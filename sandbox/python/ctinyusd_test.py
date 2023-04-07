@@ -2,6 +2,11 @@ import copy
 import ctypes
 import ctinyusd
 
+try:
+    import numpy as np
+except:
+    raise ModuleNotFoundError("Need numpy to test code.")
+
 class Token(object):
 
     def __init__(self, tok):
@@ -24,6 +29,45 @@ class Token(object):
         btok = ctinyusd.c_tinyusd_token_str(self._handle)
         print(btok)
         return btok.decode()
+
+class Value(object):
+    _np_conv_table = {
+        "float32": [ctinyusd.c_tinyusd_value_new_float, ctinyusd.c_tinyusd_value_new_array_float]
+    }
+
+    def __init__(self, value):
+
+        # CTinyUSDValue*
+        self._handle = None
+
+        if isinstance(value, np.ndarray):
+            if str(value.dtype) in self._np_conv_table:
+                fun_table = self._np_conv_table[str(value.dtype)]
+                print(fun_table)
+
+                if value.ndim == 0:
+                    # scalar
+                    fun_table[0](value)
+                elif value.ndim == 1:
+                    # 1D array
+
+                    c_type = ctypes.POINTER(ctypes.c_float)
+
+                    #self._handle = ctinyusd.c_tinyusd_value_new_array_float(value.size, value.ctypes.data_as(ctypes.POINTER(ctypes.c_float)))
+                    self._handle = ctinyusd.c_tinyusd_value_new_array_float(value.size, value.ctypes.data_as(c_type))
+                else:
+                    raise RuntimeException("2D or multi dim array is not supported: ndim = {}".format(value.ndim)) 
+                    # [0] = scalr, [1] = array
+                
+        else:
+            raise "TODO"
+
+
+    def __del__(self):
+        if self._handle is not None:
+            ret = ctinyusd.c_tinyusd_value_free(self._handle)
+            assert ret == 1
+        
 
 class Prim(object):
     
@@ -140,9 +184,13 @@ class PrimChildIterator:
         raise StopIterator
 
 
+value = np.zeros(100, dtype=np.float32)
+print(value)
 
-#t = Token("mytok")
-#print(t)
+tval = Value(value)
+
+t = Token("mytok")
+print(t)
 
 #dt = copy.copy(t)
 #del t

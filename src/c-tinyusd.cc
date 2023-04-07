@@ -1945,6 +1945,28 @@ ATTRIB_VALUE_NEW_IMPL(float4, value::float4, c_tinyusd_float4_t, C_TINYUSD_VALUE
 
 #undef ATTRIB_VALUE_NEW_IMPL
 
+#define ATTRIB_VALUE_NEW_ARRAY_IMPL(__tyname, __cppty, __cty, __tyenum) \
+CTinyUSDValue *c_tinyusd_value_new_array_##__tyname(uint64_t n, const __cty *vals) { \
+  (void)__tyenum; \
+  /* ensure C++ and C types has same size. */ \
+  static_assert(sizeof(__cppty) == sizeof(__cty), ""); \
+  std::vector<__cppty> cppvalarray; \
+  cppvalarray.resize(n); \
+  memcpy(cppvalarray.data(), &vals, sizeof(__cppty) * n); \
+  tinyusdz::value::Value *vp = new tinyusdz::value::Value(std::move(cppvalarray)); \
+  return reinterpret_cast<CTinyUSDValue *>(vp); \
+}
+
+ATTRIB_VALUE_NEW_ARRAY_IMPL(int, int, int, C_TINYUSD_VALUE_INT)
+ATTRIB_VALUE_NEW_ARRAY_IMPL(int2, value::int2, c_tinyusd_int2_t, C_TINYUSD_VALUE_INT2)
+ATTRIB_VALUE_NEW_ARRAY_IMPL(int3, value::int3, c_tinyusd_int3_t, C_TINYUSD_VALUE_INT3)
+ATTRIB_VALUE_NEW_ARRAY_IMPL(int4, value::int4, c_tinyusd_int4_t, C_TINYUSD_VALUE_INT4)
+
+ATTRIB_VALUE_NEW_ARRAY_IMPL(float, float, float, C_TINYUSD_VALUE_FLOAT)
+ATTRIB_VALUE_NEW_ARRAY_IMPL(float2, value::float2, c_tinyusd_float2_t, C_TINYUSD_VALUE_FLOAT2)
+ATTRIB_VALUE_NEW_ARRAY_IMPL(float3, value::float3, c_tinyusd_float3_t, C_TINYUSD_VALUE_FLOAT3)
+ATTRIB_VALUE_NEW_ARRAY_IMPL(float4, value::float4, c_tinyusd_float4_t, C_TINYUSD_VALUE_FLOAT4)
+
 int c_tinyusd_value_to_string(const CTinyUSDValue *aval, c_tinyusd_string_t *str) {
   if (!aval) {
     return 0;
