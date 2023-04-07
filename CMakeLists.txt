@@ -478,45 +478,45 @@ if(TINYUSDZ_WITH_OPENSUBDIV)
   # https://stackoverflow.com/questions/41700463/push-pop-a-cmake-variable
   function(ADD_OSD_LIB)
 
-    set(NO_TUTORIALS
-        ON
-        CACHE INTERNAL "" FORCE)
-    set(NO_EXAMPLES
-        ON
-        CACHE INTERNAL "" FORCE)
-    set(NO_REGRESSION
-        ON
-        CACHE INTERNAL "" FORCE)
-    set(NO_DOC
-        ON
-        CACHE INTERNAL "" FORCE)
-    set(NO_OMP
-        ON
-        CACHE INTERNAL "" FORCE)
-    set(NO_TBB
-        ON
-        CACHE INTERNAL "" FORCE)
-    set(NO_CUDA
-        ON
-        CACHE INTERNAL "" FORCE)
-    set(NO_OPENCL
-        ON
-        CACHE INTERNAL "" FORCE)
-    set(NO_OPENGL
-        ON
-        CACHE INTERNAL "" FORCE)
-    set(NO_TESTS
-        ON
-        CACHE INTERNAL "" FORCE)
-    set(NO_GLTESTS
-        ON
-        CACHE INTERNAL "" FORCE)
-    set(NO_GLFW
-        ON
-        CACHE INTERNAL "" FORCE)
-    set(NO_PTEX
-        ON
-        CACHE INTERNAL "" FORCE)
+    #set(NO_TUTORIALS
+    #    ON
+    #    CACHE INTERNAL "" FORCE)
+    #set(NO_EXAMPLES
+    #    ON
+    #    CACHE INTERNAL "" FORCE)
+    #set(NO_REGRESSION
+    #    ON
+    #    CACHE INTERNAL "" FORCE)
+    #set(NO_DOC
+    #    ON
+    #    CACHE INTERNAL "" FORCE)
+    #set(NO_OMP
+    #    ON
+    #    CACHE INTERNAL "" FORCE)
+    #set(NO_TBB
+    #    ON
+    #    CACHE INTERNAL "" FORCE)
+    #set(NO_CUDA
+    #    ON
+    #    CACHE INTERNAL "" FORCE)
+    #set(NO_OPENCL
+    #    ON
+    #    CACHE INTERNAL "" FORCE)
+    #set(NO_OPENGL
+    #    ON
+    #    CACHE INTERNAL "" FORCE)
+    #set(NO_TESTS
+    #    ON
+    #    CACHE INTERNAL "" FORCE)
+    #set(NO_GLTESTS
+    #    ON
+    #    CACHE INTERNAL "" FORCE)
+    #set(NO_GLFW
+    #    ON
+    #    CACHE INTERNAL "" FORCE)
+    #set(NO_PTEX
+    #    ON
+    #    CACHE INTERNAL "" FORCE)
 
     # CMakeLists of OSD package is problematic, so provide our own one.
     list(
@@ -563,19 +563,34 @@ if(TINYUSDZ_WITH_OPENSUBDIV)
       ${osd_DIR}/opensubdiv/vtr/sparseSelector.cpp
       ${osd_DIR}/opensubdiv/vtr/triRefinement.cpp)
 
-    add_library(osd_cpu ${OSD_FAR_SOURCES} ${OSD_OSD_SOURCES})
+    #add_library(osd_cpu_static ${OSD_FAR_SOURCES} ${OSD_SDC_SOURCES} ${OSD_VTR_SOURCES} ${OSD_OSD_SOURCES})
+    #target_include_directories(osd_cpu_static PRIVATE ${osd_DIR})
+
+    #if (TINYUSDZ_BUILD_SHARED_LIBS)
+    #  add_library(osd_cpu_shared SHARED ${OSD_FAR_SOURCES} ${OSD_SDC_SOURCES} ${OSD_VTR_SOURCES} ${OSD_OSD_SOURCES})
+    #  target_include_directories(osd_cpu_shared PRIVATE ${osd_DIR})
+    #endif()
+
+    #if (MSVC)
+    #  if (TINYUSDZ_CXX_MP_FLAG)
+    #    target_compile_options(osd_cpu_static PRIVATE /MP${CMAKE_CXX_MP_NUM_PROCESSORS})
+    #    if (TINYUSDZ_BUILD_SHARED_LIBS)
+    #      target_compile_options(osd_cpu_shared PRIVATE /MP${CMAKE_CXX_MP_NUM_PROCESSORS})
+    #    endif()
+    #  endif()
+    #endif()
+
+    # Build as Object Library(non archival collections)
+    add_library(osd_cpu ${OSD_FAR_SOURCES} ${OSD_SDC_SOURCES} ${OSD_VTR_SOURCES} ${OSD_OSD_SOURCES})
     target_include_directories(osd_cpu PRIVATE ${osd_DIR})
 
-    if (MSVC)
-      if (TINYUSDZ_CXX_MP_FLAG)
-        target_compile_options(osd_cpu PRIVATE /MP${CMAKE_CXX_MP_NUM_PROCESSORS})
-      endif()
-    endif()
+    #set(TINYUSDZ_OSD_SOURCES ${OSD_FAR_SOURCES} ${OSD_SDC_SOURCES} ${OSD_VTR_SOURCES} ${OSD_OSD_SOURCES})
 
   endfunction()
 
   add_osd_lib()
-  list(APPEND TINYUSDZ_EXT_LIBRARIES osd_cpu)
+  list(APPEND TINYUSDZ_EXT_STATIC_LIBRARIES $<TARGET_OBJECTS:osd_cpu>)
+  list(APPEND TINYUSDZ_EXT_SHARED_LIBRARIES $<TARGET_OBJECTS:osd_cpu>)
 
   list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/subdiv.cc)
 
@@ -620,6 +635,14 @@ if(WIN32 AND TINYUSDZ_WITH_PXR_COMPAT_API)
     target_compile_definitions(${TINYUSDZ_TARGET} PRIVATE "USD_EXPORTS")
   endif()
 
+endif()
+
+# static only
+target_link_libraries(${TINYUSDZ_TARGET_STATIC} PRIVATE ${TINYUSDZ_EXT_STATIC_LIBRARIES})
+
+# shared only
+if (TINYUSDZ_BUILD_SHARED_LIBS)
+  target_link_libraries(${TINYUSDZ_TARGET} PUBLIC ${TINYUSDZ_EXT_SHARED_LIBRARIES})
 endif()
 
 #
@@ -760,6 +783,8 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
 
 endforeach()
 
+
+
 # Increase warning level for clang.
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 
@@ -797,7 +822,9 @@ endif()
 if(TINYUSDZ_WITH_C_API)
   if(TINYUSDZ_BUILD_SHARED_LIBS)
     add_library(${BUILD_TARGET_C} SHARED ${TINYUSDZ_C_API_SOURCES})
-    target_link_libraries(${BUILD_TARGET_C} PRIVATE ${TINYUSDZ_TARGET})
+    # Link with static(object) version of libtinyusdz to make dll monolitic
+    # TODO: Build TINYUSDZ_TARGET_STATIC as Object?
+    target_link_libraries(${BUILD_TARGET_C} PRIVATE ${TINYUSDZ_TARGET_STATIC})
     target_compile_definitions(${BUILD_TARGET_C} PRIVATE "TINYUSDZ_COMPILE_LIBRARY")
     target_compile_definitions(${BUILD_TARGET_C} PRIVATE "TINYUSDZ_SHARED_LIBRARY")
     target_include_directories(
