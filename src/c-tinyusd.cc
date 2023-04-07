@@ -728,6 +728,8 @@ uint32_t c_tinyusd_value_type_is_numeric(CTinyUSDValueType value_type) {
     }  // invalid
        // default: { return 0; }
   }
+
+  return 0;
 }
 
 uint32_t c_tinyusd_value_type_sizeof(CTinyUSDValueType value_type) {
@@ -1120,7 +1122,7 @@ int c_tinyusd_prim_del_child(CTinyUSDPrim *prim, uint64_t child_idx) {
     return 0;
   }
 
-  pprim->children().erase(pprim->children().begin() + ssize_t(child_idx));
+  pprim->children().erase(pprim->children().begin() + int64_t(child_idx));
 
   return 1;
 }
