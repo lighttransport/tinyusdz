@@ -600,22 +600,22 @@ C_TINYUSD_EXPORT CTinyUSDValue *c_tinyusd_value_new_float4(
    New Value with 1D array ofspecific type.
    NOTE: Array data is copied.
  */
-C_TINYUSD_EXPORT CTinyUSDValue *c_tinyusd_value_new_int_array(uint64_t n,
-                                                              int *vals);
-C_TINYUSD_EXPORT CTinyUSDValue *c_tinyusd_value_new_int2_array(
-    uint64_t n, c_tinyusd_int2_t *vals);
-C_TINYUSD_EXPORT CTinyUSDValue *c_tinyusd_value_new_int3_array(
-    uint64_t n, c_tinyusd_int3_t *vals);
-C_TINYUSD_EXPORT CTinyUSDValue *c_tinyusd_value_new_int4_array(
-    uint64_t n, c_tinyusd_int4_t *vals);
-C_TINYUSD_EXPORT CTinyUSDValue *c_tinyusd_value_new_float_array(uint64_t n,
-                                                                float *vals);
-C_TINYUSD_EXPORT CTinyUSDValue *c_tinyusd_value_new_float2_array(
-    uint64_t n, c_tinyusd_float2_t *vals);
-C_TINYUSD_EXPORT CTinyUSDValue *c_tinyusd_value_new_float3_array(
-    uint64_t n, c_tinyusd_float3_t *vals);
-C_TINYUSD_EXPORT CTinyUSDValue *c_tinyusd_value_new_float4_array(
-    uint64_t n, c_tinyusd_float4_t *vals);
+C_TINYUSD_EXPORT CTinyUSDValue *c_tinyusd_value_new_array_int(uint64_t n,
+                                                              const int *vals);
+C_TINYUSD_EXPORT CTinyUSDValue *c_tinyusd_value_new_array_int2(
+    uint64_t n, const c_tinyusd_int2_t *vals);
+C_TINYUSD_EXPORT CTinyUSDValue *c_tinyusd_value_new_array_int3(
+    uint64_t n, const c_tinyusd_int3_t *vals);
+C_TINYUSD_EXPORT CTinyUSDValue *c_tinyusd_value_new_array_int4(
+    uint64_t n, const c_tinyusd_int4_t *vals);
+C_TINYUSD_EXPORT CTinyUSDValue *c_tinyusd_value_new_array_float(uint64_t n,
+                                                                const float *vals);
+C_TINYUSD_EXPORT CTinyUSDValue *c_tinyusd_value_new_array_float2(
+    uint64_t n, const c_tinyusd_float2_t *vals);
+C_TINYUSD_EXPORT CTinyUSDValue *c_tinyusd_value_new_array_float3(
+    uint64_t n, const c_tinyusd_float3_t *vals);
+C_TINYUSD_EXPORT CTinyUSDValue *c_tinyusd_value_new_array_float4(
+    uint64_t n, const c_tinyusd_float4_t *vals);
 /*   TODO: List up other types... */
 
 /* opaque pointer to tinyusdz::Path */

@@ -883,7 +883,7 @@ uint32_t = __uint32_t# /usr/include/x86_64-linux-gnu/bits/stdint-uintn.h: 26
 
 uint64_t = __uint64_t# /usr/include/x86_64-linux-gnu/bits/stdint-uintn.h: 27
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 96
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 96
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_malloc", "cdecl"):
         continue
@@ -893,7 +893,7 @@ for _lib in _libs.values():
     c_tinyusd_malloc.errcheck = lambda v,*a : cast(v, c_void_p)
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 99
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 99
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_free", "cdecl"):
         continue
@@ -902,181 +902,185 @@ for _lib in _libs.values():
     c_tinyusd_free.restype = c_int
     break
 
-enum_anon_4 = c_int# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 113
+enum_anon_4 = c_int# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 113
 
-C_TINYUSD_FORMAT_UNKNOWN = 0# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 113
+C_TINYUSD_FORMAT_UNKNOWN = 0# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 113
 
-C_TINYUSD_FORMAT_AUTO = (C_TINYUSD_FORMAT_UNKNOWN + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 113
+C_TINYUSD_FORMAT_AUTO = (C_TINYUSD_FORMAT_UNKNOWN + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 113
 
-C_TINYUSD_FORMAT_USDA = (C_TINYUSD_FORMAT_AUTO + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 113
+C_TINYUSD_FORMAT_USDA = (C_TINYUSD_FORMAT_AUTO + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 113
 
-C_TINYUSD_FORMAT_USDC = (C_TINYUSD_FORMAT_USDA + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 113
+C_TINYUSD_FORMAT_USDC = (C_TINYUSD_FORMAT_USDA + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 113
 
-C_TINYUSD_FORMAT_USDZ = (C_TINYUSD_FORMAT_USDC + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 113
+C_TINYUSD_FORMAT_USDZ = (C_TINYUSD_FORMAT_USDC + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 113
 
-CTinyUSDFormat = enum_anon_4# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 113
+CTinyUSDFormat = enum_anon_4# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 113
 
-enum_anon_5 = c_int# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 120
+enum_anon_5 = c_int# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 120
 
-C_TINYUSD_AXIS_UNKNOWN = 0# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 120
+C_TINYUSD_AXIS_UNKNOWN = 0# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 120
 
-C_TINYUSD_AXIS_X = (C_TINYUSD_AXIS_UNKNOWN + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 120
+C_TINYUSD_AXIS_X = (C_TINYUSD_AXIS_UNKNOWN + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 120
 
-C_TINYUSD_AXIS_Y = (C_TINYUSD_AXIS_X + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 120
+C_TINYUSD_AXIS_Y = (C_TINYUSD_AXIS_X + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 120
 
-C_TINYUSD_AXIS_Z = (C_TINYUSD_AXIS_Y + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 120
+C_TINYUSD_AXIS_Z = (C_TINYUSD_AXIS_Y + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 120
 
-CTinyUSDAxis = enum_anon_5# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 120
+CTinyUSDAxis = enum_anon_5# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 120
 
-enum_anon_6 = c_int# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+enum_anon_6 = c_int# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_TOKEN = 0# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_UNKNOWN = 0# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_TOKEN_VECTOR = (C_TINYUSD_VALUE_TOKEN + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_TOKEN = (C_TINYUSD_VALUE_UNKNOWN + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_STRING = (C_TINYUSD_VALUE_TOKEN_VECTOR + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_TOKEN_VECTOR = (C_TINYUSD_VALUE_TOKEN + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_STRING_VECTOR = (C_TINYUSD_VALUE_STRING + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_STRING = (C_TINYUSD_VALUE_TOKEN_VECTOR + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_BOOL = (C_TINYUSD_VALUE_STRING_VECTOR + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_STRING_VECTOR = (C_TINYUSD_VALUE_STRING + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_HALF = (C_TINYUSD_VALUE_BOOL + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_BOOL = (C_TINYUSD_VALUE_STRING_VECTOR + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_HALF2 = (C_TINYUSD_VALUE_HALF + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_HALF = (C_TINYUSD_VALUE_BOOL + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_HALF3 = (C_TINYUSD_VALUE_HALF2 + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_HALF2 = (C_TINYUSD_VALUE_HALF + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_HALF4 = (C_TINYUSD_VALUE_HALF3 + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_HALF3 = (C_TINYUSD_VALUE_HALF2 + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_INT = (C_TINYUSD_VALUE_HALF4 + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_HALF4 = (C_TINYUSD_VALUE_HALF3 + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_INT2 = (C_TINYUSD_VALUE_INT + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_INT = (C_TINYUSD_VALUE_HALF4 + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_INT3 = (C_TINYUSD_VALUE_INT2 + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_INT2 = (C_TINYUSD_VALUE_INT + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_INT4 = (C_TINYUSD_VALUE_INT3 + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_INT3 = (C_TINYUSD_VALUE_INT2 + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_UINT = (C_TINYUSD_VALUE_INT4 + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_INT4 = (C_TINYUSD_VALUE_INT3 + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_UINT2 = (C_TINYUSD_VALUE_UINT + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_UINT = (C_TINYUSD_VALUE_INT4 + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_UINT3 = (C_TINYUSD_VALUE_UINT2 + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_UINT2 = (C_TINYUSD_VALUE_UINT + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_UINT4 = (C_TINYUSD_VALUE_UINT3 + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_UINT3 = (C_TINYUSD_VALUE_UINT2 + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_INT64 = (C_TINYUSD_VALUE_UINT4 + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_UINT4 = (C_TINYUSD_VALUE_UINT3 + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_UINT64 = (C_TINYUSD_VALUE_INT64 + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_INT64 = (C_TINYUSD_VALUE_UINT4 + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_FLOAT = (C_TINYUSD_VALUE_UINT64 + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_UINT64 = (C_TINYUSD_VALUE_INT64 + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_FLOAT2 = (C_TINYUSD_VALUE_FLOAT + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_FLOAT = (C_TINYUSD_VALUE_UINT64 + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_FLOAT3 = (C_TINYUSD_VALUE_FLOAT2 + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_FLOAT2 = (C_TINYUSD_VALUE_FLOAT + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_FLOAT4 = (C_TINYUSD_VALUE_FLOAT3 + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_FLOAT3 = (C_TINYUSD_VALUE_FLOAT2 + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_DOUBLE = (C_TINYUSD_VALUE_FLOAT4 + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_FLOAT4 = (C_TINYUSD_VALUE_FLOAT3 + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_DOUBLE2 = (C_TINYUSD_VALUE_DOUBLE + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_DOUBLE = (C_TINYUSD_VALUE_FLOAT4 + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_DOUBLE3 = (C_TINYUSD_VALUE_DOUBLE2 + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_DOUBLE2 = (C_TINYUSD_VALUE_DOUBLE + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_DOUBLE4 = (C_TINYUSD_VALUE_DOUBLE3 + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_DOUBLE3 = (C_TINYUSD_VALUE_DOUBLE2 + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_QUATH = (C_TINYUSD_VALUE_DOUBLE4 + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_DOUBLE4 = (C_TINYUSD_VALUE_DOUBLE3 + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_QUATF = (C_TINYUSD_VALUE_QUATH + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_QUATH = (C_TINYUSD_VALUE_DOUBLE4 + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_QUATD = (C_TINYUSD_VALUE_QUATF + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_QUATF = (C_TINYUSD_VALUE_QUATH + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_COLOR3H = (C_TINYUSD_VALUE_QUATD + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_QUATD = (C_TINYUSD_VALUE_QUATF + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_COLOR3F = (C_TINYUSD_VALUE_COLOR3H + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_COLOR3H = (C_TINYUSD_VALUE_QUATD + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_COLOR3D = (C_TINYUSD_VALUE_COLOR3F + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_COLOR3F = (C_TINYUSD_VALUE_COLOR3H + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_COLOR4H = (C_TINYUSD_VALUE_COLOR3D + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_COLOR3D = (C_TINYUSD_VALUE_COLOR3F + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_COLOR4F = (C_TINYUSD_VALUE_COLOR4H + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_COLOR4H = (C_TINYUSD_VALUE_COLOR3D + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_COLOR4D = (C_TINYUSD_VALUE_COLOR4F + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_COLOR4F = (C_TINYUSD_VALUE_COLOR4H + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_TEXCOORD2H = (C_TINYUSD_VALUE_COLOR4D + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_COLOR4D = (C_TINYUSD_VALUE_COLOR4F + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_TEXCOORD2F = (C_TINYUSD_VALUE_TEXCOORD2H + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_TEXCOORD2H = (C_TINYUSD_VALUE_COLOR4D + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_TEXCOORD2D = (C_TINYUSD_VALUE_TEXCOORD2F + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_TEXCOORD2F = (C_TINYUSD_VALUE_TEXCOORD2H + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_TEXCOORD3H = (C_TINYUSD_VALUE_TEXCOORD2D + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_TEXCOORD2D = (C_TINYUSD_VALUE_TEXCOORD2F + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_TEXCOORD3F = (C_TINYUSD_VALUE_TEXCOORD3H + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_TEXCOORD3H = (C_TINYUSD_VALUE_TEXCOORD2D + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_TEXCOORD3D = (C_TINYUSD_VALUE_TEXCOORD3F + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_TEXCOORD3F = (C_TINYUSD_VALUE_TEXCOORD3H + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_NORMAL3H = (C_TINYUSD_VALUE_TEXCOORD3D + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_TEXCOORD3D = (C_TINYUSD_VALUE_TEXCOORD3F + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_NORMAL3F = (C_TINYUSD_VALUE_NORMAL3H + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_NORMAL3H = (C_TINYUSD_VALUE_TEXCOORD3D + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_NORMAL3D = (C_TINYUSD_VALUE_NORMAL3F + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_NORMAL3F = (C_TINYUSD_VALUE_NORMAL3H + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_VECTOR3H = (C_TINYUSD_VALUE_NORMAL3D + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_NORMAL3D = (C_TINYUSD_VALUE_NORMAL3F + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_VECTOR3F = (C_TINYUSD_VALUE_VECTOR3H + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_VECTOR3H = (C_TINYUSD_VALUE_NORMAL3D + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_VECTOR3D = (C_TINYUSD_VALUE_VECTOR3F + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_VECTOR3F = (C_TINYUSD_VALUE_VECTOR3H + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_POINT3H = (C_TINYUSD_VALUE_VECTOR3D + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_VECTOR3D = (C_TINYUSD_VALUE_VECTOR3F + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_POINT3F = (C_TINYUSD_VALUE_POINT3H + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_POINT3H = (C_TINYUSD_VALUE_VECTOR3D + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_POINT3D = (C_TINYUSD_VALUE_POINT3F + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_POINT3F = (C_TINYUSD_VALUE_POINT3H + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_MATRIX2D = (C_TINYUSD_VALUE_POINT3D + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_POINT3D = (C_TINYUSD_VALUE_POINT3F + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_MATRIX3D = (C_TINYUSD_VALUE_MATRIX2D + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_MATRIX2D = (C_TINYUSD_VALUE_POINT3D + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_MATRIX4D = (C_TINYUSD_VALUE_MATRIX3D + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_MATRIX3D = (C_TINYUSD_VALUE_MATRIX2D + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_FRAME4D = (C_TINYUSD_VALUE_MATRIX4D + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_MATRIX4D = (C_TINYUSD_VALUE_MATRIX3D + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_VALUE_END = (C_TINYUSD_VALUE_FRAME4D + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_FRAME4D = (C_TINYUSD_VALUE_MATRIX4D + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-CTinyUSDValueType = enum_anon_6# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 187
+C_TINYUSD_VALUE_DICTIONARY = (C_TINYUSD_VALUE_FRAME4D + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-enum_anon_7 = c_int# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 208
+C_TINYUSD_VALUE_END = (C_TINYUSD_VALUE_DICTIONARY + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_PRIM_UNKNOWN = 0# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 208
+CTinyUSDValueType = enum_anon_6# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 189
 
-C_TINYUSD_PRIM_MODEL = (C_TINYUSD_PRIM_UNKNOWN + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 208
+enum_anon_7 = c_int# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 210
 
-C_TINYUSD_PRIM_SCOPE = (C_TINYUSD_PRIM_MODEL + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 208
+C_TINYUSD_PRIM_UNKNOWN = 0# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 210
 
-C_TINYUSD_PRIM_XFORM = (C_TINYUSD_PRIM_SCOPE + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 208
+C_TINYUSD_PRIM_MODEL = (C_TINYUSD_PRIM_UNKNOWN + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 210
 
-C_TINYUSD_PRIM_MESH = (C_TINYUSD_PRIM_XFORM + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 208
+C_TINYUSD_PRIM_SCOPE = (C_TINYUSD_PRIM_MODEL + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 210
 
-C_TINYUSD_PRIM_GEOMSUBSET = (C_TINYUSD_PRIM_MESH + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 208
+C_TINYUSD_PRIM_XFORM = (C_TINYUSD_PRIM_SCOPE + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 210
 
-C_TINYUSD_PRIM_MATERIAL = (C_TINYUSD_PRIM_GEOMSUBSET + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 208
+C_TINYUSD_PRIM_MESH = (C_TINYUSD_PRIM_XFORM + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 210
 
-C_TINYUSD_PRIM_SHADER = (C_TINYUSD_PRIM_MATERIAL + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 208
+C_TINYUSD_PRIM_GEOMSUBSET = (C_TINYUSD_PRIM_MESH + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 210
 
-C_TINYUSD_PRIM_CAMERA = (C_TINYUSD_PRIM_SHADER + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 208
+C_TINYUSD_PRIM_MATERIAL = (C_TINYUSD_PRIM_GEOMSUBSET + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 210
 
-C_TINYUSD_PRIM_SPHERE_LIGHT = (C_TINYUSD_PRIM_CAMERA + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 208
+C_TINYUSD_PRIM_SHADER = (C_TINYUSD_PRIM_MATERIAL + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 210
 
-C_TINYUSD_PRIM_DISTANT_LIGHT = (C_TINYUSD_PRIM_SPHERE_LIGHT + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 208
+C_TINYUSD_PRIM_CAMERA = (C_TINYUSD_PRIM_SHADER + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 210
 
-C_TINYUSD_PRIM_RECT_LIGHT = (C_TINYUSD_PRIM_DISTANT_LIGHT + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 208
+C_TINYUSD_PRIM_SPHERE_LIGHT = (C_TINYUSD_PRIM_CAMERA + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 210
 
-C_TINYUSD_PRIM_END = (C_TINYUSD_PRIM_RECT_LIGHT + 1)# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 208
+C_TINYUSD_PRIM_DISTANT_LIGHT = (C_TINYUSD_PRIM_SPHERE_LIGHT + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 210
 
-CTinyUSDPrimType = enum_anon_7# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 208
+C_TINYUSD_PRIM_RECT_LIGHT = (C_TINYUSD_PRIM_DISTANT_LIGHT + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 210
 
-c_tinyusd_half_t = uint16_t# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 214
+C_TINYUSD_PRIM_END = (C_TINYUSD_PRIM_RECT_LIGHT + 1)# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 210
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 223
+CTinyUSDPrimType = enum_anon_7# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 210
+
+c_tinyusd_half_t = uint16_t# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 216
+
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 225
 class struct_anon_8(Structure):
     pass
 
@@ -1089,9 +1093,9 @@ struct_anon_8._fields_ = [
     ('y', c_int),
 ]
 
-c_tinyusd_int2_t = struct_anon_8# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 223
+c_tinyusd_int2_t = struct_anon_8# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 225
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 229
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 231
 class struct_anon_9(Structure):
     pass
 
@@ -1106,9 +1110,9 @@ struct_anon_9._fields_ = [
     ('z', c_int),
 ]
 
-c_tinyusd_int3_t = struct_anon_9# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 229
+c_tinyusd_int3_t = struct_anon_9# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 231
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 236
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 238
 class struct_anon_10(Structure):
     pass
 
@@ -1125,9 +1129,9 @@ struct_anon_10._fields_ = [
     ('w', c_int),
 ]
 
-c_tinyusd_int4_t = struct_anon_10# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 236
+c_tinyusd_int4_t = struct_anon_10# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 238
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 241
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 243
 class struct_anon_11(Structure):
     pass
 
@@ -1140,9 +1144,9 @@ struct_anon_11._fields_ = [
     ('y', uint32_t),
 ]
 
-c_tinyusd_uint2_t = struct_anon_11# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 241
+c_tinyusd_uint2_t = struct_anon_11# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 243
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 247
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 249
 class struct_anon_12(Structure):
     pass
 
@@ -1157,9 +1161,9 @@ struct_anon_12._fields_ = [
     ('z', uint32_t),
 ]
 
-c_tinyusd_uint3_t = struct_anon_12# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 247
+c_tinyusd_uint3_t = struct_anon_12# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 249
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 254
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 256
 class struct_anon_13(Structure):
     pass
 
@@ -1176,9 +1180,9 @@ struct_anon_13._fields_ = [
     ('w', uint32_t),
 ]
 
-c_tinyusd_uint4_t = struct_anon_13# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 254
+c_tinyusd_uint4_t = struct_anon_13# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 256
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 259
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 261
 class struct_anon_14(Structure):
     pass
 
@@ -1191,9 +1195,9 @@ struct_anon_14._fields_ = [
     ('y', c_tinyusd_half_t),
 ]
 
-c_tinyusd_half2_t = struct_anon_14# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 259
+c_tinyusd_half2_t = struct_anon_14# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 261
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 265
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 267
 class struct_anon_15(Structure):
     pass
 
@@ -1208,9 +1212,9 @@ struct_anon_15._fields_ = [
     ('z', c_tinyusd_half_t),
 ]
 
-c_tinyusd_half3_t = struct_anon_15# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 265
+c_tinyusd_half3_t = struct_anon_15# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 267
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 272
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 274
 class struct_anon_16(Structure):
     pass
 
@@ -1227,9 +1231,9 @@ struct_anon_16._fields_ = [
     ('w', c_tinyusd_half_t),
 ]
 
-c_tinyusd_half4_t = struct_anon_16# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 272
+c_tinyusd_half4_t = struct_anon_16# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 274
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 277
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 279
 class struct_anon_17(Structure):
     pass
 
@@ -1242,9 +1246,9 @@ struct_anon_17._fields_ = [
     ('y', c_float),
 ]
 
-c_tinyusd_float2_t = struct_anon_17# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 277
+c_tinyusd_float2_t = struct_anon_17# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 279
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 283
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 285
 class struct_anon_18(Structure):
     pass
 
@@ -1259,9 +1263,9 @@ struct_anon_18._fields_ = [
     ('z', c_float),
 ]
 
-c_tinyusd_float3_t = struct_anon_18# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 283
+c_tinyusd_float3_t = struct_anon_18# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 285
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 290
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 292
 class struct_anon_19(Structure):
     pass
 
@@ -1278,9 +1282,9 @@ struct_anon_19._fields_ = [
     ('w', c_float),
 ]
 
-c_tinyusd_float4_t = struct_anon_19# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 290
+c_tinyusd_float4_t = struct_anon_19# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 292
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 295
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 297
 class struct_anon_20(Structure):
     pass
 
@@ -1293,9 +1297,9 @@ struct_anon_20._fields_ = [
     ('y', c_double),
 ]
 
-c_tinyusd_double2_t = struct_anon_20# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 295
+c_tinyusd_double2_t = struct_anon_20# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 297
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 301
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 303
 class struct_anon_21(Structure):
     pass
 
@@ -1310,9 +1314,9 @@ struct_anon_21._fields_ = [
     ('z', c_double),
 ]
 
-c_tinyusd_double3_t = struct_anon_21# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 301
+c_tinyusd_double3_t = struct_anon_21# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 303
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 308
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 310
 class struct_anon_22(Structure):
     pass
 
@@ -1329,9 +1333,9 @@ struct_anon_22._fields_ = [
     ('w', c_double),
 ]
 
-c_tinyusd_double4_t = struct_anon_22# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 308
+c_tinyusd_double4_t = struct_anon_22# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 310
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 312
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 314
 class struct_anon_23(Structure):
     pass
 
@@ -1342,9 +1346,9 @@ struct_anon_23._fields_ = [
     ('m', c_double * int(4)),
 ]
 
-c_tinyusd_matrix2d_t = struct_anon_23# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 312
+c_tinyusd_matrix2d_t = struct_anon_23# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 314
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 316
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 318
 class struct_anon_24(Structure):
     pass
 
@@ -1355,9 +1359,9 @@ struct_anon_24._fields_ = [
     ('m', c_double * int(9)),
 ]
 
-c_tinyusd_matrix3d_t = struct_anon_24# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 316
+c_tinyusd_matrix3d_t = struct_anon_24# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 318
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 320
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 322
 class struct_anon_25(Structure):
     pass
 
@@ -1368,9 +1372,9 @@ struct_anon_25._fields_ = [
     ('m', c_double * int(16)),
 ]
 
-c_tinyusd_matrix4d_t = struct_anon_25# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 320
+c_tinyusd_matrix4d_t = struct_anon_25# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 322
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 325
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 327
 class struct_anon_26(Structure):
     pass
 
@@ -1383,9 +1387,9 @@ struct_anon_26._fields_ = [
     ('real', c_tinyusd_half_t),
 ]
 
-c_tinyusd_quath_t = struct_anon_26# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 325
+c_tinyusd_quath_t = struct_anon_26# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 327
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 330
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 332
 class struct_anon_27(Structure):
     pass
 
@@ -1398,9 +1402,9 @@ struct_anon_27._fields_ = [
     ('real', c_float),
 ]
 
-c_tinyusd_quatf_t = struct_anon_27# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 330
+c_tinyusd_quatf_t = struct_anon_27# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 332
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 335
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 337
 class struct_anon_28(Structure):
     pass
 
@@ -1413,185 +1417,185 @@ struct_anon_28._fields_ = [
     ('real', c_double),
 ]
 
-c_tinyusd_quatd_t = struct_anon_28# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 335
+c_tinyusd_quatd_t = struct_anon_28# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 337
 
-c_tinyusd_color3h_t = c_tinyusd_half3_t# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 337
+c_tinyusd_color3h_t = c_tinyusd_half3_t# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 339
 
-c_tinyusd_color3f_t = c_tinyusd_float3_t# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 338
+c_tinyusd_color3f_t = c_tinyusd_float3_t# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 340
 
-c_tinyusd_color3d_t = c_tinyusd_double3_t# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 339
+c_tinyusd_color3d_t = c_tinyusd_double3_t# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 341
 
-c_tinyusd_color4h_t = c_tinyusd_half4_t# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 341
+c_tinyusd_color4h_t = c_tinyusd_half4_t# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 343
 
-c_tinyusd_color4f_t = c_tinyusd_float4_t# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 342
+c_tinyusd_color4f_t = c_tinyusd_float4_t# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 344
 
-c_tinyusd_color4d_t = c_tinyusd_double4_t# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 343
+c_tinyusd_color4d_t = c_tinyusd_double4_t# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 345
 
-c_tinyusd_point3h_t = c_tinyusd_half3_t# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 345
+c_tinyusd_point3h_t = c_tinyusd_half3_t# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 347
 
-c_tinyusd_point3f_t = c_tinyusd_float3_t# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 346
+c_tinyusd_point3f_t = c_tinyusd_float3_t# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 348
 
-c_tinyusd_point3d_t = c_tinyusd_double3_t# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 347
+c_tinyusd_point3d_t = c_tinyusd_double3_t# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 349
 
-c_tinyusd_normal3h_t = c_tinyusd_half3_t# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 349
+c_tinyusd_normal3h_t = c_tinyusd_half3_t# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 351
 
-c_tinyusd_normal3f_t = c_tinyusd_float3_t# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 350
+c_tinyusd_normal3f_t = c_tinyusd_float3_t# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 352
 
-c_tinyusd_normal3d_t = c_tinyusd_double3_t# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 351
+c_tinyusd_normal3d_t = c_tinyusd_double3_t# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 353
 
-c_tinyusd_vector3h_t = c_tinyusd_half3_t# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 353
+c_tinyusd_vector3h_t = c_tinyusd_half3_t# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 355
 
-c_tinyusd_vector3f_t = c_tinyusd_float3_t# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 354
+c_tinyusd_vector3f_t = c_tinyusd_float3_t# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 356
 
-c_tinyusd_vector3d_t = c_tinyusd_double3_t# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 355
+c_tinyusd_vector3d_t = c_tinyusd_double3_t# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 357
 
-c_tinyusd_frame4d_t = c_tinyusd_matrix4d_t# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 357
+c_tinyusd_frame4d_t = c_tinyusd_matrix4d_t# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 359
 
-c_tinyusd_texcoord2h_t = c_tinyusd_half2_t# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 359
+c_tinyusd_texcoord2h_t = c_tinyusd_half2_t# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 361
 
-c_tinyusd_texcoord2f_t = c_tinyusd_float2_t# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 360
+c_tinyusd_texcoord2f_t = c_tinyusd_float2_t# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 362
 
-c_tinyusd_texcoord2d_t = c_tinyusd_double2_t# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 361
+c_tinyusd_texcoord2d_t = c_tinyusd_double2_t# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 363
 
-c_tinyusd_texcoord3h_t = c_tinyusd_half3_t# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 363
+c_tinyusd_texcoord3h_t = c_tinyusd_half3_t# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 365
 
-c_tinyusd_texcoord3f_t = c_tinyusd_float3_t# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 364
+c_tinyusd_texcoord3f_t = c_tinyusd_float3_t# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 366
 
-c_tinyusd_texcoord3d_t = c_tinyusd_double3_t# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 365
+c_tinyusd_texcoord3d_t = c_tinyusd_double3_t# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 367
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 367
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 369
 class struct_c_tinyusd_token_t(Structure):
     pass
 
-c_tinyusd_token_t = struct_c_tinyusd_token_t# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 367
+c_tinyusd_token_t = struct_c_tinyusd_token_t# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 369
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 369
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 371
 if _libs["c-tinyusd"].has("c_tinyusd_token_new", "cdecl"):
     c_tinyusd_token_new = _libs["c-tinyusd"].get("c_tinyusd_token_new", "cdecl")
     c_tinyusd_token_new.argtypes = [String]
     c_tinyusd_token_new.restype = POINTER(c_tinyusd_token_t)
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 372
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 374
 if _libs["c-tinyusd"].has("c_tinyusd_token_dup", "cdecl"):
     c_tinyusd_token_dup = _libs["c-tinyusd"].get("c_tinyusd_token_dup", "cdecl")
     c_tinyusd_token_dup.argtypes = [POINTER(c_tinyusd_token_t)]
     c_tinyusd_token_dup.restype = POINTER(c_tinyusd_token_t)
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 376
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 378
 if _libs["c-tinyusd"].has("c_tinyusd_token_size", "cdecl"):
     c_tinyusd_token_size = _libs["c-tinyusd"].get("c_tinyusd_token_size", "cdecl")
     c_tinyusd_token_size.argtypes = [POINTER(c_tinyusd_token_t)]
     c_tinyusd_token_size.restype = c_size_t
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 382
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 384
 if _libs["c-tinyusd"].has("c_tinyusd_token_str", "cdecl"):
     c_tinyusd_token_str = _libs["c-tinyusd"].get("c_tinyusd_token_str", "cdecl")
     c_tinyusd_token_str.argtypes = [POINTER(c_tinyusd_token_t)]
     c_tinyusd_token_str.restype = c_char_p
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 388
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 390
 if _libs["c-tinyusd"].has("c_tinyusd_token_free", "cdecl"):
     c_tinyusd_token_free = _libs["c-tinyusd"].get("c_tinyusd_token_free", "cdecl")
     c_tinyusd_token_free.argtypes = [POINTER(c_tinyusd_token_t)]
     c_tinyusd_token_free.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 391
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 393
 class struct_c_tinyusd_token_vector_t(Structure):
     pass
 
-c_tinyusd_token_vector_t = struct_c_tinyusd_token_vector_t# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 391
+c_tinyusd_token_vector_t = struct_c_tinyusd_token_vector_t# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 393
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 395
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 397
 if _libs["c-tinyusd"].has("c_tinyusd_token_vector_new_empty", "cdecl"):
     c_tinyusd_token_vector_new_empty = _libs["c-tinyusd"].get("c_tinyusd_token_vector_new_empty", "cdecl")
     c_tinyusd_token_vector_new_empty.argtypes = []
     c_tinyusd_token_vector_new_empty.restype = POINTER(c_tinyusd_token_vector_t)
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 399
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 401
 if _libs["c-tinyusd"].has("c_tinyusd_token_vector_new", "cdecl"):
     c_tinyusd_token_vector_new = _libs["c-tinyusd"].get("c_tinyusd_token_vector_new", "cdecl")
     c_tinyusd_token_vector_new.argtypes = [c_size_t, POINTER(POINTER(c_char))]
     c_tinyusd_token_vector_new.restype = POINTER(c_tinyusd_token_vector_t)
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 401
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 403
 if _libs["c-tinyusd"].has("c_tinyusd_token_vector_free", "cdecl"):
     c_tinyusd_token_vector_free = _libs["c-tinyusd"].get("c_tinyusd_token_vector_free", "cdecl")
     c_tinyusd_token_vector_free.argtypes = [POINTER(c_tinyusd_token_vector_t)]
     c_tinyusd_token_vector_free.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 408
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 410
 if _libs["c-tinyusd"].has("c_tinyusd_token_vector_size", "cdecl"):
     c_tinyusd_token_vector_size = _libs["c-tinyusd"].get("c_tinyusd_token_vector_size", "cdecl")
     c_tinyusd_token_vector_size.argtypes = [POINTER(c_tinyusd_token_vector_t)]
     c_tinyusd_token_vector_size.restype = c_size_t
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 410
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 412
 if _libs["c-tinyusd"].has("c_tinyusd_token_vector_clear", "cdecl"):
     c_tinyusd_token_vector_clear = _libs["c-tinyusd"].get("c_tinyusd_token_vector_clear", "cdecl")
     c_tinyusd_token_vector_clear.argtypes = [POINTER(c_tinyusd_token_vector_t)]
     c_tinyusd_token_vector_clear.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 411
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 413
 if _libs["c-tinyusd"].has("c_tinyusd_token_vector_resize", "cdecl"):
     c_tinyusd_token_vector_resize = _libs["c-tinyusd"].get("c_tinyusd_token_vector_resize", "cdecl")
     c_tinyusd_token_vector_resize.argtypes = [POINTER(c_tinyusd_token_vector_t), c_size_t]
     c_tinyusd_token_vector_resize.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 418
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 420
 if _libs["c-tinyusd"].has("c_tinyusd_token_vector_str", "cdecl"):
     c_tinyusd_token_vector_str = _libs["c-tinyusd"].get("c_tinyusd_token_vector_str", "cdecl")
     c_tinyusd_token_vector_str.argtypes = [POINTER(c_tinyusd_token_vector_t), c_size_t]
     c_tinyusd_token_vector_str.restype = c_char_p
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 425
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 427
 if _libs["c-tinyusd"].has("c_tinyusd_token_vector_replace", "cdecl"):
     c_tinyusd_token_vector_replace = _libs["c-tinyusd"].get("c_tinyusd_token_vector_replace", "cdecl")
     c_tinyusd_token_vector_replace.argtypes = [POINTER(c_tinyusd_token_vector_t), c_size_t, String]
     c_tinyusd_token_vector_replace.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 429
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 431
 class struct_c_tinyusd_string_t(Structure):
     pass
 
-c_tinyusd_string_t = struct_c_tinyusd_string_t# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 429
+c_tinyusd_string_t = struct_c_tinyusd_string_t# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 431
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 431
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 433
 if _libs["c-tinyusd"].has("c_tinyusd_string_new_empty", "cdecl"):
     c_tinyusd_string_new_empty = _libs["c-tinyusd"].get("c_tinyusd_string_new_empty", "cdecl")
     c_tinyusd_string_new_empty.argtypes = []
     c_tinyusd_string_new_empty.restype = POINTER(c_tinyusd_string_t)
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 433
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 435
 if _libs["c-tinyusd"].has("c_tinyusd_string_new", "cdecl"):
     c_tinyusd_string_new = _libs["c-tinyusd"].get("c_tinyusd_string_new", "cdecl")
     c_tinyusd_string_new.argtypes = [String]
     c_tinyusd_string_new.restype = POINTER(c_tinyusd_string_t)
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 436
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 438
 if _libs["c-tinyusd"].has("c_tinyusd_string_size", "cdecl"):
     c_tinyusd_string_size = _libs["c-tinyusd"].get("c_tinyusd_string_size", "cdecl")
     c_tinyusd_string_size.argtypes = [POINTER(c_tinyusd_string_t)]
     c_tinyusd_string_size.restype = c_size_t
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 442
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 444
 if _libs["c-tinyusd"].has("c_tinyusd_string_replace", "cdecl"):
     c_tinyusd_string_replace = _libs["c-tinyusd"].get("c_tinyusd_string_replace", "cdecl")
     c_tinyusd_string_replace.argtypes = [POINTER(c_tinyusd_string_t), String]
     c_tinyusd_string_replace.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 448
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 450
 if _libs["c-tinyusd"].has("c_tinyusd_string_str", "cdecl"):
     c_tinyusd_string_str = _libs["c-tinyusd"].get("c_tinyusd_string_str", "cdecl")
     c_tinyusd_string_str.argtypes = [POINTER(c_tinyusd_string_t)]
     c_tinyusd_string_str.restype = c_char_p
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 450
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 452
 if _libs["c-tinyusd"].has("c_tinyusd_string_free", "cdecl"):
     c_tinyusd_string_free = _libs["c-tinyusd"].get("c_tinyusd_string_free", "cdecl")
     c_tinyusd_string_free.argtypes = [POINTER(c_tinyusd_string_t)]
     c_tinyusd_string_free.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 454
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 456
 class struct_anon_29(Structure):
     pass
 
@@ -1602,267 +1606,255 @@ struct_anon_29._fields_ = [
     ('data', POINTER(None)),
 ]
 
-c_tinyusd_string_vector = struct_anon_29# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 454
+c_tinyusd_string_vector = struct_anon_29# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 456
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 457
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 459
 if _libs["c-tinyusd"].has("c_tinyusd_string_vector_new_empty", "cdecl"):
     c_tinyusd_string_vector_new_empty = _libs["c-tinyusd"].get("c_tinyusd_string_vector_new_empty", "cdecl")
     c_tinyusd_string_vector_new_empty.argtypes = [POINTER(c_tinyusd_string_vector), c_size_t]
     c_tinyusd_string_vector_new_empty.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 460
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 462
 if _libs["c-tinyusd"].has("c_tinyusd_string_vector_new", "cdecl"):
     c_tinyusd_string_vector_new = _libs["c-tinyusd"].get("c_tinyusd_string_vector_new", "cdecl")
     c_tinyusd_string_vector_new.argtypes = [POINTER(c_tinyusd_string_vector), c_size_t, POINTER(POINTER(c_char))]
     c_tinyusd_string_vector_new.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 469
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 471
 if _libs["c-tinyusd"].has("c_tinyusd_string_vector_size", "cdecl"):
     c_tinyusd_string_vector_size = _libs["c-tinyusd"].get("c_tinyusd_string_vector_size", "cdecl")
     c_tinyusd_string_vector_size.argtypes = [POINTER(c_tinyusd_string_vector)]
     c_tinyusd_string_vector_size.restype = c_size_t
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 471
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 473
 if _libs["c-tinyusd"].has("c_tinyusd_string_vector_clear", "cdecl"):
     c_tinyusd_string_vector_clear = _libs["c-tinyusd"].get("c_tinyusd_string_vector_clear", "cdecl")
     c_tinyusd_string_vector_clear.argtypes = [POINTER(c_tinyusd_string_vector)]
     c_tinyusd_string_vector_clear.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 472
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 474
 if _libs["c-tinyusd"].has("c_tinyusd_string_vector_resize", "cdecl"):
     c_tinyusd_string_vector_resize = _libs["c-tinyusd"].get("c_tinyusd_string_vector_resize", "cdecl")
     c_tinyusd_string_vector_resize.argtypes = [POINTER(c_tinyusd_string_vector), c_size_t]
     c_tinyusd_string_vector_resize.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 479
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 481
 if _libs["c-tinyusd"].has("c_tinyusd_string_vector_str", "cdecl"):
     c_tinyusd_string_vector_str = _libs["c-tinyusd"].get("c_tinyusd_string_vector_str", "cdecl")
     c_tinyusd_string_vector_str.argtypes = [POINTER(c_tinyusd_string_vector), c_size_t]
     c_tinyusd_string_vector_str.restype = c_char_p
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 486
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 488
 if _libs["c-tinyusd"].has("c_tinyusd_string_vector_replace", "cdecl"):
     c_tinyusd_string_vector_replace = _libs["c-tinyusd"].get("c_tinyusd_string_vector_replace", "cdecl")
     c_tinyusd_string_vector_replace.argtypes = [POINTER(c_tinyusd_string_vector), c_size_t, String]
     c_tinyusd_string_vector_replace.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 489
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 491
 if _libs["c-tinyusd"].has("c_tinyusd_string_vector_free", "cdecl"):
     c_tinyusd_string_vector_free = _libs["c-tinyusd"].get("c_tinyusd_string_vector_free", "cdecl")
     c_tinyusd_string_vector_free.argtypes = [POINTER(c_tinyusd_string_vector)]
     c_tinyusd_string_vector_free.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 496
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 498
 if _libs["c-tinyusd"].has("c_tinyusd_prim_type_name", "cdecl"):
     c_tinyusd_prim_type_name = _libs["c-tinyusd"].get("c_tinyusd_prim_type_name", "cdecl")
     c_tinyusd_prim_type_name.argtypes = [CTinyUSDPrimType]
     c_tinyusd_prim_type_name.restype = c_char_p
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 503
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 505
 if _libs["c-tinyusd"].has("c_tinyusd_prim_type_from_string", "cdecl"):
     c_tinyusd_prim_type_from_string = _libs["c-tinyusd"].get("c_tinyusd_prim_type_from_string", "cdecl")
     c_tinyusd_prim_type_from_string.argtypes = [String]
     c_tinyusd_prim_type_from_string.restype = CTinyUSDPrimType
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 510
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 512
 if _libs["c-tinyusd"].has("c_tinyusd_value_type_name", "cdecl"):
     c_tinyusd_value_type_name = _libs["c-tinyusd"].get("c_tinyusd_value_type_name", "cdecl")
     c_tinyusd_value_type_name.argtypes = [CTinyUSDValueType]
     c_tinyusd_value_type_name.restype = c_char_p
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 519
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 518
+if _libs["c-tinyusd"].has("c_tinyusd_value_type_is_numeric", "cdecl"):
+    c_tinyusd_value_type_is_numeric = _libs["c-tinyusd"].get("c_tinyusd_value_type_is_numeric", "cdecl")
+    c_tinyusd_value_type_is_numeric.argtypes = [CTinyUSDValueType]
+    c_tinyusd_value_type_is_numeric.restype = uint32_t
+
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 525
 if _libs["c-tinyusd"].has("c_tinyusd_value_type_sizeof", "cdecl"):
     c_tinyusd_value_type_sizeof = _libs["c-tinyusd"].get("c_tinyusd_value_type_sizeof", "cdecl")
     c_tinyusd_value_type_sizeof.argtypes = [CTinyUSDValueType]
     c_tinyusd_value_type_sizeof.restype = uint32_t
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 528
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 534
 if _libs["c-tinyusd"].has("c_tinyusd_value_type_components", "cdecl"):
     c_tinyusd_value_type_components = _libs["c-tinyusd"].get("c_tinyusd_value_type_components", "cdecl")
     c_tinyusd_value_type_components.argtypes = [CTinyUSDValueType]
     c_tinyusd_value_type_components.restype = uint32_t
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 531
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 537
 class struct_CTinyUSDValue(Structure):
     pass
 
-CTinyUSDValue = struct_CTinyUSDValue# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 531
+CTinyUSDValue = struct_CTinyUSDValue# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 537
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 536
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 542
+if _libs["c-tinyusd"].has("c_tinyusd_value_type", "cdecl"):
+    c_tinyusd_value_type = _libs["c-tinyusd"].get("c_tinyusd_value_type", "cdecl")
+    c_tinyusd_value_type.argtypes = [POINTER(CTinyUSDValue)]
+    c_tinyusd_value_type.restype = CTinyUSDValueType
+
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 547
 if _libs["c-tinyusd"].has("c_tinyusd_value_new_null", "cdecl"):
     c_tinyusd_value_new_null = _libs["c-tinyusd"].get("c_tinyusd_value_new_null", "cdecl")
     c_tinyusd_value_new_null.argtypes = []
     c_tinyusd_value_new_null.restype = POINTER(CTinyUSDValue)
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 538
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 549
 if _libs["c-tinyusd"].has("c_tinyusd_value_free", "cdecl"):
     c_tinyusd_value_free = _libs["c-tinyusd"].get("c_tinyusd_value_free", "cdecl")
     c_tinyusd_value_free.argtypes = [POINTER(CTinyUSDValue)]
     c_tinyusd_value_free.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 545
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 556
 if _libs["c-tinyusd"].has("c_tinyusd_value_to_string", "cdecl"):
     c_tinyusd_value_to_string = _libs["c-tinyusd"].get("c_tinyusd_value_to_string", "cdecl")
     c_tinyusd_value_to_string.argtypes = [POINTER(CTinyUSDValue), POINTER(c_tinyusd_string_t)]
     c_tinyusd_value_to_string.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 552
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 563
 if _libs["c-tinyusd"].has("c_tinyusd_value_free", "cdecl"):
     c_tinyusd_value_free = _libs["c-tinyusd"].get("c_tinyusd_value_free", "cdecl")
     c_tinyusd_value_free.argtypes = [POINTER(CTinyUSDValue)]
     c_tinyusd_value_free.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 559
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 570
 if _libs["c-tinyusd"].has("c_tinyusd_value_new_token", "cdecl"):
     c_tinyusd_value_new_token = _libs["c-tinyusd"].get("c_tinyusd_value_new_token", "cdecl")
     c_tinyusd_value_new_token.argtypes = [POINTER(c_tinyusd_token_t)]
     c_tinyusd_value_new_token.restype = POINTER(CTinyUSDValue)
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 567
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 578
 if _libs["c-tinyusd"].has("c_tinyusd_value_new_string", "cdecl"):
     c_tinyusd_value_new_string = _libs["c-tinyusd"].get("c_tinyusd_value_new_string", "cdecl")
     c_tinyusd_value_new_string.argtypes = [POINTER(c_tinyusd_string_t)]
     c_tinyusd_value_new_string.restype = POINTER(CTinyUSDValue)
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 575
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 586
 if _libs["c-tinyusd"].has("c_tinyusd_value_new_int", "cdecl"):
     c_tinyusd_value_new_int = _libs["c-tinyusd"].get("c_tinyusd_value_new_int", "cdecl")
     c_tinyusd_value_new_int.argtypes = [c_int]
     c_tinyusd_value_new_int.restype = POINTER(CTinyUSDValue)
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 576
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 587
 if _libs["c-tinyusd"].has("c_tinyusd_value_new_int2", "cdecl"):
     c_tinyusd_value_new_int2 = _libs["c-tinyusd"].get("c_tinyusd_value_new_int2", "cdecl")
     c_tinyusd_value_new_int2.argtypes = [c_tinyusd_int2_t]
     c_tinyusd_value_new_int2.restype = POINTER(CTinyUSDValue)
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 577
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 588
 if _libs["c-tinyusd"].has("c_tinyusd_value_new_int3", "cdecl"):
     c_tinyusd_value_new_int3 = _libs["c-tinyusd"].get("c_tinyusd_value_new_int3", "cdecl")
     c_tinyusd_value_new_int3.argtypes = [c_tinyusd_int3_t]
     c_tinyusd_value_new_int3.restype = POINTER(CTinyUSDValue)
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 578
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 589
 if _libs["c-tinyusd"].has("c_tinyusd_value_new_int4", "cdecl"):
     c_tinyusd_value_new_int4 = _libs["c-tinyusd"].get("c_tinyusd_value_new_int4", "cdecl")
     c_tinyusd_value_new_int4.argtypes = [c_tinyusd_int4_t]
     c_tinyusd_value_new_int4.restype = POINTER(CTinyUSDValue)
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 579
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 590
 if _libs["c-tinyusd"].has("c_tinyusd_value_new_float", "cdecl"):
     c_tinyusd_value_new_float = _libs["c-tinyusd"].get("c_tinyusd_value_new_float", "cdecl")
     c_tinyusd_value_new_float.argtypes = [c_float]
     c_tinyusd_value_new_float.restype = POINTER(CTinyUSDValue)
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 580
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 591
 if _libs["c-tinyusd"].has("c_tinyusd_value_new_float2", "cdecl"):
     c_tinyusd_value_new_float2 = _libs["c-tinyusd"].get("c_tinyusd_value_new_float2", "cdecl")
     c_tinyusd_value_new_float2.argtypes = [c_tinyusd_float2_t]
     c_tinyusd_value_new_float2.restype = POINTER(CTinyUSDValue)
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 582
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 593
 if _libs["c-tinyusd"].has("c_tinyusd_value_new_float3", "cdecl"):
     c_tinyusd_value_new_float3 = _libs["c-tinyusd"].get("c_tinyusd_value_new_float3", "cdecl")
     c_tinyusd_value_new_float3.argtypes = [c_tinyusd_float3_t]
     c_tinyusd_value_new_float3.restype = POINTER(CTinyUSDValue)
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 584
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 595
 if _libs["c-tinyusd"].has("c_tinyusd_value_new_float4", "cdecl"):
     c_tinyusd_value_new_float4 = _libs["c-tinyusd"].get("c_tinyusd_value_new_float4", "cdecl")
     c_tinyusd_value_new_float4.argtypes = [c_tinyusd_float4_t]
     c_tinyusd_value_new_float4.restype = POINTER(CTinyUSDValue)
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 592
-for _lib in _libs.values():
-    if not _lib.has("c_tinyusd_value_new_int_array", "cdecl"):
-        continue
-    c_tinyusd_value_new_int_array = _lib.get("c_tinyusd_value_new_int_array", "cdecl")
-    c_tinyusd_value_new_int_array.argtypes = [uint64_t, POINTER(c_int)]
-    c_tinyusd_value_new_int_array.restype = POINTER(CTinyUSDValue)
-    break
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 603
+if _libs["c-tinyusd"].has("c_tinyusd_value_new_array_int", "cdecl"):
+    c_tinyusd_value_new_array_int = _libs["c-tinyusd"].get("c_tinyusd_value_new_array_int", "cdecl")
+    c_tinyusd_value_new_array_int.argtypes = [uint64_t, POINTER(c_int)]
+    c_tinyusd_value_new_array_int.restype = POINTER(CTinyUSDValue)
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 594
-for _lib in _libs.values():
-    if not _lib.has("c_tinyusd_value_new_int2_array", "cdecl"):
-        continue
-    c_tinyusd_value_new_int2_array = _lib.get("c_tinyusd_value_new_int2_array", "cdecl")
-    c_tinyusd_value_new_int2_array.argtypes = [uint64_t, POINTER(c_tinyusd_int2_t)]
-    c_tinyusd_value_new_int2_array.restype = POINTER(CTinyUSDValue)
-    break
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 605
+if _libs["c-tinyusd"].has("c_tinyusd_value_new_array_int2", "cdecl"):
+    c_tinyusd_value_new_array_int2 = _libs["c-tinyusd"].get("c_tinyusd_value_new_array_int2", "cdecl")
+    c_tinyusd_value_new_array_int2.argtypes = [uint64_t, POINTER(c_tinyusd_int2_t)]
+    c_tinyusd_value_new_array_int2.restype = POINTER(CTinyUSDValue)
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 596
-for _lib in _libs.values():
-    if not _lib.has("c_tinyusd_value_new_int3_array", "cdecl"):
-        continue
-    c_tinyusd_value_new_int3_array = _lib.get("c_tinyusd_value_new_int3_array", "cdecl")
-    c_tinyusd_value_new_int3_array.argtypes = [uint64_t, POINTER(c_tinyusd_int3_t)]
-    c_tinyusd_value_new_int3_array.restype = POINTER(CTinyUSDValue)
-    break
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 607
+if _libs["c-tinyusd"].has("c_tinyusd_value_new_array_int3", "cdecl"):
+    c_tinyusd_value_new_array_int3 = _libs["c-tinyusd"].get("c_tinyusd_value_new_array_int3", "cdecl")
+    c_tinyusd_value_new_array_int3.argtypes = [uint64_t, POINTER(c_tinyusd_int3_t)]
+    c_tinyusd_value_new_array_int3.restype = POINTER(CTinyUSDValue)
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 598
-for _lib in _libs.values():
-    if not _lib.has("c_tinyusd_value_new_int4_array", "cdecl"):
-        continue
-    c_tinyusd_value_new_int4_array = _lib.get("c_tinyusd_value_new_int4_array", "cdecl")
-    c_tinyusd_value_new_int4_array.argtypes = [uint64_t, POINTER(c_tinyusd_int4_t)]
-    c_tinyusd_value_new_int4_array.restype = POINTER(CTinyUSDValue)
-    break
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 609
+if _libs["c-tinyusd"].has("c_tinyusd_value_new_array_int4", "cdecl"):
+    c_tinyusd_value_new_array_int4 = _libs["c-tinyusd"].get("c_tinyusd_value_new_array_int4", "cdecl")
+    c_tinyusd_value_new_array_int4.argtypes = [uint64_t, POINTER(c_tinyusd_int4_t)]
+    c_tinyusd_value_new_array_int4.restype = POINTER(CTinyUSDValue)
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 600
-for _lib in _libs.values():
-    if not _lib.has("c_tinyusd_value_new_float_array", "cdecl"):
-        continue
-    c_tinyusd_value_new_float_array = _lib.get("c_tinyusd_value_new_float_array", "cdecl")
-    c_tinyusd_value_new_float_array.argtypes = [uint64_t, POINTER(c_float)]
-    c_tinyusd_value_new_float_array.restype = POINTER(CTinyUSDValue)
-    break
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 611
+if _libs["c-tinyusd"].has("c_tinyusd_value_new_array_float", "cdecl"):
+    c_tinyusd_value_new_array_float = _libs["c-tinyusd"].get("c_tinyusd_value_new_array_float", "cdecl")
+    c_tinyusd_value_new_array_float.argtypes = [uint64_t, POINTER(c_float)]
+    c_tinyusd_value_new_array_float.restype = POINTER(CTinyUSDValue)
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 602
-for _lib in _libs.values():
-    if not _lib.has("c_tinyusd_value_new_float2_array", "cdecl"):
-        continue
-    c_tinyusd_value_new_float2_array = _lib.get("c_tinyusd_value_new_float2_array", "cdecl")
-    c_tinyusd_value_new_float2_array.argtypes = [uint64_t, POINTER(c_tinyusd_float2_t)]
-    c_tinyusd_value_new_float2_array.restype = POINTER(CTinyUSDValue)
-    break
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 613
+if _libs["c-tinyusd"].has("c_tinyusd_value_new_array_float2", "cdecl"):
+    c_tinyusd_value_new_array_float2 = _libs["c-tinyusd"].get("c_tinyusd_value_new_array_float2", "cdecl")
+    c_tinyusd_value_new_array_float2.argtypes = [uint64_t, POINTER(c_tinyusd_float2_t)]
+    c_tinyusd_value_new_array_float2.restype = POINTER(CTinyUSDValue)
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 604
-for _lib in _libs.values():
-    if not _lib.has("c_tinyusd_value_new_float3_array", "cdecl"):
-        continue
-    c_tinyusd_value_new_float3_array = _lib.get("c_tinyusd_value_new_float3_array", "cdecl")
-    c_tinyusd_value_new_float3_array.argtypes = [uint64_t, POINTER(c_tinyusd_float3_t)]
-    c_tinyusd_value_new_float3_array.restype = POINTER(CTinyUSDValue)
-    break
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 615
+if _libs["c-tinyusd"].has("c_tinyusd_value_new_array_float3", "cdecl"):
+    c_tinyusd_value_new_array_float3 = _libs["c-tinyusd"].get("c_tinyusd_value_new_array_float3", "cdecl")
+    c_tinyusd_value_new_array_float3.argtypes = [uint64_t, POINTER(c_tinyusd_float3_t)]
+    c_tinyusd_value_new_array_float3.restype = POINTER(CTinyUSDValue)
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 606
-for _lib in _libs.values():
-    if not _lib.has("c_tinyusd_value_new_float4_array", "cdecl"):
-        continue
-    c_tinyusd_value_new_float4_array = _lib.get("c_tinyusd_value_new_float4_array", "cdecl")
-    c_tinyusd_value_new_float4_array.argtypes = [uint64_t, POINTER(c_tinyusd_float4_t)]
-    c_tinyusd_value_new_float4_array.restype = POINTER(CTinyUSDValue)
-    break
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 617
+if _libs["c-tinyusd"].has("c_tinyusd_value_new_array_float4", "cdecl"):
+    c_tinyusd_value_new_array_float4 = _libs["c-tinyusd"].get("c_tinyusd_value_new_array_float4", "cdecl")
+    c_tinyusd_value_new_array_float4.argtypes = [uint64_t, POINTER(c_tinyusd_float4_t)]
+    c_tinyusd_value_new_array_float4.restype = POINTER(CTinyUSDValue)
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 611
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 622
 class struct_CTinyUSDPath(Structure):
     pass
 
-CTinyUSDPath = struct_CTinyUSDPath# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 611
+CTinyUSDPath = struct_CTinyUSDPath# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 622
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 614
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 625
 class struct_CTinyUSDProperty(Structure):
     pass
 
-CTinyUSDProperty = struct_CTinyUSDProperty# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 614
+CTinyUSDProperty = struct_CTinyUSDProperty# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 625
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 617
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 628
 class struct_CTinyUSDRelationship(Structure):
     pass
 
-CTinyUSDRelationship = struct_CTinyUSDRelationship# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 617
+CTinyUSDRelationship = struct_CTinyUSDRelationship# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 628
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 619
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 630
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_relationsip_new", "cdecl"):
         continue
@@ -1871,7 +1863,7 @@ for _lib in _libs.values():
     c_tinyusd_relationsip_new.restype = POINTER(CTinyUSDRelationship)
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 622
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 633
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_relationsip_free", "cdecl"):
         continue
@@ -1880,7 +1872,7 @@ for _lib in _libs.values():
     c_tinyusd_relationsip_free.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 624
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 635
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_relationsip_is_blocked", "cdecl"):
         continue
@@ -1889,7 +1881,7 @@ for _lib in _libs.values():
     c_tinyusd_relationsip_is_blocked.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 629
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 640
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_relationsip_num_targetPaths", "cdecl"):
         continue
@@ -1898,7 +1890,7 @@ for _lib in _libs.values():
     c_tinyusd_relationsip_num_targetPaths.restype = uint32_t
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 635
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 646
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_relationsip_get_targetPath", "cdecl"):
         continue
@@ -1907,13 +1899,13 @@ for _lib in _libs.values():
     c_tinyusd_relationsip_get_targetPath.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 639
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 650
 class struct_CTinyUSDAttribute(Structure):
     pass
 
-CTinyUSDAttribute = struct_CTinyUSDAttribute# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 639
+CTinyUSDAttribute = struct_CTinyUSDAttribute# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 650
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 641
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 652
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_attribute_connection_set", "cdecl"):
         continue
@@ -1922,7 +1914,7 @@ for _lib in _libs.values():
     c_tinyusd_attribute_connection_set.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 644
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 655
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_attribute_connections_set", "cdecl"):
         continue
@@ -1931,7 +1923,25 @@ for _lib in _libs.values():
     c_tinyusd_attribute_connections_set.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 652
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 658
+for _lib in _libs.values():
+    if not _lib.has("c_tinyusd_attribute_meta_set", "cdecl"):
+        continue
+    c_tinyusd_attribute_meta_set = _lib.get("c_tinyusd_attribute_meta_set", "cdecl")
+    c_tinyusd_attribute_meta_set.argtypes = [POINTER(CTinyUSDAttribute), String, POINTER(CTinyUSDValue)]
+    c_tinyusd_attribute_meta_set.restype = c_int
+    break
+
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 667
+for _lib in _libs.values():
+    if not _lib.has("c_tinyusd_attribute_meta_get", "cdecl"):
+        continue
+    c_tinyusd_attribute_meta_get = _lib.get("c_tinyusd_attribute_meta_get", "cdecl")
+    c_tinyusd_attribute_meta_get.argtypes = [POINTER(CTinyUSDAttribute), String, POINTER(POINTER(CTinyUSDValue))]
+    c_tinyusd_attribute_meta_get.restype = c_int
+    break
+
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 676
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_property_new", "cdecl"):
         continue
@@ -1940,7 +1950,7 @@ for _lib in _libs.values():
     c_tinyusd_property_new.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 653
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 677
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_property_new_attribute", "cdecl"):
         continue
@@ -1949,7 +1959,7 @@ for _lib in _libs.values():
     c_tinyusd_property_new_attribute.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 655
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 679
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_property_new_relationship", "cdecl"):
         continue
@@ -1958,7 +1968,7 @@ for _lib in _libs.values():
     c_tinyusd_property_new_relationship.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 657
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 681
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_property_free", "cdecl"):
         continue
@@ -1967,7 +1977,7 @@ for _lib in _libs.values():
     c_tinyusd_property_free.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 659
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 683
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_property_set_attribute", "cdecl"):
         continue
@@ -1976,7 +1986,7 @@ for _lib in _libs.values():
     c_tinyusd_property_set_attribute.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 661
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 685
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_property_set_relationship", "cdecl"):
         continue
@@ -1985,7 +1995,7 @@ for _lib in _libs.values():
     c_tinyusd_property_set_relationship.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 664
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 688
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_property_is_attribute", "cdecl"):
         continue
@@ -1994,7 +2004,7 @@ for _lib in _libs.values():
     c_tinyusd_property_is_attribute.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 665
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 689
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_property_is_attribute_connection", "cdecl"):
         continue
@@ -2003,7 +2013,7 @@ for _lib in _libs.values():
     c_tinyusd_property_is_attribute_connection.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 667
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 691
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_property_is_relationship", "cdecl"):
         continue
@@ -2012,49 +2022,76 @@ for _lib in _libs.values():
     c_tinyusd_property_is_relationship.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 669
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 693
+for _lib in _libs.values():
+    if not _lib.has("c_tinyusd_property_is_custom", "cdecl"):
+        continue
+    c_tinyusd_property_is_custom = _lib.get("c_tinyusd_property_is_custom", "cdecl")
+    c_tinyusd_property_is_custom.argtypes = [POINTER(CTinyUSDProperty)]
+    c_tinyusd_property_is_custom.restype = c_int
+    break
+
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 694
+for _lib in _libs.values():
+    if not _lib.has("c_tinyusd_property_is_varying", "cdecl"):
+        continue
+    c_tinyusd_property_is_varying = _lib.get("c_tinyusd_property_is_varying", "cdecl")
+    c_tinyusd_property_is_varying.argtypes = [POINTER(CTinyUSDProperty)]
+    c_tinyusd_property_is_varying.restype = c_int
+    break
+
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 696
 class struct_CTinyUSDPrim(Structure):
     pass
 
-CTinyUSDPrim = struct_CTinyUSDPrim# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 669
+CTinyUSDPrim = struct_CTinyUSDPrim# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 696
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 681
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 708
 if _libs["c-tinyusd"].has("c_tinyusd_prim_new", "cdecl"):
     c_tinyusd_prim_new = _libs["c-tinyusd"].get("c_tinyusd_prim_new", "cdecl")
     c_tinyusd_prim_new.argtypes = [String, POINTER(c_tinyusd_string_t)]
     c_tinyusd_prim_new.restype = POINTER(CTinyUSDPrim)
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 688
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 715
 if _libs["c-tinyusd"].has("c_tinyusd_prim_new_builtin", "cdecl"):
     c_tinyusd_prim_new_builtin = _libs["c-tinyusd"].get("c_tinyusd_prim_new_builtin", "cdecl")
     c_tinyusd_prim_new_builtin.argtypes = [CTinyUSDPrimType]
     c_tinyusd_prim_new_builtin.restype = POINTER(CTinyUSDPrim)
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 690
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 717
 if _libs["c-tinyusd"].has("c_tinyusd_prim_to_string", "cdecl"):
     c_tinyusd_prim_to_string = _libs["c-tinyusd"].get("c_tinyusd_prim_to_string", "cdecl")
     c_tinyusd_prim_to_string.argtypes = [POINTER(CTinyUSDPrim), POINTER(c_tinyusd_string_t)]
     c_tinyusd_prim_to_string.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 693
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 720
 if _libs["c-tinyusd"].has("c_tinyusd_prim_free", "cdecl"):
     c_tinyusd_prim_free = _libs["c-tinyusd"].get("c_tinyusd_prim_free", "cdecl")
     c_tinyusd_prim_free.argtypes = [POINTER(CTinyUSDPrim)]
     c_tinyusd_prim_free.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 697
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 724
 if _libs["c-tinyusd"].has("c_tinyusd_prim_type", "cdecl"):
     c_tinyusd_prim_type = _libs["c-tinyusd"].get("c_tinyusd_prim_type", "cdecl")
     c_tinyusd_prim_type.argtypes = [POINTER(CTinyUSDPrim)]
     c_tinyusd_prim_type.restype = c_char_p
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 708
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 731
+for _lib in _libs.values():
+    if not _lib.has("c_tinyusd_prim_element_name", "cdecl"):
+        continue
+    c_tinyusd_prim_element_name = _lib.get("c_tinyusd_prim_element_name", "cdecl")
+    c_tinyusd_prim_element_name.argtypes = [POINTER(CTinyUSDPrim)]
+    c_tinyusd_prim_element_name.restype = c_char_p
+    break
+
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 744
 if _libs["c-tinyusd"].has("c_tinyusd_prim_get_property_names", "cdecl"):
     c_tinyusd_prim_get_property_names = _libs["c-tinyusd"].get("c_tinyusd_prim_get_property_names", "cdecl")
     c_tinyusd_prim_get_property_names.argtypes = [POINTER(CTinyUSDPrim), POINTER(c_tinyusd_token_vector_t)]
     c_tinyusd_prim_get_property_names.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 716
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 752
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_prim_property_get", "cdecl"):
         continue
@@ -2063,7 +2100,7 @@ for _lib in _libs.values():
     c_tinyusd_prim_property_get.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 726
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 762
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_prim_property_add", "cdecl"):
         continue
@@ -2072,7 +2109,7 @@ for _lib in _libs.values():
     c_tinyusd_prim_property_add.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 735
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 771
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_prim_property_del", "cdecl"):
         continue
@@ -2081,99 +2118,126 @@ for _lib in _libs.values():
     c_tinyusd_prim_property_del.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 748
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 778
+for _lib in _libs.values():
+    if not _lib.has("c_tinyusd_prim_meta_set", "cdecl"):
+        continue
+    c_tinyusd_prim_meta_set = _lib.get("c_tinyusd_prim_meta_set", "cdecl")
+    c_tinyusd_prim_meta_set.argtypes = [POINTER(CTinyUSDPrim), String, POINTER(CTinyUSDValue)]
+    c_tinyusd_prim_meta_set.restype = c_int
+    break
+
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 787
+for _lib in _libs.values():
+    if not _lib.has("c_tinyusd_prim_meta_get", "cdecl"):
+        continue
+    c_tinyusd_prim_meta_get = _lib.get("c_tinyusd_prim_meta_get", "cdecl")
+    c_tinyusd_prim_meta_get.argtypes = [POINTER(CTinyUSDPrim), String, POINTER(POINTER(CTinyUSDValue))]
+    c_tinyusd_prim_meta_get.restype = c_int
+    break
+
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 795
+for _lib in _libs.values():
+    if not _lib.has("c_tinyusd_prim_meta_authored", "cdecl"):
+        continue
+    c_tinyusd_prim_meta_authored = _lib.get("c_tinyusd_prim_meta_authored", "cdecl")
+    c_tinyusd_prim_meta_authored.argtypes = [POINTER(CTinyUSDPrim), String]
+    c_tinyusd_prim_meta_authored.restype = c_int
+    break
+
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 803
 if _libs["c-tinyusd"].has("c_tinyusd_prim_append_child", "cdecl"):
     c_tinyusd_prim_append_child = _libs["c-tinyusd"].get("c_tinyusd_prim_append_child", "cdecl")
     c_tinyusd_prim_append_child.argtypes = [POINTER(CTinyUSDPrim), POINTER(CTinyUSDPrim)]
     c_tinyusd_prim_append_child.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 757
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 812
 if _libs["c-tinyusd"].has("c_tinyusd_prim_append_child_move", "cdecl"):
     c_tinyusd_prim_append_child_move = _libs["c-tinyusd"].get("c_tinyusd_prim_append_child_move", "cdecl")
     c_tinyusd_prim_append_child_move.argtypes = [POINTER(CTinyUSDPrim), POINTER(CTinyUSDPrim)]
     c_tinyusd_prim_append_child_move.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 764
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 819
 if _libs["c-tinyusd"].has("c_tinyusd_prim_del_child", "cdecl"):
     c_tinyusd_prim_del_child = _libs["c-tinyusd"].get("c_tinyusd_prim_del_child", "cdecl")
     c_tinyusd_prim_del_child.argtypes = [POINTER(CTinyUSDPrim), uint64_t]
     c_tinyusd_prim_del_child.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 772
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 827
 if _libs["c-tinyusd"].has("c_tinyusd_prim_num_children", "cdecl"):
     c_tinyusd_prim_num_children = _libs["c-tinyusd"].get("c_tinyusd_prim_num_children", "cdecl")
     c_tinyusd_prim_num_children.argtypes = [POINTER(CTinyUSDPrim)]
     c_tinyusd_prim_num_children.restype = uint64_t
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 786
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 841
 if _libs["c-tinyusd"].has("c_tinyusd_prim_get_child", "cdecl"):
     c_tinyusd_prim_get_child = _libs["c-tinyusd"].get("c_tinyusd_prim_get_child", "cdecl")
     c_tinyusd_prim_get_child.argtypes = [POINTER(CTinyUSDPrim), uint64_t, POINTER(POINTER(CTinyUSDPrim))]
     c_tinyusd_prim_get_child.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 791
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 846
 class struct_CTinyUSDStage(Structure):
     pass
 
-CTinyUSDStage = struct_CTinyUSDStage# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 791
+CTinyUSDStage = struct_CTinyUSDStage# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 846
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 793
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 848
 if _libs["c-tinyusd"].has("c_tinyusd_stage_new", "cdecl"):
     c_tinyusd_stage_new = _libs["c-tinyusd"].get("c_tinyusd_stage_new", "cdecl")
     c_tinyusd_stage_new.argtypes = []
     c_tinyusd_stage_new.restype = POINTER(CTinyUSDStage)
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 794
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 849
 if _libs["c-tinyusd"].has("c_tinyusd_stage_to_string", "cdecl"):
     c_tinyusd_stage_to_string = _libs["c-tinyusd"].get("c_tinyusd_stage_to_string", "cdecl")
     c_tinyusd_stage_to_string.argtypes = [POINTER(CTinyUSDStage), POINTER(c_tinyusd_string_t)]
     c_tinyusd_stage_to_string.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 796
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 851
 if _libs["c-tinyusd"].has("c_tinyusd_stage_free", "cdecl"):
     c_tinyusd_stage_free = _libs["c-tinyusd"].get("c_tinyusd_stage_free", "cdecl")
     c_tinyusd_stage_free.argtypes = [POINTER(CTinyUSDStage)]
     c_tinyusd_stage_free.restype = c_int
 
-CTinyUSDTraversalFunction = CFUNCTYPE(UNCHECKED(c_int), POINTER(CTinyUSDPrim), POINTER(CTinyUSDPath))# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 802
+CTinyUSDTraversalFunction = CFUNCTYPE(UNCHECKED(c_int), POINTER(CTinyUSDPrim), POINTER(CTinyUSDPath))# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 857
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 818
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 873
 if _libs["c-tinyusd"].has("c_tinyusd_stage_traverse", "cdecl"):
     c_tinyusd_stage_traverse = _libs["c-tinyusd"].get("c_tinyusd_stage_traverse", "cdecl")
     c_tinyusd_stage_traverse.argtypes = [POINTER(CTinyUSDStage), CTinyUSDTraversalFunction, POINTER(c_tinyusd_string_t)]
     c_tinyusd_stage_traverse.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 825
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 880
 if _libs["c-tinyusd"].has("c_tinyusd_detect_format", "cdecl"):
     c_tinyusd_detect_format = _libs["c-tinyusd"].get("c_tinyusd_detect_format", "cdecl")
     c_tinyusd_detect_format.argtypes = [String]
     c_tinyusd_detect_format.restype = CTinyUSDFormat
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 827
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 882
 if _libs["c-tinyusd"].has("c_tinyusd_is_usd_file", "cdecl"):
     c_tinyusd_is_usd_file = _libs["c-tinyusd"].get("c_tinyusd_is_usd_file", "cdecl")
     c_tinyusd_is_usd_file.argtypes = [String]
     c_tinyusd_is_usd_file.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 828
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 883
 if _libs["c-tinyusd"].has("c_tinyusd_is_usda_file", "cdecl"):
     c_tinyusd_is_usda_file = _libs["c-tinyusd"].get("c_tinyusd_is_usda_file", "cdecl")
     c_tinyusd_is_usda_file.argtypes = [String]
     c_tinyusd_is_usda_file.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 829
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 884
 if _libs["c-tinyusd"].has("c_tinyusd_is_usdc_file", "cdecl"):
     c_tinyusd_is_usdc_file = _libs["c-tinyusd"].get("c_tinyusd_is_usdc_file", "cdecl")
     c_tinyusd_is_usdc_file.argtypes = [String]
     c_tinyusd_is_usdc_file.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 830
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 885
 if _libs["c-tinyusd"].has("c_tinyusd_is_usdz_file", "cdecl"):
     c_tinyusd_is_usdz_file = _libs["c-tinyusd"].get("c_tinyusd_is_usdz_file", "cdecl")
     c_tinyusd_is_usdz_file.argtypes = [String]
     c_tinyusd_is_usdz_file.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 835
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 890
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_detect_format_w", "cdecl"):
         continue
@@ -2182,7 +2246,7 @@ for _lib in _libs.values():
     c_tinyusd_detect_format_w.restype = CTinyUSDFormat
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 837
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 892
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_is_usd_file_w", "cdecl"):
         continue
@@ -2191,7 +2255,7 @@ for _lib in _libs.values():
     c_tinyusd_is_usd_file_w.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 838
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 893
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_is_usda_file_w", "cdecl"):
         continue
@@ -2200,7 +2264,7 @@ for _lib in _libs.values():
     c_tinyusd_is_usda_file_w.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 839
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 894
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_is_usdc_file_w", "cdecl"):
         continue
@@ -2209,7 +2273,7 @@ for _lib in _libs.values():
     c_tinyusd_is_usdc_file_w.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 840
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 895
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_is_usdz_file_w", "cdecl"):
         continue
@@ -2218,7 +2282,7 @@ for _lib in _libs.values():
     c_tinyusd_is_usdz_file_w.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 842
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 897
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_is_usd_memory", "cdecl"):
         continue
@@ -2227,7 +2291,7 @@ for _lib in _libs.values():
     c_tinyusd_is_usd_memory.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 844
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 899
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_is_usda_memory", "cdecl"):
         continue
@@ -2236,7 +2300,7 @@ for _lib in _libs.values():
     c_tinyusd_is_usda_memory.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 846
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 901
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_is_usdc_memory", "cdecl"):
         continue
@@ -2245,7 +2309,7 @@ for _lib in _libs.values():
     c_tinyusd_is_usdc_memory.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 848
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 903
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_is_usdz_memory", "cdecl"):
         continue
@@ -2254,13 +2318,13 @@ for _lib in _libs.values():
     c_tinyusd_is_usdz_memory.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 854
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 909
 if _libs["c-tinyusd"].has("c_tinyusd_load_usd_from_file", "cdecl"):
     c_tinyusd_load_usd_from_file = _libs["c-tinyusd"].get("c_tinyusd_load_usd_from_file", "cdecl")
     c_tinyusd_load_usd_from_file.argtypes = [String, POINTER(CTinyUSDStage), POINTER(c_tinyusd_string_t), POINTER(c_tinyusd_string_t)]
     c_tinyusd_load_usd_from_file.restype = c_int
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 858
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 913
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_load_usda_from_file", "cdecl"):
         continue
@@ -2269,7 +2333,7 @@ for _lib in _libs.values():
     c_tinyusd_load_usda_from_file.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 862
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 917
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_load_usdc_from_file", "cdecl"):
         continue
@@ -2278,7 +2342,7 @@ for _lib in _libs.values():
     c_tinyusd_load_usdc_from_file.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 866
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 921
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_load_usdz_from_file", "cdecl"):
         continue
@@ -2287,7 +2351,7 @@ for _lib in _libs.values():
     c_tinyusd_load_usdz_from_file.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 874
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 929
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_load_usd_from_file_w", "cdecl"):
         continue
@@ -2296,7 +2360,7 @@ for _lib in _libs.values():
     c_tinyusd_load_usd_from_file_w.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 878
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 933
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_load_usda_from_file_w", "cdecl"):
         continue
@@ -2305,7 +2369,7 @@ for _lib in _libs.values():
     c_tinyusd_load_usda_from_file_w.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 882
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 937
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_load_usdc_from_file_w", "cdecl"):
         continue
@@ -2314,7 +2378,7 @@ for _lib in _libs.values():
     c_tinyusd_load_usdc_from_file_w.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 886
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 941
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_load_usdz_from_file_w", "cdecl"):
         continue
@@ -2323,7 +2387,7 @@ for _lib in _libs.values():
     c_tinyusd_load_usdz_from_file_w.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 891
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 946
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_load_usd_from_memory", "cdecl"):
         continue
@@ -2332,7 +2396,7 @@ for _lib in _libs.values():
     c_tinyusd_load_usd_from_memory.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 895
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 950
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_load_usda_from_memory", "cdecl"):
         continue
@@ -2341,7 +2405,7 @@ for _lib in _libs.values():
     c_tinyusd_load_usda_from_memory.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 899
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 954
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_load_usdc_from_memory", "cdecl"):
         continue
@@ -2350,7 +2414,7 @@ for _lib in _libs.values():
     c_tinyusd_load_usdc_from_memory.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 903
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 958
 for _lib in _libs.values():
     if not _lib.has("c_tinyusd_load_usdz_from_memory", "cdecl"):
         continue
@@ -2359,37 +2423,37 @@ for _lib in _libs.values():
     c_tinyusd_load_usdz_from_memory.restype = c_int
     break
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 105
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 105
 try:
     C_TINYUSD_MAX_DIM = 1
 except:
     pass
 
-# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 190
+# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 192
 try:
     C_TINYUSD_VALUE_1D_BIT = (1 << 10)
 except:
     pass
 
-c_tinyusd_token_t = struct_c_tinyusd_token_t# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 367
+c_tinyusd_token_t = struct_c_tinyusd_token_t# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 369
 
-c_tinyusd_token_vector_t = struct_c_tinyusd_token_vector_t# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 391
+c_tinyusd_token_vector_t = struct_c_tinyusd_token_vector_t# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 393
 
-c_tinyusd_string_t = struct_c_tinyusd_string_t# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 429
+c_tinyusd_string_t = struct_c_tinyusd_string_t# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 431
 
-CTinyUSDValue = struct_CTinyUSDValue# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 531
+CTinyUSDValue = struct_CTinyUSDValue# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 537
 
-CTinyUSDPath = struct_CTinyUSDPath# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 611
+CTinyUSDPath = struct_CTinyUSDPath# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 622
 
-CTinyUSDProperty = struct_CTinyUSDProperty# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 614
+CTinyUSDProperty = struct_CTinyUSDProperty# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 625
 
-CTinyUSDRelationship = struct_CTinyUSDRelationship# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 617
+CTinyUSDRelationship = struct_CTinyUSDRelationship# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 628
 
-CTinyUSDAttribute = struct_CTinyUSDAttribute# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 639
+CTinyUSDAttribute = struct_CTinyUSDAttribute# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 650
 
-CTinyUSDPrim = struct_CTinyUSDPrim# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 669
+CTinyUSDPrim = struct_CTinyUSDPrim# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 696
 
-CTinyUSDStage = struct_CTinyUSDStage# /home/syoyo/work/tinyusdz/src/c-tinyusd.h: 791
+CTinyUSDStage = struct_CTinyUSDStage# /mnt/data/work/tinyusdz/src/c-tinyusd.h: 846
 
 # No inserted files
 
