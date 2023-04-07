@@ -589,8 +589,7 @@ if(TINYUSDZ_WITH_OPENSUBDIV)
   endfunction()
 
   add_osd_lib()
-  list(APPEND TINYUSDZ_EXT_STATIC_LIBRARIES $<TARGET_OBJECTS:osd_cpu>)
-  list(APPEND TINYUSDZ_EXT_SHARED_LIBRARIES $<TARGET_OBJECTS:osd_cpu>)
+  list(APPEND TINYUSDZ_EXT_LIBRARIES $<TARGET_OBJECTS:osd_cpu>)
 
   list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/subdiv.cc)
 
@@ -635,14 +634,6 @@ if(WIN32 AND TINYUSDZ_WITH_PXR_COMPAT_API)
     target_compile_definitions(${TINYUSDZ_TARGET} PRIVATE "USD_EXPORTS")
   endif()
 
-endif()
-
-# static only
-target_link_libraries(${TINYUSDZ_TARGET_STATIC} PRIVATE ${TINYUSDZ_EXT_STATIC_LIBRARIES})
-
-# shared only
-if (TINYUSDZ_BUILD_SHARED_LIBS)
-  target_link_libraries(${TINYUSDZ_TARGET} PUBLIC ${TINYUSDZ_EXT_SHARED_LIBRARIES})
 endif()
 
 #
