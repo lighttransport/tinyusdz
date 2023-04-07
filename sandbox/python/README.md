@@ -14,4 +14,6 @@ LD_PRELOAD=/mnt/data/local/clang+llvm-14.0.0-x86_64-linux-gnu-ubuntu-18.04/lib/c
 
 Edit path to libclang_rt.asan.so to fit in your environment.
 
-Note that there are few memory leaks exist in Python library side(leaks when running empty Python script).
+Note that there are few memory leaks(false positives?) exist in Python side(leaks reported even when running empty Python script).
+
+https://github.com/python/cpython/issues/87469
