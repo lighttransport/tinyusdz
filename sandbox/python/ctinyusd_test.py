@@ -47,7 +47,7 @@ class Value(object):
 
                 if value.ndim == 0:
                     # scalar
-                    fun_table[0](value)
+                    self._handle = ctinyusd.c_tinyusd_value_new_float(value.ctypes.data_as(ctypes.c_float))
                 elif value.ndim == 1:
                     # 1D array
 
@@ -58,7 +58,19 @@ class Value(object):
                 else:
                     raise RuntimeException("2D or multi dim array is not supported: ndim = {}".format(value.ndim)) 
                     # [0] = scalr, [1] = array
+            else:
+                raise RuntimeError("Unsupported dtype {}".format(value.dtype))
                 
+        elif isinstance(value, np.generic):
+            if str(value.dtype) in self._np_conv_table:
+                fun_table = self._np_conv_table[str(value.dtype)]
+                print(fun_table)
+
+                self._handle = ctinyusd.c_tinyusd_value_new_float(np.ctypeslib.as_ctypes(value))
+            else:
+                raise RuntimeError("Unsupported dtype {}".format(value.dtype))
+            
+
         else:
             raise "TODO"
 
@@ -183,6 +195,12 @@ class PrimChildIterator:
 
         raise StopIterator
 
+
+svalue = np.float32(1.3)
+print(type(svalue))
+print(isinstance(svalue, np.generic))
+print("svalue.ndim", svalue.ndim)
+tsval = Value(svalue)
 
 value = np.zeros(100, dtype=np.float32)
 print(value)
