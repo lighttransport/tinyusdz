@@ -1887,6 +1887,22 @@ CTinyUSDValue *c_tinyusd_value_new_null() {
   return reinterpret_cast<CTinyUSDValue *>(pv);
 }
 
+int c_tinyusd_value_is_type(const CTinyUSDValue *_value, CTinyUSDValueType value_type) {
+
+  if (!_value) {
+    return 0;
+  }
+
+  const tinyusdz::value::Value *value = reinterpret_cast<const tinyusdz::value::Value *>(_value);
+  const char *ctyname = c_tinyusd_value_type_name(value_type);
+
+  if (value->type_name() == std::string(ctyname)) {
+    return 1;
+  }
+
+  return 0;
+}
+
 int c_tinyusd_value_free(CTinyUSDValue *aval) {
   if (!aval) {
     return 0;
@@ -1968,6 +1984,32 @@ ATTRIB_VALUE_NEW_ARRAY_IMPL(float, float, float, C_TINYUSD_VALUE_FLOAT)
 ATTRIB_VALUE_NEW_ARRAY_IMPL(float2, value::float2, c_tinyusd_float2_t, C_TINYUSD_VALUE_FLOAT2)
 ATTRIB_VALUE_NEW_ARRAY_IMPL(float3, value::float3, c_tinyusd_float3_t, C_TINYUSD_VALUE_FLOAT3)
 ATTRIB_VALUE_NEW_ARRAY_IMPL(float4, value::float4, c_tinyusd_float4_t, C_TINYUSD_VALUE_FLOAT4)
+
+#undef ATTRIB_VALUE_NEW_ARRAY_IMPL
+
+#define ATTRIB_VALUE_AS_IMPL(__tyname, __cppty, __cty) \
+int c_tinyusd_value_as_##__tyname(const CTinyUSDValue *_value, __cty *val) { \
+  /* ensure C++ and C types has same size. */ \
+  static_assert(sizeof(__cppty) == sizeof(__cty), ""); \
+  if (!_value) { return 0; } \
+  const tinyusdz::value::Value *vp = reinterpret_cast<const tinyusdz::value::Value *>(_value); \
+  if (auto pv = vp->as<__cppty>()) { \
+    memcpy(val, pv, sizeof(__cppty)); \
+    return 1; \
+  } \
+  return 0; \
+}
+
+ATTRIB_VALUE_AS_IMPL(int, int, int);
+ATTRIB_VALUE_AS_IMPL(int2, value::int2, c_tinyusd_int2_t);
+ATTRIB_VALUE_AS_IMPL(int3, value::int3, c_tinyusd_int3_t);
+ATTRIB_VALUE_AS_IMPL(int4, value::int4, c_tinyusd_int4_t);
+
+ATTRIB_VALUE_AS_IMPL(float, float, float);
+ATTRIB_VALUE_AS_IMPL(float2, value::float2, c_tinyusd_float2_t);
+ATTRIB_VALUE_AS_IMPL(float3, value::float3, c_tinyusd_float3_t);
+ATTRIB_VALUE_AS_IMPL(float4, value::float4, c_tinyusd_float4_t);
+
 
 int c_tinyusd_value_to_string(const CTinyUSDValue *aval, c_tinyusd_string_t *str) {
   if (!aval) {
