@@ -596,6 +596,28 @@ C_TINYUSD_EXPORT CTinyUSDValue *c_tinyusd_value_new_float4(
     c_tinyusd_float4_t val);
 /*   TODO: List up other types... */
 
+/* Check if the content of Value is the type of `value_type` */
+C_TINYUSD_EXPORT int c_tinyusd_value_is_type(const CTinyUSDValue *value, CTinyUSDValueType value_type);
+
+/*
+   Get the actual value in CTinyUSDValue by specifying the type.
+   NOTE: Datas are copied.
+   Returns 1 upon success, 0 failed(e.g. Value is invalid, type mismatch).
+ */
+C_TINYUSD_EXPORT int c_tinyusd_value_as_int(const CTinyUSDValue *value, int *val);
+C_TINYUSD_EXPORT int c_tinyusd_value_as_int2(const CTinyUSDValue *value, c_tinyusd_int2_t *val);
+C_TINYUSD_EXPORT int c_tinyusd_value_as_int3(const CTinyUSDValue *value, c_tinyusd_int3_t *val);
+C_TINYUSD_EXPORT int c_tinyusd_value_as_int4(const CTinyUSDValue *value, c_tinyusd_int4_t *val);
+
+C_TINYUSD_EXPORT int c_tinyusd_value_as_float(const CTinyUSDValue *value, float *val);
+C_TINYUSD_EXPORT int c_tinyusd_value_as_float2(const CTinyUSDValue *value, c_tinyusd_float2_t *val);
+C_TINYUSD_EXPORT int c_tinyusd_value_as_float3(const CTinyUSDValue *value, c_tinyusd_float3_t *val);
+C_TINYUSD_EXPORT int c_tinyusd_value_as_float4(const CTinyUSDValue *value, c_tinyusd_float4_t *val);
+
+
+/*   TODO: List up other types... */
+
+
 /*
    New Value with 1D array ofspecific type.
    NOTE: Array data is copied.
