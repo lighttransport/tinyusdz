@@ -1,33 +1,70 @@
 import copy
 import ctypes
 import ctinyusd
+import sys
+from typing import Optional
+
+try:
+    from typegurad import typechecked
+    is_typegurad_available = True
+except:
+    is_typegurad_available = False
+
+    # no-op 
+    def typechecked(cls):
+        return cls
 
 try:
     import numpy as np
 except:
     raise ModuleNotFoundError("Need numpy to test code.")
 
+@typechecked
 class Token(object):
+    """Python wrapper for `token` type
+    """
 
-    def __init__(self, tok):
+    def __init__(self, tok: str):
+        #print("__init__")
         self._handle = ctinyusd.c_tinyusd_token_new(tok)
-        print("init", self._handle)
+        #print("init", self._handle)
 
     def __copy__(self):
-        print("copy(duplicate instance)")
+        # Duplicate instance
         return Token(str(self))
 
     def __deepcopy__(self, memo):
-        print("deepcopy", memo)
         return self.__copy__()
 
     def __del__(self):
         ret = ctinyusd.c_tinyusd_token_free(self._handle)
-        print("del", ret)
 
     def __str__(self):
         btok = ctinyusd.c_tinyusd_token_str(self._handle)
-        print(btok)
+        return btok.decode()
+
+
+@typechecked
+class String(object):
+    """Python wrapper for `string` type
+    """
+
+    def __init__(self, s: str):
+        
+        self._handle = ctinyusd.c_tinyusd_string_new(s)
+
+    def __copy__(self):
+        # Duplicate instance
+        return String(str(self))
+
+    def __deepcopy__(self, memo):
+        return self.__copy__()
+
+    def __del__(self):
+        ret = ctinyusd.c_tinyusd_token_free(self._handle)
+
+    def __str__(self):
+        btok = ctinyusd.c_tinyusd_token_str(self._handle)
         return btok.decode()
 
 class Value(object):
@@ -79,6 +116,24 @@ class Value(object):
         if self._handle is not None:
             ret = ctinyusd.c_tinyusd_value_free(self._handle)
             assert ret == 1
+
+    def __str__(self):
+        if self._handle is not None:
+            cstrbuf = ctinyusd.c_tinyusd_string_new_empty() 
+            ret = ctinyusd.c_tinyusd_value_to_string(self._handle, cstrbuf)
+            assert ret == 1
+
+            cstr = ctinyusd.c_tinyusd_string_str(cstrbuf)
+
+            s = cstr.decode() # str
+            
+            ctinyusd.c_tinyusd_string_free(cstrbuf)
+
+            return s
+        
+
+    def __repr__(self):
+        return self.__str__()
         
 
 class Prim(object):
@@ -195,12 +250,17 @@ class PrimChildIterator:
 
         raise StopIterator
 
+tok = Token("hello")
+print(tok)
 
 svalue = np.float32(1.3)
 print(type(svalue))
 print(isinstance(svalue, np.generic))
+
 print("svalue.ndim", svalue.ndim)
 tsval = Value(svalue)
+print("tsval", tsval)
+
 
 value = np.zeros(100, dtype=np.float32)
 print(value)

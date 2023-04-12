@@ -17,3 +17,10 @@ Edit path to libclang_rt.asan.so to fit in your environment.
 Note that there are few memory leaks(false positives?) exist in Python side(leaks reported even when running empty Python script).
 
 https://github.com/python/cpython/issues/87469
+
+## Recommended module
+
+- numpy
+  - currently numpy is a required module to develop/test Python binding of TinyUSDZ.
+- typeguard
+  - for better runtime type check
