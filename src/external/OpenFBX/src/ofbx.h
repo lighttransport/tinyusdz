@@ -1,5 +1,10 @@
 #pragma once
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
 
 namespace ofbx
 {
@@ -429,7 +434,7 @@ struct AnimationCurveNode : Object
 
 	AnimationCurveNode(const Scene& _scene, const IElement& _element);
 
-	virtual const AnimationCurve* getCurve(int idx) const = 0; 
+	virtual const AnimationCurve* getCurve(int idx) const = 0;
 	virtual Vec3 getNodeLocalTransform(double time) const = 0;
 	virtual const Object* getBone() const = 0;
 };
@@ -490,7 +495,7 @@ struct GlobalSettings
 	int UpAxisSign = 1;
 	// this seems to be 1-2 in Autodesk (odd/even parity), and 0-2 in Blender (axis as in UpAxis)
 	// I recommend to ignore FrontAxis and use just UpVector
-	int FrontAxis = 1; 
+	int FrontAxis = 1;
 	int FrontAxisSign = 1;
 	CoordSystem CoordAxis = CoordSystem_RightHanded;
 	int CoordAxisSign = 1;
@@ -535,5 +540,8 @@ const char* getError();
 double fbxTimeToSeconds(i64 value);
 i64 secondsToFbxTime(double value);
 
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 } // namespace ofbx
