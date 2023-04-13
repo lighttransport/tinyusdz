@@ -924,7 +924,7 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
 
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
   try {
-    (*value) = std::stoull(ss.str());
+    (*value) = uint32_t(std::stoull(ss.str()));
   } catch (const std::invalid_argument &e) {
     (void)e;
     PushError("Not an 64bit unsigned integer literal.\n");
