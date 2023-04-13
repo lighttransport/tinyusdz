@@ -46,6 +46,9 @@ else()
   set(TINYUSDZ_DEFAULT_WITH_PXR_COMPAT_API On)
   set(TINYUSDZ_DEFAULT_WITH_USDA_PARSER On)
   set(TINYUSDZ_DEFAULT_WITH_USDC_PARSER On)
+
+  # For Visual Studio
+  set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 endif ()
 
 # options
@@ -585,6 +588,10 @@ if(TINYUSDZ_WITH_OPENSUBDIV)
     add_library(osd_cpu ${OSD_FAR_SOURCES} ${OSD_SDC_SOURCES} ${OSD_VTR_SOURCES} ${OSD_OSD_SOURCES})
     target_include_directories(osd_cpu PRIVATE ${osd_DIR})
     set_target_properties(osd_cpu PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    
+    # primarily for Visual Studio Solution Explorer.
+    set_target_properties(osd_cpu PROPERTIES FOLDER "osd")
+    
 
     #set(TINYUSDZ_OSD_SOURCES ${OSD_FAR_SOURCES} ${OSD_SDC_SOURCES} ${OSD_VTR_SOURCES} ${OSD_OSD_SOURCES})
 
@@ -613,6 +620,7 @@ endif()
 #
 #
 add_library(tinyusdz_object OBJECT ${TINYUSDZ_SOURCES} ${TINYUSDZ_DEP_SOURCES} ${TINYUSDZ_EXT_SOURCES})
+set_target_properties(tinyusdz_object PROPERTIES FOLDER "tinyusdz")
 set_target_properties(tinyusdz_object PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # TinyUSDZ should compile well without /bigobj flag.
