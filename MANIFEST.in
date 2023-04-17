@@ -600,6 +600,7 @@ include src/value-pprint.cc
 include src/value-pprint.hh
 include src/value-types.cc
 include src/value-types.hh
+include src/value-type-macros.inc
 include src/xform.hh
 include src/xform.cc
 include src/audio-loader.cc
