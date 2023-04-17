@@ -10,9 +10,8 @@
 #ifndef C_TINYUSD_H
 #define C_TINYUSD_H
 
-#include <assert.h>
+/*#include <assert.h>*/
 #include <stdint.h>
-#include <uchar.h> /* size_t */
 #include <wchar.h>
 
 #ifdef __cplusplus
