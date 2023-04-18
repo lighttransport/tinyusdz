@@ -38,6 +38,7 @@ class Token(object):
 
     def __del__(self):
         ret = ctinyusd.c_tinyusd_token_free(self._handle)
+        assert ret == 1
 
     def __str__(self):
         btok = ctinyusd.c_tinyusd_token_str(self._handle)
@@ -62,11 +63,13 @@ class String(object):
 
     def __del__(self):
         ret = ctinyusd.c_tinyusd_token_free(self._handle)
+        assert ret == 1
 
     def __str__(self):
         btok = ctinyusd.c_tinyusd_token_str(self._handle)
         return btok.decode()
 
+@typechecked
 class Value(object):
     _np_conv_table = {
         "float32": [ctinyusd.c_tinyusd_value_new_float, ctinyusd.c_tinyusd_value_new_array_float]
@@ -135,7 +138,7 @@ class Value(object):
     def __repr__(self):
         return self.__str__()
         
-
+@typechecked
 class Prim(object):
     
     _builtin_types:str = [
@@ -230,6 +233,7 @@ class Prim(object):
         print("append child:", ret)
         assert ret == 1
 
+@typechecked
 class PrimChildIterator:
     def __init__(self, handle):
         self._handle = handle
@@ -287,7 +291,7 @@ print("# of child = ", len(root.children()))
 for child in root.children():
     print(child)
 
-#cp = Prim(from_handle=p._handle)
+#cp = Prim(from_handle=root._handle)
 #print(cp)
 
 #a = copy.deepcopy(p)
