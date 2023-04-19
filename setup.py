@@ -6,7 +6,7 @@ from skbuild import setup
 
 setup(
     name='tinyusdz',
-    version='0.8.0rc0',
+    version='0.8.0rc1',
     author='Light Transport Entertainment Inc.',
     author_email='lighttransport.eth@mail3.me',
     package_dir={'tinyusdz': 'python'}, # Use `python` folder 
