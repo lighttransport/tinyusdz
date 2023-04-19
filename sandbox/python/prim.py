@@ -1,5 +1,37 @@
 from typing import Union
 
+class Model():
+    def __init__(self):
+        pass
+
+class Scope():
+    def __init__(self):
+        pass
+class GPrim:
+    def __init__(self):
+        self.visibility = None
+        self.proxyPrim = None
+
+class Xform(GPrim):
+    def __init__(self):
+        self.xformOps = [] 
+
+class Mesh(GPrim):
+    def __init__(self):
+        self.points = []
+
+class Material():
+    def __init__(self):
+        pass
+
+class Shader():
+    def __init__(self):
+        pass
+
+class Camera(GPrim):
+    def __init__(self):
+        pass
+
 class USDPath:
     """
     A struct to repersent Prim and property path.
@@ -316,3 +348,5 @@ print(pmeta["userProperties:myval"])
 #prim.bora = "ss"
 
 #print(prim)
+
+#xform = Xform()
