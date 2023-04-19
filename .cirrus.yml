@@ -2,6 +2,9 @@ arm_container:
   image: python:slim
 
 build_package_test_task:
+  setup_script:
+    - apt-get update
+    - apt-get install build-essential 
   pip_cache:
     folder: ~/.cache/pip
     fingerprint_script: echo $PYTHON_VERSION
