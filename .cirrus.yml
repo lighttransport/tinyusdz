@@ -5,5 +5,5 @@ build_package_test_task:
   pip_cache:
     folder: ~/.cache/pip
     fingerprint_script: echo $PYTHON_VERSION
-    populate_script: python3 -m pip install --upgrade setuptools wheel
-  build_package_test_script: python3 setup.py sdist bdist_wheel
+    populate_script: python3 -m pip install build
+  build_package_test_script: python3 -m build .
