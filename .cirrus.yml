@@ -5,6 +5,9 @@ build_and_store_wheels: &BUILD_AND_STORE_WHEELS
     - cibuildwheel
   wheels_artifacts:
     path: "wheelhouse/*"
+
+  # Upload only for tagged commit
+  only_if: $CIRRUS_TAG != ''
   publish_script:
     - python -m pip install twine
     - python -m twine upload --repository-url https://upload.pypi.org/legacy/ --username __token__ wheelhouse/*.whl
