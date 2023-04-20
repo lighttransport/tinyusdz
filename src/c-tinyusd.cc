@@ -1034,6 +1034,17 @@ CTinyUSDPrimType c_tinyusd_prim_type_from_string(const char *c_type_name) {
   }
 }
 
+const char *c_tinyusd_prim_element_name(
+    const CTinyUSDPrim *prim) {
+
+  if (!prim) {
+    return nullptr;
+  }
+
+  const tinyusdz::Prim *p = reinterpret_cast<const tinyusdz::Prim *>(prim);
+  return p->element_name().c_str();
+}
+
 int c_tinyusd_prim_append_child(CTinyUSDPrim *prim, CTinyUSDPrim *child_prim) {
   std::cout << "C: Append child: " << prim << "," << child_prim << "\n";
   DCOUT("DCOUT: Append child: " << prim << ", " << child_prim);
