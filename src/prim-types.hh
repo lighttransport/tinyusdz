@@ -258,10 +258,12 @@ class Path {
     return s;
   }
 
-  std::string prim_part() const { return _prim_part; }
-  std::string prop_part() const { return _prop_part; }
-  std::string variant_part() const {
-    return "{" + _variant_part + "=" + _variant_selection_part + "}";
+  const std::string &prim_part() const { return _prim_part; }
+  const std::string &prop_part() const { return _prop_part; }
+
+  const std::string &variant_part() const {
+    _variant_part_str = "{" + _variant_part + "=" + _variant_selection_part + "}";
+    return _variant_part_str;
   }
 
   void set_path_type(const PathType ty) { _path_type = ty; }
@@ -513,6 +515,7 @@ class Path {
   std::string _variant_part;  // e.g. `variantColor` for {variantColor=green}
   std::string _variant_selection_part;  // e.g. `green` for {variantColor=green}
                                         // . Could be empty({variantColor=}).
+  mutable std::string _variant_part_str; // str buffer for variant_part()
   mutable std::string _element;         // Element name
 
   nonstd::optional<PathType> _path_type;  // Currently optional.
@@ -2686,7 +2689,7 @@ class Prim {
   const Path &element_path() const { return _elementPath; }
 
   // elementName = element_path's prim part
-  const std::string element_name() const { return _elementPath.prim_part(); }
+  const std::string &element_name() const { return _elementPath.prim_part(); }
 
   const std::string type_name() const { return _data.type_name(); }
 
