@@ -2,7 +2,8 @@ import copy
 import ctypes
 import ctinyusd
 import sys
-from typing import Union, List, Optional
+
+from typing import Optional, Union, List, Any
 
 try:
     from typeguard import typechecked
@@ -94,6 +95,25 @@ class Relationship(object):
 class Property(object):
     def __init__(self, prop: Union[Attribute, Relationship]):
         pass
+
+
+@typechecked
+class Property(object):
+    def __init__(self, name: str, value: Any = None):
+        self.name = name
+        self.value = value
+
+@typechecked
+class Attribute(Property):
+    def __init__(self, name: str, value: Any = None):
+        super().__init__(self, name, value)
+
+
+@typechecked
+class Relationship(Property):
+    def __init__(self, name: str, target: Union[str, List[str], None] = None):
+        super().__init__(self, name, value)
+
 
 
 @typechecked
