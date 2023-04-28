@@ -2,10 +2,10 @@ import copy
 import ctypes
 import ctinyusd
 import sys
-from typing import Optional
+from typing import Union, List, Optional
 
 try:
-    from typegurad import typechecked
+    from typeguard import typechecked
     is_typegurad_available = True
 except:
     is_typegurad_available = False
@@ -68,6 +68,33 @@ class String(object):
     def __str__(self):
         btok = ctinyusd.c_tinyusd_token_str(self._handle)
         return btok.decode()
+
+
+@typechecked
+class Attribute(object):
+    def __init__(self):
+        pass
+
+
+@typechecked
+class Relationship(object):
+    def __init__(self, target: Union[str, List[str], None]):
+        self.target = target
+        print("Relationship", self.target)
+
+    def __str__(self):
+        if isinstance(self.target, List):
+            raise
+        else:
+            return str(self.target)
+        
+
+
+@typechecked
+class Property(object):
+    def __init__(self, prop: Union[Attribute, Relationship]):
+        pass
+
 
 @typechecked
 class Value(object):
@@ -137,11 +164,12 @@ class Value(object):
 
     def __repr__(self):
         return self.__str__()
+
         
 @typechecked
 class Prim(object):
     
-    _builtin_types:str = [
+    _builtin_types: List[str] = [
         "Model", # Generic Prim type
         "Scope",
         "Xform",
@@ -157,17 +185,20 @@ class Prim(object):
         ]
     
     # TODO: better init constructor
-    def __init__(self, prim_type:str = "Model", name:str = None, from_handle = None):
+    def __init__(self, prim_type:str = "Model", name: Optional[str] = None, from_handle = None):
 
+        print("Prim ctor")
         if from_handle is not None:
-            # Create a Python Prim instance with handle(No copies of C object)
+            # Create a Python Prim instance with handle.
+            # (Reference to existing C object. No copies of C object)
 
             print("Create Prim from handle.")
             self._handle = from_handle 
             #assert self._handle 
 
-            self._name = name
+            assert name == None
             self._prim_type = ctinyusd.c_tinyusd_prim_type(self._handle)
+            self._name = ctinyusd.c_tinyusd_prim_element_name()
 
             self._is_handle_reference = True
 
@@ -199,11 +230,17 @@ class Prim(object):
             ret = ctinyusd.c_tinyusd_prim_free(self._handle)
             print("del", ret)
 
-    def __getattr__(self, name):
-        if name == 'prim_type':
-            return self._prim_type   
-        else:
-            raise RuntimeError("Unknown Python attribute name:", name)
+    #def __getattr__(self, name):
+    #    if name == 'prim_type':
+    #        return self._prim_type   
+    #    else:
+    #        raise RuntimeError("Unknown Python attribute name:", name)
+
+    def name(self):
+        return self._name
+
+    def prim_type(self):
+        return self._prim_type
             
     def children(self):
         # Return list
@@ -233,6 +270,16 @@ class Prim(object):
         print("append child:", ret)
         assert ret == 1
 
+
+@typechecked
+class Xform(Prim):
+    def __init__(self, name: str):
+        super().__init__(prim_type="Xform", name=name)
+
+    def __del__(self):
+        super().__del__()
+
+
 @typechecked
 class PrimChildIterator:
     def __init__(self, handle):
@@ -250,9 +297,13 @@ class PrimChildIterator:
             ret = ctinyusd.c_tinyusd_prim_get_child(self._handle, ctypes.byref(child_ptr))
             assert ret == 1
 
-            child_prim = Prim(from_handle = child_ptr)
+            child_prim = Prim(from_handle=child_ptr)
 
         raise StopIterator
+
+xform = Xform("xform0")
+
+rel = Relationship("bora")
 
 tok = Token("hello")
 print(tok)
@@ -279,10 +330,10 @@ print(t)
 #print(dt)
 
 root = Prim("Xform")
-print("root", root.prim_type)
+print("root", root.prim_type())
 
 xform_prim = Prim("Xform")
-print("child", xform_prim.prim_type)
+print("child", xform_prim.prim_type())
 
 root.add_child(xform_prim)
 print("added child.")
