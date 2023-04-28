@@ -1,13 +1,27 @@
-# import ctinyusdz
+# SPDX-License-Identifier: Apache 2.0
+#
+# Requiement: Python 3.7+
 
 # TODO
 # - [ ] Refactor components
 
 from pathlib import Path
-from typing import Union, List, Literal
+
+from typing import Union, List
 from enum import Enum, auto
 
 from . import version
+
+try:
+  from typeguard import typechecked
+  is_typegurad_available = True
+except:
+  is_typegurad_available = False
+
+  # no-op 
+  def typechecked(cls):
+      return cls
+
 
 try:
     import ctinyusdz
@@ -77,25 +91,65 @@ class Type(Enum):
 """
 USD type in literal
 """
-LiteralTypes = Literal[
-    "bool",
-    "int8",
-    "int16",
-    "int", 
-    "int32",
-    "int64",
-    "uint8",
-    "uint16",
-    "uint", 
-    "uint32",
-    "uint64",
-    "string"]
+
+# Literal is not available in 3.7
+# TODO: use importlib?
+try:
+    from typing import Literal
+    USDTypes = Literal[
+        "bool",
+        "int8",
+        "int16",
+        "int", 
+        "int32",
+        "int64",
+        "uint8",
+        "uint16",
+        "uint", 
+        "uint32",
+        "uint64",
+        "string"]
+except ImportError:
+    # try backported Literal
+    try:
+        from typing_extensions import Literal
+        USDTypes = Literal[
+            "bool",
+            "int8",
+            "int16",
+            "int", 
+            "int32",
+            "int64",
+            "uint8",
+            "uint16",
+            "uint", 
+            "uint32",
+            "uint64",
+            "string"]
+    except ImportError:
+        USDTypes = [
+            "bool",
+            "int8",
+            "int16",
+            "int", 
+            "int32",
+            "int64",
+            "uint8",
+            "uint16",
+            "uint", 
+            "uint32",
+            "uint64",
+            "string"]
+    
 
 """
 numpy-like ndarray for Attribute data(e.g. points, normals, ...) 
 """
 class NDArray:
-    def __init__(self):
+    def __init__(self, dtype: str = "uint8"):
+
+        assert dtype in USDTypes
+
         self.dtype: str = "uint8" 
         self.dim: int = 1 # In USD, 1D or 2D only for array data
 
@@ -133,6 +187,12 @@ class NDArray:
         raise RuntimeError("TODO")
 
 
+@typechecked
+class Token:
+    def __init__(self, tok: str):
+        self.tok = tok
+
+
 class Property:
     """Represents Prim property.
     Base class for Attribute and Relationship. 
@@ -158,9 +218,13 @@ class Prim:
     def __init__(self):
         self.element_name: str = ""
 
+        # Corresponding Prim in C++ world.
+        self._prim = ctinyusdz.Prim()
+
         # Corresponding Prim index in C++ world.
         # 0 or None => Invalid
         self._prim_idx: int = 0
+
 
 
 class GeomMesh(Prim):
