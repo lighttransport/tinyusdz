@@ -8,36 +8,44 @@ W.I.P.
 
 ## Requirements
 
-* Python 3.8 or later
-  * tinyusdz python binding uses Python 3.8 features(e.g. Literal type)
-  * Python 3.12+ recommended
+* Python 3.7 or later
+  * Python 3.10+ recommended
+  * For developping and testing, Python 3.8 or later is required.
 
-### Recommended
+### Recommended python modules
 
 * numpy
   * For efficient Attribute data handling.
   * `from_numpy` and `to_numpy` method available when `numpy` is installed..
 * pandas
   * To support TimeSamples data efficiently(e.g. read/write to CSV, Excel)
+* typeguard
+  * To do type check at runtime.
 
 ## Structure
 
 * `ctinyusdz`: Native C++ module of tinyusdz
-  * Python binding using pybind11. Binding source code is located at `<tinyusdz>/src/python-binding.cc`
+  * Python binding on top of C binding of TinyUSDZ.
 * `tinyusdz`: Python module. Wraps some functions of `ctinyusdz`
 
-TinyUSDZ's Python binding approach is like numpy: entry point is written in Python for better Python integration(type hints for lsp(Intellisense), debuggers, exceptions, ...), and calls native modules as necessary.
+TinyUSDZ's Python binding approach is like numpy: Frontend is written in Python for better Python integration(type hints for lsp(Intellisense), debuggers, exceptions, ...), and calls native C modules as necessary.
 
 ## Supported platform
 
-* [ ] Linux
+* [x] Linux
   * [x] x86-64
-  * [ ] aarch64
-* [ ] Windows
-* [ ] macOS
+  * [x] aarch64
+* [x] Windows
+  * [x] 64bit AMD64
+  * [x] 32bit x86
+  * [ ] ARM64(not intensively tested, but should work)
+* [x] macOS
+  * [x] arm64
+  * [x] Intel
 
 ## Features
 
+* T.B.W.
 
 ### Optional
 
@@ -77,6 +85,6 @@ Please see https://tobywf.com/2021/02/python-ext-asan/ for more infos.
 
 ## License
 
-Currently MIT license, but soon move to Apache 2.0 license.
+Apache 2.0 license.
 
 EoL.
