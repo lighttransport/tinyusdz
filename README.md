@@ -34,6 +34,7 @@ $ python -m pip install tinyusdz
 |   3.10   | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> ✅ ARM64  |✅ arm64 | ✅ universal2 </br> ✅ Intel |
 |   3.11   | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> ✅ ARM64  |✅ arm64 | ✅ universal2 </br> ✅ Intel |
 
+NOTE: Windows ARM64 binary is provided using cross-compiling. Its not well tested.
 
 
 ## Status
