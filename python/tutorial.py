@@ -5,6 +5,7 @@ print("TinyUSDZ major_version", tinyusdz.version.major_version) # int
 print("TinyUSDZ minor_version", tinyusdz.version.minor_version) # int
 print("TinyUSDZ micro_version", tinyusdz.version.micro_version) # int
 
+print("typeguard available? ", tinyusdz.is_typeguard_available()) # bool
 print("numpy available? ", tinyusdz.is_numpy_available()) # bool
 print("pandas available? ", tinyusdz.is_pandas_available()) # bool
 

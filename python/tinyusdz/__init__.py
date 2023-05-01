@@ -7,7 +7,7 @@
 
 from pathlib import Path
 
-from typing import Union, List
+from typing import Union, List, Any
 from enum import Enum, auto
 
 from . import version
@@ -23,10 +23,10 @@ except:
       return cls
 
 
-try:
-    import ctinyusdz
-except:
-    raise ImportError("ctinyusdz dll/so not found. Please check if ctinyusdz.*.dll/so exists in your python envrionemnt(Set PYTHONPATH if requred.), or Python version may differ.")
+#try:
+#    import ctinyusdz
+#except:
+#    raise ImportError("ctinyusdz dll/so not found. Please check if ctinyusdz.*.dll/so exists in your python envrionemnt(Set PYTHONPATH if requred.), or Python version may differ.")
 
 try:
     import numpy as np
@@ -38,6 +38,13 @@ try:
 except:
     pass
 
+def is_typeguard_available():
+    import importlib
+
+    if importlib.util.find_spec("typeguard"):
+        return True
+
+    return False
 
 def is_numpy_available():
     import importlib
@@ -88,6 +95,33 @@ class Type(Enum):
     matrix3d = auto()
     matrix4d = auto()
 
+class XformOpType(Enum):
+    # matrix4d
+    Transform = auto()
+
+    # vector3
+    Translate = auto()    
+    Scale = auto()
+    
+    # scalar
+    RotateX = auto()
+    RotateY = auto()
+    RotateZ = auto()
+
+    # vector3
+    RotateXYZ = auto()
+    RotateXZY = auto()
+    RotateYXZ = auto()
+    RotateYZX = auto()
+    RotateZXY = auto()
+    RotateZYX = auto()
+
+    # quat
+    Orient = auto()
+    
+    # special token
+    ResetXformStack = auto()
+    
 """
 USD type in literal
 """
@@ -109,6 +143,7 @@ try:
         "uint32",
         "uint64",
         "string"]
+    Specifiers = Literal[ "def", "over", "class" ]
 except ImportError:
     # try backported Literal
     try:
@@ -126,6 +161,7 @@ except ImportError:
             "uint32",
             "uint64",
             "string"]
+        Specifiers = Literal[ "def", "over", "class" ]
     except ImportError:
         USDTypes = [
             "bool",
@@ -140,6 +176,7 @@ except ImportError:
             "uint32",
             "uint64",
             "string"]
+        Specifiers = [ "def", "over", "class" ]
     
 
 """
@@ -215,17 +252,42 @@ class Relationship(Property):
         super().__init__(self)
 
 class Prim:
-    def __init__(self):
+    def __init__(self, specifier: str = "def"):
+
+        assert specifier in Specifiers
+
         self.element_name: str = ""
 
         # Corresponding Prim in C++ world.
-        self._prim = ctinyusdz.Prim()
+        # self._prim = ctinyusdz.Prim()
 
         # Corresponding Prim index in C++ world.
         # 0 or None => Invalid
         self._prim_idx: int = 0
 
+        self._specifier = "def"
 
+    def specifier(self):
+        return self._specifier
+
+
+class XformOp:
+    def __init__(self, op_type: XformOpType = XformOpType.Translate, value: Any = None):
+        pass
+
+        self.suffix = ""
+        self.inverted = False
+
+        self.op_type = op_type
+
+        self._value = value
+
+class Xform(Prim):
+    def __init__(self, specifier: str = "def"):
+        super().__init__(self, specifier)
+
+        # TODO: Typecheck
+        self.xformOps = []
 
 class GeomMesh(Prim):
     def __init__(self):
