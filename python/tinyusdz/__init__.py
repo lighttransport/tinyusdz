@@ -5,9 +5,10 @@
 # TODO
 # - [ ] Refactor components
 
+import os
 from pathlib import Path
 
-from typing import Union, List, Any
+from typing import Union, List, Any, TextIO
 from enum import Enum, auto
 
 from . import version
@@ -122,6 +123,11 @@ class XformOpType(Enum):
     # special token
     ResetXformStack = auto()
     
+# USD ValueBlock(`None` in USDA)
+class ValueBlock:
+    def __init__(self):
+        pass
+
 """
 USD type in literal
 """
@@ -245,18 +251,18 @@ class Property:
 
 class Attribute(Property):
     def __init__(self):
-        super().__init__(self)
+        super().__init__()
 
 class Relationship(Property):
     def __init__(self):
-        super().__init__(self)
+        super().__init__()
 
 class Prim:
-    def __init__(self, specifier: str = "def"):
+    def __init__(self, name: str, specifier: str = "def"):
 
-        assert specifier in Specifiers
+        #assert specifier in Specifiers
 
-        self.element_name: str = ""
+        self._name: str = name
 
         # Corresponding Prim in C++ world.
         # self._prim = ctinyusdz.Prim()
@@ -265,12 +271,33 @@ class Prim:
         # 0 or None => Invalid
         self._prim_idx: int = 0
 
-        self._specifier = "def"
+        self._specifier = specifier
+
+        self._primChildren: List[Prim] = []
+
+        # custom properties
+        self._props = {}
 
     def specifier(self):
         return self._specifier
 
+    def primChildren(self):
+        return self._primChildren
 
+    def set_prop(self, key:str, value: Any):
+        self._props[key] = value
+
+class Model(Prim):
+    def __init__(self, name: str, specifier: str = "def", **kwargs):
+        super().__init__(name, specifier) 
+        pass
+
+class Scope(Prim):
+    def __init__(self, name: str, specifier: str = "def", **kwargs):
+        super().__init__(self, name, specifier)        
+        pass
+
+@typechecked
 class XformOp:
     def __init__(self, op_type: XformOpType = XformOpType.Translate, value: Any = None):
         pass
@@ -282,27 +309,34 @@ class XformOp:
 
         self._value = value
 
+@typechecked
 class Xform(Prim):
-    def __init__(self, specifier: str = "def"):
+    def __init__(self, name: str, specifier: str = "def"):
         super().__init__(self, specifier)
 
         # TODO: Typecheck
         self.xformOps = []
 
+@typechecked
 class GeomMesh(Prim):
-    def __init__(self):
+    def __init__(self, name: str, specifier: str = "def"):
         super().__init__()
         pass
 
+
+@typechecked
 class Material(Prim):
-    def __init__(self):
+    def __init__(self, name: str, specifier: str = "def"):
         pass
 
+
+@typechecked
 class Shader(Prim):
     def __init__(self):
         pass
 
 
+@typechecked
 class UsdPreviewSurface(Shader):
     def __init__(self):
         super().__init__(self)
@@ -311,14 +345,15 @@ class UsdPreviewSurface(Shader):
         # TODO: More attrs
 
 
+@typechecked
 class Stage:
-    Axis = Literal["X", "Y", "Z"]
+    #Axis = Literal["X", "Y", "Z"]
 
     def __init__(self):
         self._stage = None 
         self.filename = ""
 
-        self.upAxis: Union[Axis, None] = None
+        self.upAxis: Union[str, None] = None
         self.metersPerUnit: Union[float, None] = None
         self.framesPerSecond: Union[float, None] = None
         self.defaultPrim: Union[str, None] = None
@@ -439,5 +474,41 @@ def load_usd_from_binary(input_binary: bytes) -> Stage:
 
     return stage
 
+@typechecked
+def dumps(usd: Union[Stage, Prim], format: str = "usda", indent: int = 2) -> str:
+    """Dump USD Stage or Prim tree to str.
+
+    Args:
+        format(str): dump format. `usda` only at this time.
+
+    Returns:
+        str: Dumped string.
+    """
+
+    return "TODO"
+
+# TODO: Python 3.10+
+# from typing_extensions import TypeAlias
+# FILE_LIKE: TypeAlias =  Union[str, os.PathLike, TextIO]
+
+
+@typechecked
+def save(usd: Stage, file_like: Union[str, os.PathLike, TextIO], *, format: str = "usda", indent: int = 2) -> None:
+
+    if isinstance(file_like, str):
+        # filename
+        f = open(file_like, 'w', encoding='utf-8')
+    else:
+        f = file_like
+    
+    s: str = dumps(usd, format=format, indent=indent)
+
+    f.write(s)
+
+    f.close()
+
+    return True
+        
+        
 
 __all__ = ['Stage', 'version']
