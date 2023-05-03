@@ -8,26 +8,33 @@
 import os
 from pathlib import Path
 
-from typing import Union, List, Any, TextIO
+from typing import Union, List, Any, IO
 from enum import Enum, auto
 
+#
+# Local modules
+#
+from .compat_typing_extensions import Literal
 from . import version
+from .prims import Prim
 
 try:
-  from typeguard import typechecked
-  is_typegurad_available = True
-except:
-  is_typegurad_available = False
+    from typeguard import typechecked
+    is_typegurad_available = True
+except ImportError:
+    is_typegurad_available = False
 
-  # no-op 
-  def typechecked(cls):
-      return cls
+    # no-op
+    def typechecked(cls):
+        return cls
 
 
-#try:
-#    import ctinyusdz
-#except:
-#    raise ImportError("ctinyusdz dll/so not found. Please check if ctinyusdz.*.dll/so exists in your python envrionemnt(Set PYTHONPATH if requred.), or Python version may differ.")
+try:
+    import ctinyusdz
+except ImportError:
+    import warnings
+    warnings.warn(
+        "Failed to import native module `ctinyusdz`(No corresponding dll/so exists?). Loading USDA/USDC/USDZ feature is disabled.")
 
 try:
     import numpy as np
@@ -39,6 +46,7 @@ try:
 except:
     pass
 
+
 def is_typeguard_available():
     import importlib
 
@@ -46,6 +54,7 @@ def is_typeguard_available():
         return True
 
     return False
+
 
 def is_numpy_available():
     import importlib
@@ -58,17 +67,20 @@ def is_numpy_available():
 
 def is_pandas_available():
     import importlib
-   
+
     if importlib.util.find_spec("pandas"):
         return True
 
     return False
 
-__version__ = "0.8.0rc2"
+
+__version__ = version
 
 """
 USD types
 """
+
+
 class Type(Enum):
     bool = auto()
     int8 = auto()
@@ -96,14 +108,15 @@ class Type(Enum):
     matrix3d = auto()
     matrix4d = auto()
 
+
 class XformOpType(Enum):
     # matrix4d
     Transform = auto()
 
     # vector3
-    Translate = auto()    
+    Translate = auto()
     Scale = auto()
-    
+
     # scalar
     RotateX = auto()
     RotateY = auto()
@@ -119,82 +132,51 @@ class XformOpType(Enum):
 
     # quat
     Orient = auto()
-    
+
     # special token
     ResetXformStack = auto()
-    
+
 # USD ValueBlock(`None` in USDA)
+
+
 class ValueBlock:
     def __init__(self):
         pass
+
 
 """
 USD type in literal
 """
 
 # Literal is not available in 3.7
-# TODO: use importlib?
-try:
-    from typing import Literal
-    USDTypes = Literal[
-        "bool",
-        "int8",
-        "int16",
-        "int", 
-        "int32",
-        "int64",
-        "uint8",
-        "uint16",
-        "uint", 
-        "uint32",
-        "uint64",
-        "string"]
-    Specifiers = Literal[ "def", "over", "class" ]
-except ImportError:
-    # try backported Literal
-    try:
-        from typing_extensions import Literal
-        USDTypes = Literal[
-            "bool",
-            "int8",
-            "int16",
-            "int", 
-            "int32",
-            "int64",
-            "uint8",
-            "uint16",
-            "uint", 
-            "uint32",
-            "uint64",
-            "string"]
-        Specifiers = Literal[ "def", "over", "class" ]
-    except ImportError:
-        USDTypes = [
-            "bool",
-            "int8",
-            "int16",
-            "int", 
-            "int32",
-            "int64",
-            "uint8",
-            "uint16",
-            "uint", 
-            "uint32",
-            "uint64",
-            "string"]
-        Specifiers = [ "def", "over", "class" ]
-    
+USDTypes = Literal[
+    "bool",
+    "int8",
+    "int16",
+    "int",
+    "int32",
+    "int64",
+    "uint8",
+    "uint16",
+    "uint",
+    "uint32",
+    "uint64",
+    "string"]
+Specifiers = Literal["def", "over", "class"]
+
 
 """
-numpy-like ndarray for Attribute data(e.g. points, normals, ...) 
+numpy-like ndarray for Attribute data(e.g. points, normals, ...)
 """
+
+
 class NDArray:
     def __init__(self, dtype: str = "uint8"):
 
         assert dtype in USDTypes
 
-        self.dtype: str = "uint8" 
-        self.dim: int = 1 # In USD, 1D or 2D only for array data
+        self.dtype: str = "uint8"
+        self.dim: int = 1  # In USD, 1D or 2D only for array data
 
         self._data = None
 
@@ -202,8 +184,6 @@ class NDArray:
         if not is_numpy_available():
             raise ImportError("numpy is not installed.")
 
-        import numpy as np
-        
         assert isinstance(nddata, np.ndarray)
 
         assert nddata.dim < 2, "USD supports up to 2D array data"
@@ -222,8 +202,6 @@ class NDArray:
         if not is_numpy_available():
             raise ImportError("numpy is not installed.")
 
-        import numpy as np
-        
         if isinstance(self._data, np.ndarray):
             return self._data
 
@@ -238,8 +216,9 @@ class Token:
 
 class Property:
     """Represents Prim property.
-    Base class for Attribute and Relationship. 
+    Base class for Attribute and Relationship.
     """
+
     def __init__(self):
         pass
 
@@ -249,57 +228,34 @@ class Property:
     def is_relationship(self):
         return isinstance(self, Relationship)
 
+
 class Attribute(Property):
     def __init__(self):
         super().__init__()
+
 
 class Relationship(Property):
     def __init__(self):
         super().__init__()
 
-class Prim:
-    def __init__(self, name: str, specifier: str = "def"):
-
-        #assert specifier in Specifiers
-
-        self._name: str = name
-
-        # Corresponding Prim in C++ world.
-        # self._prim = ctinyusdz.Prim()
-
-        # Corresponding Prim index in C++ world.
-        # 0 or None => Invalid
-        self._prim_idx: int = 0
-
-        self._specifier = specifier
-
-        self._primChildren: List[Prim] = []
-
-        # custom properties
-        self._props = {}
-
-    def specifier(self):
-        return self._specifier
-
-    def primChildren(self):
-        return self._primChildren
-
-    def set_prop(self, key:str, value: Any):
-        self._props[key] = value
 
 class Model(Prim):
     def __init__(self, name: str, specifier: str = "def", **kwargs):
-        super().__init__(name, specifier) 
+        super().__init__(name, specifier)
         pass
+
 
 class Scope(Prim):
     def __init__(self, name: str, specifier: str = "def", **kwargs):
-        super().__init__(self, name, specifier)        
+        super().__init__(self, name, specifier)
         pass
+
 
 @typechecked
 class XformOp:
-    def __init__(self, op_type: XformOpType = XformOpType.Translate, value: Any = None):
+    def __init__(self,
+                 op_type: XformOpType = XformOpType.Translate,
+                 value: Any = None):
         pass
 
         self.suffix = ""
@@ -309,6 +265,7 @@ class XformOp:
 
         self._value = value
 
+
 @typechecked
 class Xform(Prim):
     def __init__(self, name: str, specifier: str = "def"):
@@ -316,6 +273,7 @@ class Xform(Prim):
 
         # TODO: Typecheck
         self.xformOps = []
+
 
 @typechecked
 class GeomMesh(Prim):
@@ -347,13 +305,12 @@ class UsdPreviewSurface(Shader):
 
 @typechecked
 class Stage:
-    #Axis = Literal["X", "Y", "Z"]
 
     def __init__(self):
-        self._stage = None 
+        self._stage = None
         self.filename = ""
 
-        self.upAxis: Union[str, None] = None
+        self.upAxis: Union[Literal["X", "Y", "Z"], None] = None
         self.metersPerUnit: Union[float, None] = None
         self.framesPerSecond: Union[float, None] = None
         self.defaultPrim: Union[str, None] = None
@@ -387,6 +344,7 @@ class Stage:
     def __str__(self):
         return self.__repr__()
 
+
 def is_usd(filename: Union[Path, str]) -> bool:
     """Test if input filename is a USD(USDC/USDA/UDSZ) file
 
@@ -396,6 +354,7 @@ def is_usd(filename: Union[Path, str]) -> bool:
     Returns:
         bool: True if USD file
     """
+
 
 def is_usda(filename: Union[Path, str]) -> bool:
     """Test if input filename is a USDA file
@@ -407,6 +366,7 @@ def is_usda(filename: Union[Path, str]) -> bool:
         bool: True if USDA file
     """
 
+
 def is_usdc(filename: Union[Path, str]) -> bool:
     """Test if input filename is a USDC file
 
@@ -416,6 +376,7 @@ def is_usdc(filename: Union[Path, str]) -> bool:
     Returns:
         bool: True if USDC file
     """
+
 
 def load_usd(filename: Union[Path, str]) -> Stage:
     """Loads USDC/USDA/UDSZ from a file
@@ -474,8 +435,11 @@ def load_usd_from_binary(input_binary: bytes) -> Stage:
 
     return stage
 
+
 @typechecked
-def dumps(usd: Union[Stage, Prim], format: str = "usda", indent: int = 2) -> str:
+def dumps(usd: Union[Stage, Prim],
+          format: str = "usda",
+          indent: int = 2) -> str:
     """Dump USD Stage or Prim tree to str.
 
     Args:
@@ -493,22 +457,52 @@ def dumps(usd: Union[Stage, Prim], format: str = "usda", indent: int = 2) -> str
 
 
 @typechecked
-def save(usd: Stage, file_like: Union[str, os.PathLike, TextIO], *, format: str = "usda", indent: int = 2) -> None:
+def save(stage: Stage,
+         file_like: Union[str, os.PathLike, IO[str], IO[bytes]],
+         *,
+         format: Literal["auto", "usda", "usdc", "usdz"] = "usda",
+         indent: int = 2) -> None:
+    """Save Stage to USD(ASCII only for now)
 
-    if isinstance(file_like, str):
-        # filename
-        f = open(file_like, 'w', encoding='utf-8')
-    else:
-        f = file_like
-    
-    s: str = dumps(usd, format=format, indent=indent)
+    Args:
+        stage(Stage): Stage
+        file_like(Union[str, os.PathLike, TextIO]): File like object
+        format(str): USD format. Currently `usda`(ASCII) only
+        indent(int): Indent size for ASCII output.
+                     (applicable only for `usda` format)
 
-    f.write(s)
+    Returns:
+        None. Exception will be raised when error.
 
-    f.close()
+    """
 
-    return True
-        
-        
+    from . import usd_saver
+
+    usd_saver.save(stage, file_like, format=format, indent=indent)
+
+
+@typechecked
+def load(file_like: Union[str, os.PathLike, IO[str], IO[bytes]],
+         *,
+         format: Literal["auto", "usda", "usdc", "usdz"],
+         encoding: str = None) -> Stage:
+    """Load USD
+
+    Args:
+        file_like(Union[str, os.PathLike, IO[str], IO[bytes]]): File like object.
+        format(str): Specify USD format.
+        encoding(str): Optional. Explicitly specify encoding of the file.
+
+    Returns:
+        Stage. USD Stage.
+
+    """
+
+    from . import usd_loader
+
+    usd = usd_loader.load(file_like, encoding=encoding, format=format)
+
+    return usd
+
 
 __all__ = ['Stage', 'version']
