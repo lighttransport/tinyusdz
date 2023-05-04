@@ -6,7 +6,8 @@
 
 from typing import List, Any
 
-from compat_typing_extensions import Literal
+# local modules
+from .compat_typing_extensions import Literal, TypeAlias
 
 try:
     from typeguard import typechecked
@@ -19,11 +20,14 @@ except ImportError:
         return cls
 
 
+SpecifierType: TypeAlias = Literal["def", "over", "class"]
+
+
 @typechecked
 class Prim:
     def __init__(self,
                  name: str,
-                 specifier: Literal["def", "over", "class"] = "def"):
+                 specifier: SpecifierType = "def"):
 
         # assert specifier in Specifiers
 

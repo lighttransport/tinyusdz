@@ -6,6 +6,7 @@
 # - [ ] Refactor components
 
 import os
+import warnings
 from pathlib import Path
 
 from typing import Union, List, Any, IO
@@ -14,9 +15,11 @@ from enum import Enum, auto
 #
 # Local modules
 #
-from .compat_typing_extensions import Literal
+from .compat_typing_extensions import Literal, TypeAlias
 from . import version
 from .prims import Prim
+
+FILE_LIKE: TypeAlias = Union[str, os.PathLike, IO[str], IO[bytes]]
 
 try:
     from typeguard import typechecked
@@ -46,9 +49,16 @@ try:
 except:
     pass
 
+def is_ctinyusdz_available():
+    import importlib.util
+
+    if importlib.util.find_spec("ctinyusdz"):
+        return True
+
+    return False
 
 def is_typeguard_available():
-    import importlib
+    import importlib.util
 
     if importlib.util.find_spec("typeguard"):
         return True
@@ -57,7 +67,7 @@ def is_typeguard_available():
 
 
 def is_numpy_available():
-    import importlib
+    import importlib.util
 
     if importlib.util.find_spec("numpy"):
         return True
@@ -66,7 +76,7 @@ def is_numpy_available():
 
 
 def is_pandas_available():
-    import importlib
+    import importlib.util
 
     if importlib.util.find_spec("pandas"):
         return True
@@ -162,7 +172,7 @@ USDTypes = Literal[
     "uint32",
     "uint64",
     "string"]
-Specifiers = Literal["def", "over", "class"]
+SpecifierType: TypeAlias = Literal["def", "over", "class"]
 
 
 """
@@ -345,15 +355,21 @@ class Stage:
         return self.__repr__()
 
 
-def is_usd(filename: Union[Path, str]) -> bool:
+def is_usd(file_like: FILE_LIKE) -> bool:
     """Test if input filename is a USD(USDC/USDA/UDSZ) file
 
     Args:
-        filename (Path or str): Filename
+        file_like (FILE_LIKE): File-like object(Filename, file path, binary data)
 
     Returns:
         bool: True if USD file
     """
+
+    from . import usd_loader
+
+    ok: bool = usd_loader.is_usd(file_like)
+
+    return ok
 
 
 def is_usda(filename: Union[Path, str]) -> bool:
@@ -366,6 +382,8 @@ def is_usda(filename: Union[Path, str]) -> bool:
         bool: True if USDA file
     """
 
+    raise RuntimeError("TODO")
+
 
 def is_usdc(filename: Union[Path, str]) -> bool:
     """Test if input filename is a USDC file
@@ -377,6 +395,7 @@ def is_usdc(filename: Union[Path, str]) -> bool:
         bool: True if USDC file
     """
 
+    raise RuntimeError("TODO")
 
 def load_usd(filename: Union[Path, str]) -> Stage:
     """Loads USDC/USDA/UDSZ from a file
