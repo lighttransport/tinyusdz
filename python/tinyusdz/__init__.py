@@ -19,6 +19,13 @@ from .compat_typing_extensions import Literal, TypeAlias
 from . import version
 from .prims import Prim
 
+try:
+    from . import ctinyusd
+except ImportError:
+    import warnings
+    warnings.warn(
+        "Failed to import native module `ctinyusd`(No corresponding dll/so exists?). Loading USDA/USDC/USDZ feature is disabled.")
+
 FILE_LIKE: TypeAlias = Union[str, os.PathLike, IO[str], IO[bytes]]
 
 try:
@@ -32,12 +39,6 @@ except ImportError:
         return cls
 
 
-try:
-    import ctinyusdz
-except ImportError:
-    import warnings
-    warnings.warn(
-        "Failed to import native module `ctinyusdz`(No corresponding dll/so exists?). Loading USDA/USDC/USDZ feature is disabled.")
 
 try:
     import numpy as np
@@ -49,10 +50,11 @@ try:
 except:
     pass
 
-def is_ctinyusdz_available():
+def is_ctinyusd_available():
     import importlib.util
 
-    if importlib.util.find_spec("ctinyusdz"):
+    # Seems '.' prefix required for relative module
+    if importlib.util.find_spec(".ctinyusd", package='tinyusdz'):
         return True
 
     return False

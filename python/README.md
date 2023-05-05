@@ -73,6 +73,20 @@ $ python setup.py build
 # Then copy `./_skbuild/<arch>-<version>/cmake-install/tinyusdz/ctinyusdz.*.so/dll to `<tinyusdz>/python` folder.
 ```
 
+### Re-generate ctinyusdz.py
+
+When TinyUSDZ C API has been updated, need to re-genrerate `<tinyusdz>/python/tinyusdz/ctinyusd.py` 
+using ctypesgen https://github.com/ctypesgen/ctypesgen .
+
+```
+# if you do not install ctypesgen
+$ python -m pip install ctypesgen
+
+
+$ cd <tinyusdz>/python
+$ sh gen-ctypes.sh 
+```
+
 ### Asan support
 
 If you built ctinyusdz with ASAN enabled, use `LD_PRELOAD` to load asan modules.
