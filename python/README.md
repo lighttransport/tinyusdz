@@ -69,6 +69,11 @@ $ python -m build .
 If you are working on TinyUSDZ Python module, Using `setup.py` recommended. 
 
 ```
+# install dependencies
+$ python -m pip install setuptools scikit-build cmake ninja
+```
+
+```
 $ python setup.py build
 # Then copy `./_skbuild/<arch>-<version>/cmake-install/tinyusdz/ctinyusdz.*.so/dll to `<tinyusdz>/python` folder.
 ```
