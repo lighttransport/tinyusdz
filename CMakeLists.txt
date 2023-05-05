@@ -1027,6 +1027,13 @@ if(TINYUSDZ_WITH_PYTHON)
 
   # TODO: Run ctypesgen?
 
+  #
+  # target for setup.py
+  # TODO: Use custom target and supply `cmake_install_target` in setup.py?
+  # https://scikit-build.readthedocs.io/en/latest/usage.html#scikit-build-options
+  #
+  install(TARGETS ${BUILD_TARGET_C} LIBRARY DESTINATION tinyusdz)
+
 
 endif()
 
