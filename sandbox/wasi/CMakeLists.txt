@@ -28,6 +28,8 @@ list(
   ../../src/io-util.cc
   ../../src/prim-types.cc
   ../../src/pprinter.cc
+  ../../src/path-util.cc
+  ../../src/str-util.cc
   ../../src/value-pprint.cc
   ../../src/value-types.cc
   ../../src/primvar.cc
