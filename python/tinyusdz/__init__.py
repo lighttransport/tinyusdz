@@ -399,30 +399,30 @@ def is_usdc(filename: Union[Path, str]) -> bool:
 
     raise RuntimeError("TODO")
 
-def load_usd(filename: Union[Path, str]) -> Stage:
-    """Loads USDC/USDA/UDSZ from a file
-
-    Args:
-        filename (Path or str): Filename
-
-    Returns:
-        Stage: Stage object
-    """
-
-    if isinstance(filename, str):
-        filename = Path(filename)
-
-    if not filename.exists():
-        raise FileNotFoundError("File {} not found.".format(filename))
-
-    if not filename.is_file():
-        raise FileNotFoundError("File {} is not a file".format(filename))
-
-    # TODO: Implement
-    stage = Stage()
-    stage.filename = filename
-
-    return stage
+#def load_usd(filename: Union[Path, str]) -> Stage:
+#    """Loads USDC/USDA/UDSZ from a file
+#
+#    Args:
+#        filename (Path or str): Filename
+#
+#    Returns:
+#        Stage: Stage object
+#    """
+#
+#    if isinstance(filename, str):
+#        filename = Path(filename)
+#
+#    if not filename.exists():
+#        raise FileNotFoundError("File {} not found.".format(filename))
+#
+#    if not filename.is_file():
+#        raise FileNotFoundError("File {} is not a file".format(filename))
+#
+#    # TODO: Implement
+#    stage = Stage()
+#    stage.filename = filename
+#
+#    return stage
 
 
 def load_usd_from_string(input_str: str) -> Stage:
@@ -505,7 +505,7 @@ def save(stage: Stage,
 @typechecked
 def load(file_like: Union[str, os.PathLike, IO[str], IO[bytes]],
          *,
-         format: Literal["auto", "usda", "usdc", "usdz"],
+         format: Literal["auto", "usda", "usdc", "usdz"] = "auto",
          encoding: str = None) -> Stage:
     """Load USD
 

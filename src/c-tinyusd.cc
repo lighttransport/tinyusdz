@@ -1692,6 +1692,108 @@ int c_tinyusd_load_usd_from_file(const char *filename, CTinyUSDStage *stage,
   return 1;
 }
 
+int c_tinyusd_load_usda_from_file(const char *filename, CTinyUSDStage *stage,
+                                 c_tinyusd_string_t *warn,
+                                 c_tinyusd_string_t *err) {
+  // tinyusdz::Stage *p = new tinyusdz::Stage();
+
+  if (!stage) {
+    if (err) {
+      c_tinyusd_string_replace(err, "`stage` argument is null.\n");
+    }
+    return 0;
+  }
+
+  std::string _warn;
+  std::string _err;
+
+  bool ret = tinyusdz::LoadUSDAFromFile(
+      filename, reinterpret_cast<tinyusdz::Stage *>(stage), &_warn,
+      &_err);
+
+  if (_warn.size() && warn) {
+    c_tinyusd_string_replace(warn, _warn.c_str());
+  }
+
+  if (!ret) {
+    if (err) {
+      c_tinyusd_string_replace(err, _err.c_str());
+    }
+
+    return 0;
+  }
+
+  return 1;
+}
+
+int c_tinyusd_load_usdc_from_file(const char *filename, CTinyUSDStage *stage,
+                                 c_tinyusd_string_t *warn,
+                                 c_tinyusd_string_t *err) {
+  // tinyusdz::Stage *p = new tinyusdz::Stage();
+
+  if (!stage) {
+    if (err) {
+      c_tinyusd_string_replace(err, "`stage` argument is null.\n");
+    }
+    return 0;
+  }
+
+  std::string _warn;
+  std::string _err;
+
+  bool ret = tinyusdz::LoadUSDCFromFile(
+      filename, reinterpret_cast<tinyusdz::Stage *>(stage), &_warn,
+      &_err);
+
+  if (_warn.size() && warn) {
+    c_tinyusd_string_replace(warn, _warn.c_str());
+  }
+
+  if (!ret) {
+    if (err) {
+      c_tinyusd_string_replace(err, _err.c_str());
+    }
+
+    return 0;
+  }
+
+  return 1;
+}
+
+int c_tinyusd_load_usdz_from_file(const char *filename, CTinyUSDStage *stage,
+                                 c_tinyusd_string_t *warn,
+                                 c_tinyusd_string_t *err) {
+  // tinyusdz::Stage *p = new tinyusdz::Stage();
+
+  if (!stage) {
+    if (err) {
+      c_tinyusd_string_replace(err, "`stage` argument is null.\n");
+    }
+    return 0;
+  }
+
+  std::string _warn;
+  std::string _err;
+
+  bool ret = tinyusdz::LoadUSDZFromFile(
+      filename, reinterpret_cast<tinyusdz::Stage *>(stage), &_warn,
+      &_err);
+
+  if (_warn.size() && warn) {
+    c_tinyusd_string_replace(warn, _warn.c_str());
+  }
+
+  if (!ret) {
+    if (err) {
+      c_tinyusd_string_replace(err, _err.c_str());
+    }
+
+    return 0;
+  }
+
+  return 1;
+}
+
 namespace {
 
 using namespace tinyusdz;
