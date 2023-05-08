@@ -4,16 +4,14 @@
 #
 # USD primitives
 
-from typing import List, Any
+from typing import List, Any, Dict
 
 # local modules
-from .compat_typing_extensions import Literal, TypeAlias
+from .compat_typing_extensions import Literal, TypeAlias, TypedDict
 
 try:
     from typeguard import typechecked
-    is_typegurad_available = True
 except ImportError:
-    is_typegurad_available = False
 
     # no-op
     def typechecked(cls):
@@ -45,7 +43,7 @@ class Prim:
         self._primChildren: List[Prim] = []
 
         # custom properties
-        self._props = {}
+        self._props: Dict = {}
 
     def specifier(self):
         return self._specifier
