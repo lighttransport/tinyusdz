@@ -9,7 +9,7 @@ import os
 import warnings
 from pathlib import Path
 
-from typing import Union, List, Any, IO
+from typing import Optional, Union, List, Any, IO
 from enum import Enum, auto
 
 #
@@ -39,7 +39,6 @@ except ImportError:
         return cls
 
 
-
 try:
     import numpy as np
 except:
@@ -50,6 +49,7 @@ try:
 except:
     pass
 
+
 def is_ctinyusd_available():
     import importlib.util
 
@@ -58,6 +58,7 @@ def is_ctinyusd_available():
         return True
 
     return False
+
 
 def is_typeguard_available():
     import importlib.util
@@ -157,24 +158,129 @@ class ValueBlock:
 
 
 """
-USD type in literal
+USD types in literal
 """
 
-# Literal is not available in 3.7
-USDTypes = Literal[
+USDType: TypeAlias = Literal[
+    "token",
+    "string",
+    "asset"
+    "dictionary",
+    "timecode",
+    "rel",  # Relationship
     "bool",
-    "int8",
-    "int16",
+    "uchar",
     "int",
-    "int32",
     "int64",
-    "uint8",
-    "uint16",
     "uint",
-    "uint32",
     "uint64",
-    "string"]
+    "float",
+    "float2",
+    "float3",
+    "float4",
+    "double",
+    "double2",
+    "double3",
+    "double4",
+    "half",
+    "half2",
+    "half3",
+    "half4",
+    "quath",
+    "quatf",
+    "quatd",
+    "normal3h",
+    "normal3f",
+    "normal3d",
+    "vector3h",
+    "vector3f",
+    "vector3d",
+    "vector4h",
+    "vector4f",
+    "vector4d",
+    "color3h",
+    "color3f",
+    "color3d",
+    "color4h",
+    "color4f",
+    "color4d",
+    "point3h",
+    "point3f",
+    "point3d",
+    "point3h",
+    "point3f",
+    "point3d",
+    "texCoord2h",
+    "texCoord2f",
+    "texCoord2d",
+    "texCoord3h",
+    "texCoord3f",
+    "texCoord3d",
+    "texCoord4h",
+    "texCoord4f",
+    "texCoord4d",
+    "matrix2f",
+    "matrix3f",
+    "matrix4f",
+    "matrix2d",
+    "matrix3d",
+    "matrix4d",
+    "frame4d",
+]
 SpecifierType: TypeAlias = Literal["def", "over", "class"]
+AxisType: TypeAlias = Literal["X", "Y", "Z"]
+
+# Builtin Prim type
+PrimType: TypeAlias = Literal[
+    "Model",  # Generic Prim
+    "Scope",
+    # Geom
+    "Xform",
+    "Mesh",
+    "BasisCurves",
+    "Sphere",
+    "Cube",
+    "Cylinder",
+    "Cone",
+    "Capsule",
+    "Points"
+    "GeomSubset",
+    "PointInstancer",
+    "Camera",
+    # Lux
+    "SphereLight",
+    "DomeLight",
+    "CylinderLight",
+    "DiskLight",
+    "RectLight",
+    "DistantLight",
+    "GeometryLight",
+    "PortalLight",
+    "PluginLight",
+    # Shader
+    "Shader",
+    "Material",
+]
+
+# UsdPreviewSurface types.
+# https://openusd.org/release/spec_usdpreviewsurface.html
+#
+# NOTE: defined in usdImaging in pxrUSD
+#
+ShaderNodeType: TypeAlias = Literal[
+    "ShaderNode",  # Generic shader node
+    "UsdPreviewSurface",
+    "UsdUVTexture",
+    "UsdPrimvarReader_float",
+    "UsdPrimvarReader_float2",
+    "UsdPrimvarReader_float3",
+    "UsdPrimvarReader_float4",
+    "UsdPrimvarReader_int",
+    "UsdPrimvarReader_normal",
+    "UsdPrimvarReader_vector",
+    "UsdPrimvarReader_point",
+    "UsdPrimvarReader_matrix"
+]
 
 
 """
@@ -182,12 +288,11 @@ numpy-like ndarray for Attribute data(e.g. points, normals, ...)
 """
 
 
+@typechecked
 class NDArray:
-    def __init__(self, dtype: str = "uint8"):
+    def __init__(self, dtype: USDType = "uint8"):
 
-        assert dtype in USDTypes
-
-        self.dtype: str = "uint8"
+        self.dtype: USDType = "uint8"
         self.dim: int = 1  # In USD, 1D or 2D only for array data
 
         self._data = None
@@ -322,7 +427,7 @@ class Stage:
         self._stage = None
         self.filename = ""
 
-        self.upAxis: Union[Literal["X", "Y", "Z"], None] = None
+        self.upAxis: Optional[AxisType] = None
         self.metersPerUnit: Union[float, None] = None
         self.framesPerSecond: Union[float, None] = None
         self.defaultPrim: Union[str, None] = None
@@ -399,7 +504,7 @@ def is_usdc(filename: Union[Path, str]) -> bool:
 
     raise RuntimeError("TODO")
 
-#def load_usd(filename: Union[Path, str]) -> Stage:
+# def load_usd(filename: Union[Path, str]) -> Stage:
 #    """Loads USDC/USDA/UDSZ from a file
 #
 #    Args:
