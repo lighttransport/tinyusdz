@@ -143,6 +143,7 @@ using UsdPrimvarReader_float2 = UsdPrimvarReader<value::float2>;
 using UsdPrimvarReader_float3 = UsdPrimvarReader<value::float3>;
 using UsdPrimvarReader_float4 = UsdPrimvarReader<value::float4>;
 using UsdPrimvarReader_int = UsdPrimvarReader<int>;
+using UsdPrimvarReader_string = UsdPrimvarReader<std::string>;
 
 // The underlying type is float precision for `normal`, `vector` and `point`
 using UsdPrimvarReader_normal = UsdPrimvarReader<value::normal3f>;
@@ -335,6 +336,8 @@ DEFINE_TYPE_TRAIT(UsdPrimvarReader_float4, "UsdPrimvarReader_float4",
                   TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT4, 1);
 DEFINE_TYPE_TRAIT(UsdPrimvarReader_int, "UsdPrimvarReader_int",
                   TYPE_ID_IMAGING_PRIMVAR_READER_INT, 1);
+DEFINE_TYPE_TRAIT(UsdPrimvarReader_string, "UsdPrimvarReader_string",
+                  TYPE_ID_IMAGING_PRIMVAR_READER_STRING, 1);
 DEFINE_TYPE_TRAIT(UsdPrimvarReader_vector, "UsdPrimvarReader_vector",
                   TYPE_ID_IMAGING_PRIMVAR_READER_VECTOR, 1);
 DEFINE_TYPE_TRAIT(UsdPrimvarReader_normal, "UsdPrimvarReader_normal",
