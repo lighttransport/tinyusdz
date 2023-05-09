@@ -27,7 +27,10 @@ constexpr auto kUsdPrimvarReader_float2 = "UsdPrimvarReader_float2";
 constexpr auto kUsdPrimvarReader_float3 = "UsdPrimvarReader_float3";
 constexpr auto kUsdPrimvarReader_float4 = "UsdPrimvarReader_float4";
 constexpr auto kUsdPrimvarReader_string = "UsdPrimvarReader_string";
-constexpr auto kUsdPrimvarReader_matrix4d = "UsdPrimvarReader_matrix4d";
+constexpr auto kUsdPrimvarReader_normal = "UsdPrimvarReader_normal";
+constexpr auto kUsdPrimvarReader_point = "UsdPrimvarReader_point";
+constexpr auto kUsdPrimvarReader_vector = "UsdPrimvarReader_vector";
+constexpr auto kUsdPrimvarReader_matrix = "UsdPrimvarReader_matrix";
 
 // for bindMaterialAs
 constexpr auto kWeaderThanDescendants = "weakerThanDescendants";
@@ -141,10 +144,19 @@ using UsdPrimvarReader_float3 = UsdPrimvarReader<value::float3>;
 using UsdPrimvarReader_float4 = UsdPrimvarReader<value::float4>;
 using UsdPrimvarReader_int = UsdPrimvarReader<int>;
 
-using UsdPrimvarReaderType =
-    tinyusdz::variant<UsdPrimvarReader_float, UsdPrimvarReader_float2,
-                      UsdPrimvarReader_float3, UsdPrimvarReader_float4,
-                      UsdPrimvarReader_int>;
+// The underlying type is float precision for `normal`, `vector` and `point`
+using UsdPrimvarReader_normal = UsdPrimvarReader<value::normal3f>;
+using UsdPrimvarReader_vector = UsdPrimvarReader<value::vector3f>;
+using UsdPrimvarReader_point  = UsdPrimvarReader<value::point3f>;
+
+// The underlying type is matrix4d
+using UsdPrimvarReader_matrix  = UsdPrimvarReader<value::matrix4d>;
+
+// TODO: Remove
+//using UsdPrimvarReaderType =
+//    tinyusdz::variant<UsdPrimvarReader_float, UsdPrimvarReader_float2,
+//                      UsdPrimvarReader_float3, UsdPrimvarReader_float4,
+//                      UsdPrimvarReader_int>;
 
 
 struct UsdUVTexture : ShaderNode {
@@ -323,6 +335,14 @@ DEFINE_TYPE_TRAIT(UsdPrimvarReader_float4, "UsdPrimvarReader_float4",
                   TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT4, 1);
 DEFINE_TYPE_TRAIT(UsdPrimvarReader_int, "UsdPrimvarReader_int",
                   TYPE_ID_IMAGING_PRIMVAR_READER_INT, 1);
+DEFINE_TYPE_TRAIT(UsdPrimvarReader_vector, "UsdPrimvarReader_vector",
+                  TYPE_ID_IMAGING_PRIMVAR_READER_VECTOR, 1);
+DEFINE_TYPE_TRAIT(UsdPrimvarReader_normal, "UsdPrimvarReader_normal",
+                  TYPE_ID_IMAGING_PRIMVAR_READER_NORMAL, 1);
+DEFINE_TYPE_TRAIT(UsdPrimvarReader_point, "UsdPrimvarReader_point",
+                  TYPE_ID_IMAGING_PRIMVAR_READER_POINT, 1);
+DEFINE_TYPE_TRAIT(UsdPrimvarReader_matrix, "UsdPrimvarReader_matrix",
+                  TYPE_ID_IMAGING_PRIMVAR_READER_MATRIX, 1);
 DEFINE_TYPE_TRAIT(UsdTransform2d, "UsdTransform2d",
                   TYPE_ID_IMAGING_TRANSFORM_2D, 1);
 
