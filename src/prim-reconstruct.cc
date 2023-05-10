@@ -3215,6 +3215,131 @@ bool ReconstructShader<UsdPrimvarReader_float4>(
 }
 
 template <>
+bool ReconstructShader<UsdPrimvarReader_string>(
+    const PropertyMap &properties,
+    const ReferenceList &references,
+    UsdPrimvarReader_string *preader,
+    std::string *warn,
+    std::string *err)
+{
+  (void)references;
+  std::set<std::string> table;
+  table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
+
+  for (auto &prop : properties) {
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_string,
+                   preader->fallback)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_string,
+                   preader->varname)  // `token`
+    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
+                                  UsdPrimvarReader_string, preader->result)
+    ADD_PROPERTY(table, prop, UsdPrimvarReader_string, preader->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+  return true;
+}
+
+template <>
+bool ReconstructShader<UsdPrimvarReader_vector>(
+    const PropertyMap &properties,
+    const ReferenceList &references,
+    UsdPrimvarReader_vector *preader,
+    std::string *warn,
+    std::string *err)
+{
+  (void)references;
+  std::set<std::string> table;
+  table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
+
+  for (auto &prop : properties) {
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_vector,
+                   preader->fallback)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_vector,
+                   preader->varname)  // `token`
+    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
+                                  UsdPrimvarReader_vector, preader->result)
+    ADD_PROPERTY(table, prop, UsdPrimvarReader_vector, preader->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+  return true;
+}
+
+template <>
+bool ReconstructShader<UsdPrimvarReader_normal>(
+    const PropertyMap &properties,
+    const ReferenceList &references,
+    UsdPrimvarReader_normal *preader,
+    std::string *warn,
+    std::string *err)
+{
+  (void)references;
+  std::set<std::string> table;
+  table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
+
+  for (auto &prop : properties) {
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_normal,
+                   preader->fallback)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_normal,
+                   preader->varname)  // `token`
+    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
+                                  UsdPrimvarReader_normal, preader->result)
+    ADD_PROPERTY(table, prop, UsdPrimvarReader_normal, preader->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+  return true;
+}
+
+template <>
+bool ReconstructShader<UsdPrimvarReader_point>(
+    const PropertyMap &properties,
+    const ReferenceList &references,
+    UsdPrimvarReader_point *preader,
+    std::string *warn,
+    std::string *err)
+{
+  (void)references;
+  std::set<std::string> table;
+  table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
+
+  for (auto &prop : properties) {
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_point,
+                   preader->fallback)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_point,
+                   preader->varname)  // `token`
+    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
+                                  UsdPrimvarReader_point, preader->result)
+    ADD_PROPERTY(table, prop, UsdPrimvarReader_point, preader->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+  return true;
+}
+
+template <>
+bool ReconstructShader<UsdPrimvarReader_matrix>(
+    const PropertyMap &properties,
+    const ReferenceList &references,
+    UsdPrimvarReader_matrix *preader,
+    std::string *warn,
+    std::string *err)
+{
+  (void)references;
+  std::set<std::string> table;
+  table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
+
+  for (auto &prop : properties) {
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_matrix,
+                   preader->fallback)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_matrix,
+                   preader->varname)  // `token`
+    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
+                                  UsdPrimvarReader_matrix, preader->result)
+    ADD_PROPERTY(table, prop, UsdPrimvarReader_matrix, preader->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+  return true;
+}
+
+template <>
 bool ReconstructShader<UsdTransform2d>(
     const PropertyMap &properties,
     const ReferenceList &references,
@@ -3345,6 +3470,42 @@ bool ReconstructPrim<Shader>(
                             << kUsdPrimvarReader_float4);
     }
     shader->info_id = kUsdPrimvarReader_float4;
+    shader->value = preader;
+  } else if (shader_type.compare(kUsdPrimvarReader_string) == 0) {
+    UsdPrimvarReader_string preader;
+    if (!ReconstructShader<UsdPrimvarReader_string>(properties, references,
+                                                    &preader, warn, err)) {
+      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
+                            << kUsdPrimvarReader_string);
+    }
+    shader->info_id = kUsdPrimvarReader_string;
+    shader->value = preader;
+  } else if (shader_type.compare(kUsdPrimvarReader_vector) == 0) {
+    UsdPrimvarReader_vector preader;
+    if (!ReconstructShader<UsdPrimvarReader_vector>(properties, references,
+                                                    &preader, warn, err)) {
+      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
+                            << kUsdPrimvarReader_vector);
+    }
+    shader->info_id = kUsdPrimvarReader_vector;
+    shader->value = preader;
+  } else if (shader_type.compare(kUsdPrimvarReader_normal) == 0) {
+    UsdPrimvarReader_normal preader;
+    if (!ReconstructShader<UsdPrimvarReader_normal>(properties, references,
+                                                    &preader, warn, err)) {
+      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
+                            << kUsdPrimvarReader_normal);
+    }
+    shader->info_id = kUsdPrimvarReader_normal;
+    shader->value = preader;
+  } else if (shader_type.compare(kUsdPrimvarReader_point) == 0) {
+    UsdPrimvarReader_point preader;
+    if (!ReconstructShader<UsdPrimvarReader_point>(properties, references,
+                                                    &preader, warn, err)) {
+      PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
+                            << kUsdPrimvarReader_point);
+    }
+    shader->info_id = kUsdPrimvarReader_point;
     shader->value = preader;
   } else if (shader_type.compare(kUsdTransform2d) == 0) {
     UsdTransform2d transform;
