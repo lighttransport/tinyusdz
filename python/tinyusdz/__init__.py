@@ -260,6 +260,11 @@ PrimType: TypeAlias = Literal[
     # Shader
     "Shader",
     "Material",
+    # Skel
+    "SkelRoot",
+    "Skeleton",
+    "SkelAnimation",
+    "BlendShape"
 ]
 
 # UsdPreviewSurface types.
