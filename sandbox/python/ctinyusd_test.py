@@ -143,7 +143,7 @@ class Value(object):
                     #self._handle = ctinyusd.c_tinyusd_value_new_array_float(value.size, value.ctypes.data_as(ctypes.POINTER(ctypes.c_float)))
                     self._handle = ctinyusd.c_tinyusd_value_new_array_float(value.size, value.ctypes.data_as(c_type))
                 else:
-                    raise RuntimeException("2D or multi dim array is not supported: ndim = {}".format(value.ndim)) 
+                    raise RuntimeError("2D or multi dim array is not supported: ndim = {}".format(value.ndim)) 
                     # [0] = scalr, [1] = array
             else:
                 raise RuntimeError("Unsupported dtype {}".format(value.dtype))
@@ -319,7 +319,7 @@ class PrimChildIterator:
 
             child_prim = Prim(from_handle=child_ptr)
 
-        raise StopIterator
+        raise StopIteration
 
 xform = Xform("xform0")
 
