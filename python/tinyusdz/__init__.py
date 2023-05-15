@@ -421,9 +421,25 @@ class UsdPreviewSurface(Shader):
     def __init__(self):
         super().__init__(self)
 
+        # inputs
         self.diffuseColor = [0.18, 0.18, 0.18]
-        # TODO: More attrs
-
+        self.emissiveColor = [0.0, 0.0, 0.0]
+        self.useSpecularWorkflow: int = 0
+        self.specularColor = [0.0, 0.0, 0.0] # useSpecularWorkflow=1
+        self.metallic: float = 0.0 # useSpecularWorkflow=0
+        self.roughness: float = 0.5
+        self.clearcoat: float = 0.0
+        self.clearcoatRoughness: float = 0.01
+        self.opacity: float = 1.0
+        self.opacityThreshold: float = 0.0
+        self.ior: float = 1.5
+        self.normal = [0.0, 0.0, 1.0]
+        self.displacement: float = 0.0
+        self.occlusion: float = 1.0
+        
+        # outputs
+        self.outputsSurface: Optional[str] = None
+        self.outputsDisplacement: Optional[str] = None
 
 @typechecked
 class Stage:
