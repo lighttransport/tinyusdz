@@ -566,6 +566,8 @@ include src/tydra/scene-access.cc
 include src/tydra/scene-access.hh
 include src/tydra/shader-network.cc
 include src/tydra/shader-network.hh
+include src/tydra/facial.cc
+include src/tydra/facial.hh
 include src/usd-to-json.cc
 include src/usd-to-json.hh
 include src/usdGeom.cc
