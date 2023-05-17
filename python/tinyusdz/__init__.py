@@ -360,19 +360,6 @@ class Relationship(Property):
     def __init__(self):
         super().__init__()
 
-
-class Model(Prim):
-    def __init__(self, name: str, specifier: str = "def", **kwargs):
-        super().__init__(name, specifier)
-        pass
-
-
-class Scope(Prim):
-    def __init__(self, name: str, specifier: str = "def", **kwargs):
-        super().__init__(self, name, specifier)
-        pass
-
-
 @typechecked
 class XformOp:
     def __init__(self,
@@ -387,59 +374,6 @@ class XformOp:
 
         self._value = value
 
-
-@typechecked
-class Xform(Prim):
-    def __init__(self, name: str, specifier: str = "def"):
-        super().__init__(self, specifier)
-
-        # TODO: Typecheck
-        self.xformOps = []
-
-
-@typechecked
-class GeomMesh(Prim):
-    def __init__(self, name: str, specifier: str = "def"):
-        super().__init__()
-        pass
-
-
-@typechecked
-class Material(Prim):
-    def __init__(self, name: str, specifier: str = "def"):
-        pass
-
-
-@typechecked
-class Shader(Prim):
-    def __init__(self):
-        pass
-
-
-@typechecked
-class UsdPreviewSurface(Shader):
-    def __init__(self):
-        super().__init__(self)
-
-        # inputs
-        self.diffuseColor = [0.18, 0.18, 0.18]
-        self.emissiveColor = [0.0, 0.0, 0.0]
-        self.useSpecularWorkflow: int = 0
-        self.specularColor = [0.0, 0.0, 0.0] # useSpecularWorkflow=1
-        self.metallic: float = 0.0 # useSpecularWorkflow=0
-        self.roughness: float = 0.5
-        self.clearcoat: float = 0.0
-        self.clearcoatRoughness: float = 0.01
-        self.opacity: float = 1.0
-        self.opacityThreshold: float = 0.0
-        self.ior: float = 1.5
-        self.normal = [0.0, 0.0, 1.0]
-        self.displacement: float = 0.0
-        self.occlusion: float = 1.0
-        
-        # outputs
-        self.outputsSurface: Optional[str] = None
-        self.outputsDisplacement: Optional[str] = None
 
 @typechecked
 class Stage:
