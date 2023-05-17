@@ -1,3 +1,5 @@
+project(tinyusz_android)
+
 cmake_minimum_required(VERSION 3.4.1)
 
 option(TINYUSDZ_USE_USDOBJ "Build with built-in .obj support" On)
