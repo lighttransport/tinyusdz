@@ -4,6 +4,7 @@ option(TINYUSDZ_USE_USDOBJ "Build with built-in .obj support" On)
 
 set(TINYUSDZ_SOURCES
         ${PROJECT_SOURCE_DIR}/../../../../../src/tinyusdz.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/asset-resolution.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/prim-types.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/ascii-parser.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/ascii-parser-basetype.cc
@@ -28,9 +29,15 @@ set(TINYUSDZ_SOURCES
         ${PROJECT_SOURCE_DIR}/../../../../../src/usdGeom.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/xform.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/stage.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/str-util.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/path-util.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/image-util.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/image-writer.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/linear-algebra.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/tydra/scene-access.cc
         ${PROJECT_SOURCE_DIR}/../../../../../src/tydra/render-data.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/tydra/prim-apply.cc
+        ${PROJECT_SOURCE_DIR}/../../../../../src/tydra/shader-network.cc
         )
 
 if (TINYUSDZ_USE_USDOBJ)

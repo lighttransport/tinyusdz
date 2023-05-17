@@ -513,7 +513,7 @@ bool FileExists(const std::string &filepath, void *userdata) {
   bool ret{false};
 #ifdef TINYUSDZ_ANDROID_LOAD_FROM_ASSETS
   if (asset_manager) {
-    AAsset *asset = AAssetManager_open(asset_manager, abs_filename.c_str(),
+    AAsset *asset = AAssetManager_open(asset_manager, filepath.c_str(),
                                        AASSET_MODE_STREAMING);
     if (!asset) {
       return false;
