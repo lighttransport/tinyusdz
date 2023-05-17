@@ -28,6 +28,7 @@ android {
             //version "3.18.1"
         }
     }
+    namespace 'com.example.hellotinyusdz'
 }
 
 dependencies {
