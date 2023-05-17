@@ -4,9 +4,9 @@ arm64-v8a arch only.
 
 ## Requirements
 
-* Android Studio 3.x or later
+* Android Studio 2022 Framingo or later
   * CMake(You can install cmake through Android Studio)
-  * NDK r21 or later
+  * NDK r25 or later
 
 
 ## How to build
