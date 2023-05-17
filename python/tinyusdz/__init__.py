@@ -360,19 +360,6 @@ class Relationship(Property):
     def __init__(self):
         super().__init__()
 
-
-class Model(Prim):
-    def __init__(self, name: str, specifier: str = "def", **kwargs):
-        super().__init__(name, specifier)
-        pass
-
-
-class Scope(Prim):
-    def __init__(self, name: str, specifier: str = "def", **kwargs):
-        super().__init__(self, name, specifier)
-        pass
-
-
 @typechecked
 class XformOp:
     def __init__(self,
@@ -386,43 +373,6 @@ class XformOp:
         self.op_type = op_type
 
         self._value = value
-
-
-@typechecked
-class Xform(Prim):
-    def __init__(self, name: str, specifier: str = "def"):
-        super().__init__(self, specifier)
-
-        # TODO: Typecheck
-        self.xformOps = []
-
-
-@typechecked
-class GeomMesh(Prim):
-    def __init__(self, name: str, specifier: str = "def"):
-        super().__init__()
-        pass
-
-
-@typechecked
-class Material(Prim):
-    def __init__(self, name: str, specifier: str = "def"):
-        pass
-
-
-@typechecked
-class Shader(Prim):
-    def __init__(self):
-        pass
-
-
-@typechecked
-class UsdPreviewSurface(Shader):
-    def __init__(self):
-        super().__init__(self)
-
-        self.diffuseColor = [0.18, 0.18, 0.18]
-        # TODO: More attrs
 
 
 @typechecked
