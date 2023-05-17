@@ -45,6 +45,14 @@ class Prim:
         # custom properties
         self._props: Dict = {}
 
+        # metadatum
+        self._metas: Dict = {}
+
+        # TODO
+        self._references = None
+        self._payload = None
+        self._variantSet: Dict = {}
+
     def specifier(self):
         return self._specifier
 
@@ -53,3 +61,94 @@ class Prim:
 
     def set_prop(self, key: str, value: Any):
         self._props[key] = value
+
+@typechecked
+class Model(Prim):
+    def __init__(self, name: str, specifier: str = "def", **kwargs):
+        super().__init__(name, specifier)
+        pass
+
+
+@typechecked
+class Scope(Prim):
+    def __init__(self, name: str, specifier: str = "def", **kwargs):
+        super().__init__(self, name, specifier)
+        pass
+
+
+
+
+
+@typechecked
+class Xform(Prim):
+    def __init__(self, name: str, specifier: str = "def"):
+        super().__init__(self, specifier)
+
+        # TODO: Typecheck
+        self.xformOps = []
+
+
+@typechecked
+class GeomMesh(Prim):
+    def __init__(self, name: str, specifier: str = "def"):
+        super().__init__()
+        pass
+
+
+@typechecked
+class Material(Prim):
+    def __init__(self, name: str, specifier: str = "def"):
+        pass
+
+
+@typechecked
+class Shader(Prim):
+    def __init__(self):
+        pass
+
+
+
+@typechecked
+class SkelRoot(Prim):
+    def __init__(self, name: str, specifier: str = "def", **kwargs):
+        super().__init__(self, name, specifier)
+        # TODO
+        pass
+
+
+@typechecked
+class SkelAnimtion(Prim):
+    def __init__(self, name: str, specifier: str = "def", **kwargs):
+        super().__init__(self, name, specifier)
+        # TODO
+        pass
+
+
+@typechecked
+class Skeleton(Prim):
+    def __init__(self, name: str, specifier: str = "def", **kwargs):
+        super().__init__(self, name, specifier)
+        # TODO
+        pass
+
+
+@typechecked
+class BlendShape(Prim):
+    def __init__(self, name: str, specifier: str = "def", **kwargs):
+        super().__init__(self, name, specifier)
+
+        self.offsets = None
+        self.normalOffsets = None
+        self.pointIndices = None
+        # TODO
+        pass
+
+@typechecked
+class UsdPreviewSurface(Shader):
+    def __init__(self):
+        super().__init__(self)
+
+        self.diffuseColor = [0.18, 0.18, 0.18]
+        # TODO: More attrs
+
+
