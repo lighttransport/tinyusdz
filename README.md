@@ -114,10 +114,12 @@ TinyUSDZ does not support Reality Composer file format(`.reality`) since it uses
 
 TinyUSDZ focuses on loading/writing USDA/USDC/USDZ functionalities.
 Example viewer is just for demo purpose.
-Currently TinyUSDZ project is run as personal project by `syoyo` and `syoyo` does not provide commercial support as an individual.
+`syoyo` does not provide commercial support as an individual. 
 
 If you need commercial support, eco-system development(e.g. plug-ins, DCC tools on top of TinyUSDZ) or production-grade USDZ model viewer(e.g. embed TinyUSDZ to your AR app, 3D NFT Android mobile viewer capable of displaying (encrypted) USDZ model), please contact Light Transport Entertainment, Inc. : https://goo.gl/forms/1p6uGcOKWGpXPHkA2 
 
+We have a plan to manage TinyUSDZ project under Light Transport Entertainment Inc. 
+(By relicensing to Apatch 2.0)
 
 ## Projects using TinyUSDZ
 
