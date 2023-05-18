@@ -125,6 +125,13 @@ executable('fuzz_dr_wav_decoding',
   cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
   link_args : '-fsanitize=address,fuzzer' )
 
+executable('fuzz_wuffs_jpeg_decoding',
+  'wuffs_jpeg_decoding_fuzzmain.cc',
+  install: true,
+  include_directories : incdirs,
+  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  link_args : '-fsanitize=address,fuzzer' )
+
 executable('fuzz_alac_decoding',
   'alac_decoding_fuzzmain.cc',
   '../../src/external/alac/codec/EndianPortable.c',
