@@ -2,11 +2,11 @@
 //
 // - OpenEXR(through TinyEXR). 16bit and 32bit
 // - TIFF/DNG(through TinyDNG). 8bit, 16bit and 32bit
-// - PNG, Jpeg, bmp, tga, ...(through SBI image). 8bit and 16bit(PNG)
+// - PNG(8bit, 16bit), Jpeg, bmp, tga, ...(through stb_image or wuffs). 
 //
 // TODO:
 //
-// - [ ] Use fpng for 8bit PNG
+// - [ ] Use fpng for 8bit PNG when `stb_image` is used
 // - [ ] 10bit, 12bit and 14bit DNG image
 // - [ ] Support LoD tile, multi-channel for TIFF image
 //
@@ -14,8 +14,27 @@
 #include "external/tinyexr.h"
 #endif
 
+#if defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
+
+#ifndef TINYUSDZ_NO_WUFFS_IMPLEMENTATION
+#define WUFFS_IMPLEMENTATION
+
+#define WUFFS_CONFIG__MODULES
+#define WUFFS_CONFIG__MODULE__BASE
+#define WUFFS_CONFIG__MODULE__BMP
+//#define WUFFS_CONFIG__MODULE__GIF
+#define WUFFS_CONFIG__MODULE__PNG
+#define WUFFS_CONFIG__MODULE__JPEG
+//#define WUFFS_CONFIG__MODULE__WBMP
+#endif
+
+#else
+
+// stb_image
 #ifndef TINYUSDZ_NO_STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
+#endif
+
 #endif
 
 #if defined(__clang__)
@@ -23,9 +42,17 @@
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
-#include "external/fpng.h"
+#if defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
 
+#include "external/wuffs-unsupported-snapshot.c"
+
+#else
+// fpng, stb_image
+
+#include "external/fpng.h"
 #include "external/stb_image.h"
+
+#endif
 
 #if defined(TINYUSDZ_WITH_TIFF)
 #ifndef TINYUSDZ_NO_TINY_DNG_LOADER_IMPLEMENTATION
@@ -61,6 +88,32 @@ namespace image {
 
 namespace {
 
+#if defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
+
+bool DecodeImageWUFF(const uint8_t *bytes, const size_t size,
+                    const std::string &uri, Image *image, std::string *warn,
+                    std::string *err) {
+
+  if (err) {
+    (*err) = "TODO: WUFF image loader.\n";
+  }
+
+  return false;
+
+}
+
+bool GetImageInfoWUFF(const uint8_t *bytes, const size_t size,
+                    const std::string &uri, uint32_t *width, uint32_t *height, uint32_t *channels, std::string *warn,
+                    std::string *err) {
+  if (err) {
+    (*err) = "TODO: WUFF image loader.\n";
+  }
+
+  return false;
+}
+
+
+#else
 // Decode image(png, jpg, ...) using STB
 // 16bit PNG is supported.
 bool DecodeImageSTB(const uint8_t *bytes, const size_t size,
@@ -157,6 +210,7 @@ bool GetImageInfoSTB(const uint8_t *bytes, const size_t size,
 
   return false;
 }
+#endif
 
 #if defined(TINYUSDZ_WITH_EXR)
 
@@ -308,7 +362,11 @@ nonstd::expected<image::ImageResult, std::string> LoadImageFromMemory(
   }
 #endif
 
+#if defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
+  bool ok = DecodeImageWUFF(addr, sz, uri, &ret.image, &ret.warning, &err);
+#else
   bool ok = DecodeImageSTB(addr, sz, uri, &ret.image, &ret.warning, &err);
+#endif
   if (!ok) {
     return nonstd::make_unexpected(err);
   }
@@ -336,7 +394,11 @@ nonstd::expected<image::ImageInfoResult, std::string> GetImageInfoFromMemory(
   }
 #endif
 
+#if defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
+  bool ok = GetImageInfoWUFF(addr, sz, uri, &ret.width, &ret.height, &ret.channels, &ret.warning, &err);
+#else
   bool ok = GetImageInfoSTB(addr, sz, uri, &ret.width, &ret.height, &ret.channels, &ret.warning, &err);
+#endif
   if (!ok) {
     return nonstd::make_unexpected(err);
   }
