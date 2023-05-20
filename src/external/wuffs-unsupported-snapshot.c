@@ -38470,13 +38470,22 @@ wuffs_jpeg__decoder__do_decode_frame(
           }
           goto label__0__break;
         } else if (v_marker == 219) {
-          status = wuffs_base__make_status(wuffs_jpeg__error__unsupported_dqt_after_sof_markers);
-          goto exit;
-        } else if (v_marker == 221) {
           if (a_src) {
             a_src->meta.ri = ((size_t)(iop_a_src - a_src->data.ptr));
           }
           WUFFS_BASE__COROUTINE_SUSPENSION_POINT(8);
+          status = wuffs_jpeg__decoder__decode_dqt(self, a_src);
+          if (a_src) {
+            iop_a_src = a_src->data.ptr + a_src->meta.ri;
+          }
+          if (status.repr) {
+            goto suspend;
+          }
+        } else if (v_marker == 221) {
+          if (a_src) {
+            a_src->meta.ri = ((size_t)(iop_a_src - a_src->data.ptr));
+          }
+          WUFFS_BASE__COROUTINE_SUSPENSION_POINT(9);
           status = wuffs_jpeg__decoder__decode_dri(self, a_src);
           if (a_src) {
             iop_a_src = a_src->data.ptr + a_src->meta.ri;
@@ -38498,7 +38507,7 @@ wuffs_jpeg__decoder__do_decode_frame(
         }
       }
       self->private_data.s_do_decode_frame[0].scratch = self->private_impl.f_payload_length;
-      WUFFS_BASE__COROUTINE_SUSPENSION_POINT(9);
+      WUFFS_BASE__COROUTINE_SUSPENSION_POINT(10);
       if (self->private_data.s_do_decode_frame[0].scratch > ((uint64_t)(io2_a_src - iop_a_src))) {
         self->private_data.s_do_decode_frame[0].scratch -= ((uint64_t)(io2_a_src - iop_a_src));
         iop_a_src = io2_a_src;
