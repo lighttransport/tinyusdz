@@ -165,12 +165,28 @@ option(TINYUSDZ_WITH_MODULE_USDC_WRITER "Build with USDC writer feature" ON)
 
 # Set ON if you use stb_image implementation outside of TinyUSDZ library to avoid multiple symbol def error.
 option(TINYUSDZ_NO_STB_IMAGE_IMPLEMENTATION
-       "Build with STB image implementation" OFF)
+       "Do not define STB_IMAGE_IMPLEMENTATION" OFF)
 
 # Set ON if you use stb_image_write implementation outside of TinyUSDZ library in your app to avoid multiple symbol def error.
 option(TINYUSDZ_NO_STB_IMAGE_WRITE_IMPLEMENTATION
-       "Build with STB image_write implementation" OFF)
+       "Do not define STB_IMAGE_WRITGE_IMPLEMENTATION" OFF)
 # ----------
+
+# -- Wuffs --
+
+#
+# Use wuffs to decode jpeg/png/bmp instead of using stb_image.
+# (wuffs is well(I guess) fuzz tested image decoder, so has better security than stb_image)
+#
+option(TINYUSDZ_USE_WUFFS_IMAGE_LOADER
+       "Use wuffs to load jpg/png/bmp images" OFF)
+
+# Set ON if you use wuffs implementation outside of TinyUSDZ library in your app to avoid multiple symbol def error.
+option(TINYUSDZ_NO_WUFFS_IMPLEMENTATION
+       "Do not define WUFFS_IMPLEMENTATION" OFF)
+# -----------
+
+#
 
 # -- TIFF --
 option(TINYUSDZ_WITH_TIFF
@@ -371,6 +387,7 @@ endif()
 
 set(TINYUSDZ_C_API_SOURCES ${PROJECT_SOURCE_DIR}/src/c-tinyusd.cc)
 
+# TODO: Make fpng optional
 set(TINYUSDZ_DEP_SOURCES
     ${PROJECT_SOURCE_DIR}/src/integerCoding.cpp
     ${PROJECT_SOURCE_DIR}/src/lz4-compression.cc
