@@ -40,7 +40,10 @@ class USDAReader {
   ///
   /// Base filesystem directory to search asset files.
   ///
-  void SetBaseDir(const std::string &base_dir);
+  void set_base_dir(const std::string &base_dir); 
+  void SetBaseDir(const std::string &base_dir) { // Deprecared
+    set_base_dir(base_dir);
+  }
 
   ///
   /// Set reader option
@@ -55,51 +58,61 @@ class USDAReader {
   ///
   /// Check if header data is USDA
   ///
-  bool CheckHeader();
+  bool check_header();
+  bool CheckHeader() { // Deprecated
+    return check_header();
+  }
 
   ///
   /// Reader entry point
   ///
-  bool Read(LoadState state = LoadState::Toplevel);
-
-#if 0
-  ///
-  ///
-  ///
-  std::string GetDefaultPrimName() const;
+  bool read(uint32_t load_state = static_cast<uint32_t>(LoadState::Toplevel));
+  bool Read(LoadState state = LoadState::Toplevel) { // Deprecated
+    uint32_t ustate = static_cast<uint32_t>(state);
+    return read(ustate);
+  }
 
   ///
-  /// Get parsed toplevel "def" nodes(GPrim)
+  /// Get error message(when reading USDA failed)
   ///
-  std::vector<GPrim> GetGPrims();
-#endif
+  std::string get_error();
+  std::string GetError() { // Deprecated
+    return get_error();
+  }
 
   ///
-  /// Get error message(when `Parse` failed)
+  /// Get warning message.
   ///
-  std::string GetError();
-
-  ///
-  /// Get warning message(warnings in `Parse`)
-  ///
-  std::string GetWarning();
+  std::string get_warning();
+  std::string GetWarning() { // Deprecated
+    return get_warning();
+  }
 
   ///
   /// Get read USD scene data as Layer
-  /// Must be called after `Read`
+  /// Must be called after `read`
   ///
-  bool GetAsLayer(Layer *layer);
+  bool get_as_layer(Layer *layer);
+  bool GetAsLayer(Layer *layer) { // Deprecated
+    return get_as_layer(layer);
+  }
 
   ///
   /// Reconstruct Stage from loaded USD scene data.
   /// Must be called after `Read`
   ///
-  bool ReconstructStage();
+  bool reconstruct_stage();
+  bool ReconstructStage() { // Deprecated
+    return reconstruct_stage();
+  }
 
   ///
   /// Get as stage(scene graph). Must call `ReconstructStage` beforehand.
   ///
-  const Stage& GetStage() const;
+  const Stage& get_stage() const;
+  const Stage& GetStage() const { // Deprecated
+    return get_stage();
+  }
 
  private:
 #if defined(TINYUSDZ_DISABLE_MODULE_USDA_READER)

@@ -9,6 +9,7 @@
 int main(int argc, char **argv) {
   if (argc < 2) {
     std::cout << "Need input.usda (--flatten)\n";
+    std::cout << "  --flatten: Similar to --flatten in usdview from pxrUSD.\n";
     exit(-1);
   }
 
@@ -50,15 +51,16 @@ int main(int argc, char **argv) {
 #endif
   reader.SetBaseDir(base_dir);
 
-  tinyusdz::LoadState state = tinyusdz::LoadState::Toplevel;
+  uint32_t load_states = static_cast<uint32_t>(tinyusdz::LoadState::Toplevel);
   if (do_compose) {
-    // FIXME
-    state = tinyusdz::LoadState::Sublayer;
+    load_states = static_cast<uint32_t>(tinyusdz::LoadState::Sublayer) | 
+      static_cast<uint32_t>(tinyusdz::LoadState::Payload) | static_cast<uint32_t>(tinyusdz::LoadState::Reference);
     std::cout << "Enable composition.\n"; 
   }
 
   {
-    bool ret = reader.Read(state);
+    // TODO: ReaderConfig.
+    bool ret = reader.read(load_states);
 
     if (!ret) {
       std::cerr << "Failed to parse .usda: \n";
