@@ -4603,7 +4603,7 @@ bool AsciiParser::ParseVariantSet(const int64_t primIdx,
   if (!variantSetOut) {
     PUSH_ERROR_AND_RETURN_TAG(kAscii, "[InternalError] variantSetOut arg is nullptr.");
   }
-  
+
   // variantSet =
   // {
   //   "variantName0" ( metas ) { ... }
@@ -4755,7 +4755,7 @@ bool AsciiParser::ParseVariantSet(const int64_t primIdx,
     variantContentMap.emplace(variantName, variantContent);
   }
 
-  (*variantSetOut) = std::move(variantContentMap); 
+  (*variantSetOut) = std::move(variantContentMap);
 
   return true;
 }
@@ -5094,10 +5094,10 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
 /// Parser entry point
 /// TODO: Refactor and use unified code path regardless of LoadState.
 ///
-bool AsciiParser::Parse(LoadState state, const AsciiParserOption &parser_option) {
-  _sub_layered = (state == LoadState::Sublayer);
-  _referenced = (state == LoadState::Reference);
-  _payloaded = (state == LoadState::Payload);
+bool AsciiParser::Parse(const uint32_t load_states, const AsciiParserOption &parser_option) {
+  _sub_layered = (load_states & static_cast<uint32_t>(LoadState::Sublayer));
+  _referenced = (load_states & static_cast<uint32_t>(LoadState::Reference));
+  _payloaded = (load_states &  static_cast<uint32_t>(LoadState::Payload));
   _option = parser_option;
 
   bool header_ok = ParseMagicHeader();
