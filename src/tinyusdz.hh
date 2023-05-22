@@ -98,6 +98,12 @@ struct USDLoadOptions {
   bool do_composition{false};
 
   ///
+  /// Following load flags are valid when `do_composition` is set `true`.
+  bool load_sublayers{false}; // true: Load `subLayers`
+  bool load_references{false}; // true: Load `references`
+  bool load_payloads{false}; // true: Load `paylod` at top USD loading(no lazy loading).
+
+  ///
   /// Max MBs allowed for each asset file(e.g. jpeg)
   ///
   uint32_t max_allowed_asset_size_in_mb{1024};  // [mb] default 1GB.
