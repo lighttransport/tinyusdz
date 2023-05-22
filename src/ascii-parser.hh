@@ -309,7 +309,12 @@ class AsciiParser {
   ///
   /// Parser entry point
   ///
-  bool Parse(LoadState state = LoadState::Toplevel,
+  /// @param[in] load_states Bit mask of LoadState
+  /// @param[in] parser_option Parse option(optional)
+  ///
+  /// TODO: Move `load_states` to AsciiParserOption?
+  ///
+  bool Parse(const uint32_t load_states = static_cast<uint32_t>(LoadState::Toplevel),
              const AsciiParserOption &parser_option = AsciiParserOption());
 
   ///
