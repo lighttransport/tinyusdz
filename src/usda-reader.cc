@@ -1075,7 +1075,7 @@ class USDAReader::Impl {
   /// TODO: Use callback function(visitor) so that Reconstruct**** function is
   /// invoked in the Parser context.
   ///
-  bool Read(LoadState state = LoadState::Toplevel);
+  bool Read(const uint32_t state_flags);
 
   // std::vector<GPrim> GetGPrims() { return _gprims; }
 
@@ -1285,7 +1285,7 @@ void ReconstructNodeRec(const size_t idx,
   DCOUT("prim[" << idx << "].type = " << node.prim.type_name());
   //prim.prim_id() = int64_t(idx);
 
-  // First process variants. 
+  // First process variants.
   std::set<int64_t> variantChildrenIndices; // record variantChildren indices
 
   std::map<std::string, VariantSet> variantSets;
@@ -1324,8 +1324,8 @@ void ReconstructNodeRec(const size_t idx,
 #else
 
 //
-// Construct Prim from PrimNode with botom-up approach 
-// 
+// Construct Prim from PrimNode with botom-up approach
+//
 bool ConstructPrimTreeRec(const size_t primIdx,
                         const std::vector<PrimNode> &prim_nodes,
                         Prim *destPrim,
@@ -1354,7 +1354,7 @@ bool ConstructPrimTreeRec(const size_t primIdx,
   DCOUT("prim[" << primIdx << "].variantNodeMap.size = " << node.variantNodeMap.size());
   //prim.prim_id() = int64_t(idx);
 
-  // Firstly process variants. 
+  // Firstly process variants.
   std::set<int64_t> variantChildrenIndices; // record variantChildren indices
 
   std::map<std::string, VariantSet> variantSets;
@@ -1833,7 +1833,7 @@ bool USDAReader::Impl::ReconstructPrim(
 /// -- Impl Read
 ///
 
-bool USDAReader::Impl::Read(LoadState state) {
+bool USDAReader::Impl::Read(const uint32_t state_flags) {
 
   ///
   /// Convert parser option.
@@ -1885,7 +1885,7 @@ bool USDAReader::Impl::Read(LoadState state) {
   RegisterReconstructCallback<SkelAnimation>();
   RegisterReconstructCallback<BlendShape>();
 
-  if (!_parser.Parse(state, ascii_parser_option)) {
+  if (!_parser.Parse(state_flags, ascii_parser_option)) {
     std::string warn = _parser.GetWarning();
     if (!warn.empty()) {
       PUSH_WARN("<parser> " + warn);
@@ -1923,9 +1923,11 @@ USDAReader::USDAReader(StreamReader *sr) { _impl = new Impl(sr); }
 
 USDAReader::~USDAReader() { delete _impl; }
 
-bool USDAReader::Read(const LoadState state) { return _impl->Read(state); }
+bool USDAReader::read(const uint32_t state_flags) {
+  return _impl->Read(state_flags);
+}
 
-void USDAReader::SetBaseDir(const std::string &dir) {
+void USDAReader::set_base_dir(const std::string &dir) {
   return _impl->SetBaseDir(dir);
 }
 
@@ -1935,14 +1937,14 @@ void USDAReader::SetBaseDir(const std::string &dir) {
 //  return _impl->GetDefaultPrimName();
 //}
 
-std::string USDAReader::GetError() { return _impl->GetError(); }
-std::string USDAReader::GetWarning() { return _impl->GetWarning(); }
+std::string USDAReader::get_error() { return _impl->GetError(); }
+std::string USDAReader::get_warning() { return _impl->GetWarning(); }
 
-bool USDAReader::GetAsLayer(Layer *layer) { return _impl->GetAsLayer(layer); }
+bool USDAReader::get_as_layer(Layer *layer) { return _impl->GetAsLayer(layer); }
 
-bool USDAReader::ReconstructStage() { return _impl->ReconstructStage(); }
+bool USDAReader::reconstruct_stage() { return _impl->ReconstructStage(); }
 
-const Stage &USDAReader::GetStage() const { return _impl->GetStage(); }
+const Stage &USDAReader::get_stage() const { return _impl->GetStage(); }
 
 void USDAReader::set_reader_config(const USDAReaderConfig &config) {
   return _impl->set_reader_config(config);
@@ -1970,28 +1972,28 @@ USDAReader::~USDAReader() {
   _empty_stage = nullptr;
 }
 
-bool USDAReader::CheckHeader() { return false; }
+bool USDAReader::check_header() { return false; }
 
-bool USDAReader::Read(const LoadState state) {
+bool USDAReader::read(const LoadState state) {
   (void)state;
   return false;
 }
 
-void USDAReader::SetBaseDir(const std::string &dir) { (void)dir; }
+void USDAReader::set_base_dir(const std::string &dir) { (void)dir; }
 
-std::vector<GPrim> USDAReader::GetGPrims() { return {}; }
+//std::vector<GPrim> USDAReader::GetGPrims() { return {}; }
 
-std::string USDAReader::GetDefaultPrimName() const { return std::string{}; }
+//std::string USDAReader::GetDefaultPrimName() const { return std::string{}; }
 
-std::string USDAReader::GetError() {
+std::string USDAReader::get_error() {
   return "USDA parser feature is disabled in this build.\n";
 }
-std::string USDAReader::GetWarning() { return std::string{}; }
-bool USDAReader::ReconstructStage() { return false; }
+std::string USDAReader::get_warning() { return std::string{}; }
+bool USDAReader::reconstruct_stage() { return false; }
 
-bool USDAReader::GetAsLayer(Layer *layer) { return false; }
+bool USDAReader::get_as_layer(Layer *layer) { return false; }
 
-const Stage &USDAReader::GetStage() const {
+const Stage &USDAReader::get_stage() const {
   return *_empty_stage;
 }
 
