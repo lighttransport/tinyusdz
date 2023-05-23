@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-#include <fstream>
 #include <algorithm>
+#include <fstream>
 
 #ifdef _WIN32
 
@@ -28,12 +28,13 @@
 
 #include <ext/stdio_filebuf.h>  // fstream (all sorts of IO stuff) + stdio_filebuf (=streambuf)
 
-#endif // __GLIBCXX__
+#endif  // __GLIBCXX__
 
-#else // !_WIN32
+#else  // !_WIN32
 
-#if defined(TINYUSDZ_BUILD_IOS) || defined(TARGET_OS_IPHONE) || defined(TARGET_IPHONE_SIMULATOR) || \
-    defined(__ANDROID__) || defined(__EMSCRIPTEN__) || defined(__wasi__)
+#if defined(TINYUSDZ_BUILD_IOS) || defined(TARGET_OS_IPHONE) || \
+    defined(TARGET_IPHONE_SIMULATOR) || defined(__ANDROID__) || \
+    defined(__EMSCRIPTEN__) || defined(__wasi__)
 
 // non posix
 
@@ -44,8 +45,7 @@
 
 #endif
 
-
-#endif // _WIN32
+#endif  // _WIN32
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -70,9 +70,7 @@ namespace io {
 AAssetManager *asset_manager = nullptr;
 #endif
 
-
 std::string ExpandFilePath(const std::string &_filepath, void *) {
-
   std::string filepath = _filepath;
   if (filepath.size() > 2048) {
     // file path too large.
@@ -93,8 +91,9 @@ std::string ExpandFilePath(const std::string &_filepath, void *) {
 
 #else
 
-#if defined(TINYUSDZ_BUILD_IOS) || defined(TARGET_OS_IPHONE) || defined(TARGET_IPHONE_SIMULATOR) || \
-    defined(__ANDROID__) || defined(__EMSCRIPTEN__) || defined(__OpenBSD__) || defined(__wasi__)
+#if defined(TINYUSDZ_BUILD_IOS) || defined(TARGET_OS_IPHONE) || \
+    defined(TARGET_IPHONE_SIMULATOR) || defined(__ANDROID__) || \
+    defined(__EMSCRIPTEN__) || defined(__OpenBSD__) || defined(__wasi__)
   // no expansion
   std::string s = filepath;
 #else
@@ -108,8 +107,8 @@ std::string ExpandFilePath(const std::string &_filepath, void *) {
   // Quote the string to keep any spaces in filepath intact.
   std::string quoted_path = "\"" + filepath + "\"";
   // char** w;
-  // TODO: wordexp() is a awful API. Implement our own file path expansion routine.
-  // Set NOCMD for security.
+  // TODO: wordexp() is a awful API. Implement our own file path expansion
+  // routine. Set NOCMD for security.
   int ret = wordexp(quoted_path.c_str(), &p, WRDE_NOCMD);
   if (ret) {
     // err
@@ -151,9 +150,9 @@ std::string WcharToUTF8(const std::wstring &wstr) {
 }
 #endif
 
-
 bool ReadWholeFile(std::vector<uint8_t> *out, std::string *err,
-                   const std::string &filepath, size_t filesize_max, void *userdata) {
+                   const std::string &filepath, size_t filesize_max,
+                   void *userdata) {
   (void)userdata;
 
 #ifdef TINYUSDZ_ANDROID_LOAD_FROM_ASSETS
@@ -210,6 +209,16 @@ bool ReadWholeFile(std::vector<uint8_t> *out, std::string *err,
     return false;
   }
 
+  // For directory(and pipe?), peek() will fail(Posix gnustl/libc++ only)
+  int buf = f.peek();
+  (void)buf;
+  if (!f) {
+    if (err) {
+      (*err) += "File read error. Maybe empty file or invalid file : " + filepath + "\n";
+    }
+    return false;
+  }
+
   f.seekg(0, f.end);
   size_t sz = static_cast<size_t>(f.tellg());
   f.seekg(0, f.beg);
@@ -225,11 +234,20 @@ bool ReadWholeFile(std::vector<uint8_t> *out, std::string *err,
       (*err) += "File is empty : " + filepath + "\n";
     }
     return false;
+  } else if (uint64_t(sz) >= uint64_t(std::numeric_limits<int64_t>::max())) {
+    // Posixish environment.
+    if (err) {
+      (*err) += "Invalid File(Pipe or special device?) : " + filepath + "\n";
+    }
+    return false;
   }
 
   if ((filesize_max > 0) && (sz > filesize_max)) {
     if (err) {
-      (*err) += "File size is too large : " + filepath + " sz = " + std::to_string(sz) + "\n";
+      (*err) += "File size is too large : " + filepath +
+                " sz = " + std::to_string(sz) +
+                ", allowed max filesize = " + std::to_string(filesize_max) +
+                "\n";
     }
     return false;
   }
@@ -238,16 +256,26 @@ bool ReadWholeFile(std::vector<uint8_t> *out, std::string *err,
   f.read(reinterpret_cast<char *>(&out->at(0)),
          static_cast<std::streamsize>(sz));
 
+  if (!f) {
+    // read failure.
+    if (err) {
+      (*err) += "Failed to read file: " + filepath + "\n";
+    }
+    return false;
+  }
+
   return true;
 #endif
 }
 
 bool ReadFileHeader(std::vector<uint8_t> *out, std::string *err,
-                   const std::string &filepath, uint32_t max_read_bytes, void *userdata) {
+                    const std::string &filepath, uint32_t max_read_bytes,
+                    void *userdata) {
   (void)userdata;
 
   // hard limit to 1MB.
-  max_read_bytes = (std::max)(1u, (std::min)(uint32_t(1024*1024), max_read_bytes));
+  max_read_bytes =
+      (std::max)(1u, (std::min)(uint32_t(1024 * 1024), max_read_bytes));
 
 #ifdef TINYUSDZ_ANDROID_LOAD_FROM_ASSETS
   if (tinyusdz::io::asset_manager) {
@@ -305,6 +333,17 @@ bool ReadFileHeader(std::vector<uint8_t> *out, std::string *err,
     return false;
   }
 
+  // For directory(and pipe?), peek() will fail(Posix gnustl/libc++ only)
+  int buf = f.peek();
+  (void)buf;
+  if (!f) {
+    if (err) {
+      (*err) += "File read error. Maybe empty file or invalid file : " + filepath + "\n";
+    }
+    return false;
+  }
+
+
   f.seekg(0, f.end);
   size_t sz = static_cast<size_t>(f.tellg());
   f.seekg(0, f.beg);
@@ -320,6 +359,12 @@ bool ReadFileHeader(std::vector<uint8_t> *out, std::string *err,
       (*err) += "File is empty : " + filepath + "\n";
     }
     return false;
+  } else if (uint64_t(sz) >= uint64_t(std::numeric_limits<int64_t>::max())) {
+    // Posixish environment.
+    if (err) {
+      (*err) += "Invalid File(Pipe or special device?) : " + filepath + "\n";
+    }
+    return false;
   }
 
   sz = (std::min)(size_t(max_read_bytes), sz);
@@ -328,12 +373,20 @@ bool ReadFileHeader(std::vector<uint8_t> *out, std::string *err,
   f.read(reinterpret_cast<char *>(&out->at(0)),
          static_cast<std::streamsize>(sz));
 
+  if (!f) {
+    // read failure.
+    if (err) {
+      (*err) += "Failed to read file: " + filepath + "\n";
+    }
+    return false;
+  }
+
   return true;
 #endif
 }
 
-bool WriteWholeFile(const std::string &filepath,
-                    const unsigned char *contents, size_t content_bytes, std::string *err) {
+bool WriteWholeFile(const std::string &filepath, const unsigned char *contents,
+                    size_t content_bytes, std::string *err) {
 #ifdef _WIN32
 #if defined(__GLIBCXX__)  // mingw
   int file_descriptor = _wopen(UTF8ToWchar(filepath).c_str(),
@@ -369,11 +422,11 @@ bool WriteWholeFile(const std::string &filepath,
 }
 
 #ifdef _WIN32
-bool WriteWholeFile(const std::wstring &filepath,
-                    const unsigned char *contents, size_t content_bytes, std::string *err) {
+bool WriteWholeFile(const std::wstring &filepath, const unsigned char *contents,
+                    size_t content_bytes, std::string *err) {
 #if defined(__GLIBCXX__)  // mingw
-  int file_descriptor = _wopen(filepath.c_str(),
-                               _O_CREAT | _O_WRONLY | _O_TRUNC | _O_BINARY);
+  int file_descriptor =
+      _wopen(filepath.c_str(), _O_CREAT | _O_WRONLY | _O_TRUNC | _O_BINARY);
   __gnu_cxx::stdio_filebuf<char> wfile_buf(
       file_descriptor, std::ios_base::out | std::ios_base::binary);
   std::ostream f(&wfile_buf);
@@ -420,8 +473,7 @@ std::string GetFileExtension(const std::string &FileName) {
 
 std::string GetBaseFilename(const std::string &filepath) {
   auto idx = filepath.find_last_of("/\\");
-  if (idx != std::string::npos)
-    return filepath.substr(idx + 1);
+  if (idx != std::string::npos) return filepath.substr(idx + 1);
   return filepath;
 }
 
@@ -459,7 +511,7 @@ std::string JoinPath(const std::string &dir, const std::string &filename) {
 }
 
 bool USDFileExists(const std::string &fpath) {
-  size_t read_len = 9; // USD file must be at least 9 bytes or more.
+  size_t read_len = 9;  // USD file must be at least 9 bytes or more.
 
   std::string err;
   std::vector<uint8_t> data;
@@ -469,16 +521,14 @@ bool USDFileExists(const std::string &fpath) {
   }
 
   return true;
-
 }
 
-bool IsUDIMPath(const std::string &path)
-{
+bool IsUDIMPath(const std::string &path) {
   return SplitUDIMPath(path, nullptr, nullptr);
 }
 
-bool SplitUDIMPath(const std::string &path, std::string *pre, std::string *post)
-{
+bool SplitUDIMPath(const std::string &path, std::string *pre,
+                   std::string *post) {
   std::string tag = "<UDIM>";
 
   auto rs = std::search(path.begin(), path.end(), tag.begin(), tag.end());
@@ -553,8 +603,8 @@ bool FileExists(const std::string &filepath, void *userdata) {
   return ret;
 }
 
-
-std::string FindFile(const std::string &filename, const std::vector<std::string> &search_paths) {
+std::string FindFile(const std::string &filename,
+                     const std::vector<std::string> &search_paths) {
   // TODO: Use ghc filesystem?
 
   if (filename.empty()) {
@@ -562,16 +612,15 @@ std::string FindFile(const std::string &filename, const std::vector<std::string>
   }
 
   for (size_t i = 0; i < search_paths.size(); i++) {
-    std::string absPath =
-        io::ExpandFilePath(io::JoinPath(search_paths[i], filename), /* userdata */nullptr);
-    if (io::FileExists(absPath, /* userdata */nullptr)) {
+    std::string absPath = io::ExpandFilePath(
+        io::JoinPath(search_paths[i], filename), /* userdata */ nullptr);
+    if (io::FileExists(absPath, /* userdata */ nullptr)) {
       return absPath;
     }
   }
 
   return std::string();
-
 }
 
-} // namespace io
-} // namespace tinyusdz
+}  // namespace io
+}  // namespace tinyusdz

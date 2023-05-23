@@ -5120,7 +5120,7 @@ bool AsciiParser::Parse(const uint32_t load_states, const AsciiParserOption &par
 
     if (c == '(') {
       // stage meta.
-      // TODO: We could skip parsing stage meta in flatten(composition) mode.
+      // TODO: We could skip parsing stage meta in flatten(composition) mode?.
       if (!ParseStageMetas()) {
         PUSH_ERROR_AND_RETURN("Failed to parse Stage metas.");
       }

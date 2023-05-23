@@ -401,7 +401,7 @@ bool Stage::find_prim_from_relative_path(const Prim &root,
   }
 }
 
-bool Stage::LoadLayerFromMemory(const uint8_t *addr, const size_t nbytes, const std::string &asset_name, const LoadState load_state, Layer *layer) {
+bool Stage::LoadLayerFromMemory(const uint8_t *addr, const size_t nbytes, const std::string &asset_name, Layer *layer, const uint32_t load_states) {
 
   // TODO: USDC/USDZ support.
 
@@ -411,18 +411,18 @@ bool Stage::LoadLayerFromMemory(const uint8_t *addr, const size_t nbytes, const 
   // TODO: Uase AssetResolver
   //reader.SetBaseDir(base_dir);
 
-  if (!reader.Read(load_state)) {
+  if (!reader.read(load_states)) {
     return false;
   }
 
-  if (!reader.GetAsLayer(layer)) {
+  if (!reader.get_as_layer(layer)) {
     PUSH_ERROR_AND_RETURN("Failed to retrieve USD data as Layer: filepath = " << asset_name);
   }
 
   return false;
 }
 
-bool Stage::LoadLayerFromFile(const std::string &_filename, const LoadState load_state, Layer *layer) {
+bool Stage::LoadLayerFromFile(const std::string &_filename, Layer *layer, const uint32_t load_states) {
   // TODO: Setup AssetResolver.
 
   std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
@@ -438,7 +438,7 @@ bool Stage::LoadLayerFromFile(const std::string &_filename, const LoadState load
     PUSH_ERROR_AND_RETURN("Read file failed: " + err);
   }
 
-  return LoadLayerFromMemory(data.data(), data.size(), filepath, load_state, layer);
+  return LoadLayerFromMemory(data.data(), data.size(), filepath, layer, load_states);
 }
 
 bool Stage::LoadSubLayers(std::vector<Layer> *sublayers) {
@@ -457,7 +457,7 @@ void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
   bool require_newline = true;
 
   // Check last 2 chars.
-  // if it ends with '{\n', no properties are authored so do not emit blank line before printing VariantSet or child Prims.  
+  // if it ends with '{\n', no properties are authored so do not emit blank line before printing VariantSet or child Prims.
   if (s.size() > 2) {
     if ((s[s.size() - 2] == '{') && (s[s.size()-1] == '\n')) {
       require_newline = false;
@@ -465,7 +465,7 @@ void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
   }
 
   ss << s;
- 
+
   //
   // print variant
   //
@@ -496,7 +496,7 @@ void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
 
         ss << print_props(variant.properties(), indent+3);
 
-        if (variant.metas().variantChildren.has_value() && 
+        if (variant.metas().variantChildren.has_value() &&
             (variant.metas().variantChildren.value().size() == variant.primChildren().size())) {
 
           std::map<std::string, const Prim *> primNameTable;
@@ -525,13 +525,13 @@ void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
               ss << "\n";
             }
           }
-        
+
         }
 
         ss << pprint::Indent(indent+2) << "}\n";
 
       }
-    
+
       ss << pprint::Indent(indent+1) << "}\n";
     }
   }
