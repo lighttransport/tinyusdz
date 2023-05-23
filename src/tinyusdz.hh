@@ -99,6 +99,7 @@ struct USDLoadOptions {
 
   ///
   /// Following load flags are valid when `do_composition` is set `true`.
+  ///
   bool load_sublayers{false}; // true: Load `subLayers`
   bool load_references{false}; // true: Load `references`
   bool load_payloads{false}; // true: Load `paylod` at top USD loading(no lazy loading).
