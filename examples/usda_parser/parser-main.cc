@@ -8,21 +8,33 @@
 
 int main(int argc, char **argv) {
   if (argc < 2) {
-    std::cout << "Need input.usda (--flatten)\n";
+    std::cout << "usdaparser [--flatten] input.usda\n";
     std::cout << "  --flatten: Similar to --flatten in usdview from pxrUSD.\n";
     exit(-1);
   }
 
-  std::string filename = argv[1];
+  std::string filename;
+  // = argv[1];
 
   bool do_compose =false;
+  size_t input_idx = 0; // 0 = invalid
 
-  if (argc > 2) {
-    std::string arg = argv[2];
+  for (size_t i = 1; i < argc; i++) {
+    std::string arg = argv[i];
+
     if (arg == "--flatten") {
       do_compose = true;
+    } else if (input_idx == 0) {
+      input_idx = i;
     }
   }
+
+  if (input_idx == 0) {
+    std::cerr << "No USD filename given.\n";
+    exit(-1);
+  }
+
+  filename = argv[input_idx];
 
   std::string base_dir;
   base_dir = tinyusdz::io::GetBaseDir(filename);
