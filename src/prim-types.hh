@@ -2656,17 +2656,47 @@ class Prim {
     _elementPath = Path(elementName, "");
   }
 
-  void add_child(Prim &&prim) {
-    _children.emplace_back(std::move(prim));
-    _child_dirty = true;
-  }
+  ///
+  /// Add Prim as a child.
+  /// When `rename_element_name` is true, rename input Prims elementName to make it unique among children(since USD(Crate) spec doesn't allow same Prim elementName in the same Prim hierarchy.
+  ///
+  /// Renaming rule is Maya-like:
+  /// - No elementName given: `default`
+  /// - Add or increment number suffix to the elementName:
+  ///    - `plane` => `plane1`
+  ///    - `plane1` => `plane2`
+  ///
+  /// Note: This function is thread-safe.
+  ///
+  /// @return true Upon success. false when failed(e.g. Prim with same Prim::element_name() already exists when `rename_element_name` is false) and fill `err` with error message
+  ///
+  bool add_child(Prim &&prim, const bool rename_element_name = true, std::string *err = nullptr);
 
-  // TODO: Deprecate this API to disallow modification of children?.
+#if 0
+  ///
+  /// Add Prim as a child.
+  ///
+  ///
+  /// @return true Upon success. false when failed(e.g. Prim with same Prim::element_name() already exists) and fill `err` with error message
+  ///
+  /// Note: This function is thread-safe.
+  ///
+  bool add_child(Prim &&prim, const std::string &basename, std::string *err = nullptr);
+#endif
+
+  //{
+  //
+  //  _children.emplace_back(std::move(prim));
+  //  _child_dirty = true;
+  //}
+
+  // TODO: Deprecate this API to disallow direct modification of children.
   std::vector<Prim> &children() { return _children; }
 
   const std::vector<Prim> &children() const { return _children; }
 
   const value::Value &data() const { return _data; }
+  value::Value &get_data() { return _data; }
 
   Specifier &specifier() { return _specifier; }
 
@@ -2788,7 +2818,10 @@ class Prim {
       Specifier::Invalid};  // `def`, `over` or `class`. Usually `def`
   value::Value
       _data;  // Generic container for concrete Prim object. GPrim, Xform, ...
+
   std::vector<Prim> _children;  // child Prim nodes
+  //std::set<std::string> _childrenNames; // child Prim name(elementName).
+  std::multiset<std::string> _childrenNameSet; // Stores input child Prim's elementName to assign unique elementName in `add_child`
 
   mutable bool _child_dirty{false};
   mutable bool _primChildrenIndicesIsValid{
