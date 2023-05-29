@@ -31,7 +31,7 @@
 namespace tinyusdz {
 namespace prim {
 
-constexpr auto kTag = "[PrimReconstruct]";
+//constexpr auto kTag = "[PrimReconstruct]";
 
 constexpr auto kProxyPrim = "proxyPrim";
 constexpr auto kMaterialBinding = "material:binding";
@@ -2168,6 +2168,7 @@ bool ReconstructPrim<Skeleton>(
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
+#if 0 // TODO: bindTransforms & restTransforms check somewhere.
   // usdview and Houdini USD importer expects both `bindTransforms` and `restTransforms` are authored in USD
   if (!table.count("bindTransforms")) {
     // usdview and Houdini allow `bindTransforms` is not authord in USD, but it cannot compute skinning correctly without it,
@@ -2199,6 +2200,7 @@ bool ReconstructPrim<Skeleton>(
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Array length must be same for `bindTransforms` and `restTransforms`.");
     }
   }
+#endif
 
   return true;
 }
