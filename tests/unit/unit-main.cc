@@ -21,6 +21,7 @@
 
 TEST_LIST = {
   { "prim_type_test", prim_type_test },
+  { "prim_add_test", prim_add_test },
   { "primvar_test", primvar_test },
   { "value_types_test", value_types_test },
   { "xformOp_test", xformOp_test },

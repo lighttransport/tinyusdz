@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright 2021 - Present, Syoyo Fujita.
 #include <algorithm>
+#include <cstdio>
 #include <limits>
 #include <numeric>
 //
@@ -29,6 +30,59 @@
 #endif
 
 namespace tinyusdz {
+
+namespace {
+
+///
+/// Simply add number suffix to make unique string.
+///
+/// - plane -> plane1 
+/// - sphere1 -> sphere11 
+/// - xform4 -> xform41 
+///
+///
+bool makeUniqueName(std::multiset<std::string> &nameSet, const std::string &name, std::string *unique_name) {
+  if (!unique_name) {
+    return false;
+  }
+
+  if (nameSet.count(name) == 0) {
+    (*unique_name) = name;
+    return 0;
+  }
+
+  // Simply add number
+
+  const size_t kMaxLoop = 1024; // to avoid infinite loop.
+
+  std::string new_name = name;
+
+  size_t cnt = 0;
+  while (cnt < kMaxLoop) {
+
+    size_t i = nameSet.count(new_name);
+    if (i == 0) {
+      // This should not happen though.
+      return false;
+    }
+
+    new_name += std::to_string(i);
+
+    if (nameSet.count(new_name) == 0) {
+
+      (*unique_name) = new_name;
+      return true; 
+  
+    }
+
+    cnt++;
+  }
+  
+  return false;
+}
+
+
+} // namespace
 
 nonstd::optional<Interpolation> InterpolationFromString(const std::string &v) {
   if ("faceVarying" == v) {
@@ -851,6 +905,7 @@ nonstd::optional<std::string> GetPrimElementName(const value::Value &v) {
   EXTRACT_NAME_AND_RETURN_PATH(RectLight)
   EXTRACT_NAME_AND_RETURN_PATH(Material)
   EXTRACT_NAME_AND_RETURN_PATH(Shader)
+  // TODO: extract name must be handled in Shader class
   EXTRACT_NAME_AND_RETURN_PATH(UsdPreviewSurface)
   EXTRACT_NAME_AND_RETURN_PATH(UsdUVTexture)
   EXTRACT_NAME_AND_RETURN_PATH(UsdPrimvarReader_int)
@@ -863,6 +918,7 @@ nonstd::optional<std::string> GetPrimElementName(const value::Value &v) {
   EXTRACT_NAME_AND_RETURN_PATH(UsdPrimvarReader_vector)
   EXTRACT_NAME_AND_RETURN_PATH(UsdPrimvarReader_point)
   EXTRACT_NAME_AND_RETURN_PATH(UsdPrimvarReader_matrix)
+  //
   EXTRACT_NAME_AND_RETURN_PATH(SkelRoot)
   EXTRACT_NAME_AND_RETURN_PATH(Skeleton)
   EXTRACT_NAME_AND_RETURN_PATH(SkelAnimation)
@@ -904,6 +960,7 @@ bool SetPrimElementName(value::Value &v, const std::string &elementName) {
   SET_ELEMENT_NAME(elementName, RectLight)
   SET_ELEMENT_NAME(elementName, Material)
   SET_ELEMENT_NAME(elementName, Shader)
+  // TODO: set element name must be handled in Shader class
   SET_ELEMENT_NAME(elementName, UsdPreviewSurface)
   SET_ELEMENT_NAME(elementName, UsdUVTexture)
   SET_ELEMENT_NAME(elementName, UsdPrimvarReader_int)
@@ -911,6 +968,12 @@ bool SetPrimElementName(value::Value &v, const std::string &elementName) {
   SET_ELEMENT_NAME(elementName, UsdPrimvarReader_float2)
   SET_ELEMENT_NAME(elementName, UsdPrimvarReader_float3)
   SET_ELEMENT_NAME(elementName, UsdPrimvarReader_float4)
+  SET_ELEMENT_NAME(elementName, UsdPrimvarReader_string)
+  SET_ELEMENT_NAME(elementName, UsdPrimvarReader_normal)
+  SET_ELEMENT_NAME(elementName, UsdPrimvarReader_vector)
+  SET_ELEMENT_NAME(elementName, UsdPrimvarReader_point)
+  SET_ELEMENT_NAME(elementName, UsdPrimvarReader_matrix)
+  //
   SET_ELEMENT_NAME(elementName, SkelRoot)
   SET_ELEMENT_NAME(elementName, Skeleton)
   SET_ELEMENT_NAME(elementName, SkelAnimation)
@@ -978,6 +1041,78 @@ Prim::Prim(const std::string &elementPath, value::Value &&rhs) {
   } else {
     // TODO: Raise an error if rhs is not an Prim
   }
+}
+
+bool Prim::add_child(Prim &&rhs, const bool rename_prim_name, std::string *err) {
+
+#if defined(TINYUSD_ENABLE_THREAD)
+  // TODO: Only take a lock when dirty.
+  std::lock_guard<std::mutex> lock(_mutex);
+#endif
+
+
+  std::string elementName = rhs.element_name();
+
+  if (elementName.empty()) {
+    if (err) {
+      (*err) = "Prim has empty elementName.\n";
+    }
+    return false;
+  } else {
+    if (rename_prim_name) {
+      // assign default name `default`
+      elementName = "default";
+    }
+  }
+
+  if (_children.size() != _childrenNameSet.size()) {
+    // Rebuild _childrenNames
+    _childrenNameSet.clear();
+    for (size_t i = 0; i < _children.size(); i++) {
+      if (_childrenNameSet.count(_children[i].element_name())) {
+        if (err) {
+          (*err) = "Internal error: _children contains Prim with same elementName.\n";
+        }
+        return false;
+      }
+
+      _childrenNameSet.insert(_children[i].element_name());
+    }
+  }
+
+  if (_childrenNameSet.count(elementName)) {
+    if (rename_prim_name) {
+      std::string unique_name;
+      if (!makeUniqueName(_childrenNameSet, elementName, &unique_name)) {
+        if (err) {
+          (*err) = fmt::format("Internal error. cannot assign unique name for `{}`.\n", elementName);
+        }
+        return false;
+      }
+
+      elementName = unique_name;
+
+      if (!SetPrimElementName(rhs.get_data(), elementName)) {
+        if (err) {
+          (*err) = fmt::format("Internal error. cannot modify Prim's elementName.\n");
+        }
+        return false;
+      }
+    } else {
+      if (err) {
+        (*err) = fmt::format("Prim name(elementName) {} already exists in children.\n", rhs.element_name());
+      }
+      return false;
+    }
+  }
+
+  
+
+  _childrenNameSet.insert(elementName);
+  _children.emplace_back(std::move(rhs));
+  _child_dirty = true;
+
+  return true;
 }
 
 const std::vector<int64_t> &Prim::get_child_indices_from_primChildren(bool force_update, bool *indices_is_valid) const {
