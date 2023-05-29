@@ -116,6 +116,11 @@ struct USDLoadOptions {
   uint32_t max_image_height = 2048;
   uint32_t max_image_channels = 4;
 
+  ///
+  /// For usdSkel
+  ///
+  bool strict_usdSkel_check{false}; // Strict usdSkel parsing check when true.
+
   Axis upAxis{Axis::Y};
 };
 
