@@ -243,6 +243,14 @@ class Stage {
   ///
   bool compose(bool addSourceFileComment = true) const;
 
+  const std::string &get_warning() const {
+    return _warn;
+  }
+
+  const std::string &get_error() const {
+    return _err;
+  }
+
  private:
   ///
   /// Loads USD from and return it as Layer

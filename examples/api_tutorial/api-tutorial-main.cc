@@ -24,6 +24,8 @@ void CreateScene(tinyusdz::Stage *stage) {
   // scene(Stage) in multi-threaded context, The app must take care of resource locks
   // in the app layer.
 
+  std::string err;
+
   //
   // Create simple material with UsdPrevieSurface.
   //
@@ -49,22 +51,28 @@ void CreateScene(tinyusdz::Stage *stage) {
 
     surfaceShader.metallic = 0.3f;
     // TODO: UsdUVTexture, UsdPrimvarReader***, UsdTransform2d
-    
+
     // Connect to UsdPreviewSurface's outputs:surface by setting targetPath.
-    // 
+    //
     // token outputs:surface = </mat/defaultPBR.outputs:surface>
     mat.surface.set(tinyusdz::Path(/* prim path */"/mat/defaultPBR", /* prop path */"outputs:surface"));
 
     //
     // Shaer::value is `value::Value` type, so can use '=' to assign Shader object.
     //
-    shader.value = std::move(surfaceShader); 
+    shader.value = std::move(surfaceShader);
   }
 
   tinyusdz::Prim shaderPrim(shader);
   tinyusdz::Prim matPrim(mat);
-  matPrim.children().emplace_back(std::move(shaderPrim));
 
+  //matPrim.children().emplace_back(std::move(shaderPrim)); // no uniqueness check
+
+  // Use add_child() to ensure child Prim has unique name.
+  if (!matPrim.add_child(std::move(shaderPrim), /* rename Prim name if_required */true, &err)) {
+    std::cerr << "Failed to constrcut Scene: " << err << "\n";
+    exit(-1);
+  }
 
   //
   // To construct Prim, first create concrete Prim object(e.g. Xform, GeomMesh),
@@ -287,14 +295,19 @@ void CreateScene(tinyusdz::Stage *stage) {
 
   }
 
-  tinyusdz::GeomSphere sphere;
+  tinyusdz::GeomSphere sphere1;
   {
-    sphere.name = "sphere0";
+    sphere1.name = "sphere";
 
-    sphere.radius = 3.14;
-
-
+    sphere1.radius = 3.14;
   }
+
+  tinyusdz::GeomSphere sphere2;
+  {
+    sphere2.name = "sphere"; // name will be modified to be unique at add_child().
+    sphere2.radius = 1.05;
+  }
+
 
   //
   // Create Scene(Stage) hierarchy.
@@ -303,7 +316,8 @@ void CreateScene(tinyusdz::Stage *stage) {
   // [Xform]
   //  |
   //  +- [Mesh]
-  //  +- [Sphere]
+  //  +- [Sphere0]
+  //  +- [Sphere1]
   //
   // [Material]
   //  |
@@ -315,7 +329,7 @@ void CreateScene(tinyusdz::Stage *stage) {
   // Xform::name, ...)
   tinyusdz::Prim meshPrim(mesh);
 
-  tinyusdz::Prim spherePrim(sphere);
+  tinyusdz::Prim spherePrim(sphere1);
   {
     // variantSet is maniuplated in Prim.
     // Currently we don't provide easy API for variantSet.
@@ -328,7 +342,7 @@ void CreateScene(tinyusdz::Stage *stage) {
 
     // key = variantSet name, value = default Variant selection
     vsmap.emplace("colorVariant", "red");
-    
+
     spherePrim.metas().variants = vsmap;
     spherePrim.metas().variantSets = std::make_pair(tinyusdz::ListEditQual::Append, variantSetList);
 
@@ -357,23 +371,44 @@ void CreateScene(tinyusdz::Stage *stage) {
 
     variantSet.name = "green";
     variantSet.variantSet.emplace("green", redVariant);
-      
+
     spherePrim.variantSets().emplace("colorVariant", variantSet);
   }
 
-
+  tinyusdz::Prim spherePrim2(sphere2);
 
   tinyusdz::Prim xformPrim(xform);
 
-  xformPrim.children().emplace_back(std::move(meshPrim));
-  xformPrim.children().emplace_back(std::move(spherePrim));
+  //xformPrim.children().emplace_back(std::move(meshPrim));
+  //xformPrim.children().emplace_back(std::move(spherePrim));
+
+  // Use add_child() to ensure child Prim has unique name.
+  if (!xformPrim.add_child(std::move(meshPrim), /* rename Prim name if_required */true, &err)) {
+    std::cerr << "Failed to constrcut Scene: " << err << "\n";
+    exit(-1);
+  }
+
+  if (!xformPrim.add_child(std::move(spherePrim), /* rename Prim name if_required */true, &err)) {
+    std::cerr << "Failed to constrcut Scene: " << err << "\n";
+  }
+
+  // Must set rename Prim arg `true`, otherwise `add_child` fails since spherePrim2 does not have valid & unique Prim name.
+  if (!xformPrim.add_child(std::move(spherePrim2), /* rename Prim name if_required */true, &err)) {
+    std::cerr << "Failed to constrcut Scene: " << err << "\n";
+    exit(-1);
+  }
+
+  std::cout << "num_prims = " << xformPrim.children().size() << "\n";
+  if (xformPrim.children().size() != 3) {
+    std::cerr << "Internal error. num child Prims must be 3, but got " << xformPrim.children().size() << "\n";
+    exit(-1);
+  }
 
   // If you want to specify the appearance/traversal order of child Prim(e.g. Showing Prim tree in GUI, Ascii output), set "primChildren"(token[]) metadata
   // xfromPrim.metas().primChildren.size() must be identical to xformPrim.children().size()
-  xformPrim.metas().primChildren.push_back(tinyusdz::value::token(spherePrim.element_name()));
-  xformPrim.metas().primChildren.push_back(tinyusdz::value::token(meshPrim.element_name()));
-  std::cout << "sphere.element_name = " << spherePrim.element_name() << "\n";
-  std::cout << "mesh.element_name = " << meshPrim.element_name() << "\n";
+  xformPrim.metas().primChildren.push_back(tinyusdz::value::token(xformPrim.children()[1].element_name()));
+  xformPrim.metas().primChildren.push_back(tinyusdz::value::token(xformPrim.children()[0].element_name()));
+  xformPrim.metas().primChildren.push_back(tinyusdz::value::token(xformPrim.children()[2].element_name()));
 
   stage->metas().defaultPrim = tinyusdz::value::token(xformPrim.element_name()); // token
 
@@ -419,7 +454,10 @@ void CreateScene(tinyusdz::Stage *stage) {
   // Commit Stage.
   // Internally, it calls Stage::compute_absolute_prim_path_and_assign_prim_id() to compute absolute Prim path and assign unique Prim id to each Prims in the Stage.
   // NOTE: Stage::metas() is not affected by `commit` API, so you can call `commit` before manipulating StageMetas through `Stage::metas()`
-  stage->commit();
+  if (!stage->commit()) {
+    std::cerr << "Failed to commit Stage. ERR: " << stage->get_error() << "\n";
+    exit(-1);
+  }
 #endif
 
 }
@@ -429,8 +467,13 @@ int main(int argc, char **argv) {
 
   CreateScene(&stage);
 
+  if (stage.get_warning().size()) {
+    std::cout << "WARN in Stage: " << stage.get_warning() << "\n";
+  }
+
   // Print USD scene as Ascii.
-  std::cout << stage.ExportToString() << "\n";
+  std::cout << to_string(stage) << "\n";
+  // std::cout << stage.ExportToString() << "\n"; // you can also use pxrUSD compatible ExportToString().
 
   // Dump Prim tree info.
   std::cout << stage.dump_prim_tree() << "\n";
