@@ -27,7 +27,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <algorithm>
 #include <atomic>
-//#include <cassert>
+// #include <cassert>
 #include <cctype>  // std::tolower
 #include <chrono>
 #include <fstream>
@@ -44,15 +44,15 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <unordered_set>
 #include <vector>
 
+#include "io-util.hh"
 #include "pprinter.hh"
 #include "str-util.hh"
+#include "tiny-format.hh"
 #include "tinyusdz.hh"
 #include "usdLux.hh"
 #include "usdShade.hh"
-#include "value-pprint.hh"
 #include "usda-reader.hh"
-#include "io-util.hh"
-#include "tiny-format.hh"
+#include "value-pprint.hh"
 //
 #include "common-macros.inc"
 
@@ -60,9 +60,8 @@ namespace tinyusdz {
 
 #if 1
 // For PUSH_ERROR_AND_RETURN
-#define PushError(s) \
-  _err += s;
-//#define PushWarn(s) if (warn) { (*warn) += s; }
+#define PushError(s) _err += s;
+// #define PushWarn(s) if (warn) { (*warn) += s; }
 #endif
 
 namespace {
@@ -142,25 +141,25 @@ nonstd::optional<const Prim *> GetPrimAtPathRec(const Prim *parent,
   // if (auto pv = GetPrimElementName(parent->data())) {
   {
     std::string elementName = parent->element_path().prim_part();
-    //DCOUT(pprint::Indent(depth) << "Prim elementName = " << elementName);
-    //DCOUT(pprint::Indent(depth) << "Given Path = " << path);
-    // fully absolute path
+    // DCOUT(pprint::Indent(depth) << "Prim elementName = " << elementName);
+    // DCOUT(pprint::Indent(depth) << "Given Path = " << path);
+    //  fully absolute path
     abs_path = parent_path + "/" + elementName;
-    //DCOUT(pprint::Indent(depth) << "abs_path = " << abs_path);
-    //DCOUT(pprint::Indent(depth)
-    //      << "queriying path = " << path.full_path_name());
+    // DCOUT(pprint::Indent(depth) << "abs_path = " << abs_path);
+    // DCOUT(pprint::Indent(depth)
+    //       << "queriying path = " << path.full_path_name());
     if (abs_path == path.full_path_name()) {
-      //DCOUT(pprint::Indent(depth)
-      //      << "Got it! Found Prim at Path = " << abs_path);
+      // DCOUT(pprint::Indent(depth)
+      //       << "Got it! Found Prim at Path = " << abs_path);
       return parent;
     }
   }
 
-  //DCOUT(pprint::Indent(depth)
-  //      << "# of children : " << parent->children().size());
+  // DCOUT(pprint::Indent(depth)
+  //       << "# of children : " << parent->children().size());
   for (const auto &child : parent->children()) {
     // const std::string &p = parent->elementPath.full_path_name();
-    //DCOUT(pprint::Indent(depth + 1) << "Parent path : " << abs_path);
+    // DCOUT(pprint::Indent(depth + 1) << "Parent path : " << abs_path);
     if (auto pv = GetPrimAtPathRec(&child, abs_path, path, depth + 1)) {
       return pv.value();
     }
@@ -169,7 +168,7 @@ nonstd::optional<const Prim *> GetPrimAtPathRec(const Prim *parent,
   return nonstd::nullopt;
 }
 
-} // namespace local
+}  // namespace
 
 //
 // -- Stage
@@ -265,9 +264,9 @@ bool Stage::find_prim_at_path(const Path &path, int64_t *prim_id,
 
 namespace {
 
-bool FindPrimByPrimIdRec(uint64_t prim_id, const Prim *root, const Prim **primFound, int level, std::string *err) {
-
-  if (level > 1024*1024*128) {
+bool FindPrimByPrimIdRec(uint64_t prim_id, const Prim *root,
+                         const Prim **primFound, int level, std::string *err) {
+  if (level > 1024 * 1024 * 128) {
     // too deep node.
     return false;
   }
@@ -283,7 +282,7 @@ bool FindPrimByPrimIdRec(uint64_t prim_id, const Prim *root, const Prim **primFo
 
   // Brute-force search.
   for (const auto &child : root->children()) {
-    if (FindPrimByPrimIdRec(prim_id, &child, primFound, level+1, err)) {
+    if (FindPrimByPrimIdRec(prim_id, &child, primFound, level + 1, err)) {
       return true;
     }
   }
@@ -291,10 +290,10 @@ bool FindPrimByPrimIdRec(uint64_t prim_id, const Prim *root, const Prim **primFo
   return false;
 }
 
-} // namespace local
+}  // namespace
 
 bool Stage::find_prim_by_prim_id(const uint64_t prim_id, const Prim *&prim,
-                              std::string *err) const {
+                                 std::string *err) const {
   if (prim_id < 1) {
     if (err) {
       (*err) = "Input prim_id must be 1 or greater.";
@@ -327,11 +326,10 @@ bool Stage::find_prim_by_prim_id(const uint64_t prim_id, const Prim *&prim,
   }
 
   return false;
-
 }
 
 bool Stage::find_prim_by_prim_id(const uint64_t prim_id, Prim *&prim,
-                              std::string *err) {
+                                 std::string *err) {
   const Prim *c_prim{nullptr};
   if (!find_prim_by_prim_id(prim_id, c_prim, err)) {
     return false;
@@ -401,28 +399,31 @@ bool Stage::find_prim_from_relative_path(const Prim &root,
   }
 }
 
-bool Stage::LoadLayerFromMemory(const uint8_t *addr, const size_t nbytes, const std::string &asset_name, Layer *layer, const uint32_t load_states) {
-
+bool Stage::LoadLayerFromMemory(const uint8_t *addr, const size_t nbytes,
+                                const std::string &asset_name, Layer *layer,
+                                const uint32_t load_states) {
   // TODO: USDC/USDZ support.
 
   tinyusdz::StreamReader sr(addr, nbytes, /* swap endian */ false);
   tinyusdz::usda::USDAReader reader(&sr);
 
   // TODO: Uase AssetResolver
-  //reader.SetBaseDir(base_dir);
+  // reader.SetBaseDir(base_dir);
 
   if (!reader.read(load_states)) {
     return false;
   }
 
   if (!reader.get_as_layer(layer)) {
-    PUSH_ERROR_AND_RETURN("Failed to retrieve USD data as Layer: filepath = " << asset_name);
+    PUSH_ERROR_AND_RETURN(
+        "Failed to retrieve USD data as Layer: filepath = " << asset_name);
   }
 
   return false;
 }
 
-bool Stage::LoadLayerFromFile(const std::string &_filename, Layer *layer, const uint32_t load_states) {
+bool Stage::LoadLayerFromFile(const std::string &_filename, Layer *layer,
+                              const uint32_t load_states) {
   // TODO: Setup AssetResolver.
 
   std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
@@ -432,13 +433,14 @@ bool Stage::LoadLayerFromFile(const std::string &_filename, Layer *layer, const 
 
   std::string err;
   std::vector<uint8_t> data;
-  size_t max_bytes = std::numeric_limits<size_t>::max(); // TODO:
+  size_t max_bytes = std::numeric_limits<size_t>::max();  // TODO:
   if (!io::ReadWholeFile(&data, &err, filepath, max_bytes,
                          /* userdata */ nullptr)) {
     PUSH_ERROR_AND_RETURN("Read file failed: " + err);
   }
 
-  return LoadLayerFromMemory(data.data(), data.size(), filepath, layer, load_states);
+  return LoadLayerFromMemory(data.data(), data.size(), filepath, layer,
+                             load_states);
 }
 
 bool Stage::LoadSubLayers(std::vector<Layer> *sublayers) {
@@ -449,17 +451,18 @@ bool Stage::LoadSubLayers(std::vector<Layer> *sublayers) {
 namespace {
 
 void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
-
-  // Currently, Prim's elementName is read from name variable in concrete Prim class(e.g. Xform::name).
+  // Currently, Prim's elementName is read from name variable in concrete Prim
+  // class(e.g. Xform::name).
   // TODO: use prim.elementPath for elementName.
   std::string s = pprint_value(prim.data(), indent, /* closing_brace */ false);
 
   bool require_newline = true;
 
   // Check last 2 chars.
-  // if it ends with '{\n', no properties are authored so do not emit blank line before printing VariantSet or child Prims.
+  // if it ends with '{\n', no properties are authored so do not emit blank line
+  // before printing VariantSet or child Prims.
   if (s.size() > 2) {
-    if ((s[s.size() - 2] == '{') && (s[s.size()-1] == '\n')) {
+    if ((s[s.size() - 2] == '{') && (s[s.size() - 1] == '\n')) {
       require_newline = false;
     }
   }
@@ -479,32 +482,35 @@ void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
     require_newline = true;
 
     for (const auto &variantSet : prim.variantSets()) {
-      ss << pprint::Indent(indent+1) << "variantSet " << quote(variantSet.first) << " = {\n";
+      ss << pprint::Indent(indent + 1) << "variantSet "
+         << quote(variantSet.first) << " = {\n";
 
       for (const auto &variantItem : variantSet.second.variantSet) {
-        ss << pprint::Indent(indent+2) << quote(variantItem.first);
+        ss << pprint::Indent(indent + 2) << quote(variantItem.first);
 
         const Variant &variant = variantItem.second;
 
         if (variant.metas().authored()) {
           ss << " (\n";
-          ss << print_prim_metas(variant.metas(), indent+3);
-          ss << pprint::Indent(indent+2) << ")";
+          ss << print_prim_metas(variant.metas(), indent + 3);
+          ss << pprint::Indent(indent + 2) << ")";
         }
 
         ss << " {\n";
 
-        ss << print_props(variant.properties(), indent+3);
+        ss << print_props(variant.properties(), indent + 3);
 
         if (variant.metas().variantChildren.has_value() &&
-            (variant.metas().variantChildren.value().size() == variant.primChildren().size())) {
-
+            (variant.metas().variantChildren.value().size() ==
+             variant.primChildren().size())) {
           std::map<std::string, const Prim *> primNameTable;
           for (size_t i = 0; i < variant.primChildren().size(); i++) {
-            primNameTable.emplace(variant.primChildren()[i].element_name(), &variant.primChildren()[i]);
+            primNameTable.emplace(variant.primChildren()[i].element_name(),
+                                  &variant.primChildren()[i]);
           }
 
-          for (size_t i = 0; i < variant.metas().variantChildren.value().size(); i++) {
+          for (size_t i = 0; i < variant.metas().variantChildren.value().size();
+               i++) {
             value::token nameTok = variant.metas().variantChildren.value()[i];
             const auto it = primNameTable.find(nameTok.str());
             if (it != primNameTable.end()) {
@@ -518,21 +524,18 @@ void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
           }
 
         } else {
-
           for (size_t i = 0; i < variant.primChildren().size(); i++) {
             PrimPrintRec(ss, variant.primChildren()[i], indent + 3);
             if (i != (variant.primChildren().size() - 1)) {
               ss << "\n";
             }
           }
-
         }
 
-        ss << pprint::Indent(indent+2) << "}\n";
-
+        ss << pprint::Indent(indent + 2) << "}\n";
       }
 
-      ss << pprint::Indent(indent+1) << "}\n";
+      ss << pprint::Indent(indent + 1) << "}\n";
     }
   }
 
@@ -551,7 +554,8 @@ void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
 
       std::map<std::string, const Prim *> primNameTable;
       for (size_t i = 0; i < prim.children().size(); i++) {
-        primNameTable.emplace(prim.children()[i].element_name(), &prim.children()[i]);
+        primNameTable.emplace(prim.children()[i].element_name(),
+                              &prim.children()[i]);
       }
 
       for (size_t i = 0; i < prim.metas().primChildren.size(); i++) {
@@ -559,7 +563,8 @@ void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
           ss << "\n";
         }
         value::token nameTok = prim.metas().primChildren[i];
-        DCOUT(fmt::format("primChildren  {}/{} = {}", i, prim.metas().primChildren.size(), nameTok.str()));
+        DCOUT(fmt::format("primChildren  {}/{} = {}", i,
+                          prim.metas().primChildren.size(), nameTok.str()));
         const auto it = primNameTable.find(nameTok.str());
         if (it != primNameTable.end()) {
           PrimPrintRec(ss, *(it->second), indent + 1);
@@ -592,60 +597,73 @@ std::string Stage::ExportToString() const {
 
   std::stringstream meta_ss;
   if (stage_metas.doc.value.empty()) {
-    //ss << pprint::Indent(1) << "doc = \"Exporterd from TinyUSDZ v" << tinyusdz::version_major
-    //   << "." << tinyusdz::version_minor << "." << tinyusdz::version_micro
-    //   << tinyusdz::version_rev << "\"\n";
+    // ss << pprint::Indent(1) << "doc = \"Exporterd from TinyUSDZ v" <<
+    // tinyusdz::version_major
+    //    << "." << tinyusdz::version_minor << "." << tinyusdz::version_micro
+    //    << tinyusdz::version_rev << "\"\n";
   } else {
-    meta_ss << pprint::Indent(1) << "doc = " << to_string(stage_metas.doc) << "\n";
+    meta_ss << pprint::Indent(1) << "doc = " << to_string(stage_metas.doc)
+            << "\n";
     authored = true;
   }
 
   if (stage_metas.metersPerUnit.authored()) {
-    meta_ss << pprint::Indent(1) << "metersPerUnit = " << stage_metas.metersPerUnit.get_value() << "\n";
+    meta_ss << pprint::Indent(1)
+            << "metersPerUnit = " << stage_metas.metersPerUnit.get_value()
+            << "\n";
     authored = true;
   }
 
   if (stage_metas.upAxis.authored()) {
-    meta_ss << pprint::Indent(1) << "upAxis = " << quote(to_string(stage_metas.upAxis.get_value()))
-       << "\n";
+    meta_ss << pprint::Indent(1)
+            << "upAxis = " << quote(to_string(stage_metas.upAxis.get_value()))
+            << "\n";
     authored = true;
   }
 
   if (stage_metas.timeCodesPerSecond.authored()) {
     meta_ss << pprint::Indent(1) << "timeCodesPerSecond = "
-       << stage_metas.timeCodesPerSecond.get_value() << "\n";
+            << stage_metas.timeCodesPerSecond.get_value() << "\n";
     authored = true;
   }
 
   if (stage_metas.startTimeCode.authored()) {
-    meta_ss << pprint::Indent(1) << "startTimeCode = " << stage_metas.startTimeCode.get_value() << "\n";
+    meta_ss << pprint::Indent(1)
+            << "startTimeCode = " << stage_metas.startTimeCode.get_value()
+            << "\n";
     authored = true;
   }
 
   if (stage_metas.endTimeCode.authored()) {
-    meta_ss << pprint::Indent(1) << "endTimeCode = " << stage_metas.endTimeCode.get_value() << "\n";
+    meta_ss << pprint::Indent(1)
+            << "endTimeCode = " << stage_metas.endTimeCode.get_value() << "\n";
     authored = true;
   }
 
   if (stage_metas.framesPerSecond.authored()) {
-    meta_ss << pprint::Indent(1) << "framesPerSecond = " << stage_metas.framesPerSecond.get_value() << "\n";
+    meta_ss << pprint::Indent(1)
+            << "framesPerSecond = " << stage_metas.framesPerSecond.get_value()
+            << "\n";
     authored = true;
   }
 
   // TODO: Do not print subLayers when consumed(after composition evaluated)
   if (stage_metas.subLayers.size()) {
-    meta_ss << pprint::Indent(1) << "subLayers = " << stage_metas.subLayers << "\n";
+    meta_ss << pprint::Indent(1) << "subLayers = " << stage_metas.subLayers
+            << "\n";
     authored = true;
   }
 
   if (stage_metas.defaultPrim.str().size()) {
-    meta_ss << pprint::Indent(1) << "defaultPrim = " << tinyusdz::quote(stage_metas.defaultPrim.str())
-       << "\n";
+    meta_ss << pprint::Indent(1) << "defaultPrim = "
+            << tinyusdz::quote(stage_metas.defaultPrim.str()) << "\n";
     authored = true;
   }
 
   if (stage_metas.autoPlay.authored()) {
-    meta_ss << pprint::Indent(1) << "autoPlay = " << to_string(stage_metas.autoPlay.get_value()) << "\n";
+    meta_ss << pprint::Indent(1)
+            << "autoPlay = " << to_string(stage_metas.autoPlay.get_value())
+            << "\n";
     authored = true;
   }
 
@@ -653,7 +671,7 @@ std::string Stage::ExportToString() const {
     auto v = stage_metas.playbackMode.get_value();
     if (v == StageMetas::PlaybackMode::PlaybackModeLoop) {
       meta_ss << pprint::Indent(1) << "playbackMode = \"loop\"\n";
-    } else { // None
+    } else {  // None
       meta_ss << pprint::Indent(1) << "playbackMode = \"none\"\n";
     }
     authored = true;
@@ -667,7 +685,7 @@ std::string Stage::ExportToString() const {
 
   if (stage_metas.customLayerData.size()) {
     meta_ss << print_customData(stage_metas.customLayerData, "customLayerData",
-                           /* indent */ 1);
+                                /* indent */ 1);
     authored = true;
   }
 
@@ -680,7 +698,6 @@ std::string Stage::ExportToString() const {
   ss << "\n";
 
   if (stage_metas.primChildren.size() == root_nodes.size()) {
-
     std::map<std::string, const Prim *> primNameTable;
     for (size_t i = 0; i < root_nodes.size(); i++) {
       primNameTable.emplace(root_nodes[i].element_name(), &root_nodes[i]);
@@ -688,7 +705,8 @@ std::string Stage::ExportToString() const {
 
     for (size_t i = 0; i < stage_metas.primChildren.size(); i++) {
       value::token nameTok = stage_metas.primChildren[i];
-      DCOUT(fmt::format("primChildren  {}/{} = {}", i, stage_metas.primChildren.size(), nameTok.str()));
+      DCOUT(fmt::format("primChildren  {}/{} = {}", i,
+                        stage_metas.primChildren.size(), nameTok.str()));
       const auto it = primNameTable.find(nameTok.str());
       if (it != primNameTable.end()) {
         PrimPrintRec(ss, *(it->second), 0);
@@ -736,13 +754,27 @@ bool Stage::has_prim_id(const uint64_t prim_id) const {
 
 namespace {
 
-bool ComputeAbsPathAndAssignPrimIdRec(const Stage &stage, Prim &prim, const Path &parentPath, uint32_t depth, bool assign_prim_id, bool force_assign_prim_id = true) {
-  if (depth > 1024*1024*128) {
+bool ComputeAbsPathAndAssignPrimIdRec(const Stage &stage, Prim &prim,
+                                      const Path &parentPath, uint32_t depth,
+                                      bool assign_prim_id,
+                                      bool force_assign_prim_id = true,
+                                      std::string *err = nullptr) {
+  if (depth > 1024 * 1024 * 128) {
     // too deep node.
+    if (err) {
+      (*err) += "Prim hierarchy too deep.\n";
+    }
     return false;
   }
 
-  // TODO: Check prim's element_name is not empty.
+  if (prim.element_name().empty()) {
+    // Prim's elementName must not be empty.
+    if (err) {
+      (*err) += "Prim's elementName is empty. Prim's parent Path = " +
+                parentPath.full_path_name() + "\n";
+    }
+    return false;
+  }
 
   Path abs_path = parentPath.AppendPrim(prim.element_name());
 
@@ -751,6 +783,9 @@ bool ComputeAbsPathAndAssignPrimIdRec(const Stage &stage, Prim &prim, const Path
     if (force_assign_prim_id || (prim.prim_id() < 1)) {
       uint64_t prim_id{0};
       if (!stage.allocate_prim_id(&prim_id)) {
+        if (err) {
+          (*err) += "Failed to assign unique Prim ID.\n";
+        }
         return false;
       }
       prim.prim_id() = int64_t(prim_id);
@@ -758,7 +793,9 @@ bool ComputeAbsPathAndAssignPrimIdRec(const Stage &stage, Prim &prim, const Path
   }
 
   for (Prim &child : prim.children()) {
-    if (!ComputeAbsPathAndAssignPrimIdRec(stage, child, abs_path, depth+1, assign_prim_id, force_assign_prim_id)) {
+    if (!ComputeAbsPathAndAssignPrimIdRec(stage, child, abs_path, depth + 1,
+                                          assign_prim_id, force_assign_prim_id,
+                                          err)) {
       return false;
     }
   }
@@ -766,13 +803,15 @@ bool ComputeAbsPathAndAssignPrimIdRec(const Stage &stage, Prim &prim, const Path
   return true;
 }
 
-} // namespace local
+}  // namespace
 
-bool Stage::compute_absolute_prim_path_and_assign_prim_id(bool force_assign_prim_id) {
-
+bool Stage::compute_absolute_prim_path_and_assign_prim_id(
+    bool force_assign_prim_id) {
   Path rootPath("/", "");
   for (Prim &root : root_prims()) {
-    if (!ComputeAbsPathAndAssignPrimIdRec(*this, root, rootPath, 1, /* assign_prim_id */true, force_assign_prim_id)) {
+    if (!ComputeAbsPathAndAssignPrimIdRec(*this, root, rootPath, 1,
+                                          /* assign_prim_id */ true,
+                                          force_assign_prim_id, &_err)) {
       return false;
     }
   }
@@ -784,16 +823,16 @@ bool Stage::compute_absolute_prim_path_and_assign_prim_id(bool force_assign_prim
 }
 
 bool Stage::compute_absolute_prim_path() {
-
   Path rootPath("/", "");
   for (Prim &root : root_prims()) {
-    if (!ComputeAbsPathAndAssignPrimIdRec(*this, root, rootPath, 1, /* assign prim_id */false)) {
+    if (!ComputeAbsPathAndAssignPrimIdRec(
+            *this, root, rootPath, 1, /* assign prim_id */ false,
+            /* force_assign_prim_id */ true, &_err)) {
       return false;
     }
   }
 
   return true;
-
 }
 
 namespace {
@@ -801,22 +840,24 @@ namespace {
 std::string DumpPrimTreeRec(const Prim &prim, uint32_t depth) {
   std::stringstream ss;
 
-  if (depth > 1024*1024*128) {
+  if (depth > 1024 * 1024 * 128) {
     // too deep node.
     return ss.str();
   }
 
-  ss << pprint::Indent(depth) << "\"" << prim.element_name() << "\" " << prim.absolute_path() << "\n";
-  ss << pprint::Indent(depth+1) << fmt::format("prim_id {}", prim.prim_id()) << "\n";
+  ss << pprint::Indent(depth) << "\"" << prim.element_name() << "\" "
+     << prim.absolute_path() << "\n";
+  ss << pprint::Indent(depth + 1) << fmt::format("prim_id {}", prim.prim_id())
+     << "\n";
 
   for (const Prim &child : prim.children()) {
-    ss << DumpPrimTreeRec(child, depth+1);
+    ss << DumpPrimTreeRec(child, depth + 1);
   }
 
   return ss.str();
 }
 
-} // namespace local
+}  // namespace
 
 std::string Stage::dump_prim_tree() const {
   std::stringstream ss;

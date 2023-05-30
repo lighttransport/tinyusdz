@@ -1054,14 +1054,23 @@ bool Prim::add_child(Prim &&rhs, const bool rename_prim_name, std::string *err) 
   std::string elementName = rhs.element_name();
 
   if (elementName.empty()) {
-    if (err) {
-      (*err) = "Prim has empty elementName.\n";
-    }
-    return false;
-  } else {
     if (rename_prim_name) {
+
       // assign default name `default`
       elementName = "default";
+
+      if (!SetPrimElementName(rhs.get_data(), elementName)) {
+        if (err) {
+          (*err) = fmt::format("Internal error. cannot modify Prim's elementName.\n");
+        }
+        return false;
+      }
+      rhs.element_path() = Path(elementName, /* prop_part */""); 
+    } else {
+      if (err) {
+        (*err) = "Prim has empty elementName.\n";
+      }
+      return false;
     }
   }
 
@@ -1069,6 +1078,13 @@ bool Prim::add_child(Prim &&rhs, const bool rename_prim_name, std::string *err) 
     // Rebuild _childrenNames
     _childrenNameSet.clear();
     for (size_t i = 0; i < _children.size(); i++) {
+      if (_children[i].element_name().empty()) {
+        if (err) {
+          (*err) = "Internal error: Existing child Prim's elementName is empty.\n";
+        }
+        return false;
+      }
+
       if (_childrenNameSet.count(_children[i].element_name())) {
         if (err) {
           (*err) = "Internal error: _children contains Prim with same elementName.\n";
@@ -1079,6 +1095,8 @@ bool Prim::add_child(Prim &&rhs, const bool rename_prim_name, std::string *err) 
       _childrenNameSet.insert(_children[i].element_name());
     }
   }
+
+  DCOUT("elementName = " << elementName);
 
   if (_childrenNameSet.count(elementName)) {
     if (rename_prim_name) {
@@ -1092,12 +1110,15 @@ bool Prim::add_child(Prim &&rhs, const bool rename_prim_name, std::string *err) 
 
       elementName = unique_name;
 
+      // Need to modify both Prim::data::name and Prim::elementPath
+      DCOUT("elementName = " << elementName);
       if (!SetPrimElementName(rhs.get_data(), elementName)) {
         if (err) {
           (*err) = fmt::format("Internal error. cannot modify Prim's elementName.\n");
         }
         return false;
       }
+      rhs.element_path() = Path(elementName, /* prop_part */""); 
     } else {
       if (err) {
         (*err) = fmt::format("Prim name(elementName) {} already exists in children.\n", rhs.element_name());
@@ -1107,6 +1128,7 @@ bool Prim::add_child(Prim &&rhs, const bool rename_prim_name, std::string *err) 
   }
 
   
+  DCOUT("rhs.elementName = " << rhs.element_name());
 
   _childrenNameSet.insert(elementName);
   _children.emplace_back(std::move(rhs));
