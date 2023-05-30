@@ -362,4 +362,52 @@ bool is_variantElementName(const std::string &name) {
   return tokenize_variantElement(name);
 }
 
+///
+/// Simply add number suffix to make unique string.
+///
+/// - plane -> plane1 
+/// - sphere1 -> sphere11 
+/// - xform4 -> xform41 
+///
+///
+bool makeUniqueName(std::multiset<std::string> &nameSet, const std::string &name, std::string *unique_name) {
+  if (!unique_name) {
+    return false;
+  }
+
+  if (nameSet.count(name) == 0) {
+    (*unique_name) = name;
+    return 0;
+  }
+
+  // Simply add number
+
+  const size_t kMaxLoop = 1024; // to avoid infinite loop.
+
+  std::string new_name = name;
+
+  size_t cnt = 0;
+  while (cnt < kMaxLoop) {
+
+    size_t i = nameSet.count(new_name);
+    if (i == 0) {
+      // This should not happen though.
+      return false;
+    }
+
+    new_name += std::to_string(i);
+
+    if (nameSet.count(new_name) == 0) {
+
+      (*unique_name) = new_name;
+      return true; 
+  
+    }
+
+    cnt++;
+  }
+  
+  return false;
+}
+
 }  // namespace tinyusdz

@@ -7,6 +7,10 @@
 #include "composition.hh"
 #include "prim-types.hh"
 
+#if defined(TINYUSDZ_ENABLE_THREAD)
+#include <mutex>
+#endif
+
 namespace tinyusdz {
 
 // TODO: Rename to LayerMetas
@@ -152,14 +156,26 @@ class Stage {
   ///
   /// @return Const array of Root Prims.
   ///
-  const std::vector<Prim> &root_prims() const { return root_nodes; }
+  const std::vector<Prim> &root_prims() const { return _root_nodes; }
 
   ///
   /// @brief Reference to Root Prims array
   ///
   /// @return Array of Root Prims.
+  /// TODO: Deprecate non-const `root_prims()` API and use `add_root_prim()` instead.
   ///
-  std::vector<Prim> &root_prims() { return root_nodes; }
+  std::vector<Prim> &root_prims() { return _root_nodes; }
+
+  ///
+  /// Add Prim to root.
+  ///
+  /// @param[in] prim Prim
+  /// @param[in] rename_prim_name Rename Prim's elementName if required(to be unique among root Prims)
+  ///
+  /// @return true Upon success. false when failed to add Prim to root(e.g. same name exists in the root)
+  /// (error message can be retrieved using `get_error()`)
+  ///
+  bool add_root_prim(Prim &&prim, bool rename_prim_name = true);
 
   ///
   /// @brief Get Stage metadatum
@@ -252,6 +268,11 @@ class Stage {
   }
 
  private:
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  mutable std::mutex _mutex;
+#endif
+
   ///
   /// Loads USD from and return it as Layer
   ///
@@ -283,7 +304,8 @@ class Stage {
   bool LoadSubLayers(std::vector<Layer> *dest_sublayers);
 
   // Root nodes
-  std::vector<Prim> root_nodes;
+  std::vector<Prim> _root_nodes;
+  std::multiset<std::string> _root_node_nameSet;
 
   std::string name;       // Scene name
   int64_t default_root_node{-1};  // index to default root node

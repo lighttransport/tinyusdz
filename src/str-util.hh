@@ -7,6 +7,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <set>
 
 namespace tinyusdz {
 
@@ -293,6 +294,16 @@ inline std::string makeIdentifierValid(const std::string &str) {
 
   return s;
 }
+
+///
+/// Simply add number suffix to make unique string.
+///
+/// - plane -> plane1 
+/// - sphere1 -> sphere11 
+/// - xform4 -> xform41 
+///
+///
+bool makeUniqueName(std::multiset<std::string> &nameSet, const std::string &name, std::string *unique_name);
 
 #if 0
 template<typename It>
