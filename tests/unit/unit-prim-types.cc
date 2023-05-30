@@ -120,11 +120,13 @@ void prim_add_test(void) {
   Model amodel;
   Model bmodel;
   Model cmodel;
+  Model dmodel;
   Model rootmodel;
 
   Prim aprim("test01", amodel);
   Prim bprim("test02", bmodel);
   Prim cprim("test01", cmodel);
+  Prim dprim("test02", dmodel);
   Prim root("root", rootmodel);
 
   TEST_CHECK(root.add_child(std::move(aprim)));
@@ -132,6 +134,9 @@ void prim_add_test(void) {
   TEST_CHECK(root.add_child(std::move(bprim)));
 
   // cannot add child Prim with same elementName
-  TEST_CHECK(!root.add_child(std::move(bprim))); 
+  TEST_CHECK(!root.add_child(std::move(cprim), /* rename_if_required */false)); 
+
+  // can add child Prim with renaming
+  TEST_CHECK(root.add_child(std::move(dprim), /* rename_if_required */true)); 
   
 }
