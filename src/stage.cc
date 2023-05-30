@@ -212,7 +212,7 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
   }
 
   // Brute-force search.
-  for (const auto &parent : root_nodes) {
+  for (const auto &parent : _root_nodes) {
     if (auto pv =
             GetPrimAtPathRec(&parent, /* root */ "", path, /* depth */ 0)) {
       // Add to cache.
@@ -697,10 +697,10 @@ std::string Stage::ExportToString() const {
 
   ss << "\n";
 
-  if (stage_metas.primChildren.size() == root_nodes.size()) {
+  if (stage_metas.primChildren.size() == _root_nodes.size()) {
     std::map<std::string, const Prim *> primNameTable;
-    for (size_t i = 0; i < root_nodes.size(); i++) {
-      primNameTable.emplace(root_nodes[i].element_name(), &root_nodes[i]);
+    for (size_t i = 0; i < _root_nodes.size(); i++) {
+      primNameTable.emplace(_root_nodes[i].element_name(), &_root_nodes[i]);
     }
 
     for (size_t i = 0; i < stage_metas.primChildren.size(); i++) {
@@ -718,10 +718,10 @@ std::string Stage::ExportToString() const {
       }
     }
   } else {
-    for (size_t i = 0; i < root_nodes.size(); i++) {
-      PrimPrintRec(ss, root_nodes[i], 0);
+    for (size_t i = 0; i < _root_nodes.size(); i++) {
+      PrimPrintRec(ss, _root_nodes[i], 0);
 
-      if (i != (root_nodes.size() - 1)) {
+      if (i != (_root_nodes.size() - 1)) {
         ss << "\n";
       }
     }
@@ -833,6 +833,75 @@ bool Stage::compute_absolute_prim_path() {
   }
 
   return true;
+}
+
+bool Stage::add_root_prim(Prim &&prim, bool rename_prim_name) {
+
+#if defined(TINYUSD_ENABLE_THREAD)
+  // TODO: Only take a lock when dirty.
+  std::lock_guard<std::mutex> lock(_mutex);
+#endif
+
+
+  std::string elementName = prim.element_name();
+
+  if (elementName.empty()) {
+    if (rename_prim_name) {
+
+      // assign default name `default`
+      elementName = "default";
+
+      if (!SetPrimElementName(prim.get_data(), elementName)) {
+        PUSH_ERROR_AND_RETURN("Internal error. cannot modify Prim's elementName");
+      }
+      prim.element_path() = Path(elementName, /* prop_part */"");
+    } else {
+      PUSH_ERROR_AND_RETURN("Prim has empty elementName.");
+    }
+  }
+
+  if (_root_nodes.size() != _root_node_nameSet.size()) {
+    // Rebuild nameSet
+    _root_node_nameSet.clear();
+    for (size_t i = 0; i < _root_nodes.size(); i++) {
+      if (_root_nodes[i].element_name().empty()) {
+        PUSH_ERROR_AND_RETURN("Internal error: Existing root Prim's elementName is empty.");
+      }
+
+      if (_root_node_nameSet.count(_root_nodes[i].element_name())) {
+        PUSH_ERROR_AND_RETURN("Internal error: Stage contains root Prim with same elementName.");
+      }
+
+      _root_node_nameSet.insert(_root_nodes[i].element_name());
+    }
+  }
+
+  if (_root_node_nameSet.count(elementName)) {
+    if (rename_prim_name) {
+      std::string unique_name;
+      if (!makeUniqueName(_root_node_nameSet, elementName, &unique_name)) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Internal error. cannot assign unique name for `{}`.\n", elementName));
+      }
+
+      elementName = unique_name;
+
+      // Need to modify both Prim::data::name and Prim::elementPath
+      if (!SetPrimElementName(prim.get_data(), elementName)) {
+        PUSH_ERROR_AND_RETURN("Internal error. cannot modify Prim's elementName.");
+      }
+      prim.element_path() = Path(elementName, /* prop_part */"");
+    } else {
+      PUSH_ERROR_AND_RETURN(fmt::format("Prim name(elementName) {} already exists in children.\n", prim.element_name()));
+    }
+  }
+
+
+  _root_node_nameSet.insert(elementName);
+  _root_nodes.emplace_back(std::move(prim));
+
+  return true;
+
+
 }
 
 namespace {
