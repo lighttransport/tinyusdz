@@ -899,9 +899,74 @@ bool Stage::add_root_prim(Prim &&prim, bool rename_prim_name) {
   _root_node_nameSet.insert(elementName);
   _root_nodes.emplace_back(std::move(prim));
 
+  _dirty = true;
+
   return true;
 
 
+}
+
+bool Stage::replace_root_prim(const std::string &prim_name, Prim &&prim) {
+
+#if defined(TINYUSD_ENABLE_THREAD)
+  // TODO: Only take a lock when dirty.
+  std::lock_guard<std::mutex> lock(_mutex);
+#endif
+
+  if (prim_name.empty()) {
+    PUSH_ERROR_AND_RETURN(fmt::format("prim_name is empty."));
+  }
+
+  if (!ValidatePrimElementName(prim_name)) {
+    PUSH_ERROR_AND_RETURN(fmt::format("`{}` is not a valid Prim name.", prim_name));
+  }
+
+  if (_root_nodes.size() != _root_node_nameSet.size()) {
+    // Rebuild nameSet
+    _root_node_nameSet.clear();
+    for (size_t i = 0; i < _root_nodes.size(); i++) {
+      if (_root_nodes[i].element_name().empty()) {
+        PUSH_ERROR_AND_RETURN("Internal error: Existing root Prim's elementName is empty.");
+      }
+
+      if (_root_node_nameSet.count(_root_nodes[i].element_name())) {
+        PUSH_ERROR_AND_RETURN("Internal error: Stage contains root Prim with same elementName.");
+      }
+
+      _root_node_nameSet.insert(_root_nodes[i].element_name());
+    }
+  }
+
+  // Simple linear scan
+  auto result = std::find_if(_root_nodes.begin(), _root_nodes.end(), [prim_name](const Prim &p) {
+    return (p.element_name() == prim_name);
+  });
+
+  if (result != _root_nodes.end()) {
+
+    // Need to modify both Prim::data::name and Prim::elementPath
+    if (!SetPrimElementName(prim.get_data(), prim_name)) {
+      PUSH_ERROR_AND_RETURN("Internal error. cannot modify Prim's elementName.");
+    }
+    prim.element_path() = Path(prim_name, /* prop_part */"");
+
+    (*result) = std::move(prim); // replace
+
+  } else {
+
+    // Need to modify both Prim::data::name and Prim::elementPath
+    if (!SetPrimElementName(prim.get_data(), prim_name)) {
+      PUSH_ERROR_AND_RETURN("Internal error. cannot modify Prim's elementName.");
+    }
+    prim.element_path() = Path(prim_name, /* prop_part */"");
+
+    _root_node_nameSet.insert(prim_name);
+    _root_nodes.emplace_back(std::move(prim)); // add
+  }
+
+  _dirty = true;
+
+  return true;
 }
 
 namespace {
