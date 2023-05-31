@@ -392,13 +392,13 @@ void CreateScene(tinyusdz::Stage *stage) {
     std::cerr << "Failed to constrcut Scene: " << err << "\n";
   }
 
+#if 1
   // Must set rename Prim arg `true`, otherwise `add_child` fails since spherePrim2 does not have valid & unique Prim name.
   if (!xformPrim.add_child(std::move(spherePrim2), /* rename Prim name if_required */true, &err)) {
     std::cerr << "Failed to constrcut Scene: " << err << "\n";
     exit(-1);
   }
 
-  std::cout << "num_prims = " << xformPrim.children().size() << "\n";
   if (xformPrim.children().size() != 3) {
     std::cerr << "Internal error. num child Prims must be 3, but got " << xformPrim.children().size() << "\n";
     exit(-1);
@@ -409,22 +409,51 @@ void CreateScene(tinyusdz::Stage *stage) {
   xformPrim.metas().primChildren.push_back(tinyusdz::value::token(xformPrim.children()[1].element_name()));
   xformPrim.metas().primChildren.push_back(tinyusdz::value::token(xformPrim.children()[0].element_name()));
   xformPrim.metas().primChildren.push_back(tinyusdz::value::token(xformPrim.children()[2].element_name()));
+#else
+  // You can replace(or add if corresponding Prim does not exist) existing child Prim using replace_child()
+  if (!xformPrim.replace_child("sphere", std::move(spherePrim2), &err)) {
+    std::cerr << "Failed to constrcut Scene: " << err << "\n";
+    exit(-1);
+  }
+
+  if (xformPrim.children().size() != 2) {
+    std::cerr << "Internal error. num child Prims must be 2, but got " << xformPrim.children().size() << "\n";
+    exit(-1);
+  }
+
+#endif
+
 
   stage->metas().defaultPrim = tinyusdz::value::token(xformPrim.element_name()); // token
 
-#if 0
+#if 0 // Deprecated. to be removed.
   // Use Stage::root_prims() to retrieve Stage's root Prim array.
   stage->root_prims().emplace_back(std::move(xformPrim));
   stage->root_prims().emplace_back(std::move(matPrim));
 #else
+
   if (!stage->add_root_prim(std::move(xformPrim))) {
     std::cerr << "Failed to add Prim to Stage root: " << stage->get_error() << "\n";
     exit(-1);
   }
+
   if (!stage->add_root_prim(std::move(matPrim))) {
     std::cerr << "Failed to add Prim to Stage root: " << stage->get_error() << "\n";
     exit(-1);
   }
+
+  // You can replace(or add if given Prim name does not exist in the Stage) root Prim using `replace_root_prim`.
+#if 0
+  {
+    tinyusdz::Scope scope;
+    tinyusdz::Prim scopePrim(scope);
+    if (!stage->replace_root_prim(/* root Prim name */"root", std::move(scopePrim))) {
+      std::cerr << "Failed to replace Prim to Stage root: " << stage->get_error() << "\n";
+      exit(-1);
+    }
+  }
+#endif
+
 #endif
 
   // You can add Stage metadatum through Stage::metas()
@@ -456,11 +485,6 @@ void CreateScene(tinyusdz::Stage *stage) {
     stage->metas().customLayerData = customData;
   }
 
-#if 0 // OLD API.
-  // After finishing adding Prims to the Stage,
-  // Invoke Stage::compute_absolute_prim_path_and_assign_prim_id() to compute absolute Prim path and assign unique Prim id to each Prims in the Stage.
-  stage->compute_absolute_prim_path_and_assign_prim_id();
-#else
   // Commit Stage.
   // Internally, it calls Stage::compute_absolute_prim_path_and_assign_prim_id() to compute absolute Prim path and assign unique Prim id to each Prims in the Stage.
   // NOTE: Stage::metas() is not affected by `commit` API, so you can call `commit` before manipulating StageMetas through `Stage::metas()`
@@ -468,7 +492,6 @@ void CreateScene(tinyusdz::Stage *stage) {
     std::cerr << "Failed to commit Stage. ERR: " << stage->get_error() << "\n";
     exit(-1);
   }
-#endif
 
 }
 
