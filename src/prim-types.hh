@@ -44,7 +44,7 @@
 
 #include "handle-allocator.hh"
 #include "primvar.hh"
-//#include "tiny-variant.hh"
+// #include "tiny-variant.hh"
 //
 #include "value-eval-util.hh"
 
@@ -262,7 +262,8 @@ class Path {
   const std::string &prop_part() const { return _prop_part; }
 
   const std::string &variant_part() const {
-    _variant_part_str = "{" + _variant_part + "=" + _variant_selection_part + "}";
+    _variant_part_str =
+        "{" + _variant_part + "=" + _variant_selection_part + "}";
     return _variant_part_str;
   }
 
@@ -515,8 +516,8 @@ class Path {
   std::string _variant_part;  // e.g. `variantColor` for {variantColor=green}
   std::string _variant_selection_part;  // e.g. `green` for {variantColor=green}
                                         // . Could be empty({variantColor=}).
-  mutable std::string _variant_part_str; // str buffer for variant_part()
-  mutable std::string _element;         // Element name
+  mutable std::string _variant_part_str;  // str buffer for variant_part()
+  mutable std::string _element;           // Element name
 
   nonstd::optional<PathType> _path_type;  // Currently optional.
 
@@ -1142,7 +1143,6 @@ struct Animatable {
 template <typename T>
 class TypedAttribute {
  public:
-
   static std::string type_name() { return value::TypeTraits<T>::type_name(); }
 
   static uint32_t type_id() { return value::TypeTraits<T>::type_id(); }
@@ -1719,23 +1719,16 @@ class Relationship {
 //
 class RelationshipProperty {
  public:
-
   RelationshipProperty() = default;
 
-  RelationshipProperty(const Relationship &rel) : _authored(true), _relationship(rel) {
-  }
+  RelationshipProperty(const Relationship &rel)
+      : _authored(true), _relationship(rel) {}
 
-  RelationshipProperty(const Path &p) {
-    set(p);
-  }
+  RelationshipProperty(const Path &p) { set(p); }
 
-  RelationshipProperty(const std::vector<Path> &pv) {
-    set(pv);
-  }
+  RelationshipProperty(const std::vector<Path> &pv) { set(pv); }
 
-  RelationshipProperty(const value::ValueBlock &v) {
-    set(v);
-  }
+  RelationshipProperty(const value::ValueBlock &v) { set(v); }
 
   void set_listedit_qual(ListEditQual q) { _relationship.set_listedit_qual(q); }
   ListEditQual get_listedit_qual() const {
@@ -1784,13 +1777,9 @@ class RelationshipProperty {
   }
 
   // TODO: Deprecate this direct access API to Relationship value?
-  const Relationship &relationship() const {
-    return _relationship;
-  }
+  const Relationship &relationship() const { return _relationship; }
 
-  Relationship &relationship() {
-    return _relationship;
-  }
+  Relationship &relationship() { return _relationship; }
 
   bool has_value() const { return _relationship.has_value(); }
 
@@ -2076,7 +2065,8 @@ class Property {
     Attrib,             // Attrib which contains actual data
     Relation,           // `rel` with targetPath(s).
     NoTargetsRelation,  // `rel` with no targets.
-    Connection,         // Connection attribute(`.connect` suffix). TODO: Deprecate this and use Attrib.
+    Connection,  // Connection attribute(`.connect` suffix). TODO: Deprecate
+                 // this and use Attrib.
   };
 
   Property() = default;
@@ -2138,7 +2128,7 @@ class Property {
   bool is_relationship() const {
     return (_type == Type::Relation) || (_type == Type::NoTargetsRelation);
   }
-  
+
   // TODO: Deprecate this and use is_attribute_connection
   bool is_connection() const { return _type == Type::Connection; }
 
@@ -2149,7 +2139,6 @@ class Property {
 
     return false;
   }
-
 
   std::string value_type_name() const {
     if (is_connection()) {
@@ -2658,7 +2647,9 @@ class Prim {
 
   ///
   /// Add Prim as a child.
-  /// When `rename_element_name` is true, rename input Prims elementName to make it unique among children(since USD(Crate) spec doesn't allow same Prim elementName in the same Prim hierarchy.
+  /// When `rename_element_name` is true, rename input Prims elementName to make
+  /// it unique among children(since USD(Crate) spec doesn't allow same Prim
+  /// elementName in the same Prim hierarchy.
   ///
   /// Renaming rule is Maya-like:
   /// - No elementName given: `default`
@@ -2668,9 +2659,23 @@ class Prim {
   ///
   /// Note: This function is thread-safe.
   ///
-  /// @return true Upon success. false when failed(e.g. Prim with same Prim::element_name() already exists when `rename_element_name` is false) and fill `err` with error message
+  /// @return true Upon success. false when failed(e.g. Prim with same
+  /// Prim::element_name() already exists when `rename_element_name` is false)
+  /// and fill `err` with error message
   ///
-  bool add_child(Prim &&prim, const bool rename_element_name = true, std::string *err = nullptr);
+  bool add_child(Prim &&prim, const bool rename_element_name = true,
+                 std::string *err = nullptr);
+
+  ///
+  /// Replace existing child Prim whose elementName is `child_prim_name`.
+  /// When there is no child Prim with elementName `child_prim_name` exists,
+  /// `prim` is added and rename is elementName to `child_prim_name`.
+  ///
+  /// @return true Upon success. false when failed(e.g. `child_prim_name` is
+  /// empty string or invalid Prim name) and fill `err` with error message.
+  ///
+  bool replace_child(const std::string &child_prim_name, Prim &&prim,
+                     std::string *err = nullptr);
 
 #if 0
   ///
@@ -2820,8 +2825,10 @@ class Prim {
       _data;  // Generic container for concrete Prim object. GPrim, Xform, ...
 
   std::vector<Prim> _children;  // child Prim nodes
-  //std::set<std::string> _childrenNames; // child Prim name(elementName).
-  std::multiset<std::string> _childrenNameSet; // Stores input child Prim's elementName to assign unique elementName in `add_child`
+  // std::set<std::string> _childrenNames; // child Prim name(elementName).
+  std::multiset<std::string>
+      _childrenNameSet;  // Stores input child Prim's elementName to assign
+                         // unique elementName in `add_child`
 
   mutable bool _child_dirty{false};
   mutable bool _primChildrenIndicesIsValid{
@@ -2844,7 +2851,6 @@ class Prim {
   mutable std::mutex _mutex;
 #endif
 };
-
 
 bool IsXformablePrim(const Prim &prim);
 
@@ -3125,7 +3131,7 @@ nonstd::optional<Kind> KindFromString(const std::string &v);
 
 // Return false when invalid character(e.g. '%') exists in a given string.
 // This function only validates `elementName` of a Prim(e.g. "dora", "xform1").
-// If you want to validate a Prim path(e.g. "/root/xform1"), 
+// If you want to validate a Prim path(e.g. "/root/xform1"),
 // Use ValidatePrimPath() in path-util.hh
 bool ValidatePrimElementName(const std::string &tok);
 

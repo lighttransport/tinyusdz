@@ -178,6 +178,17 @@ class Stage {
   bool add_root_prim(Prim &&prim, bool rename_prim_name = true);
 
   ///
+  /// Replace root Prim of elementName `prim_name` with `prim` 
+  ///
+  /// `prim`'s elementName will be modified to `prim_name`.
+  ///
+  /// If no root prim with `prim_name` exists, `prim` is added to root Prim and rename `prim`'s elementName to `prim_name`.
+  ///
+  /// @return true Upon succes. false when failed to replace Prim at root(e.g. `prim_name` is empty).
+  ///
+  bool replace_root_prim(const std::string &prim_name, Prim &&prim);
+
+  ///
   /// @brief Get Stage metadatum
   ///
   /// @return Stage metadatum struct.

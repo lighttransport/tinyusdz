@@ -1012,7 +1012,7 @@ bool Prim::add_child(Prim &&rhs, const bool rename_prim_name, std::string *err) 
         }
         return false;
       }
-      rhs.element_path() = Path(elementName, /* prop_part */""); 
+      rhs.element_path() = Path(elementName, /* prop_part */"");
     } else {
       if (err) {
         (*err) = "Prim has empty elementName.\n";
@@ -1055,6 +1055,15 @@ bool Prim::add_child(Prim &&rhs, const bool rename_prim_name, std::string *err) 
         return false;
       }
 
+      // Ensure valid Prim name
+      if (!ValidatePrimElementName(unique_name)) {
+        if (err) {
+          (*err) = fmt::format("Internally generated Prim name `{}` is invalid as a Prim name.\n", unique_name);
+        }
+        return false;
+
+      }
+
       elementName = unique_name;
 
       // Need to modify both Prim::data::name and Prim::elementPath
@@ -1065,7 +1074,7 @@ bool Prim::add_child(Prim &&rhs, const bool rename_prim_name, std::string *err) 
         }
         return false;
       }
-      rhs.element_path() = Path(elementName, /* prop_part */""); 
+      rhs.element_path() = Path(elementName, /* prop_part */"");
     } else {
       if (err) {
         (*err) = fmt::format("Prim name(elementName) {} already exists in children.\n", rhs.element_name());
@@ -1074,11 +1083,90 @@ bool Prim::add_child(Prim &&rhs, const bool rename_prim_name, std::string *err) 
     }
   }
 
-  
+
   DCOUT("rhs.elementName = " << rhs.element_name());
 
   _childrenNameSet.insert(elementName);
   _children.emplace_back(std::move(rhs));
+  _child_dirty = true;
+
+  return true;
+}
+
+bool Prim::replace_child(const std::string &child_prim_name, Prim &&rhs, std::string *err) {
+
+#if defined(TINYUSD_ENABLE_THREAD)
+  // TODO: Only take a lock when dirty.
+  std::lock_guard<std::mutex> lock(_mutex);
+#endif
+
+  if (child_prim_name.empty()) {
+    if (err) {
+      (*err) += "child_prim_name is empty.\n";
+    }
+  }
+
+  if (!ValidatePrimElementName(child_prim_name)) {
+    if (err) {
+      (*err) += fmt::format("`{}` is not a valid Prim name.\n", child_prim_name);
+    }
+  }
+
+  if (_children.size() != _childrenNameSet.size()) {
+    // Rebuild _childrenNames
+    _childrenNameSet.clear();
+    for (size_t i = 0; i < _children.size(); i++) {
+      if (_children[i].element_name().empty()) {
+        if (err) {
+          (*err) = "Internal error: Existing child Prim's elementName is empty.\n";
+        }
+        return false;
+      }
+
+      if (_childrenNameSet.count(_children[i].element_name())) {
+        if (err) {
+          (*err) = "Internal error: _children contains Prim with same elementName.\n";
+        }
+        return false;
+      }
+
+      _childrenNameSet.insert(_children[i].element_name());
+    }
+  }
+
+  // Simple linear scan
+  auto result = std::find_if(_children.begin(), _children.end(), [child_prim_name](const Prim &p) {
+    return (p.element_name() == child_prim_name);
+  });
+
+  if (result != _children.end()) {
+
+    // Need to modify both Prim::data::name and Prim::elementPath
+    if (!SetPrimElementName(rhs.get_data(), child_prim_name)) {
+      if (err) {
+        (*err) = fmt::format("Internal error. cannot modify Prim's elementName.\n");
+      }
+      return false;
+    }
+    rhs.element_path() = Path(child_prim_name, /* prop_part */"");
+
+    (*result) = std::move(rhs); // replace
+
+  } else {
+
+    // Need to modify both Prim::data::name and Prim::elementPath
+    if (!SetPrimElementName(rhs.get_data(), child_prim_name)) {
+      if (err) {
+        (*err) = fmt::format("Internal error. cannot modify Prim's elementName.\n");
+      }
+      return false;
+    }
+    rhs.element_path() = Path(child_prim_name, /* prop_part */"");
+
+    _childrenNameSet.insert(child_prim_name);
+    _children.emplace_back(std::move(rhs)); // add
+  }
+
   _child_dirty = true;
 
   return true;
