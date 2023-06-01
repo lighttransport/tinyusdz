@@ -1,5 +1,7 @@
-/// Copyright 2021-present Syoyo Fujita.
-/// MIT license.
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2021-2022 Syoyo Fujita.
+// Copyright 2023-present Light Transport Entertainment Inc.
+
 ///
 /// Type-erasure technique for Attribute/PrimVar(Primitive Variables), a Value class which can have 30+ different types(and can be compound-types(e.g. 1D/2D array, dictionary).
 /// Neigher std::any nor std::variant is applicable for such usecases, so write our own, handy typesystem.
