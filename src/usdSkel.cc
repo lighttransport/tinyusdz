@@ -8,10 +8,37 @@
 #include <sstream>
 
 #include "common-macros.inc"
+#include "tiny-format.hh"
 #include "prim-types.hh"
 
 namespace tinyusdz {
 namespace {}  // namespace
+
+constexpr auto kInbetweensNamespace = "inbetweens";
+
+bool BlendShape::add_inbetweenBlendShape(const double weight, Attribute &&attr) {
+
+  if (attr.name().empty()) {
+    return false;
+  }
+
+  if (attr.is_uniform()) {
+    return false;
+  }
+
+  if (!attr.is_value()) {
+    return false;
+  }
+
+  std::string attr_name = fmt::format("{}:{}", kInbetweensNamespace, attr.name());
+  attr.set_name(attr_name);
+
+  attr.metas().weight = weight;
+
+  props[attr_name] = Property(attr, /* custom */false);
+
+  return true;
+}
 
 bool SkelAnimation::get_blendShapes(std::vector<value::token> *toks) {
   return blendShapes.get_value(toks);

@@ -321,7 +321,8 @@ static void RegisterPropMetas(
   // usdSkel
   metas["elementSize"] = AsciiParser::VariableDef(value::kInt, "elementSize");
 
-  // usdSkel?
+  // usdSkel inbetween BlendShape
+  // use Double in TinyUSDZ. its float type in pxrUSD.
   metas["weight"] = AsciiParser::VariableDef(value::kDouble, "weight");
 
   // usdShade?
@@ -3580,6 +3581,14 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
         DCOUT("Got `customData` meta");
         out_meta->customData = dict;
 
+      } else if (varname == "weight") {
+        double value;
+        if (!ReadBasicType(&value)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse `weight`");
+        }
+
+        DCOUT("Got `weight` meta : " << value);
+        out_meta->weight = value;
       } else if (varname == "bindMaterialAs") {
         value::token tok;
         if (!ReadBasicType(&tok)) {

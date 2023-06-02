@@ -19,6 +19,18 @@ constexpr auto kBlendShape = "BlendShape";
 struct BlendShape {
   std::string name;
   Specifier spec{Specifier::Def};
+  int64_t parent_id{-1}; 
+
+  void set_name(const std::string &name_) {
+    name = name_;
+  }
+
+  const std::string &get_name() const {
+    return name;
+  }
+
+  Specifier &specifier() { return spec; }
+  const Specifier &specifier() const { return spec; }
 
   TypedAttribute<std::vector<value::vector3f>>
       offsets;  // uniform vector3f[]. required property
@@ -33,12 +45,29 @@ struct BlendShape {
   std::pair<ListEditQual, std::vector<Payload>> payload;
   std::map<std::string, VariantSet> variantSet;
   std::map<std::string, Property> props;
-  PrimMeta meta;
+
+  ///
+  /// Add attribute as in-beteen BlendShape attribute.
+  ///
+  /// - add `inbetweens` namespace prefix
+  /// - add `weight` attribute as Attribute meta.
+  ///
+  bool add_inbetweenBlendShape(double weight, Attribute &&attr);
 
   const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
   const std::vector<value::token> &propertyNames() const { return _properties; }
   std::vector<value::token> &primChildrenNames() { return _primChildren; }
   std::vector<value::token> &propertyNames() { return _properties; }
+
+  PrimMeta meta;
+
+  PrimMeta &metas() {
+    return meta;
+  }
+
+  const PrimMeta &metas() const {
+    return meta;
+  }
 
  private:
   std::vector<value::token> _primChildren;
@@ -49,6 +78,19 @@ struct BlendShape {
 struct Skeleton : Xformable {
   std::string name;
   Specifier spec{Specifier::Def};
+  int64_t parent_id{-1};
+
+  void set_name(const std::string &name_) {
+    name = name_;
+  }
+
+  const std::string &get_name() const {
+    return name;
+  }
+
+  Specifier &specifier() { return spec; }
+  const Specifier &specifier() const { return spec; }
+
 
   TypedAttribute<std::vector<value::matrix4d>>
       bindTransforms;  // uniform matrix4d[]. bind-pose transform of each joint
@@ -83,6 +125,15 @@ struct Skeleton : Xformable {
 
   PrimMeta meta;
 
+  PrimMeta &metas() {
+    return meta;
+  }
+
+  const PrimMeta &metas() const {
+    return meta;
+  }
+
+
   bool get_animationSource(Path *path, ListEditQual *qual = nullptr) {
     if (!path) {
       return false;
@@ -112,7 +163,7 @@ struct Skeleton : Xformable {
   std::vector<value::token> &primChildrenNames() { return _primChildren; }
   std::vector<value::token> &propertyNames() { return _properties; }
 
- private:
+  private:
   std::vector<value::token> _primChildren;
   std::vector<value::token> _properties;
 };
@@ -123,13 +174,25 @@ struct SkelRoot : Xformable {
   Specifier spec{Specifier::Def};
   int64_t parent_id{-1};
 
+  void set_name(const std::string &name_) {
+    name = name_;
+  }
+
+  const std::string &get_name() const {
+    return name;
+  }
+
+  Specifier &specifier() { return spec; }
+  const Specifier &specifier() const { return spec; }
+
+
   TypedAttribute<Animatable<Extent>>
-      extent;  // bounding extent. When authorized, the extent is the bounding
-               // box of whole its children.
+    extent;  // bounding extent. When authorized, the extent is the bounding
+  // box of whole its children.
   TypedAttributeWithFallback<Purpose> purpose{
-      Purpose::Default};  // "uniform token purpose"
+    Purpose::Default};  // "uniform token purpose"
   TypedAttributeWithFallback<Animatable<Visibility>> visibility{
-      Visibility::Inherited};  // "token visibility"
+    Visibility::Inherited};  // "token visibility"
 
   nonstd::optional<Relationship> proxyPrim;  // rel proxyPrim
   //std::vector<XformOp> xformOps;
@@ -137,17 +200,27 @@ struct SkelRoot : Xformable {
   // TODO: Add function to check if SkelRoot contains `Skeleton` and `GeomMesh`
   // node?;
 
-  
+
   std::pair<ListEditQual, std::vector<Reference>> references;
   std::pair<ListEditQual, std::vector<Payload>> payload;
   std::map<std::string, VariantSet> variantSet;
   std::map<std::string, Property> props;
-  PrimMeta meta;
 
   const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
   const std::vector<value::token> &propertyNames() const { return _properties; }
   std::vector<value::token> &primChildrenNames() { return _primChildren; }
   std::vector<value::token> &propertyNames() { return _properties; }
+
+  PrimMeta meta;
+
+  PrimMeta &metas() {
+    return meta;
+  }
+
+  const PrimMeta &metas() const {
+    return meta;
+  }
+
 
  private:
   std::vector<value::token> _primChildren;
@@ -158,6 +231,18 @@ struct SkelRoot : Xformable {
 struct SkelAnimation {
   std::string name;
   Specifier spec{Specifier::Def};
+  int64_t parent_id{-1};
+
+  void set_name(const std::string &name_) {
+    name = name_;
+  }
+
+  const std::string &get_name() const {
+    return name;
+  }
+
+  Specifier &specifier() { return spec; }
+  const Specifier &specifier() const { return spec; }
 
   TypedAttribute<std::vector<value::token>> blendShapes;  // uniform token[]
   TypedAttribute<Animatable<std::vector<float>>> blendShapeWeights;  // float[]
@@ -193,12 +278,21 @@ struct SkelAnimation {
   std::pair<ListEditQual, std::vector<Payload>> payload;
   std::map<std::string, VariantSet> variantSet;
   std::map<std::string, Property> props;
-  PrimMeta meta;
 
   const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
   const std::vector<value::token> &propertyNames() const { return _properties; }
   std::vector<value::token> &primChildrenNames() { return _primChildren; }
   std::vector<value::token> &propertyNames() { return _properties; }
+
+  PrimMeta meta;
+
+  PrimMeta &metas() {
+    return meta;
+  }
+
+  const PrimMeta &metas() const {
+    return meta;
+  }
 
  private:
   std::vector<value::token> _primChildren;
@@ -214,7 +308,7 @@ struct SkelAnimation {
 
 namespace value {
 
-// Geom
+// Register usdSkel Prim type.
 DEFINE_TYPE_TRAIT(SkelRoot, kSkelRoot, TYPE_ID_SKEL_ROOT, 1);
 DEFINE_TYPE_TRAIT(Skeleton, kSkeleton, TYPE_ID_SKELETON, 1);
 DEFINE_TYPE_TRAIT(SkelAnimation, kSkelAnimation, TYPE_ID_SKELANIMATION, 1);
