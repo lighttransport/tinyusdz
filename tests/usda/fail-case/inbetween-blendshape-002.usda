@@ -2,6 +2,7 @@
 
 def BlendShape "bs0" {
 
+  # cannot add type spec `double`
   uniform float inbetweens:val = 1.0 ( double weight = 0.5 )
 
 }
