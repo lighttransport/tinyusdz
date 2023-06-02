@@ -1,5 +1,6 @@
-// SPDX-License-Identifier: MIT
-// Copyright 2021 - Present, Syoyo Fujita.
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2021 - 2022, Syoyo Fujita.
+// Copyright 2023 - Present, Light Transport Entertainment Inc.
 //
 // USD ASCII parser
 
@@ -547,6 +548,14 @@ class AsciiParser {
   template <typename T, size_t N>
   bool SepBy1TupleType(const char sep,
                        std::vector<nonstd::optional<std::array<T, N>>> *result);
+
+  ///
+  /// Parses N occurences of tuple values with type 'T', separated by
+  /// `sep`. Allows 'None'
+  ///
+  template <typename T, size_t M, size_t N>
+  bool SepByNTupleType(const char sep,
+                       std::array<nonstd::optional<std::array<T, M>>, N> *result);
 
   ///
   /// Parses 1 or more occurences of tuple values with type 'T', separated by

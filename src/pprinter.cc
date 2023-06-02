@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2021 - 2022, Syoyo Fujita.
+// Copyright 2023, Light Transport Entertainment Inc.
+//
+// USD ASCII pretty printer.
+//
 //
 #include "pprinter.hh"
 #include "prim-types.hh"
@@ -9,12 +15,64 @@
 //
 #include "common-macros.inc"
 
+// For fast int/float to ascii
+// Default disabled.
+//#define TINYUSDZ_LOCAL_USE_JEAIII_ITOA
+
+#if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
+#include "external/jeaiii_to_text.h"
+#endif
+
+// dtoa_milo does not work well for float types
+// (e.g. it prints float 0.01 as 0.009999999997),
+// so use floaxie for float types
+// TODO: Use floaxie also for double?
+#include "external/dtoa_milo.h"
+
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
+//#include "external/floaxie/floaxie/ftoa.h"
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+
 // TODO:
 // - [ ] Print properties based on lexcographically(USDA)
 // - [ ] Refactor variantSet stmt print.
+// - [ ] wrap float/double print with `dtos` for accurate float/double value stringify.
 
 namespace tinyusdz {
+
 namespace {
+
+#if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
+void itoa(uint32_t n, char* b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
+void itoa(int32_t n, char* b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
+void itoa(uint64_t n, char* b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
+void itoa(int64_t n, char* b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
+#endif
+
+#if 0
+inline std::string dtos(const float v) {
+
+  char buf[floaxie::max_buffer_size<float>()];
+  size_t n = floaxie::ftoa(v, buf);
+
+  return std::string(buf, buf + n);
+}
+#endif
+
+inline std::string dtos(const double v) {
+
+  char buf[128];
+  dtoa_milo(v, buf);
+
+  return std::string(buf);
+}
 
 // Path quote
 std::string pquote(const Path &p) {
@@ -66,11 +124,11 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::LayerOffset &v) {
   // TODO: Do not print scale when it is 1.0
   ofs << "(";
   if (print_offset && print_scale) {
-    ofs << "offset = " << v._offset << ", scale = " << v._scale;
+    ofs << "offset = " << tinyusdz::dtos(v._offset) << ", scale = " << tinyusdz::dtos(v._scale);
   } else if (print_offset) {
-    ofs << "offset = " << v._offset;
+    ofs << "offset = " << tinyusdz::dtos(v._offset);
   } else { // print_scale
-    ofs << "scale = " << v._scale;
+    ofs << "scale = " << tinyusdz::dtos(v._scale);
   }
   ofs << ")";
 
@@ -539,6 +597,11 @@ std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
   if (meta.comment) {
     ss << pprint::Indent(indent) << "comment = " << to_string(meta.comment.value()) << "\n";
   }
+
+  if (meta.weight) {
+    ss << pprint::Indent(indent) << "weight = " << dtos(meta.weight.value()) << "\n";
+  }
+
 
   if (meta.customData) {
     ss << print_customData(meta.customData.value(), "customData", indent);

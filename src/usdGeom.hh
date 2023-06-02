@@ -295,11 +295,6 @@ struct GPrim : Xformable {
   std::pair<ListEditQual, std::vector<Payload>> payload;
   std::map<std::string, VariantSet> variantSet;
 
-  bool _valid{true};  // default behavior is valid(allow empty GPrim)
-
-  // Prim metadataum.
-  PrimMeta meta; // TODO: Move to private
-
   // For GeomPrimvar.
 
   ///
@@ -361,6 +356,9 @@ struct GPrim : Xformable {
     return _variantSetMap;
   }
 
+  // Prim metadataum.
+  PrimMeta meta; // TODO: Move to private 
+
   const PrimMeta &metas() const {
     return meta;
   }
@@ -370,6 +368,8 @@ struct GPrim : Xformable {
   }
 
  private:
+
+  //bool _valid{true};  // default behavior is valid(allow empty GPrim)
 
   std::vector<value::token> _primChildrenNames;
   std::vector<value::token> _propertyNames; 
