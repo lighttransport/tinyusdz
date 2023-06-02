@@ -860,6 +860,8 @@ struct AttrMeta {
   nonstd::optional<value::StringData> comment;    // `comment`
   nonstd::optional<CustomDataType> customData;    // `customData`
 
+  nonstd::optional<double> weight;    // usdSkel inbetween BlendShape weight.
+
   //
   // MaterialBinding
   //
@@ -875,7 +877,7 @@ struct AttrMeta {
   std::vector<value::StringData> stringData;
 
   bool authored() const {
-    return (interpolation || elementSize || hidden || customData ||
+    return (interpolation || elementSize || hidden || customData || weight ||
             bindMaterialAs || meta.size() || stringData.size());
   }
 };

@@ -794,6 +794,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   nonstd::optional<int> elementSize;
   nonstd::optional<bool> hidden;
   nonstd::optional<CustomDataType> customData;
+  nonstd::optional<double> weight;
   nonstd::optional<value::token> bindMaterialAs;
   nonstd::optional<value::StringData> comment;
   nonstd::optional<Variability> variability;
@@ -1007,6 +1008,18 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "`elementSize` field is not `int` type.");
       }
+    } else if (fv.first == "weight") {
+      // pxrUSD uses float type.
+      if (auto pv = fv.second.get_value<float>()) {
+        auto p = pv.value();
+        DCOUT("weight = " << p);
+
+        weight = double(p);
+
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                  "`weight` field is not `float` type.");
+      }
     } else if (fv.first == "bindMaterialAs") {
       // Attribute Meta
       if (auto pv = fv.second.get_value<value::token>()) {
@@ -1017,7 +1030,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
           // ok
         } else {
           // still any token is valid(for future usecase)
-          PUSH_WARN("Unsupported bindMaterialAs token: " << p.str()); 
+          PUSH_WARN("Unsupported bindMaterialAs token: " << p.str());
         }
         bindMaterialAs = p;
       } else {
@@ -1137,7 +1150,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
     }
   }
 
-  // metas
+  // Attribute metas
   AttrMeta meta;
   if (interpolation) {
     meta.interpolation = interpolation.value();
@@ -1150,6 +1163,9 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   }
   if (customData) {
     meta.customData = customData.value();
+  }
+  if (weight) {
+    meta.weight = weight.value();
   }
   if (comment) {
     meta.comment = comment.value();
@@ -1594,24 +1610,24 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
     return std::move(prim); \
   } else
 
-  if (typeName == "Model") { 
+  if (typeName == "Model") {
     // Code is mostly identical to RECONSTRUCT_PRIM.
     // Difference is store primTypeName to Model class itself.
     Model typed_prim;
-    if (!ReconstructPrim(node, psmap, &typed_prim)) {         
-      PUSH_ERROR("Failed to reconstruct Model");      
-      return nonstd::nullopt;                                      
-    }                                                              
-    typed_prim.meta = meta;                                        
-    typed_prim.name = prim_name;                                 
-    typed_prim.prim_type_name = primTypeName;                                 
-    typed_prim.spec = spec;                                      
-    typed_prim.propertyNames() = properties; 
-    typed_prim.primChildrenNames() = primChildren; 
-    value::Value primdata = typed_prim;                            
-    Prim prim(prim_name, primdata);                            
-    prim.prim_type_name() = primTypeName; 
-    /* also add primChildren to Prim */ 
+    if (!ReconstructPrim(node, psmap, &typed_prim)) {
+      PUSH_ERROR("Failed to reconstruct Model");
+      return nonstd::nullopt;
+    }
+    typed_prim.meta = meta;
+    typed_prim.name = prim_name;
+    typed_prim.prim_type_name = primTypeName;
+    typed_prim.spec = spec;
+    typed_prim.propertyNames() = properties;
+    typed_prim.primChildrenNames() = primChildren;
+    value::Value primdata = typed_prim;
+    Prim prim(prim_name, primdata);
+    prim.prim_type_name() = primTypeName;
+    /* also add primChildren to Prim */
     prim.metas().primChildren = primChildren; \
     return std::move(prim); \
   } else
