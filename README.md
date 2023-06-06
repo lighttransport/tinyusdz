@@ -56,7 +56,8 @@ Remaining tasks for v0.8.0 release are writing examples, demos and utility funct
 
 **Please see** [doc/status.md](doc/status.md) **for more details**
 
-* [ ] Basic Python binding
+* [ ] Basic C API(`c-tinyusd`) for language bindings
+  * [ ] Basic Python binding
 * [ ] Write simple SDL viewer example(2023 Summer expected)
 * [ ] Write iOS and Android example(2023 Summer expected)
 * [ ] Vulkan or OptiX/HIP RT raytracing viewer example
