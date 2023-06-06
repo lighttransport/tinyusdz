@@ -57,6 +57,7 @@ Remaining tasks for v0.8.0 release are writing examples, demos and utility funct
 **Please see** [doc/status.md](doc/status.md) **for more details**
 
 * [ ] Basic C API(`c-tinyusd`) for language bindings
+  * [ ]  [examples/c_api_example](examples/c_api_example)
   * [ ] Basic Python binding
 * [ ] Write simple SDL viewer example(2023 Summer expected)
 * [ ] Write iOS and Android example(2023 Summer expected)
