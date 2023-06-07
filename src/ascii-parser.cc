@@ -46,10 +46,6 @@
 #endif
 
 // external
-
-//#include "external/fast_float/include/fast_float/fast_float.h"
-//#include "external/jsteemann/atoi.h"
-//#include "external/simple_match/include/simple_match/simple_match.hpp"
 #include "nonstd/expected.hpp"
 
 //
@@ -60,11 +56,6 @@
 
 //
 
-// Tentative
-#ifdef __clang__
-#pragma clang diagnostic ignored "-Wunused-parameter"
-#endif
-
 #include "io-util.hh"
 #include "pprinter.hh"
 #include "prim-types.hh"
@@ -73,26 +64,6 @@
 #include "tinyusdz.hh"
 #include "value-pprint.hh"
 #include "value-types.hh"
-
-#if 0
-// s = std::string
-#define PUSH_ERROR_AND_RETURN(s)                                     \
-  do {                                                               \
-    std::ostringstream ss_e;                                         \
-    ss_e << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
-    ss_e << s;                                                       \
-    PushError(ss_e.str());                                           \
-    return false;                                                    \
-  } while (0)
-
-#define PUSH_WARN(s)                                                 \
-  do {                                                               \
-    std::ostringstream ss_w;                                         \
-    ss_w << __FILE__ << ":" << __func__ << "():" << __LINE__ << " "; \
-    ss_w << s;                                                       \
-    PushWarn(ss_w.str());                                            \
-  } while (0)
-#endif
 
 #include "common-macros.inc"
 
@@ -464,70 +435,6 @@ static void RegisterAPISchemas(std::set<std::string> &d) {
 
 namespace {
 
-#if 0 // TODO: Remove
-// parseInt
-// 0 = success
-// -1 = bad input
-// -2 = overflow
-// -3 = underflow
-int parseInt(const std::string &s, int *out_result) {
-  size_t n = s.size();
-  const char *c = s.c_str();
-
-  if ((c == nullptr) || (*c) == '\0') {
-    return -1;
-  }
-
-  size_t idx = 0;
-  bool negative = c[0] == '-';
-  if ((c[0] == '+') | (c[0] == '-')) {
-    idx = 1;
-    if (n == 1) {
-      // sign char only
-      return -1;
-    }
-  }
-
-  int64_t result = 0;
-
-  // allow zero-padded digits(e.g. "003")
-  while (idx < n) {
-    if ((c[idx] >= '0') && (c[idx] <= '9')) {
-      int digit = int(c[idx] - '0');
-      result = result * 10 + digit;
-    } else {
-      // bad input
-      return -1;
-    }
-
-    if (negative) {
-      if ((-result) < (std::numeric_limits<int>::min)()) {
-        return -3;
-      }
-    } else {
-      if (result > (std::numeric_limits<int>::max)()) {
-        return -2;
-      }
-    }
-
-    idx++;
-  }
-
-  if (negative) {
-    (*out_result) = -int(result);
-  } else {
-    (*out_result) = int(result);
-  }
-
-  return 0;  // OK
-}
-#endif
-
-}  // namespace
-
-
-namespace {
-
 using ReferenceList = std::vector<std::pair<ListEditQual, Reference>>;
 
 // https://www.techiedelight.com/trim-string-cpp-remove-leading-trailing-spaces/
@@ -568,32 +475,6 @@ inline bool hasOutputs(const std::string &str) {
 inline bool is_digit(char x) {
   return (static_cast<unsigned int>((x) - '0') < static_cast<unsigned int>(10));
 }
-
-#if 0 // TODO: Remove
-static nonstd::expected<float, std::string> ParseFloat(const std::string &s) {
-  // Parse with fast_float
-  float result;
-  auto ans = fast_float::from_chars(s.data(), s.data() + s.size(), result);
-  if (ans.ec != std::errc()) {
-    // Current `fast_float` implementation does not report detailed parsing err.
-    return nonstd::make_unexpected("Parse failed.");
-  }
-
-  return result;
-}
-
-static nonstd::expected<double, std::string> ParseDouble(const std::string &s) {
-  // Parse with fast_float
-  double result;
-  auto ans = fast_float::from_chars(s.data(), s.data() + s.size(), result);
-  if (ans.ec != std::errc()) {
-    // Current `fast_float` implementation does not report detailed parsing err.
-    return nonstd::make_unexpected("Parse failed.");
-  }
-
-  return result;
-}
-#endif
 
 void AsciiParser::SetBaseDir(const std::string &str) { _base_dir = str; }
 
@@ -779,168 +660,7 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
   // Supports limited types for customData/Dictionary.
   //
 
-#if 0
-  // TODO: support more types
-  if (type_name == value::kBool) {
-    bool val;
-    if (!ReadBasicType(&val)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse `bool`");
-    }
-    var.set_value(val);
-  } else if (type_name == value::kInt) {
-    if (array_qual) {
-      std::vector<int32_t> vss;
-      if (!ParseBasicTypeArray(&vss)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `int[]`");
-      }
-      var.set_value(vss);
-    } else {
-      int32_t val;
-      if (!ReadBasicType(&val)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `int`");
-      }
-      var.set_value(val);
-    }
-  } else if (type_name == value::kInt2) {
-    if (array_qual) {
-      std::vector<value::int2> vss;
-      if (!ParseBasicTypeArray(&vss)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `int2[]`");
-      }
-      var.set_value(vss);
-    } else {
-      value::int2 str;
-      if (!ReadBasicType(&str)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `int2`");
-      }
-      var.set_value(str);
-    }
-  } else if (type_name == value::kUInt) {
-    if (array_qual) {
-      std::vector<uint32_t> vss;
-      if (!ParseBasicTypeArray(&vss)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `uint[]`");
-      }
-      var.set_value(vss);
-    } else {
-      uint32_t val;
-      if (!ReadBasicType(&val)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `uint`");
-      }
-      var.set_value(val);
-    }
-  } else if (type_name == value::kFloat) {
-    if (array_qual) {
-      std::vector<float> vss;
-      if (!ParseBasicTypeArray(&vss)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `float[]`");
-      }
-      var.set_value(vss);
-    } else {
-      float val;
-      if (!ReadBasicType(&val)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `float`");
-      }
-      var.set_value(val);
-    }
-  } else if (type_name == value::kFloat2) {
-    if (array_qual) {
-      std::vector<value::float2> vss;
-      if (!ParseBasicTypeArray(&vss)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `float2[]`");
-      }
-      var.set_value(vss);
-    } else {
-      value::float2 str;
-      if (!ReadBasicType(&str)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `float2`");
-      }
-      var.set_value(str);
-    }
-  } else if (type_name == value::kFloat3) {
-    if (array_qual) {
-      std::vector<value::float3> vss;
-      if (!ParseBasicTypeArray(&vss)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `float3[]`");
-      }
-      var.set_value(vss);
-    } else {
-      value::float3 str;
-      if (!ReadBasicType(&str)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `float3`");
-      }
-      var.set_value(str);
-    }
-  } else if (type_name == value::kDouble) {
-    if (array_qual) {
-      std::vector<double> vss;
-      if (!ParseBasicTypeArray(&vss)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `double[]`");
-      }
-      var.set_value(vss);
-    } else {
-      double str;
-      if (!ReadBasicType(&str)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `double`");
-      }
-      var.set_value(str);
-    }
-  } else if (type_name == value::kDouble3) {
-    if (array_qual) {
-      std::vector<value::double3> vss;
-      if (!ParseBasicTypeArray(&vss)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `double3[]`");
-      }
-      var.set_value(vss);
-    } else {
-      value::double3 str;
-      if (!ReadBasicType(&str)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `double3`");
-      }
-      var.set_value(str);
-    }
-  } else if (type_name == value::kString) {
-    if (array_qual) {
-      std::vector<value::StringData> strs;
-      if (!ParseBasicTypeArray(&strs)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `string[]`");
-      }
-      var.set_value(strs);
-    } else {
-      value::StringData str;
-      if (!ReadBasicType(&str)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `string`");
-      }
-      var.set_value(str);
-    }
-  } else if (type_name == "token") {
-    if (array_qual) {
-      std::vector<value::token> toks;
-      if (!ParseBasicTypeArray(&toks)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `token[]`");
-      }
-      var.set_value(toks);
-    } else {
-      value::token tok;
-      if (!ReadBasicType(&tok)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `token`");
-      }
-      var.set_value(tok);
-    }
-  } else if (type_name == "dictionary") {
-    CustomDataType dict;
-
-    DCOUT("Parse dictionary");
-    if (!ParseDict(&dict)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse `dictionary`");
-    }
-    var.set_value(dict);
-  } else {
-    PUSH_ERROR_AND_RETURN("TODO: type = " + type_name);
-  }
-#else
-
-  // TODO: Unify ParseMetaValue()
+  // TODO: Unify code with ParseMetaValue()
 
 #define PARSE_BASE_TYPE(__ty) case value::TypeTraits<__ty>::type_id(): { \
     if (array_qual) { \
@@ -1009,8 +729,6 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
   }
 
 #undef PARSE_BASE_TYPE
-
-#endif
 
   MetaVariable metavar;
   metavar.set_value(key_name, var.value_raw());
@@ -1510,41 +1228,6 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
     // Seek \""" or \'''
     // Unescape '\'
     if (c == '\\') {
-#if 0
-      if (single_quote) {
-        std::vector<char> buf(3, '\0');
-        if (!LookCharN(3, &buf)) {
-          // at least 3 chars should be read
-          return false;
-        }
-
-        if (buf[0] == '\'' &&
-            buf[1] == '\'' &&
-            buf[2] == '\'') {
-          str_buf << "'''";
-          // advance
-          _sr->seek_from_current(3);
-          locinfo.col += 3;
-          continue;
-        }
-      } else {
-        std::vector<char> buf(3, '\0');
-        if (!LookCharN(3, &buf)) {
-          // at least 3 chars should be read
-          return false;
-        }
-
-        if (buf[0] == '"' &&
-            buf[1] == '"' &&
-            buf[2] == '"') {
-          str_buf << "\"\"\"";
-          // advance
-          _sr->seek_from_current(3);
-          locinfo.col += 3;
-          continue;
-        }
-      }
-#else
       std::vector<char> buf(3, '\0');
       if (!LookCharN(3, &buf)) {
         // at least 3 chars should be read
@@ -1568,7 +1251,6 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
           locinfo.col += 3;
           continue;
       }
-#endif
     }
 
     str_buf << c;
@@ -2678,264 +2360,6 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
     }
   }
 
-
-
-#if 0
-  // TODO: Refactor.
-  if (vartype == value::kBool) {
-    bool value;
-    if (!ReadBasicType(&value)) {
-      PUSH_ERROR_AND_RETURN("Boolean value expected for `" + varname + "`.");
-    }
-    DCOUT("bool = " << value);
-
-    var.set_value(value);
-  } else if (vartype == value::kToken) {
-    if (is_array_type) {
-      std::vector<value::token> value;
-      if (!ParseBasicTypeArray(&value)) {
-        PUSH_ERROR_AND_RETURN_TAG(
-            kAscii, fmt::format("token[] expected for `{}`.", varname));
-      }
-      DCOUT("token[] = " << value);
-
-      var.set_value(value);
-    } else {
-      value::token value;
-      if (!ReadBasicType(&value)) {
-        std::string msg = "Token expected for `" + varname + "`.\n";
-        PUSH_ERROR_AND_RETURN(msg);
-        return false;
-      }
-      DCOUT("token = " << value);
-
-      var.set_value(value);
-    }
-#if 0
-  } else if (vartype == "token[]") {
-    std::vector<value::token> value;
-    if (!ParseBasicTypeArray(&value)) {
-      std::string msg = "Token array expected for `" + varname + "`.\n";
-      PUSH_ERROR_AND_RETURN(msg);
-      return false;
-    }
-    // TODO
-    // DCOUT("token[] = " << to_string(value));
-
-    var.set_value(value);
-#endif
-  } else if (vartype == value::kString) {
-    if (is_array_type) {
-      std::vector<value::StringData> value;
-      if (!ParseBasicTypeArray(&value)) {
-        PUSH_ERROR_AND_RETURN_TAG(
-            kAscii, fmt::format("string[] expected for `{}`.", varname));
-      }
-      DCOUT("string[] = " << value);
-
-      var.set_value(value);
-    } else {
-      value::StringData sdata;
-      if (MaybeTripleQuotedString(&sdata)) {
-        var.set_value(sdata);
-      } else {
-        std::string value;
-        if (!ReadStringLiteral(&value)) {
-          PUSH_ERROR_AND_RETURN("String literal expected for `" + varname + "`.");
-        }
-        var.set_value(value);
-      }
-    }
-
-#if 0 // no ref
-  } else if (vartype == "ref[]") {
-    std::vector<Reference> values;
-    if (!ParseBasicTypeArray(&values)) {
-      PUSH_ERROR_AND_RETURN("Array of Reference expected for `" + varname +
-                            "`.");
-    }
-
-    var.set_value(values);
-
-#endif
-  } else if (vartype == "int[]") {
-    std::vector<int32_t> values;
-    if (!ParseBasicTypeArray(&values)) {
-      // std::string msg = "Array of int values expected for `" + var.name +
-      // "`.\n"; PUSH_ERROR_AND_RETURN(msg);
-      return false;
-    }
-
-    for (size_t i = 0; i < values.size(); i++) {
-      DCOUT("int[" << i << "] = " << values[i]);
-    }
-
-    var.set_value(values);
-  } else if (vartype == "float[]") {
-    std::vector<float> values;
-    if (!ParseBasicTypeArray(&values)) {
-      return false;
-    }
-
-    var.set_value(values);
-  } else if (vartype == "float2[]") {
-    std::vector<value::float2> values;
-    if (!ParseBasicTypeArray(&values)) {
-      return false;
-    }
-
-    var.set_value(values);
-  } else if (vartype == "float3[]") {
-    std::vector<value::float3> values;
-    if (!ParseBasicTypeArray(&values)) {
-      return false;
-    }
-
-    var.set_value(values);
-  } else if (vartype == "float4[]") {
-    std::vector<value::float4> values;
-    if (!ParseBasicTypeArray(&values)) {
-      return false;
-    }
-
-    var.set_value(values);
-  } else if (vartype == "double[]") {
-    std::vector<double> values;
-    if (!ParseBasicTypeArray(&values)) {
-      return false;
-    }
-
-    var.set_value(values);
-  } else if (vartype == "double2[]") {
-    std::vector<value::double2> values;
-    if (!ParseBasicTypeArray(&values)) {
-      return false;
-    }
-
-    var.set_value(values);
-  } else if (vartype == "double3[]") {
-    std::vector<value::double3> values;
-    if (!ParseBasicTypeArray(&values)) {
-      return false;
-    }
-
-    var.set_value(values);
-  } else if (vartype == "double4[]") {
-    std::vector<value::double4> values;
-    if (!ParseBasicTypeArray(&values)) {
-      return false;
-    }
-
-    var.set_value(values);
-  } else if (vartype == value::kFloat) {
-    float value;
-    if (!ReadBasicType(&value)) {
-      return false;
-    }
-    var.set_value(value);
-  } else if (vartype == value::kDouble) {
-    double value;
-    if (!ReadBasicType(&value)) {
-      return false;
-    }
-    var.set_value(value);
-  } else if (vartype == "int2") {
-    value::int2 value;
-    if (!ReadBasicType(&value)) {
-      return false;
-    }
-
-    var.set_value(value);
-
-  } else if (vartype == "int3") {
-    value::int3 value;
-    if (!ReadBasicType(&value)) {
-      return false;
-    }
-
-    var.set_value(value);
-  } else if (vartype == "int4") {
-    value::int4 value;
-    if (!ReadBasicType(&value)) {
-      return false;
-    }
-
-    var.set_value(value);
-  } else if (vartype == value::kPath) {
-    if (is_array_type) {
-      std::vector<Path> paths;
-      if (!ParseBasicTypeArray(&paths)) {
-        PUSH_ERROR_AND_RETURN_TAG(
-            kAscii,
-            fmt::format("Failed to parse `{}` in Prim metadatum.", def.name));
-      }
-      var.set_value(paths);
-
-    } else {
-      Path path;
-      if (!ReadBasicType(&path)) {
-        PUSH_ERROR_AND_RETURN_TAG(
-            kAscii,
-            fmt::format("Failed to parse `{}` in Prim metadatum.", def.name));
-      }
-      var.set_value(path);
-    }
-
-  } else if (vartype == value::kAssetPath) {
-    if (is_array_type) {
-      std::vector<value::AssetPath> paths;
-      if (!ParseBasicTypeArray(&paths)) {
-        PUSH_ERROR_AND_RETURN_TAG(
-            kAscii,
-            fmt::format("Failed to parse `{}` in Prim metadataum.", def.name));
-      }
-      var.set_value(paths);
-    } else {
-      value::AssetPath asset_path;
-      if (!ReadBasicType(&asset_path)) {
-        PUSH_ERROR_AND_RETURN_TAG(
-            kAscii,
-            fmt::format("Failed to parse `{}` in Prim metadataum.", def.name));
-      }
-      var.set_value(asset_path);
-    }
-  } else if (vartype == "Reference") {
-    if (is_array_type) {
-      std::vector<Reference> refs;
-      if (!ParseBasicTypeArray(&refs)) {
-        PUSH_ERROR_AND_RETURN_TAG(
-            kAscii,
-            fmt::format("Failed to parse `{}` in Prim metadataum.", def.name));
-      }
-      var.set_value(refs);
-    } else {
-      nonstd::optional<Reference> ref;
-      if (!ReadBasicType(&ref)) {
-        PUSH_ERROR_AND_RETURN_TAG(
-            kAscii,
-            fmt::format("Failed to parse `{}` in Prim metadataum.", def.name));
-      }
-      if (ref) {
-        var.set_value(ref.value());
-      } else {
-        // None
-        var.set_value(value::ValueBlock());
-      }
-    }
-  } else if (vartype == value::kDictionary) {
-    DCOUT("Parse dict in meta.");
-    CustomDataType dict;
-    if (!ParseDict(&dict)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse `dictionary` data in metadataum.");
-    }
-    var.set_value(dict);
-  } else {
-    PUSH_ERROR_AND_RETURN("TODO: vartype = " + vartype);
-  }
-#else
-
-
-  // refactored version
   uint32_t tyid = value::GetTypeId(vartype);
 
 #define PARSE_BASE_TYPE(__ty) case value::TypeTraits<__ty>::type_id(): { \
@@ -3055,7 +2479,6 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
   }
 
 #undef PARSE_BASE_TYPE
-#endif
 
   (*outvar) = var;
 
@@ -3817,6 +3240,7 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
 
 bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::vector<value::token> *propNames) {
 
+  (void)propNames;
 
   // prim_prop : (custom?) (variability?) type (array_qual?) name '=' value
   //           | (custom?) type (array_qual?) name '=' value interpolation?
@@ -4096,11 +3520,6 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
   DCOUT("define only:" << define_only);
 
   if (define_only) {
-#if 0
-    if (isConnection || isTimeSample) {
-      PUSH_ERROR_AND_RETURN("`.connect` or `.timeSamples` suffix provided, but no target/values provided.");
-    }
-#endif
 
     Rewind(1);
 
@@ -4782,6 +4201,8 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
                              const int64_t parentPrimIdx,
                              const uint32_t depth,
                              const bool in_variantStaement) {
+  (void)in_variantStaement;
+
   DCOUT("ParseBlock");
 
   if (!SkipCommentAndWhitespaceAndNewline()) {
@@ -4852,15 +4273,6 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
     if (!ReadIdentifier(&prim_type)) {
       return false;
     }
-#if 0
-    if (!IsSupportedPrimType(prim_type)) {
-      std::string msg =
-          "`" + prim_type +
-          "` is not a defined Prim type(or not supported in TinyUSDZ)\n";
-      PUSH_ERROR_AND_RETURN(msg);
-      return false;
-    }
-#endif
   }
 
   if (!SkipWhitespaceAndNewline()) {
