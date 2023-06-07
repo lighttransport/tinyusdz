@@ -2,6 +2,11 @@
 
 clang with fuzzer support(`-fsanitize=fuzzer`. at least clang 8.0 should work)
 
+## Status
+
+Currently no open issue found by fuzzer.
+(except for third party library, especially stb_image)
+
 ## Setup
 
 ### Ubuntu 18.04
