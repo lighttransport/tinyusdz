@@ -1203,22 +1203,36 @@ class TypedAttribute {
     return nonstd::nullopt;
   }
 
-  void set_value_empty() { _empty = true; }
+  // TODO: Supply set_connection_empty()?
+  
+  void set_value_empty() { _value_empty = true; }
 
-  bool is_value_empty() const { return _empty; }
+  bool is_value_empty() const {
+    if (_value_empty) {
+      return true;
+    }
+
+    if (_attrib) {
+      return false;
+    }
+
+    return true;
+  }
 
   // value set?
   bool authored() const {
-    if (_empty) {
-      return true;
+    if (_value_empty) {
+      return false;
     }
 
     if (_attrib) {
       return true;
     }
+
     if (_paths.size()) {
       return true;
     }
+
     return false;
   }
 
@@ -1227,7 +1241,7 @@ class TypedAttribute {
 
  private:
   AttrMeta _metas;
-  bool _empty{false};
+  bool _value_empty{false}; // applies `_attrib`
   std::vector<Path> _paths;
   nonstd::optional<T> _attrib;
   bool _blocked{false};  // for `uniform` attribute.
