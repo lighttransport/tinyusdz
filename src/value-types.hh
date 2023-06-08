@@ -1,5 +1,7 @@
-/// Copyright 2021-present Syoyo Fujita.
-/// MIT license.
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2021 - 2023, Syoyo Fujita.
+// Copyright 2023 - Present, Light Transport Entertainment Inc.
+
 ///
 /// Type-erasure technique for Value, a Value class which can represent USD's
 /// mandatory and frequently used types(e.g. `float3`, `token`, `asset`) and its
