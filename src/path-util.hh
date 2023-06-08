@@ -1,5 +1,6 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache 2.0
 // Copyright 2022 - Present, Syoyo Fujita.
+// Copyright 2023 - Present, Light Transport Entertainment Inc.
 //
 // Utility functions for Path
 
