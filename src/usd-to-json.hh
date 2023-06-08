@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache 2.0
 // Experimental USD to JSON converter
 
 #ifdef __clang__
