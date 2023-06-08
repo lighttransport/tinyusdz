@@ -76,7 +76,7 @@ NOTE: USDC(Binary) = Read only
 | SkelRoot    | 🚧    | 🚧   | Parsing only |
 | Skeleton    | 🚧    | 🚧   | Parsing only |
 | SkelAnim    | 🚧    | 🚧   | Parsing only |
-| BlendShape  | ✅    | ✅   |              |
+| BlendShape  | ✅    | ✅   | Supports inbetween blendshape attribute |
 
 * Skinning evaulation/validation are work-in-progress.
 * Skeleton utility functions(e.g. build joint hiearchy from list of `token[]`) are work-in-progress.
@@ -93,6 +93,8 @@ NOTE: USDC(Binary) = Read only
 * [ ] Tydra(scene/render delegation)
 * [ ] usdObj(wavefront .obj) support.
   * Please see [usdObj.md](usdObj.md)
+* [ ] C-API for other languages
+* [ ] Python binding and package.
 
 ## TODO
 
@@ -117,8 +119,6 @@ NOTE: USDC(Binary) = Read only
 * [ ] Audio(usdAudio)
 * [ ] MaterialX support(usdMtlx)
 * [ ] Physics(usdPhysics)
-* [ ] Python binding and package.
-* [ ] C-API for other languages
 * [ ] and more...
 
 
