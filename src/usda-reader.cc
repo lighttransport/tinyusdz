@@ -758,6 +758,8 @@ class USDAReader::Impl {
                          "Preliminary_PhysicsRigidBodyAPI"),
           std::make_pair(APISchemas::APIName::Preliminary_PhysicsColliderAPI,
                          "Preliminary_PhysicsColliderAPI"),
+          std::make_pair(APISchemas::APIName::Preliminary_AnchoringAPI,
+                         "Preliminary_AnchoringAPI")
       };
       return EnumHandler<APISchemas::APIName>("apiSchemas", tok, enums);
     };
