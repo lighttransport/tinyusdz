@@ -786,6 +786,7 @@ struct PrimMeta {
   nonstd::optional<value::StringData>
       comment;  // 'comment'  (String only metadata value)
   nonstd::optional<APISchemas> apiSchemas;  // 'apiSchemas'
+  nonstd::optional<CustomDataType> sdrMetadata; // 'sdrMetadata' (usdShade Prim only?)
 
   //
   // AssetInfo utility function
@@ -829,7 +830,7 @@ struct PrimMeta {
     return (active || hidden || kind || customData || references || payload ||
             inherits || variants || variantSets || specializes || displayName ||
             sceneName || doc || comment || meta.size() || apiSchemas ||
-            assetInfo);
+            sdrMetadata || assetInfo);
   }
 
   //

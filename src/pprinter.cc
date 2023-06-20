@@ -499,6 +499,11 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
     ss << print_payload(meta.payload.value(), indent);
   }
 
+  // TODO: only print in usdShade Prims.
+  if (meta.sdrMetadata) {
+    ss << print_customData(meta.sdrMetadata.value(), "sdrMetadata", indent);
+  }
+
   if (meta.variants) {
     ss << print_variantSelectionMap(meta.variants.value(), indent);
   }
@@ -559,7 +564,7 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   }
 
   if (meta.customData) {
-    ss << print_customData(meta.customData.value(), "customData", indent+1);
+    ss << print_customData(meta.customData.value(), "customData", indent);
   }
 
 

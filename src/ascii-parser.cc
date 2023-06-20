@@ -271,6 +271,11 @@ static void RegisterPrimMetas(
   metas["apiSchemas"] = AsciiParser::VariableDef(
       value::Add1DArraySuffix(value::kToken), "apiSchemas");
 
+  // usdShade
+  // NOTE: items are expected to be all string type.
+  metas["sdrMetadata"] = AsciiParser::VariableDef(value::kDictionary, "sdrMetadata");
+
+
   // USDZ extension
   metas["sceneName"] = AsciiParser::VariableDef(value::kString, "sceneName");
 
