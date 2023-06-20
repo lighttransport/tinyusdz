@@ -1805,6 +1805,16 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
             kTag, "`comment` must be type `string`, but got type `"
                       << fv.second.type_name() << "`");
       }
+    } else if (fv.first == "sdrMetadata") {
+      // CustomData(dict)
+      if (auto pv = fv.second.as<CustomDataType>()) {
+        // TODO: Check if all keys are string type.
+        primMeta.sdrMetadata = (*pv);
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`sdrMetadata` must be type `dictionary`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
     } else if (fv.first == "customData") {
       // CustomData(dict)
       if (auto pv = fv.second.as<CustomDataType>()) {

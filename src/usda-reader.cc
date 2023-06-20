@@ -883,6 +883,25 @@ class USDAReader::Impl {
               "(Internal error?) `kind` metadataum is not type `token`. got `"
               << var.type_name() << "`.");
         }
+      } else if (meta.first == "sdrMetadata") {
+        DCOUT("sdrMetadata. type = " << var.type_name());
+        if (var.type_id() == value::TypeTraits<CustomDataType>::type_id()) {
+          if (auto pv = var.get_value<CustomDataType>()) {
+            // TODO: Check if all items are string type.
+            out->sdrMetadata = pv.value();
+          } else {
+            PUSH_ERROR_AND_RETURN_TAG(kTag,
+                "(Internal error?) `sdrMetadata` metadataum is not type "
+                "`dictionary`. got type `"
+                << var.type_name() << "`");
+          }
+
+        } else {
+          PUSH_ERROR_AND_RETURN(
+              "(Internal error?) `sdrMetadata` metadataum is not type "
+              "`dictionary`. got type `"
+              << var.type_name() << "`");
+        }
       } else if (meta.first == "customData") {
         DCOUT("customData. type = " << var.type_name());
         if (var.type_id() == value::TypeTraits<CustomDataType>::type_id()) {
