@@ -37,10 +37,8 @@ constexpr auto kUsdPrimvarReader_matrix = "UsdPrimvarReader_matrix";
 constexpr auto kWeaderThanDescendants = "weakerThanDescendants";
 constexpr auto kStrongerThanDescendants = "strongerThanDescendants";
 
-//
-// Similar to Maya's ShadingGroup
-//
-struct Material {
+// TODO: Inherit from Prim?
+struct UsdShadePrim {
   std::string name;
   Specifier spec{Specifier::Def};
 
@@ -51,6 +49,42 @@ struct Material {
   const PrimMeta &metas() const { return meta; }
   PrimMeta &metas() { return meta; }
 
+  // Check if `key` exists in `sdrMetadata` metadatum.
+  // Return false when `key` is not found in `sdrMetadata`, or corrensponding item is not a string type.
+  bool has_sdr_metadata(const std::string &key);
+
+  // Get value from `sdrMetadata` metadatum.
+  // Return empty string when `key` is not found in `sdrMetadata`, or corrensponding item is not a string type.
+  const std::string get_sdr_metadata(const std::string &key);
+
+  // Set value to `sdrMetadata` metadatum.
+  // Return false when error(e.g. `key` contains invalid character for USD dictionary)
+  bool set_sdr_metadata(const std::string &key, const std::string &value);
+
+  TypedAttributeWithFallback<Purpose> purpose{
+      Purpose::Default};  // "uniform token purpose"
+
+  std::pair<ListEditQual, std::vector<Reference>> references;
+  std::pair<ListEditQual, std::vector<Payload>> payload;
+  std::map<std::string, VariantSet> variantSet;
+  // Custom properties
+  std::map<std::string, Property> props;
+
+  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const { return _properties; }
+  std::vector<value::token> &primChildrenNames() { return _primChildren; }
+  std::vector<value::token> &propertyNames() { return _properties; }
+
+ private:
+  std::vector<value::token> _primChildren;
+  std::vector<value::token> _properties;
+};
+
+//
+// Similar to Maya's ShadingGroup
+//
+struct Material : UsdShadePrim {
+
   ///
   /// NOTE: Mateiral's outputs must be a connection.
   /// (Whereas Shader's outputs is not)
@@ -59,68 +93,18 @@ struct Material {
   TypedConnection<value::token> displacement; // "token outputs:displacement.connect"
   TypedConnection<value::token> volume; // "token outputs:volume.connect"
 
-  TypedAttributeWithFallback<Purpose> purpose{
-      Purpose::Default};  // "uniform token purpose"
 
-  std::pair<ListEditQual, std::vector<Reference>> references;
-  std::pair<ListEditQual, std::vector<Payload>> payload;
-  std::map<std::string, VariantSet> variantSet;
-  // Custom properties
-  std::map<std::string, Property> props;
-
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
-
- private:
-  std::vector<value::token> _primChildren;
-  std::vector<value::token> _properties;
 };
 
 // TODO
-struct NodeGraph {
-  std::string name;
-  Specifier spec{Specifier::Def};
+struct NodeGraph : UsdShadePrim {
 
-  int64_t parent_id{-1};
-
-  TypedAttributeWithFallback<Purpose> purpose{
-      Purpose::Default};  // "uniform token purpose"
-
-  std::pair<ListEditQual, std::vector<Reference>> references;
-  std::pair<ListEditQual, std::vector<Payload>> payload;
-  std::map<std::string, VariantSet> variantSet;
-  // Custom properties
-  std::map<std::string, Property> props;
-
-  PrimMeta meta;
-
-  const PrimMeta &metas() const { return meta; }
-  PrimMeta &metas() { return meta; }
-
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
-
- private:
-  std::vector<value::token> _primChildren;
-  std::vector<value::token> _properties;
 };
 
 //
 // Base class of ShaderNode. Maybe similar to SdrShaderNode in pxrUSD
 //
-struct ShaderNode {
-
-  std::string name;
-
-  std::pair<ListEditQual, std::vector<Reference>> references;
-  std::pair<ListEditQual, std::vector<Payload>> payload;
-  std::map<std::string, VariantSet> variantSet;
-  // Custom properties
-  std::map<std::string, Property> props;
+struct ShaderNode : UsdShadePrim {
 
 };
 
@@ -270,9 +254,7 @@ struct UsdTransform2d : ShaderNode {
 };
 
 // Shader Prim
-struct Shader {
-  std::string name;
-  Specifier spec{Specifier::Def};
+struct Shader : UsdShadePrim {
 
   std::string info_id;  // ShaderNode type.
 
@@ -287,24 +269,6 @@ struct Shader {
       value;
 #endif
 
-  PrimMeta meta; // TODO: use ShaderNode::meta
-
-  const PrimMeta &metas() const {
-    return meta;
-  }
-
-  PrimMeta &metas() {
-    return meta;
-  }
-
-  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
-
- private:
-  std::vector<value::token> _primChildren;
-  std::vector<value::token> _properties;
 };
 
 
