@@ -2,7 +2,9 @@
 
 * magic header: "PXR-USDC" : 8 bytes
 * version number: uint8 x 8(0 = major, 1 = minor, 2 = patch, rest unused) :8 bytes
+  * Current(as of pxrUSD 23.05: default 0.8.0) 
 * int64_t tocOffset
+  * Byte offset to ToC(Table of Contents) 
 * int64_t _reserved[8]
 
 => total 88 bytes
@@ -59,7 +61,7 @@ List of indices
 
 List of path indices.
 
-Need to reconstruct
+Paths are encoded in child-sibling tree.
                           
 ### SPECS
 
