@@ -24,12 +24,15 @@ static std::string str_tolower(std::string s) {
 
 int main(int argc, char **argv) {
   if (argc < 2) {
-    std::cout << "Usage simple_usdz_dump [--flatten] input.usda/usdc/usdz\n" << std::endl;
-    std::cout << "\n --flatten (not implemented yet) Do composition(load sublayers, refences, payloads, evaluate `over`, inherit, variants..)\n" << std::endl;
+    std::cout << "Usage tusdcat [--flatten] [--relative] input.usda/usdc/usdz\n";
+    std::cout << "\n --flatten (not implemented yet) Do composition(load sublayers, refences, payloads, evaluate `over`, inherit, variants..)";
+    std::cout << "\n --relative (not implemented yet) Print Path as relative Path\n";
     return EXIT_FAILURE;
   }
 
   bool has_flatten{false};
+  bool has_relative{false};
+
   std::string filepath;
 
   int input_index = -1;
@@ -38,6 +41,8 @@ int main(int argc, char **argv) {
     std::string arg = argv[i];
     if (arg.compare("--flatten") == 0) {
       has_flatten = true;
+    } else if (arg.compare("--relative") == 0) {
+      has_relative = true;
     } else {
       filepath = arg;
       input_index = i;
@@ -128,7 +133,7 @@ int main(int argc, char **argv) {
     }
   }
 
-  std::string s = stage.ExportToString();
+  std::string s = stage.ExportToString(has_relative);
   std::cout << s << "\n";
 
   return EXIT_SUCCESS;
