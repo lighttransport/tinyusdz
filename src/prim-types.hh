@@ -581,6 +581,7 @@ using VariantSelectionMap = std::map<std::string, std::string>;
 
 class MetaVariable;
 
+// TODO: Use `Dictionary` and deprecate CustomDataType
 using CustomDataType = std::map<std::string, MetaVariable>;
 
 using Dictionary = CustomDataType;  // alias to CustomDataType
@@ -589,11 +590,11 @@ using Dictionary = CustomDataType;  // alias to CustomDataType
 /// Helper function to access CustomData(dictionary).
 /// Recursively process into subdictionaries when a key contains namespaces(':')
 ///
-bool HasCustomDataKey(const CustomDataType &customData, const std::string &key);
-bool GetCustomDataByKey(const CustomDataType &customData,
+bool HasCustomDataKey(const Dictionary &customData, const std::string &key);
+bool GetCustomDataByKey(const Dictionary &customData,
                         const std::string &key, /* out */ MetaVariable *dst);
 bool SetCustomDataByKey(const std::string &key, const MetaVariable &val,
-                        /* inout */ CustomDataType &customData);
+                        /* inout */ Dictionary &customData);
 
 // Variable class for Prim and Attribute Metadataum.
 //
@@ -724,8 +725,16 @@ struct AssetInfo {
   std::string version;
 
   // Other fields
-  CustomDataType _fields;
+  Dictionary _fields;
 };
+
+// USDZ AR class?
+// Preliminary_Trigger,
+// Preliminary_PhysicsGravitationalForce,
+// Preliminary_InfiniteColliderPlane,
+// Preliminary_ReferenceImage,
+// Preliminary_Action,
+// Preliminary_Text,
 
 struct APISchemas {
   // TinyUSDZ does not allow user-supplied API schema for now
@@ -735,14 +744,8 @@ struct APISchemas {
     // USDZ AR extensions
     Preliminary_AnchoringAPI,
     Preliminary_PhysicsColliderAPI,
-    // Preliminary_Trigger,
-    // Preliminary_PhysicsGravitationalForce,
     Preliminary_PhysicsMaterialAPI,
     Preliminary_PhysicsRigidBodyAPI,
-    // Preliminary_InfiniteColliderPlane,
-    // Preliminary_ReferenceImage,
-    // Preliminary_Action,
-    // Preliminary_Text,
   };
 
   ListEditQual listOpQual{ListEditQual::ResetToExplicit};  // must be 'prepend'
@@ -763,7 +766,7 @@ struct Reference {
   value::AssetPath asset_path;
   Path prim_path;
   LayerOffset layerOffset;
-  CustomDataType customData;
+  Dictionary customData;
 };
 
 // SdfPayload
@@ -779,14 +782,14 @@ struct PrimMeta {
   nonstd::optional<bool> active;  // 'active'
   nonstd::optional<bool> hidden;  // 'hidden'
   nonstd::optional<Kind> kind;    // 'kind'
-  nonstd::optional<CustomDataType>
+  nonstd::optional<Dictionary>
       assetInfo;  // 'assetInfo' // TODO: Use AssetInfo?
-  nonstd::optional<CustomDataType> customData;  // `customData`
+  nonstd::optional<Dictionary> customData;  // `customData`
   nonstd::optional<value::StringData> doc;      // 'documentation'
   nonstd::optional<value::StringData>
       comment;  // 'comment'  (String only metadata value)
   nonstd::optional<APISchemas> apiSchemas;  // 'apiSchemas'
-  nonstd::optional<CustomDataType> sdrMetadata; // 'sdrMetadata' (usdShade Prim only?)
+  nonstd::optional<Dictionary> sdrMetadata; // 'sdrMetadata' (usdShade Prim only?)
 
   //
   // AssetInfo utility function
@@ -859,7 +862,7 @@ struct AttrMeta {
   nonstd::optional<uint32_t> elementSize;         // usdSkel 'elementSize'
   nonstd::optional<bool> hidden;                  // 'hidden'
   nonstd::optional<value::StringData> comment;    // `comment`
-  nonstd::optional<CustomDataType> customData;    // `customData`
+  nonstd::optional<Dictionary> customData;    // `customData`
 
   nonstd::optional<double> weight;    // usdSkel inbetween BlendShape weight.
 
@@ -2088,10 +2091,26 @@ class Property {
 
   Property() = default;
 
-  Property(const std::string &type_name, bool custom = false)
+  // TODO: Deprecate this constructor.
+  //Property(const std::string &type_name, bool custom = false)
+  //    : _has_custom(custom) {
+  //  _attrib.set_type_name(type_name);
+  //  _type = Type::EmptyAttrib;
+  //}
+
+  template<typename T>
+  Property(bool custom = false)
       : _has_custom(custom) {
-    _attrib.set_type_name(type_name);
+    _attrib.set_type_name(value::TypeTraits<T>::type_name());
     _type = Type::EmptyAttrib;
+  }
+
+  static Property MakeEmptyAttrib(const std::string &type_name, bool custom = false) {
+    Property p;
+    p.set_custom(custom);
+    p.set_property_type(Type::EmptyAttrib);
+    p.attribute().set_type_name(type_name);
+    return p;
   }
 
   Property(const Attribute &a, bool custom = false)
