@@ -267,9 +267,9 @@ Edit path to MSVC SDK and Windows SDK in `bootstrap-clang-cl-win64.bat`, then
 
 ### Examples
 
+* [tusdcat](examples/tusdcat/) Parse USDZ/USDA/USDC and print it as Ascii(similar to `usdcat` in pxrUSD).
 * [usda_parser](examples/usda_parser/) Parse USDA and print it as Ascii.
 * [usdc_parser](examples/usdc_parser/) Parse USDC and print it as Ascii.
-* [Simple usdz_dump](examples/simple_usdz_dump/) Parse USDZ/USDA/USDC and print it as Ascii.
 * [Simple SDL viewer](examples/sdlviewer/)
   * Separated CMake build provided: See [Readme](examples/sdlviewer/README.md)
 * [api_tutorial](examples/api_tutorial/) Tutorial of TinyUSDZ Core API to construct a USD scene data.

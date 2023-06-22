@@ -258,7 +258,7 @@ std::string print_props(const std::map<std::string, Property> &props,
 class Stage;
 
 // Stage::ExportToString() in pxrUSD
-std::string to_string(const Stage &stage);
+//std::string to_string(const Stage &stage, bool relative_path = false);
 
 }  // namespace tinyusdz
 
