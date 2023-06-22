@@ -145,6 +145,89 @@ struct VariantPrimNode {
 };
 #endif
 
+// TODO: Unify with ascii-parser.cc
+static void RegisterPrimAttrTypes(std::set<std::string> &d) {
+  d.clear();
+
+  d.insert(value::kBool);
+
+  d.insert(value::kInt64);
+
+  d.insert(value::kInt);
+  d.insert(value::kInt2);
+  d.insert(value::kInt3);
+  d.insert(value::kInt4);
+
+  d.insert(value::kUInt64);
+
+  d.insert(value::kUInt);
+  d.insert(value::kUInt2);
+  d.insert(value::kUInt3);
+  d.insert(value::kUInt4);
+
+  d.insert(value::kFloat);
+  d.insert(value::kFloat2);
+  d.insert(value::kFloat3);
+  d.insert(value::kFloat4);
+
+  d.insert(value::kDouble);
+  d.insert(value::kDouble2);
+  d.insert(value::kDouble3);
+  d.insert(value::kDouble4);
+
+  d.insert(value::kHalf);
+  d.insert(value::kHalf2);
+  d.insert(value::kHalf3);
+  d.insert(value::kHalf4);
+
+  d.insert(value::kQuath);
+  d.insert(value::kQuatf);
+  d.insert(value::kQuatd);
+
+  d.insert(value::kNormal3f);
+  d.insert(value::kPoint3f);
+  d.insert(value::kTexCoord2h);
+  d.insert(value::kTexCoord3h);
+  d.insert(value::kTexCoord4h);
+  d.insert(value::kTexCoord2f);
+  d.insert(value::kTexCoord3f);
+  d.insert(value::kTexCoord4f);
+  d.insert(value::kTexCoord2d);
+  d.insert(value::kTexCoord3d);
+  d.insert(value::kTexCoord4d);
+  d.insert(value::kVector3f);
+  d.insert(value::kVector4f);
+  d.insert(value::kColor3h);
+  d.insert(value::kColor3f);
+  d.insert(value::kColor3d);
+  d.insert(value::kColor4h);
+  d.insert(value::kColor4f);
+  d.insert(value::kColor4d);
+
+  // Allow `matrixNf` type for USDC
+  d.insert(value::kMatrix2f);
+  d.insert(value::kMatrix3f);
+  d.insert(value::kMatrix4f);
+
+  d.insert(value::kMatrix2d);
+  d.insert(value::kMatrix3d);
+  d.insert(value::kMatrix4d);
+
+  d.insert(value::kToken);
+  d.insert(value::kString);
+
+  d.insert(value::kRelationship);
+  d.insert(value::kAssetPath);
+
+  d.insert(value::kDictionary);
+
+  // variantSet. Require special treatment.
+  // d.insert("variantSet");
+
+  // TODO: Add more types...
+}
+
+
 static bool IsUnregisteredValueType(const std::string &typeName)
 {
   std::string tyname = typeName;
@@ -174,6 +257,7 @@ class USDCReader::Impl {
  public:
   Impl(StreamReader *sr, const USDCReaderConfig &config) : _sr(sr) {
     set_reader_config(config);
+    RegisterPrimAttrTypes(_supported_prim_attr_types);
   }
 
   ~Impl() {
@@ -383,6 +467,8 @@ class USDCReader::Impl {
 
   // Check if given node_id is a prim node.
   std::set<int32_t> _prim_table;
+
+  std::set<std::string> _supported_prim_attr_types;
 };
 
 //
@@ -1176,14 +1262,28 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
 
   // FIXME: SpecType supercedes propType.
   if (propType == Property::Type::EmptyAttrib) {
+    if (!prop) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Internal error. prop is nullptr.");
+    }
+
     if (typeName) {
       // Assume Attribute
-      (*prop) = Property(typeName.value().str(), custom);
+      if (!_supported_prim_attr_types.count(typeName.value().str())) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Invalid or unsupported `typeName` {}", typeName.value()));
+      }
+
+      Property p;
+      p.set_property_type(Property::Type::EmptyAttrib);
+      p.attribute().set_type_name(typeName.value().str());
+      p.set_custom(custom);
 
       if (variability) {
-        prop->attribute().variability() = variability.value();
+        p.attribute().variability() = variability.value();
       }
-      prop->attribute().metas() = meta;
+      p.attribute().metas() = meta;
+
+      (*prop) = p;
+
     } else {
       DCOUT("spec_type = " << to_string(spec_type));
       if (spec_type == SpecType::Relationship) {
@@ -1200,12 +1300,22 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       }
     }
   } else if (propType == Property::Type::Attrib) {
+
+    if (!prop) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Internal error. prop is nullptr.");
+    }
+
     if (variability) {
       attr.variability() = variability.value();
     }
     attr.metas() = meta;
     (*prop) = Property(attr, custom);
   } else if (propType == Property::Type::Connection) {
+
+    if (!prop) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Internal error. prop is nullptr.");
+    }
+
     if (!typeName) {
       PUSH_ERROR_AND_RETURN_TAG(
           kTag, "`typeName` field is missing for Attribute Connection.");
@@ -1221,6 +1331,11 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
 
     prop->attribute().metas() = meta;
   } else if (propType == Property::Type::Relation) {
+
+    if (!prop) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Internal error. prop is nullptr.");
+    }
+
     if (variability) {
       if (variability.value() == Variability::Varying) {
         rel.set_varying_authored();

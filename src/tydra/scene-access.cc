@@ -412,7 +412,7 @@ bool ToProperty(const TypedAttribute<T> &input, Property &output, std::string *e
     output = Property(std::move(attr), /*custom*/ false);
   } else if (input.is_value_empty()) {
     // type info only
-    output = Property(value::TypeTraits<T>::type_name(), /* custom */ false);
+    output = Property::MakeEmptyAttrib(value::TypeTraits<T>::type_name(), /* custom */ false);
   } else if (input.is_connection()) {
     // Use Relation for Connection(as typed relationshipTarget)
     // Single connection targetPath only.
@@ -468,7 +468,7 @@ bool ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output, st
     return true;
   } else if (input.is_value_empty()) {
     // type info only
-    output = Property(value::TypeTraits<T>::type_name(), /* custom */ false);
+    output = Property::MakeEmptyAttrib(value::TypeTraits<T>::type_name(), /* custom */ false);
     return true;
   } else if (input.is_connection()) {
     DCOUT("IsConnection");
@@ -537,8 +537,12 @@ bool ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output, st
   }
 
   // fallback to Property with invalid value
-  output = Property(value::TypeTraits<std::nullptr_t>::type_name(),
-                    /*custom*/ false);
+  Property p;
+  p.set_property_type(Property::Type::EmptyAttrib);
+  p.attribute().set_type_name(value::TypeTraits<std::nullptr_t>::type_name());
+  p.set_custom(false);
+
+  output = p;
 
   return true;
 }
@@ -558,7 +562,11 @@ bool ToProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
     output = Property(std::move(attr), /*custom*/ false);
   } else if (input.is_value_empty()) {
     // type info only
-    output = Property(value::TypeTraits<T>::type_name(), /* custom */ false);
+    Property p;
+    p.set_property_type(Property::Type::EmptyAttrib);
+    p.attribute().set_type_name(value::TypeTraits<T>::type_name());
+    p.set_custom(false);
+    output = p;
   } else if (input.is_connection()) {
     // Use Relation for Connection(as typed relationshipTarget)
     // Single connection targetPath only.
@@ -637,7 +645,11 @@ bool ToTokenProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
     output = Property(std::move(attr), /*custom*/ false);
   } else if (input.is_value_empty()) {
     // type info only
-    output = Property(value::kToken, /* custom */ false);
+    Property p;
+    p.set_property_type(Property::Type::EmptyAttrib);
+    p.attribute().set_type_name(value::kToken);
+    p.set_custom(false);
+    output = p;
   } else if (input.is_connection()) {
     // Use Relation for Connection(as typed relationshipTarget)
     // Single connection targetPath only.
@@ -712,7 +724,11 @@ bool ToTokenProperty(const TypedAttributeWithFallback<T> &input,
     output = Property(std::move(attr), /*custom*/ false);
   } else if (input.is_value_empty()) {
     // type info only
-    output = Property(value::kToken, /* custom */ false);
+    Property p;
+    p.set_property_type(Property::Type::EmptyAttrib);
+    p.attribute().set_type_name(value::kToken);
+    p.set_custom(false);
+    output = p;
   } else if (input.is_connection()) {
     // Use Relation for Connection(as typed relationshipTarget)
     // Single connection targetPath only.
@@ -850,14 +866,14 @@ bool XformOpToProperty(const XformOp &x, Property &prop) {
     if (!ToProperty(__v, *out_prop, &err)) { \
       return nonstd::make_unexpected(fmt::format("Convert Property {} failed: {}\n", __prop_name, err)); \
     } \
-  } else 
+  } else
 
 #define TO_TOKEN_PROPERTY(__prop_name, __v) \
   if (prop_name == __prop_name) { \
     if (!ToTokenProperty(__v, *out_prop, &err)) { \
       return nonstd::make_unexpected(fmt::format("Convert Property {} failed: {}\n", __prop_name, err)); \
     } \
-  } else 
+  } else
 
 // Return false: something went wrong
 // `attr_prop` true: Include Attribute property.
@@ -970,7 +986,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
 
   DCOUT("prop_name = " << prop_name);
   std::string err;
-  
+
   TO_PROPERTY("points", mesh.points)
   TO_PROPERTY("faceVertexCounts", mesh.faceVertexCounts)
   TO_PROPERTY("faceVertexIndices", mesh.faceVertexCounts)
@@ -1230,7 +1246,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
 
     // empty. type info only
     std::string typeName = tx.result.has_actual_type() ? tx.result.get_actual_type_name() : tx.result.type_name();
-    (*out_prop) = Property(typeName, /* custom */ false);
+    (*out_prop) = Property::MakeEmptyAttrib(typeName, /* custom */ false);
   } else {
     const auto it = tx.props.find(prop_name);
     if (it == tx.props.end()) {
@@ -1274,7 +1290,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   if (prop_name == "outputs:surface") {
     if (surface.outputsSurface.authored()) {
         // empty. type info only
-        (*out_prop) = Property(value::kToken, /* custom */ false);
+        (*out_prop) = Property::MakeEmptyAttrib(value::kToken, /* custom */ false);
     } else {
       // Not authored
       return false;
@@ -1282,7 +1298,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   } else if (prop_name == "outputs:displacement") {
     if (surface.outputsDisplacement.authored()) {
       // empty. type info only
-      (*out_prop) = Property(value::kToken, /* custom */ false);
+      (*out_prop) = Property::MakeEmptyAttrib(value::kToken, /* custom */ false);
     } else {
       // Not authored
       return false;
@@ -1542,7 +1558,7 @@ bool GetPrimPropertyNamesImpl(
         prop_names->push_back(prop.first);
       }
     }
-  } 
+  }
 
   return true;
 }
@@ -1565,7 +1581,7 @@ bool GetPrimPropertyNamesImpl(
         prop_names->push_back(prop.first);
       }
     }
-  } 
+  }
 
   return true;
 }
@@ -1613,7 +1629,7 @@ bool GetGPrimPropertyNamesImpl(
         varname += ":" + xop.suffix;
       }
       prop_names->push_back(varname);
-    } 
+    }
   }
 
   if (rel_prop) {
@@ -1646,7 +1662,7 @@ bool GetGPrimPropertyNamesImpl(
         prop_names->push_back(prop.first);
       }
     }
-  } 
+  }
 
   return true;
 }
