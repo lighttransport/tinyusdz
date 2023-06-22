@@ -581,6 +581,7 @@ using VariantSelectionMap = std::map<std::string, std::string>;
 
 class MetaVariable;
 
+// TODO: Use `Dictionary` and deprecate CustomDataType
 using CustomDataType = std::map<std::string, MetaVariable>;
 
 using Dictionary = CustomDataType;  // alias to CustomDataType
@@ -589,11 +590,11 @@ using Dictionary = CustomDataType;  // alias to CustomDataType
 /// Helper function to access CustomData(dictionary).
 /// Recursively process into subdictionaries when a key contains namespaces(':')
 ///
-bool HasCustomDataKey(const CustomDataType &customData, const std::string &key);
-bool GetCustomDataByKey(const CustomDataType &customData,
+bool HasCustomDataKey(const Dictionary &customData, const std::string &key);
+bool GetCustomDataByKey(const Dictionary &customData,
                         const std::string &key, /* out */ MetaVariable *dst);
 bool SetCustomDataByKey(const std::string &key, const MetaVariable &val,
-                        /* inout */ CustomDataType &customData);
+                        /* inout */ Dictionary &customData);
 
 // Variable class for Prim and Attribute Metadataum.
 //
@@ -724,7 +725,7 @@ struct AssetInfo {
   std::string version;
 
   // Other fields
-  CustomDataType _fields;
+  Dictionary _fields;
 };
 
 // USDZ AR class?
@@ -765,7 +766,7 @@ struct Reference {
   value::AssetPath asset_path;
   Path prim_path;
   LayerOffset layerOffset;
-  CustomDataType customData;
+  Dictionary customData;
 };
 
 // SdfPayload
@@ -781,14 +782,14 @@ struct PrimMeta {
   nonstd::optional<bool> active;  // 'active'
   nonstd::optional<bool> hidden;  // 'hidden'
   nonstd::optional<Kind> kind;    // 'kind'
-  nonstd::optional<CustomDataType>
+  nonstd::optional<Dictionary>
       assetInfo;  // 'assetInfo' // TODO: Use AssetInfo?
-  nonstd::optional<CustomDataType> customData;  // `customData`
+  nonstd::optional<Dictionary> customData;  // `customData`
   nonstd::optional<value::StringData> doc;      // 'documentation'
   nonstd::optional<value::StringData>
       comment;  // 'comment'  (String only metadata value)
   nonstd::optional<APISchemas> apiSchemas;  // 'apiSchemas'
-  nonstd::optional<CustomDataType> sdrMetadata; // 'sdrMetadata' (usdShade Prim only?)
+  nonstd::optional<Dictionary> sdrMetadata; // 'sdrMetadata' (usdShade Prim only?)
 
   //
   // AssetInfo utility function
@@ -861,7 +862,7 @@ struct AttrMeta {
   nonstd::optional<uint32_t> elementSize;         // usdSkel 'elementSize'
   nonstd::optional<bool> hidden;                  // 'hidden'
   nonstd::optional<value::StringData> comment;    // `comment`
-  nonstd::optional<CustomDataType> customData;    // `customData`
+  nonstd::optional<Dictionary> customData;    // `customData`
 
   nonstd::optional<double> weight;    // usdSkel inbetween BlendShape weight.
 

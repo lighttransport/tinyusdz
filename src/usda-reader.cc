@@ -764,7 +764,7 @@ class USDAReader::Impl {
       return EnumHandler<APISchemas::APIName>("apiSchemas", tok, enums);
     };
 
-    auto BuildVariants = [](const CustomDataType &dict) -> nonstd::expected<VariantSelectionMap, std::string> {
+    auto BuildVariants = [](const Dictionary &dict) -> nonstd::expected<VariantSelectionMap, std::string> {
 
       // Allow empty dict.
 
@@ -885,8 +885,8 @@ class USDAReader::Impl {
         }
       } else if (meta.first == "sdrMetadata") {
         DCOUT("sdrMetadata. type = " << var.type_name());
-        if (var.type_id() == value::TypeTraits<CustomDataType>::type_id()) {
-          if (auto pv = var.get_value<CustomDataType>()) {
+        if (var.type_id() == value::TypeTraits<Dictionary>::type_id()) {
+          if (auto pv = var.get_value<Dictionary>()) {
             // TODO: Check if all items are string type.
             out->sdrMetadata = pv.value();
           } else {
@@ -904,8 +904,8 @@ class USDAReader::Impl {
         }
       } else if (meta.first == "customData") {
         DCOUT("customData. type = " << var.type_name());
-        if (var.type_id() == value::TypeTraits<CustomDataType>::type_id()) {
-          if (auto pv = var.get_value<CustomDataType>()) {
+        if (var.type_id() == value::TypeTraits<Dictionary>::type_id()) {
+          if (auto pv = var.get_value<Dictionary>()) {
             out->customData = pv.value();
           } else {
             PUSH_ERROR_AND_RETURN_TAG(kTag,
@@ -922,7 +922,7 @@ class USDAReader::Impl {
         }
       } else if (meta.first == "assetInfo") {
         DCOUT("assetInfo. type = " << var.type_name());
-        if (auto pv = var.get_value<CustomDataType>()) {
+        if (auto pv = var.get_value<Dictionary>()) {
           out->assetInfo = pv.value();
         } else {
           PUSH_ERROR_AND_RETURN_TAG(kTag,
@@ -931,7 +931,7 @@ class USDAReader::Impl {
               << var.type_name() << "`");
         }
       } else if (meta.first == "variants") {
-        if (auto pv = var.get_value<CustomDataType>()) {
+        if (auto pv = var.get_value<Dictionary>()) {
           auto pm = BuildVariants(pv.value());
           if (!pm) {
             PUSH_ERROR_AND_RETURN(pm.error());
