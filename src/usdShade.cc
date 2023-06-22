@@ -18,7 +18,7 @@ bool UsdShadePrim::has_sdr_metadata(const std::string &key) {
     return false;
   }
 
-  const CustomDataType &dict = metas().sdrMetadata.value();
+  const Dictionary &dict = metas().sdrMetadata.value();
 
   if (!HasCustomDataKey(dict, key)) {
     return false;
@@ -42,7 +42,7 @@ const std::string UsdShadePrim::get_sdr_metadata(const std::string &key) {
     return std::string();
   }
 
-  const CustomDataType &dict = metas().sdrMetadata.value();
+  const Dictionary &dict = metas().sdrMetadata.value();
 
   if (!HasCustomDataKey(dict, key)) {
     return std::string();
@@ -68,7 +68,7 @@ const std::string UsdShadePrim::get_sdr_metadata(const std::string &key) {
 
 bool UsdShadePrim::set_sdr_metadata(const std::string &key, const std::string &value) {
 
-  CustomDataType &dict = metas().sdrMetadata.value();
+  Dictionary &dict = metas().sdrMetadata.value();
   bool ret = SetCustomDataByKey(key, value, dict);
   return ret;
 }
