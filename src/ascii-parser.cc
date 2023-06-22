@@ -3362,7 +3362,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
       DCOUT("Relationship with no target: " << attr_name);
 
       // No targets. Define only.
-      Property p(type_name, custom_qual);
+      Property p;
       p.set_property_type(Property::Type::NoTargetsRelation);
       p.set_listedit_qual(listop_qual);
 
@@ -3537,7 +3537,10 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
     DCOUT("Define only property = " + primattr_name);
 
     // Empty Attribute. type info only
-    Property p(type_name, custom_qual);
+    Property p;
+    p.set_property_type(Property::Type::EmptyAttrib);
+    p.set_custom(custom_qual);
+    p.attribute().set_type_name(type_name);
 
     p.attribute().variability() = variability;
     if (varying_authored) {

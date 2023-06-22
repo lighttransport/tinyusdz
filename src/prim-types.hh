@@ -2091,10 +2091,26 @@ class Property {
 
   Property() = default;
 
-  Property(const std::string &type_name, bool custom = false)
+  // TODO: Deprecate this constructor.
+  //Property(const std::string &type_name, bool custom = false)
+  //    : _has_custom(custom) {
+  //  _attrib.set_type_name(type_name);
+  //  _type = Type::EmptyAttrib;
+  //}
+
+  template<typename T>
+  Property(bool custom = false)
       : _has_custom(custom) {
-    _attrib.set_type_name(type_name);
+    _attrib.set_type_name(value::TypeTraits<T>::type_name());
     _type = Type::EmptyAttrib;
+  }
+
+  static Property MakeEmptyAttrib(const std::string &type_name, bool custom = false) {
+    Property p;
+    p.set_custom(custom);
+    p.set_property_type(Type::EmptyAttrib);
+    p.attribute().set_type_name(type_name);
+    return p;
   }
 
   Property(const Attribute &a, bool custom = false)
