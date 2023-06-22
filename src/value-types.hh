@@ -368,6 +368,8 @@ enum TypeId {
   TYPE_ID_PATH_VECTOR,
   TYPE_ID_TOKEN_VECTOR,
   TYPE_ID_RELATIONSHIP,
+  
+  // -- end of base type for Property.
 
   TYPE_ID_TIMESAMPLES,
   TYPE_ID_VARIANT_SELECION_MAP,
