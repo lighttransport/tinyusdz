@@ -1103,7 +1103,7 @@ endif()
 #endif()
 
 if(TINYUSDZ_BUILD_EXAMPLES)
-  add_subdirectory(examples/simple_usdz_dump)
+  add_subdirectory(examples/tusdcat)
   add_subdirectory(examples/tydra_api)
   add_subdirectory(examples/tydra_to_renderscene)
   add_subdirectory(examples/api_tutorial)

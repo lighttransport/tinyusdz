@@ -588,7 +588,9 @@ void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
 
 }  // namespace
 
-std::string Stage::ExportToString() const {
+std::string Stage::ExportToString(bool relative_path) const {
+  (void)relative_path; // TODO
+
   std::stringstream ss;
 
   bool authored = false;

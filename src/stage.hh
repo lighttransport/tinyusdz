@@ -86,8 +86,9 @@ class Stage {
 
   ///
   /// Dump Stage as ASCII(USDA) representation.
+  /// @param[in] relative_path (optional) Print Path as relative Path.
   ///
-  std::string ExportToString() const;
+  std::string ExportToString(bool relative_path = false) const;
 
   // pxrUSD compat API end -------------------------------------
 
@@ -341,8 +342,8 @@ class Stage {
   mutable HandleAllocator<uint64_t> _prim_id_allocator;
 };
 
-inline std::string to_string(const Stage &stage) {
-  return stage.ExportToString();
+inline std::string to_string(const Stage &stage, bool relative_path = false) {
+  return stage.ExportToString(relative_path);
 }
 
 }  // namespace tinyusdz
