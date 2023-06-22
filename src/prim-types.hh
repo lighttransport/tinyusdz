@@ -727,6 +727,14 @@ struct AssetInfo {
   CustomDataType _fields;
 };
 
+// USDZ AR class?
+// Preliminary_Trigger,
+// Preliminary_PhysicsGravitationalForce,
+// Preliminary_InfiniteColliderPlane,
+// Preliminary_ReferenceImage,
+// Preliminary_Action,
+// Preliminary_Text,
+
 struct APISchemas {
   // TinyUSDZ does not allow user-supplied API schema for now
   enum class APIName {
@@ -735,14 +743,8 @@ struct APISchemas {
     // USDZ AR extensions
     Preliminary_AnchoringAPI,
     Preliminary_PhysicsColliderAPI,
-    // Preliminary_Trigger,
-    // Preliminary_PhysicsGravitationalForce,
     Preliminary_PhysicsMaterialAPI,
     Preliminary_PhysicsRigidBodyAPI,
-    // Preliminary_InfiniteColliderPlane,
-    // Preliminary_ReferenceImage,
-    // Preliminary_Action,
-    // Preliminary_Text,
   };
 
   ListEditQual listOpQual{ListEditQual::ResetToExplicit};  // must be 'prepend'
