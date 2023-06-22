@@ -719,7 +719,7 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
     break;
   }
   case value::TYPE_ID_DICT: {
-    CustomDataType dict;
+    Dictionary dict;
 
     DCOUT("Parse dictionary");
     if (!ParseDict(&dict)) {
@@ -1728,7 +1728,7 @@ bool AsciiParser::ParseStageMetaOpt() {
       PUSH_ERROR_AND_RETURN("`apiSchemas` isn't an `token[]` type.");
     }
   } else if (varname == "customLayerData") {
-    if (auto pv = var.get_value<CustomDataType>()) {
+    if (auto pv = var.get_value<Dictionary>()) {
       _stage_metas.customLayerData = pv.value();
     } else {
       PUSH_ERROR_AND_RETURN("`customLayerData` isn't a dictionary value.");
@@ -2464,7 +2464,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
       break;
     }
     case value::TYPE_ID_DICT: {
-      CustomDataType dict;
+      Dictionary dict;
 
       DCOUT("Parse dictionary");
       if (!ParseDict(&dict)) {
@@ -3000,7 +3000,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
         metavar.set_value("colorSpace", tok);
         out_meta->meta.emplace("colorSpace", metavar);
       } else if (varname == "customData") {
-        CustomDataType dict;
+        Dictionary dict;
 
         if (!ParseDict(&dict)) {
           return false;
@@ -3362,7 +3362,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
       DCOUT("Relationship with no target: " << attr_name);
 
       // No targets. Define only.
-      Property p(type_name, custom_qual);
+      Property p;
       p.set_property_type(Property::Type::NoTargetsRelation);
       p.set_listedit_qual(listop_qual);
 
@@ -3537,7 +3537,10 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
     DCOUT("Define only property = " + primattr_name);
 
     // Empty Attribute. type info only
-    Property p(type_name, custom_qual);
+    Property p;
+    p.set_property_type(Property::Type::EmptyAttrib);
+    p.set_custom(custom_qual);
+    p.attribute().set_type_name(type_name);
 
     p.attribute().variability() = variability;
     if (varying_authored) {
