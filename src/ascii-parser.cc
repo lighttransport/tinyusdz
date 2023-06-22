@@ -719,7 +719,7 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
     break;
   }
   case value::TYPE_ID_DICT: {
-    CustomDataType dict;
+    Dictionary dict;
 
     DCOUT("Parse dictionary");
     if (!ParseDict(&dict)) {
@@ -1728,7 +1728,7 @@ bool AsciiParser::ParseStageMetaOpt() {
       PUSH_ERROR_AND_RETURN("`apiSchemas` isn't an `token[]` type.");
     }
   } else if (varname == "customLayerData") {
-    if (auto pv = var.get_value<CustomDataType>()) {
+    if (auto pv = var.get_value<Dictionary>()) {
       _stage_metas.customLayerData = pv.value();
     } else {
       PUSH_ERROR_AND_RETURN("`customLayerData` isn't a dictionary value.");
@@ -2464,7 +2464,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
       break;
     }
     case value::TYPE_ID_DICT: {
-      CustomDataType dict;
+      Dictionary dict;
 
       DCOUT("Parse dictionary");
       if (!ParseDict(&dict)) {
@@ -3000,7 +3000,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
         metavar.set_value("colorSpace", tok);
         out_meta->meta.emplace("colorSpace", metavar);
       } else if (varname == "customData") {
-        CustomDataType dict;
+        Dictionary dict;
 
         if (!ParseDict(&dict)) {
           return false;
