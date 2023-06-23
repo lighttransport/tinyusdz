@@ -774,16 +774,16 @@ endif()
 
 # TODO: USE set_target_properties(... PROPERTIES OUTPUT_NAME outname)?
 add_library(${TINYUSDZ_TARGET_STATIC} STATIC $<TARGET_OBJECTS:tinyusdz_object>)
+#add_sanitizers(${TINYUSDZ_TARGET_STATIC})
 
 # Target with namespace
 add_library(${TINYUSDZ_TARGET_STATIC_NS} ALIAS ${TINYUSDZ_TARGET_STATIC})
 
-add_sanitizers(${TINYUSDZ_TARGET_STATIC})
 
 if(TINYUSDZ_BUILD_SHARED_LIBS)
   add_library(
     ${TINYUSDZ_TARGET} SHARED $<TARGET_OBJECTS:tinyusdz_object>)
-  add_sanitizers(${TINYUSDZ_TARGET})
+  #add_sanitizers(${TINYUSDZ_TARGET})
 
   # for dllexport
   target_compile_definitions(${TINYUSDZ_TARGET} PRIVATE "TINYUSDZ_COMPILE_LIBRARY")

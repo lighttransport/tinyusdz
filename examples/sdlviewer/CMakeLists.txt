@@ -86,7 +86,7 @@ function(ADD_SDL2_LIB)
   set(SDL_STATIC
       ON
       CACHE INTERNAL "" FORCE)
-  add_subdirectory(../common/SDL2-2.24.0/ SDL2)
+  add_subdirectory(../common/SDL2-2.28.0/ SDL2)
 endfunction()
 
 if(EMSCRIPTEN)
