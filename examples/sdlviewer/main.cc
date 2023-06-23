@@ -32,6 +32,7 @@
 #include "imgui_impl_sdlrenderer.h"
 #include "imnodes.h"
 #include "roboto_mono_embed.inc.h"
+#include "virtualGizmo3D/vGizmo.h"
 
 //
 #include "gui.hh"

@@ -265,7 +265,7 @@ Edit path to MSVC SDK and Windows SDK in `bootstrap-clang-cl-win64.bat`, then
 ```
 
 
-### Examples
+### Tools and Examples
 
 * [tusdcat](examples/tusdcat/) Parse USDZ/USDA/USDC and print it as Ascii(similar to `usdcat` in pxrUSD).
 * [usda_parser](examples/usda_parser/) Parse USDA and print it as Ascii.
