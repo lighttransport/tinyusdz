@@ -622,13 +622,14 @@ class USDAReader::Impl {
           primspec.specifier() = spec;
           primspec.typeName() = typeName;
 
-          // TODO: Prim metas
-          // if (!ReconstructPrimMeta(in_meta, &primspec.metas())) {
-          //   return nonstd::make_unexpected(
-          //       "Failed to process Prim metadataum.");
-          // }
+          if (!ReconstructPrimMeta(in_meta, &primspec.metas())) {
+            return nonstd::make_unexpected(
+                "Failed to process Prim metadataum.");
+          }
 
+          //
           // TODO: props, variants
+          //
 
           DCOUT("primspec name, primType = " << prim_name.prim_part() << ", " << typeName);
 
