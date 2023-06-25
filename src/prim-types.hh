@@ -3040,8 +3040,13 @@ class PrimSpec {
     return _vsmap;
   }
 
-  const PrimMeta &metas() const;
-  PrimMeta &metas();
+  const PrimMeta &metas() const {
+    return _metas;
+  }
+
+  PrimMeta &metas() {
+    return _metas;
+  }
 
   const std::vector<Reference> &get_references();
   const ListEditQual &get_references_listedit_qualifier();
