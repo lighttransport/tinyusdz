@@ -4524,6 +4524,7 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
 /// TODO: Refactor and use unified code path regardless of LoadState.
 ///
 bool AsciiParser::Parse(const uint32_t load_states, const AsciiParserOption &parser_option) {
+  _toplevel = (load_states & static_cast<uint32_t>(LoadState::Toplevel));
   _sub_layered = (load_states & static_cast<uint32_t>(LoadState::Sublayer));
   _referenced = (load_states & static_cast<uint32_t>(LoadState::Reference));
   _payloaded = (load_states &  static_cast<uint32_t>(LoadState::Payload));
@@ -4556,8 +4557,9 @@ bool AsciiParser::Parse(const uint32_t load_states, const AsciiParserOption &par
     }
   }
 
+  // Stage(Layer) metadatum is only accounted when reading toplevel USD.
   if (IsToplevel() && _stage_meta_process_fun) {
-    DCOUT("StageMeta callback.");
+    DCOUT("Invoke StageMeta callback.");
     bool ret = _stage_meta_process_fun(_stage_metas);
     if (!ret) {
       PUSH_ERROR_AND_RETURN("Failed to reconstruct Stage metas.");

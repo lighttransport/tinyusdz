@@ -1209,7 +1209,7 @@ class USDAReader::Impl {
   std::vector<PrimSpecNode> _primspec_nodes;
   // Path(prim part only) -> index to _primspec_nodes[]
   std::map<std::string, size_t> _primpath_to_primspec_idx_map;
-  bool _primspec_invalidated{true};
+  bool _primspec_invalidated{false};
 
 
   // load flags
@@ -1257,10 +1257,12 @@ bool USDAReader::Impl::GetAsLayer(Layer *layer) {
   }
 
   if (_primspec_invalidated) {
-    PUSH_ERROR_AND_RETURN("PrimSpec data is invalid. USD data is not loaded or there was an error in earlier GetAsLayer call, or GetAsLayer invoked multiple times.");
+    PUSH_ERROR_AND_RETURN("PrimSpec data is invalid. USD data is not loaded or there was an error in earlier GetAsLayer call, or GetAsLayer was invoked multiple times.");
   }
 
   layer->prim_specs.clear();
+  DCOUT("# of subLayers = " << _stage.metas().subLayers.size());
+  layer->metas() = _stage.metas();
 
   for (const auto &idx : _toplevel_primspecs) {
     DCOUT("Toplevel primspec idx: " << std::to_string(idx));
