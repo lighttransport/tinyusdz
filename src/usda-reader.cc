@@ -278,6 +278,7 @@ class USDAReader::Impl {
  public:
   Impl(StreamReader *sr) { _parser.SetStream(sr); }
 
+#if 0 // TODO: Remove
   // Return the flag if the .usda is read from `references`
   bool IsReferenced() { return _referenced; }
 
@@ -291,6 +292,7 @@ class USDAReader::Impl {
   bool IsToplevel() {
     return !IsReferenced() && !IsSubLayered() && !IsPayloaded();
   }
+#endif
 
   void SetBaseDir(const std::string &str) { _base_dir = str; }
 
@@ -1212,10 +1214,12 @@ class USDAReader::Impl {
   bool _primspec_invalidated{false};
 
 
+#if 0 
   // load flags
   bool _sub_layered{false};
   bool _referenced{false};
   bool _payloaded{false};
+#endif
 
   std::string _defaultPrim;
 

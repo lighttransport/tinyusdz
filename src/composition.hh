@@ -18,4 +18,9 @@ enum class LoadState : uint32_t
   Payload = 1 << 3// load USD from Prim meta payload
 };
 
+///
+/// Load subLayer USD files in `layer`, and return composited(flattened) Layer to `composited_layer`
+///
+bool CompositeSublayers(const std::string &base_dir, const Layer &layer, Layer *composited_layer, std::string *err);
+
 } // namespace tinyusdz
