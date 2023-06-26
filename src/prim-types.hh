@@ -3123,11 +3123,55 @@ class PrimSpec {
   PrimMeta _metas;
 };
 
-// Similar to SdfLayer
+struct LayerMetas {
+  enum class PlaybackMode {
+    PlaybackModeNone,
+    PlaybackModeLoop,
+  };
+
+  // TODO: Support more predefined properties: reference =
+  // <pxrUSD>/pxr/usd/sdf/wrapLayer.cpp Scene global setting
+  TypedAttributeWithFallback<Axis> upAxis{
+      Axis::
+          Y};  // This can be changed by plugInfo.json in USD:
+               // https://graphics.pixar.com/usd/dev/api/group___usd_geom_up_axis__group.html#gaf16b05f297f696c58a086dacc1e288b5
+  value::token defaultPrim;                               // prim node name
+  TypedAttributeWithFallback<double> metersPerUnit{1.0};  // default [m]
+  TypedAttributeWithFallback<double> timeCodesPerSecond{
+      24.0};  // default 24 fps
+  TypedAttributeWithFallback<double> framesPerSecond{
+      24.0}; 
+  TypedAttributeWithFallback<double> startTimeCode{
+      0.0};  // FIXME: default = -inf?
+  TypedAttributeWithFallback<double> endTimeCode{
+      std::numeric_limits<double>::infinity()};
+  std::vector<value::AssetPath> subLayers;  // `subLayers`
+  value::StringData comment;  // 'comment' In Stage meta, comment must be string
+                              // only(`comment = "..."` is not allowed)
+  value::StringData doc;      // `documentation`
+
+  CustomDataType customLayerData;  // customLayerData
+
+  // USDZ extension
+  TypedAttributeWithFallback<bool> autoPlay{
+      true};  // default(or not authored) = auto play
+  TypedAttributeWithFallback<PlaybackMode> playbackMode{
+      PlaybackMode::PlaybackModeLoop};
+
+  // Indirectly used.
+  std::vector<value::token> primChildren;
+};
+
+// Similar to SdfLayer or Stage
 // It is basically hold the list of PrimSpec
 struct Layer {
   std::string name;  // layer name ~= USD filename
   std::vector<PrimSpec> prim_specs;
+  
+  const LayerMetas &metas() const { return _metas; }
+  LayerMetas &metas() { return _metas; }
+
+  LayerMetas _metas; 
 };
 
 #if 0  // TODO: Remove
