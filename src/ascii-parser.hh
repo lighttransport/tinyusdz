@@ -636,6 +636,7 @@ class AsciiParser {
   ///
   std::string GetWarning();
 
+#if 0
   // Return the flag if the .usda is read from `references`
   bool IsReferenced() { return _referenced; }
 
@@ -644,10 +645,12 @@ class AsciiParser {
 
   // Return the flag if the .usda is read from `payload`
   bool IsPayloaded() { return _payloaded; }
+#endif
 
   // Return true if the .udsa is read in the top layer(stage)
   bool IsToplevel() {
-    return !IsReferenced() && !IsSubLayered() && !IsPayloaded();
+    return _toplevel;
+    //return !IsReferenced() && !IsSubLayered() && !IsPayloaded();
   }
 
   bool MaybeNone();
@@ -816,6 +819,8 @@ class AsciiParser {
   float _version{1.0f};
 
   // load flags
+  bool _toplevel{true};
+  // TODO: deprecate?
   bool _sub_layered{false};
   bool _referenced{false};
   bool _payloaded{false};

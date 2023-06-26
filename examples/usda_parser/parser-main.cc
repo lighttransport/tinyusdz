@@ -1,6 +1,7 @@
 #include <fstream>
 #include <iostream>
 
+#include "asset-resolution.hh"
 #include "io-util.hh"
 #include "str-util.hh"
 #include "stream-reader.hh"
@@ -17,11 +18,12 @@ struct CompositionFeatures {
 
 int main(int argc, char **argv) {
   if (argc < 2) {
-    std::cout << "usdaparser [--flatten] [--composition=str] input.usda\n";
+    std::cout << "usdaparser [--flatten] [--composition=list] input.usda\n";
     std::cout << "  --flatten: (Not implemented yet) Similar to --flatten in "
                  "usdview from pxrUSD.\n";
     std::cout << "  --composition: Specify which composition feature to be "
-                 "enabled. Comma separated list. \n    l "
+                 "enabled(valid when `--flatten` is supplied). Comma separated "
+                 "list. \n    l "
                  "`subLayers`, i `inherits`, v `variantSets`, r `references`, "
                  "p `payloads`, s `specializes`. \n    Example: "
                  "--composition=r,p --composition=references,subLayers\n";
@@ -104,6 +106,7 @@ int main(int argc, char **argv) {
   if (!tinyusdz::io::ReadWholeFile(&data, &err, filename,
                                    /* filesize_max */ 0)) {
     std::cerr << "Failed to open file: " << filename << ":" << err << "\n";
+    return -1;
   }
 
   tinyusdz::StreamReader sr(data.data(), data.size(), /* swap endian */ false);
@@ -115,6 +118,7 @@ int main(int argc, char **argv) {
   reader.SetBaseDir(base_dir);
 
   uint32_t load_states = static_cast<uint32_t>(tinyusdz::LoadState::Toplevel);
+#if 0
   if (do_compose) {
     if (comp_features.subLayers) {
       load_states |= static_cast<uint32_t>(tinyusdz::LoadState::Sublayer);
@@ -129,6 +133,7 @@ int main(int argc, char **argv) {
       std::cout << "Enable references.\n";
     }
   }
+#endif
 
   {
     // TODO: ReaderConfig.
@@ -145,16 +150,83 @@ int main(int argc, char **argv) {
     }
   }
 
-  // Dump
-  {
-    bool ret = reader.ReconstructStage();
+  if (do_compose) {
+    //
+    // TODO: Move composition code to `src/composition.cc`
+    //
+    tinyusdz::Layer root_layer;
+    bool ret = reader.get_as_layer(&root_layer);
     if (!ret) {
-      std::cerr << "Failed to reconstruct Stage: \n";
-      std::cerr << reader.GetError() << "\n";
+      std::cerr << "Failed to get USD data as Layer: \n";
+      std::cerr << reader.get_error() << "\n";
       return -1;
     }
 
-    tinyusdz::Stage stage = reader.GetStage();
+    tinyusdz::Stage stage;
+
+    if (comp_features.subLayers) {
+      std::cout << "Resolve subLayers..\n";
+      for (const auto &layer : root_layer.metas().subLayers) {
+        std::cout << "Load subLayer " << layer.GetAssetPath() << "\n";
+
+        tinyusdz::AssetResolutionResolver resolver;
+        resolver.set_search_paths({base_dir});
+
+        std::string layer_filepath = resolver.resolve(layer.GetAssetPath());
+        if (layer_filepath.empty()) {
+          std::cerr << layer.GetAssetPath()
+                    << " not found in path: " << base_dir << "\n";
+          exit(-1);
+        }
+
+        std::vector<uint8_t> sublayer_data;
+        if (!tinyusdz::io::ReadWholeFile(&sublayer_data, &err, layer_filepath,
+                                         /* filesize_max */ 0)) {
+          std::cerr << "Failed to open file: " << layer_filepath << ":" << err
+                    << "\n";
+          exit(-1);
+        }
+
+        tinyusdz::StreamReader ssr(sublayer_data.data(), sublayer_data.size(),
+                                   /* swap endian */ false);
+        tinyusdz::usda::USDAReader sublayer_reader(&ssr);
+
+        sublayer_reader.SetBaseDir(base_dir);
+
+        uint32_t sublayer_load_states =
+            static_cast<uint32_t>(tinyusdz::LoadState::Sublayer);
+
+        tinyusdz::Layer sublayer;
+        {
+          // TODO: ReaderConfig.
+          bool ret = sublayer_reader.read(sublayer_load_states);
+
+          if (!ret) {
+            std::cerr << "Failed to parse : " << layer_filepath << "\n";
+            std::cerr << sublayer_reader.GetError() << "\n";
+            return -1;
+          } else {
+#if !defined(TINYUSDZ_PRODUCTION_BUILD)
+            std::cout << "sublayer read ok\n";
+#endif
+          }
+
+          ret = sublayer_reader.get_as_layer(&sublayer);
+        }
+
+        std::cout << "TODO: Merge sublayer to the layer.";
+      }
+    }
+
+  } else {
+    bool ret = reader.ReconstructStage();
+    if (!ret) {
+      std::cerr << "Failed to reconstruct Stage: \n";
+      std::cerr << reader.get_error() << "\n";
+      return -1;
+    }
+
+    tinyusdz::Stage stage = reader.get_stage();
     std::cout << stage.ExportToString() << "\n";
   }
 

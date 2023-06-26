@@ -13,45 +13,8 @@
 
 namespace tinyusdz {
 
-// TODO: Rename to LayerMetas
-struct StageMetas {
-  enum class PlaybackMode {
-    PlaybackModeNone,
-    PlaybackModeLoop,
-  };
-
-  // TODO: Support more predefined properties: reference =
-  // <pxrUSD>/pxr/usd/sdf/wrapLayer.cpp Scene global setting
-  TypedAttributeWithFallback<Axis> upAxis{
-      Axis::
-          Y};  // This can be changed by plugInfo.json in USD:
-               // https://graphics.pixar.com/usd/dev/api/group___usd_geom_up_axis__group.html#gaf16b05f297f696c58a086dacc1e288b5
-  value::token defaultPrim;                               // prim node name
-  TypedAttributeWithFallback<double> metersPerUnit{1.0};  // default [m]
-  TypedAttributeWithFallback<double> timeCodesPerSecond{
-      24.0};  // default 24 fps
-  TypedAttributeWithFallback<double> framesPerSecond{
-      24.0};  // FIXME: default 24 fps
-  TypedAttributeWithFallback<double> startTimeCode{
-      0.0};  // FIXME: default = -inf?
-  TypedAttributeWithFallback<double> endTimeCode{
-      std::numeric_limits<double>::infinity()};
-  std::vector<value::AssetPath> subLayers;  // `subLayers`
-  value::StringData comment;  // 'comment' In Stage meta, comment must be string
-                              // only(`comment = "..."` is not allowed)
-  value::StringData doc;      // `documentation`
-
-  CustomDataType customLayerData;  // customLayerData
-
-  // USDZ extension
-  TypedAttributeWithFallback<bool> autoPlay{
-      true};  // default(or not authored) = auto play
-  TypedAttributeWithFallback<PlaybackMode> playbackMode{
-      PlaybackMode::PlaybackModeLoop};
-
-  // Indirectly used.
-  std::vector<value::token> primChildren;
-};
+// TODO: Use LayerMetas?
+using StageMetas = LayerMetas;
 
 class PrimRange;
 
@@ -311,7 +274,7 @@ class Stage {
   bool LoadReference(const Reference &reference, Layer *dest);
 
   ///
-  /// Loads USD assets described in `subLayers` Stage meta and return it as Layers
+  /// Loads USD assets described in `subLayers` Stage/Layer meta and return it as Layers
   ///
   bool LoadSubLayers(std::vector<Layer> *dest_sublayers);
 
