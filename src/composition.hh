@@ -6,6 +6,7 @@
 #pragma once
 
 #include "prim-types.hh"
+#include "asset-resolution.hh"
 
 namespace tinyusdz {
 
@@ -20,7 +21,14 @@ enum class LoadState : uint32_t
 
 ///
 /// Load subLayer USD files in `layer`, and return composited(flattened) Layer to `composited_layer`
+/// Supply search_path with `base_dir`
 ///
 bool CompositeSublayers(const std::string &base_dir, const Layer &layer, Layer *composited_layer, std::string *err);
+
+///
+/// Load subLayer USD files in `layer`, and return composited(flattened) Layer to `composited_layer`
+/// Supply AssetResolutionResolver
+///
+bool CompositeSublayers(const AssetResolutionResolver &resolver, const Layer &layer, Layer *composited_layer, std::string *err);
 
 } // namespace tinyusdz
