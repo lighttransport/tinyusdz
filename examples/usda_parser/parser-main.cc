@@ -6,6 +6,7 @@
 #include "str-util.hh"
 #include "stream-reader.hh"
 #include "usda-reader.hh"
+#include "composition.hh"
 
 struct CompositionFeatures {
   bool subLayers{true};
@@ -115,7 +116,7 @@ int main(int argc, char **argv) {
 #if !defined(TINYUSDZ_PRODUCTION_BUILD)
   std::cout << "Basedir = " << base_dir << "\n";
 #endif
-  reader.SetBaseDir(base_dir);
+  //reader.SetBaseDir(base_dir);
 
   uint32_t load_states = static_cast<uint32_t>(tinyusdz::LoadState::Toplevel);
 #if 0
@@ -151,9 +152,6 @@ int main(int argc, char **argv) {
   }
 
   if (do_compose) {
-    //
-    // TODO: Move composition code to `src/composition.cc`
-    //
     tinyusdz::Layer root_layer;
     bool ret = reader.get_as_layer(&root_layer);
     if (!ret) {
@@ -161,6 +159,8 @@ int main(int argc, char **argv) {
       std::cerr << reader.get_error() << "\n";
       return -1;
     }
+
+    
 
     tinyusdz::Stage stage;
 
@@ -191,7 +191,7 @@ int main(int argc, char **argv) {
                                    /* swap endian */ false);
         tinyusdz::usda::USDAReader sublayer_reader(&ssr);
 
-        sublayer_reader.SetBaseDir(base_dir);
+        //sublayer_reader.SetBaseDir(base_dir);
 
         uint32_t sublayer_load_states =
             static_cast<uint32_t>(tinyusdz::LoadState::Sublayer);
