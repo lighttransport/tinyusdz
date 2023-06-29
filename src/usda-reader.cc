@@ -18,6 +18,7 @@
 #include <stack>
 
 #include "ascii-parser.hh"
+//#include "asset-resolution.hh"
 #include "usdGeom.hh"
 #include "usdSkel.hh"
 #if defined(__wasi__)
@@ -1176,6 +1177,7 @@ class USDAReader::Impl {
   std::stack<ParseState> parse_stack;
 
   std::string _base_dir;  // Used for importing another USD file
+  //AssetResolutionResolver _arr;
 
 #if 0 // TODO: Remove since not used.
   nonstd::optional<tinyusdz::Stage> _imported_scene;  // Imported scene.

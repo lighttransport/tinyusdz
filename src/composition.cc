@@ -31,7 +31,7 @@ bool IsVisited(const std::vector<std::set<std::string>> layer_names_stack,
   return false;
 }
 
-bool CompositeSublayersRec(const std::string &base_dir, const Layer &in_layer,
+bool CompositeSublayersRec(const AssetResolutionResolver &resolver, const Layer &in_layer,
                            std::vector<std::set<std::string>> layer_names_stack,
                            Layer *composited_layer, std::string *err) {
   if (layer_names_stack.size() > (1024 * 1024)) {
@@ -56,13 +56,10 @@ bool CompositeSublayersRec(const std::string &base_dir, const Layer &in_layer,
                       sublayer_asset_path, in_layer.name));
     }
 
-    tinyusdz::AssetResolutionResolver resolver;
-    resolver.set_search_paths({base_dir});
-
     std::string layer_filepath = resolver.resolve(sublayer_asset_path);
     if (layer_filepath.empty()) {
       PUSH_ERROR_AND_RETURN(fmt::format("{} not found in path: {}",
-                                        sublayer_asset_path, base_dir));
+                                        sublayer_asset_path, resolver.search_paths_str()));
     }
 
     std::vector<uint8_t> sublayer_data;
@@ -75,6 +72,12 @@ bool CompositeSublayersRec(const std::string &base_dir, const Layer &in_layer,
                                /* swap endian */ false);
     tinyusdz::usda::USDAReader sublayer_reader(&ssr);
 
+    // Use the first path as base_dir.
+    // TODO: Use AssetResolutionResolver in USDAReder.
+    std::string base_dir;
+    if (resolver.search_paths().size()) {
+      base_dir = resolver.search_paths()[0];
+    }
     sublayer_reader.SetBaseDir(base_dir);
 
     uint32_t sublayer_load_states =
@@ -102,7 +105,7 @@ bool CompositeSublayersRec(const std::string &base_dir, const Layer &in_layer,
     Layer composited_sublayer;
 
     // Recursively load subLayer
-    if (!CompositeSublayersRec(base_dir, sublayer, layer_names_stack,
+    if (!CompositeSublayersRec(resolver, sublayer, layer_names_stack,
                                &composited_sublayer, err)) {
       return false;
     }
@@ -120,12 +123,22 @@ bool CompositeSublayersRec(const std::string &base_dir, const Layer &in_layer,
 
 bool CompositeSublayers(const std::string &base_dir, const Layer &in_layer,
                         Layer *composited_layer, std::string *err) {
+
+  tinyusdz::AssetResolutionResolver resolver;
+  resolver.set_search_paths({base_dir});
+
+  return CompositeSublayers(resolver, in_layer, composited_layer, err);
+}
+
+bool CompositeSublayers(const AssetResolutionResolver &resolver, const Layer &in_layer,
+                        Layer *composited_layer, std::string *err) {
+
   std::vector<std::set<std::string>> layer_names_stack;
 
   tinyusdz::Stage stage;
 
   std::cout << "Resolve subLayers..\n";
-  if (!CompositeSublayersRec(base_dir, in_layer, layer_names_stack,
+  if (!CompositeSublayersRec(resolver, in_layer, layer_names_stack,
                              composited_layer, err)) {
     return false;
   }

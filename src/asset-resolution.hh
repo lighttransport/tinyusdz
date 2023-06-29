@@ -52,6 +52,8 @@ class AssetResolutionResolver
     return _search_paths;
   }
 
+  std::string search_paths_str() const; 
+
   ///
   /// Register user defined filesystem handler.
   ///
@@ -64,26 +66,31 @@ class AssetResolutionResolver
   ///
   /// Check if input asset exists(do asset resolution inside the function).
   ///
-  bool find(const std::string &assetPath);
+  /// @param[in] assetPath Asset path string(e.g. "bora.png", "/mnt/c/sphere.usd")
+  ///
+  bool find(const std::string &assetPath) const;
 
   ///
   /// Resolve asset path and returns resolved path as string.
   /// Returns empty string when the asset does not exit.
   ///
-  std::string resolve(const std::string &assetPath);
+  std::string resolve(const std::string &assetPath) const;
 
   void set_userdata(void *userdata) { _userdata = userdata; }
   void *get_userdata() { return _userdata; }
+  const void *get_userdata() const { return _userdata; }
 
  private:
 
   ResolvePathHandler _resolve_path_handler{nullptr};
   void *_userdata{nullptr};
   std::vector<std::string> _search_paths;
-  //static std::vector<std::string> _default_search_paths;
+
+  // TODO: Cache resolution result
+  //mutable _dirty{true};
+  //mutable std::map<std::string, std::string> _cached_resolved_paths;
   
 };
-
 
 
 } // namespace tinyusdz 

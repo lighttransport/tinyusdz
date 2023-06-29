@@ -6,6 +6,7 @@
 #include "stream-reader.hh"
 
 #include "ascii-parser.hh"
+//#include "asset-resolution.hh"
 
 namespace tinyusdz {
 
@@ -39,11 +40,17 @@ class USDAReader {
 
   ///
   /// Base filesystem directory to search asset files.
+  /// TODO: Not used so remove it.
   ///
   void set_base_dir(const std::string &base_dir); 
   void SetBaseDir(const std::string &base_dir) { // Deprecared
     set_base_dir(base_dir);
   }
+
+  ///
+  /// Set AssetResolution resolver.
+  ///
+  //void set_asset_resolution_resolver(const AssetResolutionResolver &arr);
 
   ///
   /// Set reader option
