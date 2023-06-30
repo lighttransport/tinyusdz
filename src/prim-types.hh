@@ -161,6 +161,12 @@ enum class Variability {
   Invalid
 };
 
+// Return false when invalid character(e.g. '%') exists in a given string.
+// This function only validates `elementName` of a Prim(e.g. "dora", "xform1").
+// If you want to validate a Prim path(e.g. "/root/xform1"),
+// Use ValidatePrimPath() in path-util.hh
+bool ValidatePrimElementName(const std::string &tok);
+
 ///
 /// Simlar to SdfPath.
 /// NOTE: We are doging refactoring of Path class, so the following comment may
@@ -778,7 +784,7 @@ struct Payload {
 };
 
 // Metadata for Prim
-struct PrimMeta {
+struct PrimMetas {
   nonstd::optional<bool> active;  // 'active'
   nonstd::optional<bool> hidden;  // 'hidden'
   nonstd::optional<Kind> kind;    // 'kind'
@@ -854,8 +860,11 @@ struct PrimMeta {
   nonstd::optional<std::vector<value::token>> variantSetChildren;
 };
 
+// For backward compatibility
+using PrimMeta = PrimMetas;
+
 // Metadata for Attribute
-struct AttrMeta {
+struct AttrMetas {
   // frequently used items
   // nullopt = not specified in USD data
   nonstd::optional<Interpolation> interpolation;  // 'interpolation'
@@ -885,6 +894,9 @@ struct AttrMeta {
             bindMaterialAs || meta.size() || stringData.size());
   }
 };
+
+// For backward compatibility
+using AttrMeta = AttrMetas;
 
 // Typed TimeSamples value
 //
@@ -1208,7 +1220,7 @@ class TypedAttribute {
   }
 
   // TODO: Supply set_connection_empty()?
-  
+
   void set_value_empty() { _value_empty = true; }
 
   bool is_value_empty() const {
@@ -3140,7 +3152,7 @@ struct LayerMetas {
   TypedAttributeWithFallback<double> timeCodesPerSecond{
       24.0};  // default 24 fps
   TypedAttributeWithFallback<double> framesPerSecond{
-      24.0}; 
+      24.0};
   TypedAttributeWithFallback<double> startTimeCode{
       0.0};  // FIXME: default = -inf?
   TypedAttributeWithFallback<double> endTimeCode{
@@ -3163,15 +3175,67 @@ struct LayerMetas {
 };
 
 // Similar to SdfLayer or Stage
-// It is basically hold the list of PrimSpec
+// It is basically hold the list of PrimSpec and Layer metadatum.
 struct Layer {
-  std::string name;  // layer name ~= USD filename
-  std::vector<PrimSpec> prim_specs;
-  
+
+  const std::string name() const {
+    return _name;
+  }
+
+  void set_name(const std::string name) {
+    _name = name;
+  }
+
+  void clear_primspecs() {
+    _prim_specs.clear();
+  }
+
+  bool has_primspec(const std::string &primname) const {
+    return _prim_specs.count(primname);
+  }
+
+  ///
+  /// Add PrimSpec.
+  ///
+  /// @return false when `name` already exists in `prim_specs`, `name` is empty string or `name` contains invalid character to be used in Prim element_name.
+  ///
+  bool emplace_primspec(const std::string &name, PrimSpec &&ps) {
+    if (name.empty()) {
+      return false;
+    }
+
+    if (!ValidatePrimElementName(name)) {
+      return false;
+    }
+
+    if (has_primspec(name)) {
+      return false;
+    }
+
+    _prim_specs.emplace(name, std::move(ps));
+
+    return true;
+  }
+
+
+  const std::unordered_map<std::string, PrimSpec> &prim_specs() const {
+    return _prim_specs;
+  }
+
+  std::unordered_map<std::string, PrimSpec> &prim_specs() {
+    return _prim_specs;
+  }
+
+
   const LayerMetas &metas() const { return _metas; }
   LayerMetas &metas() { return _metas; }
 
-  LayerMetas _metas; 
+ private:
+  std::string _name;  // layer name ~= USD filename
+
+  // key = prim name
+  std::unordered_map<std::string, PrimSpec> _prim_specs;
+  LayerMetas _metas;
 };
 
 #if 0  // TODO: Remove
@@ -3214,11 +3278,6 @@ nonstd::optional<Interpolation> InterpolationFromString(const std::string &v);
 nonstd::optional<Orientation> OrientationFromString(const std::string &v);
 nonstd::optional<Kind> KindFromString(const std::string &v);
 
-// Return false when invalid character(e.g. '%') exists in a given string.
-// This function only validates `elementName` of a Prim(e.g. "dora", "xform1").
-// If you want to validate a Prim path(e.g. "/root/xform1"),
-// Use ValidatePrimPath() in path-util.hh
-bool ValidatePrimElementName(const std::string &tok);
 
 namespace value {
 
