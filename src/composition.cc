@@ -33,8 +33,8 @@ bool IsVisited(const std::vector<std::set<std::string>> layer_names_stack,
 
 bool CompositeSublayersRec(const AssetResolutionResolver &resolver, const Layer &in_layer,
                            std::vector<std::set<std::string>> layer_names_stack,
-                           Layer *composited_layer, std::string *err) {
-  if (layer_names_stack.size() > (1024 * 1024)) {
+                           Layer *composited_layer, std::string *err, const SublayersCompositionOptions &options) {
+  if (layer_names_stack.size() > options.max_depth) {
     if (err) {
       (*err) += "subLayer is nested too deeply.";
     }
@@ -53,7 +53,7 @@ bool CompositeSublayersRec(const AssetResolutionResolver &resolver, const Layer 
     if (IsVisited(layer_names_stack, sublayer_asset_path)) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("Circular referenceing detected for subLayer: {} in {}",
-                      sublayer_asset_path, in_layer.name));
+                      sublayer_asset_path, in_layer.name()));
     }
 
     std::string layer_filepath = resolver.resolve(sublayer_asset_path);
@@ -72,13 +72,15 @@ bool CompositeSublayersRec(const AssetResolutionResolver &resolver, const Layer 
                                /* swap endian */ false);
     tinyusdz::usda::USDAReader sublayer_reader(&ssr);
 
+#if 0 // not used
     // Use the first path as base_dir.
     // TODO: Use AssetResolutionResolver in USDAReder.
-    std::string base_dir;
-    if (resolver.search_paths().size()) {
-      base_dir = resolver.search_paths()[0];
-    }
-    sublayer_reader.SetBaseDir(base_dir);
+    //std::string base_dir;
+    //if (resolver.search_paths().size()) {
+    //  base_dir = resolver.search_paths()[0];
+    //}
+    //sublayer_reader.SetBaseDir(base_dir);
+#endif
 
     uint32_t sublayer_load_states =
         static_cast<uint32_t>(tinyusdz::LoadState::Sublayer);
@@ -106,12 +108,21 @@ bool CompositeSublayersRec(const AssetResolutionResolver &resolver, const Layer 
 
     // Recursively load subLayer
     if (!CompositeSublayersRec(resolver, sublayer, layer_names_stack,
-                               &composited_sublayer, err)) {
+                               &composited_sublayer, err, options)) {
       return false;
     }
 
-    DCOUT("TODO: Merge sublayer to the layer.");
-    (void)composited_layer;
+    // NOTE: `over` specifier is ignored when merging Prims among different subLayers 
+    for (auto &prim : composited_sublayer.prim_specs()) {
+      if (composited_layer->has_primspec(prim.first)) {
+        // Skip 
+      } else {
+        if (!composited_layer->emplace_primspec(prim.first, std::move(prim.second))) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Compositing PrimSpec {} in {} failed.", prim.first, layer_filepath));
+        }
+      }
+    }
+
   }
 
   layer_names_stack.pop_back();
@@ -122,16 +133,16 @@ bool CompositeSublayersRec(const AssetResolutionResolver &resolver, const Layer 
 }  // namespace
 
 bool CompositeSublayers(const std::string &base_dir, const Layer &in_layer,
-                        Layer *composited_layer, std::string *err) {
+                        Layer *composited_layer, std::string *err, SublayersCompositionOptions options) {
 
   tinyusdz::AssetResolutionResolver resolver;
   resolver.set_search_paths({base_dir});
 
-  return CompositeSublayers(resolver, in_layer, composited_layer, err);
+  return CompositeSublayers(resolver, in_layer, composited_layer, err, options);
 }
 
 bool CompositeSublayers(const AssetResolutionResolver &resolver, const Layer &in_layer,
-                        Layer *composited_layer, std::string *err) {
+                        Layer *composited_layer, std::string *err, SublayersCompositionOptions options) {
 
   std::vector<std::set<std::string>> layer_names_stack;
 
@@ -139,7 +150,7 @@ bool CompositeSublayers(const AssetResolutionResolver &resolver, const Layer &in
 
   std::cout << "Resolve subLayers..\n";
   if (!CompositeSublayersRec(resolver, in_layer, layer_names_stack,
-                             composited_layer, err)) {
+                             composited_layer, err, options)) {
     return false;
   }
 

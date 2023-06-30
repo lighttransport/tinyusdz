@@ -1266,7 +1266,7 @@ bool USDAReader::Impl::GetAsLayer(Layer *layer) {
     PUSH_ERROR_AND_RETURN("PrimSpec data is invalid. USD data is not loaded or there was an error in earlier GetAsLayer call, or GetAsLayer was invoked multiple times.");
   }
 
-  layer->prim_specs.clear();
+  layer->clear_primspecs();
   DCOUT("# of subLayers = " << _stage.metas().subLayers.size());
   layer->metas() = _stage.metas();
 
@@ -1289,7 +1289,9 @@ bool USDAReader::Impl::GetAsLayer(Layer *layer) {
       PUSH_ERROR_AND_RETURN("Construct PrimSpec tree failed.");
     }
 
-    layer->prim_specs.emplace_back(_primspec_nodes[idx].primSpec);
+    if (!layer->emplace_primspec(primSpec.name(), std::move(_primspec_nodes[idx].primSpec))) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Construct PrimSpec tree failed: PrimSpec.name = {}", primSpec.name()));
+    }
   }
 
   // NOTE: _toplevel_primspecs are destroyed(std::move'ed)
