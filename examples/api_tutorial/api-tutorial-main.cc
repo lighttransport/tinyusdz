@@ -426,12 +426,6 @@ void CreateScene(tinyusdz::Stage *stage) {
 
   stage->metas().defaultPrim = tinyusdz::value::token(xformPrim.element_name()); // token
 
-#if 0 // Deprecated. to be removed.
-  // Use Stage::root_prims() to retrieve Stage's root Prim array.
-  stage->root_prims().emplace_back(std::move(xformPrim));
-  stage->root_prims().emplace_back(std::move(matPrim));
-#else
-
   if (!stage->add_root_prim(std::move(xformPrim))) {
     std::cerr << "Failed to add Prim to Stage root: " << stage->get_error() << "\n";
     exit(-1);
@@ -452,8 +446,6 @@ void CreateScene(tinyusdz::Stage *stage) {
       exit(-1);
     }
   }
-#endif
-
 #endif
 
   // You can add Stage metadatum through Stage::metas()

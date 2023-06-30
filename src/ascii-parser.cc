@@ -4550,20 +4550,21 @@ bool AsciiParser::Parse(const uint32_t load_states, const AsciiParserOption &par
 
     if (c == '(') {
       // stage meta.
-      // TODO: We could skip parsing stage meta in flatten(composition) mode?.
       if (!ParseStageMetas()) {
         PUSH_ERROR_AND_RETURN("Failed to parse Stage metas.");
       }
     }
   }
 
-  // Stage(Layer) metadatum is only accounted when reading toplevel USD.
-  if (IsToplevel() && _stage_meta_process_fun) {
+  if (_stage_meta_process_fun) {
     DCOUT("Invoke StageMeta callback.");
     bool ret = _stage_meta_process_fun(_stage_metas);
     if (!ret) {
       PUSH_ERROR_AND_RETURN("Failed to reconstruct Stage metas.");
     }
+  } else {
+    // TODO: Report error when StageMeta callback is not set?
+    PUSH_WARN("Stage metadata processing callback is not set.");
   }
 
   PushPrimPath("/");
