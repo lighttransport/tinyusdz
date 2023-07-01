@@ -112,17 +112,31 @@ bool CompositeSublayersRec(const AssetResolutionResolver &resolver, const Layer 
       return false;
     }
 
-    // NOTE: `over` specifier is ignored when merging Prims among different subLayers 
-    for (auto &prim : composited_sublayer.prim_specs()) {
+    // 1/2. merge sublayer
+
+    // NOTE: `over` specifier is ignored when merging Prims among different subLayers
+    for (auto &prim : composited_sublayer.primspecs()) {
       if (composited_layer->has_primspec(prim.first)) {
-        // Skip 
+        // Skip
       } else {
         if (!composited_layer->emplace_primspec(prim.first, std::move(prim.second))) {
           PUSH_ERROR_AND_RETURN(fmt::format("Compositing PrimSpec {} in {} failed.", prim.first, layer_filepath));
         }
+        DCOUT("add primspec: " << prim.first);
       }
     }
 
+    // 2/2. merge this layer
+    for (auto &prim : sublayer.primspecs()) {
+      if (composited_layer->has_primspec(prim.first)) {
+        // Skip
+      } else {
+        if (!composited_layer->emplace_primspec(prim.first, std::move(prim.second))) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Compositing PrimSpec {} in {} failed.", prim.first, layer_filepath));
+        }
+        DCOUT("add primspec: " << prim.first);
+      }
+    }
   }
 
   layer_names_stack.pop_back();
@@ -148,12 +162,14 @@ bool CompositeSublayers(const AssetResolutionResolver &resolver, const Layer &in
 
   tinyusdz::Stage stage;
 
-  std::cout << "Resolve subLayers..\n";
+  DCOUT("Resolve subLayers..");
   if (!CompositeSublayersRec(resolver, in_layer, layer_names_stack,
                              composited_layer, err, options)) {
+    DCOUT("Composite subLayers failed.");
     return false;
   }
 
+  DCOUT("Composite subLayers ok.");
   return true;
 }
 
