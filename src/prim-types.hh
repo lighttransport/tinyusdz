@@ -3218,11 +3218,11 @@ struct Layer {
   }
 
 
-  const std::unordered_map<std::string, PrimSpec> &prim_specs() const {
+  const std::unordered_map<std::string, PrimSpec> &primspecs() const {
     return _prim_specs;
   }
 
-  std::unordered_map<std::string, PrimSpec> &prim_specs() {
+  std::unordered_map<std::string, PrimSpec> &primspecs() {
     return _prim_specs;
   }
 

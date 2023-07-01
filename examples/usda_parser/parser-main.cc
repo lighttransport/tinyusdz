@@ -160,63 +160,20 @@ int main(int argc, char **argv) {
       return -1;
     }
 
-    
-
     tinyusdz::Stage stage;
+    stage.metas() = root_layer.metas();
 
     if (comp_features.subLayers) {
-      std::cout << "Resolve subLayers..\n";
-      for (const auto &layer : root_layer.metas().subLayers) {
-        std::cout << "Load subLayer " << layer.GetAssetPath() << "\n";
-
-        tinyusdz::AssetResolutionResolver resolver;
-        resolver.set_search_paths({base_dir});
-
-        std::string layer_filepath = resolver.resolve(layer.GetAssetPath());
-        if (layer_filepath.empty()) {
-          std::cerr << layer.GetAssetPath()
-                    << " not found in path: " << base_dir << "\n";
-          exit(-1);
-        }
-
-        std::vector<uint8_t> sublayer_data;
-        if (!tinyusdz::io::ReadWholeFile(&sublayer_data, &err, layer_filepath,
-                                         /* filesize_max */ 0)) {
-          std::cerr << "Failed to open file: " << layer_filepath << ":" << err
-                    << "\n";
-          exit(-1);
-        }
-
-        tinyusdz::StreamReader ssr(sublayer_data.data(), sublayer_data.size(),
-                                   /* swap endian */ false);
-        tinyusdz::usda::USDAReader sublayer_reader(&ssr);
-
-        //sublayer_reader.SetBaseDir(base_dir);
-
-        uint32_t sublayer_load_states =
-            static_cast<uint32_t>(tinyusdz::LoadState::Sublayer);
-
-        tinyusdz::Layer sublayer;
-        {
-          // TODO: ReaderConfig.
-          bool ret = sublayer_reader.read(sublayer_load_states);
-
-          if (!ret) {
-            std::cerr << "Failed to parse : " << layer_filepath << "\n";
-            std::cerr << sublayer_reader.GetError() << "\n";
-            return -1;
-          } else {
-#if !defined(TINYUSDZ_PRODUCTION_BUILD)
-            std::cout << "sublayer read ok\n";
-#endif
-          }
-
-          ret = sublayer_reader.get_as_layer(&sublayer);
-        }
-
-        std::cout << "TODO: Merge sublayer to the layer.";
+      tinyusdz::Layer composited_layer;
+      if (!tinyusdz::CompositeSublayers(base_dir, root_layer, &composited_layer, &err)) {
+        std::cerr << "Failed to composite subLayers: " << err << "\n";
+        return -1;
       }
+
+      std::cout << "# of primspes:" << composited_layer.primspecs().size() << "\n";
     }
+
+    // TODO...
 
   } else {
     bool ret = reader.ReconstructStage();

@@ -1,5 +1,6 @@
-// SPDX-License-Identifier: MIT
-// Copyright 2020-Present Syoyo Fujita.
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2020-2023 Syoyo Fujita.
+// Copyright 2023-Present Light Transport Entertainment Inc.
 //
 // Common Prim reconstruction modules both for USDA and USDC.
 //
@@ -27,12 +28,22 @@ bool ReconstructXformOpsFromProperties(
       std::string *err);
 
 ///
-/// Reconstruct Prim(e.g. Xform, GeomMesh) from `properties`.
+/// Reconstruct concrete Prim(e.g. Xform, GeomMesh) from `properties`.
 ///
 template <typename T>
 bool ReconstructPrim(
     const PropertyMap &properties,
     const ReferenceList &references,
+    T *out,
+    std::string *warn,
+    std::string *err);
+
+///
+/// Reconstruct concrete Prim(e.g. Xform, GeomMesh) from PrimSpec.
+///
+template <typename T>
+bool ReconstructPrim(
+    PrimSpec &primspec,
     T *out,
     std::string *warn,
     std::string *err);
