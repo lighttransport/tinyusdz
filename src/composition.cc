@@ -112,7 +112,7 @@ bool CompositeSublayersRec(const AssetResolutionResolver &resolver, const Layer 
       return false;
     }
 
-    // 1/2. merge sublayer
+    // 1/2. merge sublayer's sublayers
 
     // NOTE: `over` specifier is ignored when merging Prims among different subLayers
     for (auto &prim : composited_sublayer.primspecs()) {
@@ -126,7 +126,7 @@ bool CompositeSublayersRec(const AssetResolutionResolver &resolver, const Layer 
       }
     }
 
-    // 2/2. merge this layer
+    // 2/2. merge sublayer
     for (auto &prim : sublayer.primspecs()) {
       if (composited_layer->has_primspec(prim.first)) {
         // Skip
@@ -167,6 +167,34 @@ bool CompositeSublayers(const AssetResolutionResolver &resolver, const Layer &in
                              composited_layer, err, options)) {
     DCOUT("Composite subLayers failed.");
     return false;
+  }
+
+  // merge Prims in root layer.
+  // NOTE: local Prims(prims in root layer) wins against subLayer's Prim
+  for (auto &prim : in_layer.primspecs()) {
+    if (composited_layer->has_primspec(prim.first)) {
+      // over
+      if (prim.second.specifier() == Specifier::Class) {
+        // TODO: Simply ignore?
+        DCOUT("TODO: `class` Prim");
+      } else if (prim.second.specifier() == Specifier::Over) {
+        // TODO `over` compisition
+        DCOUT("TODO: `over` Prim");
+      } else if (prim.second.specifier() == Specifier::Def) {
+        // overwrite
+        if (!composited_layer->replace_primspec(prim.first, prim.second)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Failed to replace PrimSpec: {}", prim.first));
+        }
+      } else {
+        /// ???
+        PUSH_ERROR_AND_RETURN(fmt::format("Prim {} has invalid Prim specifier.", prim.second.name()));
+      }
+    } else {
+      if (!composited_layer->add_primspec(prim.first, prim.second)) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Compositing PrimSpec {} in {} failed.", prim.first, in_layer.name()));
+      }
+      DCOUT("added primspec: " << prim.first);
+    }
   }
 
   DCOUT("Composite subLayers ok.");
