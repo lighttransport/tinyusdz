@@ -3195,9 +3195,32 @@ struct Layer {
   }
 
   ///
+  /// Add PrimSpec(copy PrimSpec instance).
+  ///
+  /// @return false when `name` already exists in `primspecs`, `name` is empty string or `name` contains invalid character to be used in Prim element_name.
+  ///
+  bool add_primspec(const std::string &name, const PrimSpec &ps) {
+    if (name.empty()) {
+      return false;
+    }
+
+    if (!ValidatePrimElementName(name)) {
+      return false;
+    }
+
+    if (has_primspec(name)) {
+      return false;
+    }
+
+    _prim_specs.at(name) = ps;
+
+    return true;
+  }
+
+  ///
   /// Add PrimSpec.
   ///
-  /// @return false when `name` already exists in `prim_specs`, `name` is empty string or `name` contains invalid character to be used in Prim element_name.
+  /// @return false when `name` already exists in `primspecs`, `name` is empty string or `name` contains invalid character to be used in Prim element_name.
   ///
   bool emplace_primspec(const std::string &name, PrimSpec &&ps) {
     if (name.empty()) {
@@ -3209,6 +3232,52 @@ struct Layer {
     }
 
     if (has_primspec(name)) {
+      return false;
+    }
+
+    _prim_specs.emplace(name, std::move(ps));
+
+    return true;
+  }
+
+  ///
+  /// Replace PrimSpec(copy PrimSpec instance)
+  ///
+  /// @return false when `name` does not exist in `primspecs`, `name` is empty string or `name` contains invalid character to be used in Prim element_name.
+  ///
+  bool replace_primspec(const std::string &name, const PrimSpec &ps) {
+    if (name.empty()) {
+      return false;
+    }
+
+    if (!ValidatePrimElementName(name)) {
+      return false;
+    }
+
+    if (!has_primspec(name)) {
+      return false;
+    }
+
+    _prim_specs.emplace(name, ps);
+
+    return true;
+  }
+
+  ///
+  /// Replace PrimSpec
+  ///
+  /// @return false when `name` does not exist in `primspecs`, `name` is empty string or `name` contains invalid character to be used in Prim element_name.
+  ///
+  bool replace_primspec(const std::string &name, PrimSpec &&ps) {
+    if (name.empty()) {
+      return false;
+    }
+
+    if (!ValidatePrimElementName(name)) {
+      return false;
+    }
+
+    if (!has_primspec(name)) {
       return false;
     }
 
