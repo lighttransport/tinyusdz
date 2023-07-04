@@ -53,7 +53,13 @@ Remaining tasks for v0.8.0 release are writing examples, demos and utility funct
 * [x] USDA parser(Hand-written from a scratch. No Bison/Flex dependency!)
 * [x] USDA writer
 * [x] Support basic Primitives(Xform, Mesh, BasisCurves, etc.), basic Lights and Shaders(UsdPreviewSurface, UsdUVTexture, UsdPrimvarReader)
-
+* [ ] **Experimental** support of some Composition features
+  * [ ] subLayers
+  * [ ] references, payloads
+  * [ ] inherits
+  * [ ] variants
+  * [ ] specializes
+  
 **Please see** [doc/status.md](doc/status.md) **for more details**
 
 * [ ] Basic C API(`c-tinyusd`) for language bindings
