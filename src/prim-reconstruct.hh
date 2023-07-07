@@ -43,7 +43,7 @@ bool ReconstructPrim(
 ///
 template <typename T>
 bool ReconstructPrim(
-    PrimSpec &primspec,
+    const PrimSpec &primspec,
     T *out,
     std::string *warn,
     std::string *err);
