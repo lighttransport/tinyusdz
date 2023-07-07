@@ -14,8 +14,12 @@
 // - [ ] Compose `specializes`
 // - [ ] Compose `inherits`
 // - [ ] Compose `variantSets`
+// - [ ] Compose `over`
 
 namespace tinyusdz {
+
+// Forward decl.
+class Stage;
 
 // USD asset loading state.
 enum class LoadState : uint32_t
@@ -54,5 +58,20 @@ bool CompositeSublayers(const std::string &base_dir, const Layer &layer, Layer *
 bool CompositeSublayers(const AssetResolutionResolver &resolver, const Layer &layer, Layer *composited_layer, std::string *err, const SublayersCompositionOptions options = SublayersCompositionOptions());
 
 
+///
+/// Overwrite PrimSpec with `def` or `class` specifier with 
+//bool CompositeOver(
+
+///
+/// Build USD Stage from Layer
+///
+bool LayerToStage(const Layer &layer, Stage *stage, std::string *warn, std::string *err);
+
+///
+/// Build USD Stage from Layer
+///
+/// `layer` object will be destroyed after `stage` is being build.
+///
+bool LayerToStage(Layer &&layer, Stage *stage, std::string *warn, std::string *err);
 
 } // namespace tinyusdz
