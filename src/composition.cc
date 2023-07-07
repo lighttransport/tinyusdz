@@ -9,7 +9,11 @@
 #include "asset-resolution.hh"
 #include "common-macros.inc"
 #include "io-util.hh"
+#include "prim-reconstruct.hh"
 #include "tiny-format.hh"
+#include "usdGeom.hh"
+#include "usdLux.hh"
+#include "usdShade.hh"
 #include "usda-reader.hh"
 
 #define PushError(s) \
@@ -17,7 +21,49 @@
     (*err) += s;     \
   }
 
+#define PushWarn(s) \
+  if (warn) {       \
+    (*warn) += s;   \
+  }
+
 namespace tinyusdz {
+
+namespace prim {
+
+// template specialization forward decls.
+// implimentations will be located in prim-reconstruct.cc
+#define RECONSTRUCT_PRIM_DECL(__ty)                                   \
+  template <>                                                         \
+  bool ReconstructPrim<__ty>(const PrimSpec &, __ty *, std::string *, \
+                             std::string *)
+
+RECONSTRUCT_PRIM_DECL(Xform);
+RECONSTRUCT_PRIM_DECL(Model);
+RECONSTRUCT_PRIM_DECL(Scope);
+RECONSTRUCT_PRIM_DECL(GeomPoints);
+RECONSTRUCT_PRIM_DECL(GeomMesh);
+RECONSTRUCT_PRIM_DECL(GeomCapsule);
+RECONSTRUCT_PRIM_DECL(GeomCube);
+RECONSTRUCT_PRIM_DECL(GeomCone);
+RECONSTRUCT_PRIM_DECL(GeomCylinder);
+RECONSTRUCT_PRIM_DECL(GeomSphere);
+RECONSTRUCT_PRIM_DECL(GeomBasisCurves);
+RECONSTRUCT_PRIM_DECL(GeomCamera);
+RECONSTRUCT_PRIM_DECL(SphereLight);
+RECONSTRUCT_PRIM_DECL(DomeLight);
+RECONSTRUCT_PRIM_DECL(DiskLight);
+RECONSTRUCT_PRIM_DECL(DistantLight);
+RECONSTRUCT_PRIM_DECL(CylinderLight);
+RECONSTRUCT_PRIM_DECL(SkelRoot);
+RECONSTRUCT_PRIM_DECL(SkelAnimation);
+RECONSTRUCT_PRIM_DECL(Skeleton);
+RECONSTRUCT_PRIM_DECL(BlendShape);
+RECONSTRUCT_PRIM_DECL(Material);
+RECONSTRUCT_PRIM_DECL(Shader);
+
+#undef RECONSTRUCT_PRIM_DECL
+
+}  // namespace prim
 
 namespace {
 
@@ -31,9 +77,11 @@ bool IsVisited(const std::vector<std::set<std::string>> layer_names_stack,
   return false;
 }
 
-bool CompositeSublayersRec(const AssetResolutionResolver &resolver, const Layer &in_layer,
+bool CompositeSublayersRec(const AssetResolutionResolver &resolver,
+                           const Layer &in_layer,
                            std::vector<std::set<std::string>> layer_names_stack,
-                           Layer *composited_layer, std::string *err, const SublayersCompositionOptions &options) {
+                           Layer *composited_layer, std::string *err,
+                           const SublayersCompositionOptions &options) {
   if (layer_names_stack.size() > options.max_depth) {
     if (err) {
       (*err) += "subLayer is nested too deeply.";
@@ -59,7 +107,8 @@ bool CompositeSublayersRec(const AssetResolutionResolver &resolver, const Layer 
     std::string layer_filepath = resolver.resolve(sublayer_asset_path);
     if (layer_filepath.empty()) {
       PUSH_ERROR_AND_RETURN(fmt::format("{} not found in path: {}",
-                                        sublayer_asset_path, resolver.search_paths_str()));
+                                        sublayer_asset_path,
+                                        resolver.search_paths_str()));
     }
 
     std::vector<uint8_t> sublayer_data;
@@ -72,7 +121,7 @@ bool CompositeSublayersRec(const AssetResolutionResolver &resolver, const Layer 
                                /* swap endian */ false);
     tinyusdz::usda::USDAReader sublayer_reader(&ssr);
 
-#if 0 // not used
+#if 0  // not used
     // Use the first path as base_dir.
     // TODO: Use AssetResolutionResolver in USDAReder.
     //std::string base_dir;
@@ -114,13 +163,17 @@ bool CompositeSublayersRec(const AssetResolutionResolver &resolver, const Layer 
 
     // 1/2. merge sublayer's sublayers
 
-    // NOTE: `over` specifier is ignored when merging Prims among different subLayers
+    // NOTE: `over` specifier is ignored when merging Prims among different
+    // subLayers
     for (auto &prim : composited_sublayer.primspecs()) {
       if (composited_layer->has_primspec(prim.first)) {
         // Skip
       } else {
-        if (!composited_layer->emplace_primspec(prim.first, std::move(prim.second))) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Compositing PrimSpec {} in {} failed.", prim.first, layer_filepath));
+        if (!composited_layer->emplace_primspec(prim.first,
+                                                std::move(prim.second))) {
+          PUSH_ERROR_AND_RETURN(
+              fmt::format("Compositing PrimSpec {} in {} failed.", prim.first,
+                          layer_filepath));
         }
         DCOUT("add primspec: " << prim.first);
       }
@@ -131,8 +184,11 @@ bool CompositeSublayersRec(const AssetResolutionResolver &resolver, const Layer 
       if (composited_layer->has_primspec(prim.first)) {
         // Skip
       } else {
-        if (!composited_layer->emplace_primspec(prim.first, std::move(prim.second))) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Compositing PrimSpec {} in {} failed.", prim.first, layer_filepath));
+        if (!composited_layer->emplace_primspec(prim.first,
+                                                std::move(prim.second))) {
+          PUSH_ERROR_AND_RETURN(
+              fmt::format("Compositing PrimSpec {} in {} failed.", prim.first,
+                          layer_filepath));
         }
         DCOUT("add primspec: " << prim.first);
       }
@@ -147,17 +203,17 @@ bool CompositeSublayersRec(const AssetResolutionResolver &resolver, const Layer 
 }  // namespace
 
 bool CompositeSublayers(const std::string &base_dir, const Layer &in_layer,
-                        Layer *composited_layer, std::string *err, SublayersCompositionOptions options) {
-
+                        Layer *composited_layer, std::string *err,
+                        SublayersCompositionOptions options) {
   tinyusdz::AssetResolutionResolver resolver;
   resolver.set_search_paths({base_dir});
 
   return CompositeSublayers(resolver, in_layer, composited_layer, err, options);
 }
 
-bool CompositeSublayers(const AssetResolutionResolver &resolver, const Layer &in_layer,
-                        Layer *composited_layer, std::string *err, SublayersCompositionOptions options) {
-
+bool CompositeSublayers(const AssetResolutionResolver &resolver,
+                        const Layer &in_layer, Layer *composited_layer,
+                        std::string *err, SublayersCompositionOptions options) {
   std::vector<std::set<std::string>> layer_names_stack;
 
   tinyusdz::Stage stage;
@@ -183,15 +239,19 @@ bool CompositeSublayers(const AssetResolutionResolver &resolver, const Layer &in
       } else if (prim.second.specifier() == Specifier::Def) {
         // overwrite
         if (!composited_layer->replace_primspec(prim.first, prim.second)) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Failed to replace PrimSpec: {}", prim.first));
+          PUSH_ERROR_AND_RETURN(
+              fmt::format("Failed to replace PrimSpec: {}", prim.first));
         }
       } else {
         /// ???
-        PUSH_ERROR_AND_RETURN(fmt::format("Prim {} has invalid Prim specifier.", prim.second.name()));
+        PUSH_ERROR_AND_RETURN(fmt::format("Prim {} has invalid Prim specifier.",
+                                          prim.second.name()));
       }
     } else {
       if (!composited_layer->add_primspec(prim.first, prim.second)) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Compositing PrimSpec {} in {} failed.", prim.first, in_layer.name()));
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("Compositing PrimSpec {} in {} failed.", prim.first,
+                        in_layer.name()));
       }
       DCOUT("added primspec: " << prim.first);
     }
@@ -199,6 +259,104 @@ bool CompositeSublayers(const AssetResolutionResolver &resolver, const Layer &in
 
   DCOUT("Composite subLayers ok.");
   return true;
+}
+
+namespace detail {
+
+static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
+    const PrimSpec &primspec, std::string *warn, std::string *err) {
+  (void)warn;
+
+  // TODO:
+  // - propertyNames()
+  // - primChildrenNames()
+
+#define RECONSTRUCT_PRIM(__primty)                                       \
+  if (primspec.typeName() == value::TypeTraits<__primty>::type_name()) { \
+    __primty typed_prim;                                                 \
+    if (!prim::ReconstructPrim(primspec, &typed_prim, warn, err)) {      \
+      PUSH_ERROR("Failed to reconstruct Prim from PrimSpec "             \
+                 << primspec.typeName()                                  \
+                 << " elementName: " << primspec.name());                \
+      return nonstd::nullopt;                                            \
+    }                                                                    \
+    typed_prim.meta = primspec.metas();                                  \
+    typed_prim.name = primspec.name();                                   \
+    typed_prim.spec = primspec.specifier();                              \
+    /*typed_prim.propertyNames() = properties; */                        \
+    /*typed_prim.primChildrenNames() = primChildren;*/                   \
+    value::Value primdata = typed_prim;                                  \
+    Prim prim(primspec.name(), primdata);                                \
+    prim.prim_type_name() = primspec.typeName();                         \
+    /* also add primChildren to Prim */                                  \
+    /* prim.metas().primChildren = primChildren; */                      \
+    return std::move(prim);                                              \
+  } else
+
+  if (primspec.typeName() == "Model") {
+    // Code is mostly identical to RECONSTRUCT_PRIM.
+    // Difference is store primTypeName to Model class itself.
+    Model typed_prim;
+    if (!prim::ReconstructPrim(primspec, &typed_prim, warn, err)) {
+      PUSH_ERROR("Failed to reconstruct Model");
+      return nonstd::nullopt;
+    }
+    typed_prim.meta = primspec.metas();
+    typed_prim.name = primspec.name();
+    typed_prim.prim_type_name = primspec.typeName();
+    typed_prim.spec = primspec.specifier();
+    // typed_prim.propertyNames() = properties;
+    // typed_prim.primChildrenNames() = primChildren;
+    value::Value primdata = typed_prim;
+    Prim prim(primspec.name(), primdata);
+    prim.prim_type_name() = primspec.typeName();
+    /* also add primChildren to Prim */
+    // prim.metas().primChildren = primChildren;
+    return std::move(prim);
+  } else
+
+    RECONSTRUCT_PRIM(Xform)
+  RECONSTRUCT_PRIM(Model)
+  RECONSTRUCT_PRIM(Scope)
+  RECONSTRUCT_PRIM(GeomMesh)
+  RECONSTRUCT_PRIM(GeomPoints)
+  RECONSTRUCT_PRIM(GeomCylinder)
+  RECONSTRUCT_PRIM(GeomCube)
+  RECONSTRUCT_PRIM(GeomCone)
+  RECONSTRUCT_PRIM(GeomSphere)
+  RECONSTRUCT_PRIM(GeomCapsule)
+  RECONSTRUCT_PRIM(GeomBasisCurves)
+  RECONSTRUCT_PRIM(GeomCamera)
+  // RECONSTRUCT_PRIM(GeomSubset)
+  RECONSTRUCT_PRIM(SphereLight)
+  RECONSTRUCT_PRIM(DomeLight)
+  RECONSTRUCT_PRIM(CylinderLight)
+  RECONSTRUCT_PRIM(DiskLight)
+  RECONSTRUCT_PRIM(DistantLight)
+  RECONSTRUCT_PRIM(SkelRoot)
+  RECONSTRUCT_PRIM(Skeleton)
+  RECONSTRUCT_PRIM(SkelAnimation)
+  RECONSTRUCT_PRIM(BlendShape)
+  RECONSTRUCT_PRIM(Shader)
+  RECONSTRUCT_PRIM(Material) {
+    PUSH_WARN("TODO or unsupported prim type: " << primspec.typeName());
+    return nonstd::nullopt;
+  }
+
+#undef RECONSTRUCT_PRIM
+}
+
+}  // namespace detail
+
+bool LayerToStage(const Layer &layer, Stage *stage, std::string *warn,
+                  std::string *err) {
+  stage->metas() = layer.metas();
+
+  // TODO: primChildren metadatum
+  for (const auto &primspec : layer.primspecs) {
+    if (auto pv = detail::ReconstructPrimFromPrimSpec(primspec, warn, err)) {
+    }
+  }
 }
 
 }  // namespace tinyusdz
