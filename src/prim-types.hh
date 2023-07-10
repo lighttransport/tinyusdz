@@ -3060,6 +3060,15 @@ class PrimSpec {
     return _metas;
   }
 
+  using PropertyMap = std::map<std::string, Property>;
+
+  const PropertyMap &props() const {
+    return _props;
+  }
+  PropertyMap &props() {
+    return _props;
+  }
+
   const std::vector<Reference> &get_references();
   const ListEditQual &get_references_listedit_qualifier();
 
@@ -3108,7 +3117,6 @@ class PrimSpec {
 
   std::vector<PrimSpec> _children;  // child nodes
 
-  using PropertyMap = std::map<std::string, Property>;
   PropertyMap _props;
 
   ///

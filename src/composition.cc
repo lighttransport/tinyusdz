@@ -214,15 +214,16 @@ bool CompositeSublayers(const std::string &base_dir, const Layer &in_layer,
 bool CompositeSublayers(const AssetResolutionResolver &resolver,
                         const Layer &in_layer, Layer *composited_layer,
                         std::string *err, SublayersCompositionOptions options) {
-  std::vector<std::set<std::string>> layer_names_stack;
+  if (!composited_layer) {
+    return false;
+  }
 
-  tinyusdz::Stage stage;
+  std::vector<std::set<std::string>> layer_names_stack;
 
   DCOUT("Resolve subLayers..");
   if (!CompositeSublayersRec(resolver, in_layer, layer_names_stack,
                              composited_layer, err, options)) {
-    DCOUT("Composite subLayers failed.");
-    return false;
+    PUSH_ERROR_AND_RETURN("Composite subLayers failed.");
   }
 
   // merge Prims in root layer.
@@ -256,6 +257,9 @@ bool CompositeSublayers(const AssetResolutionResolver &resolver,
       DCOUT("added primspec: " << prim.first);
     }
   }
+
+  // Remove subLayers metadatum
+  composited_layer->metas().subLayers.clear();
 
   DCOUT("Composite subLayers ok.");
   return true;
@@ -348,15 +352,30 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
 
 }  // namespace detail
 
-bool LayerToStage(const Layer &layer, Stage *stage, std::string *warn,
+bool LayerToStage(const Layer &layer, Stage *stage_out, std::string *warn,
                   std::string *err) {
-  stage->metas() = layer.metas();
+  if (!stage_out) {
+    if (err) {
+      (*err) += "`stage_ptr` is nullptr.";
+    }
+    return false;
+  }
+
+  Stage stage;
+
+  stage.metas() = layer.metas();
 
   // TODO: primChildren metadatum
-  for (const auto &primspec : layer.primspecs) {
-    if (auto pv = detail::ReconstructPrimFromPrimSpec(primspec, warn, err)) {
+  for (const auto &primspec : layer.primspecs()) {
+    if (auto pv = detail::ReconstructPrimFromPrimSpec(primspec.second, warn, err)) {
+      // TODO
+      (void)pv;
     }
   }
+
+  (*stage_out) = stage;
+
+  return true;
 }
 
 }  // namespace tinyusdz

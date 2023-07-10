@@ -1,3 +1,12 @@
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2021 - 2023, Syoyo Fujita.
+// Copyright 2023 - Present, Light Transport Entertainment Inc.
+//
+// Reconstruct concrete Prim from PropertyMap or PrimSpec.
+//
+// TODO:
+//   - [ ] Refactor code
+//
 #include "prim-reconstruct.hh"
 
 #include "prim-types.hh"
@@ -3564,6 +3573,49 @@ bool ReconstructPrim<Material>(
   return true;
 }
 
+///
+/// -- PrimSpec
+///
+
+#define RECONSTRUCT_PRIM_PRIMSPEC_IMPL(__prim_ty) \
+template <> \
+bool ReconstructPrim<__prim_ty>( \
+    const PrimSpec &primspec, \
+    __prim_ty *prim, \
+    std::string *warn, \
+    std::string *err) { \
+ \
+  ReferenceList references; /* dummy */ \
+ \
+  return ReconstructPrim<__prim_ty>(primspec.props(), references, prim, warn, err); \
+}
+
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Xform)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Model)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Scope)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomMesh)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomPoints)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomCylinder)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomCube)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomCone)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomSphere)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomCapsule)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomBasisCurves)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomCamera)
+// RECONSTRUCT_PRIM(GeomSubset)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(SphereLight)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(DomeLight)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(CylinderLight)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(DiskLight)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(DistantLight)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(SkelRoot)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Skeleton)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(SkelAnimation)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(BlendShape)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Shader)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Material)
+
 
 } // namespace prim
+
 } // namespace tinyusdz
