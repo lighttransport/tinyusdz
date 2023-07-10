@@ -215,6 +215,8 @@ std::string to_string(const tinyusdz::Animatable<Visibility> &v,
 std::string to_string(const APISchemas::APIName &name);
 std::string to_string(const CustomDataType &customData);
 
+std::string to_string(const Layer &layer, const uint32_t indent = 0, bool closing_brace = true);
+
 std::string print_xformOpOrder(const std::vector<XformOp> &xformOps,
                                const uint32_t indent);
 std::string print_xformOps(const std::vector<XformOp> &xformOps,
@@ -254,11 +256,7 @@ std::string print_props(const std::map<std::string, Property> &props,
                         const std::vector<value::token> &propNames,
                         uint32_t indent);
 
-// Forwad decl
-class Stage;
-
-// Stage::ExportToString() in pxrUSD
-//std::string to_string(const Stage &stage, bool relative_path = false);
+std::string print_layer(const Layer &layer, const uint32_t indent);
 
 }  // namespace tinyusdz
 
@@ -266,5 +264,6 @@ namespace std {
 
 std::ostream &operator<<(std::ostream &ofs, tinyusdz::Visibility v);
 std::ostream &operator<<(std::ostream &ofs, tinyusdz::Extent v);
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Layer &layer);
 
 }  // namespace std
