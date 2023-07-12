@@ -73,10 +73,12 @@ class USDAReader {
   ///
   /// Reader entry point
   ///
-  bool read(uint32_t load_state = static_cast<uint32_t>(LoadState::Toplevel));
-  bool Read(LoadState state = LoadState::Toplevel) { // Deprecated
+  /// `as_primspec` : Create PrimSpec instead of concrete(typed) Prim. Set true if you want to do composition
+  ///
+  bool read(uint32_t load_state = static_cast<uint32_t>(LoadState::Toplevel), bool as_primspec = false);
+  bool Read(LoadState state = LoadState::Toplevel, bool as_primspec = false) { // Deprecated
     uint32_t ustate = static_cast<uint32_t>(state);
-    return read(ustate);
+    return read(ustate, as_primspec);
   }
 
   ///
@@ -98,6 +100,10 @@ class USDAReader {
   ///
   /// Get read USD scene data as Layer
   /// Must be called after `read`
+  ///
+  /// FIXME: Currently concrete(typed) Prims are not included in destination Layer.
+  /// If you use this function, you'll need to invoke `read` with `as_primspec=true`.
+  ///
   ///
   bool get_as_layer(Layer *layer);
   bool GetAsLayer(Layer *layer) { // Deprecated

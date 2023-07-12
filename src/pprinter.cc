@@ -188,6 +188,11 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::StringData &v
   return ofs;
 }
 
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Layer &layer) {
+  ofs << to_string(layer);
+  return ofs;
+}
+
 
 } // namespace std
 
@@ -3389,6 +3394,146 @@ std::string dump_path(const Path &path) {
   return ss.str();
 }
 
+std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
+
+  std::stringstream meta_ss;
+
+  if (metas.doc.value.empty()) {
+    // ss << pprint::Indent(1) << "doc = \"Exporterd from TinyUSDZ v" <<
+    // tinyusdz::version_major
+    //    << "." << tinyusdz::version_minor << "." << tinyusdz::version_micro
+    //    << tinyusdz::version_rev << "\"\n";
+  } else {
+    meta_ss << pprint::Indent(indent) << "doc = " << to_string(metas.doc)
+            << "\n";
+  }
+
+  if (metas.metersPerUnit.authored()) {
+    meta_ss << pprint::Indent(indent)
+            << "metersPerUnit = " << metas.metersPerUnit.get_value()
+            << "\n";
+  }
+
+  if (metas.upAxis.authored()) {
+    meta_ss << pprint::Indent(indent)
+            << "upAxis = " << quote(to_string(metas.upAxis.get_value()))
+            << "\n";
+  }
+
+  if (metas.timeCodesPerSecond.authored()) {
+    meta_ss << pprint::Indent(indent) << "timeCodesPerSecond = "
+            << metas.timeCodesPerSecond.get_value() << "\n";
+  }
+
+  if (metas.startTimeCode.authored()) {
+    meta_ss << pprint::Indent(indent)
+            << "startTimeCode = " << metas.startTimeCode.get_value()
+            << "\n";
+  }
+
+  if (metas.endTimeCode.authored()) {
+    meta_ss << pprint::Indent(indent)
+            << "endTimeCode = " << metas.endTimeCode.get_value() << "\n";
+  }
+
+  if (metas.framesPerSecond.authored()) {
+    meta_ss << pprint::Indent(indent)
+            << "framesPerSecond = " << metas.framesPerSecond.get_value()
+            << "\n";
+  }
+
+  // TODO: Do not print subLayers when consumed(after composition evaluated)
+  if (metas.subLayers.size()) {
+    meta_ss << pprint::Indent(indent) << "subLayers = " << metas.subLayers
+            << "\n";
+  }
+
+  if (metas.defaultPrim.str().size()) {
+    meta_ss << pprint::Indent(1) << "defaultPrim = "
+            << tinyusdz::quote(metas.defaultPrim.str()) << "\n";
+  }
+
+  if (metas.autoPlay.authored()) {
+    meta_ss << pprint::Indent(1)
+            << "autoPlay = " << to_string(metas.autoPlay.get_value())
+            << "\n";
+  }
+
+  if (metas.playbackMode.authored()) {
+    auto v = metas.playbackMode.get_value();
+    if (v == LayerMetas::PlaybackMode::PlaybackModeLoop) {
+      meta_ss << pprint::Indent(indent) << "playbackMode = \"loop\"\n";
+    } else {  // None
+      meta_ss << pprint::Indent(indent) << "playbackMode = \"none\"\n";
+    }
+  }
+
+  if (!metas.comment.value.empty()) {
+    // Stage meta omits 'comment'
+    meta_ss << pprint::Indent(indent) << to_string(metas.comment) << "\n";
+  }
+
+  if (metas.customLayerData.size()) {
+    meta_ss << print_customData(metas.customLayerData, "customLayerData",
+                                /* indent */ 1);
+  }
+
+  return meta_ss.str();
+
+}
+
+std::string print_layer(const Layer &layer, const uint32_t indent) {
+
+  std::stringstream ss;
+
+  // FIXME: print magic-header outside of this function?
+  ss << pprint::Indent(indent) << "#usda 1.0\n";
+
+  std::stringstream meta_ss;
+  meta_ss << print_layer_metas(layer.metas(), indent+1);
+
+  if (meta_ss.str().size()) {
+    ss << "(\n";
+    ss << meta_ss.str();
+    ss << ")\n";
+  }
+
+  ss << "\n";
+
+  if (layer.metas().primChildren.size() == layer.primspecs().size()) {
+    std::map<std::string, const PrimSpec *> primNameTable;
+    for (const auto &item : layer.primspecs()) {
+      primNameTable.emplace(item.first, &item.second);
+    }
+
+    for (size_t i = 0; i < layer.metas().primChildren.size(); i++) {
+      value::token nameTok = layer.metas().primChildren[i];
+      DCOUT(fmt::format("primChildren  {}/{} = {}", i,
+                        layer.metas().primChildren.size(), nameTok.str()));
+      const auto it = primNameTable.find(nameTok.str());
+      if (it != primNameTable.end()) {
+        ss << prim::print_primspec((*it->second), indent);
+        if (i != (layer.metas().primChildren.size() - 1)) {
+          ss << "\n";
+        }
+      } else {
+        // TODO: Report warning?
+      }
+    }
+  } else {
+    size_t i = 0;
+    for (const auto &item : layer.primspecs()) {
+      ss << prim::print_primspec(item.second, indent);
+      if (i != (layer.primspecs().size() - 1)) {
+        ss << "\n";
+      }
+    }
+  }
+
+  return ss.str();
+
+}
+
 
 // prim-pprint.hh
 namespace prim {
@@ -3402,7 +3547,51 @@ std::string print_prim(const Prim &prim, const uint32_t indent) {
   return ss.str();
 }
 
+std::string print_primspec(const PrimSpec &primspec, const uint32_t indent) {
+
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << to_string(primspec.specifier()) << " ";
+  if (primspec.typeName().empty() || primspec.typeName() == "Model") {
+    // do not emit typeName
+  } else {
+    ss << primspec.typeName() << " ";
+  }
+
+  ss << "\"" << primspec.name() << "\"\n";
+
+  if (primspec.metas().authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(primspec.metas(), indent+1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
+  ss << pprint::Indent(indent) << "{\n";
+
+  ss << print_props(primspec.props(), indent+1);
+
+  for (const auto &item : primspec.children()) {
+    ss << print_primspec(item, indent+1);
+  }
+
+  // TODO: variant
+
+
+  ss << pprint::Indent(indent) << "}\n";
+
+  return ss.str();
+}
+
 } // namespace prim
+
+std::string to_string(const Layer &layer, const uint32_t indent, bool closing_brace) {
+  (void)closing_brace;
+  return print_layer(layer, indent);
+}
+
+std::string to_string(const PrimSpec &primspec, const uint32_t indent, bool closing_brace) {
+  (void)closing_brace;
+  return prim::print_primspec(primspec, indent);
+}
 
 } // tinyusdz
 
