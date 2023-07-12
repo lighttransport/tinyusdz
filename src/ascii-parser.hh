@@ -308,6 +308,12 @@ class AsciiParser {
   bool CheckHeader();
 
   ///
+  /// True: create PrimSpec instead of typed Prim.
+  /// Set true if you do USD composition.
+  ///
+  void set_primspec_mode(bool onoff) { _primspec_mode = onoff; }
+
+  ///
   /// Parser entry point
   ///
   /// @param[in] load_states Bit mask of LoadState
@@ -839,6 +845,8 @@ class AsciiParser {
   // PrimMetaProcessFunction _prim_meta_process_fun;
   std::map<std::string, PrimConstructFunction> _prim_construct_fun_map;
   std::map<std::string, PostPrimConstructFunction> _post_prim_construct_fun_map;
+
+  bool _primspec_mode{false};
 
   // For composition. PrimSpec is typeless so single callback function only.
   PrimSpecFunction _primspec_fun{nullptr};

@@ -2,5 +2,6 @@
 (
   subLayers = [
     @cube-000.usda@,
+    @cube-001.usda@,
   ]
 )

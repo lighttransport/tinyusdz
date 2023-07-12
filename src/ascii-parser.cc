@@ -4460,7 +4460,27 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
 
   std::string pTy = prim_type;
 
-  if (IsToplevel()) {
+  if (_primspec_mode) {
+    // Load scene as PrimSpec tree
+    if (_primspec_fun) {
+      Path fullpath(GetCurrentPrimPath(), "");
+      Path pname(prim_name, "");
+
+      // pass prim_type as is(empty = empty string)
+      nonstd::expected<bool, std::string> ret = _primspec_fun(
+          fullpath, spec, prim_type, pname, primIdx, parentPrimIdx, props, in_metas, variantSetList);
+
+      if (!ret) {
+        // construction failed.
+        PUSH_ERROR_AND_RETURN(fmt::format("Constructing PrimSpec typeName `{}`, elementName `{}` failed: {}", prim_type, prim_name, ret.error()));
+      }
+    } else {
+      PUSH_ERROR_AND_RETURN_TAG(kAscii, "[Internal Error] PrimSpec handler is not found.");
+    }
+
+  } else {
+
+    // Create typed Prim.
 
     if (prim_type.empty()) {
       // No Prim type specified. Treat it as Model
@@ -4495,23 +4515,8 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
           "TODO: Unsupported/Unimplemented Prim type: `{}`. Skipping parsing.",
           pTy));
     }
-  } else {
-    // Load scene as PrimSpec tree
-    if (_primspec_fun) {
-      Path fullpath(GetCurrentPrimPath(), "");
-      Path pname(prim_name, "");
 
-      // pass prim_type as is(empty = empty string)
-      nonstd::expected<bool, std::string> ret = _primspec_fun(
-          fullpath, spec, prim_type, pname, primIdx, parentPrimIdx, props, in_metas, variantSetList);
 
-      if (!ret) {
-        // construction failed.
-        PUSH_ERROR_AND_RETURN(fmt::format("Constructing PrimSpec typeName `{}`, elementName `{}` failed: {}", prim_type, prim_name, ret.error()));
-      }
-    } else {
-      PUSH_ERROR_AND_RETURN_TAG(kAscii, "[Internal Error] PrimSpec handler is not found.");
-    }
   }
 
   PopPrimPath();

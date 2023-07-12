@@ -3266,7 +3266,7 @@ struct Layer {
       return false;
     }
 
-    _prim_specs.emplace(name, ps);
+    _prim_specs.at(name) = ps;
 
     return true;
   }
@@ -3289,7 +3289,7 @@ struct Layer {
       return false;
     }
 
-    _prim_specs.emplace(name, std::move(ps));
+    _prim_specs.at(name) = std::move(ps);
 
     return true;
   }
