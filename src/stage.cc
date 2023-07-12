@@ -593,11 +593,12 @@ std::string Stage::ExportToString(bool relative_path) const {
 
   std::stringstream ss;
 
-  bool authored = false;
-
   ss << "#usda 1.0\n";
 
   std::stringstream meta_ss;
+#if 0
+  bool authored = false;
+
   if (stage_metas.doc.value.empty()) {
     // ss << pprint::Indent(1) << "doc = \"Exporterd from TinyUSDZ v" <<
     // tinyusdz::version_major
@@ -696,6 +697,14 @@ std::string Stage::ExportToString(bool relative_path) const {
     ss << meta_ss.str();
     ss << ")\n";
   }
+#else
+  meta_ss << print_layer_metas(stage_metas, /* indent */1);
+  if (meta_ss.str().size()) {
+    ss << "(\n";
+    ss << meta_ss.str();
+    ss << ")\n";
+  }
+#endif
 
   ss << "\n";
 

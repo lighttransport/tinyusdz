@@ -297,6 +297,14 @@ class USDAReader::Impl {
 
   void SetBaseDir(const std::string &str) { _base_dir = str; }
 
+#if 0
+  ///
+  /// True: create PrimSpec instead of typed Prim.
+  /// Set true if you do USD composition.
+  ///
+  void set_primspec_mode(bool onoff) { _primspec_mode = onoff; }
+#endif
+
   void set_reader_config(const USDAReaderConfig &config) {
     _config = config;
   }
@@ -625,16 +633,19 @@ class USDAReader::Impl {
           primspec.specifier() = spec;
           primspec.typeName() = typeName;
 
+          DCOUT("primspec name, primType = " << prim_name.prim_part() << ", " << typeName);
+
           if (!ReconstructPrimMeta(in_meta, &primspec.metas())) {
             return nonstd::make_unexpected(
                 "Failed to process Prim metadataum.");
           }
 
+          primspec.props() = properties;
+
           //
-          // TODO: props, variants
+          // TODO: variants
           //
 
-          DCOUT("primspec name, primType = " << prim_name.prim_part() << ", " << typeName);
 
           // Assign index for PrimSpec
           // TODO: Use sample id table(= _prim_nodes)
@@ -1100,7 +1111,7 @@ class USDAReader::Impl {
   /// TODO: Use callback function(visitor) so that Reconstruct**** function is
   /// invoked in the Parser context.
   ///
-  bool Read(const uint32_t state_flags);
+  bool Read(const uint32_t state_flags, bool as_primspec);
 
   // std::vector<GPrim> GetGPrims() { return _gprims; }
 
@@ -1215,8 +1226,7 @@ class USDAReader::Impl {
   std::map<std::string, size_t> _primpath_to_primspec_idx_map;
   bool _primspec_invalidated{false};
 
-
-#if 0 
+#if 0
   // load flags
   bool _sub_layered{false};
   bool _referenced{false};
@@ -1243,13 +1253,14 @@ bool ToPrimSpecRec(PrimSpecNode &node,
       return false;
     }
 
+    PrimSpec childPrimSpec;
     PrimSpecNode &child = primspec_nodes[cidx];
-    if (!ToPrimSpecRec(child, primspec_nodes, parent)) {
+    if (!ToPrimSpecRec(child, primspec_nodes, childPrimSpec)) {
       return false;
     }
+    parent.children().emplace_back(std::move(childPrimSpec));
   }
 
-  parent.children().emplace_back(std::move(node.primSpec));
 
   return true;
 }
@@ -1865,7 +1876,7 @@ bool USDAReader::Impl::ReconstructPrim(
 /// -- Impl Read
 ///
 
-bool USDAReader::Impl::Read(const uint32_t state_flags) {
+bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
 
   ///
   /// Convert parser option.
@@ -1881,7 +1892,7 @@ bool USDAReader::Impl::Read(const uint32_t state_flags) {
 
   RegisterPrimIdxAssignCallback();
 
-  // For composition(load state = !Toplevel)
+  // For composition(as_primspec == true)
   RegisterPrimSpecHandler();
 
   // For direct Prim reconstruction(load state = Toplevel)
@@ -1916,6 +1927,8 @@ bool USDAReader::Impl::Read(const uint32_t state_flags) {
   RegisterReconstructCallback<Skeleton>();
   RegisterReconstructCallback<SkelAnimation>();
   RegisterReconstructCallback<BlendShape>();
+
+  _parser.set_primspec_mode(as_primspec);
 
   if (!_parser.Parse(state_flags, ascii_parser_option)) {
     std::string warn = _parser.GetWarning();
@@ -1955,8 +1968,8 @@ USDAReader::USDAReader(StreamReader *sr) { _impl = new Impl(sr); }
 
 USDAReader::~USDAReader() { delete _impl; }
 
-bool USDAReader::read(const uint32_t state_flags) {
-  return _impl->Read(state_flags);
+bool USDAReader::read(const uint32_t state_flags, bool as_primspec) {
+  return _impl->Read(state_flags, as_primspec);
 }
 
 void USDAReader::set_base_dir(const std::string &dir) {
@@ -2006,8 +2019,9 @@ USDAReader::~USDAReader() {
 
 bool USDAReader::check_header() { return false; }
 
-bool USDAReader::read(const LoadState state) {
+bool USDAReader::read(const LoadState state, bool as_primspec) {
   (void)state;
+  (void)as_primspec;
   return false;
 }
 

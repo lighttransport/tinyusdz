@@ -7,6 +7,7 @@
 #include "stream-reader.hh"
 #include "usda-reader.hh"
 #include "composition.hh"
+#include "pprinter.hh"
 
 struct CompositionFeatures {
   bool subLayers{true};
@@ -136,9 +137,11 @@ int main(int argc, char **argv) {
   }
 #endif
 
+  bool as_primspec = do_compose ? true : false;
+
   {
     // TODO: ReaderConfig.
-    bool ret = reader.read(load_states);
+    bool ret = reader.read(load_states, as_primspec);
 
     if (!ret) {
       std::cerr << "Failed to parse .usda: \n";
@@ -160,6 +163,9 @@ int main(int argc, char **argv) {
       return -1;
     }
 
+    std::cout << "# input\n";
+    std::cout << root_layer << "\n";
+
     tinyusdz::Stage stage;
     stage.metas() = root_layer.metas();
 
@@ -170,7 +176,8 @@ int main(int argc, char **argv) {
         return -1;
       }
 
-      std::cout << "# of primspes:" << composited_layer.primspecs().size() << "\n";
+      std::cout << "# composited\n";
+      std::cout << composited_layer << "\n";
     }
 
     // TODO...

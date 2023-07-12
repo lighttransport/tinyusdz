@@ -15,6 +15,7 @@
 #include "usdLux.hh"
 #include "usdShade.hh"
 #include "usda-reader.hh"
+#include "pprinter.hh"
 
 #define PushError(s) \
   if (err) {         \
@@ -137,7 +138,7 @@ bool CompositeSublayersRec(const AssetResolutionResolver &resolver,
     tinyusdz::Layer sublayer;
     {
       // TODO: ReaderConfig.
-      bool ret = sublayer_reader.read(sublayer_load_states);
+      bool ret = sublayer_reader.read(sublayer_load_states, /* as_primspec */true);
 
       if (!ret) {
         PUSH_ERROR_AND_RETURN("Failed to parse : "
@@ -149,6 +150,8 @@ bool CompositeSublayersRec(const AssetResolutionResolver &resolver,
         PUSH_ERROR_AND_RETURN("Failed to get " << layer_filepath
                                                << " as subLayer");
       }
+
+      //std::cout << sublayer << "\n";
     }
 
     curr_layer_names.insert(sublayer_asset_path);
@@ -161,36 +164,38 @@ bool CompositeSublayersRec(const AssetResolutionResolver &resolver,
       return false;
     }
 
-    // 1/2. merge sublayer's sublayers
+    {
+      // 1/2. merge sublayer's sublayers
 
-    // NOTE: `over` specifier is ignored when merging Prims among different
-    // subLayers
-    for (auto &prim : composited_sublayer.primspecs()) {
-      if (composited_layer->has_primspec(prim.first)) {
-        // Skip
-      } else {
-        if (!composited_layer->emplace_primspec(prim.first,
-                                                std::move(prim.second))) {
-          PUSH_ERROR_AND_RETURN(
-              fmt::format("Compositing PrimSpec {} in {} failed.", prim.first,
-                          layer_filepath));
+      // NOTE: `over` specifier is ignored when merging Prims among different
+      // subLayers
+      for (auto &prim : composited_sublayer.primspecs()) {
+        if (composited_layer->has_primspec(prim.first)) {
+          // Skip
+        } else {
+          if (!composited_layer->emplace_primspec(prim.first,
+                                                  std::move(prim.second))) {
+            PUSH_ERROR_AND_RETURN(
+                fmt::format("Compositing PrimSpec {} in {} failed.", prim.first,
+                            layer_filepath));
+          }
+          DCOUT("add primspec: " << prim.first);
         }
-        DCOUT("add primspec: " << prim.first);
       }
-    }
 
-    // 2/2. merge sublayer
-    for (auto &prim : sublayer.primspecs()) {
-      if (composited_layer->has_primspec(prim.first)) {
-        // Skip
-      } else {
-        if (!composited_layer->emplace_primspec(prim.first,
-                                                std::move(prim.second))) {
-          PUSH_ERROR_AND_RETURN(
-              fmt::format("Compositing PrimSpec {} in {} failed.", prim.first,
-                          layer_filepath));
+      // 2/2. merge sublayer
+      for (auto &prim : sublayer.primspecs()) {
+        if (composited_layer->has_primspec(prim.first)) {
+          // Skip
+        } else {
+          if (!composited_layer->emplace_primspec(prim.first,
+                                                  std::move(prim.second))) {
+            PUSH_ERROR_AND_RETURN(
+                fmt::format("Compositing PrimSpec {} in {} failed.", prim.first,
+                            layer_filepath));
+          }
+          DCOUT("add primspec: " << prim.first);
         }
-        DCOUT("add primspec: " << prim.first);
       }
     }
   }
@@ -220,6 +225,7 @@ bool CompositeSublayers(const AssetResolutionResolver &resolver,
 
   std::vector<std::set<std::string>> layer_names_stack;
 
+
   DCOUT("Resolve subLayers..");
   if (!CompositeSublayersRec(resolver, in_layer, layer_names_stack,
                              composited_layer, err, options)) {
@@ -228,7 +234,9 @@ bool CompositeSublayers(const AssetResolutionResolver &resolver,
 
   // merge Prims in root layer.
   // NOTE: local Prims(prims in root layer) wins against subLayer's Prim
+  DCOUT("in_layer # of primspecs: " << in_layer.primspecs().size());
   for (auto &prim : in_layer.primspecs()) {
+    DCOUT("in_layer.prim: " << prim.first);
     if (composited_layer->has_primspec(prim.first)) {
       // over
       if (prim.second.specifier() == Specifier::Class) {
@@ -238,6 +246,7 @@ bool CompositeSublayers(const AssetResolutionResolver &resolver,
         // TODO `over` compisition
         DCOUT("TODO: `over` Prim");
       } else if (prim.second.specifier() == Specifier::Def) {
+        DCOUT("overewrite prim: " << prim.first);
         // overwrite
         if (!composited_layer->replace_primspec(prim.first, prim.second)) {
           PUSH_ERROR_AND_RETURN(
@@ -258,6 +267,7 @@ bool CompositeSublayers(const AssetResolutionResolver &resolver,
     }
   }
 
+  composited_layer->metas() = in_layer.metas();
   // Remove subLayers metadatum
   composited_layer->metas().subLayers.clear();
 
