@@ -59,14 +59,14 @@ bool CompositeSublayers(const AssetResolutionResolver &resolver, const Layer &la
 
 
 ///
-/// Overwrite PrimSpec.
+/// Override a PrimSpec with another PrimSpec.
 ///
-/// @param[inout] dst PrimSpec to be overwritten(must be `def` or `class` spec)
-/// @param[in] src PrimSpec for overwrite(must be `over` spec)
+/// @param[inout] dst PrimSpec to be override(must be `def` or `class` spec)
+/// @param[in] src PrimSpec for override(must be `over` spec)
 ///
 /// @return true upon success. false when error.
 ///
-bool OverwritePrimSpec(PrimSpec &dst, const PrimSpec &src, std::string *warn, std::string *err);
+bool OverridePrimSpec(PrimSpec &dst, const PrimSpec &src, std::string *warn, std::string *err);
 
 ///
 /// Inherit PrimSpec. All PrimSpec tree in `src` PrimSpec will be inheritated to `dst` PrimSpec.
