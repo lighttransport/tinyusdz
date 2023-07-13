@@ -130,4 +130,26 @@ bool ApplyVariantSelector(const Layer &layer, const VariantSelectorMap &vsmap, L
 ///
 bool ApplyVariantSelector(const Layer &layer, const std::string &variant_name, Layer *dst, std::string *warn, std::string *err);
 
+///
+/// Implementation of `references`
+///
+/// Import `layer` to this PrimSpec.
+///
+/// @param[inout] dst PrimSpec to be referenced.
+/// @param[in] layer Layer(PrimSpec tree) to reference.
+/// @param[in] primPath root Prim path in `layer`. Default = invalid Path = defaultPrim in `layer`.
+/// @param[in] layerOffset Layer(PrimSpec tree) to reference.
+///
+/// Use `defaultPrim` in `layer` as the root PrimSpec to import
+///
+///
+bool ReferenceLayerToPrimSpec(PrimSpec &dst, const Layer &layer, const Path primPath = Path(), const LayerOffset layerOffset = LayerOffset());
+
+#if 0 // TODO
+///
+/// Implementation of `references`
+///
+bool ReferenceLayersToPrimSpec(PrimSpec &dst, const std::vector<Layer> &layers
+#endif
+
 } // namespace tinyusdz

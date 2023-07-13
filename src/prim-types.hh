@@ -597,8 +597,8 @@ using Dictionary = CustomDataType;  // alias to CustomDataType
 /// Recursively process into subdictionaries when a key contains namespaces(':')
 ///
 bool HasCustomDataKey(const Dictionary &customData, const std::string &key);
-bool GetCustomDataByKey(const Dictionary &customData,
-                        const std::string &key, /* out */ MetaVariable *dst);
+bool GetCustomDataByKey(const Dictionary &customData, const std::string &key,
+                        /* out */ MetaVariable *dst);
 bool SetCustomDataByKey(const std::string &key, const MetaVariable &val,
                         /* inout */ Dictionary &customData);
 
@@ -793,11 +793,12 @@ struct PrimMetas {
   nonstd::optional<Dictionary>
       assetInfo;  // 'assetInfo' // TODO: Use AssetInfo?
   nonstd::optional<Dictionary> customData;  // `customData`
-  nonstd::optional<value::StringData> doc;      // 'documentation'
+  nonstd::optional<value::StringData> doc;  // 'documentation'
   nonstd::optional<value::StringData>
       comment;  // 'comment'  (String only metadata value)
   nonstd::optional<APISchemas> apiSchemas;  // 'apiSchemas'
-  nonstd::optional<Dictionary> sdrMetadata; // 'sdrMetadata' (usdShade Prim only?)
+  nonstd::optional<Dictionary>
+      sdrMetadata;  // 'sdrMetadata' (usdShade Prim only?)
 
   //
   // AssetInfo utility function
@@ -809,7 +810,8 @@ struct PrimMetas {
   // Compositions
   //
   nonstd::optional<std::pair<ListEditQual, std::vector<Reference>>> references;
-  nonstd::optional<std::pair<ListEditQual, std::vector<Payload>>> payload; // NOTE: not `payloads`
+  nonstd::optional<std::pair<ListEditQual, std::vector<Payload>>>
+      payload;  // NOTE: not `payloads`
   nonstd::optional<std::pair<ListEditQual, std::vector<Path>>>
       inherits;  // 'inherits'
   nonstd::optional<std::pair<ListEditQual, std::vector<std::string>>>
@@ -828,7 +830,9 @@ struct PrimMetas {
   // https://github.com/PixarAnimationStudios/USD/pull/2055
   nonstd::optional<std::string> displayName;  // 'displayName'
 
-  std::map<std::string, MetaVariable> meta;  // other meta values
+  Dictionary meta;  // other non-buitin meta values. TODO: remove this variable
+                    // and use `customData` instead, since pxrUSD does not allow
+                    // non-builtin Prim metadatum
 
   ///
   /// Update metadatum with rhs(authored metadataum only)
@@ -878,9 +882,9 @@ struct AttrMetas {
   nonstd::optional<uint32_t> elementSize;         // usdSkel 'elementSize'
   nonstd::optional<bool> hidden;                  // 'hidden'
   nonstd::optional<value::StringData> comment;    // `comment`
-  nonstd::optional<Dictionary> customData;    // `customData`
+  nonstd::optional<Dictionary> customData;        // `customData`
 
-  nonstd::optional<double> weight;    // usdSkel inbetween BlendShape weight.
+  nonstd::optional<double> weight;  // usdSkel inbetween BlendShape weight.
 
   //
   // MaterialBinding
@@ -1264,7 +1268,7 @@ class TypedAttribute {
 
  private:
   AttrMeta _metas;
-  bool _value_empty{false}; // applies `_attrib`
+  bool _value_empty{false};  // applies `_attrib`
   std::vector<Path> _paths;
   nonstd::optional<T> _attrib;
   bool _blocked{false};  // for `uniform` attribute.
@@ -2111,20 +2115,20 @@ class Property {
   Property() = default;
 
   // TODO: Deprecate this constructor.
-  //Property(const std::string &type_name, bool custom = false)
+  // Property(const std::string &type_name, bool custom = false)
   //    : _has_custom(custom) {
   //  _attrib.set_type_name(type_name);
   //  _type = Type::EmptyAttrib;
   //}
 
-  template<typename T>
-  Property(bool custom = false)
-      : _has_custom(custom) {
+  template <typename T>
+  Property(bool custom = false) : _has_custom(custom) {
     _attrib.set_type_name(value::TypeTraits<T>::type_name());
     _type = Type::EmptyAttrib;
   }
 
-  static Property MakeEmptyAttrib(const std::string &type_name, bool custom = false) {
+  static Property MakeEmptyAttrib(const std::string &type_name,
+                                  bool custom = false) {
     Property p;
     p.set_custom(custom);
     p.set_property_type(Type::EmptyAttrib);
@@ -3059,22 +3063,14 @@ class PrimSpec {
     return _vsmap;
   }
 
-  const PrimMeta &metas() const {
-    return _metas;
-  }
+  const PrimMeta &metas() const { return _metas; }
 
-  PrimMeta &metas() {
-    return _metas;
-  }
+  PrimMeta &metas() { return _metas; }
 
   using PropertyMap = std::map<std::string, Property>;
 
-  const PropertyMap &props() const {
-    return _props;
-  }
-  PropertyMap &props() {
-    return _props;
-  }
+  const PropertyMap &props() const { return _props; }
+  PropertyMap &props() { return _props; }
 
   const std::vector<Reference> &get_references();
   const ListEditQual &get_references_listedit_qualifier();
@@ -3166,8 +3162,7 @@ struct LayerMetas {
   TypedAttributeWithFallback<double> metersPerUnit{1.0};  // default [m]
   TypedAttributeWithFallback<double> timeCodesPerSecond{
       24.0};  // default 24 fps
-  TypedAttributeWithFallback<double> framesPerSecond{
-      24.0};
+  TypedAttributeWithFallback<double> framesPerSecond{24.0};
   TypedAttributeWithFallback<double> startTimeCode{
       0.0};  // FIXME: default = -inf?
   TypedAttributeWithFallback<double> endTimeCode{
@@ -3192,18 +3187,11 @@ struct LayerMetas {
 // Similar to SdfLayer or Stage
 // It is basically hold the list of PrimSpec and Layer metadatum.
 struct Layer {
+  const std::string name() const { return _name; }
 
-  const std::string name() const {
-    return _name;
-  }
+  void set_name(const std::string name) { _name = name; }
 
-  void set_name(const std::string name) {
-    _name = name;
-  }
-
-  void clear_primspecs() {
-    _prim_specs.clear();
-  }
+  void clear_primspecs() { _prim_specs.clear(); }
 
   bool has_primspec(const std::string &primname) const {
     return _prim_specs.count(primname);
@@ -3212,7 +3200,9 @@ struct Layer {
   ///
   /// Add PrimSpec(copy PrimSpec instance).
   ///
-  /// @return false when `name` already exists in `primspecs`, `name` is empty string or `name` contains invalid character to be used in Prim element_name.
+  /// @return false when `name` already exists in `primspecs`, `name` is empty
+  /// string or `name` contains invalid character to be used in Prim
+  /// element_name.
   ///
   bool add_primspec(const std::string &name, const PrimSpec &ps) {
     if (name.empty()) {
@@ -3235,7 +3225,9 @@ struct Layer {
   ///
   /// Add PrimSpec.
   ///
-  /// @return false when `name` already exists in `primspecs`, `name` is empty string or `name` contains invalid character to be used in Prim element_name.
+  /// @return false when `name` already exists in `primspecs`, `name` is empty
+  /// string or `name` contains invalid character to be used in Prim
+  /// element_name.
   ///
   bool emplace_primspec(const std::string &name, PrimSpec &&ps) {
     if (name.empty()) {
@@ -3258,7 +3250,9 @@ struct Layer {
   ///
   /// Replace PrimSpec(copy PrimSpec instance)
   ///
-  /// @return false when `name` does not exist in `primspecs`, `name` is empty string or `name` contains invalid character to be used in Prim element_name.
+  /// @return false when `name` does not exist in `primspecs`, `name` is empty
+  /// string or `name` contains invalid character to be used in Prim
+  /// element_name.
   ///
   bool replace_primspec(const std::string &name, const PrimSpec &ps) {
     if (name.empty()) {
@@ -3281,7 +3275,9 @@ struct Layer {
   ///
   /// Replace PrimSpec
   ///
-  /// @return false when `name` does not exist in `primspecs`, `name` is empty string or `name` contains invalid character to be used in Prim element_name.
+  /// @return false when `name` does not exist in `primspecs`, `name` is empty
+  /// string or `name` contains invalid character to be used in Prim
+  /// element_name.
   ///
   bool replace_primspec(const std::string &name, PrimSpec &&ps) {
     if (name.empty()) {
@@ -3301,15 +3297,11 @@ struct Layer {
     return true;
   }
 
-
   const std::unordered_map<std::string, PrimSpec> &primspecs() const {
     return _prim_specs;
   }
 
-  std::unordered_map<std::string, PrimSpec> &primspecs() {
-    return _prim_specs;
-  }
-
+  std::unordered_map<std::string, PrimSpec> &primspecs() { return _prim_specs; }
 
   const LayerMetas &metas() const { return _metas; }
   LayerMetas &metas() { return _metas; }
@@ -3361,7 +3353,6 @@ struct NodeIndex {
 nonstd::optional<Interpolation> InterpolationFromString(const std::string &v);
 nonstd::optional<Orientation> OrientationFromString(const std::string &v);
 nonstd::optional<Kind> KindFromString(const std::string &v);
-
 
 namespace value {
 
