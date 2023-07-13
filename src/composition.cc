@@ -360,6 +360,83 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
 #undef RECONSTRUCT_PRIM
 }
 
+static bool OverridePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std::string *warn, std::string *err) {
+
+  (void)warn;
+
+  if (depth > (1024 * 1024 * 128)) {
+    PUSH_ERROR_AND_RETURN("PrimSpec tree too deep.");
+  }
+
+  // Override metadataum
+  dst.metas().update_from(src.metas());
+
+
+  // Override properties
+  for (const auto &prop : src.props()) {
+    if (dst.props().count(prop.first)) {
+      // replace
+      dst.props().at(prop.first) = prop.second;
+    }
+  }
+
+  // Override child primspecs.
+  for ( auto &child : dst.children()) {
+    auto src_it = std::find_if(src.children().begin(), src.children().end(), [&child](const PrimSpec &ps) {
+      return ps.name() == child.name();
+    });
+
+    if (src_it != dst.children().end()) {
+      if (!OverridePrimSpecRec(depth+1, child, (*src_it), warn, err)) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+//
+// TODO: Support nested inherits?
+//
+static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src, std::string *warn, std::string *err) {
+
+  (void)warn;
+
+  // Create PrimSpec from `src`,
+  // Then override it with `dst`
+  PrimSpec ps = src; // copy
+
+  // Override metadataum
+  ps.metas().update_from(dst.metas());
+
+
+  // Override properties
+  for (const auto &prop : dst.props()) {
+    if (ps.props().count(prop.first)) {
+      // replace
+      ps.props().at(prop.first) = prop.second;
+    }
+  }
+
+  // Overide child primspecs.
+  for ( auto &child : ps.children()) {
+    auto src_it = std::find_if(dst.children().begin(), dst.children().end(), [&child](const PrimSpec &primspec) {
+      return primspec.name() == child.name();
+    });
+
+    if (src_it != ps.children().end()) {
+      if (!OverridePrimSpecRec(1, child, (*src_it), warn, err)) {
+        return false;
+      }
+    }
+  }
+
+  dst = std::move(ps);
+
+  return true;
+}
+
 }  // namespace detail
 
 bool LayerToStage(const Layer &layer, Stage *stage_out, std::string *warn,
@@ -386,6 +463,19 @@ bool LayerToStage(const Layer &layer, Stage *stage_out, std::string *warn,
   (*stage_out) = stage;
 
   return true;
+}
+
+bool OverridePrimSpec(PrimSpec &dst, const PrimSpec &src, std::string *warn, std::string *err) {
+  if (src.specifier() != Specifier::Over) {
+    PUSH_ERROR("src PrimSpec must be qualified with `over` specifier.\n");
+  }
+
+  return detail::OverridePrimSpecRec(0, dst, src, warn, err);
+}
+
+bool InheritPrimSpec(PrimSpec &dst, const PrimSpec &src, std::string *warn, std::string *err) {
+
+  return detail::InheritPrimSpecImpl(dst, src, warn, err);
 }
 
 }  // namespace tinyusdz

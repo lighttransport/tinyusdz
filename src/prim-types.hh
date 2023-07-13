@@ -602,6 +602,8 @@ bool GetCustomDataByKey(const Dictionary &customData,
 bool SetCustomDataByKey(const std::string &key, const MetaVariable &val,
                         /* inout */ Dictionary &customData);
 
+void OverrideDictionary(Dictionary &customData, const Dictionary &src);
+
 // Variable class for Prim and Attribute Metadataum.
 //
 // - Accepts limited number of types for value
@@ -807,7 +809,7 @@ struct PrimMetas {
   // Compositions
   //
   nonstd::optional<std::pair<ListEditQual, std::vector<Reference>>> references;
-  nonstd::optional<std::pair<ListEditQual, std::vector<Payload>>> payload;
+  nonstd::optional<std::pair<ListEditQual, std::vector<Payload>>> payload; // NOTE: not `payloads`
   nonstd::optional<std::pair<ListEditQual, std::vector<Path>>>
       inherits;  // 'inherits'
   nonstd::optional<std::pair<ListEditQual, std::vector<std::string>>>
@@ -827,6 +829,11 @@ struct PrimMetas {
   nonstd::optional<std::string> displayName;  // 'displayName'
 
   std::map<std::string, MetaVariable> meta;  // other meta values
+
+  ///
+  /// Update metadatum with rhs(authored metadataum only)
+  ///
+  void update_from(const PrimMetas &rhs);
 
 #if 0
   // String only metadataum.

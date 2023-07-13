@@ -1318,7 +1318,7 @@ bool SetCustomDataByKey(const std::string &key, const MetaVariable &var,
     if (i == (names.size() - 1)) {
       DCOUT("leaf");
       // leaf
-      curr->emplace(elemkey, var);
+      (*curr)[elemkey] = var;
     } else {
       auto it = curr->find(elemkey);
       if (it != curr->end()) {
@@ -1354,7 +1354,6 @@ bool SetCustomDataByKey(const std::string &key, const MetaVariable &var,
   }
 
   DCOUT("dict = " << print_customData(custom, "custom", 0));
-
 
   return true;
 }
@@ -1455,6 +1454,53 @@ bool GetCustomDataByKey(const CustomDataType &custom, const std::string &key,
   }
 
   return true;
+}
+
+namespace {
+
+bool OverrideCustomDataRec(uint32_t depth, CustomDataType &dst, const CustomDataType &src) {
+  if (depth > (1024 * 1024 * 128)) {
+    // too deep
+    return false;
+  }
+
+  for (const auto &item : src) {
+
+    if (dst.count(item.first)) {
+
+      CustomDataType *dst_dict = dst.at(item.first).get_raw_value().as<CustomDataType>();
+
+      const value::Value &src_data = item.second.get_raw_value();
+      const CustomDataType *src_dict = src_data.as<CustomDataType>();
+
+      //
+      // Recursively apply override op both types are dict.
+      //
+      if (src_dict && dst_dict) {
+        // recursively override dict
+        if (!OverrideCustomDataRec(depth+1, (*dst_dict), (*src_dict))) {
+          return false;
+        }
+
+      } else {
+        dst[item.first] = item.second;
+      }
+
+    } else {
+      // add dict value
+      dst.emplace(item.first, item.second);
+    }
+      
+  }
+
+  return true;
+}
+
+} // namespace
+
+void OverrideDictionary(CustomDataType &dst, const CustomDataType &src) {
+
+  OverrideCustomDataRec(0, dst, src);
 }
 
 
@@ -1631,6 +1677,74 @@ value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStack, doubl
   }
 
   return value::matrix4d::identity();
+}
+
+void PrimMetas::update_from(const PrimMetas &rhs) {
+
+  if (rhs.active) {
+    active = rhs.active;
+  }
+
+  if (rhs.hidden) {
+    hidden = rhs.hidden;
+  }
+
+  if (rhs.kind) {
+    kind = rhs.kind;
+  }
+
+  if (rhs.assetInfo) {
+    OverrideDictionary(assetInfo.value(), rhs.assetInfo.value());
+  }
+
+  if (rhs.customData) {
+    OverrideDictionary(customData.value(), rhs.customData.value());
+  }
+
+  if (rhs.doc) {
+    doc = rhs.doc;
+  }
+
+  if (rhs.comment) {
+    comment = rhs.comment;
+  }
+
+  if (rhs.apiSchemas) {
+    apiSchemas = rhs.apiSchemas;
+  }
+
+  if (rhs.sdrMetadata) {
+    OverrideDictionary(sdrMetadata.value(), rhs.sdrMetadata.value());
+  }
+
+  if (rhs.sceneName) {
+    sceneName = rhs.sceneName;
+  }
+
+  if (rhs.displayName) {
+    displayName = rhs.displayName;
+  }
+
+  if (rhs.references) {
+    references = rhs.references;
+  }
+  if (rhs.payload) {
+    payload = rhs.payload;
+  }
+  if (rhs.inherits) {
+    inherits = rhs.inherits;
+  }
+  if (rhs.variantSets) {
+    variantSets = rhs.variantSets;
+  }
+  if (rhs.variants) {
+    variants = rhs.variants;
+  }
+  if (rhs.specializes) {
+    specializes = rhs.specializes;
+  }
+
+  OverrideDictionary(meta, rhs.meta);
 }
 
 }  // namespace tinyusdz
