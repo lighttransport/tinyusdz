@@ -14,6 +14,7 @@ using namespace tinyusdz;
 void customdata_test(void) {
 
   MetaVariable doubleVal = double(3.0);
+  MetaVariable intVal = int(9);
   MetaVariable stringVal = std::string("dora");
 
   CustomDataType customData;
@@ -55,4 +56,16 @@ void customdata_test(void) {
   metavar2.get_value<std::string>(&retval_str);
 
   TEST_CHECK(retval_str == "dora");
+
+  // override
+  {
+    TEST_CHECK(tinyusdz::SetCustomDataByKey("hello:myval", intVal, customData));
+    ret = tinyusdz::GetCustomDataByKey(customData, "hello:myval", &metavar);
+    TEST_CHECK(ret == true);
+
+    int ival{0};
+    metavar.get_value<int>(&ival);
+
+    TEST_CHECK(ival == 9);
+  }
 }
