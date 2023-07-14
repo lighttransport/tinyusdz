@@ -478,4 +478,32 @@ bool InheritPrimSpec(PrimSpec &dst, const PrimSpec &src, std::string *warn, std:
   return detail::InheritPrimSpecImpl(dst, src, warn, err);
 }
 
+bool ReferenceLayerToPrimSpec(PrimSpec &dst, const Layer &layer, const Path primPath, const LayerOffset layerOffset) {
+
+  if (layer.primspecs().empty()) {
+    // nothing to do
+    return true;
+  }
+
+  std::string src_root_prim_name = "";
+  if (!primPath.is_valid()) {
+    // Use the defaultPrim
+    if (!layer.metas().defaultPrim.str().empty()) {
+      src_root_prim_name = layer.metas().defaultPrim.str();
+    } else {
+      // Use the first Prim.
+      src_root_prim_name = (layer.primspecs().begin())->first;
+    }
+  } else {
+    src_root_prim_name = primPath.prim_part();
+  }
+
+  DCOUT("TODO");
+  (void)dst;
+  (void)layerOffset;
+
+  return false;
+}
+
+
 }  // namespace tinyusdz
