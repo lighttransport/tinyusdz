@@ -1490,7 +1490,7 @@ bool OverrideCustomDataRec(uint32_t depth, CustomDataType &dst, const CustomData
       // add dict value
       dst.emplace(item.first, item.second);
     }
-      
+
   }
 
   return true;
@@ -1746,5 +1746,56 @@ void PrimMetas::update_from(const PrimMetas &rhs) {
 
   OverrideDictionary(meta, rhs.meta);
 }
+
+#if 0 //TODO
+bool Layer::find_primspec_at(const Path &path, const PrimSpec *ps) {
+  if (_dirty) {
+    DCOUT("clear cache.");
+    // Clear cache.
+    _prim_path_cache.clear();
+
+    _dirty = false;
+  } else {
+    // First find from a cache.
+    auto ret = _prim_path_cache.find(path.prim_part());
+    if (ret != _prim_path_cache.end()) {
+      DCOUT("Found cache.");
+      return ret->second;
+    }
+  }
+
+  if (!path.is_valid()) {
+    DCOUT("Invalid path.");
+    return nonstd::make_unexpected("Path is invalid.\n");
+  }
+
+  if (path.is_relative_path()) {
+    DCOUT("Relative path is todo.");
+    // TODO:
+    return nonstd::make_unexpected("Relative path is TODO.\n");
+  }
+
+  if (!path.is_absolute_path()) {
+    DCOUT("Not absolute path.");
+    return nonstd::make_unexpected(
+        "Path is not absolute. Non-absolute Path is TODO.\n");
+  }
+
+  // Brute-force search.
+  for (const auto &parent : _root_nodes) {
+    if (auto pv =
+            GetPrimAtPathRec(&parent, /* root */ "", path, /* depth */ 0)) {
+      // Add to cache.
+      // Assume pointer address does not change unless dirty state.
+      _prim_path_cache[path.prim_part()] = pv.value();
+      return pv.value();
+    }
+  }
+
+  DCOUT("Not found.");
+  return nonstd::make_unexpected("Cannot find path <" + path.full_path_name() +
+                                 "> int the Stage.\n");
+}
+#endif
 
 }  // namespace tinyusdz
