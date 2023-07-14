@@ -3306,12 +3306,19 @@ struct Layer {
   const LayerMetas &metas() const { return _metas; }
   LayerMetas &metas() { return _metas; }
 
+  ///
+  /// Find a PrimSpec at `path` and returns it if found.
+  ///
+  bool find_primspec_at(const Path &path, const PrimSpec *ps);
+
  private:
   std::string _name;  // layer name ~= USD filename
 
   // key = prim name
   std::unordered_map<std::string, PrimSpec> _prim_specs;
   LayerMetas _metas;
+
+  mutable bool _dirty{true};
 };
 
 #if 0  // TODO: Remove
