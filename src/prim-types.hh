@@ -3309,7 +3309,11 @@ struct Layer {
   ///
   /// Find a PrimSpec at `path` and returns it if found.
   ///
-  bool find_primspec_at(const Path &path, const PrimSpec *ps);
+  /// @param[in] path PrimSpec path to find.
+  /// @param[out] ps Pointer to PrimSpec pointer
+  /// @param[out] err Error message
+  ///
+  bool find_primspec_at(const Path &path, const PrimSpec **ps, std::string *err);
 
  private:
   std::string _name;  // layer name ~= USD filename
@@ -3318,6 +3322,13 @@ struct Layer {
   std::unordered_map<std::string, PrimSpec> _prim_specs;
   LayerMetas _metas;
 
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  mutable std::mutex _mutex;
+#endif
+
+  // Cached primspec path.
+  // key : prim_part string (e.g. "/path/bora")
+  mutable std::map<std::string, const PrimSpec *> _primspec_path_cache;
   mutable bool _dirty{true};
 };
 

@@ -179,21 +179,6 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
   DCOUT("GetPrimAtPath : " << path.prim_part() << "(input path: " << path
                            << ")");
 
-  if (_dirty) {
-    DCOUT("clear cache.");
-    // Clear cache.
-    _prim_path_cache.clear();
-
-    _dirty = false;
-  } else {
-    // First find from a cache.
-    auto ret = _prim_path_cache.find(path.prim_part());
-    if (ret != _prim_path_cache.end()) {
-      DCOUT("Found cache.");
-      return ret->second;
-    }
-  }
-
   if (!path.is_valid()) {
     DCOUT("Invalid path.");
     return nonstd::make_unexpected("Path is invalid.\n");
@@ -210,6 +195,22 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
     return nonstd::make_unexpected(
         "Path is not absolute. Non-absolute Path is TODO.\n");
   }
+
+  if (_dirty) {
+    DCOUT("clear cache.");
+    // Clear cache.
+    _prim_path_cache.clear();
+
+    _dirty = false;
+  } else {
+    // First find from a cache.
+    auto ret = _prim_path_cache.find(path.prim_part());
+    if (ret != _prim_path_cache.end()) {
+      DCOUT("Found cache.");
+      return ret->second;
+    }
+  }
+
 
   // Brute-force search.
   for (const auto &parent : _root_nodes) {
@@ -848,7 +849,7 @@ bool Stage::compute_absolute_prim_path() {
 
 bool Stage::add_root_prim(Prim &&prim, bool rename_prim_name) {
 
-#if defined(TINYUSD_ENABLE_THREAD)
+#if defined(TINYUSDZ_ENABLE_THREAD)
   // TODO: Only take a lock when dirty.
   std::lock_guard<std::mutex> lock(_mutex);
 #endif
@@ -919,7 +920,7 @@ bool Stage::add_root_prim(Prim &&prim, bool rename_prim_name) {
 
 bool Stage::replace_root_prim(const std::string &prim_name, Prim &&prim) {
 
-#if defined(TINYUSD_ENABLE_THREAD)
+#if defined(TINYUSDZ_ENABLE_THREAD)
   // TODO: Only take a lock when dirty.
   std::lock_guard<std::mutex> lock(_mutex);
 #endif

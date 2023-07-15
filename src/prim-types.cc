@@ -29,6 +29,12 @@
 #pragma clang diagnostic pop
 #endif
 
+#define PushError(msg) do { \
+  if (err) { \
+    (*err) += msg; \
+  } \
+} while(0)
+
 namespace tinyusdz {
 
 nonstd::optional<Interpolation> InterpolationFromString(const std::string &v) {
@@ -992,7 +998,7 @@ Prim::Prim(const std::string &elementPath, value::Value &&rhs) {
 
 bool Prim::add_child(Prim &&rhs, const bool rename_prim_name, std::string *err) {
 
-#if defined(TINYUSD_ENABLE_THREAD)
+#if defined(TINYUSDZ_ENABLE_THREAD)
   // TODO: Only take a lock when dirty.
   std::lock_guard<std::mutex> lock(_mutex);
 #endif
@@ -1095,7 +1101,7 @@ bool Prim::add_child(Prim &&rhs, const bool rename_prim_name, std::string *err) 
 
 bool Prim::replace_child(const std::string &child_prim_name, Prim &&rhs, std::string *err) {
 
-#if defined(TINYUSD_ENABLE_THREAD)
+#if defined(TINYUSDZ_ENABLE_THREAD)
   // TODO: Only take a lock when dirty.
   std::lock_guard<std::mutex> lock(_mutex);
 #endif
@@ -1173,7 +1179,7 @@ bool Prim::replace_child(const std::string &child_prim_name, Prim &&rhs, std::st
 }
 
 const std::vector<int64_t> &Prim::get_child_indices_from_primChildren(bool force_update, bool *indices_is_valid) const {
-#if defined(TINYUSD_ENABLE_THREAD)
+#if defined(TINYUSDZ_ENABLE_THREAD)
   // TODO: Only take a lock when dirty.
   std::lock_guard<std::mutex> lock(_mutex);
 #endif
@@ -1747,55 +1753,82 @@ void PrimMetas::update_from(const PrimMetas &rhs) {
   OverrideDictionary(meta, rhs.meta);
 }
 
-#if 0 //TODO
-bool Layer::find_primspec_at(const Path &path, const PrimSpec *ps) {
+namespace {
+
+nonstd::optional<const PrimSpec *> GetPrimSpecAtPathRec(const PrimSpec *parent, const std::string &parent_path, const Path &path, uint32_t depth) {
+  if (depth > (1024 * 1024 * 128)) {
+    // Too deep.
+    return nonstd::nullopt;
+  }
+
+  (void)parent;
+  (void)parent_path;
+  (void)path;
+
+  DCOUT("TODO");
+
+  return nonstd::nullopt;
+}
+
+} // namespace
+
+bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps, std::string *err) {
+
+  if (!ps) {
+    PUSH_ERROR_AND_RETURN("Invalid PrimSpec dst argument");
+  }
+
+  if (!path.is_valid()) {
+    DCOUT("Invalid path.");
+    PUSH_ERROR_AND_RETURN("Invalid path");
+  }
+
+  if (path.is_relative_path()) {
+    // TODO
+    PUSH_ERROR_AND_RETURN("Relative path is todo.");
+  }
+
+  if (!path.is_absolute_path()) {
+    PUSH_ERROR_AND_RETURN("path is not absolute path.");
+  }
+
+#if defined(TINYUSDZ_ENABLE_THREAD)
+  // TODO: Only take a lock when dirty.
+  std::lock_guard<std::mutex> lock(_mutex);
+#endif
+
+
   if (_dirty) {
     DCOUT("clear cache.");
     // Clear cache.
-    _prim_path_cache.clear();
+    _primspec_path_cache.clear();
 
     _dirty = false;
   } else {
     // First find from a cache.
-    auto ret = _prim_path_cache.find(path.prim_part());
-    if (ret != _prim_path_cache.end()) {
+    auto ret = _primspec_path_cache.find(path.prim_part());
+    if (ret != _primspec_path_cache.end()) {
       DCOUT("Found cache.");
       return ret->second;
     }
   }
 
-  if (!path.is_valid()) {
-    DCOUT("Invalid path.");
-    return nonstd::make_unexpected("Path is invalid.\n");
-  }
-
-  if (path.is_relative_path()) {
-    DCOUT("Relative path is todo.");
-    // TODO:
-    return nonstd::make_unexpected("Relative path is TODO.\n");
-  }
-
-  if (!path.is_absolute_path()) {
-    DCOUT("Not absolute path.");
-    return nonstd::make_unexpected(
-        "Path is not absolute. Non-absolute Path is TODO.\n");
-  }
 
   // Brute-force search.
-  for (const auto &parent : _root_nodes) {
-    if (auto pv =
-            GetPrimAtPathRec(&parent, /* root */ "", path, /* depth */ 0)) {
+  for (const auto &parent : _prim_specs) {
+    if (auto pv = GetPrimSpecAtPathRec(&parent.second, /* parent_path */"", path, /* depth */0)) {
+
+      (*ps) = pv.value();
+
       // Add to cache.
-      // Assume pointer address does not change unless dirty state.
-      _prim_path_cache[path.prim_part()] = pv.value();
-      return pv.value();
+      // Assume pointer address does not change unless dirty state changes.
+      _primspec_path_cache[path.prim_part()] = pv.value();
+      return true;
     }
+
   }
 
-  DCOUT("Not found.");
-  return nonstd::make_unexpected("Cannot find path <" + path.full_path_name() +
-                                 "> int the Stage.\n");
+  return false;
 }
-#endif
 
 }  // namespace tinyusdz
