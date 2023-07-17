@@ -275,6 +275,30 @@ bool CompositeSublayers(const AssetResolutionResolver &resolver,
   return true;
 }
 
+bool CompositeReferences(const AssetResolutionResolver &resolver,
+                        const Layer &in_layer, Layer *composited_layer,
+                        std::string *err, ReferencesCompositionOptions options) {
+  if (!composited_layer) {
+    return false;
+  }
+
+  for (auto &prim : in_layer.primspecs()) {
+
+    PrimSpec dst;
+
+    if (!CompositeReferencesRec(resolver, prim, &dst, err, options)) {
+      PUSH_ERROR_AND_RETURN("Composite `references` failed.");
+    }
+
+
+  }
+
+  composited_layer->metas() = in_layer.metas();
+
+  DCOUT("Composite subLayers ok.");
+  return true;
+}
+
 namespace detail {
 
 static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(

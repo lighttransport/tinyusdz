@@ -1761,12 +1761,28 @@ nonstd::optional<const PrimSpec *> GetPrimSpecAtPathRec(const PrimSpec *parent, 
     return nonstd::nullopt;
   }
 
-  (void)parent;
-  (void)parent_path;
-  (void)path;
+  if (!parent) {
+    return nonstd::nullopt;
+  }
 
-  DCOUT("TODO");
+  std::string abs_path;
+  {
+    std::string elementName = parent->name();
 
+    abs_path = parent_path + "/" + elementName;
+
+    if (abs_path == path.full_path_name()) {
+      return parent;
+    }
+  }
+
+  for (const auto &child : parent->children()) {
+    if (auto pv = GetPrimSpecAtPathRec(&child, abs_path, path, depth + 1)) {
+      return pv.value();
+    }
+  }
+  
+  // not found
   return nonstd::nullopt;
 }
 
