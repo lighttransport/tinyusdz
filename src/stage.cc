@@ -137,6 +137,11 @@ nonstd::optional<const Prim *> GetPrimAtPathRec(const Prim *parent,
                                                 const std::string &parent_path,
                                                 const Path &path,
                                                 const uint32_t depth) {
+
+  if (!parent) {
+    return nonstd::nullopt;
+  }
+
   std::string abs_path;
   // if (auto pv = GetPrimElementName(parent->data())) {
   {
