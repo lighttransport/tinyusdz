@@ -10,6 +10,7 @@
 #include "common-macros.inc"
 #include "io-util.hh"
 #include "prim-reconstruct.hh"
+#include "prim-types.hh"
 #include "tiny-format.hh"
 #include "usdGeom.hh"
 #include "usdLux.hh"
@@ -274,6 +275,65 @@ bool CompositeSublayers(const AssetResolutionResolver &resolver,
   DCOUT("Composite subLayers ok.");
   return true;
 }
+
+namespace {
+
+bool CompositeReferencesRec(uint32_t depth, const AssetResolutionResolver &resolver,
+                        PrimSpec &primspec /* [inout */,
+                        std::string *err, ReferencesCompositionOptions options) {
+
+  if (depth > options.max_depth) {
+    PUSH_ERROR_AND_RETURN("Too deep.");
+  }
+
+  if (primspec.metas().references) {
+    const ListEditQual &qual = primspec.metas().references.value().first;
+    const auto &refecences = primspec.metas().references.value().second;
+
+    if ((qual == ListEditQual::ResetToExplicit) || (qual == ListEditQual::Prepend)) {
+
+      for (const auto &reference : refecences) {
+
+        std::string asset_path = reference.asset_path.GetAssetPath().empty();
+
+        if (reference.asset_path.GetAssetPath().empty()) {
+          PUSH_ERROR_AND_RETURN("TODO: Prim path(e.g. </xform>) in references.");
+        }
+
+        Stage stage;
+        Layer layer;
+        if (!stage.LoadLayerFromFile(asset_path, resolver, &layer)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Failed to open `{}`: {}", asset_path, stage.get_error()));
+        }
+      }
+
+    } else if (qual == ListEditQual::Delete) {
+      PUSH_ERROR_AND_RETURN("`delete` references are not supported yet.");
+    } else if (qual == ListEditQual::Add) {
+      PUSH_ERROR_AND_RETURN("`add` references are not supported yet.");
+    } else if (qual == ListEditQual::Order) {
+      PUSH_ERROR_AND_RETURN("`order` references are not supported yet.");
+    } else if (qual == ListEditQual::Invalid) {
+      PUSH_ERROR_AND_RETURN("Invalid listedit qualifier to for `references`.");
+    } else if (qual == ListEditQual::Append) {
+      //
+    }
+
+
+    (void)qual;
+    DCOUT("TODO: ListEdit qualifier");
+  }
+
+  for (auto &child : primspec.children()) {
+    if (!CompositeReferencesRec(depth+1, resolver, child, err, options)) {
+    }
+  }
+
+  return true;
+}
+
+} // namespace
+
 
 bool CompositeReferences(const AssetResolutionResolver &resolver,
                         const Layer &in_layer, Layer *composited_layer,
