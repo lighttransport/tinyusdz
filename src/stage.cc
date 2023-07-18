@@ -33,6 +33,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <fstream>
 #include <map>
 #include <sstream>
+#include "asset-resolution.hh"
 
 //
 #ifndef __wasi__
@@ -428,18 +429,21 @@ bool Stage::LoadLayerFromMemory(const uint8_t *addr, const size_t nbytes,
   return false;
 }
 
-bool Stage::LoadLayerFromFile(const std::string &_filename, Layer *layer,
+bool Stage::LoadLayerFromFile(const std::string &_filename, const AssetResolutionResolver &resolver, Layer *layer,
                               const uint32_t load_states) {
   // TODO: Setup AssetResolver.
 
-  std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
-  std::string base_dir = io::GetBaseDir(_filename);
+  std::string filepath = resolver.resolve(_filename);
+  if (filepath.empty()) {
+    PUSH_ERROR_AND_RETURN("Failed to find/resolve a file `" << _filename << "`");
+  }
+  //std::string base_dir = io::GetBaseDir(_filename);
 
   DCOUT("load layer from file: " << filepath);
 
   std::string err;
   std::vector<uint8_t> data;
-  size_t max_bytes = std::numeric_limits<size_t>::max();  // TODO:
+  size_t max_bytes = std::numeric_limits<size_t>::max();  // TODO: set bytelimit.
   if (!io::ReadWholeFile(&data, &err, filepath, max_bytes,
                          /* userdata */ nullptr)) {
     PUSH_ERROR_AND_RETURN("Read file failed: " + err);
@@ -449,10 +453,13 @@ bool Stage::LoadLayerFromFile(const std::string &_filename, Layer *layer,
                              load_states);
 }
 
+#if 0
 bool Stage::LoadSubLayers(std::vector<Layer> *sublayers) {
+  DCOUT("TODO");
   (void)sublayers;
   return false;
 }
+#endif
 
 namespace {
 
