@@ -210,6 +210,7 @@ bool CompositeSublayersRec(const AssetResolutionResolver &resolver,
 
 }  // namespace
 
+#if 0 // TODO: remove
 bool CompositeSublayers(const std::string &base_dir, const Layer &in_layer,
                         Layer *composited_layer, std::string *warn,
                         std::string *err, SublayersCompositionOptions options) {
@@ -219,6 +220,7 @@ bool CompositeSublayers(const std::string &base_dir, const Layer &in_layer,
   return CompositeSublayers(resolver, in_layer, composited_layer, warn, err,
                             options);
 }
+#endif
 
 bool CompositeSublayers(const AssetResolutionResolver &resolver,
                         const Layer &in_layer, Layer *composited_layer,
@@ -315,8 +317,12 @@ bool CompositeReferencesRec(uint32_t depth,
         std::string _warn;
         std::string _err;
 
-        DCOUT("Loading references: " << asset_path);
-        if (!LoadLayerFromFile(asset_path, &layer, &_warn, &_err)) {
+        // resolve path
+        // TODO: Store resolved path to Reference?
+        std::string resolved_path = resolver.resolve(asset_path);
+
+        DCOUT("Loading references: " << resolved_path << ", asset_path: " << asset_path);
+        if (!LoadLayerFromFile(resolved_path, &layer, &_warn, &_err)) {
           PUSH_ERROR_AND_RETURN(fmt::format("Failed to open `{}` as Layer: {}",
                                             asset_path, _err));
         }
@@ -337,10 +343,10 @@ bool CompositeReferencesRec(uint32_t depth,
         } else {
           // Use `defaultPrim` metadatum
           if (layer.metas().defaultPrim.valid()) {
-            default_prim = layer.metas().defaultPrim.str();
+            default_prim = "/" + layer.metas().defaultPrim.str();
           } else {
             // Use the first Prim in the layer.
-            default_prim = layer.primspecs().begin()->first;
+            default_prim = "/" + layer.primspecs().begin()->first;
           }
         }
 
@@ -381,7 +387,11 @@ bool CompositeReferencesRec(uint32_t depth,
         std::string _warn;
         std::string _err;
 
-        DCOUT("Loading references: " << asset_path);
+        // resolve path
+        // TODO: Store resolved path to Reference?
+        std::string resolved_path = resolver.resolve(asset_path);
+
+        DCOUT("Loading references: " << resolved_path << ", asset_path " << asset_path);
         if (!LoadLayerFromFile(asset_path, &layer, &_warn, &_err)) {
           PUSH_ERROR_AND_RETURN(fmt::format("Failed to open `{}` as Layer: {}",
                                             asset_path, _err));
@@ -399,10 +409,10 @@ bool CompositeReferencesRec(uint32_t depth,
         } else {
           // Use `defaultPrim` metadatum
           if (layer.metas().defaultPrim.valid()) {
-            default_prim = layer.metas().defaultPrim.str();
+            default_prim = "/" + layer.metas().defaultPrim.str();
           } else {
             // Use the first Prim in the layer.
-            default_prim = layer.primspecs().begin()->first;
+            default_prim = "/" + layer.primspecs().begin()->first;
           }
         }
 
