@@ -12,6 +12,7 @@
 #include "pprinter.hh"
 #include "prim-reconstruct.hh"
 #include "prim-types.hh"
+#include "prim-pprint.hh"
 #include "tiny-format.hh"
 #include "usdGeom.hh"
 #include "usdLux.hh"
@@ -327,6 +328,10 @@ bool CompositeReferencesRec(uint32_t depth,
                                             asset_path, _err));
         }
 
+        DCOUT("layer = " << print_layer(layer, 0));
+
+        // TODO: Recursively resolve `references`
+
         if (_warn.size()) {
           if (warn) {
             (*warn) += _warn;
@@ -351,8 +356,8 @@ bool CompositeReferencesRec(uint32_t depth,
         }
 
         const PrimSpec *src_ps{nullptr};
-        if (layer.find_primspec_at(Path(default_prim, ""), &src_ps, err)) {
-          return false;
+        if (!layer.find_primspec_at(Path(default_prim, ""), &src_ps, err)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Failed to find PrimSpec `{}` in layer `{}`", default_prim, asset_path));
         }
 
         if (!src_ps) {
@@ -364,6 +369,19 @@ bool CompositeReferencesRec(uint32_t depth,
           PUSH_ERROR_AND_RETURN(
               fmt::format("Failed to reference layer `{}`", asset_path));
         }
+
+        // Modify Prim type if this PrimSpec is Model type.
+        if (primspec.typeName().empty() || primspec.typeName() == "Model") {
+
+          if (src_ps->typeName().empty() || src_ps->typeName() == "Model") {
+            // pass 
+          } else {
+            primspec.typeName() = src_ps->typeName();
+          }
+
+        } 
+
+        DCOUT("inherit done: primspec = " << primspec.name());
       }
 
     } else if (qual == ListEditQual::Delete) {
@@ -417,8 +435,8 @@ bool CompositeReferencesRec(uint32_t depth,
         }
 
         const PrimSpec *src_ps{nullptr};
-        if (layer.find_primspec_at(Path(default_prim, ""), &src_ps, err)) {
-          return false;
+        if (!layer.find_primspec_at(Path(default_prim, ""), &src_ps, err)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Failed to find PrimSpec `{}` in layer `{}`", default_prim, asset_path));
         }
 
         if (!src_ps) {
@@ -430,8 +448,22 @@ bool CompositeReferencesRec(uint32_t depth,
           PUSH_ERROR_AND_RETURN(
               fmt::format("Failed to reference layer `{}`", asset_path));
         }
+
+        // Modify Prim type if this PrimSpec is Model type.
+        if (primspec.typeName().empty() || primspec.typeName() == "Model") {
+
+          if (src_ps->typeName().empty() || src_ps->typeName() == "Model") {
+            // pass 
+          } else {
+            primspec.typeName() = src_ps->typeName();
+          }
+
+        } 
       }
     }
+
+    // Remove `references`.
+    primspec.metas().references = nonstd::nullopt;
   }
 
   return true;
@@ -456,9 +488,9 @@ bool CompositeReferences(const AssetResolutionResolver &resolver,
     }
   }
 
-  composited_layer->metas() = in_layer.metas();
+  (*composited_layer) = dst;
 
-  DCOUT("Composite subLayers ok.");
+  DCOUT("Composite `references` ok.");
   return true;
 }
 
@@ -556,8 +588,11 @@ static bool OverridePrimSpecRec(uint32_t depth, PrimSpec &dst,
     PUSH_ERROR_AND_RETURN("PrimSpec tree too deep.");
   }
 
+  DCOUT("update_from");
+  DCOUT(print_prim_metas(src.metas(), 1));
   // Override metadataum
   dst.metas().update_from(src.metas());
+  DCOUT("update_from done");
 
   // Override properties
   for (const auto &prop : src.props()) {
@@ -573,7 +608,7 @@ static bool OverridePrimSpecRec(uint32_t depth, PrimSpec &dst,
         src.children().begin(), src.children().end(),
         [&child](const PrimSpec &ps) { return ps.name() == child.name(); });
 
-    if (src_it != dst.children().end()) {
+    if (src_it != src.children().end()) {
       if (!OverridePrimSpecRec(depth + 1, child, (*src_it), warn, err)) {
         return false;
       }
@@ -588,11 +623,15 @@ static bool OverridePrimSpecRec(uint32_t depth, PrimSpec &dst,
 //
 static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
                                 std::string *warn, std::string *err) {
+  DCOUT("inherit begin\n");
   (void)warn;
+
+  DCOUT("src = " << prim::print_primspec(src));
 
   // Create PrimSpec from `src`,
   // Then override it with `dst`
   PrimSpec ps = src;  // copy
+
 
   // Override metadataum
   ps.metas().update_from(dst.metas());
@@ -612,14 +651,16 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
                                  return primspec.name() == child.name();
                                });
 
-    if (src_it != ps.children().end()) {
+    if (src_it != dst.children().end()) {
       if (!OverridePrimSpecRec(1, child, (*src_it), warn, err)) {
         return false;
       }
     }
   }
 
+  DCOUT("move");
   dst = std::move(ps);
+  DCOUT("move done");
 
   return true;
 }

@@ -1245,22 +1245,27 @@ class USDAReader::Impl {
 namespace {
 
 // bottom up conversion.
-bool ToPrimSpecRec(PrimSpecNode &node,
+bool ToPrimSpecRec(const size_t primSpecIdx,
                         std::vector<PrimSpecNode> &primspec_nodes, PrimSpec &parent) {
 
-  for (const auto &cidx : node.children) {
-    if (cidx >= primspec_nodes.size()) {
-      return false;
-    }
-
-    PrimSpec childPrimSpec;
-    PrimSpecNode &child = primspec_nodes[cidx];
-    if (!ToPrimSpecRec(child, primspec_nodes, childPrimSpec)) {
-      return false;
-    }
-    parent.children().emplace_back(std::move(childPrimSpec));
+  if (primSpecIdx >= primspec_nodes.size()) {
+    return false;
   }
 
+  const PrimSpecNode &node = primspec_nodes[primSpecIdx];
+
+  PrimSpec primspec = node.primSpec;
+
+  for (const auto &cidx : node.children) {
+
+    PrimSpec childPrimSpec;
+    if (!ToPrimSpecRec(cidx, primspec_nodes, childPrimSpec)) {
+      return false;
+    }
+    primspec.children().emplace_back(std::move(childPrimSpec));
+  }
+
+  parent = std::move(primspec);
 
   return true;
 }
@@ -1295,7 +1300,7 @@ bool USDAReader::Impl::GetAsLayer(Layer *layer) {
     DCOUT("primspec[" << idx << "].name = " << primSpec.name());
     DCOUT("root prim[" << idx << "].num_children = " << primSpec.children().size());
 
-    if (!ToPrimSpecRec(node, _primspec_nodes, /* inout */primSpec)) {
+    if (!ToPrimSpecRec(idx, _primspec_nodes, /* inout */primSpec)) {
       _primspec_invalidated = true;
       PUSH_ERROR_AND_RETURN("Construct PrimSpec tree failed.");
     }
