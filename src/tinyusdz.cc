@@ -893,6 +893,97 @@ bool IsUSD(const uint8_t *addr, const size_t length, std::string *detected_forma
   return false;
 }
 
+bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
+                        const std::string &filename, Layer *layer,
+                        std::string *warn, std::string *err,
+                        const USDLoadOptions &options) {
+  if (layer == nullptr) {
+    if (err) {
+      (*err) = "null pointer for `layer` argument.\n";
+    }
+    return false;
+  }
+
+  bool swap_endian = false;  // @FIXME
+
+  size_t max_length;
+
+  // 32bit env
+  if (sizeof(void *) == 4) {
+    if (options.max_memory_limit_in_mb > 4096) {  // exceeds 4GB
+      max_length = std::numeric_limits<uint32_t>::max();
+    } else {
+      max_length =
+          size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
+    }
+  } else {
+    // TODO: Set hard limit?
+    max_length =
+        size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
+  }
+
+  DCOUT("Max length = " << max_length);
+
+  if (length > max_length) {
+    if (err) {
+      (*err) += "USDC data [" + filename +
+                "] is too large(size = " + std::to_string(length) +
+                ", which exceeds memory limit " + std::to_string(max_length) +
+                ".\n";
+    }
+
+    return false;
+  }
+
+  StreamReader sr(addr, length, swap_endian);
+
+  usdc::USDCReaderConfig config;
+  config.numThreads = options.num_threads;
+  usdc::USDCReader reader(&sr, config);
+
+  if (!reader.ReadUSDC()) {
+    if (warn) {
+      (*warn) = reader.GetWarning();
+    }
+
+    if (err) {
+      (*err) = reader.GetError();
+    }
+    return false;
+  }
+
+  DCOUT("Loaded USDC file.");
+
+  {
+    if (!reader.get_as_layer(layer)) {
+      DCOUT("Failed to reconstruct Layer from Crate.");
+      if (warn) {
+        (*warn) = reader.GetWarning();
+      }
+
+      if (err) {
+        (*err) = reader.GetError();
+      }
+      return false;
+    }
+  }
+
+  if (warn) {
+    (*warn) = reader.GetWarning();
+  }
+
+  // Reconstruct OK but may have some error.
+  // TODO(syoyo): Return false in strict mode.
+  if (err) {
+    DCOUT(reader.GetError());
+    (*err) = reader.GetError();
+  }
+
+  DCOUT("Reconstructed Stage from USDC file.");
+
+  return true;
+}
+
 bool LoadUSDALayerFromMemory(const uint8_t *addr, const size_t length,
                        const std::string &asset_name, Layer *dst_layer,
                        std::string *warn, std::string *err,
@@ -958,7 +1049,7 @@ bool LoadLayerFromMemory(const uint8_t *addr, const size_t length,
                        const USDLoadOptions &options) {
   if (IsUSDC(addr, length)) {
     DCOUT("Detected as USDC.");
-#if 0
+#if 1
     return LoadUSDCLayerFromMemory(addr, length, asset_name, layer, warn, err,
                               options);
 #else
