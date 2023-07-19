@@ -406,6 +406,7 @@ bool Stage::find_prim_from_relative_path(const Prim &root,
   }
 }
 
+#if 0
 bool Stage::LoadLayerFromMemory(const uint8_t *addr, const size_t nbytes,
                                 const std::string &asset_name, Layer *layer,
                                 const uint32_t load_states) {
@@ -452,6 +453,7 @@ bool Stage::LoadLayerFromFile(const std::string &_filename, const AssetResolutio
   return LoadLayerFromMemory(data.data(), data.size(), filepath, layer,
                              load_states);
 }
+#endif
 
 #if 0
 bool Stage::LoadSubLayers(std::vector<Layer> *sublayers) {

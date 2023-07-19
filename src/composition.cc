@@ -9,6 +9,7 @@
 #include "asset-resolution.hh"
 #include "common-macros.inc"
 #include "io-util.hh"
+#include "pprinter.hh"
 #include "prim-reconstruct.hh"
 #include "prim-types.hh"
 #include "tiny-format.hh"
@@ -16,7 +17,6 @@
 #include "usdLux.hh"
 #include "usdShade.hh"
 #include "usda-reader.hh"
-#include "pprinter.hh"
 
 #define PushError(s) \
   if (err) {         \
@@ -82,7 +82,8 @@ bool IsVisited(const std::vector<std::set<std::string>> layer_names_stack,
 bool CompositeSublayersRec(const AssetResolutionResolver &resolver,
                            const Layer &in_layer,
                            std::vector<std::set<std::string>> layer_names_stack,
-                           Layer *composited_layer, std::string *err,
+                           Layer *composited_layer, std::string *warn,
+                           std::string *err,
                            const SublayersCompositionOptions &options) {
   if (layer_names_stack.size() > options.max_depth) {
     if (err) {
@@ -139,7 +140,8 @@ bool CompositeSublayersRec(const AssetResolutionResolver &resolver,
     tinyusdz::Layer sublayer;
     {
       // TODO: ReaderConfig.
-      bool ret = sublayer_reader.read(sublayer_load_states, /* as_primspec */true);
+      bool ret =
+          sublayer_reader.read(sublayer_load_states, /* as_primspec */ true);
 
       if (!ret) {
         PUSH_ERROR_AND_RETURN("Failed to parse : "
@@ -152,7 +154,7 @@ bool CompositeSublayersRec(const AssetResolutionResolver &resolver,
                                                << " as subLayer");
       }
 
-      //std::cout << sublayer << "\n";
+      // std::cout << sublayer << "\n";
     }
 
     curr_layer_names.insert(sublayer_asset_path);
@@ -161,7 +163,7 @@ bool CompositeSublayersRec(const AssetResolutionResolver &resolver,
 
     // Recursively load subLayer
     if (!CompositeSublayersRec(resolver, sublayer, layer_names_stack,
-                               &composited_sublayer, err, options)) {
+                               &composited_sublayer, warn, err, options)) {
       return false;
     }
 
@@ -209,27 +211,28 @@ bool CompositeSublayersRec(const AssetResolutionResolver &resolver,
 }  // namespace
 
 bool CompositeSublayers(const std::string &base_dir, const Layer &in_layer,
-                        Layer *composited_layer, std::string *err,
-                        SublayersCompositionOptions options) {
+                        Layer *composited_layer, std::string *warn,
+                        std::string *err, SublayersCompositionOptions options) {
   tinyusdz::AssetResolutionResolver resolver;
   resolver.set_search_paths({base_dir});
 
-  return CompositeSublayers(resolver, in_layer, composited_layer, err, options);
+  return CompositeSublayers(resolver, in_layer, composited_layer, warn, err,
+                            options);
 }
 
 bool CompositeSublayers(const AssetResolutionResolver &resolver,
                         const Layer &in_layer, Layer *composited_layer,
-                        std::string *err, SublayersCompositionOptions options) {
+                        std::string *warn, std::string *err,
+                        SublayersCompositionOptions options) {
   if (!composited_layer) {
     return false;
   }
 
   std::vector<std::set<std::string>> layer_names_stack;
 
-
   DCOUT("Resolve subLayers..");
   if (!CompositeSublayersRec(resolver, in_layer, layer_names_stack,
-                             composited_layer, err, options)) {
+                             composited_layer, warn, err, options)) {
     PUSH_ERROR_AND_RETURN("Composite subLayers failed.");
   }
 
@@ -278,32 +281,82 @@ bool CompositeSublayers(const AssetResolutionResolver &resolver,
 
 namespace {
 
-bool CompositeReferencesRec(uint32_t depth, const AssetResolutionResolver &resolver,
-                        PrimSpec &primspec /* [inout */,
-                        std::string *err, ReferencesCompositionOptions options) {
-
+bool CompositeReferencesRec(uint32_t depth,
+                            const AssetResolutionResolver &resolver,
+                            PrimSpec &primspec /* [inout] */, std::string *warn,
+                            std::string *err,
+                            ReferencesCompositionOptions options) {
   if (depth > options.max_depth) {
     PUSH_ERROR_AND_RETURN("Too deep.");
+  }
+
+  // Traverse children first.
+  for (auto &child : primspec.children()) {
+    if (!CompositeReferencesRec(depth + 1, resolver, child, warn, err,
+                                options)) {
+    }
   }
 
   if (primspec.metas().references) {
     const ListEditQual &qual = primspec.metas().references.value().first;
     const auto &refecences = primspec.metas().references.value().second;
 
-    if ((qual == ListEditQual::ResetToExplicit) || (qual == ListEditQual::Prepend)) {
-
+    if ((qual == ListEditQual::ResetToExplicit) ||
+        (qual == ListEditQual::Prepend)) {
       for (const auto &reference : refecences) {
+        std::string asset_path = reference.asset_path.GetAssetPath();
 
-        std::string asset_path = reference.asset_path.GetAssetPath().empty();
-
-        if (reference.asset_path.GetAssetPath().empty()) {
-          PUSH_ERROR_AND_RETURN("TODO: Prim path(e.g. </xform>) in references.");
+        if (asset_path.empty()) {
+          PUSH_ERROR_AND_RETURN(
+              "TODO: Prim path(e.g. </xform>) in references.");
         }
 
-        Stage stage;
         Layer layer;
-        if (!stage.LoadLayerFromFile(asset_path, resolver, &layer)) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Failed to open `{}`: {}", asset_path, stage.get_error()));
+        std::string _warn;
+        std::string _err;
+
+        DCOUT("Loading references: " << asset_path);
+        if (!LoadLayerFromFile(asset_path, &layer, &_warn, &_err)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Failed to open `{}` as Layer: {}",
+                                            asset_path, _err));
+        }
+
+        if (_warn.size()) {
+          if (warn) {
+            (*warn) += _warn;
+          }
+        }
+
+        if (layer.primspecs().empty()) {
+          PUSH_ERROR_AND_RETURN(fmt::format("No prims in `{}`", asset_path));
+        }
+
+        std::string default_prim;
+        if (reference.prim_path.is_valid()) {
+          default_prim = reference.prim_path.prim_part();
+        } else {
+          // Use `defaultPrim` metadatum
+          if (layer.metas().defaultPrim.valid()) {
+            default_prim = layer.metas().defaultPrim.str();
+          } else {
+            // Use the first Prim in the layer.
+            default_prim = layer.primspecs().begin()->first;
+          }
+        }
+
+        const PrimSpec *src_ps{nullptr};
+        if (layer.find_primspec_at(Path(default_prim, ""), &src_ps, err)) {
+          return false;
+        }
+
+        if (!src_ps) {
+          PUSH_ERROR_AND_RETURN("Internal error: PrimSpec pointer is nullptr.");
+        }
+
+        // `inherits` op
+        if (!InheritPrimSpec(primspec, *src_ps, warn, err)) {
+          PUSH_ERROR_AND_RETURN(
+              fmt::format("Failed to reference layer `{}`", asset_path));
         }
       }
 
@@ -316,41 +369,81 @@ bool CompositeReferencesRec(uint32_t depth, const AssetResolutionResolver &resol
     } else if (qual == ListEditQual::Invalid) {
       PUSH_ERROR_AND_RETURN("Invalid listedit qualifier to for `references`.");
     } else if (qual == ListEditQual::Append) {
-      //
-    }
+      for (const auto &reference : refecences) {
+        std::string asset_path = reference.asset_path.GetAssetPath();
 
+        if (asset_path.empty()) {
+          PUSH_ERROR_AND_RETURN(
+              "TODO: Prim path(e.g. </xform>) in references.");
+        }
 
-    (void)qual;
-    DCOUT("TODO: ListEdit qualifier");
-  }
+        Layer layer;
+        std::string _warn;
+        std::string _err;
 
-  for (auto &child : primspec.children()) {
-    if (!CompositeReferencesRec(depth+1, resolver, child, err, options)) {
+        DCOUT("Loading references: " << asset_path);
+        if (!LoadLayerFromFile(asset_path, &layer, &_warn, &_err)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Failed to open `{}` as Layer: {}",
+                                            asset_path, _err));
+        }
+
+        if (_warn.size()) {
+          if (warn) {
+            (*warn) += _warn;
+          }
+        }
+
+        std::string default_prim;
+        if (reference.prim_path.is_valid()) {
+          default_prim = reference.prim_path.prim_part();
+        } else {
+          // Use `defaultPrim` metadatum
+          if (layer.metas().defaultPrim.valid()) {
+            default_prim = layer.metas().defaultPrim.str();
+          } else {
+            // Use the first Prim in the layer.
+            default_prim = layer.primspecs().begin()->first;
+          }
+        }
+
+        const PrimSpec *src_ps{nullptr};
+        if (layer.find_primspec_at(Path(default_prim, ""), &src_ps, err)) {
+          return false;
+        }
+
+        if (!src_ps) {
+          PUSH_ERROR_AND_RETURN("Internal error: PrimSpec pointer is nullptr.");
+        }
+
+        // `over` op
+        if (!OverridePrimSpec(primspec, *src_ps, warn, err)) {
+          PUSH_ERROR_AND_RETURN(
+              fmt::format("Failed to reference layer `{}`", asset_path));
+        }
+      }
     }
   }
 
   return true;
 }
 
-} // namespace
-
+}  // namespace
 
 bool CompositeReferences(const AssetResolutionResolver &resolver,
-                        const Layer &in_layer, Layer *composited_layer,
-                        std::string *err, ReferencesCompositionOptions options) {
+                         const Layer &in_layer, Layer *composited_layer,
+                         std::string *warn, std::string *err,
+                         ReferencesCompositionOptions options) {
   if (!composited_layer) {
     return false;
   }
 
-  for (auto &prim : in_layer.primspecs()) {
+  Layer dst = in_layer; // deep copy
 
-    PrimSpec dst;
+  for (auto &item : dst.primspecs()) {
 
-    if (!CompositeReferencesRec(resolver, prim, &dst, err, options)) {
+    if (!CompositeReferencesRec(/* depth */0, resolver, item.second, warn, err, options)) {
       PUSH_ERROR_AND_RETURN("Composite `references` failed.");
     }
-
-
   }
 
   composited_layer->metas() = in_layer.metas();
@@ -444,8 +537,9 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
 #undef RECONSTRUCT_PRIM
 }
 
-static bool OverridePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std::string *warn, std::string *err) {
-
+static bool OverridePrimSpecRec(uint32_t depth, PrimSpec &dst,
+                                const PrimSpec &src, std::string *warn,
+                                std::string *err) {
   (void)warn;
 
   if (depth > (1024 * 1024 * 128)) {
@@ -454,7 +548,6 @@ static bool OverridePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &s
 
   // Override metadataum
   dst.metas().update_from(src.metas());
-
 
   // Override properties
   for (const auto &prop : src.props()) {
@@ -465,13 +558,13 @@ static bool OverridePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &s
   }
 
   // Override child primspecs.
-  for ( auto &child : dst.children()) {
-    auto src_it = std::find_if(src.children().begin(), src.children().end(), [&child](const PrimSpec &ps) {
-      return ps.name() == child.name();
-    });
+  for (auto &child : dst.children()) {
+    auto src_it = std::find_if(
+        src.children().begin(), src.children().end(),
+        [&child](const PrimSpec &ps) { return ps.name() == child.name(); });
 
     if (src_it != dst.children().end()) {
-      if (!OverridePrimSpecRec(depth+1, child, (*src_it), warn, err)) {
+      if (!OverridePrimSpecRec(depth + 1, child, (*src_it), warn, err)) {
         return false;
       }
     }
@@ -483,17 +576,16 @@ static bool OverridePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &s
 //
 // TODO: Support nested inherits?
 //
-static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src, std::string *warn, std::string *err) {
-
+static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
+                                std::string *warn, std::string *err) {
   (void)warn;
 
   // Create PrimSpec from `src`,
   // Then override it with `dst`
-  PrimSpec ps = src; // copy
+  PrimSpec ps = src;  // copy
 
   // Override metadataum
   ps.metas().update_from(dst.metas());
-
 
   // Override properties
   for (const auto &prop : dst.props()) {
@@ -504,10 +596,11 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src, std::string 
   }
 
   // Overide child primspecs.
-  for ( auto &child : ps.children()) {
-    auto src_it = std::find_if(dst.children().begin(), dst.children().end(), [&child](const PrimSpec &primspec) {
-      return primspec.name() == child.name();
-    });
+  for (auto &child : ps.children()) {
+    auto src_it = std::find_if(dst.children().begin(), dst.children().end(),
+                               [&child](const PrimSpec &primspec) {
+                                 return primspec.name() == child.name();
+                               });
 
     if (src_it != ps.children().end()) {
       if (!OverridePrimSpecRec(1, child, (*src_it), warn, err)) {
@@ -538,7 +631,8 @@ bool LayerToStage(const Layer &layer, Stage *stage_out, std::string *warn,
 
   // TODO: primChildren metadatum
   for (const auto &primspec : layer.primspecs()) {
-    if (auto pv = detail::ReconstructPrimFromPrimSpec(primspec.second, warn, err)) {
+    if (auto pv =
+            detail::ReconstructPrimFromPrimSpec(primspec.second, warn, err)) {
       // TODO
       (void)pv;
     }
@@ -549,7 +643,8 @@ bool LayerToStage(const Layer &layer, Stage *stage_out, std::string *warn,
   return true;
 }
 
-bool OverridePrimSpec(PrimSpec &dst, const PrimSpec &src, std::string *warn, std::string *err) {
+bool OverridePrimSpec(PrimSpec &dst, const PrimSpec &src, std::string *warn,
+                      std::string *err) {
   if (src.specifier() != Specifier::Over) {
     PUSH_ERROR("src PrimSpec must be qualified with `over` specifier.\n");
   }
@@ -557,13 +652,14 @@ bool OverridePrimSpec(PrimSpec &dst, const PrimSpec &src, std::string *warn, std
   return detail::OverridePrimSpecRec(0, dst, src, warn, err);
 }
 
-bool InheritPrimSpec(PrimSpec &dst, const PrimSpec &src, std::string *warn, std::string *err) {
-
+bool InheritPrimSpec(PrimSpec &dst, const PrimSpec &src, std::string *warn,
+                     std::string *err) {
   return detail::InheritPrimSpecImpl(dst, src, warn, err);
 }
 
-bool ReferenceLayerToPrimSpec(PrimSpec &dst, const Layer &layer, const Path primPath, const LayerOffset layerOffset) {
-
+bool ReferenceLayerToPrimSpec(PrimSpec &dst, const Layer &layer,
+                              const Path primPath,
+                              const LayerOffset layerOffset) {
   if (layer.primspecs().empty()) {
     // nothing to do
     return true;
@@ -588,6 +684,5 @@ bool ReferenceLayerToPrimSpec(PrimSpec &dst, const Layer &layer, const Path prim
 
   return false;
 }
-
 
 }  // namespace tinyusdz

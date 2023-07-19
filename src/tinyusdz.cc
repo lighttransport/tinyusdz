@@ -297,7 +297,7 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
         break;
       }
     }
-    
+
     offset += 30;
 
     // read in the variable name
@@ -891,6 +891,122 @@ bool IsUSD(const uint8_t *addr, const size_t length, std::string *detected_forma
   }
 
   return false;
+}
+
+bool LoadUSDALayerFromMemory(const uint8_t *addr, const size_t length,
+                       const std::string &asset_name, Layer *dst_layer,
+                       std::string *warn, std::string *err,
+                       const USDLoadOptions &options) {
+
+  // TODO: options
+  (void)options;
+
+  if (!addr) {
+    return false;
+  }
+
+  if (length < 4) {
+    return false;
+  }
+
+  if (!dst_layer) {
+    return false;
+  }
+
+  tinyusdz::StreamReader sr(addr, length, /* swap endian */ false);
+  tinyusdz::usda::USDAReader reader(&sr);
+
+  uint32_t load_states = static_cast<uint32_t>(tinyusdz::LoadState::Toplevel);
+
+  bool as_primspec = true;
+
+  {
+    bool ret = reader.read(load_states, as_primspec);
+
+    if (!ret) {
+      if (err) {
+        (*err) += "Failed to parse USDA: " + asset_name + "\n";
+        (*err) += reader.get_error() + "\n";
+      }
+      return false;
+    }
+  }
+
+  tinyusdz::Layer layer;
+  bool ret = reader.get_as_layer(&layer);
+  if (!ret) {
+    if (err) {
+      (*err) += reader.get_error();
+    }
+    return false;
+  }
+  
+  if (warn) {
+    if (reader.get_warning().size()) {
+      (*warn) += reader.get_warning();
+    }
+  }
+
+  (*dst_layer) = std::move(layer);
+
+  return true;
+}
+
+bool LoadLayerFromMemory(const uint8_t *addr, const size_t length,
+                       const std::string &asset_name, Layer *layer,
+                       std::string *warn, std::string *err,
+                       const USDLoadOptions &options) {
+  if (IsUSDC(addr, length)) {
+    DCOUT("Detected as USDC.");
+#if 0
+    return LoadUSDCLayerFromMemory(addr, length, asset_name, layer, warn, err,
+                              options);
+#else
+    if (err) {
+      (*err) += "TODO: Load USDC as Layer is not implemented yet.\n";
+    }
+    return false;
+#endif
+  } else if (IsUSDA(addr, length)) {
+    DCOUT("Detected as USDA.");
+    return LoadUSDALayerFromMemory(addr, length, asset_name, layer, warn, err,
+                              options);
+  } else if (IsUSDZ(addr, length)) {
+    DCOUT("Detected as USDZ.");
+#if 0
+    return LoadUSDZLayerFromMemory(addr, length, asset_name, layer, warn, err,
+                              options);
+#else
+    if (err) {
+      (*err) += "TODO: Load USDZ as Layer is not implemented yet.\n";
+    }
+    return false;
+#endif
+  } else {
+    if (err) {
+      (*err) += "Couldn't determine USD format(USDA/USDC/USDZ).\n";
+    }
+    return false;
+  }
+}
+
+bool LoadLayerFromFile(const std::string &_filename, Layer *stage,
+                     std::string *warn, std::string *err,
+                     const USDLoadOptions &options) {
+
+  // TODO: Use AssetResolutionResolver.
+  std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
+  std::string base_dir = io::GetBaseDir(_filename);
+
+  std::vector<uint8_t> data;
+  size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);
+  if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
+                         /* userdata */ nullptr)) {
+    return false;
+  }
+
+  return LoadLayerFromMemory(data.data(), data.size(), filepath, stage, warn, err,
+                           options);
 }
 
 }  // namespace tinyusdz
