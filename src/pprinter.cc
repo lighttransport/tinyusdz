@@ -3508,8 +3508,8 @@ std::string print_layer(const Layer &layer, const uint32_t indent) {
 
     for (size_t i = 0; i < layer.metas().primChildren.size(); i++) {
       value::token nameTok = layer.metas().primChildren[i];
-      DCOUT(fmt::format("primChildren  {}/{} = {}", i,
-                        layer.metas().primChildren.size(), nameTok.str()));
+      //DCOUT(fmt::format("primChildren  {}/{} = {}", i,
+      //                  layer.metas().primChildren.size(), nameTok.str()));
       const auto it = primNameTable.find(nameTok.str());
       if (it != primNameTable.end()) {
         ss << prim::print_primspec((*it->second), indent);

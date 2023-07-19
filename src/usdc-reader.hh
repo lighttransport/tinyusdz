@@ -40,6 +40,9 @@ class USDCReader {
 
   bool ReconstructStage(Stage *stage);
 
+  // For composition.
+  bool get_as_layer(Layer *layer);
+
   // Approximated memory usage in [mb]
   size_t GetMemoryUsage() const;
 
