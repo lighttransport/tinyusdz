@@ -44,6 +44,7 @@ struct PayloadCompositionOptions {
   uint32_t max_depth = 1024u;
 };
 
+#if 0 // deprecate it.
 ///
 /// Load subLayer USD files in `layer`, and return composited(flattened) Layer
 /// to `composited_layer` Supply search_path with `base_dir`
@@ -52,6 +53,7 @@ bool CompositeSublayers(
     const std::string &base_dir, const Layer &layer, Layer *composited_layer,
     std::string *warn, std::string *err,
     const SublayersCompositionOptions options = SublayersCompositionOptions());
+#endif
 
 ///
 /// Load subLayer USD files in `layer`, and return composited(flattened) Layer
