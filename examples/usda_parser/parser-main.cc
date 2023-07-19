@@ -171,9 +171,23 @@ int main(int argc, char **argv) {
 
     std::string warn;
 
+    tinyusdz::AssetResolutionResolver resolver;
+    resolver.set_search_paths({base_dir});
+
+    //
+    // LIVRPS strength ordering
+    // - [x] Local(subLayers)
+    // - [ ] Inherits
+    // - [ ] VariantSets
+    // - [x] References
+    // - [ ] Payload
+    // - [ ] Specializes
+    //
+
+    tinyusdz::Layer src_layer = root_layer;
     if (comp_features.subLayers) {
       tinyusdz::Layer composited_layer;
-      if (!tinyusdz::CompositeSublayers(base_dir, root_layer, &composited_layer, &warn, &err)) {
+      if (!tinyusdz::CompositeSublayers(resolver, src_layer, &composited_layer, &warn, &err)) {
         std::cerr << "Failed to composite subLayers: " << err << "\n";
         return -1;
       }
@@ -184,7 +198,25 @@ int main(int argc, char **argv) {
 
       std::cout << "# composited\n";
       std::cout << composited_layer << "\n";
-      
+
+      src_layer = std::move(composited_layer);
+    }
+    
+    if (comp_features.references) {
+      tinyusdz::Layer composited_layer;
+      if (!tinyusdz::CompositeReferences(resolver, src_layer, &composited_layer, &warn, &err)) {
+        std::cerr << "Failed to composite `references`: " << err << "\n";
+        return -1;
+      }
+
+      if (warn.size()) {
+        std::cout << "WARN: " << warn << "\n";
+      }
+
+      std::cout << "# composited\n";
+      std::cout << composited_layer << "\n";
+
+      src_layer = std::move(composited_layer);
     }
 
     // TODO...
