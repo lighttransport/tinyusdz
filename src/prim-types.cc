@@ -1687,15 +1687,15 @@ value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStack, doubl
 
 void PrimMetas::update_from(const PrimMetas &rhs) {
 
-  if (rhs.active) {
+  if (rhs.active.has_value()) {
     active = rhs.active;
   }
 
-  if (rhs.hidden) {
+  if (rhs.hidden.has_value()) {
     hidden = rhs.hidden;
   }
 
-  if (rhs.kind) {
+  if (rhs.kind.has_value()) {
     kind = rhs.kind;
   }
 
