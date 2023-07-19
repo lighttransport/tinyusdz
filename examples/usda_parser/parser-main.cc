@@ -169,15 +169,22 @@ int main(int argc, char **argv) {
     tinyusdz::Stage stage;
     stage.metas() = root_layer.metas();
 
+    std::string warn;
+
     if (comp_features.subLayers) {
       tinyusdz::Layer composited_layer;
-      if (!tinyusdz::CompositeSublayers(base_dir, root_layer, &composited_layer, &err)) {
+      if (!tinyusdz::CompositeSublayers(base_dir, root_layer, &composited_layer, &warn, &err)) {
         std::cerr << "Failed to composite subLayers: " << err << "\n";
         return -1;
       }
 
+      if (warn.size()) {
+        std::cout << "WARN: " << warn << "\n";
+      }
+
       std::cout << "# composited\n";
       std::cout << composited_layer << "\n";
+      
     }
 
     // TODO...

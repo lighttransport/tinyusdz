@@ -3217,7 +3217,7 @@ struct Layer {
       return false;
     }
 
-    _prim_specs.at(name) = ps;
+    _prim_specs.emplace(name, ps);
 
     return true;
   }

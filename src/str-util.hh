@@ -305,6 +305,27 @@ inline std::string makeIdentifierValid(const std::string &str) {
 ///
 bool makeUniqueName(std::multiset<std::string> &nameSet, const std::string &name, std::string *unique_name);
 
+
+///
+/// Convert string buffer to list of UTF-8 chars.
+/// Example: 'こんにちは' => ['こ', 'ん', 'に', 'ち', 'は']
+///
+std::vector<std::string> to_utf8_chars(const std::string &str);
+
+///
+/// Convert UTF-8 char to code.
+/// Return ~0u(0xffffffff) when input `u8char` is not a valid UTF-8 charcter.
+///
+uint32_t to_utf8_code(const std::string &u8char);
+
+#if 0 // TODO
+///
+/// Convert UTF-8 code to UTF-8 char
+///
+/// Return empty string when input `code` is not a valid UTF-8 code.
+std::string to_utf8_char(const uint32_t code);
+#endif
+
 #if 0
 template<typename It>
 inline std::string quote_then_join(const std::string& sep, const It& v, const std::string &quote = "\"")

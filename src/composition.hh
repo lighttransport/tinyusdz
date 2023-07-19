@@ -50,7 +50,7 @@ struct PayloadCompositionOptions {
 ///
 bool CompositeSublayers(
     const std::string &base_dir, const Layer &layer, Layer *composited_layer,
-    std::string *err,
+    std::string *warn, std::string *err,
     const SublayersCompositionOptions options = SublayersCompositionOptions());
 
 ///
@@ -59,7 +59,7 @@ bool CompositeSublayers(
 ///
 bool CompositeSublayers(
     const AssetResolutionResolver &resolver, const Layer &layer,
-    Layer *composited_layer, std::string *err,
+    Layer *composited_layer, std::string *warn, std::string *err,
     const SublayersCompositionOptions options = SublayersCompositionOptions());
 
 ///
@@ -68,7 +68,7 @@ bool CompositeSublayers(
 ///
 bool CompositeReferences(const AssetResolutionResolver &resolver,
                          const Layer &layer, Layer *composited_layer,
-                         std::string *err,
+                         std::string *warn, std::string *err,
                          const ReferencesCompositionOptions options =
                              ReferencesCompositionOptions());
 
@@ -78,7 +78,7 @@ bool CompositeReferences(const AssetResolutionResolver &resolver,
 ///
 bool CompositePayload(
     const AssetResolutionResolver &resolver, const Layer &layer,
-    Layer *composited_layer, std::string *err,
+    Layer *composited_layer, std::string *warn, std::string *err,
     const PayloadCompositionOptions options = PayloadCompositionOptions());
 
 ///

@@ -64,6 +64,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 //#include "usdVox.hh"
 #include "stage.hh"
 
+
 namespace tinyusdz {
 
 constexpr int version_major = 0;
@@ -160,8 +161,8 @@ bool LoadUSDFromFile(const std::string &filename, Stage *stage,
 /// Load USD(USDA/USDC/USDZ) from memory.
 /// Automatically detect file format.
 ///
-/// @param[in] addr Memory address of USDZ data
-/// @param[in] length Byte length of USDZ data
+/// @param[in] addr Memory address of USD data
+/// @param[in] length Byte length of USD data
 /// @param[in] filename Filename(can be empty).
 /// @param[out] stage USD stage(scene graph).
 /// @param[out] warn Warning message.
@@ -280,6 +281,63 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length,
                         const std::string &base_dir, Stage *stage,
                         std::string *warn, std::string *err,
                         const USDLoadOptions &options = USDLoadOptions());
+
+///
+/// For composition
+///
+
+///
+/// Load USD(USDA/USDC/USDZ) from a file and return it as Layer.
+/// Automatically detect file format.
+///
+/// @param[in] filename USD filename(UTF-8)
+/// @param[out] layer USD layer(scene graph).
+/// @param[out] warn Warning message.
+/// @param[out] err Error message(filled when the function returns false)
+/// @param[in] options Load options(optional)
+///
+/// @return true upon success
+///
+bool LoadLayerFromFile(const std::string &filename, Layer *stage,
+                     std::string *warn, std::string *err,
+                     const USDLoadOptions &options = USDLoadOptions());
+
+///
+/// Load USD(USDA/USDC/USDZ) from memory and return it as Layer.
+/// Automatically detect file format.
+///
+/// @param[in] addr Memory address of USD data
+/// @param[in] length Byte length of USD data
+/// @param[in] filename Corresponding Filename(can be empty).
+/// @param[out] layer USD layer(scene graph).
+/// @param[out] warn Warning message.
+/// @param[out] err Error message(filled when the function returns false)
+/// @param[in] options Load options(optional)
+///
+/// @return true upon success
+///
+bool LoadLayerFromMemory(const uint8_t *addr, const size_t length,
+                       const std::string &filename, Layer *layer,
+                       std::string *warn, std::string *err,
+                       const USDLoadOptions &options = USDLoadOptions());
+
+
+bool LoadUSDALayerFromMemory(const uint8_t *addr, const size_t length,
+                       const std::string &filename, Layer *layer,
+                       std::string *warn, std::string *err,
+                       const USDLoadOptions &options = USDLoadOptions());
+
+bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
+                       const std::string &filename, Layer *layer,
+                       std::string *warn, std::string *err,
+                       const USDLoadOptions &options = USDLoadOptions());
+
+#if 0 // TODO
+bool LoadUSDZLayerFromMemory(const uint8_t *addr, const size_t length,
+                       const std::string &filename, Layer *layer,
+                       std::string *warn, std::string *err,
+                       const USDLoadOptions &options = USDLoadOptions());
+#endif
 
 #if 0  // TODO
 ///
