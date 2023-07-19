@@ -110,7 +110,14 @@ class Token {
   }
 
   bool valid() const {
-    // TODO
+    if (!str_) {
+      return false;
+    }
+    
+    if (str_.value().string().empty()) {
+      return false;
+    }
+
     return true;
   }
 
@@ -147,7 +154,10 @@ class Token {
   const std::string &str() const { return str_; }
 
   bool valid() const {
-    // TODO
+    if (str().empty()) {
+      return false;
+    }
+
     return true;
   }
 
