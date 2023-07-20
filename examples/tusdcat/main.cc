@@ -1,10 +1,22 @@
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <iostream>
 #include <sstream>
 
 #include "tinyusdz.hh"
 #include "pprinter.hh"
+#include "str-util.hh"
+#include "io-util.hh"
+
+struct CompositionFeatures {
+  bool subLayers{true};
+  bool inherits{true};
+  bool variantSets{true};
+  bool references{true};
+  bool payloads{true};
+  bool specializes{true};
+};
 
 static std::string GetFileExtension(const std::string &filename) {
   if (filename.find_last_of('.') != std::string::npos)
@@ -14,18 +26,21 @@ static std::string GetFileExtension(const std::string &filename) {
 
 static std::string str_tolower(std::string s) {
   std::transform(s.begin(), s.end(), s.begin(),
-                 // static_cast<int(*)(int)>(std::tolower)         // wrong
-                 // [](int c){ return std::tolower(c); }           // wrong
-                 // [](char c){ return std::tolower(c); }          // wrong
-                 [](unsigned char c) { return std::tolower(c); }  // correct
+                 [](unsigned char c) { return std::tolower(c); } 
   );
   return s;
 }
 
 int main(int argc, char **argv) {
   if (argc < 2) {
-    std::cout << "Usage tusdcat [--flatten] [--relative] input.usda/usdc/usdz\n";
+    std::cout << "Usage tusdcat [--flatten] [--composition=STRLIST] [--relative] input.usda/usdc/usdz\n";
     std::cout << "\n --flatten (not implemented yet) Do composition(load sublayers, refences, payloads, evaluate `over`, inherit, variants..)";
+    std::cout << "  --composition: Specify which composition feature to be "
+                 "enabled(valid when `--flatten` is supplied). Comma separated "
+                 "list. \n    l "
+                 "`subLayers`, i `inherits`, v `variantSets`, r `references`, "
+                 "p `payloads`, s `specializes`. \n    Example: "
+                 "--composition=r,p --composition=references,subLayers\n";
     std::cout << "\n --relative (not implemented yet) Print Path as relative Path\n";
     return EXIT_FAILURE;
   }
@@ -36,6 +51,7 @@ int main(int argc, char **argv) {
   std::string filepath;
 
   int input_index = -1;
+  CompositionFeatures comp_features;
 
   for (size_t i = 1; i < argc; i++) {
     std::string arg = argv[i];
@@ -43,6 +59,40 @@ int main(int argc, char **argv) {
       has_flatten = true;
     } else if (arg.compare("--relative") == 0) {
       has_relative = true;
+    } else if (tinyusdz::startsWith(arg, "--composition=")) {
+      std::string value_str = tinyusdz::removePrefix(arg, "--composition=");
+      if (value_str.empty()) {
+        std::cerr << "No values specified to --composition.\n";
+        exit(-1);
+      }
+
+      std::vector<std::string> items = tinyusdz::split(value_str, ",");
+      comp_features.subLayers = false;
+      comp_features.inherits = false;
+      comp_features.variantSets = false;
+      comp_features.references = false;
+      comp_features.payloads = false;
+      comp_features.specializes = false;
+
+      for (const auto &item : items) {
+        if ((item == "l") || (item == "subLayers")) {
+          comp_features.subLayers = true;
+        } else if ((item == "i") || (item == "inherits")) {
+          comp_features.inherits = true;
+        } else if ((item == "v") || (item == "variantSets")) {
+          comp_features.variantSets = true;
+        } else if ((item == "r") || (item == "references")) {
+          comp_features.references = true;
+        } else if ((item == "p") || (item == "payloads")) {
+          comp_features.payloads = true;
+        } else if ((item == "s") || (item == "specializes")) {
+          comp_features.specializes = true;
+        } else {
+          std::cerr << "Invalid string for --composition : " << item << "\n";
+          exit(-1);
+        }
+      }
+
     } else {
       filepath = arg;
       input_index = i;
@@ -58,83 +108,186 @@ int main(int argc, char **argv) {
   std::string err;
 
   std::string ext = str_tolower(GetFileExtension(filepath));
+  std::string base_dir;
+  base_dir = tinyusdz::io::GetBaseDir(filepath);
 
-  tinyusdz::Stage stage;
+  if (has_flatten) {
 
-  if (ext.compare("usdc") == 0) {
-    tinyusdz::USDLoadOptions options;
-    options.do_composition = has_flatten;
+    // TODO: flatten for USDZ
+    if (tinyusdz::IsUSDZ(filepath)) {
 
-    bool ret = tinyusdz::LoadUSDCFromFile(filepath, &stage, &warn, &err, options);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-    }
-    if (!err.empty()) {
-      std::cerr << "ERR : " << err << "\n";
-      //return EXIT_FAILURE;
-    }
+      std::cout << "--flatten is ignored for USDZ at the moment.\n";
 
-    if (!ret) {
-      std::cerr << "Failed to load USDC file: " << filepath << "\n";
-      return EXIT_FAILURE;
-    }
-  } else if (ext.compare("usda") == 0) {
-    tinyusdz::USDLoadOptions options;
-    options.do_composition = has_flatten;
+      tinyusdz::Stage stage;
 
-    bool ret = tinyusdz::LoadUSDAFromFile(filepath, &stage, &warn, &err, options);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-    }
-    if (!err.empty()) {
-      std::cerr << "ERR : " << err << "\n";
-      //return EXIT_FAILURE;
+      bool ret = tinyusdz::LoadUSDZFromFile(filepath, &stage, &warn, &err);
+      if (!warn.empty()) {
+        std::cerr << "WARN : " << warn << "\n";
+      }
+      if (!err.empty()) {
+        std::cerr << "ERR : " << err << "\n";
+        //return EXIT_FAILURE;
+      }
+
+      if (!ret) {
+        std::cerr << "Failed to load USDZ file: " << filepath << "\n";
+        return EXIT_FAILURE;
+      }
+
+      std::cout << to_string(stage) << "\n";
+
+      return EXIT_SUCCESS;
     }
 
-    if (!ret) {
-      std::cerr << "Failed to load USDA file: " << filepath << "\n";
-      return EXIT_FAILURE;
-    }
-  } else if (ext.compare("usdz") == 0) {
-    if (has_flatten) {
-      std::cout << "--flatten is ignored for USDZ model at the moment.\n";
-    }
-    //std::cout << "usdz\n";
-    bool ret = tinyusdz::LoadUSDZFromFile(filepath, &stage, &warn, &err);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-    }
-    if (!err.empty()) {
-      std::cerr << "ERR : " << err << "\n";
-      //return EXIT_FAILURE;
+    tinyusdz::Layer root_layer;
+    bool ret = tinyusdz::LoadLayerFromFile(filepath, &root_layer, &warn, &err);
+    if (warn.size()) {
+      std::cout << "WARN: " << warn << "\n";
     }
 
     if (!ret) {
-      std::cerr << "Failed to load USDZ file: " << filepath << "\n";
-      return EXIT_FAILURE;
+      std::cerr << "Failed to read USD data as Layer: \n";
+      std::cerr << err << "\n";
+      return -1;
     }
+
+    std::cout << "# input\n";
+    std::cout << root_layer << "\n";
+
+    tinyusdz::Stage stage;
+    stage.metas() = root_layer.metas();
+
+    std::string warn;
+
+    tinyusdz::AssetResolutionResolver resolver;
+    resolver.set_search_paths({base_dir});
+
+    //
+    // LIVRPS strength ordering
+    // - [x] Local(subLayers)
+    // - [ ] Inherits
+    // - [ ] VariantSets
+    // - [x] References
+    // - [ ] Payload
+    // - [ ] Specializes
+    //
+
+    tinyusdz::Layer src_layer = root_layer;
+    if (comp_features.subLayers) {
+      tinyusdz::Layer composited_layer;
+      if (!tinyusdz::CompositeSublayers(resolver, src_layer, &composited_layer, &warn, &err)) {
+        std::cerr << "Failed to composite subLayers: " << err << "\n";
+        return -1;
+      }
+
+      if (warn.size()) {
+        std::cout << "WARN: " << warn << "\n";
+      }
+
+      std::cout << "# composited\n";
+      std::cout << composited_layer << "\n";
+
+      src_layer = std::move(composited_layer);
+    }
+    
+    if (comp_features.references) {
+      tinyusdz::Layer composited_layer;
+      if (!tinyusdz::CompositeReferences(resolver, src_layer, &composited_layer, &warn, &err)) {
+        std::cerr << "Failed to composite `references`: " << err << "\n";
+        return -1;
+      }
+
+      if (warn.size()) {
+        std::cout << "WARN: " << warn << "\n";
+      }
+
+      std::cout << "# composited\n";
+      std::cout << composited_layer << "\n";
+
+      src_layer = std::move(composited_layer);
+    }
+
+    // TODO... more composition features
+
   } else {
-    tinyusdz::USDLoadOptions options;
-    options.do_composition = has_flatten;
 
-    // try to auto detect format.
-    bool ret = tinyusdz::LoadUSDFromFile(filepath, &stage, &warn, &err, options);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-    }
-    if (!err.empty()) {
-      std::cerr << "ERR : " << err << "\n";
-      //return EXIT_FAILURE;
+    tinyusdz::Stage stage;
+
+    if (ext.compare("usdc") == 0) {
+      tinyusdz::USDLoadOptions options;
+      options.do_composition = has_flatten;
+
+      bool ret = tinyusdz::LoadUSDCFromFile(filepath, &stage, &warn, &err, options);
+      if (!warn.empty()) {
+        std::cerr << "WARN : " << warn << "\n";
+      }
+      if (!err.empty()) {
+        std::cerr << "ERR : " << err << "\n";
+        //return EXIT_FAILURE;
+      }
+
+      if (!ret) {
+        std::cerr << "Failed to load USDC file: " << filepath << "\n";
+        return EXIT_FAILURE;
+      }
+    } else if (ext.compare("usda") == 0) {
+      tinyusdz::USDLoadOptions options;
+      options.do_composition = has_flatten;
+
+      bool ret = tinyusdz::LoadUSDAFromFile(filepath, &stage, &warn, &err, options);
+      if (!warn.empty()) {
+        std::cerr << "WARN : " << warn << "\n";
+      }
+      if (!err.empty()) {
+        std::cerr << "ERR : " << err << "\n";
+        //return EXIT_FAILURE;
+      }
+
+      if (!ret) {
+        std::cerr << "Failed to load USDA file: " << filepath << "\n";
+        return EXIT_FAILURE;
+      }
+    } else if (ext.compare("usdz") == 0) {
+      if (has_flatten) {
+        std::cout << "--flatten is ignored for USDZ model at the moment.\n";
+      }
+      //std::cout << "usdz\n";
+      bool ret = tinyusdz::LoadUSDZFromFile(filepath, &stage, &warn, &err);
+      if (!warn.empty()) {
+        std::cerr << "WARN : " << warn << "\n";
+      }
+      if (!err.empty()) {
+        std::cerr << "ERR : " << err << "\n";
+        //return EXIT_FAILURE;
+      }
+
+      if (!ret) {
+        std::cerr << "Failed to load USDZ file: " << filepath << "\n";
+        return EXIT_FAILURE;
+      }
+    } else {
+      tinyusdz::USDLoadOptions options;
+      options.do_composition = has_flatten;
+
+      // try to auto detect format.
+      bool ret = tinyusdz::LoadUSDFromFile(filepath, &stage, &warn, &err, options);
+      if (!warn.empty()) {
+        std::cerr << "WARN : " << warn << "\n";
+      }
+      if (!err.empty()) {
+        std::cerr << "ERR : " << err << "\n";
+        //return EXIT_FAILURE;
+      }
+
+      if (!ret) {
+        std::cerr << "Failed to load USD file: " << filepath << "\n";
+        return EXIT_FAILURE;
+      }
     }
 
-    if (!ret) {
-      std::cerr << "Failed to load USD file: " << filepath << "\n";
-      return EXIT_FAILURE;
-    }
+    std::string s = stage.ExportToString(has_relative);
+    std::cout << s << "\n";
   }
-
-  std::string s = stage.ExportToString(has_relative);
-  std::cout << s << "\n";
 
   return EXIT_SUCCESS;
 }
