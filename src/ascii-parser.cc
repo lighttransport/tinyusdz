@@ -131,6 +131,7 @@ extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::option
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::StringData>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<std::string>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<Reference>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<Payload>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<Path>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::AssetPath>> *result);
 
@@ -188,6 +189,7 @@ extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::token>
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::StringData> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<std::string> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<Reference> *result);
+extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<Payload> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<Path> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::AssetPath> *result);
 
@@ -246,7 +248,7 @@ static void RegisterPrimMetas(
 
   // TODO: Use relatioship type?
   metas["inherits"] = AsciiParser::VariableDef(value::kPath, "inherits", true);
-  metas["payload"] = AsciiParser::VariableDef("Reference", "payload", true);
+  metas["payload"] = AsciiParser::VariableDef("Payload", "payload", true);
   metas["specializes"] =
       AsciiParser::VariableDef(value::kPath, "specializes", true);
 
@@ -2274,7 +2276,6 @@ bool AsciiParser::ParseAssetIdentifier(value::AssetPath *out,
   return valid;
 }
 
-// TODO: Return Path
 bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
   /*
     Asset reference = AsssetIdentifier + optially followd by prim path
@@ -2341,6 +2342,69 @@ bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
     }
   }
 
+  // TODO: LayerOffset and CustomData
+
+  return true;
+}
+
+bool AsciiParser::ParsePayload(Payload *out, bool *triple_deliminated) {
+  // Reference, but no customData.
+
+  if (!SkipWhitespaceAndNewline()) {
+    return false;
+  }
+
+  // Parse AssetIdentifier
+  {
+    char nc;
+    if (!LookChar1(&nc)) {
+      return false;
+    }
+
+    if (nc == '<') {
+      // No Asset Identifier.
+      out->asset_path = value::AssetPath("");
+    } else {
+
+      value::AssetPath ap;
+      if (!ParseAssetIdentifier(&ap, triple_deliminated)) {
+        PUSH_ERROR_AND_RETURN_TAG(kAscii, "Failed to parse asset path identifier.");
+      }
+      out->asset_path = ap;
+    }
+  }
+
+  // Parse optional prim_path
+  if (!SkipWhitespace()) {
+    return false;
+  }
+
+  {
+    char c;
+    if (!Char1(&c)) {
+      return false;
+    }
+
+    if (c == '<') {
+      if (!Rewind(1)) {
+        return false;
+      }
+
+      std::string path;
+      if (!ReadPathIdentifier(&path)) {
+        return false;
+      }
+
+      out->prim_path = Path(path, "");
+    } else {
+      if (!Rewind(1)) {
+        return false;
+      }
+    }
+  }
+
+  // TODO: LayerOffset
+
   return true;
 }
 
@@ -2384,8 +2448,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
     break; \
   }
 
-  // Special treatment for "Reference"
-  // FIXME: use assetPath for "Reference"?
+  // Special treatment for "Reference" and "Payload"
   if (vartype == "Reference") {
     if (array_qual) {
       std::vector<Reference> refs;
@@ -2397,6 +2460,29 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
       var.set_value(refs);
     } else {
       nonstd::optional<Reference> ref;
+      if (!ReadBasicType(&ref)) {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kAscii,
+            fmt::format("Failed to parse `{}` in Prim metadataum.", def.name));
+      }
+      if (ref) {
+        var.set_value(ref.value());
+      } else {
+        // None
+        var.set_value(value::ValueBlock());
+      }
+    }
+  } else if (vartype == "Payload") {
+    if (array_qual) {
+      std::vector<Payload> refs;
+      if (!ParseBasicTypeArray(&refs)) {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kAscii,
+            fmt::format("Failed to parse `{}` in Prim metadataum.", def.name));
+      }
+      var.set_value(refs);
+    } else {
+      nonstd::optional<Payload> ref;
       if (!ReadBasicType(&ref)) {
         PUSH_ERROR_AND_RETURN_TAG(
             kAscii,

@@ -1065,7 +1065,7 @@ class USDAReader::Impl {
         } else {
           PUSH_ERROR_AND_RETURN(
               "(Internal error?) `references` metadataum is not type "
-              "`path` or `path[]`. got type `"
+              "`Reference`. got type `"
               << var.type_name() << "`");
         }
       } else if (meta.first == "payload") {
@@ -1074,29 +1074,17 @@ class USDAReader::Impl {
           // make empty
           std::vector<Payload> refs;
           out->payload = std::make_pair(listEditQual, refs);
-        } else if (auto pv = var.get_value<Reference>()) {
+        } else if (auto pv = var.get_value<Payload>()) {
           // To Payload
-          std::vector<Payload> refs;
-          Payload ref;
-          ref.asset_path = pv.value().asset_path;
-          ref._prim_path = pv.value().prim_path;
-          // TODO: Other member variables
-          refs.emplace_back(ref);
-          out->payload = std::make_pair(listEditQual, refs);
-        } else if (auto pva = var.get_value<std::vector<Reference>>()) {
-          std::vector<Payload> refs;
-          for (const auto &item : pva.value()) {
-            Payload ref;
-            ref.asset_path = item.asset_path;
-            ref._prim_path = item.prim_path;
-            // TODO: Other member variables
-            refs.emplace_back(ref);
-          }
-          out->payload = std::make_pair(listEditQual, refs);
+          std::vector<Payload> pls;
+          pls.emplace_back(pv.value());
+          out->payload = std::make_pair(listEditQual, pls);
+        } else if (auto pva = var.get_value<std::vector<Payload>>()) {
+          out->payload = std::make_pair(listEditQual, pva.value());
         } else {
           PUSH_ERROR_AND_RETURN(
-              "(Internal error?) `references` metadataum is not type "
-              "`path` or `path[]`. got type `"
+              "(Internal error) `payload` metadataum is not type "
+              "Payload. got type `"
               << var.type_name() << "`");
         }
       } else if (meta.first == "comment") {

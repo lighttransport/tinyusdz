@@ -417,6 +417,7 @@ class AsciiParser {
   bool ReadBasicType(nonstd::optional<Path> *value);
   bool ReadBasicType(nonstd::optional<value::AssetPath> *value);
   bool ReadBasicType(nonstd::optional<Reference> *value);
+  bool ReadBasicType(nonstd::optional<Payload> *value);
   bool ReadBasicType(nonstd::optional<Identifier> *value);
   bool ReadBasicType(nonstd::optional<PathIdentifier> *value);
 
@@ -479,6 +480,7 @@ class AsciiParser {
   bool ReadBasicType(Path *value);
   bool ReadBasicType(value::AssetPath *value);
   bool ReadBasicType(Reference *value);
+  bool ReadBasicType(Payload *value);
   bool ReadBasicType(Identifier *value);
   bool ReadBasicType(PathIdentifier *value);
 
@@ -703,8 +705,8 @@ class AsciiParser {
 
   bool ParseCustomMetaValue();
 
-  // TODO: Return Path?
   bool ParseReference(Reference *out, bool *triple_deliminated);
+  bool ParsePayload(Payload *out, bool *triple_deliminated);
 
   // `#` style comment
   bool ParseSharpComment();
