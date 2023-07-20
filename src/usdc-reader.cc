@@ -2135,6 +2135,41 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
             "`references` must be type `ListOp[Reference]`, but got type `"
                 << fv.second.type_name() << "`");
       }
+    } else if (fv.first == "payload") {  // `payload` composition
+      if (auto pvb = fv.second.as<value::ValueBlock>()) {
+        // make empty array
+        primMeta.payload = std::make_pair(ListEditQual::ResetToExplicit,
+                                             std::vector<Payload>());
+      } else if (auto pv = fv.second.as<Payload>()) {
+        // payload can be non-listop
+
+        std::vector<Payload> pls;
+        pls.push_back(*pv);
+        primMeta.payload = std::make_pair(ListEditQual::ResetToExplicit, pls);
+      } else if (auto pvs = fv.second.as<ListOp<Payload>>()) {
+        const ListOp<Payload> &p = *pvs;
+        DCOUT("payload = " << to_string(p));
+
+        auto ps = DecodeListOp<Payload>(p);
+
+        if (ps.size() > 1) {
+          // This should not happen though.
+          PUSH_WARN(
+              "ListOp with multiple ListOpType is not supported for now. Use "
+              "the first one: " +
+              to_string(std::get<0>(ps[0])));
+        }
+
+        auto qual = std::get<0>(ps[0]);
+        auto items = std::get<1>(ps[0]);
+        auto listop = (*pvs);
+        primMeta.payload = std::make_pair(qual, items);
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag,
+            "`payload` must be type `ListOp[Payload]`, but got type `"
+                << fv.second.type_name() << "`");
+      }
     } else if (fv.first == "specializes") {  // `specializes` composition
       if (auto pv = fv.second.as<ListOp<Path>>()) {
         const ListOp<Path> &p = *pv;
