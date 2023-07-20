@@ -1588,6 +1588,19 @@ std::string to_string(const Reference &v) {
   return ss.str();
 }
 
+std::string to_string(const Payload &v) {
+  std::stringstream ss;
+
+  ss << v.asset_path;
+  if (v.prim_path.is_valid()) {
+    ss << v.prim_path;
+  }
+
+  ss << v.layerOffset;
+
+  return ss.str();
+}
+
 std::string print_variantSelectionMap(const VariantSelectionMap &m, const uint32_t indent) {
   std::stringstream ss;
 
