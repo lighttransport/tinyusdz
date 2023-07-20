@@ -2023,6 +2023,70 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<Reference> *result) {
 }
 
 ///
+/// Parse array of asset payload
+/// Allow non-list version
+///
+template<>
+bool AsciiParser::ParseBasicTypeArray(std::vector<Payload> *result) {
+  if (!SkipWhitespace()) {
+    return false;
+  }
+
+  char c;
+  if (!Char1(&c)) {
+    return false;
+  }
+
+  if (c != '[') {
+    Rewind(1);
+
+    DCOUT("Guess non-list version");
+    // Guess non-list version
+    Payload pl;
+    bool triple_deliminated{false};
+    if (!ParsePayload(&pl, &triple_deliminated)) {
+      return false;
+    }
+
+    (void)triple_deliminated;
+    result->clear();
+    result->push_back(pl);
+
+  } else {
+
+    if (!SkipCommentAndWhitespaceAndNewline()) {
+      return false;
+    }
+
+    // Empty array?
+    {
+      char ce;
+      if (!Char1(&ce)) {
+        return false;
+      }
+
+      if (ce == ']') {
+        result->clear();
+        return true;
+      }
+
+      Rewind(1);
+    }
+
+    if (!SepBy1BasicType(',', result)) {
+      return false;
+    }
+
+    if (!Expect(']')) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+
+///
 /// Parse PathVector
 ///
 template<>
@@ -2887,6 +2951,31 @@ bool AsciiParser::ReadBasicType(nonstd::optional<Reference> *value) {
   }
 
   Reference v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(Payload *value) {
+  bool triple_deliminated;
+  if (ParsePayload(value, &triple_deliminated)) {
+    return true;
+  }
+  (void)triple_deliminated;
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<Payload> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  Payload v;
   if (ReadBasicType(&v)) {
     (*value) = v;
     return true;
