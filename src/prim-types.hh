@@ -780,8 +780,8 @@ struct Reference {
 // SdfPayload
 struct Payload {
   value::AssetPath asset_path;  // std::string in SdfPayload
-  Path _prim_path;
-  LayerOffset _layer_offset;  // from 0.8.0
+  Path prim_path;
+  LayerOffset layerOffset;  // from 0.8.0
   // No customData for Payload
 };
 

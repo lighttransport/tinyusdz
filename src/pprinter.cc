@@ -152,10 +152,10 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Reference &v) {
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Payload &v) {
 
   ofs << v.asset_path;
-  if (v._prim_path.is_valid()) {
-    ofs << v._prim_path;
+  if (v.prim_path.is_valid()) {
+    ofs << v.prim_path;
   }
-  ofs << v._layer_offset;
+  ofs << v.layerOffset;
 
   return ofs;
 }
@@ -430,7 +430,6 @@ std::string print_payload(const prim::PayloadList &payload, const uint32_t inden
     } else {
       ss << vars;
     }
-    ss << vars;
   }
   ss << "\n";
 

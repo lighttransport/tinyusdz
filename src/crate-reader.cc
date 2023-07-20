@@ -1007,11 +1007,11 @@ bool CrateReader::ReadPayload(Payload *d) {
     if (!ReadLayerOffset(&layerOffset)) {
       return false;
     }
-    d->_layer_offset = layerOffset;
+    d->layerOffset = layerOffset;
   }
 
   d->asset_path = assetPath;
-  d->_prim_path = path.value();
+  d->prim_path = path.value();
 
   return true;
 }
