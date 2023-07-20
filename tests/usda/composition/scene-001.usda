@@ -10,5 +10,5 @@ def Xform "xform0" {
 }
 
 def Sphere "sphere0" {
-  float radius =  1.3
+  double radius =  1.3
 }
