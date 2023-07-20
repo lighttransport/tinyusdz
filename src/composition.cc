@@ -97,7 +97,8 @@ bool CompositeSublayersRec(const AssetResolutionResolver &resolver,
   std::set<std::string> &curr_layer_names = layer_names_stack.back();
 
   for (const auto &layer : in_layer.metas().subLayers) {
-    std::string sublayer_asset_path = layer.GetAssetPath();
+    // TODO: subLayerOffset
+    std::string sublayer_asset_path = layer.assetPath.GetAssetPath();
     DCOUT("Load subLayer " << sublayer_asset_path);
 
     // Do cyclic referencing check.
@@ -374,12 +375,12 @@ bool CompositeReferencesRec(uint32_t depth,
         if (primspec.typeName().empty() || primspec.typeName() == "Model") {
 
           if (src_ps->typeName().empty() || src_ps->typeName() == "Model") {
-            // pass 
+            // pass
           } else {
             primspec.typeName() = src_ps->typeName();
           }
 
-        } 
+        }
 
         DCOUT("inherit done: primspec = " << primspec.name());
       }
@@ -453,12 +454,12 @@ bool CompositeReferencesRec(uint32_t depth,
         if (primspec.typeName().empty() || primspec.typeName() == "Model") {
 
           if (src_ps->typeName().empty() || src_ps->typeName() == "Model") {
-            // pass 
+            // pass
           } else {
             primspec.typeName() = src_ps->typeName();
           }
 
-        } 
+        }
       }
     }
 

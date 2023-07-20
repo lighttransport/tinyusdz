@@ -160,6 +160,13 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Payload &v) {
   return ofs;
 }
 
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::SubLayer &v) {
+
+  ofs << v.assetPath << v.layerOffset;
+
+  return ofs;
+}
+
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::StringData &v) {
 
 #if 0

@@ -1530,6 +1530,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
   ///
   ///   specTy = SpecTypePseudoRoot
   ///
+  ///     - subLayers(+ subLayerOffsets)
   ///     - customLayerData(dict)
   ///     - defaultPrim(token)
   ///     - metersPerUnit(double)
@@ -1538,6 +1539,9 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
   ///     - documentation(string) : `doc`
   ///     - comment(string) : comment
   ///     - primChildren(token[]) : Crate only. List of root prims(Root Prim should be traversed based on this array)
+
+  std::vector<std::string> subLayers;
+  std::vector<LayerOffset> subLayerOffsets;
 
   for (const auto &fv : fvs) {
     if (fv.first == "upAxis") {
@@ -1594,6 +1598,24 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             fv.second.type_name() + "'");
       }
       DCOUT("startimeCode = " << metas->startTimeCode.get_value());
+    } else if (fv.first == "subLayers") {
+      if (auto vs = fv.second.get_value<std::vector<std::string>>()) {
+        subLayers = vs.value();
+      } else {
+        PUSH_ERROR_AND_RETURN(
+            "`subLayers` value must be string[] "
+            "type, but got '" +
+            fv.second.type_name() + "'");
+      }
+    } else if (fv.first == "subLayerOffsets") {
+      if (auto vs = fv.second.get_value<std::vector<LayerOffset>>()) {
+        subLayerOffsets = vs.value();
+      } else {
+        PUSH_ERROR_AND_RETURN(
+            "`subLayerOffsets` value must be LayerOffset[] "
+            "type, but got '" +
+            fv.second.type_name() + "'");
+      }
     } else if (fv.first == "endTimeCode") {
       if (auto vf = fv.second.get_value<float>()) {
         metas->endTimeCode = double(vf.value());
@@ -1714,6 +1736,26 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
     } else {
       PUSH_WARN("[StageMeta] TODO: " + fv.first);
     }
+  }
+
+  if (subLayers.size()) {
+    std::vector<SubLayer> dst;
+    for (size_t i = 0; i < subLayers.size(); i++) {
+      SubLayer s;
+      s.assetPath = subLayers[i];
+      dst.push_back(s);
+    }
+
+    if (subLayers.size() == subLayerOffsets.size()) {
+      for (size_t i = 0; i < subLayerOffsets.size(); i++) {
+        dst[i].layerOffset = subLayerOffsets[i];
+      }
+    }
+
+    metas->subLayers = dst;
+
+  } else if (subLayerOffsets.size()) {
+    PUSH_WARN("Corrupted subLayer info? `subLayers` Fileld not found.");
   }
 
   return true;
