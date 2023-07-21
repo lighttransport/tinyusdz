@@ -373,13 +373,11 @@ bool CompositeReferencesRec(uint32_t depth,
 
         // Modify Prim type if this PrimSpec is Model type.
         if (primspec.typeName().empty() || primspec.typeName() == "Model") {
-
           if (src_ps->typeName().empty() || src_ps->typeName() == "Model") {
             // pass
           } else {
             primspec.typeName() = src_ps->typeName();
           }
-
         }
 
         DCOUT("inherit done: primspec = " << primspec.name());
@@ -632,7 +630,9 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
   // Create PrimSpec from `src`,
   // Then override it with `dst`
   PrimSpec ps = src;  // copy
-
+  
+  // keep PrimSpec name
+  ps.name() = dst.name();
 
   // Override metadataum
   ps.metas().update_from(dst.metas());
