@@ -468,6 +468,189 @@ bool CompositeReferencesRec(uint32_t depth,
   return true;
 }
 
+bool CompositePayloadRec(uint32_t depth,
+                            const AssetResolutionResolver &resolver,
+                            PrimSpec &primspec /* [inout] */, std::string *warn,
+                            std::string *err,
+                            PayloadCompositionOptions options) {
+  if (depth > options.max_depth) {
+    PUSH_ERROR_AND_RETURN("Too deep.");
+  }
+
+  // Traverse children first.
+  for (auto &child : primspec.children()) {
+    if (!CompositePayloadRec(depth + 1, resolver, child, warn, err,
+                                options)) {
+    }
+  }
+
+  if (primspec.metas().payload) {
+    const ListEditQual &qual = primspec.metas().payload.value().first;
+    const auto &payloads = primspec.metas().payload.value().second;
+
+    if ((qual == ListEditQual::ResetToExplicit) ||
+        (qual == ListEditQual::Prepend)) {
+      for (const auto &pl : payloads) {
+        std::string asset_path = pl.asset_path.GetAssetPath();
+
+        if (asset_path.empty()) {
+          PUSH_ERROR_AND_RETURN(
+              "TODO: Prim path(e.g. </xform>) in references.");
+        }
+
+        Layer layer;
+        std::string _warn;
+        std::string _err;
+
+        // resolve path
+        // TODO: Store resolved path to Reference?
+        std::string resolved_path = resolver.resolve(asset_path);
+
+        DCOUT("Loading payload: " << resolved_path << ", asset_path: " << asset_path);
+        if (!LoadLayerFromFile(resolved_path, &layer, &_warn, &_err)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Failed to open `{}` as Layer: {}",
+                                            asset_path, _err));
+        }
+
+        DCOUT("layer = " << print_layer(layer, 0));
+
+        // TODO: Recursively resolve `payload`
+
+        if (_warn.size()) {
+          if (warn) {
+            (*warn) += _warn;
+          }
+        }
+
+        if (layer.primspecs().empty()) {
+          PUSH_ERROR_AND_RETURN(fmt::format("No prims in `{}`", asset_path));
+        }
+
+        std::string default_prim;
+        if (pl.prim_path.is_valid()) {
+          default_prim = pl.prim_path.prim_part();
+        } else {
+          // Use `defaultPrim` metadatum
+          if (layer.metas().defaultPrim.valid()) {
+            default_prim = "/" + layer.metas().defaultPrim.str();
+          } else {
+            // Use the first Prim in the layer.
+            default_prim = "/" + layer.primspecs().begin()->first;
+          }
+        }
+
+        const PrimSpec *src_ps{nullptr};
+        if (!layer.find_primspec_at(Path(default_prim, ""), &src_ps, err)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Failed to find PrimSpec `{}` in layer `{}`", default_prim, asset_path));
+        }
+
+        if (!src_ps) {
+          PUSH_ERROR_AND_RETURN("Internal error: PrimSpec pointer is nullptr.");
+        }
+
+        // `inherits` op
+        if (!InheritPrimSpec(primspec, *src_ps, warn, err)) {
+          PUSH_ERROR_AND_RETURN(
+              fmt::format("Failed to reference layer `{}`", asset_path));
+        }
+
+        // Modify Prim type if this PrimSpec is Model type.
+        if (primspec.typeName().empty() || primspec.typeName() == "Model") {
+          if (src_ps->typeName().empty() || src_ps->typeName() == "Model") {
+            // pass
+          } else {
+            primspec.typeName() = src_ps->typeName();
+          }
+        }
+
+        DCOUT("inherit done: primspec = " << primspec.name());
+      }
+
+    } else if (qual == ListEditQual::Delete) {
+      PUSH_ERROR_AND_RETURN("`delete` references are not supported yet.");
+    } else if (qual == ListEditQual::Add) {
+      PUSH_ERROR_AND_RETURN("`add` references are not supported yet.");
+    } else if (qual == ListEditQual::Order) {
+      PUSH_ERROR_AND_RETURN("`order` references are not supported yet.");
+    } else if (qual == ListEditQual::Invalid) {
+      PUSH_ERROR_AND_RETURN("Invalid listedit qualifier to for `references`.");
+    } else if (qual == ListEditQual::Append) {
+      for (const auto &pl : payloads) {
+        std::string asset_path = pl.asset_path.GetAssetPath();
+
+        if (asset_path.empty()) {
+          PUSH_ERROR_AND_RETURN(
+              "TODO: Prim path(e.g. </xform>) in references.");
+        }
+
+        Layer layer;
+        std::string _warn;
+        std::string _err;
+
+        // resolve path
+        // TODO: Store resolved path to Reference?
+        std::string resolved_path = resolver.resolve(asset_path);
+
+        DCOUT("Loading payload: " << resolved_path << ", asset_path " << asset_path);
+        if (!LoadLayerFromFile(asset_path, &layer, &_warn, &_err)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Failed to open `{}` as Layer: {}",
+                                            asset_path, _err));
+        }
+
+        if (_warn.size()) {
+          if (warn) {
+            (*warn) += _warn;
+          }
+        }
+
+        std::string default_prim;
+        if (pl.prim_path.is_valid()) {
+          default_prim = pl.prim_path.prim_part();
+        } else {
+          // Use `defaultPrim` metadatum
+          if (layer.metas().defaultPrim.valid()) {
+            default_prim = "/" + layer.metas().defaultPrim.str();
+          } else {
+            // Use the first Prim in the layer.
+            default_prim = "/" + layer.primspecs().begin()->first;
+          }
+        }
+
+        const PrimSpec *src_ps{nullptr};
+        if (!layer.find_primspec_at(Path(default_prim, ""), &src_ps, err)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Failed to find PrimSpec `{}` in layer `{}`", default_prim, asset_path));
+        }
+
+        if (!src_ps) {
+          PUSH_ERROR_AND_RETURN("Internal error: PrimSpec pointer is nullptr.");
+        }
+
+        // `over` op
+        if (!OverridePrimSpec(primspec, *src_ps, warn, err)) {
+          PUSH_ERROR_AND_RETURN(
+              fmt::format("Failed to reference layer `{}`", asset_path));
+        }
+
+        // Modify Prim type if this PrimSpec is Model type.
+        if (primspec.typeName().empty() || primspec.typeName() == "Model") {
+
+          if (src_ps->typeName().empty() || src_ps->typeName() == "Model") {
+            // pass
+          } else {
+            primspec.typeName() = src_ps->typeName();
+          }
+
+        }
+      }
+    }
+
+    // Remove `payload`.
+    primspec.metas().payload = nonstd::nullopt;
+  }
+
+  return true;
+}
+
 }  // namespace
 
 bool CompositeReferences(const AssetResolutionResolver &resolver,
@@ -490,6 +673,29 @@ bool CompositeReferences(const AssetResolutionResolver &resolver,
   (*composited_layer) = dst;
 
   DCOUT("Composite `references` ok.");
+  return true;
+}
+
+bool CompositePayload(const AssetResolutionResolver &resolver,
+                         const Layer &in_layer, Layer *composited_layer,
+                         std::string *warn, std::string *err,
+                         PayloadCompositionOptions options) {
+  if (!composited_layer) {
+    return false;
+  }
+
+  Layer dst = in_layer; // deep copy
+
+  for (auto &item : dst.primspecs()) {
+
+    if (!CompositePayloadRec(/* depth */0, resolver, item.second, warn, err, options)) {
+      PUSH_ERROR_AND_RETURN("Composite `payload` failed.");
+    }
+  }
+
+  (*composited_layer) = dst;
+
+  DCOUT("Composite `payload` ok.");
   return true;
 }
 

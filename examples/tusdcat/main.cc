@@ -14,7 +14,7 @@ struct CompositionFeatures {
   bool inherits{true};
   bool variantSets{true};
   bool references{true};
-  bool payloads{true};
+  bool payload{true}; // Not 'payloads'
   bool specializes{true};
 };
 
@@ -26,7 +26,7 @@ static std::string GetFileExtension(const std::string &filename) {
 
 static std::string str_tolower(std::string s) {
   std::transform(s.begin(), s.end(), s.begin(),
-                 [](unsigned char c) { return std::tolower(c); } 
+                 [](unsigned char c) { return std::tolower(c); }
   );
   return s;
 }
@@ -34,12 +34,12 @@ static std::string str_tolower(std::string s) {
 int main(int argc, char **argv) {
   if (argc < 2) {
     std::cout << "Usage tusdcat [--flatten] [--composition=STRLIST] [--relative] input.usda/usdc/usdz\n";
-    std::cout << "\n --flatten (not implemented yet) Do composition(load sublayers, refences, payloads, evaluate `over`, inherit, variants..)";
+    std::cout << "\n --flatten (not implemented yet) Do composition(load sublayers, refences, payload, evaluate `over`, inherit, variants..)";
     std::cout << "  --composition: Specify which composition feature to be "
                  "enabled(valid when `--flatten` is supplied). Comma separated "
                  "list. \n    l "
                  "`subLayers`, i `inherits`, v `variantSets`, r `references`, "
-                 "p `payloads`, s `specializes`. \n    Example: "
+                 "p `payload`, s `specializes`. \n    Example: "
                  "--composition=r,p --composition=references,subLayers\n";
     std::cout << "\n --relative (not implemented yet) Print Path as relative Path\n";
     return EXIT_FAILURE;
@@ -71,7 +71,7 @@ int main(int argc, char **argv) {
       comp_features.inherits = false;
       comp_features.variantSets = false;
       comp_features.references = false;
-      comp_features.payloads = false;
+      comp_features.payload = false;
       comp_features.specializes = false;
 
       for (const auto &item : items) {
@@ -83,8 +83,8 @@ int main(int argc, char **argv) {
           comp_features.variantSets = true;
         } else if ((item == "r") || (item == "references")) {
           comp_features.references = true;
-        } else if ((item == "p") || (item == "payloads")) {
-          comp_features.payloads = true;
+        } else if ((item == "p") || (item == "payload")) {
+          comp_features.payload = true;
         } else if ((item == "s") || (item == "specializes")) {
           comp_features.specializes = true;
         } else {
@@ -168,7 +168,7 @@ int main(int argc, char **argv) {
     // - [ ] Inherits
     // - [ ] VariantSets
     // - [x] References
-    // - [ ] Payload
+    // - [x] Payload
     // - [ ] Specializes
     //
 
@@ -184,12 +184,12 @@ int main(int argc, char **argv) {
         std::cout << "WARN: " << warn << "\n";
       }
 
-      std::cout << "# composited\n";
+      std::cout << "# `subLayers` composited\n";
       std::cout << composited_layer << "\n";
 
       src_layer = std::move(composited_layer);
     }
-    
+
     if (comp_features.references) {
       tinyusdz::Layer composited_layer;
       if (!tinyusdz::CompositeReferences(resolver, src_layer, &composited_layer, &warn, &err)) {
@@ -201,7 +201,24 @@ int main(int argc, char **argv) {
         std::cout << "WARN: " << warn << "\n";
       }
 
-      std::cout << "# composited\n";
+      std::cout << "# `references` composited\n";
+      std::cout << composited_layer << "\n";
+
+      src_layer = std::move(composited_layer);
+    }
+
+    if (comp_features.payload) {
+      tinyusdz::Layer composited_layer;
+      if (!tinyusdz::CompositePayload(resolver, src_layer, &composited_layer, &warn, &err)) {
+        std::cerr << "Failed to composite `payload`: " << err << "\n";
+        return -1;
+      }
+
+      if (warn.size()) {
+        std::cout << "WARN: " << warn << "\n";
+      }
+
+      std::cout << "# `payload` composited\n";
       std::cout << composited_layer << "\n";
 
       src_layer = std::move(composited_layer);
