@@ -22,7 +22,10 @@ enum class CharEncoding
 inline const std::string to_lower(const std::string &str) {
   std::string result = str;
   std::transform(result.begin(), result.end(), result.begin(), [](unsigned char c) {
-    return std::tolower(c);
+    if ((c >= 'A') && (c <= 'Z')) {
+      c += 32;
+    }
+    return static_cast<char>(c);
   });
   return result;
 }
