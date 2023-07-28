@@ -13,7 +13,7 @@ struct CompositionFeatures {
   bool inherits{true};
   bool variantSets{true};
   bool references{true};
-  bool payloads{true};
+  bool payload{true};
   bool specializes{true};
 };
 
@@ -26,7 +26,7 @@ int main(int argc, char **argv) {
                  "enabled(valid when `--flatten` is supplied). Comma separated "
                  "list. \n    l "
                  "`subLayers`, i `inherits`, v `variantSets`, r `references`, "
-                 "p `payloads`, s `specializes`. \n    Example: "
+                 "p `payload`, s `specializes`. \n    Example: "
                  "--composition=r,p --composition=references,subLayers\n";
     exit(-1);
   }
@@ -55,7 +55,7 @@ int main(int argc, char **argv) {
       comp_features.inherits = false;
       comp_features.variantSets = false;
       comp_features.references = false;
-      comp_features.payloads = false;
+      comp_features.payload = false;
       comp_features.specializes = false;
 
       for (const auto &item : items) {
@@ -67,8 +67,8 @@ int main(int argc, char **argv) {
           comp_features.variantSets = true;
         } else if ((item == "r") || (item == "references")) {
           comp_features.references = true;
-        } else if ((item == "p") || (item == "payloads")) {
-          comp_features.payloads = true;
+        } else if ((item == "p") || (item == "payload")) {
+          comp_features.payload = true;
         } else if ((item == "s") || (item == "specializes")) {
           comp_features.specializes = true;
         } else {
@@ -151,7 +151,7 @@ int main(int argc, char **argv) {
     // - [ ] Inherits
     // - [ ] VariantSets
     // - [x] References
-    // - [ ] Payload
+    // - [x] Payload
     // - [ ] Specializes
     //
 
@@ -167,7 +167,7 @@ int main(int argc, char **argv) {
         std::cout << "WARN: " << warn << "\n";
       }
 
-      std::cout << "# composited\n";
+      std::cout << "# `subLayers` composited\n";
       std::cout << composited_layer << "\n";
 
       src_layer = std::move(composited_layer);
@@ -184,7 +184,24 @@ int main(int argc, char **argv) {
         std::cout << "WARN: " << warn << "\n";
       }
 
-      std::cout << "# composited\n";
+      std::cout << "# `references` composited\n";
+      std::cout << composited_layer << "\n";
+
+      src_layer = std::move(composited_layer);
+    }
+
+    if (comp_features.payload) {
+      tinyusdz::Layer composited_layer;
+      if (!tinyusdz::CompositePayload(resolver, src_layer, &composited_layer, &warn, &err)) {
+        std::cerr << "Failed to composite `payload`: " << err << "\n";
+        return -1;
+      }
+
+      if (warn.size()) {
+        std::cout << "WARN: " << warn << "\n";
+      }
+
+      std::cout << "# `payload` composited\n";
       std::cout << composited_layer << "\n";
 
       src_layer = std::move(composited_layer);
