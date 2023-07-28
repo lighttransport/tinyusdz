@@ -40,12 +40,46 @@ typedef bool (*ResolvePathHandler)(const std::string &path, const ResolverAssetI
 class AssetResolutionResolver
 {
  public:
+  AssetResolutionResolver() = default;
+  ~AssetResolutionResolver() {
+  }
+  
+  AssetResolutionResolver(const AssetResolutionResolver &rhs) {
+    if (this != &rhs) {
+      _resolve_path_handler = rhs._resolve_path_handler;
+      _userdata = rhs._userdata;
+      _search_paths = rhs._search_paths;
+    }
+  }
+
+  AssetResolutionResolver &operator=(const AssetResolutionResolver &rhs) {
+    if (this != &rhs) {
+      _resolve_path_handler = rhs._resolve_path_handler;
+      _userdata = rhs._userdata;
+      _search_paths = rhs._search_paths;
+    }
+    return (*this);
+  }
+
+  AssetResolutionResolver &operator=(AssetResolutionResolver &&rhs) {
+    if (this != &rhs) {
+      _resolve_path_handler = rhs._resolve_path_handler;
+      _userdata = rhs._userdata;
+      _search_paths = std::move(rhs._search_paths);
+    }
+    return (*this);
+  }
+
   // TinyUSDZ does not provide global search paths at the moment.
   //static void SetDefaultSearchPath(const std::vector<std::string> &p);
   
   void set_search_paths(const std::vector<std::string> &paths) {
     // TODO: Validate input paths.
     _search_paths = paths;
+  }
+
+  void add_seartch_path(const std::string &path) {
+    _search_paths.push_back(path);
   }
 
   const std::vector<std::string> &search_paths() const {
