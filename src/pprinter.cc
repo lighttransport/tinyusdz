@@ -3588,8 +3588,12 @@ std::string print_primspec(const PrimSpec &primspec, const uint32_t indent) {
 
   ss << print_props(primspec.props(), indent+1);
 
-  for (const auto &item : primspec.children()) {
-    ss << print_primspec(item, indent+1);
+  // TODO: print according to primChildren metadatum
+  for (size_t i = 0; i < primspec.children().size(); i++) {
+    if (i > 0) {
+      ss << pprint::Indent(indent) << "\n";
+    }
+    ss << print_primspec(primspec.children()[i], indent+1);
   }
 
   // TODO: variant
