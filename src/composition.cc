@@ -52,6 +52,7 @@ RECONSTRUCT_PRIM_DECL(GeomCylinder);
 RECONSTRUCT_PRIM_DECL(GeomSphere);
 RECONSTRUCT_PRIM_DECL(GeomBasisCurves);
 RECONSTRUCT_PRIM_DECL(GeomCamera);
+RECONSTRUCT_PRIM_DECL(GeomSubset);
 RECONSTRUCT_PRIM_DECL(SphereLight);
 RECONSTRUCT_PRIM_DECL(DomeLight);
 RECONSTRUCT_PRIM_DECL(DiskLight);
@@ -80,7 +81,7 @@ bool IsVisited(const std::vector<std::set<std::string>> layer_names_stack,
   return false;
 }
 
-bool CompositeSublayersRec(const AssetResolutionResolver &resolver,
+bool CompositeSublayersRec(AssetResolutionResolver &resolver,
                            const Layer &in_layer,
                            std::vector<std::set<std::string>> layer_names_stack,
                            Layer *composited_layer, std::string *warn,
@@ -224,7 +225,7 @@ bool CompositeSublayers(const std::string &base_dir, const Layer &in_layer,
 }
 #endif
 
-bool CompositeSublayers(const AssetResolutionResolver &resolver,
+bool CompositeSublayers(AssetResolutionResolver &resolver,
                         const Layer &in_layer, Layer *composited_layer,
                         std::string *warn, std::string *err,
                         SublayersCompositionOptions options) {
@@ -286,7 +287,7 @@ bool CompositeSublayers(const AssetResolutionResolver &resolver,
 namespace {
 
 bool CompositeReferencesRec(uint32_t depth,
-                            const AssetResolutionResolver &resolver,
+                            AssetResolutionResolver &resolver,
                             PrimSpec &primspec /* [inout] */, std::string *warn,
                             std::string *err,
                             ReferencesCompositionOptions options) {
@@ -298,6 +299,7 @@ bool CompositeReferencesRec(uint32_t depth,
   for (auto &child : primspec.children()) {
     if (!CompositeReferencesRec(depth + 1, resolver, child, warn, err,
                                 options)) {
+      return false;
     }
   }
 
@@ -312,8 +314,9 @@ bool CompositeReferencesRec(uint32_t depth,
 
         if (asset_path.empty()) {
           PUSH_ERROR_AND_RETURN(
-              "TODO: Prim path(e.g. </xform>) in references.");
+              "TODO: No assetPath but Prim path(e.g. </xform>) in references.");
         }
+
 
         Layer layer;
         std::string _warn;
@@ -324,6 +327,17 @@ bool CompositeReferencesRec(uint32_t depth,
         std::string resolved_path = resolver.resolve(asset_path);
 
         DCOUT("Loading references: " << resolved_path << ", asset_path: " << asset_path);
+        if (resolved_path.empty()) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Failed to resolve asset path `{}`", asset_path));
+        }
+
+        // Add resolved asset_path's basedir to search path.
+        std::string base_dir = io::GetBaseDir(resolved_path);
+        if (base_dir.size()) {
+          DCOUT(fmt::format("Add {} to asset search path.", base_dir));
+          resolver.add_seartch_path(base_dir);
+        }
+
         if (!LoadLayerFromFile(resolved_path, &layer, &_warn, &_err)) {
           PUSH_ERROR_AND_RETURN(fmt::format("Failed to open `{}` as Layer: {}",
                                             asset_path, _err));
@@ -409,6 +423,17 @@ bool CompositeReferencesRec(uint32_t depth,
         std::string resolved_path = resolver.resolve(asset_path);
 
         DCOUT("Loading references: " << resolved_path << ", asset_path " << asset_path);
+        if (resolved_path.empty()) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Failed to resolve asset path `{}`", asset_path));
+        }
+
+        // Add resolved asset_path's basedir to search path.
+        std::string base_dir = io::GetBaseDir(resolved_path);
+        if (base_dir.size()) {
+          DCOUT(fmt::format("Add {} to asset search path.", base_dir));
+          resolver.add_seartch_path(base_dir);
+        }
+
         if (!LoadLayerFromFile(asset_path, &layer, &_warn, &_err)) {
           PUSH_ERROR_AND_RETURN(fmt::format("Failed to open `{}` as Layer: {}",
                                             asset_path, _err));
@@ -469,7 +494,7 @@ bool CompositeReferencesRec(uint32_t depth,
 }
 
 bool CompositePayloadRec(uint32_t depth,
-                            const AssetResolutionResolver &resolver,
+                         AssetResolutionResolver &resolver,
                             PrimSpec &primspec /* [inout] */, std::string *warn,
                             std::string *err,
                             PayloadCompositionOptions options) {
@@ -481,6 +506,7 @@ bool CompositePayloadRec(uint32_t depth,
   for (auto &child : primspec.children()) {
     if (!CompositePayloadRec(depth + 1, resolver, child, warn, err,
                                 options)) {
+      return false;
     }
   }
 
@@ -507,6 +533,17 @@ bool CompositePayloadRec(uint32_t depth,
         std::string resolved_path = resolver.resolve(asset_path);
 
         DCOUT("Loading payload: " << resolved_path << ", asset_path: " << asset_path);
+        if (resolved_path.empty()) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Failed to resolve asset path `{}`", asset_path));
+        }
+
+        // Add resolved asset_path's basedir to search path.
+        std::string base_dir = io::GetBaseDir(resolved_path);
+        if (base_dir.size()) {
+          DCOUT(fmt::format("Add {} to asset search path.", base_dir));
+          resolver.add_seartch_path(base_dir);
+        }
+
         if (!LoadLayerFromFile(resolved_path, &layer, &_warn, &_err)) {
           PUSH_ERROR_AND_RETURN(fmt::format("Failed to open `{}` as Layer: {}",
                                             asset_path, _err));
@@ -592,6 +629,17 @@ bool CompositePayloadRec(uint32_t depth,
         std::string resolved_path = resolver.resolve(asset_path);
 
         DCOUT("Loading payload: " << resolved_path << ", asset_path " << asset_path);
+        if (resolved_path.empty()) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Failed to resolve asset path `{}`", asset_path));
+        }
+
+        // Add resolved asset_path's basedir to search path.
+        std::string base_dir = io::GetBaseDir(resolved_path);
+        if (base_dir.size()) {
+          DCOUT(fmt::format("Add {} to asset search path.", base_dir));
+          resolver.add_seartch_path(base_dir);
+        }
+
         if (!LoadLayerFromFile(asset_path, &layer, &_warn, &_err)) {
           PUSH_ERROR_AND_RETURN(fmt::format("Failed to open `{}` as Layer: {}",
                                             asset_path, _err));
@@ -653,7 +701,7 @@ bool CompositePayloadRec(uint32_t depth,
 
 }  // namespace
 
-bool CompositeReferences(const AssetResolutionResolver &resolver,
+bool CompositeReferences(AssetResolutionResolver &resolver,
                          const Layer &in_layer, Layer *composited_layer,
                          std::string *warn, std::string *err,
                          ReferencesCompositionOptions options) {
@@ -676,7 +724,7 @@ bool CompositeReferences(const AssetResolutionResolver &resolver,
   return true;
 }
 
-bool CompositePayload(const AssetResolutionResolver &resolver,
+bool CompositePayload(AssetResolutionResolver &resolver,
                          const Layer &in_layer, Layer *composited_layer,
                          std::string *warn, std::string *err,
                          PayloadCompositionOptions options) {
@@ -942,6 +990,80 @@ bool ReferenceLayerToPrimSpec(PrimSpec &dst, const Layer &layer,
   DCOUT("TODO");
   (void)dst;
   (void)layerOffset;
+
+  return false;
+}
+
+namespace {
+
+bool HasReferencesRec(uint32_t depth,
+                      const PrimSpec &primspec, 
+                      const ReferencesCompositionOptions &options) {
+  if (depth > options.max_depth) {
+    // too deep
+    return false;
+  }
+
+  if (primspec.metas().references) {
+    return true;
+  }
+
+  // Traverse children first.
+  for (auto &child : primspec.children()) {
+    if (HasReferencesRec(depth + 1, child,
+                                options)) {
+      return true;
+    }
+  }
+
+  return false;
+
+}
+
+bool HasPayloadRec(uint32_t depth,
+                      const PrimSpec &primspec, 
+                      const PayloadCompositionOptions &options) {
+  if (depth > options.max_depth) {
+    // too deep
+    return false;
+  }
+
+  if (primspec.metas().payload) {
+    return true;
+  }
+
+  for (auto &child : primspec.children()) {
+    if (HasPayloadRec(depth + 1, child,
+                                options)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+} // namespace 
+
+bool HasReferences(const Layer &layer, const ReferencesCompositionOptions options) {
+
+  for (auto &item : layer.primspecs()) {
+
+    if (HasReferencesRec(/* depth */0, item.second, options)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+bool HasPayload(const Layer &layer, const PayloadCompositionOptions options) {
+
+  for (auto &item : layer.primspecs()) {
+
+    if (HasPayloadRec(/* depth */0, item.second, options)) {
+      return true;
+    }
+  }
 
   return false;
 }

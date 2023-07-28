@@ -9,12 +9,12 @@
 #include "prim-types.hh"
 
 // TODO
-// - [ ] Compose `references`
-// - [ ] Compose `payloads`
+// - [x] Compose `references`
+// - [x] Compose `payloads`
 // - [ ] Compose `specializes`
-// - [ ] Compose `inherits`
+// - [x] Compose `inherits`
 // - [ ] Compose `variantSets`
-// - [ ] Compose `over`
+// - [x] Compose `over`
 
 namespace tinyusdz {
 
@@ -44,6 +44,16 @@ struct PayloadCompositionOptions {
   uint32_t max_depth = 1024u;
 };
 
+///
+/// Return true when any PrimSpec in the Layer contains `references` Prim metadataum
+///
+bool HasReferences(const Layer &layer, const ReferencesCompositionOptions options = ReferencesCompositionOptions());
+
+///
+/// Return true when any PrimSpec in the Layer contains `payload` Prim metadataum
+///
+bool HasPayload(const Layer &layer, const PayloadCompositionOptions options = PayloadCompositionOptions());
+
 #if 0 // deprecate it.
 ///
 /// Load subLayer USD files in `layer`, and return composited(flattened) Layer
@@ -60,7 +70,7 @@ bool CompositeSublayers(
 /// to `composited_layer` Supply AssetResolutionResolver
 ///
 bool CompositeSublayers(
-    const AssetResolutionResolver &resolver, const Layer &layer,
+    AssetResolutionResolver &resolver /* inout */, const Layer &layer,
     Layer *composited_layer, std::string *warn, std::string *err,
     const SublayersCompositionOptions options = SublayersCompositionOptions());
 
@@ -68,7 +78,7 @@ bool CompositeSublayers(
 /// Resolve `references` for each PrimSpe, and return composited(flattened)
 /// Layer to `composited_layer` in `layer`.
 ///
-bool CompositeReferences(const AssetResolutionResolver &resolver,
+bool CompositeReferences(AssetResolutionResolver &resolver /* inout */,
                          const Layer &layer, Layer *composited_layer,
                          std::string *warn, std::string *err,
                          const ReferencesCompositionOptions options =
@@ -79,7 +89,7 @@ bool CompositeReferences(const AssetResolutionResolver &resolver,
 /// to `composited_layer` in `layer`.
 ///
 bool CompositePayload(
-    const AssetResolutionResolver &resolver, const Layer &layer,
+    AssetResolutionResolver &resolver /* inout */, const Layer &layer,
     Layer *composited_layer, std::string *warn, std::string *err,
     const PayloadCompositionOptions options = PayloadCompositionOptions());
 

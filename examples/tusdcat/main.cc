@@ -47,6 +47,7 @@ int main(int argc, char **argv) {
 
   bool has_flatten{false};
   bool has_relative{false};
+  constexpr int kMaxIteration = 128;
 
   std::string filepath;
 
@@ -190,41 +191,63 @@ int main(int argc, char **argv) {
       src_layer = std::move(composited_layer);
     }
 
-    if (comp_features.references) {
-      tinyusdz::Layer composited_layer;
-      if (!tinyusdz::CompositeReferences(resolver, src_layer, &composited_layer, &warn, &err)) {
-        std::cerr << "Failed to composite `references`: " << err << "\n";
-        return -1;
+    // TODO: Find more better way to Recursively resolve references/payload
+    bool all_resolved = true;
+    for (int i = 0; i < kMaxIteration; i++) {
+
+      if (comp_features.references) {
+        if (!tinyusdz::HasReferences(src_layer)) {
+          all_resolved = true;
+        } else {
+          all_resolved = false;
+
+          tinyusdz::Layer composited_layer;
+          if (!tinyusdz::CompositeReferences(resolver, src_layer, &composited_layer, &warn, &err)) {
+            std::cerr << "Failed to composite `references`: " << err << "\n";
+            return -1;
+          }
+
+          if (warn.size()) {
+            std::cout << "WARN: " << warn << "\n";
+          }
+
+          std::cout << "# `references` composited\n";
+          std::cout << composited_layer << "\n";
+
+          src_layer = std::move(composited_layer);
+        }
       }
 
-      if (warn.size()) {
-        std::cout << "WARN: " << warn << "\n";
+      if (comp_features.payload) {
+        if (!tinyusdz::HasPayload(src_layer)) {
+          all_resolved = true;
+        } else {
+          all_resolved = false;
+        }
+
+        tinyusdz::Layer composited_layer;
+        if (!tinyusdz::CompositePayload(resolver, src_layer, &composited_layer, &warn, &err)) {
+          std::cerr << "Failed to composite `payload`: " << err << "\n";
+          return -1;
+        }
+
+        if (warn.size()) {
+          std::cout << "WARN: " << warn << "\n";
+        }
+
+        std::cout << "# `payload` composited\n";
+        std::cout << composited_layer << "\n";
+
+        src_layer = std::move(composited_layer);
       }
 
-      std::cout << "# `references` composited\n";
-      std::cout << composited_layer << "\n";
+      // TODO... more composition features
+      
 
-      src_layer = std::move(composited_layer);
+      if (all_resolved) {
+        break;
+      }
     }
-
-    if (comp_features.payload) {
-      tinyusdz::Layer composited_layer;
-      if (!tinyusdz::CompositePayload(resolver, src_layer, &composited_layer, &warn, &err)) {
-        std::cerr << "Failed to composite `payload`: " << err << "\n";
-        return -1;
-      }
-
-      if (warn.size()) {
-        std::cout << "WARN: " << warn << "\n";
-      }
-
-      std::cout << "# `payload` composited\n";
-      std::cout << composited_layer << "\n";
-
-      src_layer = std::move(composited_layer);
-    }
-
-    // TODO... more composition features
 
   } else {
 

@@ -1700,11 +1700,19 @@ void PrimMetas::update_from(const PrimMetas &rhs) {
   }
 
   if (rhs.assetInfo) {
-    OverrideDictionary(assetInfo.value(), rhs.assetInfo.value());
+    if (assetInfo) {
+      OverrideDictionary(assetInfo.value(), rhs.assetInfo.value());
+    } else {
+      assetInfo = rhs.assetInfo;
+    }
   }
 
   if (rhs.customData) {
-    OverrideDictionary(customData.value(), rhs.customData.value());
+    if (customData) {
+      OverrideDictionary(customData.value(), rhs.customData.value());
+    } else {
+      customData = rhs.customData;
+    }
   }
 
   if (rhs.doc) {
@@ -1720,7 +1728,11 @@ void PrimMetas::update_from(const PrimMetas &rhs) {
   }
 
   if (rhs.sdrMetadata) {
-    OverrideDictionary(sdrMetadata.value(), rhs.sdrMetadata.value());
+    if (sdrMetadata) {
+      OverrideDictionary(sdrMetadata.value(), rhs.sdrMetadata.value());
+    } else {
+      sdrMetadata = rhs.sdrMetadata;
+    }
   }
 
   if (rhs.sceneName) {

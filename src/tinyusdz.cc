@@ -1085,6 +1085,10 @@ bool LoadLayerFromFile(const std::string &_filename, Layer *stage,
                      std::string *warn, std::string *err,
                      const USDLoadOptions &options) {
 
+  if (_filename.empty()) {
+    PUSH_ERROR_AND_RETURN("Input filename is empty.");
+  }
+
   // TODO: Use AssetResolutionResolver.
   std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
   std::string base_dir = io::GetBaseDir(_filename);
