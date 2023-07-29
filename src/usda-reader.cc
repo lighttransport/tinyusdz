@@ -844,6 +844,21 @@ class USDAReader::Impl {
               << var.type_name() << "`.");
         }
 
+      } else if (meta.first == "instanceable") {
+        DCOUT("instanceable. type = " << var.type_name());
+        if (var.type_name() == "bool") {
+          if (auto pv = var.get_value<bool>()) {
+            out->instanceable = pv.value();
+          } else {
+            PUSH_ERROR_AND_RETURN(
+                "(Internal error?) `instanceable` metadataum is not type `bool`.");
+          }
+        } else {
+          PUSH_ERROR_AND_RETURN(
+              "(Internal error?) `instanceable` metadataum is not type `bool`. got `"
+              << var.type_name() << "`.");
+        }
+
       } else if (meta.first == "sceneName") {
         DCOUT("sceneName. type = " << var.type_name());
         if (var.type_name() == value::kString) {

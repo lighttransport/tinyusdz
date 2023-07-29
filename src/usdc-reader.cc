@@ -1294,8 +1294,14 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
     }
 
     if (typeName) {
+      // typeName may be array type.
+      std::string baseTypeName = typeName.value().str();
+      if (endsWith(baseTypeName, "[]")) {
+        baseTypeName = removeSuffix(baseTypeName, "[]");
+      }
+
       // Assume Attribute
-      if (!_supported_prim_attr_types.count(typeName.value().str())) {
+      if (!_supported_prim_attr_types.count(baseTypeName)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Invalid or unsupported `typeName` {}", typeName.value()));
       }
 
@@ -1925,6 +1931,15 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "`hidden` must be type `bool`, but got type `"
+                                      << fv.second.type_name() << "`");
+      }
+    } else if (fv.first == "instanceable") {
+      if (auto pv = fv.second.as<bool>()) {
+        primMeta.instanceable = (*pv);
+        DCOUT("instanceable = " << to_string(primMeta.instanceable.value()));
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                  "`instanceable` must be type `bool`, but got type `"
                                       << fv.second.type_name() << "`");
       }
     } else if (fv.first == "assetInfo") {

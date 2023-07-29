@@ -1699,6 +1699,10 @@ void PrimMetas::update_from(const PrimMetas &rhs) {
     kind = rhs.kind;
   }
 
+  if (rhs.instanceable.has_value()) {
+    instanceable = rhs.instanceable;
+  }
+
   if (rhs.assetInfo) {
     if (assetInfo) {
       OverrideDictionary(assetInfo.value(), rhs.assetInfo.value());
@@ -1793,13 +1797,13 @@ nonstd::optional<const PrimSpec *> GetPrimSpecAtPathRec(const PrimSpec *parent, 
       return pv.value();
     }
   }
-  
+
   // not found
   return nonstd::nullopt;
 }
 
 bool HasReferencesRec(uint32_t depth,
-                      const PrimSpec &primspec, 
+                      const PrimSpec &primspec,
                       const uint32_t max_depth = 1024*128) {
   if (depth > max_depth) {
     // too deep
@@ -1822,7 +1826,7 @@ bool HasReferencesRec(uint32_t depth,
 }
 
 bool HasPayloadRec(uint32_t depth,
-                      const PrimSpec &primspec, 
+                      const PrimSpec &primspec,
                       const uint32_t max_depth = 1024*128) {
   if (depth > max_depth) {
     // too deep
@@ -1910,7 +1914,7 @@ bool Layer::check_unresoled_references(const uint32_t max_depth) const {
   bool ret = false;
 
   for (const auto &item : _prim_specs) {
-    if (HasReferencesRec(/* depth */0, 
+    if (HasReferencesRec(/* depth */0,
       item.second, max_depth)) {
       ret = true;
       break;
@@ -1926,7 +1930,7 @@ bool Layer::check_unresoled_payload(const uint32_t max_depth) const {
   bool ret = false;
 
   for (const auto &item : _prim_specs) {
-    if (HasPayloadRec(/* depth */0, 
+    if (HasPayloadRec(/* depth */0,
       item.second, max_depth)) {
       ret = true;
       break;
