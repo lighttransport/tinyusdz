@@ -15,6 +15,7 @@
 // - [x] Compose `inherits`
 // - [ ] Compose `variantSets`
 // - [x] Compose `over`
+// - [ ] Consider `active` Prim metadatum
 
 namespace tinyusdz {
 
@@ -47,12 +48,22 @@ struct PayloadCompositionOptions {
 ///
 /// Return true when any PrimSpec in the Layer contains `references` Prim metadataum
 ///
-bool HasReferences(const Layer &layer, const ReferencesCompositionOptions options = ReferencesCompositionOptions());
+/// Layer has cached flag for quicky detecting whether Layer has unresolved `references` or not.
+///
+/// @param[in] layer Layer
+/// @param[in] force_check When true, traverse PrimSpec hierarchy and find `references` metadatum. Use cached flag in `layer` when false.
+///
+bool HasReferences(const Layer &layer, const bool force_check = false, const ReferencesCompositionOptions options = ReferencesCompositionOptions());
 
 ///
 /// Return true when any PrimSpec in the Layer contains `payload` Prim metadataum
 ///
-bool HasPayload(const Layer &layer, const PayloadCompositionOptions options = PayloadCompositionOptions());
+/// Layer has cached flag for quicky detecting whether Layer has unresolved `payload` or not.
+///
+/// @param[in] layer Layer
+/// @param[in] force_check When true, traverse PrimSpec hierarchy and find `payload` metadatum. Use cached flag in `layer` when false.
+///
+bool HasPayload(const Layer &layer, const bool force_check = false, const PayloadCompositionOptions options = PayloadCompositionOptions());
 
 #if 0 // deprecate it.
 ///

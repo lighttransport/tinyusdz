@@ -994,78 +994,22 @@ bool ReferenceLayerToPrimSpec(PrimSpec &dst, const Layer &layer,
   return false;
 }
 
-namespace {
+bool HasReferences(const Layer &layer, const bool force_check, const ReferencesCompositionOptions options) {
 
-bool HasReferencesRec(uint32_t depth,
-                      const PrimSpec &primspec, 
-                      const ReferencesCompositionOptions &options) {
-  if (depth > options.max_depth) {
-    // too deep
-    return false;
+  if (!force_check) {
+    return layer.has_unresolved_references();
   }
 
-  if (primspec.metas().references) {
-    return true;
-  }
-
-  // Traverse children first.
-  for (auto &child : primspec.children()) {
-    if (HasReferencesRec(depth + 1, child,
-                                options)) {
-      return true;
-    }
-  }
-
-  return false;
-
+  return layer.check_unresoled_references(options.max_depth);
 }
 
-bool HasPayloadRec(uint32_t depth,
-                      const PrimSpec &primspec, 
-                      const PayloadCompositionOptions &options) {
-  if (depth > options.max_depth) {
-    // too deep
-    return false;
+bool HasPayload(const Layer &layer, const bool force_check, const PayloadCompositionOptions options) {
+
+  if (!force_check) {
+    return layer.has_unresolved_payload();
   }
 
-  if (primspec.metas().payload) {
-    return true;
-  }
-
-  for (auto &child : primspec.children()) {
-    if (HasPayloadRec(depth + 1, child,
-                                options)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-} // namespace 
-
-bool HasReferences(const Layer &layer, const ReferencesCompositionOptions options) {
-
-  for (auto &item : layer.primspecs()) {
-
-    if (HasReferencesRec(/* depth */0, item.second, options)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-bool HasPayload(const Layer &layer, const PayloadCompositionOptions options) {
-
-  for (auto &item : layer.primspecs()) {
-
-    if (HasPayloadRec(/* depth */0, item.second, options)) {
-      return true;
-    }
-  }
-
-  return false;
+  return layer.check_unresoled_payload(options.max_depth);
 }
 
 }  // namespace tinyusdz
