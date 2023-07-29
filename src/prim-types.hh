@@ -800,6 +800,8 @@ struct PrimMetas {
   nonstd::optional<Dictionary>
       sdrMetadata;  // 'sdrMetadata' (usdShade Prim only?)
 
+  nonstd::optional<bool> instanceable; // 'instanceable'
+
   //
   // AssetInfo utility function
   //
@@ -850,7 +852,7 @@ struct PrimMetas {
     return (active || hidden || kind || customData || references || payload ||
             inherits || variants || variantSets || specializes || displayName ||
             sceneName || doc || comment || meta.size() || apiSchemas ||
-            sdrMetadata || assetInfo);
+            sdrMetadata || assetInfo || instanceable);
   }
 
   //

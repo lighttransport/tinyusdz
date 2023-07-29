@@ -268,6 +268,7 @@ static void RegisterPrimMetas(
 
   metas["active"] = AsciiParser::VariableDef(value::kBool, "active");
   metas["hidden"] = AsciiParser::VariableDef(value::kBool, "hidden");
+  metas["instanceable"] = AsciiParser::VariableDef(value::kBool, "instanceable");
 
   // ListOp
   metas["apiSchemas"] = AsciiParser::VariableDef(
@@ -3626,7 +3627,11 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
     Property p;
     p.set_property_type(Property::Type::EmptyAttrib);
     p.set_custom(custom_qual);
-    p.attribute().set_type_name(type_name);
+    std::string typeName = type_name;
+    if (array_qual) {
+      typeName += "[]";
+    }
+    p.attribute().set_type_name(typeName);
 
     p.attribute().variability() = variability;
     if (varying_authored) {
