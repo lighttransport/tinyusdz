@@ -1798,6 +1798,52 @@ nonstd::optional<const PrimSpec *> GetPrimSpecAtPathRec(const PrimSpec *parent, 
   return nonstd::nullopt;
 }
 
+bool HasReferencesRec(uint32_t depth,
+                      const PrimSpec &primspec, 
+                      const uint32_t max_depth = 1024*128) {
+  if (depth > max_depth) {
+    // too deep
+    return false;
+  }
+
+  if (primspec.metas().references) {
+    return true;
+  }
+
+  for (auto &child : primspec.children()) {
+    if (HasReferencesRec(depth + 1, child,
+                                max_depth)) {
+      return true;
+    }
+  }
+
+  return false;
+
+}
+
+bool HasPayloadRec(uint32_t depth,
+                      const PrimSpec &primspec, 
+                      const uint32_t max_depth = 1024*128) {
+  if (depth > max_depth) {
+    // too deep
+    return false;
+  }
+
+  if (primspec.metas().payload) {
+    return true;
+  }
+
+  for (auto &child : primspec.children()) {
+    if (HasPayloadRec(depth + 1, child,
+                                max_depth)) {
+      return true;
+    }
+  }
+
+  return false;
+
+}
+
 } // namespace
 
 bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps, std::string *err) {
@@ -1857,6 +1903,38 @@ bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps, std::string 
   }
 
   return false;
+}
+
+bool Layer::check_unresoled_references(const uint32_t max_depth) const {
+
+  bool ret = false;
+
+  for (const auto &item : _prim_specs) {
+    if (HasReferencesRec(/* depth */0, 
+      item.second, max_depth)) {
+      ret = true;
+      break;
+    }
+  }
+
+  _has_unresolved_references = ret;
+  return _has_unresolved_references;
+}
+
+bool Layer::check_unresoled_payload(const uint32_t max_depth) const {
+
+  bool ret = false;
+
+  for (const auto &item : _prim_specs) {
+    if (HasPayloadRec(/* depth */0, 
+      item.second, max_depth)) {
+      ret = true;
+      break;
+    }
+  }
+
+  _has_unresolved_payload = ret;
+  return _has_unresolved_payload;
 }
 
 }  // namespace tinyusdz

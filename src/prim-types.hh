@@ -3313,6 +3313,54 @@ struct Layer {
   const LayerMetas &metas() const { return _metas; }
   LayerMetas &metas() { return _metas; }
 
+  bool has_unresolved_references() const {
+    return _has_unresolved_references;
+  }
+
+  bool has_unresolved_payload() const {
+    return _has_unresolved_payload;
+  }
+
+  bool has_unresolved_variant() const {
+    return _has_unresolved_variant;
+  }
+
+  bool has_over_primspec() const {
+    return _has_over_primspec;
+  }
+
+  ///
+  /// Check if PrimSpec tree contains any `references` and cache the result.
+  ///
+  /// @param[in] max_depth Maximum PrimSpec traversal depth.
+  /// @returns true if PrimSpec tree contains any (unresolved) `references`. false if not.
+  ///
+  bool check_unresoled_references(const uint32_t max_depth = 1024 * 1024) const;
+
+  ///
+  /// Check if PrimSpec tree contains any `payload` and cache the result.
+  ///
+  /// @param[in] max_depth Maximum PrimSpec traversal depth.
+  /// @returns true if PrimSpec tree contains any (unresolved) `payload`. false if not.
+  ///
+  bool check_unresoled_payload(const uint32_t max_depth = 1024 * 1024) const;
+
+  ///
+  /// Check if PrimSpec tree contains any `variant` and cache the result.
+  ///
+  /// @param[in] max_depth Maximum PrimSpec traversal depth.
+  /// @returns true if PrimSpec tree contains any (unresolved) `variant`. false if not.
+  ///
+  bool check_unresoled_variant(const uint32_t max_depth = 1024 * 1024) const;
+
+  ///
+  /// Check if PrimSpec tree contains any Prim with `over` specifier and cache the result.
+  ///
+  /// @param[in] max_depth Maximum PrimSpec traversal depth.
+  /// @returns true if PrimSpec tree contains any Prim with `over` specifier. false if not.
+  ///
+  bool check_over_primspec(const uint32_t max_depth = 1024 * 1024) const;
+
   ///
   /// Find a PrimSpec at `path` and returns it if found.
   ///
@@ -3337,6 +3385,13 @@ struct Layer {
   // key : prim_part string (e.g. "/path/bora")
   mutable std::map<std::string, const PrimSpec *> _primspec_path_cache;
   mutable bool _dirty{true};
+
+  // Cached flags for composition.
+  // true by default even PrimSpec tree does not contain any `references`, `payload`, etc.
+  mutable bool _has_unresolved_references{true};
+  mutable bool _has_unresolved_payload{true};
+  mutable bool _has_unresolved_variant{true};
+  mutable bool _has_over_primspec{true};
 };
 
 #if 0  // TODO: Remove

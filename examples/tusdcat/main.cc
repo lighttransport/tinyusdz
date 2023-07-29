@@ -196,7 +196,7 @@ int main(int argc, char **argv) {
     for (int i = 0; i < kMaxIteration; i++) {
 
       if (comp_features.references) {
-        if (!tinyusdz::HasReferences(src_layer)) {
+        if (!src_layer.check_unresoled_references()) {
           all_resolved = true;
         } else {
           all_resolved = false;
@@ -219,7 +219,7 @@ int main(int argc, char **argv) {
       }
 
       if (comp_features.payload) {
-        if (!tinyusdz::HasPayload(src_layer)) {
+        if (!src_layer.check_unresoled_payload()) {
           all_resolved = true;
         } else {
           all_resolved = false;
@@ -245,6 +245,7 @@ int main(int argc, char **argv) {
       
 
       if (all_resolved) {
+        std::cout << "# of composition resolve iteration: " << (i + 1) << "\n";
         break;
       }
     }
