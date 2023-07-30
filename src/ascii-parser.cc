@@ -2597,10 +2597,9 @@ bool AsciiParser::LexFloat(std::string *result) {
     }
     _curr_cursor.col++;
 
-    ss << sc;
-
     // sign, '.' or [0-9]
     if ((sc == '+') || (sc == '-')) {
+      ss << sc;
       has_sign = true;
 
       char c;
@@ -2621,9 +2620,14 @@ bool AsciiParser::LexFloat(std::string *result) {
 
     } else if ((sc >= '0') && (sc <= '9')) {
       // ok
+      ss << sc;
     } else if (sc == '.') {
-      // ok
+      // ok but rescan again in 2.
       leading_decimal_dots = true;
+      if (!Rewind(1)) {
+        return false;
+      }
+      _curr_cursor.col--;
     } else {
       PUSH_ERROR_AND_RETURN("Sign or `.` or 0-9 expected.");
     }
@@ -2688,6 +2692,7 @@ bool AsciiParser::LexFloat(std::string *result) {
     _sr->seek_from_current(-1);
     return true;
   }
+
 
   if (Eof()) {
     (*result) = ss.str();
@@ -3849,6 +3854,21 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
         }
       } else if (type_name == value::kDouble4) {
         if (!ParseBasicPrimAttr<value::double4>(array_qual, primattr_name,
+                                                &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kQuath) {
+        if (!ParseBasicPrimAttr<value::quath>(array_qual, primattr_name,
+                                                &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kQuatf) {
+        if (!ParseBasicPrimAttr<value::quatf>(array_qual, primattr_name,
+                                                &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kQuatd) {
+        if (!ParseBasicPrimAttr<value::quatd>(array_qual, primattr_name,
                                                 &attr)) {
           return false;
         }
