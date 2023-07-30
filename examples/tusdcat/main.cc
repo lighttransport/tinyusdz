@@ -33,20 +33,23 @@ static std::string str_tolower(std::string s) {
 
 int main(int argc, char **argv) {
   if (argc < 2) {
-    std::cout << "Usage tusdcat [--flatten] [--composition=STRLIST] [--relative] input.usda/usdc/usdz\n";
-    std::cout << "\n --flatten (not implemented yet) Do composition(load sublayers, refences, payload, evaluate `over`, inherit, variants..)";
+    std::cout << "Usage tusdcat [--flatten] [--composition=STRLIST] [--relative] [--extract-variants] input.usda/usdc/usdz\n";
+    std::cout << "\n --flatten (not fully implemented yet) Do composition(load sublayers, refences, payload, evaluate `over`, inherit, variants..)";
     std::cout << "  --composition: Specify which composition feature to be "
                  "enabled(valid when `--flatten` is supplied). Comma separated "
                  "list. \n    l "
                  "`subLayers`, i `inherits`, v `variantSets`, r `references`, "
                  "p `payload`, s `specializes`. \n    Example: "
                  "--composition=r,p --composition=references,subLayers\n";
+    std::cout << "\n --extract-variants (w.i.p) Dump variants information to .json\n";
     std::cout << "\n --relative (not implemented yet) Print Path as relative Path\n";
     return EXIT_FAILURE;
   }
 
   bool has_flatten{false};
   bool has_relative{false};
+  bool has_extract_variants{false};
+  
   constexpr int kMaxIteration = 128;
 
   std::string filepath;
@@ -60,6 +63,8 @@ int main(int argc, char **argv) {
       has_flatten = true;
     } else if (arg.compare("--relative") == 0) {
       has_relative = true;
+    } else if (arg.compare("--extract-variants") == 0) {
+      has_extract_variants = true;
     } else if (tinyusdz::startsWith(arg, "--composition=")) {
       std::string value_str = tinyusdz::removePrefix(arg, "--composition=");
       if (value_str.empty()) {
@@ -250,6 +255,16 @@ int main(int argc, char **argv) {
       }
     }
 
+    if (has_extract_variants) {
+      tinyusdz::Dictionary dict;
+      if (!tinyusdz::ExtractVariants(src_layer, &dict, &err)) {
+        std::cerr << "Failed to extract variants info: " << err;
+      } else {
+        std::cout << "== Variants info ==\n" << tinyusdz::to_string(dict) << "\n";
+      }
+
+    }
+
   } else {
 
     tinyusdz::Stage stage;
@@ -328,6 +343,16 @@ int main(int argc, char **argv) {
 
     std::string s = stage.ExportToString(has_relative);
     std::cout << s << "\n";
+
+    if (has_extract_variants) {
+      tinyusdz::Dictionary dict;
+      if (!tinyusdz::ExtractVariants(stage, &dict, &err)) {
+        std::cerr << "Failed to extract variants info: " << err;
+      } else {
+        std::cout << "== Variants info ==\n" << tinyusdz::to_string(dict) << "\n";
+      }
+
+    }
   }
 
   return EXIT_SUCCESS;

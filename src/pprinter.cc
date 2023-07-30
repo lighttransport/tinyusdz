@@ -1627,7 +1627,15 @@ std::string print_customData(const CustomDataType &customData, const std::string
 
   ss << pprint::Indent(indent);
   if (!dict_name.empty()) {
-    ss << dict_name << " = {\n";
+
+    std::string name = dict_name;
+
+    if (!isValidIdentifier(name)) {
+      // May contain "/", quote it
+      name = quote(name);
+    }
+
+    ss << name << " = {\n";
   } else {
     ss << "{\n";
   }
@@ -1657,6 +1665,10 @@ std::string print_meta(const MetaVariable &meta, const uint32_t indent, const st
 
   if (auto pv = meta.get_value<CustomDataType>()) {
     // dict
+    if (!isValidIdentifier(name)) {
+      // May contain "/", quote it
+      name = quote(name);
+    }
     ss << pprint::Indent(indent) << "dictionary " << name << " = {\n";
     for (const auto &item : pv.value()) {
       ss << print_meta(item.second, indent+1, item.first);
@@ -2003,7 +2015,7 @@ std::string print_variantSetStmt(
   const std::map<std::string, VariantSet> &vslist, const uint32_t indent) {
   std::stringstream ss;
 
-  ss << "# variantSet.size = " << std::to_string(vslist.size()) << "\n";
+  //ss << "# variantSet.size = " << std::to_string(vslist.size()) << "\n";
   for (const auto &variantSet : vslist) {
 
     if (variantSet.second.variantSet.empty()) {

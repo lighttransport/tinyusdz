@@ -10,9 +10,9 @@
 #include "common-macros.inc"
 #include "io-util.hh"
 #include "pprinter.hh"
+#include "prim-pprint.hh"
 #include "prim-reconstruct.hh"
 #include "prim-types.hh"
-#include "prim-pprint.hh"
 #include "tiny-format.hh"
 #include "usdGeom.hh"
 #include "usdLux.hh"
@@ -213,7 +213,7 @@ bool CompositeSublayersRec(AssetResolutionResolver &resolver,
 
 }  // namespace
 
-#if 0 // TODO: remove
+#if 0  // TODO: remove
 bool CompositeSublayers(const std::string &base_dir, const Layer &in_layer,
                         Layer *composited_layer, std::string *warn,
                         std::string *err, SublayersCompositionOptions options) {
@@ -286,8 +286,7 @@ bool CompositeSublayers(AssetResolutionResolver &resolver,
 
 namespace {
 
-bool CompositeReferencesRec(uint32_t depth,
-                            AssetResolutionResolver &resolver,
+bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
                             PrimSpec &primspec /* [inout] */, std::string *warn,
                             std::string *err,
                             ReferencesCompositionOptions options) {
@@ -317,7 +316,6 @@ bool CompositeReferencesRec(uint32_t depth,
               "TODO: No assetPath but Prim path(e.g. </xform>) in references.");
         }
 
-
         Layer layer;
         std::string _warn;
         std::string _err;
@@ -326,9 +324,11 @@ bool CompositeReferencesRec(uint32_t depth,
         // TODO: Store resolved path to Reference?
         std::string resolved_path = resolver.resolve(asset_path);
 
-        DCOUT("Loading references: " << resolved_path << ", asset_path: " << asset_path);
+        DCOUT("Loading references: " << resolved_path
+                                     << ", asset_path: " << asset_path);
         if (resolved_path.empty()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Failed to resolve asset path `{}`", asset_path));
+          PUSH_ERROR_AND_RETURN(
+              fmt::format("Failed to resolve asset path `{}`", asset_path));
         }
 
         // Add resolved asset_path's basedir to search path.
@@ -372,7 +372,9 @@ bool CompositeReferencesRec(uint32_t depth,
 
         const PrimSpec *src_ps{nullptr};
         if (!layer.find_primspec_at(Path(default_prim, ""), &src_ps, err)) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Failed to find PrimSpec `{}` in layer `{}`", default_prim, asset_path));
+          PUSH_ERROR_AND_RETURN(
+              fmt::format("Failed to find PrimSpec `{}` in layer `{}`",
+                          default_prim, asset_path));
         }
 
         if (!src_ps) {
@@ -422,9 +424,11 @@ bool CompositeReferencesRec(uint32_t depth,
         // TODO: Store resolved path to Reference?
         std::string resolved_path = resolver.resolve(asset_path);
 
-        DCOUT("Loading references: " << resolved_path << ", asset_path " << asset_path);
+        DCOUT("Loading references: " << resolved_path << ", asset_path "
+                                     << asset_path);
         if (resolved_path.empty()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Failed to resolve asset path `{}`", asset_path));
+          PUSH_ERROR_AND_RETURN(
+              fmt::format("Failed to resolve asset path `{}`", asset_path));
         }
 
         // Add resolved asset_path's basedir to search path.
@@ -460,7 +464,9 @@ bool CompositeReferencesRec(uint32_t depth,
 
         const PrimSpec *src_ps{nullptr};
         if (!layer.find_primspec_at(Path(default_prim, ""), &src_ps, err)) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Failed to find PrimSpec `{}` in layer `{}`", default_prim, asset_path));
+          PUSH_ERROR_AND_RETURN(
+              fmt::format("Failed to find PrimSpec `{}` in layer `{}`",
+                          default_prim, asset_path));
         }
 
         if (!src_ps) {
@@ -475,13 +481,11 @@ bool CompositeReferencesRec(uint32_t depth,
 
         // Modify Prim type if this PrimSpec is Model type.
         if (primspec.typeName().empty() || primspec.typeName() == "Model") {
-
           if (src_ps->typeName().empty() || src_ps->typeName() == "Model") {
             // pass
           } else {
             primspec.typeName() = src_ps->typeName();
           }
-
         }
       }
     }
@@ -493,19 +497,16 @@ bool CompositeReferencesRec(uint32_t depth,
   return true;
 }
 
-bool CompositePayloadRec(uint32_t depth,
-                         AssetResolutionResolver &resolver,
-                            PrimSpec &primspec /* [inout] */, std::string *warn,
-                            std::string *err,
-                            PayloadCompositionOptions options) {
+bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
+                         PrimSpec &primspec /* [inout] */, std::string *warn,
+                         std::string *err, PayloadCompositionOptions options) {
   if (depth > options.max_depth) {
     PUSH_ERROR_AND_RETURN("Too deep.");
   }
 
   // Traverse children first.
   for (auto &child : primspec.children()) {
-    if (!CompositePayloadRec(depth + 1, resolver, child, warn, err,
-                                options)) {
+    if (!CompositePayloadRec(depth + 1, resolver, child, warn, err, options)) {
       return false;
     }
   }
@@ -532,9 +533,11 @@ bool CompositePayloadRec(uint32_t depth,
         // TODO: Store resolved path to Reference?
         std::string resolved_path = resolver.resolve(asset_path);
 
-        DCOUT("Loading payload: " << resolved_path << ", asset_path: " << asset_path);
+        DCOUT("Loading payload: " << resolved_path
+                                  << ", asset_path: " << asset_path);
         if (resolved_path.empty()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Failed to resolve asset path `{}`", asset_path));
+          PUSH_ERROR_AND_RETURN(
+              fmt::format("Failed to resolve asset path `{}`", asset_path));
         }
 
         // Add resolved asset_path's basedir to search path.
@@ -578,7 +581,9 @@ bool CompositePayloadRec(uint32_t depth,
 
         const PrimSpec *src_ps{nullptr};
         if (!layer.find_primspec_at(Path(default_prim, ""), &src_ps, err)) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Failed to find PrimSpec `{}` in layer `{}`", default_prim, asset_path));
+          PUSH_ERROR_AND_RETURN(
+              fmt::format("Failed to find PrimSpec `{}` in layer `{}`",
+                          default_prim, asset_path));
         }
 
         if (!src_ps) {
@@ -628,9 +633,11 @@ bool CompositePayloadRec(uint32_t depth,
         // TODO: Store resolved path to Reference?
         std::string resolved_path = resolver.resolve(asset_path);
 
-        DCOUT("Loading payload: " << resolved_path << ", asset_path " << asset_path);
+        DCOUT("Loading payload: " << resolved_path << ", asset_path "
+                                  << asset_path);
         if (resolved_path.empty()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Failed to resolve asset path `{}`", asset_path));
+          PUSH_ERROR_AND_RETURN(
+              fmt::format("Failed to resolve asset path `{}`", asset_path));
         }
 
         // Add resolved asset_path's basedir to search path.
@@ -666,7 +673,9 @@ bool CompositePayloadRec(uint32_t depth,
 
         const PrimSpec *src_ps{nullptr};
         if (!layer.find_primspec_at(Path(default_prim, ""), &src_ps, err)) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Failed to find PrimSpec `{}` in layer `{}`", default_prim, asset_path));
+          PUSH_ERROR_AND_RETURN(
+              fmt::format("Failed to find PrimSpec `{}` in layer `{}`",
+                          default_prim, asset_path));
         }
 
         if (!src_ps) {
@@ -681,13 +690,11 @@ bool CompositePayloadRec(uint32_t depth,
 
         // Modify Prim type if this PrimSpec is Model type.
         if (primspec.typeName().empty() || primspec.typeName() == "Model") {
-
           if (src_ps->typeName().empty() || src_ps->typeName() == "Model") {
             // pass
           } else {
             primspec.typeName() = src_ps->typeName();
           }
-
         }
       }
     }
@@ -709,11 +716,11 @@ bool CompositeReferences(AssetResolutionResolver &resolver,
     return false;
   }
 
-  Layer dst = in_layer; // deep copy
+  Layer dst = in_layer;  // deep copy
 
   for (auto &item : dst.primspecs()) {
-
-    if (!CompositeReferencesRec(/* depth */0, resolver, item.second, warn, err, options)) {
+    if (!CompositeReferencesRec(/* depth */ 0, resolver, item.second, warn, err,
+                                options)) {
       PUSH_ERROR_AND_RETURN("Composite `references` failed.");
     }
   }
@@ -724,19 +731,18 @@ bool CompositeReferences(AssetResolutionResolver &resolver,
   return true;
 }
 
-bool CompositePayload(AssetResolutionResolver &resolver,
-                         const Layer &in_layer, Layer *composited_layer,
-                         std::string *warn, std::string *err,
-                         PayloadCompositionOptions options) {
+bool CompositePayload(AssetResolutionResolver &resolver, const Layer &in_layer,
+                      Layer *composited_layer, std::string *warn,
+                      std::string *err, PayloadCompositionOptions options) {
   if (!composited_layer) {
     return false;
   }
 
-  Layer dst = in_layer; // deep copy
+  Layer dst = in_layer;  // deep copy
 
   for (auto &item : dst.primspecs()) {
-
-    if (!CompositePayloadRec(/* depth */0, resolver, item.second, warn, err, options)) {
+    if (!CompositePayloadRec(/* depth */ 0, resolver, item.second, warn, err,
+                             options)) {
       PUSH_ERROR_AND_RETURN("Composite `payload` failed.");
     }
   }
@@ -890,7 +896,6 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
   ps.typeName() = dst.typeName();
   ps.specifier() = dst.specifier();
 
-
   // Override metadataum
   ps.metas().update_from(dst.metas());
 
@@ -994,8 +999,8 @@ bool ReferenceLayerToPrimSpec(PrimSpec &dst, const Layer &layer,
   return false;
 }
 
-bool HasReferences(const Layer &layer, const bool force_check, const ReferencesCompositionOptions options) {
-
+bool HasReferences(const Layer &layer, const bool force_check,
+                   const ReferencesCompositionOptions options) {
   if (!force_check) {
     return layer.has_unresolved_references();
   }
@@ -1003,13 +1008,214 @@ bool HasReferences(const Layer &layer, const bool force_check, const ReferencesC
   return layer.check_unresoled_references(options.max_depth);
 }
 
-bool HasPayload(const Layer &layer, const bool force_check, const PayloadCompositionOptions options) {
-
+bool HasPayload(const Layer &layer, const bool force_check,
+                const PayloadCompositionOptions options) {
   if (!force_check) {
     return layer.has_unresolved_payload();
   }
 
   return layer.check_unresoled_payload(options.max_depth);
+}
+
+namespace {
+
+bool ExtractVariantsRec(uint32_t depth, const std::string &root_path,
+                        const PrimSpec &ps, Dictionary &dict,
+                        const uint32_t max_depth, std::string *err) {
+  if (depth > max_depth) {
+    if (err) {
+      (*err) += "Too deep\n";
+    }
+    return false;
+  }
+
+  Dictionary variantInfos;
+
+  if (ps.name().empty()) {
+    if (err) {
+      (*err) += "PrimSpec name is empty.\n";
+    }
+    return false;
+  }
+
+  std::string full_prim_path = root_path + "/" + ps.name();
+
+  if (ps.metas().variantSets) {
+    const std::vector<std::string> &vsets =
+        ps.metas().variantSets.value().second;
+    MetaVariable var;
+    var.set_value(vsets);
+    variantInfos["variantSets"] = var;
+  }
+
+  if (ps.metas().variants) {
+    Dictionary values;
+
+    const VariantSelectionMap &vsmap = ps.metas().variants.value();
+    for (const auto &item : vsmap) {
+      MetaVariable var;
+      var.set_value(item.second);
+
+      values[item.first] = item.second;
+    }
+
+    variantInfos["variants"] = values;
+  }
+
+  if (variantInfos.size()) {
+    dict[full_prim_path] = variantInfos;
+  }
+
+  // Traverse children
+  for (const auto &child : ps.children()) {
+    if (!ExtractVariantsRec(depth + 1, full_prim_path, child, dict, max_depth,
+                            err)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool ExtractVariantsRec(uint32_t depth, const std::string &root_path,
+                        const Prim &prim, Dictionary &dict,
+                        const uint32_t max_depth, std::string *err) {
+  if (depth > max_depth) {
+    if (err) {
+      (*err) += "Too deep\n";
+    }
+    return false;
+  }
+
+  Dictionary variantInfos;
+
+  if (prim.element_name().empty()) {
+    if (err) {
+      (*err) += "Prim name is empty.\n";
+    }
+    return false;
+  }
+
+  std::string full_prim_path = root_path + "/" + prim.element_name();
+
+  if (prim.metas().variantSets) {
+    const std::vector<std::string> &vsets =
+        prim.metas().variantSets.value().second;
+    MetaVariable var;
+    var.set_value(vsets);
+    variantInfos["variantSets"] = var;
+  }
+
+  if (prim.metas().variants) {
+    Dictionary values;
+
+    const VariantSelectionMap &vsmap = prim.metas().variants.value();
+    for (const auto &item : vsmap) {
+      MetaVariable var;
+      var.set_value(item.second);
+
+      values[item.first] = item.second;
+    }
+
+    variantInfos["variants"] = values;
+  }
+
+  // variantSetChildren Prim metadataum supercedes Prim's variantSets Stmt
+  if (prim.metas().variantSetChildren) {
+    const std::vector<value::token> &vsets =
+        prim.metas().variantSetChildren.value();
+    // to string
+    std::vector<std::string> vsetchildren;
+    for (const auto &item : vsets) {
+      if (!item.valid()) {
+        if (err) {
+          (*err) += "Invalid variantSetChildren token found.\n";
+        }
+        return false;
+      }
+      vsetchildren.push_back(item.str());
+    }
+    variantInfos["variantSet"] = vsetchildren;
+  } else if (prim.variantSets().size()) {
+
+    Dictionary vsetdict;
+
+    for (const auto &item : prim.variantSets()) {
+
+      if (item.second.variantSet.size()) {
+        std::vector<std::string> variantStmtNames;
+
+        if (item.second.name.empty()) {
+          if (err) {
+            (*err) += "Invalid variantSets Statements found.\n";
+          }
+          return false;
+        }
+
+        for (const auto &v : item.second.variantSet) {
+          variantStmtNames.push_back(v.first);
+        }
+
+        vsetdict[item.first] = variantStmtNames;
+      } 
+    }
+
+    if (vsetdict.size()) {
+      variantInfos["variantSet"] = vsetdict;
+    }
+  }
+
+  if (variantInfos.size()) {
+    dict[full_prim_path] = variantInfos;
+  }
+
+  // Traverse children
+  for (const auto &child : prim.children()) {
+    if (!ExtractVariantsRec(depth + 1, full_prim_path, child, dict, max_depth,
+                            err)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+}  // namespace
+
+bool ExtractVariants(const Layer &layer, Dictionary *dict, std::string *err) {
+  if (!dict) {
+    if (err) {
+      (*err) += "`dict` argument is nullptr.\n";
+    }
+
+    return false;
+  }
+
+  for (const auto &primspec : layer.primspecs()) {
+    if (!ExtractVariantsRec(/* depth */0, /* root path */"", primspec.second, (*dict), /* max_depth */1024*1024, err)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool ExtractVariants(const Stage &stage, Dictionary *dict, std::string *err) {
+  if (!dict) {
+    if (err) {
+      (*err) += "`dict` argument is nullptr.\n";
+    }
+
+    return false;
+  }
+
+  for (const auto &prim : stage.root_prims()) {
+    if (!ExtractVariantsRec(/* depth */0, /* root path */"", prim, (*dict), /* max_depth */1024*1024, err)) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 }  // namespace tinyusdz

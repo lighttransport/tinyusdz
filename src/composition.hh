@@ -205,6 +205,20 @@ bool ReferenceLayerToPrimSpec(PrimSpec &dst, const Layer &layer,
                               const Path primPath = Path(),
                               const LayerOffset layerOffset = LayerOffset());
 
+///
+/// Extract Variant information from Layer.
+///
+/// Example:
+/// 
+/// { "/cube0" : { "variantSets" : ["colorVariant"], "variants" : { "colorVariant" : "green" } } }
+///
+bool ExtractVariants(const Layer &layer, Dictionary *dict, std::string *err);
+
+///
+/// Extract Variant information from Stage.
+///
+bool ExtractVariants(const Stage &stage, Dictionary *dict, std::string *err);
+
 #if 0  // TODO
 ///
 /// Implementation of `references`
