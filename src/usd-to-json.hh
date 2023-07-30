@@ -23,4 +23,11 @@ namespace tinyusdz {
 ///
 nonstd::expected<std::string, std::string> ToJSON(const tinyusdz::Stage &stage);
 
+
+///
+/// Convert Dictionary datatype to json string
+///
+bool DictToJSON(const Dictionary &dict, std::string &json_string, std::string *warn, std::string *err);
+
+
 } // namespace tinyusd

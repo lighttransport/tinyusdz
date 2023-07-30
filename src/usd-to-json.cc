@@ -18,6 +18,7 @@
 
 #include "common-macros.inc"
 #include "pprinter.hh"
+#include "value-pprint.hh"
 
 using namespace nlohmann;
 
@@ -226,6 +227,66 @@ nonstd::expected<std::string, std::string> ToJSON(
   std::string str = j.dump(/* indent*/ 2);
 
   return str;
+}
+
+namespace {
+
+bool MetaVarToJSONRec(
+  uint32_t depth,
+  const std::string &name,
+  const tinyusdz::MetaVariable& var,
+  json &j,
+  std::string *warn,
+  std::string *err) {
+
+  if (depth > (1024 * 1024)) {
+    return false;
+  }
+
+  if (auto pv = var.get_value<Dictionary>()) {
+
+    const Dictionary &dict = pv.value();
+
+    json cj;
+    for (const auto &item : dict) {
+      if (!MetaVarToJSONRec(depth+1, item.first, item.second, cj, warn, err)) {
+        return false;
+      }
+
+    }
+    j[name] = cj;
+
+  } else {
+
+    // For now, use string for all type.
+    std::string s = tinyusdz::value::pprint_value(var.get_raw_value());
+    
+    j[name] = s ;
+  }
+
+
+  return true;
+}
+
+}  // namespace
+
+bool DictToJSON(
+    const tinyusdz::Dictionary& dict,
+  std::string &json_str,
+  std::string *warn,
+  std::string *err) {
+
+  json j;  // root
+
+  for (const auto &item : dict) {
+    if (!MetaVarToJSONRec(0, item.first, item.second, j, warn, err)) {
+      return false;
+    }
+  }
+
+  json_str = j.dump(/* indent*/ 2);
+
+  return true;
 }
 
 }  // namespace tinyusdz
