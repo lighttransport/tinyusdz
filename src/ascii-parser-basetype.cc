@@ -142,6 +142,7 @@ int parseInt(const std::string &s, int *out_result) {
 }
 
 nonstd::expected<float, std::string> ParseFloat(const std::string &s) {
+
   // Parse with fast_float
   float result;
   auto ans = fast_float::from_chars(s.data(), s.data() + s.size(), result);
@@ -154,6 +155,7 @@ nonstd::expected<float, std::string> ParseFloat(const std::string &s) {
 }
 
 nonstd::expected<double, std::string> ParseDouble(const std::string &s) {
+
   // Parse with fast_float
   double result;
   auto ans = fast_float::from_chars(s.data(), s.data() + s.size(), result);
