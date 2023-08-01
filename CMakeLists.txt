@@ -365,6 +365,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
     ${PROJECT_SOURCE_DIR}/src/image-writer.cc
     ${PROJECT_SOURCE_DIR}/src/image-util.cc
+    ${PROJECT_SOURCE_DIR}/src/json-util.cc
     ${PROJECT_SOURCE_DIR}/src/linear-algebra.cc
     ${PROJECT_SOURCE_DIR}/src/usdGeom.cc
     ${PROJECT_SOURCE_DIR}/src/usdSkel.cc
