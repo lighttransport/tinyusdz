@@ -1765,7 +1765,7 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
       return true;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH: {
-      // AssetPath = std::string(storage format is TokenIndex).
+      // AssetPath = TokenIndex for inlined value.
       if (auto v = GetToken(crate::Index(d))) {
         std::string str = v.value().str();
 
@@ -2275,7 +2275,9 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH: {
       COMPRESS_UNSUPPORTED_CHECK(dty)
-      NON_ARRAY_UNSUPPORTED_CHECK(dty)
+
+      // AssetPath is encoded as StringIndex for uninlined and array value
+      // NOTE: inlined value uses TokenIndex.
 
       if (rep.IsArray()) {
 
@@ -2284,7 +2286,6 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return true;
         }
 
-        // AssetPath = std::string(storage format is TokenIndex).
         uint64_t n;
         if (!_sr->read8(&n)) {
           PUSH_ERROR("Failed to read the number of array elements.");
@@ -2301,15 +2302,15 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         if (!_sr->read(size_t(n) * sizeof(crate::Index),
                        size_t(n) * sizeof(crate::Index),
                        reinterpret_cast<uint8_t *>(v.data()))) {
-          PUSH_ERROR("Failed to read TokenIndex array.");
+          PUSH_ERROR("Failed to read StringIndex array.");
           return false;
         }
 
         std::vector<value::AssetPath> apaths(static_cast<size_t>(n));
 
         for (size_t i = 0; i < n; i++) {
-          if (auto tokv = GetToken(v[i])) {
-            DCOUT("Token[" << i << "] = " << tokv.value());
+          if (auto tokv = GetStringToken(v[i])) {
+            DCOUT("StringToken[" << i << "] = " << tokv.value());
             apaths[i] = value::AssetPath(tokv.value().str());
           } else {
             return false;
@@ -2319,7 +2320,28 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         value->Set(apaths);
         return true;
       } else {
-        return false;
+
+        CHECK_MEMORY_USAGE(sizeof(crate::Index));
+
+        crate::Index v;
+        if (!_sr->read(sizeof(crate::Index), sizeof(crate::Index),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read uint64 data.");
+          return false;
+        }
+
+        DCOUT("StrIndex = " << v);
+
+        if (auto tokv = GetStringToken(v)) {
+          DCOUT("StringToken = " << tokv.value());
+          value::AssetPath apath(tokv.value().str());
+          value->Set(apath);
+        } else {
+          PUSH_ERROR_AND_RETURN("Invalid StringToken found.");
+          return false;
+        }
+
+        return true;
       }
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN: {
