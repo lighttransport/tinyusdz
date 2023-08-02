@@ -4021,29 +4021,14 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
       } else if (type_name == value::kTexCoord2f) {
         if (!ParseBasicPrimAttr<value::texcoord2f>(array_qual, primattr_name,
                                                    &attr)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse texCoord2f data.");
+          return false;
         }
 
       } else if (type_name == value::kAssetPath) {
-        Reference asset_ref;
-        bool triple_deliminated{false};
-        if (!ParseReference(&asset_ref, &triple_deliminated)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse `asset` data.");
+        if (!ParseBasicPrimAttr<value::AssetPath>(array_qual, primattr_name,
+                                                   &attr)) {
+          return false;
         }
-
-        DCOUT("Asset path = " << asset_ref.asset_path);
-        value::AssetPath assetp(asset_ref.asset_path);
-        primvar::PrimVar var;
-        var.set_value(assetp);
-        attr.set_var(std::move(var));
-
-        // optional: attribute meta.
-        AttrMeta meta;
-        if (!ParseAttrMeta(&meta)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse Attribute meta.");
-        }
-        attr.metas() = meta;
-
       } else {
         PUSH_ERROR_AND_RETURN("TODO: type = " + type_name);
       }
