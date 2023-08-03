@@ -483,3 +483,4 @@ TinyUSDZ is licensed under MIT license and Apache 2.0 license.
 * virtualGizmo3D: BSD-2 license. https://github.com/BrutPitt/virtualGizmo3D
 * nanozlib: Apache 2.0 license. https://github.com/lighttransport/nanozlib
 * lz4.py: MIT license. https://github.com/SE2Dev/PyCoD/blob/master/_lz4.py
+* minijson: MIT license. https://github.com/mattn/minijson
