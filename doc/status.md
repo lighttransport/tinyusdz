@@ -83,6 +83,7 @@ NOTE: USDC(Binary) = Read only
 
 ## Work in progress
 
+* [x] Custom filesystem handler(Asset Resolution)
 * [ ] Composition(VariantSet) syntax
   * [x] VariantSet Ascii parse
   * [x] VariantSet Ascii print
@@ -95,6 +96,13 @@ NOTE: USDC(Binary) = Read only
   * Please see [usdObj.md](usdObj.md)
 * [ ] C-API for other languages
 * [ ] Python binding and package.
+* [ ] Composition Arcs
+  * Parsing some Composition Arcs possible, needs Evaluation of it.
+  * [x] subLayers
+  * [x] references
+  * [x] payloads(delayed load)
+  * [ ] variants/variantSets
+  * [ ] specializers(priority is low)
 
 ## TODO
 
@@ -103,16 +111,8 @@ NOTE: USDC(Binary) = Read only
 * [ ] MeshLight(GeometryLight)
 * [ ] Collection API
   * e.g. Light Sets
-* [ ] Composition Arcs
-  * Parsing some Composition Arcs possible, needs Evaluation of it.
-  * [ ] subLayers
-  * [ ] references
-  * [ ] payloads(delayed load)
-  * [ ] variants/variantSets(priority is low)
-  * [ ] specializers(priority is low)
 * [ ] Delayed load of Layer/Stage
 * [ ] Instancing
-* [ ] Custom filesystem handler(Asset Resolution)
 * [ ] Volume(usdVol)
   * [ ] MagicaVoxel vox for Volume?
   * [ ] VDBVolume support through TinyVDBIO? https://github.com/syoyo/tinyvdbio

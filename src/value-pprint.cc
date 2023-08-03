@@ -887,7 +887,7 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
         std::transform(p->begin(), p->end(), std::back_inserter(vs),
                        [](const value::token &tok) { return buildEscapedAndQuotedStringForUSDA(tok.str()); });
 
-        os << quote(vs);
+        os << vs;
       } else {
         os << "[InternalError: `token[]` type TypeId mismatch.]";
       }
