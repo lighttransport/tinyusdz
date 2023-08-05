@@ -44,7 +44,6 @@
 
 #include "handle-allocator.hh"
 #include "primvar.hh"
-// #include "tiny-variant.hh"
 //
 #include "value-eval-util.hh"
 
@@ -2389,7 +2388,9 @@ struct XformOp {
 // forward decl
 struct Model;
 class Prim;
+class PrimSpec;
 
+// TODO: deprecate this and use PrimSpec for variantSet statement.
 // Variant item in VariantSet.
 // Variant can contain Prim metas, Prim tree and properties.
 struct Variant {
@@ -2417,6 +2418,7 @@ struct Variant {
   std::vector<Prim> _primChildren;
 };
 
+
 struct VariantSet {
   // variantSet name = {
   //   "variant1" ...
@@ -2426,6 +2428,13 @@ struct VariantSet {
 
   std::string name;
   std::map<std::string, Variant> variantSet;
+};
+
+// For variantSet statement in PrimSpec(composition).
+struct VariantSetSpec
+{
+  std::string name;
+  std::map<std::string, PrimSpec> variantSet;
 };
 
 // Generic primspec container.
@@ -3057,13 +3066,23 @@ class PrimSpec {
   std::vector<PrimSpec> &children() { return _children; }
 
   ///
-  /// List variants in this Prim
-  /// key = variant prim name
+  /// List variants in this PrimSpec
+  /// key = variant name
   /// value = variats
   ///
   const VariantSelectionMap &get_variant_selection_map() const {
     return _vsmap;
   }
+
+  ///
+  /// Variants
+  ///
+  /// VariantSet = Prim metas + Properties and/or child Prims
+  ///            = repsetent as PrimNode for a while.
+  ///
+  ///
+  /// key = variant name
+  std::map<std::string, VariantSetSpec> &variantSets() { return _variantSets; }
 
   const PrimMeta &metas() const { return _metas; }
 
@@ -3080,6 +3099,14 @@ class PrimSpec {
   const std::vector<Payload> &get_payloads();
   const ListEditQual &get_payloads_listedit_qualifier();
 
+  const std::vector<value::token> &primChildren() const {
+    return _primChildren;
+  }
+
+  const std::vector<value::token> &propertyNames() const {
+    return _properties;
+  }
+
  private:
   void CopyFrom(const PrimSpec &rhs) {
     _specifier = rhs._specifier;
@@ -3094,6 +3121,10 @@ class PrimSpec {
 
     _variantAttributeMap = rhs._variantAttributeMap;
     _variantPrimNodeMap = rhs._variantPrimNodeMap;
+
+    _primChildren = rhs._primChildren;
+    _properties = rhs._properties;
+    _variantChildren = rhs._variantChildren;
 
     _metas = rhs._metas;
   }
@@ -3111,6 +3142,10 @@ class PrimSpec {
 
     _variantAttributeMap = std::move(rhs._variantAttributeMap);
     _variantPrimNodeMap = std::move(rhs._variantPrimNodeMap);
+
+    _primChildren = rhs._primChildren;
+    _properties = rhs._properties;
+    _variantChildren = rhs._variantChildren;
 
     _metas = std::move(rhs._metas);
   }
@@ -3137,13 +3172,11 @@ class PrimSpec {
   std::map<std::string, PropertyMap> _variantAttributeMap;
   std::map<std::string, PrimSpecMap> _variantPrimNodeMap;
 
-#if 0
-  ///
-  /// Information for Crate(USDC binary)
-  ///
-  std::vector<value::token> _primChildren;
+  std::map<std::string, VariantSetSpec> _variantSets;
+
+  std::vector<value::token> _primChildren;  // List of child PrimSPec nodes
+  std::vector<value::token> _properties;    // List of property names
   std::vector<value::token> _variantChildren;
-#endif
 
   PrimMeta _metas;
 };
