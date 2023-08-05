@@ -2792,8 +2792,9 @@ std::string to_string(const Material &material, const uint32_t indent, bool clos
 
   if (material.surface.authored()) {
 
+    // assume connection when authored.
     // TODO: list edit?.
-    ss << pprint::Indent(indent+1) << "token outputs:surface ";
+    ss << pprint::Indent(indent+1) << "token outputs:surface.connect ";
 
     const auto &conns = material.surface.get_connections();
     if (conns.size() == 1) {
@@ -2816,8 +2817,9 @@ std::string to_string(const Material &material, const uint32_t indent, bool clos
   }
 
   if (material.displacement.authored()) {
+    // assume connection when authored.
     // TODO: list edit?.
-    ss << pprint::Indent(indent+1) << "token outputs:displacement ";
+    ss << pprint::Indent(indent+1) << "token outputs:displacement.connect ";
 
     const auto &conns = material.displacement.get_connections();
     if (conns.size() == 1) {
@@ -2840,8 +2842,9 @@ std::string to_string(const Material &material, const uint32_t indent, bool clos
   }
 
   if (material.volume.authored()) {
+    // assume connection when authored.
     // TODO: list edit?.
-    ss << pprint::Indent(indent+1) << "token outputs:volume ";
+    ss << pprint::Indent(indent+1) << "token outputs:volume.connect ";
 
     const auto &conns = material.volume.get_connections();
     if (conns.size() == 1) {
