@@ -2078,6 +2078,73 @@ std::string print_variantSetStmt(
   return ss.str();
 }
 
+std::string print_variantSetSpecStmt(
+  const std::map<std::string, VariantSetSpec> &vslist, const uint32_t indent) {
+  std::stringstream ss;
+
+  //ss << "# variantSet.size = " << std::to_string(vslist.size()) << "\n";
+  for (const auto &variantSet : vslist) {
+
+    if (variantSet.second.variantSet.empty()) {
+      continue;
+    }
+
+    ss << pprint::Indent(indent) << "variantSet " << quote(variantSet.first) << " = {\n";
+
+    for (const auto &item : variantSet.second.variantSet) {
+      ss << pprint::Indent(indent+1) << quote(item.first) << " ";
+
+      if (item.second.metas().authored()) {
+        ss << "(\n";
+        ss << print_prim_metas(item.second.metas(), indent+2);
+        ss << pprint::Indent(indent+1) << ") ";
+      }
+
+      ss << "{\n";
+
+      // props
+      ss << print_props(item.second.props(), indent+2);
+
+      // primChildren
+      // TODO: print child Prims based on `primChildren` Prim metadata
+      const auto &variantPrimMetas = item.second.metas();
+      const auto &variantPrimChildren = item.second.children();
+
+      if (variantPrimMetas.primChildren.size() == variantPrimChildren.size()) {
+        std::map<std::string, const PrimSpec *> primNameTable;
+        for (size_t i = 0; i < variantPrimChildren.size(); i++) {
+          primNameTable.emplace(variantPrimChildren[i].name(), &variantPrimChildren[i]);
+        }
+
+        for (size_t i = 0; i < variantPrimMetas.primChildren.size(); i++) {
+          value::token nameTok = variantPrimMetas.primChildren[i];
+          DCOUT(fmt::format("variantPrimChildren  {}/{} = {}", i, variantPrimMetas.primChildren.size(), nameTok.str()));
+          const auto it = primNameTable.find(nameTok.str());
+          if (it != primNameTable.end()) {
+            ss << prim::print_primspec(*(it->second), indent + 2);
+          } else {
+            // TODO: Report warning?
+          }
+        }
+      } else {
+        ss << "variantPrimChildren.size = " << std::to_string(variantPrimChildren.size()) << "\n";
+        for (const auto &child : variantPrimChildren) {
+          ss << prim::print_primspec(child, indent+2);
+        }
+      }
+
+      ss << "# variantSet end\n";
+      ss << pprint::Indent(indent+1) << "}\n";
+
+    }
+
+    ss << pprint::Indent(indent) << "{\n";
+
+  }
+
+  return ss.str();
+}
+
 std::string to_string(const Model &model, const uint32_t indent, bool closing_brace) {
   std::stringstream ss;
 

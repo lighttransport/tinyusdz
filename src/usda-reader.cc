@@ -117,7 +117,7 @@ constexpr auto kTag = "[USDA]";
 
 namespace {
 
-// intermediate data structure for VariantSet
+// intermediate data structure for VariantSet stmt
 struct VariantNode {
   PrimMeta metas;
   std::map<std::string, Property> props;
@@ -142,6 +142,8 @@ struct PrimSpecNode {
 
   int64_t parent{-1};            // -1 = root node
   std::vector<size_t> children;  // index to USDAReader._primspecs[]
+
+  std::map<std::string, std::map<std::string, VariantNode>> variantNodeMap;
 };
 
 // TODO: Move to prim-types.hh?
@@ -643,8 +645,43 @@ class USDAReader::Impl {
           primspec.props() = properties;
 
           //
-          // TODO: variants
+          // variants
+          // NOTE: variantChildren setup is delayed. It will be processed in ReconstructNodeRec()
           //
+          std::map<std::string, std::map<std::string, VariantNode>> variantSets;
+          for (const auto &variantContext : in_variants) {
+            const std::string variant_name = variantContext.first;
+
+            // Convert VariantContent -> VariantNode
+            std::map<std::string, VariantNode> variantNodes;
+            for (const auto &item : variantContext.second) {
+              VariantNode variant;
+              if (!ReconstructPrimMeta(item.second.metas, &variant.metas)) {
+                return nonstd::make_unexpected(fmt::format("Failed to process Prim metadataum in variantSet {} item {} ", variant_name, item.first));
+              }
+              variant.props = item.second.props;
+
+              // child Prim should be already reconstructed.
+              for (const auto &childPrimIdx : item.second.primIndices) {
+                if (childPrimIdx < 0) {
+                  return nonstd::make_unexpected(fmt::format("[InternalError] Invalid primIndex found within VariantSet."));
+                }
+
+                if (size_t(childPrimIdx) >= _prim_nodes.size()) {
+                  return nonstd::make_unexpected(fmt::format("[InternalError] Invalid primIndex found within VariantSet. variantChildPrimIdsx {} Exceeds _prim_nodes.size() {}", childPrimIdx, _prim_nodes.size()));
+                }
+
+                variant.primChildren.push_back(childPrimIdx);
+
+                _prim_nodes[size_t(childPrimIdx)].parent_is_variant = true;
+              }
+              DCOUT("Add variant: " << item.first);
+              variantNodes.emplace(item.first, std::move(variant));
+            }
+
+            DCOUT("Add variantSet: " << variant_name);
+            variantSets.emplace(variant_name, std::move(variantNodes));
+          }
 
 
           // Assign index for PrimSpec
@@ -660,6 +697,7 @@ class USDAReader::Impl {
           DCOUT("primspec[" << primIdx << "].ty = "
                         << _primspec_nodes[size_t(primIdx)].primSpec.typeName());
           _primspec_nodes[size_t(primIdx)].parent = parentPrimIdx;
+          _primspec_nodes[size_t(primIdx)].variantNodeMap = variantSets;
 
           if (parentPrimIdx == -1) {
             _toplevel_primspecs.push_back(size_t(primIdx));
