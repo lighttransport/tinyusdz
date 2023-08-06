@@ -2,6 +2,18 @@
 
 `TinyUSDZ` is secure, portable and dependency-free(depends only on C++ STL. Other 3rd-party libraries included. Yes, you don't need pxrUSD library!) USDZ/USDC/USDA library written in C++14.
 
+## Mid-term todo
+
+* Experimental composition support https://github.com/syoyo/tinyusdz/issues/25
+  * [x] subLayers
+  * [x] references
+  * [x] payload(no delayed load)
+  * [ ] variantSet
+* Tydra: Handy data structure converter for rendering https://github.com/syoyo/tinyusdz/issues/31 
+* MaterialX
+  * USD + MateriralX + PBR rendering example using https://github.com/lighttransport/pbrlab
+* tusdview(TinyUSDZ version of usdview)
+
 ## Build status
 
 |         |   Linux                                  |  Windows                              |   macOS   |  iOS   | Android |
