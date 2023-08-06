@@ -490,7 +490,11 @@ class USDCReader::Impl {
   // For Prim/Props defined as Variant(SpecType::VariantSet)
   // key = path index.
   std::map<int32_t, Prim> _variantPrims;
-  std::map<uint32_t, Property> _variantAttributeNodes;
+  std::map<uint32_t, Property> _variantProps;
+
+  // key = parent path index, values = key to `_variantPrims`, `_variantProps`
+  std::map<int32_t, std::vector<int32_t>> _variantPrimChildren;
+  std::map<int32_t, std::vector<int32_t>> _variantPropChildren;
 
   // Check if given node_id is a prim node.
   std::set<int32_t> _prim_table;
@@ -2284,6 +2288,8 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
   (void)level;
   const crate::CrateReader::Node &node = _nodes[size_t(current)];
 
+  DCOUT(fmt::format("parent = {}, curent = {}, is_parent_variant = {}", parent, current, is_parent_variant));
+
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
   std::cout << pprint::Indent(uint32_t(level)) << "lv[" << level
             << "] node_index[" << current << "] " << node.GetLocalPath()
@@ -2374,6 +2380,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
     return true;
   }
 
+  DCOUT("spec.type = " << to_string(spec.spec_type));
   switch (spec.spec_type) {
     case SpecType::PseudoRoot: {
       PUSH_ERROR_AND_RETURN_TAG(
@@ -2492,7 +2499,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
       }
 
       DCOUT(
-          fmt::format("[{}] is a Variantset node(parent = {}). prim_idx? = {}",
+          fmt::format("[{}] is a VariantSet node(parent = {}). prim_idx? = {}",
                       current, parent, _prim_table.count(current)));
 
       Path elemPath;
@@ -2688,7 +2695,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
 
         // Parent Prim is not yet reconstructed, so store info to temporary
         // buffer _variantAttributeNodes.
-        _variantAttributeNodes.emplace(current, prop);
+        _variantProps.emplace(current, prop);
 
         DCOUT(
             fmt::format("[{}] Parsed Attribute {} under Variant. PathIndex {}",
@@ -3103,6 +3110,7 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
             DCOUT("??? prim idx already set " << current);
           } else {
             _variantPrims.emplace(current, variantPrim.value());
+            _variantPrimChildren[parent].push_back(current);
           }
         } else {
           if (_config.allow_unknown_prims && is_unsupported_prim) {
@@ -3125,6 +3133,7 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
                 DCOUT("??? prim idx already set " << current);
               } else {
                 _variantPrims.emplace(current, variantPrim.value());
+                _variantPrimChildren[parent].push_back(current);
               }
             } else {
               return false;
@@ -3154,7 +3163,8 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
 
         // Parent Prim is not yet reconstructed, so store info to temporary
         // buffer _variantAttributeNodes.
-        _variantAttributeNodes.emplace(current, prop);
+        _variantProps.emplace(current, prop);
+        _variantPropChildren[parent].push_back(current);
 
         DCOUT(
             fmt::format("[{}] Parsed Attribute {} under Variant. PathIndex {}",
