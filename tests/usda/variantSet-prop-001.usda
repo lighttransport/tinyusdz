@@ -9,7 +9,7 @@ def "bora" (
             double myval = 2.0
         }
         "Cone" {
-            int myval = 3.0
+            int myval = 3
         }
     }
 }
