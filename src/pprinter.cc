@@ -2060,18 +2060,17 @@ std::string print_variantSetStmt(
           }
         }
       } else {
-        ss << "variantPrimChildren.size = " << std::to_string(variantPrimChildren.size()) << "\n";
         for (const auto &child : variantPrimChildren) {
           ss << pprint_value(child.data(), indent+2, /* closing_brace */true);
         }
       }
 
-      ss << "# variantSet end\n";
+      //ss << "# variantSet end\n";
       ss << pprint::Indent(indent+1) << "}\n";
 
     }
 
-    ss << pprint::Indent(indent) << "{\n";
+    ss << pprint::Indent(indent) << "}\n";
 
   }
 
@@ -2127,18 +2126,17 @@ std::string print_variantSetSpecStmt(
           }
         }
       } else {
-        ss << "variantPrimChildren.size = " << std::to_string(variantPrimChildren.size()) << "\n";
         for (const auto &child : variantPrimChildren) {
           ss << prim::print_primspec(child, indent+2);
         }
       }
 
-      ss << "# variantSet end\n";
+      //ss << "# variantSet end\n";
       ss << pprint::Indent(indent+1) << "}\n";
 
     }
 
-    ss << pprint::Indent(indent) << "{\n";
+    ss << pprint::Indent(indent) << "}\n";
 
   }
 
@@ -3682,7 +3680,8 @@ std::string print_primspec(const PrimSpec &primspec, const uint32_t indent) {
     ss << print_primspec(primspec.children()[i], indent+1);
   }
 
-  // TODO: variant
+  //ss << "# variant \n";
+  ss << print_variantSetSpecStmt(primspec.variantSets(), indent+1);
 
 
   ss << pprint::Indent(indent) << "}\n";

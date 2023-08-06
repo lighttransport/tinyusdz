@@ -2944,6 +2944,9 @@ value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStak,
                                       value::TimeSampleInterpolationType::Held);
 
 ///
+/// TODO: Deprecate this class and use PrimPec
+/// NOTE PrimNode is designed for Stage(freezed)
+///
 /// Contains concrete Prim object and composition elements.
 ///
 /// PrimNode is near to the final state of `Prim`.
@@ -2969,9 +2972,33 @@ class PrimNode {
   ///
   bool select_variant(const std::string &target_name,
                       const std::string &variant_name) {
-    const auto m = vsmap.find(target_name);
-    if (m != vsmap.end()) {
-      current_vsmap[target_name] = variant_name;
+    const auto m = _vsmap.find(target_name);
+    if (m != _vsmap.end()) {
+      _current_vsmap[target_name] = variant_name;
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  ///
+  /// Get current variant selection.
+  ///
+  bool current_variant_selection(const std::string &target_name,
+                      std::string *selected_variant_name) {
+
+    if (!selected_variant_name) {
+      return false;
+    }
+
+    const auto m = _vsmap.find(target_name);
+    if (m != _vsmap.end()) {
+      const auto sm = _current_vsmap.find(target_name);
+      if (sm != _current_vsmap.end()) {
+        (*selected_variant_name) = sm->second;
+      } else {
+        (*selected_variant_name) = m->second;
+      }
       return true;
     } else {
       return false;
@@ -2984,7 +3011,7 @@ class PrimNode {
   /// key = variant prim name
   /// value = variants
   ///
-  const VariantSelectionMap &get_variant_selection_map() const { return vsmap; }
+  const VariantSelectionMap &get_variant_selection_map() const { return _vsmap; }
 
   ///
   /// Variants
@@ -2997,20 +3024,12 @@ class PrimNode {
   using VariantSet = std::map<std::string, PrimNode>;
   std::map<std::string, VariantSet> varitnSetList;  // key = variant
 
-  // using PropertyMap = std::map<std::string, Property>;
-  // using PropertyMap = std::map<std::string, Property>;
-  // using PrimNodeMap = std::map<std::string, PrimNode>;
-
-  VariantSelectionMap vsmap;          // Original variant selections
-  VariantSelectionMap current_vsmap;  // Currently selected variants
-
-  // key = variant_name
-  // std::map<std::string, PropertyMap> variantAttributeMap;
-  // std::map<std::string, PrimNodeMap> variantPrimNodeMap;
+  VariantSelectionMap _vsmap;          // Original variant selections
+  VariantSelectionMap _current_vsmap;  // Currently selected variants
 
   std::vector<value::token> primChildren;  // List of child Prim nodes
   std::vector<value::token> properties;    // List of property names
-  std::vector<value::token> variantChildren;
+  std::vector<value::token> variantChildren; // List of child VariantSet nodes.
 };
 
 /// Similar to PrimSpec
@@ -3066,6 +3085,41 @@ class PrimSpec {
   std::vector<PrimSpec> &children() { return _children; }
 
   ///
+  /// Select variant.
+  ///
+  bool select_variant(const std::string &target_name,
+                      const std::string &variant_name) {
+    const auto m = _vsmap.find(target_name);
+    if (m != _vsmap.end()) {
+      _current_vsmap[target_name] = variant_name;
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  bool current_variant_selection(const std::string &target_name,
+                      std::string *selected_variant_name) {
+
+    if (!selected_variant_name) {
+      return false;
+    }
+
+    const auto m = _vsmap.find(target_name);
+    if (m != _vsmap.end()) {
+      const auto sm = _current_vsmap.find(target_name);
+      if (sm != _current_vsmap.end()) {
+        (*selected_variant_name) = sm->second;
+      } else {
+        (*selected_variant_name) = m->second;
+      }
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  ///
   /// List variants in this PrimSpec
   /// key = variant name
   /// value = variats
@@ -3083,6 +3137,7 @@ class PrimSpec {
   ///
   /// key = variant name
   std::map<std::string, VariantSetSpec> &variantSets() { return _variantSets; }
+  const std::map<std::string, VariantSetSpec> &variantSets() const { return _variantSets; }
 
   const PrimMeta &metas() const { return _metas; }
 
@@ -3118,9 +3173,9 @@ class PrimSpec {
     _props = rhs._props;
 
     _vsmap = rhs._vsmap;
+    _current_vsmap = rhs._current_vsmap;
 
-    _variantAttributeMap = rhs._variantAttributeMap;
-    _variantPrimNodeMap = rhs._variantPrimNodeMap;
+    _variantSets = rhs._variantSets;
 
     _primChildren = rhs._primChildren;
     _properties = rhs._properties;
@@ -3139,9 +3194,9 @@ class PrimSpec {
     _props = std::move(rhs._props);
 
     _vsmap = std::move(rhs._vsmap);
+    _current_vsmap = std::move(rhs._current_vsmap);
 
-    _variantAttributeMap = std::move(rhs._variantAttributeMap);
-    _variantPrimNodeMap = std::move(rhs._variantPrimNodeMap);
+    _variantSets = rhs._variantSets;
 
     _primChildren = rhs._primChildren;
     _properties = rhs._properties;
@@ -3167,10 +3222,7 @@ class PrimSpec {
   using PrimSpecMap = std::map<std::string, PrimSpec>;
 
   VariantSelectionMap _vsmap;  // Original variant selections
-
-  // key = variant_name
-  std::map<std::string, PropertyMap> _variantAttributeMap;
-  std::map<std::string, PrimSpecMap> _variantPrimNodeMap;
+  VariantSelectionMap _current_vsmap;  // Currently selected variants
 
   std::map<std::string, VariantSetSpec> _variantSets;
 
@@ -3527,6 +3579,7 @@ using ReferenceList = std::pair<ListEditQual, std::vector<Reference>>;
 using PayloadList = std::pair<ListEditQual, std::vector<Payload>>;
 
 }  // namespace prim
+
 
 // TODO(syoyo): Range, Interval, Rect2i, Frustum, MultiInterval
 // and Quaternion?
