@@ -467,6 +467,7 @@ class Path {
     return true;  // prop part only
   }
 
+#if 0 // TODO: rmove
   bool is_variant_selection_path() const {
     if (!is_valid()) {
       return false;
@@ -478,6 +479,7 @@ class Path {
 
     return false;
   }
+#endif
 
   // Strip '/'
   Path &make_relative() {
