@@ -669,6 +669,23 @@ bool AsciiParser::ReadBasicType(nonstd::optional<bool> *value) {
 bool AsciiParser::ReadBasicType(int *value) {
   std::stringstream ss;
 
+  // pxrUSD allow floating-point value to `int` type.
+  // so first try fp parsing.
+  auto loc = CurrLoc();
+  std::string fp_str;
+  if (LexFloat(&fp_str)) {
+    auto flt = ParseDouble(fp_str);
+    if (!flt) {
+      PUSH_ERROR_AND_RETURN("Failed to parse floating value.");
+    } else {
+      (*value) = int(flt.value());
+      return true;
+    }
+  }
+
+  // revert
+  SeekTo(loc);
+
   // head character
   bool has_sign = false;
   // bool negative = false;
