@@ -65,6 +65,28 @@ bool HasReferences(const Layer &layer, const bool force_check = false, const Ref
 ///
 bool HasPayload(const Layer &layer, const bool force_check = false, const PayloadCompositionOptions options = PayloadCompositionOptions());
 
+///
+/// Return true when any PrimSpec in the Layer contains `specializes` Prim metadataum.
+/// We think specializers are not intensively used, so no caching.
+///
+/// @param[in] layer Layer
+///
+bool HasSpecializes(const Layer &layer);
+
+///
+/// Return true when any PrimSpec in the Layer contains `inherits` Prim metadataum.
+///
+/// @param[in] layer Layer
+///
+bool HasInherits(const Layer &layer);
+
+///
+/// Return true when any PrimSpec in the Layer contains `over` Prim.
+///
+/// @param[in] layer Layer
+///
+bool HasOver(const Layer &layer);
+
 #if 0 // deprecate it.
 ///
 /// Load subLayer USD files in `layer`, and return composited(flattened) Layer
@@ -96,13 +118,27 @@ bool CompositeReferences(AssetResolutionResolver &resolver /* inout */,
                              ReferencesCompositionOptions());
 
 ///
-/// Resolve `payload` for each PrimSpe, and return composited(flattened) Layer
+/// Resolve `payload` for each PrimSpec, and return composited(flattened) Layer
 /// to `composited_layer` in `layer`.
 ///
 bool CompositePayload(
     AssetResolutionResolver &resolver /* inout */, const Layer &layer,
     Layer *composited_layer, std::string *warn, std::string *err,
     const PayloadCompositionOptions options = PayloadCompositionOptions());
+
+///
+/// Resolve `specializes` for each PrimSpec, and return composited(flattened) Layer
+/// to `composited_layer` in `layer`.
+///
+bool CompositeSpecializes(const Layer &layer,
+    Layer *composited_layer, std::string *warn, std::string *err);
+
+///
+/// Resolve `inherits` for each PrimSpec, and return composited(flattened) Layer
+/// to `composited_layer` in `layer`.
+///
+bool CompositeInherits(const Layer &layer,
+    Layer *composited_layer, std::string *warn, std::string *err);
 
 ///
 /// Override a PrimSpec with another PrimSpec.
