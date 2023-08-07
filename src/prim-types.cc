@@ -1849,6 +1849,30 @@ bool HasPayloadRec(uint32_t depth,
 
 }
 
+bool HasVariantRec(uint32_t depth,
+                      const PrimSpec &primspec,
+                      const uint32_t max_depth = 1024*128) {
+  if (depth > max_depth) {
+    // too deep
+    return false;
+  }
+
+  // TODO: Also check if PrimSpec::variantSets is empty?
+  if (primspec.metas().variants && primspec.metas().variantSets) {
+    return true;
+  }
+
+  for (auto &child : primspec.children()) {
+    if (HasPayloadRec(depth + 1, child,
+                                max_depth)) {
+      return true;
+    }
+  }
+
+  return false;
+
+}
+
 } // namespace
 
 bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps, std::string *err) {
@@ -1910,7 +1934,7 @@ bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps, std::string 
   return false;
 }
 
-bool Layer::check_unresoled_references(const uint32_t max_depth) const {
+bool Layer::check_unresolved_references(const uint32_t max_depth) const {
 
   bool ret = false;
 
@@ -1926,7 +1950,7 @@ bool Layer::check_unresoled_references(const uint32_t max_depth) const {
   return _has_unresolved_references;
 }
 
-bool Layer::check_unresoled_payload(const uint32_t max_depth) const {
+bool Layer::check_unresolved_payload(const uint32_t max_depth) const {
 
   bool ret = false;
 
@@ -1940,6 +1964,22 @@ bool Layer::check_unresoled_payload(const uint32_t max_depth) const {
 
   _has_unresolved_payload = ret;
   return _has_unresolved_payload;
+}
+
+bool Layer::check_unresolved_variant(const uint32_t max_depth) const {
+
+  bool ret = false;
+
+  for (const auto &item : _prim_specs) {
+    if (HasVariantRec(/* depth */0,
+      item.second, max_depth)) {
+      ret = true;
+      break;
+    }
+  }
+
+  _has_unresolved_variant = ret;
+  return _has_unresolved_variant;
 }
 
 }  // namespace tinyusdz
