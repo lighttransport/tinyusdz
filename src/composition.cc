@@ -1005,7 +1005,7 @@ bool HasReferences(const Layer &layer, const bool force_check,
     return layer.has_unresolved_references();
   }
 
-  return layer.check_unresoled_references(options.max_depth);
+  return layer.check_unresolved_references(options.max_depth);
 }
 
 bool HasPayload(const Layer &layer, const bool force_check,
@@ -1014,7 +1014,7 @@ bool HasPayload(const Layer &layer, const bool force_check,
     return layer.has_unresolved_payload();
   }
 
-  return layer.check_unresoled_payload(options.max_depth);
+  return layer.check_unresolved_payload(options.max_depth);
 }
 
 namespace {
@@ -1157,7 +1157,7 @@ bool ExtractVariantsRec(uint32_t depth, const std::string &root_path,
         }
 
         vsetdict[item.first] = variantStmtNames;
-      } 
+      }
     }
 
     if (vsetdict.size()) {
@@ -1217,5 +1217,95 @@ bool ExtractVariants(const Stage &stage, Dictionary *dict, std::string *err) {
 
   return true;
 }
+
+bool VariantSelectPrimSpec(PrimSpec &dst, const PrimSpec &src,
+                           const std::map<std::string, std::string> &variant_selection, std::string *warn,
+                           std::string *err) {
+
+  if (src.metas().variants && src.metas().variantSets) {
+    // ok
+  } else if (src.metas().variants) {
+    if (warn) {
+      (*warn) += "`variants` are authored, but `variantSets` is not authored.\n";
+    }
+    dst = src;
+    dst.metas().variants.reset();
+    dst.metas().variantSets.reset();
+    dst.variantSets().clear();
+    return true;
+  } else if (src.metas().variantSets) {
+    if (warn) {
+      (*warn) += "`variantSets` are authored, but `variants` is not authored.\n";
+    }
+    dst = src;
+    dst.metas().variants.reset();
+    dst.metas().variantSets.reset();
+    dst.variantSets().clear();
+    // nothing to do.
+    return true;
+  }
+
+  const auto &variantSetMeta = src.metas().variantSets.value();
+
+  const ListEditQual qual = variantSetMeta.first;
+  (void)qual;
+
+  dst = src;
+
+  for (const auto &item : variant_selection) {
+
+    // Check if variantSet name exists in metadata.
+    const auto it = std::find_if(variantSetMeta.second.begin(), variantSetMeta.second.end(), [&](const std::string &name) {
+      if (name == item.first) {
+        return true;
+      }
+      return false;
+    });
+
+    if (it == variantSetMeta.second.end()) {
+      continue;
+    }
+
+    if (dst.variantSets().count(item.first)) {
+      const auto &vss = dst.variantSets().at(item.first);
+
+      if (vss.variantSet.count(item.second)) {
+        const PrimSpec &vs = vss.variantSet.at(item.second);
+
+        //
+        // Promote variant content to this Prim.
+        // Some notes:
+        // - local metadataum and property always wins.
+        //
+
+        // over-like operation
+        dst.metas().update_from(vs.metas());
+
+        for (const auto &prop : vs.props()) {
+          // local wins
+          if (!dst.props().count(prop.first)) {
+            dst.props().emplace(prop.first, prop.second);
+          }
+        }
+
+        // TODO:
+        // - [ ] primChildren
+        // - [ ] update `primChildren` and `properties` metadataum if required.
+        if (err) {
+          (*err) += "TODO: implement.\n";
+        }
+
+        return false;
+
+      }
+    }
+
+  }
+
+  dst.variantSets().clear();
+
+  return true;
+}
+
 
 }  // namespace tinyusdz
