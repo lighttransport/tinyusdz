@@ -467,6 +467,7 @@ class Path {
     return true;  // prop part only
   }
 
+#if 0 // TODO: rmove
   bool is_variant_selection_path() const {
     if (!is_valid()) {
       return false;
@@ -478,6 +479,7 @@ class Path {
 
     return false;
   }
+#endif
 
   // Strip '/'
   Path &make_relative() {
@@ -3422,7 +3424,7 @@ struct Layer {
   /// @param[in] max_depth Maximum PrimSpec traversal depth.
   /// @returns true if PrimSpec tree contains any (unresolved) `references`. false if not.
   ///
-  bool check_unresoled_references(const uint32_t max_depth = 1024 * 1024) const;
+  bool check_unresolved_references(const uint32_t max_depth = 1024 * 1024) const;
 
   ///
   /// Check if PrimSpec tree contains any `payload` and cache the result.
@@ -3430,7 +3432,7 @@ struct Layer {
   /// @param[in] max_depth Maximum PrimSpec traversal depth.
   /// @returns true if PrimSpec tree contains any (unresolved) `payload`. false if not.
   ///
-  bool check_unresoled_payload(const uint32_t max_depth = 1024 * 1024) const;
+  bool check_unresolved_payload(const uint32_t max_depth = 1024 * 1024) const;
 
   ///
   /// Check if PrimSpec tree contains any `variant` and cache the result.
@@ -3438,7 +3440,7 @@ struct Layer {
   /// @param[in] max_depth Maximum PrimSpec traversal depth.
   /// @returns true if PrimSpec tree contains any (unresolved) `variant`. false if not.
   ///
-  bool check_unresoled_variant(const uint32_t max_depth = 1024 * 1024) const;
+  bool check_unresolved_variant(const uint32_t max_depth = 1024 * 1024) const;
 
   ///
   /// Check if PrimSpec tree contains any Prim with `over` specifier and cache the result.

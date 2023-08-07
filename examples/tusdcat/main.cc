@@ -49,7 +49,7 @@ int main(int argc, char **argv) {
   bool has_flatten{false};
   bool has_relative{false};
   bool has_extract_variants{false};
-  
+
   constexpr int kMaxIteration = 128;
 
   std::string filepath;
@@ -196,12 +196,12 @@ int main(int argc, char **argv) {
       src_layer = std::move(composited_layer);
     }
 
-    // TODO: Find more better way to Recursively resolve references/payload
+    // TODO: Find more better way to Recursively resolve references/payload/variants
     bool all_resolved = true;
     for (int i = 0; i < kMaxIteration; i++) {
 
       if (comp_features.references) {
-        if (!src_layer.check_unresoled_references()) {
+        if (!src_layer.check_unresolved_references()) {
           all_resolved = true;
         } else {
           all_resolved = false;
@@ -224,7 +224,7 @@ int main(int argc, char **argv) {
       }
 
       if (comp_features.payload) {
-        if (!src_layer.check_unresoled_payload()) {
+        if (!src_layer.check_unresolved_payload()) {
           all_resolved = true;
         } else {
           all_resolved = false;
@@ -247,7 +247,7 @@ int main(int argc, char **argv) {
       }
 
       // TODO... more composition features
-      
+
 
       if (all_resolved) {
         std::cout << "# of composition resolve iteration: " << (i + 1) << "\n";

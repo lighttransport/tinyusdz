@@ -165,12 +165,12 @@ bool ListVariantSelectionMaps(const Layer &layer, VariantSelectorMap &m);
 ///
 /// @param[inout] dst PrimSpec where selected variant are written.
 /// @param[in] src Source PrimSpec. Source PrimSpec.
+/// @param[in] variant_selection Variant Selection list. key = variantSet name, value = variant name.
 ///
-/// @return true upon success. false when error(e.g. no corresponding
-/// `variant_name` exists in `src` PrimSpec).
+/// @return true upon success. false when error. No error when any of variant_selection does not exist in `src` PrimSpec.
 ///
 bool VariantSelectPrimSpec(PrimSpec &dst, const PrimSpec &src,
-                           const std::string &variant_name, std::string *warn,
+                           const std::map<std::string, std::string> &variant_selection, std::string *warn,
                            std::string *err);
 
 ///
