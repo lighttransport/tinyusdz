@@ -3418,6 +3418,18 @@ struct Layer {
     return _has_over_primspec;
   }
 
+  bool has_class_primspec() const {
+    return _has_class_primspec;
+  }
+
+  bool has_unresolved_inherits() const {
+    return _has_unresolved_inherits;
+  }
+
+  bool has_unresolved_specializes() const {
+    return _has_unresolved_specializes;
+  }
+
   ///
   /// Check if PrimSpec tree contains any `references` and cache the result.
   ///
@@ -3441,6 +3453,22 @@ struct Layer {
   /// @returns true if PrimSpec tree contains any (unresolved) `variant`. false if not.
   ///
   bool check_unresolved_variant(const uint32_t max_depth = 1024 * 1024) const;
+
+  ///
+  /// Check if PrimSpec tree contains any `specializes` and cache the result.
+  ///
+  /// @param[in] max_depth Maximum PrimSpec traversal depth.
+  /// @returns true if PrimSpec tree contains any (unresolved) `specializes`. false if not.
+  ///
+  bool check_unresolved_specializes(const uint32_t max_depth = 1024 * 1024) const;
+
+  ///
+  /// Check if PrimSpec tree contains any `inherits` and cache the result.
+  ///
+  /// @param[in] max_depth Maximum PrimSpec traversal depth.
+  /// @returns true if PrimSpec tree contains any (unresolved) `inherits`. false if not.
+  ///
+  bool check_unresolved_inherits(const uint32_t max_depth = 1024 * 1024) const;
 
   ///
   /// Check if PrimSpec tree contains any Prim with `over` specifier and cache the result.
@@ -3480,7 +3508,10 @@ struct Layer {
   mutable bool _has_unresolved_references{true};
   mutable bool _has_unresolved_payload{true};
   mutable bool _has_unresolved_variant{true};
+  mutable bool _has_unresolved_inherits{true};
+  mutable bool _has_unresolved_specializes{true};
   mutable bool _has_over_primspec{true};
+  mutable bool _has_class_primspec{true};
 };
 
 #if 0  // TODO: Remove

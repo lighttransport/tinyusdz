@@ -1017,6 +1017,22 @@ bool HasPayload(const Layer &layer, const bool force_check,
   return layer.check_unresolved_payload(options.max_depth);
 }
 
+bool HasInherits(const Layer &layer) {
+
+  return layer.check_unresolved_inherits();
+}
+
+bool HasOver(const Layer &layer) {
+
+  return layer.check_over_primspec();
+}
+
+bool HasSpecializes(const Layer &layer) {
+
+  return layer.check_unresolved_specializes();
+}
+
+
 namespace {
 
 bool ExtractVariantsRec(uint32_t depth, const std::string &root_path,
