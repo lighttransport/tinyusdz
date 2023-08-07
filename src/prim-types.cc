@@ -497,6 +497,7 @@ Path Path::append_element(const std::string &elem) {
     return p;
   }
 
+  // {variant=value}
   if (is_variantElementName(elem)) {
     std::array<std::string, 2> variant;
     if (tokenize_variantElement(elem, &variant)) {
