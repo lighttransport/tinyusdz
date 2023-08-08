@@ -2013,7 +2013,7 @@ bool HasOverRec(uint32_t depth, const PrimSpec &primspec,
 }  // namespace
 
 bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps,
-                             std::string *err) {
+                             std::string *err) const {
   if (!ps) {
     PUSH_ERROR_AND_RETURN("Invalid PrimSpec dst argument");
   }

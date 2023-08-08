@@ -133,7 +133,7 @@ bool CompositePayload(
 /// To externally specify variants to select, Use `ApplyVariantSelector`.
 ///
 bool CompositeVariant(
-    AssetResolutionResolver &resolver /* inout */, const Layer &layer,
+    const Layer &layer,
     Layer *composited_layer, std::string *warn, std::string *err);
 
 ///
