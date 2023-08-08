@@ -71,9 +71,9 @@ Remaining tasks for v0.8.0 release are writing examples, demos and utility funct
 * **Experimental** support of some Composition features https://github.com/syoyo/tinyusdz/issues/25
   * [x] subLayers
   * [x] references
-  * [ ] payloads
-  * [ ] inherits
-  * [ ] variants
+  * [x] payload 
+  * [x] inherits
+  * [x] variants
   * [ ] specializes
   
 **Please see** [doc/status.md](doc/status.md) **for more details**
