@@ -3305,6 +3305,7 @@ struct Layer {
 
   void clear_primspecs() { _prim_specs.clear(); }
 
+  // Check if `primname` exists in root Prims?
   bool has_primspec(const std::string &primname) const {
     return _prim_specs.count(primname);
   }
@@ -3501,7 +3502,7 @@ struct Layer {
   /// @param[out] ps Pointer to PrimSpec pointer
   /// @param[out] err Error message
   ///
-  bool find_primspec_at(const Path &path, const PrimSpec **ps, std::string *err);
+  bool find_primspec_at(const Path &path, const PrimSpec **ps, std::string *err) const;
 
  private:
   std::string _name;  // layer name ~= USD filename

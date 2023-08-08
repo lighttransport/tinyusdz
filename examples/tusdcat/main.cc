@@ -171,8 +171,8 @@ int main(int argc, char **argv) {
     //
     // LIVRPS strength ordering
     // - [x] Local(subLayers)
-    // - [ ] Inherits
-    // - [ ] VariantSets
+    // - [x] Inherits
+    // - [x] VariantSets
     // - [x] References
     // - [x] Payload
     // - [ ] Specializes
@@ -246,8 +246,55 @@ int main(int argc, char **argv) {
         src_layer = std::move(composited_layer);
       }
 
-      // TODO... more composition features
+      if (comp_features.inherits) {
+        if (!src_layer.check_unresolved_inherits()) {
+          all_resolved = true;
+        } else {
+          all_resolved = false;
+        }
 
+        tinyusdz::Layer composited_layer;
+        if (!tinyusdz::CompositeInherits(src_layer, &composited_layer, &warn, &err)) {
+          std::cerr << "Failed to composite `inherits`: " << err << "\n";
+          return -1;
+        }
+
+        if (warn.size()) {
+          std::cout << "WARN: " << warn << "\n";
+        }
+
+        std::cout << "# `inherits` composited\n";
+        std::cout << composited_layer << "\n";
+
+        src_layer = std::move(composited_layer);
+      }
+
+      if (comp_features.variantSets) {
+        if (!src_layer.check_unresolved_variant()) {
+          all_resolved = true;
+        } else {
+          all_resolved = false;
+        }
+
+        tinyusdz::Layer composited_layer;
+        if (!tinyusdz::CompositeVariant(src_layer, &composited_layer, &warn, &err)) {
+          std::cerr << "Failed to composite `variantSet`: " << err << "\n";
+          return -1;
+        }
+
+        if (warn.size()) {
+          std::cout << "WARN: " << warn << "\n";
+        }
+
+        std::cout << "# `variantSet` composited\n";
+        std::cout << composited_layer << "\n";
+
+        src_layer = std::move(composited_layer);
+      }
+
+      // TODO
+      // - [ ] specializes
+      // - [ ] `class` Prim?
 
       if (all_resolved) {
         std::cout << "# of composition resolve iteration: " << (i + 1) << "\n";

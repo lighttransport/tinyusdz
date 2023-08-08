@@ -708,7 +708,7 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
   return true;
 }
 
-bool CompositeVariantRec(uint32_t depth, AssetResolutionResolver &resolver,
+bool CompositeVariantRec(uint32_t depth,
                          PrimSpec &primspec /* [inout] */, std::string *warn,
                          std::string *err) {
   if (depth > (1024 * 1024)) {
@@ -717,19 +717,88 @@ bool CompositeVariantRec(uint32_t depth, AssetResolutionResolver &resolver,
 
   // Traverse children first.
   for (auto &child : primspec.children()) {
-    if (!CompositeVariantRec(depth + 1, resolver, child, warn, err)) {
+    if (!CompositeVariantRec(depth + 1, child, warn, err)) {
       return false;
     }
   }
 
   PrimSpec dst;
   std::map<std::string, std::string> variant_selection; // empty = use variant settings in PrimSpec.
-  
+
   if (!VariantSelectPrimSpec(dst, primspec, variant_selection, warn, err)) {
     return false;
   }
 
   primspec = std::move(dst);
+
+  return true;
+}
+
+bool CompositeInheritsRec(uint32_t depth,
+                         const Layer &layer,
+                         PrimSpec &primspec /* [inout] */, std::string *warn,
+                         std::string *err) {
+  if (depth > (1024 * 1024)) {
+    PUSH_ERROR_AND_RETURN("Too deep.");
+  }
+
+  // Traverse children first.
+  for (auto &child : primspec.children()) {
+    if (!CompositeInheritsRec(depth + 1, layer, child, warn, err)) {
+      return false;
+    }
+  }
+
+  if (primspec.metas().inherits) {
+    const auto &qual = primspec.metas().inherits.value().first;
+    const auto &inherits = primspec.metas().inherits.value().second;
+
+    if (inherits.size() == 0) {
+      // no-op, just remove `inherits` metadataum.
+      primspec.metas().inherits.reset();
+      return true;
+    }
+
+    if (inherits.size() != 1) {
+      if (err) {
+        (*err) += "Multiple inheritance is not supporetd.\n";
+      }
+      return false;
+    }
+
+    const Path &inheritPath = inherits[0];
+
+    const PrimSpec *inheritPrimSpec{nullptr};
+
+    if (!layer.find_primspec_at(inheritPath, &inheritPrimSpec, err)) {
+      if (err) {
+        (*err) += "Inheirt primspec failed since Path <" + inheritPath.prim_part() + "> not found or is invalid.\n";
+      }
+
+      return false;
+    }
+
+    // TODO: listEdit
+    DCOUT("TODO: listEdit in `inherits`");
+    (void)qual;
+
+    if (inheritPrimSpec) {
+      if (!InheritPrimSpec(primspec, *inheritPrimSpec, warn, err)) {
+        return false;
+      }
+
+      // remove `inherits` metadataum.
+      primspec.metas().inherits.reset();
+
+    } else {
+      // ???
+      if (err) {
+        (*err) += "Inernal error. PrimSpec is nullptr in CompositeInehritsRec.\n";
+      }
+      return false;
+    }
+
+  }
 
   return true;
 }
@@ -781,7 +850,7 @@ bool CompositePayload(AssetResolutionResolver &resolver, const Layer &in_layer,
   return true;
 }
 
-bool CompositeVariant(AssetResolutionResolver &resolver, const Layer &in_layer,
+bool CompositeVariant(const Layer &in_layer,
                       Layer *composited_layer, std::string *warn,
                       std::string *err) {
   if (!composited_layer) {
@@ -791,7 +860,7 @@ bool CompositeVariant(AssetResolutionResolver &resolver, const Layer &in_layer,
   Layer dst = in_layer;  // deep copy
 
   for (auto &item : dst.primspecs()) {
-    if (!CompositeVariantRec(/* depth */ 0, resolver, item.second, warn, err)) {
+    if (!CompositeVariantRec(/* depth */ 0, item.second, warn, err)) {
       PUSH_ERROR_AND_RETURN("Composite `variantSet` failed.");
     }
   }
@@ -799,6 +868,27 @@ bool CompositeVariant(AssetResolutionResolver &resolver, const Layer &in_layer,
   (*composited_layer) = dst;
 
   DCOUT("Composite `variantSet` ok.");
+  return true;
+}
+
+bool CompositeInherits(const Layer &in_layer,
+                      Layer *composited_layer, std::string *warn,
+                      std::string *err) {
+  if (!composited_layer) {
+    return false;
+  }
+
+  Layer dst = in_layer;  // deep copy
+
+  for (auto &item : dst.primspecs()) {
+    if (!CompositeInheritsRec(/* depth */ 0, dst, item.second, warn, err)) {
+      PUSH_ERROR_AND_RETURN("Composite `inherits` failed.");
+    }
+  }
+
+  (*composited_layer) = dst;
+
+  DCOUT("Composite `inherits` ok.");
   return true;
 }
 
