@@ -8,7 +8,9 @@
   * [x] subLayers
   * [x] references
   * [x] payload(no delayed load)
-  * [ ] variantSet
+  * [x] inherits 
+  * [x] variantSet
+  * [ ] Validate composition is correctly operated. 
 * Tydra: Handy data structure converter for rendering https://github.com/syoyo/tinyusdz/issues/31 
 * MaterialX
   * USD + MateriralX + PBR rendering example using https://github.com/lighttransport/pbrlab
