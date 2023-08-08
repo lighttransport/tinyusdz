@@ -499,3 +499,4 @@ TinyUSDZ is licensed under MIT license and Apache 2.0 license.
 * nanozlib: Apache 2.0 license. https://github.com/lighttransport/nanozlib
 * lz4.py: MIT license. https://github.com/SE2Dev/PyCoD/blob/master/_lz4.py
 * minijson: MIT license. https://github.com/mattn/minijson
+* wuffs: Apache 2.0 license. https://github.com/google/wuffs
