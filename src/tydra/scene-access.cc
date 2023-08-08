@@ -2158,5 +2158,68 @@ std::string DumpXformNode(
 
 }
 
+template<typename T>
+bool PrimToPrimSpecImpl(const T &p, PrimSpec &ps, std::string *err);
+
+template<>
+bool PrimToPrimSpecImpl(const Model &p, PrimSpec &ps, std::string *err) {
+  (void)err;
+
+  ps.name() = p.name;
+  ps.specifier() = p.spec;
+
+  ps.props() = p.props;
+  ps.metas() = p.meta;
+
+  // TODO: variantSet
+  //ps.variantSets
+
+  return true;
+}
+
+template<>
+bool PrimToPrimSpecImpl(const Xform &p, PrimSpec &ps, std::string *err) {
+  (void)err;
+
+  ps.name() = p.name;
+  ps.specifier() = p.spec;
+
+  ps.props() = p.props;
+
+  // TODO..
+  std::vector<value::token> toks;
+  Attribute xformOpOrderAttr;
+  xformOpOrderAttr.set_value(toks);
+  ps.props().emplace("xformOpOrder", Property(xformOpOrderAttr, /* custom */false));
+
+  ps.metas() = p.meta;
+
+  // TODO: variantSet
+  //ps.variantSets
+
+  return true;
+}
+
+bool PrimToPrimSpec(const Prim &prim, PrimSpec &ps, std::string *err) 
+{
+
+#define TO_PRIMSPEC(__ty) \
+  if (prim.as<__ty>()) { \
+    return PrimToPrimSpecImpl(*(prim.as<__ty>()), ps, err); \
+  } else
+  
+
+  TO_PRIMSPEC(Model)
+  {
+    if (err) {
+      (*err) += "Unsupported/unimplemented Prim type: " + prim.prim_type_name() + "\n";
+    }
+    return false;
+  } 
+
+#undef TO_PRIMSPEC
+
+}
+
 }  // namespace tydra
 }  // namespace tinyusdz

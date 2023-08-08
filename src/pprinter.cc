@@ -2060,18 +2060,83 @@ std::string print_variantSetStmt(
           }
         }
       } else {
-        ss << "variantPrimChildren.size = " << std::to_string(variantPrimChildren.size()) << "\n";
         for (const auto &child : variantPrimChildren) {
           ss << pprint_value(child.data(), indent+2, /* closing_brace */true);
         }
       }
 
-      ss << "# variantSet end\n";
+      //ss << "# variantSet end\n";
       ss << pprint::Indent(indent+1) << "}\n";
 
     }
 
-    ss << pprint::Indent(indent) << "{\n";
+    ss << pprint::Indent(indent) << "}\n";
+
+  }
+
+  return ss.str();
+}
+
+std::string print_variantSetSpecStmt(
+  const std::map<std::string, VariantSetSpec> &vslist, const uint32_t indent) {
+  std::stringstream ss;
+
+  //ss << "# variantSet.size = " << std::to_string(vslist.size()) << "\n";
+  for (const auto &variantSet : vslist) {
+
+    if (variantSet.second.variantSet.empty()) {
+      continue;
+    }
+
+    ss << pprint::Indent(indent) << "variantSet " << quote(variantSet.first) << " = {\n";
+
+    for (const auto &item : variantSet.second.variantSet) {
+      ss << pprint::Indent(indent+1) << quote(item.first) << " ";
+
+      if (item.second.metas().authored()) {
+        ss << "(\n";
+        ss << print_prim_metas(item.second.metas(), indent+2);
+        ss << pprint::Indent(indent+1) << ") ";
+      }
+
+      ss << "{\n";
+
+      // props
+      ss << print_props(item.second.props(), indent+2);
+
+      // primChildren
+      // TODO: print child Prims based on `primChildren` Prim metadata
+      const auto &variantPrimMetas = item.second.metas();
+      const auto &variantPrimChildren = item.second.children();
+
+      if (variantPrimMetas.primChildren.size() == variantPrimChildren.size()) {
+        std::map<std::string, const PrimSpec *> primNameTable;
+        for (size_t i = 0; i < variantPrimChildren.size(); i++) {
+          primNameTable.emplace(variantPrimChildren[i].name(), &variantPrimChildren[i]);
+        }
+
+        for (size_t i = 0; i < variantPrimMetas.primChildren.size(); i++) {
+          value::token nameTok = variantPrimMetas.primChildren[i];
+          DCOUT(fmt::format("variantPrimChildren  {}/{} = {}", i, variantPrimMetas.primChildren.size(), nameTok.str()));
+          const auto it = primNameTable.find(nameTok.str());
+          if (it != primNameTable.end()) {
+            ss << prim::print_primspec(*(it->second), indent + 2);
+          } else {
+            // TODO: Report warning?
+          }
+        }
+      } else {
+        for (const auto &child : variantPrimChildren) {
+          ss << prim::print_primspec(child, indent+2);
+        }
+      }
+
+      //ss << "# variantSet end\n";
+      ss << pprint::Indent(indent+1) << "}\n";
+
+    }
+
+    ss << pprint::Indent(indent) << "}\n";
 
   }
 
@@ -2725,8 +2790,9 @@ std::string to_string(const Material &material, const uint32_t indent, bool clos
 
   if (material.surface.authored()) {
 
+    // assume connection when authored.
     // TODO: list edit?.
-    ss << pprint::Indent(indent+1) << "token outputs:surface ";
+    ss << pprint::Indent(indent+1) << "token outputs:surface.connect ";
 
     const auto &conns = material.surface.get_connections();
     if (conns.size() == 1) {
@@ -2749,8 +2815,9 @@ std::string to_string(const Material &material, const uint32_t indent, bool clos
   }
 
   if (material.displacement.authored()) {
+    // assume connection when authored.
     // TODO: list edit?.
-    ss << pprint::Indent(indent+1) << "token outputs:displacement ";
+    ss << pprint::Indent(indent+1) << "token outputs:displacement.connect ";
 
     const auto &conns = material.displacement.get_connections();
     if (conns.size() == 1) {
@@ -2773,8 +2840,9 @@ std::string to_string(const Material &material, const uint32_t indent, bool clos
   }
 
   if (material.volume.authored()) {
+    // assume connection when authored.
     // TODO: list edit?.
-    ss << pprint::Indent(indent+1) << "token outputs:volume ";
+    ss << pprint::Indent(indent+1) << "token outputs:volume.connect ";
 
     const auto &conns = material.volume.get_connections();
     if (conns.size() == 1) {
@@ -3612,7 +3680,8 @@ std::string print_primspec(const PrimSpec &primspec, const uint32_t indent) {
     ss << print_primspec(primspec.children()[i], indent+1);
   }
 
-  // TODO: variant
+  //ss << "# variant \n";
+  ss << print_variantSetSpecStmt(primspec.variantSets(), indent+1);
 
 
   ss << pprint::Indent(indent) << "}\n";

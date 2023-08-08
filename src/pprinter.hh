@@ -235,6 +235,8 @@ std::string print_variantSelectionMap(const VariantSelectionMap &m,
                                       const uint32_t indent);
 std::string print_variantSetStmt(
     const std::map<std::string, VariantSet> &vslist, const uint32_t indent);
+std::string print_variantSetSpecStmt(
+    const std::map<std::string, VariantSetSpec> &vslist, const uint32_t indent);
 std::string print_payload(const prim::PayloadList &payload,
                           const uint32_t indent);
 std::string print_timesamples(const value::TimeSamples &v,

@@ -252,8 +252,10 @@ bool CompositeSublayers(AssetResolutionResolver &resolver,
         // TODO: Simply ignore?
         DCOUT("TODO: `class` Prim");
       } else if (prim.second.specifier() == Specifier::Over) {
-        // TODO `over` compisition
-        DCOUT("TODO: `over` Prim");
+        PrimSpec &dst = composited_layer->primspecs()[prim.first];
+        if (!OverridePrimSpec(dst, prim.second, warn, err)) {
+          return false;
+        }
       } else if (prim.second.specifier() == Specifier::Def) {
         DCOUT("overewrite prim: " << prim.first);
         // overwrite
@@ -706,6 +708,101 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
   return true;
 }
 
+bool CompositeVariantRec(uint32_t depth,
+                         PrimSpec &primspec /* [inout] */, std::string *warn,
+                         std::string *err) {
+  if (depth > (1024 * 1024)) {
+    PUSH_ERROR_AND_RETURN("Too deep.");
+  }
+
+  // Traverse children first.
+  for (auto &child : primspec.children()) {
+    if (!CompositeVariantRec(depth + 1, child, warn, err)) {
+      return false;
+    }
+  }
+
+  PrimSpec dst;
+  std::map<std::string, std::string> variant_selection; // empty = use variant settings in PrimSpec.
+
+  if (!VariantSelectPrimSpec(dst, primspec, variant_selection, warn, err)) {
+    return false;
+  }
+
+  primspec = std::move(dst);
+
+  return true;
+}
+
+bool CompositeInheritsRec(uint32_t depth,
+                         const Layer &layer,
+                         PrimSpec &primspec /* [inout] */, std::string *warn,
+                         std::string *err) {
+  if (depth > (1024 * 1024)) {
+    PUSH_ERROR_AND_RETURN("Too deep.");
+  }
+
+  // Traverse children first.
+  for (auto &child : primspec.children()) {
+    if (!CompositeInheritsRec(depth + 1, layer, child, warn, err)) {
+      return false;
+    }
+  }
+
+  if (primspec.metas().inherits) {
+    const auto &qual = primspec.metas().inherits.value().first;
+    const auto &inherits = primspec.metas().inherits.value().second;
+
+    if (inherits.size() == 0) {
+      // no-op, just remove `inherits` metadataum.
+      primspec.metas().inherits.reset();
+      return true;
+    }
+
+    if (inherits.size() != 1) {
+      if (err) {
+        (*err) += "Multiple inheritance is not supporetd.\n";
+      }
+      return false;
+    }
+
+    const Path &inheritPath = inherits[0];
+
+    const PrimSpec *inheritPrimSpec{nullptr};
+
+    if (!layer.find_primspec_at(inheritPath, &inheritPrimSpec, err)) {
+      if (err) {
+        (*err) += "Inheirt primspec failed since Path <" + inheritPath.prim_part() + "> not found or is invalid.\n";
+      }
+
+      return false;
+    }
+
+    // TODO: listEdit
+    DCOUT("TODO: listEdit in `inherits`");
+    (void)qual;
+
+    if (inheritPrimSpec) {
+      if (!InheritPrimSpec(primspec, *inheritPrimSpec, warn, err)) {
+        return false;
+      }
+
+      // remove `inherits` metadataum.
+      primspec.metas().inherits.reset();
+
+    } else {
+      // ???
+      if (err) {
+        (*err) += "Inernal error. PrimSpec is nullptr in CompositeInehritsRec.\n";
+      }
+      return false;
+    }
+
+  }
+
+  return true;
+}
+
 }  // namespace
 
 bool CompositeReferences(AssetResolutionResolver &resolver,
@@ -750,6 +847,48 @@ bool CompositePayload(AssetResolutionResolver &resolver, const Layer &in_layer,
   (*composited_layer) = dst;
 
   DCOUT("Composite `payload` ok.");
+  return true;
+}
+
+bool CompositeVariant(const Layer &in_layer,
+                      Layer *composited_layer, std::string *warn,
+                      std::string *err) {
+  if (!composited_layer) {
+    return false;
+  }
+
+  Layer dst = in_layer;  // deep copy
+
+  for (auto &item : dst.primspecs()) {
+    if (!CompositeVariantRec(/* depth */ 0, item.second, warn, err)) {
+      PUSH_ERROR_AND_RETURN("Composite `variantSet` failed.");
+    }
+  }
+
+  (*composited_layer) = dst;
+
+  DCOUT("Composite `variantSet` ok.");
+  return true;
+}
+
+bool CompositeInherits(const Layer &in_layer,
+                      Layer *composited_layer, std::string *warn,
+                      std::string *err) {
+  if (!composited_layer) {
+    return false;
+  }
+
+  Layer dst = in_layer;  // deep copy
+
+  for (auto &item : dst.primspecs()) {
+    if (!CompositeInheritsRec(/* depth */ 0, dst, item.second, warn, err)) {
+      PUSH_ERROR_AND_RETURN("Composite `inherits` failed.");
+    }
+  }
+
+  (*composited_layer) = dst;
+
+  DCOUT("Composite `inherits` ok.");
   return true;
 }
 
@@ -855,10 +994,8 @@ static bool OverridePrimSpecRec(uint32_t depth, PrimSpec &dst,
 
   // Override properties
   for (const auto &prop : src.props()) {
-    if (dst.props().count(prop.first)) {
-      // replace
-      dst.props().at(prop.first) = prop.second;
-    }
+    // replace
+    dst.props()[prop.first] = prop.second;
   }
 
   // Override child primspecs.
@@ -871,6 +1008,17 @@ static bool OverridePrimSpecRec(uint32_t depth, PrimSpec &dst,
       if (!OverridePrimSpecRec(depth + 1, child, (*src_it), warn, err)) {
         return false;
       }
+    }
+  }
+
+  // Add child not exists in dst.
+  for (auto &child : src.children()) {
+    auto dst_it = std::find_if(
+        dst.children().begin(), dst.children().end(),
+        [&child](const PrimSpec &ps) { return ps.name() == child.name(); });
+
+    if (dst_it == dst.children().end()) {
+      dst.children().push_back(child);
     }
   }
 
@@ -1005,7 +1153,7 @@ bool HasReferences(const Layer &layer, const bool force_check,
     return layer.has_unresolved_references();
   }
 
-  return layer.check_unresoled_references(options.max_depth);
+  return layer.check_unresolved_references(options.max_depth);
 }
 
 bool HasPayload(const Layer &layer, const bool force_check,
@@ -1014,7 +1162,17 @@ bool HasPayload(const Layer &layer, const bool force_check,
     return layer.has_unresolved_payload();
   }
 
-  return layer.check_unresoled_payload(options.max_depth);
+  return layer.check_unresolved_payload(options.max_depth);
+}
+
+bool HasInherits(const Layer &layer) {
+  return layer.check_unresolved_inherits();
+}
+
+bool HasOver(const Layer &layer) { return layer.check_over_primspec(); }
+
+bool HasSpecializes(const Layer &layer) {
+  return layer.check_unresolved_specializes();
 }
 
 namespace {
@@ -1137,11 +1295,9 @@ bool ExtractVariantsRec(uint32_t depth, const std::string &root_path,
     }
     variantInfos["variantSet"] = vsetchildren;
   } else if (prim.variantSets().size()) {
-
     Dictionary vsetdict;
 
     for (const auto &item : prim.variantSets()) {
-
       if (item.second.variantSet.size()) {
         std::vector<std::string> variantStmtNames;
 
@@ -1157,7 +1313,7 @@ bool ExtractVariantsRec(uint32_t depth, const std::string &root_path,
         }
 
         vsetdict[item.first] = variantStmtNames;
-      } 
+      }
     }
 
     if (vsetdict.size()) {
@@ -1192,7 +1348,8 @@ bool ExtractVariants(const Layer &layer, Dictionary *dict, std::string *err) {
   }
 
   for (const auto &primspec : layer.primspecs()) {
-    if (!ExtractVariantsRec(/* depth */0, /* root path */"", primspec.second, (*dict), /* max_depth */1024*1024, err)) {
+    if (!ExtractVariantsRec(/* depth */ 0, /* root path */ "", primspec.second,
+                            (*dict), /* max_depth */ 1024 * 1024, err)) {
       return false;
     }
   }
@@ -1210,10 +1367,125 @@ bool ExtractVariants(const Stage &stage, Dictionary *dict, std::string *err) {
   }
 
   for (const auto &prim : stage.root_prims()) {
-    if (!ExtractVariantsRec(/* depth */0, /* root path */"", prim, (*dict), /* max_depth */1024*1024, err)) {
+    if (!ExtractVariantsRec(/* depth */ 0, /* root path */ "", prim, (*dict),
+                            /* max_depth */ 1024 * 1024, err)) {
       return false;
     }
   }
+
+  return true;
+}
+
+bool VariantSelectPrimSpec(
+    PrimSpec &dst, const PrimSpec &src,
+    const std::map<std::string, std::string> &variant_selection,
+    std::string *warn, std::string *err) {
+  if (src.metas().variants && src.metas().variantSets) {
+    // do variant compsotion
+  } else if (src.metas().variants) {
+    if (warn) {
+      (*warn) +=
+          "`variants` are authored, but `variantSets` is not authored.\n";
+    }
+    dst = src;
+    dst.metas().variants.reset();
+    dst.metas().variantSets.reset();
+    dst.variantSets().clear();
+    return true;
+  } else if (src.metas().variantSets) {
+    if (warn) {
+      (*warn) +=
+          "`variantSets` are authored, but `variants` is not authored.\n";
+    }
+    dst = src;
+    dst.metas().variants.reset();
+    dst.metas().variantSets.reset();
+    dst.variantSets().clear();
+    // nothing to do.
+    return true;
+  } else {
+    dst = src;
+    return true;
+  }
+
+  const auto &variantSetMeta = src.metas().variantSets.value();
+
+  const ListEditQual qual = variantSetMeta.first;
+  (void)qual;
+
+  dst = src;
+
+  PrimSpec ps = src;  // temp PrimSpec. Init with src.
+
+  // Evaluate from the last element.
+  for (int64_t i = int64_t(variantSetMeta.second.size()) - 1; i >= 0; i--) {
+    const auto &variantSetName = variantSetMeta.second[size_t(i)];
+
+    // 1. look into `variant_selection`.
+    // 2. look into variant setting in this PrimSpec.
+
+    std::string variantName;
+    if (variant_selection.count(variantSetName)) {
+      variantName = variant_selection.at(variantSetName);
+    } else if (dst.current_variant_selection(variantSetName, &variantName)) {
+      // ok
+    } else {
+      continue;
+    }
+
+    if (dst.variantSets().count(variantSetName)) {
+      const auto &vss = dst.variantSets().at(variantSetName);
+
+      if (vss.variantSet.count(variantName)) {
+        const PrimSpec &vs = vss.variantSet.at(variantName);
+
+        DCOUT(fmt::format("variantSet[{}] Select variant: {}", variantSetName, variantName));
+
+        //
+        // Promote variant content to PrimSpec.
+        //
+
+        // over-like operation
+        ps.metas().update_from(vs.metas(), /* override_authored */ true);
+
+        for (const auto &prop : vs.props()) {
+          DCOUT("prop: " << prop.first);
+          // override existing prop
+          ps.props()[prop.first] = prop.second;
+        }
+
+        for (const auto &child : vs.children()) {
+          // Override if PrimSpec has same name
+          // simple linear scan.
+          auto it = std::find_if(ps.children().begin(), ps.children().end(),
+                                 [&child](const PrimSpec &item) {
+                                   return (item.name() == child.name());
+                                 });
+
+          if (it != ps.children().end()) {
+            (*it) = child;  // replace
+          } else {
+            ps.children().push_back(child);
+          }
+        }
+
+        // TODO:
+        // - [ ] update `primChildren` and `properties` metadataum if required.
+      }
+    }
+  }
+
+  DCOUT("Variant resolved prim: " << prim::print_primspec(ps));
+
+  // Local properties/metadatum wins against properties/metadataum from Variant
+  ps.specifier() = Specifier::Over;
+  if (!OverridePrimSpec(dst, ps, warn, err)) {
+    PUSH_ERROR_AND_RETURN("Failed to override PrimSpec.");
+  }
+
+  dst.metas().variants.reset();
+  dst.metas().variantSets.reset();
+  dst.variantSets().clear();
 
   return true;
 }

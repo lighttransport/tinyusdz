@@ -44,7 +44,6 @@
 
 #include "handle-allocator.hh"
 #include "primvar.hh"
-// #include "tiny-variant.hh"
 //
 #include "value-eval-util.hh"
 
@@ -468,6 +467,7 @@ class Path {
     return true;  // prop part only
   }
 
+#if 0 // TODO: rmove
   bool is_variant_selection_path() const {
     if (!is_valid()) {
       return false;
@@ -479,6 +479,7 @@ class Path {
 
     return false;
   }
+#endif
 
   // Strip '/'
   Path &make_relative() {
@@ -602,7 +603,7 @@ bool GetCustomDataByKey(const Dictionary &customData, const std::string &key,
 bool SetCustomDataByKey(const std::string &key, const MetaVariable &val,
                         /* inout */ Dictionary &customData);
 
-void OverrideDictionary(Dictionary &customData, const Dictionary &src);
+void OverrideDictionary(Dictionary &customData, const Dictionary &src, const bool override_existing = true);
 
 // Variable class for Prim and Attribute Metadataum.
 //
@@ -839,7 +840,10 @@ struct PrimMetas {
   ///
   /// Update metadatum with rhs(authored metadataum only)
   ///
-  void update_from(const PrimMetas &rhs);
+  /// @param[in] override_authored true: override this.metadataum(authored or not-authored) when rhs.metadatum is authoerd, false override only when this.metadatum is not authored and rhs.metadataum is authored.
+  ///
+  void update_from(const PrimMetas &rhs, bool override_authored = true);
+
 
 #if 0
   // String only metadataum.
@@ -2389,7 +2393,9 @@ struct XformOp {
 // forward decl
 struct Model;
 class Prim;
+class PrimSpec;
 
+// TODO: deprecate this and use PrimSpec for variantSet statement.
 // Variant item in VariantSet.
 // Variant can contain Prim metas, Prim tree and properties.
 struct Variant {
@@ -2417,6 +2423,7 @@ struct Variant {
   std::vector<Prim> _primChildren;
 };
 
+
 struct VariantSet {
   // variantSet name = {
   //   "variant1" ...
@@ -2426,6 +2433,13 @@ struct VariantSet {
 
   std::string name;
   std::map<std::string, Variant> variantSet;
+};
+
+// For variantSet statement in PrimSpec(composition).
+struct VariantSetSpec
+{
+  std::string name;
+  std::map<std::string, PrimSpec> variantSet;
 };
 
 // Generic primspec container.
@@ -2935,6 +2949,9 @@ value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStak,
                                       value::TimeSampleInterpolationType::Held);
 
 ///
+/// TODO: Deprecate this class and use PrimPec
+/// NOTE PrimNode is designed for Stage(freezed)
+///
 /// Contains concrete Prim object and composition elements.
 ///
 /// PrimNode is near to the final state of `Prim`.
@@ -2960,9 +2977,33 @@ class PrimNode {
   ///
   bool select_variant(const std::string &target_name,
                       const std::string &variant_name) {
-    const auto m = vsmap.find(target_name);
-    if (m != vsmap.end()) {
-      current_vsmap[target_name] = variant_name;
+    const auto m = _vsmap.find(target_name);
+    if (m != _vsmap.end()) {
+      _current_vsmap[target_name] = variant_name;
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  ///
+  /// Get current variant selection.
+  ///
+  bool current_variant_selection(const std::string &target_name,
+                      std::string *selected_variant_name) {
+
+    if (!selected_variant_name) {
+      return false;
+    }
+
+    const auto m = _vsmap.find(target_name);
+    if (m != _vsmap.end()) {
+      const auto sm = _current_vsmap.find(target_name);
+      if (sm != _current_vsmap.end()) {
+        (*selected_variant_name) = sm->second;
+      } else {
+        (*selected_variant_name) = m->second;
+      }
       return true;
     } else {
       return false;
@@ -2975,7 +3016,7 @@ class PrimNode {
   /// key = variant prim name
   /// value = variants
   ///
-  const VariantSelectionMap &get_variant_selection_map() const { return vsmap; }
+  const VariantSelectionMap &get_variant_selection_map() const { return _vsmap; }
 
   ///
   /// Variants
@@ -2988,20 +3029,12 @@ class PrimNode {
   using VariantSet = std::map<std::string, PrimNode>;
   std::map<std::string, VariantSet> varitnSetList;  // key = variant
 
-  // using PropertyMap = std::map<std::string, Property>;
-  // using PropertyMap = std::map<std::string, Property>;
-  // using PrimNodeMap = std::map<std::string, PrimNode>;
-
-  VariantSelectionMap vsmap;          // Original variant selections
-  VariantSelectionMap current_vsmap;  // Currently selected variants
-
-  // key = variant_name
-  // std::map<std::string, PropertyMap> variantAttributeMap;
-  // std::map<std::string, PrimNodeMap> variantPrimNodeMap;
+  VariantSelectionMap _vsmap;          // Original variant selections
+  VariantSelectionMap _current_vsmap;  // Currently selected variants
 
   std::vector<value::token> primChildren;  // List of child Prim nodes
   std::vector<value::token> properties;    // List of property names
-  std::vector<value::token> variantChildren;
+  std::vector<value::token> variantChildren; // List of child VariantSet nodes.
 };
 
 /// Similar to PrimSpec
@@ -3057,13 +3090,72 @@ class PrimSpec {
   std::vector<PrimSpec> &children() { return _children; }
 
   ///
-  /// List variants in this Prim
-  /// key = variant prim name
+  /// Select variant.
+  ///
+  bool select_variant(const std::string &target_name,
+                      const std::string &variant_name) {
+    if (metas().variants.has_value()) {
+      const auto m = metas().variants.value().find(target_name);
+      if (m != metas().variants.value().end()) {
+        _current_vsmap[target_name] = variant_name;
+        return true;
+      } else {
+        return false;
+      }
+    }
+    return false;
+  }
+
+  bool current_variant_selection(const std::string &target_name,
+                      std::string *selected_variant_name) {
+
+    if (!selected_variant_name) {
+      return false;
+    }
+
+    if (!metas().variants.has_value()) {
+      return false;
+    }
+
+    const auto &vsmap = metas().variants.value();
+
+    const auto m = vsmap.find(target_name);
+    if (m != vsmap.end()) {
+      const auto sm = _current_vsmap.find(target_name);
+      if (sm != _current_vsmap.end()) {
+        (*selected_variant_name) = sm->second;
+      } else {
+        (*selected_variant_name) = m->second;
+      }
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  ///
+  /// List variants in this PrimSpec
+  /// key = variant name
   /// value = variats
   ///
-  const VariantSelectionMap &get_variant_selection_map() const {
-    return _vsmap;
+  const VariantSelectionMap get_variant_selection_map() const {
+    VariantSelectionMap vsmap;
+    if (metas().variants.has_value()) {
+      vsmap = metas().variants.value();
+    }
+    return vsmap;
   }
+
+  ///
+  /// Variants
+  ///
+  /// VariantSet = Prim metas + Properties and/or child Prims
+  ///            = repsetent as PrimNode for a while.
+  ///
+  ///
+  /// key = variant name
+  std::map<std::string, VariantSetSpec> &variantSets() { return _variantSets; }
+  const std::map<std::string, VariantSetSpec> &variantSets() const { return _variantSets; }
 
   const PrimMeta &metas() const { return _metas; }
 
@@ -3080,6 +3172,14 @@ class PrimSpec {
   const std::vector<Payload> &get_payloads();
   const ListEditQual &get_payloads_listedit_qualifier();
 
+  const std::vector<value::token> &primChildren() const {
+    return _primChildren;
+  }
+
+  const std::vector<value::token> &propertyNames() const {
+    return _properties;
+  }
+
  private:
   void CopyFrom(const PrimSpec &rhs) {
     _specifier = rhs._specifier;
@@ -3090,10 +3190,14 @@ class PrimSpec {
 
     _props = rhs._props;
 
-    _vsmap = rhs._vsmap;
+    //_vsmap = rhs._vsmap;
+    _current_vsmap = rhs._current_vsmap;
 
-    _variantAttributeMap = rhs._variantAttributeMap;
-    _variantPrimNodeMap = rhs._variantPrimNodeMap;
+    _variantSets = rhs._variantSets;
+
+    _primChildren = rhs._primChildren;
+    _properties = rhs._properties;
+    _variantChildren = rhs._variantChildren;
 
     _metas = rhs._metas;
   }
@@ -3107,10 +3211,14 @@ class PrimSpec {
 
     _props = std::move(rhs._props);
 
-    _vsmap = std::move(rhs._vsmap);
+    //_vsmap = std::move(rhs._vsmap);
+    _current_vsmap = std::move(rhs._current_vsmap);
 
-    _variantAttributeMap = std::move(rhs._variantAttributeMap);
-    _variantPrimNodeMap = std::move(rhs._variantPrimNodeMap);
+    _variantSets = rhs._variantSets;
+
+    _primChildren = rhs._primChildren;
+    _properties = rhs._properties;
+    _variantChildren = rhs._variantChildren;
 
     _metas = std::move(rhs._metas);
   }
@@ -3131,19 +3239,14 @@ class PrimSpec {
   ///
   using PrimSpecMap = std::map<std::string, PrimSpec>;
 
-  VariantSelectionMap _vsmap;  // Original variant selections
+  //VariantSelectionMap _vsmap;  // Original variant selections
+  VariantSelectionMap _current_vsmap;  // Currently selected variants
 
-  // key = variant_name
-  std::map<std::string, PropertyMap> _variantAttributeMap;
-  std::map<std::string, PrimSpecMap> _variantPrimNodeMap;
+  std::map<std::string, VariantSetSpec> _variantSets;
 
-#if 0
-  ///
-  /// Information for Crate(USDC binary)
-  ///
-  std::vector<value::token> _primChildren;
+  std::vector<value::token> _primChildren;  // List of child PrimSPec nodes
+  std::vector<value::token> _properties;    // List of property names
   std::vector<value::token> _variantChildren;
-#endif
 
   PrimMeta _metas;
 };
@@ -3202,6 +3305,7 @@ struct Layer {
 
   void clear_primspecs() { _prim_specs.clear(); }
 
+  // Check if `primname` exists in root Prims?
   bool has_primspec(const std::string &primname) const {
     return _prim_specs.count(primname);
   }
@@ -3331,13 +3435,25 @@ struct Layer {
     return _has_over_primspec;
   }
 
+  bool has_class_primspec() const {
+    return _has_class_primspec;
+  }
+
+  bool has_unresolved_inherits() const {
+    return _has_unresolved_inherits;
+  }
+
+  bool has_unresolved_specializes() const {
+    return _has_unresolved_specializes;
+  }
+
   ///
   /// Check if PrimSpec tree contains any `references` and cache the result.
   ///
   /// @param[in] max_depth Maximum PrimSpec traversal depth.
   /// @returns true if PrimSpec tree contains any (unresolved) `references`. false if not.
   ///
-  bool check_unresoled_references(const uint32_t max_depth = 1024 * 1024) const;
+  bool check_unresolved_references(const uint32_t max_depth = 1024 * 1024) const;
 
   ///
   /// Check if PrimSpec tree contains any `payload` and cache the result.
@@ -3345,7 +3461,7 @@ struct Layer {
   /// @param[in] max_depth Maximum PrimSpec traversal depth.
   /// @returns true if PrimSpec tree contains any (unresolved) `payload`. false if not.
   ///
-  bool check_unresoled_payload(const uint32_t max_depth = 1024 * 1024) const;
+  bool check_unresolved_payload(const uint32_t max_depth = 1024 * 1024) const;
 
   ///
   /// Check if PrimSpec tree contains any `variant` and cache the result.
@@ -3353,7 +3469,23 @@ struct Layer {
   /// @param[in] max_depth Maximum PrimSpec traversal depth.
   /// @returns true if PrimSpec tree contains any (unresolved) `variant`. false if not.
   ///
-  bool check_unresoled_variant(const uint32_t max_depth = 1024 * 1024) const;
+  bool check_unresolved_variant(const uint32_t max_depth = 1024 * 1024) const;
+
+  ///
+  /// Check if PrimSpec tree contains any `specializes` and cache the result.
+  ///
+  /// @param[in] max_depth Maximum PrimSpec traversal depth.
+  /// @returns true if PrimSpec tree contains any (unresolved) `specializes`. false if not.
+  ///
+  bool check_unresolved_specializes(const uint32_t max_depth = 1024 * 1024) const;
+
+  ///
+  /// Check if PrimSpec tree contains any `inherits` and cache the result.
+  ///
+  /// @param[in] max_depth Maximum PrimSpec traversal depth.
+  /// @returns true if PrimSpec tree contains any (unresolved) `inherits`. false if not.
+  ///
+  bool check_unresolved_inherits(const uint32_t max_depth = 1024 * 1024) const;
 
   ///
   /// Check if PrimSpec tree contains any Prim with `over` specifier and cache the result.
@@ -3370,7 +3502,7 @@ struct Layer {
   /// @param[out] ps Pointer to PrimSpec pointer
   /// @param[out] err Error message
   ///
-  bool find_primspec_at(const Path &path, const PrimSpec **ps, std::string *err);
+  bool find_primspec_at(const Path &path, const PrimSpec **ps, std::string *err) const;
 
  private:
   std::string _name;  // layer name ~= USD filename
@@ -3393,7 +3525,10 @@ struct Layer {
   mutable bool _has_unresolved_references{true};
   mutable bool _has_unresolved_payload{true};
   mutable bool _has_unresolved_variant{true};
+  mutable bool _has_unresolved_inherits{true};
+  mutable bool _has_unresolved_specializes{true};
   mutable bool _has_over_primspec{true};
+  mutable bool _has_class_primspec{true};
 };
 
 #if 0  // TODO: Remove
@@ -3494,6 +3629,7 @@ using ReferenceList = std::pair<ListEditQual, std::vector<Reference>>;
 using PayloadList = std::pair<ListEditQual, std::vector<Payload>>;
 
 }  // namespace prim
+
 
 // TODO(syoyo): Range, Interval, Rect2i, Frustum, MultiInterval
 // and Quaternion?

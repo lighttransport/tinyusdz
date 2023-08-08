@@ -15,8 +15,8 @@
 #include "usdSkel.hh"
 //
 #include "common-macros.inc"
-#include "value-pprint.hh"
 #include "pprinter.hh"
+#include "value-pprint.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -29,11 +29,12 @@
 #pragma clang diagnostic pop
 #endif
 
-#define PushError(msg) do { \
-  if (err) { \
-    (*err) += msg; \
-  } \
-} while(0)
+#define PushError(msg) \
+  do {                 \
+    if (err) {         \
+      (*err) += msg;   \
+    }                  \
+  } while (0)
 
 namespace tinyusdz {
 
@@ -126,7 +127,7 @@ Path::Path(const std::string &p, const std::string &prop) {
         _element = prop;
       } else {
         if (prims.size()) {
-          _element = prims[prims.size()-1];
+          _element = prims[prims.size() - 1];
         } else {
           _element = p;
         }
@@ -163,7 +164,7 @@ Path::Path(const std::string &p, const std::string &prop) {
 
       _prop_part = prop_name.erase(0, 1);  // remove '.'
       _prim_part = p.substr(0, size_t(loc));
-      _element = _prop_part; // elementName is property path
+      _element = _prop_part;  // elementName is property path
 
       _valid = true;
 
@@ -193,7 +194,7 @@ Path::Path(const std::string &p, const std::string &prop) {
       _element = prop;
     } else {
       if (prims.size()) {
-        _element = prims[prims.size()-1];
+        _element = prims[prims.size() - 1];
       } else {
         _element = p;
       }
@@ -311,9 +312,10 @@ const Path Path::AppendProperty(const std::string &elem) const {
 }
 
 // TODO: Do test more.
-// Current implementation may not behave as in pxrUSD's SdfPath's _LessThanInternal implementation
+// Current implementation may not behave as in pxrUSD's SdfPath's
+// _LessThanInternal implementation
 bool Path::LessThan(const Path &lhs, const Path &rhs) {
-  //DCOUT("LessThan");
+  // DCOUT("LessThan");
   if (lhs.is_valid() && rhs.is_valid()) {
     // ok
   } else {
@@ -331,7 +333,6 @@ bool Path::LessThan(const Path &lhs, const Path &rhs) {
   }
 
   if (lhs.prim_part() == rhs.prim_part()) {
-
     // compare property
     const std::string &lhs_prop_part = lhs.prop_part();
     const std::string &rhs_prop_part = rhs.prop_part();
@@ -340,14 +341,15 @@ bool Path::LessThan(const Path &lhs, const Path &rhs) {
       return lhs_prop_part.empty();
     }
 
-    return std::lexicographical_compare(lhs_prop_part.begin(), lhs_prop_part.end(), rhs_prop_part.begin(), rhs_prop_part.end());
+    return std::lexicographical_compare(
+        lhs_prop_part.begin(), lhs_prop_part.end(), rhs_prop_part.begin(),
+        rhs_prop_part.end());
 
   } else {
-
     const std::vector<std::string> lhs_prim_names = split(lhs.prim_part(), "/");
     const std::vector<std::string> rhs_prim_names = split(rhs.prim_part(), "/");
-    //DCOUT("lhs_names = " << to_string(lhs_prim_names));
-    //DCOUT("rhs_names = " << to_string(rhs_prim_names));
+    // DCOUT("lhs_names = " << to_string(lhs_prim_names));
+    // DCOUT("rhs_names = " << to_string(rhs_prim_names));
 
     if (lhs_prim_names.empty() || rhs_prim_names.empty()) {
       return lhs_prim_names.empty() && rhs_prim_names.size();
@@ -371,22 +373,23 @@ bool Path::LessThan(const Path &lhs, const Path &rhs) {
 
     // Walk until common ancestor is found
     size_t child_idx = didx - 1;
-    //DCOUT("common_depth_idx = " << didx << ", lcount = " << lhs_prim_names.size() << ", rcount = " << rhs_prim_names.size());
+    // DCOUT("common_depth_idx = " << didx << ", lcount = " <<
+    // lhs_prim_names.size() << ", rcount = " << rhs_prim_names.size());
     if (didx > 1) {
       for (size_t parent_idx = didx - 2; parent_idx > 0; parent_idx--) {
-        //DCOUT("parent_idx = " << parent_idx);
+        // DCOUT("parent_idx = " << parent_idx);
         if (lhs_prim_names[parent_idx] != rhs_prim_names[parent_idx]) {
           child_idx--;
         }
       }
     }
-    //DCOUT("child_idx = " << child_idx);
+    // DCOUT("child_idx = " << child_idx);
 
     // compare child node
-    return std::lexicographical_compare(lhs_prim_names[child_idx].begin(), lhs_prim_names[child_idx].end(), rhs_prim_names[child_idx].begin(), rhs_prim_names[child_idx].end());
-
+    return std::lexicographical_compare(
+        lhs_prim_names[child_idx].begin(), lhs_prim_names[child_idx].end(),
+        rhs_prim_names[child_idx].begin(), rhs_prim_names[child_idx].end());
   }
-
 }
 
 std::pair<Path, Path> Path::split_at_root() const {
@@ -437,10 +440,9 @@ bool Path::has_prefix(const Path &prefix) const {
     // No hierarchy in Prim's property path, so use ==.
     return full_path_name() == prefix.full_path_name();
   } else if (prefix.is_prim_path()) {
-
     // '/', prefix = '/'
     if (is_root_path() && prefix.is_root_path()) {
-      //DCOUT("both are root path");
+      // DCOUT("both are root path");
       return true;
     }
 
@@ -448,14 +450,15 @@ bool Path::has_prefix(const Path &prefix) const {
     // - '/bora', prefix = '/'
     // - '/bora/dora', prefix = '/'
     if (is_absolute_path() && prefix.is_root_path()) {
-      //DCOUT("prefix is root path");
+      // DCOUT("prefix is root path");
       return true;
     }
 
     const std::vector<std::string> prim_names = split(prim_part(), "/");
-    const std::vector<std::string> prefix_prim_names = split(prefix.prim_part(), "/");
-    //DCOUT("prim_names = " << to_string(prim_names));
-    //DCOUT("prefix.prim_names = " << to_string(prefix_prim_names));
+    const std::vector<std::string> prefix_prim_names =
+        split(prefix.prim_part(), "/");
+    // DCOUT("prim_names = " << to_string(prim_names));
+    // DCOUT("prefix.prim_names = " << to_string(prefix_prim_names));
 
     if (prim_names.empty() || prefix_prim_names.empty()) {
       return false;
@@ -466,20 +469,20 @@ bool Path::has_prefix(const Path &prefix) const {
     }
 
     size_t depth = prefix_prim_names.size();
-    if (depth < 1) { // just in case
+    if (depth < 1) {  // just in case
       return false;
     }
 
-    // Move to prefix's path depth and compare each elementName of Prim tree towards the root.
-    // comapre from tail would find a difference earlier.
+    // Move to prefix's path depth and compare each elementName of Prim tree
+    // towards the root. comapre from tail would find a difference earlier.
     while (depth > 0) {
-      if (prim_names[depth-1] != prefix_prim_names[depth-1]) {
+      if (prim_names[depth - 1] != prefix_prim_names[depth - 1]) {
         return false;
       }
       depth--;
     }
 
-    //DCOUT("has_prefix");
+    // DCOUT("has_prefix");
     return true;
 
   } else {
@@ -497,6 +500,7 @@ Path Path::append_element(const std::string &elem) {
     return p;
   }
 
+  // {variant=value}
   if (is_variantElementName(elem)) {
     std::array<std::string, 2> variant;
     if (tokenize_variantElement(elem, &variant)) {
@@ -686,13 +690,13 @@ const PrimMeta *GetPrimMeta(const value::Value &v) {
   GET_PRIM_META(RectLight)
   GET_PRIM_META(Material)
   GET_PRIM_META(Shader)
-  //GET_PRIM_META(UsdPreviewSurface)
-  //GET_PRIM_META(UsdUVTexture)
-  //GET_PRIM_META(UsdPrimvarReader_int)
-  //GET_PRIM_META(UsdPrimvarReader_float)
-  //GET_PRIM_META(UsdPrimvarReader_float2)
-  //GET_PRIM_META(UsdPrimvarReader_float3)
-  //GET_PRIM_META(UsdPrimvarReader_float4)
+  // GET_PRIM_META(UsdPreviewSurface)
+  // GET_PRIM_META(UsdUVTexture)
+  // GET_PRIM_META(UsdPrimvarReader_int)
+  // GET_PRIM_META(UsdPrimvarReader_float)
+  // GET_PRIM_META(UsdPrimvarReader_float2)
+  // GET_PRIM_META(UsdPrimvarReader_float3)
+  // GET_PRIM_META(UsdPrimvarReader_float4)
   GET_PRIM_META(SkelRoot)
   GET_PRIM_META(Skeleton)
   GET_PRIM_META(SkelAnimation)
@@ -732,13 +736,13 @@ PrimMeta *GetPrimMeta(value::Value &v) {
   GET_PRIM_META(RectLight)
   GET_PRIM_META(Material)
   GET_PRIM_META(Shader)
-  //GET_PRIM_META(UsdPreviewSurface)
-  //GET_PRIM_META(UsdUVTexture)
-  //GET_PRIM_META(UsdPrimvarReader_int)
-  //GET_PRIM_META(UsdPrimvarReader_float)
-  //GET_PRIM_META(UsdPrimvarReader_float2)
-  //GET_PRIM_META(UsdPrimvarReader_float3)
-  //GET_PRIM_META(UsdPrimvarReader_float4)
+  // GET_PRIM_META(UsdPreviewSurface)
+  // GET_PRIM_META(UsdUVTexture)
+  // GET_PRIM_META(UsdPrimvarReader_int)
+  // GET_PRIM_META(UsdPrimvarReader_float)
+  // GET_PRIM_META(UsdPrimvarReader_float2)
+  // GET_PRIM_META(UsdPrimvarReader_float3)
+  // GET_PRIM_META(UsdPrimvarReader_float4)
   GET_PRIM_META(SkelRoot)
   GET_PRIM_META(Skeleton)
   GET_PRIM_META(SkelAnimation)
@@ -996,29 +1000,28 @@ Prim::Prim(const std::string &elementPath, value::Value &&rhs) {
   }
 }
 
-bool Prim::add_child(Prim &&rhs, const bool rename_prim_name, std::string *err) {
-
+bool Prim::add_child(Prim &&rhs, const bool rename_prim_name,
+                     std::string *err) {
 #if defined(TINYUSDZ_ENABLE_THREAD)
   // TODO: Only take a lock when dirty.
   std::lock_guard<std::mutex> lock(_mutex);
 #endif
 
-
   std::string elementName = rhs.element_name();
 
   if (elementName.empty()) {
     if (rename_prim_name) {
-
       // assign default name `default`
       elementName = "default";
 
       if (!SetPrimElementName(rhs.get_data(), elementName)) {
         if (err) {
-          (*err) = fmt::format("Internal error. cannot modify Prim's elementName.\n");
+          (*err) = fmt::format(
+              "Internal error. cannot modify Prim's elementName.\n");
         }
         return false;
       }
-      rhs.element_path() = Path(elementName, /* prop_part */"");
+      rhs.element_path() = Path(elementName, /* prop_part */ "");
     } else {
       if (err) {
         (*err) = "Prim has empty elementName.\n";
@@ -1033,14 +1036,17 @@ bool Prim::add_child(Prim &&rhs, const bool rename_prim_name, std::string *err) 
     for (size_t i = 0; i < _children.size(); i++) {
       if (_children[i].element_name().empty()) {
         if (err) {
-          (*err) = "Internal error: Existing child Prim's elementName is empty.\n";
+          (*err) =
+              "Internal error: Existing child Prim's elementName is empty.\n";
         }
         return false;
       }
 
       if (_childrenNameSet.count(_children[i].element_name())) {
         if (err) {
-          (*err) = "Internal error: _children contains Prim with same elementName.\n";
+          (*err) =
+              "Internal error: _children contains Prim with same "
+              "elementName.\n";
         }
         return false;
       }
@@ -1056,7 +1062,9 @@ bool Prim::add_child(Prim &&rhs, const bool rename_prim_name, std::string *err) 
       std::string unique_name;
       if (!makeUniqueName(_childrenNameSet, elementName, &unique_name)) {
         if (err) {
-          (*err) = fmt::format("Internal error. cannot assign unique name for `{}`.\n", elementName);
+          (*err) = fmt::format(
+              "Internal error. cannot assign unique name for `{}`.\n",
+              elementName);
         }
         return false;
       }
@@ -1064,10 +1072,12 @@ bool Prim::add_child(Prim &&rhs, const bool rename_prim_name, std::string *err) 
       // Ensure valid Prim name
       if (!ValidatePrimElementName(unique_name)) {
         if (err) {
-          (*err) = fmt::format("Internally generated Prim name `{}` is invalid as a Prim name.\n", unique_name);
+          (*err) = fmt::format(
+              "Internally generated Prim name `{}` is invalid as a Prim "
+              "name.\n",
+              unique_name);
         }
         return false;
-
       }
 
       elementName = unique_name;
@@ -1076,19 +1086,21 @@ bool Prim::add_child(Prim &&rhs, const bool rename_prim_name, std::string *err) 
       DCOUT("elementName = " << elementName);
       if (!SetPrimElementName(rhs.get_data(), elementName)) {
         if (err) {
-          (*err) = fmt::format("Internal error. cannot modify Prim's elementName.\n");
+          (*err) = fmt::format(
+              "Internal error. cannot modify Prim's elementName.\n");
         }
         return false;
       }
-      rhs.element_path() = Path(elementName, /* prop_part */"");
+      rhs.element_path() = Path(elementName, /* prop_part */ "");
     } else {
       if (err) {
-        (*err) = fmt::format("Prim name(elementName) {} already exists in children.\n", rhs.element_name());
+        (*err) = fmt::format(
+            "Prim name(elementName) {} already exists in children.\n",
+            rhs.element_name());
       }
       return false;
     }
   }
-
 
   DCOUT("rhs.elementName = " << rhs.element_name());
 
@@ -1099,8 +1111,8 @@ bool Prim::add_child(Prim &&rhs, const bool rename_prim_name, std::string *err) 
   return true;
 }
 
-bool Prim::replace_child(const std::string &child_prim_name, Prim &&rhs, std::string *err) {
-
+bool Prim::replace_child(const std::string &child_prim_name, Prim &&rhs,
+                         std::string *err) {
 #if defined(TINYUSDZ_ENABLE_THREAD)
   // TODO: Only take a lock when dirty.
   std::lock_guard<std::mutex> lock(_mutex);
@@ -1114,7 +1126,8 @@ bool Prim::replace_child(const std::string &child_prim_name, Prim &&rhs, std::st
 
   if (!ValidatePrimElementName(child_prim_name)) {
     if (err) {
-      (*err) += fmt::format("`{}` is not a valid Prim name.\n", child_prim_name);
+      (*err) +=
+          fmt::format("`{}` is not a valid Prim name.\n", child_prim_name);
     }
   }
 
@@ -1124,14 +1137,17 @@ bool Prim::replace_child(const std::string &child_prim_name, Prim &&rhs, std::st
     for (size_t i = 0; i < _children.size(); i++) {
       if (_children[i].element_name().empty()) {
         if (err) {
-          (*err) = "Internal error: Existing child Prim's elementName is empty.\n";
+          (*err) =
+              "Internal error: Existing child Prim's elementName is empty.\n";
         }
         return false;
       }
 
       if (_childrenNameSet.count(_children[i].element_name())) {
         if (err) {
-          (*err) = "Internal error: _children contains Prim with same elementName.\n";
+          (*err) =
+              "Internal error: _children contains Prim with same "
+              "elementName.\n";
         }
         return false;
       }
@@ -1141,36 +1157,37 @@ bool Prim::replace_child(const std::string &child_prim_name, Prim &&rhs, std::st
   }
 
   // Simple linear scan
-  auto result = std::find_if(_children.begin(), _children.end(), [child_prim_name](const Prim &p) {
-    return (p.element_name() == child_prim_name);
-  });
+  auto result = std::find_if(_children.begin(), _children.end(),
+                             [child_prim_name](const Prim &p) {
+                               return (p.element_name() == child_prim_name);
+                             });
 
   if (result != _children.end()) {
-
     // Need to modify both Prim::data::name and Prim::elementPath
     if (!SetPrimElementName(rhs.get_data(), child_prim_name)) {
       if (err) {
-        (*err) = fmt::format("Internal error. cannot modify Prim's elementName.\n");
+        (*err) =
+            fmt::format("Internal error. cannot modify Prim's elementName.\n");
       }
       return false;
     }
-    rhs.element_path() = Path(child_prim_name, /* prop_part */"");
+    rhs.element_path() = Path(child_prim_name, /* prop_part */ "");
 
-    (*result) = std::move(rhs); // replace
+    (*result) = std::move(rhs);  // replace
 
   } else {
-
     // Need to modify both Prim::data::name and Prim::elementPath
     if (!SetPrimElementName(rhs.get_data(), child_prim_name)) {
       if (err) {
-        (*err) = fmt::format("Internal error. cannot modify Prim's elementName.\n");
+        (*err) =
+            fmt::format("Internal error. cannot modify Prim's elementName.\n");
       }
       return false;
     }
-    rhs.element_path() = Path(child_prim_name, /* prop_part */"");
+    rhs.element_path() = Path(child_prim_name, /* prop_part */ "");
 
     _childrenNameSet.insert(child_prim_name);
-    _children.emplace_back(std::move(rhs)); // add
+    _children.emplace_back(std::move(rhs));  // add
   }
 
   _child_dirty = true;
@@ -1178,13 +1195,15 @@ bool Prim::replace_child(const std::string &child_prim_name, Prim &&rhs, std::st
   return true;
 }
 
-const std::vector<int64_t> &Prim::get_child_indices_from_primChildren(bool force_update, bool *indices_is_valid) const {
+const std::vector<int64_t> &Prim::get_child_indices_from_primChildren(
+    bool force_update, bool *indices_is_valid) const {
 #if defined(TINYUSDZ_ENABLE_THREAD)
   // TODO: Only take a lock when dirty.
   std::lock_guard<std::mutex> lock(_mutex);
 #endif
 
-  if (!force_update && (_primChildrenIndices.size() == _children.size()) && !_child_dirty) {
+  if (!force_update && (_primChildrenIndices.size() == _children.size()) &&
+      !_child_dirty) {
     // got cache.
     if (indices_is_valid) {
       (*indices_is_valid) = _primChildrenIndicesIsValid;
@@ -1206,11 +1225,11 @@ const std::vector<int64_t> &Prim::get_child_indices_from_primChildren(bool force
     return _primChildrenIndices;
   }
 
-  std::map<std::string, size_t> m; // name -> children() index map
+  std::map<std::string, size_t> m;  // name -> children() index map
   for (size_t i = 0; i < _children.size(); i++) {
     m.emplace(_children[i].element_name(), i);
   }
-  std::set<size_t> table; // to check uniqueness
+  std::set<size_t> table;  // to check uniqueness
 
   // Use the length of primChildren.
   _primChildrenIndices.resize(metas().primChildren.size());
@@ -1221,7 +1240,6 @@ const std::vector<int64_t> &Prim::get_child_indices_from_primChildren(bool force
     std::string tok = metas().primChildren[i].str();
     const auto it = m.find(tok);
     if (it != m.end()) {
-
       _primChildrenIndices[i] = int64_t(it->second);
 
       table.insert(it->second);
@@ -1244,9 +1262,6 @@ const std::vector<int64_t> &Prim::get_child_indices_from_primChildren(bool force
 
   return _primChildrenIndices;
 }
-
-
-
 
 //
 // To deal with clang's -Wexit-time-destructors, dynamically allocate buffer for
@@ -1415,7 +1430,6 @@ bool HasCustomDataKey(const CustomDataType &custom, const std::string &key) {
 
 bool GetCustomDataByKey(const CustomDataType &custom, const std::string &key,
                         MetaVariable *var) {
-
   if (!var) {
     return false;
   }
@@ -1464,54 +1478,51 @@ bool GetCustomDataByKey(const CustomDataType &custom, const std::string &key,
 
 namespace {
 
-bool OverrideCustomDataRec(uint32_t depth, CustomDataType &dst, const CustomDataType &src) {
+bool OverrideCustomDataRec(uint32_t depth, CustomDataType &dst,
+                           const CustomDataType &src, const bool override_existing) {
   if (depth > (1024 * 1024 * 128)) {
     // too deep
     return false;
   }
 
   for (const auto &item : src) {
-
     if (dst.count(item.first)) {
+      if (override_existing) {
+        CustomDataType *dst_dict =
+            dst.at(item.first).get_raw_value().as<CustomDataType>();
 
-      CustomDataType *dst_dict = dst.at(item.first).get_raw_value().as<CustomDataType>();
+        const value::Value &src_data = item.second.get_raw_value();
+        const CustomDataType *src_dict = src_data.as<CustomDataType>();
 
-      const value::Value &src_data = item.second.get_raw_value();
-      const CustomDataType *src_dict = src_data.as<CustomDataType>();
+        //
+        // Recursively apply override op both types are dict.
+        //
+        if (src_dict && dst_dict) {
+          // recursively override dict
+          if (!OverrideCustomDataRec(depth + 1, (*dst_dict), (*src_dict), override_existing)) {
+            return false;
+          }
 
-      //
-      // Recursively apply override op both types are dict.
-      //
-      if (src_dict && dst_dict) {
-        // recursively override dict
-        if (!OverrideCustomDataRec(depth+1, (*dst_dict), (*src_dict))) {
-          return false;
+        } else {
+          dst[item.first] = item.second;
         }
-
-      } else {
-        dst[item.first] = item.second;
       }
-
     } else {
       // add dict value
       dst.emplace(item.first, item.second);
     }
-
   }
 
   return true;
 }
 
-} // namespace
+}  // namespace
 
-void OverrideDictionary(CustomDataType &dst, const CustomDataType &src) {
-
-  OverrideCustomDataRec(0, dst, src);
+void OverrideDictionary(CustomDataType &dst, const CustomDataType &src, const bool override_existing) {
+  OverrideCustomDataRec(0, dst, src, override_existing);
 }
 
-
 AssetInfo PrimMeta::get_assetInfo(bool *is_authored) const {
-
   AssetInfo ainfo;
 
   if (is_authored) {
@@ -1519,7 +1530,6 @@ AssetInfo PrimMeta::get_assetInfo(bool *is_authored) const {
   }
 
   if (authored()) {
-
     ainfo._fields = meta;
 
     {
@@ -1546,7 +1556,8 @@ AssetInfo PrimMeta::get_assetInfo(bool *is_authored) const {
 
     {
       MetaVariable payloadDeps_var;
-      if (GetCustomDataByKey(meta, "payloadAssetDependencies", &payloadDeps_var)) {
+      if (GetCustomDataByKey(meta, "payloadAssetDependencies",
+                             &payloadDeps_var)) {
         std::vector<value::AssetPath> assets;
         if (payloadDeps_var.get_value<std::vector<value::AssetPath>>(&assets)) {
           ainfo.payloadAssetDependencies = assets;
@@ -1571,53 +1582,96 @@ AssetInfo PrimMeta::get_assetInfo(bool *is_authored) const {
 }
 
 bool IsXformablePrim(const Prim &prim) {
-
   uint32_t tyid = prim.type_id();
 
   // GeomSubset is not xformable
 
   switch (tyid) {
-  case value::TYPE_ID_GPRIM: { return true; }
-  case value::TYPE_ID_GEOM_XFORM: { return true; }
-  case value::TYPE_ID_GEOM_MESH: { return true; }
-  case value::TYPE_ID_GEOM_BASIS_CURVES: { return true; }
-  case value::TYPE_ID_GEOM_SPHERE: { return true; }
-  case value::TYPE_ID_GEOM_CUBE: { return true; }
-  case value::TYPE_ID_GEOM_CYLINDER: { return true; }
-  case value::TYPE_ID_GEOM_CONE: { return true; }
-  case value::TYPE_ID_GEOM_CAPSULE: { return true; }
-  case value::TYPE_ID_GEOM_POINTS: { return true; }
-  // value::TYPE_ID_GEOM_GEOMSUBSET
-  case value::TYPE_ID_GEOM_POINT_INSTANCER: { return true; }
-  case value::TYPE_ID_GEOM_CAMERA: { return true; }
-  case value::TYPE_ID_LUX_DOME: { return true; }
-  case value::TYPE_ID_LUX_CYLINDER: { return true; }
-  case value::TYPE_ID_LUX_SPHERE: { return true; }
-  case value::TYPE_ID_LUX_DISK: { return true; }
-  case value::TYPE_ID_LUX_DISTANT: { return true; }
-  case value::TYPE_ID_LUX_RECT: { return true; }
-  case value::TYPE_ID_LUX_GEOMETRY: { return true; }
-  case value::TYPE_ID_LUX_PORTAL: { return true; }
-  case value::TYPE_ID_LUX_PLUGIN: { return true; }
-  case value::TYPE_ID_SKEL_ROOT: { return true; }
-  case value::TYPE_ID_SKELETON: { return true; }
-  default:
-    return false;
+    case value::TYPE_ID_GPRIM: {
+      return true;
+    }
+    case value::TYPE_ID_GEOM_XFORM: {
+      return true;
+    }
+    case value::TYPE_ID_GEOM_MESH: {
+      return true;
+    }
+    case value::TYPE_ID_GEOM_BASIS_CURVES: {
+      return true;
+    }
+    case value::TYPE_ID_GEOM_SPHERE: {
+      return true;
+    }
+    case value::TYPE_ID_GEOM_CUBE: {
+      return true;
+    }
+    case value::TYPE_ID_GEOM_CYLINDER: {
+      return true;
+    }
+    case value::TYPE_ID_GEOM_CONE: {
+      return true;
+    }
+    case value::TYPE_ID_GEOM_CAPSULE: {
+      return true;
+    }
+    case value::TYPE_ID_GEOM_POINTS: {
+      return true;
+    }
+    // value::TYPE_ID_GEOM_GEOMSUBSET
+    case value::TYPE_ID_GEOM_POINT_INSTANCER: {
+      return true;
+    }
+    case value::TYPE_ID_GEOM_CAMERA: {
+      return true;
+    }
+    case value::TYPE_ID_LUX_DOME: {
+      return true;
+    }
+    case value::TYPE_ID_LUX_CYLINDER: {
+      return true;
+    }
+    case value::TYPE_ID_LUX_SPHERE: {
+      return true;
+    }
+    case value::TYPE_ID_LUX_DISK: {
+      return true;
+    }
+    case value::TYPE_ID_LUX_DISTANT: {
+      return true;
+    }
+    case value::TYPE_ID_LUX_RECT: {
+      return true;
+    }
+    case value::TYPE_ID_LUX_GEOMETRY: {
+      return true;
+    }
+    case value::TYPE_ID_LUX_PORTAL: {
+      return true;
+    }
+    case value::TYPE_ID_LUX_PLUGIN: {
+      return true;
+    }
+    case value::TYPE_ID_SKEL_ROOT: {
+      return true;
+    }
+    case value::TYPE_ID_SKELETON: {
+      return true;
+    }
+    default:
+      return false;
   }
-
 }
 
 bool CastToXformable(const Prim &prim, const Xformable **xformable) {
-
   if (!xformable) {
     return false;
   }
 
   // __ty = class derived from Xformable.
-#define TRY_CAST(__ty) \
+#define TRY_CAST(__ty)             \
   if (auto pv = prim.as<__ty>()) { \
-    (*xformable) = pv; \
-    return true; \
+    (*xformable) = pv;             \
+    return true;                   \
   }
 
   // TODO: Use tydra::ApplyToXformable
@@ -1631,7 +1685,7 @@ bool CastToXformable(const Prim &prim, const Xformable **xformable) {
   TRY_CAST(GeomCone)
   TRY_CAST(GeomCapsule)
   TRY_CAST(GeomPoints)
-  //TRY_CAST(GeomPointInstancer)
+  // TRY_CAST(GeomPointInstancer)
   TRY_CAST(GeomCamera)
   TRY_CAST(SkelRoot)
   TRY_CAST(Skeleton)
@@ -1649,10 +1703,11 @@ bool CastToXformable(const Prim &prim, const Xformable **xformable) {
   TRY_CAST(Skeleton)
 
   return false;
-
 }
 
-value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStack, double t, value::TimeSampleInterpolationType tinterp) {
+value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStack,
+                                  double t,
+                                  value::TimeSampleInterpolationType tinterp) {
   if (!IsXformablePrim(prim)) {
     if (resetXformStack) {
       (*resetXformStack) = false;
@@ -1673,7 +1728,8 @@ value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStack, doubl
 
     value::matrix4d m;
     bool rxs{false};
-    nonstd::expected<value::matrix4d, std::string> ret = xformable->GetLocalMatrix(t, tinterp, &rxs);
+    nonstd::expected<value::matrix4d, std::string> ret =
+        xformable->GetLocalMatrix(t, tinterp, &rxs);
     if (ret) {
       if (resetXformStack) {
         (*resetXformStack) = rxs;
@@ -1685,93 +1741,124 @@ value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStack, doubl
   return value::matrix4d::identity();
 }
 
-void PrimMetas::update_from(const PrimMetas &rhs) {
-
+void PrimMetas::update_from(const PrimMetas &rhs, const bool override_authored) {
   if (rhs.active.has_value()) {
-    active = rhs.active;
+    if (override_authored || !active.has_value()) {
+      active = rhs.active;
+    }
   }
 
   if (rhs.hidden.has_value()) {
-    hidden = rhs.hidden;
+    if (override_authored || !hidden.has_value()) {
+      hidden = rhs.hidden;
+    }
   }
 
   if (rhs.kind.has_value()) {
-    kind = rhs.kind;
+    if (override_authored || !kind.has_value()) {
+      kind = rhs.kind;
+    }
   }
 
   if (rhs.instanceable.has_value()) {
-    instanceable = rhs.instanceable;
+    if (override_authored || !instanceable.has_value()) {
+      instanceable = rhs.instanceable;
+    }
   }
 
   if (rhs.assetInfo) {
     if (assetInfo) {
-      OverrideDictionary(assetInfo.value(), rhs.assetInfo.value());
-    } else {
+      OverrideDictionary(assetInfo.value(), rhs.assetInfo.value(), override_authored);
+    } else if (override_authored) {
       assetInfo = rhs.assetInfo;
     }
   }
 
   if (rhs.customData) {
     if (customData) {
-      OverrideDictionary(customData.value(), rhs.customData.value());
-    } else {
+      OverrideDictionary(customData.value(), rhs.customData.value(), override_authored);
+    } else if (override_authored) {
       customData = rhs.customData;
     }
   }
 
   if (rhs.doc) {
-    doc = rhs.doc;
+    if (override_authored || !doc.has_value()) {
+      doc = rhs.doc;
+    }
   }
 
   if (rhs.comment) {
-    comment = rhs.comment;
+    if (override_authored || !comment.has_value()) {
+      comment = rhs.comment;
+    }
   }
 
   if (rhs.apiSchemas) {
-    apiSchemas = rhs.apiSchemas;
+    if (override_authored || !apiSchemas.has_value()) {
+      apiSchemas = rhs.apiSchemas;
+    }
   }
 
   if (rhs.sdrMetadata) {
     if (sdrMetadata) {
-      OverrideDictionary(sdrMetadata.value(), rhs.sdrMetadata.value());
-    } else {
+      OverrideDictionary(sdrMetadata.value(), rhs.sdrMetadata.value(), override_authored);
+    } else if (override_authored) {
       sdrMetadata = rhs.sdrMetadata;
     }
   }
 
   if (rhs.sceneName) {
-    sceneName = rhs.sceneName;
+    if (override_authored || !sceneName.has_value()) {
+      sceneName = rhs.sceneName;
+    }
   }
 
   if (rhs.displayName) {
-    displayName = rhs.displayName;
+    if (override_authored || !displayName.has_value()) {
+      displayName = rhs.displayName;
+    }
   }
 
   if (rhs.references) {
-    references = rhs.references;
+    if (override_authored || !references.has_value()) {
+      references = rhs.references;
+    }
   }
   if (rhs.payload) {
-    payload = rhs.payload;
+    if (override_authored || !payload.has_value()) {
+      payload = rhs.payload;
+    }
   }
   if (rhs.inherits) {
-    inherits = rhs.inherits;
+    if (override_authored || !inherits.has_value()) {
+      inherits = rhs.inherits;
+    }
   }
   if (rhs.variantSets) {
-    variantSets = rhs.variantSets;
+    if (override_authored || !variantSets.has_value()) {
+      variantSets = rhs.variantSets;
+    }
   }
   if (rhs.variants) {
-    variants = rhs.variants;
+    if (override_authored || !variants.has_value()) {
+      variants = rhs.variants;
+    }
   }
   if (rhs.specializes) {
-    specializes = rhs.specializes;
+    if (override_authored || !specializes.has_value()) {
+      specializes = rhs.specializes;
+    }
   }
 
-  OverrideDictionary(meta, rhs.meta);
+  OverrideDictionary(meta, rhs.meta, override_authored);
 }
 
 namespace {
 
-nonstd::optional<const PrimSpec *> GetPrimSpecAtPathRec(const PrimSpec *parent, const std::string &parent_path, const Path &path, uint32_t depth) {
+nonstd::optional<const PrimSpec *> GetPrimSpecAtPathRec(
+    const PrimSpec *parent, const std::string &parent_path, const Path &path,
+    uint32_t depth) {
   if (depth > (1024 * 1024 * 128)) {
     // Too deep.
     return nonstd::nullopt;
@@ -1802,9 +1889,8 @@ nonstd::optional<const PrimSpec *> GetPrimSpecAtPathRec(const PrimSpec *parent, 
   return nonstd::nullopt;
 }
 
-bool HasReferencesRec(uint32_t depth,
-                      const PrimSpec &primspec,
-                      const uint32_t max_depth = 1024*128) {
+bool HasReferencesRec(uint32_t depth, const PrimSpec &primspec,
+                      const uint32_t max_depth = 1024 * 128) {
   if (depth > max_depth) {
     // too deep
     return false;
@@ -1815,19 +1901,16 @@ bool HasReferencesRec(uint32_t depth,
   }
 
   for (auto &child : primspec.children()) {
-    if (HasReferencesRec(depth + 1, child,
-                                max_depth)) {
+    if (HasReferencesRec(depth + 1, child, max_depth)) {
       return true;
     }
   }
 
   return false;
-
 }
 
-bool HasPayloadRec(uint32_t depth,
-                      const PrimSpec &primspec,
-                      const uint32_t max_depth = 1024*128) {
+bool HasPayloadRec(uint32_t depth, const PrimSpec &primspec,
+                   const uint32_t max_depth = 1024 * 128) {
   if (depth > max_depth) {
     // too deep
     return false;
@@ -1838,20 +1921,99 @@ bool HasPayloadRec(uint32_t depth,
   }
 
   for (auto &child : primspec.children()) {
-    if (HasPayloadRec(depth + 1, child,
-                                max_depth)) {
+    if (HasPayloadRec(depth + 1, child, max_depth)) {
       return true;
     }
   }
 
   return false;
-
 }
 
-} // namespace
+bool HasVariantRec(uint32_t depth, const PrimSpec &primspec,
+                   const uint32_t max_depth = 1024 * 128) {
+  if (depth > max_depth) {
+    // too deep
+    return false;
+  }
 
-bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps, std::string *err) {
+  // TODO: Also check if PrimSpec::variantSets is empty?
+  if (primspec.metas().variants && primspec.metas().variantSets) {
+    return true;
+  }
 
+  for (auto &child : primspec.children()) {
+    if (HasVariantRec(depth + 1, child, max_depth)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+bool HasInheritsRec(uint32_t depth, const PrimSpec &primspec,
+                    const uint32_t max_depth = 1024 * 128) {
+  if (depth > max_depth) {
+    // too deep
+    return false;
+  }
+
+  if (primspec.metas().inherits) {
+    return true;
+  }
+
+  for (auto &child : primspec.children()) {
+    if (HasInheritsRec(depth + 1, child, max_depth)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+bool HasSpecializesRec(uint32_t depth, const PrimSpec &primspec,
+                    const uint32_t max_depth = 1024 * 128) {
+  if (depth > max_depth) {
+    // too deep
+    return false;
+  }
+
+  if (primspec.metas().specializes) {
+    return true;
+  }
+
+  for (auto &child : primspec.children()) {
+    if (HasSpecializesRec(depth + 1, child, max_depth)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+bool HasOverRec(uint32_t depth, const PrimSpec &primspec,
+                       const uint32_t max_depth = 1024 * 128) {
+  if (depth > max_depth) {
+    // too deep
+    return false;
+  }
+
+  if (primspec.specifier() == Specifier::Over) {
+    return true;
+  }
+
+  for (auto &child : primspec.children()) {
+    if (HasOverRec(depth + 1, child, max_depth)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+}  // namespace
+
+bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps,
+                             std::string *err) const {
   if (!ps) {
     PUSH_ERROR_AND_RETURN("Invalid PrimSpec dst argument");
   }
@@ -1875,7 +2037,6 @@ bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps, std::string 
   std::lock_guard<std::mutex> lock(_mutex);
 #endif
 
-
   if (_dirty) {
     DCOUT("clear cache.");
     // Clear cache.
@@ -1891,11 +2052,10 @@ bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps, std::string 
     }
   }
 
-
   // Brute-force search.
   for (const auto &parent : _prim_specs) {
-    if (auto pv = GetPrimSpecAtPathRec(&parent.second, /* parent_path */"", path, /* depth */0)) {
-
+    if (auto pv = GetPrimSpecAtPathRec(&parent.second, /* parent_path */ "",
+                                       path, /* depth */ 0)) {
       (*ps) = pv.value();
 
       // Add to cache.
@@ -1903,19 +2063,16 @@ bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps, std::string 
       _primspec_path_cache[path.prim_part()] = pv.value();
       return true;
     }
-
   }
 
   return false;
 }
 
-bool Layer::check_unresoled_references(const uint32_t max_depth) const {
-
+bool Layer::check_unresolved_references(const uint32_t max_depth) const {
   bool ret = false;
 
   for (const auto &item : _prim_specs) {
-    if (HasReferencesRec(/* depth */0,
-      item.second, max_depth)) {
+    if (HasReferencesRec(/* depth */ 0, item.second, max_depth)) {
       ret = true;
       break;
     }
@@ -1925,13 +2082,11 @@ bool Layer::check_unresoled_references(const uint32_t max_depth) const {
   return _has_unresolved_references;
 }
 
-bool Layer::check_unresoled_payload(const uint32_t max_depth) const {
-
+bool Layer::check_unresolved_payload(const uint32_t max_depth) const {
   bool ret = false;
 
   for (const auto &item : _prim_specs) {
-    if (HasPayloadRec(/* depth */0,
-      item.second, max_depth)) {
+    if (HasPayloadRec(/* depth */ 0, item.second, max_depth)) {
       ret = true;
       break;
     }
@@ -1939,6 +2094,62 @@ bool Layer::check_unresoled_payload(const uint32_t max_depth) const {
 
   _has_unresolved_payload = ret;
   return _has_unresolved_payload;
+}
+
+bool Layer::check_unresolved_variant(const uint32_t max_depth) const {
+  bool ret = false;
+
+  for (const auto &item : _prim_specs) {
+    if (HasVariantRec(/* depth */ 0, item.second, max_depth)) {
+      ret = true;
+      break;
+    }
+  }
+
+  _has_unresolved_variant = ret;
+  return _has_unresolved_variant;
+}
+
+bool Layer::check_unresolved_inherits(const uint32_t max_depth) const {
+  bool ret = false;
+
+  for (const auto &item : _prim_specs) {
+    if (HasInheritsRec(/* depth */ 0, item.second, max_depth)) {
+      ret = true;
+      break;
+    }
+  }
+
+  _has_unresolved_inherits = ret;
+  return _has_unresolved_inherits;
+}
+
+bool Layer::check_unresolved_specializes(const uint32_t max_depth) const {
+  bool ret = false;
+
+  for (const auto &item : _prim_specs) {
+    if (HasSpecializesRec(/* depth */ 0, item.second, max_depth)) {
+      ret = true;
+      break;
+    }
+  }
+
+  _has_unresolved_specializes = ret;
+  return _has_unresolved_specializes;
+}
+
+bool Layer::check_over_primspec(const uint32_t max_depth) const {
+  bool ret = false;
+
+  for (const auto &item : _prim_specs) {
+    if (HasOverRec(/* depth */ 0, item.second, max_depth)) {
+      ret = true;
+      break;
+    }
+  }
+
+  _has_over_primspec = ret;
+  return _has_over_primspec;
 }
 
 }  // namespace tinyusdz

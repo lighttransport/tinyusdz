@@ -394,6 +394,13 @@ bool BuildXformNodeFromStage(
 
 std::string DumpXformNode(const XformNode &root);
 
+///
+/// For composition. Convert Concrete Prim(Xform, GeomMesh, ...) to PrimSpec, generic Prim container.
+/// TODO: Move to *core* module?
+///
+bool PrimToPrimSpec(const Prim &prim, PrimSpec &ps, std::string *err);
+
+
 //
 // For USDZ AR extensions
 //

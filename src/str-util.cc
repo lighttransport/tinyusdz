@@ -481,31 +481,48 @@ uint32_t to_utf8_code(const std::string &s) {
   }
 
   // TODO: endianness.
-
   uint32_t code = 0;
   if (s.size() == 1) {
     unsigned char s0 = static_cast<unsigned char>(s[0]);
+    if (s0 > 0x7f) {
+      return ~0u;
+    }
     code = uint32_t(s0) & 0x7f;
   } else if (s.size() == 2) {
     // 11bit: 110y-yyyx 10xx-xxxx
     unsigned char s0 = static_cast<unsigned char>(s[0]);
     unsigned char s1 = static_cast<unsigned char>(s[1]);
-    code = (uint32_t(s0 & 0x1f) << 6) | (s1 & 0x3f);
+
+    if (((s0 & 0xe0) == 0xc0) && ((s1 & 0xc0) == 0x80)) {
+      code = (uint32_t(s0 & 0x1f) << 6) | (s1 & 0x3f);
+    } else {
+      return ~0u;
+    }
   } else if (s.size() == 3) {
     // 16bit: 1110-yyyy 10yx-xxxx 10xx-xxxx
     unsigned char s0 = static_cast<unsigned char>(s[0]);
     unsigned char s1 = static_cast<unsigned char>(s[1]);
     unsigned char s2 = static_cast<unsigned char>(s[2]);
-    code =
-        (uint32_t(s0 & 0xf) << 12) | (uint32_t(s1 & 0x3f) << 6) | (s2 & 0x3f);
+    if (((s0 & 0xf0) == 0xe0) && ((s1 & 0xc0) == 0x80) &&
+        ((s2 & 0xc0) == 0x80)) {
+      code =
+          (uint32_t(s0 & 0xf) << 12) | (uint32_t(s1 & 0x3f) << 6) | (s2 & 0x3f);
+    } else {
+      return ~0u;
+    }
   } else {
     // 21bit: 1111-0yyy 10yy-xxxx 10xx-xxxx 10xx-xxxx
     unsigned char s0 = static_cast<unsigned char>(s[0]);
     unsigned char s1 = static_cast<unsigned char>(s[1]);
     unsigned char s2 = static_cast<unsigned char>(s[2]);
     unsigned char s3 = static_cast<unsigned char>(s[3]);
-    code = (uint32_t(s0 & 0x7) << 18) | (uint32_t(s1 & 0x3f) << 12) |
-           (uint32_t(s2 & 0x3f) << 6) | uint32_t(s3 & 0x3f);
+    if (((s0 & 0xf8) == 0xf0) && ((s1 & 0xc0) == 0x80) &&
+        ((s2 & 0xc0) == 0x80) && ((s2 & 0xc0) == 0x80)) {
+      code = (uint32_t(s0 & 0x7) << 18) | (uint32_t(s1 & 0x3f) << 12) |
+             (uint32_t(s2 & 0x3f) << 6) | uint32_t(s3 & 0x3f);
+    } else {
+      return ~0u;
+    }
   }
 
   return code;

@@ -65,6 +65,28 @@ bool HasReferences(const Layer &layer, const bool force_check = false, const Ref
 ///
 bool HasPayload(const Layer &layer, const bool force_check = false, const PayloadCompositionOptions options = PayloadCompositionOptions());
 
+///
+/// Return true when any PrimSpec in the Layer contains `specializes` Prim metadataum.
+/// We think specializers are not intensively used, so no caching.
+///
+/// @param[in] layer Layer
+///
+bool HasSpecializes(const Layer &layer);
+
+///
+/// Return true when any PrimSpec in the Layer contains `inherits` Prim metadataum.
+///
+/// @param[in] layer Layer
+///
+bool HasInherits(const Layer &layer);
+
+///
+/// Return true when any PrimSpec in the Layer contains `over` Prim.
+///
+/// @param[in] layer Layer
+///
+bool HasOver(const Layer &layer);
+
 #if 0 // deprecate it.
 ///
 /// Load subLayer USD files in `layer`, and return composited(flattened) Layer
@@ -96,13 +118,37 @@ bool CompositeReferences(AssetResolutionResolver &resolver /* inout */,
                              ReferencesCompositionOptions());
 
 ///
-/// Resolve `payload` for each PrimSpe, and return composited(flattened) Layer
+/// Resolve `payload` for each PrimSpec, and return composited(flattened) Layer
 /// to `composited_layer` in `layer`.
 ///
 bool CompositePayload(
     AssetResolutionResolver &resolver /* inout */, const Layer &layer,
     Layer *composited_layer, std::string *warn, std::string *err,
     const PayloadCompositionOptions options = PayloadCompositionOptions());
+
+///
+/// Resolve `variantSet` for each PrimSpec, and return composited(flattened) Layer
+/// to `composited_layer` in `layer`.
+/// Use variant selection info in each PrimSpec.
+/// To externally specify variants to select, Use `ApplyVariantSelector`.
+///
+bool CompositeVariant(
+    const Layer &layer,
+    Layer *composited_layer, std::string *warn, std::string *err);
+
+///
+/// Resolve `specializes` for each PrimSpec, and return composited(flattened) Layer
+/// to `composited_layer` in `layer`.
+///
+bool CompositeSpecializes(const Layer &layer,
+    Layer *composited_layer, std::string *warn, std::string *err);
+
+///
+/// Resolve `inherits` for each PrimSpec, and return composited(flattened) Layer
+/// to `composited_layer` in `layer`.
+///
+bool CompositeInherits(const Layer &layer,
+    Layer *composited_layer, std::string *warn, std::string *err);
 
 ///
 /// Override a PrimSpec with another PrimSpec.
@@ -165,12 +211,12 @@ bool ListVariantSelectionMaps(const Layer &layer, VariantSelectorMap &m);
 ///
 /// @param[inout] dst PrimSpec where selected variant are written.
 /// @param[in] src Source PrimSpec. Source PrimSpec.
+/// @param[in] variant_selection Variant Selection list. key = variantSet name, value = variant name. Can be empty(when empty, use PrimSpec's variants information)
 ///
-/// @return true upon success. false when error(e.g. no corresponding
-/// `variant_name` exists in `src` PrimSpec).
+/// @return true upon success. false when error. No error when any of variant info in `variant_selection` does not exist in `src` PrimSpec.
 ///
 bool VariantSelectPrimSpec(PrimSpec &dst, const PrimSpec &src,
-                           const std::string &variant_name, std::string *warn,
+                           const std::map<std::string, std::string> &variant_selection, std::string *warn,
                            std::string *err);
 
 ///
