@@ -603,7 +603,7 @@ bool GetCustomDataByKey(const Dictionary &customData, const std::string &key,
 bool SetCustomDataByKey(const std::string &key, const MetaVariable &val,
                         /* inout */ Dictionary &customData);
 
-void OverrideDictionary(Dictionary &customData, const Dictionary &src);
+void OverrideDictionary(Dictionary &customData, const Dictionary &src, const bool override_existing = true);
 
 // Variable class for Prim and Attribute Metadataum.
 //
@@ -840,7 +840,10 @@ struct PrimMetas {
   ///
   /// Update metadatum with rhs(authored metadataum only)
   ///
-  void update_from(const PrimMetas &rhs);
+  /// @param[in] override_authored true: override this.metadataum(authored or not-authored) when rhs.metadatum is authoerd, false override only when this.metadatum is not authored and rhs.metadataum is authored.
+  ///
+  void update_from(const PrimMetas &rhs, bool override_authored = true);
+
 
 #if 0
   // String only metadataum.
@@ -3091,13 +3094,16 @@ class PrimSpec {
   ///
   bool select_variant(const std::string &target_name,
                       const std::string &variant_name) {
-    const auto m = _vsmap.find(target_name);
-    if (m != _vsmap.end()) {
-      _current_vsmap[target_name] = variant_name;
-      return true;
-    } else {
-      return false;
+    if (metas().variants.has_value()) {
+      const auto m = metas().variants.value().find(target_name);
+      if (m != metas().variants.value().end()) {
+        _current_vsmap[target_name] = variant_name;
+        return true;
+      } else {
+        return false;
+      }
     }
+    return false;
   }
 
   bool current_variant_selection(const std::string &target_name,
@@ -3107,8 +3113,14 @@ class PrimSpec {
       return false;
     }
 
-    const auto m = _vsmap.find(target_name);
-    if (m != _vsmap.end()) {
+    if (!metas().variants.has_value()) {
+      return false;
+    }
+
+    const auto &vsmap = metas().variants.value();
+
+    const auto m = vsmap.find(target_name);
+    if (m != vsmap.end()) {
       const auto sm = _current_vsmap.find(target_name);
       if (sm != _current_vsmap.end()) {
         (*selected_variant_name) = sm->second;
@@ -3126,8 +3138,12 @@ class PrimSpec {
   /// key = variant name
   /// value = variats
   ///
-  const VariantSelectionMap &get_variant_selection_map() const {
-    return _vsmap;
+  const VariantSelectionMap get_variant_selection_map() const {
+    VariantSelectionMap vsmap;
+    if (metas().variants.has_value()) {
+      vsmap = metas().variants.value();
+    }
+    return vsmap;
   }
 
   ///
@@ -3174,7 +3190,7 @@ class PrimSpec {
 
     _props = rhs._props;
 
-    _vsmap = rhs._vsmap;
+    //_vsmap = rhs._vsmap;
     _current_vsmap = rhs._current_vsmap;
 
     _variantSets = rhs._variantSets;
@@ -3195,7 +3211,7 @@ class PrimSpec {
 
     _props = std::move(rhs._props);
 
-    _vsmap = std::move(rhs._vsmap);
+    //_vsmap = std::move(rhs._vsmap);
     _current_vsmap = std::move(rhs._current_vsmap);
 
     _variantSets = rhs._variantSets;
@@ -3223,7 +3239,7 @@ class PrimSpec {
   ///
   using PrimSpecMap = std::map<std::string, PrimSpec>;
 
-  VariantSelectionMap _vsmap;  // Original variant selections
+  //VariantSelectionMap _vsmap;  // Original variant selections
   VariantSelectionMap _current_vsmap;  // Currently selected variants
 
   std::map<std::string, VariantSetSpec> _variantSets;
