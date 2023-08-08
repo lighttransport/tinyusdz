@@ -1479,7 +1479,7 @@ bool GetCustomDataByKey(const CustomDataType &custom, const std::string &key,
 namespace {
 
 bool OverrideCustomDataRec(uint32_t depth, CustomDataType &dst,
-                           const CustomDataType &src) {
+                           const CustomDataType &src, const bool override_existing) {
   if (depth > (1024 * 1024 * 128)) {
     // too deep
     return false;
@@ -1487,25 +1487,26 @@ bool OverrideCustomDataRec(uint32_t depth, CustomDataType &dst,
 
   for (const auto &item : src) {
     if (dst.count(item.first)) {
-      CustomDataType *dst_dict =
-          dst.at(item.first).get_raw_value().as<CustomDataType>();
+      if (override_existing) {
+        CustomDataType *dst_dict =
+            dst.at(item.first).get_raw_value().as<CustomDataType>();
 
-      const value::Value &src_data = item.second.get_raw_value();
-      const CustomDataType *src_dict = src_data.as<CustomDataType>();
+        const value::Value &src_data = item.second.get_raw_value();
+        const CustomDataType *src_dict = src_data.as<CustomDataType>();
 
-      //
-      // Recursively apply override op both types are dict.
-      //
-      if (src_dict && dst_dict) {
-        // recursively override dict
-        if (!OverrideCustomDataRec(depth + 1, (*dst_dict), (*src_dict))) {
-          return false;
+        //
+        // Recursively apply override op both types are dict.
+        //
+        if (src_dict && dst_dict) {
+          // recursively override dict
+          if (!OverrideCustomDataRec(depth + 1, (*dst_dict), (*src_dict), override_existing)) {
+            return false;
+          }
+
+        } else {
+          dst[item.first] = item.second;
         }
-
-      } else {
-        dst[item.first] = item.second;
       }
-
     } else {
       // add dict value
       dst.emplace(item.first, item.second);
@@ -1517,8 +1518,8 @@ bool OverrideCustomDataRec(uint32_t depth, CustomDataType &dst,
 
 }  // namespace
 
-void OverrideDictionary(CustomDataType &dst, const CustomDataType &src) {
-  OverrideCustomDataRec(0, dst, src);
+void OverrideDictionary(CustomDataType &dst, const CustomDataType &src, const bool override_existing) {
+  OverrideCustomDataRec(0, dst, src, override_existing);
 }
 
 AssetInfo PrimMeta::get_assetInfo(bool *is_authored) const {
@@ -1740,87 +1741,117 @@ value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStack,
   return value::matrix4d::identity();
 }
 
-void PrimMetas::update_from(const PrimMetas &rhs) {
+void PrimMetas::update_from(const PrimMetas &rhs, const bool override_authored) {
   if (rhs.active.has_value()) {
-    active = rhs.active;
+    if (override_authored || !active.has_value()) {
+      active = rhs.active;
+    }
   }
 
   if (rhs.hidden.has_value()) {
-    hidden = rhs.hidden;
+    if (override_authored || !hidden.has_value()) {
+      hidden = rhs.hidden;
+    }
   }
 
   if (rhs.kind.has_value()) {
-    kind = rhs.kind;
+    if (override_authored || !kind.has_value()) {
+      kind = rhs.kind;
+    }
   }
 
   if (rhs.instanceable.has_value()) {
-    instanceable = rhs.instanceable;
+    if (override_authored || !instanceable.has_value()) {
+      instanceable = rhs.instanceable;
+    }
   }
 
   if (rhs.assetInfo) {
     if (assetInfo) {
-      OverrideDictionary(assetInfo.value(), rhs.assetInfo.value());
-    } else {
+      OverrideDictionary(assetInfo.value(), rhs.assetInfo.value(), override_authored);
+    } else if (override_authored) {
       assetInfo = rhs.assetInfo;
     }
   }
 
   if (rhs.customData) {
     if (customData) {
-      OverrideDictionary(customData.value(), rhs.customData.value());
-    } else {
+      OverrideDictionary(customData.value(), rhs.customData.value(), override_authored);
+    } else if (override_authored) {
       customData = rhs.customData;
     }
   }
 
   if (rhs.doc) {
-    doc = rhs.doc;
+    if (override_authored || !doc.has_value()) {
+      doc = rhs.doc;
+    }
   }
 
   if (rhs.comment) {
-    comment = rhs.comment;
+    if (override_authored || !comment.has_value()) {
+      comment = rhs.comment;
+    }
   }
 
   if (rhs.apiSchemas) {
-    apiSchemas = rhs.apiSchemas;
+    if (override_authored || !apiSchemas.has_value()) {
+      apiSchemas = rhs.apiSchemas;
+    }
   }
 
   if (rhs.sdrMetadata) {
     if (sdrMetadata) {
-      OverrideDictionary(sdrMetadata.value(), rhs.sdrMetadata.value());
-    } else {
+      OverrideDictionary(sdrMetadata.value(), rhs.sdrMetadata.value(), override_authored);
+    } else if (override_authored) {
       sdrMetadata = rhs.sdrMetadata;
     }
   }
 
   if (rhs.sceneName) {
-    sceneName = rhs.sceneName;
+    if (override_authored || !sceneName.has_value()) {
+      sceneName = rhs.sceneName;
+    }
   }
 
   if (rhs.displayName) {
-    displayName = rhs.displayName;
+    if (override_authored || !displayName.has_value()) {
+      displayName = rhs.displayName;
+    }
   }
 
   if (rhs.references) {
-    references = rhs.references;
+    if (override_authored || !references.has_value()) {
+      references = rhs.references;
+    }
   }
   if (rhs.payload) {
-    payload = rhs.payload;
+    if (override_authored || !payload.has_value()) {
+      payload = rhs.payload;
+    }
   }
   if (rhs.inherits) {
-    inherits = rhs.inherits;
+    if (override_authored || !inherits.has_value()) {
+      inherits = rhs.inherits;
+    }
   }
   if (rhs.variantSets) {
-    variantSets = rhs.variantSets;
+    if (override_authored || !variantSets.has_value()) {
+      variantSets = rhs.variantSets;
+    }
   }
   if (rhs.variants) {
-    variants = rhs.variants;
+    if (override_authored || !variants.has_value()) {
+      variants = rhs.variants;
+    }
   }
   if (rhs.specializes) {
-    specializes = rhs.specializes;
+    if (override_authored || !specializes.has_value()) {
+      specializes = rhs.specializes;
+    }
   }
 
-  OverrideDictionary(meta, rhs.meta);
+  OverrideDictionary(meta, rhs.meta, override_authored);
 }
 
 namespace {

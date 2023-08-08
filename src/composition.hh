@@ -127,6 +127,16 @@ bool CompositePayload(
     const PayloadCompositionOptions options = PayloadCompositionOptions());
 
 ///
+/// Resolve `variantSet` for each PrimSpec, and return composited(flattened) Layer
+/// to `composited_layer` in `layer`.
+/// Use variant selection info in each PrimSpec.
+/// To externally specify variants to select, Use `ApplyVariantSelector`.
+///
+bool CompositeVariant(
+    AssetResolutionResolver &resolver /* inout */, const Layer &layer,
+    Layer *composited_layer, std::string *warn, std::string *err);
+
+///
 /// Resolve `specializes` for each PrimSpec, and return composited(flattened) Layer
 /// to `composited_layer` in `layer`.
 ///
@@ -201,9 +211,9 @@ bool ListVariantSelectionMaps(const Layer &layer, VariantSelectorMap &m);
 ///
 /// @param[inout] dst PrimSpec where selected variant are written.
 /// @param[in] src Source PrimSpec. Source PrimSpec.
-/// @param[in] variant_selection Variant Selection list. key = variantSet name, value = variant name.
+/// @param[in] variant_selection Variant Selection list. key = variantSet name, value = variant name. Can be empty(when empty, use PrimSpec's variants information)
 ///
-/// @return true upon success. false when error. No error when any of variant_selection does not exist in `src` PrimSpec.
+/// @return true upon success. false when error. No error when any of variant info in `variant_selection` does not exist in `src` PrimSpec.
 ///
 bool VariantSelectPrimSpec(PrimSpec &dst, const PrimSpec &src,
                            const std::map<std::string, std::string> &variant_selection, std::string *warn,
