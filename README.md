@@ -12,7 +12,7 @@
   * [x] variantSet
   * [ ] Validate composition is correctly operated. 
 * Tydra: Handy data structure converter for rendering https://github.com/syoyo/tinyusdz/issues/31 
-* MaterialX
+* MaterialX https://github.com/syoyo/tinyusdz/issues/86
   * USD + MateriralX + PBR rendering example using https://github.com/lighttransport/pbrlab
 * Improve support for Blender USD export/import 
 * tusdview(TinyUSDZ version of usdview)
