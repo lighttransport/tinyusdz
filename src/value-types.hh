@@ -420,7 +420,7 @@ enum TypeId {
   TYPE_ID_MATERIAL,
   TYPE_ID_SHADER_END,
 
-  // Types for usdImaging
+  // Types for usdImaging and usdMtlx
   // See <pxrUSD>/pxr/usdImaging/usdImaging/tokens.h
   TYPE_ID_IMAGING_BEGIN = (1 << 11) + (1 << 10),
   TYPE_ID_IMAGING_SHADER_NODE,
@@ -437,6 +437,10 @@ enum TypeId {
   TYPE_ID_IMAGING_PRIMVAR_READER_VECTOR, // float3
   TYPE_ID_IMAGING_PRIMVAR_READER_MATRIX, // float3
   TYPE_ID_IMAGING_TRANSFORM_2D,
+
+  TYPE_ID_IMAGING_MTLX_PREVIEWSURFACE,
+  TYPE_ID_IMAGING_MTLX_STANDARDSURFACE,
+
   TYPE_ID_IMAGING_END,
 
   // Ttpes for usdVol
