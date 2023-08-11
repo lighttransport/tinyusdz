@@ -11,16 +11,14 @@ static std::string GetFileExtension(const std::string &filename) {
 
 static std::string str_tolower(std::string s) {
   std::transform(s.begin(), s.end(), s.begin(),
-                 // static_cast<int(*)(int)>(std::tolower)         // wrong
-                 // [](int c){ return std::tolower(c); }           // wrong
-                 // [](char c){ return std::tolower(c); }          // wrong
-                 [](unsigned char c) { return std::tolower(c); }  // correct
+                 [](unsigned char c) { return std::tolower(c); } 
   );
   return s;
 }
 
 int main(int argc, char **argv) {
   if (argc < 2) {
+    std::cout << "Read USD file and check if reading is working well(TODO: use tusdcat and deprecate this test_tinyusdz program)\n" << std::endl;
     std::cout << "Usage input.[usd|usda|usdc|usdz] (--verbose)\n" << std::endl;
     return EXIT_FAILURE;
   }
