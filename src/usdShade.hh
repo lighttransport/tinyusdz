@@ -7,8 +7,8 @@
 // TODO:
 //   - [ ] Consider `interfaceOnly` connection
 //   - [ ] Strict usdShade interpretation https://graphics.pixar.com/usd/release/api/usd_shade_page_front.html
+//   - [ ] MaterialX support(in usdMtlx.hh)
 //   - [ ] NodeGraph support
-//   - [ ] MaterialX support
 //
 #pragma once
 

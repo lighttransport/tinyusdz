@@ -18,6 +18,8 @@
 #include "usdLux.hh"
 #include "usdShade.hh"
 #include "usda-reader.hh"
+#include "str-util.hh"
+#include "io-util.hh"
 
 #define PushError(s) \
   if (err) {         \
@@ -79,6 +81,32 @@ bool IsVisited(const std::vector<std::set<std::string>> layer_names_stack,
     }
   }
   return false;
+}
+
+std::string GetExtension(const std::string &name) {
+  return to_lower(io::GetFileExtension(name));
+}
+
+
+bool IsUSDFileExtension(const std::string &name) {
+  std::string ext = GetExtension(name);
+
+  // no 'usdz'
+  return (ext.compare("usd") == 0) ||
+      (ext.compare("usda") == 0) ||
+      (ext.compare("usdc") == 0);
+}
+
+bool IsWavefrontObjFileExtension(const std::string &name) {
+  std::string ext = GetExtension(name);
+
+  return ext.compare("obj") == 0;
+}
+
+bool IsMtlxFileExtension(const std::string &name) {
+  std::string ext = GetExtension(name);
+
+  return ext.compare("mtlx") == 0;
 }
 
 bool CompositeSublayersRec(AssetResolutionResolver &resolver,

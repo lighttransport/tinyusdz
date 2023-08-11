@@ -1,29 +1,6 @@
-/*
-Copyright (c) 2019 - Present, Syoyo Fujita.
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-    * Redistributions of source code must retain the above copyright
-      notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-      notice, this list of conditions and the following disclaimer in the
-      documentation and/or other materials provided with the distribution.
-    * Neither the name of the Syoyo Fujita nor the
-      names of its contributors may be used to endorse or promote products
-      derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL <COPYRIGHT HOLDER> BE LIABLE FOR ANY
-DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
+// SPDX-License-Identifier: Apache 2.0
+// Copyright (c) 2019 - 2023, Syoyo Fujita.
+// Copyright (c) 2023 - Present, Light Transport Entertainment Inc.
 
 #ifndef TINYUSDZ_HH_
 #define TINYUSDZ_HH_
@@ -70,7 +47,59 @@ namespace tinyusdz {
 constexpr int version_major = 0;
 constexpr int version_minor = 8;
 constexpr int version_micro = 0;
-constexpr auto version_rev = "rc4";  // extra revision suffix
+constexpr auto version_rev = "rc5";  // extra revision suffix
+
+//
+// Fileformat plugin(callback) interface.
+// For fileformat which is `reference`ed or `payload`ed.
+//
+// TinyUSDZ uses C++ callback interface for security.
+// (On the contrary, pxrUSD uses `plugInfo.json` + dll).
+//
+// Texture image/Shader file(e.g. glsl) is not handled in this API.
+// (Plese refer T.B.D. for texture/shader)
+
+// Check if assetInfo is a valid asset(file)
+//
+// @param[in] asset Asset path(asset path is resolved by AssetResolutionResolver) 
+// @param[out] warn Warning message
+// @param[out] err Error message(when the fuction returns false)
+// @param[inout] user_data Userdata. can be nullptr.
+// @return true when the given asset is valid. 
+typedef bool (*FileFormatCheckFunction)(const AssetInfo &asset, std::string *warn, std::string *err, void *user_data);
+
+
+// Read content of asset into PrimSpec(metadatum, properties, primChildren/variantChildren).
+//
+// Check if assetInfo is a valid asset(file)
+// @param[in] asset Asset path(asset path is resolved by AssetResolutionResolver) 
+// @param[inout] ps PrimSpec which references/payload this asset.
+// @param[out] warn Warning message
+// @param[out] err Error message(when the fuction returns false)
+// @param[inout] user_data Userdata. can be nullptr.
+// @return true when the given asset is valid. 
+typedef bool (*FileFormatReadFunction)(const AssetInfo &asset, PrimSpec &ps/* inout */, std::string *warn, std::string *err, void *user_data);
+
+// Write corresponding content of PrimSpec to an asset(file)
+//
+// @param[in] asset Asset path(asset path is resolved by AssetResolutionResolver) 
+// @param[inout] ps PrimSpec which refers this asset.
+// @param[out] warn Warning message
+// @param[out] err Error message(when the fuction returns false)
+// @param[inout] user_data Userdata. can be nullptr.
+// @return true when the given asset is valid. 
+typedef bool (*FileFormatWriteFunction)(const AssetInfo &asset, const PrimSpec &ps, std::string *err, void *user_data);
+
+struct FileFormatHandler
+{
+  std::string extension; // fileformat extension. 
+  std::string description; // Description of this fileformat. can be empty. 
+
+  FileFormatCheckFunction checker{nullptr};
+  FileFormatReadFunction reader{nullptr};
+  FileFormatWriteFunction writer{nullptr};
+  void *_userdata{nullptr};
+};
 
 struct USDLoadOptions {
   ///
@@ -122,8 +151,15 @@ struct USDLoadOptions {
   ///
   bool strict_usdSkel_check{false}; // Strict usdSkel parsing check when true.
 
+  ///
+  /// User-defined fileformat hander.
+  /// key = file(asset) extension.
+  ///
+  std::map<std::string, FileFormatHandler> fileformats;
+
   Axis upAxis{Axis::Y};
 };
+
 
 // TODO: Provide profiles for loader option.
 // e.g.
