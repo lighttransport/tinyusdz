@@ -26,6 +26,7 @@ if (EMSCRIPTEN)
   set(TINYUSDZ_DEFAULT_EXAMPLES Off)
   set(TINYUSDZ_DEFAULT_WITH_C_API Off)
   set(TINYUSDZ_DEFAULT_WITH_PXR_COMPAT_API Off)
+  # TODO: deprecate in next major version
   set(TINYUSDZ_DEFAULT_WITH_USDA_PARSER Off)
   set(TINYUSDZ_DEFAULT_WITH_USDC_PARSER Off)
 elseif(NOT PROJECT_IS_TOP_LEVEL)
@@ -36,6 +37,7 @@ elseif(NOT PROJECT_IS_TOP_LEVEL)
   set(TINYUSDZ_DEFAULT_EXAMPLES Off)
   set(TINYUSDZ_DEFAULT_WITH_C_API Off)
   set(TINYUSDZ_DEFAULT_WITH_PXR_COMPAT_API On)
+  # TODO: deprecate in next major version
   set(TINYUSDZ_DEFAULT_WITH_USDA_PARSER Off)
   set(TINYUSDZ_DEFAULT_WITH_USDC_PARSER Off)
 else()
@@ -44,8 +46,9 @@ else()
   set(TINYUSDZ_DEFAULT_BUILD_EXAMPLES On)
   set(TINYUSDZ_DEFAULT_WITH_C_API Off)
   set(TINYUSDZ_DEFAULT_WITH_PXR_COMPAT_API On)
-  set(TINYUSDZ_DEFAULT_WITH_USDA_PARSER On)
-  set(TINYUSDZ_DEFAULT_WITH_USDC_PARSER On)
+  # TODO: deprecate in next major version
+  set(TINYUSDZ_DEFAULT_WITH_USDA_PARSER Off)
+  set(TINYUSDZ_DEFAULT_WITH_USDC_PARSER Off)
 
   # For Visual Studio
   set_property(GLOBAL PROPERTY USE_FOLDERS ON)
@@ -204,8 +207,9 @@ option(TINYUSDZ_WITH_COLORIO
 # ---------
 
 # -- optional tool --
-option(TINYUSDZ_WITH_TOOL_USDA_PARSER "Build with USDA parser program" ${TINYUSDZ_DEFAULT_WITH_USDA_PARSER})
-option(TINYUSDZ_WITH_TOOL_USDC_PARSER "Build with USDC parser program" ${TINYUSDZ_DEFAULT_WITH_USDC_PARSER})
+# TODO: deperecate. Use tusdcat
+option(TINYUSDZ_WITH_TOOL_USDA_PARSER "Build with USDA parser program" Off)
+option(TINYUSDZ_WITH_TOOL_USDC_PARSER "Build with USDC parser program" Off)
 # --------------
 
 # -- For developers --
@@ -1067,6 +1071,7 @@ if(TINYUSDZ_WITH_PYTHON)
 
 endif()
 
+# TODO: deprecate in next major version
 if(TINYUSDZ_WITH_TOOL_USDA_PARSER AND TINYUSDZ_WITH_MODULE_USDA_READER)
   add_executable(
     usda_parser ${CMAKE_CURRENT_SOURCE_DIR}/examples/usda_parser/parser-main.cc)
@@ -1079,6 +1084,7 @@ if(TINYUSDZ_WITH_TOOL_USDA_PARSER AND TINYUSDZ_WITH_MODULE_USDA_READER)
   target_link_libraries(usda_parser PRIVATE ${TINYUSDZ_TARGET_STATIC})
 endif()
 
+# TODO: deprecate in next major version
 if(TINYUSDZ_WITH_TOOL_USDC_PARSER AND TINYUSDZ_WITH_MODULE_USDC_READER)
   add_executable(
     usdc_parser ${CMAKE_CURRENT_SOURCE_DIR}/examples/usdc_parser/usdc-parser-main.cc)
