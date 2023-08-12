@@ -33,16 +33,37 @@ enum class LoadState : uint32_t {
 struct SublayersCompositionOptions {
   // The maximum depth for nested `subLayers`
   uint32_t max_depth = 1024u;
+
+  // Make an error when referenced asset does not contain prims.
+  bool error_when_no_prims_in_sublayer{false};
+
+  // Make an error when referenced asset is not found
+  bool error_when_asset_not_found{false};
+
+  // Make an error when referenced asset is unsupported(e.g. unknown file extension)
+  bool error_when_unsupported_fileformat{false};
 };
 
 struct ReferencesCompositionOptions {
   // The maximum depth for nested `references`
   uint32_t max_depth = 1024u;
+
+  // Make an error when referenced asset is not found
+  bool error_when_asset_not_found{false};
+
+  // Make an error when referenced asset is unsupported(e.g. unknown file extension)
+  bool error_when_unsupported_fileformat{false};
 };
 
 struct PayloadCompositionOptions {
   // The maximum depth for nested `payload`
   uint32_t max_depth = 1024u;
+
+  // Make an error when referenced asset is not found
+  bool error_when_asset_not_found{false};
+
+  // Make an error when referenced asset is unsupported(e.g. unknown file extension)
+  bool error_when_unsupported_fileformat{false};
 };
 
 ///
