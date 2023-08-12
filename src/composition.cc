@@ -94,11 +94,13 @@ bool IsUSDFileFormat(const std::string &name) {
          (ext.compare("usdc") == 0);
 }
 
+#if defined(TINYUSDZ_WITH_USDOBJ)
 bool IsWavefrontObjFileFormat(const std::string &name) {
   std::string ext = GetExtension(name);
 
   return ext.compare("obj") == 0;
 }
+#endif
 
 bool IsMtlxFileFormat(const std::string &name) {
   std::string ext = GetExtension(name);
