@@ -780,7 +780,7 @@ static void cpy2(unsigned short *dst_val, const unsigned short *src_val) {
 }
 
 static void swap2(unsigned short *val) {
-#ifdef TINYEXR_LITTLE_ENDIAN
+#if TINYEXR_LITTLE_ENDIAN
   (void)val;
 #else
   unsigned short tmp = *val;
@@ -839,7 +839,7 @@ static void cpy4(float *dst_val, const float *src_val) {
 #endif
 
 static void swap4(unsigned int *val) {
-#ifdef TINYEXR_LITTLE_ENDIAN
+#if TINYEXR_LITTLE_ENDIAN
   (void)val;
 #else
   unsigned int tmp = *val;
@@ -854,7 +854,7 @@ static void swap4(unsigned int *val) {
 }
 
 static void swap4(int *val) {
-#ifdef TINYEXR_LITTLE_ENDIAN
+#if TINYEXR_LITTLE_ENDIAN
   (void)val;
 #else
   int tmp = *val;
@@ -869,7 +869,7 @@ static void swap4(int *val) {
 }
 
 static void swap4(float *val) {
-#ifdef TINYEXR_LITTLE_ENDIAN
+#if TINYEXR_LITTLE_ENDIAN
   (void)val;
 #else
   float tmp = *val;
@@ -900,7 +900,7 @@ static void cpy8(tinyexr::tinyexr_uint64 *dst_val, const tinyexr::tinyexr_uint64
 #endif
 
 static void swap8(tinyexr::tinyexr_uint64 *val) {
-#ifdef TINYEXR_LITTLE_ENDIAN
+#if TINYEXR_LITTLE_ENDIAN
   (void)val;
 #else
   tinyexr::tinyexr_uint64 tmp = (*val);
@@ -5818,15 +5818,20 @@ static bool ReconstructTileOffsets(OffsetData& offset_data,
 
         } else {
 
-          if ((marker + sizeof(int)) >= (head + size)) {
+          if ((marker + sizeof(uint32_t)) >= (head + size)) {
             return false;
           }
 
-          int dataSize;
-          memcpy(&dataSize, marker, sizeof(int));
+          uint32_t dataSize;
+          memcpy(&dataSize, marker, sizeof(uint32_t));
           tinyexr::swap4(&dataSize);
-          marker += sizeof(int);
+          marker += sizeof(uint32_t);
+
           marker += dataSize;
+
+          if (marker >= (head + size)) {
+            return false;
+          }
         }
 
         if (!isValidTile(exr_header, offset_data,
