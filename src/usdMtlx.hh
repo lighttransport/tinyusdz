@@ -11,6 +11,8 @@
 // {
 //    ...
 // }
+//
+// Based on MaterialX spec v1.38
 
 #pragma once
 
@@ -36,10 +38,35 @@ class MtlxUsdPreviewSurface : ShaderNode
 };
 
 
+// https://github.com/Autodesk/standard-surface/blob/master/reference/standard_surface.mtlx
+// We only support v1.0.1
 class MtlxAutodeskStandardSurface : ShaderNode
 {
-  //TypedAttributeWithFallback
+
+  TypedAttributeWithFallback<Animatable<float>> base{1.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> baseColor{value::color3f{0.8f, 0.8f, 0.8f}}; // color3
+
   // TODO
+  // ...
+  
+
+  // (coat_affect_roughness * coat) * coat_roughness
+  TypedAttribute<Animatable<float>> coat_affect_roughness;
+  TypedAttribute<Animatable<float>> coat; 
+  TypedAttribute<Animatable<float>> coat_roughness; 
+
+  // (specular_roughness + transmission_extra_roughness)
+  TypedAttribute<Animatable<float>> specular_roughness; 
+  TypedAttribute<Animatable<float>> transmission_extra_roughness; 
+  TypedAttribute<Animatable<float>> transmission_roughness_add; 
+
+  // tangent_rotate_normalize
+  // normalize(rotate3d(/* in */tangent, /*amount*/(specular_rotation * 360), /* axis */normal))
+  TypedAttribute<Animatable<float>> specular_rotation; 
+
+
+  // Output
+  TypedTerminalAttribute<value::token> out; // 'out'
 };
 
 
