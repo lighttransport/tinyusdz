@@ -2,7 +2,7 @@
 //
 // - OpenEXR(through TinyEXR). 16bit and 32bit
 // - TIFF/DNG(through TinyDNG). 8bit, 16bit and 32bit
-// - PNG(8bit, 16bit), Jpeg, bmp, tga, ...(through stb_image or wuffs). 
+// - PNG(8bit, 16bit), Jpeg, bmp, tga, ...(through stb_image or wuffs).
 //
 // TODO:
 //
@@ -10,6 +10,7 @@
 // - [ ] 10bit, 12bit and 14bit DNG image
 // - [ ] Support LoD tile, multi-channel for TIFF image
 //
+
 #if defined(TINYUSDZ_WITH_EXR)
 #include "external/tinyexr.h"
 #endif
@@ -30,9 +31,13 @@
 
 #else
 
+#if !defined( TINYUSDZ_NO_BUILTIN_IMAGE_LOADER)
+
 // stb_image
 #ifndef TINYUSDZ_NO_STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
+#endif
+
 #endif
 
 #endif
@@ -47,10 +52,17 @@
 #include "external/wuffs-unsupported-snapshot.c"
 
 #else
-// fpng, stb_image
 
+#if !defined( TINYUSDZ_NO_BUILTIN_IMAGE_LOADER)
+
+// fpng, stb_image
 #include "external/fpng.h"
+
+// avoid duplicated symbols when tinyusdz is linked to an app/library whose also use stb_image.
+#define STB_IMAGE_STATIC
 #include "external/stb_image.h"
+
+#endif
 
 #endif
 
@@ -114,6 +126,9 @@ bool GetImageInfoWUFF(const uint8_t *bytes, const size_t size,
 
 
 #else
+
+#if !defined( TINYUSDZ_NO_BUILTIN_IMAGE_LOADER)
+
 // Decode image(png, jpg, ...) using STB
 // 16bit PNG is supported.
 bool DecodeImageSTB(const uint8_t *bytes, const size_t size,
@@ -210,6 +225,7 @@ bool GetImageInfoSTB(const uint8_t *bytes, const size_t size,
 
   return false;
 }
+#endif
 #endif
 
 #if defined(TINYUSDZ_WITH_EXR)
@@ -364,8 +380,15 @@ nonstd::expected<image::ImageResult, std::string> LoadImageFromMemory(
 
 #if defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
   bool ok = DecodeImageWUFF(addr, sz, uri, &ret.image, &ret.warning, &err);
-#else
+#elif !defined(TINYUSDZ_NO_BUILTIN_IMAGE_LOADER)
   bool ok = DecodeImageSTB(addr, sz, uri, &ret.image, &ret.warning, &err);
+#else
+  // TODO: Use user-supplied image loader
+  (void)addr;
+  (void)sz;
+  (void)uri;
+  bool ok = false;
+  err = "Image loading feature is disabled in this build. TODO: use user-supplied image loader\n";
 #endif
   if (!ok) {
     return nonstd::make_unexpected(err);
@@ -396,8 +419,14 @@ nonstd::expected<image::ImageInfoResult, std::string> GetImageInfoFromMemory(
 
 #if defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
   bool ok = GetImageInfoWUFF(addr, sz, uri, &ret.width, &ret.height, &ret.channels, &ret.warning, &err);
-#else
+#elif !defined(TINYUSDZ_NO_BUILTIN_IMAGE_LOADER)
   bool ok = GetImageInfoSTB(addr, sz, uri, &ret.width, &ret.height, &ret.channels, &ret.warning, &err);
+#else
+  (void)addr;
+  (void)sz;
+  (void)uri;
+  bool ok = false;
+  err = "Image loading feature is disabled in this build. TODO: use user-supplied image info function\n";
 #endif
   if (!ok) {
     return nonstd::make_unexpected(err);

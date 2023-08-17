@@ -22,6 +22,7 @@ endif ()
 
 if (EMSCRIPTEN)
   set(TINYUSDZ_DEFAULT_PRODUCTION_BUILD On)
+  set(TINYUSDZ_DEFAULT_WITH_BUILTIN_IMAGE_LOADER On)
   set(TINYUSDZ_DEFAULT_BUILD_TESTS Off)
   set(TINYUSDZ_DEFAULT_EXAMPLES Off)
   set(TINYUSDZ_DEFAULT_WITH_C_API Off)
@@ -33,6 +34,7 @@ elseif(NOT PROJECT_IS_TOP_LEVEL)
   # assume tinyusdz is added from add_subdirectory()
   # disable tools, tests and examples build by default.
   set(TINYUSDZ_DEFAULT_PRODUCTION_BUILD Off)
+  set(TINYUSDZ_DEFAULT_WITH_BUILTIN_IMAGE_LOADER On)
   set(TINYUSDZ_DEFAULT_BUILD_TESTS Off)
   set(TINYUSDZ_DEFAULT_EXAMPLES Off)
   set(TINYUSDZ_DEFAULT_WITH_C_API Off)
@@ -42,6 +44,7 @@ elseif(NOT PROJECT_IS_TOP_LEVEL)
   set(TINYUSDZ_DEFAULT_WITH_USDC_PARSER Off)
 else()
   set(TINYUSDZ_DEFAULT_PRODUCTION_BUILD Off)
+  set(TINYUSDZ_DEFAULT_WITH_BUILTIN_IMAGE_LOADER On)
   set(TINYUSDZ_DEFAULT_BUILD_TESTS On)
   set(TINYUSDZ_DEFAULT_BUILD_EXAMPLES On)
   set(TINYUSDZ_DEFAULT_WITH_C_API Off)
@@ -65,6 +68,9 @@ option(TINYUSDZ_BUILD_BENCHMARKS
 option(TINYUSDZ_BUILD_EXAMPLES
        "Build examples(but not all examples area built in `examples` folder)"
        ${TINYUSDZ_DEFAULT_BUILD_EXAMPLES})
+option(TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER
+       "Build with built-in image loader(stb_image and fpng). When disabled, app need to provide image loader callback to load images."
+       ${TINYUSDZ_DEFAULT_WITH_BUILTIN_IMAGE_LOADER})
 
 if(MSVC)
   # it looks it is hard to disable C++ exception for MSVC, so enable exception by default
@@ -164,6 +170,7 @@ option(TINYUSDZ_WITH_MODULE_USDC_WRITER "Build with USDC writer feature" ON)
 
 #
 # In default TinyUSDZ embeds stb_image and stb_image_write to load/save JPG/PNG/BMP images.
+# (When TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER is set On)
 #
 
 # Set ON if you use stb_image implementation outside of TinyUSDZ library to avoid multiple symbol def error.
@@ -392,14 +399,12 @@ endif()
 
 set(TINYUSDZ_C_API_SOURCES ${PROJECT_SOURCE_DIR}/src/c-tinyusd.cc)
 
-# TODO: Make fpng optional
 set(TINYUSDZ_DEP_SOURCES
     ${PROJECT_SOURCE_DIR}/src/integerCoding.cpp
     ${PROJECT_SOURCE_DIR}/src/lz4-compression.cc
     #${PROJECT_SOURCE_DIR}/src/pxrLZ4/lz4.cpp
     ${PROJECT_SOURCE_DIR}/src/lz4/lz4.c
     ${PROJECT_SOURCE_DIR}/src/external/pystring.cpp
-    ${PROJECT_SOURCE_DIR}/src/external/fpng.cpp
     ${PROJECT_SOURCE_DIR}/src/external/staticstruct.cc
     ${PROJECT_SOURCE_DIR}/src/external/tinyxml2/tinyxml2.cpp
     #${PROJECT_SOURCE_DIR}/src/external/string_id/string_id.cpp
@@ -410,9 +415,13 @@ set(TINYUSDZ_DEP_SOURCES
     #${PROJECT_SOURCE_DIR}/src/external/ryu/ryu/s2f.c
 )
 
-# Disable SSE for a while, since -mpclmul required to use SSE feature of fpng.
-set_source_files_properties(${PROJECT_SOURCE_DIR}/src/external/fpng.cpp
-                            PROPERTIES COMPILE_DEFINITIONS "FPNG_NO_SSE=1")
+if (TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER)
+  list(APPEND TINYUSDZ_DEP_SOURCES  ${PROJECT_SOURCE_DIR}/src/external/fpng.cpp)
+  # Disable SSE for a while, since -mpclmul required to use SSE feature of fpng.
+  set_source_files_properties(${PROJECT_SOURCE_DIR}/src/external/fpng.cpp
+                              PROPERTIES COMPILE_DEFINITIONS "FPNG_NO_SSE=1")
+endif()
+
 
 if(TINYUSDZ_WITH_JSON)
   list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/json-to-usd.cc)
@@ -687,6 +696,10 @@ endif()
 if(NOT TINYUSDZ_WITH_MODULE_USDC_WRITER)
   target_compile_definitions(tinyusdz_object
                              PRIVATE "TINYUSDZ_DISABLE_MODULE_USDC_WRITER")
+endif()
+
+if(NOT TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER)
+  target_compile_definitions(tinyusdz_object PRIVATE "TINYUSDZ_NO_BUILTIN_IMAGE_LOADER")
 endif()
 
 if(TINYUSDZ_NO_STB_IMAGE_IMPLEMENTATION)
