@@ -3074,7 +3074,9 @@ std::string to_string(const Shader &shader, const uint32_t indent, bool closing_
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << pprint::Indent(indent+1) << "uniform token info:id = \"" << shader.info_id << "\"\n";
+  if (shader.info_id.size()) {
+    ss << pprint::Indent(indent+1) << "uniform token info:id = \"" << shader.info_id << "\"\n";
+  }
 
   if (auto pvr = shader.value.get_value<UsdPrimvarReader_float>()) {
     ss << print_shader_params(pvr.value(), indent+1);
@@ -3101,6 +3103,7 @@ std::string to_string(const Shader &shader, const uint32_t indent, bool closing_
   } else if (auto pvs = shader.value.get_value<UsdPreviewSurface>()) {
     ss << print_shader_params(pvs.value(), indent+1);
   } else if (auto pvsn = shader.value.get_value<ShaderNode>()) {
+    // Generic ShaderNode
     ss << print_common_shader_params(pvsn.value(), indent+1);
   } else {
     ss << pprint::Indent(indent+1) << "[???] Invalid ShaderNode in Shader Prim\n";
