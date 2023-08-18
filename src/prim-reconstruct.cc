@@ -3390,35 +3390,40 @@ bool ReconstructPrim<Shader>(
 {
   (void)properties;
 
+  bool is_generic_shader{false};
   auto info_id_prop = properties.find("info:id");
   if (info_id_prop == properties.end()) {
-    // Generic? Shader. Currently report as an error.
-    PUSH_ERROR_AND_RETURN("`Shader` must contain `info:id` property.");
+    // Guess MatrialX shader. info:id will be resolved by importing referenced .mtlx.
+    // Treat generic Shader at the moment.
+    is_generic_shader = true;
+    //PUSH_ERROR_AND_RETURN("`Shader` must contain `info:id` property.");
   }
 
   std::string shader_type;
-  if (info_id_prop->second.is_attribute()) {
-    const Attribute &attr = info_id_prop->second.get_attribute();
-    if ((attr.type_name() == value::kToken)) {
-      if (auto pv = attr.get_value<value::token>()) {
-        shader_type = pv.value().str();
+  if (!is_generic_shader) {
+    if (info_id_prop->second.is_attribute()) {
+      const Attribute &attr = info_id_prop->second.get_attribute();
+      if ((attr.type_name() == value::kToken)) {
+        if (auto pv = attr.get_value<value::token>()) {
+          shader_type = pv.value().str();
+        } else {
+          PUSH_ERROR_AND_RETURN("Internal errror. `info:id` has invalid type.");
+        }
       } else {
-        PUSH_ERROR_AND_RETURN("Internal errror. `info:id` has invalid type.");
+        PUSH_ERROR_AND_RETURN("`info:id` attribute must be `token` type.");
+      }
+
+      // For some corrupted? USDZ file does not have `uniform` variability.
+      if (attr.variability() != Variability::Uniform) {
+        PUSH_WARN("`info:id` attribute must have `uniform` variability.");
       }
     } else {
-      PUSH_ERROR_AND_RETURN("`info:id` attribute must be `token` type.");
+      PUSH_ERROR_AND_RETURN("Invalid type or value for `info:id` property in `Shader`.");
     }
 
-    // For some corrupted? USDZ file does not have `uniform` variability.
-    if (attr.variability() != Variability::Uniform) {
-      PUSH_WARN("`info:id` attribute must have `uniform` variability.");
-    }
-  } else {
-    PUSH_ERROR_AND_RETURN("Invalid type or value for `info:id` property in `Shader`.");
+    DCOUT("info:id = " << shader_type);
   }
 
-
-  DCOUT("info:id = " << shader_type);
 
   if (shader_type.compare(kUsdPreviewSurface) == 0) {
     UsdPreviewSurface surface;
@@ -3534,9 +3539,10 @@ bool ReconstructPrim<Shader>(
                                               &surface, warn, err)) {
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << shader_type);
     }
-    shader->info_id = shader_type;
+    if (shader_type.size()) {
+      shader->info_id = shader_type;
+    }
     shader->value = surface;
-    DCOUT("info_id = " << shader->info_id);
   }
 
   DCOUT("Shader reconstructed.");
