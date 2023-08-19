@@ -221,6 +221,10 @@ include src/external/mapbox/earcut/README.md
 #include src/external/nanobind/src/tensor.cpp
 #include src/external/nanobind/src/trampoline.cpp
 include src/external/ogt_vox.h
+include src/external/pugiconfig.hpp
+include src/external/pugixml.LICENSE
+include src/external/pugixml.cpp
+include src/external/pugixml.hpp
 include src/external/pystring.cpp
 include src/external/pystring.h
 include src/external/pystring.LICENSE

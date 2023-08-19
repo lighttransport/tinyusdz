@@ -8,7 +8,7 @@
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
-#include "tinyxml2/tinyxml2.h"
+#include "pugixml.hpp"
 #include "nlohmann/json.hpp"
 
 #ifdef __clang__
@@ -23,24 +23,39 @@ int main(int argc, char **argv)
     filename = argv[1];
   }
 
-  tinyxml2::XMLDocument doc;
-  doc.LoadFile(filename.c_str());
-  if (doc.ErrorID() != 0) {
-    std::cerr << "XML Parising error: code = " << doc.ErrorID() << "\n";
+  pugi::xml_document doc;
+  pugi::xml_parse_result result = doc.load_file(filename.c_str());
+  if (!result) {
+    if (result.description()) {
+      std::cerr << "XML Parising error: " << result.description() << "\n";
+      std::cerr << "  offset: " << result.offset << "\n";
+    }
+    return -1;
+  }
+ 
+  std::cout << "Read OK\n";
+
+  pugi::xml_node mtlx = doc.child("materialx");
+  if (!mtlx) {
+    std::cerr << "<materialx> node not found.\n";
     return -1;
   }
 
-  std::cout << "Read OK\n";
-
-  tinyxml2::XMLPrinter printer;
-  doc.Print(&printer);
-
-  const tinyxml2::XMLNode *node = doc.FirstChild();
-  if (node) {
-    // TODO
+  pugi::xml_attribute ver_attr = mtlx.attribute("version");
+  if (!ver_attr) {
+    std::cerr << "version attribute not found in <materialx>.\n";
+    return -1;
   }
+  std::cout << "version = " << ver_attr.as_string() << "\n";
 
-  std::cout << printer.CStr() << "\n";
+  pugi::xml_attribute cspace_attr = mtlx.attribute("colorspace");
+  if (!cspace_attr) {
+    std::cerr << "colorspace attribute not found in <materialx>.\n";
+    return -1;
+  }
+  std::cout << "colorspace = " << cspace_attr.as_string() << "\n";
+
+  auto usdp = mtlx.child("UsdPreviewSurface");
 
   return 0;
 }
