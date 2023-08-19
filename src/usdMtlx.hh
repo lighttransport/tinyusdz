@@ -17,6 +17,8 @@
 #pragma once
 
 #include <string>
+
+#include "asset-resolution.hh"
 #include "usdShade.hh"
 
 namespace tinyusdz {
@@ -24,56 +26,93 @@ namespace tinyusdz {
 constexpr auto kMtlxUsdPreviewSurface = "MtlxUsdPreviewSurface";
 constexpr auto kMtlxAutodeskStandardSurface = "MtlxAutodeskStandaradSurface";
 
-struct MtlxModel
-{
+
+namespace mtlx {
+
+enum class ColorSpace {
+  Lin_rec709, // lin_rec709
+  Unknown
+};
+
+} // namespace mtlx
+
+
+struct MtlxModel {
   std::string asset_name;
-  // TODO
 
+  std::string version;
+  std::string cms;
+  std::string cmsconfig; // filename
+  std::string color_space; // colorspace
+  std::string name_space; // namespace
+
+  //mtlx::ColorSpace colorspace{Lin_rec709};
+  // TODO
 };
 
-class MtlxUsdPreviewSurface : ShaderNode
-{
-  //TypedAttributeWithFallback
-  // TODO
+class MtlxUsdPreviewSurface : ShaderNode {
+  // TypedAttributeWithFallback
+  //  TODO
 };
-
 
 // https://github.com/Autodesk/standard-surface/blob/master/reference/standard_surface.mtlx
 // We only support v1.0.1
-class MtlxAutodeskStandardSurface : ShaderNode
-{
-
+class MtlxAutodeskStandardSurface : ShaderNode {
   TypedAttributeWithFallback<Animatable<float>> base{1.0f};
-  TypedAttributeWithFallback<Animatable<value::color3f>> baseColor{value::color3f{0.8f, 0.8f, 0.8f}}; // color3
+  TypedAttributeWithFallback<Animatable<value::color3f>> baseColor{
+      value::color3f{0.8f, 0.8f, 0.8f}};  // color3
 
   // TODO
   // ...
-  
 
   // (coat_affect_roughness * coat) * coat_roughness
   TypedAttribute<Animatable<float>> coat_affect_roughness;
-  TypedAttribute<Animatable<float>> coat; 
-  TypedAttribute<Animatable<float>> coat_roughness; 
+  TypedAttribute<Animatable<float>> coat;
+  TypedAttribute<Animatable<float>> coat_roughness;
 
   // (specular_roughness + transmission_extra_roughness)
-  TypedAttribute<Animatable<float>> specular_roughness; 
-  TypedAttribute<Animatable<float>> transmission_extra_roughness; 
-  TypedAttribute<Animatable<float>> transmission_roughness_add; 
+  TypedAttribute<Animatable<float>> specular_roughness;
+  TypedAttribute<Animatable<float>> transmission_extra_roughness;
+  TypedAttribute<Animatable<float>> transmission_roughness_add;
 
   // tangent_rotate_normalize
-  // normalize(rotate3d(/* in */tangent, /*amount*/(specular_rotation * 360), /* axis */normal))
-  TypedAttribute<Animatable<float>> specular_rotation; 
-
+  // normalize(rotate3d(/* in */tangent, /*amount*/(specular_rotation * 360), /*
+  // axis */normal))
+  TypedAttribute<Animatable<float>> specular_rotation;
 
   // Output
-  TypedTerminalAttribute<value::token> out; // 'out'
+  TypedTerminalAttribute<value::token> out;  // 'out'
 };
 
-
 // IO
-bool ReadMaterialXFromString(const std::string &str, MtlxModel *mtlx, std::string *err = nullptr);
-bool ReadMaterialXFromFile(const std::string &filepath, MtlxModel *mtlx, std::string *err = nullptr);
 
+///
+/// Load MaterialX XML from a string.
+///
+/// @param[in] str String representation of XML data.
+/// @param[in] asset_name Corresponding asset name. Can be empty.
+/// @param[out] mtlx Output
+/// @param[out] err Error message
+///
+/// @return true upon success.
+bool ReadMaterialXFromString(const std::string &str, const std::string &asset_name, MtlxModel *mtlx,
+                             std::string *err = nullptr);
+
+///
+/// Load MaterialX XML from a file.
+///
+/// @param[in] str String representation of XML data.
+/// @param[in] asset_name Corresponding asset name. Can be empty.
+/// @param[out] mtlx Output
+/// @param[out] err Error message
+///
+/// @return true upon success.
+///
+/// TODO: Use FileSystem handler
+
+bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver,
+                            const std::string &asset_path, MtlxModel *mtlx,
+                            std::string *err = nullptr);
 
 // import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT
 #include "define-type-trait.inc"
@@ -91,5 +130,4 @@ DEFINE_TYPE_TRAIT(MtlxAutodeskStandardSurface, kMtlxAutodeskStandardSurface,
 
 }  // namespace value
 
-
-} // namespace tinyusdz
+}  // namespace tinyusdz

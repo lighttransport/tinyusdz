@@ -381,7 +381,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/usdSkel.cc
     ${PROJECT_SOURCE_DIR}/src/usdShade.cc
     ${PROJECT_SOURCE_DIR}/src/usdLux.cc
-    # usdMtlX has less dependency(tinyxml2), so add it to core component
+    # usdMtlX has less dependency(pugixml), so add it to core component
     ${PROJECT_SOURCE_DIR}/src/usdMtlx.cc
     ${PROJECT_SOURCE_DIR}/src/usdObj.cc
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
@@ -406,7 +406,8 @@ set(TINYUSDZ_DEP_SOURCES
     ${PROJECT_SOURCE_DIR}/src/lz4/lz4.c
     ${PROJECT_SOURCE_DIR}/src/external/pystring.cpp
     ${PROJECT_SOURCE_DIR}/src/external/staticstruct.cc
-    ${PROJECT_SOURCE_DIR}/src/external/tinyxml2/tinyxml2.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/pugixml.cpp
+    #${PROJECT_SOURCE_DIR}/src/external/tinyxml2/tinyxml2.cpp
     #${PROJECT_SOURCE_DIR}/src/external/string_id/string_id.cpp
     #${PROJECT_SOURCE_DIR}/src/external/string_id/error.cpp
     #${PROJECT_SOURCE_DIR}/src/external/string_id/generator.cpp
