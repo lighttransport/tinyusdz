@@ -21,6 +21,7 @@
 #include "asset-resolution.hh"
 #include "usdShade.hh"
 
+
 namespace tinyusdz {
 
 constexpr auto kMtlxUsdPreviewSurface = "MtlxUsdPreviewSurface";
@@ -48,16 +49,21 @@ struct MtlxModel {
 
   //mtlx::ColorSpace colorspace{Lin_rec709};
   // TODO
+
+  std::string shader_name;
+
+  // Content of shader.
+  // MtlxUsdPreviewSurface or MtlxAutodeskStandaradSurface
+  value::Value shader; 
 };
 
-class MtlxUsdPreviewSurface : ShaderNode {
-  // TypedAttributeWithFallback
-  //  TODO
+struct MtlxUsdPreviewSurface : UsdPreviewSurface {
+  //  TODO: add mtlx specific attribute.
 };
 
 // https://github.com/Autodesk/standard-surface/blob/master/reference/standard_surface.mtlx
 // We only support v1.0.1
-class MtlxAutodeskStandardSurface : ShaderNode {
+struct MtlxAutodeskStandardSurface : ShaderNode {
   TypedAttributeWithFallback<Animatable<float>> base{1.0f};
   TypedAttributeWithFallback<Animatable<value::color3f>> baseColor{
       value::color3f{0.8f, 0.8f, 0.8f}};  // color3
@@ -113,6 +119,10 @@ bool ReadMaterialXFromString(const std::string &str, const std::string &asset_na
 bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver,
                             const std::string &asset_path, MtlxModel *mtlx,
                             std::string *err = nullptr);
+
+bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
+                             std::string *err = nullptr);
+
 
 // import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT
 #include "define-type-trait.inc"
