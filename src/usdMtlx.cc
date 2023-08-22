@@ -17,6 +17,19 @@
 #include "ascii-parser.hh" // To parse color3f value
 #include "common-macros.inc"
 #include "usdMtlx.hh"
+#include "value-pprint.hh"
+#include "pprinter.hh"
+#include "tiny-format.hh"
+
+#include "external/dtoa_milo.h"
+
+inline std::string dtos(const double v) {
+
+  char buf[128];
+  dtoa_milo(v, buf);
+
+  return std::string(buf);
+}
 
 #define PushError(msg) do { \
   if (err) { \
@@ -48,6 +61,118 @@ namespace detail {
 bool ParseMaterialXValue(const std::string &typeName, const std::string &str,
                            value::Value *value, std::string *err);
 
+template<typename T> std::string to_xml_string(const T &val);
+
+template<>
+std::string to_xml_string(const float &val) {
+  return dtos(double(val));
+}
+
+template<>
+std::string to_xml_string(const int &val) {
+  return std::to_string(val);
+}
+
+template<>
+std::string to_xml_string(const value::color3f &val) {
+  return dtos(double(val.r)) + ", " + dtos(double(val.g)) + ", " + dtos(double(val.b));
+}
+
+template<>
+std::string to_xml_string(const value::normal3f &val) {
+  return dtos(double(val.x)) + ", " + dtos(double(val.y)) + ", " + dtos(double(val.z));
+}
+
+template<typename T>
+bool SerializeAttribute(const std::string &attr_name, const TypedAttributeWithFallback<Animatable<T>> &attr, std::string &value_str, std::string *err) {
+
+  std::stringstream value_ss;
+
+  if (attr.is_connection()) {
+    PUSH_ERROR_AND_RETURN(fmt::format("TODO: connection attribute"));
+  } else if (attr.is_blocked()) {
+    // do nothing
+    value_str = "";
+    return true;
+  } else {
+    const Animatable<T> &animatable_value = attr.get_value();
+    if (animatable_value.is_scalar()) {
+      T value;
+      if (animatable_value.get_scalar(&value)) {
+        value_ss << "\"" << to_xml_string(value) << "\"";
+      } else {
+        PUSH_ERROR_AND_RETURN(fmt::format("Failed to get the value at default time of `{}`", attr_name));
+      }
+    } else if (animatable_value.is_timesamples()) {
+      // no time-varying attribute in MaterialX. Use the value at default timecode.
+      T value;
+      if (animatable_value.get(value::TimeCode::Default(), &value)) {
+        value_ss << "\"" << to_xml_string(value) << "\"";
+      } else {
+        PUSH_ERROR_AND_RETURN(fmt::format("Failed to get the value at default time of `{}`", attr_name));
+      }
+    } else {
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to get the value of `{}`", attr_name));
+    }
+  }
+
+  value_str = value_ss.str();
+  return true;
+}
+
+static bool WriteMaterialXToString(const MtlxUsdPreviewSurface &shader, std::string &xml_str, std::string *err) {
+  // We directly write xml string for simplicity.
+  //
+  // TODO:
+  // - [ ] Use pugixml to write xml string.
+
+  std::stringstream ss;
+
+  std::string node_name = "SR_default";
+
+  ss << "<?xml version=\"1.0\"?>\n";
+  // TODO: colorspace
+  ss << "<materialx version=\"1.38\" colorspace=\"lin_rec709\">\n";
+  ss << pprint::Indent(1) << "<UsdPreviewSurface name=\"" << node_name << "\" type =\"surfaceshader\">\n";
+
+#define EMIT_ATTRIBUTE(__name, __tyname, __attr) { \
+    std::string value_str; \
+    if (!SerializeAttribute(__name, __attr, value_str, err)) { \
+      return false; \
+    } \
+    if (value_str.size()) { \
+      ss << pprint::Indent(2) << "<input name=\"" << __name << "\" type=\"" << __tyname << "\" value=\"" << value_str << "\" />\n"; \
+    } \
+  }
+
+  // TODO: Attribute Connection
+  EMIT_ATTRIBUTE("diffuseColor", "color3", shader.diffuseColor)
+  EMIT_ATTRIBUTE("emissiveColor", "color3", shader.emissiveColor)
+  EMIT_ATTRIBUTE("useSpecularWorkflow", "integer", shader.useSpecularWorkflow)
+  EMIT_ATTRIBUTE("specularColor", "color3", shader.specularColor)
+  EMIT_ATTRIBUTE("metallic", "float", shader.metallic)
+  EMIT_ATTRIBUTE("roughness", "float", shader.roughness)
+  EMIT_ATTRIBUTE("clearcoat", "float", shader.clearcoat)
+  EMIT_ATTRIBUTE("clearcoatRoughness", "float", shader.clearcoatRoughness)
+  EMIT_ATTRIBUTE("opacity", "float", shader.opacity)
+  EMIT_ATTRIBUTE("opacityThreshold", "float", shader.opacityThreshold)
+  EMIT_ATTRIBUTE("ior", "float", shader.ior)
+  EMIT_ATTRIBUTE("normal", "vector3", shader.normal)
+  EMIT_ATTRIBUTE("displacement", "float", shader.displacement)
+  EMIT_ATTRIBUTE("occlusion", "float", shader.occlusion)
+
+  ss << pprint::Indent(1) << "</UsdPreviewSurface>\n";
+
+  ss << pprint::Indent(1) << "<surfacematerial name=\"USD_Default\" type=\"material\">\n";
+  ss << pprint::Indent(2) << "<input name=\"surfaceshader\" type=\"surfaceshader\" nodename=\"" << node_name << "\" />\n";
+  ss << pprint::Indent(1) << "</surfacematerial>\n";
+
+  ss << "</materialx>\n";
+
+  xml_str = ss.str();
+
+  return true;
+}
 
 } // namespace detail
 
@@ -129,6 +254,21 @@ bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver, const std::s
   return ReadMaterialXFromString(str, asset_path, mtlx, err);
 }
 
+bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
+                             std::string *err) {
+
+  if (auto usdps = mtlx.shader.as<MtlxUsdPreviewSurface>()) {
+    return detail::WriteMaterialXToString(*usdps, xml_str, err);
+  } else if (auto adskss = mtlx.shader.as<MtlxAutodeskStandardSurface>()) {
+    // TODO
+    PUSH_ERROR_AND_RETURN("TODO: AutodeskStandardSurface");
+  } else {
+    // TODO
+    PUSH_ERROR_AND_RETURN("Unknown/unsupported shader: " << mtlx.shader_name);
+  }
+
+  return false;
+}
 
 
 //} // namespace usdMtlx
