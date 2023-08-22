@@ -975,12 +975,12 @@ struct TypedTimeSamples {
           [](const Sample &a, double tval) { return a.t < tval; });
 
       if (interp == value::TimeSampleInterpolationType::Linear) {
-        size_t idx0 = size_t(std::max(
+        size_t idx0 = size_t((std::max)(
             int64_t(0),
-            std::min(int64_t(_samples.size() - 1),
+            (std::min)(int64_t(_samples.size() - 1),
                      int64_t(std::distance(_samples.begin(), it - 1)))));
         size_t idx1 =
-            size_t(std::max(int64_t(0), std::min(int64_t(_samples.size() - 1),
+            size_t((std::max)(int64_t(0), (std::min)(int64_t(_samples.size() - 1),
                                                  int64_t(idx0) + 1)));
 
         double tl = _samples[idx0].t;
@@ -995,7 +995,7 @@ struct TypedTimeSamples {
         }
 
         // Just in case.
-        dt = std::max(0.0, std::min(1.0, dt));
+        dt = (std::max)(0.0, (std::min)(1.0, dt));
 
         const value::Value &pv0 = _samples[idx0].value;
         const value::Value &pv1 = _samples[idx1].value;
