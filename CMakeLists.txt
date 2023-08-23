@@ -103,6 +103,7 @@ option(TINYUSDZ_CXX_EXCEPTIONS
        "Enable/Disable C++ exceptions(default: Off for posix, on for MSVC)"
        ${TINYUSDZ_CXX_EXCEPTIONS_DEFAULT})
 
+option(TINYUSDZ_WITH_USDMTLX "Build with MaterialX support" ON)
 option(TINYUSDZ_WITH_JSON "Build with JSON serialization support" OFF)
 option(TINYUSDZ_WITH_USDOBJ "Build with usdObj support(import wavefront .obj)"
        ON)
@@ -406,14 +407,7 @@ set(TINYUSDZ_DEP_SOURCES
     ${PROJECT_SOURCE_DIR}/src/lz4/lz4.c
     ${PROJECT_SOURCE_DIR}/src/external/pystring.cpp
     ${PROJECT_SOURCE_DIR}/src/external/staticstruct.cc
-    ${PROJECT_SOURCE_DIR}/src/external/pugixml.cpp
     #${PROJECT_SOURCE_DIR}/src/external/tinyxml2/tinyxml2.cpp
-    #${PROJECT_SOURCE_DIR}/src/external/string_id/string_id.cpp
-    #${PROJECT_SOURCE_DIR}/src/external/string_id/error.cpp
-    #${PROJECT_SOURCE_DIR}/src/external/string_id/generator.cpp
-    #${PROJECT_SOURCE_DIR}/src/external/string_id/database.cpp
-    #${PROJECT_SOURCE_DIR}/src/external/ryu/ryu/s2d.c
-    #${PROJECT_SOURCE_DIR}/src/external/ryu/ryu/s2f.c
 )
 
 if (TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER)
@@ -423,6 +417,9 @@ if (TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER)
                               PROPERTIES COMPILE_DEFINITIONS "FPNG_NO_SSE=1")
 endif()
 
+if(TINYUSDZ_WITH_JSON)
+  list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/external/pugixml.cpp)
+endif()
 
 if(TINYUSDZ_WITH_JSON)
   list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/json-to-usd.cc)
@@ -721,6 +718,11 @@ target_include_directories(tinyusdz_object
 #    ${TINYUSDZ_LIB_TARGET}
 #    PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
 #endif()
+
+if(TINYUSDZ_WITH_USDMTLX)
+  target_compile_definitions(tinyusdz_object
+                             PRIVATE "TINYUSDZ_USE_USDMTLX")
+endif()
 
 if(TINYUSDZ_WITH_USDFBX)
   target_compile_definitions(tinyusdz_object
