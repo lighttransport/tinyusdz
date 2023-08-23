@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2023 - Present, Light Transport Entertainment, Inc.
+
+#if defined(TINYUSDZ_USE_USDMTLX)
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -10,14 +14,18 @@
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif
+#endif // TINYUSDZ_USE_USDMTLX
 
 #include <sstream>
+
+#include "usdMtlx.hh"
+
+#if defined(TINYUSDZ_USE_USDMTLX)
 
 #include "io-util.hh"
 #include "tiny-format.hh"
 #include "ascii-parser.hh" // To parse color3f value
 #include "common-macros.inc"
-#include "usdMtlx.hh"
 #include "value-pprint.hh"
 #include "pprinter.hh"
 #include "tiny-format.hh"
@@ -82,7 +90,7 @@ bool is_supported_type(const std::string &typeName) {
   //if (typeName.compare("color") == 0) return true;
   //if (typeName.compare("geomname") == 0) return true;
   //if (typeName.compare("geomnamearray") == 0) return true;
-  
+
   return false;
 }
 
@@ -465,6 +473,38 @@ bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
   return false;
 }
 
-
 //} // namespace usdMtlx
 } // namespace tinyusdz
+
+#else
+
+namespace tinyusdz {
+
+bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver, const std::string &asset_path, MtlxModel *mtlx, std::string *err) {
+
+  (void)resolver;
+  (void)asset_path;
+  (void)mtlx;
+
+  if (err) {
+    (*err) += "MaterialX support is disabled in this build.\n";
+  }
+  return false;
+}
+
+bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
+                             std::string *err) {
+  (void)mtlx;
+  (void)xml_str;
+
+  if (err) {
+    (*err) += "MaterialX support is disabled in this build.\n";
+  }
+  return false;
+}
+
+} // namespace tinyusdz
+
+#endif // TINYUSDZ_USE_USDMTLX
+
+
