@@ -1919,6 +1919,34 @@ enum class TimeSampleInterpolation {
 // of Prim
 // TODO: Refactor
 struct Attribute {
+
+  Attribute() = default;
+
+  ///
+  /// Construct Attribute with typed value(`float`, `token`, ...).
+  ///
+  template <typename T>
+  Attribute(const T &v, bool varying = true) {
+    static_assert((value::TypeId::TYPE_ID_VALUE_BEGIN <=
+                   value::TypeTraits<T>::type_id()) &&
+                      (value::TypeId::TYPE_ID_VALUE_END >
+                       value::TypeTraits<T>::type_id()),
+                  "T is not a value type");
+    set_value(v);
+    variability() = varying ? Variability::Varying : Variability::Uniform;
+  }
+
+  ///
+  /// Construct connection attribute.
+  ///
+  Attribute(const Path &v) {
+    set_connection(v);
+  }
+
+  Attribute(const std::vector<Path> &vs) {
+    set_connections(vs);
+  }
+
   const std::string &name() const { return _name; }
 
   std::string &name() { return _name; }
