@@ -40,6 +40,12 @@ inline std::string dtos(const double v) {
   return std::string(buf);
 }
 
+//#define PushWarn(msg) do { \
+//  if (warn) { \
+//    (*warn) += msg; \
+//  } \
+//} while(0);
+
 #define PushError(msg) do { \
   if (err) { \
     (*err) += msg; \
@@ -137,6 +143,19 @@ bool ParseValue<float>(tinyusdz::ascii::AsciiParser &parser, float &ret, std::st
 }
 
 template<>
+bool ParseValue<std::string>(tinyusdz::ascii::AsciiParser &parser, std::string &ret, std::string *err) {
+
+  std::string val;
+  if (!parser.ReadBasicType(&val)) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse a value of type `{}`", value::TypeTraits<std::string>::type_name()));
+  }
+
+  ret = val;
+
+  return true;
+}
+
+template<>
 bool ParseValue<value::float2>(tinyusdz::ascii::AsciiParser &parser, value::float2 &ret, std::string *err) {
 
 
@@ -217,6 +236,70 @@ bool ParseValue<value::float4>(tinyusdz::ascii::AsciiParser &parser, value::floa
 ///
 bool ParseMaterialXValue(const std::string &typeName, const std::string &str,
                            value::Value *value, std::string *err);
+
+bool ParseMaterialXValue(const std::string &typeName, const std::string &str,
+                           value::Value *value, std::string *err) {
+
+  (void)value;
+
+  if (!is_supported_type(typeName)) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Invalid/unsupported type: {}", typeName));
+  }
+
+  tinyusdz::StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()), str.size(), /* swap endian */ false);
+  tinyusdz::ascii::AsciiParser parser(&sr);
+
+  if (typeName.compare("integer") == 0) {
+    int val;
+    if (!ParseValue(parser, val, err)) {
+      return false;
+    }
+  } else if (typeName.compare("boolean") == 0) {
+    bool val;
+    if (!ParseValue(parser, val, err)) {
+      return false;
+    }
+  } else if (typeName.compare("vector2") == 0) {
+    value::float2 val;
+    if (!ParseValue(parser, val, err)) {
+      return false;
+    }
+  } else if (typeName.compare("vector3") == 0) {
+    value::float3 val;
+    if (!ParseValue(parser, val, err)) {
+      return false;
+    }
+  } else if (typeName.compare("vector4") == 0) {
+    value::float4 val;
+    if (!ParseValue(parser, val, err)) {
+      return false;
+    }
+  } else {
+    PUSH_ERROR_AND_RETURN("TODO: " + typeName);
+  }
+
+  // TODO
+  return false;
+}
+
+template<typename T>
+bool ParseMaterialXValue(const std::string &str,
+                         T *value, std::string *err) {
+
+  tinyusdz::StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()), str.size(), /* swap endian */ false);
+  tinyusdz::ascii::AsciiParser parser(&sr);
+
+  T val;
+
+  if (!ParseValue(parser, val, err)) {
+    return false;
+  }
+
+  (*value) = val;
+  return true;
+}
+
+
 
 template<typename T> std::string to_xml_string(const T &val);
 
@@ -331,50 +414,70 @@ static bool WriteMaterialXToString(const MtlxUsdPreviewSurface &shader, std::str
   return true;
 }
 
-bool ParseMaterialXValue(const std::string &typeName, const std::string &str,
-                           value::Value *value, std::string *err) {
-
-  (void)value;
-
-  if (!is_supported_type(typeName)) {
-    PUSH_ERROR_AND_RETURN(fmt::format("Invalid/unsupported type: {}", typeName));
+#if 0 // TODO
+static bool ConvertPlace2d(const pugi::xml_node &node, UsdTransform2d &tx, std::string *warn, std::string *err) {
+  // texcoord(vector2). default index=0 uv coordinate
+  // pivot(vector2). default (0, 0)
+  // scale(vector2). default (1, 1)
+  // rotate(float). in degrees, Conter-clockwise
+  // offset(vector2)
+  if (pugi::xml_attribute texcoord_attr = node.attribute("texcoord")) {
+    PUSH_WARN("TODO: `texcoord` attribute.\n");
   }
 
-  tinyusdz::StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()), str.size(), /* swap endian */ false);
-  tinyusdz::ascii::AsciiParser parser(&sr);
+  if (pugi::xml_attribute pivot_attr = node.attribute("pivot")) {
+    PUSH_WARN("TODO: `pivot` attribute.\n");
+  }
 
-  if (typeName.compare("integer") == 0) {
-    int val;
-    if (!ParseValue(parser, val, err)) {
-      return false;
+  if (pugi::xml_attribute scale_attr = node.attribute("scale")) {
+    value::float2 value;
+    if (!ParseMaterialXValue(scale_attr.as_string(), &value, err)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse `rotate` attribute of `place2d`.\n");
     }
-  } else if (typeName.compare("boolean") == 0) {
-    bool val;
-    if (!ParseValue(parser, val, err)) {
-      return false;
+    tx.scale = value;
+  }
+
+  if (pugi::xml_attribute rotate_attr = node.attribute("rotate")) {
+    float value;
+    if (!ParseMaterialXValue(rotate_attr.as_string(), &value, err)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse `rotate` attribute of `place2d`.\n");
     }
-  } else if (typeName.compare("vector2") == 0) {
-    value::float2 val;
-    if (!ParseValue(parser, val, err)) {
-      return false;
-    }
-  } else if (typeName.compare("vector3") == 0) {
-    value::float3 val;
-    if (!ParseValue(parser, val, err)) {
-      return false;
-    }
-  } else if (typeName.compare("vector4") == 0) {
-    value::float4 val;
-    if (!ParseValue(parser, val, err)) {
-      return false;
+    tx.rotation = value;
+  }
+
+  pugi::xml_attribute offset_attr = node.attribute("offset");
+  if (offset_attr) {
+    PUSH_WARN("TODO: `offset` attribute.\n");
+  }
+
+  return true;
+}
+
+static bool ConvertTiledImage(const pugi::xml_node &node, UsdUVTexture &tex, std::string *err) {
+  (void)tex;
+  // file: uniform filename
+  // default: float or colorN or vectorN
+  // texcoord: vector2
+  // uvtiling: vector2(default 1.0, 1.0)
+  // uvoffset: vector2(default 0.0, 0.0)
+  // realworldimagesize: vector2
+  // realworldtilesize: vector2
+  // filtertype: string: "closest", "linear" or "cubic"
+  if (pugi::xml_attribute file_attr = node.attribute("file")) {
+    std::string filename;
+    if (!ParseMaterialXValue(file_attr.as_string(), &filename, err)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse `file` attribute in `tiledimage`.\n");
     }
   } else {
-    PUSH_ERROR_AND_RETURN("TODO: " + typeName);
+    PUSH_ERROR_AND_RETURN("`file` attribute not found.");
   }
 
-  // TODO
-  return false;
+  // TODO...
+
+  return true;
+
 }
+#endif
 
 
 } // namespace detail
