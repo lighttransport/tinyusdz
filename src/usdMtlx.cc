@@ -64,6 +64,15 @@ extern template bool AsciiParser::SepBy1BasicType<float>(const char sep, std::ve
 
 namespace detail {
 
+template<typename T>
+Property MakeProperty(const T &value) {
+
+  Attribute attr(value);
+  Property prop(attr, /* custom */false);
+
+  return prop;
+}
+
 bool is_supported_type(const std::string &typeName);
 
 bool is_supported_type(const std::string &typeName) {
@@ -482,7 +491,6 @@ static bool ConvertTiledImage(const pugi::xml_node &node, UsdUVTexture &tex, std
 
 } // namespace detail
 
-
 bool ReadMaterialXFromString(const std::string &str, const std::string &asset_path, MtlxModel *mtlx, std::string *err) {
 
 
@@ -576,6 +584,21 @@ bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
   return false;
 }
 
+bool ToPrimSpec(const MtlxModel &model, PrimSpec &ps, std::string *err)
+{
+  constexpr auto kAutodeskStandardSurface = "AutodeskStandardSurface";
+
+  if (model.shader_name == kUsdPreviewSurface) {
+    ps.props()["info:id"] = detail::MakeProperty(value::token(kUsdPreviewSurface));
+  } else if (model.shader_name == kAutodeskStandardSurface) {
+    ps.props()["info:id"] = detail::MakeProperty(value::token(kAutodeskStandardSurface));
+  } else {
+    PUSH_ERROR_AND_RETURN("Unsupported shader_name: " << model.shader_name);
+  }
+
+  return true;
+}
+
 //} // namespace usdMtlx
 } // namespace tinyusdz
 
@@ -606,8 +629,17 @@ bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
   return false;
 }
 
+bool ToPrimSpec(const MtlxModel &model, PrimSpec &ps, std::string *err)
+  (void)model;
+  (void)ps;
+
+  if (err) {
+    (*err) += "MaterialX support is disabled in this build.\n";
+  }
+  return false;
+
+}
+
 } // namespace tinyusdz
 
 #endif // TINYUSDZ_USE_USDMTLX
-
-
