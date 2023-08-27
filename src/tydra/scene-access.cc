@@ -19,6 +19,8 @@
 namespace tinyusdz {
 namespace tydra {
 
+constexpr auto kInfoId = "info:id";
+
 namespace {
 
 // For PUSH_ERROR_AND_RETURN
@@ -825,6 +827,27 @@ bool ToTerminalAttributeValue(
 
   return true;
 }
+
+template <typename T>
+nonstd::optional<Property> TypedTerminalAttributeToProperty(const TypedTerminalAttribute<T> &input) {
+  if (!input.authored()) {
+    // nothing to do
+    return nonstd::nullopt;
+  }
+
+  Property output;
+
+  // type info only
+  if (input.has_actual_type()) {
+    // type info only
+    output = Property::MakeEmptyAttrib(input.get_actual_type_name(), /* custom */ false);
+  } else {
+    output = Property::MakeEmptyAttrib(input.type_name(), /* custom */ false);
+  }
+
+  return output;
+}
+
 
 bool XformOpToProperty(const XformOp &x, Property &prop) {
   primvar::PrimVar pv;
@@ -2200,14 +2223,14 @@ bool PrimToPrimSpecImpl(const Xform &p, PrimSpec &ps, std::string *err) {
   return true;
 }
 
-bool PrimToPrimSpec(const Prim &prim, PrimSpec &ps, std::string *err) 
+bool PrimToPrimSpec(const Prim &prim, PrimSpec &ps, std::string *err)
 {
 
 #define TO_PRIMSPEC(__ty) \
   if (prim.as<__ty>()) { \
     return PrimToPrimSpecImpl(*(prim.as<__ty>()), ps, err); \
   } else
-  
+
 
   TO_PRIMSPEC(Model)
   {
@@ -2215,11 +2238,82 @@ bool PrimToPrimSpec(const Prim &prim, PrimSpec &ps, std::string *err)
       (*err) += "Unsupported/unimplemented Prim type: " + prim.prim_type_name() + "\n";
     }
     return false;
-  } 
+  }
 
 #undef TO_PRIMSPEC
 
 }
+
+bool ShaderToPrimSpec(const UsdTransform2d &node, PrimSpec &ps, std::string *warn, std::string *err)
+{
+  (void)warn;
+
+#define TO_PROPERTY(__prop_name, __v) { \
+  Property prop; \
+  if (!ToProperty(__v, prop, err)) { \
+    PUSH_ERROR_AND_RETURN(fmt::format("Convert {} to Property failed.\n", __prop_name)); \
+  } \
+  ps.props()[__prop_name] = prop; \
+}
+
+  // inputs
+  TO_PROPERTY("inputs:in", node.in)
+  TO_PROPERTY("inputs:rotation", node.rotation)
+  TO_PROPERTY("inputs:scale", node.scale)
+  TO_PROPERTY("inputs:translation", node.translation)
+
+  // outputs
+  if (auto pv = TypedTerminalAttributeToProperty(node.result)) {
+    ps.props()["outputs:result"] = pv.value();
+  }
+
+  for (auto prop : node.props) {
+    ps.props()[prop.first] = prop.second;
+  }
+
+  ps.props()[kInfoId] = Property(Attribute::Uniform(value::token(kUsdTransform2d)));
+  ps.metas() = node.metas();
+  ps.name() = node.name;
+  ps.specifier() = node.spec;
+
+  return true;
+}
+
+#if 0
+bool ShaderToPrimSpec(const UsdUVTexture &node, PrimSpec &ps, std::string *warn, std::string *err)
+{
+  (void)warn;
+
+#define TO_PROPERTY(__prop_name, __v) { \
+  Property prop; \
+  if (!ToProperty(__v, prop, err)) { \
+    PUSH_ERROR_AND_RETURN(fmt::format("Convert {} to Property failed.\n", __prop_name)); \
+  } \
+  ps.props()[__prop_name] = prop; \
+}
+
+  // inputs
+  TO_PROPERTY("inputs:in", node.in)
+  TO_PROPERTY("inputs:rotation", node.rotation)
+  TO_PROPERTY("inputs:scale", node.scale)
+  TO_PROPERTY("inputs:translation", node.translation)
+
+  // outputs
+  if (auto pv = TypedTerminalAttributeToProperty(node.result)) {
+    ps.props()["outputs:result"] = pv.value();
+  }
+
+  for (auto prop : node.props) {
+    ps.props()[prop.first] = prop.second;
+  }
+
+  ps.metas() = node.metas();
+  ps.name() = node.name;
+  ps.specifier() = node.spec;
+
+  return true;
+}
+#endif
 
 }  // namespace tydra
 }  // namespace tinyusdz
