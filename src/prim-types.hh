@@ -1937,6 +1937,25 @@ struct Attribute {
   }
 
   ///
+  /// Construct uniform attribute.
+  ///
+  template <typename T>
+  static Attribute Uniform(const T &v) {
+
+    static_assert((value::TypeId::TYPE_ID_VALUE_BEGIN <=
+                   value::TypeTraits<T>::type_id()) &&
+                      (value::TypeId::TYPE_ID_VALUE_END >
+                       value::TypeTraits<T>::type_id()),
+                  "T is not a value type");
+
+    Attribute attr;
+    attr.set_value(v);
+    attr.variability() = Variability::Uniform;
+    return attr;
+  }
+  
+
+  ///
   /// Construct connection attribute.
   ///
   Attribute(const Path &v) {
