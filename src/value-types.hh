@@ -254,6 +254,9 @@ enum TypeId {
   TYPE_ID_MONOSTATE,
   TYPE_ID_VALUEBLOCK,  // Value block. `None` in ascii.
 
+  // -- begin value type
+  TYPE_ID_VALUE_BEGIN,
+  
   TYPE_ID_TOKEN,
   TYPE_ID_STRING,
   TYPE_ID_STRING_DATA,  // String for primvar and metadata. Includes multi-line
@@ -336,18 +339,21 @@ enum TypeId {
 
   TYPE_ID_EXTENT,  // float3[2]
 
-  TYPE_ID_LAYER_OFFSET,
-  TYPE_ID_PAYLOAD,
-
   TYPE_ID_TIMECODE,
-  // TYPE_ID_TIMESAMPLE,
-
-  TYPE_ID_DICT,        // Generic dict type.
-  TYPE_ID_CUSTOMDATA,  // similar to `dictionary`, but limited types are allowed
-                       // to use. for metadatum(e.g. `customData` in Prim Meta)
 
   // TYPE_ID_ASSET,
   TYPE_ID_ASSET_PATH,
+
+  TYPE_ID_DICT,        // Generic dict type. TODO: remove?
+  TYPE_ID_CUSTOMDATA,  // similar to `dictionary`, but limited types are allowed
+                       // to use. for metadatum(e.g. `customData` in Prim Meta)
+                       
+  TYPE_ID_VALUE_END,
+
+  // -- end value type
+  
+  TYPE_ID_LAYER_OFFSET,
+  TYPE_ID_PAYLOAD,
 
   // Types in prim-types.hh
   TYPE_ID_REFERENCE,
