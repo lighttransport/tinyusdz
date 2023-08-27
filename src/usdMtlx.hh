@@ -123,6 +123,7 @@ bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver,
 bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
                              std::string *err = nullptr);
 
+bool ToPrimSpec(const MtlxModel &model, PrimSpec &ps, std::string *err);
 
 // import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT
 #include "define-type-trait.inc"
