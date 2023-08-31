@@ -90,7 +90,9 @@ struct MtlxAutodeskStandardSurface : ShaderNode {
   TypedTerminalAttribute<value::token> out;  // 'out'
 };
 
+//
 // IO
+//
 
 ///
 /// Load MaterialX XML from a string.
@@ -98,11 +100,12 @@ struct MtlxAutodeskStandardSurface : ShaderNode {
 /// @param[in] str String representation of XML data.
 /// @param[in] asset_name Corresponding asset name. Can be empty.
 /// @param[out] mtlx Output
+/// @param[out] warn Warning message
 /// @param[out] err Error message
 ///
 /// @return true upon success.
 bool ReadMaterialXFromString(const std::string &str, const std::string &asset_name, MtlxModel *mtlx,
-                             std::string *err = nullptr);
+                             std::string *warn, std::string *err);
 
 ///
 /// Load MaterialX XML from a file.
@@ -118,10 +121,10 @@ bool ReadMaterialXFromString(const std::string &str, const std::string &asset_na
 
 bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver,
                             const std::string &asset_path, MtlxModel *mtlx,
-                            std::string *err = nullptr);
+                            std::string *warn, std::string *err);
 
 bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
-                             std::string *err = nullptr);
+                             std::string *warn, std::string *err);
 
 bool ToPrimSpec(const MtlxModel &model, PrimSpec &ps, std::string *err);
 
