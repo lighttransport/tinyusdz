@@ -892,13 +892,18 @@ struct AttrMetas {
 
   nonstd::optional<double> weight;  // usdSkel inbetween BlendShape weight.
 
+  // usdShade
+  nonstd::optional<value::token> connectability; // NOTE: applies to attr
+  nonstd::optional<value::token> outputName; // NOTE: applies to rel
+  nonstd::optional<value::token> renderType; // NOTE: applies to prop
+  nonstd::optional<Dictionary> sdrMetadata; // NOTE: applies to attr(also seen in prim meta)
   //
   // MaterialBinding
   //
   // Could be arbitrary token value so use `token[]` type.
   // For now, either `weakerThanDescendants` or `strongerThanDescendants` are
   // valid token.
-  nonstd::optional<value::token> bindMaterialAs;  // 'bindMaterialAs'
+  nonstd::optional<value::token> bindMaterialAs;  // 'bindMaterialAs' NOTE: applies to rel.
 
   std::map<std::string, MetaVariable> meta;  // other meta values
 
@@ -908,7 +913,7 @@ struct AttrMetas {
 
   bool authored() const {
     return (interpolation || elementSize || hidden || customData || weight ||
-            bindMaterialAs || meta.size() || stringData.size());
+            connectability || outputName || renderType || sdrMetadata || bindMaterialAs || meta.size() || stringData.size());
   }
 };
 
