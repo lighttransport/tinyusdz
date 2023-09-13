@@ -309,7 +309,12 @@ static void RegisterPropMetas(
 
   metas["interpolation"] = AsciiParser::VariableDef(value::kToken, "interpolation");
 
+  // usdShade
   metas["bindMaterialAs"] = AsciiParser::VariableDef(value::kToken, "bindMaterialAs");
+  metas["connectability"] = AsciiParser::VariableDef(value::kToken, "connectability");
+  metas["renderType"] = AsciiParser::VariableDef(value::kToken, "renderType");
+  metas["outputName"] = AsciiParser::VariableDef(value::kToken, "outputName");
+  metas["sdrMetadata"] = AsciiParser::VariableDef(value::kDictionary, "sdrMetadata");
 }
 
 
@@ -364,6 +369,8 @@ static void RegisterPrimAttrTypes(std::set<std::string> &d) {
   d.insert(value::kTexCoord4d);
   d.insert(value::kVector3f);
   d.insert(value::kVector4f);
+  d.insert(value::kVector3d);
+  d.insert(value::kVector4d);
   d.insert(value::kColor3h);
   d.insert(value::kColor3f);
   d.insert(value::kColor3d);
