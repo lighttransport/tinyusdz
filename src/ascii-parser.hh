@@ -144,7 +144,7 @@ class AsciiParser {
   }
 
   bool IsStageMeta(const std::string &name);
-  bool IsPrimMeta(const std::string &name);
+  bool IsRegisteredPrimMeta(const std::string &name);
 
   class VariableDef {
    public:
@@ -678,6 +678,10 @@ class AsciiParser {
   bool ReadIdentifier(std::string *token);  // no '"'
   bool ReadPathIdentifier(
       std::string *path_identifier);  // '<' + identifier + '>'
+
+  // read until newline
+  bool ReadUntilNewline(std::string *str);
+
 
   /// Parse magic
   /// #usda FLOAT
