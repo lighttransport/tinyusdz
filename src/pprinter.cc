@@ -582,7 +582,12 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
     ss << print_customData(meta.customData.value(), "customData", indent);
   }
 
-
+  for (const auto &item : meta.unregisteredMetas) {
+    // do not quote
+    ss << pprint::Indent(indent) << item.first << " = " << item.second << "\n";
+  }
+  
+  // TODO: deprecate meta.meta and remove it.
   for (const auto &item : meta.meta) {
     ss << print_meta(item.second, indent+1, item.first);
   }
