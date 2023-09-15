@@ -833,6 +833,9 @@ struct PrimMetas {
   // https://github.com/PixarAnimationStudios/USD/pull/2055
   nonstd::optional<std::string> displayName;  // 'displayName'
 
+  // Unregistered metadatum. value is represented as string.
+  std::map<std::string, std::string> unregisteredMetas;
+
   Dictionary meta;  // other non-buitin meta values. TODO: remove this variable
                     // and use `customData` instead, since pxrUSD does not allow
                     // non-builtin Prim metadatum
@@ -855,7 +858,7 @@ struct PrimMetas {
   bool authored() const {
     return (active || hidden || kind || customData || references || payload ||
             inherits || variants || variantSets || specializes || displayName ||
-            sceneName || doc || comment || meta.size() || apiSchemas ||
+            sceneName || doc || comment || unregisteredMetas.size() || meta.size() || apiSchemas ||
             sdrMetadata || assetInfo || instanceable);
   }
 
