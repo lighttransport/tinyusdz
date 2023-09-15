@@ -17,6 +17,10 @@
 * Improve interoperability with Blender USD export/import 
 * tusdview(TinyUSDZ version of usdview)
 
+## "What if" Experimental feature
+
+* Gaussian Splatting support? https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/
+ 
 ## Build status
 
 |         |   Linux                                  |  Windows                              |   macOS   |  iOS   | Android |
