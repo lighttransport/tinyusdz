@@ -400,6 +400,16 @@ std::string DumpXformNode(const XformNode &root);
 ///
 bool PrimToPrimSpec(const Prim &prim, PrimSpec &ps, std::string *err);
 
+///
+/// For MaterialX
+/// TODO: Move to shader-network.hh?
+///
+bool ShaderToPrimSpec(const UsdUVTexture &node, PrimSpec &ps, std::string *warn, std::string *err);
+bool ShaderToPrimSpec(const UsdTransform2d &node, PrimSpec &ps, std::string *warn, std::string *err);
+
+template<typename T>
+bool ShaderToPrimSpec(const UsdPrimvarReader<T> &node, PrimSpec &ps, std::string *warn, std::string *err);
+
 
 //
 // For USDZ AR extensions

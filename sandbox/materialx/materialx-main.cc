@@ -55,7 +55,15 @@ int main(int argc, char **argv)
   }
   std::cout << "colorspace = " << cspace_attr.as_string() << "\n";
 
-  auto usdp = mtlx.child("UsdPreviewSurface");
+  //auto usdp = mtlx.child("UsdPreviewSurface");
+
+  // nodegraph
+  for (auto ng : mtlx.children("nodegraph")) {
+    std::cout << "nodegraph: " << ng.name() << "\n";
+    for (auto ti : ng.children("tiledimage")) {
+      std::cout << "tiledimage: " << ti.attribute("name").as_string() << "\n";
+    }
+  }
 
   return 0;
 }

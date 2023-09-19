@@ -601,7 +601,7 @@ struct GeomCamera : public GPrim {
   // Properties
   //
 
-  TypedAttribute<std::vector<value::float4>> clippingPlanes;
+  TypedAttribute<Animatable<std::vector<value::float4>>> clippingPlanes; // float4[]
   TypedAttributeWithFallback<Animatable<value::float2>> clippingRange{
       value::float2({0.1f, 1000000.0f})};
   TypedAttributeWithFallback<Animatable<float>> exposure{0.0f};  // in EV

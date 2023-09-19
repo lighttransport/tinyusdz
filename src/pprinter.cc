@@ -582,7 +582,12 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
     ss << print_customData(meta.customData.value(), "customData", indent);
   }
 
-
+  for (const auto &item : meta.unregisteredMetas) {
+    // do not quote
+    ss << pprint::Indent(indent) << item.first << " = " << item.second << "\n";
+  }
+  
+  // TODO: deprecate meta.meta and remove it.
   for (const auto &item : meta.meta) {
     ss << print_meta(item.second, indent+1, item.first);
   }
@@ -608,6 +613,22 @@ std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
 
   if (meta.bindMaterialAs) {
     ss << pprint::Indent(indent) << "bindMaterialAs = " << quote(to_string(meta.bindMaterialAs.value())) << "\n";
+  }
+
+  if (meta.connectability) {
+    ss << pprint::Indent(indent) << "connectability = " << quote(to_string(meta.connectability.value())) << "\n";
+  }
+
+  if (meta.outputName) {
+    ss << pprint::Indent(indent) << "outputName = " << quote(to_string(meta.outputName.value())) << "\n";
+  }
+
+  if (meta.renderType) {
+    ss << pprint::Indent(indent) << "renderType = " << quote(to_string(meta.renderType.value())) << "\n";
+  }
+
+  if (meta.sdrMetadata) {
+    ss << pprint::Indent(indent) << print_customData(meta.sdrMetadata.value(), "sdrMetadata", indent);
   }
 
   if (meta.hidden) {
@@ -3648,7 +3669,137 @@ std::string print_prim(const Prim &prim, const uint32_t indent) {
 
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << value::pprint_value(prim.data());
+  // Currently, Prim's elementName is read from name variable in concrete Prim
+  // class(e.g. Xform::name).
+  // TODO: use prim.elementPath for elementName.
+  std::string s = pprint_value(prim.data(), indent, /* closing_brace */ false);
+
+  bool require_newline = true;
+
+  // Check last 2 chars.
+  // if it ends with '{\n', no properties are authored so do not emit blank line
+  // before printing VariantSet or child Prims.
+  if (s.size() > 2) {
+    if ((s[s.size() - 2] == '{') && (s[s.size() - 1] == '\n')) {
+      require_newline = false;
+    }
+  }
+
+  ss << s;
+
+  //
+  // print variant
+  //
+  if (prim.variantSets().size()) {
+    if (require_newline) {
+      ss << "\n";
+    }
+
+    // need to add blank line after VariantSet stmt and before child Prims,
+    // so set require_newline true
+    require_newline = true;
+
+    for (const auto &variantSet : prim.variantSets()) {
+      ss << pprint::Indent(indent + 1) << "variantSet "
+         << quote(variantSet.first) << " = {\n";
+
+      for (const auto &variantItem : variantSet.second.variantSet) {
+        ss << pprint::Indent(indent + 2) << quote(variantItem.first);
+
+        const Variant &variant = variantItem.second;
+
+        if (variant.metas().authored()) {
+          ss << " (\n";
+          ss << print_prim_metas(variant.metas(), indent + 3);
+          ss << pprint::Indent(indent + 2) << ")";
+        }
+
+        ss << " {\n";
+
+        ss << print_props(variant.properties(), indent + 3);
+
+        if (variant.metas().variantChildren.has_value() &&
+            (variant.metas().variantChildren.value().size() ==
+             variant.primChildren().size())) {
+          std::map<std::string, const Prim *> primNameTable;
+          for (size_t i = 0; i < variant.primChildren().size(); i++) {
+            primNameTable.emplace(variant.primChildren()[i].element_name(),
+                                  &variant.primChildren()[i]);
+          }
+
+          for (size_t i = 0; i < variant.metas().variantChildren.value().size();
+               i++) {
+            value::token nameTok = variant.metas().variantChildren.value()[i];
+            const auto it = primNameTable.find(nameTok.str());
+            if (it != primNameTable.end()) {
+              ss << print_prim(*(it->second), indent + 3);
+              if (i != (variant.primChildren().size() - 1)) {
+                ss << "\n";
+              }
+            } else {
+              // TODO: Report warning?
+            }
+          }
+
+        } else {
+          for (size_t i = 0; i < variant.primChildren().size(); i++) {
+            ss << print_prim(variant.primChildren()[i], indent + 3);
+            if (i != (variant.primChildren().size() - 1)) {
+              ss << "\n";
+            }
+          }
+        }
+
+        ss << pprint::Indent(indent + 2) << "}\n";
+      }
+
+      ss << pprint::Indent(indent + 1) << "}\n";
+    }
+  }
+
+  //
+  // primChildren
+  //
+  if (prim.children().size()) {
+    if (require_newline) {
+      ss << "\n";
+      require_newline = false;
+    }
+    if (prim.metas().primChildren.size() == prim.children().size()) {
+      // Use primChildren info to determine the order of the traversal.
+
+      std::map<std::string, const Prim *> primNameTable;
+      for (size_t i = 0; i < prim.children().size(); i++) {
+        primNameTable.emplace(prim.children()[i].element_name(),
+                              &prim.children()[i]);
+      }
+
+      for (size_t i = 0; i < prim.metas().primChildren.size(); i++) {
+        if (i > 0) {
+          ss << "\n";
+        }
+        value::token nameTok = prim.metas().primChildren[i];
+        DCOUT(fmt::format("primChildren  {}/{} = {}", i,
+                          prim.metas().primChildren.size(), nameTok.str()));
+        const auto it = primNameTable.find(nameTok.str());
+        if (it != primNameTable.end()) {
+          ss << print_prim(*(it->second), indent + 1);
+        } else {
+          // TODO: Report warning?
+        }
+      }
+
+    } else {
+      for (size_t i = 0; i < prim.children().size(); i++) {
+        if (i > 0) {
+          ss << "\n";
+        }
+        ss << print_prim(prim.children()[i], indent + 1);
+      }
+    }
+  }
+
+  ss << pprint::Indent(indent) << "}\n";
 
   return ss.str();
 }

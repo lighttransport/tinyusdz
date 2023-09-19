@@ -47,6 +47,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "io-util.hh"
 #include "pprinter.hh"
+#include "prim-pprint.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
 #include "tinyusdz.hh"
@@ -66,73 +67,6 @@ namespace tinyusdz {
 #endif
 
 namespace {
-
-#if 0  // not used yet
-
-///
-/// Node represents scene graph node.
-/// This does not contain leaf node inormation.
-///
-class Node {
- public:
-  // -2 = initialize as invalid node
-  Node() : _parent(-2) {}
-
-  Node(int64_t parent, Path &path) : _parent(parent), _path(path) {}
-
-  int64_t GetParent() const { return _parent; }
-
-  const std::vector<size_t> &GetChildren() const { return _children; }
-
-  ///
-  /// child_name is used when reconstructing scene graph.
-  ///
-  bool AddChildren(const std::string &child_name, size_t node_index) {
-    if (_primChildren.count(child_name)) {
-      return false;
-    }
-    //assert(_primChildren.count(child_name) == 0);
-    _primChildren.emplace(child_name);
-    _children.push_back(node_index);
-
-    return true;
-  }
-
-  ///
-  /// Get full path(e.g. `/muda/dora/bora` when the parent is `/muda/dora` and
-  /// this node is `bora`)
-  ///
-  // std::string GetFullPath() const { return _path.full_path_name(); }
-
-  ///
-  /// Get local path
-  ///
-  std::string GetLocalPath() const { return _path.full_path_name(); }
-
-  const Path &GetPath() const { return _path; }
-
-  // NodeType GetNodeType() const { return _node_type; }
-
-  const std::unordered_set<std::string> &GetPrimChildren() const {
-    return _primChildren;
-  }
-
-  void SetAssetInfo(const value::dict &dict) { _assetInfo = dict; }
-
-  const value::dict &GetAssetInfo() const { return _assetInfo; }
-
- private:
-  int64_t
-      _parent;  // -1 = this node is the root node. -2 = invalid or leaf node
-  std::vector<size_t> _children;                  // index to child nodes.
-  std::unordered_set<std::string> _primChildren;  // List of name of child nodes
-
-  Path _path;  // local path
-  value::dict _assetInfo;
-
-  // NodeType _node_type;
-};
-#endif
 
 nonstd::optional<const Prim *> GetPrimAtPathRec(const Prim *parent,
                                                 const std::string &parent_path,
@@ -406,65 +340,9 @@ bool Stage::find_prim_from_relative_path(const Prim &root,
   }
 }
 
-#if 0
-bool Stage::LoadLayerFromMemory(const uint8_t *addr, const size_t nbytes,
-                                const std::string &asset_name, Layer *layer,
-                                const uint32_t load_states) {
-  // TODO: USDC/USDZ support.
-
-  tinyusdz::StreamReader sr(addr, nbytes, /* swap endian */ false);
-  tinyusdz::usda::USDAReader reader(&sr);
-
-  // TODO: Uase AssetResolver
-  // reader.SetBaseDir(base_dir);
-
-  if (!reader.read(load_states)) {
-    return false;
-  }
-
-  if (!reader.get_as_layer(layer)) {
-    PUSH_ERROR_AND_RETURN(
-        "Failed to retrieve USD data as Layer: filepath = " << asset_name);
-  }
-
-  return false;
-}
-
-bool Stage::LoadLayerFromFile(const std::string &_filename, const AssetResolutionResolver &resolver, Layer *layer,
-                              const uint32_t load_states) {
-  // TODO: Setup AssetResolver.
-
-  std::string filepath = resolver.resolve(_filename);
-  if (filepath.empty()) {
-    PUSH_ERROR_AND_RETURN("Failed to find/resolve a file `" << _filename << "`");
-  }
-  //std::string base_dir = io::GetBaseDir(_filename);
-
-  DCOUT("load layer from file: " << filepath);
-
-  std::string err;
-  std::vector<uint8_t> data;
-  size_t max_bytes = std::numeric_limits<size_t>::max();  // TODO: set bytelimit.
-  if (!io::ReadWholeFile(&data, &err, filepath, max_bytes,
-                         /* userdata */ nullptr)) {
-    PUSH_ERROR_AND_RETURN("Read file failed: " + err);
-  }
-
-  return LoadLayerFromMemory(data.data(), data.size(), filepath, layer,
-                             load_states);
-}
-#endif
-
-#if 0
-bool Stage::LoadSubLayers(std::vector<Layer> *sublayers) {
-  DCOUT("TODO");
-  (void)sublayers;
-  return false;
-}
-#endif
-
 namespace {
 
+#if 0 // Deprecated. TODO: remove
 void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
   // Currently, Prim's elementName is read from name variable in concrete Prim
   // class(e.g. Xform::name).
@@ -600,6 +478,7 @@ void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
 
   ss << pprint::Indent(indent) << "}\n";
 }
+#endif
 
 }  // namespace
 
@@ -611,115 +490,12 @@ std::string Stage::ExportToString(bool relative_path) const {
   ss << "#usda 1.0\n";
 
   std::stringstream meta_ss;
-#if 0
-  bool authored = false;
-
-  if (stage_metas.doc.value.empty()) {
-    // ss << pprint::Indent(1) << "doc = \"Exporterd from TinyUSDZ v" <<
-    // tinyusdz::version_major
-    //    << "." << tinyusdz::version_minor << "." << tinyusdz::version_micro
-    //    << tinyusdz::version_rev << "\"\n";
-  } else {
-    meta_ss << pprint::Indent(1) << "doc = " << to_string(stage_metas.doc)
-            << "\n";
-    authored = true;
-  }
-
-  if (stage_metas.metersPerUnit.authored()) {
-    meta_ss << pprint::Indent(1)
-            << "metersPerUnit = " << stage_metas.metersPerUnit.get_value()
-            << "\n";
-    authored = true;
-  }
-
-  if (stage_metas.upAxis.authored()) {
-    meta_ss << pprint::Indent(1)
-            << "upAxis = " << quote(to_string(stage_metas.upAxis.get_value()))
-            << "\n";
-    authored = true;
-  }
-
-  if (stage_metas.timeCodesPerSecond.authored()) {
-    meta_ss << pprint::Indent(1) << "timeCodesPerSecond = "
-            << stage_metas.timeCodesPerSecond.get_value() << "\n";
-    authored = true;
-  }
-
-  if (stage_metas.startTimeCode.authored()) {
-    meta_ss << pprint::Indent(1)
-            << "startTimeCode = " << stage_metas.startTimeCode.get_value()
-            << "\n";
-    authored = true;
-  }
-
-  if (stage_metas.endTimeCode.authored()) {
-    meta_ss << pprint::Indent(1)
-            << "endTimeCode = " << stage_metas.endTimeCode.get_value() << "\n";
-    authored = true;
-  }
-
-  if (stage_metas.framesPerSecond.authored()) {
-    meta_ss << pprint::Indent(1)
-            << "framesPerSecond = " << stage_metas.framesPerSecond.get_value()
-            << "\n";
-    authored = true;
-  }
-
-  // TODO: Do not print subLayers when consumed(after composition evaluated)
-  if (stage_metas.subLayers.size()) {
-    meta_ss << pprint::Indent(1) << "subLayers = " << stage_metas.subLayers
-            << "\n";
-    authored = true;
-  }
-
-  if (stage_metas.defaultPrim.str().size()) {
-    meta_ss << pprint::Indent(1) << "defaultPrim = "
-            << tinyusdz::quote(stage_metas.defaultPrim.str()) << "\n";
-    authored = true;
-  }
-
-  if (stage_metas.autoPlay.authored()) {
-    meta_ss << pprint::Indent(1)
-            << "autoPlay = " << to_string(stage_metas.autoPlay.get_value())
-            << "\n";
-    authored = true;
-  }
-
-  if (stage_metas.playbackMode.authored()) {
-    auto v = stage_metas.playbackMode.get_value();
-    if (v == StageMetas::PlaybackMode::PlaybackModeLoop) {
-      meta_ss << pprint::Indent(1) << "playbackMode = \"loop\"\n";
-    } else {  // None
-      meta_ss << pprint::Indent(1) << "playbackMode = \"none\"\n";
-    }
-    authored = true;
-  }
-
-  if (!stage_metas.comment.value.empty()) {
-    // Stage meta omits 'comment'
-    meta_ss << pprint::Indent(1) << to_string(stage_metas.comment) << "\n";
-    authored = true;
-  }
-
-  if (stage_metas.customLayerData.size()) {
-    meta_ss << print_customData(stage_metas.customLayerData, "customLayerData",
-                                /* indent */ 1);
-    authored = true;
-  }
-
-  if (authored) {
-    ss << "(\n";
-    ss << meta_ss.str();
-    ss << ")\n";
-  }
-#else
   meta_ss << print_layer_metas(stage_metas, /* indent */1);
   if (meta_ss.str().size()) {
     ss << "(\n";
     ss << meta_ss.str();
     ss << ")\n";
   }
-#endif
 
   ss << "\n";
 
@@ -735,7 +511,8 @@ std::string Stage::ExportToString(bool relative_path) const {
                         stage_metas.primChildren.size(), nameTok.str()));
       const auto it = primNameTable.find(nameTok.str());
       if (it != primNameTable.end()) {
-        PrimPrintRec(ss, *(it->second), 0);
+        //PrimPrintRec(ss, *(it->second), 0);
+        ss << prim::print_prim(*(it->second), 0);
         if (i != (stage_metas.primChildren.size() - 1)) {
           ss << "\n";
         }
@@ -745,7 +522,8 @@ std::string Stage::ExportToString(bool relative_path) const {
     }
   } else {
     for (size_t i = 0; i < _root_nodes.size(); i++) {
-      PrimPrintRec(ss, _root_nodes[i], 0);
+      //PrimPrintRec(ss, _root_nodes[i], 0);
+      ss << prim::print_prim(_root_nodes[i], 0);
 
       if (i != (_root_nodes.size() - 1)) {
         ss << "\n";
