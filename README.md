@@ -14,9 +14,13 @@
 * Tydra: Handy data structure converter for rendering https://github.com/syoyo/tinyusdz/issues/31 
 * MaterialX https://github.com/syoyo/tinyusdz/issues/86
   * USD + MateriralX + PBR rendering example using https://github.com/lighttransport/pbrlab
-* Improve support for Blender USD export/import 
+* Improve interoperability with Blender USD export/import 
 * tusdview(TinyUSDZ version of usdview)
 
+## "What if" Experimental feature
+
+* Gaussian Splatting support? https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/
+ 
 ## Build status
 
 |         |   Linux                                  |  Windows                              |   macOS   |  iOS   | Android |
@@ -81,8 +85,9 @@ Remaining tasks for v0.8.0 release are writing examples, demos and utility funct
 * [ ] Basic C API(`c-tinyusd`) for language bindings
   * [ ]  [examples/c_api_example](examples/c_api_example)
   * [ ] Basic Python binding
-* [ ] Write simple SDL viewer example(2023 Summer expected)
-* [ ] Write iOS and Android example(2023 Summer expected)
+* [ ] Write simple SDL viewer example(2023 Winter expected)
+* [ ] Write iOS and Android example(2023 Winter expected)
+* [ ] Write Vision OS example?(2024 expected)
 * [ ] Vulkan or OptiX/HIP RT raytracing viewer example
 * [ ] USD <-> glTF converter example
   * There is an independent work of USD to glTF binary GLB converter: https://github.com/fynv/usd2glb
@@ -290,8 +295,8 @@ Edit path to MSVC SDK and Windows SDK in `bootstrap-clang-cl-win64.bat`, then
 ### Tools and Examples
 
 * [tusdcat](examples/tusdcat/) Parse USDZ/USDA/USDC and print it as Ascii(similar to `usdcat` in pxrUSD).
-* [usda_parser](examples/usda_parser/) Parse USDA and print it as Ascii.
-* [usdc_parser](examples/usdc_parser/) Parse USDC and print it as Ascii.
+* Deprecated. Use `tusdcat` [usda_parser](examples/usda_parser/) Parse USDA and print it as Ascii.
+* Deprecated. Use `tusdcat` [usdc_parser](examples/usdc_parser/) Parse USDC and print it as Ascii.
 * [Simple SDL viewer](examples/sdlviewer/)
   * Separated CMake build provided: See [Readme](examples/sdlviewer/README.md)
 * [api_tutorial](examples/api_tutorial/) Tutorial of TinyUSDZ Core API to construct a USD scene data.

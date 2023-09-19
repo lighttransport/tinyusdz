@@ -1143,7 +1143,13 @@ class USDAReader::Impl {
           out->comment = spv.value();
         }
       } else {
-        PUSH_WARN("TODO: Prim metadataum : " << meta.first);
+        // Must be string value for unregisteredMeta
+        if (auto spv = var.get_value<std::string>()) {
+          out->unregisteredMetas[meta.first] = spv.value();
+        } else {
+          PUSH_WARN("(Internal) unregistered Metadata must be type string, but got type " + var.type_name());
+        }
+        
       }
     }
 
