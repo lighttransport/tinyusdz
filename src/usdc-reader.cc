@@ -859,6 +859,10 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   nonstd::optional<CustomDataType> customData;
   nonstd::optional<double> weight;
   nonstd::optional<value::token> bindMaterialAs;
+  nonstd::optional<value::token> connectability;
+  nonstd::optional<value::token> renderType;
+  nonstd::optional<value::token> outputName;
+  nonstd::optional<CustomDataType> sdrMetadata;
   nonstd::optional<value::StringData> comment;
   nonstd::optional<Variability> variability;
   Property::Type propType{Property::Type::EmptyAttrib};
@@ -1129,6 +1133,38 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`connectionChildren` field is not `PathVector` type.");
       }
+    } else if (fv.first == "connectability") {
+      if (auto pv = fv.second.get_value<value::token>()) {
+        connectability = pv.value();
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`connectability` must be type `token`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
+    } else if (fv.first == "outputName") {
+      if (auto pv = fv.second.get_value<value::token>()) {
+        outputName = pv.value();
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`outputName` must be type `token`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
+    } else if (fv.first == "renderType") {
+      if (auto pv = fv.second.get_value<value::token>()) {
+        renderType = pv.value();
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`renderType` must be type `token`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
+    } else if (fv.first == "sdrMetadata") {
+      if (auto pv = fv.second.get_value<CustomDataType>()) {
+        sdrMetadata = pv.value();
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`sdrMetadata` must be type `dictionary`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
     } else if (fv.first == "customData") {
       // CustomData(dict)
       if (auto pv = fv.second.get_value<CustomDataType>()) {
@@ -1236,6 +1272,20 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   if (bindMaterialAs) {
     meta.bindMaterialAs = bindMaterialAs.value();
   }
+  if (outputName) {
+    meta.outputName = outputName.value();
+  }
+  if (sdrMetadata) {
+    meta.sdrMetadata = sdrMetadata.value();
+  }
+  if (connectability) {
+    meta.connectability = connectability.value();
+  }
+  if (renderType) {
+    meta.renderType = renderType.value();
+  }
+
+
 
   // FIXME: SpecType supercedes propType.
   if (propType == Property::Type::EmptyAttrib) {
@@ -2057,8 +2107,13 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
       }
 
     } else {
-      DCOUT("PrimProp TODO: " << fv.first);
-      PUSH_WARN("PrimProp TODO: " << fv.first);
+      if (auto pv = fv.second.as<std::string>()) {
+        // Assume unregistered Prim metadatum
+        primMeta.unregisteredMetas[fv.first] = (*pv);
+      } else {
+        DCOUT("PrimProp TODO: " << fv.first);
+        PUSH_WARN("PrimProp TODO: " << fv.first);
+      }
     }
   }
 

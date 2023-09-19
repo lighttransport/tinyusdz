@@ -833,6 +833,9 @@ struct PrimMetas {
   // https://github.com/PixarAnimationStudios/USD/pull/2055
   nonstd::optional<std::string> displayName;  // 'displayName'
 
+  // Unregistered metadatum. value is represented as string.
+  std::map<std::string, std::string> unregisteredMetas;
+
   Dictionary meta;  // other non-buitin meta values. TODO: remove this variable
                     // and use `customData` instead, since pxrUSD does not allow
                     // non-builtin Prim metadatum
@@ -855,7 +858,7 @@ struct PrimMetas {
   bool authored() const {
     return (active || hidden || kind || customData || references || payload ||
             inherits || variants || variantSets || specializes || displayName ||
-            sceneName || doc || comment || meta.size() || apiSchemas ||
+            sceneName || doc || comment || unregisteredMetas.size() || meta.size() || apiSchemas ||
             sdrMetadata || assetInfo || instanceable);
   }
 
@@ -892,13 +895,18 @@ struct AttrMetas {
 
   nonstd::optional<double> weight;  // usdSkel inbetween BlendShape weight.
 
+  // usdShade
+  nonstd::optional<value::token> connectability; // NOTE: applies to attr
+  nonstd::optional<value::token> outputName; // NOTE: applies to rel
+  nonstd::optional<value::token> renderType; // NOTE: applies to prop
+  nonstd::optional<Dictionary> sdrMetadata; // NOTE: applies to attr(also seen in prim meta)
   //
   // MaterialBinding
   //
   // Could be arbitrary token value so use `token[]` type.
   // For now, either `weakerThanDescendants` or `strongerThanDescendants` are
   // valid token.
-  nonstd::optional<value::token> bindMaterialAs;  // 'bindMaterialAs'
+  nonstd::optional<value::token> bindMaterialAs;  // 'bindMaterialAs' NOTE: applies to rel.
 
   std::map<std::string, MetaVariable> meta;  // other meta values
 
@@ -908,7 +916,7 @@ struct AttrMetas {
 
   bool authored() const {
     return (interpolation || elementSize || hidden || customData || weight ||
-            bindMaterialAs || meta.size() || stringData.size());
+            connectability || outputName || renderType || sdrMetadata || bindMaterialAs || meta.size() || stringData.size());
   }
 };
 
@@ -1919,6 +1927,53 @@ enum class TimeSampleInterpolation {
 // of Prim
 // TODO: Refactor
 struct Attribute {
+
+  Attribute() = default;
+
+  ///
+  /// Construct Attribute with typed value(`float`, `token`, ...).
+  ///
+  template <typename T>
+  Attribute(const T &v, bool varying = true) {
+    static_assert((value::TypeId::TYPE_ID_VALUE_BEGIN <=
+                   value::TypeTraits<T>::type_id()) &&
+                      (value::TypeId::TYPE_ID_VALUE_END >
+                       value::TypeTraits<T>::type_id()),
+                  "T is not a value type");
+    set_value(v);
+    variability() = varying ? Variability::Varying : Variability::Uniform;
+  }
+
+  ///
+  /// Construct uniform attribute.
+  ///
+  template <typename T>
+  static Attribute Uniform(const T &v) {
+
+    static_assert((value::TypeId::TYPE_ID_VALUE_BEGIN <=
+                   value::TypeTraits<T>::type_id()) &&
+                      (value::TypeId::TYPE_ID_VALUE_END >
+                       value::TypeTraits<T>::type_id()),
+                  "T is not a value type");
+
+    Attribute attr;
+    attr.set_value(v);
+    attr.variability() = Variability::Uniform;
+    return attr;
+  }
+  
+
+  ///
+  /// Construct connection attribute.
+  ///
+  Attribute(const Path &v) {
+    set_connection(v);
+  }
+
+  Attribute(const std::vector<Path> &vs) {
+    set_connections(vs);
+  }
+
   const std::string &name() const { return _name; }
 
   std::string &name() { return _name; }

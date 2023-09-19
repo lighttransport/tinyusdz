@@ -1,5 +1,5 @@
 CXX=clang++
-CXXFLAGS=-Weverything -Wall
+CXXFLAGS=-Weverything -Wall -Wno-c++98-compat
 
 .PHONY: clean
 
@@ -9,6 +9,9 @@ all: pugixml.o
 pugixml.o: ../../src/external/pugixml.cpp
 	$(CXX) -o $@ -c $<
 
+
+t:
+	./materialx_test ../../data/materialx/StandardSurface/standard_surface_wood_tiled.mtlx
 
 clean:
 	rm -rf materialx_test pugixml.o

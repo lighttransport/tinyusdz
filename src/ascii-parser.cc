@@ -309,7 +309,12 @@ static void RegisterPropMetas(
 
   metas["interpolation"] = AsciiParser::VariableDef(value::kToken, "interpolation");
 
+  // usdShade
   metas["bindMaterialAs"] = AsciiParser::VariableDef(value::kToken, "bindMaterialAs");
+  metas["connectability"] = AsciiParser::VariableDef(value::kToken, "connectability");
+  metas["renderType"] = AsciiParser::VariableDef(value::kToken, "renderType");
+  metas["outputName"] = AsciiParser::VariableDef(value::kToken, "outputName");
+  metas["sdrMetadata"] = AsciiParser::VariableDef(value::kDictionary, "sdrMetadata");
 }
 
 
@@ -364,6 +369,8 @@ static void RegisterPrimAttrTypes(std::set<std::string> &d) {
   d.insert(value::kTexCoord4d);
   d.insert(value::kVector3f);
   d.insert(value::kVector4f);
+  d.insert(value::kVector3d);
+  d.insert(value::kVector4d);
   d.insert(value::kColor3h);
   d.insert(value::kColor3f);
   d.insert(value::kColor3d);
@@ -1525,6 +1532,54 @@ bool AsciiParser::ReadPathIdentifier(std::string *path_identifier) {
 
   (*path_identifier) = TrimString(ss.str());
   // std::cout << "PathIdentifier: " << (*path_identifier) << "\n";
+
+  return true;
+}
+
+bool AsciiParser::ReadUntilNewline(std::string *str) {
+
+  std::stringstream ss;
+
+  while (!Eof()) {
+    char c;
+    if (!Char1(&c)) {
+      // this should not happen.
+      return false;
+    }
+
+    if (c == '\n') {
+      break;
+    } else if (c == '\r') {
+      // CRLF?
+      if (_sr->tell() < (_sr->size() - 1)) {
+        char d;
+        if (!Char1(&d)) {
+          // this should not happen.
+          return false;
+        }
+
+        if (d == '\n') {
+          break;
+        }
+
+        // unwind 1 char
+        if (!_sr->seek_from_current(-1)) {
+          // this should not happen.
+          return false;
+        }
+
+        break;
+      }
+
+    } 
+
+    ss << c;
+  }
+
+  _curr_cursor.row++;
+  _curr_cursor.col = 0;
+
+  (*str) = ss.str();
 
   return true;
 }
@@ -2886,11 +2941,7 @@ AsciiParser::ParsePrimMeta() {
 
   DCOUT("Identifier = " << varname);
 
-  if (!IsPrimMeta(varname)) {
-    std::string msg = "'" + varname + "' is not a Prim Metadata variable.";
-    PUSH_ERROR(msg);
-    return nonstd::nullopt;
-  }
+  bool registered_meta = IsRegisteredPrimMeta(varname);
 
   if (!Expect('=')) {
     PUSH_ERROR("'=' expected in Prim Metadata line.");
@@ -2898,19 +2949,35 @@ AsciiParser::ParsePrimMeta() {
   }
   SkipWhitespace();
 
-  if (auto pv = GetPrimMetaDefinition(varname)) {
-    MetaVariable var;
-    const auto vardef = pv.value();
-    if (!ParseMetaValue(vardef, &var)) {
-      PUSH_ERROR("Failed to parse Prim meta value.");
+  if (!registered_meta) {
+    // parse as string until newline
+   
+    std::string content;
+    if (!ReadUntilNewline(&content)) {
+      PUSH_ERROR("Failed to parse unregistered Prim metadata.");
       return nonstd::nullopt;
     }
-    var.set_name(varname);
 
+    MetaVariable var;
+    var.set_value(varname, content);
+    
     return std::make_pair(qual, var);
   } else {
-    PUSH_ERROR(fmt::format("Unsupported/unimplemented PrimSpec metadata {}", varname));
-    return nonstd::nullopt;
+
+    if (auto pv = GetPrimMetaDefinition(varname)) {
+      MetaVariable var;
+      const auto vardef = pv.value();
+      if (!ParseMetaValue(vardef, &var)) {
+        PUSH_ERROR("Failed to parse Prim meta value.");
+        return nonstd::nullopt;
+      }
+      var.set_name(varname);
+
+      return std::make_pair(qual, var);
+    } else {
+      PUSH_ERROR(fmt::format("[Internal error] Unsupported/unimplemented PrimSpec metadata {}", varname));
+      return nonstd::nullopt;
+    }
   }
 
 }
@@ -4119,7 +4186,7 @@ AsciiParser::~AsciiParser() {}
 
 bool AsciiParser::CheckHeader() { return ParseMagicHeader(); }
 
-bool AsciiParser::IsPrimMeta(const std::string &name) {
+bool AsciiParser::IsRegisteredPrimMeta(const std::string &name) {
   return _supported_prim_metas.count(name) ? true : false;
 }
 

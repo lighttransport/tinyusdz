@@ -40,6 +40,12 @@ inline std::string dtos(const double v) {
   return std::string(buf);
 }
 
+#define PushWarn(msg) do { \
+  if (warn) { \
+    (*warn) += msg; \
+  } \
+} while(0);
+
 #define PushError(msg) do { \
   if (err) { \
     (*err) += msg; \
@@ -57,6 +63,15 @@ extern template bool AsciiParser::SepBy1BasicType<float>(const char sep, std::ve
 } // namespace ascii
 
 namespace detail {
+
+template<typename T>
+Property MakeProperty(const T &value) {
+
+  Attribute attr(value);
+  Property prop(attr, /* custom */false);
+
+  return prop;
+}
 
 bool is_supported_type(const std::string &typeName);
 
@@ -129,6 +144,19 @@ bool ParseValue<float>(tinyusdz::ascii::AsciiParser &parser, float &ret, std::st
   float val;
   if (!parser.ReadBasicType(&val)) {
     PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse a value of type `{}`", value::TypeTraits<float>::type_name()));
+  }
+
+  ret = val;
+
+  return true;
+}
+
+template<>
+bool ParseValue<std::string>(tinyusdz::ascii::AsciiParser &parser, std::string &ret, std::string *err) {
+
+  std::string val;
+  if (!parser.ReadBasicType(&val)) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse a value of type `{}`", value::TypeTraits<std::string>::type_name()));
   }
 
   ret = val;
@@ -218,6 +246,70 @@ bool ParseValue<value::float4>(tinyusdz::ascii::AsciiParser &parser, value::floa
 bool ParseMaterialXValue(const std::string &typeName, const std::string &str,
                            value::Value *value, std::string *err);
 
+bool ParseMaterialXValue(const std::string &typeName, const std::string &str,
+                           value::Value *value, std::string *err) {
+
+  (void)value;
+
+  if (!is_supported_type(typeName)) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Invalid/unsupported type: {}", typeName));
+  }
+
+  tinyusdz::StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()), str.size(), /* swap endian */ false);
+  tinyusdz::ascii::AsciiParser parser(&sr);
+
+  if (typeName.compare("integer") == 0) {
+    int val;
+    if (!ParseValue(parser, val, err)) {
+      return false;
+    }
+  } else if (typeName.compare("boolean") == 0) {
+    bool val;
+    if (!ParseValue(parser, val, err)) {
+      return false;
+    }
+  } else if (typeName.compare("vector2") == 0) {
+    value::float2 val;
+    if (!ParseValue(parser, val, err)) {
+      return false;
+    }
+  } else if (typeName.compare("vector3") == 0) {
+    value::float3 val;
+    if (!ParseValue(parser, val, err)) {
+      return false;
+    }
+  } else if (typeName.compare("vector4") == 0) {
+    value::float4 val;
+    if (!ParseValue(parser, val, err)) {
+      return false;
+    }
+  } else {
+    PUSH_ERROR_AND_RETURN("TODO: " + typeName);
+  }
+
+  // TODO
+  return false;
+}
+
+template<typename T>
+bool ParseMaterialXValue(const std::string &str,
+                         T *value, std::string *err) {
+
+  tinyusdz::StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()), str.size(), /* swap endian */ false);
+  tinyusdz::ascii::AsciiParser parser(&sr);
+
+  T val;
+
+  if (!ParseValue(parser, val, err)) {
+    return false;
+  }
+
+  (*value) = val;
+  return true;
+}
+
+
+
 template<typename T> std::string to_xml_string(const T &val);
 
 template<>
@@ -277,7 +369,9 @@ bool SerializeAttribute(const std::string &attr_name, const TypedAttributeWithFa
   return true;
 }
 
-static bool WriteMaterialXToString(const MtlxUsdPreviewSurface &shader, std::string &xml_str, std::string *err) {
+static bool WriteMaterialXToString(const MtlxUsdPreviewSurface &shader, std::string &xml_str, std::string *warn, std::string *err) {
+  (void)warn;
+
   // We directly write xml string for simplicity.
   //
   // TODO:
@@ -331,56 +425,158 @@ static bool WriteMaterialXToString(const MtlxUsdPreviewSurface &shader, std::str
   return true;
 }
 
-bool ParseMaterialXValue(const std::string &typeName, const std::string &str,
-                           value::Value *value, std::string *err) {
+static bool ConvertPlace2d(const pugi::xml_node &node, PrimSpec &ps, std::string *warn, std::string *err) {
 
-  (void)value;
-
-  if (!is_supported_type(typeName)) {
-    PUSH_ERROR_AND_RETURN(fmt::format("Invalid/unsupported type: {}", typeName));
+  // texcoord(vector2). default index=0 uv coordinate
+  // pivot(vector2). default (0, 0)
+  // scale(vector2). default (1, 1)
+  // rotate(float). in degrees, Conter-clockwise
+  // offset(vector2)
+  if (pugi::xml_attribute texcoord_attr = node.attribute("texcoord")) {
+    PUSH_WARN("TODO: `texcoord` attribute.\n");
   }
 
-  tinyusdz::StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()), str.size(), /* swap endian */ false);
-  tinyusdz::ascii::AsciiParser parser(&sr);
+  if (pugi::xml_attribute pivot_attr = node.attribute("pivot")) {
+    value::float2 value;
+    if (!ParseMaterialXValue(pivot_attr.as_string(), &value, err)) {
+      ps.props()["inputs:pivot"] = Property(Attribute::Uniform(value));
+    }
+  }
 
-  if (typeName.compare("integer") == 0) {
-    int val;
-    if (!ParseValue(parser, val, err)) {
-      return false;
+  if (pugi::xml_attribute scale_attr = node.attribute("scale")) {
+    value::float2 value;
+    if (!ParseMaterialXValue(scale_attr.as_string(), &value, err)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse `rotate` attribute of `place2d`.\n");
     }
-  } else if (typeName.compare("boolean") == 0) {
-    bool val;
-    if (!ParseValue(parser, val, err)) {
-      return false;
+    ps.props()["inputs:scale"] = Property(Attribute::Uniform(value));
+  }
+
+  if (pugi::xml_attribute rotate_attr = node.attribute("rotate")) {
+    float value;
+    if (!ParseMaterialXValue(rotate_attr.as_string(), &value, err)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse `rotate` attribute of `place2d`.\n");
     }
-  } else if (typeName.compare("vector2") == 0) {
-    value::float2 val;
-    if (!ParseValue(parser, val, err)) {
-      return false;
+    ps.props()["inputs:rotate"] = Property(Attribute::Uniform(value));
+  }
+
+  pugi::xml_attribute offset_attr = node.attribute("offset");
+  if (offset_attr) {
+    value::float2 value;
+    if (!ParseMaterialXValue(offset_attr.as_string(), &value, err)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse `offset` attribute of `place2d`.\n");
     }
-  } else if (typeName.compare("vector3") == 0) {
-    value::float3 val;
-    if (!ParseValue(parser, val, err)) {
-      return false;
-    }
-  } else if (typeName.compare("vector4") == 0) {
-    value::float4 val;
-    if (!ParseValue(parser, val, err)) {
+    ps.props()["inputs:offset"] = Property(Attribute::Uniform(value));
+  }
+
+  ps.specifier() = Specifier::Def;
+  ps.typeName() = kShader;
+  ps.props()[kShaderInfoId] = Property(Attribute::Uniform(value::token(kUsdTransform2d)));
+
+
+  return true;
+}
+
+static bool ConvertNodeGraphRec(const uint32_t depth, const pugi::xml_node &node, PrimSpec &ps_out, std::string *warn, std::string *err) {
+
+  if (depth > (1024 * 1024)) {
+    PUSH_ERROR_AND_RETURN("Network too deep.\n");
+  }
+
+  PrimSpec ps;
+
+  std::string node_name = node.name();
+
+  if (node_name == "place2d") {
+    if (!ConvertPlace2d(node, ps, warn, err)) {
       return false;
     }
   } else {
-    PUSH_ERROR_AND_RETURN("TODO: " + typeName);
+    PUSH_ERROR_AND_RETURN("Unknown/unsupported Shader Node: " << node.name());
   }
 
-  // TODO
-  return false;
+  for (const auto &child : node.children()) {
+    PrimSpec child_ps;
+    if (!ConvertNodeGraphRec(depth+1, child, child_ps, warn, err)) {
+      return false;
+    }
+
+    ps.children().emplace_back(std::move(child_ps));
+  }
+
+  ps_out = std::move(ps);
+
+  return true;
 }
+
+#if 0 // TODO
+static bool ConvertPlace2d(const pugi::xml_node &node, UsdTransform2d &tx, std::string *warn, std::string *err) {
+  // texcoord(vector2). default index=0 uv coordinate
+  // pivot(vector2). default (0, 0)
+  // scale(vector2). default (1, 1)
+  // rotate(float). in degrees, Conter-clockwise
+  // offset(vector2)
+  if (pugi::xml_attribute texcoord_attr = node.attribute("texcoord")) {
+    PUSH_WARN("TODO: `texcoord` attribute.\n");
+  }
+
+  if (pugi::xml_attribute pivot_attr = node.attribute("pivot")) {
+    PUSH_WARN("TODO: `pivot` attribute.\n");
+  }
+
+  if (pugi::xml_attribute scale_attr = node.attribute("scale")) {
+    value::float2 value;
+    if (!ParseMaterialXValue(scale_attr.as_string(), &value, err)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse `rotate` attribute of `place2d`.\n");
+    }
+    tx.scale = value;
+  }
+
+  if (pugi::xml_attribute rotate_attr = node.attribute("rotate")) {
+    float value;
+    if (!ParseMaterialXValue(rotate_attr.as_string(), &value, err)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse `rotate` attribute of `place2d`.\n");
+    }
+    tx.rotation = value;
+  }
+
+  pugi::xml_attribute offset_attr = node.attribute("offset");
+  if (offset_attr) {
+    PUSH_WARN("TODO: `offset` attribute.\n");
+  }
+
+  return true;
+}
+
+static bool ConvertTiledImage(const pugi::xml_node &node, UsdUVTexture &tex, std::string *err) {
+  (void)tex;
+  // file: uniform filename
+  // default: float or colorN or vectorN
+  // texcoord: vector2
+  // uvtiling: vector2(default 1.0, 1.0)
+  // uvoffset: vector2(default 0.0, 0.0)
+  // realworldimagesize: vector2
+  // realworldtilesize: vector2
+  // filtertype: string: "closest", "linear" or "cubic"
+  if (pugi::xml_attribute file_attr = node.attribute("file")) {
+    std::string filename;
+    if (!ParseMaterialXValue(file_attr.as_string(), &filename, err)) {
+      PUSH_ERROR_AND_RETURN("Failed to parse `file` attribute in `tiledimage`.\n");
+    }
+  } else {
+    PUSH_ERROR_AND_RETURN("`file` attribute not found.");
+  }
+
+  // TODO...
+
+  return true;
+
+}
+#endif
 
 
 } // namespace detail
 
-
-bool ReadMaterialXFromString(const std::string &str, const std::string &asset_path, MtlxModel *mtlx, std::string *err) {
+bool ReadMaterialXFromString(const std::string &str, const std::string &asset_path, MtlxModel *mtlx, std::string *warn, std::string *err) {
 
 
   pugi::xml_document doc;
@@ -398,7 +594,7 @@ bool ReadMaterialXFromString(const std::string &str, const std::string &asset_pa
   // Attributes for a <materialx> element:
   //
   // - [x] version(string, required)
-  //   - TODO: validate version string
+  //   - [x] validate version string
   // - [ ] cms(string, optional)
   // - [ ] cmsconfig(filename, optional)
   // - [ ] colorspace(string, optional)
@@ -409,36 +605,79 @@ bool ReadMaterialXFromString(const std::string &str, const std::string &asset_pa
     PUSH_ERROR_AND_RETURN("version attribute not found in <materialx>:" + asset_path);
   }
 
-  //value::Value v;
-  //if (!detail::ParseMaterialXValue("float", ver_attr.as_string(), &v, err)) {
-  //  return false;
-  //}
-  //DCOUT("version = " << ver_attr.as_string());
+  // parse version string as floating point
+  {
+    DCOUT("version = " << ver_attr.as_string());
+    float ver{0.0};
+    if (!detail::ParseMaterialXValue(ver_attr.as_string(), &ver, err)) {
+      return false;
+    }
 
+    if (ver < 1.38f) {
+      PUSH_ERROR_AND_RETURN(fmt::format("TinyUSDZ only supports MaterialX version 1.38 or greater, but got {}", ver_attr.as_string()));
+    }
+    mtlx->version = ver_attr.as_string();
+  }
 
   pugi::xml_attribute cms_attr = root.attribute("cms");
   if (cms_attr) {
+    mtlx->cms = cms_attr.as_string();
   }
 
   pugi::xml_attribute cmsconfig_attr = root.attribute("cms");
   if (cmsconfig_attr) {
+    mtlx->cmsconfig = cmsconfig_attr.as_string();
   }
   pugi::xml_attribute colorspace_attr = root.attribute("colorspace");
   if (colorspace_attr) {
+    mtlx->color_space = colorspace_attr.as_string();
   }
 
   pugi::xml_attribute namespace_attr = root.attribute("namespace");
   if (namespace_attr) {
+    mtlx->name_space = namespace_attr.as_string();
   }
 
+  std::vector<PrimSpec> nodegraph_pss;
 
-  // TODO
-  (void)mtlx;
+  // NodeGraph
+  for (auto ng : root.children("nodegraph")) {
+    PrimSpec root_ps;
+    if (detail::ConvertNodeGraphRec(0, ng, root_ps, warn, err)) {
+      return false;
+    }
+
+    nodegraph_pss.emplace_back(std::move(root_ps));
+  }
+
+  // standard_surface
+  for (auto sd_surface : root.children("standard_surface")) {
+    // TODO
+    (void)sd_surface;
+  }
+
+  // standard_surface
+  for (auto usd_surface : root.children("UsdPreviewSurface")) {
+    // TODO
+    (void)usd_surface;
+  }
+
+  // surfacematerial
+  for (auto surface : root.children("surfacematerial")) {
+    // TODO
+    (void)surface;
+  }
+
+  // look.
+  for (auto look : root.children("look")) {
+    // TODO
+    (void)look;
+  }
 
   return true;
 }
 
-bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver, const std::string &asset_path, MtlxModel *mtlx, std::string *err) {
+bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver, const std::string &asset_path, MtlxModel *mtlx, std::string *warn, std::string *err) {
 
   std::string filepath = resolver.resolve(asset_path);
   if (filepath.empty()) {
@@ -454,14 +693,14 @@ bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver, const std::s
   }
 
   std::string str(reinterpret_cast<const char *>(&data[0]), data.size());
-  return ReadMaterialXFromString(str, asset_path, mtlx, err);
+  return ReadMaterialXFromString(str, asset_path, mtlx, warn, err);
 }
 
 bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
-                             std::string *err) {
+                             std::string *warn, std::string *err) {
 
   if (auto usdps = mtlx.shader.as<MtlxUsdPreviewSurface>()) {
-    return detail::WriteMaterialXToString(*usdps, xml_str, err);
+    return detail::WriteMaterialXToString(*usdps, xml_str, warn, err);
   } else if (auto adskss = mtlx.shader.as<MtlxAutodeskStandardSurface>()) {
     // TODO
     PUSH_ERROR_AND_RETURN("TODO: AutodeskStandardSurface");
@@ -473,6 +712,21 @@ bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
   return false;
 }
 
+bool ToPrimSpec(const MtlxModel &model, PrimSpec &ps, std::string *err)
+{
+  constexpr auto kAutodeskStandardSurface = "AutodeskStandardSurface";
+
+  if (model.shader_name == kUsdPreviewSurface) {
+    ps.props()["info:id"] = detail::MakeProperty(value::token(kUsdPreviewSurface));
+  } else if (model.shader_name == kAutodeskStandardSurface) {
+    ps.props()["info:id"] = detail::MakeProperty(value::token(kAutodeskStandardSurface));
+  } else {
+    PUSH_ERROR_AND_RETURN("Unsupported shader_name: " << model.shader_name);
+  }
+
+  return true;
+}
+
 //} // namespace usdMtlx
 } // namespace tinyusdz
 
@@ -480,11 +734,12 @@ bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
 
 namespace tinyusdz {
 
-bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver, const std::string &asset_path, MtlxModel *mtlx, std::string *err) {
+bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver, const std::string &asset_path, MtlxModel *mtlx, std::string *warn, std::string *err) {
 
   (void)resolver;
   (void)asset_path;
   (void)mtlx;
+  (void)warn;
 
   if (err) {
     (*err) += "MaterialX support is disabled in this build.\n";
@@ -493,9 +748,10 @@ bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver, const std::s
 }
 
 bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
-                             std::string *err) {
+                             std::string *warn, std::string *err) {
   (void)mtlx;
   (void)xml_str;
+  (void)warn;
 
   if (err) {
     (*err) += "MaterialX support is disabled in this build.\n";
@@ -503,8 +759,19 @@ bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
   return false;
 }
 
+#if 0
+bool ToPrimSpec(const MtlxModel &model, PrimSpec &ps, std::string *err)
+  (void)model;
+  (void)ps;
+
+  if (err) {
+    (*err) += "MaterialX support is disabled in this build.\n";
+  }
+  return false;
+
+}
+#endif
+
 } // namespace tinyusdz
 
 #endif // TINYUSDZ_USE_USDMTLX
-
-

@@ -1851,6 +1851,18 @@ void PrimMetas::update_from(const PrimMetas &rhs, const bool override_authored) 
     }
   }
 
+  if (rhs.unregisteredMetas.size()) {
+    for (const auto &item : rhs.unregisteredMetas) {
+      if (unregisteredMetas.count(item.first)) {
+        if (override_authored) {
+          unregisteredMetas[item.first] = item.second;
+        } 
+      } else {
+        unregisteredMetas[item.first] = item.second;
+      }
+    }
+  }
+
   OverrideDictionary(meta, rhs.meta, override_authored);
 }
 

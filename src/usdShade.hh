@@ -19,6 +19,8 @@ namespace tinyusdz {
 constexpr auto kMaterial = "Material";
 constexpr auto kShader = "Shader";
 
+constexpr auto kShaderInfoId = "info:id";
+
 constexpr auto kUsdPreviewSurface = "UsdPreviewSurface";
 constexpr auto kUsdUVTexture = "UsdUVTexture";
 constexpr auto kUsdTransform2d = "UsdTransform2d";
@@ -270,7 +272,6 @@ struct Shader : UsdShadePrim {
 #endif
 
 };
-
 
 // import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT
 #include "define-type-trait.inc"
