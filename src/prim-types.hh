@@ -3589,7 +3589,7 @@ struct Layer {
 
 //
 // Fileformat plugin(callback) interface.
-// For fileformat which is `reference`ed or `payload`ed.
+// For fileformat which is used in `subLayers`, `reference` or `payload`.
 //
 // TinyUSDZ uses C++ callback interface for security.
 // (On the contrary, pxrUSD uses `plugInfo.json` + dll).
@@ -3599,36 +3599,37 @@ struct Layer {
 //
 // TODO: Move to another header file?
 
-// Check if assetInfo is a valid asset(file)
+// Check if given data is a valid file format
 //
-// @param[in] asset Asset path(asset path is resolved by AssetResolutionResolver) 
+// @param[in] addr Data address
+// @param[in] nbytes Data bytes
 // @param[out] warn Warning message
 // @param[out] err Error message(when the fuction returns false)
 // @param[inout] user_data Userdata. can be nullptr.
-// @return true when the given asset is valid. 
-typedef bool (*FileFormatCheckFunction)(const AssetInfo &asset, std::string *warn, std::string *err, void *user_data);
+// @return true when the given data is expected file format. 
+typedef bool (*FileFormatCheckFunction)(const uint8_t *addr, const size_t nbytes, std::string *warn, std::string *err, void *user_data);
 
 
-// Read content of asset into PrimSpec(metadatum, properties, primChildren/variantChildren).
+// Read content of data into PrimSpec(metadatum, properties, primChildren/variantChildren).
 //
-// Check if assetInfo is a valid asset(file)
-// @param[in] asset Asset path(asset path is resolved by AssetResolutionResolver) 
+// @param[in] addr Data address
+// @param[in] nbytes Data bytes
 // @param[inout] ps PrimSpec which references/payload this asset.
 // @param[out] warn Warning message
 // @param[out] err Error message(when the fuction returns false)
 // @param[inout] user_data Userdata. can be nullptr.
-// @return true when the given asset is valid. 
-typedef bool (*FileFormatReadFunction)(const AssetInfo &asset, PrimSpec &ps/* inout */, std::string *warn, std::string *err, void *user_data);
+// @return true when reading data succeeds. 
+typedef bool (*FileFormatReadFunction)(const uint8_t *addr, const size_t nbytes, PrimSpec &ps/* inout */, std::string *warn, std::string *err, void *user_data);
 
-// Write corresponding content of PrimSpec to an asset(file)
+// Write corresponding content of PrimSpec to a binary data
 //
-// @param[in] asset Asset path(asset path is resolved by AssetResolutionResolver) 
-// @param[inout] ps PrimSpec which refers this asset.
+// @param[in] ps PrimSpec which refers this asset.
+// @param[out] out_data Data.
 // @param[out] warn Warning message
 // @param[out] err Error message(when the fuction returns false)
 // @param[inout] user_data Userdata. can be nullptr.
-// @return true when the given asset is valid. 
-typedef bool (*FileFormatWriteFunction)(const AssetInfo &asset, const PrimSpec &ps, std::string *err, void *user_data);
+// @return true upon data write success. 
+typedef bool (*FileFormatWriteFunction)(const PrimSpec &ps, std::vector<uint8_t> *out_data, std::string *warn, std::string *err, void *user_data);
 
 struct FileFormatHandler
 {

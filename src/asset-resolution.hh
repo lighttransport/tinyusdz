@@ -58,14 +58,42 @@ struct ResolverAssetInfo {
 /// For easier language bindings(e.g. for C), we use simple callback function
 /// approach.
 ///
-typedef int (*FSReadData)(const char *asset_name, uint8_t **bytes,
-                          uint64_t *size, std::string *err);
-typedef int (*FSWriteData)(const char *asset_name, const uint8_t *bytes,
-                           const uint64_t size, std::string *err);
+
+// @param[in] asset_name Asset name or filepath
+// @param[out] nbytes Bytes of this asset.
+// @param[out] err Error message.
+// @param[inout] userdata Userdata.
+// 
+// @return 0 upon success. negative value = error
+typedef int (*FSSizeData)(const char *asset_name, uint64_t *nbytes,
+                          std::string *err, void *userdata);
+
+// @param[in] asset_name Asset name or filepath
+// @param[in] req_nbytes Required bytes for output buffer.
+// @param[out] out_buf Output buffer. Memory should be allocated before calling this functione(`req_nbytes` or more)
+// @param[out] nbytes Read bytes. 0 <= nbytes <= `req_nbytes`
+// @param[out] err Error message.
+// @param[inout] userdata Userdata.
+//
+// @return 0 upon success. negative value = error
+typedef int (*FSReadData)(const char *asset_name, uint64_t req_nbytes, uint8_t *out_buf,
+                          uint64_t *nbytes, std::string *err, void *userdata);
+
+// @param[in] asset_name Asset name or filepath
+// @param[in] buffer Data.
+// @param[in] nbytes Data bytes.
+// @param[out] err Error message.
+// @param[inout] userdata Userdata.
+// 
+// @return 0 upon success. negative value = error
+typedef int (*FSWriteData)(const char *asset_name, const uint8_t *buffer,
+                           const uint64_t nbytes, std::string *err, void *userdata);
 
 struct FileSystemHandler {
+  FSSizeData size_fun{nullptr};
   FSReadData read_fun{nullptr};
   FSWriteData write_fun{nullptr};
+  void *userdata{nullptr};
 };
 
 ///

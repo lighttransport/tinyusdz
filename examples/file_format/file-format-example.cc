@@ -15,36 +15,99 @@
 std::map<std::string, float> g_map;
 
 //
+// We provide two APIs
+// 
+// - File system API(for AssetResolution::openAsset)
+//   - Create on-memory file(data)
+// - File format API(read/write data with custom format)
+
+// File system APIs
+static int MyFSizeData(const char *asset_name, uint64_t *nbytes, std::string *err, void *userdata) {
+  (void)userdata;
+
+  if (!asset_name) {
+    if (err) {
+      (*err) += "asset_name arg is nullptr.\n";
+    }
+    return -1;
+  }
+
+  if (!nbytes) {
+    if (err) {
+      (*err) += "nbytes arg is nullptr.\n";
+    }
+    return -1;
+  }
+
+  (*nbytes) = sizeof(float);
+  return 0; // OK
+}
+
+int MyFSReadData(const char *asset_name, uint64_t req_nbytes, uint8_t *out_buf,
+                            uint64_t *nbytes, std::string *err, void *userdata) {
+
+  if (!asset_name) {
+    if (err) {
+      (*err) += "asset_name arg is nullptr.\n";
+    }
+    return -3;
+  }
+
+  if (!nbytes) {
+    if (err) {
+      (*err) += "nbytes arg is nullptr.\n";
+    }
+    return -3;
+  }
+
+  if (req_nbytes < sizeof(float)) {
+    return -2;
+  }
+
+  if (g_map.count(asset_name)) {
+    float val = g_map[asset_name];
+    memcpy(out_buf, &val, sizeof(float));
+
+    (*nbytes) = sizeof(float);
+    return 0;
+  }
+
+  // 
+  return -1;
+}
+
+//
 // custom File-format APIs.
 //
-static bool MyCheck(const tinyusdz::AssetInfo &asset, std::string *warn, std::string *err, void *user_data) {
+static bool MyCheck(const uint8_t *addr, const size_t nbytes, std::string *warn, std::string *err, void *user_data) {
   return true;
 }
 
-static bool MyRead(const  tinyusdz::AssetInfo &asset, tinyusdz::PrimSpec &ps/* inout */, std::string *warn, std::string *err, void *user_data) {
-  std::string key = asset.identifier.GetAssetPath();
+static bool MyRead(const uint8_t *addr, const size_t nbytes, tinyusdz::PrimSpec &ps/* inout */, std::string *warn, std::string *err, void *user_data) {
 
-  if (g_map.count(key)) {
-    float val = g_map[key];
-
-    tinyusdz::Attribute attr;
-    attr.set_value(val);
-    attr.set_name("myval");
-    attr.variability() = tinyusdz::Variability::Uniform;
-
-    ps.props()["myval"] = tinyusdz::Property(attr, /* custom */false);
-
-    return true;
-
-  } else {
-    if (err) {
-      (*err) += "`" + key + "` not found.\n";
-    }
+  if (!addr) {
     return false;
   }
+
+  if (nbytes != 4) {
+    return false;
+  }
+
+  
+  float val;
+  memcpy(&val, addr, 4);
+
+  tinyusdz::Attribute attr;
+  attr.set_value(val);
+  attr.set_name("myval");
+  attr.variability() = tinyusdz::Variability::Uniform;
+
+  ps.props()["myval"] = tinyusdz::Property(attr, /* custom */false);
+
+  return true;
 }
 
-static bool MyWrite(const  tinyusdz::AssetInfo &asset, const tinyusdz::PrimSpec &ps, std::string *err, void *user_data) {
+static bool MyWrite(const tinyusdz::PrimSpec &ps, std::vector<uint8_t> *data_out, std::string *warn, std::string *err, void *user_data) {
   // TOOD
   return false;
 }
