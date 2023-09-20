@@ -128,6 +128,7 @@ bool IsBuiltinFileFormat(const std::string &name) {
 
 // TODO: support loading non-USD asset
 bool LoadAsset(AssetResolutionResolver &resolver,
+               const std::map<std::string, FileFormatHandler> &fileformats,
                const value::AssetPath &assetPath, const Path &primPath,
                Layer *dst_layer, const PrimSpec **dst_primspec_root,
                const bool error_when_no_prims_found,
@@ -161,13 +162,19 @@ bool LoadAsset(AssetResolutionResolver &resolver,
       }
     }
   } else {
-    if (error_when_unsupported_fileformat) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("Unknown/unsupported asset file format: {}", asset_path));
+    std::string ext = GetExtension(asset_path);
+    if (fileformats.count(ext)) {
+      DCOUT("Fileformat handler found for: " + ext);
+
     } else {
-      PUSH_WARN(fmt::format(
-          "Unknown/unsupported asset file format. Skipped: {}", asset_path));
-      return true;
+      if (error_when_unsupported_fileformat) {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("Unknown/unsupported asset file format: {}", asset_path));
+      } else {
+        PUSH_WARN(fmt::format(
+            "Unknown/unsupported asset file format. Skipped: {}", asset_path));
+        return true;
+      }
     }
   }
 
@@ -301,7 +308,7 @@ bool CompositeSublayersRec(AssetResolutionResolver &resolver,
     }
 
     tinyusdz::Layer sublayer;
-    if (!LoadAsset(resolver, layer.assetPath, /* not_used */Path::make_root_path(), &sublayer, /* primspec_root */nullptr, options.error_when_no_prims_in_sublayer, options.error_when_asset_not_found, options.error_when_unsupported_fileformat, warn, err)) {
+    if (!LoadAsset(resolver, options.fileformats, layer.assetPath, /* not_used */Path::make_root_path(), &sublayer, /* primspec_root */nullptr, options.error_when_no_prims_in_sublayer, options.error_when_asset_not_found, options.error_when_unsupported_fileformat, warn, err)) {
       PUSH_ERROR_AND_RETURN(fmt::format("Load asset in subLayer failed: `{}`", layer.assetPath));
     }
 
@@ -447,7 +454,7 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
         Layer layer;
         const PrimSpec *src_ps{nullptr};
 
-        if (!LoadAsset(resolver, reference.asset_path, reference.prim_path,
+        if (!LoadAsset(resolver, options.fileformats, reference.asset_path, reference.prim_path,
                        &layer, &src_ps, /* error_when_no_prims_found */true, options.error_when_asset_not_found,
                        options.error_when_unsupported_fileformat, warn, err)) {
           PUSH_ERROR_AND_RETURN(
@@ -491,7 +498,7 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
         Layer layer;
         const PrimSpec *src_ps{nullptr};
 
-        if (!LoadAsset(resolver, reference.asset_path, reference.prim_path,
+        if (!LoadAsset(resolver, options.fileformats, reference.asset_path, reference.prim_path,
                        &layer, &src_ps, /* error_when_no_prims */true, options.error_when_asset_not_found,
                        options.error_when_unsupported_fileformat, warn, err)) {
           PUSH_ERROR_AND_RETURN(
@@ -559,7 +566,7 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
 
         Layer layer;
         const PrimSpec *src_ps{nullptr};
-        if (!LoadAsset(resolver, pl.asset_path, pl.prim_path,
+        if (!LoadAsset(resolver, options.fileformats, pl.asset_path, pl.prim_path,
                        &layer, &src_ps, /* error_when_no_prims_found */true, options.error_when_asset_not_found,
                        options.error_when_unsupported_fileformat, warn, err)) {
           PUSH_ERROR_AND_RETURN(
@@ -609,7 +616,7 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
 
         Layer layer;
         const PrimSpec *src_ps{nullptr};
-        if (!LoadAsset(resolver, pl.asset_path, pl.prim_path,
+        if (!LoadAsset(resolver, options.fileformats, pl.asset_path, pl.prim_path,
                        &layer, &src_ps, /* error_when_no_prims_found */true, options.error_when_asset_not_found,
                        options.error_when_unsupported_fileformat, warn, err)) {
           PUSH_ERROR_AND_RETURN(

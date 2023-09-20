@@ -737,6 +737,7 @@ struct AssetInfo {
   Dictionary _fields;
 };
 
+
 // USDZ AR class?
 // Preliminary_Trigger,
 // Preliminary_PhysicsGravitationalForce,
@@ -3586,41 +3587,60 @@ struct Layer {
   mutable bool _has_class_primspec{true};
 };
 
-#if 0  // TODO: Remove
-// Simple bidirectional Path(string) <-> index lookup
-struct StringAndIdMap {
-  void add(int32_t key, const std::string &val) {
-    _i_to_s[key] = val;
-    _s_to_i[val] = key;
-  }
+//
+// Fileformat plugin(callback) interface.
+// For fileformat which is `reference`ed or `payload`ed.
+//
+// TinyUSDZ uses C++ callback interface for security.
+// (On the contrary, pxrUSD uses `plugInfo.json` + dll).
+//
+// Texture image/Shader file(e.g. glsl) is not handled in this API.
+// (Plese refer T.B.D. for texture/shader)
+//
+// TODO: Move to another header file?
 
-  void add(const std::string &key, int32_t val) {
-    _s_to_i[key] = val;
-    _i_to_s[val] = key;
-  }
+// Check if assetInfo is a valid asset(file)
+//
+// @param[in] asset Asset path(asset path is resolved by AssetResolutionResolver) 
+// @param[out] warn Warning message
+// @param[out] err Error message(when the fuction returns false)
+// @param[inout] user_data Userdata. can be nullptr.
+// @return true when the given asset is valid. 
+typedef bool (*FileFormatCheckFunction)(const AssetInfo &asset, std::string *warn, std::string *err, void *user_data);
 
-  size_t count(int32_t i) const { return _i_to_s.count(i); }
 
-  size_t count(const std::string &s) const { return _s_to_i.count(s); }
+// Read content of asset into PrimSpec(metadatum, properties, primChildren/variantChildren).
+//
+// Check if assetInfo is a valid asset(file)
+// @param[in] asset Asset path(asset path is resolved by AssetResolutionResolver) 
+// @param[inout] ps PrimSpec which references/payload this asset.
+// @param[out] warn Warning message
+// @param[out] err Error message(when the fuction returns false)
+// @param[inout] user_data Userdata. can be nullptr.
+// @return true when the given asset is valid. 
+typedef bool (*FileFormatReadFunction)(const AssetInfo &asset, PrimSpec &ps/* inout */, std::string *warn, std::string *err, void *user_data);
 
-  std::string at(int32_t i) const { return _i_to_s.at(i); }
+// Write corresponding content of PrimSpec to an asset(file)
+//
+// @param[in] asset Asset path(asset path is resolved by AssetResolutionResolver) 
+// @param[inout] ps PrimSpec which refers this asset.
+// @param[out] warn Warning message
+// @param[out] err Error message(when the fuction returns false)
+// @param[inout] user_data Userdata. can be nullptr.
+// @return true when the given asset is valid. 
+typedef bool (*FileFormatWriteFunction)(const AssetInfo &asset, const PrimSpec &ps, std::string *err, void *user_data);
 
-  int32_t at(std::string s) const { return _s_to_i.at(s); }
+struct FileFormatHandler
+{
+  std::string extension; // fileformat extension. 
+  std::string description; // Description of this fileformat. can be empty. 
 
-  std::map<int32_t, std::string> _i_to_s;  // index -> string
-  std::map<std::string, int32_t> _s_to_i;  // string -> index
+  FileFormatCheckFunction checker{nullptr};
+  FileFormatReadFunction reader{nullptr};
+  FileFormatWriteFunction writer{nullptr};
+  void *userdata{nullptr};
 };
 
-struct NodeIndex {
-  std::string name;
-
-  // TypeTraits<T>::type_id
-  value::TypeId type_id{value::TypeId::TYPE_ID_INVALID};
-
-  int64_t index{-1};  // array index to `Scene::xforms`, `Scene::geom_cameras`,
-                      // ... -1 = invlid(or not set)
-};
-#endif
 
 nonstd::optional<Interpolation> InterpolationFromString(const std::string &v);
 nonstd::optional<Orientation> OrientationFromString(const std::string &v);

@@ -49,58 +49,6 @@ constexpr int version_minor = 8;
 constexpr int version_micro = 0;
 constexpr auto version_rev = "rc5";  // extra revision suffix
 
-//
-// Fileformat plugin(callback) interface.
-// For fileformat which is `reference`ed or `payload`ed.
-//
-// TinyUSDZ uses C++ callback interface for security.
-// (On the contrary, pxrUSD uses `plugInfo.json` + dll).
-//
-// Texture image/Shader file(e.g. glsl) is not handled in this API.
-// (Plese refer T.B.D. for texture/shader)
-
-// Check if assetInfo is a valid asset(file)
-//
-// @param[in] asset Asset path(asset path is resolved by AssetResolutionResolver) 
-// @param[out] warn Warning message
-// @param[out] err Error message(when the fuction returns false)
-// @param[inout] user_data Userdata. can be nullptr.
-// @return true when the given asset is valid. 
-typedef bool (*FileFormatCheckFunction)(const AssetInfo &asset, std::string *warn, std::string *err, void *user_data);
-
-
-// Read content of asset into PrimSpec(metadatum, properties, primChildren/variantChildren).
-//
-// Check if assetInfo is a valid asset(file)
-// @param[in] asset Asset path(asset path is resolved by AssetResolutionResolver) 
-// @param[inout] ps PrimSpec which references/payload this asset.
-// @param[out] warn Warning message
-// @param[out] err Error message(when the fuction returns false)
-// @param[inout] user_data Userdata. can be nullptr.
-// @return true when the given asset is valid. 
-typedef bool (*FileFormatReadFunction)(const AssetInfo &asset, PrimSpec &ps/* inout */, std::string *warn, std::string *err, void *user_data);
-
-// Write corresponding content of PrimSpec to an asset(file)
-//
-// @param[in] asset Asset path(asset path is resolved by AssetResolutionResolver) 
-// @param[inout] ps PrimSpec which refers this asset.
-// @param[out] warn Warning message
-// @param[out] err Error message(when the fuction returns false)
-// @param[inout] user_data Userdata. can be nullptr.
-// @return true when the given asset is valid. 
-typedef bool (*FileFormatWriteFunction)(const AssetInfo &asset, const PrimSpec &ps, std::string *err, void *user_data);
-
-struct FileFormatHandler
-{
-  std::string extension; // fileformat extension. 
-  std::string description; // Description of this fileformat. can be empty. 
-
-  FileFormatCheckFunction checker{nullptr};
-  FileFormatReadFunction reader{nullptr};
-  FileFormatWriteFunction writer{nullptr};
-  void *userdata{nullptr};
-};
-
 struct USDLoadOptions {
   ///
   /// Set the number of threads to use when parsing USD scene.
