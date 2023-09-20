@@ -62,9 +62,6 @@ int main(int argc, char **argv) {
   my_handler.writer = MyWrite;
   my_handler.userdata = nullptr;
 
-  tinyusdz::USDLoadOptions options;
-  options.fileformats["my"] = my_handler;
-
   tinyusdz::Stage stage;  // empty scene
 
   std::string input_usd_filepath = "../data/fileformat_my.usda";
@@ -75,7 +72,7 @@ int main(int argc, char **argv) {
   std::string warn, err;
 
   tinyusdz::Layer layer;
-  bool ret = tinyusdz::LoadLayerFromFile(input_usd_filepath, &layer, &warn, &err, options);
+  bool ret = tinyusdz::LoadLayerFromFile(input_usd_filepath, &layer, &warn, &err);
 
   if (warn.size()) {
     std::cout << "WARN: " << warn << "\n";
@@ -88,6 +85,9 @@ int main(int argc, char **argv) {
 
   // dummy Asset resolver.
   tinyusdz::AssetResolutionResolver resolver;
+
+  tinyusdz::ReferencesCompositionOptions options;
+  options.fileformats["my"] = my_handler;
 
   // Do `references` composition to materialize `references = @***.my@`
   tinyusdz::Layer composited_layer;
