@@ -98,7 +98,7 @@ struct FileFormatHandler
   FileFormatCheckFunction checker{nullptr};
   FileFormatReadFunction reader{nullptr};
   FileFormatWriteFunction writer{nullptr};
-  void *_userdata{nullptr};
+  void *userdata{nullptr};
 };
 
 struct USDLoadOptions {
@@ -153,7 +153,7 @@ struct USDLoadOptions {
 
   ///
   /// User-defined fileformat hander.
-  /// key = file(asset) extension.
+  /// key = file(asset) extension(`.` excluded. example: 'mtlx', 'obj').
   ///
   std::map<std::string, FileFormatHandler> fileformats;
 
