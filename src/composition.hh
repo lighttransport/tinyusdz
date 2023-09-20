@@ -42,6 +42,9 @@ struct SublayersCompositionOptions {
 
   // Make an error when referenced asset is unsupported(e.g. unknown file extension)
   bool error_when_unsupported_fileformat{false};
+
+  // File formats
+  std::map<std::string, FileFormatHandler> fileformats;
 };
 
 struct ReferencesCompositionOptions {
@@ -53,6 +56,9 @@ struct ReferencesCompositionOptions {
 
   // Make an error when referenced asset is unsupported(e.g. unknown file extension)
   bool error_when_unsupported_fileformat{false};
+
+  // File formats
+  std::map<std::string, FileFormatHandler> fileformats;
 };
 
 struct PayloadCompositionOptions {
@@ -64,6 +70,9 @@ struct PayloadCompositionOptions {
 
   // Make an error when referenced asset is unsupported(e.g. unknown file extension)
   bool error_when_unsupported_fileformat{false};
+
+  // File formats
+  std::map<std::string, FileFormatHandler> fileformats;
 };
 
 ///
