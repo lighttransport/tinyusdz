@@ -29,6 +29,14 @@ class Asset {
 
   uint8_t *data() { return buf_.data(); }
 
+  void resize(uint64_t sz) { buf_.resize(sz); }
+
+  void shrink_to_fit() { buf_.shrink_to_fit(); }
+
+  void set_data(const std::vector<uint8_t> &&rhs) {
+    buf_ = rhs;
+  }
+
 #if 0
   ///
   /// Read asset data to `buffer`
@@ -59,16 +67,28 @@ struct ResolverAssetInfo {
 /// approach.
 ///
 
+// Resolve asset.
+//
 // @param[in] asset_name Asset name or filepath
+// @param[in] search_paths Search paths.
+// @param[out] resolved_asset_name Resolved asset name.
+// @param[out] err Error message.
+// @param[inout] userdata Userdata.
+// 
+// @return 0 upon success. -1 = asset cannot be resolved(not found). other negative value = error
+typedef int (*FSResolveAsset)(const char *asset_name, const std::vector<std::string> &search_paths, std::string *resolved_asset_name,
+                          std::string *err, void *userdata);
+
+// @param[in] resolved_asset_name Resolved Asset name or filepath
 // @param[out] nbytes Bytes of this asset.
 // @param[out] err Error message.
 // @param[inout] userdata Userdata.
 // 
 // @return 0 upon success. negative value = error
-typedef int (*FSSizeData)(const char *asset_name, uint64_t *nbytes,
+typedef int (*FSSizeAsset)(const char *resolved_asset_name, uint64_t *nbytes,
                           std::string *err, void *userdata);
 
-// @param[in] asset_name Asset name or filepath
+// @param[in] resolved_asset_name Resolved Asset name or filepath
 // @param[in] req_nbytes Required bytes for output buffer.
 // @param[out] out_buf Output buffer. Memory should be allocated before calling this functione(`req_nbytes` or more)
 // @param[out] nbytes Read bytes. 0 <= nbytes <= `req_nbytes`
@@ -76,26 +96,29 @@ typedef int (*FSSizeData)(const char *asset_name, uint64_t *nbytes,
 // @param[inout] userdata Userdata.
 //
 // @return 0 upon success. negative value = error
-typedef int (*FSReadData)(const char *asset_name, uint64_t req_nbytes, uint8_t *out_buf,
+typedef int (*FSReadAsset)(const char *resolved_asset_name, uint64_t req_nbytes, uint8_t *out_buf,
                           uint64_t *nbytes, std::string *err, void *userdata);
 
-// @param[in] asset_name Asset name or filepath
+// @param[in] asset_name Asset name or filepath(could be empty)
+// @param[in] resolved_asset_name Resolved Asset name or filepath
 // @param[in] buffer Data.
 // @param[in] nbytes Data bytes.
 // @param[out] err Error message.
 // @param[inout] userdata Userdata.
 // 
 // @return 0 upon success. negative value = error
-typedef int (*FSWriteData)(const char *asset_name, const uint8_t *buffer,
+typedef int (*FSWriteAsset)(const char *asset_name, const char *resolved_asset_name, const uint8_t *buffer,
                            const uint64_t nbytes, std::string *err, void *userdata);
 
-struct FileSystemHandler {
-  FSSizeData size_fun{nullptr};
-  FSReadData read_fun{nullptr};
-  FSWriteData write_fun{nullptr};
+struct AssetResolutionHandler {
+  FSResolveAsset resolve_fun{nullptr};
+  FSSizeAsset size_fun{nullptr};
+  FSReadAsset read_fun{nullptr};
+  FSWriteAsset write_fun{nullptr};
   void *userdata{nullptr};
 };
 
+#if 0 // deprecated.
 ///
 /// @param[in] path Path string to be resolved.
 /// @param[in] assetInfo nullptr when no `assetInfo` assigned to this path.
@@ -107,6 +130,7 @@ typedef bool (*ResolvePathHandler)(const std::string &path,
                                    const ResolverAssetInfo *assetInfo,
                                    void *userdata, std::string *resolvedPath,
                                    std::string *err);
+#endif
 
 class AssetResolutionResolver {
  public:
@@ -115,7 +139,8 @@ class AssetResolutionResolver {
 
   AssetResolutionResolver(const AssetResolutionResolver &rhs) {
     if (this != &rhs) {
-      _resolve_path_handler = rhs._resolve_path_handler;
+      //_resolve_path_handler = rhs._resolve_path_handler;
+      _asset_resolution_handlers = rhs._asset_resolution_handlers;
       _userdata = rhs._userdata;
       _search_paths = rhs._search_paths;
     }
@@ -123,7 +148,8 @@ class AssetResolutionResolver {
 
   AssetResolutionResolver &operator=(const AssetResolutionResolver &rhs) {
     if (this != &rhs) {
-      _resolve_path_handler = rhs._resolve_path_handler;
+      // _resolve_path_handler = rhs._resolve_path_handler;
+      _asset_resolution_handlers = rhs._asset_resolution_handlers;
       _userdata = rhs._userdata;
       _search_paths = rhs._search_paths;
     }
@@ -132,7 +158,8 @@ class AssetResolutionResolver {
 
   AssetResolutionResolver &operator=(AssetResolutionResolver &&rhs) {
     if (this != &rhs) {
-      _resolve_path_handler = rhs._resolve_path_handler;
+      //_resolve_path_handler = rhs._resolve_path_handler;
+      _asset_resolution_handlers = rhs._asset_resolution_handlers;
       _userdata = rhs._userdata;
       _search_paths = std::move(rhs._search_paths);
     }
@@ -156,15 +183,30 @@ class AssetResolutionResolver {
   std::string search_paths_str() const;
 
   ///
-  /// Register user defined filesystem handler.
-  /// Default = use file handler(FILE/ifstream)
+  /// Register user defined AssetResolution handler per file extension.
+  /// Default = use built-in file handler(FILE/ifstream)
+  /// This handler is used in resolve(), find() and open_asset()
   ///
-  void register_filesystem_handler(FileSystemHandler handler) {
-    _filesystem_handler = handler;
+  void register_asset_resolution_handler(const std::string &ext_name, AssetResolutionHandler handler) {
+    if (ext_name.empty()) {
+      return;
+    }
+    _asset_resolution_handlers[ext_name] = handler;
   }
 
-  void unregister_filesystem_handler() { _filesystem_handler.reset(); }
+  bool unregister_asset_resolution_handler(const std::string &ext_name) {
+    if (_asset_resolution_handlers.count(ext_name)) {
+      _asset_resolution_handlers.erase(ext_name);
+    }
+    return false;
+  }
 
+  bool has_asset_resolution_handler(const std::string &ext_name) {
+    return _asset_resolution_handlers.count(ext_name);
+  }
+
+
+#if 0
   ///
   /// Register user defined asset path resolver.
   /// Default = find file from search paths.
@@ -174,6 +216,7 @@ class AssetResolutionResolver {
   }
 
   void unregister_resolve_path_handler() { _resolve_path_handler = nullptr; }
+#endif
 
   ///
   /// Check if input asset exists(do asset resolution inside the function).
@@ -193,7 +236,7 @@ class AssetResolutionResolver {
   /// Open asset from the resolved Path.
   ///
   /// @param[in] resolvedPath Resolved path(through `resolve()`)
-  /// @param[in] assetPath Asset path of resolved path.
+  /// @param[in] assetPath Asset path(could be empty)
   /// @param[out] asset Asset.
   /// @param[out] warn Warning.
   /// @param[out] err Error message.
@@ -207,16 +250,84 @@ class AssetResolutionResolver {
   void *get_userdata() { return _userdata; }
   const void *get_userdata() const { return _userdata; }
 
+  void set_max_asset_bytes_in_mb(size_t megabytes) {
+    if (megabytes > 0) {
+      _max_asset_bytes_in_mb = megabytes;
+    }
+  } 
+
+  size_t get_max_asset_bytes_in_mb() const {
+    return _max_asset_bytes_in_mb;
+  }
+
  private:
-  ResolvePathHandler _resolve_path_handler{nullptr};
+  //ResolvePathHandler _resolve_path_handler{nullptr};
   void *_userdata{nullptr};
   std::vector<std::string> _search_paths;
+  size_t _max_asset_bytes_in_mb{1024*1024}; // default 1 TB
 
-  nonstd::optional<FileSystemHandler> _filesystem_handler;
+  std::map<std::string, AssetResolutionHandler> _asset_resolution_handlers;
 
   // TODO: Cache resolution result
   // mutable _dirty{true};
   // mutable std::map<std::string, std::string> _cached_resolved_paths;
 };
+
+// forward decl
+class PrimSpec;
+
+//
+// Fileformat plugin(callback) interface.
+// For fileformat which is used in `subLayers`, `reference` or `payload`.
+//
+// TinyUSDZ uses C++ callback interface for security.
+// (On the contrary, pxrUSD uses `plugInfo.json` + dll).
+//
+// Texture image/Shader file(e.g. glsl) is not handled in this API.
+// (Plese refer T.B.D. for texture/shader)
+//
+// TODO: Move to another header file?
+
+// Check if given data is a expectected file format
+//
+// @param[in] asset Asset data.
+// @param[out] warn Warning message
+// @param[out] err Error message(when the fuction returns false)
+// @param[inout] user_data Userdata. can be nullptr.
+// @return true when the given data is expected file format. 
+typedef bool (*FileFormatCheckFunction)(const Asset &asset, std::string *warn, std::string *err, void *user_data);
+
+
+// Read content of data into PrimSpec(metadatum, properties, primChildren/variantChildren).
+//
+// @param[in] asset Asset data
+// @param[inout] ps PrimSpec which references/payload this asset.
+// @param[out] warn Warning message
+// @param[out] err Error message(when the fuction returns false)
+// @param[inout] user_data Userdata. can be nullptr.
+// @return true when reading data succeeds. 
+typedef bool (*FileFormatReadFunction)(const Asset &asset, PrimSpec &ps/* inout */, std::string *warn, std::string *err, void *user_data);
+
+// Write corresponding content of PrimSpec to a binary data
+//
+// @param[in] ps PrimSpec which refers this asset.
+// @param[out] out_asset Output asset data.
+// @param[out] warn Warning message
+// @param[out] err Error message(when the fuction returns false)
+// @param[inout] user_data Userdata. can be nullptr.
+// @return true upon data write success. 
+typedef bool (*FileFormatWriteFunction)(const PrimSpec &ps, Asset *out_data, std::string *warn, std::string *err, void *user_data);
+
+struct FileFormatHandler
+{
+  std::string extension; // fileformat extension. 
+  std::string description; // Description of this fileformat. can be empty. 
+
+  FileFormatCheckFunction checker{nullptr};
+  FileFormatReadFunction reader{nullptr};
+  FileFormatWriteFunction writer{nullptr};
+  void *userdata{nullptr};
+};
+
 
 }  // namespace tinyusdz

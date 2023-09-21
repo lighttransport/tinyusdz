@@ -15,14 +15,38 @@
 std::map<std::string, float> g_map;
 
 //
-// We provide two APIs
-// 
-// - File system API(for AssetResolution::openAsset)
-//   - Create on-memory file(data)
+// To read asset in custom format(and in custom file system), this example provides
+//
+// - AssetResolution handler(for AssetResolution::open_asset)
+//   - Create on-memory asset system
 // - File format API(read/write data with custom format)
+//   - Simple 4 byte binary(float value)
+//
 
-// File system APIs
-static int MyFSizeData(const char *asset_name, uint64_t *nbytes, std::string *err, void *userdata) {
+static int MyARResolve(const char *asset_name, const std::vector<std::string> &search_paths, std::string *resolved_asset_name, std::string *err, void *userdata) {
+  (void)err;
+  (void)userdata;
+  (void)search_paths;
+
+  if (!asset_name) {
+    return -2; // err
+  }
+
+  if (!resolved_asset_name) {
+    return -2; // err
+  }
+
+  if (g_map.count(asset_name)) {
+    (*resolved_asset_name) = asset_name;
+    return 0; // OK
+  }
+
+  return -1; // failed to resolve.
+}
+
+
+// AssetResoltion handlers
+static int MyARSize(const char *asset_name, uint64_t *nbytes, std::string *err, void *userdata) {
   (void)userdata;
 
   if (!asset_name) {
@@ -43,7 +67,7 @@ static int MyFSizeData(const char *asset_name, uint64_t *nbytes, std::string *er
   return 0; // OK
 }
 
-int MyFSReadData(const char *asset_name, uint64_t req_nbytes, uint8_t *out_buf,
+int MyARRead(const char *asset_name, uint64_t req_nbytes, uint8_t *out_buf,
                             uint64_t *nbytes, std::string *err, void *userdata) {
 
   if (!asset_name) {
@@ -72,30 +96,26 @@ int MyFSReadData(const char *asset_name, uint64_t req_nbytes, uint8_t *out_buf,
     return 0;
   }
 
-  // 
+  //
   return -1;
 }
 
 //
 // custom File-format APIs.
 //
-static bool MyCheck(const uint8_t *addr, const size_t nbytes, std::string *warn, std::string *err, void *user_data) {
+static bool MyCheck(const tinyusdz::Asset &asset, std::string *warn, std::string *err, void *user_data) {
   return true;
 }
 
-static bool MyRead(const uint8_t *addr, const size_t nbytes, tinyusdz::PrimSpec &ps/* inout */, std::string *warn, std::string *err, void *user_data) {
+static bool MyRead(const tinyusdz::Asset &asset, tinyusdz::PrimSpec &ps/* inout */, std::string *warn, std::string *err, void *user_data) {
 
-  if (!addr) {
+  if (asset.size() != 4) {
     return false;
   }
 
-  if (nbytes != 4) {
-    return false;
-  }
 
-  
   float val;
-  memcpy(&val, addr, 4);
+  memcpy(&val, asset.data(), 4);
 
   tinyusdz::Attribute attr;
   attr.set_value(val);
@@ -107,7 +127,7 @@ static bool MyRead(const uint8_t *addr, const size_t nbytes, tinyusdz::PrimSpec 
   return true;
 }
 
-static bool MyWrite(const tinyusdz::PrimSpec &ps, std::vector<uint8_t> *data_out, std::string *warn, std::string *err, void *user_data) {
+static bool MyWrite(const tinyusdz::PrimSpec &ps, tinyusdz::Asset *asset_out, std::string *warn, std::string *err, void *user_data) {
   // TOOD
   return false;
 }
@@ -146,8 +166,15 @@ int main(int argc, char **argv) {
     exit(-1);
   }
 
-  // dummy Asset resolver.
   tinyusdz::AssetResolutionResolver resolver;
+  // Register filesystem handler for `.my` asset.
+  tinyusdz::AssetResolutionHandler ar_handler;
+  ar_handler.resolve_fun = MyARResolve;
+  ar_handler.size_fun = MyARSize;
+  ar_handler.read_fun = MyARRead;
+  ar_handler.write_fun = nullptr; // not used in this example.
+  ar_handler.userdata = nullptr; // not used in this example;
+  resolver.register_asset_resolution_handler("my", ar_handler);
 
   tinyusdz::ReferencesCompositionOptions options;
   options.fileformats["my"] = my_handler;
@@ -158,8 +185,8 @@ int main(int argc, char **argv) {
     std::cerr << "Failed to composite `references`: " << err << "\n";
     return -1;
   }
-  
- 
+
+
   // Print USD scene as Ascii.
   std::cout << composited_layer << "\n";
 
