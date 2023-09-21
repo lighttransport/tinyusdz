@@ -719,7 +719,10 @@ class AsciiParser {
   bool IsSupportedPrimType(const std::string &ty);
   bool IsSupportedAPISchema(const std::string &ty);
 
-  bool Eof() { return _sr->eof(); }
+  bool Eof() {
+    // end of buffer, or current char is nullchar('\0')
+    return _sr->eof() || _sr->is_nullchar();
+  }
 
   bool ParseRelationship(Relationship *result);
   bool ParseProperties(std::map<std::string, Property> *props,
