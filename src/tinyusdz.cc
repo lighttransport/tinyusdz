@@ -993,14 +993,23 @@ bool LoadUSDALayerFromMemory(const uint8_t *addr, const size_t length,
   (void)options;
 
   if (!addr) {
+    if (err) {
+      (*err) += "addr arg is nullptr.\n";
+    }
     return false;
   }
 
-  if (length < 4) {
+  if (length < 9) {
+    if (err) {
+      (*err) += "Input too short.\n";
+    }
     return false;
   }
 
   if (!dst_layer) {
+    if (err) {
+      (*err) += "dst_layher arg is nullptr.\n";
+    }
     return false;
   }
 

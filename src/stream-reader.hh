@@ -346,6 +346,15 @@ class StreamReader {
   uint64_t tell() const { return uint64_t(idx_); }
   bool eof() const { return idx_ >= length_; }
 
+  bool is_nullchar() const {
+    if (idx_ < length_) {
+      return binary_[idx_] == '\0';
+    }
+
+    // TODO: report true when eof()?
+    return false;
+  }
+
   const uint8_t *data() const { return binary_; }
 
   bool swap_endian() const { return swap_endian_; }
