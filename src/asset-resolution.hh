@@ -29,7 +29,7 @@ class Asset {
 
   uint8_t *data() { return buf_.data(); }
 
-  void resize(uint64_t sz) { buf_.resize(sz); }
+  void resize(size_t sz) { buf_.resize(sz); }
 
   void shrink_to_fit() { buf_.shrink_to_fit(); }
 
@@ -264,7 +264,7 @@ class AssetResolutionResolver {
   //ResolvePathHandler _resolve_path_handler{nullptr};
   void *_userdata{nullptr};
   std::vector<std::string> _search_paths;
-  size_t _max_asset_bytes_in_mb{1024*1024}; // default 1 TB
+  mutable size_t _max_asset_bytes_in_mb{1024*1024}; // default 1 TB
 
   std::map<std::string, AssetResolutionHandler> _asset_resolution_handlers;
 

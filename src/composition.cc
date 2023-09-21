@@ -206,9 +206,26 @@ bool LoadAsset(AssetResolutionResolver &resolver,
     resolver.add_seartch_path(base_dir);
   }
 
-  if (!LoadLayerFromFile(resolved_path, &layer, &_warn, &_err)) {
+  Asset asset;
+  if (!resolver.open_asset(resolved_path, asset_path, &asset, &_warn, &_err)) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Failed to open resolved asset `{}`(`{}`)", resolved_path, asset_path, _err));
+  }
+
+  if (IsUSDFileFormat(asset_path)) {
+    if (!LoadLayerFromMemory(asset.data(), asset.size(), asset_path, &layer, &_warn, &_err)) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Failed to open `{}` as Layer: {}", asset_path, _err));
+    }
+  } else if (IsMtlxFileFormat(asset_path)) {
+    DCOUT("TODO:");
     PUSH_ERROR_AND_RETURN(
-        fmt::format("Failed to open `{}` as Layer: {}", asset_path, _err));
+        fmt::format("TODO: open mtlx asset `{}`", asset_path, _err));
+    
+  } else {
+    // TODO: Invoke fileformat handler
+    PUSH_ERROR_AND_RETURN(
+        fmt::format("TODO: open custom asset `{}`", asset_path, _err));
   }
 
   DCOUT("layer = " << print_layer(layer, 0));

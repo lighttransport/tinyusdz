@@ -316,6 +316,27 @@ bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
                        std::string *warn, std::string *err,
                        const USDLoadOptions &options = USDLoadOptions());
 
+///
+/// Load USD(USDA/USDC/USDZ) layer using AssetResolution resolver.
+/// This API would be useful if you want to load USD from custom storage(e.g, on Android), URI(web), DB, etc.
+/// Automatically detect file format.
+///
+/// resolved_asset_name must be resolved asset name using AssetResolutionResolver::resolve()
+///
+/// @param[in] resolver AssetResolution resolver.
+/// @param[in] resolved_asset_name Resolved asset name.
+/// @param[out] layer USD layer(scene graph).
+/// @param[out] warn Warning message.
+/// @param[out] err Error message(filled when the function returns false)
+/// @param[in] options Load options(optional)
+///
+/// @return true upon success
+///
+bool LoadLayerFromAsset(AssetResolutionResolver &resolver,
+                       const std::string &resolved_asset_name, Layer *layer,
+                       std::string *warn, std::string *err,
+                       const USDLoadOptions &options = USDLoadOptions());
+
 #if 0 // TODO
 bool LoadUSDZLayerFromMemory(const uint8_t *addr, const size_t length,
                        const std::string &filename, Layer *layer,
