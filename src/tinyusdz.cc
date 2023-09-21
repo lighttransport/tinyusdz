@@ -1031,7 +1031,7 @@ bool LoadUSDALayerFromMemory(const uint8_t *addr, const size_t length,
     }
     return false;
   }
-  
+
   if (warn) {
     if (reader.get_warning().size()) {
       (*warn) += reader.get_warning();
@@ -1101,6 +1101,25 @@ bool LoadLayerFromFile(const std::string &_filename, Layer *stage,
   }
 
   return LoadLayerFromMemory(data.data(), data.size(), filepath, stage, warn, err,
+                           options);
+}
+
+bool LoadLayerFromAsset(AssetResolutionResolver &resolver, const std::string &resolved_asset_name, Layer *layer,
+                     std::string *warn, std::string *err,
+                     const USDLoadOptions &options) {
+
+  if (resolved_asset_name.empty()) {
+    PUSH_ERROR_AND_RETURN("Input asset name is empty.");
+  }
+
+  resolver.set_max_asset_bytes_in_mb(options.max_allowed_asset_size_in_mb);
+
+  Asset asset;
+  if (!resolver.open_asset(resolved_asset_name, resolved_asset_name, &asset, warn, err)) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Failed to open asset `{}`.", resolved_asset_name));
+  }
+
+  return LoadLayerFromMemory(asset.data(), asset.size(), resolved_asset_name, layer, warn, err,
                            options);
 }
 
