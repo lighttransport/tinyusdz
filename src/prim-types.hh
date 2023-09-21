@@ -3587,61 +3587,6 @@ struct Layer {
   mutable bool _has_class_primspec{true};
 };
 
-//
-// Fileformat plugin(callback) interface.
-// For fileformat which is used in `subLayers`, `reference` or `payload`.
-//
-// TinyUSDZ uses C++ callback interface for security.
-// (On the contrary, pxrUSD uses `plugInfo.json` + dll).
-//
-// Texture image/Shader file(e.g. glsl) is not handled in this API.
-// (Plese refer T.B.D. for texture/shader)
-//
-// TODO: Move to another header file?
-
-// Check if given data is a valid file format
-//
-// @param[in] addr Data address
-// @param[in] nbytes Data bytes
-// @param[out] warn Warning message
-// @param[out] err Error message(when the fuction returns false)
-// @param[inout] user_data Userdata. can be nullptr.
-// @return true when the given data is expected file format. 
-typedef bool (*FileFormatCheckFunction)(const uint8_t *addr, const size_t nbytes, std::string *warn, std::string *err, void *user_data);
-
-
-// Read content of data into PrimSpec(metadatum, properties, primChildren/variantChildren).
-//
-// @param[in] addr Data address
-// @param[in] nbytes Data bytes
-// @param[inout] ps PrimSpec which references/payload this asset.
-// @param[out] warn Warning message
-// @param[out] err Error message(when the fuction returns false)
-// @param[inout] user_data Userdata. can be nullptr.
-// @return true when reading data succeeds. 
-typedef bool (*FileFormatReadFunction)(const uint8_t *addr, const size_t nbytes, PrimSpec &ps/* inout */, std::string *warn, std::string *err, void *user_data);
-
-// Write corresponding content of PrimSpec to a binary data
-//
-// @param[in] ps PrimSpec which refers this asset.
-// @param[out] out_data Data.
-// @param[out] warn Warning message
-// @param[out] err Error message(when the fuction returns false)
-// @param[inout] user_data Userdata. can be nullptr.
-// @return true upon data write success. 
-typedef bool (*FileFormatWriteFunction)(const PrimSpec &ps, std::vector<uint8_t> *out_data, std::string *warn, std::string *err, void *user_data);
-
-struct FileFormatHandler
-{
-  std::string extension; // fileformat extension. 
-  std::string description; // Description of this fileformat. can be empty. 
-
-  FileFormatCheckFunction checker{nullptr};
-  FileFormatReadFunction reader{nullptr};
-  FileFormatWriteFunction writer{nullptr};
-  void *userdata{nullptr};
-};
-
 
 nonstd::optional<Interpolation> InterpolationFromString(const std::string &v);
 nonstd::optional<Orientation> OrientationFromString(const std::string &v);
