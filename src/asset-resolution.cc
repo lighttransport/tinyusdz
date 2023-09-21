@@ -120,21 +120,27 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
       uint64_t sz{0};
       int ret = _asset_resolution_handlers.at(ext).size_fun(resolvedPath.c_str(), &sz, err, userdata);
       if (ret != 0) {
+        if (err) {
+          (*err) += "Get size of asset through handler failed.\n";
+        }
         return false;
       }
 
       tinyusdz::Asset asset;
-      asset.resize(sz);
+      asset.resize(size_t(sz));
 
       uint64_t read_size{0};
 
       ret = _asset_resolution_handlers.at(ext).read_fun(resolvedPath.c_str(), /* req_size */asset.size(), asset.data(), &read_size, err, userdata);
       if (ret != 0) {
+        if (err) {
+          (*err) += "Read asset through handler failed.\n";
+        }
         return false;
       }
 
       if (read_size < sz) {
-        asset.resize(read_size);
+        asset.resize(size_t(read_size));
         // May optimize memory usage
         asset.shrink_to_fit();
       }
@@ -151,7 +157,12 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
   size_t max_bytes = 1024 * 1024 * _max_asset_bytes_in_mb;
   if (!io::ReadWholeFile(&data, err, resolvedPath, max_bytes,
                            /* userdata */ nullptr)) {
-      return false;
+
+    if (err) {
+      (*err) += "Open asset from a file failed.\n";
+    }
+
+    return false;
   }
 
   asset_out->set_data(std::move(data));
