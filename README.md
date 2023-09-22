@@ -301,6 +301,8 @@ Edit path to MSVC SDK and Windows SDK in `bootstrap-clang-cl-win64.bat`, then
   * Separated CMake build provided: See [Readme](examples/sdlviewer/README.md)
 * [api_tutorial](examples/api_tutorial/) Tutorial of TinyUSDZ Core API to construct a USD scene data.
 * [tydra_api](examples/tydra_api/) Tutorial of TinyUSDZ Tydra API to access/query/convert a USD scene data.
+* [asset_resolution](examples/asset_resolution/) Tutorial of using AssetResolutionResolver API to load USD from customized I/O(e.g. from Memory, Web, DB, ...)
+* [file_format](examples/file_format/) Tutorial of using custom FileFormat handler to load Prim data in custom fileformat.
 
 See [examples](examples) directory for more examples, but may not actively maintained except for the above examples.
 
