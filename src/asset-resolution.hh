@@ -37,22 +37,37 @@ class Asset {
     buf_ = rhs;
   }
 
-#if 0
-  ///
-  /// Read asset data to `buffer`
-  ///
-  /// @param[out] buffer Buffer address. Must have enough memory allocated.
-  /// @param[in] nbytes The number of bytes to read.
-  /// @param[in] byte_offset Byte offset.
-  ///
-  /// @return The number of bytes read.
+  void set_name(const std::string &name) {
+    name_ = name;
+  }
 
-  size_t read(uint8_t *buffer, size_t nbytes, size_t byte_offset) const;
-#endif
+  void set_resolved_name(const std::string &name) {
+    resolved_name_ = name;
+  }
+
+  const std::string &name() const {
+    return name_;
+  }
+
+  const std::string &resolved_name() const {
+    return resolved_name_;
+  }
+
+  void set_version(const std::string &version) {
+    version_ = version;
+  }
+
+  const std::string &version() const {
+    return version_;
+  }
 
  private:
+  std::string version_; // optional. 
+  std::string name_;
+  std::string resolved_name_;
   std::vector<uint8_t> buf_;
 };
+
 
 struct ResolverAssetInfo {
   std::string version;

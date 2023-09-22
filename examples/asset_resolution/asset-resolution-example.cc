@@ -134,8 +134,6 @@ def "dora" {
 }
 )";
 
-  tinyusdz::Stage stage;  // empty scene
-
   std::string input_usd_name = "bora.usda";
   if (argc > 1) {
     input_usd_name = argv[1];
