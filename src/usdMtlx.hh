@@ -128,6 +128,13 @@ bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
 
 bool ToPrimSpec(const MtlxModel &model, PrimSpec &ps, std::string *err);
 
+///
+/// Load MaterialX from Asset and construct USD PrimSpec
+///
+bool LoadMaterialXFromAsset(const Asset &asset,
+                            const std::string &asset_path, PrimSpec &ps /* inout */,
+                            std::string *warn, std::string *err);
+
 // import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT
 #include "define-type-trait.inc"
 
