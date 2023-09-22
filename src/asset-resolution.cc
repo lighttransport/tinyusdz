@@ -97,7 +97,6 @@ std::string AssetResolutionResolver::resolve(
 bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const std::string &assetPath,
                   Asset *asset_out, std::string *warn, std::string *err) {
 
-
   if (!asset_out) {
     if (err) {
       (*err) = "`asset` arg is nullptr.";
@@ -132,6 +131,7 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
       uint64_t read_size{0};
 
       ret = _asset_resolution_handlers.at(ext).read_fun(resolvedPath.c_str(), /* req_size */asset.size(), asset.data(), &read_size, err, userdata);
+
       if (ret != 0) {
         if (err) {
           (*err) += "Read asset through handler failed.\n";

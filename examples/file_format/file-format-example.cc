@@ -3,50 +3,69 @@
 
 // Import to_string() and operator<< features
 #include <iostream>
+
 #include "pprinter.hh"
-#include "value-pprint.hh"
 #include "prim-pprint.hh"
-
-// Tydra is a collection of APIs to access/convert USD Prim data
-// (e.g. Can get Attribute by name)
-// See <tinyusdz>/examples/tydra_api for more Tydra API examples.
-#include "tydra/scene-access.hh"
-
-std::map<std::string, float> g_map;
+#include "value-pprint.hh"
 
 //
-// To read asset in custom format(and in custom file system), this example provides
+// To read asset in custom format, this example provides
 //
 // - AssetResolution handler(for AssetResolution::open_asset)
-//   - Create on-memory asset system
+//   - Optional. Create on-memory asset system
+//   - You can use built-in file based AssetResolution handler if you provide
+//   .my file
 // - File format API(read/write data with custom format)
-//   - Simple 4 byte binary(float value)
+//   - Simple 4 byte binary storing a float value.
 //
 
-static int MyARResolve(const char *asset_name, const std::vector<std::string> &search_paths, std::string *resolved_asset_name, std::string *err, void *userdata) {
+//
+// def "muda" ( references = @bora.my@ ) {
+// }
+//
+// =>
+//
+// def "muda" () {
+//    uniform float myval = 3.14
+// }
+//
+
+static std::map<std::string, float> g_map;
+
+//
+// Asset resolution handlers
+//
+static int MyARResolve(const char *asset_name,
+                       const std::vector<std::string> &search_paths,
+                       std::string *resolved_asset_name, std::string *err,
+                       void *userdata) {
   (void)err;
   (void)userdata;
   (void)search_paths;
 
+  std::cout << "Resolve " << asset_name << "\n";
+
   if (!asset_name) {
-    return -2; // err
+    return -2;  // err
   }
 
   if (!resolved_asset_name) {
-    return -2; // err
+    return -2;  // err
   }
 
   if (g_map.count(asset_name)) {
     (*resolved_asset_name) = asset_name;
-    return 0; // OK
+    std::cout << "Resolved as " << resolved_asset_name << "\n";
+    return 0;  // OK
   }
+  std::cerr << "Can't resolve asset: " << asset_name << "\n";
 
-  return -1; // failed to resolve.
+  return -1;  // failed to resolve.
 }
 
-
 // AssetResoltion handlers
-static int MyARSize(const char *asset_name, uint64_t *nbytes, std::string *err, void *userdata) {
+static int MyARSize(const char *asset_name, uint64_t *nbytes, std::string *err,
+                    void *userdata) {
   (void)userdata;
 
   if (!asset_name) {
@@ -63,13 +82,14 @@ static int MyARSize(const char *asset_name, uint64_t *nbytes, std::string *err, 
     return -1;
   }
 
+  std::cout << "Asset size " << sizeof(float) << "\n";
+
   (*nbytes) = sizeof(float);
-  return 0; // OK
+  return 0;  // OK
 }
 
 int MyARRead(const char *asset_name, uint64_t req_nbytes, uint8_t *out_buf,
-                            uint64_t *nbytes, std::string *err, void *userdata) {
-
+             uint64_t *nbytes, std::string *err, void *userdata) {
   if (!asset_name) {
     if (err) {
       (*err) += "asset_name arg is nullptr.\n";
@@ -101,18 +121,36 @@ int MyARRead(const char *asset_name, uint64_t req_nbytes, uint8_t *out_buf,
 }
 
 //
-// custom File-format APIs.
+// custom File-format handlers
 //
-static bool MyCheck(const tinyusdz::Asset &asset, std::string *warn, std::string *err, void *user_data) {
+static bool MyCheck(const tinyusdz::Asset &asset, std::string *warn,
+                    std::string *err, void *user_data) {
+  if (asset.size() != 4) {
+    return false;
+  }
+
   return true;
 }
 
-static bool MyRead(const tinyusdz::Asset &asset, tinyusdz::PrimSpec &ps/* inout */, std::string *warn, std::string *err, void *user_data) {
+static bool MyRead(const tinyusdz::Asset &asset,
+                   tinyusdz::PrimSpec &ps /* inout */, std::string *warn,
+                   std::string *err, void *user_data) {
+  //
+  // `tinyusdz::Asset` is a simple buffer: data() : bytes buffer, size() :
+  // buffer size
+  //
 
   if (asset.size() != 4) {
     return false;
   }
 
+  //
+  // Create a PrimSpec:
+  //
+  // def "my01" {
+  //   uniform float myval = ...
+  // }
+  //
 
   float val;
   memcpy(&val, asset.data(), 4);
@@ -122,31 +160,34 @@ static bool MyRead(const tinyusdz::Asset &asset, tinyusdz::PrimSpec &ps/* inout 
   attr.set_name("myval");
   attr.variability() = tinyusdz::Variability::Uniform;
 
-  ps.props()["myval"] = tinyusdz::Property(attr, /* custom */false);
+  ps.props()["myval"] = tinyusdz::Property(attr, /* custom */ false);
+
+  ps.name() = "my01";  // must set PrimSpec name
 
   return true;
 }
 
-static bool MyWrite(const tinyusdz::PrimSpec &ps, tinyusdz::Asset *asset_out, std::string *warn, std::string *err, void *user_data) {
+static bool MyWrite(const tinyusdz::PrimSpec &ps, tinyusdz::Asset *asset_out,
+                    std::string *warn, std::string *err, void *user_data) {
   // TOOD
   return false;
 }
 
-
 int main(int argc, char **argv) {
-  g_map["bora"] = 3.14f;
-  g_map["dora"] = 6.14f;
+  g_map["bora.my"] = 3.14f;
+  g_map["dora.my"] = 6.14f;
 
   tinyusdz::FileFormatHandler my_handler;
   my_handler.extension = "my";
-  my_handler.description = "Custom fileformat  example.";
+  my_handler.description = "Custom fileformat example.";
   my_handler.checker = MyCheck;
-  my_handler.reader= MyRead;
+  my_handler.reader = MyRead;
   my_handler.writer = MyWrite;
   my_handler.userdata = nullptr;
 
   tinyusdz::Stage stage;  // empty scene
 
+  // path to <tinyusdz>/data/fileformat_my.usda
   std::string input_usd_filepath = "../data/fileformat_my.usda";
   if (argc > 1) {
     input_usd_filepath = argv[1];
@@ -155,7 +196,8 @@ int main(int argc, char **argv) {
   std::string warn, err;
 
   tinyusdz::Layer layer;
-  bool ret = tinyusdz::LoadLayerFromFile(input_usd_filepath, &layer, &warn, &err);
+  bool ret =
+      tinyusdz::LoadLayerFromFile(input_usd_filepath, &layer, &warn, &err);
 
   if (warn.size()) {
     std::cout << "WARN: " << warn << "\n";
@@ -167,13 +209,13 @@ int main(int argc, char **argv) {
   }
 
   tinyusdz::AssetResolutionResolver resolver;
-  // Register filesystem handler for `.my` asset.
+  // Register on-memory filesystem handler for `.my` asset.
   tinyusdz::AssetResolutionHandler ar_handler;
   ar_handler.resolve_fun = MyARResolve;
   ar_handler.size_fun = MyARSize;
   ar_handler.read_fun = MyARRead;
-  ar_handler.write_fun = nullptr; // not used in this example.
-  ar_handler.userdata = nullptr; // not used in this example;
+  ar_handler.write_fun = nullptr;  // not used in this example.
+  ar_handler.userdata = nullptr;   // not used in this example;
   resolver.register_asset_resolution_handler("my", ar_handler);
 
   tinyusdz::ReferencesCompositionOptions options;
@@ -181,11 +223,11 @@ int main(int argc, char **argv) {
 
   // Do `references` composition to materialize `references = @***.my@`
   tinyusdz::Layer composited_layer;
-  if (!tinyusdz::CompositeReferences(resolver, layer, &composited_layer, &warn, &err)) {
+  if (!tinyusdz::CompositeReferences(resolver, layer, &composited_layer, &warn,
+                                     &err, options)) {
     std::cerr << "Failed to composite `references`: " << err << "\n";
     return -1;
   }
-
 
   // Print USD scene as Ascii.
   std::cout << composited_layer << "\n";
