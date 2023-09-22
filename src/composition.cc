@@ -15,6 +15,7 @@
 #include "prim-types.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
+#include "tinyusdz.hh"
 #include "usdGeom.hh"
 #include "usdLux.hh"
 #include "usdShade.hh"
@@ -141,46 +142,13 @@ bool LoadAsset(AssetResolutionResolver &resolver,
   }
 
   std::string asset_path = assetPath.GetAssetPath();
+  std::string ext = GetExtension(asset_path);
 
   if (asset_path.empty()) {
     PUSH_ERROR_AND_RETURN(
         "TODO: No assetPath but Prim path(e.g. </xform>) in references.");
   }
 
-  if (IsBuiltinFileFormat(asset_path)) {
-    if (IsUSDFileFormat(asset_path)) {
-      // ok
-    } else {
-      if (error_when_unsupported_fileformat) {
-        PUSH_ERROR_AND_RETURN(fmt::format(
-            "TODO: Unknown/unsupported asset file format: {}", asset_path));
-      } else {
-        PUSH_WARN(fmt::format(
-            "TODO: Unknown/unsupported asset file format. Skipped: {}",
-            asset_path));
-        return true;
-      }
-    }
-  } else {
-    std::string ext = GetExtension(asset_path);
-    if (fileformats.count(ext)) {
-      DCOUT("Fileformat handler found for: " + ext);
-
-    } else {
-      if (error_when_unsupported_fileformat) {
-        PUSH_ERROR_AND_RETURN(
-            fmt::format("Unknown/unsupported asset file format: {}", asset_path));
-      } else {
-        PUSH_WARN(fmt::format(
-            "Unknown/unsupported asset file format. Skipped: {}", asset_path));
-        return true;
-      }
-    }
-  }
-
-  Layer layer;
-  std::string _warn;
-  std::string _err;
 
   // resolve path
   // TODO: Store resolved path to Reference?
@@ -188,6 +156,7 @@ bool LoadAsset(AssetResolutionResolver &resolver,
 
   DCOUT("Loading references: " << resolved_path
                                << ", asset_path: " << asset_path);
+
   if (resolved_path.empty()) {
     if (error_when_asset_not_found) {
       PUSH_ERROR_AND_RETURN(
@@ -207,10 +176,48 @@ bool LoadAsset(AssetResolutionResolver &resolver,
   }
 
   Asset asset;
-  if (!resolver.open_asset(resolved_path, asset_path, &asset, &_warn, &_err)) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("Failed to open resolved asset `{}`(`{}`)", resolved_path, asset_path, _err));
+  if (!resolver.open_asset(resolved_path, asset_path, &asset, warn, err)) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Failed to open asset `{}`.", resolved_path));
   }
+
+  DCOUT("Opened resolved assst: " << resolved_path
+                               << ", asset_path: " << asset_path);
+
+  if (IsBuiltinFileFormat(asset_path)) {
+    if (IsUSDFileFormat(asset_path)) {
+      // ok
+    } else {
+      // TODO: mtlx, obj
+      if (error_when_unsupported_fileformat) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "TODO: Unknown/unsupported asset file format: {}", asset_path));
+      } else {
+        PUSH_WARN(fmt::format(
+            "TODO: Unknown/unsupported asset file format. Skipped: {}",
+            asset_path));
+        return true;
+      }
+    }
+  } else {
+    if (fileformats.count(ext)) {
+      DCOUT("Fileformat handler found for: " + ext);
+
+    } else {
+      DCOUT("Unknown/unsupported fileformat: " + ext);
+      if (error_when_unsupported_fileformat) {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("Unknown/unsupported asset file format: {}", asset_path));
+      } else {
+        PUSH_WARN(fmt::format(
+            "Unknown/unsupported asset file format. Skipped: {}", asset_path));
+        return true;
+      }
+    }
+  }
+
+  Layer layer;
+  std::string _warn;
+  std::string _err;
 
   if (IsUSDFileFormat(asset_path)) {
     if (!LoadLayerFromMemory(asset.data(), asset.size(), asset_path, &layer, &_warn, &_err)) {
@@ -220,12 +227,29 @@ bool LoadAsset(AssetResolutionResolver &resolver,
   } else if (IsMtlxFileFormat(asset_path)) {
     DCOUT("TODO:");
     PUSH_ERROR_AND_RETURN(
-        fmt::format("TODO: open mtlx asset `{}`", asset_path, _err));
+        fmt::format("TODO: open mtlx asset `{}`", asset_path));
     
   } else {
-    // TODO: Invoke fileformat handler
-    PUSH_ERROR_AND_RETURN(
-        fmt::format("TODO: open custom asset `{}`", asset_path, _err));
+    if (fileformats.count(ext)) {
+      PrimSpec ps;
+      const FileFormatHandler &handler= fileformats.at(ext);
+
+      if (!handler.reader(asset, ps, &_warn, &_err, handler.userdata)) {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("Failed to read asset `{}` error: {}", asset_path, _err));
+      }
+
+      if (ps.name().empty()) {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("PrimSpec element_name is empty. asset `{}`", asset_path));
+      }
+
+      layer.primspecs()[ps.name()] = ps;
+      DCOUT("Read asset from custom fileformat handler: " << ext);
+    } else {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("FileFormat handler not found for asset `{}`", asset_path));
+    }
   }
 
   DCOUT("layer = " << print_layer(layer, 0));

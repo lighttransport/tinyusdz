@@ -300,12 +300,16 @@ typedef bool (*FileFormatCheckFunction)(const Asset &asset, std::string *warn, s
 
 // Read content of data into PrimSpec(metadatum, properties, primChildren/variantChildren).
 //
+// TODO: Use `Layer` instead of `PrimSpec`?
+//
 // @param[in] asset Asset data
 // @param[inout] ps PrimSpec which references/payload this asset.
 // @param[out] warn Warning message
 // @param[out] err Error message(when the fuction returns false)
 // @param[inout] user_data Userdata. can be nullptr.
+//
 // @return true when reading data succeeds. 
+//
 typedef bool (*FileFormatReadFunction)(const Asset &asset, PrimSpec &ps/* inout */, std::string *warn, std::string *err, void *user_data);
 
 // Write corresponding content of PrimSpec to a binary data
