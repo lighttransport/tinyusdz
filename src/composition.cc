@@ -19,6 +19,7 @@
 #include "usdGeom.hh"
 #include "usdLux.hh"
 #include "usdShade.hh"
+#include "usdMtlx.hh"
 #include "usda-reader.hh"
 
 #define PushError(s) \
@@ -225,9 +226,14 @@ bool LoadAsset(AssetResolutionResolver &resolver,
           fmt::format("Failed to open `{}` as Layer: {}", asset_path, _err));
     }
   } else if (IsMtlxFileFormat(asset_path)) {
-    DCOUT("TODO:");
-    PUSH_ERROR_AND_RETURN(
-        fmt::format("TODO: open mtlx asset `{}`", asset_path));
+
+    PrimSpec ps;
+    if (!LoadMaterialXFromAsset(asset, asset_path, ps, &_warn, &_err)) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Failed to open mtlx asset `{}`", asset_path));
+    }
+
+    layer.primspecs()[ps.name()] = ps;
     
   } else {
     if (fileformats.count(ext)) {

@@ -727,6 +727,33 @@ bool ToPrimSpec(const MtlxModel &model, PrimSpec &ps, std::string *err)
   return true;
 }
 
+bool LoadMaterialXFromAsset(const Asset &asset,
+                            const std::string &asset_path, PrimSpec &ps /* inout */,
+                            std::string *warn, std::string *err) {
+  (void)asset_path;
+  (void)warn;
+
+  if (asset.size() < 32) {
+    if (err) {
+      (*err) += "MateiralX: Asset size too small.\n";
+    }
+    return false;
+  }
+
+  std::string str(reinterpret_cast<const char *>(asset.data()), asset.size());
+
+  MtlxModel mtlx;
+  if (!ReadMaterialXFromString(str, asset_path, &mtlx, warn, err)) {
+    PUSH_ERROR_AND_RETURN("Failed to read MaterialX.");
+  }
+
+  if (!ToPrimSpec(mtlx, ps, err)) {
+    PUSH_ERROR_AND_RETURN("Failed to convert MaterialX to USD PrimSpec.");
+  }
+
+  return true;
+}
+
 //} // namespace usdMtlx
 } // namespace tinyusdz
 
@@ -751,6 +778,20 @@ bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
                              std::string *warn, std::string *err) {
   (void)mtlx;
   (void)xml_str;
+  (void)warn;
+
+  if (err) {
+    (*err) += "MaterialX support is disabled in this build.\n";
+  }
+  return false;
+}
+
+bool LoadMaterialXFromAsset(const Asset &asset,
+                            const std::string &asset_path, PrimSpec &ps /* inout */,
+                            std::string *warn, std::string *err) {
+  (void)asset;
+  (void)asset_path;
+  (void)ps;
   (void)warn;
 
   if (err) {
