@@ -37,6 +37,12 @@ enum class ColorSpace {
 
 } // namespace mtlx
 
+// <surfacematerial>
+struct MtlxMaterial {
+  std::string name;
+  std::string typeName;
+  std::string nodename;
+};
 
 struct MtlxModel {
   std::string asset_name;
@@ -55,6 +61,9 @@ struct MtlxModel {
   // Content of shader.
   // MtlxUsdPreviewSurface or MtlxAutodeskStandaradSurface
   value::Value shader; 
+
+  std::map<std::string, MtlxMaterial> surface_materials;
+  std::map<std::string, value::Value> shaders; // MtlxUsdPreviewSurface or MtlxAutodeskStandaradSurface
 };
 
 struct MtlxUsdPreviewSurface : UsdPreviewSurface {

@@ -9,12 +9,12 @@
 #endif
 
 #include "external/pugixml.hpp"
-//#include "external/jsonhpp/nlohmann/json.hpp"
+// #include "external/jsonhpp/nlohmann/json.hpp"
 
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif
-#endif // TINYUSDZ_USE_USDMTLX
+#endif  // TINYUSDZ_USE_USDMTLX
 
 #include <sstream>
 
@@ -22,53 +22,51 @@
 
 #if defined(TINYUSDZ_USE_USDMTLX)
 
-#include "io-util.hh"
-#include "tiny-format.hh"
-#include "ascii-parser.hh" // To parse color3f value
+#include "ascii-parser.hh"  // To parse color3f value
 #include "common-macros.inc"
-#include "value-pprint.hh"
+#include "external/dtoa_milo.h"
+#include "io-util.hh"
 #include "pprinter.hh"
 #include "tiny-format.hh"
-
-#include "external/dtoa_milo.h"
+#include "value-pprint.hh"
 
 inline std::string dtos(const double v) {
-
   char buf[128];
   dtoa_milo(v, buf);
 
   return std::string(buf);
 }
 
-#define PushWarn(msg) do { \
-  if (warn) { \
-    (*warn) += msg; \
-  } \
-} while(0);
+#define PushWarn(msg) \
+  do {                \
+    if (warn) {       \
+      (*warn) += msg; \
+    }                 \
+  } while (0);
 
-#define PushError(msg) do { \
-  if (err) { \
-    (*err) += msg; \
-  } \
-} while(0);
-
+#define PushError(msg) \
+  do {                 \
+    if (err) {         \
+      (*err) += msg;   \
+    }                  \
+  } while (0);
 
 namespace tinyusdz {
 
 // defined in ascii-parser-base-types.cc
 namespace ascii {
 
-extern template bool AsciiParser::SepBy1BasicType<float>(const char sep, std::vector<float> *ret);
+extern template bool AsciiParser::SepBy1BasicType<float>(
+    const char sep, std::vector<float> *ret);
 
-} // namespace ascii
+}  // namespace ascii
 
 namespace detail {
 
-template<typename T>
+template <typename T>
 Property MakeProperty(const T &value) {
-
   Attribute attr(value);
-  Property prop(attr, /* custom */false);
+  Property prop(attr, /* custom */ false);
 
   return prop;
 }
@@ -76,7 +74,6 @@ Property MakeProperty(const T &value) {
 bool is_supported_type(const std::string &typeName);
 
 bool is_supported_type(const std::string &typeName) {
-
   if (typeName.compare("integer") == 0) return true;
   if (typeName.compare("boolean") == 0) return true;
   if (typeName.compare("float") == 0) return true;
@@ -102,22 +99,23 @@ bool is_supported_type(const std::string &typeName) {
   // No matrixarray
 
   // TODO
-  //if (typeName.compare("color") == 0) return true;
-  //if (typeName.compare("geomname") == 0) return true;
-  //if (typeName.compare("geomnamearray") == 0) return true;
+  // if (typeName.compare("color") == 0) return true;
+  // if (typeName.compare("geomname") == 0) return true;
+  // if (typeName.compare("geomnamearray") == 0) return true;
 
   return false;
 }
 
-template<typename T>
+template <typename T>
 bool ParseValue(tinyusdz::ascii::AsciiParser &parser, T &ret, std::string *err);
 
-template<>
-bool ParseValue<int>(tinyusdz::ascii::AsciiParser &parser, int &ret, std::string *err) {
-
+template <>
+bool ParseValue<int>(tinyusdz::ascii::AsciiParser &parser, int &ret,
+                     std::string *err) {
   int val;
   if (!parser.ReadBasicType(&val)) {
-    PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse a value of type `{}`", value::TypeTraits<int>::type_name()));
+    PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse a value of type `{}`",
+                                      value::TypeTraits<int>::type_name()));
   }
 
   ret = val;
@@ -125,12 +123,13 @@ bool ParseValue<int>(tinyusdz::ascii::AsciiParser &parser, int &ret, std::string
   return true;
 }
 
-template<>
-bool ParseValue<bool>(tinyusdz::ascii::AsciiParser &parser, bool &ret, std::string *err) {
-
+template <>
+bool ParseValue<bool>(tinyusdz::ascii::AsciiParser &parser, bool &ret,
+                      std::string *err) {
   bool val;
   if (!parser.ReadBasicType(&val)) {
-    PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse a value of type `{}`", value::TypeTraits<bool>::type_name()));
+    PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse a value of type `{}`",
+                                      value::TypeTraits<bool>::type_name()));
   }
 
   ret = val;
@@ -138,12 +137,13 @@ bool ParseValue<bool>(tinyusdz::ascii::AsciiParser &parser, bool &ret, std::stri
   return true;
 }
 
-template<>
-bool ParseValue<float>(tinyusdz::ascii::AsciiParser &parser, float &ret, std::string *err) {
-
+template <>
+bool ParseValue<float>(tinyusdz::ascii::AsciiParser &parser, float &ret,
+                       std::string *err) {
   float val;
   if (!parser.ReadBasicType(&val)) {
-    PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse a value of type `{}`", value::TypeTraits<float>::type_name()));
+    PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse a value of type `{}`",
+                                      value::TypeTraits<float>::type_name()));
   }
 
   ret = val;
@@ -151,12 +151,14 @@ bool ParseValue<float>(tinyusdz::ascii::AsciiParser &parser, float &ret, std::st
   return true;
 }
 
-template<>
-bool ParseValue<std::string>(tinyusdz::ascii::AsciiParser &parser, std::string &ret, std::string *err) {
-
+template <>
+bool ParseValue<std::string>(tinyusdz::ascii::AsciiParser &parser,
+                             std::string &ret, std::string *err) {
   std::string val;
   if (!parser.ReadBasicType(&val)) {
-    PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse a value of type `{}`", value::TypeTraits<std::string>::type_name()));
+    PUSH_ERROR_AND_RETURN(
+        fmt::format("Failed to parse a value of type `{}`",
+                    value::TypeTraits<std::string>::type_name()));
   }
 
   ret = val;
@@ -164,18 +166,20 @@ bool ParseValue<std::string>(tinyusdz::ascii::AsciiParser &parser, std::string &
   return true;
 }
 
-template<>
-bool ParseValue<value::float2>(tinyusdz::ascii::AsciiParser &parser, value::float2 &ret, std::string *err) {
-
-
+template <>
+bool ParseValue<value::float2>(tinyusdz::ascii::AsciiParser &parser,
+                               value::float2 &ret, std::string *err) {
   std::vector<float> values;
   if (!parser.SepBy1BasicType(',', &values)) {
-    PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse a value of type `{}`", value::TypeTraits<value::float3>::type_name()));
+    PUSH_ERROR_AND_RETURN(
+        fmt::format("Failed to parse a value of type `{}`",
+                    value::TypeTraits<value::float3>::type_name()));
   }
 
   if (values.size() != 2) {
-    PUSH_ERROR_AND_RETURN(fmt::format("type `{}` expects the number of elements is 2, but got {}",
-       value::TypeTraits<value::float2>::type_name(), values.size()));
+    PUSH_ERROR_AND_RETURN(fmt::format(
+        "type `{}` expects the number of elements is 2, but got {}",
+        value::TypeTraits<value::float2>::type_name(), values.size()));
   }
 
   ret[0] = values[0];
@@ -184,18 +188,20 @@ bool ParseValue<value::float2>(tinyusdz::ascii::AsciiParser &parser, value::floa
   return true;
 }
 
-template<>
-bool ParseValue<value::float3>(tinyusdz::ascii::AsciiParser &parser, value::float3 &ret, std::string *err) {
-
-
+template <>
+bool ParseValue<value::float3>(tinyusdz::ascii::AsciiParser &parser,
+                               value::float3 &ret, std::string *err) {
   std::vector<float> values;
   if (!parser.SepBy1BasicType(',', &values)) {
-    PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse a value of type `{}`", value::TypeTraits<value::float3>::type_name()));
+    PUSH_ERROR_AND_RETURN(
+        fmt::format("Failed to parse a value of type `{}`",
+                    value::TypeTraits<value::float3>::type_name()));
   }
 
   if (values.size() != 3) {
-    PUSH_ERROR_AND_RETURN(fmt::format("type `{}` expects the number of elements is 3, but got {}",
-       value::TypeTraits<value::float3>::type_name(), values.size()));
+    PUSH_ERROR_AND_RETURN(fmt::format(
+        "type `{}` expects the number of elements is 3, but got {}",
+        value::TypeTraits<value::float3>::type_name(), values.size()));
   }
 
   ret[0] = values[0];
@@ -205,17 +211,90 @@ bool ParseValue<value::float3>(tinyusdz::ascii::AsciiParser &parser, value::floa
   return true;
 }
 
-template<>
-bool ParseValue<value::float4>(tinyusdz::ascii::AsciiParser &parser, value::float4 &ret, std::string *err) {
-
+template <>
+bool ParseValue<value::vector3f>(tinyusdz::ascii::AsciiParser &parser,
+                                 value::vector3f &ret, std::string *err) {
   std::vector<float> values;
   if (!parser.SepBy1BasicType(',', &values)) {
-    PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse a value of type `{}`", value::TypeTraits<value::float4>::type_name()));
+    PUSH_ERROR_AND_RETURN(
+        fmt::format("Failed to parse a value of type `{}`",
+                    value::TypeTraits<value::vector3f>::type_name()));
+  }
+
+  if (values.size() != 3) {
+    PUSH_ERROR_AND_RETURN(fmt::format(
+        "type `{}` expects the number of elements is 3, but got {}",
+        value::TypeTraits<value::vector3f>::type_name(), values.size()));
+  }
+
+  ret[0] = values[0];
+  ret[1] = values[1];
+  ret[2] = values[2];
+
+  return true;
+}
+
+template <>
+bool ParseValue<value::normal3f>(tinyusdz::ascii::AsciiParser &parser,
+                                 value::normal3f &ret, std::string *err) {
+  std::vector<float> values;
+  if (!parser.SepBy1BasicType(',', &values)) {
+    PUSH_ERROR_AND_RETURN(
+        fmt::format("Failed to parse a value of type `{}`",
+                    value::TypeTraits<value::normal3f>::type_name()));
+  }
+
+  if (values.size() != 3) {
+    PUSH_ERROR_AND_RETURN(fmt::format(
+        "type `{}` expects the number of elements is 3, but got {}",
+        value::TypeTraits<value::normal3f>::type_name(), values.size()));
+  }
+
+  ret[0] = values[0];
+  ret[1] = values[1];
+  ret[2] = values[2];
+
+  return true;
+}
+
+
+template <>
+bool ParseValue<value::color3f>(tinyusdz::ascii::AsciiParser &parser,
+                                 value::color3f &ret, std::string *err) {
+  std::vector<float> values;
+  if (!parser.SepBy1BasicType(',', &values)) {
+    PUSH_ERROR_AND_RETURN(
+        fmt::format("Failed to parse a value of type `{}`",
+                    value::TypeTraits<value::color3f>::type_name()));
+  }
+
+  if (values.size() != 3) {
+    PUSH_ERROR_AND_RETURN(fmt::format(
+        "type `{}` expects the number of elements is 3, but got {}",
+        value::TypeTraits<value::color3f>::type_name(), values.size()));
+  }
+
+  ret[0] = values[0];
+  ret[1] = values[1];
+  ret[2] = values[2];
+
+  return true;
+}
+
+template <>
+bool ParseValue<value::float4>(tinyusdz::ascii::AsciiParser &parser,
+                               value::float4 &ret, std::string *err) {
+  std::vector<float> values;
+  if (!parser.SepBy1BasicType(',', &values)) {
+    PUSH_ERROR_AND_RETURN(
+        fmt::format("Failed to parse a value of type `{}`",
+                    value::TypeTraits<value::float4>::type_name()));
   }
 
   if (values.size() != 4) {
-    PUSH_ERROR_AND_RETURN(fmt::format("type `{}` expects the number of elements is 4, but got {}",
-       value::TypeTraits<value::float4>::type_name(), values.size()));
+    PUSH_ERROR_AND_RETURN(fmt::format(
+        "type `{}` expects the number of elements is 4, but got {}",
+        value::TypeTraits<value::float4>::type_name(), values.size()));
   }
 
   ret[0] = values[0];
@@ -244,18 +323,19 @@ bool ParseValue<value::float4>(tinyusdz::ascii::AsciiParser &parser, value::floa
 /// stringarray. Unsupported data type: geomname, geomnamearray
 ///
 bool ParseMaterialXValue(const std::string &typeName, const std::string &str,
-                           value::Value *value, std::string *err);
+                         value::Value *value, std::string *err);
 
 bool ParseMaterialXValue(const std::string &typeName, const std::string &str,
-                           value::Value *value, std::string *err) {
-
+                         value::Value *value, std::string *err) {
   (void)value;
 
   if (!is_supported_type(typeName)) {
-    PUSH_ERROR_AND_RETURN(fmt::format("Invalid/unsupported type: {}", typeName));
+    PUSH_ERROR_AND_RETURN(
+        fmt::format("Invalid/unsupported type: {}", typeName));
   }
 
-  tinyusdz::StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()), str.size(), /* swap endian */ false);
+  tinyusdz::StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()),
+                            str.size(), /* swap endian */ false);
   tinyusdz::ascii::AsciiParser parser(&sr);
 
   if (typeName.compare("integer") == 0) {
@@ -291,11 +371,10 @@ bool ParseMaterialXValue(const std::string &typeName, const std::string &str,
   return false;
 }
 
-template<typename T>
-bool ParseMaterialXValue(const std::string &str,
-                         T *value, std::string *err) {
-
-  tinyusdz::StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()), str.size(), /* swap endian */ false);
+template <typename T>
+bool ParseMaterialXValue(const std::string &str, T *value, std::string *err) {
+  tinyusdz::StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()),
+                            str.size(), /* swap endian */ false);
   tinyusdz::ascii::AsciiParser parser(&sr);
 
   T val;
@@ -308,33 +387,35 @@ bool ParseMaterialXValue(const std::string &str,
   return true;
 }
 
+template <typename T>
+std::string to_xml_string(const T &val);
 
-
-template<typename T> std::string to_xml_string(const T &val);
-
-template<>
+template <>
 std::string to_xml_string(const float &val) {
   return dtos(double(val));
 }
 
-template<>
+template <>
 std::string to_xml_string(const int &val) {
   return std::to_string(val);
 }
 
-template<>
+template <>
 std::string to_xml_string(const value::color3f &val) {
-  return dtos(double(val.r)) + ", " + dtos(double(val.g)) + ", " + dtos(double(val.b));
+  return dtos(double(val.r)) + ", " + dtos(double(val.g)) + ", " +
+         dtos(double(val.b));
 }
 
-template<>
+template <>
 std::string to_xml_string(const value::normal3f &val) {
-  return dtos(double(val.x)) + ", " + dtos(double(val.y)) + ", " + dtos(double(val.z));
+  return dtos(double(val.x)) + ", " + dtos(double(val.y)) + ", " +
+         dtos(double(val.z));
 }
 
-template<typename T>
-bool SerializeAttribute(const std::string &attr_name, const TypedAttributeWithFallback<Animatable<T>> &attr, std::string &value_str, std::string *err) {
-
+template <typename T>
+bool SerializeAttribute(const std::string &attr_name,
+                        const TypedAttributeWithFallback<Animatable<T>> &attr,
+                        std::string &value_str, std::string *err) {
   std::stringstream value_ss;
 
   if (attr.is_connection()) {
@@ -350,18 +431,22 @@ bool SerializeAttribute(const std::string &attr_name, const TypedAttributeWithFa
       if (animatable_value.get_scalar(&value)) {
         value_ss << "\"" << to_xml_string(value) << "\"";
       } else {
-        PUSH_ERROR_AND_RETURN(fmt::format("Failed to get the value at default time of `{}`", attr_name));
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Failed to get the value at default time of `{}`", attr_name));
       }
     } else if (animatable_value.is_timesamples()) {
-      // no time-varying attribute in MaterialX. Use the value at default timecode.
+      // no time-varying attribute in MaterialX. Use the value at default
+      // timecode.
       T value;
       if (animatable_value.get(value::TimeCode::Default(), &value)) {
         value_ss << "\"" << to_xml_string(value) << "\"";
       } else {
-        PUSH_ERROR_AND_RETURN(fmt::format("Failed to get the value at default time of `{}`", attr_name));
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Failed to get the value at default time of `{}`", attr_name));
       }
     } else {
-      PUSH_ERROR_AND_RETURN(fmt::format("Failed to get the value of `{}`", attr_name));
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Failed to get the value of `{}`", attr_name));
     }
   }
 
@@ -369,7 +454,9 @@ bool SerializeAttribute(const std::string &attr_name, const TypedAttributeWithFa
   return true;
 }
 
-static bool WriteMaterialXToString(const MtlxUsdPreviewSurface &shader, std::string &xml_str, std::string *warn, std::string *err) {
+static bool WriteMaterialXToString(const MtlxUsdPreviewSurface &shader,
+                                   std::string &xml_str, std::string *warn,
+                                   std::string *err) {
   (void)warn;
 
   // We directly write xml string for simplicity.
@@ -384,16 +471,19 @@ static bool WriteMaterialXToString(const MtlxUsdPreviewSurface &shader, std::str
   ss << "<?xml version=\"1.0\"?>\n";
   // TODO: colorspace
   ss << "<materialx version=\"1.38\" colorspace=\"lin_rec709\">\n";
-  ss << pprint::Indent(1) << "<UsdPreviewSurface name=\"" << node_name << "\" type =\"surfaceshader\">\n";
+  ss << pprint::Indent(1) << "<UsdPreviewSurface name=\"" << node_name
+     << "\" type =\"surfaceshader\">\n";
 
-#define EMIT_ATTRIBUTE(__name, __tyname, __attr) { \
-    std::string value_str; \
-    if (!SerializeAttribute(__name, __attr, value_str, err)) { \
-      return false; \
-    } \
-    if (value_str.size()) { \
-      ss << pprint::Indent(2) << "<input name=\"" << __name << "\" type=\"" << __tyname << "\" value=\"" << value_str << "\" />\n"; \
-    } \
+#define EMIT_ATTRIBUTE(__name, __tyname, __attr)                            \
+  {                                                                         \
+    std::string value_str;                                                  \
+    if (!SerializeAttribute(__name, __attr, value_str, err)) {              \
+      return false;                                                         \
+    }                                                                       \
+    if (value_str.size()) {                                                 \
+      ss << pprint::Indent(2) << "<input name=\"" << __name << "\" type=\"" \
+         << __tyname << "\" value=\"" << value_str << "\" />\n";            \
+    }                                                                       \
   }
 
   // TODO: Attribute Connection
@@ -414,8 +504,11 @@ static bool WriteMaterialXToString(const MtlxUsdPreviewSurface &shader, std::str
 
   ss << pprint::Indent(1) << "</UsdPreviewSurface>\n";
 
-  ss << pprint::Indent(1) << "<surfacematerial name=\"USD_Default\" type=\"material\">\n";
-  ss << pprint::Indent(2) << "<input name=\"surfaceshader\" type=\"surfaceshader\" nodename=\"" << node_name << "\" />\n";
+  ss << pprint::Indent(1)
+     << "<surfacematerial name=\"USD_Default\" type=\"material\">\n";
+  ss << pprint::Indent(2)
+     << "<input name=\"surfaceshader\" type=\"surfaceshader\" nodename=\""
+     << node_name << "\" />\n";
   ss << pprint::Indent(1) << "</surfacematerial>\n";
 
   ss << "</materialx>\n";
@@ -425,8 +518,8 @@ static bool WriteMaterialXToString(const MtlxUsdPreviewSurface &shader, std::str
   return true;
 }
 
-static bool ConvertPlace2d(const pugi::xml_node &node, PrimSpec &ps, std::string *warn, std::string *err) {
-
+static bool ConvertPlace2d(const pugi::xml_node &node, PrimSpec &ps,
+                           std::string *warn, std::string *err) {
   // texcoord(vector2). default index=0 uv coordinate
   // pivot(vector2). default (0, 0)
   // scale(vector2). default (1, 1)
@@ -446,7 +539,8 @@ static bool ConvertPlace2d(const pugi::xml_node &node, PrimSpec &ps, std::string
   if (pugi::xml_attribute scale_attr = node.attribute("scale")) {
     value::float2 value;
     if (!ParseMaterialXValue(scale_attr.as_string(), &value, err)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse `rotate` attribute of `place2d`.\n");
+      PUSH_ERROR_AND_RETURN(
+          "Failed to parse `rotate` attribute of `place2d`.\n");
     }
     ps.props()["inputs:scale"] = Property(Attribute::Uniform(value));
   }
@@ -454,7 +548,8 @@ static bool ConvertPlace2d(const pugi::xml_node &node, PrimSpec &ps, std::string
   if (pugi::xml_attribute rotate_attr = node.attribute("rotate")) {
     float value;
     if (!ParseMaterialXValue(rotate_attr.as_string(), &value, err)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse `rotate` attribute of `place2d`.\n");
+      PUSH_ERROR_AND_RETURN(
+          "Failed to parse `rotate` attribute of `place2d`.\n");
     }
     ps.props()["inputs:rotate"] = Property(Attribute::Uniform(value));
   }
@@ -463,21 +558,23 @@ static bool ConvertPlace2d(const pugi::xml_node &node, PrimSpec &ps, std::string
   if (offset_attr) {
     value::float2 value;
     if (!ParseMaterialXValue(offset_attr.as_string(), &value, err)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse `offset` attribute of `place2d`.\n");
+      PUSH_ERROR_AND_RETURN(
+          "Failed to parse `offset` attribute of `place2d`.\n");
     }
     ps.props()["inputs:offset"] = Property(Attribute::Uniform(value));
   }
 
   ps.specifier() = Specifier::Def;
   ps.typeName() = kShader;
-  ps.props()[kShaderInfoId] = Property(Attribute::Uniform(value::token(kUsdTransform2d)));
-
+  ps.props()[kShaderInfoId] =
+      Property(Attribute::Uniform(value::token(kUsdTransform2d)));
 
   return true;
 }
 
-static bool ConvertNodeGraphRec(const uint32_t depth, const pugi::xml_node &node, PrimSpec &ps_out, std::string *warn, std::string *err) {
-
+static bool ConvertNodeGraphRec(const uint32_t depth,
+                                const pugi::xml_node &node, PrimSpec &ps_out,
+                                std::string *warn, std::string *err) {
   if (depth > (1024 * 1024)) {
     PUSH_ERROR_AND_RETURN("Network too deep.\n");
   }
@@ -496,7 +593,7 @@ static bool ConvertNodeGraphRec(const uint32_t depth, const pugi::xml_node &node
 
   for (const auto &child : node.children()) {
     PrimSpec child_ps;
-    if (!ConvertNodeGraphRec(depth+1, child, child_ps, warn, err)) {
+    if (!ConvertNodeGraphRec(depth + 1, child, child_ps, warn, err)) {
       return false;
     }
 
@@ -508,7 +605,7 @@ static bool ConvertNodeGraphRec(const uint32_t depth, const pugi::xml_node &node
   return true;
 }
 
-#if 0 // TODO
+#if 0  // TODO
 static bool ConvertPlace2d(const pugi::xml_node &node, UsdTransform2d &tx, std::string *warn, std::string *err) {
   // texcoord(vector2). default index=0 uv coordinate
   // pivot(vector2). default (0, 0)
@@ -573,11 +670,39 @@ static bool ConvertTiledImage(const pugi::xml_node &node, UsdUVTexture &tex, std
 }
 #endif
 
+}  // namespace detail
 
-} // namespace detail
+bool ReadMaterialXFromString(const std::string &str,
+                             const std::string &asset_path, MtlxModel *mtlx,
+                             std::string *warn, std::string *err) {
+#define GET_ATTR_VALUE(__xml, __name, __ty, __var)                        \
+  do {                                                                    \
+    pugi::xml_attribute attr = __xml.attribute(__name);                   \
+    if (!attr) {                                                          \
+      PUSH_ERROR_AND_RETURN(                                              \
+          fmt::format("Required XML Attribute `{}` not found.", __name)); \
+    }                                                                     \
+    __ty v;                                                               \
+    if (!detail::ParseMaterialXValue(attr.as_string(), &v, err)) {        \
+      return false;                                                       \
+    }                                                                     \
+    __var = v;                                                            \
+  } while (0)
 
-bool ReadMaterialXFromString(const std::string &str, const std::string &asset_path, MtlxModel *mtlx, std::string *warn, std::string *err) {
-
+#define GET_SHADER_PARAM(__name, __typeName, __inp_name, __tyname, __ty, \
+                         __valuestr, __attr)                             \
+  if (__name == __inp_name) {                                            \
+    if (__typeName != __tyname) {                                        \
+      PUSH_ERROR_AND_RETURN(                                             \
+          fmt::format("type `{}` expected for input `{}`, but got `{}`", \
+                      __typeName, __inp_name, __tyname));                \
+    }                                                                    \
+    __ty v;                                                              \
+    if (!detail::ParseMaterialXValue(__valuestr, &v, err)) {             \
+      return false;                                                      \
+    }                                                                    \
+    __attr.set_value(v);                                                 \
+  } else
 
   pugi::xml_document doc;
   pugi::xml_parse_result result = doc.load_string(str.c_str());
@@ -595,14 +720,15 @@ bool ReadMaterialXFromString(const std::string &str, const std::string &asset_pa
   //
   // - [x] version(string, required)
   //   - [x] validate version string
-  // - [ ] cms(string, optional)
-  // - [ ] cmsconfig(filename, optional)
-  // - [ ] colorspace(string, optional)
-  // - [ ] namespace(string, optional)
+  // - [x] cms(string, optional)
+  // - [x] cmsconfig(filename, optional)
+  // - [x] colorspace(string, optional)
+  // - [x] namespace(string, optional)
 
   pugi::xml_attribute ver_attr = root.attribute("version");
   if (!ver_attr) {
-    PUSH_ERROR_AND_RETURN("version attribute not found in <materialx>:" + asset_path);
+    PUSH_ERROR_AND_RETURN("version attribute not found in <materialx>:" +
+                          asset_path);
   }
 
   // parse version string as floating point
@@ -614,7 +740,10 @@ bool ReadMaterialXFromString(const std::string &str, const std::string &asset_pa
     }
 
     if (ver < 1.38f) {
-      PUSH_ERROR_AND_RETURN(fmt::format("TinyUSDZ only supports MaterialX version 1.38 or greater, but got {}", ver_attr.as_string()));
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("TinyUSDZ only supports MaterialX version 1.38 or "
+                      "greater, but got {}",
+                      ver_attr.as_string()));
     }
     mtlx->version = ver_attr.as_string();
   }
@@ -652,33 +781,133 @@ bool ReadMaterialXFromString(const std::string &str, const std::string &asset_pa
 
   // standard_surface
   for (auto sd_surface : root.children("standard_surface")) {
+    PUSH_WARN("TODO: `look`");
     // TODO
     (void)sd_surface;
   }
 
   // standard_surface
   for (auto usd_surface : root.children("UsdPreviewSurface")) {
-    // TODO
-    (void)usd_surface;
+    std::string surface_name;
+    {
+      std::string typeName;
+
+      GET_ATTR_VALUE(usd_surface, "name", std::string, surface_name);
+      GET_ATTR_VALUE(usd_surface, "type", std::string, typeName);
+
+      if (typeName != "surfaceshader") {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("`surfaceshader` expected for type of "
+                        "UsdPreviewSurface, but got `{}`",
+                        typeName));
+      }
+    }
+
+    MtlxUsdPreviewSurface surface;
+    for (auto inp : usd_surface.children("input")) {
+      std::string name;
+      std::string typeName;
+      std::string valueStr;
+      GET_ATTR_VALUE(inp, "name", std::string, name);
+      GET_ATTR_VALUE(inp, "type", std::string, typeName);
+      GET_ATTR_VALUE(inp, "value", std::string, valueStr);
+
+      // TODO: connection
+      GET_SHADER_PARAM(name, typeName, "diffuseColor", "color3", value::color3f,
+                       valueStr, surface.diffuseColor)
+      GET_SHADER_PARAM(name, typeName, "emissiveColor", "color3",
+                       value::color3f, valueStr, surface.emissiveColor)
+      GET_SHADER_PARAM(name, typeName, "useSpecularWorkflow", "integer", int,
+                       valueStr, surface.useSpecularWorkflow)
+      GET_SHADER_PARAM(name, typeName, "specularColor", "color3",
+                       value::color3f, valueStr, surface.specularColor)
+      GET_SHADER_PARAM(name, typeName, "metallic", "float", float, valueStr,
+                       surface.metallic)
+      GET_SHADER_PARAM(name, typeName, "roughness", "float", float, valueStr,
+                       surface.roughness)
+      GET_SHADER_PARAM(name, typeName, "clearcoat", "float", float, valueStr,
+                       surface.clearcoat)
+      GET_SHADER_PARAM(name, typeName, "clearcoatRoughness", "float", float,
+                       valueStr, surface.clearcoatRoughness)
+      GET_SHADER_PARAM(name, typeName, "opacity", "float", float, valueStr,
+                       surface.opacity)
+      GET_SHADER_PARAM(name, typeName, "opacityThreshold", "float", float,
+                       valueStr, surface.opacityThreshold)
+      GET_SHADER_PARAM(name, typeName, "ior", "float", float, valueStr,
+                       surface.ior)
+      GET_SHADER_PARAM(name, typeName, "normal", "vector3f", value::normal3f,
+                       valueStr, surface.normal)
+      GET_SHADER_PARAM(name, typeName, "displacement", "float", float, valueStr,
+                       surface.displacement)
+      GET_SHADER_PARAM(name, typeName, "occlusion", "float", float, valueStr,
+                       surface.occlusion) {
+        PUSH_WARN("Unknown/unsupported input " << name);
+      }
+    }
+
+    mtlx->shaders[surface_name] = surface;
   }
 
   // surfacematerial
-  for (auto surface : root.children("surfacematerial")) {
-    // TODO
-    (void)surface;
+  for (auto surfacematerial : root.children("surfacematerial")) {
+    std::string material_name;
+    {
+      std::string typeName;
+      GET_ATTR_VALUE(surfacematerial, "name", std::string, material_name);
+      GET_ATTR_VALUE(surfacematerial, "type", std::string, typeName);
+
+      if (typeName != "material") {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "`material` expected for type of surfacematerial, but got `{}`",
+            typeName));
+      }
+    }
+
+    std::string typeName;
+    std::string nodename;
+    for (auto inp : surfacematerial.children("input")) {
+      std::string name;
+      GET_ATTR_VALUE(inp, "name", std::string, name);
+      GET_ATTR_VALUE(inp, "type", std::string, typeName);
+      GET_ATTR_VALUE(inp, "nodename", std::string, nodename);
+
+      if (name != "surfaceshader") {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("Currently only `surfaceshader` supported for "
+                        "`surfacematerial`'s input, but got `{}`",
+                        name));
+      }
+
+      if (typeName != "surfaceshader") {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("Currently only `surfaceshader` supported for "
+                        "`surfacematerial` input type, but got `{}`",
+                        typeName));
+      }
+    }
+
+    MtlxMaterial mat;
+    mat.name = material_name;
+    mat.typeName = typeName;
+    mat.nodename = nodename;
+    mtlx->surface_materials[material_name] = mat;
   }
 
   // look.
   for (auto look : root.children("look")) {
+    PUSH_WARN("TODO: `look`");
     // TODO
     (void)look;
   }
 
+#undef GET_ATTR_VALUE
+
   return true;
 }
 
-bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver, const std::string &asset_path, MtlxModel *mtlx, std::string *warn, std::string *err) {
-
+bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver,
+                           const std::string &asset_path, MtlxModel *mtlx,
+                           std::string *warn, std::string *err) {
   std::string filepath = resolver.resolve(asset_path);
   if (filepath.empty()) {
     PUSH_ERROR_AND_RETURN("Asset not found: " + asset_path);
@@ -688,7 +917,8 @@ bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver, const std::s
   size_t max_bytes = 1024 * 1024 * 16;
 
   std::vector<uint8_t> data;
-  if (!io::ReadWholeFile(&data, err, filepath, max_bytes, /* userdata */nullptr)) {
+  if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
+                         /* userdata */ nullptr)) {
     PUSH_ERROR_AND_RETURN("Read file failed.");
   }
 
@@ -697,8 +927,7 @@ bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver, const std::s
 }
 
 bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
-                             std::string *warn, std::string *err) {
-
+                            std::string *warn, std::string *err) {
   if (auto usdps = mtlx.shader.as<MtlxUsdPreviewSurface>()) {
     return detail::WriteMaterialXToString(*usdps, xml_str, warn, err);
   } else if (auto adskss = mtlx.shader.as<MtlxAutodeskStandardSurface>()) {
@@ -712,24 +941,59 @@ bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
   return false;
 }
 
-bool ToPrimSpec(const MtlxModel &model, PrimSpec &ps, std::string *err)
-{
+bool ToPrimSpec(const MtlxModel &model, PrimSpec &ps, std::string *err) {
+  //
+  // def "MaterialX" {
+  //
+  //   def "Materials" {
+  //     def Material ... {
+  //     }
+  //   }
+  //   def "Shaders" {
+  //   }
   constexpr auto kAutodeskStandardSurface = "AutodeskStandardSurface";
 
   if (model.shader_name == kUsdPreviewSurface) {
-    ps.props()["info:id"] = detail::MakeProperty(value::token(kUsdPreviewSurface));
+    ps.props()["info:id"] =
+        detail::MakeProperty(value::token(kUsdPreviewSurface));
   } else if (model.shader_name == kAutodeskStandardSurface) {
-    ps.props()["info:id"] = detail::MakeProperty(value::token(kAutodeskStandardSurface));
+    ps.props()["info:id"] =
+        detail::MakeProperty(value::token(kAutodeskStandardSurface));
   } else {
     PUSH_ERROR_AND_RETURN("Unsupported shader_name: " << model.shader_name);
   }
 
+  PrimSpec materials;
+  materials.name() = "Materials";
+  materials.specifier() = Specifier::Def;
+
+  for (const auto &item : model.surface_materials) {
+    PrimSpec material;
+    material.specifier() = Specifier::Def;
+    material.typeName() = "Material";
+
+    material.name() = item.second.name;
+  }
+
+  PrimSpec shaders;
+  shaders.name() = "Shaders";
+  shaders.specifier() = Specifier::Def;
+
+  PrimSpec root;
+  root.name() = "MaterialX";
+  root.specifier() = Specifier::Def;
+
+  root.children().push_back(materials);
+  root.children().push_back(shaders);
+
+  ps = std::move(root);
+
   return true;
 }
 
-bool LoadMaterialXFromAsset(const Asset &asset,
-                            const std::string &asset_path, PrimSpec &ps /* inout */,
-                            std::string *warn, std::string *err) {
+bool LoadMaterialXFromAsset(const Asset &asset, const std::string &asset_path,
+                            PrimSpec &ps /* inout */, std::string *warn,
+                            std::string *err) {
   (void)asset_path;
   (void)warn;
 
@@ -755,14 +1019,15 @@ bool LoadMaterialXFromAsset(const Asset &asset,
 }
 
 //} // namespace usdMtlx
-} // namespace tinyusdz
+}  // namespace tinyusdz
 
 #else
 
 namespace tinyusdz {
 
-bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver, const std::string &asset_path, MtlxModel *mtlx, std::string *warn, std::string *err) {
-
+bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver,
+                           const std::string &asset_path, MtlxModel *mtlx,
+                           std::string *warn, std::string *err) {
   (void)resolver;
   (void)asset_path;
   (void)mtlx;
@@ -775,7 +1040,7 @@ bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver, const std::s
 }
 
 bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
-                             std::string *warn, std::string *err) {
+                            std::string *warn, std::string *err) {
   (void)mtlx;
   (void)xml_str;
   (void)warn;
@@ -786,9 +1051,9 @@ bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
   return false;
 }
 
-bool LoadMaterialXFromAsset(const Asset &asset,
-                            const std::string &asset_path, PrimSpec &ps /* inout */,
-                            std::string *warn, std::string *err) {
+bool LoadMaterialXFromAsset(const Asset &asset, const std::string &asset_path,
+                            PrimSpec &ps /* inout */, std::string *warn,
+                            std::string *err) {
   (void)asset;
   (void)asset_path;
   (void)ps;
@@ -797,6 +1062,7 @@ bool LoadMaterialXFromAsset(const Asset &asset,
   if (err) {
     (*err) += "MaterialX support is disabled in this build.\n";
   }
+
   return false;
 }
 
@@ -813,6 +1079,6 @@ bool ToPrimSpec(const MtlxModel &model, PrimSpec &ps, std::string *err)
 }
 #endif
 
-} // namespace tinyusdz
+}  // namespace tinyusdz
 
-#endif // TINYUSDZ_USE_USDMTLX
+#endif  // TINYUSDZ_USE_USDMTLX

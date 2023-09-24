@@ -55,7 +55,10 @@ int main(int argc, char **argv)
   }
   std::cout << "colorspace = " << cspace_attr.as_string() << "\n";
 
-  //auto usdp = mtlx.child("UsdPreviewSurface");
+  for (auto usdp : mtlx.child("UsdPreviewSurface")) {
+    std::cout << "UsdPreviewSurface: " << usdp.name() << "\n";
+
+  }
 
   // nodegraph
   for (auto ng : mtlx.children("nodegraph")) {
@@ -65,5 +68,15 @@ int main(int argc, char **argv)
     }
   }
 
+
+  // surfacematerial
+  for (auto sm : mtlx.children("surfacematerial")) {
+    std::cout << "surfacematerial: " << sm.name() << "\n";
+    for (auto inp : sm.children("input")) {
+      std::cout << "input: " << inp.attribute("name").as_string() << "\n";
+      std::cout << "  " << inp.attribute("type").as_string() << "\n";
+      std::cout << "  " << inp.attribute("nodename").as_string() << "\n";
+    }
+  }
   return 0;
 }
