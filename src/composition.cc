@@ -185,10 +185,10 @@ bool LoadAsset(AssetResolutionResolver &resolver,
                                << ", asset_path: " << asset_path);
 
   if (IsBuiltinFileFormat(asset_path)) {
-    if (IsUSDFileFormat(asset_path)) {
+    if (IsUSDFileFormat(asset_path) || IsMtlxFileFormat(asset_path)) {
       // ok
     } else {
-      // TODO: mtlx, obj
+      // TODO: obj
       if (error_when_unsupported_fileformat) {
         PUSH_ERROR_AND_RETURN(fmt::format(
             "TODO: Unknown/unsupported asset file format: {}", asset_path));
@@ -227,13 +227,19 @@ bool LoadAsset(AssetResolutionResolver &resolver,
     }
   } else if (IsMtlxFileFormat(asset_path)) {
 
+    // primPath must be '</MaterialX>'
+    if (primPath.prim_part() != "/MaterialX") {
+      PUSH_ERROR_AND_RETURN("Prim path must be </MaterialX>, but got: " + primPath.prim_part());
+    }
+
     PrimSpec ps;
     if (!LoadMaterialXFromAsset(asset, asset_path, ps, &_warn, &_err)) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("Failed to open mtlx asset `{}`", asset_path));
     }
 
-    layer.primspecs()[ps.name()] = ps;
+    ps.name() = "MaterialX";
+    layer.primspecs()["MaterialX"] = ps;
     
   } else {
     if (fileformats.count(ext)) {
