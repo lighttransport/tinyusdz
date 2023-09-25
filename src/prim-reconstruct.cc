@@ -2982,6 +2982,44 @@ bool ReconstructPrim<GeomCamera>(
 }
 
 template <>
+bool ReconstructPrim<PointInstancer>(
+    const Specifier &spec,
+    const PropertyMap &properties,
+    const ReferenceList &references,
+    PointInstancer *instancer,
+    std::string *warn,
+    std::string *err) {
+
+  (void)warn;
+  (void)references;
+
+  DCOUT("Reconstruct PointInstancer.");
+
+  std::set<std::string> table;
+  if (!ReconstructGPrimProperties(spec, table, properties, instancer, warn, err)) {
+    return false;
+  }
+
+  for (const auto &prop : properties) {
+    PARSE_TARGET_PATHS_RELATION(table, prop, "prototypes", instancer->prototypes)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "protoIndices", PointInstancer, instancer->protoIndices)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "ids", PointInstancer, instancer->ids)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "positions", PointInstancer, instancer->positions)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "orientations", PointInstancer, instancer->orientations)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "scales", PointInstancer, instancer->scales)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "velocities", PointInstancer, instancer->velocities)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "accelerations", PointInstancer, instancer->accelerations)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "angularVelocities", PointInstancer, instancer->angularVelocities)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "invisibleIds", PointInstancer, instancer->invisibleIds)
+
+    ADD_PROPERTY(table, prop, PointInstancer, instancer->props)
+    PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
+  }
+
+  return true;
+}
+
+template <>
 bool ReconstructShader<ShaderNode>(
     const Specifier &spec,
     const PropertyMap &properties,
