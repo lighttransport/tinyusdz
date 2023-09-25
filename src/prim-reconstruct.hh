@@ -22,6 +22,7 @@ namespace prim {
 /// TODO: Move to prim-reconstruct.cc?
 ///
 bool ReconstructXformOpsFromProperties(
+      const Specifier &spec,
       std::set<std::string> &table, /* inout */
       const PropertyMap &properties,
       std::vector<XformOp> *xformOps,
@@ -32,6 +33,7 @@ bool ReconstructXformOpsFromProperties(
 ///
 template <typename T>
 bool ReconstructPrim(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     T *out,

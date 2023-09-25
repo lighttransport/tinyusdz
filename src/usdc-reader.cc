@@ -71,7 +71,7 @@ namespace prim {
 // implimentations will be located in prim-reconstruct.cc
 #define RECONSTRUCT_PRIM_DECL(__ty)                                      \
   template <>                                                            \
-  bool ReconstructPrim<__ty>(const PropertyMap &, const ReferenceList &, \
+  bool ReconstructPrim<__ty>(const Specifier &spec, const PropertyMap &, const ReferenceList &, \
                              __ty *, std::string *, std::string *)
 
 RECONSTRUCT_PRIM_DECL(Xform);
@@ -271,7 +271,7 @@ class USDCReader::Impl {
       std::vector<value::token> &variantChildren); /* out */
 
   template <typename T>
-  bool ReconstructPrim(const crate::CrateReader::Node &node,
+  bool ReconstructPrim(const Specifier &spec, const crate::CrateReader::Node &node,
                        const PathIndexToSpecIndexMap &psmap, T *prim);
 
   ///
@@ -1384,7 +1384,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
 }
 
 template <typename T>
-bool USDCReader::Impl::ReconstructPrim(const crate::CrateReader::Node &node,
+bool USDCReader::Impl::ReconstructPrim(const Specifier &spec, const crate::CrateReader::Node &node,
                                        const PathIndexToSpecIndexMap &psmap,
                                        T *prim) {
   // Prim's properties are stored in its children nodes.
@@ -1395,7 +1395,7 @@ bool USDCReader::Impl::ReconstructPrim(const crate::CrateReader::Node &node,
 
   prim::ReferenceList refs;  // dummy
 
-  if (!prim::ReconstructPrim<T>(properties, refs, prim, &_warn, &_err)) {
+  if (!prim::ReconstructPrim<T>(spec, properties, refs, prim, &_warn, &_err)) {
     return false;
   }
 
@@ -1655,7 +1655,7 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
 #define RECONSTRUCT_PRIM(__primty, __node_ty, __prim_name, __spec) \
   if (__node_ty == value::TypeTraits<__primty>::type_name()) {     \
     __primty typed_prim;                                           \
-    if (!ReconstructPrim(node, psmap, &typed_prim)) {         \
+    if (!ReconstructPrim(__spec, node, psmap, &typed_prim)) {         \
       PUSH_ERROR("Failed to reconstruct Prim " << __node_ty << " elementName: " << __prim_name);      \
       return nonstd::nullopt;                                      \
     }                                                              \
@@ -1676,7 +1676,7 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
     // Code is mostly identical to RECONSTRUCT_PRIM.
     // Difference is store primTypeName to Model class itself.
     Model typed_prim;
-    if (!ReconstructPrim(node, psmap, &typed_prim)) {
+    if (!ReconstructPrim(spec, node, psmap, &typed_prim)) {
       PUSH_ERROR("Failed to reconstruct Model");
       return nonstd::nullopt;
     }
@@ -2304,8 +2304,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
         if (specifier.value() == Specifier::Def) {
           // ok
         } else if (specifier.value() == Specifier::Class) {
-          PUSH_WARN("TODO: `class` specifier. skipping this model...");
-          return true;
+          // ok
         } else if (specifier.value() == Specifier::Over) {
           // ok
         } else {
@@ -2465,8 +2464,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
         if (specifier.value() == Specifier::Def) {
           // ok
         } else if (specifier.value() == Specifier::Class) {
-          PUSH_WARN("TODO: `class` specifier. skipping this model...");
-          return true;
+          // ok
         } else if (specifier.value() == Specifier::Over) {
           // ok
         } else {
@@ -2758,8 +2756,7 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
         if (specifier.value() == Specifier::Def) {
           // ok
         } else if (specifier.value() == Specifier::Class) {
-          PUSH_WARN("TODO: `class` specifier. skipping this model...");
-          return true;
+          // ok
         } else if (specifier.value() == Specifier::Over) {
           // ok
         } else {
@@ -2934,8 +2931,7 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
         if (specifier.value() == Specifier::Def) {
           // ok
         } else if (specifier.value() == Specifier::Class) {
-          PUSH_WARN("TODO: `class` specifier. skipping this model...");
-          return true;
+          // ok
         } else if (specifier.value() == Specifier::Over) {
           // ok
         } else {
@@ -3116,7 +3112,7 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
 }
 
 //
-// TODO: rewrite code in bottom-up manner 
+// TODO: rewrite code in bottom-up manner
 //
 bool USDCReader::Impl::ReconstructPrimRecursively(
     int parent, int current, Prim *parentPrim, int level,
@@ -3176,13 +3172,13 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
   //
   DCOUT(fmt::format("parent {}, current {}", parent, current));
 
-  DCOUT(fmt::format("  has variant properties {}, has variant children {}", 
+  DCOUT(fmt::format("  has variant properties {}, has variant children {}",
     _variantPropChildren.count(current),
     _variantPrimChildren.count(current)));
 
   if (_variantPropChildren.count(current)) {
 
-    // - parentPrim 
+    // - parentPrim
     //   - variantPrim(SpecTypeVariant) <- current
     //     - variant property(SpecTypeAttribute)
 
@@ -3223,7 +3219,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
         PUSH_ERROR_AND_RETURN("Internal error: variant Property not found.");
       }
       const std::pair<Path, Property> &pp = _variantProps.at(item);
-  
+
       std::string prop_name = std::get<0>(pp).prop_part();
       DCOUT(fmt::format("  node_index = {}, prop name {}", item, prop_name));
 
@@ -3250,7 +3246,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
     DCOUT(fmt::format("{} has variant Prim ", prim->element_name()));
 
-    
+
     for (const auto &item : _variantPrimChildren.at(current)) {
 
       if (!_variantPrims.count(item)) {
@@ -3423,13 +3419,13 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
   //
   DCOUT(fmt::format("parent {}, current {}", parent, current));
 
-  DCOUT(fmt::format("  has variant properties {}, has variant children {}", 
+  DCOUT(fmt::format("  has variant properties {}, has variant children {}",
     _variantPropChildren.count(current),
     _variantPrimChildren.count(current)));
 
   if (_variantPropChildren.count(current)) {
 
-    // - parentPrim 
+    // - parentPrim
     //   - variantPrim(SpecTypeVariant) <- current
     //     - variant property(SpecTypeAttribute)
 
@@ -3470,7 +3466,7 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
         PUSH_ERROR_AND_RETURN("Internal error: variant Property not found.");
       }
       const std::pair<Path, Property> &pp = _variantProps.at(item);
-  
+
       std::string prop_name = std::get<0>(pp).prop_part();
       DCOUT(fmt::format("  node_index = {}, prop name {}", item, prop_name));
 
@@ -3497,7 +3493,7 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
 
     DCOUT(fmt::format("{} has variant PrimSpec ", primspec->name()));
 
-    
+
     for (const auto &item : _variantPrimChildren.at(current)) {
 
       if (!_variantPrimSpecs.count(item)) {
