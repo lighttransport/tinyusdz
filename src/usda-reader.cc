@@ -104,6 +104,7 @@ RECONSTRUCT_PRIM_DECL(GeomCylinder);
 RECONSTRUCT_PRIM_DECL(GeomCapsule);
 RECONSTRUCT_PRIM_DECL(GeomBasisCurves);
 RECONSTRUCT_PRIM_DECL(GeomCamera);
+RECONSTRUCT_PRIM_DECL(PointInstancer);
 RECONSTRUCT_PRIM_DECL(Material);
 RECONSTRUCT_PRIM_DECL(Shader);
 
@@ -190,6 +191,7 @@ DEFINE_PRIM_TYPE(Skeleton, kSkeleton, value::TYPE_ID_SKELETON);
 DEFINE_PRIM_TYPE(SkelAnimation, kSkelAnimation, value::TYPE_ID_SKELANIMATION);
 DEFINE_PRIM_TYPE(BlendShape, kBlendShape, value::TYPE_ID_BLENDSHAPE);
 DEFINE_PRIM_TYPE(GeomCamera, kGeomCamera, value::TYPE_ID_GEOM_CAMERA);
+DEFINE_PRIM_TYPE(PointInstancer, kPointInstancer, value::TYPE_ID_GEOM_POINT_INSTANCER);
 DEFINE_PRIM_TYPE(Scope, "Scope", value::TYPE_ID_SCOPE);
 
 DEFINE_PRIM_TYPE(GPrim, "GPrim", value::TYPE_ID_GPRIM);

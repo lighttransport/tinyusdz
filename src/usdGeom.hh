@@ -734,7 +734,7 @@ struct PointInstancer : public GPrim {
 
   TypedAttribute<Animatable<std::vector<int32_t>>>
       protoIndices;                                      // int[] protoIndices
-  TypedAttribute<Animatable<std::vector<int64_t>>> ids;  // int64[] protoIndices
+  TypedAttribute<Animatable<std::vector<int64_t>>> ids;  // int64[] ids
   TypedAttribute<Animatable<std::vector<value::point3f>>>
       positions;  // point3f[] positions
   TypedAttribute<Animatable<std::vector<value::quath>>>

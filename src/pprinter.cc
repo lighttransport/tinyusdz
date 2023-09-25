@@ -2281,7 +2281,7 @@ std::string to_string(const GeomCamera &camera, const uint32_t indent, bool clos
   ss << print_typed_attr(camera.shutterClose, "shutter:close", indent+1);
 
 
-  ss << print_gprim_predefined(camera, indent);
+  ss << print_gprim_predefined(camera, indent+1);
 
   ss << print_props(camera.props, indent+1);
 
@@ -2668,6 +2668,43 @@ std::string to_string(const GeomCapsule &geom, const uint32_t indent, bool closi
 
   ss << print_gprim_predefined(geom, indent+1);
   ss << print_props(geom.props, indent+1);
+
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
+std::string to_string(const PointInstancer &instancer, const uint32_t indent, bool closing_brace) {
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << to_string(instancer.spec) << " PointInstancer \"" << instancer.name << "\"\n";
+  if (instancer.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(instancer.meta, indent+1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
+  ss << pprint::Indent(indent) << "{\n";
+
+  // members
+  if (instancer.prototypes) {
+    ss << print_relationship(instancer.prototypes.value(), instancer.prototypes.value().get_listedit_qual(), /* custom */false, "prototypes", indent+1);
+  }
+  ss << print_typed_attr(instancer.protoIndices, "protoIndices", indent+1);
+  ss << print_typed_attr(instancer.ids, "ids", indent+1);
+  ss << print_typed_attr(instancer.invisibleIds, "invisibleIds", indent+1);
+  ss << print_typed_attr(instancer.positions, "positions", indent+1);
+  ss << print_typed_attr(instancer.orientations, "orientations", indent+1);
+  ss << print_typed_attr(instancer.scales, "scales", indent+1);
+  ss << print_typed_attr(instancer.velocities, "velocities", indent+1);
+  ss << print_typed_attr(instancer.accelerations, "accelerations", indent+1);
+  ss << print_typed_attr(instancer.angularVelocities, "angularVelocities", indent+1);
+
+
+  ss << print_gprim_predefined(instancer, indent+1);
+
+  ss << print_props(instancer.props, indent+1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
