@@ -2110,7 +2110,11 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<Payload> *result) {
       Rewind(1);
     }
 
-    if (!SepBy1BasicType(',', result)) {
+    if (!SepBy1BasicType(',', ']', result)) {
+      return false;
+    }
+
+    if (!SkipCommentAndWhitespaceAndNewline()) {
       return false;
     }
 
@@ -2156,6 +2160,10 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<Path> *result) {
   }
 
   if (!SepBy1BasicType(',', ']', result)) {
+    return false;
+  }
+
+  if (!SkipCommentAndWhitespaceAndNewline()) {
     return false;
   }
 
