@@ -622,8 +622,11 @@ nonstd::optional<Kind> KindFromString(const std::string &str) {
   } else if (str == "sceneLibrary") {
     // https://developer.apple.com/documentation/arkit/usdz_schemas_for_ar/scenelibrary
     return Kind::SceneLibrary;
+  } else if (str.empty()) {
+    return nonstd::nullopt;
+  } else {
+    return Kind::UserDef;
   }
-  return nonstd::nullopt;
 }
 
 bool ValidatePrimElementName(const std::string &name) {
@@ -1313,6 +1316,7 @@ const PrimMeta &Prim::metas() const {
   return EmptyStaticMeta::GetEmptyStaticMeta();
 }
 
+
 bool SetCustomDataByKey(const std::string &key, const MetaVariable &var,
                         CustomDataType &custom) {
   // split by namespace
@@ -1579,6 +1583,19 @@ AssetInfo PrimMeta::get_assetInfo(bool *is_authored) const {
   }
 
   return ainfo;
+}
+
+const std::string PrimMeta::get_kind() const {
+
+  if (kind.has_value()) {
+    if (kind.value() == Kind::UserDef) {
+      return _kind_str;
+    } else {
+      return to_string(kind.value());
+    }
+  }
+
+  return "";
 }
 
 bool IsXformablePrim(const Prim &prim) {

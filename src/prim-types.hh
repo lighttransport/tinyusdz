@@ -90,6 +90,7 @@ enum class Purpose {
 // USDZ extension: sceneLibrary
 // https://developer.apple.com/documentation/arkit/usdz_schemas_for_ar/scenelibrary
 //
+
 enum class Kind {
   Model,
   Group,
@@ -97,6 +98,7 @@ enum class Kind {
   Component,
   Subcomponent,
   SceneLibrary,  // USDZ extension
+  UserDef, // Unknown or user defined Kind
   Invalid
 };
 
@@ -791,7 +793,9 @@ struct Payload {
 struct PrimMetas {
   nonstd::optional<bool> active;  // 'active'
   nonstd::optional<bool> hidden;  // 'hidden'
-  nonstd::optional<Kind> kind;    // 'kind'
+  nonstd::optional<Kind> kind;    // 'kind'. user-defined kind value is stored in _kind_str;
+  std::string _kind_str;
+
   nonstd::optional<Dictionary>
       assetInfo;  // 'assetInfo' // TODO: Use AssetInfo?
   nonstd::optional<Dictionary> customData;  // `customData`
@@ -803,6 +807,10 @@ struct PrimMetas {
       sdrMetadata;  // 'sdrMetadata' (usdShade Prim only?)
 
   nonstd::optional<bool> instanceable; // 'instanceable'
+
+  // String representation of Kind.
+  // For user-defined Kind, it returns `_kind_str`
+  const std::string get_kind() const;
 
   //
   // AssetInfo utility function
