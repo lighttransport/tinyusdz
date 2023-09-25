@@ -942,7 +942,10 @@ class USDAReader::Impl {
               // USDZ specific: https://developer.apple.com/documentation/arkit/usdz_schemas_for_ar/scenelibrary
               out->kind = Kind::SceneLibrary;
             } else {
-              PUSH_ERROR_AND_RETURN("Invalid token for `kind` metadataum.");
+              // NOTE: empty token allowed.
+
+              out->kind = Kind::UserDef;
+              out->_kind_str = tok.str();
             }
             DCOUT("Added kind: " << to_string(out->kind.value()));
           } else {

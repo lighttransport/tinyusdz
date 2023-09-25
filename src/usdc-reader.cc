@@ -1825,13 +1825,26 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
       }
     } else if (fv.first == "kind") {
       if (auto pv = fv.second.as<value::token>()) {
-        if (auto kv = KindFromString(pv->str())) {
-          primMeta.kind = kv.value();
-        } else {
-          PUSH_ERROR_AND_RETURN_TAG(
-              kTag, fmt::format("Invalid token for `kind` Prim metadata: `{}`",
-                                pv->str()));
-        }
+
+          const value::token tok = (*pv);
+          if (tok.str() == "subcomponent") {
+            primMeta.kind = Kind::Subcomponent;
+          } else if (tok.str() == "component") {
+            primMeta.kind = Kind::Component;
+          } else if (tok.str() == "model") {
+            primMeta.kind = Kind::Model;
+          } else if (tok.str() == "group") {
+            primMeta.kind = Kind::Group;
+          } else if (tok.str() == "assembly") {
+            primMeta.kind = Kind::Assembly;
+          } else if (tok.str() == "sceneLibrary") {
+            // USDZ specific: https://developer.apple.com/documentation/arkit/usdz_schemas_for_ar/scenelibrary
+            primMeta.kind = Kind::SceneLibrary;
+          } else {
+
+            primMeta.kind = Kind::UserDef;
+            primMeta._kind_str = tok.str();
+          }
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "`kind` must be type `token`, but got type `"
