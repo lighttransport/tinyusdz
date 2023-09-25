@@ -2318,7 +2318,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
 
       std::string pTyName;
       if (!typeName) {
-        PUSH_WARN("Treat this node as Model(`typeName` field is missing).");
+        //PUSH_WARN("Treat this node as Model(`typeName` field is missing).");
         pTyName = "Model";
       } else {
         pTyName = typeName.value();
@@ -2478,7 +2478,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
 
       std::string pTyName; // TinyUSDZ' prim typename
       if (!typeName) {
-        PUSH_WARN("Treat this node as Model(where `typeName` is missing).");
+        //PUSH_WARN("Treat this node as Model(where `typeName` is missing).");
         pTyName = "Model";
       } else {
         pTyName = typeName.value();
@@ -2770,7 +2770,7 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
 
       std::string pTyName;
       if (!typeName) {
-        PUSH_WARN("Treat this node as Model(`typeName` field is missing).");
+        //PUSH_WARN("Treat this node as Model(`typeName` field is missing).");
         pTyName = "Model";
       } else {
         pTyName = typeName.value();
@@ -2945,7 +2945,7 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
 
       std::string pTyName; // TinyUSDZ' prim typename
       if (!typeName) {
-        PUSH_WARN("Treat this node as Model(where `typeName` is missing).");
+        //PUSH_WARN("Treat this node as Model(where `typeName` is missing).");
         pTyName = "Model";
       } else {
         pTyName = typeName.value();
