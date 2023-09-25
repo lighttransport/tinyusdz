@@ -453,7 +453,7 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   }
 
   if (meta.kind) {
-    ss << pprint::Indent(indent) << "kind = " << quote(to_string(meta.kind.value())) << "\n";
+    ss << pprint::Indent(indent) << "kind = " << quote(meta.get_kind()) << "\n";
   }
 
   // TODO: UTF-8 ready pprint
@@ -1804,6 +1804,9 @@ std::string to_string(tinyusdz::Kind v) {
     return "subcomponent";
   } else if (v == tinyusdz::Kind::SceneLibrary) {
     return "sceneLibrary";
+  } else if (v == tinyusdz::Kind::UserDef) {
+    // Should use PrimMeta::get_kind() to get actual Kind string value.
+    return "[[InternalError. UserDefKind]]";
   } else {
     return "[[InvalidKind]]";
   }
