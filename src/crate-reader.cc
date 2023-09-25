@@ -73,16 +73,8 @@ namespace crate {
   } while(0)
 
 
-#if 0
-//
-// Impl(TODO)
-//
-class CrateReader::Impl
-{
- public:
-  Impl();
-};
-#endif
+
+#define VERSION_LESS_THAN_0_8_0(__version) ((_version[0] == 0) && (_version[1] < 7))
 
 //
 // --
@@ -304,7 +296,7 @@ template <class Int>
 bool CrateReader::ReadCompressedInts(Int *out,
                                      size_t num_ints) {
   if (num_ints > _config.maxInts) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "# of ints too large.");
+    PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("# of ints {} too large. maxInts is set to {}", num_ints, _config.maxInts));
   }
 
   using Compressor =
@@ -356,7 +348,12 @@ bool CrateReader::ReadIntArray(bool is_compressed, std::vector<T> *d) {
 
   size_t length{0}; // uncompressed array elements.
   // < ver 0.7.0  use 32bit
-  if ((_version[0] == 0) && ((_version[1] < 7))) {
+  if (VERSION_LESS_THAN_0_8_0(_version)) {
+      uint32_t shapesize; // not used
+      if (!_sr->read4(&shapesize)) {
+        PUSH_ERROR("Failed to read the number of array elements.");
+        return false;
+      }
     uint32_t n;
     if (!_sr->read4(&n)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
@@ -416,11 +413,15 @@ bool CrateReader::ReadHalfArray(bool is_compressed,
                                 std::vector<value::half> *d) {
   size_t length;
   // < ver 0.7.0  use 32bit
-  if ((_version[0] == 0) && ((_version[1] < 7))) {
+  if (VERSION_LESS_THAN_0_8_0(_version)) {
+      uint32_t shapesize; // not used
+      if (!_sr->read4(&shapesize)) {
+        PUSH_ERROR("Failed to read the number of array elements.");
+        return false;
+      }
     uint32_t n;
     if (!_sr->read4(&n)) {
-      _err += "Failed to read the number of array elements.\n";
-      return false;
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
     }
     length = size_t(n);
   } else {
@@ -434,7 +435,7 @@ bool CrateReader::ReadHalfArray(bool is_compressed,
   }
 
   if (length > _config.maxArrayElements) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many array elements.");
+    PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Too many array elements {}.", length));
   }
 
   CHECK_MEMORY_USAGE(length * sizeof(uint16_t));
@@ -530,7 +531,12 @@ bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
 
   size_t length;
   // < ver 0.7.0  use 32bit
-  if ((_version[0] == 0) && ((_version[1] < 7))) {
+  if (VERSION_LESS_THAN_0_8_0(_version)) {
+      uint32_t shapesize; // not used
+      if (!_sr->read4(&shapesize)) {
+        PUSH_ERROR("Failed to read the number of array elements.");
+        return false;
+      }
     uint32_t n;
     if (!_sr->read4(&n)) {
       _err += "Failed to read the number of array elements.\n";
@@ -639,7 +645,12 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
 
   size_t length;
   // < ver 0.7.0  use 32bit
-  if ((_version[0] == 0) && ((_version[1] < 7))) {
+  if (VERSION_LESS_THAN_0_8_0(_version)) {
+      uint32_t shapesize; // not used
+      if (!_sr->read4(&shapesize)) {
+        PUSH_ERROR("Failed to read the number of array elements.");
+        return false;
+      }
     uint32_t n;
     if (!_sr->read4(&n)) {
       _err += "Failed to read the number of array elements.\n";
@@ -885,9 +896,9 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
 bool CrateReader::ReadStringArray(std::vector<std::string> *d) {
   // array data is not compressed
   auto ReadFn = [this](std::vector<std::string> &result) -> bool {
-    uint64_t n;
+    uint64_t n{0};
     if (!_sr->read8(&n)) {
-      PUSH_ERROR("Failed to read # of elements.");
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
       return false;
     }
 
@@ -1033,9 +1044,9 @@ bool CrateReader::ReadLayerOffset(LayerOffset *d) {
 bool CrateReader::ReadLayerOffsetArray(std::vector<LayerOffset> *d) {
   // array data is not compressed
 
-  uint64_t n;
+  uint64_t n{0};
   if (!_sr->read8(&n)) {
-    PUSH_ERROR("Failed to read # of elements.");
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
     return false;
   }
 
@@ -1060,9 +1071,9 @@ bool CrateReader::ReadLayerOffsetArray(std::vector<LayerOffset> *d) {
 bool CrateReader::ReadPathArray(std::vector<Path> *d) {
   // array data is not compressed
   auto ReadFn = [this](std::vector<Path> &result) -> bool {
-    uint64_t n;
+    uint64_t n{0};
     if (!_sr->read8(&n)) {
-      _err += "Failed to read # of elements in ListOp.\n";
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
       return false;
     }
 
@@ -1233,11 +1244,12 @@ bool CrateReader::ReadStringListOp(ListOp<std::string> *d) {
 
   // array data is not compressed
   auto ReadFn = [this](std::vector<std::string> &result) -> bool {
-    uint64_t n;
+    uint64_t n{0};
     if (!_sr->read8(&n)) {
-      _err += "Failed to read # of elements in ListOp.\n";
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
       return false;
     }
+
 
     if (n > _config.maxArrayElements) {
       _err += "Too many ListOp elements.\n";
@@ -1346,9 +1358,9 @@ bool CrateReader::ReadPathListOp(ListOp<Path> *d) {
 
   // array data is not compressed
   auto ReadFn = [this](std::vector<Path> &result) -> bool {
-    uint64_t n;
+    uint64_t n{0};
     if (!_sr->read8(&n)) {
-      PUSH_ERROR("Failed to read # of elements in ListOp.");
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
       return false;
     }
 
@@ -1452,8 +1464,9 @@ bool CrateReader::ReadArray(std::vector<Reference> *d) {
     return false;
   }
 
-  uint64_t n;
+  uint64_t n{0};
   if (!_sr->read8(&n)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
     return false;
   }
 
@@ -1481,9 +1494,23 @@ bool CrateReader::ReadArray(std::vector<Payload> *d) {
     return false;
   }
 
-  uint64_t n;
-  if (!_sr->read8(&n)) {
-    return false;
+  uint64_t n{0};
+  if (VERSION_LESS_THAN_0_8_0(_version)) {
+    uint32_t shapesize; // not used
+    if (!_sr->read4(&shapesize)) {
+      PUSH_ERROR("Failed to read the number of array elements.");
+      return false;
+    }
+    uint32_t _n;
+    if (!_sr->read4(&_n)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
+    }
+    n = _n;
+  } else {
+    if (!_sr->read8(&n)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
+      return false;
+    }
   }
 
   if (n > _config.maxArrayElements) {
@@ -1512,9 +1539,23 @@ bool CrateReader::ReadArray(std::vector<T> *d) {
     return false;
   }
 
-  uint64_t n;
-  if (!_sr->read8(&n)) {
-    return false;
+  uint64_t n{0};
+  if (VERSION_LESS_THAN_0_8_0(_version)) {
+    uint32_t shapesize; // not used
+    if (!_sr->read4(&shapesize)) {
+      PUSH_ERROR("Failed to read the number of array elements.");
+      return false;
+    }
+    uint32_t _n;
+    if (!_sr->read4(&_n)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
+    }
+    n = _n;
+  } else {
+    if (!_sr->read8(&n)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
+      return false;
+    }
   }
 
   if (n > _config.maxArrayElements) {
@@ -2286,10 +2327,23 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return true;
         }
 
-        uint64_t n;
-        if (!_sr->read8(&n)) {
-          PUSH_ERROR("Failed to read the number of array elements.");
-          return false;
+        uint64_t n{0};
+        if (VERSION_LESS_THAN_0_8_0(_version)) {
+          uint32_t shapesize; // not used
+          if (!_sr->read4(&shapesize)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          uint32_t _n;
+          if (!_sr->read4(&_n)) {
+            PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
+          }
+          n = _n;
+        } else {
+          if (!_sr->read8(&n)) {
+            PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read the number of array elements.");
+            return false;
+          }
         }
 
         if (n > _config.maxAssetPathElements) {
@@ -2362,7 +2416,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n > _config.maxArrayElements) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Token array too large. TinyUSDZ limites it up to {}", _config.maxArrayElements));
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Token array too large. TinyUSDZ limits it up to {}", _config.maxArrayElements));
         }
 
         CHECK_MEMORY_USAGE(n * sizeof(crate::Index));
@@ -2669,10 +2723,24 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return true;
         }
 
-        uint64_t n;
-        if (!_sr->read8(&n)) {
-          PUSH_ERROR("Failed to read the number of array elements.");
-          return false;
+        uint64_t n{0};
+        if (VERSION_LESS_THAN_0_8_0(_version)) {
+          uint32_t shapesize; // not used
+          if (!_sr->read4(&shapesize)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          uint32_t _n;
+          if (!_sr->read4(&_n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          n = _n;
+        } else {
+          if (!_sr->read8(&n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
         }
 
         if (n == 0) {
@@ -2681,7 +2749,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n > _config.maxArrayElements) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
         CHECK_MEMORY_USAGE(n * sizeof(value::matrix2d));
@@ -2726,10 +2794,24 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return true;
         }
 
-        uint64_t n;
-        if (!_sr->read8(&n)) {
-          PUSH_ERROR("Failed to read the number of array elements.");
-          return false;
+        uint64_t n{0};
+        if (VERSION_LESS_THAN_0_8_0(_version)) {
+          uint32_t shapesize; // not used
+          if (!_sr->read4(&shapesize)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          uint32_t _n;
+          if (!_sr->read4(&_n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          n = _n;
+        } else {
+          if (!_sr->read8(&n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
         }
 
         if (n == 0) {
@@ -2738,7 +2820,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n > _config.maxArrayElements) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
         CHECK_MEMORY_USAGE(n * sizeof(value::matrix3d));
@@ -2782,11 +2864,25 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           value->Set(v);
           return true;
         }
-        uint64_t n;
 
-        if (!_sr->read8(&n)) {
-          PUSH_ERROR("Failed to read the number of array elements.");
-          return false;
+        uint64_t n{0};
+        if (VERSION_LESS_THAN_0_8_0(_version)) {
+          uint32_t shapesize; // not used
+          if (!_sr->read4(&shapesize)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          uint32_t _n;
+          if (!_sr->read4(&_n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          n = _n;
+        } else {
+          if (!_sr->read8(&n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
         }
 
         if (n == 0) {
@@ -2795,7 +2891,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n > _config.maxArrayElements) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
         CHECK_MEMORY_USAGE(n * sizeof(value::matrix4d));
@@ -2836,10 +2932,24 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           value->Set(v);
           return true;
         }
-        uint64_t n;
-        if (!_sr->read8(&n)) {
-          PUSH_ERROR("Failed to read the number of array elements.");
-          return false;
+        uint64_t n{0};
+        if (VERSION_LESS_THAN_0_8_0(_version)) {
+          uint32_t shapesize; // not used
+          if (!_sr->read4(&shapesize)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          uint32_t _n;
+          if (!_sr->read4(&_n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          n = _n;
+        } else {
+          if (!_sr->read8(&n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
         }
 
         if (n == 0) {
@@ -2848,7 +2958,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n > _config.maxArrayElements) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
         CHECK_MEMORY_USAGE(n * sizeof(value::quatd));
@@ -2890,10 +3000,24 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           value->Set(v);
           return true;
         }
-        uint64_t n;
-        if (!_sr->read8(&n)) {
-          PUSH_ERROR("Failed to read the number of array elements.");
-          return false;
+        uint64_t n{0};
+        if (VERSION_LESS_THAN_0_8_0(_version)) {
+          uint32_t shapesize; // not used
+          if (!_sr->read4(&shapesize)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          uint32_t _n;
+          if (!_sr->read4(&_n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          n = _n;
+        } else {
+          if (!_sr->read8(&n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
         }
 
         if (n == 0) {
@@ -2902,7 +3026,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n > _config.maxArrayElements) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
         CHECK_MEMORY_USAGE(n * sizeof(value::quatf));
@@ -2944,10 +3068,25 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           value->Set(v);
           return true;
         }
-        uint64_t n;
-        if (!_sr->read8(&n)) {
-          PUSH_ERROR("Failed to read the number of array elements.");
-          return false;
+
+        uint64_t n{0};
+        if (VERSION_LESS_THAN_0_8_0(_version)) {
+          uint32_t shapesize; // not used
+          if (!_sr->read4(&shapesize)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          uint32_t _n;
+          if (!_sr->read4(&_n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          n = _n;
+        } else {
+          if (!_sr->read8(&n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
         }
 
         if (n == 0) {
@@ -2956,7 +3095,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n > _config.maxArrayElements) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
         CHECK_MEMORY_USAGE(n * sizeof(value::quath));
@@ -3001,10 +3140,24 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return true;
         }
 
-        uint64_t n;
-        if (!_sr->read8(&n)) {
-          PUSH_ERROR("Failed to read the number of array elements.");
-          return false;
+        uint64_t n{0};
+        if (VERSION_LESS_THAN_0_8_0(_version)) {
+          uint32_t shapesize; // not used
+          if (!_sr->read4(&shapesize)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          uint32_t _n;
+          if (!_sr->read4(&_n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          n = _n;
+        } else {
+          if (!_sr->read8(&n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
         }
 
         if (n == 0) {
@@ -3013,7 +3166,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n > _config.maxArrayElements) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
         CHECK_MEMORY_USAGE(n * sizeof(value::double2));
@@ -3056,14 +3209,28 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return true;
         }
 
-        uint64_t n;
-        if (!_sr->read8(&n)) {
-          PUSH_ERROR("Failed to read the number of array elements.");
-          return false;
+        uint64_t n{0};
+        if (VERSION_LESS_THAN_0_8_0(_version)) {
+          uint32_t shapesize; // not used
+          if (!_sr->read4(&shapesize)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          uint32_t _n;
+          if (!_sr->read4(&_n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          n = _n;
+        } else {
+          if (!_sr->read8(&n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
         }
 
         if (n > _config.maxArrayElements) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
         if (n == 0) {
@@ -3110,14 +3277,28 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           value->Set(v);
           return true;
         }
-        uint64_t n;
-        if (!_sr->read8(&n)) {
-          PUSH_ERROR("Failed to read the number of array elements.");
-          return false;
+        uint64_t n{0};
+        if (VERSION_LESS_THAN_0_8_0(_version)) {
+          uint32_t shapesize; // not used
+          if (!_sr->read4(&shapesize)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          uint32_t _n;
+          if (!_sr->read4(&_n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          n = _n;
+        } else {
+          if (!_sr->read8(&n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
         }
 
         if (n > _config.maxArrayElements) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
         CHECK_MEMORY_USAGE(n * sizeof(value::half2));
@@ -3158,14 +3339,29 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           value->Set(v);
           return true;
         }
-        uint64_t n;
-        if (!_sr->read8(&n)) {
-          PUSH_ERROR("Failed to read the number of array elements.");
-          return false;
+
+        uint64_t n{0};
+        if (VERSION_LESS_THAN_0_8_0(_version)) {
+          uint32_t shapesize; // not used
+          if (!_sr->read4(&shapesize)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          uint32_t _n;
+          if (!_sr->read4(&_n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          n = _n;
+        } else {
+          if (!_sr->read8(&n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
         }
 
         if (n > _config.maxArrayElements) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
         CHECK_MEMORY_USAGE(n * sizeof(value::int2));
@@ -3206,14 +3402,29 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           value->Set(v);
           return true;
         }
-        uint64_t n;
-        if (!_sr->read8(&n)) {
-          PUSH_ERROR("Failed to read the number of array elements.");
-          return false;
+
+        uint64_t n{0};
+        if (VERSION_LESS_THAN_0_8_0(_version)) {
+          uint32_t shapesize; // not used
+          if (!_sr->read4(&shapesize)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          uint32_t _n;
+          if (!_sr->read4(&_n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          n = _n;
+        } else {
+          if (!_sr->read8(&n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
         }
 
         if (n > _config.maxArrayElements) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
         CHECK_MEMORY_USAGE(n * sizeof(value::double3));
@@ -3255,14 +3466,28 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return true;
         }
 
-        uint64_t n;
-        if (!_sr->read8(&n)) {
-          PUSH_ERROR("Failed to read the number of array elements.");
-          return false;
+        uint64_t n{0};
+        if (VERSION_LESS_THAN_0_8_0(_version)) {
+          uint32_t shapesize; // not used
+          if (!_sr->read4(&shapesize)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          uint32_t _n;
+          if (!_sr->read4(&_n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          n = _n;
+        } else {
+          if (!_sr->read8(&n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
         }
 
         if (n > _config.maxArrayElements) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
         CHECK_MEMORY_USAGE(n * sizeof(value::float3));
@@ -3304,14 +3529,28 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           value->Set(v);
           return true;
         }
-        uint64_t n;
-        if (!_sr->read8(&n)) {
-          PUSH_ERROR("Failed to read the number of array elements.");
-          return false;
+        uint64_t n{0};
+        if (VERSION_LESS_THAN_0_8_0(_version)) {
+          uint32_t shapesize; // not used
+          if (!_sr->read4(&shapesize)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          uint32_t _n;
+          if (!_sr->read4(&_n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          n = _n;
+        } else {
+          if (!_sr->read8(&n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
         }
 
         if (n > _config.maxArrayElements) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
         CHECK_MEMORY_USAGE(n * sizeof(value::half3));
@@ -3352,14 +3591,28 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           value->Set(v);
           return true;
         }
-        uint64_t n;
-        if (!_sr->read8(&n)) {
-          PUSH_ERROR("Failed to read the number of array elements.");
-          return false;
+        uint64_t n{0};
+        if (VERSION_LESS_THAN_0_8_0(_version)) {
+      uint32_t shapesize; // not used
+      if (!_sr->read4(&shapesize)) {
+        PUSH_ERROR("Failed to read the number of array elements.");
+        return false;
+      }
+          uint32_t _n;
+          if (!_sr->read4(&_n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          n = _n;
+        } else {
+          if (!_sr->read8(&n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
         }
 
         if (n > _config.maxArrayElements) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
         CHECK_MEMORY_USAGE(n * sizeof(value::int3));
@@ -3400,14 +3653,29 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           value->Set(v);
           return true;
         }
-        uint64_t n;
-        if (!_sr->read8(&n)) {
-          PUSH_ERROR("Failed to read the number of array elements.");
-          return false;
+
+        uint64_t n{0};
+        if (VERSION_LESS_THAN_0_8_0(_version)) {
+      uint32_t shapesize; // not used
+      if (!_sr->read4(&shapesize)) {
+        PUSH_ERROR("Failed to read the number of array elements.");
+        return false;
+      }
+          uint32_t _n;
+          if (!_sr->read4(&_n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          n = _n;
+        } else {
+          if (!_sr->read8(&n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
         }
 
         if (n > _config.maxArrayElements) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
         CHECK_MEMORY_USAGE(n * sizeof(value::double4));
@@ -3448,14 +3716,28 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           value->Set(v);
           return true;
         }
-        uint64_t n;
-        if (!_sr->read8(&n)) {
-          PUSH_ERROR("Failed to read the number of array elements.");
-          return false;
+        uint64_t n{0};
+        if (VERSION_LESS_THAN_0_8_0(_version)) {
+      uint32_t shapesize; // not used
+      if (!_sr->read4(&shapesize)) {
+        PUSH_ERROR("Failed to read the number of array elements.");
+        return false;
+      }
+          uint32_t _n;
+          if (!_sr->read4(&_n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          n = _n;
+        } else {
+          if (!_sr->read8(&n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
         }
 
         if (n > _config.maxArrayElements) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
         CHECK_MEMORY_USAGE(n * sizeof(value::float4));
@@ -3496,14 +3778,28 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           value->Set(v);
           return true;
         }
-        uint64_t n;
-        if (!_sr->read8(&n)) {
-          PUSH_ERROR("Failed to read the number of array elements.");
-          return false;
+        uint64_t n{0};
+        if (VERSION_LESS_THAN_0_8_0(_version)) {
+      uint32_t shapesize; // not used
+      if (!_sr->read4(&shapesize)) {
+        PUSH_ERROR("Failed to read the number of array elements.");
+        return false;
+      }
+          uint32_t _n;
+          if (!_sr->read4(&_n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          n = _n;
+        } else {
+          if (!_sr->read8(&n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
         }
 
         if (n > _config.maxArrayElements) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
         CHECK_MEMORY_USAGE(n * sizeof(value::half4));
@@ -3544,14 +3840,28 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           value->Set(v);
           return true;
         }
-        uint64_t n;
-        if (!_sr->read8(&n)) {
-          PUSH_ERROR("Failed to read the number of array elements.");
-          return false;
+        uint64_t n{0};
+        if (VERSION_LESS_THAN_0_8_0(_version)) {
+      uint32_t shapesize; // not used
+      if (!_sr->read4(&shapesize)) {
+        PUSH_ERROR("Failed to read the number of array elements.");
+        return false;
+      }
+          uint32_t _n;
+          if (!_sr->read4(&_n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          n = _n;
+        } else {
+          if (!_sr->read8(&n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
         }
 
         if (n > _config.maxArrayElements) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
         }
 
         CHECK_MEMORY_USAGE(n * sizeof(value::int4));
@@ -3657,14 +3967,14 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_VECTOR: {
       COMPRESS_UNSUPPORTED_CHECK(dty)
       // std::vector<Index>
-      uint64_t n;
+      uint64_t n{0};
       if (!_sr->read8(&n)) {
-        PUSH_ERROR("Failed to read TokenVector value.");
+        PUSH_ERROR("Failed to read the number of array elements.");
         return false;
       }
 
       if (n > _config.maxArrayElements) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Array size too large.");
+        PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large. maxArrayElements is set to {}. Please increase maxArrayElements in CrateReaderConfig.", n, _config.maxArrayElements));
       }
 
       CHECK_MEMORY_USAGE(n * sizeof(crate::Index));
@@ -5327,7 +5637,7 @@ bool CrateReader::ReadTOC() {
     return false;
   }
   if (num_sections >= _config.maxTOCSections) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "# of sections are too large.");
+    PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("# of sections {} are too large. maxTOCSections is set to {}", num_sections, _config.maxTOCSections));
   }
 
   DCOUT("toc sections = " << num_sections);
