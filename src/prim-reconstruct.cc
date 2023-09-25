@@ -57,6 +57,7 @@ constexpr auto kSkelBlendShapeTargets = "skel:blendShapeTargets";
 ///
 template <typename T>
 bool ReconstructShader(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     T *out,
@@ -1643,11 +1644,18 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
  }
 
 bool ReconstructXformOpsFromProperties(
+  const Specifier &spec,
   std::set<std::string> &table, /* inout */
   const std::map<std::string, Property> &properties,
   std::vector<XformOp> *xformOps,
   std::string *err)
 {
+
+  if (spec == Specifier::Class) {
+    // Do not materialize xformOps here.
+    return true;
+  }
+
 
   constexpr auto kTranslate = "xformOp:translate";
   constexpr auto kTransform = "xformOp:transform";
@@ -1695,7 +1703,6 @@ bool ReconstructXformOpsFromProperties(
 
     return nonstd::nullopt;
   };
-
 
   // Lookup xform values from `xformOpOrder`
   // TODO: TimeSamples, Connection
@@ -1991,6 +1998,7 @@ namespace {
 
 // xformOps and built-in props
 bool ReconstructGPrimProperties(
+  const Specifier &spec,
   std::set<std::string> &table, /* inout */
   const std::map<std::string, Property> &properties,
   GPrim *gprim, /* inout */
@@ -1999,7 +2007,7 @@ bool ReconstructGPrimProperties(
 {
 
   (void)warn;
-  if (!prim::ReconstructXformOpsFromProperties(table, properties, &gprim->xformOps, err)) {
+  if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &gprim->xformOps, err)) {
     return false;
   }
 
@@ -2026,6 +2034,7 @@ bool ReconstructGPrimProperties(
 
 template <>
 bool ReconstructPrim<Xform>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     Xform *xform,
@@ -2035,7 +2044,7 @@ bool ReconstructPrim<Xform>(
   (void)references;
 
   std::set<std::string> table;
-  if (!ReconstructGPrimProperties(table, properties, xform, warn, err)) {
+  if (!ReconstructGPrimProperties(spec, table, properties, xform, warn, err)) {
     return false;
   }
 
@@ -2049,12 +2058,14 @@ bool ReconstructPrim<Xform>(
 
 template <>
 bool ReconstructPrim<Model>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     Model *model,
     std::string *warn,
     std::string *err) {
   DCOUT("Model ");
+  (void)spec;
   (void)references;
   (void)model;
   (void)err;
@@ -2070,6 +2081,7 @@ bool ReconstructPrim<Model>(
 
 template <>
 bool ReconstructPrim<Scope>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     Scope *scope,
@@ -2077,6 +2089,7 @@ bool ReconstructPrim<Scope>(
     std::string *err) {
   // `Scope` is just a namespace in scene graph(no node xform)
 
+  (void)spec;
   (void)references;
   (void)scope;
   (void)err;
@@ -2093,6 +2106,7 @@ bool ReconstructPrim<Scope>(
 
 template <>
 bool ReconstructPrim<SkelRoot>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     SkelRoot *root,
@@ -2102,7 +2116,7 @@ bool ReconstructPrim<SkelRoot>(
   (void)references;
 
   std::set<std::string> table;
-  if (!prim::ReconstructXformOpsFromProperties(table, properties, &root->xformOps, err)) {
+  if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &root->xformOps, err)) {
     return false;
   }
 
@@ -2126,6 +2140,7 @@ bool ReconstructPrim<SkelRoot>(
 
 template <>
 bool ReconstructPrim<Skeleton>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     Skeleton *skel,
@@ -2136,7 +2151,7 @@ bool ReconstructPrim<Skeleton>(
   (void)references;
 
   std::set<std::string> table;
-  if (!prim::ReconstructXformOpsFromProperties(table, properties, &skel->xformOps, err)) {
+  if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &skel->xformOps, err)) {
     return false;
   }
 
@@ -2216,12 +2231,14 @@ bool ReconstructPrim<Skeleton>(
 
 template <>
 bool ReconstructPrim<SkelAnimation>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     SkelAnimation *skelanim,
     std::string *warn,
     std::string *err) {
 
+  (void)spec;
   (void)warn;
   (void)references;
   std::set<std::string> table;
@@ -2241,11 +2258,13 @@ bool ReconstructPrim<SkelAnimation>(
 
 template <>
 bool ReconstructPrim<BlendShape>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     BlendShape *bs,
     std::string *warn,
     std::string *err) {
+  (void)spec;
   (void)warn;
   (void)references;
 
@@ -2299,6 +2318,7 @@ bool ReconstructPrim(
 
 template <>
 bool ReconstructPrim(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     GeomBasisCurves *curves,
@@ -2344,7 +2364,7 @@ bool ReconstructPrim(
   };
 
   std::set<std::string> table;
-  if (!ReconstructGPrimProperties(table, properties, curves, warn, err)) {
+  if (!ReconstructGPrimProperties(spec, table, properties, curves, warn, err)) {
     return false;
   }
 
@@ -2376,6 +2396,7 @@ bool ReconstructPrim(
 
 template <>
 bool ReconstructPrim<SphereLight>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     SphereLight *light,
@@ -2386,7 +2407,7 @@ bool ReconstructPrim<SphereLight>(
 
   std::set<std::string> table;
 
-  if (!prim::ReconstructXformOpsFromProperties(table, properties, &light->xformOps, err)) {
+  if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &light->xformOps, err)) {
     return false;
   }
 
@@ -2410,6 +2431,7 @@ bool ReconstructPrim<SphereLight>(
 
 template <>
 bool ReconstructPrim<RectLight>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     RectLight *light,
@@ -2420,7 +2442,7 @@ bool ReconstructPrim<RectLight>(
 
   std::set<std::string> table;
 
-  if (!prim::ReconstructXformOpsFromProperties(table, properties, &light->xformOps, err)) {
+  if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &light->xformOps, err)) {
     return false;
   }
 
@@ -2444,6 +2466,7 @@ bool ReconstructPrim<RectLight>(
 
 template <>
 bool ReconstructPrim<DiskLight>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     DiskLight *light,
@@ -2454,7 +2477,7 @@ bool ReconstructPrim<DiskLight>(
 
   std::set<std::string> table;
 
-  if (!prim::ReconstructXformOpsFromProperties(table, properties, &light->xformOps, err)) {
+  if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &light->xformOps, err)) {
     return false;
   }
 
@@ -2473,6 +2496,7 @@ bool ReconstructPrim<DiskLight>(
 
 template <>
 bool ReconstructPrim<CylinderLight>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     CylinderLight *light,
@@ -2483,7 +2507,7 @@ bool ReconstructPrim<CylinderLight>(
 
   std::set<std::string> table;
 
-  if (!prim::ReconstructXformOpsFromProperties(table, properties, &light->xformOps, err)) {
+  if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &light->xformOps, err)) {
     return false;
   }
 
@@ -2503,6 +2527,7 @@ bool ReconstructPrim<CylinderLight>(
 
 template <>
 bool ReconstructPrim<DistantLight>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     DistantLight *light,
@@ -2513,7 +2538,7 @@ bool ReconstructPrim<DistantLight>(
 
   std::set<std::string> table;
 
-  if (!prim::ReconstructXformOpsFromProperties(table, properties, &light->xformOps, err)) {
+  if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &light->xformOps, err)) {
     return false;
   }
 
@@ -2531,6 +2556,7 @@ bool ReconstructPrim<DistantLight>(
 
 template <>
 bool ReconstructPrim<DomeLight>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     DomeLight *light,
@@ -2541,7 +2567,7 @@ bool ReconstructPrim<DomeLight>(
 
   std::set<std::string> table;
 
-  if (!prim::ReconstructXformOpsFromProperties(table, properties, &light->xformOps, err)) {
+  if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &light->xformOps, err)) {
     return false;
   }
 
@@ -2567,6 +2593,7 @@ bool ReconstructPrim<DomeLight>(
 
 template <>
 bool ReconstructPrim<GeomSphere>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     GeomSphere *sphere,
@@ -2579,7 +2606,7 @@ bool ReconstructPrim<GeomSphere>(
   DCOUT("Reconstruct Sphere.");
 
   std::set<std::string> table;
-  if (!ReconstructGPrimProperties(table, properties, sphere, warn, err)) {
+  if (!ReconstructGPrimProperties(spec, table, properties, sphere, warn, err)) {
     return false;
   }
 
@@ -2594,6 +2621,7 @@ bool ReconstructPrim<GeomSphere>(
 
 template <>
 bool ReconstructPrim<GeomPoints>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     GeomPoints *points,
@@ -2606,7 +2634,7 @@ bool ReconstructPrim<GeomPoints>(
   DCOUT("Reconstruct Points.");
 
   std::set<std::string> table;
-  if (!ReconstructGPrimProperties(table, properties, points, warn, err)) {
+  if (!ReconstructGPrimProperties(spec, table, properties, points, warn, err)) {
     return false;
   }
 
@@ -2627,6 +2655,7 @@ bool ReconstructPrim<GeomPoints>(
 
 template <>
 bool ReconstructPrim<GeomCone>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     GeomCone *cone,
@@ -2637,7 +2666,7 @@ bool ReconstructPrim<GeomCone>(
   (void)references;
 
   std::set<std::string> table;
-  if (!ReconstructGPrimProperties(table, properties, cone, warn, err)) {
+  if (!ReconstructGPrimProperties(spec, table, properties, cone, warn, err)) {
     return false;
   }
 
@@ -2655,6 +2684,7 @@ bool ReconstructPrim<GeomCone>(
 
 template <>
 bool ReconstructPrim<GeomCylinder>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     GeomCylinder *cylinder,
@@ -2665,7 +2695,7 @@ bool ReconstructPrim<GeomCylinder>(
   (void)references;
 
   std::set<std::string> table;
-  if (!ReconstructGPrimProperties(table, properties, cylinder, warn, err)) {
+  if (!ReconstructGPrimProperties(spec, table, properties, cylinder, warn, err)) {
     return false;
   }
 
@@ -2685,6 +2715,7 @@ bool ReconstructPrim<GeomCylinder>(
 
 template <>
 bool ReconstructPrim<GeomCapsule>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     GeomCapsule *capsule,
@@ -2695,7 +2726,7 @@ bool ReconstructPrim<GeomCapsule>(
   (void)references;
 
   std::set<std::string> table;
-  if (!ReconstructGPrimProperties(table, properties, capsule, warn, err)) {
+  if (!ReconstructGPrimProperties(spec, table, properties, capsule, warn, err)) {
     return false;
   }
 
@@ -2712,6 +2743,7 @@ bool ReconstructPrim<GeomCapsule>(
 
 template <>
 bool ReconstructPrim<GeomCube>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     GeomCube *cube,
@@ -2725,7 +2757,7 @@ bool ReconstructPrim<GeomCube>(
   // pxrUSD says... "If you author size you must also author extent."
   //
   std::set<std::string> table;
-  if (!ReconstructGPrimProperties(table, properties, cube, warn, err)) {
+  if (!ReconstructGPrimProperties(spec, table, properties, cube, warn, err)) {
     return false;
   }
 
@@ -2741,6 +2773,7 @@ bool ReconstructPrim<GeomCube>(
 
 template <>
 bool ReconstructPrim<GeomMesh>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     GeomMesh *mesh,
@@ -2800,7 +2833,7 @@ bool ReconstructPrim<GeomMesh>(
   };
 
   std::set<std::string> table;
-  if (!ReconstructGPrimProperties(table, properties, mesh, warn, err)) {
+  if (!ReconstructGPrimProperties(spec, table, properties, mesh, warn, err)) {
     return false;
   }
 
@@ -2850,6 +2883,7 @@ bool ReconstructPrim<GeomMesh>(
 
 template <>
 bool ReconstructPrim<GeomCamera>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     GeomCamera *camera,
@@ -2911,7 +2945,7 @@ bool ReconstructPrim<GeomCamera>(
   };
 
   std::set<std::string> table;
-  if (!ReconstructGPrimProperties(table, properties, camera, warn, err)) {
+  if (!ReconstructGPrimProperties(spec, table, properties, camera, warn, err)) {
     return false;
   }
 
@@ -2949,12 +2983,15 @@ bool ReconstructPrim<GeomCamera>(
 
 template <>
 bool ReconstructShader<ShaderNode>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     ShaderNode *node,
     std::string *warn,
     std::string *err)
 {
+  (void)spec;
+
   if (!node) {
     return false;
   }
@@ -2977,11 +3014,13 @@ bool ReconstructShader<ShaderNode>(
 
 template <>
 bool ReconstructShader<UsdPreviewSurface>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     UsdPreviewSurface *surface,
     std::string *warn,
     std::string *err) {
+  (void)spec;
   // TODO: references
   (void)references;
 
@@ -3029,12 +3068,14 @@ bool ReconstructShader<UsdPreviewSurface>(
 
 template <>
 bool ReconstructShader<UsdUVTexture>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     UsdUVTexture *texture,
     std::string *warn,
     std::string *err)
 {
+  (void)spec;
   // TODO: references
   (void)references;
 
@@ -3103,12 +3144,14 @@ bool ReconstructShader<UsdUVTexture>(
 
 template <>
 bool ReconstructShader<UsdPrimvarReader_int>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_int *preader,
     std::string *warn,
     std::string *err)
 {
+  (void)spec;
   (void)references;
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
@@ -3127,12 +3170,14 @@ bool ReconstructShader<UsdPrimvarReader_int>(
 
 template <>
 bool ReconstructShader<UsdPrimvarReader_float>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_float *preader,
     std::string *warn,
     std::string *err)
 {
+  (void)spec;
   (void)references;
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
@@ -3151,12 +3196,14 @@ bool ReconstructShader<UsdPrimvarReader_float>(
 
 template <>
 bool ReconstructShader<UsdPrimvarReader_float2>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_float2 *preader,
     std::string *warn,
     std::string *err)
 {
+  (void)spec;
   (void)references;
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
@@ -3177,12 +3224,14 @@ bool ReconstructShader<UsdPrimvarReader_float2>(
 
 template <>
 bool ReconstructShader<UsdPrimvarReader_float3>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_float3 *preader,
     std::string *warn,
     std::string *err)
 {
+  (void)spec;
   (void)references;
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
@@ -3202,12 +3251,14 @@ bool ReconstructShader<UsdPrimvarReader_float3>(
 
 template <>
 bool ReconstructShader<UsdPrimvarReader_float4>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_float4 *preader,
     std::string *warn,
     std::string *err)
 {
+  (void)spec;
   (void)references;
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
@@ -3227,12 +3278,14 @@ bool ReconstructShader<UsdPrimvarReader_float4>(
 
 template <>
 bool ReconstructShader<UsdPrimvarReader_string>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_string *preader,
     std::string *warn,
     std::string *err)
 {
+  (void)spec;
   (void)references;
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
@@ -3252,12 +3305,14 @@ bool ReconstructShader<UsdPrimvarReader_string>(
 
 template <>
 bool ReconstructShader<UsdPrimvarReader_vector>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_vector *preader,
     std::string *warn,
     std::string *err)
 {
+  (void)spec;
   (void)references;
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
@@ -3277,12 +3332,14 @@ bool ReconstructShader<UsdPrimvarReader_vector>(
 
 template <>
 bool ReconstructShader<UsdPrimvarReader_normal>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_normal *preader,
     std::string *warn,
     std::string *err)
 {
+  (void)spec;
   (void)references;
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
@@ -3302,12 +3359,14 @@ bool ReconstructShader<UsdPrimvarReader_normal>(
 
 template <>
 bool ReconstructShader<UsdPrimvarReader_point>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_point *preader,
     std::string *warn,
     std::string *err)
 {
+  (void)spec;
   (void)references;
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
@@ -3327,12 +3386,14 @@ bool ReconstructShader<UsdPrimvarReader_point>(
 
 template <>
 bool ReconstructShader<UsdPrimvarReader_matrix>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_matrix *preader,
     std::string *warn,
     std::string *err)
 {
+  (void)spec;
   (void)references;
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
@@ -3352,12 +3413,14 @@ bool ReconstructShader<UsdPrimvarReader_matrix>(
 
 template <>
 bool ReconstructShader<UsdTransform2d>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     UsdTransform2d *transform,
     std::string *warn,
     std::string *err)
 {
+  (void)spec;
   (void)references;
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
@@ -3382,12 +3445,14 @@ bool ReconstructShader<UsdTransform2d>(
 
 template <>
 bool ReconstructPrim<Shader>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     Shader *shader,
     std::string *warn,
     std::string *err)
 {
+  (void)spec;
   (void)properties;
 
   bool is_generic_shader{false};
@@ -3427,7 +3492,7 @@ bool ReconstructPrim<Shader>(
 
   if (shader_type.compare(kUsdPreviewSurface) == 0) {
     UsdPreviewSurface surface;
-    if (!ReconstructShader<UsdPreviewSurface>(properties, references,
+    if (!ReconstructShader<UsdPreviewSurface>(spec, properties, references,
                                               &surface, warn, err)) {
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kUsdPreviewSurface);
     }
@@ -3436,7 +3501,7 @@ bool ReconstructPrim<Shader>(
     DCOUT("info_id = " << shader->info_id);
   } else if (shader_type.compare(kUsdUVTexture) == 0) {
     UsdUVTexture texture;
-    if (!ReconstructShader<UsdUVTexture>(properties, references,
+    if (!ReconstructShader<UsdUVTexture>(spec, properties, references,
                                          &texture, warn, err)) {
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kUsdUVTexture);
     }
@@ -3444,7 +3509,7 @@ bool ReconstructPrim<Shader>(
     shader->value = texture;
   } else if (shader_type.compare(kUsdPrimvarReader_int) == 0) {
     UsdPrimvarReader_int preader;
-    if (!ReconstructShader<UsdPrimvarReader_int>(properties, references,
+    if (!ReconstructShader<UsdPrimvarReader_int>(spec, properties, references,
                                                  &preader, warn, err)) {
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
                             << kUsdPrimvarReader_int);
@@ -3453,7 +3518,7 @@ bool ReconstructPrim<Shader>(
     shader->value = preader;
   } else if (shader_type.compare(kUsdPrimvarReader_float) == 0) {
     UsdPrimvarReader_float preader;
-    if (!ReconstructShader<UsdPrimvarReader_float>(properties, references,
+    if (!ReconstructShader<UsdPrimvarReader_float>(spec, properties, references,
                                                    &preader, warn, err)) {
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
                             << kUsdPrimvarReader_float);
@@ -3462,7 +3527,7 @@ bool ReconstructPrim<Shader>(
     shader->value = preader;
   } else if (shader_type.compare(kUsdPrimvarReader_float2) == 0) {
     UsdPrimvarReader_float2 preader;
-    if (!ReconstructShader<UsdPrimvarReader_float2>(properties, references,
+    if (!ReconstructShader<UsdPrimvarReader_float2>(spec, properties, references,
                                                     &preader, warn, err)) {
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
                             << kUsdPrimvarReader_float2);
@@ -3471,7 +3536,7 @@ bool ReconstructPrim<Shader>(
     shader->value = preader;
   } else if (shader_type.compare(kUsdPrimvarReader_float3) == 0) {
     UsdPrimvarReader_float3 preader;
-    if (!ReconstructShader<UsdPrimvarReader_float3>(properties, references,
+    if (!ReconstructShader<UsdPrimvarReader_float3>(spec,properties, references,
                                                     &preader, warn, err)) {
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
                             << kUsdPrimvarReader_float3);
@@ -3480,7 +3545,7 @@ bool ReconstructPrim<Shader>(
     shader->value = preader;
   } else if (shader_type.compare(kUsdPrimvarReader_float4) == 0) {
     UsdPrimvarReader_float4 preader;
-    if (!ReconstructShader<UsdPrimvarReader_float4>(properties, references,
+    if (!ReconstructShader<UsdPrimvarReader_float4>(spec,properties, references,
                                                     &preader, warn, err)) {
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
                             << kUsdPrimvarReader_float4);
@@ -3489,7 +3554,7 @@ bool ReconstructPrim<Shader>(
     shader->value = preader;
   } else if (shader_type.compare(kUsdPrimvarReader_string) == 0) {
     UsdPrimvarReader_string preader;
-    if (!ReconstructShader<UsdPrimvarReader_string>(properties, references,
+    if (!ReconstructShader<UsdPrimvarReader_string>(spec,properties, references,
                                                     &preader, warn, err)) {
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
                             << kUsdPrimvarReader_string);
@@ -3498,7 +3563,7 @@ bool ReconstructPrim<Shader>(
     shader->value = preader;
   } else if (shader_type.compare(kUsdPrimvarReader_vector) == 0) {
     UsdPrimvarReader_vector preader;
-    if (!ReconstructShader<UsdPrimvarReader_vector>(properties, references,
+    if (!ReconstructShader<UsdPrimvarReader_vector>(spec,properties, references,
                                                     &preader, warn, err)) {
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
                             << kUsdPrimvarReader_vector);
@@ -3507,7 +3572,7 @@ bool ReconstructPrim<Shader>(
     shader->value = preader;
   } else if (shader_type.compare(kUsdPrimvarReader_normal) == 0) {
     UsdPrimvarReader_normal preader;
-    if (!ReconstructShader<UsdPrimvarReader_normal>(properties, references,
+    if (!ReconstructShader<UsdPrimvarReader_normal>(spec,properties, references,
                                                     &preader, warn, err)) {
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
                             << kUsdPrimvarReader_normal);
@@ -3516,7 +3581,7 @@ bool ReconstructPrim<Shader>(
     shader->value = preader;
   } else if (shader_type.compare(kUsdPrimvarReader_point) == 0) {
     UsdPrimvarReader_point preader;
-    if (!ReconstructShader<UsdPrimvarReader_point>(properties, references,
+    if (!ReconstructShader<UsdPrimvarReader_point>(spec,properties, references,
                                                     &preader, warn, err)) {
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
                             << kUsdPrimvarReader_point);
@@ -3525,7 +3590,7 @@ bool ReconstructPrim<Shader>(
     shader->value = preader;
   } else if (shader_type.compare(kUsdTransform2d) == 0) {
     UsdTransform2d transform;
-    if (!ReconstructShader<UsdTransform2d>(properties, references,
+    if (!ReconstructShader<UsdTransform2d>(spec,properties, references,
                                                     &transform, warn, err)) {
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
                             << kUsdTransform2d);
@@ -3535,7 +3600,7 @@ bool ReconstructPrim<Shader>(
   } else {
     // Reconstruct as generic ShaderNode
     ShaderNode surface;
-    if (!ReconstructShader<ShaderNode>(properties, references,
+    if (!ReconstructShader<ShaderNode>(spec,properties, references,
                                               &surface, warn, err)) {
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << shader_type);
     }
@@ -3552,12 +3617,14 @@ bool ReconstructPrim<Shader>(
 
 template <>
 bool ReconstructPrim<Material>(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     Material *material,
     std::string *warn,
     std::string *err)
 {
+  (void)spec;
   (void)references;
   std::set<std::string> table;
 
@@ -3593,7 +3660,7 @@ bool ReconstructPrim<__prim_ty>( \
  \
   ReferenceList references; /* dummy */ \
  \
-  return ReconstructPrim<__prim_ty>(primspec.props(), references, prim, warn, err); \
+  return ReconstructPrim<__prim_ty>(primspec.specifier(), primspec.props(), references, prim, warn, err); \
 }
 
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Xform)
