@@ -81,7 +81,7 @@ namespace prim {
 
 // template specialization forward decls.
 // implimentations will be located in prim-reconstruct.cc
-#define RECONSTRUCT_PRIM_DECL(__ty) template<> bool ReconstructPrim<__ty>(const PropertyMap &, const ReferenceList &, __ty *, std::string *, std::string *)
+#define RECONSTRUCT_PRIM_DECL(__ty) template<> bool ReconstructPrim<__ty>(const Specifier &spec, const PropertyMap &, const ReferenceList &, __ty *, std::string *, std::string *)
 
 RECONSTRUCT_PRIM_DECL(Xform);
 RECONSTRUCT_PRIM_DECL(Model);
@@ -444,6 +444,7 @@ class USDAReader::Impl {
 
   template <typename T>
   bool ReconstructPrim(
+      const Specifier &spec,
       const prim::PropertyMap &properties,
       const prim::ReferenceList &references,
       T *out);
@@ -503,7 +504,7 @@ class USDAReader::Impl {
             references = prim.meta.references.value();
           }
 
-          bool ret = ReconstructPrim<T>(properties, references, &prim);
+          bool ret = ReconstructPrim<T>(spec, properties, references, &prim);
 
           if (!ret) {
             return nonstd::make_unexpected("Failed to reconstruct Prim: " +
@@ -1152,7 +1153,7 @@ class USDAReader::Impl {
         } else {
           PUSH_WARN("(Internal) unregistered Metadata must be type string, but got type " + var.type_name());
         }
-        
+
       }
     }
 
@@ -1344,7 +1345,7 @@ bool ToPrimSpecRec(const size_t primSpecIdx,
             variantChildrenIndices.insert(vidx);
           }
         }
-      
+
         variant.metas() = std::move(item.second.metas);
         variant.props() = std::move(item.second.props);
 
@@ -1355,7 +1356,7 @@ bool ToPrimSpecRec(const size_t primSpecIdx,
       variantSets.emplace(variantNodes.first, std::move(variantSet));
     }
     primspec.variantSets() = std::move(variantSets);
-  } 
+  }
 
   for (const auto &cidx : node.children) {
 
@@ -1553,12 +1554,13 @@ bool USDAReader::Impl::ReconstructStage() {
 
 template <>
 bool USDAReader::Impl::ReconstructPrim(
+    const Specifier &spec,
     const prim::PropertyMap &properties,
     const prim::ReferenceList &references,
     Xform *xform) {
 
   std::string err;
-  if (!prim::ReconstructPrim(properties, references, xform, &_warn, &err)) {
+  if (!prim::ReconstructPrim(spec, properties, references, xform, &_warn, &err)) {
     PUSH_ERROR_AND_RETURN("Failed to reconstruct Xform Prim: " << err);
   }
   return true;
@@ -1858,9 +1860,11 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
 
 template <>
 bool USDAReader::Impl::ReconstructPrim(
+    const Specifier &spec,
     const prim::PropertyMap &properties,
     const prim::ReferenceList &references,
     GPrim *gprim) {
+  (void)spec;
   (void)gprim;
 
   DCOUT("TODO: Reconstruct GPrim.");
@@ -1873,6 +1877,7 @@ bool USDAReader::Impl::ReconstructPrim(
 
 template <>
 bool USDAReader::Impl::ReconstructPrim<NodeGraph>(
+    const Specifier &spec,
     const prim::PropertyMap &properties,
     const prim::ReferenceList &references,
     NodeGraph *graph) {
@@ -1888,12 +1893,13 @@ bool USDAReader::Impl::ReconstructPrim<NodeGraph>(
 // Generic Prim handler. T = Xform, GeomMesh, ...
 template <typename T>
 bool USDAReader::Impl::ReconstructPrim(
+    const Specifier &spec,
     const prim::PropertyMap &properties,
     const prim::ReferenceList &references,
     T *prim) {
 
   std::string err;
-  if (!prim::ReconstructPrim(properties, references, prim, &_warn, &err)) {
+  if (!prim::ReconstructPrim(spec, properties, references, prim, &_warn, &err)) {
     PUSH_ERROR_AND_RETURN(fmt::format("Failed to reconstruct {} Prim: {}", value::TypeTraits<T>::type_name(), err));
   }
   return true;
