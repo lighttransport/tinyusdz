@@ -43,7 +43,7 @@ struct CrateReaderConfig {
   size_t maxValueRecursion = 16; // Prevent recursive Value unpack(e.g. Value encodes itself)
 
   // Generic int[] data
-  size_t maxInts = 1024 * 1024 * 4;
+  size_t maxInts = 1024 * 1024 * 1024;
 
   // Total memory budget for uncompressed USD data(vertices, `tokens`, ...)` in
   // [bytes].
