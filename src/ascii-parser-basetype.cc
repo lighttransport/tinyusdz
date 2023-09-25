@@ -1756,6 +1756,10 @@ bool AsciiParser::ParseBasicTypeArray(
     return false;
   }
 
+  if (!SkipCommentAndWhitespaceAndNewline()) {
+    return false;
+  }
+
   if (!Expect(']')) {
     return false;
   }
@@ -1792,6 +1796,10 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<T> *result) {
   }
 
   if (!SepBy1BasicType<T>(',', ']', result)) {
+    return false;
+  }
+
+  if (!SkipCommentAndWhitespaceAndNewline()) {
     return false;
   }
 
@@ -1842,6 +1850,10 @@ bool AsciiParser::SepBy1BasicType(const char sep,
     }
 
     if (c == sep) {
+      // Look next token
+      if (!SkipWhitespaceAndNewline()) {
+        return false;
+      }
 
       char nc;
       if (!LookChar1(&nc)) {
@@ -1849,9 +1861,9 @@ bool AsciiParser::SepBy1BasicType(const char sep,
       }
 
       if (nc == end_symbol) {
+        // end
         break;
       }
-
     }
 
     if (c != sep) {
@@ -1996,7 +2008,6 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<Reference> *result) {
   if (c != '[') {
     Rewind(1);
 
-    DCOUT("Guess non-list version");
     // Guess non-list version
     Reference ref;
     bool triple_deliminated{false};
@@ -2029,13 +2040,20 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<Reference> *result) {
       Rewind(1);
     }
 
-    if (!SepBy1BasicType(',', result)) {
+
+    if (!SepBy1BasicType<Reference>(',', ']', result)) {
+      return false;
+    }
+    DCOUT("parsed ref array");
+
+    if (!SkipCommentAndWhitespaceAndNewline()) {
       return false;
     }
 
     if (!Expect(']')) {
       return false;
     }
+
   }
 
   return true;
