@@ -2313,9 +2313,8 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Specifier.");
         }
       } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                  "`specifier` field is missing for FieldSets "
-                                  "with SpecType::Prim.");
+        // default `over`
+        specifier = Specifier::Over;
       }
 
       std::string pTyName;
