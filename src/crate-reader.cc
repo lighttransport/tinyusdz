@@ -19,6 +19,7 @@
 #endif
 
 #include <unordered_set>
+//#include <stack>
 
 #include "crate-format.hh"
 #include "crate-pprint.hh"
@@ -4309,8 +4310,18 @@ bool CrateReader::BuildDecompressedPathsImpl(
     std::vector<int32_t> const &elementTokenIndexes,
     std::vector<int32_t> const &jumps,
     std::vector<bool> &visit_table,
-    size_t curIndex, Path parentPath) {
+    size_t curIndex, const Path &_parentPath) {
+
+  // TODO: Rewrite recursive call with for-based loop to avoid possible stack overlow. 
+  //constexpr size_t kMaxIter = 1024 * 1024 * 1024;
+  //std::stack<size_t> thisIndexStack;
+  //thisIndexStack.push(curIndex++);
+
   bool hasChild = false, hasSibling = false;
+
+  Path parentPath = _parentPath;
+
+
   do {
     auto thisIndex = curIndex++;
     DCOUT("thisIndex = " << thisIndex << ", pathIndexes.size = " << pathIndexes.size());
