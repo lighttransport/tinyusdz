@@ -262,13 +262,28 @@ class CrateReader {
   }
 
  private:
+
+  // To save stack usage
+  struct BuildDecompressedPathsArg {
+    std::vector<uint32_t> *pathIndexes{};
+    std::vector<int32_t> *elementTokenIndexes{};
+    std::vector<int32_t> *jumps{};
+    std::vector<bool> *visit_table{};
+    size_t startIndex{}; // usually 0
+    size_t endIndex{}; // inclusive. usually pathIndexes.size() - 1
+    Path parentPath;
+  };
+
   bool BuildDecompressedPathsImpl(
+      BuildDecompressedPathsArg *arg);
+#if 0
       std::vector<uint32_t> const &pathIndexes,
       std::vector<int32_t> const &elementTokenIndexes,
       std::vector<int32_t> const &jumps,
       std::vector<bool> &visit_table,  // track visited pathIndex to prevent
                                        // circular referencing
       size_t curIndex, const Path &parentPath);
+#endif
 
   bool UnpackValueRep(const crate::ValueRep &rep, crate::CrateValue *value);
   bool UnpackInlinedValueRep(const crate::ValueRep &rep,

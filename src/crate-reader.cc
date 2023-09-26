@@ -1,5 +1,6 @@
-// SPDX-License-Identifier: MIT
-// Copyright 2022-Present Syoyo Fujita.
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2022-2022 Syoyo Fujita.
+// Copyright 2023-Present Light Transport Entertainment Inc.
 //
 // Crate(binary format) reader
 //
@@ -19,7 +20,7 @@
 #endif
 
 #include <unordered_set>
-//#include <stack>
+#include <stack>
 
 #include "crate-format.hh"
 #include "crate-pprint.hh"
@@ -4306,137 +4307,247 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 }
 
 bool CrateReader::BuildDecompressedPathsImpl(
+#if 0
     std::vector<uint32_t> const &pathIndexes,
     std::vector<int32_t> const &elementTokenIndexes,
     std::vector<int32_t> const &jumps,
     std::vector<bool> &visit_table,
     size_t curIndex, const Path &_parentPath) {
-
-  // TODO: Rewrite recursive call with for-based loop to avoid possible stack overlow. 
-  //constexpr size_t kMaxIter = 1024 * 1024 * 1024;
-  //std::stack<size_t> thisIndexStack;
-  //thisIndexStack.push(curIndex++);
+#else
+    BuildDecompressedPathsArg *arg) {
+#endif
 
   bool hasChild = false, hasSibling = false;
 
+#if 0
   Path parentPath = _parentPath;
+#else
 
+  if (!arg) {
+    return false;
+  }
 
-  do {
-    auto thisIndex = curIndex++;
-    DCOUT("thisIndex = " << thisIndex << ", pathIndexes.size = " << pathIndexes.size());
-    if (parentPath.is_empty()) {
-      // root node.
-      // Assume single root node in the scene.
-      DCOUT("paths[" << pathIndexes[thisIndex]
-                     << "] is parent. name = " << parentPath.full_path_name());
-      parentPath = Path::make_root_path();
+  Path parentPath = arg->parentPath;
+  if (!arg->pathIndexes) {
+    return false;
+  }
+  if (!arg->elementTokenIndexes) {
+    return false;
+  }
+  if (!arg->jumps) {
+    return false;
+  }
+  if (!arg->visit_table) {
+    return false;
+  }
+  auto &pathIndexes = *arg->pathIndexes;
+  auto &elementTokenIndexes = *arg->elementTokenIndexes;
+  auto &jumps = *arg->jumps;
+  auto &visit_table = *arg->visit_table;
+#endif
 
-      if (thisIndex >= pathIndexes.size()) {
-        PUSH_ERROR("Index exceeds pathIndexes.size()");
-        return false;
-      }
+  auto rootPath = Path::make_root_path();
 
-      size_t idx = pathIndexes[thisIndex];
-      if (idx >= _paths.size()) {
-        PUSH_ERROR("Index is out-of-range");
-        return false;
-      }
+  // TODO: Rewrite recursive call with for-based loop to avoid possible stack overlow.
+  constexpr size_t kMaxIter = 1024 * 1024 * 1024;
 
-      if (idx < visit_table.size()) {
-        if (visit_table[idx]) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Circular referencing of Path index tree detected. Invalid Paths data.");
-        }
-      }
+  std::stack<size_t> startIndexStack;
+  std::stack<size_t> endIndexStack;
+  std::stack<Path> parentPathStack;
 
-      _paths[idx] = parentPath;
-      visit_table[idx] = true;
-    } else {
-      if (thisIndex >= elementTokenIndexes.size()) {
-        PUSH_ERROR("Index exceeds elementTokenIndexes.size()");
-        return false;
-      }
-      int32_t _tokenIndex = elementTokenIndexes[thisIndex];
-      DCOUT("elementTokenIndex = " << _tokenIndex);
-      bool isPrimPropertyPath = _tokenIndex < 0;
-      // ~0 returns -2147483648, so cast to uint32
-      uint32_t tokenIndex = uint32_t(isPrimPropertyPath ? -_tokenIndex : _tokenIndex);
+  size_t nIter = 0;
 
-      DCOUT("tokenIndex = " << tokenIndex << ", _tokens.size = " << _tokens.size());
-      if (tokenIndex >= _tokens.size()) {
-        PUSH_ERROR("Invalid tokenIndex in BuildDecompressedPathsImpl.");
-        return false;
-      }
-      auto const &elemToken = _tokens[size_t(tokenIndex)];
-      DCOUT("elemToken = " << elemToken);
-      DCOUT("[" << pathIndexes[thisIndex] << "].append = " << elemToken);
+  size_t startIndex = arg->startIndex;
+  size_t endIndex = arg->endIndex;
 
-      size_t idx = pathIndexes[thisIndex];
-      if (idx >= _paths.size()) {
-        PUSH_ERROR("Index is out-of-range");
-        return false;
-      }
+  while (nIter < kMaxIter) {
 
-      if (idx >= _elemPaths.size()) {
-        PUSH_ERROR("Index is out-of-range");
-        return false;
-      }
+    DCOUT("iter " << nIter);
+    DCOUT("startIndex = " << startIndex << ", endIdx = " << endIndex);
 
-      if (idx < visit_table.size()) {
-        if (visit_table[idx]) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, "Circular referencing of Path index tree detected. Invalid Paths data.");
-        }
-      }
+    for (size_t thisIndex = startIndex; thisIndex < (endIndex + 1); thisIndex++) {
+      //auto thisIndex = curIndex++;
+      DCOUT("thisIndex = " << thisIndex << ", pathIndexes.size = " << pathIndexes.size());
+      if (parentPath.is_empty()) {
+        // root node.
+        // Assume single root node in the scene.
+        DCOUT("paths[" << pathIndexes[thisIndex]
+                       << "] is parent. name = " << parentPath.full_path_name());
+        parentPath = rootPath;
 
-      // Reconstruct full path
-      _paths[idx] =
-          isPrimPropertyPath ? parentPath.AppendProperty(elemToken.str())
-                             : parentPath.AppendElement(elemToken.str()); // prim, variantSelection, etc.
-
-      // also set leaf path for 'primChildren' check
-      _elemPaths[idx] = Path(elemToken.str(), "");
-      //_paths[pathIndexes[thisIndex]].SetLocalPart(elemToken.str());
-
-      visit_table[idx] = true;
-    }
-
-    // If we have either a child or a sibling but not both, then just
-    // continue to the neighbor.  If we have both then spawn a task for the
-    // sibling and do the child ourself.  We think that our path trees tend
-    // to be broader more often than deep.
-
-    if (thisIndex >= jumps.size()) {
-      PUSH_ERROR("Index is out-of-range");
-      return false;
-    }
-
-    hasChild = (jumps[thisIndex] > 0) || (jumps[thisIndex] == -1);
-    hasSibling = (jumps[thisIndex] >= 0);
-    DCOUT("hasChild = " << hasChild << ", hasSibling = " << hasSibling);
-
-    if (hasChild) {
-      if (hasSibling) {
-        // NOTE(syoyo): This recursive call can be parallelized
-        auto siblingIndex = thisIndex + size_t(jumps[thisIndex]);
-        if (!BuildDecompressedPathsImpl(pathIndexes, elementTokenIndexes, jumps, visit_table,
-                                        siblingIndex, parentPath)) {
+        if (thisIndex >= pathIndexes.size()) {
+          PUSH_ERROR("Index exceeds pathIndexes.size()");
           return false;
         }
+
+        size_t idx = pathIndexes[thisIndex];
+        if (idx >= _paths.size()) {
+          PUSH_ERROR("Index is out-of-range");
+          return false;
+        }
+
+        if (idx < visit_table.size()) {
+          if (visit_table[idx]) {
+            PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Circular referencing of Path index {}(thisIndex {}) detected. Invalid Paths data.", idx, thisIndex));
+          }
+        }
+
+        _paths[idx] = parentPath;
+        visit_table[idx] = true;
+      } else {
+        if (thisIndex >= elementTokenIndexes.size()) {
+          PUSH_ERROR("Index exceeds elementTokenIndexes.size()");
+          return false;
+        }
+        int32_t _tokenIndex = elementTokenIndexes[thisIndex];
+        DCOUT("elementTokenIndex = " << _tokenIndex);
+        bool isPrimPropertyPath = _tokenIndex < 0;
+        // ~0 returns -2147483648, so cast to uint32
+        uint32_t tokenIndex = uint32_t(isPrimPropertyPath ? -_tokenIndex : _tokenIndex);
+
+        DCOUT("tokenIndex = " << tokenIndex << ", _tokens.size = " << _tokens.size());
+        if (tokenIndex >= _tokens.size()) {
+          PUSH_ERROR("Invalid tokenIndex in BuildDecompressedPathsImpl.");
+          return false;
+        }
+        auto const &elemToken = _tokens[size_t(tokenIndex)];
+        DCOUT("elemToken = " << elemToken);
+        DCOUT("[" << pathIndexes[thisIndex] << "].append = " << elemToken);
+
+        size_t idx = pathIndexes[thisIndex];
+        if (idx >= _paths.size()) {
+          PUSH_ERROR("Index is out-of-range");
+          return false;
+        }
+
+        if (idx >= _elemPaths.size()) {
+          PUSH_ERROR("Index is out-of-range");
+          return false;
+        }
+
+        if (idx < visit_table.size()) {
+          if (visit_table[idx]) {
+            PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Circular referencing of Path index {}(thisIndex {}) detected. Invalid Paths data.", idx, thisIndex));
+          }
+        }
+
+        // Reconstruct full path
+        _paths[idx] =
+            isPrimPropertyPath ? parentPath.AppendProperty(elemToken.str())
+                               : parentPath.AppendElement(elemToken.str()); // prim, variantSelection, etc.
+
+        // also set leaf path for 'primChildren' check
+        _elemPaths[idx] = Path(elemToken.str(), "");
+        //_paths[pathIndexes[thisIndex]].SetLocalPart(elemToken.str());
+
+        visit_table[idx] = true;
       }
 
-      size_t idx = pathIndexes[thisIndex];
-      if (idx >= _paths.size()) {
+      // If we have either a child or a sibling but not both, then just
+      // continue to the neighbor.  If we have both then spawn a task for the
+      // sibling and do the child ourself.  We think that our path trees tend
+      // to be broader more often than deep.
+
+      if (thisIndex >= jumps.size()) {
         PUSH_ERROR("Index is out-of-range");
         return false;
       }
 
-      // Have a child (may have also had a sibling). Reset parent path.
-      parentPath = _paths[idx];
+      hasChild = (jumps[thisIndex] > 0) || (jumps[thisIndex] == -1);
+      hasSibling = (jumps[thisIndex] >= 0);
+      DCOUT("hasChild = " << hasChild << ", hasSibling = " << hasSibling);
+
+      if (hasChild) {
+        if (hasSibling) {
+          // NOTE(syoyo): This recursive call can be parallelized
+          auto siblingIndex = thisIndex + size_t(jumps[thisIndex]);
+
+          // Find subtree end.
+          size_t subtreeStartIdx = siblingIndex;
+          size_t subtreeIdx = subtreeStartIdx;
+
+          for (; subtreeIdx < jumps.size(); subtreeIdx++) {
+
+            bool has_child = (jumps[subtreeIdx] > 0) || (jumps[subtreeIdx] == -1);
+            bool has_sibling = (jumps[subtreeIdx] >= 0);
+
+            if (has_child || has_sibling) {
+              continue;
+            }
+            break;
+          }
+
+          size_t subtreeEndIdx = subtreeIdx;
+          if (subtreeEndIdx >= jumps.size()) {
+            // Guess corrupted.
+            PUSH_ERROR_AND_RETURN("jump indices seems corrupted.");
+          }
+
+          DCOUT("subtree startIdx " << subtreeStartIdx << ", subtree endIndex " << subtreeEndIdx);
+
+          if (subtreeEndIdx > subtreeStartIdx) {
+
+            // index range after traversing subtree
+            {
+                startIndexStack.push(thisIndex+1);
+                endIndexStack.push(endIndex);
+                parentPathStack.push(parentPath);
+            }
+
+            startIndexStack.push(subtreeStartIdx);
+            endIndexStack.push(subtreeEndIdx);
+
+            {
+              size_t idx = pathIndexes[thisIndex];
+              if (idx >= _paths.size()) {
+                PUSH_ERROR("Index is out-of-range");
+                return false;
+              }
+
+              parentPathStack.push(_paths[idx]);
+            }
+
+            DCOUT("stack size: " << startIndexStack.size());
+
+            nIter++;
+
+            break; // goto `(A)`
+          }
+
+        }
+
+        size_t idx = pathIndexes[thisIndex];
+        if (idx >= _paths.size()) {
+          PUSH_ERROR("Index is out-of-range");
+          return false;
+        }
+
+        parentPath = _paths[idx];
+
+      }
     }
-    // If we had only a sibling, we just continue since the parent path is
-    // unchanged and the next thing in the reader stream is the sibling's
-    // header.
-  } while (hasChild || hasSibling);
+
+    // (A)
+
+    if (startIndexStack.empty()) {
+      break; // end traversal
+    }
+
+    startIndex = startIndexStack.top();
+    startIndexStack.pop();
+
+    endIndex = endIndexStack.top();
+    endIndexStack.pop();
+
+    parentPath = parentPathStack.top();
+    parentPathStack.pop();
+
+    nIter++;
+  }
+
+  if (nIter >= kMaxIter) {
+    PUSH_ERROR_AND_RETURN("PathIndex tree Too deep.");
+  }
 
   return true;
 }
@@ -4763,10 +4874,24 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
   }
 
   // Now build the paths.
+#if 0
   if (!BuildDecompressedPathsImpl(pathIndexes, elementTokenIndexes, jumps, visit_table,
                                   /* curIndex */ 0, Path())) {
     return false;
   }
+#else
+  BuildDecompressedPathsArg arg;
+  arg.pathIndexes = &pathIndexes;
+  arg.elementTokenIndexes = &elementTokenIndexes;
+  arg.jumps = &jumps;
+  arg.visit_table = &visit_table;
+  arg.startIndex = 0;
+  arg.endIndex = pathIndexes.size() - 1;
+  arg.parentPath = Path();
+  if (!BuildDecompressedPathsImpl(&arg)) {
+    return false;
+  }
+#endif
 
   // Now build node hierarchy.
 
