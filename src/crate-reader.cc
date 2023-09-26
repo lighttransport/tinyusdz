@@ -4306,22 +4306,11 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
   return false;
 }
 
+#if defined(TINYUSDZ_CRATE_USE_FOR_BASED_PATH_INDEX_DECODER)
 bool CrateReader::BuildDecompressedPathsImpl(
-#if 0
-    std::vector<uint32_t> const &pathIndexes,
-    std::vector<int32_t> const &elementTokenIndexes,
-    std::vector<int32_t> const &jumps,
-    std::vector<bool> &visit_table,
-    size_t curIndex, const Path &_parentPath) {
-#else
     BuildDecompressedPathsArg *arg) {
-#endif
 
   bool hasChild = false, hasSibling = false;
-
-#if 0
-  Path parentPath = _parentPath;
-#else
 
   if (!arg) {
     return false;
@@ -4344,13 +4333,11 @@ bool CrateReader::BuildDecompressedPathsImpl(
   auto &elementTokenIndexes = *arg->elementTokenIndexes;
   auto &jumps = *arg->jumps;
   auto &visit_table = *arg->visit_table;
-#endif
 
   auto rootPath = Path::make_root_path();
 
-  // TODO: Rewrite recursive call with for-based loop to avoid possible stack overlow.
-  constexpr size_t kMaxIter = 1024 * 1024 * 1024;
-
+  const size_t maxIter = _config.maxPathIndicesDecodeIteration;
+    
   std::stack<size_t> startIndexStack;
   std::stack<size_t> endIndexStack;
   std::stack<Path> parentPathStack;
@@ -4360,9 +4347,8 @@ bool CrateReader::BuildDecompressedPathsImpl(
   size_t startIndex = arg->startIndex;
   size_t endIndex = arg->endIndex;
 
-  while (nIter < kMaxIter) {
+  while (nIter < maxIter) {
 
-    DCOUT("iter " << nIter);
     DCOUT("startIndex = " << startIndex << ", endIdx = " << endIndex);
 
     for (size_t thisIndex = startIndex; thisIndex < (endIndex + 1); thisIndex++) {
@@ -4462,6 +4448,10 @@ bool CrateReader::BuildDecompressedPathsImpl(
           // NOTE(syoyo): This recursive call can be parallelized
           auto siblingIndex = thisIndex + size_t(jumps[thisIndex]);
 
+          if (siblingIndex >= jumps.size()) {
+            PUSH_ERROR_AND_RETURN("jump index corrupted.");
+          }
+
           // Find subtree end.
           size_t subtreeStartIdx = siblingIndex;
           size_t subtreeIdx = subtreeStartIdx;
@@ -4485,12 +4475,13 @@ bool CrateReader::BuildDecompressedPathsImpl(
 
           DCOUT("subtree startIdx " << subtreeStartIdx << ", subtree endIndex " << subtreeEndIdx);
 
-          if (subtreeEndIdx > subtreeStartIdx) {
+          if (subtreeEndIdx >= subtreeStartIdx) {
 
             // index range after traversing subtree
-            {
+            if (jumps[thisIndex] > 1) {
                 startIndexStack.push(thisIndex+1);
-                endIndexStack.push(endIndex);
+                // jumps should be always positive, so no siblingIndex < thisIndex
+                endIndexStack.push(siblingIndex-1); // endIndex is inclusive so subtract 1.
                 parentPathStack.push(parentPath);
             }
 
@@ -4545,12 +4536,145 @@ bool CrateReader::BuildDecompressedPathsImpl(
     nIter++;
   }
 
-  if (nIter >= kMaxIter) {
+  if (nIter >= maxIter) {
     PUSH_ERROR_AND_RETURN("PathIndex tree Too deep.");
   }
 
   return true;
 }
+#else
+bool CrateReader::BuildDecompressedPathsImpl(
+    std::vector<uint32_t> const &pathIndexes,
+    std::vector<int32_t> const &elementTokenIndexes,
+    std::vector<int32_t> const &jumps,
+    std::vector<bool> &visit_table,
+    size_t curIndex, const Path &_parentPath) {
+
+  Path parentPath = _parentPath;
+
+  bool hasChild = false, hasSibling = false;
+  do {
+    auto thisIndex = curIndex++;
+    DCOUT("thisIndex = " << thisIndex << ", pathIndexes.size = " << pathIndexes.size());
+    if (parentPath.is_empty()) {
+      // root node.
+      // Assume single root node in the scene.
+      DCOUT("paths[" << pathIndexes[thisIndex]
+                     << "] is parent. name = " << parentPath.full_path_name());
+      parentPath = Path::make_root_path();
+
+      if (thisIndex >= pathIndexes.size()) {
+        PUSH_ERROR("Index exceeds pathIndexes.size()");
+        return false;
+      }
+
+      size_t idx = pathIndexes[thisIndex];
+      if (idx >= _paths.size()) {
+        PUSH_ERROR("Index is out-of-range");
+        return false;
+      }
+
+      if (idx < visit_table.size()) {
+        if (visit_table[idx]) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Circular referencing of Path index tree detected. Invalid Paths data.");
+        }
+      }
+
+      _paths[idx] = parentPath;
+      visit_table[idx] = true;
+    } else {
+      if (thisIndex >= elementTokenIndexes.size()) {
+        PUSH_ERROR("Index exceeds elementTokenIndexes.size()");
+        return false;
+      }
+      int32_t _tokenIndex = elementTokenIndexes[thisIndex];
+      DCOUT("elementTokenIndex = " << _tokenIndex);
+      bool isPrimPropertyPath = _tokenIndex < 0;
+      // ~0 returns -2147483648, so cast to uint32
+      uint32_t tokenIndex = uint32_t(isPrimPropertyPath ? -_tokenIndex : _tokenIndex);
+
+      DCOUT("tokenIndex = " << tokenIndex << ", _tokens.size = " << _tokens.size());
+      if (tokenIndex >= _tokens.size()) {
+        PUSH_ERROR("Invalid tokenIndex in BuildDecompressedPathsImpl.");
+        return false;
+      }
+      auto const &elemToken = _tokens[size_t(tokenIndex)];
+      DCOUT("elemToken = " << elemToken);
+      DCOUT("[" << pathIndexes[thisIndex] << "].append = " << elemToken);
+
+      size_t idx = pathIndexes[thisIndex];
+      if (idx >= _paths.size()) {
+        PUSH_ERROR("Index is out-of-range");
+        return false;
+      }
+
+      if (idx >= _elemPaths.size()) {
+        PUSH_ERROR("Index is out-of-range");
+        return false;
+      }
+
+      if (idx < visit_table.size()) {
+        if (visit_table[idx]) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, "Circular referencing of Path index tree detected. Invalid Paths data.");
+        }
+      }
+
+      // Reconstruct full path
+      _paths[idx] =
+          isPrimPropertyPath ? parentPath.AppendProperty(elemToken.str())
+                             : parentPath.AppendElement(elemToken.str()); // prim, variantSelection, etc.
+
+      // also set leaf path for 'primChildren' check
+      _elemPaths[idx] = Path(elemToken.str(), "");
+      //_paths[pathIndexes[thisIndex]].SetLocalPart(elemToken.str());
+
+      visit_table[idx] = true;
+    }
+
+    // If we have either a child or a sibling but not both, then just
+    // continue to the neighbor.  If we have both then spawn a task for the
+    // sibling and do the child ourself.  We think that our path trees tend
+    // to be broader more often than deep.
+
+    if (thisIndex >= jumps.size()) {
+      PUSH_ERROR("Index is out-of-range");
+      return false;
+    }
+
+    hasChild = (jumps[thisIndex] > 0) || (jumps[thisIndex] == -1);
+    hasSibling = (jumps[thisIndex] >= 0);
+    DCOUT("hasChild = " << hasChild << ", hasSibling = " << hasSibling);
+
+    DCOUT(fmt::format("hasChild {}, hasSibling {}", hasChild, hasSibling));
+
+    if (hasChild) {
+      if (hasSibling) {
+        // NOTE(syoyo): This recursive call can be parallelized
+        auto siblingIndex = thisIndex + size_t(jumps[thisIndex]);
+        if (!BuildDecompressedPathsImpl(pathIndexes, elementTokenIndexes, jumps, visit_table,
+                                        siblingIndex, parentPath)) {
+          return false;
+        }
+      }
+
+      size_t idx = pathIndexes[thisIndex];
+      if (idx >= _paths.size()) {
+        PUSH_ERROR("Index is out-of-range");
+        return false;
+      }
+
+      // Have a child (may have also had a sibling). Reset parent path.
+      parentPath = _paths[idx];
+    }
+    // If we had only a sibling, we just continue since the parent path is
+    // unchanged and the next thing in the reader stream is the sibling's
+    // header.
+  } while (hasChild || hasSibling);
+
+  return true;
+}
+#endif
+
 
 // TODO(syoyo): Refactor. Code is mostly identical to BuildDecompressedPathsImpl
 bool CrateReader::BuildNodeHierarchy(
@@ -4874,24 +4998,39 @@ bool CrateReader::ReadCompressedPaths(const uint64_t maxNumPaths) {
   }
 
   // Now build the paths.
-#if 0
-  if (!BuildDecompressedPathsImpl(pathIndexes, elementTokenIndexes, jumps, visit_table,
-                                  /* curIndex */ 0, Path())) {
-    return false;
-  }
-#else
+#if defined(TINYUSDZ_CRATE_USE_FOR_BASED_PATH_INDEX_DECODER)
   BuildDecompressedPathsArg arg;
   arg.pathIndexes = &pathIndexes;
   arg.elementTokenIndexes = &elementTokenIndexes;
   arg.jumps = &jumps;
   arg.visit_table = &visit_table;
   arg.startIndex = 0;
-  arg.endIndex = pathIndexes.size() - 1;
+  arg.endIndex = pathIndexes.size() - 1; // or numEncodedPaths - 1
   arg.parentPath = Path();
   if (!BuildDecompressedPathsImpl(&arg)) {
     return false;
   }
+
+#else
+  if (!BuildDecompressedPathsImpl(pathIndexes, elementTokenIndexes, jumps, visit_table,
+                                  /* curIndex */ 0, Path())) {
+    return false;
+  }
 #endif
+
+  //
+  // Ensure decoded numEncodedPaths.
+  //
+  size_t sumDecodedPaths = 0;
+  for (size_t i = 0; i < visit_table.size(); i++) {
+    if (visit_table[i]) {
+      sumDecodedPaths++;
+    }
+  }
+  if (sumDecodedPaths != numEncodedPaths) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Decoded {} paths but numEncodedPaths in Crate is {}. Possible corruption of Crate data.",
+      sumDecodedPaths, numEncodedPaths));
+  }
 
   // Now build node hierarchy.
 
