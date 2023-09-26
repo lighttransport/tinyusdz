@@ -268,7 +268,7 @@ class CrateReader {
       std::vector<int32_t> const &jumps,
       std::vector<bool> &visit_table,  // track visited pathIndex to prevent
                                        // circular referencing
-      size_t curIndex, Path parentPath);
+      size_t curIndex, const Path &parentPath);
 
   bool UnpackValueRep(const crate::ValueRep &rep, crate::CrateValue *value);
   bool UnpackInlinedValueRep(const crate::ValueRep &rep,
