@@ -11,6 +11,9 @@
   * [x] inherits 
   * [x] variantSet
   * [ ] Validate composition is correctly operated. 
+* Support reading & compose some production USD scenes
+  * [ ] Moana island v2.1 https://github.com/syoyo/tinyusdz/issues/90
+  * [ ] ALAB USD production scene https://github.com/syoyo/tinyusdz/issues/91
 * Tydra: Handy data structure converter for rendering https://github.com/syoyo/tinyusdz/issues/31 
 * MaterialX https://github.com/syoyo/tinyusdz/issues/86
   * USD + MateriralX + PBR rendering example using https://github.com/lighttransport/pbrlab
