@@ -4877,11 +4877,6 @@ bool CrateReader::ReadTokens() {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "uncompressedSize too small or zero bytes.");
   }
 
-  // TODO uncompressdSize check.
-  if (uncompressedSize > _sr->size()) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "uncompressedSize exceeds input USDC size.");
-  }
-
   uint64_t compressedSize;
   if (!_sr->read8(&compressedSize)) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read compressedSize at `TOKENS` section.");
