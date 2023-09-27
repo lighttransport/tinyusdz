@@ -16,6 +16,11 @@
 namespace tinyusdz {
 namespace crate {
 
+// on: Use for-based PathIndex tree decoder to avoid potential buffer overflow(new implementation. its not well tested with fuzzer)
+// off: Use recursive function call to decode PathIndex tree(its been working for a years and tested with fuzzer)
+// TODO: After several battle-testing, make for-based PathIndex tree decoder default
+#define TINYUSDZ_CRATE_USE_FOR_BASED_PATH_INDEX_DECODER
+
 struct CrateReaderConfig {
   int numThreads = -1;
 
@@ -41,6 +46,7 @@ struct CrateReaderConfig {
   size_t maxVariantsMapElements = 128;
 
   size_t maxValueRecursion = 16; // Prevent recursive Value unpack(e.g. Value encodes itself)
+  size_t maxPathIndicesDecodeIteration = 1024 * 1024 * 256; // Prevent infinite loop BuildDecompressedPathsImpl
 
   // Generic int[] data
   size_t maxInts = 1024 * 1024 * 1024;
@@ -263,6 +269,7 @@ class CrateReader {
 
  private:
 
+#if defined(TINYUSDZ_CRATE_USE_FOR_BASED_PATH_INDEX_DECODER)
   // To save stack usage
   struct BuildDecompressedPathsArg {
     std::vector<uint32_t> *pathIndexes{};
@@ -276,7 +283,9 @@ class CrateReader {
 
   bool BuildDecompressedPathsImpl(
       BuildDecompressedPathsArg *arg);
-#if 0
+
+#else
+  bool BuildDecompressedPathsImpl(
       std::vector<uint32_t> const &pathIndexes,
       std::vector<int32_t> const &elementTokenIndexes,
       std::vector<int32_t> const &jumps,
