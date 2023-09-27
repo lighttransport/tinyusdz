@@ -282,8 +282,7 @@ static void RegisterPrimMetas(
   // USDZ extension
   metas["sceneName"] = AsciiParser::VariableDef(value::kString, "sceneName");
 
-  // Omniverse extension
-  // Builtin from pxrUSD 23.xx?
+  // Builtin from pxrUSD 23.xx
   metas["displayName"] = AsciiParser::VariableDef(value::kString, "displayName");
 }
 
@@ -315,6 +314,9 @@ static void RegisterPropMetas(
   metas["renderType"] = AsciiParser::VariableDef(value::kToken, "renderType");
   metas["outputName"] = AsciiParser::VariableDef(value::kToken, "outputName");
   metas["sdrMetadata"] = AsciiParser::VariableDef(value::kDictionary, "sdrMetadata");
+
+  // Builtin from pxrUSD 23.xx
+  metas["displayName"] = AsciiParser::VariableDef(value::kString, "displayName");
 }
 
 
@@ -3189,6 +3191,43 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
         }
         DCOUT("bindMaterialAs: " << tok);
         out_meta->bindMaterialAs = tok;
+      } else if (varname == "displayName") {
+        std::string str;
+        if (!ReadStringLiteral(&str)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse `displayName`(string type)");
+        }
+        DCOUT("displayName: " << str);
+        out_meta->displayName = str;
+
+      } else if (varname == "connectability") {
+        value::token tok;
+        if (!ReadBasicType(&tok)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse `connectability`");
+        }
+        DCOUT("connectability: " << tok);
+        out_meta->connectability = tok;
+      } else if (varname == "renderType") {
+        value::token tok;
+        if (!ReadBasicType(&tok)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse `renderType`");
+        }
+        DCOUT("renderType: " << tok);
+        out_meta->renderType = tok;
+      } else if (varname == "outputName") {
+        value::token tok;
+        if (!ReadBasicType(&tok)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse `outputName`");
+        }
+        DCOUT("outputName: " << tok);
+        out_meta->outputName = tok;
+      } else if (varname == "sdrMetadata") {
+        Dictionary dict;
+
+        if (!ParseDict(&dict)) {
+          return false;
+        }
+
+        out_meta->sdrMetadata = dict;
       } else {
         if (auto pv = GetPropMetaDefinition(varname)) {
           // Parse as generic metadata variable
