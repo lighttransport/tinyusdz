@@ -619,6 +619,10 @@ std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
     ss << pprint::Indent(indent) << "connectability = " << quote(to_string(meta.connectability.value())) << "\n";
   }
 
+  if (meta.displayName) {
+    ss << pprint::Indent(indent) << "displayName = " << quote(meta.displayName.value()) << "\n";
+  }
+
   if (meta.outputName) {
     ss << pprint::Indent(indent) << "outputName = " << quote(to_string(meta.outputName.value())) << "\n";
   }
