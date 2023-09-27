@@ -97,3 +97,23 @@
 #else
 #define DCOUT(x)
 #endif
+
+// Simple auto-free class
+// Use this class when saving stack size is required(e.g. recursive function call).
+// T must have default constructor
+template<typename T>
+class AutoFree {
+ private:
+  T *_v{nullptr}; 
+
+ public:
+
+  AutoFree() : _v(new T()) { 
+  }
+
+  ~AutoFree() {
+    delete _v;
+  }
+
+  T &value() { return *_v; }
+};
