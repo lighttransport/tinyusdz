@@ -4735,9 +4735,7 @@ bool CrateReader::BuildNodeHierarchy(
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Circular referencing detected. Invalid Prim tree representation.");
         }
 
-        Node root(parentNodeIndex, _paths[pathIdx]);
-
-        _nodes[pathIdx] = root;
+        _nodes[pathIdx] = Node(parentNodeIndex, _paths[pathIdx]);
         visit_table[pathIdx] = true;
 
         parentNodeIndex = int64_t(thisIndex);
@@ -4776,14 +4774,15 @@ bool CrateReader::BuildNodeHierarchy(
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Circular referencing detected. Invalid Prim tree representation.");
         }
 
-        Node node(parentNodeIndex, _paths[pathIdx]);
 
         // Ensure parent is not set yet.
         if (_nodes[pathIdx].GetParent() != -2) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "???: Maybe corrupted path hierarchy?.");
         }
 
+        Node node(parentNodeIndex, _paths[pathIdx]);
         _nodes[pathIdx] = node;
+
         visit_table[pathIdx] = true;
 
         if (pathIdx >= _elemPaths.size()) {
