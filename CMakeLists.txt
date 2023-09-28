@@ -972,14 +972,11 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
       "-Weverything -Werror -Wno-poison-system-directories -Wno-padded -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-documentation -Wno-unused-member-function"
   )
 
-  if(EMSCRIPTEN) 
-    # Recent `latest` emscripten(as of 2023 May 5. clang17)
-    # seems enable -Wunsafe-buffer-usage when `-Weverything` is defined,
-    # resulting compilation error for some raw array access without bound check.
-    #
-    # https://reviews.llvm.org/D138940
-    # 
-    # we need to suppress it as a work around.
+  # clang17 seems enable -Wunsafe-buffer-usage when `-Weverything` is defined,
+  # resulting compilation error for some raw array access without bound check.
+  # https://reviews.llvm.org/D138940
+  # we need to suppress it as a work around.
+  if (${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 16)
     set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-unsafe-buffer-usage")
   endif()
 
