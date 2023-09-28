@@ -892,7 +892,8 @@ struct PrimMetas {
 // For backward compatibility
 using PrimMeta = PrimMetas;
 
-// Metadata for Attribute
+// Metadata for Property(Relationship and Attribute)
+// TODO: Rename to PropMetas
 struct AttrMetas {
   // frequently used items
   // nullopt = not specified in USD data
@@ -934,6 +935,8 @@ struct AttrMetas {
 
 // For backward compatibility
 using AttrMeta = AttrMetas;
+
+using PropMetas = AttrMetas;
 
 // Typed TimeSamples value
 //

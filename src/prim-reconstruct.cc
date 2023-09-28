@@ -1297,7 +1297,7 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
   return ret;
 }
 
-// Rel with single targetPath
+// Rel with single targetPath(or empty)
 #define PARSE_SINGLE_TARGET_PATH_RELATION(__table, __prop, __propname, __target) \
   if (prop.first == __propname) { \
     if (__table.count(__propname)) { \
@@ -1320,6 +1320,11 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
         continue; \
       } \
       PUSH_ERROR_AND_RETURN(fmt::format("`{}` target is empty or has mutiple Paths. Must be single Path.", __propname)); \
+    } else if (!rel.has_value()) { \
+      /* define-only. accept  */ \
+      __target = rel; \
+      table.insert(prop.first); \
+      DCOUT("Added rel " << __propname); \
     } else { \
       PUSH_ERROR_AND_RETURN(fmt::format("`{}` target must be Path.", __propname)); \
     } \
