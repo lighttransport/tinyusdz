@@ -2930,15 +2930,15 @@ bool ReconstructPrim<GeomMesh>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "cornerIndices", GeomMesh,
                          mesh->cornerIndices)
     PARSE_TYPED_ATTRIBUTE(table, prop, "cornerSharpnesses", GeomMesh,
-                         mesh->cornerIndices)
+                         mesh->cornerSharpnesses)
     PARSE_TYPED_ATTRIBUTE(table, prop, "creaseIndices", GeomMesh,
-                         mesh->cornerIndices)
+                         mesh->creaseIndices)
     PARSE_TYPED_ATTRIBUTE(table, prop, "creaseLengths", GeomMesh,
-                         mesh->cornerIndices)
+                         mesh->creaseLengths)
     PARSE_TYPED_ATTRIBUTE(table, prop, "creaseSharpnesses", GeomMesh,
-                         mesh->cornerIndices)
+                         mesh->creaseSharpnesses)
     PARSE_TYPED_ATTRIBUTE(table, prop, "holeIndices", GeomMesh,
-                         mesh->cornerIndices)
+                         mesh->holeIndices)
     PARSE_ENUM_PROPETY(table, prop, "subdivisionScheme",
                        SubdivisioSchemeHandler, GeomMesh,
                        mesh->subdivisionScheme)
