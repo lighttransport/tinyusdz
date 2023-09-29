@@ -284,6 +284,28 @@ std::string print_typed_token_timesamples(const TypedTimeSamples<T> &v, const ui
   return ss.str();
 }
 
+static std::string print_str_timesamples(const TypedTimeSamples<std::string> &v, const uint32_t indent = 0) {
+  std::stringstream ss;
+
+  ss << "{\n";
+
+  const auto &samples = v.get_samples();
+
+  for (size_t i = 0; i < samples.size(); i++) {
+    ss << pprint::Indent(indent+1) << samples[i].t << ": ";
+    if (samples[i].blocked) {
+      ss << "None";
+    } else {
+      ss << buildEscapedAndQuotedStringForUSDA(samples[i].value);
+    }
+    ss << ",\n";
+  }
+
+  ss << pprint::Indent(indent) << "}\n";
+
+  return ss.str();
+}
+
 template<typename T>
 std::string print_animatable(const Animatable<T> &v, const uint32_t indent = 0) {
   std::stringstream ss;
@@ -586,7 +608,7 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
     // do not quote
     ss << pprint::Indent(indent) << item.first << " = " << item.second << "\n";
   }
-  
+
   // TODO: deprecate meta.meta and remove it.
   for (const auto &item : meta.meta) {
     ss << print_meta(item.second, indent+1, item.first);
@@ -698,6 +720,56 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr, const st
           T a;
           if (pv.value().get_scalar(&a)) {
             ss << " = " << a;
+          } else {
+            ss << " = [InternalError]";
+          }
+        }
+      }
+    }
+
+    if (attr.metas().authored()) {
+      ss << "(\n" << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent) << ")";
+    }
+    ss << "\n";
+  }
+
+  return ss.str();
+}
+
+static std::string print_str_attr(const TypedAttribute<Animatable<std::string>> &attr, const std::string &name, const uint32_t indent) {
+
+  std::stringstream ss;
+
+  if (attr.authored()) {
+
+    ss << pprint::Indent(indent);
+
+    ss << value::TypeTraits<std::string>::type_name() << " " << name;
+
+    if (attr.is_blocked()) {
+      ss << " = None";
+    } else if (attr.is_connection()) {
+      ss << ".connect = ";
+      const std::vector<Path> &paths = attr.get_connections();
+      if (paths.size() == 1) {
+        ss << paths[0];
+      } else if (paths.size() == 0) {
+        ss << "[InternalError]";
+      } else {
+        ss << paths;
+      }
+
+    } else {
+      auto pv = attr.get_value();
+
+      if (pv) {
+        if (pv.value().is_timesamples()) {
+          ss << ".timeSamples = " << print_str_timesamples(pv.value().get_timesamples(), indent);
+        } else {
+          std::string a;
+          if (pv.value().get_scalar(&a)) {
+            // Do not use operator<<(std::string)
+            ss << " = " << tinyusdz::buildEscapedAndQuotedStringForUSDA(a);
           } else {
             ss << " = [InternalError]";
           }
@@ -2950,7 +3022,7 @@ static std::string print_common_shader_params(const ShaderNode &shader, const ui
 static std::string print_shader_params(const UsdPrimvarReader_float &shader, const uint32_t indent) {
   std::stringstream ss;
 
-  ss << print_typed_attr(shader.varname, "inputs:varname", indent);
+  ss << print_str_attr(shader.varname, "inputs:varname", indent);
   ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
   ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
 
@@ -2963,7 +3035,7 @@ static std::string print_shader_params(const UsdPrimvarReader_float &shader, con
 static std::string print_shader_params(const UsdPrimvarReader_float2 &shader, const uint32_t indent) {
   std::stringstream ss;
 
-  ss << print_typed_attr(shader.varname, "inputs:varname", indent);
+  ss << print_str_attr(shader.varname, "inputs:varname", indent);
   ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
   ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
 
@@ -2975,7 +3047,7 @@ static std::string print_shader_params(const UsdPrimvarReader_float2 &shader, co
 static std::string print_shader_params(const UsdPrimvarReader_float3 &shader, const uint32_t indent) {
   std::stringstream ss;
 
-  ss << print_typed_attr(shader.varname, "inputs:varname", indent);
+  ss << print_str_attr(shader.varname, "inputs:varname", indent);
   ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
   ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
 
@@ -2987,7 +3059,7 @@ static std::string print_shader_params(const UsdPrimvarReader_float3 &shader, co
 static std::string print_shader_params(const UsdPrimvarReader_float4 &shader, const uint32_t indent) {
   std::stringstream ss;
 
-  ss << print_typed_attr(shader.varname, "inputs:varname", indent);
+  ss << print_str_attr(shader.varname, "inputs:varname", indent);
   ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
   ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
 
@@ -2999,7 +3071,7 @@ static std::string print_shader_params(const UsdPrimvarReader_float4 &shader, co
 static std::string print_shader_params(const UsdPrimvarReader_string &shader, const uint32_t indent) {
   std::stringstream ss;
 
-  ss << print_typed_attr(shader.varname, "inputs:varname", indent);
+  ss << print_str_attr(shader.varname, "inputs:varname", indent);
   ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
   ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
 
@@ -3011,7 +3083,7 @@ static std::string print_shader_params(const UsdPrimvarReader_string &shader, co
 static std::string print_shader_params(const UsdPrimvarReader_normal &shader, const uint32_t indent) {
   std::stringstream ss;
 
-  ss << print_typed_attr(shader.varname, "inputs:varname", indent);
+  ss << print_str_attr(shader.varname, "inputs:varname", indent);
   ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
   ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
 
@@ -3023,7 +3095,7 @@ static std::string print_shader_params(const UsdPrimvarReader_normal &shader, co
 static std::string print_shader_params(const UsdPrimvarReader_vector &shader, const uint32_t indent) {
   std::stringstream ss;
 
-  ss << print_typed_attr(shader.varname, "inputs:varname", indent);
+  ss << print_str_attr(shader.varname, "inputs:varname", indent);
   ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
   ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
 
@@ -3035,7 +3107,7 @@ static std::string print_shader_params(const UsdPrimvarReader_vector &shader, co
 static std::string print_shader_params(const UsdPrimvarReader_point &shader, const uint32_t indent) {
   std::stringstream ss;
 
-  ss << print_typed_attr(shader.varname, "inputs:varname", indent);
+  ss << print_str_attr(shader.varname, "inputs:varname", indent);
   ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
   ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
 
@@ -3047,7 +3119,7 @@ static std::string print_shader_params(const UsdPrimvarReader_point &shader, con
 static std::string print_shader_params(const UsdPrimvarReader_matrix &shader, const uint32_t indent) {
   std::stringstream ss;
 
-  ss << print_typed_attr(shader.varname, "inputs:varname", indent);
+  ss << print_str_attr(shader.varname, "inputs:varname", indent);
   ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
   ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
 
