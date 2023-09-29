@@ -1377,8 +1377,8 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
     if (__table.count(__propname)) { \
        continue; \
     } \
-    if (prop.second.is_relationship() && prop.second.is_empty()) { \
-      PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relationship with Path target.", __propname)); \
+    if (!prop.second.is_relationship()) { \
+      PUSH_ERROR_AND_RETURN(fmt::format("Property `{}` must be a Relationship.", __propname)); \
     } \
     const Relationship &rel = prop.second.get_relationship(); \
     if (rel.is_path()) { \
