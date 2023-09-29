@@ -140,6 +140,11 @@ bool AsciiParser::ParseTimeSampleValue(const uint32_t type_id, value::Value *res
   PARSE_TYPE(type_id, value::point3f)
   PARSE_TYPE(type_id, value::texcoord2f)
   PARSE_TYPE(type_id, value::texcoord3f)
+  PARSE_TYPE(type_id, value::matrix2f)
+  PARSE_TYPE(type_id, value::matrix3f)
+  PARSE_TYPE(type_id, value::matrix4f)
+  PARSE_TYPE(type_id, value::matrix2d)
+  PARSE_TYPE(type_id, value::matrix3d)
   PARSE_TYPE(type_id, value::matrix4d) {
     PUSH_ERROR_AND_RETURN(" : TODO: timeSamples type " + value::GetTypeName(type_id));
   }

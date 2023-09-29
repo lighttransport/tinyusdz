@@ -62,7 +62,8 @@ bool ReconstructShader(
     const ReferenceList &references,
     T *out,
     std::string *warn,
-    std::string *err);
+    std::string *err,
+    const PrimReconstructOptions &options);
 
 namespace {
 
@@ -216,7 +217,7 @@ static bool ConvertTokenAttributeToStringAttribute(
     }
     out.set_value(strs);
   }
-    
+
   return true;
 }
 
@@ -239,7 +240,7 @@ static bool ConvertStringDataAttributeToStringAttribute(
       if (toks.is_scalar()) {
         value::StringData tok;
         toks.get_scalar(&tok);
-        strs.set(tok.value); 
+        strs.set(tok.value);
       } else if (toks.is_timesamples()) {
         auto tok_ts = toks.get_timesamples();
 
@@ -253,7 +254,7 @@ static bool ConvertStringDataAttributeToStringAttribute(
     }
     out.set_value(strs);
   }
-    
+
   return true;
 }
 
@@ -1672,7 +1673,7 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
 
 // TODO: TimeSamples
 #define PARSE_ENUM_PROPETY(__table, __prop, __name, __enum_handler, __klass, \
-                           __target) {                                      \
+                           __target, __strict_check) {                          \
   if (__prop.first == __name) {                                              \
     if (__table.count(__name)) { continue; } \
     const Attribute &attr = __prop.second.get_attribute();                           \
@@ -1682,10 +1683,14 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
         __target = e.value();                                                \
         /* TODO: attr meta __target.meta = attr.meta;  */                    \
         __table.insert(__name);                                              \
-      } else {                                                               \
+      } else if (__strict_check) {                                            \
         PUSH_ERROR_AND_RETURN("(" << value::TypeTraits<__klass>::type_name()  \
                                   << ") " << e.error());                     \
-      }                                                                      \
+      } else { \
+        PUSH_WARN("`" << tok.value().str() << "` is not allowed token for `" << __name << "`. Set to default token value."); \
+        /* TODO: attr meta __target.meta = attr.meta;  */                    \
+        __table.insert(__name);                                              \
+      } \
     } else {                                                                 \
       PUSH_ERROR_AND_RETURN("(" << value::TypeTraits<__klass>::type_name()    \
                                 << ") Property type mismatch. " << __name    \
@@ -2082,7 +2087,8 @@ bool ReconstructGPrimProperties(
   const std::map<std::string, Property> &properties,
   GPrim *gprim, /* inout */
   std::string *warn,
-  std::string *err)
+  std::string *err,
+  bool strict_allowedToken_check)
 {
 
   (void)warn;
@@ -2097,11 +2103,11 @@ bool ReconstructGPrimProperties(
     PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kProxyPrim, gprim->proxyPrim)
     PARSE_TYPED_ATTRIBUTE(table, prop, "doubleSided", GPrim, gprim->doubleSided)
     PARSE_ENUM_PROPETY(table, prop, "visibility", VisibilityEnumHandler, GPrim,
-                   gprim->visibility)
+                   gprim->visibility, strict_allowedToken_check)
     PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GPrim,
-                       gprim->purpose)
+                       gprim->purpose, strict_allowedToken_check)
     PARSE_ENUM_PROPETY(table, prop, "orientation", OrientationEnumHandler, GPrim,
-                       gprim->orientation)
+                       gprim->orientation, strict_allowedToken_check)
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GPrim, gprim->extent)
   }
 
@@ -2118,12 +2124,14 @@ bool ReconstructPrim<Xform>(
     const ReferenceList &references,
     Xform *xform,
     std::string *warn,
-    std::string *err) {
+    std::string *err,
+    const PrimReconstructOptions &options) {
 
+  (void)options;
   (void)references;
 
   std::set<std::string> table;
-  if (!ReconstructGPrimProperties(spec, table, properties, xform, warn, err)) {
+  if (!ReconstructGPrimProperties(spec, table, properties, xform, warn, err, options.strict_allowedToken_check)) {
     return false;
   }
 
@@ -2142,12 +2150,14 @@ bool ReconstructPrim<Model>(
     const ReferenceList &references,
     Model *model,
     std::string *warn,
-    std::string *err) {
+    std::string *err,
+    const PrimReconstructOptions &options) {
   DCOUT("Model ");
   (void)spec;
   (void)references;
   (void)model;
   (void)err;
+  (void)options;
 
   std::set<std::string> table;
   for (const auto &prop : properties) {
@@ -2165,13 +2175,15 @@ bool ReconstructPrim<Scope>(
     const ReferenceList &references,
     Scope *scope,
     std::string *warn,
-    std::string *err) {
+    std::string *err,
+    const PrimReconstructOptions &options) {
   // `Scope` is just a namespace in scene graph(no node xform)
 
   (void)spec;
   (void)references;
   (void)scope;
   (void)err;
+  (void)options;
 
   DCOUT("Scope");
   std::set<std::string> table;
@@ -2190,9 +2202,11 @@ bool ReconstructPrim<SkelRoot>(
     const ReferenceList &references,
     SkelRoot *root,
     std::string *warn,
-    std::string *err) {
+    std::string *err,
+    const PrimReconstructOptions &options) {
 
   (void)references;
+  (void)options;
 
   std::set<std::string> table;
   if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &root->xformOps, err)) {
@@ -2207,9 +2221,9 @@ bool ReconstructPrim<SkelRoot>(
   for (const auto &prop : properties) {
     ADD_PROPERTY(table, prop, SkelRoot, root->props)
     PARSE_ENUM_PROPETY(table, prop, "visibility", VisibilityEnumHandler, SkelRoot,
-                   root->visibility)
+                   root->visibility, options.strict_allowedToken_check)
     PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, SkelRoot,
-                       root->purpose)
+                       root->purpose, options.strict_allowedToken_check)
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", SkelRoot, root->extent)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
@@ -2224,10 +2238,12 @@ bool ReconstructPrim<Skeleton>(
     const ReferenceList &references,
     Skeleton *skel,
     std::string *warn,
-    std::string *err) {
+    std::string *err,
+    const PrimReconstructOptions &options) {
 
   (void)warn;
   (void)references;
+  (void)options;
 
   std::set<std::string> table;
   if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &skel->xformOps, err)) {
@@ -2263,9 +2279,9 @@ bool ReconstructPrim<Skeleton>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "jointNames", Skeleton, skel->jointNames)
     PARSE_TYPED_ATTRIBUTE(table, prop, "restTransforms", Skeleton, skel->restTransforms)
     PARSE_ENUM_PROPETY(table, prop, "visibility", VisibilityEnumHandler, Skeleton,
-                   skel->visibility)
+                   skel->visibility, options.strict_allowedToken_check)
     PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, Skeleton,
-                       skel->purpose)
+                       skel->purpose, options.strict_allowedToken_check)
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", Skeleton, skel->extent)
     ADD_PROPERTY(table, prop, Skeleton, skel->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
@@ -2315,11 +2331,13 @@ bool ReconstructPrim<SkelAnimation>(
     const ReferenceList &references,
     SkelAnimation *skelanim,
     std::string *warn,
-    std::string *err) {
+    std::string *err,
+    const PrimReconstructOptions &options) {
 
   (void)spec;
   (void)warn;
   (void)references;
+  (void)options;
   std::set<std::string> table;
   for (auto &prop : properties) {
     PARSE_TYPED_ATTRIBUTE(table, prop, "joints", SkelAnimation, skelanim->joints)
@@ -2342,10 +2360,12 @@ bool ReconstructPrim<BlendShape>(
     const ReferenceList &references,
     BlendShape *bs,
     std::string *warn,
-    std::string *err) {
+    std::string *err,
+    const PrimReconstructOptions &options) {
   (void)spec;
   (void)warn;
   (void)references;
+  (void)options;
 
   DCOUT("Reconstruct BlendShape");
 
@@ -2402,8 +2422,10 @@ bool ReconstructPrim(
     const ReferenceList &references,
     GeomBasisCurves *curves,
     std::string *warn,
-    std::string *err) {
+    std::string *err,
+    const PrimReconstructOptions &options) {
   (void)references;
+  (void)options;
 
   DCOUT("GeomBasisCurves");
 
@@ -2443,7 +2465,7 @@ bool ReconstructPrim(
   };
 
   std::set<std::string> table;
-  if (!ReconstructGPrimProperties(spec, table, properties, curves, warn, err)) {
+  if (!ReconstructGPrimProperties(spec, table, properties, curves, warn, err, options.strict_allowedToken_check)) {
     return false;
   }
 
@@ -2459,11 +2481,11 @@ bool ReconstructPrim(
                  curves->accelerations)
     PARSE_TYPED_ATTRIBUTE(table, prop, "widths", GeomBasisCurves, curves->widths)
     PARSE_ENUM_PROPETY(table, prop, "type", TypeHandler, GeomBasisCurves,
-                       curves->type)
+                       curves->type, options.strict_allowedToken_check)
     PARSE_ENUM_PROPETY(table, prop, "basis", BasisHandler, GeomBasisCurves,
-                       curves->basis)
+                       curves->basis, options.strict_allowedToken_check)
     PARSE_ENUM_PROPETY(table, prop, "wrap", WrapHandler, GeomBasisCurves,
-                       curves->wrap)
+                       curves->wrap, options.strict_allowedToken_check)
 
     ADD_PROPERTY(table, prop, GeomBasisCurves, curves->props)
 
@@ -2480,10 +2502,12 @@ bool ReconstructPrim<SphereLight>(
     const ReferenceList &references,
     SphereLight *light,
     std::string *warn,
-    std::string *err) {
+    std::string *err,
+    const PrimReconstructOptions &options) {
 
   (void)references;
 
+  (void)options;
   std::set<std::string> table;
 
   if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &light->xformOps, err)) {
@@ -2497,9 +2521,9 @@ bool ReconstructPrim<SphereLight>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:intensity", SphereLight,
                    light->intensity)
     PARSE_ENUM_PROPETY(table, prop, "visibility", VisibilityEnumHandler, SphereLight,
-                   light->visibility)
+                   light->visibility, options.strict_allowedToken_check)
     PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, SphereLight,
-                       light->purpose)
+                       light->purpose, options.strict_allowedToken_check)
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", SphereLight, light->extent)
     ADD_PROPERTY(table, prop, SphereLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
@@ -2515,9 +2539,11 @@ bool ReconstructPrim<RectLight>(
     const ReferenceList &references,
     RectLight *light,
     std::string *warn,
-    std::string *err) {
+    std::string *err,
+    const PrimReconstructOptions &options) {
 
   (void)references;
+  (void)options;
 
   std::set<std::string> table;
 
@@ -2535,7 +2561,7 @@ bool ReconstructPrim<RectLight>(
                    light->intensity)
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", RectLight, light->extent)
     PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, RectLight,
-                       light->purpose)
+                       light->purpose, options.strict_allowedToken_check)
     ADD_PROPERTY(table, prop, SphereLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
@@ -2550,9 +2576,11 @@ bool ReconstructPrim<DiskLight>(
     const ReferenceList &references,
     DiskLight *light,
     std::string *warn,
-    std::string *err) {
+    std::string *err,
+    const PrimReconstructOptions &options) {
 
   (void)references;
+  (void)options;
 
   std::set<std::string> table;
 
@@ -2565,7 +2593,7 @@ bool ReconstructPrim<DiskLight>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:radius", DiskLight, light->radius)
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", DiskLight, light->extent)
     PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, DiskLight,
-                       light->purpose)
+                       light->purpose, options.strict_allowedToken_check)
     ADD_PROPERTY(table, prop, DiskLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
@@ -2580,9 +2608,11 @@ bool ReconstructPrim<CylinderLight>(
     const ReferenceList &references,
     CylinderLight *light,
     std::string *warn,
-    std::string *err) {
+    std::string *err,
+    const PrimReconstructOptions &options) {
 
   (void)references;
+  (void)options;
 
   std::set<std::string> table;
 
@@ -2596,7 +2626,7 @@ bool ReconstructPrim<CylinderLight>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:radius", CylinderLight, light->radius)
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", CylinderLight, light->extent)
     PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, CylinderLight,
-                       light->purpose)
+                       light->purpose, options.strict_allowedToken_check)
     ADD_PROPERTY(table, prop, SphereLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
@@ -2611,9 +2641,11 @@ bool ReconstructPrim<DistantLight>(
     const ReferenceList &references,
     DistantLight *light,
     std::string *warn,
-    std::string *err) {
+    std::string *err,
+    const PrimReconstructOptions &options) {
 
   (void)references;
+  (void)options;
 
   std::set<std::string> table;
 
@@ -2625,7 +2657,7 @@ bool ReconstructPrim<DistantLight>(
     // PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:angle", DistantLight, light->angle)
     PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, DistantLight,
-                       light->purpose)
+                       light->purpose, options.strict_allowedToken_check)
     ADD_PROPERTY(table, prop, SphereLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
@@ -2640,9 +2672,11 @@ bool ReconstructPrim<DomeLight>(
     const ReferenceList &references,
     DomeLight *light,
     std::string *warn,
-    std::string *err) {
+    std::string *err,
+    const PrimReconstructOptions &options) {
 
   (void)references;
+  (void)options;
 
   std::set<std::string> table;
 
@@ -2661,7 +2695,7 @@ bool ReconstructPrim<DomeLight>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:intensity", DomeLight,
                    light->intensity)
     PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, DomeLight,
-                       light->purpose)
+                       light->purpose, options.strict_allowedToken_check)
     ADD_PROPERTY(table, prop, DomeLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
@@ -2677,15 +2711,17 @@ bool ReconstructPrim<GeomSphere>(
     const ReferenceList &references,
     GeomSphere *sphere,
     std::string *warn,
-    std::string *err) {
+    std::string *err,
+    const PrimReconstructOptions &options) {
 
   (void)warn;
   (void)references;
+  (void)options;
 
   DCOUT("Reconstruct Sphere.");
 
   std::set<std::string> table;
-  if (!ReconstructGPrimProperties(spec, table, properties, sphere, warn, err)) {
+  if (!ReconstructGPrimProperties(spec, table, properties, sphere, warn, err, options.strict_allowedToken_check)) {
     return false;
   }
 
@@ -2705,15 +2741,17 @@ bool ReconstructPrim<GeomPoints>(
     const ReferenceList &references,
     GeomPoints *points,
     std::string *warn,
-    std::string *err) {
+    std::string *err,
+    const PrimReconstructOptions &options) {
 
   (void)warn;
   (void)references;
+  (void)options;
 
   DCOUT("Reconstruct Points.");
 
   std::set<std::string> table;
-  if (!ReconstructGPrimProperties(spec, table, properties, points, warn, err)) {
+  if (!ReconstructGPrimProperties(spec, table, properties, points, warn, err, options.strict_allowedToken_check)) {
     return false;
   }
 
@@ -2739,13 +2777,15 @@ bool ReconstructPrim<GeomCone>(
     const ReferenceList &references,
     GeomCone *cone,
     std::string *warn,
-    std::string *err) {
+    std::string *err,
+    const PrimReconstructOptions &options) {
 
   (void)warn;
   (void)references;
+  (void)options;
 
   std::set<std::string> table;
-  if (!ReconstructGPrimProperties(spec, table, properties, cone, warn, err)) {
+  if (!ReconstructGPrimProperties(spec, table, properties, cone, warn, err, options.strict_allowedToken_check)) {
     return false;
   }
 
@@ -2753,7 +2793,7 @@ bool ReconstructPrim<GeomCone>(
     DCOUT("prop: " << prop.first);
     PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomCone, cone->radius)
     PARSE_TYPED_ATTRIBUTE(table, prop, "height", GeomCone, cone->height)
-    PARSE_ENUM_PROPETY(table, prop, "axis", AxisEnumHandler, GeomCone, cone->axis)
+    PARSE_ENUM_PROPETY(table, prop, "axis", AxisEnumHandler, GeomCone, cone->axis, options.strict_allowedToken_check)
     ADD_PROPERTY(table, prop, GeomCone, cone->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
@@ -2768,13 +2808,15 @@ bool ReconstructPrim<GeomCylinder>(
     const ReferenceList &references,
     GeomCylinder *cylinder,
     std::string *warn,
-    std::string *err) {
+    std::string *err,
+    const PrimReconstructOptions &options) {
 
   (void)warn;
   (void)references;
+  (void)options;
 
   std::set<std::string> table;
-  if (!ReconstructGPrimProperties(spec, table, properties, cylinder, warn, err)) {
+  if (!ReconstructGPrimProperties(spec, table, properties, cylinder, warn, err, options.strict_allowedToken_check)) {
     return false;
   }
 
@@ -2784,7 +2826,7 @@ bool ReconstructPrim<GeomCylinder>(
                          cylinder->radius)
     PARSE_TYPED_ATTRIBUTE(table, prop, "height", GeomCylinder,
                          cylinder->height)
-    PARSE_ENUM_PROPETY(table, prop, "axis", AxisEnumHandler, GeomCylinder, cylinder->axis)
+    PARSE_ENUM_PROPETY(table, prop, "axis", AxisEnumHandler, GeomCylinder, cylinder->axis, options.strict_allowedToken_check)
     ADD_PROPERTY(table, prop, GeomCylinder, cylinder->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
@@ -2799,20 +2841,22 @@ bool ReconstructPrim<GeomCapsule>(
     const ReferenceList &references,
     GeomCapsule *capsule,
     std::string *warn,
-    std::string *err) {
+    std::string *err,
+    const PrimReconstructOptions &options) {
 
   (void)warn;
   (void)references;
+  (void)options;
 
   std::set<std::string> table;
-  if (!ReconstructGPrimProperties(spec, table, properties, capsule, warn, err)) {
+  if (!ReconstructGPrimProperties(spec, table, properties, capsule, warn, err, options.strict_allowedToken_check)) {
     return false;
   }
 
   for (const auto &prop : properties) {
     PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomCapsule, capsule->radius)
     PARSE_TYPED_ATTRIBUTE(table, prop, "height", GeomCapsule, capsule->height)
-    PARSE_ENUM_PROPETY(table, prop, "axis", AxisEnumHandler, GeomCapsule, capsule->axis)
+    PARSE_ENUM_PROPETY(table, prop, "axis", AxisEnumHandler, GeomCapsule, capsule->axis, options.strict_allowedToken_check)
     ADD_PROPERTY(table, prop, GeomCapsule, capsule->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
@@ -2827,16 +2871,18 @@ bool ReconstructPrim<GeomCube>(
     const ReferenceList &references,
     GeomCube *cube,
     std::string *warn,
-    std::string *err) {
+    std::string *err,
+    const PrimReconstructOptions &options) {
 
   (void)warn;
   (void)references;
+  (void)options;
 
   //
   // pxrUSD says... "If you author size you must also author extent."
   //
   std::set<std::string> table;
-  if (!ReconstructGPrimProperties(spec, table, properties, cube, warn, err)) {
+  if (!ReconstructGPrimProperties(spec, table, properties, cube, warn, err, options.strict_allowedToken_check)) {
     return false;
   }
 
@@ -2857,9 +2903,11 @@ bool ReconstructPrim<GeomMesh>(
     const ReferenceList &references,
     GeomMesh *mesh,
     std::string *warn,
-    std::string *err) {
+    std::string *err,
+    const PrimReconstructOptions &options) {
 
   (void)references;
+  (void)options;
 
   DCOUT("GeomMesh");
 
@@ -2912,7 +2960,7 @@ bool ReconstructPrim<GeomMesh>(
   };
 
   std::set<std::string> table;
-  if (!ReconstructGPrimProperties(spec, table, properties, mesh, warn, err)) {
+  if (!ReconstructGPrimProperties(spec, table, properties, mesh, warn, err, options.strict_allowedToken_check)) {
     return false;
   }
 
@@ -2941,13 +2989,13 @@ bool ReconstructPrim<GeomMesh>(
                          mesh->holeIndices)
     PARSE_ENUM_PROPETY(table, prop, "subdivisionScheme",
                        SubdivisioSchemeHandler, GeomMesh,
-                       mesh->subdivisionScheme)
+                       mesh->subdivisionScheme, options.strict_allowedToken_check)
     PARSE_ENUM_PROPETY(table, prop, "interpolateBoundary",
                        InterpolateBoundaryHandler, GeomMesh,
-                       mesh->interpolateBoundary)
+                       mesh->interpolateBoundary, options.strict_allowedToken_check)
     PARSE_ENUM_PROPETY(table, prop, "facevaryingLinearInterpolation",
                        FaceVaryingLinearInterpolationHandler, GeomMesh,
-                       mesh->faceVaryingLinearInterpolation)
+                       mesh->faceVaryingLinearInterpolation, options.strict_allowedToken_check)
     // blendShape names
     PARSE_TYPED_ATTRIBUTE(table, prop, kSkelBlendShapes, GeomMesh, mesh->blendShapes)
     // generic
@@ -2967,10 +3015,11 @@ bool ReconstructPrim<GeomCamera>(
     const ReferenceList &references,
     GeomCamera *camera,
     std::string *warn,
-    std::string *err) {
-
+    std::string *err,
+    const PrimReconstructOptions &options) {
   (void)references;
   (void)warn;
+  (void)options;
 
   auto ProjectionHandler = [](const std::string &tok)
       -> nonstd::expected<GeomCamera::Projection, std::string> {
@@ -3024,7 +3073,7 @@ bool ReconstructPrim<GeomCamera>(
   };
 
   std::set<std::string> table;
-  if (!ReconstructGPrimProperties(spec, table, properties, camera, warn, err)) {
+  if (!ReconstructGPrimProperties(spec, table, properties, camera, warn, err, options.strict_allowedToken_check)) {
     return false;
   }
 
@@ -3050,9 +3099,9 @@ bool ReconstructPrim<GeomCamera>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "shutter:close", GeomCamera,
                    camera->shutterClose)
     PARSE_ENUM_PROPETY(table, prop, "projection", ProjectionHandler, GeomCamera,
-                       camera->projection)
+                       camera->projection, options.strict_allowedToken_check)
     PARSE_ENUM_PROPETY(table, prop, "stereoRole", StereoRoleHandler, GeomCamera,
-                       camera->stereoRole)
+                       camera->stereoRole, options.strict_allowedToken_check)
     ADD_PROPERTY(table, prop, GeomCamera, camera->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
@@ -3067,15 +3116,17 @@ bool ReconstructPrim<PointInstancer>(
     const ReferenceList &references,
     PointInstancer *instancer,
     std::string *warn,
-    std::string *err) {
+    std::string *err,
+    const PrimReconstructOptions &options) {
 
   (void)warn;
   (void)references;
+  (void)options;
 
   DCOUT("Reconstruct PointInstancer.");
 
   std::set<std::string> table;
-  if (!ReconstructGPrimProperties(spec, table, properties, instancer, warn, err)) {
+  if (!ReconstructGPrimProperties(spec, table, properties, instancer, warn, err, options.strict_allowedToken_check)) {
     return false;
   }
 
@@ -3105,9 +3156,11 @@ bool ReconstructShader<ShaderNode>(
     const ReferenceList &references,
     ShaderNode *node,
     std::string *warn,
-    std::string *err)
+    std::string *err,
+    const PrimReconstructOptions &options)
 {
   (void)spec;
+  (void)options;
 
   if (!node) {
     return false;
@@ -3136,10 +3189,11 @@ bool ReconstructShader<UsdPreviewSurface>(
     const ReferenceList &references,
     UsdPreviewSurface *surface,
     std::string *warn,
-    std::string *err) {
+    std::string *err,
+    const PrimReconstructOptions &options) {
   (void)spec;
-  // TODO: references
   (void)references;
+  (void)options;
 
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
@@ -3190,11 +3244,12 @@ bool ReconstructShader<UsdUVTexture>(
     const ReferenceList &references,
     UsdUVTexture *texture,
     std::string *warn,
-    std::string *err)
+    std::string *err,
+    const PrimReconstructOptions &options)
 {
   (void)spec;
-  // TODO: references
   (void)references;
+  (void)options;
 
   auto SourceColorSpaceHandler = [](const std::string &tok)
       -> nonstd::expected<UsdUVTexture::SourceColorSpace, std::string> {
@@ -3234,13 +3289,13 @@ bool ReconstructShader<UsdUVTexture>(
                           texture->st)
     PARSE_ENUM_PROPETY(table, prop, "inputs:sourceColorSpace",
                        SourceColorSpaceHandler, UsdUVTexture,
-                       texture->sourceColorSpace)
+                       texture->sourceColorSpace, options.strict_allowedToken_check)
     PARSE_ENUM_PROPETY(table, prop, "inputs:wrapS",
                        WrapHandler, UsdUVTexture,
-                       texture->wrapS)
+                       texture->wrapS, options.strict_allowedToken_check)
     PARSE_ENUM_PROPETY(table, prop, "inputs:wrapT",
                        WrapHandler, UsdUVTexture,
-                       texture->wrapT)
+                       texture->wrapT, options.strict_allowedToken_check)
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:r", UsdUVTexture,
                                   texture->outputsR)
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:g", UsdUVTexture,
@@ -3266,10 +3321,12 @@ bool ReconstructShader<UsdPrimvarReader_int>(
     const ReferenceList &references,
     UsdPrimvarReader_int *preader,
     std::string *warn,
-    std::string *err)
+    std::string *err,
+    const PrimReconstructOptions &options)
 {
   (void)spec;
   (void)references;
+  (void)options;
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
   for (auto &prop : properties) {
@@ -3307,10 +3364,12 @@ bool ReconstructShader<UsdPrimvarReader_float>(
     const ReferenceList &references,
     UsdPrimvarReader_float *preader,
     std::string *warn,
-    std::string *err)
+    std::string *err,
+    const PrimReconstructOptions &options)
 {
   (void)spec;
   (void)references;
+  (void)options;
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
   for (auto &prop : properties) {
@@ -3356,10 +3415,12 @@ bool ReconstructShader<UsdPrimvarReader_float2>(
     const ReferenceList &references,
     UsdPrimvarReader_float2 *preader,
     std::string *warn,
-    std::string *err)
+    std::string *err,
+    const PrimReconstructOptions &options)
 {
   (void)spec;
   (void)references;
+  (void)options;
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
   for (auto &prop : properties) {
@@ -3407,10 +3468,12 @@ bool ReconstructShader<UsdPrimvarReader_float3>(
     const ReferenceList &references,
     UsdPrimvarReader_float3 *preader,
     std::string *warn,
-    std::string *err)
+    std::string *err,
+    const PrimReconstructOptions &options)
 {
   (void)spec;
   (void)references;
+  (void)options;
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
   for (auto &prop : properties) {
@@ -3457,10 +3520,12 @@ bool ReconstructShader<UsdPrimvarReader_float4>(
     const ReferenceList &references,
     UsdPrimvarReader_float4 *preader,
     std::string *warn,
-    std::string *err)
+    std::string *err,
+    const PrimReconstructOptions &options)
 {
   (void)spec;
   (void)references;
+  (void)options;
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
 
@@ -3507,10 +3572,12 @@ bool ReconstructShader<UsdPrimvarReader_string>(
     const ReferenceList &references,
     UsdPrimvarReader_string *preader,
     std::string *warn,
-    std::string *err)
+    std::string *err,
+    const PrimReconstructOptions &options)
 {
   (void)spec;
   (void)references;
+  (void)options;
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
 
@@ -3557,10 +3624,12 @@ bool ReconstructShader<UsdPrimvarReader_vector>(
     const ReferenceList &references,
     UsdPrimvarReader_vector *preader,
     std::string *warn,
-    std::string *err)
+    std::string *err,
+    const PrimReconstructOptions &options)
 {
   (void)spec;
   (void)references;
+  (void)options;
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
 
@@ -3607,10 +3676,12 @@ bool ReconstructShader<UsdPrimvarReader_normal>(
     const ReferenceList &references,
     UsdPrimvarReader_normal *preader,
     std::string *warn,
-    std::string *err)
+    std::string *err,
+    const PrimReconstructOptions &options)
 {
   (void)spec;
   (void)references;
+  (void)options;
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
 
@@ -3657,10 +3728,12 @@ bool ReconstructShader<UsdPrimvarReader_point>(
     const ReferenceList &references,
     UsdPrimvarReader_point *preader,
     std::string *warn,
-    std::string *err)
+    std::string *err,
+    const PrimReconstructOptions &options)
 {
   (void)spec;
   (void)references;
+  (void)options;
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
 
@@ -3707,10 +3780,12 @@ bool ReconstructShader<UsdPrimvarReader_matrix>(
     const ReferenceList &references,
     UsdPrimvarReader_matrix *preader,
     std::string *warn,
-    std::string *err)
+    std::string *err,
+    const PrimReconstructOptions &options)
 {
   (void)spec;
   (void)references;
+  (void)options;
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
 
@@ -3757,10 +3832,12 @@ bool ReconstructShader<UsdTransform2d>(
     const ReferenceList &references,
     UsdTransform2d *transform,
     std::string *warn,
-    std::string *err)
+    std::string *err,
+    const PrimReconstructOptions &options)
 {
   (void)spec;
   (void)references;
+  (void)options;
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
   for (auto &prop : properties) {
@@ -3789,10 +3866,12 @@ bool ReconstructPrim<Shader>(
     const ReferenceList &references,
     Shader *shader,
     std::string *warn,
-    std::string *err)
+    std::string *err,
+    const PrimReconstructOptions &options)
 {
   (void)spec;
   (void)properties;
+  (void)options;
 
   bool is_generic_shader{false};
   auto info_id_prop = properties.find("info:id");
@@ -3832,7 +3911,7 @@ bool ReconstructPrim<Shader>(
   if (shader_type.compare(kUsdPreviewSurface) == 0) {
     UsdPreviewSurface surface;
     if (!ReconstructShader<UsdPreviewSurface>(spec, properties, references,
-                                              &surface, warn, err)) {
+                                              &surface, warn, err, options)) {
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kUsdPreviewSurface);
     }
     shader->info_id = kUsdPreviewSurface;
@@ -3841,7 +3920,7 @@ bool ReconstructPrim<Shader>(
   } else if (shader_type.compare(kUsdUVTexture) == 0) {
     UsdUVTexture texture;
     if (!ReconstructShader<UsdUVTexture>(spec, properties, references,
-                                         &texture, warn, err)) {
+                                         &texture, warn, err, options)) {
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kUsdUVTexture);
     }
     shader->info_id = kUsdUVTexture;
@@ -3849,7 +3928,7 @@ bool ReconstructPrim<Shader>(
   } else if (shader_type.compare(kUsdPrimvarReader_int) == 0) {
     UsdPrimvarReader_int preader;
     if (!ReconstructShader<UsdPrimvarReader_int>(spec, properties, references,
-                                                 &preader, warn, err)) {
+                                                 &preader, warn, err, options)) {
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
                             << kUsdPrimvarReader_int);
     }
@@ -3858,7 +3937,7 @@ bool ReconstructPrim<Shader>(
   } else if (shader_type.compare(kUsdPrimvarReader_float) == 0) {
     UsdPrimvarReader_float preader;
     if (!ReconstructShader<UsdPrimvarReader_float>(spec, properties, references,
-                                                   &preader, warn, err)) {
+                                                   &preader, warn, err, options)) {
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
                             << kUsdPrimvarReader_float);
     }
@@ -3867,7 +3946,7 @@ bool ReconstructPrim<Shader>(
   } else if (shader_type.compare(kUsdPrimvarReader_float2) == 0) {
     UsdPrimvarReader_float2 preader;
     if (!ReconstructShader<UsdPrimvarReader_float2>(spec, properties, references,
-                                                    &preader, warn, err)) {
+                                                    &preader, warn, err, options)) {
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
                             << kUsdPrimvarReader_float2);
     }
@@ -3876,7 +3955,7 @@ bool ReconstructPrim<Shader>(
   } else if (shader_type.compare(kUsdPrimvarReader_float3) == 0) {
     UsdPrimvarReader_float3 preader;
     if (!ReconstructShader<UsdPrimvarReader_float3>(spec,properties, references,
-                                                    &preader, warn, err)) {
+                                                    &preader, warn, err, options)) {
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
                             << kUsdPrimvarReader_float3);
     }
@@ -3885,7 +3964,7 @@ bool ReconstructPrim<Shader>(
   } else if (shader_type.compare(kUsdPrimvarReader_float4) == 0) {
     UsdPrimvarReader_float4 preader;
     if (!ReconstructShader<UsdPrimvarReader_float4>(spec,properties, references,
-                                                    &preader, warn, err)) {
+                                                    &preader, warn, err, options)) {
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
                             << kUsdPrimvarReader_float4);
     }
@@ -3894,7 +3973,7 @@ bool ReconstructPrim<Shader>(
   } else if (shader_type.compare(kUsdPrimvarReader_string) == 0) {
     UsdPrimvarReader_string preader;
     if (!ReconstructShader<UsdPrimvarReader_string>(spec,properties, references,
-                                                    &preader, warn, err)) {
+                                                    &preader, warn, err, options)) {
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
                             << kUsdPrimvarReader_string);
     }
@@ -3903,7 +3982,7 @@ bool ReconstructPrim<Shader>(
   } else if (shader_type.compare(kUsdPrimvarReader_vector) == 0) {
     UsdPrimvarReader_vector preader;
     if (!ReconstructShader<UsdPrimvarReader_vector>(spec,properties, references,
-                                                    &preader, warn, err)) {
+                                                    &preader, warn, err, options)) {
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
                             << kUsdPrimvarReader_vector);
     }
@@ -3912,7 +3991,7 @@ bool ReconstructPrim<Shader>(
   } else if (shader_type.compare(kUsdPrimvarReader_normal) == 0) {
     UsdPrimvarReader_normal preader;
     if (!ReconstructShader<UsdPrimvarReader_normal>(spec,properties, references,
-                                                    &preader, warn, err)) {
+                                                    &preader, warn, err, options)) {
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
                             << kUsdPrimvarReader_normal);
     }
@@ -3921,7 +4000,7 @@ bool ReconstructPrim<Shader>(
   } else if (shader_type.compare(kUsdPrimvarReader_point) == 0) {
     UsdPrimvarReader_point preader;
     if (!ReconstructShader<UsdPrimvarReader_point>(spec,properties, references,
-                                                    &preader, warn, err)) {
+                                                    &preader, warn, err, options)) {
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
                             << kUsdPrimvarReader_point);
     }
@@ -3930,7 +4009,7 @@ bool ReconstructPrim<Shader>(
   } else if (shader_type.compare(kUsdTransform2d) == 0) {
     UsdTransform2d transform;
     if (!ReconstructShader<UsdTransform2d>(spec,properties, references,
-                                                    &transform, warn, err)) {
+                                                    &transform, warn, err, options)) {
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct "
                             << kUsdTransform2d);
     }
@@ -3940,7 +4019,7 @@ bool ReconstructPrim<Shader>(
     // Reconstruct as generic ShaderNode
     ShaderNode surface;
     if (!ReconstructShader<ShaderNode>(spec,properties, references,
-                                              &surface, warn, err)) {
+                                              &surface, warn, err, options)) {
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << shader_type);
     }
     if (shader_type.size()) {
@@ -3961,10 +4040,12 @@ bool ReconstructPrim<Material>(
     const ReferenceList &references,
     Material *material,
     std::string *warn,
-    std::string *err)
+    std::string *err,
+    const PrimReconstructOptions &options)
 {
   (void)spec;
   (void)references;
+  (void)options;
   std::set<std::string> table;
 
   // TODO: special treatment for properties with 'inputs' and 'outputs' namespace.
@@ -3978,7 +4059,7 @@ bool ReconstructPrim<Material>(
     PARSE_SHADER_INPUT_CONNECTION_PROPERTY(table, prop, "outputs:volume",
                                   Material, material->volume)
     PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, Material,
-                       material->purpose)
+                       material->purpose, options.strict_allowedToken_check)
     ADD_PROPERTY(table, prop, Material, material->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
@@ -3995,11 +4076,12 @@ bool ReconstructPrim<__prim_ty>( \
     const PrimSpec &primspec, \
     __prim_ty *prim, \
     std::string *warn, \
-    std::string *err) { \
+    std::string *err, \
+    const PrimReconstructOptions &options) { \
  \
   ReferenceList references; /* dummy */ \
  \
-  return ReconstructPrim<__prim_ty>(primspec.specifier(), primspec.props(), references, prim, warn, err); \
+  return ReconstructPrim<__prim_ty>(primspec.specifier(), primspec.props(), references, prim, warn, err, options); \
 }
 
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Xform)

@@ -41,7 +41,7 @@ namespace prim {
 #define RECONSTRUCT_PRIM_DECL(__ty)                                   \
   template <>                                                         \
   bool ReconstructPrim<__ty>(const PrimSpec &, __ty *, std::string *, \
-                             std::string *)
+                             std::string *, const PrimReconstructOptions &)
 
 RECONSTRUCT_PRIM_DECL(Xform);
 RECONSTRUCT_PRIM_DECL(Model);
@@ -240,7 +240,7 @@ bool LoadAsset(AssetResolutionResolver &resolver,
 
     ps.name() = "MaterialX";
     layer.primspecs()["MaterialX"] = ps;
-    
+
   } else {
     if (fileformats.count(ext)) {
       PrimSpec ps;

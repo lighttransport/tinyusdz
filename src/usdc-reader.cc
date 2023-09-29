@@ -72,7 +72,7 @@ namespace prim {
 #define RECONSTRUCT_PRIM_DECL(__ty)                                      \
   template <>                                                            \
   bool ReconstructPrim<__ty>(const Specifier &spec, const PropertyMap &, const ReferenceList &, \
-                             __ty *, std::string *, std::string *)
+                             __ty *, std::string *, std::string *, const PrimReconstructOptions &)
 
 RECONSTRUCT_PRIM_DECL(Xform);
 RECONSTRUCT_PRIM_DECL(Model);
@@ -1396,7 +1396,10 @@ bool USDCReader::Impl::ReconstructPrim(const Specifier &spec, const crate::Crate
 
   prim::ReferenceList refs;  // dummy
 
-  if (!prim::ReconstructPrim<T>(spec, properties, refs, prim, &_warn, &_err)) {
+  prim::PrimReconstructOptions reconstruct_options;
+  reconstruct_options.strict_allowedToken_check = _config.strict_allowedToken_check;
+
+  if (!prim::ReconstructPrim<T>(spec, properties, refs, prim, &_warn, &_err, reconstruct_options)) {
     return false;
   }
 
@@ -1652,6 +1655,7 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
   if (is_unsupported_prim) {
     (*is_unsupported_prim) = false; // init with false
   }
+
 
 #define RECONSTRUCT_PRIM(__primty, __node_ty, __prim_name, __spec) \
   if (__node_ty == value::TypeTraits<__primty>::type_name()) {     \

@@ -58,6 +58,7 @@ struct PathIdentifier : std::string {
 struct AsciiParserOption {
   bool allow_unknown_prim{true};
   bool allow_unknown_apiSchema{true};
+  bool strict_allowedToken_check{false};
 };
 
 ///
@@ -400,6 +401,9 @@ class AsciiParser {
   bool ReadBasicType(nonstd::optional<value::color4h> *value);
   bool ReadBasicType(nonstd::optional<value::color4f> *value);
   bool ReadBasicType(nonstd::optional<value::color4d> *value);
+  bool ReadBasicType(nonstd::optional<value::matrix2f> *value);
+  bool ReadBasicType(nonstd::optional<value::matrix3f> *value);
+  bool ReadBasicType(nonstd::optional<value::matrix4f> *value);
   bool ReadBasicType(nonstd::optional<value::matrix2d> *value);
   bool ReadBasicType(nonstd::optional<value::matrix3d> *value);
   bool ReadBasicType(nonstd::optional<value::matrix4d> *value);
@@ -469,6 +473,9 @@ class AsciiParser {
   bool ReadBasicType(value::texcoord3h *value);
   bool ReadBasicType(value::texcoord3f *value);
   bool ReadBasicType(value::texcoord3d *value);
+  bool ReadBasicType(value::matrix2f *value);
+  bool ReadBasicType(value::matrix3f *value);
+  bool ReadBasicType(value::matrix4f *value);
   bool ReadBasicType(value::matrix2d *value);
   bool ReadBasicType(value::matrix3d *value);
   bool ReadBasicType(value::matrix4d *value);
@@ -488,7 +495,10 @@ class AsciiParser {
   template <typename T>
   bool ReadBasicType(std::vector<T> *value);
 
-  // Apprently, No float precision matrix in USDA
+  bool ParseMatrix(value::matrix2f *result);
+  bool ParseMatrix(value::matrix3f *result);
+  bool ParseMatrix(value::matrix4f *result);
+
   bool ParseMatrix(value::matrix2d *result);
   bool ParseMatrix(value::matrix3d *result);
   bool ParseMatrix(value::matrix4d *result);

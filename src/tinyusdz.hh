@@ -100,6 +100,11 @@ struct USDLoadOptions {
   bool strict_usdSkel_check{false}; // Strict usdSkel parsing check when true.
 
   ///
+  /// allowedToken
+  ///
+  bool strict_allowedToken_check{false}; // Make parse error when token value is not in allowedToken list(when the schema defines allowedToken list)
+  
+  ///
   /// User-defined fileformat hander.
   /// key = file(asset) extension(`.` excluded. example: 'mtlx', 'obj').
   ///

@@ -147,6 +147,7 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
 
   usdc::USDCReaderConfig config;
   config.numThreads = options.num_threads;
+  config.strict_allowedToken_check = options.strict_allowedToken_check;
   usdc::USDCReader reader(&sr, config);
 
   if (!reader.ReadUSDC()) {
@@ -650,8 +651,6 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length,
                         const std::string &base_dir, Stage *stage,
                         std::string *warn, std::string *err,
                         const USDLoadOptions &options) {
-  (void)warn;
-
   if (addr == nullptr) {
     if (err) {
       (*err) = "null pointer for `addr` argument.\n";
@@ -668,10 +667,12 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length,
 
   tinyusdz::StreamReader sr(addr, length, /* swap endian */ false);
   tinyusdz::usda::USDAReader reader(&sr);
+  
+  tinyusdz::usda::USDAReaderConfig config;
+  config.strict_allowedToken_check = options.strict_allowedToken_check;
+  reader.set_reader_config(config);
 
   reader.SetBaseDir(base_dir);
-
-  (void)options;
 
   {
     bool ret = reader.Read();
@@ -698,6 +699,10 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length,
   }
 
   (*stage) = reader.GetStage();
+
+  if (warn) {
+    (*warn) += reader.GetWarning();
+  }
 
   return true;
 }
@@ -939,6 +944,7 @@ bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
 
   usdc::USDCReaderConfig config;
   config.numThreads = options.num_threads;
+  config.strict_allowedToken_check = options.strict_allowedToken_check;
   usdc::USDCReader reader(&sr, config);
 
   if (!reader.ReadUSDC()) {
@@ -1015,6 +1021,10 @@ bool LoadUSDALayerFromMemory(const uint8_t *addr, const size_t length,
 
   tinyusdz::StreamReader sr(addr, length, /* swap endian */ false);
   tinyusdz::usda::USDAReader reader(&sr);
+
+  tinyusdz::usda::USDAReaderConfig config;
+  config.strict_allowedToken_check = options.strict_allowedToken_check;
+  reader.set_reader_config(config);
 
   uint32_t load_states = static_cast<uint32_t>(tinyusdz::LoadState::Toplevel);
 
