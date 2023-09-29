@@ -172,9 +172,97 @@ nonstd::expected<double, std::string> ParseDouble(const std::string &s) {
 //
 // -- Parse Basic Type
 //
+bool AsciiParser::ParseMatrix(value::matrix2f *result) {
+
+  if (!Expect('(')) {
+    return false;
+  }
+
+  std::vector<std::array<float, 2>> content;
+  if (!SepBy1TupleType<float, 2>(',', &content)) {
+    return false;
+  }
+
+  if (content.size() != 2) {
+    PushError("# of rows in matrix2f must be 2, but got " +
+              std::to_string(content.size()) + "\n");
+    return false;
+  }
+
+  if (!Expect(')')) {
+    return false;
+  }
+
+  for (size_t i = 0; i < 2; i++) {
+    result->m[i][0] = content[i][0];
+    result->m[i][1] = content[i][1];
+  }
+
+  return true;
+}
+
+bool AsciiParser::ParseMatrix(value::matrix3f *result) {
+
+  if (!Expect('(')) {
+    return false;
+  }
+
+  std::vector<std::array<float, 3>> content;
+  if (!SepBy1TupleType<float, 3>(',', &content)) {
+    return false;
+  }
+
+  if (content.size() != 3) {
+    PushError("# of rows in matrix3f must be 3, but got " +
+              std::to_string(content.size()) + "\n");
+    return false;
+  }
+
+  if (!Expect(')')) {
+    return false;
+  }
+
+  for (size_t i = 0; i < 3; i++) {
+    result->m[i][0] = content[i][0];
+    result->m[i][1] = content[i][1];
+    result->m[i][2] = content[i][2];
+  }
+
+  return true;
+}
+
+bool AsciiParser::ParseMatrix(value::matrix4f *result) {
+
+  if (!Expect('(')) {
+    return false;
+  }
+
+  std::vector<std::array<float, 4>> content;
+  if (!SepBy1TupleType<float, 4>(',', &content)) {
+    return false;
+  }
+
+  if (content.size() != 4) {
+    PushError("# of rows in matrix4f must be 4, but got " +
+              std::to_string(content.size()) + "\n");
+    return false;
+  }
+
+  if (!Expect(')')) {
+    return false;
+  }
+
+  for (size_t i = 0; i < 4; i++) {
+    result->m[i][0] = content[i][0];
+    result->m[i][1] = content[i][1];
+    result->m[i][2] = content[i][2];
+    result->m[i][3] = content[i][3];
+  }
+
+  return true;
+}
 
 bool AsciiParser::ParseMatrix(value::matrix2d *result) {
-  // Assume column major(OpenGL style).
 
   if (!Expect('(')) {
     return false;
@@ -204,7 +292,6 @@ bool AsciiParser::ParseMatrix(value::matrix2d *result) {
 }
 
 bool AsciiParser::ParseMatrix(value::matrix3d *result) {
-  // Assume column major(OpenGL style).
 
   if (!Expect('(')) {
     return false;
@@ -235,7 +322,6 @@ bool AsciiParser::ParseMatrix(value::matrix3d *result) {
 }
 
 bool AsciiParser::ParseMatrix(value::matrix4d *result) {
-  // Assume column major(OpenGL style).
 
   if (!Expect('(')) {
     return false;
@@ -366,8 +452,52 @@ bool AsciiParser::ReadBasicType(nonstd::optional<value::matrix4d> *value) {
   return false;
 }
 
-#if 0  // No `matrixNf` in USDA?
-template<>
+bool AsciiParser::ReadBasicType(value::matrix2f *value) {
+  if (value) {
+    return ParseMatrix(value);
+  } else {
+    return false;
+  }
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::matrix2f> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::matrix2f v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(value::matrix3f *value) {
+  if (value) {
+    return ParseMatrix(value);
+  } else {
+    return false;
+  }
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::matrix3f> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::matrix3f v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
 bool AsciiParser::ReadBasicType(value::matrix4f *value) {
   if (value) {
     return ParseMatrix(value);
@@ -376,9 +506,7 @@ bool AsciiParser::ReadBasicType(value::matrix4f *value) {
   }
 }
 
-template<>
-bool AsciiParser::ReadBasicType(
-    nonstd::optional<value::matrix4f> *value) {
+bool AsciiParser::ReadBasicType(nonstd::optional<value::matrix4f> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -392,7 +520,6 @@ bool AsciiParser::ReadBasicType(
 
   return false;
 }
-#endif
 
 ///
 /// Parse the array of tuple. some may be None(e.g. `float3`: [(0, 1, 2),
@@ -3152,6 +3279,9 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color3d> *resu
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color4h> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color4f> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color4d> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2f> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3f> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4f> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2d> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3d> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4d> *result);

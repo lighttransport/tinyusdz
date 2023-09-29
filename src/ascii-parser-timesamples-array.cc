@@ -119,6 +119,9 @@ extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color3
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color4h> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color4f> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color4d> *result);
+extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2f> *result);
+extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3f> *result);
+extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4f> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2d> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3d> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4d> *result);
@@ -191,6 +194,11 @@ bool AsciiParser::ParseTimeSampleValueOfArrayType(const uint32_t type_id, value:
   PARSE_TYPE(type_id, value::point3f)
   PARSE_TYPE(type_id, value::texcoord2f)
   PARSE_TYPE(type_id, value::texcoord3f)
+  PARSE_TYPE(type_id, value::matrix2f)
+  PARSE_TYPE(type_id, value::matrix3f)
+  PARSE_TYPE(type_id, value::matrix4f)
+  PARSE_TYPE(type_id, value::matrix2d)
+  PARSE_TYPE(type_id, value::matrix3d)
   PARSE_TYPE(type_id, value::matrix4d) {
     PUSH_ERROR_AND_RETURN(" : TODO: timeSamples type " + value::GetTypeName(type_id));
   }

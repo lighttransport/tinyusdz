@@ -14,6 +14,11 @@
 namespace tinyusdz {
 namespace prim {
 
+struct PrimReconstructOptions
+{
+  bool strict_allowedToken_check{false};
+};
+
 
 ///
 /// Reconstruct property with `xformOp:***` namespace in `properties` to `XformOp` class.
@@ -38,7 +43,8 @@ bool ReconstructPrim(
     const ReferenceList &references,
     T *out,
     std::string *warn,
-    std::string *err);
+    std::string *err,
+    const PrimReconstructOptions &options = PrimReconstructOptions());
 
 ///
 /// Reconstruct concrete Prim(e.g. Xform, GeomMesh) from PrimSpec.
@@ -48,7 +54,8 @@ bool ReconstructPrim(
     const PrimSpec &primspec,
     T *out,
     std::string *warn,
-    std::string *err);
+    std::string *err,
+    const PrimReconstructOptions &options = PrimReconstructOptions());
 
 
 } // namespace prim
