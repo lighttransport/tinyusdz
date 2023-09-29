@@ -25,6 +25,8 @@ struct USDCReaderConfig {
 
   bool allow_unknown_prims = true;
   bool allow_unknown_apiSchemas = true;
+
+  bool strict_allowedToken_check = false;
 };
 
 class USDCReader {

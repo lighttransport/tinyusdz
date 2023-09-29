@@ -81,7 +81,7 @@ namespace prim {
 
 // template specialization forward decls.
 // implimentations will be located in prim-reconstruct.cc
-#define RECONSTRUCT_PRIM_DECL(__ty) template<> bool ReconstructPrim<__ty>(const Specifier &spec, const PropertyMap &, const ReferenceList &, __ty *, std::string *, std::string *)
+#define RECONSTRUCT_PRIM_DECL(__ty) template<> bool ReconstructPrim<__ty>(const Specifier &spec, const PropertyMap &, const ReferenceList &, __ty *, std::string *, std::string *, const PrimReconstructOptions &)
 
 RECONSTRUCT_PRIM_DECL(Xform);
 RECONSTRUCT_PRIM_DECL(Model);
@@ -341,108 +341,8 @@ class USDAReader::Impl {
   }
 
   void PushWarn(const std::string &s) {
-    _err += s;
+    _warn += s;
   }
-
-#if 0  // TODO: remove
-    if (prim_type.empty()) {
-      if (IsToplevel()) {
-        if (references.size()) {
-          // Infer prim type from referenced asset.
-
-          if (references.size() > 1) {
-            LOG_ERROR("TODO: multiple references\n");
-          }
-
-          auto it = references.begin();
-          const Reference &ref = it->second;
-          std::string filepath = ref.asset_path;
-
-          // usdOBJ?
-          if (endsWith(filepath, ".obj")) {
-            prim_type = "geom_mesh";
-          } else {
-            if (!io::IsAbsPath(filepath)) {
-              filepath = io::JoinPath(_base_dir, ref.asset_path);
-            }
-
-            if (_reference_cache.count(filepath)) {
-              LOG_ERROR("TODO: Use cached info");
-            }
-
-            DCOUT("Reading references: " + filepath);
-
-            std::vector<uint8_t> data;
-            std::string err;
-            if (!io::ReadWholeFile(&data, &err, filepath,
-                                   /* max_filesize */ 0)) {
-              PUSH_ERROR_AND_RETURN("Failed to read file: " + filepath);
-            }
-
-            tinyusdz::StreamReader sr(data.data(), data.size(),
-                                      /* swap endian */ false);
-            tinyusdz::usda::USDAReader parser(&sr);
-
-            std::string base_dir = io::GetBaseDir(filepath);
-
-            parser.SetBaseDir(base_dir);
-
-            {
-              bool ret = parser.Parse(tinyusdz::usda::LOAD_STATE_REFERENCE);
-
-              if (!ret) {
-                PUSH_WARN("Failed to parse .usda: " << parser.GetError());
-              } else {
-                DCOUT("`references` load ok.");
-              }
-            }
-
-            std::string defaultPrim = parser.GetDefaultPrimName();
-
-            DCOUT("defaultPrim: " + parser.GetDefaultPrimName());
-
-            const std::vector<GPrim> &root_nodes = parser.GetGPrims();
-            if (root_nodes.empty()) {
-              PUSH_WARN("USD file does not contain any Prim node.");
-            } else {
-              size_t default_idx =
-                  0;  // Use the first element when corresponding defaultPrim
-                      // node is not found.
-
-              auto node_it = std::find_if(root_nodes.begin(), root_nodes.end(),
-                                          [defaultPrim](const GPrim &a) {
-                                            return !defaultPrim.empty() &&
-                                                   (a.name == defaultPrim);
-                                          });
-
-              if (node_it != root_nodes.end()) {
-                default_idx =
-                    size_t(std::distance(root_nodes.begin(), node_it));
-              }
-
-              DCOUT("defaultPrim node: " + root_nodes[default_idx].name);
-              for (size_t i = 0; i < root_nodes.size(); i++) {
-                DCOUT("root nodes: " + root_nodes[i].name);
-              }
-
-              // Store result to cache
-              _reference_cache[filepath] = {default_idx, root_nodes};
-
-              prim_type = root_nodes[default_idx].prim_type;
-              DCOUT("Infered prim type: " + prim_type);
-            }
-          }
-        }
-      } else {
-        // Unknown or unresolved node type
-        LOG_ERROR("TODO: unresolved node type\n");
-      }
-    }
-
-
-    return true;
-  }
-#endif
 
   template <typename T>
   bool ReconstructPrim(
@@ -1900,8 +1800,12 @@ bool USDAReader::Impl::ReconstructPrim(
     const prim::ReferenceList &references,
     T *prim) {
 
+  prim::PrimReconstructOptions options;
+  options.strict_allowedToken_check = _config.strict_allowedToken_check;
+  DCOUT("strict_allowedToken_check " << options.strict_allowedToken_check);
+
   std::string err;
-  if (!prim::ReconstructPrim(spec, properties, references, prim, &_warn, &err)) {
+  if (!prim::ReconstructPrim(spec, properties, references, prim, &_warn, &err, options)) {
     PUSH_ERROR_AND_RETURN(fmt::format("Failed to reconstruct {} Prim: {}", value::TypeTraits<T>::type_name(), err));
   }
   return true;
@@ -1923,6 +1827,7 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
   ascii::AsciiParserOption ascii_parser_option;
   ascii_parser_option.allow_unknown_prim = _config.allow_unknown_prims;
   ascii_parser_option.allow_unknown_apiSchema = _config.allow_unknown_apiSchema;
+  ascii_parser_option.strict_allowedToken_check = _config.strict_allowedToken_check;
 
   ///
   /// Setup callbacks.
@@ -1969,14 +1874,17 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
 
   _parser.set_primspec_mode(as_primspec);
 
-  if (!_parser.Parse(state_flags, ascii_parser_option)) {
-    std::string warn = _parser.GetWarning();
-    if (!warn.empty()) {
-      PUSH_WARN("<parser> " + warn);
-    }
+  bool ret = _parser.Parse(state_flags, ascii_parser_option);
 
+  std::string warn = _parser.GetWarning();
+  if (!warn.empty()) {
+    PUSH_WARN("<USDAParser> " + warn);
+  }
+
+  if (!ret) {
     PUSH_ERROR_AND_RETURN("Parse failed:\n" + _parser.GetError());
   }
+
 
   return true;
 }

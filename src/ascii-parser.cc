@@ -124,6 +124,9 @@ extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::option
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::color4h>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::color4f>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::color4d>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::matrix2f>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::matrix3f>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::matrix4f>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::matrix2d>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::matrix3d>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::matrix4d>> *result);
@@ -182,6 +185,9 @@ extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color3
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color4h> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color4f> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color4d> *result);
+extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2f> *result);
+extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3f> *result);
+extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4f> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2d> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3d> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4d> *result);
@@ -380,10 +386,9 @@ static void RegisterPrimAttrTypes(std::set<std::string> &d) {
   d.insert(value::kColor4f);
   d.insert(value::kColor4d);
 
-  // It looks no `matrixNf` type for USDA
-  // d.insert(value::kMatrix2f);
-  // d.insert(value::kMatrix3f);
-  // d.insert(value::kMatrix4f);
+  d.insert(value::kMatrix2f);
+  d.insert(value::kMatrix3f);
+  d.insert(value::kMatrix4f);
 
   d.insert(value::kMatrix2d);
   d.insert(value::kMatrix3d);
@@ -567,6 +572,9 @@ std::string AsciiParser::GetWarning() {
   __FUNC(value::double2)              \
   __FUNC(value::double3)              \
   __FUNC(value::double4)              \
+  __FUNC(value::matrix2f)             \
+  __FUNC(value::matrix3f)             \
+  __FUNC(value::matrix4f)             \
   __FUNC(value::matrix2d)             \
   __FUNC(value::matrix3d)             \
   __FUNC(value::matrix4d)             \
@@ -1573,7 +1581,7 @@ bool AsciiParser::ReadUntilNewline(std::string *str) {
         break;
       }
 
-    } 
+    }
 
     ss << c;
   }
@@ -1704,10 +1712,17 @@ bool AsciiParser::ParseStageMetaOpt() {
       } else if (s == "Z") {
         _stage_metas.upAxis = Axis::Z;
       } else {
-        PUSH_ERROR_AND_RETURN(
-            "Invalid `upAxis` value. Must be \"X\", \"Y\" or \"Z\", but got "
-            "\"" +
-            s + "\"(Note: Case sensitive)");
+        if (_option.strict_allowedToken_check) {
+          PUSH_ERROR_AND_RETURN(
+              "Invalid `upAxis` value. Must be \"X\", \"Y\" or \"Z\", but got "
+              "\"" +
+              s + "\"(Note: Case sensitive)");
+        } else {
+          PUSH_WARN("Ignore unknown `upAxis` value. Must be \"X\", \"Y\" or \"Z\", but got "
+          "\"" +
+          s + "\"(Note: Case sensitive). Use default upAxis `Y`.");
+          _stage_metas.upAxis = Axis::Y;
+        }
       }
     } else {
       PUSH_ERROR_AND_RETURN("`upAxis` isn't a token value.");
@@ -2953,7 +2968,7 @@ AsciiParser::ParsePrimMeta() {
 
   if (!registered_meta) {
     // parse as string until newline
-   
+
     std::string content;
     if (!ReadUntilNewline(&content)) {
       PUSH_ERROR("Failed to parse unregistered Prim metadata.");
@@ -2962,7 +2977,7 @@ AsciiParser::ParsePrimMeta() {
 
     MetaVariable var;
     var.set_value(varname, content);
-    
+
     return std::make_pair(qual, var);
   } else {
 
@@ -4028,6 +4043,21 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
                                                 &attr)) {
           return false;
         }
+      } else if (type_name == value::kMatrix2f) {
+        if (!ParseBasicPrimAttr<value::matrix2f>(array_qual, primattr_name,
+                                               &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kMatrix3f) {
+        if (!ParseBasicPrimAttr<value::matrix3f>(array_qual, primattr_name,
+                                               &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kMatrix4f) {
+        if (!ParseBasicPrimAttr<value::matrix4f>(array_qual, primattr_name,
+                                               &attr)) {
+          return false;
+        }
       } else if (type_name == value::kMatrix2d) {
         if (!ParseBasicPrimAttr<value::matrix2d>(array_qual, primattr_name,
                                                &attr)) {
@@ -4108,6 +4138,22 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
                                                 &attr)) {
           return false;
         }
+      } else if (type_name == value::kMatrix2f) {
+        if (!ParseBasicPrimAttr<value::matrix2f>(array_qual, primattr_name,
+                                                 &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kMatrix3f) {
+        if (!ParseBasicPrimAttr<value::matrix3f>(array_qual, primattr_name,
+                                                 &attr)) {
+          return false;
+        }
+      } else if (type_name == value::kMatrix4f) {
+        if (!ParseBasicPrimAttr<value::matrix4f>(array_qual, primattr_name,
+                                                 &attr)) {
+          return false;
+        }
+
       } else if (type_name == value::kMatrix2d) {
         if (!ParseBasicPrimAttr<value::matrix2d>(array_qual, primattr_name,
                                                  &attr)) {

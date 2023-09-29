@@ -16,6 +16,7 @@ struct USDAReaderConfig {
   bool allow_unknown_prims{true};
   bool allow_unknown_shader{true};
   bool allow_unknown_apiSchema{true};
+  bool strict_allowedToken_check{false};
 };
 
 ///
