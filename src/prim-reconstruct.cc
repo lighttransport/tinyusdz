@@ -183,13 +183,87 @@ nonstd::optional<Animatable<Extent>> ConvertToAnimatable(const primvar::PrimVar 
   return nonstd::nullopt;
 }
 
+static bool ConvertTokenAttributeToStringAttribute(
+  const TypedAttribute<Animatable<value::token>> &inp,
+  TypedAttribute<Animatable<std::string>> &out) {
+
+  out.metas() = inp.metas();
+
+  if (inp.is_blocked()) {
+    out.set_blocked(true);
+  } else if (inp.is_value_empty()) {
+    out.set_value_empty();
+  } else if (inp.is_connection()) {
+    out.set_connections(inp.get_connections());
+  } else {
+    Animatable<value::token> toks;
+    Animatable<std::string> strs;
+    if (inp.get_value(&toks)) {
+      if (toks.is_scalar()) {
+        value::token tok;
+        toks.get_scalar(&tok);
+        strs.set(tok.str());
+      } else if (toks.is_timesamples()) {
+        auto tok_ts = toks.get_timesamples();
+
+        for (auto &item : tok_ts.get_samples()) {
+          strs.add_sample(item.t, item.value.str());
+        }
+      } else if (toks.is_blocked()) {
+        // TODO
+        return false;
+      }
+    }
+    out.set_value(strs);
+  }
+    
+  return true;
+}
+
+static bool ConvertStringDataAttributeToStringAttribute(
+  const TypedAttribute<Animatable<value::StringData>> &inp,
+  TypedAttribute<Animatable<std::string>> &out) {
+
+  out.metas() = inp.metas();
+
+  if (inp.is_blocked()) {
+    out.set_blocked(true);
+  } else if (inp.is_value_empty()) {
+    out.set_value_empty();
+  } else if (inp.is_connection()) {
+    out.set_connections(inp.get_connections());
+  } else {
+    Animatable<value::StringData> toks;
+    Animatable<std::string> strs;
+    if (inp.get_value(&toks)) {
+      if (toks.is_scalar()) {
+        value::StringData tok;
+        toks.get_scalar(&tok);
+        strs.set(tok.value); 
+      } else if (toks.is_timesamples()) {
+        auto tok_ts = toks.get_timesamples();
+
+        for (auto &item : tok_ts.get_samples()) {
+          strs.add_sample(item.t, item.value.value);
+        }
+      } else if (toks.is_blocked()) {
+        // TODO
+        return false;
+      }
+    }
+    out.set_value(strs);
+  }
+    
+  return true;
+}
+
 // For animatable attribute(`varying`)
 template<typename T>
 static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
   const std::string prop_name,
   const Property &prop,
   const std::string &name,
-  TypedAttributeWithFallback<Animatable<T>> &target) /* out */
+  TypedAttributeWithFallback<Animatable<T>> &target)
 {
   ParseResult ret;
 
@@ -269,7 +343,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
             target.set_value(pv.value());
           } else {
             ret.code = ParseResult::ResultCode::InternalError;
-            ret.err = fmt::format("Failed to retrieve value with requested type.");
+            ret.err = fmt::format("Fallback. Failed to retrieve value with requested type `{}`.", value::TypeTraits<T>::type_name());
             return ret;
           }
 
@@ -537,7 +611,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
             target.set_value(pv.value());
           } else {
             ret.code = ParseResult::ResultCode::InternalError;
-            ret.err = fmt::format("Failed to retrieve value with requested type.");
+            ret.err = fmt::format("Failed to retrieve value with requested type `{}`.", value::TypeTraits<T>::type_name());
             return ret;
           }
 
@@ -556,11 +630,11 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
             return ret;
           }
         } else if (attr.get_var().is_scalar()) {
-          if (auto pv = attr.get_value<T>()) {
+          if (auto pv = attr.get_var().get_value<T>()) {
             target.set_value(pv.value());
           } else {
             ret.code = ParseResult::ResultCode::InternalError;
-            ret.err = fmt::format("Failed to retrieve value with requested type.");
+            ret.err = fmt::format("Failed to retrieve value with requested type `{}`.", value::TypeTraits<T>::type_name());
             return ret;
           }
         } else {
@@ -3201,8 +3275,23 @@ bool ReconstructShader<UsdPrimvarReader_int>(
   for (auto &prop : properties) {
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_int,
                    preader->fallback)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_int,
-                   preader->varname)  // `token`
+    if ((prop.first == "inputs:varname") && !table.count("inputs:varname")) {
+      // Support older spec: `token` for varname
+      TypedAttribute<Animatable<value::token>> tok_attr;
+      auto ret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", tok_attr);
+      if (ret.code == ParseResult::ResultCode::Success) {
+        if (!ConvertTokenAttributeToStringAttribute(tok_attr, preader->varname)) {
+          PUSH_ERROR_AND_RETURN("Failed to convert inputs:varname token type to string type.");
+        }
+      } else if (ret.code == ParseResult::ResultCode::TypeMismatch) {
+        ret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", preader->varname);
+        if (ret.code == ParseResult::ResultCode::Success) {
+          // ok
+        } else {
+          PUSH_ERROR_AND_RETURN(fmt::format("Faied to parse inputs:varname: {}", ret.err));
+        }
+      }
+    }
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_int, preader->result)
     ADD_PROPERTY(table, prop, UsdPrimvarReader_int, preader->props)
@@ -3227,8 +3316,31 @@ bool ReconstructShader<UsdPrimvarReader_float>(
   for (auto &prop : properties) {
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_float,
                    preader->fallback)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_float,
-                   preader->varname)  // `token`
+    if ((prop.first == "inputs:varname") && !table.count("inputs:varname")) {
+      // Support older spec: `token` for varname
+      TypedAttribute<Animatable<value::token>> tok_attr;
+      auto ret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", tok_attr);
+      if (ret.code == ParseResult::ResultCode::Success) {
+        if (!ConvertTokenAttributeToStringAttribute(tok_attr, preader->varname)) {
+          PUSH_ERROR_AND_RETURN("Failed to convert inputs:varname token type to string type.");
+        }
+      } else if (ret.code == ParseResult::ResultCode::TypeMismatch) {
+        TypedAttribute<Animatable<value::StringData>> sdata_attr;
+        auto sdret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", sdata_attr);
+        if (sdret.code == ParseResult::ResultCode::Success) {
+          if (!ConvertStringDataAttributeToStringAttribute(sdata_attr, preader->varname)) {
+            PUSH_ERROR_AND_RETURN("Failed to convert inputs:varname StringData type to string type.");
+          }
+        } else if (sdret.code == ParseResult::ResultCode::TypeMismatch) {
+          auto sret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", preader->varname);
+          if (sret.code == ParseResult::ResultCode::Success) {
+            // ok
+          } else {
+            PUSH_ERROR_AND_RETURN(fmt::format("Faied to parse inputs:varname: {}", sret.err));
+          }
+        }
+      }
+    }
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_float, preader->result)
     ADD_PROPERTY(table, prop, UsdPrimvarReader_float, preader->props)
@@ -3252,8 +3364,31 @@ bool ReconstructShader<UsdPrimvarReader_float2>(
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
   for (auto &prop : properties) {
     DCOUT("prop = " << prop.first);
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_float2,
-                   preader->varname)  // `token`
+    if ((prop.first == "inputs:varname") && !table.count("inputs:varname")) {
+      // Support older spec: `token` for varname
+      TypedAttribute<Animatable<value::token>> tok_attr;
+      auto ret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", tok_attr);
+      if (ret.code == ParseResult::ResultCode::Success) {
+        if (!ConvertTokenAttributeToStringAttribute(tok_attr, preader->varname)) {
+          PUSH_ERROR_AND_RETURN("Failed to convert inputs:varname token type to string type.");
+        }
+      } else if (ret.code == ParseResult::ResultCode::TypeMismatch) {
+        TypedAttribute<Animatable<value::StringData>> sdata_attr;
+        auto sdret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", sdata_attr);
+        if (sdret.code == ParseResult::ResultCode::Success) {
+          if (!ConvertStringDataAttributeToStringAttribute(sdata_attr, preader->varname)) {
+            PUSH_ERROR_AND_RETURN("Failed to convert inputs:varname StringData type to string type.");
+          }
+        } else if (sdret.code == ParseResult::ResultCode::TypeMismatch) {
+          auto sret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", preader->varname);
+          if (sret.code == ParseResult::ResultCode::Success) {
+            // ok
+          } else {
+            PUSH_ERROR_AND_RETURN(fmt::format("Faied to parse inputs:varname: {}", sret.err));
+          }
+        }
+      }
+    }
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_float2,
                    preader->fallback)
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
@@ -3281,8 +3416,31 @@ bool ReconstructShader<UsdPrimvarReader_float3>(
   for (auto &prop : properties) {
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_float3,
                    preader->fallback)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_float3,
-                   preader->varname)  // `token`
+    if ((prop.first == "inputs:varname") && !table.count("inputs:varname")) {
+      // Support older spec: `token` for varname
+      TypedAttribute<Animatable<value::token>> tok_attr;
+      auto ret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", tok_attr);
+      if (ret.code == ParseResult::ResultCode::Success) {
+        if (!ConvertTokenAttributeToStringAttribute(tok_attr, preader->varname)) {
+          PUSH_ERROR_AND_RETURN("Failed to convert inputs:varname token type to string type.");
+        }
+      } else if (ret.code == ParseResult::ResultCode::TypeMismatch) {
+        TypedAttribute<Animatable<value::StringData>> sdata_attr;
+        auto sdret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", sdata_attr);
+        if (sdret.code == ParseResult::ResultCode::Success) {
+          if (!ConvertStringDataAttributeToStringAttribute(sdata_attr, preader->varname)) {
+            PUSH_ERROR_AND_RETURN("Failed to convert inputs:varname StringData type to string type.");
+          }
+        } else if (sdret.code == ParseResult::ResultCode::TypeMismatch) {
+          auto sret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", preader->varname);
+          if (sret.code == ParseResult::ResultCode::Success) {
+            // ok
+          } else {
+            PUSH_ERROR_AND_RETURN(fmt::format("Faied to parse inputs:varname: {}", sret.err));
+          }
+        }
+      }
+    }
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_float3, preader->result)
     ADD_PROPERTY(table, prop, UsdPrimvarReader_float3, preader->props)
@@ -3309,8 +3467,31 @@ bool ReconstructShader<UsdPrimvarReader_float4>(
   for (auto &prop : properties) {
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_float4,
                    preader->fallback)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_float4,
-                   preader->varname)  // `token`
+    if ((prop.first == "inputs:varname") && !table.count("inputs:varname")) {
+      // Support older spec: `token` for varname
+      TypedAttribute<Animatable<value::token>> tok_attr;
+      auto ret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", tok_attr);
+      if (ret.code == ParseResult::ResultCode::Success) {
+        if (!ConvertTokenAttributeToStringAttribute(tok_attr, preader->varname)) {
+          PUSH_ERROR_AND_RETURN("Failed to convert inputs:varname token type to string type.");
+        }
+      } else if (ret.code == ParseResult::ResultCode::TypeMismatch) {
+        TypedAttribute<Animatable<value::StringData>> sdata_attr;
+        auto sdret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", sdata_attr);
+        if (sdret.code == ParseResult::ResultCode::Success) {
+          if (!ConvertStringDataAttributeToStringAttribute(sdata_attr, preader->varname)) {
+            PUSH_ERROR_AND_RETURN("Failed to convert inputs:varname StringData type to string type.");
+          }
+        } else if (sdret.code == ParseResult::ResultCode::TypeMismatch) {
+          auto sret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", preader->varname);
+          if (sret.code == ParseResult::ResultCode::Success) {
+            // ok
+          } else {
+            PUSH_ERROR_AND_RETURN(fmt::format("Faied to parse inputs:varname: {}", sret.err));
+          }
+        }
+      }
+    }
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_float4, preader->result)
     ADD_PROPERTY(table, prop, UsdPrimvarReader_float4, preader->props)
@@ -3336,8 +3517,31 @@ bool ReconstructShader<UsdPrimvarReader_string>(
   for (auto &prop : properties) {
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_string,
                    preader->fallback)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_string,
-                   preader->varname)  // `token`
+    if ((prop.first == "inputs:varname") && !table.count("inputs:varname")) {
+      // Support older spec: `token` for varname
+      TypedAttribute<Animatable<value::token>> tok_attr;
+      auto ret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", tok_attr);
+      if (ret.code == ParseResult::ResultCode::Success) {
+        if (!ConvertTokenAttributeToStringAttribute(tok_attr, preader->varname)) {
+          PUSH_ERROR_AND_RETURN("Failed to convert inputs:varname token type to string type.");
+        }
+      } else if (ret.code == ParseResult::ResultCode::TypeMismatch) {
+        TypedAttribute<Animatable<value::StringData>> sdata_attr;
+        auto sdret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", sdata_attr);
+        if (sdret.code == ParseResult::ResultCode::Success) {
+          if (!ConvertStringDataAttributeToStringAttribute(sdata_attr, preader->varname)) {
+            PUSH_ERROR_AND_RETURN("Failed to convert inputs:varname StringData type to string type.");
+          }
+        } else if (sdret.code == ParseResult::ResultCode::TypeMismatch) {
+          auto sret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", preader->varname);
+          if (sret.code == ParseResult::ResultCode::Success) {
+            // ok
+          } else {
+            PUSH_ERROR_AND_RETURN(fmt::format("Faied to parse inputs:varname: {}", sret.err));
+          }
+        }
+      }
+    }
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_string, preader->result)
     ADD_PROPERTY(table, prop, UsdPrimvarReader_string, preader->props)
@@ -3363,8 +3567,31 @@ bool ReconstructShader<UsdPrimvarReader_vector>(
   for (auto &prop : properties) {
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_vector,
                    preader->fallback)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_vector,
-                   preader->varname)  // `token`
+    if ((prop.first == "inputs:varname") && !table.count("inputs:varname")) {
+      // Support older spec: `token` for varname
+      TypedAttribute<Animatable<value::token>> tok_attr;
+      auto ret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", tok_attr);
+      if (ret.code == ParseResult::ResultCode::Success) {
+        if (!ConvertTokenAttributeToStringAttribute(tok_attr, preader->varname)) {
+          PUSH_ERROR_AND_RETURN("Failed to convert inputs:varname token type to string type.");
+        }
+      } else if (ret.code == ParseResult::ResultCode::TypeMismatch) {
+        TypedAttribute<Animatable<value::StringData>> sdata_attr;
+        auto sdret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", sdata_attr);
+        if (sdret.code == ParseResult::ResultCode::Success) {
+          if (!ConvertStringDataAttributeToStringAttribute(sdata_attr, preader->varname)) {
+            PUSH_ERROR_AND_RETURN("Failed to convert inputs:varname StringData type to string type.");
+          }
+        } else if (sdret.code == ParseResult::ResultCode::TypeMismatch) {
+          auto sret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", preader->varname);
+          if (sret.code == ParseResult::ResultCode::Success) {
+            // ok
+          } else {
+            PUSH_ERROR_AND_RETURN(fmt::format("Faied to parse inputs:varname: {}", sret.err));
+          }
+        }
+      }
+    }
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_vector, preader->result)
     ADD_PROPERTY(table, prop, UsdPrimvarReader_vector, preader->props)
@@ -3390,8 +3617,31 @@ bool ReconstructShader<UsdPrimvarReader_normal>(
   for (auto &prop : properties) {
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_normal,
                    preader->fallback)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_normal,
-                   preader->varname)  // `token`
+    if ((prop.first == "inputs:varname") && !table.count("inputs:varname")) {
+      // Support older spec: `token` for varname
+      TypedAttribute<Animatable<value::token>> tok_attr;
+      auto ret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", tok_attr);
+      if (ret.code == ParseResult::ResultCode::Success) {
+        if (!ConvertTokenAttributeToStringAttribute(tok_attr, preader->varname)) {
+          PUSH_ERROR_AND_RETURN("Failed to convert inputs:varname token type to string type.");
+        }
+      } else if (ret.code == ParseResult::ResultCode::TypeMismatch) {
+        TypedAttribute<Animatable<value::StringData>> sdata_attr;
+        auto sdret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", sdata_attr);
+        if (sdret.code == ParseResult::ResultCode::Success) {
+          if (!ConvertStringDataAttributeToStringAttribute(sdata_attr, preader->varname)) {
+            PUSH_ERROR_AND_RETURN("Failed to convert inputs:varname StringData type to string type.");
+          }
+        } else if (sdret.code == ParseResult::ResultCode::TypeMismatch) {
+          auto sret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", preader->varname);
+          if (sret.code == ParseResult::ResultCode::Success) {
+            // ok
+          } else {
+            PUSH_ERROR_AND_RETURN(fmt::format("Faied to parse inputs:varname: {}", sret.err));
+          }
+        }
+      }
+    }
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_normal, preader->result)
     ADD_PROPERTY(table, prop, UsdPrimvarReader_normal, preader->props)
@@ -3417,8 +3667,31 @@ bool ReconstructShader<UsdPrimvarReader_point>(
   for (auto &prop : properties) {
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_point,
                    preader->fallback)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_point,
-                   preader->varname)  // `token`
+    if ((prop.first == "inputs:varname") && !table.count("inputs:varname")) {
+      // Support older spec: `token` for varname
+      TypedAttribute<Animatable<value::token>> tok_attr;
+      auto ret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", tok_attr);
+      if (ret.code == ParseResult::ResultCode::Success) {
+        if (!ConvertTokenAttributeToStringAttribute(tok_attr, preader->varname)) {
+          PUSH_ERROR_AND_RETURN("Failed to convert inputs:varname token type to string type.");
+        }
+      } else if (ret.code == ParseResult::ResultCode::TypeMismatch) {
+        TypedAttribute<Animatable<value::StringData>> sdata_attr;
+        auto sdret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", sdata_attr);
+        if (sdret.code == ParseResult::ResultCode::Success) {
+          if (!ConvertStringDataAttributeToStringAttribute(sdata_attr, preader->varname)) {
+            PUSH_ERROR_AND_RETURN("Failed to convert inputs:varname StringData type to string type.");
+          }
+        } else if (sdret.code == ParseResult::ResultCode::TypeMismatch) {
+          auto sret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", preader->varname);
+          if (sret.code == ParseResult::ResultCode::Success) {
+            // ok
+          } else {
+            PUSH_ERROR_AND_RETURN(fmt::format("Faied to parse inputs:varname: {}", sret.err));
+          }
+        }
+      }
+    }
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_point, preader->result)
     ADD_PROPERTY(table, prop, UsdPrimvarReader_point, preader->props)
@@ -3444,8 +3717,31 @@ bool ReconstructShader<UsdPrimvarReader_matrix>(
   for (auto &prop : properties) {
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fallback", UsdPrimvarReader_matrix,
                    preader->fallback)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:varname", UsdPrimvarReader_matrix,
-                   preader->varname)  // `token`
+    if ((prop.first == "inputs:varname") && !table.count("inputs:varname")) {
+      // Support older spec: `token` for varname
+      TypedAttribute<Animatable<value::token>> tok_attr;
+      auto ret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", tok_attr);
+      if (ret.code == ParseResult::ResultCode::Success) {
+        if (!ConvertTokenAttributeToStringAttribute(tok_attr, preader->varname)) {
+          PUSH_ERROR_AND_RETURN("Failed to convert inputs:varname token type to string type.");
+        }
+      } else if (ret.code == ParseResult::ResultCode::TypeMismatch) {
+        TypedAttribute<Animatable<value::StringData>> sdata_attr;
+        auto sdret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", sdata_attr);
+        if (sdret.code == ParseResult::ResultCode::Success) {
+          if (!ConvertStringDataAttributeToStringAttribute(sdata_attr, preader->varname)) {
+            PUSH_ERROR_AND_RETURN("Failed to convert inputs:varname StringData type to string type.");
+          }
+        } else if (sdret.code == ParseResult::ResultCode::TypeMismatch) {
+          auto sret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", preader->varname);
+          if (sret.code == ParseResult::ResultCode::Success) {
+            // ok
+          } else {
+            PUSH_ERROR_AND_RETURN(fmt::format("Faied to parse inputs:varname: {}", sret.err));
+          }
+        }
+      }
+    }
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
                                   UsdPrimvarReader_matrix, preader->result)
     ADD_PROPERTY(table, prop, UsdPrimvarReader_matrix, preader->props)

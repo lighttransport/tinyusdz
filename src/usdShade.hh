@@ -115,7 +115,7 @@ struct UsdPrimvarReader : ShaderNode {
 
   TypedAttribute<Animatable<T>> fallback;  // "inputs:fallback"
 
-  TypedAttribute<Animatable<value::token>> varname;  // "token inputs:varname". Name of the primvar to be fetched from the geometry("primvar" namespace is omitted) NOTE: usdShade Schema uses `string` type.
+  TypedAttribute<Animatable<std::string>> varname;  // "string inputs:varname". Name of the primvar to be fetched from the geometry("primvar" namespace is omitted). NOTE: older spec uses `token` type: https://openusd.org/release/spec_usdpreviewsurface.html#version-2-3
 
 
   ///
