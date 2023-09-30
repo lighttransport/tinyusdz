@@ -2620,6 +2620,42 @@ std::string to_string(const GeomBasisCurves &geom, const uint32_t indent, bool c
   return ss.str();
 }
 
+std::string to_string(const GeomNurbsCurves &geom, const uint32_t indent, bool closing_brace) {
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << to_string(geom.spec) << " NurbsCurves \"" << geom.name << "\"\n";
+  if (geom.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(geom.meta, indent+1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
+  ss << pprint::Indent(indent) << "{\n";
+
+  // members
+  ss << print_typed_attr(geom.points, "points", indent+1);
+  ss << print_typed_attr(geom.normals, "normals", indent+1);
+  ss << print_typed_attr(geom.widths, "widths", indent+1);
+  ss << print_typed_attr(geom.velocities, "velocites", indent+1);
+  ss << print_typed_attr(geom.accelerations, "accelerations", indent+1);
+  ss << print_typed_attr(geom.curveVertexCounts, "curveVertexCounts", indent+1);
+
+  //
+  ss << print_typed_attr(geom.order, "order", indent+1);
+  ss << print_typed_attr(geom.knots, "knots", indent+1);
+  ss << print_typed_attr(geom.ranges, "ranges", indent+1);
+  ss << print_typed_attr(geom.pointWeights, "pointWeights", indent+1);
+
+  ss << print_gprim_predefined(geom, indent+1);
+
+  ss << print_props(geom.props, indent+1);
+
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
 std::string to_string(const GeomCube &geom, const uint32_t indent, bool closing_brace) {
   std::stringstream ss;
 

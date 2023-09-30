@@ -598,10 +598,10 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
         DCOUT("Adding typed attribute: " << name);
 
         if (attr.is_blocked()) {
-          // e.g. "float radius = None"
+          // e.g. "uniform float radius = None"
           target.set_blocked(true);
         } else if (attr.variability() == Variability::Uniform) {
-          // e.g. "float radius = 1.2"
+          // e.g. "uniform float radius = 1.2"
           if (!attr.get_var().is_scalar()) {
             ret.code = ParseResult::ResultCode::VariabilityMismatch;
             ret.err = fmt::format("TimeSample value is assigned to `uniform` property `{}", name);
@@ -874,11 +874,10 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
       if (attr.is_blocked()) {
         // e.g. "float3[] extent = None"
         target.set_blocked(true);
-      } else if (attr.variability() == Variability::Uniform) {
-        ret.code = ParseResult::ResultCode::VariabilityMismatch;
-        ret.err = fmt::format("`extent` attribute is varying. `uniform` qualifier assigned to it.");
-        return ret;
       } else if (attr.get_var().is_scalar()){
+        //
+        // No variability check. allow `uniform extent`(promote to varying)
+        //
         if (auto pv = attr.get_value<std::vector<value::float3>>()) {
           if (pv.value().size() != 2) {
             ret.code = ParseResult::ResultCode::TypeMismatch;
@@ -2486,6 +2485,49 @@ bool ReconstructPrim(
                        curves->basis, options.strict_allowedToken_check)
     PARSE_ENUM_PROPETY(table, prop, "wrap", WrapHandler, GeomBasisCurves,
                        curves->wrap, options.strict_allowedToken_check)
+
+    ADD_PROPERTY(table, prop, GeomBasisCurves, curves->props)
+
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+
+  return true;
+}
+
+template <>
+bool ReconstructPrim(
+    const Specifier &spec,
+    const PropertyMap &properties,
+    const ReferenceList &references,
+    GeomNurbsCurves *curves,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+  (void)references;
+  (void)options;
+
+  std::set<std::string> table;
+  if (!ReconstructGPrimProperties(spec, table, properties, curves, warn, err, options.strict_allowedToken_check)) {
+    return false;
+  }
+
+  for (const auto &prop : properties) {
+    PARSE_TYPED_ATTRIBUTE(table, prop, "curveVertexCounts", GeomNurbsCurves,
+                         curves->curveVertexCounts)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "points", GeomNurbsCurves, curves->points)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "velocities", GeomNurbsCurves,
+                          curves->velocities)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "normals", GeomNurbsCurves,
+                  curves->normals)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "accelerations", GeomNurbsCurves,
+                 curves->accelerations)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "widths", GeomNurbsCurves, curves->widths)
+
+    //
+    PARSE_TYPED_ATTRIBUTE(table, prop, "order", GeomNurbsCurves, curves->order)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "knots", GeomNurbsCurves, curves->knots)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "ranges", GeomNurbsCurves, curves->ranges)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "pointWeights", GeomNurbsCurves, curves->pointWeights)
 
     ADD_PROPERTY(table, prop, GeomBasisCurves, curves->props)
 
