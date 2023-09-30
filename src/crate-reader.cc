@@ -1058,6 +1058,10 @@ bool CrateReader::ReadLayerOffsetArray(std::vector<LayerOffset> *d) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many array elements.");
   }
 
+  if (n == 0) {
+    return true;
+  }
+
   CHECK_MEMORY_USAGE(size_t(n) * sizeof(LayerOffset));
 
   d->resize(size_t(n));
