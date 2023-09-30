@@ -22,6 +22,7 @@ constexpr auto kGeomXform = "Xform";
 constexpr auto kGeomMesh = "Mesh";
 constexpr auto kGeomSubset = "GeomSubset";
 constexpr auto kGeomBasisCurves = "BasisCurves";
+constexpr auto kGeomNurbsCurves = "NurbsCurves";
 constexpr auto kGeomCylinder = "Cylinder";
 constexpr auto kGeomCapsule = "Capsule";
 constexpr auto kGeomPoints = "Points";
@@ -707,6 +708,31 @@ struct GeomBasisCurves : public GPrim {
       accelerations;  // vector3f
 };
 
+struct GeomNurbsCurves : public GPrim {
+
+  //
+  // Predefined attribs.
+  //
+  TypedAttribute<Animatable<std::vector<value::vector3f>>>
+      accelerations; 
+  TypedAttribute<Animatable<std::vector<value::vector3f>>>
+      velocities; 
+  TypedAttribute<Animatable<std::vector<int>>>
+      curveVertexCounts;
+  TypedAttribute<Animatable<std::vector<value::normal3f>>>
+      normals; 
+  TypedAttribute<Animatable<std::vector<value::point3f>>>
+      points; 
+  TypedAttribute<Animatable<std::vector<float>>>
+      widths; 
+
+
+  TypedAttribute<Animatable<std::vector<int>>> order;    
+  TypedAttribute<Animatable<std::vector<double>>> knots; 
+  TypedAttribute<Animatable<std::vector<value::double2>>> ranges;    
+  TypedAttribute<Animatable<std::vector<double>>> pointWeights; 
+};
+
 //
 // Points primitive.
 //
@@ -763,6 +789,8 @@ DEFINE_TYPE_TRAIT(GPrim, kGPrim, TYPE_ID_GPRIM, 1);
 DEFINE_TYPE_TRAIT(Xform, kGeomXform, TYPE_ID_GEOM_XFORM, 1);
 DEFINE_TYPE_TRAIT(GeomMesh, kGeomMesh, TYPE_ID_GEOM_MESH, 1);
 DEFINE_TYPE_TRAIT(GeomBasisCurves, kGeomBasisCurves, TYPE_ID_GEOM_BASIS_CURVES,
+                  1);
+DEFINE_TYPE_TRAIT(GeomNurbsCurves, kGeomNurbsCurves, TYPE_ID_GEOM_NURBS_CURVES,
                   1);
 DEFINE_TYPE_TRAIT(GeomSphere, kGeomSphere, TYPE_ID_GEOM_SPHERE, 1);
 DEFINE_TYPE_TRAIT(GeomCube, kGeomCube, TYPE_ID_GEOM_CUBE, 1);

@@ -85,6 +85,7 @@ RECONSTRUCT_PRIM_DECL(GeomCone);
 RECONSTRUCT_PRIM_DECL(GeomCylinder);
 RECONSTRUCT_PRIM_DECL(GeomSphere);
 RECONSTRUCT_PRIM_DECL(GeomBasisCurves);
+RECONSTRUCT_PRIM_DECL(GeomNurbsCurves);
 RECONSTRUCT_PRIM_DECL(GeomCamera);
 RECONSTRUCT_PRIM_DECL(PointInstancer);
 RECONSTRUCT_PRIM_DECL(SphereLight);
@@ -1710,6 +1711,7 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
   RECONSTRUCT_PRIM(GeomSphere, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(GeomCapsule, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(GeomBasisCurves, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(GeomNurbsCurves, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(PointInstancer, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(GeomCamera, typeName, prim_name, spec)
   // RECONSTRUCT_PRIM(GeomSubset, typeName, prim_name, spec)
