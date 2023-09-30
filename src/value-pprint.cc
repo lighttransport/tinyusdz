@@ -640,6 +640,7 @@ namespace value {
   __FUNC(GeomCapsule)           \
   __FUNC(GeomCone)              \
   __FUNC(GeomBasisCurves)       \
+  __FUNC(GeomNurbsCurves)       \
   __FUNC(GeomCamera)            \
   __FUNC(PointInstancer)        \
   __FUNC(SphereLight)        \

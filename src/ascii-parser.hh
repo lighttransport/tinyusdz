@@ -192,6 +192,9 @@ class AsciiParser {
     std::vector<int64_t> primIndices;  // primIdx of Reconstrcuted Prim.
     std::map<std::string, Property> props;
     std::vector<value::token> properties;
+
+    // for nested `variantSet` 
+    std::map<std::string, std::map<std::string, VariantContent>> variantSets;
   };
 
   // TODO: Use std::vector instead of std::map?

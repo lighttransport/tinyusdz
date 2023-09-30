@@ -103,6 +103,7 @@ RECONSTRUCT_PRIM_DECL(GeomCube);
 RECONSTRUCT_PRIM_DECL(GeomCylinder);
 RECONSTRUCT_PRIM_DECL(GeomCapsule);
 RECONSTRUCT_PRIM_DECL(GeomBasisCurves);
+RECONSTRUCT_PRIM_DECL(GeomNurbsCurves);
 RECONSTRUCT_PRIM_DECL(GeomCamera);
 RECONSTRUCT_PRIM_DECL(PointInstancer);
 RECONSTRUCT_PRIM_DECL(Material);
@@ -178,6 +179,8 @@ DEFINE_PRIM_TYPE(GeomCapsule, kGeomCapsule, value::TYPE_ID_GEOM_CAPSULE);
 DEFINE_PRIM_TYPE(GeomCylinder, kGeomCylinder, value::TYPE_ID_GEOM_CYLINDER);
 DEFINE_PRIM_TYPE(GeomBasisCurves, kGeomBasisCurves,
                  value::TYPE_ID_GEOM_BASIS_CURVES);
+DEFINE_PRIM_TYPE(GeomNurbsCurves, kGeomNurbsCurves,
+                 value::TYPE_ID_GEOM_NURBS_CURVES);
 DEFINE_PRIM_TYPE(GeomSubset, kGeomSubset, value::TYPE_ID_GEOM_GEOMSUBSET);
 DEFINE_PRIM_TYPE(SphereLight, kSphereLight, value::TYPE_ID_LUX_SPHERE);
 DEFINE_PRIM_TYPE(DomeLight, kDomeLight, value::TYPE_ID_LUX_DOME);
@@ -1872,6 +1875,7 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
   RegisterReconstructCallback<GeomMesh>();
   RegisterReconstructCallback<GeomSubset>();
   RegisterReconstructCallback<GeomBasisCurves>();
+  RegisterReconstructCallback<GeomNurbsCurves>();
   RegisterReconstructCallback<GeomCamera>();
 
   RegisterReconstructCallback<Material>();
