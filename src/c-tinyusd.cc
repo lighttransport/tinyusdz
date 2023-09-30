@@ -1133,7 +1133,7 @@ int c_tinyusd_prim_del_child(CTinyUSDPrim *prim, uint64_t child_idx) {
     return 0;
   }
 
-  pprim->children().erase(pprim->children().begin() + ssize_t(child_idx));
+  pprim->children().erase(pprim->children().begin() + ptrdiff_t(child_idx));
 
   return 1;
 }
