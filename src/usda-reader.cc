@@ -897,6 +897,24 @@ class USDAReader::Impl {
               "`dictionary`. got type `"
               << var.type_name() << "`");
         }
+      } else if (meta.first == "clips") {
+        DCOUT("clips. type = " << var.type_name());
+        if (var.type_id() == value::TypeTraits<Dictionary>::type_id()) {
+          if (auto pv = var.get_value<Dictionary>()) {
+            out->clips = pv.value();
+          } else {
+            PUSH_ERROR_AND_RETURN_TAG(kTag,
+                "(Internal error?) `clips` metadataum is not type "
+                "`dictionary`. got type `"
+                << var.type_name() << "`");
+          }
+
+        } else {
+          PUSH_ERROR_AND_RETURN(
+              "(Internal error?) `clips` metadataum is not type "
+              "`dictionary`. got type `"
+              << var.type_name() << "`");
+        }
       } else if (meta.first == "assetInfo") {
         DCOUT("assetInfo. type = " << var.type_name());
         if (auto pv = var.get_value<Dictionary>()) {

@@ -284,6 +284,9 @@ static void RegisterPrimMetas(
   // NOTE: items are expected to be all string type.
   metas["sdrMetadata"] = AsciiParser::VariableDef(value::kDictionary, "sdrMetadata");
 
+  metas["clips"] =
+      AsciiParser::VariableDef(value::kDictionary, "clips");
+
 
   // USDZ extension
   metas["sceneName"] = AsciiParser::VariableDef(value::kString, "sceneName");
@@ -2488,6 +2491,8 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
   MetaVariable var;
 
   bool array_qual{false};
+
+  DCOUT("parseMeta: vartype " << vartype);
 
   if (endsWith(vartype, "[]")) {
     vartype = removeSuffix(vartype, "[]");
