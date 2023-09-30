@@ -1116,7 +1116,7 @@ int c_tinyusd_prim_get_child(const CTinyUSDPrim *prim,
     return 0;
   }
 
-  const tinyusdz::Prim *pchild = &pprim->children()[child_index];
+  const tinyusdz::Prim *pchild = &pprim->children()[size_t(child_index)];
 
   (*child_prim) = reinterpret_cast<const CTinyUSDPrim *>(pchild);
 
@@ -1133,7 +1133,7 @@ int c_tinyusd_prim_del_child(CTinyUSDPrim *prim, uint64_t child_idx) {
     return 0;
   }
 
-  pprim->children().erase(pprim->children().begin() + int64_t(child_idx));
+  pprim->children().erase(pprim->children().begin() + ssize_t(child_idx));
 
   return 1;
 }
@@ -2082,8 +2082,8 @@ CTinyUSDValue *c_tinyusd_value_new_array_##__tyname(uint64_t n, const __cty *val
   /* ensure C++ and C types has same size. */ \
   static_assert(sizeof(__cppty) == sizeof(__cty), ""); \
   std::vector<__cppty> cppvalarray; \
-  cppvalarray.resize(n); \
-  memcpy(cppvalarray.data(), &vals, sizeof(__cppty) * n); \
+  cppvalarray.resize(size_t(n)); \
+  memcpy(cppvalarray.data(), &vals, sizeof(__cppty) * size_t(n)); \
   tinyusdz::value::Value *vp = new tinyusdz::value::Value(std::move(cppvalarray)); \
   return reinterpret_cast<CTinyUSDValue *>(vp); \
 }
