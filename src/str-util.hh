@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <set>
+#include <cstdint>
 
 namespace tinyusdz {
 
