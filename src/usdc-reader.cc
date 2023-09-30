@@ -1829,6 +1829,15 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
             kTag, "`assetInfo` must be type `dictionary`, but got type `"
                       << fv.second.type_name() << "`");
       }
+    } else if (fv.first == "clips") {
+      // CustomData(dict)
+      if (auto pv = fv.second.as<CustomDataType>()) {
+        primMeta.clips = (*pv);
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`clips` must be type `dictionary`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
     } else if (fv.first == "kind") {
       if (auto pv = fv.second.as<value::token>()) {
 

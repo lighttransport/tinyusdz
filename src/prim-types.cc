@@ -1791,6 +1791,14 @@ void PrimMetas::update_from(const PrimMetas &rhs, const bool override_authored) 
     }
   }
 
+  if (rhs.clips) {
+    if (clips) {
+      OverrideDictionary(clips.value(), rhs.clips.value(), override_authored);
+    } else if (override_authored) {
+      clips = rhs.clips;
+    }
+  }
+
   if (rhs.customData) {
     if (customData) {
       OverrideDictionary(customData.value(), rhs.customData.value(), override_authored);

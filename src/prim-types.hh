@@ -807,6 +807,7 @@ struct PrimMetas {
       sdrMetadata;  // 'sdrMetadata' (usdShade Prim only?)
 
   nonstd::optional<bool> instanceable; // 'instanceable'
+  nonstd::optional<Dictionary> clips; // 'clips'
 
   // String representation of Kind.
   // For user-defined Kind, it returns `_kind_str`
@@ -868,7 +869,7 @@ struct PrimMetas {
     return (active || hidden || kind || customData || references || payload ||
             inherits || variants || variantSets || specializes || displayName ||
             sceneName || doc || comment || unregisteredMetas.size() || meta.size() || apiSchemas ||
-            sdrMetadata || assetInfo || instanceable);
+            sdrMetadata || assetInfo || instanceable || clips);
   }
 
   //
