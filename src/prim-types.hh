@@ -2482,11 +2482,14 @@ struct Variant {
   const std::vector<Prim> &primChildren() const { return _primChildren; }
   std::vector<Prim> &primChildren() { return _primChildren; }
 
+  const std::map<std::string, std::map<std::string, Variant>> &variantSets() const { return _variantSets; }
+  std::map<std::string, std::map<std::string, Variant>> &variantSets() { return _variantSets; }
+
  private:
-  // std::vector<int64_t> primIndices;
+  std::map<std::string, std::map<std::string, Variant>> _variantSets;
+
   std::map<std::string, Property> _props;
 
-  // std::string _name; // variant name
   PrimMeta _metas;
 
   // We represent Prim children as `Prim` for a while.

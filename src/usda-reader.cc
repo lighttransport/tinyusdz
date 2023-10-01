@@ -124,6 +124,8 @@ struct VariantNode {
   PrimMeta metas;
   std::map<std::string, Property> props;
   std::vector<int64_t> primChildren;
+  int64_t variantPrimIdx{-1};
+  std::map<std::string, std::map<std::string, VariantNode>> variantSets;
 };
 
 struct PrimNode {
@@ -354,6 +356,67 @@ class USDAReader::Impl {
       const prim::ReferenceList &references,
       T *out);
 
+  bool ProcessVariantSetContent(const uint32_t depth, const std::map<std::string, std::map<std::string, ascii::AsciiParser::VariantContent>> &in_variants, std::map<std::string, std::map<std::string, VariantNode>> &dst) {
+    if (depth > 1024 * 1024) {
+      PUSH_ERROR_AND_RETURN("Too deep.");
+    }
+
+    //
+    // variantSet
+    // NOTE: variantChildren setup is delayed. It will be processed in ConstructPrimSpecTreeRec
+    //
+    std::map<std::string, std::map<std::string, VariantNode>> variantSets;
+    for (const auto &variantContext : in_variants) {
+      const std::string variant_name = variantContext.first;
+
+
+      // Convert VariantContent -> VariantNode
+      std::map<std::string, VariantNode> variantNodes;
+      for (const auto &item : variantContext.second) {
+
+        // process child variantSet first.
+        std::map<std::string, std::map<std::string, VariantNode>> childVariantSets;
+        if (!ProcessVariantSetContent(depth+1, item.second.variantSets, childVariantSets))
+        {
+          return false;
+        }
+
+        VariantNode variant;
+
+        variant.variantPrimIdx = item.second.variantPrimIdx;
+        variant.variantSets = std::move(childVariantSets);
+
+        if (!ReconstructPrimMeta(item.second.metas, &variant.metas)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Failed to process Prim metadataum in variantSet {} item {} ", variant_name, item.first));
+        }
+        variant.props = item.second.props;
+
+        // child Prim should be already reconstructed.
+        for (const auto &childPrimIdx : item.second.primIndices) {
+          if (childPrimIdx < 0) {
+            PUSH_ERROR_AND_RETURN(fmt::format("[InternalError] Invalid primIndex found within VariantSet."));
+          }
+
+          if (size_t(childPrimIdx) >= _prim_nodes.size()) {
+            PUSH_ERROR_AND_RETURN(fmt::format("[InternalError] Invalid primIndex found within VariantSet. variantChildPrimIdsx {} Exceeds _prim_nodes.size() {}", childPrimIdx, _prim_nodes.size()));
+          }
+
+          variant.primChildren.push_back(childPrimIdx);
+
+          //_prim_nodes[size_t(childPrimIdx)].parent_is_variant = true;
+        }
+        DCOUT("Add variant: " << item.first);
+        variantNodes[item.first] = std::move(variant);
+      }
+
+      DCOUT("Add variantSet: " << variant_name);
+      variantSets[variant_name] = std::move(variantNodes);
+    }
+
+    dst = std::move(variantSets);
+
+    return true;
+  }
 
   template <typename T>
   bool RegisterReconstructCallback() {
@@ -424,6 +487,7 @@ class USDAReader::Impl {
           // NOTE: variantChildren setup is delayed. It will be processed in ConstructPrimSpecTreeRec
           //
           std::map<std::string, std::map<std::string, VariantNode>> variantSets;
+#if 0
           for (const auto &variantContext : in_variants) {
             const std::string variant_name = variantContext.first;
 
@@ -457,6 +521,11 @@ class USDAReader::Impl {
             DCOUT("Add variantSet: " << variant_name);
             variantSets.emplace(variant_name, std::move(variantNodes));
           }
+#else
+          if (!ProcessVariantSetContent(0, in_variants, variantSets)) {
+            return nonstd::make_unexpected(fmt::format("[InternalError] Failed to process VariantSet"));
+          }
+#endif
 
           // Add to scene graph.
           // NOTE: Scene graph is constructed from bottom up manner(Children
@@ -1357,6 +1426,7 @@ namespace {
 //
 bool ConstructPrimTreeRec(const size_t primIdx,
                         const std::vector<PrimNode> &prim_nodes,
+                        const bool parent_is_variant,
                         Prim *destPrim,
                         std::string *err) {
 
@@ -1393,6 +1463,34 @@ bool ConstructPrimTreeRec(const size_t primIdx,
     for (const auto &item : variantNodes.second) {
       DCOUT("variant " << item.first);
       Variant variant;
+
+      int64_t variantPrimIdx = item.second.variantPrimIdx;
+      if (item.second.variantSets.size() && (variantPrimIdx < 0)) {
+        if (err) {
+          (*err) = "variantPrimIdx is not set.\n";
+        }
+        return false;
+      }
+
+      for (const auto &childVariantNode: item.second.variantSets) {
+        DCOUT("variantSet child " << childVariantNode.first);
+
+        Prim variantChildPrim(value::Value(nullptr)); // dummy
+        if (!ConstructPrimTreeRec(size_t(variantPrimIdx), prim_nodes, /* parent_is_variant */true, &variantChildPrim, err)) {
+          return false;
+        }
+
+        // extract variant part.
+        for (auto &childVariantItem : variantChildPrim.variantSets())
+        {
+          std::map<std::string, Variant> childVariant;
+          for (auto &vitem : childVariantItem.second.variantSet) {
+            childVariant[vitem.first] = vitem.second;
+          }
+          variant.variantSets()[item.first] = childVariant;
+        }
+      }
+
       for (const int64_t vidx : item.second.primChildren) {
         if (variantChildrenIndices.count(vidx)) {
           // Duplicated variant childrenIndices
@@ -1405,7 +1503,7 @@ bool ConstructPrimTreeRec(const size_t primIdx,
           if ((vidx >= 0) && (size_t(vidx) <= prim_nodes.size())) {
 
             Prim variantChildPrim(value::Value(nullptr)); // dummy
-            if (!ConstructPrimTreeRec(size_t(vidx), prim_nodes, &variantChildPrim, err)) {
+            if (!ConstructPrimTreeRec(size_t(vidx), prim_nodes, /* parent_is_variant */true, &variantChildPrim, err)) {
               return false;
             }
 
@@ -1429,7 +1527,6 @@ bool ConstructPrimTreeRec(const size_t primIdx,
     }
     variantSets.emplace(variantNodes.first, std::move(variantSet));
   }
-  prim.variantSets() = std::move(variantSets);
 
   for (const auto &cidx : node.children) {
     if (variantChildrenIndices.count(int64_t(cidx))) {
@@ -1438,14 +1535,17 @@ bool ConstructPrimTreeRec(const size_t primIdx,
     }
 
     Prim childPrim(value::Value(nullptr)); // dummy
-    if (!ConstructPrimTreeRec(cidx, prim_nodes, &childPrim, err)) {
+    // inherit `parent_is_variant`
+    if (!ConstructPrimTreeRec(cidx, prim_nodes, parent_is_variant, &childPrim, err)) {
       return false;
     }
 
     prim.children().emplace_back(std::move(childPrim));
   }
 
+  prim.variantSets() = std::move(variantSets);
   (*destPrim) = std::move(prim);
+
   return true;
 }
 
@@ -1460,7 +1560,7 @@ bool USDAReader::Impl::ReconstructStage() {
     DCOUT("Toplevel prim idx: " << std::to_string(idx));
 
     Prim prim(value::Value(nullptr)); // init with dummy Prim
-    if (!ConstructPrimTreeRec(idx, _prim_nodes, &prim, &_err)) {
+    if (!ConstructPrimTreeRec(idx, _prim_nodes, /* parent_is_variant */false, &prim, &_err)) {
       return false;
     }
 
