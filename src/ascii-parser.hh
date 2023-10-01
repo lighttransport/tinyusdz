@@ -194,6 +194,7 @@ class AsciiParser {
     std::vector<value::token> properties;
 
     // for nested `variantSet` 
+    int64_t variantPrimIdx{-1}; // Pseudo Prim Idx for `variantSet`. -1 = no variantSet node
     std::map<std::string, std::map<std::string, VariantContent>> variantSets;
   };
 
