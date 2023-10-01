@@ -406,7 +406,7 @@ set(TINYUSDZ_DEP_SOURCES
     #${PROJECT_SOURCE_DIR}/src/pxrLZ4/lz4.cpp
     ${PROJECT_SOURCE_DIR}/src/lz4/lz4.c
     ${PROJECT_SOURCE_DIR}/src/external/pystring.cpp
-    ${PROJECT_SOURCE_DIR}/src/external/staticstruct.cc
+    #${PROJECT_SOURCE_DIR}/src/external/staticstruct.cc
     #${PROJECT_SOURCE_DIR}/src/external/tinyxml2/tinyxml2.cpp
 )
 
