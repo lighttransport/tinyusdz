@@ -1483,6 +1483,7 @@ bool ConstructPrimTreeRec(const size_t primIdx,
         // extract variant part.
         for (auto &childVariantItem : variantChildPrim.variantSets())
         {
+          DCOUT("childVariant " << childVariantItem.first);
           std::map<std::string, Variant> childVariant;
           for (auto &vitem : childVariantItem.second.variantSet) {
             childVariant[vitem.first] = vitem.second;
@@ -1540,6 +1541,7 @@ bool ConstructPrimTreeRec(const size_t primIdx,
       return false;
     }
 
+    DCOUT("Add childPrim " << childPrim.element_name() << " to Prim " << prim.element_name());
     prim.children().emplace_back(std::move(childPrim));
   }
 
