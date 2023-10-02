@@ -4287,7 +4287,7 @@ bool AsciiParser::IsStageMeta(const std::string &name) {
 bool AsciiParser::ParseVariantSet(const int64_t primIdx,
                                   const int64_t parentPrimIdx,
                                   const uint32_t depth,
-                                  std::map<std::string, VariantContent> *variantSetOut) {
+                                  VariantSetContent *variantSetOut) {
 
   if (depth > 1024 * 1024) {
     PUSH_ERROR_AND_RETURN_TAG(kAscii, "[InternalError] too deep nested call.");
@@ -4311,7 +4311,7 @@ bool AsciiParser::ParseVariantSet(const int64_t primIdx,
     return false;
   }
 
-  std::map<std::string, VariantContent> variantContentMap;
+  VariantSetContent variantSetContent;
 
   // for each variantStatement
   while (!Eof()) {
@@ -4360,6 +4360,10 @@ bool AsciiParser::ParseVariantSet(const int64_t primIdx,
     }
 
     VariantContent variantContent;
+
+    int64_t variantPrimIdx = _prim_idx_assign_fun(parentPrimIdx);
+    //variantContent.variantPrimIdx = variantPrimIdx;
+    DCOUT("primIdx for variant = " << variantPrimIdx);
 
     while (!Eof()) {
 
@@ -4416,8 +4420,9 @@ bool AsciiParser::ParseVariantSet(const int64_t primIdx,
           return false;
         }
 
-        std::map<std::string, VariantContent> child_vmap;
-        if (!ParseVariantSet(primIdx, parentPrimIdx, depth+1, &child_vmap)) {
+
+        VariantSetContent child_vmap;
+        if (!ParseVariantSet(variantPrimIdx, primIdx, depth+1, &child_vmap)) {
           PUSH_ERROR_AND_RETURN("Failed to parse `variantSet` statement.");
         }
 
@@ -4476,16 +4481,15 @@ bool AsciiParser::ParseVariantSet(const int64_t primIdx,
 
     DCOUT(fmt::format("variantSet item {} parsed.", variantName));
 
-    int64_t idx = _prim_idx_assign_fun(parentPrimIdx);
-    DCOUT("primIdx for variant = " << idx);
 
-    variantContent.variantPrimIdx = idx;
 
     variantContent.metas = metas;
-    variantContentMap[variantName] = variantContent;
+    variantSetContent.variantSets[variantName] = variantContent;
   }
 
-  (*variantSetOut) = std::move(variantContentMap);
+  variantSetContent.variantPrimIdx = primIdx;
+
+  (*variantSetOut) = std::move(variantSetContent);
 
   return true;
 }
@@ -4704,12 +4708,15 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
           return false;
         }
 
-        std::map<std::string, VariantContent> vmap;
-        if (!ParseVariantSet(primIdx, parentPrimIdx, depth, &vmap)) {
+        int64_t variantPrimIdx = _prim_idx_assign_fun(parentPrimIdx);
+
+        VariantSetContent vs;
+        if (!ParseVariantSet(variantPrimIdx, primIdx, depth, &vs)) {
           PUSH_ERROR_AND_RETURN("Failed to parse `variantSet` statement.");
         }
 
-        variantSetList[variantName] = vmap;
+        vs.variantPrimIdx = variantPrimIdx;
+        variantSetList[variantName] = vs;
 
         continue;
       }
