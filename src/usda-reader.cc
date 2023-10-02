@@ -383,7 +383,9 @@ class USDAReader::Impl {
 
         VariantNode variant;
 
+        DCOUT("variantPrimIdx = " << variantContext.second.variantPrimIdx);
         variant.variantPrimIdx = variantContext.second.variantPrimIdx;
+        DCOUT("child variantSets.size " << childVariantSets.size());
         variant.variantSets = std::move(childVariantSets);
 
         if (!ReconstructPrimMeta(item.second.metas, &variant.metas)) {
@@ -1473,8 +1475,10 @@ bool ConstructPrimTreeRec(const size_t primIdx,
         return false;
       }
 
+      DCOUT("# of child variantSet " << item.second.variantSets.size());
       for (const auto &childVariantNode: item.second.variantSets) {
         DCOUT("variantSet child " << childVariantNode.first);
+        DCOUT("  variantPrimIdx " << variantPrimIdx);
 
         Prim variantChildPrim(value::Value(nullptr)); // dummy
         if (!ConstructPrimTreeRec(size_t(variantPrimIdx), prim_nodes, /* parent_is_variant */true, &variantChildPrim, err)) {
@@ -1482,6 +1486,7 @@ bool ConstructPrimTreeRec(const size_t primIdx,
         }
 
         // extract variant part.
+        DCOUT("childVariant.size " << variantChildPrim.variantSets().size());
         for (auto &childVariantItem : variantChildPrim.variantSets())
         {
           DCOUT("childVariant " << childVariantItem.first);
@@ -1489,7 +1494,8 @@ bool ConstructPrimTreeRec(const size_t primIdx,
           for (auto &vitem : childVariantItem.second.variantSet) {
             childVariant[vitem.first] = vitem.second;
           }
-          variant.variantSets()[item.first] = childVariant;
+          variant.variantSets()[item.first].name = item.first;
+          variant.variantSets()[item.first].variantSet = childVariant;
         }
       }
 
@@ -1525,14 +1531,15 @@ bool ConstructPrimTreeRec(const size_t primIdx,
       variant.properties() = std::move(item.second.props);
 
       variantSet.name = variantNodes.first;
-      variantSet.variantSet.emplace(item.first, std::move(variant));
+      variantSet.variantSet[item.first] = std::move(variant);
     }
-    variantSets.emplace(variantNodes.first, std::move(variantSet));
+    variantSets[variantNodes.first] = std::move(variantSet);
   }
 
   for (const auto &cidx : node.children) {
     DCOUT("parent: " << primIdx << ", child: " << cidx);
     if (variantChildrenIndices.count(int64_t(cidx))) {
+      DCOUT("primIdx " << cidx << " processed");
       // Prim is processed
       continue;
     }
