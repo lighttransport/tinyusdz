@@ -30,9 +30,9 @@ NOTE: USDC(Binary) = Read only
 | Cone           | ✅    | ✅   |              |
 | BasisCurves    | ✅    | ✅   | for hair/fur |
 | NurbsPatch     |       |      |              |
-| NurbsCurves    |       |      |              |
+| NurbsCurves    | ✅    | ✅    |              |
 | HermiteCurves  |       |      |              |
-| PointInstancer |       |      |              |
+| PointInstancer | ✅    | ✅    |              |
 
 ## Camera(usdGeom)
 
@@ -63,11 +63,10 @@ NOTE: USDC(Binary) = Read only
 | -----------       | ----- | ---- | ------- |
 | UsdPreviewSurface | ✅    | ✅   |         |
 | UsdUVTexture      | ❕    | ❕   | 1.      |
-| UsdPrimvarReader  | ❕    | ❕   | 2.      |
+| UsdPrimvarReader  | ✅    | ✅   | 2.      |
 
 
 1. UDIM texture is not supported.
-2. Supported type for UsdPrimvarReader: `int`, `float`, `float2`, `float3` and `float4`
 
 ## Skinning, BlendShapes(usdSkel)
 
@@ -87,7 +86,7 @@ NOTE: USDC(Binary) = Read only
 * [ ] Composition(VariantSet) syntax
   * [x] VariantSet Ascii parse
   * [x] VariantSet Ascii print
-  * [ ] VariantSet Crate parse
+  * [x] VariantSet Crate parse
   * [ ] VariantSet(SpecTypeVariant) Crate write
 * [ ] USDC serialization
 * [ ] Skinning evaluation/validation
@@ -101,7 +100,7 @@ NOTE: USDC(Binary) = Read only
   * [x] subLayers
   * [x] references
   * [x] payloads(delayed load)
-  * [ ] variants/variantSets
+  * [x] variants/variantSets
   * [ ] specializers(priority is low)
 
 ## TODO
