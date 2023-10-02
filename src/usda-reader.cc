@@ -356,7 +356,7 @@ class USDAReader::Impl {
       const prim::ReferenceList &references,
       T *out);
 
-  bool ProcessVariantSetContent(const uint32_t depth, const std::map<std::string, std::map<std::string, ascii::AsciiParser::VariantContent>> &in_variants, std::map<std::string, std::map<std::string, VariantNode>> &dst) {
+  bool ProcessVariantSetContent(const uint32_t depth, const std::map<std::string, ascii::AsciiParser::VariantSetContent> &in_variants, std::map<std::string, std::map<std::string, VariantNode>> &dst) {
     if (depth > 1024 * 1024) {
       PUSH_ERROR_AND_RETURN("Too deep.");
     }
@@ -372,7 +372,7 @@ class USDAReader::Impl {
 
       // Convert VariantContent -> VariantNode
       std::map<std::string, VariantNode> variantNodes;
-      for (const auto &item : variantContext.second) {
+      for (const auto &item : variantContext.second.variantSets) {
 
         // process child variantSet first.
         std::map<std::string, std::map<std::string, VariantNode>> childVariantSets;
@@ -383,7 +383,7 @@ class USDAReader::Impl {
 
         VariantNode variant;
 
-        variant.variantPrimIdx = item.second.variantPrimIdx;
+        variant.variantPrimIdx = variantContext.second.variantPrimIdx;
         variant.variantSets = std::move(childVariantSets);
 
         if (!ReconstructPrimMeta(item.second.metas, &variant.metas)) {
@@ -629,7 +629,7 @@ class USDAReader::Impl {
 
             // Convert VariantContent -> VariantNode
             std::map<std::string, VariantNode> variantNodes;
-            for (const auto &item : variantContext.second) {
+            for (const auto &item : variantContext.second.variantSets) {
               VariantNode variant;
               if (!ReconstructPrimMeta(item.second.metas, &variant.metas)) {
                 return nonstd::make_unexpected(fmt::format("Failed to process Prim metadataum in variantSet {} item {} ", variant_name, item.first));
@@ -1449,6 +1449,7 @@ bool ConstructPrimTreeRec(const size_t primIdx,
   Prim prim(node.prim);
   prim.prim_type_name() = node.typeName;
 
+  DCOUT("prim[" << primIdx << "].name = " << prim.element_name());
   DCOUT("prim[" << primIdx << "].type = " << node.prim.type_name());
   DCOUT("prim[" << primIdx << "].variantNodeMap.size = " << node.variantNodeMap.size());
   //prim.prim_id() = int64_t(idx);
@@ -1530,6 +1531,7 @@ bool ConstructPrimTreeRec(const size_t primIdx,
   }
 
   for (const auto &cidx : node.children) {
+    DCOUT("parent: " << primIdx << ", child: " << cidx);
     if (variantChildrenIndices.count(int64_t(cidx))) {
       // Prim is processed
       continue;
