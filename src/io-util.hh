@@ -6,6 +6,7 @@
 #include <vector>
 #include <algorithm>
 #include <map>
+#include <cstdint>
 
 #ifdef TINYUSDZ_ANDROID_LOAD_FROM_ASSETS
 #include <android/asset_manager.h>
