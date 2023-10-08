@@ -753,6 +753,7 @@ struct APISchemas {
   enum class APIName {
     MaterialBindingAPI,  // "MaterialBindingAPI"
     SkelBindingAPI,      // "SkelBindingAPI"
+    ShapingAPI,         // "ShapingAPI"(usdLux)
     // USDZ AR extensions
     Preliminary_AnchoringAPI,
     Preliminary_PhysicsColliderAPI,

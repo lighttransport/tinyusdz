@@ -2144,6 +2144,9 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
       if (auto pv = fv.second.as<std::string>()) {
         // Assume unregistered Prim metadatum
         primMeta.unregisteredMetas[fv.first] = (*pv);
+      } else if (auto ptv = fv.second.as<value::token>()) {
+        // store value as string type.
+        primMeta.unregisteredMetas[fv.first] = quote((*ptv).str());
       } else {
         DCOUT("PrimProp TODO: " << fv.first);
         PUSH_WARN("PrimProp TODO: " << fv.first);
