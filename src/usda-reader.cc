@@ -720,6 +720,8 @@ class USDAReader::Impl {
           std::make_pair(APISchemas::APIName::SkelBindingAPI, "SkelBindingAPI"),
           std::make_pair(APISchemas::APIName::MaterialBindingAPI,
                          "MaterialBindingAPI"),
+          std::make_pair(APISchemas::APIName::ShapingAPI,
+                         "ShapingAPI"),
           std::make_pair(APISchemas::APIName::Preliminary_PhysicsMaterialAPI,
                          "Preliminary_PhysicsMaterialAPI"),
           std::make_pair(APISchemas::APIName::Preliminary_PhysicsRigidBodyAPI,
