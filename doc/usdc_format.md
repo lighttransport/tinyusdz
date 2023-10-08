@@ -22,7 +22,9 @@ From pxr/usd/usd/crateFile.cpp
 ```
 
 * TinyUSDZ should support at least v0.8.0(USD v20.11).
-  
+* TinyUSDZ has some support to load USDC version v0.7.0 or v0.4.0
+  * Moana island v2.1 USD file
+     
 ## Compression
 
 version 0.4.0 or later uses LZ4 for compression and interger compression(pxr original? compression. its backend still uses LZ4) for index arrays.
