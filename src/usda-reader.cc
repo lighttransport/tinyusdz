@@ -359,12 +359,18 @@ class USDAReader::Impl {
   bool RegisterReconstructCallback() {
     _parser.RegisterPrimConstructFunction(
         PrimTypeTraits<T>::prim_type_name,
-        [&](const Path &full_path, const Specifier spec, const std::string &primTypeName, const Path &prim_name, const int64_t primIdx,
+        [&](const Path &full_path, const Specifier spec, const std::string &_primTypeName, const Path &prim_name, const int64_t primIdx,
             const int64_t parentPrimIdx,
             const prim::PropertyMap &properties,
             const ascii::AsciiParser::PrimMetaMap &in_meta,
             const ascii::AsciiParser::VariantSetList &in_variants)
             -> nonstd::expected<bool, std::string> {
+
+          std::string primTypeName = _primTypeName;
+          if (primTypeName == "__AnyType__") {
+            primTypeName = ""; // Make empty
+          }
+
           if (!prim_name.is_valid()) {
             return nonstd::make_unexpected("Invalid Prim name: " +
                                            prim_name.full_path_name());
