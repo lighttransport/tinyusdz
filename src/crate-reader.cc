@@ -889,6 +889,7 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
 
   // Move to next location.
   // sizeof(uint64) = sizeof(ValueRep)
+  _sr->seek_set(values_offset);
   if (!_sr->seek_from_current(int64_t(sizeof(uint64_t) * num_values))) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to seek over TimeSamples's values.");
   }
