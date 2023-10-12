@@ -341,8 +341,8 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
 
     uint16_t compr_method = *reinterpret_cast<uint16_t *>(&local_header[0] + 8);
     // uint32_t compr_bytes = *reinterpret_cast<uint32_t*>(&local_header[0]+18);
-    uint32_t uncompr_bytes =
-        *reinterpret_cast<uint32_t *>(&local_header[0] + 22);
+    uint32_t uncompr_bytes;
+    memcpy(&uncompr_bytes, &local_header[22], sizeof(uncompr_bytes));
 
     // USDZ only supports uncompressed ZIP
     if (compr_method != 0) {
