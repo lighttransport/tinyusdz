@@ -79,7 +79,7 @@ struct GLTexState {
 
 struct GLVertexUniformState {
   GLint u_modelview{-1};
-  GLint u_normal{-1}; 
+  GLint u_normal{-1};
   GLint u_perspective{-1};
 
   std::array<float, 16> modelviewMatrix[16];
@@ -98,7 +98,7 @@ struct GLMeshState {
 
 struct GLNodeState {
   GLVertexUniformState gl_v_uniform_state;
-  GLMeshState gl_mesh_state;  
+  GLMeshState gl_mesh_state;
 };
 
 
@@ -533,7 +533,7 @@ static bool SetupMesh(
       facevaryingVertices.push_back(mesh.points[vi1]);
       facevaryingVertices.push_back(mesh.points[vi2]);
     }
- 
+
     GLuint vb;
     glGenBuffers(1, &vb);
     glBindBuffer(GL_ARRAY_BUFFER, vb);
@@ -637,7 +637,7 @@ static bool SetupMesh(
     }
   }
 
-#if 0 
+#if 0
   // Build index buffer.
   GLuint elementbuffer;
   glGenBuffers(1, &elementbuffer);
@@ -727,6 +727,25 @@ int main(int argc, char** argv) {
       //glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);            // 3.0+ only
   #endif
 
+  float highDPIscaleFactor = 1.0f;
+
+#if defined(_WIN32) || defined(__linux__)
+    // if it's a HighDPI monitor, try to scale everything
+    GLFWmonitor *monitor = glfwGetPrimaryMonitor();
+    float xscale, yscale;
+    glfwGetMonitorContentScale(monitor, &xscale, &yscale);
+    std::cout << "monitor xscale, yscale = " << xscale << ", " << yscale << "\n";
+    if (xscale > 1 || yscale > 1)
+    {
+        highDPIscaleFactor = xscale;
+        glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_TRUE);
+
+    }
+#elif __APPLE__
+    glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, GLFW_FALSE);
+#endif
+
+
 #ifdef _DEBUG_OPENGL
   glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
 #endif
@@ -801,6 +820,20 @@ int main(int argc, char** argv) {
 
   int display_w, display_h;
   ImVec4 clear_color = {0.1f, 0.18f, 0.3f, 1.0f};
+
+  {
+    float cxscale, cyscale;
+    glfwGetWindowContentScale(window, &cxscale, &cyscale);
+    std::cout << "xscale, yscale = " << cxscale << ", " << cyscale << "\n";
+
+    ImGuiIO& io = ImGui::GetIO();
+
+    io.DisplayFramebufferScale = {2.0f, 2.0f}; // HACK
+
+    ImFontConfig font_config;
+    font_config.SizePixels = 16.0f * xscale;
+    io.Fonts->AddFontDefault(&font_config);
+  }
 
   while (!done) {
     glfwPollEvents();
