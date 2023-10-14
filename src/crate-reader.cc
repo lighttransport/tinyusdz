@@ -5693,7 +5693,7 @@ bool CrateReader::ReadFieldSets() {
   }
 
   if (num_fieldsets > _config.maxNumFieldSets) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many FieldSets");
+    PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Too many FieldSets {}. maxNumFieldSets is set to {}", num_fieldsets, _config.maxNumFieldSets));
   }
 
   CHECK_MEMORY_USAGE(size_t(num_fieldsets) * sizeof(uint32_t));
