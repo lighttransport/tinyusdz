@@ -1649,6 +1649,7 @@ std::string to_string(const APISchemas::APIName &name) {
   switch (name) {
   case APISchemas::APIName::SkelBindingAPI: { s = "SkelBindingAPI"; break; }
   case APISchemas::APIName::MaterialBindingAPI: { s = "MaterialBindingAPI"; break; }
+  case APISchemas::APIName::ShapingAPI: { s = "ShapingAPI"; break; }
   case APISchemas::APIName::Preliminary_AnchoringAPI: { s = "Preliminary_AnchoringAPI"; break; }
   case APISchemas::APIName::Preliminary_PhysicsColliderAPI: { s = "Preliminary_PhysicsColliderAPI"; break; }
   case APISchemas::APIName::Preliminary_PhysicsRigidBodyAPI: { s = "Preliminary_PhysicsRigidBodyAPI"; break; }
