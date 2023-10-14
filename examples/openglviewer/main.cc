@@ -34,15 +34,16 @@
 // local
 #include "shader.hh"
 
-constexpr auto kAttribPoints = "points";
-constexpr auto kAttribNormals = "normals";
-constexpr auto kAttribTexCoordBase = "texcoord_";
-constexpr auto kAttribTexCoord0 = "texcoord_0";
+// variable name must match in shaders/***.vert
+constexpr auto kAttribPoints = "input_position";
+constexpr auto kAttribNormals = "input_normal";
+constexpr auto kAttribTexCoordBase = "input_uv";
+constexpr auto kAttribTexCoord0 = "input_uv";
 constexpr auto kMaxTexCoords = 1;  // TODO: multi texcoords
 
-constexpr auto kUniformModelviewMatrix = "modelviewMatrix";
+constexpr auto kUniformModelMatrix = "modelMatrix";
 constexpr auto kUniformNormalMatrix = "normalMatrix";
-constexpr auto kUniformProjectionMatrix = "projectionMatrix";
+constexpr auto kUniformMVPMatrix = "mvp";
 
 constexpr auto kUniformDiffuseTex = "diffuseTex";
 constexpr auto kUniformDiffuseTexTransform = "diffuseTexTransform";
@@ -61,6 +62,8 @@ constexpr auto kUniformOcclusionTexScaleAndBias =
 
 // Embedded shaders
 #include "shaders/no_skinning.vert_inc.hh"
+#include "shaders/world_fragment.frag_inc.hh"
+#include "shaders/normals.frag_inc.hh"
 
 #define CHECK_GL(tag)                                                        \
   do {                                                                       \
@@ -83,13 +86,13 @@ struct GLTexState {
 };
 
 struct GLVertexUniformState {
-  GLint u_modelview{-1};
+  GLint u_model{-1};
   GLint u_normal{-1};
-  GLint u_perspective{-1};
+  GLint u_mvp{-1};
 
-  std::array<float, 16> modelviewMatrix[16];
-  std::array<float, 16> normalMatrix[16];  // transpose(inverse(modelview))
-  std::array<float, 16> perspectiveMatrix[16];
+  std::array<float, 16> modelMatrix[16];
+  std::array<float, 16> normalMatrix[16];  // transpose(inverse(model * view))
+  std::array<float, 16> mvp[16]; // modeviewprojection
 };
 
 // TODO: Use handle_id for key
@@ -290,29 +293,37 @@ void SetupVertexUniforms(GLVertexUniformState& gl_state,
       tinyusdz::upper_left_3x3_only(xform_node.get_world_matrix()));
   matrix4f invtransmat = invtransmatd;
 
-  memcpy(gl_state.modelviewMatrix, &worldmat.m[0][0], sizeof(float) * 16);
+  memcpy(gl_state.modelMatrix, &worldmat.m[0][0], sizeof(float) * 16);
   memcpy(gl_state.normalMatrix, &invtransmat.m[0][0], sizeof(float) * 16);
   // memcpy(gl_state.perspectiveMatrix, &perspective.m[0][0], sizeof(float) *
   // 16);
 }
 
 void SetVertexUniforms(const GLVertexUniformState& gl_state) {
-  if (gl_state.u_modelview > -1) {
-    glUniformMatrix4fv(gl_state.u_modelview, 1, GL_FALSE,
-                       gl_state.modelviewMatrix->data());
+  if (gl_state.u_model > -1) {
+    glUniformMatrix4fv(gl_state.u_model, 1, GL_FALSE,
+                       gl_state.modelMatrix->data());
     CHECK_GL("UniformMatrix u_modelview");
   }
 
-  if (gl_state.u_modelview > -1) {
+  if (gl_state.u_model > -1) {
     glUniformMatrix4fv(gl_state.u_normal, 1, GL_FALSE,
                        gl_state.normalMatrix->data());
     CHECK_GL("UniformMatrix u_normal");
   }
 }
 
-bool LoadShaders() {
-  std::string s(reinterpret_cast<char*>(shaders_no_skinning_vert),
+bool LoadShaders(GLProgramState &gl_state) {
+  // default = show normal vector as color.
+  std::string vert_str(reinterpret_cast<char*>(shaders_no_skinning_vert),
                 shaders_no_skinning_vert_len);
+
+  std::string frag_str(reinterpret_cast<char*>(shaders_normals_frag),
+                shaders_normals_frag_len);
+
+  example::shader default_shader("default", vert_str, frag_str);
+
+  gl_state.shaders["default"] = std::move(default_shader);
 
   return true;
 }
@@ -320,9 +331,9 @@ bool LoadShaders() {
 bool SetupShader() {
   GLuint prog_id;
 
-  GLint modelv_loc = glGetUniformLocation(prog_id, kUniformModelviewMatrix);
-  if (modelv_loc < 0) {
-    std::cerr << kUniformModelviewMatrix
+  GLint model_loc = glGetUniformLocation(prog_id, kUniformModelMatrix);
+  if (model_loc < 0) {
+    std::cerr << kUniformModelMatrix
               << " not found in the vertex shader.\n";
     return false;
   }
@@ -333,9 +344,9 @@ bool SetupShader() {
     return false;
   }
 
-  GLint proj_loc = glGetUniformLocation(prog_id, kUniformProjectionMatrix);
-  if (proj_loc < 0) {
-    std::cerr << kUniformProjectionMatrix
+  GLint mvp_loc = glGetUniformLocation(prog_id, kUniformMVPMatrix);
+  if (mvp_loc < 0) {
+    std::cerr << kUniformMVPMatrix
               << " not found in the vertex shader.\n";
     return false;
   }
@@ -476,6 +487,7 @@ bool SetupTexture(const tinyusdz::tydra::RenderScene& scene,
 static bool SetupMesh(tinyusdz::tydra::RenderMesh& mesh, GLuint program_id,
                       GLMeshState& gl_state)  // [out]
 {
+  std::cout << "program_id " << program_id << "\n";
   std::vector<uint32_t> indices;
 
   if (mesh.faceVertexCounts.empty()) {
@@ -492,7 +504,7 @@ static bool SetupMesh(tinyusdz::tydra::RenderMesh& mesh, GLuint program_id,
       }
     }
   } else {
-    size_t faceOffset = 0;
+    size_t faceVertexIndexOffset = 0;
 
     // Currently all faces must be triangle.
     for (size_t f = 0; f < mesh.faceVertexCounts.size(); f++) {
@@ -503,11 +515,12 @@ static bool SetupMesh(tinyusdz::tydra::RenderMesh& mesh, GLuint program_id,
         return false;
       }
 
-      for (size_t c = 0; c < mesh.faceVertexCounts[f]; c++) {
-        indices.push_back(mesh.faceVertexIndices[faceOffset + c]);
+      size_t fvCounts = mesh.faceVertexCounts[f];
+      for (size_t c = 0; c < fvCounts; c++) {
+        indices.push_back(mesh.faceVertexIndices[faceVertexIndexOffset + c]);
       }
 
-      faceOffset += f;
+      faceVertexIndexOffset += fvCounts;
     }
   }
 
@@ -604,8 +617,8 @@ static bool SetupMesh(tinyusdz::tydra::RenderMesh& mesh, GLuint program_id,
                             /* stride */ sizeof(GLfloat) * 3, 0);
       CHECK_GL("VertexAttribPointer");
     } else {
-      std::cerr << kAttribNormals << " attribute not found in vertex shader.\n";
-      exit(-1);
+      std::cerr << kAttribNormals << " attribute not found in vertex shader. Shader does not use it?\n";
+      // may ok
     }
   }
 
@@ -667,7 +680,7 @@ static void DrawMesh(const GLMeshState& gl_state) {
   glBindVertexArray(0);
 }
 
-static void DrawScene(const example::shader shader,
+static void DrawScene(const example::shader &shader,
                       const tinyusdz::tydra::RenderScene& scene) {
   //
   // Use single shader for the scene
@@ -713,7 +726,7 @@ static void ComputeBoundingBox(
   }
 }
 
-static bool ProcScene(const tinyusdz::Stage& stage) {
+static bool ProcScene(const example::shader &gl_shader, const tinyusdz::Stage& stage) {
   //
   // Stage to Renderable Scene
   tinyusdz::tydra::RenderSceneConverter converter;
@@ -741,7 +754,7 @@ static bool ProcScene(const tinyusdz::Stage& stage) {
     std::cout << "mesh[" << i << "].bmax " << bmax[0] << ", " << bmax[1] << ", " << bmax[2] << "\n";
 
     GLMeshState gl_mesh; 
-    if (!SetupMesh(renderScene.meshes[i], program_id, gl_mesh)) {
+    if (!SetupMesh(renderScene.meshes[i], gl_shader.get_program(), gl_mesh)) {
       std::cerr << "SetupMesh for mesh[" << i << "] failed.\n";
       exit(-1);
     }
@@ -884,8 +897,6 @@ int main(int argc, char** argv) {
     return EXIT_FAILURE;
   }
 
-  ProcScene(stage);
-
   GLFWwindow* window{nullptr};
   window = glfwCreateWindow(gCtx.width, gCtx.height, "Simple USDZ GL viewer",
                             nullptr, nullptr);
@@ -914,6 +925,7 @@ int main(int argc, char** argv) {
 
   GUIContext gui_ctx;
 
+
   glfwSetWindowUserPointer(window, &gui_ctx);
   glfwSetKeyCallback(window, key_callback);
   glfwSetCursorPosCallback(window, mouse_move_callback);
@@ -928,6 +940,20 @@ int main(int argc, char** argv) {
 
   ImGui_ImplGlfw_InitForOpenGL(window, true);
   ImGui_ImplOpenGL3_Init(glsl_version);
+
+
+  GLProgramState gl_progs;
+  if (!LoadShaders(gl_progs)) {
+    exit(-1);
+  }
+
+  ProcScene(gl_progs.shaders["default"], stage);
+
+struct GLProgramState {
+  // std::map<std::string, GLint> uniforms;
+
+  std::map<std::string, example::shader> shaders;
+};
 
   int display_w, display_h;
   ImVec4 clear_color = {0.1f, 0.18f, 0.3f, 1.0f};
