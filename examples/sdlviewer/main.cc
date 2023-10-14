@@ -765,8 +765,6 @@ int main(int argc, char** argv) {
 
   std::cout << "Loading file " << filename << "\n";
 
-  // tinyusdz::HighLevelScene scene;
-
   bool init_with_empty = false;
 
   if (!LoadModel(filename, &g_gui_ctx.stage)) {
@@ -783,6 +781,22 @@ int main(int argc, char** argv) {
     //}
   }
 
+  // Assume single monitor
+  SDL_DisplayMode DM;
+  SDL_GetCurrentDisplayMode(0, &DM);
+  std::cout << "Current monitor: " << DM.w << " x " << DM.h << "\n";
+
+  int default_win_x = 1600;
+  int default_win_y = 800;
+
+  if (DM.w > 2560) {
+    default_win_x = 2560;
+  }
+
+  if (DM.h > 1600) {
+    default_win_y = 1600;
+  }
+
 #if defined(__APPLE__)
   // For some reason, HIGHDPI does not work well on Retina Display for SDLRenderer backend.
   // Disable it for a while.
@@ -791,9 +805,10 @@ int main(int argc, char** argv) {
   SDL_WindowFlags window_flags = static_cast<SDL_WindowFlags>(SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
 #endif
 
+  std::cout << "default window size: " << default_win_x << " x " << default_win_y << "\n";
   SDL_Window* window = SDL_CreateWindow(
       "Simple USDZ viewer", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-      1600, 800, window_flags);
+      default_win_x, default_win_y, window_flags);
   if (!window) {
     std::cerr << "Failed to create SDL2 window. If you are running on Linux, "
                  "probably X11 Display is not setup correctly. Check your "
@@ -840,12 +855,34 @@ int main(int argc, char** argv) {
   ImNodes::CreateContext();
 
   {
+
+    float ddpi, hdpi, vdpi;
+    if (SDL_GetDisplayDPI(0, &ddpi, &hdpi, &vdpi) != 0) {
+        fprintf(stderr, "Failed to obtain DPI information for display 0: %s\n", SDL_GetError());
+        exit(1);
+    }
+    std::cout << "ddpi " << ddpi << ", hdpi " << hdpi << ", vdpi " << vdpi << "\n";
+
+    float dpi_scaling = ddpi / 72.0f;
+
     ImGuiIO& io = ImGui::GetIO();
+
+    if (dpi_scaling >= 144.0f) {
+      // https://github.com/ocornut/imgui/issues/1786
+      // nx DisplayFrameBufferScale + nx font_size + FontGlobalScale 0.5 may give nicer visual on High DPI monitor
+      io.FontGlobalScale = 0.5f;
+    }
+
+    io.DisplayFramebufferScale = {dpi_scaling , dpi_scaling}; // HACK
 
     ImFontConfig roboto_config;
     strcpy(roboto_config.Name, "Roboto");
 
-    float font_size = 18.0f;
+    float font_size = 18.0 * dpi_scaling;
+
+    //ImFontConfig font_config;
+    //font_config.SizePixels = 18.0f * xscale;
+    //io.Fonts->AddFontDefault(&font_config);
     io.Fonts->AddFontFromMemoryCompressedTTF(roboto_mono_compressed_data,
                                              roboto_mono_compressed_size,
                                              font_size, &roboto_config);
