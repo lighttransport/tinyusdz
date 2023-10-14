@@ -1678,7 +1678,7 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
     return std::move(prim); \
   } else
 
-  if (typeName == "Model") {
+  if (typeName == "Model" || typeName == "__AnyType__") {
     // Code is mostly identical to RECONSTRUCT_PRIM.
     // Difference is store primTypeName to Model class itself.
     Model typed_prim;
@@ -1688,7 +1688,11 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
     }
     typed_prim.meta = meta;
     typed_prim.name = prim_name;
-    typed_prim.prim_type_name = primTypeName;
+    if (typeName == "__AnyType__") {
+      typed_prim.prim_type_name = "";
+    } else {
+      typed_prim.prim_type_name = primTypeName;
+    }
     typed_prim.spec = spec;
     typed_prim.propertyNames() = properties;
     typed_prim.primChildrenNames() = primChildren;
@@ -2140,6 +2144,9 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
       if (auto pv = fv.second.as<std::string>()) {
         // Assume unregistered Prim metadatum
         primMeta.unregisteredMetas[fv.first] = (*pv);
+      } else if (auto ptv = fv.second.as<value::token>()) {
+        // store value as string type.
+        primMeta.unregisteredMetas[fv.first] = quote((*ptv).str());
       } else {
         DCOUT("PrimProp TODO: " << fv.first);
         PUSH_WARN("PrimProp TODO: " << fv.first);
@@ -2345,6 +2352,11 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
         std::string prim_name = elemPath.prim_part();
         std::string primTypeName = typeName.has_value() ? typeName.value() : "";
 
+        // __AnyType__
+        if (typeName.has_value() && typeName.value() == "__AnyType__") {
+          primTypeName = "";
+        }
+
         // Validation check should be already done in crate-reader, so no
         // further validation required.
         if (!ValidatePrimElementName(prim_name)) {
@@ -2507,6 +2519,10 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
         DCOUT("prim_name = " << prim_name);
 
         std::string primTypeName = typeName.has_value() ? typeName.value() : "";
+        // __AnyType__
+        if (typeName.has_value() && typeName.value() == "__AnyType__") {
+          primTypeName = "";
+        }
 
         // Something like '{shapeVariant=Capsule}'
 
@@ -2796,6 +2812,10 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
         DCOUT("elemPath.prim_name = " << elemPath.prim_part());
         std::string prim_name = elemPath.prim_part();
         std::string primTypeName = typeName.has_value() ? typeName.value() : "";
+        // __AnyType__
+        if (typeName.has_value() && typeName.value() == "__AnyType__") {
+          primTypeName = "";
+        }
 
         // Validation check should be already done in crate-reader, so no
         // further validation required.
@@ -2973,6 +2993,10 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
         DCOUT("prim_name = " << prim_name);
 
         std::string primTypeName = typeName.has_value() ? typeName.value() : "";
+        // __AnyType__
+        if (typeName.has_value() && typeName.value() == "__AnyType__") {
+          primTypeName = "";
+        }
 
         // Something like '{shapeVariant=Capsule}'
 
