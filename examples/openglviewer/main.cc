@@ -38,7 +38,7 @@ constexpr auto kAttribPoints = "points";
 constexpr auto kAttribNormals = "normals";
 constexpr auto kAttribTexCoordBase = "texcoord_";
 constexpr auto kAttribTexCoord0 = "texcoord_0";
-constexpr auto kMaxTexCoords = 1; // TODO: multi texcoords
+constexpr auto kMaxTexCoords = 1;  // TODO: multi texcoords
 
 constexpr auto kUniformModelviewMatrix = "modelviewMatrix";
 constexpr auto kUniformNormalMatrix = "normalMatrix";
@@ -46,31 +46,36 @@ constexpr auto kUniformProjectionMatrix = "projectionMatrix";
 
 constexpr auto kUniformDiffuseTex = "diffuseTex";
 constexpr auto kUniformDiffuseTexTransform = "diffuseTexTransform";
-constexpr auto kUniformDiffuseTexScaleAndBias = "diffuseTexScaleAndBias"; // (sx, sy, bx, by)
+constexpr auto kUniformDiffuseTexScaleAndBias =
+    "diffuseTexScaleAndBias";  // (sx, sy, bx, by)
 
 constexpr auto kUniformNormaTex = "normalTex";
 constexpr auto kUniformNormaTexTransform = "normalTexTransform";
-constexpr auto kUniformNormalTexScaleAndBias = "normalTexScaleAndBias"; // (sx, sy, bx, by)
+constexpr auto kUniformNormalTexScaleAndBias =
+    "normalTexScaleAndBias";  // (sx, sy, bx, by)
 
 constexpr auto kUniformOcclusionTex = "occlusionlTex";
 constexpr auto kUniformOcclusionTexTransform = "occlusionlTexTransform";
-constexpr auto kUniformOcclusionTexScaleAndBias = "occlusionTexScaleAndBias"; // (sx, sy, bx, by)
+constexpr auto kUniformOcclusionTexScaleAndBias =
+    "occlusionTexScaleAndBias";  // (sx, sy, bx, by)
 
 // Embedded shaders
 #include "shaders/no_skinning.vert_inc.hh"
 
-#define CHECK_GL(tag) do { \
-  GLenum err = glGetError(); \
-  if (err != GL_NO_ERROR) { \
-    std::cerr << "[" << tag << "] " << __FILE__ << ":" << __LINE__ << ":" << __func__ << " code " << std::to_string(int(err)) << "\n"; \
-  } \
-} while(0)
+#define CHECK_GL(tag)                                                        \
+  do {                                                                       \
+    GLenum err = glGetError();                                               \
+    if (err != GL_NO_ERROR) {                                                \
+      std::cerr << "[" << tag << "] " << __FILE__ << ":" << __LINE__ << ":"  \
+                << __func__ << " code " << std::to_string(int(err)) << "\n"; \
+    }                                                                        \
+  } while (0)
 
 struct GLTexParams {
   std::map<std::string, GLint> uniforms;
   GLenum wrapS{GL_REPEAT};
   GLenum wrapT{GL_REPEAT};
-  std::array<float, 4> borderCol{0.0f, 0.0f, 0.0f, 0.0f}; // transparent black
+  std::array<float, 4> borderCol{0.0f, 0.0f, 0.0f, 0.0f};  // transparent black
 };
 
 struct GLTexState {
@@ -83,17 +88,16 @@ struct GLVertexUniformState {
   GLint u_perspective{-1};
 
   std::array<float, 16> modelviewMatrix[16];
-  std::array<float, 16> normalMatrix[16]; // transpose(inverse(modelview))
+  std::array<float, 16> normalMatrix[16];  // transpose(inverse(modelview))
   std::array<float, 16> perspectiveMatrix[16];
-
 };
 
 // TODO: Use handle_id for key
 struct GLMeshState {
   std::map<std::string, GLint> attribs;
   std::vector<GLuint> diffuseTexHandles;
-  GLuint vertex_array_object{0}; // vertex array object
-  GLuint num_triangles{0}; // up to 4GB triangles
+  GLuint vertex_array_object{0};  // vertex array object
+  GLuint num_triangles{0};        // up to 4GB triangles
 };
 
 struct GLNodeState {
@@ -101,13 +105,11 @@ struct GLNodeState {
   GLMeshState gl_mesh_state;
 };
 
-
 struct GLProgramState {
-  //std::map<std::string, GLint> uniforms;
+  // std::map<std::string, GLint> uniforms;
 
   std::map<std::string, example::shader> shaders;
 };
-
 
 struct GUIContext {
   enum AOV {
@@ -134,6 +136,9 @@ struct GUIContext {
 
   float curr_quat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
   float prev_quat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+
+  float xrotate = 0.0f; // in degree
+  float yrotate = 0.0f; // in degree
 
   std::array<float, 3> eye = {0.0f, 0.0f, 5.0f};
   std::array<float, 3> lookat = {0.0f, 0.0f, 0.0f};
@@ -211,6 +216,7 @@ static void mouse_move_callback(GLFWwindow* window, double x, double y) {
           trans_scale * (param->mouse_y - static_cast<float>(y));
 
     } else {
+#if 0
       // Adjust y.
       trackball(param->prev_quat,
                 (2.f * (param->mouse_x - x_offset) - w) / static_cast<float>(w),
@@ -220,6 +226,20 @@ static void mouse_move_callback(GLFWwindow* window, double x, double y) {
                 (h - 2.f * (static_cast<float>(y) - y_offset)) /
                     static_cast<float>(h));
       add_quats(param->prev_quat, param->curr_quat, param->curr_quat);
+#else
+      const float rotation_amp = 1.0f;
+      param->xrotate += rotation_amp * (param->mouse_y - static_cast<float>(y));
+      param->yrotate += rotation_amp * (param->mouse_x - static_cast<float>(x));
+
+      // limit rotation around X axis.
+      if (param->xrotate < -89) {
+        param->xrotate = -89;
+      }
+      if (param->xrotate > 89) {
+        param->xrotate = 89;
+      }
+
+#endif
     }
   }
 
@@ -260,49 +280,50 @@ static void resize_callback(GLFWwindow* window, int width, int height) {
 
 namespace {
 
-void SetupVertexUniforms(GLVertexUniformState &gl_state,
-  tinyusdz::tydra::XformNode &xform_node)
-{
+void SetupVertexUniforms(GLVertexUniformState& gl_state,
+                         tinyusdz::tydra::XformNode& xform_node) {
   using namespace tinyusdz::value;
 
   // implicitly casts matrix4d to matrix4f;
   matrix4f worldmat = xform_node.get_world_matrix();
-  matrix4d invtransmatd = tinyusdz::inverse(tinyusdz::upper_left_3x3_only(xform_node.get_world_matrix()));
+  matrix4d invtransmatd = tinyusdz::inverse(
+      tinyusdz::upper_left_3x3_only(xform_node.get_world_matrix()));
   matrix4f invtransmat = invtransmatd;
 
   memcpy(gl_state.modelviewMatrix, &worldmat.m[0][0], sizeof(float) * 16);
   memcpy(gl_state.normalMatrix, &invtransmat.m[0][0], sizeof(float) * 16);
-  //memcpy(gl_state.perspectiveMatrix, &perspective.m[0][0], sizeof(float) * 16);
+  // memcpy(gl_state.perspectiveMatrix, &perspective.m[0][0], sizeof(float) *
+  // 16);
 }
 
-void SetVertexUniforms(
-  const GLVertexUniformState &gl_state) {
-
+void SetVertexUniforms(const GLVertexUniformState& gl_state) {
   if (gl_state.u_modelview > -1) {
-    glUniformMatrix4fv(gl_state.u_modelview, 1, GL_FALSE, gl_state.modelviewMatrix->data());
+    glUniformMatrix4fv(gl_state.u_modelview, 1, GL_FALSE,
+                       gl_state.modelviewMatrix->data());
     CHECK_GL("UniformMatrix u_modelview");
   }
 
   if (gl_state.u_modelview > -1) {
-    glUniformMatrix4fv(gl_state.u_normal, 1, GL_FALSE, gl_state.normalMatrix->data());
+    glUniformMatrix4fv(gl_state.u_normal, 1, GL_FALSE,
+                       gl_state.normalMatrix->data());
     CHECK_GL("UniformMatrix u_normal");
   }
-
 }
 
 bool LoadShaders() {
-  std::string s(reinterpret_cast<char *>(shaders_no_skinning_vert), shaders_no_skinning_vert_len);
+  std::string s(reinterpret_cast<char*>(shaders_no_skinning_vert),
+                shaders_no_skinning_vert_len);
 
   return true;
 }
 
 bool SetupShader() {
-
   GLuint prog_id;
 
   GLint modelv_loc = glGetUniformLocation(prog_id, kUniformModelviewMatrix);
   if (modelv_loc < 0) {
-    std::cerr << kUniformModelviewMatrix << " not found in the vertex shader.\n";
+    std::cerr << kUniformModelviewMatrix
+              << " not found in the vertex shader.\n";
     return false;
   }
 
@@ -314,7 +335,8 @@ bool SetupShader() {
 
   GLint proj_loc = glGetUniformLocation(prog_id, kUniformProjectionMatrix);
   if (proj_loc < 0) {
-    std::cerr << kUniformProjectionMatrix << " not found in the vertex shader.\n";
+    std::cerr << kUniformProjectionMatrix
+              << " not found in the vertex shader.\n";
     return false;
   }
 
@@ -358,8 +380,10 @@ bool SetupTexture(const tinyusdz::tydra::RenderScene& scene,
   // There are two possibilities: opaque black or transparent black.
   // We use fully transparent(0.0) for a while.
   texParams.borderCol = {0.0f, 0.0f, 0.0f, 0.0f};
-  glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, &texParams.borderCol[0]);
-  CHECK_GL("texture_id[" << std::to_string(tex.texture_image_id) << "] glTexParameters");
+  glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR,
+                   &texParams.borderCol[0]);
+  CHECK_GL("texture_id[" << std::to_string(tex.texture_image_id)
+                         << "] glTexParameters");
 
   texState.texParams = std::move(texParams);
 
@@ -434,8 +458,9 @@ bool SetupTexture(const tinyusdz::tydra::RenderScene& scene,
           // continue anyway
         } else {
           glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image.width, image.height, 0,
-                      format, type, buffer.data.data());
-          CHECK_GL("texture_id[" << std::to_string(image_id) << "] glTexImage2D");
+                       format, type, buffer.data.data());
+          CHECK_GL("texture_id[" << std::to_string(image_id)
+                                 << "] glTexImage2D");
         }
       }
     }
@@ -448,21 +473,21 @@ bool SetupTexture(const tinyusdz::tydra::RenderScene& scene,
   return true;
 }
 
-static bool SetupMesh(
-  tinyusdz::tydra::RenderMesh &mesh,
-  GLuint program_id,
-  GLMeshState &gl_state) // [out]
+static bool SetupMesh(tinyusdz::tydra::RenderMesh& mesh, GLuint program_id,
+                      GLMeshState& gl_state)  // [out]
 {
   std::vector<uint32_t> indices;
 
   if (mesh.faceVertexCounts.empty()) {
     // assume all triangulaged faces.
     if ((mesh.faceVertexIndices.size() % 3) != 0) {
-      std::cerr << "mesh <" << mesh.abs_name << ">  faceVertexIndices.size " << std::to_string(mesh.faceVertexIndices.size()) << " must be multiple of 3\n";
+      std::cerr << "mesh <" << mesh.abs_name << ">  faceVertexIndices.size "
+                << std::to_string(mesh.faceVertexIndices.size())
+                << " must be multiple of 3\n";
     }
 
     for (size_t f = 0; f < mesh.faceVertexIndices.size() / 3; f++) {
-      for (size_t c = 0; c < 3; c++ ) {
+      for (size_t c = 0; c < 3; c++) {
         indices.push_back(mesh.faceVertexIndices[3 * f + c]);
       }
     }
@@ -472,15 +497,17 @@ static bool SetupMesh(
     // Currently all faces must be triangle.
     for (size_t f = 0; f < mesh.faceVertexCounts.size(); f++) {
       if (mesh.faceVertexCounts[f] != 3) {
-        std::cerr << "mesh <" << mesh.abs_name << ">  Non triangle face found at faceVertexCounts[" << f << "] (" << mesh.faceVertexCounts[f] << ")\n";
+        std::cerr << "mesh <" << mesh.abs_name
+                  << ">  Non triangle face found at faceVertexCounts[" << f
+                  << "] (" << mesh.faceVertexCounts[f] << ")\n";
         return false;
       }
 
-      for (size_t c = 0; c < mesh.faceVertexCounts[f]; c++ ) {
+      for (size_t c = 0; c < mesh.faceVertexCounts[f]; c++) {
         indices.push_back(mesh.faceVertexIndices[faceOffset + c]);
       }
 
-    faceOffset += f;
+      faceOffset += f;
     }
   }
 
@@ -500,7 +527,7 @@ static bool SetupMesh(
   //
   // - Static mesh(STATIC_DRAW) only
 
-  { // position
+  {  // position
 
     // expand position to facevarying data.
     // assume faces are all triangle.
@@ -509,23 +536,28 @@ static bool SetupMesh(
     gl_state.num_triangles = indices.size() / 3;
 
     for (size_t i = 0; i < indices.size() / 3; i++) {
-
       size_t vi0 = indices[3 * i + 0];
       size_t vi1 = indices[3 * i + 1];
       size_t vi2 = indices[3 * i + 2];
 
       if (vi0 >= mesh.points.size()) {
-        std::cerr << "indices[" << (3 * i + 0) << "(" << vi0 << ") exceeds mesh.points.size()(" << mesh.points.size() << ")\n";
+        std::cerr << "indices[" << (3 * i + 0) << "(" << vi0
+                  << ") exceeds mesh.points.size()(" << mesh.points.size()
+                  << ")\n";
         return false;
       }
 
       if (vi1 >= mesh.points.size()) {
-        std::cerr << "indices[" << (3 * i + 1) << "(" << vi1 << ") exceeds mesh.points.size()(" << mesh.points.size() << ")\n";
+        std::cerr << "indices[" << (3 * i + 1) << "(" << vi1
+                  << ") exceeds mesh.points.size()(" << mesh.points.size()
+                  << ")\n";
         return false;
       }
 
       if (vi2 >= mesh.points.size()) {
-        std::cerr << "indices[" << (3 * i + 2) << "(" << vi2 << ") exceeds mesh.points.size()(" << mesh.points.size() << ")\n";
+        std::cerr << "indices[" << (3 * i + 2) << "(" << vi2
+                  << ") exceeds mesh.points.size()(" << mesh.points.size()
+                  << ")\n";
         return false;
       }
 
@@ -537,26 +569,17 @@ static bool SetupMesh(
     GLuint vb;
     glGenBuffers(1, &vb);
     glBindBuffer(GL_ARRAY_BUFFER, vb);
-    glBufferData(
-        GL_ARRAY_BUFFER,
-        facevaryingVertices.size() * sizeof(tinyusdz::tydra::vec3),
-        facevaryingVertices.data(),
-        GL_STATIC_DRAW
-    );
+    glBufferData(GL_ARRAY_BUFFER,
+                 facevaryingVertices.size() * sizeof(tinyusdz::tydra::vec3),
+                 facevaryingVertices.data(), GL_STATIC_DRAW);
     CHECK_GL("Set facevaryingVertices buffer data");
 
     GLint loc = glGetAttribLocation(program_id, kAttribPoints);
 
     if (loc > -1) {
       glEnableVertexAttribArray(loc);
-      glVertexAttribPointer(
-          loc,
-          3,
-          GL_FLOAT,
-          GL_FALSE,
-          /* stride */sizeof(GLfloat) * 3,
-          0
-      );
+      glVertexAttribPointer(loc, 3, GL_FLOAT, GL_FALSE,
+                            /* stride */ sizeof(GLfloat) * 3, 0);
       CHECK_GL("VertexAttribPointer");
     } else {
       std::cerr << kAttribPoints << " attribute not found in vertex shader.\n";
@@ -564,30 +587,21 @@ static bool SetupMesh(
     }
   }
 
-  if (mesh.facevaryingNormals.size()) { // normals
+  if (mesh.facevaryingNormals.size()) {  // normals
     GLuint vb;
     glGenBuffers(1, &vb);
     glBindBuffer(GL_ARRAY_BUFFER, vb);
-    glBufferData(
-        GL_ARRAY_BUFFER,
-        mesh.facevaryingNormals.size() * sizeof(tinyusdz::tydra::vec3),
-        mesh.facevaryingNormals.data(),
-        GL_STATIC_DRAW
-    );
+    glBufferData(GL_ARRAY_BUFFER,
+                 mesh.facevaryingNormals.size() * sizeof(tinyusdz::tydra::vec3),
+                 mesh.facevaryingNormals.data(), GL_STATIC_DRAW);
     CHECK_GL("Set facevaryingNormals buffer data");
 
     GLint loc = glGetAttribLocation(program_id, kAttribNormals);
 
     if (loc > -1) {
       glEnableVertexAttribArray(loc);
-      glVertexAttribPointer(
-          loc,
-          3,
-          GL_FLOAT,
-          GL_FALSE,
-          /* stride */sizeof(GLfloat) * 3,
-          0
-      );
+      glVertexAttribPointer(loc, 3, GL_FLOAT, GL_FALSE,
+                            /* stride */ sizeof(GLfloat) * 3, 0);
       CHECK_GL("VertexAttribPointer");
     } else {
       std::cerr << kAttribNormals << " attribute not found in vertex shader.\n";
@@ -601,19 +615,18 @@ static bool SetupMesh(
     for (const auto it : mesh.facevaryingTexcoords) {
       uint32_t slot_id = it.first;
       if (slot_id >= kMaxTexCoords) {
-        std::cerr << "Texcoord slot id " << slot_id << " must be less than kMaxTexCoords " << kMaxTexCoords << "\n";
+        std::cerr << "Texcoord slot id " << slot_id
+                  << " must be less than kMaxTexCoords " << kMaxTexCoords
+                  << "\n";
         return false;
       }
 
       GLuint vb;
       glGenBuffers(1, &vb);
       glBindBuffer(GL_ARRAY_BUFFER, vb);
-      glBufferData(
-          GL_ARRAY_BUFFER,
-          it.second.size() * sizeof(tinyusdz::tydra::vec2),
-          it.second.data(),
-          GL_STATIC_DRAW
-      );
+      glBufferData(GL_ARRAY_BUFFER,
+                   it.second.size() * sizeof(tinyusdz::tydra::vec2),
+                   it.second.data(), GL_STATIC_DRAW);
       CHECK_GL("Set facevaryingTexcoord0 buffer data");
 
       std::string texattr = kAttribTexCoordBase + std::to_string(slot_id);
@@ -621,14 +634,8 @@ static bool SetupMesh(
 
       if (loc > -1) {
         glEnableVertexAttribArray(loc);
-        glVertexAttribPointer(
-            loc,
-            2,
-            GL_FLOAT,
-            GL_FALSE,
-            /* stride */sizeof(GLfloat) * 2,
-            0
-        );
+        glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE,
+                              /* stride */ sizeof(GLfloat) * 2, 0);
         CHECK_GL("VertexAttribPointer");
       } else {
         std::cerr << texattr << " attribute not found in vertex shader.\n";
@@ -652,19 +659,16 @@ static bool SetupMesh(
   return true;
 }
 
-static void DrawMesh(const GLMeshState &gl_state) {
-
+static void DrawMesh(const GLMeshState& gl_state) {
   // Simply bind vertex array object and call glDrawArrays.
   glBindVertexArray(gl_state.vertex_array_object);
   glDrawArrays(GL_TRIANGLES, 0, gl_state.num_triangles * 3);
   CHECK_GL("DrawArrays");
   glBindVertexArray(0);
-
 }
 
-static void DrawScene(
-  const example::shader shader,
-  const tinyusdz::tydra::RenderScene &scene) {
+static void DrawScene(const example::shader shader,
+                      const tinyusdz::tydra::RenderScene& scene) {
   //
   // Use single shader for the scene
   //
@@ -673,78 +677,186 @@ static void DrawScene(
   shader.use();
   CHECK_GL("shader.use");
 
-
   glUseProgram(0);
   CHECK_GL("glUseProgram(0)");
 }
 
-static void DrawNode(const GLNodeState &gl_node) {
+static void DrawNode(const GLNodeState& gl_node) {
   SetVertexUniforms(gl_node.gl_v_uniform_state);
 
   // TODO
   DrawMesh(gl_node.gl_mesh_state);
 }
 
+static void ComputeBoundingBox(
+  const tinyusdz::tydra::RenderMesh &mesh,
+  std::array<float, 3> &bmin,
+  std::array<float, 3> &bmax
+)
+{
+  bmin = { std::numeric_limits<float>::infinity(),
+           std::numeric_limits<float>::infinity(),
+           std::numeric_limits<float>::infinity() };
 
-static void ProcScene(const tinyusdz::Stage& stage) {
+  bmax = { -std::numeric_limits<float>::infinity(),
+           -std::numeric_limits<float>::infinity(),
+           -std::numeric_limits<float>::infinity() };
+
+  for (const auto &p : mesh.points) {
+    bmin[0] = (std::min)(bmin[0], p[0]);
+    bmin[1] = (std::min)(bmin[1], p[1]);
+    bmin[2] = (std::min)(bmin[2], p[2]);
+
+    bmax[0] = (std::max)(bmax[0], p[0]);
+    bmax[1] = (std::max)(bmax[1], p[1]);
+    bmax[2] = (std::max)(bmax[2], p[2]);
+  }
+}
+
+static bool ProcScene(const tinyusdz::Stage& stage) {
   //
   // Stage to Renderable Scene
   tinyusdz::tydra::RenderSceneConverter converter;
 
+  tinyusdz::tydra::RenderScene renderScene;
+  bool ret = converter.ConvertToRenderScene(stage, &renderScene);
+  if (converter.GetWarning().size()) {
+    std::cout << "ConvertToRenderScene WARN: " << converter.GetWarning() << "\n";
+  }
+
+  if (!ret) {
+    std::cerr << "Failed to convert USD Stage to OpenGL-like data structure: " << converter.GetError() << "\n";
+    exit(-1);
+  } 
+
+  std::cout << "# of meshes: " << renderScene.meshes.size() << "\n";
+
+  for (size_t i = 0; i < renderScene.meshes.size(); i++) {
+    std::array<float, 3> bmin;
+    std::array<float, 3> bmax;
+
+    ComputeBoundingBox(renderScene.meshes[i], bmin, bmax);
+
+    std::cout << "mesh[" << i << "].bmin " << bmin[0] << ", " << bmin[1] << ", " << bmin[2] << "\n";
+    std::cout << "mesh[" << i << "].bmax " << bmax[0] << ", " << bmax[1] << ", " << bmax[2] << "\n";
+
+    GLMeshState gl_mesh; 
+    if (!SetupMesh(renderScene.meshes[i], program_id, gl_mesh)) {
+      std::cerr << "SetupMesh for mesh[" << i << "] failed.\n";
+      exit(-1);
+    }
+  }
+
+
   // TODO
+  return true;
+}
+
+static void vnormalize(float v[3]) {
+  float r;
+
+  r = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+  if (r == 0.0) return;
+
+  v[0] /= r;
+  v[1] /= r;
+  v[2] /= r;
+}
+
+static void vcross(float v1[3], float v2[3], float result[3]) {
+  result[0] = v1[1] * v2[2] - v1[2] * v2[1];
+  result[1] = v1[2] * v2[0] - v1[0] * v2[2];
+  result[2] = v1[0] * v2[1] - v1[1] * v2[0];
+}
+
+// based on mesa.
+static void MygluLookAt(float eye[3], float center[3], float up[3]) {
+  float forward[3], side[3];
+  GLfloat m[4][4];
+
+  forward[0] = center[0] - eye[0];
+  forward[1] = center[1] - eye[1];
+  forward[2] = center[2] - eye[2];
+
+  vnormalize(forward);
+
+  /* Side = forward x up */
+  vcross(forward, up, side);
+  vnormalize(side);
+
+  /* Recompute up as: up = side x forward */
+  vcross(side, forward, up);
+
+  memset(m, 0, sizeof(GLfloat) * 16);
+  m[0][0] = 1.0f;
+  m[1][1] = 1.0f;
+  m[2][2] = 1.0f;
+  m[3][3] = 1.0f;
+
+  m[0][0] = side[0];
+  m[1][0] = side[1];
+  m[2][0] = side[2];
+
+  m[0][1] = up[0];
+  m[1][1] = up[1];
+  m[2][1] = up[2];
+
+  m[0][2] = -forward[0];
+  m[1][2] = -forward[1];
+  m[2][2] = -forward[2];
+
+  glMultMatrixf(&m[0][0]);
+  // TODO: Use glTranslated?
+  glTranslatef(-eye[0], -eye[1], -eye[2]);
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
-
   // Setup window
   glfwSetErrorCallback(error_callback);
   if (!glfwInit()) {
     exit(EXIT_FAILURE);
   }
 
-  // Decide GL+GLSL versions
-  #if defined(IMGUI_IMPL_OPENGL_ES2)
-      // GL ES 2.0 + GLSL 100
-      const char* glsl_version = "#version 100";
-      glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
-      glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
-      glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_ES_API);
-  #elif defined(__APPLE__)
-      // GL 3.2 + GLSL 150
-      const char* glsl_version = "#version 150";
-      glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-      glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
-      glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);  // 3.2+ only
-      glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);            // Required on Mac
-  #else
-      // GL 3.0 + GLSL 130
-      const char* glsl_version = "#version 130";
-      glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-      glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
-      //glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);  // 3.2+ only
-      //glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);            // 3.0+ only
-  #endif
+// Decide GL+GLSL versions
+#if defined(IMGUI_IMPL_OPENGL_ES2)
+  // GL ES 2.0 + GLSL 100
+  const char* glsl_version = "#version 100";
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+  glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_ES_API);
+#elif defined(__APPLE__)
+  // GL 3.2 + GLSL 150
+  const char* glsl_version = "#version 150";
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
+  glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);  // 3.2+ only
+  glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);  // Required on Mac
+#else
+  // GL 3.0 + GLSL 130
+  const char* glsl_version = "#version 130";
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+  // glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);  // 3.2+
+  // only glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE); // 3.0+ only
+#endif
 
   float highDPIscaleFactor = 1.0f;
 
 #if defined(_WIN32) || defined(__linux__)
-    // if it's a HighDPI monitor, try to scale everything
-    GLFWmonitor *monitor = glfwGetPrimaryMonitor();
-    float xscale, yscale;
-    glfwGetMonitorContentScale(monitor, &xscale, &yscale);
-    std::cout << "monitor xscale, yscale = " << xscale << ", " << yscale << "\n";
-    if (xscale > 1 || yscale > 1)
-    {
-        highDPIscaleFactor = xscale;
-        glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_TRUE);
-
-    }
+  // if it's a HighDPI monitor, try to scale everything
+  GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+  float xscale, yscale;
+  glfwGetMonitorContentScale(monitor, &xscale, &yscale);
+  std::cout << "monitor xscale, yscale = " << xscale << ", " << yscale << "\n";
+  if (xscale > 1 || yscale > 1) {
+    highDPIscaleFactor = xscale;
+    glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_TRUE);
+  }
 #elif __APPLE__
-    glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, GLFW_FALSE);
+  glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, GLFW_FALSE);
 #endif
-
 
 #ifdef _DEBUG_OPENGL
   glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
@@ -774,12 +886,11 @@ int main(int argc, char** argv) {
 
   ProcScene(stage);
 
-
   GLFWwindow* window{nullptr};
   window = glfwCreateWindow(gCtx.width, gCtx.height, "Simple USDZ GL viewer",
                             nullptr, nullptr);
   glfwMakeContextCurrent(window);
-  glfwSwapInterval(1); // vsync on
+  glfwSwapInterval(1);  // vsync on
 
   if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress))) {
     std::cerr << "Failed to load OpenGL functions with gladLoadGL\n";
@@ -828,12 +939,29 @@ int main(int argc, char** argv) {
 
     ImGuiIO& io = ImGui::GetIO();
 
-    io.DisplayFramebufferScale = {2.0f, 2.0f}; // HACK
+    io.DisplayFramebufferScale = {2.0f, 2.0f};  // HACK
 
     ImFontConfig font_config;
     font_config.SizePixels = 16.0f * xscale;
     io.Fonts->AddFontDefault(&font_config);
   }
+
+  std::array<float, 3> bmin = {-100.0f, -100.0f, -100.0f};
+  std::array<float, 3> bmax = {100.0f, 100.0f, 100.0f};
+
+  float maxExtent = 0.5f * (bmax[0] - bmin[0]);
+  if (maxExtent < 0.5f * (bmax[1] - bmin[1])) {
+    maxExtent = 0.5f * (bmax[1] - bmin[1]);
+  }
+  if (maxExtent < 0.5f * (bmax[2] - bmin[2])) {
+    maxExtent = 0.5f * (bmax[2] - bmin[2]);
+  }
+
+  float eye[3], lookat[3], up[3];
+
+  up[0] = 0.0f;
+  up[1] = 1.0f;
+  up[2] = 0.0f;
 
   while (!done) {
     glfwPollEvents();
@@ -853,6 +981,21 @@ int main(int argc, char** argv) {
     glClearColor(clear_color.x, clear_color.y, clear_color.z, clear_color.w);
     glEnable(GL_DEPTH_TEST);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    // camera & rotate
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    MygluLookAt(eye, lookat, up);
+    // GLfloat mat[4][4];
+    // build_rotmatrix(mat, curr_quat);
+    // glMultMatrixf(&mat[0][0]);
+
+    // Fit model to [-1, 1]
+    glScalef(1.0f / maxExtent, 1.0f / maxExtent, 1.0f / maxExtent);
+
+    // Centerize object.
+    glTranslatef(-0.5 * (bmax[0] + bmin[0]), -0.5 * (bmax[1] + bmin[1]),
+                 -0.5 * (bmax[2] + bmin[2]));
 
 #if 0
     // Draw scene
