@@ -114,6 +114,10 @@ struct GLProgramState {
   std::map<std::string, example::shader> shaders;
 };
 
+struct GLScene {
+  std::vector<GLMeshState> meshes; 
+};
+
 struct GUIContext {
   enum AOV {
     AOV_COLOR = 0,
@@ -595,7 +599,7 @@ static bool SetupMesh(tinyusdz::tydra::RenderMesh& mesh, GLuint program_id,
                             /* stride */ sizeof(GLfloat) * 3, 0);
       CHECK_GL("VertexAttribPointer");
     } else {
-      std::cerr << kAttribPoints << " attribute not found in vertex shader.\n";
+      std::cerr << "vertex positions: " << kAttribPoints << " attribute not found in vertex shader.\n";
       return false;
     }
   }
@@ -617,7 +621,7 @@ static bool SetupMesh(tinyusdz::tydra::RenderMesh& mesh, GLuint program_id,
                             /* stride */ sizeof(GLfloat) * 3, 0);
       CHECK_GL("VertexAttribPointer");
     } else {
-      std::cerr << kAttribNormals << " attribute not found in vertex shader. Shader does not use it?\n";
+      std::cerr << "vertex normals: " << kAttribNormals << " attribute not found in vertex shader. Shader does not use it?\n";
       // may ok
     }
   }
@@ -651,12 +655,13 @@ static bool SetupMesh(tinyusdz::tydra::RenderMesh& mesh, GLuint program_id,
                               /* stride */ sizeof(GLfloat) * 2, 0);
         CHECK_GL("VertexAttribPointer");
       } else {
-        std::cerr << texattr << " attribute not found in vertex shader.\n";
-        return false;
+        std::cerr << "Texture UV0: " << texattr << " attribute not found in vertex shader.\n";
+        // may OK
       }
     }
   }
 
+  // We build facevarying vertex data, so no index buffers.
 #if 0
   // Build index buffer.
   GLuint elementbuffer;
@@ -689,6 +694,9 @@ static void DrawScene(const example::shader &shader,
   // bind program
   shader.use();
   CHECK_GL("shader.use");
+
+  for (size_t i = 0; i < scene.meshes.size(); i++) {
+  }
 
   glUseProgram(0);
   CHECK_GL("glUseProgram(0)");
@@ -947,13 +955,10 @@ int main(int argc, char** argv) {
     exit(-1);
   }
 
-  ProcScene(gl_progs.shaders["default"], stage);
+  if (!ProcScene(gl_progs.shaders["default"], stage)) {
+    exit(-1);
+  }
 
-struct GLProgramState {
-  // std::map<std::string, GLint> uniforms;
-
-  std::map<std::string, example::shader> shaders;
-};
 
   int display_w, display_h;
   ImVec4 clear_color = {0.1f, 0.18f, 0.3f, 1.0f};
