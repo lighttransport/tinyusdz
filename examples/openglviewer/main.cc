@@ -115,7 +115,11 @@ struct GLProgramState {
 };
 
 struct GLScene {
-  std::vector<GLMeshState> meshes; 
+  std::vector<GLMeshState> gl_meshes; 
+
+  // scene bounding box
+  std::array<float, 3> bmin;
+  std::array<float, 3> bmax;
 };
 
 struct GUIContext {
@@ -686,7 +690,7 @@ static void DrawMesh(const GLMeshState& gl_state) {
 }
 
 static void DrawScene(const example::shader &shader,
-                      const tinyusdz::tydra::RenderScene& scene) {
+                      const GLScene& scene) {
   //
   // Use single shader for the scene
   //
@@ -695,7 +699,9 @@ static void DrawScene(const example::shader &shader,
   shader.use();
   CHECK_GL("shader.use");
 
-  for (size_t i = 0; i < scene.meshes.size(); i++) {
+  for (size_t i = 0; i < scene.gl_meshes.size(); i++) {
+    const auto gl_mesh = scene.gl_meshes[i];
+    DrawMesh(gl_mesh);
   }
 
   glUseProgram(0);
@@ -734,7 +740,7 @@ static void ComputeBoundingBox(
   }
 }
 
-static bool ProcScene(const example::shader &gl_shader, const tinyusdz::Stage& stage) {
+static bool ProcScene(const example::shader &gl_shader, const tinyusdz::Stage& stage, GLScene *scene) {
   //
   // Stage to Renderable Scene
   tinyusdz::tydra::RenderSceneConverter converter;
@@ -752,6 +758,17 @@ static bool ProcScene(const example::shader &gl_shader, const tinyusdz::Stage& s
 
   std::cout << "# of meshes: " << renderScene.meshes.size() << "\n";
 
+  std::array<float, 3> scene_bmin;
+  std::array<float, 3> scene_bmax;
+
+  scene_bmin = { std::numeric_limits<float>::infinity(),
+           std::numeric_limits<float>::infinity(),
+           std::numeric_limits<float>::infinity() };
+
+  scene_bmax = { -std::numeric_limits<float>::infinity(),
+           -std::numeric_limits<float>::infinity(),
+           -std::numeric_limits<float>::infinity() };
+
   for (size_t i = 0; i < renderScene.meshes.size(); i++) {
     std::array<float, 3> bmin;
     std::array<float, 3> bmax;
@@ -761,13 +778,26 @@ static bool ProcScene(const example::shader &gl_shader, const tinyusdz::Stage& s
     std::cout << "mesh[" << i << "].bmin " << bmin[0] << ", " << bmin[1] << ", " << bmin[2] << "\n";
     std::cout << "mesh[" << i << "].bmax " << bmax[0] << ", " << bmax[1] << ", " << bmax[2] << "\n";
 
+    // TODO: accounnt for xform
+    scene_bmin[0] = (std::min)(bmin[0], scene_bmin[0]);
+    scene_bmin[1] = (std::min)(bmin[1], scene_bmin[1]);
+    scene_bmin[2] = (std::min)(bmin[2], scene_bmin[2]);
+
+    scene_bmax[0] = (std::max)(bmax[0], scene_bmax[0]);
+    scene_bmax[1] = (std::max)(bmax[1], scene_bmax[1]);
+    scene_bmax[2] = (std::max)(bmax[2], scene_bmax[2]);
+
     GLMeshState gl_mesh; 
     if (!SetupMesh(renderScene.meshes[i], gl_shader.get_program(), gl_mesh)) {
       std::cerr << "SetupMesh for mesh[" << i << "] failed.\n";
       exit(-1);
     }
+
+    scene->gl_meshes.emplace_back(gl_mesh);
   }
 
+  scene->bmin = scene_bmin;
+  scene->bmax = scene_bmax;
 
   // TODO
   return true;
@@ -955,7 +985,8 @@ int main(int argc, char** argv) {
     exit(-1);
   }
 
-  if (!ProcScene(gl_progs.shaders["default"], stage)) {
+  GLScene gl_scene;
+  if (!ProcScene(gl_progs.shaders["default"], stage, &gl_scene)) {
     exit(-1);
   }
 
