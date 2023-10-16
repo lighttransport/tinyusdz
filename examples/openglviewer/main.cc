@@ -32,6 +32,7 @@
 // TinyUSDZ
 // include relative to openglviewer example cmake top dir for clangd lsp.
 #include "tinyusdz.hh"
+#include "value-pprint.hh" // import to_string(tinyusdz::value::***)
 #include "io-util.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
@@ -120,7 +121,7 @@ struct GLProgramState {
 };
 
 struct GLScene {
-  std::vector<GLMeshState> gl_meshes; 
+  std::vector<GLNodeState> gl_nodes; 
 
   // scene bounding box
   std::array<float, 3> bmin;
@@ -161,6 +162,8 @@ struct GUIContext {
   std::array<float, 3> up = {0.0f, 1.0f, 0.0f};
 
   example::Camera camera;
+
+  std::string usd_filepath;
 };
 
 GUIContext gCtx;
@@ -297,19 +300,26 @@ static void resize_callback(GLFWwindow* window, int width, int height) {
 namespace {
 
 void SetupVertexUniforms(GLVertexUniformState& gl_state,
-                         tinyusdz::tydra::XformNode& xform_node) {
+                         const tinyusdz::value::matrix4d &worldmatd,
+                         const tinyusdz::value::matrix4f &viewproj) {
   using namespace tinyusdz::value;
 
   // implicitly casts matrix4d to matrix4f;
-  matrix4f worldmat = xform_node.get_world_matrix();
+  matrix4f worldmat = worldmatd;
+
   matrix4d invtransmatd = tinyusdz::inverse(
-      tinyusdz::upper_left_3x3_only(xform_node.get_world_matrix()));
+      tinyusdz::upper_left_3x3_only(worldmatd));
+
   matrix4f invtransmat = invtransmatd;
 
   memcpy(gl_state.modelMatrix, &worldmat.m[0][0], sizeof(float) * 16);
   memcpy(gl_state.normalMatrix, &invtransmat.m[0][0], sizeof(float) * 16);
-  // memcpy(gl_state.perspectiveMatrix, &perspective.m[0][0], sizeof(float) *
-  // 16);
+
+  // NOTE: USD uses pre-multiply matmul
+  matrix4f mvp = viewproj * worldmat;
+
+  // FIXME:
+  memcpy(gl_state.mvp, &mvp.m[0][0], sizeof(float) * 16);
 }
 
 void SetVertexUniforms(const GLVertexUniformState& gl_state) {
@@ -319,9 +329,15 @@ void SetVertexUniforms(const GLVertexUniformState& gl_state) {
     CHECK_GL("UniformMatrix u_modelview");
   }
 
-  if (gl_state.u_model > -1) {
+  if (gl_state.u_normal > -1) {
     glUniformMatrix4fv(gl_state.u_normal, 1, GL_FALSE,
                        gl_state.normalMatrix->data());
+    CHECK_GL("UniformMatrix u_normal");
+  }
+
+  if (gl_state.u_mvp > -1) {
+    glUniformMatrix4fv(gl_state.u_mvp, 1, GL_FALSE,
+                       gl_state.mvp->data());
     CHECK_GL("UniformMatrix u_normal");
   }
 }
@@ -341,27 +357,32 @@ bool LoadShaders(GLProgramState &gl_state) {
   return true;
 }
 
-bool SetupShader() {
-  GLuint prog_id;
+bool SetupGLUniforms(GLuint prog_id, GLVertexUniformState &gl_v_uniform_state) {
 
   GLint model_loc = glGetUniformLocation(prog_id, kUniformModelMatrix);
   if (model_loc < 0) {
     std::cerr << kUniformModelMatrix
               << " not found in the vertex shader.\n";
-    return false;
+    //return false;
+  } else {
+    gl_v_uniform_state.u_model = model_loc;
   }
 
   GLint norm_loc = glGetUniformLocation(prog_id, kUniformNormalMatrix);
   if (norm_loc < 0) {
     std::cerr << kUniformNormalMatrix << " not found in the vertex shader.\n";
-    return false;
+    //return false;
+  } else {
+    gl_v_uniform_state.u_normal = norm_loc;
   }
 
   GLint mvp_loc = glGetUniformLocation(prog_id, kUniformMVPMatrix);
   if (mvp_loc < 0) {
     std::cerr << kUniformMVPMatrix
               << " not found in the vertex shader.\n";
-    return false;
+    //return false;
+  } else {
+    gl_v_uniform_state.u_mvp = mvp_loc;
   }
 
   return true;
@@ -694,6 +715,12 @@ static void DrawMesh(const GLMeshState& gl_state) {
   glBindVertexArray(0);
 }
 
+static void DrawNode(const GLNodeState& gl_node) {
+  SetVertexUniforms(gl_node.gl_v_uniform_state);
+
+  DrawMesh(gl_node.gl_mesh_state);
+}
+
 static void DrawScene(const example::shader &shader,
                       const GLScene& scene) {
   //
@@ -704,21 +731,15 @@ static void DrawScene(const example::shader &shader,
   shader.use();
   CHECK_GL("shader.use");
 
-  for (size_t i = 0; i < scene.gl_meshes.size(); i++) {
-    const auto gl_mesh = scene.gl_meshes[i];
-    DrawMesh(gl_mesh);
+  for (size_t i = 0; i < scene.gl_nodes.size(); i++) {
+    const auto gl_node = scene.gl_nodes[i];
+    DrawNode(gl_node);
   }
 
   glUseProgram(0);
   CHECK_GL("glUseProgram(0)");
 }
 
-static void DrawNode(const GLNodeState& gl_node) {
-  SetVertexUniforms(gl_node.gl_v_uniform_state);
-
-  // TODO
-  DrawMesh(gl_node.gl_mesh_state);
-}
 
 static void ComputeBoundingBox(
   const tinyusdz::tydra::RenderMesh &mesh,
@@ -774,6 +795,9 @@ static bool ProcScene(const example::shader &gl_shader, const tinyusdz::Stage& s
            -std::numeric_limits<float>::infinity(),
            -std::numeric_limits<float>::infinity() };
 
+  // FIXME:
+  tinyusdz::value::matrix4f viewproj = tinyusdz::value::matrix4d::identity();
+
   for (size_t i = 0; i < renderScene.meshes.size(); i++) {
     std::array<float, 3> bmin;
     std::array<float, 3> bmax;
@@ -798,7 +822,18 @@ static bool ProcScene(const example::shader &gl_shader, const tinyusdz::Stage& s
       exit(-1);
     }
 
-    scene->gl_meshes.emplace_back(gl_mesh);
+    GLNodeState gl_node;
+    gl_node.gl_mesh_state = gl_mesh;
+
+    // FIXME:
+    tinyusdz::value::matrix4d identm = tinyusdz::value::matrix4d::identity();
+
+
+    std::cout << "global matrix: " << identm << "\n";
+    SetupVertexUniforms(gl_node.gl_v_uniform_state, identm, viewproj);
+    SetupGLUniforms(gl_shader.get_program(), gl_node.gl_v_uniform_state);
+
+    scene->gl_nodes.emplace_back(gl_node);
   }
 
   scene->bmin = scene_bmin;
@@ -967,6 +1002,8 @@ int main(int argc, char** argv) {
     return EXIT_FAILURE;
   }
 
+  gCtx.usd_filepath = full_filepath;
+
   GLFWwindow* window{nullptr};
   window = glfwCreateWindow(gCtx.width, gCtx.height, "Simple USDZ GL viewer",
                             nullptr, nullptr);
@@ -1022,6 +1059,8 @@ int main(int argc, char** argv) {
     exit(-1);
   }
 
+  std::cout << "scene bmin: " << gl_scene.bmin[0] << ", " << gl_scene.bmin[1] << ", " << gl_scene.bmin[2] << "\n";
+  std::cout << "scene bmax: " << gl_scene.bmax[0] << ", " << gl_scene.bmax[1] << ", " << gl_scene.bmax[2] << "\n";
 
   int display_w, display_h;
   ImVec4 clear_color = {0.1f, 0.18f, 0.3f, 1.0f};
@@ -1057,6 +1096,8 @@ int main(int argc, char** argv) {
   up[1] = 1.0f;
   up[2] = 0.0f;
 
+  const example::shader &curr_shader = gl_progs.shaders["default"];
+
   while (!done) {
     glfwPollEvents();
     ImGui_ImplOpenGL3_NewFrame();
@@ -1070,12 +1111,19 @@ int main(int argc, char** argv) {
     ImGui::Text("left mouse");
     ImGui::End();
 
+    ImGui::Begin("Scene");
+    ImGui::InputText("filename", const_cast<char *>(gCtx.usd_filepath.c_str()), gCtx.usd_filepath.size(), ImGuiInputTextFlags_ReadOnly);
+    ImGui::InputFloat3("scene bmin", &gl_scene.bmin[0], "%.3f", ImGuiInputTextFlags_ReadOnly);
+    ImGui::InputFloat3("scene bmax", &gl_scene.bmax[0], "%.3f", ImGuiInputTextFlags_ReadOnly);
+    ImGui::End();
+
     glfwGetFramebufferSize(window, &display_w, &display_h);
     glViewport(0, 0, display_w, display_h);
     glClearColor(clear_color.x, clear_color.y, clear_color.z, clear_color.w);
     glEnable(GL_DEPTH_TEST);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+#if 0
     // camera & rotate
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
@@ -1090,7 +1138,10 @@ int main(int argc, char** argv) {
     // Centerize object.
     glTranslatef(-0.5 * (bmax[0] + bmin[0]), -0.5 * (bmax[1] + bmin[1]),
                  -0.5 * (bmax[2] + bmin[2]));
+#endif
 
+    DrawScene(curr_shader, gl_scene);
+    
 #if 0
     // Draw scene
     if ((scene.default_root_node >= 0) && (scene.default_root_node < scene.nodes.size())) {
