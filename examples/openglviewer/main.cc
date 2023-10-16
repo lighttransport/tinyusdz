@@ -10,6 +10,10 @@
 #include <thread>
 #include <vector>
 
+#if defined(_MSC_VER)
+#include <direct.h> // _getcwd
+#endif
+
 // GL
 //
 // glad must be included before glfw3.h
@@ -28,6 +32,7 @@
 // TinyUSDZ
 // include relative to openglviewer example cmake top dir for clangd lsp.
 #include "tinyusdz.hh"
+#include "io-util.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
 
@@ -831,6 +836,25 @@ static void MygluLookAt(float eye[3], float center[3], float up[3]) {
   glTranslatef(-eye[0], -eye[1], -eye[2]);
 }
 
+std::string find_file(const std::string basefile, int max_parents = 8)
+{
+  if (max_parents > 16) {
+     return std::string();
+  }
+
+  std::string filepath = basefile;
+
+  for (size_t i = 0; i < max_parents; i++) {
+    if (tinyusdz::io::FileExists(filepath)) {
+      return filepath;
+    }
+
+    filepath = "../" + filepath;
+  }
+
+  return std::string();
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -883,19 +907,27 @@ int main(int argc, char** argv) {
   glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
 #endif
 
-  std::string filename = "../../../models/suzanne.usdc";
+  std::string filename = "models/suzanne.usdc";
+#if defined(_MSC_VER)
+  std::cout << "cwd: " << _getcwd(nullptr, 0) << "\n";
+#endif
 
   if (argc > 1) {
     filename = std::string(argv[1]);
   }
 
-  std::cout << "Loading USD file " << filename << "\n";
+  std::string full_filepath = find_file(filename);
+  if (full_filepath.empty()) {
+    std::cerr << "cannot find or file not exists: " << filename << "\n";
+  }
+
+  std::cout << "Loading USD file " << full_filepath << "\n";
 
   std::string warn;
   std::string err;
   tinyusdz::Stage stage;
 
-  bool ret = tinyusdz::LoadUSDFromFile(filename, &stage, &warn, &err);
+  bool ret = tinyusdz::LoadUSDFromFile(full_filepath, &stage, &warn, &err);
   if (!warn.empty()) {
     std::cerr << "WARN : " << warn << "\n";
     return EXIT_FAILURE;
@@ -1048,8 +1080,8 @@ int main(int argc, char** argv) {
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
+    //glFlush();
     glfwSwapBuffers(window);
-    glFlush();
 
     static int frameCount = 0;
     static double currentTime = glfwGetTime();
@@ -1065,8 +1097,6 @@ int main(int argc, char** argv) {
       frameCount = 0;
       previousTime = currentTime;
     }
-
-    glfwSwapBuffers(window);
 
     done = glfwWindowShouldClose(window);
   };
