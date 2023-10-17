@@ -28,14 +28,14 @@ struct CrateReaderConfig {
   // Set limits to prevent infinite-loop, buffer-overrun, out-of-memory, etc.
   size_t maxTOCSections = 32;
 
-  size_t maxNumTokens = 1024 * 1024;
-  size_t maxNumStrings = 1024 * 1024;
-  size_t maxNumFields = 1024 * 1024;
-  size_t maxNumFieldSets = 1024 * 1024;
-  size_t maxNumSpecifiers = 1024 * 1024;
-  size_t maxNumPaths = 1024 * 1024;
+  size_t maxNumTokens = 1024 * 1024 * 64;
+  size_t maxNumStrings = 1024 * 1024 * 64;
+  size_t maxNumFields = 1024 * 1024 * 256;
+  size_t maxNumFieldSets = 1024 * 1024 * 256;
+  size_t maxNumSpecifiers = 1024 * 1024 * 256;
+  size_t maxNumPaths = 1024 * 1024 * 256;
 
-  size_t maxNumIndices = 1024 * 1024 * 16;
+  size_t maxNumIndices = 1024 * 1024 * 256;
   size_t maxDictElements = 256;
   size_t maxArrayElements = 1024 * 1024 * 1024;  // 1G
   size_t maxAssetPathElements = 512;
