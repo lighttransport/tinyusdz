@@ -650,7 +650,7 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
         std::vector<vec2> uvs(vattr.counts());
         memcpy(uvs.data(), vattr.data.data(), vattr.data.size());
 
-        dst.facevaryingTexcoords[size_t(slotId)] = uvs;
+        dst.facevaryingTexcoords[uint32_t(slotId)] = uvs;
 
       } else {
         PUSH_ERROR_AND_RETURN(ret.error());
