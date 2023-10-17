@@ -33,6 +33,7 @@
 // include relative to openglviewer example cmake top dir for clangd lsp.
 #include "tinyusdz.hh"
 #include "value-pprint.hh" // import to_string(tinyusdz::value::***)
+#include "linear-algebra.hh"
 #include "io-util.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
@@ -518,6 +519,10 @@ bool SetupTexture(const tinyusdz::tydra::RenderScene& scene,
   return true;
 }
 
+static void BuildFacevaryingGeometricNormals(const std::vector<tinyusdz::tydra::vec3> &points,
+  std::vector<tinyusdz::tydra::vec3> &geom_facevarying_normals);
+
+
 static bool SetupMesh(tinyusdz::tydra::RenderMesh& mesh, GLuint program_id,
                       GLMeshState& gl_state)  // [out]
 {
@@ -574,11 +579,11 @@ static bool SetupMesh(tinyusdz::tydra::RenderMesh& mesh, GLuint program_id,
   //
   // - Static mesh(STATIC_DRAW) only
 
+  std::vector<tinyusdz::tydra::vec3> facevaryingVertices;
   {  // position
 
     // expand position to facevarying data.
     // assume faces are all triangle.
-    std::vector<tinyusdz::tydra::vec3> facevaryingVertices;
     facevaryingVertices.resize(indices.size() / 3);
     gl_state.num_triangles = indices.size() / 3;
 
@@ -634,7 +639,14 @@ static bool SetupMesh(tinyusdz::tydra::RenderMesh& mesh, GLuint program_id,
     }
   }
 
-  if (mesh.facevaryingNormals.size()) {  // normals
+  std::vector<tinyusdz::tydra::vec3> facevaryingNormals;
+  if (mesh.facevaryingNormals.size()) {
+    facevaryingNormals = mesh.facevaryingNormals;
+  } else {
+    BuildFacevaryingGeometricNormals(facevaryingVertices, facevaryingNormals);
+  }
+
+  if (facevaryingNormals.size()) {  // normals
     GLuint vb;
     glGenBuffers(1, &vb);
     glBindBuffer(GL_ARRAY_BUFFER, vb);
@@ -918,6 +930,47 @@ std::string find_file(const std::string basefile, int max_parents = 8)
   }
 
   return std::string();
+}
+
+static void BuildFacevaryingGeometricNormals(const std::vector<tinyusdz::tydra::vec3> &points,
+  std::vector<tinyusdz::tydra::vec3> &geom_facevarying_normals) {
+
+  if ((points.size() % 3) != 0) {
+    return; 
+  }
+
+  size_t npoints = points.size() / 3;
+
+  for (size_t i = 0 ; i < npoints; i++) {   
+    tinyusdz::value::point3f p0;
+    p0.x = points[3 * i + 0][0];
+    p0.y = points[3 * i + 0][1];
+    p0.z = points[3 * i + 0][2];
+    tinyusdz::value::point3f p1;
+    p1.x = points[3 * i + 1][0];
+    p1.y = points[3 * i + 1][1];
+    p1.z = points[3 * i + 1][2];
+    tinyusdz::value::point3f p2;
+    p2.x = points[3 * i + 2][0];
+    p2.y = points[3 * i + 2][1];
+    p2.z = points[3 * i + 2][2];
+    
+    tinyusdz::value::point3f p10 = p1 - p0;
+    tinyusdz::value::point3f p20 = p2 - p0;
+
+    // CCW
+    tinyusdz::value::point3f Ng = tinyusdz::vcross(p10, p20);
+    Ng = tinyusdz::vnormalize(Ng);
+
+    tinyusdz::tydra::vec3 nf;
+    nf[0] = Ng.x;
+    nf[1] = Ng.y;
+    nf[2] = Ng.z;
+
+    geom_facevarying_normals.push_back(nf);
+    geom_facevarying_normals.push_back(nf);
+    geom_facevarying_normals.push_back(nf);
+  }
 }
 
 }  // namespace
