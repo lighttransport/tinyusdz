@@ -318,10 +318,12 @@ bool FindBoundMaterial(
     return true;
   }
 
-  // Search parent Prim
+  // Search parent Prim's materialBinding.
+  Path currentPath = abs_path;
+
   int depth = 0;
   while (depth < 1024*1024*128) { // to avoid infinite loop.
-    Path parentPath = abs_path.get_parent_prim_path();
+    Path parentPath = currentPath.get_parent_prim_path();
     DCOUT("search parent: " << parentPath.full_path_name());
 
     if (parentPath.is_valid() && (!parentPath.is_root_path())) {
@@ -343,6 +345,9 @@ bool FindBoundMaterial(
       // no further parent Prim.
       return false;
     }
+
+    currentPath = parentPath;
+
     depth++;
   }
 
