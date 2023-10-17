@@ -780,6 +780,10 @@ half float_to_half_full(float _f) {
   return fp16;
 }
 
+matrix2f::matrix2f(const matrix2d &src) {
+  (*this) = src;
+}
+
 matrix2f &matrix2f::operator=(const matrix2d &src) {
 
   for (size_t j = 0; j < 2; j++) {
@@ -789,6 +793,10 @@ matrix2f &matrix2f::operator=(const matrix2d &src) {
   }
 
   return *this;
+}
+
+matrix3f::matrix3f(const matrix3d &src) {
+  (*this) = src;
 }
 
 matrix3f &matrix3f::operator=(const matrix3d &src) {
