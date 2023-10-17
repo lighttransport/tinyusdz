@@ -98,7 +98,7 @@ struct GLVertexUniformState {
   GLint u_mvp{-1};
 
   std::array<float, 16> modelMatrix[16];
-  std::array<float, 16> normalMatrix[16];  // transpose(inverse(model * view))
+  std::array<float, 9> normalMatrix[9];  // 3x3 transpose(inverse(model * view))
   std::array<float, 16> mvp[16]; // modeviewprojection
 };
 
@@ -311,10 +311,11 @@ void SetupVertexUniforms(GLVertexUniformState& gl_state,
   matrix4d invtransmatd = tinyusdz::inverse(
       tinyusdz::upper_left_3x3_only(worldmatd));
 
-  matrix4f invtransmat = invtransmatd;
+  matrix3d invtransmat33d = tinyusdz::to_matrix3x3(invtransmatd);
+  matrix3f invtransmat33 = invtransmat33d;
 
   memcpy(gl_state.modelMatrix, &worldmat.m[0][0], sizeof(float) * 16);
-  memcpy(gl_state.normalMatrix, &invtransmat.m[0][0], sizeof(float) * 16);
+  memcpy(gl_state.normalMatrix, &invtransmat33.m[0][0], sizeof(float) * 9);
 
   // NOTE: USD uses pre-multiply matmul
   matrix4f mvp = viewproj * worldmat;
@@ -331,7 +332,7 @@ void SetVertexUniforms(const GLVertexUniformState& gl_state) {
   }
 
   if (gl_state.u_normal > -1) {
-    glUniformMatrix4fv(gl_state.u_normal, 1, GL_FALSE,
+    glUniformMatrix3fv(gl_state.u_normal, 1, GL_FALSE,
                        gl_state.normalMatrix->data());
     CHECK_GL("UniformMatrix u_normal");
   }
