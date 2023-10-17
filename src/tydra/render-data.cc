@@ -246,7 +246,9 @@ bool TriangulatePolygon(const std::vector<T> &points,
           faceVertexIndices[faceIndexOffset + 1]);
       triangulatedFaceVertexIndices.push_back(
           faceVertexIndices[faceIndexOffset + 2]);
-      faceVertexIndexMap.push_back(i);
+      faceVertexIndexMap.push_back(faceIndexOffset + 0);
+      faceVertexIndexMap.push_back(faceIndexOffset + 1);
+      faceVertexIndexMap.push_back(faceIndexOffset + 2);
 #if 1
     } else if (npolys == 4) {
       // Use simple split
@@ -268,8 +270,12 @@ bool TriangulatePolygon(const std::vector<T> &points,
       triangulatedFaceVertexIndices.push_back(
           faceVertexIndices[faceIndexOffset + 3]);
 
-      faceVertexIndexMap.push_back(i);
-      faceVertexIndexMap.push_back(i);
+      faceVertexIndexMap.push_back(faceIndexOffset + 0);
+      faceVertexIndexMap.push_back(faceIndexOffset + 1);
+      faceVertexIndexMap.push_back(faceIndexOffset + 2);
+      faceVertexIndexMap.push_back(faceIndexOffset + 0);
+      faceVertexIndexMap.push_back(faceIndexOffset + 2);
+      faceVertexIndexMap.push_back(faceIndexOffset + 3);
 #endif
     } else {
       // Find the normal axis of the polygon using Newell's method
@@ -374,7 +380,9 @@ bool TriangulatePolygon(const std::vector<T> &points,
         triangulatedFaceVertexIndices.push_back(
             faceVertexIndices[faceIndexOffset + indices[3 * k + 2]]);
 
-        faceVertexIndexMap.push_back(i);
+        faceVertexIndexMap.push_back(faceIndexOffset + indices[3 * k + 0]);
+        faceVertexIndexMap.push_back(faceIndexOffset + indices[3 * k + 1]);
+        faceVertexIndexMap.push_back(faceIndexOffset + indices[3 * k + 2]);
       }
     }
 
@@ -642,7 +650,7 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
         std::vector<vec2> uvs(vattr.counts());
         memcpy(uvs.data(), vattr.data.data(), vattr.data.size());
 
-        dst.facevaryingTexcoords.emplace(slotId, uvs);
+        dst.facevaryingTexcoords[slotId] = uvs;
 
       } else {
         PUSH_ERROR_AND_RETURN(ret.error());
@@ -663,10 +671,40 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
       PUSH_ERROR_AND_RETURN("Triangulation failed: " + err);
     }
 
-    // TODO: Triangulate primvars with faceVertexIndexMap
 
     dst.faceVertexCounts = std::move(triangulatedFaceVertexCounts);
     dst.faceVertexIndices = std::move(triangulatedFaceVertexIndices);
+
+    if (dst.facevaryingNormals.size()) {
+      std::vector<tydra::vec3> triangulatedFacevaryingNormals;
+
+      for (size_t i = 0; i < faceVertexIndexMap.size(); i++) {
+        size_t fvIdx = faceVertexIndexMap[i];
+        triangulatedFacevaryingNormals.push_back(dst.facevaryingNormals[fvIdx]);
+      }  
+
+      dst.facevaryingNormals = std::move(triangulatedFacevaryingNormals);
+    }
+
+    if (dst.facevaryingTexcoords.size()) {
+       
+      std::unordered_map<uint32_t, std::vector<tydra::vec2>> triangulatedFacevaryingTexcoords;
+
+      for (auto &slot : dst.facevaryingTexcoords) {
+        std::vector<tydra::vec2> texcoords;
+        for (size_t i = 0; i < faceVertexIndexMap.size(); i++) {
+          size_t fvIdx = faceVertexIndexMap[i];
+
+          texcoords.push_back(slot.second[fvIdx]);
+        }  
+        triangulatedFacevaryingTexcoords[slot.first] = texcoords;
+
+      }
+
+      dst.facevaryingTexcoords = std::move(triangulatedFacevaryingTexcoords);
+    }
+
+    // TODO: Triangulate other primvars with faceVertexIndexMap
 
   }  // triangulate
 
