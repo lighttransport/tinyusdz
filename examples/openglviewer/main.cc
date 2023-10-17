@@ -585,7 +585,6 @@ static bool SetupMesh(tinyusdz::tydra::RenderMesh& mesh, GLuint program_id,
 
     // expand position to facevarying data.
     // assume faces are all triangle.
-    facevaryingVertices.resize(indices.size() / 3);
     gl_state.num_triangles = indices.size() / 3;
 
     for (size_t i = 0; i < indices.size() / 3; i++) {
@@ -1027,6 +1026,7 @@ int main(int argc, char** argv) {
 #endif
 
   std::string filename = "models/suzanne.usdc";
+  //std::string filename = "models/simple-plane.usdz";
 #if defined(_MSC_VER)
   std::cout << "cwd: " << _getcwd(nullptr, 0) << "\n";
 #endif
