@@ -838,11 +838,22 @@ static bool ProcScene(const example::shader &gl_shader, const tinyusdz::Stage& s
     gl_node.gl_mesh_state = gl_mesh;
 
     // FIXME:
+    tinyusdz::value::double3 scene_center;
+    scene_center[0] = scene_bmin[0] + 0.5 * (scene_bmax[0] - scene_bmin[0]);
+    scene_center[1] = scene_bmin[1] + 0.5 * (scene_bmax[1] - scene_bmin[1]);
+    scene_center[2] = scene_bmin[2] + 0.5 * (scene_bmax[2] - scene_bmin[2]);
+
     tinyusdz::value::matrix4d identm = tinyusdz::value::matrix4d::identity();
+    tinyusdz::value::double3 trans = {scene_center[0], scene_center[1], scene_center[2]};
+    tinyusdz::value::double3 rotate = {90.0, 0.0, 0.0};
+    tinyusdz::value::double3 scale = {1.0, 1.0, -1.0};
+    tinyusdz::value::matrix4d rotm = tinyusdz::trs_angle_xyz(trans, rotate, scale);
+
+    tinyusdz::value::matrix4d modelm = rotm * identm;
 
 
     std::cout << "global matrix: " << identm << "\n";
-    SetupVertexUniforms(gl_node.gl_v_uniform_state, identm, viewproj);
+    SetupVertexUniforms(gl_node.gl_v_uniform_state, modelm, viewproj);
     SetupGLUniforms(gl_shader.get_program(), gl_node.gl_v_uniform_state);
 
     scene->gl_nodes.emplace_back(gl_node);
