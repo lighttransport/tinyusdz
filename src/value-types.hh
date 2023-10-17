@@ -604,6 +604,7 @@ struct matrix2f {
     return m;
   }
 
+  matrix2f(const matrix2d &rhs);
   matrix2f &operator=(const matrix2d &rhs);
   
   float m[2][2];
@@ -683,6 +684,7 @@ struct matrix3f {
     return m;
   }
 
+  matrix3f(const matrix3d &rhs);
   matrix3f &operator=(const matrix3d &rhs);
 
   float m[3][3];
