@@ -1256,7 +1256,7 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
 
         // Get value producing attribute(i.e, follow .connection and return
         // terminal Attribute value)
-        value::token varname;
+        std::string varname;
         TerminalAttributeValue attr;
         if (!tydra::EvaluateAttribute(*_stage, *readerPrim, "inputs:varname",
                                       &attr, &err)) {
@@ -1267,18 +1267,22 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
         }
 
         if (auto pv = attr.as<value::token>()) {
-          varname = *pv;
+          varname = (*pv).str();
+        } else if (auto pvs = attr.as<std::string>()) {
+          varname = (*pvs);
+        } else if (auto pvsd = attr.as<value::StringData>()) {
+          varname = (*pvsd).value;
         } else {
           PUSH_ERROR_AND_RETURN(
-              "`inputs:varname` must be `token` type, but got " +
+              "`inputs:varname` must be `string` or `token` type, but got " +
               attr.type_name());
         }
-        if (varname.str().empty()) {
+        if (varname.empty()) {
           PUSH_ERROR_AND_RETURN("`inputs:varname` is empty token.");
         }
         DCOUT("inputs:varname = " << varname);
 
-        tex.varname_uv = varname.str();
+        tex.varname_uv = varname;
       } else if (const UsdTransform2d *ptransform =
                      pshader->value.as<UsdTransform2d>()) {
         auto result = ConvertTexTransform2d(*_stage, path, *ptransform, &tex);
