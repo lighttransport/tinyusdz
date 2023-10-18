@@ -1071,6 +1071,9 @@ int main(int argc, char** argv) {
     return EXIT_FAILURE;
   }
 
+  std::string basedir = tinyusdz::io::GetBaseDir(full_filepath);
+  std::cout << "basedir = " << basedir << "\n";
+
   gCtx.usd_filepath = full_filepath;
 
   GLFWwindow* window{nullptr};
