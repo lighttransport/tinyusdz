@@ -18,6 +18,13 @@
 //
 // glad must be included before glfw3.h
 // TODO: Use imgui's imgui_impl_opengl3_loader.h
+#if defined(_WIN32)
+#if !defined(NOMINMAX)
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#endif
+
 #include "glad/glad.h"
 //
 #include <GLFW/glfw3.h>
@@ -37,6 +44,7 @@
 #include "io-util.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
+#include "external/linalg.h"
 
 // local
 #include "shader.hh"
@@ -71,6 +79,7 @@ constexpr auto kUniformOcclusionTexScaleAndBias =
 #include "shaders/no_skinning.vert_inc.hh"
 #include "shaders/world_fragment.frag_inc.hh"
 #include "shaders/normals.frag_inc.hh"
+#include "shaders/usdpreviewsurface.frag_inc.hh"
 
 #define CHECK_GL(tag)                                                        \
   do {                                                                       \
@@ -82,7 +91,7 @@ constexpr auto kUniformOcclusionTexScaleAndBias =
   } while (0)
 
 struct GLTexParams {
-  std::map<std::string, GLint> uniforms;
+  //std::map<std::string, GLint> uniforms;
   GLenum wrapS{GL_REPEAT};
   GLenum wrapT{GL_REPEAT};
   std::array<float, 4> borderCol{0.0f, 0.0f, 0.0f, 0.0f};  // transparent black
@@ -90,6 +99,9 @@ struct GLTexParams {
 
 struct GLTexState {
   GLTexParams texParams;
+  std::string sampler_name;
+  uint32_t slot_id{0};
+  GLuint tex_id;
 };
 
 struct GLVertexUniformState {
@@ -113,6 +125,8 @@ struct GLMeshState {
 struct GLNodeState {
   GLVertexUniformState gl_v_uniform_state;
   GLMeshState gl_mesh_state;
+
+  GLTexState gl_tex_state;
 };
 
 struct GLProgramState {
@@ -162,13 +176,16 @@ struct GUIContext {
   float znear = 0.01f;
   float zfar = 1000.0f;
 
-  std::array<float, 3> eye = {0.0f, 0.0f, 5.0f};
+  std::array<float, 3> eye = {0.0f, 0.5f, -5.0f};
   std::array<float, 3> lookat = {0.0f, 0.0f, 0.0f};
   std::array<float, 3> up = {0.0f, 1.0f, 0.0f};
 
   example::Camera camera;
 
   std::string usd_filepath;
+
+  std::string converter_info;
+  std::string converter_warn;
 };
 
 GUIContext gCtx;
@@ -344,8 +361,19 @@ void SetVertexUniforms(const GLVertexUniformState& gl_state) {
   if (gl_state.u_mvp > -1) {
     glUniformMatrix4fv(gl_state.u_mvp, 1, GL_FALSE,
                        gl_state.mvp->data());
-    CHECK_GL("UniformMatrix u_normal");
+    CHECK_GL("UniformMatrix u_mvp");
   }
+}
+
+void SetTexUniforms(const GLuint prog_id, const GLTexState& gl_tex) {
+  glActiveTexture(GL_TEXTURE0 + gl_tex.slot_id);
+  glBindTexture(GL_TEXTURE_2D, gl_tex.tex_id);
+
+  GLint loc = glGetUniformLocation(prog_id, gl_tex.sampler_name.c_str());
+  if (loc > -1) {
+    glUniform1i(loc, gl_tex.slot_id);
+  }
+  CHECK_GL("glUniform1i u_modelview");
 }
 
 bool LoadShaders(GLProgramState &gl_state) {
@@ -353,8 +381,8 @@ bool LoadShaders(GLProgramState &gl_state) {
   std::string vert_str(reinterpret_cast<char*>(shaders_no_skinning_vert),
                 shaders_no_skinning_vert_len);
 
-  std::string frag_str(reinterpret_cast<char*>(shaders_normals_frag),
-                shaders_normals_frag_len);
+  std::string frag_str(reinterpret_cast<char*>(shaders_usdpreviewsurface_frag),
+                shaders_usdpreviewsurface_frag_len);
 
   example::shader default_shader("default", vert_str, frag_str);
 
@@ -731,25 +759,58 @@ static void DrawMesh(const GLMeshState& gl_state) {
   glBindVertexArray(0);
 }
 
-static void DrawNode(const GLNodeState& gl_node) {
+static void DrawNode(GLNodeState& gl_node,
+  const tinyusdz::value::matrix4f &viewproj) {
+
+  // FIXME
+  tinyusdz::value::matrix4d identm = tinyusdz::value::matrix4d::identity();
+  tinyusdz::value::double3 trans = {0.0, 0.0, 0.0};
+  tinyusdz::value::double3 rotate = {0.0, 0.0, 0.0};
+  tinyusdz::value::double3 scale = {1.0, 1.0, -1.0};
+  tinyusdz::value::matrix4d rotm = tinyusdz::trs_angle_xyz(trans, rotate, scale);
+
+  tinyusdz::value::matrix4d modelm = rotm * identm;
+
+  SetupVertexUniforms(gl_node.gl_v_uniform_state, modelm, viewproj);
+
   SetVertexUniforms(gl_node.gl_v_uniform_state);
+  //SetTexUniforms(gl_node.gl_tex_state);
 
   DrawMesh(gl_node.gl_mesh_state);
 }
 
+static void ConvertMatrix(example::mat4 &m, tinyusdz::value::matrix4f &dst)
+{
+  for (size_t i = 0; i < 4; i++) {
+    for (size_t j = 0; j < 4; j++) {
+      dst.m[i][j] = m[i][j];
+    }
+  }
+}
+
 static void DrawScene(const example::shader &shader,
-                      const GLScene& scene) {
+                      GLScene& scene) {
   //
   // Use single shader for the scene
   //
+
+  tinyusdz::value::matrix4f view;
+  ConvertMatrix(gCtx.camera.matrices.view, view);
+
+  tinyusdz::value::matrix4f proj;
+  ConvertMatrix(gCtx.camera.matrices.perspective, proj);
+
+  tinyusdz::value::matrix4f viewproj = view * proj;
+
 
   // bind program
   shader.use();
   CHECK_GL("shader.use");
 
+
   for (size_t i = 0; i < scene.gl_nodes.size(); i++) {
-    const auto gl_node = scene.gl_nodes[i];
-    DrawNode(gl_node);
+    auto &gl_node = scene.gl_nodes[i];
+    DrawNode(gl_node, viewproj);
   }
 
   glUseProgram(0);
@@ -782,15 +843,21 @@ static void ComputeBoundingBox(
   }
 }
 
-static bool ProcScene(const example::shader &gl_shader, const tinyusdz::Stage& stage, GLScene *scene) {
+
+static bool ProcScene(const example::shader &gl_shader, const tinyusdz::Stage& stage,
+  std::string &asset_search_path, GLScene *scene) {
   //
   // Stage to Renderable Scene
   tinyusdz::tydra::RenderSceneConverter converter;
+
+  converter.set_search_paths({asset_search_path});
 
   tinyusdz::tydra::RenderScene renderScene;
   bool ret = converter.ConvertToRenderScene(stage, &renderScene);
   if (converter.GetWarning().size()) {
     std::cout << "ConvertToRenderScene WARN: " << converter.GetWarning() << "\n";
+
+    gCtx.converter_warn = converter.GetWarning();
   }
 
   if (!ret) {
@@ -799,6 +866,9 @@ static bool ProcScene(const example::shader &gl_shader, const tinyusdz::Stage& s
   } 
 
   std::cout << "# of meshes: " << renderScene.meshes.size() << "\n";
+  std::cout << "# of textures: " << renderScene.textures.size() << "\n";
+
+  gCtx.converter_info = converter.GetInfo();
 
   std::array<float, 3> scene_bmin;
   std::array<float, 3> scene_bmax;
@@ -811,8 +881,21 @@ static bool ProcScene(const example::shader &gl_shader, const tinyusdz::Stage& s
            -std::numeric_limits<float>::infinity(),
            -std::numeric_limits<float>::infinity() };
 
-  // FIXME:
-  tinyusdz::value::matrix4f viewproj = tinyusdz::value::matrix4d::identity();
+  tinyusdz::value::matrix4f view;
+  ConvertMatrix(gCtx.camera.matrices.view, view);
+
+  tinyusdz::value::matrix4f proj;
+  ConvertMatrix(gCtx.camera.matrices.perspective, proj);
+
+  tinyusdz::value::matrix4f viewproj = proj * view;
+
+  std::map<std::string, GLTexState> gl_tex_state_map;
+
+  for (size_t i = 0; i < renderScene.textures.size(); i++) {
+    SetupTexture(renderScene, renderScene.textures[i]);
+  }
+
+  // TODO: Material
 
   for (size_t i = 0; i < renderScene.meshes.size(); i++) {
     std::array<float, 3> bmin;
@@ -847,24 +930,26 @@ static bool ProcScene(const example::shader &gl_shader, const tinyusdz::Stage& s
     scene_center[1] = scene_bmin[1] + 0.5 * (scene_bmax[1] - scene_bmin[1]);
     scene_center[2] = scene_bmin[2] + 0.5 * (scene_bmax[2] - scene_bmin[2]);
 
+    // FIXME
     tinyusdz::value::matrix4d identm = tinyusdz::value::matrix4d::identity();
     tinyusdz::value::double3 trans = {scene_center[0], scene_center[1], scene_center[2]};
-    tinyusdz::value::double3 rotate = {90.0, 0.0, 0.0};
+    tinyusdz::value::double3 rotate = {0.0, 0.0, 0.0};
     tinyusdz::value::double3 scale = {1.0, 1.0, -1.0};
     tinyusdz::value::matrix4d rotm = tinyusdz::trs_angle_xyz(trans, rotate, scale);
 
     tinyusdz::value::matrix4d modelm = rotm * identm;
 
-
     std::cout << "global matrix: " << identm << "\n";
     SetupVertexUniforms(gl_node.gl_v_uniform_state, modelm, viewproj);
     SetupGLUniforms(gl_shader.get_program(), gl_node.gl_v_uniform_state);
+
 
     scene->gl_nodes.emplace_back(gl_node);
   }
 
   scene->bmin = scene_bmin;
   scene->bmax = scene_bmax;
+
 
   // TODO
   return true;
@@ -988,6 +1073,34 @@ static void BuildFacevaryingGeometricNormals(const std::vector<tinyusdz::tydra::
   }
 }
 
+static void ImMatrix4Display(const char *label, const float *m) {
+
+  static std::string labels[4];
+
+  labels[0] = std::string(label) + " m0";
+  labels[1] = std::string(label) + " m1";
+  labels[2] = std::string(label) + " m2";
+  labels[3] = std::string(label) + " m3";
+
+  ImGui::InputFloat4(labels[0].c_str(), const_cast<float *>(m), "%.3f", ImGuiInputTextFlags_ReadOnly);
+  ImGui::InputFloat4(labels[1].c_str(), const_cast<float *>(m+4), "%.3f", ImGuiInputTextFlags_ReadOnly);
+  ImGui::InputFloat4(labels[2].c_str(), const_cast<float *>(m+8), "%.3f", ImGuiInputTextFlags_ReadOnly);
+  ImGui::InputFloat4(labels[3].c_str(), const_cast<float *>(m+12), "%.3f", ImGuiInputTextFlags_ReadOnly);
+}
+
+static void ImMatrix3Display(const char *label, const float *m) {
+
+  static std::string labels[3];
+
+  labels[0] = std::string(label) + " m0";
+  labels[1] = std::string(label) + " m1";
+  labels[2] = std::string(label) + " m2";
+
+  ImGui::InputFloat3(labels[0].c_str(), const_cast<float *>(m), "%.3f", ImGuiInputTextFlags_ReadOnly);
+  ImGui::InputFloat3(labels[1].c_str(), const_cast<float *>(m+3), "%.3f", ImGuiInputTextFlags_ReadOnly);
+  ImGui::InputFloat3(labels[2].c_str(), const_cast<float *>(m+6), "%.3f", ImGuiInputTextFlags_ReadOnly);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1040,7 +1153,9 @@ int main(int argc, char** argv) {
   glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
 #endif
 
-  std::string filename = "models/suzanne.usdc";
+  //std::string filename = "models/suzanne.usdc";
+  //std::string filename = "models/texture-cat-plane.usdc";
+  std::string filename = "models/texturedcube.usdc";
   //std::string filename = "models/simple-plane.usdz";
 #if defined(_MSC_VER)
   std::cout << "cwd: " << _getcwd(nullptr, 0) << "\n";
@@ -1127,7 +1242,7 @@ int main(int argc, char** argv) {
   }
 
   GLScene gl_scene;
-  if (!ProcScene(gl_progs.shaders["default"], stage, &gl_scene)) {
+  if (!ProcScene(gl_progs.shaders["default"], stage, /* asset search path */basedir, &gl_scene)) {
     exit(-1);
   }
 
@@ -1191,14 +1306,19 @@ int main(int argc, char** argv) {
     ImGui::InputFloat3("scene bmax", &gl_scene.bmax[0], "%.3f", ImGuiInputTextFlags_ReadOnly);
     ImGui::End();
 
+    ImGui::Begin("RenderScene converter log");
+      ImGui::InputTextMultiline("info", const_cast<char *>(gCtx.converter_info.c_str()), gCtx.converter_info.size(), ImVec2(800, 300), ImGuiInputTextFlags_ReadOnly);
+      ImGui::InputTextMultiline("warn", const_cast<char *>(gCtx.converter_warn.c_str()), gCtx.converter_warn.size(), ImVec2(800, 300), ImGuiInputTextFlags_ReadOnly);
+    ImGui::End();
+
     ImGui::Begin("Camera");
     ImGui::SliderFloat("fov", &gCtx.fov, 0.0f, 178.0f);
-    ImGui::SliderFloat("znear", &gCtx.znear, 0.0f, 1000.f);
-    ImGui::SliderFloat("zfar", &gCtx.zfar, 0.0f, 10000.0f);
+    ImGui::InputFloat("znear", &gCtx.znear);
+    ImGui::InputFloat("zfar", &gCtx.zfar);
     ImGui::InputFloat3("eye", &gCtx.eye[0]);
     ImGui::Separator();
-    ImGui::SliderFloat("xrot", &gCtx.xrotate, -180.0f, 180.0f);
-    ImGui::SliderFloat("yrot", &gCtx.yrotate, -89.9f, 89.9f);
+    ImGui::SliderFloat("xrot", &gCtx.xrotate, -89.9f, 89.9f);
+    ImGui::SliderFloat("yrot", &gCtx.yrotate, -180.0f, 180.0f);
     ImGui::Separator();
     if (ImGui::Button("Reset rotation")) {
       gCtx.xrotate = 0.0f;
@@ -1214,26 +1334,31 @@ int main(int argc, char** argv) {
 
     float aspect = float(display_w) / float(display_h);
     // view
-    gCtx.camera.setPerspective(gCtx.fov, aspect, gCtx.znear, gCtx.zfar);
     gCtx.camera.setPosition(gCtx.eye);
     gCtx.camera.setRotation({gCtx.xrotate, gCtx.yrotate, 0.0f});
+    gCtx.camera.setPerspective(gCtx.fov, aspect, gCtx.znear, gCtx.zfar);
 
-#if 0
-    // camera & rotate
-    glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
-    MygluLookAt(eye, lookat, up);
-    // GLfloat mat[4][4];
-    // build_rotmatrix(mat, curr_quat);
-    // glMultMatrixf(&mat[0][0]);
+    gCtx.camera.matrices.perspective;
 
-    // Fit model to [-1, 1]
-    glScalef(1.0f / maxExtent, 1.0f / maxExtent, 1.0f / maxExtent);
+    ImGui::Begin("View matrix");
+    {
+      tinyusdz::value::matrix4f view;
+      ConvertMatrix(gCtx.camera.matrices.view, view);
+      tinyusdz::value::matrix4f proj;
+      ConvertMatrix(gCtx.camera.matrices.perspective, proj);
 
-    // Centerize object.
-    glTranslatef(-0.5 * (bmax[0] + bmin[0]), -0.5 * (bmax[1] + bmin[1]),
-                 -0.5 * (bmax[2] + bmin[2]));
-#endif
+      //example::mat4 viewproj = linalg::mul(gCtx.camera.matrices.perspective, gCtx.camera.matrices.view);
+      tinyusdz::value::matrix4f viewproj = view * proj;
+
+      ImMatrix4Display("view", &gCtx.camera.matrices.view[0][0]);
+      ImGui::Separator();
+      ImMatrix4Display("perspective", &gCtx.camera.matrices.perspective[0][0]);
+      ImGui::Separator();
+      //ImMatrix4Display("viewproj", &viewproj.x[0]);
+      ImMatrix4Display("viewproj", &viewproj.m[0][0]);
+
+      ImGui::End();
+    }
 
     DrawScene(curr_shader, gl_scene);
     
