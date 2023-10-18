@@ -158,6 +158,10 @@ struct GUIContext {
   float xrotate = 0.0f; // in degree
   float yrotate = 0.0f; // in degree
 
+  float fov = 45.0f; // in degree
+  float znear = 0.01f;
+  float zfar = 1000.0f;
+
   std::array<float, 3> eye = {0.0f, 0.0f, 5.0f};
   std::array<float, 3> lookat = {0.0f, 0.0f, 0.0f};
   std::array<float, 3> up = {0.0f, 1.0f, 0.0f};
@@ -1164,6 +1168,8 @@ int main(int argc, char** argv) {
   const example::shader &curr_shader = gl_progs.shaders["default"];
 
   while (!done) {
+
+
     glfwPollEvents();
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
@@ -1182,11 +1188,32 @@ int main(int argc, char** argv) {
     ImGui::InputFloat3("scene bmax", &gl_scene.bmax[0], "%.3f", ImGuiInputTextFlags_ReadOnly);
     ImGui::End();
 
+    ImGui::Begin("Camera");
+    ImGui::SliderFloat("fov", &gCtx.fov, 0.0f, 178.0f);
+    ImGui::SliderFloat("znear", &gCtx.znear, 0.0f, 1000.f);
+    ImGui::SliderFloat("zfar", &gCtx.zfar, 0.0f, 10000.0f);
+    ImGui::InputFloat3("eye", &gCtx.eye[0]);
+    ImGui::Separator();
+    ImGui::SliderFloat("xrot", &gCtx.xrotate, -180.0f, 180.0f);
+    ImGui::SliderFloat("yrot", &gCtx.yrotate, -89.9f, 89.9f);
+    ImGui::Separator();
+    if (ImGui::Button("Reset rotation")) {
+      gCtx.xrotate = 0.0f;
+      gCtx.yrotate = 0.0f;
+    }
+    ImGui::End();
+
     glfwGetFramebufferSize(window, &display_w, &display_h);
     glViewport(0, 0, display_w, display_h);
     glClearColor(clear_color.x, clear_color.y, clear_color.z, clear_color.w);
     glEnable(GL_DEPTH_TEST);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    float aspect = float(display_w) / float(display_h);
+    // view
+    gCtx.camera.setPerspective(gCtx.fov, aspect, gCtx.znear, gCtx.zfar);
+    gCtx.camera.setPosition(gCtx.eye);
+    gCtx.camera.setRotation({gCtx.xrotate, gCtx.yrotate, 0.0f});
 
 #if 0
     // camera & rotate
