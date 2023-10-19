@@ -18,7 +18,9 @@
 * MaterialX https://github.com/syoyo/tinyusdz/issues/86
   * USD + MateriralX + PBR rendering example using https://github.com/lighttransport/pbrlab
 * Improve interoperability with Blender USD export/import https://github.com/syoyo/tinyusdz/issues/98
-* tusdview(TinyUSDZ version of usdview)
+* Example viewer 
+  * [examples/openglviewer](examples/openglviewer) OpenGL viewer
+  * [examples/sdlviewer](examples/sdlviewer) Software raytracing viewer 
 
 ## "What if" Experimental feature
 
