@@ -658,9 +658,7 @@ class RenderSceneConverter {
   bool ConvertToRenderScene(const Stage &stage, RenderScene *scene);
 
   const std::string &GetInfo() const { return _info; }
-
   const std::string &GetWarning() const { return _warn; }
-
   const std::string &GetError() const { return _err; }
 
   StringAndIdMap nodeMap;
@@ -679,7 +677,7 @@ class RenderSceneConverter {
   ///
   /// @param[in] rmaterial_id RenderMaterial index. -1 if no material assigned
   /// to this Mesh. If the mesh has bounded material, RenderMaterial index must
-  /// be obrained using ConertMaterial method.
+  /// be obrained using ConvertMaterial method.
   /// @param[in] mesh Input GeomMesh
   /// @param[out] dst RenderMesh output
   ///
@@ -723,15 +721,13 @@ class RenderSceneConverter {
   MaterialConverterConfig _material_config;
   const Stage *_stage{nullptr};
 
+  void PushInfo(const std::string &msg) { _info += msg; }
   void PushWarn(const std::string &msg) { _warn += msg; }
-
   void PushError(const std::string &msg) { _err += msg; }
 
-  void PushInfo(const std::string &msg) { _info += msg; }
-
+  std::string _info;
   std::string _err;
   std::string _warn;
-  std::string _info;
 };
 
 // For debug
