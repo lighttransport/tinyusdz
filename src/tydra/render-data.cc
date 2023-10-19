@@ -1199,6 +1199,12 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
     tex.texture_image_id = int64_t(images.size());
 
     images.emplace_back(texImage);
+
+    std::stringstream ss;
+    ss << "Loaded texture image " << assetPath.GetAssetPath() << " : buffer_id " + std::to_string(texImage.buffer_id) << "\n";
+    ss << "  width x height x components " << texImage.width << " x " << texImage.height << " x " << texImage.channels << "\n";
+    ss << "  colorSpace " << tinyusdz::tydra::to_string(texImage.colorSpace) << "\n";
+    PushInfo(ss.str());
   }
 
   //
