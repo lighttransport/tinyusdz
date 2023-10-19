@@ -44,6 +44,7 @@ Alternatively you can use `xxd -i input.frag` to generate embeddable shader code
 
 * [x] Embed shader codes to C++ source code.
 * [ ] GeomSubset(per-face material)
+  * per-face material shading support may take time. Use raytraced viewer(../sdlviewer) for a while if you want to visualize GeomSubset
 * [ ] Bump/normal mapping
   * Need to compute tangent basis
 * [ ] UDIM texturing
