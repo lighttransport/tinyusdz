@@ -43,6 +43,7 @@ Alternatively you can use `xxd -i input.frag` to generate embeddable shader code
 ## TODO
 
 * [x] Embed shader codes to C++ source code.
+* [ ] GeomSubset(per-face material)
 * [ ] Bump/normal mapping
   * Need to compute tangent basis
 * [ ] UDIM texturing
