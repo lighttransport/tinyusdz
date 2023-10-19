@@ -657,6 +657,8 @@ class RenderSceneConverter {
   ///
   bool ConvertToRenderScene(const Stage &stage, RenderScene *scene);
 
+  const std::string &GetInfo() const { return _info; }
+
   const std::string &GetWarning() const { return _warn; }
 
   const std::string &GetError() const { return _err; }
@@ -725,8 +727,11 @@ class RenderSceneConverter {
 
   void PushError(const std::string &msg) { _err += msg; }
 
+  void PushInfo(const std::string &msg) { _info += msg; }
+
   std::string _err;
   std::string _warn;
+  std::string _info;
 };
 
 // For debug
