@@ -102,8 +102,99 @@ struct GLTexState {
   GLTexParams texParams;
   std::string sampler_name;
   uint32_t slot_id{0};
-  GLuint tex_id;
+  GLuint tex_id; // glBindTexture id
+  GLint u_tex{-1};  // sampler glUniform location
 };
+
+template<typename T>
+struct GLTexOrFactor {
+  GLTexOrFactor(const T &v) : factor(v) {}
+
+  GLTexState tex;
+  T factor;
+  GLint u_factor{-1};
+};
+
+template<typename T>
+struct GLUniformFactor {
+  GLUniformFactor(const T &v) : factor(v) {}
+
+  T factor;
+  GLint u_factor{-1};
+};
+
+struct GLUsdPreviewSurfaceState {
+
+  static constexpr auto kDiffuseColor = "diffuseColor";
+  static constexpr auto kDiffuseColorTex = "diffuseColorTex";
+  static constexpr auto kEmissionColor = "emissionColor";
+  static constexpr auto kEmissionColorTex = "emissionColorTex";
+  static constexpr auto kSpecularColor = "specularColor";
+  static constexpr auto kSpecularColorTex = "specularColorTex";
+  static constexpr auto kUseSpecularWorkflow = "useSpecularWorkflow";
+  static constexpr auto kMetallic = "metallic";
+  static constexpr auto kMetallicTex = "metallicTex";
+  static constexpr auto kRoughness = "roughness";
+  static constexpr auto kRoughnessTex = "roughnessTex";
+  static constexpr auto kClearcoat = "clearcoat";
+  static constexpr auto kClearcoatTex = "clearcoatTex";
+  static constexpr auto kClearcoatRoughness = "clearcoatRoughness";
+  static constexpr auto kClearcoatRoughnessTex = "clearcoatRoughnessTex";
+  static constexpr auto kOpacity = "opacity";
+  static constexpr auto kOpacityTex = "opacityTex";
+  static constexpr auto kOpacityThreshold = "opacityThreshold";
+  static constexpr auto kOpacityThresholdTex = "opacityThresholdTex";
+  static constexpr auto kIor = "ior";
+  static constexpr auto kIorTex = "iorTex";
+  static constexpr auto kNormal = "normal";
+  static constexpr auto kNormalTex = "normalTex";
+  static constexpr auto kOcclusion = "occlusion";
+  static constexpr auto kOcclusionTex = "occlusionTex";
+
+  GLTexOrFactor<tinyusdz::tydra::vec3> diffuseColor{{0.18f, 0.18f, 0.18f}};
+  GLTexOrFactor<tinyusdz::tydra::vec3> emissionColor{{0.0f, 0.0f, 0.0f}};
+
+  GLUniformFactor<int> useSpecularWorkflow{0}; // non-texturable
+
+  GLTexOrFactor<tinyusdz::tydra::vec3> specularColor{{0.0f, 0.0f, 0.0f}}; // useSpecularWorkflow = 1
+  GLTexOrFactor<float> metallic{0.0f}; // useSpecularWorkflow = 0
+
+  GLTexOrFactor<float> roughness{0.5f};
+  GLTexOrFactor<float> clearcoat{0.0f};
+  GLTexOrFactor<float> clearcoatRoughness{0.01f};
+  GLTexOrFactor<float> opacity{1.0f};
+  GLTexOrFactor<float> opacityThreshold{0.0f};
+
+  GLTexOrFactor<float> ior{1.5f};
+
+  GLTexOrFactor<tinyusdz::tydra::vec3> normal{{0.0f, 0.0f, 1.0f}}; // normal map
+
+  // No displacement mapping on OpenGL
+  //GLTexOrFactor<float> displacement{0.0f}; 
+
+  GLTexOrFactor<float> occlusion{1.0f}; 
+
+};
+
+void SetupGLUsdPreviewSurface(
+  GLuint prog_id,
+  tinyusdz::tydra::RenderMaterial &m,
+  GLUsdPreviewSurfaceState &dst)
+{
+  if (m.surfaceShader.diffuseColor.is_texture()) {
+    GLint loc = glGetUniformLocation(prog_id, GLUsdPreviewSurfaceState::kDiffuseColorTex);
+    dst.diffuseColor.tex.u_tex = loc;
+  } else {
+    GLint loc = glGetUniformLocation(prog_id, GLUsdPreviewSurfaceState::kDiffuseColor);
+    if (loc < 0) {
+      std::cerr << GLUsdPreviewSurfaceState::kDiffuseColor << " uniform not found in the shader.\n";
+    }
+    dst.diffuseColor.u_factor = loc;
+    dst.diffuseColor.factor = m.surfaceShader.diffuseColor.value;
+  }
+
+  // TODO: Support shader params
+}
 
 struct GLVertexUniformState {
   GLint u_model{-1};
