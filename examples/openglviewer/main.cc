@@ -96,6 +96,9 @@ struct GLTexParams {
   GLenum wrapS{GL_REPEAT};
   GLenum wrapT{GL_REPEAT};
   std::array<float, 4> borderCol{0.0f, 0.0f, 0.0f, 0.0f};  // transparent black
+
+  // Use 3x3 mat to support pivot transform.
+  tinyusdz::tydra::mat3 uv_transform{tinyusdz::tydra::mat3::identity()};
 };
 
 struct GLTexState {
@@ -104,6 +107,8 @@ struct GLTexState {
   uint32_t slot_id{0};
   GLuint tex_id; // glBindTexture id
   GLint u_tex{-1};  // sampler glUniform location
+
+  GLint u_transform; // texcoord transform
 };
 
 template<typename T>
@@ -126,33 +131,21 @@ struct GLUniformFactor {
 struct GLUsdPreviewSurfaceState {
 
   static constexpr auto kDiffuseColor = "diffuseColor";
-  static constexpr auto kDiffuseColorTex = "diffuseColorTex";
-  static constexpr auto kEmissionColor = "emissionColor";
-  static constexpr auto kEmissionColorTex = "emissionColorTex";
+  static constexpr auto kEmissiveColor = "emissiveColor";
   static constexpr auto kSpecularColor = "specularColor";
-  static constexpr auto kSpecularColorTex = "specularColorTex";
   static constexpr auto kUseSpecularWorkflow = "useSpecularWorkflow";
   static constexpr auto kMetallic = "metallic";
-  static constexpr auto kMetallicTex = "metallicTex";
   static constexpr auto kRoughness = "roughness";
-  static constexpr auto kRoughnessTex = "roughnessTex";
   static constexpr auto kClearcoat = "clearcoat";
-  static constexpr auto kClearcoatTex = "clearcoatTex";
   static constexpr auto kClearcoatRoughness = "clearcoatRoughness";
-  static constexpr auto kClearcoatRoughnessTex = "clearcoatRoughnessTex";
   static constexpr auto kOpacity = "opacity";
-  static constexpr auto kOpacityTex = "opacityTex";
   static constexpr auto kOpacityThreshold = "opacityThreshold";
-  static constexpr auto kOpacityThresholdTex = "opacityThresholdTex";
   static constexpr auto kIor = "ior";
-  static constexpr auto kIorTex = "iorTex";
   static constexpr auto kNormal = "normal";
-  static constexpr auto kNormalTex = "normalTex";
   static constexpr auto kOcclusion = "occlusion";
-  static constexpr auto kOcclusionTex = "occlusionTex";
 
   GLTexOrFactor<tinyusdz::tydra::vec3> diffuseColor{{0.18f, 0.18f, 0.18f}};
-  GLTexOrFactor<tinyusdz::tydra::vec3> emissionColor{{0.0f, 0.0f, 0.0f}};
+  GLTexOrFactor<tinyusdz::tydra::vec3> emissiveColor{{0.0f, 0.0f, 0.0f}};
 
   GLUniformFactor<int> useSpecularWorkflow{0}; // non-texturable
 
@@ -176,24 +169,148 @@ struct GLUsdPreviewSurfaceState {
 
 };
 
-void SetupGLUsdPreviewSurface(
+template<typename T>
+bool SetupGLUsdPreviewSurfaceParam(
+  const GLuint prog_id,
+  const tinyusdz::tydra::RenderScene &scene,
+  const std::string &base_shadername,
+  const tinyusdz::tydra::ShaderParam<T> &s,
+
+  GLTexOrFactor<T> &dst)
+{
+  if (s.is_texture()) {
+    {
+      std::string u_name = base_shadername + "Tex";
+      GLint loc = glGetUniformLocation(prog_id, u_name.c_str());
+      dst.tex.u_tex = loc;
+    }
+
+    {
+      std::string u_name = base_shadername + "TexTransform";
+      GLint loc = glGetUniformLocation(prog_id, u_name.c_str());
+      dst.tex.u_transform = loc;
+      if (s.textureId < 0 || s.textureId >= scene.textures.size()) {
+        std::cerr << "Invalid txtureId for " << base_shadername + "\n";
+      } else {
+        const tinyusdz::tydra::UVTexture &uvtex = scene.textures[size_t(s.textureId)];
+        dst.tex.texParams.uv_transform = uvtex.transform;
+      }
+    }
+
+  } else {
+    GLint loc = glGetUniformLocation(prog_id, base_shadername.c_str());
+    if (loc < 0) {
+      std::cerr << base_shadername << " uniform not found in the shader.\n";
+    }
+    dst.u_factor = loc;
+    dst.factor = s.value;
+  }
+
+  return true;
+}
+
+bool ReloadShader(
+  GLuint prog_id, const std::string &vert_filepath, const std::string &frag_filepath) {
+  std::string vert_str;
+  std::string frag_str;
+
+  if (vert_filepath.size() && tinyusdz::io::FileExists(vert_filepath)) {
+
+    std::vector<uint8_t> bytes;
+    std::string err;
+    if (!tinyusdz::io::ReadWholeFile(&bytes, &err, vert_filepath)) {
+      std::cerr << "Read vertg shader failed: " << err << "\n";
+      return false;
+    }
+
+    vert_str = std::string(reinterpret_cast<char *>(bytes.data()), bytes.size());
+  }
+
+  if (frag_filepath.size() && tinyusdz::io::FileExists(frag_filepath)) {
+
+    std::vector<uint8_t> bytes;
+    std::string err;
+    if (!tinyusdz::io::ReadWholeFile(&bytes, &err, frag_filepath)) {
+      std::cerr << "Read frag shader failed: " << err << "\n";
+      return false;
+    }
+
+    frag_str = std::string(reinterpret_cast<char *>(bytes.data()), bytes.size());
+  }
+
+  // TODO
+  return true;
+}
+
+
+bool SetupGLUsdPreviewSurface(
   GLuint prog_id,
+  tinyusdz::tydra::RenderScene &scene,
   tinyusdz::tydra::RenderMaterial &m,
   GLUsdPreviewSurfaceState &dst)
 {
-  if (m.surfaceShader.diffuseColor.is_texture()) {
-    GLint loc = glGetUniformLocation(prog_id, GLUsdPreviewSurfaceState::kDiffuseColorTex);
-    dst.diffuseColor.tex.u_tex = loc;
-  } else {
-    GLint loc = glGetUniformLocation(prog_id, GLUsdPreviewSurfaceState::kDiffuseColor);
-    if (loc < 0) {
-      std::cerr << GLUsdPreviewSurfaceState::kDiffuseColor << " uniform not found in the shader.\n";
-    }
-    dst.diffuseColor.u_factor = loc;
-    dst.diffuseColor.factor = m.surfaceShader.diffuseColor.value;
+  const auto surfaceShader = m.surfaceShader;
+
+  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene, GLUsdPreviewSurfaceState::kDiffuseColor, surfaceShader.diffuseColor, dst.diffuseColor)) {
+    return false;
   }
 
-  // TODO: Support shader params
+  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene, GLUsdPreviewSurfaceState::kEmissiveColor, surfaceShader.emissiveColor, dst.emissiveColor)) {
+    return false;
+  }
+
+  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene, GLUsdPreviewSurfaceState::kSpecularColor, surfaceShader.specularColor, dst.specularColor)) {
+    return false;
+  }
+
+  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene, GLUsdPreviewSurfaceState::kMetallic, surfaceShader.metallic, dst.metallic)) {
+    return false;
+  }
+
+  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene, GLUsdPreviewSurfaceState::kRoughness, surfaceShader.roughness, dst.roughness)) {
+    return false;
+  }
+
+  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene, GLUsdPreviewSurfaceState::kClearcoat, surfaceShader.clearcoat, dst.clearcoat)) {
+    return false;
+  }
+
+  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene, GLUsdPreviewSurfaceState::kClearcoatRoughness, surfaceShader.clearcoatRoughness, dst.clearcoatRoughness)) {
+    return false;
+  }
+
+  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene, GLUsdPreviewSurfaceState::kOpacity, surfaceShader.opacity, dst.opacity)) {
+    return false;
+  }
+
+  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene, GLUsdPreviewSurfaceState::kOpacityThreshold, surfaceShader.opacityThreshold, dst.opacityThreshold)) {
+    return false;
+  }
+
+  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene, GLUsdPreviewSurfaceState::kIor, surfaceShader.ior, dst.ior)) {
+    return false;
+  }
+
+  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene, GLUsdPreviewSurfaceState::kOcclusion, surfaceShader.occlusion, dst.occlusion)) {
+    return false;
+  }
+
+  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene, GLUsdPreviewSurfaceState::kNormal, surfaceShader.normal, dst.normal)) {
+    return false;
+  }
+
+  {
+    GLint loc = glGetUniformLocation(prog_id, GLUsdPreviewSurfaceState::kUseSpecularWorkflow);
+    if (loc < 0) {
+      std::cerr << GLUsdPreviewSurfaceState::kUseSpecularWorkflow << " uniform not found in the shader.\n";
+    }
+    dst.useSpecularWorkflow.factor = surfaceShader.useSpecularWorkFlow ? 1.0f : 0.0f;
+    dst.useSpecularWorkflow.u_factor = loc;
+  }
+
+  // TODO: `displacement` param
+
+  return true;
 }
 
 struct GLVertexUniformState {

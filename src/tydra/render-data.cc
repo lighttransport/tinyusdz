@@ -1460,6 +1460,16 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShader(
     return false;
   }
 
+  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.emissiveColor,
+                                        "emissiveColor", rshader.emissiveColor)) {
+    return false;
+  }
+
+  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.specularColor,
+                                        "specularColor", rshader.specularColor)) {
+    return false;
+  }
+
   if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.normal,
                                         "normal", rshader.normal)) {
     return false;
