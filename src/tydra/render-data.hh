@@ -467,6 +467,8 @@ struct PreviewSurfaceShader {
   bool useSpecularWorkFlow{false};
 
   ShaderParam<vec3> diffuseColor{{0.18f, 0.18f, 0.18f}};
+  ShaderParam<vec3> emissiveColor{{0.0f, 0.0f, 0.0f}};
+  ShaderParam<vec3> specularColor{{0.0f, 0.0f, 0.0f}};
   ShaderParam<float> metallic{0.0f};
   ShaderParam<float> roughness{0.5f};
   ShaderParam<float> clearcoat{0.0f};
