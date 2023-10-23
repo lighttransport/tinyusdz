@@ -173,5 +173,40 @@ bool ResolveRelativePath(const Path &base_prim_path, const Path &relative_path, 
   return true;
 }
 
+bool ValidatePropPath(const Path &path, std::string *err) {
+  if (path.prop_part() == ":") {
+    if (err) {
+      (*err) = "Namespace delimiter only in Property path.";
+    }
+    return false;
+  }
+
+  if (startsWith(path.prop_part(), ":")) {
+    if (err) {
+      (*err) = "Property path starts with namespace delimiter.";
+    }
+    return false;
+  }
+
+  if (endsWith(path.prop_part(), ":")) {
+    if (err) {
+      (*err) = "Property path ends with namespace delimiter.";
+    }
+    return false;
+  }
+
+  if (contains_str(path.prop_part(), "::")) {
+    if (err) {
+      (*err) = "Empty path among namespace delimiters(`::`) in Property path.";
+    }
+    return false;
+  }
+
+  // TODO: more validation
+
+  return true;
+
+}
+
 } // namespace pathutil
 } // namespace tinyusdz
