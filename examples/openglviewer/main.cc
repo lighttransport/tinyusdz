@@ -41,11 +41,11 @@
 #include "external/linalg.h"
 #include "io-util.hh"
 #include "linear-algebra.hh"
+#include "pprinter.hh"  // import to_string(tinyusdz::value::***)
 #include "tinyusdz.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
 #include "value-pprint.hh"  // import to_string(tinyusdz::value::***)
-#include "pprinter.hh"  // import to_string(tinyusdz::value::***)
 
 // local
 #include "shader.hh"
@@ -105,13 +105,13 @@ struct GLTexState {
   GLTexParams texParams;
   std::string sampler_name;
   uint32_t slot_id{0};
-  GLuint tex_id; // glBindTexture id
+  GLuint tex_id;    // glBindTexture id
   GLint u_tex{-1};  // sampler glUniform location
 
-  GLint u_transform; // texcoord transform
+  GLint u_transform;  // texcoord transform
 };
 
-template<typename T>
+template <typename T>
 struct GLTexOrFactor {
   GLTexOrFactor(const T &v) : factor(v) {}
 
@@ -120,7 +120,7 @@ struct GLTexOrFactor {
   GLint u_factor{-1};
 };
 
-template<typename T>
+template <typename T>
 struct GLUniformFactor {
   GLUniformFactor(const T &v) : factor(v) {}
 
@@ -129,7 +129,6 @@ struct GLUniformFactor {
 };
 
 struct GLUsdPreviewSurfaceState {
-
   static constexpr auto kDiffuseColor = "diffuseColor";
   static constexpr auto kEmissiveColor = "emissiveColor";
   static constexpr auto kSpecularColor = "specularColor";
@@ -147,10 +146,11 @@ struct GLUsdPreviewSurfaceState {
   GLTexOrFactor<tinyusdz::tydra::vec3> diffuseColor{{0.18f, 0.18f, 0.18f}};
   GLTexOrFactor<tinyusdz::tydra::vec3> emissiveColor{{0.0f, 0.0f, 0.0f}};
 
-  GLUniformFactor<int> useSpecularWorkflow{0}; // non-texturable
+  GLUniformFactor<int> useSpecularWorkflow{0};  // non-texturable
 
-  GLTexOrFactor<tinyusdz::tydra::vec3> specularColor{{0.0f, 0.0f, 0.0f}}; // useSpecularWorkflow = 1
-  GLTexOrFactor<float> metallic{0.0f}; // useSpecularWorkflow = 0
+  GLTexOrFactor<tinyusdz::tydra::vec3> specularColor{
+      {0.0f, 0.0f, 0.0f}};              // useSpecularWorkflow = 1
+  GLTexOrFactor<float> metallic{0.0f};  // useSpecularWorkflow = 0
 
   GLTexOrFactor<float> roughness{0.5f};
   GLTexOrFactor<float> clearcoat{0.0f};
@@ -160,24 +160,22 @@ struct GLUsdPreviewSurfaceState {
 
   GLTexOrFactor<float> ior{1.5f};
 
-  GLTexOrFactor<tinyusdz::tydra::vec3> normal{{0.0f, 0.0f, 1.0f}}; // normal map
+  GLTexOrFactor<tinyusdz::tydra::vec3> normal{
+      {0.0f, 0.0f, 1.0f}};  // normal map
 
   // No displacement mapping on OpenGL
-  //GLTexOrFactor<float> displacement{0.0f}; 
+  // GLTexOrFactor<float> displacement{0.0f};
 
-  GLTexOrFactor<float> occlusion{1.0f}; 
-
+  GLTexOrFactor<float> occlusion{1.0f};
 };
 
-template<typename T>
-bool SetupGLUsdPreviewSurfaceParam(
-  const GLuint prog_id,
-  const tinyusdz::tydra::RenderScene &scene,
-  const std::string &base_shadername,
-  const tinyusdz::tydra::ShaderParam<T> &s,
+template <typename T>
+bool SetupGLUsdPreviewSurfaceParam(const GLuint prog_id,
+                                   const tinyusdz::tydra::RenderScene &scene,
+                                   const std::string &base_shadername,
+                                   const tinyusdz::tydra::ShaderParam<T> &s,
 
-  GLTexOrFactor<T> &dst)
-{
+                                   GLTexOrFactor<T> &dst) {
   if (s.is_texture()) {
     {
       std::string u_name = base_shadername + "Tex";
@@ -192,7 +190,8 @@ bool SetupGLUsdPreviewSurfaceParam(
       if (s.textureId < 0 || s.textureId >= scene.textures.size()) {
         std::cerr << "Invalid txtureId for " << base_shadername + "\n";
       } else {
-        const tinyusdz::tydra::UVTexture &uvtex = scene.textures[size_t(s.textureId)];
+        const tinyusdz::tydra::UVTexture &uvtex =
+            scene.textures[size_t(s.textureId)];
         dst.tex.texParams.uv_transform = uvtex.transform;
       }
     }
@@ -209,13 +208,12 @@ bool SetupGLUsdPreviewSurfaceParam(
   return true;
 }
 
-bool ReloadShader(
-  GLuint prog_id, const std::string &vert_filepath, const std::string &frag_filepath) {
+bool ReloadShader(GLuint prog_id, const std::string &vert_filepath,
+                  const std::string &frag_filepath) {
   std::string vert_str;
   std::string frag_str;
 
   if (vert_filepath.size() && tinyusdz::io::FileExists(vert_filepath)) {
-
     std::vector<uint8_t> bytes;
     std::string err;
     if (!tinyusdz::io::ReadWholeFile(&bytes, &err, vert_filepath)) {
@@ -223,11 +221,13 @@ bool ReloadShader(
       return false;
     }
 
-    vert_str = std::string(reinterpret_cast<char *>(bytes.data()), bytes.size());
+    vert_str =
+        std::string(reinterpret_cast<char *>(bytes.data()), bytes.size());
+
+    std::cout << "VERT:\n" << vert_str << "\n";
   }
 
   if (frag_filepath.size() && tinyusdz::io::FileExists(frag_filepath)) {
-
     std::vector<uint8_t> bytes;
     std::string err;
     if (!tinyusdz::io::ReadWholeFile(&bytes, &err, frag_filepath)) {
@@ -235,76 +235,103 @@ bool ReloadShader(
       return false;
     }
 
-    frag_str = std::string(reinterpret_cast<char *>(bytes.data()), bytes.size());
+    frag_str =
+        std::string(reinterpret_cast<char *>(bytes.data()), bytes.size());
+
+    std::cout << "FRAG:\n" << frag_str << "\n";
   }
 
   // TODO
   return true;
 }
 
-
-bool SetupGLUsdPreviewSurface(
-  GLuint prog_id,
-  tinyusdz::tydra::RenderScene &scene,
-  tinyusdz::tydra::RenderMaterial &m,
-  GLUsdPreviewSurfaceState &dst)
-{
+bool SetupGLUsdPreviewSurface(GLuint prog_id,
+                              tinyusdz::tydra::RenderScene &scene,
+                              tinyusdz::tydra::RenderMaterial &m,
+                              GLUsdPreviewSurfaceState &dst) {
   const auto surfaceShader = m.surfaceShader;
 
-  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene, GLUsdPreviewSurfaceState::kDiffuseColor, surfaceShader.diffuseColor, dst.diffuseColor)) {
+  if (!SetupGLUsdPreviewSurfaceParam(
+          prog_id, scene, GLUsdPreviewSurfaceState::kDiffuseColor,
+          surfaceShader.diffuseColor, dst.diffuseColor)) {
     return false;
   }
 
-  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene, GLUsdPreviewSurfaceState::kEmissiveColor, surfaceShader.emissiveColor, dst.emissiveColor)) {
+  if (!SetupGLUsdPreviewSurfaceParam(
+          prog_id, scene, GLUsdPreviewSurfaceState::kEmissiveColor,
+          surfaceShader.emissiveColor, dst.emissiveColor)) {
     return false;
   }
 
-  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene, GLUsdPreviewSurfaceState::kSpecularColor, surfaceShader.specularColor, dst.specularColor)) {
+  if (!SetupGLUsdPreviewSurfaceParam(
+          prog_id, scene, GLUsdPreviewSurfaceState::kSpecularColor,
+          surfaceShader.specularColor, dst.specularColor)) {
     return false;
   }
 
-  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene, GLUsdPreviewSurfaceState::kMetallic, surfaceShader.metallic, dst.metallic)) {
+  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene,
+                                     GLUsdPreviewSurfaceState::kMetallic,
+                                     surfaceShader.metallic, dst.metallic)) {
     return false;
   }
 
-  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene, GLUsdPreviewSurfaceState::kRoughness, surfaceShader.roughness, dst.roughness)) {
+  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene,
+                                     GLUsdPreviewSurfaceState::kRoughness,
+                                     surfaceShader.roughness, dst.roughness)) {
     return false;
   }
 
-  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene, GLUsdPreviewSurfaceState::kClearcoat, surfaceShader.clearcoat, dst.clearcoat)) {
+  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene,
+                                     GLUsdPreviewSurfaceState::kClearcoat,
+                                     surfaceShader.clearcoat, dst.clearcoat)) {
     return false;
   }
 
-  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene, GLUsdPreviewSurfaceState::kClearcoatRoughness, surfaceShader.clearcoatRoughness, dst.clearcoatRoughness)) {
+  if (!SetupGLUsdPreviewSurfaceParam(
+          prog_id, scene, GLUsdPreviewSurfaceState::kClearcoatRoughness,
+          surfaceShader.clearcoatRoughness, dst.clearcoatRoughness)) {
     return false;
   }
 
-  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene, GLUsdPreviewSurfaceState::kOpacity, surfaceShader.opacity, dst.opacity)) {
+  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene,
+                                     GLUsdPreviewSurfaceState::kOpacity,
+                                     surfaceShader.opacity, dst.opacity)) {
     return false;
   }
 
-  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene, GLUsdPreviewSurfaceState::kOpacityThreshold, surfaceShader.opacityThreshold, dst.opacityThreshold)) {
+  if (!SetupGLUsdPreviewSurfaceParam(
+          prog_id, scene, GLUsdPreviewSurfaceState::kOpacityThreshold,
+          surfaceShader.opacityThreshold, dst.opacityThreshold)) {
     return false;
   }
 
-  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene, GLUsdPreviewSurfaceState::kIor, surfaceShader.ior, dst.ior)) {
+  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene,
+                                     GLUsdPreviewSurfaceState::kIor,
+                                     surfaceShader.ior, dst.ior)) {
     return false;
   }
 
-  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene, GLUsdPreviewSurfaceState::kOcclusion, surfaceShader.occlusion, dst.occlusion)) {
+  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene,
+                                     GLUsdPreviewSurfaceState::kOcclusion,
+                                     surfaceShader.occlusion, dst.occlusion)) {
     return false;
   }
 
-  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene, GLUsdPreviewSurfaceState::kNormal, surfaceShader.normal, dst.normal)) {
+  if (!SetupGLUsdPreviewSurfaceParam(prog_id, scene,
+                                     GLUsdPreviewSurfaceState::kNormal,
+                                     surfaceShader.normal, dst.normal)) {
     return false;
   }
 
   {
-    GLint loc = glGetUniformLocation(prog_id, GLUsdPreviewSurfaceState::kUseSpecularWorkflow);
+    GLint loc = glGetUniformLocation(
+        prog_id, GLUsdPreviewSurfaceState::kUseSpecularWorkflow);
     if (loc < 0) {
-      std::cerr << GLUsdPreviewSurfaceState::kUseSpecularWorkflow << " uniform not found in the shader.\n";
+      std::cerr << GLUsdPreviewSurfaceState::kUseSpecularWorkflow
+                << " uniform not found in the shader.\n";
     }
-    dst.useSpecularWorkflow.factor = surfaceShader.useSpecularWorkFlow ? 1.0f : 0.0f;
+    dst.useSpecularWorkflow.factor =
+        surfaceShader.useSpecularWorkFlow ? 1.0f : 0.0f;
     dst.useSpecularWorkflow.u_factor = loc;
   }
 
@@ -395,6 +422,9 @@ struct GUIContext {
 
   std::string converter_info;
   std::string converter_warn;
+
+  std::string vert_filename{"../shaders/no_skinning.vert"};
+  std::string frag_filename{"../shaders/usdpreviewsurface.frag"};
 };
 
 GUIContext gCtx;
@@ -1071,13 +1101,12 @@ static void ComputeBoundingBox(const tinyusdz::tydra::RenderMesh &mesh,
 static bool ProcScene(const example::shader &gl_shader,
                       const tinyusdz::Stage &stage,
                       std::string &asset_search_path, GLScene *scene) {
-
   tinyusdz::Axis upAxis{tinyusdz::Axis::Y};
   if (stage.metas().upAxis.authored()) {
     upAxis = stage.metas().upAxis.get_value();
   }
   std::cout << "upAxis " << tinyusdz::to_string(upAxis) << "\n";
- 
+
   //
   // Stage to Renderable Scene
   //
@@ -1153,7 +1182,8 @@ static bool ProcScene(const example::shader &gl_shader,
     scene_bmax[2] = (std::max)(bmax[2], scene_bmax[2]);
 
     GLMeshState gl_mesh;
-    if (!SetupMesh(upAxis, renderScene.meshes[i], gl_shader.get_program(), gl_mesh)) {
+    if (!SetupMesh(upAxis, renderScene.meshes[i], gl_shader.get_program(),
+                   gl_mesh)) {
       std::cerr << "SetupMesh for mesh[" << i << "] failed.\n";
       exit(-1);
     }
@@ -1396,7 +1426,7 @@ int main(int argc, char **argv) {
 
   std::string filename = "models/suzanne.usdc";
   // std::string filename = "models/texture-cat-plane.usdc";
-  //std::string filename = "models/texturedcube.usdc";
+  // std::string filename = "models/texturedcube.usdc";
   // std::string filename = "models/simple-plane.usdz";
 #if defined(_MSC_VER)
   std::cout << "cwd: " << _getcwd(nullptr, 0) << "\n";
@@ -1560,6 +1590,24 @@ int main(int argc, char **argv) {
                               ImGuiInputTextFlags_ReadOnly);
     ImGui::End();
 
+    // For developers only
+    ImGui::Begin("dev");
+    {
+      static bool compile_ok{true};
+
+      if (ImGui::Button("Reload shader")) {
+        compile_ok = ReloadShader(curr_shader.get_program(), gCtx.vert_filename,
+                                  gCtx.frag_filename);
+      }
+
+      if (compile_ok) {
+        ImGui::TextColored(ImVec4(0.3, 1.0, 0.4, 1.0), "Shader Compile OK");
+      } else {
+        ImGui::TextColored(ImVec4(1.0, 0.2, 0.1, 1.0), "Shader Compile Failed");
+      }
+      ImGui::End();
+    }
+
     ImGui::Begin("Camera");
     ImGui::SliderFloat("fov", &gCtx.fov, 0.0f, 178.0f);
     ImGui::InputFloat("znear", &gCtx.znear);
@@ -1586,8 +1634,6 @@ int main(int argc, char **argv) {
     gCtx.camera.setPosition(gCtx.eye);
     gCtx.camera.setRotation({gCtx.xrotate, gCtx.yrotate, 0.0f});
     gCtx.camera.setPerspective(gCtx.fov, aspect, gCtx.znear, gCtx.zfar);
-
-    gCtx.camera.matrices.perspective;
 
     ImGui::Begin("View matrix");
     {
