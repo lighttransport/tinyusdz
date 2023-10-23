@@ -1420,10 +1420,12 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
     ss << c;
   }
 
-  // ':' must lie in the middle of string literal
-  if (ss.str().back() == ':') {
-    PUSH_ERROR_AND_RETURN("PrimAttr name must not ends with `:`\n");
-    return false;
+  {
+    std::string name_err;
+    if (!pathutil::ValidatePropPath(Path("", ss.str()), &name_err)) {
+      PUSH_ERROR_AND_RETURN_TAG(kAscii,
+          fmt::format("Invalid Property name `{}`: {}", ss.str(), name_err));
+    }
   }
 
   // '.' must lie in the middle of string literal
@@ -1432,7 +1434,7 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
     return false;
   }
 
-  // Currently we only support '.connect'
+
   std::string tok = ss.str();
 
   if (contains(tok, '.')) {
@@ -3140,6 +3142,15 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
             fmt::format("Unsupported Property metadatum name: {}", varname));
       }
 
+      {
+        std::string name_err;
+        if (!pathutil::ValidatePropPath(Path("", varname), &name_err)) {
+          PUSH_ERROR_AND_RETURN_TAG(kAscii,
+              fmt::format("Invalid Property name `{}`: {}", varname, name_err));
+        }
+      }
+
+
       if (!SkipWhitespaceAndNewline()) {
         return false;
       }
@@ -3260,7 +3271,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
           metavar.set_name(varname);
 
           // add to custom meta
-          out_meta->meta.emplace(varname, metavar);
+          out_meta->meta[varname] = metavar;
 
         } else {
           // This should not happen though.
