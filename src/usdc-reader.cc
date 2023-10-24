@@ -815,6 +815,11 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Property Prop.PropPart is empty");
       }
 
+      std::string prop_err;
+      if (!pathutil::ValidatePropPath(Path("", prop_name), &prop_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Invalid Property name `{}`: {}", prop_name, prop_err));
+      }
+
       Property prop;
       if (!ParseProperty(spec.spec_type, child_fvs, &prop)) {
         PUSH_ERROR_AND_RETURN_TAG(
@@ -824,7 +829,7 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
                 prop_name));
       }
 
-      props->emplace(prop_name, prop);
+      (*props)[prop_name] = prop;
       DCOUT("Add property : " << prop_name);
     }
   }
@@ -2559,7 +2564,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
           if (_variantPrims.count(current)) {
             DCOUT("??? prim idx already set " << current);
           } else {
-            _variantPrims.emplace(current, variantPrim.value());
+            _variantPrims.emplace(current,  variantPrim.value());
             _variantPrimChildren[parent].push_back(current);
           }
         } else {
@@ -3035,7 +3040,7 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
           if (_variantPrims.count(current)) {
             DCOUT("??? prim idx already set " << current);
           } else {
-            _variantPrims.emplace(current, variantPrim.value());
+            _variantPrims[current] =  variantPrim.value();
             _variantPrimChildren[parent].push_back(current);
           }
         } else {
@@ -3058,7 +3063,7 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
               if (_variantPrims.count(current)) {
                 DCOUT("??? prim idx already set " << current);
               } else {
-                _variantPrims.emplace(current, variantPrim.value());
+                _variantPrims[current] = variantPrim.value();
                 _variantPrimChildren[parent].push_back(current);
               }
             } else {
@@ -3085,7 +3090,7 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
         if (_variantPrimSpecs.count(current)) {
           DCOUT("??? prim idx already set " << current);
         } else {
-          _variantPrimSpecs.emplace(current, variantPrimSpec);
+          _variantPrimSpecs[current] = variantPrimSpec;
           _variantPrimChildren[parent].push_back(current);
         }
 
@@ -3571,7 +3576,7 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
 
   if (parent == 0) {  // root prim
     if (primspec) {
-      layer->primspecs().emplace(primspec.value().name(), std::move(primspec.value()));
+      layer->primspecs()[primspec.value().name()] = std::move(primspec.value());
     }
   } else {
     if (_variantPrimSpecs.count(parent)) {
