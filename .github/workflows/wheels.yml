@@ -32,7 +32,7 @@ jobs:
         with:
           path: ./wheelhouse/*.whl
 
-  # It looks cibuildwheels did not clean build folder(CMake), and it results to Windowd arm64 build failure(trying to use x86 build of .obj)
+  # It looks cibuildwheels did not clean build folder(CMake), and it results to Windows arm64 build failure(trying to reuse x86 build of .obj)
   # So supply separated build job for Windows ARM64 build
   # TODO: clean build folder using CIBW_BEFORE_ALL?
   build_win_arm64_wheels:
