@@ -10,7 +10,8 @@
   * [x] payload(no delayed load)
   * [x] inherits 
   * [x] variantSet
-  * [ ] Validate composition is correctly operated. 
+  * [ ] Validate composition is correctly operated.
+* Better usdLux support https://github.com/syoyo/tinyusdz/issues/101 
 * Support reading & compose some production USD scenes
   * [ ] Moana island v2.1 https://github.com/syoyo/tinyusdz/issues/90
   * [ ] ALAB USD production scene https://github.com/syoyo/tinyusdz/issues/91
