@@ -3252,6 +3252,28 @@ class PrimSpec {
     return _properties;
   }
 
+  const std::string &get_current_working_path() const {
+    return _current_working_path;
+  }
+
+  const std::vector<std::string> &get_asset_search_paths() const {
+    return _asset_search_paths;
+  }
+
+  void set_current_working_path(const std::string &s) {
+    _current_working_path = s;
+  }
+
+  void set_asset_search_paths(const std::vector<std::string> &search_paths) {
+    _asset_search_paths = search_paths;
+  }
+
+  void set_asset_resolution_state(
+    const std::string &cwp, const std::vector<std::string> &search_paths) {
+    _current_working_path = cwp;
+    _asset_search_paths = search_paths;
+  }
+
  private:
   void CopyFrom(const PrimSpec &rhs) {
     _specifier = rhs._specifier;
@@ -3272,6 +3294,9 @@ class PrimSpec {
     _variantChildren = rhs._variantChildren;
 
     _metas = rhs._metas;
+
+    _current_working_path = rhs._current_working_path;
+    _asset_search_paths = rhs._asset_search_paths;
   }
 
   void MoveFrom(PrimSpec &rhs) {
@@ -3293,6 +3318,9 @@ class PrimSpec {
     _variantChildren = rhs._variantChildren;
 
     _metas = std::move(rhs._metas);
+
+    _current_working_path = rhs._current_working_path;
+    _asset_search_paths = rhs._asset_search_paths;
   }
 
   Specifier _specifier{Specifier::Def};
@@ -3321,6 +3349,15 @@ class PrimSpec {
   std::vector<value::token> _variantChildren;
 
   PrimMeta _metas;
+
+  ///
+  /// For solving asset path in nested composition.
+  /// Keep asset resolution state.
+  /// TODO: Use struct. Store userdata pointer.
+  ///
+  std::string _current_working_path{"./"};
+  std::vector<std::string> _asset_search_paths;
+
 };
 
 struct SubLayer
@@ -3576,6 +3613,28 @@ struct Layer {
   ///
   bool find_primspec_at(const Path &path, const PrimSpec **ps, std::string *err) const;
 
+
+  ///
+  /// Set state for AssetResolution in the subsequent composition operation.
+  ///
+  void set_asset_resolution_state(
+    const std::string &cwp, const std::vector<std::string> &search_paths, void *userdata=nullptr) {
+    _current_working_path = cwp;
+    _asset_search_paths = search_paths;
+    _asset_resolution_userdata = userdata;
+  }
+
+  void get_asset_resolution_state(
+    std::string &cwp, std::vector<std::string> &search_paths, void *&userdata) {
+    cwp = _current_working_path;
+    search_paths = _asset_search_paths;
+    userdata = _asset_resolution_userdata;
+  }
+
+  const std::vector<std::string> get_asset_search_paths() const {
+    return _asset_search_paths;
+  }
+
  private:
   std::string _name;  // layer name ~= USD filename
 
@@ -3601,6 +3660,15 @@ struct Layer {
   mutable bool _has_unresolved_specializes{true};
   mutable bool _has_over_primspec{true};
   mutable bool _has_class_primspec{true};
+
+  //
+  // Record AssetResolution state(search paths, current working directory)
+  // when this layer is opened by compostion(`references`, `payload`, `subLayers`)
+  //
+  mutable std::string _current_working_path{"./"};
+  mutable std::vector<std::string> _asset_search_paths;
+  mutable void *_asset_resolution_userdata{nullptr};
+  
 };
 
 
