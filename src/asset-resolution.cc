@@ -58,9 +58,17 @@ bool AssetResolutionResolver::find(const std::string &assetPath) const {
     }
   }
 
+  
+  // TODO: Only find when input path is relative.
+  std::string rpath = io::FindFile(assetPath, {_current_working_path});
+  if (rpath.size()) {
+    return true;
+  }
+
   // TODO: Cache resolition.
   std::string fpath = io::FindFile(assetPath, _search_paths);
   return fpath.size();
+
 }
 
 std::string AssetResolutionResolver::resolve(
@@ -88,8 +96,16 @@ std::string AssetResolutionResolver::resolve(
     }
   }
 
+  DCOUT("cwd = " << _current_working_path);
   DCOUT("search_paths = " << _search_paths);
   DCOUT("assetPath = " << assetPath);
+
+  // TODO: Only find when input path is relative.
+  std::string rpath = io::FindFile(assetPath, {_current_working_path});
+  if (rpath.size()) {
+    return rpath;
+  }
+
   // TODO: Cache resolition.
   return io::FindFile(assetPath, _search_paths);
 }
