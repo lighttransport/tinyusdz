@@ -306,9 +306,10 @@ bool LoadAsset(AssetResolutionResolver &resolver,
     }
 
     if (!layer.find_primspec_at(Path(default_prim, ""), &src_ps, err)) {
+      DCOUT("layer = " << to_string(layer));
       PUSH_ERROR_AND_RETURN(
-          fmt::format("Failed to find PrimSpec `{}` in layer `{}`", default_prim,
-                      asset_path));
+          fmt::format("Failed to find PrimSpec `{}` in layer `{}`(resolved path: `{}`)", default_prim,
+                      asset_path, resolved_path));
     }
 
     if (!src_ps) {
