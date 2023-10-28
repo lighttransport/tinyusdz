@@ -197,14 +197,15 @@ int main(int argc, char **argv) {
     }
 
     // TODO: Find more better way to Recursively resolve references/payload/variants
-    bool all_resolved = true;
     for (int i = 0; i < kMaxIteration; i++) {
+
+      bool has_unresolved = false;
 
       if (comp_features.references) {
         if (!src_layer.check_unresolved_references()) {
-          all_resolved = true;
+          std::cout << "# iter " << i << ": no unresolved references.\n";
         } else {
-          all_resolved = false;
+          has_unresolved = true;
 
           tinyusdz::Layer composited_layer;
           if (!tinyusdz::CompositeReferences(resolver, src_layer, &composited_layer, &warn, &err)) {
@@ -225,79 +226,82 @@ int main(int argc, char **argv) {
 
       if (comp_features.payload) {
         if (!src_layer.check_unresolved_payload()) {
-          all_resolved = true;
+          std::cout << "# iter " << i << ": no unresolved payload.\n";
         } else {
-          all_resolved = false;
+          has_unresolved = true;
+
+          tinyusdz::Layer composited_layer;
+          if (!tinyusdz::CompositePayload(resolver, src_layer, &composited_layer, &warn, &err)) {
+            std::cerr << "Failed to composite `payload`: " << err << "\n";
+            return -1;
+          }
+
+          if (warn.size()) {
+            std::cout << "WARN: " << warn << "\n";
+          }
+
+          std::cout << "# `payload` composited\n";
+          std::cout << composited_layer << "\n";
+
+          src_layer = std::move(composited_layer);
         }
-
-        tinyusdz::Layer composited_layer;
-        if (!tinyusdz::CompositePayload(resolver, src_layer, &composited_layer, &warn, &err)) {
-          std::cerr << "Failed to composite `payload`: " << err << "\n";
-          return -1;
-        }
-
-        if (warn.size()) {
-          std::cout << "WARN: " << warn << "\n";
-        }
-
-        std::cout << "# `payload` composited\n";
-        std::cout << composited_layer << "\n";
-
-        src_layer = std::move(composited_layer);
       }
 
       if (comp_features.inherits) {
         if (!src_layer.check_unresolved_inherits()) {
-          all_resolved = true;
+          std::cout << "# iter " << i << ": no unresolved inherits.\n";
         } else {
-          all_resolved = false;
+          has_unresolved = true;
+
+          tinyusdz::Layer composited_layer;
+          if (!tinyusdz::CompositeInherits(src_layer, &composited_layer, &warn, &err)) {
+            std::cerr << "Failed to composite `inherits`: " << err << "\n";
+            return -1;
+          }
+
+          if (warn.size()) {
+            std::cout << "WARN: " << warn << "\n";
+          }
+
+          std::cout << "# `inherits` composited\n";
+          std::cout << composited_layer << "\n";
+
+          src_layer = std::move(composited_layer);
         }
-
-        tinyusdz::Layer composited_layer;
-        if (!tinyusdz::CompositeInherits(src_layer, &composited_layer, &warn, &err)) {
-          std::cerr << "Failed to composite `inherits`: " << err << "\n";
-          return -1;
-        }
-
-        if (warn.size()) {
-          std::cout << "WARN: " << warn << "\n";
-        }
-
-        std::cout << "# `inherits` composited\n";
-        std::cout << composited_layer << "\n";
-
-        src_layer = std::move(composited_layer);
       }
 
       if (comp_features.variantSets) {
         if (!src_layer.check_unresolved_variant()) {
-          all_resolved = true;
+          std::cout << "# iter " << i << ": no unresolved variant.\n";
         } else {
-          all_resolved = false;
+          has_unresolved = true;
+
+          tinyusdz::Layer composited_layer;
+          if (!tinyusdz::CompositeVariant(src_layer, &composited_layer, &warn, &err)) {
+            std::cerr << "Failed to composite `variantSet`: " << err << "\n";
+            return -1;
+          }
+
+          if (warn.size()) {
+            std::cout << "WARN: " << warn << "\n";
+          }
+
+          std::cout << "# `variantSet` composited\n";
+          std::cout << composited_layer << "\n";
+
+          src_layer = std::move(composited_layer);
         }
-
-        tinyusdz::Layer composited_layer;
-        if (!tinyusdz::CompositeVariant(src_layer, &composited_layer, &warn, &err)) {
-          std::cerr << "Failed to composite `variantSet`: " << err << "\n";
-          return -1;
-        }
-
-        if (warn.size()) {
-          std::cout << "WARN: " << warn << "\n";
-        }
-
-        std::cout << "# `variantSet` composited\n";
-        std::cout << composited_layer << "\n";
-
-        src_layer = std::move(composited_layer);
       }
 
       // TODO
       // - [ ] specializes
       // - [ ] `class` Prim?
 
-      if (all_resolved) {
-        std::cout << "# of composition resolve iteration: " << (i + 1) << "\n";
+      std::cout << "# has_unresolved_references: " << src_layer.check_unresolved_references() << "\n";
+      std::cout << "# all resolved? " << !has_unresolved << "\n";
+
+      if (!has_unresolved) {
+        std::cout << "# of composition iteration to resolve fully: " << (i + 1) << "\n";
         break;
       }
     }
