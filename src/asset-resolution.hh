@@ -200,7 +200,7 @@ class AssetResolutionResolver {
     _current_working_path = cwp;
   }
 
-  const std::string &current_working_path_str() const {
+  const std::string &current_working_path() const {
     return _current_working_path;
   }
 

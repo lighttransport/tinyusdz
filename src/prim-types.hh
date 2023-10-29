@@ -3317,7 +3317,9 @@ class PrimSpec {
     _properties = rhs._properties;
     _variantChildren = rhs._variantChildren;
 
-    _metas = std::move(rhs._metas);
+    // FIXME: std::move doesn't work for nonstd::optional. need to write user-defined move constructor in
+    // PrimMetas?
+    _metas = rhs._metas;
 
     _current_working_path = rhs._current_working_path;
     _asset_search_paths = rhs._asset_search_paths;
@@ -3355,7 +3357,7 @@ class PrimSpec {
   /// Keep asset resolution state.
   /// TODO: Use struct. Store userdata pointer.
   ///
-  std::string _current_working_path{"./"};
+  std::string _current_working_path;
   std::vector<std::string> _asset_search_paths;
 
 };
@@ -3631,6 +3633,10 @@ struct Layer {
     userdata = _asset_resolution_userdata;
   }
 
+  const std::string get_current_working_path() const {
+    return _current_working_path;
+  }
+
   const std::vector<std::string> get_asset_search_paths() const {
     return _asset_search_paths;
   }
@@ -3665,7 +3671,7 @@ struct Layer {
   // Record AssetResolution state(search paths, current working directory)
   // when this layer is opened by compostion(`references`, `payload`, `subLayers`)
   //
-  mutable std::string _current_working_path{"./"};
+  mutable std::string _current_working_path;
   mutable std::vector<std::string> _asset_search_paths;
   mutable void *_asset_resolution_userdata{nullptr};
   

@@ -166,6 +166,7 @@ int main(int argc, char **argv) {
     std::string warn;
 
     tinyusdz::AssetResolutionResolver resolver;
+    resolver.set_current_working_path(base_dir);
     resolver.set_search_paths({base_dir});
 
     //
