@@ -468,8 +468,7 @@ bool CompositeSublayersRec(AssetResolutionResolver &resolver,
         if (composited_layer->has_primspec(prim.first)) {
           // Skip
         } else {
-          if (!composited_layer->emplace_primspec(prim.first,
-                                                  std::move(prim.second))) {
+          if (!composited_layer->emplace_primspec(prim.first, std::move(prim.second))) {
             PUSH_ERROR_AND_RETURN(
                 fmt::format("Compositing PrimSpec {} in {} failed.", prim.first,
                             layer_filepath));
@@ -483,8 +482,7 @@ bool CompositeSublayersRec(AssetResolutionResolver &resolver,
         if (composited_layer->has_primspec(prim.first)) {
           // Skip
         } else {
-          if (!composited_layer->emplace_primspec(prim.first,
-                                                  std::move(prim.second))) {
+          if (!composited_layer->emplace_primspec(prim.first, std::move(prim.second))) {
             PUSH_ERROR_AND_RETURN(
                 fmt::format("Compositing PrimSpec {} in {} failed.", prim.first,
                             layer_filepath));
@@ -777,9 +775,10 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
       }
     }
 
-    // Remove `references`.
-    primspec.metas().references = nonstd::nullopt;
   }
+
+  // Remove `references`.
+  primspec.metas().references.reset();
 
   return true;
 }
@@ -816,6 +815,7 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
         std::string asset_path = pl.asset_path.GetAssetPath();
         DCOUT("asset_path = " << asset_path);
 
+        Layer layer;
         const PrimSpec *src_ps{nullptr};
 
         if (pl.asset_path.GetAssetPath().empty()) {
@@ -833,7 +833,6 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
           }
         } else {
 
-          Layer layer;
           if (!LoadAsset(resolver, cwp, search_paths, options.fileformats,
                          pl.asset_path, pl.prim_path, &layer, &src_ps,
                          /* error_when_no_prims_found */ true,
@@ -879,6 +878,7 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
       for (const auto &pl : payloads) {
         std::string asset_path = pl.asset_path.GetAssetPath();
 
+        Layer layer;
         const PrimSpec *src_ps{nullptr};
 
         if (pl.asset_path.GetAssetPath().empty()) {
@@ -895,7 +895,7 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
                             pl.prim_path.full_path_name()));
           }
         } else {
-          Layer layer;
+
           if (!LoadAsset(resolver, cwp, search_paths, options.fileformats,
                          pl.asset_path, pl.prim_path, &layer, &src_ps,
                          /* error_when_no_prims_found */ true,
@@ -928,9 +928,10 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
       }
     }
 
-    // Remove `payload`.
-    primspec.metas().payload = nonstd::nullopt;
   }
+
+  // Remove `payload`.
+  primspec.metas().payload.reset();
 
   return true;
 }
