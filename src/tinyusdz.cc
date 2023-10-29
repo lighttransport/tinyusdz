@@ -1062,14 +1062,41 @@ bool LoadUSDALayerFromMemory(const uint8_t *addr, const size_t length,
   return true;
 }
 
+// Copy assetresolver state to all PrimSpec in the tree.
+static bool PropagateAssetResolverState(uint32_t depth, PrimSpec &ps,
+                                 const std::string &cwp,
+                                 const std::vector<std::string> &search_paths) {
+  if (depth > (1024 * 1024 * 512)) {
+    return false;
+  }
+
+  if (depth == 0) {
+    DCOUT("current_working_path: " << cwp);
+    DCOUT("search_paths: " << search_paths);
+  }
+
+  ps.set_asset_resolution_state(cwp, search_paths);
+
+  for (auto &child : ps.children()) {
+    if (!PropagateAssetResolverState(depth + 1, child, cwp, search_paths)) {
+      return false;
+    }
+  }
+
+    return true;
+}
+
 bool LoadLayerFromMemory(const uint8_t *addr, const size_t length,
                        const std::string &asset_name, Layer *layer,
                        std::string *warn, std::string *err,
                        const USDLoadOptions &options) {
+
+  bool ret{false};
+
   if (IsUSDC(addr, length)) {
     DCOUT("Detected as USDC.");
 #if 1
-    return LoadUSDCLayerFromMemory(addr, length, asset_name, layer, warn, err,
+    ret = LoadUSDCLayerFromMemory(addr, length, asset_name, layer, warn, err,
                               options);
 #else
     if (err) {
@@ -1079,7 +1106,7 @@ bool LoadLayerFromMemory(const uint8_t *addr, const size_t length,
 #endif
   } else if (IsUSDA(addr, length)) {
     DCOUT("Detected as USDA.");
-    return LoadUSDALayerFromMemory(addr, length, asset_name, layer, warn, err,
+    ret = LoadUSDALayerFromMemory(addr, length, asset_name, layer, warn, err,
                               options);
   } else if (IsUSDZ(addr, length)) {
     DCOUT("Detected as USDZ.");
@@ -1098,6 +1125,18 @@ bool LoadLayerFromMemory(const uint8_t *addr, const size_t length,
     }
     return false;
   }
+
+  if (ret) {
+    std::vector<std::string> search_paths; // empty
+    std::string basedir = io::GetBaseDir(asset_name);
+    // Save current working path to each PrimSpec in the layer
+    // for the subsequent composition operation.
+    for (auto &root_ps : layer->primspecs()) {
+      PropagateAssetResolverState(0, root_ps.second, basedir, search_paths);
+    }
+  }
+
+  return ret;
 }
 
 bool LoadLayerFromFile(const std::string &_filename, Layer *stage,
