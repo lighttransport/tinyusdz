@@ -3311,18 +3311,16 @@ class PrimSpec {
     //_vsmap = std::move(rhs._vsmap);
     _current_vsmap = std::move(rhs._current_vsmap);
 
-    _variantSets = rhs._variantSets;
+    _variantSets = std::move(rhs._variantSets);
 
-    _primChildren = rhs._primChildren;
-    _properties = rhs._properties;
-    _variantChildren = rhs._variantChildren;
+    _primChildren = std::move(rhs._primChildren);
+    _properties = std::move(rhs._properties);
+    _variantChildren = std::move(rhs._variantChildren);
 
-    // FIXME: std::move doesn't work for nonstd::optional. need to write user-defined move constructor in
-    // PrimMetas?
-    _metas = rhs._metas;
+    _metas = std::move(rhs._metas);
 
     _current_working_path = rhs._current_working_path;
-    _asset_search_paths = rhs._asset_search_paths;
+    _asset_search_paths = std::move(rhs._asset_search_paths);
   }
 
   Specifier _specifier{Specifier::Def};
