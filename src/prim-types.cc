@@ -2062,11 +2062,11 @@ bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps,
 
   if (path.is_relative_path()) {
     // TODO
-    PUSH_ERROR_AND_RETURN("Relative path is todo.");
+    PUSH_ERROR_AND_RETURN(fmt::format("TODO: Relative path: {}", path.full_path_name()));
   }
 
   if (!path.is_absolute_path()) {
-    PUSH_ERROR_AND_RETURN("path is not absolute path.");
+    PUSH_ERROR_AND_RETURN(fmt::format("Path is not absolute path: {}", path.full_path_name()));
   }
 
 #if defined(TINYUSDZ_ENABLE_THREAD)

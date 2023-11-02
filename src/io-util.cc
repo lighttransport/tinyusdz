@@ -62,6 +62,7 @@
 #endif
 
 #include "io-util.hh"
+#include "str-util.hh"
 
 namespace tinyusdz {
 namespace io {
@@ -502,10 +503,24 @@ std::string JoinPath(const std::string &dir, const std::string &filename) {
   } else {
     // check '/'
     char lastChar = *dir.rbegin();
+
+    // TODO: Support more relative path case.
+
+    std::string basedir;
     if (lastChar != '/') {
-      return dir + std::string("/") + filename;
+      basedir = dir + std::string("/");
     } else {
-      return dir + filename;
+      basedir = dir;
+    }
+
+    if (basedir.size()) {
+      if (startsWith(filename, "./")) {
+        // strip "./"
+        return basedir + removePrefix(filename, "./");
+      }
+      return basedir + filename;
+    } else {
+      return filename;
     }
   }
 }
@@ -609,6 +624,13 @@ std::string FindFile(const std::string &filename,
 
   if (filename.empty()) {
     return filename;
+  }
+
+  if (search_paths.empty()) {
+    std::string absPath = io::ExpandFilePath(filename, /* userdata */ nullptr);
+    if (io::FileExists(absPath, /* userdata */ nullptr)) {
+      return absPath;
+    }
   }
 
   for (size_t i = 0; i < search_paths.size(); i++) {

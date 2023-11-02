@@ -4336,6 +4336,10 @@ bool AsciiParser::ParseVariantSet(const int64_t primIdx,
       Rewind(1);
     }
 
+    if (!SkipCommentAndWhitespaceAndNewline()) {
+      return false;
+    }
+
     // string
     std::string variantName;
     if (!ReadBasicType(&variantName)) {
@@ -4440,12 +4444,12 @@ bool AsciiParser::ParseVariantSet(const int64_t primIdx,
         DCOUT(fmt::format("Done parse ParsePrimProps."));
       }
 
-      if (!SkipWhitespaceAndNewline()) {
+      if (!SkipCommentAndWhitespaceAndNewline()) {
         return false;
       }
     }
 
-    if (!SkipWhitespaceAndNewline()) {
+    if (!SkipCommentAndWhitespaceAndNewline()) {
       return false;
     }
 
