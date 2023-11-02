@@ -1915,7 +1915,7 @@ bool ReconstructXformOpsFromProperties(
           }
         } else if (auto rotY = SplitXformOpToken(tok, kRotateY)) {
           op.op_type = XformOp::OpType::RotateY;
-          op.suffix = rotX.value();
+          op.suffix = rotY.value();
 
           if (attr.get_var().is_timesamples()) {
             op.set_timesamples(attr.get_var().ts_raw());

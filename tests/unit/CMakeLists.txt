@@ -12,6 +12,7 @@ set(TEST_SOURCES
 	unit-value-types.cc
 	unit-xform.cc
 	unit-math.cc
+	unit-ioutil.cc
    )
 
 if (TINYUSDZ_WITH_PXR_COMPAT_API)
