@@ -2800,9 +2800,8 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Specifier.");
         }
       } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                  "`specifier` field is missing for FieldSets "
-                                  "with SpecType::Prim.");
+        // Default = Over Prim.
+        specifier = Specifier::Over;
       }
 
       std::string pTyName;
@@ -2981,6 +2980,7 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
       } else {
         // Seems Variant is only composed of Properties.
         // Create pseudo `def` Prim
+        // FIXME: default is `Over`?
         specifier = Specifier::Def;
       }
 

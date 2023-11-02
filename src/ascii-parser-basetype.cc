@@ -1672,7 +1672,7 @@ bool AsciiParser::SepBy1BasicType(const char sep, const char end_symbol, std::ve
   }
 
   while (!Eof()) {
-    if (!SkipWhitespaceAndNewline()) {
+    if (!SkipCommentAndWhitespaceAndNewline()) {
       return false;
     }
 
@@ -1684,7 +1684,7 @@ bool AsciiParser::SepBy1BasicType(const char sep, const char end_symbol, std::ve
 
     if (c == sep) {
       // Look next token
-      if (!SkipWhitespaceAndNewline()) {
+      if (!SkipCommentAndWhitespaceAndNewline()) {
         return false;
       }
 
@@ -1967,7 +1967,7 @@ bool AsciiParser::SepBy1BasicType(const char sep,
 
   while (!Eof()) {
     // sep
-    if (!SkipWhitespaceAndNewline()) {
+    if (!SkipCommentAndWhitespaceAndNewline()) {
       return false;
     }
 
@@ -1978,7 +1978,7 @@ bool AsciiParser::SepBy1BasicType(const char sep,
 
     if (c == sep) {
       // Look next token
-      if (!SkipWhitespaceAndNewline()) {
+      if (!SkipCommentAndWhitespaceAndNewline()) {
         return false;
       }
 

@@ -1482,10 +1482,11 @@ int main(int argc, char **argv) {
 
   float highDPIscaleFactor = 1.0f;
 
+  float xscale=1.0f;
+  float yscale=1.0f;
 #if defined(_WIN32) || defined(__linux__)
   // if it's a HighDPI monitor, try to scale everything
   GLFWmonitor *monitor = glfwGetPrimaryMonitor();
-  float xscale, yscale;
   glfwGetMonitorContentScale(monitor, &xscale, &yscale);
   std::cout << "monitor xscale, yscale = " << xscale << ", " << yscale << "\n";
   if (xscale > 1 || yscale > 1) {
