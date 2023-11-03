@@ -1,4 +1,4 @@
-# Tiny USDZ library in C++14
+# Tiny USDZ/USDA/USDC library in C++14
 
 `TinyUSDZ` is secure, portable and dependency-free(depends only on C++ STL. Other 3rd-party libraries included. Yes, you don't need pxrUSD library!) USDZ/USDC/USDA library written in C++14.
 
