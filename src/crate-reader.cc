@@ -2295,8 +2295,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        if (n > _config.maxAssetPathElements) {
-          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("# of bool array too large. TinyUSDZ limites it up to {}", _config.maxAssetPathElements));
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("# of bool array too large. TinyUSDZ limites it up to {}", _config.maxArrayElements));
         }
 
         CHECK_MEMORY_USAGE(n * sizeof(uint8_t));
