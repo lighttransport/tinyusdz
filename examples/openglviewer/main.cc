@@ -418,6 +418,14 @@ struct GUIContext {
 
   example::Camera camera;
 
+  GLUsdPreviewSurfaceState *selected_surfaceShader{nullptr};
+
+  std::vector<GLUsdPreviewSurfaceState> surfaceShaders;
+
+  // for ImGui
+  std::vector<std::string> surfaceShaderNames;
+  std::string selected_surfaceShaderName;
+
   std::string usd_filepath;
 
   std::string converter_info;
@@ -428,6 +436,74 @@ struct GUIContext {
 };
 
 GUIContext gCtx;
+
+//
+// Combo with std::vector<std::string>
+//
+static bool ImGuiComboUI(const std::string &caption, std::string &current_item,
+                         const std::vector<std::string> &items) {
+  bool changed = false;
+
+  if (ImGui::BeginCombo(caption.c_str(), current_item.c_str())) {
+    for (int n = 0; n < items.size(); n++) {
+      bool is_selected = (current_item == items[n]);
+      if (ImGui::Selectable(items[n].c_str(), is_selected)) {
+        current_item = items[n];
+        changed = true;
+      }
+      if (is_selected) {
+        // Set the initial focus when opening the combo (scrolling + for
+        // keyboard navigation support in the upcoming navigation branch)
+        ImGui::SetItemDefaultFocus();
+      }
+    }
+    ImGui::EndCombo();
+  }
+
+  return changed;
+}
+
+static void MaterialUI()
+{
+  ImGui::Begin("Material");
+
+  ImGuiComboUI("surfaceShader", gCtx.selected_surfaceShaderName, gCtx.surfaceShaderNames);
+
+  ImGui::End();
+}
+
+static void UsdPreviewSurfaceParamUI(
+  GLUsdPreviewSurfaceState &state)
+{
+  bool changed = false;
+
+  ImGui::Begin("Shader param");
+
+  changed |= ImGui::ColorEdit3("diffuseColor", &state.diffuseColor.factor[0]);
+  changed |= ImGui::ColorEdit3("emissiveColor", &state.emissiveColor.factor[0]);
+  bool specWorkflow = state.useSpecularWorkflow.factor > 0 ? true : false;
+  changed |= ImGui::Checkbox("useSpecularWorkflow", &specWorkflow);
+  state.useSpecularWorkflow.factor = specWorkflow;
+
+  if (specWorkflow) {
+    changed |= ImGui::ColorEdit3("specularColor", &state.specularColor.factor[0]);
+  } else {
+    changed |= ImGui::SliderFloat("metallic", &state.metallic.factor, 0.0f, 1.0f);
+  }
+
+  changed |= ImGui::SliderFloat("clearcoat", &state.clearcoat.factor, 0.0f, 1.0f);
+  changed |= ImGui::SliderFloat("clearcoatRoughness", &state.clearcoatRoughness.factor, 0.0f, 1.0f);
+
+  changed |= ImGui::SliderFloat("opacity", &state.opacity.factor, 0.0f, 1.0f);
+  changed |= ImGui::SliderFloat("opacityThreshold", &state.opacityThreshold.factor, 0.0f, 1.0f);
+
+  changed |= ImGui::SliderFloat("ior", &state.ior.factor, 0.0f, 6.0f);
+
+  changed |= ImGui::SliderFloat("occlusion", &state.occlusion.factor, 0.0f, 1.0f);
+
+
+  ImGui::End();
+}
 
 // --- glfw ----------------------------------------------------
 
@@ -1579,6 +1655,14 @@ int main(int argc, char **argv) {
     ImGui::InputFloat3("scene bmax", &gl_scene.bmax[0], "%.3f",
                        ImGuiInputTextFlags_ReadOnly);
     ImGui::End();
+
+    ImGui::Begin("Material");
+    
+    ImGui::End();
+
+    if (gCtx.selected_surfaceShader) {
+      UsdPreviewSurfaceParamUI(*gCtx.selected_surfaceShader);
+    }
 
     ImGui::Begin("RenderScene converter log");
     ImGui::InputTextMultiline("info",
