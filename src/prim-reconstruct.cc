@@ -3152,6 +3152,62 @@ bool ReconstructPrim<GeomCamera>(
 }
 
 template <>
+bool ReconstructPrim<GeomSubset>(
+    const Specifier &spec,
+    const PropertyMap &properties,
+    const ReferenceList &references,
+    GeomSubset *subset,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+
+  (void)spec;
+  (void)references;
+
+  DCOUT("GeomSubset");
+
+  // Currently schema only allows 'face'
+  auto ElementTypeHandler = [](const std::string &tok)
+      -> nonstd::expected<GeomSubset::ElementType, std::string> {
+    using EnumTy = std::pair<GeomSubset::ElementType, const char *>;
+    const std::vector<EnumTy> enums = {
+        std::make_pair(GeomSubset::ElementType::Face, "face"),
+    };
+    return EnumHandler<GeomSubset::ElementType>("elementType", tok,
+                                                    enums);
+  };
+
+  auto FamilyTypeHandler = [](const std::string &tok)
+      -> nonstd::expected<GeomSubset::FamilyType, std::string> {
+    using EnumTy = std::pair<GeomSubset::FamilyType, const char *>;
+    const std::vector<EnumTy> enums = {
+        std::make_pair(GeomSubset::FamilyType::Partition, "partition"),
+        std::make_pair(GeomSubset::FamilyType::NonOverlapping, "nonOverlapping"),
+        std::make_pair(GeomSubset::FamilyType::Unrestricted, "unrestricted"),
+    };
+    return EnumHandler<GeomSubset::FamilyType>("familyType", tok,
+                                                    enums);
+  };
+
+  std::set<std::string> table;
+
+  for (const auto &prop : properties) {
+    DCOUT("GeomSubset prop: " << prop.first);
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBinding, subset->materialBinding)
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingCollection, subset->materialBindingCollection)
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingPreview, subset->materialBindingPreview)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "familyName", GeomSubset, subset->familyName)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "indices", GeomSubset, subset->indices)
+    PARSE_ENUM_PROPETY(table, prop, "familyType", FamilyTypeHandler, GeomSubset, subset->familyType, options  .strict_allowedToken_check)
+    PARSE_ENUM_PROPETY(table, prop, "elementType", ElementTypeHandler, GeomSubset, subset->elementType, options.strict_allowedToken_check)
+    ADD_PROPERTY(table, prop, GeomSubset, subset->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+
+  return true;
+}
+
+template <>
 bool ReconstructPrim<PointInstancer>(
     const Specifier &spec,
     const PropertyMap &properties,
@@ -4138,7 +4194,7 @@ RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomSphere)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomCapsule)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomBasisCurves)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomCamera)
-// RECONSTRUCT_PRIM(GeomSubset)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeomSubset)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(SphereLight)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(DomeLight)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(CylinderLight)

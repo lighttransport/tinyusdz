@@ -799,9 +799,9 @@ nonstd::expected<bool, std::string> GeomMesh::ValidateGeomSubset() {
     return true;
   }
 
-  auto CheckFaceIds = [](const size_t nfaces, const std::vector<uint32_t> ids) {
+  auto CheckFaceIds = [](const size_t nfaces, const std::vector<int32_t> ids) {
     if (std::any_of(ids.begin(), ids.end(),
-                    [&nfaces](uint32_t id) { return id >= nfaces; })) {
+                    [&nfaces](int32_t id) { return (id < 0) && uint32_t(id) >= nfaces; })) {
       return false;
     }
 
@@ -836,7 +836,19 @@ nonstd::expected<bool, std::string> GeomMesh::ValidateGeomSubset() {
     for (size_t i = 0; i < geom_subset_children.size(); i++) {
       const GeomSubset &subset = geom_subset_children[i];
 
-      if (!CheckFaceIds(n, subset.indices)) {
+      Animatable<std::vector<int32_t>> indicesAttr;
+      if (!subset.indices.get_value( &indicesAttr ))
+      {
+        return nonstd::make_unexpected("Failed to get `indices` attribute. Maybe connection(Not yet supported)?\n");
+      }
+
+      std::vector<int32_t> indices;
+      if (!indicesAttr.get_scalar(&indices))
+      {
+        return nonstd::make_unexpected("Timesampled `GeomSubset.indices` is not supported\n");
+      }
+
+      if (!CheckFaceIds(n, indices)) {
         ss << "Face index out-of-range.\n";
         return nonstd::make_unexpected(ss.str());
       }
