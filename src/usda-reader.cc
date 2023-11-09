@@ -1722,10 +1722,7 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
 
             if (auto pv =
                     item.second.get_attribute().get_value<std::vector<int>>()) {
-              // int -> uint
-              std::transform(pv.value().begin(), pv.value().end(),
-                             std::back_inserter(subset.indices),
-                             [](int a) { return uint32_t(a); });
+              subset.indices.set_value( *pv );
             } else {
               PUSH_ERROR_AND_RETURN(
                   "`indices` property must be `int[]` type, but got `" +
