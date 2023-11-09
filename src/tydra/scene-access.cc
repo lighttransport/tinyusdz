@@ -1058,39 +1058,18 @@ nonstd::expected<bool, std::string> GetPrimProperty(
 
   // Currently GeomSubset does not support TimeSamples and AttributeMeta
 
+  std::string err;
+
   DCOUT("prop_name = " << prop_name);
-  if (prop_name == "indices") {
-    primvar::PrimVar var;
-    var.set_value(subset.indices);
-    Attribute attr;
-    attr.set_var(std::move(var));
-    attr.variability() = Variability::Uniform;
-    (*out_prop) = Property(attr, /* custom */ false);
-  } else if (prop_name == "elementType") {
-    value::token tok(to_string(subset.elementType));
-    primvar::PrimVar var;
-    var.set_value(tok);
-    Attribute attr;
-    attr.set_var(std::move(var));
-    attr.variability() = Variability::Uniform;
-    (*out_prop) = Property(attr, /* custom */ false);
-  } else if (prop_name == "familyType") {
-    value::token tok(to_string(subset.familyType));
-    primvar::PrimVar var;
-    var.set_value(tok);
-    Attribute attr;
-    attr.set_var(std::move(var));
-    attr.variability() = Variability::Uniform;
-    (*out_prop) = Property(attr, /* custom */ false);
-  } else if (prop_name == "familyName") {
-    if (subset.familyName) {
-      value::token tok(subset.familyName.value());
-      primvar::PrimVar var;
-      var.set_value(tok);
-      Attribute attr;
-      attr.set_var(std::move(var));
-      attr.variability() = Variability::Uniform;
-      (*out_prop) = Property(attr, /* custom */ false);
+  TO_PROPERTY("indices", subset.indices);
+  TO_TOKEN_PROPERTY("elementType", subset.elementType);
+  TO_TOKEN_PROPERTY("familyType", subset.familyType);
+  TO_PROPERTY("familyName", subset.familyName);
+
+  if (prop_name == "material:binding") {
+    if (subset.materialBinding) {
+      const Relationship &rel = subset.materialBinding.value();
+      (*out_prop) = Property(rel, /* custom */false);
     } else {
       return false;
     }

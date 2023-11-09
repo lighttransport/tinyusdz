@@ -634,6 +634,7 @@ namespace value {
   __FUNC(Xform)                 \
   __FUNC(GeomMesh)              \
   __FUNC(GeomSphere)            \
+  __FUNC(GeomSubset)            \
   __FUNC(GeomPoints)            \
   __FUNC(GeomCube)              \
   __FUNC(GeomCylinder)          \

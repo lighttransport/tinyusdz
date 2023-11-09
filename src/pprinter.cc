@@ -6,18 +6,19 @@
 //
 //
 #include "pprinter.hh"
-#include "prim-types.hh"
+
 #include "prim-pprint.hh"
-#include "usdShade.hh"
-#include "value-pprint.hh"
+#include "prim-types.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
+#include "usdShade.hh"
+#include "value-pprint.hh"
 //
 #include "common-macros.inc"
 
 // For fast int/float to ascii
 // Default disabled.
-//#define TINYUSDZ_LOCAL_USE_JEAIII_ITOA
+// #define TINYUSDZ_LOCAL_USE_JEAIII_ITOA
 
 #if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
 #include "external/jeaiii_to_text.h"
@@ -34,7 +35,7 @@
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
-//#include "external/floaxie/floaxie/ftoa.h"
+// #include "external/floaxie/floaxie/ftoa.h"
 
 #ifdef __clang__
 #pragma clang diagnostic pop
@@ -43,17 +44,18 @@
 // TODO:
 // - [ ] Print properties based on lexcographically(USDA)
 // - [ ] Refactor variantSet stmt print.
-// - [ ] wrap float/double print with `dtos` for accurate float/double value stringify.
+// - [ ] wrap float/double print with `dtos` for accurate float/double value
+// stringify.
 
 namespace tinyusdz {
 
 namespace {
 
 #if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
-void itoa(uint32_t n, char* b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
-void itoa(int32_t n, char* b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
-void itoa(uint64_t n, char* b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
-void itoa(int64_t n, char* b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
+void itoa(uint32_t n, char *b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
+void itoa(int32_t n, char *b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
+void itoa(uint64_t n, char *b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
+void itoa(int64_t n, char *b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
 #endif
 
 #if 0
@@ -67,7 +69,6 @@ inline std::string dtos(const float v) {
 #endif
 
 inline std::string dtos(const double v) {
-
   char buf[128];
   dtoa_milo(v, buf);
 
@@ -79,11 +80,10 @@ std::string pquote(const Path &p) {
   return wquote(p.full_path_name(), "<", ">");
 }
 
-} // namespace
-} // namespace tinyusdz
+}  // namespace
+}  // namespace tinyusdz
 
 namespace std {
-
 
 std::ostream &operator<<(std::ostream &ofs, tinyusdz::Visibility v) {
   ofs << to_string(v);
@@ -102,9 +102,7 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Path &v) {
   return ofs;
 }
 
-
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::LayerOffset &v) {
-
   bool print_offset{true};
   bool print_scale{true};
 
@@ -124,10 +122,11 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::LayerOffset &v) {
   // TODO: Do not print scale when it is 1.0
   ofs << "(";
   if (print_offset && print_scale) {
-    ofs << "offset = " << tinyusdz::dtos(v._offset) << ", scale = " << tinyusdz::dtos(v._scale);
+    ofs << "offset = " << tinyusdz::dtos(v._offset)
+        << ", scale = " << tinyusdz::dtos(v._scale);
   } else if (print_offset) {
     ofs << "offset = " << tinyusdz::dtos(v._offset);
-  } else { // print_scale
+  } else {  // print_scale
     ofs << "scale = " << tinyusdz::dtos(v._scale);
   }
   ofs << ")";
@@ -136,21 +135,20 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::LayerOffset &v) {
 }
 
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Reference &v) {
-
   ofs << v.asset_path;
   if (v.prim_path.is_valid()) {
     ofs << v.prim_path;
   }
   ofs << v.layerOffset;
   if (!v.customData.empty()) {
-    ofs << tinyusdz::print_customData(v.customData, "customData", /* indent */ 0);
+    ofs << tinyusdz::print_customData(v.customData, "customData",
+                                      /* indent */ 0);
   }
 
   return ofs;
 }
 
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Payload &v) {
-
   ofs << v.asset_path;
   if (v.prim_path.is_valid()) {
     ofs << v.prim_path;
@@ -161,14 +159,13 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Payload &v) {
 }
 
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::SubLayer &v) {
-
   ofs << v.assetPath << v.layerOffset;
 
   return ofs;
 }
 
-std::ostream &operator<<(std::ostream &ofs, const tinyusdz::value::StringData &v) {
-
+std::ostream &operator<<(std::ostream &ofs,
+                         const tinyusdz::value::StringData &v) {
 #if 0
   std::string delim = v.single_quote ? "'" : "\"";
 
@@ -200,9 +197,7 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Layer &layer) {
   return ofs;
 }
 
-
-} // namespace std
-
+}  // namespace std
 
 namespace tinyusdz {
 
@@ -230,16 +225,13 @@ std::string Indent(uint32_t n) {
   return ss.str();
 }
 
-void SetIndentString(const std::string &s) {
-  sIndentString = s;
-}
+void SetIndentString(const std::string &s) { sIndentString = s; }
 
-} // namespace pprint
+}  // namespace pprint
 
-
-
-template<typename T>
-std::string print_typed_timesamples(const TypedTimeSamples<T> &v, const uint32_t indent = 0) {
+template <typename T>
+std::string print_typed_timesamples(const TypedTimeSamples<T> &v,
+                                    const uint32_t indent = 0) {
   std::stringstream ss;
 
   ss << "{\n";
@@ -247,7 +239,7 @@ std::string print_typed_timesamples(const TypedTimeSamples<T> &v, const uint32_t
   const auto &samples = v.get_samples();
 
   for (size_t i = 0; i < samples.size(); i++) {
-    ss << pprint::Indent(indent+1) << samples[i].t << ": ";
+    ss << pprint::Indent(indent + 1) << samples[i].t << ": ";
     if (samples[i].blocked) {
       ss << "None";
     } else {
@@ -261,8 +253,9 @@ std::string print_typed_timesamples(const TypedTimeSamples<T> &v, const uint32_t
   return ss.str();
 }
 
-template<typename T>
-std::string print_typed_token_timesamples(const TypedTimeSamples<T> &v, const uint32_t indent = 0) {
+template <typename T>
+std::string print_typed_token_timesamples(const TypedTimeSamples<T> &v,
+                                          const uint32_t indent = 0) {
   std::stringstream ss;
 
   ss << "{\n";
@@ -270,7 +263,7 @@ std::string print_typed_token_timesamples(const TypedTimeSamples<T> &v, const ui
   const auto &samples = v.get_samples();
 
   for (size_t i = 0; i < samples.size(); i++) {
-    ss << pprint::Indent(indent+1) << samples[i].t << ": ";
+    ss << pprint::Indent(indent + 1) << samples[i].t << ": ";
     if (samples[i].blocked) {
       ss << "None";
     } else {
@@ -284,7 +277,8 @@ std::string print_typed_token_timesamples(const TypedTimeSamples<T> &v, const ui
   return ss.str();
 }
 
-static std::string print_str_timesamples(const TypedTimeSamples<std::string> &v, const uint32_t indent = 0) {
+static std::string print_str_timesamples(const TypedTimeSamples<std::string> &v,
+                                         const uint32_t indent = 0) {
   std::stringstream ss;
 
   ss << "{\n";
@@ -292,7 +286,7 @@ static std::string print_str_timesamples(const TypedTimeSamples<std::string> &v,
   const auto &samples = v.get_samples();
 
   for (size_t i = 0; i < samples.size(); i++) {
-    ss << pprint::Indent(indent+1) << samples[i].t << ": ";
+    ss << pprint::Indent(indent + 1) << samples[i].t << ": ";
     if (samples[i].blocked) {
       ss << "None";
     } else {
@@ -306,8 +300,9 @@ static std::string print_str_timesamples(const TypedTimeSamples<std::string> &v,
   return ss.str();
 }
 
-template<typename T>
-std::string print_animatable(const Animatable<T> &v, const uint32_t indent = 0) {
+template <typename T>
+std::string print_animatable(const Animatable<T> &v,
+                             const uint32_t indent = 0) {
   std::stringstream ss;
 
   if (v.is_timesamples()) {
@@ -327,8 +322,9 @@ std::string print_animatable(const Animatable<T> &v, const uint32_t indent = 0) 
   return ss.str();
 }
 
-template<typename T>
-std::string print_animatable_token(const Animatable<T> &v, const uint32_t indent = 0) {
+template <typename T>
+std::string print_animatable_token(const Animatable<T> &v,
+                                   const uint32_t indent = 0) {
   std::stringstream ss;
 
   if (v.is_timesamples()) {
@@ -348,10 +344,10 @@ std::string print_animatable_token(const Animatable<T> &v, const uint32_t indent
   return ss.str();
 }
 
-
 namespace {
 
-std::string print_references(const prim::ReferenceList &references, const uint32_t indent) {
+std::string print_references(const prim::ReferenceList &references,
+                             const uint32_t indent) {
   std::stringstream ss;
 
   auto listEditQual = std::get<0>(references);
@@ -379,8 +375,8 @@ std::string print_references(const prim::ReferenceList &references, const uint32
   return ss.str();
 }
 
-std::string print_rel_only(const Relationship &rel, const std::string &name, uint32_t indent)
-{
+std::string print_rel_only(const Relationship &rel, const std::string &name,
+                           uint32_t indent) {
   std::stringstream ss;
 
   ss << "rel " << name;
@@ -398,7 +394,9 @@ std::string print_rel_only(const Relationship &rel, const std::string &name, uin
   }
 
   if (rel.metas().authored()) {
-    ss << " (\n" << print_attr_metas(rel.metas(), indent+1) << pprint::Indent(indent) << ")";
+    ss << " (\n"
+       << print_attr_metas(rel.metas(), indent + 1) << pprint::Indent(indent)
+       << ")";
   }
 
   ss << "\n";
@@ -406,7 +404,9 @@ std::string print_rel_only(const Relationship &rel, const std::string &name, uin
   return ss.str();
 }
 
-std::string print_relationship(const Relationship &rel, const ListEditQual &qual, const bool custom, const std::string &name, uint32_t indent) {
+std::string print_relationship(const Relationship &rel,
+                               const ListEditQual &qual, const bool custom,
+                               const std::string &name, uint32_t indent) {
   std::stringstream ss;
 
   ss << pprint::Indent(indent);
@@ -429,9 +429,10 @@ std::string print_relationship(const Relationship &rel, const ListEditQual &qual
   return ss.str();
 }
 
-} // namespce local
+}  // namespace
 
-std::string print_payload(const prim::PayloadList &payload, const uint32_t indent) {
+std::string print_payload(const prim::PayloadList &payload,
+                          const uint32_t indent) {
   std::stringstream ss;
 
   auto listEditQual = std::get<0>(payload);
@@ -459,11 +460,11 @@ std::string print_payload(const prim::PayloadList &payload, const uint32_t inden
 }
 
 std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
-
   std::stringstream ss;
 
   if (meta.active) {
-    ss << pprint::Indent(indent) << "active = " << to_string(meta.active.value()) << "\n";
+    ss << pprint::Indent(indent)
+       << "active = " << to_string(meta.active.value()) << "\n";
   }
 
   if (meta.clips) {
@@ -471,11 +472,13 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   }
 
   if (meta.instanceable) {
-    ss << pprint::Indent(indent) << "instanceable = " << to_string(meta.instanceable.value()) << "\n";
+    ss << pprint::Indent(indent)
+       << "instanceable = " << to_string(meta.instanceable.value()) << "\n";
   }
 
   if (meta.hidden) {
-    ss << pprint::Indent(indent) << "hidden = " << to_string(meta.hidden.value()) << "\n";
+    ss << pprint::Indent(indent)
+       << "hidden = " << to_string(meta.hidden.value()) << "\n";
   }
 
   if (meta.kind) {
@@ -484,12 +487,14 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
 
   // TODO: UTF-8 ready pprint
   if (meta.sceneName) {
-    ss << pprint::Indent(indent) << "sceneName = " << quote(meta.sceneName.value()) << "\n";
+    ss << pprint::Indent(indent)
+       << "sceneName = " << quote(meta.sceneName.value()) << "\n";
   }
 
   // TODO: UTF-8 ready pprint
   if (meta.displayName) {
-    ss << pprint::Indent(indent) << "displayName = " << quote(meta.displayName.value()) << "\n";
+    ss << pprint::Indent(indent)
+       << "displayName = " << quote(meta.displayName.value()) << "\n";
   }
 
   if (meta.assetInfo) {
@@ -552,7 +557,8 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   if (meta.variantSets) {
     ss << pprint::Indent(indent);
     auto listEditQual = std::get<0>(meta.variantSets.value());
-    const std::vector<std::string> &vs = std::get<1>(meta.variantSets.value()); // string[]
+    const std::vector<std::string> &vs =
+        std::get<1>(meta.variantSets.value());  // string[]
 
     if (listEditQual != ListEditQual::ResetToExplicit) {
       ss << to_string(listEditQual) << " ";
@@ -573,8 +579,8 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
     auto schemas = meta.apiSchemas.value();
 
     if (schemas.names.size()) {
-
-      ss << pprint::Indent(indent) << to_string(schemas.listOpQual) << " apiSchemas = [";
+      ss << pprint::Indent(indent) << to_string(schemas.listOpQual)
+         << " apiSchemas = [";
 
       for (size_t i = 0; i < schemas.names.size(); i++) {
         if (i != 0) {
@@ -597,11 +603,13 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   }
 
   if (meta.doc) {
-    ss << pprint::Indent(indent) << "doc = " << to_string(meta.doc.value()) << "\n";
+    ss << pprint::Indent(indent) << "doc = " << to_string(meta.doc.value())
+       << "\n";
   }
 
   if (meta.comment) {
-    ss << pprint::Indent(indent) << "comment = " << to_string(meta.comment.value()) << "\n";
+    ss << pprint::Indent(indent)
+       << "comment = " << to_string(meta.comment.value()) << "\n";
   }
 
   if (meta.customData) {
@@ -615,64 +623,76 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
 
   // TODO: deprecate meta.meta and remove it.
   for (const auto &item : meta.meta) {
-    ss << print_meta(item.second, indent+1, item.first);
+    ss << print_meta(item.second, indent + 1, item.first);
   }
 
-  //for (const auto &item : meta.stringData) {
-  //  ss << pprint::Indent(indent) << to_string(item) << "\n";
-  //}
+  // for (const auto &item : meta.stringData) {
+  //   ss << pprint::Indent(indent) << to_string(item) << "\n";
+  // }
 
   return ss.str();
 }
 
 std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
-
   std::stringstream ss;
 
   if (meta.interpolation) {
-    ss << pprint::Indent(indent) << "interpolation = " << quote(to_string(meta.interpolation.value())) << "\n";
+    ss << pprint::Indent(indent)
+       << "interpolation = " << quote(to_string(meta.interpolation.value()))
+       << "\n";
   }
 
   if (meta.elementSize) {
-    ss << pprint::Indent(indent) << "elementSize = " << to_string(meta.elementSize.value()) << "\n";
+    ss << pprint::Indent(indent)
+       << "elementSize = " << to_string(meta.elementSize.value()) << "\n";
   }
 
   if (meta.bindMaterialAs) {
-    ss << pprint::Indent(indent) << "bindMaterialAs = " << quote(to_string(meta.bindMaterialAs.value())) << "\n";
+    ss << pprint::Indent(indent)
+       << "bindMaterialAs = " << quote(to_string(meta.bindMaterialAs.value()))
+       << "\n";
   }
 
   if (meta.connectability) {
-    ss << pprint::Indent(indent) << "connectability = " << quote(to_string(meta.connectability.value())) << "\n";
+    ss << pprint::Indent(indent)
+       << "connectability = " << quote(to_string(meta.connectability.value()))
+       << "\n";
   }
 
   if (meta.displayName) {
-    ss << pprint::Indent(indent) << "displayName = " << quote(meta.displayName.value()) << "\n";
+    ss << pprint::Indent(indent)
+       << "displayName = " << quote(meta.displayName.value()) << "\n";
   }
 
   if (meta.outputName) {
-    ss << pprint::Indent(indent) << "outputName = " << quote(to_string(meta.outputName.value())) << "\n";
+    ss << pprint::Indent(indent)
+       << "outputName = " << quote(to_string(meta.outputName.value())) << "\n";
   }
 
   if (meta.renderType) {
-    ss << pprint::Indent(indent) << "renderType = " << quote(to_string(meta.renderType.value())) << "\n";
+    ss << pprint::Indent(indent)
+       << "renderType = " << quote(to_string(meta.renderType.value())) << "\n";
   }
 
   if (meta.sdrMetadata) {
-    ss << pprint::Indent(indent) << print_customData(meta.sdrMetadata.value(), "sdrMetadata", indent);
+    ss << pprint::Indent(indent)
+       << print_customData(meta.sdrMetadata.value(), "sdrMetadata", indent);
   }
 
   if (meta.hidden) {
-    ss << pprint::Indent(indent) << "hidden = " << to_string(meta.hidden.value()) << "\n";
+    ss << pprint::Indent(indent)
+       << "hidden = " << to_string(meta.hidden.value()) << "\n";
   }
 
   if (meta.comment) {
-    ss << pprint::Indent(indent) << "comment = " << to_string(meta.comment.value()) << "\n";
+    ss << pprint::Indent(indent)
+       << "comment = " << to_string(meta.comment.value()) << "\n";
   }
 
   if (meta.weight) {
-    ss << pprint::Indent(indent) << "weight = " << dtos(meta.weight.value()) << "\n";
+    ss << pprint::Indent(indent) << "weight = " << dtos(meta.weight.value())
+       << "\n";
   }
-
 
   if (meta.customData) {
     ss << print_customData(meta.customData.value(), "customData", indent);
@@ -690,13 +710,12 @@ std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
   return ss.str();
 }
 
-template<typename T>
-std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr, const std::string &name, const uint32_t indent) {
-
+template <typename T>
+std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr,
+                             const std::string &name, const uint32_t indent) {
   std::stringstream ss;
 
   if (attr.authored()) {
-
     ss << pprint::Indent(indent);
 
     ss << value::TypeTraits<T>::type_name() << " " << name;
@@ -719,7 +738,8 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr, const st
 
       if (pv) {
         if (pv.value().is_timesamples()) {
-          ss << ".timeSamples = " << print_typed_timesamples(pv.value().get_timesamples(), indent);
+          ss << ".timeSamples = "
+             << print_typed_timesamples(pv.value().get_timesamples(), indent);
         } else {
           T a;
           if (pv.value().get_scalar(&a)) {
@@ -732,7 +752,9 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr, const st
     }
 
     if (attr.metas().authored()) {
-      ss << "(\n" << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent) << ")";
+      ss << "(\n"
+         << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
+         << ")";
     }
     ss << "\n";
   }
@@ -740,12 +762,12 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr, const st
   return ss.str();
 }
 
-static std::string print_str_attr(const TypedAttribute<Animatable<std::string>> &attr, const std::string &name, const uint32_t indent) {
-
+static std::string print_str_attr(
+    const TypedAttribute<Animatable<std::string>> &attr,
+    const std::string &name, const uint32_t indent) {
   std::stringstream ss;
 
   if (attr.authored()) {
-
     ss << pprint::Indent(indent);
 
     ss << value::TypeTraits<std::string>::type_name() << " " << name;
@@ -768,7 +790,8 @@ static std::string print_str_attr(const TypedAttribute<Animatable<std::string>> 
 
       if (pv) {
         if (pv.value().is_timesamples()) {
-          ss << ".timeSamples = " << print_str_timesamples(pv.value().get_timesamples(), indent);
+          ss << ".timeSamples = "
+             << print_str_timesamples(pv.value().get_timesamples(), indent);
         } else {
           std::string a;
           if (pv.value().get_scalar(&a)) {
@@ -782,7 +805,9 @@ static std::string print_str_attr(const TypedAttribute<Animatable<std::string>> 
     }
 
     if (attr.metas().authored()) {
-      ss << "(\n" << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent) << ")";
+      ss << "(\n"
+         << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
+         << ")";
     }
     ss << "\n";
   }
@@ -823,25 +848,21 @@ std::string print_typed_token_attr(const TypedAttribute<Animatable<T>> &attr, co
 }
 #endif
 
-template<typename T>
-std::string print_typed_attr(const TypedAttribute<T> &attr, const std::string &name, const uint32_t indent) {
-
+template <typename T>
+std::string print_typed_attr(const TypedAttribute<T> &attr,
+                             const std::string &name, const uint32_t indent) {
   std::stringstream ss;
 
   if (attr.authored()) {
-
-
     ss << pprint::Indent(indent);
 
     ss << "uniform ";
 
     ss << value::TypeTraits<T>::type_name() << " " << name;
 
-
     if (attr.is_blocked()) {
       ss << " = None";
     } else if (attr.is_connection()) {
-
       ss << ".connect = ";
       const std::vector<Path> &paths = attr.get_connections();
       if (paths.size() == 1) {
@@ -862,7 +883,9 @@ std::string print_typed_attr(const TypedAttribute<T> &attr, const std::string &n
     }
 
     if (attr.metas().authored()) {
-      ss << " (\n" << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent) << ")";
+      ss << " (\n"
+         << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
+         << ")";
     }
     ss << "\n";
   }
@@ -903,13 +926,13 @@ std::string print_typed_token_attr(const TypedAttribute<T> &attr, const std::str
 }
 #endif
 
-template<typename T>
-std::string print_typed_attr(const TypedAttributeWithFallback<Animatable<T>> &attr, const std::string &name, const uint32_t indent) {
-
+template <typename T>
+std::string print_typed_attr(
+    const TypedAttributeWithFallback<Animatable<T>> &attr,
+    const std::string &name, const uint32_t indent) {
   std::stringstream ss;
 
   if (attr.authored()) {
-
     ss << pprint::Indent(indent);
 
     ss << value::TypeTraits<T>::type_name() << " " << name;
@@ -935,11 +958,13 @@ std::string print_typed_attr(const TypedAttributeWithFallback<Animatable<T>> &at
         ss << ".timeSamples";
       }
 
-      ss << " = " <<  print_animatable(v, indent);
+      ss << " = " << print_animatable(v, indent);
     }
 
     if (attr.metas().authored()) {
-      ss << " (\n" << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent) << ")";
+      ss << " (\n"
+         << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
+         << ")";
     }
     ss << "\n";
   }
@@ -947,13 +972,13 @@ std::string print_typed_attr(const TypedAttributeWithFallback<Animatable<T>> &at
   return ss.str();
 }
 
-template<typename T>
-std::string print_typed_terminal_attr(const TypedTerminalAttribute<T> &attr, const std::string &name, const uint32_t indent) {
-
+template <typename T>
+std::string print_typed_terminal_attr(const TypedTerminalAttribute<T> &attr,
+                                      const std::string &name,
+                                      const uint32_t indent) {
   std::stringstream ss;
 
   if (attr.authored()) {
-
     ss << pprint::Indent(indent);
 
     if (attr.has_actual_type()) {
@@ -963,7 +988,9 @@ std::string print_typed_terminal_attr(const TypedTerminalAttribute<T> &attr, con
     }
 
     if (attr.metas().authored()) {
-      ss << " (\n" << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent) << ")";
+      ss << " (\n"
+         << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
+         << ")";
     }
     ss << "\n";
   }
@@ -971,13 +998,12 @@ std::string print_typed_terminal_attr(const TypedTerminalAttribute<T> &attr, con
   return ss.str();
 }
 
-template<typename T>
-std::string print_typed_attr(const TypedAttributeWithFallback<T> &attr, const std::string &name, const uint32_t indent) {
-
+template <typename T>
+std::string print_typed_attr(const TypedAttributeWithFallback<T> &attr,
+                             const std::string &name, const uint32_t indent) {
   std::stringstream ss;
 
   if (attr.authored()) {
-
     ss << pprint::Indent(indent);
 
     ss << "uniform ";
@@ -1002,7 +1028,9 @@ std::string print_typed_attr(const TypedAttributeWithFallback<T> &attr, const st
     }
 
     if (attr.metas().authored()) {
-      ss << " (\n" << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent) << ")";
+      ss << " (\n"
+         << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
+         << ")";
     }
     ss << "\n";
   }
@@ -1010,15 +1038,14 @@ std::string print_typed_attr(const TypedAttributeWithFallback<T> &attr, const st
   return ss.str();
 }
 
-template<typename T>
-std::string print_typed_token_attr(const TypedAttributeWithFallback<Animatable<T>> &attr, const std::string &name, const uint32_t indent) {
-
+template <typename T>
+std::string print_typed_token_attr(
+    const TypedAttributeWithFallback<Animatable<T>> &attr,
+    const std::string &name, const uint32_t indent) {
   std::stringstream ss;
 
   if (attr.authored()) {
-
     if (attr.is_connection()) {
-
       ss << pprint::Indent(indent);
 
       ss << "token " << name;
@@ -1044,11 +1071,13 @@ std::string print_typed_token_attr(const TypedAttributeWithFallback<Animatable<T
         ss << ".timeSamples";
       }
 
-      ss << " = " <<  print_animatable_token(v, indent);
+      ss << " = " << print_animatable_token(v, indent);
     }
 
     if (attr.metas().authored()) {
-      ss << " (\n" << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent) << ")";
+      ss << " (\n"
+         << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
+         << ")";
     }
     ss << "\n";
   }
@@ -1056,13 +1085,13 @@ std::string print_typed_token_attr(const TypedAttributeWithFallback<Animatable<T
   return ss.str();
 }
 
-template<typename T>
-std::string print_typed_token_attr(const TypedAttributeWithFallback<T> &attr, const std::string &name, const uint32_t indent) {
-
+template <typename T>
+std::string print_typed_token_attr(const TypedAttributeWithFallback<T> &attr,
+                                   const std::string &name,
+                                   const uint32_t indent) {
   std::stringstream ss;
 
   if (attr.authored()) {
-
     if (attr.is_connection()) {
       ss << pprint::Indent(indent);
 
@@ -1078,7 +1107,6 @@ std::string print_typed_token_attr(const TypedAttributeWithFallback<T> &attr, co
         ss << paths;
       }
     } else {
-
       ss << pprint::Indent(indent);
 
       ss << "uniform token " << name;
@@ -1091,7 +1119,9 @@ std::string print_typed_token_attr(const TypedAttributeWithFallback<T> &attr, co
     }
 
     if (attr.metas().authored()) {
-      ss << " (\n" << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent) << ")";
+      ss << " (\n"
+         << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
+         << ")";
     }
     ss << "\n";
   }
@@ -1099,24 +1129,25 @@ std::string print_typed_token_attr(const TypedAttributeWithFallback<T> &attr, co
   return ss.str();
 }
 
-std::string print_timesamples(const value::TimeSamples &v, const uint32_t indent) {
+std::string print_timesamples(const value::TimeSamples &v,
+                              const uint32_t indent) {
   std::stringstream ss;
 
   ss << "{\n";
 
   for (size_t i = 0; i < v.size(); i++) {
-    ss << pprint::Indent(indent+1);
-    ss << v.get_samples()[i].t << ": " << value::pprint_value(v.get_samples()[i].value);
-    ss << ",\n"; // USDA allow ',' for the last item
+    ss << pprint::Indent(indent + 1);
+    ss << v.get_samples()[i].t << ": "
+       << value::pprint_value(v.get_samples()[i].value);
+    ss << ",\n";  // USDA allow ',' for the last item
   }
   ss << pprint::Indent(indent) << "}\n";
 
   return ss.str();
 }
 
-
-std::string print_rel_prop(const Property &prop, const std::string &name, uint32_t indent)
-{
+std::string print_rel_prop(const Property &prop, const std::string &name,
+                           uint32_t indent) {
   std::stringstream ss;
 
   if (!prop.is_relationship()) {
@@ -1144,15 +1175,14 @@ std::string print_rel_prop(const Property &prop, const std::string &name, uint32
   return ss.str();
 }
 
-std::string print_prop(const Property &prop, const std::string &prop_name, uint32_t indent)
-{
+std::string print_prop(const Property &prop, const std::string &prop_name,
+                       uint32_t indent) {
   std::stringstream ss;
 
   if (prop.is_relationship()) {
-
     ss << print_rel_prop(prop, prop_name, indent);
 
-  // Attribute or AttributeConnection
+    // Attribute or AttributeConnection
   } else if (prop.is_attribute() || prop.is_connection()) {
     const Attribute &attr = prop.get_attribute();
 
@@ -1165,8 +1195,8 @@ std::string print_prop(const Property &prop, const std::string &prop_name, uint3
     if (attr.variability() == Variability::Uniform) {
       ss << "uniform ";
     } else if (attr.is_varying_authored()) {
-      // For Attribute, `varying` is the default variability and does not shown in USDA
-      // do nothing
+      // For Attribute, `varying` is the default variability and does not shown
+      // in USDA do nothing
     }
 
     std::string ty;
@@ -1175,7 +1205,6 @@ std::string print_prop(const Property &prop, const std::string &prop_name, uint3
     ss << ty << " " << prop_name;
 
     if (attr.is_connection()) {
-
       ss << ".connect = ";
 
       const std::vector<Path> &paths = attr.connections();
@@ -1207,7 +1236,9 @@ std::string print_prop(const Property &prop, const std::string &prop_name, uint3
     }
 
     if (prop.get_attribute().metas().authored()) {
-      ss << " (\n" << print_attr_metas(prop.get_attribute().metas(), indent+1) << pprint::Indent(indent) << ")";
+      ss << " (\n"
+         << print_attr_metas(prop.get_attribute().metas(), indent + 1)
+         << pprint::Indent(indent) << ")";
     }
     ss << "\n";
   } else {
@@ -1217,24 +1248,24 @@ std::string print_prop(const Property &prop, const std::string &prop_name, uint3
   return ss.str();
 }
 
-std::string print_props(const std::map<std::string, Property> &props, uint32_t indent)
-{
+std::string print_props(const std::map<std::string, Property> &props,
+                        uint32_t indent) {
   std::stringstream ss;
 
   for (const auto &item : props) {
-
     const Property &prop = item.second;
 
     ss << print_prop(prop, item.first, indent);
-
   }
 
   return ss.str();
 }
 
 // Print user-defined (custom) properties.
-std::string print_props(const std::map<std::string, Property> &props, std::set<std::string> &tok_table, const std::vector<value::token> &propNames, uint32_t indent)
-{
+std::string print_props(const std::map<std::string, Property> &props,
+                        std::set<std::string> &tok_table,
+                        const std::vector<value::token> &propNames,
+                        uint32_t indent) {
   std::stringstream ss;
 
   if (propNames.size()) {
@@ -1245,27 +1276,23 @@ std::string print_props(const std::map<std::string, Property> &props, std::set<s
 
       const auto it = props.find(propNames[i].str());
       if (it != props.end()) {
-
         ss << print_prop(it->second, it->first, indent);
 
         tok_table.insert(propNames[i].str());
       }
-
     }
   } else {
-
     ss << print_props(props, indent);
-
   }
 
   return ss.str();
 }
 
-std::string print_xformOpOrder(const std::vector<XformOp> &xformOps, const uint32_t indent) {
+std::string print_xformOpOrder(const std::vector<XformOp> &xformOps,
+                               const uint32_t indent) {
   std::stringstream ss;
 
   if (xformOps.size()) {
-
     ss << pprint::Indent(indent) << "uniform token[] xformOpOrder = [";
     for (size_t i = 0; i < xformOps.size(); i++) {
       if (i > 0) {
@@ -1289,10 +1316,8 @@ std::string print_xformOpOrder(const std::vector<XformOp> &xformOps, const uint3
   return ss.str();
 }
 
-
-
-std::string print_xformOps(const std::vector<XformOp>& xformOps, const uint32_t indent) {
-
+std::string print_xformOps(const std::vector<XformOp> &xformOps,
+                           const uint32_t indent) {
   std::stringstream ss;
 
   // To prevent printing xformOp attributes multiple times.
@@ -1321,7 +1346,7 @@ std::string print_xformOps(const std::vector<XformOp>& xformOps, const uint32_t 
 
       ss << pprint::Indent(indent);
 
-      ss << xformOp.get_value_type_name() << " " ;
+      ss << xformOp.get_value_type_name() << " ";
 
       ss << varname;
 
@@ -1355,8 +1380,10 @@ std::string print_xformOps(const std::vector<XformOp>& xformOps, const uint32_t 
   return ss.str();
 }
 
-static std::string print_xformOp(const std::vector<XformOp>& xformOps, const std::string &prop_name, const uint32_t indent, std::set<std::string> &table) {
-
+static std::string print_xformOp(const std::vector<XformOp> &xformOps,
+                                 const std::string &prop_name,
+                                 const uint32_t indent,
+                                 std::set<std::string> &table) {
   std::stringstream ss;
 
   if (xformOps.empty()) {
@@ -1383,7 +1410,7 @@ static std::string print_xformOp(const std::vector<XformOp>& xformOps, const std
 
     ss << pprint::Indent(indent);
 
-    ss << xformOp.get_value_type_name() << " " ;
+    ss << xformOp.get_value_type_name() << " ";
 
     ss << varname;
 
@@ -1416,7 +1443,7 @@ static std::string print_xformOp(const std::vector<XformOp>& xformOps, const std
   return ss.str();
 }
 
-template<typename T>
+template <typename T>
 std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
   std::stringstream ss;
 
@@ -1429,20 +1456,29 @@ std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
   ss << print_typed_token_attr(gprim.visibility, "visibility", indent);
 
   if (gprim.materialBinding) {
-    ss << print_relationship(gprim.materialBinding.value(), gprim.materialBinding.value().get_listedit_qual(), /* custom */false, "material:binding", indent);
+    ss << print_relationship(gprim.materialBinding.value(),
+                             gprim.materialBinding.value().get_listedit_qual(),
+                             /* custom */ false, "material:binding", indent);
   }
 
   if (gprim.materialBindingCollection) {
-    ss << print_relationship(gprim.materialBindingCollection.value(), gprim.materialBindingCollection.value().get_listedit_qual(), /* custom */false, "material:binding:collection", indent);
+    ss << print_relationship(
+        gprim.materialBindingCollection.value(),
+        gprim.materialBindingCollection.value().get_listedit_qual(),
+        /* custom */ false, "material:binding:collection", indent);
   }
 
   if (gprim.materialBindingPreview) {
-    ss << print_relationship(gprim.materialBindingPreview.value(), gprim.materialBindingPreview.value().get_listedit_qual(), /* custom */false, "material:binding:preview", indent);
+    ss << print_relationship(
+        gprim.materialBindingPreview.value(),
+        gprim.materialBindingPreview.value().get_listedit_qual(),
+        /* custom */ false, "material:binding:preview", indent);
   }
 
   if (gprim.proxyPrim.authored()) {
     const Relationship &rel = gprim.proxyPrim.relationship();
-    ss << print_relationship(rel, rel.get_listedit_qual(), /* custom */false, "proxyPrim", indent);
+    ss << print_relationship(rel, rel.get_listedit_qual(), /* custom */ false,
+                             "proxyPrim", indent);
   }
 
   ss << print_xformOps(gprim.xformOps, indent);
@@ -1450,8 +1486,10 @@ std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
   return ss.str();
 }
 
-static bool emit_gprim_predefined(std::stringstream &ss, const GPrim *gprim, const std::string &prop_name, const uint32_t indent, std::set<std::string> &table) {
-
+static bool emit_gprim_predefined(std::stringstream &ss, const GPrim *gprim,
+                                  const std::string &prop_name,
+                                  const uint32_t indent,
+                                  std::set<std::string> &table) {
   if (prop_name == "doubleSided") {
     ss << print_typed_attr(gprim->doubleSided, "doubleSided", indent);
     table.insert("doubleSided");
@@ -1469,23 +1507,33 @@ static bool emit_gprim_predefined(std::stringstream &ss, const GPrim *gprim, con
     table.insert("visibility");
   } else if (prop_name == "material:binding") {
     if (gprim->materialBinding) {
-      ss << print_relationship(gprim->materialBinding.value(), gprim->materialBinding.value().get_listedit_qual(), /* custom */false, "material:binding", indent);
+      ss << print_relationship(
+          gprim->materialBinding.value(),
+          gprim->materialBinding.value().get_listedit_qual(),
+          /* custom */ false, "material:binding", indent);
       table.insert("material:binding");
     }
   } else if (prop_name == "material:binding:collection") {
     if (gprim->materialBindingCollection) {
-      ss << print_relationship(gprim->materialBindingCollection.value(), gprim->materialBindingCollection.value().get_listedit_qual(), /* custom */false, "material:binding:collection", indent);
+      ss << print_relationship(
+          gprim->materialBindingCollection.value(),
+          gprim->materialBindingCollection.value().get_listedit_qual(),
+          /* custom */ false, "material:binding:collection", indent);
       table.insert("material:binding:collection");
     }
   } else if (prop_name == "material:binding:preview") {
     if (gprim->materialBindingPreview) {
-      ss << print_relationship(gprim->materialBindingPreview.value(), gprim->materialBindingPreview.value().get_listedit_qual(), /* custom */false, "material:binding:preview", indent);
+      ss << print_relationship(
+          gprim->materialBindingPreview.value(),
+          gprim->materialBindingPreview.value().get_listedit_qual(),
+          /* custom */ false, "material:binding:preview", indent);
       table.insert("material:binding:preview");
     }
   } else if (prop_name == "proxyPrim") {
     if (gprim->proxyPrim.authored()) {
       const Relationship &rel = gprim->proxyPrim.relationship();
-      ss << print_relationship(rel, rel.get_listedit_qual(), /* custom */false, "proxyPrim", indent);
+      ss << print_relationship(rel, rel.get_listedit_qual(), /* custom */ false,
+                               "proxyPrim", indent);
       table.insert("proxyPrim");
     }
   } else if (prop_name == "xformOpOrder") {
@@ -1499,7 +1547,6 @@ static bool emit_gprim_predefined(std::stringstream &ss, const GPrim *gprim, con
   }
 
   return true;
-
 }
 
 std::string to_string(bool v) {
@@ -1642,18 +1689,38 @@ std::string to_string(const value::texcoord3d &v) {
   return ss.str();
 }
 
-
 std::string to_string(const APISchemas::APIName &name) {
   std::string s;
 
   switch (name) {
-  case APISchemas::APIName::SkelBindingAPI: { s = "SkelBindingAPI"; break; }
-  case APISchemas::APIName::MaterialBindingAPI: { s = "MaterialBindingAPI"; break; }
-  case APISchemas::APIName::ShapingAPI: { s = "ShapingAPI"; break; }
-  case APISchemas::APIName::Preliminary_AnchoringAPI: { s = "Preliminary_AnchoringAPI"; break; }
-  case APISchemas::APIName::Preliminary_PhysicsColliderAPI: { s = "Preliminary_PhysicsColliderAPI"; break; }
-  case APISchemas::APIName::Preliminary_PhysicsRigidBodyAPI: { s = "Preliminary_PhysicsRigidBodyAPI"; break; }
-  case APISchemas::APIName::Preliminary_PhysicsMaterialAPI: { s = "Preliminary_PhysicsMaterialAPI"; break; }
+    case APISchemas::APIName::SkelBindingAPI: {
+      s = "SkelBindingAPI";
+      break;
+    }
+    case APISchemas::APIName::MaterialBindingAPI: {
+      s = "MaterialBindingAPI";
+      break;
+    }
+    case APISchemas::APIName::ShapingAPI: {
+      s = "ShapingAPI";
+      break;
+    }
+    case APISchemas::APIName::Preliminary_AnchoringAPI: {
+      s = "Preliminary_AnchoringAPI";
+      break;
+    }
+    case APISchemas::APIName::Preliminary_PhysicsColliderAPI: {
+      s = "Preliminary_PhysicsColliderAPI";
+      break;
+    }
+    case APISchemas::APIName::Preliminary_PhysicsRigidBodyAPI: {
+      s = "Preliminary_PhysicsRigidBodyAPI";
+      break;
+    }
+    case APISchemas::APIName::Preliminary_PhysicsMaterialAPI: {
+      s = "Preliminary_PhysicsMaterialAPI";
+      break;
+    }
   }
 
   return s;
@@ -1688,7 +1755,7 @@ std::string to_string(const Reference &v) {
 
   if (!v.customData.empty()) {
     // TODO: Indent
-    ss << print_customData(v.customData, "customData", /* indent */0);
+    ss << print_customData(v.customData, "customData", /* indent */ 0);
   }
 
   return ss.str();
@@ -1707,7 +1774,8 @@ std::string to_string(const Payload &v) {
   return ss.str();
 }
 
-std::string print_variantSelectionMap(const VariantSelectionMap &m, const uint32_t indent) {
+std::string print_variantSelectionMap(const VariantSelectionMap &m,
+                                      const uint32_t indent) {
   std::stringstream ss;
 
   if (m.empty()) {
@@ -1715,21 +1783,22 @@ std::string print_variantSelectionMap(const VariantSelectionMap &m, const uint32
   }
 
   ss << pprint::Indent(indent) << "variants = {\n";
-  for (const auto &item: m) {
-    ss << pprint::Indent(indent+1) << "string " << item.first << " = " << quote(item.second) << "\n";
+  for (const auto &item : m) {
+    ss << pprint::Indent(indent + 1) << "string " << item.first << " = "
+       << quote(item.second) << "\n";
   }
   ss << pprint::Indent(indent) << "}\n";
 
   return ss.str();
 }
 
-
-std::string print_customData(const CustomDataType &customData, const std::string &dict_name, const uint32_t indent) {
+std::string print_customData(const CustomDataType &customData,
+                             const std::string &dict_name,
+                             const uint32_t indent) {
   std::stringstream ss;
 
   ss << pprint::Indent(indent);
   if (!dict_name.empty()) {
-
     std::string name = dict_name;
 
     if (!isValidIdentifier(name)) {
@@ -1742,17 +1811,19 @@ std::string print_customData(const CustomDataType &customData, const std::string
     ss << "{\n";
   }
   for (const auto &item : customData) {
-    ss << print_meta(item.second, indent+1, item.first);
+    ss << print_meta(item.second, indent + 1, item.first);
   }
   ss << pprint::Indent(indent) << "}\n";
 
   return ss.str();
 }
 
-std::string print_meta(const MetaVariable &meta, const uint32_t indent, const std::string &varname) {
+std::string print_meta(const MetaVariable &meta, const uint32_t indent,
+                       const std::string &varname) {
   std::stringstream ss;
 
-  //ss << "TODO: isObject " << meta.is_object() << ", isValue " << meta.IsValue() << "\n";
+  // ss << "TODO: isObject " << meta.is_object() << ", isValue " <<
+  // meta.IsValue() << "\n";
 
   // Use varname if meta.name is empty
   std::string name = meta.get_name();
@@ -1764,7 +1835,6 @@ std::string print_meta(const MetaVariable &meta, const uint32_t indent, const st
     name = "[ERROR:EmptyName]";
   }
 
-
   if (auto pv = meta.get_value<CustomDataType>()) {
     // dict
     if (!isValidIdentifier(name)) {
@@ -1773,11 +1843,12 @@ std::string print_meta(const MetaVariable &meta, const uint32_t indent, const st
     }
     ss << pprint::Indent(indent) << "dictionary " << name << " = {\n";
     for (const auto &item : pv.value()) {
-      ss << print_meta(item.second, indent+1, item.first);
+      ss << print_meta(item.second, indent + 1, item.first);
     }
     ss << pprint::Indent(indent) << "}\n";
   } else {
-    ss << pprint::Indent(indent) << meta.type_name() << " " << name << " = " << pprint_value(meta.get_raw_value()) << "\n";
+    ss << pprint::Indent(indent) << meta.type_name() << " " << name << " = "
+       << pprint_value(meta.get_raw_value()) << "\n";
   }
 
   return ss.str();
@@ -1787,9 +1858,18 @@ std::string to_string(tinyusdz::GeomMesh::InterpolateBoundary v) {
   std::string s;
 
   switch (v) {
-    case tinyusdz::GeomMesh::InterpolateBoundary::InterpolateBoundaryNone: { s = "none"; break; }
-    case tinyusdz::GeomMesh::InterpolateBoundary::EdgeAndCorner: {s = "edgeAndCorner"; break; }
-    case tinyusdz::GeomMesh::InterpolateBoundary::EdgeOnly: { s = "edgeOnly"; break; }
+    case tinyusdz::GeomMesh::InterpolateBoundary::InterpolateBoundaryNone: {
+      s = "none";
+      break;
+    }
+    case tinyusdz::GeomMesh::InterpolateBoundary::EdgeAndCorner: {
+      s = "edgeAndCorner";
+      break;
+    }
+    case tinyusdz::GeomMesh::InterpolateBoundary::EdgeOnly: {
+      s = "edgeOnly";
+      break;
+    }
   }
 
   return s;
@@ -1799,10 +1879,22 @@ std::string to_string(tinyusdz::GeomMesh::SubdivisionScheme v) {
   std::string s;
 
   switch (v) {
-    case tinyusdz::GeomMesh::SubdivisionScheme::CatmullClark: { s = "catmullClark"; break; }
-    case tinyusdz::GeomMesh::SubdivisionScheme::Loop: { s = "loop"; break; }
-    case tinyusdz::GeomMesh::SubdivisionScheme::Bilinear: { s = "bilinear"; break; }
-    case tinyusdz::GeomMesh::SubdivisionScheme::SubdivisionSchemeNone: { s = "none"; break; }
+    case tinyusdz::GeomMesh::SubdivisionScheme::CatmullClark: {
+      s = "catmullClark";
+      break;
+    }
+    case tinyusdz::GeomMesh::SubdivisionScheme::Loop: {
+      s = "loop";
+      break;
+    }
+    case tinyusdz::GeomMesh::SubdivisionScheme::Bilinear: {
+      s = "bilinear";
+      break;
+    }
+    case tinyusdz::GeomMesh::SubdivisionScheme::SubdivisionSchemeNone: {
+      s = "none";
+      break;
+    }
   }
 
   return s;
@@ -1812,12 +1904,31 @@ std::string to_string(tinyusdz::GeomMesh::FaceVaryingLinearInterpolation v) {
   std::string s;
 
   switch (v) {
-    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::CornersPlus1: { s = "cornersPlus1"; break; }
-    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::CornersPlus2: { s = "cornersPlus2"; break; }
-    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::CornersOnly: { s = "cornersOnly"; break; }
-    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::Boundaries: { s = "boundaries"; break; }
-    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::FaceVaryingLinearInterpolationNone: { s = "none"; break; }
-    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::All: { s = "all"; break; }
+    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::CornersPlus1: {
+      s = "cornersPlus1";
+      break;
+    }
+    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::CornersPlus2: {
+      s = "cornersPlus2";
+      break;
+    }
+    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::CornersOnly: {
+      s = "cornersOnly";
+      break;
+    }
+    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::Boundaries: {
+      s = "boundaries";
+      break;
+    }
+    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::
+        FaceVaryingLinearInterpolationNone: {
+      s = "none";
+      break;
+    }
+    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::All: {
+      s = "all";
+      break;
+    }
   }
 
   return s;
@@ -1827,7 +1938,10 @@ std::string to_string(tinyusdz::GeomSubset::ElementType v) {
   std::string s;
 
   switch (v) {
-    case tinyusdz::GeomSubset::ElementType::Face: { s = "face"; break; }
+    case tinyusdz::GeomSubset::ElementType::Face: {
+      s = "face";
+      break;
+    }
   }
 
   return s;
@@ -1837,22 +1951,39 @@ std::string to_string(tinyusdz::GeomSubset::FamilyType v) {
   std::string s;
 
   switch (v) {
-    case tinyusdz::GeomSubset::FamilyType::Partition: { s = "partition"; break; }
-    case tinyusdz::GeomSubset::FamilyType::NonOverlapping: { s = "nonOverlapping"; break; }
-    case tinyusdz::GeomSubset::FamilyType::Unrestricted: { s = "unrestricted"; break; }
+    case tinyusdz::GeomSubset::FamilyType::Partition: {
+      s = "partition";
+      break;
+    }
+    case tinyusdz::GeomSubset::FamilyType::NonOverlapping: {
+      s = "nonOverlapping";
+      break;
+    }
+    case tinyusdz::GeomSubset::FamilyType::Unrestricted: {
+      s = "unrestricted";
+      break;
+    }
   }
 
   return s;
 }
 
-
 std::string to_string(const tinyusdz::UsdUVTexture::SourceColorSpace v) {
   std::string s;
 
   switch (v) {
-    case tinyusdz::UsdUVTexture::SourceColorSpace::Auto: { s = "auto"; break; }
-    case tinyusdz::UsdUVTexture::SourceColorSpace::Raw: {s = "raw"; break; }
-    case tinyusdz::UsdUVTexture::SourceColorSpace::SRGB: { s = "sRGB"; break; }
+    case tinyusdz::UsdUVTexture::SourceColorSpace::Auto: {
+      s = "auto";
+      break;
+    }
+    case tinyusdz::UsdUVTexture::SourceColorSpace::Raw: {
+      s = "raw";
+      break;
+    }
+    case tinyusdz::UsdUVTexture::SourceColorSpace::SRGB: {
+      s = "sRGB";
+      break;
+    }
   }
 
   return s;
@@ -1862,11 +1993,26 @@ std::string to_string(const tinyusdz::UsdUVTexture::Wrap v) {
   std::string s;
 
   switch (v) {
-    case tinyusdz::UsdUVTexture::Wrap::UseMetadata: { s = "useMetadata"; break; }
-    case tinyusdz::UsdUVTexture::Wrap::Black: {s = "black"; break; }
-    case tinyusdz::UsdUVTexture::Wrap::Clamp: { s = "clamp"; break; }
-    case tinyusdz::UsdUVTexture::Wrap::Repeat: { s = "repeat"; break; }
-    case tinyusdz::UsdUVTexture::Wrap::Mirror: { s = "mirror"; break; }
+    case tinyusdz::UsdUVTexture::Wrap::UseMetadata: {
+      s = "useMetadata";
+      break;
+    }
+    case tinyusdz::UsdUVTexture::Wrap::Black: {
+      s = "black";
+      break;
+    }
+    case tinyusdz::UsdUVTexture::Wrap::Clamp: {
+      s = "clamp";
+      break;
+    }
+    case tinyusdz::UsdUVTexture::Wrap::Repeat: {
+      s = "repeat";
+      break;
+    }
+    case tinyusdz::UsdUVTexture::Wrap::Mirror: {
+      s = "mirror";
+      break;
+    }
   }
 
   return s;
@@ -1892,7 +2038,6 @@ std::string to_string(tinyusdz::Kind v) {
     return "[[InvalidKind]]";
   }
 }
-
 
 std::string to_string(tinyusdz::Axis v) {
   if (v == tinyusdz::Axis::X) {
@@ -1924,7 +2069,7 @@ std::string to_string(tinyusdz::Orientation o) {
 
 std::string to_string(tinyusdz::ListEditQual v) {
   if (v == tinyusdz::ListEditQual::ResetToExplicit) {
-    return ""; // unqualified
+    return "";  // unqualified
   } else if (v == tinyusdz::ListEditQual::Append) {
     return "append";
   } else if (v == tinyusdz::ListEditQual::Add) {
@@ -2088,7 +2233,7 @@ std::string to_string(const tinyusdz::Klass &klass, uint32_t indent, bool closin
         ss << "TODO: Rel\n";
     } else {
       //const PrimAttrib &attrib = prop.second.GetAttrib();
-#if 0 // TODO
+#if 0  // TODO
       if (auto p = tinyusdz::primvar::as_basic<double>(&pattr->var)) {
         ss << tinyusdz::pprint::Indent(indent);
         if (pattr->custom) {
@@ -2115,33 +2260,32 @@ std::string to_string(const tinyusdz::Klass &klass, uint32_t indent, bool closin
 }
 #endif
 
-
 std::string print_variantSetStmt(
-  const std::map<std::string, VariantSet> &vslist, const uint32_t indent) {
+    const std::map<std::string, VariantSet> &vslist, const uint32_t indent) {
   std::stringstream ss;
 
-  //ss << "# variantSet.size = " << std::to_string(vslist.size()) << "\n";
+  // ss << "# variantSet.size = " << std::to_string(vslist.size()) << "\n";
   for (const auto &variantSet : vslist) {
-
     if (variantSet.second.variantSet.empty()) {
       continue;
     }
 
-    ss << pprint::Indent(indent) << "variantSet " << quote(variantSet.first) << " = {\n";
+    ss << pprint::Indent(indent) << "variantSet " << quote(variantSet.first)
+       << " = {\n";
 
     for (const auto &item : variantSet.second.variantSet) {
-      ss << pprint::Indent(indent+1) << quote(item.first) << " ";
+      ss << pprint::Indent(indent + 1) << quote(item.first) << " ";
 
       if (item.second.metas().authored()) {
         ss << "(\n";
-        ss << print_prim_metas(item.second.metas(), indent+2);
-        ss << pprint::Indent(indent+1) << ") ";
+        ss << print_prim_metas(item.second.metas(), indent + 2);
+        ss << pprint::Indent(indent + 1) << ") ";
       }
 
       ss << "{\n";
 
       // props
-      ss << print_props(item.second.properties(), indent+2);
+      ss << print_props(item.second.properties(), indent + 2);
 
       // primChildren
       // TODO: print child Prims based on `primChildren` Prim metadata
@@ -2151,63 +2295,67 @@ std::string print_variantSetStmt(
       if (variantPrimMetas.primChildren.size() == variantPrimChildren.size()) {
         std::map<std::string, const Prim *> primNameTable;
         for (size_t i = 0; i < variantPrimChildren.size(); i++) {
-          primNameTable.emplace(variantPrimChildren[i].element_name(), &variantPrimChildren[i]);
+          primNameTable.emplace(variantPrimChildren[i].element_name(),
+                                &variantPrimChildren[i]);
         }
 
         for (size_t i = 0; i < variantPrimMetas.primChildren.size(); i++) {
           value::token nameTok = variantPrimMetas.primChildren[i];
-          DCOUT(fmt::format("variantPrimChildren  {}/{} = {}", i, variantPrimMetas.primChildren.size(), nameTok.str()));
+          DCOUT(fmt::format("variantPrimChildren  {}/{} = {}", i,
+                            variantPrimMetas.primChildren.size(),
+                            nameTok.str()));
           const auto it = primNameTable.find(nameTok.str());
           if (it != primNameTable.end()) {
-            ss << pprint_value(it->second->data(), indent + 2, /* closing_brace */true);
+            ss << pprint_value(it->second->data(), indent + 2,
+                               /* closing_brace */ true);
           } else {
             // TODO: Report warning?
           }
         }
       } else {
         for (const auto &child : variantPrimChildren) {
-          ss << pprint_value(child.data(), indent+2, /* closing_brace */true);
+          ss << pprint_value(child.data(), indent + 2,
+                             /* closing_brace */ true);
         }
       }
 
-      //ss << "# variantSet end\n";
-      ss << pprint::Indent(indent+1) << "}\n";
-
+      // ss << "# variantSet end\n";
+      ss << pprint::Indent(indent + 1) << "}\n";
     }
 
     ss << pprint::Indent(indent) << "}\n";
-
   }
 
   return ss.str();
 }
 
 std::string print_variantSetSpecStmt(
-  const std::map<std::string, VariantSetSpec> &vslist, const uint32_t indent) {
+    const std::map<std::string, VariantSetSpec> &vslist,
+    const uint32_t indent) {
   std::stringstream ss;
 
-  //ss << "# variantSet.size = " << std::to_string(vslist.size()) << "\n";
+  // ss << "# variantSet.size = " << std::to_string(vslist.size()) << "\n";
   for (const auto &variantSet : vslist) {
-
     if (variantSet.second.variantSet.empty()) {
       continue;
     }
 
-    ss << pprint::Indent(indent) << "variantSet " << quote(variantSet.first) << " = {\n";
+    ss << pprint::Indent(indent) << "variantSet " << quote(variantSet.first)
+       << " = {\n";
 
     for (const auto &item : variantSet.second.variantSet) {
-      ss << pprint::Indent(indent+1) << quote(item.first) << " ";
+      ss << pprint::Indent(indent + 1) << quote(item.first) << " ";
 
       if (item.second.metas().authored()) {
         ss << "(\n";
-        ss << print_prim_metas(item.second.metas(), indent+2);
-        ss << pprint::Indent(indent+1) << ") ";
+        ss << print_prim_metas(item.second.metas(), indent + 2);
+        ss << pprint::Indent(indent + 1) << ") ";
       }
 
       ss << "{\n";
 
       // props
-      ss << print_props(item.second.props(), indent+2);
+      ss << print_props(item.second.props(), indent + 2);
 
       // primChildren
       // TODO: print child Prims based on `primChildren` Prim metadata
@@ -2217,12 +2365,15 @@ std::string print_variantSetSpecStmt(
       if (variantPrimMetas.primChildren.size() == variantPrimChildren.size()) {
         std::map<std::string, const PrimSpec *> primNameTable;
         for (size_t i = 0; i < variantPrimChildren.size(); i++) {
-          primNameTable.emplace(variantPrimChildren[i].name(), &variantPrimChildren[i]);
+          primNameTable.emplace(variantPrimChildren[i].name(),
+                                &variantPrimChildren[i]);
         }
 
         for (size_t i = 0; i < variantPrimMetas.primChildren.size(); i++) {
           value::token nameTok = variantPrimMetas.primChildren[i];
-          DCOUT(fmt::format("variantPrimChildren  {}/{} = {}", i, variantPrimMetas.primChildren.size(), nameTok.str()));
+          DCOUT(fmt::format("variantPrimChildren  {}/{} = {}", i,
+                            variantPrimMetas.primChildren.size(),
+                            nameTok.str()));
           const auto it = primNameTable.find(nameTok.str());
           if (it != primNameTable.end()) {
             ss << prim::print_primspec(*(it->second), indent + 2);
@@ -2232,23 +2383,22 @@ std::string print_variantSetSpecStmt(
         }
       } else {
         for (const auto &child : variantPrimChildren) {
-          ss << prim::print_primspec(child, indent+2);
+          ss << prim::print_primspec(child, indent + 2);
         }
       }
 
-      //ss << "# variantSet end\n";
-      ss << pprint::Indent(indent+1) << "}\n";
-
+      // ss << "# variantSet end\n";
+      ss << pprint::Indent(indent + 1) << "}\n";
     }
 
     ss << pprint::Indent(indent) << "}\n";
-
   }
 
   return ss.str();
 }
 
-std::string to_string(const Model &model, const uint32_t indent, bool closing_brace) {
+std::string to_string(const Model &model, const uint32_t indent,
+                      bool closing_brace) {
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << to_string(model.spec);
@@ -2259,13 +2409,13 @@ std::string to_string(const Model &model, const uint32_t indent, bool closing_br
 
   if (model.meta.authored()) {
     ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(model.meta, indent+1);
+    ss << print_prim_metas(model.meta, indent + 1);
     ss << pprint::Indent(indent) << ")\n";
   }
   ss << pprint::Indent(indent) << "{\n";
 
   std::set<std::string> tokset;
-  ss << print_props(model.props, tokset, model.propertyNames(), indent+1);
+  ss << print_props(model.props, tokset, model.propertyNames(), indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -2274,19 +2424,21 @@ std::string to_string(const Model &model, const uint32_t indent, bool closing_br
   return ss.str();
 }
 
-std::string to_string(const Scope &scope, const uint32_t indent, bool closing_brace) {
+std::string to_string(const Scope &scope, const uint32_t indent,
+                      bool closing_brace) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(scope.spec) << " Scope \"" << scope.name << "\"\n";
+  ss << pprint::Indent(indent) << to_string(scope.spec) << " Scope \""
+     << scope.name << "\"\n";
   if (scope.meta.authored()) {
     ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(scope.meta, indent+1);
+    ss << print_prim_metas(scope.meta, indent + 1);
     ss << pprint::Indent(indent) << ")\n";
   }
   ss << pprint::Indent(indent) << "{\n";
 
   std::set<std::string> tokset;
-  ss << print_props(scope.props, tokset, scope.propertyNames(), indent+1);
+  ss << print_props(scope.props, tokset, scope.propertyNames(), indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -2295,16 +2447,18 @@ std::string to_string(const Scope &scope, const uint32_t indent, bool closing_br
   return ss.str();
 }
 
-std::string to_string(const GPrim &gprim, const uint32_t indent, bool closing_brace) {
+std::string to_string(const GPrim &gprim, const uint32_t indent,
+                      bool closing_brace) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(gprim.spec) << " GPrim \"" << gprim.name << "\"\n";
+  ss << pprint::Indent(indent) << to_string(gprim.spec) << " GPrim \""
+     << gprim.name << "\"\n";
   ss << pprint::Indent(indent) << "(\n";
   // args
   ss << pprint::Indent(indent) << ")\n";
   ss << pprint::Indent(indent) << "{\n";
 
-  ss << print_gprim_predefined(gprim, indent+1);
+  ss << print_gprim_predefined(gprim, indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -2313,20 +2467,22 @@ std::string to_string(const GPrim &gprim, const uint32_t indent, bool closing_br
   return ss.str();
 }
 
-std::string to_string(const Xform &xform, const uint32_t indent, bool closing_brace) {
+std::string to_string(const Xform &xform, const uint32_t indent,
+                      bool closing_brace) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(xform.spec) << " Xform \"" << xform.name << "\"\n";
+  ss << pprint::Indent(indent) << to_string(xform.spec) << " Xform \""
+     << xform.name << "\"\n";
   if (xform.meta.authored()) {
     ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(xform.meta, indent+1);
+    ss << print_prim_metas(xform.meta, indent + 1);
     ss << pprint::Indent(indent) << ")\n";
   }
   ss << pprint::Indent(indent) << "{\n";
 
-  ss << print_gprim_predefined(xform, indent+1);
+  ss << print_gprim_predefined(xform, indent + 1);
 
-  ss << print_props(xform.props, indent+1);
+  ss << print_props(xform.props, indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -2335,36 +2491,41 @@ std::string to_string(const Xform &xform, const uint32_t indent, bool closing_br
   return ss.str();
 }
 
-std::string to_string(const GeomCamera &camera, const uint32_t indent, bool closing_brace) {
+std::string to_string(const GeomCamera &camera, const uint32_t indent,
+                      bool closing_brace) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(camera.spec) << " Camera \"" << camera.name << "\"\n";
+  ss << pprint::Indent(indent) << to_string(camera.spec) << " Camera \""
+     << camera.name << "\"\n";
   if (camera.meta.authored()) {
     ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(camera.meta, indent+1);
+    ss << print_prim_metas(camera.meta, indent + 1);
     ss << pprint::Indent(indent) << ")\n";
   }
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << print_typed_attr(camera.clippingRange, "clippingRange", indent+1);
-  ss << print_typed_attr(camera.clippingPlanes, "clippingPlanes", indent+1);
-  ss << print_typed_attr(camera.focalLength, "focalLength", indent+1);
-  ss << print_typed_attr(camera.horizontalAperture, "horizontalAperture", indent+1);
-  ss << print_typed_attr(camera.horizontalApertureOffset, "horizontalApertureOffset", indent+1);
-  ss << print_typed_attr(camera.verticalAperture, "verticalAperture", indent+1);
-  ss << print_typed_attr(camera.verticalApertureOffset, "verticalApertureOffset", indent+1);
+  ss << print_typed_attr(camera.clippingRange, "clippingRange", indent + 1);
+  ss << print_typed_attr(camera.clippingPlanes, "clippingPlanes", indent + 1);
+  ss << print_typed_attr(camera.focalLength, "focalLength", indent + 1);
+  ss << print_typed_attr(camera.horizontalAperture, "horizontalAperture",
+                         indent + 1);
+  ss << print_typed_attr(camera.horizontalApertureOffset,
+                         "horizontalApertureOffset", indent + 1);
+  ss << print_typed_attr(camera.verticalAperture, "verticalAperture",
+                         indent + 1);
+  ss << print_typed_attr(camera.verticalApertureOffset,
+                         "verticalApertureOffset", indent + 1);
 
-  ss << print_typed_token_attr(camera.projection, "projection", indent+1);
-  ss << print_typed_token_attr(camera.stereoRole, "stereoRole", indent+1);
+  ss << print_typed_token_attr(camera.projection, "projection", indent + 1);
+  ss << print_typed_token_attr(camera.stereoRole, "stereoRole", indent + 1);
 
-  ss << print_typed_attr(camera.shutterOpen, "shutter:open", indent+1);
-  ss << print_typed_attr(camera.shutterClose, "shutter:close", indent+1);
+  ss << print_typed_attr(camera.shutterOpen, "shutter:open", indent + 1);
+  ss << print_typed_attr(camera.shutterClose, "shutter:close", indent + 1);
 
+  ss << print_gprim_predefined(camera, indent + 1);
 
-  ss << print_gprim_predefined(camera, indent+1);
-
-  ss << print_props(camera.props, indent+1);
+  ss << print_props(camera.props, indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -2374,19 +2535,21 @@ std::string to_string(const GeomCamera &camera, const uint32_t indent, bool clos
 }
 
 #define PRINT_TYPED_ATTR(__table, __propName, __var, __name, __indent) \
-  if (__propName == __name) { \
-    ss << print_typed_attr(__var, __name, __indent); \
-    __table.insert(__name); \
-    continue; \
+  if (__propName == __name) {                                          \
+    ss << print_typed_attr(__var, __name, __indent);                   \
+    __table.insert(__name);                                            \
+    continue;                                                          \
   }
 
-std::string to_string(const GeomSphere &sphere, const uint32_t indent, bool closing_brace) {
+std::string to_string(const GeomSphere &sphere, const uint32_t indent,
+                      bool closing_brace) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(sphere.spec) << " Sphere \"" << sphere.name << "\"\n";
+  ss << pprint::Indent(indent) << to_string(sphere.spec) << " Sphere \""
+     << sphere.name << "\"\n";
   if (sphere.meta.authored()) {
     ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(sphere.meta, indent+1);
+    ss << print_prim_metas(sphere.meta, indent + 1);
     ss << pprint::Indent(indent) << ")\n";
   }
   ss << pprint::Indent(indent) << "{\n";
@@ -2404,28 +2567,29 @@ std::string to_string(const GeomSphere &sphere, const uint32_t indent, bool clos
     for (size_t i = 0; i < sortedPropertyNames.size(); i++) {
       std::string propName = sortedPropertyNames[i];
 
-      PRINT_TYPED_ATTR(table, propName, sphere.radius, "radius", indent+1)
+      PRINT_TYPED_ATTR(table, propName, sphere.radius, "radius", indent + 1)
 
-      if (emit_gprim_predefined(ss, &sphere, propName, indent+1, table)) {
+      if (emit_gprim_predefined(ss, &sphere, propName, indent + 1, table)) {
         continue;
       }
       if (sphere.props.count(propName)) {
-        ss << print_prop(sphere.props.at(propName), propName, indent+1);
+        ss << print_prop(sphere.props.at(propName), propName, indent + 1);
         table.insert(propName);
         continue;
       }
 
       // not found
-      ss << fmt::format("# Property `{}` is described in `properties` Prim metadatum, but not found in this Prim. Possibly USDC file is corrupted.\n");
-
+      ss << fmt::format(
+          "# Property `{}` is described in `properties` Prim metadatum, but "
+          "not found in this Prim. Possibly USDC file is corrupted.\n");
     }
   } else {
     // members
-    ss << print_typed_attr(sphere.radius, "radius", indent+1);
+    ss << print_typed_attr(sphere.radius, "radius", indent + 1);
 
-    ss << print_gprim_predefined(sphere, indent+1);
+    ss << print_gprim_predefined(sphere, indent + 1);
 
-    ss << print_props(sphere.props, indent+1);
+    ss << print_props(sphere.props, indent + 1);
   }
 
   if (closing_brace) {
@@ -2435,53 +2599,65 @@ std::string to_string(const GeomSphere &sphere, const uint32_t indent, bool clos
   return ss.str();
 }
 
-std::string to_string(const GeomMesh &mesh, const uint32_t indent, bool closing_brace) {
+std::string to_string(const GeomMesh &mesh, const uint32_t indent,
+                      bool closing_brace) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(mesh.spec) << " Mesh \"" << mesh.name << "\"\n";
+  ss << pprint::Indent(indent) << to_string(mesh.spec) << " Mesh \""
+     << mesh.name << "\"\n";
   if (mesh.meta.authored()) {
     ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(mesh.meta, indent+1);
+    ss << print_prim_metas(mesh.meta, indent + 1);
     ss << pprint::Indent(indent) << ")\n";
   }
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << print_typed_attr(mesh.points, "points", indent+1);
-  ss << print_typed_attr(mesh.normals, "normals", indent+1);
-  ss << print_typed_attr(mesh.faceVertexIndices, "faceVertexIndices", indent+1);
-  ss << print_typed_attr(mesh.faceVertexCounts, "faceVertexCounts", indent+1);
+  ss << print_typed_attr(mesh.points, "points", indent + 1);
+  ss << print_typed_attr(mesh.normals, "normals", indent + 1);
+  ss << print_typed_attr(mesh.faceVertexIndices, "faceVertexIndices",
+                         indent + 1);
+  ss << print_typed_attr(mesh.faceVertexCounts, "faceVertexCounts", indent + 1);
 
   if (mesh.skeleton) {
-    ss << print_relationship(mesh.skeleton.value(), mesh.skeleton.value().get_listedit_qual(), /* custom */false, "skel:skeketon", indent+1);
+    ss << print_relationship(mesh.skeleton.value(),
+                             mesh.skeleton.value().get_listedit_qual(),
+                             /* custom */ false, "skel:skeketon", indent + 1);
   }
 
-  ss << print_typed_attr(mesh.blendShapes, "skel:blendShapes", indent+1);
+  ss << print_typed_attr(mesh.blendShapes, "skel:blendShapes", indent + 1);
   if (mesh.blendShapeTargets) {
-    ss << print_relationship(mesh.blendShapeTargets.value(), mesh.blendShapeTargets.value().get_listedit_qual(), /* custom */false, "skel:blendShapeTargets", indent+1);
+    ss << print_relationship(mesh.blendShapeTargets.value(),
+                             mesh.blendShapeTargets.value().get_listedit_qual(),
+                             /* custom */ false, "skel:blendShapeTargets",
+                             indent + 1);
   }
-
 
   // subdiv
-  ss << print_typed_attr(mesh.cornerIndices, "cornerIndices", indent+1);
-  ss << print_typed_attr(mesh.cornerSharpnesses, "cornerSharpnesses", indent+1);
-  ss << print_typed_attr(mesh.creaseIndices, "creaseIndices", indent+1);
-  ss << print_typed_attr(mesh.creaseLengths, "creaseLengths", indent+1);
-  ss << print_typed_attr(mesh.creaseSharpnesses, "creaseSharpnesses", indent+1);
-  ss << print_typed_attr(mesh.holeIndices, "holeIndices", indent+1);
+  ss << print_typed_attr(mesh.cornerIndices, "cornerIndices", indent + 1);
+  ss << print_typed_attr(mesh.cornerSharpnesses, "cornerSharpnesses",
+                         indent + 1);
+  ss << print_typed_attr(mesh.creaseIndices, "creaseIndices", indent + 1);
+  ss << print_typed_attr(mesh.creaseLengths, "creaseLengths", indent + 1);
+  ss << print_typed_attr(mesh.creaseSharpnesses, "creaseSharpnesses",
+                         indent + 1);
+  ss << print_typed_attr(mesh.holeIndices, "holeIndices", indent + 1);
 
-  ss << print_typed_token_attr(mesh.subdivisionScheme, "subdivisonScheme", indent+1);
-  ss << print_typed_token_attr(mesh.interpolateBoundary, "interpolateBoundary", indent+1);
-  ss << print_typed_token_attr(mesh.faceVaryingLinearInterpolation, "faceVaryingLinearInterpolation", indent+1);
+  ss << print_typed_token_attr(mesh.subdivisionScheme, "subdivisonScheme",
+                               indent + 1);
+  ss << print_typed_token_attr(mesh.interpolateBoundary, "interpolateBoundary",
+                               indent + 1);
+  ss << print_typed_token_attr(mesh.faceVaryingLinearInterpolation,
+                               "faceVaryingLinearInterpolation", indent + 1);
 
-  ss << print_gprim_predefined(mesh, indent+1);
+  ss << print_gprim_predefined(mesh, indent + 1);
 
   // GeomSubset.
   for (const auto &subset : mesh.geom_subset_children) {
-    ss << to_string(subset, indent+1, /* closing_brace */true);
+    ss << to_string(subset, indent + 1, /* closing_brace */ true);
   }
 
-  ss << print_props(mesh.props, indent+1);
+  ss << print_props(mesh.props, indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -2490,18 +2666,44 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent, bool closing_
   return ss.str();
 }
 
-std::string to_string(const GeomSubset &geom, const uint32_t indent, bool closing_brace) {
+std::string to_string(const GeomSubset &subset, const uint32_t indent,
+                      bool closing_brace) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(geom.spec) << " GeomSubset \"" << geom.name << "\"\n";
+  ss << pprint::Indent(indent) << to_string(subset.spec) << " GeomSubset \""
+     << subset.name << "\"\n";
   ss << pprint::Indent(indent) << "(\n";
-  ss << print_prim_metas(geom.meta, indent+1);
+  ss << print_prim_metas(subset.meta, indent + 1);
   ss << pprint::Indent(indent) << ")\n";
   ss << pprint::Indent(indent) << "{\n";
 
-  ss << pprint::Indent(indent+1) << "[TODO] GeomSubset\n";
+  ss << print_typed_token_attr(subset.elementType, "elementType", indent + 1);
+  ss << print_typed_token_attr(subset.familyType, "familyType", indent + 1);
+  ss << print_typed_attr(subset.familyName, "familyName", indent + 1);
+  ss << print_typed_attr(subset.indices, "indices", indent + 1);
 
-  ss << print_props(geom.props, indent+1);
+  if (subset.materialBinding) {
+    ss << print_relationship(subset.materialBinding.value(),
+                             subset.materialBinding.value().get_listedit_qual(),
+                             /* custom */ false, "material:binding",
+                             indent + 1);
+  }
+
+  if (subset.materialBindingCollection) {
+    ss << print_relationship(
+        subset.materialBindingCollection.value(),
+        subset.materialBindingCollection.value().get_listedit_qual(),
+        /* custom */ false, "material:binding:collection", indent + 1);
+  }
+
+  if (subset.materialBindingPreview) {
+    ss << print_relationship(
+        subset.materialBindingPreview.value(),
+        subset.materialBindingPreview.value().get_listedit_qual(),
+        /* custom */ false, "material:binding:preview", indent + 1);
+  }
+
+  ss << print_props(subset.props, indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -2510,28 +2712,30 @@ std::string to_string(const GeomSubset &geom, const uint32_t indent, bool closin
   return ss.str();
 }
 
-std::string to_string(const GeomPoints &geom, const uint32_t indent, bool closing_brace) {
+std::string to_string(const GeomPoints &geom, const uint32_t indent,
+                      bool closing_brace) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(geom.spec) << " Points \"" << geom.name << "\"\n";
+  ss << pprint::Indent(indent) << to_string(geom.spec) << " Points \""
+     << geom.name << "\"\n";
   if (geom.meta.authored()) {
     ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(geom.meta, indent+1);
+    ss << print_prim_metas(geom.meta, indent + 1);
     ss << pprint::Indent(indent) << ")\n";
   }
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << print_typed_attr(geom.points, "points", indent+1);
-  ss << print_typed_attr(geom.normals, "normals", indent+1);
-  ss << print_typed_attr(geom.widths, "widths", indent+1);
-  ss << print_typed_attr(geom.ids, "ids", indent+1);
-  ss << print_typed_attr(geom.velocities, "velocities", indent+1);
-  ss << print_typed_attr(geom.accelerations, "accelerations", indent+1);
+  ss << print_typed_attr(geom.points, "points", indent + 1);
+  ss << print_typed_attr(geom.normals, "normals", indent + 1);
+  ss << print_typed_attr(geom.widths, "widths", indent + 1);
+  ss << print_typed_attr(geom.ids, "ids", indent + 1);
+  ss << print_typed_attr(geom.velocities, "velocities", indent + 1);
+  ss << print_typed_attr(geom.accelerations, "accelerations", indent + 1);
 
-  ss << print_gprim_predefined(geom, indent+1);
+  ss << print_gprim_predefined(geom, indent + 1);
 
-  ss << print_props(geom.props, indent+1);
+  ss << print_props(geom.props, indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -2541,78 +2745,107 @@ std::string to_string(const GeomPoints &geom, const uint32_t indent, bool closin
 }
 
 std::string to_string(const GeomBasisCurves::Type &ty) {
-
   std::string s;
 
-  switch(ty) {
-    case GeomBasisCurves::Type::Cubic: { s = "cubic"; break; }
-    case GeomBasisCurves::Type::Linear: { s = "linear"; break; }
+  switch (ty) {
+    case GeomBasisCurves::Type::Cubic: {
+      s = "cubic";
+      break;
+    }
+    case GeomBasisCurves::Type::Linear: {
+      s = "linear";
+      break;
+    }
   }
 
   return s;
 }
 
 std::string to_string(const GeomBasisCurves::Basis &ty) {
-
   std::string s;
 
-  switch(ty) {
-    case GeomBasisCurves::Basis::Bezier: { s = "bezier"; break; }
-    case GeomBasisCurves::Basis::Bspline: { s = "bspline"; break; }
-    case GeomBasisCurves::Basis::CatmullRom: { s = "catmullRom"; break; }
+  switch (ty) {
+    case GeomBasisCurves::Basis::Bezier: {
+      s = "bezier";
+      break;
+    }
+    case GeomBasisCurves::Basis::Bspline: {
+      s = "bspline";
+      break;
+    }
+    case GeomBasisCurves::Basis::CatmullRom: {
+      s = "catmullRom";
+      break;
+    }
   }
 
   return s;
 }
 
 std::string to_string(const GeomBasisCurves::Wrap &ty) {
-
   std::string s;
 
-  switch(ty) {
-    case GeomBasisCurves::Wrap::Nonperiodic: { s = "nonperiodic"; break; }
-    case GeomBasisCurves::Wrap::Periodic: { s = "periodic"; break; }
-    case GeomBasisCurves::Wrap::Pinned: { s = "pinned"; break; }
+  switch (ty) {
+    case GeomBasisCurves::Wrap::Nonperiodic: {
+      s = "nonperiodic";
+      break;
+    }
+    case GeomBasisCurves::Wrap::Periodic: {
+      s = "periodic";
+      break;
+    }
+    case GeomBasisCurves::Wrap::Pinned: {
+      s = "pinned";
+      break;
+    }
   }
 
   return s;
 }
 
-
-std::string to_string(const GeomBasisCurves &geom, const uint32_t indent, bool closing_brace) {
+std::string to_string(const GeomBasisCurves &geom, const uint32_t indent,
+                      bool closing_brace) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(geom.spec) << " BasisCurves \"" << geom.name << "\"\n";
+  ss << pprint::Indent(indent) << to_string(geom.spec) << " BasisCurves \""
+     << geom.name << "\"\n";
   if (geom.meta.authored()) {
     ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(geom.meta, indent+1);
+    ss << print_prim_metas(geom.meta, indent + 1);
     ss << pprint::Indent(indent) << ")\n";
   }
   ss << pprint::Indent(indent) << "{\n";
 
   // members
   if (geom.type) {
-    ss << pprint::Indent(indent+1) << "uniform token type = " << quote(to_string(geom.type.value())) << "\n";
+    ss << pprint::Indent(indent + 1)
+       << "uniform token type = " << quote(to_string(geom.type.value()))
+       << "\n";
   }
 
   if (geom.basis) {
-    ss << pprint::Indent(indent+1) << "uniform token basis = " << quote(to_string(geom.basis.value())) << "\n";
+    ss << pprint::Indent(indent + 1)
+       << "uniform token basis = " << quote(to_string(geom.basis.value()))
+       << "\n";
   }
 
   if (geom.wrap) {
-    ss << pprint::Indent(indent+1) << "uniform token wrap = " << quote(to_string(geom.wrap.value())) << "\n";
+    ss << pprint::Indent(indent + 1)
+       << "uniform token wrap = " << quote(to_string(geom.wrap.value()))
+       << "\n";
   }
 
-  ss << print_typed_attr(geom.points, "points", indent+1);
-  ss << print_typed_attr(geom.normals, "normals", indent+1);
-  ss << print_typed_attr(geom.widths, "widths", indent+1);
-  ss << print_typed_attr(geom.velocities, "velocites", indent+1);
-  ss << print_typed_attr(geom.accelerations, "accelerations", indent+1);
-  ss << print_typed_attr(geom.curveVertexCounts, "curveVertexCounts", indent+1);
+  ss << print_typed_attr(geom.points, "points", indent + 1);
+  ss << print_typed_attr(geom.normals, "normals", indent + 1);
+  ss << print_typed_attr(geom.widths, "widths", indent + 1);
+  ss << print_typed_attr(geom.velocities, "velocites", indent + 1);
+  ss << print_typed_attr(geom.accelerations, "accelerations", indent + 1);
+  ss << print_typed_attr(geom.curveVertexCounts, "curveVertexCounts",
+                         indent + 1);
 
-  ss << print_gprim_predefined(geom, indent+1);
+  ss << print_gprim_predefined(geom, indent + 1);
 
-  ss << print_props(geom.props, indent+1);
+  ss << print_props(geom.props, indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -2621,59 +2854,37 @@ std::string to_string(const GeomBasisCurves &geom, const uint32_t indent, bool c
   return ss.str();
 }
 
-std::string to_string(const GeomNurbsCurves &geom, const uint32_t indent, bool closing_brace) {
+std::string to_string(const GeomNurbsCurves &geom, const uint32_t indent,
+                      bool closing_brace) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(geom.spec) << " NurbsCurves \"" << geom.name << "\"\n";
+  ss << pprint::Indent(indent) << to_string(geom.spec) << " NurbsCurves \""
+     << geom.name << "\"\n";
   if (geom.meta.authored()) {
     ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(geom.meta, indent+1);
+    ss << print_prim_metas(geom.meta, indent + 1);
     ss << pprint::Indent(indent) << ")\n";
   }
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << print_typed_attr(geom.points, "points", indent+1);
-  ss << print_typed_attr(geom.normals, "normals", indent+1);
-  ss << print_typed_attr(geom.widths, "widths", indent+1);
-  ss << print_typed_attr(geom.velocities, "velocites", indent+1);
-  ss << print_typed_attr(geom.accelerations, "accelerations", indent+1);
-  ss << print_typed_attr(geom.curveVertexCounts, "curveVertexCounts", indent+1);
+  ss << print_typed_attr(geom.points, "points", indent + 1);
+  ss << print_typed_attr(geom.normals, "normals", indent + 1);
+  ss << print_typed_attr(geom.widths, "widths", indent + 1);
+  ss << print_typed_attr(geom.velocities, "velocites", indent + 1);
+  ss << print_typed_attr(geom.accelerations, "accelerations", indent + 1);
+  ss << print_typed_attr(geom.curveVertexCounts, "curveVertexCounts",
+                         indent + 1);
 
   //
-  ss << print_typed_attr(geom.order, "order", indent+1);
-  ss << print_typed_attr(geom.knots, "knots", indent+1);
-  ss << print_typed_attr(geom.ranges, "ranges", indent+1);
-  ss << print_typed_attr(geom.pointWeights, "pointWeights", indent+1);
+  ss << print_typed_attr(geom.order, "order", indent + 1);
+  ss << print_typed_attr(geom.knots, "knots", indent + 1);
+  ss << print_typed_attr(geom.ranges, "ranges", indent + 1);
+  ss << print_typed_attr(geom.pointWeights, "pointWeights", indent + 1);
 
-  ss << print_gprim_predefined(geom, indent+1);
+  ss << print_gprim_predefined(geom, indent + 1);
 
-  ss << print_props(geom.props, indent+1);
-
-  if (closing_brace) {
-    ss << pprint::Indent(indent) << "}\n";
-  }
-
-  return ss.str();
-}
-
-std::string to_string(const GeomCube &geom, const uint32_t indent, bool closing_brace) {
-  std::stringstream ss;
-
-  ss << pprint::Indent(indent) << to_string(geom.spec) << " Cube \"" << geom.name << "\"\n";
-  if (geom.meta.authored()) {
-    ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(geom.meta, indent+1);
-    ss << pprint::Indent(indent) << ")\n";
-  }
-  ss << pprint::Indent(indent) << "{\n";
-
-  // members
-  ss << print_typed_attr(geom.size, "size", indent+1);
-
-  ss << print_gprim_predefined(geom, indent+1);
-
-  ss << print_props(geom.props, indent+1);
+  ss << print_props(geom.props, indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -2682,20 +2893,49 @@ std::string to_string(const GeomCube &geom, const uint32_t indent, bool closing_
   return ss.str();
 }
 
-std::string to_string(const GeomCone &geom, const uint32_t indent, bool closing_brace) {
+std::string to_string(const GeomCube &geom, const uint32_t indent,
+                      bool closing_brace) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(geom.spec) << " Cone \"" << geom.name << "\"\n";
+  ss << pprint::Indent(indent) << to_string(geom.spec) << " Cube \""
+     << geom.name << "\"\n";
   if (geom.meta.authored()) {
     ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(geom.meta, indent+1);
+    ss << print_prim_metas(geom.meta, indent + 1);
     ss << pprint::Indent(indent) << ")\n";
   }
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << print_typed_attr(geom.radius, "radius", indent+1);
-  ss << print_typed_attr(geom.height, "height", indent+1);
+  ss << print_typed_attr(geom.size, "size", indent + 1);
+
+  ss << print_gprim_predefined(geom, indent + 1);
+
+  ss << print_props(geom.props, indent + 1);
+
+  if (closing_brace) {
+    ss << pprint::Indent(indent) << "}\n";
+  }
+
+  return ss.str();
+}
+
+std::string to_string(const GeomCone &geom, const uint32_t indent,
+                      bool closing_brace) {
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << to_string(geom.spec) << " Cone \""
+     << geom.name << "\"\n";
+  if (geom.meta.authored()) {
+    ss << pprint::Indent(indent) << "(\n";
+    ss << print_prim_metas(geom.meta, indent + 1);
+    ss << pprint::Indent(indent) << ")\n";
+  }
+  ss << pprint::Indent(indent) << "{\n";
+
+  // members
+  ss << print_typed_attr(geom.radius, "radius", indent + 1);
+  ss << print_typed_attr(geom.height, "height", indent + 1);
 
   if (geom.axis.authored()) {
     std::string axis;
@@ -2706,11 +2946,11 @@ std::string to_string(const GeomCone &geom, const uint32_t indent, bool closing_
     } else {
       axis = "\"Z\"";
     }
-    ss << pprint::Indent(indent+1) << "uniform token axis = " << axis << "\n";
+    ss << pprint::Indent(indent + 1) << "uniform token axis = " << axis << "\n";
   }
 
-  ss << print_gprim_predefined(geom, indent+1);
-  ss << print_props(geom.props, indent+1);
+  ss << print_gprim_predefined(geom, indent + 1);
+  ss << print_props(geom.props, indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -2719,20 +2959,22 @@ std::string to_string(const GeomCone &geom, const uint32_t indent, bool closing_
   return ss.str();
 }
 
-std::string to_string(const GeomCylinder &geom, const uint32_t indent, bool closing_brace) {
+std::string to_string(const GeomCylinder &geom, const uint32_t indent,
+                      bool closing_brace) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(geom.spec) << " Cylinder \"" << geom.name << "\"\n";
+  ss << pprint::Indent(indent) << to_string(geom.spec) << " Cylinder \""
+     << geom.name << "\"\n";
   if (geom.meta.authored()) {
     ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(geom.meta, indent+1);
+    ss << print_prim_metas(geom.meta, indent + 1);
     ss << pprint::Indent(indent) << ")\n";
   }
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << print_typed_attr(geom.radius, "radius", indent+1);
-  ss << print_typed_attr(geom.height, "height", indent+1);
+  ss << print_typed_attr(geom.radius, "radius", indent + 1);
+  ss << print_typed_attr(geom.height, "height", indent + 1);
 
   if (geom.axis.authored()) {
     std::string axis;
@@ -2743,11 +2985,10 @@ std::string to_string(const GeomCylinder &geom, const uint32_t indent, bool clos
     } else {
       axis = "\"Z\"";
     }
-    ss << pprint::Indent(indent+1) << "uniform token axis = " << axis << "\n";
+    ss << pprint::Indent(indent + 1) << "uniform token axis = " << axis << "\n";
   }
 
-
-  ss << print_gprim_predefined(geom, indent+1);
+  ss << print_gprim_predefined(geom, indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -2756,20 +2997,22 @@ std::string to_string(const GeomCylinder &geom, const uint32_t indent, bool clos
   return ss.str();
 }
 
-std::string to_string(const GeomCapsule &geom, const uint32_t indent, bool closing_brace) {
+std::string to_string(const GeomCapsule &geom, const uint32_t indent,
+                      bool closing_brace) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(geom.spec) << " Capsule \"" << geom.name << "\"\n";
+  ss << pprint::Indent(indent) << to_string(geom.spec) << " Capsule \""
+     << geom.name << "\"\n";
   if (geom.meta.authored()) {
     ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(geom.meta, indent+1);
+    ss << print_prim_metas(geom.meta, indent + 1);
     ss << pprint::Indent(indent) << ")\n";
   }
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << print_typed_attr(geom.radius, "radius", indent+1);
-  ss << print_typed_attr(geom.height, "height", indent+1);
+  ss << print_typed_attr(geom.radius, "radius", indent + 1);
+  ss << print_typed_attr(geom.height, "height", indent + 1);
 
   if (geom.axis.authored()) {
     std::string axis;
@@ -2780,11 +3023,11 @@ std::string to_string(const GeomCapsule &geom, const uint32_t indent, bool closi
     } else {
       axis = "\"Z\"";
     }
-    ss << pprint::Indent(indent+1) << "uniform token axis = " << axis << "\n";
+    ss << pprint::Indent(indent + 1) << "uniform token axis = " << axis << "\n";
   }
 
-  ss << print_gprim_predefined(geom, indent+1);
-  ss << print_props(geom.props, indent+1);
+  ss << print_gprim_predefined(geom, indent + 1);
+  ss << print_props(geom.props, indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -2793,35 +3036,39 @@ std::string to_string(const GeomCapsule &geom, const uint32_t indent, bool closi
   return ss.str();
 }
 
-std::string to_string(const PointInstancer &instancer, const uint32_t indent, bool closing_brace) {
+std::string to_string(const PointInstancer &instancer, const uint32_t indent,
+                      bool closing_brace) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(instancer.spec) << " PointInstancer \"" << instancer.name << "\"\n";
+  ss << pprint::Indent(indent) << to_string(instancer.spec)
+     << " PointInstancer \"" << instancer.name << "\"\n";
   if (instancer.meta.authored()) {
     ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(instancer.meta, indent+1);
+    ss << print_prim_metas(instancer.meta, indent + 1);
     ss << pprint::Indent(indent) << ")\n";
   }
   ss << pprint::Indent(indent) << "{\n";
 
   // members
   if (instancer.prototypes) {
-    ss << print_relationship(instancer.prototypes.value(), instancer.prototypes.value().get_listedit_qual(), /* custom */false, "prototypes", indent+1);
+    ss << print_relationship(instancer.prototypes.value(),
+                             instancer.prototypes.value().get_listedit_qual(),
+                             /* custom */ false, "prototypes", indent + 1);
   }
-  ss << print_typed_attr(instancer.protoIndices, "protoIndices", indent+1);
-  ss << print_typed_attr(instancer.ids, "ids", indent+1);
-  ss << print_typed_attr(instancer.invisibleIds, "invisibleIds", indent+1);
-  ss << print_typed_attr(instancer.positions, "positions", indent+1);
-  ss << print_typed_attr(instancer.orientations, "orientations", indent+1);
-  ss << print_typed_attr(instancer.scales, "scales", indent+1);
-  ss << print_typed_attr(instancer.velocities, "velocities", indent+1);
-  ss << print_typed_attr(instancer.accelerations, "accelerations", indent+1);
-  ss << print_typed_attr(instancer.angularVelocities, "angularVelocities", indent+1);
+  ss << print_typed_attr(instancer.protoIndices, "protoIndices", indent + 1);
+  ss << print_typed_attr(instancer.ids, "ids", indent + 1);
+  ss << print_typed_attr(instancer.invisibleIds, "invisibleIds", indent + 1);
+  ss << print_typed_attr(instancer.positions, "positions", indent + 1);
+  ss << print_typed_attr(instancer.orientations, "orientations", indent + 1);
+  ss << print_typed_attr(instancer.scales, "scales", indent + 1);
+  ss << print_typed_attr(instancer.velocities, "velocities", indent + 1);
+  ss << print_typed_attr(instancer.accelerations, "accelerations", indent + 1);
+  ss << print_typed_attr(instancer.angularVelocities, "angularVelocities",
+                         indent + 1);
 
+  ss << print_gprim_predefined(instancer, indent + 1);
 
-  ss << print_gprim_predefined(instancer, indent+1);
-
-  ss << print_props(instancer.props, indent+1);
+  ss << print_props(instancer.props, indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -2830,32 +3077,36 @@ std::string to_string(const PointInstancer &instancer, const uint32_t indent, bo
   return ss.str();
 }
 
-std::string to_string(const SkelRoot &root, const uint32_t indent, bool closing_brace) {
+std::string to_string(const SkelRoot &root, const uint32_t indent,
+                      bool closing_brace) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(root.spec) << " SkelRoot \"" << root.name << "\"\n";
+  ss << pprint::Indent(indent) << to_string(root.spec) << " SkelRoot \""
+     << root.name << "\"\n";
   if (root.meta.authored()) {
     ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(root.meta, indent+1);
+    ss << print_prim_metas(root.meta, indent + 1);
     ss << pprint::Indent(indent) << ")\n";
   }
   ss << pprint::Indent(indent) << "{\n";
 
-  ss << print_typed_token_attr(root.visibility, "visibility", indent+1);
-  ss << print_typed_token_attr(root.purpose, "purpose", indent+1);
-  ss << print_typed_attr(root.extent, "extent", indent+1);
+  ss << print_typed_token_attr(root.visibility, "visibility", indent + 1);
+  ss << print_typed_token_attr(root.purpose, "purpose", indent + 1);
+  ss << print_typed_attr(root.extent, "extent", indent + 1);
 
   if (root.proxyPrim) {
-    ss << print_relationship(root.proxyPrim.value(), root.proxyPrim.value().get_listedit_qual(), /* custom */false, "proxyPrim", indent+1);
+    ss << print_relationship(root.proxyPrim.value(),
+                             root.proxyPrim.value().get_listedit_qual(),
+                             /* custom */ false, "proxyPrim", indent + 1);
   }
 
   // TODO
   // Skeleton id
-  //ss << pprint::Indent(indent) << "skelroot.skeleton_id << "\n"
+  // ss << pprint::Indent(indent) << "skelroot.skeleton_id << "\n"
 
-  ss << print_xformOps(root.xformOps, indent+1);
+  ss << print_xformOps(root.xformOps, indent + 1);
 
-  ss << print_props(root.props, indent+1);
+  ss << print_props(root.props, indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -2864,37 +3115,44 @@ std::string to_string(const SkelRoot &root, const uint32_t indent, bool closing_
   return ss.str();
 }
 
-std::string to_string(const Skeleton &skel, const uint32_t indent, bool closing_brace) {
+std::string to_string(const Skeleton &skel, const uint32_t indent,
+                      bool closing_brace) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(skel.spec) << " Skeleton \"" << skel.name << "\"\n";
+  ss << pprint::Indent(indent) << to_string(skel.spec) << " Skeleton \""
+     << skel.name << "\"\n";
   if (skel.meta.authored()) {
     ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(skel.meta, indent+1);
+    ss << print_prim_metas(skel.meta, indent + 1);
     ss << pprint::Indent(indent) << ")\n";
   }
   ss << pprint::Indent(indent) << "{\n";
 
-  ss << print_typed_attr(skel.bindTransforms, "bindTransforms", indent+1);
-  ss << print_typed_attr(skel.jointNames, "jointNames", indent+1);
-  ss << print_typed_attr(skel.joints, "joints", indent+1);
-  ss << print_typed_attr(skel.restTransforms, "restTransforms", indent+1);
+  ss << print_typed_attr(skel.bindTransforms, "bindTransforms", indent + 1);
+  ss << print_typed_attr(skel.jointNames, "jointNames", indent + 1);
+  ss << print_typed_attr(skel.joints, "joints", indent + 1);
+  ss << print_typed_attr(skel.restTransforms, "restTransforms", indent + 1);
 
   if (skel.animationSource) {
-    ss << print_relationship(skel.animationSource.value(), skel.animationSource.value().get_listedit_qual(), /* custom */false, "skel:animationSource", indent+1);
+    ss << print_relationship(skel.animationSource.value(),
+                             skel.animationSource.value().get_listedit_qual(),
+                             /* custom */ false, "skel:animationSource",
+                             indent + 1);
   }
 
   if (skel.proxyPrim) {
-    ss << print_relationship(skel.proxyPrim.value(), skel.proxyPrim.value().get_listedit_qual(), /* custom */false, "proxyPrim", indent+1);
+    ss << print_relationship(skel.proxyPrim.value(),
+                             skel.proxyPrim.value().get_listedit_qual(),
+                             /* custom */ false, "proxyPrim", indent + 1);
   }
 
-  ss << print_xformOps(skel.xformOps, indent+1);
+  ss << print_xformOps(skel.xformOps, indent + 1);
 
-  ss << print_typed_token_attr(skel.visibility, "visibility", indent+1);
-  ss << print_typed_token_attr(skel.purpose, "purpose", indent+1);
-  ss << print_typed_attr(skel.extent, "extent", indent+1);
+  ss << print_typed_token_attr(skel.visibility, "visibility", indent + 1);
+  ss << print_typed_token_attr(skel.purpose, "purpose", indent + 1);
+  ss << print_typed_attr(skel.extent, "extent", indent + 1);
 
-  ss << print_props(skel.props, indent+1);
+  ss << print_props(skel.props, indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -2903,25 +3161,28 @@ std::string to_string(const Skeleton &skel, const uint32_t indent, bool closing_
   return ss.str();
 }
 
-std::string to_string(const SkelAnimation &skelanim, const uint32_t indent, bool closing_brace) {
+std::string to_string(const SkelAnimation &skelanim, const uint32_t indent,
+                      bool closing_brace) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(skelanim.spec) << " SkelAnimation \"" << skelanim.name << "\"\n";
+  ss << pprint::Indent(indent) << to_string(skelanim.spec)
+     << " SkelAnimation \"" << skelanim.name << "\"\n";
   if (skelanim.meta.authored()) {
     ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(skelanim.meta, indent+1);
+    ss << print_prim_metas(skelanim.meta, indent + 1);
     ss << pprint::Indent(indent) << ")\n";
   }
   ss << pprint::Indent(indent) << "{\n";
 
-  ss << print_typed_attr(skelanim.blendShapes, "blendShapes", indent+1);
-  ss << print_typed_attr(skelanim.blendShapeWeights, "blendShapeWeights", indent+1);
-  ss << print_typed_attr(skelanim.joints, "joints", indent+1);
-  ss << print_typed_attr(skelanim.rotations, "rotations", indent+1);
-  ss << print_typed_attr(skelanim.scales, "scales", indent+1);
-  ss << print_typed_attr(skelanim.translations, "translations", indent+1);
+  ss << print_typed_attr(skelanim.blendShapes, "blendShapes", indent + 1);
+  ss << print_typed_attr(skelanim.blendShapeWeights, "blendShapeWeights",
+                         indent + 1);
+  ss << print_typed_attr(skelanim.joints, "joints", indent + 1);
+  ss << print_typed_attr(skelanim.rotations, "rotations", indent + 1);
+  ss << print_typed_attr(skelanim.scales, "scales", indent + 1);
+  ss << print_typed_attr(skelanim.translations, "translations", indent + 1);
 
-  ss << print_props(skelanim.props, indent+1);
+  ss << print_props(skelanim.props, indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -2930,23 +3191,24 @@ std::string to_string(const SkelAnimation &skelanim, const uint32_t indent, bool
   return ss.str();
 }
 
-
-std::string to_string(const BlendShape &prim, const uint32_t indent, bool closing_brace) {
+std::string to_string(const BlendShape &prim, const uint32_t indent,
+                      bool closing_brace) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(prim.spec) << " BlendShape \"" << prim.name << "\"\n";
+  ss << pprint::Indent(indent) << to_string(prim.spec) << " BlendShape \""
+     << prim.name << "\"\n";
   if (prim.meta.authored()) {
     ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(prim.meta, indent+1);
+    ss << print_prim_metas(prim.meta, indent + 1);
     ss << pprint::Indent(indent) << ")\n";
   }
   ss << pprint::Indent(indent) << "{\n";
 
-  ss << print_typed_attr(prim.offsets, "offsets", indent+1);
-  ss << print_typed_attr(prim.normalOffsets, "normalOffsets", indent+1);
-  ss << print_typed_attr(prim.pointIndices, "pointIndices", indent+1);
+  ss << print_typed_attr(prim.offsets, "offsets", indent + 1);
+  ss << print_typed_attr(prim.normalOffsets, "normalOffsets", indent + 1);
+  ss << print_typed_attr(prim.pointIndices, "pointIndices", indent + 1);
 
-  ss << print_props(prim.props, indent+1);
+  ss << print_props(prim.props, indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -2955,22 +3217,23 @@ std::string to_string(const BlendShape &prim, const uint32_t indent, bool closin
   return ss.str();
 }
 
-std::string to_string(const Material &material, const uint32_t indent, bool closing_brace) {
+std::string to_string(const Material &material, const uint32_t indent,
+                      bool closing_brace) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(material.spec) << " Material \"" << material.name << "\"\n";
+  ss << pprint::Indent(indent) << to_string(material.spec) << " Material \""
+     << material.name << "\"\n";
   if (material.meta.authored()) {
     ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(material.meta, indent+1);
+    ss << print_prim_metas(material.meta, indent + 1);
     ss << pprint::Indent(indent) << ")\n";
   }
   ss << pprint::Indent(indent) << "{\n";
 
   if (material.surface.authored()) {
-
     // assume connection when authored.
     // TODO: list edit?.
-    ss << pprint::Indent(indent+1) << "token outputs:surface.connect ";
+    ss << pprint::Indent(indent + 1) << "token outputs:surface.connect ";
 
     const auto &conns = material.surface.get_connections();
     if (conns.size() == 1) {
@@ -2987,7 +3250,9 @@ std::string to_string(const Material &material, const uint32_t indent, bool clos
     }
 
     if (material.surface.metas().authored()) {
-      ss << "(\n" << print_attr_metas(material.surface.metas(), indent + 2) << pprint::Indent(indent+1) << ")";
+      ss << "(\n"
+         << print_attr_metas(material.surface.metas(), indent + 2)
+         << pprint::Indent(indent + 1) << ")";
     }
     ss << "\n";
   }
@@ -2995,7 +3260,7 @@ std::string to_string(const Material &material, const uint32_t indent, bool clos
   if (material.displacement.authored()) {
     // assume connection when authored.
     // TODO: list edit?.
-    ss << pprint::Indent(indent+1) << "token outputs:displacement.connect ";
+    ss << pprint::Indent(indent + 1) << "token outputs:displacement.connect ";
 
     const auto &conns = material.displacement.get_connections();
     if (conns.size() == 1) {
@@ -3012,7 +3277,9 @@ std::string to_string(const Material &material, const uint32_t indent, bool clos
     }
 
     if (material.displacement.metas().authored()) {
-      ss << "(\n" << print_attr_metas(material.displacement.metas(), indent + 2) << pprint::Indent(indent+1) << ")";
+      ss << "(\n"
+         << print_attr_metas(material.displacement.metas(), indent + 2)
+         << pprint::Indent(indent + 1) << ")";
     }
     ss << "\n";
   }
@@ -3020,7 +3287,7 @@ std::string to_string(const Material &material, const uint32_t indent, bool clos
   if (material.volume.authored()) {
     // assume connection when authored.
     // TODO: list edit?.
-    ss << pprint::Indent(indent+1) << "token outputs:volume.connect ";
+    ss << pprint::Indent(indent + 1) << "token outputs:volume.connect ";
 
     const auto &conns = material.volume.get_connections();
     if (conns.size() == 1) {
@@ -3037,13 +3304,14 @@ std::string to_string(const Material &material, const uint32_t indent, bool clos
     }
 
     if (material.volume.metas().authored()) {
-      ss << "(\n" << print_attr_metas(material.volume.metas(), indent + 2) << pprint::Indent(indent+1) << ")";
+      ss << "(\n"
+         << print_attr_metas(material.volume.metas(), indent + 2)
+         << pprint::Indent(indent + 1) << ")";
     }
     ss << "\n";
   }
 
-
-  ss << print_props(material.props, indent+1);
+  ss << print_props(material.props, indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -3052,7 +3320,8 @@ std::string to_string(const Material &material, const uint32_t indent, bool clos
   return ss.str();
 }
 
-static std::string print_common_shader_params(const ShaderNode &shader, const uint32_t indent) {
+static std::string print_common_shader_params(const ShaderNode &shader,
+                                              const uint32_t indent) {
   std::stringstream ss;
 
   ss << print_props(shader.props, indent);
@@ -3060,20 +3329,8 @@ static std::string print_common_shader_params(const ShaderNode &shader, const ui
   return ss.str();
 }
 
-static std::string print_shader_params(const UsdPrimvarReader_float &shader, const uint32_t indent) {
-  std::stringstream ss;
-
-  ss << print_str_attr(shader.varname, "inputs:varname", indent);
-  ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
-  ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
-
-  ss << print_common_shader_params(shader, indent);
-
-  return ss.str();
-
-}
-
-static std::string print_shader_params(const UsdPrimvarReader_float2 &shader, const uint32_t indent) {
+static std::string print_shader_params(const UsdPrimvarReader_float &shader,
+                                       const uint32_t indent) {
   std::stringstream ss;
 
   ss << print_str_attr(shader.varname, "inputs:varname", indent);
@@ -3085,7 +3342,8 @@ static std::string print_shader_params(const UsdPrimvarReader_float2 &shader, co
   return ss.str();
 }
 
-static std::string print_shader_params(const UsdPrimvarReader_float3 &shader, const uint32_t indent) {
+static std::string print_shader_params(const UsdPrimvarReader_float2 &shader,
+                                       const uint32_t indent) {
   std::stringstream ss;
 
   ss << print_str_attr(shader.varname, "inputs:varname", indent);
@@ -3097,7 +3355,8 @@ static std::string print_shader_params(const UsdPrimvarReader_float3 &shader, co
   return ss.str();
 }
 
-static std::string print_shader_params(const UsdPrimvarReader_float4 &shader, const uint32_t indent) {
+static std::string print_shader_params(const UsdPrimvarReader_float3 &shader,
+                                       const uint32_t indent) {
   std::stringstream ss;
 
   ss << print_str_attr(shader.varname, "inputs:varname", indent);
@@ -3109,7 +3368,8 @@ static std::string print_shader_params(const UsdPrimvarReader_float4 &shader, co
   return ss.str();
 }
 
-static std::string print_shader_params(const UsdPrimvarReader_string &shader, const uint32_t indent) {
+static std::string print_shader_params(const UsdPrimvarReader_float4 &shader,
+                                       const uint32_t indent) {
   std::stringstream ss;
 
   ss << print_str_attr(shader.varname, "inputs:varname", indent);
@@ -3121,7 +3381,8 @@ static std::string print_shader_params(const UsdPrimvarReader_string &shader, co
   return ss.str();
 }
 
-static std::string print_shader_params(const UsdPrimvarReader_normal &shader, const uint32_t indent) {
+static std::string print_shader_params(const UsdPrimvarReader_string &shader,
+                                       const uint32_t indent) {
   std::stringstream ss;
 
   ss << print_str_attr(shader.varname, "inputs:varname", indent);
@@ -3133,7 +3394,8 @@ static std::string print_shader_params(const UsdPrimvarReader_normal &shader, co
   return ss.str();
 }
 
-static std::string print_shader_params(const UsdPrimvarReader_vector &shader, const uint32_t indent) {
+static std::string print_shader_params(const UsdPrimvarReader_normal &shader,
+                                       const uint32_t indent) {
   std::stringstream ss;
 
   ss << print_str_attr(shader.varname, "inputs:varname", indent);
@@ -3145,7 +3407,8 @@ static std::string print_shader_params(const UsdPrimvarReader_vector &shader, co
   return ss.str();
 }
 
-static std::string print_shader_params(const UsdPrimvarReader_point &shader, const uint32_t indent) {
+static std::string print_shader_params(const UsdPrimvarReader_vector &shader,
+                                       const uint32_t indent) {
   std::stringstream ss;
 
   ss << print_str_attr(shader.varname, "inputs:varname", indent);
@@ -3157,7 +3420,8 @@ static std::string print_shader_params(const UsdPrimvarReader_point &shader, con
   return ss.str();
 }
 
-static std::string print_shader_params(const UsdPrimvarReader_matrix &shader, const uint32_t indent) {
+static std::string print_shader_params(const UsdPrimvarReader_point &shader,
+                                       const uint32_t indent) {
   std::stringstream ss;
 
   ss << print_str_attr(shader.varname, "inputs:varname", indent);
@@ -3169,7 +3433,21 @@ static std::string print_shader_params(const UsdPrimvarReader_matrix &shader, co
   return ss.str();
 }
 
-static std::string print_shader_params(const UsdTransform2d &shader, const uint32_t indent) {
+static std::string print_shader_params(const UsdPrimvarReader_matrix &shader,
+                                       const uint32_t indent) {
+  std::stringstream ss;
+
+  ss << print_str_attr(shader.varname, "inputs:varname", indent);
+  ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
+  ss << print_typed_terminal_attr(shader.result, "outputs:result", indent);
+
+  ss << print_common_shader_params(shader, indent);
+
+  return ss.str();
+}
+
+static std::string print_shader_params(const UsdTransform2d &shader,
+                                       const uint32_t indent) {
   std::stringstream ss;
 
   ss << print_typed_attr(shader.in, "inputs:in", indent);
@@ -3183,40 +3461,46 @@ static std::string print_shader_params(const UsdTransform2d &shader, const uint3
   return ss.str();
 }
 
-static std::string print_shader_params(const UsdPreviewSurface &shader, const uint32_t indent) {
+static std::string print_shader_params(const UsdPreviewSurface &shader,
+                                       const uint32_t indent) {
   std::stringstream ss;
 
   ss << print_typed_attr(shader.diffuseColor, "inputs:diffuseColor", indent);
   ss << print_typed_attr(shader.emissiveColor, "inputs:emissiveColor", indent);
-  ss << print_typed_attr(shader.useSpecularWorkflow, "inputs:useSpecularWorkflow", indent);
+  ss << print_typed_attr(shader.useSpecularWorkflow,
+                         "inputs:useSpecularWorkflow", indent);
   ss << print_typed_attr(shader.ior, "inputs:ior", indent);
   ss << print_typed_attr(shader.specularColor, "inputs:specularColor", indent);
   ss << print_typed_attr(shader.metallic, "inputs:metallic", indent);
   ss << print_typed_attr(shader.clearcoat, "inputs:clearcoat", indent);
-  ss << print_typed_attr(shader.clearcoatRoughness, "inputs:clearcoatRoughness", indent);
+  ss << print_typed_attr(shader.clearcoatRoughness, "inputs:clearcoatRoughness",
+                         indent);
   ss << print_typed_attr(shader.roughness, "inputs:roughness", indent);
   ss << print_typed_attr(shader.opacity, "inputs:opacity", indent);
-  ss << print_typed_attr(shader.opacityThreshold, "inputs:opacityThreshold", indent);
+  ss << print_typed_attr(shader.opacityThreshold, "inputs:opacityThreshold",
+                         indent);
   ss << print_typed_attr(shader.normal, "inputs:normal", indent);
   ss << print_typed_attr(shader.displacement, "inputs:displacement", indent);
   ss << print_typed_attr(shader.occlusion, "inputs:occlusion", indent);
 
-  ss << print_typed_terminal_attr(shader.outputsSurface, "outputs:surface", indent);
-  ss << print_typed_terminal_attr(shader.outputsDisplacement, "outputs:displacement", indent);
+  ss << print_typed_terminal_attr(shader.outputsSurface, "outputs:surface",
+                                  indent);
+  ss << print_typed_terminal_attr(shader.outputsDisplacement,
+                                  "outputs:displacement", indent);
 
   ss << print_common_shader_params(shader, indent);
 
   return ss.str();
-
 }
 
-static std::string print_shader_params(const UsdUVTexture &shader, const uint32_t indent) {
+static std::string print_shader_params(const UsdUVTexture &shader,
+                                       const uint32_t indent) {
   std::stringstream ss;
-
 
   ss << print_typed_attr(shader.file, "inputs:file", indent);
 
-  ss << print_typed_token_attr(shader.sourceColorSpace, "inputs:sourceColorSpace", indent);
+  ss << print_typed_token_attr(shader.sourceColorSpace,
+                               "inputs:sourceColorSpace", indent);
 
   ss << print_typed_attr(shader.fallback, "inputs:fallback", indent);
 
@@ -3238,65 +3522,67 @@ static std::string print_shader_params(const UsdUVTexture &shader, const uint32_
   return ss.str();
 }
 
-std::string to_string(const Shader &shader, const uint32_t indent, bool closing_brace) {
-
+std::string to_string(const Shader &shader, const uint32_t indent,
+                      bool closing_brace) {
   // generic Shader class
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(shader.spec) << " Shader \"" << shader.name << "\"\n";
+  ss << pprint::Indent(indent) << to_string(shader.spec) << " Shader \""
+     << shader.name << "\"\n";
   if (shader.meta.authored()) {
     ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(shader.metas(), indent+1);
+    ss << print_prim_metas(shader.metas(), indent + 1);
     ss << pprint::Indent(indent) << ")\n";
   }
   ss << pprint::Indent(indent) << "{\n";
 
   // members
   if (shader.info_id.size()) {
-    ss << pprint::Indent(indent+1) << "uniform token info:id = \"" << shader.info_id << "\"\n";
+    ss << pprint::Indent(indent + 1) << "uniform token info:id = \""
+       << shader.info_id << "\"\n";
   }
 
   if (auto pvr = shader.value.get_value<UsdPrimvarReader_float>()) {
-    ss << print_shader_params(pvr.value(), indent+1);
+    ss << print_shader_params(pvr.value(), indent + 1);
   } else if (auto pvr2 = shader.value.get_value<UsdPrimvarReader_float2>()) {
-    ss << print_shader_params(pvr2.value(), indent+1);
+    ss << print_shader_params(pvr2.value(), indent + 1);
   } else if (auto pvr3 = shader.value.get_value<UsdPrimvarReader_float3>()) {
-    ss << print_shader_params(pvr3.value(), indent+1);
+    ss << print_shader_params(pvr3.value(), indent + 1);
   } else if (auto pvr4 = shader.value.get_value<UsdPrimvarReader_float4>()) {
-    ss << print_shader_params(pvr4.value(), indent+1);
+    ss << print_shader_params(pvr4.value(), indent + 1);
   } else if (auto pvrs = shader.value.get_value<UsdPrimvarReader_string>()) {
-    ss << print_shader_params(pvrs.value(), indent+1);
+    ss << print_shader_params(pvrs.value(), indent + 1);
   } else if (auto pvrn = shader.value.get_value<UsdPrimvarReader_normal>()) {
-    ss << print_shader_params(pvrn.value(), indent+1);
+    ss << print_shader_params(pvrn.value(), indent + 1);
   } else if (auto pvrv = shader.value.get_value<UsdPrimvarReader_vector>()) {
-    ss << print_shader_params(pvrv.value(), indent+1);
+    ss << print_shader_params(pvrv.value(), indent + 1);
   } else if (auto pvrp = shader.value.get_value<UsdPrimvarReader_point>()) {
-    ss << print_shader_params(pvrp.value(), indent+1);
+    ss << print_shader_params(pvrp.value(), indent + 1);
   } else if (auto pvrm = shader.value.get_value<UsdPrimvarReader_matrix>()) {
-    ss << print_shader_params(pvrm.value(), indent+1);
+    ss << print_shader_params(pvrm.value(), indent + 1);
   } else if (auto pvtex = shader.value.get_value<UsdUVTexture>()) {
-    ss << print_shader_params(pvtex.value(), indent+1);
+    ss << print_shader_params(pvtex.value(), indent + 1);
   } else if (auto pvtx2d = shader.value.get_value<UsdTransform2d>()) {
-    ss << print_shader_params(pvtx2d.value(), indent+1);
+    ss << print_shader_params(pvtx2d.value(), indent + 1);
   } else if (auto pvs = shader.value.get_value<UsdPreviewSurface>()) {
-    ss << print_shader_params(pvs.value(), indent+1);
+    ss << print_shader_params(pvs.value(), indent + 1);
   } else if (auto pvsn = shader.value.get_value<ShaderNode>()) {
     // Generic ShaderNode
-    ss << print_common_shader_params(pvsn.value(), indent+1);
+    ss << print_common_shader_params(pvsn.value(), indent + 1);
   } else {
-    ss << pprint::Indent(indent+1) << "[???] Invalid ShaderNode in Shader Prim\n";
+    ss << pprint::Indent(indent + 1)
+       << "[???] Invalid ShaderNode in Shader Prim\n";
   }
-
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
   }
 
   return ss.str();
-
 }
 
-std::string to_string(const UsdPreviewSurface &surf, const uint32_t indent, bool closing_brace) {
+std::string to_string(const UsdPreviewSurface &surf, const uint32_t indent,
+                      bool closing_brace) {
   // TODO: Print spec and meta?
   std::stringstream ss;
 
@@ -3309,7 +3595,8 @@ std::string to_string(const UsdPreviewSurface &surf, const uint32_t indent, bool
   return ss.str();
 }
 
-std::string to_string(const UsdUVTexture &tex, const uint32_t indent, bool closing_brace) {
+std::string to_string(const UsdUVTexture &tex, const uint32_t indent,
+                      bool closing_brace) {
   // TODO: Print spec and meta?
   std::stringstream ss;
 
@@ -3322,7 +3609,8 @@ std::string to_string(const UsdUVTexture &tex, const uint32_t indent, bool closi
   return ss.str();
 }
 
-std::string to_string(const UsdPrimvarReader_float2 &preader, const uint32_t indent, bool closing_brace) {
+std::string to_string(const UsdPrimvarReader_float2 &preader,
+                      const uint32_t indent, bool closing_brace) {
   // TODO: Print spec and meta?
   std::stringstream ss;
 
@@ -3335,37 +3623,39 @@ std::string to_string(const UsdPrimvarReader_float2 &preader, const uint32_t ind
   return ss.str();
 }
 
-
-
-std::string to_string(const SphereLight &light, const uint32_t indent, bool closing_brace) {
+std::string to_string(const SphereLight &light, const uint32_t indent,
+                      bool closing_brace) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(light.spec) << " SphereLight \"" << light.name << "\"\n";
+  ss << pprint::Indent(indent) << to_string(light.spec) << " SphereLight \""
+     << light.name << "\"\n";
   if (light.meta.authored()) {
     ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(light.meta, indent+1);
+    ss << print_prim_metas(light.meta, indent + 1);
     ss << pprint::Indent(indent) << ")\n";
   }
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << print_typed_attr(light.color, "inputs:color", indent+1);
-  ss << print_typed_attr(light.colorTemperature, "inputs:colorTemperature", indent+1);
-  ss << print_typed_attr(light.diffuse, "inputs:diffuse", indent+1);
-  ss << print_typed_attr(light.enableColorTemperature, "inputs:enableColorTemperature", indent+1);
-  ss << print_typed_attr(light.exposure, "inputs:exposure", indent+1);
-  ss << print_typed_attr(light.intensity, "inputs:intensity", indent+1);
-  ss << print_typed_attr(light.normalize, "inputs:normalize", indent+1);
-  ss << print_typed_attr(light.specular, "inputs:specular", indent+1);
+  ss << print_typed_attr(light.color, "inputs:color", indent + 1);
+  ss << print_typed_attr(light.colorTemperature, "inputs:colorTemperature",
+                         indent + 1);
+  ss << print_typed_attr(light.diffuse, "inputs:diffuse", indent + 1);
+  ss << print_typed_attr(light.enableColorTemperature,
+                         "inputs:enableColorTemperature", indent + 1);
+  ss << print_typed_attr(light.exposure, "inputs:exposure", indent + 1);
+  ss << print_typed_attr(light.intensity, "inputs:intensity", indent + 1);
+  ss << print_typed_attr(light.normalize, "inputs:normalize", indent + 1);
+  ss << print_typed_attr(light.specular, "inputs:specular", indent + 1);
 
-  ss << print_typed_attr(light.radius, "inputs:radius", indent+1);
+  ss << print_typed_attr(light.radius, "inputs:radius", indent + 1);
 
-  ss << print_typed_attr(light.extent, "extent", indent+1);
-  ss << print_typed_token_attr(light.visibility, "visibility", indent+1);
-  ss << print_typed_token_attr(light.purpose, "purpose", indent+1);
+  ss << print_typed_attr(light.extent, "extent", indent + 1);
+  ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
+  ss << print_typed_token_attr(light.purpose, "purpose", indent + 1);
 
-  ss << print_xformOps(light.xformOps, indent+1);
-  ss << print_props(light.props, indent+1);
+  ss << print_xformOps(light.xformOps, indent + 1);
+  ss << print_props(light.props, indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -3374,35 +3664,39 @@ std::string to_string(const SphereLight &light, const uint32_t indent, bool clos
   return ss.str();
 }
 
-std::string to_string(const DistantLight &light, const uint32_t indent, bool closing_brace) {
+std::string to_string(const DistantLight &light, const uint32_t indent,
+                      bool closing_brace) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(light.spec) << " DistantLight \"" << light.name << "\"\n";
+  ss << pprint::Indent(indent) << to_string(light.spec) << " DistantLight \""
+     << light.name << "\"\n";
   if (light.meta.authored()) {
     ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(light.meta, indent+1);
+    ss << print_prim_metas(light.meta, indent + 1);
     ss << pprint::Indent(indent) << ")\n";
   }
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << print_typed_attr(light.color, "inputs:color", indent+1);
-  ss << print_typed_attr(light.colorTemperature, "inputs:colorTemperature", indent+1);
-  ss << print_typed_attr(light.diffuse, "inputs:diffuse", indent+1);
-  ss << print_typed_attr(light.enableColorTemperature, "inputs:enableColorTemperature", indent+1);
-  ss << print_typed_attr(light.exposure, "inputs:exposure", indent+1);
-  ss << print_typed_attr(light.intensity, "inputs:intensity", indent+1);
-  ss << print_typed_attr(light.normalize, "inputs:normalize", indent+1);
-  ss << print_typed_attr(light.specular, "inputs:specular", indent+1);
+  ss << print_typed_attr(light.color, "inputs:color", indent + 1);
+  ss << print_typed_attr(light.colorTemperature, "inputs:colorTemperature",
+                         indent + 1);
+  ss << print_typed_attr(light.diffuse, "inputs:diffuse", indent + 1);
+  ss << print_typed_attr(light.enableColorTemperature,
+                         "inputs:enableColorTemperature", indent + 1);
+  ss << print_typed_attr(light.exposure, "inputs:exposure", indent + 1);
+  ss << print_typed_attr(light.intensity, "inputs:intensity", indent + 1);
+  ss << print_typed_attr(light.normalize, "inputs:normalize", indent + 1);
+  ss << print_typed_attr(light.specular, "inputs:specular", indent + 1);
 
-  ss << print_typed_attr(light.angle, "inputs:angle", indent+1);
+  ss << print_typed_attr(light.angle, "inputs:angle", indent + 1);
 
-  ss << print_typed_attr(light.extent, "extent", indent+1);
-  ss << print_typed_token_attr(light.visibility, "visibility", indent+1);
-  ss << print_typed_token_attr(light.purpose, "purpose", indent+1);
+  ss << print_typed_attr(light.extent, "extent", indent + 1);
+  ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
+  ss << print_typed_token_attr(light.purpose, "purpose", indent + 1);
 
-  ss << print_xformOps(light.xformOps, indent+1);
-  ss << print_props(light.props, indent+1);
+  ss << print_xformOps(light.xformOps, indent + 1);
+  ss << print_props(light.props, indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -3411,37 +3705,40 @@ std::string to_string(const DistantLight &light, const uint32_t indent, bool clo
   return ss.str();
 }
 
-std::string to_string(const CylinderLight &light, const uint32_t indent, bool closing_brace) {
+std::string to_string(const CylinderLight &light, const uint32_t indent,
+                      bool closing_brace) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(light.spec) << " CylinderLight \"" << light.name << "\"\n";
+  ss << pprint::Indent(indent) << to_string(light.spec) << " CylinderLight \""
+     << light.name << "\"\n";
   if (light.meta.authored()) {
     ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(light.meta, indent+1);
+    ss << print_prim_metas(light.meta, indent + 1);
     ss << pprint::Indent(indent) << ")\n";
   }
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << print_typed_attr(light.color, "inputs:color", indent+1);
-  ss << print_typed_attr(light.colorTemperature, "inputs:colorTemperature", indent+1);
-  ss << print_typed_attr(light.diffuse, "inputs:diffuse", indent+1);
-  ss << print_typed_attr(light.enableColorTemperature, "inputs:enableColorTemperature", indent+1);
-  ss << print_typed_attr(light.exposure, "inputs:exposure", indent+1);
-  ss << print_typed_attr(light.intensity, "inputs:intensity", indent+1);
-  ss << print_typed_attr(light.normalize, "inputs:normalize", indent+1);
-  ss << print_typed_attr(light.specular, "inputs:specular", indent+1);
+  ss << print_typed_attr(light.color, "inputs:color", indent + 1);
+  ss << print_typed_attr(light.colorTemperature, "inputs:colorTemperature",
+                         indent + 1);
+  ss << print_typed_attr(light.diffuse, "inputs:diffuse", indent + 1);
+  ss << print_typed_attr(light.enableColorTemperature,
+                         "inputs:enableColorTemperature", indent + 1);
+  ss << print_typed_attr(light.exposure, "inputs:exposure", indent + 1);
+  ss << print_typed_attr(light.intensity, "inputs:intensity", indent + 1);
+  ss << print_typed_attr(light.normalize, "inputs:normalize", indent + 1);
+  ss << print_typed_attr(light.specular, "inputs:specular", indent + 1);
 
-  ss << print_typed_attr(light.length, "inputs:length", indent+1);
-  ss << print_typed_attr(light.radius, "inputs:radius", indent+1);
+  ss << print_typed_attr(light.length, "inputs:length", indent + 1);
+  ss << print_typed_attr(light.radius, "inputs:radius", indent + 1);
 
-  ss << print_typed_attr(light.extent, "extent", indent+1);
-  ss << print_typed_token_attr(light.visibility, "visibility", indent+1);
-  ss << print_typed_token_attr(light.purpose, "purpose", indent+1);
+  ss << print_typed_attr(light.extent, "extent", indent + 1);
+  ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
+  ss << print_typed_token_attr(light.purpose, "purpose", indent + 1);
 
-
-  ss << print_xformOps(light.xformOps, indent+1);
-  ss << print_props(light.props, indent+1);
+  ss << print_xformOps(light.xformOps, indent + 1);
+  ss << print_props(light.props, indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -3450,35 +3747,39 @@ std::string to_string(const CylinderLight &light, const uint32_t indent, bool cl
   return ss.str();
 }
 
-std::string to_string(const DiskLight &light, const uint32_t indent, bool closing_brace) {
+std::string to_string(const DiskLight &light, const uint32_t indent,
+                      bool closing_brace) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(light.spec) << " DiskLight \"" << light.name << "\"\n";
+  ss << pprint::Indent(indent) << to_string(light.spec) << " DiskLight \""
+     << light.name << "\"\n";
   if (light.meta.authored()) {
     ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(light.meta, indent+1);
+    ss << print_prim_metas(light.meta, indent + 1);
     ss << pprint::Indent(indent) << ")\n";
   }
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << print_typed_attr(light.color, "inputs:color", indent+1);
-  ss << print_typed_attr(light.colorTemperature, "inputs:colorTemperature", indent+1);
-  ss << print_typed_attr(light.diffuse, "inputs:diffuse", indent+1);
-  ss << print_typed_attr(light.enableColorTemperature, "inputs:enableColorTemperature", indent+1);
-  ss << print_typed_attr(light.exposure, "inputs:exposure", indent+1);
-  ss << print_typed_attr(light.intensity, "inputs:intensity", indent+1);
-  ss << print_typed_attr(light.normalize, "inputs:normalize", indent+1);
-  ss << print_typed_attr(light.specular, "inputs:specular", indent+1);
+  ss << print_typed_attr(light.color, "inputs:color", indent + 1);
+  ss << print_typed_attr(light.colorTemperature, "inputs:colorTemperature",
+                         indent + 1);
+  ss << print_typed_attr(light.diffuse, "inputs:diffuse", indent + 1);
+  ss << print_typed_attr(light.enableColorTemperature,
+                         "inputs:enableColorTemperature", indent + 1);
+  ss << print_typed_attr(light.exposure, "inputs:exposure", indent + 1);
+  ss << print_typed_attr(light.intensity, "inputs:intensity", indent + 1);
+  ss << print_typed_attr(light.normalize, "inputs:normalize", indent + 1);
+  ss << print_typed_attr(light.specular, "inputs:specular", indent + 1);
 
-  ss << print_typed_attr(light.radius, "inputs:radius", indent+1);
+  ss << print_typed_attr(light.radius, "inputs:radius", indent + 1);
 
-  ss << print_typed_attr(light.extent, "extent", indent+1);
-  ss << print_typed_token_attr(light.visibility, "visibility", indent+1);
-  ss << print_typed_token_attr(light.purpose, "purpose", indent+1);
+  ss << print_typed_attr(light.extent, "extent", indent + 1);
+  ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
+  ss << print_typed_token_attr(light.purpose, "purpose", indent + 1);
 
-  ss << print_xformOps(light.xformOps, indent+1);
-  ss << print_props(light.props, indent+1);
+  ss << print_xformOps(light.xformOps, indent + 1);
+  ss << print_props(light.props, indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -3487,38 +3788,43 @@ std::string to_string(const DiskLight &light, const uint32_t indent, bool closin
   return ss.str();
 }
 
-std::string to_string(const DomeLight &light, const uint32_t indent, bool closing_brace) {
+std::string to_string(const DomeLight &light, const uint32_t indent,
+                      bool closing_brace) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(light.spec) << " DomeLight \"" << light.name << "\"\n";
+  ss << pprint::Indent(indent) << to_string(light.spec) << " DomeLight \""
+     << light.name << "\"\n";
   if (light.meta.authored()) {
     ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(light.meta, indent+1);
+    ss << print_prim_metas(light.meta, indent + 1);
     ss << pprint::Indent(indent) << ")\n";
   }
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << print_typed_attr(light.color, "inputs:color", indent+1);
-  ss << print_typed_attr(light.colorTemperature, "inputs:colorTemperature", indent+1);
-  ss << print_typed_attr(light.diffuse, "inputs:diffuse", indent+1);
-  ss << print_typed_attr(light.enableColorTemperature, "inputs:enableColorTemperature", indent+1);
-  ss << print_typed_attr(light.exposure, "inputs:exposure", indent+1);
-  ss << print_typed_attr(light.intensity, "inputs:intensity", indent+1);
-  ss << print_typed_attr(light.normalize, "inputs:normalize", indent+1);
-  ss << print_typed_attr(light.specular, "inputs:specular", indent+1);
+  ss << print_typed_attr(light.color, "inputs:color", indent + 1);
+  ss << print_typed_attr(light.colorTemperature, "inputs:colorTemperature",
+                         indent + 1);
+  ss << print_typed_attr(light.diffuse, "inputs:diffuse", indent + 1);
+  ss << print_typed_attr(light.enableColorTemperature,
+                         "inputs:enableColorTemperature", indent + 1);
+  ss << print_typed_attr(light.exposure, "inputs:exposure", indent + 1);
+  ss << print_typed_attr(light.intensity, "inputs:intensity", indent + 1);
+  ss << print_typed_attr(light.normalize, "inputs:normalize", indent + 1);
+  ss << print_typed_attr(light.specular, "inputs:specular", indent + 1);
 
-  ss << print_typed_attr(light.guideRadius, "inputs:guideRadius", indent+1);
-  ss << print_typed_attr(light.file, "inputs:file", indent+1);
-  ss << print_typed_token_attr(light.textureFormat, "inputs:textureFormat", indent+1);
+  ss << print_typed_attr(light.guideRadius, "inputs:guideRadius", indent + 1);
+  ss << print_typed_attr(light.file, "inputs:file", indent + 1);
+  ss << print_typed_token_attr(light.textureFormat, "inputs:textureFormat",
+                               indent + 1);
 
-  ss << print_typed_attr(light.extent, "extent", indent+1);
-  ss << print_typed_token_attr(light.visibility, "visibility", indent+1);
-  ss << print_typed_token_attr(light.purpose, "purpose", indent+1);
+  ss << print_typed_attr(light.extent, "extent", indent + 1);
+  ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
+  ss << print_typed_token_attr(light.purpose, "purpose", indent + 1);
 
-  ss << print_xformOps(light.xformOps, indent+1);
+  ss << print_xformOps(light.xformOps, indent + 1);
 
-  ss << print_props(light.props, indent+1);
+  ss << print_props(light.props, indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -3527,38 +3833,42 @@ std::string to_string(const DomeLight &light, const uint32_t indent, bool closin
   return ss.str();
 }
 
-std::string to_string(const RectLight &light, const uint32_t indent, bool closing_brace) {
+std::string to_string(const RectLight &light, const uint32_t indent,
+                      bool closing_brace) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << to_string(light.spec) << " RectLight \"" << light.name << "\"\n";
+  ss << pprint::Indent(indent) << to_string(light.spec) << " RectLight \""
+     << light.name << "\"\n";
   if (light.meta.authored()) {
     ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(light.meta, indent+1);
+    ss << print_prim_metas(light.meta, indent + 1);
     ss << pprint::Indent(indent) << ")\n";
   }
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  ss << print_typed_attr(light.color, "inputs:color", indent+1);
-  ss << print_typed_attr(light.colorTemperature, "inputs:colorTemperature", indent+1);
-  ss << print_typed_attr(light.diffuse, "inputs:diffuse", indent+1);
-  ss << print_typed_attr(light.enableColorTemperature, "inputs:enableColorTemperature", indent+1);
-  ss << print_typed_attr(light.exposure, "inputs:exposure", indent+1);
-  ss << print_typed_attr(light.intensity, "inputs:intensity", indent+1);
-  ss << print_typed_attr(light.normalize, "inputs:normalize", indent+1);
-  ss << print_typed_attr(light.specular, "inputs:specular", indent+1);
+  ss << print_typed_attr(light.color, "inputs:color", indent + 1);
+  ss << print_typed_attr(light.colorTemperature, "inputs:colorTemperature",
+                         indent + 1);
+  ss << print_typed_attr(light.diffuse, "inputs:diffuse", indent + 1);
+  ss << print_typed_attr(light.enableColorTemperature,
+                         "inputs:enableColorTemperature", indent + 1);
+  ss << print_typed_attr(light.exposure, "inputs:exposure", indent + 1);
+  ss << print_typed_attr(light.intensity, "inputs:intensity", indent + 1);
+  ss << print_typed_attr(light.normalize, "inputs:normalize", indent + 1);
+  ss << print_typed_attr(light.specular, "inputs:specular", indent + 1);
 
-  ss << print_typed_attr(light.file, "inputs:file", indent+1);
-  ss << print_typed_attr(light.height, "inputs:height", indent+1);
-  ss << print_typed_attr(light.width, "inputs:width", indent+1);
-  ss << print_typed_attr(light.height, "inputs:height", indent+1);
+  ss << print_typed_attr(light.file, "inputs:file", indent + 1);
+  ss << print_typed_attr(light.height, "inputs:height", indent + 1);
+  ss << print_typed_attr(light.width, "inputs:width", indent + 1);
+  ss << print_typed_attr(light.height, "inputs:height", indent + 1);
 
-  ss << print_typed_attr(light.extent, "extent", indent+1);
-  ss << print_typed_token_attr(light.visibility, "visibility", indent+1);
-  ss << print_typed_token_attr(light.purpose, "purpose", indent+1);
+  ss << print_typed_attr(light.extent, "extent", indent + 1);
+  ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
+  ss << print_typed_token_attr(light.purpose, "purpose", indent + 1);
 
-  ss << print_xformOps(light.xformOps, indent+1);
-  ss << print_props(light.props, indent+1);
+  ss << print_xformOps(light.xformOps, indent + 1);
+  ss << print_props(light.props, indent + 1);
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -3566,10 +3876,8 @@ std::string to_string(const RectLight &light, const uint32_t indent, bool closin
 
   return ss.str();
 }
-
 
 std::string to_string(const GeomCamera::Projection &proj) {
-
   if (proj == GeomCamera::Projection::Orthographic) {
     return "orthographic";
   } else {
@@ -3578,7 +3886,6 @@ std::string to_string(const GeomCamera::Projection &proj) {
 }
 
 std::string to_string(const GeomCamera::StereoRole &role) {
-
   if (role == GeomCamera::StereoRole::Mono) {
     return "mono";
   } else if (role == GeomCamera::StereoRole::Right) {
@@ -3598,14 +3905,13 @@ std::string to_string(const Path &path, bool show_full_path) {
 }
 
 std::string to_string(const std::vector<Path> &v, bool show_full_path) {
-
   // TODO(syoyo): indent
   std::stringstream ss;
   ss << "[";
 
   for (size_t i = 0; i < v.size(); i++) {
     ss << to_string(v[i], show_full_path);
-    if (i != (v.size() -1)) {
+    if (i != (v.size() - 1)) {
       ss << ", ";
     }
   }
@@ -3617,28 +3923,68 @@ std::string to_string(const XformOp::OpType &op) {
   std::string ss;
 
   switch (op) {
-  case XformOp::OpType::ResetXformStack: { ss = "!resetXformStack!"; break; }
-  case XformOp::OpType::Transform: { ss = "xformOp:transform"; break; }
-  case XformOp::OpType::Translate: { ss = "xformOp:translate"; break; }
-  case XformOp::OpType::Scale: { ss = "xformOp:scale"; break; }
-  case XformOp::OpType::RotateX: { ss = "xformOp:rotateX"; break; }
-  case XformOp::OpType::RotateY: { ss = "xformOp:rotateY"; break; }
-  case XformOp::OpType::RotateZ: { ss = "xformOp:rotateZ"; break; }
-  case XformOp::OpType::RotateXYZ: { ss = "xformOp:rotateXYZ"; break; }
-  case XformOp::OpType::RotateXZY: { ss = "xformOp:rotateXZY"; break; }
-  case XformOp::OpType::RotateYXZ: { ss = "xformOp:rotateYXZ"; break; }
-  case XformOp::OpType::RotateYZX: { ss = "xformOp:rotateYZX"; break; }
-  case XformOp::OpType::RotateZXY: { ss = "xformOp:rotateZXY"; break; }
-  case XformOp::OpType::RotateZYX: { ss = "xformOp:rotateZYX"; break; }
-  case XformOp::OpType::Orient: { ss = "xformOp:orient"; break; }
+    case XformOp::OpType::ResetXformStack: {
+      ss = "!resetXformStack!";
+      break;
+    }
+    case XformOp::OpType::Transform: {
+      ss = "xformOp:transform";
+      break;
+    }
+    case XformOp::OpType::Translate: {
+      ss = "xformOp:translate";
+      break;
+    }
+    case XformOp::OpType::Scale: {
+      ss = "xformOp:scale";
+      break;
+    }
+    case XformOp::OpType::RotateX: {
+      ss = "xformOp:rotateX";
+      break;
+    }
+    case XformOp::OpType::RotateY: {
+      ss = "xformOp:rotateY";
+      break;
+    }
+    case XformOp::OpType::RotateZ: {
+      ss = "xformOp:rotateZ";
+      break;
+    }
+    case XformOp::OpType::RotateXYZ: {
+      ss = "xformOp:rotateXYZ";
+      break;
+    }
+    case XformOp::OpType::RotateXZY: {
+      ss = "xformOp:rotateXZY";
+      break;
+    }
+    case XformOp::OpType::RotateYXZ: {
+      ss = "xformOp:rotateYXZ";
+      break;
+    }
+    case XformOp::OpType::RotateYZX: {
+      ss = "xformOp:rotateYZX";
+      break;
+    }
+    case XformOp::OpType::RotateZXY: {
+      ss = "xformOp:rotateZXY";
+      break;
+    }
+    case XformOp::OpType::RotateZYX: {
+      ss = "xformOp:rotateZYX";
+      break;
+    }
+    case XformOp::OpType::Orient: {
+      ss = "xformOp:orient";
+      break;
+    }
   }
 
   return ss;
 }
 
-std::string to_string(const tinyusdz::value::token &v) {
-  return v.str();
-}
+std::string to_string(const tinyusdz::value::token &v) { return v.str(); }
 
 std::string to_string(const DomeLight::TextureFormat &texformat) {
   std::string s = "[InvalidTextureFormat]";
@@ -3679,7 +4025,6 @@ std::string dump_path(const Path &path) {
 }
 
 std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
-
   std::stringstream meta_ss;
 
   if (metas.doc.value.empty()) {
@@ -3694,8 +4039,7 @@ std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
 
   if (metas.metersPerUnit.authored()) {
     meta_ss << pprint::Indent(indent)
-            << "metersPerUnit = " << metas.metersPerUnit.get_value()
-            << "\n";
+            << "metersPerUnit = " << metas.metersPerUnit.get_value() << "\n";
   }
 
   if (metas.upAxis.authored()) {
@@ -3705,14 +4049,14 @@ std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
   }
 
   if (metas.timeCodesPerSecond.authored()) {
-    meta_ss << pprint::Indent(indent) << "timeCodesPerSecond = "
-            << metas.timeCodesPerSecond.get_value() << "\n";
+    meta_ss << pprint::Indent(indent)
+            << "timeCodesPerSecond = " << metas.timeCodesPerSecond.get_value()
+            << "\n";
   }
 
   if (metas.startTimeCode.authored()) {
     meta_ss << pprint::Indent(indent)
-            << "startTimeCode = " << metas.startTimeCode.get_value()
-            << "\n";
+            << "startTimeCode = " << metas.startTimeCode.get_value() << "\n";
   }
 
   if (metas.endTimeCode.authored()) {
@@ -3733,14 +4077,14 @@ std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
   }
 
   if (metas.defaultPrim.str().size()) {
-    meta_ss << pprint::Indent(1) << "defaultPrim = "
-            << tinyusdz::quote(metas.defaultPrim.str()) << "\n";
+    meta_ss << pprint::Indent(1)
+            << "defaultPrim = " << tinyusdz::quote(metas.defaultPrim.str())
+            << "\n";
   }
 
   if (metas.autoPlay.authored()) {
     meta_ss << pprint::Indent(1)
-            << "autoPlay = " << to_string(metas.autoPlay.get_value())
-            << "\n";
+            << "autoPlay = " << to_string(metas.autoPlay.get_value()) << "\n";
   }
 
   if (metas.playbackMode.authored()) {
@@ -3763,18 +4107,16 @@ std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
   }
 
   return meta_ss.str();
-
 }
 
 std::string print_layer(const Layer &layer, const uint32_t indent) {
-
   std::stringstream ss;
 
   // FIXME: print magic-header outside of this function?
   ss << pprint::Indent(indent) << "#usda 1.0\n";
 
   std::stringstream meta_ss;
-  meta_ss << print_layer_metas(layer.metas(), indent+1);
+  meta_ss << print_layer_metas(layer.metas(), indent + 1);
 
   if (meta_ss.str().size()) {
     ss << "(\n";
@@ -3792,8 +4134,8 @@ std::string print_layer(const Layer &layer, const uint32_t indent) {
 
     for (size_t i = 0; i < layer.metas().primChildren.size(); i++) {
       value::token nameTok = layer.metas().primChildren[i];
-      //DCOUT(fmt::format("primChildren  {}/{} = {}", i,
-      //                  layer.metas().primChildren.size(), nameTok.str()));
+      // DCOUT(fmt::format("primChildren  {}/{} = {}", i,
+      //                   layer.metas().primChildren.size(), nameTok.str()));
       const auto it = primNameTable.find(nameTok.str());
       if (it != primNameTable.end()) {
         ss << prim::print_primspec((*it->second), indent);
@@ -3815,15 +4157,12 @@ std::string print_layer(const Layer &layer, const uint32_t indent) {
   }
 
   return ss.str();
-
 }
-
 
 // prim-pprint.hh
 namespace prim {
 
 std::string print_prim(const Prim &prim, const uint32_t indent) {
-
   std::stringstream ss;
 
   // Currently, Prim's elementName is read from name variable in concrete Prim
@@ -3962,7 +4301,6 @@ std::string print_prim(const Prim &prim, const uint32_t indent) {
 }
 
 std::string print_primspec(const PrimSpec &primspec, const uint32_t indent) {
-
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << to_string(primspec.specifier()) << " ";
@@ -3976,41 +4314,41 @@ std::string print_primspec(const PrimSpec &primspec, const uint32_t indent) {
 
   if (primspec.metas().authored()) {
     ss << pprint::Indent(indent) << "(\n";
-    ss << print_prim_metas(primspec.metas(), indent+1);
+    ss << print_prim_metas(primspec.metas(), indent + 1);
     ss << pprint::Indent(indent) << ")\n";
   }
   ss << pprint::Indent(indent) << "{\n";
 
-  ss << print_props(primspec.props(), indent+1);
+  ss << print_props(primspec.props(), indent + 1);
 
   // TODO: print according to primChildren metadatum
   for (size_t i = 0; i < primspec.children().size(); i++) {
     if (i > 0) {
       ss << pprint::Indent(indent) << "\n";
     }
-    ss << print_primspec(primspec.children()[i], indent+1);
+    ss << print_primspec(primspec.children()[i], indent + 1);
   }
 
-  //ss << "# variant \n";
-  ss << print_variantSetSpecStmt(primspec.variantSets(), indent+1);
-
+  // ss << "# variant \n";
+  ss << print_variantSetSpecStmt(primspec.variantSets(), indent + 1);
 
   ss << pprint::Indent(indent) << "}\n";
 
   return ss.str();
 }
 
-} // namespace prim
+}  // namespace prim
 
-std::string to_string(const Layer &layer, const uint32_t indent, bool closing_brace) {
+std::string to_string(const Layer &layer, const uint32_t indent,
+                      bool closing_brace) {
   (void)closing_brace;
   return print_layer(layer, indent);
 }
 
-std::string to_string(const PrimSpec &primspec, const uint32_t indent, bool closing_brace) {
+std::string to_string(const PrimSpec &primspec, const uint32_t indent,
+                      bool closing_brace) {
   (void)closing_brace;
   return prim::print_primspec(primspec, indent);
 }
 
-} // tinyusdz
-
+}  // namespace tinyusdz

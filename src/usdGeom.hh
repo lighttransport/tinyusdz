@@ -399,9 +399,9 @@ struct GeomSubset {
 
   int64_t parent_id{-1};  // Index to parent node
 
-  ElementType elementType{ElementType::Face};  // must be face
-  FamilyType familyType{FamilyType::Unrestricted};
-  nonstd::optional<value::token> familyName;  // "token familyName"
+  TypedAttributeWithFallback<ElementType> elementType{ElementType::Face};  // must be face for now
+  TypedAttributeWithFallback<FamilyType> familyType{FamilyType::Unrestricted};
+  TypedAttribute<value::token> familyName;  // "uniform token familyName"
 
   nonstd::expected<bool, std::string> SetElementType(const std::string &str) {
     if (str == "face") {
@@ -430,10 +430,35 @@ struct GeomSubset {
                                    "`.");
   }
 
-  std::vector<uint32_t> indices;
+  // Some frequently used materialBindings
+  nonstd::optional<Relationship> materialBinding; // rel material:binding
+  nonstd::optional<Relationship> materialBindingCollection; // rel material:binding:collection
+  nonstd::optional<Relationship> materialBindingPreview; // rel material:binding:preview
+
+  TypedAttribute<Animatable<std::vector<int32_t>>> indices; // int[] indices
 
   std::map<std::string, Property> props;  // custom Properties
   PrimMeta meta;
+
+  std::vector<value::token> &primChildrenNames() {
+    return _primChildrenNames;
+  }
+  
+  std::vector<value::token> &propertyNames() {
+    return _propertyNames;
+  }
+  
+  const std::vector<value::token> &primChildrenNames() const {
+    return _primChildrenNames;
+  }
+  
+  const std::vector<value::token> &propertyNames() const {
+    return _propertyNames;
+  }
+
+ private:
+  std::vector<value::token> _primChildrenNames;
+  std::vector<value::token> _propertyNames;
 };
 
 // Polygon mesh geometry
