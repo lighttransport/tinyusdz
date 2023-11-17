@@ -2652,10 +2652,12 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent,
 
   ss << print_gprim_predefined(mesh, indent + 1);
 
+#if 0
   // GeomSubset.
   for (const auto &subset : mesh.geom_subset_children) {
     ss << to_string(subset, indent + 1, /* closing_brace */ true);
   }
+#endif
 
   ss << print_props(mesh.props, indent + 1);
 
