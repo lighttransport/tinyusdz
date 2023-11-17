@@ -596,6 +596,7 @@ struct GeomMesh : GPrim {
   // - int[] primvars:skel:jointIndices
   // - float[] primvars:skel:jointWeights
 
+#if 0 // GeomSubset Prim is now managed as a child Prim
   //
   // GeomSubset
   //
@@ -605,8 +606,18 @@ struct GeomMesh : GPrim {
 
   std::vector<GeomSubset> geom_subset_children;
 
+#endif
+
   ///
-  /// Validate GeomSubset data whose are attached to this GeomMesh.
+  /// Get GeomSubset list assgied to this GeomMesh(child Prim).
+  ///
+  /// The pointer points to the address of child Prim,
+  /// so should not free it and this GeomMesh object must be valid during using the pointer to GeomSubset.
+  ///
+  std::vector<const GeomSubset *> GetGeomSubsets();
+
+  ///
+  /// Validate GeomSubset data whose are attached(as a child Prim) to this GeomMesh.
   ///
   nonstd::expected<bool, std::string> ValidateGeomSubset();
 };

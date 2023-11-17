@@ -96,6 +96,7 @@ RECONSTRUCT_PRIM_DECL(CylinderLight);
 RECONSTRUCT_PRIM_DECL(DiskLight);
 RECONSTRUCT_PRIM_DECL(DistantLight);
 RECONSTRUCT_PRIM_DECL(GeomMesh);
+RECONSTRUCT_PRIM_DECL(GeomSubset);
 RECONSTRUCT_PRIM_DECL(GeomSphere);
 RECONSTRUCT_PRIM_DECL(GeomPoints);
 RECONSTRUCT_PRIM_DECL(GeomCone);
@@ -1543,6 +1544,7 @@ bool USDAReader::Impl::RegisterReconstructCallback<GPrim>() {
 }
 #endif
 
+#if 0
 template <>
 bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
   _parser.RegisterPrimConstructFunction(
@@ -1560,6 +1562,7 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
         }
 
         (void)primTypeName;
+
 
 #if 0
         if (parent.IsRootPrim()) {
@@ -1583,208 +1586,12 @@ bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
           return nonstd::make_unexpected("Failed to process Prim metadataum.");
         }
 
-    // TODO: Construct GeomMesh first
-#if 0
-        const std::string parent_primpath = parent.prim_part();
-
-        const PrimNode &pnode = _prim_nodes[size_t(parentPrimIdx)];
-        auto pmesh = pnode.prim.get_value<GeomMesh>();
-        if (!pmesh) {
-          return nonstd::make_unexpected(
-              "Parent Prim must be GeomMesh, but got " +
-              pnode.prim.type_name());
-        }
-        GeomMesh &mesh = pmesh.value();
-
-        GeomSubset subset;
-
-        // uniform token elementType
-        // uniform token familyName
-        // int[] indices
-        // rel material:binding
-
-        if (references.size()) {
-          PUSH_WARN("`references` support in GeomSubset is TODO");
-        }
-
-        // Update props;
-        for (auto item : properties) {
-          if (item.first == "elementType") {
-            if (item.second.is_relationship()) {
-              PUSH_ERROR_AND_RETURN(
-                  "`elementType` property as Relation is not supported.");
-            }
-            if (auto pv = item.second.get_attribute().var.get_value<value::token>()) {
-              if (item.second.get_attribute().uniform) {
-                auto e = subset.SetElementType(pv.value().str());
-                if (!e) {
-                  PUSH_ERROR_AND_RETURN(e.error());
-                }
-                continue;
-              }
-            }
-            PUSH_ERROR_AND_RETURN(
-                "`elementType` property must be `uniform token` type.");
-          } else if (item.first == "familyType") {
-            if (item.second.is_relationship()) {
-              PUSH_ERROR_AND_RETURN(
-                  "`familyType` property as Relation is not supported.");
-            }
-
-            if (auto pv = item.second.get_attribute().var.get_value<value::token>()) {
-              if (item.second.get_attribute().uniform) {
-                auto e = subset.SetFamilyType(pv.value().str());
-                if (!e) {
-                  PUSH_ERROR_AND_RETURN(e.error());
-                }
-                continue;
-              }
-            }
-            PUSH_ERROR_AND_RETURN(
-                "`familyType` property must be `uniform token` type.");
-
-          } else if (item.first == "indices") {
-            if (item.second.is_relationship()) {
-              PUSH_ERROR_AND_RETURN(
-                  "`indices` property as Relation is not supported.");
-            }
-
-            if (auto pv =
-                    item.second.get_attribute().var.get_value<std::vector<int>>()) {
-              // int -> uint
-              std::transform(pv.value().begin(), pv.value().end(),
-                             std::back_inserter(subset.indices),
-                             [](int a) { return uint32_t(a); });
-            }
-
-            PUSH_ERROR_AND_RETURN(
-                "`indices` property must be `int[]` type, but got `" +
-                item.second.get_attribute().var.type_name() + "`");
-
-          } else if (item.first == "material:binding") {
-            if (!item.second.is_relationship()) {
-              PUSH_ERROR_AND_RETURN(
-                  "`material:binding` property as Attribute is not "
-                  "supported.");
-            }
-          } else {
-            PUSH_WARN("GeomSubset: TODO: " + item.first);
-          }
-        }
-
-        mesh.geom_subset_children.emplace_back(subset);
-#else
-
-        // Add GeomSubset to _prim_nodes.
-
-        GeomSubset subset;
-
-        for (auto item : properties) {
-          if (item.first == "elementType") {
-            if (item.second.is_relationship()) {
-              PUSH_ERROR_AND_RETURN(
-                  "`elementType` property as Relation is not supported.");
-            }
-            if (auto pv = item.second.get_attribute().get_value<value::token>()) {
-              if (item.second.get_attribute().variability() == Variability::Uniform) {
-                auto e = subset.SetElementType(pv.value().str());
-                if (!e) {
-                  PUSH_ERROR_AND_RETURN(e.error());
-                }
-                continue;
-              }
-            }
-            PUSH_ERROR_AND_RETURN(
-                "`elementType` property must be `uniform token` type.");
-          } else if (item.first == "familyType") {
-            if (item.second.is_relationship()) {
-              PUSH_ERROR_AND_RETURN(
-                  "`familyType` property as Relation is not supported.");
-            }
-
-            if (auto pv = item.second.get_attribute().get_value<value::token>()) {
-              if (item.second.get_attribute().variability() == Variability::Uniform) {
-                auto e = subset.SetFamilyType(pv.value().str());
-                if (!e) {
-                  PUSH_ERROR_AND_RETURN(e.error());
-                }
-                continue;
-              }
-            }
-            PUSH_ERROR_AND_RETURN(
-                "`familyType` property must be `uniform token` type.");
-
-          } else if (item.first == "indices") {
-            if (item.second.is_relationship()) {
-              PUSH_ERROR_AND_RETURN(
-                  "`indices` property as Relation is not supported.");
-            }
-
-            if (auto pv =
-                    item.second.get_attribute().get_value<std::vector<int>>()) {
-              subset.indices.set_value( *pv );
-            } else {
-              PUSH_ERROR_AND_RETURN(
-                  "`indices` property must be `int[]` type, but got `" +
-                  item.second.get_attribute().type_name() + "`");
-            }
-
-          } else if (item.first == "material:binding") {
-            if (!item.second.is_relationship()) {
-              PUSH_ERROR_AND_RETURN(
-                  "`material:binding` property as Attribute is not "
-                  "supported.");
-            }
-          } else if (item.first == "familyName") {
-            if (item.second.is_relationship()) {
-              PUSH_ERROR_AND_RETURN(
-                  "`familyName` property as Relation is not supported.");
-            }
-
-            if (auto pv = item.second.get_attribute().get_value<value::token>()) {
-              subset.familyName = pv.value();
-            } else {
-              PUSH_ERROR_AND_RETURN(
-                  "`familyName` property must be `token` type, but got `" +
-                  item.second.get_attribute().type_name() + "`");
-            }
-          } else {
-            PUSH_WARN("GeomSubset: TODO: " + item.first);
-          }
-        }
-
-        subset.name = prim_name.prim_part();
-        subset.spec = spec;
-        subset.meta = meta;
-
-        // Add to scene graph.
-        // NOTE: Scene graph is constructed from bottom up manner(Children
-        // first), so add this primIdx to parent's children.
-        if (size_t(primIdx) >= _prim_nodes.size()) {
-          _prim_nodes.resize(size_t(primIdx) + 1);
-        }
-        DCOUT("sz " << std::to_string(_prim_nodes.size())
-                    << ", primIdx = " << primIdx);
-
-        _prim_nodes[size_t(primIdx)].prim = std::move(subset);
-        DCOUT("prim[" << primIdx << "].ty = "
-                      << _prim_nodes[size_t(primIdx)].prim.type_name());
-        _prim_nodes[size_t(primIdx)].parent = parentPrimIdx;
-
-        if (parentPrimIdx == -1) {
-          _toplevel_prims.push_back(size_t(primIdx));
-        } else {
-          _prim_nodes[size_t(parentPrimIdx)].children.push_back(
-              size_t(primIdx));
-        }
-
-#endif
-
         return true;
       });
 
   return true;
 }
+#endif
 
 template <>
 bool USDAReader::Impl::ReconstructPrim(
