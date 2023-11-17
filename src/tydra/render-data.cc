@@ -172,6 +172,7 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
   return std::move(vattr);
 }
 
+#if 0 // not used at the moment.
 ///
 /// For GeomSubset. Build offset table to corresponding array index in
 /// mesh.faceVertexIndices. No need to use this function for triangulated mesh,
@@ -189,6 +190,7 @@ bool BuildFaceVertexIndexOffsets(const std::vector<uint32_t> &faceVertexCounts,
 
   return true;
 }
+#endif
 
 ///
 /// Input: points, faceVertexCounts, faceVertexIndices
@@ -681,13 +683,13 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
       for (size_t i = 0; i < faceVertexIndexMap.size(); i++) {
         size_t fvIdx = faceVertexIndexMap[i];
         triangulatedFacevaryingNormals.push_back(dst.facevaryingNormals[fvIdx]);
-      }  
+      }
 
       dst.facevaryingNormals = std::move(triangulatedFacevaryingNormals);
     }
 
     if (dst.facevaryingTexcoords.size()) {
-       
+
       std::unordered_map<uint32_t, std::vector<tydra::vec2>> triangulatedFacevaryingTexcoords;
 
       for (auto &slot : dst.facevaryingTexcoords) {
@@ -696,7 +698,7 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
           size_t fvIdx = faceVertexIndexMap[i];
 
           texcoords.push_back(slot.second[fvIdx]);
-        }  
+        }
         triangulatedFacevaryingTexcoords[slot.first] = texcoords;
 
       }
@@ -708,6 +710,7 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
 
   }  // triangulate
 
+#if 0 // TODO: GeomSubsets.
   // for GeomSubsets
   if (mesh.geom_subset_children.size()) {
     std::vector<size_t> faceVertexIndexOffsets;
@@ -717,6 +720,7 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
       PUSH_ERROR_AND_RETURN("Build faceVertexIndexOffsets failed.");
     }
   }
+#endif
 
   (*dstMesh) = std::move(dst);
   return true;

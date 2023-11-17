@@ -795,18 +795,20 @@ void GeomMesh::Initialize(const GPrim &gprim) {
 nonstd::expected<bool, std::string> GeomMesh::ValidateGeomSubset() {
   std::stringstream ss;
 
+#if 0
   if (geom_subset_children.empty()) {
     return true;
   }
+#endif
 
-  auto CheckFaceIds = [](const size_t nfaces, const std::vector<int32_t> ids) {
-    if (std::any_of(ids.begin(), ids.end(),
-                    [&nfaces](int32_t id) { return (id < 0) && uint32_t(id) >= nfaces; })) {
-      return false;
-    }
+  //auto CheckFaceIds = [](const size_t nfaces, const std::vector<int32_t> ids) {
+  //  if (std::any_of(ids.begin(), ids.end(),
+  //                  [&nfaces](int32_t id) { return (id < 0) && uint32_t(id) >= nfaces; })) {
+  //    return false;
+  //  }
 
-    return true;
-  };
+  //  return true;
+  //};
 
   if (!faceVertexCounts.authored()) {
     // No `faceVertexCounts` definition
@@ -830,6 +832,7 @@ nonstd::expected<bool, std::string> GeomMesh::ValidateGeomSubset() {
       return nonstd::make_unexpected("Failed to get faceVertexCounts data.");
     }
 
+#if 0 // TODO
     size_t n = fvc.size();
 
     // Currently we only check if face ids are valid.
@@ -853,6 +856,7 @@ nonstd::expected<bool, std::string> GeomMesh::ValidateGeomSubset() {
         return nonstd::make_unexpected(ss.str());
       }
     }
+#endif
   }
 
   // TODO
