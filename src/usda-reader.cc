@@ -95,6 +95,7 @@ RECONSTRUCT_PRIM_DECL(SphereLight);
 RECONSTRUCT_PRIM_DECL(CylinderLight);
 RECONSTRUCT_PRIM_DECL(DiskLight);
 RECONSTRUCT_PRIM_DECL(DistantLight);
+RECONSTRUCT_PRIM_DECL(GPrim);
 RECONSTRUCT_PRIM_DECL(GeomMesh);
 RECONSTRUCT_PRIM_DECL(GeomSubset);
 RECONSTRUCT_PRIM_DECL(GeomSphere);
@@ -109,6 +110,7 @@ RECONSTRUCT_PRIM_DECL(GeomCamera);
 RECONSTRUCT_PRIM_DECL(PointInstancer);
 RECONSTRUCT_PRIM_DECL(Material);
 RECONSTRUCT_PRIM_DECL(Shader);
+RECONSTRUCT_PRIM_DECL(NodeGraph);
 
 #undef RECONSTRUCT_PRIM_DECL
 
@@ -190,6 +192,7 @@ DEFINE_PRIM_TYPE(DistantLight, kDistantLight, value::TYPE_ID_LUX_DISTANT);
 DEFINE_PRIM_TYPE(CylinderLight,  kCylinderLight, value::TYPE_ID_LUX_CYLINDER);
 DEFINE_PRIM_TYPE(Material, kMaterial, value::TYPE_ID_MATERIAL);
 DEFINE_PRIM_TYPE(Shader, kShader, value::TYPE_ID_SHADER);
+DEFINE_PRIM_TYPE(NodeGraph, kNodeGraph, value::TYPE_ID_NODEGRAPH);
 DEFINE_PRIM_TYPE(SkelRoot, kSkelRoot, value::TYPE_ID_SKEL_ROOT);
 DEFINE_PRIM_TYPE(Skeleton, kSkeleton, value::TYPE_ID_SKELETON);
 DEFINE_PRIM_TYPE(SkelAnimation, kSkelAnimation, value::TYPE_ID_SKELANIMATION);
@@ -1498,100 +1501,10 @@ bool USDAReader::Impl::ReconstructPrim(
   return true;
 }
 
+#if 0
 ///
 /// -- RegisterReconstructCallback specializations
 ///
-#if 0
-template <>
-bool USDAReader::Impl::RegisterReconstructCallback<GPrim>() {
-  // TODO: Move to ReconstructPrim
-  _parser.RegisterPrimConstructFunction(
-      PrimTypeTraits<GPrim>::prim_type_name,
-      [&](const Path &path, const PropertyMap &properties,
-          ReferenceList &references) {
-        // TODO: Implement
-        GPrim gprim;
-
-        //
-        // Resolve prepend references
-        //
-        for (const auto &ref : references) {
-          if (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend) {
-          }
-        }
-
-        // Update props;
-        for (auto item : properties) {
-          if (item.second.is_relationship()) {
-            PUSH_WARN("TODO: rel");
-          } else {
-            gprim.props[item.first].attrib = item.second.get_attribute();
-          }
-        }
-
-        //
-        // Resolve append references
-        //
-        for (const auto &ref : references) {
-          if (std::get<0>(ref) == tinyusdz::ListEditQual::Prepend) {
-          }
-        }
-
-        return true;
-      });
-
-  return true;
-}
-#endif
-
-#if 0
-template <>
-bool USDAReader::Impl::RegisterReconstructCallback<GeomSubset>() {
-  _parser.RegisterPrimConstructFunction(
-      "GeomSubset",
-      [&](const Path &full_path, const Specifier spec, const std::string &primTypeName, const Path &prim_name, const int64_t primIdx,
-          const int64_t parentPrimIdx,
-          const prim::PropertyMap &properties,
-          //const prim::ReferenceList &references,
-          const ascii::AsciiParser::PrimMetaMap &in_meta,
-          const ascii::AsciiParser::VariantSetList &in_variantSetList)
-          -> nonstd::expected<bool, std::string> {
-        const Path &parent = full_path.get_parent_prim_path();
-        if (!parent.is_valid()) {
-          return nonstd::make_unexpected("Invalid Prim path.");
-        }
-
-        (void)primTypeName;
-
-
-#if 0
-        if (parent.IsRootPrim()) {
-          return nonstd::make_unexpected(
-              "GeomSubset must be defined as a child of GeomMesh prim.");
-        }
-#endif
-
-        if (parentPrimIdx < 0) {
-          return nonstd::make_unexpected(
-              "GeomSubset muet be defined as a child of GeomMesh.");
-        }
-
-        if (_prim_nodes.size() < size_t(parentPrimIdx)) {
-          return nonstd::make_unexpected(
-              "Unexpected parentPrimIdx for GeomSubset.");
-        }
-
-        PrimMeta meta;
-        if (!ReconstructPrimMeta(in_meta, &meta)) {
-          return nonstd::make_unexpected("Failed to process Prim metadataum.");
-        }
-
-        return true;
-      });
-
-  return true;
-}
-#endif
 
 template <>
 bool USDAReader::Impl::ReconstructPrim(
@@ -1624,6 +1537,7 @@ bool USDAReader::Impl::ReconstructPrim<NodeGraph>(
 
   return true;
 }
+#endif
 
 // Generic Prim handler. T = Xform, GeomMesh, ...
 template <typename T>

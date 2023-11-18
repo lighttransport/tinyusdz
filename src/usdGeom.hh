@@ -456,6 +456,12 @@ struct GeomSubset {
     return _propertyNames;
   }
 
+  static bool ValidateSubsets(
+    const std::vector<const GeomSubset *> &subsets,
+    const size_t elementCount,
+    const FamilyType &familyType, std::string *err);
+    
+
  private:
   std::vector<value::token> _primChildrenNames;
   std::vector<value::token> _propertyNames;
