@@ -2394,25 +2394,28 @@ bool ReconstructPrim<BlendShape>(
   return true;
 }
 
-#if 0
 template <>
 bool ReconstructPrim(
+    const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
     GPrim *gprim,
     std::string *warn,
-    std::string *err) {
+    std::string *err,
+    const PrimReconstructOptions &options) {
   (void)gprim;
   (void)err;
 
   (void)references;
   (void)properties;
 
-  PUSH_WARN("TODO: GPrim");
+  std::set<std::string> table;
+  if (!ReconstructGPrimProperties(spec, table, properties, gprim, warn, err, options.strict_allowedToken_check)) {
+    return false;
+  }
 
   return true;
 }
-#endif
 
 template <>
 bool ReconstructPrim(

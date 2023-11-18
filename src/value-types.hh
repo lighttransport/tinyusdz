@@ -425,6 +425,7 @@ enum TypeId {
   TYPE_ID_SHADER_BEGIN = 1 << 11,
   TYPE_ID_SHADER,
   TYPE_ID_MATERIAL,
+  TYPE_ID_NODEGRAPH,
   TYPE_ID_SHADER_END,
 
   // Types for usdImaging and usdMtlx
