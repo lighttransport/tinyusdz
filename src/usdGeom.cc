@@ -864,4 +864,98 @@ nonstd::expected<bool, std::string> GeomMesh::ValidateGeomSubset() {
       "TODO: Implent GeomMesh::ValidateGeomSubset\n");
 }
 
+bool GeomSubset::ValidateSubsets(
+    const std::vector<const GeomSubset *> &subsets,
+    const size_t elementCount,
+    const FamilyType &familyType, std::string *err) {
+
+  if (subsets.empty()) {
+    return true;
+  }
+
+  // All subsets must have the same elementType.
+  GeomSubset::ElementType elementType = subsets[0]->elementType.get_value();
+  for (const auto psubset : subsets) {
+    if (psubset->elementType.get_value() != elementType) {
+      if (err) {
+        (*err) = fmt::format("GeomSubset {}'s elementType must be `{}`, but got `{}`.\n",
+          psubset->name, to_string(elementType), to_string(psubset->elementType.get_value()));
+      }
+
+      return false;
+    }
+  }
+
+  std::set<int32_t> indicesInFamily;
+
+  bool valid = true;
+  std::stringstream ss;
+
+  // TODO: TimeSampled indices
+  for (const auto psubset : subsets) {
+    Animatable<std::vector<int32_t>> indices;
+    if (!psubset->indices.get_value(&indices)) {
+      ss << fmt::format("GeomSubset {}'s indices is not value Attribute. Connection or ValueBlock?\n",
+          psubset->name);
+
+      valid = false;
+    }
+
+    if (indices.is_blocked()) {
+      ss << fmt::format("GeomSubset {}'s indices is Value Blocked.\n", psubset->name);
+      valid = false;
+    }
+
+    if (indices.is_timesamples()) {
+      ss << fmt::format("ValidateSubsets: TimeSampled GeomSubset.indices is not yet supported.\n");
+      valid = false;
+    }
+
+    std::vector<int32_t> subsetIndices;
+    if (!indices.get_scalar(&subsetIndices)) {
+      ss << fmt::format("ValidateSubsets: Internal error. Failed to get GeomSubset.indices.\n");
+      valid = false;
+    }
+
+    for (const int32_t index : subsetIndices) {
+      if (!indicesInFamily.insert(index).second && (familyType != FamilyType::Unrestricted)) {
+        ss << fmt::format("Found overlapping index {} in GeomSubset `{}`\n", index, psubset->name);
+        valid = false; 
+      }
+    }
+
+    // Make sure every index appears exactly once if it's a partition.
+    if ((familyType == FamilyType::Partition) && (indicesInFamily.size() != elementCount)) {
+      ss << fmt::format("ValidateSubsets: The number of unique indices {} must be equal to input elementCount {}\n", indicesInFamily.size(), elementCount);
+      valid = false;
+    }
+
+    // Ensure that the indices are in the range [0, faceCount)
+    size_t maxIndex = static_cast<size_t>(*indicesInFamily.rbegin());
+    int minIndex = *indicesInFamily.begin();
+    
+    if (maxIndex >= elementCount) {
+      ss << fmt::format("ValidateSubsets: All indices must be in range [0, elementSize {}), but one or more indices are greater than elementSize. Maximum = {}\n", elementCount, maxIndex);
+
+      valid = false;
+    }
+    
+    if (minIndex < 0) {
+      ss << fmt::format("ValidateSubsets: Found one or more indices that are less than 0. Minumum = {}\n", minIndex);
+
+      valid = false;
+    }
+
+  }
+
+  if (!valid) {
+    if (err) {
+      (*err) += ss.str();
+    }
+  }
+
+  return true;
+
+}
+
 }  // namespace tinyusdz
