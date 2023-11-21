@@ -792,78 +792,7 @@ void GeomMesh::Initialize(const GPrim &gprim) {
 };
 #endif
 
-nonstd::expected<bool, std::string> GeomMesh::ValidateGeomSubset() {
-  std::stringstream ss;
-
-#if 0
-  if (geom_subset_children.empty()) {
-    return true;
-  }
-#endif
-
-  //auto CheckFaceIds = [](const size_t nfaces, const std::vector<int32_t> ids) {
-  //  if (std::any_of(ids.begin(), ids.end(),
-  //                  [&nfaces](int32_t id) { return (id < 0) && uint32_t(id) >= nfaces; })) {
-  //    return false;
-  //  }
-
-  //  return true;
-  //};
-
-  if (!faceVertexCounts.authored()) {
-    // No `faceVertexCounts` definition
-    ss << "`faceVerexCounts` attribute is not present in GeomMesh.\n";
-    return nonstd::make_unexpected(ss.str());
-  }
-
-  if (faceVertexCounts.authored()) {
-    return nonstd::make_unexpected("TODO: Support faceVertexCounts.connect\n");
-  }
-
-  if (faceVertexCounts.get_value()) {
-    const auto fvp = faceVertexCounts.get_value();
-    std::vector<int32_t> fvc;
-
-    if (fvp.value().is_timesamples()) {
-      return nonstd::make_unexpected("TODO: faceVertexCounts.timeSamples\n");
-    }
-
-    if (!fvp.value().get_scalar(&fvc)) {
-      return nonstd::make_unexpected("Failed to get faceVertexCounts data.");
-    }
-
-#if 0 // TODO
-    size_t n = fvc.size();
-
-    // Currently we only check if face ids are valid.
-    for (size_t i = 0; i < geom_subset_children.size(); i++) {
-      const GeomSubset &subset = geom_subset_children[i];
-
-      Animatable<std::vector<int32_t>> indicesAttr;
-      if (!subset.indices.get_value( &indicesAttr ))
-      {
-        return nonstd::make_unexpected("Failed to get `indices` attribute. Maybe connection(Not yet supported)?\n");
-      }
-
-      std::vector<int32_t> indices;
-      if (!indicesAttr.get_scalar(&indices))
-      {
-        return nonstd::make_unexpected("Timesampled `GeomSubset.indices` is not supported\n");
-      }
-
-      if (!CheckFaceIds(n, indices)) {
-        ss << "Face index out-of-range.\n";
-        return nonstd::make_unexpected(ss.str());
-      }
-    }
-#endif
-  }
-
-  // TODO
-  return nonstd::make_unexpected(
-      "TODO: Implent GeomMesh::ValidateGeomSubset\n");
-}
-
+// static 
 bool GeomSubset::ValidateSubsets(
     const std::vector<const GeomSubset *> &subsets,
     const size_t elementCount,

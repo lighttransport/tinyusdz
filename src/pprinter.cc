@@ -2633,6 +2633,12 @@ std::string to_string(const GeomMesh &mesh, const uint32_t indent,
                              indent + 1);
   }
 
+  for (const auto &item : mesh.subsetFamilyTypeMap) {
+    std::string attr_name = "subsetFamily:" + item.first.str() + ":familyType";
+    // TODO: Support connection attr?
+    ss << pprint::Indent(indent+1) << "uniform token " << attr_name << " = " << quote(to_string(item.second)) << "\n";
+  }
+
   // subdiv
   ss << print_typed_attr(mesh.cornerIndices, "cornerIndices", indent + 1);
   ss << print_typed_attr(mesh.cornerSharpnesses, "cornerSharpnesses",
@@ -2680,7 +2686,6 @@ std::string to_string(const GeomSubset &subset, const uint32_t indent,
   ss << pprint::Indent(indent) << "{\n";
 
   ss << print_typed_token_attr(subset.elementType, "elementType", indent + 1);
-  ss << print_typed_token_attr(subset.familyType, "familyType", indent + 1);
   ss << print_typed_attr(subset.familyName, "familyName", indent + 1);
   ss << print_typed_attr(subset.indices, "indices", indent + 1);
 

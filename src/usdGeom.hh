@@ -400,8 +400,10 @@ struct GeomSubset {
   int64_t parent_id{-1};  // Index to parent node
 
   TypedAttributeWithFallback<ElementType> elementType{ElementType::Face};  // must be face for now
-  TypedAttributeWithFallback<FamilyType> familyType{FamilyType::Unrestricted};
   TypedAttribute<value::token> familyName;  // "uniform token familyName"
+
+  // FamilyType attribute is described in parent GeomMesh's `subsetFamily:<FAMILYNAME>:familyType` attribute.
+  //TypedAttributeWithFallback<FamilyType> familyType{FamilyType::Unrestricted};
 
   nonstd::expected<bool, std::string> SetElementType(const std::string &str) {
     if (str == "face") {
@@ -414,6 +416,7 @@ struct GeomSubset {
         "` specified");
   }
 
+#if 0
   nonstd::expected<bool, std::string> SetFamilyType(const std::string &str) {
     if (str == "partition") {
       familyType = FamilyType::Partition;
@@ -429,6 +432,7 @@ struct GeomSubset {
     return nonstd::make_unexpected("Invalid `familyType` specified: `" + str +
                                    "`.");
   }
+#endif
 
   // Some frequently used materialBindings
   nonstd::optional<Relationship> materialBinding; // rel material:binding
@@ -602,6 +606,51 @@ struct GeomMesh : GPrim {
   // - int[] primvars:skel:jointIndices
   // - float[] primvars:skel:jointWeights
 
+
+  /// 
+  /// For GeomSubset
+  ///
+  /// This creates `uniform token subsetFamily:<familyName>:familyType = familyType` attribute when serialized.
+  /// 
+  void set_subsetFamilyType(const value::token &familyName, GeomSubset::FamilyType familyType) {
+    subsetFamilyTypeMap[familyName] = familyType;
+  }
+
+  ///
+  /// This look ups `uniform token subsetFamily:<familyName>:familyType = familyType` attribute.
+  /// 
+  /// @return true upon success, false when corresponding attribute not found or invalid.
+  bool get_subsetFamilyType(const value::token &familyName, GeomSubset::FamilyType *familyType) {
+    if (!familyType) {
+      return false;
+    }
+
+    if (subsetFamilyTypeMap.count(familyName)) {
+      (*familyType) = subsetFamilyTypeMap[familyName];
+      return true;
+    }
+    return false;
+
+  }
+
+  ///
+  /// Return the list of subet familyNames in this GeomMesh.
+  ///
+  /// This lists `uniform token subsetFamily:<familyName>:familyType` attributes.
+  /// 
+  /// @return The list familyNames. Empty when no familyName attribute found.
+  std::vector<value::token> get_subsetFamilyNames() {
+    std::vector<value::token> toks;
+    for (const auto &item : subsetFamilyTypeMap) {
+      toks.push_back(item.first);
+    }
+    return toks;
+  }
+
+
+  // familyName -> familyType map
+  std::map<value::token, GeomSubset::FamilyType> subsetFamilyTypeMap;
+
 #if 0 // GeomSubset Prim is now managed as a child Prim
   //
   // GeomSubset
@@ -614,6 +663,7 @@ struct GeomMesh : GPrim {
 
 #endif
 
+#if 0 // Deprecated: Use tydra::GetGeomSubsets() instead.
   ///
   /// Get GeomSubset list assgied to this GeomMesh(child Prim).
   ///
@@ -621,11 +671,8 @@ struct GeomMesh : GPrim {
   /// so should not free it and this GeomMesh object must be valid during using the pointer to GeomSubset.
   ///
   std::vector<const GeomSubset *> GetGeomSubsets();
+#endif
 
-  ///
-  /// Validate GeomSubset data whose are attached(as a child Prim) to this GeomMesh.
-  ///
-  nonstd::expected<bool, std::string> ValidateGeomSubset();
 };
 
 struct GeomCamera : public GPrim {
