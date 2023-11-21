@@ -1063,7 +1063,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   DCOUT("prop_name = " << prop_name);
   TO_PROPERTY("indices", subset.indices);
   TO_TOKEN_PROPERTY("elementType", subset.elementType);
-  TO_TOKEN_PROPERTY("familyType", subset.familyType);
+  //TO_TOKEN_PROPERTY("familyType", subset.familyType);
   TO_PROPERTY("familyName", subset.familyName);
 
   if (prop_name == "material:binding") {
@@ -1705,6 +1705,35 @@ bool GetPrimPropertyNamesImpl(
   return true;
 }
 
+template <>
+bool GetPrimPropertyNamesImpl(
+    const GeomSubset &subset, std::vector<std::string> *prop_names, bool attr_prop, bool rel_prop) {
+
+  (void)rel_prop;
+
+  if (!prop_names) {
+    return false;
+  }
+
+  if (attr_prop) {
+    if (subset.elementType.authored()) {
+      prop_names->push_back("elementType");
+    }
+
+    if (subset.familyName.authored()) {
+      prop_names->push_back("familyName");
+    }
+
+    if (subset.indices.authored()) {
+      prop_names->push_back("indices");
+    }
+
+    DCOUT("TODO: more attrs...");
+  }
+
+  return true;
+}
+
 //
 // visited_paths : To prevent circular referencing of attribute connection.
 //
@@ -1888,7 +1917,8 @@ bool GetPropertyNames(const tinyusdz::Prim &prim, std::vector<std::string> *out_
   GET_PRIM_PROPERTY_NAMES(Xform)
   GET_PRIM_PROPERTY_NAMES(Scope)
   GET_PRIM_PROPERTY_NAMES(GeomMesh)
-  //GET_PRIM_PROPERTY_NAMES(GeomSubset)
+  GET_PRIM_PROPERTY_NAMES(GeomSubset)
+  // TODO
   //GET_PRIM_PROPERTY_NAMES(Shader)
   //GET_PRIM_PROPERTY_NAMES(Material)
   //GET_PRIM_PROPERTY_NAMES(SkelRoot)
@@ -2256,6 +2286,83 @@ bool ShaderToPrimSpec(const UsdTransform2d &node, PrimSpec &ps, std::string *war
   ps.specifier() = node.spec;
 
   return true;
+}
+
+std::vector<const GeomSubset *> GetGeomSubsets(const tinyusdz::Stage &stage, const tinyusdz::Path &prim_path, const tinyusdz::value::token &familyName, bool prim_must_be_geommesh) {
+  std::vector<const GeomSubset *> result;
+
+  const Prim *pprim{nullptr};
+  if (!stage.find_prim_at_path(prim_path, pprim)) {
+    return result;
+  }
+
+  if (!pprim) {
+    return result;
+  }
+
+  if (prim_must_be_geommesh && !pprim->is<GeomMesh>()) {
+    return result;
+  }
+
+  // Only account for child Prims.
+  for (const auto &p : pprim->children()) {
+    if (auto pv = p.as<GeomSubset>()) {
+      if (familyName.valid()) {
+
+        if (pv->familyName.authored()) {
+          if (pv->familyName.get_value().has_value()) {
+            const value::token &tok = pv->familyName.get_value().value();
+            if (familyName.str() == tok.str()) {
+              result.push_back(pv);
+            }
+          } else {
+            // connection attr or value block?
+            // skip adding this GeomSubset.
+          }
+        } else {
+          result.push_back(pv);
+        }
+      } else {
+        result.push_back(pv);
+      }
+    }
+  }
+
+  return result;
+}
+
+std::vector<const GeomSubset *> GetGeomSubsetChildren(const tinyusdz::Prim &prim, const tinyusdz::value::token &familyName, bool prim_must_be_geommesh) {
+  std::vector<const GeomSubset *> result;
+
+  if (prim_must_be_geommesh && !prim.is<GeomMesh>()) {
+    return result;
+  }
+
+  // Only account for child Prims.
+  for (const auto &p : prim.children()) {
+    if (auto pv = p.as<GeomSubset>()) {
+      if (familyName.valid()) {
+
+        if (pv->familyName.authored()) {
+          if (pv->familyName.get_value().has_value()) {
+            const value::token &tok = pv->familyName.get_value().value();
+            if (familyName.str() == tok.str()) {
+              result.push_back(pv);
+            }
+          } else {
+            // connection attr or value block?
+            // skip adding this GeomSubset.
+          }
+        } else {
+          result.push_back(pv);
+        }
+      } else {
+        result.push_back(pv);
+      }
+    }
+  }
+
+  return result;
 }
 
 #if 0
