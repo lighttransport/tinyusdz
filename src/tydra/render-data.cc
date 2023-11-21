@@ -1645,6 +1645,10 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
   }
 
   if (const tinyusdz::GeomMesh *pmesh = prim.as<tinyusdz::GeomMesh>()) {
+
+    // Collect GeomSubsets
+    // std::vector<const tinyusdz::GeomSubset *> subsets = GetGeomSubsets(;
+
     DCOUT("Material: " << abs_path);
 
     //

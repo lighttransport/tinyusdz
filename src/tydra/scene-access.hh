@@ -395,6 +395,49 @@ bool BuildXformNodeFromStage(
 std::string DumpXformNode(const XformNode &root);
 
 ///
+/// Get GeomSubset children of the given Prim path
+///
+/// The pointer address is valid until Stage's content is unchanged. 
+///
+/// @param[in] familyName Get GeomSubset having this `familyName`. empty token = return all GeomSubsets. 
+/// @param[in] prim_must_be_geommesh Prim path must point to GeomMesh Prim.
+///
+/// (TODO: Return id of GeomSubset Prim object, instead of the ponter address)
+///
+/// @return array of GeomSubset pointers. Empty array when failed or no GeomSubset Prim(with `familyName`) attached to the Prim.
+///
+///
+std::vector<const GeomSubset *> GetGeomSubsets(const tinyusdz::Stage &stage, const tinyusdz::Path &prim_path, const tinyusdz::value::token &familyName, bool prim_must_be_geommesh = true);
+
+///
+/// Get GeomSubset children of the given Prim
+///
+/// The pointer address is valid until Stage's content is unchanged. 
+///
+/// @param[in] familyName Get GeomSubset having this `familyName`. empty token = return all GeomSubsets. 
+/// @param[in] prim_must_be_geommesh Prim must be GeomMesh Prim type.
+///
+/// (TODO: Return id of GeomSubset Prim object, instead of the ponter address)
+///
+/// @return array of GeomSubset pointers. Empty array when failed or no GeomSubset Prim(with `familyName`) attached to the Prim.
+///
+std::vector<const GeomSubset *> GetGeomSubsetChildren(const tinyusdz::Prim &prim, const tinyusdz::value::token &familyName, bool prim_must_be_geommesh = true);
+
+#if 0 // TODO
+///
+/// Get list of GeomSubset PrimSpecs attached to the PrimSpec
+/// Prim path must point to GeomMesh PrimSpec.
+///
+/// The pointer address is valid until Layer's content is unchanged. 
+///
+/// (TODO: Return PrimSpec index instead of the ponter address)
+///
+std::vector<const PrimSpec *> GetGeomSubsetPrimSpecs(const tinyusdz::Layer &layer, const tinyusdz::Path &prim_path);
+
+std::vector<const PrimSpec *> GetGeomSubsetChildren(const tinyusdz::Path &prim_path);
+#endif
+
+///
 /// For composition. Convert Concrete Prim(Xform, GeomMesh, ...) to PrimSpec, generic Prim container.
 /// TODO: Move to *core* module?
 ///

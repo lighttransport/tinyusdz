@@ -3004,6 +3004,18 @@ bool ReconstructPrim<GeomMesh>(
         "facevaryingLinearInterpolation", tok, enums);
   };
 
+  auto FamilyTypeHandler = [](const std::string &tok)
+      -> nonstd::expected<GeomSubset::FamilyType, std::string> {
+    using EnumTy = std::pair<GeomSubset::FamilyType, const char *>;
+    const std::vector<EnumTy> enums = {
+        std::make_pair(GeomSubset::FamilyType::Partition, "partition"),
+        std::make_pair(GeomSubset::FamilyType::NonOverlapping, "nonOverlapping"),
+        std::make_pair(GeomSubset::FamilyType::Unrestricted, "unrestricted"),
+    };
+    return EnumHandler<GeomSubset::FamilyType>("familyType", tok,
+                                                    enums);
+  };
+
   std::set<std::string> table;
   if (!ReconstructGPrimProperties(spec, table, properties, mesh, warn, err, options.strict_allowedToken_check)) {
     return false;
@@ -3043,6 +3055,29 @@ bool ReconstructPrim<GeomMesh>(
                        mesh->faceVaryingLinearInterpolation, options.strict_allowedToken_check)
     // blendShape names
     PARSE_TYPED_ATTRIBUTE(table, prop, kSkelBlendShapes, GeomMesh, mesh->blendShapes)
+
+    // subsetFamily for GeomSubset
+    if (startsWith(prop.first, "subsetFamily")) {
+      // uniform subsetFamily::<FAMILYNAME>:familyType = ...
+      std::vector<std::string> names = split(prop.first, ":");
+
+      if ((names.size() == 3) &&
+          (names[0] == "subsetFamily") &&
+          (names[2] == "familyType")) {
+
+        DCOUT("subsetFamily" << prop.first);
+        GeomSubset::FamilyType familyType{GeomSubset::FamilyType::Unrestricted};
+
+        PARSE_ENUM_PROPETY(table, prop, prop.first,
+                           FamilyTypeHandler, GeomMesh,
+                           familyType, options.strict_allowedToken_check)
+
+        // TODO: Validate familyName
+        mesh->subsetFamilyTypeMap[value::token(names[1])] = familyType;
+
+      }
+    }
+
     // generic
     ADD_PROPERTY(table, prop, GeomMesh, mesh->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
@@ -3180,18 +3215,6 @@ bool ReconstructPrim<GeomSubset>(
                                                     enums);
   };
 
-  auto FamilyTypeHandler = [](const std::string &tok)
-      -> nonstd::expected<GeomSubset::FamilyType, std::string> {
-    using EnumTy = std::pair<GeomSubset::FamilyType, const char *>;
-    const std::vector<EnumTy> enums = {
-        std::make_pair(GeomSubset::FamilyType::Partition, "partition"),
-        std::make_pair(GeomSubset::FamilyType::NonOverlapping, "nonOverlapping"),
-        std::make_pair(GeomSubset::FamilyType::Unrestricted, "unrestricted"),
-    };
-    return EnumHandler<GeomSubset::FamilyType>("familyType", tok,
-                                                    enums);
-  };
-
   std::set<std::string> table;
 
   for (const auto &prop : properties) {
@@ -3201,7 +3224,7 @@ bool ReconstructPrim<GeomSubset>(
     PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingPreview, subset->materialBindingPreview)
     PARSE_TYPED_ATTRIBUTE(table, prop, "familyName", GeomSubset, subset->familyName)
     PARSE_TYPED_ATTRIBUTE(table, prop, "indices", GeomSubset, subset->indices)
-    PARSE_ENUM_PROPETY(table, prop, "familyType", FamilyTypeHandler, GeomSubset, subset->familyType, options  .strict_allowedToken_check)
+    //PARSE_ENUM_PROPETY(table, prop, "familyType", FamilyTypeHandler, GeomSubset, subset->familyType, options  .strict_allowedToken_check)
     PARSE_ENUM_PROPETY(table, prop, "elementType", ElementTypeHandler, GeomSubset, subset->elementType, options.strict_allowedToken_check)
     ADD_PROPERTY(table, prop, GeomSubset, subset->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
