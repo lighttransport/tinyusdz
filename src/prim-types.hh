@@ -788,6 +788,12 @@ struct Payload {
   Path prim_path;
   LayerOffset layerOffset;  // from 0.8.0
   // No customData for Payload
+
+  // NOTE: pxrUSD encodes `payload = None` as Payload with empty paths in USDC(Crate).
+  // (Not ValueBlock)
+  bool is_none() const {
+    return asset_path.GetAssetPath().empty() && !prim_path.is_valid();
+  }
 };
 
 // Metadata for Prim
