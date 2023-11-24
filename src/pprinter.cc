@@ -149,11 +149,15 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Reference &v) {
 }
 
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Payload &v) {
-  ofs << v.asset_path;
-  if (v.prim_path.is_valid()) {
-    ofs << v.prim_path;
+  if (v.is_none()) {
+    ofs << "None";
+  } else {
+    ofs << v.asset_path;
+    if (v.prim_path.is_valid()) {
+      ofs << v.prim_path;
+    }
+    ofs << v.layerOffset;
   }
-  ofs << v.layerOffset;
 
   return ofs;
 }
@@ -1764,12 +1768,18 @@ std::string to_string(const Reference &v) {
 std::string to_string(const Payload &v) {
   std::stringstream ss;
 
-  ss << v.asset_path;
-  if (v.prim_path.is_valid()) {
-    ss << v.prim_path;
-  }
+  if (v.is_none()) {
+    // pxrUSD serialize and prints 'None' for payload by filling all members in Payload empty.
+    ss << "None";
 
-  ss << v.layerOffset;
+  } else {
+    ss << v.asset_path;
+    if (v.prim_path.is_valid()) {
+      ss << v.prim_path;
+    }
+
+    ss << v.layerOffset;
+  }
 
   return ss.str();
 }
