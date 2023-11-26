@@ -955,8 +955,14 @@ class USDAReader::Impl {
         }
       } else if (meta.first == "inherits") {
         if (auto pvb = var.get_value<value::ValueBlock>()) {
+          if (listEditQual != ListEditQual::ResetToExplicit) {
+            PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
+          }
           out->inherits = std::make_pair(listEditQual, std::vector<Path>());
         } else if (auto pv = var.get_value<std::vector<Path>>()) {
+          if (pv.value().empty() && (listEditQual != ListEditQual::ResetToExplicit)) {
+            PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
+          }
           out->inherits = std::make_pair(listEditQual, pv.value());
         } else if (auto pvp = var.get_value<Path>()) {
           std::vector<Path> vs;
@@ -971,8 +977,14 @@ class USDAReader::Impl {
 
       } else if (meta.first == "specializes") {
         if (auto pvb = var.get_value<value::ValueBlock>()) {
+          if (listEditQual != ListEditQual::ResetToExplicit) {
+            PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
+          }
           out->specializes = std::make_pair(listEditQual, std::vector<Path>());
         } else if (auto pv = var.get_value<std::vector<Path>>()) {
+          if (pv.value().empty() && (listEditQual != ListEditQual::ResetToExplicit)) {
+            PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
+          }
           out->specializes = std::make_pair(listEditQual, pv.value());
         } else if (auto pvp = var.get_value<Path>()) {
           std::vector<Path> vs;
@@ -988,6 +1000,9 @@ class USDAReader::Impl {
       } else if (meta.first == "variantSets") {
         // treat as `string`
         if (auto pvb = var.get_value<value::ValueBlock>()) {
+          if (listEditQual != ListEditQual::ResetToExplicit) {
+            PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
+          }
           out->variantSets = std::make_pair(listEditQual, std::vector<std::string>());
         } else if (auto pv = var.get_value<value::StringData>()) {
           std::vector<std::string> vs;
@@ -998,6 +1013,9 @@ class USDAReader::Impl {
           vs.push_back(pvs.value());
           out->variantSets = std::make_pair(listEditQual, vs);
         } else if (auto pva = var.get_value<std::vector<std::string>>()) {
+          if (pva.value().empty() && (listEditQual != ListEditQual::ResetToExplicit)) {
+            PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
+          }
           out->variantSets = std::make_pair(listEditQual, pva.value());
         } else {
           PUSH_ERROR_AND_RETURN(
@@ -1040,7 +1058,11 @@ class USDAReader::Impl {
       } else if (meta.first == "references") {
 
         if (var.is_blocked()) {
-          // make empty
+          // Treat as empty list
+          // empty list must be qualified as 'explicit' 
+          if (listEditQual != ListEditQual::ResetToExplicit) {
+            PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
+          }
           std::vector<Reference> refs;
           out->references = std::make_pair(listEditQual, refs);
         } else if (auto pv = var.get_value<Reference>()) {
@@ -1049,6 +1071,9 @@ class USDAReader::Impl {
           refs.emplace_back(pv.value());
           out->references = std::make_pair(listEditQual, refs);
         } else if (auto pva = var.get_value<std::vector<Reference>>()) {
+          if (pva.value().empty() && (listEditQual != ListEditQual::ResetToExplicit)) {
+            PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
+          }
           out->references = std::make_pair(listEditQual, pva.value());
         } else {
           PUSH_ERROR_AND_RETURN(
@@ -1059,6 +1084,9 @@ class USDAReader::Impl {
       } else if (meta.first == "payload") {
 
         if (var.is_blocked()) {
+          if (listEditQual != ListEditQual::ResetToExplicit) {
+            PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
+          }
           // make empty
           std::vector<Payload> refs;
           out->payload = std::make_pair(listEditQual, refs);
@@ -1068,6 +1096,9 @@ class USDAReader::Impl {
           pls.emplace_back(pv.value());
           out->payload = std::make_pair(listEditQual, pls);
         } else if (auto pva = var.get_value<std::vector<Payload>>()) {
+          if (pva.value().empty() && (listEditQual != ListEditQual::ResetToExplicit)) {
+            PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("None or Empty list must be `explicit`(no qualifier), but has qualifier `{}`", to_string(listEditQual)));
+          }
           out->payload = std::make_pair(listEditQual, pva.value());
         } else {
           PUSH_ERROR_AND_RETURN(
@@ -1082,11 +1113,12 @@ class USDAReader::Impl {
           out->comment = spv.value();
         }
       } else {
-        // Must be string value for unregisteredMeta
+        // Must be string value for unregisteredMeta for now.
+        // TODO: infer int, string, token, int[], string[] and token[] type from the value for custom(unregisteredMeta) metadata.
         if (auto spv = var.get_value<std::string>()) {
           out->unregisteredMetas[meta.first] = spv.value();
         } else {
-          PUSH_WARN("(Internal) unregistered Metadata must be type string, but got type " + var.type_name());
+          PUSH_WARN("(Internal) unregistered Metadata must be type string for now, but got type " + var.type_name());
         }
 
       }
