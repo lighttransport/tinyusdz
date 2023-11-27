@@ -657,6 +657,11 @@ set_target_properties(tinyusdz_object PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # Uncommend if you encounter the following errror: fatal  error C1128: number of sections exceeded object file format limit: compile with /bigobj
 #if(MSVC)
 #  target_compile_options(tinyusdz_object PRIVATE /bigobj)
+#elif(WIN32)
+#  if (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+#    # guess mingw-gcc
+#    target_compile_options(tinyusdz_object PRIVATE "-Wa, -mbig-obj")
+#  endif()
 #endif()
 
 if (MSVC)
