@@ -1479,6 +1479,14 @@ std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
         /* custom */ false, "material:binding:preview", indent);
   }
 
+  for (const auto &item : gprim.materialBindingCollectionMap()) {
+    std::string rel_name = kMaterialBindingCollection + std::string(":") + item.first;
+    ss << print_relationship(
+        item.second,
+        item.second.get_listedit_qual(),
+        /* custom */ false, rel_name, indent);
+  }
+
   if (gprim.proxyPrim.authored()) {
     const Relationship &rel = gprim.proxyPrim.relationship();
     ss << print_relationship(rel, rel.get_listedit_qual(), /* custom */ false,
