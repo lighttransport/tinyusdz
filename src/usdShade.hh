@@ -41,6 +41,26 @@ constexpr auto kUsdPrimvarReader_matrix = "UsdPrimvarReader_matrix";
 constexpr auto kWeaderThanDescendants = "weakerThanDescendants";
 constexpr auto kStrongerThanDescendants = "strongerThanDescendants";
 
+enum class MaterialBindingStrength
+{
+  WeakerThanDescendants, // default
+  StrongerThanDescendants
+};
+
+// TODO: Move to pprinter.hh?
+static std::string to_string(const MaterialBindingStrength strength) {
+  switch (strength) {
+    case MaterialBindingStrength::WeakerThanDescendants: {
+      return kWeaderThanDescendants;
+    }
+    case MaterialBindingStrength::StrongerThanDescendants: {
+      return kStrongerThanDescendants;
+    }
+  }
+
+  return "[[Invalid MaterialBindingStrength]]";
+}
+
 // TODO: Inherit from Prim?
 struct UsdShadePrim {
   std::string name;
