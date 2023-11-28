@@ -48,18 +48,7 @@ enum class MaterialBindingStrength
 };
 
 // TODO: Move to pprinter.hh?
-static std::string to_string(const MaterialBindingStrength strength) {
-  switch (strength) {
-    case MaterialBindingStrength::WeakerThanDescendants: {
-      return kWeaderThanDescendants;
-    }
-    case MaterialBindingStrength::StrongerThanDescendants: {
-      return kStrongerThanDescendants;
-    }
-  }
-
-  return "[[Invalid MaterialBindingStrength]]";
-}
+std::string to_string(const MaterialBindingStrength strength);
 
 // TODO: Inherit from Prim?
 struct UsdShadePrim {
