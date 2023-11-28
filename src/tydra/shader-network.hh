@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache 2.0
 // Copyright 2022 - Present, Light Transport Entertainment, Inc.
 //
 // Shader network evaluation

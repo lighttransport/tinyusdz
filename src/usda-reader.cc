@@ -1,5 +1,6 @@
-// SPDX-License-Identifier: MIT
-// Copyright 2021 - Present, Syoyo Fujita.
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2021 - 2023, Syoyo Fujita.
+// Copyright 2023 - Present, Light Transport Entertainment Inc.
 //
 // USDA reader
 // TODO:
