@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache 2.0
+// Copyright 2021 - 2023, Syoyo Fujita.
+// Copyright 2023 - Present, Light Transport Entertainment Inc.
 #pragma once
 
-#include <math.h>
 #include "tinyusdz.hh"
 #include "stream-reader.hh"
 
