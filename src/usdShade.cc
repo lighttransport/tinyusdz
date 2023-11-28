@@ -13,6 +13,19 @@
 
 namespace tinyusdz {
 
+std::string to_string(const MaterialBindingStrength strength) {
+  switch (strength) {
+    case MaterialBindingStrength::WeakerThanDescendants: {
+      return kWeaderThanDescendants;
+    }
+    case MaterialBindingStrength::StrongerThanDescendants: {
+      return kStrongerThanDescendants;
+    }
+  }
+
+  return "[[Invalid MaterialBindingStrength]]";
+}
+
 bool UsdShadePrim::has_sdr_metadata(const std::string &key) {
   if (!metas().sdrMetadata.has_value()) {
     return false;
