@@ -233,8 +233,6 @@ include src/external/simple_match/README.md
 include src/external/simple_match/include/simple_match/implementation/some_none.hpp
 include src/external/simple_match/include/simple_match/simple_match.hpp
 include src/external/simple_match/include/simple_match/utility.hpp
-include src/external/staticstruct.cc
-include src/external/staticstruct.hh
 include src/external/stb_image.h
 include src/external/stb_image_resize.h
 include src/external/stb_image_write.h
@@ -265,10 +263,6 @@ include src/external/tiny_obj_loader.cc
 include src/external/tiny_obj_loader.h
 include src/external/tinyexr.cc
 include src/external/tinyexr.h
-include src/external/tinyxml2/LICENSE.txt
-include src/external/tinyxml2/readme.md
-include src/external/tinyxml2/tinyxml2.cpp
-include src/external/tinyxml2/tinyxml2.h
 include src/external/floaxie/README.md
 include src/external/floaxie/LICENSE
 include src/external/floaxie/floaxie/atof.h

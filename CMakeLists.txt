@@ -403,11 +403,8 @@ set(TINYUSDZ_C_API_SOURCES ${PROJECT_SOURCE_DIR}/src/c-tinyusd.cc)
 set(TINYUSDZ_DEP_SOURCES
     ${PROJECT_SOURCE_DIR}/src/integerCoding.cpp
     ${PROJECT_SOURCE_DIR}/src/lz4-compression.cc
-    #${PROJECT_SOURCE_DIR}/src/pxrLZ4/lz4.cpp
     ${PROJECT_SOURCE_DIR}/src/lz4/lz4.c
     ${PROJECT_SOURCE_DIR}/src/external/pystring.cpp
-    #${PROJECT_SOURCE_DIR}/src/external/staticstruct.cc
-    #${PROJECT_SOURCE_DIR}/src/external/tinyxml2/tinyxml2.cpp
 )
 
 if (TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER)
