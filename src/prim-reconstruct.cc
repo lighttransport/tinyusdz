@@ -2097,8 +2097,37 @@ bool ReconstructGPrimProperties(
 
   for (const auto &prop : properties) {
     PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBinding, gprim->materialBinding)
-    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingCollection, gprim->materialBindingCollection)
     PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingPreview, gprim->materialBindingPreview)
+    // material:binding:collection
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingCollection, gprim->materialBindingCollection)
+    // material:binding:collection:NAME
+    if (startsWith(prop.first, kMaterialBindingCollection + std::string(":"))) {
+
+      if (table.count(prop.first)) { 
+         continue;
+      }
+
+      if (!prop.second.is_relationship()) { 
+        PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relationship", prop.first));
+      } 
+
+      std::string collection_name = removePrefix(prop.first, kMaterialBindingCollection + std::string(":"));
+      if (collection_name.empty()) {
+        PUSH_ERROR_AND_RETURN("empty NAME is not allowed for 'mateirial:binding:collection'");
+      }
+      std::vector<std::string> names = split(collection_name, ":");
+      if (names.size() > 1) {
+        PUSH_ERROR_AND_RETURN("Nested namespace is not allowed for 'mateirial:binding:collection'");
+      }
+      collection_name = names[0];
+
+      const Relationship &rel = prop.second.get_relationship();
+
+      gprim->add_materialBindingCollection(collection_name, rel);
+
+      table.insert(prop.first);
+      continue;
+    }
     PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kProxyPrim, gprim->proxyPrim)
     PARSE_TYPED_ATTRIBUTE(table, prop, "doubleSided", GPrim, gprim->doubleSided)
     PARSE_ENUM_PROPETY(table, prop, "visibility", VisibilityEnumHandler, GPrim,

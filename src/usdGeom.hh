@@ -13,6 +13,7 @@
 #include "prim-types.hh"
 #include "value-types.hh"
 #include "xform.hh"
+#include "usdShade.hh"
 
 namespace tinyusdz {
 
@@ -288,7 +289,7 @@ struct GPrim : Xformable {
 
   // Some frequently used materialBindings
   nonstd::optional<Relationship> materialBinding; // material:binding
-  nonstd::optional<Relationship> materialBindingCollection; // material:binding:collection
+  nonstd::optional<Relationship> materialBindingCollection; // material:binding:collection  TODO: deprecate?(seems `material:binding:collection` without leaf NAME seems ignored in pxrUSD.
   nonstd::optional<Relationship> materialBindingPreview; // material:binding:preview
 
   std::map<std::string, Property> props;
@@ -369,6 +370,75 @@ struct GPrim : Xformable {
     return meta;
   }
 
+  bool has_materialBinding() const {
+    return materialBinding.has_value();
+  }
+
+  bool has_materialBindingPreview() const {
+    return materialBindingPreview.has_value();
+  }
+
+  void clear_materialBinding() {
+    materialBinding.reset();
+  }
+
+  void clear_materialBindingPreview() {
+    materialBindingPreview.reset();
+  }
+
+  void set_materialBinding(const Relationship &rel) {
+    materialBinding = rel;
+  }
+
+  void set_materialBinding(const Relationship &rel, const MaterialBindingStrength strength) {
+    value::token strength_tok(to_string(strength));
+    materialBinding = rel;
+    materialBinding.value().metas().bindMaterialAs = strength_tok;
+  }
+
+  void set_materialBindingPreview(const Relationship &rel) {
+    materialBindingPreview = rel;
+  }
+
+  void set_materialBindingPreview(const Relationship &rel, const MaterialBindingStrength strength) {
+    value::token strength_tok(to_string(strength));
+    materialBindingPreview = rel;
+    materialBindingPreview.value().metas().bindMaterialAs = strength_tok;
+  }
+
+  bool has_materialBindingCollection(const std::string &tok) {
+    return _materialBindingCollectionMap.count(tok);
+  }
+
+  void add_materialBindingCollection(const std::string &tok, const Relationship &rel) {
+
+    // NOTE:
+    // https://openusd.org/release/wp_usdshade.html#basic-proposal-for-collection-based-assignment
+    // says: material:binding:collection defines a namespace of binding relationships to be applied in namespace order, with the earliest ordered binding relationship the strongest
+    //
+    // so the app is better first check if `tok` element alreasy exists(using has_materialBindingCollection)
+
+    _materialBindingCollectionMap[tok] = rel;
+  }
+
+  void clear_materialBindingCollection(const std::string &tok) {
+
+    _materialBindingCollectionMap.erase(tok);
+  }
+
+  void add_materialBindingCollection(const std::string &tok, const Relationship &rel, MaterialBindingStrength strength) {
+    value::token strength_tok(to_string(strength));
+
+    _materialBindingCollectionMap[tok] = rel;
+    _materialBindingCollectionMap[tok].metas().bindMaterialAs = strength_tok;
+
+  }
+
+  const std::map<std::string, Relationship> materialBindingCollectionMap() const {
+    return _materialBindingCollectionMap;
+  }
+  
+
  private:
 
   //bool _valid{true};  // default behavior is valid(allow empty GPrim)
@@ -378,6 +448,9 @@ struct GPrim : Xformable {
 
   // For Variants
   std::map<std::string, VariantSet> _variantSetMap;
+
+  // For material:binding:collection:<NAME>
+  std::map<std::string, Relationship> _materialBindingCollectionMap;
 
 };
 
