@@ -4,6 +4,7 @@ def Xform "geom"
 {
   # collection
   rel material:binding:collection:beauty = </mymat>
+  rel material:binding:collection:mypurpose:beauty = </mymat0>
 
   def Mesh "mymesh"
   {

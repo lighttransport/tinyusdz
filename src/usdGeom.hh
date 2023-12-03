@@ -36,12 +36,13 @@ constexpr auto kPointInstancer = "PointInstancer";
 constexpr auto kMaterialBinding = "material:binding";
 constexpr auto kMaterialBindingCollection = "material:binding:collection";
 constexpr auto kMaterialBindingPreview = "material:binding:preview";
+constexpr auto kMaterialBindingFull = "material:binding:full";
 
 struct GPrim;
 
 bool IsSupportedGeomPrimvarType(uint32_t tyid);
 bool IsSupportedGeomPrimvarType(const std::string &type_name);
-  
+
 //
 // GeomPrimvar is a wrapper class for Attribute and indices(for Indexed Primvar)
 // - Attribute with `primvars` prefix. e.g. "primvars:
@@ -71,7 +72,7 @@ class GeomPrimvar {
   }
 
   // TODO: TimeSamples indices.
-  GeomPrimvar(const Attribute &attr, const std::vector<int32_t> &indices) : _attr(attr), _indices(indices) 
+  GeomPrimvar(const Attribute &attr, const std::vector<int32_t> &indices) : _attr(attr), _indices(indices)
   {
     _has_value = true;
   }
@@ -131,7 +132,7 @@ class GeomPrimvar {
 
   bool has_elementSize() const;
   uint32_t get_elementSize() const;
-  
+
   bool has_interpolation() const;
   Interpolation get_interpolation() const;
 
@@ -166,7 +167,7 @@ class GeomPrimvar {
     if (!_has_value) {
       return "null";
     }
-    
+
     return _attr.type_name();
   }
 
@@ -244,8 +245,10 @@ class GeomPrimvar {
 
 // Geometric Prim. Encapsulates Imagable + Boundable in pxrUSD schema.
 // <pxrUSD>/pxr/usd/usdGeom/schema.udsa
+//
+// TODO: inherit UsdShagePrim?
 
-struct GPrim : Xformable {
+struct GPrim : Xformable, MaterialBinding {
   std::string name;
   Specifier spec{Specifier::Def};
 
@@ -287,10 +290,13 @@ struct GPrim : Xformable {
 
   RelationshipProperty proxyPrim;
 
+#if 0
   // Some frequently used materialBindings
   nonstd::optional<Relationship> materialBinding; // material:binding
   nonstd::optional<Relationship> materialBindingCollection; // material:binding:collection  TODO: deprecate?(seems `material:binding:collection` without leaf NAME seems ignored in pxrUSD.
   nonstd::optional<Relationship> materialBindingPreview; // material:binding:preview
+  nonstd::optional<Relationship> materialBindingFull; // material:binding:full
+#endif
 
   std::map<std::string, Property> props;
 
@@ -315,7 +321,7 @@ struct GPrim : Xformable {
   /// @param[in] name Primvar name(`primvars:` prefix omitted. e.g. "normals", "st0", ...)
   ///
   bool has_primvar(const std::string &name) const;
-  
+
   ///
   /// Return List of Primvar in this GPrim contains.
   ///
@@ -360,7 +366,7 @@ struct GPrim : Xformable {
   }
 
   // Prim metadataum.
-  PrimMeta meta; // TODO: Move to private 
+  PrimMeta meta; // TODO: Move to private
 
   const PrimMeta &metas() const {
     return meta;
@@ -370,6 +376,19 @@ struct GPrim : Xformable {
     return meta;
   }
 
+#if 0
+  //
+  // NOTE on material binding.
+  // https://openusd.org/release/wp_usdshade.html
+  //
+  //  - "all purpose", direct binding, material:binding. single relationship target only
+  //  - a purpose-restricted, direct, fallback binding, e.g. material:binding:preview
+  //  - an all-purpose, collection-based binding, e.g. material:binding:collection:metalBits
+  //  - a purpose-restricted, collection-based binding, e.g. material:binding:collection:full:metalBits
+  //
+  // In TinyUSDZ, treat empty purpose token as "all purpose"
+  //
+
   bool has_materialBinding() const {
     return materialBinding.has_value();
   }
@@ -378,12 +397,30 @@ struct GPrim : Xformable {
     return materialBindingPreview.has_value();
   }
 
+  bool has_materialBindingFull() const {
+    return materialBindingFull.has_value();
+  }
+
+  bool has_materialBinding(const value::token &mat_purpose) const {
+    if (mat_purpose.str() == "full") {
+      return has_materialBindingFull();
+    } else if (mat_purpose.str() == "preview") {
+      return has_materialBindingPreview();
+    } else {
+      return _materialBindingMap.count(mat_purpose.str());
+    }
+  }
+
   void clear_materialBinding() {
     materialBinding.reset();
   }
 
   void clear_materialBindingPreview() {
     materialBindingPreview.reset();
+  }
+
+  void clear_materialBindingFull() {
+    materialBindingFull.reset();
   }
 
   void set_materialBinding(const Relationship &rel) {
@@ -406,11 +443,54 @@ struct GPrim : Xformable {
     materialBindingPreview.value().metas().bindMaterialAs = strength_tok;
   }
 
+  void set_materialBindingFull(const Relationship &rel) {
+    materialBindingFull = rel;
+  }
+
+  void set_materialBindingFull(const Relationship &rel, const MaterialBindingStrength strength) {
+    value::token strength_tok(to_string(strength));
+    materialBindingFull = rel;
+    materialBindingFull.value().metas().bindMaterialAs = strength_tok;
+  }
+
+  void set_materialBinding(const Relationship &rel, const value::token &mat_purpose) {
+
+    if (mat_purpose.str().empty()) {
+      return set_materialBinding(rel);
+    } else if (mat_purpose.str() == "full") {
+      return set_materialBindingFull(rel);
+    } else if (mat_purpose.str() == "preview") {
+      return set_materialBindingFull(rel);
+    } else {
+      _materialBindingMap[mat_purpose.str()] = rel;
+    }
+  }
+
+  void set_materialBinding(const Relationship &rel, const value::token &mat_purpose, const MaterialBindingStrength strength) {
+    value::token strength_tok(to_string(strength));
+
+    if (mat_purpose.str().empty()) {
+      return set_materialBinding(rel, strength);
+    } else if (mat_purpose.str() == "full") {
+      return set_materialBindingFull(rel, strength);
+    } else if (mat_purpose.str() == "preview") {
+      return set_materialBindingFull(rel, strength);
+    } else {
+      _materialBindingMap[mat_purpose.str()] = rel;
+      _materialBindingMap[mat_purpose.str()].metas().bindMaterialAs = strength_tok;
+    }
+  }
+
   bool has_materialBindingCollection(const std::string &tok) {
+
+    if (!_materialBindingCollectionMap.count(tok)) {
+      return false;
+    }
+
     return _materialBindingCollectionMap.count(tok);
   }
 
-  void add_materialBindingCollection(const std::string &tok, const Relationship &rel) {
+  void set_materialBindingCollection(const value::token &tok, const value::token &mat_purpose, const Relationship &rel) {
 
     // NOTE:
     // https://openusd.org/release/wp_usdshade.html#basic-proposal-for-collection-based-assignment
@@ -418,39 +498,51 @@ struct GPrim : Xformable {
     //
     // so the app is better first check if `tok` element alreasy exists(using has_materialBindingCollection)
 
-    _materialBindingCollectionMap[tok] = rel;
+    auto &m = _materialBindingCollectionMap[tok.str()];
+
+    m[mat_purpose.str()] = rel;
   }
 
-  void clear_materialBindingCollection(const std::string &tok) {
-
-    _materialBindingCollectionMap.erase(tok);
+  void clear_materialBindingCollection(const value::token &tok, const value::token &mat_purpose) {
+    if (_materialBindingCollectionMap.count(tok.str())) {
+      _materialBindingCollectionMap[tok.str()].erase(mat_purpose.str());
+    }
   }
 
-  void add_materialBindingCollection(const std::string &tok, const Relationship &rel, MaterialBindingStrength strength) {
+  void set_materialBindingCollection(const value::token &tok, const value::token &mat_purpose, const Relationship &rel, MaterialBindingStrength strength) {
     value::token strength_tok(to_string(strength));
 
-    _materialBindingCollectionMap[tok] = rel;
-    _materialBindingCollectionMap[tok].metas().bindMaterialAs = strength_tok;
+    _materialBindingCollectionMap[tok.str()][mat_purpose.str()] = rel;
+    _materialBindingCollectionMap[tok.str()][mat_purpose.str()].metas().bindMaterialAs = strength_tok;
 
   }
 
-  const std::map<std::string, Relationship> materialBindingCollectionMap() const {
+  const std::map<std::string, std::map<std::string, Relationship>> materialBindingCollectionMap() const {
     return _materialBindingCollectionMap;
   }
-  
+#endif
+
 
  private:
 
   //bool _valid{true};  // default behavior is valid(allow empty GPrim)
 
   std::vector<value::token> _primChildrenNames;
-  std::vector<value::token> _propertyNames; 
+  std::vector<value::token> _propertyNames;
 
   // For Variants
   std::map<std::string, VariantSet> _variantSetMap;
 
-  // For material:binding:collection:<NAME>
-  std::map<std::string, Relationship> _materialBindingCollectionMap;
+#if 0
+  // For material:binding(excludes frequently used `material:binding`, `material:binding:full` and `material:binding:preview`)
+  // key = PURPOSE, value = rel
+  std::map<std::string, Relationship> _materialBindingMap;
+
+  // For material:binding:collection
+  // key = NAME, value = map<PURPOSE, Rel>
+  // TODO: Use multi-index map
+  std::map<std::string, std::map<std::string, Relationship>> _materialBindingCollectionMap;
+#endif
 
 };
 
@@ -459,7 +551,7 @@ struct Xform : GPrim {
 };
 
 // GeomSubset
-struct GeomSubset {
+struct GeomSubset : public MaterialBinding {
   enum class ElementType { Face };
 
   enum class FamilyType {
@@ -508,10 +600,12 @@ struct GeomSubset {
   }
 #endif
 
+#if 0
   // Some frequently used materialBindings
   nonstd::optional<Relationship> materialBinding; // rel material:binding
   nonstd::optional<Relationship> materialBindingCollection; // rel material:binding:collection
   nonstd::optional<Relationship> materialBindingPreview; // rel material:binding:preview
+#endif
 
   TypedAttribute<Animatable<std::vector<int32_t>>> indices; // int[] indices
 
@@ -521,15 +615,15 @@ struct GeomSubset {
   std::vector<value::token> &primChildrenNames() {
     return _primChildrenNames;
   }
-  
+
   std::vector<value::token> &propertyNames() {
     return _propertyNames;
   }
-  
+
   const std::vector<value::token> &primChildrenNames() const {
     return _primChildrenNames;
   }
-  
+
   const std::vector<value::token> &propertyNames() const {
     return _propertyNames;
   }
@@ -538,7 +632,7 @@ struct GeomSubset {
     const std::vector<const GeomSubset *> &subsets,
     const size_t elementCount,
     const FamilyType &familyType, std::string *err);
-    
+
 
  private:
   std::vector<value::token> _primChildrenNames;
@@ -681,18 +775,18 @@ struct GeomMesh : GPrim {
   // - float[] primvars:skel:jointWeights
 
 
-  /// 
+  ///
   /// For GeomSubset
   ///
   /// This creates `uniform token subsetFamily:<familyName>:familyType = familyType` attribute when serialized.
-  /// 
+  ///
   void set_subsetFamilyType(const value::token &familyName, GeomSubset::FamilyType familyType) {
     subsetFamilyTypeMap[familyName] = familyType;
   }
 
   ///
   /// This look ups `uniform token subsetFamily:<familyName>:familyType = familyType` attribute.
-  /// 
+  ///
   /// @return true upon success, false when corresponding attribute not found or invalid.
   bool get_subsetFamilyType(const value::token &familyName, GeomSubset::FamilyType *familyType) {
     if (!familyType) {
@@ -711,7 +805,7 @@ struct GeomMesh : GPrim {
   /// Return the list of subet familyNames in this GeomMesh.
   ///
   /// This lists `uniform token subsetFamily:<familyName>:familyType` attributes.
-  /// 
+  ///
   /// @return The list familyNames. Empty when no familyName attribute found.
   std::vector<value::token> get_subsetFamilyNames() {
     std::vector<value::token> toks;
@@ -877,23 +971,23 @@ struct GeomNurbsCurves : public GPrim {
   // Predefined attribs.
   //
   TypedAttribute<Animatable<std::vector<value::vector3f>>>
-      accelerations; 
+      accelerations;
   TypedAttribute<Animatable<std::vector<value::vector3f>>>
-      velocities; 
+      velocities;
   TypedAttribute<Animatable<std::vector<int>>>
       curveVertexCounts;
   TypedAttribute<Animatable<std::vector<value::normal3f>>>
-      normals; 
+      normals;
   TypedAttribute<Animatable<std::vector<value::point3f>>>
-      points; 
+      points;
   TypedAttribute<Animatable<std::vector<float>>>
-      widths; 
+      widths;
 
 
-  TypedAttribute<Animatable<std::vector<int>>> order;    
-  TypedAttribute<Animatable<std::vector<double>>> knots; 
-  TypedAttribute<Animatable<std::vector<value::double2>>> ranges;    
-  TypedAttribute<Animatable<std::vector<double>>> pointWeights; 
+  TypedAttribute<Animatable<std::vector<int>>> order;
+  TypedAttribute<Animatable<std::vector<double>>> knots;
+  TypedAttribute<Animatable<std::vector<value::double2>>> ranges;
+  TypedAttribute<Animatable<std::vector<double>>> pointWeights;
 };
 
 //

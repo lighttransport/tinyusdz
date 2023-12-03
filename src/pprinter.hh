@@ -268,6 +268,8 @@ std::string print_props(const std::map<std::string, Property> &props,
 std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent);
 std::string print_layer(const Layer &layer, const uint32_t indent);
 
+std::string print_material_binding(const MaterialBinding *mb, const uint32_t indent);
+
 }  // namespace tinyusdz
 
 namespace std {
