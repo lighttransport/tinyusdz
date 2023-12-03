@@ -1384,6 +1384,7 @@ std::string print_xformOps(const std::vector<XformOp> &xformOps,
   return ss.str();
 }
 
+#if 0
 static std::string print_xformOp(const std::vector<XformOp> &xformOps,
                                  const std::string &prop_name,
                                  const uint32_t indent,
@@ -1446,6 +1447,61 @@ static std::string print_xformOp(const std::vector<XformOp> &xformOps,
 
   return ss.str();
 }
+#endif
+
+std::string print_material_binding(const MaterialBinding *mb, const uint32_t indent) {
+  if (!mb) {
+    return std::string();
+  }
+
+  std::stringstream ss;
+
+  if (mb->materialBinding) {
+    ss << print_relationship(mb->materialBinding.value(),
+                             mb->materialBinding.value().get_listedit_qual(),
+                             /* custom */ false, "material:binding", indent);
+  }
+
+  if (mb->materialBindingCollection) {
+    ss << print_relationship(
+        mb->materialBindingCollection.value(),
+        mb->materialBindingCollection.value().get_listedit_qual(),
+        /* custom */ false, "material:binding:collection", indent);
+  }
+
+  if (mb->materialBindingPreview) {
+    ss << print_relationship(
+        mb->materialBindingPreview.value(),
+        mb->materialBindingPreview.value().get_listedit_qual(),
+        /* custom */ false, "material:binding:preview", indent);
+  }
+
+  for (const auto &collection : mb->materialBindingCollectionMap()) {
+
+    std::string collection_name;
+    if (!collection.first.empty()) {
+      collection_name = std::string(":") + collection.first;
+    }
+
+    for (const auto &item : collection.second) { 
+      // item.first = purpose
+      std::string rel_name;
+
+      if (item.first.empty()) { // all-purpose
+        rel_name = kMaterialBindingCollection + collection_name;
+      } else {
+        rel_name = kMaterialBindingCollection + collection_name + std::string(":") + item.first;
+      }
+
+      ss << print_relationship(
+          item.second,
+          item.second.get_listedit_qual(),
+          /* custom */ false, rel_name, indent);
+    }
+  }
+
+  return ss.str();
+}
 
 template <typename T>
 std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
@@ -1459,33 +1515,7 @@ std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
 
   ss << print_typed_token_attr(gprim.visibility, "visibility", indent);
 
-  if (gprim.materialBinding) {
-    ss << print_relationship(gprim.materialBinding.value(),
-                             gprim.materialBinding.value().get_listedit_qual(),
-                             /* custom */ false, "material:binding", indent);
-  }
-
-  if (gprim.materialBindingCollection) {
-    ss << print_relationship(
-        gprim.materialBindingCollection.value(),
-        gprim.materialBindingCollection.value().get_listedit_qual(),
-        /* custom */ false, "material:binding:collection", indent);
-  }
-
-  if (gprim.materialBindingPreview) {
-    ss << print_relationship(
-        gprim.materialBindingPreview.value(),
-        gprim.materialBindingPreview.value().get_listedit_qual(),
-        /* custom */ false, "material:binding:preview", indent);
-  }
-
-  for (const auto &item : gprim.materialBindingCollectionMap()) {
-    std::string rel_name = kMaterialBindingCollection + std::string(":") + item.first;
-    ss << print_relationship(
-        item.second,
-        item.second.get_listedit_qual(),
-        /* custom */ false, rel_name, indent);
-  }
+  ss << print_material_binding(&gprim, indent);
 
   if (gprim.proxyPrim.authored()) {
     const Relationship &rel = gprim.proxyPrim.relationship();
@@ -1498,6 +1528,7 @@ std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
   return ss.str();
 }
 
+#if 0
 static bool emit_gprim_predefined(std::stringstream &ss, const GPrim *gprim,
                                   const std::string &prop_name,
                                   const uint32_t indent,
@@ -1560,6 +1591,7 @@ static bool emit_gprim_predefined(std::stringstream &ss, const GPrim *gprim,
 
   return true;
 }
+#endif
 
 std::string to_string(bool v) {
   if (v) {
@@ -2552,12 +2584,14 @@ std::string to_string(const GeomCamera &camera, const uint32_t indent,
   return ss.str();
 }
 
+#if 0
 #define PRINT_TYPED_ATTR(__table, __propName, __var, __name, __indent) \
   if (__propName == __name) {                                          \
     ss << print_typed_attr(__var, __name, __indent);                   \
     __table.insert(__name);                                            \
     continue;                                                          \
   }
+#endif
 
 std::string to_string(const GeomSphere &sphere, const uint32_t indent,
                       bool closing_brace) {
@@ -2574,6 +2608,7 @@ std::string to_string(const GeomSphere &sphere, const uint32_t indent,
 
   std::set<std::string> table;
 
+#if 0 // TODO
   if (sphere.propertyNames().size()) {
     // pxrUSD sorts property, so does TinyUSDZ also.
     std::vector<std::string> sortedPropertyNames;
@@ -2609,6 +2644,15 @@ std::string to_string(const GeomSphere &sphere, const uint32_t indent,
 
     ss << print_props(sphere.props, indent + 1);
   }
+#else
+
+  ss << print_typed_attr(sphere.radius, "radius", indent + 1);
+
+  ss << print_gprim_predefined(sphere, indent + 1);
+
+  ss << print_props(sphere.props, indent + 1);
+
+#endif
 
   if (closing_brace) {
     ss << pprint::Indent(indent) << "}\n";
@@ -2707,26 +2751,7 @@ std::string to_string(const GeomSubset &subset, const uint32_t indent,
   ss << print_typed_attr(subset.familyName, "familyName", indent + 1);
   ss << print_typed_attr(subset.indices, "indices", indent + 1);
 
-  if (subset.materialBinding) {
-    ss << print_relationship(subset.materialBinding.value(),
-                             subset.materialBinding.value().get_listedit_qual(),
-                             /* custom */ false, "material:binding",
-                             indent + 1);
-  }
-
-  if (subset.materialBindingCollection) {
-    ss << print_relationship(
-        subset.materialBindingCollection.value(),
-        subset.materialBindingCollection.value().get_listedit_qual(),
-        /* custom */ false, "material:binding:collection", indent + 1);
-  }
-
-  if (subset.materialBindingPreview) {
-    ss << print_relationship(
-        subset.materialBindingPreview.value(),
-        subset.materialBindingPreview.value().get_listedit_qual(),
-        /* custom */ false, "material:binding:preview", indent + 1);
-  }
+  ss << print_material_binding(&subset, indent + 1);
 
   ss << print_props(subset.props, indent + 1);
 

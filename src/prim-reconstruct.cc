@@ -2079,6 +2079,86 @@ bool ReconstructXformOpsFromProperties(
 
 namespace {
 
+bool ReconstructMaterialBindingProperties(
+  std::set<std::string> &table, /* inout */
+  const std::map<std::string, Property> &properties,
+  MaterialBinding *mb, /* inout */
+  std::string *err)
+{
+
+  for (const auto &prop : properties) {
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBinding, mb->materialBinding)
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingPreview, mb->materialBindingPreview)
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingPreview, mb->materialBindingFull)
+    // material:binding:collection
+    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingCollection, mb->materialBindingCollection)
+    // material:binding:collection[:PURPOSE]:NAME
+    if (startsWith(prop.first, kMaterialBindingCollection + std::string(":"))) {
+
+      if (table.count(prop.first)) {
+         continue;
+      }
+
+      if (!prop.second.is_relationship()) {
+        PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relationship", prop.first));
+      }
+
+      std::string collection_name = removePrefix(prop.first, kMaterialBindingCollection + std::string(":"));
+      if (collection_name.empty()) {
+        PUSH_ERROR_AND_RETURN("empty NAME is not allowed for 'mateirial:binding:collection'");
+      }
+      std::vector<std::string> names = split(collection_name, ":");
+      if (names.size() > 2) {
+        PUSH_ERROR_AND_RETURN("3 or more namespaces is not allowed for 'mateirial:binding:collection'");
+      }
+      value::token mat_purpose; // empty = all-purpose
+      if (names.size() == 1) {
+        collection_name = names[0];
+      } else {
+        mat_purpose = value::token(names[0]);
+        collection_name = names[1];
+      }
+
+      const Relationship &rel = prop.second.get_relationship();
+
+      mb->set_materialBindingCollection(value::token(collection_name), mat_purpose, rel);
+
+      table.insert(prop.first);
+      continue;
+    }
+    // material:binding:PURPOSE
+    if (startsWith(prop.first, kMaterialBinding + std::string(":"))) {
+
+      if (table.count(prop.first)) {
+         continue;
+      }
+
+      if (!prop.second.is_relationship()) {
+        PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relationship", prop.first));
+      }
+
+      std::string purpose_name = removePrefix(prop.first, kMaterialBindingCollection + std::string(":"));
+      if (purpose_name.empty()) {
+        PUSH_ERROR_AND_RETURN("empty PURPOSE is not allowed for 'mateirial:binding:'");
+      }
+      std::vector<std::string> names = split(purpose_name, ":");
+      if (names.size() > 1) {
+        PUSH_ERROR_AND_RETURN("PURPOSE must not have nested namespaces for 'mateirial:binding'");
+      }
+      value::token mat_purpose = value::token(names[0]);
+
+      const Relationship &rel = prop.second.get_relationship();
+
+      mb->set_materialBinding(rel, mat_purpose);
+
+      table.insert(prop.first);
+      continue;
+    }
+  }
+
+  return true;
+}
+
 // xformOps and built-in props
 bool ReconstructGPrimProperties(
   const Specifier &spec,
@@ -2095,39 +2175,11 @@ bool ReconstructGPrimProperties(
     return false;
   }
 
+  if (!prim::ReconstructMaterialBindingProperties(table, properties, gprim, err)) {
+    return false;
+  }
+
   for (const auto &prop : properties) {
-    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBinding, gprim->materialBinding)
-    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingPreview, gprim->materialBindingPreview)
-    // material:binding:collection
-    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingCollection, gprim->materialBindingCollection)
-    // material:binding:collection:NAME
-    if (startsWith(prop.first, kMaterialBindingCollection + std::string(":"))) {
-
-      if (table.count(prop.first)) { 
-         continue;
-      }
-
-      if (!prop.second.is_relationship()) { 
-        PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relationship", prop.first));
-      } 
-
-      std::string collection_name = removePrefix(prop.first, kMaterialBindingCollection + std::string(":"));
-      if (collection_name.empty()) {
-        PUSH_ERROR_AND_RETURN("empty NAME is not allowed for 'mateirial:binding:collection'");
-      }
-      std::vector<std::string> names = split(collection_name, ":");
-      if (names.size() > 1) {
-        PUSH_ERROR_AND_RETURN("Nested namespace is not allowed for 'mateirial:binding:collection'");
-      }
-      collection_name = names[0];
-
-      const Relationship &rel = prop.second.get_relationship();
-
-      gprim->add_materialBindingCollection(collection_name, rel);
-
-      table.insert(prop.first);
-      continue;
-    }
     PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kProxyPrim, gprim->proxyPrim)
     PARSE_TYPED_ATTRIBUTE(table, prop, "doubleSided", GPrim, gprim->doubleSided)
     PARSE_ENUM_PROPETY(table, prop, "visibility", VisibilityEnumHandler, GPrim,
@@ -3246,11 +3298,11 @@ bool ReconstructPrim<GeomSubset>(
 
   std::set<std::string> table;
 
+  if (!prim::ReconstructMaterialBindingProperties(table, properties, subset, err)) {
+    return false;
+  }
+
   for (const auto &prop : properties) {
-    DCOUT("GeomSubset prop: " << prop.first);
-    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBinding, subset->materialBinding)
-    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingCollection, subset->materialBindingCollection)
-    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingPreview, subset->materialBindingPreview)
     PARSE_TYPED_ATTRIBUTE(table, prop, "familyName", GeomSubset, subset->familyName)
     PARSE_TYPED_ATTRIBUTE(table, prop, "indices", GeomSubset, subset->indices)
     //PARSE_ENUM_PROPETY(table, prop, "familyType", FamilyTypeHandler, GeomSubset, subset->familyType, options  .strict_allowedToken_check)
