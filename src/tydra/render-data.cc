@@ -1664,9 +1664,9 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
     tinyusdz::Path bound_material_path;
     const tinyusdz::Material *bound_material{nullptr};
-    bool ret = tinyusdz::tydra::FindBoundMaterial(
+    bool ret = tinyusdz::tydra::GetBoundMaterial(
         *converter->GetStagePtr(), /* GeomMesh prim path */ abs_path,
-        /* suffix */ "", &bound_material_path, &bound_material, err);
+        /* purpose */ "", &bound_material_path, &bound_material, err);
 
     int64_t rmaterial_id = -1;
 

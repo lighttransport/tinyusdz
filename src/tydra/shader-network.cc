@@ -1,6 +1,7 @@
 #include "shader-network.hh"
 #include "prim-apply.hh"
 
+#include "common-macros.inc"
 #include "prim-types.hh"
 #include "usdShade.hh"
 #include "pprinter.hh"
@@ -9,6 +10,13 @@
 #include "stage.hh"
 #include "common-macros.inc"
 #include "tydra/scene-access.hh"
+
+
+#define PushError(msg) { \
+  if (err) { \
+    (*err) += msg; \
+  } \
+}
 
 namespace tinyusdz {
 namespace tydra {
@@ -159,21 +167,126 @@ bool GetSinglePath(const Relationship &rel, Path *path) {
 
 } // namespace local
 
-bool GetBoundMaterial(
+bool GetDirectlyBoundMaterial(
   const Stage &_stage,
   const Prim &prim,
-  const std::string &suffix,
+  const std::string &purpose,
   tinyusdz::Path *materialPath,
   const Material **material,
   std::string *err) {
 
-  if (materialPath == nullptr) {
+  if (!materialPath) {
+    PUSH_ERROR_AND_RETURN("`materialPath` ptr is null.");
+  }
+
+  if (!material) {
+    PUSH_ERROR_AND_RETURN("`material` ptr is null.");
+  }
+
+  (void)err;
+
+  auto apply_fun = [&](const Stage &stage, const MaterialBinding *mb) -> bool {
+
+    Relationship mat_rel;
+    if (!mb->get_materialBinding(value::token(purpose), &mat_rel)) {
+      return false;
+    }
+
+    if (!GetSinglePath(mat_rel, materialPath)) {
+      return false;
+    }
+
+    const Prim *p;
+    if (stage.find_prim_at_path(*materialPath, p, err)) {
+      if (p->is<Material>() && (material != nullptr)) {
+        (*material) = p->as<Material>();
+      } else {
+        (*material) = nullptr;
+      }
+    }
+    
+    return false;
+  };
+
+  bool ret = ApplyToMaterialBinding(_stage, prim, apply_fun);
+
+  return ret;
+}
+
+bool GetDirectCollectionMaterialBinding(
+  const Stage &_stage,
+  const Prim &prim,
+  const std::string &purpose,
+  tinyusdz::Path *materialPath,
+  const Material **material,
+  std::string *err) {
+
+  if (!materialPath) {
+    PUSH_ERROR_AND_RETURN("`materialPath` ptr is null.");
+  }
+
+  if (!material) {
+    PUSH_ERROR_AND_RETURN("`material` ptr is null.");
+  }
+
+  (void)err;
+
+  auto apply_fun = [&](const Stage &stage, const MaterialBinding *mb) -> bool {
+
+    Relationship mat_rel;
+    if (!mb->get_materialBinding(value::token(purpose), &mat_rel)) {
+      return false;
+    }
+
+    if (!GetSinglePath(mat_rel, materialPath)) {
+      return false;
+    }
+
+    const Prim *p;
+    if (stage.find_prim_at_path(*materialPath, p, err)) {
+      if (p->is<Material>() && (material != nullptr)) {
+        (*material) = p->as<Material>();
+      } else {
+        (*material) = nullptr;
+      }
+    }
+    
+    return false;
+  };
+
+  bool ret = ApplyToMaterialBinding(_stage, prim, apply_fun);
+
+  return ret;
+}
+
+bool GetBoundMaterial(
+  const Stage &_stage,
+  const Prim &prim,
+  const std::string &purpose,
+  tinyusdz::Path *materialPath,
+  const Material **material,
+  std::string *err) {
+
+  if (!materialPath) {
+    return false;
+  }
+
+  if (!material) {
     return false;
   }
 
   (void)err;
 
-  auto apply_fun = [&](const Stage &stage, const GPrim *gprim) -> bool {
+  auto apply_fun = [&](const Stage &stage, const MaterialBinding *mb) -> bool {
+
+    Relationship mat_rel;
+    if (!mb->get_materialBinding(value::token(purpose), &mat_rel)) {
+      return false;
+    }
+
+    // TODO
+    
+#if 0
     if (suffix.empty()) {
       if (gprim->materialBinding.has_value()) {
         if (GetSinglePath(gprim->materialBinding.value(), materialPath)) {
@@ -225,16 +338,17 @@ bool GetBoundMaterial(
     } else {
       return false;
     }
+#endif
 
     return false;
   };
 
-  bool ret = ApplyToGPrim(_stage, prim, apply_fun);
+  bool ret = ApplyToMaterialBinding(_stage, prim, apply_fun);
 
   return ret;
 }
 
-bool FindBoundMaterial(
+bool GetBoundMaterial(
   const Stage &_stage,
   const Path &abs_path,
   const std::string &suffix,
