@@ -1459,21 +1459,37 @@ std::string print_material_binding(const MaterialBinding *mb, const uint32_t ind
   if (mb->materialBinding) {
     ss << print_relationship(mb->materialBinding.value(),
                              mb->materialBinding.value().get_listedit_qual(),
-                             /* custom */ false, "material:binding", indent);
-  }
-
-  if (mb->materialBindingCollection) {
-    ss << print_relationship(
-        mb->materialBindingCollection.value(),
-        mb->materialBindingCollection.value().get_listedit_qual(),
-        /* custom */ false, "material:binding:collection", indent);
+                             /* custom */ false, kMaterialBinding, indent);
   }
 
   if (mb->materialBindingPreview) {
     ss << print_relationship(
         mb->materialBindingPreview.value(),
         mb->materialBindingPreview.value().get_listedit_qual(),
-        /* custom */ false, "material:binding:preview", indent);
+        /* custom */ false, kMaterialBindingPreview, indent);
+  }
+
+  if (mb->materialBindingFull) {
+    ss << print_relationship(
+        mb->materialBindingFull.value(),
+        mb->materialBindingFull.value().get_listedit_qual(),
+        /* custom */ false, kMaterialBindingFull, indent);
+  }
+
+  // NOTE: matb does not include "material:binding", "material:binding:preview" and "material:binding:full"
+  for (const auto &matb : mb->materialBindingMap()) {
+    if (matb.first.empty()) {
+      // this should not happen
+      continue;
+    }
+
+    std::string matb_name = kMaterialBinding + std::string(":") + matb.first;
+
+    ss << print_relationship(
+        matb.second,
+        matb.second.get_listedit_qual(),
+        /* custom */ false, matb_name, indent);
+    
   }
 
   for (const auto &collection : mb->materialBindingCollectionMap()) {
