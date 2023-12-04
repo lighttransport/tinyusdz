@@ -202,6 +202,70 @@ class MaterialBinding {
     return _materialBindingCollectionMap;
   }
 
+  bool get_materialBinding(const value::token &mat_purpose, Relationship *relOut) const {
+    if (!relOut) {
+      return false;
+    }
+
+    if (mat_purpose.str().empty()) {
+      if (materialBinding.has_value()) {
+        (*relOut) = materialBinding.value();
+        return true;
+      } else {
+        return false; // not authored
+      }
+    } else if (mat_purpose.str() == "full") {
+      if (materialBindingFull.has_value()) {
+        (*relOut) = materialBindingFull.value();
+        return true;
+      } else {
+        return false; // not authored
+      }
+    } else if (mat_purpose.str() == "preview") {
+      if (materialBindingPreview.has_value()) {
+        (*relOut) = materialBindingPreview.value();
+        return true;
+      } else {
+        return false; // not authored
+      }
+    } else {
+      if (_materialBindingMap.count(mat_purpose.str())) {
+        (*relOut) = _materialBindingMap.at(mat_purpose.str());
+        return true;
+      } else {
+        return false; // not authored
+      }
+    }
+  }
+
+  bool get_materialBindingCollection(const value::token &tok, const value::token &mat_purpose, Relationship *relOut) {
+    if (!relOut) {
+      return false;
+    }
+
+    if (tok.str().empty() && mat_purpose.str().empty()) {
+      if (materialBindingCollection.has_value()) {
+        (*relOut) = materialBindingCollection.value();
+      } else {
+        return false;
+      }
+    }
+
+    if (!_materialBindingCollectionMap.count(tok.str())) {
+      return false;
+    }
+
+    const auto &mbcMap = _materialBindingCollectionMap.at(tok.str());
+
+    if (!mbcMap.count(mat_purpose.str())) {
+      return false;
+    }
+    
+    (*relOut) = mbcMap.at(mat_purpose.str());
+    return true;
+
+  }
+
  private:
 
   // For material:binding(excludes frequently used `material:binding`, `material:binding:full` and `material:binding:preview`)
