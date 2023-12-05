@@ -53,6 +53,7 @@ namespace tinyusdz {
 template <typename T>
 class ordered_dict {
  public:
+
   bool at(const size_t idx, T *dst) const {
     if (idx >= _keys.size()) {
       return false;
@@ -64,6 +65,21 @@ class ordered_dict {
     }
 
     (*dst) = _m.at(_keys[idx]);
+
+    return true;
+  }
+
+  bool at(const size_t idx, const T **dst) const {
+    if (idx >= _keys.size()) {
+      return false;
+    }
+
+    if (!_m.count(_keys[idx])) {
+      // This should not happen though.
+      return false;
+    }
+
+    (*dst) = &(_m.at(_keys[idx]));
 
     return true;
   }
@@ -125,6 +141,8 @@ class ordered_dict {
   }
 
   size_t size() const { return _m.size(); }
+
+  // No operator[] for safety.
 
  private:
   std::vector<std::string> _keys;
