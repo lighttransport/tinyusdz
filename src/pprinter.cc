@@ -1492,26 +1492,34 @@ std::string print_material_binding(const MaterialBinding *mb, const uint32_t ind
     
   }
 
+  // TODO: sort by collection name?
   for (const auto &collection : mb->materialBindingCollectionMap()) {
 
-    std::string collection_name;
+    std::string purpose_name;
     if (!collection.first.empty()) {
-      collection_name = std::string(":") + collection.first;
+      purpose_name = std::string(":") + collection.first;
     }
 
-    for (const auto &item : collection.second) { 
-      // item.first = purpose
+    for (size_t i = 0; i < collection.second.size(); i++) {
+      std::string coll_name = collection.second.keys()[i];
+ 
+      const Relationship *rel{nullptr};
+      if (!collection.second.at(i, &rel)) {
+        // this should not happen though.
+        continue;
+      }
+
       std::string rel_name;
 
-      if (item.first.empty()) { // all-purpose
-        rel_name = kMaterialBindingCollection + collection_name;
+      if (coll_name.empty()) { 
+        rel_name = kMaterialBindingCollection + purpose_name;
       } else {
-        rel_name = kMaterialBindingCollection + collection_name + std::string(":") + item.first;
+        rel_name = kMaterialBindingCollection + std::string(":") + coll_name + purpose_name;
       }
 
       ss << print_relationship(
-          item.second,
-          item.second.get_listedit_qual(),
+          *rel,
+          rel->get_listedit_qual(),
           /* custom */ false, rel_name, indent);
     }
   }
