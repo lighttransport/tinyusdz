@@ -358,15 +358,15 @@ int main(int argc, char **argv) {
 
 
   //
-  // Find bound Material
+  // Get bound Material
   //
-  std::cout << "FindBoundMaterial example -------------\n";
+  std::cout << "GetBoundMaterial example -------------\n";
   for (const auto &item : meshmap) {
     // FindBoundMaterial seaches bound material for parent GPrim.
     tinyusdz::Path matPath;
     const tinyusdz::Material *material{nullptr};
     std::string err;
-    bool ret = tinyusdz::tydra::FindBoundMaterial(stage, tinyusdz::Path(item.first, ""), /* suffix */"", &matPath, &material, &err);
+    bool ret = tinyusdz::tydra::GetBoundMaterial(stage, tinyusdz::Path(item.first, ""), /* suffix */"", &matPath, &material, &err);
 
     if (ret) {
       std::cout << item.first << " has bound Material. Material Path = " << matPath << "\n";
