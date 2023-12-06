@@ -49,6 +49,107 @@
 
 namespace tinyusdz {
 
+// Simple Python-like OrderedDict 
+template <typename T>
+class ordered_dict {
+ public:
+
+  bool at(const size_t idx, T *dst) const {
+    if (idx >= _keys.size()) {
+      return false;
+    }
+
+    if (!_m.count(_keys[idx])) {
+      // This should not happen though.
+      return false;
+    }
+
+    (*dst) = _m.at(_keys[idx]);
+
+    return true;
+  }
+
+  bool at(const size_t idx, const T **dst) const {
+    if (idx >= _keys.size()) {
+      return false;
+    }
+
+    if (!_m.count(_keys[idx])) {
+      // This should not happen though.
+      return false;
+    }
+
+    (*dst) = &(_m.at(_keys[idx]));
+
+    return true;
+  }
+
+  bool count(const std::string &key) const {
+    return _m.count(key);
+  }
+
+  void insert(const std::string &key, const T &value) {
+    if (_m.count(key)) {
+      // overwrite existing value
+    } else {
+      _keys.push_back(key);
+    }
+
+    _m[key] = value;
+  }
+
+  bool erase(const std::string &key) {
+
+    if (!_m.count(key)) {
+      return false;
+    }
+
+    // linear search
+    bool erased = false;
+    size_t idx = 0;
+    for (size_t i = 0; i < _keys.size(); i++) {
+      if (key == _keys[i]) {
+        idx = i;
+        erased = true;
+      }
+    }
+
+    if (!erased) {
+      return false;
+    }
+
+    _keys.erase(_keys.begin() + idx);
+    _m.erase(key);
+
+    return true;
+  }
+  
+
+  bool at(const std::string &key, T *dst) const {
+    if (!_m.count(key)) {
+      // This should not happen though.
+      return false;
+    }
+
+    (*dst) = _m.at(key);
+
+    return true;
+  }
+
+  const std::vector<std::string> &keys() const {
+    return _keys;
+  }
+
+  size_t size() const { return _m.size(); }
+
+  // No operator[] for safety.
+
+ private:
+  std::vector<std::string> _keys;
+  std::map<std::string, T> _m;
+};
+
+
 // SpecType enum must be same order with pxrUSD's SdfSpecType(since enum value
 // is stored in Crate directly)
 enum class SpecType {
