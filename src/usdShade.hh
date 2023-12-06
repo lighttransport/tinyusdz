@@ -66,9 +66,10 @@ class MaterialBinding {
 
   // Some frequently used materialBindings
   nonstd::optional<Relationship> materialBinding; // material:binding
-  nonstd::optional<Relationship> materialBindingCollection; // material:binding:collection  TODO: deprecate?(seems `material:binding:collection` without leaf NAME seems ignored in pxrUSD.
   nonstd::optional<Relationship> materialBindingPreview; // material:binding:preview
   nonstd::optional<Relationship> materialBindingFull; // material:binding:full
+
+  //nonstd::optional<Relationship> materialBindingCollection; // material:binding:collection  Deprecated. use _materialBindingCollectionMap[""][""] instead.
 
   bool has_materialBinding() const {
     return materialBinding.has_value();
@@ -181,7 +182,7 @@ class MaterialBinding {
 
     auto &m = _materialBindingCollectionMap[tok.str()];
 
-    m[mat_purpose.str()] = rel;
+    m.insert(mat_purpose.str(), rel);
   }
 
   void clear_materialBindingCollection(const value::token &tok, const value::token &mat_purpose) {
@@ -193,12 +194,17 @@ class MaterialBinding {
   void set_materialBindingCollection(const value::token &tok, const value::token &mat_purpose, const Relationship &rel, MaterialBindingStrength strength) {
     value::token strength_tok(to_string(strength));
 
-    _materialBindingCollectionMap[tok.str()][mat_purpose.str()] = rel;
-    _materialBindingCollectionMap[tok.str()][mat_purpose.str()].metas().bindMaterialAs = strength_tok;
+    Relationship r = rel;
+    r.metas().bindMaterialAs = strength_tok;
 
+    _materialBindingCollectionMap[tok.str()].insert(mat_purpose.str(), r);
   }
 
-  const std::map<std::string, std::map<std::string, Relationship>> materialBindingCollectionMap() const {
+  const std::map<std::string, Relationship> &materialBindingMap() const {
+    return _materialBindingMap;
+  }
+
+  const std::map<std::string, ordered_dict<Relationship>> &materialBindingCollectionMap() const {
     return _materialBindingCollectionMap;
   }
 
@@ -238,34 +244,6 @@ class MaterialBinding {
     }
   }
 
-  bool get_materialBindingCollection(const value::token &tok, const value::token &mat_purpose, Relationship *relOut) {
-    if (!relOut) {
-      return false;
-    }
-
-    if (tok.str().empty() && mat_purpose.str().empty()) {
-      if (materialBindingCollection.has_value()) {
-        (*relOut) = materialBindingCollection.value();
-      } else {
-        return false;
-      }
-    }
-
-    if (!_materialBindingCollectionMap.count(tok.str())) {
-      return false;
-    }
-
-    const auto &mbcMap = _materialBindingCollectionMap.at(tok.str());
-
-    if (!mbcMap.count(mat_purpose.str())) {
-      return false;
-    }
-    
-    (*relOut) = mbcMap.at(mat_purpose.str());
-    return true;
-
-  }
-
  private:
 
   // For material:binding(excludes frequently used `material:binding`, `material:binding:full` and `material:binding:preview`)
@@ -273,9 +251,15 @@ class MaterialBinding {
   std::map<std::string, Relationship> _materialBindingMap;
 
   // For material:binding:collection
-  // key = NAME, value = map<PURPOSE, Rel>
+  // Use ordered dict since the requests:
+  //
+  // https://openusd.org/release/wp_usdshade.html#basic-proposal-for-collection-based-assignment
+  //  
+  // `...with the earliest ordered binding relationship the strongest`
+  //
+  // key = PURPOSE, value = map<NAME, Rel>
   // TODO: Use multi-index map
-  std::map<std::string, std::map<std::string, Relationship>> _materialBindingCollectionMap;
+  std::map<std::string, ordered_dict<Relationship>> _materialBindingCollectionMap;
 };
 
 // TODO: Inherit from Prim?

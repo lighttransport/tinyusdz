@@ -2,6 +2,7 @@
 #include "prim-apply.hh"
 
 #include "common-macros.inc"
+#include "tiny-format.hh"
 #include "prim-types.hh"
 #include "usdShade.hh"
 #include "pprinter.hh"
@@ -183,8 +184,6 @@ bool GetDirectlyBoundMaterial(
     PUSH_ERROR_AND_RETURN("`material` ptr is null.");
   }
 
-  (void)err;
-
   auto apply_fun = [&](const Stage &stage, const MaterialBinding *mb) -> bool {
 
     Relationship mat_rel;
@@ -193,13 +192,18 @@ bool GetDirectlyBoundMaterial(
     }
 
     if (!GetSinglePath(mat_rel, materialPath)) {
-      return false;
+      std::string binding_name = kMaterialBinding;
+      if (!purpose.empty()) {
+        binding_name += ":" + purpose;
+      }
+      PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be single targetPath", binding_name));
     }
 
     const Prim *p;
     if (stage.find_prim_at_path(*materialPath, p, err)) {
-      if (p->is<Material>() && (material != nullptr)) {
+      if (p->is<Material>()) {
         (*material) = p->as<Material>();
+        return true;
       } else {
         (*material) = nullptr;
       }
@@ -351,7 +355,7 @@ bool GetBoundMaterial(
 bool GetBoundMaterial(
   const Stage &_stage,
   const Path &abs_path,
-  const std::string &suffix,
+  const std::string &materialPurpose,
   tinyusdz::Path *materialPath,
   const Material **material,
   std::string *err) {
@@ -360,15 +364,9 @@ bool GetBoundMaterial(
     return false;
   }
 
-  const Prim *prim{nullptr};
-  bool ret = _stage.find_prim_at_path(abs_path, prim, err);
-
-  if (!ret) {
-    return false;
-  }
-
-  auto apply_fun = [&](const Stage &stage, const GPrim *gprim) -> bool {
-    if (suffix.empty()) {
+  auto apply_fun = [&](const Stage &stage, const MaterialBinding *mb) -> bool {
+#if 0
+    if (purpose.empty()) {
       if (gprim->materialBinding.has_value()) {
         if (GetSinglePath(gprim->materialBinding.value(), materialPath)) {
           DCOUT("GPrim has materialBinding.");
@@ -423,46 +421,85 @@ bool GetBoundMaterial(
     } else {
       return false;
     }
-
+#endif
+    // TODO
     return false;
   };
 
-  ret = ApplyToGPrim(_stage, *prim, apply_fun);
-  if (ret) {
-    return true;
+  std::vector<value::token> purposes;
+  if (materialPurpose.empty()) {
+    purposes.push_back(value::token("")); // all-purpose
+  } else {
+    purposes.push_back(value::token(materialPurpose));
+    purposes.push_back(value::token("")); // all-purpose
   }
 
-  // Search parent Prim's materialBinding.
-  Path currentPath = abs_path;
+  // for purpose : purposes:
+  //
+  //   boundMaterial = None
+  //
+  //   for p = prim, p != Root, p = p.GetParent():
+  //     
+  //     if DirectBindingStrongerThanDescendants(p, purpose) or not boundMaterial:
+  //
+  //       if dicrectBind = GetDirectlyBoundMaterial(p, purpose):
+  //
+  //         boundMaterial = directBound
+  //
+  //   for collBinding : GetCollectionMaterialBindings(p, purpose):  
+  //
+  //     if (collBinding.GetCollection().Contains(prim) and
+  //         collBinding.IsStrongerThanDescendants() or not boundMaterial):
+  //
+  //       boundMaterial = collBinding.GetMaterial()
+  //       break
+  //
+  //
+  //   if boundMaterial:
+  //     return boundMaterial
+  //
+  //
+  // return False(or return default material)
 
-  int depth = 0;
-  while (depth < 1024*1024*128) { // to avoid infinite loop.
-    Path parentPath = currentPath.get_parent_prim_path();
-    DCOUT("search parent: " << parentPath.full_path_name());
+  for (const auto &purpose : purposes) {
 
-    if (parentPath.is_valid() && (!parentPath.is_root_path())) {
-      ret = _stage.find_prim_at_path(parentPath, prim, err);
+    Path currentPath = abs_path;
+    const Material *boundMateiral{nullptr};
+    
+    uint32_t depth = 0;
+    while (depth < 1024*128) { // to avoid infinite loop.
+
+      if (!currentPath.is_valid() || currentPath.is_root_path()) {
+        break;
+      }
+
+      const Prim *prim{nullptr};
+      bool ret = _stage.find_prim_at_path(currentPath, prim, err);
       if (!ret) {
         return false;
       }
 
-      ret = ApplyToGPrim(_stage, *prim, apply_fun);
-      if (ret) {
-        return true;
+      std::string _err;
+      Path directMaterialPath;
+      const Material *directMaterial{nullptr};
+      bool has_directBound = GetDirectlyBoundMaterial(_stage, *prim, purpose.str(), &directMaterialPath, &directMaterial, &_err);
+
+      if (!has_directBound) {
+        if (_err.size()) {
+          if (err) {
+            (*err) += _err;
+          }
+          return false;
+        }
       }
 
-    } else {
-      return false;
+      Path parentPath = currentPath.get_parent_prim_path();
+      DCOUT("search parent: " << parentPath.full_path_name());
+
+      currentPath = parentPath;
+
+      depth++;
     }
-
-    if (parentPath.is_root_prim()) {
-      // no further parent Prim.
-      return false;
-    }
-
-    currentPath = parentPath;
-
-    depth++;
   }
 
   return false;

@@ -2091,7 +2091,23 @@ bool ReconstructMaterialBindingProperties(
     PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingPreview, mb->materialBindingPreview)
     PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingPreview, mb->materialBindingFull)
     // material:binding:collection
-    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingCollection, mb->materialBindingCollection)
+    if (prop.first == kMaterialBindingCollection) {
+
+      if (table.count(prop.first)) {
+         continue;
+      }
+
+      if (!prop.second.is_relationship()) {
+        PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relationship", prop.first));
+      }
+
+      const Relationship &rel = prop.second.get_relationship();
+
+      mb->set_materialBindingCollection(value::token(""), value::token(""), rel);
+
+      table.insert(prop.first);
+      continue;
+    }
     // material:binding:collection[:PURPOSE]:NAME
     if (startsWith(prop.first, kMaterialBindingCollection + std::string(":"))) {
 
