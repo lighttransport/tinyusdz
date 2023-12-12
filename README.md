@@ -4,6 +4,9 @@
 
 ## Mid-term todo
 
+* Collection API and GeomSubset/Material Binding API support
+  * [ ] https://github.com/syoyo/tinyusdz/issues/108
+  * [ ] https://github.com/syoyo/tinyusdz/issues/103 
 * Experimental composition support https://github.com/syoyo/tinyusdz/issues/25
   * [x] subLayers
   * [x] references
