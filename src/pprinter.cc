@@ -1520,7 +1520,7 @@ std::string print_collection(const Collection *coll, const uint32_t indent) {
       continue;
     }
 
-    std::string prefix = "collection:";
+    std::string prefix = "collection";
     if (name.size()) {
       prefix += ":" + name;
     }

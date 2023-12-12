@@ -49,7 +49,7 @@
 
 namespace tinyusdz {
 
-// Simple Python-like OrderedDict 
+// Simple Python-like OrderedDict
 template <typename T>
 class ordered_dict {
  public:
@@ -105,7 +105,7 @@ class ordered_dict {
 
     return _m[key];
   }
-  
+
 
   void insert(const std::string &key, T &&value) {
     if (_m.count(key)) {
@@ -137,7 +137,7 @@ class ordered_dict {
       return false;
     }
 
-    _keys.erase(_keys.begin() + idx);
+    _keys.erase(_keys.begin() + std::ptrdiff_t(idx));
     _m.erase(key);
 
     return true;
@@ -153,7 +153,7 @@ class ordered_dict {
 
     return true;
   }
-  
+
 
   bool at(const std::string &key, const T *dst) const {
     if (!_m.count(key)) {
@@ -2126,7 +2126,7 @@ struct Attribute {
     attr.variability() = Variability::Uniform;
     return attr;
   }
-  
+
 
   ///
   /// Construct connection attribute.
@@ -3579,13 +3579,13 @@ class Collection
 {
  public:
   const ordered_dict<CollectionInstance> instances() const {
-    return _instances; 
+    return _instances;
   }
 
   bool add_instance(const std::string &name, CollectionInstance &instance) {
     if (_instances.count(name)) {
       return false;
-    } 
+    }
 
     _instances.insert(name, instance);
 
@@ -3883,7 +3883,7 @@ struct Layer {
   mutable std::string _current_working_path;
   mutable std::vector<std::string> _asset_search_paths;
   mutable void *_asset_resolution_userdata{nullptr};
-  
+
 };
 
 
