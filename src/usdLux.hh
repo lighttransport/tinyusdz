@@ -20,7 +20,7 @@ constexpr auto kGeometryLight = "GeometryLight";
 constexpr auto kPortalLight = "PortalLight";
 constexpr auto kPluginLight = "PluginLight";
 
-class Light : public Xformable {
+class Light : public Xformable, public Collection {
 
  public:
   std::string name;
