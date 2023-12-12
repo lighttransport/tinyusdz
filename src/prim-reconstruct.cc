@@ -1517,6 +1517,17 @@ nonstd::expected<T, std::string> EnumHandler(
   } \
 }
 
+#define PARSE_TYPED_ATTRIBUTE_NOCONTINUE(__table, __prop, __name, __klass, __target) { \
+  ParseResult ret = ParseTypedAttribute(__table, __prop.first, __prop.second, __name, __target); \
+  if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
+    /* do nothing */ \
+  } else if (ret.code == ParseResult::ResultCode::Unmatched) { \
+    /* go next */ \
+  } else { \
+    PUSH_ERROR_AND_RETURN(fmt::format("Parsing attribute `{}` failed. Error: {}", __name, ret.err)); \
+  } \
+}
+
 #define PARSE_EXTENT_ATTRIBUTE(__table, __prop, __name, __klass, __target) { \
   ParseResult ret = ParseExtentAttribute(__table, __prop.first, __prop.second, __name, __target); \
   if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
@@ -2215,20 +2226,28 @@ bool ReconstructCollectionProperties(
 
         CollectionInstance &coll_instance = coll->get_or_add_instance(instance_name);
         coll_instance.includes = prop.second.get_relationship();
+        table.insert(prop.first);
 
       } else if (names[1] == "expansionRule") {
-        
+
         CollectionInstance::ExpansionRule expansionRule;
 
-        PARSE_ENUM_PROPETY(table, prop, "expansionRule", ExpansionRuleEnumHandler, CollectionInstance,
+        PARSE_ENUM_PROPETY(table, prop, prop.first, ExpansionRuleEnumHandler, CollectionInstance,
                        expansionRule, strict_allowedToken_check)
 
-        if (table.count(prop.first)) { // parsed correctly
+        if (table.count(prop.first)) {
           CollectionInstance &coll_instance = coll->get_or_add_instance(instance_name);
           coll_instance.expansionRule = expansionRule;
         }
       } else if (names[1] == "includeRoot") {
-    
+
+        TypedAttributeWithFallback<Animatable<bool>> includeRoot{false};
+        PARSE_TYPED_ATTRIBUTE_NOCONTINUE(table, prop, prop.first, CollectionInstance, includeRoot)
+
+        if (table.count(prop.first)) {
+          CollectionInstance &coll_instance = coll->get_or_add_instance(instance_name);
+          coll_instance.includeRoot = includeRoot;
+        }
       } else if (names[1] == "excludes") {
 
         if (!prop.second.is_relationship()) {
@@ -2237,25 +2256,9 @@ bool ReconstructCollectionProperties(
 
         CollectionInstance &coll_instance = coll->get_or_add_instance(instance_name);
         coll_instance.excludes = prop.second.get_relationship();
+        table.insert(prop.first);
 
       }
-
-    }
-
-
-
-      const Relationship &rel = prop.second.get_relationship();
-
-      mb->set_materialBindingCollection(value::token(collection_name), mat_purpose, rel);
-
-      table.insert(prop.first);
-      continue;
-    }
-
-      mb->set_materialBinding(rel, mat_purpose);
-
-      table.insert(prop.first);
-      continue;
     }
   }
 
@@ -2278,6 +2281,11 @@ bool ReconstructGPrimProperties(
   }
 
   if (!prim::ReconstructMaterialBindingProperties(table, properties, gprim, err)) {
+    return false;
+  }
+
+  if (!prim::ReconstructCollectionProperties(
+    table, properties, gprim, warn, err, strict_allowedToken_check)) {
     return false;
   }
 
@@ -3401,6 +3409,11 @@ bool ReconstructPrim<GeomSubset>(
   std::set<std::string> table;
 
   if (!prim::ReconstructMaterialBindingProperties(table, properties, subset, err)) {
+    return false;
+  }
+
+  if (!prim::ReconstructCollectionProperties(
+    table, properties, subset, warn, err, options.strict_allowedToken_check)) {
     return false;
   }
 
