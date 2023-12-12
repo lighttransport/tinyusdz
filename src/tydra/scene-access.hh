@@ -483,7 +483,7 @@ class CollectionMembershipQuery
 ///
 /// @returns CollectionMembershipQuery object. When encountered an error, CollectionMembershipQuery contains empty info(i.e, all query will fail) 
 ///
-static CollectionMembershipQuery BuildCollectionMembershipQuery(
+CollectionMembershipQuery BuildCollectionMembershipQuery(
   const Stage &stage, const CollectionInstance &seedCollectionInstance);
 
 bool IsPathIncluded(const CollectionMembershipQuery &query, const Stage &stage, const Path &abs_path, const CollectionInstance::ExpansionRule expansionRule = CollectionInstance::ExpansionRule::ExpandPrims);
