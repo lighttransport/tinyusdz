@@ -495,6 +495,9 @@ DEFINE_TYPE_TRAIT(UsdPrimvarReader_matrix, kUsdPrimvarReader_matrix,
 DEFINE_TYPE_TRAIT(UsdTransform2d, kUsdTransform2d,
                   TYPE_ID_IMAGING_TRANSFORM_2D, 1);
 
+DEFINE_TYPE_TRAIT(MaterialBinding, "MaterialBindingAPI",
+                  TYPE_ID_MATERIAL_BINDING, 1);
+
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT
 
