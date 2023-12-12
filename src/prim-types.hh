@@ -49,6 +49,147 @@
 
 namespace tinyusdz {
 
+// Simple Python-like OrderedDict 
+template <typename T>
+class ordered_dict {
+ public:
+
+  bool at(const size_t idx, T *dst) const {
+    if (idx >= _keys.size()) {
+      return false;
+    }
+
+    if (!_m.count(_keys[idx])) {
+      // This should not happen though.
+      return false;
+    }
+
+    (*dst) = _m.at(_keys[idx]);
+
+    return true;
+  }
+
+  bool at(const size_t idx, const T **dst) const {
+    if (idx >= _keys.size()) {
+      return false;
+    }
+
+    if (!_m.count(_keys[idx])) {
+      // This should not happen though.
+      return false;
+    }
+
+    (*dst) = &(_m.at(_keys[idx]));
+
+    return true;
+  }
+
+  bool count(const std::string &key) const {
+    return _m.count(key);
+  }
+
+  void insert(const std::string &key, const T &value) {
+    if (_m.count(key)) {
+      // overwrite existing value
+    } else {
+      _keys.push_back(key);
+    }
+
+    _m[key] = value;
+  }
+
+  T &get_or_add(const std::string &key) {
+    if (!_m.count(key)) {
+      _keys.push_back(key);
+    }
+
+    return _m[key];
+  }
+  
+
+  void insert(const std::string &key, T &&value) {
+    if (_m.count(key)) {
+      // overwrite existing value
+    } else {
+      _keys.push_back(key);
+    }
+
+    _m[key] = std::move(value);
+  }
+
+  bool erase(const std::string &key) {
+
+    if (!_m.count(key)) {
+      return false;
+    }
+
+    // linear search
+    bool erased = false;
+    size_t idx = 0;
+    for (size_t i = 0; i < _keys.size(); i++) {
+      if (key == _keys[i]) {
+        idx = i;
+        erased = true;
+      }
+    }
+
+    if (!erased) {
+      return false;
+    }
+
+    _keys.erase(_keys.begin() + idx);
+    _m.erase(key);
+
+    return true;
+  }
+
+  bool at(const std::string &key, T **dst) {
+    if (!_m.count(key)) {
+      // This should not happen though.
+      return false;
+    }
+
+    (*dst) = &_m.at(key);
+
+    return true;
+  }
+  
+
+  bool at(const std::string &key, const T *dst) const {
+    if (!_m.count(key)) {
+      // This should not happen though.
+      return false;
+    }
+
+    (*dst) = _m.at(key);
+
+    return true;
+  }
+
+  bool at(const std::string &key, const T **dst) const {
+    if (!_m.count(key)) {
+      // This should not happen though.
+      return false;
+    }
+
+    (*dst) = &_m.at(key);
+
+    return true;
+  }
+
+  const std::vector<std::string> &keys() const {
+    return _keys;
+  }
+
+  size_t size() const { return _m.size(); }
+
+  // No operator[] for safety.
+
+ private:
+  std::vector<std::string> _keys;
+  std::map<std::string, T> _m;
+};
+
 // SpecType enum must be same order with pxrUSD's SdfSpecType(since enum value
 // is stored in Crate directly)
 enum class SpecType {
@@ -754,6 +895,7 @@ struct APISchemas {
     MaterialBindingAPI,  // "MaterialBindingAPI"
     SkelBindingAPI,      // "SkelBindingAPI"
     ShapingAPI,         // "ShapingAPI"(usdLux)
+    CollectionAPI,      // "CollectionAPI"
     // USDZ AR extensions
     Preliminary_AnchoringAPI,
     Preliminary_PhysicsColliderAPI,
@@ -3411,6 +3553,69 @@ struct LayerMetas {
   std::vector<value::token> primChildren;
 };
 
+// Collection API
+// https://openusd.org/release/api/class_usd_collection_a_p_i.html
+
+constexpr auto kExpandPrims = "expandPrims";
+constexpr auto kExplicitOnly = "explicitOnly";
+constexpr auto kExpandPrimsAndProperties = "expandPrimsAndProperties";
+
+struct CollectionInstance {
+
+  enum class ExpansionRule {
+    ExpandPrims, // "expandPrims" (default)
+    ExplicitOnly, // "explicitOnly"
+    ExpandPrimsAndProperties, // "expandPrimsAndProperties"
+  };
+
+  TypedAttributeWithFallback<ExpansionRule> expansionRule{ExpansionRule::ExpandPrims}; // uniform token collection:collectionName:expansionRule
+  TypedAttributeWithFallback<Animatable<bool>> includeRoot{false}; // bool collection:<collectionName>:includeRoot
+  nonstd::optional<Relationship> includes; // rel collection:<collectionName>:includes
+  nonstd::optional<Relationship> excludes; // rel collection:<collectionName>:excludes
+
+};
+
+class Collection
+{
+ public:
+  const ordered_dict<CollectionInstance> instances() const {
+    return _instances; 
+  }
+
+  bool add_instance(const std::string &name, CollectionInstance &instance) {
+    if (_instances.count(name)) {
+      return false;
+    } 
+
+    _instances.insert(name, instance);
+
+    return true;
+  }
+
+  bool get_instance(const std::string &name, const CollectionInstance **coll) const {
+    if (!coll) {
+      return false;
+    }
+
+    return _instances.at(name, coll);
+  }
+
+  CollectionInstance &get_or_add_instance(const std::string &name) {
+    return _instances.get_or_add(name);
+  }
+
+  bool has_instance(const std::string &name) const {
+    return _instances.count(name);
+  }
+
+  bool del_instance(const std::string &name) {
+    return _instances.erase(name);
+  }
+
+ private:
+  ordered_dict<CollectionInstance> _instances;
+};
+
 // Similar to SdfLayer or Stage
 // It is basically hold the list of PrimSpec and Layer metadatum.
 struct Layer {
@@ -3723,6 +3928,9 @@ DEFINE_TYPE_TRAIT(std::vector<value::token>, "token[]", TYPE_ID_TOKEN_VECTOR,
                   1);
 
 DEFINE_TYPE_TRAIT(value::TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
+
+DEFINE_TYPE_TRAIT(Collection, "Collection", TYPE_ID_COLLECTION, 1);
+DEFINE_TYPE_TRAIT(CollectionInstance, "CollectionInstance", TYPE_ID_COLLECTION_INSTANCE, 1);
 
 DEFINE_TYPE_TRAIT(Model, "Model", TYPE_ID_MODEL, 1);
 DEFINE_TYPE_TRAIT(Scope, "Scope", TYPE_ID_SCOPE, 1);

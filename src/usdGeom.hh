@@ -248,7 +248,7 @@ class GeomPrimvar {
 //
 // TODO: inherit UsdShagePrim?
 
-struct GPrim : Xformable, MaterialBinding {
+struct GPrim : Xformable, MaterialBinding, Collection {
   std::string name;
   Specifier spec{Specifier::Def};
 
@@ -551,7 +551,7 @@ struct Xform : GPrim {
 };
 
 // GeomSubset
-struct GeomSubset : public MaterialBinding {
+struct GeomSubset : public MaterialBinding, Collection {
   enum class ElementType { Face };
 
   enum class FamilyType {

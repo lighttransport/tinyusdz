@@ -2086,6 +2086,10 @@ bool ReconstructMaterialBindingProperties(
   std::string *err)
 {
 
+  if (!mb) {
+    return false;
+  }
+
   for (const auto &prop : properties) {
     PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBinding, mb->materialBinding)
     PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingPreview, mb->materialBindingPreview)
@@ -2159,6 +2163,104 @@ bool ReconstructMaterialBindingProperties(
   return true;
 }
 
+bool ReconstructCollectionProperties(
+  std::set<std::string> &table, /* inout */
+  const std::map<std::string, Property> &properties,
+  Collection *coll, /* inout */
+  std::string *warn,
+  std::string *err,
+  bool strict_allowedToken_check)
+{
+  constexpr auto kCollectionPrefix = "collection:";
+
+  auto ExpansionRuleEnumHandler = [](const std::string &tok) {
+    using EnumTy = std::pair<CollectionInstance::ExpansionRule, const char *>;
+    const std::vector<EnumTy> enums = {
+        std::make_pair(CollectionInstance::ExpansionRule::ExplicitOnly, kExplicitOnly),
+        std::make_pair(CollectionInstance::ExpansionRule::ExpandPrims, kExpandPrims),
+        std::make_pair(CollectionInstance::ExpansionRule::ExpandPrimsAndProperties, kExpandPrimsAndProperties),
+    };
+    return EnumHandler<CollectionInstance::ExpansionRule>("expansionRule", tok, enums);
+  };
+
+  if (!coll) {
+    return false;
+  }
+
+  for (const auto &prop : properties) {
+    if (startsWith(prop.first, kCollectionPrefix)) {
+      if (table.count(prop.first)) {
+         continue;
+      }
+
+      std::string suffix = removePrefix(prop.first, kCollectionPrefix);
+      std::vector<std::string> names = split(suffix, ":");
+      if (names.size() != 2) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Invalid collection property name. Must be 'collection:INSTANCE_NAME:<prop_name>' but got '{}'",  prop.first));
+      }
+      if (names[0].empty()) {
+        PUSH_ERROR_AND_RETURN("INSTANCE_NAME is empty for collection property name");
+      }
+      if (names[1].empty()) {
+        PUSH_ERROR_AND_RETURN("Collection property name is empty");
+      }
+
+      std::string instance_name = names[0];
+
+      if (names[1] == "includes") {
+
+        if (!prop.second.is_relationship()) {
+          PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relationship", prop.first));
+        }
+
+        CollectionInstance &coll_instance = coll->get_or_add_instance(instance_name);
+        coll_instance.includes = prop.second.get_relationship();
+
+      } else if (names[1] == "expansionRule") {
+        
+        CollectionInstance::ExpansionRule expansionRule;
+
+        PARSE_ENUM_PROPETY(table, prop, "expansionRule", ExpansionRuleEnumHandler, CollectionInstance,
+                       expansionRule, strict_allowedToken_check)
+
+        if (table.count(prop.first)) { // parsed correctly
+          CollectionInstance &coll_instance = coll->get_or_add_instance(instance_name);
+          coll_instance.expansionRule = expansionRule;
+        }
+      } else if (names[1] == "includeRoot") {
+    
+      } else if (names[1] == "excludes") {
+
+        if (!prop.second.is_relationship()) {
+          PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relationship", prop.first));
+        }
+
+        CollectionInstance &coll_instance = coll->get_or_add_instance(instance_name);
+        coll_instance.excludes = prop.second.get_relationship();
+
+      }
+
+    }
+
+
+
+      const Relationship &rel = prop.second.get_relationship();
+
+      mb->set_materialBindingCollection(value::token(collection_name), mat_purpose, rel);
+
+      table.insert(prop.first);
+      continue;
+    }
+
+      mb->set_materialBinding(rel, mat_purpose);
+
+      table.insert(prop.first);
+      continue;
+    }
+  }
+
+  return true;
+}
 // xformOps and built-in props
 bool ReconstructGPrimProperties(
   const Specifier &spec,
