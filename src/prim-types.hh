@@ -2662,9 +2662,72 @@ struct VariantSetSpec
   std::map<std::string, PrimSpec> variantSet;
 };
 
+// Collection API
+// https://openusd.org/release/api/class_usd_collection_a_p_i.html
+
+constexpr auto kExpandPrims = "expandPrims";
+constexpr auto kExplicitOnly = "explicitOnly";
+constexpr auto kExpandPrimsAndProperties = "expandPrimsAndProperties";
+
+struct CollectionInstance {
+
+  enum class ExpansionRule {
+    ExpandPrims, // "expandPrims" (default)
+    ExplicitOnly, // "explicitOnly"
+    ExpandPrimsAndProperties, // "expandPrimsAndProperties"
+  };
+
+  TypedAttributeWithFallback<ExpansionRule> expansionRule{ExpansionRule::ExpandPrims}; // uniform token collection:collectionName:expansionRule
+  TypedAttributeWithFallback<Animatable<bool>> includeRoot{false}; // bool collection:<collectionName>:includeRoot
+  nonstd::optional<Relationship> includes; // rel collection:<collectionName>:includes
+  nonstd::optional<Relationship> excludes; // rel collection:<collectionName>:excludes
+
+};
+
+class Collection
+{
+ public:
+  const ordered_dict<CollectionInstance> instances() const {
+    return _instances;
+  }
+
+  bool add_instance(const std::string &name, CollectionInstance &instance) {
+    if (_instances.count(name)) {
+      return false;
+    }
+
+    _instances.insert(name, instance);
+
+    return true;
+  }
+
+  bool get_instance(const std::string &name, const CollectionInstance **coll) const {
+    if (!coll) {
+      return false;
+    }
+
+    return _instances.at(name, coll);
+  }
+
+  CollectionInstance &get_or_add_instance(const std::string &name) {
+    return _instances.get_or_add(name);
+  }
+
+  bool has_instance(const std::string &name) const {
+    return _instances.count(name);
+  }
+
+  bool del_instance(const std::string &name) {
+    return _instances.erase(name);
+  }
+
+ private:
+  ordered_dict<CollectionInstance> _instances;
+};
+
 // Generic primspec container.
 // Unknown or unsupported Prim type are also reprenseted as Model for now.
-struct Model {
+struct Model : Collection {
   std::string name;
 
   std::string prim_type_name;  // e.g. "" for `def "bora" {}`, "UnknownPrim" for
@@ -2704,16 +2767,6 @@ struct Klass {
   std::vector<std::pair<ListEditQual, Reference>> references;
 
   std::map<std::string, Property> props;
-};
-#endif
-
-#if 0
-struct MaterialBindingAPI {
-  Path binding;            // rel material:binding
-  Path bindingCollection;  // rel material:binding:collection
-  Path bindingPreview;     // rel material:binding:preview
-
-  // TODO: allPurpose, preview, ...
 };
 #endif
 
@@ -2845,7 +2898,7 @@ struct Volume {
 // `Scope` is uncommon in graphics community, its something like `Group`.
 // From USD doc: Scope is the simplest grouping primitive, and does not carry
 // the baggage of transformability.
-struct Scope {
+struct Scope : Collection {
   std::string name;
   Specifier spec{Specifier::Def};
 
@@ -3553,68 +3606,6 @@ struct LayerMetas {
   std::vector<value::token> primChildren;
 };
 
-// Collection API
-// https://openusd.org/release/api/class_usd_collection_a_p_i.html
-
-constexpr auto kExpandPrims = "expandPrims";
-constexpr auto kExplicitOnly = "explicitOnly";
-constexpr auto kExpandPrimsAndProperties = "expandPrimsAndProperties";
-
-struct CollectionInstance {
-
-  enum class ExpansionRule {
-    ExpandPrims, // "expandPrims" (default)
-    ExplicitOnly, // "explicitOnly"
-    ExpandPrimsAndProperties, // "expandPrimsAndProperties"
-  };
-
-  TypedAttributeWithFallback<ExpansionRule> expansionRule{ExpansionRule::ExpandPrims}; // uniform token collection:collectionName:expansionRule
-  TypedAttributeWithFallback<Animatable<bool>> includeRoot{false}; // bool collection:<collectionName>:includeRoot
-  nonstd::optional<Relationship> includes; // rel collection:<collectionName>:includes
-  nonstd::optional<Relationship> excludes; // rel collection:<collectionName>:excludes
-
-};
-
-class Collection
-{
- public:
-  const ordered_dict<CollectionInstance> instances() const {
-    return _instances;
-  }
-
-  bool add_instance(const std::string &name, CollectionInstance &instance) {
-    if (_instances.count(name)) {
-      return false;
-    }
-
-    _instances.insert(name, instance);
-
-    return true;
-  }
-
-  bool get_instance(const std::string &name, const CollectionInstance **coll) const {
-    if (!coll) {
-      return false;
-    }
-
-    return _instances.at(name, coll);
-  }
-
-  CollectionInstance &get_or_add_instance(const std::string &name) {
-    return _instances.get_or_add(name);
-  }
-
-  bool has_instance(const std::string &name) const {
-    return _instances.count(name);
-  }
-
-  bool del_instance(const std::string &name) {
-    return _instances.erase(name);
-  }
-
- private:
-  ordered_dict<CollectionInstance> _instances;
-};
 
 // Similar to SdfLayer or Stage
 // It is basically hold the list of PrimSpec and Layer metadatum.

@@ -453,6 +453,43 @@ bool ShaderToPrimSpec(const UsdTransform2d &node, PrimSpec &ps, std::string *war
 template<typename T>
 bool ShaderToPrimSpec(const UsdPrimvarReader<T> &node, PrimSpec &ps, std::string *warn, std::string *err);
 
+//
+// Utilities and Query for CollectionAPI
+// 
+
+///
+/// Get `Collection` object(properties defined in Collection API) from a given Prim.
+///
+/// @param[in] prim Prim
+/// @param[out] Pointer to the pointer of found Collection.
+/// @return true upon success.
+///
+bool GetCollection(const Prim &prim, const Collection **collection);
+
+class CollectionMembershipQuery
+{
+ public:
+  
+ private:
+  std::map<Path, CollectionInstance::ExpansionRule> _expansionRuleMap;
+
+};
+
+///
+/// Build Collection Membership
+///
+/// It traverse collection paths starting from `seedCollectionInstance` in the Stage.
+/// Note: No circular referencing path allowed.
+///
+/// @returns CollectionMembershipQuery object. When encountered an error, CollectionMembershipQuery contains empty info(i.e, all query will fail) 
+///
+static CollectionMembershipQuery BuildCollectionMembershipQuery(
+  const Stage &stage, const CollectionInstance &seedCollectionInstance);
+
+bool IsPathIncluded(const CollectionMembershipQuery &query, const Stage &stage, const Path &abs_path, const CollectionInstance::ExpansionRule expansionRule = CollectionInstance::ExpansionRule::ExpandPrims);
+
+// TODO: Layer version
+// bool IsPathIncluded(const Layer &layer, const Path &abs_path, const CollectionInstance::ExpansionRule expansionRule = CollectionInstance::ExpansionRule::ExpandPrims);
 
 //
 // For USDZ AR extensions
