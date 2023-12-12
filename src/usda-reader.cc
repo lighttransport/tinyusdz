@@ -723,6 +723,7 @@ class USDAReader::Impl {
       using EnumTy = std::pair<APISchemas::APIName, const char *>;
       const std::vector<EnumTy> enums = {
           std::make_pair(APISchemas::APIName::SkelBindingAPI, "SkelBindingAPI"),
+          std::make_pair(APISchemas::APIName::CollectionAPI, "CollectionAPI"),
           std::make_pair(APISchemas::APIName::MaterialBindingAPI,
                          "MaterialBindingAPI"),
           std::make_pair(APISchemas::APIName::ShapingAPI,
