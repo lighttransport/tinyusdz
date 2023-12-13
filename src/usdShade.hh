@@ -52,6 +52,11 @@ std::string to_string(const MaterialBindingStrength strength);
 
 class MaterialBinding {
  public:
+
+  static value::token kAllPurpose() {
+    return value::token("");
+  }
+
   //
   // NOTE on material binding.
   // https://openusd.org/release/wp_usdshade.html
@@ -70,6 +75,10 @@ class MaterialBinding {
   nonstd::optional<Relationship> materialBindingPreview; // material:binding:preview
   nonstd::optional<Relationship> materialBindingFull; // material:binding:full
 
+  value::token get_materialBindingStrength(const value::token &purpose);
+  value::token get_materialBindingStrengthCollection(const value::token &collection_name, const value::token &purpose);
+
+
   bool has_materialBinding() const {
     return materialBinding.has_value();
   }
@@ -83,7 +92,9 @@ class MaterialBinding {
   }
 
   bool has_materialBinding(const value::token &mat_purpose) const {
-    if (mat_purpose.str() == "full") {
+    if (mat_purpose.str() == kAllPurpose().str()) {
+      return has_materialBinding();
+    } else if (mat_purpose.str() == "full") {
       return has_materialBindingFull();
     } else if (mat_purpose.str() == "preview") {
       return has_materialBindingPreview();
