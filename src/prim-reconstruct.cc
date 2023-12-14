@@ -3401,6 +3401,7 @@ bool ReconstructPrim<GeomSubset>(
     using EnumTy = std::pair<GeomSubset::ElementType, const char *>;
     const std::vector<EnumTy> enums = {
         std::make_pair(GeomSubset::ElementType::Face, "face"),
+        std::make_pair(GeomSubset::ElementType::Point, "point"),
     };
     return EnumHandler<GeomSubset::ElementType>("elementType", tok,
                                                     enums);

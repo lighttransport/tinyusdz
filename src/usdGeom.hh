@@ -552,7 +552,7 @@ struct Xform : GPrim {
 
 // GeomSubset
 struct GeomSubset : public MaterialBinding, Collection {
-  enum class ElementType { Face };
+  enum class ElementType { Face, Point };
 
   enum class FamilyType {
     Partition,       // 'partition'
@@ -565,7 +565,7 @@ struct GeomSubset : public MaterialBinding, Collection {
 
   int64_t parent_id{-1};  // Index to parent node
 
-  TypedAttributeWithFallback<ElementType> elementType{ElementType::Face};  // must be face for now
+  TypedAttributeWithFallback<ElementType> elementType{ElementType::Face};
   TypedAttribute<value::token> familyName;  // "uniform token familyName"
 
   // FamilyType attribute is described in parent GeomMesh's `subsetFamily:<FAMILYNAME>:familyType` attribute.
@@ -575,10 +575,13 @@ struct GeomSubset : public MaterialBinding, Collection {
     if (str == "face") {
       elementType = ElementType::Face;
       return true;
+    } else if (str == "point") {
+      elementType = ElementType::Point;
+      return true;
     }
 
     return nonstd::make_unexpected(
-        "Only `face` is supported for `elementType`, but `" + str +
+        "`face` or `point` is supported for `elementType`, but `" + str +
         "` specified");
   }
 
