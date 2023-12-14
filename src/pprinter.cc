@@ -2050,6 +2050,10 @@ std::string to_string(tinyusdz::GeomSubset::ElementType v) {
       s = "face";
       break;
     }
+    case tinyusdz::GeomSubset::ElementType::Point: {
+      s = "point";
+      break;
+    }
   }
 
   return s;
