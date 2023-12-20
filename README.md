@@ -1,7 +1,12 @@
 # Tiny USDZ/USDA/USDC library in C++14
 
-`TinyUSDZ` is secure, portable and dependency-free(depends only on C++ STL. Other 3rd-party libraries included. Yes, you don't need pxrUSD library!) USDZ/USDC/USDA library written in C++14.
+`TinyUSDZ` is secure, portable and dependency-free(depends only on C++ STL. Other 3rd-party libraries included. Yes, you don't need pxrUSD/OpenUSD library!) USDZ/USDC/USDA library written in C++14.
 
+## High priority
+
+* Tydra: Handy data structure converter for rendering https://github.com/syoyo/tinyusdz/issues/31
+  * [ ] USD to RenderScene(OpenGL/Vulkan) conversion https://github.com/syoyo/tinyusdz/issues/109
+ 
 ## Mid-term todo
 
 * Collection API and GeomSubset/Material Binding API support
@@ -18,7 +23,7 @@
 * Support reading & compose some production USD scenes
   * [ ] Moana island v2.1 https://github.com/syoyo/tinyusdz/issues/90
   * [ ] ALAB USD production scene https://github.com/syoyo/tinyusdz/issues/91
-* Tydra: Handy data structure converter for rendering https://github.com/syoyo/tinyusdz/issues/31 
+ 
 * MaterialX https://github.com/syoyo/tinyusdz/issues/86
   * USD + MateriralX + PBR rendering example using https://github.com/lighttransport/pbrlab
 * Improve interoperability with Blender USD export/import https://github.com/syoyo/tinyusdz/issues/98
