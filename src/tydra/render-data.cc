@@ -7,6 +7,7 @@
 //
 #include "asset-resolution.hh"
 #include "image-loader.hh"
+#include "image-util.hh"
 #include "pprinter.hh"
 #include "prim-types.hh"
 #include "str-util.hh"
@@ -15,7 +16,6 @@
 #include "usdGeom.hh"
 #include "usdShade.hh"
 #include "value-pprint.hh"
-#include "image-util.hh"
 
 #if defined(TINYUSDZ_WITH_COLORIO)
 #include "external/tiny-color-io.h"
@@ -43,6 +43,12 @@
 #include "tydra/scene-access.hh"
 #include "tydra/shader-network.hh"
 
+#define SET_ERROR_AND_RETURN(msg) \
+    if (err) {                      \
+      (*err) = (msg);               \
+    }                               \
+    return false
+
 namespace tinyusdz {
 
 namespace tydra {
@@ -65,16 +71,17 @@ inline T Get(const nonstd::optional<T> &nv, const T &default_value) {
 //
 template <typename T>
 nonstd::expected<std::vector<T>, std::string> UniformToFaceVarying(
-  const std::vector<T> &inputs,
-  const std::vector<uint32_t> &faceVertexCounts,
-  const std::vector<uint32_t> &faceVertexIndices)
-{
+    const std::vector<T> &inputs, const std::vector<uint32_t> &faceVertexCounts,
+    const std::vector<uint32_t> &faceVertexIndices) {
   (void)faceVertexIndices;
 
   std::vector<T> dst;
 
   if (inputs.size() == faceVertexCounts.size()) {
-    return nonstd::make_unexpected(fmt::format("The number of inputs {} must be the same with faceVertexCounts.size() {}", inputs.size(), faceVertexCounts.size()));
+    return nonstd::make_unexpected(
+        fmt::format("The number of inputs {} must be the same with "
+                    "faceVertexCounts.size() {}",
+                    inputs.size(), faceVertexCounts.size()));
   }
 
   for (size_t i = 0; i < faceVertexCounts.size(); i++) {
@@ -91,10 +98,8 @@ nonstd::expected<std::vector<T>, std::string> UniformToFaceVarying(
 
 template <typename T>
 nonstd::expected<std::vector<T>, std::string> VertexToFaceVarying(
-  const std::vector<T> &inputs,
-  const std::vector<uint32_t> &faceVertexCounts,
-  const std::vector<uint32_t> &faceVertexIndices)
-{
+    const std::vector<T> &inputs, const std::vector<uint32_t> &faceVertexCounts,
+    const std::vector<uint32_t> &faceVertexIndices) {
   std::vector<T> dst;
 
   size_t face_offset{0};
@@ -105,13 +110,16 @@ nonstd::expected<std::vector<T>, std::string> VertexToFaceVarying(
       size_t idx = k + face_offset;
 
       if (idx >= faceVertexIndices.size()) {
-        return nonstd::make_unexpected(fmt::format("faeVertexIndex out-of-range at faceVertexCount[{}]", i));
+        return nonstd::make_unexpected(fmt::format(
+            "faeVertexIndex out-of-range at faceVertexCount[{}]", i));
       }
 
       size_t v_idx = faceVertexIndices[idx];
 
       if (v_idx >= inputs.size()) {
-        return nonstd::make_unexpected(fmt::format("faeVertexIndices[{}] {} exceeds input array size {}", idx, v_idx, inputs.size()));
+        return nonstd::make_unexpected(
+            fmt::format("faeVertexIndices[{}] {} exceeds input array size {}",
+                        idx, v_idx, inputs.size()));
       }
 
       dst.emplace_back(inputs[v_idx]);
@@ -139,7 +147,8 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
   }
 
   if (!primvar.has_value()) {
-    return nonstd::make_unexpected("No value exist for primvars:" + name + "\n");
+    return nonstd::make_unexpected("No value exist for primvars:" + name +
+                                   "\n");
   }
 
   if (primvar.get_type_id() !=
@@ -175,7 +184,7 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
   return std::move(vattr);
 }
 
-#if 0 // not used at the moment.
+#if 0  // not used at the moment.
 ///
 /// For GeomSubset. Build offset table to corresponding array index in
 /// mesh.faceVertexIndices. No need to use this function for triangulated mesh,
@@ -195,12 +204,128 @@ bool BuildFaceVertexIndexOffsets(const std::vector<uint32_t> &faceVertexCounts,
 }
 #endif
 
+
+bool ToVertexAttributeData(const GeomPrimvar &primvar, VertexAttribute *dst, std::string *err)
+{
+  size_t elementSize = primvar.get_elementSize();
+  if (elementSize == 0) {
+    SET_ERROR_AND_RETURN(fmt::format("elementSize is zero for primvar: {}", primvar.name()));
+  }
+
+  VertexAttribute vattr;
+
+  const tinyusdz::Attribute &attr = primvar.get_attribute();
+
+#define TO_TYPED_VALUE(__ty, __va_ty) \
+  if (attr.type_id() == value::TypeTraits<__ty>::type_id()) { \
+    if (sizeof(__ty) != VertexAttributeFormatSize(__va_ty)) { \
+      SET_ERROR_AND_RETURN("Internal error. type size mismatch.\n"); \
+    } \
+    __ty value; \
+    if (!primvar.get_value(&value, err)) { \
+      return false; \
+    } \
+    vattr.format = __va_ty; \
+  } else if (attr.type_id() == (value::TypeTraits<__ty>::type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { \
+    std::vector<__ty> flattened; \
+    if (!primvar.flatten_with_indices(&flattened, err)) { \
+      return false; \
+    } \
+  } else
+
+  TO_TYPED_VALUE(int, VertexAttributeFormat::Int)
+  {
+    SET_ERROR_AND_RETURN(fmt::format("Unknown or unsupported data type for Geom PrimVar: {}", attr.type_name()));
+  }
+
+#undef TO_TYPED_VALUE
+
+  if (primvar.get_interpolation() == Interpolation::Varying) {
+    vattr.variability = VertexVariability::Varying;
+  } else if (primvar.get_interpolation() == Interpolation::Constant) {
+    vattr.variability = VertexVariability::Constant;
+  } else if (primvar.get_interpolation() == Interpolation::Uniform) {
+    vattr.variability = VertexVariability::Uniform;
+  } else if (primvar.get_interpolation() == Interpolation::Vertex) {
+    vattr.variability = VertexVariability::Vertex;
+  } else if (primvar.get_interpolation() == Interpolation::FaceVarying) {
+    vattr.variability = VertexVariability::FaceVarying;
+  }
+
+  // TODO
+  vattr.indices.clear();  // just in case.
+
+  (*dst) = std::move(vattr);
+
+  return false;
+}
+
+///
+/// Triangulate Geom primvar.
+///
+/// triangulatted indices are computed in `TriangulatePolygon` API.
+///
+/// @param[in] mesh Geom mesh
+/// @param[in] name Geom Primvar name.
+/// @param[in] triangulatedFaceVertexIndices Triangulated faceVertexIndices(len
+/// = 3 * triangles)
+/// @param[in] triangulatedToOrigFaceVertexIndexMap Triangulated faceVertexIndex
+/// to original faceVertexIndex remapping table. len = 3 * triangles.
+///
+nonstd::expected<VertexAttribute, std::string> TriangulateGeomPrimvar(
+    const GeomMesh &mesh, const std::string &name,
+    const std::vector<uint32_t> &faceVertexCounts,
+    const std::vector<uint32_t> &faceVertexIndices,
+    const std::vector<uint32_t> &triangulatedFaceVertexIndices,
+    const std::vector<size_t> &triangulatedToOrigFaceVertexIndexMap) {
+  GeomPrimvar primvar;
+
+  if (triangulatedFaceVertexIndices.size() % 3 != 0) {
+    return nonstd::make_unexpected(fmt::format(
+        "triangulatedFaceVertexIndices.size {} must be the multiple of 3.\n",
+        triangulatedFaceVertexIndices.size()));
+  }
+
+  size_t num_triangles = triangulatedFaceVertexIndices.size() % 3;
+
+  if (!mesh.get_primvar(name, &primvar)) {
+    return nonstd::make_unexpected(
+        fmt::format("No primvars:{} found in GeomMesh {}\n", name, mesh.name));
+  }
+
+  if (!primvar.has_value()) {
+    // TODO: Create empty VertexAttribute?
+    return nonstd::make_unexpected(
+        fmt::format("No value exist for primvars:{}\n", name));
+  }
+
+  //
+  // Flatten Indexed PrimVar(return raw primvar for non-Indexed PrimVar)
+  //
+  std::string err;
+  value::Value flattened;
+  if (!primvar.flatten_with_indices(&flattened, &err)) {
+    return nonstd::make_unexpected(fmt::format(
+        "Failed to flatten Indexed PrimVar: {}. Error = {}\n", name, err));
+  }
+
+  VertexAttribute vattr;
+
+  if (!ToVertexAttributeData(primvar, &vattr, &err)) {
+    return nonstd::make_unexpected(fmt::format(
+        "Failed to convert Geom PrimVar to VertexAttribute for {}. Error = {}\n", name, err));
+  }
+
+  return vattr;
+}
+
 ///
 /// Input: points, faceVertexCounts, faceVertexIndices
 /// Output: triangulated faceVertexCounts(all filled with 3), triangulated
-/// faceVertexIndices, indexMap (length = triangulated faceVertexIndices.
-/// indexMap[i] stores array index in original faceVertexIndices. For remapping
-/// primvar attributes.)
+/// faceVertexIndices, triangulatedToOrigFaceVertexIndexMap (length =
+/// triangulated faceVertexIndices. triangulatedToOrigFaceVertexIndexMap[i]
+/// stores array index in original faceVertexIndices. For remapping primvar
+/// attributes.)
 ///
 /// Return false when a polygon is degenerated.
 /// No overlap check at the moment
@@ -208,17 +333,17 @@ bool BuildFaceVertexIndexOffsets(const std::vector<uint32_t> &faceVertexCounts,
 /// T = value::float3 or value::double3
 /// BaseTy = float or double
 template <typename T, typename BaseTy>
-bool TriangulatePolygon(const std::vector<T> &points,
-                        const std::vector<uint32_t> &faceVertexCounts,
-                        const std::vector<uint32_t> &faceVertexIndices,
-                        std::vector<uint32_t> &triangulatedFaceVertexCounts,
-                        std::vector<uint32_t> &triangulatedFaceVertexIndices,
-                        std::vector<size_t> &faceVertexIndexMap,
-                        std::string &err) {
+bool TriangulatePolygon(
+    const std::vector<T> &points, const std::vector<uint32_t> &faceVertexCounts,
+    const std::vector<uint32_t> &faceVertexIndices,
+    std::vector<uint32_t> &triangulatedFaceVertexCounts,
+    std::vector<uint32_t> &triangulatedFaceVertexIndices,
+    std::vector<size_t> &triangulatedToOrigFaceVertexIndexMap,
+    std::string &err) {
   triangulatedFaceVertexCounts.clear();
   triangulatedFaceVertexIndices.clear();
 
-  faceVertexIndexMap.clear();
+  triangulatedToOrigFaceVertexIndexMap.clear();
 
   size_t faceIndexOffset = 0;
 
@@ -251,13 +376,13 @@ bool TriangulatePolygon(const std::vector<T> &points,
           faceVertexIndices[faceIndexOffset + 1]);
       triangulatedFaceVertexIndices.push_back(
           faceVertexIndices[faceIndexOffset + 2]);
-      faceVertexIndexMap.push_back(faceIndexOffset + 0);
-      faceVertexIndexMap.push_back(faceIndexOffset + 1);
-      faceVertexIndexMap.push_back(faceIndexOffset + 2);
+      triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset + 0);
+      triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset + 1);
+      triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset + 2);
 #if 1
     } else if (npolys == 4) {
       // Use simple split
-      // TODO: Split at shortest edge?
+      // TODO: Split at shortest edge for better triangulation.
       triangulatedFaceVertexCounts.push_back(3);
       triangulatedFaceVertexCounts.push_back(3);
 
@@ -275,12 +400,12 @@ bool TriangulatePolygon(const std::vector<T> &points,
       triangulatedFaceVertexIndices.push_back(
           faceVertexIndices[faceIndexOffset + 3]);
 
-      faceVertexIndexMap.push_back(faceIndexOffset + 0);
-      faceVertexIndexMap.push_back(faceIndexOffset + 1);
-      faceVertexIndexMap.push_back(faceIndexOffset + 2);
-      faceVertexIndexMap.push_back(faceIndexOffset + 0);
-      faceVertexIndexMap.push_back(faceIndexOffset + 2);
-      faceVertexIndexMap.push_back(faceIndexOffset + 3);
+      triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset + 0);
+      triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset + 1);
+      triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset + 2);
+      triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset + 0);
+      triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset + 2);
+      triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset + 3);
 #endif
     } else {
       // Find the normal axis of the polygon using Newell's method
@@ -385,9 +510,12 @@ bool TriangulatePolygon(const std::vector<T> &points,
         triangulatedFaceVertexIndices.push_back(
             faceVertexIndices[faceIndexOffset + indices[3 * k + 2]]);
 
-        faceVertexIndexMap.push_back(faceIndexOffset + indices[3 * k + 0]);
-        faceVertexIndexMap.push_back(faceIndexOffset + indices[3 * k + 1]);
-        faceVertexIndexMap.push_back(faceIndexOffset + indices[3 * k + 2]);
+        triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset +
+                                                       indices[3 * k + 0]);
+        triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset +
+                                                       indices[3 * k + 1]);
+        triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset +
+                                                       indices[3 * k + 2]);
       }
     }
 
@@ -431,6 +559,14 @@ nonstd::optional<UsdPrimvarReader_float2> FindPrimvarReader_float2Rec(
 #endif
 
 }  // namespace
+
+bool ToFacevaryingVertexAttribute(const tydra::VertexAttribute &src, tydra::VertexAttribute *dst, const std::vector<uint32_t> &facevarying_indices) {
+
+  
+  return false;
+
+}
+
 
 #if 0
 // Currently float2 only
@@ -562,21 +698,26 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
 
     if (normals.size()) {
       if (interp == Interpolation::Uniform) {
-        auto result = UniformToFaceVarying(normals, dst.faceVertexCounts, dst.faceVertexIndices);
+        auto result = UniformToFaceVarying(normals, dst.faceVertexCounts,
+                                           dst.faceVertexIndices);
         if (!result) {
           PUSH_ERROR_AND_RETURN(
-              fmt::format("Convert uniform `normals` attribute to failed: {}", result.error()));
+              fmt::format("Convert uniform `normals` attribute to failed: {}",
+                          result.error()));
         }
 
         dst.facevaryingNormals.resize(result.value().size());
         memcpy(dst.facevaryingNormals.data(), result.value().data(),
                sizeof(value::normal3f) * result.value().size());
 
-      } else if ((interp == Interpolation::Vertex) || (interp == Interpolation::Varying)) {
-        auto result = VertexToFaceVarying(normals, dst.faceVertexCounts, dst.faceVertexIndices);
+      } else if ((interp == Interpolation::Vertex) ||
+                 (interp == Interpolation::Varying)) {
+        auto result = VertexToFaceVarying(normals, dst.faceVertexCounts,
+                                          dst.faceVertexIndices);
         if (!result) {
-          PUSH_ERROR_AND_RETURN(
-              fmt::format("Convert vertex/varying `normals` attribute to failed: {}", result.error()));
+          PUSH_ERROR_AND_RETURN(fmt::format(
+              "Convert vertex/varying `normals` attribute to failed: {}",
+              result.error()));
         }
 
         dst.facevaryingNormals.resize(result.value().size());
@@ -589,7 +730,8 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
                sizeof(value::normal3f) * normals.size());
       } else {
         PUSH_ERROR_AND_RETURN(
-            "Unsupported/unimplemented interpolation for `normals` attribute: " +
+            "Unsupported/unimplemented interpolation for `normals` "
+            "attribute: " +
             to_string(interp) + ".\n");
       }
     } else {
@@ -644,15 +786,22 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
                           uvname));
         }
 
-        if (vattr.counts() != num_fvs) {
+        if (vattr.element_size() != 1) {
+          PUSH_ERROR_AND_RETURN(
+              fmt::format("Multi-element UV texcoord attribute(`elementSize != 1` in USD Attribute metadataum)  is not supported "
+                          "match to the number of facevarying elements {}\n",
+                          vattr.vertex_count(), num_fvs));
+        }
+
+        if (vattr.vertex_count() != num_fvs) {
           PUSH_ERROR_AND_RETURN(
               fmt::format("The number of UV texcoord attributes {} does not "
                           "match to the number of facevarying elements {}\n",
-                          vattr.counts(), num_fvs));
+                          vattr.vertex_count(), num_fvs));
         }
 
         DCOUT("Add texcoord attr `" << uvname << "` to slot Id " << slotId);
-        std::vector<vec2> uvs(vattr.counts());
+        std::vector<vec2> uvs(vattr.vertex_count());
         memcpy(uvs.data(), vattr.data.data(), vattr.data.size());
 
         dst.facevaryingTexcoords[uint32_t(slotId)] = uvs;
@@ -676,7 +825,6 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
       PUSH_ERROR_AND_RETURN("Triangulation failed: " + err);
     }
 
-
     dst.faceVertexCounts = std::move(triangulatedFaceVertexCounts);
     dst.faceVertexIndices = std::move(triangulatedFaceVertexIndices);
 
@@ -692,8 +840,8 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
     }
 
     if (dst.facevaryingTexcoords.size()) {
-
-      std::unordered_map<uint32_t, std::vector<tydra::vec2>> triangulatedFacevaryingTexcoords;
+      std::unordered_map<uint32_t, std::vector<tydra::vec2>>
+          triangulatedFacevaryingTexcoords;
 
       for (auto &slot : dst.facevaryingTexcoords) {
         std::vector<tydra::vec2> texcoords;
@@ -703,7 +851,6 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
           texcoords.push_back(slot.second[fvIdx]);
         }
         triangulatedFacevaryingTexcoords[slot.first] = texcoords;
-
       }
 
       dst.facevaryingTexcoords = std::move(triangulatedFacevaryingTexcoords);
@@ -713,7 +860,7 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
 
   }  // triangulate
 
-#if 0 // TODO: GeomSubsets.
+#if 0  // TODO: GeomSubsets.
   // for GeomSubsets
   if (mesh.geom_subset_children.size()) {
     std::vector<size_t> faceVertexIndexOffsets;
@@ -896,12 +1043,24 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
   const std::string prim_part = path.prim_part();
   const std::string prop_part = path.prop_part();
 
-  if (prop_part != "outputs:rgb") {
+  // NOTE: no `outputs:rgba` in the spec.
+  constexpr auto kOutputsRGB = "outputs:rgb";
+  constexpr auto kOutputsR = "outputs:r";
+  constexpr auto kOutputsG = "outputs:g";
+  constexpr auto kOutputsB = "outputs:b";
+  constexpr auto kOutputsA = "outputs:a";
+
+  if ((prop_part == kOutputsRGB) ||
+      (prop_part == kOutputsR) ||
+      (prop_part == kOutputsG) ||
+      (prop_part == kOutputsB) ||
+      (prop_part == kOutputsA)) {
+    // ok
+  } else {
     return nonstd::make_unexpected(
-        "connection Path's property part must be `outputs:rgb` at the moment "
+        fmt::format("connection Path's property part must be `{}`, `{}`, `{}` or `{}` "
         "for "
-        "UsdUVTexture, but got " +
-        prop_part + " \n");
+        "UsdUVTexture, but got `{}`\n", kOutputsRGB, kOutputsR, kOutputsG, kOutputsB, kOutputsA, prop_part));
   }
 
   const Prim *prim{nullptr};
@@ -933,7 +1092,7 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
   }
 
   return nonstd::make_unexpected(fmt::format(
-      "Prim {} must be Shader, but got {}", prim_part, prim->prim_type_name()));
+      "Prim {} must be `Shader` Prim type, but got `{}`", prim_part, prim->prim_type_name()));
 }
 
 }  // namespace
@@ -1000,7 +1159,8 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
       }
 
       bool tex_ok = tex_loader_fun(
-          assetPath, assetInfo, _asset_resolver, &texImage, &assetImageBuffer.data,
+          assetPath, assetInfo, _asset_resolver, &texImage,
+          &assetImageBuffer.data,
           _material_config.texture_image_loader_function_userdata, &warn, &err);
 
       if (!tex_ok && !_material_config.allow_texture_load_failure) {
@@ -1050,148 +1210,152 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
 
     // Linearlization and widen texel bit depth if required.
     if (_material_config.linearize_color_space) {
-
       size_t width = size_t(texImage.width);
       size_t height = size_t(texImage.height);
       size_t channels = size_t(texImage.channels);
       if (channels == 4) {
-        PUSH_ERROR_AND_RETURN(fmt::format("TODO: RGBA color channels are not supported yet."));
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("TODO: RGBA color channels are not supported yet."));
       }
       if (channels > 4) {
-        PUSH_ERROR_AND_RETURN(fmt::format("TODO: Multiband color channels(5 or more) are not supported(yet)."));
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("TODO: Multiband color channels(5 or more) are not "
+                        "supported(yet)."));
       }
 
       if (assetImageBuffer.componentType == tydra::ComponentType::UInt8) {
-
         if (texImage.usdColorSpace == tydra::ColorSpace::sRGB) {
-
           if (_material_config.preserve_texel_bitdepth) {
-
             // u8 sRGB -> u8 Linear
             imageBuffer.componentType = tydra::ComponentType::UInt8;
 
-            bool ret = srgb_8bit_to_linear_8bit(assetImageBuffer.data, width, height ,channels, /* channel stride */channels, &imageBuffer.data);
+            bool ret = srgb_8bit_to_linear_8bit(
+                assetImageBuffer.data, width, height, channels,
+                /* channel stride */ channels, &imageBuffer.data);
             if (!ret) {
-              PUSH_ERROR_AND_RETURN("Failed to convert sRGB u8 image to Linear u8 image.");
+              PUSH_ERROR_AND_RETURN(
+                  "Failed to convert sRGB u8 image to Linear u8 image.");
             }
 
             imageBuffer.count = 1;
 
           } else {
-
             // u8 sRGB -> fp32 Linear
             imageBuffer.componentType = tydra::ComponentType::Float;
 
             std::vector<float> buf;
-            bool ret = srgb_8bit_to_linear_f32(assetImageBuffer.data, width, height ,channels, /* channel stride */channels, &buf);
+            bool ret = srgb_8bit_to_linear_f32(
+                assetImageBuffer.data, width, height, channels,
+                /* channel stride */ channels, &buf);
             if (!ret) {
-              PUSH_ERROR_AND_RETURN("Failed to convert sRGB u8 image to Linear f32 image.");
+              PUSH_ERROR_AND_RETURN(
+                  "Failed to convert sRGB u8 image to Linear f32 image.");
             }
 
             imageBuffer.data.resize(buf.size() * sizeof(float));
-            memcpy(imageBuffer.data.data(), buf.data(), sizeof(float) * buf.size());
+            memcpy(imageBuffer.data.data(), buf.data(),
+                   sizeof(float) * buf.size());
             imageBuffer.count = 1;
           }
 
           texImage.colorSpace = tydra::ColorSpace::Linear;
 
         } else if (texImage.usdColorSpace == tydra::ColorSpace::Linear) {
-
           if (_material_config.preserve_texel_bitdepth) {
-
             // no op.
             imageBuffer = std::move(assetImageBuffer);
 
           } else {
-
             // u8 -> fp32
             imageBuffer.componentType = tydra::ComponentType::Float;
 
             std::vector<float> buf;
-            bool ret = u8_to_f32_image(assetImageBuffer.data, width, height ,channels, &buf);
+            bool ret = u8_to_f32_image(assetImageBuffer.data, width, height,
+                                       channels, &buf);
             if (!ret) {
               PUSH_ERROR_AND_RETURN("Failed to convert u8 image to f32 image.");
             }
 
             imageBuffer.data.resize(buf.size() * sizeof(float));
-            memcpy(imageBuffer.data.data(), buf.data(), sizeof(float) * buf.size());
+            memcpy(imageBuffer.data.data(), buf.data(),
+                   sizeof(float) * buf.size());
             imageBuffer.count = 1;
           }
 
           texImage.colorSpace = tydra::ColorSpace::Linear;
 
         } else {
-          PUSH_ERROR(fmt::format("TODO: Color space {}", to_string(texImage.usdColorSpace)));
+          PUSH_ERROR(fmt::format("TODO: Color space {}",
+                                 to_string(texImage.usdColorSpace)));
         }
 
-      } else if (assetImageBuffer.componentType == tydra::ComponentType::Float) {
-
+      } else if (assetImageBuffer.componentType ==
+                 tydra::ComponentType::Float) {
         // ignore preserve_texel_bitdepth
 
         if (texImage.usdColorSpace == tydra::ColorSpace::sRGB) {
-
           // srgb f32 -> linear f32
           std::vector<float> in_buf;
           std::vector<float> out_buf;
           in_buf.resize(assetImageBuffer.data.size() / sizeof(float));
-          memcpy(in_buf.data(), assetImageBuffer.data.data(), in_buf.size() * sizeof(float));
+          memcpy(in_buf.data(), assetImageBuffer.data.data(),
+                 in_buf.size() * sizeof(float));
 
           out_buf.resize(assetImageBuffer.data.size() / sizeof(float));
 
-          bool ret = srgb_f32_to_linear_f32(in_buf, width, height ,channels, /* channel stride */channels, &out_buf);
+          bool ret =
+              srgb_f32_to_linear_f32(in_buf, width, height, channels,
+                                     /* channel stride */ channels, &out_buf);
 
           imageBuffer.data.resize(assetImageBuffer.data.size());
-          memcpy(imageBuffer.data.data(), out_buf.data(), imageBuffer.data.size());
+          memcpy(imageBuffer.data.data(), out_buf.data(),
+                 imageBuffer.data.size());
 
           if (!ret) {
-            PUSH_ERROR_AND_RETURN("Failed to convert sRGB f32 image to Linear f32 image.");
+            PUSH_ERROR_AND_RETURN(
+                "Failed to convert sRGB f32 image to Linear f32 image.");
           }
 
         } else if (texImage.usdColorSpace == tydra::ColorSpace::Linear) {
-
           // no op
           imageBuffer = std::move(assetImageBuffer);
 
         } else {
-          PUSH_ERROR(fmt::format("TODO: Color space {}", to_string(texImage.usdColorSpace)));
+          PUSH_ERROR(fmt::format("TODO: Color space {}",
+                                 to_string(texImage.usdColorSpace)));
         }
 
       } else {
-        PUSH_ERROR(fmt::format("TODO: asset texture texel format {}", to_string(assetImageBuffer.componentType)));
+        PUSH_ERROR(fmt::format("TODO: asset texture texel format {}",
+                               to_string(assetImageBuffer.componentType)));
       }
 
-
     } else {
-
       // Same color space.
 
       if (assetImageBuffer.componentType == tydra::ComponentType::UInt8) {
-
         if (_material_config.preserve_texel_bitdepth) {
-
           // Do nothing.
           imageBuffer = std::move(assetImageBuffer);
 
         } else {
-
           // u8 to f32
           imageBuffer.componentType = tydra::ComponentType::Float;
-
         }
 
         texImage.colorSpace = texImage.usdColorSpace;
 
-      } else if (assetImageBuffer.componentType == tydra::ComponentType::Float) {
-
+      } else if (assetImageBuffer.componentType ==
+                 tydra::ComponentType::Float) {
         // ignore preserve_texel_bitdepth
 
         // f32 to f32, so no op
         imageBuffer = std::move(assetImageBuffer);
 
       } else {
-        PUSH_ERROR(fmt::format("TODO: asset texture texel format {}", to_string(assetImageBuffer.componentType)));
+        PUSH_ERROR(fmt::format("TODO: asset texture texel format {}",
+                               to_string(assetImageBuffer.componentType)));
       }
-
     }
 
     // Assign buffer id
@@ -1202,15 +1366,17 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
     // different.
     buffers.emplace_back(imageBuffer);
 
-
     tex.texture_image_id = int64_t(images.size());
 
     images.emplace_back(texImage);
 
     std::stringstream ss;
-    ss << "Loaded texture image " << assetPath.GetAssetPath() << " : buffer_id " + std::to_string(texImage.buffer_id) << "\n";
-    ss << "  width x height x components " << texImage.width << " x " << texImage.height << " x " << texImage.channels << "\n";
-    ss << "  colorSpace " << tinyusdz::tydra::to_string(texImage.colorSpace) << "\n";
+    ss << "Loaded texture image " << assetPath.GetAssetPath()
+       << " : buffer_id " + std::to_string(texImage.buffer_id) << "\n";
+    ss << "  width x height x components " << texImage.width << " x "
+       << texImage.height << " x " << texImage.channels << "\n";
+    ss << "  colorSpace " << tinyusdz::tydra::to_string(texImage.colorSpace)
+       << "\n";
     PushInfo(ss.str());
   }
 
@@ -1386,7 +1552,8 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
     const UsdUVTexture *ptex{nullptr};
     const Shader *pshader{nullptr};
     Path texPath;
-    auto result = GetConnectedUVTexture(*_stage, param, &texPath, &ptex, &pshader);
+    auto result =
+        GetConnectedUVTexture(*_stage, param, &texPath, &ptex, &pshader);
 
     if (!result) {
       PUSH_ERROR_AND_RETURN(result.error());
@@ -1468,12 +1635,14 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShader(
   }
 
   if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.emissiveColor,
-                                        "emissiveColor", rshader.emissiveColor)) {
+                                        "emissiveColor",
+                                        rshader.emissiveColor)) {
     return false;
   }
 
   if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.specularColor,
-                                        "specularColor", rshader.specularColor)) {
+                                        "specularColor",
+                                        rshader.specularColor)) {
     return false;
   }
 
@@ -1648,7 +1817,6 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
   }
 
   if (const tinyusdz::GeomMesh *pmesh = prim.as<tinyusdz::GeomMesh>()) {
-
     // Collect GeomSubsets
     // std::vector<const tinyusdz::GeomSubset *> subsets = GetGeomSubsets(;
 
@@ -1879,7 +2047,6 @@ bool DefaultTextureImageLoaderFunction(const value::AssetPath &assetPath,
 
   return true;
 }
-
 
 std::string to_string(ColorSpace cty) {
   std::string s;
