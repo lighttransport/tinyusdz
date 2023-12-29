@@ -455,9 +455,9 @@ struct VertexAttribute {
   size_t element_size() const { return elementSize; }
 
   size_t format_size() const { return VertexAttributeFormatSize(format); }
-
 };
 
+#if 0
 ///
 /// Flatten(expand by vertexCounts and vertexIndices) VertexAttribute.
 ///
@@ -473,6 +473,23 @@ static bool FlattenVertexAttribute(
     const std::vector<uint32_t> &faceVertexIndices,
     std::vector<uint8_t> &dst,
     size_t &itemCount);
+#else
+
+///
+/// Convert variability of `src` VertexAttribute to "facevarying".
+///
+/// @param[in] src Input VertexAttribute.
+/// @param[in] faceVertexCounts  # of vertex per face. When the size is empty
+/// and faceVertexIndices is not empty, treat `faceVertexIndices` as
+/// triangulated mesh indices.
+/// @param[in] faceVertexIndices
+/// @param[out] dst VertexAttribute with facevarying variability. `dst.vertex_count()` become `sum(faceVertexCounts)`
+///
+static bool ToFacevaringVertexAttribute(
+    const VertexAttribute &src, VertexAttribute &dst,
+    const std::vector<uint32_t> &faceVertexCounts,
+    const std::vector<uint32_t> &faceVertexIndices);
+#endif
 
 //
 // Convert PrimVar(type-erased value) to typed VertexAttribute
@@ -565,25 +582,50 @@ struct RenderMesh {
   std::string element_name;  // element(leaf) Prim name
   std::string abs_name;      // absolute Prim path in USD
 
+  // TODO: Support half-precision and double-precision.
   std::vector<vec3> points;
   std::vector<uint32_t> faceVertexIndices;
-  // For triangulated mesh, array elements are all 3.
-  // TODO: Make `faceVertexCounts` empty for Trianglulated mesh.
+  // For triangulated mesh, array elements are all filled with 3 or
+  // faceVertexCounts.size() == 0.
   std::vector<uint32_t> faceVertexCounts;
 
+  // `normals` or `primvar:normals`. Empty when no normals exist in the GeomMesh.
   std::vector<vec3> facevaryingNormals;
-  Interpolation normalsInterpolation;  // Optional info. USD interpolation for
-                                       // `facevaryingNormals`
+  Interpolation normalsInterpolation;  // Optional info. USD interpolation for `facevaryingNormals`
 
-  // key = slot ID.
+  // key = slot ID. Usually 0 = primary
   // vec2(texCoord2f) only
-  // TODO: Interpolation for UV
+  // TODO: Interpolation for UV?
   std::unordered_map<uint32_t, std::vector<vec2>> facevaryingTexcoords;
+  StringAndIdMap texcoordSlotIdMap; // st primvarname to slotID map
+
+  //
+  // tangents and binormals(single-frame only)
+  //
+  // When `normals`(or `normals` primvar) is not present in the GeomMesh, tangents and normals are not computed.
+  //
+  // When `normals` is supplied, but no `tangents` and `binormals` are supplied,
+  // Tydra computes it based on: https://learnopengl.com/Advanced-Lighting/Normal-Mapping
+  // (when MeshConverterConfig::compute_tangents_and_binormals is set to `true`)
+  //
+  // For UsdPreviewSurface, geom primvar name of `tangents` and `binormals` are read from
+  // Material's inputs::frame:tangentsPrimvarName(default "tangents"), inputs::frame::binormalsPrimvarName(default "binormals")
+  // https://learnopengl.com/Advanced-Lighting/Normal-Mapping
+  //
+  std::vector<vec3> facevaryingTangents;
+  std::vector<vec3> facevaryingBinormals;
 
   std::vector<int32_t>
       materialIds;  // per-face material. -1 = no material assigned
 
-  std::map<uint32_t, VertexAttribute> primvars;  // Excludes texcoords
+  //
+  // Primvars(User defined attributes).
+  // VertexAttribute preserves input USD primvar variability(interpolation)
+  // (e.g. skinWeight primvar has 'vertex' variability)
+  //
+  // This primvars excludes `st`, `tangents` and `binormals`(referenced by UsdPrimvarReader)
+  //
+  std::map<uint32_t, VertexAttribute> primvars;
 
   // Index value = key to `primvars`
   StringAndIdMap primvarsMap;
@@ -803,6 +845,7 @@ std::vector<UsdPrimvarReader_float2> ExtractPrimvarReadersFromMaterialNode(const
 
 struct MeshConverterConfig {
   bool triangulate{true};
+  bool compute_tangents_and_binormals{true};
 };
 
 struct MaterialConverterConfig {
