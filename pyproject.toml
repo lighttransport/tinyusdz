@@ -13,4 +13,9 @@ line-length = 140
 [project]
 name = "tinyusdz"
 version = "0.8.0rc5"
-readme = {file = "README.md", content-type: "text/markdown"}
+description = "Python binding of TinyUSDZ"
+license = "Apache-2.0"
+authors = ["Syoyo Fujita <syoyofujtia@gmail.com>",
+           "Light Transport Entertainment, Inc. <syoyo@lighttransport.com>"
+          ]
+readme = {file = "README.md", content-type = "text/markdown"}

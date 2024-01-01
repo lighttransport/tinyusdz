@@ -466,8 +466,7 @@ You can build pure Windows build of TinyUSDZ on Linux CI machine.
 
 ## License
 
-TinyUSDZ is licensed under MIT license and Apache 2.0 license.
-(Doing relicensing from MIT to Apache 2.0. Will be fully relicensed to Apache 2.0 at some point)
+TinyUSDZ is licensed under Apache 2.0 license.
 
 ### Third party licenses
 
