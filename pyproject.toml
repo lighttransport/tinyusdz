@@ -9,3 +9,8 @@ build-backend = "setuptools.build_meta"
 
 [tool.black]
 line-length = 140
+
+[project]
+name = "tinyusdz"
+version = "0.8.0rc5"
+readme = {file = "README.md", content-type: "text/markdown"}
