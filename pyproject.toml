@@ -14,8 +14,8 @@ line-length = 140
 name = "tinyusdz"
 version = "0.8.0rc5"
 description = "Python binding of TinyUSDZ"
-license = "Apache-2.0"
-authors = ["Syoyo Fujita <syoyofujtia@gmail.com>",
-           "Light Transport Entertainment, Inc. <syoyo@lighttransport.com>"
+license = {file = "LICENSE"}
+authors = [{ name = "Syoyo Fujita", email = "syoyofujtia@gmail.com"},
+           { name = "Light Transport Entertainment, Inc.", email = "syoyo@lighttransport.com"}
           ]
 readme = {file = "README.md", content-type = "text/markdown"}
