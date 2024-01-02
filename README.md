@@ -61,12 +61,14 @@ $ python -m pip install tinyusdz
 
 |         |   Linux                                  |  Windows                              |   macOS 11(Big Sur) or later  | macos 10  |
 |:-------:|:---------------------------------------- |:------------------------------------- |:-----------------------------:|:---------:|
+|   3.6(⚠️)   | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> ✅ ARM64  |🚫 | ✅ Intel |
 |   3.7   | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> ✅ ARM64  |✅ arm64 | 🚫 universal2 </br> ✅ Intel |
 |   3.8   | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> ✅ ARM64  |✅ arm64 | ✅ universal2 </br> ✅ Intel |
 |   3.9   | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> ✅ ARM64  |✅ arm64 | ✅ universal2 </br> ✅ Intel |
 |   3.10   | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> ✅ ARM64  |✅ arm64 | ✅ universal2 </br> ✅ Intel |
 |   3.11   | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> ✅ ARM64  |✅ arm64 | ✅ universal2 </br> ✅ Intel |
 
+⚠️  Python 3.6 is EOL and not recommended to use it. 3.6 bwheels is provided as long as cibuildwheels provides the build for it.
 NOTE: Windows ARM64 binary is provided using cross-compiling. Its not well tested.
 
 
