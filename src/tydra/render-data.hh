@@ -343,6 +343,10 @@ static size_t VertexAttributeFormatSize(VertexAttributeFormat f) {
       elemsize = sizeof(float) * 4;
       break;
     }
+    case VertexAttributeFormat::Int: {
+      elemsize = 4;
+      break;
+    }
     case VertexAttributeFormat::Ivec2: {
       elemsize = sizeof(int) * 2;
       break;
@@ -353,6 +357,10 @@ static size_t VertexAttributeFormatSize(VertexAttributeFormat f) {
     }
     case VertexAttributeFormat::Ivec4: {
       elemsize = sizeof(int) * 4;
+      break;
+    }
+    case VertexAttributeFormat::Uint: {
+      elemsize = 4;
       break;
     }
     case VertexAttributeFormat::Uvec2: {
@@ -441,6 +449,14 @@ struct VertexAttribute {
     return reinterpret_cast<const void *>(data.data());
   }
 
+  const std::vector<uint8_t> &get_data() const {
+    return data;
+  }
+
+  std::vector<uint8_t> &get_data() {
+    return data;
+  }
+
   //
   // Bytes for each vertex data: formatSize * elementSize
   //
@@ -457,7 +473,7 @@ struct VertexAttribute {
   size_t format_size() const { return VertexAttributeFormatSize(format); }
 };
 
-#if 0
+#if 0 // TODO: Implement
 ///
 /// Flatten(expand by vertexCounts and vertexIndices) VertexAttribute.
 ///
@@ -475,6 +491,7 @@ static bool FlattenVertexAttribute(
     size_t &itemCount);
 #else
 
+#if 0 // TODO: Implement
 ///
 /// Convert variability of `src` VertexAttribute to "facevarying".
 ///
@@ -489,6 +506,7 @@ static bool ToFacevaringVertexAttribute(
     const VertexAttribute &src, VertexAttribute &dst,
     const std::vector<uint32_t> &faceVertexCounts,
     const std::vector<uint32_t> &faceVertexIndices);
+#endif
 #endif
 
 //
