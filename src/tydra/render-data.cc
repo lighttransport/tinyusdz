@@ -45,11 +45,13 @@
 #include "tydra/scene-access.hh"
 #include "tydra/shader-network.hh"
 
+#if 0 // not used a.t.m.
 #define SET_ERROR_AND_RETURN(msg) \
     if (err) {                      \
       (*err) = (msg);               \
     }                               \
     return false
+#endif
 
 namespace tinyusdz {
 
@@ -239,11 +241,11 @@ nonstd::expected<std::vector<uint8_t>, std::string> VertexToFaceVarying(
   return dst;
 }
 
+#if 0 // unused a.t.m
 // Copy single value to facevarying vertices.
 template <typename T>
-nonstd::expected<std::vector<T>, std::string> ConstantToFaceVarying(
-    const T &input, const std::vector<uint32_t> &faceVertexCounts,
-    const std::vector<uint32_t> &faceVertexIndices) {
+static nonstd::expected<std::vector<T>, std::string> ConstantToFaceVarying(
+    const T &input, const std::vector<uint32_t> &faceVertexCounts) {
   std::vector<T> dst;
 
   for (size_t i = 0; i < faceVertexCounts.size(); i++) {
@@ -256,12 +258,12 @@ nonstd::expected<std::vector<T>, std::string> ConstantToFaceVarying(
 
   return dst;
 }
+#endif
 
-nonstd::expected<std::vector<uint8_t>, std::string> ConstantToFaceVarying(
+static nonstd::expected<std::vector<uint8_t>, std::string> ConstantToFaceVarying(
     const std::vector<uint8_t> &src,
     const size_t stride_bytes,
-    const std::vector<uint32_t> &faceVertexCounts,
-    const std::vector<uint32_t> &faceVertexIndices) {
+    const std::vector<uint32_t> &faceVertexCounts) {
   std::vector<uint8_t> dst;
 
   if (src.empty()) {
@@ -367,6 +369,7 @@ bool BuildFaceVertexIndexOffsets(const std::vector<uint32_t> &faceVertexCounts,
 #endif
 
 
+#if 0 // unused a.t.m.
 bool ToVertexAttributeData(const GeomPrimvar &primvar, VertexAttribute *dst, std::string *err)
 {
   size_t elementSize = primvar.get_elementSize();
@@ -421,7 +424,9 @@ bool ToVertexAttributeData(const GeomPrimvar &primvar, VertexAttribute *dst, std
 
   return false;
 }
+#endif
 
+#if 0 // TODO: Remove
 ///
 /// Triangulate Geom primvar.
 ///
@@ -447,8 +452,6 @@ nonstd::expected<VertexAttribute, std::string> TriangulateGeomPrimvar(
         "triangulatedFaceVertexIndices.size {} must be the multiple of 3.\n",
         triangulatedFaceVertexIndices.size()));
   }
-
-  size_t num_triangles = triangulatedFaceVertexIndices.size() % 3;
 
   if (!mesh.get_primvar(name, &primvar)) {
     return nonstd::make_unexpected(
@@ -480,6 +483,7 @@ nonstd::expected<VertexAttribute, std::string> TriangulateGeomPrimvar(
 
   return vattr;
 }
+#endif
 
 ///
 /// Input: points, faceVertexCounts, faceVertexIndices
@@ -720,9 +724,11 @@ nonstd::optional<UsdPrimvarReader_float2> FindPrimvarReader_float2Rec(
 }
 #endif
 
+
+#if 0 // not used a.t.m.
 // Building an Orthonormal Basis, Revisited
 // http://jcgt.org/published/0006/01/01/
-void GenerateBasis(const vec3 &n, vec3 *tangent,
+static void GenerateBasis(const vec3 &n, vec3 *tangent,
                          vec3 *binormal)
 {
   if (n[2] < 0.0f) {
@@ -762,7 +768,7 @@ void GenerateBasis(const vec3 &n, vec3 *tangent,
 /// - [ ] Implement more robust tangent/binormal frame computation algorithm for arbitrary mesh?
 ///
 ///
-bool ComputeTangentsAndBinormals(
+static bool ComputeTangentsAndBinormals(
     const std::vector<vec3> &vertices,
     const std::vector<uint32_t> &faceVertexCounts,
     const std::vector<uint32_t> &faceVertexIndices,
@@ -1027,16 +1033,10 @@ bool ComputeTangentsAndBinormals(
 
   return true;
 }
+#endif
 
 
 }  // namespace
-
-bool ToFacevaryingVertexAttribute(const tydra::VertexAttribute &src, tydra::VertexAttribute *dst, const std::vector<uint32_t> &facevarying_indices) {
-
-
-  return false;
-
-}
 
 
 #if 0
@@ -1249,13 +1249,6 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
               fmt::format("Texcoord VertexAttribute must be Vec2 type.\n"));
         }
 
-        if (vattr.variability != VertexVariability::FaceVarying) {
-          PUSH_ERROR_AND_RETURN(
-              fmt::format("TODO: non-facevarying UV texcoord attribute is not "
-                          "support yet: {}.\n",
-                          uvname));
-        }
-
         if (vattr.element_size() != 1) {
           PUSH_ERROR_AND_RETURN(
               fmt::format("Multi-element UV texcoord attribute(`elementSize != 1` in USD Attribute metadataum)  is not supported "
@@ -1263,18 +1256,68 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
                           vattr.vertex_count(), num_fvs));
         }
 
-        if (vattr.vertex_count() != num_fvs) {
-          PUSH_ERROR_AND_RETURN(
-              fmt::format("The number of UV texcoord attributes {} does not "
-                          "match to the number of facevarying elements {}\n",
-                          vattr.vertex_count(), num_fvs));
-        }
 
         DCOUT("Add texcoord attr `" << uvname << "` to slot Id " << slotId);
-        std::vector<vec2> uvs(vattr.vertex_count());
-        memcpy(uvs.data(), vattr.data.data(), vattr.data.size());
 
-        dst.facevaryingTexcoords[uint32_t(slotId)] = uvs;
+        if (vattr.variability == VertexVariability::Constant) {
+
+          auto result = ConstantToFaceVarying(vattr.get_data(), vattr.stride_bytes(),
+            dst.faceVertexCounts);
+          if (!result) {
+            PUSH_ERROR_AND_RETURN(
+                fmt::format("Failed to convert 'constant' attribute to 'facevarying': {}", result.error()));
+          }
+
+          std::vector<vec2> uvs;
+          uvs.resize(result.value().size() / sizeof(vec2));
+          memcpy(uvs.data(), result.value().data(), result.value().size());
+
+          dst.facevaryingTexcoords[uint32_t(slotId)] = uvs;
+
+
+        } else if (vattr.variability == VertexVariability::Uniform) {
+          auto result = UniformToFaceVarying(vattr.get_data(), vattr.stride_bytes(),
+            dst.faceVertexCounts);
+          if (!result) {
+            PUSH_ERROR_AND_RETURN(
+                fmt::format("Failed to convert 'uniform' attribute to 'facevarying': {}", result.error()));
+          }
+
+          std::vector<vec2> uvs;
+          uvs.resize(result.value().size() / sizeof(vec2));
+          memcpy(uvs.data(), result.value().data(), result.value().size());
+
+          dst.facevaryingTexcoords[uint32_t(slotId)] = uvs;
+        } else if ((vattr.variability == VertexVariability::Varying) ||
+            (vattr.variability == VertexVariability::Vertex)) {
+          auto result = VertexToFaceVarying(vattr.get_data(), vattr.stride_bytes(),
+            dst.faceVertexCounts, dst.faceVertexIndices);
+          if (!result) {
+            PUSH_ERROR_AND_RETURN(
+                fmt::format("Failed to convert 'vertex' or 'varying' attribute to 'facevarying': {}", result.error()));
+          }
+
+          std::vector<vec2> uvs;
+          uvs.resize(result.value().size() / sizeof(vec2));
+          memcpy(uvs.data(), result.value().data(), result.value().size());
+
+          dst.facevaryingTexcoords[uint32_t(slotId)] = uvs;
+        } else if (vattr.variability == VertexVariability::FaceVarying) {
+
+          if (vattr.vertex_count() != num_fvs) {
+            PUSH_ERROR_AND_RETURN(
+                fmt::format("The number of UV texcoord attributes {} does not "
+                            "match to the number of facevarying elements {}\n",
+                            vattr.vertex_count(), num_fvs));
+          }
+
+          std::vector<vec2> uvs(vattr.vertex_count());
+          memcpy(uvs.data(), vattr.data.data(), vattr.data.size());
+
+          dst.facevaryingTexcoords[uint32_t(slotId)] = uvs;
+        } else {
+          PUSH_ERROR_AND_RETURN("Internal error. Invalid variability value in TexCoord attribute.");
+        }
 
       } else {
         PUSH_ERROR_AND_RETURN(ret.error());
@@ -1326,7 +1369,7 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
       dst.facevaryingTexcoords = std::move(triangulatedFacevaryingTexcoords);
     }
 
-    // TODO: Triangulate other primvars with faceVertexIndexMap
+    // TODO: Triangulate other primvars
 
   }  // triangulate
 
