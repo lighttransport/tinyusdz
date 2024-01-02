@@ -28,6 +28,7 @@
   }                               \
   return false
 
+#if 0
 // NOTE: Some types are not supported on pxrUSD(e.g. string)
 #define APPLY_GEOMPRIVAR_TYPE(__FUNC) \
   __FUNC(value::half)                 \
@@ -75,6 +76,7 @@
   __FUNC(value::texcoord3h)           \
   __FUNC(value::texcoord3f)           \
   __FUNC(value::texcoord3d)
+#endif
 
 // TODO: Followings are not supported on pxrUSD. Enable it in TinyUSDZ?
 #if 0
@@ -252,6 +254,11 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
                           indexAttr.type_name()));
         }
 
+        if (!(primvar.get_attribute().type_id() & value::TYPE_ID_1D_ARRAY_BIT)) {
+          SET_ERROR_AND_RETURN(
+              fmt::format("Indexed GeomPrimVar for scalar PrimVar Attribute is not supported. PrimVar name: {}", primvar_name));
+        }
+
         primvar.set_indices(indices);
       } else {
         SET_ERROR_AND_RETURN("[Internal Error] Invalid Index Attribute.");
@@ -267,7 +274,7 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
 }
 
 template <typename T>
-bool GeomPrimvar::flatten_with_indices(std::vector<T> *dest, std::string *err) {
+bool GeomPrimvar::flatten_with_indices(std::vector<T> *dest, std::string *err) const {
   if (!dest) {
     if (err) {
       (*err) += "Output value is nullptr.";
@@ -317,13 +324,13 @@ bool GeomPrimvar::flatten_with_indices(std::vector<T> *dest, std::string *err) {
 
 // instanciation
 #define INSTANCIATE_FLATTEN_WITH_INDICES(__ty) \
-  template bool GeomPrimvar::flatten_with_indices(std::vector<__ty> *dest, std::string *err);
+  template bool GeomPrimvar::flatten_with_indices(std::vector<__ty> *dest, std::string *err) const;
 
 APPLY_GEOMPRIVAR_TYPE(INSTANCIATE_FLATTEN_WITH_INDICES)
 
 #undef INSTANCIATE_FLATTEN_WITH_INDICES
 
-bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) {
+bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) const {
   // using namespace simple_match;
   // using namespace simple_match::placeholders;
 
@@ -355,7 +362,7 @@ bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) {
     }
 
     if (!(_attr.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) {
-      // Nothing to do for scalar type.
+      // Just return value as-is for scalar type
       (*dest) = _attr.get_var().value_raw();
     } else {
       std::string err_msg;
@@ -429,11 +436,9 @@ bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) {
 }
 
 template <typename T>
-bool GeomPrimvar::get_value(T *dest, std::string *err) {
+bool GeomPrimvar::get_value(T *dest, std::string *err) const {
   static_assert(tinyusdz::value::TypeTraits<T>::type_id() != value::TypeTraits<value::token>::type_id(), "`token` type is not supported as a GeomPrimvar");
   static_assert(tinyusdz::value::TypeTraits<T>::type_id() != value::TypeTraits<std::vector<value::token>>::type_id(), "`token[]` type is not supported as a GeomPrimvar");
-  static_assert(tinyusdz::value::TypeTraits<T>::type_id() != value::TypeTraits<std::string>::type_id(), "`string` type is not supported as a GeomPrimvar");
-  static_assert(tinyusdz::value::TypeTraits<T>::type_id() != value::TypeTraits<std::vector<std::string>>::type_id(), "`string[]` type is not supported as a GeomPrimvar");
 
   if (!dest) {
     if (err) {
@@ -484,8 +489,8 @@ bool GeomPrimvar::get_value(T *dest, std::string *err) {
 
 // instanciation
 #define INSTANCIATE_GET_VALUE(__ty) \
-  template bool GeomPrimvar::get_value(__ty *dest, std::string *err); \
-  template bool GeomPrimvar::get_value(std::vector<__ty> *dest, std::string *err);
+  template bool GeomPrimvar::get_value(__ty *dest, std::string *err) const; \
+  template bool GeomPrimvar::get_value(std::vector<__ty> *dest, std::string *err) const;
 
 APPLY_GEOMPRIVAR_TYPE(INSTANCIATE_GET_VALUE)
 
@@ -543,7 +548,7 @@ bool GPrim::set_primvar(const GeomPrimvar &primvar,
     attr.metas().elementSize = primvar.get_elementSize();
   }
 
-  props.emplace(primvar_name, attr);
+  props[primvar_name] = attr;
 
   if (primvar.has_indices()) {
 
@@ -552,7 +557,7 @@ bool GPrim::set_primvar(const GeomPrimvar &primvar,
     Attribute indices;
     indices.set_value(primvar.get_indices());
 
-    props.emplace(index_name, indices);
+    props[index_name] = indices;
   }
 
   return true;
@@ -713,87 +718,7 @@ const std::vector<int32_t> GeomMesh::get_faceVertexIndices() const {
   return dst;
 }
 
-#if 0
-void GeomMesh::Initialize(const GPrim &gprim) {
-  name = gprim.name;
-  parent_id = gprim.parent_id;
-
-  props = gprim.props;
-
-#if 0
-  for (auto &prop_item : gprim.props) {
-    std::string attr_name = std::get<0>(prop_item);
-    const Property &prop = std::get<1>(prop_item);
-
-    if (prop.is_rel) {
-      //LOG_INFO("TODO: Rel property:" + attr_name);
-      continue;
-    }
-
-    const PrimAttrib &attr = prop.get_attribute();
-
-    if (attr_name == "points") {
-      //if (auto p = primvar::as_vector<value::float3>(&attr.var)) {
-      //  points = *p;
-      //}
-    } else if (attr_name == "faceVertexIndices") {
-      //if (auto p = primvar::as_vector<int>(&attr.var)) {
-      //  faceVertexIndices = *p;
-      //}
-    } else if (attr_name == "faceVertexCounts") {
-      //if (auto p = primvar::as_vector<int>(&attr.var)) {
-      //  faceVertexCounts = *p;
-      //}
-    } else if (attr_name == "normals") {
-      //if (auto p = primvar::as_vector<value::float3>(&attr.var)) {
-      //  normals.var = *p;
-      //  normals.interpolation = attr.interpolation;
-      //}
-    } else if (attr_name == "velocitiess") {
-      //if (auto p = primvar::as_vector<value::float3>(&attr.var)) {
-      //  velocitiess.var = (*p);
-      //  velocitiess.interpolation = attr.interpolation;
-      //}
-    } else if (attr_name == "primvars:uv") {
-      //if (auto pv2f = primvar::as_vector<Vec2f>(&attr.var)) {
-      //  st.buffer = (*pv2f);
-      //  st.interpolation = attr.interpolation;
-      //} else if (auto pv3f = primvar::as_vector<value::float3>(&attr.var)) {
-      //  st.buffer = (*pv3f);
-      //  st.interpolation = attr.interpolation;
-      //}
-    } else {
-      // Generic PrimAtrr
-      props[attr_name] = attr;
-    }
-
-  }
-#endif
-
-  doubleSided = gprim.doubleSided;
-  orientation = gprim.orientation;
-  visibility = gprim.visibility;
-  extent = gprim.extent;
-  purpose = gprim.purpose;
-
-  // displayColor = gprim.displayColor;
-  // displayOpacity = gprim.displayOpacity;
-
-#if 0  // TODO
-
-
-  // PrimVar(TODO: Remove)
-  UVCoords st;
-
-  //
-  // Properties
-  //
-
-#endif
-};
-#endif
-
-// static 
+// static
 bool GeomSubset::ValidateSubsets(
     const std::vector<const GeomSubset *> &subsets,
     const size_t elementCount,
@@ -850,7 +775,7 @@ bool GeomSubset::ValidateSubsets(
     for (const int32_t index : subsetIndices) {
       if (!indicesInFamily.insert(index).second && (familyType != FamilyType::Unrestricted)) {
         ss << fmt::format("Found overlapping index {} in GeomSubset `{}`\n", index, psubset->name);
-        valid = false; 
+        valid = false;
       }
     }
 
@@ -863,13 +788,13 @@ bool GeomSubset::ValidateSubsets(
     // Ensure that the indices are in the range [0, faceCount)
     size_t maxIndex = static_cast<size_t>(*indicesInFamily.rbegin());
     int minIndex = *indicesInFamily.begin();
-    
+
     if (maxIndex >= elementCount) {
       ss << fmt::format("ValidateSubsets: All indices must be in range [0, elementSize {}), but one or more indices are greater than elementSize. Maximum = {}\n", elementCount, maxIndex);
 
       valid = false;
     }
-    
+
     if (minIndex < 0) {
       ss << fmt::format("ValidateSubsets: Found one or more indices that are less than 0. Minumum = {}\n", minIndex);
 

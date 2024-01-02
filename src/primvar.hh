@@ -6,6 +6,8 @@
 /// Type-erasure technique for Attribute/PrimVar(Primitive Variables), a Value class which can have 30+ different types(and can be compound-types(e.g. 1D/2D array, dictionary).
 /// Neigher std::any nor std::variant is applicable for such usecases, so write our own, handy typesystem.
 ///
+/// TODO: Rename PrimVar to something more better one(AttributeValue?).
+///
 #pragma once
 
 #include <array>
@@ -140,7 +142,7 @@ struct PrimVar {
     return pv.value().get_value<T>();
   }
 
-  // Check if specific a TimeSample value for a specified index is ValueBlock or not.
+  // Check if specific TimeSample value for a specified index is ValueBlock or not.
   nonstd::optional<bool> is_ts_value_blocked(size_t idx) const {
 
     if (!is_timesamples()) {
