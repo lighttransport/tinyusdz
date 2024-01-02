@@ -3,6 +3,8 @@
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 //
 // TODO:
+//   - [ ] Subdivision surface to polygon mesh conversion.
+//     - [ ] Correctly handle primvar with 'vertex' interpolation(Use the basis function of subd surface)
 //   - [ ] Support time-varying shader attribute(timeSamples)
 //
 #include "image-loader.hh"
@@ -66,15 +68,13 @@ inline T Get(const nonstd::optional<T> &nv, const T &default_value) {
 #endif
 
 //
-// Convert vertex attribute with Uniform interpolation to facevarying attribute,
-// by replicating uniform value per face over face vertices(per face).
+// Convert vertex attribute with Uniform variability(interpolation) to facevarying attribute,
+// by replicating uniform value per face over face vertices.
 //
 template <typename T>
 nonstd::expected<std::vector<T>, std::string> UniformToFaceVarying(
-    const std::vector<T> &inputs, const std::vector<uint32_t> &faceVertexCounts,
-    const std::vector<uint32_t> &faceVertexIndices) {
-  (void)faceVertexIndices;
-
+    const std::vector<T> &inputs, const std::vector<uint32_t> &faceVertexCounts)
+{
   std::vector<T> dst;
 
   if (inputs.size() == faceVertexCounts.size()) {
@@ -96,6 +96,54 @@ nonstd::expected<std::vector<T>, std::string> UniformToFaceVarying(
   return dst;
 }
 
+// Generic uniform to facevarying conversion
+nonstd::expected<std::vector<uint8_t>, std::string> UniformToFaceVarying(
+    const std::vector<uint8_t> &src,
+    const size_t stride_bytes,
+    const std::vector<uint32_t> &faceVertexCounts)
+{
+  std::vector<uint8_t> dst;
+
+  if (stride_bytes == 0) {
+    return nonstd::make_unexpected("stride_bytes is zero.");
+  }
+
+  if ((src.size() % stride_bytes) != 0) {
+    return nonstd::make_unexpected(
+        fmt::format("input bytes {} must be the multiple of stride_bytes {}",
+                    src.size(), stride_bytes));
+  }
+
+  size_t num_uniforms = src.size() / stride_bytes;
+
+  if (num_uniforms == faceVertexCounts.size()) {
+    return nonstd::make_unexpected(
+        fmt::format("The number of input uniform attributes {} must be the same with "
+                    "faceVertexCounts.size() {}",
+                    num_uniforms, faceVertexCounts.size()));
+  }
+
+  std::vector<uint8_t> buf;
+  buf.resize(stride_bytes);
+
+  for (size_t i = 0; i < faceVertexCounts.size(); i++) {
+    size_t cnt = faceVertexCounts[i];
+
+    memcpy(buf.data(), src.data() + i * stride_bytes, stride_bytes);
+
+    // repeat cnt times.
+    for (size_t k = 0; k < cnt; k++) {
+      dst.insert(dst.end(), buf.begin(), buf.end());
+    }
+  }
+
+  return dst;
+}
+
+//
+// Convert vertex attribute with Vertex variability(interpolation) to facevarying attribute,
+// by expanding(flatten) the value per vertex per face.
+//
 template <typename T>
 nonstd::expected<std::vector<T>, std::string> VertexToFaceVarying(
     const std::vector<T> &inputs, const std::vector<uint32_t> &faceVertexCounts,
@@ -126,6 +174,120 @@ nonstd::expected<std::vector<T>, std::string> VertexToFaceVarying(
     }
 
     face_offset += cnt;
+  }
+
+  return dst;
+}
+
+// Generic vertex to facevarying conversion
+nonstd::expected<std::vector<uint8_t>, std::string> VertexToFaceVarying(
+    const std::vector<uint8_t> &src,
+    const size_t stride_bytes,
+    const std::vector<uint32_t> &faceVertexCounts,
+    const std::vector<uint32_t> &faceVertexIndices) {
+  std::vector<uint8_t> dst;
+
+  if (src.empty()) {
+      return nonstd::make_unexpected(
+          "src data is empty.");
+  }
+
+  if (stride_bytes == 0) {
+      return nonstd::make_unexpected(
+          "stride_bytes must be non-zero.");
+  }
+
+  if ((src.size() % stride_bytes) != 0) {
+      return nonstd::make_unexpected(fmt::format(
+          "src size {} must be the multiple of stride_bytes {}", src.size(), stride_bytes));
+  }
+
+  const size_t num_vertices  = src.size() / stride_bytes;
+
+
+  std::vector<uint8_t> buf;
+  buf.resize(stride_bytes);
+
+  size_t faceVertexIndexOffset{0};
+
+  for (size_t i = 0; i < faceVertexCounts.size(); i++) {
+    size_t cnt = faceVertexCounts[i];
+
+    for (size_t k = 0; k < cnt; k++) {
+      size_t fv_idx = k + faceVertexIndexOffset;
+
+      if (fv_idx >= faceVertexIndices.size()) {
+        return nonstd::make_unexpected(fmt::format(
+            "faeVertexIndex {} out-of-range at faceVertexCount[{}]", fv_idx, i));
+      }
+
+      size_t v_idx = faceVertexIndices[fv_idx];
+
+      if (v_idx >= num_vertices) {
+        return nonstd::make_unexpected(
+            fmt::format("faeVertexIndices[{}] {} exceeds the number of vertices {}",
+                        fv_idx, v_idx, num_vertices));
+      }
+
+      memcpy(buf.data(), src.data() + v_idx * stride_bytes, stride_bytes);
+      dst.insert(dst.end(), buf.begin(), buf.end());
+    }
+
+    faceVertexIndexOffset += cnt;
+  }
+
+  return dst;
+}
+
+// Copy single value to facevarying vertices.
+template <typename T>
+nonstd::expected<std::vector<T>, std::string> ConstantToFaceVarying(
+    const T &input, const std::vector<uint32_t> &faceVertexCounts,
+    const std::vector<uint32_t> &faceVertexIndices) {
+  std::vector<T> dst;
+
+  for (size_t i = 0; i < faceVertexCounts.size(); i++) {
+    size_t cnt = faceVertexCounts[i];
+
+    for (size_t k = 0; k < cnt; k++) {
+      dst.emplace_back(input);
+    }
+  }
+
+  return dst;
+}
+
+nonstd::expected<std::vector<uint8_t>, std::string> ConstantToFaceVarying(
+    const std::vector<uint8_t> &src,
+    const size_t stride_bytes,
+    const std::vector<uint32_t> &faceVertexCounts,
+    const std::vector<uint32_t> &faceVertexIndices) {
+  std::vector<uint8_t> dst;
+
+  if (src.empty()) {
+      return nonstd::make_unexpected(
+          "src data is empty.");
+  }
+
+  if (stride_bytes == 0) {
+      return nonstd::make_unexpected(
+          "stride_bytes must be non-zero.");
+  }
+
+  if ((src.size() != stride_bytes)) {
+      return nonstd::make_unexpected(fmt::format(
+          "src size {} must be equal to stride_bytes {}", src.size(), stride_bytes));
+  }
+
+  std::vector<uint8_t> buf;
+  buf.resize(stride_bytes);
+
+  for (size_t i = 0; i < faceVertexCounts.size(); i++) {
+    size_t cnt = faceVertexCounts[i];
+
+    for (size_t k = 0; k < cnt; k++) {
+      dst.insert(dst.end(), buf.begin(), buf.end());
+    }
   }
 
   return dst;
@@ -584,7 +746,7 @@ void GenerateBasis(const vec3 &n, vec3 *tangent,
 ///
 /// Implemented code uses two adjacent edge composed from three vertices v_{i}, v_{i+1}, v_{i+2} for i < (N - 1)
 /// , where N is the number of vertices per facet.
-/// 
+///
 /// This may produce unwanted tangent/binormal frame for ill-defined polygon(quad, pentagon, ...).
 /// Also, we assume input mesh has well-formed and has no or few vertices with similar property(position, uvs and normals)
 ///
@@ -664,15 +826,15 @@ bool ComputeTangentsAndBinormals(
     }
 
     // Process each two-edges per facet.
-    // 
+    //
     // Example:
     //
     // fv3
-    //  o----------------o fv2 
+    //  o----------------o fv2
     //   \              /
     //    \            /
     //     o----------o
-    //    fv0         fv1 
+    //    fv0         fv1
 
     // facet0:  fv0, fv1, fv2
     // facet1:  fv1, fv2, fv3
@@ -1007,8 +1169,7 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
 
     if (normals.size()) {
       if (interp == Interpolation::Uniform) {
-        auto result = UniformToFaceVarying(normals, dst.faceVertexCounts,
-                                           dst.faceVertexIndices);
+        auto result = UniformToFaceVarying(normals, dst.faceVertexCounts);
         if (!result) {
           PUSH_ERROR_AND_RETURN(
               fmt::format("Convert uniform `normals` attribute to failed: {}",
