@@ -120,8 +120,8 @@ enum class VertexVariability {
   Uniform,   // one value for each geometric elements(e.g. `face`, `UV patch`)
   Varying,   // per-vertex for each geometric elements. Bilinear interpolation.
   Vertex,  // Equvalent to `Varying` for Polygon mesh. The basis function of the
-           // surface is used for interpolation for Subdivision Surface.
-  FaceVarying,  // per-Vertex per face
+           // surface is used for the interpolation(Curves, Subdivision Surface, etc).
+  FaceVarying,  // per-Vertex per face. Bilinear interpolation.
   Indexed,      // Need to supply index buffer
 };
 
