@@ -59,6 +59,22 @@ namespace tydra {
 
 namespace {
 
+inline std::string to_string(const UVTexture::Channel channel) {
+  if (channel == UVTexture::Channel::RGB) {
+    return "rgb";
+  } else if (channel == UVTexture::Channel::R) {
+    return "r";
+  } else if (channel == UVTexture::Channel::G) {
+    return "g";
+  } else if (channel == UVTexture::Channel::B) {
+    return "b";
+  } else if (channel == UVTexture::Channel::A) {
+    return "a";
+  }
+
+  return "[[InternalError. Invalid UVTexture::Channel]]";
+}
+
 #if 0
 template <typename T>
 inline T Get(const nonstd::optional<T> &nv, const T &default_value) {
@@ -2856,6 +2872,7 @@ std::string DumpUVTexture(const UVTexture &texture, uint32_t indent) {
   ss << "UVTexture {\n";
   ss << pprint::Indent(indent + 1) << "primvar_name " << texture.varname_uv
      << "\n";
+  ss << pprint::Indent(indent + 1) << "outputChannel " << to_string(texture.outputChannel) << "\n";
   ss << pprint::Indent(indent + 1) << "bias " << texture.bias << "\n";
   ss << pprint::Indent(indent + 1) << "scale " << texture.scale << "\n";
   ss << pprint::Indent(indent + 1) << "wrapS " << to_string(texture.wrapS)
