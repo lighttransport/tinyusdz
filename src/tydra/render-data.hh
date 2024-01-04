@@ -120,7 +120,8 @@ enum class VertexVariability {
   Uniform,   // one value for each geometric elements(e.g. `face`, `UV patch`)
   Varying,   // per-vertex for each geometric elements. Bilinear interpolation.
   Vertex,  // Equvalent to `Varying` for Polygon mesh. The basis function of the
-           // surface is used for the interpolation(Curves, Subdivision Surface, etc).
+           // surface is used for the interpolation(Curves, Subdivision Surface,
+           // etc).
   FaceVarying,  // per-Vertex per face. Bilinear interpolation.
   Indexed,      // Need to supply index buffer
 };
@@ -449,13 +450,9 @@ struct VertexAttribute {
     return reinterpret_cast<const void *>(data.data());
   }
 
-  const std::vector<uint8_t> &get_data() const {
-    return data;
-  }
+  const std::vector<uint8_t> &get_data() const { return data; }
 
-  std::vector<uint8_t> &get_data() {
-    return data;
-  }
+  std::vector<uint8_t> &get_data() { return data; }
 
   //
   // Bytes for each vertex data: formatSize * elementSize
@@ -473,7 +470,7 @@ struct VertexAttribute {
   size_t format_size() const { return VertexAttributeFormatSize(format); }
 };
 
-#if 0 // TODO: Implement
+#if 0  // TODO: Implement
 ///
 /// Flatten(expand by vertexCounts and vertexIndices) VertexAttribute.
 ///
@@ -491,7 +488,7 @@ static bool FlattenVertexAttribute(
     size_t &itemCount);
 #else
 
-#if 0 // TODO: Implement
+#if 0  // TODO: Implement
 ///
 /// Convert variability of `src` VertexAttribute to "facevarying".
 ///
@@ -607,27 +604,32 @@ struct RenderMesh {
   // faceVertexCounts.size() == 0.
   std::vector<uint32_t> faceVertexCounts;
 
-  // `normals` or `primvar:normals`. Empty when no normals exist in the GeomMesh.
+  // `normals` or `primvar:normals`. Empty when no normals exist in the
+  // GeomMesh.
   std::vector<vec3> facevaryingNormals;
-  Interpolation normalsInterpolation;  // Optional info. USD interpolation for `facevaryingNormals`
+  Interpolation normalsInterpolation;  // Optional info. USD interpolation for
+                                       // `facevaryingNormals`
 
   // key = slot ID. Usually 0 = primary
   // vec2(texCoord2f) only
   // TODO: Interpolation for UV?
   std::unordered_map<uint32_t, std::vector<vec2>> facevaryingTexcoords;
-  StringAndIdMap texcoordSlotIdMap; // st primvarname to slotID map
+  StringAndIdMap texcoordSlotIdMap;  // st primvarname to slotID map
 
   //
   // tangents and binormals(single-frame only)
   //
-  // When `normals`(or `normals` primvar) is not present in the GeomMesh, tangents and normals are not computed.
+  // When `normals`(or `normals` primvar) is not present in the GeomMesh,
+  // tangents and normals are not computed.
   //
   // When `normals` is supplied, but no `tangents` and `binormals` are supplied,
-  // Tydra computes it based on: https://learnopengl.com/Advanced-Lighting/Normal-Mapping
-  // (when MeshConverterConfig::compute_tangents_and_binormals is set to `true`)
+  // Tydra computes it based on:
+  // https://learnopengl.com/Advanced-Lighting/Normal-Mapping (when
+  // MeshConverterConfig::compute_tangents_and_binormals is set to `true`)
   //
-  // For UsdPreviewSurface, geom primvar name of `tangents` and `binormals` are read from
-  // Material's inputs::frame:tangentsPrimvarName(default "tangents"), inputs::frame::binormalsPrimvarName(default "binormals")
+  // For UsdPreviewSurface, geom primvar name of `tangents` and `binormals` are
+  // read from Material's inputs::frame:tangentsPrimvarName(default "tangents"),
+  // inputs::frame::binormalsPrimvarName(default "binormals")
   // https://learnopengl.com/Advanced-Lighting/Normal-Mapping
   //
   std::vector<vec3> facevaryingTangents;
@@ -641,7 +643,8 @@ struct RenderMesh {
   // VertexAttribute preserves input USD primvar variability(interpolation)
   // (e.g. skinWeight primvar has 'vertex' variability)
   //
-  // This primvars excludes `st`, `tangents` and `binormals`(referenced by UsdPrimvarReader)
+  // This primvars excludes `st`, `tangents` and `binormals`(referenced by
+  // UsdPrimvarReader)
   //
   std::map<uint32_t, VertexAttribute> primvars;
 
@@ -675,7 +678,8 @@ struct UVReaderFloat {
 };
 
 struct UVTexture {
-  enum class Channel { R, G, B, RGB, RGBA };
+  // NOTE: it looks no 'rgba' in UsdUvTexture
+  enum class Channel { R, G, B, A, RGB, RGBA };
 
   // TextureWrap `black` in UsdUVTexture is mapped to `CLAMP_TO_BORDER`(app must
   // set border color to black) default is CLAMP_TO_EDGE and `useMetadata` wrap
@@ -685,10 +689,24 @@ struct UVTexture {
   WrapMode wrapS{WrapMode::CLAMP_TO_EDGE};
   WrapMode wrapT{WrapMode::CLAMP_TO_EDGE};
 
-  // NOTE: for single channel(e.g. R) fetch, Only [0] will be filled for the
-  // return value.
-  vec4 fetch(size_t faceId, float varyu, float varyv, float varyw = 1.0f,
-             Channel channel = Channel::RGB);
+  // Do CPU texture mapping. For baking texels with transform, texturing in
+  // raytracer(bake lighting), etc.
+  //
+  // This method accounts for `tranform` and `bias/scale`
+  //
+  // NOTE: for R, G, B channel, The value is replicated to output[0], output[1]
+  // and output[2]. For A channel, The value is returned to output[3]
+  vec4 fetch_uv(size_t faceId, float varyu, float varyv);
+
+  // `fetch_uv` with user-specified channel. `outputChannel` is ignored.
+  vec4 fetch_uv_channel(size_t faceId, float varyu, float varyv, Channel channel);
+
+  // UVW version of `fetch_uv`.
+  vec4 fetch_uvw(size_t faceId, float varyu, float varyv, float varyw);
+  vec4 fetch_uvw_channel(size_t faceId, float varyu, float varyv, float varyw, Channel channel);
+
+  // output channel info
+  Channel outputChannel{Channel::RGB};
 
   // bias and scale for texel value
   vec4 bias{0.0f, 0.0f, 0.0f, 0.0f};
@@ -991,12 +1009,34 @@ class RenderSceneConverter {
                        const tinyusdz::Material &material,
                        RenderMaterial *rmat_out);
 
+  ///
+  /// Convert UsdPreviewSurface Shader to renderer-friendly PreviewSurfaceShader
+  ///
+  /// @param[in] shader_abs_path USD Path to Shader Prim with UsdPreviewSurface info:id.
+  /// @param[in] shader UsdPreviewSurface
+  /// @param[in] pss_put PreviewSurfaceShader
+  ///
+  /// @return true when success.
+  ///
   bool ConvertPreviewSurfaceShader(const tinyusdz::Path &shader_abs_path,
                                    const tinyusdz::UsdPreviewSurface &shader,
                                    PreviewSurfaceShader *pss_out);
 
+  ///
+  /// Convert UsdUvTexture to renderer-friendly UVTexture
+  ///
+  /// @param[in] tex_abs_path USD Path to Shader Prim with UsdUVTexture info:id.
+  /// @param[in] assetInfo assetInfo Prim metadata of given Shader Prim
+  /// @param[in] texture UsdUVTexture 
+  /// @param[in] tex_out UVTexture 
+  ///
+  /// TODO: Retrieve assetInfo from `tex_abs_path`?
+  ///
+  /// @return true when success.
+  ///
   bool ConvertUVTexture(const Path &tex_abs_path, const AssetInfo &assetInfo,
-                        const UsdUVTexture &texture, UVTexture *tex_out);
+                        const UsdUVTexture &texture,
+                        UVTexture *tex_out);
 
   const Stage *GetStagePtr() const { return _stage; }
 
