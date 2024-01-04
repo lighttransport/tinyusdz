@@ -30,7 +30,12 @@ struct UsdUVTexture;
 template <typename T>
 struct UsdPrimvarReader;
 
-using UsdPrimvarReader_float2 = UsdPrimvarReader<value::float2>;
+using UsdPrimvarReader_int = UsdPrimvarReader<int>;
+using UsdPrimvarReader_float = UsdPrimvarReader<float>;
+using UsdPrimvarReader_float3 = UsdPrimvarReader<value::float3>;
+using UsdPrimvarReader_float3 = UsdPrimvarReader<value::float3>;
+using UsdPrimvarReader_string = UsdPrimvarReader<std::string>;
+using UsdPrimvarReader_matrix4d = UsdPrimvarReader<value::matrix4d>;
 
 namespace tydra {
 
@@ -111,12 +116,13 @@ struct AnimationSample {
 };
 
 enum class VertexVariability {
-  Constant,
-  Uniform,
-  Varying,  // per-vertex
-  Vertex,   // basically per-vertex(it depends on Subdivision scheme)
-  FaceVarying,
-  Indexed,  // Need to supply index buffer
+  Constant,  // one value for all geometric elements
+  Uniform,   // one value for each geometric elements(e.g. `face`, `UV patch`)
+  Varying,   // per-vertex for each geometric elements. Bilinear interpolation.
+  Vertex,  // Equvalent to `Varying` for Polygon mesh. The basis function of the
+           // surface is used for the interpolation(Curves, Subdivision Surface, etc).
+  FaceVarying,  // per-Vertex per face. Bilinear interpolation.
+  Indexed,      // Need to supply index buffer
 };
 
 std::string to_string(VertexVariability variability);
@@ -162,28 +168,255 @@ struct Attribute {
   int64_t buffer_id{-1};  // index to buffer_id
 };
 
-// TODO: Support more format
+// Compound of ComponentType x component
 enum class VertexAttributeFormat {
-  Float,   // float
-  Vec2,    // float2
-  Vec3,    // float3
-  Vec4,    // float4
-  Ivec2,   // int2
-  Uvec4,   // uint4
-  Double,  // double
-  Dvec2,   // double2
-  Dvec3,   // double3
-  Dvec4,   // double4
+  Bool,     // bool(1 byte)
+  Char,     // int8
+  Char2,    // int8x2
+  Char3,    // int8x3
+  Char4,    // int8x4
+  Byte,     // uint8
+  Byte2,    // uint8x2
+  Byte3,    // uint8x3
+  Byte4,    // uint8x4
+  Short,    // int16
+  Short2,   // int16x2
+  Short3,   // int16x2
+  Short4,   // int16x2
+  Ushort,   // uint16
+  Ushort2,  // uint16x2
+  Ushort3,  // uint16x2
+  Ushort4,  // uint16x2
+  Half,     // half
+  Half2,    // half2
+  Half3,    // half3
+  Half4,    // half4
+  Float,    // float
+  Vec2,     // float2
+  Vec3,     // float3
+  Vec4,     // float4
+  Int,      // int
+  Ivec2,    // int2
+  Ivec3,    // int3
+  Ivec4,    // int4
+  Uint,     // uint
+  Uvec2,    // uint2
+  Uvec3,    // uint3
+  Uvec4,    // uint4
+  Double,   // double
+  Dvec2,    // double2
+  Dvec3,    // double3
+  Dvec4,    // double4
+  Mat2,     // float 2x2
+  Mat3,     // float 3x3
+  Mat4,     // float 4x4
+  Dmat2,    // double 2x2
+  Dmat3,    // double 3x3
+  Dmat4,    // double 4x4
 };
+
+static size_t VertexAttributeFormatSize(VertexAttributeFormat f) {
+  size_t elemsize{0};
+
+  switch (f) {
+    case VertexAttributeFormat::Bool: {
+      elemsize = 1;
+      break;
+    }
+    case VertexAttributeFormat::Char: {
+      elemsize = 1;
+      break;
+    }
+    case VertexAttributeFormat::Char2: {
+      elemsize = 2;
+      break;
+    }
+    case VertexAttributeFormat::Char3: {
+      elemsize = 3;
+      break;
+    }
+    case VertexAttributeFormat::Char4: {
+      elemsize = 4;
+      break;
+    }
+    case VertexAttributeFormat::Byte: {
+      elemsize = 1;
+      break;
+    }
+    case VertexAttributeFormat::Byte2: {
+      elemsize = 2;
+      break;
+    }
+    case VertexAttributeFormat::Byte3: {
+      elemsize = 3;
+      break;
+    }
+    case VertexAttributeFormat::Byte4: {
+      elemsize = 4;
+      break;
+    }
+    case VertexAttributeFormat::Short: {
+      elemsize = 2;
+      break;
+    }
+    case VertexAttributeFormat::Short2: {
+      elemsize = 4;
+      break;
+    }
+    case VertexAttributeFormat::Short3: {
+      elemsize = 6;
+      break;
+    }
+    case VertexAttributeFormat::Short4: {
+      elemsize = 8;
+      break;
+    }
+    case VertexAttributeFormat::Ushort: {
+      elemsize = 2;
+      break;
+    }
+    case VertexAttributeFormat::Ushort2: {
+      elemsize = 4;
+      break;
+    }
+    case VertexAttributeFormat::Ushort3: {
+      elemsize = 6;
+      break;
+    }
+    case VertexAttributeFormat::Ushort4: {
+      elemsize = 8;
+      break;
+    }
+    case VertexAttributeFormat::Half: {
+      elemsize = 2;
+      break;
+    }
+    case VertexAttributeFormat::Half2: {
+      elemsize = 4;
+      break;
+    }
+    case VertexAttributeFormat::Half3: {
+      elemsize = 6;
+      break;
+    }
+    case VertexAttributeFormat::Half4: {
+      elemsize = 8;
+      break;
+    }
+    case VertexAttributeFormat::Mat2: {
+      elemsize = 4 * 4;
+      break;
+    }
+    case VertexAttributeFormat::Mat3: {
+      elemsize = 4 * 9;
+      break;
+    }
+    case VertexAttributeFormat::Mat4: {
+      elemsize = 4 * 16;
+      break;
+    }
+    case VertexAttributeFormat::Dmat2: {
+      elemsize = 8 * 4;
+      break;
+    }
+    case VertexAttributeFormat::Dmat3: {
+      elemsize = 8 * 9;
+      break;
+    }
+    case VertexAttributeFormat::Dmat4: {
+      elemsize = 8 * 16;
+      break;
+    }
+    case VertexAttributeFormat::Float: {
+      elemsize = 4;
+      break;
+    }
+    case VertexAttributeFormat::Vec2: {
+      elemsize = sizeof(float) * 2;
+      break;
+    }
+    case VertexAttributeFormat::Vec3: {
+      elemsize = sizeof(float) * 3;
+      break;
+    }
+    case VertexAttributeFormat::Vec4: {
+      elemsize = sizeof(float) * 4;
+      break;
+    }
+    case VertexAttributeFormat::Int: {
+      elemsize = 4;
+      break;
+    }
+    case VertexAttributeFormat::Ivec2: {
+      elemsize = sizeof(int) * 2;
+      break;
+    }
+    case VertexAttributeFormat::Ivec3: {
+      elemsize = sizeof(int) * 3;
+      break;
+    }
+    case VertexAttributeFormat::Ivec4: {
+      elemsize = sizeof(int) * 4;
+      break;
+    }
+    case VertexAttributeFormat::Uint: {
+      elemsize = 4;
+      break;
+    }
+    case VertexAttributeFormat::Uvec2: {
+      elemsize = sizeof(uint32_t) * 2;
+      break;
+    }
+    case VertexAttributeFormat::Uvec3: {
+      elemsize = sizeof(uint32_t) * 3;
+      break;
+    }
+    case VertexAttributeFormat::Uvec4: {
+      elemsize = sizeof(uint32_t) * 4;
+      break;
+    }
+    case VertexAttributeFormat::Double: {
+      elemsize = sizeof(double);
+      break;
+    }
+    case VertexAttributeFormat::Dvec2: {
+      elemsize = sizeof(double) * 2;
+      break;
+    }
+    case VertexAttributeFormat::Dvec3: {
+      elemsize = sizeof(double) * 3;
+      break;
+    }
+    case VertexAttributeFormat::Dvec4: {
+      elemsize = sizeof(double) * 4;
+      break;
+    }
+  }
+
+  return elemsize;
+}
 
 std::string to_string(VertexAttributeFormat f);
 
+///
+/// Vertex attribute array. Stores raw vertex attribute data.
+///
+/// arrayLength = elementSize * vertexCount
+/// arrayBytes = formatSize * elementSize * vertexCount
+///
+/// Example:
+///    positions(float3, elementSize=1, n=2): [1.0, 1.1, 1.2,  0.4, 0.3, 0.2]
+///    skinWeights(float, elementSize=4, n=2): [1.0, 1.0, 1.0, 1.0,  0.5, 0.5,
+///    0.5, 0.5]
+///
 struct VertexAttribute {
   VertexAttributeFormat format{VertexAttributeFormat::Vec3};
+  uint32_t elementSize{1};  // `elementSize` in USD terminology(i.e. # of
+                            // samples per vertex data)
   uint32_t stride{
       0};  //  We don't support packed(interleaved) vertex data, so stride is
-           //  usually sizeof(VertexAttributeFormat type). 0 = tightly packed.
-           //  Let app/gfx API decide actual stride bytes.
+           //  usually sizeof(VertexAttributeFormat) * elementSize. 0 = tightly
+           //  packed. Let app/gfx API decide actual stride bytes.
   std::vector<uint8_t> data;  // raw binary data(TODO: Use Buffer ID?)
   std::vector<uint32_t>
       indices;  // Dedicated Index buffer. Set when variability == Indexed.
@@ -191,63 +424,94 @@ struct VertexAttribute {
   VertexVariability variability{VertexVariability::FaceVarying};
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
 
-  size_t counts() const {
+  // Returns the number of vertex items.
+  // We use compound type for the format, so this returns 1 when the buffer is
+  // composed of 3 floats and `format` is float3 for example.
+  size_t vertex_count() const {
     if (stride != 0) {
+      // TODO: return 0 when (data.size() % stride) != 0?
       return data.size() / stride;
     }
 
-    size_t elemsize = 0;
+    size_t itemSize = stride_bytes();
 
-    switch (format) {
-      case VertexAttributeFormat::Float: {
-        elemsize = 4;
-        break;
-      }
-      case VertexAttributeFormat::Vec2: {
-        elemsize = sizeof(float) * 2;
-        break;
-      }
-      case VertexAttributeFormat::Vec3: {
-        elemsize = sizeof(float) * 3;
-        break;
-      }
-      case VertexAttributeFormat::Vec4: {
-        elemsize = sizeof(float) * 4;
-        break;
-      }
-      case VertexAttributeFormat::Ivec2: {
-        elemsize = sizeof(int) * 2;
-        break;
-      }
-      case VertexAttributeFormat::Uvec4: {
-        elemsize = sizeof(int) * 4;
-        break;
-      }
-      case VertexAttributeFormat::Double: {
-        elemsize = sizeof(double);
-        break;
-      }
-      case VertexAttributeFormat::Dvec2: {
-        elemsize = sizeof(double) * 2;
-        break;
-      }
-      case VertexAttributeFormat::Dvec3: {
-        elemsize = sizeof(double) * 3;
-        break;
-      }
-      case VertexAttributeFormat::Dvec4: {
-        elemsize = sizeof(double) * 4;
-        break;
-      }
-    }
-
-    if (elemsize == 0) {  // this should not happen though.
+    if ((data.size() % itemSize) != 0) {
+      // data size mismatch
       return 0;
     }
 
-    return data.size() / elemsize;
+    return data.size() / itemSize;
   }
+
+  size_t num_bytes() const { return data.size(); }
+
+  const void *buffer() const {
+    return reinterpret_cast<const void *>(data.data());
+  }
+
+  const std::vector<uint8_t> &get_data() const {
+    return data;
+  }
+
+  std::vector<uint8_t> &get_data() {
+    return data;
+  }
+
+  //
+  // Bytes for each vertex data: formatSize * elementSize
+  //
+  size_t stride_bytes() const {
+    if (stride != 0) {
+      return stride;
+    }
+
+    return element_size() * VertexAttributeFormatSize(format);
+  }
+
+  size_t element_size() const { return elementSize; }
+
+  size_t format_size() const { return VertexAttributeFormatSize(format); }
 };
+
+#if 0 // TODO: Implement
+///
+/// Flatten(expand by vertexCounts and vertexIndices) VertexAttribute.
+///
+/// @param[in] src Input VertexAttribute.
+/// @param[in] faceVertexCounts Array of faceVertex counts.
+/// @param[in] faceVertexIndices Array of faceVertex indices.
+/// @param[out] dst flattened VertexAttribute data.
+/// @param[out] itemCount # of vertex items = dst.size() / src.stride_bytes().
+///
+static bool FlattenVertexAttribute(
+    const VertexAttribute &src,
+    const std::vector<uint32_t> &faceVertexCounts,
+    const std::vector<uint32_t> &faceVertexIndices,
+    std::vector<uint8_t> &dst,
+    size_t &itemCount);
+#else
+
+#if 0 // TODO: Implement
+///
+/// Convert variability of `src` VertexAttribute to "facevarying".
+///
+/// @param[in] src Input VertexAttribute.
+/// @param[in] faceVertexCounts  # of vertex per face. When the size is empty
+/// and faceVertexIndices is not empty, treat `faceVertexIndices` as
+/// triangulated mesh indices.
+/// @param[in] faceVertexIndices
+/// @param[out] dst VertexAttribute with facevarying variability. `dst.vertex_count()` become `sum(faceVertexCounts)`
+///
+static bool ToFacevaringVertexAttribute(
+    const VertexAttribute &src, VertexAttribute &dst,
+    const std::vector<uint32_t> &faceVertexCounts,
+    const std::vector<uint32_t> &faceVertexIndices);
+#endif
+#endif
+
+//
+// Convert PrimVar(type-erased value) to typed VertexAttribute
+//
 
 enum class ColorSpace {
   sRGB,
@@ -336,25 +600,50 @@ struct RenderMesh {
   std::string element_name;  // element(leaf) Prim name
   std::string abs_name;      // absolute Prim path in USD
 
+  // TODO: Support half-precision and double-precision.
   std::vector<vec3> points;
   std::vector<uint32_t> faceVertexIndices;
-  // For triangulated mesh, array elements are all 3.
-  // TODO: Make `faceVertexCounts` empty for Trianglulated mesh.
+  // For triangulated mesh, array elements are all filled with 3 or
+  // faceVertexCounts.size() == 0.
   std::vector<uint32_t> faceVertexCounts;
 
+  // `normals` or `primvar:normals`. Empty when no normals exist in the GeomMesh.
   std::vector<vec3> facevaryingNormals;
-  Interpolation normalsInterpolation;  // Optional info. USD interpolation for
-                                       // `facevaryingNormals`
+  Interpolation normalsInterpolation;  // Optional info. USD interpolation for `facevaryingNormals`
 
-  // key = slot ID.
+  // key = slot ID. Usually 0 = primary
   // vec2(texCoord2f) only
-  // TODO: Interpolation for UV
+  // TODO: Interpolation for UV?
   std::unordered_map<uint32_t, std::vector<vec2>> facevaryingTexcoords;
+  StringAndIdMap texcoordSlotIdMap; // st primvarname to slotID map
+
+  //
+  // tangents and binormals(single-frame only)
+  //
+  // When `normals`(or `normals` primvar) is not present in the GeomMesh, tangents and normals are not computed.
+  //
+  // When `normals` is supplied, but no `tangents` and `binormals` are supplied,
+  // Tydra computes it based on: https://learnopengl.com/Advanced-Lighting/Normal-Mapping
+  // (when MeshConverterConfig::compute_tangents_and_binormals is set to `true`)
+  //
+  // For UsdPreviewSurface, geom primvar name of `tangents` and `binormals` are read from
+  // Material's inputs::frame:tangentsPrimvarName(default "tangents"), inputs::frame::binormalsPrimvarName(default "binormals")
+  // https://learnopengl.com/Advanced-Lighting/Normal-Mapping
+  //
+  std::vector<vec3> facevaryingTangents;
+  std::vector<vec3> facevaryingBinormals;
 
   std::vector<int32_t>
       materialIds;  // per-face material. -1 = no material assigned
 
-  std::map<uint32_t, VertexAttribute> primvars;  // Excludes texcoords
+  //
+  // Primvars(User defined attributes).
+  // VertexAttribute preserves input USD primvar variability(interpolation)
+  // (e.g. skinWeight primvar has 'vertex' variability)
+  //
+  // This primvars excludes `st`, `tangents` and `binormals`(referenced by UsdPrimvarReader)
+  //
+  std::map<uint32_t, VertexAttribute> primvars;
 
   // Index value = key to `primvars`
   StringAndIdMap primvarsMap;
@@ -574,6 +863,7 @@ std::vector<UsdPrimvarReader_float2> ExtractPrimvarReadersFromMaterialNode(const
 
 struct MeshConverterConfig {
   bool triangulate{true};
+  bool compute_tangents_and_binormals{true};
 };
 
 struct MaterialConverterConfig {
@@ -597,14 +887,15 @@ struct MaterialConverterConfig {
 
   // In the UsdUVTexture spec, 8bit texture image is converted to floating point
   // image of range `[0.0, 1.0]`. When this flag is set to false, 8bit and 16bit
-  // texture image is converted to floating point image. When this flag is set to true,
-  // 8bit and 16bit texture data is stored as-is to save memory usage. Setting
-  // true is good if you want to render USD scene on mobile, WebGL, etc.
+  // texture image is converted to floating point image. When this flag is set
+  // to true, 8bit and 16bit texture data is stored as-is to save memory usage.
+  // Setting true is good if you want to render USD scene on mobile, WebGL, etc.
   bool preserve_texel_bitdepth{false};
 
   // Apply the inverse of a color space to make texture image in linear space.
-  // When `preserve_texel_bitdepth` is set to true, linearization also preserse texel bit depth
-  // (i.e, for 8bit sRGB image, 8bit linear-space image is produced) 
+  // When `preserve_texel_bitdepth` is set to true, linearization also preserse
+  // texel bit depth (i.e, for 8bit sRGB image, 8bit linear-space image is
+  // produced)
   bool linearize_color_space{false};
 
   // Allow asset(texture, shader, etc) path with Windows backslashes(e.g.
@@ -704,8 +995,8 @@ class RenderSceneConverter {
                                    const tinyusdz::UsdPreviewSurface &shader,
                                    PreviewSurfaceShader *pss_out);
 
-  bool ConvertUVTexture(const Path &tex_abs_path, const AssetInfo &assetInfo, const UsdUVTexture &texture,
-                        UVTexture *tex_out);
+  bool ConvertUVTexture(const Path &tex_abs_path, const AssetInfo &assetInfo,
+                        const UsdUVTexture &texture, UVTexture *tex_out);
 
   const Stage *GetStagePtr() const { return _stage; }
 
@@ -720,7 +1011,6 @@ class RenderSceneConverter {
 
   RenderSceneConverterConfig _scene_config;
   MeshConverterConfig _mesh_config;
-
   MaterialConverterConfig _material_config;
   const Stage *_stage{nullptr};
 
