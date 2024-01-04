@@ -8,7 +8,7 @@ setup(
     name='tinyusdz',
     version='0.8.0rc6',
     author='Light Transport Entertainment Inc.',
-    author_email='syoyo@lighttransport.com, lighttransport.eth@mail3.me',
+    author_email='syoyo@lighttransport.com',
     # `python/tinyusdz` as root for `tinyusdz` module
     packages=['tinyusdz'],
     package_dir={'': 'python'},
@@ -19,5 +19,5 @@ setup(
         '-DTINYUSDZ_WITH_TOOL_USDC_PARSER=Off'],
     long_description=open("./python/README.md", 'r').read(),
     long_description_content_type='text/markdown',
-    license='MIT',
+    license_files=('LICENSE'),
 )

@@ -49,14 +49,14 @@ bool IsSupportedGeomPrimvarType(const std::string &type_name);
 // - Optional: indices.
 //
 // GeomPrimvar is only constructable from GPrim.
-// This class COPIES variable from GPrim when get operation.
+// This class COPIES variable from GPrim for `get` operation.
 //
-// Currently read-only operation are well provided. writing feature is not well tested(`set_value` may have issue)
+// Currently read-only operation is well provided. writing feature is not well tested(`set_value` may have issue)
 // (If you struggled to ue GeomPrimvar, please operate on `GPrim::props` directly)
 //
 // Limitation:
 // TimeSamples are not supported for indices.
-// Also, TimeSamples are not supported both when constructing GeomPrimvar with Typed Attribute value and retriving Attribute value.
+// Also, TimeSamples are not supported both when constructing GeomPrimvar with Typed Attribute value and retrieving Attribute value.
 //
 //
 class GeomPrimvar {
@@ -122,13 +122,14 @@ class GeomPrimvar {
   /// Return false when operation failed or if the attribute type is not supported for Indexed Primvar.
   ///
   template <typename T>
-  bool flatten_with_indices(T *dst, std::string *err = nullptr);
+  bool flatten_with_indices(T *dst, std::string *err = nullptr) const;
 
   template <typename T>
-  bool flatten_with_indices(std::vector<T> *dst, std::string *err = nullptr);
+  bool flatten_with_indices(std::vector<T> *dst, std::string *err = nullptr) const;
 
   // Generic Value version.
-  bool flatten_with_indices(value::Value *dst, std::string *err = nullptr);
+  // TODO: return Attribute?
+  bool flatten_with_indices(value::Value *dst, std::string *err = nullptr) const;
 
   bool has_elementSize() const;
   uint32_t get_elementSize() const;
@@ -147,8 +148,8 @@ class GeomPrimvar {
   const std::vector<int32_t> &get_indices() const { return _indices; }
   bool has_indices() const { return _indices.size(); }
 
-  uint32_t type_id() { return _attr.type_id(); }
-  std::string type_name() { return _attr.type_name(); }
+  uint32_t type_id() const { return _attr.type_id(); }
+  std::string type_name() const { return _attr.type_name(); }
 
   // Name of Primvar. "primvars:" prefix(namespace) is omitted.
   const std::string name() const { return _name; }
@@ -186,9 +187,9 @@ class GeomPrimvar {
   /// TODO: TimeSamples
   ///
   template <typename T>
-  bool get_value(T *dst, std::string *err = nullptr);
+  bool get_value(T *dst, std::string *err = nullptr) const;
 
-  bool get_value(value::Value *dst, std::string *err = nullptr);
+  bool get_value(value::Value *dst, std::string *err = nullptr) const;
 
   ///
   /// Set Attribute value.
@@ -1068,10 +1069,17 @@ DEFINE_TYPE_TRAIT(PointInstancer, kPointInstancer, TYPE_ID_GEOM_POINT_INSTANCER,
 
 }  // namespace value
 
-// For geomprimvar template
+// Relation is supported as geomprimvar.
+// example:
+//
+// rel primvar:myrel = [</a>, </b>]
+//
 
-// NOTE: Some types are not supported on pxrUSD(e.g. string)
+// NOTE: `bool` type seems not supported on pxrUSD
+// NOTE: `string` type need special treatment when `idFrom` Relationship exists( https://github.com/syoyo/tinyusdz/issues/113 )
 #define APPLY_GEOMPRIVAR_TYPE(__FUNC) \
+  __FUNC(bool)                        \
+  __FUNC(std::string)                 \
   __FUNC(value::half)                 \
   __FUNC(value::half2)                \
   __FUNC(value::half3)                \
@@ -1118,15 +1126,22 @@ DEFINE_TYPE_TRAIT(PointInstancer, kPointInstancer, TYPE_ID_GEOM_POINT_INSTANCER,
   __FUNC(value::texcoord3f)           \
   __FUNC(value::texcoord3d)
 
+// TODO: 64bit int/uint seems not supported on pxrUSD. Enable it in TinyUSDZ?
+#if 0
+  __FUNC(int64_t) \
+  __FUNC(uint64_t)
+#endif
+
 #define EXTERN_TEMPLATE_GET_VALUE(__ty) \
-  extern template bool GeomPrimvar::get_value(__ty *dest, std::string *err); \
-  extern template bool GeomPrimvar::get_value(std::vector<__ty> *dest, std::string *err); \
-  extern template bool GeomPrimvar::flatten_with_indices(std::vector<__ty> *dest, std::string *err);
+  extern template bool GeomPrimvar::get_value(__ty *dest, std::string *err) const; \
+  extern template bool GeomPrimvar::get_value(std::vector<__ty> *dest, std::string *err) const; \
+  extern template bool GeomPrimvar::flatten_with_indices(std::vector<__ty> *dest, std::string *err) const;
 
 APPLY_GEOMPRIVAR_TYPE(EXTERN_TEMPLATE_GET_VALUE)
 
 #undef EXTERN_TEMPLATE_GET_VALUE
-#undef APPLY_GEOMPRIVAR_TYPE
+
+//#undef APPLY_GEOMPRIVAR_TYPE
 
 
 }  // namespace tinyusdz
