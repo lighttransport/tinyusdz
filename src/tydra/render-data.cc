@@ -2732,9 +2732,9 @@ std::string DumpMesh(const RenderMesh &mesh, uint32_t indent) {
   ss << pprint::Indent(indent + 1) << "num_texcoordSlots "
      << std::to_string(mesh.facevaryingTexcoords.size()) << "\n";
   for (const auto &uvs : mesh.facevaryingTexcoords) {
-    ss << pprint::Indent(indent + 1) << "num_texcoords_"
+    ss << pprint::Indent(indent + 1) << "num_facevaryingTexcoords_"
        << std::to_string(uvs.first) << " " << uvs.second.size() << "\n";
-    ss << pprint::Indent(indent + 2) << "texcoords_" << uvs.first << " \""
+    ss << pprint::Indent(indent + 2) << "facevaryingTexcoords_" << uvs.first << " \""
        << value::print_array_snipped(uvs.second) << "\"\n";
   }
 
