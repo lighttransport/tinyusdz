@@ -1551,6 +1551,13 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
         "Attribute connections must be single connection Path.\n");
   }
 
+  //
+  // Example: color3f inputs:diffuseColor.connect = </path/to/tex.outputs:rgb>
+  //
+  // => path.prim_part : /path/to/tex
+  // => path.prop_part : outputs:rgb
+  //
+
   const Path &path = src.get_connections()[0];
 
   const std::string prim_part = path.prim_part();
@@ -1563,11 +1570,15 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
   constexpr auto kOutputsB = "outputs:b";
   constexpr auto kOutputsA = "outputs:a";
 
-  if ((prop_part == kOutputsRGB) ||
-      (prop_part == kOutputsR) ||
-      (prop_part == kOutputsG) ||
-      (prop_part == kOutputsB) ||
-      (prop_part == kOutputsA)) {
+  if (prop_part == kOutputsRGB) {
+    // ok
+  } else if (prop_part == kOutputsR) {
+    // ok
+  } else if (prop_part == kOutputsG) {
+    // ok
+  } else if (prop_part == kOutputsB) {
+    // ok
+  } else if (prop_part == kOutputsA) {
     // ok
   } else {
     return nonstd::make_unexpected(
@@ -1891,6 +1902,24 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
     ss << "  colorSpace " << tinyusdz::tydra::to_string(texImage.colorSpace)
        << "\n";
     PushInfo(ss.str());
+  }
+
+  //
+  // Set outputChannel
+  //
+  if (texture.outputsRGB.authored()) {
+    tex.outputChannel = UVTexture::Channel::RGB;
+  } else if (texture.outputsA.authored()) {
+    tex.outputChannel = UVTexture::Channel::A;
+  } else if (texture.outputsR.authored()) {
+    tex.outputChannel = UVTexture::Channel::R;
+  } else if (texture.outputsG.authored()) {
+    tex.outputChannel = UVTexture::Channel::G;
+  } else if (texture.outputsB.authored()) {
+    tex.outputChannel = UVTexture::Channel::B;
+  } else {
+    PUSH_WARN("No valid output channel attribute authored. Default to RGB");
+    tex.outputChannel = UVTexture::Channel::RGB;
   }
 
   //
