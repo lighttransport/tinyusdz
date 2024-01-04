@@ -86,7 +86,7 @@ inline T Get(const nonstd::optional<T> &nv, const T &default_value) {
 #endif
 
 //
-// Convert vertex attribute with Uniform variability(interpolation) to facevarying attribute,
+// Convert vertex attribute with Uniform variability(interpolation) to facevarying variability,
 // by replicating uniform value per face over face vertices.
 //
 template <typename T>
@@ -109,6 +109,57 @@ nonstd::expected<std::vector<T>, std::string> UniformToFaceVarying(
     for (size_t k = 0; k < cnt; k++) {
       dst.emplace_back(inputs[i]);
     }
+  }
+
+  return dst;
+}
+
+//
+// Convert vertex attribute with Uniform variability(interpolation) to vertex variability,
+// by replicating uniform value for vertices of a face.
+// For shared vertex, the value will be overwritten.
+//
+template <typename T>
+nonstd::expected<std::vector<T>, std::string> UniformToVertex(
+    const std::vector<T> &inputs, const std::vector<uint32_t> &faceVertexCounts,
+    const std::vector<uint32_t> &faceVertexIndices)
+{
+  std::vector<T> dst;
+
+  if (faceVertexIndices.size() < 3) {
+    return nonstd::make_unexpected(
+        fmt::format("faceVertexIndices.size must be 3 or greater, but got {}.",
+                    faceVertexCounts.size()));
+  }
+
+  dst.resize(inputs.size());
+
+  size_t fvIndexOffset{0};
+
+  for (size_t i = 0; i < faceVertexCounts.size(); i++) {
+    size_t cnt = faceVertexCounts[i];
+
+    if ((fvIndexOffset + cnt) > faceVertexIndices.size()) {
+      return nonstd::make_unexpected(
+          fmt::format("faceVertexCounts[{}] {} gives buffer-overrun to faceVertexIndices.size {}.",
+                      i, cnt, faceVertexIndices.size()));
+    }
+
+    for (size_t k = 0; k < cnt; k++) {
+      uint32_t v_idx = faceVertexIndices[fvIndexOffset + k];
+
+      if (v_idx >= inputs.size()) {
+        return nonstd::make_unexpected(
+            fmt::format("vertexIndex {} is out-of-range for inputs.size {}.",
+                        v_idx, inputs.size()));
+
+      }
+
+      // may overwrite the value
+      dst[v_idx] = inputs[v_idx];
+    }
+
+    fvIndexOffset += cnt;
   }
 
   return dst;
@@ -1173,8 +1224,11 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
   }
 
   if (mesh.get_points().size()) {
-    dst.points.resize(mesh.get_points().size());
-    memcpy(dst.points.data(), mesh.get_points().data(),
+
+    dst.points.get_data().resize(sizeof(value::float3) * mesh.get_points().size());
+    dst.points.format = VertexAttributeFormat::Vec3;
+
+    memcpy(dst.points.get_data().data(), mesh.get_points().data(),
            sizeof(value::float3) * mesh.get_points().size());
   }
 
