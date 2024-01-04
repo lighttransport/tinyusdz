@@ -592,13 +592,45 @@ struct Node {
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
 };
 
+#if 0 // TODO
+// Static Mesh(no time-varying, no vertex animation)
+struct StaticMesh {
+
+
+};
+
+// Dynamic Mesh(time-varying, vertex animation(including BlendShapes))
+struct DynamicMesh {
+
+
+};
+
+// Skinned(USD Skeleton) Mesh
+struct SkinnedMesh {
+
+};
+#endif
+
 // Currently normals and texcoords are converted as facevarying attribute.
 struct RenderMesh {
+
+  //
+  // Type of Vertex attributes of this mesh.
+  //
+  // `Indexed` preferred. `Facevarying` as the last resport.
+  //
+  enum class VertexArrayType {
+    Indexed, // 'vertex'-varying. i.e, use faceVertexIndices to draw mesh. All vertex attributes must be representatable by single indices(i.e, no `facevertex`-varying attribute)
+    Facevarying, // 'facevertx'-varying. When any of mesh attribute has 'facevertex' varying, we cannot represent the mesh with single indices, so decompose all vertex attribute to Facevaring(no VertexArray indices). This would impact rendering performance.
+  };
+
   std::string element_name;  // element(leaf) Prim name
   std::string abs_name;      // absolute Prim path in USD
 
-  // TODO: Support half-precision and double-precision.
-  std::vector<vec3> points;
+  VertexArrayType vertexArrayType{VertexArrayType::Facevarying};
+
+  VertexAttribute points; // varying: vertex
+
   std::vector<uint32_t> faceVertexIndices;
   // For triangulated mesh, array elements are all filled with 3 or
   // faceVertexCounts.size() == 0.
@@ -606,14 +638,18 @@ struct RenderMesh {
 
   // `normals` or `primvar:normals`. Empty when no normals exist in the
   // GeomMesh.
+  VertexAttribute normals;
+#if 0
   std::vector<vec3> facevaryingNormals;
   Interpolation normalsInterpolation;  // Optional info. USD interpolation for
                                        // `facevaryingNormals`
+#endif                                       
 
   // key = slot ID. Usually 0 = primary
-  // vec2(texCoord2f) only
-  // TODO: Interpolation for UV?
+#if 0
   std::unordered_map<uint32_t, std::vector<vec2>> facevaryingTexcoords;
+#endif
+  std::unordered_map<uint32_t, VertexAttribute> texcoords;
   StringAndIdMap texcoordSlotIdMap;  // st primvarname to slotID map
 
   //
@@ -632,8 +668,10 @@ struct RenderMesh {
   // inputs::frame::binormalsPrimvarName(default "binormals")
   // https://learnopengl.com/Advanced-Lighting/Normal-Mapping
   //
-  std::vector<vec3> facevaryingTangents;
-  std::vector<vec3> facevaryingBinormals;
+  VertexAttribute tangents;
+  VertexAttribute binormals;
+  //std::vector<vec3> facevaryingTangents;
+  //std::vector<vec3> facevaryingBinormals;
 
   std::vector<int32_t>
       materialIds;  // per-face material. -1 = no material assigned
