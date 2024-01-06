@@ -519,3 +519,4 @@ Some helper code is licensed under MIT license.
 * nanozlib: Apache 2.0 license. https://github.com/lighttransport/nanozlib
 * lz4.py: MIT license. https://github.com/SE2Dev/PyCoD/blob/master/_lz4.py
 * pugixml: MIT license. https://github.com/zeux/pugixml
+* meshoptimizer: MIT license. https://github.com/zeux/meshoptimizer

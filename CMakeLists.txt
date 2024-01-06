@@ -72,6 +72,9 @@ option(TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER
        "Build with built-in image loader(stb_image and fpng). When disabled, app need to provide image loader callback to load images."
        ${TINYUSDZ_DEFAULT_WITH_BUILTIN_IMAGE_LOADER})
 
+option(TINYUSDZ_WITH_MESHOPTIMIZER
+       "Build with meshoptimizer for optimized mesh rendering in OpenGL/Vulkan." On)
+
 if(MSVC)
   # it looks it is hard to disable C++ exception for MSVC, so enable exception by default
   set(TINYUSDZ_CXX_EXCEPTIONS_DEFAULT On)
@@ -406,6 +409,28 @@ set(TINYUSDZ_DEP_SOURCES
     ${PROJECT_SOURCE_DIR}/src/lz4/lz4.c
     ${PROJECT_SOURCE_DIR}/src/external/pystring.cpp
 )
+
+if (TINYUSDZ_WITH_MESHOPTIMIZER)
+  list(APPEND TINYUSDZ_DEP_SOURCES
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/allocator.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/clusterizer.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/indexcodec.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/indexgenerator.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/LICENSE.md
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/overdrawanalyzer.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/overdrawoptimizer.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/quantization.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/simplifier.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/spatialorder.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/stripifier.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/vcacheanalyzer.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/vcacheoptimizer.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/vertexcodec.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/vertexfilter.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/vfetchanalyzer.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/vfetchoptimizer.cpp
+  )
+endif()
 
 if (TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER)
   list(APPEND TINYUSDZ_DEP_SOURCES  ${PROJECT_SOURCE_DIR}/src/external/fpng.cpp)
@@ -974,6 +999,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_WITH_OPENSUBDIV")
   endif(TINYUSDZ_WITH_OPENSUBDIV)
+
+  if (TINYUSDZ_WITH_MESHOPTIMIZER)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_MESHOPTIMIZER")
+  endif(TINYUSDZ_WITH_MESHOPTIMIZER)
 
   if(NOT TINYUSDZ_CXX_EXCEPTIONS)
     if(MSVC)
