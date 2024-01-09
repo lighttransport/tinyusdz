@@ -1201,6 +1201,9 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
 
   bool triangulate = _mesh_config.triangulate;
 
+  // Conversion strategy.
+  // - First try to convert vertex attributes with 'vertex' varying(VertexArray with indexed buffer_
+
   // indices
   // TODO: timeSamples, connections
   if (const auto pv = mesh.faceVertexIndices.get_value()) {
