@@ -311,6 +311,7 @@ Edit path to MSVC SDK and Windows SDK in `bootstrap-clang-cl-win64.bat`, then
 ### Tools and Examples
 
 * [tusdcat](examples/tusdcat/) Parse USDZ/USDA/USDC and print it as Ascii(similar to `usdcat` in pxrUSD).
+  * `tusdcat` also do USD composition(`flatten`) and contains TinyUSDZ Composition API usecase.
 * Deprecated. Use `tusdcat` [usda_parser](examples/usda_parser/) Parse USDA and print it as Ascii.
 * Deprecated. Use `tusdcat` [usdc_parser](examples/usdc_parser/) Parse USDC and print it as Ascii.
 * [Simple SDL viewer](examples/sdlviewer/)
