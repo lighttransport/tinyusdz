@@ -123,7 +123,7 @@ enum class VertexVariability {
            // surface is used for the interpolation(Curves, Subdivision Surface,
            // etc).
   FaceVarying,  // per-Vertex per face. Bilinear interpolation.
-  Indexed,      // Need to supply index buffer
+  Indexed,      // Dedicated index buffer provided(unflattened Indexed Primvar). 
 };
 
 std::string to_string(VertexVariability variability);
@@ -421,7 +421,7 @@ struct VertexAttribute {
   std::vector<uint8_t> data;  // raw binary data(TODO: Use Buffer ID?)
   std::vector<uint32_t>
       indices;  // Dedicated Index buffer. Set when variability == Indexed.
-                // empty = Use vertex index buffer
+                // empty = Use externally provided vertex index buffer
   VertexVariability variability{VertexVariability::FaceVarying};
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
 
@@ -468,6 +468,27 @@ struct VertexAttribute {
   size_t element_size() const { return elementSize; }
 
   size_t format_size() const { return VertexAttributeFormatSize(format); }
+
+  bool is_constant() const {
+    return (variability == VertexVariability::Constant);
+  }
+
+  bool is_uniform() const {
+    return (variability == VertexVariability::Constant);
+  }
+
+  // includes 'varying'
+  bool is_vertex() const {
+    return (variability == VertexVariability::Vertex) || (variability == VertexVariability::Varying);
+  }
+
+  bool is_facevarying() const {
+    return (variability == VertexVariability::FaceVarying);
+  }
+
+  bool is_indexed() const {
+    return variability == VertexVariability::Indexed;
+  }
 };
 
 #if 0  // TODO: Implement
