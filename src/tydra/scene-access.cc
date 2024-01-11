@@ -2426,5 +2426,40 @@ bool ShaderToPrimSpec(const UsdUVTexture &node, PrimSpec &ps, std::string *warn,
 }
 #endif
 
+bool GetCollection(const Prim &prim, const Collection **dst) {
+  if (!dst) {
+    return false;
+  }
+
+  auto fn = [dst](const Collection *coll) {
+    (*dst) = coll;
+    return true;
+  };
+
+  bool ret = ApplyToCollection(prim, fn);
+
+  return ret;
+}
+
+bool IsPathIncluded(const CollectionMembershipQuery &query, const Stage &stage, const Path &abs_path, const CollectionInstance::ExpansionRule expansionRule) {
+
+  (void)query;
+  (void)stage;
+  (void)expansionRule;
+
+  DCOUT("TODO");
+
+  if (!abs_path.is_valid()) {
+    return false;
+  }
+
+  if (abs_path.is_root_path()) {
+    return true;
+  }
+
+  return false;
+  
+}
+
 }  // namespace tydra
 }  // namespace tinyusdz
