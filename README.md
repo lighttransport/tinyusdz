@@ -1,9 +1,17 @@
 # Tiny USDZ/USDA/USDC library in C++14
 
-`TinyUSDZ` is secure, portable and dependency-free(depends only on C++ STL. Other 3rd-party libraries included. Yes, you don't need pxrUSD library!) USDZ/USDC/USDA library written in C++14.
+`TinyUSDZ` is secure, portable and dependency-free(depends only on C++ STL. Other 3rd-party libraries included. Yes, you don't need pxrUSD/OpenUSD library!) USDZ/USDC/USDA library written in C++14.
 
+## High priority
+
+* Tydra: Handy data structure converter for rendering https://github.com/syoyo/tinyusdz/issues/31
+  * [ ] USD to RenderScene(OpenGL/Vulkan) conversion https://github.com/syoyo/tinyusdz/issues/109
+ 
 ## Mid-term todo
 
+* Collection API and GeomSubset/Material Binding API support
+  * [ ] https://github.com/syoyo/tinyusdz/issues/108
+  * [ ] https://github.com/syoyo/tinyusdz/issues/103 
 * Experimental composition support https://github.com/syoyo/tinyusdz/issues/25
   * [x] subLayers
   * [x] references
@@ -15,7 +23,7 @@
 * Support reading & compose some production USD scenes
   * [ ] Moana island v2.1 https://github.com/syoyo/tinyusdz/issues/90
   * [ ] ALAB USD production scene https://github.com/syoyo/tinyusdz/issues/91
-* Tydra: Handy data structure converter for rendering https://github.com/syoyo/tinyusdz/issues/31 
+ 
 * MaterialX https://github.com/syoyo/tinyusdz/issues/86
   * USD + MateriralX + PBR rendering example using https://github.com/lighttransport/pbrlab
 * Improve interoperability with Blender USD export/import https://github.com/syoyo/tinyusdz/issues/98
@@ -53,12 +61,14 @@ $ python -m pip install tinyusdz
 
 |         |   Linux                                  |  Windows                              |   macOS 11(Big Sur) or later  | macos 10  |
 |:-------:|:---------------------------------------- |:------------------------------------- |:-----------------------------:|:---------:|
+|   3.6(⚠️)   | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> ✅ ARM64  |🚫 | ✅ Intel |
 |   3.7   | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> ✅ ARM64  |✅ arm64 | 🚫 universal2 </br> ✅ Intel |
 |   3.8   | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> ✅ ARM64  |✅ arm64 | ✅ universal2 </br> ✅ Intel |
 |   3.9   | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> ✅ ARM64  |✅ arm64 | ✅ universal2 </br> ✅ Intel |
 |   3.10   | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> ✅ ARM64  |✅ arm64 | ✅ universal2 </br> ✅ Intel |
 |   3.11   | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> ✅ ARM64  |✅ arm64 | ✅ universal2 </br> ✅ Intel |
 
+⚠️  Python 3.6 is EOL and not recommended to use it. 3.6 bwheels is provided as long as cibuildwheels provides the build for it.
 NOTE: Windows ARM64 binary is provided using cross-compiling. Its not well tested.
 
 
@@ -301,6 +311,7 @@ Edit path to MSVC SDK and Windows SDK in `bootstrap-clang-cl-win64.bat`, then
 ### Tools and Examples
 
 * [tusdcat](examples/tusdcat/) Parse USDZ/USDA/USDC and print it as Ascii(similar to `usdcat` in pxrUSD).
+  * `tusdcat` also do USD composition(`flatten`) and contains TinyUSDZ Composition API usecase.
 * Deprecated. Use `tusdcat` [usda_parser](examples/usda_parser/) Parse USDA and print it as Ascii.
 * Deprecated. Use `tusdcat` [usdc_parser](examples/usdc_parser/) Parse USDC and print it as Ascii.
 * [Simple SDL viewer](examples/sdlviewer/)
@@ -458,8 +469,8 @@ You can build pure Windows build of TinyUSDZ on Linux CI machine.
 
 ## License
 
-TinyUSDZ is licensed under MIT license and Apache 2.0 license.
-(Doing relicensing from MIT to Apache 2.0. Will be fully relicensed to Apache 2.0 at some point)
+TinyUSDZ is primarily licensed under Apache 2.0 license.
+Some helper code is licensed under MIT license.
 
 ### Third party licenses
 

@@ -1527,6 +1527,58 @@ std::string print_material_binding(const MaterialBinding *mb, const uint32_t ind
   return ss.str();
 }
 
+std::string print_collection(const Collection *coll, const uint32_t indent) {
+  std::stringstream ss;
+
+  if (!coll) {
+    return std::string();
+  }
+
+  const auto &instances = coll->instances();
+
+  for (size_t i = 0; i < instances.size(); i++) {
+    std::string name = instances.keys()[i];
+
+    CollectionInstance instance;
+    if (!instances.at(i, &instance)) {
+      continue;
+    }
+
+    std::string prefix = "collection";
+    if (name.size()) {
+      prefix += ":" + name;
+    }
+
+    if (instance.expansionRule.authored()) {
+      ss << print_typed_token_attr(instance.expansionRule, prefix + ":expansionRule", indent);
+
+    }
+
+
+    if (instance.includeRoot.authored()) {
+      ss << print_typed_attr(instance.includeRoot, prefix + ":includeRoot", indent);
+    }
+
+    if (instance.includes) {
+      ss << print_relationship(
+          instance.includes.value(),
+          instance.includes.value().get_listedit_qual(),
+          /* custom */ false, prefix + ":includes", indent);
+        
+    }
+
+    if (instance.excludes) {
+      ss << print_relationship(
+          instance.excludes.value(),
+          instance.excludes.value().get_listedit_qual(),
+          /* custom */ false, prefix + ":excludes", indent);
+        
+    }
+  }
+
+  return ss.str();
+}
+
 template <typename T>
 std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
   std::stringstream ss;
@@ -1540,6 +1592,8 @@ std::string print_gprim_predefined(const T &gprim, const uint32_t indent) {
   ss << print_typed_token_attr(gprim.visibility, "visibility", indent);
 
   ss << print_material_binding(&gprim, indent);
+
+  ss << print_collection(&gprim, indent);
 
   if (gprim.proxyPrim.authored()) {
     const Relationship &rel = gprim.proxyPrim.relationship();
@@ -1763,6 +1817,10 @@ std::string to_string(const APISchemas::APIName &name) {
   switch (name) {
     case APISchemas::APIName::SkelBindingAPI: {
       s = "SkelBindingAPI";
+      break;
+    }
+    case APISchemas::APIName::CollectionAPI: {
+      s = "CollectionAPI";
       break;
     }
     case APISchemas::APIName::MaterialBindingAPI: {
@@ -2016,6 +2074,10 @@ std::string to_string(tinyusdz::GeomSubset::ElementType v) {
       s = "face";
       break;
     }
+    case tinyusdz::GeomSubset::ElementType::Point: {
+      s = "point";
+      break;
+    }
   }
 
   return s;
@@ -2035,6 +2097,27 @@ std::string to_string(tinyusdz::GeomSubset::FamilyType v) {
     }
     case tinyusdz::GeomSubset::FamilyType::Unrestricted: {
       s = "unrestricted";
+      break;
+    }
+  }
+
+  return s;
+}
+
+std::string to_string(tinyusdz::CollectionInstance::ExpansionRule rule) {
+  std::string s;
+
+  switch (rule) {
+    case tinyusdz::CollectionInstance::ExpansionRule::ExplicitOnly: {
+      s = kExplicitOnly;
+      break;
+    }
+    case tinyusdz::CollectionInstance::ExpansionRule::ExpandPrims: {
+      s = kExpandPrims;
+      break;
+    }
+    case tinyusdz::CollectionInstance::ExpansionRule::ExpandPrimsAndProperties: {
+      s = kExpandPrimsAndProperties;
       break;
     }
   }
@@ -2776,6 +2859,7 @@ std::string to_string(const GeomSubset &subset, const uint32_t indent,
   ss << print_typed_attr(subset.indices, "indices", indent + 1);
 
   ss << print_material_binding(&subset, indent + 1);
+  ss << print_collection(&subset, indent + 1);
 
   ss << print_props(subset.props, indent + 1);
 

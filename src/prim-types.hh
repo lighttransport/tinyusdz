@@ -49,7 +49,7 @@
 
 namespace tinyusdz {
 
-// Simple Python-like OrderedDict 
+// Simple Python-like OrderedDict
 template <typename T>
 class ordered_dict {
  public:
@@ -98,6 +98,25 @@ class ordered_dict {
     _m[key] = value;
   }
 
+  T &get_or_add(const std::string &key) {
+    if (!_m.count(key)) {
+      _keys.push_back(key);
+    }
+
+    return _m[key];
+  }
+
+
+  void insert(const std::string &key, T &&value) {
+    if (_m.count(key)) {
+      // overwrite existing value
+    } else {
+      _keys.push_back(key);
+    }
+
+    _m[key] = std::move(value);
+  }
+
   bool erase(const std::string &key) {
 
     if (!_m.count(key)) {
@@ -118,20 +137,42 @@ class ordered_dict {
       return false;
     }
 
-    _keys.erase(_keys.begin() + idx);
+    _keys.erase(_keys.begin() + std::ptrdiff_t(idx));
     _m.erase(key);
 
     return true;
   }
-  
 
-  bool at(const std::string &key, T *dst) const {
+  bool at(const std::string &key, T **dst) {
+    if (!_m.count(key)) {
+      // This should not happen though.
+      return false;
+    }
+
+    (*dst) = &_m.at(key);
+
+    return true;
+  }
+
+
+  bool at(const std::string &key, const T *dst) const {
     if (!_m.count(key)) {
       // This should not happen though.
       return false;
     }
 
     (*dst) = _m.at(key);
+
+    return true;
+  }
+
+  bool at(const std::string &key, const T **dst) const {
+    if (!_m.count(key)) {
+      // This should not happen though.
+      return false;
+    }
+
+    (*dst) = &_m.at(key);
 
     return true;
   }
@@ -148,7 +189,6 @@ class ordered_dict {
   std::vector<std::string> _keys;
   std::map<std::string, T> _m;
 };
-
 
 // SpecType enum must be same order with pxrUSD's SdfSpecType(since enum value
 // is stored in Crate directly)
@@ -855,6 +895,7 @@ struct APISchemas {
     MaterialBindingAPI,  // "MaterialBindingAPI"
     SkelBindingAPI,      // "SkelBindingAPI"
     ShapingAPI,         // "ShapingAPI"(usdLux)
+    CollectionAPI,      // "CollectionAPI"
     // USDZ AR extensions
     Preliminary_AnchoringAPI,
     Preliminary_PhysicsColliderAPI,
@@ -1102,15 +1143,26 @@ struct TypedTimeSamples {
       (*dst) = _samples[0].value;
       return true;
     } else {
+
+      if (_samples.size() == 1) {
+        (*dst) = _samples[0].value;
+        return true;
+      }
+
       auto it = std::lower_bound(
-          _samples.begin(), _samples.end(), t,
-          [](const Sample &a, double tval) { return a.t < tval; });
+        _samples.begin(), _samples.end(), t,
+        [](const Sample &a, double tval) { return a.t < tval; });
 
       if (interp == value::TimeSampleInterpolationType::Linear) {
+
+        // MS STL does not allow seek vector iterator before begin
+        // Issue #110
+        const auto it_minus_1 = (it == _samples.begin()) ? _samples.begin() : (it - 1);
+
         size_t idx0 = size_t((std::max)(
             int64_t(0),
             (std::min)(int64_t(_samples.size() - 1),
-                     int64_t(std::distance(_samples.begin(), it - 1)))));
+                     int64_t(std::distance(_samples.begin(), it_minus_1)))));
         size_t idx1 =
             size_t((std::max)(int64_t(0), (std::min)(int64_t(_samples.size() - 1),
                                                  int64_t(idx0) + 1)));
@@ -2085,7 +2137,7 @@ struct Attribute {
     attr.variability() = Variability::Uniform;
     return attr;
   }
-  
+
 
   ///
   /// Construct connection attribute.
@@ -2570,6 +2622,7 @@ struct XformOp {
 };
 
 // forward decl
+class MaterialBinding;
 struct Model;
 class Prim;
 class PrimSpec;
@@ -2621,9 +2674,307 @@ struct VariantSetSpec
   std::map<std::string, PrimSpec> variantSet;
 };
 
+// Collection API
+// https://openusd.org/release/api/class_usd_collection_a_p_i.html
+
+constexpr auto kExpandPrims = "expandPrims";
+constexpr auto kExplicitOnly = "explicitOnly";
+constexpr auto kExpandPrimsAndProperties = "expandPrimsAndProperties";
+
+struct CollectionInstance {
+
+  enum class ExpansionRule {
+    ExpandPrims, // "expandPrims" (default)
+    ExplicitOnly, // "explicitOnly"
+    ExpandPrimsAndProperties, // "expandPrimsAndProperties"
+  };
+
+  TypedAttributeWithFallback<ExpansionRule> expansionRule{ExpansionRule::ExpandPrims}; // uniform token collection:collectionName:expansionRule
+  TypedAttributeWithFallback<Animatable<bool>> includeRoot{false}; // bool collection:<collectionName>:includeRoot
+  nonstd::optional<Relationship> includes; // rel collection:<collectionName>:includes
+  nonstd::optional<Relationship> excludes; // rel collection:<collectionName>:excludes
+
+};
+
+class Collection
+{
+ public:
+  const ordered_dict<CollectionInstance> instances() const {
+    return _instances;
+  }
+
+  bool add_instance(const std::string &name, CollectionInstance &instance) {
+    if (_instances.count(name)) {
+      return false;
+    }
+
+    _instances.insert(name, instance);
+
+    return true;
+  }
+
+  bool get_instance(const std::string &name, const CollectionInstance **coll) const {
+    if (!coll) {
+      return false;
+    }
+
+    return _instances.at(name, coll);
+  }
+
+  CollectionInstance &get_or_add_instance(const std::string &name) {
+    return _instances.get_or_add(name);
+  }
+
+  bool has_instance(const std::string &name) const {
+    return _instances.count(name);
+  }
+
+  bool del_instance(const std::string &name) {
+    return _instances.erase(name);
+  }
+
+ private:
+  ordered_dict<CollectionInstance> _instances;
+};
+
+// for bindMaterialAs
+constexpr auto kWeaderThanDescendants = "weakerThanDescendants";
+constexpr auto kStrongerThanDescendants = "strongerThanDescendants";
+
+enum class MaterialBindingStrength
+{
+  WeakerThanDescendants, // default
+  StrongerThanDescendants
+};
+
+// TODO: Move to pprinter.hh?
+std::string to_string(const MaterialBindingStrength strength);
+
+class MaterialBinding {
+ public:
+
+  static value::token kAllPurpose() {
+    return value::token("");
+  }
+
+  //
+  // NOTE on material binding.
+  // https://openusd.org/release/wp_usdshade.html
+  //
+  //  - "all purpose", direct binding, material:binding. single relationship target only
+  //  - a purpose-restricted, direct, fallback binding, e.g. material:binding:preview
+  //  - an all-purpose, collection-based binding, e.g. material:binding:collection:metalBits
+  //  - a purpose-restricted, collection-based binding, e.g. material:binding:collection:full:metalBits
+  //
+  // In TinyUSDZ, treat empty purpose token as "all purpose"
+  //
+
+  // Some frequently used materialBindings
+  nonstd::optional<Relationship> materialBinding; // material:binding
+  nonstd::optional<Relationship> materialBindingPreview; // material:binding:preview
+  nonstd::optional<Relationship> materialBindingFull; // material:binding:full
+
+  //nonstd::optional<Relationship> materialBindingCollection; // material:binding:collection  Deprecated. use materialBindingCollectionMap[""][""] instead.
+
+  value::token get_materialBindingStrength(const value::token &purpose);
+  value::token get_materialBindingStrengthCollection(const value::token &collection_name, const value::token &purpose);
+
+  bool has_materialBinding() const {
+    return materialBinding.has_value();
+  }
+
+  bool has_materialBindingPreview() const {
+    return materialBindingPreview.has_value();
+  }
+
+  bool has_materialBindingFull() const {
+    return materialBindingFull.has_value();
+  }
+
+  bool has_materialBinding(const value::token &mat_purpose) const {
+    if (mat_purpose.str() == kAllPurpose().str()) {
+      return has_materialBinding();
+    } else if (mat_purpose.str() == "full") {
+      return has_materialBindingFull();
+    } else if (mat_purpose.str() == "preview") {
+      return has_materialBindingPreview();
+    } else {
+      return _materialBindingMap.count(mat_purpose.str());
+    }
+  }
+
+  void clear_materialBinding() {
+    materialBinding.reset();
+  }
+
+  void clear_materialBindingPreview() {
+    materialBindingPreview.reset();
+  }
+
+  void clear_materialBindingFull() {
+    materialBindingFull.reset();
+  }
+
+  void set_materialBinding(const Relationship &rel) {
+    materialBinding = rel;
+  }
+
+  void set_materialBinding(const Relationship &rel, const MaterialBindingStrength strength) {
+    value::token strength_tok(to_string(strength));
+    materialBinding = rel;
+    materialBinding.value().metas().bindMaterialAs = strength_tok;
+  }
+
+  void set_materialBindingPreview(const Relationship &rel) {
+    materialBindingPreview = rel;
+  }
+
+  void set_materialBindingPreview(const Relationship &rel, const MaterialBindingStrength strength) {
+    value::token strength_tok(to_string(strength));
+    materialBindingPreview = rel;
+    materialBindingPreview.value().metas().bindMaterialAs = strength_tok;
+  }
+
+  void set_materialBindingFull(const Relationship &rel) {
+    materialBindingFull = rel;
+  }
+
+  void set_materialBindingFull(const Relationship &rel, const MaterialBindingStrength strength) {
+    value::token strength_tok(to_string(strength));
+    materialBindingFull = rel;
+    materialBindingFull.value().metas().bindMaterialAs = strength_tok;
+  }
+
+  void set_materialBinding(const Relationship &rel, const value::token &mat_purpose) {
+
+    if (mat_purpose.str().empty()) {
+      return set_materialBinding(rel);
+    } else if (mat_purpose.str() == "full") {
+      return set_materialBindingFull(rel);
+    } else if (mat_purpose.str() == "preview") {
+      return set_materialBindingFull(rel);
+    } else {
+      _materialBindingMap[mat_purpose.str()] = rel;
+    }
+  }
+
+  void set_materialBinding(const Relationship &rel, const value::token &mat_purpose, const MaterialBindingStrength strength) {
+    value::token strength_tok(to_string(strength));
+
+    if (mat_purpose.str().empty()) {
+      return set_materialBinding(rel, strength);
+    } else if (mat_purpose.str() == "full") {
+      return set_materialBindingFull(rel, strength);
+    } else if (mat_purpose.str() == "preview") {
+      return set_materialBindingFull(rel, strength);
+    } else {
+      _materialBindingMap[mat_purpose.str()] = rel;
+      _materialBindingMap[mat_purpose.str()].metas().bindMaterialAs = strength_tok;
+    }
+  }
+
+  bool has_materialBindingCollection(const std::string &tok) {
+
+    if (!_materialBindingCollectionMap.count(tok)) {
+      return false;
+    }
+
+    return _materialBindingCollectionMap.count(tok);
+  }
+
+  void set_materialBindingCollection(const value::token &tok, const value::token &mat_purpose, const Relationship &rel) {
+
+    // NOTE:
+    // https://openusd.org/release/wp_usdshade.html#basic-proposal-for-collection-based-assignment
+    // says: material:binding:collection defines a namespace of binding relationships to be applied in namespace order, with the earliest ordered binding relationship the strongest
+    //
+    // so the app is better first check if `tok` element alreasy exists(using has_materialBindingCollection)
+
+    auto &m = _materialBindingCollectionMap[tok.str()];
+
+    m.insert(mat_purpose.str(), rel);
+  }
+
+  void clear_materialBindingCollection(const value::token &tok, const value::token &mat_purpose) {
+    if (_materialBindingCollectionMap.count(tok.str())) {
+      _materialBindingCollectionMap[tok.str()].erase(mat_purpose.str());
+    }
+  }
+
+  void set_materialBindingCollection(const value::token &tok, const value::token &mat_purpose, const Relationship &rel, MaterialBindingStrength strength) {
+    value::token strength_tok(to_string(strength));
+
+    Relationship r = rel;
+    r.metas().bindMaterialAs = strength_tok;
+
+    _materialBindingCollectionMap[tok.str()].insert(mat_purpose.str(), r);
+  }
+
+  const std::map<std::string, Relationship> &materialBindingMap() const {
+    return _materialBindingMap;
+  }
+
+  const std::map<std::string, ordered_dict<Relationship>> &materialBindingCollectionMap() const {
+    return _materialBindingCollectionMap;
+  }
+
+  bool get_materialBinding(const value::token &mat_purpose, Relationship *relOut) const {
+    if (!relOut) {
+      return false;
+    }
+
+    if (mat_purpose.str().empty()) {
+      if (materialBinding.has_value()) {
+        (*relOut) = materialBinding.value();
+        return true;
+      } else {
+        return false; // not authored
+      }
+    } else if (mat_purpose.str() == "full") {
+      if (materialBindingFull.has_value()) {
+        (*relOut) = materialBindingFull.value();
+        return true;
+      } else {
+        return false; // not authored
+      }
+    } else if (mat_purpose.str() == "preview") {
+      if (materialBindingPreview.has_value()) {
+        (*relOut) = materialBindingPreview.value();
+        return true;
+      } else {
+        return false; // not authored
+      }
+    } else {
+      if (_materialBindingMap.count(mat_purpose.str())) {
+        (*relOut) = _materialBindingMap.at(mat_purpose.str());
+        return true;
+      } else {
+        return false; // not authored
+      }
+    }
+  }
+
+ private:
+
+  // For material:binding(excludes frequently used `material:binding`, `material:binding:full` and `material:binding:preview`)
+  // key = PURPOSE, value = rel
+  std::map<std::string, Relationship> _materialBindingMap;
+
+  // For material:binding:collection
+  // Use ordered dict since the requests:
+  //
+  // https://openusd.org/release/wp_usdshade.html#basic-proposal-for-collection-based-assignment
+  //  
+  // `...with the earliest ordered binding relationship the strongest`
+  //
+  // key = PURPOSE, value = map<NAME, Rel>
+  // TODO: Use multi-index map
+  std::map<std::string, ordered_dict<Relationship>> _materialBindingCollectionMap;
+};
+
 // Generic primspec container.
 // Unknown or unsupported Prim type are also reprenseted as Model for now.
-struct Model {
+struct Model : public Collection, MaterialBinding {
   std::string name;
 
   std::string prim_type_name;  // e.g. "" for `def "bora" {}`, "UnknownPrim" for
@@ -2663,16 +3014,6 @@ struct Klass {
   std::vector<std::pair<ListEditQual, Reference>> references;
 
   std::map<std::string, Property> props;
-};
-#endif
-
-#if 0
-struct MaterialBindingAPI {
-  Path binding;            // rel material:binding
-  Path bindingCollection;  // rel material:binding:collection
-  Path bindingPreview;     // rel material:binding:preview
-
-  // TODO: allPurpose, preview, ...
 };
 #endif
 
@@ -2804,7 +3145,7 @@ struct Volume {
 // `Scope` is uncommon in graphics community, its something like `Group`.
 // From USD doc: Scope is the simplest grouping primitive, and does not carry
 // the baggage of transformability.
-struct Scope {
+struct Scope : Collection, MaterialBinding {
   std::string name;
   Specifier spec{Specifier::Def};
 
@@ -3512,6 +3853,7 @@ struct LayerMetas {
   std::vector<value::token> primChildren;
 };
 
+
 // Similar to SdfLayer or Stage
 // It is basically hold the list of PrimSpec and Layer metadatum.
 struct Layer {
@@ -3779,7 +4121,7 @@ struct Layer {
   mutable std::string _current_working_path;
   mutable std::vector<std::string> _asset_search_paths;
   mutable void *_asset_resolution_userdata{nullptr};
-  
+
 };
 
 
@@ -3824,6 +4166,9 @@ DEFINE_TYPE_TRAIT(std::vector<value::token>, "token[]", TYPE_ID_TOKEN_VECTOR,
                   1);
 
 DEFINE_TYPE_TRAIT(value::TimeSamples, "TimeSamples", TYPE_ID_TIMESAMPLES, 1);
+
+DEFINE_TYPE_TRAIT(Collection, "Collection", TYPE_ID_COLLECTION, 1);
+DEFINE_TYPE_TRAIT(CollectionInstance, "CollectionInstance", TYPE_ID_COLLECTION_INSTANCE, 1);
 
 DEFINE_TYPE_TRAIT(Model, "Model", TYPE_ID_MODEL, 1);
 DEFINE_TYPE_TRAIT(Scope, "Scope", TYPE_ID_SCOPE, 1);

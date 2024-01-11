@@ -18,6 +18,7 @@ class Prim;
 // forward decl of usdShade
 struct Material;
 struct Shader;
+enum class MaterialBindingStrength;
 
 template<typename T>
 struct UsdPrimvarReader;

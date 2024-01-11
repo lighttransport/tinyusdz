@@ -14,6 +14,8 @@ class MaterialBinding;
 struct GPrim;
 struct Xformable;
 
+class Collection; // Collection API
+
 namespace tydra {
 
 bool ApplyToGPrim(
@@ -30,6 +32,14 @@ bool ApplyToMaterialBinding(
 bool ApplyToXformable(
   const Stage &stage, const Prim &prim,
   std::function<bool(const Stage &stage, const Xformable *xformable)> fn);
+
+bool ApplyToGPrim(
+  const Prim &prim,
+  std::function<bool(const GPrim *gprim)> fn);
+
+bool ApplyToCollection(
+  const Prim &prim,
+  std::function<bool(const Collection *coll)> fn);
 
 } // namespace tydra
 } // namespace tinyusdz
