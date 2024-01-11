@@ -208,7 +208,7 @@ bool GetDirectlyBoundMaterial(
         (*material) = nullptr;
       }
     }
-    
+
     return false;
   };
 
@@ -254,7 +254,7 @@ bool GetDirectCollectionMaterialBinding(
         (*material) = nullptr;
       }
     }
-    
+
     return false;
   };
 
@@ -283,13 +283,15 @@ bool GetBoundMaterial(
 
   auto apply_fun = [&](const Stage &stage, const MaterialBinding *mb) -> bool {
 
+    (void)stage;
+
     Relationship mat_rel;
     if (!mb->get_materialBinding(value::token(purpose), &mat_rel)) {
       return false;
     }
 
     // TODO
-    
+
 #if 0
     if (suffix.empty()) {
       if (gprim->materialBinding.has_value()) {
@@ -364,7 +366,11 @@ bool GetBoundMaterial(
     return false;
   }
 
+  (void)material;
+
   auto apply_fun = [&](const Stage &stage, const MaterialBinding *mb) -> bool {
+    (void)stage;
+    (void)mb;
 #if 0
     if (purpose.empty()) {
       if (gprim->materialBinding.has_value()) {
@@ -426,6 +432,8 @@ bool GetBoundMaterial(
     return false;
   };
 
+  (void)apply_fun;
+
   std::vector<value::token> purposes;
   if (materialPurpose.empty()) {
     purposes.push_back(value::token("")); // all-purpose
@@ -439,14 +447,14 @@ bool GetBoundMaterial(
   //   boundMaterial = None
   //
   //   for p = prim, p != Root, p = p.GetParent():
-  //     
+  //
   //     if DirectBindingStrongerThanDescendants(p, purpose) or not boundMaterial:
   //
   //       if dicrectBind = GetDirectlyBoundMaterial(p, purpose):
   //
   //         boundMaterial = directBound
   //
-  //   for collBinding : GetCollectionMaterialBindings(p, purpose):  
+  //   for collBinding : GetCollectionMaterialBindings(p, purpose):
   //
   //     if (collBinding.GetCollection().Contains(prim) and
   //         collBinding.IsStrongerThanDescendants() or not boundMaterial):
@@ -464,8 +472,7 @@ bool GetBoundMaterial(
   for (const auto &purpose : purposes) {
 
     Path currentPath = abs_path;
-    const Material *boundMateiral{nullptr};
-    
+
     uint32_t depth = 0;
     while (depth < 1024*128) { // to avoid infinite loop.
 

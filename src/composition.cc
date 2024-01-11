@@ -202,12 +202,19 @@ bool LoadAsset(AssetResolutionResolver &resolver,
           fmt::format("Failed to resolve asset path `{}`", asset_path));
     } else {
       PUSH_WARN(fmt::format("Asset not found: `{}`", asset_path));
+#if 0 // for debugging. print cwd.
 #if defined(__linux__)
-      char pathname[512];
-      memset(pathname, 0, 512);
-      getcwd(pathname, 512);
+      char pathname[4096];
+      memset(pathname, 0, 4096);
+      char *pathname_p = getcwd(pathname, 4096);
 
-      PUSH_WARN(fmt::format("  cwd = {}", std::string(pathname)));
+      if (pathname_p == nullptr) {
+        PUSH_ERROR_AND_RETURN(
+            "Getting current working directory failed.");
+      }
+
+      PUSH_WARN(fmt::format("  cwd = {}", std::string(pathname_p)));
+#endif
 #endif
       PUSH_WARN(
           fmt::format("  current working path: `{}`", current_working_path));

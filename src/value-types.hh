@@ -374,7 +374,7 @@ enum TypeId {
   TYPE_ID_PATH_VECTOR,
   TYPE_ID_TOKEN_VECTOR,
   TYPE_ID_RELATIONSHIP,
-  
+
   // -- end of base type for Property.
 
   TYPE_ID_TIMESAMPLES,
@@ -451,11 +451,11 @@ enum TypeId {
 
   TYPE_ID_IMAGING_END,
 
-  // Ttpes for usdVol
+  // Types for usdVol
   TYPE_ID_VOL_BEGIN = 1 << 12,
   TYPE_ID_VOL_END,
 
-  // Ttpes for usdSkel
+  // Types for usdSkel
   TYPE_ID_SKEL_BEGIN = 1 << 13,
   TYPE_ID_SKEL_ROOT,
   TYPE_ID_SKELETON,
@@ -464,6 +464,14 @@ enum TypeId {
   TYPE_ID_SKEL_END,
 
   TYPE_ID_MODEL_END,
+
+  
+  // Types for API
+  TYPE_ID_API_BEGIN = 1 << 14,
+  TYPE_ID_COLLECTION,
+  TYPE_ID_COLLECTION_INSTANCE,
+  TYPE_ID_MATERIAL_BINDING,
+  TYPE_ID_API_END,
 
   // Base ID for user data type(less than `TYPE_ID_1D_ARRAY_BIT-1`)
   TYPE_ID_USER_BEGIN = 1 << 16,

@@ -1517,6 +1517,17 @@ nonstd::expected<T, std::string> EnumHandler(
   } \
 }
 
+#define PARSE_TYPED_ATTRIBUTE_NOCONTINUE(__table, __prop, __name, __klass, __target) { \
+  ParseResult ret = ParseTypedAttribute(__table, __prop.first, __prop.second, __name, __target); \
+  if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
+    /* do nothing */ \
+  } else if (ret.code == ParseResult::ResultCode::Unmatched) { \
+    /* go next */ \
+  } else { \
+    PUSH_ERROR_AND_RETURN(fmt::format("Parsing attribute `{}` failed. Error: {}", __name, ret.err)); \
+  } \
+}
+
 #define PARSE_EXTENT_ATTRIBUTE(__table, __prop, __name, __klass, __target) { \
   ParseResult ret = ParseExtentAttribute(__table, __prop.first, __prop.second, __name, __target); \
   if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
@@ -2086,6 +2097,10 @@ bool ReconstructMaterialBindingProperties(
   std::string *err)
 {
 
+  if (!mb) {
+    return false;
+  }
+
   for (const auto &prop : properties) {
     PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBinding, mb->materialBinding)
     PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingPreview, mb->materialBindingPreview)
@@ -2175,6 +2190,96 @@ bool ReconstructMaterialBindingProperties(
   return true;
 }
 
+bool ReconstructCollectionProperties(
+  std::set<std::string> &table, /* inout */
+  const std::map<std::string, Property> &properties,
+  Collection *coll, /* inout */
+  std::string *warn,
+  std::string *err,
+  bool strict_allowedToken_check)
+{
+  constexpr auto kCollectionPrefix = "collection:";
+
+  auto ExpansionRuleEnumHandler = [](const std::string &tok) {
+    using EnumTy = std::pair<CollectionInstance::ExpansionRule, const char *>;
+    const std::vector<EnumTy> enums = {
+        std::make_pair(CollectionInstance::ExpansionRule::ExplicitOnly, kExplicitOnly),
+        std::make_pair(CollectionInstance::ExpansionRule::ExpandPrims, kExpandPrims),
+        std::make_pair(CollectionInstance::ExpansionRule::ExpandPrimsAndProperties, kExpandPrimsAndProperties),
+    };
+    return EnumHandler<CollectionInstance::ExpansionRule>("expansionRule", tok, enums);
+  };
+
+  if (!coll) {
+    return false;
+  }
+
+  for (const auto &prop : properties) {
+    if (startsWith(prop.first, kCollectionPrefix)) {
+      if (table.count(prop.first)) {
+         continue;
+      }
+
+      std::string suffix = removePrefix(prop.first, kCollectionPrefix);
+      std::vector<std::string> names = split(suffix, ":");
+      if (names.size() != 2) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Invalid collection property name. Must be 'collection:INSTANCE_NAME:<prop_name>' but got '{}'",  prop.first));
+      }
+      if (names[0].empty()) {
+        PUSH_ERROR_AND_RETURN("INSTANCE_NAME is empty for collection property name");
+      }
+      if (names[1].empty()) {
+        PUSH_ERROR_AND_RETURN("Collection property name is empty");
+      }
+
+      std::string instance_name = names[0];
+
+      if (names[1] == "includes") {
+
+        if (!prop.second.is_relationship()) {
+          PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relationship", prop.first));
+        }
+
+        CollectionInstance &coll_instance = coll->get_or_add_instance(instance_name);
+        coll_instance.includes = prop.second.get_relationship();
+        table.insert(prop.first);
+
+      } else if (names[1] == "expansionRule") {
+
+        CollectionInstance::ExpansionRule expansionRule;
+
+        PARSE_ENUM_PROPETY(table, prop, prop.first, ExpansionRuleEnumHandler, CollectionInstance,
+                       expansionRule, strict_allowedToken_check)
+
+        if (table.count(prop.first)) {
+          CollectionInstance &coll_instance = coll->get_or_add_instance(instance_name);
+          coll_instance.expansionRule = expansionRule;
+        }
+      } else if (names[1] == "includeRoot") {
+
+        TypedAttributeWithFallback<Animatable<bool>> includeRoot{false};
+        PARSE_TYPED_ATTRIBUTE_NOCONTINUE(table, prop, prop.first, CollectionInstance, includeRoot)
+
+        if (table.count(prop.first)) {
+          CollectionInstance &coll_instance = coll->get_or_add_instance(instance_name);
+          coll_instance.includeRoot = includeRoot;
+        }
+      } else if (names[1] == "excludes") {
+
+        if (!prop.second.is_relationship()) {
+          PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relationship", prop.first));
+        }
+
+        CollectionInstance &coll_instance = coll->get_or_add_instance(instance_name);
+        coll_instance.excludes = prop.second.get_relationship();
+        table.insert(prop.first);
+
+      }
+    }
+  }
+
+  return true;
+}
 // xformOps and built-in props
 bool ReconstructGPrimProperties(
   const Specifier &spec,
@@ -2192,6 +2297,11 @@ bool ReconstructGPrimProperties(
   }
 
   if (!prim::ReconstructMaterialBindingProperties(table, properties, gprim, err)) {
+    return false;
+  }
+
+  if (!prim::ReconstructCollectionProperties(
+    table, properties, gprim, warn, err, strict_allowedToken_check)) {
     return false;
   }
 
@@ -3307,6 +3417,7 @@ bool ReconstructPrim<GeomSubset>(
     using EnumTy = std::pair<GeomSubset::ElementType, const char *>;
     const std::vector<EnumTy> enums = {
         std::make_pair(GeomSubset::ElementType::Face, "face"),
+        std::make_pair(GeomSubset::ElementType::Point, "point"),
     };
     return EnumHandler<GeomSubset::ElementType>("elementType", tok,
                                                     enums);
@@ -3315,6 +3426,11 @@ bool ReconstructPrim<GeomSubset>(
   std::set<std::string> table;
 
   if (!prim::ReconstructMaterialBindingProperties(table, properties, subset, err)) {
+    return false;
+  }
+
+  if (!prim::ReconstructCollectionProperties(
+    table, properties, subset, warn, err, options.strict_allowedToken_check)) {
     return false;
   }
 
