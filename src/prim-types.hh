@@ -2964,7 +2964,7 @@ class MaterialBinding {
   // Use ordered dict since the requests:
   //
   // https://openusd.org/release/wp_usdshade.html#basic-proposal-for-collection-based-assignment
-  //  
+  //
   // `...with the earliest ordered binding relationship the strongest`
   //
   // key = PURPOSE, value = map<NAME, Rel>
@@ -3856,7 +3856,8 @@ struct LayerMetas {
 
 // Similar to SdfLayer or Stage
 // It is basically hold the list of PrimSpec and Layer metadatum.
-struct Layer {
+class Layer {
+ public:
   const std::string name() const { return _name; }
 
   void set_name(const std::string name) { _name = name; }
