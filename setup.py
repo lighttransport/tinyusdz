@@ -6,7 +6,7 @@ from skbuild import setup
 
 setup(
     name='tinyusdz',
-    version='0.8.0rc6',
+    #version='0.8.0rc6',
     author='Light Transport Entertainment Inc.',
     author_email='syoyo@lighttransport.com',
     # `python/tinyusdz` as root for `tinyusdz` module
