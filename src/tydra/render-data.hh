@@ -592,7 +592,7 @@ struct Node {
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
 };
 
-#if 0 // TODO
+#if 0  // TODO
 // Static Mesh(no time-varying, no vertex animation)
 struct StaticMesh {
 
@@ -611,25 +611,70 @@ struct SkinnedMesh {
 };
 #endif
 
+// BlendShape shape target.
+struct ShapeTarget {
+  std::string element_name;
+  std::string abs_name;
+  std::string display_name;
+
+  std::vector<uint32_t> pointIndices;
+  std::vector<vec3> pointOffsets;
+  std::vector<vec3> normalOffsets;
+  float weight{1.0f};  // for in-between shape target
+};
+
+//
+// NOTE: both jointIndices and jointWeights' USD interpolation must be 'vertex'
+//
+struct JointAndWeight {
+  std::vector<int> jointIndices;  // int[] primvars:skel:jointIndices
+
+  // NOTE: weight is converted from USD as-is. not normalized.
+  std::vector<float> jointWeights;  // float[] primvars:skel:jointWeight;
+
+  int elementSize{1};
+};
+
+// GeomSubset
+// TODO:
+struct Subset {
+  std::string element_name;
+  std::string abs_name;
+  std::string display_name;
+
+  std::string elementType{"face"}; // either "face" or "point"
+  std::string familyName;
+
+  std::vector<int> indices;
+
+  std::map<uint32_t, VertexAttribute> attributes;
+};
+
 // Currently normals and texcoords are converted as facevarying attribute.
 struct RenderMesh {
-
   //
   // Type of Vertex attributes of this mesh.
   //
   // `Indexed` preferred. `Facevarying` as the last resport.
   //
   enum class VertexArrayType {
-    Indexed, // 'vertex'-varying. i.e, use faceVertexIndices to draw mesh. All vertex attributes must be representatable by single indices(i.e, no `facevertex`-varying attribute)
-    Facevarying, // 'facevertx'-varying. When any of mesh attribute has 'facevertex' varying, we cannot represent the mesh with single indices, so decompose all vertex attribute to Facevaring(no VertexArray indices). This would impact rendering performance.
+    Indexed,  // 'vertex'-varying. i.e, use faceVertexIndices to draw mesh. All
+              // vertex attributes must be representatable by single
+              // indices(i.e, no `facevertex`-varying attribute)
+    Facevarying,  // 'facevertx'-varying. When any of mesh attribute has
+                  // 'facevertex' varying, we cannot represent the mesh with
+                  // single indices, so decompose all vertex attribute to
+                  // Facevaring(no VertexArray indices). This would impact
+                  // rendering performance.
   };
 
   std::string element_name;  // element(leaf) Prim name
   std::string abs_name;      // absolute Prim path in USD
+  std::string display_name;  // displayName Prim metadataum
 
   VertexArrayType vertexArrayType{VertexArrayType::Facevarying};
 
-  VertexAttribute points; // varying: vertex
+  VertexAttribute points;  // varying: vertex. vformat: usually float3 format.
 
   std::vector<uint32_t> faceVertexIndices;
   // For triangulated mesh, array elements are all filled with 3 or
@@ -639,16 +684,8 @@ struct RenderMesh {
   // `normals` or `primvar:normals`. Empty when no normals exist in the
   // GeomMesh.
   VertexAttribute normals;
-#if 0
-  std::vector<vec3> facevaryingNormals;
-  Interpolation normalsInterpolation;  // Optional info. USD interpolation for
-                                       // `facevaryingNormals`
-#endif                                       
 
   // key = slot ID. Usually 0 = primary
-#if 0
-  std::unordered_map<uint32_t, std::vector<vec2>> facevaryingTexcoords;
-#endif
   std::unordered_map<uint32_t, VertexAttribute> texcoords;
   StringAndIdMap texcoordSlotIdMap;  // st primvarname to slotID map
 
@@ -670,8 +707,11 @@ struct RenderMesh {
   //
   VertexAttribute tangents;
   VertexAttribute binormals;
-  //std::vector<vec3> facevaryingTangents;
-  //std::vector<vec3> facevaryingBinormals;
+  // std::vector<vec3> facevaryingTangents;
+  // std::vector<vec3> facevaryingBinormals;
+
+  //
+  JointAndWeight joint_and_weights;
 
   std::vector<int32_t>
       materialIds;  // per-face material. -1 = no material assigned
@@ -688,6 +728,9 @@ struct RenderMesh {
 
   // Index value = key to `primvars`
   StringAndIdMap primvarsMap;
+
+  // GeomSubsets(other than GeomSubset for Material)
+  std::vector<Subset> subsets;
 
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
 };
@@ -737,11 +780,13 @@ struct UVTexture {
   vec4 fetch_uv(size_t faceId, float varyu, float varyv);
 
   // `fetch_uv` with user-specified channel. `outputChannel` is ignored.
-  vec4 fetch_uv_channel(size_t faceId, float varyu, float varyv, Channel channel);
+  vec4 fetch_uv_channel(size_t faceId, float varyu, float varyv,
+                        Channel channel);
 
   // UVW version of `fetch_uv`.
   vec4 fetch_uvw(size_t faceId, float varyu, float varyv, float varyw);
-  vec4 fetch_uvw_channel(size_t faceId, float varyu, float varyv, float varyw, Channel channel);
+  vec4 fetch_uvw_channel(size_t faceId, float varyu, float varyv, float varyw,
+                         Channel channel);
 
   // output channel info
   Channel outputChannel{Channel::RGB};
@@ -1050,7 +1095,8 @@ class RenderSceneConverter {
   ///
   /// Convert UsdPreviewSurface Shader to renderer-friendly PreviewSurfaceShader
   ///
-  /// @param[in] shader_abs_path USD Path to Shader Prim with UsdPreviewSurface info:id.
+  /// @param[in] shader_abs_path USD Path to Shader Prim with UsdPreviewSurface
+  /// info:id.
   /// @param[in] shader UsdPreviewSurface
   /// @param[in] pss_put PreviewSurfaceShader
   ///
@@ -1065,16 +1111,15 @@ class RenderSceneConverter {
   ///
   /// @param[in] tex_abs_path USD Path to Shader Prim with UsdUVTexture info:id.
   /// @param[in] assetInfo assetInfo Prim metadata of given Shader Prim
-  /// @param[in] texture UsdUVTexture 
-  /// @param[in] tex_out UVTexture 
+  /// @param[in] texture UsdUVTexture
+  /// @param[in] tex_out UVTexture
   ///
   /// TODO: Retrieve assetInfo from `tex_abs_path`?
   ///
   /// @return true when success.
   ///
   bool ConvertUVTexture(const Path &tex_abs_path, const AssetInfo &assetInfo,
-                        const UsdUVTexture &texture,
-                        UVTexture *tex_out);
+                        const UsdUVTexture &texture, UVTexture *tex_out);
 
   const Stage *GetStagePtr() const { return _stage; }
 
