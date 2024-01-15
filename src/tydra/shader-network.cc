@@ -199,7 +199,7 @@ bool GetDirectlyBoundMaterial(
       PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be single targetPath", binding_name));
     }
 
-    const Prim *p;
+    const Prim *p{nullptr};
     if (stage.find_prim_at_path(*materialPath, p, err)) {
       if (p->is<Material>()) {
         (*material) = p->as<Material>();
@@ -215,6 +215,22 @@ bool GetDirectlyBoundMaterial(
   bool ret = ApplyToMaterialBinding(_stage, prim, apply_fun);
 
   return ret;
+}
+
+bool GetDirectlyBoundMaterial(
+  const Stage &stage,
+  const Path &abs_path,
+  const std::string &purpose,
+  tinyusdz::Path *materialPath, 
+  const Material **material,
+  std::string *err) {
+
+  const Prim *p{nullptr};
+  if (stage.find_prim_at_path(abs_path, p, err)) {
+    return GetDirectlyBoundMaterial(stage, *p, purpose, materialPath, material, err);
+  }
+
+  return false;
 }
 
 bool GetDirectCollectionMaterialBinding(

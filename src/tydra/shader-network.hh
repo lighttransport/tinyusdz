@@ -14,6 +14,9 @@ namespace tinyusdz {
 class Path;
 class Stage;
 class Prim;
+class Layer;
+class PrimSpec;
+
 
 // forward decl of usdShade
 struct Material;
@@ -135,6 +138,29 @@ bool GetDirectlyBoundMaterial(
   tinyusdz::Path *materialPath, 
   const Material **material,
   std::string *err);
+
+///
+/// Layer + PrimSpec version
+///
+bool GetDirectlyBoundMaterial(
+  const Layer& layer,
+  const PrimSpec &ps,
+  const std::string &purpose,
+  tinyusdz::Path *materialPath, 
+  const Material **material,
+  std::string *err);
+
+///
+/// Layer + Path version
+///
+bool GetDirectlyBoundMaterial(
+  const Layer& layer,
+  const Path &abs_path,
+  const std::string &purpose,
+  tinyusdz::Path *materialPath, 
+  const Material **material,
+  std::string *err);
+
 
 ///
 /// Get material:binding:collection target Path of given Prim.
