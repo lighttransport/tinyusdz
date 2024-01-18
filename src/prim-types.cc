@@ -1891,6 +1891,24 @@ void PrimMetas::update_from(const PrimMetas &rhs, const bool override_authored) 
   OverrideDictionary(meta, rhs.meta, override_authored);
 }
 
+bool AttrMetas::has_colorSpace() const {
+  return meta.count("colorSpace");
+}
+
+value::token AttrMetas::get_colorSpace() const {
+  if (!has_colorSpace()) {
+    return value::token();
+  }
+
+  const MetaVariable &mv = meta.at("colorSpace");
+  value::token tok;
+  if (mv.get_value<value::token>(&tok)) {
+    return tok;
+  }
+
+  return value::token();
+}
+
 namespace {
 
 nonstd::optional<const PrimSpec *> GetPrimSpecAtPathRec(

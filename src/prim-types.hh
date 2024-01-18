@@ -1063,6 +1063,7 @@ struct AttrMetas {
 
   nonstd::optional<std::string> displayName;  // 'displayName'
 
+
   //
   // MaterialBinding
   //
@@ -1077,6 +1078,13 @@ struct AttrMetas {
   // TODO: Represent as `MetaVariable`?
   std::vector<value::StringData> stringData;
 
+
+  //
+  // Some handy methods for non-frequently used metadatum.
+  //
+  bool has_colorSpace() const;
+  value::token get_colorSpace() const; // return empty when not authored or 'colorSpace' metadataum is not token type.
+  
   bool authored() const {
     return (interpolation || elementSize || hidden || customData || weight ||
             connectability || outputName || renderType || sdrMetadata || displayName || bindMaterialAs || meta.size() || stringData.size());
