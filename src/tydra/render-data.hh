@@ -515,10 +515,14 @@ enum class ColorSpace {
   Linear,
   Rec709,
   OCIO,
+  Lin_DisplayP3, // colorSpace 'lin_displayp3'
+  sRGB_DisplayP3, // colorSpace 'srgb_displayp3'
   Custom,  // TODO: Custom colorspace
 };
 
 std::string to_string(ColorSpace cs);
+
+bool from_token(const value::token &tok, ColorSpace *result);
 
 struct TextureImage {
   std::string asset_identifier;  // (resolved) filename or asset identifier.
