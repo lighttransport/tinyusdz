@@ -969,6 +969,23 @@ std::vector<UsdPrimvarReader_float2> ExtractPrimvarReadersFromMaterialNode(const
 struct MeshConverterConfig {
   bool triangulate{true};
   bool compute_tangents_and_binormals{true};
+
+  // We may want texcoord data even if the Mesh does not have bound Material.
+  // But we don't know which primvar is used as a texture coordinate when no Texture assigned to the mesh(no PrimVar Reader assigned to)
+  // Use UsdPreviewSurface setting for it.
+  //
+  // https://openusd.org/release/spec_usdpreviewsurface.html#usd-sample
+  //
+  // Also for tangnents/binormals.
+  // 
+  // 'primvars' namespace is omitted.
+  //
+  std::string default_texcoords_primvar_name{"st"};
+  std::string default_texcoords1_primvar_name{"st1"}; // for multi texture(available from iOS 16/macOS 13)
+  std::string default_tangents_primvar_name{"tangents"};
+  std::string default_binormals_primvar_name{"binormals"};
+
+  // TODO: tangents1/binormals1 for multi-frame normal mapping?
 };
 
 struct MaterialConverterConfig {
@@ -981,19 +998,20 @@ struct MaterialConverterConfig {
   // Default configuration:
   //
   // - The converter converts 8bit texture to floating point image and texel
-  // data is converted to linear space.
+  // value is converted to linear space.
   // - Allow missing asset(texture) and asset load failure.
   //
   // Recommended configuration for mobile/WebGL
   //
   // - `preserve_texel_bitdepth` true
+  //   - No floating-point image conversion.
   // - `linearize_color_space` true
-  //   - No sRGB -> Linear conversion in a shader
+  //   - Linearlize in CPU, and no sRGB -> Linear conversion in a shader required.
 
   // In the UsdUVTexture spec, 8bit texture image is converted to floating point
   // image of range `[0.0, 1.0]`. When this flag is set to false, 8bit and 16bit
   // texture image is converted to floating point image. When this flag is set
-  // to true, 8bit and 16bit texture data is stored as-is to save memory usage.
+  // to true, 8bit and 16bit texture data is stored as-is to save memory.
   // Setting true is good if you want to render USD scene on mobile, WebGL, etc.
   bool preserve_texel_bitdepth{false};
 
@@ -1005,7 +1023,7 @@ struct MaterialConverterConfig {
 
   // Allow asset(texture, shader, etc) path with Windows backslashes(e.g.
   // ".\textures\cat.png")? When true, convert it to forward slash('/') on
-  // Posixish system.
+  // Posixish system(otherwise character is escaped(e.g. '\t' -> tab).
   bool allow_backslash_in_asset_path{true};
 
   // Allow texture load failure?
