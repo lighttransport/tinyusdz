@@ -1726,21 +1726,32 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
           _asset_resolver.resolve(assetPath.GetAssetPath());
     }
 
-    // colorSpace
-    if (texture.sourceColorSpace.authored()) {
-      UsdUVTexture::SourceColorSpace cs;
-      if (texture.sourceColorSpace.get_value().get_scalar(&cs)) {
-        if (cs == UsdUVTexture::SourceColorSpace::SRGB) {
-          texImage.usdColorSpace = tydra::ColorSpace::sRGB;
-        } else if (cs == UsdUVTexture::SourceColorSpace::Raw) {
-          texImage.usdColorSpace = tydra::ColorSpace::Linear;
-        } else if (cs == UsdUVTexture::SourceColorSpace::Auto) {
-          // TODO: Read colorspace from a file.
-          if ((texImage.assetTexelComponentType == ComponentType::UInt8) ||
-              (texImage.assetTexelComponentType == ComponentType::Int8)) {
+    // colorSpace.
+    // First look into `colorSpace` metadata of asset, then
+    // look into `inputs:sourceColorSpace' attribute.
+    if (texture.file.metas().has_colorSpace()) {
+      ColorSpace cs;
+      value::token cs_token = texture.file.metas().get_colorSpace();
+      if (!from_token(cs_token, &cs)) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Invalid or unsupported token value for 'colorSpace': `{}` ", cs_token.str()));
+      }
+      texImage.usdColorSpace = cs;
+    } else {
+      if (texture.sourceColorSpace.authored()) {
+        UsdUVTexture::SourceColorSpace cs;
+        if (texture.sourceColorSpace.get_value().get_scalar(&cs)) {
+          if (cs == UsdUVTexture::SourceColorSpace::SRGB) {
             texImage.usdColorSpace = tydra::ColorSpace::sRGB;
-          } else {
+          } else if (cs == UsdUVTexture::SourceColorSpace::Raw) {
             texImage.usdColorSpace = tydra::ColorSpace::Linear;
+          } else if (cs == UsdUVTexture::SourceColorSpace::Auto) {
+            // TODO: Read colorspace from a file.
+            if ((texImage.assetTexelComponentType == ComponentType::UInt8) ||
+                (texImage.assetTexelComponentType == ComponentType::Int8)) {
+              texImage.usdColorSpace = tydra::ColorSpace::sRGB;
+            } else {
+              texImage.usdColorSpace = tydra::ColorSpace::Linear;
+            }
           }
         }
       }
@@ -2625,6 +2636,14 @@ std::string to_string(ColorSpace cty) {
       s = "ocio";
       break;
     }
+    case ColorSpace::Lin_DisplayP3: {
+      s = "lin_displayp3";
+      break;
+    }
+    case ColorSpace::sRGB_DisplayP3: {
+      s = "srgb_displayp3";
+      break;
+    }
     case ColorSpace::Custom: {
       s = "custom";
       break;
@@ -2632,6 +2651,32 @@ std::string to_string(ColorSpace cty) {
   }
 
   return s;
+}
+
+bool from_token(const value::token &tok, ColorSpace *cty) {
+  if (!cty) {
+    return false;
+  }
+
+  if (tok.str() == "srgb") {
+    (*cty) = ColorSpace::sRGB; 
+  } else if (tok.str() == "linear") {
+    (*cty) = ColorSpace::Linear; 
+  } else if (tok.str() == "rec709") {
+    (*cty) = ColorSpace::Rec709;
+  } else if (tok.str() == "ocio") {
+    (*cty) = ColorSpace::OCIO;
+  } else if (tok.str() == "lin_displayp3") {
+    (*cty) =ColorSpace::Lin_DisplayP3;
+  } else if (tok.str() == "srgb_displayp3") {
+    (*cty) = ColorSpace::sRGB_DisplayP3;
+  } else if (tok.str() == "custom") {
+    (*cty) = ColorSpace::Custom;
+  } else {
+    return false;
+  }
+
+  return true;
 }
 
 std::string to_string(ComponentType cty) {
