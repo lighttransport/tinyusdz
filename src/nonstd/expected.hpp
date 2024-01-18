@@ -9,17 +9,17 @@
 //   A proposal to add a utility class to represent expected monad
 //   by Vicente J. Botet Escriba and Pierre Talbot. http:://wg21.link/p0323
 
+#ifndef NONSTD_EXPECTED_LITE_HPP
+#define NONSTD_EXPECTED_LITE_HPP
+
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
-#ifndef NONSTD_EXPECTED_LITE_HPP
-#define NONSTD_EXPECTED_LITE_HPP
-
 #define expected_lite_MAJOR  0
-#define expected_lite_MINOR  5
-#define expected_lite_PATCH  0
+#define expected_lite_MINOR  6
+#define expected_lite_PATCH  3
 
 #define expected_lite_VERSION  expected_STRINGIFY(expected_lite_MAJOR) "." expected_STRINGIFY(expected_lite_MINOR) "." expected_STRINGIFY(expected_lite_PATCH)
 
@@ -71,17 +71,25 @@
 # define nsel_P0323R  7
 #endif
 
-// Control presence of C++ exception handling (try and auto discover):
+// Monadic operations proposal revisions:
+//
+// P2505R0:  0 (2021-12-12)
+// P2505R1:  1 (2022-02-10)
+// P2505R2:  2 (2022-04-15)
+// P2505R3:  3 (2022-06-05)
+// P2505R4:  4 (2022-06-15)
+// P2505R5:  5 (2022-09-20) *
+//
+// expected-lite uses 5
 
-// TinyUSDZ: Disable exception by default
-#ifdef nsel_CONFIG_NO_EXCEPTIONS
-#undef nsel_CONFIG_NO_EXCEPTIONS
+#ifndef  nsel_P2505R
+# define nsel_P2505R  5
 #endif
 
-#define nsel_CONFIG_NO_EXCEPTIONS  1
+// Control presence of C++ exception handling (try and auto discover):
 
 #ifndef nsel_CONFIG_NO_EXCEPTIONS
-# if _MSC_VER
+# if defined(_MSC_VER)
 #  include <cstddef>    // for _HAS_EXCEPTIONS
 # endif
 # if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || (_HAS_EXCEPTIONS)
@@ -97,7 +105,7 @@
 # define nsel_CONFIG_NO_EXCEPTIONS_SEH  ( nsel_CONFIG_NO_EXCEPTIONS && _MSC_VER )
 #endif
 
-// C++ language version detection (C++20 is speculative):
+// C++ language version detection (C++23 is speculative):
 // Note: VC14.0/1900 (VS2015) lacks too much from C++14.
 
 #ifndef   nsel_CPLUSPLUS
@@ -112,11 +120,12 @@
 #define nsel_CPP11_OR_GREATER  ( nsel_CPLUSPLUS >= 201103L )
 #define nsel_CPP14_OR_GREATER  ( nsel_CPLUSPLUS >= 201402L )
 #define nsel_CPP17_OR_GREATER  ( nsel_CPLUSPLUS >= 201703L )
-#define nsel_CPP20_OR_GREATER  ( nsel_CPLUSPLUS >= 202000L )
+#define nsel_CPP20_OR_GREATER  ( nsel_CPLUSPLUS >= 202002L )
+#define nsel_CPP23_OR_GREATER  ( nsel_CPLUSPLUS >= 202300L )
 
-// Use C++20 std::expected if available and requested:
+// Use C++23 std::expected if available and requested:
 
-#if nsel_CPP20_OR_GREATER && defined(__has_include )
+#if nsel_CPP23_OR_GREATER && defined(__has_include )
 # if __has_include( <expected> )
 #  define nsel_HAVE_STD_EXPECTED  1
 # else
@@ -416,7 +425,7 @@ struct is_nothrow_swappable
 };
 } // namespace detail
 
-// is [nothow] swappable:
+// is [nothrow] swappable:
 
 template< typename T >
 struct is_swappable : decltype( detail::is_swappable::test<T>(0) ){};
@@ -440,7 +449,7 @@ struct conjunction<B1, Bn...> : std::conditional<bool(B1::value), conjunction<Bn
 
 namespace std20 {
 
-#if nsel_CPP20_OR_GREATER
+#if defined(__cpp_lib_remove_cvref)
 
 using std::remove_cvref;
 
@@ -463,7 +472,161 @@ class expected;
 
 namespace detail {
 
+#if nsel_P2505R >= 3
+template< typename T >
+struct is_expected : std::false_type {};
+
+template< typename T, typename E >
+struct is_expected< expected< T, E > > : std::true_type {};
+#endif // nsel_P2505R >= 3
+
 /// discriminated union to hold value or 'error'.
+
+template< typename T, typename E >
+class storage_t_noncopy_nonmove_impl
+{
+    template< typename, typename > friend class nonstd::expected_lite::expected;
+
+public:
+    using value_type = T;
+    using error_type = E;
+
+    // no-op construction
+    storage_t_noncopy_nonmove_impl() {}
+    ~storage_t_noncopy_nonmove_impl() {}
+
+    explicit storage_t_noncopy_nonmove_impl( bool has_value )
+        : m_has_value( has_value )
+    {}
+
+    void construct_value()
+    {
+        new( &m_value ) value_type();
+    }
+
+    // void construct_value( value_type const & e )
+    // {
+    //     new( &m_value ) value_type( e );
+    // }
+
+    // void construct_value( value_type && e )
+    // {
+    //     new( &m_value ) value_type( std::move( e ) );
+    // }
+
+    template< class... Args >
+    void emplace_value( Args&&... args )
+    {
+        new( &m_value ) value_type( std::forward<Args>(args)...);
+    }
+
+    template< class U, class... Args >
+    void emplace_value( std::initializer_list<U> il, Args&&... args )
+    {
+        new( &m_value ) value_type( il, std::forward<Args>(args)... );
+    }
+
+    void destruct_value()
+    {
+        m_value.~value_type();
+    }
+
+    // void construct_error( error_type const & e )
+    // {
+    //     // new( &m_error ) error_type( e );
+    // }
+
+    // void construct_error( error_type && e )
+    // {
+    //     // new( &m_error ) error_type( std::move( e ) );
+    // }
+
+    template< class... Args >
+    void emplace_error( Args&&... args )
+    {
+        new( &m_error ) error_type( std::forward<Args>(args)...);
+    }
+
+    template< class U, class... Args >
+    void emplace_error( std::initializer_list<U> il, Args&&... args )
+    {
+        new( &m_error ) error_type( il, std::forward<Args>(args)... );
+    }
+
+    void destruct_error()
+    {
+        m_error.~error_type();
+    }
+
+    constexpr value_type const & value() const &
+    {
+        return m_value;
+    }
+
+    value_type & value() &
+    {
+        return m_value;
+    }
+
+    constexpr value_type const && value() const &&
+    {
+        return std::move( m_value );
+    }
+
+    nsel_constexpr14 value_type && value() &&
+    {
+        return std::move( m_value );
+    }
+
+    value_type const * value_ptr() const
+    {
+        return &m_value;
+    }
+
+    value_type * value_ptr()
+    {
+        return &m_value;
+    }
+
+    error_type const & error() const &
+    {
+        return m_error;
+    }
+
+    error_type & error() &
+    {
+        return m_error;
+    }
+
+    constexpr error_type const && error() const &&
+    {
+        return std::move( m_error );
+    }
+
+    nsel_constexpr14 error_type && error() &&
+    {
+        return std::move( m_error );
+    }
+
+    bool has_value() const
+    {
+        return m_has_value;
+    }
+
+    void set_has_value( bool v )
+    {
+        m_has_value = v;
+    }
+
+private:
+    union
+    {
+        value_type m_value;
+        error_type m_error;
+    };
+
+    bool m_has_value = false;
+};
 
 template< typename T, typename E >
 class storage_t_impl
@@ -481,6 +644,11 @@ public:
     explicit storage_t_impl( bool has_value )
         : m_has_value( has_value )
     {}
+
+    void construct_value()
+    {
+        new( &m_value ) value_type();
+    }
 
     void construct_value( value_type const & e )
     {
@@ -696,15 +864,22 @@ template< typename T, typename E, bool isConstructable, bool isMoveable >
 class storage_t
 {
 public:
+};
+
+template< typename T, typename E >
+class storage_t<T, E, false, false> : public storage_t_noncopy_nonmove_impl<T, E>
+{
+public:
     storage_t() = default;
     ~storage_t() = default;
 
     explicit storage_t( bool has_value )
-        : storage_t_impl<T, E>( has_value )
+        : storage_t_noncopy_nonmove_impl<T, E>( has_value )
     {}
 
     storage_t( storage_t const & other ) = delete;
     storage_t( storage_t &&      other ) = delete;
+
 };
 
 template< typename T, typename E >
@@ -843,6 +1018,146 @@ public:
     }
 };
 
+#if nsel_P2505R >= 3
+// C++11 invoke implementation
+template< typename >
+struct is_reference_wrapper : std::false_type {};
+template< typename T >
+struct is_reference_wrapper< std::reference_wrapper< T > > : std::true_type {};
+
+template< typename FnT, typename ClassT, typename ObjectT, typename... Args
+    nsel_REQUIRES_T(
+        std::is_function<FnT>::value
+        && ( std::is_same< ClassT, typename std20::remove_cvref< ObjectT >::type >::value
+        || std::is_base_of< ClassT, typename std20::remove_cvref< ObjectT >::type >::value )
+    )
+>
+nsel_constexpr auto invoke_member_function_impl( FnT ClassT::* memfnptr, ObjectT && obj, Args && ... args )
+        noexcept( noexcept( (std::forward< ObjectT >( obj ).*memfnptr)( std::forward< Args >( args )... ) ) )
+        -> decltype( (std::forward< ObjectT >( obj ).*memfnptr)( std::forward< Args >( args )...) )
+{
+      return (std::forward< ObjectT >( obj ).*memfnptr)( std::forward< Args >( args )... );
+}
+
+template< typename FnT, typename ClassT, typename ObjectT, typename... Args
+    nsel_REQUIRES_T(
+        std::is_function<FnT>::value
+        && is_reference_wrapper< typename std20::remove_cvref< ObjectT >::type >::value
+    )
+>
+nsel_constexpr auto invoke_member_function_impl( FnT ClassT::* memfnptr, ObjectT && obj, Args && ... args )
+        noexcept( noexcept( (obj.get().*memfnptr)( std::forward< Args >( args ) ... ) ) )
+        -> decltype( (obj.get().*memfnptr)( std::forward< Args >( args ) ... ) )
+{
+    return (obj.get().*memfnptr)( std::forward< Args >( args ) ... );
+}
+
+template< typename FnT, typename ClassT, typename ObjectT, typename... Args
+    nsel_REQUIRES_T(
+        std::is_function<FnT>::value
+        && !std::is_same< ClassT, typename std20::remove_cvref< ObjectT >::type >::value
+        && !std::is_base_of< ClassT, typename std20::remove_cvref< ObjectT >::type >::value
+        && !is_reference_wrapper< typename std20::remove_cvref< ObjectT >::type >::value
+    )
+>
+nsel_constexpr auto invoke_member_function_impl( FnT ClassT::* memfnptr, ObjectT && obj, Args && ... args )
+        noexcept( noexcept( ((*std::forward< ObjectT >( obj )).*memfnptr)( std::forward< Args >( args ) ... ) ) )
+        -> decltype( ((*std::forward< ObjectT >( obj )).*memfnptr)( std::forward< Args >( args ) ... ) )
+{
+    return ((*std::forward<ObjectT>(obj)).*memfnptr)( std::forward< Args >( args ) ... );
+}
+
+template< typename MemberT, typename ClassT, typename ObjectT
+    nsel_REQUIRES_T(
+        std::is_same< ClassT, typename std20::remove_cvref< ObjectT >::type >::value
+        || std::is_base_of< ClassT, typename std20::remove_cvref< ObjectT >::type >::value
+    )
+>
+nsel_constexpr auto invoke_member_object_impl( MemberT ClassT::* memobjptr, ObjectT && obj )
+        noexcept( noexcept( std::forward< ObjectT >( obj ).*memobjptr ) )
+        -> decltype( std::forward< ObjectT >( obj ).*memobjptr )
+{
+    return std::forward< ObjectT >( obj ).*memobjptr;
+}
+
+template< typename MemberT, typename ClassT, typename ObjectT
+    nsel_REQUIRES_T(
+        is_reference_wrapper< typename std20::remove_cvref< ObjectT >::type >::value
+    )
+>
+nsel_constexpr auto invoke_member_object_impl( MemberT ClassT::* memobjptr, ObjectT && obj )
+        noexcept( noexcept( obj.get().*memobjptr ) )
+        -> decltype( obj.get().*memobjptr )
+{
+    return obj.get().*memobjptr;
+}
+
+template< typename MemberT, typename ClassT, typename ObjectT
+    nsel_REQUIRES_T(
+        !std::is_same< ClassT, typename std20::remove_cvref< ObjectT >::type >::value
+        && !std::is_base_of< ClassT, typename std20::remove_cvref< ObjectT >::type >::value
+        && !is_reference_wrapper< typename std20::remove_cvref< ObjectT >::type >::value
+    )
+>
+nsel_constexpr auto invoke_member_object_impl( MemberT ClassT::* memobjptr, ObjectT && obj )
+        noexcept( noexcept( (*std::forward< ObjectT >( obj )).*memobjptr ) )
+        -> decltype( (*std::forward< ObjectT >( obj )).*memobjptr )
+{
+    return (*std::forward< ObjectT >( obj )).*memobjptr;
+}
+
+template< typename F, typename... Args
+    nsel_REQUIRES_T(
+        std::is_member_function_pointer< typename std20::remove_cvref< F >::type >::value
+    )
+>
+nsel_constexpr auto invoke( F && f, Args && ... args )
+        noexcept( noexcept( invoke_member_function_impl( std::forward< F >( f ), std::forward< Args >( args ) ... ) ) )
+        -> decltype( invoke_member_function_impl( std::forward< F >( f ), std::forward< Args >( args ) ... ) )
+{
+    return invoke_member_function_impl( std::forward< F >( f ), std::forward< Args >( args ) ... );
+}
+
+template< typename F, typename... Args
+    nsel_REQUIRES_T(
+        std::is_member_object_pointer< typename std20::remove_cvref< F >::type >::value
+    )
+>
+nsel_constexpr auto invoke( F && f, Args && ... args )
+        noexcept( noexcept( invoke_member_object_impl( std::forward< F >( f ), std::forward< Args >( args ) ... ) ) )
+        -> decltype( invoke_member_object_impl( std::forward< F >( f ), std::forward< Args >( args ) ... ) )
+{
+    return invoke_member_object_impl( std::forward< F >( f ), std::forward< Args >( args ) ... );
+}
+
+template< typename F, typename... Args
+    nsel_REQUIRES_T(
+        !std::is_member_function_pointer< typename std20::remove_cvref< F >::type >::value
+        && !std::is_member_object_pointer< typename std20::remove_cvref< F >::type >::value
+    )
+>
+nsel_constexpr auto invoke( F && f, Args && ... args )
+        noexcept( noexcept( std::forward< F >( f )( std::forward< Args >( args ) ... ) ) )
+        -> decltype( std::forward< F >( f )( std::forward< Args >( args ) ... ) )
+{
+    return std::forward< F >( f )( std::forward< Args >( args ) ... );
+}
+
+template< typename F, typename ... Args >
+using invoke_result_nocvref_t = typename std20::remove_cvref< decltype( invoke( std::declval< F >(), std::declval< Args >()... ) ) >::type;
+
+#if nsel_P2505R >= 5
+template< typename F, typename ... Args >
+using transform_invoke_result_t = typename std::remove_cv< decltype( invoke( std::declval< F >(), std::declval< Args >()... ) ) >::type;
+#else
+template< typename F, typename ... Args >
+using transform_invoke_result_t = invoke_result_nocvref_t
+#endif // nsel_P2505R >= 5
+
+template< typename T >
+struct valid_expected_value_type : std::integral_constant< bool, std::is_destructible< T >::value && !std::is_reference< T >::value && !std::is_array< T >::value > {};
+
+#endif // nsel_P2505R >= 3
 } // namespace detail
 
 /// x.x.5 Unexpected object type; unexpected_type; C++17 and later can also use aliased type unexpected.
@@ -1013,11 +1328,12 @@ public:
 
     // x.x.5.2.4 Swap
 
+    template< typename U=E >
     nsel_REQUIRES_R( void,
-        std17::is_swappable<E>::value
+        std17::is_swappable<U>::value
     )
     swap( unexpected_type & other ) noexcept (
-        std17::is_nothrow_swappable<E>::value
+        std17::is_nothrow_swappable<U>::value
     )
     {
         using std::swap;
@@ -1350,6 +1666,24 @@ struct error_traits< std::error_code >
 
 #endif // nsel_CONFIG_NO_EXCEPTIONS
 
+#if nsel_P2505R >= 3
+namespace detail {
+
+// from https://en.cppreference.com/w/cpp/utility/expected/unexpected:
+// "the type of the unexpected value. The type must not be an array type, a non-object type, a specialization of std::unexpected, or a cv-qualified type."
+template< typename T >
+struct valid_unexpected_type : std::integral_constant< bool,
+    std::is_same< T, typename std20::remove_cvref< T >::type >::value
+    && std::is_object< T >::value
+    && !std::is_array< T >::value
+> {};
+
+template< typename T >
+struct valid_unexpected_type< unexpected_type< T > > : std::false_type {};
+
+} // namespace detail
+#endif // nsel_P2505R >= 3
+
 } // namespace expected_lite
 
 // provide nonstd::unexpected_type:
@@ -1390,7 +1724,7 @@ public:
     nsel_constexpr14 expected()
     : contained( true )
     {
-        contained.construct_value( value_type() );
+        contained.construct_value();
     }
 
     nsel_constexpr14 expected( expected const & ) = default;
@@ -1676,10 +2010,11 @@ public:
         return *this;
     }
 
-    template< typename G
+    template< typename G = E
         nsel_REQUIRES_T(
-            std::is_copy_constructible<E>::value    // TODO: std::is_nothrow_copy_constructible<E>
-            && std::is_copy_assignable<E>::value
+            std::is_constructible<E, G const&>::value &&
+            std::is_copy_constructible<G>::value    // TODO: std::is_nothrow_copy_constructible<G>
+            && std::is_copy_assignable<G>::value
         )
     >
     expected & operator=( nonstd::unexpected_type<G> const & error )
@@ -1688,10 +2023,11 @@ public:
         return *this;
     }
 
-    template< typename G
+    template< typename G = E
         nsel_REQUIRES_T(
-            std::is_move_constructible<E>::value    // TODO: std::is_nothrow_move_constructible<E>
-            && std::is_move_assignable<E>::value
+            std::is_constructible<E, G&&>::value &&
+            std::is_move_constructible<G>::value    // TODO: std::is_nothrow_move_constructible<G>
+            && std::is_move_assignable<G>::value
         )
     >
     expected & operator=( nonstd::unexpected_type<G> && error )
@@ -1779,12 +2115,12 @@ public:
 
     constexpr value_type const && operator *() const &&
     {
-        return assert( has_value() ), std::move( contained.value() );
+        return std::move( ( assert( has_value() ), contained.value() ) );
     }
 
     nsel_constexpr14 value_type && operator *() &&
     {
-        return assert( has_value() ), std::move( contained.value() );
+        return std::move( ( assert( has_value() ), contained.value() ) );
     }
 
 #endif
@@ -1845,12 +2181,12 @@ public:
 
     constexpr error_type const && error() const &&
     {
-        return assert( ! has_value() ), std::move( contained.error() );
+        return std::move( ( assert( ! has_value() ), contained.error() ) );
     }
 
     error_type && error() &&
     {
-        return assert( ! has_value() ), std::move( contained.error() );
+        return std::move( ( assert( ! has_value() ), contained.error() ) );
     }
 
 #endif
@@ -1893,6 +2229,316 @@ public:
             : static_cast<T>( std::forward<U>( v ) );
     }
 
+#if nsel_P2505R >= 4
+    template< typename G = E
+        nsel_REQUIRES_T(
+            std::is_copy_constructible< E >::value
+            && std::is_convertible< G, E >::value
+        )
+    >
+    nsel_constexpr error_type error_or( G && e ) const &
+    {
+        return has_value()
+            ? static_cast< E >( std::forward< G >( e ) )
+            : contained.error();
+    }
+
+    template< typename G = E
+        nsel_REQUIRES_T(
+            std::is_move_constructible< E >::value
+            && std::is_convertible< G, E >::value
+        )
+    >
+    nsel_constexpr14 error_type error_or( G && e ) &&
+    {
+        return has_value()
+            ? static_cast< E >( std::forward< G >( e ) )
+            : std::move( contained.error() );
+    }
+#endif // nsel_P2505R >= 4
+
+#if nsel_P2505R >= 3
+    // Monadic operations (P2505)
+    template< typename F
+        nsel_REQUIRES_T(
+            detail::is_expected < detail::invoke_result_nocvref_t< F, value_type & > > ::value
+            && std::is_same< typename detail::invoke_result_nocvref_t< F, value_type & >::error_type, error_type >::value
+            && std::is_constructible< error_type, error_type & >::value
+        )
+    >
+    nsel_constexpr14 detail::invoke_result_nocvref_t< F, value_type & > and_then( F && f ) &
+    {
+        return has_value()
+            ? detail::invoke_result_nocvref_t< F, value_type & >( detail::invoke( std::forward< F >( f ), value() ) )
+            : detail::invoke_result_nocvref_t< F, value_type & >( unexpect, error() );
+    }
+
+    template<typename F
+        nsel_REQUIRES_T(
+            detail::is_expected< detail::invoke_result_nocvref_t< F, const value_type & > >::value
+            && std::is_same< typename detail::invoke_result_nocvref_t< F, const value_type & >::error_type, error_type >::value
+            && std::is_constructible< error_type, const error_type & >::value
+        )
+    >
+    nsel_constexpr detail::invoke_result_nocvref_t< F, const value_type & > and_then( F && f ) const &
+    {
+        return has_value()
+            ? detail::invoke_result_nocvref_t< F, const value_type & >( detail::invoke( std::forward< F >( f ), value() ) )
+            : detail::invoke_result_nocvref_t< F, const value_type & >( unexpect, error() );
+    }
+
+#if !nsel_COMPILER_GNUC_VERSION || nsel_COMPILER_GNUC_VERSION >= 490
+    template<typename F
+        nsel_REQUIRES_T(
+            detail::is_expected< detail::invoke_result_nocvref_t< F, value_type && > >::value
+            && std::is_same< typename detail::invoke_result_nocvref_t< F, value_type && >::error_type, error_type >::value
+            && std::is_constructible< error_type, error_type && >::value
+        )
+    >
+    nsel_constexpr14 detail::invoke_result_nocvref_t< F, value_type && > and_then( F && f ) &&
+    {
+        return has_value()
+            ? detail::invoke_result_nocvref_t< F, value_type && >( detail::invoke( std::forward< F >( f ), std::move( value() ) ) )
+            : detail::invoke_result_nocvref_t< F, value_type && >( unexpect, std::move( error() ) );
+    }
+
+    template<typename F
+        nsel_REQUIRES_T(
+            detail::is_expected< detail::invoke_result_nocvref_t< F, const value_type && > >::value
+            && std::is_same< typename detail::invoke_result_nocvref_t< F, const value_type & >::error_type, error_type >::value
+            && std::is_constructible< error_type, const error_type && >::value
+        )
+    >
+    nsel_constexpr detail::invoke_result_nocvref_t< F, const value_type && > and_then( F && f ) const &&
+    {
+        return has_value()
+            ? detail::invoke_result_nocvref_t< F, const value_type && >( detail::invoke( std::forward< F >( f ), std::move( value() ) ) )
+            : detail::invoke_result_nocvref_t< F, const value_type && >( unexpect, std::move( error() ) );
+    }
+#endif
+
+    template<typename F
+        nsel_REQUIRES_T(
+            detail::is_expected< detail::invoke_result_nocvref_t< F, error_type & > >::value
+            && std::is_same< typename detail::invoke_result_nocvref_t< F, error_type & >::value_type, value_type >::value
+            && std::is_constructible< value_type, value_type & >::value
+        )
+    >
+    nsel_constexpr14 detail::invoke_result_nocvref_t< F, error_type & > or_else( F && f ) &
+    {
+        return has_value()
+            ? detail::invoke_result_nocvref_t< F, error_type & >( value() )
+            : detail::invoke_result_nocvref_t< F, error_type & >( detail::invoke( std::forward< F >( f ), error() ) );
+    }
+
+    template<typename F
+        nsel_REQUIRES_T(
+            detail::is_expected< detail::invoke_result_nocvref_t< F, const error_type & > >::value
+            && std::is_same< typename detail::invoke_result_nocvref_t< F, const error_type & >::value_type, value_type >::value
+            && std::is_constructible< value_type, const value_type & >::value
+        )
+    >
+    nsel_constexpr detail::invoke_result_nocvref_t< F, const error_type & > or_else( F && f ) const &
+    {
+        return has_value()
+            ? detail::invoke_result_nocvref_t< F, const error_type & >( value() )
+            : detail::invoke_result_nocvref_t< F, const error_type & >( detail::invoke( std::forward< F >( f ), error() ) );
+    }
+
+#if !nsel_COMPILER_GNUC_VERSION || nsel_COMPILER_GNUC_VERSION >= 490
+    template<typename F
+        nsel_REQUIRES_T(
+            detail::is_expected< detail::invoke_result_nocvref_t< F, error_type && > >::value
+            && std::is_same< typename detail::invoke_result_nocvref_t< F, error_type && >::value_type, value_type >::value
+            && std::is_constructible< value_type, value_type && >::value
+        )
+    >
+    nsel_constexpr14 detail::invoke_result_nocvref_t< F, error_type && > or_else( F && f ) &&
+    {
+        return has_value()
+            ? detail::invoke_result_nocvref_t< F, error_type && >( std::move( value() ) )
+            : detail::invoke_result_nocvref_t< F, error_type && >( detail::invoke( std::forward< F >( f ), std::move( error() ) ) );
+    }
+
+    template<typename F
+        nsel_REQUIRES_T(
+            detail::is_expected< detail::invoke_result_nocvref_t< F, const error_type && > >::value
+            && std::is_same< typename detail::invoke_result_nocvref_t< F, const error_type && >::value_type, value_type >::value
+            && std::is_constructible< value_type, const value_type && >::value
+        )
+    >
+    nsel_constexpr detail::invoke_result_nocvref_t< F, const error_type && > or_else( F && f ) const &&
+    {
+        return has_value()
+            ? detail::invoke_result_nocvref_t< F, const error_type && >( std::move( value() ) )
+            : detail::invoke_result_nocvref_t< F, const error_type && >( detail::invoke( std::forward< F >( f ), std::move( error() ) ) );
+    }
+#endif
+
+    template<typename F
+        nsel_REQUIRES_T(
+            std::is_constructible< error_type, error_type & >::value
+            && !std::is_void< detail::transform_invoke_result_t< F, value_type & > >::value
+            && detail::valid_expected_value_type< detail::transform_invoke_result_t< F, value_type & > >::value
+        )
+    >
+    nsel_constexpr14 expected< detail::transform_invoke_result_t< F, value_type & >, error_type > transform( F && f ) &
+    {
+        return has_value()
+            ? expected< detail::transform_invoke_result_t< F, value_type & >, error_type >( detail::invoke( std::forward< F >( f ), **this ) )
+            : make_unexpected( error() );
+    }
+
+    template<typename F
+        nsel_REQUIRES_T(
+            std::is_constructible< error_type, error_type & >::value
+            && std::is_void< detail::transform_invoke_result_t< F, value_type & > >::value
+        )
+    >
+    nsel_constexpr14 expected< void, error_type > transform( F && f ) &
+    {
+        return has_value()
+            ? ( detail::invoke( std::forward< F >( f ), **this ), expected< void, error_type >() )
+            : make_unexpected( error() );
+    }
+
+    template<typename F
+        nsel_REQUIRES_T(
+            std::is_constructible< error_type, const error_type & >::value
+            && !std::is_void< detail::transform_invoke_result_t< F, const value_type & > >::value
+            && detail::valid_expected_value_type< detail::transform_invoke_result_t< F, const value_type & > >::value
+        )
+    >
+    nsel_constexpr expected< detail::transform_invoke_result_t< F, const value_type & >, error_type > transform( F && f ) const &
+    {
+        return has_value()
+            ? expected< detail::transform_invoke_result_t< F, const value_type & >, error_type >( detail::invoke( std::forward< F >( f ), **this ) )
+            : make_unexpected( error() );
+    }
+
+    template<typename F
+        nsel_REQUIRES_T(
+            std::is_constructible< error_type, const error_type & >::value
+            && std::is_void< detail::transform_invoke_result_t< F, const value_type & > >::value
+        )
+    >
+    nsel_constexpr expected< void, error_type > transform( F && f ) const &
+    {
+        return has_value()
+            ? ( detail::invoke( std::forward< F >( f ), **this ), expected< void, error_type >() )
+            : make_unexpected( error() );
+    }
+
+#if !nsel_COMPILER_GNUC_VERSION || nsel_COMPILER_GNUC_VERSION >= 490
+    template<typename F
+        nsel_REQUIRES_T(
+            std::is_constructible< error_type, error_type && >::value
+            && !std::is_void< detail::transform_invoke_result_t< F, value_type && > >::value
+            && detail::valid_expected_value_type< detail::transform_invoke_result_t< F, value_type && > >::value
+        )
+    >
+    nsel_constexpr14 expected< detail::transform_invoke_result_t< F, value_type && >, error_type > transform( F && f ) &&
+    {
+        return has_value()
+            ? expected< detail::transform_invoke_result_t< F, value_type && >, error_type >( detail::invoke( std::forward< F >( f ), std::move( **this ) ) )
+            : make_unexpected( std::move( error() ) );
+    }
+
+    template<typename F
+        nsel_REQUIRES_T(
+            std::is_constructible< error_type, error_type && >::value
+            && std::is_void< detail::transform_invoke_result_t< F, value_type && > >::value
+        )
+    >
+    nsel_constexpr14 expected< void, error_type > transform( F && f ) &&
+    {
+        return has_value()
+            ? ( detail::invoke( std::forward< F >( f ), **this ), expected< void, error_type >() )
+            : make_unexpected( std::move( error() ) );
+    }
+
+    template<typename F
+        nsel_REQUIRES_T(
+            std::is_constructible< error_type, const error_type && >::value
+            && !std::is_void< detail::transform_invoke_result_t< F, const value_type && > >::value
+            && detail::valid_expected_value_type< detail::transform_invoke_result_t< F, const value_type && > >::value
+        )
+    >
+    nsel_constexpr expected< detail::transform_invoke_result_t< F, const value_type && >, error_type > transform( F && f ) const &&
+    {
+        return has_value()
+            ? expected< detail::transform_invoke_result_t< F, const value_type && >, error_type >( detail::invoke( std::forward< F >( f ), std::move( **this ) ) )
+            : make_unexpected( std::move( error() ) );
+    }
+
+    template<typename F
+        nsel_REQUIRES_T(
+            std::is_constructible< error_type, const error_type && >::value
+            && std::is_void< detail::transform_invoke_result_t< F, const value_type && > >::value
+        )
+    >
+    nsel_constexpr expected< void, error_type > transform( F && f ) const &&
+    {
+        return has_value()
+            ? ( detail::invoke( std::forward< F >( f ), **this ), expected< void, error_type >() )
+            : make_unexpected( std::move( error() ) );
+    }
+#endif
+
+    template<typename F
+        nsel_REQUIRES_T(
+            detail::valid_unexpected_type< detail::transform_invoke_result_t< F, error_type & > >::value
+            && std::is_constructible< value_type, value_type & >::value
+        )
+    >
+    nsel_constexpr14 expected< value_type, detail::transform_invoke_result_t< F, error_type & > > transform_error( F && f ) &
+    {
+        return has_value()
+            ? expected< value_type, detail::transform_invoke_result_t< F, error_type & > >( in_place, **this )
+            : make_unexpected( detail::invoke( std::forward< F >( f ), error() ) );
+    }
+
+    template<typename F
+        nsel_REQUIRES_T(
+            detail::valid_unexpected_type< detail::transform_invoke_result_t< F, const error_type & > >::value
+            && std::is_constructible< value_type, const value_type & >::value
+        )
+    >
+    nsel_constexpr expected< value_type, detail::transform_invoke_result_t< F, const error_type & > > transform_error( F && f ) const &
+    {
+        return has_value()
+            ? expected< value_type, detail::transform_invoke_result_t< F, const error_type & > >( in_place, **this )
+            : make_unexpected( detail::invoke( std::forward< F >( f ), error() ) );
+    }
+
+#if !nsel_COMPILER_GNUC_VERSION || nsel_COMPILER_GNUC_VERSION >= 490
+    template<typename F
+        nsel_REQUIRES_T(
+            detail::valid_unexpected_type< detail::transform_invoke_result_t< F, error_type && > >::value
+            && std::is_constructible< value_type, value_type && >::value
+        )
+    >
+    nsel_constexpr14 expected< value_type, detail::transform_invoke_result_t< F, error_type && > > transform_error( F && f ) &&
+    {
+        return has_value()
+            ? expected< value_type, detail::transform_invoke_result_t< F, error_type && > >( in_place, std::move( **this ) )
+            : make_unexpected( detail::invoke( std::forward< F >( f ), std::move( error() ) ) );
+    }
+
+    template<typename F
+        nsel_REQUIRES_T(
+            detail::valid_unexpected_type< detail::transform_invoke_result_t< F, const error_type && > >::value
+            && std::is_constructible< value_type, const value_type && >::value
+        )
+    >
+    nsel_constexpr expected< value_type, detail::transform_invoke_result_t< F, const error_type && > > transform_error( F && f ) const &&
+    {
+        return has_value()
+            ? expected< value_type, detail::transform_invoke_result_t< F, const error_type && > >( in_place, std::move( **this ) )
+            : make_unexpected( detail::invoke( std::forward< F >( f ), std::move( error() ) ) );
+    }
+#endif
+#endif // nsel_P2505R >= 3
     // unwrap()
 
 //  template <class U, class E>
@@ -2117,12 +2763,12 @@ public:
 
     constexpr error_type const && error() const &&
     {
-        return assert( ! has_value() ), std::move( contained.error() );
+        return std::move( ( assert( ! has_value() ), contained.error() ) );
     }
 
     error_type && error() &&
     {
-        return assert( ! has_value() ), std::move( contained.error() );
+        return std::move( ( assert( ! has_value() ), contained.error() ) );
     }
 
 #endif
@@ -2138,6 +2784,305 @@ public:
         using ContainedEx = typename std::remove_reference< decltype( get_unexpected().value() ) >::type;
         return ! has_value() && std::is_base_of< Ex, ContainedEx>::value;
     }
+
+#if nsel_P2505R >= 4
+    template< typename G = E
+        nsel_REQUIRES_T(
+            std::is_copy_constructible< E >::value
+            && std::is_convertible< G, E >::value
+        )
+    >
+    nsel_constexpr error_type error_or( G && e ) const &
+    {
+        return has_value()
+            ? static_cast< E >( std::forward< G >( e ) )
+            : contained.error();
+    }
+
+    template< typename G = E
+        nsel_REQUIRES_T(
+            std::is_move_constructible< E >::value
+            && std::is_convertible< G, E >::value
+        )
+    >
+    nsel_constexpr14 error_type error_or( G && e ) &&
+    {
+        return has_value()
+            ? static_cast< E >( std::forward< G >( e ) )
+            : std::move( contained.error() );
+    }
+#endif // nsel_P2505R >= 4
+
+#if nsel_P2505R >= 3
+    // Monadic operations (P2505)
+    template<typename F
+        nsel_REQUIRES_T(
+            detail::is_expected< detail::invoke_result_nocvref_t< F > >::value
+            && std::is_same< typename detail::invoke_result_nocvref_t< F >::error_type, error_type >::value
+            && std::is_constructible< error_type, error_type & >::value
+        )
+    >
+    nsel_constexpr14 detail::invoke_result_nocvref_t< F > and_then( F && f ) &
+    {
+        return has_value()
+            ? detail::invoke_result_nocvref_t< F >( detail::invoke( std::forward< F >( f ) ) )
+            : detail::invoke_result_nocvref_t< F >( unexpect, error() );
+    }
+
+    template<typename F
+        nsel_REQUIRES_T(
+            detail::is_expected< detail::invoke_result_nocvref_t< F > >::value
+            && std::is_same< typename detail::invoke_result_nocvref_t< F >::error_type, error_type >::value
+            && std::is_constructible< error_type, const error_type & >::value
+        )
+    >
+    nsel_constexpr detail::invoke_result_nocvref_t< F > and_then( F && f ) const &
+    {
+        return has_value()
+            ? detail::invoke_result_nocvref_t< F >( detail::invoke( std::forward< F >( f ) ) )
+            : detail::invoke_result_nocvref_t< F >( unexpect, error() );
+    }
+
+#if !nsel_COMPILER_GNUC_VERSION || nsel_COMPILER_GNUC_VERSION >= 490
+    template<typename F
+        nsel_REQUIRES_T(
+            detail::is_expected< detail::invoke_result_nocvref_t< F > >::value
+            && std::is_same< typename detail::invoke_result_nocvref_t< F >::error_type, error_type >::value
+            && std::is_constructible< error_type, error_type && >::value
+        )
+    >
+    nsel_constexpr14 detail::invoke_result_nocvref_t< F > and_then( F && f ) &&
+    {
+        return has_value()
+            ? detail::invoke_result_nocvref_t< F >( detail::invoke( std::forward< F >( f ) ) )
+            : detail::invoke_result_nocvref_t< F >( unexpect, std::move( error() ) );
+    }
+
+    template<typename F
+        nsel_REQUIRES_T(
+            detail::is_expected< detail::invoke_result_nocvref_t< F > >::value
+            && std::is_same< typename detail::invoke_result_nocvref_t< F >::error_type, error_type >::value
+            && std::is_constructible< error_type, const error_type && >::value
+        )
+    >
+    nsel_constexpr detail::invoke_result_nocvref_t< F > and_then( F && f ) const &&
+    {
+        return has_value()
+            ? detail::invoke_result_nocvref_t< F >( detail::invoke( std::forward< F >( f ) ) )
+            : detail::invoke_result_nocvref_t< F >( unexpect, std::move( error() ) );
+    }
+#endif
+
+    template<typename F
+        nsel_REQUIRES_T(
+            detail::is_expected< detail::invoke_result_nocvref_t< F, error_type & > >::value
+            && std::is_void< typename detail::invoke_result_nocvref_t< F, error_type & >::value_type >::value
+        )
+    >
+    nsel_constexpr14 detail::invoke_result_nocvref_t< F, error_type & > or_else( F && f ) &
+    {
+        return has_value()
+            ? detail::invoke_result_nocvref_t< F, error_type & >()
+            : detail::invoke_result_nocvref_t< F, error_type & >( detail::invoke( std::forward< F >( f ), error() ) );
+    }
+
+    template<typename F
+        nsel_REQUIRES_T(
+            detail::is_expected< detail::invoke_result_nocvref_t< F, const error_type & > >::value
+            && std::is_void< typename detail::invoke_result_nocvref_t< F, const error_type & >::value_type >::value
+        )
+    >
+    nsel_constexpr detail::invoke_result_nocvref_t< F, const error_type & > or_else( F && f ) const &
+    {
+        return has_value()
+            ? detail::invoke_result_nocvref_t< F, const error_type & >()
+            : detail::invoke_result_nocvref_t< F, const error_type & >( detail::invoke( std::forward< F >( f ), error() ) );
+    }
+
+#if !nsel_COMPILER_GNUC_VERSION || nsel_COMPILER_GNUC_VERSION >= 490
+    template<typename F
+        nsel_REQUIRES_T(
+            detail::is_expected< detail::invoke_result_nocvref_t< F, error_type && > >::value
+            && std::is_void< typename detail::invoke_result_nocvref_t< F, error_type && >::value_type >::value
+        )
+    >
+    nsel_constexpr14 detail::invoke_result_nocvref_t< F, error_type && > or_else( F && f ) &&
+    {
+        return has_value()
+            ? detail::invoke_result_nocvref_t< F, error_type && >()
+            : detail::invoke_result_nocvref_t< F, error_type && >( detail::invoke( std::forward< F >( f ), std::move( error() ) ) );
+    }
+
+    template<typename F
+        nsel_REQUIRES_T(
+            detail::is_expected< detail::invoke_result_nocvref_t< F, const error_type && > >::value
+            && std::is_void< typename detail::invoke_result_nocvref_t< F, const error_type && >::value_type >::value
+        )
+    >
+    nsel_constexpr detail::invoke_result_nocvref_t< F, const error_type && > or_else( F && f ) const &&
+    {
+        return has_value()
+            ? detail::invoke_result_nocvref_t< F, const error_type && >()
+            : detail::invoke_result_nocvref_t< F, const error_type && >( detail::invoke( std::forward< F >( f ), std::move( error() ) ) );
+    }
+#endif
+
+    template<typename F
+        nsel_REQUIRES_T(
+            std::is_constructible< error_type, error_type & >::value
+            && !std::is_void< detail::transform_invoke_result_t< F > >::value
+        )
+    >
+    nsel_constexpr14 expected< detail::transform_invoke_result_t< F >, error_type > transform( F && f ) &
+    {
+        return has_value()
+            ? expected< detail::transform_invoke_result_t< F >, error_type >( detail::invoke( std::forward< F >( f ) ) )
+            : make_unexpected( error() );
+    }
+
+    template<typename F
+        nsel_REQUIRES_T(
+            std::is_constructible< error_type, error_type & >::value
+            && std::is_void< detail::transform_invoke_result_t< F > >::value
+        )
+    >
+    nsel_constexpr14 expected< void, error_type > transform( F && f ) &
+    {
+        return has_value()
+            ? ( detail::invoke( std::forward< F >( f ) ), expected< void, error_type >() )
+            : make_unexpected( error() );
+    }
+
+    template<typename F
+        nsel_REQUIRES_T(
+            std::is_constructible< error_type, const error_type & >::value
+            && !std::is_void< detail::transform_invoke_result_t< F > >::value
+        )
+    >
+    nsel_constexpr expected< detail::transform_invoke_result_t< F >, error_type > transform( F && f ) const &
+    {
+        return has_value()
+            ? expected< detail::transform_invoke_result_t< F >, error_type >( detail::invoke( std::forward< F >( f ) ) )
+            : make_unexpected( error() );
+    }
+
+    template<typename F
+        nsel_REQUIRES_T(
+            std::is_constructible< error_type, const error_type & >::value
+            && std::is_void< detail::transform_invoke_result_t< F > >::value
+        )
+    >
+    nsel_constexpr expected< void, error_type > transform( F && f ) const &
+    {
+        return has_value()
+            ? ( detail::invoke( std::forward< F >( f ) ), expected< void, error_type >() )
+            : make_unexpected( error() );
+    }
+
+#if !nsel_COMPILER_GNUC_VERSION || nsel_COMPILER_GNUC_VERSION >= 490
+    template<typename F
+        nsel_REQUIRES_T(
+            std::is_constructible< error_type, error_type && >::value
+            && !std::is_void< detail::transform_invoke_result_t< F > >::value
+        )
+    >
+    nsel_constexpr14 expected< detail::transform_invoke_result_t< F >, error_type > transform( F && f ) &&
+    {
+        return has_value()
+            ? expected< detail::transform_invoke_result_t< F >, error_type >( detail::invoke( std::forward< F >( f ) ) )
+            : make_unexpected( error() );
+    }
+
+    template<typename F
+        nsel_REQUIRES_T(
+            std::is_constructible< error_type, error_type && >::value
+            && std::is_void< detail::transform_invoke_result_t< F > >::value
+        )
+    >
+    nsel_constexpr14 expected< void, error_type > transform( F && f ) &&
+    {
+        return has_value()
+            ? ( detail::invoke( std::forward< F >( f ) ), expected< void, error_type >() )
+            : make_unexpected( error() );
+    }
+
+    template<typename F
+        nsel_REQUIRES_T(
+            std::is_constructible< error_type, const error_type && >::value
+            && !std::is_void< detail::transform_invoke_result_t< F > >::value
+        )
+    >
+    nsel_constexpr expected< detail::transform_invoke_result_t< F >, error_type > transform( F && f ) const &&
+    {
+        return has_value()
+            ? expected< detail::transform_invoke_result_t< F >, error_type >( detail::invoke( std::forward< F >( f ) ) )
+            : make_unexpected( error() );
+    }
+
+    template<typename F
+        nsel_REQUIRES_T(
+            std::is_constructible< error_type, const error_type && >::value
+            && std::is_void< detail::transform_invoke_result_t< F > >::value
+        )
+    >
+    nsel_constexpr expected< void, error_type > transform( F && f ) const &&
+    {
+        return has_value()
+            ? ( detail::invoke( std::forward< F >( f ) ), expected< void, error_type >() )
+            : make_unexpected( error() );
+    }
+#endif
+
+    template<typename F
+        nsel_REQUIRES_T(
+            detail::valid_unexpected_type< detail::transform_invoke_result_t< F, error_type & > >::value
+        )
+    >
+    nsel_constexpr14 expected< void, detail::transform_invoke_result_t< F, error_type & > > transform_error( F && f ) &
+    {
+        return has_value()
+            ? expected< void, detail::transform_invoke_result_t< F, error_type & > >()
+            : make_unexpected( detail::invoke( std::forward< F >( f ), error() ) );
+    }
+
+    template<typename F
+        nsel_REQUIRES_T(
+            detail::valid_unexpected_type< detail::transform_invoke_result_t< F, const error_type & > >::value
+        )
+    >
+    nsel_constexpr expected< void, detail::transform_invoke_result_t< F, const error_type & > > transform_error( F && f ) const &
+    {
+        return has_value()
+            ? expected< void, detail::transform_invoke_result_t< F, const error_type & > >()
+            : make_unexpected( detail::invoke( std::forward< F >( f ), error() ) );
+    }
+
+#if !nsel_COMPILER_GNUC_VERSION || nsel_COMPILER_GNUC_VERSION >= 490
+    template<typename F
+        nsel_REQUIRES_T(
+            detail::valid_unexpected_type< detail::transform_invoke_result_t< F, error_type && > >::value
+        )
+    >
+    nsel_constexpr14 expected< void, detail::transform_invoke_result_t< F, error_type && > > transform_error( F && f ) &&
+    {
+        return has_value()
+            ? expected< void, detail::transform_invoke_result_t< F, error_type && > >()
+            : make_unexpected( detail::invoke( std::forward< F >( f ), std::move( error() ) ) );
+    }
+
+    template<typename F
+        nsel_REQUIRES_T(
+            detail::valid_unexpected_type< detail::transform_invoke_result_t< F, const error_type && > >::value
+        )
+    >
+    nsel_constexpr expected< void, detail::transform_invoke_result_t< F, const error_type && > > transform_error( F && f ) const &&
+    {
+        return has_value()
+            ? expected< void, detail::transform_invoke_result_t< F, const error_type && > >()
+            : make_unexpected( detail::invoke( std::forward< F >( f ), std::move( error() ) ) );
+    }
+#endif
+#endif // nsel_P2505R >= 3
 
 //  template constexpr 'see below' unwrap() const&;
 //
@@ -2173,22 +3118,30 @@ private:
 
 // x.x.4.6 expected<>: comparison operators
 
-template< typename T1, typename E1, typename T2, typename E2 >
+template< typename T1, typename E1, typename T2, typename E2
+    nsel_REQUIRES_T(
+        !std::is_void<T1>::value && !std::is_void<T2>::value
+    )
+>
 constexpr bool operator==( expected<T1,E1> const & x, expected<T2,E2> const & y )
 {
-    return bool(x) != bool(y) ? false : bool(x) == false ? x.error() == y.error() : *x == *y;
+    return bool(x) != bool(y) ? false : bool(x) ? *x == *y : x.error() == y.error();
+}
+
+template< typename T1, typename E1, typename T2, typename E2
+    nsel_REQUIRES_T(
+        std::is_void<T1>::value && std::is_void<T2>::value
+    )
+>
+constexpr bool operator==( expected<T1,E1> const & x, expected<T2,E2> const & y )
+{
+    return bool(x) != bool(y) ? false : bool(x) || static_cast<bool>( x.error() == y.error() );
 }
 
 template< typename T1, typename E1, typename T2, typename E2 >
 constexpr bool operator!=( expected<T1,E1> const & x, expected<T2,E2> const & y )
 {
     return !(x == y);
-}
-
-template< typename E1, typename E2 >
-constexpr bool operator==( expected<void,E1> const & x, expected<void,E1> const & y )
-{
-    return bool(x) != bool(y) ? false : bool(x) == false ? x.error() == y.error() : true;
 }
 
 #if nsel_P0323R <= 2
@@ -2221,13 +3174,21 @@ constexpr bool operator>=( expected<T,E> const & x, expected<T,E> const & y )
 
 // x.x.4.7 expected: comparison with T
 
-template< typename T1, typename E1, typename T2 >
+template< typename T1, typename E1, typename T2
+    nsel_REQUIRES_T(
+        !std::is_void<T1>::value
+    )
+>
 constexpr bool operator==( expected<T1,E1> const & x, T2 const & v )
 {
     return bool(x) ? *x == v : false;
 }
 
-template< typename T1, typename E1, typename T2 >
+template< typename T1, typename E1, typename T2
+    nsel_REQUIRES_T(
+        !std::is_void<T1>::value
+    )
+>
 constexpr bool operator==(T2 const & v, expected<T1,E1> const & x )
 {
     return bool(x) ? v == *x : false;
@@ -2526,8 +3487,8 @@ nsel_RESTORE_WARNINGS()
 
 #endif // nsel_USES_STD_EXPECTED
 
-#endif // NONSTD_EXPECTED_LITE_HPP
-       
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif
+
+#endif // NONSTD_EXPECTED_LITE_HPP

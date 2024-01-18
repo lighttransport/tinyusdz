@@ -874,6 +874,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   nonstd::optional<CustomDataType> sdrMetadata;
   nonstd::optional<value::StringData> comment;
   nonstd::optional<Variability> variability;
+  AttrMeta meta; // for other not frequently-used attribute/relationship metadata.
   Property::Type propType{Property::Type::EmptyAttrib};
   Attribute attr;
 
@@ -1195,7 +1196,21 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
                       << fv.second.type_name() << "`");
       }
 
+    } else if (fv.first == "colorSpace") {
+      if (auto pv = fv.second.get_value<value::token>()) {
+        
+        MetaVariable mv;
+        mv.set_name("colorSpace");
+        mv.set_value(pv.value());
+
+        meta.meta["colorSpace"] = mv;
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`colorSpace` must be type `token`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
     } else {
+      // TODO: register unkown metadataum as custom metadata?
       PUSH_WARN("TODO: " << fv.first);
       DCOUT("TODO: " << fv.first);
     }
@@ -1259,7 +1274,6 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   }
 
   // Attribute metas
-  AttrMeta meta;
   if (interpolation) {
     meta.interpolation = interpolation.value();
   }
@@ -2148,6 +2162,8 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
       }
 
     } else {
+      // TODO: support int, int[], uint, uint[], int64, uint64, ...
+      // https://github.com/syoyo/tinyusdz/issues/106
       if (auto pv = fv.second.as<std::string>()) {
         // Assume unregistered Prim metadatum
         primMeta.unregisteredMetas[fv.first] = (*pv);
