@@ -1,24 +1,21 @@
 // SPDX-License-Identifier: Apache 2.0
-// Copyright 2022-Present Light Transport Entertainment Inc.
+// Copyright 2024-Present Light Transport Entertainment Inc.
 
 //
-// Command-line tool to convert USD Stage to RenderScene(glTF-like data
+// Command-line check tool to convert USD Stage to RenderScene(glTF-like data
 // structure)
 //
 #include <algorithm>
 #include <iostream>
 #include <sstream>
 
-#include "io-util.hh"
-#include "pprinter.hh"
-#include "prim-pprint.hh"
+#define TINYGLTF_IMPLEMENTATION
+#include "tiny_gltf.h"
+
 #include "tinyusdz.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
 #include "tydra/shader-network.hh"
-#include "usdShade.hh"
-#include "value-pprint.hh"
-#include "value-types.hh"
 
 static std::string GetFileExtension(const std::string &filename) {
   if (filename.find_last_of('.') != std::string::npos)
