@@ -678,7 +678,7 @@ struct RenderMesh {
 
   VertexArrayType vertexArrayType{VertexArrayType::Facevarying};
 
-  VertexAttribute points;  // varying: vertex. vformat: usually float3 format.
+  std::vector<vec3> points;  // varying is 'vertex'.
 
   std::vector<uint32_t> faceVertexIndices;
   // For triangulated mesh, array elements are all filled with 3 or

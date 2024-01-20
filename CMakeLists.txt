@@ -66,7 +66,7 @@ option(TINYUSDZ_BUILD_TESTS "Build tests" ${TINYUSDZ_DEFAULT_BUILD_TESTS})
 option(TINYUSDZ_BUILD_BENCHMARKS
        "Build some bechmark tests(e.g. internal C++ data structures)" OFF)
 option(TINYUSDZ_BUILD_EXAMPLES
-       "Build examples(but not all examples area built in `examples` folder)"
+       "Build examples(but not all examples in `examples` folder are being built)"
        ${TINYUSDZ_DEFAULT_BUILD_EXAMPLES})
 option(TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER
        "Build with built-in image loader(stb_image and fpng). When disabled, app need to provide image loader callback to load images."
@@ -105,6 +105,7 @@ option(TINYUSDZ_CXX_EXCEPTIONS
 
 option(TINYUSDZ_WITH_USDMTLX "Build with MaterialX support" ON)
 option(TINYUSDZ_WITH_JSON "Build with JSON serialization support" OFF)
+option(TINYUSDZ_WITH_USD_TO_GLTF "Build with USD to glTF example" ON)
 option(TINYUSDZ_WITH_USDOBJ "Build with usdObj support(import wavefront .obj)"
        ON)
 option(TINYUSDZ_WITH_USDFBX "Build with usdFbx support(import FBX .fbx)"
@@ -1159,6 +1160,9 @@ if(TINYUSDZ_BUILD_EXAMPLES)
   add_subdirectory(examples/asset_resolution)
   if (TINYUSDZ_WITH_JSON)
     add_subdirectory(examples/usd_to_json)
+  endif()
+  if (TINYUSDZ_WITH_USD_TO_GLTF)
+    add_subdirectory(examples/usd_to_gltf)
   endif()
   if(TINYUSDZ_WITH_MODULE_USDA_WRITER)
     add_subdirectory(examples/save_usda)
