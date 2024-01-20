@@ -33,8 +33,8 @@ readme = {file = "README.md", content-type = "text/markdown"}
 
 [tool.setuptools_scm]
 # setuptools_scm>=8
-#version_file = "tinyusdz/_version.py"
+#version_file = "python/tinyusdz/_version.py"
 
 # setuptools_scm<8
-write_to = "tinyusdz/_version.py"
+write_to = "python/tinyusdz/_version.py"
 
