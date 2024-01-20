@@ -224,7 +224,7 @@ option(TINYUSDZ_WITH_TOOL_USDC_PARSER "Build with USDC parser program" Off)
 option(TINYUSDZ_COMPILE_TIME_TRACE
        "Add -ftime-trace to profile compilation time(clang only)" OFF)
 option(TINYUSDZ_CUSTOM_COMPILE_FLAGS
-       "Add custom compile flags(described in CMakeLists.txt). For Developer only)" OFF)
+       "Use hard-coded custom compile flags(described in CMakeLists.txt). For Developer only)" OFF)
 # ---
 
 # cmake modules
@@ -637,6 +637,53 @@ if(TINYUSDZ_WITH_TIFF OR TINYUSDZ_WITH_EXR)
   endif()
 endif()
 
+# Increase warning level for clang.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+
+  set(TUSDZ_COMPILE_FLAGS
+      "-Weverything -Werror -Wno-poison-system-directories -Wno-padded -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-documentation -Wno-unused-member-function"
+  )
+
+  # clang17 seems enable -Wunsafe-buffer-usage when `-Weverything` is defined,
+  # resulting compilation error for some raw array access without bound check.
+  # https://reviews.llvm.org/D138940
+  # https://github.com/llvm/llvm-project/issues/64646
+  # we need to suppress it as a work around.
+  if (${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 16)
+    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-unsafe-buffer-usage")
+  endif()
+
+  if(TINYUSDZ_COMPILE_TIME_TRACE)
+    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -ftime-trace ")
+  endif()
+
+  set_source_files_properties(${TINYUSDZ_SOURCES}
+                              PROPERTIES COMPILE_FLAGS ${TUSDZ_COMPILE_FLAGS})
+
+  if (TINYUSDZ_WITH_C_API)
+    set_source_files_properties(${TINYUSDZ_C_API_SOURCES}
+                                PROPERTIES COMPILE_FLAGS ${TUSDZ_COMPILE_FLAGS})
+  endif()
+
+endif()
+
+if(TINYUSDZ_CUSTOM_COMPILE_FLAGS)
+  #
+  # Overwrite existing TUSDZ_COMPILE_FLAGS
+  #
+
+  #if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+    set(TUSDZ_CUSTOM_COMPILE_FLAGS "-fstack-usage ")
+    set_source_files_properties(${TINYUSDZ_SOURCES}
+                              PROPERTIES COMPILE_FLAGS ${TUSDZ_CUSTOM_COMPILE_FLAGS})
+
+    if (TINYUSDZ_WITH_C_API)
+      set_source_files_properties(${TINYUSDZ_C_API_SOURCES}
+                                  PROPERTIES COMPILE_FLAGS ${TUSDZ_CUSTOM_COMPILE_FLAGS})
+    endif()
+  #endif()
+endif()
+
 #
 # -- target
 #
@@ -987,47 +1034,6 @@ endforeach()
 
 
 
-# Increase warning level for clang.
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-
-  set(TUSDZ_COMPILE_FLAGS
-      "-Weverything -Werror -Wno-poison-system-directories -Wno-padded -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-documentation -Wno-unused-member-function"
-  )
-
-  # clang17 seems enable -Wunsafe-buffer-usage when `-Weverything` is defined,
-  # resulting compilation error for some raw array access without bound check.
-  # https://reviews.llvm.org/D138940
-  # we need to suppress it as a work around.
-  if (${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 16)
-    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-unsafe-buffer-usage")
-  endif()
-
-  if(TINYUSDZ_COMPILE_TIME_TRACE)
-    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -ftime-trace ")
-  endif()
-
-  set_source_files_properties(${TINYUSDZ_SOURCES}
-                              PROPERTIES COMPILE_FLAGS ${TUSDZ_COMPILE_FLAGS})
-
-  if (TINYUSDZ_WITH_C_API)
-    set_source_files_properties(${TINYUSDZ_C_API_SOURCES}
-                                PROPERTIES COMPILE_FLAGS ${TUSDZ_COMPILE_FLAGS})
-  endif()
-
-endif()
-
-if(TINYUSDZ_CUSTOM_COMPILE_FLAGS)
-  #if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
-    set(TUSDZ_CUSTOM_COMPILE_FLAGS "-fstack-usage ")
-    set_source_files_properties(${TINYUSDZ_SOURCES}
-                              PROPERTIES COMPILE_FLAGS ${TUSDZ_CUSTOM_COMPILE_FLAGS})
-
-    if (TINYUSDZ_WITH_C_API)
-      set_source_files_properties(${TINYUSDZ_C_API_SOURCES}
-                                  PROPERTIES COMPILE_FLAGS ${TUSDZ_CUSTOM_COMPILE_FLAGS})
-    endif()
-  #endif()
-endif()
 
 if(TINYUSDZ_WITH_C_API)
   if(TINYUSDZ_BUILD_SHARED_LIBS)
