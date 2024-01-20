@@ -7,6 +7,7 @@
 //     - [ ] Correctly handle primvar with 'vertex' interpolation(Use the basis function of subd surface)
 //   - [ ] Support time-varying shader attribute(timeSamples)
 //
+#include <numeric>
 #include "image-loader.hh"
 #include "image-util.hh"
 #include "pprinter.hh"
@@ -45,7 +46,9 @@
 #include "tydra/scene-access.hh"
 #include "tydra/shader-network.hh"
 
-#if 0 // not used a.t.m.
+//#define PushError(msg) if (err) { (*err) += msg; }
+ 
+#if 0
 #define SET_ERROR_AND_RETURN(msg) \
     if (err) {                      \
       (*err) = (msg);               \
@@ -121,7 +124,7 @@ nonstd::expected<std::vector<T>, std::string> UniformToFaceVarying(
 //
 template <typename T>
 nonstd::expected<std::vector<T>, std::string> UniformToVertex(
-    const std::vector<T> &inputs, const std::vector<uint32_t> &faceVertexCounts,
+    const std::vector<T> &inputs, const size_t elementSize, const std::vector<uint32_t> &faceVertexCounts,
     const std::vector<uint32_t> &faceVertexIndices)
 {
   std::vector<T> dst;
@@ -132,7 +135,23 @@ nonstd::expected<std::vector<T>, std::string> UniformToVertex(
                     faceVertexCounts.size()));
   }
 
-  dst.resize(inputs.size());
+  if (faceVertexCounts.empty()) {
+    return nonstd::make_unexpected("faceVertexCounts.size is zero");
+  }
+
+  if (elementSize == 0) {
+    return nonstd::make_unexpected("`elementSize` is zero.");
+  }
+
+  if ((inputs.size() % elementSize) != 0) {
+    return nonstd::make_unexpected(
+        fmt::format("input bytes {} must be dividable by elementSize {}.",
+                    inputs.size(), elementSize));
+  }
+
+  size_t num_uniforms = faceVertexCounts.size();
+
+  dst.resize(num_uniforms * elementSize);
 
   size_t fvIndexOffset{0};
 
@@ -156,7 +175,72 @@ nonstd::expected<std::vector<T>, std::string> UniformToVertex(
       }
 
       // may overwrite the value
-      dst[v_idx] = inputs[v_idx];
+      memcpy(&dst[v_idx * elementSize], inputs[i * elementSize], sizeof(T) * elementSize);
+    }
+
+    fvIndexOffset += cnt;
+  }
+
+  return dst;
+}
+
+nonstd::expected<std::vector<uint8_t>, std::string> UniformToVertex(
+    const std::vector<uint8_t> &inputs, const size_t stride_bytes, const std::vector<uint32_t> &faceVertexCounts,
+    const std::vector<uint32_t> &faceVertexIndices)
+{
+  std::vector<uint8_t> dst;
+
+  if (stride_bytes == 0) {
+    return nonstd::make_unexpected(
+        fmt::format("stride_bytes is zero."));
+  }
+
+  if (faceVertexIndices.size() < 3) {
+    return nonstd::make_unexpected(
+        fmt::format("faceVertexIndices.size must be 3 or greater, but got {}.",
+                    faceVertexCounts.size()));
+  }
+
+  if ((inputs.size() % stride_bytes) != 0) {
+    return nonstd::make_unexpected(
+        fmt::format("input bytes {} must be dividable by stride_bytes {}.",
+                    inputs.size(), stride_bytes));
+  }
+
+  size_t num_uniforms = inputs.size() / stride_bytes;
+
+  if (num_uniforms == faceVertexCounts.size()) {
+    return nonstd::make_unexpected(
+        fmt::format("The number of input uniform attributes {} must be the same with "
+                    "faceVertexCounts.size() {}",
+                    num_uniforms, faceVertexCounts.size()));
+  }
+
+  dst.resize(num_uniforms * stride_bytes);
+
+  size_t fvIndexOffset{0};
+
+  for (size_t i = 0; i < faceVertexCounts.size(); i++) {
+    size_t cnt = faceVertexCounts[i];
+
+    if ((fvIndexOffset + cnt) > faceVertexIndices.size()) {
+      return nonstd::make_unexpected(
+          fmt::format("faceVertexCounts[{}] {} gives buffer-overrun to faceVertexIndices.size {}.",
+                      i, cnt, faceVertexIndices.size()));
+    }
+
+    for (size_t k = 0; k < cnt; k++) {
+      uint32_t v_idx = faceVertexIndices[fvIndexOffset + k];
+
+      if (v_idx >= inputs.size()) {
+        return nonstd::make_unexpected(
+            fmt::format("vertexIndex {} is out-of-range for inputs.size {}.",
+                        v_idx, inputs.size()));
+
+      }
+
+      // may overwrite the value
+      memcpy(dst.data() + v_idx * stride_bytes, inputs.data() + i * stride_bytes, stride_bytes); 
     }
 
     fvIndexOffset += cnt;
@@ -327,6 +411,77 @@ static nonstd::expected<std::vector<T>, std::string> ConstantToFaceVarying(
 }
 #endif
 
+static nonstd::expected<std::vector<uint8_t>, std::string> ConstantToVertex(
+    const std::vector<uint8_t> &src,
+    const size_t stride_bytes,
+    const std::vector<uint32_t> &faceVertexCounts,
+    const std::vector<uint32_t> &faceVertexIndices) {
+
+  if (faceVertexCounts.empty()) {
+      return nonstd::make_unexpected(
+          "faceVertexCounts is empty.");
+  }
+
+  if (faceVertexIndices.size() < 3) {
+      return nonstd::make_unexpected(
+          fmt::format("faceVertexIndices.size must be at least 3, but got {}.", faceVertexIndices.size()));
+  }
+
+  const uint32_t num_vertices = *std::max_element(faceVertexIndices.cbegin(), faceVertexIndices.cend());
+
+  std::vector<uint8_t> dst;
+
+  if (src.empty()) {
+      return nonstd::make_unexpected(
+          "src data is empty.");
+  }
+
+  if (stride_bytes == 0) {
+      return nonstd::make_unexpected(
+          "stride_bytes must be non-zero.");
+  }
+
+  if (src.size() != stride_bytes) {
+      return nonstd::make_unexpected(fmt::format(
+          "src size {} must be equal to stride_bytes {}", src.size(), stride_bytes));
+  }
+
+  dst.resize(stride_bytes * num_vertices);
+
+  size_t faceVertexIndexOffset = 0;
+  for (size_t i = 0; i < faceVertexCounts.size(); i++) {
+    uint32_t cnt = faceVertexCounts[i];
+    if (cnt < 3) {
+      return nonstd::make_unexpected(fmt::format(
+          "faeVertexCounts[{}] must be equal to or greater than 3, but got {}", i, cnt));
+      
+    }
+
+    for (size_t k = 0; k < cnt; k++) {
+      size_t fv_idx = k + faceVertexIndexOffset;
+
+      if (fv_idx >= faceVertexIndices.size()) {
+        return nonstd::make_unexpected(fmt::format(
+            "faeVertexIndex {} out-of-range at faceVertexCount[{}]", fv_idx, i));
+      }
+
+      size_t v_idx = faceVertexIndices[fv_idx];
+
+      if (v_idx >= num_vertices) { // this should not happen. just in case.
+        return nonstd::make_unexpected(
+            fmt::format("faeVertexIndices[{}] {} exceeds the number of vertices {}",
+                        fv_idx, v_idx, num_vertices));
+      }
+
+      memcpy(dst.data() + v_idx * stride_bytes, src.data(), stride_bytes);
+    }
+
+    faceVertexIndexOffset += cnt;
+  }
+
+  return dst;
+}
+
 static nonstd::expected<std::vector<uint8_t>, std::string> ConstantToFaceVarying(
     const std::vector<uint8_t> &src,
     const size_t stride_bytes,
@@ -360,6 +515,147 @@ static nonstd::expected<std::vector<uint8_t>, std::string> ConstantToFaceVarying
   }
 
   return dst;
+}
+
+static bool ToFaceVaryingAttribute(const std::string &attr_name,
+  const VertexAttribute &src,
+  const std::vector<uint32_t> &faceVertexCounts,
+  const std::vector<uint32_t> &faceVertexIndices,
+  VertexAttribute *dst,
+  std::string *err) {
+
+#define PushError(msg) if (err) { (*err) += msg; }
+
+  if (!dst) {
+    PUSH_ERROR_AND_RETURN("'dest' parameter is nullptr.");
+  }
+
+  if (src.variability == VertexVariability::Indexed) {
+    PUSH_ERROR_AND_RETURN(fmt::format("'indexed' variability for {} is not supported.", attr_name));
+  } else if (src.variability == VertexVariability::Constant) {
+
+    auto result = ConstantToFaceVarying(src.get_data(), src.stride_bytes(),
+            faceVertexCounts);
+
+    if (!result) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to convert vertex data with 'constant' variability to 'facevarying': name {}.", attr_name));
+    }
+
+    dst->data = result.value();
+    dst->elementSize = src.elementSize;
+    dst->format = src.format;
+    dst->stride = src.stride;
+    dst->variability = VertexVariability::FaceVarying;
+
+    return true;
+
+  } else if (src.variability == VertexVariability::Uniform) {
+
+    auto result = UniformToFaceVarying(src.get_data(), src.stride_bytes(),
+            faceVertexCounts);
+
+    if (!result) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to convert vertex data with 'uniform' variability to 'facevarying': name {}.", attr_name));
+    }
+
+    dst->data = result.value();
+    dst->elementSize = src.elementSize;
+    dst->format = src.format;
+    dst->stride = src.stride;
+    dst->variability = VertexVariability::FaceVarying;
+
+    return true;
+
+  } else if (src.variability == VertexVariability::Vertex) {
+
+    auto result = VertexToFaceVarying(src.get_data(), src.stride_bytes(),
+            faceVertexCounts, faceVertexIndices);
+
+    if (!result) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to convert vertex data with 'vertex' variability to 'facevarying': name {}.", attr_name));
+    }
+
+    dst->data = result.value();
+    dst->elementSize = src.elementSize;
+    dst->format = src.format;
+    dst->stride = src.stride;
+    dst->variability = VertexVariability::FaceVarying;
+
+    return true;
+  } else if (src.variability == VertexVariability::FaceVarying) {
+    (*dst) = src;
+    return true;
+  }
+
+#undef PushError
+
+  return false;
+}
+
+static bool ToVertexVaryingAttribute(
+  const std::string &attr_name,
+  const VertexAttribute &src,
+  const std::vector<uint32_t> &faceVertexCounts,
+  const std::vector<uint32_t> &faceVertexIndices,
+  VertexAttribute *dst,
+  std::string *err) {
+
+#define PushError(msg) if (err) { (*err) += msg; }
+
+  if (!dst) {
+    PUSH_ERROR_AND_RETURN("'dest' parameter is nullptr.");
+  }
+
+  if (src.variability == VertexVariability::Indexed) {
+    PUSH_ERROR_AND_RETURN(fmt::format("'indexed' variability for {} is not supported.", attr_name));
+  } else if (src.variability == VertexVariability::Constant) {
+
+    auto result = ConstantToVertex(src.get_data(), src.stride_bytes(),
+            faceVertexCounts, faceVertexIndices);
+
+    if (!result) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to convert vertex data with 'constant' variability to 'facevarying': name {}.", attr_name));
+    }
+
+    dst->data = result.value();
+    dst->elementSize = src.elementSize;
+    dst->format = src.format;
+    dst->stride = src.stride;
+    dst->variability = VertexVariability::Vertex;
+
+    return true;
+
+  } else if (src.variability == VertexVariability::Uniform) {
+
+    auto result = UniformToVertex(src.get_data(), src.stride_bytes(),
+            faceVertexCounts, faceVertexIndices);
+
+    if (!result) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to convert vertex data with 'uniform' variability to 'facevarying': name {}.", attr_name));
+    }
+
+    dst->data = result.value();
+    dst->elementSize = src.elementSize;
+    dst->format = src.format;
+    dst->stride = src.stride;
+    dst->variability = VertexVariability::Vertex;
+
+    return true;
+
+  } else if (src.variability == VertexVariability::Vertex) {
+
+    (*dst) = src;
+    return true;
+  } else if (src.variability == VertexVariability::FaceVarying) {
+
+    PUSH_ERROR_AND_RETURN(fmt::format("'facevarying' variability cannot be converted to 'vertex' variability: name {}.", attr_name));
+
+  }
+
+#undef PushError
+
+  return false;
+  
 }
 
 //
@@ -1209,22 +1505,29 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
   if (const auto pv = mesh.faceVertexIndices.get_value()) {
     std::vector<int32_t> indices;
     if (pv.value().get_scalar(&indices)) {
-      // to uint32
-      std::transform(indices.cbegin(), indices.cend(),
-                     std::back_inserter(dst.faceVertexIndices),
-                     [](int32_t v) { return uint32_t(v); });
+      for (size_t i = 0; i < indices.size(); i++) {
+        if (indices[i] <= 0) {
+          PUSH_ERROR_AND_RETURN(fmt::format("faceVertexIndices[{}] contains negative index value {}.", i, indices[i]));
+        }
+        dst.faceVertexIndices.push_back(uint32_t(indices[i]));
+      }
     }
   }
 
   if (const auto pv = mesh.faceVertexCounts.get_value()) {
     std::vector<int32_t> counts;
     if (pv.value().get_scalar(&counts)) {
-      // to uint32
-      std::transform(counts.cbegin(), counts.cend(),
-                     std::back_inserter(dst.faceVertexCounts),
-                     [](int32_t v) { return uint32_t(v); });
+
+      for (size_t i = 0; i < counts.size(); i++) {
+        if (counts[i] <= 0) {
+          PUSH_ERROR_AND_RETURN(fmt::format("faceVertexCounts[{}] contains invalid value {}. The count value must be >= 3", i, counts[i]));
+        }
+        dst.faceVertexCounts.push_back(uint32_t(counts[i]));
+      }
     }
   }
+
+  size_t sumCounts = std::accumulate(dst.faceVertexCounts.cbegin(), dst.faceVertexCounts.cend(), 0ull);
 
   if (mesh.get_points().size()) {
 
@@ -1235,42 +1538,141 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
            sizeof(value::float3) * mesh.get_points().size());
   }
 
+  // slotId, texcoord data
+  std::unordered_map<uint32_t, VertexAttribute> uvAttrs;
+ 
+  if ((rmaterial_id > -1) && (size_t(rmaterial_id) < materials.size())) {
+    const RenderMaterial &material = materials[size_t(rmaterial_id)];
+
+    StringAndIdMap uvname_map;
+    if (!ListUVNames(material, textures, uvname_map)) {
+      return false;
+    }
+
+    for (auto it = uvname_map.i_begin(); it != uvname_map.i_end(); it++) {
+      uint64_t slotId = it->first;
+      std::string uvname = it->second;
+
+      auto ret = GetTextureCoordinate(*_stage, mesh, uvname);
+      if (ret) {
+        const VertexAttribute vattr = ret.value();
+
+        uvAttrs[uint32_t(slotId)] = vattr;
+      }
+    }
+  }
+
+  //
+  // Check if the Mesh can be drawn with single index buffer,
+  // since OpenGL and Vulkan does not support drawing a Primitive with multiple index buffers.
+  //
+  // The check means that normal and texcoord are not face-varying attribute.
+  // If the Mesh contains any face-varying attribute, all attribute are converted to face-varying
+  // so that the Mesh can be drawn without index buffer.
+  // This will hurt the performance of rendering in OpenGL/Vulkan, especially when the Mesh is animated with skinning.
+  // 
+  // We leave user-defined primvar as-is, so no check for it.
+  //  
+  bool is_single_indexable{true};
+  {
+    Interpolation interp = mesh.get_normalsInterpolation();
+    if (interp == Interpolation::FaceVarying) {
+      is_single_indexable = false;
+    }
+
+    for (const auto &uv : uvAttrs) {
+      // 'indexed' should not appear, just in case.
+      if ((uv.second.variability == VertexVariability::Varying) || (uv.second.variability == VertexVariability::Indexed)) {
+        is_single_indexable = false;
+      }
+    }
+  }
+
   // normals
   {
     std::vector<value::normal3f> normals = mesh.get_normals();
     Interpolation interp = mesh.get_normalsInterpolation();
 
     if (normals.size()) {
-      if (interp == Interpolation::Uniform) {
-        auto result = UniformToFaceVarying(normals, dst.faceVertexCounts);
-        if (!result) {
-          PUSH_ERROR_AND_RETURN(
-              fmt::format("Convert uniform `normals` attribute to failed: {}",
-                          result.error()));
-        }
 
-        dst.facevaryingNormals.resize(result.value().size());
-        memcpy(dst.facevaryingNormals.data(), result.value().data(),
-               sizeof(value::normal3f) * result.value().size());
+      if (interp == Interpolation::Uniform) {
+        if (is_single_indexable) {
+          auto result = UniformToVertex(normals, /* elementSize */1, 
+                  dst.faceVertexCounts, dst.faceVertexIndices);
+
+          if (!result) {
+            PUSH_ERROR_AND_RETURN(
+                fmt::format("Convert `normals` attribute with uniform-varying to vertex-varying failed: {}",
+                            result.error()));
+          }
+
+          dst.normals.get_data().resize(result.value().size() * sizeof(value::normal3f));
+          memcpy(dst.normals.get_data().data(), result.value().data(), result.value().size() * sizeof(value::normal3f));
+          dst.normals.elementSize = 1;
+          dst.normals.stride = sizeof(value::normal3f);
+          dst.normals.variability = VertexVariability::Vertex;
+          dst.normals.format = VertexAttributeFormat::Vec3;
+
+        } else {
+          auto result = UniformToFaceVarying(normals, dst.faceVertexCounts);
+          if (!result) {
+            PUSH_ERROR_AND_RETURN(
+                fmt::format("Convert uniform `normals` attribute to failed: {}",
+                            result.error()));
+          }
+
+          dst.normals.get_data().resize(result.value().size() * sizeof(value::normal3f));
+          memcpy(dst.normals.get_data().data(), result.value().data(),
+                 sizeof(value::normal3f) * result.value().size());
+          dst.normals.elementSize = 1;
+          dst.normals.stride = sizeof(value::normal3f);
+          dst.normals.variability = VertexVariability::FaceVarying;
+          dst.normals.format = VertexAttributeFormat::Vec3;
+        }
+        
 
       } else if ((interp == Interpolation::Vertex) ||
                  (interp == Interpolation::Varying)) {
-        auto result = VertexToFaceVarying(normals, dst.faceVertexCounts,
-                                          dst.faceVertexIndices);
-        if (!result) {
-          PUSH_ERROR_AND_RETURN(fmt::format(
-              "Convert vertex/varying `normals` attribute to failed: {}",
-              result.error()));
+        if (is_single_indexable) {
+          dst.normals.get_data().resize(normals.size() * sizeof(value::normal3f));
+          memcpy(dst.normals.get_data().data(), normals.data(),
+                 sizeof(value::normal3f) * normals.size());
+          dst.normals.elementSize = 1;
+          dst.normals.stride = sizeof(value::normal3f);
+          dst.normals.variability = VertexVariability::Vertex;
+          dst.normals.format = VertexAttributeFormat::Vec3;
+      
+        } else {
+          auto result = VertexToFaceVarying(normals, dst.faceVertexCounts,
+                                            dst.faceVertexIndices);
+          if (!result) {
+            PUSH_ERROR_AND_RETURN(fmt::format(
+                "Convert vertex/varying `normals` attribute to failed: {}",
+                result.error()));
+          }
+
+          dst.normals.get_data().resize(result.value().size() * sizeof(value::normal3f));
+          memcpy(dst.normals.get_data().data(), result.value().data(),
+                 sizeof(value::normal3f) * result.value().size());
+          dst.normals.elementSize = 1;
+          dst.normals.stride = sizeof(value::normal3f);
+          dst.normals.variability = VertexVariability::FaceVarying;
+          dst.normals.format = VertexAttributeFormat::Vec3;
         }
 
-        dst.facevaryingNormals.resize(result.value().size());
-        memcpy(dst.facevaryingNormals.data(), result.value().data(),
-               sizeof(value::normal3f) * result.value().size());
-
       } else if (interp == Interpolation::FaceVarying) {
-        dst.facevaryingNormals.resize(normals.size());
-        memcpy(dst.facevaryingNormals.data(), normals.data(),
+
+        if (is_single_indexable) {
+          PUSH_ERROR_AND_RETURN("Internal error. `is_single_indexable` should not be true when FaceVarying."); 
+        }
+
+        dst.normals.get_data().resize(normals.size() * sizeof(value::normal3f));
+        memcpy(dst.normals.get_data().data(), normals.data(),
                sizeof(value::normal3f) * normals.size());
+        dst.normals.elementSize = 1;
+        dst.normals.stride = sizeof(value::normal3f);
+        dst.normals.variability = VertexVariability::FaceVarying;
+        dst.normals.format = VertexAttributeFormat::Vec3;
       } else {
         PUSH_ERROR_AND_RETURN(
             "Unsupported/unimplemented interpolation for `normals` "
@@ -1278,8 +1680,8 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
             to_string(interp) + ".\n");
       }
     } else {
-      dst.facevaryingNormals.clear();
-      dst.normalsInterpolation = interp;
+      dst.normals.get_data().clear();
+      dst.normals.stride = 0;
     }
   }
 
@@ -1341,11 +1743,11 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
                 fmt::format("Failed to convert 'constant' attribute to 'facevarying': {}", result.error()));
           }
 
-          std::vector<vec2> uvs;
-          uvs.resize(result.value().size() / sizeof(vec2));
-          memcpy(uvs.data(), result.value().data(), result.value().size());
+          VertexAttribute uvAttr;
+          uvAttr.get_data().resize(result.value().size() * sizeof(vec2));
+          memcpy(uvAttr.get_data().data(), result.value().data(), result.value().size() * sizeof(vec2));
 
-          dst.facevaryingTexcoords[uint32_t(slotId)] = uvs;
+          dst.texcoords[uint32_t(slotId)] = uvAttr;
 
 
         } else if (vattr.variability == VertexVariability::Uniform) {
@@ -1356,11 +1758,11 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
                 fmt::format("Failed to convert 'uniform' attribute to 'facevarying': {}", result.error()));
           }
 
-          std::vector<vec2> uvs;
-          uvs.resize(result.value().size() / sizeof(vec2));
-          memcpy(uvs.data(), result.value().data(), result.value().size());
+          VertexAttribute uvAttr;
+          uvAttr.get_data().resize(result.value().size() * sizeof(vec2));
+          memcpy(uvAttr.get_data().data(), result.value().data(), result.value().size() * sizeof(vec2));
 
-          dst.facevaryingTexcoords[uint32_t(slotId)] = uvs;
+          dst.texcoords[uint32_t(slotId)] = uvAttr;
         } else if ((vattr.variability == VertexVariability::Varying) ||
             (vattr.variability == VertexVariability::Vertex)) {
           auto result = VertexToFaceVarying(vattr.get_data(), vattr.stride_bytes(),
@@ -1370,11 +1772,11 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
                 fmt::format("Failed to convert 'vertex' or 'varying' attribute to 'facevarying': {}", result.error()));
           }
 
-          std::vector<vec2> uvs;
-          uvs.resize(result.value().size() / sizeof(vec2));
-          memcpy(uvs.data(), result.value().data(), result.value().size());
+          VertexAttribute uvAttr;
+          uvAttr.get_data().resize(result.value().size() * sizeof(vec2));
+          memcpy(uvAttr.get_data().data(), result.value().data(), result.value().size() * sizeof(vec2));
 
-          dst.facevaryingTexcoords[uint32_t(slotId)] = uvs;
+          dst.texcoords[uint32_t(slotId)] = uvAttr;
         } else if (vattr.variability == VertexVariability::FaceVarying) {
 
           if (vattr.vertex_count() != num_fvs) {
@@ -1384,10 +1786,7 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
                             vattr.vertex_count(), num_fvs));
           }
 
-          std::vector<vec2> uvs(vattr.vertex_count());
-          memcpy(uvs.data(), vattr.data.data(), vattr.data.size());
-
-          dst.facevaryingTexcoords[uint32_t(slotId)] = uvs;
+          dst.texcoords[uint32_t(slotId)] = vattr;
         } else {
           PUSH_ERROR_AND_RETURN("Internal error. Invalid variability value in TexCoord attribute.");
         }
@@ -1398,6 +1797,7 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
     }
   }
 
+#if 0 // TODO
   if (triangulate) {
     std::string err;
 
@@ -1445,6 +1845,7 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
     // TODO: Triangulate other primvars
 
   }  // triangulate
+#endif
 
 #if 0  // TODO: GeomSubsets.
   // for GeomSubsets
@@ -1783,21 +2184,32 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
           _asset_resolver.resolve(assetPath.GetAssetPath());
     }
 
-    // colorSpace
-    if (texture.sourceColorSpace.authored()) {
-      UsdUVTexture::SourceColorSpace cs;
-      if (texture.sourceColorSpace.get_value().get_scalar(&cs)) {
-        if (cs == UsdUVTexture::SourceColorSpace::SRGB) {
-          texImage.usdColorSpace = tydra::ColorSpace::sRGB;
-        } else if (cs == UsdUVTexture::SourceColorSpace::Raw) {
-          texImage.usdColorSpace = tydra::ColorSpace::Linear;
-        } else if (cs == UsdUVTexture::SourceColorSpace::Auto) {
-          // TODO: Read colorspace from a file.
-          if ((texImage.assetTexelComponentType == ComponentType::UInt8) ||
-              (texImage.assetTexelComponentType == ComponentType::Int8)) {
+    // colorSpace.
+    // First look into `colorSpace` metadata of asset, then
+    // look into `inputs:sourceColorSpace' attribute.
+    if (texture.file.metas().has_colorSpace()) {
+      ColorSpace cs;
+      value::token cs_token = texture.file.metas().get_colorSpace();
+      if (!from_token(cs_token, &cs)) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Invalid or unsupported token value for 'colorSpace': `{}` ", cs_token.str()));
+      }
+      texImage.usdColorSpace = cs;
+    } else {
+      if (texture.sourceColorSpace.authored()) {
+        UsdUVTexture::SourceColorSpace cs;
+        if (texture.sourceColorSpace.get_value().get_scalar(&cs)) {
+          if (cs == UsdUVTexture::SourceColorSpace::SRGB) {
             texImage.usdColorSpace = tydra::ColorSpace::sRGB;
-          } else {
+          } else if (cs == UsdUVTexture::SourceColorSpace::Raw) {
             texImage.usdColorSpace = tydra::ColorSpace::Linear;
+          } else if (cs == UsdUVTexture::SourceColorSpace::Auto) {
+            // TODO: Read colorspace from a file.
+            if ((texImage.assetTexelComponentType == ComponentType::UInt8) ||
+                (texImage.assetTexelComponentType == ComponentType::Int8)) {
+              texImage.usdColorSpace = tydra::ColorSpace::sRGB;
+            } else {
+              texImage.usdColorSpace = tydra::ColorSpace::Linear;
+            }
           }
         }
       }
@@ -2682,6 +3094,14 @@ std::string to_string(ColorSpace cty) {
       s = "ocio";
       break;
     }
+    case ColorSpace::Lin_DisplayP3: {
+      s = "lin_displayp3";
+      break;
+    }
+    case ColorSpace::sRGB_DisplayP3: {
+      s = "srgb_displayp3";
+      break;
+    }
     case ColorSpace::Custom: {
       s = "custom";
       break;
@@ -2689,6 +3109,32 @@ std::string to_string(ColorSpace cty) {
   }
 
   return s;
+}
+
+bool from_token(const value::token &tok, ColorSpace *cty) {
+  if (!cty) {
+    return false;
+  }
+
+  if (tok.str() == "srgb") {
+    (*cty) = ColorSpace::sRGB; 
+  } else if (tok.str() == "linear") {
+    (*cty) = ColorSpace::Linear; 
+  } else if (tok.str() == "rec709") {
+    (*cty) = ColorSpace::Rec709;
+  } else if (tok.str() == "ocio") {
+    (*cty) = ColorSpace::OCIO;
+  } else if (tok.str() == "lin_displayp3") {
+    (*cty) =ColorSpace::Lin_DisplayP3;
+  } else if (tok.str() == "srgb_displayp3") {
+    (*cty) = ColorSpace::sRGB_DisplayP3;
+  } else if (tok.str() == "custom") {
+    (*cty) = ColorSpace::Custom;
+  } else {
+    return false;
+  }
+
+  return true;
 }
 
 std::string to_string(ComponentType cty) {

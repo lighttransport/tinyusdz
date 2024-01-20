@@ -313,7 +313,7 @@ static void RegisterPropMetas(
   metas["weight"] = AsciiParser::VariableDef(value::kDouble, "weight");
 
   // usdShade?
-  metas["colorSpace"] = AsciiParser::VariableDef(value::kInt, "colorSpace");
+  metas["colorSpace"] = AsciiParser::VariableDef(value::kToken, "colorSpace");
 
   metas["interpolation"] = AsciiParser::VariableDef(value::kToken, "interpolation");
 
