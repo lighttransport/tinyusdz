@@ -638,9 +638,9 @@ struct SkinnedMesh {
 
 // BlendShape shape target.
 struct ShapeTarget {
-  std::string element_name;
-  std::string abs_name;
-  std::string display_name;
+  std::string prim_name; // Prim name 
+  std::string abs_name; // Absolute prim path
+  std::string display_name; // `displayName` prim meta
 
   std::vector<uint32_t> pointIndices;
   std::vector<vec3> pointOffsets;
@@ -663,16 +663,15 @@ struct JointAndWeight {
 // GeomSubset
 // TODO:
 struct Subset {
-  std::string element_name;
-  std::string abs_name;
-  std::string display_name;
+  std::string prim_name; // Prim name in Stage
+  std::string abs_name; // Absolute prim path in Stage
+  std::string display_name; // `displayName` prim meta
+  int64_t prim_index{-1}; // Prim index in Stage
 
   std::string elementType{"face"}; // either "face" or "point"
   std::string familyName;
 
   std::vector<int> indices;
-
-  std::map<uint32_t, VertexAttribute> attributes;
 };
 
 // Currently normals and texcoords are converted as facevarying attribute.
@@ -693,9 +692,9 @@ struct RenderMesh {
                   // rendering performance.
   };
 
-  std::string element_name;  // element(leaf) Prim name
-  std::string abs_name;      // absolute Prim path in USD
-  std::string display_name;  // displayName Prim metadataum
+  std::string prim_name;  // Prim name
+  std::string abs_name;      // Absolute Prim path in Stage
+  std::string display_name;  // `displayName` Prim metadataum
 
   VertexArrayType vertexArrayType{VertexArrayType::Facevarying};
 
@@ -989,6 +988,9 @@ std::vector<UsdPrimvarReader_float2> ExtractPrimvarReadersFromMaterialNode(const
 
 struct MeshConverterConfig {
   bool triangulate{true};
+
+  bool validate_geomsubset{true}; // Validate GeomSubset. 
+
   bool compute_tangents_and_binormals{true};
 
   // We may want texcoord data even if the Mesh does not have bound Material.
