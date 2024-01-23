@@ -184,6 +184,7 @@ nonstd::expected<std::vector<T>, std::string> UniformToVertex(
   return dst;
 }
 
+#if 0 // not used atm.
 nonstd::expected<std::vector<uint8_t>, std::string> UniformToVertex(
     const std::vector<uint8_t> &inputs, const size_t stride_bytes, const std::vector<uint32_t> &faceVertexCounts,
     const std::vector<uint32_t> &faceVertexIndices)
@@ -248,6 +249,7 @@ nonstd::expected<std::vector<uint8_t>, std::string> UniformToVertex(
 
   return dst;
 }
+#endif
 
 // Generic uniform to facevarying conversion
 nonstd::expected<std::vector<uint8_t>, std::string> UniformToFaceVarying(
@@ -409,7 +411,6 @@ static nonstd::expected<std::vector<T>, std::string> ConstantToFaceVarying(
 
   return dst;
 }
-#endif
 
 static nonstd::expected<std::vector<uint8_t>, std::string> ConstantToVertex(
     const std::vector<uint8_t> &src,
@@ -481,6 +482,7 @@ static nonstd::expected<std::vector<uint8_t>, std::string> ConstantToVertex(
 
   return dst;
 }
+#endif
 
 static nonstd::expected<std::vector<uint8_t>, std::string> ConstantToFaceVarying(
     const std::vector<uint8_t> &src,
@@ -517,6 +519,7 @@ static nonstd::expected<std::vector<uint8_t>, std::string> ConstantToFaceVarying
   return dst;
 }
 
+#if 0 // Not used atm.
 static bool ToFaceVaryingAttribute(const std::string &attr_name,
   const VertexAttribute &src,
   const std::vector<uint32_t> &faceVertexCounts,
@@ -657,6 +660,7 @@ static bool ToVertexVaryingAttribute(
   return false;
   
 }
+#endif
 
 //
 // name does not include "primvars:" prefix.
@@ -848,6 +852,7 @@ nonstd::expected<VertexAttribute, std::string> TriangulateGeomPrimvar(
 }
 #endif
 
+#if 0 // not used atm.
 ///
 /// Input: points, faceVertexCounts, faceVertexIndices
 /// Output: triangulated faceVertexCounts(all filled with 3), triangulated
@@ -1053,6 +1058,7 @@ bool TriangulatePolygon(
 
   return true;
 }
+#endif
 
 #if 0
 //
@@ -1495,8 +1501,6 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
 
   RenderMesh dst;
 
-  bool triangulate = _mesh_config.triangulate;
-
   // Conversion strategy.
   // - First try to convert vertex attributes with 'vertex' varying(VertexArray with indexed buffer_
 
@@ -1526,8 +1530,6 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
       }
     }
   }
-
-  size_t sumCounts = std::accumulate(dst.faceVertexCounts.cbegin(), dst.faceVertexCounts.cend(), 0ull);
 
   if (mesh.get_points().size()) {
 
@@ -1796,6 +1798,8 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
   }
 
 #if 0 // TODO
+  bool triangulate = _mesh_config.triangulate;
+
   if (triangulate) {
     std::string err;
 
