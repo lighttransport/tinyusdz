@@ -9,10 +9,16 @@
 #include <iostream>
 #include <sstream>
 
+// Use json.hpp located at <tinyusdz>/src/external
+#define TINYGLTF_NO_INCLUDE_JSON
+#include "external/jsonhpp/nlohmann/json.hpp"
+
 #define TINYGLTF_IMPLEMENTATION
-#include "tiny_gltf.h"
+#define STB_IMAGE_IMPLEMENTATION // this will include <tinyusdz>/src/external/stb_image.h
+#include "external/tiny_gltf.h"
 
 #include "tinyusdz.hh"
+#include "io-util.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
 #include "tydra/shader-network.hh"

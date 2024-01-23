@@ -389,11 +389,18 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
     ${PROJECT_SOURCE_DIR}/src/pprinter.cc
     ${PROJECT_SOURCE_DIR}/src/stage.cc
+    ${PROJECT_SOURCE_DIR}/src/stage.hh
     ${PROJECT_SOURCE_DIR}/src/tydra/facial.cc
+    ${PROJECT_SOURCE_DIR}/src/tydra/facial.hh
     ${PROJECT_SOURCE_DIR}/src/tydra/prim-apply.cc
+    ${PROJECT_SOURCE_DIR}/src/tydra/prim-apply.hh
     ${PROJECT_SOURCE_DIR}/src/tydra/scene-access.cc
+    ${PROJECT_SOURCE_DIR}/src/tydra/scene-access.hh
     ${PROJECT_SOURCE_DIR}/src/tydra/shader-network.cc
-    ${PROJECT_SOURCE_DIR}/src/tydra/render-data.cc)
+    ${PROJECT_SOURCE_DIR}/src/tydra/shader-network.hh
+    ${PROJECT_SOURCE_DIR}/src/tydra/render-data.cc
+    ${PROJECT_SOURCE_DIR}/src/tydra/render-data.hh
+    )
 
 if(TINYUSDZ_WITH_PXR_COMPAT_API)
   list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/pxr-compat.cc)

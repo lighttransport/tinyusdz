@@ -175,7 +175,7 @@ nonstd::expected<std::vector<T>, std::string> UniformToVertex(
       }
 
       // may overwrite the value
-      memcpy(&dst[v_idx * elementSize], inputs[i * elementSize], sizeof(T) * elementSize);
+      memcpy(&dst[v_idx * elementSize], &inputs[i * elementSize], sizeof(T) * elementSize);
     }
 
     fvIndexOffset += cnt;
@@ -1531,11 +1531,9 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
 
   if (mesh.get_points().size()) {
 
-    dst.points.get_data().resize(sizeof(value::float3) * mesh.get_points().size());
-    dst.points.format = VertexAttributeFormat::Vec3;
+    dst.points.resize(mesh.get_points().size());
+    memcpy(dst.points.data(), mesh.get_points().data(), sizeof(value::float3) * mesh.get_points().size());
 
-    memcpy(dst.points.get_data().data(), mesh.get_points().data(),
-           sizeof(value::float3) * mesh.get_points().size());
   }
 
   // slotId, texcoord data
@@ -3205,13 +3203,99 @@ std::string to_string(UVTexture::WrapMode mode) {
   return s;
 }
 
+std::string to_string(VertexVariability v) {
+  std::string s;
+
+  switch(v) {
+    case VertexVariability::Constant: { s = "constant"; break; }
+    case VertexVariability::Uniform: { s = "uniform"; break; }
+    case VertexVariability::Varying: { s = "varying"; break; }
+    case VertexVariability::Vertex: { s = "vertex"; break; }
+    case VertexVariability::FaceVarying: { s = "facevarying"; break; }
+    case VertexVariability::Indexed: { s = "indexed"; break; }
+  }
+
+  return s;
+}
+
+std::string to_string(VertexAttributeFormat f) {
+  std::string s;
+
+  switch (f) {
+  case VertexAttributeFormat::Bool: {   s = "bool"; break; }
+  case VertexAttributeFormat::Char: {     s = "int8"; break; }
+  case VertexAttributeFormat::Char2: {    s = "int8x2"; break; }
+  case VertexAttributeFormat::Char3: {    s = "int8x3"; break; }
+  case VertexAttributeFormat::Char4: {    s = "int8x4"; break; }
+  case VertexAttributeFormat::Byte: {    s = "uint8"; break; }
+  case VertexAttributeFormat::Byte2: {    s = "uint8x2"; break; }
+  case VertexAttributeFormat::Byte3: {   s = "uint8x3"; break; }
+  case VertexAttributeFormat::Byte4: {    s = "uint8x4"; break; }
+  case VertexAttributeFormat::Short: {    s = "int16"; break; }
+  case VertexAttributeFormat::Short2: {   s = "int16x2"; break; }
+  case VertexAttributeFormat::Short3: {   s = "int16x2"; break; }
+  case VertexAttributeFormat::Short4: {   s = "int16x2"; break; }
+  case VertexAttributeFormat::Ushort: {   s = "uint16"; break; }
+  case VertexAttributeFormat::Ushort2: {  s = "uint16x2"; break; }
+  case VertexAttributeFormat::Ushort3: {  s = "uint16x2"; break; }
+  case VertexAttributeFormat::Ushort4: {  s = "uint16x2"; break; }
+  case VertexAttributeFormat::Half  : {   s = "half"; break; }
+  case VertexAttributeFormat::Half2 : {   s = "half2"; break; }
+  case VertexAttributeFormat::Half3 : {   s = "half3"; break; }
+  case VertexAttributeFormat::Half4 : {   s = "half4"; break; }
+  case VertexAttributeFormat::Float : {   s = "float"; break; }
+  case VertexAttributeFormat::Vec2  : {   s = "float2"; break; }
+  case VertexAttributeFormat::Vec3  : {   s = "float3"; break; }
+  case VertexAttributeFormat::Vec4  : {   s = "float4"; break; }
+  case VertexAttributeFormat::Int   : {   s = "int"; break; }
+  case VertexAttributeFormat::Ivec2 : {   s = "int2"; break; }
+  case VertexAttributeFormat::Ivec3 : {   s = "int3"; break; }
+  case VertexAttributeFormat::Ivec4 : {   s = "int4"; break; }
+  case VertexAttributeFormat::Uint  : {   s = "uint"; break; }
+  case VertexAttributeFormat::Uvec2 : {   s = "uint2"; break; }
+  case VertexAttributeFormat::Uvec3 : {   s = "uint3"; break; }
+  case VertexAttributeFormat::Uvec4 : {   s = "uint4"; break; }
+  case VertexAttributeFormat::Double: {   s = "double"; break; }
+  case VertexAttributeFormat::Dvec2 : {   s = "double2"; break; }
+  case VertexAttributeFormat::Dvec3 : {   s = "double3"; break; }
+  case VertexAttributeFormat::Dvec4 : {   s = "double4"; break; }
+  case VertexAttributeFormat::Mat2  : {   s = "mat2"; break; }
+  case VertexAttributeFormat::Mat3  : {   s = "mat3"; break; }
+  case VertexAttributeFormat::Mat4  : {   s = "mat4"; break; }
+  case VertexAttributeFormat::Dmat2 : {   s = "dmat2"; break; }
+  case VertexAttributeFormat::Dmat3 : {   s = "dmat3"; break; }
+  case VertexAttributeFormat::Dmat4 : {   s = "dmat4"; break; }
+  }
+
+  return s;
+}
+
 namespace {
+
+std::string DumpVertexAttribute(const VertexAttribute &vattr, uint32_t indent) {
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << "Count(" << vattr.get_data().size() << ")\n";
+  ss << pprint::Indent(indent) << "Format(" << to_string(vattr.format) << ")\n";
+  ss << pprint::Indent(indent) << "Variability(" << to_string(vattr.variability) << ")\n";
+  ss << pprint::Indent(indent) << "ElementSize(" << vattr.elementSize << ")\n";
+  ss << pprint::Indent(indent) << value::print_array_snipped(vattr.data) << "\n";
+  if (vattr.indices.size()) {
+    ss << pprint::Indent(indent) << "Indices = " << value::print_array_snipped(vattr.indices) << "\n";
+  }
+  
+  return ss.str();
+}
+
 
 std::string DumpMesh(const RenderMesh &mesh, uint32_t indent) {
   std::stringstream ss;
 
-  ss << "RenderMesh {\n";
+  ss << "RenderMesh j{\n";
 
+  ss << pprint::Indent(indent + 1) << "prim_name `" << mesh.prim_name << "`\n";
+  ss << pprint::Indent(indent + 1) << "abs_path `" << mesh.abs_path << "`\n";
+  ss << pprint::Indent(indent + 1) << "display_name `" << mesh.display_name << "`\n";
   ss << pprint::Indent(indent + 1) << "num_points "
      << std::to_string(mesh.points.size()) << "\n";
   ss << pprint::Indent(indent + 1) << "points \""
@@ -3228,18 +3312,20 @@ std::string DumpMesh(const RenderMesh &mesh, uint32_t indent) {
      << std::to_string(mesh.materialIds.size()) << "\n";
   ss << pprint::Indent(indent + 1) << "materialIds \""
      << value::print_array_snipped(mesh.materialIds) << "\"\n";
-  ss << pprint::Indent(indent + 1) << "num_facevaryingNormals "
-     << mesh.facevaryingNormals.size() << "\n";
-  ss << pprint::Indent(indent + 1) << "facevaryingNormals \""
-     << value::print_array_snipped(mesh.facevaryingNormals) << "\"\n";
+  ss << pprint::Indent(indent + 1) << "normals " << DumpVertexAttribute(mesh.normals, indent+2) << "\n";
   ss << pprint::Indent(indent + 1) << "num_texcoordSlots "
-     << std::to_string(mesh.facevaryingTexcoords.size()) << "\n";
-  for (const auto &uvs : mesh.facevaryingTexcoords) {
-    ss << pprint::Indent(indent + 1) << "num_facevaryingTexcoords_"
-       << std::to_string(uvs.first) << " " << uvs.second.size() << "\n";
-    ss << pprint::Indent(indent + 2) << "facevaryingTexcoords_" << uvs.first << " \""
-       << value::print_array_snipped(uvs.second) << "\"\n";
+     << std::to_string(mesh.texcoords.size()) << "\n";
+  for (const auto &uvs : mesh.texcoords) {
+    ss << pprint::Indent(indent + 1) << "texcoords_"
+       << std::to_string(uvs.first) << " " << DumpVertexAttribute(uvs.second, indent+2) << "\n";
   }
+  if (mesh.binormals.data.size()) {
+    ss << pprint::Indent(indent + 1) << "binormals " << DumpVertexAttribute(mesh.binormals, indent+2) << "\n";
+  }
+  if (mesh.tangents.data.size()) {
+    ss << pprint::Indent(indent + 1) << "tangents " << DumpVertexAttribute(mesh.tangents, indent+2) << "\n";
+  }
+
 
   // TODO: primvars
 
