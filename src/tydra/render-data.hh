@@ -639,7 +639,7 @@ struct SkinnedMesh {
 // BlendShape shape target.
 struct ShapeTarget {
   std::string prim_name; // Prim name 
-  std::string abs_name; // Absolute prim path
+  std::string abs_path; // Absolute prim path
   std::string display_name; // `displayName` prim meta
 
   std::vector<uint32_t> pointIndices;
@@ -664,7 +664,7 @@ struct JointAndWeight {
 // TODO:
 struct Subset {
   std::string prim_name; // Prim name in Stage
-  std::string abs_name; // Absolute prim path in Stage
+  std::string abs_path; // Absolute prim path in Stage
   std::string display_name; // `displayName` prim meta
   int64_t prim_index{-1}; // Prim index in Stage
 
@@ -693,7 +693,7 @@ struct RenderMesh {
   };
 
   std::string prim_name;  // Prim name
-  std::string abs_name;      // Absolute Prim path in Stage
+  std::string abs_path;      // Absolute Prim path in Stage
   std::string display_name;  // `displayName` Prim metadataum
 
   VertexArrayType vertexArrayType{VertexArrayType::Facevarying};
