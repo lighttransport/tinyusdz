@@ -208,7 +208,8 @@ We have a plan to manage TinyUSDZ project under Light Transport Entertainment In
   * [x] MinGW gcc supported, but not recommended(You may got compilation failure depending on your build configuration: https://github.com/syoyo/tinyusdz/issues/33 , and linking takes too much time if you use default bfd linker.). If you want to compile TinyUSDZ in MinGW environment, llvm-mingw(clang) is recommended to use.
 
 
-Compilation with C++17 is also supported.
+Compilation with C++17 is also supported. 
+Compile on C++20 and C++23 could be possible, but not well tested, since C++20/C++23 compiler is not yet mature(as of 2024/01))
 
 ## Build
 
