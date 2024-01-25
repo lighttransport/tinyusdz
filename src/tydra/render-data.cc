@@ -47,7 +47,7 @@
 #include "tydra/shader-network.hh"
 
 //#define PushError(msg) if (err) { (*err) += msg; }
- 
+
 #if 0
 #define SET_ERROR_AND_RETURN(msg) \
     if (err) {                      \
@@ -241,7 +241,7 @@ nonstd::expected<std::vector<uint8_t>, std::string> UniformToVertex(
       }
 
       // may overwrite the value
-      memcpy(dst.data() + v_idx * stride_bytes, inputs.data() + i * stride_bytes, stride_bytes); 
+      memcpy(dst.data() + v_idx * stride_bytes, inputs.data() + i * stride_bytes, stride_bytes);
     }
 
     fvIndexOffset += cnt;
@@ -455,7 +455,7 @@ static nonstd::expected<std::vector<uint8_t>, std::string> ConstantToVertex(
     if (cnt < 3) {
       return nonstd::make_unexpected(fmt::format(
           "faeVertexCounts[{}] must be equal to or greater than 3, but got {}", i, cnt));
-      
+
     }
 
     for (size_t k = 0; k < cnt; k++) {
@@ -658,7 +658,7 @@ static bool ToVertexVaryingAttribute(
 #undef PushError
 
   return false;
-  
+
 }
 #endif
 
@@ -1510,7 +1510,7 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
     std::vector<int32_t> indices;
     if (pv.value().get_scalar(&indices)) {
       for (size_t i = 0; i < indices.size(); i++) {
-        if (indices[i] <= 0) {
+        if (indices[i] < 0) {
           PUSH_ERROR_AND_RETURN(fmt::format("faceVertexIndices[{}] contains negative index value {}.", i, indices[i]));
         }
         dst.faceVertexIndices.push_back(uint32_t(indices[i]));
@@ -1523,7 +1523,7 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
     if (pv.value().get_scalar(&counts)) {
 
       for (size_t i = 0; i < counts.size(); i++) {
-        if (counts[i] <= 0) {
+        if (counts[i] < 3) {
           PUSH_ERROR_AND_RETURN(fmt::format("faceVertexCounts[{}] contains invalid value {}. The count value must be >= 3", i, counts[i]));
         }
         dst.faceVertexCounts.push_back(uint32_t(counts[i]));
@@ -1540,7 +1540,7 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
 
   // slotId, texcoord data
   std::unordered_map<uint32_t, VertexAttribute> uvAttrs;
- 
+
   if ((rmaterial_id > -1) && (size_t(rmaterial_id) < materials.size())) {
     const RenderMaterial &material = materials[size_t(rmaterial_id)];
 
@@ -1570,9 +1570,9 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
   // If the Mesh contains any face-varying attribute, all attribute are converted to face-varying
   // so that the Mesh can be drawn without index buffer.
   // This will hurt the performance of rendering in OpenGL/Vulkan, especially when the Mesh is animated with skinning.
-  // 
+  //
   // We leave user-defined primvar as-is, so no check for it.
-  //  
+  //
   bool is_single_indexable{true};
   {
     Interpolation interp = mesh.get_normalsInterpolation();
@@ -1597,7 +1597,7 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
 
       if (interp == Interpolation::Uniform) {
         if (is_single_indexable) {
-          auto result = UniformToVertex(normals, /* elementSize */1, 
+          auto result = UniformToVertex(normals, /* elementSize */1,
                   dst.faceVertexCounts, dst.faceVertexIndices);
 
           if (!result) {
@@ -1629,7 +1629,7 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
           dst.normals.variability = VertexVariability::FaceVarying;
           dst.normals.format = VertexAttributeFormat::Vec3;
         }
-        
+
 
       } else if ((interp == Interpolation::Vertex) ||
                  (interp == Interpolation::Varying)) {
@@ -1641,7 +1641,7 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
           dst.normals.stride = sizeof(value::normal3f);
           dst.normals.variability = VertexVariability::Vertex;
           dst.normals.format = VertexAttributeFormat::Vec3;
-      
+
         } else {
           auto result = VertexToFaceVarying(normals, dst.faceVertexCounts,
                                             dst.faceVertexIndices);
@@ -1663,7 +1663,7 @@ bool RenderSceneConverter::ConvertMesh(const int64_t rmaterial_id,
       } else if (interp == Interpolation::FaceVarying) {
 
         if (is_single_indexable) {
-          PUSH_ERROR_AND_RETURN("Internal error. `is_single_indexable` should not be true when FaceVarying."); 
+          PUSH_ERROR_AND_RETURN("Internal error. `is_single_indexable` should not be true when FaceVarying.");
         }
 
         dst.normals.get_data().resize(normals.size() * sizeof(value::normal3f));
@@ -3119,9 +3119,9 @@ bool from_token(const value::token &tok, ColorSpace *cty) {
   }
 
   if (tok.str() == "srgb") {
-    (*cty) = ColorSpace::sRGB; 
+    (*cty) = ColorSpace::sRGB;
   } else if (tok.str() == "linear") {
-    (*cty) = ColorSpace::Linear; 
+    (*cty) = ColorSpace::Linear;
   } else if (tok.str() == "rec709") {
     (*cty) = ColorSpace::Rec709;
   } else if (tok.str() == "ocio") {
@@ -3276,6 +3276,93 @@ std::string to_string(VertexAttributeFormat f) {
 
 namespace {
 
+template<typename T>
+std::string DumpVertexAttributeDataImpl(const T *data, const size_t nbytes, const size_t stride_bytes, uint32_t indent) {
+
+  size_t itemsize;
+
+  if (stride_bytes != 0) {
+    if ((nbytes % stride_bytes) != 0) {
+      return fmt::format("[Invalid VertexAttributeData. input bytes {} must be dividable by stride_bytes {}(Type {})]", nbytes, stride_bytes, value::TypeTraits<T>::type_name());
+    }
+    itemsize = stride_bytes;
+  } else {
+    if ((nbytes % sizeof(T)) != 0) {
+      return fmt::format("[Invalid VertexAttributeData. input bytes {} must be dividable by size {}(Type {})]", nbytes, sizeof(T), value::TypeTraits<T>::type_name());
+    }
+    itemsize = sizeof(T);
+  }
+
+  size_t nitems = nbytes / itemsize;
+  std::string s;
+  s += pprint::Indent(indent);
+  if (stride_bytes != 0) {
+    s += value::print_strided_array_snipped<T>(reinterpret_cast<const uint8_t *>(data), stride_bytes, nitems);
+  } else {
+    s += value::print_array_snipped(data, nitems);
+  }
+  s += "\n";
+  return s;
+}
+
+std::string DumpVertexAttributeData(const VertexAttribute &vattr, uint32_t indent) {
+
+  // Ignore elementSize
+#define APPLY_FUNC(__fmt, __basety) if (__fmt == vattr.format) { \
+  return DumpVertexAttributeDataImpl(reinterpret_cast<const __basety *>(vattr.data.data()), vattr.data.size(), vattr.stride, indent); \
+}
+
+  APPLY_FUNC(VertexAttributeFormat::Bool, uint8_t)
+  APPLY_FUNC(VertexAttributeFormat::Char, char)
+  APPLY_FUNC(VertexAttributeFormat::Char2, value::char2)
+  APPLY_FUNC(VertexAttributeFormat::Char3, value::char3)
+  APPLY_FUNC(VertexAttributeFormat::Char4, value::char4)
+  APPLY_FUNC(VertexAttributeFormat::Byte,  uint8_t) 
+  APPLY_FUNC(VertexAttributeFormat::Byte2, value::uchar2)
+  APPLY_FUNC(VertexAttributeFormat::Byte3, value::uchar3)
+  APPLY_FUNC(VertexAttributeFormat::Byte4, value::uchar4)
+  APPLY_FUNC(VertexAttributeFormat::Short , int16_t)
+  APPLY_FUNC(VertexAttributeFormat::Short2, value::short2)
+  APPLY_FUNC(VertexAttributeFormat::Short3, value::short3)
+  APPLY_FUNC(VertexAttributeFormat::Short4, value::short4)
+  APPLY_FUNC(VertexAttributeFormat::Ushort ,uint16_t)
+  APPLY_FUNC(VertexAttributeFormat::Ushort2,value::ushort2)
+  APPLY_FUNC(VertexAttributeFormat::Ushort3,value::ushort3)
+  APPLY_FUNC(VertexAttributeFormat::Ushort4,value::ushort4)
+  APPLY_FUNC(VertexAttributeFormat::Half  , value::half) 
+  APPLY_FUNC(VertexAttributeFormat::Half2 , value::half2)
+  APPLY_FUNC(VertexAttributeFormat::Half3 , value::half3) 
+  APPLY_FUNC(VertexAttributeFormat::Half4 , value::half4)
+  APPLY_FUNC(VertexAttributeFormat::Float , float) 
+  APPLY_FUNC(VertexAttributeFormat::Vec2  , value::float2) 
+  APPLY_FUNC(VertexAttributeFormat::Vec3  , value::float3)
+  APPLY_FUNC(VertexAttributeFormat::Vec4  , value::float4) 
+  APPLY_FUNC(VertexAttributeFormat::Int   , int)
+  APPLY_FUNC(VertexAttributeFormat::Ivec2 , value::int2)
+  APPLY_FUNC(VertexAttributeFormat::Ivec3 , value::int3) 
+  APPLY_FUNC(VertexAttributeFormat::Ivec4 , value::int4) 
+  APPLY_FUNC(VertexAttributeFormat::Uint  , uint32_t) 
+  APPLY_FUNC(VertexAttributeFormat::Uvec2 , value::half)
+  APPLY_FUNC(VertexAttributeFormat::Uvec3 , value::half)
+  APPLY_FUNC(VertexAttributeFormat::Uvec4 , value::half)
+  APPLY_FUNC(VertexAttributeFormat::Double, double)
+  APPLY_FUNC(VertexAttributeFormat::Dvec2 , value::double2)
+  APPLY_FUNC(VertexAttributeFormat::Dvec3 , value::double2)
+  APPLY_FUNC(VertexAttributeFormat::Dvec4 , value::double2)
+  APPLY_FUNC(VertexAttributeFormat::Mat2  , value::matrix2f)
+  APPLY_FUNC(VertexAttributeFormat::Mat3  , value::matrix3f)
+  APPLY_FUNC(VertexAttributeFormat::Mat4  , value::matrix4f)
+  APPLY_FUNC(VertexAttributeFormat::Dmat2 , value::matrix2d)
+  APPLY_FUNC(VertexAttributeFormat::Dmat3 , value::matrix3d)
+  APPLY_FUNC(VertexAttributeFormat::Dmat4 , value::matrix4d)
+  else {
+    return fmt::format("[InternalError. Invalid VertexAttributeFormat: Id{}]", int(vattr.format));
+  }
+
+#undef APPLY_FUNC
+
+}
+
 std::string DumpVertexAttribute(const VertexAttribute &vattr, uint32_t indent) {
   std::stringstream ss;
 
@@ -3283,11 +3370,11 @@ std::string DumpVertexAttribute(const VertexAttribute &vattr, uint32_t indent) {
   ss << pprint::Indent(indent) << "Format(" << to_string(vattr.format) << ")\n";
   ss << pprint::Indent(indent) << "Variability(" << to_string(vattr.variability) << ")\n";
   ss << pprint::Indent(indent) << "ElementSize(" << vattr.elementSize << ")\n";
-  ss << pprint::Indent(indent) << value::print_array_snipped(vattr.data) << "\n";
+  ss << DumpVertexAttributeData(vattr, indent) << "\n";
   if (vattr.indices.size()) {
     ss << pprint::Indent(indent) << "Indices = " << value::print_array_snipped(vattr.indices) << "\n";
   }
-  
+
   return ss.str();
 }
 
@@ -3316,18 +3403,18 @@ std::string DumpMesh(const RenderMesh &mesh, uint32_t indent) {
      << std::to_string(mesh.materialIds.size()) << "\n";
   ss << pprint::Indent(indent + 1) << "materialIds \""
      << value::print_array_snipped(mesh.materialIds) << "\"\n";
-  ss << pprint::Indent(indent + 1) << "normals " << DumpVertexAttribute(mesh.normals, indent+2) << "\n";
+  ss << pprint::Indent(indent + 1) << "normals \n" << DumpVertexAttribute(mesh.normals, indent+2) << "\n";
   ss << pprint::Indent(indent + 1) << "num_texcoordSlots "
      << std::to_string(mesh.texcoords.size()) << "\n";
   for (const auto &uvs : mesh.texcoords) {
     ss << pprint::Indent(indent + 1) << "texcoords_"
-       << std::to_string(uvs.first) << " " << DumpVertexAttribute(uvs.second, indent+2) << "\n";
+       << std::to_string(uvs.first) << "\n" << DumpVertexAttribute(uvs.second, indent+2) << "\n";
   }
   if (mesh.binormals.data.size()) {
-    ss << pprint::Indent(indent + 1) << "binormals " << DumpVertexAttribute(mesh.binormals, indent+2) << "\n";
+    ss << pprint::Indent(indent + 1) << "binormals\n"  << DumpVertexAttribute(mesh.binormals, indent+2) << "\n";
   }
   if (mesh.tangents.data.size()) {
-    ss << pprint::Indent(indent + 1) << "tangents " << DumpVertexAttribute(mesh.tangents, indent+2) << "\n";
+    ss << pprint::Indent(indent + 1) << "tangents\n" << DumpVertexAttribute(mesh.tangents, indent+2) << "\n";
   }
 
 
