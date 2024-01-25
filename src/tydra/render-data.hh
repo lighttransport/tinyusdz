@@ -1191,14 +1191,6 @@ class RenderSceneConverter {
   std::string _warn;
 };
 
-//
-// Utility for usdSkel
-//
-
-// Equivalent to pxrUSd's UsdSkelNormalizeWeights
-bool SkelNormalizeWeights(const std::vector<float> &weights, int numInfluencesPerComponent, const float eps = std::numeric_limits<float>::epsilon());
-bool SkelSortInfluences(const std::vector<int> indices, const std::vector<float> &weights, int numInfluencesPerComponent);
-
 // For debug
 // Supported format: "kdl" (default. https://kdl.dev/), "json"
 //
