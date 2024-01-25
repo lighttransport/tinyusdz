@@ -69,6 +69,7 @@ namespace value {
 
 // Identifier is the one used in USDA(Ascii)
 // See: https://graphics.pixar.com/usd/release/api/_usd__page__datatypes.html
+// NOTE: There are some TinyUSDZ specific types(e.g., short, char)
 constexpr auto kToken = "token";
 constexpr auto kString = "string";
 constexpr auto kPath =
@@ -78,12 +79,29 @@ constexpr auto kDictionary = "dictionary";
 constexpr auto kTimeCode = "timecode";
 
 constexpr auto kBool = "bool";
+constexpr auto kChar = "char";
+constexpr auto kChar2 = "char2";
+constexpr auto kChar3 = "char3";
+constexpr auto kChar4 = "char4";
 constexpr auto kUChar = "uchar";
+constexpr auto kUChar2 = "uchar2";
+constexpr auto kUChar3 = "uchar3";
+constexpr auto kUChar4 = "uchar4";
 constexpr auto kHalf = "half";
 constexpr auto kInt = "int";
 constexpr auto kUInt = "uint";
 constexpr auto kInt64 = "int64";
 constexpr auto kUInt64 = "uint64";
+
+constexpr auto kShort = "short";
+constexpr auto kShort2 = "short2";
+constexpr auto kShort3 = "short3";
+constexpr auto kShort4 = "short4";
+
+constexpr auto kUShort = "ushort";
+constexpr auto kUShort2 = "ushort2";
+constexpr auto kUShort3 = "ushort3";
+constexpr auto kUShort4 = "ushort4";
 
 constexpr auto kInt2 = "int2";
 constexpr auto kInt3 = "int3";
@@ -264,6 +282,11 @@ enum TypeId {
 
   TYPE_ID_BOOL,
 
+  TYPE_ID_CHAR,
+  TYPE_ID_CHAR2,
+  TYPE_ID_CHAR3,
+  TYPE_ID_CHAR4,
+
   // TYPE_ID_INT8,
   TYPE_ID_HALF,
   TYPE_ID_INT32,
@@ -278,8 +301,22 @@ enum TypeId {
   TYPE_ID_INT4,
 
   TYPE_ID_UCHAR,  // uint8
+  TYPE_ID_UCHAR2,
+  TYPE_ID_UCHAR3,
+  TYPE_ID_UCHAR4,
+
   TYPE_ID_UINT32,
   TYPE_ID_UINT64,
+
+  TYPE_ID_SHORT,
+  TYPE_ID_SHORT2,
+  TYPE_ID_SHORT3,
+  TYPE_ID_SHORT4,
+
+  TYPE_ID_USHORT,
+  TYPE_ID_USHORT2,
+  TYPE_ID_USHORT3,
+  TYPE_ID_USHORT4,
 
   TYPE_ID_UINT2,
   TYPE_ID_UINT3,
@@ -542,6 +579,22 @@ inline half operator*(float a, const half &b) {
 inline half operator/(float a, const half &b) {
   return float_to_half_full(a / half_to_float(b));
 }
+
+using char2 = std::array<char, 2>;
+using char3 = std::array<char, 3>;
+using char4 = std::array<char, 4>;
+
+using uchar2 = std::array<uint8_t, 2>;
+using uchar3 = std::array<uint8_t, 3>;
+using uchar4 = std::array<uint8_t, 4>;
+
+using short2 = std::array<int16_t, 2>;
+using short3 = std::array<int16_t, 3>;
+using short4 = std::array<int16_t, 4>;
+
+using ushort2 = std::array<uint16_t, 2>;
+using ushort3 = std::array<uint16_t, 3>;
+using ushort4 = std::array<uint16_t, 4>;
 
 using int2 = std::array<int32_t, 2>;
 using int3 = std::array<int32_t, 3>;
@@ -1705,11 +1758,31 @@ DEFINE_TYPE_TRAIT(bool, kBool, TYPE_ID_BOOL, 1);
 DEFINE_TYPE_TRAIT(uint8_t, kUChar, TYPE_ID_UCHAR, 1);
 DEFINE_TYPE_TRAIT(half, kHalf, TYPE_ID_HALF, 1);
 
+DEFINE_TYPE_TRAIT(int16_t, kShort, TYPE_ID_SHORT, 1);
+DEFINE_TYPE_TRAIT(uint16_t, kUShort, TYPE_ID_USHORT, 1);
+
 DEFINE_TYPE_TRAIT(int32_t, kInt, TYPE_ID_INT32, 1);
 DEFINE_TYPE_TRAIT(uint32_t, kUInt, TYPE_ID_UINT32, 1);
 
 DEFINE_TYPE_TRAIT(int64_t, kInt64, TYPE_ID_INT64, 1);
 DEFINE_TYPE_TRAIT(uint64_t, kUInt64, TYPE_ID_UINT64, 1);
+
+DEFINE_TYPE_TRAIT(char, kChar, TYPE_ID_CHAR, 1);
+DEFINE_TYPE_TRAIT(char2, kChar2, TYPE_ID_CHAR2, 2);
+DEFINE_TYPE_TRAIT(char3, kChar3, TYPE_ID_CHAR3, 3);
+DEFINE_TYPE_TRAIT(char4, kChar4, TYPE_ID_CHAR4, 4);
+
+DEFINE_TYPE_TRAIT(uchar2, kUChar2, TYPE_ID_UCHAR2, 2);
+DEFINE_TYPE_TRAIT(uchar3, kUChar3, TYPE_ID_UCHAR3, 3);
+DEFINE_TYPE_TRAIT(uchar4, kUChar4, TYPE_ID_UCHAR4, 4);
+
+DEFINE_TYPE_TRAIT(short2, kShort2, TYPE_ID_SHORT2, 2);
+DEFINE_TYPE_TRAIT(short3, kShort3, TYPE_ID_SHORT3, 3);
+DEFINE_TYPE_TRAIT(short4, kShort4, TYPE_ID_SHORT4, 4);
+
+DEFINE_TYPE_TRAIT(ushort2, kUShort2, TYPE_ID_USHORT2, 2);
+DEFINE_TYPE_TRAIT(ushort3, kUShort3, TYPE_ID_USHORT3, 3);
+DEFINE_TYPE_TRAIT(ushort4, kUShort4, TYPE_ID_USHORT4, 4);
 
 DEFINE_TYPE_TRAIT(int2, kInt2, TYPE_ID_INT2, 2);
 DEFINE_TYPE_TRAIT(int3, kInt3, TYPE_ID_INT3, 3);

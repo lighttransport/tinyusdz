@@ -94,6 +94,67 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half4 &v) {
   return os;
 }
 
+// treat char vector type as byte
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::char2 &v) {
+  os << "(" << int(v[0]) << ", " << int(v[1]) << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::char3 &v) {
+  os << "(" << int(v[0]) << ", " << int(v[1]) << ", " << int(v[2]) << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::char4 &v) {
+  os << "(" << int(v[0]) << ", " << int(v[1]) << ", " << int(v[2]) << ", " << int(v[3]) << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::uchar2 &v) {
+  os << "(" << int(v[0]) << ", " << int(v[1]) << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::uchar3 &v) {
+  os << "(" << int(v[0]) << ", " << int(v[1]) << ", " << int(v[2]) << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::uchar4 &v) {
+  os << "(" << int(v[0]) << ", " << int(v[1]) << ", " << int(v[2]) << ", " << int(v[3]) << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::short2 &v) {
+  os << "(" << v[0] << ", " << v[1] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::short3 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::short4 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::ushort2 &v) {
+  os << "(" << v[0] << ", " << v[1] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::ushort3 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::ushort4 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
+  return os;
+}
+
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::int2 &v) {
   os << "(" << v[0] << ", " << v[1] << ")";
   return os;
