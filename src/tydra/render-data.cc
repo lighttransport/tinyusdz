@@ -2936,6 +2936,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
     DCOUT("renderMaterialId = " << rmaterial_id);
 
+#if 0
     // Do not assign materialIds when no material bound to this Mesh.
     // TODO: per-face material.
     if ((rmaterial_id > -1) &&
@@ -2943,6 +2944,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       rmesh.materialIds.resize(rmesh.faceVertexCounts.size(),
                                int32_t(rmaterial_id));
     }
+#endif
 
     converter->meshes.emplace_back(std::move(rmesh));
   }
@@ -3317,7 +3319,7 @@ std::string DumpVertexAttributeData(const VertexAttribute &vattr, uint32_t inden
   APPLY_FUNC(VertexAttributeFormat::Char2, value::char2)
   APPLY_FUNC(VertexAttributeFormat::Char3, value::char3)
   APPLY_FUNC(VertexAttributeFormat::Char4, value::char4)
-  APPLY_FUNC(VertexAttributeFormat::Byte,  uint8_t) 
+  APPLY_FUNC(VertexAttributeFormat::Byte,  uint8_t)
   APPLY_FUNC(VertexAttributeFormat::Byte2, value::uchar2)
   APPLY_FUNC(VertexAttributeFormat::Byte3, value::uchar3)
   APPLY_FUNC(VertexAttributeFormat::Byte4, value::uchar4)
@@ -3329,19 +3331,19 @@ std::string DumpVertexAttributeData(const VertexAttribute &vattr, uint32_t inden
   APPLY_FUNC(VertexAttributeFormat::Ushort2,value::ushort2)
   APPLY_FUNC(VertexAttributeFormat::Ushort3,value::ushort3)
   APPLY_FUNC(VertexAttributeFormat::Ushort4,value::ushort4)
-  APPLY_FUNC(VertexAttributeFormat::Half  , value::half) 
+  APPLY_FUNC(VertexAttributeFormat::Half  , value::half)
   APPLY_FUNC(VertexAttributeFormat::Half2 , value::half2)
-  APPLY_FUNC(VertexAttributeFormat::Half3 , value::half3) 
+  APPLY_FUNC(VertexAttributeFormat::Half3 , value::half3)
   APPLY_FUNC(VertexAttributeFormat::Half4 , value::half4)
-  APPLY_FUNC(VertexAttributeFormat::Float , float) 
-  APPLY_FUNC(VertexAttributeFormat::Vec2  , value::float2) 
+  APPLY_FUNC(VertexAttributeFormat::Float , float)
+  APPLY_FUNC(VertexAttributeFormat::Vec2  , value::float2)
   APPLY_FUNC(VertexAttributeFormat::Vec3  , value::float3)
-  APPLY_FUNC(VertexAttributeFormat::Vec4  , value::float4) 
+  APPLY_FUNC(VertexAttributeFormat::Vec4  , value::float4)
   APPLY_FUNC(VertexAttributeFormat::Int   , int)
   APPLY_FUNC(VertexAttributeFormat::Ivec2 , value::int2)
-  APPLY_FUNC(VertexAttributeFormat::Ivec3 , value::int3) 
-  APPLY_FUNC(VertexAttributeFormat::Ivec4 , value::int4) 
-  APPLY_FUNC(VertexAttributeFormat::Uint  , uint32_t) 
+  APPLY_FUNC(VertexAttributeFormat::Ivec3 , value::int3)
+  APPLY_FUNC(VertexAttributeFormat::Ivec4 , value::int4)
+  APPLY_FUNC(VertexAttributeFormat::Uint  , uint32_t)
   APPLY_FUNC(VertexAttributeFormat::Uvec2 , value::half)
   APPLY_FUNC(VertexAttributeFormat::Uvec3 , value::half)
   APPLY_FUNC(VertexAttributeFormat::Uvec4 , value::half)
@@ -3399,10 +3401,8 @@ std::string DumpMesh(const RenderMesh &mesh, uint32_t indent) {
      << std::to_string(mesh.faceVertexIndices.size()) << "\n";
   ss << pprint::Indent(indent + 1) << "faceVertexIndices \""
      << value::print_array_snipped(mesh.faceVertexIndices) << "\"\n";
-  ss << pprint::Indent(indent + 1) << "num_materialIds "
-     << std::to_string(mesh.materialIds.size()) << "\n";
-  ss << pprint::Indent(indent + 1) << "materialIds \""
-     << value::print_array_snipped(mesh.materialIds) << "\"\n";
+  ss << pprint::Indent(indent + 1) << "materialId "
+     << std::to_string(mesh.material_id) << "\n";
   ss << pprint::Indent(indent + 1) << "normals \n" << DumpVertexAttribute(mesh.normals, indent+2) << "\n";
   ss << pprint::Indent(indent + 1) << "num_texcoordSlots "
      << std::to_string(mesh.texcoords.size()) << "\n";
