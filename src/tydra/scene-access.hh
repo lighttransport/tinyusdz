@@ -491,6 +491,52 @@ bool IsPathIncluded(const CollectionMembershipQuery &query, const Stage &stage, 
 // TODO: Layer version
 // bool IsPathIncluded(const Layer &layer, const Path &abs_path, const CollectionInstance::ExpansionRule expansionRule = CollectionInstance::ExpansionRule::ExpandPrims);
 
+
+//
+// usdSkel 
+//
+
+struct SkelNode
+{
+  std::string jointElementName;  // elementName(leaf node name) of jointPath.
+  std::string jointPath; // joints in UsdSkel. Relative or Absolute Prim path(e.g. "root/head", "/root/head")
+  std::string jointName; // jointNames in UsdSkel
+  value::matrix4d bindTransform{value::matrix4d::identity()};
+  value::matrix4d restTransform{value::matrix4d::identity()};
+  int parentNodeIndex{-1};
+
+  std::vector<int> childNodeIndices;
+};
+
+class SkelHierarchy
+{
+ public:
+  SkelHierarchy() = default;
+
+  const std::string &name() const { return _name; }
+
+  bool get_root(SkelNode &dst) {
+    if (_skel_nodes.empty()) {
+      _err += "SkelNode is Empty\n";
+      return false;
+    }
+    
+    dst = _skel_nodes[0];
+    return true;
+  }
+
+ private:
+  std::string _warm;
+  std::string _err;
+  std::string _name; // Skeleleton Prim name
+  std::vector<SkelNode> _skel_nodes; // [0] = root node.
+};
+
+///
+/// Extract skeleleton info from Skeleton and build skeleton(bone) hierarchy.
+///
+bool BuildSkelHierarchy(const Stage &stage, const Skeleton &skel, SkelHierarchy &dst, std::string *err = nullptr);
+
 //
 // For USDZ AR extensions
 //
