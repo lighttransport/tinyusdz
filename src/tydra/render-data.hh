@@ -660,18 +660,19 @@ struct JointAndWeight {
   int elementSize{1};
 };
 
-// GeomSubset
-// TODO:
-struct Subset {
+// GeomSubset whose familyName is 'materialBind'.
+// For per-face material mapping.
+struct MaterialSubset {
   std::string prim_name; // Prim name in Stage
-  std::string abs_path; // Absolute prim path in Stage
-  std::string display_name; // `displayName` prim meta
+  std::string abs_path; // Absolute Prim path in Stage
+  std::string display_name; // `displayName` Prim meta
   int64_t prim_index{-1}; // Prim index in Stage
 
-  std::string elementType{"face"}; // either "face" or "point"
-  std::string familyName;
+  // Index to RenderScene::materials
+  int material_id{-1}; 
+  int backface_material_id{-1};
 
-  std::vector<int> indices;
+  std::vector<int> indices; // index to face, i.e. index to faceVertexCounts[]
 };
 
 // Currently normals and texcoords are converted as facevarying attribute.
@@ -734,12 +735,20 @@ struct RenderMesh {
   // std::vector<vec3> facevaryingTangents;
   // std::vector<vec3> facevaryingBinormals;
 
-  //
+  //  TODO
   JointAndWeight joint_and_weights;
 
-  std::vector<int32_t>
-      materialIds;  // per-face material. -1 = no material assigned
+  // Index to RenderScene::materials
+  int material_id{-1}; // Material applied to whole faces in the mesh. per-face material by GeomSubset is stored in `material_subsetMap` and `material_suset_famiyNames` 
+  int backface_material_id{-1}; // Backface material. Look up `rel material:binding:<BACKFACENAME>` in GeomMesh. BACKFACENAME is a user-supplied setting. Default = MaterialConverterConfig::default_backface_material_purpose_name
 
+  // Key = GeomSubset name
+  std::map<std::string, MaterialSubset> material_subsetMap; // GeomSubset whose famiyName is 'materialBind'
+  
+  // If you want to access user-defined primvars or custom property,
+  // Plese look into corresponding Prim( stage::find_prim_at_path(abs_path) ) 
+
+#if 0 // TODO: Remove
   //
   // Primvars(User defined attributes).
   // VertexAttribute preserves input USD primvar variability(interpolation)
@@ -752,9 +761,7 @@ struct RenderMesh {
 
   // Index value = key to `primvars`
   StringAndIdMap primvarsMap;
-
-  // GeomSubsets(other than GeomSubset for Material)
-  std::vector<Subset> subsets;
+#endif
 
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
 };
@@ -1012,6 +1019,10 @@ struct MeshConverterConfig {
 };
 
 struct MaterialConverterConfig {
+  // purpose name for two-sided material mapping.
+  // https://github.com/syoyo/tinyusdz/issues/120
+  std::string default_backface_material_purpose_name{"back"};
+
   // DefaultTextureImageLoader will be used when nullptr;
   TextureImageLoaderFunction texture_image_loader_function{nullptr};
   void *texture_image_loader_function_userdata{nullptr};
