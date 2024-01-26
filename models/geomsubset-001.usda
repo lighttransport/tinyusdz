@@ -1,0 +1,55 @@
+#usda 1.0
+(
+    defaultPrim = "grid2"
+    endTimeCode = 1
+    framesPerSecond = 24
+    metersPerUnit = 1
+    startTimeCode = 1
+    timeCodesPerSecond = 24
+    upAxis = "Y"
+)
+
+def Xform "grid2" (
+    kind = "component"
+)
+{
+    matrix4d xformOp:transform:xform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+    uniform token[] xformOpOrder = ["xformOp:transform:xform"]
+
+    def Mesh "mesh_0"
+    {
+        float3[] extent = [(-1, 0, -1), (1, 0, 1)]
+        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4, 4, 4, 4]
+        int[] faceVertexIndices = [0, 1, 5, 4, 1, 2, 6, 5, 2, 3, 7, 6, 4, 5, 9, 8, 5, 6, 10, 9, 6, 7, 11, 10, 8, 9, 13, 12, 9, 10, 14, 13, 10, 11, 15, 14]
+        uniform token orientation = "leftHanded"
+        point3f[] points = [(-1, 0, -1), (-0.3333333, 0, -1), (0.33333337, 0, -1), (1, 0, -1), (-1, 0, -0.3333333), (-0.3333333, 0, -0.3333333), (0.33333337, 0, -0.3333333), (1, 0, -0.3333333), (-1, 0, 0.33333337), (-0.3333333, 0, 0.33333337), (0.33333337, 0, 0.33333337), (1, 0, 0.33333337), (-1, 0, 1), (-0.3333333, 0, 1), (0.33333337, 0, 1), (1, 0, 1)] (
+            interpolation = "vertex"
+        )
+        uniform token subdivisionScheme = "none"
+
+	
+        uniform token subsetFamily:materialBind:familyType = "partition"
+        def GeomSubset "subset"
+        {
+            uniform token elementName = "face"
+            uniform token familyName = "materialBind"
+            int[] indices = [0, 1, 2]
+            rel material:binding = </Looks/sampleMat>
+        }
+    }
+}
+
+def "Looks"
+{
+    def Material "sampleMat"
+    {
+        token outputs:surface.connect = </Looks/sampleMat/sampleShader.outputs:surface>
+
+        def Shader "sampleShader"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (1, 0, 0)
+            token outputs:surface
+        }
+    }
+}
