@@ -11,6 +11,7 @@
 #include "asset-resolution.hh"
 #include "nonstd/expected.hpp"
 #include "usdShade.hh"
+#include "usdGeom.hh"
 #include "value-types.hh"
 
 namespace tinyusdz {
@@ -411,6 +412,7 @@ std::string to_string(VertexAttributeFormat f);
 ///    0.5, 0.5]
 ///
 struct VertexAttribute {
+  std::string name; // Attribute(primvar) name. Optional. Can be empty.
   VertexAttributeFormat format{VertexAttributeFormat::Vec3};
   uint32_t elementSize{1};  // `elementSize` in USD terminology(i.e. # of
                             // samples per vertex data)
@@ -737,6 +739,10 @@ struct RenderMesh {
 
   //  TODO
   JointAndWeight joint_and_weights;
+
+  // BlendShapes
+  // key = USD BlendShape prim name.
+  std::map<std::string, ShapeTarget> targets;
 
   // Index to RenderScene::materials
   int material_id{-1}; // Material applied to whole faces in the mesh. per-face material by GeomSubset is stored in `material_subsetMap` and `material_suset_famiyNames` 
@@ -1077,6 +1083,7 @@ struct RenderSceneConverterConfig {
 };
 
 class RenderSceneConverter {
+
  public:
   RenderSceneConverter() = default;
   RenderSceneConverter(const RenderSceneConverter &rhs) = delete;
@@ -1124,20 +1131,27 @@ class RenderSceneConverter {
   std::vector<UVTexture> textures;
   std::vector<TextureImage> images;
   std::vector<BufferData> buffers;
+  //std::vector<SkinHierarchy> skins;
 
   ///
-  /// @param[in] rmaterial_id RenderMaterial index. -1 if no material assigned
-  /// to this Mesh. If the mesh has bounded material, RenderMaterial index must
-  /// be obrained using ConvertMaterial method.
+  /// @param[in] mesh_abs_path USD prim path to this GeomMesh
   /// @param[in] mesh Input GeomMesh
+  /// @param[in] rmaterial_map USD material path -> RenderMaterial index list. Use empty map if no material assigned
+  /// to this Mesh. If the mesh has bounded material(including material from GeomSubset), RenderMaterial index must
+  /// be obrained using ConvertMaterial method firstly.
+  /// @param[in] material_subsets GeomSubset assigned to this Mesh
   /// @param[out] dst RenderMesh output
   ///
   /// @return true when success.
   ///
   /// TODO: per-face material(GeomSubset)
   ///
-  bool ConvertMesh(const int64_t rmaterial_d, const tinyusdz::GeomMesh &mesh,
-                   RenderMesh *dst);
+  bool ConvertMesh(const tinyusdz::Path &mesh_abs_path,
+                   const tinyusdz::GeomMesh &mesh,
+                   const std::map<std::string, int64_t> &rmaterial_map,
+                   const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+                   RenderMesh *dst,
+                   double timecode = tinyusdz::value::TimeCode::Default());
 
   ///
   /// Convert USD Material/Shader to renderer-friendly Material
@@ -1146,7 +1160,8 @@ class RenderSceneConverter {
   ///
   bool ConvertMaterial(const tinyusdz::Path &abs_mat_path,
                        const tinyusdz::Material &material,
-                       RenderMaterial *rmat_out);
+                       RenderMaterial *rmat_out,
+                       double timecode = tinyusdz::value::TimeCode::Default());
 
   ///
   /// Convert UsdPreviewSurface Shader to renderer-friendly PreviewSurfaceShader
@@ -1160,7 +1175,8 @@ class RenderSceneConverter {
   ///
   bool ConvertPreviewSurfaceShader(const tinyusdz::Path &shader_abs_path,
                                    const tinyusdz::UsdPreviewSurface &shader,
-                                   PreviewSurfaceShader *pss_out);
+                                   PreviewSurfaceShader *pss_out,
+                                   double timecode = tinyusdz::value::TimeCode::Default());
 
   ///
   /// Convert UsdUvTexture to renderer-friendly UVTexture
@@ -1175,7 +1191,8 @@ class RenderSceneConverter {
   /// @return true when success.
   ///
   bool ConvertUVTexture(const Path &tex_abs_path, const AssetInfo &assetInfo,
-                        const UsdUVTexture &texture, UVTexture *tex_out);
+                        const UsdUVTexture &texture, UVTexture *tex_out,
+                        double timecode = tinyusdz::value::TimeCode::Default());
 
   const Stage *GetStagePtr() const { return _stage; }
 
