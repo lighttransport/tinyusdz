@@ -641,8 +641,13 @@ endif()
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 
   set(TUSDZ_COMPILE_FLAGS
-      "-Weverything -Werror -Wno-poison-system-directories -Wno-padded -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-documentation -Wno-unused-member-function"
+      "-Weverything -Wno-poison-system-directories -Wno-padded -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-documentation -Wno-unused-member-function"
   )
+
+  option(TINYUSDZ_DISABLE_WERROR "Don't set -Werror when building the tinyusdz library" OFF)
+  if (NOT TINYUSDZ_DISABLE_WERROR)
+    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Werror")
+  endif()
 
   # clang17 seems enable -Wunsafe-buffer-usage when `-Weverything` is defined,
   # resulting compilation error for some raw array access without bound check.
