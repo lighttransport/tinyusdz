@@ -14,10 +14,33 @@ Currently Tydra is considering following three usecases in mind:
 - Scene conversion to Ray tracing renderer(e.g. Vulkan/OptiX ray tracing)
   See `../../examples/sdlviewer/` for SW raytracing example.
 
+## Status
+
+Work in progres. API and feature is subject to change.
+
 ## RenderScene
 
 Scene graph representation suited for OpenGL/Vulkan renderer.
 
+### Status
+
+* [ ] Node xform
+* [x] Triangulate mesh
+* [ ] Subdivision surface support(subdivide mesh using OpenSubdiv)
+* [ ] Resolve Material binding
+  * [ ] GeomSubset material binding
+  * [ ] Collection material binding 
+* [ ] Load and setup Texture
+  * Colorspace conversion
+    * [x] sRGB <-> Linear
+    * [x] rec709 <-> Linear
+    * [ ] OCIO LUT
+    *  
+* [ ] Skinning
+* [ ] BlendShape
+* [ ] Animation
+* [ ] Lights
+    
 ## TODO
 
 - Data structure suited for realtime DCC.
