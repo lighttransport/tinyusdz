@@ -644,8 +644,8 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
       "-Weverything -Wno-poison-system-directories -Wno-padded -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-documentation -Wno-unused-member-function"
   )
 
-  option(TINYUSDZ_DISABLE_WERROR "Don't set -Werror when building the tinyusdz library" OFF)
-  if (NOT TINYUSDZ_DISABLE_WERROR)
+  option(TINYUSDZ_NO_WERROR "Don't set -Werror when building the tinyusdz library" OFF)
+  if (NOT TINYUSDZ_NO_WERROR)
     set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Werror")
   endif()
 
