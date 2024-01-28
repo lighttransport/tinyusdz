@@ -142,8 +142,10 @@ int main(int argc, char **argv) {
   // TODO: Set user-defined AssetResolutionResolver
   // AssetResolutionResolver arr;
   // converter.set_asset_resoluition_resolver(arr);
+  
 
-  bool ret = converter.ConvertToRenderScene(stage, &render_scene);
+  double timecode = tinyusdz::value::TimeCode::Default();
+  bool ret = converter.ConvertToRenderScene(stage, &render_scene, timecode);
   if (!ret) {
     std::cerr << "Failed to convert USD Stage to RenderScene: \n" << converter.GetError() << "\n";
     return EXIT_FAILURE;
