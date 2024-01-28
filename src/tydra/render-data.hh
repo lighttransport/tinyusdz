@@ -10,8 +10,9 @@
 
 #include "asset-resolution.hh"
 #include "nonstd/expected.hpp"
-#include "usdShade.hh"
 #include "usdGeom.hh"
+#include "usdShade.hh"
+#include "usdSkel.hh"
 #include "value-types.hh"
 
 namespace tinyusdz {
@@ -124,7 +125,7 @@ enum class VertexVariability {
            // surface is used for the interpolation(Curves, Subdivision Surface,
            // etc).
   FaceVarying,  // per-Vertex per face. Bilinear interpolation.
-  Indexed,      // Dedicated index buffer provided(unflattened Indexed Primvar). 
+  Indexed,      // Dedicated index buffer provided(unflattened Indexed Primvar).
 };
 
 std::string to_string(VertexVariability variability);
@@ -412,7 +413,7 @@ std::string to_string(VertexAttributeFormat f);
 ///    0.5, 0.5]
 ///
 struct VertexAttribute {
-  std::string name; // Attribute(primvar) name. Optional. Can be empty.
+  std::string name;  // Attribute(primvar) name. Optional. Can be empty.
   VertexAttributeFormat format{VertexAttributeFormat::Vec3};
   uint32_t elementSize{1};  // `elementSize` in USD terminology(i.e. # of
                             // samples per vertex data)
@@ -481,16 +482,15 @@ struct VertexAttribute {
 
   // includes 'varying'
   bool is_vertex() const {
-    return (variability == VertexVariability::Vertex) || (variability == VertexVariability::Varying);
+    return (variability == VertexVariability::Vertex) ||
+           (variability == VertexVariability::Varying);
   }
 
   bool is_facevarying() const {
     return (variability == VertexVariability::FaceVarying);
   }
 
-  bool is_indexed() const {
-    return variability == VertexVariability::Indexed;
-  }
+  bool is_indexed() const { return variability == VertexVariability::Indexed; }
 };
 
 #if 0  // TODO: Implement
@@ -538,9 +538,9 @@ enum class ColorSpace {
   Linear,
   Rec709,
   OCIO,
-  Lin_DisplayP3, // colorSpace 'lin_displayp3'
-  sRGB_DisplayP3, // colorSpace 'srgb_displayp3'
-  Custom,  // TODO: Custom colorspace
+  Lin_DisplayP3,   // colorSpace 'lin_displayp3'
+  sRGB_DisplayP3,  // colorSpace 'srgb_displayp3'
+  Custom,          // TODO: Custom colorspace
 };
 
 std::string to_string(ColorSpace cs);
@@ -612,7 +612,7 @@ struct Node {
 
   std::vector<uint32_t> children;
 
-  // Every node have its transform at `default` timecode.
+  // Every node have its transform at specified timecode.
   value::matrix4d local_matrix;
   value::matrix4d global_matrix;
 
@@ -640,9 +640,9 @@ struct SkinnedMesh {
 
 // BlendShape shape target.
 struct ShapeTarget {
-  std::string prim_name; // Prim name 
-  std::string abs_path; // Absolute prim path
-  std::string display_name; // `displayName` prim meta
+  std::string prim_name;     // Prim name
+  std::string abs_path;      // Absolute prim path
+  std::string display_name;  // `displayName` prim meta
 
   std::vector<uint32_t> pointIndices;
   std::vector<vec3> pointOffsets;
@@ -665,16 +665,16 @@ struct JointAndWeight {
 // GeomSubset whose familyName is 'materialBind'.
 // For per-face material mapping.
 struct MaterialSubset {
-  std::string prim_name; // Prim name in Stage
-  std::string abs_path; // Absolute Prim path in Stage
-  std::string display_name; // `displayName` Prim meta
-  int64_t prim_index{-1}; // Prim index in Stage
+  std::string prim_name;     // Prim name in Stage
+  std::string abs_path;      // Absolute Prim path in Stage
+  std::string display_name;  // `displayName` Prim meta
+  int64_t prim_index{-1};    // Prim index in Stage
 
   // Index to RenderScene::materials
-  int material_id{-1}; 
+  int material_id{-1};
   int backface_material_id{-1};
 
-  std::vector<int> indices; // index to face, i.e. index to faceVertexCounts[]
+  std::vector<int> indices;  // index to face, i.e. index to faceVertexCounts[]
 };
 
 // Currently normals and texcoords are converted as facevarying attribute.
@@ -695,7 +695,7 @@ struct RenderMesh {
                   // rendering performance.
   };
 
-  std::string prim_name;  // Prim name
+  std::string prim_name;     // Prim name
   std::string abs_path;      // Absolute Prim path in Stage
   std::string display_name;  // `displayName` Prim metadataum
 
@@ -707,6 +707,10 @@ struct RenderMesh {
   // For triangulated mesh, array elements are all filled with 3 or
   // faceVertexCounts.size() == 0.
   std::vector<uint32_t> faceVertexCounts;
+
+
+  std::vector<size_t> triangulatedToOrigFaceVertexIndexMap; // used for rearrange facevertex attrib
+  std::vector<uint32_t> triangulatedFaceCounts;  // used for rearrange face indices(e.g GeomSubset indices)
 
   // `normals` or `primvar:normals`. Empty when no normals exist in the
   // GeomMesh.
@@ -745,16 +749,22 @@ struct RenderMesh {
   std::map<std::string, ShapeTarget> targets;
 
   // Index to RenderScene::materials
-  int material_id{-1}; // Material applied to whole faces in the mesh. per-face material by GeomSubset is stored in `material_subsetMap` and `material_suset_famiyNames` 
-  int backface_material_id{-1}; // Backface material. Look up `rel material:binding:<BACKFACENAME>` in GeomMesh. BACKFACENAME is a user-supplied setting. Default = MaterialConverterConfig::default_backface_material_purpose_name
+  int material_id{-1};  // Material applied to whole faces in the mesh. per-face
+                        // material by GeomSubset is stored in
+                        // `material_subsetMap` and `material_suset_famiyNames`
+  int backface_material_id{
+      -1};  // Backface material. Look up `rel material:binding:<BACKFACENAME>`
+            // in GeomMesh. BACKFACENAME is a user-supplied setting. Default =
+            // MaterialConverterConfig::default_backface_material_purpose_name
 
   // Key = GeomSubset name
-  std::map<std::string, MaterialSubset> material_subsetMap; // GeomSubset whose famiyName is 'materialBind'
-  
-  // If you want to access user-defined primvars or custom property,
-  // Plese look into corresponding Prim( stage::find_prim_at_path(abs_path) ) 
+  std::map<std::string, MaterialSubset>
+      material_subsetMap;  // GeomSubset whose famiyName is 'materialBind'
 
-#if 0 // TODO: Remove
+  // If you want to access user-defined primvars or custom property,
+  // Plese look into corresponding Prim( stage::find_prim_at_path(abs_path) )
+
+#if 0  // TODO: Remove
   //
   // Primvars(User defined attributes).
   // VertexAttribute preserves input USD primvar variability(interpolation)
@@ -1002,22 +1012,24 @@ std::vector<UsdPrimvarReader_float2> ExtractPrimvarReadersFromMaterialNode(const
 struct MeshConverterConfig {
   bool triangulate{true};
 
-  bool validate_geomsubset{true}; // Validate GeomSubset. 
+  bool validate_geomsubset{true};  // Validate GeomSubset.
 
   bool compute_tangents_and_binormals{true};
 
   // We may want texcoord data even if the Mesh does not have bound Material.
-  // But we don't know which primvar is used as a texture coordinate when no Texture assigned to the mesh(no PrimVar Reader assigned to)
-  // Use UsdPreviewSurface setting for it.
+  // But we don't know which primvar is used as a texture coordinate when no
+  // Texture assigned to the mesh(no PrimVar Reader assigned to) Use
+  // UsdPreviewSurface setting for it.
   //
   // https://openusd.org/release/spec_usdpreviewsurface.html#usd-sample
   //
   // Also for tangnents/binormals.
-  // 
+  //
   // 'primvars' namespace is omitted.
   //
   std::string default_texcoords_primvar_name{"st"};
-  std::string default_texcoords1_primvar_name{"st1"}; // for multi texture(available from iOS 16/macOS 13)
+  std::string default_texcoords1_primvar_name{
+      "st1"};  // for multi texture(available from iOS 16/macOS 13)
   std::string default_tangents_primvar_name{"tangents"};
   std::string default_binormals_primvar_name{"binormals"};
 
@@ -1046,7 +1058,8 @@ struct MaterialConverterConfig {
   // - `preserve_texel_bitdepth` true
   //   - No floating-point image conversion.
   // - `linearize_color_space` true
-  //   - Linearlize in CPU, and no sRGB -> Linear conversion in a shader required.
+  //   - Linearlize in CPU, and no sRGB -> Linear conversion in a shader
+  //   required.
 
   // In the UsdUVTexture spec, 8bit texture image is converted to floating point
   // image of range `[0.0, 1.0]`. When this flag is set to false, 8bit and 16bit
@@ -1083,7 +1096,6 @@ struct RenderSceneConverterConfig {
 };
 
 class RenderSceneConverter {
-
  public:
   RenderSceneConverter() = default;
   RenderSceneConverter(const RenderSceneConverter &rhs) = delete;
@@ -1113,7 +1125,8 @@ class RenderSceneConverter {
   /// Convert Stage to RenderScene.
   /// Must be called after SetStage, SetMaterialConverterConfig(optional)
   ///
-  bool ConvertToRenderScene(const Stage &stage, RenderScene *scene);
+  bool ConvertToRenderScene(const Stage &stage, RenderScene *scene,
+                            const double timecode);
 
   const std::string &GetInfo() const { return _info; }
   const std::string &GetWarning() const { return _warn; }
@@ -1131,14 +1144,15 @@ class RenderSceneConverter {
   std::vector<UVTexture> textures;
   std::vector<TextureImage> images;
   std::vector<BufferData> buffers;
-  //std::vector<SkinHierarchy> skins;
+  // std::vector<SkinHierarchy> skins;
 
   ///
   /// @param[in] mesh_abs_path USD prim path to this GeomMesh
   /// @param[in] mesh Input GeomMesh
-  /// @param[in] rmaterial_map USD material path -> RenderMaterial index list. Use empty map if no material assigned
-  /// to this Mesh. If the mesh has bounded material(including material from GeomSubset), RenderMaterial index must
-  /// be obrained using ConvertMaterial method firstly.
+  /// @param[in] rmaterial_map USD material path -> RenderMaterial index list.
+  /// Use empty map if no material assigned to this Mesh. If the mesh has
+  /// bounded material(including material from GeomSubset), RenderMaterial index
+  /// must be obrained using ConvertMaterial method firstly.
   /// @param[in] material_subsets GeomSubset assigned to this Mesh
   /// @param[out] dst RenderMesh output
   ///
@@ -1146,22 +1160,22 @@ class RenderSceneConverter {
   ///
   /// TODO: per-face material(GeomSubset)
   ///
-  bool ConvertMesh(const tinyusdz::Path &mesh_abs_path,
-                   const tinyusdz::GeomMesh &mesh,
-                   const std::map<std::string, int64_t> &rmaterial_map,
-                   const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
-                   RenderMesh *dst,
-                   double timecode = tinyusdz::value::TimeCode::Default());
+  bool ConvertMesh(
+      const tinyusdz::Path &mesh_abs_path, const tinyusdz::GeomMesh &mesh,
+      const std::map<std::string, int64_t> &rmaterial_map,
+      const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+      RenderMesh *dst,
+      const double timecode = tinyusdz::value::TimeCode::Default());
 
   ///
   /// Convert USD Material/Shader to renderer-friendly Material
   ///
   /// @return true when success.
   ///
-  bool ConvertMaterial(const tinyusdz::Path &abs_mat_path,
-                       const tinyusdz::Material &material,
-                       RenderMaterial *rmat_out,
-                       double timecode = tinyusdz::value::TimeCode::Default());
+  bool ConvertMaterial(
+      const tinyusdz::Path &abs_mat_path, const tinyusdz::Material &material,
+      RenderMaterial *rmat_out,
+      const double timecode = tinyusdz::value::TimeCode::Default());
 
   ///
   /// Convert UsdPreviewSurface Shader to renderer-friendly PreviewSurfaceShader
@@ -1173,10 +1187,10 @@ class RenderSceneConverter {
   ///
   /// @return true when success.
   ///
-  bool ConvertPreviewSurfaceShader(const tinyusdz::Path &shader_abs_path,
-                                   const tinyusdz::UsdPreviewSurface &shader,
-                                   PreviewSurfaceShader *pss_out,
-                                   double timecode = tinyusdz::value::TimeCode::Default());
+  bool ConvertPreviewSurfaceShader(
+      const tinyusdz::Path &shader_abs_path,
+      const tinyusdz::UsdPreviewSurface &shader, PreviewSurfaceShader *pss_out,
+      const double timecode = tinyusdz::value::TimeCode::Default());
 
   ///
   /// Convert UsdUvTexture to renderer-friendly UVTexture
@@ -1190,18 +1204,39 @@ class RenderSceneConverter {
   ///
   /// @return true when success.
   ///
-  bool ConvertUVTexture(const Path &tex_abs_path, const AssetInfo &assetInfo,
-                        const UsdUVTexture &texture, UVTexture *tex_out,
-                        double timecode = tinyusdz::value::TimeCode::Default());
+  bool ConvertUVTexture(
+      const Path &tex_abs_path, const AssetInfo &assetInfo,
+      const UsdUVTexture &texture, UVTexture *tex_out,
+      const double timecode = tinyusdz::value::TimeCode::Default());
 
   const Stage *GetStagePtr() const { return _stage; }
 
+  double GetTimeCode() const { return _timecode; }
+
  private:
+
+  bool ValidateGeomSubset(const Prim &prim) const;
+
   template <typename T, typename Dty>
   bool ConvertPreviewSurfaceShaderParam(
       const Path &shader_abs_path,
       const TypedAttributeWithFallback<Animatable<T>> &param,
-      const std::string &param_name, ShaderParam<Dty> &dst_param);
+      const std::string &param_name, ShaderParam<Dty> &dst_param,
+      const double timecode);
+
+  //
+  // Get BlendShape prims in this GeomMesh Prim
+  // (`skel:blendShapes`, `skel:blendShapeTargets`)
+  //
+  bool GetBlenedShapesImpl(
+      const tinyusdz::Prim &prim,
+      std::vector<const tinyusdz::BlendShape *> &out_blendshapes);
+
+  //
+  // Get Skeleton assigned to this GeomMesh Prim
+  //
+  bool GetSkeletonImpl(const tinyusdz::Prim &prim,
+                       const tinyusdz::Skeleton *&out_skeleton);
 
   AssetResolutionResolver _asset_resolver;
 
@@ -1217,6 +1252,8 @@ class RenderSceneConverter {
   std::string _info;
   std::string _err;
   std::string _warn;
+
+  double _timecode = value::TimeCode::Default();
 };
 
 // For debug

@@ -667,7 +667,7 @@ std::vector<const tinyusdz::GeomSubset *> GetMaterialBindGeomSubsets(
 
   std::vector<const tinyusdz::GeomSubset *> dst;
 
-  // GeomSubet Prim must be a child.
+  // GeomSubet Prim must be a child Prim of GeomMesh.
   for (const auto &child : prim.children()) {
     if (const tinyusdz::GeomSubset *psubset = child.as<tinyusdz::GeomSubset>()) {
       value::token tok;
@@ -1621,20 +1621,23 @@ bool RenderSceneConverter::ConvertMesh(
 
   bool triangulate = _mesh_config.triangulate;
 
+
   if (triangulate) {
-    std::string err;
 
     std::vector<uint32_t> triangulatedFaceVertexCounts;  // should be all 3's
     std::vector<uint32_t> triangulatedFaceVertexIndices;
-    std::vector<size_t> triangulatedToOrigFaceVertexIndexMap; // not used atm.
-    std::vector<uint32_t> triangulatedFaceCounts; 
+    std::vector<size_t> triangulatedToOrigFaceVertexIndexMap; // used for rearrange facevertex attrib
+    std::vector<uint32_t> triangulatedFaceCounts;  // used for rearrange face indices(e.g GeomSubset indices)
+
+    std::string err;
+
     if (!TriangulatePolygon<value::float3, float>(
             dst.points, dst.faceVertexCounts, dst.faceVertexIndices,
             triangulatedFaceVertexCounts, triangulatedFaceVertexIndices,
             triangulatedToOrigFaceVertexIndexMap, triangulatedFaceCounts, err)) {
       PUSH_ERROR_AND_RETURN("Triangulation failed: " + err);
     }
-    (void)triangulatedToOrigFaceVertexIndexMap;
+
 
     if (dst.material_subsetMap.size()) {
 
@@ -1643,83 +1646,77 @@ bool RenderSceneConverter::ConvertMesh(
         PUSH_ERROR_AND_RETURN("Internal error in triangulation logic.");
       }
 
+      //
       // Up to 2GB faces.
       //
-#if 0
-      // Build offset table.
-      // key: orig face index, value: counts
-      std::map<int32_t, uint32_t> faceIndexCounts;
 
-      // key: orig face index, value: indexOffset
+      // key: array index in faceVertexCount(before triangulation), value: the array index in triangulatedFaceVertexCounts
       std::map<int32_t, uint32_t> faceIndexOffsets;
 
-      int32_t maxFaceIndex = 0;
-      for (size_t i = 0; i < triangulatedToOrigFaceVertexIndexMap.size(); i++) {
-        size_t faceIndex = triangulatedToOrigFaceVertexIndexMap[i];
+      uint32_t faceIndexOffset = 0;
+      for (size_t i = 0; i < triangulatedFaceCounts.size(); i++) {
+        size_t ncount = triangulatedFaceCounts[i];
 
-        if (faceIndex > std::numeric_limits<int>::max()) {
-          PUSH_ERROR_AND_RETURN("Mesh contains 2G or more faces.");
-        }
+        faceIndexOffsets[int32_t(i)] = faceIndexOffset;
 
-        if (int(faceIndexCounts[int32_t(faceIndex)]) >= std::numeric_limits<int>::max()) {
-          PUSH_ERROR_AND_RETURN("Mesh contains 2G or more faces.");
-        }
+        faceIndexOffset += ncount;
 
-        faceIndexCounts[int32_t(faceIndex)]++;
-
-        maxFaceIndex = (std::max)(maxFaceIndex, int32_t(faceIndex));
-      }
-
-      size_t offset = 0;
-      for (int32_t i = 0; i < maxFaceIndex; i++) {
-        if (faceIndexCounts.count(i)) {
-          faceIndexOffsets[i] = uint32_t(offset);
-          offset += faceIndexCounts[i];
-
-          if (offset >= std::numeric_limits<int>::max()) {
-            PUSH_ERROR_AND_RETURN("Mesh contains 2G or more faces.");
-          }
+        if (int(faceIndexOffset) >= std::numeric_limits<int>::max()) {
+          PUSH_ERROR_AND_RETURN("Triangulated Mesh contains 2G or more faces.");
         }
       }
 
       // Remap indices in MaterialSubset
+      //
+      // example:
+      //
+      // faceVertexCounts = [4, 4]
+      // faceVertexIndices = [0, 1, 2, 3, 4, 5, 6, 7]
+      //
+      // triangulatedFaceVertexCounts = [3, 3, 3, 3]
+      // triangulatedFaceVertexIndices = [0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7]
+      // triangulatedFaceCounts = [2, 2]
+      //
+      // geomsubset.indices = [0, 1] # index to faceVertexCounts
+      // faceIndexOffsets = [0, 2]
+      //
+      // => triangulated geomsubset.indices = [0, 1, 2, 3] # index to triangulatedFaceVertexCounts
+      //
+      //
       for (auto &it : dst.material_subsetMap) {
-        std::vector<int> indices;
+        std::vector<int> triangulated_indices;
 
-        for (const auto &i : it.second.indices) {
-          -1
-          faceIndexOffsets[i];
+        for (size_t i = 0; i < it.second.indices.size(); i++) {
+          int32_t srcIndex = it.second.indices[i];
+          if (srcIndex < 0) {
+            PUSH_ERROR_AND_RETURN("Invalid index value in GeomSubset.");
+          }
+
+          if (!faceIndexOffsets.count(int(i))) {
+            PUSH_ERROR_AND_RETURN(fmt::format("Index value {} in GeomSubset is out-of-range.", i));
+          }
+
+          uint32_t baseFaceIndex = faceIndexOffsets[int(i)];
+
+          for (size_t k = 0; k < triangulatedFaceCounts[uint32_t(srcIndex)]; k++) {
+            if ((baseFaceIndex + k) > (std::numeric_limits<int32_t>::max)()) {
+              PUSH_ERROR_AND_RETURN(fmt::format("Index value exceeds 2GB."));
+            }
+            // assume faceIndex in each polygon is monotonically increasing.
+            triangulated_indices.push_back(int(baseFaceIndex + k));
+          }
+
         }
       }
-#else
-      // Remap indices in MaterialSubset
-      for (auto &it : dst.material_subsetMap) {
-        std::vector<int> indices;
-
-        for (const auto &i : it.second.indices) {
-          if (i < 0) {
-            PUSH_ERROR_AND_RETURN(fmt::format("Invalid index {} found.", i));
-          }
-          if (size_t(i) > dst.faceVertexCounts.size()) {
-            PUSH_ERROR_AND_RETURN(fmt::format("GeomSubset index {} exceeds the number of faces in the mesh {}.", i, dst.faceVertexCounts.size()));
-          }
-
-          uint32_t faceIndex = dst.faceVertexCounts[size_t(i)];
-          // repeat n times.
-          for (size_t k = 0; k < triangulatedFaceCounts[size_t(i)]; k++) {
-          }
-          
-        }
-      }
-#endif
-
     }
 
     dst.faceVertexCounts = std::move(triangulatedFaceVertexCounts);
     dst.faceVertexIndices = std::move(triangulatedFaceVertexIndices);
 
+    dst.triangulatedToOrigFaceVertexIndexMap = std::move(triangulatedToOrigFaceVertexIndexMap);
+    dst.triangulatedFaceCounts = std::move(triangulatedFaceCounts);
 
-  }  // triangulate
+  }  // end triangulate
 
 
   //
@@ -1881,9 +1878,34 @@ bool RenderSceneConverter::ConvertMesh(
           PUSH_ERROR_AND_RETURN("Internal error. `is_single_indexable` should not be true when FaceVarying.");
         }
 
-        dst.normals.get_data().resize(normals.size() * sizeof(value::normal3f));
-        memcpy(dst.normals.get_data().data(), normals.data(),
-               sizeof(value::normal3f) * normals.size());
+        if (triangulate) {
+          size_t nsrcs = normals.size() / sizeof(value::normal3f);
+          value::normal3f *src_ptr = reinterpret_cast<value::normal3f *>(normals.data());
+
+          std::vector<value::normal3f> triangulated_fvnormals;
+
+          // rearrange normals
+          for (size_t i = 0; i < dst.triangulatedToOrigFaceVertexIndexMap.size(); i++) {
+            size_t vidx = dst.triangulatedToOrigFaceVertexIndexMap[i];
+
+            if (vidx >= nsrcs) {
+              PUSH_ERROR_AND_RETURN("Internal error. Invalid triangulation.");
+            }
+
+            triangulated_fvnormals.push_back(src_ptr[vidx]);
+          } 
+
+          dst.normals.get_data().resize(triangulated_fvnormals.size() * sizeof(value::normal3f));
+          memcpy(dst.normals.get_data().data(), triangulated_fvnormals.data(),
+                 sizeof(value::normal3f) * triangulated_fvnormals.size());
+
+        } else {
+          dst.normals.get_data().resize(normals.size() * sizeof(value::normal3f));
+          memcpy(dst.normals.get_data().data(), normals.data(),
+                 sizeof(value::normal3f) * normals.size());
+
+        }
+
         dst.normals.elementSize = 1;
         dst.normals.stride = sizeof(value::normal3f);
         dst.normals.variability = VertexVariability::FaceVarying;
@@ -1976,14 +1998,38 @@ bool RenderSceneConverter::ConvertMesh(
         dst.texcoords[uint32_t(slotId)] = uvAttr;
       } else if (vattr.variability == VertexVariability::FaceVarying) {
 
-        if (vattr.vertex_count() != num_fvs) {
-          PUSH_ERROR_AND_RETURN(
-              fmt::format("The number of UV texcoord attributes {} does not "
-                          "match to the number of facevarying elements {}\n",
-                          vattr.vertex_count(), num_fvs));
-        }
+        if (triangulate) {
+          size_t nsrcs = vattr.get_data().size() / sizeof(vec2);
+          const vec2 *src_ptr = reinterpret_cast<const vec2 *>(vattr.get_data().data());
 
-        dst.texcoords[uint32_t(slotId)] = vattr;
+          std::vector<vec2> triangulated_fvtexcoords;
+
+          // rearrange indices
+          for (size_t i = 0; i < dst.triangulatedToOrigFaceVertexIndexMap.size(); i++) {
+            size_t vidx = dst.triangulatedToOrigFaceVertexIndexMap[i];
+
+            if (vidx >= nsrcs) {
+              PUSH_ERROR_AND_RETURN("Internal error. Invalid triangulation.");
+            }
+
+            triangulated_fvtexcoords.push_back(src_ptr[vidx]);
+          } 
+
+          VertexAttribute uvAttr;
+          uvAttr.get_data().resize(triangulated_fvtexcoords.size() * sizeof(vec2));
+          memcpy(uvAttr.get_data().data(), triangulated_fvtexcoords.data(), triangulated_fvtexcoords.size() * sizeof(vec2));
+
+          dst.texcoords[uint32_t(slotId)] = uvAttr;
+        } else {
+          if (vattr.vertex_count() != num_fvs) {
+            PUSH_ERROR_AND_RETURN(
+                fmt::format("The number of UV texcoord attributes {} does not "
+                            "match to the number of facevarying elements {}\n",
+                            vattr.vertex_count(), num_fvs));
+          }
+
+          dst.texcoords[uint32_t(slotId)] = vattr;
+        }
       } else {
         PUSH_ERROR_AND_RETURN("Internal error. Invalid variability value in TexCoord attribute.");
       }
@@ -2003,23 +2049,24 @@ namespace {
 // Convert UsdTranform2d -> PrimvarReader_float2 shader network.
 nonstd::expected<bool, std::string> ConvertTexTransform2d(
     const Stage &stage, const Path &tx_abs_path, const UsdTransform2d &tx,
-    UVTexture *tex_out) {
+    UVTexture *tex_out,
+    double timecode) {
   float rotation;  // in angles
-  if (!tx.rotation.get_value().get_scalar(&rotation)) {
+  if (!tx.rotation.get_value().get(timecode, &rotation)) {
     return nonstd::make_unexpected(
         fmt::format("Failed to retrieve rotation attribute from {}\n",
                     tx_abs_path.full_path_name()));
   }
 
   value::float2 scale;
-  if (!tx.scale.get_value().get_scalar(&scale)) {
+  if (!tx.scale.get_value().get(timecode, &scale)) {
     return nonstd::make_unexpected(
         fmt::format("Failed to retrieve scale attribute from {}\n",
                     tx_abs_path.full_path_name()));
   }
 
   value::float2 translation;
-  if (!tx.translation.get_value().get_scalar(&translation)) {
+  if (!tx.translation.get_value().get(timecode, &translation)) {
     return nonstd::make_unexpected(
         fmt::format("Failed to retrieve translation attribute from {}\n",
                     tx_abs_path.full_path_name()));
@@ -2241,7 +2288,8 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
 bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
                                             const AssetInfo &assetInfo,
                                             const UsdUVTexture &texture,
-                                            UVTexture *tex_out) {
+                                            UVTexture *tex_out,
+                                            double timecode) {
   DCOUT("ConvertUVTexture " << tex_abs_path);
 
   if (!tex_out) {
@@ -2259,11 +2307,10 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
 
   value::AssetPath assetPath;
   if (auto apath = texture.file.get_value()) {
-    if (!apath.value().get_scalar(&assetPath)) {
+    if (!apath.value().get(timecode, &assetPath)) {
       PUSH_ERROR_AND_RETURN(
-          fmt::format("Failed to get `asset:file` value from Path {} (Maybe "
-                      "`asset:file` is timeSample value?)",
-                      tex_abs_path.prim_part()));
+          fmt::format("Failed to get `asset:file` value from Path {} at time {}",
+                      tex_abs_path.prim_part(), timecode));
     }
   } else {
     PUSH_ERROR_AND_RETURN(
@@ -2331,6 +2378,7 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
     } else {
       if (texture.sourceColorSpace.authored()) {
         UsdUVTexture::SourceColorSpace cs;
+        // TODO: timesampled colorSpace info
         if (texture.sourceColorSpace.get_value().get_scalar(&cs)) {
           if (cs == UsdUVTexture::SourceColorSpace::SRGB) {
             texImage.usdColorSpace = tydra::ColorSpace::sRGB;
@@ -2625,7 +2673,7 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
         tex.varname_uv = varname;
       } else if (const UsdTransform2d *ptransform =
                      pshader->value.as<UsdTransform2d>()) {
-        auto result = ConvertTexTransform2d(*_stage, path, *ptransform, &tex);
+        auto result = ConvertTexTransform2d(*_stage, path, *ptransform, &tex, timecode);
         if (!result) {
           PUSH_ERROR_AND_RETURN(result.error());
         }
@@ -2638,7 +2686,7 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
     } else {
       Animatable<value::texcoord2f> fallbacks = texture.st.get_value();
       value::texcoord2f uv;
-      if (fallbacks.get_scalar(&uv)) {
+      if (fallbacks.get(timecode, &uv)) {
         tex.fallback_uv[0] = uv[0];
         tex.fallback_uv[1] = uv[1];
       } else {
@@ -2653,6 +2701,7 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
   if (texture.wrapS.authored()) {
     tinyusdz::UsdUVTexture::Wrap wrap;
 
+    // TODO: TimeSampled wrap enum  
     if (!texture.wrapS.get_value().get_scalar(&wrap)) {
       PUSH_ERROR_AND_RETURN("Invalid UsdUVTexture inputs:wrapS value.");
     }
@@ -2700,7 +2749,8 @@ template <typename T, typename Dty>
 bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
     const Path &shader_abs_path,
     const TypedAttributeWithFallback<Animatable<T>> &param,
-    const std::string &param_name, ShaderParam<Dty> &dst_param) {
+    const std::string &param_name, ShaderParam<Dty> &dst_param,
+    const double timecode) {
   if (!param.authored()) {
     return true;
   }
@@ -2751,7 +2801,7 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
     return true;
   } else {
     T val;
-    if (!param.get_value().get_scalar(&val)) {
+    if (!param.get_value().get(timecode, &val)) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("Failed to get {} at `default` timecode.", param_name));
     }
@@ -2765,7 +2815,8 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
 // TODO: timeSamples
 bool RenderSceneConverter::ConvertPreviewSurfaceShader(
     const Path &shader_abs_path, const UsdPreviewSurface &shader,
-    PreviewSurfaceShader *rshader_out) {
+    PreviewSurfaceShader *rshader_out,
+    const double timecode) {
   if (!rshader_out) {
     PUSH_ERROR_AND_RETURN("rshader_out arg is nullptr.");
   }
@@ -2781,9 +2832,9 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShader(
           fmt::format("TODO: useSpecularWorkflow with connection."));
     } else {
       int val;
-      if (!shader.useSpecularWorkflow.get_value().get_scalar(&val)) {
+      if (!shader.useSpecularWorkflow.get_value().get(timecode, &val)) {
         PUSH_ERROR_AND_RETURN(fmt::format(
-            "Failed to get useSpcularWorkFlow value at `default` timecode."));
+            "Failed to get useSpcularWorkFlow value at time `{}`.", timecode));
       }
 
       rshader.useSpecularWorkFlow = val ? true : false;
@@ -2791,71 +2842,59 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShader(
   }
 
   if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.diffuseColor,
-                                        "diffuseColor", rshader.diffuseColor)) {
+                                        "diffuseColor", rshader.diffuseColor, timecode)) {
     return false;
   }
 
   if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.emissiveColor,
                                         "emissiveColor",
-                                        rshader.emissiveColor)) {
+                                        rshader.emissiveColor, timecode)) {
     return false;
   }
 
   if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.specularColor,
                                         "specularColor",
-                                        rshader.specularColor)) {
+                                        rshader.specularColor, timecode)) {
     return false;
   }
 
   if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.normal,
-                                        "normal", rshader.normal)) {
+                                        "normal", rshader.normal, timecode)) {
     return false;
   }
 
   if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.roughness,
-                                        "roughness", rshader.roughness)) {
+                                        "roughness", rshader.roughness, timecode)) {
     return false;
   }
 
   if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.metallic,
-                                        "metallic", rshader.metallic)) {
+                                        "metallic", rshader.metallic, timecode)) {
     return false;
   }
 
   if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.clearcoat,
-                                        "clearcoat", rshader.clearcoat)) {
+                                        "clearcoat", rshader.clearcoat, timecode)) {
     return false;
   }
 
   if (!ConvertPreviewSurfaceShaderParam(
           shader_abs_path, shader.clearcoatRoughness, "clearcoatRoughness",
-          rshader.clearcoatRoughness)) {
-    return false;
-  }
-
-  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.opacity,
-                                        "opacity", rshader.opacity)) {
-    return false;
-  }
-
-  if (!ConvertPreviewSurfaceShaderParam(
-          shader_abs_path, shader.opacityThreshold, "opacityThreshold",
-          rshader.opacityThreshold)) {
-    return false;
-  }
+          rshader.clearcoatRoughness, timecode)) {
+    return false; } if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.opacity, "opacity", rshader.opacity, timecode)) { return false; } if (!ConvertPreviewSurfaceShaderParam( shader_abs_path, shader.opacityThreshold, "opacityThreshold", rshader.opacityThreshold, timecode)) { return false; }
 
   if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.ior, "ior",
-                                        rshader.ior)) {
+                                        rshader.ior, timecode)) {
     return false;
   }
 
   if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.occlusion,
-                                        "occlusion", rshader.occlusion)) {
+                                        "occlusion", rshader.occlusion, timecode)) {
     return false;
   }
 
   if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.displacement,
-                                        "displacement", rshader.displacement)) {
+                                        "displacement", rshader.displacement, timecode)) {
     return false;
   }
 
@@ -2865,7 +2904,7 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShader(
 
 bool RenderSceneConverter::ConvertMaterial(const Path &mat_abs_path,
                                            const tinyusdz::Material &material,
-                                           RenderMaterial *rmat_out) {
+                                           RenderMaterial *rmat_out, const double timecode) {
   if (!_stage) {
     PUSH_ERROR_AND_RETURN("stage is nullptr.");
   }
@@ -2877,11 +2916,7 @@ bool RenderSceneConverter::ConvertMaterial(const Path &mat_abs_path,
   RenderMaterial rmat;
   rmat.abs_path = mat_abs_path.prim_part();
   rmat.name = mat_abs_path.element_name();
-  DCOUT("rmat.abs_path = " << rmat.abs_path);
-  DCOUT("rmat.name = " << rmat.name);
-
-  std::string err;
-
+  DCOUT("rmat.abs_path = " << rmat.abs_path); DCOUT("rmat.name = " << rmat.name); std::string err;
   Path surfacePath;
 
   //
@@ -2977,6 +3012,8 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     return false;
   }
 
+  double timecode = converter->GetTimeCode();
+
   if (const tinyusdz::GeomMesh *pmesh = prim.as<tinyusdz::GeomMesh>()) {
     // Collect GeomSubsets
     // std::vector<const tinyusdz::GeomSubset *> subsets = GetGeomSubsets(;
@@ -3062,7 +3099,11 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
       RenderMesh rmesh;
 
-      if (!converter->ConvertMesh(rmaterial_id, *pmesh, &rmesh)) {
+      // TODO
+      std::map<std::string, int64_t> rmaterial_idMap;
+      std::vector<const GeomSubset *> material_subsetMap;
+
+      if (!converter->ConvertMesh(abs_path, *pmesh, rmaterial_idMap, material_subsetMap, &rmesh, timecode)) {
         if (err) {
           (*err) += fmt::format("Mesh conversion failed: {}",
                                 abs_path.full_path_name());
@@ -3097,24 +3138,25 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     }
 #endif
 
-    converter->meshes.emplace_back(std::move(rmesh));
+    //converter->meshes.emplace_back(std::move(rmesh));
   }
 
   return true;  // continue traversal
 }
+
 }  // namespace
 
 bool RenderSceneConverter::ConvertToRenderScene(const Stage &stage,
-                                                RenderScene *scene) {
+                                                RenderScene *scene, const double timecode) {
   if (!scene) {
     PUSH_ERROR_AND_RETURN("nullptr for RenderScene argument.");
   }
 
   _stage = &stage;
 
-  // Build Xform at default time.
+  // Build Xform at specified time.
   XformNode xform_node;
-  if (!BuildXformNodeFromStage(stage, &xform_node)) {
+  if (!BuildXformNodeFromStage(stage, &xform_node, timecode)) {
     PUSH_ERROR_AND_RETURN("Failed to build Xform node hierarchy.\n");
   }
 
@@ -3837,6 +3879,49 @@ std::string DumpRenderScene(const RenderScene &scene,
 
   return ss.str();
 }
+
+bool RenderSceneConverter::GetBlenedShapesImpl(
+  const tinyusdz::Prim &prim,
+  std::vector<const BlendShape *> &out_blendshapes) {
+
+  std::vector<const tinyusdz::BlendShape *> dst;
+
+  auto *pmesh = prim.as<GeomMesh>();
+  if (!pmesh) {
+    return false;
+  }
+
+  //
+  // BlendShape Prim may not be a child of GeomMesh. So need to search Prims
+  //
+  if (pmesh->blendShapes.authored() && pmesh->blendShapeTargets.has_value()) {
+    // TODO: connection
+    std::vector<value::token> blendShapeNames;
+
+    if (!pmesh->blendShapes.get_value(&blendShapeNames)) {
+      PUSH_ERROR_AND_RETURN("Failed to get `skel:blendShapes` attribute.");
+    }
+
+    if (pmesh->blendShapeTargets.has_value()) {
+      if (pmesh->blendShapeTargets.value().is_path()) {
+        if (blendShapeNames.size() != 1) {
+          PUSH_ERROR_AND_RETURN("Array size mismatch with `skel:blendShapes` and `skel:blendShapeTargets`.");
+        }
+      } else if (pmesh->blendShapeTargets.value().is_pathvector()) {
+        if (blendShapeNames.size() != pmesh->blendShapeTargets.value().targetPathVector.size()) {
+          PUSH_ERROR_AND_RETURN("Array size mismatch with `skel:blendShapes` and `skel:blendShapeTargets`.");
+        }
+      } else {
+        PUSH_ERROR_AND_RETURN("Invalid or unsupported definition of `skel:blendShapeTargets` relationship.");
+      }
+    }
+    
+  }
+
+  out_blendshapes = dst;
+  return true;
+}  
+
 
 }  // namespace tydra
 }  // namespace tinyusdz
