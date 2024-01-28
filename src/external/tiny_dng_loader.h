@@ -35,10 +35,6 @@ THE SOFTWARE.
 #include <string>
 #include <vector>
 
-#if !defined(TINY_DNG_NO_EXCEPTION)
-#include <stdexcept>
-#endif
-
 namespace tinydng {
 
 // TODO: Deal with out-of-memory error
@@ -164,13 +160,13 @@ struct GainMap {
 struct DNGImage {
   int black_level[4];  // for each spp(up to 4)
   int white_level[4];  // for each spp(up to 4)
-  int version;         // DNG version
+  int version{0};         // DNG version
 
-  int samples_per_pixel;
-  int rows_per_strip;
+  int samples_per_pixel{0};
+  int rows_per_strip{0};
 
-  int bits_per_sample_original;  // BitsPerSample in stored file.
-  int bits_per_sample;  // Bits per sample after reading(decoding) DNG image.
+  int bits_per_sample_original{0};  // BitsPerSample in stored file.
+  int bits_per_sample{0};  // Bits per sample after reading(decoding) DNG image.
 
   char cfa_plane_color[4];  // 0:red, 1:green, 2:blue, 3:cyan, 4:magenta,
                             // 5:yellow, 6:white
@@ -229,6 +225,17 @@ struct DNGImage {
   std::vector<unsigned int> strip_byte_counts;
   std::vector<unsigned int> strip_offsets;
 
+  // Color profile
+  std::string profile_name; // UTF-8 string
+  // An array of flattened the pair of input/output value.
+  // [(0.0, 0.0), (0.1, 0.1), ... (1.0, 1.0)]
+  // First two item must be 0.0, Last two item must be 1.0
+  std::vector<float> profile_tone_curve;  
+  int profile_embed_policy{-1}; // 0 = "allow copying", 1 = "embed if used", 2 = "embed never"
+
+  // Noise profile
+  std::vector<double> noise_profile; // 2 or 2 * ColorPlanes
+
   // CR2(Canon RAW) specific
   unsigned short cr2_slices[3];
   unsigned short pad_c;
@@ -253,9 +260,6 @@ struct DNGImage {
 ///
 /// If DNG contains multiple images(e.g. full-res image + thumnail image),
 /// The function creates `DNGImage` data strucure for each images.
-///
-/// C++ exception would be trigerred inside the function unless
-/// TINY_DNG_NO_EXCEPTION macro is defined.
 ///
 /// @param[in] filename DNG filename.
 /// @param[in] custom_fields List of custom fields to parse(optional. can pass
@@ -342,7 +346,7 @@ bool IsDNGFromMemory(const char* mem, unsigned int size, std::string* msg);
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
-// #define TINY_DNG_LOADER_DEBUG
+#define TINY_DNG_LOADER_DEBUG
 #ifdef TINY_DNG_LOADER_DEBUG
 #define TINY_DNG_DPRINTF(...) printf(__VA_ARGS__)
 #else
@@ -1235,22 +1239,11 @@ static int parseScan(ljp* self) {
 
         left = Px + diff;
 
-        if (left >= 0) {
-          // ok
-        } else {
-          //TINY_DNG_ASSERT(left >= 0, "left value must be positive.");
-          return LJ92_ERROR_CORRUPT;
-        }
-
-        if (left < 65536) {
-          // ok
-        } else {
-          //TINY_DNG_ASSERT(left < 65536,
-          //                "left value must be less than u16 max(65536).");
-          return LJ92_ERROR_CORRUPT;
-        }
-
+        // issue https://github.com/syoyo/tinydng/issues/37
+        // The spec says the prediction(left) is calculated by adding the difference, then take a modulo(2^16)
+        // (`left` could be negative or 65536+ before taking a modulo)
         left = (u16)(left % 65536);
+
         // TINY_DNG_DPRINTF("row[%d] col[%d] c[%d] Px = %d, diff = %d, left =
         // %d\n", row, col, c, Px, diff, left);
         // Apple ProRAW gives -1 for `left`(=65535?), so uncommented negative
@@ -1973,6 +1966,9 @@ typedef enum {
   TAG_CALIBRATION_ILLUMINANT1 = 50778,
   TAG_CALIBRATION_ILLUMINANT2 = 50779,
   TAG_ACTIVE_AREA = 50829,
+  TAG_PROFILE_NAME = 50936,
+  TAG_PROFILE_TONE_CURVE = 50940,
+  TAG_PROFILE_EMBED_POLICY = 50941,
   TAG_FORWARD_MATRIX1 = 50964,
   TAG_FORWARD_MATRIX2 = 50965,
 
@@ -1990,8 +1986,7 @@ typedef enum {
   TAG_OPCODE_LIST2 = 0xc741,
   TAG_OPCODE_LIST3 = 0xc742,
 
-  // TODO:
-  // TAG_NOISE_PROFILE = 0xc761
+  TAG_NOISE_PROFILE = 51041,
 
   // DNG 1.6(Apple ProRAW)
   // ahttps://helpx.adobe.com/photoshop/kb/dng-specification-tags.html
@@ -2689,6 +2684,8 @@ static void InitializeDNGImage(tinydng::DNGImage* image) {
   image->orientation = 1;
 
   image->strips_per_image = -1;  // 2^32 - 1
+
+  image->profile_embed_policy = -1;
 
   // CR2 specific
   image->cr2_slices[0] = 0;
@@ -3977,7 +3974,7 @@ static bool ParseTIFFIFD(const StreamReader& sr,
         }
       } break;
 
-      case TAG_ACTIVE_AREA:
+      case TAG_ACTIVE_AREA: {
 
         for (size_t c = 0; c < 4; c++) {
           if (!sr.read_uint(type, reinterpret_cast<unsigned int*>(
@@ -3991,7 +3988,163 @@ static bool ParseTIFFIFD(const StreamReader& sr,
 
         image.has_active_area = true;
 
-        break;
+      }  break;
+
+      case TAG_PROFILE_NAME: {
+
+        size_t readLen = len;
+        if (readLen < 1) {
+          if (err) {
+            (*err) += "Null string for ProfileName Tag.\n";
+          }
+
+          return false;
+        }
+
+        const size_t kMaxNameSize = 1024 * 1024;
+
+        if (readLen > kMaxNameSize) {
+          if (err) {
+            (*err) += "The length of ProfileName string too large.\n";
+          }
+          return false;
+        }
+
+        std::vector<uint8_t> buf(readLen);  // readLen includes null char
+        if (!sr.read(readLen, readLen,
+                     reinterpret_cast<unsigned char*>(buf.data()))) {
+          if (err) {
+            (*err) += "Failed to parse ProfileName Tag.\n";
+          }
+          return false;
+        }
+
+        // TODO: Validate UTF-8 string.
+        image.profile_name = std::string(buf.begin(), buf.end());
+
+        TINY_DNG_DPRINTF("profile_name = %s\n", image.profile_name.c_str());
+
+      }  break;
+
+      case TAG_PROFILE_TONE_CURVE: {
+
+        TINY_DNG_DPRINTF("tone curve datalen = %d\n", len);
+
+        // len = samples * 2.
+        // It seems single channel tone curve only. 
+        if ((len % 2) != 0) {
+          if (err) {
+            (*err) += "Invalid data size for ProfileToneCurve Tag.\n";
+          }
+
+          return false;
+        }
+        size_t readLen = len * sizeof(float);
+
+        const size_t kMaxSamples = 1024 * 1024;
+
+        if (len > (kMaxSamples * 2)) {
+          if (err) {
+            (*err) += "The count of ProfileToneCurve too large.\n";
+          }
+          return false;
+        }
+
+        std::vector<float> buf(len);
+
+        for (size_t k = 0; k < len; k++) {
+          if (!sr.read_float(&buf[k])) {
+            if (err) {
+              (*err) += "Failed to parse ProfileToneCurve Tag.\n";
+            }
+            return false;
+          }
+        }
+
+        // TODO: Validate curve data.
+        image.profile_tone_curve = buf;
+
+        TINY_DNG_DPRINTF("profile_tone_curve.count = %d\n", int(image.profile_tone_curve.size()));
+
+      }  break;
+
+      case TAG_PROFILE_EMBED_POLICY: {
+        int policy;
+        if (!sr.read4(&policy)) {
+          if (err) {
+            (*err) += "Failed to parse ProfileEmbedPolicy Tag.\n";
+          }
+          return false;
+        }
+
+        if ((policy < 0) || (policy > 2)) {
+          if (err) {
+            (*err) += "ProfileEmbedPolicy value must be 0, 1 or 2.\n";
+          }
+          return false;
+        }
+
+        image.profile_embed_policy = policy;
+
+      } break;
+
+      case TAG_NOISE_PROFILE: {
+
+        TINY_DNG_DPRINTF("noise profile datalen = %d\n", len);
+
+        // DOUBLE * 2.
+        // or
+        // DOUBLE * 2 * colorPlanes
+
+        // It seems single channel tone curve only. 
+        if ((len % 2) != 0) {
+          if (err) {
+            (*err) += "Invalid data size for ProfileToneCurve Tag.\n";
+          }
+
+          return false;
+        }
+
+        if (len > 2) {
+          if ((image.samples_per_pixel < 1) || (image.samples_per_pixel > 4)) {
+            if (err) {
+              (*err) += "SamplesPerPixel Tag must exist before NoiseProfile Tag.\n";
+            }
+          }
+
+          if (len != (image.samples_per_pixel * 2)) {
+            if (err) {
+              (*err) += "Counts in NoisProfile must be 2 * SamplesPerPixel.\n";
+            }
+          }
+        }
+
+        const size_t kMaxSamples = 1024;
+
+        if (len > kMaxSamples) {
+          if (err) {
+            (*err) += "The count of NoiseProfile too large.\n";
+          }
+          return false;
+        }
+
+        std::vector<double> buf(len);
+
+        for (size_t k = 0; k < len; k++) {
+          if (!sr.read_double(&buf[k])) {
+            if (err) {
+              (*err) += "Failed to parse NoiseProfile Tag.\n";
+            }
+            return false;
+          }
+        }
+    
+        // TODO: Validate noise profile data.
+        image.noise_profile = buf;
+
+        TINY_DNG_DPRINTF("noise_profile.samples = %d\n", int(image.noise_profile.size()));
+
+      }  break;
 
       case TAG_BLACK_LEVEL: {
         // Assume TAG_SAMPLES_PER_PIXEL is read before
@@ -4327,7 +4480,7 @@ static bool ParseTIFFIFD(const StreamReader& sr,
         unsigned int strip_byte_count;
         if (!sr.read4(&strip_byte_count)) {
           if (err) {
-            (*err) += "Failed to read StripByteCount value.";
+            (*err) += "Failed to read StripByteCount value.\n";
           }
           return false;
         }
