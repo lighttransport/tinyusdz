@@ -888,7 +888,7 @@ nonstd::expected<VertexAttribute, std::string> TriangulateGeomPrimvar(
 /// attributes.)
 /// triangulatedFaceCounts: len = len(faceVertexCounts). Records the number of triangle faces. 1 = triangle. 2 = quad, ...
 /// For remapping face indices(e.g. GeomSubset::indices)
-/// 
+///
 ///
 /// Return false when a polygon is degenerated.
 /// No overlap check at the moment
@@ -1537,7 +1537,7 @@ bool RenderSceneConverter::ConvertMesh(
                                        const GeomMesh &mesh,
                                        const std::map<std::string, int64_t> &rmaterial_idMap,
                                        const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
-                                       RenderMesh *dstMesh, double timecode) {
+                                       RenderMesh *dstMesh) {
 
   //
   // Steps:
@@ -1560,7 +1560,7 @@ bool RenderSceneConverter::ConvertMesh(
   // TODO: connections
   if (const auto pv = mesh.faceVertexIndices.get_value()) {
     std::vector<int32_t> indices;
-    if (pv.value().get(timecode, &indices)) {
+    if (pv.value().get(_timecode, &indices)) {
       for (size_t i = 0; i < indices.size(); i++) {
         if (indices[i] < 0) {
           PUSH_ERROR_AND_RETURN(fmt::format("faceVertexIndices[{}] contains negative index value {}.", i, indices[i]));
@@ -1572,7 +1572,7 @@ bool RenderSceneConverter::ConvertMesh(
 
   if (const auto pv = mesh.faceVertexCounts.get_value()) {
     std::vector<int32_t> counts;
-    if (pv.value().get(timecode, &counts)) {
+    if (pv.value().get(_timecode, &counts)) {
 
       for (size_t i = 0; i < counts.size(); i++) {
         if (counts[i] < 3) {
@@ -1604,7 +1604,7 @@ bool RenderSceneConverter::ConvertMesh(
 
     if (const auto pv = psubset->indices.get_value()) {
       std::vector<int32_t> indices;
-      if (pv.value().get(timecode, &indices)) {
+      if (pv.value().get(_timecode, &indices)) {
         ms.indices = indices;
       }
     }
@@ -1893,7 +1893,7 @@ bool RenderSceneConverter::ConvertMesh(
             }
 
             triangulated_fvnormals.push_back(src_ptr[vidx]);
-          } 
+          }
 
           dst.normals.get_data().resize(triangulated_fvnormals.size() * sizeof(value::normal3f));
           memcpy(dst.normals.get_data().data(), triangulated_fvnormals.data(),
@@ -2013,7 +2013,7 @@ bool RenderSceneConverter::ConvertMesh(
             }
 
             triangulated_fvtexcoords.push_back(src_ptr[vidx]);
-          } 
+          }
 
           VertexAttribute uvAttr;
           uvAttr.get_data().resize(triangulated_fvtexcoords.size() * sizeof(vec2));
@@ -2288,8 +2288,7 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
 bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
                                             const AssetInfo &assetInfo,
                                             const UsdUVTexture &texture,
-                                            UVTexture *tex_out,
-                                            double timecode) {
+                                            UVTexture *tex_out) {
   DCOUT("ConvertUVTexture " << tex_abs_path);
 
   if (!tex_out) {
@@ -2307,10 +2306,10 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
 
   value::AssetPath assetPath;
   if (auto apath = texture.file.get_value()) {
-    if (!apath.value().get(timecode, &assetPath)) {
+    if (!apath.value().get(_timecode, &assetPath)) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("Failed to get `asset:file` value from Path {} at time {}",
-                      tex_abs_path.prim_part(), timecode));
+                      tex_abs_path.prim_part(), _timecode));
     }
   } else {
     PUSH_ERROR_AND_RETURN(
@@ -2379,7 +2378,7 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
       if (texture.sourceColorSpace.authored()) {
         UsdUVTexture::SourceColorSpace cs;
         // TODO: timesampled colorSpace info
-        if (texture.sourceColorSpace.get_value().get_scalar(&cs)) {
+        if (texture.sourceColorSpace.get_value().get(_timecode, &cs)) {
           if (cs == UsdUVTexture::SourceColorSpace::SRGB) {
             texImage.usdColorSpace = tydra::ColorSpace::sRGB;
           } else if (cs == UsdUVTexture::SourceColorSpace::Raw) {
@@ -2673,7 +2672,7 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
         tex.varname_uv = varname;
       } else if (const UsdTransform2d *ptransform =
                      pshader->value.as<UsdTransform2d>()) {
-        auto result = ConvertTexTransform2d(*_stage, path, *ptransform, &tex, timecode);
+        auto result = ConvertTexTransform2d(*_stage, path, *ptransform, &tex, _timecode);
         if (!result) {
           PUSH_ERROR_AND_RETURN(result.error());
         }
@@ -2686,7 +2685,7 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
     } else {
       Animatable<value::texcoord2f> fallbacks = texture.st.get_value();
       value::texcoord2f uv;
-      if (fallbacks.get(timecode, &uv)) {
+      if (fallbacks.get(_timecode, &uv)) {
         tex.fallback_uv[0] = uv[0];
         tex.fallback_uv[1] = uv[1];
       } else {
@@ -2701,7 +2700,7 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
   if (texture.wrapS.authored()) {
     tinyusdz::UsdUVTexture::Wrap wrap;
 
-    // TODO: TimeSampled wrap enum  
+    // TODO: TimeSampled wrap enum
     if (!texture.wrapS.get_value().get_scalar(&wrap)) {
       PUSH_ERROR_AND_RETURN("Invalid UsdUVTexture inputs:wrapS value.");
     }
@@ -2749,8 +2748,8 @@ template <typename T, typename Dty>
 bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
     const Path &shader_abs_path,
     const TypedAttributeWithFallback<Animatable<T>> &param,
-    const std::string &param_name, ShaderParam<Dty> &dst_param,
-    const double timecode) {
+    const std::string &param_name, ShaderParam<Dty> &dst_param)
+{
   if (!param.authored()) {
     return true;
   }
@@ -2801,7 +2800,7 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
     return true;
   } else {
     T val;
-    if (!param.get_value().get(timecode, &val)) {
+    if (!param.get_value().get(_timecode, &val)) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("Failed to get {} at `default` timecode.", param_name));
     }
@@ -2815,8 +2814,7 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
 // TODO: timeSamples
 bool RenderSceneConverter::ConvertPreviewSurfaceShader(
     const Path &shader_abs_path, const UsdPreviewSurface &shader,
-    PreviewSurfaceShader *rshader_out,
-    const double timecode) {
+    PreviewSurfaceShader *rshader_out) {
   if (!rshader_out) {
     PUSH_ERROR_AND_RETURN("rshader_out arg is nullptr.");
   }
@@ -2832,9 +2830,9 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShader(
           fmt::format("TODO: useSpecularWorkflow with connection."));
     } else {
       int val;
-      if (!shader.useSpecularWorkflow.get_value().get(timecode, &val)) {
+      if (!shader.useSpecularWorkflow.get_value().get(_timecode, &val)) {
         PUSH_ERROR_AND_RETURN(fmt::format(
-            "Failed to get useSpcularWorkFlow value at time `{}`.", timecode));
+            "Failed to get useSpcularWorkFlow value at time `{}`.", _timecode));
       }
 
       rshader.useSpecularWorkFlow = val ? true : false;
@@ -2842,59 +2840,59 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShader(
   }
 
   if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.diffuseColor,
-                                        "diffuseColor", rshader.diffuseColor, timecode)) {
+                                        "diffuseColor", rshader.diffuseColor)) {
     return false;
   }
 
   if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.emissiveColor,
                                         "emissiveColor",
-                                        rshader.emissiveColor, timecode)) {
+                                        rshader.emissiveColor)) {
     return false;
   }
 
   if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.specularColor,
                                         "specularColor",
-                                        rshader.specularColor, timecode)) {
+                                        rshader.specularColor)) {
     return false;
   }
 
   if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.normal,
-                                        "normal", rshader.normal, timecode)) {
+                                        "normal", rshader.normal)) {
     return false;
   }
 
   if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.roughness,
-                                        "roughness", rshader.roughness, timecode)) {
+                                        "roughness", rshader.roughness)) {
     return false;
   }
 
   if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.metallic,
-                                        "metallic", rshader.metallic, timecode)) {
+                                        "metallic", rshader.metallic)) {
     return false;
   }
 
   if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.clearcoat,
-                                        "clearcoat", rshader.clearcoat, timecode)) {
+                                        "clearcoat", rshader.clearcoat)) {
     return false;
   }
 
   if (!ConvertPreviewSurfaceShaderParam(
           shader_abs_path, shader.clearcoatRoughness, "clearcoatRoughness",
-          rshader.clearcoatRoughness, timecode)) {
-    return false; } if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.opacity, "opacity", rshader.opacity, timecode)) { return false; } if (!ConvertPreviewSurfaceShaderParam( shader_abs_path, shader.opacityThreshold, "opacityThreshold", rshader.opacityThreshold, timecode)) { return false; }
+          rshader.clearcoatRoughness)) {
+    return false; } if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.opacity, "opacity", rshader.opacity)) { return false; } if (!ConvertPreviewSurfaceShaderParam( shader_abs_path, shader.opacityThreshold, "opacityThreshold", rshader.opacityThreshold)) { return false; }
 
   if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.ior, "ior",
-                                        rshader.ior, timecode)) {
+                                        rshader.ior)) {
     return false;
   }
 
   if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.occlusion,
-                                        "occlusion", rshader.occlusion, timecode)) {
+                                        "occlusion", rshader.occlusion)) {
     return false;
   }
 
   if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.displacement,
-                                        "displacement", rshader.displacement, timecode)) {
+                                        "displacement", rshader.displacement)) {
     return false;
   }
 
@@ -2904,7 +2902,7 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShader(
 
 bool RenderSceneConverter::ConvertMaterial(const Path &mat_abs_path,
                                            const tinyusdz::Material &material,
-                                           RenderMaterial *rmat_out, const double timecode) {
+                                           RenderMaterial *rmat_out) {
   if (!_stage) {
     PUSH_ERROR_AND_RETURN("stage is nullptr.");
   }
@@ -3012,8 +3010,6 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     return false;
   }
 
-  double timecode = converter->GetTimeCode();
-
   if (const tinyusdz::GeomMesh *pmesh = prim.as<tinyusdz::GeomMesh>()) {
     // Collect GeomSubsets
     // std::vector<const tinyusdz::GeomSubset *> subsets = GetGeomSubsets(;
@@ -3103,7 +3099,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       std::map<std::string, int64_t> rmaterial_idMap;
       std::vector<const GeomSubset *> material_subsetMap;
 
-      if (!converter->ConvertMesh(abs_path, *pmesh, rmaterial_idMap, material_subsetMap, &rmesh, timecode)) {
+      if (!converter->ConvertMesh(abs_path, *pmesh, rmaterial_idMap, material_subsetMap, &rmesh)) {
         if (err) {
           (*err) += fmt::format("Mesh conversion failed: {}",
                                 abs_path.full_path_name());
@@ -3915,12 +3911,12 @@ bool RenderSceneConverter::GetBlenedShapesImpl(
         PUSH_ERROR_AND_RETURN("Invalid or unsupported definition of `skel:blendShapeTargets` relationship.");
       }
     }
-    
+
   }
 
   out_blendshapes = dst;
   return true;
-}  
+}
 
 
 }  // namespace tydra
