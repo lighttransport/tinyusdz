@@ -1128,8 +1128,61 @@ struct TypedTimeSamples {
   }
 
   // Get value at specified time.
+  // For non-interpolatable types(includes enums and unknown types)
+  //
+  // Return `Held` value even when TimeSampleInterpolationType is
+  // Linear. Returns nullopt when specified time is out-of-range.
+  template<typename V = T, std::enable_if_t<!value::LerpTraits<V>::supported(), std::nullptr_t> = nullptr>
+  bool get(T *dst, double t = value::TimeCode::Default(),
+           value::TimeSampleInterpolationType interp =
+               value::TimeSampleInterpolationType::Held) const {
+
+    (void)interp;
+
+    if (!dst) {
+      return false;
+    }
+
+    if (empty()) {
+      return false;
+    }
+
+    if (_dirty) {
+      update();
+    }
+
+    if (value::TimeCode(t).is_default()) {
+      // FIXME: Use the first item for now.
+      // TODO: Handle bloked
+      (*dst) = _samples[0].value;
+      return true;
+    } else {
+
+      if (_samples.size() == 1) {
+        (*dst) = _samples[0].value;
+        return true;
+      }
+
+      auto it = std::lower_bound(
+        _samples.begin(), _samples.end(), t,
+        [](const Sample &a, double tval) { return a.t < tval; });
+
+      if (it == _samples.end()) {
+        // ???
+        return false;
+      }
+
+      (*dst) = it->value;
+      return true;
+    }
+
+  }
+
+  // TODO: Move to .cc to save compile time.
+  // Get value at specified time.
   // Return linearly interpolated value when TimeSampleInterpolationType is
   // Linear. Returns nullopt when specified time is out-of-range.
+  template<typename V = T, std::enable_if_t<value::LerpTraits<V>::supported(), std::nullptr_t> = nullptr>
   bool get(T *dst, double t = value::TimeCode::Default(),
            value::TimeSampleInterpolationType interp =
                value::TimeSampleInterpolationType::Held) const {
