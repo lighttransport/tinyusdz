@@ -1217,6 +1217,8 @@ MTy MatSub(const MTy &m, const MTy &n) {
   return ret;
 }
 
+// TODO: division
+
 inline matrix2f operator+(const matrix2f &a, const matrix2f &b) {
   matrix2f ret = MatAdd<matrix2f, float, 2>(a, b);
   return ret;
@@ -1381,6 +1383,8 @@ struct point3h {
   half &operator[](size_t idx) { return *(&x + idx); }
 };
 
+#if 0 // move to value-eval-util.hh
+
 inline point3h operator+(const float a, const point3h &b) {
   return {a + b.x, a + b.y, a + b.z};
 }
@@ -1461,6 +1465,7 @@ inline point3h operator*(const point3h &a, const point3h &b) {
 inline point3h operator/(const point3h &a, const point3h &b) {
   return {a.x / b.x, a.y / b.y, a.z / b.z};
 }
+#endif
 
 struct point3f {
   float x, y, z;
@@ -1469,6 +1474,7 @@ struct point3f {
   float &operator[](size_t idx) { return *(&x + idx); }
 };
 
+#if 0
 inline point3f operator+(const float a, const point3f &b) {
   return {a + b.x, a + b.y, a + b.z};
 }
@@ -1549,6 +1555,7 @@ inline point3f operator*(const point3f &a, const point3f &b) {
 inline point3f operator/(const point3f &a, const point3f &b) {
   return {a.x / b.x, a.y / b.y, a.z / b.z};
 }
+#endif
 
 struct point3d {
   double x, y, z;
@@ -1557,6 +1564,7 @@ struct point3d {
   double &operator[](size_t idx) { return *(&x + idx); }
 };
 
+#if 0
 inline point3d operator+(const double a, const point3d &b) {
   return {a + b.x, a + b.y, a + b.z};
 }
@@ -1637,6 +1645,7 @@ inline point3d operator*(const point3d &a, const point3d &b) {
 inline point3d operator/(const point3d &a, const point3d &b) {
   return {a.x / b.x, a.y / b.y, a.z / b.z};
 }
+#endif
 
 struct color3h {
   half r, g, b;
