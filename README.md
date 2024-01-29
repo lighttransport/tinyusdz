@@ -169,12 +169,12 @@ We have a plan to manage TinyUSDZ project under Light Transport Entertainment In
 ## Projects using TinyUSDZ
 
 * usd2glb: USD to glTF 2.0 GLB converter https://github.com/fynv/usd2glb
+* webgpu-cpp-usdz: WebGPU C++/Wasm USDZ Renderer(NOTE: It doesn't support much yet!) https://github.com/Twinklebear/webgpu-cpp-usdz
 
 ### Other related projects
 
 * UsdzSharpie: C# Simple implementation of Usdz file format ( https://github.com/UkooLabs/UsdzSharpie )
 * TinyGLTF: glTF 2.0 loader/saver ( https://github.com/syoyo/tinygltf )
-* USD-build-aarch64: Full USD build for AARCH64(Linux and Android): https://github.com/syoyo/USD-build-aarch64
 * BlenderUSDZ: It contains their own Python USDC parser/serializer. https://github.com/robmcrosby/BlenderUSDZ
 
 ## Supported platforms

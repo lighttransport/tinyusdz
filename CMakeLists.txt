@@ -21,6 +21,7 @@ endif ()
 
 
 if (EMSCRIPTEN)
+  set(TINYUSDZ_DEFAULT_NO_WERROR ON)
   set(TINYUSDZ_DEFAULT_PRODUCTION_BUILD On)
   set(TINYUSDZ_DEFAULT_WITH_BUILTIN_IMAGE_LOADER On)
   set(TINYUSDZ_DEFAULT_BUILD_TESTS Off)
@@ -33,6 +34,7 @@ if (EMSCRIPTEN)
 elseif(NOT PROJECT_IS_TOP_LEVEL)
   # assume tinyusdz is added from add_subdirectory()
   # disable tools, tests and examples build by default.
+  set(TINYUSDZ_DEFAULT_NO_WERROR OFF)
   set(TINYUSDZ_DEFAULT_PRODUCTION_BUILD Off)
   set(TINYUSDZ_DEFAULT_WITH_BUILTIN_IMAGE_LOADER On)
   set(TINYUSDZ_DEFAULT_BUILD_TESTS Off)
@@ -43,6 +45,7 @@ elseif(NOT PROJECT_IS_TOP_LEVEL)
   set(TINYUSDZ_DEFAULT_WITH_USDA_PARSER Off)
   set(TINYUSDZ_DEFAULT_WITH_USDC_PARSER Off)
 else()
+  set(TINYUSDZ_DEFAULT_NO_WERROR OFF)
   set(TINYUSDZ_DEFAULT_PRODUCTION_BUILD Off)
   set(TINYUSDZ_DEFAULT_WITH_BUILTIN_IMAGE_LOADER On)
   set(TINYUSDZ_DEFAULT_BUILD_TESTS On)
@@ -649,8 +652,13 @@ endif()
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 
   set(TUSDZ_COMPILE_FLAGS
-      "-Weverything -Werror -Wno-poison-system-directories -Wno-padded -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-documentation -Wno-unused-member-function"
+      "-Weverything -Wno-poison-system-directories -Wno-padded -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-documentation -Wno-unused-member-function"
   )
+
+  option(TINYUSDZ_NO_WERROR "Don't set -Werror when building the tinyusdz library" ${TINYUSDZ_DEFAULT_NO_WERROR})
+  if (NOT TINYUSDZ_NO_WERROR)
+    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Werror")
+  endif()
 
   # clang17 seems enable -Wunsafe-buffer-usage when `-Weverything` is defined,
   # resulting compilation error for some raw array access without bound check.
