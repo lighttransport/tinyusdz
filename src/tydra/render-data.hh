@@ -1164,8 +1164,7 @@ class RenderSceneConverter {
       const tinyusdz::Path &mesh_abs_path, const tinyusdz::GeomMesh &mesh,
       const std::map<std::string, int64_t> &rmaterial_map,
       const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
-      RenderMesh *dst,
-      const double timecode = tinyusdz::value::TimeCode::Default());
+      RenderMesh *dst);
 
   ///
   /// Convert USD Material/Shader to renderer-friendly Material
@@ -1174,8 +1173,7 @@ class RenderSceneConverter {
   ///
   bool ConvertMaterial(
       const tinyusdz::Path &abs_mat_path, const tinyusdz::Material &material,
-      RenderMaterial *rmat_out,
-      const double timecode = tinyusdz::value::TimeCode::Default());
+      RenderMaterial *rmat_out);
 
   ///
   /// Convert UsdPreviewSurface Shader to renderer-friendly PreviewSurfaceShader
@@ -1189,8 +1187,7 @@ class RenderSceneConverter {
   ///
   bool ConvertPreviewSurfaceShader(
       const tinyusdz::Path &shader_abs_path,
-      const tinyusdz::UsdPreviewSurface &shader, PreviewSurfaceShader *pss_out,
-      const double timecode = tinyusdz::value::TimeCode::Default());
+      const tinyusdz::UsdPreviewSurface &shader, PreviewSurfaceShader *pss_out);
 
   ///
   /// Convert UsdUvTexture to renderer-friendly UVTexture
@@ -1206,8 +1203,7 @@ class RenderSceneConverter {
   ///
   bool ConvertUVTexture(
       const Path &tex_abs_path, const AssetInfo &assetInfo,
-      const UsdUVTexture &texture, UVTexture *tex_out,
-      const double timecode = tinyusdz::value::TimeCode::Default());
+      const UsdUVTexture &texture, UVTexture *tex_out);
 
   const Stage *GetStagePtr() const { return _stage; }
 
@@ -1221,8 +1217,7 @@ class RenderSceneConverter {
   bool ConvertPreviewSurfaceShaderParam(
       const Path &shader_abs_path,
       const TypedAttributeWithFallback<Animatable<T>> &param,
-      const std::string &param_name, ShaderParam<Dty> &dst_param,
-      const double timecode);
+      const std::string &param_name, ShaderParam<Dty> &dst_param);
 
   //
   // Get BlendShape prims in this GeomMesh Prim
