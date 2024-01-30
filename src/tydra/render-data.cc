@@ -5,7 +5,10 @@
 // TODO:
 //   - [ ] Subdivision surface to polygon mesh conversion.
 //     - [ ] Correctly handle primvar with 'vertex' interpolation(Use the basis function of subd surface)
-//   - [ ] Support time-varying shader attribute(timeSamples)
+//   - [x] Support time-varying shader attribute(timeSamples)
+//   - [ ] Wide gamut colorspace conversion support
+//     - [ ] sRGB <-> DisplayP3
+//   - [ ] tangentes and binormals
 //
 #include <numeric>
 #include "image-loader.hh"
@@ -688,7 +691,7 @@ std::vector<const tinyusdz::GeomSubset *> GetMaterialBindGeomSubsets(
 
 //
 // name does not include "primvars:" prefix.
-// TODO: timeSamples, connected attribute.
+// TODO: connected attribute.
 //
 nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
     const Stage &state, const GeomMesh &mesh, const std::string &name) {
@@ -2377,7 +2380,6 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
     } else {
       if (texture.sourceColorSpace.authored()) {
         UsdUVTexture::SourceColorSpace cs;
-        // TODO: timesampled colorSpace info
         if (texture.sourceColorSpace.get_value().get(_timecode, &cs)) {
           if (cs == UsdUVTexture::SourceColorSpace::SRGB) {
             texImage.usdColorSpace = tydra::ColorSpace::sRGB;
@@ -2691,8 +2693,7 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
       } else {
         // TODO: report warning.
         PUSH_WARN(
-            "Failed to get fallback `st` texcoord attribute. Maybe `st` is "
-            "timeSamples attribute?\n");
+            "Failed to get fallback `st` texcoord attribute.");
       }
     }
   }
@@ -2700,8 +2701,7 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
   if (texture.wrapS.authored()) {
     tinyusdz::UsdUVTexture::Wrap wrap;
 
-    // TODO: TimeSampled wrap enum
-    if (!texture.wrapS.get_value().get_scalar(&wrap)) {
+    if (!texture.wrapS.get_value().get(_timecode, &wrap)) {
       PUSH_ERROR_AND_RETURN("Invalid UsdUVTexture inputs:wrapS value.");
     }
 
@@ -2721,7 +2721,7 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
   if (texture.wrapT.authored()) {
     tinyusdz::UsdUVTexture::Wrap wrap;
 
-    if (!texture.wrapT.get_value().get_scalar(&wrap)) {
+    if (!texture.wrapT.get_value().get(_timecode, &wrap)) {
       PUSH_ERROR_AND_RETURN("Invalid UsdUVTexture inputs:wrapT value.");
     }
 
@@ -2811,7 +2811,6 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
   }
 }
 
-// TODO: timeSamples
 bool RenderSceneConverter::ConvertPreviewSurfaceShader(
     const Path &shader_abs_path, const UsdPreviewSurface &shader,
     PreviewSurfaceShader *rshader_out) {
@@ -3878,9 +3877,9 @@ std::string DumpRenderScene(const RenderScene &scene,
 
 bool RenderSceneConverter::GetBlenedShapesImpl(
   const tinyusdz::Prim &prim,
-  std::vector<const BlendShape *> &out_blendshapes) {
+  std::vector<std::pair<std::string, const BlendShape *>> &out_blendshapes) {
 
-  std::vector<const tinyusdz::BlendShape *> dst;
+  std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> dst;
 
   auto *pmesh = prim.as<GeomMesh>();
   if (!pmesh) {
@@ -3888,30 +3887,60 @@ bool RenderSceneConverter::GetBlenedShapesImpl(
   }
 
   //
-  // BlendShape Prim may not be a child of GeomMesh. So need to search Prims
+  // BlendShape Prim may not be a child of GeomMesh. So need to search Prim in Stage
   //
   if (pmesh->blendShapes.authored() && pmesh->blendShapeTargets.has_value()) {
-    // TODO: connection
+    // TODO: connection?
     std::vector<value::token> blendShapeNames;
 
     if (!pmesh->blendShapes.get_value(&blendShapeNames)) {
       PUSH_ERROR_AND_RETURN("Failed to get `skel:blendShapes` attribute.");
     }
 
-    if (pmesh->blendShapeTargets.has_value()) {
-      if (pmesh->blendShapeTargets.value().is_path()) {
-        if (blendShapeNames.size() != 1) {
-          PUSH_ERROR_AND_RETURN("Array size mismatch with `skel:blendShapes` and `skel:blendShapeTargets`.");
-        }
-      } else if (pmesh->blendShapeTargets.value().is_pathvector()) {
-        if (blendShapeNames.size() != pmesh->blendShapeTargets.value().targetPathVector.size()) {
-          PUSH_ERROR_AND_RETURN("Array size mismatch with `skel:blendShapes` and `skel:blendShapeTargets`.");
-        }
-      } else {
-        PUSH_ERROR_AND_RETURN("Invalid or unsupported definition of `skel:blendShapeTargets` relationship.");
+    if (pmesh->blendShapeTargets.value().is_path()) {
+      if (blendShapeNames.size() != 1) {
+        PUSH_ERROR_AND_RETURN("Array size mismatch with `skel:blendShapes` and `skel:blendShapeTargets`.");
       }
+
+      const Path &targetPath = pmesh->blendShapeTargets.value().targetPath;
+      const Prim *bsprim{nullptr};
+      if (_stage->find_prim_at_path(targetPath, bsprim, &_err)) {
+        return false;
+      }
+      if (!bsprim) {
+        PUSH_ERROR_AND_RETURN("Internal error. BlendShape Prim is nullptr.");
+      }
+
+      if (const auto *bs = bsprim->as<BlendShape>()) {
+        dst.push_back(std::make_pair(blendShapeNames[0].str(), bs));
+      } else {
+        PUSH_ERROR_AND_RETURN(fmt::format("{} is not BlendShape Prim.", targetPath.full_path_name()));
+      }
+
+    } else if (pmesh->blendShapeTargets.value().is_pathvector()) {
+      if (blendShapeNames.size() != pmesh->blendShapeTargets.value().targetPathVector.size()) {
+        PUSH_ERROR_AND_RETURN("Array size mismatch with `skel:blendShapes` and `skel:blendShapeTargets`.");
+      }
+    } else {
+      PUSH_ERROR_AND_RETURN("Invalid or unsupported definition of `skel:blendShapeTargets` relationship.");
     }
 
+    for (size_t i = 0; i < pmesh->blendShapeTargets.value().targetPathVector.size(); i++) {
+      const Path &targetPath = pmesh->blendShapeTargets.value().targetPathVector[i];
+      const Prim *bsprim{nullptr};
+      if (_stage->find_prim_at_path(targetPath, bsprim, &_err)) {
+        return false;
+      }
+      if (!bsprim) {
+        PUSH_ERROR_AND_RETURN("Internal error. BlendShape Prim is nullptr.");
+      }
+
+      if (const auto *bs = bsprim->as<BlendShape>()) {
+        dst.push_back(std::make_pair(blendShapeNames[0].str(), bs));
+      } else {
+        PUSH_ERROR_AND_RETURN(fmt::format("{} is not BlendShape Prim.", targetPath.full_path_name()));
+      }
+    }
   }
 
   out_blendshapes = dst;

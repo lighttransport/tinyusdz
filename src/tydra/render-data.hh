@@ -1225,7 +1225,7 @@ class RenderSceneConverter {
   //
   bool GetBlenedShapesImpl(
       const tinyusdz::Prim &prim,
-      std::vector<const tinyusdz::BlendShape *> &out_blendshapes);
+      std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> &out_blendshapes);
 
   //
   // Get Skeleton assigned to this GeomMesh Prim
