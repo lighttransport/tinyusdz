@@ -2182,6 +2182,8 @@ DEFINE_LERP_TRAIT(value::frame4d)
 bool Lerp(const value::Value &a, const value::Value &b, double dt,
           value::Value *dst);
 
+
+
 // Handy, but may not be efficient for large time samples(e.g. 1M samples or
 // more)
 //
@@ -2304,10 +2306,71 @@ struct TimeSamples {
   }
 
 #if 1  // TODO: Write implementation in .cc
+
+    // Get value at specified time.
+    // For non-interpolatable types(includes enums and unknown types)
+    //
+    // Return `Held` value even when TimeSampleInterpolationType is
+    // Linear. Returns nullopt when specified time is out-of-range.
+    template<typename T, std::enable_if_t<!value::LerpTraits<T>::supported(), std::nullptr_t> = nullptr>
+    bool get(T *dst, double t = value::TimeCode::Default(),
+             value::TimeSampleInterpolationType interp =
+                 value::TimeSampleInterpolationType::Held) const {
+
+      (void)interp;
+
+      if (!dst) {
+        return false;
+      }
+
+      if (empty()) {
+        return false;
+      }
+
+      if (_dirty) {
+        update();
+      }
+
+      if (value::TimeCode(t).is_default()) {
+        // TODO: Handle bloked
+        if (const auto pv = _samples[0].value.as<T>()) {
+          (*dst) = *pv;
+          return true;
+        }
+        return false;
+      } else {
+
+        if (_samples.size() == 1) {
+          if (const auto pv = _samples[0].value.as<T>()) {
+            (*dst) = *pv;
+            return true;
+          }
+          return false;
+        }
+
+        auto it = std::lower_bound(
+          _samples.begin(), _samples.end(), t,
+          [](const Sample &a, double tval) { return a.t < tval; });
+
+        if (it == _samples.end()) {
+          // ???
+          return false;
+        }
+
+        const value::Value &v = it->value;
+
+        if (const T *pv = v.as<T>()) {
+          (*dst) = *pv;
+          return true;
+        }
+        return false;
+      }
+  }
+
   // Get value at specified time.
   // Return linearly interpolated value when TimeSampleInterpolationType is
-  // Linear. Returns nullopt when specified time is out-of-range.
-  template <typename T>
+  // Linear. Returns false when samples is empty or some internal error.
+  template<typename T, std::enable_if_t<value::LerpTraits<T>::supported(), std::nullptr_t> = nullptr>
   bool get(T *dst, double t = value::TimeCode::Default(),
            TimeSampleInterpolationType interp =
                TimeSampleInterpolationType::Held) const {
@@ -2326,18 +2389,35 @@ struct TimeSamples {
     if (value::TimeCode(t).is_default()) {
       // FIXME: Use the first item for now.
       // TODO: Handle bloked
-      (*dst) = _samples[0].value;
-      return true;
+      if (const auto pv = _samples[0].value.as<T>()) {
+        (*dst) = *pv;
+        return true;
+      }
+      return false;
     } else {
+
+      if (_samples.size() == 1) {
+        if (const auto pv = _samples[0].value.as<T>()) {
+          (*dst) = *pv;
+          return true;
+        }
+        return true;
+      }
+
       auto it = std::lower_bound(
           _samples.begin(), _samples.end(), t,
           [](const Sample &a, double tval) { return a.t < tval; });
 
       if (interp == TimeSampleInterpolationType::Linear) {
+
+        // MS STL does not allow seek vector iterator before begin
+        // Issue #110
+        const auto it_minus_1 = (it == _samples.begin()) ? _samples.begin() : (it - 1);
+
         size_t idx0 = size_t(std::max(
             int64_t(0),
             std::min(int64_t(_samples.size() - 1),
-                     int64_t(std::distance(_samples.begin(), it - 1)))));
+                     int64_t(std::distance(_samples.begin(), it_minus_1)))));
         size_t idx1 =
             size_t(std::max(int64_t(0), std::min(int64_t(_samples.size() - 1),
                                                  int64_t(idx0) + 1)));
@@ -2356,21 +2436,32 @@ struct TimeSamples {
         // Just in case.
         dt = std::max(0.0, std::min(1.0, dt));
 
-        const T &p0 = _samples[idx0].value;
-        const T &p1 = _samples[idx1].value;
+        const value::Value &p0 = _samples[idx0].value;
+        const value::Value &p1 = _samples[idx1].value;
 
-        const T p = lerp(p0, p1, dt);
+        value::Value p;
+        if (!Lerp(p0, p1, dt, &p)) {
+          return false;
+        }
 
-        (*dst) = std::move(p);
-        return true;
+        if (const auto pv = p.as<T>()) {
+          (*dst) = *pv;
+          return true;
+        }
+        return false;
       } else {
         if (it == _samples.end()) {
           // ???
           return false;
         }
 
-        (*dst) = it->value;
-        return true;
+        const value::Value &v = it->value;
+        if (const T *pv = v.as<T>()) {
+          (*dst) = *pv;
+          return true;
+        }
+
+        return false;
       }
     }
 
