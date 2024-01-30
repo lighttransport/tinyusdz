@@ -487,10 +487,72 @@ bool GeomPrimvar::get_value(T *dest, std::string *err) const {
   return false;
 }
 
+template <typename T>
+bool GeomPrimvar::get_value(double timecode, T *dest, value::TimeSampleInterpolationType interp, std::string *err) const {
+  static_assert(tinyusdz::value::TypeTraits<T>::type_id() != value::TypeTraits<value::token>::type_id(), "`token` type is not supported as a GeomPrimvar");
+  static_assert(tinyusdz::value::TypeTraits<T>::type_id() != value::TypeTraits<std::vector<value::token>>::type_id(), "`token[]` type is not supported as a GeomPrimvar");
+
+  if (!dest) {
+    if (err) {
+      (*err) += "Output value is nullptr.";
+    }
+    return false;
+  }
+
+  if (_attr.is_blocked()) {
+    if (err) {
+      (*err) += "Attribute is blocked.";
+    }
+    return false;
+  }
+
+  if (!IsSupportedGeomPrimvarType(_attr.type_id())) {
+    if (err) {
+      (*err) += fmt::format("Unsupported type for GeomPrimvar. type = `{}`",
+                            _attr.type_name());
+    }
+    return false;
+  }
+
+  if (_attr.is_timesamples()) {
+    T value;
+
+    if (!_attr.get_value(timecode, &value, interp)) {
+      if (err) {
+        (*err) += fmt::format("Get Attribute value at time {} failed. Maybe type mismatch?. Requested type `{}` but Attribute has type `{}`", timecode, value::TypeTraits<T>::type_id(), _attr.type_name());
+      }
+      return false;
+    }
+
+    // copy
+    (*dest) = value;
+    return true;
+
+  } else if (_attr.is_value()) {
+
+    if (auto pv = _attr.get_value<T>()) {
+
+      // copy
+      (*dest) = pv.value();
+      return true;
+
+    } else {
+      if (err) {
+        (*err) += fmt::format("Attribute value type mismatch. Requested type `{}` but Attribute has type `{}`", value::TypeTraits<T>::type_id(), _attr.type_name());
+      }
+      return false;
+    }
+  }
+
+  return false;
+}
+
 // instanciation
 #define INSTANCIATE_GET_VALUE(__ty) \
   template bool GeomPrimvar::get_value(__ty *dest, std::string *err) const; \
-  template bool GeomPrimvar::get_value(std::vector<__ty> *dest, std::string *err) const;
+  template bool GeomPrimvar::get_value(double, __ty *dest, value::TimeSampleInterpolationType, std::string *err) const; \
+  template bool GeomPrimvar::get_value(std::vector<__ty> *dest, std::string *err) const; \
+  template bool GeomPrimvar::get_value(double, std::vector<__ty> *dest, value::TimeSampleInterpolationType, std::string *err) const;
 
 APPLY_GEOMPRIVAR_TYPE(INSTANCIATE_GET_VALUE)
 

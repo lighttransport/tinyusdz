@@ -184,12 +184,20 @@ class GeomPrimvar {
 
   ///
   /// Get Attribute value.
-  /// TODO: TimeSamples
   ///
   template <typename T>
   bool get_value(T *dst, std::string *err = nullptr) const;
 
   bool get_value(value::Value *dst, std::string *err = nullptr) const;
+
+
+  ///
+  /// Get Attribute value at specified time.
+  ///
+  template <typename T>
+  bool get_value(double timecode, T *dst, const value::TimeSampleInterpolationType interp = value::TimeSampleInterpolationType::Held, std::string *err = nullptr) const;
+
+  bool get_value(double timecode, value::Value *dst, const value::TimeSampleInterpolationType interp = value::TimeSampleInterpolationType::Held, std::string *err = nullptr) const;
 
   ///
   /// Set Attribute value.
@@ -1134,7 +1142,9 @@ DEFINE_TYPE_TRAIT(PointInstancer, kPointInstancer, TYPE_ID_GEOM_POINT_INSTANCER,
 
 #define EXTERN_TEMPLATE_GET_VALUE(__ty) \
   extern template bool GeomPrimvar::get_value(__ty *dest, std::string *err) const; \
+  extern template bool GeomPrimvar::get_value(double, __ty *dest, value::TimeSampleInterpolationType, std::string *err) const; \
   extern template bool GeomPrimvar::get_value(std::vector<__ty> *dest, std::string *err) const; \
+  extern template bool GeomPrimvar::get_value(double, std::vector<__ty> *dest, value::TimeSampleInterpolationType, std::string *err) const; \
   extern template bool GeomPrimvar::flatten_with_indices(std::vector<__ty> *dest, std::string *err) const;
 
 APPLY_GEOMPRIVAR_TYPE(EXTERN_TEMPLATE_GET_VALUE)

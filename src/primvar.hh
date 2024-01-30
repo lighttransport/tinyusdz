@@ -196,6 +196,12 @@ struct PrimVar {
   ///
   bool get_interpolated_value(const double t, const value::TimeSampleInterpolationType tinterp, value::Value *v) const;
 
+  
+  template <typename T>
+  bool get_interpolated_value(const double t, const value::TimeSampleInterpolationType tinterp, T *v) const {
+    return _ts.get(v, t, tinterp);
+  }
+
   size_t num_timesamples() const {
     if (is_timesamples()) {
       return _ts.size();

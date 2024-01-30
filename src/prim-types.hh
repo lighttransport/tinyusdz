@@ -2302,18 +2302,18 @@ struct Attribute {
 
   template <typename T>
   bool get_value(const double t, T *dst,
-                 value::TimeSampleInterpolationType interp =
+                 value::TimeSampleInterpolationType tinterp =
                      value::TimeSampleInterpolationType::Held) const {
     if (!dst) {
       return false;
     }
 
     if (is_timesamples()) {
-      return _var.get_ts_value(dst, t, interp);
+      return _var.get_interpolated_value(t, tinterp, dst);
     } else {
       nonstd::optional<T> v = _var.get_value<T>();
       if (v) {
-        (*dst) = v;
+        (*dst) = v.value();
         return true;
       }
 
