@@ -48,7 +48,7 @@ inline __ty operator/(const __basety a, const __ty &b) { \
 }\
 inline __ty operator/(const __ty &a, const __basety b) { \
   return {a[0] / b, a[1] / b}; \
-} 
+}
 
 #define FOUR_ARITH_OP_3(__ty, __basety) \
 inline __ty operator+(const __ty &a, const __ty &b) { \
@@ -93,7 +93,7 @@ inline __ty operator/(const __basety a, const __ty &b) { \
 }\
 inline __ty operator/(const __ty &a, const __basety b) { \
   return {a[0] / b, a[1] / b, a[2] / b}; \
-} 
+}
 
 #define FOUR_ARITH_OP_4(__ty, __basety) \
 inline __ty operator+(const __ty &a, const __ty &b) { \
@@ -138,9 +138,9 @@ inline __ty operator/(const __basety a, const __ty &b) { \
 }\
 inline __ty operator/(const __ty &a, const __basety b) { \
   return {a[0] / b, a[1] / b, a[2] / b, a[3] / b}; \
-} 
+}
 
-// TODO: half op scalar_half 
+// TODO: half op scalar_half
 FOUR_ARITH_OP_2(value::half2, float)
 FOUR_ARITH_OP_3(value::half3, float)
 FOUR_ARITH_OP_4(value::half4, float)
@@ -195,20 +195,20 @@ FOUR_ARITH_OP_3(value::texcoord3d, double)
 
 inline value::matrix2f operator+(const value::matrix2f &a, const double b) {
   value::matrix2f dst;
-  dst.m[0][0] = a.m[0][0] + b;
-  dst.m[0][1] = a.m[0][1] + b;
-  dst.m[1][0] = a.m[1][0] + b;
-  dst.m[1][1] = a.m[1][1] + b;
+  dst.m[0][0] = float(double(a.m[0][0]) + b);
+  dst.m[0][1] = float(double(a.m[0][1]) + b);
+  dst.m[1][0] = float(double(a.m[1][0]) + b);
+  dst.m[1][1] = float(double(a.m[1][1]) + b);
 
   return dst;
 }
 
 inline value::matrix2f operator+(const double a, const value::matrix2f &b) {
   value::matrix2f dst;
-  dst.m[0][0] = a + b.m[0][0];
-  dst.m[0][1] = a + b.m[0][1];
-  dst.m[1][0] = a + b.m[1][0];
-  dst.m[1][1] = a + b.m[1][1];
+  dst.m[0][0] = float(a + double(b.m[0][0]));
+  dst.m[0][1] = float(a + double(b.m[0][1]));
+  dst.m[1][0] = float(a + double(b.m[1][0]));
+  dst.m[1][1] = float(a + double(b.m[1][1]));
 
   return dst;
 }
@@ -216,90 +216,90 @@ inline value::matrix2f operator+(const double a, const value::matrix2f &b) {
 
 inline value::matrix2f operator-(const value::matrix2f &a, const double b) {
   value::matrix2f dst;
-  dst.m[0][0] = a.m[0][0] - b;
-  dst.m[0][1] = a.m[0][1] - b;
-  dst.m[1][0] = a.m[1][0] - b;
-  dst.m[1][1] = a.m[1][1] - b;
+  dst.m[0][0] = float(double(a.m[0][0]) - b);
+  dst.m[0][1] = float(double(a.m[0][1]) - b);
+  dst.m[1][0] = float(double(a.m[1][0]) - b);
+  dst.m[1][1] = float(double(a.m[1][1]) - b);
 
   return dst;
 }
 
 inline value::matrix2f operator-(const double a, const value::matrix2f &b) {
   value::matrix2f dst;
-  dst.m[0][0] = a - b.m[0][0];
-  dst.m[0][1] = a - b.m[0][1];
-  dst.m[1][0] = a - b.m[1][0];
-  dst.m[1][1] = a - b.m[1][1];
+  dst.m[0][0] = float(a - double(b.m[0][0]));
+  dst.m[0][1] = float(a - double(b.m[0][1]));
+  dst.m[1][0] = float(a - double(b.m[1][0]));
+  dst.m[1][1] = float(a - double(b.m[1][1]));
 
   return dst;
 }
 
 inline value::matrix2f operator*(const value::matrix2f &a, const double b) {
   value::matrix2f dst;
-  dst.m[0][0] = a.m[0][0] * b;
-  dst.m[0][1] = a.m[0][1] * b;
-  dst.m[1][0] = a.m[1][0] * b;
-  dst.m[1][1] = a.m[1][1] * b;
+  dst.m[0][0] = float(double(a.m[0][0]) * b);
+  dst.m[0][1] = float(double(a.m[0][1]) * b);
+  dst.m[1][0] = float(double(a.m[1][0]) * b);
+  dst.m[1][1] = float(double(a.m[1][1]) * b);
 
   return dst;
 }
 
 inline value::matrix2f operator*(const double a, const value::matrix2f &b) {
   value::matrix2f dst;
-  dst.m[0][0] = a * b.m[0][0];
-  dst.m[0][1] = a * b.m[0][1];
-  dst.m[1][0] = a * b.m[1][0];
-  dst.m[1][1] = a * b.m[1][1];
+  dst.m[0][0] = float(a * double(b.m[0][0]));
+  dst.m[0][1] = float(a * double(b.m[0][1]));
+  dst.m[1][0] = float(a * double(b.m[1][0]));
+  dst.m[1][1] = float(a * double(b.m[1][1]));
 
   return dst;
 }
 
 inline value::matrix2f operator/(const value::matrix2f &a, const double b) {
   value::matrix2f dst;
-  dst.m[0][0] = a.m[0][0] / b;
-  dst.m[0][1] = a.m[0][1] / b;
-  dst.m[1][0] = a.m[1][0] / b;
-  dst.m[1][1] = a.m[1][1] / b;
+  dst.m[0][0] = float(double(a.m[0][0]) / b);
+  dst.m[0][1] = float(double(a.m[0][1]) / b);
+  dst.m[1][0] = float(double(a.m[1][0]) / b);
+  dst.m[1][1] = float(double(a.m[1][1]) / b);
 
   return dst;
 }
 
 inline value::matrix2f operator/(const double a, const value::matrix2f &b) {
   value::matrix2f dst;
-  dst.m[0][0] = a / b.m[0][0];
-  dst.m[0][1] = a / b.m[0][1];
-  dst.m[1][0] = a / b.m[1][0];
-  dst.m[1][1] = a / b.m[1][1];
+  dst.m[0][0] = float(a / double(b.m[0][0]));
+  dst.m[0][1] = float(a / double(b.m[0][1]));
+  dst.m[1][0] = float(a / double(b.m[1][0]));
+  dst.m[1][1] = float(a / double(b.m[1][1]));
 
   return dst;
 }
 
 inline value::matrix3f operator+(const value::matrix3f &a, const double b) {
   value::matrix3f dst;
-  dst.m[0][0] = a.m[0][0] + b;
-  dst.m[0][1] = a.m[0][1] + b;
-  dst.m[0][2] = a.m[0][2] + b;
-  dst.m[1][0] = a.m[1][0] + b;
-  dst.m[1][1] = a.m[1][1] + b;
-  dst.m[1][2] = a.m[1][2] + b;
-  dst.m[2][0] = a.m[2][0] + b;
-  dst.m[2][1] = a.m[2][1] + b;
-  dst.m[2][2] = a.m[2][2] + b;
+  dst.m[0][0] = float(double(a.m[0][0]) + b);
+  dst.m[0][1] = float(double(a.m[0][1]) + b);
+  dst.m[0][2] = float(double(a.m[0][2]) + b);
+  dst.m[1][0] = float(double(a.m[1][0]) + b);
+  dst.m[1][1] = float(double(a.m[1][1]) + b);
+  dst.m[1][2] = float(double(a.m[1][2]) + b);
+  dst.m[2][0] = float(double(a.m[2][0]) + b);
+  dst.m[2][1] = float(double(a.m[2][1]) + b);
+  dst.m[2][2] = float(double(a.m[2][2]) + b);
 
   return dst;
 }
 
 inline value::matrix3f operator+(const double a, const value::matrix3f &b) {
   value::matrix3f dst;
-  dst.m[0][0] = a + b.m[0][0];
-  dst.m[0][1] = a + b.m[0][1];
-  dst.m[0][2] = a + b.m[0][2];
-  dst.m[1][0] = a + b.m[1][0];
-  dst.m[1][1] = a + b.m[1][1];
-  dst.m[1][2] = a + b.m[1][2];
-  dst.m[2][0] = a + b.m[2][0];
-  dst.m[2][1] = a + b.m[2][1];
-  dst.m[2][2] = a + b.m[2][2];
+  dst.m[0][0] = float(a + double(b.m[0][0]));
+  dst.m[0][1] = float(a + double(b.m[0][1]));
+  dst.m[0][2] = float(a + double(b.m[0][2]));
+  dst.m[1][0] = float(a + double(b.m[1][0]));
+  dst.m[1][1] = float(a + double(b.m[1][1]));
+  dst.m[1][2] = float(a + double(b.m[1][2]));
+  dst.m[2][0] = float(a + double(b.m[2][0]));
+  dst.m[2][1] = float(a + double(b.m[2][1]));
+  dst.m[2][2] = float(a + double(b.m[2][2]));
 
   return dst;
 }
@@ -307,265 +307,265 @@ inline value::matrix3f operator+(const double a, const value::matrix3f &b) {
 
 inline value::matrix3f operator-(const value::matrix3f &a, const double b) {
   value::matrix3f dst;
-  dst.m[0][0] = a.m[0][0] - b;
-  dst.m[0][1] = a.m[0][1] - b;
-  dst.m[0][2] = a.m[0][2] - b;
-  dst.m[1][0] = a.m[1][0] - b;
-  dst.m[1][1] = a.m[1][1] - b;
-  dst.m[1][2] = a.m[1][2] - b;
-  dst.m[2][0] = a.m[2][0] - b;
-  dst.m[2][1] = a.m[2][1] - b;
-  dst.m[2][2] = a.m[2][2] - b;
+  dst.m[0][0] = float(double(a.m[0][0] )- b);
+  dst.m[0][1] = float(double(a.m[0][1] )- b);
+  dst.m[0][2] = float(double(a.m[0][2] )- b);
+  dst.m[1][0] = float(double(a.m[1][0] )- b);
+  dst.m[1][1] = float(double(a.m[1][1] )- b);
+  dst.m[1][2] = float(double(a.m[1][2] )- b);
+  dst.m[2][0] = float(double(a.m[2][0] )- b);
+  dst.m[2][1] = float(double(a.m[2][1] )- b);
+  dst.m[2][2] = float(double(a.m[2][2] )- b);
 
   return dst;
 }
 
 inline value::matrix3f operator-(const double a, const value::matrix3f &b) {
   value::matrix3f dst;
-  dst.m[0][0] = a - b.m[0][0];
-  dst.m[0][1] = a - b.m[0][1];
-  dst.m[0][2] = a - b.m[0][2];
-  dst.m[1][0] = a - b.m[1][0];
-  dst.m[1][1] = a - b.m[1][1];
-  dst.m[1][2] = a - b.m[1][2];
-  dst.m[2][0] = a - b.m[2][0];
-  dst.m[2][1] = a - b.m[2][1];
-  dst.m[2][2] = a - b.m[2][2];
+  dst.m[0][0] = float(a - double(b.m[0][0]));
+  dst.m[0][1] = float(a - double(b.m[0][1]));
+  dst.m[0][2] = float(a - double(b.m[0][2]));
+  dst.m[1][0] = float(a - double(b.m[1][0]));
+  dst.m[1][1] = float(a - double(b.m[1][1]));
+  dst.m[1][2] = float(a - double(b.m[1][2]));
+  dst.m[2][0] = float(a - double(b.m[2][0]));
+  dst.m[2][1] = float(a - double(b.m[2][1]));
+  dst.m[2][2] = float(a - double(b.m[2][2]));
 
   return dst;
 }
 
 inline value::matrix3f operator*(const value::matrix3f &a, const double b) {
   value::matrix3f dst;
-  dst.m[0][0] = a.m[0][0] * b;
-  dst.m[0][1] = a.m[0][1] * b;
-  dst.m[0][2] = a.m[0][2] * b;
-  dst.m[1][0] = a.m[1][0] * b;
-  dst.m[1][1] = a.m[1][1] * b;
-  dst.m[1][2] = a.m[1][2] * b;
-  dst.m[2][0] = a.m[2][0] * b;
-  dst.m[2][1] = a.m[2][1] * b;
-  dst.m[2][2] = a.m[2][2] * b;
+  dst.m[0][0] = float(double(a.m[0][0]) * b);
+  dst.m[0][1] = float(double(a.m[0][1]) * b);
+  dst.m[0][2] = float(double(a.m[0][2]) * b);
+  dst.m[1][0] = float(double(a.m[1][0]) * b);
+  dst.m[1][1] = float(double(a.m[1][1]) * b);
+  dst.m[1][2] = float(double(a.m[1][2]) * b);
+  dst.m[2][0] = float(double(a.m[2][0]) * b);
+  dst.m[2][1] = float(double(a.m[2][1]) * b);
+  dst.m[2][2] = float(double(a.m[2][2]) * b);
 
   return dst;
 }
 
 inline value::matrix3f operator*(const double a, const value::matrix3f &b) {
   value::matrix3f dst;
-  dst.m[0][0] = a * b.m[0][0];
-  dst.m[0][1] = a * b.m[0][1];
-  dst.m[0][2] = a * b.m[0][2];
-  dst.m[1][0] = a * b.m[1][0];
-  dst.m[1][1] = a * b.m[1][1];
-  dst.m[1][2] = a * b.m[1][2];
-  dst.m[2][0] = a * b.m[2][0];
-  dst.m[2][1] = a * b.m[2][1];
-  dst.m[2][2] = a * b.m[2][2];
+  dst.m[0][0] = float(a * double(b.m[0][0]));
+  dst.m[0][1] = float(a * double(b.m[0][1]));
+  dst.m[0][2] = float(a * double(b.m[0][2]));
+  dst.m[1][0] = float(a * double(b.m[1][0]));
+  dst.m[1][1] = float(a * double(b.m[1][1]));
+  dst.m[1][2] = float(a * double(b.m[1][2]));
+  dst.m[2][0] = float(a * double(b.m[2][0]));
+  dst.m[2][1] = float(a * double(b.m[2][1]));
+  dst.m[2][2] = float(a * double(b.m[2][2]));
 
   return dst;
 }
 
 inline value::matrix3f operator/(const value::matrix3f &a, const double b) {
   value::matrix3f dst;
-  dst.m[0][0] = a.m[0][0] / b;
-  dst.m[0][1] = a.m[0][1] / b;
-  dst.m[0][2] = a.m[0][2] / b;
-  dst.m[1][0] = a.m[1][0] / b;
-  dst.m[1][1] = a.m[1][1] / b;
-  dst.m[1][2] = a.m[1][2] / b;
-  dst.m[2][0] = a.m[2][0] / b;
-  dst.m[2][1] = a.m[2][1] / b;
-  dst.m[2][2] = a.m[2][2] / b;
+  dst.m[0][0] = float(double(a.m[0][0]) / b);
+  dst.m[0][1] = float(double(a.m[0][1]) / b);
+  dst.m[0][2] = float(double(a.m[0][2]) / b);
+  dst.m[1][0] = float(double(a.m[1][0]) / b);
+  dst.m[1][1] = float(double(a.m[1][1]) / b);
+  dst.m[1][2] = float(double(a.m[1][2]) / b);
+  dst.m[2][0] = float(double(a.m[2][0]) / b);
+  dst.m[2][1] = float(double(a.m[2][1]) / b);
+  dst.m[2][2] = float(double(a.m[2][2]) / b);
 
   return dst;
 }
 
 inline value::matrix3f operator/(const double a, const value::matrix3f &b) {
   value::matrix3f dst;
-  dst.m[0][0] = a / b.m[0][0];
-  dst.m[0][1] = a / b.m[0][1];
-  dst.m[0][2] = a / b.m[0][2];
-  dst.m[1][0] = a / b.m[1][0];
-  dst.m[1][1] = a / b.m[1][1];
-  dst.m[1][2] = a / b.m[1][2];
-  dst.m[2][0] = a / b.m[2][0];
-  dst.m[2][1] = a / b.m[2][1];
-  dst.m[2][2] = a / b.m[2][2];
+  dst.m[0][0] = float(a / double(b.m[0][0]));
+  dst.m[0][1] = float(a / double(b.m[0][1]));
+  dst.m[0][2] = float(a / double(b.m[0][2]));
+  dst.m[1][0] = float(a / double(b.m[1][0]));
+  dst.m[1][1] = float(a / double(b.m[1][1]));
+  dst.m[1][2] = float(a / double(b.m[1][2]));
+  dst.m[2][0] = float(a / double(b.m[2][0]));
+  dst.m[2][1] = float(a / double(b.m[2][1]));
+  dst.m[2][2] = float(a / double(b.m[2][2]));
 
   return dst;
 }
 
 inline value::matrix4f operator+(const value::matrix4f &a, const double b) {
   value::matrix4f dst;
-  dst.m[0][0] = a.m[0][0] + b;
-  dst.m[0][1] = a.m[0][1] + b;
-  dst.m[0][2] = a.m[0][2] + b;
-  dst.m[0][3] = a.m[0][3] + b;
-  dst.m[1][0] = a.m[1][0] + b;
-  dst.m[1][1] = a.m[1][1] + b;
-  dst.m[1][2] = a.m[1][2] + b;
-  dst.m[1][3] = a.m[1][3] + b;
-  dst.m[2][0] = a.m[2][0] + b;
-  dst.m[2][1] = a.m[2][1] + b;
-  dst.m[2][2] = a.m[2][2] + b;
-  dst.m[2][3] = a.m[2][3] + b;
-  dst.m[3][0] = a.m[3][0] + b;
-  dst.m[3][1] = a.m[3][1] + b;
-  dst.m[3][2] = a.m[3][2] + b;
-  dst.m[3][3] = a.m[3][3] + b;
+  dst.m[0][0] = float(double(a.m[0][0]) + b);
+  dst.m[0][1] = float(double(a.m[0][1]) + b);
+  dst.m[0][2] = float(double(a.m[0][2]) + b);
+  dst.m[0][3] = float(double(a.m[0][3]) + b);
+  dst.m[1][0] = float(double(a.m[1][0]) + b);
+  dst.m[1][1] = float(double(a.m[1][1]) + b);
+  dst.m[1][2] = float(double(a.m[1][2]) + b);
+  dst.m[1][3] = float(double(a.m[1][3]) + b);
+  dst.m[2][0] = float(double(a.m[2][0]) + b);
+  dst.m[2][1] = float(double(a.m[2][1]) + b);
+  dst.m[2][2] = float(double(a.m[2][2]) + b);
+  dst.m[2][3] = float(double(a.m[2][3]) + b);
+  dst.m[3][0] = float(double(a.m[3][0]) + b);
+  dst.m[3][1] = float(double(a.m[3][1]) + b);
+  dst.m[3][2] = float(double(a.m[3][2]) + b);
+  dst.m[3][3] = float(double(a.m[3][3]) + b);
 
   return dst;
 }
 
 inline value::matrix4f operator+(const double a, const value::matrix4f &b) {
   value::matrix4f dst;
-  dst.m[0][0] = a + b.m[0][0];
-  dst.m[0][1] = a + b.m[0][1];
-  dst.m[0][2] = a + b.m[0][2];
-  dst.m[0][3] = a + b.m[0][3];
-  dst.m[1][0] = a + b.m[1][0];
-  dst.m[1][1] = a + b.m[1][1];
-  dst.m[1][2] = a + b.m[1][2];
-  dst.m[1][3] = a + b.m[1][3];
-  dst.m[2][0] = a + b.m[2][0];
-  dst.m[2][1] = a + b.m[2][1];
-  dst.m[2][2] = a + b.m[2][2];
-  dst.m[2][3] = a + b.m[2][3];
-  dst.m[3][0] = a + b.m[3][0];
-  dst.m[3][1] = a + b.m[3][1];
-  dst.m[3][2] = a + b.m[3][2];
-  dst.m[3][3] = a + b.m[3][3];
+  dst.m[0][0] = float(a + double(b.m[0][0]));
+  dst.m[0][1] = float(a + double(b.m[0][1]));
+  dst.m[0][2] = float(a + double(b.m[0][2]));
+  dst.m[0][3] = float(a + double(b.m[0][3]));
+  dst.m[1][0] = float(a + double(b.m[1][0]));
+  dst.m[1][1] = float(a + double(b.m[1][1]));
+  dst.m[1][2] = float(a + double(b.m[1][2]));
+  dst.m[1][3] = float(a + double(b.m[1][3]));
+  dst.m[2][0] = float(a + double(b.m[2][0]));
+  dst.m[2][1] = float(a + double(b.m[2][1]));
+  dst.m[2][2] = float(a + double(b.m[2][2]));
+  dst.m[2][3] = float(a + double(b.m[2][3]));
+  dst.m[3][0] = float(a + double(b.m[3][0]));
+  dst.m[3][1] = float(a + double(b.m[3][1]));
+  dst.m[3][2] = float(a + double(b.m[3][2]));
+  dst.m[3][3] = float(a + double(b.m[3][3]));
 
   return dst;
 }
 
 inline value::matrix4f operator-(const value::matrix4f &a, const double b) {
   value::matrix4f dst;
-  dst.m[0][0] = a.m[0][0] - b;
-  dst.m[0][1] = a.m[0][1] - b;
-  dst.m[0][2] = a.m[0][2] - b;
-  dst.m[0][3] = a.m[0][3] - b;
-  dst.m[1][0] = a.m[1][0] - b;
-  dst.m[1][1] = a.m[1][1] - b;
-  dst.m[1][2] = a.m[1][2] - b;
-  dst.m[1][3] = a.m[1][3] - b;
-  dst.m[2][0] = a.m[2][0] - b;
-  dst.m[2][1] = a.m[2][1] - b;
-  dst.m[2][2] = a.m[2][2] - b;
-  dst.m[2][3] = a.m[2][3] - b;
-  dst.m[3][0] = a.m[3][0] - b;
-  dst.m[3][1] = a.m[3][1] - b;
-  dst.m[3][2] = a.m[3][2] - b;
-  dst.m[3][3] = a.m[3][3] - b;
+  dst.m[0][0] = float(double(a.m[0][0]) - b);
+  dst.m[0][1] = float(double(a.m[0][1]) - b);
+  dst.m[0][2] = float(double(a.m[0][2]) - b);
+  dst.m[0][3] = float(double(a.m[0][3]) - b);
+  dst.m[1][0] = float(double(a.m[1][0]) - b);
+  dst.m[1][1] = float(double(a.m[1][1]) - b);
+  dst.m[1][2] = float(double(a.m[1][2]) - b);
+  dst.m[1][3] = float(double(a.m[1][3]) - b);
+  dst.m[2][0] = float(double(a.m[2][0]) - b);
+  dst.m[2][1] = float(double(a.m[2][1]) - b);
+  dst.m[2][2] = float(double(a.m[2][2]) - b);
+  dst.m[2][3] = float(double(a.m[2][3]) - b);
+  dst.m[3][0] = float(double(a.m[3][0]) - b);
+  dst.m[3][1] = float(double(a.m[3][1]) - b);
+  dst.m[3][2] = float(double(a.m[3][2]) - b);
+  dst.m[3][3] = float(double(a.m[3][3]) - b);
 
   return dst;
 }
 
 inline value::matrix4f operator-(const double a, const value::matrix4f &b) {
   value::matrix4f dst;
-  dst.m[0][0] = a - b.m[0][0];
-  dst.m[0][1] = a - b.m[0][1];
-  dst.m[0][2] = a - b.m[0][2];
-  dst.m[0][3] = a - b.m[0][3];
-  dst.m[1][0] = a - b.m[1][0];
-  dst.m[1][1] = a - b.m[1][1];
-  dst.m[1][2] = a - b.m[1][2];
-  dst.m[1][3] = a - b.m[1][3];
-  dst.m[2][0] = a - b.m[2][0];
-  dst.m[2][1] = a - b.m[2][1];
-  dst.m[2][2] = a - b.m[2][2];
-  dst.m[2][3] = a - b.m[2][3];
-  dst.m[3][0] = a - b.m[3][0];
-  dst.m[3][1] = a - b.m[3][1];
-  dst.m[3][2] = a - b.m[3][2];
-  dst.m[3][3] = a - b.m[3][3];
+  dst.m[0][0] = float(a - double(b.m[0][0]));
+  dst.m[0][1] = float(a - double(b.m[0][1]));
+  dst.m[0][2] = float(a - double(b.m[0][2]));
+  dst.m[0][3] = float(a - double(b.m[0][3]));
+  dst.m[1][0] = float(a - double(b.m[1][0]));
+  dst.m[1][1] = float(a - double(b.m[1][1]));
+  dst.m[1][2] = float(a - double(b.m[1][2]));
+  dst.m[1][3] = float(a - double(b.m[1][3]));
+  dst.m[2][0] = float(a - double(b.m[2][0]));
+  dst.m[2][1] = float(a - double(b.m[2][1]));
+  dst.m[2][2] = float(a - double(b.m[2][2]));
+  dst.m[2][3] = float(a - double(b.m[2][3]));
+  dst.m[3][0] = float(a - double(b.m[3][0]));
+  dst.m[3][1] = float(a - double(b.m[3][1]));
+  dst.m[3][2] = float(a - double(b.m[3][2]));
+  dst.m[3][3] = float(a - double(b.m[3][3]));
 
   return dst;
 }
 inline value::matrix4f operator*(const value::matrix4f &a, const double b) {
   value::matrix4f dst;
-  dst.m[0][0] = a.m[0][0] * b;
-  dst.m[0][1] = a.m[0][1] * b;
-  dst.m[0][2] = a.m[0][2] * b;
-  dst.m[0][3] = a.m[0][3] * b;
-  dst.m[1][0] = a.m[1][0] * b;
-  dst.m[1][1] = a.m[1][1] * b;
-  dst.m[1][2] = a.m[1][2] * b;
-  dst.m[1][3] = a.m[1][3] * b;
-  dst.m[2][0] = a.m[2][0] * b;
-  dst.m[2][1] = a.m[2][1] * b;
-  dst.m[2][2] = a.m[2][2] * b;
-  dst.m[2][3] = a.m[2][3] * b;
-  dst.m[3][0] = a.m[3][0] * b;
-  dst.m[3][1] = a.m[3][1] * b;
-  dst.m[3][2] = a.m[3][2] * b;
-  dst.m[3][3] = a.m[3][3] * b;
+  dst.m[0][0] = float(double(a.m[0][0]) * b);
+  dst.m[0][1] = float(double(a.m[0][1]) * b);
+  dst.m[0][2] = float(double(a.m[0][2]) * b);
+  dst.m[0][3] = float(double(a.m[0][3]) * b);
+  dst.m[1][0] = float(double(a.m[1][0]) * b);
+  dst.m[1][1] = float(double(a.m[1][1]) * b);
+  dst.m[1][2] = float(double(a.m[1][2]) * b);
+  dst.m[1][3] = float(double(a.m[1][3]) * b);
+  dst.m[2][0] = float(double(a.m[2][0]) * b);
+  dst.m[2][1] = float(double(a.m[2][1]) * b);
+  dst.m[2][2] = float(double(a.m[2][2]) * b);
+  dst.m[2][3] = float(double(a.m[2][3]) * b);
+  dst.m[3][0] = float(double(a.m[3][0]) * b);
+  dst.m[3][1] = float(double(a.m[3][1]) * b);
+  dst.m[3][2] = float(double(a.m[3][2]) * b);
+  dst.m[3][3] = float(double(a.m[3][3]) * b);
 
   return dst;
 }
 
 inline value::matrix4f operator*(const double a, const value::matrix4f &b) {
   value::matrix4f dst;
-  dst.m[0][0] = a * b.m[0][0];
-  dst.m[0][1] = a * b.m[0][1];
-  dst.m[0][2] = a * b.m[0][2];
-  dst.m[0][3] = a * b.m[0][3];
-  dst.m[1][0] = a * b.m[1][0];
-  dst.m[1][1] = a * b.m[1][1];
-  dst.m[1][2] = a * b.m[1][2];
-  dst.m[1][3] = a * b.m[1][3];
-  dst.m[2][0] = a * b.m[2][0];
-  dst.m[2][1] = a * b.m[2][1];
-  dst.m[2][2] = a * b.m[2][2];
-  dst.m[2][3] = a * b.m[2][3];
-  dst.m[3][0] = a * b.m[3][0];
-  dst.m[3][1] = a * b.m[3][1];
-  dst.m[3][2] = a * b.m[3][2];
-  dst.m[3][3] = a * b.m[3][3];
+  dst.m[0][0] = float(a * double(b.m[0][0]));
+  dst.m[0][1] = float(a * double(b.m[0][1]));
+  dst.m[0][2] = float(a * double(b.m[0][2]));
+  dst.m[0][3] = float(a * double(b.m[0][3]));
+  dst.m[1][0] = float(a * double(b.m[1][0]));
+  dst.m[1][1] = float(a * double(b.m[1][1]));
+  dst.m[1][2] = float(a * double(b.m[1][2]));
+  dst.m[1][3] = float(a * double(b.m[1][3]));
+  dst.m[2][0] = float(a * double(b.m[2][0]));
+  dst.m[2][1] = float(a * double(b.m[2][1]));
+  dst.m[2][2] = float(a * double(b.m[2][2]));
+  dst.m[2][3] = float(a * double(b.m[2][3]));
+  dst.m[3][0] = float(a * double(b.m[3][0]));
+  dst.m[3][1] = float(a * double(b.m[3][1]));
+  dst.m[3][2] = float(a * double(b.m[3][2]));
+  dst.m[3][3] = float(a * double(b.m[3][3]));
 
   return dst;
 }
 
 inline value::matrix4f operator/(const value::matrix4f &a, const double b) {
   value::matrix4f dst;
-  dst.m[0][0] = a.m[0][0] / b;
-  dst.m[0][1] = a.m[0][1] / b;
-  dst.m[0][2] = a.m[0][2] / b;
-  dst.m[0][3] = a.m[0][3] / b;
-  dst.m[1][0] = a.m[1][0] / b;
-  dst.m[1][1] = a.m[1][1] / b;
-  dst.m[1][2] = a.m[1][2] / b;
-  dst.m[1][3] = a.m[1][3] / b;
-  dst.m[2][0] = a.m[2][0] / b;
-  dst.m[2][1] = a.m[2][1] / b;
-  dst.m[2][2] = a.m[2][2] / b;
-  dst.m[2][3] = a.m[2][3] / b;
-  dst.m[3][0] = a.m[3][0] / b;
-  dst.m[3][1] = a.m[3][1] / b;
-  dst.m[3][2] = a.m[3][2] / b;
-  dst.m[3][3] = a.m[3][3] / b;
+  dst.m[0][0] = float(double(a.m[0][0]) / b);
+  dst.m[0][1] = float(double(a.m[0][1]) / b);
+  dst.m[0][2] = float(double(a.m[0][2]) / b);
+  dst.m[0][3] = float(double(a.m[0][3]) / b);
+  dst.m[1][0] = float(double(a.m[1][0]) / b);
+  dst.m[1][1] = float(double(a.m[1][1]) / b);
+  dst.m[1][2] = float(double(a.m[1][2]) / b);
+  dst.m[1][3] = float(double(a.m[1][3]) / b);
+  dst.m[2][0] = float(double(a.m[2][0]) / b);
+  dst.m[2][1] = float(double(a.m[2][1]) / b);
+  dst.m[2][2] = float(double(a.m[2][2]) / b);
+  dst.m[2][3] = float(double(a.m[2][3]) / b);
+  dst.m[3][0] = float(double(a.m[3][0]) / b);
+  dst.m[3][1] = float(double(a.m[3][1]) / b);
+  dst.m[3][2] = float(double(a.m[3][2]) / b);
+  dst.m[3][3] = float(double(a.m[3][3]) / b);
 
   return dst;
 }
 
 inline value::matrix4f operator/(const double a, const value::matrix4f &b) {
   value::matrix4f dst;
-  dst.m[0][0] = a / b.m[0][0];
-  dst.m[0][1] = a / b.m[0][1];
-  dst.m[0][2] = a / b.m[0][2];
-  dst.m[0][3] = a / b.m[0][3];
-  dst.m[1][0] = a / b.m[1][0];
-  dst.m[1][1] = a / b.m[1][1];
-  dst.m[1][2] = a / b.m[1][2];
-  dst.m[1][3] = a / b.m[1][3];
-  dst.m[2][0] = a / b.m[2][0];
-  dst.m[2][1] = a / b.m[2][1];
-  dst.m[2][2] = a / b.m[2][2];
-  dst.m[2][3] = a / b.m[2][3];
-  dst.m[3][0] = a / b.m[3][0];
-  dst.m[3][1] = a / b.m[3][1];
-  dst.m[3][2] = a / b.m[3][2];
-  dst.m[3][3] = a / b.m[3][3];
+  dst.m[0][0] = float(a / double(b.m[0][0]));
+  dst.m[0][1] = float(a / double(b.m[0][1]));
+  dst.m[0][2] = float(a / double(b.m[0][2]));
+  dst.m[0][3] = float(a / double(b.m[0][3]));
+  dst.m[1][0] = float(a / double(b.m[1][0]));
+  dst.m[1][1] = float(a / double(b.m[1][1]));
+  dst.m[1][2] = float(a / double(b.m[1][2]));
+  dst.m[1][3] = float(a / double(b.m[1][3]));
+  dst.m[2][0] = float(a / double(b.m[2][0]));
+  dst.m[2][1] = float(a / double(b.m[2][1]));
+  dst.m[2][2] = float(a / double(b.m[2][2]));
+  dst.m[2][3] = float(a / double(b.m[2][3]));
+  dst.m[3][0] = float(a / double(b.m[3][0]));
+  dst.m[3][1] = float(a / double(b.m[3][1]));
+  dst.m[3][2] = float(a / double(b.m[3][2]));
+  dst.m[3][3] = float(a / double(b.m[3][3]));
 
   return dst;
 }
@@ -1816,7 +1816,7 @@ inline value::quath lerp(const value::quath &a, const value::quath &b, const dou
   h.imag[0] = value::float_to_half_full(ret.imag[0]);
   h.imag[1] = value::float_to_half_full(ret.imag[1]);
   h.imag[2] = value::float_to_half_full(ret.imag[2]);
-  
+
   return h;
 }
 
