@@ -1540,6 +1540,7 @@ bool RenderSceneConverter::ConvertMesh(
                                        const GeomMesh &mesh,
                                        const std::map<std::string, int64_t> &rmaterial_idMap,
                                        const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+                                       const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> &blendshapes,
                                        RenderMesh *dstMesh) {
 
   //
@@ -2036,6 +2037,118 @@ bool RenderSceneConverter::ConvertMesh(
       } else {
         PUSH_ERROR_AND_RETURN("Internal error. Invalid variability value in TexCoord attribute.");
       }
+  }
+
+  //
+  // Vertex skin weights(jointIndex and jointWeights)
+  //
+  if (mesh.has_primvar("skel:jointIndices") && mesh.has_primvar("skel:jointWeights")) {
+    GeomPrimvar jointIndices;
+    GeomPrimvar jointWeights;
+
+    if (!mesh.get_primvar("skel:jointIndices", &jointIndices)) {
+        PUSH_ERROR_AND_RETURN("Internal error. Failed to get `skel:jointIndices` primvar.");
+    }
+
+    if (!mesh.get_primvar("skel:jointWeights", &jointWeights)) {
+        PUSH_ERROR_AND_RETURN("Internal error. Failed to get `skel:jointIndices` primvar.");
+    }
+
+    // interpolation must be 'vertex'
+    if (!jointIndices.has_interpolation()) {
+        PUSH_ERROR_AND_RETURN(fmt::format("`skel:jointIndices` primvar must author `interpolation` metadata(and set it to `vertex`)"));
+    }
+    
+    if (jointIndices.get_interpolation() != Interpolation::Vertex) {
+        PUSH_ERROR_AND_RETURN(fmt::format("`skel:jointIndices` primvar must use `vertex` for `interpolation` metadata, but got `{}`.", to_string(jointIndices.get_interpolation())));
+    }
+
+    uint32_t jointIndicesElementSize = jointIndices.get_elementSize();
+    uint32_t jointWeightsElementSize = jointWeights.get_elementSize();
+
+    if (jointIndicesElementSize == 0) {
+        PUSH_ERROR_AND_RETURN(fmt::format("`elementSize` of `skel:jointIndices` is zero."));
+    }
+
+    if (jointWeightsElementSize == 0) {
+        PUSH_ERROR_AND_RETURN(fmt::format("`elementSize` of `skel:jointWeights` is zero."));
+    }
+
+    if (jointIndicesElementSize > _mesh_config.max_skin_elementSize) {
+        PUSH_ERROR_AND_RETURN(fmt::format("`elementSize` {} of `skel:jointIndices` too large. Max allowed is set to {}",
+          jointIndicesElementSize, _mesh_config.max_skin_elementSize));
+    }
+
+    if (jointWeightsElementSize > _mesh_config.max_skin_elementSize) {
+        PUSH_ERROR_AND_RETURN(fmt::format("`elementSize` {} of `skel:jointWeights` too large. Max allowed is set to {}",
+          jointWeightsElementSize, _mesh_config.max_skin_elementSize));
+    }
+
+    if (jointIndicesElementSize != jointWeightsElementSize) {
+        PUSH_ERROR_AND_RETURN(fmt::format("`elementSize` {} of `skel:jointIndices` must equal to `elementSize` {} of `skel:jointWeights`",
+          jointIndicesElementSize, jointWeightsElementSize));
+    }
+
+    std::vector<int> jointIndicesArray;
+    if (!jointIndices.flatten_with_indices(&jointIndicesArray)) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Failed to flatten Indexed Primvar `skel:jointIndices`. Ensure `skel:jointIndices` is type `int[]`"));
+    }
+
+    std::vector<float> jointWeightsArray;
+    if (!jointWeights.flatten_with_indices(&jointWeightsArray)) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Failed to flatten Indexed Primvar `skel:jointWeights`. Ensure `skel:jointWeights` is type `float[]`"));
+    }
+
+    if (jointIndicesArray.size() != jointWeightsArray.size()) {
+        PUSH_ERROR_AND_RETURN(fmt::format("`skel:jointIndices` nitems {} must be equal to `skel:jointWeights` ntems {}", jointIndicesArray.size(), jointWeightsArray.size()));
+    }
+
+    if (jointIndicesArray.empty()) {
+        PUSH_ERROR_AND_RETURN(fmt::format("`skel:jointIndices` is empty array."));
+    }
+
+    // TODO: Validate jointIndex.
+    
+    dst.joint_and_weights.jointIndices = jointIndicesArray;
+    dst.joint_and_weights.jointWeights = jointWeightsArray;
+    dst.joint_and_weights.elementSize = int(jointIndicesElementSize);
+
+    if (mesh.skeleton.has_value()) {
+      Path skelPath;
+
+      if (mesh.skeleton.value().is_path()) {
+        skelPath = mesh.skeleton.value().targetPath;
+      } else if (mesh.skeleton.value().is_pathvector()) {
+        // Use the first tone
+        if (mesh.skeleton.value().targetPathVector.size()) {
+          skelPath = mesh.skeleton.value().targetPathVector[0];
+        } else {
+          PUSH_WARN("`skel:skeleton` has invalid definition.");
+        }
+      } else {
+        PUSH_WARN("`skel:skeleton` has invalid definition.");
+      }
+
+      if (skelPath.is_valid()) {
+        // TODO
+      }
+    }
+
+    // optional. geomBindTransform.
+    if (mesh.has_primvar("skel:geomBindTransform")) {
+      GeomPrimvar bindTransformPvar;
+
+      if (!mesh.get_primvar("skel:geomBindTransform", &bindTransformPvar)) {
+        PUSH_ERROR_AND_RETURN("Internal error. Failed to get `skel:geomBindTransform` primvar.");
+      }
+
+      value::matrix4d bindTransform;
+      if (!bindTransformPvar.get_value(&bindTransform)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `skel:geomBindTransform` attribute. Ensure `skel:geomBindTransform` is type `matrix4d`"));
+      }
+      
+
+    } 
   }
 
   //
@@ -3097,8 +3210,9 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       // TODO
       std::map<std::string, int64_t> rmaterial_idMap;
       std::vector<const GeomSubset *> material_subsetMap;
+      std::vector<std::pair<std::string, const BlendShape *>> blendshapes;
 
-      if (!converter->ConvertMesh(abs_path, *pmesh, rmaterial_idMap, material_subsetMap, &rmesh)) {
+      if (!converter->ConvertMesh(abs_path, *pmesh, rmaterial_idMap, material_subsetMap, blendshapes, &rmesh)) {
         if (err) {
           (*err) += fmt::format("Mesh conversion failed: {}",
                                 abs_path.full_path_name());

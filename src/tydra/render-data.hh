@@ -15,6 +15,9 @@
 #include "usdSkel.hh"
 #include "value-types.hh"
 
+// tydra
+#include "scene-access.hh"
+
 namespace tinyusdz {
 
 // forward decl
@@ -25,7 +28,6 @@ struct GeomMesh;
 struct Xform;
 struct AssetInfo;
 class Path;
-
 struct UsdPreviewSurface;
 struct UsdUVTexture;
 
@@ -650,10 +652,12 @@ struct ShapeTarget {
   float weight{1.0f};  // for in-between shape target
 };
 
-//
-// NOTE: both jointIndices and jointWeights' USD interpolation must be 'vertex'
-//
 struct JointAndWeight {
+  value::matrix4d geomBindTransform{value::matrix4d::identity()}; // matrix4d primvars:skel:geomBindTransform
+
+  //
+  // NOTE: both jointIndices and jointWeights' USD interpolation must be 'vertex'
+  //
   std::vector<int> jointIndices;  // int[] primvars:skel:jointIndices
 
   // NOTE: weight is converted from USD as-is. not normalized.
@@ -1034,6 +1038,12 @@ struct MeshConverterConfig {
   std::string default_binormals_primvar_name{"binormals"};
 
   // TODO: tangents1/binormals1 for multi-frame normal mapping?
+  
+
+  // Upperlimit of the number of skin weights per vertex.
+  // For realtime app, usually up to 64
+  uint32_t max_skin_elementSize = 1024ull * 256ull; 
+
 };
 
 struct MaterialConverterConfig {
@@ -1095,6 +1105,30 @@ struct RenderSceneConverterConfig {
   bool load_texture_assets{true};
 };
 
+
+class RenderSceneConverterEnv {
+ public:
+  RenderSceneConverterEnv(const Stage &_stage) : stage(_stage) {
+  }
+
+  RenderSceneConverterConfig scene_config;
+  MeshConverterConfig mesh_config;
+  MaterialConverterConfig material_config;
+  AssetResolutionResolver asset_resolver;
+
+  void set_search_paths(const std::vector<std::string> &paths) {
+    asset_resolver.set_search_paths(paths);
+  }
+
+  const Stage &stage; // Point to valid Stage object
+
+  double timecode{value::TimeCode::Default()};
+};
+
+//
+// Convert USD scenegraph at specified time
+// TODO: Use RenderSceneConverterEnv(RenderSceneConverterEnv::timecode)
+// 
 class RenderSceneConverter {
  public:
   RenderSceneConverter() = default;
@@ -1144,7 +1178,7 @@ class RenderSceneConverter {
   std::vector<UVTexture> textures;
   std::vector<TextureImage> images;
   std::vector<BufferData> buffers;
-  // std::vector<SkinHierarchy> skins;
+  std::vector<SkelHierarchy> skeletons;
 
   ///
   /// @param[in] mesh_abs_path USD prim path to this GeomMesh
@@ -1153,7 +1187,8 @@ class RenderSceneConverter {
   /// Use empty map if no material assigned to this Mesh. If the mesh has
   /// bounded material(including material from GeomSubset), RenderMaterial index
   /// must be obrained using ConvertMaterial method firstly.
-  /// @param[in] material_subsets GeomSubset assigned to this Mesh
+  /// @param[in] material_subsets GeomSubset assigned to this Mesh. Can be empty.
+  /// @param[in] blendshapes BlendShape Prims assigned to this Mesh. Can be empty.
   /// @param[out] dst RenderMesh output
   ///
   /// @return true when success.
@@ -1164,6 +1199,7 @@ class RenderSceneConverter {
       const tinyusdz::Path &mesh_abs_path, const tinyusdz::GeomMesh &mesh,
       const std::map<std::string, int64_t> &rmaterial_map,
       const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> &blendshapes,
       RenderMesh *dst);
 
   ///
