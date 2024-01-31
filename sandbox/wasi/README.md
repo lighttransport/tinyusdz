@@ -17,7 +17,7 @@ $ make
 
 ### Binary size
 
-Currently is less than 4MB when compiled with `-DCMAKE_BUILD_TYPE=MinSizeRel` (650 KB when gzip compressed).
+Currently it is less than 4MB when compiled with `-DCMAKE_BUILD_TYPE=MinSizeRel` (650 KB when gzip compressed).
 
 ## Run
 
@@ -33,3 +33,8 @@ Install `wasmtime`, then copy example USD file to `build` folder(where `tinyusdz
 $ cp ../../../models/cube-previewsurface.usda .
 $ wasmtime --dir=. tinyusdz_wasi cube-previewsurface.usda
 ```
+
+## TODO
+
+* [ ] Unify CMakeList.txt with <tinyusdz>/CMakelist.txt
+* [ ] Write WASI specific AssetResolution/FileSystemHandler example.
