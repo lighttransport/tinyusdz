@@ -2225,8 +2225,56 @@ bool RenderSceneConverter::ConvertMesh(
   //
   // BlendShapes
   //
-  for (const auto &bs : blendshapes) {
+  for (const auto &it : blendshapes) {
+
+    const std::string &bs_path = it.first;
+    const BlendShape *bs = it.second;
+
+    if (!bs) {
+      continue;
+    }
+
+    // TOOD: in-between attribs
+
+    std::vector<int> vertex_indices;
+    std::vector<value::vector3f> normal_offsets;
+    std::vector<value::vector3f> vertex_offsets;
+
+    bs->pointIndices.get_value(&vertex_indices);
+    bs->normalOffsets.get_value(&normal_offsets);
+    bs->offsets.get_value(&vertex_offsets);
+
+    ShapeTarget shapeTarget;
+    shapeTarget.abs_path = bs_path;
+    shapeTarget.prim_name = bs->name;
+    shapeTarget.display_name = bs->metas().displayName.value_or("");
+
+    if (vertex_indices.empty()) {
+      PUSH_WARN(fmt::format("`pointIndices` in BlendShape `{}` is not authored or empty. Skipping.", bs->name));
+    }
+
     // Check if index is valid.
+    std::vector<uint32_t> indices;
+    for (size_t i = 0; i < vertex_indices.size(); i++) {
+      if (vertex_indices[i] < 0) {
+        PUSH_ERROR_AND_RETURN("negative index in `pointIndices`. Prim path: `{}`", bs_path);
+      }
+
+      if (vertex_indices[i] > dst.points.size()) {
+        PUSH_ERROR_AND_RETURN("pointIndices[{}] {} exceeds the number of points in GeomMesh {}. Prim path: `{}`", i, vertex_indices[i], dst.points.size(), bs_path);
+      }
+    }
+    shapeTarget.pointIndices
+
+    if (vertex_offsets.size() && (vertex_offsets.size() == vertex_indices.size())) {
+    }
+
+    if (normal_offsets.size() && (normal_offsets.size() == vertex_indices.size())) {
+    }
+
+    // TODO: key duplicate check
+    dst.targets[bs->name] = shapeTarget;
+
   }
 
   //
