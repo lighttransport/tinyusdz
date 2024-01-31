@@ -3,6 +3,7 @@
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 //
 // Render data structure suited for WebGL and Raytracing render
+//
 
 #include <algorithm>
 #include <cmath>
@@ -641,6 +642,13 @@ struct SkinnedMesh {
 #endif
 
 // BlendShape shape target.
+
+struct InbetweenShapeTarget {
+  std::vector<vec3> pointOffsets;
+  std::vector<vec3> normalOffsets;
+  float weight{0.5f}; // TODO: Init with invalid weight
+};
+
 struct ShapeTarget {
   std::string prim_name;     // Prim name
   std::string abs_path;      // Absolute prim path
@@ -649,7 +657,9 @@ struct ShapeTarget {
   std::vector<uint32_t> pointIndices;
   std::vector<vec3> pointOffsets;
   std::vector<vec3> normalOffsets;
-  float weight{1.0f};  // for in-between shape target
+
+  // key = weight
+  std::unordered_map<float, InbetweenShapeTarget> inbetweens;
 };
 
 struct JointAndWeight {

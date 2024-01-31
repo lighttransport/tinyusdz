@@ -10,6 +10,9 @@
 //   - [ ] Wide gamut colorspace conversion support
 //     - [ ] sRGB <-> DisplayP3
 //   - [ ] tangentes and binormals
+//   - [ ] Support Inbetween BlendShape
+//   - [ ] Support material binding collection(Collection API)
+//   - [ ] Support multiple skel animation
 //
 #include <numeric>
 
@@ -2234,7 +2237,9 @@ bool RenderSceneConverter::ConvertMesh(
       continue;
     }
 
-    // TOOD: in-between attribs
+    //
+    // TODO: in-between attribs
+    // 
 
     std::vector<int> vertex_indices;
     std::vector<value::vector3f> normal_offsets;
@@ -2255,21 +2260,29 @@ bool RenderSceneConverter::ConvertMesh(
 
     // Check if index is valid.
     std::vector<uint32_t> indices;
+    indices.resize(vertex_indices.size());
+
     for (size_t i = 0; i < vertex_indices.size(); i++) {
       if (vertex_indices[i] < 0) {
-        PUSH_ERROR_AND_RETURN("negative index in `pointIndices`. Prim path: `{}`", bs_path);
+        PUSH_ERROR_AND_RETURN(fmt::format("negative index in `pointIndices`. Prim path: `{}`", bs_path));
       }
 
-      if (vertex_indices[i] > dst.points.size()) {
-        PUSH_ERROR_AND_RETURN("pointIndices[{}] {} exceeds the number of points in GeomMesh {}. Prim path: `{}`", i, vertex_indices[i], dst.points.size(), bs_path);
+      if (uint32_t(vertex_indices[i]) > dst.points.size()) {
+        PUSH_ERROR_AND_RETURN(fmt::format("pointIndices[{}] {} exceeds the number of points in GeomMesh {}. Prim path: `{}`", i, vertex_indices[i], dst.points.size(), bs_path));
       }
+
+      indices[i] = uint32_t(vertex_indices[i]);
     }
-    shapeTarget.pointIndices
+    shapeTarget.pointIndices = indices;
 
     if (vertex_offsets.size() && (vertex_offsets.size() == vertex_indices.size())) {
+      shapeTarget.pointOffsets.resize(vertex_offsets.size());
+      memcpy(shapeTarget.pointOffsets.data(), vertex_offsets.data(), sizeof(value::normal3f) * vertex_offsets.size());
     }
 
     if (normal_offsets.size() && (normal_offsets.size() == vertex_indices.size())) {
+      shapeTarget.normalOffsets.resize(normal_offsets.size());
+      memcpy(shapeTarget.normalOffsets.data(), normal_offsets.data(), sizeof(value::normal3f) * normal_offsets.size());
     }
 
     // TODO: key duplicate check
