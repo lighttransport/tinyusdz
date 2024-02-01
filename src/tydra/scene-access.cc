@@ -1637,20 +1637,45 @@ bool GetGPrimPropertyNamesImpl(
   if (rel_prop) {
 
     if (gprim->materialBinding) {
-      prop_names->push_back("material:binding");
-    }
-
-    if (gprim->materialBindingCollection) {
-      prop_names->push_back("material:binding:collection");
+      prop_names->push_back(kMaterialBinding);
     }
 
     if (gprim->materialBindingPreview) {
-      prop_names->push_back("material:binding:preview");
+      prop_names->push_back(kMaterialBindingPreview);
+    }
+
+    if (gprim->materialBindingFull) {
+      prop_names->push_back(kMaterialBindingFull);
+    }
+
+    for (const auto &item : gprim->materialBindingMap()) {
+      prop_names->push_back("material:binding:" + item.first);
+    }
+
+    for (const auto &collection : gprim->materialBindingCollectionMap()) {
+      std::string purpose_name;
+      if (!collection.first.empty()) {
+        purpose_name = ":" + collection.first;
+      }
+
+      for (size_t i = 0; i < collection.second.size(); i++) {
+        const std::string &coll_name = collection.second.keys()[i];
+        std::string rel_name;
+        if (collection.first.empty()) {
+          rel_name = kMaterialBindingCollection + purpose_name;
+        } else {
+          rel_name = kMaterialBindingCollection + std::string(":") + coll_name + purpose_name;
+        }
+
+        prop_names->push_back(rel_name);
+      }
     }
 
     if (gprim->proxyPrim.authored()) {
       prop_names->push_back("proxyPrim");
     }
+
+    
   }
 
   // other props
