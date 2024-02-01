@@ -676,6 +676,11 @@ struct JointAndWeight {
   int elementSize{1};
 };
 
+struct MaterialPath {
+  std::string material_path; // USD Material Prim path.
+  std::string backface_material_path; // USD Material Prim path.
+};
+
 // GeomSubset whose familyName is 'materialBind'.
 // For per-face material mapping.
 struct MaterialSubset {
@@ -718,11 +723,12 @@ struct RenderMesh {
   std::vector<vec3> points;  // varying is 'vertex'.
 
   std::vector<uint32_t> faceVertexIndices;
-  // For triangulated mesh, array elements are all filled with 3 or
-  // faceVertexCounts.size() == 0.
+  // For triangulated mesh, faceVertexCounts are all filled with 3.
+  // TODO: Set to empty when the mesh is composed of all triangle faces to save memory?
   std::vector<uint32_t> faceVertexCounts;
 
 
+  // Aux state to triangulate primvars in the app.
   std::vector<size_t> triangulatedToOrigFaceVertexIndexMap; // used for rearrange facevertex attrib
   std::vector<uint32_t> triangulatedFaceCounts;  // used for rearrange face indices(e.g GeomSubset indices)
 
@@ -752,10 +758,8 @@ struct RenderMesh {
   //
   VertexAttribute tangents;
   VertexAttribute binormals;
-  // std::vector<vec3> facevaryingTangents;
-  // std::vector<vec3> facevaryingBinormals;
 
-  //  TODO
+  // For vertex skinning
   JointAndWeight joint_and_weights;
 
   // BlendShapes
@@ -765,7 +769,7 @@ struct RenderMesh {
   // Index to RenderScene::materials
   int material_id{-1};  // Material applied to whole faces in the mesh. per-face
                         // material by GeomSubset is stored in
-                        // `material_subsetMap` and `material_suset_famiyNames`
+                        // `material_subsetMap`
   int backface_material_id{
       -1};  // Backface material. Look up `rel material:binding:<BACKFACENAME>`
             // in GeomMesh. BACKFACENAME is a user-supplied setting. Default =
@@ -1191,22 +1195,29 @@ class RenderSceneConverter {
   std::vector<SkelHierarchy> skeletons;
 
   ///
+  /// Convert GeomMesh to renderer-friendly mesh.
+  /// Also apply triangulation when MeshConverterConfig::triangulate is set to true.
+  ///
+  /// It is recommended first convert Materials assigned(bound) to this GeomMesh(and GeomSubsets) or create your own Materials, and supply material info with `material_path` and `rmaterial_map`.
+  /// You may supply empty material info and assign Material after ConvertMesh manually, but it will need some steps(Need to find texcoord primvar, triangulate texcoord, etc). See the implementation of ConvertMesh for details)
+  ///
   /// @param[in] mesh_abs_path USD prim path to this GeomMesh
   /// @param[in] mesh Input GeomMesh
-  /// @param[in] rmaterial_map USD material path -> RenderMaterial index list.
+  /// @param[in] material_path USD Material Prim path assigned(bound) to this GeomMesh.
+  /// @param[in] rmaterial_map USD Material Prim path -> RenderMaterial index list.
   /// Use empty map if no material assigned to this Mesh. If the mesh has
   /// bounded material(including material from GeomSubset), RenderMaterial index
-  /// must be obrained using ConvertMaterial method firstly.
-  /// @param[in] material_subsets GeomSubset assigned to this Mesh. Can be empty.
-  /// @param[in] blendshapes BlendShape Prims assigned to this Mesh. Can be empty.
+  /// must be obrained using ConvertMaterial method before calling ConvertMesh.
+  /// @param[in] material_subsets GeomSubset assigned to this Mesh. Can be empty when no materialBind GeomSuset assigned to this mesh.
+  /// @param[in] blendshapes BlendShape Prims assigned to this Mesh. Can be empty when no BlendShape assigned to this mesh.
   /// @param[out] dst RenderMesh output
   ///
   /// @return true when success.
   ///
-  /// TODO: per-face material(GeomSubset)
   ///
   bool ConvertMesh(
       const tinyusdz::Path &mesh_abs_path, const tinyusdz::GeomMesh &mesh,
+      const MaterialPath &material_path,
       const std::map<std::string, int64_t> &rmaterial_map,
       const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
       const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> &blendshapes,
@@ -1265,6 +1276,7 @@ class RenderSceneConverter {
       const TypedAttributeWithFallback<Animatable<T>> &param,
       const std::string &param_name, ShaderParam<Dty> &dst_param);
 
+#if 0 // moved to scene-access.hh
   //
   // Get BlendShape prims in this GeomMesh Prim
   // (`skel:blendShapes`, `skel:blendShapeTargets`)
@@ -1272,6 +1284,7 @@ class RenderSceneConverter {
   bool GetBlenedShapesImpl(
       const tinyusdz::Prim &prim,
       std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> &out_blendshapes);
+#endif
 
   //
   // Get Skeleton assigned to this GeomMesh Prim
