@@ -423,6 +423,14 @@ std::vector<const GeomSubset *> GetGeomSubsets(const tinyusdz::Stage &stage, con
 ///
 std::vector<const GeomSubset *> GetGeomSubsetChildren(const tinyusdz::Prim &prim, const tinyusdz::value::token &familyName, bool prim_must_be_geommesh = true);
 
+//
+// Get BlendShape prims in this GeomMesh Prim
+// (`skel:blendShapes`, `skel:blendShapeTargets`)
+//
+std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> GetBlenedShapes(
+  const tinyusdz::Stage &stage,
+  const tinyusdz::Prim &prim, std::string *err = nullptr);
+
 #if 0 // TODO
 ///
 /// Get list of GeomSubset PrimSpecs attached to the PrimSpec
