@@ -646,7 +646,7 @@ struct SkinnedMesh {
 struct InbetweenShapeTarget {
   std::vector<vec3> pointOffsets;
   std::vector<vec3> normalOffsets;
-  float weight{0.5f}; // TODO: Init with invalid weight
+  float weight{0.5f};  // TODO: Init with invalid weight
 };
 
 struct ShapeTarget {
@@ -663,10 +663,12 @@ struct ShapeTarget {
 };
 
 struct JointAndWeight {
-  value::matrix4d geomBindTransform{value::matrix4d::identity()}; // matrix4d primvars:skel:geomBindTransform
+  value::matrix4d geomBindTransform{
+      value::matrix4d::identity()};  // matrix4d primvars:skel:geomBindTransform
 
   //
-  // NOTE: both jointIndices and jointWeights' USD interpolation must be 'vertex'
+  // NOTE: both jointIndices and jointWeights' USD interpolation must be
+  // 'vertex'
   //
   std::vector<int> jointIndices;  // int[] primvars:skel:jointIndices
 
@@ -677,8 +679,8 @@ struct JointAndWeight {
 };
 
 struct MaterialPath {
-  std::string material_path; // USD Material Prim path.
-  std::string backface_material_path; // USD Material Prim path.
+  std::string material_path;           // USD Material Prim path.
+  std::string backface_material_path;  // USD Material Prim path.
 };
 
 // GeomSubset whose familyName is 'materialBind'.
@@ -724,13 +726,17 @@ struct RenderMesh {
 
   std::vector<uint32_t> faceVertexIndices;
   // For triangulated mesh, faceVertexCounts are all filled with 3.
-  // TODO: Set to empty when the mesh is composed of all triangle faces to save memory?
+  // TODO: Set to empty when the mesh is composed of all triangle faces to save
+  // memory?
   std::vector<uint32_t> faceVertexCounts;
 
-
   // Aux state to triangulate primvars in the app.
-  std::vector<size_t> triangulatedToOrigFaceVertexIndexMap; // used for rearrange facevertex attrib
-  std::vector<uint32_t> triangulatedFaceCounts;  // used for rearrange face indices(e.g GeomSubset indices)
+  std::vector<size_t>
+      triangulatedToOrigFaceVertexIndexMap;  // used for rearrange facevertex
+                                             // attrib
+  std::vector<uint32_t>
+      triangulatedFaceCounts;  // used for rearrange face indices(e.g GeomSubset
+                               // indices)
 
   // `normals` or `primvar:normals`. Empty when no normals exist in the
   // GeomMesh.
@@ -758,6 +764,21 @@ struct RenderMesh {
   //
   VertexAttribute tangents;
   VertexAttribute binormals;
+
+  bool doubleSided{false};  // false = backface-cull.
+  value::color3f displayColor{
+      0.18f, 0.18f,
+      0.18f};  // displayColor primvar(The number of array elements = 1) in USD.
+               // default is set to the same in UsdPreviewSurface::diffuseColor
+  float displayOpacity{
+      1.0};  // displayOpacity primvar(The number of array elements = 1) in USD
+  bool is_rightHanded{true};  // orientation attribute in USD.
+
+  VertexAttribute
+      vertex_colors;  // vertex color(displayColor primvar in USD). vec3.
+  VertexAttribute
+      vertex_opacities;  // opacity(alpha) component of vertex
+                         // color(displayOpacity primvar in USD). float
 
   // For vertex skinning
   JointAndWeight joint_and_weights;
@@ -1052,12 +1073,10 @@ struct MeshConverterConfig {
   std::string default_binormals_primvar_name{"binormals"};
 
   // TODO: tangents1/binormals1 for multi-frame normal mapping?
-  
 
   // Upperlimit of the number of skin weights per vertex.
   // For realtime app, usually up to 64
-  uint32_t max_skin_elementSize = 1024ull * 256ull; 
-
+  uint32_t max_skin_elementSize = 1024ull * 256ull;
 };
 
 struct MaterialConverterConfig {
@@ -1119,11 +1138,9 @@ struct RenderSceneConverterConfig {
   bool load_texture_assets{true};
 };
 
-
 class RenderSceneConverterEnv {
  public:
-  RenderSceneConverterEnv(const Stage &_stage) : stage(_stage) {
-  }
+  RenderSceneConverterEnv(const Stage &_stage) : stage(_stage) {}
 
   RenderSceneConverterConfig scene_config;
   MeshConverterConfig mesh_config;
@@ -1134,7 +1151,7 @@ class RenderSceneConverterEnv {
     asset_resolver.set_search_paths(paths);
   }
 
-  const Stage &stage; // Point to valid Stage object
+  const Stage &stage;  // Point to valid Stage object
 
   double timecode{value::TimeCode::Default()};
 };
@@ -1142,7 +1159,7 @@ class RenderSceneConverterEnv {
 //
 // Convert USD scenegraph at specified time
 // TODO: Use RenderSceneConverterEnv(RenderSceneConverterEnv::timecode)
-// 
+//
 class RenderSceneConverter {
  public:
   RenderSceneConverter() = default;
@@ -1196,21 +1213,30 @@ class RenderSceneConverter {
 
   ///
   /// Convert GeomMesh to renderer-friendly mesh.
-  /// Also apply triangulation when MeshConverterConfig::triangulate is set to true.
+  /// Also apply triangulation when MeshConverterConfig::triangulate is set to
+  /// true.
   ///
-  /// It is recommended first convert Materials assigned(bound) to this GeomMesh(and GeomSubsets) or create your own Materials, and supply material info with `material_path` and `rmaterial_map`.
-  /// You may supply empty material info and assign Material after ConvertMesh manually, but it will need some steps(Need to find texcoord primvar, triangulate texcoord, etc). See the implementation of ConvertMesh for details)
+  /// It is recommended first convert Materials assigned(bound) to this
+  /// GeomMesh(and GeomSubsets) or create your own Materials, and supply
+  /// material info with `material_path` and `rmaterial_map`. You may supply
+  /// empty material info and assign Material after ConvertMesh manually, but it
+  /// will need some steps(Need to find texcoord primvar, triangulate texcoord,
+  /// etc). See the implementation of ConvertMesh for details)
   ///
   /// @param[in] mesh_abs_path USD prim path to this GeomMesh
   /// @param[in] mesh Input GeomMesh
-  /// @param[in] material_path USD Material Prim path assigned(bound) to this GeomMesh.
-  /// @param[in] subset_material_path_map USD Material Prim path assigned(bound) to GeomSubsets in this GeomMesh. key = GeomSubset Prim name.
-  /// @param[in] rmaterial_map USD Material Prim path -> RenderMaterial index list.
-  /// Use empty map if no material assigned to this Mesh. If the mesh has
+  /// @param[in] material_path USD Material Prim path assigned(bound) to this
+  /// GeomMesh.
+  /// @param[in] subset_material_path_map USD Material Prim path assigned(bound)
+  /// to GeomSubsets in this GeomMesh. key = GeomSubset Prim name.
+  /// @param[in] rmaterial_map USD Material Prim path -> RenderMaterial index
+  /// list. Use empty map if no material assigned to this Mesh. If the mesh has
   /// bounded material(including material from GeomSubset), RenderMaterial index
   /// must be obrained using ConvertMaterial method before calling ConvertMesh.
-  /// @param[in] material_subsets GeomSubset assigned to this Mesh. Can be empty when no materialBind GeomSuset assigned to this mesh.
-  /// @param[in] blendshapes BlendShape Prims assigned to this Mesh. Can be empty when no BlendShape assigned to this mesh.
+  /// @param[in] material_subsets GeomSubset assigned to this Mesh. Can be empty
+  /// when no materialBind GeomSuset assigned to this mesh.
+  /// @param[in] blendshapes BlendShape Prims assigned to this Mesh. Can be
+  /// empty when no BlendShape assigned to this mesh.
   /// @param[out] dst RenderMesh output
   ///
   /// @return true when success.
@@ -1222,7 +1248,8 @@ class RenderSceneConverter {
       const std::map<std::string, MaterialPath> &subset_material_path_map,
       const std::map<std::string, int64_t> &rmaterial_map,
       const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
-      const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> &blendshapes,
+      const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+          &blendshapes,
       RenderMesh *dst);
 
   ///
@@ -1230,9 +1257,9 @@ class RenderSceneConverter {
   ///
   /// @return true when success.
   ///
-  bool ConvertMaterial(
-      const tinyusdz::Path &abs_mat_path, const tinyusdz::Material &material,
-      RenderMaterial *rmat_out);
+  bool ConvertMaterial(const tinyusdz::Path &abs_mat_path,
+                       const tinyusdz::Material &material,
+                       RenderMaterial *rmat_out);
 
   ///
   /// Convert UsdPreviewSurface Shader to renderer-friendly PreviewSurfaceShader
@@ -1244,9 +1271,9 @@ class RenderSceneConverter {
   ///
   /// @return true when success.
   ///
-  bool ConvertPreviewSurfaceShader(
-      const tinyusdz::Path &shader_abs_path,
-      const tinyusdz::UsdPreviewSurface &shader, PreviewSurfaceShader *pss_out);
+  bool ConvertPreviewSurfaceShader(const tinyusdz::Path &shader_abs_path,
+                                   const tinyusdz::UsdPreviewSurface &shader,
+                                   PreviewSurfaceShader *pss_out);
 
   ///
   /// Convert UsdUvTexture to renderer-friendly UVTexture
@@ -1260,17 +1287,31 @@ class RenderSceneConverter {
   ///
   /// @return true when success.
   ///
-  bool ConvertUVTexture(
-      const Path &tex_abs_path, const AssetInfo &assetInfo,
-      const UsdUVTexture &texture, UVTexture *tex_out);
+  bool ConvertUVTexture(const Path &tex_abs_path, const AssetInfo &assetInfo,
+                        const UsdUVTexture &texture, UVTexture *tex_out);
 
   const Stage *GetStagePtr() const { return _stage; }
 
   double GetTimeCode() const { return _timecode; }
 
  private:
-
-  bool ValidateGeomSubset(const Prim &prim) const;
+  ///
+  /// Convert variability of vertex data.
+  ///
+  /// @param[in] vattr Input VertexAttribute
+  /// @param[in] to_vertex_varing Convert to `vertex` varying when true. `facevarying` when false.
+  /// @param[in] faceVertexCounts faceVertexCounts
+  /// @param[in] faceVertexIndices faceVertexIndices
+  ///
+  /// @param[out] dst Output VertexAttribute
+  ///
+  /// @return true upon success.
+  ///
+  bool ConvertVertexVariabilityImpl(
+      const VertexAttribute &vattr, const bool to_vertex_varying,
+      const std::vector<uint32_t> &faceVertexCounts,
+      const std::vector<uint32_t> &faceVertexIndices,
+      VertexAttribute &dst);
 
   template <typename T, typename Dty>
   bool ConvertPreviewSurfaceShaderParam(
@@ -1278,7 +1319,7 @@ class RenderSceneConverter {
       const TypedAttributeWithFallback<Animatable<T>> &param,
       const std::string &param_name, ShaderParam<Dty> &dst_param);
 
-#if 0 // moved to scene-access.hh
+#if 0  // moved to scene-access.hh
   //
   // Get BlendShape prims in this GeomMesh Prim
   // (`skel:blendShapes`, `skel:blendShapeTargets`)
