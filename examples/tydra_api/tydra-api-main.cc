@@ -358,15 +358,37 @@ int main(int argc, char **argv) {
 
 
   //
-  // Find bound Material
+  // Get bound Material
   //
-  std::cout << "FindBoundMaterial example -------------\n";
+  // - GetBoundMaterial:
+  //   - Look Directly boundMaterial to the Prim.
+  //   - If no material is asigned to the Prim, look into parent's BoundMaterial settings.
+  //   - Also considers BindMaterial strength `bindMaterialAs` Prim metadatum 
+  //   - [ ] TODO: Consider materialBindingCollection
+  // - GetDirectlyBoundMaterial: Get BoundMaterial assigned to the Prim being queried.
+  //
+  // Usually GetBoundMaterial is what you want.
+  //
+  // See https://openusd.org/release/wp_usdshade.html for more details about Material assignment. 
+  //
+  std::cout << "GetBoundMaterial example -------------\n";
   for (const auto &item : meshmap) {
-    // FindBoundMaterial seaches bound material for parent GPrim.
+
     tinyusdz::Path matPath;
     const tinyusdz::Material *material{nullptr};
     std::string err;
-    bool ret = tinyusdz::tydra::FindBoundMaterial(stage, tinyusdz::Path(item.first, ""), /* suffix */"", &matPath, &material, &err);
+
+    bool ret = tinyusdz::tydra::GetDirectlyBoundMaterial(stage, tinyusdz::Path(item.first, ""), /* purpose */"", &matPath, &material, &err);
+    std::cout << "Prim : " << item.first << "\n";
+    if (ret) {
+      std::cout << "has directlyBoundMaterial: " << matPath.full_path_name() << "\n";
+    } else if (err.empty()) {
+      std::cout << "no directlyBoundMaterial" << "\n";
+    } else {
+      std::cout << "GetDirectlyBoundMaterial failed: " << err << "\n";
+    }
+
+    ret = tinyusdz::tydra::GetBoundMaterial(stage, tinyusdz::Path(item.first, ""), /* purpose */"", &matPath, &material, &err);
 
     if (ret) {
       std::cout << item.first << " has bound Material. Material Path = " << matPath << "\n";
