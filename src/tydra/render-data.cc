@@ -54,7 +54,7 @@
 #include "tydra/scene-access.hh"
 #include "tydra/shader-network.hh"
 
-//#define PushError(msg) if (err) { (*err) += msg; }
+// #define PushError(msg) if (err) { (*err) += msg; }
 
 #if 0
 #define SET_ERROR_AND_RETURN(msg) \
@@ -1541,6 +1541,7 @@ bool ListUVNames(const RenderMaterial &material,
 bool RenderSceneConverter::ConvertMesh(
     const Path &abs_path, const GeomMesh &mesh,
     const MaterialPath &material_path,
+    const std::map<std::string, MaterialPath> &subset_material_path_map,
     const std::map<std::string, int64_t> &rmaterial_idMap,
     const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
     const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
@@ -1605,7 +1606,8 @@ bool RenderSceneConverter::ConvertMesh(
   // bindMaterial GeoMesh and GeomSubset.
   //
   // Assume Material conversion is done before ConvertMesh.
-  // Here we only assign rmaterial id and extract GeomSubset::indices information.
+  // Here we only assign rmaterial id and extract GeomSubset::indices
+  // information.
   //
 
   if (rmaterial_idMap.count(material_path.material_path)) {
@@ -1613,7 +1615,8 @@ bool RenderSceneConverter::ConvertMesh(
   }
 
   if (rmaterial_idMap.count(material_path.backface_material_path)) {
-    dst.backface_material_id = int(rmaterial_idMap.at(material_path.backface_material_path));
+    dst.backface_material_id =
+        int(rmaterial_idMap.at(material_path.backface_material_path));
   }
 
   if (_mesh_config.validate_geomsubset) {
@@ -1641,6 +1644,9 @@ bool RenderSceneConverter::ConvertMesh(
       if (pv.value().get(_timecode, &indices)) {
         ms.indices = indices;
       }
+    }
+
+    if (subset_material_path_map.count(psubset->name)) {
     }
 
     // TODO: BindMaterial;
@@ -2241,7 +2247,6 @@ bool RenderSceneConverter::ConvertMesh(
   // BlendShapes
   //
   for (const auto &it : blendshapes) {
-
     const std::string &bs_path = it.first;
     const BlendShape *bs = it.second;
 
@@ -2267,7 +2272,10 @@ bool RenderSceneConverter::ConvertMesh(
     shapeTarget.display_name = bs->metas().displayName.value_or("");
 
     if (vertex_indices.empty()) {
-      PUSH_WARN(fmt::format("`pointIndices` in BlendShape `{}` is not authored or empty. Skipping.", bs->name));
+      PUSH_WARN(
+          fmt::format("`pointIndices` in BlendShape `{}` is not authored or "
+                      "empty. Skipping.",
+                      bs->name));
     }
 
     // Check if index is valid.
@@ -2276,30 +2284,37 @@ bool RenderSceneConverter::ConvertMesh(
 
     for (size_t i = 0; i < vertex_indices.size(); i++) {
       if (vertex_indices[i] < 0) {
-        PUSH_ERROR_AND_RETURN(fmt::format("negative index in `pointIndices`. Prim path: `{}`", bs_path));
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "negative index in `pointIndices`. Prim path: `{}`", bs_path));
       }
 
       if (uint32_t(vertex_indices[i]) > dst.points.size()) {
-        PUSH_ERROR_AND_RETURN(fmt::format("pointIndices[{}] {} exceeds the number of points in GeomMesh {}. Prim path: `{}`", i, vertex_indices[i], dst.points.size(), bs_path));
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("pointIndices[{}] {} exceeds the number of points in "
+                        "GeomMesh {}. Prim path: `{}`",
+                        i, vertex_indices[i], dst.points.size(), bs_path));
       }
 
       indices[i] = uint32_t(vertex_indices[i]);
     }
     shapeTarget.pointIndices = indices;
 
-    if (vertex_offsets.size() && (vertex_offsets.size() == vertex_indices.size())) {
+    if (vertex_offsets.size() &&
+        (vertex_offsets.size() == vertex_indices.size())) {
       shapeTarget.pointOffsets.resize(vertex_offsets.size());
-      memcpy(shapeTarget.pointOffsets.data(), vertex_offsets.data(), sizeof(value::normal3f) * vertex_offsets.size());
+      memcpy(shapeTarget.pointOffsets.data(), vertex_offsets.data(),
+             sizeof(value::normal3f) * vertex_offsets.size());
     }
 
-    if (normal_offsets.size() && (normal_offsets.size() == vertex_indices.size())) {
+    if (normal_offsets.size() &&
+        (normal_offsets.size() == vertex_indices.size())) {
       shapeTarget.normalOffsets.resize(normal_offsets.size());
-      memcpy(shapeTarget.normalOffsets.data(), normal_offsets.data(), sizeof(value::normal3f) * normal_offsets.size());
+      memcpy(shapeTarget.normalOffsets.data(), normal_offsets.data(),
+             sizeof(value::normal3f) * normal_offsets.size());
     }
 
     // TODO: key duplicate check
     dst.targets[bs->name] = shapeTarget;
-
   }
 
   //
@@ -3306,11 +3321,11 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
       std::vector<RenderMaterial> &rmaterials = converter->materials;
 
-    tinyusdz::Path bound_material_path;
-    const tinyusdz::Material *bound_material{nullptr};
-    bool ret = tinyusdz::tydra::GetBoundMaterial(
-        *converter->GetStagePtr(), /* GeomMesh prim path */ abs_path,
-        /* purpose */ "", &bound_material_path, &bound_material, err);
+      tinyusdz::Path bound_material_path;
+      const tinyusdz::Material *bound_material{nullptr};
+      bool ret = tinyusdz::tydra::GetBoundMaterial(
+          *converter->GetStagePtr(), /* GeomMesh prim path */ abs_path,
+          /* purpose */ "", &bound_material_path, &bound_material, err);
 
       int64_t rmaterial_id = -1;
 
@@ -3375,6 +3390,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
       // TODO
       MaterialPath material_path;
+      std::map<std::string, MaterialPath> subset_material_path_map;
       std::map<std::string, int64_t> rmaterial_idMap;
       std::vector<const GeomSubset *> material_subsets;
       std::vector<std::pair<std::string, const BlendShape *>> blendshapes;
@@ -3390,7 +3406,8 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         }
       }
 
-      if (!converter->ConvertMesh(abs_path, *pmesh, material_path, rmaterial_idMap,
+      if (!converter->ConvertMesh(abs_path, *pmesh, material_path,
+                                  subset_material_path_map, rmaterial_idMap,
                                   material_subsets, blendshapes, &rmesh)) {
         if (err) {
           (*err) += fmt::format("Mesh conversion failed: {}",
@@ -3399,20 +3416,8 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         return false;
       }
 
-      DCOUT("renderMaterialId = " << rmaterial_id);
+      converter->meshes.emplace_back(std::move(rmesh));
     }
-
-#if 0
-    // Do not assign materialIds when no material bound to this Mesh.
-    // TODO: per-face material.
-    if ((rmaterial_id > -1) &&
-        (rmaterial_id < (std::numeric_limits<int32_t>::max)())) {
-      rmesh.materialIds.resize(rmesh.faceVertexCounts.size(),
-                               int32_t(rmaterial_id));
-    }
-#endif
-
-    // converter->meshes.emplace_back(std::move(rmesh));
   }
 
   return true;  // continue traversal
@@ -4319,7 +4324,7 @@ std::string DumpRenderScene(const RenderScene &scene,
   return ss.str();
 }
 
-#if 0 // moved to scene-access.hh
+#if 0  // moved to scene-access.hh
 bool RenderSceneConverter::GetBlenedShapesImpl(
     const tinyusdz::Prim &prim,
     std::vector<std::pair<std::string, const BlendShape *>> &out_blendshapes) {

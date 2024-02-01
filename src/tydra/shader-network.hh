@@ -73,6 +73,21 @@ extern template bool EvaluateShaderAttribute(const Stage &stage, const Shader &s
 
 
 ///
+/// Return true when...
+///
+/// - `bindMaterialAs` attribute metadata is "strongerThanDescendants"
+///
+bool DirectBindingStrongerThanDescendants(
+  const Stage &stage,
+  const Prim &prim,
+  const std::string &purpose);
+
+bool DirectBindingStrongerThanDescendants(
+  const Stage &stage,
+  const Path &abs_path,
+  const std::string &purpose);
+
+///
 /// Get material:binding target Path of given Prim.
 ///
 /// This API walk up Prim tree to the root and take into account 'material:binding' and 'material:binding:collection'.
@@ -86,13 +101,16 @@ extern template bool EvaluateShaderAttribute(const Stage &stage, const Shader &s
 /// @param[out] material THe pointer to found Material object in Stage(if no Material object found in Stage, returns nullptr)
 /// @return true when bound Material Path is found.
 ///
+
+#if 0 // TODO
 bool GetBoundMaterial(
   const Stage &stage,
   const Prim &prim,
-  const std::string &suffix,
+  const std::string &purpose,
   tinyusdz::Path *materialPath, 
   const Material **material,
   std::string *err);
+#endif
 
 ///
 /// `Path` version of `GetBoundMaterial`
