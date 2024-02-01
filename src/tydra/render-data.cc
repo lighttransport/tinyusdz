@@ -1540,6 +1540,7 @@ bool ListUVNames(const RenderMaterial &material,
 
 bool RenderSceneConverter::ConvertMesh(
     const Path &abs_path, const GeomMesh &mesh,
+    const MaterialPath &material_path,
     const std::map<std::string, int64_t> &rmaterial_idMap,
     const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
     const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
@@ -1601,10 +1602,19 @@ bool RenderSceneConverter::ConvertMesh(
   }
 
   //
-  // bindMaterial GeomSubset.
-  // Assume Material conversion is done before ConvertMesh.
-  // Here we only extract indices information.
+  // bindMaterial GeoMesh and GeomSubset.
   //
+  // Assume Material conversion is done before ConvertMesh.
+  // Here we only assign rmaterial id and extract GeomSubset::indices information.
+  //
+
+  if (rmaterial_idMap.count(material_path.material_path)) {
+    dst.material_id = int(rmaterial_idMap.at(material_path.material_path));
+  }
+
+  if (rmaterial_idMap.count(material_path.backface_material_path)) {
+    dst.backface_material_id = int(rmaterial_idMap.at(material_path.backface_material_path));
+  }
 
   if (_mesh_config.validate_geomsubset) {
     size_t elementCount = dst.faceVertexCounts.size();
@@ -1632,6 +1642,8 @@ bool RenderSceneConverter::ConvertMesh(
         ms.indices = indices;
       }
     }
+
+    // TODO: BindMaterial;
 
     // TODO
     //  ms.prim_index
@@ -2239,7 +2251,7 @@ bool RenderSceneConverter::ConvertMesh(
 
     //
     // TODO: in-between attribs
-    // 
+    //
 
     std::vector<int> vertex_indices;
     std::vector<value::vector3f> normal_offsets;
@@ -3362,6 +3374,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       RenderMesh rmesh;
 
       // TODO
+      MaterialPath material_path;
       std::map<std::string, int64_t> rmaterial_idMap;
       std::vector<const GeomSubset *> material_subsets;
       std::vector<std::pair<std::string, const BlendShape *>> blendshapes;
@@ -3377,7 +3390,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         }
       }
 
-      if (!converter->ConvertMesh(abs_path, *pmesh, rmaterial_idMap,
+      if (!converter->ConvertMesh(abs_path, *pmesh, material_path, rmaterial_idMap,
                                   material_subsets, blendshapes, &rmesh)) {
         if (err) {
           (*err) += fmt::format("Mesh conversion failed: {}",
@@ -4306,6 +4319,7 @@ std::string DumpRenderScene(const RenderScene &scene,
   return ss.str();
 }
 
+#if 0 // moved to scene-access.hh
 bool RenderSceneConverter::GetBlenedShapesImpl(
     const tinyusdz::Prim &prim,
     std::vector<std::pair<std::string, const BlendShape *>> &out_blendshapes) {
@@ -4388,6 +4402,7 @@ bool RenderSceneConverter::GetBlenedShapesImpl(
   out_blendshapes = dst;
   return true;
 }
+#endif
 
 }  // namespace tydra
 }  // namespace tinyusdz
