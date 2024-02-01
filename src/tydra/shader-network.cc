@@ -279,24 +279,11 @@ bool GetDirectCollectionMaterialBinding(
   return ret;
 }
 
-bool GetBoundMaterial(
+bool DirectBindingStrongerThanDescendants(
   const Stage &_stage,
   const Prim &prim,
-  const std::string &purpose,
-  tinyusdz::Path *materialPath,
-  const Material **material,
-  std::string *err) {
-
-  if (!materialPath) {
-    return false;
-  }
-
-  if (!material) {
-    return false;
-  }
-
-  (void)err;
-
+  const std::string &purpose)
+{
   auto apply_fun = [&](const Stage &stage, const MaterialBinding *mb) -> bool {
 
     (void)stage;
@@ -306,69 +293,47 @@ bool GetBoundMaterial(
       return false;
     }
 
-    // TODO
+    const value::token strength = mat_rel.metas().bindMaterialAs.value_or(kWeaderThanDescendants);
+    return strength.str() == kStrongerThanDescendants;
 
-#if 0
-    if (suffix.empty()) {
-      if (gprim->materialBinding.has_value()) {
-        if (GetSinglePath(gprim->materialBinding.value(), materialPath)) {
-
-          const Prim *p;
-          if (stage.find_prim_at_path(*materialPath, p, err)) {
-            if (p->is<Material>() && (material != nullptr)) {
-              (*material) = p->as<Material>();
-            } else {
-              (*material) = nullptr;
-            }
-          }
-
-          return true;
-        }
-      }
-    } else if (suffix == "collection") {
-      if (gprim->materialBindingCollection.has_value()) {
-        if (GetSinglePath(gprim->materialBindingCollection.value(), materialPath)) {
-
-          const Prim *p;
-          if (stage.find_prim_at_path(*materialPath, p, err)) {
-            if (p->is<Material>() && (material != nullptr)) {
-              (*material) = p->as<Material>();
-            } else {
-              (*material) = nullptr;
-            }
-          }
-
-          return true;
-        }
-      }
-    } else if (suffix == "preview") {
-      if (gprim->materialBindingPreview.has_value()) {
-        if (GetSinglePath(gprim->materialBindingPreview.value(), materialPath)) {
-
-          const Prim *p{nullptr};
-          if (stage.find_prim_at_path(*materialPath, p, err)) {
-            if (p->is<Material>() && (material != nullptr)) {
-              (*material) = p->as<Material>();
-            } else {
-              (*material) = nullptr;
-            }
-          }
-
-          return true;
-        }
-      }
-    } else {
-      return false;
-    }
-#endif
-
-    return false;
   };
 
   bool ret = ApplyToMaterialBinding(_stage, prim, apply_fun);
 
   return ret;
 }
+
+bool DirectBindingStrongerThanDescendants(
+  const Stage &stage,
+  const Path &abs_path,
+  const std::string &purpose) {
+
+  const Prim *p{nullptr};
+  if (stage.find_prim_at_path(abs_path, p)) {
+    return DirectBindingStrongerThanDescendants(stage, *p, purpose);
+  }
+
+  return false;
+}
+
+#if 0 // TODO
+bool GetBoundMaterial(
+  const Stage &_stage,
+  const Prim &prim,
+  const std::string &purpose,
+  tinyusdz::Path *materialPath,
+  const Material **materiand,
+  std::string *err) {
+
+  if (materialPath == nullptr) {
+    return false;
+  }
+
+  if (material == nullptr) {
+    return false;
+  }
+}
+#endif
 
 bool GetBoundMaterial(
   const Stage &_stage,
@@ -382,73 +347,9 @@ bool GetBoundMaterial(
     return false;
   }
 
-  (void)material;
-
-  auto apply_fun = [&](const Stage &stage, const MaterialBinding *mb) -> bool {
-    (void)stage;
-    (void)mb;
-#if 0
-    if (purpose.empty()) {
-      if (gprim->materialBinding.has_value()) {
-        if (GetSinglePath(gprim->materialBinding.value(), materialPath)) {
-          DCOUT("GPrim has materialBinding.");
-          const Prim *p;
-          if (stage.find_prim_at_path(*materialPath, p, err)) {
-            DCOUT("material = " << material);
-            if (p->is<Material>() && (material != nullptr)) {
-              DCOUT("Store mat.");
-              (*material) = p->as<Material>();
-            } else {
-              DCOUT("nullmat.");
-              (*material) = nullptr;
-            }
-          }
-          return true;
-        }
-      } else {
-          DCOUT("GPrim has no materialBinding.");
-      }
-    } else if (suffix == "collection") {
-      if (gprim->materialBindingCollection.has_value()) {
-        if (GetSinglePath(gprim->materialBindingCollection.value(), materialPath)) {
-
-          const Prim *p;
-          if (stage.find_prim_at_path(*materialPath, p, err)) {
-            if (p->is<Material>() && (material != nullptr)) {
-              (*material) = p->as<Material>();
-            } else {
-              (*material) = nullptr;
-            }
-          }
-
-          return true;
-        }
-      }
-    } else if (suffix == "preview") {
-      if (gprim->materialBindingPreview.has_value()) {
-        if (GetSinglePath(gprim->materialBindingPreview.value(), materialPath)) {
-
-          const Prim *p{nullptr};
-          if (stage.find_prim_at_path(*materialPath, p, err)) {
-            if (p->is<Material>() && (material != nullptr)) {
-              (*material) = p->as<Material>();
-            } else {
-              (*material) = nullptr;
-            }
-          }
-
-          return true;
-        }
-      }
-    } else {
-      return false;
-    }
-#endif
-    // TODO
+  if (material == nullptr) {
     return false;
-  };
-
-  (void)apply_fun;
+  }
 
   std::vector<value::token> purposes;
   if (materialPurpose.empty()) {
@@ -470,13 +371,13 @@ bool GetBoundMaterial(
   //
   //         boundMaterial = directBound
   //
-  //   for collBinding : GetCollectionMaterialBindings(p, purpose):
+  //     for collBinding : GetCollectionMaterialBindings(p, purpose):
   //
-  //     if (collBinding.GetCollection().Contains(prim) and
-  //         collBinding.IsStrongerThanDescendants() or not boundMaterial):
+  //       if (collBinding.GetCollection().Contains(prim) and
+  //           collBinding.IsStrongerThanDescendants() or not boundMaterial):
   //
-  //       boundMaterial = collBinding.GetMaterial()
-  //       break
+  //         boundMaterial = collBinding.GetMaterial()
+  //         break
   //
   //
   //   if boundMaterial:
@@ -488,7 +389,11 @@ bool GetBoundMaterial(
   for (const auto &purpose : purposes) {
 
     Path currentPath = abs_path;
+    Path boundMaterialPath;
+    const Material *boundMaterial{nullptr};
 
+    // We need to climb up to the root in any case.
+    // TODO: Cache result.
     uint32_t depth = 0;
     while (depth < 1024*128) { // to avoid infinite loop.
 
@@ -502,13 +407,19 @@ bool GetBoundMaterial(
         return false;
       }
 
-      std::string _err;
-      Path directMaterialPath;
-      const Material *directMaterial{nullptr};
-      bool has_directBound = GetDirectlyBoundMaterial(_stage, *prim, purpose.str(), &directMaterialPath, &directMaterial, &_err);
+      if (!boundMaterial || DirectBindingStrongerThanDescendants(_stage, *prim, purpose.str())) {
 
-      if (!has_directBound) {
-        if (_err.size()) {
+        std::string _err;
+        Path directMaterialPath;
+        const Material *directMaterial{nullptr};
+        bool has_directBound = GetDirectlyBoundMaterial(_stage, *prim, purpose.str(), &directMaterialPath, &directMaterial, &_err);
+
+        if (has_directBound && directMaterial) {
+
+          boundMaterial = directMaterial;
+          boundMaterialPath = directMaterialPath;
+        
+        } else if (_err.size()) {
           if (err) {
             (*err) += _err;
           }
@@ -522,6 +433,14 @@ bool GetBoundMaterial(
       currentPath = parentPath;
 
       depth++;
+
+      // TODO: collection
+    }
+
+    if (boundMaterial) {
+      (*material) = boundMaterial;
+      (*materialPath) = boundMaterialPath;
+      return true;
     }
   }
 
