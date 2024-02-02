@@ -491,6 +491,7 @@ static nonstd::expected<std::vector<uint8_t>, std::string> ConstantToVertex(
   return dst;
 }
 
+#if 0
 static nonstd::expected<std::vector<uint8_t>, std::string>
 ConstantToFaceVarying(const std::vector<uint8_t> &src,
                       const size_t stride_bytes,
@@ -524,6 +525,7 @@ ConstantToFaceVarying(const std::vector<uint8_t> &src,
 
   return dst;
 }
+#endif
 
 #if 0  // Not used atm.
 static bool ToFaceVaryingAttribute(const std::string &attr_name,
@@ -1831,24 +1833,25 @@ bool RenderSceneConverter::ConvertMesh(
         PUSH_ERROR_AND_RETURN("Internal error in triangulation logic.");
       }
 
-      //
-      // Up to 2GB faces.
-      //
 
-      // key: array index in faceVertexCount(before triangulation), value: the
-      // array index in triangulatedFaceVertexCounts
-      std::map<int32_t, uint32_t> faceIndexOffsets;
+      //
+      // size: len(triangulatedFaceCounts)
+      // value: array index in triangulatedFaceVertexCounts
+      // Up to 4GB faces.
+      //
+      std::vector<uint32_t> faceIndexOffsets;
+      faceIndexOffsets.resize(triangulatedFaceCounts.size());
 
-      uint32_t faceIndexOffset = 0;
+      size_t faceIndexOffset = 0;
       for (size_t i = 0; i < triangulatedFaceCounts.size(); i++) {
         size_t ncount = triangulatedFaceCounts[i];
 
-        faceIndexOffsets[int32_t(i)] = faceIndexOffset;
+        faceIndexOffsets[i] = uint32_t(faceIndexOffset);
 
         faceIndexOffset += ncount;
 
-        if (int(faceIndexOffset) >= std::numeric_limits<int>::max()) {
-          PUSH_ERROR_AND_RETURN("Triangulated Mesh contains 2G or more faces.");
+        if (faceIndexOffset >= std::numeric_limits<uint32_t>::max()) {
+          PUSH_ERROR_AND_RETURN("Triangulated Mesh contains 4G or more faces.");
         }
       }
 
@@ -1879,12 +1882,7 @@ bool RenderSceneConverter::ConvertMesh(
             PUSH_ERROR_AND_RETURN("Invalid index value in GeomSubset.");
           }
 
-          if (!faceIndexOffsets.count(int(i))) {
-            PUSH_ERROR_AND_RETURN(fmt::format(
-                "Index value {} in GeomSubset is out-of-range.", i));
-          }
-
-          uint32_t baseFaceIndex = faceIndexOffsets[int(i)];
+          uint32_t baseFaceIndex = faceIndexOffsets[i];
 
           for (size_t k = 0; k < triangulatedFaceCounts[uint32_t(srcIndex)];
                k++) {
@@ -2689,6 +2687,8 @@ bool RenderSceneConverter::ConvertMesh(
       memcpy(shapeTarget.normalOffsets.data(), normal_offsets.data(),
              sizeof(value::normal3f) * normal_offsets.size());
     }
+
+    // TODO inbetweens
 
     // TODO: key duplicate check
     dst.targets[bs->name] = shapeTarget;
@@ -4700,91 +4700,6 @@ std::string DumpRenderScene(const RenderScene &scene,
 
   return ss.str();
 }
-
-#if 0  // moved to scene-access.hh
-bool RenderSceneConverter::GetBlenedShapesImpl(
-    const tinyusdz::Prim &prim,
-    std::vector<std::pair<std::string, const BlendShape *>> &out_blendshapes) {
-  std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> dst;
-
-  auto *pmesh = prim.as<GeomMesh>();
-  if (!pmesh) {
-    return false;
-  }
-
-  //
-  // BlendShape Prim may not be a child of GeomMesh. So need to search Prim in
-  // Stage
-  //
-  if (pmesh->blendShapes.authored() && pmesh->blendShapeTargets.has_value()) {
-    // TODO: connection?
-    std::vector<value::token> blendShapeNames;
-
-    if (!pmesh->blendShapes.get_value(&blendShapeNames)) {
-      PUSH_ERROR_AND_RETURN("Failed to get `skel:blendShapes` attribute.");
-    }
-
-    if (pmesh->blendShapeTargets.value().is_path()) {
-      if (blendShapeNames.size() != 1) {
-        PUSH_ERROR_AND_RETURN(
-            "Array size mismatch with `skel:blendShapes` and "
-            "`skel:blendShapeTargets`.");
-      }
-
-      const Path &targetPath = pmesh->blendShapeTargets.value().targetPath;
-      const Prim *bsprim{nullptr};
-      if (_stage->find_prim_at_path(targetPath, bsprim, &_err)) {
-        return false;
-      }
-      if (!bsprim) {
-        PUSH_ERROR_AND_RETURN("Internal error. BlendShape Prim is nullptr.");
-      }
-
-      if (const auto *bs = bsprim->as<BlendShape>()) {
-        dst.push_back(std::make_pair(blendShapeNames[0].str(), bs));
-      } else {
-        PUSH_ERROR_AND_RETURN(fmt::format("{} is not BlendShape Prim.",
-                                          targetPath.full_path_name()));
-      }
-
-    } else if (pmesh->blendShapeTargets.value().is_pathvector()) {
-      if (blendShapeNames.size() !=
-          pmesh->blendShapeTargets.value().targetPathVector.size()) {
-        PUSH_ERROR_AND_RETURN(
-            "Array size mismatch with `skel:blendShapes` and "
-            "`skel:blendShapeTargets`.");
-      }
-    } else {
-      PUSH_ERROR_AND_RETURN(
-          "Invalid or unsupported definition of `skel:blendShapeTargets` "
-          "relationship.");
-    }
-
-    for (size_t i = 0;
-         i < pmesh->blendShapeTargets.value().targetPathVector.size(); i++) {
-      const Path &targetPath =
-          pmesh->blendShapeTargets.value().targetPathVector[i];
-      const Prim *bsprim{nullptr};
-      if (_stage->find_prim_at_path(targetPath, bsprim, &_err)) {
-        return false;
-      }
-      if (!bsprim) {
-        PUSH_ERROR_AND_RETURN("Internal error. BlendShape Prim is nullptr.");
-      }
-
-      if (const auto *bs = bsprim->as<BlendShape>()) {
-        dst.push_back(std::make_pair(blendShapeNames[0].str(), bs));
-      } else {
-        PUSH_ERROR_AND_RETURN(fmt::format("{} is not BlendShape Prim.",
-                                          targetPath.full_path_name()));
-      }
-    }
-  }
-
-  out_blendshapes = dst;
-  return true;
-}
-#endif
 
 }  // namespace tydra
 }  // namespace tinyusdz
