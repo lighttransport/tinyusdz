@@ -71,9 +71,21 @@ class GeomPrimvar {
     _has_value = true;
   }
 
-  // TODO: TimeSamples indices.
-  GeomPrimvar(const Attribute &attr, const std::vector<int32_t> &indices) : _attr(attr), _indices(indices)
+  GeomPrimvar(const Attribute &attr, const std::vector<int32_t> &indices) : _attr(attr)
   {
+    _indices.add_sample(value::TimeCode::Default(), indices);
+    _has_value = true;
+  }
+
+  GeomPrimvar(const Attribute &attr, const TypedTimeSamples<std::vector<int32_t>> &indices) : _attr(attr)
+  {
+    _indices = indices;
+    _has_value = true;
+  }
+
+  GeomPrimvar(const Attribute &attr, TypedTimeSamples<std::vector<int32_t>> &&indices) : _attr(attr)
+  {
+    _indices = std::move(indices);
     _has_value = true;
   }
 
@@ -125,11 +137,15 @@ class GeomPrimvar {
   bool flatten_with_indices(T *dst, std::string *err = nullptr) const;
 
   template <typename T>
+  bool flatten_with_indices(T *dst, double t, value::TimeSampleInterpolationType tinerp = value::TimeSampleInterpolationType::Linear, std::string *err = nullptr) const;
+
+  template <typename T>
   bool flatten_with_indices(std::vector<T> *dst, std::string *err = nullptr) const;
 
   // Generic Value version.
   // TODO: return Attribute?
   bool flatten_with_indices(value::Value *dst, std::string *err = nullptr) const;
+  bool flatten_with_indices(double t, value::Value *dst, value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear, std::string *err = nullptr) const;
 
   bool has_elementSize() const;
   uint32_t get_elementSize() const;
@@ -145,8 +161,11 @@ class GeomPrimvar {
     _interpolation = interp;
   }
 
-  const std::vector<int32_t> &get_indices() const { return _indices; }
-  bool has_indices() const { return _indices.size(); }
+  const TypedTimeSamples<std::vector<int32_t>> &get_indices() const {
+    return _indices;
+  }
+
+  bool has_indices() const { return !_indices.empty(); }
 
   uint32_t type_id() const { return _attr.type_id(); }
   std::string type_name() const { return _attr.type_name(); }
@@ -195,9 +214,9 @@ class GeomPrimvar {
   /// Get Attribute value at specified time.
   ///
   template <typename T>
-  bool get_value(double timecode, T *dst, const value::TimeSampleInterpolationType interp = value::TimeSampleInterpolationType::Held, std::string *err = nullptr) const;
+  bool get_value(double timecode, T *dst, const value::TimeSampleInterpolationType interp = value::TimeSampleInterpolationType::Linear, std::string *err = nullptr) const;
 
-  bool get_value(double timecode, value::Value *dst, const value::TimeSampleInterpolationType interp = value::TimeSampleInterpolationType::Held, std::string *err = nullptr) const;
+  bool get_value(double timecode, value::Value *dst, const value::TimeSampleInterpolationType interp = value::TimeSampleInterpolationType::Linear, std::string *err = nullptr) const;
 
   ///
   /// Set Attribute value.
@@ -221,11 +240,15 @@ class GeomPrimvar {
   void set_name(const std::string &name) { _name = name; }
 
   void set_indices(const std::vector<int32_t> &indices) {
-    _indices = indices;
+    _indices.add_sample(value::TimeCode::Default(), indices);
   }
 
   void set_indices(const std::vector<int32_t> &&indices) {
-    _indices = std::move(indices);
+    _indices.add_sample(value::TimeCode::Default(), std::move(indices));
+  }
+
+  void set_indices(const TypedTimeSamples<std::vector<int32_t>> &indices) {
+    _indices = indices;
   }
 
   const Attribute &get_attribute() const {
@@ -237,7 +260,8 @@ class GeomPrimvar {
   std::string _name;
   bool _has_value{false};
   Attribute _attr;
-  std::vector<int32_t> _indices;  // TODO: uint support?
+  //std::vector<int32_t> _indices;  // TODO: uint support?
+  TypedTimeSamples<std::vector<int32_t>> _indices;
 
   // Store Attribute meta separately.
   nonstd::optional<uint32_t> _elementSize;
@@ -293,9 +317,9 @@ struct GPrim : Xformable, MaterialBinding, Collection {
       Purpose::Default};  // "uniform token purpose"
 
   // Handy API to get `primvars:displayColor` and `primvars:displayOpacity`
-  bool get_displayColor(value::color3f *col, const double t = value::TimeCode::Default(), const value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held);
+  bool get_displayColor(value::color3f *col, const double t = value::TimeCode::Default(), const value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear);
 
-  bool get_displayOpacity(float *opacity, const double t = value::TimeCode::Default(), const value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held);
+  bool get_displayOpacity(float *opacity, const double t = value::TimeCode::Default(), const value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear);
 
   RelationshipProperty proxyPrim;
 

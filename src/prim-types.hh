@@ -1135,7 +1135,7 @@ struct TypedTimeSamples {
   template<typename V = T, std::enable_if_t<!value::LerpTraits<V>::supported(), std::nullptr_t> = nullptr>
   bool get(T *dst, double t = value::TimeCode::Default(),
            value::TimeSampleInterpolationType interp =
-               value::TimeSampleInterpolationType::Held) const {
+               value::TimeSampleInterpolationType::Linear) const {
 
     (void)interp;
 
@@ -1185,7 +1185,7 @@ struct TypedTimeSamples {
   template<typename V = T, std::enable_if_t<value::LerpTraits<V>::supported(), std::nullptr_t> = nullptr>
   bool get(T *dst, double t = value::TimeCode::Default(),
            value::TimeSampleInterpolationType interp =
-               value::TimeSampleInterpolationType::Held) const {
+               value::TimeSampleInterpolationType::Linear) const {
     if (!dst) {
       return false;
     }
@@ -1313,6 +1313,13 @@ struct TypedTimeSamples {
     return _samples;
   }
 
+  size_t size() const {
+    if (_dirty) {
+      update();
+    }
+    return _samples.size();
+  }
+
  private:
   // Need to be sorted when looking up the value.
   mutable std::vector<Sample> _samples;
@@ -1346,7 +1353,7 @@ struct Animatable {
   ///
   bool get(double t, T *v,
            const value::TimeSampleInterpolationType tinerp =
-               value::TimeSampleInterpolationType::Held) const {
+               value::TimeSampleInterpolationType::Linear) const {
     if (!v) {
       return false;
     }
@@ -2303,7 +2310,7 @@ struct Attribute {
   template <typename T>
   bool get_value(const double t, T *dst,
                  value::TimeSampleInterpolationType tinterp =
-                     value::TimeSampleInterpolationType::Held) const {
+                     value::TimeSampleInterpolationType::Linear) const {
     if (!dst) {
       return false;
     }
@@ -3522,12 +3529,12 @@ bool CastToXformable(const Prim &prim, const Xformable **xformable);
 /// @param[out] resetXformStack Whether Prim's xformOps contains
 /// `!resetXformStack!` or not
 /// @param[in] t time
-/// @param[in] tinterp Interpolation type(Held or Linear)
+/// @param[in] tinterp Interpolation type(Linear or Held)
 ///
 value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStak,
                                   double t = value::TimeCode::Default(),
                                   value::TimeSampleInterpolationType tinterp =
-                                      value::TimeSampleInterpolationType::Held);
+                                      value::TimeSampleInterpolationType::Linear);
 
 ///
 /// TODO: Deprecate this class and use PrimPec

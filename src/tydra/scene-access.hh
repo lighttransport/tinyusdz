@@ -318,7 +318,7 @@ bool EvaluateAttribute(
     const std::string &attr_name, TerminalAttributeValue *value,
     std::string *err, const double t = tinyusdz::value::TimeCode::Default(),
     const tinyusdz::value::TimeSampleInterpolationType tinterp =
-        tinyusdz::value::TimeSampleInterpolationType::Held);
+        tinyusdz::value::TimeSampleInterpolationType::Linear);
 
 ///
 /// For efficient Xform retrieval from Stage.
@@ -390,7 +390,7 @@ bool BuildXformNodeFromStage(
     const tinyusdz::Stage &stage, XformNode *root, /* out */
     const double t = tinyusdz::value::TimeCode::Default(),
     const tinyusdz::value::TimeSampleInterpolationType tinterp =
-        tinyusdz::value::TimeSampleInterpolationType::Held);
+        tinyusdz::value::TimeSampleInterpolationType::Linear);
 
 std::string DumpXformNode(const XformNode &root);
 

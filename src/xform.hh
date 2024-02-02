@@ -151,7 +151,7 @@ struct Xformable {
   /// Global = Parent x Local
   ///
   nonstd::expected<value::matrix4d, std::string> GetGlobalMatrix(
-      const value::matrix4d &parentMatrix, double t = value::TimeCode::Default(), value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held) const {
+      const value::matrix4d &parentMatrix, double t = value::TimeCode::Default(), value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear) const {
     bool resetXformStack{false};
 
     auto m = GetLocalMatrix(t, tinterp, &resetXformStack);
@@ -175,7 +175,7 @@ struct Xformable {
   ///
   /// @param[out] resetTransformStack Is xformOpOrder contains !resetTransformStack!? 
   ///
-  nonstd::expected<value::matrix4d, std::string> GetLocalMatrix(double t = value::TimeCode::Default(), value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held, bool *resetTransformStack = nullptr) const {
+  nonstd::expected<value::matrix4d, std::string> GetLocalMatrix(double t = value::TimeCode::Default(), value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear, bool *resetTransformStack = nullptr) const {
     if (_dirty) {
       value::matrix4d m;
       std::string err;
