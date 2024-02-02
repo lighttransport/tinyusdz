@@ -1296,7 +1296,7 @@ class RenderSceneConverter {
 
  private:
   ///
-  /// Convert variability of vertex data.
+  /// Convert variability of vertex data to 'vertex' or 'facevarying'.
   ///
   /// @param[in] vattr Input VertexAttribute
   /// @param[in] to_vertex_varing Convert to `vertex` varying when true. `facevarying` when false.
@@ -1318,16 +1318,6 @@ class RenderSceneConverter {
       const Path &shader_abs_path,
       const TypedAttributeWithFallback<Animatable<T>> &param,
       const std::string &param_name, ShaderParam<Dty> &dst_param);
-
-#if 0  // moved to scene-access.hh
-  //
-  // Get BlendShape prims in this GeomMesh Prim
-  // (`skel:blendShapes`, `skel:blendShapeTargets`)
-  //
-  bool GetBlenedShapesImpl(
-      const tinyusdz::Prim &prim,
-      std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> &out_blendshapes);
-#endif
 
   //
   // Get Skeleton assigned to this GeomMesh Prim
