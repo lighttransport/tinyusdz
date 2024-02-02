@@ -299,8 +299,13 @@ bool GeomPrimvar::flatten_with_indices(std::vector<T> *dest, std::string *err) c
     }
 
     if (auto pv = _attr.get_value<std::vector<T>>()) {
+
+      std::vector<int32_t> indices;
+      // Get indices at default time
+      _indices.get(&indices);
+
       std::vector<T> expanded_val;
-      auto ret = ExpandWithIndices(pv.value(), _indices, &expanded_val);
+      auto ret = ExpandWithIndices(pv.value(), indices, &expanded_val);
       if (ret) {
         (*dest) = expanded_val;
         // Currently we ignore ret.value()
@@ -315,6 +320,12 @@ bool GeomPrimvar::flatten_with_indices(std::vector<T> *dest, std::string *err) c
             (*err) += "\n" + err_msg;
           }
         }
+      }
+    } else {
+      if (err) {
+        (*err) += fmt::format(
+            "`{}[]` type requested, but Attribute is type `{}`",
+            value::TypeTraits<T>::type_name(), _attr.type_name());
       }
     }
   }
@@ -367,6 +378,10 @@ bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) con
     } else {
       std::string err_msg;
 
+      std::vector<int32_t> indices;
+      // Get indices at default time
+      _indices.get(&indices);
+      
 #if 0
 #define APPLY_FUN(__ty)                                                      \
   value::TypeTraits<__ty>::type_id | value::TYPE_ID_1D_ARRAY_BIT,            \
@@ -393,7 +408,7 @@ bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) con
   case value::TypeTraits<__ty>::type_id() | value::TYPE_ID_1D_ARRAY_BIT: { \
     std::vector<__ty> expanded_val;                                      \
     if (auto pv = _attr.get_value<std::vector<__ty>>()) {                \
-      auto ret = ExpandWithIndices(pv.value(), _indices, &expanded_val); \
+      auto ret = ExpandWithIndices(pv.value(), indices, &expanded_val); \
       if (ret) {                                                         \
         processed = ret.value();                                         \
         if (processed) {                                                 \
@@ -617,7 +632,10 @@ bool GPrim::set_primvar(const GeomPrimvar &primvar,
     std::string index_name = primvar_name + kIndices;
 
     Attribute indices;
-    indices.set_value(primvar.get_indices());
+
+    for (const auto &sample : primvar.get_indices().get_samples()) {
+      indices.set_timesample(sample.value, sample.t);
+    }
 
     props[index_name] = indices;
   }
