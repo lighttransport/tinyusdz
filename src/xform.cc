@@ -36,6 +36,85 @@ using double3x3 = linalg::aliases::double3x3;
 using double3 = linalg::aliases::double3;
 using double4 = linalg::aliases::double4;
 
+constexpr uint32_t kIdentityMaxUlps = 1;
+
+bool is_identity(const value::matrix2f &m) {
+  return math::almost_equals_by_ulps(m.m[0][0], 1.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[0][1], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[1][0], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[1][1], 0.0f, kIdentityMaxUlps);
+}
+
+bool is_identity(const value::matrix3f &m) {
+  return math::almost_equals_by_ulps(m.m[0][0], 1.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[0][1], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[0][2], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[1][0], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[1][1], 1.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[1][2], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[2][0], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[2][1], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[2][2], 1.0f, kIdentityMaxUlps);
+}
+
+bool is_identity(const value::matrix4f &m) {
+  return math::almost_equals_by_ulps(m.m[0][0], 1.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[0][1], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[0][2], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[0][3], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[1][0], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[1][1], 1.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[1][2], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[1][3], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[2][0], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[2][1], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[2][2], 1.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[2][3], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[3][0], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[3][1], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[3][2], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[3][3], 1.0f, kIdentityMaxUlps);
+}
+
+bool is_identity(const value::matrix2d &m) {
+  return math::almost_equals_by_ulps(m.m[0][0], 1.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[0][1], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[1][0], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[1][1], 0.0, uint64_t(kIdentityMaxUlps));
+}
+
+bool is_identity(const value::matrix3d &m) {
+  return math::almost_equals_by_ulps(m.m[0][0], 1.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[0][1], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[0][2], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[1][0], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[1][1], 1.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[1][2], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[2][0], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[2][1], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[2][2], 1.0, uint64_t(kIdentityMaxUlps));
+}
+
+bool is_identity(const value::matrix4d &m) {
+  return math::almost_equals_by_ulps(m.m[0][0], 1.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[0][1], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[0][2], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[0][3], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[1][0], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[1][1], 1.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[1][2], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[1][3], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[2][0], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[2][1], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[2][2], 1.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[2][3], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[3][0], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[3][1], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[3][2], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[3][3], 1.0, uint64_t(kIdentityMaxUlps));
+}
+
+
 value::quatf to_quaternion(const value::float3 &axis, const float angle) {
 
   // Use sin_pi and cos_pi for better accuracy.
@@ -371,7 +450,7 @@ class XformEvaluator {
     rm.m[1][1] = c;
     rm.m[1][2] = s;
     rm.m[2][1] = -s;
-    rm.m[2][2] = c; 
+    rm.m[2][2] = c;
 
     m = m * rm;
 
@@ -388,8 +467,8 @@ class XformEvaluator {
 
     rm.m[0][0] = c;
     rm.m[0][2] = -s;
-    rm.m[2][0] = s; 
-    rm.m[2][2] = c; 
+    rm.m[2][0] = s;
+    rm.m[2][2] = c;
 
     m = m * rm;
 
@@ -406,9 +485,9 @@ class XformEvaluator {
     double c = math::cos_pi(k);
     double s = math::sin_pi(k);
 
-    rm.m[0][0] = c; 
-    rm.m[0][1] = s; 
-    rm.m[1][0] = -s; 
+    rm.m[0][0] = c;
+    rm.m[0][1] = s;
+    rm.m[1][0] = -s;
     rm.m[1][1] = c;
 
     m = m * rm;

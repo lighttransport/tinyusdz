@@ -587,8 +587,9 @@ struct AnimationSampler {
   Interpolation interpolation{Interpolation::Linear};
 };
 
+// TODO: Supprot more data types(e.g. float2)
 struct AnimationChannel {
-  enum class ChannelType { Transform, Translation, Rotation, Scale };
+  enum class ChannelType { Transform, Translation, Rotation, Scale, Weight };
 
   // Matrix precision is recuded to float-precision
   // NOTE: transform is not supported in glTF(you need to decompose transform
@@ -599,54 +600,42 @@ struct AnimationChannel {
   AnimationSampler<vec3> translations;
   AnimationSampler<quat> rotations;  // Rotation is converted to quaternions
   AnimationSampler<vec3> scales;
+  AnimationSampler<float> weights;
 
   int64_t taget_node{-1};  // array index to RenderScene::nodes
 };
 
 struct Animation {
-  std::string path;  // USD Prim path
+  std::string target_path;  // Target USD Prim path
   std::vector<AnimationChannel> channels;
 };
 
 struct Node {
   NodeType nodeType{NodeType::Xform};
 
-  int32_t id;  // Index to node content(e.g. meshes[id] when nodeTypes == Mesh
+  int32_t id{-1};  // Index to node content(e.g. meshes[id] when nodeTypes == Mesh). -1 = no corresponding content exists for this node.
 
   std::vector<uint32_t> children;
 
   // Every node have its transform at specified timecode.
   value::matrix4d local_matrix;
-  value::matrix4d global_matrix;
+  value::matrix4d global_matrix; // = local_matrix * parent_matrix (USD use row-major(pre-multiply))
+
+  bool is_identity_matrix() {
+    return is_identity(local_matrix);
+  }
+
+  std::vector<AnimationChannel> node_animations; // xform animations(timesamples)
 
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
 };
-
-#if 0  // TODO
-// Static Mesh(no time-varying, no vertex animation)
-struct StaticMesh {
-
-
-};
-
-// Dynamic Mesh(time-varying, vertex animation(including BlendShapes))
-struct DynamicMesh {
-
-
-};
-
-// Skinned(USD Skeleton) Mesh
-struct SkinnedMesh {
-
-};
-#endif
 
 // BlendShape shape target.
 
 struct InbetweenShapeTarget {
   std::vector<vec3> pointOffsets;
   std::vector<vec3> normalOffsets;
-  float weight{0.5f};  // TODO: Init with invalid weight
+  float weight{0.5f};  // TODO: Init with invalid weight?
 };
 
 struct ShapeTarget {
