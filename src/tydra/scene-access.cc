@@ -239,56 +239,12 @@ const Prim *GetParentPrim(const tinyusdz::Stage &stage,
 //
 // Template Instanciations
 //
-template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<Model> &m);
-template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<Scope> &m);
-template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<GPrim> &m);
-template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<Xform> &m);
-template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<GeomMesh> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<GeomBasisCurves> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<GeomSphere> &m);
-template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<GeomCone> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<GeomCylinder> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<GeomCapsule> &m);
-template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<GeomCube> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<GeomPoints> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<GeomSubset> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<GeomCamera> &m);
+#define LISTPRIMS_INSTANCIATE(__ty) \
+template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<__ty> &m);
 
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<DomeLight> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<CylinderLight> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<SphereLight> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<DiskLight> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<DistantLight> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<RectLight> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<GeometryLight> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<PortalLight> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<PluginLight> &m);
+APPLY_FUNC_TO_PRIM_TYPES(LISTPRIMS_INSTANCIATE)
 
-template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<Material> &m);
-template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<Shader> &m);
-
-template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<SkelRoot> &m);
-template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<Skeleton> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<SkelAnimation> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<BlendShape> &m);
+#undef LISTPRIMS_INSTANCIATE
 
 template bool ListShaders(const tinyusdz::Stage &stage,
                           PathShaderMap<UsdPreviewSurface> &m);
@@ -2125,6 +2081,83 @@ bool EvaluateTypedAttributeImpl(
   return false;
 }
 
+template<typename T>
+bool EvaluateTypedAttributeImpl(
+    const tinyusdz::Stage &stage, const TypedAttributeWithFallback<T> &attr,
+    const std::string &attr_name,
+    T *value,
+    std::string *err, std::set<std::string> &visited_paths,
+    const double t, const value::TimeSampleInterpolationType tinterp)
+{
+
+  if (attr.is_connection()) {
+    // Follow connection target Path(singple targetPath only).
+    std::vector<Path> pv = attr.connections();
+    if (pv.empty()) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Connection targetPath is empty for Attribute {}.", attr_name));
+    }
+
+    if (pv.size() > 1) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Multiple targetPaths assigned to .connection for Attribute {}.", attr_name));
+    }
+
+    auto target = pv[0];
+
+    std::string targetPrimPath = target.prim_part();
+    std::string targetPrimPropName = target.prop_part();
+    DCOUT("connection targetPath : " << target << "(Prim: " << targetPrimPath
+                                     << ", Prop: " << targetPrimPropName
+                                     << ")");
+
+    auto targetPrimRet =
+        stage.GetPrimAtPath(Path(targetPrimPath, /* prop */ ""));
+    if (targetPrimRet) {
+      // Follow the connetion
+      const Prim *targetPrim = targetPrimRet.value();
+
+      std::string abs_path = target.full_path_name();
+
+      if (visited_paths.count(abs_path)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Circular referencing detected. connectionTargetPath = {}",
+            to_string(target)));
+      }
+      visited_paths.insert(abs_path);
+
+      TerminalAttributeValue attr_value;
+
+      bool ret = EvaluateAttributeImpl(stage, *targetPrim, targetPrimPropName,
+                                   &attr_value, err, visited_paths, t, tinterp);
+
+      if (!ret) {
+        return false;
+      }
+
+      if (const auto pav = attr_value.as<T>()) {
+        (*value) = (*pav);
+        return true;
+      } else {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("Attribute of Connection targetPath has different type `{}. Expected `{}`. Attribute `{}`.", attr_value.type_name(), value::TypeTraits<T>::type_name(), attr_name));
+      }
+
+
+    } else {
+      PUSH_ERROR_AND_RETURN(targetPrimRet.error());
+    }
+  } else if (attr.is_blocked()) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Attribute `{}` is ValueBlocked(None).", attr_name));
+  } else {
+
+    (*value) = attr.get_value();
+    return true;
+
+  }
+
+  return false;
+}
 
 template<typename T>
 bool EvaluateTypedAttributeImpl(
@@ -2212,6 +2245,88 @@ bool EvaluateTypedAttributeImpl(
   return false;
 }
 
+template<typename T>
+bool EvaluateTypedAttributeImpl(
+    const tinyusdz::Stage &stage, const TypedAttributeWithFallback<Animatable<T>> &attr,
+    const std::string &attr_name,
+    T *value,
+    std::string *err, std::set<std::string> &visited_paths,
+    const double t, const value::TimeSampleInterpolationType tinterp)
+{
+
+  if (attr.is_connection()) {
+    // Follow connection target Path(singple targetPath only).
+    std::vector<Path> pv = attr.connections();
+    if (pv.empty()) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Connection targetPath is empty for Attribute {}.", attr_name));
+    }
+
+    if (pv.size() > 1) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Multiple targetPaths assigned to .connection for Attribute {}.", attr_name));
+    }
+
+    auto target = pv[0];
+
+    std::string targetPrimPath = target.prim_part();
+    std::string targetPrimPropName = target.prop_part();
+    DCOUT("connection targetPath : " << target << "(Prim: " << targetPrimPath
+                                     << ", Prop: " << targetPrimPropName
+                                     << ")");
+
+    auto targetPrimRet =
+        stage.GetPrimAtPath(Path(targetPrimPath, /* prop */ ""));
+    if (targetPrimRet) {
+      // Follow the connetion
+      const Prim *targetPrim = targetPrimRet.value();
+
+      std::string abs_path = target.full_path_name();
+
+      if (visited_paths.count(abs_path)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Circular referencing detected. connectionTargetPath = {}",
+            to_string(target)));
+      }
+      visited_paths.insert(abs_path);
+
+      TerminalAttributeValue attr_value;
+
+      bool ret = EvaluateAttributeImpl(stage, *targetPrim, targetPrimPropName,
+                                   &attr_value, err, visited_paths, t, tinterp);
+
+      if (!ret) {
+        return false;
+      }
+
+      if (const auto pav = attr_value.as<T>()) {
+        (*value) = (*pav);
+        return true;
+      } else {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("Attribute of Connection targetPath has different type `{}. Expected `{}`. Attribute `{}`.", attr_value.type_name(), value::TypeTraits<T>::type_name(), attr_name));
+      }
+
+
+    } else {
+      PUSH_ERROR_AND_RETURN(targetPrimRet.error());
+    }
+  } else if (attr.is_blocked()) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Attribute `{}` is ValueBlocked(None).", attr_name));
+  } else {
+
+    const Animatable<T> &v = attr.get_value();
+
+    if (!v.get(t, value, tinterp)) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("[Internal error] failed to get value.\n"));
+    }
+
+  }
+
+  return false;
+}
+
 
 template<typename T>
 bool EvaluateTypedAttribute(
@@ -2247,6 +2362,7 @@ bool EvaluateTypedAnimatableAttribute(
 
   return EvaluateTypedAttributeImpl(stage, attr, attr_name, value, err,
                                visited_paths, t, tinterp);
+
 }
 
 #define EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE(__ty) \
@@ -2256,16 +2372,49 @@ APPLY_FUNC_TO_VALUE_TYPES(EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE)
 
 #undef EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE
 
-#if 0
-bool EvaluateTypedAnimatableAttribute(const tinyusdz::Stage &stage, const TypedAttribute<Animatable<std::vector<int>>> &attr, const std::string &attr_name, std::vector<int> *value, std::string *err, const double t, const tinyusdz::value::TimeSampleInterpolationType tinterp) {
+template<typename T>
+bool EvaluateTypedAttributeWithFallback(
+    const tinyusdz::Stage &stage, const TypedAttributeWithFallback<T> &attr,
+    const std::string &attr_name,
+    T *value,
+    std::string *err) {
+
+  std::set<std::string> visited_paths;
+
+  return EvaluateTypedAttributeImpl(stage, attr, attr_name, value, err,
+                               visited_paths, value::TimeCode::Default(), value::TimeSampleInterpolationType::Held);
+}
+
+// template instanciations
+#define EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE(__ty) \
+template bool EvaluateTypedAttributeWithFallback(const tinyusdz::Stage &stage, const TypedAttributeWithFallback<__ty> &attr, const std::string &attr_name, __ty *value, std::string *err);
+
+APPLY_FUNC_TO_VALUE_TYPES(EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE)
+
+#undef EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE
+
+
+template<class T>
+bool EvaluateTypedAnimatableAttributeWithFallback(
+    const tinyusdz::Stage &stage, const TypedAttributeWithFallback<Animatable<T>> &attr,
+    const std::string &attr_name,
+    T *value,
+    std::string *err, const double t,
+    const tinyusdz::value::TimeSampleInterpolationType tinterp) {
+
   std::set<std::string> visited_paths;
 
   return EvaluateTypedAttributeImpl(stage, attr, attr_name, value, err,
                                visited_paths, t, tinterp);
 
 }
-#endif
 
+#define EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE(__ty) \
+template bool EvaluateTypedAnimatableAttributeWithFallback(const tinyusdz::Stage &stage, const TypedAttributeWithFallback<Animatable<__ty>> &attr, const std::string &attr_name, __ty *value, std::string *err, const double t, const tinyusdz::value::TimeSampleInterpolationType tinterp);
+
+APPLY_FUNC_TO_VALUE_TYPES(EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE)
+
+#undef EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE
 
 
 bool ListSceneNames(const tinyusdz::Prim &root,
