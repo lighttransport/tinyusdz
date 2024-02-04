@@ -15,8 +15,10 @@
 #include "usdGeom.hh"
 #include "usdShade.hh"
 #include "usdSkel.hh"
+#include "usdLux.hh"
 #include "value-types.hh"
 #include "value-type-macros.inc"
+#include "prim-type-macros.inc"
 #include "tiny-format.hh"
 
 namespace tinyusdz {
@@ -34,12 +36,21 @@ template <typename T>
 using PathShaderMap =
     std::map<std::string, std::pair<const Shader *, const T *>>;
 
+// TODO: extern template to suppress possible `-Wundefined-func-template`?
+
 ///
 /// List Prim of type T from the Stage.
 /// Returns false when unsupported/unimplemented Prim type T is given.
 ///
 template <typename T>
 bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<T> &m /* output */);
+
+#define EXTERN_LISTPRIMS(__ty) \
+extern template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<__ty> &m);
+
+APPLY_FUNC_TO_PRIM_TYPES(EXTERN_LISTPRIMS)
+
+#undef EXTERN_LISTPRIMS
 
 ///
 /// List Shader of shader type T from the Stage.
@@ -49,6 +60,26 @@ bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<T> &m /* output */);
 template <typename T>
 bool ListShaders(const tinyusdz::Stage &stage,
                  PathShaderMap<T> &m /* output */);
+
+extern template bool ListShaders(const tinyusdz::Stage &stage,
+                          PathShaderMap<UsdPreviewSurface> &m);
+extern template bool ListShaders(const tinyusdz::Stage &stage,
+                           PathShaderMap<UsdUVTexture> &m);
+
+extern template bool ListShaders(const tinyusdz::Stage &stage,
+                           PathShaderMap<UsdPrimvarReader_string> &m);
+extern template bool ListShaders(const tinyusdz::Stage &stage,
+                           PathShaderMap<UsdPrimvarReader_int> &m);
+extern template bool ListShaders(const tinyusdz::Stage &stage,
+                           PathShaderMap<UsdPrimvarReader_float> &m);
+extern template bool ListShaders(const tinyusdz::Stage &stage,
+                           PathShaderMap<UsdPrimvarReader_float2> &m);
+extern template bool ListShaders(const tinyusdz::Stage &stage,
+                           PathShaderMap<UsdPrimvarReader_float3> &m);
+extern template bool ListShaders(const tinyusdz::Stage &stage,
+                           PathShaderMap<UsdPrimvarReader_float4> &m);
+extern template bool ListShaders(const tinyusdz::Stage &stage,
+                          PathShaderMap<UsdPrimvarReader_matrix> &m);
 
 ///
 /// Get parent Prim from Path.
@@ -333,102 +364,13 @@ bool EvaluateTypedAttribute(
     T *value,
     std::string *err);
 
-//#define EXTERN_EVALUATE_TYPED_ATTRIBUTE(__ty) \
-//template bool EvaluateTypedAttribute(const tinyusdz::Stage &stage, const TypedAttribute<__ty> &attr, const std::string &attr_name, __ty *value, std::string *err);
-//
-//APPLY_FUNC_TO_VALUE_TYPES(EXTERN_EVALUATE_TYPED_ATTRIBUTE)
-//
-//#undef EXTERN_EVALUATE_TYPED_ATTRIBUTE
+#define EXTERN_EVALUATE_TYPED_ATTRIBUTE(__ty) \
+extern template bool EvaluateTypedAttribute(const tinyusdz::Stage &stage, const TypedAttribute<__ty> &attr, const std::string &attr_name, __ty *value, std::string *err);
 
-#if 0
-template<typename T>
-bool EvaluateTypedAttributeImpl(
-    const tinyusdz::Stage &stage, const TypedAttribute<Animatable<T>> &attr,
-    const std::string &attr_name,
-    T *value,
-    std::string *err, std::set<std::string> &visited_paths,
-    const double t, const value::TimeSampleInterpolationType tinterp)
-{
+APPLY_FUNC_TO_VALUE_TYPES(EXTERN_EVALUATE_TYPED_ATTRIBUTE)
 
-  if (attr.is_connection()) {
-    // Follow connection target Path(singple targetPath only).
-    std::vector<Path> pv = attr.connections();
-    if (pv.empty()) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Connection targetPath is empty for Attribute {}.", attr_name));
-    }
+#undef EXTERN_EVALUATE_TYPED_ATTRIBUTE
 
-    if (pv.size() > 1) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("Multiple targetPaths assigned to .connection for Attribute {}.", attr_name));
-    }
-
-    auto target = pv[0];
-
-    std::string targetPrimPath = target.prim_part();
-    std::string targetPrimPropName = target.prop_part();
-    DCOUT("connection targetPath : " << target << "(Prim: " << targetPrimPath
-                                     << ", Prop: " << targetPrimPropName
-                                     << ")");
-
-    auto targetPrimRet =
-        stage.GetPrimAtPath(Path(targetPrimPath, /* prop */ ""));
-    if (targetPrimRet) {
-      // Follow the connetion
-      const Prim *targetPrim = targetPrimRet.value();
-
-      std::string abs_path = target.full_path_name();
-
-      if (visited_paths.count(abs_path)) {
-        PUSH_ERROR_AND_RETURN(fmt::format(
-            "Circular referencing detected. connectionTargetPath = {}",
-            to_string(target)));
-      }
-      visited_paths.insert(abs_path);
-
-      TerminalAttributeValue attr_value;
-
-      bool ret = EvaluateAttributeImpl(stage, *targetPrim, targetPrimPropName,
-                                   &attr_value, err, visited_paths, t, tinterp);
-
-      if (!ret) {
-        return false;
-      }
-
-      if (const auto pav = attr_value.as<T>()) {
-        (*value) = (*pav);
-        return true;
-      } else {
-        PUSH_ERROR_AND_RETURN(
-            fmt::format("Attribute of Connection targetPath has different type `{}. Expected `{}`. Attribute `{}`.", attr_value.type_name(), value::TypeTraits<T>::type_name(), attr_name));
-      }
-
-
-    } else {
-      PUSH_ERROR_AND_RETURN(targetPrimRet.error());
-    }
-  } else if (attr.is_blocked()) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("Attribute `{}` is ValueBlocked(None).", attr_name));
-  } else {
-
-    Animatable<T> v;
-    if (!attr.get_value(&v)) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("[Internal error] failed to get value.\n"));
-    }
-
-    if (!v.get(t, value, tinterp)) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("[Internal error] failed to get value.\n"));
-    }
-
-  }
-
-  return false;
-}
-#endif
-
-#if 0
 template<typename T>
 bool EvaluateTypedAnimatableAttribute(
     const tinyusdz::Stage &stage,
@@ -437,18 +379,12 @@ bool EvaluateTypedAnimatableAttribute(
     T *value,
     std::string *err, const double t = tinyusdz::value::TimeCode::Default(),
     const tinyusdz::value::TimeSampleInterpolationType tinterp =
-        tinyusdz::value::TimeSampleInterpolationType::Linear) {
-  std::set<std::string> visited_paths;
+        tinyusdz::value::TimeSampleInterpolationType::Linear);
 
-  return EvaluateTypedAttributeImpl(stage, attr, attr_name, value, err,
-                               visited_paths, t, tinterp);
-}
-#endif
+#define EXTERN_EVALUATE_TYPED_ATTRIBUTE(__ty) \
+extern template bool EvaluateTypedAnimatableAttribute(const tinyusdz::Stage &stage, const TypedAttribute<Animatable<__ty>> &attr, const std::string &attr_name, __ty *value, std::string *err, const double t, const value::TimeSampleInterpolationType tinter);
 
-#define DEFINE_EVALUATE_TYPED_ATTRIBUTE(__ty) \
-bool EvaluateTypedAnimatableAttribute(const tinyusdz::Stage &stage, const TypedAttribute<Animatable<__ty>> &attr, const std::string &attr_name, __ty *value, std::string *err, const double t = value::TimeCode::Default(), const value::TimeSampleInterpolationType tinter = value::TimeSampleInterpolationType::Linear);
-
-APPLY_FUNC_TO_VALUE_TYPES(DEFINE_EVALUATE_TYPED_ATTRIBUTE)
+APPLY_FUNC_TO_VALUE_TYPES(EXTERN_EVALUATE_TYPED_ATTRIBUTE)
 
 #undef EXTERN_EVALUATE_TYPED_ATTRIBUTE
 
@@ -460,6 +396,12 @@ bool EvaluateTypedAttributeWithFallback(
     T *value,
     std::string *err);
 
+#define EXTERN_EVALUATE_TYPED_ATTRIBUTE(__ty) \
+extern template bool EvaluateTypedAttributeWithFallback(const tinyusdz::Stage &stage, const TypedAttributeWithFallback<__ty> &attr, const std::string &attr_name, __ty *value, std::string *err);
+
+APPLY_FUNC_TO_VALUE_TYPES(EXTERN_EVALUATE_TYPED_ATTRIBUTE)
+
+#undef EXTERN_EVALUATE_TYPED_ATTRIBUTE
 
 template<typename T>
 bool EvaluateTypedAnimatableAttributeWithFallback(
@@ -471,6 +413,12 @@ bool EvaluateTypedAnimatableAttributeWithFallback(
     const tinyusdz::value::TimeSampleInterpolationType tinterp =
         tinyusdz::value::TimeSampleInterpolationType::Linear);
 
+#define EXTERN_EVALUATE_TYPED_ATTRIBUTE(__ty) \
+extern template bool EvaluateTypedAnimatableAttributeWithFallback(const tinyusdz::Stage &stage, const TypedAttributeWithFallback<Animatable<__ty>> &attr, const std::string &attr_name, __ty *value, std::string *err, const double t, const value::TimeSampleInterpolationType tinter);
+
+APPLY_FUNC_TO_VALUE_TYPES(EXTERN_EVALUATE_TYPED_ATTRIBUTE)
+
+#undef EXTERN_EVALUATE_TYPED_ATTRIBUTE
 
 ///
 /// For efficient Xform retrieval from Stage.

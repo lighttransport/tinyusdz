@@ -116,7 +116,7 @@ struct DomeLight : public Light {
   
 };
 
-// TODO:
+// TODO: Deprecate
 struct GeometryLight : public Light {
 
   RelationshipProperty geometry; // `rel geometry`
