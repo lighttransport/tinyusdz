@@ -15,6 +15,7 @@
 //   - [ ] Support material binding collection(Collection API)
 //   - [ ] Support multiple skel animation
 //   - [ ] Adjust normal vector computation with handness?
+//   - [ ] Node xform animation
 //
 #include <numeric>
 
@@ -69,6 +70,13 @@
 namespace tinyusdz {
 
 namespace tydra {
+
+//#define EXTERN_EVALUATE_TYPED_ATTRIBUTE_INSTANCE(__ty) \
+//extern template bool EvaluateTypedAnimatableAttribute<__ty>( const tinyusdz::Stage &stage, const TypedAttribute<Animatable<__ty>> &attr, const std::string &attr_name, __ty *value, std::string *err, const double t = value::TimeCode::Default(), const tinyusdz::value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear);
+//
+//APPLY_FUNC_TO_VALUE_TYPES(EXTERN_EVALUATE_TYPED_ATTRIBUTE_INSTANCE)
+//
+//#undef EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE
 
 namespace {
 
@@ -705,10 +713,10 @@ std::vector<const tinyusdz::GeomSubset *> GetMaterialBindGeomSubsets(
 // TODO: connected attribute.
 //
 nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
-    const Stage &state, const GeomMesh &mesh, const std::string &name) {
+    const Stage &stage, const GeomMesh &mesh, const std::string &name) {
   VertexAttribute vattr;
 
-  (void)state;
+  (void)stage;
 
   GeomPrimvar primvar;
   if (!mesh.get_primvar(name, &primvar)) {
@@ -1688,14 +1696,18 @@ bool RenderSceneConverter::ConvertMesh(
     const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
         &blendshapes,
     RenderMesh *dstMesh) {
+
   //
   // Steps:
-  // - (validate GeomSubsets)
-  // - Triangulate indices  when `triangulate` is enabled.
-  // - Convert normals and texcoords
+  //
+  // - Validate GeomSubsets
+  // - Assign Material and list up texcoord primvars
+  // - convert texcoord, normals, vetexcolor(displaycolors)
   //   - First try to convert it to `vertex` varying(Can be drawn with single
   //   index buffer)
   //   - Otherwise convert to `facevarying` as the last resort.
+  // - Triangulate indices  when `triangulate` is enabled.
+  //   - Triangulate texcoord, normals, vertexcolor.
   // - Convert Skin weights
   // - Convert BlendShape
   //
@@ -1726,18 +1738,22 @@ bool RenderSceneConverter::ConvertMesh(
     }
   }
 
-  if (const auto pv = mesh.faceVertexCounts.get_value()) {
-    std::vector<int32_t> counts;
-    if (pv.value().get(_timecode, &counts)) {
-      for (size_t i = 0; i < counts.size(); i++) {
-        if (counts[i] < 3) {
-          PUSH_ERROR_AND_RETURN(
-              fmt::format("faceVertexCounts[{}] contains invalid value {}. The "
-                          "count value must be >= 3",
-                          i, counts[i]));
-        }
-        dst.faceVertexCounts.push_back(uint32_t(counts[i]));
+  {
+    std::vector<int> counts;
+    bool ret = EvaluateTypedAnimatableAttribute(*_stage, mesh.faceVertexCounts, "faceVertexCounts", &counts, &_err, _timecode, value::TimeSampleInterpolationType::Held);
+    if (!ret) {
+      return false;
+    }
+
+    dst.faceVertexCounts.clear();
+    for (size_t i = 0; i < counts.size(); i++) {
+      if (counts[i] < 3) {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("faceVertexCounts[{}] contains invalid value {}. The "
+                        "count value must be >= 3",
+                        i, counts[i]));
       }
+      dst.faceVertexCounts.push_back(uint32_t(counts[i]));
     }
   }
 
