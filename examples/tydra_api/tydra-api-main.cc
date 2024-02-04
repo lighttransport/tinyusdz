@@ -126,7 +126,7 @@ static void TraversePrimvarReader_float2(const tinyusdz::Stage &stage,
 
 int main(int argc, char **argv) {
   if (argc < 2) {
-    std::cout << "Need USD file with Material/Shader(e.g. `<tinyusdz>/models/texturescube.usda`\n" << std::endl;
+    std::cout << "Need USD file with Material/Shader(e.g. `<tinyusdz>/models/texturescube.usda`)\n" << std::endl;
     return EXIT_FAILURE;
   }
 

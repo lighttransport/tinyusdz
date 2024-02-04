@@ -469,6 +469,7 @@ include src/prim-reconstruct.cc
 include src/prim-reconstruct.hh
 include src/prim-types.cc
 include src/prim-types.hh
+include src/prim-type-macros.inc
 include src/primvar.cc
 include src/primvar.hh
 include src/pxr-compat.cc

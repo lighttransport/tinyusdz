@@ -296,6 +296,8 @@ template bool ListShaders(const tinyusdz::Stage &stage,
                           PathShaderMap<UsdUVTexture> &m);
 
 template bool ListShaders(const tinyusdz::Stage &stage,
+                          PathShaderMap<UsdPrimvarReader_string> &m);
+template bool ListShaders(const tinyusdz::Stage &stage,
                           PathShaderMap<UsdPrimvarReader_int> &m);
 template bool ListShaders(const tinyusdz::Stage &stage,
                           PathShaderMap<UsdPrimvarReader_float> &m);
@@ -305,6 +307,8 @@ template bool ListShaders(const tinyusdz::Stage &stage,
                           PathShaderMap<UsdPrimvarReader_float3> &m);
 template bool ListShaders(const tinyusdz::Stage &stage,
                           PathShaderMap<UsdPrimvarReader_float4> &m);
+template bool ListShaders(const tinyusdz::Stage &stage,
+                          PathShaderMap<UsdPrimvarReader_matrix> &m);
 
 namespace {
 
@@ -2122,8 +2126,6 @@ bool EvaluateTypedAttributeImpl(
 }
 
 
-
-#if 1
 template<typename T>
 bool EvaluateTypedAttributeImpl(
     const tinyusdz::Stage &stage, const TypedAttribute<Animatable<T>> &attr,
@@ -2209,7 +2211,6 @@ bool EvaluateTypedAttributeImpl(
 
   return false;
 }
-#endif
 
 
 template<typename T>
@@ -2227,15 +2228,14 @@ bool EvaluateTypedAttribute(
 
 // template instanciations
 #define EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE(__ty) \
-template<> bool EvaluateTypedAttribute<__ty>(const tinyusdz::Stage &stage, const TypedAttribute<__ty> &attr, const std::string &attr_name, __ty *value, std::string *err);
+template bool EvaluateTypedAttribute(const tinyusdz::Stage &stage, const TypedAttribute<__ty> &attr, const std::string &attr_name, __ty *value, std::string *err);
 
 APPLY_FUNC_TO_VALUE_TYPES(EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE)
 
 #undef EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE
 
 
-#if 0
-template<typename T>
+template<class T>
 bool EvaluateTypedAnimatableAttribute(
     const tinyusdz::Stage &stage, const TypedAttribute<Animatable<T>> &attr,
     const std::string &attr_name,
@@ -2248,8 +2248,15 @@ bool EvaluateTypedAnimatableAttribute(
   return EvaluateTypedAttributeImpl(stage, attr, attr_name, value, err,
                                visited_paths, t, tinterp);
 }
-#endif
 
+#define EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE(__ty) \
+template bool EvaluateTypedAnimatableAttribute(const tinyusdz::Stage &stage, const TypedAttribute<Animatable<__ty>> &attr, const std::string &attr_name, __ty *value, std::string *err, const double t, const tinyusdz::value::TimeSampleInterpolationType tinterp);
+
+APPLY_FUNC_TO_VALUE_TYPES(EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE)
+
+#undef EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE
+
+#if 0
 bool EvaluateTypedAnimatableAttribute(const tinyusdz::Stage &stage, const TypedAttribute<Animatable<std::vector<int>>> &attr, const std::string &attr_name, std::vector<int> *value, std::string *err, const double t, const tinyusdz::value::TimeSampleInterpolationType tinterp) {
   std::set<std::string> visited_paths;
 
@@ -2257,14 +2264,9 @@ bool EvaluateTypedAnimatableAttribute(const tinyusdz::Stage &stage, const TypedA
                                visited_paths, t, tinterp);
 
 }
+#endif
 
 
-//#define EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE(__ty) \
-//template<> bool EvaluateTypedAnimatableAttribute<__ty>(const tinyusdz::Stage &stage, const TypedAttribute<Animatable<__ty>> &attr, const std::string &attr_name, __ty *value, std::string *err, const double t, const tinyusdz::value::TimeSampleInterpolationType tinterp);
-//
-//APPLY_FUNC_TO_VALUE_TYPES(EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE)
-//
-//#undef EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE
 
 bool ListSceneNames(const tinyusdz::Prim &root,
                     std::vector<std::pair<bool, std::string>> *sceneNames) {

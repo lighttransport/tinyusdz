@@ -1700,6 +1700,7 @@ bool RenderSceneConverter::ConvertMesh(
   //
   // Steps:
   //
+  // - Get points, faceVertexIndices and faceVertexOffsets at specified time.
   // - Validate GeomSubsets
   // - Assign Material and list up texcoord primvars
   // - convert texcoord, normals, vetexcolor(displaycolors)
@@ -1722,19 +1723,47 @@ bool RenderSceneConverter::ConvertMesh(
       (mesh.orientation.get_value() == tinyusdz::Orientation::RightHanded);
   dst.doubleSided = mesh.doubleSided.get_value();
 
-  // indices
-  // TODO: connections
-  if (const auto pv = mesh.faceVertexIndices.get_value()) {
+  //
+  // 1. Mandatory attribute: points, faceVertexCounts and faceVertexIndices.
+  //
+  // TODO: Make error when Mesh's indices is empty?
+  //
+
+  {
+    std::vector<value::point3f> points;
+    bool ret = EvaluateTypedAnimatableAttribute(*_stage, mesh.points, "points", &points, &_err, _timecode, value::TimeSampleInterpolationType::Linear);
+    if (!ret) {
+      return false;
+    }
+
+    if (points.empty()) {
+      PUSH_ERROR_AND_RETURN(fmt::format("`points` is empty. Prim {}", abs_path));
+    }
+
+    dst.points.resize(points.size());
+    memcpy(dst.points.data(), points.data(),
+           sizeof(value::float3) * points.size());
+      
+  }
+
+  {
     std::vector<int32_t> indices;
-    if (pv.value().get(_timecode, &indices)) {
-      for (size_t i = 0; i < indices.size(); i++) {
-        if (indices[i] < 0) {
-          PUSH_ERROR_AND_RETURN(fmt::format(
-              "faceVertexIndices[{}] contains negative index value {}.", i,
-              indices[i]));
-        }
-        dst.faceVertexIndices.push_back(uint32_t(indices[i]));
+    bool ret = EvaluateTypedAnimatableAttribute(*_stage, mesh.faceVertexIndices, "faceVertexIndices", &indices, &_err, _timecode, value::TimeSampleInterpolationType::Held);
+    if (!ret) {
+      return false;
+    }
+
+    for (size_t i = 0; i < indices.size(); i++) {
+      if (indices[i] < 0) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "faceVertexIndices[{}] contains negative index value {}.", i,
+            indices[i]));
       }
+      if (size_t(indices[i]) > dst.points.size()) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "faceVertexIndices[{}] {} exceeds points.size {}.", i, indices[i], dst.points.size()));
+      }
+      dst.faceVertexIndices.push_back(uint32_t(indices[i]));
     }
   }
 
@@ -1745,6 +1774,7 @@ bool RenderSceneConverter::ConvertMesh(
       return false;
     }
 
+    size_t sumCounts = 0;
     dst.faceVertexCounts.clear();
     for (size_t i = 0; i < counts.size(); i++) {
       if (counts[i] < 3) {
@@ -1753,21 +1783,24 @@ bool RenderSceneConverter::ConvertMesh(
                         "count value must be >= 3",
                         i, counts[i]));
       }
+
+      if ((sumCounts + size_t(counts[i])) > dst.faceVertexIndices.size()) {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("faceVertexCounts[{}] exceeds faceVertexIndices.size {}.",
+                        i, dst.faceVertexIndices.size()));
+      }
       dst.faceVertexCounts.push_back(uint32_t(counts[i]));
+      sumCounts += size_t(counts[i]);
     }
   }
 
-  if (mesh.get_points().size()) {
-    dst.points.resize(mesh.get_points().size());
-    memcpy(dst.points.data(), mesh.get_points().data(),
-           sizeof(value::float3) * mesh.get_points().size());
-  }
+
 
   //
-  // bindMaterial GeoMesh and GeomSubset.
+  // 2. bindMaterial GeoMesh and GeomSubset.
   //
   // Assume Material conversion is done before ConvertMesh.
-  // Here we only assign rmaterial id and extract GeomSubset::indices
+  // Here we only assign RenderMaterial id and extract GeomSubset::indices
   // information.
   //
 
@@ -1797,25 +1830,31 @@ bool RenderSceneConverter::ConvertMesh(
   for (const auto &psubset : material_subsets) {
     MaterialSubset ms;
     ms.prim_name = psubset->name;
+    //ms.prim_index = // TODO
     ms.abs_path = abs_path.prim_part() + std::string("/") + psubset->name;
     ms.display_name = psubset->meta.displayName.value_or("");
 
-    if (const auto pv = psubset->indices.get_value()) {
-      std::vector<int32_t> indices;
-      if (pv.value().get(_timecode, &indices)) {
-        ms.indices = indices;
+    // TODO: Raise error when indices is empty?
+    if (psubset->indices.authored()) {
+
+      std::vector<int> indices; // index to faceVertexCounts
+      bool ret = EvaluateTypedAnimatableAttribute(*_stage, psubset->indices, "indices", &indices, &_err, _timecode, value::TimeSampleInterpolationType::Held);
+      if (!ret) {
+        return false;
       }
+
+      ms.indices = indices;
     }
 
     if (subset_material_path_map.count(psubset->name)) {
+      const auto &mp = subset_material_path_map.at(psubset->name);
+      if (rmaterial_idMap.count(mp.material_path)) {
+        ms.material_id = int(rmaterial_idMap.at(mp.material_path));
+      }
+      if (rmaterial_idMap.count(mp.backface_material_path)) {
+        ms.backface_material_id = int(rmaterial_idMap.at(mp.backface_material_path));
+      }
     }
-
-    // TODO: BindMaterial;
-
-    // TODO
-    //  ms.prim_index
-    // int material_id{-1};
-    // int backface_material_id{-1};
 
     // TODO: Ensure prim_name is unique.
     dst.material_subsetMap[ms.prim_name] = ms;
