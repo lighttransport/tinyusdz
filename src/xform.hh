@@ -11,6 +11,13 @@
 
 namespace tinyusdz {
 
+bool is_identity(const value::matrix2f &m);
+bool is_identity(const value::matrix3f &m);
+bool is_identity(const value::matrix4f &m);
+bool is_identity(const value::matrix2d &m);
+bool is_identity(const value::matrix3d &m);
+bool is_identity(const value::matrix4d &m);
+
 value::quatf to_quaternion(const value::float3 &axis, const float angle);
 value::quatd to_quaternion(const value::double3 &axis, const double angle);
 
