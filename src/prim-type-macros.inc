@@ -26,5 +26,6 @@
   __FUNC(SkelRoot) \
   __FUNC(Skeleton) \
   __FUNC(SkelAnimation) \
+  __FUNC(BlendShape) \
   __FUNC(Shader) \
-  __FUNC(Material) 
+  __FUNC(Material)

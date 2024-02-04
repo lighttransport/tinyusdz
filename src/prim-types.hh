@@ -1662,6 +1662,7 @@ class TypedAttributeWithFallback {
   void set_connections(const std::vector<Path> &paths) { _paths = paths; }
 
   const std::vector<Path> &get_connections() const { return _paths; }
+  const std::vector<Path> &connections() const { return _paths; }
 
   const nonstd::optional<Path> get_connection() const {
     if (_paths.size()) {
