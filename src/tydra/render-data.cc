@@ -1743,7 +1743,7 @@ bool RenderSceneConverter::ConvertMesh(
     dst.points.resize(points.size());
     memcpy(dst.points.data(), points.data(),
            sizeof(value::float3) * points.size());
-      
+
   }
 
   {
@@ -2265,6 +2265,7 @@ bool RenderSceneConverter::ConvertMesh(
   for (size_t i = 0; i < dst.faceVertexCounts.size(); i++) {
     num_fvs += dst.faceVertexCounts[i];
   }
+  (void)num_fvs;
 
   DCOUT("num_fvs = " << num_fvs);
 
