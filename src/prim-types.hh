@@ -2172,8 +2172,9 @@ enum class TimeSampleInterpolation {
 // Attribute is a struct to hold generic attribute of a property(e.g. primvar)
 // of Prim
 // TODO: Refactor
-struct Attribute {
+class Attribute {
 
+ public:
   Attribute() = default;
 
   ///
