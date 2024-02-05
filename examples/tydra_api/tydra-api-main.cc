@@ -3,6 +3,7 @@
 #include <sstream>
 
 #include "tinyusdz.hh"
+#include "tydra/attribute-eval.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
 #include "tydra/shader-network.hh"
@@ -217,7 +218,7 @@ int main(int argc, char **argv) {
       //return false;
     }
 
-    return true; 
+    return true;
   };
 
   void *userdata = nullptr;
@@ -363,13 +364,13 @@ int main(int argc, char **argv) {
   // - GetBoundMaterial:
   //   - Look Directly boundMaterial to the Prim.
   //   - If no material is asigned to the Prim, look into parent's BoundMaterial settings.
-  //   - Also considers BindMaterial strength `bindMaterialAs` Prim metadatum 
+  //   - Also considers BindMaterial strength `bindMaterialAs` Prim metadatum
   //   - [ ] TODO: Consider materialBindingCollection
   // - GetDirectlyBoundMaterial: Get BoundMaterial assigned to the Prim being queried.
   //
   // Usually GetBoundMaterial is what you want.
   //
-  // See https://openusd.org/release/wp_usdshade.html for more details about Material assignment. 
+  // See https://openusd.org/release/wp_usdshade.html for more details about Material assignment.
   //
   std::cout << "GetBoundMaterial example -------------\n";
   for (const auto &item : meshmap) {
