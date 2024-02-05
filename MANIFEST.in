@@ -502,6 +502,11 @@ include src/tydra/render-data.hh
 include src/tydra/scene-access.cc
 include src/tydra/scene-access.hh
 include src/tydra/attribute-eval.hh
+include src/tydra/attribute-eval.cc
+include src/tydra/attribute-eval-typed.cc
+include src/tydra/attribute-eval-typed-fallack.cc
+include src/tydra/attribute-eval-typed-animatable.cc
+include src/tydra/attribute-eval-typed-animatable-fallback.cc
 include src/tydra/shader-network.cc
 include src/tydra/shader-network.hh
 include src/tydra/facial.cc
