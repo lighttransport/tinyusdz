@@ -55,6 +55,7 @@
 //
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
+#include "tydra/attribute-eval.hh"
 #include "tydra/shader-network.hh"
 
 // #define PushError(msg) if (err) { (*err) += msg; }

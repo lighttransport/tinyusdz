@@ -501,6 +501,7 @@ include src/tydra/render-data.cc
 include src/tydra/render-data.hh
 include src/tydra/scene-access.cc
 include src/tydra/scene-access.hh
+include src/tydra/attribute-eval.hh
 include src/tydra/shader-network.cc
 include src/tydra/shader-network.hh
 include src/tydra/facial.cc

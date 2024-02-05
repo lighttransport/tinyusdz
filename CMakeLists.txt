@@ -399,6 +399,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/tydra/prim-apply.hh
     ${PROJECT_SOURCE_DIR}/src/tydra/scene-access.cc
     ${PROJECT_SOURCE_DIR}/src/tydra/scene-access.hh
+    ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval.cc
     ${PROJECT_SOURCE_DIR}/src/tydra/shader-network.cc
     ${PROJECT_SOURCE_DIR}/src/tydra/shader-network.hh
     ${PROJECT_SOURCE_DIR}/src/tydra/render-data.cc
