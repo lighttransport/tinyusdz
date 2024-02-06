@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2022-Present Light Transport Entertainment, Inc.
 //
-#include "scene-access.hh"
 
+// src
 #include "common-macros.inc"
 #include "pprinter.hh"
 #include "prim-pprint.hh"
@@ -15,6 +15,10 @@
 #include "usdShade.hh"
 #include "usdSkel.hh"
 #include "value-pprint.hh"
+
+// src/tydra
+#include "scene-access.hh"
+#include "attribute-eval.hh"
 
 namespace tinyusdz {
 namespace tydra {
@@ -2381,6 +2385,278 @@ GetBlenedShapes(
 
   return dst;
 }
+
+bool GetGeomPrimvar(const Stage &stage, const GPrim &prim, const std::string &varname, GeomPrimvar *out_primvar, std::string *err) {
+  if (!out_primvar) {
+    PUSH_ERROR_AND_RETURN("Output GeomPrimvar is nullptr.");
+  }
+
+  GeomPrimvar primvar;
+
+  constexpr auto kPrimvars = "primvars:";
+  constexpr auto kIndices = ":indices";
+  
+  std::string primvar_name = kPrimvars + varname;
+
+  const auto it = prim.props.find(primvar_name);
+  if (it == prim.props.end()) {
+    return false;
+  }
+
+  if (it->second.is_attribute()) {
+    const Attribute &attr = it->second.get_attribute();
+
+    if (attr.is_connection()) {
+      // follow targetPath to get Attribute 
+      Attribute terminal_attr;
+      bool ret = tydra::GetTerminalAttribute(stage, attr, primvar_name, &terminal_attr, err);
+      if (!ret) {
+        return false;
+      }
+
+      primvar.set_value(terminal_attr);
+
+    } else {
+      primvar.set_value(attr);
+    }
+
+    primvar.set_name(varname);
+
+    if (attr.metas().interpolation.has_value()) {
+      primvar.set_interpolation(attr.metas().interpolation.value());
+    }
+     if (attr.metas().elementSize.has_value()) {
+      primvar.set_elementSize(attr.metas().elementSize.value());
+    }
+    // TODO: copy other attribute metas?
+
+  } else {
+    PUSH_ERROR_AND_RETURN(fmt::format("{} is not Attribute(Maybe Relationship?).", primvar_name));
+  }
+
+  // has indices?
+  std::string index_name = primvar_name + kIndices;
+  const auto indexIt = prim.props.find(index_name);
+
+  if (indexIt != prim.props.end()) {
+    if (indexIt->second.is_attribute()) {
+      const Attribute &indexAttr = indexIt->second.get_attribute();
+
+      if (!(primvar.get_attribute().type_id() & value::TYPE_ID_1D_ARRAY_BIT)) {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("Indexed GeomPrimVar with scalar PrimVar Attribute is not supported. PrimVar name: {}", primvar_name));
+      }
+
+      if (indexAttr.is_connection()) {
+        // follow targetPath to get Attribute 
+        Attribute terminal_indexAttr;
+        bool ret = tydra::GetTerminalAttribute(stage, indexAttr, index_name, &terminal_indexAttr, err);
+        if (!ret) {
+          return false;
+        }
+
+        if (terminal_indexAttr.is_timesamples()) {
+          const auto &ts = terminal_indexAttr.get_var().ts_raw();
+          TypedTimeSamples<std::vector<int32_t>> tss;
+          if (!tss.from_timesamples(ts)) {
+            PUSH_ERROR_AND_RETURN(fmt::format("Index Attribute seems not an timesamples with int[] type: {}", index_name));
+          }
+        
+          primvar.set_indices(tss);
+        } else if (terminal_indexAttr.is_value()) {
+
+          // TODO: Support uint[]?
+          std::vector<int32_t> indices;
+          if (!terminal_indexAttr.get_value(&indices)) {
+            PUSH_ERROR_AND_RETURN(
+                fmt::format("Index Attribute is not int[] type. Got {}",
+                            indexAttr.type_name()));
+          }
+
+          primvar.set_indices(indices);
+
+        }
+      
+      } else if (indexAttr.is_timesamples()) {
+        const auto &ts = indexAttr.get_var().ts_raw();
+        TypedTimeSamples<std::vector<int32_t>> tss;
+        if (!tss.from_timesamples(ts)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Index Attribute seems not an timesamples with int[] type: {}", index_name));
+        }
+      
+        primvar.set_indices(tss);
+      } else if (indexAttr.is_blocked()) {
+        PUSH_ERROR_AND_RETURN("TODO: Index attribute is blocked(ValueBlock).");
+      } else if (indexAttr.is_value()) {
+        // Check if int[] type.
+        // TODO: Support uint[]?
+        std::vector<int32_t> indices;
+        if (!indexAttr.get_value(&indices)) {
+          PUSH_ERROR_AND_RETURN(
+              fmt::format("Index Attribute is not int[] type. Got {}",
+                          indexAttr.type_name()));
+        }
+
+
+        primvar.set_indices(indices);
+      } else {
+        PUSH_ERROR_AND_RETURN("[Internal Error] Invalid Index Attribute.");
+      }
+    } else {
+      // indices are optional, so ok to skip it.
+    }
+  }
+
+  (*out_primvar) = primvar;
+
+  return true;
+
+
+}
+
+namespace {
+
+//
+// visited_paths : To prevent circular referencing of attribute connection.
+//
+bool GetTerminalAttributeImpl(
+    const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
+    const std::string &attr_name, Attribute *value,
+    std::string *err, std::set<std::string> &visited_paths) {
+
+  DCOUT("Prim : " << prim.element_path().element_name() << "("
+                  << prim.type_name() << ") attr_name " << attr_name);
+
+  Property prop;
+  if (!GetProperty(prim, attr_name, &prop, err)) {
+    return false;
+  }
+
+  if (prop.is_connection()) {
+    // Follow connection target Path(singple targetPath only).
+    std::vector<Path> pv = prop.get_attribute().connections();
+    if (pv.empty()) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Connection targetPath is empty for Attribute {}.", attr_name));
+    }
+
+    if (pv.size() > 1) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Multiple targetPaths assigned to .connection."));
+    }
+
+    auto target = pv[0];
+
+    std::string targetPrimPath = target.prim_part();
+    std::string targetPrimPropName = target.prop_part();
+    DCOUT("connection targetPath : " << target << "(Prim: " << targetPrimPath
+                                     << ", Prop: " << targetPrimPropName
+                                     << ")");
+
+    auto targetPrimRet =
+        stage.GetPrimAtPath(Path(targetPrimPath, /* prop */ ""));
+    if (targetPrimRet) {
+      // Follow the connetion
+      const Prim *targetPrim = targetPrimRet.value();
+
+      std::string abs_path = target.full_path_name();
+
+      if (visited_paths.count(abs_path)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Circular referencing detected. connectionTargetPath = {}",
+            to_string(target)));
+      }
+      visited_paths.insert(abs_path);
+
+      return GetTerminalAttributeImpl(stage, *targetPrim, targetPrimPropName,
+                                   value, err, visited_paths);
+
+    } else {
+      PUSH_ERROR_AND_RETURN(targetPrimRet.error());
+    }
+  } else if (prop.is_relationship()) {
+    PUSH_ERROR_AND_RETURN(
+        fmt::format("Property `{}` is a Relation.", attr_name));
+  } else if (prop.is_empty()) {
+    PUSH_ERROR_AND_RETURN(fmt::format(
+        "Attribute `{}` is a define-only attribute(no value assigned).",
+        attr_name));
+  } else if (prop.is_attribute()) {
+
+    (*value) = prop.get_attribute();
+    
+  } else {
+    // ???
+    PUSH_ERROR_AND_RETURN(
+        fmt::format("[InternalError] Invalid Attribute `{}`.", attr_name));
+  }
+
+  return true;
+}
+
+} // namespace
+
+bool GetTerminalAttribute(
+    const tinyusdz::Stage &stage, const tinyusdz::Attribute &attr,
+    const std::string &attr_name, Attribute *value,
+    std::string *err) {
+
+  if (!value) {
+    PUSH_ERROR_AND_RETURN("`value` arg is nullptr.");
+  }
+
+  std::set<std::string> visited_paths;
+
+  if (attr.is_connection()) {
+
+    std::vector<Path> pv = attr.connections();
+    if (pv.empty()) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Connection targetPath is empty for Attribute {}.", attr_name));
+    }
+
+    if (pv.size() > 1) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Multiple targetPaths assigned to .connection."));
+    }
+
+    auto target = pv[0];
+
+    std::string targetPrimPath = target.prim_part();
+    std::string targetPrimPropName = target.prop_part();
+    DCOUT("connection targetPath : " << target << "(Prim: " << targetPrimPath
+                                     << ", Prop: " << targetPrimPropName
+                                     << ")");
+
+    auto targetPrimRet =
+        stage.GetPrimAtPath(Path(targetPrimPath, /* prop */ ""));
+    if (targetPrimRet) {
+      // Follow the connetion
+      const Prim *targetPrim = targetPrimRet.value();
+
+      std::string abs_path = target.full_path_name();
+
+      if (visited_paths.count(abs_path)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Circular referencing detected. connectionTargetPath = {}",
+            to_string(target)));
+      }
+      visited_paths.insert(abs_path);
+
+      return GetTerminalAttributeImpl(stage, *targetPrim, targetPrimPropName,
+                                   value, err, visited_paths);
+    
+    } else {
+      PUSH_ERROR_AND_RETURN(targetPrimRet.error());
+    }
+
+  } else {
+    (*value) = attr;
+    return true;
+  }
+
+  return false;
+
+}
+
 
 }  // namespace tydra
 }  // namespace tinyusdz
