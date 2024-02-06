@@ -342,6 +342,9 @@ struct GPrim : Xformable, MaterialBinding, Collection {
   ///
   /// Get Attribute(+ indices Attribute for Indexed Primvar) with "primvars:" suffix(namespace) in `props`
   ///
+  /// NOTE: This API does not support Connection Atttribute(e.g. `int[] primvars:uvs:indices = </root/geom0.indices>`)
+  /// If you want to get Primvar with possible Connection Attribute, use Tydra API: `GetGeomPrimvar`
+  ///
   /// @param[in] name Primvar name(`primvars:` prefix omitted. e.g. "normals", "st0", ...)
   /// @param[out] primvar GeomPrimvar output.
   /// @param[out] err Optional Error message(filled when returning false)
@@ -357,6 +360,9 @@ struct GPrim : Xformable, MaterialBinding, Collection {
 
   ///
   /// Return List of Primvar in this GPrim contains.
+  ///
+  /// NOTE: This API does not support Connection Atttribute(e.g. `int[] primvars:uvs:indices = </root/geom0.indices>`)
+  /// If you want to get Primvar with possible Connection Attribute, use Tydra API: `GetGeomPrimvars`
   ///
   std::vector<GeomPrimvar> get_primvars() const;
 
