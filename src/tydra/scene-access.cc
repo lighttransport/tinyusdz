@@ -2386,9 +2386,13 @@ GetBlenedShapes(
   return dst;
 }
 
-bool GetGeomPrimvar(const Stage &stage, const GPrim &prim, const std::string &varname, GeomPrimvar *out_primvar, std::string *err) {
+bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim, const std::string &varname, GeomPrimvar *out_primvar, std::string *err) {
   if (!out_primvar) {
     PUSH_ERROR_AND_RETURN("Output GeomPrimvar is nullptr.");
+  }
+
+  if (!gprim) {
+    PUSH_ERROR_AND_RETURN("Input `gprim` arg is nullptr.");
   }
 
   GeomPrimvar primvar;
@@ -2398,8 +2402,8 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim &prim, const std::string &va
   
   std::string primvar_name = kPrimvars + varname;
 
-  const auto it = prim.props.find(primvar_name);
-  if (it == prim.props.end()) {
+  const auto it = gprim->props.find(primvar_name);
+  if (it == gprim->props.end()) {
     return false;
   }
 
@@ -2436,9 +2440,9 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim &prim, const std::string &va
 
   // has indices?
   std::string index_name = primvar_name + kIndices;
-  const auto indexIt = prim.props.find(index_name);
+  const auto indexIt = gprim->props.find(index_name);
 
-  if (indexIt != prim.props.end()) {
+  if (indexIt != gprim->props.end()) {
     if (indexIt->second.is_attribute()) {
       const Attribute &indexAttr = indexIt->second.get_attribute();
 
