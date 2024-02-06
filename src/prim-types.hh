@@ -1084,7 +1084,7 @@ struct AttrMetas {
   //
   bool has_colorSpace() const;
   value::token get_colorSpace() const; // return empty when not authored or 'colorSpace' metadataum is not token type.
-  
+
   bool authored() const {
     return (interpolation || elementSize || hidden || customData || weight ||
             connectability || outputName || renderType || sdrMetadata || displayName || bindMaterialAs || meta.size() || stringData.size());
@@ -1096,6 +1096,8 @@ using AttrMeta = AttrMetas;
 
 using PropMetas = AttrMetas;
 
+// TODO: Move to value-types.hh?
+//
 // Typed TimeSamples value
 //
 // double radius.timeSamples = { 0: 1.0, 1: None, 2: 3.0 }
@@ -1311,6 +1313,32 @@ struct TypedTimeSamples {
     }
 
     return _samples;
+  }
+
+  // From typeless timesamples.
+  bool from_timesamples(const value::TimeSamples &ts) {
+    std::vector<Sample> buf;
+    for (size_t i = 0; i < ts.size(); i++) {
+      if (ts.get_samples()[i].value.type_id() != value::TypeTraits<T>::type_id()) {
+        return false;
+      }
+      Sample s;
+      s.t = ts.get_samples()[i].t;
+      s.blocked = ts.get_samples()[i].blocked;
+      if (const auto pv = ts.get_samples()[i].value.as<T>()) {
+        s.value = (*pv);
+      } else {
+        return false;
+      }
+
+      buf.push_back(s);
+    }
+
+
+    _samples = std::move(buf);
+    _dirty = true;
+
+    return true;
   }
 
   size_t size() const {

@@ -22,9 +22,6 @@
 #include "str-util.hh"
 #include "value-pprint.hh"
 
-// To support resolving attribute value(attribute connection),
-#include "tydra/scene-access.hh"
-
 #define SET_ERROR_AND_RETURN(msg) \
   if (err) {                      \
     (*err) = (msg);               \
@@ -155,7 +152,6 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
     return false;
   }
 
-  // Currently connection attribute is not supported.
   if (it->second.is_attribute()) {
     const Attribute &attr = it->second.get_attribute();
 
@@ -169,7 +165,7 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
     }
 
   } else {
-    SET_ERROR_AND_RETURN("GeomPrimvar of non-Attribute property is not supported.");
+    SET_ERROR_AND_RETURN(fmt::format("{} is not Attribute. Maybe Relationship?", primvar_name));
   }
 
   // has indices?
@@ -178,15 +174,25 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
 
   if (indexIt != props.end()) {
     if (indexIt->second.is_attribute()) {
+
+      if (!(primvar.get_attribute().type_id() & value::TYPE_ID_1D_ARRAY_BIT)) {
+        SET_ERROR_AND_RETURN(
+            fmt::format("Indexed GeomPrimVar with scalar PrimVar Attribute is not supported. PrimVar name: {}", primvar_name));
+      }
+
       const Attribute &indexAttr = indexIt->second.get_attribute();
 
       if (indexAttr.is_connection()) {
         SET_ERROR_AND_RETURN(
-            "TODO: Connetion is not supported for index Attribute at the "
-            "moment.");
+            "Attribute Connetion is not supported for index Attribute, since we need Stage info to find Prim referred by targetPath. Use Tydra API tydra::GetGeomPrimvar.");
       } else if (indexAttr.is_timesamples()) {
-        SET_ERROR_AND_RETURN(
-            "TODO: Index attribute with timeSamples is not supported yet.");
+        const auto &ts = indexAttr.get_var().ts_raw();
+        TypedTimeSamples<std::vector<int32_t>> tss;
+        if (!tss.from_timesamples(ts)) {
+          SET_ERROR_AND_RETURN(fmt::format("Index Attribute seems not an timesamples with int[] type: {}", index_name));
+        }
+      
+        primvar.set_indices(tss);
       } else if (indexAttr.is_blocked()) {
         SET_ERROR_AND_RETURN("TODO: Index attribute is blocked(ValueBlock).");
       } else if (indexAttr.is_value()) {
@@ -197,11 +203,6 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
           SET_ERROR_AND_RETURN(
               fmt::format("Index Attribute is not int[] type. Got {}",
                           indexAttr.type_name()));
-        }
-
-        if (!(primvar.get_attribute().type_id() & value::TYPE_ID_1D_ARRAY_BIT)) {
-          SET_ERROR_AND_RETURN(
-              fmt::format("Indexed GeomPrimVar for scalar PrimVar Attribute is not supported. PrimVar name: {}", primvar_name));
         }
 
         primvar.set_indices(indices);

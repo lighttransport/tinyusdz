@@ -191,6 +191,43 @@ struct PrimVar {
     _ts.add_sample(t, v);
   }
 
+#if 0 // TODO
+  ///
+  /// Get typed TimesSamples
+  ///
+  template<typename T>
+  bool get_timesamples(TypedTimeSamples<T> *dst) {
+    if (!is_timesamples()) {
+      return false;
+    }
+
+    TypedTimeSamples<T> tss;
+    std::vector<TimedTimeSample::Sample<T>> buf;
+    for (size_t i = 0; i < ts.size(); i++) {
+      if (ts.get_samples()[i].value.type_id() != value::TypeTraits<T>::type_id()) {
+        return false;
+      }
+      Sample s;
+      s.t = ts.get_samples()[i].t;
+      s.blocked = ts.get_samples()[i].blocked;
+      if (const auto pv = ts.get_samples()[i].value.as<T>()) {
+        s.value = ts.get_samples()[i].value;
+      } else {
+        return false;
+      }
+   
+      buf.push_back(s);
+    }
+  
+  
+      _samples = std::move(buf);
+      _dirty = true;
+  
+      return true;
+    }
+#endif
+
+
   ///
   /// Get interpolated timesample value.
   ///

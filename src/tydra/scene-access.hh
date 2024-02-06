@@ -395,6 +395,48 @@ class CollectionMembershipQuery
 };
 
 ///
+/// Get terminal Attribute. Similar to GetValueProducingAttribute in pxrUSD.
+///
+/// On the contrary to EvaluateAttribute, Do not evaluate Attribute value at specified time.
+///
+/// - if Attribute is connection, follow its targetPath recursively until encountering non-connection Attribute.
+/// - if Attribute is blocked, return Attribute ValueBlock.
+/// - if Attribute is timesamples, return TimeSamples Attribute.
+/// - if Attribute is scalar, return scalar Attribute.
+///
+/// @return true upon success.
+bool GetTerminalAttribute(const Stage &stage, const Attribute &attr, const std::string &attr_name,
+                  Attribute *attr_out, std::string *err);
+
+///
+/// Get Geom Primvar.
+///
+/// This API supports Connection Attribute(which requires finding Prim of targetPath in Stage).
+///
+/// example of Primvar with Connection Attribute:
+///
+///   texCoord2f[] primvars:uvs = </root/geom0.uvs>
+///   int[] primvars:uvs:indices.connection = </root/geom0.indices>
+///
+/// @param[in] stage Stage
+/// @param[in] prim GPrim
+/// @param[in] name Primvar name(`primvars:` prefix omitted)
+/// @param[out] primvar GeomPrimvar output.
+/// @param[out] err Error message.
+///
+/// @return true upon success.
+///
+bool GetGeomPrimvar(const Stage &stage, const GPrim &prim, const std::string &name, GeomPrimvar *primvar, std::string *err = nullptr);
+
+
+///
+/// Get Primvars in GPrim.
+///
+/// This API supports Connection Attribute(which requires finding Prim of targetPath in Stage).
+///
+std::vector<GeomPrimvar> GetGeomPrimvars(const Stage &stage, const GPrim &prim);
+
+///
 /// Build Collection Membership
 ///
 /// It traverse collection paths starting from `seedCollectionInstance` in the Stage.
