@@ -2415,8 +2415,7 @@ bool RenderSceneConverter::ConvertMesh(
           vattr.get_data(), vattr.stride_bytes(), dst.faceVertexCounts);
       if (!result) {
         PUSH_ERROR_AND_RETURN(
-            fmt::format(eFailed to convert 'constant' attribute to 'facevarying'
-                        : {} ",
+            fmt::format("Failed to convert 'constant' attribute to 'facevarying': {} ",
                           result.error()));
       }
 

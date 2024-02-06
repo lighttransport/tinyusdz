@@ -408,6 +408,40 @@ class CollectionMembershipQuery
 bool GetTerminalAttribute(const Stage &stage, const Attribute &attr, const std::string &attr_name,
                   Attribute *attr_out, std::string *err);
 
+template<typename T>
+bool GetTerminalAttribute(const Stage &stage, const TypedAttribute<T> &attr, const std::string &attr_name,
+  Attribute *attr_out, std::string *err)
+{
+  if (!attr_out) {
+    return false;
+  }
+
+  Attribute value;
+  if (attr.is_connection()) {
+    Attribute input;
+    input.set_connections(attr.connections());
+    return GetTerminalAttribute(stage, input, attr_name, attr_out, err);
+  } else if (attr.is_blocked()) {
+    value.metas() = attr.metas();
+    value.variability() = Variability::Uniform;
+    value.set_type_name(value::TypeTraits<T>::type_name());
+    value.set_blocked(true);
+    (*attr_out) = std::move(value);    
+    return true;
+  } else if (attr.is_value_empty()) {
+    value.set_type_name(value::TypeTraits<T>::type_name());
+    value.metas() = attr.metas();
+    value.variability() = Variability::Uniform;
+  } else {
+    value.set_value(attr.get_value());
+    value.metas() = attr.metas();
+    value.variability() = Variability::Uniform;
+  }
+
+  (*attr_out) = std::move(value);
+  return true;
+}
+
 ///
 /// Get Geom Primvar.
 ///
@@ -419,14 +453,14 @@ bool GetTerminalAttribute(const Stage &stage, const Attribute &attr, const std::
 ///   int[] primvars:uvs:indices.connection = </root/geom0.indices>
 ///
 /// @param[in] stage Stage
-/// @param[in] prim GPrim
+/// @param[in] prim The pointer to GPrim.
 /// @param[in] name Primvar name(`primvars:` prefix omitted)
 /// @param[out] primvar GeomPrimvar output.
 /// @param[out] err Error message.
 ///
 /// @return true upon success.
 ///
-bool GetGeomPrimvar(const Stage &stage, const GPrim &prim, const std::string &name, GeomPrimvar *primvar, std::string *err = nullptr);
+bool GetGeomPrimvar(const Stage &stage, const GPrim *prim, const std::string &name, GeomPrimvar *primvar, std::string *err = nullptr);
 
 
 ///
