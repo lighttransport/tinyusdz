@@ -129,18 +129,23 @@ class GeomPrimvar {
   ///   dest[i] = values[indices[i]]
   /// ```
   ///
+  /// Use Default time and Linear interpolation when `indices` and/or primvar is timesamples.
+  ///
   /// If Primvar does not have indices, return attribute value as is(same with `get_value`).
+  /// For now, we only support Attribute with 1D array type.
   ///
   /// Return false when operation failed or if the attribute type is not supported for Indexed Primvar.
   ///
-  template <typename T>
-  bool flatten_with_indices(T *dst, std::string *err = nullptr) const;
-
-  template <typename T>
-  bool flatten_with_indices(T *dst, double t, value::TimeSampleInterpolationType tinerp = value::TimeSampleInterpolationType::Linear, std::string *err = nullptr) const;
-
+  ///
   template <typename T>
   bool flatten_with_indices(std::vector<T> *dst, std::string *err = nullptr) const;
+
+  ///
+  /// Specify time and interpolation type.
+  ///
+  template <typename T>
+  bool flatten_with_indices(double t, std::vector<T> *dst, value::TimeSampleInterpolationType tinerp = value::TimeSampleInterpolationType::Linear, std::string *err = nullptr) const;
+
 
   // Generic Value version.
   // TODO: return Attribute?
@@ -1175,7 +1180,8 @@ DEFINE_TYPE_TRAIT(PointInstancer, kPointInstancer, TYPE_ID_GEOM_POINT_INSTANCER,
   extern template bool GeomPrimvar::get_value(double, __ty *dest, value::TimeSampleInterpolationType, std::string *err) const; \
   extern template bool GeomPrimvar::get_value(std::vector<__ty> *dest, std::string *err) const; \
   extern template bool GeomPrimvar::get_value(double, std::vector<__ty> *dest, value::TimeSampleInterpolationType, std::string *err) const; \
-  extern template bool GeomPrimvar::flatten_with_indices(std::vector<__ty> *dest, std::string *err) const;
+  extern template bool GeomPrimvar::flatten_with_indices(std::vector<__ty> *dest, std::string *err) const; \
+  extern template bool GeomPrimvar::flatten_with_indices(double, std::vector<__ty> *dest, value::TimeSampleInterpolationType, std::string *err) const;
 
 APPLY_GEOMPRIVAR_TYPE(EXTERN_TEMPLATE_GET_VALUE)
 

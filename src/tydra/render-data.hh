@@ -1143,6 +1143,7 @@ class RenderSceneConverterEnv {
   const Stage &stage;  // Point to valid Stage object
 
   double timecode{value::TimeCode::Default()};
+  value::TimeSampleInterpolationType _tinterp{value::TimeSampleInterpolationType::Linear};
 };
 
 //
@@ -1283,6 +1284,8 @@ class RenderSceneConverter {
 
   double GetTimeCode() const { return _timecode; }
 
+  value::TimeSampleInterpolationType GetTimeSampleInterpolation() const { return _tinterp; }
+
  private:
   ///
   /// Convert variability of vertex data to 'vertex' or 'facevarying'.
@@ -1329,7 +1332,8 @@ class RenderSceneConverter {
   std::string _err;
   std::string _warn;
 
-  double _timecode = value::TimeCode::Default();
+  double _timecode{value::TimeCode::Default()};
+  value::TimeSampleInterpolationType _tinterp{value::TimeSampleInterpolationType::Linear};
 };
 
 // For debug

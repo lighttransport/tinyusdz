@@ -219,8 +219,9 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
   return true;
 }
 
+
 template <typename T>
-bool GeomPrimvar::flatten_with_indices(std::vector<T> *dest, std::string *err) const {
+bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, const value::TimeSampleInterpolationType tinterp, std::string *err) const {
   if (!dest) {
     if (err) {
       (*err) += "Output value is nullptr.";
@@ -228,14 +229,8 @@ bool GeomPrimvar::flatten_with_indices(std::vector<T> *dest, std::string *err) c
     return false;
   }
 
-  if (_attr.is_timesamples()) {
-    if (err) {
-      (*err) += "TimeSamples attribute is TODO.";
-    }
-    return false;
-  }
+  if (_attr.is_timesamples() || _attr.is_value()) {
 
-  if (_attr.is_value()) {
     if (!IsSupportedGeomPrimvarType(_attr.type_id())) {
       if (err) {
         (*err) += fmt::format("Unsupported type for GeomPrimvar. type = `{}`",
@@ -244,14 +239,15 @@ bool GeomPrimvar::flatten_with_indices(std::vector<T> *dest, std::string *err) c
       return false;
     }
 
-    if (auto pv = _attr.get_value<std::vector<T>>()) {
+    std::vector<T> value;
+    if (_attr.get_value<std::vector<T>>(t, &value, tinterp)) {
 
       std::vector<int32_t> indices;
-      // Get indices at default time
-      _indices.get(&indices);
+      // Get indices at specified time
+      _indices.get(&indices, t, tinterp);
 
       std::vector<T> expanded_val;
-      auto ret = ExpandWithIndices(pv.value(), indices, &expanded_val);
+      auto ret = ExpandWithIndices(value, indices, &expanded_val);
       if (ret) {
         (*dest) = expanded_val;
         // Currently we ignore ret.value()
@@ -274,14 +270,22 @@ bool GeomPrimvar::flatten_with_indices(std::vector<T> *dest, std::string *err) c
             value::TypeTraits<T>::type_name(), _attr.type_name());
       }
     }
+  } else {
+    // TODO: Report error?
   }
 
   return false;
 }
 
+template <typename T>
+bool GeomPrimvar::flatten_with_indices(std::vector<T> *dest, std::string *err) const {
+  return flatten_with_indices(value::TimeCode::Default(), dest, value::TimeSampleInterpolationType::Linear, err);
+}
+
 // instanciation
 #define INSTANCIATE_FLATTEN_WITH_INDICES(__ty) \
-  template bool GeomPrimvar::flatten_with_indices(std::vector<__ty> *dest, std::string *err) const;
+  template bool GeomPrimvar::flatten_with_indices(std::vector<__ty> *dest, std::string *err) const; \
+  template bool GeomPrimvar::flatten_with_indices(const double t, std::vector<__ty> *dest, const value::TimeSampleInterpolationType tinterp, std::string *err) const;
 
 APPLY_GEOMPRIVAR_TYPE(INSTANCIATE_FLATTEN_WITH_INDICES)
 
