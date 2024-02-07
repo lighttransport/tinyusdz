@@ -52,6 +52,8 @@ include src/crate-reader.hh
 include src/crate-writer.cc
 include src/crate-writer.hh
 include src/define-type-trait.inc
+include src/external/nanoflann.hpp
+include src/external/nanoflann.COPYING
 include src/external/filesystem/LICENSE
 include src/external/filesystem/README.md
 include src/external/filesystem/include/ghc/filesystem.hpp
