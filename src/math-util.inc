@@ -65,11 +65,27 @@ inline double angle(double radian) {
   return radian * 180.0 / 3.141592653589793;
 }
 
+inline bool is_close(const int16_t a, const int16_t b) {
+  return a == b;
+}
+
+inline bool is_close(const uint16_t a, const uint16_t b) {
+  return a == b;
+}
+
+inline bool is_close(const int32_t a, const int32_t b) {
+  return a == b;
+}
+
+inline bool is_close(const uint32_t a, const uint32_t b) {
+  return a == b;
+}
+
 // Simple subtraction is not robust. Use more robust fp diff compare.
 // https://embeddeduse.com/2019/08/26/qt-compare-two-floats/
 // https://randomascii.wordpress.com/2012/02/25/comparing-floating-point-numbers-2012-edition/
 // TODO: ulp based comparison for more robust compare
-inline bool is_close(float a, float b, const float eps) {
+inline bool is_close(float a, float b, const float eps = std::numeric_limits<float>::epsilon()) {
   float d = a - b;
   if (std::fabs(d) <= eps) {
     return true;
@@ -78,7 +94,7 @@ inline bool is_close(float a, float b, const float eps) {
   return std::fabs(d) <= (eps * std::fmax(std::fabs(a), std::fabs(b)));
 }
 
-inline bool is_close(double a, double b, const double eps) {
+inline bool is_close(double a, double b, const double eps = std::numeric_limits<double>::epsilon()) {
   double d = a - b;
   if (std::fabs(d) <= eps) {
     return true;
@@ -86,14 +102,8 @@ inline bool is_close(double a, double b, const double eps) {
   return std::fabs(d) <= (eps * std::fmax(std::fabs(a), std::fabs(b)));
 }
 
-inline bool is_close(value::float3 a, value::float3 b, const float eps) {
-  return is_close(a[0], b[0], eps) && is_close(a[1], b[1], eps) &&
-         is_close(a[2], b[2], eps);
-}
-
-inline bool is_close(value::double3 a, value::double3 b, const double eps) {
-  return is_close(a[0], b[0], eps) && is_close(a[1], b[1], eps) &&
-         is_close(a[2], b[2], eps);
+inline bool is_close(value::half a, value::half b, const float eps = std::numeric_limits<float>::epsilon()) {
+  return is_close(value::half_to_float(a), value::half_to_float(b), eps);
 }
 
 // Compare two floating point by ulps.
@@ -283,6 +293,111 @@ inline double sin_pi(double x) {
 inline double cos_pi(double x) {
   return cos_pi_imp(x);
 }
+
+//
+// is_close
+//
+
+inline bool is_close(const value::half2 &a, const value::half2 &b, const float eps = std::numeric_limits<float>::epsilon()) {
+  return is_close(a[0], b[0], eps) && is_close(a[1], b[1], eps);
+}
+inline bool is_close(const value::half3 &a, const value::half3 &b, const float eps = std::numeric_limits<float>::epsilon()) {
+  return is_close(a[0], b[0], eps) && is_close(a[1], b[1], eps) && is_close(a[2], b[2], eps);
+}
+inline bool is_close(const value::half4 &a, const value::half4 &b, const float eps = std::numeric_limits<float>::epsilon()) {
+  return is_close(a[0], b[0], eps) && is_close(a[1], b[1], eps) && is_close(a[2], b[2], eps) && is_close(a[3], b[3], eps);
+}
+
+inline bool is_close(const value::float2 &a, const value::float2 &b, const float eps = std::numeric_limits<float>::epsilon()) {
+  return is_close(a[0], b[0], eps) && is_close(a[1], b[1], eps);
+}
+inline bool is_close(const value::float3 &a, const value::float3 &b, const float eps = std::numeric_limits<float>::epsilon()) {
+  return is_close(a[0], b[0], eps) && is_close(a[1], b[1], eps) && is_close(a[2], b[2], eps);
+}
+inline bool is_close(const value::float4 &a, const value::float4 &b, const float eps = std::numeric_limits<float>::epsilon()) {
+  return is_close(a[0], b[0], eps) && is_close(a[1], b[1], eps) && is_close(a[2], b[2], eps) && is_close(a[3], b[3], eps);
+}
+
+inline bool is_close(const value::double2 &a, const value::double2 &b, const double eps = std::numeric_limits<float>::epsilon()) {
+  return is_close(a[0], b[0], eps) && is_close(a[1], b[1], eps);
+}
+inline bool is_close(const value::double3 &a, const value::double3 &b, const double eps = std::numeric_limits<float>::epsilon()) {
+  return is_close(a[0], b[0], eps) && is_close(a[1], b[1], eps) && is_close(a[2], b[2], eps);
+}
+inline bool is_close(const value::double4 &a, const value::double4 &b, const double eps = std::numeric_limits<float>::epsilon()) {
+  return is_close(a[0], b[0], eps) && is_close(a[1], b[1], eps) && is_close(a[2], b[2], eps) && is_close(a[3], b[3], eps);
+}
+
+inline bool is_close(const bool a, const bool b) {
+  return a == b;
+}
+
+inline bool is_close(const signed char a, const signed char b) {
+  return a == b;
+}
+
+inline bool is_close(const value::char2 &a, const value::char2 &b) {
+  return (a[0] == b[0]) && (a[1] == b[1]);
+}
+inline bool is_close(const value::char4 &a, const value::char3 &b) {
+  return (a[0] == b[0]) && (a[1] == b[1]) && (a[2] == b[2]);
+}
+inline bool is_close(const value::char4 &a, const value::char4 &b) {
+  return (a[0] == b[0]) && (a[1], b[1]) && (a[2] == b[2]) && (a[3] == b[3]);
+}
+
+inline bool is_close(const uint8_t a, const uint8_t b) {
+  return a == b;
+}
+
+inline bool is_close(const value::uchar2 &a, const value::uchar2 &b) {
+  return (a[0] == b[0]) && (a[1] == b[1]);
+}
+inline bool is_close(const value::uchar4 &a, const value::uchar3 &b) {
+  return (a[0] == b[0]) && (a[1] == b[1]) && (a[2] == b[2]);
+}
+inline bool is_close(const value::uchar4 &a, const value::uchar4 &b) {
+  return (a[0] == b[0]) && (a[1], b[1]) && (a[2] == b[2]) && (a[3] == b[3]);
+}
+
+inline bool is_close(const value::int2 &a, const value::int2 &b) {
+  return (a[0] == b[0]) && (a[1] == b[1]);
+}
+inline bool is_close(const value::int3 &a, const value::int3 &b) {
+  return (a[0] == b[0]) && (a[1] == b[1]) && (a[2] == b[2]);
+}
+inline bool is_close(const value::int4 &a, const value::int4 &b) {
+  return (a[0] == b[0]) && (a[1], b[1]) && (a[2] == b[2]) && (a[3] == b[3]);
+}
+inline bool is_close(const value::uint2 &a, const value::uint2 &b) {
+  return (a[0] == b[0]) && (a[1] == b[1]);
+}
+inline bool is_close(const value::uint3 &a, const value::uint3 &b) {
+  return (a[0] == b[0]) && (a[1] == b[1]) && (a[2], b[2]);
+}
+inline bool is_close(const value::uint4 &a, const value::uint4 &b) {
+  return (a[0] == b[0]) && (a[1] == b[1]) && (a[2] == b[2]) && (a[3] == b[3]);
+}
+
+inline bool is_close(const value::short2 &a, const value::short2 &b) {
+  return (a[0] == b[0]) && (a[1] == b[1]);
+}
+inline bool is_close(const value::short3 &a, const value::short3 &b) {
+  return (a[0] == b[0]) && (a[1] == b[1]) && (a[2] == b[2]);
+}
+inline bool is_close(const value::short4 &a, const value::short4 &b) {
+  return (a[0] == b[0]) && (a[1], b[1]) && (a[2] == b[2]) && (a[3] == b[3]);
+}
+inline bool is_close(const value::ushort2 &a, const value::ushort2 &b) {
+  return (a[0] == b[0]) && (a[1] == b[1]);
+}
+inline bool is_close(const value::ushort3 &a, const value::ushort4 &b) {
+  return (a[0] == b[0]) && (a[1] == b[1]) && (a[2], b[2]);
+}
+inline bool is_close(const value::ushort4 &a, const value::ushort4 &b) {
+  return (a[0] == b[0]) && (a[1] == b[1]) && (a[2] == b[2]) && (a[3] == b[3]);
+}
+
 
 }  // namespace math
 
