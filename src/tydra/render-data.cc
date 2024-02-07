@@ -30,6 +30,7 @@
 #include "usdGeom.hh"
 #include "usdShade.hh"
 #include "value-pprint.hh"
+#include "math-util.inc"
 
 #if defined(TINYUSDZ_WITH_COLORIO)
 #include "external/tiny-color-io.h"
@@ -43,6 +44,9 @@
 // For triangulation.
 // TODO: Use tinyobjloader's triangulation
 #include "external/mapbox/earcut/earcut.hpp"
+
+// For kNN point search
+//#include "external/nanoflann.hpp"
 
 #ifdef __clang__
 #pragma clang diagnostic pop
@@ -535,6 +539,223 @@ ConstantToFaceVarying(const std::vector<uint8_t> &src,
   return dst;
 }
 #endif
+
+template<typename T>
+bool TryConvertFacevaryingToVertex(
+  const std::vector<T> &src,
+  std::vector<T> *dst,
+  const std::vector<uint32_t> &faceVertexIndices) {
+
+  if (!dst) {
+    return false;
+  }
+
+  if (src.size() != faceVertexIndices.size()) {
+    return false;
+  }
+
+  // size must be at least 1 triangle(3 verts).
+  if (faceVertexIndices.size() < 3) {
+    return false;
+  }
+
+  // vidx, value
+  std::unordered_map<uint32_t, T> vdata;
+
+  uint32_t max_vidx = 0;
+  for (size_t i = 0; i < faceVertexIndices.size(); i++) {
+
+    uint32_t vidx = faceVertexIndices[i];
+
+    if (vdata.count(vidx)) {
+      
+      if (!math::is_close(vdata[vidx], src[i])) {
+        return false;
+      }
+    } else {
+      vdata[vidx] = src[i];
+    }
+  }
+
+  dst->resize(max_vidx);
+  // TODO: initialize identity matrix when T is matrix type
+  memset(dst->data(), 0, sizeof(T));
+
+  for (const auto &v : vdata) {
+    (*dst)[v.first] = v.second;
+  }
+
+  return true;
+}
+
+// T = matrix type.
+template<typename T>
+bool TryConvertFacevaryingToVertexMat(
+  const std::vector<T> &src,
+  std::vector<T> *dst,
+  const std::vector<uint32_t> &faceVertexIndices) {
+
+  if (!dst) {
+    return false;
+  }
+
+  if (src.size() != faceVertexIndices.size()) {
+    return false;
+  }
+
+  // size must be at least 1 triangle(3 verts).
+  if (faceVertexIndices.size() < 3) {
+    return false;
+  }
+
+  // vidx, value
+  std::unordered_map<uint32_t, T> vdata;
+
+  uint32_t max_vidx = 0;
+  for (size_t i = 0; i < faceVertexIndices.size(); i++) {
+
+    uint32_t vidx = faceVertexIndices[i];
+
+    if (vdata.count(vidx)) {
+      
+      if (!is_close(vdata[vidx], src[i])) {
+        return false;
+      }
+    } else {
+      vdata[vidx] = src[i];
+    }
+  }
+
+  dst->assign(max_vidx, T::identity());
+
+  for (const auto &v : vdata) {
+    (*dst)[v.first] = v.second;
+  }
+
+  return true;
+}
+
+///
+/// Try to convert 'facevarying' vertex attribute to 'vertex' attribute.
+/// Inspect each vertex value is the same(with given eps)
+///
+/// Current limitation:
+/// - stride must be 0 or tightly packed.
+/// - elementSize must be 1
+/// 
+/// @return true when 'facevarying' vertex attribute successfully converted to 'vertex'
+///
+static bool TryConvertFacevaryingToVertex(
+  const VertexAttribute &src,
+  VertexAttribute *dst,
+  const std::vector<uint32_t> &faceVertexIndices,
+  std::string *err) {
+
+  if (!dst) {
+    return false;
+  }
+
+  if (!src.is_facevarying()) {
+    return false;
+  }
+
+  if (src.element_size() != 1) {
+    return false;
+  }
+
+  if ((src.stride != 0) || (src.stride_bytes() != src.format_size())) {
+    return false;
+  }
+
+#define CONVERT_FUN(__fmt, __ty) \
+  if (src.format == __fmt) { \
+    std::vector<__ty> vsrc; \
+    vsrc.resize(src.vertex_count()); \
+    memcpy(vsrc.data(), src.get_data().data(), src.get_data().size()); \
+    std::vector<__ty> vdst; \
+    bool ret = TryConvertFacevaryingToVertex<__ty>(vsrc, &vdst, faceVertexIndices); \
+    if (!ret) { return false; } \
+    dst->elementSize = 1; \
+    dst->format = src.format; \
+    dst->variability = VertexVariability::Vertex; \
+    dst->data.resize(vdst.size() * src.format_size()); \
+    memcpy(dst->data.data(), vdst.data(), dst->data.size()); \
+    return true; \
+  } else 
+
+#define CONVERT_FUN_MAT(__fmt, __ty) \
+  if (src.format == __fmt) { \
+    std::vector<__ty> vsrc; \
+    vsrc.resize(src.vertex_count()); \
+    memcpy(vsrc.data(), src.get_data().data(), src.get_data().size()); \
+    std::vector<__ty> vdst; \
+    bool ret = TryConvertFacevaryingToVertexMat<__ty>(vsrc, &vdst, faceVertexIndices); \
+    if (!ret) { return false; } \
+    dst->elementSize = 1; \
+    dst->format = src.format; \
+    dst->variability = VertexVariability::Vertex; \
+    dst->data.resize(vdst.size() * src.format_size()); \
+    memcpy(dst->data.data(), vdst.data(), dst->data.size()); \
+    return true; \
+  } else 
+
+  CONVERT_FUN(VertexAttributeFormat::Bool, uint8_t)
+  CONVERT_FUN(VertexAttributeFormat::Float, float)
+  CONVERT_FUN(VertexAttributeFormat::Vec2, value::float2)
+  CONVERT_FUN(VertexAttributeFormat::Vec3, value::float3)
+  CONVERT_FUN(VertexAttributeFormat::Vec4, value::float4)
+  CONVERT_FUN(VertexAttributeFormat::Char, signed char)
+  //CONVERT_FUN(VertexAttributeFormat::Char2, value::char2)
+  //CONVERT_FUN(VertexAttributeFormat::Char3, value::char3)
+  //CONVERT_FUN(VertexAttributeFormat::Char4,    // int8x4
+  CONVERT_FUN(VertexAttributeFormat::Byte, uint8_t)
+  //CONVERT_FUN(VertexAttributeFormat::Byte2,    // uint8x2
+  //CONVERT_FUN(VertexAttributeFormat::Byte3,    // uint8x3
+  //CONVERT_FUN(VertexAttributeFormat::Byte4,    // uint8x4
+  CONVERT_FUN(VertexAttributeFormat::Short, int16_t)
+  //CONVERT_FUN(VertexAttributeFormat::Short2, value::short2)
+  //CONVERT_FUN(VertexAttributeFormat::Short3, value::short3)
+  //CONVERT_FUN(VertexAttributeFormat::Short4, value::short4)
+  CONVERT_FUN(VertexAttributeFormat::Ushort,  uint16_t)
+  //CONVERT_FUN(VertexAttributeFormat::Ushort2, uint16_t)
+  //CONVERT_FUN(VertexAttributeFormat::Ushort3, uint16_t)
+  //CONVERT_FUN(VertexAttributeFormat::Ushort4, uint16_t)
+  CONVERT_FUN(VertexAttributeFormat::Half,   value::half) 
+  CONVERT_FUN(VertexAttributeFormat::Half2,  value::half2)
+  CONVERT_FUN(VertexAttributeFormat::Half3,  value::half3)
+  CONVERT_FUN(VertexAttributeFormat::Half4,  value::half4)
+  CONVERT_FUN(VertexAttributeFormat::Int,    int) 
+  CONVERT_FUN(VertexAttributeFormat::Ivec2,  value::int2)
+  CONVERT_FUN(VertexAttributeFormat::Ivec3,  value::int3)
+  CONVERT_FUN(VertexAttributeFormat::Ivec4,  value::int4) 
+  CONVERT_FUN(VertexAttributeFormat::Uint,   uint32_t) 
+  CONVERT_FUN(VertexAttributeFormat::Uvec2,  value::uint2)
+  CONVERT_FUN(VertexAttributeFormat::Uvec3,  value::uint3) 
+  CONVERT_FUN(VertexAttributeFormat::Uvec4,  value::uint4)  
+  CONVERT_FUN(VertexAttributeFormat::Double, double) 
+  CONVERT_FUN(VertexAttributeFormat::Dvec2,  value::double2) 
+  CONVERT_FUN(VertexAttributeFormat::Dvec3,  value::double3) 
+  CONVERT_FUN(VertexAttributeFormat::Dvec4,  value::double4) 
+  CONVERT_FUN_MAT(VertexAttributeFormat::Mat2,   value::matrix2f)
+  CONVERT_FUN_MAT(VertexAttributeFormat::Mat3,   value::matrix3f)
+  CONVERT_FUN_MAT(VertexAttributeFormat::Mat4,   value::matrix4f)
+  CONVERT_FUN_MAT(VertexAttributeFormat::Dmat2,  value::matrix2d)
+  CONVERT_FUN_MAT(VertexAttributeFormat::Dmat3,  value::matrix3d)
+  CONVERT_FUN_MAT(VertexAttributeFormat::Dmat4,  value::matrix4d)
+  {
+    if (err) {
+      (*err) += fmt::format("Unsupported/Unimplemented VertexAttributeFormat: {}",
+      to_string(src.format));
+    }
+  }
+
+#undef CONVERT_FUN
+#undef CONVERT_FUN_MAT
+
+
+  return false;
+  
+}
 
 #if 0  // Not used atm.
 static bool ToFaceVaryingAttribute(const std::string &attr_name,

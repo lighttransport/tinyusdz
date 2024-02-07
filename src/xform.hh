@@ -18,6 +18,13 @@ bool is_identity(const value::matrix2d &m);
 bool is_identity(const value::matrix3d &m);
 bool is_identity(const value::matrix4d &m);
 
+bool is_close(const value::matrix2f &a, const value::matrix2f &b, const float eps = std::numeric_limits<float>::epsilon());
+bool is_close(const value::matrix3f &a, const value::matrix3f &b, const float eps = std::numeric_limits<float>::epsilon());
+bool is_close(const value::matrix4f &a, const value::matrix4f &b, const float eps = std::numeric_limits<float>::epsilon());
+bool is_close(const value::matrix2d &a, const value::matrix2d &b, const double eps = std::numeric_limits<double>::epsilon());
+bool is_close(const value::matrix3d &a, const value::matrix3d &b, const double eps = std::numeric_limits<double>::epsilon());
+bool is_close(const value::matrix4d &a, const value::matrix4d &b, const double eps = std::numeric_limits<double>::epsilon());
+
 value::quatf to_quaternion(const value::float3 &axis, const float angle);
 value::quatd to_quaternion(const value::double3 &axis, const double angle);
 
