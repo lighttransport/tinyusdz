@@ -714,14 +714,16 @@ std::vector<const tinyusdz::GeomSubset *> GetMaterialBindGeomSubsets(
 // TODO: connected attribute.
 //
 nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
-    const Stage &stage, const GeomMesh &mesh, const std::string &name) {
+    const Stage &stage, const GeomMesh &mesh, const std::string &name,
+    const double t, const value::TimeSampleInterpolationType tinterp) {
   VertexAttribute vattr;
 
   (void)stage;
 
+  std::string err;
   GeomPrimvar primvar;
-  if (!mesh.get_primvar(name, &primvar)) {
-    return nonstd::make_unexpected(fmt::format("No primvars:{}\n", name));
+  if (!GetGeomPrimvar(stage, &mesh, name, &primvar, &err)) {
+    return nonstd::make_unexpected(err);
   }
 
   if (!primvar.has_value()) {
@@ -750,7 +752,7 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
   }
 
   std::vector<value::texcoord2f> uvs;
-  if (!primvar.flatten_with_indices(&uvs)) {
+  if (!primvar.flatten_with_indices(t, &uvs, tinterp)) {
     return nonstd::make_unexpected(
         "Failed to retrieve texture coordinate primvar with concrete type.\n");
   }
@@ -810,7 +812,7 @@ bool ToVertexAttributeData(const GeomPrimvar &primvar, VertexAttribute *dst, std
   } else if (attr.type_id() == (value::TypeTraits<__ty>::type_id() & \
                                 value::TYPE_ID_1D_ARRAY_BIT)) {      \
     std::vector<__ty> flattened;                                     \
-    if (!primvar.flatten_with_indices(&flattened, err)) {            \
+    if (!primvar.flatten_with_indices(t, &flattened, tinterp, err)) {            \
       return false;                                                  \
     }                                                                \
   } else
@@ -870,7 +872,7 @@ nonstd::expected<VertexAttribute, std::string> TriangulateGeomPrimvar(
         triangulatedFaceVertexIndices.size()));
   }
 
-  if (!mesh.get_primvar(name, &primvar)) {
+  if (!GetGeomPrimvar(name, &primvar)) {
     return nonstd::make_unexpected(
         fmt::format("No primvars:{} found in GeomMesh {}\n", name, mesh.name));
   }
@@ -886,7 +888,7 @@ nonstd::expected<VertexAttribute, std::string> TriangulateGeomPrimvar(
   //
   std::string err;
   value::Value flattened;
-  if (!primvar.flatten_with_indices(&flattened, &err)) {
+  if (!primvar.flatten_with_indices(t, &flattened, tinterp, &err)) {
     return nonstd::make_unexpected(fmt::format(
         "Failed to flatten Indexed PrimVar: {}. Error = {}\n", name, err));
   }
@@ -1980,7 +1982,7 @@ bool RenderSceneConverter::ConvertMesh(
     if (mesh.has_primvar(_mesh_config.default_texcoords_primvar_name)) {
       DCOUT("uv primvar  with default_texcoords_primvar_name found.");
       auto ret = GetTextureCoordinate(
-          *_stage, mesh, _mesh_config.default_texcoords_primvar_name);
+          *_stage, mesh, _mesh_config.default_texcoords_primvar_name, _timecode, _tinterp);
       if (ret) {
         const VertexAttribute vattr = ret.value();
 
@@ -2005,7 +2007,7 @@ bool RenderSceneConverter::ConvertMesh(
           std::string uvname = it->second;
 
           if (!uvAttrs.count(uint32_t(slotId))) {
-            auto ret = GetTextureCoordinate(*_stage, mesh, uvname);
+            auto ret = GetTextureCoordinate(*_stage, mesh, uvname, _timecode, _tinterp);
             if (ret) {
               const VertexAttribute vattr = ret.value();
 
@@ -2019,12 +2021,13 @@ bool RenderSceneConverter::ConvertMesh(
 
   if (mesh.has_primvar("displayColor")) {
     GeomPrimvar pvar;
-    if (!mesh.get_primvar("displayColor", &pvar)) {
-      PUSH_ERROR_AND_RETURN("Failed to get `displayColor` primvar.");
+
+    if (!GetGeomPrimvar(*_stage, &mesh, "displayColor", &pvar, &_err)) {
+      return false;
     }
 
     std::vector<value::color3f> displayColors;
-    if (!pvar.flatten_with_indices(&displayColors, &_err)) {
+    if (!pvar.flatten_with_indices(_timecode, &displayColors, _tinterp, &_err)) {
       PUSH_ERROR_AND_RETURN("Failed to expand `displayColor` primvar.");
     }
 
@@ -2053,12 +2056,12 @@ bool RenderSceneConverter::ConvertMesh(
 
   if (mesh.has_primvar("displayOpacity")) {
     GeomPrimvar pvar;
-    if (!mesh.get_primvar("displayOpacity", &pvar)) {
-      PUSH_ERROR_AND_RETURN("Failed to get `displayOpacity` primvar.");
+    if (!GetGeomPrimvar(*_stage, &mesh, "displayOpacity", &pvar, &_err)) {
+      return false;
     }
 
     std::vector<float> displayOpacity;
-    if (!pvar.flatten_with_indices(&displayOpacity, &_err)) {
+    if (!pvar.flatten_with_indices(_timecode, &displayOpacity, _tinterp, &_err)) {
       PUSH_ERROR_AND_RETURN("Failed to expand `displayColor` primvar.");
     }
 
@@ -2544,14 +2547,12 @@ bool RenderSceneConverter::ConvertMesh(
     GeomPrimvar jointIndices;
     GeomPrimvar jointWeights;
 
-    if (!mesh.get_primvar("skel:jointIndices", &jointIndices)) {
-      PUSH_ERROR_AND_RETURN(
-          "Internal error. Failed to get `skel:jointIndices` primvar.");
+    if (!GetGeomPrimvar(*_stage, &mesh, "skel:jointIndices", &jointIndices, &_err)) {
+      return false;
     }
 
-    if (!mesh.get_primvar("skel:jointWeights", &jointWeights)) {
-      PUSH_ERROR_AND_RETURN(
-          "Internal error. Failed to get `skel:jointIndices` primvar.");
+    if (!GetGeomPrimvar(*_stage, &mesh, "skel:jointWeights", &jointWeights, &_err)) {
+      return false;
     }
 
     // interpolation must be 'vertex'
@@ -2603,14 +2604,14 @@ bool RenderSceneConverter::ConvertMesh(
     }
 
     std::vector<int> jointIndicesArray;
-    if (!jointIndices.flatten_with_indices(&jointIndicesArray)) {
+    if (!jointIndices.flatten_with_indices(_timecode, &jointIndicesArray, _tinterp)) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("Failed to flatten Indexed Primvar `skel:jointIndices`. "
                       "Ensure `skel:jointIndices` is type `int[]`"));
     }
 
     std::vector<float> jointWeightsArray;
-    if (!jointWeights.flatten_with_indices(&jointWeightsArray)) {
+    if (!jointWeights.flatten_with_indices(_timecode, &jointWeightsArray, _tinterp)) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("Failed to flatten Indexed Primvar `skel:jointWeights`. "
                       "Ensure `skel:jointWeights` is type `float[]`"));
@@ -2658,9 +2659,8 @@ bool RenderSceneConverter::ConvertMesh(
     if (mesh.has_primvar("skel:geomBindTransform")) {
       GeomPrimvar bindTransformPvar;
 
-      if (!mesh.get_primvar("skel:geomBindTransform", &bindTransformPvar)) {
-        PUSH_ERROR_AND_RETURN(
-            "Internal error. Failed to get `skel:geomBindTransform` primvar.");
+      if (!GetGeomPrimvar(*_stage, &mesh, "skel:geomBindTransform", &bindTransformPvar, &_err)) {
+        return false;
       }
 
       value::matrix4d bindTransform;
