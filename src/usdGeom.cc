@@ -34,7 +34,6 @@ namespace {
 
 constexpr auto kPrimvars = "primvars:";
 constexpr auto kIndices = ":indices";
-constexpr auto kPrimvarsNormals = "primvars:normals";
 
 ///
 /// Computes
@@ -194,7 +193,7 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
       
         primvar.set_indices(tss);
       } else if (indexAttr.is_blocked()) {
-        SET_ERROR_AND_RETURN("TODO: Index attribute is blocked(ValueBlock).");
+        // ignore Index attribute.
       } else if (indexAttr.is_value()) {
         // Check if int[] type.
         // TODO: Support uint[]?
@@ -241,6 +240,11 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
 
     std::vector<T> value;
     if (_attr.get_value<std::vector<T>>(t, &value, tinterp)) {
+
+      if (_indices.empty()) {
+        (*dest) = value;
+        return true;
+      }
 
       std::vector<int32_t> indices;
       // Get indices at specified time
@@ -652,37 +656,55 @@ const std::vector<value::normal3f> GeomMesh::get_normals(
     double time, value::TimeSampleInterpolationType interp) const {
   std::vector<value::normal3f> dst;
 
-  if (props.count(kPrimvarsNormals)) {
-    const auto prop = props.at(kPrimvarsNormals);
-    if (prop.is_relationship()) {
-      // TODO:
+  std::string err;
+  if (has_primvar("normals")) {
+    GeomPrimvar primvar;
+    if (!get_primvar("normals", &primvar, &err)) {
       return dst;
     }
 
-    if (prop.get_attribute().get_var().is_timesamples()) {
-      // TODO:
-      return dst;
-    }
-
-    if (prop.get_attribute().type_name() == "normal3f[]") {
-      if (auto pv =
-              prop.get_attribute().get_value<std::vector<value::normal3f>>()) {
-        dst = pv.value();
-      }
-    }
+    primvar.flatten_with_indices(time, &dst, interp);
+    return dst;
   } else if (normals.authored()) {
     if (normals.is_connection()) {
-      // TODO
+      // Not supported
       return dst;
     } else if (normals.is_blocked()) {
       return dst;
     }
 
-    if (normals.get_value()) {
-      std::vector<value::normal3f> val;
-      if (normals.get_value().value().get(time, &val, interp)) {
-        dst = std::move(val);
+    std::vector<int> indices;
+    if (props.count("normals:indices")) {
+      Attribute indexAttr = props.at("normals:indices").get_attribute();
+
+      if (indexAttr.is_connection()) {
+        // not supported.
+        return dst;
       }
+
+      if (!indexAttr.get_value(time, &indices, interp)) {
+        // err
+        return dst;
+      }
+
+    }
+
+    std::vector<value::normal3f> value;
+    if (!normals.get_value().value().get(time, &value, interp)) {
+      return dst;
+    }
+
+    if (indices.size()) {
+      std::vector<value::normal3f> expanded_normals;
+      auto ret = ExpandWithIndices(value, indices, &expanded_normals);
+
+      if (!ret) {
+        return dst;
+      }
+
+      dst = expanded_normals;
+    } else {
+      dst = value;
     }
   }
 
@@ -690,8 +712,8 @@ const std::vector<value::normal3f> GeomMesh::get_normals(
 }
 
 Interpolation GeomMesh::get_normalsInterpolation() const {
-  if (props.count(kPrimvarsNormals)) {
-    const auto &prop = props.at(kPrimvarsNormals);
+  if (props.count("primvars:normals")) {
+    const auto &prop = props.at("primvars:normals");
     if (prop.get_attribute().type_name() == "normal3f[]") {
       if (prop.get_attribute().metas().interpolation) {
         return prop.get_attribute().metas().interpolation.value();
