@@ -759,9 +759,11 @@ struct GeomMesh : GPrim {
   /// @brief Returns normals vector. Precedence order: `primvars:normals` then
   /// `normals`.
   ///
+  /// NOTE: No support for connected attribute. Using tydra::GetGeomPrimvar preferred.
+  ///
   /// @return normals vector(copied). Returns empty normals vector when neither
   /// `primvars:normals` nor `normals` attribute defined, attribute is a
-  /// relation or normals attribute have invalid type(other than `normal3f`).
+  /// Relationship, Connection Attribute, or normals attribute have invalid type(other than `normal3f`).
   ///
   const std::vector<value::normal3f> get_normals(
       double time = value::TimeCode::Default(),
