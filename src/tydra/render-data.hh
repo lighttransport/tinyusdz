@@ -423,17 +423,20 @@ struct VertexAttribute {
   uint32_t stride{
       0};  //  We don't support packed(interleaved) vertex data, so stride is
            //  usually sizeof(VertexAttributeFormat) * elementSize. 0 = tightly
-           //  packed. Let app/gfx API decide actual stride bytes.
+           //  packed.
   std::vector<uint8_t> data;  // raw binary data(TODO: Use Buffer ID?)
   std::vector<uint32_t>
       indices;  // Dedicated Index buffer. Set when variability == Indexed.
                 // empty = Use externally provided vertex index buffer
-  VertexVariability variability{VertexVariability::FaceVarying};
+  VertexVariability variability{VertexVariability::Vertex};
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
 
-  // Returns the number of vertex items.
-  // We use compound type for the format, so this returns 1 when the buffer is
-  // composed of 3 floats and `format` is float3 for example.
+  //
+  // Returns the number of vertex items(excludes `elementSize`).
+  // 
+  // We use compound type for the format.
+  // For example, this returns 1 when the buffer is
+  // composed of 3 floats and `format` is float3(in any elementSize >= 1).
   size_t vertex_count() const {
     if (stride != 0) {
       // TODO: return 0 when (data.size() % stride) != 0?
@@ -461,7 +464,9 @@ struct VertexAttribute {
   std::vector<uint8_t> &get_data() { return data; }
 
   //
-  // Bytes for each vertex data: formatSize * elementSize
+  // Bytes for each vertex item.
+  // Returns `formatSize * elementSize` when `stride` is 0.
+  // Returns `stride` when `stride` is not zero.
   //
   size_t stride_bytes() const {
     if (stride != 0) {
@@ -723,13 +728,23 @@ struct RenderMesh {
 
   std::vector<vec3> points;  // varying is 'vertex'.
 
+  ///
+  /// Original faceVertexIndices/faceVertexCounts in GeomMesh.
+  /// For triangulated mesh, faceVertexCounts are all filled with 3.
+  /// TODO: Set to empty when the mesh is composed of all triangle faces to save
+  /// memory?
+  ///
   std::vector<uint32_t> faceVertexIndices;
-  // For triangulated mesh, faceVertexCounts are all filled with 3.
-  // TODO: Set to empty when the mesh is composed of all triangle faces to save
-  // memory?
   std::vector<uint32_t> faceVertexCounts;
 
-  // Aux state to triangulate primvars in the app.
+  ///
+  /// Triangulated faceVertexIndices, faceVerteCounts and auxiality state required to triangulate primvars in the app.
+  ///
+  /// trinangulatedFaceVertexIndices will be empty when the mesh is not triangulated.
+  ///
+  std::vector<uint32_t> triangulatedFaceVertexIndices;
+  std::vector<uint32_t> triangulatedFaceVertexCounts;
+
   std::vector<size_t>
       triangulatedToOrigFaceVertexIndexMap;  // used for rearrange facevertex
                                              // attrib
@@ -751,7 +766,7 @@ struct RenderMesh {
   // When `normals`(or `normals` primvar) is not present in the GeomMesh,
   // tangents and normals are not computed.
   //
-  // When `normals` is supplied, but no `tangents` and `binormals` are supplied,
+  // When `normals` is supplied, but neither `tangents` nor `binormals` are supplied in primvars,
   // Tydra computes it based on:
   // https://learnopengl.com/Advanced-Lighting/Normal-Mapping (when
   // MeshConverterConfig::compute_tangents_and_binormals is set to `true`)
@@ -801,21 +816,6 @@ struct RenderMesh {
 
   // If you want to access user-defined primvars or custom property,
   // Plese look into corresponding Prim( stage::find_prim_at_path(abs_path) )
-
-#if 0  // TODO: Remove
-  //
-  // Primvars(User defined attributes).
-  // VertexAttribute preserves input USD primvar variability(interpolation)
-  // (e.g. skinWeight primvar has 'vertex' variability)
-  //
-  // This primvars excludes `st`, `tangents` and `binormals`(referenced by
-  // UsdPrimvarReader)
-  //
-  std::map<uint32_t, VertexAttribute> primvars;
-
-  // Index value = key to `primvars`
-  StringAndIdMap primvarsMap;
-#endif
 
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
 };

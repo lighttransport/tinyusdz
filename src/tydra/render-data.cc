@@ -64,24 +64,15 @@
 
 // #define PushError(msg) if (err) { (*err) += msg; }
 
-#if 0
 #define SET_ERROR_AND_RETURN(msg) \
   if (err) {                      \
     (*err) = (msg);               \
   }                               \
   return false
-#endif
 
 namespace tinyusdz {
 
 namespace tydra {
-
-//#define EXTERN_EVALUATE_TYPED_ATTRIBUTE_INSTANCE(__ty) \
-//extern template bool EvaluateTypedAnimatableAttribute<__ty>( const tinyusdz::Stage &stage, const TypedAttribute<Animatable<__ty>> &attr, const std::string &attr_name, __ty *value, std::string *err, const double t = value::TimeCode::Default(), const tinyusdz::value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear);
-//
-//APPLY_FUNC_TO_VALUE_TYPES(EXTERN_EVALUATE_TYPED_ATTRIBUTE_INSTANCE)
-//
-//#undef EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE
 
 namespace {
 
@@ -100,16 +91,6 @@ inline std::string to_string(const UVTexture::Channel channel) {
 
   return "[[InternalError. Invalid UVTexture::Channel]]";
 }
-
-#if 0
-template <typename T>
-inline T Get(const nonstd::optional<T> &nv, const T &default_value) {
-  if (nv) {
-    return nv.value();
-  }
-  return default_value;
-}
-#endif
 
 //
 // Convert vertex attribute with Uniform variability(interpolation) to
@@ -209,7 +190,6 @@ nonstd::expected<std::vector<T>, std::string> UniformToVertex(
   return dst;
 }
 
-#if 1  // not used atm.
 nonstd::expected<std::vector<uint8_t>, std::string> UniformToVertex(
     const std::vector<uint8_t> &inputs, const size_t stride_bytes,
     const std::vector<uint32_t> &faceVertexCounts,
@@ -274,7 +254,6 @@ nonstd::expected<std::vector<uint8_t>, std::string> UniformToVertex(
 
   return dst;
 }
-#endif
 
 // Generic uniform to facevarying conversion
 nonstd::expected<std::vector<uint8_t>, std::string> UniformToFaceVarying(
@@ -978,6 +957,77 @@ static bool ToVertexVaryingAttribute(
 }
 #endif
 
+///
+/// Triangulate VeretexAttribute data.
+///
+static bool TriangulateVertexAttribute(
+  VertexAttribute &vattr,
+  const std::vector<uint32_t> &faceVertexCounts,
+  const std::vector<uint32_t> &faceVertexIndices,
+  const std::vector<uint32_t> &triangulatedFaceVertexIndices,
+  const std::vector<size_t> &triangulatedToOrigFaceVertexIndexMap,
+  const std::vector<uint32_t> &triangulatedFaceCounts,
+  std::string *err) {
+
+  (void)faceVertexIndices;
+
+  if (triangulatedFaceCounts.empty()) {
+    SET_ERROR_AND_RETURN("triangulatedFaceCounts is empty.");
+  }
+
+  if (faceVertexCounts.size() != triangulatedFaceCounts.size()) {
+    SET_ERROR_AND_RETURN("faceVertexCounts.size must be equal to triangulatedFaceCounts.size.");
+  }
+
+  if ((triangulatedFaceVertexIndices.size() % 3) != 0) {
+    SET_ERROR_AND_RETURN("Invalid size for triangulatedFaceVertexIndices.");
+  }
+
+  if (vattr.is_facevarying()) {
+
+    size_t num_fvs = vattr.vertex_count();
+    std::vector<uint8_t> buf;
+
+    for (uint32_t f = 0; f < triangulatedToOrigFaceVertexIndexMap.size(); f++) {
+      // Array index offset in `triangulatedToOrigFaceVertexIndexMap[f]` = location of vertex data for 'facevarying' variability.
+      size_t src_fvIdxOffset = triangulatedToOrigFaceVertexIndexMap[f];
+      if (src_fvIdxOffset >= num_fvs) {
+        SET_ERROR_AND_RETURN("Invalid index found in triangulatedToOrigFaceVertexIndexMap.");
+      }
+        
+      buf.insert(buf.end(), vattr.get_data().data() + src_fvIdxOffset * vattr.stride_bytes(), vattr.get_data().data() + (1 + src_fvIdxOffset) * vattr.stride_bytes());
+      
+    }
+
+    vattr.data = std::move(buf);
+  } else if (vattr.is_vertex()) {
+    // nothing is required.
+    return true;
+  } else if (vattr.is_indexed()) {
+    SET_ERROR_AND_RETURN("Indexed VertexAttribute is not supported.");
+  } else if (vattr.is_constant()) {
+
+    std::vector<uint8_t> buf;
+
+    for (size_t f = 0; f < triangulatedFaceCounts.size(); f++) {
+      uint32_t nf = triangulatedFaceCounts[f];
+
+      // copy `nf` times.
+      for (size_t k = 0; k < nf; k++) {
+        buf.insert(buf.end(), vattr.get_data().data() + f * vattr.stride_bytes(), vattr.get_data().data() + (1 + f) * vattr.stride_bytes());
+    
+      }
+    }
+
+    vattr.data = std::move(buf);
+  } else if (vattr.is_uniform()) {
+    // nothing is required
+    return true;
+  } 
+
+  return true;
+}
+
 std::vector<const tinyusdz::GeomSubset *> GetMaterialBindGeomSubsets(
     const tinyusdz::Prim &prim) {
   std::vector<const tinyusdz::GeomSubset *> dst;
@@ -1417,39 +1467,6 @@ bool TriangulatePolygon(
 }
 #endif
 
-#if 0
-//
-// `Shader` may be nested, so first list up all Shader nodes under Material.
-//
-struct ShaderNode
-{
-  std::name
-};
-
-nonstd::optional<UsdPrimvarReader_float2> FindPrimvarReader_float2Rec(
-  const Prim &root,
-  RenderMesh &mesh)
-{
-  if (auto sv = root.data.as<Shader>()) {
-    const Shader &shader = (*sv);
-
-    if (auto pv = shader.value.as<UsdUVTexture>()) {
-      const UsdUVTexture &tex = (*pv);
-      (void)tex;
-    }
-  }
-
-  for (const auto &child : root.children) {
-    auto ret = ListUpShaderGraphRec(child, mesh);
-    if (!ret) {
-      return nonstd::make_unexpected(ret.error());
-    }
-  }
-
-  return true;
-}
-#endif
-
 #if 0  // not used a.t.m.
 // Building an Orthonormal Basis, Revisited
 // http://jcgt.org/published/0006/01/01/
@@ -1780,7 +1797,7 @@ std::vector<UsdPrimvarReader_float2> ExtractPrimvarReadersFromMaterialNode(
   return dst;
 }
 
-nonstd::expected<Node, std::string> Convert(const Stage &stage,
+nonstd::expected<Node, std::string> ConvertXform(const Stage &stage,
                                             const Xform &xform) {
   (void)stage;
 
@@ -1850,6 +1867,11 @@ bool RenderSceneConverter::ConvertVertexVariabilityImpl(
     VertexAttribute &vattr, const bool to_vertex_varying,
     const std::vector<uint32_t> &faceVertexCounts,
     const std::vector<uint32_t> &faceVertexIndices) {
+
+  if (vattr.data.empty()) {
+    return true;
+  }
+
   if (vattr.variability == VertexVariability::Uniform) {
     if (to_vertex_varying) {
       auto result = UniformToVertex(vattr.get_data(), vattr.stride_bytes(),
@@ -1874,8 +1896,8 @@ bool RenderSceneConverter::ConvertVertexVariabilityImpl(
                         vattr.name, result.error()));
       }
 
-      dst.data = result.value();
-      dst.variability = VertexVariability::FaceVarying;
+      vattr.data = result.value();
+      vattr.variability = VertexVariability::FaceVarying;
     }
   } else if (vattr.variability == VertexVariability::Constant) {
     if (to_vertex_varying) {
@@ -1907,9 +1929,7 @@ bool RenderSceneConverter::ConvertVertexVariabilityImpl(
 
   } else if ((vattr.variability == VertexVariability::Vertex) ||
              (vattr.variability == VertexVariability::Varying)) {
-    if (to_vertex_varying) {
-      dst = vattr;
-    } else {
+    if (!to_vertex_varying) {
       auto result = VertexToFaceVarying(vattr.get_data(), vattr.stride_bytes(),
                                         faceVertexCounts, faceVertexIndices);
       if (!result) {
@@ -1950,8 +1970,8 @@ bool RenderSceneConverter::ConvertVertexVariabilityImpl(
         }
 
         memcpy(buf.data(),
-               vsrc.get_data().data() + vidx * vsrc.stride_bytes(),
-               vsrc.stride_bytes());
+               vsrc.data() + vidx * vattr.stride_bytes(),
+               vattr.stride_bytes());
 
         vattr.data.insert(vattr.data.end(), buf.begin(), buf.end());
       }
@@ -2423,29 +2443,28 @@ bool RenderSceneConverter::ConvertMesh(
   // Convert built-in vertex attributes to either 'vertex' or 'facevarying'
   //
   {
-    V
-    if (!ConvertVertexVariabilityImpl(dst.normals, is_single_indexable,
-      dst.
-bool RenderSceneConverter::ConvertVertexVariabilityImpl(
-    const VertexAttribute &vattr, const bool to_vertex_varying,
-    const std::vector<uint32_t> &faceVertexCounts,
-    const std::vector<uint32_t> &faceVertexIndices, VertexAttribute &dst) {
+    if (!ConvertVertexVariabilityImpl(dst.normals, is_single_indexable, dst.faceVertexCounts, dst.faceVertexIndices)) {
+      return false;
+    }
+    for (auto &it : dst.texcoords) {
+      if (!ConvertVertexVariabilityImpl(it.second, is_single_indexable, dst.faceVertexCounts, dst.faceVertexIndices)) {
+        return false;
+      }
+    }
 
-  } else {
-
+    if (!ConvertVertexVariabilityImpl(dst.vertex_colors, is_single_indexable, dst.faceVertexCounts, dst.faceVertexIndices)) {
+      return false;
+    }
+    if (!ConvertVertexVariabilityImpl(dst.vertex_opacities, is_single_indexable, dst.faceVertexCounts, dst.faceVertexIndices)) {
+      return false;
+    }
   }
 
-  //VertexAttribute dstAttr;
-  //if (!ConvertVertexVariabilityImpl(vattr, is_single_indexable,
-  //  dst.faceVertexCounts, dst.faceVertexIndices, dstAttr)) {
-  //  PUSH_ERROR_AND_RETURN(
-  //      "Failed to convert displayOpacity attribute's variability.");
-  //}
-
-  //dst.vertex_opacities = std::move(dstAttr);
-
   ///
-  /// 4. Triangulate.
+  /// 4. Triangulate 
+  ///  - triangulate faceVertexCounts, faceVertexIndices
+  ///  - Remap faceIndex in MaterialSubset(GeomSubset).
+  ///  - Triangulate vertex attributes(normals, uvcoords, vertex colors/opacities).
   ///
   if (triangulate) {
     std::vector<uint32_t> triangulatedFaceVertexCounts;  // should be all 3's
@@ -2536,8 +2555,16 @@ bool RenderSceneConverter::ConvertVertexVariabilityImpl(
       }
     }
 
-    dst.faceVertexCounts = std::move(triangulatedFaceVertexCounts);
-    dst.faceVertexIndices = std::move(triangulatedFaceVertexIndices);
+    // Triangulate built-in vertex attributes.
+    {
+      if (!TriangulateVertexAttribute(dst.normals, dst.faceVertexCounts, dst.faceVertexIndices, triangulatedFaceVertexIndices, triangulatedToOrigFaceVertexIndexMap, triangulatedFaceCounts, &_err)) {
+        return false;
+      }
+
+    }
+
+    dst.triangulatedFaceVertexCounts = std::move(triangulatedFaceVertexCounts);
+    dst.triangulatedFaceVertexIndices = std::move(triangulatedFaceVertexIndices);
 
     dst.triangulatedToOrigFaceVertexIndexMap =
         std::move(triangulatedToOrigFaceVertexIndexMap);
@@ -2767,7 +2794,6 @@ bool RenderSceneConverter::ConvertVertexVariabilityImpl(
 
 namespace {
 
-#if 1
 // Convert UsdTranform2d -> PrimvarReader_float2 shader network.
 nonstd::expected<bool, std::string> ConvertTexTransform2d(
     const Stage &stage, const Path &tx_abs_path, const UsdTransform2d &tx,
@@ -2908,7 +2934,6 @@ nonstd::expected<bool, std::string> ConvertTexTransform2d(
 
   return true;
 }
-#endif
 
 template <typename T>
 nonstd::expected<bool, std::string> GetConnectedUVTexture(
