@@ -670,6 +670,16 @@ struct JointAndWeight {
 struct MaterialPath {
   std::string material_path;           // USD Material Prim path.
   std::string backface_material_path;  // USD Material Prim path.
+
+  // Default RenderMaterial Id to assign when material_path/backface_material_path is empty.
+  // -1 = no material will be assigned.
+  int default_material_id{-1};
+  int default_backface_material_id{-1};
+
+  // primvar name used for texcoords when default RenderMaterial is used.
+  // Currently we don't support different texcoord for each frontface and backface material.
+  std::string default_texcoord_primvar_name{"st"};
+
 };
 
 // GeomSubset whose familyName is 'materialBind'.
@@ -1066,6 +1076,13 @@ struct MeshConverterConfig {
   // Upperlimit of the number of skin weights per vertex.
   // For realtime app, usually up to 64
   uint32_t max_skin_elementSize = 1024ull * 256ull;
+
+  //
+  // Allowed relative error to check if vertex data is the same.
+  // Used for 'facevarying' variability to `vertex` variability conversion in ConvertMesh.
+  // Only effective to floating-point vertex data.
+  //
+  float facevarying_to_vertex_eps = std::numeric_limits<float>::epsilon();
 };
 
 struct MaterialConverterConfig {
@@ -1206,17 +1223,33 @@ class RenderSceneConverter {
   /// Also apply triangulation when MeshConverterConfig::triangulate is set to
   /// true.
   ///
-  /// It is recommended first convert Materials assigned(bound) to this
+  /// normals, texcoords, vertexcolors/opacities vertex attributes(built-in primvars) are converterd to either
+  /// `vertex` variability(i.e. can be drawn with single vertex indices) or
+  /// `facevarying` variability(any of primvars is `facevarying`. It can be drawn with no indices, but less efficient(especially vertex has skin weights and blendshapes)).
+  ///
+  /// Since preferred variability for OpenGL/Vulkan renderer is `vertex`, ConvertMesh tries to convert `facevarying` attribute to `vertex` attribute when all shared vertex data is the same.
+  ///
+  /// Note that `points`, skin weights and BlendShape attributes are remains with `vertex` variability.
+  /// (so that we can apply some processing per point-wise)
+  ///
+  /// So if you want to render a mesh whose normal/texcoord/etc variability is `facevarying`,
+  /// `points`, skin weights and BlendShape attributes would also need to be converted to `facevarying` to draw.
+  ///
+  /// Other user defined primvars are not touched by ConvertMesh.
+  /// The app need to manually triangulate, change variability of user-defined primvar if required.
+  ///
+  /// It is recommended first convert Materials assigned(bounded) to this
   /// GeomMesh(and GeomSubsets) or create your own Materials, and supply
   /// material info with `material_path` and `rmaterial_map`. You may supply
   /// empty material info and assign Material after ConvertMesh manually, but it
   /// will need some steps(Need to find texcoord primvar, triangulate texcoord,
   /// etc). See the implementation of ConvertMesh for details)
   ///
+  ///
   /// @param[in] mesh_abs_path USD prim path to this GeomMesh
   /// @param[in] mesh Input GeomMesh
   /// @param[in] material_path USD Material Prim path assigned(bound) to this
-  /// GeomMesh.
+  /// GeomMesh. Use tydra::GetBoundPath to get Material path actually assigned to the mesh.
   /// @param[in] subset_material_path_map USD Material Prim path assigned(bound)
   /// to GeomSubsets in this GeomMesh. key = GeomSubset Prim name.
   /// @param[in] rmaterial_map USD Material Prim path -> RenderMaterial index
@@ -1290,20 +1323,17 @@ class RenderSceneConverter {
   ///
   /// Convert variability of vertex data to 'vertex' or 'facevarying'.
   ///
-  /// @param[in] vattr Input VertexAttribute
+  /// @param[inout] vattr Input/Output VertexAttribute
   /// @param[in] to_vertex_varing Convert to `vertex` varying when true. `facevarying` when false.
   /// @param[in] faceVertexCounts faceVertexCounts
   /// @param[in] faceVertexIndices faceVertexIndices
   ///
-  /// @param[out] dst Output VertexAttribute
-  ///
   /// @return true upon success.
   ///
   bool ConvertVertexVariabilityImpl(
-      const VertexAttribute &vattr, const bool to_vertex_varying,
+      VertexAttribute &vattr, const bool to_vertex_varying,
       const std::vector<uint32_t> &faceVertexCounts,
-      const std::vector<uint32_t> &faceVertexIndices,
-      VertexAttribute &dst);
+      const std::vector<uint32_t> &faceVertexIndices);
 
   template <typename T, typename Dty>
   bool ConvertPreviewSurfaceShaderParam(
