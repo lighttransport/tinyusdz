@@ -1078,6 +1078,16 @@ struct MeshConverterConfig {
   uint32_t max_skin_elementSize = 1024ull * 256ull;
 
   //
+  // Build indices when vertex attributes are converted to `faceverying`?
+  // Similar vertices are merged to single vertex index.
+  // (convert vertex attributes from 'facevarying' to 'vertex' variability)
+  //
+  // Building indices is preferred for renderers which supports single index-buffer only
+  // (e.g. OpenGL/Vulkan)
+  //
+  bool build_indices{true};
+
+  //
   // Allowed relative error to check if vertex data is the same.
   // Used for 'facevarying' variability to `vertex` variability conversion in ConvertMesh.
   // Only effective to floating-point vertex data.
@@ -1163,6 +1173,124 @@ class RenderSceneConverterEnv {
   value::TimeSampleInterpolationType _tinterp{value::TimeSampleInterpolationType::Linear};
 };
 
+
+//
+// Simple packed vertex struct & comparator for dedup.
+// https://github.com/huamulan/OpenGL-tutorial/blob/master/common/vboindexer.cpp
+//
+// Up to 2 texcoords.
+//
+// TODO: Use spatial hash for robust dedup(consider floating-point eps)
+// TODO: Polish interface to support arbitrary vertex configuration.
+//
+struct DefaultPackedVertexData
+{
+  value::float3 position;
+  value::float3 normal;
+  value::float2 uv0;
+  value::float2 uv1;
+  value::float3 color;
+  float opacity;
+
+  // comparator for std::map
+  bool operator<(const DefaultPackedVertexData &rhs) const {
+    return memcmp(reinterpret_cast<const void *>(this), reinterpret_cast<const void *>(&rhs), sizeof(DefaultPackedVertexData))>0;
+  }
+};
+
+template<class PackedVert>
+struct DefaultVertexInput
+{
+  std::vector<value::float3> positions;
+  std::vector<value::float3> normals;
+  std::vector<value::float2> uv0s;
+  std::vector<value::float2> uv1s;
+  std::vector<value::float3> colors;
+  std::vector<float> opacities;
+
+  size_t size() const {
+    return positions.size();
+  }
+
+  void get(size_t idx, PackedVert &output) {
+    output.position = positions[idx];  
+    output.normals = positions[idx];  
+    output.uv0 = uv0s[idx];  
+    output.uv1 = uv1s[idx];  
+    output.color = colors[idx];  
+    output.opacity = opacities[idx];  
+  }
+
+};
+
+template<class PackedVert>
+struct DefaultVertexOutput
+{
+  std::vector<value::float3> positions;
+  std::vector<value::float3> normals;
+  std::vector<value::float2> uv0s;
+  std::vector<value::float2> uv1s;
+  std::vector<value::float3> colors;
+  std::vector<float> opacities;
+
+  size_t size() const {
+    return positions.size();
+  }
+
+  void push_back(const PackedVert &v) {
+    positions.push_back(v.position);
+    normals.push_back(v.normals);
+    uv0s.push_back(v.uv0s);
+    uv1s.push_back(v.uv1s);
+    colors.push_back(v.color);
+    opacities.push_back(v.opacity);
+  }
+
+};
+
+
+//
+// out_vertex_indices_remap: corresponding vertexIndex in input.
+//
+template<class VertexInput, class VertexOutput, class PackedVert>
+void BuildIndices(
+  const VertexInput &input,
+  VertexOutput &output,
+  std::vector<uint32_t> &out_indices,
+  std::vector<uint32_t> &out_vertex_indices_remap)
+
+  // TODO: Use unordered_map?
+  std::map<PackedVert, uint32_t> vertexToIndexMap;
+
+  auto GetSimilarVertex = [&](const PackedVert &v, uint32_t &out_idx) -> bool {
+    auto it = vertexToIndexMap.find(v);
+    if (it == vertexToIndexMap.end()) {
+      return false;
+    }
+
+    out_idx = it->second;
+    return true;
+  };
+
+  for (size_t i = 0; i < input.size(); i++) {
+    PackedVert v;
+    input.get(i, v);
+
+    uint32_t index{0};
+    bool found = GetSimilarVertex(v, index);
+    if (found) {
+      out_indices.push_back(index);
+    } else {
+
+      out_indices.push_back(output.size());
+      output.push_back(v); 
+
+    }
+  }
+}
+  
+  
+
 //
 // Convert USD scenegraph at specified time
 // TODO: Use RenderSceneConverterEnv(RenderSceneConverterEnv::timecode)
@@ -1228,11 +1356,12 @@ class RenderSceneConverter {
   /// `facevarying` variability(any of primvars is `facevarying`. It can be drawn with no indices, but less efficient(especially vertex has skin weights and blendshapes)).
   ///
   /// Since preferred variability for OpenGL/Vulkan renderer is `vertex`, ConvertMesh tries to convert `facevarying` attribute to `vertex` attribute when all shared vertex data is the same.
+  /// If it fails, but `MeshConverterConfig.build_indices` is set to true, ConvertMesh builds vertex indices from `facevarying` and convert variability to 'vertex'. 
   ///
   /// Note that `points`, skin weights and BlendShape attributes are remains with `vertex` variability.
   /// (so that we can apply some processing per point-wise)
   ///
-  /// So if you want to render a mesh whose normal/texcoord/etc variability is `facevarying`,
+  /// Thus, if you want to render a mesh whose normal/texcoord/etc variability is `facevarying`,
   /// `points`, skin weights and BlendShape attributes would also need to be converted to `facevarying` to draw.
   ///
   /// Other user defined primvars are not touched by ConvertMesh.
