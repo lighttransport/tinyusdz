@@ -10,12 +10,14 @@
 //   - [ ] Wide gamut colorspace conversion support
 //     - [ ] sRGB <-> DisplayP3
 //   - [ ] tangentes and binormals
-//   - [ ] displayColor, displayOpacity primvar(vertex color)
+//   - [x] displayColor, displayOpacity primvar(vertex color)
 //   - [ ] Support Inbetween BlendShape
 //   - [ ] Support material binding collection(Collection API)
-//   - [ ] Support multiple skel animation
+//   - [ ] Support multiple skel animation https://github.com/PixarAnimationStudios/OpenUSD/issues/2246
 //   - [ ] Adjust normal vector computation with handness?
 //   - [ ] Node xform animation
+//   - [ ] Better build of index buffer
+//     - Implement spatial hash
 //
 #include <numeric>
 
@@ -97,6 +99,7 @@ inline std::string to_string(const UVTexture::Channel channel) {
 // facevarying variability, by replicating uniform value per face over face
 // vertices.
 //
+#if 0 // unused atm
 template <typename T>
 nonstd::expected<std::vector<T>, std::string> UniformToFaceVarying(
     const std::vector<T> &inputs,
@@ -121,12 +124,14 @@ nonstd::expected<std::vector<T>, std::string> UniformToFaceVarying(
 
   return dst;
 }
+#endif
 
 //
 // Convert vertex attribute with Uniform variability(interpolation) to vertex
 // variability, by replicating uniform value for vertices of a face. For shared
 // vertex, the value will be overwritten.
 //
+#if 0 // unused atm
 template <typename T>
 nonstd::expected<std::vector<T>, std::string> UniformToVertex(
     const std::vector<T> &inputs, const size_t elementSize,
@@ -189,6 +194,7 @@ nonstd::expected<std::vector<T>, std::string> UniformToVertex(
 
   return dst;
 }
+#endif
 
 nonstd::expected<std::vector<uint8_t>, std::string> UniformToVertex(
     const std::vector<uint8_t> &inputs, const size_t stride_bytes,
@@ -301,6 +307,7 @@ nonstd::expected<std::vector<uint8_t>, std::string> UniformToFaceVarying(
 // Convert vertex attribute with Vertex variability(interpolation) to
 // facevarying attribute, by expanding(flatten) the value per vertex per face.
 //
+#if 0 // unsued atm
 template <typename T>
 nonstd::expected<std::vector<T>, std::string> VertexToFaceVarying(
     const std::vector<T> &inputs, const std::vector<uint32_t> &faceVertexCounts,
@@ -335,6 +342,7 @@ nonstd::expected<std::vector<T>, std::string> VertexToFaceVarying(
 
   return dst;
 }
+#endif
 
 // Generic vertex to facevarying conversion
 nonstd::expected<std::vector<uint8_t>, std::string> VertexToFaceVarying(
@@ -994,9 +1002,9 @@ static bool TriangulateVertexAttribute(
       if (src_fvIdxOffset >= num_fvs) {
         SET_ERROR_AND_RETURN("Invalid index found in triangulatedToOrigFaceVertexIndexMap.");
       }
-        
+
       buf.insert(buf.end(), vattr.get_data().data() + src_fvIdxOffset * vattr.stride_bytes(), vattr.get_data().data() + (1 + src_fvIdxOffset) * vattr.stride_bytes());
-      
+
     }
 
     vattr.data = std::move(buf);
@@ -1015,7 +1023,7 @@ static bool TriangulateVertexAttribute(
       // copy `nf` times.
       for (size_t k = 0; k < nf; k++) {
         buf.insert(buf.end(), vattr.get_data().data() + f * vattr.stride_bytes(), vattr.get_data().data() + (1 + f) * vattr.stride_bytes());
-    
+
       }
     }
 
@@ -1023,7 +1031,7 @@ static bool TriangulateVertexAttribute(
   } else if (vattr.is_uniform()) {
     // nothing is required
     return true;
-  } 
+  }
 
   return true;
 }
@@ -2011,6 +2019,8 @@ bool RenderSceneConverter::ConvertMesh(
   //   - Triangulate texcoord, normals, vertexcolor.
   // 5. Convert Skin weights
   // 6. Convert BlendShape
+  // 7. Build indices(convert 'facevarying' to 'vertrex')
+  // 8. Build tangent frame(for normal mapping)
   //
   //
 
@@ -2461,7 +2471,7 @@ bool RenderSceneConverter::ConvertMesh(
   }
 
   ///
-  /// 4. Triangulate 
+  /// 4. Triangulate
   ///  - triangulate faceVertexCounts, faceVertexIndices
   ///  - Remap faceIndex in MaterialSubset(GeomSubset).
   ///  - Triangulate vertex attributes(normals, uvcoords, vertex colors/opacities).
@@ -2785,8 +2795,111 @@ bool RenderSceneConverter::ConvertMesh(
   }
 
   //
-  // NOTE: For other primvars, the app must convert it manually.
+  // 7. Build indices
   //
+  if (_mesh_config.build_indices && (!is_single_indexable)) {
+
+    //
+    // Remap points from 'vertex' to 'facevarying' to setup orgVertexIndices.
+    //
+    std::vector<uint32_t> orgVertexIndices; // Keep track the original vertexIndex.
+
+    const std::vector<uint32_t> &fvIndices = dst.triangulatedFaceVertexIndices.size() ? dst.triangulatedFaceVertexIndices : dst.faceVertexIndices;
+
+    
+    DefaultVertexInput<DefaultPackedVertexData> vertex_input;
+
+    size_t num_fvs = fvIndices.size();
+    vertex_input.positions.assign(num_fvs, {0.0f, 0.0f, 0.0f});
+    vertex_input.uv0s.assign(num_fvs, {0.0f, 0.0f});
+    vertex_input.uv1s.assign(num_fvs, {0.0f, 0.0f});
+    vertex_input.normals.assign(num_fvs, {0.0f, 0.0f, 0.0f});
+    vertex_input.colors.assign(num_fvs, {0.0f, 0.0f, 0.0f});
+    vertex_input.opacities.assign(num_fvs, 0.0f);
+    
+    if (dst.normals.vertex_count()) {
+      if (!dst.normals.is_facevarying()) {
+        PUSH_ERROR_AND_RETURN("Internal error. normals must be 'facevarying' variability.");
+      }
+      if (dst.normals.vertex_count() != num_fvs) {
+        PUSH_ERROR_AND_RETURN("Internal error. The number of normal items does not match with the number of facevarying items.");
+      }
+    }
+
+    const value::float2 *texcoord0_ptr = nullptr;
+    const value::float2 *texcoord1_ptr = nullptr;
+
+    for (const auto &it : dst.texcoords) {
+      if (it.second.vertex_count() > 0) {
+        if (!it.second.is_facevarying()) {
+          PUSH_ERROR_AND_RETURN("Internal error. texcoords must be 'facevarying' variability.");
+        }
+        if (it.second.vertex_count() != num_fvs) {
+          PUSH_ERROR_AND_RETURN("Internal error. The number of texcoord items does not match with the number of facevarying items.");
+        }
+
+        if (it.first == 0) {
+          texcoord0_ptr = reinterpret_cast<const value::float2 *>(it.second.get_data().data());
+        } else if (it.first == 1) {
+          texcoord1_ptr = reinterpret_cast<const value::float2 *>(it.second.get_data().data());
+        } else {
+          // ignore.
+        }
+      }
+    }
+    
+    if (dst.vertex_colors.vertex_count()) {
+      if (!dst.vertex_colors.is_facevarying()) {
+        PUSH_ERROR_AND_RETURN("Internal error. vertex_colors must be 'facevarying' variability.");
+      }
+      if (dst.vertex_colors.vertex_count() != num_fvs) {
+        PUSH_ERROR_AND_RETURN("Internal error. The number of vertex_color items does not match with the number of facevarying items.");
+      }
+    }
+
+    if (dst.vertex_opacities.vertex_count()) {
+      if (!dst.vertex_opacities.is_facevarying()) {
+        PUSH_ERROR_AND_RETURN("Internal error. vertex_opacities must be 'facevarying' variability.");
+      }
+      if (dst.vertex_colors.vertex_count() != num_fvs) {
+        PUSH_ERROR_AND_RETURN("Internal error. The number of vertex_opacity items does not match with the number of facevarying items.");
+      }
+    }
+
+    const value::float3 *normals_ptr = (dst.normals.vertex_count() > 0) ? reinterpret_cast<const value::float3 *>(dst.normals.get_data().data()) : nullptr;
+    const value::float3 *colors_ptr = (dst.vertex_colors.vertex_count() > 0) ? reinterpret_cast<const value::float3 *>(dst.vertex_colors.get_data().data()) : nullptr;
+    const float *opacities_ptr = (dst.vertex_opacities.vertex_count() > 0) ? reinterpret_cast<const float *>(dst.vertex_opacities.get_data().data()) : nullptr;
+
+
+    for (size_t i = 0; i < num_fvs; i++) {
+      vertex_input.positions[i] = dst.points[fvIndices[i]];
+      if (normals_ptr) {
+        vertex_input.normals[i] = normals_ptr[i];
+      }
+      if (texcoord0_ptr) {
+        vertex_input.uv0s[i] = texcoord0_ptr[i];
+      }
+      if (texcoord1_ptr) {
+        vertex_input.uv1s[i] = texcoord1_ptr[i];
+      }
+      if (colors_ptr) {
+        vertex_input.colors[i] = colors_ptr[i];
+      }
+      if (opacities_ptr) {
+        vertex_input.opacities[i] = opacities_ptr[i];
+      }
+    }
+    
+    std::vector<uint32_t> out_indices;
+    DefaultVertexOutput<DefaultPackedVertexData> vertex_output;
+    BuildIndices(vertex_input, vertex_output, out_indices);
+
+  }
+
+  //
+  // 8. Compute tangents.
+  //
+
 
   (*dstMesh) = std::move(dst);
   return true;
