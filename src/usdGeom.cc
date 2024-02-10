@@ -39,13 +39,14 @@ constexpr auto kIndices = ":indices";
 /// Computes
 ///
 ///  for i in len(indices):
-///    dest[i] = values[indices[i]]
+///    for k in elementSize:
+///      dest[i*elementSize + k] = values[indices[i]*elementSize + k]
 ///
-/// `dest` = `values` when `indices` is empty
+/// `dest` is set to `values` when `indices` is empty
 ///
 template <typename T>
 nonstd::expected<bool, std::string> ExpandWithIndices(
-    const std::vector<T> &values, const std::vector<int32_t> &indices,
+    const std::vector<T> &values, uint32_t elementSize, const std::vector<int32_t> &indices,
     std::vector<T> *dest) {
   if (!dest) {
     return nonstd::make_unexpected("`dest` is nullptr.");
@@ -56,15 +57,25 @@ nonstd::expected<bool, std::string> ExpandWithIndices(
     return true;
   }
 
-  dest->resize(indices.size());
+  if (elementSize == 0) {
+    return false;
+  }
+
+  if ((values.size() % elementSize) != 0) {
+    return false;
+  }
+
+  dest->resize(indices.size() * elementSize);
 
   std::vector<size_t> invalidIndices;
 
   bool valid = true;
   for (size_t i = 0; i < indices.size(); i++) {
     int32_t idx = indices[i];
-    if ((idx >= 0) && (size_t(idx) < values.size())) {
-      (*dest)[i] = values[size_t(idx)];
+    if ((idx >= 0) && ((size_t(idx+1) * size_t(elementSize)) <= values.size())) {
+      for (size_t k = 0; k < elementSize; k++) {
+        (*dest)[i*elementSize + k] = values[size_t(idx)*elementSize + k];
+      }
     } else {
       invalidIndices.push_back(i);
       valid = false;
@@ -246,12 +257,14 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
         return true;
       }
 
+      uint32_t elementSize = _attr.metas().elementSize.value_or(1);
+
       std::vector<int32_t> indices;
       // Get indices at specified time
       _indices.get(&indices, t, tinterp);
 
       std::vector<T> expanded_val;
-      auto ret = ExpandWithIndices(value, indices, &expanded_val);
+      auto ret = ExpandWithIndices(value, elementSize, indices, &expanded_val);
       if (ret) {
         (*dest) = expanded_val;
         // Currently we ignore ret.value()
@@ -299,8 +312,6 @@ bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) con
   // using namespace simple_match;
   // using namespace simple_match::placeholders;
 
-  value::Value val;
-
   if (!dest) {
     if (err) {
       (*err) += "Output value is nullptr.";
@@ -308,16 +319,9 @@ bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) con
     return false;
   }
 
-  if (_attr.is_timesamples()) {
-    if (err) {
-      (*err) += "TimeSamples attribute is TODO.";
-    }
-    return false;
-  }
-
   bool processed = false;
 
-  if (_attr.is_value()) {
+  if (_attr.is_value() || _attr.is_timesamples()) {
     if (!IsSupportedGeomPrimvarType(_attr.type_id())) {
       if (err) {
         (*err) += fmt::format("Unsupported type for GeomPrimvar. type = `{}`",
@@ -326,43 +330,34 @@ bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) con
       return false;
     }
 
+    value::Value val;
+
     if (!(_attr.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) {
-      // Just return value as-is for scalar type
-      (*dest) = _attr.get_var().value_raw();
+
+      // evaluate value at specified time and return it for scalar type.
+      value::Value v;
+      if (!_attr.get_var().get_interpolated_value(value::TimeCode::Default(), value::TimeSampleInterpolationType::Linear, &v)) {
+        if (err) {
+          (*err) += fmt::format("Failed to evaluate Attribute value.");
+        }
+        return false;
+      }
+      (*dest) = v;
     } else {
       std::string err_msg;
+
+      uint32_t elementSize = _attr.metas().elementSize.value_or(1);
 
       std::vector<int32_t> indices;
       // Get indices at default time
       _indices.get(&indices);
       
-#if 0
-#define APPLY_FUN(__ty)                                                      \
-  value::TypeTraits<__ty>::type_id | value::TYPE_ID_1D_ARRAY_BIT,            \
-      [this, &val, &processed, &err_msg]() {                                 \
-        std::vector<__ty> expanded_val;                                      \
-        if (auto pv = _attr.get_value<std::vector<__ty>>()) {                \
-          auto ret = ExpandWithIndices(pv.value(), _indices, &expanded_val); \
-          if (ret) {                                                         \
-            processed = ret.value();                                         \
-            if (processed) {                                                 \
-              val = expanded_val;                                            \
-            }                                                                \
-          } else {                                                           \
-            err_msg = ret.error();                                           \
-          }                                                                  \
-        }                                                                    \
-      },
-
-      match(_attr.type_id(), APPLY_GEOMPRIVAR_TYPE(APPLY_FUN) _,
-            [&processed]() { processed = false; });
-#else
-
 #define APPLY_FUN(__ty)                                                  \
   case value::TypeTraits<__ty>::type_id() | value::TYPE_ID_1D_ARRAY_BIT: { \
+    std::vector<__ty> value; \
     std::vector<__ty> expanded_val;                                      \
-    if (auto pv = _attr.get_value<std::vector<__ty>>()) {                \
-      auto ret = ExpandWithIndices(pv.value(), indices, &expanded_val); \
+    if (_attr.get_value(value::TimeCode::Default(), &value, value::TimeSampleInterpolationType::Linear)) {                \
+      auto ret = ExpandWithIndices(value, elementSize, indices, &expanded_val); \
       if (ret) {                                                         \
         processed = ret.value();                                         \
         if (processed) {                                                 \
@@ -374,8 +369,6 @@ bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) con
     }                                                                    \
     break;                                                               \
   }
-
-#endif
 
       switch (_attr.type_id()) {
         APPLY_GEOMPRIVAR_TYPE(APPLY_FUN)
@@ -695,8 +688,10 @@ const std::vector<value::normal3f> GeomMesh::get_normals(
     }
 
     if (indices.size()) {
+      uint32_t elementSize = normals.metas().elementSize.value_or(1);
+
       std::vector<value::normal3f> expanded_normals;
-      auto ret = ExpandWithIndices(value, indices, &expanded_normals);
+      auto ret = ExpandWithIndices(value, elementSize, indices, &expanded_normals);
 
       if (!ret) {
         return dst;
