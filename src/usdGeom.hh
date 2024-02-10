@@ -734,16 +734,11 @@ struct GeomMesh : GPrim {
   // Utility functions
   //
 
-#if 0 // TODO: Remove
-  // Initialize GeomMesh by GPrim(prepend references)
-  void Initialize(const GPrim &pprim);
-
-  // Update GeomMesh by GPrim(append references)
-  void UpdateBy(const GPrim &pprim);
-#endif
 
   ///
   /// @brief Returns `points`.
+  ///
+  /// NOTE: No support for connected attribute. Using tydra::EvaluateTypedAttribute preferred.
   ///
   /// @param[in] time Time for TimeSampled `points` data.
   /// @param[in] interp Interpolation type for TimeSampled `points` data
@@ -778,6 +773,8 @@ struct GeomMesh : GPrim {
 
   ///
   /// @brief Returns `faceVertexCounts`.
+  ///
+  /// NOTE: No support for connected attribute. Using tydra::EvaluateTypedAttribute preferred.
   ///
   /// @return face vertex counts vector(copied)
   ///

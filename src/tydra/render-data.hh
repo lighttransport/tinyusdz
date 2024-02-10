@@ -433,7 +433,7 @@ struct VertexAttribute {
 
   //
   // Returns the number of vertex items(excludes `elementSize`).
-  // 
+  //
   // We use compound type for the format.
   // For example, this returns 1 when the buffer is
   // composed of 3 floats and `format` is float3(in any elementSize >= 1).
@@ -1179,6 +1179,7 @@ class RenderSceneConverterEnv {
 // https://github.com/huamulan/OpenGL-tutorial/blob/master/common/vboindexer.cpp
 //
 // Up to 2 texcoords.
+// tangent and binormal is included in VertexData, considering the situation that tangent and binormal is supplied through user-defined primvar.
 //
 // TODO: Use spatial hash for robust dedup(consider floating-point eps)
 // TODO: Polish interface to support arbitrary vertex configuration.
@@ -1189,12 +1190,43 @@ struct DefaultPackedVertexData
   value::float3 normal;
   value::float2 uv0;
   value::float2 uv1;
+  value::float3 tangent;
+  value::float3 binormal;
   value::float3 color;
   float opacity;
 
   // comparator for std::map
   bool operator<(const DefaultPackedVertexData &rhs) const {
     return memcmp(reinterpret_cast<const void *>(this), reinterpret_cast<const void *>(&rhs), sizeof(DefaultPackedVertexData))>0;
+  }
+
+};
+
+struct DefaultPackedVertexDataHasher {
+  inline size_t operator()(const DefaultPackedVertexData &v) const {
+
+    // Simple hasher using FNV1 32bit
+    // TODO: Use 64bit FNV1?
+    // TODO: Use spatial hash or LSH(LocallySensitiveHash) for position value.
+    static constexpr uint32_t kFNV_Prime = 0x01000193;
+    static constexpr uint32_t kFNV_Offset_Basis = 0x811c9dc5;
+
+    const uint8_t *ptr = reinterpret_cast<const uint8_t *>(&v);
+    size_t n = sizeof(DefaultPackedVertexData);
+
+    uint32_t hash = kFNV_Offset_Basis;
+    for (size_t i = 0; i < n; i++) {
+      hash = (kFNV_Prime * hash) ^ (ptr[i]);
+    }
+
+    return size_t(hash);
+  }
+
+};
+
+struct DefaultPackedVertexDataEqual {
+  bool operator()(const DefaultPackedVertexData &lhs, const DefaultPackedVertexData &rhs) const {
+    return memcmp(reinterpret_cast<const void *>(&lhs), reinterpret_cast<const void *>(&rhs), sizeof(DefaultPackedVertexData)) == 0;
   }
 };
 
@@ -1205,6 +1237,8 @@ struct DefaultVertexInput
   std::vector<value::float3> normals;
   std::vector<value::float2> uv0s;
   std::vector<value::float2> uv1s;
+  std::vector<value::float3> tangents;
+  std::vector<value::float3> binormals;
   std::vector<value::float3> colors;
   std::vector<float> opacities;
 
@@ -1213,12 +1247,14 @@ struct DefaultVertexInput
   }
 
   void get(size_t idx, PackedVert &output) {
-    output.position = positions[idx];  
-    output.normals = positions[idx];  
-    output.uv0 = uv0s[idx];  
-    output.uv1 = uv1s[idx];  
-    output.color = colors[idx];  
-    output.opacity = opacities[idx];  
+    output.position = positions[idx];
+    output.normals = normals[idx];
+    output.uv0 = uv0s[idx];
+    output.uv1 = uv1s[idx];
+    output.tangent = tangents[idx];
+    output.binormal = binormals[idx];
+    output.color = colors[idx];
+    output.opacity = opacities[idx];
   }
 
 };
@@ -1230,6 +1266,8 @@ struct DefaultVertexOutput
   std::vector<value::float3> normals;
   std::vector<value::float2> uv0s;
   std::vector<value::float2> uv1s;
+  std::vector<value::float3> tangents;
+  std::vector<value::float3> binormals;
   std::vector<value::float3> colors;
   std::vector<float> opacities;
 
@@ -1240,8 +1278,10 @@ struct DefaultVertexOutput
   void push_back(const PackedVert &v) {
     positions.push_back(v.position);
     normals.push_back(v.normals);
-    uv0s.push_back(v.uv0s);
-    uv1s.push_back(v.uv1s);
+    uv0s.push_back(v.uv0);
+    uv1s.push_back(v.uv1);
+    tangents.push_back(v.tangent);
+    binormals.push_back(v.binormal);
     colors.push_back(v.color);
     opacities.push_back(v.opacity);
   }
@@ -1252,15 +1292,14 @@ struct DefaultVertexOutput
 //
 // out_vertex_indices_remap: corresponding vertexIndex in input.
 //
-template<class VertexInput, class VertexOutput, class PackedVert>
+template<class VertexInput, class VertexOutput, class PackedVert, class PackedVertHasher, class PackedVertEqual>
 void BuildIndices(
   const VertexInput &input,
   VertexOutput &output,
-  std::vector<uint32_t> &out_indices,
-  std::vector<uint32_t> &out_vertex_indices_remap)
-
-  // TODO: Use unordered_map?
-  std::map<PackedVert, uint32_t> vertexToIndexMap;
+  std::vector<uint32_t> &out_indices)
+{
+  // TODO: Use LSH(locally sensitive hashing) or BVH for kNN point query.
+  std::unordered_map<PackedVert, uint32_t, PackedVertHasher, PackedVertEqual> vertexToIndexMap;
 
   auto GetSimilarVertex = [&](const PackedVert &v, uint32_t &out_idx) -> bool {
     auto it = vertexToIndexMap.find(v);
@@ -1282,14 +1321,14 @@ void BuildIndices(
       out_indices.push_back(index);
     } else {
 
-      out_indices.push_back(output.size());
-      output.push_back(v); 
+      out_indices.push_back(uint32_t(output.size()));
+      output.push_back(v);
 
     }
   }
 }
-  
-  
+
+
 
 //
 // Convert USD scenegraph at specified time
@@ -1356,7 +1395,7 @@ class RenderSceneConverter {
   /// `facevarying` variability(any of primvars is `facevarying`. It can be drawn with no indices, but less efficient(especially vertex has skin weights and blendshapes)).
   ///
   /// Since preferred variability for OpenGL/Vulkan renderer is `vertex`, ConvertMesh tries to convert `facevarying` attribute to `vertex` attribute when all shared vertex data is the same.
-  /// If it fails, but `MeshConverterConfig.build_indices` is set to true, ConvertMesh builds vertex indices from `facevarying` and convert variability to 'vertex'. 
+  /// If it fails, but `MeshConverterConfig.build_indices` is set to true, ConvertMesh builds vertex indices from `facevarying` and convert variability to 'vertex'.
   ///
   /// Note that `points`, skin weights and BlendShape attributes are remains with `vertex` variability.
   /// (so that we can apply some processing per point-wise)
