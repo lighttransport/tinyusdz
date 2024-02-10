@@ -1132,8 +1132,10 @@ bool BuildFaceVertexIndexOffsets(const std::vector<uint32_t> &faceVertexCounts,
 }
 #endif
 
-#if 0  // unused a.t.m.
-bool ToVertexAttributeData(const GeomPrimvar &primvar, VertexAttribute *dst, std::string *err)
+bool ToVertexAttribute(const GeomPrimvar &primvar,
+  VertexAttribute &dst,
+  std::string *err,
+  const double t, const value::TimeSampleInterpolationType tinterp)
 {
   size_t elementSize = primvar.get_elementSize();
   if (elementSize == 0) {
@@ -1143,6 +1145,13 @@ bool ToVertexAttributeData(const GeomPrimvar &primvar, VertexAttribute *dst, std
   VertexAttribute vattr;
 
   const tinyusdz::Attribute &attr = primvar.get_attribute();
+
+  value::Value value;
+  if (!primvar.flatten_with_indices(t, &value, tinterp)) {
+    SET_ERROR_AND_RETURN("Failed to flatten primvar");
+  }
+
+  
 
 #define TO_TYPED_VALUE(__ty, __va_ty)                                 \
   if (attr.type_id() == value::TypeTraits<__ty>::type_id()) {         \
@@ -1157,8 +1166,6 @@ bool ToVertexAttributeData(const GeomPrimvar &primvar, VertexAttribute *dst, std
   } else if (attr.type_id() == (value::TypeTraits<__ty>::type_id() &  \
                                 value::TYPE_ID_1D_ARRAY_BIT)) {       \
     std::vector<__ty> flattened;                                      \
-    if (!primvar.flatten_with_indices(t, &flattened, tinterp, err)) { \
-      return false;                                                   \
     }                                                                 \
   } else
 
@@ -1168,6 +1175,8 @@ bool ToVertexAttributeData(const GeomPrimvar &primvar, VertexAttribute *dst, std
   }
 
 #undef TO_TYPED_VALUE
+
+  if (!p
 
   if (primvar.get_interpolation() == Interpolation::Varying) {
     vattr.variability = VertexVariability::Varying;
@@ -1181,14 +1190,12 @@ bool ToVertexAttributeData(const GeomPrimvar &primvar, VertexAttribute *dst, std
     vattr.variability = VertexVariability::FaceVarying;
   }
 
-  // TODO
   vattr.indices.clear();  // just in case.
 
-  (*dst) = std::move(vattr);
+  dst = std::move(vattr);
 
   return false;
 }
-#endif
 
 #if 0  // TODO: Remove
 ///
@@ -1988,6 +1995,7 @@ bool RenderSceneConverter::ConvertVertexVariabilityImpl(
 }
 
 bool RenderSceneConverter::ConvertMesh(
+    const RenderSceneConverterEnv &env,
     const Path &abs_path, const GeomMesh &mesh,
     const MaterialPath &material_path,
     const std::map<std::string, MaterialPath> &subset_material_path_map,
@@ -2034,7 +2042,7 @@ bool RenderSceneConverter::ConvertMesh(
   {
     std::vector<value::point3f> points;
     bool ret = EvaluateTypedAnimatableAttribute(
-        *_stage, mesh.points, "points", &points, &_err, _timecode,
+        *_stage, mesh.points, "points", &points, &_err, env.timecode,
         value::TimeSampleInterpolationType::Linear);
     if (!ret) {
       return false;
@@ -2054,7 +2062,7 @@ bool RenderSceneConverter::ConvertMesh(
     std::vector<int32_t> indices;
     bool ret = EvaluateTypedAnimatableAttribute(
         *_stage, mesh.faceVertexIndices, "faceVertexIndices", &indices, &_err,
-        _timecode, value::TimeSampleInterpolationType::Held);
+        env.timecode, value::TimeSampleInterpolationType::Held);
     if (!ret) {
       return false;
     }
@@ -2078,7 +2086,7 @@ bool RenderSceneConverter::ConvertMesh(
     std::vector<int> counts;
     bool ret = EvaluateTypedAnimatableAttribute(
         *_stage, mesh.faceVertexCounts, "faceVertexCounts", &counts, &_err,
-        _timecode, value::TimeSampleInterpolationType::Held);
+        env.timecode, value::TimeSampleInterpolationType::Held);
     if (!ret) {
       return false;
     }
@@ -2145,7 +2153,7 @@ bool RenderSceneConverter::ConvertMesh(
     if (psubset->indices.authored()) {
       std::vector<int> indices;  // index to faceVertexCounts
       bool ret = EvaluateTypedAnimatableAttribute(
-          *_stage, psubset->indices, "indices", &indices, &_err, _timecode,
+          *_stage, psubset->indices, "indices", &indices, &_err, env.timecode,
           value::TimeSampleInterpolationType::Held);
       if (!ret) {
         return false;
@@ -2190,8 +2198,8 @@ bool RenderSceneConverter::ConvertMesh(
     if (mesh.has_primvar(_mesh_config.default_texcoords_primvar_name)) {
       DCOUT("uv primvar  with default_texcoords_primvar_name found.");
       auto ret = GetTextureCoordinate(
-          *_stage, mesh, _mesh_config.default_texcoords_primvar_name, _timecode,
-          _tinterp);
+          *_stage, mesh, _mesh_config.default_texcoords_primvar_name, env.timecode,
+          env.tinterp);
       if (ret) {
         const VertexAttribute vattr = ret.value();
 
@@ -2216,8 +2224,8 @@ bool RenderSceneConverter::ConvertMesh(
           std::string uvname = it->second;
 
           if (!uvAttrs.count(uint32_t(slotId))) {
-            auto ret = GetTextureCoordinate(*_stage, mesh, uvname, _timecode,
-                                            _tinterp);
+            auto ret = GetTextureCoordinate(*_stage, mesh, uvname, env.timecode,
+                                            env.tinterp);
             if (ret) {
               const VertexAttribute vattr = ret.value();
 
@@ -2237,7 +2245,7 @@ bool RenderSceneConverter::ConvertMesh(
     }
 
     std::vector<value::normal3f> tangents;
-    if (!pvar.flatten_with_indices(_timecode, &tangents, _tinterp,
+    if (!pvar.flatten_with_indices(env.timecode, &tangents, env.tinterp,
                                    &_err)) {
       PUSH_ERROR_AND_RETURN(fmt::format("Failed to expand tangents primvar {}.", _mesh_config.default_tangents_primvar_name));
     }
@@ -2271,7 +2279,7 @@ bool RenderSceneConverter::ConvertMesh(
     }
 
     std::vector<value::normal3f> binormals;
-    if (!pvar.flatten_with_indices(_timecode, &binormals, _tinterp,
+    if (!pvar.flatten_with_indices(env.timecode, &binormals, _tinterp,
                                    &_err)) {
       PUSH_ERROR_AND_RETURN(fmt::format("Failed to expand binormals primvar {}.", _mesh_config.default_binormals_primvar_name));
     }
@@ -2305,7 +2313,7 @@ bool RenderSceneConverter::ConvertMesh(
     }
 
     std::vector<value::color3f> displayColors;
-    if (!pvar.flatten_with_indices(_timecode, &displayColors, _tinterp,
+    if (!pvar.flatten_with_indices(env.timecode, &displayColors, _tinterp,
                                    &_err)) {
       PUSH_ERROR_AND_RETURN("Failed to expand `displayColor` primvar.");
     }
@@ -2341,7 +2349,7 @@ bool RenderSceneConverter::ConvertMesh(
     }
 
     std::vector<float> displayOpacity;
-    if (!pvar.flatten_with_indices(_timecode, &displayOpacity, _tinterp,
+    if (!pvar.flatten_with_indices(env.timecode, &displayOpacity, _tinterp,
                                    &_err)) {
       PUSH_ERROR_AND_RETURN("Failed to expand `displayColor` primvar.");
     }
@@ -2397,13 +2405,13 @@ bool RenderSceneConverter::ConvertMesh(
         return false;
       }
 
-      if (!pvar.flatten_with_indices(_timecode, &normals, _tinterp, &_err)) {
+      if (!pvar.flatten_with_indices(env.timecode, &normals, _tinterp, &_err)) {
         PUSH_ERROR_AND_RETURN("Failed to expand `normals` primvar.");
       }
 
     } else if (mesh.normals.authored()) {  // look 'normals'
       if (!EvaluateTypedAnimatableAttribute(*_stage, mesh.normals, "normals",
-                                            &normals, &_err, _timecode,
+                                            &normals, &_err, env.timecode,
                                             _tinterp)) {
       }
     }
@@ -2747,7 +2755,7 @@ bool RenderSceneConverter::ConvertMesh(
     }
 
     std::vector<int> jointIndicesArray;
-    if (!jointIndices.flatten_with_indices(_timecode, &jointIndicesArray,
+    if (!jointIndices.flatten_with_indices(env.timecode, &jointIndicesArray,
                                            _tinterp)) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("Failed to flatten Indexed Primvar `skel:jointIndices`. "
@@ -2755,7 +2763,7 @@ bool RenderSceneConverter::ConvertMesh(
     }
 
     std::vector<float> jointWeightsArray;
-    if (!jointWeights.flatten_with_indices(_timecode, &jointWeightsArray,
+    if (!jointWeights.flatten_with_indices(env.timecode, &jointWeightsArray,
                                            _tinterp)) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("Failed to flatten Indexed Primvar `skel:jointWeights`. "
@@ -3321,7 +3329,7 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
 //
 // - UsdUVTexture -> UsdPrimvarReader
 // - UsdUVTexture -> UsdTransform2d -> UsdPrimvarReader
-bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
+bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env, const Path &tex_abs_path,
                                             const AssetInfo &assetInfo,
                                             const UsdUVTexture &texture,
                                             UVTexture *tex_out) {
@@ -3342,10 +3350,10 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
 
   value::AssetPath assetPath;
   if (auto apath = texture.file.get_value()) {
-    if (!apath.value().get(_timecode, &assetPath)) {
+    if (!apath.value().get(env.timecode, &assetPath)) {
       PUSH_ERROR_AND_RETURN(fmt::format(
           "Failed to get `asset:file` value from Path {} at time {}",
-          tex_abs_path.prim_part(), _timecode));
+          tex_abs_path.prim_part(), env.timecode));
     }
   } else {
     PUSH_ERROR_AND_RETURN(
@@ -3415,7 +3423,7 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
     } else {
       if (texture.sourceColorSpace.authored()) {
         UsdUVTexture::SourceColorSpace cs;
-        if (texture.sourceColorSpace.get_value().get(_timecode, &cs)) {
+        if (texture.sourceColorSpace.get_value().get(env.timecode, &cs)) {
           if (cs == UsdUVTexture::SourceColorSpace::SRGB) {
             texImage.usdColorSpace = tydra::ColorSpace::sRGB;
           } else if (cs == UsdUVTexture::SourceColorSpace::Raw) {
@@ -3710,7 +3718,7 @@ bool RenderSceneConverter::ConvertUVTexture(const Path &tex_abs_path,
       } else if (const UsdTransform2d *ptransform =
                      pshader->value.as<UsdTransform2d>()) {
         auto result =
-            ConvertTexTransform2d(*_stage, path, *ptransform, &tex, _timecode);
+            ConvertTexTransform2d(*_stage, path, *ptransform, &tex, env.timecode);
         if (!result) {
           PUSH_ERROR_AND_RETURN(result.error());
         }
@@ -3816,7 +3824,7 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
 
     UVTexture rtex;
     const AssetInfo &assetInfo = pshader->metas().get_assetInfo();
-    if (!ConvertUVTexture(texPath, assetInfo, *ptex, &rtex)) {
+    if (!ConvertUVTexture(env, texPath, assetInfo, *ptex, &rtex)) {
       PUSH_ERROR_AND_RETURN(fmt::format(
           "Failed to convert UVTexture connected to {}", param_name));
     }

@@ -538,8 +538,27 @@ static bool ToFacevaringVertexAttribute(
 #endif
 
 //
-// Convert PrimVar(type-erased value) to typed VertexAttribute
+// Convert PrimVar(type-erased value) at specified time to VertexAttribute
+// 
+// Input Primvar's name, variability(interpolation) and elementSize are preserved.
+// Use Primvar's underlying type to set the type of VertexAttribute.
+// (example: 'color3f'(underlying type 'float3') -> Vec3)
+// 
+// @param[in] pvar GeomPrimvar.
+// @param[out] dst Output VertexAttribute.
+// @param[out] err Error messsage. can be nullptr
+// @param[in] t timecode
+// @param[in] tinterp Interpolation for timesamples 
 //
+// @return true upon success.
+//
+bool ToVertexAttribute(
+  const GeomPrimvar &pvar,
+  VertexAttribute &dst,
+  std::string *err,
+  const double t = value::TimeCode::Default(),
+  const value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear);
+  
 
 enum class ColorSpace {
   sRGB,
@@ -1154,24 +1173,6 @@ struct RenderSceneConverterConfig {
   bool load_texture_assets{true};
 };
 
-class RenderSceneConverterEnv {
- public:
-  RenderSceneConverterEnv(const Stage &_stage) : stage(_stage) {}
-
-  RenderSceneConverterConfig scene_config;
-  MeshConverterConfig mesh_config;
-  MaterialConverterConfig material_config;
-  AssetResolutionResolver asset_resolver;
-
-  void set_search_paths(const std::vector<std::string> &paths) {
-    asset_resolver.set_search_paths(paths);
-  }
-
-  const Stage &stage;  // Point to valid Stage object
-
-  double timecode{value::TimeCode::Default()};
-  value::TimeSampleInterpolationType _tinterp{value::TimeSampleInterpolationType::Linear};
-};
 
 
 //
@@ -1329,6 +1330,24 @@ void BuildIndices(
 }
 
 
+class RenderSceneConverterEnv {
+ public:
+  RenderSceneConverterEnv(const Stage &_stage) : stage(_stage) {}
+
+  RenderSceneConverterConfig scene_config;
+  MeshConverterConfig mesh_config;
+  MaterialConverterConfig material_config;
+  AssetResolutionResolver asset_resolver;
+
+  void set_search_paths(const std::vector<std::string> &paths) {
+    asset_resolver.set_search_paths(paths);
+  }
+
+  const Stage &stage;  // Point to valid Stage object
+
+  double timecode{value::TimeCode::Default()};
+  value::TimeSampleInterpolationType tinterp{value::TimeSampleInterpolationType::Linear};
+};
 
 //
 // Convert USD scenegraph at specified time
@@ -1434,6 +1453,7 @@ class RenderSceneConverter {
   ///
   ///
   bool ConvertMesh(
+      const RenderSceneConverterEnv &env,
       const tinyusdz::Path &mesh_abs_path, const tinyusdz::GeomMesh &mesh,
       const MaterialPath &material_path,
       const std::map<std::string, MaterialPath> &subset_material_path_map,
@@ -1478,14 +1498,10 @@ class RenderSceneConverter {
   ///
   /// @return true when success.
   ///
-  bool ConvertUVTexture(const Path &tex_abs_path, const AssetInfo &assetInfo,
+  bool ConvertUVTexture(const RenderSceneConverterEnv &env, const Path &tex_abs_path, const AssetInfo &assetInfo,
                         const UsdUVTexture &texture, UVTexture *tex_out);
 
   const Stage *GetStagePtr() const { return _stage; }
-
-  double GetTimeCode() const { return _timecode; }
-
-  value::TimeSampleInterpolationType GetTimeSampleInterpolation() const { return _tinterp; }
 
  private:
   ///
@@ -1530,8 +1546,6 @@ class RenderSceneConverter {
   std::string _err;
   std::string _warn;
 
-  double _timecode{value::TimeCode::Default()};
-  value::TimeSampleInterpolationType _tinterp{value::TimeSampleInterpolationType::Linear};
 };
 
 // For debug

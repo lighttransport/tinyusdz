@@ -125,7 +125,7 @@ struct PrimVar {
     return nonstd::nullopt;
   }
 
-  // Type-safe way to get concrete value.
+  // Type-safe way to get concrete value for timesampled variable.
   // No interpolation.
   template <class T>
   nonstd::optional<T> get_ts_value(size_t idx) const {
