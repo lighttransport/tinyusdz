@@ -1132,12 +1132,114 @@ bool BuildFaceVertexIndexOffsets(const std::vector<uint32_t> &faceVertexCounts,
 }
 #endif
 
+namespace {
+
+template<typename UnderlyingTy>
+bool ScalarValueToVertexAttribute(const value::Value &value,
+  const std::string &name,
+  const VertexAttributeFormat format,
+  VertexAttribute &dst,
+  std::string *err) {
+
+  if (VertexAttributeFormatSize(format) != sizeof(UnderlyingTy)) {
+    SET_ERROR_AND_RETURN("format size mismatch.");
+    return false;
+  }
+
+  if (auto pv = value.as<UnderlyingTy>()) {
+    dst.data.resize(sizeof(UnderlyingTy));
+    memcpy(dst.data.data(), pv, sizeof(UnderlyingTy));  
+
+    dst.elementSize = 1;
+    dst.stride = 0;
+    dst.format = format;
+    dst.variability = VertexVariability::Constant;
+    dst.name = name;
+    dst.indices.clear();
+    return true;
+  } 
+
+  SET_ERROR_AND_RETURN("[Internal error] value is not scalar-typed value.");
+}
+
+template<typename UnderlyingTy>
+bool ArrayValueToVertexAttribute(const value::Value &value,
+  const std::string &name,
+  const uint32_t elementSize,
+  const VertexVariability variability,
+  const uint32_t num_vertices,
+  const uint32_t num_face_counts,
+  const uint32_t num_face_vertex_indices,
+  const VertexAttributeFormat format,
+  VertexAttribute &dst,
+  std::string *err) {
+
+  size_t value_counts = value.array_size();
+  if (value_counts == 0) {
+    SET_ERROR_AND_RETURN("Empty array size"); 
+  }
+
+  if (variability == VertexVariability::Indexed) {
+    SET_ERROR_AND_RETURN("Indexed variability is not supported."); 
+  }
+
+  if (VertexAttributeFormatSize(format) != sizeof(UnderlyingTy)) {
+    SET_ERROR_AND_RETURN("format size mismatch.");
+    return false;
+  }
+
+  if (auto pv = value.as<UnderlyingTy>()) {
+    if (variability == VertexVariability::Constant) {
+      if (value_counts != elementSize) {
+        SET_ERROR_AND_RETURN(fmt::format("# of items {} expected, but got {}. Variability = Constant",
+          elementSize, value_counts));
+      }
+    } else if (variability == VertexVariability::Uniform) {
+      if (value_counts != (elementSize * num_face_counts)) {
+        SET_ERROR_AND_RETURN(fmt::format("# of items {} expected, but got {}. Variability = Uniform",
+          elementSize * num_face_counts, value_counts));
+      }
+    } else if (variability == VertexVariability::Vertex) {
+      if (value_counts != (elementSize * num_vertices)) {
+        SET_ERROR_AND_RETURN(fmt::format("# of items {} expected, but got {}. Variability = Vertex",
+          elementSize * num_vertices, value_counts));
+      }
+    } else { // facevarying
+      if (value_counts != (elementSize * num_face_vertex_indices)) {
+        SET_ERROR_AND_RETURN(fmt::format("# of items {} expected, but got {}. Variability = FaceVarying",
+          elementSize * num_face_vertex_indices, value_counts));
+      }
+
+    }
+
+    dst.data.resize(value_counts * sizeof(UnderlyingTy));
+    memcpy(dst.data.data(), pv, value_counts * sizeof(UnderlyingTy));  
+
+    dst.elementSize = elementSize;
+    dst.stride = 0;
+    dst.format = format;
+    dst.variability = variability;
+    dst.name = name;
+    dst.indices.clear();
+    return true;
+  } 
+
+  SET_ERROR_AND_RETURN(fmt::format("Requested underlying type {} but input `value` has underlying type {}.",
+    value::TypeTraits<UnderlyingTy>::type_name(), value.underlying_type_name()));
+}
+
+} // namespace
+
 bool ToVertexAttribute(const GeomPrimvar &primvar,
+  const std::string &name,
+  const uint32_t num_vertices,
+  const uint32_t num_face_counts,
+  const uint32_t num_face_vertex_indices,
   VertexAttribute &dst,
   std::string *err,
   const double t, const value::TimeSampleInterpolationType tinterp)
 {
-  size_t elementSize = primvar.get_elementSize();
+  uint32_t elementSize = uint32_t(primvar.get_elementSize());
   if (elementSize == 0) {
     SET_ERROR_AND_RETURN(fmt::format("elementSize is zero for primvar: {}", primvar.name()));
   }
@@ -1151,50 +1253,85 @@ bool ToVertexAttribute(const GeomPrimvar &primvar,
     SET_ERROR_AND_RETURN("Failed to flatten primvar");
   }
 
-  
+  bool is_array = value.type_id() & value::TYPE_ID_1D_ARRAY_BIT;
 
-#define TO_TYPED_VALUE(__ty, __va_ty)                                 \
-  if (attr.type_id() == value::TypeTraits<__ty>::type_id()) {         \
-    if (sizeof(__ty) != VertexAttributeFormatSize(__va_ty)) {         \
-      SET_ERROR_AND_RETURN("Internal error. type size mismatch.\n");  \
-    }                                                                 \
-    __ty value;                                                       \
-    if (!primvar.get_value(&value, err)) {                            \
-      return false;                                                   \
-    }                                                                 \
-    vattr.format = __va_ty;                                           \
-  } else if (attr.type_id() == (value::TypeTraits<__ty>::type_id() &  \
-                                value::TYPE_ID_1D_ARRAY_BIT)) {       \
-    std::vector<__ty> flattened;                                      \
-    }                                                                 \
+  VertexVariability variability;
+  if (primvar.get_interpolation() == Interpolation::Varying) {
+    variability = VertexVariability::Varying;
+  } else if (primvar.get_interpolation() == Interpolation::Constant) {
+    variability = VertexVariability::Constant;
+  } else if (primvar.get_interpolation() == Interpolation::Uniform) {
+    variability = VertexVariability::Uniform;
+  } else if (primvar.get_interpolation() == Interpolation::Vertex) {
+    variability = VertexVariability::Vertex;
+  } else if (primvar.get_interpolation() == Interpolation::FaceVarying) {
+    variability = VertexVariability::FaceVarying;
+  } else {
+    SET_ERROR_AND_RETURN("[Internal Error] Invalid `interpolation` type.");
+  }
+
+  uint32_t underlyingTypeId = value.underlying_type_id();
+  
+  // Cast to underlying type
+
+#define TO_TYPED_VALUE(__underlying_ty, __vfmt)                     \
+  if (underlyingTypeId == value::TypeTraits<__underlying_ty>::type_id()) { \
+    if (is_array) {         \
+      return ArrayValueToVertexAttribute<__underlying_ty>(value, name, elementSize, variability, num_vertices, num_face_counts, num_face_vertex_indices, __vfmt, dst, err); \
+    } else { \
+      return ScalarValueToVertexAttribute<__underlying_ty>(value, name, __vfmt, dst, err); \
+    } \
   } else
 
+  TO_TYPED_VALUE(bool, VertexAttributeFormat::Bool)
+  TO_TYPED_VALUE(uint8_t, VertexAttributeFormat::Byte)
+  TO_TYPED_VALUE(value::uchar2, VertexAttributeFormat::Byte2)
+  TO_TYPED_VALUE(value::uchar3, VertexAttributeFormat::Byte3)
+  TO_TYPED_VALUE(value::uchar4, VertexAttributeFormat::Byte4)
+  TO_TYPED_VALUE(char, VertexAttributeFormat::Char)
+  TO_TYPED_VALUE(value::char2, VertexAttributeFormat::Char2)
+  TO_TYPED_VALUE(value::char3, VertexAttributeFormat::Char3)
+  TO_TYPED_VALUE(value::char4, VertexAttributeFormat::Char4)
+  TO_TYPED_VALUE(short, VertexAttributeFormat::Short)
+  TO_TYPED_VALUE(value::short2, VertexAttributeFormat::Short2)
+  TO_TYPED_VALUE(value::short3, VertexAttributeFormat::Short3)
+  TO_TYPED_VALUE(value::short4, VertexAttributeFormat::Short4)
+  TO_TYPED_VALUE(uint16_t, VertexAttributeFormat::Ushort)
+  TO_TYPED_VALUE(value::ushort2, VertexAttributeFormat::Ushort2)
+  TO_TYPED_VALUE(value::ushort3, VertexAttributeFormat::Ushort3)
+  TO_TYPED_VALUE(value::ushort4, VertexAttributeFormat::Ushort4)
   TO_TYPED_VALUE(int, VertexAttributeFormat::Int)
+  TO_TYPED_VALUE(value::int2, VertexAttributeFormat::Ivec2)
+  TO_TYPED_VALUE(value::int3, VertexAttributeFormat::Ivec3)
+  TO_TYPED_VALUE(value::int4, VertexAttributeFormat::Ivec4)
+  TO_TYPED_VALUE(uint32_t, VertexAttributeFormat::Uint)
+  TO_TYPED_VALUE(value::uint2, VertexAttributeFormat::Uvec2)
+  TO_TYPED_VALUE(value::uint3, VertexAttributeFormat::Uvec3)
+  TO_TYPED_VALUE(value::uint4, VertexAttributeFormat::Uvec4)
+  TO_TYPED_VALUE(float, VertexAttributeFormat::Float)
+  TO_TYPED_VALUE(value::float2, VertexAttributeFormat::Vec2)
+  TO_TYPED_VALUE(value::float3, VertexAttributeFormat::Vec3)
+  TO_TYPED_VALUE(value::float4, VertexAttributeFormat::Vec4)
+  TO_TYPED_VALUE(value::half, VertexAttributeFormat::Half)
+  TO_TYPED_VALUE(value::half2, VertexAttributeFormat::Half2)
+  TO_TYPED_VALUE(value::half3, VertexAttributeFormat::Half3)
+  TO_TYPED_VALUE(value::half4, VertexAttributeFormat::Half4)
+  TO_TYPED_VALUE(double, VertexAttributeFormat::Double)
+  TO_TYPED_VALUE(value::double2, VertexAttributeFormat::Dvec2)
+  TO_TYPED_VALUE(value::double3, VertexAttributeFormat::Dvec3)
+  TO_TYPED_VALUE(value::double4, VertexAttributeFormat::Dvec4)
+  TO_TYPED_VALUE(value::matrix2f, VertexAttributeFormat::Mat2)
+  TO_TYPED_VALUE(value::matrix3f, VertexAttributeFormat::Mat3)
+  TO_TYPED_VALUE(value::matrix4f, VertexAttributeFormat::Mat4)
+  TO_TYPED_VALUE(value::matrix2d, VertexAttributeFormat::Dmat2)
+  TO_TYPED_VALUE(value::matrix3d, VertexAttributeFormat::Dmat3)
+  TO_TYPED_VALUE(value::matrix4d, VertexAttributeFormat::Dmat4)
   {
     SET_ERROR_AND_RETURN(fmt::format("Unknown or unsupported data type for Geom PrimVar: {}", attr.type_name()));
   }
 
 #undef TO_TYPED_VALUE
 
-  if (!p
-
-  if (primvar.get_interpolation() == Interpolation::Varying) {
-    vattr.variability = VertexVariability::Varying;
-  } else if (primvar.get_interpolation() == Interpolation::Constant) {
-    vattr.variability = VertexVariability::Constant;
-  } else if (primvar.get_interpolation() == Interpolation::Uniform) {
-    vattr.variability = VertexVariability::Uniform;
-  } else if (primvar.get_interpolation() == Interpolation::Vertex) {
-    vattr.variability = VertexVariability::Vertex;
-  } else if (primvar.get_interpolation() == Interpolation::FaceVarying) {
-    vattr.variability = VertexVariability::FaceVarying;
-  }
-
-  vattr.indices.clear();  // just in case.
-
-  dst = std::move(vattr);
-
-  return false;
 }
 
 #if 0  // TODO: Remove
@@ -2177,8 +2314,6 @@ bool RenderSceneConverter::ConvertMesh(
     dst.material_subsetMap[ms.prim_name] = ms;
   }
 
-  bool triangulate = _mesh_config.triangulate;
-
   //
   // List up texcoords in this mesh.
   // - If no material assigned to this mesh, look into
@@ -2237,6 +2372,10 @@ bool RenderSceneConverter::ConvertMesh(
     }
   }
 
+  uint32_t num_vertices = uint32_t(dst.points.size());
+  uint32_t num_faces = uint32_t(dst.faceVertexCounts.size());
+  uint32_t num_face_vertex_indices = uint32_t(dst.faceVertexIndices.size());
+
   if (mesh.has_primvar(_mesh_config.default_tangents_primvar_name)) {
     GeomPrimvar pvar;
 
@@ -2244,30 +2383,8 @@ bool RenderSceneConverter::ConvertMesh(
       return false;
     }
 
-    std::vector<value::normal3f> tangents;
-    if (!pvar.flatten_with_indices(env.timecode, &tangents, env.tinterp,
-                                   &_err)) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Failed to expand tangents primvar {}.", _mesh_config.default_tangents_primvar_name));
-    }
-
-    {
-      dst.tangents.elementSize = 1;
-      dst.tangents.format = VertexAttributeFormat::Vec3;
-      dst.tangents.stride = 0;
-
-      if (pvar.get_interpolation() == Interpolation::Varying) {
-        dst.tangents.variability = VertexVariability::Varying;
-      } else if (pvar.get_interpolation() == Interpolation::Constant) {
-        dst.tangents.variability = VertexVariability::Constant;
-      } else if (pvar.get_interpolation() == Interpolation::Uniform) {
-        dst.tangents.variability = VertexVariability::Uniform;
-      } else if (pvar.get_interpolation() == Interpolation::Vertex) {
-        dst.tangents.variability = VertexVariability::Vertex;
-      } else if (pvar.get_interpolation() == Interpolation::FaceVarying) {
-        dst.tangents.variability = VertexVariability::FaceVarying;
-      }
-      dst.tangents.indices.clear();
-      dst.tangents.name = _mesh_config.default_tangents_primvar_name;
+    if (!ToVertexAttribute(pvar, _mesh_config.default_tangents_primvar_name, num_vertices, num_faces, num_face_vertex_indices, dst.tangents, &_err, env.timecode, env.tinterp)) {
+      return false;
     }
   }
 
@@ -2278,30 +2395,8 @@ bool RenderSceneConverter::ConvertMesh(
       return false;
     }
 
-    std::vector<value::normal3f> binormals;
-    if (!pvar.flatten_with_indices(env.timecode, &binormals, _tinterp,
-                                   &_err)) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Failed to expand binormals primvar {}.", _mesh_config.default_binormals_primvar_name));
-    }
-
-    {
-      dst.binormals.elementSize = 1;
-      dst.binormals.format = VertexAttributeFormat::Vec3;
-      dst.binormals.stride = 0;
-
-      if (pvar.get_interpolation() == Interpolation::Varying) {
-        dst.binormals.variability = VertexVariability::Varying;
-      } else if (pvar.get_interpolation() == Interpolation::Constant) {
-        dst.binormals.variability = VertexVariability::Constant;
-      } else if (pvar.get_interpolation() == Interpolation::Uniform) {
-        dst.binormals.variability = VertexVariability::Uniform;
-      } else if (pvar.get_interpolation() == Interpolation::Vertex) {
-        dst.binormals.variability = VertexVariability::Vertex;
-      } else if (pvar.get_interpolation() == Interpolation::FaceVarying) {
-        dst.binormals.variability = VertexVariability::FaceVarying;
-      }
-      dst.binormals.indices.clear();
-      dst.binormals.name = _mesh_config.default_binormals_primvar_name;
+    if (!ToVertexAttribute(pvar, _mesh_config.default_binormals_primvar_name, num_vertices, num_faces, num_face_vertex_indices, dst.binormals, &_err, env.timecode, env.tinterp)) {
+      return false;
     }
   }
 
@@ -2312,33 +2407,15 @@ bool RenderSceneConverter::ConvertMesh(
       return false;
     }
 
-    std::vector<value::color3f> displayColors;
-    if (!pvar.flatten_with_indices(env.timecode, &displayColors, _tinterp,
-                                   &_err)) {
-      PUSH_ERROR_AND_RETURN("Failed to expand `displayColor` primvar.");
+    VertexAttribute vcolor;
+    if (!ToVertexAttribute(pvar, "displayColor", num_vertices, num_faces, num_face_vertex_indices, vcolor, &_err, env.timecode, env.tinterp)) {
+      return false;
     }
 
-    if (displayColors.size() == 1) {
-      dst.displayColor = displayColors[0];
+    if ((vcolor.elementSize == 1) && (vcolor.vertex_count() == 1) && (vcolor.stride_bytes() == 3 * 4)) {
+      memcpy(&dst.displayColor, vcolor.data.data(), vcolor.stride_bytes());
     } else {
-      Array length check
-      dst.vertex_colors.elementSize = 1;
-      dst.vertex_colors.format = VertexAttributeFormat::Vec3;
-      dst.vertex_colors.stride = 0;
-
-      if (pvar.get_interpolation() == Interpolation::Varying) {
-        dst.vertex_colors.variability = VertexVariability::Varying;
-      } else if (pvar.get_interpolation() == Interpolation::Constant) {
-        dst.vertex_colors.variability = VertexVariability::Constant;
-      } else if (pvar.get_interpolation() == Interpolation::Uniform) {
-        dst.vertex_colors.variability = VertexVariability::Uniform;
-      } else if (pvar.get_interpolation() == Interpolation::Vertex) {
-        dst.vertex_colors.variability = VertexVariability::Vertex;
-      } else if (pvar.get_interpolation() == Interpolation::FaceVarying) {
-        dst.vertex_colors.variability = VertexVariability::FaceVarying;
-      }
-      dst.vertex_colors.indices.clear();
-      dst.vertex_colors.name = "displayColor";
+      dst.vertex_colors = vcolor;
     }
   }
 
@@ -2348,32 +2425,15 @@ bool RenderSceneConverter::ConvertMesh(
       return false;
     }
 
-    std::vector<float> displayOpacity;
-    if (!pvar.flatten_with_indices(env.timecode, &displayOpacity, _tinterp,
-                                   &_err)) {
-      PUSH_ERROR_AND_RETURN("Failed to expand `displayColor` primvar.");
+    VertexAttribute vopacity;
+    if (!ToVertexAttribute(pvar, "displayOpacity", num_vertices, num_faces, num_face_vertex_indices, vopacity, &_err, env.timecode, env.tinterp)) {
+      return false;
     }
 
-    if (displayOpacity.size() == 1) {
-      dst.displayOpacity = displayOpacity[0];
+    if ((vopacity.elementSize == 1) && (vopacity.vertex_count() == 1) && (vopacity.stride_bytes() == 4)) {
+      memcpy(&dst.displayOpacity, vopacity.data.data(), vopacity.stride_bytes());
     } else {
-      dst.vertex_opacities.elementSize = 1;
-      dst.vertex_opacities.format = VertexAttributeFormat::Float;
-      dst.vertex_opacities.stride = 0;
-
-      if (pvar.get_interpolation() == Interpolation::Varying) {
-        dst.vertex_opacities.variability = VertexVariability::Varying;
-      } else if (pvar.get_interpolation() == Interpolation::Constant) {
-        dst.vertex_opacities.variability = VertexVariability::Constant;
-      } else if (pvar.get_interpolation() == Interpolation::Uniform) {
-        dst.vertex_opacities.variability = VertexVariability::Uniform;
-      } else if (pvar.get_interpolation() == Interpolation::Vertex) {
-        dst.vertex_opacities.variability = VertexVariability::Vertex;
-      } else if (pvar.get_interpolation() == Interpolation::FaceVarying) {
-        dst.vertex_opacities.variability = VertexVariability::FaceVarying;
-      }
-      dst.vertex_opacities.indices.clear();
-      dst.vertex_opacities.name = "displayOpacity";
+      dst.vertex_opacities = vopacity;
     }
   }
 
@@ -2405,14 +2465,14 @@ bool RenderSceneConverter::ConvertMesh(
         return false;
       }
 
-      if (!pvar.flatten_with_indices(env.timecode, &normals, _tinterp, &_err)) {
+      if (!pvar.flatten_with_indices(env.timecode, &normals, env.tinterp, &_err)) {
         PUSH_ERROR_AND_RETURN("Failed to expand `normals` primvar.");
       }
 
     } else if (mesh.normals.authored()) {  // look 'normals'
       if (!EvaluateTypedAnimatableAttribute(*_stage, mesh.normals, "normals",
                                             &normals, &_err, env.timecode,
-                                            _tinterp)) {
+                                            env.tinterp)) {
       }
     }
 
@@ -2579,6 +2639,7 @@ bool RenderSceneConverter::ConvertMesh(
   ///  - Triangulate vertex attributes(normals, uvcoords, vertex
   ///  colors/opacities).
   ///
+  bool triangulate = _mesh_config.triangulate;
   if (triangulate) {
     std::vector<uint32_t> triangulatedFaceVertexCounts;  // should be all 3's
     std::vector<uint32_t> triangulatedFaceVertexIndices;
@@ -2756,7 +2817,7 @@ bool RenderSceneConverter::ConvertMesh(
 
     std::vector<int> jointIndicesArray;
     if (!jointIndices.flatten_with_indices(env.timecode, &jointIndicesArray,
-                                           _tinterp)) {
+                                           env.tinterp)) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("Failed to flatten Indexed Primvar `skel:jointIndices`. "
                       "Ensure `skel:jointIndices` is type `int[]`"));
@@ -2764,7 +2825,7 @@ bool RenderSceneConverter::ConvertMesh(
 
     std::vector<float> jointWeightsArray;
     if (!jointWeights.flatten_with_indices(env.timecode, &jointWeightsArray,
-                                           _tinterp)) {
+                                           env.tinterp)) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("Failed to flatten Indexed Primvar `skel:jointWeights`. "
                       "Ensure `skel:jointWeights` is type `float[]`"));
@@ -3731,7 +3792,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env, 
     } else {
       Animatable<value::texcoord2f> fallbacks = texture.st.get_value();
       value::texcoord2f uv;
-      if (fallbacks.get(_timecode, &uv)) {
+      if (fallbacks.get(env.timecode, &uv)) {
         tex.fallback_uv[0] = uv[0];
         tex.fallback_uv[1] = uv[1];
       } else {
@@ -3744,7 +3805,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env, 
   if (texture.wrapS.authored()) {
     tinyusdz::UsdUVTexture::Wrap wrap;
 
-    if (!texture.wrapS.get_value().get(_timecode, &wrap)) {
+    if (!texture.wrapS.get_value().get(env.timecode, &wrap)) {
       PUSH_ERROR_AND_RETURN("Invalid UsdUVTexture inputs:wrapS value.");
     }
 
@@ -3764,7 +3825,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env, 
   if (texture.wrapT.authored()) {
     tinyusdz::UsdUVTexture::Wrap wrap;
 
-    if (!texture.wrapT.get_value().get(_timecode, &wrap)) {
+    if (!texture.wrapT.get_value().get(env.timecode, &wrap)) {
       PUSH_ERROR_AND_RETURN("Invalid UsdUVTexture inputs:wrapT value.");
     }
 
@@ -3789,6 +3850,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env, 
 
 template <typename T, typename Dty>
 bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
+    const RenderSceneConverterEnv &env,
     const Path &shader_abs_path,
     const TypedAttributeWithFallback<Animatable<T>> &param,
     const std::string &param_name, ShaderParam<Dty> &dst_param) {
@@ -3842,7 +3904,7 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
     return true;
   } else {
     T val;
-    if (!param.get_value().get(_timecode, &val)) {
+    if (!param.get_value().get(env.timecode, &val)) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("Failed to get {} at `default` timecode.", param_name));
     }
@@ -3854,6 +3916,7 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
 }
 
 bool RenderSceneConverter::ConvertPreviewSurfaceShader(
+    const RenderSceneConverterEnv &env,
     const Path &shader_abs_path, const UsdPreviewSurface &shader,
     PreviewSurfaceShader *rshader_out) {
   if (!rshader_out) {
@@ -3871,78 +3934,78 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShader(
           fmt::format("TODO: useSpecularWorkflow with connection."));
     } else {
       int val;
-      if (!shader.useSpecularWorkflow.get_value().get(_timecode, &val)) {
+      if (!shader.useSpecularWorkflow.get_value().get(env.timecode, &val)) {
         PUSH_ERROR_AND_RETURN(fmt::format(
-            "Failed to get useSpcularWorkFlow value at time `{}`.", _timecode));
+            "Failed to get useSpcularWorkFlow value at time `{}`.", env.timecode));
       }
 
       rshader.useSpecularWorkFlow = val ? true : false;
     }
   }
 
-  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.diffuseColor,
+  if (!ConvertPreviewSurfaceShaderParam(env, shader_abs_path, shader.diffuseColor,
                                         "diffuseColor", rshader.diffuseColor)) {
     return false;
   }
 
-  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.emissiveColor,
+  if (!ConvertPreviewSurfaceShaderParam(env, shader_abs_path, shader.emissiveColor,
                                         "emissiveColor",
                                         rshader.emissiveColor)) {
     return false;
   }
 
-  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.specularColor,
+  if (!ConvertPreviewSurfaceShaderParam(env, shader_abs_path, shader.specularColor,
                                         "specularColor",
                                         rshader.specularColor)) {
     return false;
   }
 
-  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.normal,
+  if (!ConvertPreviewSurfaceShaderParam(env, shader_abs_path, shader.normal,
                                         "normal", rshader.normal)) {
     return false;
   }
 
-  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.roughness,
+  if (!ConvertPreviewSurfaceShaderParam(env, shader_abs_path, shader.roughness,
                                         "roughness", rshader.roughness)) {
     return false;
   }
 
-  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.metallic,
+  if (!ConvertPreviewSurfaceShaderParam(env, shader_abs_path, shader.metallic,
                                         "metallic", rshader.metallic)) {
     return false;
   }
 
-  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.clearcoat,
+  if (!ConvertPreviewSurfaceShaderParam(env, shader_abs_path, shader.clearcoat,
                                         "clearcoat", rshader.clearcoat)) {
     return false;
   }
 
-  if (!ConvertPreviewSurfaceShaderParam(
+  if (!ConvertPreviewSurfaceShaderParam(env,
           shader_abs_path, shader.clearcoatRoughness, "clearcoatRoughness",
           rshader.clearcoatRoughness)) {
     return false;
   }
-  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.opacity,
+  if (!ConvertPreviewSurfaceShaderParam(env, shader_abs_path, shader.opacity,
                                         "opacity", rshader.opacity)) {
     return false;
   }
-  if (!ConvertPreviewSurfaceShaderParam(
+  if (!ConvertPreviewSurfaceShaderParam(env,
           shader_abs_path, shader.opacityThreshold, "opacityThreshold",
           rshader.opacityThreshold)) {
     return false;
   }
 
-  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.ior, "ior",
+  if (!ConvertPreviewSurfaceShaderParam(env, shader_abs_path, shader.ior, "ior",
                                         rshader.ior)) {
     return false;
   }
 
-  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.occlusion,
+  if (!ConvertPreviewSurfaceShaderParam(env, shader_abs_path, shader.occlusion,
                                         "occlusion", rshader.occlusion)) {
     return false;
   }
 
-  if (!ConvertPreviewSurfaceShaderParam(shader_abs_path, shader.displacement,
+  if (!ConvertPreviewSurfaceShaderParam(env, shader_abs_path, shader.displacement,
                                         "displacement", rshader.displacement)) {
     return false;
   }
@@ -3951,7 +4014,7 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShader(
   return true;
 }
 
-bool RenderSceneConverter::ConvertMaterial(const Path &mat_abs_path,
+bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env, const Path &mat_abs_path,
                                            const tinyusdz::Material &material,
                                            RenderMaterial *rmat_out) {
   if (!_stage) {
@@ -4030,7 +4093,7 @@ bool RenderSceneConverter::ConvertMaterial(const Path &mat_abs_path,
     }
 
     PreviewSurfaceShader pss;
-    if (!ConvertPreviewSurfaceShader(surfacePath, *psurface, &pss)) {
+    if (!ConvertPreviewSurfaceShader(env, surfacePath, *psurface, &pss)) {
       PUSH_ERROR_AND_RETURN(fmt::format(
           "Failed to convert UsdPreviewSurface : {}", surfacePath.prim_part()));
     }
@@ -4046,14 +4109,19 @@ bool RenderSceneConverter::ConvertMaterial(const Path &mat_abs_path,
 
 namespace {
 
+struct MeshVisitorEnv {
+  RenderSceneConverter *converter{nullptr};
+  RenderSceneConverterEnv *env{nullptr};
+};
+
 bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
                  const int32_t level, void *userdata, std::string *err) {
   if (!userdata) {
     return false;
   }
 
-  RenderSceneConverter *converter =
-      reinterpret_cast<RenderSceneConverter *>(userdata);
+  MeshVisitorEnv *visitorEnv =
+      reinterpret_cast<MeshVisitorEnv *>(userdata);
 
   if (level > 1024 * 1024) {
     if (err) {
@@ -4080,12 +4148,12 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     {
       const std::string mesh_path_str = abs_path.full_path_name();
 
-      std::vector<RenderMaterial> &rmaterials = converter->materials;
+      std::vector<RenderMaterial> &rmaterials = visitorEnv->converter->materials;
 
       tinyusdz::Path bound_material_path;
       const tinyusdz::Material *bound_material{nullptr};
       bool ret = tinyusdz::tydra::GetBoundMaterial(
-          *converter->GetStagePtr(), /* GeomMesh prim path */ abs_path,
+          *visitorEnv->converter->GetStagePtr(), /* GeomMesh prim path */ abs_path,
           /* purpose */ "", &bound_material_path, &bound_material, err);
 
       int64_t rmaterial_id = -1;
@@ -4094,13 +4162,13 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         DCOUT("Bound material path: " << bound_material_path);
 
         const auto matIt =
-            converter->materialMap.find(bound_material_path.full_path_name());
+            visitorEnv->converter->materialMap.find(bound_material_path.full_path_name());
 
-        if (matIt != converter->materialMap.s_end()) {
+        if (matIt != visitorEnv->converter->materialMap.s_end()) {
           // Got material in the cache.
           uint64_t mat_id = matIt->second;
           if (mat_id >=
-              converter->materials.size()) {  // this should not happen though
+              visitorEnv->converter->materials.size()) {  // this should not happen though
             if (err) {
               (*err) += "Material index out-of-range.\n";
             }
@@ -4118,7 +4186,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
         } else {
           RenderMaterial rmat;
-          if (!converter->ConvertMaterial(bound_material_path, *bound_material,
+          if (!visitorEnv->converter->ConvertMaterial(*visitorEnv->env, bound_material_path, *bound_material,
                                           &rmat)) {
             if (err) {
               (*err) += fmt::format("Material conversion failed: {}",
@@ -4138,7 +4206,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
           }
           rmaterial_id = int64_t(mat_id);
 
-          converter->materialMap.add(bound_material_path.full_path_name(),
+          visitorEnv->converter->materialMap.add(bound_material_path.full_path_name(),
                                      uint64_t(rmaterial_id));
           DCOUT("Add material: " << mat_id << " " << rmat.abs_path << " ( "
                                  << rmat.name << " ) ");
@@ -4167,7 +4235,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         }
       }
 
-      if (!converter->ConvertMesh(abs_path, *pmesh, material_path,
+      if (!visitorEnv->converter->ConvertMesh(*visitorEnv->env, abs_path, *pmesh, material_path,
                                   subset_material_path_map, rmaterial_idMap,
                                   material_subsets, blendshapes, &rmesh)) {
         if (err) {
@@ -4177,7 +4245,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         return false;
       }
 
-      converter->meshes.emplace_back(std::move(rmesh));
+      visitorEnv->converter->meshes.emplace_back(std::move(rmesh));
     }
   }
 
