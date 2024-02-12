@@ -1247,9 +1247,9 @@ struct DefaultVertexInput
     return positions.size();
   }
 
-  void get(size_t idx, PackedVert &output) {
+  void get(size_t idx, PackedVert &output) const {
     output.position = positions[idx];
-    output.normals = normals[idx];
+    output.normal = normals[idx];
     output.uv0 = uv0s[idx];
     output.uv1 = uv1s[idx];
     output.tangent = tangents[idx];
@@ -1278,7 +1278,7 @@ struct DefaultVertexOutput
 
   void push_back(const PackedVert &v) {
     positions.push_back(v.position);
-    normals.push_back(v.normals);
+    normals.push_back(v.normal);
     uv0s.push_back(v.uv0);
     uv1s.push_back(v.uv1);
     tangents.push_back(v.tangent);
@@ -1468,7 +1468,7 @@ class RenderSceneConverter {
   ///
   /// @return true when success.
   ///
-  bool ConvertMaterial(const tinyusdz::Path &abs_mat_path,
+  bool ConvertMaterial(const RenderSceneConverterEnv &env,const tinyusdz::Path &abs_mat_path,
                        const tinyusdz::Material &material,
                        RenderMaterial *rmat_out);
 
@@ -1482,7 +1482,7 @@ class RenderSceneConverter {
   ///
   /// @return true when success.
   ///
-  bool ConvertPreviewSurfaceShader(const tinyusdz::Path &shader_abs_path,
+  bool ConvertPreviewSurfaceShader(const RenderSceneConverterEnv &env, const tinyusdz::Path &shader_abs_path,
                                    const tinyusdz::UsdPreviewSurface &shader,
                                    PreviewSurfaceShader *pss_out);
 
@@ -1521,6 +1521,7 @@ class RenderSceneConverter {
 
   template <typename T, typename Dty>
   bool ConvertPreviewSurfaceShaderParam(
+      const RenderSceneConverterEnv &env,
       const Path &shader_abs_path,
       const TypedAttributeWithFallback<Animatable<T>> &param,
       const std::string &param_name, ShaderParam<Dty> &dst_param);
