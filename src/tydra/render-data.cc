@@ -2179,7 +2179,7 @@ bool RenderSceneConverter::ConvertMesh(
   {
     std::vector<value::point3f> points;
     bool ret = EvaluateTypedAnimatableAttribute(
-        *_stage, mesh.points, "points", &points, &_err, env.timecode,
+        env.stage, mesh.points, "points", &points, &_err, env.timecode,
         value::TimeSampleInterpolationType::Linear);
     if (!ret) {
       return false;
@@ -2198,7 +2198,7 @@ bool RenderSceneConverter::ConvertMesh(
   {
     std::vector<int32_t> indices;
     bool ret = EvaluateTypedAnimatableAttribute(
-        *_stage, mesh.faceVertexIndices, "faceVertexIndices", &indices, &_err,
+        env.stage, mesh.faceVertexIndices, "faceVertexIndices", &indices, &_err,
         env.timecode, value::TimeSampleInterpolationType::Held);
     if (!ret) {
       return false;
@@ -2222,7 +2222,7 @@ bool RenderSceneConverter::ConvertMesh(
   {
     std::vector<int> counts;
     bool ret = EvaluateTypedAnimatableAttribute(
-        *_stage, mesh.faceVertexCounts, "faceVertexCounts", &counts, &_err,
+        env.stage, mesh.faceVertexCounts, "faceVertexCounts", &counts, &_err,
         env.timecode, value::TimeSampleInterpolationType::Held);
     if (!ret) {
       return false;
@@ -2290,7 +2290,7 @@ bool RenderSceneConverter::ConvertMesh(
     if (psubset->indices.authored()) {
       std::vector<int> indices;  // index to faceVertexCounts
       bool ret = EvaluateTypedAnimatableAttribute(
-          *_stage, psubset->indices, "indices", &indices, &_err, env.timecode,
+          env.stage, psubset->indices, "indices", &indices, &_err, env.timecode,
           value::TimeSampleInterpolationType::Held);
       if (!ret) {
         return false;
@@ -2333,7 +2333,7 @@ bool RenderSceneConverter::ConvertMesh(
     if (mesh.has_primvar(_mesh_config.default_texcoords_primvar_name)) {
       DCOUT("uv primvar  with default_texcoords_primvar_name found.");
       auto ret = GetTextureCoordinate(
-          *_stage, mesh, _mesh_config.default_texcoords_primvar_name, env.timecode,
+          env.stage, mesh, _mesh_config.default_texcoords_primvar_name, env.timecode,
           env.tinterp);
       if (ret) {
         const VertexAttribute vattr = ret.value();
@@ -2359,7 +2359,7 @@ bool RenderSceneConverter::ConvertMesh(
           std::string uvname = it->second;
 
           if (!uvAttrs.count(uint32_t(slotId))) {
-            auto ret = GetTextureCoordinate(*_stage, mesh, uvname, env.timecode,
+            auto ret = GetTextureCoordinate(env.stage, mesh, uvname, env.timecode,
                                             env.tinterp);
             if (ret) {
               const VertexAttribute vattr = ret.value();
@@ -2379,7 +2379,7 @@ bool RenderSceneConverter::ConvertMesh(
   if (mesh.has_primvar(_mesh_config.default_tangents_primvar_name)) {
     GeomPrimvar pvar;
 
-    if (!GetGeomPrimvar(*_stage, &mesh, _mesh_config.default_tangents_primvar_name, &pvar, &_err)) {
+    if (!GetGeomPrimvar(env.stage, &mesh, _mesh_config.default_tangents_primvar_name, &pvar, &_err)) {
       return false;
     }
 
@@ -2391,7 +2391,7 @@ bool RenderSceneConverter::ConvertMesh(
   if (mesh.has_primvar(_mesh_config.default_binormals_primvar_name)) {
     GeomPrimvar pvar;
 
-    if (!GetGeomPrimvar(*_stage, &mesh, _mesh_config.default_binormals_primvar_name, &pvar, &_err)) {
+    if (!GetGeomPrimvar(env.stage, &mesh, _mesh_config.default_binormals_primvar_name, &pvar, &_err)) {
       return false;
     }
 
@@ -2400,15 +2400,16 @@ bool RenderSceneConverter::ConvertMesh(
     }
   }
 
-  if (mesh.has_primvar("displayColor")) {
+  constexpr auto kDisplayColor = "displayColor";
+  if (mesh.has_primvar(kDisplayColor)) {
     GeomPrimvar pvar;
 
-    if (!GetGeomPrimvar(*_stage, &mesh, "displayColor", &pvar, &_err)) {
+    if (!GetGeomPrimvar(env.stage, &mesh, kDisplayColor, &pvar, &_err)) {
       return false;
     }
 
     VertexAttribute vcolor;
-    if (!ToVertexAttribute(pvar, "displayColor", num_vertices, num_faces, num_face_vertex_indices, vcolor, &_err, env.timecode, env.tinterp)) {
+    if (!ToVertexAttribute(pvar, kDisplayColor, num_vertices, num_faces, num_face_vertex_indices, vcolor, &_err, env.timecode, env.tinterp)) {
       return false;
     }
 
@@ -2419,14 +2420,15 @@ bool RenderSceneConverter::ConvertMesh(
     }
   }
 
-  if (mesh.has_primvar("displayOpacity")) {
+  constexpr auto kDisplayOpacity = "displayOpacity";
+  if (mesh.has_primvar(kDisplayOpacity)) {
     GeomPrimvar pvar;
-    if (!GetGeomPrimvar(*_stage, &mesh, "displayOpacity", &pvar, &_err)) {
+    if (!GetGeomPrimvar(env.stage, &mesh, kDisplayOpacity, &pvar, &_err)) {
       return false;
     }
 
     VertexAttribute vopacity;
-    if (!ToVertexAttribute(pvar, "displayOpacity", num_vertices, num_faces, num_face_vertex_indices, vopacity, &_err, env.timecode, env.tinterp)) {
+    if (!ToVertexAttribute(pvar, kDisplayOpacity, num_vertices, num_faces, num_face_vertex_indices, vopacity, &_err, env.timecode, env.tinterp)) {
       return false;
     }
 
@@ -2461,7 +2463,7 @@ bool RenderSceneConverter::ConvertMesh(
 
     if (mesh.has_primvar("normals")) {  // primvars:normals
       GeomPrimvar pvar;
-      if (!GetGeomPrimvar(*_stage, &mesh, "normals", &pvar, &_err)) {
+      if (!GetGeomPrimvar(env.stage, &mesh, "normals", &pvar, &_err)) {
         return false;
       }
 
@@ -2470,7 +2472,7 @@ bool RenderSceneConverter::ConvertMesh(
       }
 
     } else if (mesh.normals.authored()) {  // look 'normals'
-      if (!EvaluateTypedAnimatableAttribute(*_stage, mesh.normals, "normals",
+      if (!EvaluateTypedAnimatableAttribute(env.stage, mesh.normals, "normals",
                                             &normals, &_err, env.timecode,
                                             env.tinterp)) {
       }
@@ -2757,12 +2759,12 @@ bool RenderSceneConverter::ConvertMesh(
     GeomPrimvar jointIndices;
     GeomPrimvar jointWeights;
 
-    if (!GetGeomPrimvar(*_stage, &mesh, "skel:jointIndices", &jointIndices,
+    if (!GetGeomPrimvar(env.stage, &mesh, "skel:jointIndices", &jointIndices,
                         &_err)) {
       return false;
     }
 
-    if (!GetGeomPrimvar(*_stage, &mesh, "skel:jointWeights", &jointWeights,
+    if (!GetGeomPrimvar(env.stage, &mesh, "skel:jointWeights", &jointWeights,
                         &_err)) {
       return false;
     }
@@ -2873,7 +2875,7 @@ bool RenderSceneConverter::ConvertMesh(
     if (mesh.has_primvar("skel:geomBindTransform")) {
       GeomPrimvar bindTransformPvar;
 
-      if (!GetGeomPrimvar(*_stage, &mesh, "skel:geomBindTransform",
+      if (!GetGeomPrimvar(env.stage, &mesh, "skel:geomBindTransform",
                           &bindTransformPvar, &_err)) {
         return false;
       }
@@ -3716,7 +3718,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env, 
       const Path &path = paths[0];
 
       const Prim *readerPrim{nullptr};
-      if (!_stage->find_prim_at_path(Path(path.prim_part(), ""), readerPrim,
+      if (!env.stage.find_prim_at_path(Path(path.prim_part(), ""), readerPrim,
                                      &err)) {
         PUSH_ERROR_AND_RETURN(
             "UsdUVTexture inputs:st connection targetPath not found in the "
@@ -3751,7 +3753,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env, 
         // terminal Attribute value)
         std::string varname;
         TerminalAttributeValue attr;
-        if (!tydra::EvaluateAttribute(*_stage, *readerPrim, "inputs:varname",
+        if (!tydra::EvaluateAttribute(env.stage, *readerPrim, "inputs:varname",
                                       &attr, &err)) {
           PUSH_ERROR_AND_RETURN(
               fmt::format("Failed to evaluate UsdPrimvarReader_float2's "
@@ -3779,7 +3781,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env, 
       } else if (const UsdTransform2d *ptransform =
                      pshader->value.as<UsdTransform2d>()) {
         auto result =
-            ConvertTexTransform2d(*_stage, path, *ptransform, &tex, env.timecode);
+            ConvertTexTransform2d(env.stage, path, *ptransform, &tex, env.timecode);
         if (!result) {
           PUSH_ERROR_AND_RETURN(result.error());
         }
@@ -3867,7 +3869,7 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
     const Shader *pshader{nullptr};
     Path texPath;
     auto result =
-        GetConnectedUVTexture(*_stage, param, &texPath, &ptex, &pshader);
+        GetConnectedUVTexture(env.stage, param, &texPath, &ptex, &pshader);
 
     if (!result) {
       PUSH_ERROR_AND_RETURN(result.error());
@@ -4017,10 +4019,6 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShader(
 bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env, const Path &mat_abs_path,
                                            const tinyusdz::Material &material,
                                            RenderMaterial *rmat_out) {
-  if (!_stage) {
-    PUSH_ERROR_AND_RETURN("stage is nullptr.");
-  }
-
   if (!rmat_out) {
     PUSH_ERROR_AND_RETURN("rmat_out argument is nullptr.");
   }
@@ -4054,7 +4052,7 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env, c
     }
 
     const Prim *shaderPrim{nullptr};
-    if (!_stage->find_prim_at_path(
+    if (!env.stage.find_prim_at_path(
             Path(surfacePath.prim_part(), /* prop part */ ""), shaderPrim,
             &err)) {
       PUSH_ERROR_AND_RETURN(fmt::format(
@@ -4153,7 +4151,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       tinyusdz::Path bound_material_path;
       const tinyusdz::Material *bound_material{nullptr};
       bool ret = tinyusdz::tydra::GetBoundMaterial(
-          *visitorEnv->converter->GetStagePtr(), /* GeomMesh prim path */ abs_path,
+          visitorEnv->env->stage, /* GeomMesh prim path */ abs_path,
           /* purpose */ "", &bound_material_path, &bound_material, err);
 
       int64_t rmaterial_id = -1;
@@ -4261,8 +4259,6 @@ bool RenderSceneConverter::ConvertToRenderScene(const Stage &stage,
     PUSH_ERROR_AND_RETURN("nullptr for RenderScene argument.");
   }
 
-  _stage = &stage;
-
   // Build Xform at specified time.
   XformNode xform_node;
   if (!BuildXformNodeFromStage(stage, &xform_node, timecode)) {
@@ -4281,8 +4277,14 @@ bool RenderSceneConverter::ConvertToRenderScene(const Stage &stage,
 
   std::string err;
 
+  // FIXME
+  RenderSceneConverterEnv env(stage);
+  MeshVisitorEnv menv;
+  menv.env = &env;
+  menv.converter = this;
+
   // Pass `this` through userdata ptr
-  bool ret = tydra::VisitPrims(stage, MeshVisitor, this, &err);
+  bool ret = tydra::VisitPrims(stage, MeshVisitor, &menv, &err);
 
   if (!ret) {
     _err += err;
