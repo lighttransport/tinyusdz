@@ -308,9 +308,7 @@ APPLY_GEOMPRIVAR_TYPE(INSTANCIATE_FLATTEN_WITH_INDICES)
 
 #undef INSTANCIATE_FLATTEN_WITH_INDICES
 
-bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) const {
-  // using namespace simple_match;
-  // using namespace simple_match::placeholders;
+bool GeomPrimvar::flatten_with_indices(const double t, value::Value *dest, const value::TimeSampleInterpolationType tinterp, std::string *err) const {
 
   if (!dest) {
     if (err) {
@@ -336,7 +334,7 @@ bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) con
 
       // evaluate value at specified time and return it for scalar type.
       value::Value v;
-      if (!_attr.get_var().get_interpolated_value(value::TimeCode::Default(), value::TimeSampleInterpolationType::Linear, &v)) {
+      if (!_attr.get_var().get_interpolated_value(t, tinterp, &v)) {
         if (err) {
           (*err) += fmt::format("Failed to evaluate Attribute value.");
         }
@@ -356,7 +354,7 @@ bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) con
   case value::TypeTraits<__ty>::type_id() | value::TYPE_ID_1D_ARRAY_BIT: { \
     std::vector<__ty> value; \
     std::vector<__ty> expanded_val;                                      \
-    if (_attr.get_value(value::TimeCode::Default(), &value, value::TimeSampleInterpolationType::Linear)) {                \
+    if (_attr.get_value(t, &value, tinterp)) {                \
       auto ret = ExpandWithIndices(value, elementSize, indices, &expanded_val); \
       if (ret) {                                                         \
         processed = ret.value();                                         \
@@ -395,6 +393,10 @@ bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) con
   }
 
   return processed;
+}
+
+bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) const {
+  return flatten_with_indices(value::TimeCode::Default(), dest, value::TimeSampleInterpolationType::Linear, err);
 }
 
 template <typename T>
