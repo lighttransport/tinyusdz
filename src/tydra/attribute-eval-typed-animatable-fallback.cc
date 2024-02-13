@@ -131,6 +131,10 @@ bool EvaluateTypedAnimatableAttribute(
     const double t,
     const value::TimeSampleInterpolationType tinterp) {
 
+  if (!value_out) {
+    PUSH_ERROR_AND_RETURN("`value_out` param is nullptr.");
+  }
+
   if (tattr.is_blocked()) {
     if (err) {
       (*err) += "Attribute is Blocked.\n";

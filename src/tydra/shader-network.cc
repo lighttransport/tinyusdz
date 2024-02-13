@@ -432,6 +432,11 @@ bool GetBoundMaterial(
 
       currentPath = parentPath;
 
+      if (currentPath.is_root_prim()) {
+        // parent is root('/'), so no need to follow the parent path anymore.
+        break;
+      }
+
       depth++;
 
       // TODO: collection

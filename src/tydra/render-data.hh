@@ -420,10 +420,9 @@ struct VertexAttribute {
   VertexAttributeFormat format{VertexAttributeFormat::Vec3};
   uint32_t elementSize{1};  // `elementSize` in USD terminology(i.e. # of
                             // samples per vertex data)
-  uint32_t stride{
-      0};  //  We don't support packed(interleaved) vertex data, so stride is
-           //  usually sizeof(VertexAttributeFormat) * elementSize. 0 = tightly
-           //  packed.
+  uint32_t stride{0};  //  We don't support packed(interleaved) vertex data, so
+                       //  stride is usually sizeof(VertexAttributeFormat) *
+                       //  elementSize. 0 = tightly packed.
   std::vector<uint8_t> data;  // raw binary data(TODO: Use Buffer ID?)
   std::vector<uint32_t>
       indices;  // Dedicated Index buffer. Set when variability == Indexed.
@@ -539,26 +538,24 @@ static bool ToFacevaringVertexAttribute(
 
 //
 // Convert PrimVar(type-erased value) at specified time to VertexAttribute
-// 
-// Input Primvar's name, variability(interpolation) and elementSize are preserved.
-// Use Primvar's underlying type to set the type of VertexAttribute.
+//
+// Input Primvar's name, variability(interpolation) and elementSize are
+// preserved. Use Primvar's underlying type to set the type of VertexAttribute.
 // (example: 'color3f'(underlying type 'float3') -> Vec3)
-// 
+//
 // @param[in] pvar GeomPrimvar.
 // @param[out] dst Output VertexAttribute.
 // @param[out] err Error messsage. can be nullptr
 // @param[in] t timecode
-// @param[in] tinterp Interpolation for timesamples 
+// @param[in] tinterp Interpolation for timesamples
 //
 // @return true upon success.
 //
-bool ToVertexAttribute(
-  const GeomPrimvar &pvar,
-  VertexAttribute &dst,
-  std::string *err,
-  const double t = value::TimeCode::Default(),
-  const value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear);
-  
+bool ToVertexAttribute(const GeomPrimvar &pvar, VertexAttribute &dst,
+                       std::string *err,
+                       const double t = value::TimeCode::Default(),
+                       const value::TimeSampleInterpolationType tinterp =
+                           value::TimeSampleInterpolationType::Linear);
 
 enum class ColorSpace {
   sRGB,
@@ -637,19 +634,20 @@ struct Animation {
 struct Node {
   NodeType nodeType{NodeType::Xform};
 
-  int32_t id{-1};  // Index to node content(e.g. meshes[id] when nodeTypes == Mesh). -1 = no corresponding content exists for this node.
+  int32_t id{-1};  // Index to node content(e.g. meshes[id] when nodeTypes ==
+                   // Mesh). -1 = no corresponding content exists for this node.
 
   std::vector<uint32_t> children;
 
   // Every node have its transform at specified timecode.
   value::matrix4d local_matrix;
-  value::matrix4d global_matrix; // = local_matrix * parent_matrix (USD use row-major(pre-multiply))
+  value::matrix4d global_matrix;  // = local_matrix * parent_matrix (USD use
+                                  // row-major(pre-multiply))
 
-  bool is_identity_matrix() {
-    return is_identity(local_matrix);
-  }
+  bool is_identity_matrix() { return is_identity(local_matrix); }
 
-  std::vector<AnimationChannel> node_animations; // xform animations(timesamples)
+  std::vector<AnimationChannel>
+      node_animations;  // xform animations(timesamples)
 
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
 };
@@ -695,15 +693,16 @@ struct MaterialPath {
   std::string material_path;           // USD Material Prim path.
   std::string backface_material_path;  // USD Material Prim path.
 
-  // Default RenderMaterial Id to assign when material_path/backface_material_path is empty.
-  // -1 = no material will be assigned.
+  // Default RenderMaterial Id to assign when
+  // material_path/backface_material_path is empty. -1 = no material will be
+  // assigned.
   int default_material_id{-1};
   int default_backface_material_id{-1};
 
   // primvar name used for texcoords when default RenderMaterial is used.
-  // Currently we don't support different texcoord for each frontface and backface material.
+  // Currently we don't support different texcoord for each frontface and
+  // backface material.
   std::string default_texcoord_primvar_name{"st"};
-
 };
 
 // GeomSubset whose familyName is 'materialBind'.
@@ -757,9 +756,11 @@ struct RenderMesh {
   std::vector<uint32_t> faceVertexCounts;
 
   ///
-  /// Triangulated faceVertexIndices, faceVerteCounts and auxiality state required to triangulate primvars in the app.
+  /// Triangulated faceVertexIndices, faceVerteCounts and auxiality state
+  /// required to triangulate primvars in the app.
   ///
-  /// trinangulatedFaceVertexIndices will be empty when the mesh is not triangulated.
+  /// trinangulatedFaceVertexIndices will be empty when the mesh is not
+  /// triangulated.
   ///
   std::vector<uint32_t> triangulatedFaceVertexIndices;
   std::vector<uint32_t> triangulatedFaceVertexCounts;
@@ -785,8 +786,8 @@ struct RenderMesh {
   // When `normals`(or `normals` primvar) is not present in the GeomMesh,
   // tangents and normals are not computed.
   //
-  // When `normals` is supplied, but neither `tangents` nor `binormals` are supplied in primvars,
-  // Tydra computes it based on:
+  // When `normals` is supplied, but neither `tangents` nor `binormals` are
+  // supplied in primvars, Tydra computes it based on:
   // https://learnopengl.com/Advanced-Lighting/Normal-Mapping (when
   // MeshConverterConfig::compute_tangents_and_binormals is set to `true`)
   //
@@ -1101,15 +1102,15 @@ struct MeshConverterConfig {
   // Similar vertices are merged to single vertex index.
   // (convert vertex attributes from 'facevarying' to 'vertex' variability)
   //
-  // Building indices is preferred for renderers which supports single index-buffer only
-  // (e.g. OpenGL/Vulkan)
+  // Building indices is preferred for renderers which supports single
+  // index-buffer only (e.g. OpenGL/Vulkan)
   //
   bool build_indices{true};
 
   //
   // Allowed relative error to check if vertex data is the same.
-  // Used for 'facevarying' variability to `vertex` variability conversion in ConvertMesh.
-  // Only effective to floating-point vertex data.
+  // Used for 'facevarying' variability to `vertex` variability conversion in
+  // ConvertMesh. Only effective to floating-point vertex data.
   //
   float facevarying_to_vertex_eps = std::numeric_limits<float>::epsilon();
 };
@@ -1173,20 +1174,18 @@ struct RenderSceneConverterConfig {
   bool load_texture_assets{true};
 };
 
-
-
 //
 // Simple packed vertex struct & comparator for dedup.
 // https://github.com/huamulan/OpenGL-tutorial/blob/master/common/vboindexer.cpp
 //
 // Up to 2 texcoords.
-// tangent and binormal is included in VertexData, considering the situation that tangent and binormal is supplied through user-defined primvar.
+// tangent and binormal is included in VertexData, considering the situation
+// that tangent and binormal is supplied through user-defined primvar.
 //
 // TODO: Use spatial hash for robust dedup(consider floating-point eps)
 // TODO: Polish interface to support arbitrary vertex configuration.
 //
-struct DefaultPackedVertexData
-{
+struct DefaultPackedVertexData {
   value::float3 position;
   value::float3 normal;
   value::float2 uv0;
@@ -1198,14 +1197,14 @@ struct DefaultPackedVertexData
 
   // comparator for std::map
   bool operator<(const DefaultPackedVertexData &rhs) const {
-    return memcmp(reinterpret_cast<const void *>(this), reinterpret_cast<const void *>(&rhs), sizeof(DefaultPackedVertexData))>0;
+    return memcmp(reinterpret_cast<const void *>(this),
+                  reinterpret_cast<const void *>(&rhs),
+                  sizeof(DefaultPackedVertexData)) > 0;
   }
-
 };
 
 struct DefaultPackedVertexDataHasher {
   inline size_t operator()(const DefaultPackedVertexData &v) const {
-
     // Simple hasher using FNV1 32bit
     // TODO: Use 64bit FNV1?
     // TODO: Use spatial hash or LSH(LocallySensitiveHash) for position value.
@@ -1222,18 +1221,19 @@ struct DefaultPackedVertexDataHasher {
 
     return size_t(hash);
   }
-
 };
 
 struct DefaultPackedVertexDataEqual {
-  bool operator()(const DefaultPackedVertexData &lhs, const DefaultPackedVertexData &rhs) const {
-    return memcmp(reinterpret_cast<const void *>(&lhs), reinterpret_cast<const void *>(&rhs), sizeof(DefaultPackedVertexData)) == 0;
+  bool operator()(const DefaultPackedVertexData &lhs,
+                  const DefaultPackedVertexData &rhs) const {
+    return memcmp(reinterpret_cast<const void *>(&lhs),
+                  reinterpret_cast<const void *>(&rhs),
+                  sizeof(DefaultPackedVertexData)) == 0;
   }
 };
 
-template<class PackedVert>
-struct DefaultVertexInput
-{
+template <class PackedVert>
+struct DefaultVertexInput {
   std::vector<value::float3> positions;
   std::vector<value::float3> normals;
   std::vector<value::float2> uv0s;
@@ -1243,26 +1243,54 @@ struct DefaultVertexInput
   std::vector<value::float3> colors;
   std::vector<float> opacities;
 
-  size_t size() const {
-    return positions.size();
-  }
+  size_t size() const { return positions.size(); }
 
   void get(size_t idx, PackedVert &output) const {
-    output.position = positions[idx];
-    output.normal = normals[idx];
-    output.uv0 = uv0s[idx];
-    output.uv1 = uv1s[idx];
-    output.tangent = tangents[idx];
-    output.binormal = binormals[idx];
-    output.color = colors[idx];
-    output.opacity = opacities[idx];
+    if (idx < positions.size()) {
+      output.position = positions[idx];
+    } else {
+      output.position = {0.0f, 0.0f, 0.0f};
+    }
+    if (idx < normals.size()) {
+      output.normal = normals[idx];
+    } else {
+      output.normal = {0.0f, 0.0f, 0.0f};
+    }
+    if (idx < uv0s.size()) {
+      output.uv0 = uv0s[idx];
+    } else {
+      output.uv0 = {0.0f, 0.0f};
+    }
+    if (idx < uv1s.size()) {
+      output.uv1 = uv1s[idx];
+    } else {
+      output.uv1 = {0.0f, 0.0f};
+    }
+    if (idx < tangents.size()) {
+      output.tangent = tangents[idx];
+    } else {
+      output.tangent = {0.0f, 0.0f, 0.0f};
+    }
+    if (idx < binormals.size()) {
+      output.binormal = binormals[idx];
+    } else {
+      output.binormal = {0.0f, 0.0f, 0.0f};
+    }
+    if (idx < colors.size()) {
+      output.color = colors[idx];
+    } else {
+      output.color = {0.0f, 0.0f, 0.0f};
+    }
+    if (idx < opacities.size()) {
+      output.opacity = opacities[idx];
+    } else {
+      output.opacity = 0.0f;  // FIXME: Use 1.0?
+    }
   }
-
 };
 
-template<class PackedVert>
-struct DefaultVertexOutput
-{
+template <class PackedVert>
+struct DefaultVertexOutput {
   std::vector<value::float3> positions;
   std::vector<value::float3> normals;
   std::vector<value::float2> uv0s;
@@ -1272,9 +1300,7 @@ struct DefaultVertexOutput
   std::vector<value::float3> colors;
   std::vector<float> opacities;
 
-  size_t size() const {
-    return positions.size();
-  }
+  size_t size() const { return positions.size(); }
 
   void push_back(const PackedVert &v) {
     positions.push_back(v.position);
@@ -1286,21 +1312,18 @@ struct DefaultVertexOutput
     colors.push_back(v.color);
     opacities.push_back(v.opacity);
   }
-
 };
-
 
 //
 // out_vertex_indices_remap: corresponding vertexIndex in input.
 //
-template<class VertexInput, class VertexOutput, class PackedVert, class PackedVertHasher, class PackedVertEqual>
-void BuildIndices(
-  const VertexInput &input,
-  VertexOutput &output,
-  std::vector<uint32_t> &out_indices)
-{
+template <class VertexInput, class VertexOutput, class PackedVert,
+          class PackedVertHasher, class PackedVertEqual>
+void BuildIndices(const VertexInput &input, VertexOutput &output,
+                  std::vector<uint32_t> &out_indices) {
   // TODO: Use LSH(locally sensitive hashing) or BVH for kNN point query.
-  std::unordered_map<PackedVert, uint32_t, PackedVertHasher, PackedVertEqual> vertexToIndexMap;
+  std::unordered_map<PackedVert, uint32_t, PackedVertHasher, PackedVertEqual>
+      vertexToIndexMap;
 
   auto GetSimilarVertex = [&](const PackedVert &v, uint32_t &out_idx) -> bool {
     auto it = vertexToIndexMap.find(v);
@@ -1321,14 +1344,11 @@ void BuildIndices(
     if (found) {
       out_indices.push_back(index);
     } else {
-
       out_indices.push_back(uint32_t(output.size()));
       output.push_back(v);
-
     }
   }
 }
-
 
 class RenderSceneConverterEnv {
  public:
@@ -1346,7 +1366,8 @@ class RenderSceneConverterEnv {
   const Stage &stage;  // Point to valid Stage object
 
   double timecode{value::TimeCode::Default()};
-  value::TimeSampleInterpolationType tinterp{value::TimeSampleInterpolationType::Linear};
+  value::TimeSampleInterpolationType tinterp{
+      value::TimeSampleInterpolationType::Linear};
 };
 
 //
@@ -1409,21 +1430,29 @@ class RenderSceneConverter {
   /// Also apply triangulation when MeshConverterConfig::triangulate is set to
   /// true.
   ///
-  /// normals, texcoords, vertexcolors/opacities vertex attributes(built-in primvars) are converterd to either
-  /// `vertex` variability(i.e. can be drawn with single vertex indices) or
-  /// `facevarying` variability(any of primvars is `facevarying`. It can be drawn with no indices, but less efficient(especially vertex has skin weights and blendshapes)).
+  /// normals, texcoords, vertexcolors/opacities vertex attributes(built-in
+  /// primvars) are converterd to either `vertex` variability(i.e. can be drawn
+  /// with single vertex indices) or `facevarying` variability(any of primvars
+  /// is `facevarying`. It can be drawn with no indices, but less
+  /// efficient(especially vertex has skin weights and blendshapes)).
   ///
-  /// Since preferred variability for OpenGL/Vulkan renderer is `vertex`, ConvertMesh tries to convert `facevarying` attribute to `vertex` attribute when all shared vertex data is the same.
-  /// If it fails, but `MeshConverterConfig.build_indices` is set to true, ConvertMesh builds vertex indices from `facevarying` and convert variability to 'vertex'.
+  /// Since preferred variability for OpenGL/Vulkan renderer is `vertex`,
+  /// ConvertMesh tries to convert `facevarying` attribute to `vertex` attribute
+  /// when all shared vertex data is the same. If it fails, but
+  /// `MeshConverterConfig.build_indices` is set to true, ConvertMesh builds
+  /// vertex indices from `facevarying` and convert variability to 'vertex'.
   ///
-  /// Note that `points`, skin weights and BlendShape attributes are remains with `vertex` variability.
-  /// (so that we can apply some processing per point-wise)
+  /// Note that `points`, skin weights and BlendShape attributes are remains
+  /// with `vertex` variability. (so that we can apply some processing per
+  /// point-wise)
   ///
-  /// Thus, if you want to render a mesh whose normal/texcoord/etc variability is `facevarying`,
-  /// `points`, skin weights and BlendShape attributes would also need to be converted to `facevarying` to draw.
+  /// Thus, if you want to render a mesh whose normal/texcoord/etc variability
+  /// is `facevarying`, `points`, skin weights and BlendShape attributes would
+  /// also need to be converted to `facevarying` to draw.
   ///
   /// Other user defined primvars are not touched by ConvertMesh.
-  /// The app need to manually triangulate, change variability of user-defined primvar if required.
+  /// The app need to manually triangulate, change variability of user-defined
+  /// primvar if required.
   ///
   /// It is recommended first convert Materials assigned(bounded) to this
   /// GeomMesh(and GeomSubsets) or create your own Materials, and supply
@@ -1436,7 +1465,8 @@ class RenderSceneConverter {
   /// @param[in] mesh_abs_path USD prim path to this GeomMesh
   /// @param[in] mesh Input GeomMesh
   /// @param[in] material_path USD Material Prim path assigned(bound) to this
-  /// GeomMesh. Use tydra::GetBoundPath to get Material path actually assigned to the mesh.
+  /// GeomMesh. Use tydra::GetBoundPath to get Material path actually assigned
+  /// to the mesh.
   /// @param[in] subset_material_path_map USD Material Prim path assigned(bound)
   /// to GeomSubsets in this GeomMesh. key = GeomSubset Prim name.
   /// @param[in] rmaterial_map USD Material Prim path -> RenderMaterial index
@@ -1453,9 +1483,8 @@ class RenderSceneConverter {
   ///
   ///
   bool ConvertMesh(
-      const RenderSceneConverterEnv &env,
-      const tinyusdz::Path &mesh_abs_path, const tinyusdz::GeomMesh &mesh,
-      const MaterialPath &material_path,
+      const RenderSceneConverterEnv &env, const tinyusdz::Path &mesh_abs_path,
+      const tinyusdz::GeomMesh &mesh, const MaterialPath &material_path,
       const std::map<std::string, MaterialPath> &subset_material_path_map,
       const std::map<std::string, int64_t> &rmaterial_map,
       const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
@@ -1468,7 +1497,8 @@ class RenderSceneConverter {
   ///
   /// @return true when success.
   ///
-  bool ConvertMaterial(const RenderSceneConverterEnv &env,const tinyusdz::Path &abs_mat_path,
+  bool ConvertMaterial(const RenderSceneConverterEnv &env,
+                       const tinyusdz::Path &abs_mat_path,
                        const tinyusdz::Material &material,
                        RenderMaterial *rmat_out);
 
@@ -1482,7 +1512,8 @@ class RenderSceneConverter {
   ///
   /// @return true when success.
   ///
-  bool ConvertPreviewSurfaceShader(const RenderSceneConverterEnv &env, const tinyusdz::Path &shader_abs_path,
+  bool ConvertPreviewSurfaceShader(const RenderSceneConverterEnv &env,
+                                   const tinyusdz::Path &shader_abs_path,
                                    const tinyusdz::UsdPreviewSurface &shader,
                                    PreviewSurfaceShader *pss_out);
 
@@ -1498,17 +1529,19 @@ class RenderSceneConverter {
   ///
   /// @return true when success.
   ///
-  bool ConvertUVTexture(const RenderSceneConverterEnv &env, const Path &tex_abs_path, const AssetInfo &assetInfo,
+  bool ConvertUVTexture(const RenderSceneConverterEnv &env,
+                        const Path &tex_abs_path, const AssetInfo &assetInfo,
                         const UsdUVTexture &texture, UVTexture *tex_out);
 
-  const Stage *GetStagePtr() const { return _stage; }
+  // const Stage *GetStagePtr() const { return _stage; }
 
  private:
   ///
   /// Convert variability of vertex data to 'vertex' or 'facevarying'.
   ///
   /// @param[inout] vattr Input/Output VertexAttribute
-  /// @param[in] to_vertex_varing Convert to `vertex` varying when true. `facevarying` when false.
+  /// @param[in] to_vertex_varing Convert to `vertex` varying when true.
+  /// `facevarying` when false.
   /// @param[in] faceVertexCounts faceVertexCounts
   /// @param[in] faceVertexIndices faceVertexIndices
   ///
@@ -1521,8 +1554,7 @@ class RenderSceneConverter {
 
   template <typename T, typename Dty>
   bool ConvertPreviewSurfaceShaderParam(
-      const RenderSceneConverterEnv &env,
-      const Path &shader_abs_path,
+      const RenderSceneConverterEnv &env, const Path &shader_abs_path,
       const TypedAttributeWithFallback<Animatable<T>> &param,
       const std::string &param_name, ShaderParam<Dty> &dst_param);
 
@@ -1537,7 +1569,7 @@ class RenderSceneConverter {
   RenderSceneConverterConfig _scene_config;
   MeshConverterConfig _mesh_config;
   MaterialConverterConfig _material_config;
-  const Stage *_stage{nullptr};
+  // const Stage *_stage{nullptr};
 
   void PushInfo(const std::string &msg) { _info += msg; }
   void PushWarn(const std::string &msg) { _warn += msg; }
@@ -1546,7 +1578,6 @@ class RenderSceneConverter {
   std::string _info;
   std::string _err;
   std::string _warn;
-
 };
 
 // For debug

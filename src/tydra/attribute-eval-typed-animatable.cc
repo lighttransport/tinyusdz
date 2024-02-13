@@ -131,6 +131,10 @@ bool EvaluateTypedAnimatableAttribute(
     const double t,
     const value::TimeSampleInterpolationType tinterp) {
 
+  if (!value_out) {
+    PUSH_ERROR_AND_RETURN("`value_out` param is nullptr.");
+  }
+
   if (tattr.is_blocked()) {
     if (err) {
       (*err) += "Attribute is Blocked.\n";
@@ -146,11 +150,9 @@ bool EvaluateTypedAnimatableAttribute(
     // Follow targetPath
     Attribute attr = ToAttributeConnection(tattr);
 
-    //std::set<std::string> visited_paths;
-
     TerminalAttributeValue value;
     bool ret = EvaluateAttribute(stage, attr, attr_name, &value, err,
-                                 value::TimeCode::Default(), value::TimeSampleInterpolationType::Held);
+                                 t, tinterp);
 
     if (!ret) {
       return false;
@@ -168,8 +170,7 @@ bool EvaluateTypedAnimatableAttribute(
   } else {
     Animatable<T> value;
     if (tattr.get_value(&value)) {
-      T v;
-      if (value.get(t, &v, tinterp)) {
+      if (value.get(t, value_out, tinterp)) {
         return true;
       } else {
         if (err) {
