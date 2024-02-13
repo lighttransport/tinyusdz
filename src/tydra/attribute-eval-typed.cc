@@ -132,6 +132,10 @@ bool EvaluateTypedAttribute(
     T *value_out,
     std::string *err) {
 
+  if (!value_out) {
+    PUSH_ERROR_AND_RETURN("`value_out` param is nullptr.");
+  }
+
   if (tattr.is_blocked()) {
     if (err) {
       (*err) += "Attribute is Blocked.\n";

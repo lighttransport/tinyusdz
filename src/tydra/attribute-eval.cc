@@ -72,6 +72,7 @@ bool EvaluateAttributeImpl(
 
   Property prop;
   if (!GetProperty(prim, attr_name, &prop, err)) {
+    DCOUT("Get property failed: " << attr_name);
     return false;
   }
 
