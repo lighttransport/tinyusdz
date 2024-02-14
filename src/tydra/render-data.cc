@@ -1615,7 +1615,6 @@ bool TriangulatePolygon(
 }
 #endif
 
-#if 0  // not used a.t.m.
 // Building an Orthonormal Basis, Revisited
 // http://jcgt.org/published/0006/01/01/
 static void GenerateBasis(const vec3 &n, vec3 *tangent,
@@ -1634,6 +1633,90 @@ static void GenerateBasis(const vec3 &n, vec3 *tangent,
   }
 }
 
+struct ComputeTangentPackedVertexData {
+  value::float3 position;
+  value::float3 normal;
+  value::float2 uv0;
+
+  // comparator for std::map
+  bool operator<(const DefaultPackedVertexData &rhs) const {
+    return memcmp(reinterpret_cast<const void *>(this),
+                  reinterpret_cast<const void *>(&rhs),
+                  sizeof(DefaultPackedVertexData)) > 0;
+  }
+};
+
+struct ComputeTangentPackedVertexDataHasher {
+  inline size_t operator()(const ComputeTangentPackedVertexData &v) const {
+    // Simple hasher using FNV1 32bit
+    // TODO: Use 64bit FNV1?
+    // TODO: Use spatial hash or LSH(LocallySensitiveHash) for position value.
+    static constexpr uint32_t kFNV_Prime = 0x01000193;
+    static constexpr uint32_t kFNV_Offset_Basis = 0x811c9dc5;
+
+    const uint8_t *ptr = reinterpret_cast<const uint8_t *>(&v);
+    size_t n = sizeof(DefaultPackedVertexData);
+
+    uint32_t hash = kFNV_Offset_Basis;
+    for (size_t i = 0; i < n; i++) {
+      hash = (kFNV_Prime * hash) ^ (ptr[i]);
+    }
+
+    return size_t(hash);
+  }
+};
+
+struct ComputeTangentPackedVertexDataEqual {
+  bool operator()(const ComputeTangentPackedVertexData &lhs,
+                  const ComputeTangentPackedVertexData &rhs) const {
+    return memcmp(reinterpret_cast<const void *>(&lhs),
+                  reinterpret_cast<const void *>(&rhs),
+                  sizeof(ComputeTangentPackedVertexData)) == 0;
+  }
+};
+
+template <class PackedVert>
+struct ComputeTangentVertexInput {
+  std::vector<value::float3> positions;
+  std::vector<value::float3> normals;
+  std::vector<value::float2> uvs;
+
+  size_t size() const { return positions.size(); }
+
+  void get(size_t idx, PackedVert &output) const {
+    if (idx < positions.size()) {
+      output.position = positions[idx];
+    } else {
+      output.position = {0.0f, 0.0f, 0.0f};
+    }
+    if (idx < normals.size()) {
+      output.normal = normals[idx];
+    } else {
+      output.normal = {0.0f, 0.0f, 0.0f};
+    }
+    if (idx < uvs.size()) {
+      output.uv = uvs[idx];
+    } else {
+      output.uv = {0.0f, 0.0f};
+    }
+  }
+};
+
+template <class PackedVert>
+struct ComputeTangentVertexOutput {
+  std::vector<value::float3> positions;
+  std::vector<value::float3> normals;
+  std::vector<value::float2> uvs;
+
+  size_t size() const { return positions.size(); }
+
+  void push_back(const PackedVert &v) {
+    positions.push_back(v.position);
+    normals.push_back(v.normal);
+    uvs.push_back(v.uv0);
+  }
+};
+
 ///
 /// Compute facevarying tangent and facevarying binormal.
 ///
@@ -1647,69 +1730,102 @@ static void GenerateBasis(const vec3 &n, vec3 *tangent,
 /// Also, we assume input mesh has well-formed and has no or few vertices with similar property(position, uvs and normals)
 ///
 /// TODO:
-/// - [ ] Implement getSimilarVertexIndex in the above opengl-tutorial to better average tangent/binormal.
-///   - https://github.com/huamulan/OpenGL-tutorial/blob/master/common/vboindexer.cpp uses simple linear-search,
-///   - so could become quite slow when the input mesh has large number of vertices.
+/// - [ ] Implement better getSimilarVertexIndex in the above opengl-tutorial to better average tangent/binormal.
 ///   - Use kNN search(e.g. nanoflann https://github.com/jlblancoc/nanoflann ), or point-query by building BVH over the mesh points.
 ///     - BVH builder candidate:
 ///       - NanoRT https://github.com/lighttransport/nanort
 ///       - bvh https://github.com/madmann91/bvh
 ///   - Or we can quantize vertex attributes and compute locally sensitive hashsing? https://dl.acm.org/doi/10.1145/3188745.3188846
-/// - [ ] Implement more robust tangent/binormal frame computation algorithm for arbitrary mesh?
+/// - [ ] Support robusut computing tangent/binormal on arbitrary mesh.
 ///
 ///
+/// @param[in]  is_facevarying_input false = vertices, texcoords and normals are 'vertex' variability. true = 'facevarying' variability.
 static bool ComputeTangentsAndBinormals(
     const std::vector<vec3> &vertices,
     const std::vector<uint32_t> &faceVertexCounts,
     const std::vector<uint32_t> &faceVertexIndices,
-    const std::vector<vec2> &facevarying_texcoords,
-    const std::vector<vec3> &facevarying_normals,
-    std::vector<vec3> *facevarying_tangents,
-    std::vector<vec3> *facevarying_binormals,
+    const std::vector<vec2> &texcoords,
+    const std::vector<vec3> &normals,
+    bool is_facevarying_input,  // false: 'vertex' varying
+    std::vector<vec3> *tangents,
+    std::vector<vec3> *binormals,
+    std::vector<uint32_t> *out_indices,
     std::string *err) {
 
+  if (!tangents) {
+    SET_ERROR_AND_RETURN("tangents arg is nullptr.");
+  }
+
+  if (!binormals) {
+    SET_ERROR_AND_RETURN("binormals arg is nullptr.");
+  }
+
+  if (!out_indices) {
+    SET_ERROR_AND_RETURN("out_indices arg is nullptr.");
+  }
 
   if (vertices.empty()) {
     SET_ERROR_AND_RETURN("vertices is empty.");
   }
 
   // At least 1 triangle face should exist.
-  if (faceVertexIndices.size() < 9) {
-    SET_ERROR_AND_RETURN("faceVertexIndices.size < 9");
+  if (faceVertexIndices.size() < 3) {
+    SET_ERROR_AND_RETURN("faceVertexIndices.size < 3");
   }
 
-  if (facevarying_texcoords.empty()) {
-    SET_ERROR_AND_RETURN("facevarying_texcoords is empty");
+  if (texcoords.empty()) {
+    SET_ERROR_AND_RETURN("texcoords is empty");
   }
 
-  if (facevarying_normals.empty()) {
-    SET_ERROR_AND_RETURN("facevarying_normals is empty");
+  if (normals.empty()) {
+    SET_ERROR_AND_RETURN("normals is empty");
   }
 
-  std::vector<value::normal3f> tn(vertices.size());
-  memset(&tn.at(0), 0, sizeof(value::normal3f) * tn.size());
-  std::vector<value::normal3f> bn(vertices.size());
-  memset(&bn.at(0), 0, sizeof(value::normal3f) * bn.size());
+  if (is_facevarying_input) {
+    if (vertices.size() != faceVertexIndices.size()) {
+      SET_ERROR_AND_RETURN("Invalid vertices.size.");
+    }
+    if (texcoords.size() != faceVertexIndices.size()) {
+      SET_ERROR_AND_RETURN("Invalid texcoords.size.");
+    }
+    if (normals.size() != faceVertexIndices.size()) {
+      SET_ERROR_AND_RETURN("Invalid normals.size.");
+    }
+  } else {
+    uint32_t max_vert_index = *std::max_element(faceVertexIndices.begin(), faceVertexIndices.end());
+    if (max_vert_index >= vertices.size()) {
+      SET_ERROR_AND_RETURN("Invalid vertices.size.");
+    }
+    if (max_vert_index >= texcoords.size()) {
+      SET_ERROR_AND_RETURN("Invalid texcoords.size.");
+    }
+    if (max_vert_index >= normals.size()) {
+      SET_ERROR_AND_RETURN("Invalid normals.size.");
+    }
+  }
 
-
-  bool hasFaceVertexCounts{true};
-
-  size_t num_faces = faceVertexCounts.size();
-  if (num_faces == 0) {
+  bool hasFaceVertexCounts = true;
+  if (faceVertexCounts.size() == 0) {
     // Assume all triangle faces.
     if ((faceVertexIndices.size() % 3) != 0) {
       SET_ERROR_AND_RETURN("Invalid faceVertexIndices. It must be all triangles: faceVertexIndices.size % 3 == 0");
     }
-
-    num_faces = faceVertexIndices.size() / 3;
     hasFaceVertexCounts = false;
   }
 
+
+  // tn, bn = facevarying
+  std::vector<value::normal3f> tn(faceVertexIndices.size());
+  memset(&tn.at(0), 0, sizeof(value::normal3f) * tn.size());
+  std::vector<value::normal3f> bn(faceVertexIndices.size());
+  memset(&bn.at(0), 0, sizeof(value::normal3f) * bn.size());
+
+
   //
-  // 1. Compute tangent/binormal for each faceVertex.
+  // 1. Compute facevarying tangent/binormal for each faceVertex.
   //
   size_t faceVertexIndexOffset{0};
-  for (size_t i = 0; i < num_faces; i++) {
+  for (size_t i = 0; i < faceVertexCounts.size(); i++) {
     size_t nv = hasFaceVertexCounts ? faceVertexCounts[i] : 3;
 
     if ((faceVertexIndexOffset + nv) >= faceVertexIndices.size()) {
@@ -1737,13 +1853,13 @@ static bool ComputeTangentsAndBinormals(
 
     for (size_t f = 0; f < nv - 2; f++) {
 
-      size_t fid0 = f;
-      size_t fid1 = f+1;
-      size_t fid2 = f+2;
+      size_t fid0 = faceVertexIndexOffset + f;
+      size_t fid1 = faceVertexIndexOffset + f+1;
+      size_t fid2 = faceVertexIndexOffset + f+2;
 
-      uint32_t vf0 = faceVertexIndices[fid0];
-      uint32_t vf1 = faceVertexIndices[fid1];
-      uint32_t vf2 = faceVertexIndices[fid2];
+      uint32_t vf0 = is_facevarying_input ? uint32_t(fid0) : faceVertexIndices[fid0];
+      uint32_t vf1 = is_facevarying_input ? uint32_t(fid1) : faceVertexIndices[fid1];
+      uint32_t vf2 = is_facevarying_input ? uint32_t(fid2) : faceVertexIndices[fid2];
 
       if ((vf0 >= vertices.size()) ||
           (vf1 >= vertices.size()) ||
@@ -1776,18 +1892,18 @@ static bool ComputeTangentsAndBinormals(
       float w3x = 0.0f;
       float w3y = 0.0f;
 
-      if ((fid0 >= facevarying_texcoords.size()) ||
-          (fid1 >= facevarying_texcoords.size()) ||
-          (fid2 >= facevarying_texcoords.size()) ) {
+      if ((vf0 >= texcoords.size()) ||
+          (vf1 >= texcoords.size()) ||
+          (vf2 >= texcoords.size()) ) {
 
         // index out-of-range
-        SET_ERROR_AND_RETURN("Invalid value in faceVertexCounts. some exceeds facevarying_texcoords.size()");
+        SET_ERROR_AND_RETURN("Invalid index. some exceeds texcoords.size()");
       }
 
       {
-        vec2 uv1 = facevarying_texcoords[fid0];
-        vec2 uv2 = facevarying_texcoords[fid1];
-        vec2 uv3 = facevarying_texcoords[fid2];
+        vec2 uv1 = texcoords[vf0];
+        vec2 uv2 = texcoords[vf1];
+        vec2 uv3 = texcoords[vf2];
 
         w1x = uv1[0];
         w1y = uv1[1];
@@ -1821,109 +1937,114 @@ static bool ComputeTangentsAndBinormals(
                   (s1 * z2 - s2 * z1) * r};
 
 
-      tn[vf0][0] += tdir[0];
-      tn[vf0][1] += tdir[1];
-      tn[vf0][2] += tdir[2];
+      tn[fid0][0] += tdir[0];
+      tn[fid0][1] += tdir[1];
+      tn[fid0][2] += tdir[2];
 
-      tn[vf1][0] += tdir[0];
-      tn[vf1][1] += tdir[1];
-      tn[vf1][2] += tdir[2];
+      tn[fid1][0] += tdir[0];
+      tn[fid1][1] += tdir[1];
+      tn[fid1][2] += tdir[2];
 
-      tn[vf2][0] += tdir[0];
-      tn[vf2][1] += tdir[1];
-      tn[vf2][2] += tdir[2];
+      tn[fid2][0] += tdir[0];
+      tn[fid2][1] += tdir[1];
+      tn[fid2][2] += tdir[2];
 
-      bn[vf0][0] += bdir[0];
-      bn[vf0][1] += bdir[1];
-      bn[vf0][2] += bdir[2];
+      bn[fid0][0] += bdir[0];
+      bn[fid0][1] += bdir[1];
+      bn[fid0][2] += bdir[2];
 
-      bn[vf1][0] += bdir[0];
-      bn[vf1][1] += bdir[1];
-      bn[vf1][2] += bdir[2];
+      bn[fid1][0] += bdir[0];
+      bn[fid1][1] += bdir[1];
+      bn[fid1][2] += bdir[2];
 
-      bn[vf2][0] += bdir[0];
-      bn[vf2][1] += bdir[1];
-      bn[vf2][2] += bdir[2];
+      bn[fid2][0] += bdir[0];
+      bn[fid2][1] += bdir[1];
+      bn[fid2][2] += bdir[2];
     }
 
     faceVertexIndexOffset += nv;
   }
 
   //
-  // 2. normalize * orthogonalize;
+  // 2. Build indices(use same index for shared-vertex)
   //
-  facevarying_tangents->resize(facevarying_normals.size());
-  facevarying_binormals->resize(facevarying_normals.size());
+  std::vector<uint32_t> vertex_indices; // len = faceVertexIndices.size()
+  {
+    ComputeTangentVertexInput<ComputeTangentPackedVertexData> vertex_input;
+    ComputeTangentVertexOutput<ComputeTangentPackedVertexData> vertex_output;
 
-  faceVertexIndexOffset = 0;
-  for (size_t i = 0; i < num_faces; i++) {
-    size_t nv = hasFaceVertexCounts ? faceVertexCounts[i] : 3;
+    if (is_facevarying_input) {
+      vertex_input.positions = vertices;
+      vertex_input.normals = normals;
+      vertex_input.uvs = texcoords;
+    } else {
+      // expand to facevarying.
+      for (size_t i = 0; i < faceVertexIndices.size(); i++) {
+        vertex_input.positions.push_back(vertices[faceVertexIndices[i]]);
+        vertex_input.normals.push_back(normals[faceVertexIndices[i]]);
+        vertex_input.uvs.push_back(texcoords[faceVertexIndices[i]]);
+      }
+      
+    }
 
-    for (size_t f = 0; f < nv - 2; f++) {
-      uint32_t vf[3];
+    BuildIndices<ComputeTangentVertexInput<ComputeTangentPackedVertexData>,
+                 ComputeTangentVertexOutput<ComputeTangentPackedVertexData>,
+                 ComputeTangentPackedVertexData, ComputeTangentPackedVertexDataHasher,
+                 ComputeTangentPackedVertexDataEqual>(vertex_input, vertex_output,
+                                               vertex_indices);
 
-      vf[0] = faceVertexIndices[faceVertexIndexOffset + f];
-      vf[1] = faceVertexIndices[faceVertexIndexOffset + f + 1];
-      vf[2] = faceVertexIndices[faceVertexIndexOffset + f + 2];
+    // We only need indices. Discard vertex_output
+  }
 
-      value::normal3f n[3];
+  const uint32_t num_verts = *std::max_element(vertex_indices.begin(), vertex_indices.end());
+
+  //
+  // 3. normalize * orthogonalize;
+  //
+  tangents->resize(num_verts);
+  binormals->resize(num_verts);
+
+  for (size_t i = 0; i < vertex_indices.size(); i++) {
+
+      value::normal3f n;
 
       // http://www.terathon.com/code/tangent.html
 
-      {
-        n[0][0] = facevarying_normals[faceVertexIndexOffset + f + 0][0];
-        n[0][1] = facevarying_normals[faceVertexIndexOffset + f + 0][1];
-        n[0][2] = facevarying_normals[faceVertexIndexOffset + f + 0][2];
+      n[0] = normals[vertex_indices[i]][0];
+      n[1] = normals[vertex_indices[i]][1];
+      n[2] = normals[vertex_indices[i]][2];
 
-        n[1][0] = facevarying_normals[faceVertexIndexOffset + f + 1][0];
-        n[1][1] = facevarying_normals[faceVertexIndexOffset + f + 1][1];
-        n[1][2] = facevarying_normals[faceVertexIndexOffset + f + 1][2];
+      value::normal3f Tn = tn[vertex_indices[i]];
+      value::normal3f Bn = bn[vertex_indices[i]];
 
-        n[2][0] = facevarying_normals[faceVertexIndexOffset + f + 2][0];
-        n[2][1] = facevarying_normals[faceVertexIndexOffset + f + 2][1];
-        n[2][2] = facevarying_normals[faceVertexIndexOffset + f + 2][2];
+      if (vlength(Bn) > 0.0f) {
+        Bn = vnormalize(Bn);
       }
 
-      size_t dst_idx[3];
-      dst_idx[0] = f;
-      dst_idx[1] = f+1;
-      dst_idx[2] = f+2;
-
-      for (size_t k = 0; k < 3; k++) {
-        value::normal3f Tn = tn[vf[k]];
-        value::normal3f Bn = bn[vf[k]];
-
-        if (vlength(Bn) > 0.0f) {
-          Bn = vnormalize(Bn);
-        }
-
-        // Gram-Schmidt orthogonalize
-        Tn = (Tn - n[k] * vdot(n[k], Tn));
-        if (vlength(Tn) > 0.0f) {
-          Tn = vnormalize(Tn);
-        }
-
-        // Calculate handedness
-        if (vdot(vcross(n[k], Tn), Bn) < 0.0f) {
-          Tn = Tn * -1.0f;
-        }
-
-        ((*facevarying_tangents)[faceVertexIndexOffset + dst_idx[k]])[0] = Tn[0];
-        ((*facevarying_tangents)[faceVertexIndexOffset + dst_idx[k]])[1] = Tn[1];
-        ((*facevarying_tangents)[faceVertexIndexOffset + dst_idx[k]])[2] = Tn[2];
-
-        ((*facevarying_binormals)[faceVertexIndexOffset + dst_idx[k]])[0] = Bn[0];
-        ((*facevarying_binormals)[faceVertexIndexOffset + dst_idx[k]])[1] = Bn[1];
-        ((*facevarying_binormals)[faceVertexIndexOffset + dst_idx[k]])[2] = Bn[2];
+      // Gram-Schmidt orthogonalize
+      Tn = (Tn - n * vdot(n, Tn));
+      if (vlength(Tn) > 0.0f) {
+        Tn = vnormalize(Tn);
       }
-    }
 
-    faceVertexIndexOffset += nv;
+      // Calculate handedness
+      if (vdot(vcross(n, Tn), Bn) < 0.0f) {
+        Tn = Tn * -1.0f;
+      }
+
+      ((*tangents)[vertex_indices[i]])[0] = Tn[0];
+      ((*tangents)[vertex_indices[i]])[1] = Tn[1];
+      ((*tangents)[vertex_indices[i]])[2] = Tn[2];
+
+      ((*binormals)[vertex_indices[i]])[0] = Bn[0];
+      ((*binormals)[vertex_indices[i]])[1] = Bn[1];
+      ((*binormals)[vertex_indices[i]])[2] = Bn[2];
   }
+
+  (*out_indices) = vertex_indices;
 
   return true;
 }
-#endif
 
 }  // namespace
 
