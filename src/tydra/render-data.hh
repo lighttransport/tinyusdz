@@ -458,6 +458,11 @@ struct VertexAttribute {
     return reinterpret_cast<const void *>(data.data());
   }
 
+  void set_buffer(const uint8_t *addr, size_t n) {
+    data.resize(n);
+    memcpy(data.data(), addr, n);
+  }
+
   const std::vector<uint8_t> &get_data() const { return data; }
 
   std::vector<uint8_t> &get_data() { return data; }
@@ -1368,6 +1373,7 @@ class RenderSceneConverterEnv {
   double timecode{value::TimeCode::Default()};
   value::TimeSampleInterpolationType tinterp{
       value::TimeSampleInterpolationType::Linear};
+
 };
 
 //
@@ -1380,17 +1386,17 @@ class RenderSceneConverter {
   RenderSceneConverter(const RenderSceneConverter &rhs) = delete;
   RenderSceneConverter(RenderSceneConverter &&rhs) = delete;
 
-  void set_scene_config(const RenderSceneConverterConfig &config) {
-    _scene_config = config;
-  }
+  //void set_scene_config(const RenderSceneConverterConfig &config) {
+  //  _scene_config = config;
+  //}
 
-  void set_mesh_config(const MeshConverterConfig &config) {
-    _mesh_config = config;
-  }
+  //void set_mesh_config(const MeshConverterConfig &config) {
+  //  _mesh_config = config;
+  //}
 
-  void set_material_config(const MaterialConverterConfig &config) {
-    _material_config = config;
-  }
+  //void set_material_config(const MaterialConverterConfig &config) {
+  //  _material_config = config;
+  //}
 
   void set_asset_resoluition_resolver(AssetResolutionResolver &&rhs) {
     _asset_resolver = std::move(rhs);
@@ -1566,9 +1572,9 @@ class RenderSceneConverter {
 
   AssetResolutionResolver _asset_resolver;
 
-  RenderSceneConverterConfig _scene_config;
-  MeshConverterConfig _mesh_config;
-  MaterialConverterConfig _material_config;
+  //RenderSceneConverterConfig _scene_config;
+  //MeshConverterConfig _mesh_config;
+  //MaterialConverterConfig _material_config;
   // const Stage *_stage{nullptr};
 
   void PushInfo(const std::string &msg) { _info += msg; }
