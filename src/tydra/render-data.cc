@@ -962,11 +962,13 @@ static bool ToVertexVaryingAttribute(
 ///
 static bool TriangulateVertexAttribute(
     VertexAttribute &vattr, const std::vector<uint32_t> &faceVertexCounts,
-    const std::vector<uint32_t> &faceVertexIndices,
     const std::vector<uint32_t> &triangulatedFaceVertexIndices,
     const std::vector<size_t> &triangulatedToOrigFaceVertexIndexMap,
     const std::vector<uint32_t> &triangulatedFaceCounts, std::string *err) {
-  (void)faceVertexIndices;
+
+  if (vattr.vertex_count() == 0) {
+    return true;
+  }
 
   if (triangulatedFaceCounts.empty()) {
     SET_ERROR_AND_RETURN("triangulatedFaceCounts is empty.");
@@ -1148,7 +1150,7 @@ bool ScalarValueToVertexAttribute(const value::Value &value,
 
   if (auto pv = value.as<UnderlyingTy>()) {
     dst.data.resize(sizeof(UnderlyingTy));
-    memcpy(dst.data.data(), pv, sizeof(UnderlyingTy));  
+    memcpy(dst.data.data(), pv, sizeof(UnderlyingTy));
 
     dst.elementSize = 1;
     dst.stride = 0;
@@ -1157,7 +1159,7 @@ bool ScalarValueToVertexAttribute(const value::Value &value,
     dst.name = name;
     dst.indices.clear();
     return true;
-  } 
+  }
 
   SET_ERROR_AND_RETURN("[Internal error] value is not scalar-typed value.");
 }
@@ -1176,11 +1178,11 @@ bool ArrayValueToVertexAttribute(const value::Value &value,
 
   size_t value_counts = value.array_size();
   if (value_counts == 0) {
-    SET_ERROR_AND_RETURN("Empty array size"); 
+    SET_ERROR_AND_RETURN("Empty array size");
   }
 
   if (variability == VertexVariability::Indexed) {
-    SET_ERROR_AND_RETURN("Indexed variability is not supported."); 
+    SET_ERROR_AND_RETURN("Indexed variability is not supported.");
   }
 
   if (VertexAttributeFormatSize(format) != sizeof(UnderlyingTy)) {
@@ -1213,7 +1215,7 @@ bool ArrayValueToVertexAttribute(const value::Value &value,
     }
 
     dst.data.resize(value_counts * sizeof(UnderlyingTy));
-    memcpy(dst.data.data(), pv, value_counts * sizeof(UnderlyingTy));  
+    memcpy(dst.data.data(), pv, value_counts * sizeof(UnderlyingTy));
 
     dst.elementSize = elementSize;
     dst.stride = 0;
@@ -1222,7 +1224,7 @@ bool ArrayValueToVertexAttribute(const value::Value &value,
     dst.name = name;
     dst.indices.clear();
     return true;
-  } 
+  }
 
   SET_ERROR_AND_RETURN(fmt::format("Requested underlying type {} but input `value` has underlying type {}.",
     value::TypeTraits<UnderlyingTy>::type_name(), value.underlying_type_name()));
@@ -1271,7 +1273,7 @@ bool ToVertexAttribute(const GeomPrimvar &primvar,
   }
 
   uint32_t underlyingTypeId = value.underlying_type_id();
-  
+
   // Cast to underlying type
 
 #define TO_TYPED_VALUE(__underlying_ty, __vfmt)                     \
@@ -2265,7 +2267,7 @@ bool RenderSceneConverter::ConvertMesh(
         int(rmaterial_idMap.at(material_path.backface_material_path));
   }
 
-  if (_mesh_config.validate_geomsubset) {
+  if (env.mesh_config.validate_geomsubset) {
     size_t elementCount = dst.faceVertexCounts.size();
 
     if (material_subsets.size() &&
@@ -2330,10 +2332,10 @@ bool RenderSceneConverter::ConvertMesh(
     // No material assigned to the Mesh, but we may still want texcoords solely(
     // assign material after the conversion)
     // So find a primvar whose name matches default texcoord name.
-    if (mesh.has_primvar(_mesh_config.default_texcoords_primvar_name)) {
+    if (mesh.has_primvar(env.mesh_config.default_texcoords_primvar_name)) {
       DCOUT("uv primvar  with default_texcoords_primvar_name found.");
       auto ret = GetTextureCoordinate(
-          env.stage, mesh, _mesh_config.default_texcoords_primvar_name, env.timecode,
+          env.stage, mesh, env.mesh_config.default_texcoords_primvar_name, env.timecode,
           env.tinterp);
       if (ret) {
         const VertexAttribute vattr = ret.value();
@@ -2376,26 +2378,26 @@ bool RenderSceneConverter::ConvertMesh(
   uint32_t num_faces = uint32_t(dst.faceVertexCounts.size());
   uint32_t num_face_vertex_indices = uint32_t(dst.faceVertexIndices.size());
 
-  if (mesh.has_primvar(_mesh_config.default_tangents_primvar_name)) {
+  if (mesh.has_primvar(env.mesh_config.default_tangents_primvar_name)) {
     GeomPrimvar pvar;
 
-    if (!GetGeomPrimvar(env.stage, &mesh, _mesh_config.default_tangents_primvar_name, &pvar, &_err)) {
+    if (!GetGeomPrimvar(env.stage, &mesh, env.mesh_config.default_tangents_primvar_name, &pvar, &_err)) {
       return false;
     }
 
-    if (!ToVertexAttribute(pvar, _mesh_config.default_tangents_primvar_name, num_vertices, num_faces, num_face_vertex_indices, dst.tangents, &_err, env.timecode, env.tinterp)) {
+    if (!ToVertexAttribute(pvar, env.mesh_config.default_tangents_primvar_name, num_vertices, num_faces, num_face_vertex_indices, dst.tangents, &_err, env.timecode, env.tinterp)) {
       return false;
     }
   }
 
-  if (mesh.has_primvar(_mesh_config.default_binormals_primvar_name)) {
+  if (mesh.has_primvar(env.mesh_config.default_binormals_primvar_name)) {
     GeomPrimvar pvar;
 
-    if (!GetGeomPrimvar(env.stage, &mesh, _mesh_config.default_binormals_primvar_name, &pvar, &_err)) {
+    if (!GetGeomPrimvar(env.stage, &mesh, env.mesh_config.default_binormals_primvar_name, &pvar, &_err)) {
       return false;
     }
 
-    if (!ToVertexAttribute(pvar, _mesh_config.default_binormals_primvar_name, num_vertices, num_faces, num_face_vertex_indices, dst.binormals, &_err, env.timecode, env.tinterp)) {
+    if (!ToVertexAttribute(pvar, env.mesh_config.default_binormals_primvar_name, num_vertices, num_faces, num_face_vertex_indices, dst.binormals, &_err, env.timecode, env.tinterp)) {
       return false;
     }
   }
@@ -2507,7 +2509,7 @@ bool RenderSceneConverter::ConvertMesh(
       VertexAttribute va_normals;
       if (TryConvertFacevaryingToVertex(
               dst.normals, &va_normals, dst.faceVertexIndices, &_warn,
-              _mesh_config.facevarying_to_vertex_eps)) {
+              env.mesh_config.facevarying_to_vertex_eps)) {
         dst.normals = std::move(va_normals);
       } else {
         is_single_indexable = false;
@@ -2540,7 +2542,7 @@ bool RenderSceneConverter::ConvertMesh(
       VertexAttribute va_uvs;
       if (TryConvertFacevaryingToVertex(
               vattr, &va_uvs, dst.faceVertexIndices, &_warn,
-              _mesh_config.facevarying_to_vertex_eps)) {
+              env.mesh_config.facevarying_to_vertex_eps)) {
         dst.texcoords[uint32_t(slotId)] = va_uvs;
       } else {
         is_single_indexable = false;
@@ -2570,7 +2572,7 @@ bool RenderSceneConverter::ConvertMesh(
       VertexAttribute va;
       if (TryConvertFacevaryingToVertex(
               dst.vertex_colors, &va, dst.faceVertexIndices, &_warn,
-              _mesh_config.facevarying_to_vertex_eps)) {
+              env.mesh_config.facevarying_to_vertex_eps)) {
         dst.vertex_colors = std::move(va);
       } else {
         is_single_indexable = false;
@@ -2597,13 +2599,15 @@ bool RenderSceneConverter::ConvertMesh(
       VertexAttribute va;
       if (TryConvertFacevaryingToVertex(
               dst.vertex_opacities, &va, dst.faceVertexIndices, &_warn,
-              _mesh_config.facevarying_to_vertex_eps)) {
+              env.mesh_config.facevarying_to_vertex_eps)) {
         dst.vertex_opacities = std::move(va);
       } else {
         is_single_indexable = false;
       }
     }
   }
+
+  DCOUT(mesh.name << " : is_single_indexable = " << is_single_indexable);
 
   //
   // Convert built-in vertex attributes to either 'vertex' or 'facevarying'
@@ -2641,7 +2645,7 @@ bool RenderSceneConverter::ConvertMesh(
   ///  - Triangulate vertex attributes(normals, uvcoords, vertex
   ///  colors/opacities).
   ///
-  bool triangulate = _mesh_config.triangulate;
+  bool triangulate = env.mesh_config.triangulate;
   if (triangulate) {
     std::vector<uint32_t> triangulatedFaceVertexCounts;  // should be all 3's
     std::vector<uint32_t> triangulatedFaceVertexIndices;
@@ -2730,15 +2734,56 @@ bool RenderSceneConverter::ConvertMesh(
       }
     }
 
+    //
     // Triangulate built-in vertex attributes.
+    //
     {
       if (!TriangulateVertexAttribute(dst.normals, dst.faceVertexCounts,
-                                      dst.faceVertexIndices,
                                       triangulatedFaceVertexIndices,
                                       triangulatedToOrigFaceVertexIndexMap,
                                       triangulatedFaceCounts, &_err)) {
-        return false;
+        PUSH_ERROR_AND_RETURN("Failed to triangulate normals attribute.");
       }
+
+      if (!TriangulateVertexAttribute(dst.tangents, dst.faceVertexCounts,
+                                      triangulatedFaceVertexIndices,
+                                      triangulatedToOrigFaceVertexIndexMap,
+                                      triangulatedFaceCounts, &_err)) {
+        PUSH_ERROR_AND_RETURN("Failed to triangulate tangents attribute.");
+      }
+
+      if (!TriangulateVertexAttribute(dst.binormals, dst.faceVertexCounts,
+                                      triangulatedFaceVertexIndices,
+                                      triangulatedToOrigFaceVertexIndexMap,
+                                      triangulatedFaceCounts, &_err)) {
+        PUSH_ERROR_AND_RETURN("Failed to triangulate binormals attribute.");
+      }
+
+      for (auto &it : dst.texcoords) {
+
+        if (!TriangulateVertexAttribute(it.second, dst.faceVertexCounts,
+                                        triangulatedFaceVertexIndices,
+                                        triangulatedToOrigFaceVertexIndexMap,
+                                        triangulatedFaceCounts, &_err)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Failed to triangulate texcoords[{}] attribute.", it.first));
+        }
+
+      }
+
+      if (!TriangulateVertexAttribute(dst.vertex_colors, dst.faceVertexCounts,
+                                      triangulatedFaceVertexIndices,
+                                      triangulatedToOrigFaceVertexIndexMap,
+                                      triangulatedFaceCounts, &_err)) {
+        PUSH_ERROR_AND_RETURN("Failed to triangulate vertex_colors attribute.");
+      }
+
+      if (!TriangulateVertexAttribute(dst.vertex_opacities, dst.faceVertexCounts,
+                                      triangulatedFaceVertexIndices,
+                                      triangulatedToOrigFaceVertexIndexMap,
+                                      triangulatedFaceCounts, &_err)) {
+        PUSH_ERROR_AND_RETURN("Failed to triangulate vertopacitiesex_colors attribute.");
+      }
+
     }
 
     dst.triangulatedFaceVertexCounts = std::move(triangulatedFaceVertexCounts);
@@ -2749,7 +2794,7 @@ bool RenderSceneConverter::ConvertMesh(
         std::move(triangulatedToOrigFaceVertexIndexMap);
     dst.triangulatedFaceCounts = std::move(triangulatedFaceCounts);
 
-  }  // end triangulate
+  }
 
   //
   // 5. Vertex skin weights(jointIndex and jointWeights)
@@ -2776,11 +2821,30 @@ bool RenderSceneConverter::ConvertMesh(
                       "metadata(and set it to `vertex`)"));
     }
 
-    if (jointIndices.get_interpolation() != Interpolation::Vertex) {
+    // TODO: Disallow Varying?
+    if ((jointIndices.get_interpolation() != Interpolation::Vertex) &&
+        (jointIndices.get_interpolation() != Interpolation::Varying))
+         {
       PUSH_ERROR_AND_RETURN(
           fmt::format("`skel:jointIndices` primvar must use `vertex` for "
                       "`interpolation` metadata, but got `{}`.",
                       to_string(jointIndices.get_interpolation())));
+    }
+
+    if (!jointWeights.has_interpolation()) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("`skel:jointWeights` primvar must author `interpolation` "
+                      "metadata(and set it to `vertex`)"));
+    }
+
+    // TODO: Disallow Varying?
+    if ((jointWeights.get_interpolation() != Interpolation::Vertex) &&
+        (jointWeights.get_interpolation() != Interpolation::Varying))
+         {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("`skel:jointWeights` primvar must use `vertex` for "
+                      "`interpolation` metadata, but got `{}`.",
+                      to_string(jointWeights.get_interpolation())));
     }
 
     uint32_t jointIndicesElementSize = jointIndices.get_elementSize();
@@ -2788,26 +2852,26 @@ bool RenderSceneConverter::ConvertMesh(
 
     if (jointIndicesElementSize == 0) {
       PUSH_ERROR_AND_RETURN(
-          fmt::format("`elementSize` of `skel:jointIndices` is zero."));
+          fmt::format("`elementSize` metadata of `skel:jointIndices` is zero."));
     }
 
     if (jointWeightsElementSize == 0) {
       PUSH_ERROR_AND_RETURN(
-          fmt::format("`elementSize` of `skel:jointWeights` is zero."));
+          fmt::format("`elementSize` metadata of `skel:jointWeights` is zero."));
     }
 
-    if (jointIndicesElementSize > _mesh_config.max_skin_elementSize) {
+    if (jointIndicesElementSize > env.mesh_config.max_skin_elementSize) {
       PUSH_ERROR_AND_RETURN(fmt::format(
           "`elementSize` {} of `skel:jointIndices` too large. Max allowed is "
           "set to {}",
-          jointIndicesElementSize, _mesh_config.max_skin_elementSize));
+          jointIndicesElementSize, env.mesh_config.max_skin_elementSize));
     }
 
-    if (jointWeightsElementSize > _mesh_config.max_skin_elementSize) {
+    if (jointWeightsElementSize > env.mesh_config.max_skin_elementSize) {
       PUSH_ERROR_AND_RETURN(fmt::format(
           "`elementSize` {} of `skel:jointWeights` too large. Max allowed is "
           "set to {}",
-          jointWeightsElementSize, _mesh_config.max_skin_elementSize));
+          jointWeightsElementSize, env.mesh_config.max_skin_elementSize));
     }
 
     if (jointIndicesElementSize != jointWeightsElementSize) {
@@ -2970,7 +3034,9 @@ bool RenderSceneConverter::ConvertMesh(
   //
   // 7. Build indices
   //
-  if (_mesh_config.build_indices && (!is_single_indexable)) {
+  if (env.mesh_config.build_indices && (!is_single_indexable)) {
+    DCOUT("Build vertex indices");
+
     //
     // Remap points from 'vertex' to 'facevarying' to setup orgVertexIndices.
     //
@@ -2989,6 +3055,8 @@ bool RenderSceneConverter::ConvertMesh(
     vertex_input.uv0s.assign(num_fvs, {0.0f, 0.0f});
     vertex_input.uv1s.assign(num_fvs, {0.0f, 0.0f});
     vertex_input.normals.assign(num_fvs, {0.0f, 0.0f, 0.0f});
+    vertex_input.tangents.assign(num_fvs, {0.0f, 0.0f, 0.0f});
+    vertex_input.binormals.assign(num_fvs, {0.0f, 0.0f, 0.0f});
     vertex_input.colors.assign(num_fvs, {0.0f, 0.0f, 0.0f});
     vertex_input.opacities.assign(num_fvs, 0.0f);
 
@@ -3141,11 +3209,50 @@ bool RenderSceneConverter::ConvertMesh(
                  DefaultPackedVertexData, DefaultPackedVertexDataHasher,
                  DefaultPackedVertexDataEqual>(vertex_input, vertex_output,
                                                out_indices);
+
+
+    dst.faceVertexIndices = out_indices;
+    dst.points = vertex_output.positions;
+    if (normals_ptr) {
+      dst.normals.set_buffer(reinterpret_cast<const uint8_t *>(vertex_output.normals.data()), vertex_output.normals.size() * sizeof(value::float3));
+    }
+
+    if (texcoord0_ptr) {
+      dst.texcoords[0].set_buffer(reinterpret_cast<const uint8_t *>(vertex_output.uv0s.data()), vertex_output.uv0s.size() * sizeof(value::float2));
+    }
+
+    if (texcoord1_ptr) {
+      dst.texcoords[1].set_buffer(reinterpret_cast<const uint8_t *>(vertex_output.uv1s.data()), vertex_output.uv1s.size() * sizeof(value::float2));
+    }
+
+    if (tangents_ptr) {
+      dst.tangents.set_buffer(reinterpret_cast<const uint8_t *>(vertex_output.tangents.data()), vertex_output.tangents.size() * sizeof(value::float3));
+    }
+
+    if (binormals_ptr) {
+      dst.binormals.set_buffer(reinterpret_cast<const uint8_t *>(vertex_output.binormals.data()), vertex_output.binormals.size() * sizeof(value::float3));
+    }
+
+    if (colors_ptr) {
+      dst.vertex_colors.set_buffer(reinterpret_cast<const uint8_t *>(vertex_output.colors.data()), vertex_output.colors.size() * sizeof(value::float3));
+    }
+
+    if (opacities_ptr) {
+      dst.vertex_opacities.set_buffer(reinterpret_cast<const uint8_t *>(vertex_output.opacities.data()), vertex_output.opacities.size() * sizeof(value::float3));
+    }
+
+    is_single_indexable = true;
   }
 
   //
   // 8. Compute tangents.
   //
+  bool tangents_computed = false;
+  if (env.mesh_config.compute_tangents_and_binormals && (dst.binormals.vertex_count() == 0 && dst.tangents.vertex_count() == 0)) {
+    // TODO
+  }
+
+  (void)tangents_computed;
 
   (*dstMesh) = std::move(dst);
   return true;
@@ -3433,11 +3540,11 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env, 
     assetImageBuffer.componentType = ComponentType::UInt8;
     assetImageBuffer.count = 1;
 
-    if (_scene_config.load_texture_assets) {
+    if (env.scene_config.load_texture_assets) {
       std::string warn;
 
       TextureImageLoaderFunction tex_loader_fun =
-          _material_config.texture_image_loader_function;
+          env.material_config.texture_image_loader_function;
 
       if (!tex_loader_fun) {
         tex_loader_fun = DefaultTextureImageLoaderFunction;
@@ -3446,9 +3553,9 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env, 
       bool tex_ok = tex_loader_fun(
           assetPath, assetInfo, _asset_resolver, &texImage,
           &assetImageBuffer.data,
-          _material_config.texture_image_loader_function_userdata, &warn, &err);
+          env.material_config.texture_image_loader_function_userdata, &warn, &err);
 
-      if (!tex_ok && !_material_config.allow_texture_load_failure) {
+      if (!tex_ok && !env.material_config.allow_texture_load_failure) {
         PUSH_ERROR_AND_RETURN("Failed to load texture image: " + err);
       }
 
@@ -3507,7 +3614,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env, 
     BufferData imageBuffer;
 
     // Linearlization and widen texel bit depth if required.
-    if (_material_config.linearize_color_space) {
+    if (env.material_config.linearize_color_space) {
       size_t width = size_t(texImage.width);
       size_t height = size_t(texImage.height);
       size_t channels = size_t(texImage.channels);
@@ -3523,7 +3630,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env, 
 
       if (assetImageBuffer.componentType == tydra::ComponentType::UInt8) {
         if (texImage.usdColorSpace == tydra::ColorSpace::sRGB) {
-          if (_material_config.preserve_texel_bitdepth) {
+          if (env.material_config.preserve_texel_bitdepth) {
             // u8 sRGB -> u8 Linear
             imageBuffer.componentType = tydra::ComponentType::UInt8;
 
@@ -3559,7 +3666,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env, 
           texImage.colorSpace = tydra::ColorSpace::Linear;
 
         } else if (texImage.usdColorSpace == tydra::ColorSpace::Linear) {
-          if (_material_config.preserve_texel_bitdepth) {
+          if (env.material_config.preserve_texel_bitdepth) {
             // no op.
             imageBuffer = std::move(assetImageBuffer);
 
@@ -3632,7 +3739,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env, 
       // Same color space.
 
       if (assetImageBuffer.componentType == tydra::ComponentType::UInt8) {
-        if (_material_config.preserve_texel_bitdepth) {
+        if (env.material_config.preserve_texel_bitdepth) {
           // Do nothing.
           imageBuffer = std::move(assetImageBuffer);
 
