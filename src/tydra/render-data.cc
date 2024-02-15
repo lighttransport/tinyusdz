@@ -44,6 +44,10 @@
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
+// For tangent/binormal computation
+// NOTE: HalfEdge is not used atm.
+#include "external/half-edge.hh"
+
 // For triangulation.
 // TODO: Use tinyobjloader's triangulation
 #include "external/mapbox/earcut/earcut.hpp"
@@ -1615,6 +1619,7 @@ bool TriangulatePolygon(
 }
 #endif
 
+#if 0 // not used atm.
 // Building an Orthonormal Basis, Revisited
 // http://jcgt.org/published/0006/01/01/
 static void GenerateBasis(const vec3 &n, vec3 *tangent,
@@ -1632,11 +1637,12 @@ static void GenerateBasis(const vec3 &n, vec3 *tangent,
     (*binormal) = vec3{b, 1.0f - n[1] * n[1] * a, -n[1]};
   }
 }
+#endif
 
 struct ComputeTangentPackedVertexData {
   value::float3 position;
   value::float3 normal;
-  value::float2 uv0;
+  value::float2 uv;
 
   // comparator for std::map
   bool operator<(const DefaultPackedVertexData &rhs) const {
@@ -1713,7 +1719,7 @@ struct ComputeTangentVertexOutput {
   void push_back(const PackedVert &v) {
     positions.push_back(v.position);
     normals.push_back(v.normal);
-    uvs.push_back(v.uv0);
+    uvs.push_back(v.uv);
   }
 };
 
@@ -1737,9 +1743,13 @@ struct ComputeTangentVertexOutput {
 ///       - bvh https://github.com/madmann91/bvh
 ///   - Or we can quantize vertex attributes and compute locally sensitive hashsing? https://dl.acm.org/doi/10.1145/3188745.3188846
 /// - [ ] Support robusut computing tangent/binormal on arbitrary mesh.
+///  - e.g. vector field calculation, use instance-mesh algorithm, etc...
+//   - Use half-edges to find adjacent face/vertex.
 ///
 ///
-/// @param[in]  is_facevarying_input false = vertices, texcoords and normals are 'vertex' variability. true = 'facevarying' variability.
+/// @param[in] is_facevarying_input false = vertices, texcoords and normals are 'vertex' variability. true = 'facevarying' variability.
+/// @param[in] build_indices
+///
 static bool ComputeTangentsAndBinormals(
     const std::vector<vec3> &vertices,
     const std::vector<uint32_t> &faceVertexCounts,
@@ -1851,6 +1861,7 @@ static bool ComputeTangentsAndBinormals(
     // facet0:  fv0, fv1, fv2
     // facet1:  fv1, fv2, fv3
 
+
     for (size_t f = 0; f < nv - 2; f++) {
 
       size_t fid0 = faceVertexIndexOffset + f;
@@ -1937,29 +1948,34 @@ static bool ComputeTangentsAndBinormals(
                   (s1 * z2 - s2 * z1) * r};
 
 
-      tn[fid0][0] += tdir[0];
-      tn[fid0][1] += tdir[1];
-      tn[fid0][2] += tdir[2];
+      //
+      // NOTE: for quad or polygon mesh, this overwrites previous 2 facevarying points for each face.
+      //       And this would not be a good way to compute tangents for quad/polygon.
+      //
 
-      tn[fid1][0] += tdir[0];
-      tn[fid1][1] += tdir[1];
-      tn[fid1][2] += tdir[2];
+      tn[fid0][0] = tdir[0];
+      tn[fid0][1] = tdir[1];
+      tn[fid0][2] = tdir[2];
 
-      tn[fid2][0] += tdir[0];
-      tn[fid2][1] += tdir[1];
-      tn[fid2][2] += tdir[2];
+      tn[fid1][0] = tdir[0];
+      tn[fid1][1] = tdir[1];
+      tn[fid1][2] = tdir[2];
 
-      bn[fid0][0] += bdir[0];
-      bn[fid0][1] += bdir[1];
-      bn[fid0][2] += bdir[2];
+      tn[fid2][0] = tdir[0];
+      tn[fid2][1] = tdir[1];
+      tn[fid2][2] = tdir[2];
 
-      bn[fid1][0] += bdir[0];
-      bn[fid1][1] += bdir[1];
-      bn[fid1][2] += bdir[2];
+      bn[fid0][0] = bdir[0];
+      bn[fid0][1] = bdir[1];
+      bn[fid0][2] = bdir[2];
 
-      bn[fid2][0] += bdir[0];
-      bn[fid2][1] += bdir[1];
-      bn[fid2][2] += bdir[2];
+      bn[fid1][0] = bdir[0];
+      bn[fid1][1] = bdir[1];
+      bn[fid1][2] = bdir[2];
+
+      bn[fid2][0] = bdir[0];
+      bn[fid2][1] = bdir[1];
+      bn[fid2][2] = bdir[2];
     }
 
     faceVertexIndexOffset += nv;
@@ -1984,7 +2000,7 @@ static bool ComputeTangentsAndBinormals(
         vertex_input.normals.push_back(normals[faceVertexIndices[i]]);
         vertex_input.uvs.push_back(texcoords[faceVertexIndices[i]]);
       }
-      
+
     }
 
     BuildIndices<ComputeTangentVertexInput<ComputeTangentPackedVertexData>,
@@ -2001,44 +2017,70 @@ static bool ComputeTangentsAndBinormals(
   //
   // 3. normalize * orthogonalize;
   //
-  tangents->resize(num_verts);
-  binormals->resize(num_verts);
+
+  // per-vertex tangents/binormals
+  std::vector<value::normal3f> v_tn;
+  v_tn.assign(num_verts, {0.0f, 0.0f, 0.0f});
+
+  std::vector<value::normal3f> v_bn;
+  v_bn.assign(num_verts, {0.0f, 0.0f, 0.0f});
+
+  for (size_t i = 0; i < vertex_indices.size(); i++) {
+    value::normal3f Tn = tn[vertex_indices[i]];
+    value::normal3f Bn = bn[vertex_indices[i]];
+
+    v_tn[vertex_indices[i]][0] += Tn[0];
+    v_tn[vertex_indices[i]][1] += Tn[1];
+    v_tn[vertex_indices[i]][2] += Tn[2];
+
+    v_bn[vertex_indices[i]][0] += Bn[0];
+    v_bn[vertex_indices[i]][1] += Bn[1];
+    v_bn[vertex_indices[i]][2] += Bn[2];
+  }
+
+  for (size_t i = 0; i < size_t(num_verts); i++) {
+    if (vlength(v_tn[i]) > 0.0f) {
+      v_tn[i] = vnormalize(v_tn[i]);
+    }
+    if (vlength(v_bn[i]) > 0.0f) {
+      v_bn[i] = vnormalize(v_bn[i]);
+    }
+  }
+
+  tangents->assign(num_verts, {0.0f, 0.0f, 0.0f});
+  binormals->assign(num_verts, {0.0f, 0.0f, 0.0f});
 
   for (size_t i = 0; i < vertex_indices.size(); i++) {
 
-      value::normal3f n;
+    value::normal3f n;
 
-      // http://www.terathon.com/code/tangent.html
+    // http://www.terathon.com/code/tangent.html
 
-      n[0] = normals[vertex_indices[i]][0];
-      n[1] = normals[vertex_indices[i]][1];
-      n[2] = normals[vertex_indices[i]][2];
+    n[0] = normals[vertex_indices[i]][0];
+    n[1] = normals[vertex_indices[i]][1];
+    n[2] = normals[vertex_indices[i]][2];
 
-      value::normal3f Tn = tn[vertex_indices[i]];
-      value::normal3f Bn = bn[vertex_indices[i]];
+    value::normal3f Tn = v_tn[vertex_indices[i]];
+    value::normal3f Bn = v_bn[vertex_indices[i]];
 
-      if (vlength(Bn) > 0.0f) {
-        Bn = vnormalize(Bn);
-      }
+    // Gram-Schmidt orthogonalize
+    Tn = (Tn - n * vdot(n, Tn));
+    if (vlength(Tn) > 0.0f) {
+      Tn = vnormalize(Tn);
+    }
 
-      // Gram-Schmidt orthogonalize
-      Tn = (Tn - n * vdot(n, Tn));
-      if (vlength(Tn) > 0.0f) {
-        Tn = vnormalize(Tn);
-      }
+    // Calculate handedness
+    if (vdot(vcross(n, Tn), Bn) < 0.0f) {
+      Tn = Tn * -1.0f;
+    }
 
-      // Calculate handedness
-      if (vdot(vcross(n, Tn), Bn) < 0.0f) {
-        Tn = Tn * -1.0f;
-      }
+    ((*tangents)[vertex_indices[i]])[0] = Tn[0];
+    ((*tangents)[vertex_indices[i]])[1] = Tn[1];
+    ((*tangents)[vertex_indices[i]])[2] = Tn[2];
 
-      ((*tangents)[vertex_indices[i]])[0] = Tn[0];
-      ((*tangents)[vertex_indices[i]])[1] = Tn[1];
-      ((*tangents)[vertex_indices[i]])[2] = Tn[2];
-
-      ((*binormals)[vertex_indices[i]])[0] = Bn[0];
-      ((*binormals)[vertex_indices[i]])[1] = Bn[1];
-      ((*binormals)[vertex_indices[i]])[2] = Bn[2];
+    ((*binormals)[vertex_indices[i]])[0] = Bn[0];
+    ((*binormals)[vertex_indices[i]])[1] = Bn[1];
+    ((*binormals)[vertex_indices[i]])[2] = Bn[2];
   }
 
   (*out_indices) = vertex_indices;
