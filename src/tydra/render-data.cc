@@ -2087,6 +2087,83 @@ static bool ComputeTangentsAndBinormals(
 
   return true;
 }
+ 
+//
+// Compute geometric normal in CCW(Counter Clock-Wise) manner
+// Also computes the area of the input triangle.
+// 
+inline static value::float3 GeometricNormal(
+  const value::float3 v0, const value::float3 v1, const value::float3 v2, float &area) {
+
+  const value::float3 v10 = v1 - v0;
+  const value::float3 v20 = v2 - v0;
+
+  value::float3 Nf = vcross(v10, v20);  // CCW
+  area = 0.5f * vlength(Nf);
+  Nf = vnormalize(Nf);
+
+  return Nf;
+} 
+
+//
+// Compute a normal for vertices.
+// Normal vector is computed as weighted(by the area of the triangle) vector.
+//
+// TODO: Implement better normal calculation. ref. http://www.bytehazard.com/articles/vertnorm.html
+// 
+static bool ComputeNormals(
+    const std::vector<vec3> &vertices,
+    const std::vector<uint32_t> &faceVertexCounts,
+    const std::vector<uint32_t> &faceVertexIndices,
+    std::vector<vec3> &normals,
+    std::string *err) {
+
+  normals.assign(vertices.size(), {0.0f, 0.0f, 0.0f});
+
+  size_t faceVertexIndexOffset{0};
+  for (size_t f = 0; f < faceVertexCounts.size(); f++) {
+    size_t nv = faceVertexCounts[f];
+
+    if (nv < 3) {
+      SET_ERROR_AND_RETURN(fmt::format("Invalid face num {} at faceVertexCounts[{}]",
+        nv, f));
+    }
+
+    uint32_t vidx0 = faceVertexIndices[faceVertexIndexOffset + f + 0];
+    uint32_t vidx1 = faceVertexIndices[faceVertexIndexOffset + f + 1];
+    uint32_t vidx2 = faceVertexIndices[faceVertexIndexOffset + f + 2];
+
+    if ((vidx0 >= vertices.size()) || (vidx1 >= vertices.size()) || (vidx2 >= vertices.size())) {
+      SET_ERROR_AND_RETURN(fmt::format("vertexIndex exceeds vertices.size {}",
+        vertices.size()));
+    }
+
+    // For quad/polygon, first three vertices are used to compute face normal
+    // (Assume quad/polygon plane is co-planar)
+    float area{0.0f};
+    value::float3 Nf = GeometricNormal(
+      vertices[vidx0],
+      vertices[vidx1],
+      vertices[vidx2], area);
+
+    for (size_t v = 0; v < nv; v++) {
+      uint32_t vidx = faceVertexIndices[faceVertexIndexOffset + v];
+      if (vidx >= vertices.size()) {
+        SET_ERROR_AND_RETURN(fmt::format("vertexIndex exceeds vertices.size {}",
+          vertices.size()));
+      }
+      normals[vidx] += area * Nf; 
+    }
+
+    faceVertexIndexOffset += nv;
+  }
+
+  for (size_t v = 0; v < normals.size(); v++) {
+    normals[v] = vnormalize(normals[v]);
+  }
+
+  return true;
+}
 
 }  // namespace
 
@@ -2321,7 +2398,8 @@ bool RenderSceneConverter::ConvertMesh(
   // 5. Convert Skin weights
   // 6. Convert BlendShape
   // 7. Build indices(convert 'facevarying' to 'vertrex')
-  // 8. Build tangent frame(for normal mapping)
+  // 8. Calcualte normals(if not present in the mesh)
+  // 9. Build tangent frame(for normal mapping)
   //
   //
 
@@ -3197,7 +3275,7 @@ bool RenderSceneConverter::ConvertMesh(
   //
   // 7. Build indices
   //
-  if (env.mesh_config.build_indices && (!is_single_indexable)) {
+  if (env.mesh_config.build_vertex_indices && (!is_single_indexable)) {
     DCOUT("Build vertex indices");
 
     //
@@ -3408,12 +3486,37 @@ bool RenderSceneConverter::ConvertMesh(
   }
 
   //
+  // 8. Compute normals
+  // 
+  if (env.mesh_config.compute_normals && (dst.normals.empty())) {
+    std::vector<vec3> normals;
+    if (ComputeNormals(dst.points, dst.faceVertexCounts, dst.faceVertexIndices, normals, &_err)) {
+      return false;
+    }
+
+    dst.normals.set_buffer(reinterpret_cast<const uint8_t *>(normals.data()), normals.size() * sizeof(vec3));
+    dst.normals.elementSize = 1;
+    dst.normals.variability = VertexVariability::Vertex;
+  }
+
+  //
   // 8. Compute tangents.
   //
   bool tangents_computed = false;
   if (env.mesh_config.compute_tangents_and_binormals && (dst.binormals.vertex_count() == 0 && dst.tangents.vertex_count() == 0)) {
     // TODO
-  }
+    //
+static bool ComputeTangentsAndBinormals(
+    const std::vector<vec3> &vertices,
+    const std::vector<uint32_t> &faceVertexCounts,
+    const std::vector<uint32_t> &faceVertexIndices,
+    const std::vector<vec2> &texcoords,
+    const std::vector<vec3> &normals,
+    bool is_facevarying_input,  // false: 'vertex' varying
+    std::vector<vec3> *tangents,
+    std::vector<vec3> *binormals,
+    std::vector<uint32_t> *out_indices,
+    std::string *err) {
 
   (void)tangents_computed;
 

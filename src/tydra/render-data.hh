@@ -452,6 +452,10 @@ struct VertexAttribute {
     return data.size() / itemSize;
   }
 
+  inline bool empty() const {
+    return data.empty();
+  }
+
   size_t num_bytes() const { return data.size(); }
 
   const void *buffer() const {
@@ -1077,8 +1081,6 @@ struct MeshConverterConfig {
 
   bool validate_geomsubset{true};  // Validate GeomSubset.
 
-  bool compute_tangents_and_binormals{true};
-
   // We may want texcoord data even if the Mesh does not have bound Material.
   // But we don't know which primvar is used as a texture coordinate when no
   // Texture assigned to the mesh(no PrimVar Reader assigned to) Use
@@ -1103,14 +1105,33 @@ struct MeshConverterConfig {
   uint32_t max_skin_elementSize = 1024ull * 256ull;
 
   //
-  // Build indices when vertex attributes are converted to `faceverying`?
-  // Similar vertices are merged to single vertex index.
+  // Build vertex indices when vertex attributes are converted to `faceverying`?
+  // Similar vertices are merged into single vertex index.
   // (convert vertex attributes from 'facevarying' to 'vertex' variability)
   //
   // Building indices is preferred for renderers which supports single
   // index-buffer only (e.g. OpenGL/Vulkan)
   //
-  bool build_indices{true};
+  bool build_vertex_indices{true};
+
+  //
+  // Compute normals if not present in the mesh.
+  // The algorithm computes smoothed normal for shared vertex.
+  // Normals are also computed when `compute_tangents_and_binormals` is true
+  // and normals primvar is not present in the mesh.
+  //
+  bool compute_normals{true};
+
+  //
+  // Compute tangents and binormals for tangent space normal mapping.
+  // But when primary texcoords primvar is not present, tangents and binormals are not computed.
+  //
+  // NOTE: The algorithm is not robust to compute tangent/binormal for quad/polygons.
+  // Set `triangulate` preferred when you want let Tydra compute tangent/binormal.
+  // 
+  // NOTE: Computing tangent frame for multi-texcoord is not supported.
+  //
+  bool compute_tangents_and_binormals{true};
 
   //
   // Allowed relative error to check if vertex data is the same.
