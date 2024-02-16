@@ -548,6 +548,27 @@ inline half operator/(const half &a, const half &b) {
   return float_to_half_full(half_to_float(a) / half_to_float(b));
 }
 
+inline half& operator+=(half &a, const half &b) {
+  a = float_to_half_full(half_to_float(a) + half_to_float(b));
+  return a;
+}
+
+inline half& operator-=(half &a, const half &b) {
+  a = float_to_half_full(half_to_float(a) - half_to_float(b));
+  return a;
+}
+
+inline half& operator*=(half &a, const half &b) {
+  a = float_to_half_full(half_to_float(a) * half_to_float(b));
+  return a;
+}
+
+// TODO: save div
+inline half& operator/=(half &a, const half &b) {
+  a = float_to_half_full(half_to_float(a) / half_to_float(b));
+  return a;
+}
+
 inline half operator+(const half &a, float b) {
   return float_to_half_full(half_to_float(a) + b);
 }
@@ -2627,6 +2648,7 @@ struct AttribMap {
 #endif
 
 }  // namespace value
+
 }  // namespace tinyusdz
 
 namespace tinyusdz {

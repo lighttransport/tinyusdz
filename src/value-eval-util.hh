@@ -140,54 +140,144 @@ inline __ty operator/(const __ty &a, const __basety b) { \
   return {a[0] / b, a[1] / b, a[2] / b, a[3] / b}; \
 }
 
+#define ARITH_ASSIGN_OP_2(__ty, __basety) \
+inline __ty &operator+=(__ty &a, const __ty &b) { \
+  a[0] += b[0]; a[1] += b[1]; \
+  return a; \
+} \
+inline __ty &operator-=(__ty &a, const __ty &b) { \
+  a[0] -= b[0]; a[1] -= b[1]; \
+  return a; \
+} \
+inline __ty &operator*=(__ty &a, const __ty &b) { \
+  a[0] *= b[0]; a[1] *= b[1]; \
+  return a; \
+} \
+inline __ty &operator/=(__ty &a, const __ty &b) { \
+  a[0] /= b[0]; a[1] /= b[1]; \
+  return a; \
+} \
+
+#define ARITH_ASSIGN_OP_3(__ty, __basety) \
+inline __ty &operator+=(__ty &a, const __ty &b) { \
+  a[0] += b[0]; a[1] += b[1]; a[2] += b[2]; \
+  return a; \
+} \
+inline __ty &operator-=(__ty &a, const __ty &b) { \
+  a[0] -= b[0]; a[1] -= b[1]; a[2] -= b[2]; \
+  return a; \
+} \
+inline __ty &operator*=(__ty &a, const __ty &b) { \
+  a[0] *= b[0]; a[1] *= b[1]; a[2] *= b[2]; \
+  return a; \
+} \
+inline __ty &operator/=(__ty &a, const __ty &b) { \
+  a[0] /= b[0]; a[1] /= b[1]; a[2] /= b[2]; \
+  return a; \
+} \
+
+#define ARITH_ASSIGN_OP_4(__ty, __basety) \
+inline __ty &operator+=(__ty &a, const __ty &b) { \
+  a[0] += b[0]; a[1] += b[1]; a[2] += b[2]; a[3] += b[3]; \
+  return a; \
+} \
+inline __ty &operator-=(__ty &a, const __ty &b) { \
+  a[0] -= b[0]; a[1] -= b[1]; a[2] -= b[2]; a[3] -= b[3]; \
+  return a; \
+} \
+inline __ty &operator*=(__ty &a, const __ty &b) { \
+  a[0] *= b[0]; a[1] *= b[1]; a[2] *= b[2]; a[3] *= b[3]; \
+  return a; \
+} \
+inline __ty &operator/=(__ty &a, const __ty &b) { \
+  a[0] /= b[0]; a[1] /= b[1]; a[2] /= b[2]; a[3] /= b[3]; \
+  return a; \
+} \
+
 // TODO: half op scalar_half
 FOUR_ARITH_OP_2(value::half2, float)
 FOUR_ARITH_OP_3(value::half3, float)
 FOUR_ARITH_OP_4(value::half4, float)
+ARITH_ASSIGN_OP_2(value::half2, float)
+ARITH_ASSIGN_OP_3(value::half3, float)
+ARITH_ASSIGN_OP_4(value::half4, float)
 
 FOUR_ARITH_OP_2(value::int2, int)
 FOUR_ARITH_OP_3(value::int3, int)
 FOUR_ARITH_OP_4(value::int4, int)
+ARITH_ASSIGN_OP_2(value::int2, int)
+ARITH_ASSIGN_OP_3(value::int3, int)
+ARITH_ASSIGN_OP_4(value::int4, int)
 
 FOUR_ARITH_OP_2(value::uint2, uint32_t)
 FOUR_ARITH_OP_3(value::uint3, uint32_t)
 FOUR_ARITH_OP_4(value::uint4, uint32_t)
+ARITH_ASSIGN_OP_2(value::uint2, uint32_t)
+ARITH_ASSIGN_OP_3(value::uint3, uint32_t)
+ARITH_ASSIGN_OP_4(value::uint4, uint32_t)
 
 FOUR_ARITH_OP_2(value::float2, float)
 FOUR_ARITH_OP_3(value::float3, float)
 FOUR_ARITH_OP_4(value::float4, float)
+ARITH_ASSIGN_OP_2(value::float2, float)
+ARITH_ASSIGN_OP_3(value::float3, float)
+ARITH_ASSIGN_OP_4(value::float4, float)
 
 FOUR_ARITH_OP_2(value::double2, double)
 FOUR_ARITH_OP_3(value::double3, double)
 FOUR_ARITH_OP_4(value::double4, double)
+ARITH_ASSIGN_OP_2(value::double2, double)
+ARITH_ASSIGN_OP_3(value::double3, double)
+ARITH_ASSIGN_OP_4(value::double4, double)
 
 FOUR_ARITH_OP_3(value::normal3h, float)
 FOUR_ARITH_OP_3(value::normal3f, float)
 FOUR_ARITH_OP_3(value::normal3d, double)
+ARITH_ASSIGN_OP_3(value::normal3h, float)
+ARITH_ASSIGN_OP_3(value::normal3f, float)
+ARITH_ASSIGN_OP_3(value::normal3d, double)
 
 FOUR_ARITH_OP_3(value::vector3h, float)
 FOUR_ARITH_OP_3(value::vector3f, float)
 FOUR_ARITH_OP_3(value::vector3d, double)
+ARITH_ASSIGN_OP_3(value::vector3h, float)
+ARITH_ASSIGN_OP_3(value::vector3f, float)
+ARITH_ASSIGN_OP_3(value::vector3d, double)
 
 FOUR_ARITH_OP_3(value::point3h, float)
 FOUR_ARITH_OP_3(value::point3f, float)
 FOUR_ARITH_OP_3(value::point3d, double)
+ARITH_ASSIGN_OP_3(value::point3h, float)
+ARITH_ASSIGN_OP_3(value::point3f, float)
+ARITH_ASSIGN_OP_3(value::point3d, double)
 
 FOUR_ARITH_OP_3(value::color3h, float)
 FOUR_ARITH_OP_3(value::color3f, float)
 FOUR_ARITH_OP_3(value::color3d, double)
+ARITH_ASSIGN_OP_3(value::color3h, float)
+ARITH_ASSIGN_OP_3(value::color3f, float)
+ARITH_ASSIGN_OP_3(value::color3d, double)
 
 FOUR_ARITH_OP_4(value::color4h, float)
 FOUR_ARITH_OP_4(value::color4f, float)
 FOUR_ARITH_OP_4(value::color4d, double)
+ARITH_ASSIGN_OP_4(value::color4h, float)
+ARITH_ASSIGN_OP_4(value::color4f, float)
+ARITH_ASSIGN_OP_4(value::color4d, double)
 
 FOUR_ARITH_OP_2(value::texcoord2h, float)
 FOUR_ARITH_OP_2(value::texcoord2f, float)
 FOUR_ARITH_OP_2(value::texcoord2d, double)
+ARITH_ASSIGN_OP_2(value::texcoord2h, float)
+ARITH_ASSIGN_OP_2(value::texcoord2f, float)
+ARITH_ASSIGN_OP_2(value::texcoord2d, double)
 
 FOUR_ARITH_OP_3(value::texcoord3h, float)
 FOUR_ARITH_OP_3(value::texcoord3f, float)
 FOUR_ARITH_OP_3(value::texcoord3d, double)
+ARITH_ASSIGN_OP_3(value::texcoord3h, float)
+ARITH_ASSIGN_OP_3(value::texcoord3f, float)
+ARITH_ASSIGN_OP_3(value::texcoord3d, double)
 
 #undef FOUR_ARITH_OP_2
 #undef FOUR_ARITH_OP_3
