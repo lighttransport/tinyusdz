@@ -133,14 +133,14 @@ enum class VertexVariability {
 
 std::string to_string(VertexVariability variability);
 
-// Geometric, light and camera
+// Geometric, camera, and light
 enum class NodeType {
   Xform,
   Mesh,  // Polygon mesh
+  Camera,
   PointLight,
   DomeLight,
-  Camera,
-  // TODO...
+  // TODO(more lights)...
 };
 
 enum class ComponentType {
@@ -1000,12 +1000,66 @@ struct RenderMaterial {
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
 };
 
+// Simple Camera
+// 
+// https://openusd.org/dev/api/class_usd_geom_camera.html
+// 
+// NOTE: Node's matrix is used for Camera matrix 
+// NOTE: "Y up" coordinate, right-handed coordinate space in USD.
+// NOTE: Unit uses tenths of a scene unit(i.e. [mm] by default).
+//       RenderSceneConverter adjusts property value to [mm] accounting for Stage's unitsPerMeter
+struct RenderCamera {
+
+  std::string name;  // elementName in USD (e.g. "frontCamera")
+  std::string
+      abs_path;  // abosolute GeomCamera Prim path in USD (e.g. "/xform/camera")
+
+  float znear{0.1f}; // clippingRange[0]
+  float zfar{1000000.0f}; // clippingRange[1]
+  float verticalAspectRatio{1.0}; // vertical aspect ratio
+
+  // for Ortho camera
+  float xmag{1.0f}; // horizontal maginification
+  float ymag{1.0f}; // vertical maginification
+
+  float focalLength{50.0f}; // EFL(Effective Focal Length). [mm]
+  float verticalAperture{15.2908f}; // [mm]
+  float horizontalAperture{20.965f}; // [mm]
+
+  // vertical FOV in radian
+  inline float yfov() {
+    return 2.0f * std::atan(0.5f * verticalAperture / focalLength);
+  }
+
+  // horizontal FOV in radian
+  float xfov() {
+    return 2.0f * std::atan(0.5f * horizontalAperture / focalLength);
+  }
+
+  GeomCamera::Projection projection{GeomCamera::Projection::Perspective};
+  GeomCamera::StereoRole stereoRole{GeomCamera::StereoRole::Mono};
+
+};
+
+// Simple light
+struct RenderLight
+{
+  std::string name;  // elementName in USD (e.g. "frontCamera")
+  std::string
+      abs_path;  // abosolute GeomCamera Prim path in USD (e.g. "/xform/camera")
+
+
+  // TODO..
+};
+
 // Simple glTF-like Scene Graph
 class RenderScene {
  public:
   std::vector<Node> nodes;  // Prims in USD
   std::vector<TextureImage> images;
   std::vector<RenderMaterial> materials;
+  std::vector<RenderCamera> cameras;
+  std::vector<RenderLight> lights;
   std::vector<UVTexture> textures;
   std::vector<RenderMesh> meshes;
   std::vector<Animation> animations;
@@ -1443,12 +1497,16 @@ class RenderSceneConverter {
   StringAndIdMap nodeMap;
   StringAndIdMap meshMap;
   StringAndIdMap materialMap;
+  StringAndIdMap cameraMap;
+  StringAndIdMap lightMap;
   StringAndIdMap textureMap;
   StringAndIdMap imageMap;
   StringAndIdMap bufferMap;
   std::vector<Node> nodes;
   std::vector<RenderMesh> meshes;
   std::vector<RenderMaterial> materials;
+  std::vector<RenderCamera> cameras;
+  std::vector<RenderLight> lights;
   std::vector<UVTexture> textures;
   std::vector<TextureImage> images;
   std::vector<BufferData> buffers;
