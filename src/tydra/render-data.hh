@@ -1040,13 +1040,13 @@ class RenderScene {
 ///
 typedef bool (*TextureImageLoaderFunction)(
     const value::AssetPath &assetPath, const AssetInfo &assetInfo,
-    AssetResolutionResolver &assetResolver, TextureImage *imageOut,
+    const AssetResolutionResolver &assetResolver, TextureImage *imageOut,
     std::vector<uint8_t> *imageData, void *userdata, std::string *warn,
     std::string *err);
 
 bool DefaultTextureImageLoaderFunction(const value::AssetPath &assetPath,
                                        const AssetInfo &assetInfo,
-                                       AssetResolutionResolver &assetResolver,
+                                       const AssetResolutionResolver &assetResolver,
                                        TextureImage *imageOut,
                                        std::vector<uint8_t> *imageData,
                                        void *userdata, std::string *warn,
@@ -1383,6 +1383,7 @@ class RenderSceneConverterEnv {
   RenderSceneConverterConfig scene_config;
   MeshConverterConfig mesh_config;
   MaterialConverterConfig material_config;
+
   AssetResolutionResolver asset_resolver;
 
   void set_search_paths(const std::vector<std::string> &paths) {
@@ -1419,20 +1420,21 @@ class RenderSceneConverter {
   //  _material_config = config;
   //}
 
-  void set_asset_resoluition_resolver(AssetResolutionResolver &&rhs) {
-    _asset_resolver = std::move(rhs);
-  }
+  //void set_asset_resoluition_resolver(AssetResolutionResolver &&rhs) {
+  //  _asset_resolver = std::move(rhs);
+  //}
 
-  void set_search_paths(const std::vector<std::string> &paths) {
-    _asset_resolver.set_search_paths(paths);
-  }
+  //void set_search_paths(const std::vector<std::string> &paths) {
+  //  _asset_resolver.set_search_paths(paths);
+  //}
 
+  ///
+  /// All-in-one Stage to RenderScene conversion.
   ///
   /// Convert Stage to RenderScene.
   /// Must be called after SetStage, SetMaterialConverterConfig(optional)
   ///
-  bool ConvertToRenderScene(const Stage &stage, RenderScene *scene,
-                            const double timecode);
+  bool ConvertToRenderScene(const RenderSceneConverterEnv &env, RenderScene *scene);
 
   const std::string &GetInfo() const { return _info; }
   const std::string &GetWarning() const { return _warn; }
@@ -1591,8 +1593,7 @@ class RenderSceneConverter {
   bool GetSkeletonImpl(const tinyusdz::Prim &prim,
                        const tinyusdz::Skeleton *&out_skeleton);
 
-  AssetResolutionResolver _asset_resolver;
-
+  //AssetResolutionResolver _asset_resolver;
   //RenderSceneConverterConfig _scene_config;
   //MeshConverterConfig _mesh_config;
   //MaterialConverterConfig _material_config;

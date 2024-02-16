@@ -3856,7 +3856,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env, 
       }
 
       bool tex_ok = tex_loader_fun(
-          assetPath, assetInfo, _asset_resolver, &texImage,
+          assetPath, assetInfo, env.asset_resolver, &texImage,
           &assetImageBuffer.data,
           env.material_config.texture_image_loader_function_userdata, &warn, &err);
 
@@ -3880,7 +3880,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env, 
     } else {
       // store resolved asset path.
       texImage.asset_identifier =
-          _asset_resolver.resolve(assetPath.GetAssetPath());
+          env.asset_resolver.resolve(assetPath.GetAssetPath());
     }
 
     // colorSpace.
@@ -4521,7 +4521,7 @@ namespace {
 
 struct MeshVisitorEnv {
   RenderSceneConverter *converter{nullptr};
-  RenderSceneConverterEnv *env{nullptr};
+  const RenderSceneConverterEnv *env{nullptr};
 };
 
 bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
@@ -4664,16 +4664,15 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
 }  // namespace
 
-bool RenderSceneConverter::ConvertToRenderScene(const Stage &stage,
-                                                RenderScene *scene,
-                                                const double timecode) {
+bool RenderSceneConverter::ConvertToRenderScene(const RenderSceneConverterEnv &env,
+                                                RenderScene *scene) {
   if (!scene) {
     PUSH_ERROR_AND_RETURN("nullptr for RenderScene argument.");
   }
 
   // Build Xform at specified time.
   XformNode xform_node;
-  if (!BuildXformNodeFromStage(stage, &xform_node, timecode)) {
+  if (!BuildXformNodeFromStage(env.stage, &xform_node, env.timecode)) {
     PUSH_ERROR_AND_RETURN("Failed to build Xform node hierarchy.\n");
   }
 
@@ -4689,14 +4688,12 @@ bool RenderSceneConverter::ConvertToRenderScene(const Stage &stage,
 
   std::string err;
 
-  // FIXME
-  RenderSceneConverterEnv env(stage);
   MeshVisitorEnv menv;
   menv.env = &env;
   menv.converter = this;
 
   // Pass `this` through userdata ptr
-  bool ret = tydra::VisitPrims(stage, MeshVisitor, &menv, &err);
+  bool ret = tydra::VisitPrims(env.stage, MeshVisitor, &menv, &err);
 
   if (!ret) {
     _err += err;
@@ -4723,7 +4720,7 @@ bool RenderSceneConverter::ConvertToRenderScene(const Stage &stage,
 
 bool DefaultTextureImageLoaderFunction(const value::AssetPath &assetPath,
                                        const AssetInfo &assetInfo,
-                                       AssetResolutionResolver &assetResolver,
+                                       const AssetResolutionResolver &assetResolver,
                                        TextureImage *texImageOut,
                                        std::vector<uint8_t> *imageData,
                                        void *userdata, std::string *warn,
