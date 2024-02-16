@@ -2010,6 +2010,13 @@ class Value {
   uint32_t type_id() const { return v_.type_id(); }
   uint32_t underlying_type_id() const { return v_.underlying_type_id(); }
 
+  //
+  // Cast value to given type.
+  //
+  // Supports:
+  // - cast to role type(e.g. returns value when T = `vector3f` and stored value is type `float3`)
+  // - cast to underlying type(e.g. returns value when T = `float3` and stored value is type `vector3f`)
+  //
   // Return nullptr when type conversion failed.
   template <class T>
   const T *as() const {
@@ -2024,6 +2031,8 @@ class Value {
     }
   }
 
+  // Non const version of `as`.
+  //
   // Return nullptr when type conversion failed.
   template <class T>
   T *as() {

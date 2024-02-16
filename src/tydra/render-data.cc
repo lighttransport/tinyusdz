@@ -1747,8 +1747,16 @@ struct ComputeTangentVertexOutput {
 //   - Use half-edges to find adjacent face/vertex.
 ///
 ///
-/// @param[in] is_facevarying_input false = vertices, texcoords and normals are 'vertex' variability. true = 'facevarying' variability.
-/// @param[in] build_indices
+/// @param[in] vertices Vertex points(`vertex` variability).
+/// @param[in] faceVertexCounts faceVertexCounts of the mesh.
+/// @param[in] faceVertexIndices faceVertexIndices of the mesh.
+/// @param[in] texcoords Primary texcoords.
+/// @param[in] normals normals.
+/// @param[in] is_facevarying_input false = texcoords and normals are 'vertex' variability. true = 'facevarying' variability.
+/// @param[out] tangents Computed tangents;
+/// @param[out] binormals Computed binormals;
+/// @param[out] out_vertex_indices Vertex indices.
+/// @param[out] err Error message.
 ///
 static bool ComputeTangentsAndBinormals(
     const std::vector<vec3> &vertices,
@@ -1759,7 +1767,7 @@ static bool ComputeTangentsAndBinormals(
     bool is_facevarying_input,  // false: 'vertex' varying
     std::vector<vec3> *tangents,
     std::vector<vec3> *binormals,
-    std::vector<uint32_t> *out_indices,
+    std::vector<uint32_t> *out_vertex_indices,
     std::string *err) {
 
   if (!tangents) {
@@ -1770,7 +1778,7 @@ static bool ComputeTangentsAndBinormals(
     SET_ERROR_AND_RETURN("binormals arg is nullptr.");
   }
 
-  if (!out_indices) {
+  if (!out_vertex_indices) {
     SET_ERROR_AND_RETURN("out_indices arg is nullptr.");
   }
 
@@ -1990,7 +1998,10 @@ static bool ComputeTangentsAndBinormals(
     ComputeTangentVertexOutput<ComputeTangentPackedVertexData> vertex_output;
 
     if (is_facevarying_input) {
-      vertex_input.positions = vertices;
+      // input position is still in 'vertex' variability.
+      for (size_t i = 0; i < faceVertexIndices.size(); i++) {
+        vertex_input.positions.push_back(vertices[faceVertexIndices[i]]);
+      }
       vertex_input.normals = normals;
       vertex_input.uvs = texcoords;
     } else {
@@ -2083,15 +2094,15 @@ static bool ComputeTangentsAndBinormals(
     ((*binormals)[vertex_indices[i]])[2] = Bn[2];
   }
 
-  (*out_indices) = vertex_indices;
+  (*out_vertex_indices) = vertex_indices;
 
   return true;
 }
- 
+
 //
 // Compute geometric normal in CCW(Counter Clock-Wise) manner
 // Also computes the area of the input triangle.
-// 
+//
 inline static value::float3 GeometricNormal(
   const value::float3 v0, const value::float3 v1, const value::float3 v2, float &area) {
 
@@ -2103,14 +2114,14 @@ inline static value::float3 GeometricNormal(
   Nf = vnormalize(Nf);
 
   return Nf;
-} 
+}
 
 //
 // Compute a normal for vertices.
 // Normal vector is computed as weighted(by the area of the triangle) vector.
 //
 // TODO: Implement better normal calculation. ref. http://www.bytehazard.com/articles/vertnorm.html
-// 
+//
 static bool ComputeNormals(
     const std::vector<vec3> &vertices,
     const std::vector<uint32_t> &faceVertexCounts,
@@ -2152,7 +2163,7 @@ static bool ComputeNormals(
         SET_ERROR_AND_RETURN(fmt::format("vertexIndex exceeds vertices.size {}",
           vertices.size()));
       }
-      normals[vidx] += area * Nf; 
+      normals[vidx] += area * Nf;
     }
 
     faceVertexIndexOffset += nv;
@@ -3273,7 +3284,42 @@ bool RenderSceneConverter::ConvertMesh(
   }
 
   //
-  // 7. Build indices
+  // 7. Compute normals
+  //
+  //    Compute normals when normals is not present or compute tangents requiested but normals is not present.
+  //    Normals are computed with 'vertex' variability to compute smooth normals for shared vertex.
+  //
+  bool compute_normals = (env.mesh_config.compute_normals && dst.normals.empty());
+  bool compute_tangents = (env.mesh_config.compute_tangents_and_binormals && (dst.binormals.empty() == 0 && dst.tangents.empty() == 0));
+
+  if (compute_normals || (compute_tangents && dst.normals.empty())) {
+    std::vector<vec3> normals;
+    if (ComputeNormals(dst.points, dst.faceVertexCounts, dst.faceVertexIndices, normals, &_err)) {
+      return false;
+    }
+
+    dst.normals.set_buffer(reinterpret_cast<const uint8_t *>(normals.data()), normals.size() * sizeof(vec3));
+    dst.normals.elementSize = 1;
+    dst.normals.variability = VertexVariability::Vertex;
+    dst.normals.format = VertexAttributeFormat::Vec3;
+    dst.normals.stride = 0;
+    dst.normals.indices.clear();
+
+    if (!is_single_indexable) {
+      auto result = VertexToFaceVarying(dst.normals.get_data(), dst.normals.stride_bytes(),
+                                        dst.faceVertexCounts, dst.faceVertexIndices);
+      if (!result) {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("Convert vertex/varying `normals` attribute to failed: {}",
+                        result.error()));
+      }
+      dst.normals.data = result.value();
+      dst.normals.variability = VertexVariability::FaceVarying;
+    }
+  }
+
+  //
+  // 8. Build indices
   //
   if (env.mesh_config.build_vertex_indices && (!is_single_indexable)) {
     DCOUT("Build vertex indices");
@@ -3486,39 +3532,32 @@ bool RenderSceneConverter::ConvertMesh(
   }
 
   //
-  // 8. Compute normals
-  // 
-  if (env.mesh_config.compute_normals && (dst.normals.empty())) {
-    std::vector<vec3> normals;
-    if (ComputeNormals(dst.points, dst.faceVertexCounts, dst.faceVertexIndices, normals, &_err)) {
-      return false;
-    }
-
-    dst.normals.set_buffer(reinterpret_cast<const uint8_t *>(normals.data()), normals.size() * sizeof(vec3));
-    dst.normals.elementSize = 1;
-    dst.normals.variability = VertexVariability::Vertex;
-  }
-
-  //
   // 8. Compute tangents.
   //
-  bool tangents_computed = false;
-  if (env.mesh_config.compute_tangents_and_binormals && (dst.binormals.vertex_count() == 0 && dst.tangents.vertex_count() == 0)) {
-    // TODO
-    //
-static bool ComputeTangentsAndBinormals(
-    const std::vector<vec3> &vertices,
-    const std::vector<uint32_t> &faceVertexCounts,
-    const std::vector<uint32_t> &faceVertexIndices,
-    const std::vector<vec2> &texcoords,
-    const std::vector<vec3> &normals,
-    bool is_facevarying_input,  // false: 'vertex' varying
-    std::vector<vec3> *tangents,
-    std::vector<vec3> *binormals,
-    std::vector<uint32_t> *out_indices,
-    std::string *err) {
+  if (compute_tangents) {
 
-  (void)tangents_computed;
+    std::vector<vec2> texcoords;
+    std::vector<vec3> normals;
+
+    // TODO: Support arbitrary slotID
+    texcoords.resize(dst.texcoords[0].vertex_count());
+    normals.resize(dst.normals.vertex_count());
+
+    memcpy(texcoords.data(), dst.texcoords[0].buffer(), dst.texcoords[0].num_bytes());
+    memcpy(normals.data(), dst.normals.buffer(), dst.normals.num_bytes());
+
+    std::vector<vec3> tangents;
+    std::vector<vec3> binormals;
+    std::vector<uint32_t> vertex_indices;
+
+    if (!ComputeTangentsAndBinormals(dst.points, dst.faceVertexCounts, dst.faceVertexIndices,
+      texcoords, normals, !is_single_indexable, &tangents, &binormals, &vertex_indices, &_err)) {
+
+      PUSH_ERROR_AND_RETURN("Failed to compute tangents/binormals.");
+    }
+
+    // TODO: Remap
+  }
 
   (*dstMesh) = std::move(dst);
   return true;
