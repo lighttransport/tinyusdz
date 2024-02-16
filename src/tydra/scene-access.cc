@@ -1902,10 +1902,6 @@ bool BuildXformNodeFromStageRec(
   XformNode *nodeOut, /* out */
   value::matrix4d rootMat,
   const double t, const tinyusdz::value::TimeSampleInterpolationType tinterp) {
-  // TODO: time
-  (void)t;
-  (void)tinterp;
-  (void)stage;
 
   if (!nodeOut) {
     return false;
@@ -1927,8 +1923,7 @@ bool BuildXformNodeFromStageRec(
   if (IsXformablePrim(*prim)) {
     bool resetXformStack{false};
 
-    // TODO: t, tinterp
-    value::matrix4d localMat = GetLocalTransform(*prim, &resetXformStack);
+    value::matrix4d localMat = GetLocalTransform(*prim, &resetXformStack, t, tinterp);
     DCOUT("local mat = " << localMat);
 
     value::matrix4d worldMat = rootMat;
