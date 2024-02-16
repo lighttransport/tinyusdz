@@ -130,18 +130,19 @@ int main(int argc, char **argv) {
   // RenderScene: Scene graph object which is suited for GL/Vulkan renderer
   tinyusdz::tydra::RenderScene render_scene;
   tinyusdz::tydra::RenderSceneConverter converter;
+  tinyusdz::tydra::RenderSceneConverterEnv env(stage);
 
   // Add base directory of .usd file to search path.
   std::string usd_basedir = tinyusdz::io::GetBaseDir(filepath);
   std::cout << "Add seach path: " << usd_basedir << "\n";
 
-  converter.set_search_paths({usd_basedir});
+  env.set_search_paths({usd_basedir});
   // TODO: Set user-defined AssetResolutionResolver
   // AssetResolutionResolver arr;
   // converter.set_asset_resoluition_resolver(arr);
 
   double timecode = tinyusdz::value::TimeCode::Default();
-  bool ret = converter.ConvertToRenderScene(stage, &render_scene, timecode);
+  bool ret = converter.ConvertToRenderScene(env, &render_scene);
   if (!ret) {
     std::cerr << "Failed to convert USD Stage to RenderScene: \n" << converter.GetError() << "\n";
     return EXIT_FAILURE;
