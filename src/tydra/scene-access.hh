@@ -10,16 +10,16 @@
 
 #include <map>
 
+#include "prim-type-macros.inc"
 #include "prim-types.hh"
 #include "stage.hh"
+#include "tiny-format.hh"
 #include "usdGeom.hh"
+#include "usdLux.hh"
 #include "usdShade.hh"
 #include "usdSkel.hh"
-#include "usdLux.hh"
-#include "value-types.hh"
 #include "value-type-macros.inc"
-#include "prim-type-macros.inc"
-#include "tiny-format.hh"
+#include "value-types.hh"
 
 namespace tinyusdz {
 namespace tydra {
@@ -45,8 +45,9 @@ using PathShaderMap =
 template <typename T>
 bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<T> &m /* output */);
 
-#define EXTERN_LISTPRIMS(__ty) \
-extern template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<__ty> &m);
+#define EXTERN_LISTPRIMS(__ty)                                 \
+  extern template bool ListPrims(const tinyusdz::Stage &stage, \
+                                 PathPrimMap<__ty> &m);
 
 APPLY_FUNC_TO_PRIM_TYPES(EXTERN_LISTPRIMS)
 
@@ -62,24 +63,24 @@ bool ListShaders(const tinyusdz::Stage &stage,
                  PathShaderMap<T> &m /* output */);
 
 extern template bool ListShaders(const tinyusdz::Stage &stage,
-                          PathShaderMap<UsdPreviewSurface> &m);
+                                 PathShaderMap<UsdPreviewSurface> &m);
 extern template bool ListShaders(const tinyusdz::Stage &stage,
-                           PathShaderMap<UsdUVTexture> &m);
+                                 PathShaderMap<UsdUVTexture> &m);
 
 extern template bool ListShaders(const tinyusdz::Stage &stage,
-                           PathShaderMap<UsdPrimvarReader_string> &m);
+                                 PathShaderMap<UsdPrimvarReader_string> &m);
 extern template bool ListShaders(const tinyusdz::Stage &stage,
-                           PathShaderMap<UsdPrimvarReader_int> &m);
+                                 PathShaderMap<UsdPrimvarReader_int> &m);
 extern template bool ListShaders(const tinyusdz::Stage &stage,
-                           PathShaderMap<UsdPrimvarReader_float> &m);
+                                 PathShaderMap<UsdPrimvarReader_float> &m);
 extern template bool ListShaders(const tinyusdz::Stage &stage,
-                           PathShaderMap<UsdPrimvarReader_float2> &m);
+                                 PathShaderMap<UsdPrimvarReader_float2> &m);
 extern template bool ListShaders(const tinyusdz::Stage &stage,
-                           PathShaderMap<UsdPrimvarReader_float3> &m);
+                                 PathShaderMap<UsdPrimvarReader_float3> &m);
 extern template bool ListShaders(const tinyusdz::Stage &stage,
-                           PathShaderMap<UsdPrimvarReader_float4> &m);
+                                 PathShaderMap<UsdPrimvarReader_float4> &m);
 extern template bool ListShaders(const tinyusdz::Stage &stage,
-                          PathShaderMap<UsdPrimvarReader_matrix> &m);
+                                 PathShaderMap<UsdPrimvarReader_matrix> &m);
 
 ///
 /// Get parent Prim from Path.
@@ -141,8 +142,8 @@ bool GetProperty(const tinyusdz::Prim &prim, const std::string &prop_name,
                  Property *prop, std::string *err);
 
 ///
-/// Get List of Property(Attribute and Relationship) names of given Prim by name.
-/// It includes authored builtin Property names.
+/// Get List of Property(Attribute and Relationship) names of given Prim by
+/// name. It includes authored builtin Property names.
 ///
 /// @param[in] prim Prim
 /// @param[out] prop_names Property names
@@ -151,7 +152,8 @@ bool GetProperty(const tinyusdz::Prim &prim, const std::string &prop_name,
 /// @return true upon success.
 /// @return false when something go wrong.
 ///
-bool GetPropertyNames(const tinyusdz::Prim &prim, std::vector<std::string> *prop_names, std::string *err);
+bool GetPropertyNames(const tinyusdz::Prim &prim,
+                      std::vector<std::string> *prop_names, std::string *err);
 
 ///
 /// Get List of Attribute names of given Prim.
@@ -164,11 +166,13 @@ bool GetPropertyNames(const tinyusdz::Prim &prim, std::vector<std::string> *prop
 /// @return true upon success.
 /// @return false when something go wrong.
 ///
-bool GetAttributeNames(const tinyusdz::Prim &prim, std::vector<std::string> *attr_names, std::string *err);
+bool GetAttributeNames(const tinyusdz::Prim &prim,
+                       std::vector<std::string> *attr_names, std::string *err);
 
 ///
 /// Get List of Relationship names of given Prim.
-/// It includes authored builtin Relationship names(e.g. "proxyPrim" for `GeomMesh`).
+/// It includes authored builtin Relationship names(e.g. "proxyPrim" for
+/// `GeomMesh`).
 ///
 /// @param[in] prim Prim
 /// @param[out] rel_names Relationship names
@@ -177,7 +181,9 @@ bool GetAttributeNames(const tinyusdz::Prim &prim, std::vector<std::string> *att
 /// @return true upon success.
 /// @return false when something go wrong.
 ///
-bool GetRelationshipNames(const tinyusdz::Prim &prim, std::vector<std::string> *rel_names, std::string *err);
+bool GetRelationshipNames(const tinyusdz::Prim &prim,
+                          std::vector<std::string> *rel_names,
+                          std::string *err);
 
 ///
 /// Get Attribute of given Prim by name.
@@ -235,8 +241,8 @@ bool HasRelationship(const tinyusdz::Prim &prim, const std::string &rel_name);
 /// For efficient Xform retrieval from Stage.
 ///
 /// XformNode's pointer value and hierarchy become invalid when Prim is
-/// removed/added to Stage. If you change the content of Stage, please rebuild
-/// XformNode using BuildXformNodeFromStage() again
+/// removed/added from/to Stage. If you change the content of Stage, please
+/// rebuild XformNode using BuildXformNodeFromStage() again
 ///
 /// TODO: Use prim_id and deprecate the pointer to Prim.
 ///
@@ -254,8 +260,8 @@ struct XformNode {
 
   // world matrix = parent_world_matrix x local_matrix
   // Equivalent to GetLocalToWorldMatrix in pxrUSD
-  // if !resetXformStack! exists in Prim's xformOpOrder, this returns Prim's local matrix
-  // (clears parent's world matrix)
+  // if !resetXformStack! exists in Prim's xformOpOrder, this returns Prim's
+  // local matrix (clears parent's world matrix)
   const value::matrix4d &get_world_matrix() const { return _world_matrix; }
 
   const value::matrix4d &get_parent_world_matrix() const {
@@ -288,14 +294,11 @@ struct XformNode {
 };
 
 ///
-/// Build Xform scene hierachy from Stage.
+/// Build Xform hierachy from Stage.
 ///
-/// You can build Xform node graph using BuildXformNodeFromStage()
+/// Xform value is evaluated at specified time and timeSample interpolation
+/// type.
 ///
-/// Set a time, and compute xform of each Prim and store its cache(i.e. read
-/// only).
-///
-/// TODO: Support timeSamples.
 ///
 bool BuildXformNodeFromStage(
     const tinyusdz::Stage &stage, XformNode *root, /* out */
@@ -310,39 +313,48 @@ std::string DumpXformNode(const XformNode &root);
 ///
 /// The pointer address is valid until Stage's content is unchanged.
 ///
-/// @param[in] familyName Get GeomSubset having this `familyName`. empty token = return all GeomSubsets.
+/// @param[in] familyName Get GeomSubset having this `familyName`. empty token =
+/// return all GeomSubsets.
 /// @param[in] prim_must_be_geommesh Prim path must point to GeomMesh Prim.
 ///
 /// (TODO: Return id of GeomSubset Prim object, instead of the ponter address)
 ///
-/// @return array of GeomSubset pointers. Empty array when failed or no GeomSubset Prim(with `familyName`) attached to the Prim.
+/// @return array of GeomSubset pointers. Empty array when failed or no
+/// GeomSubset Prim(with `familyName`) attached to the Prim.
 ///
 ///
-std::vector<const GeomSubset *> GetGeomSubsets(const tinyusdz::Stage &stage, const tinyusdz::Path &prim_path, const tinyusdz::value::token &familyName, bool prim_must_be_geommesh = true);
+std::vector<const GeomSubset *> GetGeomSubsets(
+    const tinyusdz::Stage &stage, const tinyusdz::Path &prim_path,
+    const tinyusdz::value::token &familyName,
+    bool prim_must_be_geommesh = true);
 
 ///
 /// Get GeomSubset children of the given Prim
 ///
 /// The pointer address is valid until Stage's content is unchanged.
 ///
-/// @param[in] familyName Get GeomSubset having this `familyName`. empty token = return all GeomSubsets.
+/// @param[in] familyName Get GeomSubset having this `familyName`. empty token =
+/// return all GeomSubsets.
 /// @param[in] prim_must_be_geommesh Prim must be GeomMesh Prim type.
 ///
 /// (TODO: Return id of GeomSubset Prim object, instead of the ponter address)
 ///
-/// @return array of GeomSubset pointers. Empty array when failed or no GeomSubset Prim(with `familyName`) attached to the Prim.
+/// @return array of GeomSubset pointers. Empty array when failed or no
+/// GeomSubset Prim(with `familyName`) attached to the Prim.
 ///
-std::vector<const GeomSubset *> GetGeomSubsetChildren(const tinyusdz::Prim &prim, const tinyusdz::value::token &familyName, bool prim_must_be_geommesh = true);
+std::vector<const GeomSubset *> GetGeomSubsetChildren(
+    const tinyusdz::Prim &prim, const tinyusdz::value::token &familyName,
+    bool prim_must_be_geommesh = true);
 
 //
 // Get BlendShape prims in this GeomMesh Prim
 // (`skel:blendShapes`, `skel:blendShapeTargets`)
 //
-std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> GetBlenedShapes(
-  const tinyusdz::Stage &stage,
-  const tinyusdz::Prim &prim, std::string *err = nullptr);
+std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+GetBlenedShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
+                std::string *err = nullptr);
 
-#if 0 // TODO
+#if 0  // TODO
 ///
 /// Get list of GeomSubset PrimSpecs attached to the PrimSpec
 /// Prim path must point to GeomMesh PrimSpec.
@@ -357,7 +369,8 @@ std::vector<const PrimSpec *> GetGeomSubsetChildren(const tinyusdz::Path &prim_p
 #endif
 
 ///
-/// For composition. Convert Concrete Prim(Xform, GeomMesh, ...) to PrimSpec, generic Prim container.
+/// For composition. Convert Concrete Prim(Xform, GeomMesh, ...) to PrimSpec,
+/// generic Prim container.
 /// TODO: Move to *core* module?
 ///
 bool PrimToPrimSpec(const Prim &prim, PrimSpec &ps, std::string *err);
@@ -366,18 +379,22 @@ bool PrimToPrimSpec(const Prim &prim, PrimSpec &ps, std::string *err);
 /// For MaterialX
 /// TODO: Move to shader-network.hh?
 ///
-bool ShaderToPrimSpec(const UsdUVTexture &node, PrimSpec &ps, std::string *warn, std::string *err);
-bool ShaderToPrimSpec(const UsdTransform2d &node, PrimSpec &ps, std::string *warn, std::string *err);
+bool ShaderToPrimSpec(const UsdUVTexture &node, PrimSpec &ps, std::string *warn,
+                      std::string *err);
+bool ShaderToPrimSpec(const UsdTransform2d &node, PrimSpec &ps,
+                      std::string *warn, std::string *err);
 
-template<typename T>
-bool ShaderToPrimSpec(const UsdPrimvarReader<T> &node, PrimSpec &ps, std::string *warn, std::string *err);
+template <typename T>
+bool ShaderToPrimSpec(const UsdPrimvarReader<T> &node, PrimSpec &ps,
+                      std::string *warn, std::string *err);
 
 //
 // Utilities and Query for CollectionAPI
 //
 
 ///
-/// Get `Collection` object(properties defined in Collection API) from a given Prim.
+/// Get `Collection` object(properties defined in Collection API) from a given
+/// Prim.
 ///
 /// @param[in] prim Prim
 /// @param[out] Pointer to the pointer of found Collection.
@@ -385,33 +402,33 @@ bool ShaderToPrimSpec(const UsdPrimvarReader<T> &node, PrimSpec &ps, std::string
 ///
 bool GetCollection(const Prim &prim, const Collection **collection);
 
-class CollectionMembershipQuery
-{
+class CollectionMembershipQuery {
  public:
-
  private:
   std::map<Path, CollectionInstance::ExpansionRule> _expansionRuleMap;
-
 };
 
 ///
 /// Get terminal Attribute. Similar to GetValueProducingAttribute in pxrUSD.
 ///
-/// On the contrary to EvaluateAttribute, Do not evaluate Attribute value at specified time.
+/// On the contrary to EvaluateAttribute, Do not evaluate Attribute value at
+/// specified time.
 ///
-/// - if Attribute is connection, follow its targetPath recursively until encountering non-connection Attribute.
+/// - if Attribute is connection, follow its targetPath recursively until
+/// encountering non-connection Attribute.
 /// - if Attribute is blocked, return Attribute ValueBlock.
 /// - if Attribute is timesamples, return TimeSamples Attribute.
 /// - if Attribute is scalar, return scalar Attribute.
 ///
 /// @return true upon success.
-bool GetTerminalAttribute(const Stage &stage, const Attribute &attr, const std::string &attr_name,
-                  Attribute *attr_out, std::string *err);
+bool GetTerminalAttribute(const Stage &stage, const Attribute &attr,
+                          const std::string &attr_name, Attribute *attr_out,
+                          std::string *err);
 
-template<typename T>
-bool GetTerminalAttribute(const Stage &stage, const TypedAttribute<T> &attr, const std::string &attr_name,
-  Attribute *attr_out, std::string *err)
-{
+template <typename T>
+bool GetTerminalAttribute(const Stage &stage, const TypedAttribute<T> &attr,
+                          const std::string &attr_name, Attribute *attr_out,
+                          std::string *err) {
   if (!attr_out) {
     return false;
   }
@@ -426,7 +443,7 @@ bool GetTerminalAttribute(const Stage &stage, const TypedAttribute<T> &attr, con
     value.variability() = Variability::Uniform;
     value.set_type_name(value::TypeTraits<T>::type_name());
     value.set_blocked(true);
-    (*attr_out) = std::move(value);    
+    (*attr_out) = std::move(value);
     return true;
   } else if (attr.is_value_empty()) {
     value.set_type_name(value::TypeTraits<T>::type_name());
@@ -445,7 +462,8 @@ bool GetTerminalAttribute(const Stage &stage, const TypedAttribute<T> &attr, con
 ///
 /// Get Geom Primvar.
 ///
-/// This API supports Connection Attribute(which requires finding Prim of targetPath in Stage).
+/// This API supports Connection Attribute(which requires finding Prim of
+/// targetPath in Stage).
 ///
 /// example of Primvar with Connection Attribute:
 ///
@@ -460,42 +478,49 @@ bool GetTerminalAttribute(const Stage &stage, const TypedAttribute<T> &attr, con
 ///
 /// @return true upon success.
 ///
-bool GetGeomPrimvar(const Stage &stage, const GPrim *prim, const std::string &name, GeomPrimvar *primvar, std::string *err = nullptr);
-
+bool GetGeomPrimvar(const Stage &stage, const GPrim *prim,
+                    const std::string &name, GeomPrimvar *primvar,
+                    std::string *err = nullptr);
 
 ///
 /// Get Primvars in GPrim.
 ///
-/// This API supports Connection Attribute(which requires finding Prim of targetPath in Stage).
+/// This API supports Connection Attribute(which requires finding Prim of
+/// targetPath in Stage).
 ///
 std::vector<GeomPrimvar> GetGeomPrimvars(const Stage &stage, const GPrim &prim);
 
 ///
 /// Build Collection Membership
 ///
-/// It traverse collection paths starting from `seedCollectionInstance` in the Stage.
-/// Note: No circular referencing path allowed.
+/// It traverse collection paths starting from `seedCollectionInstance` in the
+/// Stage. Note: No circular referencing path allowed.
 ///
-/// @returns CollectionMembershipQuery object. When encountered an error, CollectionMembershipQuery contains empty info(i.e, all query will fail)
+/// @returns CollectionMembershipQuery object. When encountered an error,
+/// CollectionMembershipQuery contains empty info(i.e, all query will fail)
 ///
 CollectionMembershipQuery BuildCollectionMembershipQuery(
-  const Stage &stage, const CollectionInstance &seedCollectionInstance);
+    const Stage &stage, const CollectionInstance &seedCollectionInstance);
 
-bool IsPathIncluded(const CollectionMembershipQuery &query, const Stage &stage, const Path &abs_path, const CollectionInstance::ExpansionRule expansionRule = CollectionInstance::ExpansionRule::ExpandPrims);
+bool IsPathIncluded(const CollectionMembershipQuery &query, const Stage &stage,
+                    const Path &abs_path,
+                    const CollectionInstance::ExpansionRule expansionRule =
+                        CollectionInstance::ExpansionRule::ExpandPrims);
 
 // TODO: Layer version
-// bool IsPathIncluded(const Layer &layer, const Path &abs_path, const CollectionInstance::ExpansionRule expansionRule = CollectionInstance::ExpansionRule::ExpandPrims);
-
+// bool IsPathIncluded(const Layer &layer, const Path &abs_path, const
+// CollectionInstance::ExpansionRule expansionRule =
+// CollectionInstance::ExpansionRule::ExpandPrims);
 
 //
 // usdSkel
 //
 
-struct SkelNode
-{
+struct SkelNode {
   std::string jointElementName;  // elementName(leaf node name) of jointPath.
-  std::string jointPath; // joints in UsdSkel. Relative or Absolute Prim path(e.g. "root/head", "/root/head")
-  std::string jointName; // jointNames in UsdSkel
+  std::string jointPath;         // joints in UsdSkel. Relative or Absolute Prim
+                                 // path(e.g. "root/head", "/root/head")
+  std::string jointName;         // jointNames in UsdSkel
   value::matrix4d bindTransform{value::matrix4d::identity()};
   value::matrix4d restTransform{value::matrix4d::identity()};
   int parentNodeIndex{-1};
@@ -503,8 +528,7 @@ struct SkelNode
   std::vector<int> childNodeIndices;
 };
 
-class SkelHierarchy
-{
+class SkelHierarchy {
  public:
   SkelHierarchy() = default;
 
@@ -523,14 +547,15 @@ class SkelHierarchy
  private:
   std::string _warm;
   std::string _err;
-  std::string _name; // Skeleleton Prim name
-  std::vector<SkelNode> _skel_nodes; // [0] = root node.
+  std::string _name;                  // Skeleleton Prim name
+  std::vector<SkelNode> _skel_nodes;  // [0] = root node.
 };
 
 ///
 /// Extract skeleleton info from Skeleton and build skeleton(bone) hierarchy.
 ///
-bool BuildSkelHierarchy(const Stage &stage, const Skeleton &skel, SkelHierarchy &dst, std::string *err = nullptr);
+bool BuildSkelHierarchy(const Stage &stage, const Skeleton &skel,
+                        SkelHierarchy &dst, std::string *err = nullptr);
 
 //
 // For USDZ AR extensions

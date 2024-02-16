@@ -903,6 +903,8 @@ struct GeomCamera : public GPrim {
 
   //
   // Properties
+  // 
+  // NOTE: fallback value is in [mm](tenth of scene unit)
   //
 
   TypedAttribute<Animatable<std::vector<value::float4>>> clippingPlanes; // float4[]
