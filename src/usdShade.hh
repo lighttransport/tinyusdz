@@ -335,6 +335,8 @@ using UsdPrimvarReader_matrix  = UsdPrimvarReader<value::matrix4d>;
 
 struct UsdUVTexture : ShaderNode {
 
+  // NOTE: transparent black(0, 0, 0, 0) for "black"
+  //       https://github.com/PixarAnimationStudios/OpenUSD/commit/2cf6612b2b1d5a1a1031bc153867116c5963e605
   enum class Wrap {
     UseMetadata, // "useMetadata" (default)
     Black, // "black"
