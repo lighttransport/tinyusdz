@@ -765,10 +765,8 @@ bool SetupTexture(const tinyusdz::tydra::RenderScene &scene,
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, texParams.wrapS);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, texParams.wrapT);
 
-  // For `black` wrap mode.
-  // Not sure what aplha color should be for USD's `black` wrap mode.
-  // There are two possibilities: opaque black or transparent black.
-  // We use fully transparent(0.0) for a while.
+  // Transparent black For `black` wrap mode.
+  // https://github.com/PixarAnimationStudios/OpenUSD/commit/2cf6612b2b1d5a1a1031bc153867116c5963e605
   texParams.borderCol = {0.0f, 0.0f, 0.0f, 0.0f};
   glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR,
                    &texParams.borderCol[0]);
