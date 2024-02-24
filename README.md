@@ -5,7 +5,9 @@
 ## High priority
 
 * Tydra: Handy data structure converter for rendering https://github.com/syoyo/tinyusdz/issues/31
+  * Working on the branch: https://github.com/syoyo/tinyusdz/tree/rendermesh-refactor 
   * [ ] USD to RenderScene(OpenGL/Vulkan) conversion https://github.com/syoyo/tinyusdz/issues/109
+ 
  
 ## Mid-term todo
 
