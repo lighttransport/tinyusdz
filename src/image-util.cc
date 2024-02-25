@@ -15,13 +15,15 @@
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
 #endif
 
-#include "external/stb_image_resize.h"
+//#include "external/stb_image_resize.h"
+#include "external/stb_image_resize2.h"
 
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif
 
 #include "image-util.hh"
+#include "value-types.hh"
 
 #if defined(TINYUSDZ_WITH_COLORIO)
 #include "external/tiny-color-io.h"
@@ -428,7 +430,7 @@ bool srgb_8bit_to_linear_f32(const std::vector<uint8_t> &in_img, size_t width,
 bool srgb_f32_to_linear_f32(const std::vector<float> &in_img, size_t width,
                          size_t height,
                          size_t channels, size_t channel_stride,
-                         std::vector<float> *out_img, float scale_factor, float bias) {
+                         std::vector<float> *out_img, const float scale_factor, const float bias, const float alpha_scale_factor, const float alpha_bias) {
 
   if ((width == 0) ||
     (height == 0) ||
@@ -465,8 +467,7 @@ bool srgb_f32_to_linear_f32(const std::vector<float> &in_img, size_t width,
       // Apply linear conversion.
       for (size_t c = channels; c < channel_stride; c++) {
         size_t idx = channel_stride * width * y + channel_stride * x + c;
-        // TODO: Do we need to apply scale_factor and bias to linear-value(e.g. alpha) channel also?
-        float f = in_img[idx] * scale_factor + bias;
+        float f = in_img[idx] * alpha_scale_factor + alpha_bias;
         (*out_img)[idx] = f;
       }
     }
@@ -574,6 +575,217 @@ bool f32_to_u8_image(const std::vector<float> &in_img, size_t width,
   for (size_t i = 0; i < num_pixels; i++) {
     float f = scale * in_img[i] + bias;
     (*out_img)[i] = detail::f32_to_u8(f);
+  }
+
+  return true;
+}
+
+bool linear_displayp3_to_linear_sRGB(const std::vector<float> &in_img, size_t width,
+                         size_t height, size_t channels,
+                         std::vector<float> *out_img) {
+
+  // http://endavid.com/index.php?entry=79
+  // https://tech.metail.com/introduction-colour-spaces-dci-p3/
+  
+
+  if (!out_img) {
+    return false;
+  }
+  
+  if (channels > 4) {
+    return false;
+  }
+
+  if ((channels != 3) && (channels != 4)) {
+    return false;
+  }
+
+  if (in_img.size() != (width * height * channels)) {
+    return false;
+  }
+
+  out_img->resize(in_img.size());
+
+  if (channels == 3) {
+    for (size_t y = 0; y < height; y++) {
+      for (size_t x = 0; x < width; x++) {
+        float r, g, b;
+        r = in_img[3 * (y * width + x) + 0]; 
+        g = in_img[3 * (y * width + x) + 1]; 
+        b = in_img[3 * (y * width + x) + 2]; 
+
+        float out_rgb[3];
+        out_rgb[0] = 1.2249f * r - 0.2247f * g;
+        out_rgb[1] = -0.0420f * r + 1.0419f * g;
+        out_rgb[2] = -0.0197f * r - 0.0786f * g + 1.0979f * b;
+
+        // clamp
+        out_rgb[0] = (out_rgb[0] < 0.0f) ? 0.0f : out_rgb[0];
+        out_rgb[1] = (out_rgb[1] < 0.0f) ? 0.0f : out_rgb[1];
+        out_rgb[2] = (out_rgb[2] < 0.0f) ? 0.0f : out_rgb[2];
+
+        (*out_img)[3 * (y * width + x) + 0] = out_rgb[0];
+        (*out_img)[3 * (y * width + x) + 1] = out_rgb[1];
+        (*out_img)[3 * (y * width + x) + 2] = out_rgb[2];
+      }
+    }
+
+  } else { // rgba
+    for (size_t y = 0; y < height; y++) {
+      for (size_t x = 0; x < width; x++) {
+        float r, g, b, a;
+        r = in_img[4 * (y * width + x) + 0]; 
+        g = in_img[4 * (y * width + x) + 1]; 
+        b = in_img[4 * (y * width + x) + 2]; 
+        a = in_img[4 * (y * width + x) + 3]; 
+
+        float out_rgb[3];
+        out_rgb[0] = 1.2249f * r - 0.2247f * g;
+        out_rgb[1] = -0.0420f * r + 1.0419f * g;
+        out_rgb[2] = -0.0197f * r - 0.0786f * g + 1.0979f * b;
+
+        // clamp
+        out_rgb[0] = (out_rgb[0] < 0.0f) ? 0.0f : out_rgb[0];
+        out_rgb[1] = (out_rgb[1] < 0.0f) ? 0.0f : out_rgb[1];
+        out_rgb[2] = (out_rgb[2] < 0.0f) ? 0.0f : out_rgb[2];
+
+        (*out_img)[4 * (y * width + x) + 0] = out_rgb[0];
+        (*out_img)[4 * (y * width + x) + 1] = out_rgb[1];
+        (*out_img)[4 * (y * width + x) + 2] = out_rgb[2];
+        (*out_img)[4 * (y * width + x) + 3] = a;
+      }
+    }
+  }
+
+  return true;
+}
+
+bool linear_sRGB_to_linear_displayp3(const std::vector<float> &in_img, size_t width,
+                         size_t height, size_t channels,
+                         std::vector<float> *out_img) {
+
+  // http://endavid.com/index.php?entry=79
+  // https://tech.metail.com/introduction-colour-spaces-dci-p3/
+  
+
+  if (!out_img) {
+    return false;
+  }
+  
+  if (channels > 4) {
+    return false;
+  }
+
+  if ((channels != 3) && (channels != 4)) {
+    return false;
+  }
+
+  if (in_img.size() != (width * height * channels)) {
+    return false;
+  }
+
+  out_img->resize(in_img.size());
+
+  if (channels == 3) {
+    for (size_t y = 0; y < height; y++) {
+      for (size_t x = 0; x < width; x++) {
+        float r, g, b;
+        r = in_img[3 * (y * width + x) + 0]; 
+        g = in_img[3 * (y * width + x) + 1]; 
+        b = in_img[3 * (y * width + x) + 2]; 
+
+        float out_rgb[3];
+        out_rgb[0] = 0.8225f * r + 0.1774f * g;
+        out_rgb[1] = 0.0332f * r + 0.9669f * g;
+        out_rgb[2] = 0.0171f * r + 0.0724f * g + 0.9108f * b;
+
+        // clamp for just in case.
+        out_rgb[0] = (out_rgb[0] < 0.0f) ? 0.0f : out_rgb[0];
+        out_rgb[1] = (out_rgb[1] < 0.0f) ? 0.0f : out_rgb[1];
+        out_rgb[2] = (out_rgb[2] < 0.0f) ? 0.0f : out_rgb[2];
+
+        (*out_img)[3 * (y * width + x) + 0] = out_rgb[0];
+        (*out_img)[3 * (y * width + x) + 1] = out_rgb[1];
+        (*out_img)[3 * (y * width + x) + 2] = out_rgb[2];
+      }
+    }
+
+  } else { // rgba
+    for (size_t y = 0; y < height; y++) {
+      for (size_t x = 0; x < width; x++) {
+        float r, g, b, a;
+        r = in_img[4 * (y * width + x) + 0]; 
+        g = in_img[4 * (y * width + x) + 1]; 
+        b = in_img[4 * (y * width + x) + 2]; 
+        a = in_img[4 * (y * width + x) + 3]; 
+
+        float out_rgb[3];
+        out_rgb[0] = 0.8225f * r + 0.1774f * g;
+        out_rgb[1] = 0.0332f * r + 0.9669f * g;
+        out_rgb[2] = 0.0171f * r + 0.0724f * g + 0.9108f * b;
+
+        // clamp for just in case.
+        out_rgb[0] = (out_rgb[0] < 0.0f) ? 0.0f : out_rgb[0];
+        out_rgb[1] = (out_rgb[1] < 0.0f) ? 0.0f : out_rgb[1];
+        out_rgb[2] = (out_rgb[2] < 0.0f) ? 0.0f : out_rgb[2];
+
+        (*out_img)[4 * (y * width + x) + 0] = out_rgb[0];
+        (*out_img)[4 * (y * width + x) + 1] = out_rgb[1];
+        (*out_img)[4 * (y * width + x) + 2] = out_rgb[2];
+        (*out_img)[4 * (y * width + x) + 3] = a;
+      }
+    }
+  }
+
+  return true;
+}
+
+bool displayp3_f16_to_linear_f32(const std::vector<value::half> &in_img, size_t width,
+                         size_t height,
+                         size_t channels, size_t channel_stride,
+                         std::vector<float> *out_img, const float scale_factor, const float bias, const float alpha_scale_factor, const float alpha_bias) {
+
+  if ((width == 0) ||
+    (height == 0) ||
+    (channels == 0) ||
+    (out_img == nullptr)) {
+    return false;
+  }
+
+  if (channel_stride == 0) {
+    channel_stride = channels;
+  } else {
+    if (channel_stride < channels) {
+      return false;
+    }
+  }
+
+  size_t dest_size = size_t(width) * size_t(height) * channel_stride;
+  if (dest_size > in_img.size()) {
+    return false;
+  }
+
+  out_img->resize(dest_size);
+
+  // assume input is in [0.0, 1.0]
+  for (size_t y = 0; y < height; y++) {
+    for (size_t x = 0; x < width; x++) {
+      for (size_t c = 0; c < channels; c++) {
+        size_t idx = channel_stride * width * y + channel_stride * x + c;
+        float in_val = value::half_to_float(in_img[idx]);
+        float f = in_val * scale_factor + bias;
+        (*out_img)[idx] = SrgbTransform::srgbToLinear(f); // Display P3 use the same transfer function with sRGB
+      }
+
+      // remainder(usually alpha channel)
+      // Apply linear conversion.
+      for (size_t c = channels; c < channel_stride; c++) {
+        size_t idx = channel_stride * width * y + channel_stride * x + c;
+        float in_val = value::half_to_float(in_img[idx]);
+        float f = in_val * alpha_scale_factor + alpha_bias;
+        (*out_img)[idx] = f;
+      }
+    }
   }
 
   return true;
