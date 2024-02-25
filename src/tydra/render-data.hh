@@ -166,6 +166,7 @@ struct BufferData {
   // TODO: Stride
 };
 
+#if 0 // not used atm
 // glTF-like Attribute
 struct Attribute {
   std::string path;     // Path string in Stage
@@ -173,6 +174,7 @@ struct Attribute {
 
   int64_t buffer_id{-1};  // index to buffer_id
 };
+#endif
 
 // Compound of ComponentType x component
 enum class VertexAttributeFormat {
@@ -1064,7 +1066,7 @@ class RenderScene {
   std::vector<RenderMesh> meshes;
   std::vector<Animation> animations;
   std::vector<BufferData>
-      buffers;  // Various data storage(e.g. primvar texcoords)
+      buffers;  // Various data storage(e.g. texel/image data).
 
   // int64_t default_root_node{-1}; // index to `nodes`. `defaultPrim` in USD
 };
@@ -1462,26 +1464,6 @@ class RenderSceneConverter {
   RenderSceneConverter(const RenderSceneConverter &rhs) = delete;
   RenderSceneConverter(RenderSceneConverter &&rhs) = delete;
 
-  //void set_scene_config(const RenderSceneConverterConfig &config) {
-  //  _scene_config = config;
-  //}
-
-  //void set_mesh_config(const MeshConverterConfig &config) {
-  //  _mesh_config = config;
-  //}
-
-  //void set_material_config(const MaterialConverterConfig &config) {
-  //  _material_config = config;
-  //}
-
-  //void set_asset_resoluition_resolver(AssetResolutionResolver &&rhs) {
-  //  _asset_resolver = std::move(rhs);
-  //}
-
-  //void set_search_paths(const std::vector<std::string> &paths) {
-  //  _asset_resolver.set_search_paths(paths);
-  //}
-
   ///
   /// All-in-one Stage to RenderScene conversion.
   ///
@@ -1650,12 +1632,6 @@ class RenderSceneConverter {
   //
   bool GetSkeletonImpl(const tinyusdz::Prim &prim,
                        const tinyusdz::Skeleton *&out_skeleton);
-
-  //AssetResolutionResolver _asset_resolver;
-  //RenderSceneConverterConfig _scene_config;
-  //MeshConverterConfig _mesh_config;
-  //MaterialConverterConfig _material_config;
-  // const Stage *_stage{nullptr};
 
   void PushInfo(const std::string &msg) { _info += msg; }
   void PushWarn(const std::string &msg) { _warn += msg; }
