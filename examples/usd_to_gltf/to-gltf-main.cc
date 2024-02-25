@@ -49,6 +49,46 @@ using PrimvarReader_float2Map =
     std::map<std::string, std::pair<const tinyusdz::Shader *,
                                     const tinyusdz::UsdPrimvarReader_float2 *>>;
 
+tinygltf::Material to_gltf_material(const tinyusdz::tydra::RenderMaterial &mat) {
+  tinygltf::Material out;
+
+  out.pbrMetallicRoughness.roughnessFactor = mat.surfaceShader.roughness.value;
+
+  return out;
+}
+
+bool to_gltf(const tinyusdz::tydra::RenderScene &rscene, const std::string &gltf_filename)
+{
+  tinygltf::Model model;
+  tinygltf::Scene scene;
+  std::vector<tinygltf::Mesh> meshes;
+  tinygltf::Primitive primitive;
+
+  tinygltf::Asset asset;
+  asset.version = "2.0";
+  asset.generator = "usd_to_gltf example in TinyUSDZ";
+
+  model.scenes.push_back(scene);
+
+  // model.bufferViews
+  // model.buffers
+  // model.nodes
+  //model.meshes = meshes;
+  model.asset = asset;
+
+  // model.materials
+
+  tinygltf::TinyGLTF ctx;
+  bool ret = ctx.WriteGltfSceneToFile(&model,
+    gltf_filename,
+    true, // embedImages
+  true, // embedBuffers
+  true, // pretty print
+  false); // write binary glTF
+
+  return ret;
+}
+
 int main(int argc, char **argv) {
   if (argc < 2) {
     std::cout << "Need USD file.\n"
@@ -157,6 +197,11 @@ int main(int argc, char **argv) {
   }
 
   std::cout << DumpRenderScene(render_scene) << "\n";
+
+  if (!to_gltf(render_scene, "output.gltf")) {
+    std::cerr << "Failed to save scene as glTF\n";
+    return EXIT_FAILURE;
+  } 
 
   return EXIT_SUCCESS;
 }
