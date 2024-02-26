@@ -4664,42 +4664,101 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
 }  // namespace
 
+
+bool RenderSceneConverter::BuildNodeHierarchyImpl(
+  const tinyusdz::Prim &prim,
+  const std::string primPath) {
+
+  if (prim.prim_type_name() == "GeomMesh") {
+
+  } else if (prim.prim_type_name() == "Xform") {
+
+  } else if (prim.prim_type_name() == "Material") {
+
+  } else if (prim.prim_type_name() == "Scope") {
+
+  } else if (prim.prim_type_name() == "Model") {
+
+  } else {
+    // 
+  }
+
+  for (const auto &child : prim.children()) {
+    std::string childPrimPath = primPath + "/" + child.element_name();
+    if (!BuildNodeHierarchyImpl(child, childPrimPath)) {
+      return false;
+    }
+  }
+
+  return true;
+
+}
+
+bool RenderSceneConverter::BuildNodeHierarchy(
+  const RenderSceneConverterEnv &env) {
+
+  for (const auto &rootPrim : env.stage.root_prims()) {
+    if (!BuildNodeHierarchyImpl(rootPrim, "/" + rootPrim.element_name())) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 bool RenderSceneConverter::ConvertToRenderScene(const RenderSceneConverterEnv &env,
                                                 RenderScene *scene) {
   if (!scene) {
     PUSH_ERROR_AND_RETURN("nullptr for RenderScene argument.");
   }
 
-  // Build Xform at specified time.
+  // 1. Convert Xform
+  // 2. Convert Material/Texture
+  // 3. Convert Mesh/SkinWeights/BlendShapes
+  // 4. Convert Skeleton(bones)
+  // 5. Build node hierarchy
+  // TODO: Convert lights
+
+  //
+  // 1. Build Xform at specified time.
+  //
   XformNode xform_node;
   if (!BuildXformNodeFromStage(env.stage, &xform_node, env.timecode)) {
     PUSH_ERROR_AND_RETURN("Failed to build Xform node hierarchy.\n");
   }
 
-  // W.I.P.
-
-  RenderScene render_scene;
-
-  // 1. Visit GeomMesh
-  // 2. If the mesh has bound material
-  //   1. Create Material
-  //
-  // TODO: GeomSubset(per-face material)
-
   std::string err;
 
+  //
+  // 2. Convert Material/Texture
+  //
+  // TODO
+
+  //
+  // 3. Convert Mesh/SkinWeights/BlendShapes
+  //
   MeshVisitorEnv menv;
   menv.env = &env;
   menv.converter = this;
 
-  // Pass `this` through userdata ptr
   bool ret = tydra::VisitPrims(env.stage, MeshVisitor, &menv, &err);
 
   if (!ret) {
-    _err += err;
-
-    return false;
+    PUSH_ERROR_AND_RETURN(err);
   }
+
+  //
+  // 4. Convert Skeletons
+  //
+  // TODO
+  
+
+  //
+  // 5. Build node hierarchy
+  //
+  if (!BuildNodeHierarchy(env)) {
+    return false;
+  } 
 
   // render_scene.meshMap = std::move(meshMap);
   // render_scene.materialMap = std::move(materialMap);
@@ -4707,6 +4766,7 @@ bool RenderSceneConverter::ConvertToRenderScene(const RenderSceneConverterEnv &e
   // render_scene.imageMap = std::move(imageMap);
   // render_scene.bufferMap = std::move(bufferMap);
 
+  RenderScene render_scene;
   render_scene.nodes = std::move(nodes);
   render_scene.meshes = std::move(meshes);
   render_scene.textures = std::move(textures);
