@@ -1476,6 +1476,7 @@ class RenderSceneConverter {
   const std::string &GetWarning() const { return _warn; }
   const std::string &GetError() const { return _err; }
 
+  // TODO: Move to private?
   StringAndIdMap nodeMap;
   StringAndIdMap meshMap;
   StringAndIdMap materialMap;
@@ -1602,7 +1603,7 @@ class RenderSceneConverter {
                         const Path &tex_abs_path, const AssetInfo &assetInfo,
                         const UsdUVTexture &texture, UVTexture *tex_out);
 
-  // const Stage *GetStagePtr() const { return _stage; }
+  bool BuildNodeHierarchy(const RenderSceneConverterEnv &env);
 
  private:
   ///
@@ -1632,6 +1633,10 @@ class RenderSceneConverter {
   //
   bool GetSkeletonImpl(const tinyusdz::Prim &prim,
                        const tinyusdz::Skeleton *&out_skeleton);
+
+  bool BuildNodeHierarchyImpl(
+    const tinyusdz::Prim &prim,
+    const std::string primPath);
 
   void PushInfo(const std::string &msg) { _info += msg; }
   void PushWarn(const std::string &msg) { _warn += msg; }
