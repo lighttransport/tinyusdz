@@ -8,8 +8,8 @@
 //     function of subd surface)
 //   - [x] Support time-varying shader attribute(timeSamples)
 //   - [ ] Wide gamut colorspace conversion support
-//     - [ ] sRGB <-> DisplayP3
-//   - [ ] tangentes and binormals
+//     - [ ] linear sRGB <-> linear DisplayP3
+//   - [x] COmpute tangentes and binormals
 //   - [x] displayColor, displayOpacity primvar(vertex color)
 //   - [ ] Support Inbetween BlendShape
 //   - [ ] Support material binding collection(Collection API)
@@ -4666,39 +4666,62 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
 
 bool RenderSceneConverter::BuildNodeHierarchyImpl(
-  const tinyusdz::Prim &prim,
-  const std::string primPath) {
+  const RenderSceneConverterEnv &env,
+  const XformNode &node,
+  int &node_id) {
 
-  if (prim.prim_type_name() == "GeomMesh") {
+  Node rnode;
 
-  } else if (prim.prim_type_name() == "Xform") {
-
-  } else if (prim.prim_type_name() == "Material") {
-
-  } else if (prim.prim_type_name() == "Scope") {
-
-  } else if (prim.prim_type_name() == "Model") {
-
-  } else {
-    // 
-  }
-
-  for (const auto &child : prim.children()) {
-    std::string childPrimPath = primPath + "/" + child.element_name();
-    if (!BuildNodeHierarchyImpl(child, childPrimPath)) {
-      return false;
+  const tinyusdz::Prim *prim = node.prim;
+  if (prim) {
+    if (prim->prim_type_name() == "GeomMesh") {
+      // GeomMesh(GPrim) also has xform.
+      rnode.local_matrix = node.get_local_matrix();
+      rnode.nodeType = NodeType::Mesh;
+      rnode.id = 0; // TODO: index to meshes
+    } else if (prim->prim_type_name() == "Xform") {
+      rnode.local_matrix = node.get_local_matrix();
+      rnode.global_matrix = node.get_world_matrix();
+      rnode.nodeType = NodeType::Xform;
+    } else if (prim->prim_type_name() == "Scope") {
+      // NOTE: get_local_matrix() should return identity matrix.
+      rnode.local_matrix = node.get_local_matrix();
+      rnode.global_matrix = node.get_world_matrix();
+      rnode.nodeType = NodeType::Xform;
+    } else if (prim->prim_type_name() == "Model") {
+      rnode.local_matrix = node.get_local_matrix();
+      rnode.global_matrix = node.get_world_matrix();
+      rnode.nodeType = NodeType::Xform;
+    } else {
+      // TODO: Light, Camera
+      // ignore other node types.
     }
   }
 
+  int nid = int(nodes.size());
+  nodes.push_back(rnode);
+
+  for (const auto &child : node.children) {
+    int child_node_id{-1};
+    if (!BuildNodeHierarchyImpl(env, child, child_node_id)) {
+      return false;
+    }
+
+    nodes[size_t(nid)].children.push_back(uint32_t(child_node_id));
+  }
+
+  node_id = nid;
   return true;
 
 }
 
 bool RenderSceneConverter::BuildNodeHierarchy(
-  const RenderSceneConverterEnv &env) {
+  const RenderSceneConverterEnv &env,
+  const XformNode &root) {
 
-  for (const auto &rootPrim : env.stage.root_prims()) {
-    if (!BuildNodeHierarchyImpl(rootPrim, "/" + rootPrim.element_name())) {
+  for (const auto &rootNode : root.children) {
+    int root_id{-1};
+    if (!BuildNodeHierarchyImpl(env, rootNode, root_id)) {
       return false;
     }
   }
@@ -4721,6 +4744,7 @@ bool RenderSceneConverter::ConvertToRenderScene(const RenderSceneConverterEnv &e
 
   //
   // 1. Build Xform at specified time.
+  //    Each Prim in Stage is converted to XformNode.
   //
   XformNode xform_node;
   if (!BuildXformNodeFromStage(env.stage, &xform_node, env.timecode)) {
@@ -4754,9 +4778,9 @@ bool RenderSceneConverter::ConvertToRenderScene(const RenderSceneConverterEnv &e
   
 
   //
-  // 5. Build node hierarchy
+  // 5. Build node hierarchy from XformNode and meshes, materials, skeletons, etc.
   //
-  if (!BuildNodeHierarchy(env)) {
+  if (!BuildNodeHierarchy(env, xform_node)) {
     return false;
   } 
 
