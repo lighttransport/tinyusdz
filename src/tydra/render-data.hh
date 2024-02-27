@@ -648,9 +648,10 @@ struct Node {
   int32_t id{-1};  // Index to node content(e.g. meshes[id] when nodeTypes ==
                    // Mesh). -1 = no corresponding content exists for this node.
 
-  std::vector<uint32_t> children;
+  std::vector<uint32_t> children; // index to child Node in RenderScene::nodes
 
   // Every node have its transform at specified timecode.
+  // `resetXfor` is encoded in local/global matrix.
   value::matrix4d local_matrix;
   value::matrix4d global_matrix;  // = local_matrix * parent_matrix (USD use
                                   // row-major(pre-multiply))
@@ -1485,6 +1486,9 @@ class RenderSceneConverter {
   StringAndIdMap textureMap;
   StringAndIdMap imageMap;
   StringAndIdMap bufferMap;
+
+  std::vector<uint32_t> root_nodes; // index to `nodes`
+
   std::vector<Node> nodes;
   std::vector<RenderMesh> meshes;
   std::vector<RenderMaterial> materials;
@@ -1603,7 +1607,11 @@ class RenderSceneConverter {
                         const Path &tex_abs_path, const AssetInfo &assetInfo,
                         const UsdUVTexture &texture, UVTexture *tex_out);
 
-  bool BuildNodeHierarchy(const RenderSceneConverterEnv &env);
+  ///
+  /// @param[in] env
+  /// @param[in] root XformNode
+  ///
+  bool BuildNodeHierarchy(const RenderSceneConverterEnv &env, const XformNode &node);
 
  private:
   ///
@@ -1635,8 +1643,9 @@ class RenderSceneConverter {
                        const tinyusdz::Skeleton *&out_skeleton);
 
   bool BuildNodeHierarchyImpl(
-    const tinyusdz::Prim &prim,
-    const std::string primPath);
+    const RenderSceneConverterEnv &env,
+    const XformNode &node,
+    int &node_id);
 
   void PushInfo(const std::string &msg) { _info += msg; }
   void PushWarn(const std::string &msg) { _warn += msg; }
