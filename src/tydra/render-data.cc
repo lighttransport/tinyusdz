@@ -4692,6 +4692,8 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
 
   const tinyusdz::Prim *prim = node.prim;
   if (prim) {
+    rnode.name = prim->element_name();
+
     if (prim->type_id() == value::TYPE_ID_GEOM_MESH) {
       // GeomMesh(GPrim) also has xform.
       rnode.local_matrix = node.get_local_matrix();
@@ -4749,8 +4751,9 @@ bool RenderSceneConverter::BuildNodeHierarchy(
   const RenderSceneConverterEnv &env,
   const XformNode &root) {
 
-  int default_root_node_id{-1};
   std::string defaultRootNode = env.stage.metas().defaultPrim.str();
+
+  default_node = -1;
 
   for (const auto &rootNode : root.children) {
     Node root_node;
@@ -4759,12 +4762,12 @@ bool RenderSceneConverter::BuildNodeHierarchy(
     }
 
     if (defaultRootNode == rootNode.element_name) {
-      default_root_node_id = int(root_nodes.size());
+      default_node = int(root_nodes.size());
     }
 
-    // omits "/"
-    root_nodeMap.add(rootNode.element_name, root_nodes.size());
+    root_nodeMap.add("/" + rootNode.element_name, root_nodes.size());
     root_nodes.push_back(root_node);
+
   }
 
   return true;
@@ -4832,7 +4835,16 @@ bool RenderSceneConverter::ConvertToRenderScene(const RenderSceneConverterEnv &e
   // render_scene.bufferMap = std::move(bufferMap);
 
   RenderScene render_scene;
-  render_scene.nodes = std::move(nodes);
+  render_scene.usd_filename = env.usd_filename;
+  render_scene.default_root_node = 0;
+  if (default_node > -1) {
+    if (size_t(default_node) >= root_nodes.size()) {
+      PushWarn("Invalid default_node id. Use 0 for default_node id.");
+    } else {
+      render_scene.default_root_node = uint32_t(default_node);
+    }
+  }
+  render_scene.nodes = std::move(root_nodes);
   render_scene.meshes = std::move(meshes);
   render_scene.textures = std::move(textures);
   render_scene.images = std::move(images);
@@ -5379,10 +5391,23 @@ std::string DumpVertexAttribute(const VertexAttribute &vattr, uint32_t indent) {
   return ss.str();
 }
 
+std::string DumpNode(const Node &node, uint32_t indent) {
+  std::stringstream ss;
+
+  ss << "Node {\n";
+
+  ss << pprint::Indent(indent + 1) << "name `" << node.name << "`\n";
+  ss << pprint::Indent(indent + 1) << "local_matrix " << quote(tinyusdz::to_string(node.local_matrix)) << "\n";
+
+  ss << pprint::Indent(indent) << "}\n";
+
+  return ss.str();
+}
+
 std::string DumpMesh(const RenderMesh &mesh, uint32_t indent) {
   std::stringstream ss;
 
-  ss << "RenderMesh j{\n";
+  ss << "RenderMesh {\n";
 
   ss << pprint::Indent(indent + 1) << "prim_name `" << mesh.prim_name << "`\n";
   ss << pprint::Indent(indent + 1) << "abs_path `" << mesh.abs_path << "`\n";
@@ -5634,14 +5659,15 @@ std::string DumpRenderScene(const RenderScene &scene,
                             const std::string &format) {
   std::stringstream ss;
 
-  // Currently kdl only.
   if (format == "json") {
-    // not supported yet.
+    // TODO:
+    // Currently kdl only.
+    ss << "// `json` format is not supported yet. Use KDL format\n";
   }
 
-  // KDL does not support array, so quote it as done in USD
-
-  ss << "title RenderScene\n";
+  ss << "title " << quote(scene.usd_filename) << "\n";
+  ss << "default_root_node " << scene.default_root_node << "\n";
+  ss << "// # of Root Nodes : " << scene.nodes.size() << "\n";
   ss << "// # of Meshes : " << scene.meshes.size() << "\n";
   ss << "// # of Animations : " << scene.animations.size() << "\n";
   ss << "// # of Materials : " << scene.materials.size() << "\n";
@@ -5650,6 +5676,12 @@ std::string DumpRenderScene(const RenderScene &scene,
   ss << "// # of Buffers : " << scene.buffers.size() << "\n";
 
   ss << "\n";
+
+  ss << "nodes {\n";
+  for (size_t i = 0; i < scene.nodes.size(); i++) {
+    ss << "[" << i << "] " << DumpNode(scene.nodes[i], 1);
+  }
+  ss << "}\n";
 
   ss << "meshes {\n";
   for (size_t i = 0; i < scene.meshes.size(); i++) {
