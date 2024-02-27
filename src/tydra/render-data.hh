@@ -49,10 +49,10 @@ using vec2 = value::float2;
 using vec3 = value::float3;
 using vec4 = value::float4;
 using quat = value::float4;
-using mat2 = value::matrix2f;   // float precision
-using mat3 = value::matrix3f;   // float precision
-using mat4 = value::matrix4f;   // float precision
-using dmat4 = value::matrix4d;  // float precision
+using mat2 = value::matrix2f;
+using mat3 = value::matrix3f;   
+using mat4 = value::matrix4f;   
+using dmat4 = value::matrix4d;  
 
 // Simple string <-> id map
 struct StringAndIdMap {
@@ -648,13 +648,15 @@ struct Node {
   int32_t id{-1};  // Index to node content(e.g. meshes[id] when nodeTypes ==
                    // Mesh). -1 = no corresponding content exists for this node.
 
-  std::vector<uint32_t> children; // index to child Node in RenderScene::nodes
+  std::vector<Node> children;
 
   // Every node have its transform at specified timecode.
-  // `resetXfor` is encoded in local/global matrix.
+  // `resetXform` is encoded in global matrix.
   value::matrix4d local_matrix;
   value::matrix4d global_matrix;  // = local_matrix * parent_matrix (USD use
                                   // row-major(pre-multiply))
+
+  bool has_resetXform{false}; // true: When updating the transform of the node, need to reset parent's matrix to compute global matrix.
 
   bool is_identity_matrix() { return is_identity(local_matrix); }
 
@@ -1058,7 +1060,9 @@ struct RenderLight
 // Simple glTF-like Scene Graph
 class RenderScene {
  public:
-  std::vector<Node> nodes;  // Prims in USD
+  uint32_t default_root_node{0}; // index to `nodes`.
+
+  std::vector<Node> nodes; 
   std::vector<TextureImage> images;
   std::vector<RenderMaterial> materials;
   std::vector<RenderCamera> cameras;
@@ -1066,10 +1070,10 @@ class RenderScene {
   std::vector<UVTexture> textures;
   std::vector<RenderMesh> meshes;
   std::vector<Animation> animations;
+  std::vector<SkelHierarchy> skeletons;
   std::vector<BufferData>
       buffers;  // Various data storage(e.g. texel/image data).
 
-  // int64_t default_root_node{-1}; // index to `nodes`. `defaultPrim` in USD
 };
 
 ///
@@ -1477,8 +1481,11 @@ class RenderSceneConverter {
   const std::string &GetWarning() const { return _warn; }
   const std::string &GetError() const { return _err; }
 
+  // Prim path <-> index for corresponding array
+  // e.g. meshMap: primPath/index to `meshes`.
+
   // TODO: Move to private?
-  StringAndIdMap nodeMap;
+  StringAndIdMap root_nodeMap;
   StringAndIdMap meshMap;
   StringAndIdMap materialMap;
   StringAndIdMap cameraMap;
@@ -1487,9 +1494,9 @@ class RenderSceneConverter {
   StringAndIdMap imageMap;
   StringAndIdMap bufferMap;
 
-  std::vector<uint32_t> root_nodes; // index to `nodes`
+  int default_node{-1};
 
-  std::vector<Node> nodes;
+  std::vector<Node> root_nodes;
   std::vector<RenderMesh> meshes;
   std::vector<RenderMaterial> materials;
   std::vector<RenderCamera> cameras;
@@ -1644,8 +1651,9 @@ class RenderSceneConverter {
 
   bool BuildNodeHierarchyImpl(
     const RenderSceneConverterEnv &env,
+    const std::string &parentPrimPath,
     const XformNode &node,
-    int &node_id);
+    Node &out_rnode);
 
   void PushInfo(const std::string &msg) { _info += msg; }
   void PushWarn(const std::string &msg) { _warn += msg; }

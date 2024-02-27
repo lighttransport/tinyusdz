@@ -4545,7 +4545,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     // Collect GeomSubsets
     // std::vector<const tinyusdz::GeomSubset *> subsets = GetGeomSubsets(;
 
-    DCOUT("Material: " << abs_path);
+    DCOUT("Mesh: " << abs_path);
 
     //
     // First convert Material.
@@ -4655,6 +4655,15 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         return false;
       }
 
+      uint64_t mesh_id = uint64_t(visitorEnv->converter->meshes.size());
+      if (mesh_id >= (std::numeric_limits<int64_t>::max)()) {
+        if (err) {
+          (*err) += "Mesh index too large.\n";
+        }
+        return false;
+      }
+      visitorEnv->converter->meshMap.add(abs_path.full_path_name(), mesh_id);
+
       visitorEnv->converter->meshes.emplace_back(std::move(rmesh));
     }
   }
@@ -4667,50 +4676,71 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
 bool RenderSceneConverter::BuildNodeHierarchyImpl(
   const RenderSceneConverterEnv &env,
+  const std::string &parentPrimPath,
   const XformNode &node,
-  int &node_id) {
+  Node &out_rnode) {
 
   Node rnode;
 
+  std::string primPath;
+  if (parentPrimPath.empty()) {
+    primPath = "/" + node.element_name;
+  } else {
+    primPath = parentPrimPath + "/" + node.element_name;
+  }
+
+
   const tinyusdz::Prim *prim = node.prim;
   if (prim) {
-    if (prim->prim_type_name() == "GeomMesh") {
+    if (prim->type_id() == value::TYPE_ID_GEOM_MESH) {
       // GeomMesh(GPrim) also has xform.
       rnode.local_matrix = node.get_local_matrix();
       rnode.nodeType = NodeType::Mesh;
+      rnode.has_resetXform = node.has_resetXformStack();
       rnode.id = 0; // TODO: index to meshes
-    } else if (prim->prim_type_name() == "Xform") {
+    } else if (prim->type_id() == value::TYPE_ID_GEOM_CAMERA) {
+      rnode.local_matrix = node.get_local_matrix();
+      rnode.nodeType = NodeType::Mesh;
+      rnode.has_resetXform = node.has_resetXformStack();
+      rnode.id = 0; // TODO: index to cameras
+    } else if (prim->prim_id() == value::TYPE_ID_GEOM_XFORM) {
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
+      rnode.has_resetXform = node.has_resetXformStack();
       rnode.nodeType = NodeType::Xform;
-    } else if (prim->prim_type_name() == "Scope") {
+    } else if (prim->prim_id() == value::TYPE_ID_SCOPE) {
       // NOTE: get_local_matrix() should return identity matrix.
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
+      rnode.has_resetXform = node.has_resetXformStack();
       rnode.nodeType = NodeType::Xform;
-    } else if (prim->prim_type_name() == "Model") {
+    } else if (prim->prim_id() == value::TYPE_ID_MODEL) {
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
+      rnode.has_resetXform = node.has_resetXformStack();
       rnode.nodeType = NodeType::Xform;
+    } else if (IsLightPrim(*prim)) {
+      rnode.local_matrix = node.get_local_matrix();
+      rnode.global_matrix = node.get_world_matrix();
+      rnode.has_resetXform = node.has_resetXformStack();
+      // TODO
+      //rnode.nodeType = NodeType::Light;
+      rnode.id = 0; // TODO: index to lights
+      // TODO
     } else {
-      // TODO: Light, Camera
       // ignore other node types.
     }
   }
 
-  int nid = int(nodes.size());
-  nodes.push_back(rnode);
-
   for (const auto &child : node.children) {
-    int child_node_id{-1};
-    if (!BuildNodeHierarchyImpl(env, child, child_node_id)) {
+    Node child_rnode;
+    if (!BuildNodeHierarchyImpl(env, primPath, child, child_rnode)) {
       return false;
     }
 
-    nodes[size_t(nid)].children.push_back(uint32_t(child_node_id));
+    out_rnode.children.push_back(child_rnode);
   }
 
-  node_id = nid;
   return true;
 
 }
@@ -4719,11 +4749,22 @@ bool RenderSceneConverter::BuildNodeHierarchy(
   const RenderSceneConverterEnv &env,
   const XformNode &root) {
 
+  int default_root_node_id{-1};
+  std::string defaultRootNode = env.stage.metas().defaultPrim.str();
+
   for (const auto &rootNode : root.children) {
-    int root_id{-1};
-    if (!BuildNodeHierarchyImpl(env, rootNode, root_id)) {
+    Node root_node;
+    if (!BuildNodeHierarchyImpl(env, /* root */"", rootNode, root_node)) {
       return false;
     }
+
+    if (defaultRootNode == rootNode.element_name) {
+      default_root_node_id = int(root_nodes.size());
+    }
+
+    // omits "/"
+    root_nodeMap.add(rootNode.element_name, root_nodes.size());
+    root_nodes.push_back(root_node);
   }
 
   return true;
@@ -4775,14 +4816,14 @@ bool RenderSceneConverter::ConvertToRenderScene(const RenderSceneConverterEnv &e
   // 4. Convert Skeletons
   //
   // TODO
-  
+
 
   //
   // 5. Build node hierarchy from XformNode and meshes, materials, skeletons, etc.
   //
   if (!BuildNodeHierarchy(env, xform_node)) {
     return false;
-  } 
+  }
 
   // render_scene.meshMap = std::move(meshMap);
   // render_scene.materialMap = std::move(materialMap);
@@ -4797,6 +4838,7 @@ bool RenderSceneConverter::ConvertToRenderScene(const RenderSceneConverterEnv &e
   render_scene.images = std::move(images);
   render_scene.buffers = std::move(buffers);
   render_scene.materials = std::move(materials);
+  render_scene.skeletons = std::move(skeletons);
 
   (*scene) = std::move(render_scene);
   return true;
