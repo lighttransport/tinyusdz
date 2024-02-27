@@ -643,6 +643,8 @@ struct Animation {
 };
 
 struct Node {
+  std::string name; // element_name in USD
+
   NodeType nodeType{NodeType::Xform};
 
   int32_t id{-1};  // Index to node content(e.g. meshes[id] when nodeTypes ==
@@ -1060,6 +1062,8 @@ struct RenderLight
 // Simple glTF-like Scene Graph
 class RenderScene {
  public:
+  std::string usd_filename;
+
   uint32_t default_root_node{0}; // index to `nodes`.
 
   std::vector<Node> nodes; 
@@ -1447,11 +1451,13 @@ class RenderSceneConverterEnv {
 
   AssetResolutionResolver asset_resolver;
 
+  std::string usd_filename; // Corresponding USD filename to Stage.
+
   void set_search_paths(const std::vector<std::string> &paths) {
     asset_resolver.set_search_paths(paths);
   }
 
-  const Stage &stage;  // Point to valid Stage object
+  const Stage &stage;  // Point to valid Stage object at constructor
 
   double timecode{value::TimeCode::Default()};
   value::TimeSampleInterpolationType tinterp{

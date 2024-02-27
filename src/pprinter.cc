@@ -1671,6 +1671,8 @@ static bool emit_gprim_predefined(std::stringstream &ss, const GPrim *gprim,
 }
 #endif
 
+// TODO: Move to value-pprint.cc
+
 std::string to_string(bool v) {
   if (v) {
     return "true";
@@ -1806,6 +1808,42 @@ std::string to_string(const value::texcoord3f &v) {
 }
 
 std::string to_string(const value::texcoord3d &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const value::matrix2f &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const value::matrix3f &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const value::matrix4f &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const value::matrix2d &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const value::matrix3d &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const value::matrix4d &v) {
   std::stringstream ss;
   ss << v;
   return ss.str();
