@@ -3557,6 +3557,10 @@ bool RenderSceneConverter::ConvertMesh(
     std::vector<vec3> normals;
 
     // TODO: Support arbitrary slotID
+    if (!dst.texcoords.count(0)) {
+      PUSH_ERROR_AND_RETURN("texcoord is required to compute tangents/binormals.\n");
+    }
+
     texcoords.resize(dst.texcoords[0].vertex_count());
     normals.resize(dst.normals.vertex_count());
 
@@ -3573,16 +3577,46 @@ bool RenderSceneConverter::ConvertMesh(
       PUSH_ERROR_AND_RETURN("Failed to compute tangents/binormals.");
     }
 
-    // TODO: Remap
+    // 1. For now, always convert tangents/binormals to 'facevarying' variability
+    {
+      std::vector<vec3> facevarying_tangents;
+      std::vector<vec3> facevarying_binormals;
+      facevarying_tangents.assign(vertex_indices.size(), {0.0f, 0.0f, 0.0f});
+      facevarying_binormals.assign(vertex_indices.size(), {0.0f, 0.0f, 0.0f});
+      for (size_t i = 0; i < vertex_indices.size(); i++) {
+        facevarying_tangents[i] = tangents[vertex_indices[i]];
+        facevarying_binormals[i] = binormals[vertex_indices[i]];
+      }
 
-    // Build indices(again)
-    if (!BuildVertexIndicesImpl(dst)) {
-      return false;
+      dst.tangents.data.resize(facevarying_tangents.size() * sizeof(vec3));
+      memcpy(dst.tangents.data.data(), facevarying_tangents.data(), facevarying_tangents.size() * sizeof(vec3));
+
+      dst.tangents.format = VertexAttributeFormat::Vec3;
+      dst.tangents.stride = 0;
+      dst.tangents.elementSize = 1;
+      dst.tangents.variability = VertexVariability::FaceVarying;
+
+
+      dst.binormals.data.resize(facevarying_binormals.size() * sizeof(vec3));
+      memcpy(dst.binormals.data.data(), facevarying_binormals.data(), facevarying_binormals.size() * sizeof(vec3));
+
+      dst.binormals.format = VertexAttributeFormat::Vec3;
+      dst.binormals.stride = 0;
+      dst.binormals.elementSize = 1;
+      dst.binormals.variability = VertexVariability::FaceVarying;
     }
 
+    // 2. Build single vertex indices if `build_vertex_indices` is true.
+    if (env.mesh_config.build_vertex_indices) {
+      if (!BuildVertexIndicesImpl(dst)) {
+        return false;
+      }
+      is_single_indexable = true;
+    }
   }
 
   (*dstMesh) = std::move(dst);
+
   return true;
 }
 
