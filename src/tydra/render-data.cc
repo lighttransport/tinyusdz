@@ -2384,6 +2384,223 @@ bool RenderSceneConverter::ConvertVertexVariabilityImpl(
   return true;
 }
 
+bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
+
+    //
+    // - If mesh is triangulated, use triangulatedFaceVertexIndices, otherwise use faceVertxIndices.
+    // - Make vertex attributes 'facevarying' variability
+    // - Assign same id for similar(currently identitical) vertex attribute.
+    // - Reorder vertex attributes to 'vertex' variability.
+    //
+
+    const std::vector<uint32_t> &fvIndices =
+        mesh.triangulatedFaceVertexIndices.size()
+            ? mesh.triangulatedFaceVertexIndices
+            : mesh.faceVertexIndices;
+
+    DefaultVertexInput<DefaultPackedVertexData> vertex_input;
+
+    size_t num_fvs = fvIndices.size();
+    vertex_input.positions.assign(num_fvs, {0.0f, 0.0f, 0.0f});
+    vertex_input.uv0s.assign(num_fvs, {0.0f, 0.0f});
+    vertex_input.uv1s.assign(num_fvs, {0.0f, 0.0f});
+    vertex_input.normals.assign(num_fvs, {0.0f, 0.0f, 0.0f});
+    vertex_input.tangents.assign(num_fvs, {0.0f, 0.0f, 0.0f});
+    vertex_input.binormals.assign(num_fvs, {0.0f, 0.0f, 0.0f});
+    vertex_input.colors.assign(num_fvs, {0.0f, 0.0f, 0.0f});
+    vertex_input.opacities.assign(num_fvs, 0.0f);
+
+    if (mesh.normals.vertex_count()) {
+      if (!mesh.normals.is_facevarying()) {
+        PUSH_ERROR_AND_RETURN(
+            "Internal error. normals must be 'facevarying' variability.");
+      }
+      if (mesh.normals.vertex_count() != num_fvs) {
+        PUSH_ERROR_AND_RETURN(
+            "Internal error. The number of normal items does not match with "
+            "the number of facevarying items.");
+      }
+    }
+
+    const value::float2 *texcoord0_ptr = nullptr;
+    const value::float2 *texcoord1_ptr = nullptr;
+
+    for (const auto &it : mesh.texcoords) {
+      if (it.second.vertex_count() > 0) {
+        if (!it.second.is_facevarying()) {
+          PUSH_ERROR_AND_RETURN(
+              "Internal error. texcoords must be 'facevarying' variability.");
+        }
+        if (it.second.vertex_count() != num_fvs) {
+          PUSH_ERROR_AND_RETURN(
+              "Internal error. The number of texcoord items does not match "
+              "with the number of facevarying items.");
+        }
+
+        if (it.first == 0) {
+          texcoord0_ptr = reinterpret_cast<const value::float2 *>(
+              it.second.get_data().data());
+        } else if (it.first == 1) {
+          texcoord1_ptr = reinterpret_cast<const value::float2 *>(
+              it.second.get_data().data());
+        } else {
+          // ignore.
+        }
+      }
+    }
+
+    const value::float3 *tangents_ptr = nullptr;
+    const value::float3 *binormals_ptr = nullptr;
+
+    if (texcoord0_ptr) {
+      if (mesh.tangents.vertex_count()) {
+        if (!mesh.tangents.is_facevarying()) {
+          PUSH_ERROR_AND_RETURN(
+              "Internal error. tangents must be 'facevarying' variability.");
+        }
+        if (mesh.tangents.vertex_count() != num_fvs) {
+          PUSH_ERROR_AND_RETURN(
+              "Internal error. The number of tangents items does not match "
+              "with the number of facevarying items.");
+        }
+
+        tangents_ptr = reinterpret_cast<const value::float3 *>(
+                      mesh.tangents.get_data().data());
+      }
+
+
+      if (mesh.binormals.vertex_count()) {
+        if (!mesh.binormals.is_facevarying()) {
+          PUSH_ERROR_AND_RETURN(
+              "Internal error. binormals must be 'facevarying' variability.");
+        }
+        if (mesh.binormals.vertex_count() != num_fvs) {
+          PUSH_ERROR_AND_RETURN(
+              "Internal error. The number of binormals items does not match "
+              "with the number of facevarying items.");
+        }
+        binormals_ptr = reinterpret_cast<const value::float3 *>(
+                      mesh.binormals.get_data().data());
+      }
+
+    }
+
+    if (mesh.vertex_colors.vertex_count()) {
+      if (!mesh.vertex_colors.is_facevarying()) {
+        PUSH_ERROR_AND_RETURN(
+            "Internal error. vertex_colors must be 'facevarying' variability.");
+      }
+      if (mesh.vertex_colors.vertex_count() != num_fvs) {
+        PUSH_ERROR_AND_RETURN(
+            "Internal error. The number of vertex_color items does not match "
+            "with the number of facevarying items.");
+      }
+    }
+
+    if (mesh.vertex_opacities.vertex_count()) {
+      if (!mesh.vertex_opacities.is_facevarying()) {
+        PUSH_ERROR_AND_RETURN(
+            "Internal error. vertex_opacities must be 'facevarying' "
+            "variability.");
+      }
+      if (mesh.vertex_colors.vertex_count() != num_fvs) {
+        PUSH_ERROR_AND_RETURN(
+            "Internal error. The number of vertex_opacity items does not match "
+            "with the number of facevarying items.");
+      }
+    }
+
+    const value::float3 *normals_ptr =
+        (mesh.normals.vertex_count() > 0)
+            ? reinterpret_cast<const value::float3 *>(
+                  mesh.normals.get_data().data())
+            : nullptr;
+    const value::float3 *colors_ptr =
+        (mesh.vertex_colors.vertex_count() > 0)
+            ? reinterpret_cast<const value::float3 *>(
+                  mesh.vertex_colors.get_data().data())
+            : nullptr;
+    const float *opacities_ptr =
+        (mesh.vertex_opacities.vertex_count() > 0)
+            ? reinterpret_cast<const float *>(
+                  mesh.vertex_opacities.get_data().data())
+            : nullptr;
+
+    for (size_t i = 0; i < num_fvs; i++) {
+      vertex_input.positions[i] = mesh.points[fvIndices[i]];
+      if (normals_ptr) {
+        vertex_input.normals[i] = normals_ptr[i];
+      }
+      if (texcoord0_ptr) {
+        vertex_input.uv0s[i] = texcoord0_ptr[i];
+      }
+      if (texcoord1_ptr) {
+        vertex_input.uv1s[i] = texcoord1_ptr[i];
+      }
+      if (tangents_ptr) {
+        vertex_input.tangents[i] = tangents_ptr[i];
+      }
+      if (binormals_ptr) {
+        vertex_input.binormals[i] = binormals_ptr[i];
+      }
+      if (colors_ptr) {
+        vertex_input.colors[i] = colors_ptr[i];
+      }
+      if (opacities_ptr) {
+        vertex_input.opacities[i] = opacities_ptr[i];
+      }
+    }
+
+    std::vector<uint32_t> out_indices;
+    DefaultVertexOutput<DefaultPackedVertexData> vertex_output;
+
+    BuildIndices<DefaultVertexInput<DefaultPackedVertexData>,
+                 DefaultVertexOutput<DefaultPackedVertexData>,
+                 DefaultPackedVertexData, DefaultPackedVertexDataHasher,
+                 DefaultPackedVertexDataEqual>(vertex_input, vertex_output,
+                                               out_indices);
+
+
+    mesh.faceVertexIndices = out_indices;
+    mesh.points = vertex_output.positions;
+    if (normals_ptr) {
+      mesh.normals.set_buffer(reinterpret_cast<const uint8_t *>(vertex_output.normals.data()), vertex_output.normals.size() * sizeof(value::float3));
+    }
+
+    if (texcoord0_ptr) {
+      mesh.texcoords[0].set_buffer(reinterpret_cast<const uint8_t *>(vertex_output.uv0s.data()), vertex_output.uv0s.size() * sizeof(value::float2));
+    }
+
+    if (texcoord1_ptr) {
+      mesh.texcoords[1].set_buffer(reinterpret_cast<const uint8_t *>(vertex_output.uv1s.data()), vertex_output.uv1s.size() * sizeof(value::float2));
+    }
+
+    if (tangents_ptr) {
+      mesh.tangents.set_buffer(reinterpret_cast<const uint8_t *>(vertex_output.tangents.data()), vertex_output.tangents.size() * sizeof(value::float3));
+    }
+
+    if (binormals_ptr) {
+      mesh.binormals.set_buffer(reinterpret_cast<const uint8_t *>(vertex_output.binormals.data()), vertex_output.binormals.size() * sizeof(value::float3));
+    }
+
+    if (colors_ptr) {
+      mesh.vertex_colors.set_buffer(reinterpret_cast<const uint8_t *>(vertex_output.colors.data()), vertex_output.colors.size() * sizeof(value::float3));
+    }
+
+    if (opacities_ptr) {
+      mesh.vertex_opacities.set_buffer(reinterpret_cast<const uint8_t *>(vertex_output.opacities.data()), vertex_output.opacities.size() * sizeof(value::float3));
+    }
+
+  if (mesh.triangulatedFaceVertexIndices.size()) {
+    mesh.triangulatedFaceVertexIndices.swap(out_indices);
+  } else {
+    mesh.faceVertexIndices.swap(out_indices);
+  }
+
+  return true;
+}
+
+
 bool RenderSceneConverter::ConvertMesh(
     const RenderSceneConverterEnv &env,
     const Path &abs_path, const GeomMesh &mesh,
@@ -3324,208 +3541,8 @@ bool RenderSceneConverter::ConvertMesh(
   if (env.mesh_config.build_vertex_indices && (!is_single_indexable)) {
     DCOUT("Build vertex indices");
 
-    //
-    // Remap points from 'vertex' to 'facevarying' to setup orgVertexIndices.
-    //
-    std::vector<uint32_t>
-        orgVertexIndices;  // Keep track the original vertexIndex.
-
-    const std::vector<uint32_t> &fvIndices =
-        dst.triangulatedFaceVertexIndices.size()
-            ? dst.triangulatedFaceVertexIndices
-            : dst.faceVertexIndices;
-
-    DefaultVertexInput<DefaultPackedVertexData> vertex_input;
-
-    size_t num_fvs = fvIndices.size();
-    vertex_input.positions.assign(num_fvs, {0.0f, 0.0f, 0.0f});
-    vertex_input.uv0s.assign(num_fvs, {0.0f, 0.0f});
-    vertex_input.uv1s.assign(num_fvs, {0.0f, 0.0f});
-    vertex_input.normals.assign(num_fvs, {0.0f, 0.0f, 0.0f});
-    vertex_input.tangents.assign(num_fvs, {0.0f, 0.0f, 0.0f});
-    vertex_input.binormals.assign(num_fvs, {0.0f, 0.0f, 0.0f});
-    vertex_input.colors.assign(num_fvs, {0.0f, 0.0f, 0.0f});
-    vertex_input.opacities.assign(num_fvs, 0.0f);
-
-    if (dst.normals.vertex_count()) {
-      if (!dst.normals.is_facevarying()) {
-        PUSH_ERROR_AND_RETURN(
-            "Internal error. normals must be 'facevarying' variability.");
-      }
-      if (dst.normals.vertex_count() != num_fvs) {
-        PUSH_ERROR_AND_RETURN(
-            "Internal error. The number of normal items does not match with "
-            "the number of facevarying items.");
-      }
-    }
-
-    const value::float2 *texcoord0_ptr = nullptr;
-    const value::float2 *texcoord1_ptr = nullptr;
-
-    for (const auto &it : dst.texcoords) {
-      if (it.second.vertex_count() > 0) {
-        if (!it.second.is_facevarying()) {
-          PUSH_ERROR_AND_RETURN(
-              "Internal error. texcoords must be 'facevarying' variability.");
-        }
-        if (it.second.vertex_count() != num_fvs) {
-          PUSH_ERROR_AND_RETURN(
-              "Internal error. The number of texcoord items does not match "
-              "with the number of facevarying items.");
-        }
-
-        if (it.first == 0) {
-          texcoord0_ptr = reinterpret_cast<const value::float2 *>(
-              it.second.get_data().data());
-        } else if (it.first == 1) {
-          texcoord1_ptr = reinterpret_cast<const value::float2 *>(
-              it.second.get_data().data());
-        } else {
-          // ignore.
-        }
-      }
-    }
-
-    const value::float3 *tangents_ptr = nullptr;
-    const value::float3 *binormals_ptr = nullptr;
-
-    if (texcoord0_ptr) {
-      if (dst.tangents.vertex_count()) {
-        if (!dst.tangents.is_facevarying()) {
-          PUSH_ERROR_AND_RETURN(
-              "Internal error. tangents must be 'facevarying' variability.");
-        }
-        if (dst.tangents.vertex_count() != num_fvs) {
-          PUSH_ERROR_AND_RETURN(
-              "Internal error. The number of tangents items does not match "
-              "with the number of facevarying items.");
-        }
-
-        tangents_ptr = reinterpret_cast<const value::float3 *>(
-                      dst.tangents.get_data().data());
-      }
-
-
-      if (dst.binormals.vertex_count()) {
-        if (!dst.binormals.is_facevarying()) {
-          PUSH_ERROR_AND_RETURN(
-              "Internal error. binormals must be 'facevarying' variability.");
-        }
-        if (dst.binormals.vertex_count() != num_fvs) {
-          PUSH_ERROR_AND_RETURN(
-              "Internal error. The number of binormals items does not match "
-              "with the number of facevarying items.");
-        }
-        binormals_ptr = reinterpret_cast<const value::float3 *>(
-                      dst.binormals.get_data().data());
-      }
-
-    }
-
-    if (dst.vertex_colors.vertex_count()) {
-      if (!dst.vertex_colors.is_facevarying()) {
-        PUSH_ERROR_AND_RETURN(
-            "Internal error. vertex_colors must be 'facevarying' variability.");
-      }
-      if (dst.vertex_colors.vertex_count() != num_fvs) {
-        PUSH_ERROR_AND_RETURN(
-            "Internal error. The number of vertex_color items does not match "
-            "with the number of facevarying items.");
-      }
-    }
-
-    if (dst.vertex_opacities.vertex_count()) {
-      if (!dst.vertex_opacities.is_facevarying()) {
-        PUSH_ERROR_AND_RETURN(
-            "Internal error. vertex_opacities must be 'facevarying' "
-            "variability.");
-      }
-      if (dst.vertex_colors.vertex_count() != num_fvs) {
-        PUSH_ERROR_AND_RETURN(
-            "Internal error. The number of vertex_opacity items does not match "
-            "with the number of facevarying items.");
-      }
-    }
-
-    const value::float3 *normals_ptr =
-        (dst.normals.vertex_count() > 0)
-            ? reinterpret_cast<const value::float3 *>(
-                  dst.normals.get_data().data())
-            : nullptr;
-    const value::float3 *colors_ptr =
-        (dst.vertex_colors.vertex_count() > 0)
-            ? reinterpret_cast<const value::float3 *>(
-                  dst.vertex_colors.get_data().data())
-            : nullptr;
-    const float *opacities_ptr =
-        (dst.vertex_opacities.vertex_count() > 0)
-            ? reinterpret_cast<const float *>(
-                  dst.vertex_opacities.get_data().data())
-            : nullptr;
-
-    for (size_t i = 0; i < num_fvs; i++) {
-      vertex_input.positions[i] = dst.points[fvIndices[i]];
-      if (normals_ptr) {
-        vertex_input.normals[i] = normals_ptr[i];
-      }
-      if (texcoord0_ptr) {
-        vertex_input.uv0s[i] = texcoord0_ptr[i];
-      }
-      if (texcoord1_ptr) {
-        vertex_input.uv1s[i] = texcoord1_ptr[i];
-      }
-      if (tangents_ptr) {
-        vertex_input.tangents[i] = tangents_ptr[i];
-      }
-      if (binormals_ptr) {
-        vertex_input.binormals[i] = binormals_ptr[i];
-      }
-      if (colors_ptr) {
-        vertex_input.colors[i] = colors_ptr[i];
-      }
-      if (opacities_ptr) {
-        vertex_input.opacities[i] = opacities_ptr[i];
-      }
-    }
-
-    std::vector<uint32_t> out_indices;
-    DefaultVertexOutput<DefaultPackedVertexData> vertex_output;
-
-    BuildIndices<DefaultVertexInput<DefaultPackedVertexData>,
-                 DefaultVertexOutput<DefaultPackedVertexData>,
-                 DefaultPackedVertexData, DefaultPackedVertexDataHasher,
-                 DefaultPackedVertexDataEqual>(vertex_input, vertex_output,
-                                               out_indices);
-
-
-    dst.faceVertexIndices = out_indices;
-    dst.points = vertex_output.positions;
-    if (normals_ptr) {
-      dst.normals.set_buffer(reinterpret_cast<const uint8_t *>(vertex_output.normals.data()), vertex_output.normals.size() * sizeof(value::float3));
-    }
-
-    if (texcoord0_ptr) {
-      dst.texcoords[0].set_buffer(reinterpret_cast<const uint8_t *>(vertex_output.uv0s.data()), vertex_output.uv0s.size() * sizeof(value::float2));
-    }
-
-    if (texcoord1_ptr) {
-      dst.texcoords[1].set_buffer(reinterpret_cast<const uint8_t *>(vertex_output.uv1s.data()), vertex_output.uv1s.size() * sizeof(value::float2));
-    }
-
-    if (tangents_ptr) {
-      dst.tangents.set_buffer(reinterpret_cast<const uint8_t *>(vertex_output.tangents.data()), vertex_output.tangents.size() * sizeof(value::float3));
-    }
-
-    if (binormals_ptr) {
-      dst.binormals.set_buffer(reinterpret_cast<const uint8_t *>(vertex_output.binormals.data()), vertex_output.binormals.size() * sizeof(value::float3));
-    }
-
-    if (colors_ptr) {
-      dst.vertex_colors.set_buffer(reinterpret_cast<const uint8_t *>(vertex_output.colors.data()), vertex_output.colors.size() * sizeof(value::float3));
-    }
-
-    if (opacities_ptr) {
-      dst.vertex_opacities.set_buffer(reinterpret_cast<const uint8_t *>(vertex_output.opacities.data()), vertex_output.opacities.size() * sizeof(value::float3));
+    if (!BuildVertexIndicesImpl(dst)) {
+      return false;
     }
 
     is_single_indexable = true;
@@ -3557,6 +3574,12 @@ bool RenderSceneConverter::ConvertMesh(
     }
 
     // TODO: Remap
+
+    // Build indices(again)
+    if (!BuildVertexIndicesImpl(dst)) {
+      return false;
+    }
+
   }
 
   (*dstMesh) = std::move(dst);

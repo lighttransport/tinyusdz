@@ -1649,6 +1649,17 @@ class RenderSceneConverter {
       const TypedAttributeWithFallback<Animatable<T>> &param,
       const std::string &param_name, ShaderParam<Dty> &dst_param);
 
+  ///
+  /// Build (single) vertex indices for RenderMesh.
+  /// existing `RenderMesh::faceVertexIndices` will be replaced with built indices.
+  /// All vertex attributes are converted to 'vertex' variability.
+  ///
+  /// Limitation: Currently we only supports texcoords up to two(primary(0) and secondary(1)).
+  ///
+  /// @param[inout] mesh
+  ///
+  bool BuildVertexIndicesImpl(RenderMesh &mesh);
+
   //
   // Get Skeleton assigned to this GeomMesh Prim
   //
