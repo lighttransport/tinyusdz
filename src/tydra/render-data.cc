@@ -1588,7 +1588,8 @@ bool TriangulatePolygon(
 
       size_t ntris = indices.size() / 3;
 
-      if (ntris > (std::numeric_limits<uint32_t>::max)()) {
+      // Up to 2GB tris.
+      if (ntris > (std::numeric_limits<int32_t>::max)()) {
         err = "Too many triangles are generated.\n";
         return false;
       }
