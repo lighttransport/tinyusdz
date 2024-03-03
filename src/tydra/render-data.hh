@@ -643,7 +643,9 @@ struct Animation {
 };
 
 struct Node {
-  std::string name; // element_name in USD
+  std::string prim_name;     // Prim name(element name)
+  std::string abs_path;      // Absolute prim path
+  std::string display_name;  // `displayName` prim meta
 
   NodeType nodeType{NodeType::Xform};
 

@@ -4747,10 +4747,13 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
     primPath = parentPrimPath + "/" + node.element_name;
   }
 
-
   const tinyusdz::Prim *prim = node.prim;
   if (prim) {
-    rnode.name = prim->element_name();
+    rnode.prim_name = prim->element_name();
+    rnode.abs_path = primPath;
+    rnode.display_name = prim->metas().displayName.value_or("");
+
+    DCOUT("rnode.prim_name " << rnode.prim_name);
 
     if (prim->type_id() == value::TYPE_ID_GEOM_MESH) {
       // GeomMesh(GPrim) also has xform.
@@ -4798,8 +4801,10 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
       return false;
     }
 
-    out_rnode.children.push_back(child_rnode);
+    rnode.children.emplace_back(std::move(child_rnode));
   }
+
+  out_rnode = std::move(rnode);
 
   return true;
 
@@ -5361,12 +5366,8 @@ std::string DumpVertexAttributeDataImpl(const T *data, const size_t nbytes,
   size_t nitems = nbytes / itemsize;
   std::string s;
   s += pprint::Indent(indent);
-  if (stride_bytes != 0) {
-    s += value::print_strided_array_snipped<T>(
-        reinterpret_cast<const uint8_t *>(data), stride_bytes, nitems);
-  } else {
-    s += value::print_array_snipped(data, nitems);
-  }
+  s += value::print_strided_array_snipped<T>(
+      reinterpret_cast<const uint8_t *>(data), stride_bytes, nitems);
   s += "\n";
   return s;
 }
@@ -5435,15 +5436,15 @@ std::string DumpVertexAttributeData(const VertexAttribute &vattr,
 std::string DumpVertexAttribute(const VertexAttribute &vattr, uint32_t indent) {
   std::stringstream ss;
 
-  ss << pprint::Indent(indent) << "Count(" << vattr.get_data().size() << ")\n";
-  ss << pprint::Indent(indent) << "Format(" << to_string(vattr.format) << ")\n";
-  ss << pprint::Indent(indent) << "Variability(" << to_string(vattr.variability)
-     << ")\n";
-  ss << pprint::Indent(indent) << "ElementSize(" << vattr.elementSize << ")\n";
+  ss << pprint::Indent(indent) << "count " << vattr.get_data().size() << "\n";
+  ss << pprint::Indent(indent) << "format " << quote(to_string(vattr.format)) << "\n";
+  ss << pprint::Indent(indent) << "variability " << quote(to_string(vattr.variability))
+     << "\n";
+  ss << pprint::Indent(indent) << "elementSize " << vattr.elementSize << "\n";
   ss << DumpVertexAttributeData(vattr, indent) << "\n";
   if (vattr.indices.size()) {
     ss << pprint::Indent(indent)
-       << "Indices = " << value::print_array_snipped(vattr.indices) << "\n";
+       << "indices " << quote(value::print_array_snipped(vattr.indices)) << "\n";
   }
 
   return ss.str();
@@ -5452,25 +5453,40 @@ std::string DumpVertexAttribute(const VertexAttribute &vattr, uint32_t indent) {
 std::string DumpNode(const Node &node, uint32_t indent) {
   std::stringstream ss;
 
-  ss << "Node {\n";
+  ss << pprint::Indent(indent) << "node {\n";
 
-  ss << pprint::Indent(indent + 1) << "name `" << node.name << "`\n";
+  ss << pprint::Indent(indent + 1) << "prim_name " << quote(node.prim_name) << "\n";
+  ss << pprint::Indent(indent + 1) << "abs_path " << quote(node.abs_path) << "\n";
+  ss << pprint::Indent(indent + 1) << "display_name " << quote(node.display_name) << "\n";
   ss << pprint::Indent(indent + 1) << "local_matrix " << quote(tinyusdz::to_string(node.local_matrix)) << "\n";
+
+  if (node.children.size()) {
+    ss << pprint::Indent(indent + 1) << "children {\n";
+    for (const auto &child : node.children) {
+      ss << DumpNode(child, indent + 1);
+    }
+    ss << pprint::Indent(indent + 1) << "}\n";
+  }
 
   ss << pprint::Indent(indent) << "}\n";
 
   return ss.str();
 }
 
+std::stringstream &DumpMaterialSubset(std::stringstream &ss, const MaterialSubset &msubset, uint32_t indent) {
+
+  return ss;
+}
+
 std::string DumpMesh(const RenderMesh &mesh, uint32_t indent) {
   std::stringstream ss;
 
-  ss << "RenderMesh {\n";
+  ss << "mesh {\n";
 
-  ss << pprint::Indent(indent + 1) << "prim_name `" << mesh.prim_name << "`\n";
-  ss << pprint::Indent(indent + 1) << "abs_path `" << mesh.abs_path << "`\n";
-  ss << pprint::Indent(indent + 1) << "display_name `" << mesh.display_name
-     << "`\n";
+  ss << pprint::Indent(indent + 1) << "prim_name " << quote(mesh.prim_name) << "\n";
+  ss << pprint::Indent(indent + 1) << "abs_path " << quote(mesh.abs_path) << "\n";
+  ss << pprint::Indent(indent + 1) << "display_name " << quote(mesh.display_name)
+     << "\n";
   ss << pprint::Indent(indent + 1) << "num_points "
      << std::to_string(mesh.points.size()) << "\n";
   ss << pprint::Indent(indent + 1) << "points \""
@@ -5501,6 +5517,14 @@ std::string DumpMesh(const RenderMesh &mesh, uint32_t indent) {
   if (mesh.tangents.data.size()) {
     ss << pprint::Indent(indent + 1) << "tangents\n"
        << DumpVertexAttribute(mesh.tangents, indent + 2) << "\n";
+  }
+
+  if (mesh.material_subsetMap.size()) {
+    ss << pprint::Indent(indent + 1) << "material_subset {\n";
+    for (const auto &msubset : mesh.material_subsetMap) {
+      msubset.second.material_id
+    }
+    ss << pprint::Indent(indent + 1) << "}\n";
   }
 
   // TODO: primvars
@@ -5737,7 +5761,7 @@ std::string DumpRenderScene(const RenderScene &scene,
 
   ss << "nodes {\n";
   for (size_t i = 0; i < scene.nodes.size(); i++) {
-    ss << "[" << i << "] " << DumpNode(scene.nodes[i], 1);
+    ss << DumpNode(scene.nodes[i], 1);
   }
   ss << "}\n";
 
