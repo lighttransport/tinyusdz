@@ -5441,7 +5441,7 @@ std::string DumpVertexAttribute(const VertexAttribute &vattr, uint32_t indent) {
   ss << pprint::Indent(indent) << "variability " << quote(to_string(vattr.variability))
      << "\n";
   ss << pprint::Indent(indent) << "elementSize " << vattr.elementSize << "\n";
-  ss << DumpVertexAttributeData(vattr, indent) << "\n";
+  ss << pprint::Indent(indent) << "value " << quote(DumpVertexAttributeData(vattr, /* indent */0)) << "\n";
   if (vattr.indices.size()) {
     ss << pprint::Indent(indent)
        << "indices " << quote(value::print_array_snipped(vattr.indices)) << "\n";
@@ -5473,15 +5473,17 @@ std::string DumpNode(const Node &node, uint32_t indent) {
   return ss.str();
 }
 
-std::stringstream &DumpMaterialSubset(std::stringstream &ss, const MaterialSubset &msubset, uint32_t indent) {
+void DumpMaterialSubset(std::stringstream &ss, const MaterialSubset &msubset, uint32_t indent) {
 
-  return ss;
+  ss << pprint::Indent(indent) << "material_subset {\n";
+  ss << pprint::Indent(indent + 1) << "material_id " << msubset.material_id << "\n";
+  ss << pprint::Indent(indent) << "}\n";
 }
 
 std::string DumpMesh(const RenderMesh &mesh, uint32_t indent) {
   std::stringstream ss;
 
-  ss << "mesh {\n";
+  ss << pprint::Indent(indent) << "mesh {\n";
 
   ss << pprint::Indent(indent + 1) << "prim_name " << quote(mesh.prim_name) << "\n";
   ss << pprint::Indent(indent + 1) << "abs_path " << quote(mesh.abs_path) << "\n";
@@ -5501,28 +5503,32 @@ std::string DumpMesh(const RenderMesh &mesh, uint32_t indent) {
      << value::print_array_snipped(mesh.faceVertexIndices) << "\"\n";
   ss << pprint::Indent(indent + 1) << "materialId "
      << std::to_string(mesh.material_id) << "\n";
-  ss << pprint::Indent(indent + 1) << "normals \n"
+  ss << pprint::Indent(indent + 1) << "normals {\n"
      << DumpVertexAttribute(mesh.normals, indent + 2) << "\n";
+  ss << pprint::Indent(indent + 1) << "}\n";
   ss << pprint::Indent(indent + 1) << "num_texcoordSlots "
      << std::to_string(mesh.texcoords.size()) << "\n";
   for (const auto &uvs : mesh.texcoords) {
     ss << pprint::Indent(indent + 1) << "texcoords_"
-       << std::to_string(uvs.first) << "\n"
+       << std::to_string(uvs.first) << " {\n"
        << DumpVertexAttribute(uvs.second, indent + 2) << "\n";
+    ss << pprint::Indent(indent + 1) << "}\n";
   }
   if (mesh.binormals.data.size()) {
-    ss << pprint::Indent(indent + 1) << "binormals\n"
+    ss << pprint::Indent(indent + 1) << "binormals {\n"
        << DumpVertexAttribute(mesh.binormals, indent + 2) << "\n";
+    ss << pprint::Indent(indent + 1) << "}\n";
   }
   if (mesh.tangents.data.size()) {
-    ss << pprint::Indent(indent + 1) << "tangents\n"
+    ss << pprint::Indent(indent + 1) << "tangents {\n"
        << DumpVertexAttribute(mesh.tangents, indent + 2) << "\n";
+    ss << pprint::Indent(indent + 1) << "}\n";
   }
 
   if (mesh.material_subsetMap.size()) {
-    ss << pprint::Indent(indent + 1) << "material_subset {\n";
+    ss << pprint::Indent(indent + 1) << "material_subsets {\n";
     for (const auto &msubset : mesh.material_subsetMap) {
-      msubset.second.material_id
+      DumpMaterialSubset(ss, msubset.second, indent + 2);
     }
     ss << pprint::Indent(indent + 1) << "}\n";
   }
