@@ -279,7 +279,7 @@ template <typename T>
 std::string print_strided_array_snipped(const uint8_t *vals, size_t stride_bytes, const size_t n, size_t N = 16) {
   std::stringstream os;
 
-  if (stride_bytes == 0) {
+  if ((stride_bytes == 0) || (stride_bytes == sizeof(T))) { // tightly packed.
     return print_array_snipped(reinterpret_cast<const T*>(vals), n, N);
   }
 
@@ -289,7 +289,7 @@ std::string print_strided_array_snipped(const uint8_t *vals, size_t stride_bytes
       if (i > 0) {
         os << ", ";
       }
-      os << reinterpret_cast<const T *>(&vals[i * stride_bytes]);
+      os << *reinterpret_cast<const T *>(&vals[i * stride_bytes]);
     }
     os << "]";
   } else {
@@ -302,7 +302,7 @@ std::string print_strided_array_snipped(const uint8_t *vals, size_t stride_bytes
       if (i > 0) {
         os << ", ";
       }
-      os << reinterpret_cast<const T *>(&vals[i * stride_bytes]);
+      os << *reinterpret_cast<const T *>(&vals[i * stride_bytes]);
     }
 
     os << ", ..., ";
@@ -311,7 +311,7 @@ std::string print_strided_array_snipped(const uint8_t *vals, size_t stride_bytes
       if (i > tail_start) {
         os << ", ";
       }
-      os << reinterpret_cast<const T *>(&vals[i * stride_bytes]);
+      os << *reinterpret_cast<const T *>(&vals[i * stride_bytes]);
     }
 
     os << "]";
