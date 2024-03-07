@@ -317,10 +317,44 @@ bool makeUniqueName(std::multiset<std::string> &nameSet, const std::string &name
 std::vector<std::string> to_utf8_chars(const std::string &str);
 
 ///
-/// Convert UTF-8 char to code.
+/// Convert UTF-8 char to codepoint.
 /// Return ~0u(0xffffffff) when input `u8char` is not a valid UTF-8 charcter.
 ///
 uint32_t to_utf8_code(const std::string &u8char);
+
+///
+/// Convert UTF-8 codepoint to UTF-8 string.
+///
+inline std::string codepoint_to_utf8(uint32_t code) {
+  if (code <= 0x7f) {
+    return std::string(1, char(code));
+  } else if (code <= 0x7ff) {
+    // 11bit: 110y-yyyx 10xx-xxxx
+    uint8_t buf[2];
+    buf[0] = uint8_t(((code >> 6) & 0x1f) | 0xc0);
+    buf[1] = uint8_t(((code >> 0) & 0x3f) | 0x80);
+    return std::string(reinterpret_cast<const char *>(&buf[0]), 2);
+  } else if (code <= 0xffff) {
+    // 16bit: 1110-yyyy 10yx-xxxx 10xx-xxxx
+    uint8_t buf[3];
+    buf[0] = uint8_t(((code >> 12) & 0x0f) | 0xe0);
+    buf[1] = uint8_t(((code >>  6) & 0x3f) | 0x80);
+    buf[2] = uint8_t(((code >>  0) & 0x3f) | 0x80);
+    return std::string(reinterpret_cast<const char *>(&buf[0]), 3);
+  } else if (code <= 0x10ffff) {
+    // 21bit: 1111-0yyy 10yy-xxxx 10xx-xxxx 10xx-xxxx
+    uint8_t buf[4];
+    buf[0] = uint8_t(((code >> 18) & 0x07) | 0xF0);
+    buf[1] = uint8_t(((code >> 12) & 0x3F) | 0x80);
+    buf[2] = uint8_t(((code >>  6) & 0x3F) | 0x80);
+    buf[3] = uint8_t(((code >>  0) & 0x3F) | 0x80);
+    return std::string(reinterpret_cast<const char *>(&buf[0]), 4);
+  }
+
+  // invalid
+  return std::string();
+}
+
 
 #if 0 // TODO
 ///
