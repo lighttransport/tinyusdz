@@ -241,6 +241,7 @@ std::string unescapeControlSequence(const std::string &str);
 std::string buildEscapedAndQuotedStringForUSDA(const std::string &str);
 
 // TfIsValidIdentifier in pxrUSD equivalanet
+// TODO: support UTF-8
 inline bool isValidIdentifier(const std::string &str) {
 
   if (str.empty()) {
@@ -270,6 +271,7 @@ inline bool isValidIdentifier(const std::string &str) {
 
 
 // TfMakeValidIdentifier in pxrUSD equivalanet
+// TODO: support UTF-8
 inline std::string makeIdentifierValid(const std::string &str) {
   std::string s;
 
@@ -309,6 +311,8 @@ inline std::string makeIdentifierValid(const std::string &str) {
 ///
 bool makeUniqueName(std::multiset<std::string> &nameSet, const std::string &name, std::string *unique_name);
 
+
+bool is_valid_utf8(const std::string &str);
 
 ///
 /// Convert string buffer to list of UTF-8 chars.
