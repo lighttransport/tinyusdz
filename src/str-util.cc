@@ -411,6 +411,22 @@ bool makeUniqueName(std::multiset<std::string> &nameSet,
 
 namespace detail {
 
+inline uint32_t utf8_len(const unsigned char c) {
+      if (c <= 127) {
+        // ascii
+        return 1;
+      } else if ((c & 0xE0) == 0xC0) {
+        return 2;
+      } else if ((c & 0xF0) == 0xE0) {
+        return 3;
+      } else if ((c & 0xF8) == 0xF0) {
+        return 4;
+      }
+
+      // invalid
+      return 0;
+}
+
 inline std::string extract_utf8_char(const std::string &str, uint32_t start_i,
                                      int &len) {
   len = 0;
@@ -539,5 +555,17 @@ std::string to_utf8_char(const uint32_t code) {
 
 }
 #endif
+
+bool is_valid_utf8(const std::string &str) {
+  // TODO: Consider UTF-BOM?
+  for (size_t i = 0; i < str.size();) {
+    uint32_t len = detail::utf8_len(*reinterpret_cast<const unsigned char *>(&str[i]));
+    if (len == 0) {
+      return false;
+    }
+    i += len;
+  }
+  return true;
+}
 
 }  // namespace tinyusdz
