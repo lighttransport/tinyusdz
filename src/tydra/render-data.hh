@@ -133,13 +133,14 @@ enum class VertexVariability {
 
 std::string to_string(VertexVariability variability);
 
-// Geometric, camera, and light
 enum class NodeType {
   Xform,
   Mesh,  // Polygon mesh
   Camera,
+  Skeleton, // SkelHierarchy
   PointLight,
-  DomeLight,
+  DirectionalLight,
+  EnvmapLight, // DomeLight in USD
   // TODO(more lights)...
 };
 
@@ -165,16 +166,6 @@ struct BufferData {
 
   // TODO: Stride
 };
-
-#if 0 // not used atm
-// glTF-like Attribute
-struct Attribute {
-  std::string path;     // Path string in Stage
-  uint32_t slot_id{0};  // slot ID.
-
-  int64_t buffer_id{-1};  // index to buffer_id
-};
-#endif
 
 // Compound of ComponentType x component
 enum class VertexAttributeFormat {
@@ -602,6 +593,46 @@ struct TextureImage {
   int64_t buffer_id{-1};  // index to buffer_id(texel data)
 
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
+};
+
+struct Cubemap
+{
+  // face id mapping(based on OpenGL)
+  // https://www.khronos.org/opengl/wiki/Cubemap_Texture
+  //
+  // 0: +X (right)
+  // 1: -X (left)
+  // 2: +Y (top)
+  // 3: -Y (bottom)
+  // 4: +Z (back)
+  // 5: -Z (front)
+  
+  // LoD of cubemap
+  std::vector<std::array<TextureImage, 6>> faces_lod;
+};
+
+// Envmap lightsource
+struct EnvmapLight
+{
+  enum class Coordinate {
+    LatLong,  // "latlong"
+    Angular,  // "angular"
+    // MirroredBall, // TODO: "mirroredBall"
+    Cubemap,  // TinyUSDZ Tydra specific.
+  };
+
+  std::string element_name;
+  std::string abs_path;
+  std::string display_name;
+
+  double guideRadius{1.0e5}; 
+  std::string asset_name; // 'inputs:texture:file' 
+
+  std::vector<TextureImage> texture_lod;
+
+  // Utility
+  bool to_cubemap(Cubemap &cubemap);
+
 };
 
 // glTF-lie animation data
@@ -1257,7 +1288,6 @@ struct MaterialConverterConfig {
   // Allow asset(e.g. texture file/shader file) which does not exit?
   bool allow_missing_asset{true};
 
-  // ------------------------------------------
 };
 
 struct RenderSceneConverterConfig {
