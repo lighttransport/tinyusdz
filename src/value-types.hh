@@ -57,6 +57,7 @@
 #endif
 
 #include "token-type.hh"
+#include "common-macros.inc"
 
 // forward decl
 namespace linb {
@@ -1778,6 +1779,8 @@ struct TypeTraits<void> {
   static constexpr uint32_t underlying_type_id() { return TYPE_ID_VOID; }
   static std::string type_name() { return "void"; }
   static std::string underlying_type_name() { return "void"; }
+  static bool is_role_type() { return false; }
+  static bool is_array() { return false; }
 };
 
 DEFINE_TYPE_TRAIT(std::nullptr_t, "null", TYPE_ID_NULL, 1);
@@ -1907,6 +1910,8 @@ struct TypeTraits<std::vector<T>> {
   using value_type = std::vector<T>;
   static constexpr uint32_t ndim() { return 1; } /* array dim */
   static constexpr uint32_t ncomp() { return TypeTraits<T>::ncomp(); }
+  // Return the size of base type
+  static constexpr size_t size() { return TypeTraits<T>::size(); }
   static constexpr uint32_t type_id() { return
       TypeTraits<T>::type_id() | TYPE_ID_1D_ARRAY_BIT; }
   static constexpr uint32_t get_type_id() {
@@ -1917,6 +1922,8 @@ struct TypeTraits<std::vector<T>> {
   static std::string underlying_type_name() {
     return TypeTraits<T>::underlying_type_name() + "[]";
   }
+  static constexpr bool is_role_type() { return TypeTraits<T>::is_role_type(); }
+  static constexpr bool is_array() { return true; }
 };
 
 #if 0  // Current pxrUSD does not support 2D array
@@ -2013,39 +2020,52 @@ class Value {
   //
   // Cast value to given type.
   //
-  // Supports:
-  // - cast to role type(e.g. returns value when T = `vector3f` and stored value is type `float3`)
-  // - cast to underlying type(e.g. returns value when T = `float3` and stored value is type `vector3f`)
+  // when `strict_cast` is false(default behavior), it supports casting type among role type and underlying type.
+  // (e.g. "float3" -> "color3f", "color3f" -> "vector3f", "normal3f[]" -> "float3[]")
   //
   // Return nullptr when type conversion failed.
   template <class T>
-  const T *as() const {
+  const T *as(bool strict_cast = false) const {
     if (TypeTraits<T>::type_id() == v_.type_id()) {
       return linb::any_cast<const T>(&v_);
-    } else if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
-      // `roll` type. Can be able to cast to underlying type since the memory
-      // layout does not change.
-      return linb::any_cast<const T>(&v_);
-    } else {
-      return nullptr;
+    } else if (!strict_cast) {
+      // NOTE: linb::any_cast does type_id check, so use linb::cast(~= reinterpret_cast) here
+      if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
+        if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
+          return linb::cast<const T>(&v_);
+        }
+      } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
+        if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
+          return linb::cast<const T>(&v_);
+        }
+      }
     }
+
+    return nullptr;
   }
 
   // Non const version of `as`.
   //
   // Return nullptr when type conversion failed.
   template <class T>
-  T *as() {
+  T *as(bool strict_cast = false) {
     if (TypeTraits<T>::type_id() == v_.type_id()) {
       return linb::any_cast<T>(&v_);
-    } else if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
-      // `roll` type. Can be able to cast to underlying type since the memory
-      // layout does not change.
-      return linb::any_cast<T>(&v_);
-    } else {
-      return nullptr;
+    } else if (!strict_cast) {
+      if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
+        if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
+          return linb::cast<T>(&v_);
+        }
+      } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
+        if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
+          return linb::cast<T>(&v_);
+        }
+      }
     }
+
+    return nullptr;
   }
+
 
 #if 0
   // Useful function to retrieve concrete value with type T.
@@ -2060,7 +2080,7 @@ class Value {
 
   // Type-safe way to get concrete value.
   template <class T>
-  nonstd::optional<T> get_value() const {
+  nonstd::optional<T> get_value(bool strict_cast = false) const {
     if (TypeTraits<T>::type_id() == v_.type_id()) {
       const T *pv = linb::any_cast<const T>(&v_);
       if (!pv) {
@@ -2069,15 +2089,21 @@ class Value {
       }
 
       return std::move(*pv);
-    } else if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
-      // `roll` type. Can be able to cast to underlying type since the memory
-      // layout does not change.
-      // Use force cast
-      // TODO: type-check
-      return std::move(*linb::cast<const T>(&v_));
+    } else if (!strict_cast) {
+
+      if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
+        if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
+          return std::move(*linb::cast<const T>(&v_));
+        }
+      } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
+        if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
+          return std::move(*linb::cast<const T>(&v_));
+        }
+      }
     }
     return nonstd::nullopt;
   }
+
 
   template <class T>
   Value &operator=(const T &v) {

@@ -1033,6 +1033,7 @@ struct RenderMaterial {
   std::string name;  // elementName in USD (e.g. "pbrMat")
   std::string
       abs_path;  // abosolute Prim path in USD (e.g. "/_material/scope/pbrMat")
+  std::string display_name; 
 
   PreviewSurfaceShader surfaceShader;
   // TODO: displacement, volume.
@@ -1053,6 +1054,7 @@ struct RenderCamera {
   std::string name;  // elementName in USD (e.g. "frontCamera")
   std::string
       abs_path;  // abosolute GeomCamera Prim path in USD (e.g. "/xform/camera")
+  std::string display_name; 
 
   float znear{0.1f}; // clippingRange[0]
   float zfar{1000000.0f}; // clippingRange[1]
@@ -1078,6 +1080,9 @@ struct RenderCamera {
 
   GeomCamera::Projection projection{GeomCamera::Projection::Perspective};
   GeomCamera::StereoRole stereoRole{GeomCamera::StereoRole::Mono};
+
+  double shutterOpen{0.0};
+  double shutterClose{0.0};
 
 };
 
