@@ -2612,7 +2612,7 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
     }
 
     if (opacities_ptr) {
-      mesh.vertex_opacities.set_buffer(reinterpret_cast<const uint8_t *>(vertex_output.opacities.data()), vertex_output.opacities.size() * sizeof(value::float3));
+      mesh.vertex_opacities.set_buffer(reinterpret_cast<const uint8_t *>(vertex_output.opacities.data()), vertex_output.opacities.size() * sizeof(float));
     }
 
   if (mesh.triangulatedFaceVertexIndices.size()) {
