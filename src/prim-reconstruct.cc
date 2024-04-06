@@ -1686,28 +1686,35 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
                            __target, __strict_check) {                          \
   if (__prop.first == __name) {                                              \
     if (__table.count(__name)) { continue; } \
-    const Attribute &attr = __prop.second.get_attribute();                           \
-    if (auto tok = attr.get_value<value::token>()) {                     \
-      auto e = __enum_handler(tok.value().str());                            \
-      if (e) {                                                               \
-        __target = e.value();                                                \
-        /* TODO: attr meta __target.meta = attr.meta;  */                    \
-        __table.insert(__name);                                              \
-      } else if (__strict_check) {                                            \
-        PUSH_ERROR_AND_RETURN("(" << value::TypeTraits<__klass>::type_name()  \
-                                  << ") " << e.error());                     \
-      } else { \
-        PUSH_WARN("`" << tok.value().str() << "` is not allowed token for `" << __name << "`. Set to default token value."); \
-        /* TODO: attr meta __target.meta = attr.meta;  */                    \
-        __table.insert(__name);                                              \
-      } \
-    } else {                                                                 \
-      PUSH_ERROR_AND_RETURN("(" << value::TypeTraits<__klass>::type_name()    \
-                                << ") Property type mismatch. " << __name    \
-                                << " must be type `token`, but got `"        \
-                                << attr.type_name() << "`.");            \
-    }                                                                        \
-  } }
+    if ((__prop.second.value_type_name() == value::TypeTraits<value::token>::type_name()) && __prop.second.is_attribute() && __prop.second.is_empty()) { \
+      PUSH_WARN("No value assigned to `" << __name << "` token attribute. Set default token value."); \
+      /* TODO: attr meta __target.meta = attr.meta;  */                    \
+      __table.insert(__name);                                              \
+    } else { \
+      const Attribute &attr = __prop.second.get_attribute();                           \
+      if (auto tok = attr.get_value<value::token>()) {                     \
+        auto e = __enum_handler(tok.value().str());                            \
+        if (e) {                                                               \
+          __target = e.value();                                                \
+          /* TODO: attr meta __target.meta = attr.meta;  */                    \
+          __table.insert(__name);                                              \
+        } else if (__strict_check) {                                            \
+          PUSH_ERROR_AND_RETURN("(" << value::TypeTraits<__klass>::type_name()  \
+                                    << ") " << e.error());                     \
+        } else { \
+          PUSH_WARN("`" << tok.value().str() << "` is not allowed token for `" << __name << "`. Set to default token value."); \
+          /* TODO: attr meta __target.meta = attr.meta;  */                    \
+          __table.insert(__name);                                              \
+        } \
+      } else {                                                                 \
+        PUSH_ERROR_AND_RETURN("(" << value::TypeTraits<__klass>::type_name()    \
+                                  << ") Property type mismatch. " << __name    \
+                                  << " must be type `token`, but got `"        \
+                                  << attr.type_name() << "`.");            \
+      }                                                                        \
+    } \
+  } \
+}
 
 
 // Add custom property(including property with "primvars" prefix)
