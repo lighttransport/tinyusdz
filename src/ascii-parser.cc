@@ -3361,7 +3361,7 @@ bool AsciiParser::ParseRelationship(Relationship *result) {
       PUSH_ERROR_AND_RETURN("Failed to parse None.");
     }
 
-    // Should be empty.
+    // Should be empty for None.
     if (value.has_value()) {
       PUSH_ERROR_AND_RETURN("Failed to parse None.");
     }
@@ -3620,10 +3620,6 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
 
     if (!SkipWhitespaceAndNewline()) {
       return false;
-    }
-
-    if (MaybeNone()) {
-      return true;
     }
 
     Relationship rel;
