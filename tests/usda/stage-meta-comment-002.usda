@@ -1,0 +1,7 @@
+#usda 1.0
+(
+  # NOTE: pxrusd prints empty customLayerData, while tinyusdz does not print empty customLayerData
+  customLayerData = {
+    # hello this is comment
+  }
+)
