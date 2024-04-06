@@ -8,7 +8,7 @@
   * Working on the branch: https://github.com/syoyo/tinyusdz/tree/rendermesh-refactor 
   * [ ] USD to RenderScene(OpenGL/Vulkan) conversion https://github.com/syoyo/tinyusdz/issues/109
   * [ ] GeomSubset/Material Binding API support for shading/texturing https://github.com/syoyo/tinyusdz/issues/103 
- 
+  * [ ] UTF8 Identifier support https://github.com/syoyo/tinyusdz/issues/47
  
 ## Mid-term todo
 
