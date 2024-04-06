@@ -3976,7 +3976,10 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env, 
             cs_token.str()));
       }
       texImage.usdColorSpace = cs;
-    } else {
+
+    }
+
+    {
       if (texture.sourceColorSpace.authored()) {
         UsdUVTexture::SourceColorSpace cs;
         if (texture.sourceColorSpace.get_value().get(env.timecode, &cs)) {
@@ -5057,8 +5060,12 @@ bool from_token(const value::token &tok, ColorSpace *cty) {
     return false;
   }
 
-  if (tok.str() == "srgb") {
-    (*cty) = ColorSpace::sRGB;
+  if (tok.str() == "raw") {
+    (*cty) = ColorSpace::Linear; 
+  } else if (tok.str() == "Raw") { // NOTE: Seems uncommon token
+    (*cty) = ColorSpace::Linear; 
+  } else if (tok.str() == "srgb") {
+    (*cty) = ColorSpace::sRGB; 
   } else if (tok.str() == "linear") {
     (*cty) = ColorSpace::Linear;
   } else if (tok.str() == "rec709") {
