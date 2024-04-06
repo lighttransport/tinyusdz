@@ -2159,13 +2159,13 @@ bool ReconstructMaterialBindingProperties(
         PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relationship", prop.first));
       }
 
-      std::string purpose_name = removePrefix(prop.first, kMaterialBindingCollection + std::string(":"));
+      std::string purpose_name = removePrefix(prop.first, kMaterialBinding + std::string(":"));
       if (purpose_name.empty()) {
         PUSH_ERROR_AND_RETURN("empty PURPOSE is not allowed for 'mateirial:binding:'");
       }
       std::vector<std::string> names = split(purpose_name, ":");
       if (names.size() > 1) {
-        PUSH_ERROR_AND_RETURN("PURPOSE must not have nested namespaces for 'mateirial:binding'");
+        PUSH_ERROR_AND_RETURN(fmt::format("PURPOSE `{}` must not have nested namespaces for 'mateirial:binding'", purpose_name));
       }
       value::token mat_purpose = value::token(names[0]);
 
