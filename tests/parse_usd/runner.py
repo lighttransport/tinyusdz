@@ -26,9 +26,13 @@ def run(config):
 
         print(ret.returncode)
 
+    print("Success cases: =====================")
+    for f in success_cases:
+        print(f, "OK")
+
     print("Failure cases: =====================")
     for f in failure_cases:
-        print(f)
+        print(f, "Failed")
 
 def main():
 
