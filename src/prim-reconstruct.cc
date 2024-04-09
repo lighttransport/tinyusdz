@@ -26,6 +26,10 @@
 #define PushError(s) if (err) { (*err) = s + (*err); }
 #define PushWarn(s) if (warn) { (*warn) = s + (*err); }
 
+// __VA_ARGS__ does not allow empty, thus # of args must be 2+ 
+#define PUSH_WARN_F(s, ...) PUSH_WARN(fmt::format(s, __VA_ARGS__))
+#define PUSH_ERROR_AND_RETURN_F(s, ...) PUSH_ERROR_AND_RETURN(fmt::format(s, __VA_ARGS__))
+
 //
 // NOTE:
 //
@@ -1583,22 +1587,39 @@ static nonstd::expected<Orientation, std::string> OrientationEnumHandler(const s
   return EnumHandler<Orientation>("orientation", tok, enums);
 };
 
-#if 0
-// Animatable enum
+#if 1
+
+// Animatable enum tokens
 template<typename T, typename EnumTy>
-nonstd::expected<bool, std::string> ParseEnumProperty(
+bool ParseEnumProperty(
   const std::string &prop_name,
+  bool strict_allowedToken_check,
   EnumHandlerFun<EnumTy> enum_handler,
   const Attribute &attr,
-  TypedAttributeWithFallback<Animatable<T>> *result)
+  TypedAttributeWithFallback<Animatable<T>> *result,
+  std::string *warn = nullptr,
+  std::string *err = nullptr)
 {
+
   if (!result) {
-    return false;
+    PUSH_ERROR_AND_RETURN("[Internal error] `result` arg is nullptr.");
   }
 
-  if (attr.variability == Variability::Uniform) {
+  if (attr.is_connection()) {
+    PUSH_ERROR_AND_RETURN_F("Attribute connection is not supported in TinyUSDZ for built-in 'enum' token attribute: {}", prop_name);
+  }
+
+
+  if (attr.variability() == Variability::Uniform) {
+    // scalar
+
+    if (attr.is_blocked()) {
+      result->set_blocked(true);
+      return true;
+    }
+
     if (attr.get_var().is_timesamples()) {
-      return nonstd::make_unexpected(fmt::format("Property `{}` is defined as `uniform` variability but TimeSample value is assigned.", prop_name));
+      PUSH_ERROR_AND_RETURN_F("Attribute `{}` is defined as `uniform` variability but TimeSample value is assigned.", prop_name);
     }
 
     if (auto tok = attr.get_value<value::token>()) {
@@ -1606,11 +1627,15 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
       if (e) {
         (*result) = e.value();
         return true;
+      } else if (strict_allowedToken_check) {
+        PUSH_ERROR_AND_RETURN_F("Attribute `{}`: `{}` is not an allowed token.", prop_name, tok.value().str());
       } else {
-        return nonstd::make_unexpected(fmt::format("({}) {}", value::TypeTraits<T>::type_name(), e.error()));
+        PUSH_WARN_F("Attribute `{}`: `{}` is not an allowed token. Ignore it.", prop_name, tok.value().str());
+        result->set_value_empty();
+        return true;
       }
     } else {
-      return nonstd::make_unexpected(fmt::format("Property `{}` must be type `token`, but got type `{}`", prop_name, attr.type_name()));
+      PUSH_ERROR_AND_RETURN_F("Internal error. Maybe type mismatch? Attribute `{}` must be type `token`, but got type `{}`", prop_name, attr.type_name());
     }
 
 
@@ -1618,16 +1643,25 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
     // uniform or TimeSamples
     if (attr.get_var().is_scalar()) {
 
+      if (attr.is_blocked()) {
+        result->set_blocked(true);
+        return true;
+      }
+
       if (auto tok = attr.get_value<value::token>()) {
         auto e = enum_handler(tok.value().str());
         if (e) {
           (*result) = e.value();
           return true;
+        } else if (strict_allowedToken_check) {
+          PUSH_ERROR_AND_RETURN_F("Attribute `{}`: `{}` is not an allowed token.", prop_name, tok.value().str());
         } else {
-          return nonstd::make_unexpected(fmt::format("({}) {}", value::TypeTraits<T>::type_name(), e.error()));
+          PUSH_WARN_F("Attribute `{}`: `{}` is not an allowed token. Ignore it.", prop_name, tok.value().str());
+          result->set_value_empty();
+          return true;
         }
       } else {
-        return nonstd::make_unexpected(fmt::format("Property `{}` must be type `token`, but got type `{}`", prop_name, attr.type_name()));
+        PUSH_ERROR_AND_RETURN_F("Internal error. Maybe type mismatch? Attribute `{}` must be type `token`, but got type `{}`", prop_name, attr.type_name());
       }
     } else if (attr.get_var().is_timesamples()) {
       size_t n = attr.get_var().num_timesamples();
@@ -1636,13 +1670,13 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
 
       for (size_t i = 0; i < n; i++) {
 
-        double sample_time;
+        double sample_time{value::TimeCode::Default()};
 
         if (auto pv = attr.get_var().get_ts_time(i)) {
           sample_time = pv.value();
         } else {
           // This should not happen.
-          return nonstd::make_unexpected("Internal error.");
+          PUSH_ERROR_AND_RETURN_F("Internal error. Failed to get timecode for `{}`", prop_name);
         }
 
         if (auto pv = attr.get_var().is_ts_value_blocked(i)) {
@@ -1652,18 +1686,21 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
           }
         } else {
           // This should not happen.
-          return nonstd::make_unexpected("Internal error.");
+          PUSH_ERROR_AND_RETURN_F("Internal error. Failed to get valueblock info for `{}`", prop_name);
         }
 
         if (auto tok = attr.get_var().get_ts_value<value::token>(i)) {
           auto e = enum_handler(tok.value().str());
           if (e) {
             samples.AddSample(sample_time, e.value());
+          } else if (strict_allowedToken_check) {
+            PUSH_ERROR_AND_RETURN_F("Attribute `{}`: `{}` is not an allowed token.", prop_name, tok.value().str());
           } else {
-            return nonstd::make_unexpected(fmt::format("({}) {}", value::TypeTraits<T>::type_name(), e.error()));
+            PUSH_WARN_F("Attribute `{}`: `{}` at {}'th timesample is not an allowed token. Ignore it.", prop_name, i, tok.value().str());
+            continue;
           }
         } else {
-          return nonstd::make_unexpected(fmt::format("Property `{}`'s TimeSample value must be type `token`, but got invalid type", prop_name));
+          PUSH_ERROR_AND_RETURN_F("Internal error. Maybe type mismatch? Attribute `{}`'s {}'th timesample must be type `token`, but got type `{}`", prop_name, i, attr.type_name());
         }
       }
 
@@ -1671,7 +1708,7 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
       return true;
 
     } else {
-      return nonstd::make_unexpected(fmt::format("Property `{}` has invalid value."));
+      PUSH_ERROR_AND_RETURN_F("Internal error. Attribute `{}` is invalid", prop_name);
     }
 
   }
@@ -1681,6 +1718,7 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
 #endif
 
 
+#if 0
 // TODO: TimeSamples
 #define PARSE_ENUM_PROPETY(__table, __prop, __name, __enum_handler, __klass, \
                            __target, __strict_check) {                          \
@@ -1715,6 +1753,27 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
     } \
   } \
 }
+#else
+#define PARSE_ENUM_PROPETY(__table, __prop, __name, __enum_handler, __klass, \
+                           __target, __strict_check) {                          \
+  if (__prop.first == __name) {                                              \
+    if (__table.count(__name)) { continue; } \
+    if ((__prop.second.value_type_name() == value::TypeTraits<value::token>::type_name()) && __prop.second.is_attribute() && __prop.second.is_empty()) { \
+      PUSH_WARN("No value assigned to `" << __name << "` token attribute. Set default token value."); \
+      /* TODO: attr meta __target.meta = attr.meta;  */                    \
+      __table.insert(__name);                                              \
+    } else { \
+      const Attribute &attr = __prop.second.get_attribute();                           \
+      if (!ParseEnumProperty(__name, __strict_check, __enum_handler, attr, &__target, warn, err)) { \
+        return false; \
+      } \
+      /* copy metas */ \
+      __target.metas() = attr.metas(); \
+     __table.insert(__name);                                              \
+    } \
+  } \
+}
+#endif
 
 
 // Add custom property(including property with "primvars" prefix)
@@ -2191,7 +2250,8 @@ bool ReconstructCollectionProperties(
 {
   constexpr auto kCollectionPrefix = "collection:";
 
-  auto ExpansionRuleEnumHandler = [](const std::string &tok) {
+  std::function<nonstd::expected<CollectionInstance::ExpansionRule, std::string>(const std::string &)> ExpansionRuleEnumHandler = [](const std::string &tok) {
+  //auto ExpansionRuleEnumHandler = [](const std::string &tok) {
     using EnumTy = std::pair<CollectionInstance::ExpansionRule, const char *>;
     const std::vector<EnumTy> enums = {
         std::make_pair(CollectionInstance::ExpansionRule::ExplicitOnly, kExplicitOnly),
@@ -2238,6 +2298,13 @@ bool ReconstructCollectionProperties(
       } else if (names[1] == "expansionRule") {
 
         CollectionInstance::ExpansionRule expansionRule;
+
+        EnumHandlerFun<CollectionInstance::ExpansionRule> enum_handler_fn;
+
+        Attribute dummy;
+        TypedAttributeWithFallback<Animatable<CollectionInstance::ExpansionRule>> r;
+        bool ok = ParseEnumProperty(prop.first, true, ExpansionEnumHandler, dummy,  &r);
+
 
         PARSE_ENUM_PROPETY(table, prop, prop.first, ExpansionRuleEnumHandler, CollectionInstance,
                        expansionRule, strict_allowedToken_check)
