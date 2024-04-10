@@ -1,9 +1,9 @@
-// SPDX-License-Identifier: Apache 2.0
-// Copyright (c) 2019 - 2023, Syoyo Fujita.
-// Copyright (c) 2023 - Present, Light Transport Entertainment Inc.
+  // SPDX-License-Identifier: Apache 2.0
+  // Copyright (c) 2019 - 2023, Syoyo Fujita.
+  // Copyright (c) 2023 - Present, Light Transport Entertainment Inc.
 
-#ifndef TINYUSDZ_HH_
-#define TINYUSDZ_HH_
+  #ifndef TINYUSDZ_HH_
+  #define TINYUSDZ_HH_
 
 #include <array>
 #include <cmath>
@@ -40,6 +40,7 @@
 #include "usdSkel.hh"
 //#include "usdVox.hh"
 #include "stage.hh"
+#include "asset-resolution.hh"
 
 
 namespace tinyusdz {
@@ -62,6 +63,7 @@ struct USDLoadOptions {
   int32_t max_memory_limit_in_mb{16384};  // in [mb] Default 16GB
 
   ///
+  /// TODO: Deprecate
   /// Loads asset data(e.g. texture image, audio). Default is true.
   /// If you want to load asset data in your own way or don't need asset data to
   /// be loaded, Set this false.
@@ -187,6 +189,52 @@ bool LoadUSDZFromFile(const std::wstring &filename, Stage *stage,
                       const USDLoadOptions &options = USDLoadOptions());
 #endif
 
+struct USDZAsset
+{
+  // key: asset name, value = byte begin/end in `data`
+  std::map<std::string, std::pair<size_t, size_t>> asset_map;
+  std::vector<uint8_t> data; // USDZ itself
+
+  ///
+  /// For texture size
+  ///
+  uint32_t max_image_width = 2048;
+  uint32_t max_image_height = 2048;
+  uint32_t max_image_channels = 4;
+};
+
+///
+/// Read USDZ(zip) asset info from a file.
+///
+/// @param[in] filename USDZ filename(UTF-8)
+/// @param[out] asset USDZ asset info.
+/// @param[out] warn Warning message.
+/// @param[out] err Error message(filled when the function returns false)
+///
+/// @return true upon success
+///
+bool ReadUSDZAssetInfoFromFile(const std::string &filename, USDZAsset *asset,
+  std::string *warn, std::string *err);
+
+bool ReadUSDZAssetInfoFromMemory(const uint8_t *addr, const size_t length, USDZAsset *asset,
+  std::string *warn, std::string *err);
+
+///
+/// Handy utility API to setup AssetResolutionResolver to load asset data from USDZ data.
+///
+/// @param[inout] resolver Add asset resolution to the resolver.
+/// @param[out] resolver Add asset resolution to the resolver.
+/// @param[out] content data buffer(USDZ asset data). Must be retained until there is (potential) access to any asset, since AssetResolutionResolver and FileSystemHandler loads an asset from this buffer.
+/// @param[in] overwrite_asset_info. Overwrite asset info when an asset info already exists in `resolver`? This could be useful if you provide your own custom asset loader for specific asset name(Add asset info before `SetupAssertResolutionForUSDZ` call and set `Overwrite` false).
+/// @param[out] warn Warning message.
+/// @param[out] err Error message.
+///
+/// @return upon success and setup `resolver` and `fsHandler`.
+///
+bool SetupUSDZAssetResolution(
+  AssetResolutionResolver &resolver,
+  const USDZAsset *pusdzAsset);
+
 ///
 /// Load USDZ(zip) from memory.
 ///
@@ -204,6 +252,13 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
                         const std::string &filename, Stage *stage,
                         std::string *warn, std::string *err,
                         const USDLoadOptions &options = USDLoadOptions());
+
+///
+/// Default AssetResolution handler for USDZ(read asset from USDZ container)
+///
+int USDZResolveAsset(const char *asset_name, const std::vector<std::string> &search_paths, std::string *resolved_asset_name, std::string *err, void *userdata);
+int USDZSizeAsset(const char *resolved_asset_name, uint64_t *nbytes, std::string *err, void *userdata);
+int USDZReadAsset(const char *resolved_asset_name, uint64_t req_bytes, uint8_t *out_buf, uint64_t *nbytes, std::string *err, void *userdata);
 
 ///
 /// Load USDC(binary) from a file.
