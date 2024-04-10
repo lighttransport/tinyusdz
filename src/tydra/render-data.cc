@@ -3967,37 +3967,48 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env, 
     // colorSpace.
     // First look into `colorSpace` metadata of asset, then
     // look into `inputs:sourceColorSpace' attribute.
+    // When both `colorSpace` metadata and `inputs:sourceColorSpace' attribute exists, `inputs:sourceColorSpace` wins.
+    bool inferColorSpaceFailed = false;
     if (texture.file.metas().has_colorSpace()) {
       ColorSpace cs;
       value::token cs_token = texture.file.metas().get_colorSpace();
-      if (!from_token(cs_token, &cs)) {
-        PUSH_ERROR_AND_RETURN(fmt::format(
-            "Invalid or unsupported token value for 'colorSpace': `{}` ",
-            cs_token.str()));
+      if (InferColorSpace(cs_token, &cs)) {
+        texImage.usdColorSpace = cs;
+        DCOUT("Inferred colorSpace: " << to_string(cs));
+      } else {
+        inferColorSpaceFailed = true;
       }
-      texImage.usdColorSpace = cs;
-
     }
 
+    bool sourceColorSpaceSet = false;
     {
       if (texture.sourceColorSpace.authored()) {
         UsdUVTexture::SourceColorSpace cs;
         if (texture.sourceColorSpace.get_value().get(env.timecode, &cs)) {
           if (cs == UsdUVTexture::SourceColorSpace::SRGB) {
             texImage.usdColorSpace = tydra::ColorSpace::sRGB;
+            sourceColorSpaceSet = true;
           } else if (cs == UsdUVTexture::SourceColorSpace::Raw) {
             texImage.usdColorSpace = tydra::ColorSpace::Linear;
+            sourceColorSpaceSet = true;
           } else if (cs == UsdUVTexture::SourceColorSpace::Auto) {
             // TODO: Read colorspace from a file.
             if ((texImage.assetTexelComponentType == ComponentType::UInt8) ||
                 (texImage.assetTexelComponentType == ComponentType::Int8)) {
               texImage.usdColorSpace = tydra::ColorSpace::sRGB;
+              sourceColorSpaceSet = true;
             } else {
               texImage.usdColorSpace = tydra::ColorSpace::Linear;
+              sourceColorSpaceSet = true;
             }
           }
         }
       }
+    }
+
+    if (!sourceColorSpaceSet && inferColorSpaceFailed) {
+      value::token cs_token = texture.file.metas().get_colorSpace();
+      PUSH_ERROR_AND_RETURN(fmt::format("Invalid or unknown colorSpace metadataum: {}. Please report an issue to TinyUSDZ github repo.", cs_token.str()));
     }
 
     BufferData imageBuffer;
@@ -5055,16 +5066,18 @@ std::string to_string(ColorSpace cty) {
   return s;
 }
 
-bool from_token(const value::token &tok, ColorSpace *cty) {
+bool InferColorSpace(const value::token &tok, ColorSpace *cty) {
   if (!cty) {
     return false;
   }
 
   if (tok.str() == "raw") {
     (*cty) = ColorSpace::Linear; 
-  } else if (tok.str() == "Raw") { // NOTE: Seems uncommon token
+  } else if (tok.str() == "Raw") { 
     (*cty) = ColorSpace::Linear; 
   } else if (tok.str() == "srgb") {
+    (*cty) = ColorSpace::sRGB; 
+  } else if (tok.str() == "sRGB") {
     (*cty) = ColorSpace::sRGB; 
   } else if (tok.str() == "linear") {
     (*cty) = ColorSpace::Linear;
@@ -5075,6 +5088,8 @@ bool from_token(const value::token &tok, ColorSpace *cty) {
   } else if (tok.str() == "lin_displayp3") {
     (*cty) = ColorSpace::Lin_DisplayP3;
   } else if (tok.str() == "srgb_displayp3") {
+    (*cty) = ColorSpace::sRGB_DisplayP3;
+  } else if (tok.str() == "Input - Texture - sRGB - Display P3") { // seen in Apple's USDZ model
     (*cty) = ColorSpace::sRGB_DisplayP3;
   } else if (tok.str() == "custom") {
     (*cty) = ColorSpace::Custom;
