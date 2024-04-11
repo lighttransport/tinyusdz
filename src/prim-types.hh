@@ -2929,7 +2929,7 @@ struct Scope : Collection {
 
   PrimMeta meta;
 
-  Animatable<Visibility> visibility{Visibility::Inherited};
+  TypedAttributeWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
   Purpose purpose{Purpose::Default};
 
   std::map<std::string, VariantSet> variantSet;
