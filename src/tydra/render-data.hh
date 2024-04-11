@@ -522,7 +522,8 @@ enum class ColorSpace {
 
 std::string to_string(ColorSpace cs);
 
-bool from_token(const value::token &tok, ColorSpace *result);
+// Infer colorspace from token value.
+bool InferColorSpace(const value::token &tok, ColorSpace *result);
 
 struct TextureImage {
   std::string asset_identifier;  // (resolved) filename or asset identifier.
