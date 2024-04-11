@@ -26,7 +26,7 @@
 #define PushError(s) if (err) { (*err) = s + (*err); }
 #define PushWarn(s) if (warn) { (*warn) = s + (*err); }
 
-// __VA_ARGS__ does not allow empty, thus # of args must be 2+ 
+// __VA_ARGS__ does not allow empty, thus # of args must be 2+
 #define PUSH_WARN_F(s, ...) PUSH_WARN(fmt::format(s, __VA_ARGS__))
 #define PUSH_ERROR_AND_RETURN_F(s, ...) PUSH_ERROR_AND_RETURN(fmt::format(s, __VA_ARGS__))
 
@@ -1589,9 +1589,95 @@ static nonstd::expected<Orientation, std::string> OrientationEnumHandler(const s
 
 #if 1
 
+template<typename T, typename EnumTy>
+bool ParseUniformEnumProperty(
+  const std::string &prop_name,
+  bool strict_allowedToken_check,
+  EnumHandlerFun<EnumTy> enum_handler,
+  const Attribute &attr,
+  TypedAttributeWithFallback<T> *result,
+  std::string *warn = nullptr,
+  std::string *err = nullptr)
+{
+
+  if (!result) {
+    PUSH_ERROR_AND_RETURN("[Internal error] `result` arg is nullptr.");
+  }
+
+  if (attr.is_connection()) {
+    PUSH_ERROR_AND_RETURN_F("Attribute connection is not supported in TinyUSDZ for built-in 'enum' token attribute: {}", prop_name);
+  }
+
+
+  if (attr.variability() == Variability::Uniform) {
+    // scalar
+
+    if (attr.is_blocked()) {
+      result->set_blocked(true);
+      return true;
+    }
+
+    if (attr.get_var().is_timesamples()) {
+      PUSH_ERROR_AND_RETURN_F("Attribute `{}` is defined as `uniform` variability but TimeSample value is assigned.", prop_name);
+    }
+
+    if (auto tok = attr.get_value<value::token>()) {
+      auto e = enum_handler(tok.value().str());
+      if (e) {
+        (*result) = e.value();
+        return true;
+      } else if (strict_allowedToken_check) {
+        PUSH_ERROR_AND_RETURN_F("Attribute `{}`: `{}` is not an allowed token.", prop_name, tok.value().str());
+      } else {
+        PUSH_WARN_F("Attribute `{}`: `{}` is not an allowed token. Ignore it.", prop_name, tok.value().str());
+        result->set_value_empty();
+        return true;
+      }
+    } else {
+      PUSH_ERROR_AND_RETURN_F("Internal error. Maybe type mismatch? Attribute `{}` must be type `token`, but got type `{}`", prop_name, attr.type_name());
+    }
+
+
+  } else {
+    // uniform or TimeSamples
+    if (attr.get_var().is_scalar()) {
+
+      if (attr.is_blocked()) {
+        result->set_blocked(true);
+        return true;
+      }
+
+      if (auto tok = attr.get_value<value::token>()) {
+        auto e = enum_handler(tok.value().str());
+        if (e) {
+          (*result) = e.value();
+          return true;
+        } else if (strict_allowedToken_check) {
+          PUSH_ERROR_AND_RETURN_F("Attribute `{}`: `{}` is not an allowed token.", prop_name, tok.value().str());
+        } else {
+          PUSH_WARN_F("Attribute `{}`: `{}` is not an allowed token. Ignore it.", prop_name, tok.value().str());
+          result->set_value_empty();
+          return true;
+        }
+      } else {
+        PUSH_ERROR_AND_RETURN_F("Internal error. Maybe type mismatch? Attribute `{}` must be type `token`, but got type `{}`", prop_name, attr.type_name());
+      }
+    } else if (attr.get_var().is_timesamples()) {
+      PUSH_ERROR_AND_RETURN_F("Attribute `{}` is uniform variability, but TimeSampled value is authored.",
+ prop_name);
+
+    } else {
+      PUSH_ERROR_AND_RETURN_F("Internal error. Attribute `{}` is invalid", prop_name);
+    }
+
+  }
+
+  return false;
+}
+
 // Animatable enum tokens
 template<typename T, typename EnumTy>
-bool ParseEnumProperty(
+bool ParseTimeSampledEnumProperty(
   const std::string &prop_name,
   bool strict_allowedToken_check,
   EnumHandlerFun<EnumTy> enum_handler,
@@ -1754,7 +1840,7 @@ bool ParseEnumProperty(
   } \
 }
 #else
-#define PARSE_ENUM_PROPETY(__table, __prop, __name, __enum_handler, __klass, \
+#define PARSE_UNIFORM_ENUM_PROPETY(__table, __prop, __name, __enum_handler, __klass, \
                            __target, __strict_check) {                          \
   if (__prop.first == __name) {                                              \
     if (__table.count(__name)) { continue; } \
@@ -1764,7 +1850,28 @@ bool ParseEnumProperty(
       __table.insert(__name);                                              \
     } else { \
       const Attribute &attr = __prop.second.get_attribute();                           \
-      if (!ParseEnumProperty(__name, __strict_check, __enum_handler, attr, &__target, warn, err)) { \
+      if (!ParseUniformEnumProperty(__name, __strict_check, __enum_handler, attr, &__target, warn, err)) { \
+        return false; \
+      } \
+      /* copy metas */ \
+      __target.metas() = attr.metas(); \
+     __table.insert(__name);                                              \
+    } \
+  } \
+}
+
+#define PARSE_TIMESAMPLED_ENUM_PROPETY(__table, __prop, __name, __enum_ty, __enum_handler, __klass, \
+                           __target, __strict_check) {                          \
+  if (__prop.first == __name) {                                              \
+    if (__table.count(__name)) { continue; } \
+    if ((__prop.second.value_type_name() == value::TypeTraits<value::token>::type_name()) && __prop.second.is_attribute() && __prop.second.is_empty()) { \
+      PUSH_WARN("No value assigned to `" << __name << "` token attribute. Set default token value."); \
+      /* TODO: attr meta __target.meta = attr.meta;  */                    \
+      __table.insert(__name);                                              \
+    } else { \
+      const Attribute &attr = __prop.second.get_attribute();                           \
+      std::function<nonstd::expected<__enum_ty, std::string>(const std::string &)> fun = __enum_handler; \
+      if (!ParseTimeSampledEnumProperty(__name, __strict_check, fun, attr, &__target, warn, err)) { \
         return false; \
       } \
       /* copy metas */ \
@@ -2297,21 +2404,14 @@ bool ReconstructCollectionProperties(
 
       } else if (names[1] == "expansionRule") {
 
-        CollectionInstance::ExpansionRule expansionRule;
+        TypedAttributeWithFallback<CollectionInstance::ExpansionRule> r{CollectionInstance::ExpansionRule::ExpandPrims};
 
-        EnumHandlerFun<CollectionInstance::ExpansionRule> enum_handler_fn;
-
-        Attribute dummy;
-        TypedAttributeWithFallback<Animatable<CollectionInstance::ExpansionRule>> r;
-        bool ok = ParseEnumProperty(prop.first, true, ExpansionEnumHandler, dummy,  &r);
-
-
-        PARSE_ENUM_PROPETY(table, prop, prop.first, ExpansionRuleEnumHandler, CollectionInstance,
-                       expansionRule, strict_allowedToken_check)
+        PARSE_UNIFORM_ENUM_PROPETY(table, prop, prop.first, ExpansionRuleEnumHandler, CollectionInstance,
+                       r, strict_allowedToken_check)
 
         if (table.count(prop.first)) {
           CollectionInstance &coll_instance = coll->get_or_add_instance(instance_name);
-          coll_instance.expansionRule = expansionRule;
+          coll_instance.expansionRule = r.get_value();
         }
       } else if (names[1] == "includeRoot") {
 
@@ -2366,11 +2466,11 @@ bool ReconstructGPrimProperties(
   for (const auto &prop : properties) {
     PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kProxyPrim, gprim->proxyPrim)
     PARSE_TYPED_ATTRIBUTE(table, prop, "doubleSided", GPrim, gprim->doubleSided)
-    PARSE_ENUM_PROPETY(table, prop, "visibility", VisibilityEnumHandler, GPrim,
+    PARSE_TIMESAMPLED_ENUM_PROPETY(table, prop, "visibility", Visibility, VisibilityEnumHandler, GPrim,
                    gprim->visibility, strict_allowedToken_check)
-    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GPrim,
+    PARSE_TIMESAMPLED_ENUM_PROPETY(table, prop, "purpose", Purpose, PurposeEnumHandler, GPrim,
                        gprim->purpose, strict_allowedToken_check)
-    PARSE_ENUM_PROPETY(table, prop, "orientation", OrientationEnumHandler, GPrim,
+    PARSE_TIMESAMPLED_ENUM_PROPETY(table, prop, "orientation", Orientation, OrientationEnumHandler, GPrim,
                        gprim->orientation, strict_allowedToken_check)
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GPrim, gprim->extent)
   }
