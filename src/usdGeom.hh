@@ -587,24 +587,6 @@ struct GeomSubset : public MaterialBinding, Collection {
   }
 
 #if 0
-  nonstd::expected<bool, std::string> SetFamilyType(const std::string &str) {
-    if (str == "partition") {
-      familyType = FamilyType::Partition;
-      return true;
-    } else if (str == "nonOverlapping") {
-      familyType = FamilyType::NonOverlapping;
-      return true;
-    } else if (str == "unrestricted") {
-      familyType = FamilyType::Unrestricted;
-      return true;
-    }
-
-    return nonstd::make_unexpected("Invalid `familyType` specified: `" + str +
-                                   "`.");
-  }
-#endif
-
-#if 0
   // Some frequently used materialBindings
   nonstd::optional<Relationship> materialBinding; // rel material:binding
   nonstd::optional<Relationship> materialBindingCollection; // rel material:binding:collection
@@ -896,7 +878,7 @@ struct GeomCone : public GPrim {
   TypedAttributeWithFallback<Animatable<double>> height{2.0};
   TypedAttributeWithFallback<Animatable<double>> radius{1.0};
 
-  TypedAttribute<Axis> axis;
+  TypedAttributeWithFallback<Axis> axis{Axis::Z};
 };
 
 struct GeomCapsule : public GPrim {
@@ -905,7 +887,7 @@ struct GeomCapsule : public GPrim {
   //
   TypedAttributeWithFallback<Animatable<double>> height{2.0};
   TypedAttributeWithFallback<Animatable<double>> radius{0.5};
-  TypedAttribute<Axis> axis;  // uniform token axis
+  TypedAttributeWithFallback<Axis> axis{Axis::Z};  // uniform token axis
 };
 
 struct GeomCylinder : public GPrim {
@@ -914,7 +896,7 @@ struct GeomCylinder : public GPrim {
   //
   TypedAttributeWithFallback<Animatable<double>> height{2.0};
   TypedAttributeWithFallback<Animatable<double>> radius{1.0};
-  TypedAttribute<Axis> axis;  // uniform token axis
+  TypedAttributeWithFallback<Axis> axis{Axis::Z};  // uniform token axis
 };
 
 struct GeomCube : public GPrim {
@@ -952,9 +934,9 @@ struct GeomBasisCurves : public GPrim {
     Pinned,       // "pinned"
   };
 
-  nonstd::optional<Type> type;
-  nonstd::optional<Basis> basis;
-  nonstd::optional<Wrap> wrap;
+  TypedAttributeWithFallback<Type> type{Type::Cubic};
+  TypedAttributeWithFallback<Basis> basis{Basis::Bezier};
+  TypedAttributeWithFallback<Wrap> wrap{Wrap::Nonperiodic};
 
   //
   // Predefined attribs.
