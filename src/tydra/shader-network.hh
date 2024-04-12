@@ -3,6 +3,8 @@
 //
 // Shader network evaluation
 
+#pragma once
+
 #include <unordered_map>
 
 #include "nonstd/expected.hpp"
