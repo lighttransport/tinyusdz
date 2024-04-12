@@ -1522,6 +1522,10 @@ class TypedAttribute {
   void set_value_empty() { _value_empty = true; }
 
   bool is_value_empty() const {
+    if (is_connection()) {
+      return false;
+    }
+
     if (_value_empty) {
       return true;
     }
@@ -3252,7 +3256,7 @@ struct Scope : Collection, MaterialBinding {
 
   PrimMeta meta;
 
-  Animatable<Visibility> visibility{Visibility::Inherited};
+  TypedAttributeWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
   Purpose purpose{Purpose::Default};
 
   std::map<std::string, VariantSet> variantSet;

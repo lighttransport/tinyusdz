@@ -3013,23 +3013,9 @@ std::string to_string(const GeomBasisCurves &geom, const uint32_t indent,
   ss << pprint::Indent(indent) << "{\n";
 
   // members
-  if (geom.type) {
-    ss << pprint::Indent(indent + 1)
-       << "uniform token type = " << quote(to_string(geom.type.value()))
-       << "\n";
-  }
-
-  if (geom.basis) {
-    ss << pprint::Indent(indent + 1)
-       << "uniform token basis = " << quote(to_string(geom.basis.value()))
-       << "\n";
-  }
-
-  if (geom.wrap) {
-    ss << pprint::Indent(indent + 1)
-       << "uniform token wrap = " << quote(to_string(geom.wrap.value()))
-       << "\n";
-  }
+  ss << print_typed_token_attr(geom.type, "type", indent + 1);
+  ss << print_typed_token_attr(geom.basis, "basis", indent + 1);
+  ss << print_typed_token_attr(geom.wrap, "wrap", indent + 1);
 
   ss << print_typed_attr(geom.points, "points", indent + 1);
   ss << print_typed_attr(geom.normals, "normals", indent + 1);
@@ -3887,7 +3873,7 @@ std::string to_string(const DistantLight &light, const uint32_t indent,
 
   ss << print_typed_attr(light.angle, "inputs:angle", indent + 1);
 
-  ss << print_typed_attr(light.extent, "extent", indent + 1);
+  //ss << print_typed_attr(light.extent, "extent", indent + 1);
   ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
   ss << print_typed_token_attr(light.purpose, "purpose", indent + 1);
 
@@ -4014,7 +4000,7 @@ std::string to_string(const DomeLight &light, const uint32_t indent,
   ss << print_typed_token_attr(light.textureFormat, "inputs:textureFormat",
                                indent + 1);
 
-  ss << print_typed_attr(light.extent, "extent", indent + 1);
+  //ss << print_typed_attr(light.extent, "extent", indent + 1);
   ss << print_typed_token_attr(light.visibility, "visibility", indent + 1);
   ss << print_typed_token_attr(light.purpose, "purpose", indent + 1);
 
