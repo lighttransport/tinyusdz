@@ -20,7 +20,7 @@ constexpr auto kGeometryLight = "GeometryLight";
 constexpr auto kPortalLight = "PortalLight";
 constexpr auto kPluginLight = "PluginLight";
 
-class Light : public Xformable, public Collection {
+class BoundableLight : public Xformable, public Collection {
 
  public:
   std::string name;
@@ -63,13 +63,57 @@ class Light : public Xformable, public Collection {
   std::vector<value::token> _properties;
 };
 
-struct SphereLight : public Light {
+// non-boundable still inherits Xformable. 
+// Differences with boundable is just `extent` attribute is omitted.
+class NonboundableLight : public Xformable, public Collection {
+
+ public:
+  std::string name;
+  Specifier spec{Specifier::Def};
+  int64_t parent_id{-1};  // Index to xform node
+
+  TypedAttributeWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
+  TypedAttributeWithFallback<Purpose> purpose{Purpose::Default};
+
+  // Light API
+  TypedAttributeWithFallback<Animatable<value::color3f>> color{value::color3f({1.0f, 1.0f, 1.0f})}; // inputs.color Light energy in linear color space.
+  TypedAttributeWithFallback<Animatable<float>> colorTemperature{6500.0f};  // inputs:colorTemperature
+  TypedAttributeWithFallback<Animatable<float>> diffuse{1.0f}; // inputs:diffuse diffuse multiplier
+  TypedAttributeWithFallback<Animatable<bool>> enableColorTemperature{false}; // inputs:enableColorTemperature
+  TypedAttributeWithFallback<Animatable<float>> exposure{0.0f}; // inputs:exposure EV
+  TypedAttributeWithFallback<Animatable<float>> intensity{1.0f}; // inputs:intensity
+  TypedAttributeWithFallback<Animatable<bool>> normalize{false}; // inputs:normalize normalize power by the surface area of the light.
+  TypedAttributeWithFallback<Animatable<float>> specular{1.0f}; // inputs:specular specular multiplier
+  // rel light:filters
+
+
+  std::pair<ListEditQual, std::vector<Reference>> references;
+  std::pair<ListEditQual, std::vector<Payload>> payload;
+  std::map<std::string, VariantSet> variantSet;
+  std::map<std::string, Property> props;
+  PrimMeta meta; // TODO: move to private
+
+  const PrimMeta &metas() const { return meta; }
+  PrimMeta &metas() { return meta; }
+
+  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const { return _properties; }
+  std::vector<value::token> &primChildrenNames() { return _primChildren; }
+  std::vector<value::token> &propertyNames() { return _properties; }
+
+ private:
+
+  std::vector<value::token> _primChildren;
+  std::vector<value::token> _properties;
+};
+
+struct SphereLight : public BoundableLight {
 
   TypedAttributeWithFallback<Animatable<float>> radius{0.5f}; // inputs:radius
 
 };
 
-struct CylinderLight : public Light {
+struct CylinderLight : public BoundableLight {
 
   TypedAttributeWithFallback<Animatable<float>> length{1.0f}; // inputs:length size in Y axis
   TypedAttributeWithFallback<Animatable<float>> radius{0.5f}; // inputs:radius  size in X axis
@@ -77,7 +121,7 @@ struct CylinderLight : public Light {
 };
 
 
-struct RectLight : public Light {
+struct RectLight : public BoundableLight {
 
   TypedAttribute<Animatable<value::AssetPath>> file; // asset inputs:texture:file
   TypedAttributeWithFallback<Animatable<float>> height{1.0f}; // inputs:height size in Y axis
@@ -85,20 +129,20 @@ struct RectLight : public Light {
 
 };
 
-struct DiskLight : public Light {
+struct DiskLight : public BoundableLight {
 
   TypedAttributeWithFallback<Animatable<float>> radius{0.5f}; // inputs:radius
 
 };
 
 // NOTE: Make Distance xformable?
-struct DistantLight : public Light {
+struct DistantLight : public NonboundableLight {
 
   TypedAttributeWithFallback<Animatable<float>> angle{0.53f}; // inputs:angle in degrees
 
 };
 
-struct DomeLight : public Light {
+struct DomeLight : public NonboundableLight {
 
   enum class TextureFormat {
     Automatic, // "automatic"
@@ -117,19 +161,19 @@ struct DomeLight : public Light {
 };
 
 // TODO: Deprecate
-struct GeometryLight : public Light {
+struct GeometryLight : public NonboundableLight {
 
   RelationshipProperty geometry; // `rel geometry`
 
 };
 
 // TODO
-struct PortalLight : public Light {
+struct PortalLight : public NonboundableLight {
 
 };
 
 // TODO
-struct PluginLight : public Light {
+struct PluginLight : public Xformable, public Collection {
 };
 
 #if 0 // TODO
