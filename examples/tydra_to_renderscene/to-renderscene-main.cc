@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <iostream>
 #include <sstream>
+#include <fstream>
 
 #include "io-util.hh"
 #include "pprinter.hh"
@@ -16,6 +17,7 @@
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
 #include "tydra/shader-network.hh"
+#include "tydra/obj-export.hh"
 #include "usdShade.hh"
 #include "value-pprint.hh"
 #include "value-types.hh"
@@ -153,6 +155,30 @@ int main(int argc, char **argv) {
   }
 
   std::cout << DumpRenderScene(render_scene) << "\n";
+
+  bool export_obj = false; // TODO: read export settring from args.
+  if (export_obj) {
+    for (size_t i = 0; i < render_scene.meshes.size(); i++) {
+      std::string obj_str;
+      std::string mtl_str;
+      if (!tinyusdz::tydra::export_to_obj(render_scene, i, obj_str, mtl_str, &warn, &err)) {
+        std::cerr << "obj export error: " << err << "\n";
+        exit(-1);
+      }
+
+      std::string obj_filename = std::to_string(i) + render_scene.meshes[i].prim_name + ".obj";
+      std::string mtl_filename = std::to_string(i) + render_scene.meshes[i].prim_name + ".mtl";
+      {
+        std::ofstream obj_ofs(obj_filename);
+        obj_ofs << obj_str;
+      }
+
+      {
+        std::ofstream mtl_ofs(mtl_filename);
+        mtl_ofs << mtl_str;
+      }
+    }
+  }
 
   return EXIT_SUCCESS;
 }
