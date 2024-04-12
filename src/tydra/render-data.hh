@@ -1161,26 +1161,6 @@ bool DefaultTextureImageLoaderFunction(const value::AssetPath &assetPath,
 /// TODO: UDIM loder
 ///
 
-#if 0  // TODO: remove
-///
-/// Easy API to convert USD Stage to RenderScene(glTF-like scene graph)
-///
-bool ConvertToRenderScene(
-  const Stage &stage,
-  RenderScene *scene,
-  std::string *warn,
-  std::string *err);
-
-nonstd::expected<Node, std::string> Convert(const Stage &stage,
-                                                  const Xform &xform);
-
-nonstd::expected<RenderMesh, std::string> Convert(const Stage &stage,
-                                                  const GeomMesh &mesh, bool triangulate=false);
-
-// Currently float2 only
-std::vector<UsdPrimvarReader_float2> ExtractPrimvarReadersFromMaterialNode(const Prim &node);
-#endif
-
 struct MeshConverterConfig {
   bool triangulate{true};
 
