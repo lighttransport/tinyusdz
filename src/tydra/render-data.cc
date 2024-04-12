@@ -5086,9 +5086,7 @@ bool InferColorSpace(const value::token &tok, ColorSpace *cty) {
   } else if (tok.str() == "ocio") {
     (*cty) = ColorSpace::OCIO;
   } else if (tok.str() == "lin_displayp3") {
-    (*cty) =ColorSpace::Lin_DisplayP3;
-  } else if (tok.str() == "lin_displayp3") {
-    (*cty) =ColorSpace::Lin_DisplayP3;
+    (*cty) = ColorSpace::Lin_DisplayP3;
   } else if (tok.str() == "srgb_displayp3") {
     (*cty) = ColorSpace::sRGB_DisplayP3;
   } else if (tok.str() == "Input - Texture - sRGB - Display P3") { // seen in Apple's USDZ model
