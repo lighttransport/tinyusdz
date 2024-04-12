@@ -798,20 +798,24 @@ struct RenderMesh {
   std::vector<vec3> points;  // varying is 'vertex'.
 
   ///
-  /// Original faceVertexIndices/faceVertexCounts in GeomMesh.
-  /// For triangulated mesh, faceVertexCounts are all filled with 3.
-  /// TODO: Set to empty when the mesh is composed of all triangle faces to save
-  /// memory?
+  /// Initialized with USD faceVertexIndices/faceVertexCounts in GeomMesh.
+  /// When the mesh is triangulated, these attribute does not change.
   ///
-  std::vector<uint32_t> faceVertexIndices;
-  std::vector<uint32_t> faceVertexCounts;
+  /// But will be modified when `MeshConverterCondig::build_vertex_indices` is set to true
+  /// (To make vertex attributes of the mesh single-indexable)
+  /// 
+  ///
+  std::vector<uint32_t> usdFaceVertexIndices;
+  std::vector<uint32_t> usdFaceVertexCounts;
 
   ///
   /// Triangulated faceVertexIndices, faceVerteCounts and auxiality state
   /// required to triangulate primvars in the app.
   ///
-  /// trinangulatedFaceVertexIndices will be empty when the mesh is not
+  /// trinangulated*** variables will be empty when the mesh is not
   /// triangulated.
+  ///
+  /// Topology could be changed(modified) when `MeshConverterCondig::build_vertex_indices` is set to true.
   ///
   std::vector<uint32_t> triangulatedFaceVertexIndices;
   std::vector<uint32_t> triangulatedFaceVertexCounts;
@@ -822,6 +826,18 @@ struct RenderMesh {
   std::vector<uint32_t>
       triangulatedFaceCounts;  // used for rearrange face indices(e.g GeomSubset
                                // indices)
+                               
+  const std::vector<uint32_t> &faceVertexIndices() const {
+    return is_triangulated() ? triangulatedFaceVertexIndices : usdFaceVertexIndices;
+  }
+
+  const std::vector<uint32_t> &faceVertexCounts() const {
+    return is_triangulated() ? triangulatedFaceVertexCounts : usdFaceVertexCounts;
+  }
+
+  bool is_triangulated() const {
+    return triangulatedFaceVertexIndices.size() && triangulatedFaceVertexCounts.size();
+  }
 
   // `normals` or `primvar:normals`. Empty when no normals exist in the
   // GeomMesh.
@@ -918,6 +934,10 @@ struct UVTexture {
   // NOTE: it looks no 'rgba' in UsdUvTexture
   enum class Channel { R, G, B, A, RGB, RGBA };
 
+  std::string prim_name; // element Prim name
+  std::string abs_path; // Absolute Prim path
+  std::string display_name; // displayName prim metadatum
+  
   // TextureWrap `black` in UsdUVTexture is mapped to `CLAMP_TO_BORDER`(app must
   // set border color to black) default is CLAMP_TO_EDGE and `useMetadata` wrap
   // mode is ignored.
@@ -977,6 +997,10 @@ std::string to_string(UVTexture::WrapMode ty);
 
 struct UDIMTexture {
   enum class Channel { R, G, B, RGB, RGBA };
+
+  std::string prim_name; // element Prim name
+  std::string abs_path; // Absolute Prim path
+  std::string display_name; // displayName prim metadatum
 
   // NOTE: for single channel(e.g. R) fetch, Only [0] will be filled for the
   // return value.
