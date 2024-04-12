@@ -50,12 +50,26 @@ using PrimvarReader_float2Map =
 
 int main(int argc, char **argv) {
   if (argc < 2) {
-    std::cout << "Need USD file.\n"
-              << std::endl;
+    std::cout << "Usage: " << argv[0] << " input.usd [OPTIONS].\n";
+    std::cout << "\n\nOptions\n\n";
+    std::cout << "  -t: Triangulate mesh\n";
+    std::cout << "  --dumpobj: Dump mesh as wavefront .obj(for visual debugging)\n";
     return EXIT_FAILURE;
   }
 
-  std::string filepath = argv[1];
+  bool triangulate = true;
+  bool export_obj = false;
+  std::string filepath;
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "-t") == 0) {
+      triangulate = true;
+    } else if (strcmp(argv[i], "--dumpobj") == 0) {
+      export_obj = true;
+    } else {
+      filepath = argv[i];
+    }
+  }
+
   std::string warn;
   std::string err;
 
@@ -134,6 +148,9 @@ int main(int argc, char **argv) {
   tinyusdz::tydra::RenderSceneConverter converter;
   tinyusdz::tydra::RenderSceneConverterEnv env(stage);
 
+  std::cout << "Triangulate : " << (triangulate ? "true" : "false") << "\n";
+  env.mesh_config.triangulate = triangulate;
+
   // Add base directory of .usd file to search path.
   std::string usd_basedir = tinyusdz::io::GetBaseDir(filepath);
   std::cout << "Add seach path: " << usd_basedir << "\n";
@@ -156,8 +173,8 @@ int main(int argc, char **argv) {
 
   std::cout << DumpRenderScene(render_scene) << "\n";
 
-  bool export_obj = false; // TODO: read export settring from args.
   if (export_obj) {
+    std::cout << "Dump RenderMesh as wavefront .obj\n";
     for (size_t i = 0; i < render_scene.meshes.size(); i++) {
       std::string obj_str;
       std::string mtl_str;
