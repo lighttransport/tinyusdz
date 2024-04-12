@@ -4,6 +4,7 @@
 //
 // Render data structure suited for WebGL and Raytracing render
 //
+#pragma once
 
 #include <algorithm>
 #include <cmath>
