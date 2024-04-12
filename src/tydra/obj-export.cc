@@ -101,9 +101,10 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
     PUSH_ERROR_AND_RETURN("different vertex indices are TODO");
   }
 
+
   obj_str = ss.str();
 
-  return true;
+  PUSH_ERROR_AND_RETURN("TODO");
 
 }
 
