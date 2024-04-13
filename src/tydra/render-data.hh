@@ -755,7 +755,7 @@ struct MaterialPath {
   // primvar name used for texcoords when default RenderMaterial is used.
   // Currently we don't support different texcoord for each frontface and
   // backface material.
-  std::string default_texcoord_primvar_name{"st"};
+  std::string default_texcoords_primvar_name{"st"};
 };
 
 // GeomSubset whose familyName is 'materialBind'.
