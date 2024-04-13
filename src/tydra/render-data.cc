@@ -3691,6 +3691,10 @@ bool RenderSceneConverter::ConvertMesh(
     }
   }
 
+  dst.prim_name = mesh.name;
+  dst.abs_path = abs_path.full_path_name();
+  dst.display_name = mesh.metas().displayName.value_or("");
+
   (*dstMesh) = std::move(dst);
 
   return true;
