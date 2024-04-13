@@ -90,9 +90,9 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
     std::unordered_set<uint32_t> subset_face_ids;
 
     for (const auto &subset : mesh.material_subsetMap) {
-      std::vector<uint32_t> face_ids(subset.second.indices.size());
-      for (size_t i = 0; i < subset.second.indices.size(); i++) {
-        face_ids[i] = uint32_t(subset.second.indices[i]); 
+      std::vector<uint32_t> face_ids(subset.second.indices().size());
+      for (size_t i = 0; i < subset.second.indices().size(); i++) {
+        face_ids[i] = uint32_t(subset.second.indices()[i]); 
         subset_face_ids.insert(face_ids[i]);
       }
       if (subset.first.empty()) {
@@ -133,7 +133,7 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
 
     if (std::get<0>(group.second) > -1) {
       uint32_t mat_id = uint32_t(std::get<0>(group.second));
-      ss << "usemtl " << scene.materials[mat_id].name;
+      ss << "usemtl " << scene.materials[mat_id].name << "\n";
     } 
 
     const auto &face_ids = std::get<1>(group.second);
@@ -167,7 +167,8 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
 
   obj_str = ss.str();
 
-  ss.flush();
+  ss.str("");
+  ss << "# exported from TinyUSDZ Tydra.\n";
 
   // emit material info
   for (const auto &group : face_groups) {
@@ -176,7 +177,7 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
     }
 
     uint32_t mat_id = uint32_t(std::get<0>(group.second));
-    ss << "newmtl " << scene.materials[mat_id].name;
+    ss << "newmtl " << scene.materials[mat_id].name << "\n";
 
     // Diffuse only
     // TODO: Emit more PBR material
@@ -202,8 +203,8 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
     }
 
     ss << "\n";
-    
   }
+  ss << "# " << face_groups.size() << " materials.\n";
 
   mtl_str = ss.str();
 

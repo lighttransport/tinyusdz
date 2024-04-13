@@ -770,7 +770,16 @@ struct MaterialSubset {
   int material_id{-1};
   int backface_material_id{-1};
 
-  std::vector<int> indices;  // index to face, i.e. index to faceVertexCounts[]
+  // USD GeomSubset.indices. Index to a facet, i.e. index to GeomMesh.faceVertexCounts[], in USD GeomSubset
+  std::vector<int> usdIndices;  
+
+  // Triangulated indices. Filled when `MeshConverterConfig::triangualte` is true
+  std::vector<int> triangulatedIndices;  
+
+  const std::vector<int> &indices() const {
+    return triangulatedIndices.size() ? triangulatedIndices : usdIndices;
+  }
+  
 };
 
 // Currently normals and texcoords are converted as facevarying attribute.

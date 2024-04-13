@@ -3,14 +3,13 @@
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 //
 // TODO:
-//   - [ ] Setup rmaterial MaterialSubset 
 //   - [ ] Subdivision surface to polygon mesh conversion.
 //     - [ ] Correctly handle primvar with 'vertex' interpolation(Use the basis
 //     function of subd surface)
 //   - [x] Support time-varying shader attribute(timeSamples)
 //   - [ ] Wide gamut colorspace conversion support
 //     - [ ] linear sRGB <-> linear DisplayP3
-//   - [x] COmpute tangentes and binormals
+//   - [x] Compute tangentes and binormals
 //   - [x] displayColor, displayOpacity primvar(vertex color)
 //   - [ ] Support Inbetween BlendShape
 //   - [ ] Support material binding collection(Collection API)
@@ -2815,17 +2814,19 @@ bool RenderSceneConverter::ConvertMesh(
         return false;
       }
 
-      ms.indices = indices;
+      ms.usdIndices = indices;
     }
 
     if (subset_material_path_map.count(psubset->name)) {
       const auto &mp = subset_material_path_map.at(psubset->name);
       if (rmaterial_map.count(mp.material_path)) {
         ms.material_id = int(rmaterial_map.at(mp.material_path));
+        DCOUT("MaterialSubset " << psubset->name << " : material_id " << ms.material_id);
       }
       if (rmaterial_map.count(mp.backface_material_path)) {
         ms.backface_material_id =
             int(rmaterial_map.at(mp.backface_material_path));
+        DCOUT("MaterialSubset " << psubset->name << " : backface_material_id " << ms.backface_material_id);
       }
     }
 
@@ -3226,6 +3227,7 @@ bool RenderSceneConverter::ConvertMesh(
         size_t ncount = triangulatedFaceCounts[i];
 
         faceIndexOffsets[i] = uint32_t(faceIndexOffset);
+        DCOUT("faceIndexOffset[" << i << "] = " << faceIndexOffsets[i]);
 
         faceIndexOffset += ncount;
 
@@ -3255,23 +3257,26 @@ bool RenderSceneConverter::ConvertMesh(
       for (auto &it : dst.material_subsetMap) {
         std::vector<int> triangulated_indices;
 
-        for (size_t i = 0; i < it.second.indices.size(); i++) {
-          int32_t srcIndex = it.second.indices[i];
+        for (size_t i = 0; i < it.second.usdIndices.size(); i++) {
+          int32_t srcIndex = it.second.usdIndices[i];
           if (srcIndex < 0) {
             PUSH_ERROR_AND_RETURN("Invalid index value in GeomSubset.");
           }
 
-          uint32_t baseFaceIndex = faceIndexOffsets[i];
+          uint32_t baseFaceIndex = faceIndexOffsets[size_t(srcIndex)];
+          DCOUT(i << ", baseFaceIndex = " << baseFaceIndex);
 
           for (size_t k = 0; k < triangulatedFaceCounts[uint32_t(srcIndex)];
                k++) {
             if ((baseFaceIndex + k) > (std::numeric_limits<int32_t>::max)()) {
               PUSH_ERROR_AND_RETURN(fmt::format("Index value exceeds 2GB."));
             }
-            // assume faceIndex in each polygon is monotonically increasing.
+            // assume triangulated faceIndex in each polygon is monotonically increasing.
             triangulated_indices.push_back(int(baseFaceIndex + k));
           }
         }
+
+        it.second.triangulatedIndices = std::move(triangulated_indices);
       }
     }
 
@@ -4717,9 +4722,9 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     //
     // First convert Material assigned to GeomMesh.
     //
-    // - If prim has materialBind, convert it to RenderMesh's material.
     // - If prim has GeomSubset with materialBind, convert it to per-face
     // material.
+    // - If prim has materialBind, convert it to RenderMesh's material.
     //
 
     auto ConvertBoundMaterial = [&](const Path &bound_material_path, 
@@ -4786,14 +4791,79 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       return true;
     };
 
+
+      // Convert bound materials in GeomSubsets
+      //
+      // key: subset Prim name 
+      std::map<std::string, MaterialPath> subset_material_path_map;
+      std::vector<const GeomSubset *> material_subsets;
+      {
+        material_subsets = GetMaterialBindGeomSubsets(prim);
+
+        for (const auto &psubset : material_subsets) {
+
+          MaterialPath mpath;
+          mpath.default_texcoords_primvar_name = visitorEnv->env->mesh_config.default_texcoords_primvar_name;
+
+          Path subset_abs_path = abs_path.AppendElement(psubset->name);
+
+          // front and back
+          {
+            tinyusdz::Path bound_material_path;
+            const tinyusdz::Material *bound_material{nullptr};
+            bool ret = tinyusdz::tydra::GetBoundMaterial(
+                visitorEnv->env->stage, /* GeomSubset prim path */ subset_abs_path,
+                /* purpose */ "", &bound_material_path, &bound_material, err);
+
+            if (ret && bound_material) {
+              int64_t rmaterial_id = -1; // not used.
+
+              if (!ConvertBoundMaterial(bound_material_path, bound_material, rmaterial_id)) {
+                return false;
+              }
+
+              mpath.material_path = bound_material_path.full_path_name();
+              DCOUT("GeomSubset " << subset_abs_path << " : Bound material path: " << mpath.backface_material_path);
+
+            }
+
+          }
+
+          std::string backface_purpose = visitorEnv->env->material_config.default_backface_material_purpose_name;
+
+          if (!backface_purpose.empty() && psubset->has_materialBinding(value::token(backface_purpose))) {
+            DCOUT("backface_material_purpose " << visitorEnv->env->material_config.default_backface_material_purpose_name);
+            tinyusdz::Path bound_material_path;
+            const tinyusdz::Material *bound_material{nullptr};
+            bool ret = tinyusdz::tydra::GetBoundMaterial(
+                visitorEnv->env->stage, /* GeomSubset prim path */ subset_abs_path,
+                /* purpose */ visitorEnv->env->material_config.default_backface_material_purpose_name, &bound_material_path, &bound_material, err);
+
+            if (ret && bound_material) {
+              int64_t rmaterial_id = -1; // not used
+
+              if (!ConvertBoundMaterial(bound_material_path, bound_material, rmaterial_id)) {
+                return false;
+              }
+
+              mpath.backface_material_path = bound_material_path.full_path_name();
+              DCOUT("GeomSubset " << subset_abs_path << " : Bound backface material path: " << mpath.backface_material_path);
+            }
+          }
+
+          subset_material_path_map[psubset->name] = mpath;
+
+        }
+      }
+
     MaterialPath material_path;
     material_path.default_texcoords_primvar_name = visitorEnv->env->mesh_config.default_texcoords_primvar_name;
     // TODO: Implement feature to assign default material id(MaterialPath::default_material_id) when no bound material found.
 
-    // Front and back material.
     {
       const std::string mesh_path_str = abs_path.full_path_name();
 
+      // Front and back material.
       {
         tinyusdz::Path bound_material_path;
         const tinyusdz::Material *bound_material{nullptr};
@@ -4802,7 +4872,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
             /* purpose */ "", &bound_material_path, &bound_material, err);
 
         if (ret && bound_material) {
-          int64_t rmaterial_id = -1;
+          int64_t rmaterial_id = -1; // not used
 
           if (!ConvertBoundMaterial(bound_material_path, bound_material, rmaterial_id)) {
             return false;
@@ -4813,7 +4883,9 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         }
       }
 
-      {
+      std::string backface_purpose = visitorEnv->env->material_config.default_backface_material_purpose_name;
+
+      if (!backface_purpose.empty() && pmesh->has_materialBinding(value::token(backface_purpose))) {
         tinyusdz::Path bound_material_path;
         const tinyusdz::Material *bound_material{nullptr};
         bool ret = tinyusdz::tydra::GetBoundMaterial(
@@ -4821,7 +4893,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
             /* purpose */ visitorEnv->env->material_config.default_backface_material_purpose_name, &bound_material_path, &bound_material, err);
 
         if (ret && bound_material) {
-          int64_t rmaterial_id = -1;
+          int64_t rmaterial_id = -1; // not used
 
           if (!ConvertBoundMaterial(bound_material_path, bound_material, rmaterial_id)) {
             return false;
@@ -4832,86 +4904,11 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         }
       }
 
-#if 0
-      if (ret && bound_material) {
-        DCOUT("Bound material path: " << bound_material_path);
 
-        const auto matIt = visitorEnv->converter->materialMap.find(
-            bound_material_path.full_path_name());
-
-        if (matIt != visitorEnv->converter->materialMap.s_end()) {
-          // Got material in the cache.
-          uint64_t mat_id = matIt->second;
-          if (mat_id >= visitorEnv->converter->materials
-                            .size()) {  // this should not happen though
-            if (err) {
-              (*err) += "Material index out-of-range.\n";
-            }
-            return false;
-          }
-
-          if (mat_id >= (std::numeric_limits<int64_t>::max)()) {
-            if (err) {
-              (*err) += "Material index too large.\n";
-            }
-            return false;
-          }
-
-          rmaterial_id = int64_t(mat_id);
-
-        } else {
-          RenderMaterial rmat;
-          if (!visitorEnv->converter->ConvertMaterial(*visitorEnv->env,
-                                                      bound_material_path,
-                                                      *bound_material, &rmat)) {
-            if (err) {
-              (*err) += fmt::format("Material conversion failed: {}",
-                                    bound_material_path);
-            }
-            return false;
-          }
-
-          // Assign new material ID
-          uint64_t mat_id = rmaterials.size();
-
-          if (mat_id >= (std::numeric_limits<int64_t>::max)()) {
-            if (err) {
-              (*err) += "Material index too large.\n";
-            }
-            return false;
-          }
-          rmaterial_id = int64_t(mat_id);
-
-          visitorEnv->converter->materialMap.add(
-              bound_material_path.full_path_name(), uint64_t(rmaterial_id));
-          DCOUT("Added renderMaterial: " << mat_id << " " << rmat.abs_path << " ( "
-                                 << rmat.name << " ) ");
-
-          rmaterials.push_back(rmat);
-        }
-
-        material_path.material_path = 
-      }
-#endif
-
-      RenderMesh rmesh;
-
-      
-      std::map<std::string, MaterialPath> subset_material_path_map;
-      std::vector<const GeomSubset *> material_subsets;
+      // TODO: BlendShapes
       std::vector<std::pair<std::string, const BlendShape *>> blendshapes;
 
-      {
-        material_subsets = GetMaterialBindGeomSubsets(prim);
-
-        for (const auto &psubset : material_subsets) {
-          MaterialSubset ms;
-          ms.prim_name = psubset->name;
-          ms.abs_path = abs_path.prim_part() + std::string("/") + psubset->name;
-          ms.display_name = psubset->meta.displayName.value_or("");
-          //subset_material_path_map[] = 
-        }
-      }
+      RenderMesh rmesh;
 
       if (!visitorEnv->converter->ConvertMesh(
               *visitorEnv->env, abs_path, *pmesh, material_path,
@@ -5692,6 +5689,8 @@ void DumpMaterialSubset(std::stringstream &ss, const MaterialSubset &msubset,
                         uint32_t indent) {
   ss << pprint::Indent(indent) << "material_subset {\n";
   ss << pprint::Indent(indent + 1) << "material_id " << msubset.material_id
+     << "\n";
+  ss << pprint::Indent(indent + 1) << "indices " << quote(value::print_array_snipped(msubset.indices()))
      << "\n";
   ss << pprint::Indent(indent) << "}\n";
 }
