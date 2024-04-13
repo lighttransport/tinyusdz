@@ -2593,46 +2593,55 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
   }
 
   mesh.points = vertex_output.positions;
+
+  // attributes are now 'vertex' variability
   if (normals_ptr) {
     mesh.normals.set_buffer(
         reinterpret_cast<const uint8_t *>(vertex_output.normals.data()),
         vertex_output.normals.size() * sizeof(value::float3));
+    mesh.normals.variability = VertexVariability::Vertex;
   }
 
   if (texcoord0_ptr) {
     mesh.texcoords[0].set_buffer(
         reinterpret_cast<const uint8_t *>(vertex_output.uv0s.data()),
         vertex_output.uv0s.size() * sizeof(value::float2));
+    mesh.texcoords[0].variability = VertexVariability::Vertex;
   }
 
   if (texcoord1_ptr) {
     mesh.texcoords[1].set_buffer(
         reinterpret_cast<const uint8_t *>(vertex_output.uv1s.data()),
         vertex_output.uv1s.size() * sizeof(value::float2));
+    mesh.texcoords[1].variability = VertexVariability::Vertex;
   }
 
   if (tangents_ptr) {
     mesh.tangents.set_buffer(
         reinterpret_cast<const uint8_t *>(vertex_output.tangents.data()),
         vertex_output.tangents.size() * sizeof(value::float3));
+    mesh.tangents.variability = VertexVariability::Vertex;
   }
 
   if (binormals_ptr) {
     mesh.binormals.set_buffer(
         reinterpret_cast<const uint8_t *>(vertex_output.binormals.data()),
         vertex_output.binormals.size() * sizeof(value::float3));
+    mesh.binormals.variability = VertexVariability::Vertex;
   }
 
   if (colors_ptr) {
     mesh.vertex_colors.set_buffer(
         reinterpret_cast<const uint8_t *>(vertex_output.colors.data()),
         vertex_output.colors.size() * sizeof(value::float3));
+    mesh.vertex_colors.variability = VertexVariability::Vertex;
   }
 
   if (opacities_ptr) {
     mesh.vertex_opacities.set_buffer(
         reinterpret_cast<const uint8_t *>(vertex_output.opacities.data()),
         vertex_output.opacities.size() * sizeof(float));
+    mesh.vertex_opacities.variability = VertexVariability::Vertex;
   }
 
   return true;
@@ -3033,6 +3042,7 @@ bool RenderSceneConverter::ConvertMesh(
               env.mesh_config.facevarying_to_vertex_eps)) {
         dst.normals = std::move(va_normals);
       } else {
+        DCOUT("normals cannot be converted to 'vertex' varying. Staying 'facevarying'");
         is_single_indexable = false;
       }
     }
@@ -3066,6 +3076,7 @@ bool RenderSceneConverter::ConvertMesh(
               env.mesh_config.facevarying_to_vertex_eps)) {
         dst.texcoords[uint32_t(slotId)] = va_uvs;
       } else {
+        DCOUT("texcoord[" << slotId << "] cannot be converted to 'vertex' varying. Staying 'facevarying'");
         is_single_indexable = false;
         dst.texcoords[uint32_t(slotId)] = vattr;
       }
@@ -3096,6 +3107,7 @@ bool RenderSceneConverter::ConvertMesh(
               env.mesh_config.facevarying_to_vertex_eps)) {
         dst.vertex_colors = std::move(va);
       } else {
+        DCOUT("vertex_colors cannot be converted to 'vertex' varying. Staying 'facevarying'");
         is_single_indexable = false;
       }
     }
@@ -3123,6 +3135,7 @@ bool RenderSceneConverter::ConvertMesh(
               env.mesh_config.facevarying_to_vertex_eps)) {
         dst.vertex_opacities = std::move(va);
       } else {
+        DCOUT("vertex_opacities cannot be converted to 'vertex' varying. Staying 'facevarying'");
         is_single_indexable = false;
       }
     }
