@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2022-Present Light Transport Entertainment, Inc.
 //
-#include "scene-access.hh"
 
+// src
 #include "common-macros.inc"
 #include "pprinter.hh"
 #include "prim-pprint.hh"
@@ -15,6 +15,10 @@
 #include "usdShade.hh"
 #include "usdSkel.hh"
 #include "value-pprint.hh"
+
+// src/tydra
+#include "scene-access.hh"
+#include "attribute-eval.hh"
 
 namespace tinyusdz {
 namespace tydra {
@@ -239,62 +243,20 @@ const Prim *GetParentPrim(const tinyusdz::Stage &stage,
 //
 // Template Instanciations
 //
-template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<Model> &m);
-template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<Scope> &m);
-template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<GPrim> &m);
-template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<Xform> &m);
-template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<GeomMesh> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<GeomBasisCurves> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<GeomSphere> &m);
-template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<GeomCone> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<GeomCylinder> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<GeomCapsule> &m);
-template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<GeomCube> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<GeomPoints> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<GeomSubset> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<GeomCamera> &m);
+#define LISTPRIMS_INSTANCIATE(__ty) \
+template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<__ty> &m);
 
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<DomeLight> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<CylinderLight> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<SphereLight> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<DiskLight> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<DistantLight> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<RectLight> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<GeometryLight> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<PortalLight> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<PluginLight> &m);
+APPLY_FUNC_TO_PRIM_TYPES(LISTPRIMS_INSTANCIATE)
 
-template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<Material> &m);
-template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<Shader> &m);
-
-template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<SkelRoot> &m);
-template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<Skeleton> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<SkelAnimation> &m);
-template bool ListPrims(const tinyusdz::Stage &stage,
-                        PathPrimMap<BlendShape> &m);
+#undef LISTPRIMS_INSTANCIATE
 
 template bool ListShaders(const tinyusdz::Stage &stage,
                           PathShaderMap<UsdPreviewSurface> &m);
 template bool ListShaders(const tinyusdz::Stage &stage,
                           PathShaderMap<UsdUVTexture> &m);
 
+template bool ListShaders(const tinyusdz::Stage &stage,
+                          PathShaderMap<UsdPrimvarReader_string> &m);
 template bool ListShaders(const tinyusdz::Stage &stage,
                           PathShaderMap<UsdPrimvarReader_int> &m);
 template bool ListShaders(const tinyusdz::Stage &stage,
@@ -305,6 +267,8 @@ template bool ListShaders(const tinyusdz::Stage &stage,
                           PathShaderMap<UsdPrimvarReader_float3> &m);
 template bool ListShaders(const tinyusdz::Stage &stage,
                           PathShaderMap<UsdPrimvarReader_float4> &m);
+template bool ListShaders(const tinyusdz::Stage &stage,
+                          PathShaderMap<UsdPrimvarReader_matrix> &m);
 
 namespace {
 
@@ -785,44 +749,6 @@ bool ToTokenProperty(const TypedAttributeWithFallback<T> &input,
     attr.set_var(std::move(pvar));
     attr.variability() = Variability::Uniform;
     output = Property(attr, /* custom */ false);
-  }
-
-  return true;
-}
-
-bool ToTerminalAttributeValue(
-    const Attribute &attr, TerminalAttributeValue *value, std::string *err,
-    const double t, const value::TimeSampleInterpolationType tinterp) {
-  if (!value) {
-    // ???
-    return false;
-  }
-
-  if (attr.is_blocked()) {
-    PUSH_ERROR_AND_RETURN("Attribute is None(Value Blocked).");
-  }
-
-  const primvar::PrimVar &var = attr.get_var();
-
-  value->meta() = attr.metas();
-  value->variability() = attr.variability();
-
-  if (!var.is_valid()) {
-    PUSH_ERROR_AND_RETURN("[InternalError] Attribute is invalid.");
-  } else if (var.is_scalar()) {
-    const value::Value &v = var.value_raw();
-    DCOUT("Attribute is scalar type:" << v.type_name());
-    DCOUT("Attribute value = " << pprint_value(v));
-
-    value->set_value(v);
-  } else if (var.is_timesamples()) {
-    value::Value v;
-    if (!var.get_interpolated_value(t, tinterp, &v)) {
-      PUSH_ERROR_AND_RETURN("Interpolate TimeSamples failed.");
-      return false;
-    }
-
-    value->set_value(v);
   }
 
   return true;
@@ -1637,20 +1563,45 @@ bool GetGPrimPropertyNamesImpl(
   if (rel_prop) {
 
     if (gprim->materialBinding) {
-      prop_names->push_back("material:binding");
-    }
-
-    if (gprim->materialBindingCollection) {
-      prop_names->push_back("material:binding:collection");
+      prop_names->push_back(kMaterialBinding);
     }
 
     if (gprim->materialBindingPreview) {
-      prop_names->push_back("material:binding:preview");
+      prop_names->push_back(kMaterialBindingPreview);
+    }
+
+    if (gprim->materialBindingFull) {
+      prop_names->push_back(kMaterialBindingFull);
+    }
+
+    for (const auto &item : gprim->materialBindingMap()) {
+      prop_names->push_back("material:binding:" + item.first);
+    }
+
+    for (const auto &collection : gprim->materialBindingCollectionMap()) {
+      std::string purpose_name;
+      if (!collection.first.empty()) {
+        purpose_name = ":" + collection.first;
+      }
+
+      for (size_t i = 0; i < collection.second.size(); i++) {
+        const std::string &coll_name = collection.second.keys()[i];
+        std::string rel_name;
+        if (collection.first.empty()) {
+          rel_name = kMaterialBindingCollection + purpose_name;
+        } else {
+          rel_name = kMaterialBindingCollection + std::string(":") + coll_name + purpose_name;
+        }
+
+        prop_names->push_back(rel_name);
+      }
     }
 
     if (gprim->proxyPrim.authored()) {
       prop_names->push_back("proxyPrim");
     }
+
+
   }
 
   // other props
@@ -1729,96 +1680,6 @@ bool GetPrimPropertyNamesImpl(
     }
 
     DCOUT("TODO: more attrs...");
-  }
-
-  return true;
-}
-
-//
-// visited_paths : To prevent circular referencing of attribute connection.
-//
-bool EvaluateAttributeImpl(
-    const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
-    const std::string &attr_name, TerminalAttributeValue *value,
-    std::string *err, std::set<std::string> &visited_paths, const double t,
-    const tinyusdz::value::TimeSampleInterpolationType tinterp) {
-  // TODO:
-  (void)tinterp;
-
-  DCOUT("Prim : " << prim.element_path().element_name() << "("
-                  << prim.type_name() << ") attr_name " << attr_name);
-
-  Property prop;
-  if (!GetProperty(prim, attr_name, &prop, err)) {
-    return false;
-  }
-
-  if (prop.is_connection()) {
-    // Follow connection target Path(singple targetPath only).
-    std::vector<Path> pv = prop.get_attribute().connections();
-    if (pv.empty()) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Connection targetPath is empty for Attribute {}.", attr_name));
-    }
-
-    if (pv.size() > 1) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("Multiple targetPaths assigned to .connection."));
-    }
-
-    auto target = pv[0];
-
-    std::string targetPrimPath = target.prim_part();
-    std::string targetPrimPropName = target.prop_part();
-    DCOUT("connection targetPath : " << target << "(Prim: " << targetPrimPath
-                                     << ", Prop: " << targetPrimPropName
-                                     << ")");
-
-    auto targetPrimRet =
-        stage.GetPrimAtPath(Path(targetPrimPath, /* prop */ ""));
-    if (targetPrimRet) {
-      // Follow the connetion
-      const Prim *targetPrim = targetPrimRet.value();
-
-      std::string abs_path = target.full_path_name();
-
-      if (visited_paths.count(abs_path)) {
-        PUSH_ERROR_AND_RETURN(fmt::format(
-            "Circular referencing detected. connectionTargetPath = {}",
-            to_string(target)));
-      }
-      visited_paths.insert(abs_path);
-
-      return EvaluateAttributeImpl(stage, *targetPrim, targetPrimPropName,
-                                   value, err, visited_paths, t, tinterp);
-
-    } else {
-      PUSH_ERROR_AND_RETURN(targetPrimRet.error());
-    }
-  } else if (prop.is_relationship()) {
-    PUSH_ERROR_AND_RETURN(
-        fmt::format("Property `{}` is a Relation.", attr_name));
-  } else if (prop.is_empty()) {
-    PUSH_ERROR_AND_RETURN(fmt::format(
-        "Attribute `{}` is a define-only attribute(no value assigned).",
-        attr_name));
-  } else if (prop.is_attribute()) {
-    DCOUT("IsAttrib");
-
-    const Attribute &attr = prop.get_attribute();
-
-    if (attr.is_blocked()) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("Attribute `{}` is ValueBlocked(None).", attr_name));
-    }
-
-    if (!ToTerminalAttributeValue(attr, value, err, t, tinterp)) {
-      return false;
-    }
-
-  } else {
-    // ???
-    PUSH_ERROR_AND_RETURN(
-        fmt::format("[InternalError] Invalid Attribute `{}`.", attr_name));
   }
 
   return true;
@@ -2005,17 +1866,6 @@ bool GetRelationship(const tinyusdz::Prim &prim, const std::string &rel_name,
   return true;
 }
 
-bool EvaluateAttribute(
-    const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
-    const std::string &attr_name, TerminalAttributeValue *value,
-    std::string *err, const double t,
-    const tinyusdz::value::TimeSampleInterpolationType tinterp) {
-  std::set<std::string> visited_paths;
-
-  return EvaluateAttributeImpl(stage, prim, attr_name, value, err,
-                               visited_paths, t, tinterp);
-}
-
 bool ListSceneNames(const tinyusdz::Prim &root,
                     std::vector<std::pair<bool, std::string>> *sceneNames) {
   if (!sceneNames) {
@@ -2052,10 +1902,6 @@ bool BuildXformNodeFromStageRec(
   XformNode *nodeOut, /* out */
   value::matrix4d rootMat,
   const double t, const tinyusdz::value::TimeSampleInterpolationType tinterp) {
-  // TODO: time
-  (void)t;
-  (void)tinterp;
-  (void)stage;
 
   if (!nodeOut) {
     return false;
@@ -2077,8 +1923,7 @@ bool BuildXformNodeFromStageRec(
   if (IsXformablePrim(*prim)) {
     bool resetXformStack{false};
 
-    // TODO: t, tinterp
-    value::matrix4d localMat = GetLocalTransform(*prim, &resetXformStack);
+    value::matrix4d localMat = GetLocalTransform(*prim, &resetXformStack, t, tinterp);
     DCOUT("local mat = " << localMat);
 
     value::matrix4d worldMat = rootMat;
@@ -2433,8 +2278,385 @@ bool IsPathIncluded(const CollectionMembershipQuery &query, const Stage &stage, 
   }
 
   return false;
-  
+
 }
+
+std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+GetBlenedShapes(
+  const tinyusdz::Stage &stage,
+    const tinyusdz::Prim &prim, std::string *err) {
+
+  std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> dst;
+
+  auto *pmesh = prim.as<GeomMesh>();
+  if (!pmesh) {
+    if (err) {
+      (*err) += "Prim must be GeomMesh.\n";
+    }
+    return std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>{};
+  }
+
+  //
+  // BlendShape Prim may not be a child of GeomMesh. So need to search Prim in
+  // Stage
+  //
+  if (pmesh->blendShapes.authored() && pmesh->blendShapeTargets.has_value()) {
+    // TODO: connection?
+    std::vector<value::token> blendShapeNames;
+
+    if (!pmesh->blendShapes.get_value(&blendShapeNames)) {
+      if (err) {
+        (*err) += "Failed to get `skel:blendShapes` attribute.\n";
+      }
+      return std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>{};
+    }
+
+    if (pmesh->blendShapeTargets.value().is_path()) {
+      if (blendShapeNames.size() != 1) {
+        if (err) {
+          (*err) += "Array size mismatch with `skel:blendShapes` and "
+            "`skel:blendShapeTargets`.\n";
+        }
+        return std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>{};
+      }
+
+      const Path &targetPath = pmesh->blendShapeTargets.value().targetPath;
+      const Prim *bsprim{nullptr};
+      if (!stage.find_prim_at_path(targetPath, bsprim, err)) {
+        return std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>{};
+      }
+      if (!bsprim) {
+        if (err) { (*err) += "Internal error. BlendShape Prim is nullptr.\n"; }
+        return std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>{};
+      }
+
+      if (const auto *bs = bsprim->as<BlendShape>()) {
+        dst.push_back(std::make_pair(blendShapeNames[0].str(), bs));
+      } else {
+        if (err) {
+          (*err) += fmt::format("{} is not BlendShape Prim.\n",
+                                          targetPath.full_path_name());
+        }
+        return std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>{};
+      }
+
+    } else if (pmesh->blendShapeTargets.value().is_pathvector()) {
+      if (blendShapeNames.size() !=
+          pmesh->blendShapeTargets.value().targetPathVector.size()) {
+        if (err) { (*err) +=
+            "Array size mismatch with `skel:blendShapes` and "
+            "`skel:blendShapeTargets`.\n"; }
+        return std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>{};
+      }
+    } else {
+      if (err) { (*err) +=
+          "Invalid or unsupported definition of `skel:blendShapeTargets` "
+          "relationship.\n"; }
+      return std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>{};
+    }
+
+    for (size_t i = 0;
+         i < pmesh->blendShapeTargets.value().targetPathVector.size(); i++) {
+      const Path &targetPath =
+          pmesh->blendShapeTargets.value().targetPathVector[i];
+      const Prim *bsprim{nullptr};
+      if (!stage.find_prim_at_path(targetPath, bsprim, err)) {
+        return std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>{};
+      }
+      if (!bsprim) {
+        if (err) { (*err) += "Internal error. BlendShape Prim is nullptr."; }
+        return std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>{};
+      }
+
+      if (const auto *bs = bsprim->as<BlendShape>()) {
+        dst.push_back(std::make_pair(blendShapeNames[0].str(), bs));
+      } else {
+        if (err) { (*err) += fmt::format("{} is not BlendShape Prim.",
+                                          targetPath.full_path_name()); }
+        return std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>{};
+      }
+    }
+  }
+
+  return dst;
+}
+
+bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim, const std::string &varname, GeomPrimvar *out_primvar, std::string *err) {
+  if (!out_primvar) {
+    PUSH_ERROR_AND_RETURN("Output GeomPrimvar is nullptr.");
+  }
+
+  if (!gprim) {
+    PUSH_ERROR_AND_RETURN("Input `gprim` arg is nullptr.");
+  }
+
+  GeomPrimvar primvar;
+
+  constexpr auto kPrimvars = "primvars:";
+  constexpr auto kIndices = ":indices";
+  
+  std::string primvar_name = kPrimvars + varname;
+
+  const auto it = gprim->props.find(primvar_name);
+  if (it == gprim->props.end()) {
+    return false;
+  }
+
+  if (it->second.is_attribute()) {
+    const Attribute &attr = it->second.get_attribute();
+
+    if (attr.is_connection()) {
+      // follow targetPath to get Attribute 
+      Attribute terminal_attr;
+      bool ret = tydra::GetTerminalAttribute(stage, attr, primvar_name, &terminal_attr, err);
+      if (!ret) {
+        return false;
+      }
+
+      primvar.set_value(terminal_attr);
+
+    } else {
+      primvar.set_value(attr);
+    }
+
+    primvar.set_name(varname);
+
+    if (attr.metas().interpolation.has_value()) {
+      primvar.set_interpolation(attr.metas().interpolation.value());
+    }
+     if (attr.metas().elementSize.has_value()) {
+      primvar.set_elementSize(attr.metas().elementSize.value());
+    }
+    // TODO: copy other attribute metas?
+
+  } else {
+    PUSH_ERROR_AND_RETURN(fmt::format("{} is not Attribute(Maybe Relationship?).", primvar_name));
+  }
+
+  // has indices?
+  std::string index_name = primvar_name + kIndices;
+  const auto indexIt = gprim->props.find(index_name);
+
+  if (indexIt != gprim->props.end()) {
+    if (indexIt->second.is_attribute()) {
+      const Attribute &indexAttr = indexIt->second.get_attribute();
+
+      if (!(primvar.get_attribute().type_id() & value::TYPE_ID_1D_ARRAY_BIT)) {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("Indexed GeomPrimVar with scalar PrimVar Attribute is not supported. PrimVar name: {}", primvar_name));
+      }
+
+      if (indexAttr.is_connection()) {
+        // follow targetPath to get Attribute 
+        Attribute terminal_indexAttr;
+        bool ret = tydra::GetTerminalAttribute(stage, indexAttr, index_name, &terminal_indexAttr, err);
+        if (!ret) {
+          return false;
+        }
+
+        if (terminal_indexAttr.is_timesamples()) {
+          const auto &ts = terminal_indexAttr.get_var().ts_raw();
+          TypedTimeSamples<std::vector<int32_t>> tss;
+          if (!tss.from_timesamples(ts)) {
+            PUSH_ERROR_AND_RETURN(fmt::format("Index Attribute seems not an timesamples with int[] type: {}", index_name));
+          }
+        
+          primvar.set_indices(tss);
+        } else if (terminal_indexAttr.is_value()) {
+
+          // TODO: Support uint[]?
+          std::vector<int32_t> indices;
+          if (!terminal_indexAttr.get_value(&indices)) {
+            PUSH_ERROR_AND_RETURN(
+                fmt::format("Index Attribute is not int[] type. Got {}",
+                            indexAttr.type_name()));
+          }
+
+          primvar.set_indices(indices);
+
+        }
+      
+      } else if (indexAttr.is_timesamples()) {
+        const auto &ts = indexAttr.get_var().ts_raw();
+        TypedTimeSamples<std::vector<int32_t>> tss;
+        if (!tss.from_timesamples(ts)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Index Attribute seems not an timesamples with int[] type: {}", index_name));
+        }
+      
+        primvar.set_indices(tss);
+      } else if (indexAttr.is_blocked()) {
+        // Value blocked. e.g. `float2[] primvars:st:indices = None`
+        // We can simply skip reading indices.
+      } else if (indexAttr.is_value()) {
+        // Check if int[] type.
+        // TODO: Support uint[]?
+        std::vector<int32_t> indices;
+        if (!indexAttr.get_value(&indices)) {
+          PUSH_ERROR_AND_RETURN(
+              fmt::format("Index Attribute is not int[] type. Got {}",
+                          indexAttr.type_name()));
+        }
+
+
+        primvar.set_indices(indices);
+      } else {
+        PUSH_ERROR_AND_RETURN("[Internal Error] Invalid Index Attribute.");
+      }
+    } else {
+      // indices are optional, so ok to skip it.
+    }
+  }
+
+  (*out_primvar) = primvar;
+
+  return true;
+
+
+}
+
+namespace {
+
+//
+// visited_paths : To prevent circular referencing of attribute connection.
+//
+bool GetTerminalAttributeImpl(
+    const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
+    const std::string &attr_name, Attribute *value,
+    std::string *err, std::set<std::string> &visited_paths) {
+
+  DCOUT("Prim : " << prim.element_path().element_name() << "("
+                  << prim.type_name() << ") attr_name " << attr_name);
+
+  Property prop;
+  if (!GetProperty(prim, attr_name, &prop, err)) {
+    return false;
+  }
+
+  if (prop.is_connection()) {
+    // Follow connection target Path(singple targetPath only).
+    std::vector<Path> pv = prop.get_attribute().connections();
+    if (pv.empty()) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Connection targetPath is empty for Attribute {}.", attr_name));
+    }
+
+    if (pv.size() > 1) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Multiple targetPaths assigned to .connection."));
+    }
+
+    auto target = pv[0];
+
+    std::string targetPrimPath = target.prim_part();
+    std::string targetPrimPropName = target.prop_part();
+    DCOUT("connection targetPath : " << target << "(Prim: " << targetPrimPath
+                                     << ", Prop: " << targetPrimPropName
+                                     << ")");
+
+    auto targetPrimRet =
+        stage.GetPrimAtPath(Path(targetPrimPath, /* prop */ ""));
+    if (targetPrimRet) {
+      // Follow the connetion
+      const Prim *targetPrim = targetPrimRet.value();
+
+      std::string abs_path = target.full_path_name();
+
+      if (visited_paths.count(abs_path)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Circular referencing detected. connectionTargetPath = {}",
+            to_string(target)));
+      }
+      visited_paths.insert(abs_path);
+
+      return GetTerminalAttributeImpl(stage, *targetPrim, targetPrimPropName,
+                                   value, err, visited_paths);
+
+    } else {
+      PUSH_ERROR_AND_RETURN(targetPrimRet.error());
+    }
+  } else if (prop.is_relationship()) {
+    PUSH_ERROR_AND_RETURN(
+        fmt::format("Property `{}` is a Relation.", attr_name));
+  } else if (prop.is_empty()) {
+    PUSH_ERROR_AND_RETURN(fmt::format(
+        "Attribute `{}` is a define-only attribute(no value assigned).",
+        attr_name));
+  } else if (prop.is_attribute()) {
+
+    (*value) = prop.get_attribute();
+    
+  } else {
+    // ???
+    PUSH_ERROR_AND_RETURN(
+        fmt::format("[InternalError] Invalid Attribute `{}`.", attr_name));
+  }
+
+  return true;
+}
+
+} // namespace
+
+bool GetTerminalAttribute(
+    const tinyusdz::Stage &stage, const tinyusdz::Attribute &attr,
+    const std::string &attr_name, Attribute *value,
+    std::string *err) {
+
+  if (!value) {
+    PUSH_ERROR_AND_RETURN("`value` arg is nullptr.");
+  }
+
+  std::set<std::string> visited_paths;
+
+  if (attr.is_connection()) {
+
+    std::vector<Path> pv = attr.connections();
+    if (pv.empty()) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Connection targetPath is empty for Attribute {}.", attr_name));
+    }
+
+    if (pv.size() > 1) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Multiple targetPaths assigned to .connection."));
+    }
+
+    auto target = pv[0];
+
+    std::string targetPrimPath = target.prim_part();
+    std::string targetPrimPropName = target.prop_part();
+    DCOUT("connection targetPath : " << target << "(Prim: " << targetPrimPath
+                                     << ", Prop: " << targetPrimPropName
+                                     << ")");
+
+    auto targetPrimRet =
+        stage.GetPrimAtPath(Path(targetPrimPath, /* prop */ ""));
+    if (targetPrimRet) {
+      // Follow the connetion
+      const Prim *targetPrim = targetPrimRet.value();
+
+      std::string abs_path = target.full_path_name();
+
+      if (visited_paths.count(abs_path)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Circular referencing detected. connectionTargetPath = {}",
+            to_string(target)));
+      }
+      visited_paths.insert(abs_path);
+
+      return GetTerminalAttributeImpl(stage, *targetPrim, targetPrimPropName,
+                                   value, err, visited_paths);
+    
+    } else {
+      PUSH_ERROR_AND_RETURN(targetPrimRet.error());
+    }
+
+  } else {
+    (*value) = attr;
+    return true;
+  }
+
+  return false;
+
+}
+
 
 }  // namespace tydra
 }  // namespace tinyusdz

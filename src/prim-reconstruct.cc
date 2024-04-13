@@ -26,6 +26,10 @@
 #define PushError(s) if (err) { (*err) = s + (*err); }
 #define PushWarn(s) if (warn) { (*warn) = s + (*err); }
 
+// __VA_ARGS__ does not allow empty, thus # of args must be 2+
+#define PUSH_WARN_F(s, ...) PUSH_WARN(fmt::format(s, __VA_ARGS__))
+#define PUSH_ERROR_AND_RETURN_F(s, ...) PUSH_ERROR_AND_RETURN(fmt::format(s, __VA_ARGS__))
+
 //
 // NOTE:
 //
@@ -43,6 +47,9 @@ namespace prim {
 //constexpr auto kTag = "[PrimReconstruct]";
 
 constexpr auto kProxyPrim = "proxyPrim";
+constexpr auto kVisibility = "visibility";
+constexpr auto kExtent = "extent";
+constexpr auto kPurpose = "purpose";
 constexpr auto kMaterialBinding = "material:binding";
 constexpr auto kMaterialBindingCollection = "material:binding:collection";
 constexpr auto kMaterialBindingPreview = "material:binding:preview";
@@ -1560,7 +1567,7 @@ static nonstd::expected<Visibility, std::string> VisibilityEnumHandler(const std
       std::make_pair(Visibility::Inherited, "inherited"),
       std::make_pair(Visibility::Invisible, "invisible"),
   };
-  return EnumHandler<Visibility>("visilibity", tok, enums);
+  return EnumHandler<Visibility>(kVisibility, tok, enums);
 };
 
 static nonstd::expected<Purpose, std::string> PurposeEnumHandler(const std::string &tok) {
@@ -1583,22 +1590,38 @@ static nonstd::expected<Orientation, std::string> OrientationEnumHandler(const s
   return EnumHandler<Orientation>("orientation", tok, enums);
 };
 
-#if 0
-// Animatable enum
+#if 1
+
 template<typename T, typename EnumTy>
-nonstd::expected<bool, std::string> ParseEnumProperty(
+bool ParseUniformEnumProperty(
   const std::string &prop_name,
+  bool strict_allowedToken_check,
   EnumHandlerFun<EnumTy> enum_handler,
   const Attribute &attr,
-  TypedAttributeWithFallback<Animatable<T>> *result)
+  TypedAttributeWithFallback<T> *result,
+  std::string *warn = nullptr,
+  std::string *err = nullptr)
 {
+
   if (!result) {
-    return false;
+    PUSH_ERROR_AND_RETURN("[Internal error] `result` arg is nullptr.");
   }
 
-  if (attr.variability == Variability::Uniform) {
+  if (attr.is_connection()) {
+    PUSH_ERROR_AND_RETURN_F("Attribute connection is not supported in TinyUSDZ for built-in 'enum' token attribute: {}", prop_name);
+  }
+
+
+  if (attr.variability() == Variability::Uniform) {
+    // scalar
+
+    if (attr.is_blocked()) {
+      result->set_blocked(true);
+      return true;
+    }
+
     if (attr.get_var().is_timesamples()) {
-      return nonstd::make_unexpected(fmt::format("Property `{}` is defined as `uniform` variability but TimeSample value is assigned.", prop_name));
+      PUSH_ERROR_AND_RETURN_F("Attribute `{}` is defined as `uniform` variability but TimeSample value is assigned.", prop_name);
     }
 
     if (auto tok = attr.get_value<value::token>()) {
@@ -1606,11 +1629,15 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
       if (e) {
         (*result) = e.value();
         return true;
+      } else if (strict_allowedToken_check) {
+        PUSH_ERROR_AND_RETURN_F("Attribute `{}`: `{}` is not an allowed token.", prop_name, tok.value().str());
       } else {
-        return nonstd::make_unexpected(fmt::format("({}) {}", value::TypeTraits<T>::type_name(), e.error()));
+        PUSH_WARN_F("Attribute `{}`: `{}` is not an allowed token. Ignore it.", prop_name, tok.value().str());
+        result->set_value_empty();
+        return true;
       }
     } else {
-      return nonstd::make_unexpected(fmt::format("Property `{}` must be type `token`, but got type `{}`", prop_name, attr.type_name()));
+      PUSH_ERROR_AND_RETURN_F("Internal error. Maybe type mismatch? Attribute `{}` must be type `token`, but got type `{}`", prop_name, attr.type_name());
     }
 
 
@@ -1618,60 +1645,159 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
     // uniform or TimeSamples
     if (attr.get_var().is_scalar()) {
 
+      if (attr.is_blocked()) {
+        result->set_blocked(true);
+        return true;
+      }
+
       if (auto tok = attr.get_value<value::token>()) {
         auto e = enum_handler(tok.value().str());
         if (e) {
           (*result) = e.value();
           return true;
+        } else if (strict_allowedToken_check) {
+          PUSH_ERROR_AND_RETURN_F("Attribute `{}`: `{}` is not an allowed token.", prop_name, tok.value().str());
         } else {
-          return nonstd::make_unexpected(fmt::format("({}) {}", value::TypeTraits<T>::type_name(), e.error()));
+          PUSH_WARN_F("Attribute `{}`: `{}` is not an allowed token. Ignore it.", prop_name, tok.value().str());
+          result->set_value_empty();
+          return true;
         }
       } else {
-        return nonstd::make_unexpected(fmt::format("Property `{}` must be type `token`, but got type `{}`", prop_name, attr.type_name()));
+        PUSH_ERROR_AND_RETURN_F("Internal error. Maybe type mismatch? Attribute `{}` must be type `token`, but got type `{}`", prop_name, attr.type_name());
+      }
+    } else if (attr.get_var().is_timesamples()) {
+      PUSH_ERROR_AND_RETURN_F("Attribute `{}` is uniform variability, but TimeSampled value is authored.",
+ prop_name);
+
+    } else {
+      PUSH_ERROR_AND_RETURN_F("Internal error. Attribute `{}` is invalid", prop_name);
+    }
+
+  }
+
+  return false;
+}
+
+// Animatable enum tokens
+template<typename T, typename EnumTy>
+bool ParseTimeSampledEnumProperty(
+  const std::string &prop_name,
+  bool strict_allowedToken_check,
+  EnumHandlerFun<EnumTy> enum_handler,
+  const Attribute &attr,
+  TypedAttributeWithFallback<Animatable<T>> *result,
+  std::string *warn = nullptr,
+  std::string *err = nullptr)
+{
+
+  if (!result) {
+    PUSH_ERROR_AND_RETURN("[Internal error] `result` arg is nullptr.");
+  }
+
+  if (attr.is_connection()) {
+    PUSH_ERROR_AND_RETURN_F("Attribute connection is not supported in TinyUSDZ for built-in 'enum' token attribute: {}", prop_name);
+  }
+
+
+  if (attr.variability() == Variability::Uniform) {
+    // scalar
+
+    if (attr.is_blocked()) {
+      result->set_blocked(true);
+      return true;
+    }
+
+    if (attr.get_var().is_timesamples()) {
+      PUSH_ERROR_AND_RETURN_F("Attribute `{}` is defined as `uniform` variability but TimeSample value is assigned.", prop_name);
+    }
+
+    if (auto tok = attr.get_value<value::token>()) {
+      auto e = enum_handler(tok.value().str());
+      if (e) {
+        (*result) = e.value();
+        return true;
+      } else if (strict_allowedToken_check) {
+        PUSH_ERROR_AND_RETURN_F("Attribute `{}`: `{}` is not an allowed token.", prop_name, tok.value().str());
+      } else {
+        PUSH_WARN_F("Attribute `{}`: `{}` is not an allowed token. Ignore it.", prop_name, tok.value().str());
+        result->set_value_empty();
+        return true;
+      }
+    } else {
+      PUSH_ERROR_AND_RETURN_F("Internal error. Maybe type mismatch? Attribute `{}` must be type `token`, but got type `{}`", prop_name, attr.type_name());
+    }
+
+
+  } else {
+    // uniform or TimeSamples
+    if (attr.get_var().is_scalar()) {
+
+      if (attr.is_blocked()) {
+        result->set_blocked(true);
+        return true;
+      }
+
+      if (auto tok = attr.get_value<value::token>()) {
+        auto e = enum_handler(tok.value().str());
+        if (e) {
+          (*result) = e.value();
+          return true;
+        } else if (strict_allowedToken_check) {
+          PUSH_ERROR_AND_RETURN_F("Attribute `{}`: `{}` is not an allowed token.", prop_name, tok.value().str());
+        } else {
+          PUSH_WARN_F("Attribute `{}`: `{}` is not an allowed token. Ignore it.", prop_name, tok.value().str());
+          result->set_value_empty();
+          return true;
+        }
+      } else {
+        PUSH_ERROR_AND_RETURN_F("Internal error. Maybe type mismatch? Attribute `{}` must be type `token`, but got type `{}`", prop_name, attr.type_name());
       }
     } else if (attr.get_var().is_timesamples()) {
       size_t n = attr.get_var().num_timesamples();
 
-      TypedTimeSamples<T> samples;
+      Animatable<T> samples;
 
       for (size_t i = 0; i < n; i++) {
 
-        double sample_time;
+        double sample_time{value::TimeCode::Default()};
 
         if (auto pv = attr.get_var().get_ts_time(i)) {
           sample_time = pv.value();
         } else {
           // This should not happen.
-          return nonstd::make_unexpected("Internal error.");
+          PUSH_ERROR_AND_RETURN_F("Internal error. Failed to get timecode for `{}`", prop_name);
         }
 
         if (auto pv = attr.get_var().is_ts_value_blocked(i)) {
           if (pv.value() == true) {
-            samples.AddBlockedSample(sample_time);
+            samples.add_blocked_sample(sample_time);
             continue;
           }
         } else {
           // This should not happen.
-          return nonstd::make_unexpected("Internal error.");
+          PUSH_ERROR_AND_RETURN_F("Internal error. Failed to get valueblock info for `{}`", prop_name);
         }
 
         if (auto tok = attr.get_var().get_ts_value<value::token>(i)) {
           auto e = enum_handler(tok.value().str());
           if (e) {
-            samples.AddSample(sample_time, e.value());
+            samples.add_sample(sample_time, e.value());
+          } else if (strict_allowedToken_check) {
+            PUSH_ERROR_AND_RETURN_F("Attribute `{}`: `{}` is not an allowed token.", prop_name, tok.value().str());
           } else {
-            return nonstd::make_unexpected(fmt::format("({}) {}", value::TypeTraits<T>::type_name(), e.error()));
+            PUSH_WARN_F("Attribute `{}`: `{}` at {}'th timesample is not an allowed token. Ignore it.", prop_name, i, tok.value().str());
+            continue;
           }
         } else {
-          return nonstd::make_unexpected(fmt::format("Property `{}`'s TimeSample value must be type `token`, but got invalid type", prop_name));
+          PUSH_ERROR_AND_RETURN_F("Internal error. Maybe type mismatch? Attribute `{}`'s {}'th timesample must be type `token`, but got type `{}`", prop_name, i, attr.type_name());
         }
       }
 
-      result->ts = samples;
+      result->set_value(samples);
       return true;
 
     } else {
-      return nonstd::make_unexpected(fmt::format("Property `{}` has invalid value."));
+      PUSH_ERROR_AND_RETURN_F("Internal error. Attribute `{}` is invalid", prop_name);
     }
 
   }
@@ -1681,6 +1807,7 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
 #endif
 
 
+#if 0
 // TODO: TimeSamples
 #define PARSE_ENUM_PROPETY(__table, __prop, __name, __enum_handler, __klass, \
                            __target, __strict_check) {                          \
@@ -1715,11 +1842,54 @@ nonstd::expected<bool, std::string> ParseEnumProperty(
     } \
   } \
 }
+#else
+#define PARSE_UNIFORM_ENUM_PROPERTY(__table, __prop, __name, __enum_ty, __enum_handler, __klass, \
+                           __target, __strict_check) {                          \
+  if (__prop.first == __name) {                                              \
+    if (__table.count(__name)) { continue; } \
+    if ((__prop.second.value_type_name() == value::TypeTraits<value::token>::type_name()) && __prop.second.is_attribute() && __prop.second.is_empty()) { \
+      PUSH_WARN("No value assigned to `" << __name << "` token attribute. Set default token value."); \
+      /* TODO: attr meta __target.meta = attr.meta;  */                    \
+      __table.insert(__name);                                              \
+    } else { \
+      const Attribute &attr = __prop.second.get_attribute();                           \
+      std::function<nonstd::expected<__enum_ty, std::string>(const std::string &)> fun = __enum_handler; \
+      if (!ParseUniformEnumProperty(__name, __strict_check, fun, attr, &__target, warn, err)) { \
+        return false; \
+      } \
+      /* copy metas */ \
+      __target.metas() = attr.metas(); \
+     __table.insert(__name);                                              \
+    } \
+  } \
+}
+
+#define PARSE_TIMESAMPLED_ENUM_PROPERTY(__table, __prop, __name, __enum_ty, __enum_handler, __klass, \
+                           __target, __strict_check) {                          \
+  if (__prop.first == __name) {                                              \
+    if (__table.count(__name)) { continue; } \
+    if ((__prop.second.value_type_name() == value::TypeTraits<value::token>::type_name()) && __prop.second.is_attribute() && __prop.second.is_empty()) { \
+      PUSH_WARN("No value assigned to `" << __name << "` token attribute. Set default token value."); \
+      /* TODO: attr meta __target.meta = attr.meta;  */                    \
+      __table.insert(__name);                                              \
+    } else { \
+      const Attribute &attr = __prop.second.get_attribute();                           \
+      std::function<nonstd::expected<__enum_ty, std::string>(const std::string &)> fun = __enum_handler; \
+      if (!ParseTimeSampledEnumProperty(__name, __strict_check, fun, attr, &__target, warn, err)) { \
+        return false; \
+      } \
+      /* copy metas */ \
+      __target.metas() = attr.metas(); \
+     __table.insert(__name);                                              \
+    } \
+  } \
+}
+#endif
 
 
 // Add custom property(including property with "primvars" prefix)
-// Please call this macro after listing up all predefined property using
-// `PARSE_PROPERTY` and `PARSE_ENUM_PROPETY`
+// Please call this macro after listing up all predefined property with
+// `PARSE_PROPERTY` and `PARSE_***_ENUM_PROPERTY`
 #define ADD_PROPERTY(__table, __prop, __klass, __dst) {        \
   /* Check if the property name is a predefined property */  \
   if (!__table.count(__prop.first)) {                        \
@@ -2113,7 +2283,23 @@ bool ReconstructMaterialBindingProperties(
     PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingPreview, mb->materialBindingPreview)
     PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingPreview, mb->materialBindingFull)
     // material:binding:collection
-    PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kMaterialBindingCollection, mb->materialBindingCollection)
+    if (prop.first == kMaterialBindingCollection) {
+
+      if (table.count(prop.first)) {
+         continue;
+      }
+
+      if (!prop.second.is_relationship()) {
+        PUSH_ERROR_AND_RETURN(fmt::format("`{}` must be a Relationship", prop.first));
+      }
+
+      const Relationship &rel = prop.second.get_relationship();
+
+      mb->set_materialBindingCollection(value::token(""), value::token(""), rel);
+
+      table.insert(prop.first);
+      continue;
+    }
     // material:binding:collection[:PURPOSE]:NAME
     if (startsWith(prop.first, kMaterialBindingCollection + std::string(":"))) {
 
@@ -2191,7 +2377,8 @@ bool ReconstructCollectionProperties(
 {
   constexpr auto kCollectionPrefix = "collection:";
 
-  auto ExpansionRuleEnumHandler = [](const std::string &tok) {
+  std::function<nonstd::expected<CollectionInstance::ExpansionRule, std::string>(const std::string &)> ExpansionRuleEnumHandler = [](const std::string &tok) {
+  //auto ExpansionRuleEnumHandler = [](const std::string &tok) {
     using EnumTy = std::pair<CollectionInstance::ExpansionRule, const char *>;
     const std::vector<EnumTy> enums = {
         std::make_pair(CollectionInstance::ExpansionRule::ExplicitOnly, kExplicitOnly),
@@ -2237,14 +2424,14 @@ bool ReconstructCollectionProperties(
 
       } else if (names[1] == "expansionRule") {
 
-        CollectionInstance::ExpansionRule expansionRule;
+        TypedAttributeWithFallback<CollectionInstance::ExpansionRule> r{CollectionInstance::ExpansionRule::ExpandPrims};
 
-        PARSE_ENUM_PROPETY(table, prop, prop.first, ExpansionRuleEnumHandler, CollectionInstance,
-                       expansionRule, strict_allowedToken_check)
+        PARSE_UNIFORM_ENUM_PROPERTY(table, prop, prop.first, CollectionInstance::ExpansionRule, ExpansionRuleEnumHandler, CollectionInstance,
+                       r, strict_allowedToken_check)
 
         if (table.count(prop.first)) {
           CollectionInstance &coll_instance = coll->get_or_add_instance(instance_name);
-          coll_instance.expansionRule = expansionRule;
+          coll_instance.expansionRule = r.get_value();
         }
       } else if (names[1] == "includeRoot") {
 
@@ -2299,11 +2486,11 @@ bool ReconstructGPrimProperties(
   for (const auto &prop : properties) {
     PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kProxyPrim, gprim->proxyPrim)
     PARSE_TYPED_ATTRIBUTE(table, prop, "doubleSided", GPrim, gprim->doubleSided)
-    PARSE_ENUM_PROPETY(table, prop, "visibility", VisibilityEnumHandler, GPrim,
+    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, GPrim,
                    gprim->visibility, strict_allowedToken_check)
-    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, GPrim,
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, "purpose", Purpose, PurposeEnumHandler, GPrim,
                        gprim->purpose, strict_allowedToken_check)
-    PARSE_ENUM_PROPETY(table, prop, "orientation", OrientationEnumHandler, GPrim,
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, "orientation", Orientation, OrientationEnumHandler, GPrim,
                        gprim->orientation, strict_allowedToken_check)
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", GPrim, gprim->extent)
   }
@@ -2385,6 +2572,8 @@ bool ReconstructPrim<Scope>(
   DCOUT("Scope");
   std::set<std::string> table;
   for (const auto &prop : properties) {
+    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, Scope,
+                   scope->visibility, options.strict_allowedToken_check)
     ADD_PROPERTY(table, prop, Scope, scope->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
@@ -2417,11 +2606,11 @@ bool ReconstructPrim<SkelRoot>(
   // custom props only
   for (const auto &prop : properties) {
     ADD_PROPERTY(table, prop, SkelRoot, root->props)
-    PARSE_ENUM_PROPETY(table, prop, "visibility", VisibilityEnumHandler, SkelRoot,
+    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, SkelRoot,
                    root->visibility, options.strict_allowedToken_check)
-    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, SkelRoot,
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, SkelRoot,
                        root->purpose, options.strict_allowedToken_check)
-    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", SkelRoot, root->extent)
+    PARSE_EXTENT_ATTRIBUTE(table, prop, kExtent, SkelRoot, root->extent)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
@@ -2475,9 +2664,9 @@ bool ReconstructPrim<Skeleton>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "joints", Skeleton, skel->joints)
     PARSE_TYPED_ATTRIBUTE(table, prop, "jointNames", Skeleton, skel->jointNames)
     PARSE_TYPED_ATTRIBUTE(table, prop, "restTransforms", Skeleton, skel->restTransforms)
-    PARSE_ENUM_PROPETY(table, prop, "visibility", VisibilityEnumHandler, Skeleton,
+    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, Skeleton,
                    skel->visibility, options.strict_allowedToken_check)
-    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, Skeleton,
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, "purpose", Purpose, PurposeEnumHandler, Skeleton,
                        skel->purpose, options.strict_allowedToken_check)
     PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", Skeleton, skel->extent)
     ADD_PROPERTY(table, prop, Skeleton, skel->props)
@@ -2680,11 +2869,11 @@ bool ReconstructPrim(
     PARSE_TYPED_ATTRIBUTE(table, prop, "accelerations", GeomBasisCurves,
                  curves->accelerations)
     PARSE_TYPED_ATTRIBUTE(table, prop, "widths", GeomBasisCurves, curves->widths)
-    PARSE_ENUM_PROPETY(table, prop, "type", TypeHandler, GeomBasisCurves,
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, "type", GeomBasisCurves::Type, TypeHandler, GeomBasisCurves,
                        curves->type, options.strict_allowedToken_check)
-    PARSE_ENUM_PROPETY(table, prop, "basis", BasisHandler, GeomBasisCurves,
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, "basis", GeomBasisCurves::Basis, BasisHandler, GeomBasisCurves,
                        curves->basis, options.strict_allowedToken_check)
-    PARSE_ENUM_PROPETY(table, prop, "wrap", WrapHandler, GeomBasisCurves,
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, "wrap", GeomBasisCurves::Wrap, WrapHandler, GeomBasisCurves,
                        curves->wrap, options.strict_allowedToken_check)
 
     ADD_PROPERTY(table, prop, GeomBasisCurves, curves->props)
@@ -2763,11 +2952,11 @@ bool ReconstructPrim<SphereLight>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:radius", SphereLight, light->radius)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:intensity", SphereLight,
                    light->intensity)
-    PARSE_ENUM_PROPETY(table, prop, "visibility", VisibilityEnumHandler, SphereLight,
+    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, SphereLight,
                    light->visibility, options.strict_allowedToken_check)
-    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, SphereLight,
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, SphereLight,
                        light->purpose, options.strict_allowedToken_check)
-    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", SphereLight, light->extent)
+    PARSE_EXTENT_ATTRIBUTE(table, prop, kExtent, SphereLight, light->extent)
     ADD_PROPERTY(table, prop, SphereLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
@@ -2802,8 +2991,10 @@ bool ReconstructPrim<RectLight>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:width", RectLight, light->width)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:intensity", RectLight,
                    light->intensity)
-    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", RectLight, light->extent)
-    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, RectLight,
+    PARSE_EXTENT_ATTRIBUTE(table, prop, kExtent, RectLight, light->extent)
+    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, RectLight,
+                   light->visibility, options.strict_allowedToken_check)
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, RectLight,
                        light->purpose, options.strict_allowedToken_check)
     ADD_PROPERTY(table, prop, SphereLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
@@ -2834,8 +3025,10 @@ bool ReconstructPrim<DiskLight>(
   for (const auto &prop : properties) {
     // PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:radius", DiskLight, light->radius)
-    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", DiskLight, light->extent)
-    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, DiskLight,
+    PARSE_EXTENT_ATTRIBUTE(table, prop, kExtent, DiskLight, light->extent)
+    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, DiskLight,
+                       light->visibility, options.strict_allowedToken_check)
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, DiskLight,
                        light->purpose, options.strict_allowedToken_check)
     ADD_PROPERTY(table, prop, DiskLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
@@ -2867,8 +3060,10 @@ bool ReconstructPrim<CylinderLight>(
     // PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:length", CylinderLight, light->length)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:radius", CylinderLight, light->radius)
-    PARSE_EXTENT_ATTRIBUTE(table, prop, "extent", CylinderLight, light->extent)
-    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, CylinderLight,
+    PARSE_EXTENT_ATTRIBUTE(table, prop, kExtent, CylinderLight, light->extent)
+    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, CylindrLight,
+                   light->visibility, options.strict_allowedToken_check)
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, CylinderLight,
                        light->purpose, options.strict_allowedToken_check)
     ADD_PROPERTY(table, prop, SphereLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
@@ -2899,8 +3094,10 @@ bool ReconstructPrim<DistantLight>(
   for (const auto &prop : properties) {
     // PARSE_PROPERTY(prop, "inputs:colorTemperature", light->colorTemperature)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:angle", DistantLight, light->angle)
-    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, DistantLight,
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, DistantLight,
                        light->purpose, options.strict_allowedToken_check)
+    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, DistantLight,
+                   light->visibility, options.strict_allowedToken_check)
     ADD_PROPERTY(table, prop, SphereLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
@@ -2937,7 +3134,9 @@ bool ReconstructPrim<DomeLight>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:color", DomeLight, light->color)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:intensity", DomeLight,
                    light->intensity)
-    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, DomeLight,
+    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, DomeLight,
+                   light->visibility, options.strict_allowedToken_check)
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, DomeLight,
                        light->purpose, options.strict_allowedToken_check)
     ADD_PROPERTY(table, prop, DomeLight, light->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
@@ -3036,7 +3235,7 @@ bool ReconstructPrim<GeomCone>(
     DCOUT("prop: " << prop.first);
     PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomCone, cone->radius)
     PARSE_TYPED_ATTRIBUTE(table, prop, "height", GeomCone, cone->height)
-    PARSE_ENUM_PROPETY(table, prop, "axis", AxisEnumHandler, GeomCone, cone->axis, options.strict_allowedToken_check)
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, "axis", Axis, AxisEnumHandler, GeomCone, cone->axis, options.strict_allowedToken_check)
     ADD_PROPERTY(table, prop, GeomCone, cone->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
@@ -3069,7 +3268,7 @@ bool ReconstructPrim<GeomCylinder>(
                          cylinder->radius)
     PARSE_TYPED_ATTRIBUTE(table, prop, "height", GeomCylinder,
                          cylinder->height)
-    PARSE_ENUM_PROPETY(table, prop, "axis", AxisEnumHandler, GeomCylinder, cylinder->axis, options.strict_allowedToken_check)
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, "axis", Axis, AxisEnumHandler, GeomCylinder, cylinder->axis, options.strict_allowedToken_check)
     ADD_PROPERTY(table, prop, GeomCylinder, cylinder->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
@@ -3099,7 +3298,7 @@ bool ReconstructPrim<GeomCapsule>(
   for (const auto &prop : properties) {
     PARSE_TYPED_ATTRIBUTE(table, prop, "radius", GeomCapsule, capsule->radius)
     PARSE_TYPED_ATTRIBUTE(table, prop, "height", GeomCapsule, capsule->height)
-    PARSE_ENUM_PROPETY(table, prop, "axis", AxisEnumHandler, GeomCapsule, capsule->axis, options.strict_allowedToken_check)
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, "axis", Axis, AxisEnumHandler, GeomCapsule, capsule->axis, options.strict_allowedToken_check)
     ADD_PROPERTY(table, prop, GeomCapsule, capsule->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
@@ -3154,7 +3353,7 @@ bool ReconstructPrim<GeomMesh>(
 
   DCOUT("GeomMesh");
 
-  auto SubdivisioSchemeHandler = [](const std::string &tok)
+  auto SubdivisionSchemeHandler = [](const std::string &tok)
       -> nonstd::expected<GeomMesh::SubdivisionScheme, std::string> {
     using EnumTy = std::pair<GeomMesh::SubdivisionScheme, const char *>;
     const std::vector<EnumTy> enums = {
@@ -3242,14 +3441,14 @@ bool ReconstructPrim<GeomMesh>(
                          mesh->creaseSharpnesses)
     PARSE_TYPED_ATTRIBUTE(table, prop, "holeIndices", GeomMesh,
                          mesh->holeIndices)
-    PARSE_ENUM_PROPETY(table, prop, "subdivisionScheme",
-                       SubdivisioSchemeHandler, GeomMesh,
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, "subdivisionScheme", GeomMesh::SubdivisionScheme,
+                       SubdivisionSchemeHandler, GeomMesh,
                        mesh->subdivisionScheme, options.strict_allowedToken_check)
-    PARSE_ENUM_PROPETY(table, prop, "interpolateBoundary",
-                       InterpolateBoundaryHandler, GeomMesh,
+    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, "interpolateBoundary",
+                       GeomMesh::InterpolateBoundary, InterpolateBoundaryHandler, GeomMesh,
                        mesh->interpolateBoundary, options.strict_allowedToken_check)
-    PARSE_ENUM_PROPETY(table, prop, "facevaryingLinearInterpolation",
-                       FaceVaryingLinearInterpolationHandler, GeomMesh,
+    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, "facevaryingLinearInterpolation",
+                       GeomMesh::FaceVaryingLinearInterpolation, FaceVaryingLinearInterpolationHandler, GeomMesh,
                        mesh->faceVaryingLinearInterpolation, options.strict_allowedToken_check)
     // blendShape names
     PARSE_TYPED_ATTRIBUTE(table, prop, kSkelBlendShapes, GeomMesh, mesh->blendShapes)
@@ -3264,14 +3463,16 @@ bool ReconstructPrim<GeomMesh>(
           (names[2] == "familyType")) {
 
         DCOUT("subsetFamily" << prop.first);
-        GeomSubset::FamilyType familyType{GeomSubset::FamilyType::Unrestricted};
+        TypedAttributeWithFallback<GeomSubset::FamilyType> familyType{GeomSubset::FamilyType::Unrestricted};
 
-        PARSE_ENUM_PROPETY(table, prop, prop.first,
-                           FamilyTypeHandler, GeomMesh,
+        PARSE_UNIFORM_ENUM_PROPERTY(table, prop, prop.first,
+                           GeomSubset::FamilyType, FamilyTypeHandler, GeomMesh,
                            familyType, options.strict_allowedToken_check)
 
+        // NOTE: Ignore metadataum of familyType.
+        
         // TODO: Validate familyName
-        mesh->subsetFamilyTypeMap[value::token(names[1])] = familyType;
+        mesh->subsetFamilyTypeMap[value::token(names[1])] = familyType.get_value();
 
       }
     }
@@ -3376,9 +3577,9 @@ bool ReconstructPrim<GeomCamera>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "shutter:open", GeomCamera, camera->shutterOpen)
     PARSE_TYPED_ATTRIBUTE(table, prop, "shutter:close", GeomCamera,
                    camera->shutterClose)
-    PARSE_ENUM_PROPETY(table, prop, "projection", ProjectionHandler, GeomCamera,
+    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, "projection", GeomCamera::Projection, ProjectionHandler, GeomCamera,
                        camera->projection, options.strict_allowedToken_check)
-    PARSE_ENUM_PROPETY(table, prop, "stereoRole", StereoRoleHandler, GeomCamera,
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, "stereoRole", GeomCamera::StereoRole, StereoRoleHandler, GeomCamera,
                        camera->stereoRole, options.strict_allowedToken_check)
     ADD_PROPERTY(table, prop, GeomCamera, camera->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
@@ -3428,8 +3629,7 @@ bool ReconstructPrim<GeomSubset>(
   for (const auto &prop : properties) {
     PARSE_TYPED_ATTRIBUTE(table, prop, "familyName", GeomSubset, subset->familyName)
     PARSE_TYPED_ATTRIBUTE(table, prop, "indices", GeomSubset, subset->indices)
-    //PARSE_ENUM_PROPETY(table, prop, "familyType", FamilyTypeHandler, GeomSubset, subset->familyType, options  .strict_allowedToken_check)
-    PARSE_ENUM_PROPETY(table, prop, "elementType", ElementTypeHandler, GeomSubset, subset->elementType, options.strict_allowedToken_check)
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, "elementType", GeomSubset::ElementType, ElementTypeHandler, GeomSubset, subset->elementType, options.strict_allowedToken_check)
     ADD_PROPERTY(table, prop, GeomSubset, subset->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
@@ -3615,14 +3815,14 @@ bool ReconstructShader<UsdUVTexture>(
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:file", UsdUVTexture, texture->file)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:st", UsdUVTexture,
                           texture->st)
-    PARSE_ENUM_PROPETY(table, prop, "inputs:sourceColorSpace",
-                       SourceColorSpaceHandler, UsdUVTexture,
+    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, "inputs:sourceColorSpace",
+                       UsdUVTexture::SourceColorSpace, SourceColorSpaceHandler, UsdUVTexture,
                        texture->sourceColorSpace, options.strict_allowedToken_check)
-    PARSE_ENUM_PROPETY(table, prop, "inputs:wrapS",
-                       WrapHandler, UsdUVTexture,
+    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, "inputs:wrapS",
+                       UsdUVTexture::Wrap, WrapHandler, UsdUVTexture,
                        texture->wrapS, options.strict_allowedToken_check)
-    PARSE_ENUM_PROPETY(table, prop, "inputs:wrapT",
-                       WrapHandler, UsdUVTexture,
+    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, "inputs:wrapT",
+                       UsdUVTexture::Wrap, WrapHandler, UsdUVTexture,
                        texture->wrapT, options.strict_allowedToken_check)
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:r", UsdUVTexture,
                                   texture->outputsR)
@@ -4386,7 +4586,7 @@ bool ReconstructPrim<Material>(
                                   Material, material->displacement)
     PARSE_SHADER_INPUT_CONNECTION_PROPERTY(table, prop, "outputs:volume",
                                   Material, material->volume)
-    PARSE_ENUM_PROPETY(table, prop, "purpose", PurposeEnumHandler, Material,
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, Material,
                        material->purpose, options.strict_allowedToken_check)
     ADD_PROPERTY(table, prop, Material, material->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)

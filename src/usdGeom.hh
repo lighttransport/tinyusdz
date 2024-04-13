@@ -71,9 +71,21 @@ class GeomPrimvar {
     _has_value = true;
   }
 
-  // TODO: TimeSamples indices.
-  GeomPrimvar(const Attribute &attr, const std::vector<int32_t> &indices) : _attr(attr), _indices(indices)
+  GeomPrimvar(const Attribute &attr, const std::vector<int32_t> &indices) : _attr(attr)
   {
+    _indices.add_sample(value::TimeCode::Default(), indices);
+    _has_value = true;
+  }
+
+  GeomPrimvar(const Attribute &attr, const TypedTimeSamples<std::vector<int32_t>> &indices) : _attr(attr)
+  {
+    _indices = indices;
+    _has_value = true;
+  }
+
+  GeomPrimvar(const Attribute &attr, TypedTimeSamples<std::vector<int32_t>> &&indices) : _attr(attr)
+  {
+    _indices = std::move(indices);
     _has_value = true;
   }
 
@@ -117,19 +129,28 @@ class GeomPrimvar {
   ///   dest[i] = values[indices[i]]
   /// ```
   ///
+  /// Use Default time and Linear interpolation when `indices` and/or primvar is timesamples.
+  ///
   /// If Primvar does not have indices, return attribute value as is(same with `get_value`).
+  /// For now, we only support Attribute with 1D array type.
   ///
   /// Return false when operation failed or if the attribute type is not supported for Indexed Primvar.
   ///
-  template <typename T>
-  bool flatten_with_indices(T *dst, std::string *err = nullptr) const;
-
+  ///
   template <typename T>
   bool flatten_with_indices(std::vector<T> *dst, std::string *err = nullptr) const;
+
+  ///
+  /// Specify time and interpolation type.
+  ///
+  template <typename T>
+  bool flatten_with_indices(double t, std::vector<T> *dst, value::TimeSampleInterpolationType tinerp = value::TimeSampleInterpolationType::Linear, std::string *err = nullptr) const;
+
 
   // Generic Value version.
   // TODO: return Attribute?
   bool flatten_with_indices(value::Value *dst, std::string *err = nullptr) const;
+  bool flatten_with_indices(double t, value::Value *dst, value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear, std::string *err = nullptr) const;
 
   bool has_elementSize() const;
   uint32_t get_elementSize() const;
@@ -145,8 +166,11 @@ class GeomPrimvar {
     _interpolation = interp;
   }
 
-  const std::vector<int32_t> &get_indices() const { return _indices; }
-  bool has_indices() const { return _indices.size(); }
+  const TypedTimeSamples<std::vector<int32_t>> &get_indices() const {
+    return _indices;
+  }
+
+  bool has_indices() const { return !_indices.empty(); }
 
   uint32_t type_id() const { return _attr.type_id(); }
   std::string type_name() const { return _attr.type_name(); }
@@ -184,12 +208,20 @@ class GeomPrimvar {
 
   ///
   /// Get Attribute value.
-  /// TODO: TimeSamples
   ///
   template <typename T>
   bool get_value(T *dst, std::string *err = nullptr) const;
 
   bool get_value(value::Value *dst, std::string *err = nullptr) const;
+
+
+  ///
+  /// Get Attribute value at specified time.
+  ///
+  template <typename T>
+  bool get_value(double timecode, T *dst, const value::TimeSampleInterpolationType interp = value::TimeSampleInterpolationType::Linear, std::string *err = nullptr) const;
+
+  bool get_value(double timecode, value::Value *dst, const value::TimeSampleInterpolationType interp = value::TimeSampleInterpolationType::Linear, std::string *err = nullptr) const;
 
   ///
   /// Set Attribute value.
@@ -213,11 +245,15 @@ class GeomPrimvar {
   void set_name(const std::string &name) { _name = name; }
 
   void set_indices(const std::vector<int32_t> &indices) {
-    _indices = indices;
+    _indices.add_sample(value::TimeCode::Default(), indices);
   }
 
   void set_indices(const std::vector<int32_t> &&indices) {
-    _indices = std::move(indices);
+    _indices.add_sample(value::TimeCode::Default(), std::move(indices));
+  }
+
+  void set_indices(const TypedTimeSamples<std::vector<int32_t>> &indices) {
+    _indices = indices;
   }
 
   const Attribute &get_attribute() const {
@@ -229,7 +265,8 @@ class GeomPrimvar {
   std::string _name;
   bool _has_value{false};
   Attribute _attr;
-  std::vector<int32_t> _indices;  // TODO: uint support?
+  //std::vector<int32_t> _indices;  // TODO: uint support?
+  TypedTimeSamples<std::vector<int32_t>> _indices;
 
   // Store Attribute meta separately.
   nonstd::optional<uint32_t> _elementSize;
@@ -285,9 +322,9 @@ struct GPrim : Xformable, MaterialBinding, Collection {
       Purpose::Default};  // "uniform token purpose"
 
   // Handy API to get `primvars:displayColor` and `primvars:displayOpacity`
-  bool get_displayColor(value::color3f *col, const double t = value::TimeCode::Default(), const value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held);
+  bool get_displayColor(value::color3f *col, const double t = value::TimeCode::Default(), const value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear);
 
-  bool get_displayOpacity(float *opacity, const double t = value::TimeCode::Default(), const value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held);
+  bool get_displayOpacity(float *opacity, const double t = value::TimeCode::Default(), const value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear);
 
   RelationshipProperty proxyPrim;
 
@@ -310,6 +347,9 @@ struct GPrim : Xformable, MaterialBinding, Collection {
   ///
   /// Get Attribute(+ indices Attribute for Indexed Primvar) with "primvars:" suffix(namespace) in `props`
   ///
+  /// NOTE: This API does not support Connection Atttribute(e.g. `int[] primvars:uvs:indices = </root/geom0.indices>`)
+  /// If you want to get Primvar with possible Connection Attribute, use Tydra API: `GetGeomPrimvar`
+  ///
   /// @param[in] name Primvar name(`primvars:` prefix omitted. e.g. "normals", "st0", ...)
   /// @param[out] primvar GeomPrimvar output.
   /// @param[out] err Optional Error message(filled when returning false)
@@ -325,6 +365,9 @@ struct GPrim : Xformable, MaterialBinding, Collection {
 
   ///
   /// Return List of Primvar in this GPrim contains.
+  ///
+  /// NOTE: This API does not support Connection Atttribute(e.g. `int[] primvars:uvs:indices = </root/geom0.indices>`)
+  /// If you want to get Primvar with possible Connection Attribute, use Tydra API: `GetGeomPrimvars`
   ///
   std::vector<GeomPrimvar> get_primvars() const;
 
@@ -587,24 +630,6 @@ struct GeomSubset : public MaterialBinding, Collection {
   }
 
 #if 0
-  nonstd::expected<bool, std::string> SetFamilyType(const std::string &str) {
-    if (str == "partition") {
-      familyType = FamilyType::Partition;
-      return true;
-    } else if (str == "nonOverlapping") {
-      familyType = FamilyType::NonOverlapping;
-      return true;
-    } else if (str == "unrestricted") {
-      familyType = FamilyType::Unrestricted;
-      return true;
-    }
-
-    return nonstd::make_unexpected("Invalid `familyType` specified: `" + str +
-                                   "`.");
-  }
-#endif
-
-#if 0
   // Some frequently used materialBindings
   nonstd::optional<Relationship> materialBinding; // rel material:binding
   nonstd::optional<Relationship> materialBindingCollection; // rel material:binding:collection
@@ -691,16 +716,11 @@ struct GeomMesh : GPrim {
   // Utility functions
   //
 
-#if 0 // TODO: Remove
-  // Initialize GeomMesh by GPrim(prepend references)
-  void Initialize(const GPrim &pprim);
-
-  // Update GeomMesh by GPrim(append references)
-  void UpdateBy(const GPrim &pprim);
-#endif
 
   ///
   /// @brief Returns `points`.
+  ///
+  /// NOTE: No support for connected attribute. Using tydra::EvaluateTypedAttribute preferred.
   ///
   /// @param[in] time Time for TimeSampled `points` data.
   /// @param[in] interp Interpolation type for TimeSampled `points` data
@@ -716,9 +736,11 @@ struct GeomMesh : GPrim {
   /// @brief Returns normals vector. Precedence order: `primvars:normals` then
   /// `normals`.
   ///
+  /// NOTE: No support for connected attribute. Using tydra::GetGeomPrimvar preferred.
+  ///
   /// @return normals vector(copied). Returns empty normals vector when neither
   /// `primvars:normals` nor `normals` attribute defined, attribute is a
-  /// relation or normals attribute have invalid type(other than `normal3f`).
+  /// Relationship, Connection Attribute, or normals attribute have invalid type(other than `normal3f`).
   ///
   const std::vector<value::normal3f> get_normals(
       double time = value::TimeCode::Default(),
@@ -733,6 +755,8 @@ struct GeomMesh : GPrim {
 
   ///
   /// @brief Returns `faceVertexCounts`.
+  ///
+  /// NOTE: No support for connected attribute. Using tydra::EvaluateTypedAttribute preferred.
   ///
   /// @return face vertex counts vector(copied)
   ///
@@ -861,6 +885,8 @@ struct GeomCamera : public GPrim {
 
   //
   // Properties
+  // 
+  // NOTE: fallback value is in [mm](tenth of scene unit)
   //
 
   TypedAttribute<Animatable<std::vector<value::float4>>> clippingPlanes; // float4[]
@@ -896,7 +922,7 @@ struct GeomCone : public GPrim {
   TypedAttributeWithFallback<Animatable<double>> height{2.0};
   TypedAttributeWithFallback<Animatable<double>> radius{1.0};
 
-  TypedAttribute<Axis> axis;
+  TypedAttributeWithFallback<Axis> axis{Axis::Z};
 };
 
 struct GeomCapsule : public GPrim {
@@ -905,7 +931,7 @@ struct GeomCapsule : public GPrim {
   //
   TypedAttributeWithFallback<Animatable<double>> height{2.0};
   TypedAttributeWithFallback<Animatable<double>> radius{0.5};
-  TypedAttribute<Axis> axis;  // uniform token axis
+  TypedAttributeWithFallback<Axis> axis{Axis::Z};  // uniform token axis
 };
 
 struct GeomCylinder : public GPrim {
@@ -914,7 +940,7 @@ struct GeomCylinder : public GPrim {
   //
   TypedAttributeWithFallback<Animatable<double>> height{2.0};
   TypedAttributeWithFallback<Animatable<double>> radius{1.0};
-  TypedAttribute<Axis> axis;  // uniform token axis
+  TypedAttributeWithFallback<Axis> axis{Axis::Z};  // uniform token axis
 };
 
 struct GeomCube : public GPrim {
@@ -952,9 +978,9 @@ struct GeomBasisCurves : public GPrim {
     Pinned,       // "pinned"
   };
 
-  nonstd::optional<Type> type;
-  nonstd::optional<Basis> basis;
-  nonstd::optional<Wrap> wrap;
+  TypedAttributeWithFallback<Type> type{Type::Cubic};
+  TypedAttributeWithFallback<Basis> basis{Basis::Bezier};
+  TypedAttributeWithFallback<Wrap> wrap{Wrap::Nonperiodic};
 
   //
   // Predefined attribs.
@@ -1134,8 +1160,11 @@ DEFINE_TYPE_TRAIT(PointInstancer, kPointInstancer, TYPE_ID_GEOM_POINT_INSTANCER,
 
 #define EXTERN_TEMPLATE_GET_VALUE(__ty) \
   extern template bool GeomPrimvar::get_value(__ty *dest, std::string *err) const; \
+  extern template bool GeomPrimvar::get_value(double, __ty *dest, value::TimeSampleInterpolationType, std::string *err) const; \
   extern template bool GeomPrimvar::get_value(std::vector<__ty> *dest, std::string *err) const; \
-  extern template bool GeomPrimvar::flatten_with_indices(std::vector<__ty> *dest, std::string *err) const;
+  extern template bool GeomPrimvar::get_value(double, std::vector<__ty> *dest, value::TimeSampleInterpolationType, std::string *err) const; \
+  extern template bool GeomPrimvar::flatten_with_indices(std::vector<__ty> *dest, std::string *err) const; \
+  extern template bool GeomPrimvar::flatten_with_indices(double, std::vector<__ty> *dest, value::TimeSampleInterpolationType, std::string *err) const;
 
 APPLY_GEOMPRIVAR_TYPE(EXTERN_TEMPLATE_GET_VALUE)
 
