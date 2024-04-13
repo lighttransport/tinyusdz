@@ -143,7 +143,7 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
 
       for (size_t f = 0; f < mesh.faceVertexCounts()[face_ids[i]]; f++) {
         if (f > 0) {
-          ss << " , ";
+          ss << " ";
         }
         // obj's index starts with 1.
         uint32_t idx = mesh.faceVertexIndices()[offsets[face_ids[i]] + f] + 1;
