@@ -2772,6 +2772,7 @@ bool RenderSceneConverter::ConvertMesh(
   // information.
   //
 
+  DCOUT("rmaterial_idMap.size " << rmaterial_idMap.size());
   if (rmaterial_idMap.count(material_path.material_path)) {
     dst.material_id = int(rmaterial_idMap.at(material_path.material_path));
   }
@@ -2856,6 +2857,8 @@ bool RenderSceneConverter::ConvertMesh(
 
         // Use slotId 0
         uvAttrs[0] = vattr;
+      } else {
+        PUSH_WARN("Failed to get texture coordinate for `" << env.mesh_config.default_texcoords_primvar_name  << "` : " << ret.error());
       }
     }
   } else {
@@ -2867,6 +2870,7 @@ bool RenderSceneConverter::ConvertMesh(
 
         StringAndIdMap uvname_map;
         if (!ListUVNames(material, textures, uvname_map)) {
+          DCOUT("Failed to list UV names");
           return false;
         }
 
@@ -2881,6 +2885,8 @@ bool RenderSceneConverter::ConvertMesh(
               const VertexAttribute vattr = ret.value();
 
               uvAttrs[uint32_t(slotId)] = vattr;
+            } else {
+              PUSH_WARN("Failed to get texture coordinate for `" << uvname << "` : " << ret.error());
             }
           }
         }

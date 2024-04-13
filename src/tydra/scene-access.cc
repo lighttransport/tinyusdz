@@ -2485,7 +2485,8 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim, const std::string &v
       
         primvar.set_indices(tss);
       } else if (indexAttr.is_blocked()) {
-        PUSH_ERROR_AND_RETURN("TODO: Index attribute is blocked(ValueBlock).");
+        // Value blocked. e.g. `float2[] primvars:st:indices = None`
+        // We can simply skip reading indices.
       } else if (indexAttr.is_value()) {
         // Check if int[] type.
         // TODO: Support uint[]?
