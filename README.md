@@ -5,10 +5,10 @@
 ## High priority
 
 * Tydra: Handy data structure converter for rendering https://github.com/syoyo/tinyusdz/issues/31
-  * Working on the branch: https://github.com/syoyo/tinyusdz/tree/rendermesh-refactor 
-  * [ ] USD to RenderScene(OpenGL/Vulkan) conversion https://github.com/syoyo/tinyusdz/issues/109
+  * Working on the branch: https://github.com/syoyo/tinyusdz/tree/rendermesh-refactor  https://github.com/syoyo/tinyusdz/issues/148
+  * [ ] USD to RenderScene(OpenGL/Vulkan-like API friendly data structure) conversion https://github.com/syoyo/tinyusdz/issues/109
   * [ ] GeomSubset/Material Binding API support for shading/texturing https://github.com/syoyo/tinyusdz/issues/103 
-  * [ ] UTF8 Identifier support https://github.com/syoyo/tinyusdz/issues/47
+* [ ] UTF8 Identifier support https://github.com/syoyo/tinyusdz/issues/47
  
 ## Mid-term todo
 
