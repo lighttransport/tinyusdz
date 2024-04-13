@@ -4722,20 +4722,117 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     // material.
     //
 
-    {
-      const std::string mesh_path_str = abs_path.full_path_name();
+    auto ConvertBoundMaterial = [&](const Path &bound_material_path, 
+      const tinyusdz::Material *bound_material,
+      int64_t &rmaterial_id) -> bool {
 
       std::vector<RenderMaterial> &rmaterials =
           visitorEnv->converter->materials;
 
-      tinyusdz::Path bound_material_path;
-      const tinyusdz::Material *bound_material{nullptr};
-      bool ret = tinyusdz::tydra::GetBoundMaterial(
-          visitorEnv->env->stage, /* GeomMesh prim path */ abs_path,
-          /* purpose */ "", &bound_material_path, &bound_material, err);
+        const auto matIt = visitorEnv->converter->materialMap.find(
+            bound_material_path.full_path_name());
 
-      int64_t rmaterial_id = -1;
+        if (matIt != visitorEnv->converter->materialMap.s_end()) {
+          // Got material in the cache.
+          uint64_t mat_id = matIt->second;
+          if (mat_id >= visitorEnv->converter->materials
+                            .size()) {  // this should not happen though
+            if (err) {
+              (*err) += "Material index out-of-range.\n";
+            }
+            return false;
+          }
 
+          if (mat_id >= (std::numeric_limits<int64_t>::max)()) {
+            if (err) {
+              (*err) += "Material index too large.\n";
+            }
+            return false;
+          }
+
+          rmaterial_id = int64_t(mat_id);
+
+        } else {
+          RenderMaterial rmat;
+          if (!visitorEnv->converter->ConvertMaterial(*visitorEnv->env,
+                                                      bound_material_path,
+                                                      *bound_material, &rmat)) {
+            if (err) {
+              (*err) += fmt::format("Material conversion failed: {}",
+                                    bound_material_path);
+            }
+            return false;
+          }
+
+          // Assign new material ID
+          uint64_t mat_id = rmaterials.size();
+
+          if (mat_id >= (std::numeric_limits<int64_t>::max)()) {
+            if (err) {
+              (*err) += "Material index too large.\n";
+            }
+            return false;
+          }
+          rmaterial_id = int64_t(mat_id);
+
+          visitorEnv->converter->materialMap.add(
+              bound_material_path.full_path_name(), uint64_t(rmaterial_id));
+          DCOUT("Added renderMaterial: " << mat_id << " " << rmat.abs_path << " ( "
+                                 << rmat.name << " ) ");
+
+          rmaterials.push_back(rmat);
+        }
+    
+      return true;
+    };
+
+    MaterialPath material_path;
+    material_path.default_texcoords_primvar_name = visitorEnv->env->mesh_config.default_texcoords_primvar_name;
+    // TODO: Implement feature to assign default material id(MaterialPath::default_material_id) when no bound material found.
+
+    // Front and back material.
+    {
+      const std::string mesh_path_str = abs_path.full_path_name();
+
+      {
+        tinyusdz::Path bound_material_path;
+        const tinyusdz::Material *bound_material{nullptr};
+        bool ret = tinyusdz::tydra::GetBoundMaterial(
+            visitorEnv->env->stage, /* GeomMesh prim path */ abs_path,
+            /* purpose */ "", &bound_material_path, &bound_material, err);
+
+        if (ret && bound_material) {
+          int64_t rmaterial_id = -1;
+
+          if (!ConvertBoundMaterial(bound_material_path, bound_material, rmaterial_id)) {
+            return false;
+          }
+
+          material_path.material_path = bound_material_path.full_path_name();
+          DCOUT("Bound material path: " << material_path.material_path);
+        }
+      }
+
+      {
+        tinyusdz::Path bound_material_path;
+        const tinyusdz::Material *bound_material{nullptr};
+        bool ret = tinyusdz::tydra::GetBoundMaterial(
+            visitorEnv->env->stage, /* GeomMesh prim path */ abs_path,
+            /* purpose */ visitorEnv->env->material_config.default_backface_material_purpose_name, &bound_material_path, &bound_material, err);
+
+        if (ret && bound_material) {
+          int64_t rmaterial_id = -1;
+
+          if (!ConvertBoundMaterial(bound_material_path, bound_material, rmaterial_id)) {
+            return false;
+          }
+
+          material_path.backface_material_path = bound_material_path.full_path_name();
+          DCOUT("Bound backface material path: " << material_path.backface_material_path);
+        }
+      }
+
+#if 0
       if (ret && bound_material) {
         DCOUT("Bound material path: " << bound_material_path);
 
@@ -4792,12 +4889,13 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
           rmaterials.push_back(rmat);
         }
+
+        material_path.material_path = 
       }
+#endif
 
       RenderMesh rmesh;
 
-      // TODO: Fill these parameters.
-      MaterialPath material_path;
       
       std::map<std::string, MaterialPath> subset_material_path_map;
       std::vector<const GeomSubset *> material_subsets;
