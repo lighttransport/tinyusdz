@@ -964,8 +964,8 @@ static bool ToVertexVaryingAttribute(
 static bool TriangulateVertexAttribute(
     VertexAttribute &vattr, const std::vector<uint32_t> &faceVertexCounts,
     const std::vector<uint32_t> &triangulatedFaceVertexIndices,
-    const std::vector<size_t> &triangulatedToOrigFaceVertexIndexMap,
     const std::vector<uint32_t> &triangulatedFaceCounts, std::string *err) {
+
   if (vattr.vertex_count() == 0) {
     return true;
   }
@@ -984,23 +984,22 @@ static bool TriangulateVertexAttribute(
   }
 
   if (vattr.is_facevarying()) {
-    size_t num_fvs = vattr.vertex_count();
+    size_t num_vs = vattr.vertex_count();
     std::vector<uint8_t> buf;
 
-    for (uint32_t f = 0; f < triangulatedToOrigFaceVertexIndexMap.size(); f++) {
-      // Array index offset in `triangulatedToOrigFaceVertexIndexMap[f]` =
-      // location of vertex data for 'facevarying' variability.
-      size_t src_fvIdxOffset = triangulatedToOrigFaceVertexIndexMap[f];
-      if (src_fvIdxOffset >= num_fvs) {
+    for (uint32_t f = 0; f < triangulatedFaceVertexIndices.size(); f++) {
+      size_t src_fvIdx = triangulatedFaceVertexIndices[f];
+
+      if (src_fvIdx >= num_vs) {
         PUSH_ERROR_AND_RETURN(
-            "Invalid index found in triangulatedToOrigFaceVertexIndexMap.");
+            "Invalid index found in triangulatedFaceVertexIndices.");
       }
 
       buf.insert(
           buf.end(),
-          vattr.get_data().data() + src_fvIdxOffset * vattr.stride_bytes(),
+          vattr.get_data().data() + src_fvIdx * vattr.stride_bytes(),
           vattr.get_data().data() +
-              (1 + src_fvIdxOffset) * vattr.stride_bytes());
+              (1 + src_fvIdx) * vattr.stride_bytes());
     }
 
     vattr.data = std::move(buf);
@@ -2553,7 +2552,16 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
           : nullptr;
 
   for (size_t i = 0; i < num_fvs; i++) {
-    vertex_input.positions[i] = mesh.points[fvIndices[i]];
+    size_t fvi = fvIndices[i];
+    if (fvi >= num_fvs) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Invalid faceVertexIndex {}. Must be less than {}", fvi, num_fvs)); 
+    }
+
+    //
+    // position is 'vertex' varying, others are 'facevarying'
+    //
+    vertex_input.positions[i] = mesh.points[fvi];
+
     if (normals_ptr) {
       vertex_input.normals[i] = normals_ptr[i];
     }
@@ -3264,7 +3272,7 @@ bool RenderSceneConverter::ConvertMesh(
           }
 
           uint32_t baseFaceIndex = faceIndexOffsets[size_t(srcIndex)];
-          DCOUT(i << ", baseFaceIndex = " << baseFaceIndex);
+          //DCOUT(i << ", baseFaceIndex = " << baseFaceIndex);
 
           for (size_t k = 0; k < triangulatedFaceCounts[uint32_t(srcIndex)];
                k++) {
@@ -3286,21 +3294,18 @@ bool RenderSceneConverter::ConvertMesh(
     {
       if (!TriangulateVertexAttribute(dst.normals, dst.usdFaceVertexCounts,
                                       triangulatedFaceVertexIndices,
-                                      triangulatedToOrigFaceVertexIndexMap,
                                       triangulatedFaceCounts, &_err)) {
         PUSH_ERROR_AND_RETURN("Failed to triangulate normals attribute.");
       }
 
       if (!TriangulateVertexAttribute(dst.tangents, dst.usdFaceVertexCounts,
                                       triangulatedFaceVertexIndices,
-                                      triangulatedToOrigFaceVertexIndexMap,
                                       triangulatedFaceCounts, &_err)) {
         PUSH_ERROR_AND_RETURN("Failed to triangulate tangents attribute.");
       }
 
       if (!TriangulateVertexAttribute(dst.binormals, dst.usdFaceVertexCounts,
                                       triangulatedFaceVertexIndices,
-                                      triangulatedToOrigFaceVertexIndexMap,
                                       triangulatedFaceCounts, &_err)) {
         PUSH_ERROR_AND_RETURN("Failed to triangulate binormals attribute.");
       }
@@ -3308,7 +3313,6 @@ bool RenderSceneConverter::ConvertMesh(
       for (auto &it : dst.texcoords) {
         if (!TriangulateVertexAttribute(it.second, dst.usdFaceVertexCounts,
                                         triangulatedFaceVertexIndices,
-                                        triangulatedToOrigFaceVertexIndexMap,
                                         triangulatedFaceCounts, &_err)) {
           PUSH_ERROR_AND_RETURN(fmt::format(
               "Failed to triangulate texcoords[{}] attribute.", it.first));
@@ -3317,7 +3321,6 @@ bool RenderSceneConverter::ConvertMesh(
 
       if (!TriangulateVertexAttribute(dst.vertex_colors, dst.usdFaceVertexCounts,
                                       triangulatedFaceVertexIndices,
-                                      triangulatedToOrigFaceVertexIndexMap,
                                       triangulatedFaceCounts, &_err)) {
         PUSH_ERROR_AND_RETURN("Failed to triangulate vertex_colors attribute.");
       }
@@ -3325,7 +3328,6 @@ bool RenderSceneConverter::ConvertMesh(
       if (!TriangulateVertexAttribute(dst.vertex_opacities,
                                       dst.usdFaceVertexCounts,
                                       triangulatedFaceVertexIndices,
-                                      triangulatedToOrigFaceVertexIndexMap,
                                       triangulatedFaceCounts, &_err)) {
         PUSH_ERROR_AND_RETURN(
             "Failed to triangulate vertopacitiesex_colors attribute.");

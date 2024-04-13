@@ -133,7 +133,8 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
 
     if (std::get<0>(group.second) > -1) {
       uint32_t mat_id = uint32_t(std::get<0>(group.second));
-      ss << "usemtl " << scene.materials[mat_id].name << "\n";
+      // prepend mat_id to name
+      ss << "usemtl " << mat_id << scene.materials[mat_id].name << "\n";
     } 
 
     const auto &face_ids = std::get<1>(group.second);
@@ -183,18 +184,18 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
     // TODO: Emit more PBR material
     if (scene.materials[mat_id].surfaceShader.diffuseColor.is_texture()) {
       int32_t texId = scene.materials[mat_id].surfaceShader.diffuseColor.textureId;
-      if ((texId == -1) || (texId >= int(scene.textures.size()))) {
-        PUSH_ERROR_AND_RETURN("Invalid texture id");
+      if ((texId < 0) || (texId >= int(scene.textures.size()))) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Invalid texture id {}. scene.textures.size = {}", texId, scene.textures.size()));
       }
 
       int64_t imageId = scene.textures[size_t(texId)].texture_image_id;
-      if ((imageId > -1) && (imageId < int64_t(scene.images.size()))) {
-        PUSH_ERROR_AND_RETURN("Invalid image id");
+      if ((imageId < 0) || (imageId >= int64_t(scene.images.size()))) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Invalid image id {}. scene.images.size = {}", imageId, scene.images.size()));
       }
 
       std::string texname = scene.images[size_t(imageId)].asset_identifier;
       if (texname.empty()) {
-        PUSH_ERROR_AND_RETURN("Texture filename is empty.");
+        PUSH_ERROR_AND_RETURN(fmt::format("Filename for image id {} is empty.", imageId));
       }
       ss << "map_Kd " << texname << "\n";
     } else {
