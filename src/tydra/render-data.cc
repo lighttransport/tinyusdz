@@ -3,6 +3,7 @@
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 //
 // TODO:
+//   - [ ] Setup rmaterial MaterialSubset 
 //   - [ ] Subdivision surface to polygon mesh conversion.
 //     - [ ] Correctly handle primvar with 'vertex' interpolation(Use the basis
 //     function of subd surface)
@@ -2651,7 +2652,8 @@ bool RenderSceneConverter::ConvertMesh(
     const RenderSceneConverterEnv &env, const Path &abs_path,
     const GeomMesh &mesh, const MaterialPath &material_path,
     const std::map<std::string, MaterialPath> &subset_material_path_map,
-    const std::map<std::string, int64_t> &rmaterial_idMap,
+    //const std::map<std::string, int64_t> &rmaterial_idMap,
+    const StringAndIdMap &rmaterial_map,
     const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
     const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
         &blendshapes,
@@ -2772,14 +2774,14 @@ bool RenderSceneConverter::ConvertMesh(
   // information.
   //
 
-  DCOUT("rmaterial_idMap.size " << rmaterial_idMap.size());
-  if (rmaterial_idMap.count(material_path.material_path)) {
-    dst.material_id = int(rmaterial_idMap.at(material_path.material_path));
+  DCOUT("rmaterial_ap.size " << rmaterial_map.size());
+  if (rmaterial_map.count(material_path.material_path)) {
+    dst.material_id = int(rmaterial_map.at(material_path.material_path));
   }
 
-  if (rmaterial_idMap.count(material_path.backface_material_path)) {
+  if (rmaterial_map.count(material_path.backface_material_path)) {
     dst.backface_material_id =
-        int(rmaterial_idMap.at(material_path.backface_material_path));
+        int(rmaterial_map.at(material_path.backface_material_path));
   }
 
   if (env.mesh_config.validate_geomsubset) {
@@ -2818,12 +2820,12 @@ bool RenderSceneConverter::ConvertMesh(
 
     if (subset_material_path_map.count(psubset->name)) {
       const auto &mp = subset_material_path_map.at(psubset->name);
-      if (rmaterial_idMap.count(mp.material_path)) {
-        ms.material_id = int(rmaterial_idMap.at(mp.material_path));
+      if (rmaterial_map.count(mp.material_path)) {
+        ms.material_id = int(rmaterial_map.at(mp.material_path));
       }
-      if (rmaterial_idMap.count(mp.backface_material_path)) {
+      if (rmaterial_map.count(mp.backface_material_path)) {
         ms.backface_material_id =
-            int(rmaterial_idMap.at(mp.backface_material_path));
+            int(rmaterial_map.at(mp.backface_material_path));
       }
     }
 
@@ -2843,7 +2845,7 @@ bool RenderSceneConverter::ConvertMesh(
   std::unordered_map<uint32_t, VertexAttribute> uvAttrs;
 
   // We need Material info to get corresponding primvar name.
-  if (rmaterial_idMap.empty()) {
+  if (rmaterial_map.empty()) {
     // No material assigned to the Mesh, but we may still want texcoords solely(
     // assign material after the conversion)
     // So find a primvar whose name matches default texcoord name.
@@ -2862,8 +2864,8 @@ bool RenderSceneConverter::ConvertMesh(
       }
     }
   } else {
-    for (auto rmat : rmaterial_idMap) {
-      int64_t rmaterial_id = rmat.second;
+    for (auto mit = rmaterial_map.i_begin(); mit != rmaterial_map.i_end(); mit++) {
+      int64_t rmaterial_id = int64_t(mit->first);
 
       if ((rmaterial_id > -1) && (size_t(rmaterial_id) < materials.size())) {
         const RenderMaterial &material = materials[size_t(rmaterial_id)];
@@ -4687,6 +4689,7 @@ namespace {
 struct MeshVisitorEnv {
   RenderSceneConverter *converter{nullptr};
   const RenderSceneConverterEnv *env{nullptr};
+
 };
 
 bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
@@ -4712,7 +4715,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     DCOUT("Mesh: " << abs_path);
 
     //
-    // First convert Material.
+    // First convert Material assigned to GeomMesh.
     //
     // - If prim has materialBind, convert it to RenderMesh's material.
     // - If prim has GeomSubset with materialBind, convert it to per-face
@@ -4784,7 +4787,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
           visitorEnv->converter->materialMap.add(
               bound_material_path.full_path_name(), uint64_t(rmaterial_id));
-          DCOUT("Add material: " << mat_id << " " << rmat.abs_path << " ( "
+          DCOUT("Added renderMaterial: " << mat_id << " " << rmat.abs_path << " ( "
                                  << rmat.name << " ) ");
 
           rmaterials.push_back(rmat);
@@ -4793,10 +4796,10 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
       RenderMesh rmesh;
 
-      // TODO
+      // TODO: Fill these parameters.
       MaterialPath material_path;
+      
       std::map<std::string, MaterialPath> subset_material_path_map;
-      std::map<std::string, int64_t> rmaterial_idMap;
       std::vector<const GeomSubset *> material_subsets;
       std::vector<std::pair<std::string, const BlendShape *>> blendshapes;
 
@@ -4808,12 +4811,13 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
           ms.prim_name = psubset->name;
           ms.abs_path = abs_path.prim_part() + std::string("/") + psubset->name;
           ms.display_name = psubset->meta.displayName.value_or("");
+          //subset_material_path_map[] = 
         }
       }
 
       if (!visitorEnv->converter->ConvertMesh(
               *visitorEnv->env, abs_path, *pmesh, material_path,
-              subset_material_path_map, rmaterial_idMap, material_subsets,
+              subset_material_path_map, visitorEnv->converter->materialMap, material_subsets,
               blendshapes, &rmesh)) {
         if (err) {
           (*err) += fmt::format("Mesh conversion failed: {}",
@@ -4963,11 +4967,9 @@ bool RenderSceneConverter::ConvertToRenderScene(
 
   //
   // 2. Convert Material/Texture
-  //
-  // TODO
-
-  //
   // 3. Convert Mesh/SkinWeights/BlendShapes
+  //
+  // Material conversion will be done in MeshVisitor.
   //
   MeshVisitorEnv menv;
   menv.env = &env;

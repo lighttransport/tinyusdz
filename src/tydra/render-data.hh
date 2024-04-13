@@ -67,6 +67,8 @@ struct StringAndIdMap {
     _i_to_s[val] = key;
   }
 
+  bool empty() const { return _i_to_s.empty(); }
+
   size_t count(uint64_t i) const { return _i_to_s.count(i); }
 
   size_t count(const std::string &s) const { return _s_to_i.count(s); }
@@ -1599,8 +1601,8 @@ class RenderSceneConverter {
   /// to the mesh.
   /// @param[in] subset_material_path_map USD Material Prim path assigned(bound)
   /// to GeomSubsets in this GeomMesh. key = GeomSubset Prim name.
-  /// @param[in] rmaterial_map USD Material Prim path -> RenderMaterial index
-  /// list. Use empty map if no material assigned to this Mesh. If the mesh has
+  /// @param[in] rmaterial_map USD Material Prim path <-> RenderMaterial index
+  /// map. Use empty map if no material assigned to this Mesh. If the mesh has
   /// bounded material(including material from GeomSubset), RenderMaterial index
   /// must be obrained using ConvertMaterial method before calling ConvertMesh.
   /// @param[in] material_subsets GeomSubset assigned to this Mesh. Can be empty
@@ -1616,7 +1618,8 @@ class RenderSceneConverter {
       const RenderSceneConverterEnv &env, const tinyusdz::Path &mesh_abs_path,
       const tinyusdz::GeomMesh &mesh, const MaterialPath &material_path,
       const std::map<std::string, MaterialPath> &subset_material_path_map,
-      const std::map<std::string, int64_t> &rmaterial_map,
+      //const std::map<std::string, int64_t> &rmaterial_map,
+      const StringAndIdMap &rmaterial_map,
       const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
       const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
           &blendshapes,
