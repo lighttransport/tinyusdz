@@ -52,17 +52,21 @@ int main(int argc, char **argv) {
   if (argc < 2) {
     std::cout << "Usage: " << argv[0] << " input.usd [OPTIONS].\n";
     std::cout << "\n\nOptions\n\n";
-    std::cout << "  -t: Triangulate mesh\n";
+    std::cout << "  --noidxbuild: Do not rebuild vertex indices\n";
+    std::cout << "  --notri: Do not triangulate mesh\n";
     std::cout << "  --dumpobj: Dump mesh as wavefront .obj(for visual debugging)\n";
     return EXIT_FAILURE;
   }
 
+  bool build_indices = true;
   bool triangulate = true;
   bool export_obj = false;
   std::string filepath;
   for (int i = 1; i < argc; i++) {
-    if (strcmp(argv[i], "-t") == 0) {
-      triangulate = true;
+    if (strcmp(argv[i], "--notri") == 0) {
+      triangulate = false;
+    } else if (strcmp(argv[i], "--noidxbuild") == 0) {
+      build_indices = false;
     } else if (strcmp(argv[i], "--dumpobj") == 0) {
       export_obj = true;
     } else {
@@ -150,6 +154,8 @@ int main(int argc, char **argv) {
 
   std::cout << "Triangulate : " << (triangulate ? "true" : "false") << "\n";
   env.mesh_config.triangulate = triangulate;
+  std::cout << "Rebuild vertex indices : " << (build_indices ? "true" : "false") << "\n";
+  env.mesh_config.build_vertex_indices = build_indices; 
 
   // Add base directory of .usd file to search path.
   std::string usd_basedir = tinyusdz::io::GetBaseDir(filepath);
@@ -194,6 +200,7 @@ int main(int argc, char **argv) {
         std::ofstream mtl_ofs(mtl_filename);
         mtl_ofs << mtl_str;
       }
+      std::cout << "  Wrote " << obj_filename << "\n";
     }
   }
 
