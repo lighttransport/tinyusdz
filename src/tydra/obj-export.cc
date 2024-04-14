@@ -42,7 +42,7 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
   const RenderMesh &mesh = scene.meshes[size_t(mesh_id)];
 
   ss << "# exported from TinyUSDZ Tydra.\n";
-  ss << "mtllib " << mesh.prim_name + ".mtl";
+  ss << "mtllib " << mesh_id << mesh.prim_name + ".mtl";
   ss << "\n";
   
   for (size_t i = 0; i < mesh.points.size(); i++) {
@@ -50,37 +50,46 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
   } 
   ss << "# " << mesh.points.size() << " vertices\n";
 
-  bool is_single_indexed = true;
   bool has_texcoord = false;
+  bool is_facevarying_texcoord = false;
   bool has_normal = false;
+  bool is_facevarying_normal = false;
 
   // primary texcoord only
   if (mesh.texcoords.count(0)) {
     const VertexAttribute &texcoord = mesh.texcoords.at(0);  
+    if (texcoord.variability == VertexVariability::FaceVarying) {
+      is_facevarying_texcoord = true;
+    } else if (texcoord.variability == VertexVariability::Vertex) {
+      is_facevarying_texcoord = false;
+    } else {
+      PUSH_ERROR_AND_RETURN("Vertex variability must be either 'vertex' or 'facevarying' for texcoord0");
+    }
     if (texcoord.format == VertexAttributeFormat::Vec2) {
       const float *ptr = reinterpret_cast<const float *>(texcoord.buffer());
       for (size_t i = 0; i < texcoord.vertex_count(); i++) {
         ss << "vt " << ptr[2 * i + 0] << " " << ptr[2 * i + 1] << "\n";
       } 
 
-      is_single_indexed &= texcoord.is_vertex();
       has_texcoord = true;
     }
   }
 
   if (!mesh.normals.empty()) {
+    if (mesh.normals.variability == VertexVariability::FaceVarying) {
+      is_facevarying_normal = true;
+    } else if (mesh.normals.variability == VertexVariability::Vertex) {
+      is_facevarying_normal = false;
+    } else {
+      PUSH_ERROR_AND_RETURN("Vertex variability must be either 'vertex' or 'facevarying' for texcoord0");
+    }
     if (mesh.normals.format == VertexAttributeFormat::Vec3) {
       const float *ptr = reinterpret_cast<const float *>(mesh.normals.buffer());
       for (size_t i = 0; i < mesh.normals.vertex_count(); i++) {
         ss << "vn " << ptr[3 * i + 0] << " " << ptr[3 * i + 1] << " " << ptr[3 * i + 2] << "\n";
       } 
-      is_single_indexed &= mesh.normals.is_vertex();
       has_normal = true;
     }
-  }
-
-  if (!is_single_indexed) {
-    PUSH_ERROR_AND_RETURN("TODO: mesh with facevarying texcoord or facevarying normal");
   }
 
   // name -> (mat_id, face_ids)
@@ -124,6 +133,7 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
     offset += mesh.faceVertexCounts()[i];
   }
 
+  size_t faceIndexOffset = 0;
   // Assume empty group name is iterated first.
   for (const auto &group : face_groups) {
 
@@ -133,8 +143,7 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
 
     if (std::get<0>(group.second) > -1) {
       uint32_t mat_id = uint32_t(std::get<0>(group.second));
-      // prepend mat_id to name
-      ss << "usemtl " << mat_id << scene.materials[mat_id].name << "\n";
+      ss << "usemtl " << scene.materials[mat_id].name << "\n";
     } 
 
     const auto &face_ids = std::get<1>(group.second);
@@ -149,17 +158,21 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
         // obj's index starts with 1.
         uint32_t idx = mesh.faceVertexIndices()[offsets[face_ids[i]] + f] + 1;
 
+        uint32_t t_idx = is_facevarying_texcoord ? uint32_t(faceIndexOffset + f) : idx;
+        uint32_t n_idx = is_facevarying_normal ? uint32_t(faceIndexOffset + f) : idx;
+
         if (has_texcoord && has_normal) {
-          ss << idx << "/" << idx << "/" << idx;
+          ss << idx << "/" << t_idx << "/" << n_idx;
         } else if (has_texcoord) {
-          ss << idx << "/" << idx;
+          ss << idx << "/" << t_idx;
         } else if (has_normal) {
-          ss << idx << "//" << idx;
+          ss << idx << "//" << n_idx;
         } else {
           ss << idx;
         }
       }
 
+      faceIndexOffset += mesh.faceVertexIndices()[face_ids[i]];
       ss << "\n";
     }
 
