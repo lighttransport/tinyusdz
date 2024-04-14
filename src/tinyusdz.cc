@@ -69,7 +69,7 @@ namespace tinyusdz {
 
 // constexpr auto kTagUSDA = "[USDA]";
 // constexpr auto kTagUSDC = "[USDC]";
-constexpr auto kTagUSDZ = "[USDZ]";
+// constexpr auto kTagUSDZ = "[USDZ]";
 
 // For PUSH_ERROR_AND_RETURN
 #define PushError(s) \
@@ -489,6 +489,7 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
     }
   }
 
+#if 0 // TODO: Remove
   // Decode images
   for (size_t i = 0; i < assets.size(); i++) {
     const std::string &uri = assets[i].filename;
@@ -584,6 +585,7 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
       // TODO: Support other asserts(e.g. audio mp3)
     }
   }
+#endif
 
   return true;
 }
