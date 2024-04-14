@@ -18,6 +18,12 @@
 #endif
 
 #include <windows.h>  // include API for expanding a file path
+#include <io.h>
+
+#ifndef TINYUSDZ_MMAP_SUPPORTED
+#define TINYUSDZ_MMAP_SUPPORTED (1)
+#endif
+
 
 #ifdef _MSC_VER
 #undef NOMINMAX
@@ -41,14 +47,28 @@
 
 // non posix
 
+// TODO: Add mmmap or similar feature support to these system.
+
 #else
 
 // Assume Posix
 #include <wordexp.h>
 
+#include <sys/stat.h>
+#include <sys/mman.h>
+
+#ifndef TINYUSDZ_MMAP_SUPPORTED
+#define TINYUSDZ_MMAP_SUPPORTED (1)
+#endif
+
+
 #endif
 
 #endif  // _WIN32
+
+#ifndef TINYUSDZ_MMAP_SUPPORTED
+#define TINYUSDZ_MMAP_SUPPORTED (0)
+#endif
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -73,6 +93,70 @@ namespace io {
 #ifdef TINYUSDZ_ANDROID_LOAD_FROM_ASSETS
 AAssetManager *asset_manager = nullptr;
 #endif
+
+
+bool IsMMapSupported() {
+#if TINYUSDZ_MMAP_SUPPORTED
+  return true;
+#else
+  return false;
+#endif
+}
+
+bool MMapFile(const std::string &filepath, MMapFileHandle *handle, bool writable) {
+
+#if TINYUSDZ_MMAP_SUPPORTED
+#if defined(_WIN32)
+#if 0 // TODO
+  int fd = open(filepath.c_str(), writable ? O_RDWR : O_RDONLY);
+  HANDLE hFile = _get_ofhandle(fd);
+  HANDLE hMapping = CreateFileMapping(hFile, nullptr, PAGE_READWRITE, 0, 0, nullptr);
+      if (hMapping == nullptr) {
+        return false;
+      }
+      void *data = MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, 0);
+      if (!data) {
+        return false;
+      }
+      CloseHandle(hMapping);
+#else
+  return false;
+#endif
+#else // !WIN32
+  // assume posix
+  FILE *fp = fopen(filepath.c_str(), writable ? "rw" : "r");
+  int ret = std::fseek(fp, 0, SEEK_END);
+  if (ret != 0) {
+    fclose(fp);
+    return false;
+  } 
+
+  size_t size = size_t(std::ftell(fp));
+  std::fseek(fp, 0, SEEK_SET);
+
+  if (size == 0) {
+    return false;
+  }
+  
+  int fd = fileno(fp);
+  
+  int flags = MAP_SHARED; 
+  void *addr = mmap(nullptr, size, writable ? PROT_READ|PROT_WRITE : PROT_READ, flags, fd, 0);
+  if (addr == MAP_FAILED) {
+    return false;
+  }
+
+  handle->addr = reinterpret_cast<uint8_t *>(addr);
+  handle->size = size;
+  handle->fp = reinterpret_cast<void *>(fp);
+
+  return true;
+#endif // !WIN32
+#else // !TINYUSDZ_MMAP_SUPPORTED
+  return false;
+#endif
+}
+
 
 std::string ExpandFilePath(const std::string &_filepath, void *) {
   std::string filepath = _filepath;
