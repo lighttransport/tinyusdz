@@ -194,6 +194,7 @@ int main(int argc, char **argv) {
         std::ofstream mtl_ofs(mtl_filename);
         mtl_ofs << mtl_str;
       }
+      std::cout << "Wrote " << obj_filename << "\n";
     }
   }
 
