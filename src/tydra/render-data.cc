@@ -5796,9 +5796,6 @@ std::string DumpNode(const Node &node, uint32_t indent) {
 
   ss << pprint::Indent(indent + 1) << "prim_name " << quote(node.prim_name)
      << "\n";
-
-  ss << pprint::Indent(indent + 1) << "prim_name " << quote(node.prim_name)
-     << "\n";
   ss << pprint::Indent(indent + 1) << "abs_path " << quote(node.abs_path)
      << "\n";
   ss << pprint::Indent(indent + 1) << "display_name "
