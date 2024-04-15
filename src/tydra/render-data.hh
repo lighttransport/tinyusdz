@@ -164,10 +164,10 @@ std::string to_string(ComponentType ty);
 // glTF-like BufferData
 struct BufferData {
   ComponentType componentType{ComponentType::UInt8};
-  uint8_t count{1};           // up to 256
-  std::vector<uint8_t> data;  // binary data
+  //uint8_t count{1};           // # of components. up to 256
+  std::vector<uint8_t> data;  // binary data. size is dividable by sizeof(componentType)
 
-  // TODO: Stride
+  // TODO: Stride?
 };
 
 // Compound of ComponentType x component

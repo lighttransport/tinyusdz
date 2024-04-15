@@ -270,7 +270,7 @@ class AssetResolutionResolver {
   /// @return true upon success.
   ///
   bool open_asset(const std::string &resolvedPath, const std::string &assetPath,
-                  Asset *asset, std::string *warn, std::string *err);
+                  Asset *asset, std::string *warn, std::string *err) const;
 
   void set_userdata(void *userdata) { _userdata = userdata; }
   void *get_userdata() { return _userdata; }
