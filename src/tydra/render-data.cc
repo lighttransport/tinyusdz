@@ -963,8 +963,10 @@ static bool ToVertexVaryingAttribute(
 ///
 static bool TriangulateVertexAttribute(
     VertexAttribute &vattr, const std::vector<uint32_t> &faceVertexCounts,
+    const std::vector<size_t> &triangulatedToOrigFaceVertexIndexMap,
+    const std::vector<uint32_t> &triangulatedFaceCounts,
     const std::vector<uint32_t> &triangulatedFaceVertexIndices,
-    const std::vector<uint32_t> &triangulatedFaceCounts, std::string *err) {
+    std::string *err) {
 
   if (vattr.vertex_count() == 0) {
     return true;
@@ -984,11 +986,16 @@ static bool TriangulateVertexAttribute(
   }
 
   if (vattr.is_facevarying()) {
+    if (triangulatedToOrigFaceVertexIndexMap.size() != triangulatedFaceVertexIndices.size()) {
+      PUSH_ERROR_AND_RETURN("triangulatedToOrigFaceVertexIndexMap.size must be equal to triangulatedFaceVertexIndices.");
+    }
+
     size_t num_vs = vattr.vertex_count();
     std::vector<uint8_t> buf;
 
     for (uint32_t f = 0; f < triangulatedFaceVertexIndices.size(); f++) {
-      size_t src_fvIdx = triangulatedFaceVertexIndices[f];
+      // Array index to faceVertexIndices(before triangulation).
+      size_t src_fvIdx = triangulatedToOrigFaceVertexIndexMap[f];
 
       if (src_fvIdx >= num_vs) {
         PUSH_ERROR_AND_RETURN(
@@ -1004,7 +1011,7 @@ static bool TriangulateVertexAttribute(
 
     vattr.data = std::move(buf);
   } else if (vattr.is_vertex()) {
-    // nothing is required.
+    // # of vertices does not change, so nothing is required.
     return true;
   } else if (vattr.is_indexed()) {
     PUSH_ERROR_AND_RETURN("Indexed VertexAttribute is not supported.");
@@ -1364,7 +1371,7 @@ bool ToVertexAttribute(const GeomPrimvar &primvar, const std::string &name,
 #undef TO_TYPED_VALUE
 }
 
-#if 0  // TODO: Remove
+#if 0  // TODO: Remove. The following could be done using ToVertexAttribute + TriangulateVertexAttribute
 ///
 /// Triangulate Geom primvar.
 ///
@@ -1429,15 +1436,24 @@ nonstd::expected<VertexAttribute, std::string> TriangulateGeomPrimvar(
 /// Output: triangulated faceVertexCounts(all filled with 3), triangulated
 /// faceVertexIndices, triangulatedToOrigFaceVertexIndexMap (length =
 /// triangulated faceVertexIndices. triangulatedToOrigFaceVertexIndexMap[i]
-/// stores array index in original faceVertexIndices. For remapping primvar
+/// stores an array index to original faceVertexIndices. For remapping facevarying primvar
 /// attributes.)
-/// triangulatedFaceCounts: len = len(faceVertexCounts). Records the number of
+///   
+/// triangulatedFaceVertexCounts: len = len(faceVertexCounts). Records the number of
 /// triangle faces. 1 = triangle. 2 = quad, ... For remapping face indices(e.g.
 /// GeomSubset::indices)
 ///
 /// triangulated*** output is generated even when input mesh is fully composed
 /// from triangles(`faceVertexCounts` are all filled with 3) Return false when a
 /// polygon is degenerated. No overlap check at the moment
+///
+/// Example:
+///   - faceVertexCounts = [4]
+///   - faceVertexIndices = [0, 1, 3, 2]
+///
+///   - triangulatedFaceVertexCounts = [3, 3]
+///   - triangulatedFaceVertexIndices = [0, 1, 3, 0, 3, 2]
+///   - triangulatedToOrigFaceVertexIndexMap = [0, 1, 2, 0, 2, 3]
 ///
 /// T = value::float3 or value::double3
 /// BaseTy = float or double
@@ -2289,6 +2305,11 @@ bool ListUVNames(const RenderMaterial &material,
 
 }  // namespace
 
+///
+/// Convert vertex variability either 'vertex' or 'facevarying'
+///
+/// @param[in] to_vertex_varying true: Convert to 'vertrex' varying. false: Convert to 'facevarying'
+///
 bool RenderSceneConverter::ConvertVertexVariabilityImpl(
     VertexAttribute &vattr, const bool to_vertex_varying,
     const std::vector<uint32_t> &faceVertexCounts,
@@ -2374,34 +2395,6 @@ bool RenderSceneConverter::ConvertVertexVariabilityImpl(
           "FaceVarying.");
     }
 
-    std::vector<uint8_t> buf;
-    buf.resize(vattr.stride_bytes());
-
-    size_t nsrcs = vattr.vertex_count();
-
-    if (faceVertexIndices.empty()) {
-      // vattr.data = vattr.get_data();
-    } else {
-      auto vsrc = vattr.data;  // copy
-
-      vattr.data.clear();
-      // rearrange
-      for (size_t i = 0; i < faceVertexIndices.size(); i++) {
-        size_t vidx = faceVertexIndices[i];
-
-        if (vidx >= nsrcs) {
-          PUSH_ERROR_AND_RETURN(
-              "Internal error. Invalid index in faceVertexIndices.");
-        }
-
-        memcpy(buf.data(), vsrc.data() + vidx * vattr.stride_bytes(),
-               vattr.stride_bytes());
-
-        vattr.data.insert(vattr.data.end(), buf.begin(), buf.end());
-      }
-    }
-
-    vattr.variability = VertexVariability::FaceVarying;
   } else {
     PUSH_ERROR_AND_RETURN(
         fmt::format("Unsupported/unimplemented interpolation: {} ",
@@ -3293,42 +3286,54 @@ bool RenderSceneConverter::ConvertMesh(
     //
     {
       if (!TriangulateVertexAttribute(dst.normals, dst.usdFaceVertexCounts,
+                                      triangulatedToOrigFaceVertexIndexMap,
+                                      triangulatedFaceCounts,
                                       triangulatedFaceVertexIndices,
-                                      triangulatedFaceCounts, &_err)) {
+                                      &_err)) {
         PUSH_ERROR_AND_RETURN("Failed to triangulate normals attribute.");
       }
 
       if (!TriangulateVertexAttribute(dst.tangents, dst.usdFaceVertexCounts,
+                                      triangulatedToOrigFaceVertexIndexMap,
+                                      triangulatedFaceCounts,
                                       triangulatedFaceVertexIndices,
-                                      triangulatedFaceCounts, &_err)) {
+                                         &_err)) {
         PUSH_ERROR_AND_RETURN("Failed to triangulate tangents attribute.");
       }
 
       if (!TriangulateVertexAttribute(dst.binormals, dst.usdFaceVertexCounts,
+                                      triangulatedToOrigFaceVertexIndexMap,
+                                      triangulatedFaceCounts,
                                       triangulatedFaceVertexIndices,
-                                      triangulatedFaceCounts, &_err)) {
+                                       &_err)) {
         PUSH_ERROR_AND_RETURN("Failed to triangulate binormals attribute.");
       }
 
       for (auto &it : dst.texcoords) {
         if (!TriangulateVertexAttribute(it.second, dst.usdFaceVertexCounts,
+                                        triangulatedToOrigFaceVertexIndexMap,
+                                        triangulatedFaceCounts,
                                         triangulatedFaceVertexIndices,
-                                        triangulatedFaceCounts, &_err)) {
+                                         &_err)) {
           PUSH_ERROR_AND_RETURN(fmt::format(
               "Failed to triangulate texcoords[{}] attribute.", it.first));
         }
       }
 
       if (!TriangulateVertexAttribute(dst.vertex_colors, dst.usdFaceVertexCounts,
+                                        triangulatedToOrigFaceVertexIndexMap,
+                                      triangulatedFaceCounts,
                                       triangulatedFaceVertexIndices,
-                                      triangulatedFaceCounts, &_err)) {
+                                      &_err)) {
         PUSH_ERROR_AND_RETURN("Failed to triangulate vertex_colors attribute.");
       }
 
       if (!TriangulateVertexAttribute(dst.vertex_opacities,
                                       dst.usdFaceVertexCounts,
+                                        triangulatedToOrigFaceVertexIndexMap,
+                                      triangulatedFaceCounts,
                                       triangulatedFaceVertexIndices,
-                                      triangulatedFaceCounts, &_err)) {
+                                      &_err)) {
         PUSH_ERROR_AND_RETURN(
             "Failed to triangulate vertopacitiesex_colors attribute.");
       }
@@ -3639,6 +3644,7 @@ bool RenderSceneConverter::ConvertMesh(
   // 8. Compute tangents.
   //
   if (compute_tangents) {
+    DCOUT("Compute tangents.");
     std::vector<vec2> texcoords;
     std::vector<vec3> normals;
 
@@ -5576,7 +5582,6 @@ std::string DumpVertexAttributeDataImpl(const T *data, const size_t nbytes,
   s += pprint::Indent(indent);
   s += value::print_strided_array_snipped<T>(
       reinterpret_cast<const uint8_t *>(data), stride_bytes, nitems);
-  s += "\n";
   return s;
 }
 
