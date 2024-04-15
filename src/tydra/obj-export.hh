@@ -12,7 +12,12 @@ namespace tydra {
 
 ///
 /// Export RenderMesh/RenderMaterial to .obj.
-/// Requires RenderScene to export Material/Texture correctly.
+/// Requires RenderScene instance to export Material/Texture correctly.
+///
+/// NOTE: No consideration of up-Axis. 3D coordinate is exported as-as.
+/// Thus, if your USD scene is Z-up, 3D coordinate in exported .obj is Z-up.
+///
+/// (fortunately, you can import .obj by specifying Z-up axis in Blender)
 ///
 /// @param[in] scene RenderScene
 /// @param[in] mesh_id Mesh id in RenderScene
