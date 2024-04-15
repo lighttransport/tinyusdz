@@ -731,15 +731,15 @@ struct JointAndWeight {
       value::matrix4d::identity()};  // matrix4d primvars:skel:geomBindTransform
 
   //
-  // NOTE: both jointIndices and jointWeights' USD interpolation must be
-  // 'vertex'
+  // NOTE: variability of jointIndices and jointWeights are 'vertex'
+  // NOTE: Values in jointIndices and jointWeights will be reordered when `MeshConverterConfig::build_vertex_indices` is set true.
   //
   std::vector<int> jointIndices;  // int[] primvars:skel:jointIndices
 
   // NOTE: weight is converted from USD as-is. not normalized.
   std::vector<float> jointWeights;  // float[] primvars:skel:jointWeight;
 
-  int elementSize{1};
+  int elementSize{1}; // # of weights per vertex
 };
 
 struct MaterialPath {
@@ -1331,7 +1331,8 @@ struct RenderSceneConverterConfig {
 // TODO: Polish interface to support arbitrary vertex configuration.
 //
 struct DefaultPackedVertexData {
-  value::float3 position;
+  //value::float3 position;
+  uint32_t point_index;
   value::float3 normal;
   value::float2 uv0;
   value::float2 uv1;
@@ -1379,7 +1380,8 @@ struct DefaultPackedVertexDataEqual {
 
 template <class PackedVert>
 struct DefaultVertexInput {
-  std::vector<value::float3> positions;
+  //std::vector<value::float3> positions;
+  std::vector<uint32_t> point_indices;
   std::vector<value::float3> normals;
   std::vector<value::float2> uv0s;
   std::vector<value::float2> uv1s;
@@ -1388,13 +1390,13 @@ struct DefaultVertexInput {
   std::vector<value::float3> colors;
   std::vector<float> opacities;
 
-  size_t size() const { return positions.size(); }
+  size_t size() const { return point_indices.size(); }
 
   void get(size_t idx, PackedVert &output) const {
-    if (idx < positions.size()) {
-      output.position = positions[idx];
+    if (idx < point_indices.size()) {
+      output.point_index = point_indices[idx];
     } else {
-      output.position = {0.0f, 0.0f, 0.0f};
+      output.point_index = ~0u; // this case should not happen though
     }
     if (idx < normals.size()) {
       output.normal = normals[idx];
@@ -1436,7 +1438,8 @@ struct DefaultVertexInput {
 
 template <class PackedVert>
 struct DefaultVertexOutput {
-  std::vector<value::float3> positions;
+  //std::vector<value::float3> positions;
+  std::vector<uint32_t> point_indices;
   std::vector<value::float3> normals;
   std::vector<value::float2> uv0s;
   std::vector<value::float2> uv1s;
@@ -1445,10 +1448,10 @@ struct DefaultVertexOutput {
   std::vector<value::float3> colors;
   std::vector<float> opacities;
 
-  size_t size() const { return positions.size(); }
+  size_t size() const { return point_indices.size(); }
 
   void push_back(const PackedVert &v) {
-    positions.push_back(v.position);
+    point_indices.push_back(v.point_index);
     normals.push_back(v.normal);
     uv0s.push_back(v.uv0);
     uv1s.push_back(v.uv1);
@@ -1465,7 +1468,8 @@ struct DefaultVertexOutput {
 template <class VertexInput, class VertexOutput, class PackedVert,
           class PackedVertHasher, class PackedVertEqual>
 void BuildIndices(const VertexInput &input, VertexOutput &output,
-                  std::vector<uint32_t> &out_indices) {
+                  std::vector<uint32_t> &out_indices, std::vector<uint32_t> &out_point_indices)
+{
   // TODO: Use LSH(locally sensitive hashing) or BVH for kNN point query.
   std::unordered_map<PackedVert, uint32_t, PackedVertHasher, PackedVertEqual>
       vertexToIndexMap;
@@ -1489,9 +1493,12 @@ void BuildIndices(const VertexInput &input, VertexOutput &output,
     if (found) {
       out_indices.push_back(index);
     } else {
-      out_indices.push_back(uint32_t(output.size()));
+      uint32_t new_index = uint32_t(output.size());
+      out_indices.push_back(new_index);
       output.push_back(v);
+      vertexToIndexMap[v] = new_index;
     }
+    out_point_indices.push_back(v.point_index);
   }
 }
 
