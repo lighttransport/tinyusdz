@@ -4041,7 +4041,6 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
 
   UVTexture tex;
 
-  // First load texture file.
   if (!texture.file.authored()) {
     PUSH_ERROR_AND_RETURN(fmt::format("`asset:file` is not authored. Path = {}",
                                       tex_abs_path.prim_part()));
@@ -4067,9 +4066,9 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
 
     // Texel data is treated as byte array
     assetImageBuffer.componentType = ComponentType::UInt8;
-    assetImageBuffer.count = 1;
 
     if (env.scene_config.load_texture_assets) {
+      DCOUT("load texture : " << assetPath.GetAssetPath());
       std::string warn;
 
       TextureImageLoaderFunction tex_loader_fun =
@@ -4163,13 +4162,11 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
 
     // Linearlization and widen texel bit depth if required.
     if (env.material_config.linearize_color_space) {
+      DCOUT("linearlize colorspace.");
       size_t width = size_t(texImage.width);
       size_t height = size_t(texImage.height);
       size_t channels = size_t(texImage.channels);
-      if (channels == 4) {
-        PUSH_ERROR_AND_RETURN(
-            fmt::format("TODO: RGBA color channels are not supported yet."));
-      }
+
       if (channels > 4) {
         PUSH_ERROR_AND_RETURN(
             fmt::format("TODO: Multiband color channels(5 or more) are not "
@@ -4190,9 +4187,8 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
                   "Failed to convert sRGB u8 image to Linear u8 image.");
             }
 
-            imageBuffer.count = 1;
-
           } else {
+            DCOUT("u8 sRGB -> fp32 linear.");
             // u8 sRGB -> fp32 Linear
             imageBuffer.componentType = tydra::ComponentType::Float;
 
@@ -4205,10 +4201,10 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
                   "Failed to convert sRGB u8 image to Linear f32 image.");
             }
 
+            DCOUT("sz = " << buf.size());
             imageBuffer.data.resize(buf.size() * sizeof(float));
             memcpy(imageBuffer.data.data(), buf.data(),
                    sizeof(float) * buf.size());
-            imageBuffer.count = 1;
           }
 
           texImage.colorSpace = tydra::ColorSpace::Linear;
@@ -4232,7 +4228,6 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
             imageBuffer.data.resize(buf.size() * sizeof(float));
             memcpy(imageBuffer.data.data(), buf.data(),
                    sizeof(float) * buf.size());
-            imageBuffer.count = 1;
           }
 
           texImage.colorSpace = tydra::ColorSpace::Linear;
@@ -4285,6 +4280,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
 
     } else {
       // Same color space.
+      DCOUT("assetImageBuffer.sz = " << assetImageBuffer.data.size());
 
       if (assetImageBuffer.componentType == tydra::ComponentType::UInt8) {
         if (env.material_config.preserve_texel_bitdepth) {
@@ -4292,8 +4288,25 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
           imageBuffer = std::move(assetImageBuffer);
 
         } else {
-          // u8 to f32
+
+          size_t width = size_t(texImage.width);
+          size_t height = size_t(texImage.height);
+          size_t channels = size_t(texImage.channels);
+
+          // u8 to f32, but no sRGB -> linear conversion(this would break UsdPreviewSurface's spec though)
+          PUSH_WARN("8bit sRGB texture is converted to fp32 sRGB texture(without linearlization)");
+          std::vector<float> buf;
+          bool ret = u8_to_f32_image(assetImageBuffer.data, width, height,
+                                     channels, &buf);
+          if (!ret) {
+            PUSH_ERROR_AND_RETURN("Failed to convert u8 image to f32 image.");
+          }
           imageBuffer.componentType = tydra::ComponentType::Float;
+
+          imageBuffer.data.resize(buf.size() * sizeof(float));
+          memcpy(imageBuffer.data.data(), buf.data(),
+                 sizeof(float) * buf.size());
+      
         }
 
         texImage.colorSpace = texImage.usdColorSpace;
@@ -5037,12 +5050,18 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
       rnode.local_matrix = node.get_local_matrix();
       rnode.nodeType = NodeType::Mesh;
       rnode.has_resetXform = node.has_resetXformStack();
-      rnode.id = 0;  // TODO: index to meshes
+
+      if (meshMap.count(primPath)) {
+        rnode.id = int32_t(meshMap.at(primPath));
+      } else {
+        rnode.id = -1;
+      }
     } else if (prim->type_id() == value::TYPE_ID_GEOM_CAMERA) {
       rnode.local_matrix = node.get_local_matrix();
       rnode.nodeType = NodeType::Mesh;
       rnode.has_resetXform = node.has_resetXformStack();
-      rnode.id = 0;  // TODO: index to cameras
+      rnode.nodeType = NodeType::Camera;
+      rnode.id = -1;  // TODO: Assign index to cameras
     } else if (prim->prim_id() == value::TYPE_ID_GEOM_XFORM) {
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
@@ -5063,10 +5082,16 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
       rnode.has_resetXform = node.has_resetXformStack();
-      // TODO
-      // rnode.nodeType = NodeType::Light;
-      rnode.id = 0;  // TODO: index to lights
-      // TODO
+      if (prim->prim_id() == value::TYPE_ID_LUX_DISTANT) {
+        rnode.nodeType = NodeType::DirectionalLight;
+      } else if (prim->prim_id() == value::TYPE_ID_LUX_SPHERE) {
+        // treat sphereLight as pointLight
+        rnode.nodeType = NodeType::PointLight;
+      } else {
+        // TODO
+        rnode.nodeType = NodeType::Xform;
+      }
+      rnode.id = -1;  // TODO: index to lights
     } else {
       // ignore other node types.
     }
@@ -5224,8 +5249,19 @@ bool DefaultTextureImageLoaderFunction(
     return false;
   }
 
+  Asset asset;
+  bool ret = assetResolver.open_asset(resolvedPath, assetPath.GetAssetPath(), &asset, warn, err);
+  if (!ret) {
+    if (err) {
+      (*err) += fmt::format("Failed to open asset: {}", resolvedPath);
+    } 
+    return false;
+  }
+
   DCOUT("Resolved asset path = " << resolvedPath);
-  auto result = tinyusdz::image::LoadImageFromFile(resolvedPath);
+
+  // TODO: user-defined image loader handler.
+  auto result = tinyusdz::image::LoadImageFromMemory(asset.data(), asset.size(), resolvedPath);
   if (!result) {
     if (err) {
       (*err) += "Failed to load image file: " + result.error() + "\n";
@@ -5730,10 +5766,36 @@ std::string DumpVertexAttribute(const VertexAttribute &vattr, uint32_t indent) {
   return ss.str();
 }
 
+inline std::string to_string(NodeType ntype) {
+  if (ntype == NodeType::Xform) {
+    return "xform";
+  } else if (ntype == NodeType::Mesh) {
+    return "mesh";
+  } else if (ntype == NodeType::Camera) {
+    return "camera";
+  } else if (ntype == NodeType::PointLight) {
+    return "pointLight";
+  } else if (ntype == NodeType::DirectionalLight) {
+    return "directionalLight";
+  } else if (ntype == NodeType::Skeleton) {
+    return "skeleton";
+  }
+  return "???";
+}
+
 std::string DumpNode(const Node &node, uint32_t indent) {
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << "node {\n";
+
+  ss << pprint::Indent(indent + 1) << "type " << quote(to_string(node.nodeType))
+     << "\n";
+
+  ss << pprint::Indent(indent + 1) << "id " << node.id
+     << "\n";
+
+  ss << pprint::Indent(indent + 1) << "prim_name " << quote(node.prim_name)
+     << "\n";
 
   ss << pprint::Indent(indent + 1) << "prim_name " << quote(node.prim_name)
      << "\n";
@@ -6053,8 +6115,6 @@ std::string DumpBuffer(const BufferData &buffer, uint32_t indent) {
 
   ss << "Buffer {\n";
   ss << pprint::Indent(indent + 1) << "bytes " << buffer.data.size() << "\n";
-  ss << pprint::Indent(indent + 1) << "count " << std::to_string(buffer.count)
-     << "\n";
   ss << pprint::Indent(indent + 1) << "componentType "
      << to_string(buffer.componentType) << "\n";
 
