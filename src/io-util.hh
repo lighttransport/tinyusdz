@@ -134,7 +134,6 @@ struct MMapFileHandle
   bool writable{false};
   uint8_t *addr{nullptr};
   size_t size{0};
-  void *fp{nullptr};
 };
 
 ///

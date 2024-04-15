@@ -230,23 +230,24 @@ struct USDZAsset
 /// Read USDZ(zip) asset info from a file.
 ///
 /// Whole file content(USDZ) is copied into USDZAsset::data.
-/// If you want to save memory to load USDZ with assets, first read USDZ conent into memory(or mmap it), then use `ReadUSDZAssetInfoFromMemory with `assert_on_memory` true.
+/// If you want to save memory to load USDZ with assets, first read USDZ conent into memory(or Use io-util.hh::MMapFile() to mmap file), then use `ReadUSDZAssetInfoFromMemory with `assert_on_memory` true.
 ///
 /// @param[in] filename USDZ filename(UTF-8)
 /// @param[out] asset USDZ asset info.
 /// @param[out] warn Warning message.
 /// @param[out] err Error message(filled when the function returns false)
+/// @param[in] max_file_size_in_mb Maximum file size
 ///
 /// @return true upon success
 ///
 bool ReadUSDZAssetInfoFromFile(const std::string &filename, USDZAsset *asset,
-  std::string *warn, std::string *err);
+  std::string *warn, std::string *err, size_t max_file_size_in_mb = 16384ull);
 
 ///
 /// Read USDZ(zip) asset info from memory.
 ///
 /// @param[in] addr Memory address
-/// @param[in] asset_on_memory When true, do not copy USDZ data to USDZAsset. Instead just retain `addr` and `length` in USDZAsset. Memory address `addr` must be retained during asset data in USDZAsset is accessed. When false, memory data is copied into USDZAsset.
+/// @param[in] asset_on_memory When true, do not copy USDZ data(`length` bytes from `addr` address) to USDZAsset. Instead just retain `addr` and `length` in USDZAsset. Memory address `addr` must be retained during any asset data in USDZAsset is accessed. When false, USDZ data is copied into USDZAsset.
 /// 
 /// @param[out] asset USDZ asset info.
 /// @param[out] warn Warning message.
@@ -272,6 +273,7 @@ bool ReadUSDZAssetInfoFromMemory(const uint8_t *addr, const size_t length, const
 bool SetupUSDZAssetResolution(
   AssetResolutionResolver &resolver,
   const USDZAsset *pusdzAsset);
+
 ///
 /// Default AssetResolution handler for USDZ(read asset from USDZ container)
 ///
