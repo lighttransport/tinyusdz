@@ -1459,43 +1459,67 @@ std::string print_material_binding(const MaterialBinding *mb, const uint32_t ind
   if (mb->materialBinding) {
     ss << print_relationship(mb->materialBinding.value(),
                              mb->materialBinding.value().get_listedit_qual(),
-                             /* custom */ false, "material:binding", indent);
-  }
-
-  if (mb->materialBindingCollection) {
-    ss << print_relationship(
-        mb->materialBindingCollection.value(),
-        mb->materialBindingCollection.value().get_listedit_qual(),
-        /* custom */ false, "material:binding:collection", indent);
+                             /* custom */ false, kMaterialBinding, indent);
   }
 
   if (mb->materialBindingPreview) {
     ss << print_relationship(
         mb->materialBindingPreview.value(),
         mb->materialBindingPreview.value().get_listedit_qual(),
-        /* custom */ false, "material:binding:preview", indent);
+        /* custom */ false, kMaterialBindingPreview, indent);
   }
 
-  for (const auto &collection : mb->materialBindingCollectionMap()) {
+  if (mb->materialBindingFull) {
+    ss << print_relationship(
+        mb->materialBindingFull.value(),
+        mb->materialBindingFull.value().get_listedit_qual(),
+        /* custom */ false, kMaterialBindingFull, indent);
+  }
 
-    std::string collection_name;
-    if (!collection.first.empty()) {
-      collection_name = std::string(":") + collection.first;
+  // NOTE: matb does not include "material:binding", "material:binding:preview" and "material:binding:full"
+  for (const auto &matb : mb->materialBindingMap()) {
+    if (matb.first.empty()) {
+      // this should not happen
+      continue;
     }
 
-    for (const auto &item : collection.second) { 
-      // item.first = purpose
+    std::string matb_name = kMaterialBinding + std::string(":") + matb.first;
+
+    ss << print_relationship(
+        matb.second,
+        matb.second.get_listedit_qual(),
+        /* custom */ false, matb_name, indent);
+    
+  }
+
+  // TODO: sort by collection name?
+  for (const auto &collection : mb->materialBindingCollectionMap()) {
+
+    std::string purpose_name;
+    if (!collection.first.empty()) {
+      purpose_name = std::string(":") + collection.first;
+    }
+
+    for (size_t i = 0; i < collection.second.size(); i++) {
+      std::string coll_name = collection.second.keys()[i];
+ 
+      const Relationship *rel{nullptr};
+      if (!collection.second.at(i, &rel)) {
+        // this should not happen though.
+        continue;
+      }
+
       std::string rel_name;
 
-      if (item.first.empty()) { // all-purpose
-        rel_name = kMaterialBindingCollection + collection_name;
+      if (coll_name.empty()) { 
+        rel_name = kMaterialBindingCollection + purpose_name;
       } else {
-        rel_name = kMaterialBindingCollection + collection_name + std::string(":") + item.first;
+        rel_name = kMaterialBindingCollection + std::string(":") + coll_name + purpose_name;
       }
 
       ss << print_relationship(
-          item.second,
-          item.second.get_listedit_qual(),
+          *rel,
+          rel->get_listedit_qual(),
           /* custom */ false, rel_name, indent);
     }
   }
@@ -1647,6 +1671,8 @@ static bool emit_gprim_predefined(std::stringstream &ss, const GPrim *gprim,
 }
 #endif
 
+// TODO: Move to value-pprint.cc
+
 std::string to_string(bool v) {
   if (v) {
     return "true";
@@ -1782,6 +1808,42 @@ std::string to_string(const value::texcoord3f &v) {
 }
 
 std::string to_string(const value::texcoord3d &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const value::matrix2f &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const value::matrix3f &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const value::matrix4f &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const value::matrix2d &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const value::matrix3d &v) {
+  std::stringstream ss;
+  ss << v;
+  return ss.str();
+}
+
+std::string to_string(const value::matrix4d &v) {
   std::stringstream ss;
   ss << v;
   return ss.str();

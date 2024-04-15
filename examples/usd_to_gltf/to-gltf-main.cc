@@ -1,26 +1,27 @@
 // SPDX-License-Identifier: Apache 2.0
-// Copyright 2022-Present Light Transport Entertainment Inc.
+// Copyright 2024-Present Light Transport Entertainment Inc.
 
 //
-// Command-line tool to convert USD Stage to RenderScene(glTF-like data
+// Command-line check tool to convert USD Stage to RenderScene(glTF-like data
 // structure)
 //
 #include <algorithm>
 #include <iostream>
 #include <sstream>
-#include <fstream>
 
-#include "io-util.hh"
-#include "pprinter.hh"
-#include "prim-pprint.hh"
+// Use json.hpp located at <tinyusdz>/src/external
+#define TINYGLTF_NO_INCLUDE_JSON
+#include "external/jsonhpp/nlohmann/json.hpp"
+
+#define TINYGLTF_IMPLEMENTATION
+#define STB_IMAGE_IMPLEMENTATION // this will include <tinyusdz>/src/external/stb_image.h
+#include "external/tiny_gltf.h"
+
 #include "tinyusdz.hh"
+#include "io-util.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
 #include "tydra/shader-network.hh"
-#include "tydra/obj-export.hh"
-#include "usdShade.hh"
-#include "value-pprint.hh"
-#include "value-types.hh"
 
 static std::string GetFileExtension(const std::string &filename) {
   if (filename.find_last_of('.') != std::string::npos)
@@ -48,28 +49,54 @@ using PrimvarReader_float2Map =
     std::map<std::string, std::pair<const tinyusdz::Shader *,
                                     const tinyusdz::UsdPrimvarReader_float2 *>>;
 
+tinygltf::Material to_gltf_material(const tinyusdz::tydra::RenderMaterial &mat) {
+  tinygltf::Material out;
+
+  out.pbrMetallicRoughness.roughnessFactor = mat.surfaceShader.roughness.value;
+
+  return out;
+}
+
+bool to_gltf(const tinyusdz::tydra::RenderScene &rscene, const std::string &gltf_filename)
+{
+  tinygltf::Model model;
+  tinygltf::Scene scene;
+  std::vector<tinygltf::Mesh> meshes;
+  tinygltf::Primitive primitive;
+
+  tinygltf::Asset asset;
+  asset.version = "2.0";
+  asset.generator = "usd_to_gltf example in TinyUSDZ";
+
+  model.scenes.push_back(scene);
+
+  // model.bufferViews
+  // model.buffers
+  // model.nodes
+  //model.meshes = meshes;
+  model.asset = asset;
+
+  // model.materials
+
+  tinygltf::TinyGLTF ctx;
+  bool ret = ctx.WriteGltfSceneToFile(&model,
+    gltf_filename,
+    true, // embedImages
+  true, // embedBuffers
+  true, // pretty print
+  false); // write binary glTF
+
+  return ret;
+}
+
 int main(int argc, char **argv) {
   if (argc < 2) {
-    std::cout << "Usage: " << argv[0] << " input.usd [OPTIONS].\n";
-    std::cout << "\n\nOptions\n\n";
-    std::cout << "  -t: Triangulate mesh\n";
-    std::cout << "  --dumpobj: Dump mesh as wavefront .obj(for visual debugging)\n";
+    std::cout << "Need USD file.\n"
+              << std::endl;
     return EXIT_FAILURE;
   }
 
-  bool triangulate = true;
-  bool export_obj = false;
-  std::string filepath;
-  for (int i = 1; i < argc; i++) {
-    if (strcmp(argv[i], "-t") == 0) {
-      triangulate = true;
-    } else if (strcmp(argv[i], "--dumpobj") == 0) {
-      export_obj = true;
-    } else {
-      filepath = argv[i];
-    }
-  }
-
+  std::string filepath = argv[1];
   std::string warn;
   std::string err;
 
@@ -148,9 +175,6 @@ int main(int argc, char **argv) {
   tinyusdz::tydra::RenderSceneConverter converter;
   tinyusdz::tydra::RenderSceneConverterEnv env(stage);
 
-  std::cout << "Triangulate : " << (triangulate ? "true" : "false") << "\n";
-  env.mesh_config.triangulate = triangulate;
-
   // Add base directory of .usd file to search path.
   std::string usd_basedir = tinyusdz::io::GetBaseDir(filepath);
   std::cout << "Add seach path: " << usd_basedir << "\n";
@@ -159,6 +183,7 @@ int main(int argc, char **argv) {
   // TODO: Set user-defined AssetResolutionResolver
   // AssetResolutionResolver arr;
   // converter.set_asset_resoluition_resolver(arr);
+
 
   double timecode = tinyusdz::value::TimeCode::Default();
   bool ret = converter.ConvertToRenderScene(env, &render_scene);
@@ -173,29 +198,10 @@ int main(int argc, char **argv) {
 
   std::cout << DumpRenderScene(render_scene) << "\n";
 
-  if (export_obj) {
-    std::cout << "Dump RenderMesh as wavefront .obj\n";
-    for (size_t i = 0; i < render_scene.meshes.size(); i++) {
-      std::string obj_str;
-      std::string mtl_str;
-      if (!tinyusdz::tydra::export_to_obj(render_scene, i, obj_str, mtl_str, &warn, &err)) {
-        std::cerr << "obj export error: " << err << "\n";
-        exit(-1);
-      }
-
-      std::string obj_filename = std::to_string(i) + render_scene.meshes[i].prim_name + ".obj";
-      std::string mtl_filename = std::to_string(i) + render_scene.meshes[i].prim_name + ".mtl";
-      {
-        std::ofstream obj_ofs(obj_filename);
-        obj_ofs << obj_str;
-      }
-
-      {
-        std::ofstream mtl_ofs(mtl_filename);
-        mtl_ofs << mtl_str;
-      }
-    }
-  }
+  if (!to_gltf(render_scene, "output.gltf")) {
+    std::cerr << "Failed to save scene as glTF\n";
+    return EXIT_FAILURE;
+  } 
 
   return EXIT_SUCCESS;
 }
