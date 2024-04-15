@@ -119,7 +119,7 @@ std::string AssetResolutionResolver::resolve(
 }
 
 bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const std::string &assetPath,
-                  Asset *asset_out, std::string *warn, std::string *err) {
+                  Asset *asset_out, std::string *warn, std::string *err) const {
 
   if (!asset_out) {
     if (err) {
@@ -127,6 +127,8 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
     }
     return false;
   }
+
+  DCOUT("Opening asset: " << resolvedPath);
 
   (void)assetPath;
   (void)warn;
@@ -148,6 +150,8 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
         }
         return false;
       }
+    
+      DCOUT("asset_size: " << sz);
 
       tinyusdz::Asset asset;
       asset.resize(size_t(sz));
@@ -177,6 +181,7 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
     }
   }
 
+  // Default: read from a file.
   std::vector<uint8_t> data;
   size_t max_bytes = 1024 * 1024 * _max_asset_bytes_in_mb;
   if (!io::ReadWholeFile(&data, err, resolvedPath, max_bytes,

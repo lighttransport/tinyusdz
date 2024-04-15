@@ -331,6 +331,7 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
 
     if (assets) {
       USDZAssetInfo info;
+      DCOUT("USDZasset[" << assets->size() << "] " << varname << ", byte_begin " << offset << ", length " << uncompr_bytes << "\n");
       info.filename = varname;
       info.byte_begin = offset;
       info.byte_end = offset + uncompr_bytes;
@@ -1224,6 +1225,8 @@ bool LoadLayerFromAsset(AssetResolutionResolver &resolver, const std::string &re
 
 int USDZResolveAsset(const char *asset_name, const std::vector<std::string> &search_paths, std::string *resolved_asset_name, std::string *err, void *userdata) {
 
+  DCOUT("Resolve asset: " << asset_name);
+
   if (!userdata) {
     if (err) {
       (*err) += "`userdata` must be non-null.\n";
@@ -1245,13 +1248,21 @@ int USDZResolveAsset(const char *asset_name, const std::vector<std::string> &sea
     return -2;
   }
 
+  std::string asset_path = asset_name;
+
+  // Remove relative path prefix './' 
+  if (tinyusdz::startsWith(asset_path, "./")) {
+    asset_path = tinyusdz::removePrefix(asset_path, "./");
+  }
+
   // Not used
   (void)search_paths;
 
   const USDZAsset *passet = reinterpret_cast<const USDZAsset *>(userdata);
 
-  if (passet->asset_map.count(asset_name)) {
-    (*resolved_asset_name) = asset_name;
+  if (passet->asset_map.count(asset_path)) {
+    DCOUT("Resolved asset: " << asset_name << " as " << asset_path);
+    (*resolved_asset_name) = asset_path;
     return 0;
   }
 
@@ -1407,7 +1418,6 @@ bool SetupUSDZAssetResolution(
   resolver.register_asset_resolution_handler("exr", handler);
   resolver.register_asset_resolution_handler("EXR", handler);
    
-
   return true;
 }
 
