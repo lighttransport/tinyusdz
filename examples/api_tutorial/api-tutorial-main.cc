@@ -1,23 +1,23 @@
-// All-in-one TinyUSDZ core
+#include <iostream>
+
+// All-in-one TinyUSDZ core, but pprint feature is not included to speed up compilation.
 #include "tinyusdz.hh"
 
 // Import to_string() and operator<< features
-#include <iostream>
-
 #include "pprinter.hh"
 #include "prim-pprint.hh"
 #include "value-pprint.hh"
 
 // Tydra is a collection of APIs to access/convert USD Prim data
-// (e.g. Can get Attribute by name)
-// See <tinyusdz>/examples/tydra_api for more Tydra API examples.
+// (e.g. Get Prim's attribute by name)
+// See <tinyusdz>/examples/tydra_api for more info about Tydra API.
 #include "tydra/scene-access.hh"
 
 //
 // create a Scene
 //
 void CreateScene(tinyusdz::Stage *stage) {
-  // TinyUSDZ API does not use mutex, smart pointers(e.g. shared_ptr) and C++
+  // TinyUSDZ API does not use mutex, smart pointers(e.g. unique_ptr/shared_ptr) and C++
   // exception. Also threading is opional in TinyUSDZ and currently
   // multi-threading is not used. `value::token` implementation is simply copy
   // string for each instances(like C++11 ABI std::string). (on the contrary,

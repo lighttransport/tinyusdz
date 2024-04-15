@@ -1084,7 +1084,7 @@ struct AttrMetas {
   //
   bool has_colorSpace() const;
   value::token get_colorSpace() const; // return empty when not authored or 'colorSpace' metadataum is not token type.
-  
+
   bool authored() const {
     return (interpolation || elementSize || hidden || customData || weight ||
             connectability || outputName || renderType || sdrMetadata || displayName || bindMaterialAs || meta.size() || stringData.size());
@@ -1096,6 +1096,8 @@ using AttrMeta = AttrMetas;
 
 using PropMetas = AttrMetas;
 
+// TODO: Move to value-types.hh?
+//
 // Typed TimeSamples value
 //
 // double radius.timeSamples = { 0: 1.0, 1: None, 2: 3.0 }
@@ -1128,11 +1130,64 @@ struct TypedTimeSamples {
   }
 
   // Get value at specified time.
-  // Return linearly interpolated value when TimeSampleInterpolationType is
+  // For non-interpolatable types(includes enums and unknown types)
+  //
+  // Return `Held` value even when TimeSampleInterpolationType is
   // Linear. Returns nullopt when specified time is out-of-range.
+  template<typename V = T, std::enable_if_t<!value::LerpTraits<V>::supported(), std::nullptr_t> = nullptr>
   bool get(T *dst, double t = value::TimeCode::Default(),
            value::TimeSampleInterpolationType interp =
-               value::TimeSampleInterpolationType::Held) const {
+               value::TimeSampleInterpolationType::Linear) const {
+
+    (void)interp;
+
+    if (!dst) {
+      return false;
+    }
+
+    if (empty()) {
+      return false;
+    }
+
+    if (_dirty) {
+      update();
+    }
+
+    if (value::TimeCode(t).is_default()) {
+      // FIXME: Use the first item for now.
+      // TODO: Handle bloked
+      (*dst) = _samples[0].value;
+      return true;
+    } else {
+
+      if (_samples.size() == 1) {
+        (*dst) = _samples[0].value;
+        return true;
+      }
+
+      auto it = std::lower_bound(
+        _samples.begin(), _samples.end(), t,
+        [](const Sample &a, double tval) { return a.t < tval; });
+
+      if (it == _samples.end()) {
+        // ???
+        return false;
+      }
+
+      (*dst) = it->value;
+      return true;
+    }
+
+  }
+
+  // TODO: Move to .cc to save compile time.
+  // Get value at specified time.
+  // Return linearly interpolated value when TimeSampleInterpolationType is
+  // Linear. Returns nullopt when specified time is out-of-range.
+  template<typename V = T, std::enable_if_t<value::LerpTraits<V>::supported(), std::nullptr_t> = nullptr>
+  bool get(T *dst, double t = value::TimeCode::Default(),
+           value::TimeSampleInterpolationType interp =
+               value::TimeSampleInterpolationType::Linear) const {
     if (!dst) {
       return false;
     }
@@ -1260,6 +1315,39 @@ struct TypedTimeSamples {
     return _samples;
   }
 
+  // From typeless timesamples.
+  bool from_timesamples(const value::TimeSamples &ts) {
+    std::vector<Sample> buf;
+    for (size_t i = 0; i < ts.size(); i++) {
+      if (ts.get_samples()[i].value.type_id() != value::TypeTraits<T>::type_id()) {
+        return false;
+      }
+      Sample s;
+      s.t = ts.get_samples()[i].t;
+      s.blocked = ts.get_samples()[i].blocked;
+      if (const auto pv = ts.get_samples()[i].value.as<T>()) {
+        s.value = (*pv);
+      } else {
+        return false;
+      }
+
+      buf.push_back(s);
+    }
+
+
+    _samples = std::move(buf);
+    _dirty = true;
+
+    return true;
+  }
+
+  size_t size() const {
+    if (_dirty) {
+      update();
+    }
+    return _samples.size();
+  }
+
  private:
   // Need to be sorted when looking up the value.
   mutable std::vector<Sample> _samples;
@@ -1267,7 +1355,7 @@ struct TypedTimeSamples {
 };
 
 //
-// Scalar or TimeSamples.
+// Scalar or TimeSamples
 //
 template <typename T>
 struct Animatable {
@@ -1293,7 +1381,7 @@ struct Animatable {
   ///
   bool get(double t, T *v,
            const value::TimeSampleInterpolationType tinerp =
-               value::TimeSampleInterpolationType::Held) const {
+               value::TimeSampleInterpolationType::Linear) const {
     if (!v) {
       return false;
     }
@@ -1419,6 +1507,7 @@ class TypedAttribute {
   void set_connections(const std::vector<Path> &paths) { _paths = paths; }
 
   const std::vector<Path> &get_connections() const { return _paths; }
+  const std::vector<Path> &connections() const { return _paths; }
 
   const nonstd::optional<Path> get_connection() const {
     if (_paths.size()) {
@@ -1605,6 +1694,7 @@ class TypedAttributeWithFallback {
   void set_connections(const std::vector<Path> &paths) { _paths = paths; }
 
   const std::vector<Path> &get_connections() const { return _paths; }
+  const std::vector<Path> &connections() const { return _paths; }
 
   const nonstd::optional<Path> get_connection() const {
     if (_paths.size()) {
@@ -2114,8 +2204,9 @@ enum class TimeSampleInterpolation {
 // Attribute is a struct to hold generic attribute of a property(e.g. primvar)
 // of Prim
 // TODO: Refactor
-struct Attribute {
+class Attribute {
 
+ public:
   Attribute() = default;
 
   ///
@@ -2253,18 +2344,18 @@ struct Attribute {
 
   template <typename T>
   bool get_value(const double t, T *dst,
-                 value::TimeSampleInterpolationType interp =
-                     value::TimeSampleInterpolationType::Held) const {
+                 value::TimeSampleInterpolationType tinterp =
+                     value::TimeSampleInterpolationType::Linear) const {
     if (!dst) {
       return false;
     }
 
     if (is_timesamples()) {
-      return _var.get_ts_value(dst, t, interp);
+      return _var.get_interpolated_value(t, tinterp, dst);
     } else {
       nonstd::optional<T> v = _var.get_value<T>();
       if (v) {
-        (*dst) = v;
+        (*dst) = v.value();
         return true;
       }
 
@@ -2634,6 +2725,7 @@ struct XformOp {
 };
 
 // forward decl
+class MaterialBinding;
 struct Model;
 class Prim;
 class PrimSpec;
@@ -2748,9 +2840,244 @@ class Collection
   ordered_dict<CollectionInstance> _instances;
 };
 
+// for bindMaterialAs
+constexpr auto kWeaderThanDescendants = "weakerThanDescendants";
+constexpr auto kStrongerThanDescendants = "strongerThanDescendants";
+
+enum class MaterialBindingStrength
+{
+  WeakerThanDescendants, // default
+  StrongerThanDescendants
+};
+
+// TODO: Move to pprinter.hh?
+std::string to_string(const MaterialBindingStrength strength);
+
+class MaterialBinding {
+ public:
+
+  static value::token kAllPurpose() {
+    return value::token("");
+  }
+
+  //
+  // NOTE on material binding.
+  // https://openusd.org/release/wp_usdshade.html
+  //
+  //  - "all purpose", direct binding, material:binding. single relationship target only
+  //  - a purpose-restricted, direct, fallback binding, e.g. material:binding:preview
+  //  - an all-purpose, collection-based binding, e.g. material:binding:collection:metalBits
+  //  - a purpose-restricted, collection-based binding, e.g. material:binding:collection:full:metalBits
+  //
+  // In TinyUSDZ, treat empty purpose token as "all purpose"
+  //
+
+  // Some frequently used materialBindings
+  nonstd::optional<Relationship> materialBinding; // material:binding
+  nonstd::optional<Relationship> materialBindingPreview; // material:binding:preview
+  nonstd::optional<Relationship> materialBindingFull; // material:binding:full
+
+  //nonstd::optional<Relationship> materialBindingCollection; // material:binding:collection  Deprecated. use materialBindingCollectionMap[""][""] instead.
+
+  value::token get_materialBindingStrength(const value::token &purpose);
+  value::token get_materialBindingStrengthCollection(const value::token &collection_name, const value::token &purpose);
+
+  bool has_materialBinding() const {
+    return materialBinding.has_value();
+  }
+
+  bool has_materialBindingPreview() const {
+    return materialBindingPreview.has_value();
+  }
+
+  bool has_materialBindingFull() const {
+    return materialBindingFull.has_value();
+  }
+
+  bool has_materialBinding(const value::token &mat_purpose) const {
+    if (mat_purpose.str() == kAllPurpose().str()) {
+      return has_materialBinding();
+    } else if (mat_purpose.str() == "full") {
+      return has_materialBindingFull();
+    } else if (mat_purpose.str() == "preview") {
+      return has_materialBindingPreview();
+    } else {
+      return _materialBindingMap.count(mat_purpose.str());
+    }
+  }
+
+  void clear_materialBinding() {
+    materialBinding.reset();
+  }
+
+  void clear_materialBindingPreview() {
+    materialBindingPreview.reset();
+  }
+
+  void clear_materialBindingFull() {
+    materialBindingFull.reset();
+  }
+
+  void set_materialBinding(const Relationship &rel) {
+    materialBinding = rel;
+  }
+
+  void set_materialBinding(const Relationship &rel, const MaterialBindingStrength strength) {
+    value::token strength_tok(to_string(strength));
+    materialBinding = rel;
+    materialBinding.value().metas().bindMaterialAs = strength_tok;
+  }
+
+  void set_materialBindingPreview(const Relationship &rel) {
+    materialBindingPreview = rel;
+  }
+
+  void set_materialBindingPreview(const Relationship &rel, const MaterialBindingStrength strength) {
+    value::token strength_tok(to_string(strength));
+    materialBindingPreview = rel;
+    materialBindingPreview.value().metas().bindMaterialAs = strength_tok;
+  }
+
+  void set_materialBindingFull(const Relationship &rel) {
+    materialBindingFull = rel;
+  }
+
+  void set_materialBindingFull(const Relationship &rel, const MaterialBindingStrength strength) {
+    value::token strength_tok(to_string(strength));
+    materialBindingFull = rel;
+    materialBindingFull.value().metas().bindMaterialAs = strength_tok;
+  }
+
+  void set_materialBinding(const Relationship &rel, const value::token &mat_purpose) {
+
+    if (mat_purpose.str().empty()) {
+      return set_materialBinding(rel);
+    } else if (mat_purpose.str() == "full") {
+      return set_materialBindingFull(rel);
+    } else if (mat_purpose.str() == "preview") {
+      return set_materialBindingFull(rel);
+    } else {
+      _materialBindingMap[mat_purpose.str()] = rel;
+    }
+  }
+
+  void set_materialBinding(const Relationship &rel, const value::token &mat_purpose, const MaterialBindingStrength strength) {
+    value::token strength_tok(to_string(strength));
+
+    if (mat_purpose.str().empty()) {
+      return set_materialBinding(rel, strength);
+    } else if (mat_purpose.str() == "full") {
+      return set_materialBindingFull(rel, strength);
+    } else if (mat_purpose.str() == "preview") {
+      return set_materialBindingFull(rel, strength);
+    } else {
+      _materialBindingMap[mat_purpose.str()] = rel;
+      _materialBindingMap[mat_purpose.str()].metas().bindMaterialAs = strength_tok;
+    }
+  }
+
+  bool has_materialBindingCollection(const std::string &tok) {
+
+    if (!_materialBindingCollectionMap.count(tok)) {
+      return false;
+    }
+
+    return _materialBindingCollectionMap.count(tok);
+  }
+
+  void set_materialBindingCollection(const value::token &tok, const value::token &mat_purpose, const Relationship &rel) {
+
+    // NOTE:
+    // https://openusd.org/release/wp_usdshade.html#basic-proposal-for-collection-based-assignment
+    // says: material:binding:collection defines a namespace of binding relationships to be applied in namespace order, with the earliest ordered binding relationship the strongest
+    //
+    // so the app is better first check if `tok` element alreasy exists(using has_materialBindingCollection)
+
+    auto &m = _materialBindingCollectionMap[tok.str()];
+
+    m.insert(mat_purpose.str(), rel);
+  }
+
+  void clear_materialBindingCollection(const value::token &tok, const value::token &mat_purpose) {
+    if (_materialBindingCollectionMap.count(tok.str())) {
+      _materialBindingCollectionMap[tok.str()].erase(mat_purpose.str());
+    }
+  }
+
+  void set_materialBindingCollection(const value::token &tok, const value::token &mat_purpose, const Relationship &rel, MaterialBindingStrength strength) {
+    value::token strength_tok(to_string(strength));
+
+    Relationship r = rel;
+    r.metas().bindMaterialAs = strength_tok;
+
+    _materialBindingCollectionMap[tok.str()].insert(mat_purpose.str(), r);
+  }
+
+  const std::map<std::string, Relationship> &materialBindingMap() const {
+    return _materialBindingMap;
+  }
+
+  const std::map<std::string, ordered_dict<Relationship>> &materialBindingCollectionMap() const {
+    return _materialBindingCollectionMap;
+  }
+
+  bool get_materialBinding(const value::token &mat_purpose, Relationship *relOut) const {
+    if (!relOut) {
+      return false;
+    }
+
+    if (mat_purpose.str().empty()) {
+      if (materialBinding.has_value()) {
+        (*relOut) = materialBinding.value();
+        return true;
+      } else {
+        return false; // not authored
+      }
+    } else if (mat_purpose.str() == "full") {
+      if (materialBindingFull.has_value()) {
+        (*relOut) = materialBindingFull.value();
+        return true;
+      } else {
+        return false; // not authored
+      }
+    } else if (mat_purpose.str() == "preview") {
+      if (materialBindingPreview.has_value()) {
+        (*relOut) = materialBindingPreview.value();
+        return true;
+      } else {
+        return false; // not authored
+      }
+    } else {
+      if (_materialBindingMap.count(mat_purpose.str())) {
+        (*relOut) = _materialBindingMap.at(mat_purpose.str());
+        return true;
+      } else {
+        return false; // not authored
+      }
+    }
+  }
+
+ private:
+
+  // For material:binding(excludes frequently used `material:binding`, `material:binding:full` and `material:binding:preview`)
+  // key = PURPOSE, value = rel
+  std::map<std::string, Relationship> _materialBindingMap;
+
+  // For material:binding:collection
+  // Use ordered dict since the requests:
+  //
+  // https://openusd.org/release/wp_usdshade.html#basic-proposal-for-collection-based-assignment
+  //
+  // `...with the earliest ordered binding relationship the strongest`
+  //
+  // key = PURPOSE, value = map<NAME, Rel>
+  // TODO: Use multi-index map
+  std::map<std::string, ordered_dict<Relationship>> _materialBindingCollectionMap;
+};
+
 // Generic primspec container.
 // Unknown or unsupported Prim type are also reprenseted as Model for now.
-struct Model : Collection {
+struct Model : public Collection, MaterialBinding {
   std::string name;
 
   std::string prim_type_name;  // e.g. "" for `def "bora" {}`, "UnknownPrim" for
@@ -2921,7 +3248,7 @@ struct Volume {
 // `Scope` is uncommon in graphics community, its something like `Group`.
 // From USD doc: Scope is the simplest grouping primitive, and does not carry
 // the baggage of transformability.
-struct Scope : Collection {
+struct Scope : Collection, MaterialBinding {
   std::string name;
   Specifier spec{Specifier::Def};
 
@@ -3237,12 +3564,12 @@ bool CastToXformable(const Prim &prim, const Xformable **xformable);
 /// @param[out] resetXformStack Whether Prim's xformOps contains
 /// `!resetXformStack!` or not
 /// @param[in] t time
-/// @param[in] tinterp Interpolation type(Held or Linear)
+/// @param[in] tinterp Interpolation type(Linear or Held)
 ///
 value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStak,
                                   double t = value::TimeCode::Default(),
                                   value::TimeSampleInterpolationType tinterp =
-                                      value::TimeSampleInterpolationType::Held);
+                                      value::TimeSampleInterpolationType::Linear);
 
 ///
 /// TODO: Deprecate this class and use PrimPec
@@ -3632,7 +3959,8 @@ struct LayerMetas {
 
 // Similar to SdfLayer or Stage
 // It is basically hold the list of PrimSpec and Layer metadatum.
-struct Layer {
+class Layer {
+ public:
   const std::string name() const { return _name; }
 
   void set_name(const std::string name) { _name = name; }

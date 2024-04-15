@@ -160,7 +160,7 @@ struct DomeLight : public NonboundableLight {
   
 };
 
-// TODO:
+// TODO: Deprecate
 struct GeometryLight : public NonboundableLight {
 
   RelationshipProperty geometry; // `rel geometry`
@@ -180,6 +180,10 @@ struct PluginLight : public Xformable, public Collection {
 struct PluginLightFilter : public Light {
 };
 #endif
+
+inline bool IsLightPrim(const Prim &prim) {
+  return (prim.type_id() > value::TYPE_ID_LUX_BEGIN) && (prim.type_id() < value::TYPE_ID_LUX_END);
+}
 
 // import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT
 #include "define-type-trait.inc"
