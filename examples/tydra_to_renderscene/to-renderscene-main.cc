@@ -80,6 +80,7 @@ int main(int argc, char **argv) {
   std::string ext = str_tolower(GetFileExtension(filepath));
 
   tinyusdz::Stage stage;
+  bool is_usdz = false;
 
   if (ext.compare("usdc") == 0) {
     bool ret = tinyusdz::LoadUSDCFromFile(filepath, &stage, &warn, &err);
@@ -120,6 +121,8 @@ int main(int argc, char **argv) {
       // return EXIT_FAILURE;
     }
 
+    is_usdz = true;
+
     if (!ret) {
       std::cerr << "Failed to load USDZ file: " << filepath << "\n";
       return EXIT_FAILURE;
@@ -135,6 +138,8 @@ int main(int argc, char **argv) {
       std::cerr << "ERR : " << err << "\n";
       // return EXIT_FAILURE;
     }
+
+    is_usdz = tinyusdz::IsUSDZ(filepath);
 
     if (!ret) {
       std::cerr << "Failed to load USD file: " << filepath << "\n";
@@ -161,10 +166,36 @@ int main(int argc, char **argv) {
   std::string usd_basedir = tinyusdz::io::GetBaseDir(filepath);
   std::cout << "Add seach path: " << usd_basedir << "\n";
 
-  env.set_search_paths({usd_basedir});
-  // TODO: Set user-defined AssetResolutionResolver
-  // AssetResolutionResolver arr;
-  // converter.set_asset_resoluition_resolver(arr);
+
+  tinyusdz::USDZAsset usdz_asset;
+  if (is_usdz) {
+    // Setup AssetResolutionResolver to read a asset(file) from memory. 
+    if (!tinyusdz::ReadUSDZAssetInfoFromFile(filepath, &usdz_asset, &warn, &err)) {
+      std::cerr << "Failed to read USDZ assetInfo from file: " << err << "\n";
+      exit(-1);
+    }
+    if (warn.size()) {
+      std::cout << warn << "\n";
+    }
+
+    tinyusdz::AssetResolutionResolver arr;
+    
+    // NOTE: Pointer address of usdz_asset must be valid until the call of RenderSceneConverter::ConvertToRenderScene.
+    if (!tinyusdz::SetupUSDZAssetResolution(arr, &usdz_asset)) {
+      std::cerr << "Failed to setup AssetResolution for USDZ asset\n";
+      exit(-1);
+    };
+
+    env.asset_resolver = arr;
+
+  } else {
+    env.set_search_paths({usd_basedir});
+
+    // TODO: Add example to set user-defined AssetResolutionResolver
+    // AssetResolutionResolver arr;
+    // ...
+    // env.asset_resolver(arr);
+  }
 
   double timecode = tinyusdz::value::TimeCode::Default();
   bool ret = converter.ConvertToRenderScene(env, &render_scene);
