@@ -48,15 +48,19 @@ bool PrimVar::get_interpolated_value(const double t, const value::TimeSampleInte
       (*dst) = samples[0].value;
       return true;
     } else {
+      // TODO: Unify code in prim-types.hh
       auto it = std::lower_bound(
           samples.begin(), samples.end(), t,
           [](const value::TimeSamples::Sample &a, double tval) { return a.t < tval; });
 
       if (tinterp == value::TimeSampleInterpolationType::Linear) {
+
+        const auto it_minus_1 = (it == samples.begin()) ? samples.begin() : (it - 1);
+
         size_t idx0 = size_t(std::max(
             int64_t(0),
             std::min(int64_t(samples.size() - 1),
-                     int64_t(std::distance(samples.begin(), it - 1)))));
+                     int64_t(std::distance(samples.begin(), it_minus_1)))));
         size_t idx1 =
             size_t(std::max(int64_t(0), std::min(int64_t(samples.size() - 1),
                                                  int64_t(idx0) + 1)));

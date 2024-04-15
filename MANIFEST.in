@@ -52,6 +52,8 @@ include src/crate-reader.hh
 include src/crate-writer.cc
 include src/crate-writer.hh
 include src/define-type-trait.inc
+include src/external/nanoflann.hpp
+include src/external/nanoflann.COPYING
 include src/external/filesystem/LICENSE
 include src/external/filesystem/README.md
 include src/external/filesystem/include/ghc/filesystem.hpp
@@ -173,6 +175,7 @@ include src/external/simple_match/include/simple_match/simple_match.hpp
 include src/external/simple_match/include/simple_match/utility.hpp
 include src/external/stb_image.h
 include src/external/stb_image_resize.h
+include src/external/stb_image_resize2.h
 include src/external/stb_image_write.h
 include src/external/stb_truetype.h
 include src/external/string_id/LICENSE
@@ -469,6 +472,7 @@ include src/prim-reconstruct.cc
 include src/prim-reconstruct.hh
 include src/prim-types.cc
 include src/prim-types.hh
+include src/prim-type-macros.inc
 include src/primvar.cc
 include src/primvar.hh
 include src/pxr-compat.cc
@@ -500,6 +504,12 @@ include src/tydra/render-data.cc
 include src/tydra/render-data.hh
 include src/tydra/scene-access.cc
 include src/tydra/scene-access.hh
+include src/tydra/attribute-eval.hh
+include src/tydra/attribute-eval.cc
+include src/tydra/attribute-eval-typed.cc
+include src/tydra/attribute-eval-typed-fallack.cc
+include src/tydra/attribute-eval-typed-animatable.cc
+include src/tydra/attribute-eval-typed-animatable-fallback.cc
 include src/tydra/shader-network.cc
 include src/tydra/shader-network.hh
 include src/tydra/facial.cc

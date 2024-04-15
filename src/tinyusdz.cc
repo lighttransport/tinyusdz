@@ -69,7 +69,7 @@ namespace tinyusdz {
 
 // constexpr auto kTagUSDA = "[USDA]";
 // constexpr auto kTagUSDC = "[USDC]";
-constexpr auto kTagUSDZ = "[USDZ]";
+// constexpr auto kTagUSDZ = "[USDZ]";
 
 // For PUSH_ERROR_AND_RETURN
 #define PushError(s) \
@@ -489,6 +489,7 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
     }
   }
 
+#if 0 // TODO: Remove
   // Decode images
   for (size_t i = 0; i < assets.size(); i++) {
     const std::string &uri = assets[i].filename;
@@ -584,6 +585,7 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
       // TODO: Support other asserts(e.g. audio mp3)
     }
   }
+#endif
 
   return true;
 }
@@ -743,6 +745,67 @@ bool LoadUSDFromMemory(const uint8_t *addr, const size_t length,
     }
     return false;
   }
+}
+
+bool ReadUSDZAssetInfoFromMemory(const uint8_t *addr, const size_t length, const bool asset_on_memory, USDZAsset *asset,
+  std::string *warn, std::string *err) {
+
+  if (!asset) {
+    return false;
+  }
+
+  std::vector<USDZAssetInfo> assetInfos;
+  if (!ParseUSDZHeader(addr, length, &assetInfos, warn, err)) {
+    return false;
+  }
+
+  for (size_t i = 0; i < assetInfos.size(); i++) {
+    if (assetInfos[i].byte_begin > length) {
+      if (err) {
+        (*err) += "Invalid byte begin offset in USDZ asset header.";
+      }
+      return false;
+    }
+    if (assetInfos[i].byte_end > length) {
+      if (err) {
+        (*err) += "Invalid byte end offset in USDZ asset header.";
+      }
+      return false;
+    }
+    // Assume same filename does not exist.
+    asset->asset_map[assetInfos[i].filename] = std::make_pair(assetInfos[i].byte_begin, assetInfos[i].byte_end);
+  }
+
+  if (asset_on_memory) {
+    asset->data.clear();
+    asset->addr = addr;
+    asset->size = length;
+  } else {
+    // copy content
+    asset->data.resize(length);
+    memcpy(asset->data.data(), addr, length);
+    asset->addr = nullptr;
+    asset->size = 0;
+  }
+
+  return true;
+}
+
+bool ReadUSDZAssetInfoFromFile(const std::string &_filename, USDZAsset *asset,
+  std::string *warn, std::string *err, size_t max_memory_limit_in_mb) {
+
+  std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
+  std::string base_dir = io::GetBaseDir(_filename);
+
+  std::vector<uint8_t> data;
+  size_t max_bytes = 1024ull * 1024ull * max_memory_limit_in_mb;
+  if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
+                         /* userdata */ nullptr)) {
+    return false;
+  }
+
+  return ReadUSDZAssetInfoFromMemory(data.data(), data.size(), /* asset_on_memory */false, asset, warn, err);
+
 }
 
 //
@@ -1157,6 +1220,195 @@ bool LoadLayerFromAsset(AssetResolutionResolver &resolver, const std::string &re
 
   return LoadLayerFromMemory(asset.data(), asset.size(), resolved_asset_name, layer, warn, err,
                            options);
+}
+
+int USDZResolveAsset(const char *asset_name, const std::vector<std::string> &search_paths, std::string *resolved_asset_name, std::string *err, void *userdata) {
+
+  if (!userdata) {
+    if (err) {
+      (*err) += "`userdata` must be non-null.\n";
+    }
+    return -2;
+  }
+
+  if (!asset_name) {
+    if (err) {
+      (*err) += "`asset_name` must be non-null.\n";
+    }
+    return -2;
+  }
+
+  if (!resolved_asset_name) {
+    if (err) {
+      (*err) += "`resolved_asset_name` must be non-null.\n";
+    }
+    return -2;
+  }
+
+  // Not used
+  (void)search_paths;
+
+  const USDZAsset *passet = reinterpret_cast<const USDZAsset *>(userdata);
+
+  if (passet->asset_map.count(asset_name)) {
+    (*resolved_asset_name) = asset_name;
+    return 0;
+  }
+
+  return -1; // not found
+}
+
+int USDZSizeAsset(const char *resolved_asset_name, uint64_t *nbytes, std::string *err, void *userdata) {
+
+  if (!userdata) {
+    if (err) {
+      (*err) += "`userdata` must be non-null.\n";
+    }
+    return -2;
+  }
+
+  if (!resolved_asset_name) {
+    if (err) {
+      (*err) += "`resolved_asset_name` must be non-null.\n";
+    }
+    return -2;
+  }
+
+  if (!nbytes) {
+    if (err) {
+      (*err) += "`nbytes` must be non-null.\n";
+    }
+    return -2;
+  }
+
+  const USDZAsset *passet = reinterpret_cast<const USDZAsset *>(userdata);
+
+  if (!passet->asset_map.count(resolved_asset_name)) {
+    if (err) {
+      (*err) += "resolved_asset_name `" + std::string(resolved_asset_name) + "` not found in USDZAsset.\n";
+    }
+    return -1;
+  }
+
+  std::pair<size_t, size_t> byte_range = passet->asset_map.at(resolved_asset_name);
+
+  if (byte_range.first >= byte_range.second) {
+    if (err) {
+      (*err) += "Invalid USDZAsset byte range.\n";
+    }
+    return -2;
+  }
+
+  (*nbytes) = byte_range.second - byte_range.first;
+
+  return 0;
+}
+
+int USDZReadAsset(const char *resolved_asset_name, uint64_t req_bytes, uint8_t *out_buf, uint64_t *nbytes, std::string *err, void *userdata) {
+  if (!userdata) {
+    if (err) {
+      (*err) += "`userdata` must be non-null.\n";
+    }
+    return -1;
+  }
+
+  if (!resolved_asset_name) {
+    if (err) {
+      (*err) += "`resolved_asset_name` must be non-null.\n";
+    }
+    return -2;
+  }
+
+  if (!out_buf) {
+    if (err) {
+      (*err) += "`out_buf` must be non-null.\n";
+    }
+    return -2;
+  }
+
+  if (!nbytes) {
+    if (err) {
+      (*err) += "`nbytes` must be non-null.\n";
+    }
+    return -2;
+  }
+
+  const USDZAsset *passet = reinterpret_cast<const USDZAsset *>(userdata);
+
+  if (!passet->asset_map.count(resolved_asset_name)) {
+    if (err) {
+      (*err) += "resolved_asset_name `" + std::string(resolved_asset_name) + "` not found in USDZAsset.\n";
+    }
+    return -1;
+  }
+
+  std::pair<size_t, size_t> byte_range = passet->asset_map.at(resolved_asset_name);
+
+  if (byte_range.first >= byte_range.second) {
+    if (err) {
+      (*err) += "Invalid USDZAsset byte range.\n";
+    }
+    return -2;
+  }
+
+  size_t sz = byte_range.second - byte_range.first;
+
+  if (sz > req_bytes) {
+    if (err) {
+      (*err) += "USDZAsset " + std::string(resolved_asset_name) + "'s size exceeds requested bytes.\n";
+    }
+    return -2;
+  }
+
+  if (byte_range.first + sz > passet->data.size()) {
+    if (err) {
+      (*err) += "Invalid USDZAsset size: " + std::string(resolved_asset_name) + "\n";
+    }
+    return -2;
+  }
+
+  memcpy(out_buf, passet->data.data() + byte_range.first, sz);
+  (*nbytes) = sz;
+
+  return 0;
+}
+
+bool SetupUSDZAssetResolution(
+  AssetResolutionResolver &resolver,
+  const USDZAsset *pusdzAsset)
+{
+  // https://openusd.org/release/spec_usdz.html
+  //
+  // [x] Image: png, jpeg(jpg), exr
+  // 
+  // TODO(LTE):
+  //
+  // [ ] USD: usda, usdc, usd 
+  // [ ] Audio: m4a, mp3, wav 
+
+  if (!pusdzAsset) {
+    return false;
+  }
+  // TODO: Validate Asset data.
+
+  AssetResolutionHandler handler;
+  handler.resolve_fun = USDZResolveAsset;
+  handler.size_fun = USDZSizeAsset;
+  handler.read_fun = USDZReadAsset;
+  handler.write_fun = nullptr; 
+  handler.userdata = reinterpret_cast<void *>(const_cast<USDZAsset *>(pusdzAsset));
+ 
+  resolver.register_asset_resolution_handler("png", handler);
+  resolver.register_asset_resolution_handler("PNG", handler);
+  resolver.register_asset_resolution_handler("JPG", handler);
+  resolver.register_asset_resolution_handler("jpg", handler);
+  resolver.register_asset_resolution_handler("jpeg", handler);
+  resolver.register_asset_resolution_handler("JPEG", handler);
+  resolver.register_asset_resolution_handler("exr", handler);
+  resolver.register_asset_resolution_handler("EXR", handler);
+   
+
+  return true;
 }
 
 }  // namespace tinyusdz
