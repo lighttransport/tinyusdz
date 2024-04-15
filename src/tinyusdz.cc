@@ -747,6 +747,67 @@ bool LoadUSDFromMemory(const uint8_t *addr, const size_t length,
   }
 }
 
+bool ReadUSDZAssetInfoFromMemory(const uint8_t *addr, const size_t length, const bool asset_on_memory, USDZAsset *asset,
+  std::string *warn, std::string *err) {
+
+  if (!asset) {
+    return false;
+  }
+
+  std::vector<USDZAssetInfo> assetInfos;
+  if (!ParseUSDZHeader(addr, length, &assetInfos, warn, err)) {
+    return false;
+  }
+
+  for (size_t i = 0; i < assetInfos.size(); i++) {
+    if (assetInfos[i].byte_begin > length) {
+      if (err) {
+        (*err) += "Invalid byte begin offset in USDZ asset header.";
+      }
+      return false;
+    }
+    if (assetInfos[i].byte_end > length) {
+      if (err) {
+        (*err) += "Invalid byte end offset in USDZ asset header.";
+      }
+      return false;
+    }
+    // Assume same filename does not exist.
+    asset->asset_map[assetInfos[i].filename] = std::make_pair(assetInfos[i].byte_begin, assetInfos[i].byte_end);
+  }
+
+  if (asset_on_memory) {
+    asset->data.clear();
+    asset->addr = addr;
+    asset->size = length;
+  } else {
+    // copy content
+    asset->data.resize(length);
+    memcpy(asset->data.data(), addr, length);
+    asset->addr = nullptr;
+    asset->size = 0;
+  }
+
+  return true;
+}
+
+bool ReadUSDZAssetInfoFromFile(const std::string &_filename, USDZAsset *asset,
+  std::string *warn, std::string *err, size_t max_memory_limit_in_mb) {
+
+  std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
+  std::string base_dir = io::GetBaseDir(_filename);
+
+  std::vector<uint8_t> data;
+  size_t max_bytes = 1024ull * 1024ull * max_memory_limit_in_mb;
+  if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
+                         /* userdata */ nullptr)) {
+    return false;
+  }
+
+  return ReadUSDZAssetInfoFromMemory(data.data(), data.size(), /* asset_on_memory */false, asset, warn, err);
+
+}
+
 //
 // File type detection
 //

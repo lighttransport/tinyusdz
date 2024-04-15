@@ -140,7 +140,7 @@ bool MMapFile(const std::string &filepath, MMapFileHandle *handle, bool writable
   
   int fd = fileno(fp);
   
-  int flags = MAP_SHARED; 
+  int flags = MAP_PRIVATE; // delayed access 
   void *addr = mmap(nullptr, size, writable ? PROT_READ|PROT_WRITE : PROT_READ, flags, fd, 0);
   if (addr == MAP_FAILED) {
     return false;
@@ -148,10 +148,31 @@ bool MMapFile(const std::string &filepath, MMapFileHandle *handle, bool writable
 
   handle->addr = reinterpret_cast<uint8_t *>(addr);
   handle->size = size;
-  handle->fp = reinterpret_cast<void *>(fp);
+  handle->writable = writable;
+  handle->filename = filepath;
+  close(fd);
 
   return true;
 #endif // !WIN32
+#else // !TINYUSDZ_MMAP_SUPPORTED
+  return false;
+#endif
+}
+
+bool UnmapFile(const MMapFileHandle &handle) {
+#if TINYUSDZ_MMAP_SUPPORTED
+#if defined(_WIN32)
+  // TODO
+  return false;
+#else // !WIN32
+  if (handle.addr && handle.size) {
+    int ret = munmap(reinterpret_cast<void *>(handle.addr), handle.size);  
+    // ignore return code for now
+    (void)ret;
+    return true;
+  }
+  return false;
+#endif
 #else // !TINYUSDZ_MMAP_SUPPORTED
   return false;
 #endif
