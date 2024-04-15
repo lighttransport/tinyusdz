@@ -18,6 +18,7 @@
 //   - [ ] Adjust normal vector computation with handness?
 //   - [ ] Node xform animation
 //   - [ ] Better build of index buffer
+//     - [ ] Preserve the order of 'points' variable(mesh.points, Skin indices/weights, BlendShape points, ...) as much as possible.
 //     - Implement spatial hash
 //
 #include <numeric>
@@ -1686,7 +1687,8 @@ static void GenerateBasis(const vec3 &n, vec3 *tangent,
 #endif
 
 struct ComputeTangentPackedVertexData {
-  value::float3 position;
+  //value::float3 position;
+  uint32_t point_index;
   value::float3 normal;
   value::float2 uv;
 
@@ -1729,17 +1731,18 @@ struct ComputeTangentPackedVertexDataEqual {
 
 template <class PackedVert>
 struct ComputeTangentVertexInput {
-  std::vector<value::float3> positions;
+  //std::vector<value::float3> positions;
+  std::vector<uint32_t> point_indices;
   std::vector<value::float3> normals;
   std::vector<value::float2> uvs;
 
-  size_t size() const { return positions.size(); }
+  size_t size() const { return point_indices.size(); }
 
   void get(size_t idx, PackedVert &output) const {
-    if (idx < positions.size()) {
-      output.position = positions[idx];
+    if (idx < point_indices.size()) {
+      output.point_index = point_indices[idx];
     } else {
-      output.position = {0.0f, 0.0f, 0.0f};
+      output.point_index = ~0u; // never should reach here though.
     }
     if (idx < normals.size()) {
       output.normal = normals[idx];
@@ -1756,14 +1759,16 @@ struct ComputeTangentVertexInput {
 
 template <class PackedVert>
 struct ComputeTangentVertexOutput {
-  std::vector<value::float3> positions;
+  //std::vector<value::float3> positions;
+  std::vector<uint32_t> point_indices;
   std::vector<value::float3> normals;
   std::vector<value::float2> uvs;
 
-  size_t size() const { return positions.size(); }
+  size_t size() const { return point_indices.size(); }
 
   void push_back(const PackedVert &v) {
-    positions.push_back(v.position);
+    //positions.push_back(v.position);
+    point_indices.push_back(v.point_index);
     normals.push_back(v.normal);
     uvs.push_back(v.uv);
   }
@@ -2048,29 +2053,31 @@ static bool ComputeTangentsAndBinormals(
     if (is_facevarying_input) {
       // input position is still in 'vertex' variability.
       for (size_t i = 0; i < faceVertexIndices.size(); i++) {
-        vertex_input.positions.push_back(vertices[faceVertexIndices[i]]);
+        vertex_input.point_indices.push_back(faceVertexIndices[i]);
       }
       vertex_input.normals = normals;
       vertex_input.uvs = texcoords;
     } else {
       // expand to facevarying.
       for (size_t i = 0; i < faceVertexIndices.size(); i++) {
-        vertex_input.positions.push_back(vertices[faceVertexIndices[i]]);
+        vertex_input.point_indices.push_back(faceVertexIndices[i]);
         vertex_input.normals.push_back(normals[faceVertexIndices[i]]);
         vertex_input.uvs.push_back(texcoords[faceVertexIndices[i]]);
       }
     }
+
+    std::vector<uint32_t> vertex_point_indices;
 
     BuildIndices<ComputeTangentVertexInput<ComputeTangentPackedVertexData>,
                  ComputeTangentVertexOutput<ComputeTangentPackedVertexData>,
                  ComputeTangentPackedVertexData,
                  ComputeTangentPackedVertexDataHasher,
                  ComputeTangentPackedVertexDataEqual>(
-        vertex_input, vertex_output, vertex_indices);
+        vertex_input, vertex_output, vertex_indices, vertex_point_indices);
 
     DCOUT("faceVertexIndices.size : " << faceVertexIndices.size());
     DCOUT("# of indices after the build: " << vertex_indices.size() << ", reduced " << (faceVertexIndices.size() - vertex_indices.size()) << " indices.");
-    // We only need indices. Discard vertex_output
+    // We only need indices. Discard vertex_output and vertrex_point_indices
   }
 
   const uint32_t num_verts =
@@ -2428,7 +2435,7 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
   DefaultVertexInput<DefaultPackedVertexData> vertex_input;
 
   size_t num_fvs = fvIndices.size();
-  vertex_input.positions.assign(num_fvs, {0.0f, 0.0f, 0.0f});
+  vertex_input.point_indices = fvIndices;
   vertex_input.uv0s.assign(num_fvs, {0.0f, 0.0f});
   vertex_input.uv1s.assign(num_fvs, {0.0f, 0.0f});
   vertex_input.normals.assign(num_fvs, {0.0f, 0.0f, 0.0f});
@@ -2557,11 +2564,6 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
       PUSH_ERROR_AND_RETURN(fmt::format("Invalid faceVertexIndex {}. Must be less than {}", fvi, num_fvs)); 
     }
 
-    //
-    // position is 'vertex' varying, others are 'facevarying'
-    //
-    vertex_input.positions[i] = mesh.points[fvi];
-
     if (normals_ptr) {
       vertex_input.normals[i] = normals_ptr[i];
     }
@@ -2586,13 +2588,21 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
   }
 
   std::vector<uint32_t> out_indices;
+  std::vector<uint32_t> out_point_indices; // to reorder position data 
   DefaultVertexOutput<DefaultPackedVertexData> vertex_output;
 
   BuildIndices<DefaultVertexInput<DefaultPackedVertexData>,
                DefaultVertexOutput<DefaultPackedVertexData>,
                DefaultPackedVertexData, DefaultPackedVertexDataHasher,
                DefaultPackedVertexDataEqual>(vertex_input, vertex_output,
-                                             out_indices);
+                                             out_indices, out_point_indices);
+
+  if (out_indices.size() != out_point_indices.size()) {
+    PUSH_ERROR_AND_RETURN("Internal error. out_indices.size != out_point_indices.");
+  }
+
+  DCOUT("faceVertexIndices.size : " << fvIndices.size());
+  DCOUT("# of indices after the build: " << out_indices.size() << ", reduced " << (fvIndices.size() - out_indices.size()) << " indices.");
 
   if (mesh.is_triangulated()) {
     mesh.triangulatedFaceVertexIndices = out_indices;
@@ -2600,9 +2610,54 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
     mesh.usdFaceVertexIndices = out_indices;
   }
 
-  mesh.points = vertex_output.positions;
+  //
+  // Reorder 'vertex' varying attributes(points, jointIndices/jointWeights, BlendShape points, ...)
+  // TODO: Preserve input order as much as possible.
+  //
+  {
+    uint32_t numPoints = *std::max_element(out_indices.begin(), out_indices.end()) + 1;
+    {
+      std::vector<value::float3> tmp_points(numPoints);
+      for (size_t i = 0; i < out_point_indices.size(); i++) {
+        if (out_point_indices[i] >= mesh.points.size()) {
+          PUSH_ERROR_AND_RETURN("Internal error. point index out-of-range.");
+        }
+        tmp_points[out_indices[i]] = mesh.points[out_point_indices[i]];
+      }
+      mesh.points.swap(tmp_points);
+    }
 
-  // attributes are now 'vertex' variability
+    if (mesh.joint_and_weights.jointIndices.size()) {
+      if (mesh.joint_and_weights.elementSize < 1) {
+        PUSH_ERROR_AND_RETURN("Internal error. Invalid elementSize in mesh.joint_and_weights.");
+      }
+      uint32_t elementSize = uint32_t(mesh.joint_and_weights.elementSize);
+      std::vector<int> tmp_indices(numPoints * elementSize);
+      std::vector<float> tmp_weights(numPoints * elementSize);
+      for (size_t i = 0; i < out_point_indices.size(); i++) {
+        if ((elementSize * out_point_indices[i]) >= mesh.joint_and_weights.jointIndices.size()) {
+          PUSH_ERROR_AND_RETURN("Internal error. point index exceeds jointIndices.size.");
+        }
+        for (size_t k = 0; k < elementSize; k++) {
+          tmp_indices[elementSize * out_indices[i] + k] = mesh.joint_and_weights.jointIndices[elementSize * out_point_indices[i] + k];
+        }
+
+        if ((elementSize * out_point_indices[i]) >= mesh.joint_and_weights.jointWeights.size()) {
+          PUSH_ERROR_AND_RETURN("Internal error. point index exceeds jointWeights.size.");
+        }
+
+        for (size_t k = 0; k < elementSize; k++) {
+          tmp_weights[elementSize * out_indices[i] + k] = mesh.joint_and_weights.jointWeights[elementSize * out_point_indices[i] + k];
+        }
+      }
+      mesh.joint_and_weights.jointIndices.swap(tmp_indices);
+      mesh.joint_and_weights.jointWeights.swap(tmp_weights);
+    }
+
+    // TODO: Reorder BlendShape points
+  }
+
+  // Other 'facevarying' attributes are now 'vertex' variability
   if (normals_ptr) {
     mesh.normals.set_buffer(
         reinterpret_cast<const uint8_t *>(vertex_output.normals.data()),
@@ -5759,6 +5814,14 @@ std::string DumpMesh(const RenderMesh &mesh, uint32_t indent) {
     ss << pprint::Indent(indent + 1) << "}\n";
   }
 
+  if (mesh.joint_and_weights.jointIndices.size()) {
+    ss << pprint::Indent(indent + 1) << "skin {\n";
+    ss << pprint::Indent(indent + 2) << "geomBindTransform " << quote(tinyusdz::to_string(mesh.joint_and_weights.geomBindTransform)) << "\n";
+    ss << pprint::Indent(indent + 2) << "elementSize " << mesh.joint_and_weights.elementSize << "\n";
+    ss << pprint::Indent(indent + 2) << "jointIndices " << quote(value::print_array_snipped(mesh.joint_and_weights.jointIndices)) << "\n";
+    ss << pprint::Indent(indent + 2) << "jointWeights " << quote(value::print_array_snipped(mesh.joint_and_weights.jointWeights)) << "\n";
+    ss << pprint::Indent(indent + 1) << "}\n";
+  }
   if (mesh.material_subsetMap.size()) {
     ss << pprint::Indent(indent + 1) << "material_subsets {\n";
     for (const auto &msubset : mesh.material_subsetMap) {
