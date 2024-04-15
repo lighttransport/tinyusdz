@@ -27,8 +27,8 @@ Scene graph representation suited for OpenGL/Vulkan renderer.
 * [ ] Node xform
 * [x] Triangulate mesh
 * [ ] Subdivision surface support(subdivide mesh using OpenSubdiv)
-* [ ] Resolve Material binding
-  * [ ] GeomSubset material binding
+* [x] Resolve Material binding
+  * [x] GeomSubset material binding
   * [ ] Collection material binding 
 * [ ] Load and setup Texture
   * Colorspace conversion
