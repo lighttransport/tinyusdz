@@ -553,6 +553,7 @@ bool TryConvertFacevaryingToVertexInt(
   uint32_t max_vidx = 0;
   for (size_t i = 0; i < faceVertexIndices.size(); i++) {
     uint32_t vidx = faceVertexIndices[i];
+    max_vidx = (std::max)(vidx, max_vidx);
 
     if (vdata.count(vidx)) {
       if (!math::is_close(vdata[vidx], src[i])) {
@@ -563,9 +564,8 @@ bool TryConvertFacevaryingToVertexInt(
     }
   }
 
-  dst->resize(max_vidx);
-  // TODO: initialize identity matrix when T is matrix type
-  memset(dst->data(), 0, sizeof(T));
+  dst->resize(max_vidx + 1);
+  memset(dst->data(), 0, (max_vidx + 1) * sizeof(T));
 
   for (const auto &v : vdata) {
     (*dst)[v.first] = v.second;
@@ -574,16 +574,18 @@ bool TryConvertFacevaryingToVertexInt(
   return true;
 }
 
-// T = float, double
+// T = float, double, float2, ...
 template <typename T, typename EpsTy>
 bool TryConvertFacevaryingToVertexFloat(
     const std::vector<T> &src, std::vector<T> *dst,
     const std::vector<uint32_t> &faceVertexIndices, const EpsTy eps) {
+  DCOUT("TryConvertFacevaryingToVertexFloat");
   if (!dst) {
     return false;
   }
 
   if (src.size() != faceVertexIndices.size()) {
+    DCOUT("size mismatch.");
     return false;
   }
 
@@ -598,9 +600,11 @@ bool TryConvertFacevaryingToVertexFloat(
   uint32_t max_vidx = 0;
   for (size_t i = 0; i < faceVertexIndices.size(); i++) {
     uint32_t vidx = faceVertexIndices[i];
+    max_vidx = (std::max)(vidx, max_vidx);
 
     if (vdata.count(vidx)) {
       if (!math::is_close(vdata[vidx], src[i], eps)) {
+        DCOUT("diff at faceVertexIndices[" << i << "]");
         return false;
       }
     } else {
@@ -608,9 +612,8 @@ bool TryConvertFacevaryingToVertexFloat(
     }
   }
 
-  dst->resize(max_vidx);
-  // TODO: initialize identity matrix when T is matrix type
-  memset(dst->data(), 0, sizeof(T));
+  dst->resize(max_vidx + 1);
+  memset(dst->data(), 0, (max_vidx + 1) * sizeof(T));
 
   for (const auto &v : vdata) {
     (*dst)[v.first] = v.second;
@@ -643,6 +646,7 @@ bool TryConvertFacevaryingToVertexMat(
   uint32_t max_vidx = 0;
   for (size_t i = 0; i < faceVertexIndices.size(); i++) {
     uint32_t vidx = faceVertexIndices[i];
+    max_vidx = (std::max)(vidx, max_vidx);
 
     if (vdata.count(vidx)) {
       if (!is_close(vdata[vidx], src[i])) {
@@ -653,7 +657,7 @@ bool TryConvertFacevaryingToVertexMat(
     }
   }
 
-  dst->assign(max_vidx, T::identity());
+  dst->assign(max_vidx+1, T::identity());
 
   for (const auto &v : vdata) {
     (*dst)[v.first] = v.second;
@@ -677,20 +681,21 @@ static bool TryConvertFacevaryingToVertex(
     const VertexAttribute &src, VertexAttribute *dst,
     const std::vector<uint32_t> &faceVertexIndices, std::string *err,
     const float eps) {
+  DCOUT("TryConvertFacevaryingToVertex");
   if (!dst) {
-    return false;
+    PUSH_ERROR_AND_RETURN("Output `dst` is nullptr.");
   }
 
   if (!src.is_facevarying()) {
-    return false;
+    PUSH_ERROR_AND_RETURN("Input must be 'facevarying' attribute");
   }
 
   if (src.element_size() != 1) {
-    return false;
+    PUSH_ERROR_AND_RETURN("Input's element_size must be 1.");
   }
 
-  if ((src.stride != 0) || (src.stride_bytes() != src.format_size())) {
-    return false;
+  if ((src.stride != 0) && (src.stride_bytes() != src.format_size())) {
+    PUSH_ERROR_AND_RETURN("Input attribute must be tightly packed. stride_bytes = " << src.stride_bytes() << ", format_size = " << src.format_size());
   }
 
 #define CONVERT_FUN_INT(__fmt, __ty)                                      \
@@ -2063,6 +2068,8 @@ static bool ComputeTangentsAndBinormals(
                  ComputeTangentPackedVertexDataEqual>(
         vertex_input, vertex_output, vertex_indices);
 
+    DCOUT("faceVertexIndices.size : " << faceVertexIndices.size());
+    DCOUT("# of indices after the build: " << vertex_indices.size() << ", reduced " << (faceVertexIndices.size() - vertex_indices.size()) << " indices.");
     // We only need indices. Discard vertex_output
   }
 
@@ -3050,9 +3057,11 @@ bool RenderSceneConverter::ConvertMesh(
       if (TryConvertFacevaryingToVertex(
               dst.normals, &va_normals, dst.usdFaceVertexIndices, &_warn,
               env.mesh_config.facevarying_to_vertex_eps)) {
+        DCOUT("normals is converted to 'vertex' varying.");
         dst.normals = std::move(va_normals);
       } else {
         DCOUT("normals cannot be converted to 'vertex' varying. Staying 'facevarying'");
+        DCOUT("warn = " << _warn);
         is_single_indexable = false;
       }
     }
@@ -3084,6 +3093,7 @@ bool RenderSceneConverter::ConvertMesh(
       if (TryConvertFacevaryingToVertex(
               vattr, &va_uvs, dst.usdFaceVertexIndices, &_warn,
               env.mesh_config.facevarying_to_vertex_eps)) {
+        DCOUT("texcoord[" << slotId << "] is converted to 'vertex' varying.");
         dst.texcoords[uint32_t(slotId)] = va_uvs;
       } else {
         DCOUT("texcoord[" << slotId << "] cannot be converted to 'vertex' varying. Staying 'facevarying'");
