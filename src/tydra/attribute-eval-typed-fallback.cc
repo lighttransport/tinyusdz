@@ -177,11 +177,68 @@ bool EvaluateTypedAttribute(
   return false;
 }
 
+template<>
+bool EvaluateTypedAttribute(
+    const tinyusdz::Stage &stage, const TypedAttributeWithFallback<std::string> &tattr,
+    const std::string &attr_name,
+    std::string *value_out,
+    std::string *err) {
+
+  if (!value_out) {
+    PUSH_ERROR_AND_RETURN("`value_out` param is nullptr.");
+  }
+
+  if (tattr.is_blocked()) {
+    if (err) {
+      (*err) += "Attribute is Blocked.\n";
+    }
+    return false;
+  } else if (tattr.is_value_empty()) {
+    if (err) {
+      (*err) += "Attribute value is empty.\n";
+    }
+    return false;
+  } else if (tattr.is_connection()) {
+
+    // Follow targetPath 
+    Attribute attr = ToAttributeConnection(tattr);
+
+    //std::set<std::string> visited_paths;
+
+    TerminalAttributeValue value;
+    bool ret = EvaluateAttribute(stage, attr, attr_name, &value, err,
+                                 value::TimeCode::Default(), value::TimeSampleInterpolationType::Held);
+
+    if (!ret) {
+      return false;
+    }
+
+    if (auto pv = value.as<std::string>()) {
+      (*value_out) = *pv;
+      return true;
+    }
+
+    if (auto pv = value.as<value::token>()) {
+      (*value_out) = pv->str();
+      return true;
+    }
+
+    if (err) {
+      (*err) += fmt::format("Type mismatch. Value producing attribute has type {}, but requested type is {}. Attribute: {}", value.type_name(), tattr.type_name(), attr_name);
+    }
+
+  } else {
+    (*value_out) = tattr.get_value();
+    return true;
+  }
+  return false;
+}
+
 // template instanciations
 #define EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE(__ty) \
 template bool EvaluateTypedAttribute(const tinyusdz::Stage &stage, const TypedAttributeWithFallback<__ty> &attr, const std::string &attr_name, __ty *value, std::string *err);
 
-APPLY_FUNC_TO_VALUE_TYPES(EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE)
+APPLY_FUNC_TO_VALUE_TYPES_NO_STRING(EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE)
 
 #undef EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE
 
