@@ -191,6 +191,7 @@ nonstd::optional<Animatable<Extent>> ConvertToAnimatable(const primvar::PrimVar 
   return nonstd::nullopt;
 }
 
+#if 0 // TODO: remove. moved to prim-types.cc
 static bool ConvertTokenAttributeToStringAttribute(
   const TypedAttribute<Animatable<value::token>> &inp,
   TypedAttribute<Animatable<std::string>> &out) {
@@ -227,6 +228,7 @@ static bool ConvertTokenAttributeToStringAttribute(
 
   return true;
 }
+#endif
 
 static bool ConvertStringDataAttributeToStringAttribute(
   const TypedAttribute<Animatable<value::StringData>> &inp,
