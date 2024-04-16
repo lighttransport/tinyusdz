@@ -3447,6 +3447,7 @@ bool RenderSceneConverter::ConvertMesh(
   //
   if (mesh.has_primvar("skel:jointIndices") &&
       mesh.has_primvar("skel:jointWeights")) {
+    DCOUT("Convertg skin weights");
     GeomPrimvar jointIndices;
     GeomPrimvar jointWeights;
 
@@ -3694,9 +3695,11 @@ bool RenderSceneConverter::ConvertMesh(
        (dst.binormals.empty() == 0 && dst.tangents.empty() == 0));
 
   if (compute_normals || (compute_tangents && dst.normals.empty())) {
+    DCOUT("Compute normals");
     std::vector<vec3> normals;
-    if (ComputeNormals(dst.points, dst.faceVertexCounts(),
+    if (!ComputeNormals(dst.points, dst.faceVertexCounts(),
                        dst.faceVertexIndices(), normals, &_err)) {
+      DCOUT("compute normals failed.");
       return false;
     }
 
@@ -4816,6 +4819,9 @@ struct MeshVisitorEnv {
 bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
                  const int32_t level, void *userdata, std::string *err) {
   if (!userdata) {
+    if (err) {
+      (*err) += "userdata pointer must be filled.";
+    } 
     return false;
   }
 
@@ -4935,6 +4941,9 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
             if (!ConvertBoundMaterial(bound_material_path, bound_material,
                                       rmaterial_id)) {
+              if (err) {
+                (*err) += "Convert boundMaterial failed: " + bound_material_path.full_path_name();
+              }
               return false;
             }
 
@@ -4968,6 +4977,9 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
             if (!ConvertBoundMaterial(bound_material_path, bound_material,
                                       rmaterial_id)) {
+              if (err) {
+                (*err) += "Convert boundMaterial failed: " + bound_material_path.full_path_name();
+              }
               return false;
             }
 
@@ -5004,6 +5016,9 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
           if (!ConvertBoundMaterial(bound_material_path, bound_material,
                                     rmaterial_id)) {
+            if (err) {
+              (*err) += "Convert boundMaterial failed: " + bound_material_path.full_path_name();
+            }
             return false;
           }
 
@@ -5032,6 +5047,9 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
           if (!ConvertBoundMaterial(bound_material_path, bound_material,
                                     rmaterial_id)) {
+            if (err) {
+              (*err) += "Convert boundMaterial failed: " + bound_material_path.full_path_name();
+            }
             return false;
           }
 
@@ -5054,6 +5072,8 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         if (err) {
           (*err) += fmt::format("Mesh conversion failed: {}",
                                 abs_path.full_path_name());
+          (*err) += "\n" + visitorEnv->converter->GetError() + "\n";
+        
         }
         return false;
       }
