@@ -3293,7 +3293,7 @@ bool RenderSceneConverter::ConvertMesh(
         size_t ncount = triangulatedFaceCounts[i];
 
         faceIndexOffsets[i] = uint32_t(faceIndexOffset);
-        DCOUT("faceIndexOffset[" << i << "] = " << faceIndexOffsets[i]);
+        //DCOUT("faceIndexOffset[" << i << "] = " << faceIndexOffsets[i]);
 
         faceIndexOffset += ncount;
 
