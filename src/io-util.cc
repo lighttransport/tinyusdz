@@ -104,6 +104,9 @@ bool IsMMapSupported() {
 }
 
 bool MMapFile(const std::string &filepath, MMapFileHandle *handle, bool writable) {
+  (void)filepath;
+  (void)handle;
+  (void)writable;
 
 #if TINYUSDZ_MMAP_SUPPORTED
 #if defined(_WIN32)
@@ -160,6 +163,7 @@ bool MMapFile(const std::string &filepath, MMapFileHandle *handle, bool writable
 }
 
 bool UnmapFile(const MMapFileHandle &handle) {
+  (void)handle;
 #if TINYUSDZ_MMAP_SUPPORTED
 #if defined(_WIN32)
   // TODO
