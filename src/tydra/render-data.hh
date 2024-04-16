@@ -566,6 +566,7 @@ enum class ColorSpace {
   sRGB,
   Linear,
   Rec709,
+  Lin_ACEScg, // ACES CG colorspace(linear colorspace. no transfer curve applied)
   OCIO,
   Lin_DisplayP3,   // colorSpace 'lin_displayp3'
   sRGB_DisplayP3,  // colorSpace 'srgb_displayp3'
