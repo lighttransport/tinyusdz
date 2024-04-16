@@ -5317,6 +5317,10 @@ std::string to_string(ColorSpace cty) {
       s = "ocio";
       break;
     }
+    case ColorSpace::Lin_ACEScg: {
+      s = "lin_acescg";
+      break;
+    }
     case ColorSpace::Lin_DisplayP3: {
       s = "lin_displayp3";
       break;
@@ -5357,10 +5361,18 @@ bool InferColorSpace(const value::token &tok, ColorSpace *cty) {
     (*cty) = ColorSpace::Lin_DisplayP3;
   } else if (tok.str() == "srgb_displayp3") {
     (*cty) = ColorSpace::sRGB_DisplayP3;
+
+  //
+  // seen in Apple's USDZ model
+  //
+
+  } else if (tok.str() == "ACES - ACEScg") {
+    (*cty) = ColorSpace::Lin_ACEScg;
   } else if (tok.str() ==
-             "Input - Texture - sRGB - Display P3") {  // seen in Apple's USDZ
-                                                       // model
+             "Input - Texture - sRGB - Display P3") { 
     (*cty) = ColorSpace::sRGB_DisplayP3;
+  } else if (tok.str() == "Input - Texture - sRGB - sRGB") {
+    (*cty) = ColorSpace::sRGB;
   } else if (tok.str() == "custom") {
     (*cty) = ColorSpace::Custom;
   } else {
