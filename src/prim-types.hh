@@ -1466,6 +1466,7 @@ class TypedAttribute {
 
   TypedAttribute &operator=(const T &value) {
     _attrib = value;
+    _value_empty = false;
 
     // fallback Value should be already set with `AttribWithFallback(const T&
     // fallback)` constructor.
@@ -1473,7 +1474,7 @@ class TypedAttribute {
     return (*this);
   }
 
-  void set_value(const T &v) { _attrib = v; }
+  void set_value(const T &v) { _attrib = v; _value_empty = false; }
 
   const nonstd::optional<T> get_value() const {
     if (_attrib) {
@@ -1495,16 +1496,17 @@ class TypedAttribute {
   bool is_blocked() const { return _blocked; }
 
   // for `uniform` attribute only
-  void set_blocked(bool onoff) { _blocked = onoff; }
+  void set_blocked(bool onoff) { _blocked = onoff; if (onoff) _value_empty = false; }
 
   bool is_connection() const { return _paths.size(); }
 
   void set_connection(const Path &path) {
     _paths.clear();
     _paths.push_back(path);
+    _value_empty = false;
   }
 
-  void set_connections(const std::vector<Path> &paths) { _paths = paths; }
+  void set_connections(const std::vector<Path> &paths) { _paths = paths; _value_empty = false; }
 
   const std::vector<Path> &get_connections() const { return _paths; }
   const std::vector<Path> &connections() const { return _paths; }
@@ -1526,28 +1528,33 @@ class TypedAttribute {
       return false;
     }
 
-    if (_value_empty) {
-      return true;
-    }
-
-    if (_attrib) {
+    if (_attrib.has_value()) {
       return false;
     }
 
-    return true;
+    if (_blocked) {
+      return false;
+    }
+
+    return _value_empty;
   }
 
   // value set?
   bool authored() const {
-    if (_value_empty) {
-      return false;
-    }
-
     if (_attrib) {
       return true;
     }
 
     if (_paths.size()) {
+      return true;
+    }
+
+    if (_value_empty) {
+      // Declare only.
+      return true;
+    }
+
+    if (_blocked) {
       return true;
     }
 
