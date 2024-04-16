@@ -1,10 +1,8 @@
-// Apply __FUNC to value types.
-#define APPLY_FUNC_TO_VALUE_TYPES(__FUNC) \
+// Apply __FUNC to value types(but no string types).
+#define APPLY_FUNC_TO_VALUE_TYPES_NO_STRING(__FUNC) \
   __FUNC(bool)                            \
   __FUNC(value::AssetPath)                \
   __FUNC(value::token)                    \
-  __FUNC(std::string)                     \
-  __FUNC(value::StringData)               \
   __FUNC(value::half)                     \
   __FUNC(value::half2)                    \
   __FUNC(value::half3)                    \
@@ -108,6 +106,12 @@
   __FUNC(std::vector<value::matrix3d>)                 \
   __FUNC(std::vector<value::matrix4d>)                 \
   __FUNC(std::vector<value::frame4d>) \
+
+// Apply __FUNC to value types.
+#define APPLY_FUNC_TO_VALUE_TYPES(__FUNC) \
+  APPLY_FUNC_TO_VALUE_TYPES_NO_STRING(__FUNC) \
+  __FUNC(std::string)                     \
+  __FUNC(value::StringData)               \
 
 // Apply __FUNC to numeric value types.
 #define APPLY_FUNC_TO_NUMERIC_VALUE_TYPES(__FUNC) \

@@ -182,10 +182,13 @@ bool EvaluateTypedAttribute(
     T *value,
     std::string *err);
 
+
+// NOTE: std::string uses the specialization, so no extern template.
 #define EXTERN_EVALUATE_TYPED_ATTRIBUTE(__ty) \
 extern template bool EvaluateTypedAttribute(const tinyusdz::Stage &stage, const TypedAttribute<__ty> &attr, const std::string &attr_name, __ty *value, std::string *err);
 
-APPLY_FUNC_TO_VALUE_TYPES(EXTERN_EVALUATE_TYPED_ATTRIBUTE)
+APPLY_FUNC_TO_VALUE_TYPES_NO_STRING(EXTERN_EVALUATE_TYPED_ATTRIBUTE)
+template<> bool EvaluateTypedAttribute(const tinyusdz::Stage &stage, const TypedAttribute<std::string> &attr, const std::string &attr_name, std::string *value, std::string *err);
 
 #undef EXTERN_EVALUATE_TYPED_ATTRIBUTE
 
@@ -202,7 +205,8 @@ bool EvaluateTypedAnimatableAttribute(
 #define EXTERN_EVALUATE_TYPED_ATTRIBUTE(__ty) \
 extern template bool EvaluateTypedAnimatableAttribute(const tinyusdz::Stage &stage, const TypedAttribute<Animatable<__ty>> &attr, const std::string &attr_name, __ty *value, std::string *err, const double t, const value::TimeSampleInterpolationType tinter);
 
-APPLY_FUNC_TO_VALUE_TYPES(EXTERN_EVALUATE_TYPED_ATTRIBUTE)
+APPLY_FUNC_TO_VALUE_TYPES_NO_STRING(EXTERN_EVALUATE_TYPED_ATTRIBUTE)
+template<> bool EvaluateTypedAnimatableAttribute(const tinyusdz::Stage &stage, const TypedAttribute<Animatable<std::string>> &attr, const std::string &attr_name, std::string *value, std::string *err, const double t, const value::TimeSampleInterpolationType tinter);
 
 #undef EXTERN_EVALUATE_TYPED_ATTRIBUTE
 
@@ -217,7 +221,13 @@ bool EvaluateTypedAttribute(
 #define EXTERN_EVALUATE_TYPED_ATTRIBUTE(__ty) \
 extern template bool EvaluateTypedAttribute(const tinyusdz::Stage &stage, const TypedAttributeWithFallback<__ty> &attr, const std::string &attr_name, __ty *value, std::string *err);
 
-APPLY_FUNC_TO_VALUE_TYPES(EXTERN_EVALUATE_TYPED_ATTRIBUTE)
+APPLY_FUNC_TO_VALUE_TYPES_NO_STRING(EXTERN_EVALUATE_TYPED_ATTRIBUTE)
+template<> bool EvaluateTypedAttribute(
+    const tinyusdz::Stage &stage,
+    const TypedAttributeWithFallback<std::string> &attr,
+    const std::string &attr_name,
+    std::string *value,
+    std::string *err);
 
 #undef EXTERN_EVALUATE_TYPED_ATTRIBUTE
 
@@ -234,7 +244,13 @@ bool EvaluateTypedAnimatableAttribute(
 #define EXTERN_EVALUATE_TYPED_ATTRIBUTE(__ty) \
 extern template bool EvaluateTypedAnimatableAttribute(const tinyusdz::Stage &stage, const TypedAttributeWithFallback<Animatable<__ty>> &attr, const std::string &attr_name, __ty *value, std::string *err, const double t, const value::TimeSampleInterpolationType tinter);
 
-APPLY_FUNC_TO_VALUE_TYPES(EXTERN_EVALUATE_TYPED_ATTRIBUTE)
+APPLY_FUNC_TO_VALUE_TYPES_NO_STRING(EXTERN_EVALUATE_TYPED_ATTRIBUTE)
+template<> bool EvaluateTypedAnimatableAttribute(
+    const tinyusdz::Stage &stage,
+    const TypedAttributeWithFallback<Animatable<std::string>> &attr,
+    const std::string &attr_name,
+    std::string *value,
+    std::string *err, const double t, const tinyusdz::value::TimeSampleInterpolationType tinterp);
 
 #undef EXTERN_EVALUATE_TYPED_ATTRIBUTE
 
