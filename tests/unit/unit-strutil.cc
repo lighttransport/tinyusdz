@@ -25,6 +25,9 @@ void strutil_test(void) {
     s = "___";
     TEST_CHECK(is_valid_utf8_identifier(s));
 
+    s = "customLayerData";
+    TEST_CHECK(isValidIdentifier(s));
+
     // Now TinyUSDZ allow UTF-8 string as identifier by default.
     s = u8"響";
     TEST_CHECK(isValidIdentifier(s));
@@ -32,5 +35,6 @@ void strutil_test(void) {
     // Emoji in identifier is not allowed.
     s = u8"_hello😩";
     TEST_CHECK(!isValidIdentifier(s));
+
   }
 }
