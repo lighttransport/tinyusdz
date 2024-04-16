@@ -662,12 +662,12 @@ bool is_valid_utf8_identifier(const std::string &str) {
 
   // (XID_Start|_) (XID_Continue|_)+
   
-  if ((codepoints[0] != '_') || !unicode_xid::is_xid_start(codepoints[0])) {
+  if ((codepoints[0] != '_') && !unicode_xid::is_xid_start(codepoints[0])) {
     return false;
   }
 
   for (size_t i = 1; i < codepoints.size(); i++) {
-    if ((codepoints[i] != '_') || !unicode_xid::is_xid_continue(codepoints[i])) {
+    if ((codepoints[i] != '_') && !unicode_xid::is_xid_continue(codepoints[i])) {
       return false;
     }
   }
