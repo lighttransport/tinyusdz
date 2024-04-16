@@ -1450,6 +1450,13 @@ struct Animatable {
 /// For attribute with `uniform` qualifier or TimeSamples, or have
 /// `.connect`(Connection)
 ///
+/// To support multiple definition of attribute(up to 2), we support both having
+/// Connection and values.
+///
+/// e.g.  float var = 1.0
+///       float var.connect = </path/to/value>
+///       (metadata is shared)
+///
 /// - `authored() = true` : Attribute value is authored(attribute is
 /// described in USDA/USDC)
 /// - `authored() = false` : Attribute value is not authored(not described
@@ -1559,6 +1566,15 @@ class TypedAttribute {
     }
 
     return false;
+  }
+
+  void clear_connections() {
+    _paths.clear();
+  }
+
+  void clear_value() {
+    _attrib.reset();
+    _value_empty = true;
   }
 
   const AttrMeta &metas() const { return _metas; }

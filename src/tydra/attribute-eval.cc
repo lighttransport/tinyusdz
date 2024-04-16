@@ -120,10 +120,6 @@ bool EvaluateAttributeImpl(
   } else if (prop.is_relationship()) {
     PUSH_ERROR_AND_RETURN(
         fmt::format("Property `{}` is a Relation.", attr_name));
-  } else if (prop.is_empty()) {
-    PUSH_ERROR_AND_RETURN(fmt::format(
-        "Attribute `{}` is a define-only attribute(no value assigned).",
-        attr_name));
   } else if (prop.is_attribute()) {
     DCOUT("IsAttrib");
 
@@ -138,6 +134,10 @@ bool EvaluateAttributeImpl(
       return false;
     }
 
+  } else if (prop.is_empty()) {
+    PUSH_ERROR_AND_RETURN(fmt::format(
+        "Attribute `{}` is a define-only attribute(no value assigned).",
+        attr_name));
   } else {
     // ???
     PUSH_ERROR_AND_RETURN(
