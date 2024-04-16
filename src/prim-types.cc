@@ -76,6 +76,45 @@ bool operator==(const Path &lhs, const Path &rhs) {
   return (lhs.full_path_name() == rhs.full_path_name());
 }
 
+bool ConvertTokenAttributeToStringAttribute(
+    const TypedAttribute<Animatable<value::token>> &inp,
+    TypedAttribute<Animatable<std::string>> &out) {
+  
+    out.metas() = inp.metas();
+  
+    if (inp.is_blocked()) {
+      out.set_blocked(true);
+    } else if (inp.is_value_empty()) {
+      out.set_value_empty();
+    } else if (inp.is_connection()) {
+      out.set_connections(inp.get_connections());
+    } else {
+      Animatable<value::token> toks;
+      Animatable<std::string> strs;
+      if (inp.get_value(&toks)) {
+        if (toks.is_scalar()) {
+          value::token tok;
+          toks.get_scalar(&tok);
+          strs.set(tok.str());
+        } else if (toks.is_timesamples()) {
+          auto tok_ts = toks.get_timesamples();
+  
+          for (auto &item : tok_ts.get_samples()) {
+            strs.add_sample(item.t, item.value.str());
+          }
+        } else if (toks.is_blocked()) {
+          // TODO
+          return false;
+        }
+      }
+      out.set_value(strs);
+    }
+  
+    return true;
+  }
+  
+
+
 //
 // -- Path
 //
