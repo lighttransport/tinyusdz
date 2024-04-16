@@ -1743,6 +1743,11 @@ class TypedAttributeWithFallback {
 template <typename T>
 using TypedAnimatableAttributeWithFallback =
     TypedAttributeWithFallback<Animatable<T>>;
+ 
+bool ConvertTokenAttributeToStringAttribute(
+      const TypedAttribute<Animatable<value::token>> &inp,
+      TypedAttribute<Animatable<std::string>> &out);
+
 
 ///
 /// Similar to pxrUSD's PrimIndex
