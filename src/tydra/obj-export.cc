@@ -25,6 +25,7 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
   // NOTE:
   //
   // - Export GeomSubset(per-face material) as group(g) + usemtl
+  // - Export skin weight as tinyobjloader's 'vw' extension
   //
 
   (void)obj_str;
@@ -49,6 +50,21 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
     ss << "v " << mesh.points[i][0] << " " << mesh.points[i][1] << " " << mesh.points[i][2] << "\n";
   } 
   ss << "# " << mesh.points.size() << " vertices\n";
+
+  if (mesh.joint_and_weights.jointWeights.size() == (mesh.points.size() * size_t(mesh.joint_and_weights.elementSize))) {
+     
+    size_t elementSize = size_t(mesh.joint_and_weights.elementSize); // # of weights per vertex.
+    for (size_t i = 0; i < mesh.points.size(); i++) {
+      ss << "vw ";
+      for (size_t w = 0; w < elementSize; w++) {
+        if (w > 0) {
+          ss << " ";
+        }
+        ss << mesh.joint_and_weights.jointIndices[i * elementSize + w] << " " << mesh.joint_and_weights.jointWeights[i * elementSize + w];
+      } 
+      ss << "\n";
+    }
+  }
 
   bool has_texcoord = false;
   bool is_facevarying_texcoord = false;
