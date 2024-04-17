@@ -627,7 +627,7 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
 
   // TODO: deprecate meta.meta and remove it.
   for (const auto &item : meta.meta) {
-    ss << print_meta(item.second, indent + 1, item.first);
+    ss << print_meta(item.second, indent + 1, true, item.first);
   }
 
   // for (const auto &item : meta.stringData) {
@@ -704,7 +704,8 @@ std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
 
   // other user defined metadataum.
   for (const auto &item : meta.meta) {
-    ss << print_meta(item.second, indent, item.first);
+    // attribute meta does not emit type_name
+    ss << print_meta(item.second, indent, /* emit_type_name */false, item.first);
   }
 
   for (const auto &item : meta.stringData) {
@@ -1981,14 +1982,14 @@ std::string print_customData(const CustomDataType &customData,
     ss << "{\n";
   }
   for (const auto &item : customData) {
-    ss << print_meta(item.second, indent + 1, item.first);
+    ss << print_meta(item.second, indent + 1, true, item.first);
   }
   ss << pprint::Indent(indent) << "}\n";
 
   return ss.str();
 }
 
-std::string print_meta(const MetaVariable &meta, const uint32_t indent,
+std::string print_meta(const MetaVariable &meta, const uint32_t indent, bool emit_type_name,
                        const std::string &varname) {
   std::stringstream ss;
 
@@ -2013,11 +2014,15 @@ std::string print_meta(const MetaVariable &meta, const uint32_t indent,
     }
     ss << pprint::Indent(indent) << "dictionary " << name << " = {\n";
     for (const auto &item : pv.value()) {
-      ss << print_meta(item.second, indent + 1, item.first);
+      ss << print_meta(item.second, indent + 1, /* emit_type_name */true, item.first);
     }
     ss << pprint::Indent(indent) << "}\n";
   } else {
-    ss << pprint::Indent(indent) << meta.type_name() << " " << name << " = "
+    ss << pprint::Indent(indent);
+    if (emit_type_name) {
+      ss << meta.type_name() << " ";
+    }
+    ss << name << " = "
        << pprint_value(meta.get_raw_value()) << "\n";
   }
 
