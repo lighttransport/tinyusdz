@@ -3823,7 +3823,7 @@ bool RenderSceneConverter::ConvertMesh(
 
 namespace {
 
-// Convert UsdTranform2d -> PrimvarReader_float2 shader network.
+// Convert UsdTransform2d -> PrimvarReader_float2 shader network.
 nonstd::expected<bool, std::string> ConvertTexTransform2d(
     const Stage &stage, const Path &tx_abs_path, const UsdTransform2d &tx,
     UVTexture *tex_out, double timecode) {
@@ -3894,10 +3894,10 @@ nonstd::expected<bool, std::string> ConvertTexTransform2d(
 
   const UsdPrimvarReader_float2 *preader =
       pshader->value.as<UsdPrimvarReader_float2>();
-  if (preader) {
+  if (!preader) {
     return nonstd::make_unexpected(fmt::format(
-        "Shader {} must be UsdPrimvarReader_float2 type, but got {}\n",
-        prim_part, pshader->info_id));
+        "Shader {} must be UsdPrimvarReader_float2 type, but got {}(internal type {})\n",
+        prim_part, pshader->info_id, pshader->value.type_name()));
   }
 
   // Get value producing attribute(i.e, follow .connection and return
