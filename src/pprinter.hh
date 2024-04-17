@@ -233,7 +233,7 @@ std::string print_xformOps(const std::vector<XformOp> &xformOps,
 std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent);
 
 // varname = optional variable name which is used when meta.get_name() is empty.
-std::string print_meta(const MetaVariable &meta, const uint32_t indent,
+std::string print_meta(const MetaVariable &meta, const uint32_t indent, bool emit_type_name,
                        const std::string &varname = std::string());
 std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent);
 std::string print_customData(const CustomDataType &customData,
