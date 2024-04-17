@@ -1140,6 +1140,8 @@ class RenderScene {
  public:
   std::string usd_filename;
 
+  std::string upAxis{"Y"}; // "X", "Y" or "Z"
+
   uint32_t default_root_node{0}; // index to `nodes`.
 
   std::vector<Node> nodes; 
