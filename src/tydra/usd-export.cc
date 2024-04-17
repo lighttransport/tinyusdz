@@ -20,6 +20,45 @@ namespace tydra {
 
 namespace detail {
 
+static bool ExportBlendShape(const ShapeTarget &target, BlendShape *dst, std::string *err) {
+  (void)err;
+
+  dst->name = target.prim_name;
+  if (target.display_name.size()) {
+    dst->metas().displayName = target.display_name;
+  }
+
+  if (target.pointIndices.size()) {
+    std::vector<int> indices(target.pointIndices.size());
+    for (size_t i = 0; i < target.pointOffsets.size(); i++) {
+      indices[i] = int(target.pointIndices[i]);
+    }
+    dst->pointIndices = indices;
+  }
+
+  if (target.pointOffsets.size()) {
+    std::vector<value::vector3f> offsets(target.pointOffsets.size());
+    for (size_t i = 0; i < target.pointOffsets.size(); i++) {
+      offsets[i][0] = target.pointOffsets[i][0];
+      offsets[i][1] = target.pointOffsets[i][1];
+      offsets[i][2] = target.pointOffsets[i][2];
+    }
+    dst->offsets = offsets;
+  }
+
+  if (target.normalOffsets.size()) {
+    std::vector<value::vector3f> normalOffsets(target.normalOffsets.size());
+    for (size_t i = 0; i < target.normalOffsets.size(); i++) {
+      normalOffsets[i][0] = target.normalOffsets[i][0];
+      normalOffsets[i][1] = target.normalOffsets[i][1];
+      normalOffsets[i][2] = target.normalOffsets[i][2];
+    }
+    dst->normalOffsets = normalOffsets;
+  }
+
+  return true;
+}
+
 // TODO: Support BlendShapes target
 static bool ExportSkelAnimation(const Animation &anim, const std::vector<std::string> &jointNames, SkelAnimation *dst, std::string *err) {
   (void)err;
@@ -163,7 +202,7 @@ static bool ToGeomMesh(const RenderMesh &rmesh, GeomMesh *dst, std::string *err)
   }
 
   // TODO: GeomSubset, Material assignment, skel binding, ...
-
+ 
   return true;
 }
 
@@ -192,7 +231,41 @@ bool export_to_usda(const RenderScene &scene,
     if (!detail::ToGeomMesh(scene.meshes[i], &mesh, err)) {
       return false;
     }
+
+    std::vector<BlendShape> bss;
+    if (scene.meshes[i].targets.size()) {
+
+      std::vector<value::token> bsNames;
+      Relationship bsTargets;
+
+      for (const auto &target : scene.meshes[i].targets) {
+        BlendShape bs;
+        if (!detail::ExportBlendShape(target.second, &bs, err)) {
+          return false;
+        }
+
+        bss.emplace_back(bs);
+        bsNames.push_back(value::token(target.first));
+        // TODO: Set abs_path
+        Path targetPath = Path(mesh.name, "").AppendPrim(target.first);
+        bsTargets.targetPathVector.push_back(targetPath);
+      }
+
+      mesh.blendShapeTargets = bsTargets;
+      mesh.blendShapes = bsNames;
+
+    }
+
+    // Add BlendShape prim under GeomMesh prim.
     Prim prim(mesh);
+
+    if (bss.size()) {
+      for (size_t t = 0; t < bss.size(); t++) {
+        Prim bsPrim(bss[t]);
+        prim.add_child(std::move(bsPrim));
+      }
+    }
+
     stage.add_root_prim(std::move(prim));
   }
 
