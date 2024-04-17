@@ -13,12 +13,12 @@ namespace tinyusdz {
 // No colorspace conversion will be applied when decoding image data
 // (e.g. from .jpg, .png).
 struct Image {
+  // NOTE: Actual pixel value format is determined with combination of PixelFormat x bpp
+  // e.g. Float + 16 bpp = fp16
   enum class PixelFormat {
     UInt, // LDR and HDR image
-    Int, // For normal/displacement map
-    Float // HDR image
-    // TODO
-    // Half
+    Int, // For ao/normal/displacement map, DNG photo
+    Float, // HDR image
   };
    
   std::string uri;  // filename or uri;
@@ -30,6 +30,19 @@ struct Image {
   PixelFormat format{PixelFormat::UInt};
   
   std::vector<uint8_t> data; // Raw data.
+
+  std::string colorspace; // Colorspace metadata in the image. Optional.
 };
+
+inline std::string to_string(Image::PixelFormat fmt) {
+  std::string s{"[[InvalidPixelFormat]]"};
+  switch (fmt) {
+    case Image::PixelFormat::UInt: { s =  "uint"; break; }
+    case Image::PixelFormat::Int: { s =  "int"; break; }
+    case Image::PixelFormat::Float: { s =  "float"; break; }
+  }
+
+  return s;
+}
 
 } // namespace tinyusdz
