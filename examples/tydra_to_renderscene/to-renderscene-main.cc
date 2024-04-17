@@ -11,6 +11,7 @@
 #include <fstream>
 
 #include "io-util.hh"
+#include "str-util.hh"
 #include "pprinter.hh"
 #include "prim-pprint.hh"
 #include "tinyusdz.hh"
@@ -18,6 +19,7 @@
 #include "tydra/scene-access.hh"
 #include "tydra/shader-network.hh"
 #include "tydra/obj-export.hh"
+#include "tydra/usd-export.hh"
 #include "usdShade.hh"
 #include "value-pprint.hh"
 #include "value-types.hh"
@@ -55,12 +57,14 @@ int main(int argc, char **argv) {
     std::cout << "  --noidxbuild: Do not rebuild vertex indices\n";
     std::cout << "  --notri: Do not triangulate mesh\n";
     std::cout << "  --dumpobj: Dump mesh as wavefront .obj(for visual debugging)\n";
+    std::cout << "  --dumpusd: Dump scene as USD(USDA Ascii)\n";
     return EXIT_FAILURE;
   }
 
   bool build_indices = true;
   bool triangulate = true;
   bool export_obj = false;
+  bool export_usd = false;
   std::string filepath;
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--notri") == 0) {
@@ -69,6 +73,8 @@ int main(int argc, char **argv) {
       build_indices = false;
     } else if (strcmp(argv[i], "--dumpobj") == 0) {
       export_obj = true;
+    } else if (strcmp(argv[i], "--dumpusd") == 0) {
+      export_usd = true;
     } else {
       filepath = argv[i];
     }
@@ -234,6 +240,25 @@ int main(int argc, char **argv) {
       std::cout << "  Wrote " << obj_filename << "\n";
     }
   }
+
+  if (export_usd) {
+    std::string usd_basename = tinyusdz::io::GetBaseFilename(filepath);
+    std::string usd_filename = tinyusdz::removeSuffix(usd_basename, ext) + ".usda";
+    
+    std::string usda_str;
+    if (!tinyusdz::tydra::export_to_usda(render_scene, usda_str, &warn, &err)) {
+      std::cerr << "Failed to export RenderScene to USDA: " << err << "\n";
+    }
+    if (warn.size()) {
+      std::cout << "WARN: " << warn << "\n";
+    }
+
+    {
+      std::ofstream ofs(usd_filename);
+      ofs << usda_str;
+    }
+    std::cout << "Exported RenderScene as USDA: " << usd_filename << "\n";
+  } 
 
   return EXIT_SUCCESS;
 }

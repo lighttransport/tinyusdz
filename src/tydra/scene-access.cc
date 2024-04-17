@@ -426,6 +426,7 @@ bool ToProperty(const TypedAttribute<T> &input, Property &output, std::string *e
 template <typename T>
 bool ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output, std::string *err) {
   if (input.is_blocked()) {
+    DCOUT("Value is blocked");
     Attribute attr;
     attr.set_blocked(input.is_blocked());
     attr.variability() = Variability::Uniform;
@@ -433,6 +434,7 @@ bool ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output, st
     output = Property(std::move(attr), /*custom*/ false);
     return true;
   } else if (input.is_value_empty()) {
+    DCOUT("Value is empty");
     // type info only
     output = Property::MakeEmptyAttrib(value::TypeTraits<T>::type_name(), /* custom */ false);
     return true;
@@ -473,23 +475,31 @@ bool ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output, st
     // FIXME: Currently scalar only.
     nonstd::optional<Animatable<T>> aval = input.get_value();
     if (aval) {
+      DCOUT("Value is authored");
       if (aval.value().is_scalar()) {
+        DCOUT("Value is scalar");
         T a;
         if (aval.value().get_scalar(&a)) {
-          value::Value val(a);
-          primvar::PrimVar pvar;
-          pvar.set_value(val);
+          DCOUT("Value get ok");
+          //value::Value val(a);
           Attribute attr;
+          //attr.set_type_name(value::TypeTraits<T>::type_name());
+          primvar::PrimVar pvar;
+          pvar.set_value(a);
           attr.set_var(std::move(pvar));
-          attr.variability() = Variability::Uniform;
+          //attr.set_value(val);
+          attr.variability() = Variability::Varying;
           output = Property(attr, /* custom */ false);
           return true;
+        } else {
+          DCOUT("Value get failed.");
         }
       } else if (aval.value().is_blocked()) {
+        DCOUT("Value is blocked");
         Attribute attr;
         attr.set_type_name(value::TypeTraits<T>::type_name());
         attr.set_blocked(true);
-        attr.variability() = Variability::Uniform;
+        attr.variability() = Variability::Varying;
         output = Property(std::move(attr), /*custom*/ false);
         return true;
       } else if (aval.value().is_timesamples()) {
@@ -499,10 +509,13 @@ bool ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output, st
         }
         return false;
       }
+    } else {
+      DCOUT("Value is not authored");
     }
   }
 
   // fallback to Property with invalid value
+  DCOUT("Fallback to invalid value");
   Property p;
   p.set_property_type(Property::Type::EmptyAttrib);
   p.attribute().set_type_name(value::TypeTraits<std::nullptr_t>::type_name());
@@ -1053,7 +1066,6 @@ nonstd::expected<bool, std::string> GetPrimProperty(
   std::string err;
 
   TO_PROPERTY("inputs:varname", preader.varname)
-
   {
     const auto it = preader.props.find(prop_name);
     if (it == preader.props.end()) {
@@ -1063,6 +1075,7 @@ nonstd::expected<bool, std::string> GetPrimProperty(
 
     (*out_prop) = it->second;
   }
+  DCOUT("prop_name found = " << prop_name);
 
   return true;
 }
