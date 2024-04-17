@@ -170,7 +170,7 @@ struct PrimVar {
 
   template <class T>
   void set_value(const T &v) {
-    _ts.clear();
+    //_ts.clear(); // timeSamples and (defaut) value should co-exist.
     _value = v;
   }
 
