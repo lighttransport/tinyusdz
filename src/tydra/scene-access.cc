@@ -280,9 +280,10 @@ bool VisitPrimsRec(const tinyusdz::Path &root_abs_path, const tinyusdz::Prim &ro
   if (!ret) {
     if (fun_error.empty()) {
       // early termination request.
+      DCOUT("Early termination requested");
     } else {
       if (err) {
-        (*err) += fmt::format("Visit function returned an error for Prim {} (id {})", root_abs_path.full_path_name(), root.prim_id());
+        (*err) += fmt::format("Visit function returned an error for Prim {} (id {}). err = {}", root_abs_path.full_path_name(), root.prim_id(), fun_error);
       }
     }
     return false;
