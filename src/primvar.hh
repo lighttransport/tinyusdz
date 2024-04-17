@@ -42,12 +42,24 @@ struct PrimVar {
   bool _blocked{false}; // ValueBlocked.
   value::TimeSamples _ts; // For TimeSamples value.
 
+  bool has_value() const {
+    // ValueBlock is treated as having a value.
+    if (_blocked) {
+      return true;
+    }
+    return _value.type_id() != value::TypeId::TYPE_ID_INVALID;
+  }
+
+  bool has_timesamples() const {
+    return _ts.size();
+  }
+
   bool is_scalar() const {
     return _ts.empty();
   }
 
   bool is_timesamples() const {
-    return _ts.size();
+    return !has_value() && _ts.size();
   }
 
   bool is_blocked() const {
@@ -64,11 +76,13 @@ struct PrimVar {
   }
 
   bool is_valid() const {
-    if (is_timesamples()) {
-      return _ts.type_id() != value::TypeId::TYPE_ID_INVALID;
-    } else {
-      return _value.type_id() != value::TypeId::TYPE_ID_INVALID;
+    if (has_timesamples()) {
+      if (_ts.type_id() == value::TypeId::TYPE_ID_INVALID) {
+        return false;
+      }
     }
+
+    return has_value();
   }
 
   std::string type_name() const {
@@ -170,8 +184,11 @@ struct PrimVar {
 
   template <class T>
   void set_value(const T &v) {
-    _ts.clear();
     _value = v;
+  }
+
+  void clear_value() {
+    _value = nullptr;
   }
 
   void set_timesamples(const value::TimeSamples &v) {
@@ -182,6 +199,10 @@ struct PrimVar {
     _ts = std::move(v);
   }
 
+  void clear_timesamples() {
+    _ts.clear();
+  }
+
   template <typename T>
   void set_timesample(double t, const T &v) {
     _ts.add_sample(t, v);
@@ -190,6 +211,7 @@ struct PrimVar {
   void set_timesample(double t, value::Value &v) {
     _ts.add_sample(t, v);
   }
+
 
 #if 0 // TODO
   ///
