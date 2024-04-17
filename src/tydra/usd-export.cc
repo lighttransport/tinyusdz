@@ -20,6 +20,61 @@ namespace tydra {
 
 namespace detail {
 
+// TODO: Support BlendShapes target
+static bool ExportSkelAnimation(const Animation &anim, const std::vector<std::string> &jointNames, SkelAnimation *dst, std::string *err) {
+  (void)err;
+  dst->name = anim.prim_name;
+  if (anim.display_name.size()) {
+    dst->metas().displayName = anim.display_name;
+  }
+
+  {
+    std::vector<value::token> joints(jointNames.size());
+    for (size_t i = 0; i < jointNames.size(); i++) {
+      joints[i] = value::token(jointNames[i]);
+    }
+    dst->joints = joints;
+  }
+
+  for (size_t i = 0; i < anim.channels.size(); i++) {
+    const AnimationChannel &channel = anim.channels[i];
+
+    if (channel.rotations.samples.size()) {
+      Animatable<std::vector<value::quatf>> rots;
+      for (const auto &sample : channel.rotations.samples) {
+        std::vector<value::quatf> ts(sample.value.size());
+        for (size_t k = 0; k < sample.value.size(); k++) {
+          ts[k][0] = sample.value[k][0];
+          ts[k][1] = sample.value[k][1];
+          ts[k][2] = sample.value[k][2];
+          ts[k][3] = sample.value[k][3];
+        }
+        rots.add_sample(double(sample.t), ts);
+      }
+      dst->rotations.set_value(rots);
+    } else if (channel.translations.samples.size()) {
+      Animatable<std::vector<value::float3>> txs;
+      for (const auto &sample : channel.translations.samples) {
+        txs.add_sample(double(sample.t), sample.value);
+      }
+      dst->translations.set_value(txs);
+    } else if (channel.scales.samples.size()) {
+      Animatable<std::vector<value::half3>> scales;
+      for (const auto &sample : channel.scales.samples) {
+        std::vector<value::half3> ts(sample.value.size());
+        for (size_t k = 0; k < sample.value.size(); k++) {
+          ts[k][0] = tinyusdz::value::float_to_half_full(sample.value[k][0]);
+          ts[k][1] = tinyusdz::value::float_to_half_full(sample.value[k][1]);
+          ts[k][2] = tinyusdz::value::float_to_half_full(sample.value[k][2]);
+        }
+        scales.add_sample(double(sample.t), ts);
+      }
+      dst->scales.set_value(scales);
+    }
+  }
+  return false;
+}
+
 static bool ToGeomMesh(const RenderMesh &rmesh, GeomMesh *dst, std::string *err) {
   std::vector<int> fvCounts(rmesh.faceVertexCounts().size());
   for (size_t i = 0; i < rmesh.faceVertexCounts().size(); i++) {
@@ -107,7 +162,7 @@ static bool ToGeomMesh(const RenderMesh &rmesh, GeomMesh *dst, std::string *err)
     dst->set_primvar(uvPvar);
   }
 
-  // TODO: Material assignment
+  // TODO: GeomSubset, Material assignment, skel binding, ...
 
   return true;
 }
@@ -130,7 +185,7 @@ bool export_to_usda(const RenderScene &scene,
     stage.metas().upAxis = Axis::Z;
   } 
 
-  // TODO: Node hierarchy
+  // TODO: Construct Node hierarchy
 
   for (size_t i = 0; i < scene.meshes.size(); i++) {
     GeomMesh mesh;
@@ -138,6 +193,18 @@ bool export_to_usda(const RenderScene &scene,
       return false;
     }
     Prim prim(mesh);
+    stage.add_root_prim(std::move(prim));
+  }
+
+  for (size_t i = 0; i < scene.animations.size(); i++) {
+    SkelAnimation skelAnim;
+    std::vector<std::string> jointNames; // TODO: Read jointNames from SkelHierarchy.
+    if (!detail::ExportSkelAnimation(scene.animations[i], jointNames, &skelAnim, err)) {
+      return false;
+    }
+
+    // TODO: Put SkelAnimation under SkelRoot
+    Prim prim(skelAnim);
     stage.add_root_prim(std::move(prim));
   }
 

@@ -659,22 +659,25 @@ struct AnimationSampler {
 struct AnimationChannel {
   enum class ChannelType { Transform, Translation, Rotation, Scale, Weight };
 
-  // Matrix precision is recuded to float-precision
+  // Matrix precision is reduced to float-precision
   // NOTE: transform is not supported in glTF(you need to decompose transform
   // matrix into TRS)
-  AnimationSampler<mat4> transforms;
+  AnimationSampler<std::vector<mat4>> transforms;
 
   // half-types are upcasted to float precision
-  AnimationSampler<vec3> translations;
-  AnimationSampler<quat> rotations;  // Rotation is converted to quaternions
-  AnimationSampler<vec3> scales;
-  AnimationSampler<float> weights;
+  AnimationSampler<std::vector<vec3>> translations;
+  AnimationSampler<std::vector<quat>> rotations;  // Rotation is represented as quaternions
+  AnimationSampler<std::vector<vec3>> scales;
+  AnimationSampler<std::vector<float>> weights;
 
   int64_t taget_node{-1};  // array index to RenderScene::nodes
 };
 
+// USD SkelAnimation
 struct Animation {
-  std::string target_path;  // Target USD Prim path
+  std::string prim_name; // Prim name(element name)
+  std::string abs_path;  // Target USD Prim path
+  std::string display_name;  // `displayName` prim meta
   std::vector<AnimationChannel> channels;
 };
 
