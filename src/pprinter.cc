@@ -1190,25 +1190,102 @@ std::string print_prop(const Property &prop, const std::string &prop_name,
   } else if (prop.is_attribute() || prop.is_connection()) {
     const Attribute &attr = prop.get_attribute();
 
-    ss << pprint::Indent(indent);
+    //
+    // May print multiple times.
+    // e.g.
+    // float var = 1.0
+    // float var.timeSamples = ...
+    // float var.connect = <...>
+    //
+    // timeSamples and connect cannot have attrMeta
+    // 
 
-    if (prop.has_custom()) {
-      ss << "custom ";
+    if (attr.has_value()) {
+
+      ss << pprint::Indent(indent);
+
+      if (prop.has_custom()) {
+        ss << "custom ";
+      }
+
+      if (attr.variability() == Variability::Uniform) {
+        ss << "uniform ";
+      } else if (attr.is_varying_authored()) {
+        // For Attribute, `varying` is the default variability and does not shown
+        // in USDA do nothing
+      }
+
+      std::string ty;
+
+      ty = attr.type_name();
+      ss << ty << " " << prop_name;
+
+      if (prop.is_empty()) {
+        // Nothing to do
+      } else {
+        // has value content
+
+        ss << " = ";
+
+        if (attr.is_blocked()) {
+          ss << "None";
+        } else {
+          // is_scalar
+          ss << value::pprint_value(attr.get_var().value_raw());
+        }
+      }
+
+      if (prop.get_attribute().metas().authored()) {
+        ss << " (\n"
+           << print_attr_metas(prop.get_attribute().metas(), indent + 1)
+           << pprint::Indent(indent) << ")";
+      }
+
+      ss << "\n";
     }
 
-    if (attr.variability() == Variability::Uniform) {
-      ss << "uniform ";
-    } else if (attr.is_varying_authored()) {
-      // For Attribute, `varying` is the default variability and does not shown
-      // in USDA do nothing
+    if (attr.has_timesamples() && (attr.variability() != Variability::Uniform)) {
+
+      ss << pprint::Indent(indent);
+
+      if (prop.has_custom()) {
+        ss << "custom ";
+      }
+
+      std::string ty;
+
+      ty = attr.type_name();
+      ss << ty << " " << prop_name;
+
+      ss << ".timeSamples";
+
+      ss << " = ";
+
+      ss << print_timesamples(attr.get_var().ts_raw(), indent);
+
+      ss << "\n";
     }
 
-    std::string ty;
+    if (attr.has_connection()) {
 
-    ty = attr.type_name();
-    ss << ty << " " << prop_name;
+      ss << pprint::Indent(indent);
 
-    if (attr.is_connection()) {
+      if (prop.has_custom()) {
+        ss << "custom ";
+      }
+
+      if (attr.variability() == Variability::Uniform) {
+        ss << "uniform ";
+      } else if (attr.is_varying_authored()) {
+        // For Attribute, `varying` is the default variability and does not shown
+        // in USDA do nothing
+      }
+
+      std::string ty;
+
+      ty = attr.type_name();
+      ss << ty << " " << prop_name;
+
       ss << ".connect = ";
 
       const std::vector<Path> &paths = attr.connections();
@@ -1219,32 +1296,10 @@ std::string print_prop(const Property &prop, const std::string &prop_name,
       } else {
         ss << paths;
       }
-    } else if (prop.is_empty()) {
-      // Nothing to do
-    } else {
-      // has value content
 
-      if (attr.get_var().is_timesamples()) {
-        ss << ".timeSamples";
-      }
-      ss << " = ";
-
-      if (attr.get_var().is_timesamples()) {
-        ss << print_timesamples(attr.get_var().ts_raw(), indent);
-      } else if (attr.is_blocked()) {
-        ss << "None";
-      } else {
-        // is_scalar
-        ss << value::pprint_value(attr.get_var().value_raw());
-      }
+      ss << "\n";
     }
 
-    if (prop.get_attribute().metas().authored()) {
-      ss << " (\n"
-         << print_attr_metas(prop.get_attribute().metas(), indent + 1)
-         << pprint::Indent(indent) << ")";
-    }
-    ss << "\n";
   } else {
     ss << "[Invalid Property] " << prop_name << "\n";
   }
