@@ -2296,7 +2296,7 @@ bool IsPathIncluded(const CollectionMembershipQuery &query, const Stage &stage, 
 }
 
 std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
-GetBlenedShapes(
+GetBlendShapes(
   const tinyusdz::Stage &stage,
     const tinyusdz::Prim &prim, std::string *err) {
 

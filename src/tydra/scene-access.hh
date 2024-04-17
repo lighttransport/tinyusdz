@@ -351,7 +351,7 @@ std::vector<const GeomSubset *> GetGeomSubsetChildren(
 // (`skel:blendShapes`, `skel:blendShapeTargets`)
 //
 std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
-GetBlenedShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
+GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
                 std::string *err = nullptr);
 
 #if 0  // TODO
