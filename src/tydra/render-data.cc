@@ -26,6 +26,7 @@
 
 #include "image-loader.hh"
 #include "image-util.hh"
+#include "image-types.hh"
 #include "linear-algebra.hh"
 #include "math-util.inc"
 #include "pprinter.hh"
@@ -4117,18 +4118,19 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
           env.material_config.texture_image_loader_function_userdata, &warn,
           &err);
 
-      if (!tex_ok && !env.material_config.allow_texture_load_failure) {
-        PUSH_ERROR_AND_RETURN("Failed to load texture image: " + err);
-      }
-
       if (warn.size()) {
         DCOUT("WARN: " << warn);
         PushWarn(warn);
       }
 
+      if (!tex_ok && !env.material_config.allow_texture_load_failure) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Failed to load texture image: `{}` err = {}", assetPath.GetAssetPath(), err));
+      }
+
+
       if (err.size()) {
-        // report as warning.
-        PushWarn(err);
+        // report as warn.
+        PUSH_WARN(fmt::format("Failed to load texture image: `{}`. Skip loading. reason = {} ", assetPath.GetAssetPath(), err)); 
       }
 
       // store unresolved asset path.
@@ -4145,6 +4147,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
     // look into `inputs:sourceColorSpace' attribute.
     // When both `colorSpace` metadata and `inputs:sourceColorSpace' attribute
     // exists, `inputs:sourceColorSpace` wins.
+    // FIXME: Change to `colorSpace` metadata supersedes 'inputs:sourceColorSpace'?
     bool inferColorSpaceFailed = false;
     if (texture.file.metas().has_colorSpace()) {
       ColorSpace cs;
@@ -5347,13 +5350,42 @@ bool DefaultTextureImageLoaderFunction(
   texImage.asset_identifier = resolvedPath;
   texImage.channels = result.value().image.channels;
 
-  if (result.value().image.bpp == 8) {
+  const auto &imgret = result.value();
+
+  if (imgret.image.bpp == 8) {
     // assume uint8
     texImage.assetTexelComponentType = ComponentType::UInt8;
+  } else if (imgret.image.bpp == 16) {
+    if (imgret.image.format == Image::PixelFormat::UInt) {
+      texImage.assetTexelComponentType = ComponentType::UInt16;
+    } else if (imgret.image.format == Image::PixelFormat::Int) {
+      texImage.assetTexelComponentType = ComponentType::Int16;
+    } else if (imgret.image.format == Image::PixelFormat::Float) {
+      texImage.assetTexelComponentType = ComponentType::Half;
+    } else {
+      if (err) {
+        (*err) += "Invalid image.pixelformat: " + tinyusdz::to_string(imgret.image.format) + "\n";
+      }
+      return false;
+    }
+  
+  } else if (imgret.image.bpp == 16) {
+    if (imgret.image.format == Image::PixelFormat::UInt) {
+      texImage.assetTexelComponentType = ComponentType::UInt32;
+    } else if (imgret.image.format == Image::PixelFormat::Int) {
+      texImage.assetTexelComponentType = ComponentType::Int32;
+    } else if (imgret.image.format == Image::PixelFormat::Float) {
+      texImage.assetTexelComponentType = ComponentType::Float;
+    } else {
+      if (err) {
+        (*err) += "Invalid image.pixelformat: " + tinyusdz::to_string(imgret.image.format) + "\n";
+      }
+      return false;
+    }
   } else {
     DCOUT("TODO: bpp = " << result.value().image.bpp);
     if (err) {
-      (*err) = "TODO or unsupported bpp: " +
+      (*err) += "TODO or unsupported bpp: " +
                std::to_string(result.value().image.bpp) + "\n";
     }
     return false;
