@@ -1517,6 +1517,10 @@ class TypedAttribute {
     return nonstd::nullopt;
   }
 
+  bool has_connection() const {
+    return _paths.size();
+  }
+
   // TODO: Supply set_connection_empty()?
 
   void set_value_empty() { _value_empty = true; }
@@ -2202,7 +2206,9 @@ enum class TimeSampleInterpolation {
 #endif
 
 // Attribute is a struct to hold generic attribute of a property(e.g. primvar)
-// of Prim
+// of Prim.
+// It can have multiple values(default value, timeSamples and connection) at once.
+//
 // TODO: Refactor
 class Attribute {
 
@@ -2370,7 +2376,14 @@ class Attribute {
 
   void set_blocked(bool onoff) { _var.set_blocked(onoff); }
 
-  bool is_blocked() const { return _var.is_blocked(); }
+  bool is_blocked() const {
+    if (has_timesamples()) {
+      return false;
+    }
+
+    return _var.is_blocked(); 
+  }
+  bool has_blocked() const { return _var.is_blocked(); }
 
   Variability &variability() { return _variability; }
   Variability variability() const { return _variability; }
@@ -2381,10 +2394,28 @@ class Attribute {
 
   bool is_varying_authored() const { return _varying_authored; }
 
-  bool is_connection() const { return _paths.size(); }
+  bool is_connection() const {
+    if (has_timesamples()) {
+      return false;
+    }
+
+    if (has_blocked()) {
+      return false;
+    }
+
+    return _paths.size();
+  }
+
+  bool has_connection() const {
+    return _paths.size();
+  }
 
   bool is_value() const {
     if (is_connection()) {
+      return false;
+    }
+
+    if (is_timesamples()) {
       return false;
     }
 
@@ -2395,12 +2426,21 @@ class Attribute {
     return true;
   }
 
+  // check if Attribute has default value
+  bool has_value() const {
+    return _var.has_value(); 
+  }
+
   bool is_timesamples() const {
     if (!is_value()) {
       return false;
     }
 
     return _var.is_timesamples();
+  }
+
+  bool has_timesamples() const {
+    return _var.has_timesamples();
   }
 
   void set_connection(const Path &path) {
