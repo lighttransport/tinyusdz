@@ -3448,7 +3448,7 @@ bool RenderSceneConverter::ConvertMesh(
   //
   if (mesh.has_primvar("skel:jointIndices") &&
       mesh.has_primvar("skel:jointWeights")) {
-    DCOUT("Convertg skin weights");
+    DCOUT("Convert skin weights");
     GeomPrimvar jointIndices;
     GeomPrimvar jointWeights;
 
@@ -3678,6 +3678,7 @@ bool RenderSceneConverter::ConvertMesh(
 
     // TODO: key duplicate check
     dst.targets[bs->name] = shapeTarget;
+    DCOUT("Converted blendshape target: " << bs->name);
   }
 
   //
@@ -5063,8 +5064,18 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         }
       }
 
-      // TODO: BlendShapes
+      // BlendShapes
       std::vector<std::pair<std::string, const BlendShape *>> blendshapes;
+      {
+        std::string local_err;
+        blendshapes = GetBlendShapes(visitorEnv->env->stage, prim, &local_err);
+        if (local_err.size()) {
+          if (err) {
+            (*err) += fmt::format("Failed to get BlendShapes prims. err = {}", local_err);
+          }
+        }
+      }
+      DCOUT("# of blendshapes : " << blendshapes.size());
 
       RenderMesh rmesh;
 
@@ -6002,6 +6013,23 @@ std::string DumpMesh(const RenderMesh &mesh, uint32_t indent) {
        << quote(value::print_array_snipped(mesh.joint_and_weights.jointWeights))
        << "\n";
     ss << pprint::Indent(indent + 1) << "}\n";
+  }
+  if (mesh.targets.size()) {
+    ss << pprint::Indent(indent + 1) << "shapeTargets {\n";
+
+    for (const auto &target : mesh.targets) {
+      ss << pprint::Indent(indent + 2) << target.first << " {\n";
+      ss << pprint::Indent(indent + 3) << "prim_name " << quote(target.second.prim_name) << "\n";
+      ss << pprint::Indent(indent + 3) << "abs_path " << quote(target.second.abs_path) << "\n";
+      ss << pprint::Indent(indent + 3) << "display_name " << quote(target.second.display_name) << "\n";
+      ss << pprint::Indent(indent + 3) << "pointIndices " << quote(value::print_array_snipped(target.second.pointIndices)) << "\n";
+      ss << pprint::Indent(indent + 3) << "pointOffsets " << quote(value::print_array_snipped(target.second.pointOffsets)) << "\n";
+      ss << pprint::Indent(indent + 3) << "normalOffsets " << quote(value::print_array_snipped(target.second.normalOffsets)) << "\n";
+      ss << pprint::Indent(indent + 2) << "}\n";
+    }
+
+    ss << pprint::Indent(indent + 1) << "}\n";
+
   }
   if (mesh.material_subsetMap.size()) {
     ss << pprint::Indent(indent + 1) << "material_subsets {\n";
