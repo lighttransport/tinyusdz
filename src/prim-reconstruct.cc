@@ -357,6 +357,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           // e.g. "float radius = None"
           target.set_blocked(true);
         } else if (attr.variability() == Variability::Uniform) {
+          DCOUT("Property is uniform: " << name);
           // e.g. "float radius = 1.2"
           if (!attr.get_var().is_scalar()) {
             ret.code = ParseResult::ResultCode::VariabilityMismatch;
@@ -373,6 +374,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           }
 
         } else if (attr.get_var().is_timesamples()) {
+          DCOUT("Property is timesamples: " << name);
           // e.g. "float radius.timeSamples = {0: 1.2, 1: 2.3}"
 
           Animatable<T> anim;
@@ -387,6 +389,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
             return ret;
           }
         } else if (attr.get_var().is_scalar()) {
+          DCOUT("Property is scalar: " << name);
           if (auto pv = attr.get_value<T>()) {
             target.set_value(pv.value());
           } else {
@@ -624,9 +627,11 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
         DCOUT("Adding typed attribute: " << name);
 
         if (attr.is_blocked()) {
+          DCOUT("Attribute is blocked: " << name);
           // e.g. "uniform float radius = None"
           target.set_blocked(true);
         } else if (attr.variability() == Variability::Uniform) {
+          DCOUT("Attribute is uniform: " << name);
           // e.g. "uniform float radius = 1.2"
           if (!attr.get_var().is_scalar()) {
             ret.code = ParseResult::ResultCode::VariabilityMismatch;
@@ -643,6 +648,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           }
 
         } else if (attr.get_var().is_timesamples()) {
+          DCOUT("Attribute is timesamples: " << name);
           // e.g. "float radius.timeSamples = {0: 1.2, 1: 2.3}"
 
           Animatable<T> anim;
@@ -657,6 +663,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
             return ret;
           }
         } else if (attr.get_var().is_scalar()) {
+          DCOUT("Attribute is scalar: " << name);
           if (auto pv = attr.get_var().get_value<T>()) {
             target.set_value(pv.value());
           } else {
@@ -1532,9 +1539,13 @@ nonstd::expected<T, std::string> EnumHandler(
 
 } // namespace
 
+// Work around until https://github.com/syoyo/tinyusdz/issues/154
+// clear table to allow the latter attribute can overwrite previous definition.
 #define PARSE_TYPED_ATTRIBUTE(__table, __prop, __name, __klass, __target) { \
   ParseResult ret = ParseTypedAttribute(__table, __prop.first, __prop.second, __name, __target); \
   if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
+    /* FIXME: workaround. clear table */ \
+    __table.erase(__name); \
     continue; /* got it */\
   } else if (ret.code == ParseResult::ResultCode::Unmatched) { \
     /* go next */ \

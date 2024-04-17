@@ -878,7 +878,8 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   Property::Type propType{Property::Type::EmptyAttrib};
   Attribute attr;
 
-  bool is_scalar{false};
+  bool has_default{false};
+  bool has_timesamples{false};
 
   value::Value scalar;
   Relationship rel;
@@ -932,7 +933,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       // Set scalar
       // TODO: Easier CrateValue to Attribute.var conversion
       scalar = fv.second.get_raw();
-      is_scalar = true;
+      has_default = true;
 
       // TODO: Handle UnregisteredValue in crate-reader.cc
       // UnregisteredValue is represented as string.
@@ -956,6 +957,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         primvar::PrimVar var;
         var.set_timesamples(pv.value());
         attr.set_var(std::move(var));
+        has_timesamples = true;
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "`timeSamples` is not TimeSamples data.");
@@ -1233,7 +1235,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   (void)hasConnectionPaths;
 #endif
 
-  if (is_scalar) {
+  if (has_default) {
     if (typeName) {
       if (scalar.type_id() == value::TypeTraits<value::ValueBlock>::type_id()) {
         // nothing to do
@@ -1261,9 +1263,20 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         }
       }
     }
-    primvar::PrimVar var;
-    var.set_value(scalar);
-    attr.set_var(std::move(var));
+
+    if (has_timesamples) {
+      DCOUT("add scalar");
+      // overwrite 
+      primvar::PrimVar var = attr.get_var();
+      var.set_value(scalar);
+      DCOUT("var.is_timesamples = " << var.is_timesamples());
+      attr.set_var(std::move(var));
+      
+    } else {
+      primvar::PrimVar var;
+      var.set_value(scalar);
+      attr.set_var(std::move(var));
+    }
 
     if (scalar.type_id() == value::TypeTraits<value::ValueBlock>::type_id()) {
       if (typeName) {
