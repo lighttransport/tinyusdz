@@ -3902,7 +3902,10 @@ nonstd::expected<bool, std::string> ConvertTexTransform2d(
 
   // Get value producing attribute(i.e, follow .connection and return
   // terminal Attribute value)
-  value::token varname;
+  //value::token varname;
+
+  // 'string' for inputs:varname preferred.
+  std::string varname;
 #if 0
   if (!tydra::EvaluateShaderAttribute(stage, *pshader, "inputs:varname",
                                       &varname, &err)) {
@@ -3917,14 +3920,18 @@ nonstd::expected<bool, std::string> ConvertTexTransform2d(
     return nonstd::make_unexpected(
         "`inputs:varname` evaluation failed: " + err + "\n");
   }
-  if (auto pv = attr.as<value::token>()) {
-    varname = *pv;
+  if (auto pvt = attr.as<value::token>()) {
+    varname = pvt->str();
+  } else if (auto pvs = attr.as<std::string>()) {
+    varname = *pvs;
+  } else if (auto pvsd = attr.as<value::StringData>()) {
+    varname = (*pvsd).value;
   } else {
     return nonstd::make_unexpected(
-        "`inputs:varname` must be `token` type, but got " + attr.type_name() +
+        "`inputs:varname` must be `token` or `string` type, but got " + attr.type_name() +
         "\n");
   }
-  if (varname.str().empty()) {
+  if (varname.empty()) {
     return nonstd::make_unexpected("`inputs:varname` is empty token\n");
   }
   DCOUT("inputs:varname = " << varname);
@@ -3959,7 +3966,7 @@ nonstd::expected<bool, std::string> ConvertTexTransform2d(
   tex_out->tx_scale = scale;
   tex_out->has_transform2d = true;
 
-  tex_out->varname_uv = varname.str();
+  tex_out->varname_uv = varname;
 
   return true;
 }
