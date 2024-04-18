@@ -4060,7 +4060,6 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
 
 }  // namespace
 
-// W.I.P.
 // Convert UsdUVTexture shader node.
 // @return true upon conversion success(textures.back() contains the converted
 // UVTexture)
@@ -4138,7 +4137,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
 
       if (err.size()) {
         // report as warn.
-        PUSH_WARN(fmt::format("Failed to load texture image: `{}`. Skip loading. reason = {} ", assetPath.GetAssetPath(), err)); 
+        PUSH_WARN(fmt::format("Failed to load texture image: `{}`. Skip loading. reason = {} ", assetPath.GetAssetPath(), err));
       }
 
       // store unresolved asset path.
@@ -4832,7 +4831,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
   if (!userdata) {
     if (err) {
       (*err) += "userdata pointer must be filled.";
-    } 
+    }
     return false;
   }
 
@@ -5094,7 +5093,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
           (*err) += fmt::format("Mesh conversion failed: {}",
                                 abs_path.full_path_name());
           (*err) += "\n" + visitorEnv->converter->GetError() + "\n";
-        
+
         }
         return false;
       }
@@ -5116,6 +5115,23 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 }
 
 }  // namespace
+
+bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &env,
+                                            const Path &abs_path,
+                                            const SkelAnimation &skelAnim,
+                                            Animation *anim_out) {
+
+  // NOTE: fortunately USD SkelAnimation uses quaternions for rotations
+  // anim_out->channels.rotations
+  
+  (void)env;
+  (void)abs_path;
+  (void)skelAnim;
+  (void)anim_out;
+
+  PUSH_ERROR_AND_RETURN("TODO");
+
+}
 
 bool RenderSceneConverter::BuildNodeHierarchyImpl(
     const RenderSceneConverterEnv &env, const std::string &parentPrimPath,
@@ -5386,7 +5402,7 @@ bool DefaultTextureImageLoaderFunction(
       }
       return false;
     }
-  
+
   } else if (imgret.image.bpp == 16) {
     if (imgret.image.format == Image::PixelFormat::UInt) {
       texImage.assetTexelComponentType = ComponentType::UInt32;
