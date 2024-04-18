@@ -507,6 +507,8 @@ if(TINYUSDZ_WITH_TIFF OR TINYUSDZ_WITH_EXR)
 
 endif()
 
+
+
 if(TINYUSDZ_WITH_ALAC_AUDIO)
   list(APPEND TINYUSDZ_DEP_SOURCES
        ${PROJECT_SOURCE_DIR}/src/external/alac/codec/EndianPortable.c
@@ -1023,6 +1025,14 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_WITH_EXR")
   endif(TINYUSDZ_WITH_EXR)
+
+  if (TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_USE_WUFFS_IMAGE_LOADER")
+    if (TINYUSDZ_NO_WUFFS_IMPLEMENTATION)
+      target_compile_definitions(${TINYUSDZ_LIB_TARGET} PRIVATE "TINYUSDZ_NO_WUFFS_IMPLEMENTATION")
+    endif()
+  endif ()
 
   if(TINYUSDZ_WITH_COLORIO)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}

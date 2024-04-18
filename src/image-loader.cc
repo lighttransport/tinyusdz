@@ -19,15 +19,8 @@
 
 #ifndef TINYUSDZ_NO_WUFFS_IMPLEMENTATION
 #define WUFFS_IMPLEMENTATION
-
-#define WUFFS_CONFIG__MODULES
-#define WUFFS_CONFIG__MODULE__BASE
-#define WUFFS_CONFIG__MODULE__BMP
-//#define WUFFS_CONFIG__MODULE__GIF
-#define WUFFS_CONFIG__MODULE__PNG
-#define WUFFS_CONFIG__MODULE__JPEG
-//#define WUFFS_CONFIG__MODULE__WBMP
 #endif
+
 
 #else
 
@@ -49,7 +42,41 @@
 
 #if defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
 
-#include "external/wuffs-unsupported-snapshot.c"
+// Defining the WUFFS_CONFIG__MODULE* macros are optional, but it lets users of
+// release/c/etc.c choose which parts of Wuffs to build. That file contains the
+// entire Wuffs standard library, implementing a variety of codecs and file
+// formats. Without this macro definition, an optimizing compiler or linker may
+// very well discard Wuffs code for unused codecs, but listing the Wuffs
+// modules we use makes that process explicit. Preprocessing means that such
+// code simply isn't compiled.
+#define WUFFS_CONFIG__MODULES
+#define WUFFS_CONFIG__MODULE__ADLER32
+#define WUFFS_CONFIG__MODULE__AUX__BASE
+#define WUFFS_CONFIG__MODULE__AUX__IMAGE
+#define WUFFS_CONFIG__MODULE__BASE
+#define WUFFS_CONFIG__MODULE__BMP
+#define WUFFS_CONFIG__MODULE__CRC32
+#define WUFFS_CONFIG__MODULE__DEFLATE
+#define WUFFS_CONFIG__MODULE__GIF
+#define WUFFS_CONFIG__MODULE__JPEG
+#define WUFFS_CONFIG__MODULE__NETPBM
+#define WUFFS_CONFIG__MODULE__NIE
+#define WUFFS_CONFIG__MODULE__PNG
+#define WUFFS_CONFIG__MODULE__TGA
+#define WUFFS_CONFIG__MODULE__WBMP
+#define WUFFS_CONFIG__MODULE__ZLIB
+
+// Defining the WUFFS_CONFIG__STATIC_FUNCTIONS macro is optional, but when
+// combined with WUFFS_IMPLEMENTATION, it demonstrates making all of Wuffs'
+// functions have static storage.
+//
+// This can help the compiler ignore or discard unused code, which can produce
+// faster compiles and smaller binaries. Other motivations are discussed in the
+// "ALLOW STATIC IMPLEMENTATION" section of
+// https://raw.githubusercontent.com/nothings/stb/master/docs/stb_howto.txt
+#define WUFFS_CONFIG__STATIC_FUNCTIONS
+
+#include "external/wuffs-v0.4.c"
 
 #else
 
@@ -106,6 +133,12 @@ bool DecodeImageWUFF(const uint8_t *bytes, const size_t size,
                     const std::string &uri, Image *image, std::string *warn,
                     std::string *err) {
 
+  (void)bytes;
+  (void)size;
+  (void)uri;
+  (void)image;
+  (void)warn;
+
   if (err) {
     (*err) = "TODO: WUFF image loader.\n";
   }
@@ -117,6 +150,14 @@ bool DecodeImageWUFF(const uint8_t *bytes, const size_t size,
 bool GetImageInfoWUFF(const uint8_t *bytes, const size_t size,
                     const std::string &uri, uint32_t *width, uint32_t *height, uint32_t *channels, std::string *warn,
                     std::string *err) {
+  (void)bytes;
+  (void)size;
+  (void)uri;
+  (void)width;
+  (void)height;
+  (void)channels;
+  (void)warn;
+
   if (err) {
     (*err) = "TODO: WUFF image loader.\n";
   }
