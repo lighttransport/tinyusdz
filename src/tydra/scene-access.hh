@@ -521,6 +521,7 @@ struct SkelNode {
   std::string jointPath;         // joints in UsdSkel. Relative or Absolute Prim
                                  // path(e.g. "root/head", "/root/head")
   std::string jointName;         // jointNames in UsdSkel
+  int jointId{-1};               // jointIndex(array index in UsdSkel joints)
   value::matrix4d bindTransform{value::matrix4d::identity()};
   value::matrix4d restTransform{value::matrix4d::identity()};
   int parentNodeIndex{-1};

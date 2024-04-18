@@ -1689,6 +1689,17 @@ class RenderSceneConverter {
                         const UsdUVTexture &texture, UVTexture *tex_out);
 
   ///
+  /// Convert SkelAnimation to Tydra Animation.
+  ///
+  /// @param[in] abs_path USD Path to SkelAnimation Prim
+  /// @param[in] skelAnim SkelAnimation
+  /// @param[in] anim_out UVTexture
+  ///
+  bool ConvertSkelAnimation(const RenderSceneConverterEnv &env,
+                        const Path &abs_path, const SkelAnimation &skelAnim,
+                        Animation *anim_out);
+
+  ///
   /// @param[in] env
   /// @param[in] root XformNode
   ///
