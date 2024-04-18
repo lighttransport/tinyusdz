@@ -49,7 +49,7 @@ namespace tydra {
 using vec2 = value::float2;
 using vec3 = value::float3;
 using vec4 = value::float4;
-using quat = value::float4;
+using quat = value::float4; // (x, y, z, w)
 using mat2 = value::matrix2f;
 using mat3 = value::matrix3f;   
 using mat4 = value::matrix4f;   
@@ -642,11 +642,15 @@ struct EnvmapLight
 
 // glTF-lie animation data
 
+// TOOD: Implement Animation sample resampler.
+
+// In USD, timeSamples are linearly interpolated by default.
+// For default value(value at static time), create a Sample at time `-inf`(USD TimeCode::Default)
 template <typename T>
 struct AnimationSampler {
   std::vector<AnimationSample<T>> samples;
 
-  // No cubicSpline
+  // No cubicSpline in USD
   enum class Interpolation {
     Linear,
     Step,  // Held in USD
@@ -659,15 +663,18 @@ struct AnimationSampler {
 struct AnimationChannel {
   enum class ChannelType { Transform, Translation, Rotation, Scale, Weight };
 
+  ChannelType type;
+  // The following AnimationSampler is filled depending on ChannelType.
+  // Example: Rotation => Only `rotations` are filled.
+
   // Matrix precision is reduced to float-precision
   // NOTE: transform is not supported in glTF(you need to decompose transform
   // matrix into TRS)
   AnimationSampler<std::vector<mat4>> transforms;
 
-  // half-types are upcasted to float precision
   AnimationSampler<std::vector<vec3>> translations;
   AnimationSampler<std::vector<quat>> rotations;  // Rotation is represented as quaternions
-  AnimationSampler<std::vector<vec3>> scales;
+  AnimationSampler<std::vector<vec3>> scales; // half-types are upcasted to float precision
   AnimationSampler<std::vector<float>> weights;
 
   int64_t taget_node{-1};  // array index to RenderScene::nodes
@@ -1138,12 +1145,29 @@ struct RenderLight
   // TODO..
 };
 
+struct SceneMetadata
+{
+  std::string copyright;
+  std::string comment;
+
+  std::string upAxis{"Y"}; // "X", "Y" or "Z"
+  nonstd::optional<double> startTimeCode;
+  nonstd::optional<double> endTimeCode;
+  double framesPerSecond{24.0};
+  double timeCodesPerSecond{24.0};
+  double metersPerUnit{1.0}; // default [m]
+  
+  bool autoPlay{true};
+
+  // If you want to lookup more thing on USD Stage Metadata, Use Stage::metas() 
+};
+
 // Simple glTF-like Scene Graph
 class RenderScene {
  public:
   std::string usd_filename;
 
-  std::string upAxis{"Y"}; // "X", "Y" or "Z"
+  SceneMetadata meta;
 
   uint32_t default_root_node{0}; // index to `nodes`.
 
