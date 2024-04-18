@@ -216,11 +216,11 @@ bool export_to_usda(const RenderScene &scene,
   Stage stage;
 
   stage.metas().comment = "Exported from TinyUSDZ Tydra.";
-  if (scene.upAxis == "X") {
+  if (scene.meta.upAxis == "X") {
     stage.metas().upAxis = Axis::X;
-  } else if (scene.upAxis == "Y") {
+  } else if (scene.meta.upAxis == "Y") {
     stage.metas().upAxis = Axis::Y;
-  } else if (scene.upAxis == "Z") {
+  } else if (scene.meta.upAxis == "Z") {
     stage.metas().upAxis = Axis::Z;
   } 
 
