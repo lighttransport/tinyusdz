@@ -5125,15 +5125,6 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
   // An animation source is only valid if its translation, rotation, and scale components are all authored, storing arrays size to the same size as the authored joints array.
   // """
 
-  // NOTE: fortunately USD SkelAnimation uses quaternions for rotations
-  // anim_out->channels.rotations
-  
-  (void)anim_out;
-
-  AnimationChannel channel_txs; channel_txs.type = AnimationChannel::ChannelType::Translation;
-  AnimationChannel channel_rots; channel_rots.type = AnimationChannel::ChannelType::Rotation;
-  AnimationChannel channel_scales; channel_scales.type = AnimationChannel::ChannelType::Scale;
-
   if (!skelAnim.joints.authored()) {
     PUSH_ERROR_AND_RETURN(fmt::format("`joints` is not authored for SkelAnimation Prim : {}", abs_path));
   }
@@ -5153,6 +5144,18 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
     skelAnim.scales.authored() ? "yes" : "no"));
   }
 
+  //
+  // Reorder values[channels][timeCode][jointId] into values[jointId][channels][timeCode]
+  // 
+
+  std::map<std::string, std::map<AnimationChannel::ChannelType, AnimationChannel>> channelMap;
+  StringAndIdMap jointIdMap;
+  
+  for (const auto &joint : joints) {
+    uint64_t id = jointIdMap.size();
+    jointIdMap.add(joint.str(), id);
+  }
+
 
   Animatable<std::vector<value::float3>> translations;
   if (!skelAnim.translations.get_value(&translations)) {
@@ -5169,6 +5172,9 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
     PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `scales` attribute of SkelAnimation. Maybe ValueBlock or connection? : {}", abs_path)); 
   }
 
+  //
+  // NOTE: both timeSamples and default value are authored, timeSamples wins.
+  //
   bool is_translations_timesamples = false;
   bool is_rotations_timesamples = false;
   bool is_scales_timesamples = false;
@@ -5181,16 +5187,25 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
     }
 
     for (const auto &sample : ts_txs.get_samples()) {
-      AnimationSample<std::vector<value::float3>> dst;
       if (!sample.blocked) {
         // length check 
         if (sample.value.size() != joints.size()) {
           PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. timeCode {} translations.size {} must be equal to joints.size {} : {}", sample.t, sample.value.size(), joints.size(), abs_path)); 
         }
 
-        dst.t = float(sample.t);
-        dst.value = sample.value;
-        channel_txs.translations.samples.push_back(dst);
+        for (size_t j = 0; j < sample.value.size(); j++) {
+          AnimationSample<value::float3> s;
+          s.t = float(sample.t);
+          s.value = sample.value[j];
+
+          std::string jointName = jointIdMap.at(j);
+          auto &it = channelMap.at(jointName).at(AnimationChannel::ChannelType::Translation);
+          if (it.translations.samples.empty()) {
+            it.type = AnimationChannel::ChannelType::Translation;
+          }
+          it.translations.samples.push_back(s);
+        }
+
       }
     }
     is_translations_timesamples = true;
@@ -5214,6 +5229,7 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
     }
   }
 
+  // value at 'default' time.
   std::vector<value::float3> translation;
   std::vector<value::float4> rotation;
   std::vector<value::float3> scale;
@@ -5268,33 +5284,54 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
     is_scales_timesamples = false;
   }
 
-  // Use USD TimeCode::Default for static sample.
-  if (is_translations_timesamples) {
-  } else {
-    AnimationSample<std::vector<value::float3>> sample;
-    sample.t = std::numeric_limits<float>::quiet_NaN();
-    sample.value = translation;
-    channel_txs.translations.samples.push_back(sample);
+  if (!is_translations_timesamples) {
+    // Create a channel value with single-entry
+    // Use USD TimeCode::Default for static sample.
+    for (const auto &joint : joints) {
+      channelMap[joint.str()][AnimationChannel::ChannelType::Translation].type = AnimationChannel::ChannelType::Translation;
+
+      AnimationSample<value::float3> s;
+      s.t = std::numeric_limits<float>::quiet_NaN();
+      uint64_t joint_id = jointIdMap.at(joint.str());
+      s.value = translation[joint_id];
+      channelMap[joint.str()][AnimationChannel::ChannelType::Translation].translations.samples.clear();
+      channelMap[joint.str()][AnimationChannel::ChannelType::Translation].translations.samples.push_back(s);
+    }
   }
 
-  if (is_rotations_timesamples) {
-  } else {
-    AnimationSample<std::vector<value::float4>> sample;
-    sample.t = std::numeric_limits<float>::quiet_NaN();
-    sample.value = rotation;
-    channel_rots.rotations.samples.push_back(sample);
+  if (!is_rotations_timesamples) {
+    for (const auto &joint : joints) {
+      channelMap[joint.str()][AnimationChannel::ChannelType::Rotation].type = AnimationChannel::ChannelType::Rotation;
+
+      AnimationSample<value::float4> s;
+      s.t = std::numeric_limits<float>::quiet_NaN();
+      uint64_t joint_id = jointIdMap.at(joint.str());
+      s.value = rotation[joint_id];
+      channelMap[joint.str()][AnimationChannel::ChannelType::Rotation].rotations.samples.clear();
+      channelMap[joint.str()][AnimationChannel::ChannelType::Rotation].rotations.samples.push_back(s);
+    }
   }
 
-  if (is_scales_timesamples) {
-  } else {
-    AnimationSample<std::vector<value::float3>> sample;
-    sample.t = std::numeric_limits<float>::quiet_NaN();
-    sample.value = scale;
-    channel_scales.scales.samples.push_back(sample);
+  if (!is_scales_timesamples) {
+    for (const auto &joint : joints) {
+      channelMap[joint.str()][AnimationChannel::ChannelType::Scale].type = AnimationChannel::ChannelType::Scale;
+
+      AnimationSample<value::float3> s;
+      s.t = std::numeric_limits<float>::quiet_NaN();
+      uint64_t joint_id = jointIdMap.at(joint.str());
+      s.value = scale[joint_id];
+      channelMap[joint.str()][AnimationChannel::ChannelType::Scale].scales.samples.clear();
+      channelMap[joint.str()][AnimationChannel::ChannelType::Scale].scales.samples.push_back(s);
+    }
   }
 
-  PUSH_ERROR_AND_RETURN("TODO");
+  anim_out->abs_path = abs_path.full_path_name();
+  anim_out->prim_name = skelAnim.name;
+  anim_out->display_name = skelAnim.metas().displayName.value_or("");
 
+  anim_out->channels_map = std::move(channelMap);
+
+  return true;
 }
 
 bool RenderSceneConverter::BuildNodeHierarchyImpl(
