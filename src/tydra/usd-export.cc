@@ -60,22 +60,54 @@ static bool ExportBlendShape(const ShapeTarget &target, BlendShape *dst, std::st
 }
 
 // TODO: Support BlendShapes target
-static bool ExportSkelAnimation(const Animation &anim, const std::vector<std::string> &jointNames, SkelAnimation *dst, std::string *err) {
+static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::string *err) {
   (void)err;
   dst->name = anim.prim_name;
   if (anim.display_name.size()) {
     dst->metas().displayName = anim.display_name;
   }
 
-  {
-    std::vector<value::token> joints(jointNames.size());
-    for (size_t i = 0; i < jointNames.size(); i++) {
-      joints[i] = value::token(jointNames[i]);
-    }
-    dst->joints = joints;
+  if (anim.channels_map.empty()) {
+    // TODO: Warn message
+    return true;
   }
 
-  for (size_t i = 0; i < anim.channels.size(); i++) {
+  StringAndIdMap joint_idMap;
+  for (const auto &channels : anim.channels_map)
+  {
+    uint64_t joint_id = uint64_t(joint_idMap.size());
+    joint_idMap.add(channels.first, uint64_t(joint_id));
+  }
+
+  std::vector<value::token> joints(joint_idMap.size());
+  for (const auto &channels : anim.channels_map) {
+    joints[joint_idMap.at(channels.first)] = value::token(channels.first);
+  }
+
+  for (const auto &channels : anim.channels_map) {
+    size_t tx_id{~0u};
+    size_t rot_id{~0u};
+    size_t scale_id{~0u};
+
+    for (size_t i = 0; i < channels.second.size(); i++) {
+      if (channels.second[i].type == AnimationChannel::ChannelType::Translation) {
+        tx_id = i;
+      } else if (channels.second[i].type == AnimationChannel::ChannelType::Rotation) {
+        rot_id = i;
+      } else if (channels.second[i].type == AnimationChannel::ChannelType::Scale) {
+        scale_id = i;
+      }
+    }
+
+    // TODO: Provide dummy value when missing.
+    if ((tx_id == ~0u) || (rot_id == ~0u) || (scale_id == ~0u)) {
+      PUSH_ERROR_AND_RETURN(fmt::format("translation, rotation and scale AnimationChannel must be all provided. translation {}, rotation {}, scale {}",
+        (tx_id == ~0u) ? "missing" : "provided",
+        (rot_id == ~0u) ? "missing" : "provided",
+        (scale_id == ~0u) ? "missing" : "provided"));
+    }
+
+#if 0 // TODO
     const AnimationChannel &channel = anim.channels[i];
 
     if (channel.rotations.samples.size()) {
@@ -110,6 +142,7 @@ static bool ExportSkelAnimation(const Animation &anim, const std::vector<std::st
       }
       dst->scales.set_value(scales);
     }
+#endif
   }
   return false;
 }
@@ -202,7 +235,7 @@ static bool ToGeomMesh(const RenderMesh &rmesh, GeomMesh *dst, std::string *err)
   }
 
   // TODO: GeomSubset, Material assignment, skel binding, ...
- 
+
   return true;
 }
 
@@ -222,7 +255,7 @@ bool export_to_usda(const RenderScene &scene,
     stage.metas().upAxis = Axis::Y;
   } else if (scene.meta.upAxis == "Z") {
     stage.metas().upAxis = Axis::Z;
-  } 
+  }
 
   // TODO: Construct Node hierarchy
 
@@ -271,8 +304,7 @@ bool export_to_usda(const RenderScene &scene,
 
   for (size_t i = 0; i < scene.animations.size(); i++) {
     SkelAnimation skelAnim;
-    std::vector<std::string> jointNames; // TODO: Read jointNames from SkelHierarchy.
-    if (!detail::ExportSkelAnimation(scene.animations[i], jointNames, &skelAnim, err)) {
+    if (!detail::ExportSkelAnimation(scene.animations[i], &skelAnim, err)) {
       return false;
     }
 
