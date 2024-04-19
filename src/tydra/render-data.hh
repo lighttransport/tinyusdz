@@ -665,6 +665,11 @@ struct AnimationSampler {
 struct AnimationChannel {
   enum class ChannelType { Transform, Translation, Rotation, Scale, Weight };
 
+  AnimationChannel() = default;
+
+  AnimationChannel(ChannelType ty) : type(ty) {
+  } 
+
   ChannelType type;
   // The following AnimationSampler is filled depending on ChannelType.
   // Example: Rotation => Only `rotations` are filled.
@@ -672,12 +677,12 @@ struct AnimationChannel {
   // Matrix precision is reduced to float-precision
   // NOTE: transform is not supported in glTF(you need to decompose transform
   // matrix into TRS)
-  AnimationSampler<std::vector<mat4>> transforms;
+  AnimationSampler<mat4> transforms;
 
-  AnimationSampler<std::vector<vec3>> translations;
-  AnimationSampler<std::vector<quat>> rotations;  // Rotation is represented as quaternions
-  AnimationSampler<std::vector<vec3>> scales; // half-types are upcasted to float precision
-  AnimationSampler<std::vector<float>> weights;
+  AnimationSampler<vec3> translations;
+  AnimationSampler<quat> rotations;  // Rotation is represented as quaternions
+  AnimationSampler<vec3> scales; // half-types are upcasted to float precision
+  AnimationSampler<float> weights;
 
   //std::string joint_name; // joint name(UsdSkel::joints)
   //int64_t joint_id{-1};  // joint index in SkelHierarchy
@@ -689,8 +694,8 @@ struct Animation {
   std::string abs_path;  // Target USD Prim path
   std::string display_name;  // `displayName` prim meta
 
-  // key = joint, value = channels(Usually 3(trans, rots and scales))
-  std::map<std::string, std::vector<AnimationChannel>> channels_map;
+  // key = joint, value = (key: channel_type, value: channel_value)
+  std::map<std::string, std::map<AnimationChannel::ChannelType, AnimationChannel>> channels_map;
 };
 
 struct Node {
