@@ -659,7 +659,9 @@ struct AnimationSampler {
   Interpolation interpolation{Interpolation::Linear};
 };
 
-// TODO: Supprot more data types(e.g. float2)
+// We store animation data in AoS(array of structure) approach(glTF-like), i.e. animation channel is provided per joint, instead of
+// SoA(structure of array) approach(USD SkelAnimation)
+// TODO: Use VertexAttribute-like data structure
 struct AnimationChannel {
   enum class ChannelType { Transform, Translation, Rotation, Scale, Weight };
 
@@ -677,7 +679,8 @@ struct AnimationChannel {
   AnimationSampler<std::vector<vec3>> scales; // half-types are upcasted to float precision
   AnimationSampler<std::vector<float>> weights;
 
-  int64_t taget_node{-1};  // array index to RenderScene::nodes
+  //std::string joint_name; // joint name(UsdSkel::joints)
+  //int64_t joint_id{-1};  // joint index in SkelHierarchy
 };
 
 // USD SkelAnimation
@@ -685,7 +688,9 @@ struct Animation {
   std::string prim_name; // Prim name(element name)
   std::string abs_path;  // Target USD Prim path
   std::string display_name;  // `displayName` prim meta
-  std::vector<AnimationChannel> channels;
+
+  // key = joint, value = channels(Usually 3(trans, rots and scales))
+  std::map<std::string, std::vector<AnimationChannel>> channels_map;
 };
 
 struct Node {
