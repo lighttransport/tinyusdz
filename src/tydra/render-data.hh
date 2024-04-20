@@ -1774,10 +1774,10 @@ class RenderSceneConverter {
   bool BuildVertexIndicesImpl(RenderMesh &mesh);
 
   //
-  // Get Skeleton assigned to this GeomMesh Prim
+  // Get Skeleton assigned to the GeomMesh Prim and convert it to SkelHierarchy.
   //
-  bool GetSkeletonImpl(const tinyusdz::Prim &prim,
-                       const tinyusdz::Skeleton *&out_skeleton);
+  bool ConvertSkeletonImpl(const RenderSceneConverterEnv &env, const tinyusdz::GeomMesh &mesh,
+                       SkelHierarchy *&out_skel);
 
   bool BuildNodeHierarchyImpl(
     const RenderSceneConverterEnv &env,

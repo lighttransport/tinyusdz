@@ -5524,6 +5524,52 @@ bool RenderSceneConverter::ConvertToRenderScene(
   return true;
 }
 
+bool RenderSceneConverter::ConvertSkeletonImpl(const RenderSceneConverterEnv &env, const tinyusdz::GeomMesh &mesh,
+                       SkelHierarchy *&out_skel) {
+
+  if (!out_skel) {
+    return false;
+  }
+
+  if (!mesh.skeleton.has_value()) {
+    return false;
+  }
+
+  Path skelPath;
+
+  if (mesh.skeleton.value().is_path()) {
+    skelPath = mesh.skeleton.value().targetPath;
+  } else if (mesh.skeleton.value().is_pathvector()) {
+    // Use the first one
+    if (mesh.skeleton.value().targetPathVector.size()) {
+      skelPath = mesh.skeleton.value().targetPathVector[0];
+    } else {
+      PUSH_WARN("`skel:skeleton` has invalid definition.");
+    }
+  } else {
+    PUSH_WARN("`skel:skeleton` has invalid definition.");
+  }
+
+  if (skelPath.is_valid()) {
+    const Prim *skelPrim{nullptr};
+    if (!env.stage.find_prim_at_path(skelPath, skelPrim, &_err)) {
+      return false;
+    }
+
+    SkelHierarchy dst;
+    if (const auto pskel = skelPrim->as<Skeleton>()) {
+      if (!BuildSkelHierarchy(env.stage, (*pskel), dst, &_err)) {
+        return false;
+      }
+    }
+
+    (*out_skel) = dst;
+    return true;
+  }
+
+  PUSH_ERROR_AND_RETURN("`skel:skeleton` path is invalid.");
+}
+
 bool DefaultTextureImageLoaderFunction(
     const value::AssetPath &assetPath, const AssetInfo &assetInfo,
     const AssetResolutionResolver &assetResolver, TextureImage *texImageOut,
