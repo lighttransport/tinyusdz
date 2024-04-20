@@ -2408,7 +2408,7 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim, const std::string &v
 
   constexpr auto kPrimvars = "primvars:";
   constexpr auto kIndices = ":indices";
-  
+
   std::string primvar_name = kPrimvars + varname;
 
   const auto it = gprim->props.find(primvar_name);
@@ -2420,7 +2420,7 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim, const std::string &v
     const Attribute &attr = it->second.get_attribute();
 
     if (attr.is_connection()) {
-      // follow targetPath to get Attribute 
+      // follow targetPath to get Attribute
       Attribute terminal_attr;
       bool ret = tydra::GetTerminalAttribute(stage, attr, primvar_name, &terminal_attr, err);
       if (!ret) {
@@ -2461,7 +2461,7 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim, const std::string &v
       }
 
       if (indexAttr.is_connection()) {
-        // follow targetPath to get Attribute 
+        // follow targetPath to get Attribute
         Attribute terminal_indexAttr;
         bool ret = tydra::GetTerminalAttribute(stage, indexAttr, index_name, &terminal_indexAttr, err);
         if (!ret) {
@@ -2474,7 +2474,7 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim, const std::string &v
           if (!tss.from_timesamples(ts)) {
             PUSH_ERROR_AND_RETURN(fmt::format("Index Attribute seems not an timesamples with int[] type: {}", index_name));
           }
-        
+
           primvar.set_indices(tss);
         } else if (terminal_indexAttr.is_value()) {
 
@@ -2489,14 +2489,14 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim, const std::string &v
           primvar.set_indices(indices);
 
         }
-      
+
       } else if (indexAttr.is_timesamples()) {
         const auto &ts = indexAttr.get_var().ts_raw();
         TypedTimeSamples<std::vector<int32_t>> tss;
         if (!tss.from_timesamples(ts)) {
           PUSH_ERROR_AND_RETURN(fmt::format("Index Attribute seems not an timesamples with int[] type: {}", index_name));
         }
-      
+
         primvar.set_indices(tss);
       } else if (indexAttr.is_blocked()) {
         // Value blocked. e.g. `float2[] primvars:st:indices = None`
@@ -2597,7 +2597,7 @@ bool GetTerminalAttributeImpl(
   } else if (prop.is_attribute()) {
 
     (*value) = prop.get_attribute();
-    
+
   } else {
     // ???
     PUSH_ERROR_AND_RETURN(
@@ -2657,7 +2657,7 @@ bool GetTerminalAttribute(
 
       return GetTerminalAttributeImpl(stage, *targetPrim, targetPrimPropName,
                                    value, err, visited_paths);
-    
+
     } else {
       PUSH_ERROR_AND_RETURN(targetPrimRet.error());
     }
@@ -2668,6 +2668,121 @@ bool GetTerminalAttribute(
   }
 
   return false;
+
+}
+
+namespace detail {
+
+bool BuildSkelHierarchyImpl(/* inout */std::set<size_t> &visitSet, const int parentJointId, const std::vector<int> &parentJointIds, const std::vector<value::token> &jointNames, const std::vector<value::matrix4d> bindTransforms, const std::vector<value::matrix4d> &restTransforms, SkelNode &node, std::string *err = nullptr) {
+
+  // Simple linear search
+  for(size_t i = 0; i < parentJointIds.size(); i++) {
+    if (visitSet.count(i)) {
+      continue;
+    }
+
+    int parentJointIdOfCurrIdx = parentJointIds[i];
+    if (parentJointId == parentJointIdOfCurrIdx) {
+    }
+  }
+
+  return true;
+}
+
+} // namespace detail
+
+bool BuildSkelHierarchy(const Skeleton &skel,
+                        SkelNode &dst, std::string *err) {
+
+  if (!skel.joints.authored()) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Skeleton.joints attrbitue is not authored: {}", skel.name));
+  }
+
+  if (!skel.jointNames.authored()) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Skeleton.jointNames attrbitue is not authored: {}", skel.name));
+  }
+
+  std::vector<value::token> joints;
+  if (!skel.joints.get_value(&joints)) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Failed to get Skeleton.joints attrbitue: {}", skel.name));
+  }
+
+  if (joints.empty()) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Skeleton.joints attrbitue is empty: {}", skel.name));
+  }
+
+  std::vector<value::token> jointNames;
+  if (!skel.jointNames.get_value(&jointNames)) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Failed to get Skeleton.jointNames attrbitue: {}", skel.name));
+  }
+
+  if (joints.size() != jointNames.size()) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Skeleton.joints.size {} must be equal to Skeleton.jointNames.size {}: {}", joints.size(), jointNames.size(), skel.name));
+  }
+
+  std::vector<value::matrix4d> restTransforms;
+  if (skel.restTransforms.authored()) {
+    if (!skel.restTransforms.get_value(&restTransforms)) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to get Skeleton.restTransforms attrbitue: {}", skel.name));
+    }
+  } else {
+    // TODO: Report error when `restTransforms` attribute is omitted?
+    restTransforms.assign(joints.size(), value::matrix4d::identity());
+  }
+
+  if (joints.size() != restTransforms.size()) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Skeleton.joints.size {} must be equal to Skeleton.restTransforms.size {}: {}", joints.size(), restTransforms.size(), skel.name));
+  }
+
+
+  std::vector<value::matrix4d> bindTransforms;
+  if (skel.bindTransforms.authored()) {
+    if (!skel.bindTransforms.get_value(&bindTransforms)) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to get Skeleton.bindTransforms attrbitue: {}", skel.name));
+    }
+  } else {
+    // TODO: Report error when `restTransforms` attribute is omitted?
+    restTransforms.assign(joints.size(), value::matrix4d::identity());
+  }
+
+  if (joints.size() != bindTransforms.size()) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Skeleton.joints.size {} must be equal to Skeleton.bindTransforms.size {}: {}", joints.size(), bindTransforms.size(), skel.name));
+  }
+
+  // Get flattened representation of joint hierarchy with BuildSkelTopology.
+  // For root node, parentJointId = -1.
+  std::vector<int> parentJointIds;
+  if (!BuildSkelTopology(joints, parentJointIds, err)) {
+    return false;
+  }
+
+  // Just in case. Chek if topology is single-rooted.
+  auto nroots = std::count_if(parentJointIds.begin(), parentJointIds.end(), [](int x) {
+    return x == -1;
+  });
+
+  if (nroots == 0) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Invalid Skel topology. No root joint found: {}", skel.name));
+  }
+
+  if (nroots != 1) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Invalid Skel topology. Topology must be single-rooted, but it has {} roots: {}", nroots, skel.name));
+  }
+
+
+  std::set<size_t> visitSet;
+
+  SkelNode root;
+  // Construct hierachy from flattened id array.
+  if (!detail::BuildSkelHierarchyImpl(visitSet, -1, parentJointIds, jointNames, bindTransforms, restTransforms, root, err)){
+    return false;
+  }
+
+  dst = root;
+
+  return true;
+}
+
 
 }
 
