@@ -11,6 +11,7 @@
 //     - [ ] linear sRGB <-> linear DisplayP3
 //   - [x] Compute tangentes and binormals
 //   - [x] displayColor, displayOpacity primvar(vertex color)
+//   - [ ] Support SkelAnimation and Skeleton
 //   - [ ] Support Inbetween BlendShape
 //   - [ ] Support material binding collection(Collection API)
 //   - [ ] Support multiple skel animation
@@ -3578,6 +3579,7 @@ bool RenderSceneConverter::ConvertMesh(
 
       if (skelPath.is_valid()) {
         // TODO
+        // GetSkeletonImpl
       }
     }
 

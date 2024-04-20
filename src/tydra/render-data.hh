@@ -1721,7 +1721,7 @@ class RenderSceneConverter {
   /// Convert SkelAnimation to Tydra Animation.
   ///
   /// @param[in] abs_path USD Path to SkelAnimation Prim
-  /// @param[in] skelAnim SkelAnimation
+  /// @param[in] skelAnim SkelAnimatio
   /// @param[in] anim_out UVTexture
   ///
   bool ConvertSkelAnimation(const RenderSceneConverterEnv &env,
