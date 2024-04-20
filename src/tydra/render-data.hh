@@ -915,6 +915,7 @@ struct RenderMesh {
 
   // For vertex skinning
   JointAndWeight joint_and_weights;
+  int skel_id{-1}; // index to RenderScene::skeletons
 
   // BlendShapes
   // key = USD BlendShape prim name.
@@ -1777,7 +1778,7 @@ class RenderSceneConverter {
   // Get Skeleton assigned to the GeomMesh Prim and convert it to SkelHierarchy.
   //
   bool ConvertSkeletonImpl(const RenderSceneConverterEnv &env, const std::string &mesh_abs_path, const tinyusdz::GeomMesh &mesh,
-                       SkelHierarchy *&out_skel);
+                       SkelHierarchy *out_skel);
 
   bool BuildNodeHierarchyImpl(
     const RenderSceneConverterEnv &env,
