@@ -84,20 +84,13 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
     joints[joint_idMap.at(channels.first)] = value::token(channels.first);
   }
 
+#if 0 // TODO
   for (const auto &channels : anim.channels_map) {
-    size_t tx_id{~0u};
-    size_t rot_id{~0u};
-    size_t scale_id{~0u};
+    
+    const auto tx_it = channels.second.at(AnimationChannel::ChannelType::Translation);
+    const auto rot_it = channels.second.at(AnimationChannel::ChannelType::Rotation);
+    const auto scale_it = channels.second.at(AnimationChannel::ChannelType::Scale);
 
-    for (size_t i = 0; i < channels.second.size(); i++) {
-      if (channels.second[i].type == AnimationChannel::ChannelType::Translation) {
-        tx_id = i;
-      } else if (channels.second[i].type == AnimationChannel::ChannelType::Rotation) {
-        rot_id = i;
-      } else if (channels.second[i].type == AnimationChannel::ChannelType::Scale) {
-        scale_id = i;
-      }
-    }
 
     // TODO: Provide dummy value when missing.
     if ((tx_id == ~0u) || (rot_id == ~0u) || (scale_id == ~0u)) {
@@ -144,6 +137,7 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
     }
 #endif
   }
+#endif
   return false;
 }
 
