@@ -2788,11 +2788,6 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
         "Skeleton.joints attrbitue is not authored: {}", skel.name));
   }
 
-  if (!skel.jointNames.authored()) {
-    PUSH_ERROR_AND_RETURN(fmt::format(
-        "Skeleton.jointNames attrbitue is not authored: {}", skel.name));
-  }
-
   std::vector<value::token> joints;
   if (!skel.joints.get_value(&joints)) {
     PUSH_ERROR_AND_RETURN(
@@ -2805,17 +2800,27 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
   }
 
   std::vector<value::token> jointNames;
-  if (!skel.jointNames.get_value(&jointNames)) {
-    PUSH_ERROR_AND_RETURN(fmt::format(
-        "Failed to get Skeleton.jointNames attrbitue: {}", skel.name));
+
+  if (skel.jointNames.authored()) {
+    if (!skel.jointNames.get_value(&jointNames)) {
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "Failed to get Skeleton.jointNames attrbitue: {}", skel.name));
+    }
+
+    if (joints.size() != jointNames.size()) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Skeleton.joints.size {} must be equal to "
+                      "Skeleton.jointNames.size {}: {}",
+                      joints.size(), jointNames.size(), skel.name));
+    }
+  } else {
+    // Use joints 
+    jointNames.resize(joints.size());
+    for (size_t i = 0; i < joints.size(); i++) {
+      jointNames[i] = joints[i];
+    }
   }
 
-  if (joints.size() != jointNames.size()) {
-    PUSH_ERROR_AND_RETURN(
-        fmt::format("Skeleton.joints.size {} must be equal to "
-                    "Skeleton.jointNames.size {}: {}",
-                    joints.size(), jointNames.size(), skel.name));
-  }
 
   std::vector<value::matrix4d> restTransforms;
   if (skel.restTransforms.authored()) {
