@@ -2671,6 +2671,15 @@ bool GetTerminalAttribute(
 
 }
 
+bool BuildSkelHierarchy(const Stage &stage, const Skeleton &skel,
+                        SkelHierarchy &dst, std::string *err) {
+  (void)stage;
+  (void)skel;
+  (void)dst;
+
+  PUSH_ERROR_AND_RETURN("TODO");
+}
+
 
 }  // namespace tydra
 }  // namespace tinyusdz
