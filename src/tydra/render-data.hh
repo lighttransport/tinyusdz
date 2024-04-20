@@ -689,8 +689,8 @@ struct Animation {
   std::string abs_path;  // Target USD Prim path
   std::string display_name;  // `displayName` prim meta
 
-  // key = joint, value = channels(Usually 3(trans, rots and scales))
-  std::map<std::string, std::vector<AnimationChannel>> channels_map;
+  // key = joint, value = (key: channel_type, value= channel value))
+  std::map<std::string, std::map<AnimationChannel::ChannelType, AnimationChannel>> channels_map;
 };
 
 struct Node {
