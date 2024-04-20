@@ -6237,6 +6237,104 @@ std::string DumpMesh(const RenderMesh &mesh, uint32_t indent) {
   return ss.str();
 }
 
+namespace detail {
+
+void DumpSkelNode(std::stringstream &ss, const SkelNode &node, uint32_t indent) {
+
+  ss << pprint::Indent(indent) << node.joint_name << " {\n";
+
+  ss << pprint::Indent(indent + 1) << "joint_path " << quote(node.joint_path) << "\n";
+  ss << pprint::Indent(indent + 1) << "joint_id " << node.joint_id << "\n";
+  ss << pprint::Indent(indent + 1) << "bind_transform " << quote(tinyusdz::to_string(node.bind_transform)) << "\n";
+  ss << pprint::Indent(indent + 1) << "rest_transform " << quote(tinyusdz::to_string(node.rest_transform)) << "\n";
+
+  ss << pprint::Indent(indent) << "}\n";
+}
+
+
+} // namespace detail
+
+std::string DumpSkeleton(const SkelHierarchy &skel, uint32_t indent) {
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << "skeleton {\n";
+
+  ss << pprint::Indent(indent + 1) << "name " << quote(skel.prim_name) << "\n";
+  ss << pprint::Indent(indent + 1) << "abs_path " << quote(skel.abs_path)
+     << "\n";
+  ss << pprint::Indent(indent + 1) << "display_name "
+     << quote(skel.display_name) << "\n";
+
+  detail::DumpSkelNode(ss, skel.root_node, indent + 1);
+
+  ss << "\n";
+
+  ss << pprint::Indent(indent) << "}\n";
+
+  return ss.str();
+}
+
+namespace detail {
+
+template<typename T>
+std::string PrintAnimationSamples(const std::vector<AnimationSample<T>> &samples) {
+  std::stringstream ss;
+
+  ss << "[";
+  for (size_t i = 0; i < samples.size(); i++) {
+    if (i > 0) {
+      ss << ", ";
+    }
+
+    ss << "(" << samples[i].t << ", " << samples[i].value << ")";
+  }
+  ss << "]";
+
+  return ss.str();
+}
+
+void DumpAnimChannel(std::stringstream &ss, const std::string &name, const std::map<AnimationChannel::ChannelType, AnimationChannel> &channels, uint32_t indent) {
+
+  ss << pprint::Indent(indent) << name << " {\n";
+
+  for (const auto &channel : channels) {
+    if (channel.first == AnimationChannel::ChannelType::Translation) {
+      ss << pprint::Indent(indent + 1) << "translations " << quote(detail::PrintAnimationSamples(channel.second.translations.samples)) << "\n";
+    } else if (channel.first == AnimationChannel::ChannelType::Rotation) {
+      ss << pprint::Indent(indent + 1) << "rotations " << quote(detail::PrintAnimationSamples(channel.second.rotations.samples)) << "\n";
+    } else if (channel.first == AnimationChannel::ChannelType::Scale) {
+      ss << pprint::Indent(indent + 1) << "scales " << quote(detail::PrintAnimationSamples(channel.second.scales.samples)) << "\n";
+    }
+  }
+
+  ss << pprint::Indent(indent) << "}\n";
+}
+
+
+} // namespace detail
+
+std::string DumpAnimation(const Animation &anim, uint32_t indent) {
+  std::stringstream ss;
+
+  ss << pprint::Indent(indent) << "animation {\n";
+
+  ss << pprint::Indent(indent + 1) << "name " << quote(anim.prim_name) << "\n";
+  ss << pprint::Indent(indent + 1) << "abs_path " << quote(anim.abs_path)
+     << "\n";
+  ss << pprint::Indent(indent + 1) << "display_name "
+     << quote(anim.display_name) << "\n";
+
+  for (const auto &channel : anim.channels_map) {
+    detail::DumpAnimChannel(ss, channel.first, channel.second, indent + 1);
+  }
+
+  ss << "\n";
+
+  ss << pprint::Indent(indent) << "}\n";
+
+  return ss.str();
+}
+
 std::string DumpCamera(const RenderCamera &camera, uint32_t indent) {
   std::stringstream ss;
 
@@ -6477,8 +6575,9 @@ std::string DumpRenderScene(const RenderScene &scene,
   ss << "default_root_node " << scene.default_root_node << "\n";
   ss << "// # of Root Nodes : " << scene.nodes.size() << "\n";
   ss << "// # of Meshes : " << scene.meshes.size() << "\n";
-  ss << "// # of Cameras : " << scene.cameras.size() << "\n";
+  ss << "// # of Skeletons : " << scene.skeletons.size() << "\n";
   ss << "// # of Animations : " << scene.animations.size() << "\n";
+  ss << "// # of Cameras : " << scene.cameras.size() << "\n";
   ss << "// # of Materials : " << scene.materials.size() << "\n";
   ss << "// # of UVTextures : " << scene.textures.size() << "\n";
   ss << "// # of TextureImages : " << scene.images.size() << "\n";
@@ -6495,6 +6594,18 @@ std::string DumpRenderScene(const RenderScene &scene,
   ss << "meshes {\n";
   for (size_t i = 0; i < scene.meshes.size(); i++) {
     ss << "[" << i << "] " << DumpMesh(scene.meshes[i], 1);
+  }
+  ss << "}\n";
+
+  ss << "skeletons {\n";
+  for (size_t i = 0; i < scene.skeletons.size(); i++) {
+    ss << "[" << i << "] " << DumpSkeleton(scene.skeletons[i], 1);
+  }
+  ss << "}\n";
+
+  ss << "animations {\n";
+  for (size_t i = 0; i < scene.animations.size(); i++) {
+    ss << "[" << i << "] " << DumpAnimation(scene.animations[i], 1);
   }
   ss << "}\n";
 
@@ -6532,7 +6643,7 @@ std::string DumpRenderScene(const RenderScene &scene,
   }
   ss << "}\n";
 
-  // ss << "TODO: Animations, ...\n";
+  // ss << "TODO: AnimationChannel, ...\n";
 
   return ss.str();
 }
