@@ -3562,6 +3562,7 @@ bool RenderSceneConverter::ConvertMesh(
     dst.joint_and_weights.elementSize = int(jointIndicesElementSize);
 
     if (mesh.skeleton.has_value()) {
+      DCOUT("Convert Skeleton");
       Path skelPath;
 
       if (mesh.skeleton.value().is_path()) {
@@ -3578,8 +3579,25 @@ bool RenderSceneConverter::ConvertMesh(
       }
 
       if (skelPath.is_valid()) {
-        // TODO
-        // GetSkeletonImpl
+        SkelHierarchy skel;
+        if (!ConvertSkeletonImpl(env, abs_path.full_path_name(), mesh, &skel)) {
+          return false;
+        }
+        DCOUT("Converted skeleton attached to : " << abs_path);
+
+        auto it = std::find_if(skeletons.begin(), skeletons.end(), [&abs_path](const SkelHierarchy &sk) {
+          return sk.abs_path == abs_path.full_path_name();
+        });
+
+        int skel_id{0};
+        if (it != skeletons.end()) {
+          skel_id = int(std::distance(skeletons.begin(), it));
+        } else {
+          skel_id = int(skeletons.size());
+          skeletons.emplace_back(std::move(skel));
+        }
+
+        dst.skel_id = skel_id;
       }
     }
 
@@ -5527,7 +5545,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
 }
 
 bool RenderSceneConverter::ConvertSkeletonImpl(const RenderSceneConverterEnv &env, const std::string &abs_path, const tinyusdz::GeomMesh &mesh,
-                       SkelHierarchy *&out_skel) {
+                       SkelHierarchy *out_skel) {
 
   if (!out_skel) {
     return false;
@@ -6277,6 +6295,8 @@ std::string DumpMesh(const RenderMesh &mesh, uint32_t indent) {
        << DumpVertexAttribute(mesh.tangents, indent + 2) << "\n";
     ss << pprint::Indent(indent + 1) << "}\n";
   }
+
+  ss << pprint::Indent(indent + 1) << "skek_id " << mesh.skel_id << "\n";
 
   if (mesh.joint_and_weights.jointIndices.size()) {
     ss << pprint::Indent(indent + 1) << "skin {\n";
