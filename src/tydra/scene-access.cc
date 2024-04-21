@@ -2742,12 +2742,13 @@ bool GetTerminalAttribute(const tinyusdz::Stage &stage,
 namespace detail {
 
 static bool BuildSkelHierarchyImpl(
-    /* inout */ std::set<size_t> &visitSet, const int parentJointId,
+    /* inout */ std::set<size_t> &visitSet,
+    /* inout */ SkelNode &parentNode,
     const std::vector<int> &parentJointIds,
     const std::vector<value::token> &joints,
     const std::vector<value::token> &jointNames,
     const std::vector<value::matrix4d> bindTransforms,
-    const std::vector<value::matrix4d> &restTransforms, SkelNode &parentNode,
+    const std::vector<value::matrix4d> &restTransforms,
     std::string *err = nullptr) {
   // Simple linear search
   for (size_t i = 0; i < parentJointIds.size(); i++) {
@@ -2756,7 +2757,8 @@ static bool BuildSkelHierarchyImpl(
     }
 
     int parentJointIdOfCurrIdx = parentJointIds[i];
-    if (parentJointId == parentJointIdOfCurrIdx) {
+    if (parentNode.joint_id == parentJointIdOfCurrIdx) {
+      DCOUT("add joint " << i << "(parent = " << parentJointIdOfCurrIdx << ")");
       SkelNode node;
       node.joint_id = int(i);
       node.joint_path = joints[i].str();
@@ -2767,9 +2769,9 @@ static bool BuildSkelHierarchyImpl(
       visitSet.insert(i);
 
       // Recursively traverse children
-      if (!BuildSkelHierarchyImpl(visitSet, parentJointIdOfCurrIdx,
+      if (!BuildSkelHierarchyImpl(visitSet, node,
                                   parentJointIds, joints, jointNames, bindTransforms,
-                                  restTransforms, node, err)) {
+                                  restTransforms, err)) {
         return false;
       }
 
@@ -2896,10 +2898,12 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
   root.joint_id = int(rootIdx);
   root.bind_transform = bindTransforms[rootIdx];
   root.rest_transform = restTransforms[rootIdx];
+
+  DCOUT("parentJointIds = " << parentJointIds);
  
   // Construct hierachy from flattened id array.
-  if (!detail::BuildSkelHierarchyImpl(visitSet, -1, parentJointIds, joints, jointNames,
-                                      bindTransforms, restTransforms, root,
+  if (!detail::BuildSkelHierarchyImpl(visitSet, root, parentJointIds, joints, jointNames,
+                                      bindTransforms, restTransforms,
                                       err)) {
     return false;
   }
