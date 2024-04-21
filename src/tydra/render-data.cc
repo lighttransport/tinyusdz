@@ -6358,6 +6358,14 @@ void DumpSkelNode(std::stringstream &ss, const SkelNode &node, uint32_t indent) 
   ss << pprint::Indent(indent + 1) << "bind_transform " << quote(tinyusdz::to_string(node.bind_transform)) << "\n";
   ss << pprint::Indent(indent + 1) << "rest_transform " << quote(tinyusdz::to_string(node.rest_transform)) << "\n";
 
+  if (node.children.size()) {
+    ss << pprint::Indent(indent + 1) << "children {\n";
+    for (const auto &child : node.children) {
+      DumpSkelNode(ss, child, indent + 2);
+    }
+    ss << pprint::Indent(indent + 1) << "}\n";
+  }
+
   ss << pprint::Indent(indent) << "}\n";
 }
 
