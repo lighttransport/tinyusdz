@@ -20,6 +20,82 @@ namespace tydra {
 
 namespace detail {
 
+static void CountNodes(const SkelNode &node, size_t &count) {
+  count++;
+
+  for (const auto &child : node.children) {
+    CountNodes(child, count);
+  } 
+}
+
+static bool FlattenSkelNode(const SkelNode &node,
+  std::vector<value::token> &joints,
+  std::vector<value::token> &jointNames,
+  std::vector<value::matrix4d> &bindTransforms,
+  std::vector<value::matrix4d> &restTransforms, std::string *err) {
+
+  size_t idx = size_t(node.joint_id);
+  if (idx >= joints.size()) {
+    if (err) {
+      (*err) += "joint_id out-of-bounds.";
+    }
+    return false;
+  }
+
+  joints[idx] = value::token(node.joint_path);
+  jointNames[idx] = value::token(node.joint_name);
+  bindTransforms[idx] = node.bind_transform;
+  restTransforms[idx] = node.rest_transform;
+
+  for (const auto &child : node.children) {
+    if (!FlattenSkelNode(child, joints, jointNames, bindTransforms, restTransforms, err)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+
+// TODO: skelAnimationSource
+static bool ExportSkeleton(const SkelHierarchy &skel, Skeleton *dst, std::string *err) {
+
+  size_t num_joints{0};
+  CountNodes(skel.root_node, num_joints);
+
+  std::vector<value::token> joints(num_joints);
+  std::vector<value::token> jointNames(num_joints);
+  std::vector<value::matrix4d> bindTransforms(num_joints);
+  std::vector<value::matrix4d> restTransforms(num_joints);
+
+  // Flatten hierachy.
+  if (!FlattenSkelNode(skel.root_node, joints, jointNames, bindTransforms, restTransforms, err)) {
+    return false;
+  } 
+
+  dst->joints.set_value(joints);
+
+  // TODO: Do not author jointNames when for all i: joints[i] == jointNames[i];
+  bool name_is_same = true;
+  for (size_t i = 0; i < num_joints; i++) {
+    if (joints[i].str() != jointNames[i].str()) {
+      name_is_same = false;
+      break;
+    }
+  }
+
+  if (!name_is_same) {
+    dst->jointNames.set_value(jointNames);
+  }
+
+  dst->bindTransforms.set_value(bindTransforms);
+  dst->restTransforms.set_value(restTransforms);
+
+  dst->name = skel.prim_name;
+
+  return true;
+}
+
 static bool ExportBlendShape(const ShapeTarget &target, BlendShape *dst, std::string *err) {
   (void)err;
 
@@ -319,17 +395,18 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
 }
 
 static bool ToGeomMesh(const RenderMesh &rmesh, GeomMesh *dst, std::string *err) {
+
   std::vector<int> fvCounts(rmesh.faceVertexCounts().size());
   for (size_t i = 0; i < rmesh.faceVertexCounts().size(); i++) {
     fvCounts[i] = int(rmesh.faceVertexCounts()[i]);
   }
-  dst->faceVertexCounts = fvCounts;
+  dst->faceVertexCounts.set_value(fvCounts);
 
   std::vector<int> fvIndices(rmesh.faceVertexIndices().size());
   for (size_t i = 0; i < rmesh.faceVertexIndices().size(); i++) {
-    fvCounts[i] = int(rmesh.faceVertexIndices()[i]);
+    fvIndices[i] = int(rmesh.faceVertexIndices()[i]);
   }
-  dst->faceVertexIndices = fvIndices;
+  dst->faceVertexIndices.set_value(fvIndices);
 
   std::vector<value::point3f> points(rmesh.points.size());
   for (size_t i = 0; i < rmesh.points.size(); i++) {
@@ -436,6 +513,18 @@ bool export_to_usda(const RenderScene &scene,
       return false;
     }
 
+    Skeleton skel;
+    bool has_skel{false};
+
+    if ((scene.meshes[i].skel_id > -1) && (size_t(scene.meshes[i].skel_id) < scene.skeletons.size())) {
+      DCOUT("Export Skeleton");
+      if (!detail::ExportSkeleton(scene.skeletons[size_t(scene.meshes[i].skel_id)], &skel, err)) {
+        return false;
+      }
+    
+      has_skel = true;
+    }
+
     std::vector<BlendShape> bss;
     if (scene.meshes[i].targets.size()) {
 
@@ -461,16 +550,39 @@ bool export_to_usda(const RenderScene &scene,
     }
 
     // Add BlendShape prim under GeomMesh prim.
-    Prim prim(mesh);
+    Prim meshPrim(mesh);
 
     if (bss.size()) {
       for (size_t t = 0; t < bss.size(); t++) {
         Prim bsPrim(bss[t]);
-        prim.add_child(std::move(bsPrim));
+        meshPrim.add_child(std::move(bsPrim));
       }
     }
 
-    stage.add_root_prim(std::move(prim));
+    if (has_skel) {
+
+      SkelRoot skelRoot;
+      skelRoot.set_name("skelRoot" + std::to_string(i)); 
+
+      Prim skelPrim(skel);
+
+      Prim skelRootPrim(skelRoot);
+      skelRootPrim.add_child(std::move(meshPrim), /* rename_primname_if_require */true);
+      skelRootPrim.add_child(std::move(skelPrim), /* rename_primname_if_require */true);
+
+      stage.add_root_prim(std::move(skelRootPrim));
+
+    } else {
+      // Put Prims under Scope Prim
+      Scope scope;
+      scope.name = "scope" + std::to_string(i);
+
+      Prim scopePrim(scope);
+      scopePrim.add_child(std::move(meshPrim));
+
+      stage.add_root_prim(std::move(scopePrim));
+    }
+
   }
 
   for (size_t i = 0; i < scene.animations.size(); i++) {
