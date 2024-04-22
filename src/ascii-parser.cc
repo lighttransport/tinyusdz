@@ -3392,17 +3392,18 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
     } else {
       std::vector<T> value;
       if (!ParseBasicTypeArray(&value)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse " +
-                              std::string(value::TypeTraits<T>::type_name()) +
-                              " array.");
+        PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse Primtive Attribute {} type = {}[]", primattr_name,
+                              std::string(value::TypeTraits<T>::type_name())));
       }
 
       // Empty array allowed.
-      DCOUT("Got it: ty = " + std::string(value::TypeTraits<T>::type_name()) +
+      DCOUT("Got it: primatrr " << primattr_name << ", ty = " + std::string(value::TypeTraits<T>::type_name()) +
             ", sz = " + std::to_string(value.size()));
       var.set_value(value);
     }
 
+#if 0
+  // FIXME: Disable duplicated parsing attribute connection here, since parsing attribute connection will be handled in ParsePrimProps().
   } else if (hasConnect(primattr_name)) {
     std::string value;  // TODO: Use Path
     if (!ReadPathIdentifier(&value)) {
@@ -3425,6 +3426,22 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
 
     // TODO: Use Path
     var.set_value(abs_path.full_path_name());
+
+    // Check if attribute metadatum is not authored.
+    if (!SkipCommentAndWhitespaceAndNewline()) {
+      return false;
+    }
+
+    char c;
+    if (!LookChar1(&c)) {
+      return false;
+    }
+
+    if (c == '(') {
+      PUSH_ERROR_AND_RETURN(fmt::format("Attribute connection cannot have attribute metadataum: {}", primattr_name));
+    }
+
+#endif
   } else {
     nonstd::optional<T> value;
     if (!ReadBasicType(&value)) {
@@ -3814,6 +3831,20 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
       PUSH_ERROR_AND_RETURN(fmt::format("Invalid relative Path: {}. error = {}", path.full_path_name(), err));
     }
 
+    // Check if attribute metadatum is not authored.
+    if (!SkipCommentAndWhitespaceAndNewline()) {
+      return false;
+    }
+
+    char c;
+    if (!LookChar1(&c)) {
+      return false;
+    }
+
+    if (c == '(') {
+      PUSH_ERROR_AND_RETURN(fmt::format("Attribute connection cannot have attribute metadataum: {}", primattr_name));
+    }
+
     Property p(abs_path, /* value typename */ type_name, custom_qual);
     if (value_blocked) {
       p.attribute().set_blocked(true);
@@ -3854,6 +3885,20 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
       if (!ParseTimeSamples(type_name, &ts)) {
         PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("Failed to parse TimeSamples of type {}", type_name));
       }
+    }
+
+    // Check if attribute metadatum is not authored.
+    if (!SkipCommentAndWhitespaceAndNewline()) {
+      return false;
+    }
+
+    char c;
+    if (!LookChar1(&c)) {
+      return false;
+    }
+
+    if (c == '(') {
+      PUSH_ERROR_AND_RETURN(fmt::format("TimeSampled Attribute cannot have attribute metadataum: {}", primattr_name));
     }
 
     //std::string varname = removeSuffix(primattr_name, ".timeSamples");
