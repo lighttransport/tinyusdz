@@ -949,6 +949,7 @@ enum class UVReaderFloatComponentType {
 
 std::string to_string(UVReaderFloatComponentType ty);
 
+// TODO: Deprecate UVReaderFloat.
 // float, float2, float3 or float4 only
 struct UVReaderFloat {
   UVReaderFloatComponentType componentType{
@@ -956,11 +957,11 @@ struct UVReaderFloat {
   int64_t mesh_id{-1};   // index to RenderMesh
   int64_t coord_id{-1};  // index to RenderMesh::facevaryingTexcoords
 
-  // mat2 transform; // UsdTransform2d
-
+#if 0
   // Returns interpolated UV coordinate with UV transform
   // # of components filled are equal to `componentType`.
   vec4 fetchUV(size_t faceId, float varyu, float varyv);
+#endif
 };
 
 struct UVTexture {
@@ -1728,7 +1729,7 @@ class RenderSceneConverter {
   ///
   /// @param[in] abs_path USD Path to SkelAnimation Prim
   /// @param[in] skelAnim SkelAnimatio
-  /// @param[in] anim_out UVTexture
+  /// @param[in] anim_out Animation
   ///
   bool ConvertSkelAnimation(const RenderSceneConverterEnv &env,
                         const Path &abs_path, const SkelAnimation &skelAnim,

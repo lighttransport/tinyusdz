@@ -8,6 +8,7 @@
 #include "usd-export.hh"
 #include "common-macros.inc"
 #include "tiny-format.hh"
+#include "math-util.inc"
 
 namespace tinyusdz {
 namespace tydra {
@@ -487,7 +488,242 @@ static bool ToGeomMesh(const RenderMesh &rmesh, GeomMesh *dst, std::string *err)
   return true;
 }
 
-} // namespace
+///
+/// Convert Material and Shader graph as Material Prim(it encloses Shaders).
+///
+static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path, size_t material_id, Prim *dst, std::string *err) {
+
+  (void)err;
+
+  const RenderMaterial &rmat = scene.materials[material_id];
+
+  // TODO: create two UsdUVTextures for RGBA imagge(rgb and alpha)
+  auto ConstrcutUVTexture = [&](UVTexture &tex, nonstd::optional<UsdTransform2d> *uv_xform_dst) -> bool {
+
+    UsdUVTexture image_tex;
+
+    std::string preaderPrimPath = abs_path + "/uvmap.outputs:result";
+    Path preaderPath(preaderPrimPath, "");
+
+    TextureImage teximg;
+    image_tex.name = "Image_Texture";
+
+    value::AssetPath fileAssetPath(teximg.asset_identifier);
+    // TODO: Set colorSpace in attribute meta.
+    image_tex.file = fileAssetPath;
+
+    if (teximg.colorSpace == ColorSpace::sRGB) {
+      image_tex.sourceColorSpace = UsdUVTexture::SourceColorSpace::SRGB;
+    } else if (teximg.colorSpace == ColorSpace::Linear) {
+      image_tex.sourceColorSpace = UsdUVTexture::SourceColorSpace::Raw;
+    } else {
+      image_tex.sourceColorSpace = UsdUVTexture::SourceColorSpace::Auto;
+    }
+    
+    image_tex.st.set_connection(preaderPath);
+
+    if (tex.wrapS == UVTexture::WrapMode::CLAMP_TO_EDGE) {
+      image_tex.wrapS = UsdUVTexture::Wrap::Clamp;
+    } else if (tex.wrapS == UVTexture::WrapMode::REPEAT) {
+      image_tex.wrapS = UsdUVTexture::Wrap::Repeat;
+    } else if (tex.wrapS == UVTexture::WrapMode::MIRROR) {
+      image_tex.wrapS = UsdUVTexture::Wrap::Mirror;
+    } else if (tex.wrapS == UVTexture::WrapMode::CLAMP_TO_BORDER) {
+      image_tex.wrapS = UsdUVTexture::Wrap::Black;
+    } else {
+      image_tex.wrapS = UsdUVTexture::Wrap::Repeat;
+    }
+
+    if (tex.wrapT == UVTexture::WrapMode::CLAMP_TO_EDGE) {
+      image_tex.wrapT = UsdUVTexture::Wrap::Clamp;
+    } else if (tex.wrapT == UVTexture::WrapMode::REPEAT) {
+      image_tex.wrapT = UsdUVTexture::Wrap::Repeat;
+    } else if (tex.wrapT == UVTexture::WrapMode::MIRROR) {
+      image_tex.wrapT = UsdUVTexture::Wrap::Mirror;
+    } else if (tex.wrapT == UVTexture::WrapMode::CLAMP_TO_BORDER) {
+      image_tex.wrapT = UsdUVTexture::Wrap::Black;
+    } else {
+      image_tex.wrapT = UsdUVTexture::Wrap::Repeat;
+    }
+
+    if (tex.outputChannel == UVTexture::Channel::R) {
+      image_tex.outputsR.set_authored(true);
+    } else if (tex.outputChannel == UVTexture::Channel::G) {
+      image_tex.outputsG.set_authored(true);
+    } else if (tex.outputChannel == UVTexture::Channel::B) {
+      image_tex.outputsB.set_authored(true);
+    } else if (tex.outputChannel == UVTexture::Channel::RGB) {
+      image_tex.outputsRGB.set_authored(true);
+    } else if (tex.outputChannel == UVTexture::Channel::RGBA) {
+      PUSH_ERROR_AND_RETURN("rgba texture is not supported yet.");
+    } 
+
+    UsdTransform2d uv_xform;
+    uv_xform.name = "place2d";
+    if (tex.has_transform2d) {
+      // TODO: Deompose tex.transform and use it?
+      uv_xform.translation = tex.tx_translation;
+      uv_xform.rotation = tex.tx_rotation;
+      uv_xform.scale = tex.tx_scale;
+
+      uv_xform_dst->emplace(std::move(uv_xform));
+    } else {
+      uv_xform_dst->reset();
+    }
+
+    UsdPrimvarReader_float2 preader;
+    preader.name = "primvar_reader";
+
+    value::float2 fallback_value;
+    fallback_value[0] = tex.fallback_uv[0];
+    fallback_value[1] = tex.fallback_uv[1];
+    if (!math::is_close(fallback_value, {0.0f, 0.0f})) {
+      preader.fallback = fallback_value;
+    }
+
+    preader.varname = tex.varname_uv;
+    preader.result.set_authored(true);
+
+
+    Shader preaderShader;
+    preaderShader.name = "uvmap";
+    preaderShader.value = preader;
+
+    Shader imageTexShader;
+    imageTexShader.name = "Image_Texture";
+    imageTexShader.value = image_tex;
+    
+    return true;
+  };
+
+
+struct UVTexture {
+  // NOTE: it looks no 'rgba' in UsdUvTexture
+  enum class Channel { R, G, B, A, RGB, RGBA };
+
+  std::string prim_name; // element Prim name
+  std::string abs_path; // Absolute Prim path
+  std::string display_name; // displayName prim metadatum
+  
+  // TextureWrap `black` in UsdUVTexture is mapped to `CLAMP_TO_BORDER`(app must
+  // set border color to black) default is CLAMP_TO_EDGE and `useMetadata` wrap
+  // mode is ignored.
+  enum class WrapMode { CLAMP_TO_EDGE, REPEAT, MIRROR, CLAMP_TO_BORDER };
+
+  WrapMode wrapS{WrapMode::CLAMP_TO_EDGE};
+  WrapMode wrapT{WrapMode::CLAMP_TO_EDGE};
+
+  // Do CPU texture mapping. For baking texels with transform, texturing in
+  // raytracer(bake lighting), etc.
+  //
+  // This method accounts for `tranform` and `bias/scale`
+  //
+  // NOTE: for R, G, B channel, The value is replicated to output[0], output[1]
+  // and output[2]. For A channel, The value is returned to output[3]
+  vec4 fetch_uv(size_t faceId, float varyu, float varyv);
+
+  // `fetch_uv` with user-specified channel. `outputChannel` is ignored.
+  vec4 fetch_uv_channel(size_t faceId, float varyu, float varyv,
+                        Channel channel);
+
+  // UVW version of `fetch_uv`.
+  vec4 fetch_uvw(size_t faceId, float varyu, float varyv, float varyw);
+  vec4 fetch_uvw_channel(size_t faceId, float varyu, float varyv, float varyw,
+                         Channel channel);
+
+  // output channel info
+  Channel outputChannel{Channel::RGB};
+
+  // bias and scale for texel value
+  vec4 bias{0.0f, 0.0f, 0.0f, 0.0f};
+  vec4 scale{1.0f, 1.0f, 1.0f, 1.0f};
+
+  UVReaderFloat uvreader;
+  vec4 fallback_uv{0.0f, 0.0f, 0.0f, 0.0f};
+
+  // UsdTransform2d
+  // https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Khronos/KHR_texture_transform
+  // = scale * rotate + translation
+  bool has_transform2d{false};  // true = `transform`, `tx_rotation`, `tx_scale`
+                                // and `tx_translation` are filled;
+  mat3 transform{value::matrix3f::identity()};
+
+  // raw transform2d value
+  float tx_rotation{0.0f};
+  vec2 tx_scale{1.0f, 1.0f};
+  vec2 tx_translation{0.0f, 0.0f};
+
+  // UV primvars name(UsdPrimvarReader's inputs:varname)
+  std::string varname_uv;
+
+  int64_t texture_image_id{-1};  // Index to TextureImage
+  uint64_t handle{0};            // Handle ID for Graphics API. 0 = invalid
+};
+
+
+  };
+
+  // Layout
+  //
+  // - Material
+  //   - Shader(UsdPreviewSurface)
+  //     - UsdUVTexture(Shader)
+  //     - TexTransform2d(Shader)
+  //     - PrimvarReader
+  //
+
+  Material mat;
+
+  mat.name = rmat.name;
+
+  Shader shader;  // Shader container
+  shader.name = "defaultPBR";
+
+  std::string abs_mat_path = abs_path + "/" + mat.name;
+  std::string abs_shader_path = abs_mat_path + "/" + shader.name;
+
+  {
+    UsdPreviewSurface surfaceShader;  // Concrete Shader node object
+
+    //
+    // Asssign actual shader object to Shader::value.
+    // Also do not forget set its shader node type name through Shader::info_id
+    //
+    shader.info_id = tinyusdz::kUsdPreviewSurface;  // "UsdPreviewSurface" token
+
+    //
+    // Currently no shader network/connection API.
+    // Manually construct it.
+    //
+    surfaceShader.outputsSurface.set_authored(
+        true);  // Author `token outputs:surface`
+
+    // TODO: UsdUVTexture, UsdPrimvarReader***, UsdTransform2d
+    surfaceShader.metallic = rmat.surfaceShader.metallic.value;
+
+    // Connect to UsdPreviewSurface's outputs:surface by setting targetPath.
+    //
+    // token outputs:surface = </path/to/mat/defaultPBR.outputs:surface>
+    mat.surface.set(tinyusdz::Path(/* prim path */ abs_shader_path,
+                                   /* prop path */ "outputs:surface"));
+
+    //
+    // Shaer::value is `value::Value` type, so can use '=' to assign Shader
+    // object.
+    //
+    shader.value = std::move(surfaceShader);
+  }
+
+  tinyusdz::Prim shaderPrim(shader);
+  tinyusdz::Prim matPrim(mat);
+
+  matPrim.add_child(std::move(shaderPrim));
+  
+  (*dst) = std::move(matPrim);
+  
+}
+
+} // namespace detail
 
 bool export_to_usda(const RenderScene &scene,
   std::string &usda_str, std::string *warn, std::string *err) {
@@ -595,6 +831,25 @@ bool export_to_usda(const RenderScene &scene,
     Prim prim(skelAnim);
     stage.add_root_prim(std::move(prim));
   }
+
+  {
+    Scope matGroup;
+    matGroup.name = "materials";
+
+    Prim matGroupPrim(matGroup);
+
+    for (size_t i = 0; i < scene.materials.size(); i++) {
+      // init with dummy object(Model Prim)
+      Model dummy;
+      Prim matPrim(std::move(dummy));  
+      if (!detail::ToMaterialPrim(scene, "/materials", i, &matPrim, err)) {
+        return false;
+      }
+      if (!matGroupPrim.add_child(std::move(matPrim), /* rename_primname_if_required */false, err)) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Failed to add child Prim: {}", err));
+      }
+      
+    }
 
   usda_str =stage.ExportToString();
 
