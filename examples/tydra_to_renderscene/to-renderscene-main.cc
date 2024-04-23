@@ -243,7 +243,7 @@ int main(int argc, char **argv) {
 
   if (export_usd) {
     std::string usd_basename = tinyusdz::io::GetBaseFilename(filepath);
-    std::string usd_filename = tinyusdz::removeSuffix(usd_basename, ext) + ".usda";
+    std::string usd_filename = tinyusdz::removeSuffix(usd_basename, ext) + "export.usda";
     
     std::string usda_str;
     if (!tinyusdz::tydra::export_to_usda(render_scene, usda_str, &warn, &err)) {
