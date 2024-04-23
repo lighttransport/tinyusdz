@@ -483,7 +483,29 @@ static bool ToGeomMesh(const RenderMesh &rmesh, GeomMesh *dst, std::string *err)
     dst->set_primvar(uvPvar);
   }
 
-  // TODO: GeomSubset, Material assignment, skel binding, ...
+  if (rmesh.joint_and_weights.jointIndices.size() && rmesh.joint_and_weights.jointWeights.size() && (rmesh.joint_and_weights.elementSize > 0)) {
+    GeomPrimvar weightpvar;
+    weightpvar.set_name("skel:jointWeights");
+    weightpvar.set_value(rmesh.joint_and_weights.jointWeights);
+    weightpvar.set_elementSize(uint32_t(rmesh.joint_and_weights.elementSize));
+    weightpvar.set_interpolation(Interpolation::Vertex);
+    dst->set_primvar(weightpvar);
+
+    GeomPrimvar idxpvar;
+    idxpvar.set_name("skel:jointIndices");
+    idxpvar.set_value(rmesh.joint_and_weights.jointIndices);
+    idxpvar.set_elementSize(uint32_t(rmesh.joint_and_weights.elementSize));
+    idxpvar.set_interpolation(Interpolation::Vertex);
+    dst->set_primvar(idxpvar);
+
+    // matrix4d primvars:skel:geomBindTransform
+    GeomPrimvar geomBindTransform;
+    geomBindTransform.set_name("skel:geomBindTransform");
+    geomBindTransform.set_value(rmesh.joint_and_weights.geomBindTransform);
+    dst->set_primvar(geomBindTransform);
+  }
+
+  // TODO: GeomSubset, Material assignment, ...
 
   return true;
 }
@@ -935,7 +957,23 @@ bool export_to_usda(const RenderScene &scene,
       if (!detail::ExportSkeleton(scene.skeletons[size_t(scene.meshes[i].skel_id)], &skel, err)) {
         return false;
       }
+
+      // Add some skel settings to GeomMesh.
+      
+      // rel skel:skeleton
+      Relationship skelRel;
+      // FIXME: Set abs_path 
+      Path skelTargetPath("/skelRoot" + std::to_string(i) + "/" + skel.name, "");
+      skelRel.set(skelTargetPath);
+      mesh.skeleton = skelRel;
+
     
+      // prepend apiSchemas = ["SkelBindingAPI"]
+      APISchemas skelAPISchema;
+      skelAPISchema.listOpQual = ListEditQual::Prepend;
+      skelAPISchema.names.push_back({APISchemas::APIName::SkelBindingAPI, ""});
+      mesh.metas().apiSchemas = skelAPISchema;
+
       has_skel = true;
     }
 
