@@ -3688,6 +3688,12 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
   //
   // Attrib.
   //
+  
+  // Attribute cannot have 'varying' keyword
+  if (varying_authored) {
+    PUSH_ERROR_AND_RETURN_TAG(
+        kAscii, "Syntax error. `varying` keyword is not allowed for Attribute.");
+  }
 
   if (listop_qual != ListEditQual::ResetToExplicit) {
     PUSH_ERROR_AND_RETURN_TAG(
@@ -3842,29 +3848,41 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
     }
 
     if (c == '(') {
-      PUSH_ERROR_AND_RETURN(fmt::format("Attribute connection cannot have attribute metadataum: {}", primattr_name));
+      PUSH_ERROR_AND_RETURN(fmt::format("Attribute connection cannot have attribute metadataum: {}", attr_name));
     }
 
-    Property p(abs_path, /* value typename */ type_name, custom_qual);
-    if (value_blocked) {
-      p.attribute().set_blocked(true);
+    bool attr_exists = props->count(attr_name) && props->at(attr_name).is_attribute();
+    if (attr_exists) {
+
+      // Check if variability is the same
+      if (props->at(attr_name).attribute().variability() != variability) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Variability mismatch. Attribute `{}` already has variability `{}`, but timeSampled value has variability `{}`.", attr_name, to_string(props->at(attr_name).attribute().variability()), to_string(variability)));
+      }
+
+      props->at(attr_name).attribute().set_connection(abs_path);
+    } else {
+
+      Property p(abs_path, /* value typename */ type_name, custom_qual);
+      if (value_blocked) {
+        p.attribute().set_blocked(true);
+      }
+
+      p.attribute().variability() = variability;
+      //if (varying_authored) {
+      //  p.attribute().set_varying_authored();
+      //}
+
+      (*props)[attr_name] = p;
     }
 
-    p.attribute().variability() = variability;
-    if (varying_authored) {
-      p.attribute().set_varying_authored();
-    }
-
-    (*props)[attr_name] = p;
-
-    DCOUT(fmt::format("Added {} as a attribute connection.", primattr_name));
+    DCOUT(fmt::format("Added attribute connection to `{}`", attr_name));
 
     return true;
 
   } else if (isTimeSample) {
-    // float.timeSamples = None is not supported
+    // float.timeSamples = None is syntax error.
     if (value_blocked) {
-      PUSH_ERROR_AND_RETURN("ValueBlock to .timeSamples is not supported.");
+      PUSH_ERROR_AND_RETURN(fmt::format("Syntax error. ValueBlock to .timeSamples is invalid: {}", attr_name));
     }
 
     //
@@ -3898,28 +3916,45 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
     }
 
     if (c == '(') {
-      PUSH_ERROR_AND_RETURN(fmt::format("TimeSampled Attribute cannot have attribute metadataum: {}", primattr_name));
-    }
-
-    //std::string varname = removeSuffix(primattr_name, ".timeSamples");
-    Attribute attr;
-    primvar::PrimVar var;
-    var.set_timesamples(ts);
-
-    attr.name() = attr_name;
-    attr.set_var(std::move(var));
-
-    attr.variability() = variability;
-    if (varying_authored) {
-      attr.set_varying_authored();
+      PUSH_ERROR_AND_RETURN(fmt::format("TimeSampled Attribute cannot have attribute metadataum: {}", attr_name));
     }
 
     DCOUT("timeSamples primattr: type = " << type_name
                                           << ", name = " << attr_name);
 
-    Property p(attr, custom_qual);
-    p.set_property_type(Property::Type::Attrib);
-    (*props)[attr_name] = p;
+    Attribute attr;
+    Attribute *pattr{nullptr};
+    bool attr_exists = props->count(attr_name) && props->at(attr_name).is_attribute();
+    if (attr_exists) {
+      // Add timeSamples to existing Attribute
+      pattr = &(props->at(attr_name).attribute());
+
+      // Check if variability is the same
+      if (pattr->variability() != variability) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Variability mismatch. Attribute `{}` already has variability `{}`, but timeSampled value has variability `{}`.", attr_name, to_string(pattr->variability()), to_string(variability)));
+      }
+
+      pattr->get_var().set_timesamples(ts);
+
+    } else {
+      // new Attribute
+      pattr = &attr;  
+
+      primvar::PrimVar var;
+      var.set_timesamples(ts);
+      pattr->set_var(std::move(var));
+      pattr->variability() = variability;
+
+      //if (varying_authored) {
+      //  pattr->set_varying_authored();
+      //}
+
+      pattr->name() = attr_name;
+
+      Property p(attr, custom_qual);
+      p.set_property_type(Property::Type::Attrib);
+      (*props)[attr_name] = p;
+    }
 
     return true;
 
