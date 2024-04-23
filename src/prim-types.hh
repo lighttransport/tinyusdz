@@ -2207,7 +2207,7 @@ enum class TimeSampleInterpolation {
 
 // Attribute is a struct to hold generic attribute of a property(e.g. primvar)
 // of Prim.
-// It can have multiple values(default value, timeSamples and connection) at once.
+// It can have multiple values(default value(or ValueBlock), timeSamples and connection) at once.
 //
 // TODO: Refactor
 class Attribute {
@@ -2373,6 +2373,7 @@ class Attribute {
   AttrMeta &metas() { return _metas; }
 
   const primvar::PrimVar &get_var() const { return _var; }
+  primvar::PrimVar &get_var() { return _var; }
 
   void set_blocked(bool onoff) { _var.set_blocked(onoff); }
 
