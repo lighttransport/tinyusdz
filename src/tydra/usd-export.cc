@@ -520,21 +520,30 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
   // TODO: create two UsdUVTextures for RGBA imagge(rgb and alpha)
   auto ConstructUVTexture = [&](const UVTexture &tex, const std::string &param_name, const std::string &abs_mat_path, /* inout */std::vector<Shader> &shader_nodes) -> bool {
 
-    UsdUVTexture image_tex;
 
     std::string preaderPrimPath = abs_mat_path + "/uvmap_" + param_name + ".outputs:result";
     Path preaderPath(preaderPrimPath, "");
 
-    TextureImage teximg;
+    if ((tex.texture_image_id < 0) || (size_t(tex.texture_image_id) >= scene.images.size())) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Invalid texture_image_id for `{}`", param_name));
+    }
+
+    const TextureImage &src_teximg = scene.images[size_t(tex.texture_image_id)];
+
+    UsdUVTexture image_tex;
     image_tex.name = "Image_Texture_" + param_name;
 
-    value::AssetPath fileAssetPath(teximg.asset_identifier);
-    // TODO: Set colorSpace in attribute meta.
+    DCOUT("asset_identifier: " << src_teximg.asset_identifier);
+    if (src_teximg.asset_identifier.empty()) {
+      PUSH_ERROR_AND_RETURN(fmt::format("file asset name is empty for texture image `{}`", param_name));
+    }
+    value::AssetPath fileAssetPath(src_teximg.asset_identifier);
     image_tex.file = fileAssetPath;
 
-    if (teximg.colorSpace == ColorSpace::sRGB) {
+    // TODO: Set colorSpace in attribute meta.
+    if (src_teximg.colorSpace == ColorSpace::sRGB) {
       image_tex.sourceColorSpace = UsdUVTexture::SourceColorSpace::SRGB;
-    } else if (teximg.colorSpace == ColorSpace::Linear) {
+    } else if (src_teximg.colorSpace == ColorSpace::Linear) {
       image_tex.sourceColorSpace = UsdUVTexture::SourceColorSpace::Raw;
     } else {
       image_tex.sourceColorSpace = UsdUVTexture::SourceColorSpace::Auto;
