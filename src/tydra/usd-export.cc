@@ -493,20 +493,18 @@ static bool ToGeomMesh(const RenderMesh &rmesh, GeomMesh *dst, std::string *err)
 ///
 static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path, size_t material_id, Prim *dst, std::string *err) {
 
-  (void)err;
-
   const RenderMaterial &rmat = scene.materials[material_id];
 
   // TODO: create two UsdUVTextures for RGBA imagge(rgb and alpha)
-  auto ConstrcutUVTexture = [&](UVTexture &tex, nonstd::optional<UsdTransform2d> *uv_xform_dst) -> bool {
+  auto ConstructUVTexture = [&](const UVTexture &tex, const std::string &param_name, const std::string &abs_mat_path, /* inout */std::vector<Shader> &shader_nodes) -> bool {
 
     UsdUVTexture image_tex;
 
-    std::string preaderPrimPath = abs_path + "/uvmap.outputs:result";
+    std::string preaderPrimPath = abs_mat_path + "/uvmap_" + param_name + ".outputs:result";
     Path preaderPath(preaderPrimPath, "");
 
     TextureImage teximg;
-    image_tex.name = "Image_Texture";
+    image_tex.name = "Image_Texture_" + param_name;
 
     value::AssetPath fileAssetPath(teximg.asset_identifier);
     // TODO: Set colorSpace in attribute meta.
@@ -559,20 +557,22 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
     } 
 
     UsdTransform2d uv_xform;
-    uv_xform.name = "place2d";
+    uv_xform.name = "place2d_" + param_name;
     if (tex.has_transform2d) {
       // TODO: Deompose tex.transform and use it?
       uv_xform.translation = tex.tx_translation;
       uv_xform.rotation = tex.tx_rotation;
       uv_xform.scale = tex.tx_scale;
 
-      uv_xform_dst->emplace(std::move(uv_xform));
-    } else {
-      uv_xform_dst->reset();
+      Shader uv_xformShader;
+      uv_xformShader.name = "place2d_" + param_name;
+      uv_xformShader.info_id = tinyusdz::kUsdTransform2d;
+      uv_xformShader.value = uv_xform;
+      shader_nodes.emplace_back(std::move(uv_xformShader));
     }
 
     UsdPrimvarReader_float2 preader;
-    preader.name = "primvar_reader";
+    preader.name = "primvar_reader_" + param_name;
 
     value::float2 fallback_value;
     fallback_value[0] = tex.fallback_uv[0];
@@ -581,87 +581,30 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
       preader.fallback = fallback_value;
     }
 
-    preader.varname = tex.varname_uv;
+    Animatable<std::string> varname;
+    // TODO: Read varname from RenderMesh.
+    varname = std::string("UVMap");
+    preader.varname.set_value(varname);
     preader.result.set_authored(true);
 
 
     Shader preaderShader;
-    preaderShader.name = "uvmap";
+    preaderShader.name = "uvmap_" + param_name;
+    preaderShader.info_id = tinyusdz::kUsdPrimvarReader_float2;
     preaderShader.value = preader;
 
+    shader_nodes.emplace_back(std::move(preaderShader));
+
     Shader imageTexShader;
-    imageTexShader.name = "Image_Texture";
+    imageTexShader.name = "Image_Texture_" + param_name;
+    imageTexShader.info_id = tinyusdz::kUsdUVTexture;
     imageTexShader.value = image_tex;
+
+    shader_nodes.emplace_back(std::move(imageTexShader));
     
     return true;
   };
 
-
-struct UVTexture {
-  // NOTE: it looks no 'rgba' in UsdUvTexture
-  enum class Channel { R, G, B, A, RGB, RGBA };
-
-  std::string prim_name; // element Prim name
-  std::string abs_path; // Absolute Prim path
-  std::string display_name; // displayName prim metadatum
-  
-  // TextureWrap `black` in UsdUVTexture is mapped to `CLAMP_TO_BORDER`(app must
-  // set border color to black) default is CLAMP_TO_EDGE and `useMetadata` wrap
-  // mode is ignored.
-  enum class WrapMode { CLAMP_TO_EDGE, REPEAT, MIRROR, CLAMP_TO_BORDER };
-
-  WrapMode wrapS{WrapMode::CLAMP_TO_EDGE};
-  WrapMode wrapT{WrapMode::CLAMP_TO_EDGE};
-
-  // Do CPU texture mapping. For baking texels with transform, texturing in
-  // raytracer(bake lighting), etc.
-  //
-  // This method accounts for `tranform` and `bias/scale`
-  //
-  // NOTE: for R, G, B channel, The value is replicated to output[0], output[1]
-  // and output[2]. For A channel, The value is returned to output[3]
-  vec4 fetch_uv(size_t faceId, float varyu, float varyv);
-
-  // `fetch_uv` with user-specified channel. `outputChannel` is ignored.
-  vec4 fetch_uv_channel(size_t faceId, float varyu, float varyv,
-                        Channel channel);
-
-  // UVW version of `fetch_uv`.
-  vec4 fetch_uvw(size_t faceId, float varyu, float varyv, float varyw);
-  vec4 fetch_uvw_channel(size_t faceId, float varyu, float varyv, float varyw,
-                         Channel channel);
-
-  // output channel info
-  Channel outputChannel{Channel::RGB};
-
-  // bias and scale for texel value
-  vec4 bias{0.0f, 0.0f, 0.0f, 0.0f};
-  vec4 scale{1.0f, 1.0f, 1.0f, 1.0f};
-
-  UVReaderFloat uvreader;
-  vec4 fallback_uv{0.0f, 0.0f, 0.0f, 0.0f};
-
-  // UsdTransform2d
-  // https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Khronos/KHR_texture_transform
-  // = scale * rotate + translation
-  bool has_transform2d{false};  // true = `transform`, `tx_rotation`, `tx_scale`
-                                // and `tx_translation` are filled;
-  mat3 transform{value::matrix3f::identity()};
-
-  // raw transform2d value
-  float tx_rotation{0.0f};
-  vec2 tx_scale{1.0f, 1.0f};
-  vec2 tx_translation{0.0f, 0.0f};
-
-  // UV primvars name(UsdPrimvarReader's inputs:varname)
-  std::string varname_uv;
-
-  int64_t texture_image_id{-1};  // Index to TextureImage
-  uint64_t handle{0};            // Handle ID for Graphics API. 0 = invalid
-};
-
-
-  };
 
   // Layout
   //
@@ -676,12 +619,14 @@ struct UVTexture {
 
   mat.name = rmat.name;
 
-  Shader shader;  // Shader container
+  Shader shader;  // root Shader 
   shader.name = "defaultPBR";
 
   std::string abs_mat_path = abs_path + "/" + mat.name;
   std::string abs_shader_path = abs_mat_path + "/" + shader.name;
 
+  std::vector<Shader> shader_nodes;
+  
   {
     UsdPreviewSurface surfaceShader;  // Concrete Shader node object
 
@@ -698,8 +643,232 @@ struct UVTexture {
     surfaceShader.outputsSurface.set_authored(
         true);  // Author `token outputs:surface`
 
-    // TODO: UsdUVTexture, UsdPrimvarReader***, UsdTransform2d
-    surfaceShader.metallic = rmat.surfaceShader.metallic.value;
+    surfaceShader.useSpecularWorkflow = rmat.surfaceShader.useSpecularWorkFlow ? 1 : 0;
+
+    if (rmat.surfaceShader.diffuseColor.is_texture()) {
+
+      if (size_t(rmat.surfaceShader.diffuseColor.textureId) > scene.textures.size()) {
+        PUSH_ERROR_AND_RETURN("Invalid texture_id for 'diffuseColor' texture.");
+      }
+    
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.diffuseColor.textureId)], "diffuseColor", abs_mat_path, shader_nodes)) {
+        PUSH_ERROR_AND_RETURN("Failed to convert 'diffuseColor' texture.");
+      }
+
+      Path connPath(abs_mat_path + "/Image_Texture_" + "diffuseColor", "outputs:rgb");
+      surfaceShader.diffuseColor.set_connection(connPath);
+    } else {
+      value::color3f diffuseCol;
+      diffuseCol.r = rmat.surfaceShader.diffuseColor.value[0];
+      diffuseCol.g = rmat.surfaceShader.diffuseColor.value[1];
+      diffuseCol.b = rmat.surfaceShader.diffuseColor.value[2];
+
+      surfaceShader.diffuseColor.set_value(diffuseCol);
+    }
+
+    if (rmat.surfaceShader.specularColor.is_texture()) {
+
+      if (size_t(rmat.surfaceShader.specularColor.textureId) > scene.textures.size()) {
+        PUSH_ERROR_AND_RETURN("Invalid texture_id for 'specularColor' texture.");
+      }
+    
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.specularColor.textureId)], "specularColor", abs_mat_path, shader_nodes)) {
+        PUSH_ERROR_AND_RETURN("Failed to convert 'specularColor' texture.");
+      }
+
+      Path connPath(abs_mat_path + "/Image_Texture_" + "specularColor", "outputs:rgb");
+      surfaceShader.specularColor.set_connection(connPath);
+    } else {
+      value::color3f col;
+      col.r = rmat.surfaceShader.specularColor.value[0];
+      col.g = rmat.surfaceShader.specularColor.value[1];
+      col.b = rmat.surfaceShader.specularColor.value[2];
+      surfaceShader.specularColor = col;
+    }
+
+    if (rmat.surfaceShader.emissiveColor.is_texture()) {
+
+      if (size_t(rmat.surfaceShader.emissiveColor.textureId) > scene.textures.size()) {
+        PUSH_ERROR_AND_RETURN("Invalid texture_id for 'emissiveColor' texture.");
+      }
+    
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.emissiveColor.textureId)], "emissiveColor", abs_mat_path, shader_nodes)) {
+        PUSH_ERROR_AND_RETURN("Failed to convert 'emissiveColor' texture.");
+      }
+
+      Path connPath(abs_mat_path + "/Image_Texture_" + "emissiveColor", "outputs:rgb");
+      surfaceShader.emissiveColor.set_connection(connPath);
+    } else {
+      value::color3f col;
+      col.r = rmat.surfaceShader.emissiveColor.value[0];
+      col.g = rmat.surfaceShader.emissiveColor.value[1];
+      col.b = rmat.surfaceShader.emissiveColor.value[2];
+      surfaceShader.emissiveColor = col;
+    }
+
+    if (rmat.surfaceShader.metallic.is_texture()) {
+
+      if (size_t(rmat.surfaceShader.metallic.textureId) > scene.textures.size()) {
+        PUSH_ERROR_AND_RETURN("Invalid texture_id for 'metallic' texture.");
+      }
+    
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.metallic.textureId)], "metallic", abs_mat_path, shader_nodes)) {
+        PUSH_ERROR_AND_RETURN("Failed to convert 'metallic' texture.");
+      }
+
+      Path connPath(abs_mat_path + "/Image_Texture_" + "metallic", "outputs:r");
+      surfaceShader.metallic.set_connection(connPath);
+    } else {
+      surfaceShader.metallic = rmat.surfaceShader.metallic.value;
+    }
+
+    if (rmat.surfaceShader.roughness.is_texture()) {
+
+      if (size_t(rmat.surfaceShader.roughness.textureId) > scene.textures.size()) {
+        PUSH_ERROR_AND_RETURN("Invalid texture_id for 'roughness' texture.");
+      }
+    
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.roughness.textureId)], "roughness", abs_mat_path, shader_nodes)) {
+        PUSH_ERROR_AND_RETURN("Failed to convert 'roughness' texture.");
+      }
+
+      Path connPath(abs_mat_path + "/Image_Texture_" + "roughness", "outputs:r");
+      surfaceShader.roughness.set_connection(connPath);
+    } else {
+      surfaceShader.roughness = rmat.surfaceShader.roughness.value;
+    }
+
+    if (rmat.surfaceShader.clearcoat.is_texture()) {
+
+      if (size_t(rmat.surfaceShader.clearcoat.textureId) > scene.textures.size()) {
+        PUSH_ERROR_AND_RETURN("Invalid texture_id for 'clearcoat' texture.");
+      }
+    
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.clearcoat.textureId)], "clearcoat", abs_mat_path, shader_nodes)) {
+        PUSH_ERROR_AND_RETURN("Failed to convert 'clearcoat' texture.");
+      }
+
+      Path connPath(abs_mat_path + "/Image_Texture_" + "clearcoat", "outputs:r");
+      surfaceShader.clearcoat.set_connection(connPath);
+    } else {
+      surfaceShader.clearcoat = rmat.surfaceShader.clearcoat.value;
+    }
+
+    if (rmat.surfaceShader.clearcoatRoughness.is_texture()) {
+
+      if (size_t(rmat.surfaceShader.clearcoatRoughness.textureId) > scene.textures.size()) {
+        PUSH_ERROR_AND_RETURN("Invalid texture_id for 'clearcoatRoughness' texture.");
+      }
+    
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.clearcoatRoughness.textureId)], "clearcoatRoughness", abs_mat_path, shader_nodes)) {
+        PUSH_ERROR_AND_RETURN("Failed to convert 'clearcoatRoughness' texture.");
+      }
+
+      Path connPath(abs_mat_path + "/Image_Texture_" + "clearcoatRoughness", "outputs:r");
+      surfaceShader.clearcoatRoughness.set_connection(connPath);
+    } else {
+      surfaceShader.clearcoatRoughness = rmat.surfaceShader.clearcoatRoughness.value;
+    }
+
+    if (rmat.surfaceShader.opacity.is_texture()) {
+
+      if (size_t(rmat.surfaceShader.opacity.textureId) > scene.textures.size()) {
+        PUSH_ERROR_AND_RETURN("Invalid texture_id for 'opacity' texture.");
+      }
+    
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.opacity.textureId)], "opacity", abs_mat_path, shader_nodes)) {
+        PUSH_ERROR_AND_RETURN("Failed to convert 'opacity' texture.");
+      }
+
+      Path connPath(abs_mat_path + "/Image_Texture_" + "opacity", "outputs:r");
+      surfaceShader.opacity.set_connection(connPath);
+    } else {
+      surfaceShader.opacity = rmat.surfaceShader.opacity.value;
+    }
+
+    if (rmat.surfaceShader.opacityThreshold.is_texture()) {
+
+      if (size_t(rmat.surfaceShader.opacityThreshold.textureId) > scene.textures.size()) {
+        PUSH_ERROR_AND_RETURN("Invalid texture_id for 'opacityThreshold' texture.");
+      }
+    
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.opacityThreshold.textureId)], "opacityThreshold", abs_mat_path, shader_nodes)) {
+        PUSH_ERROR_AND_RETURN("Failed to convert 'opacityThreshold' texture.");
+      }
+
+      Path connPath(abs_mat_path + "/Image_Texture_" + "opacityThreshold", "outputs:r");
+      surfaceShader.opacityThreshold.set_connection(connPath);
+    } else {
+      surfaceShader.opacityThreshold = rmat.surfaceShader.opacityThreshold.value;
+    }
+
+    if (rmat.surfaceShader.ior.is_texture()) {
+
+      if (size_t(rmat.surfaceShader.ior.textureId) > scene.textures.size()) {
+        PUSH_ERROR_AND_RETURN("Invalid texture_id for 'ior' texture.");
+      }
+    
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.ior.textureId)], "ior", abs_mat_path, shader_nodes)) {
+        PUSH_ERROR_AND_RETURN("Failed to convert 'ior' texture.");
+      }
+
+      Path connPath(abs_mat_path + "/Image_Texture_" + "ior", "outputs:r");
+      surfaceShader.ior.set_connection(connPath);
+    } else {
+      surfaceShader.ior = rmat.surfaceShader.ior.value;
+    }
+
+    if (rmat.surfaceShader.occlusion.is_texture()) {
+
+      if (size_t(rmat.surfaceShader.occlusion.textureId) > scene.textures.size()) {
+        PUSH_ERROR_AND_RETURN("Invalid texture_id for 'occlusion' texture.");
+      }
+    
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.occlusion.textureId)], "occlusion", abs_mat_path, shader_nodes)) {
+        PUSH_ERROR_AND_RETURN("Failed to convert 'occlusion' texture.");
+      }
+
+      Path connPath(abs_mat_path + "/Image_Texture_" + "occlusion", "outputs:r");
+      surfaceShader.occlusion.set_connection(connPath);
+    } else {
+      surfaceShader.occlusion = rmat.surfaceShader.occlusion.value;
+    }
+
+    if (rmat.surfaceShader.normal.is_texture()) {
+
+      if (size_t(rmat.surfaceShader.normal.textureId) > scene.textures.size()) {
+        PUSH_ERROR_AND_RETURN("Invalid texture_id for 'normal' texture.");
+      }
+    
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.normal.textureId)], "normal", abs_mat_path, shader_nodes)) {
+        PUSH_ERROR_AND_RETURN("Failed to convert 'normal' texture.");
+      }
+
+      Path connPath(abs_mat_path + "/Image_Texture_" + "normal", "outputs:rgb");
+      surfaceShader.normal.set_connection(connPath);
+    } else {
+      value::normal3f n;
+      n[0] = rmat.surfaceShader.normal.value[0];
+      n[1] = rmat.surfaceShader.normal.value[1];
+      n[2] = rmat.surfaceShader.normal.value[2];
+      surfaceShader.normal = n;
+    }
+
+    if (rmat.surfaceShader.displacement.is_texture()) {
+
+      if (size_t(rmat.surfaceShader.displacement.textureId) > scene.textures.size()) {
+        PUSH_ERROR_AND_RETURN("Invalid texture_id for 'displacement' texture.");
+      }
+    
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.displacement.textureId)], "displacement", abs_mat_path, shader_nodes)) {
+        PUSH_ERROR_AND_RETURN("Failed to convert 'displacement' texture.");
+      }
+
+      Path connPath(abs_mat_path + "/Image_Texture_" + "displacement", "outputs:rgb");
+      surfaceShader.displacement.set_connection(connPath);
+    } else {
+      surfaceShader.displacement = rmat.surfaceShader.displacement.value;
+    }
 
     // Connect to UsdPreviewSurface's outputs:surface by setting targetPath.
     //
@@ -714,13 +883,22 @@ struct UVTexture {
     shader.value = std::move(surfaceShader);
   }
 
-  tinyusdz::Prim shaderPrim(shader);
-  tinyusdz::Prim matPrim(mat);
+  Prim shaderPrim(shader);
+
+  Prim matPrim(mat);
 
   matPrim.add_child(std::move(shaderPrim));
+
+  for (const auto &node : shader_nodes) {
+    Prim shaderNodePrim(node);
+    
+    if (!matPrim.add_child(std::move(shaderNodePrim), /* rename_primname */false, err)) {
+      return false;
+    } 
+  }
   
   (*dst) = std::move(matPrim);
-  
+  return true;
 }
 
 } // namespace detail
@@ -838,6 +1016,8 @@ bool export_to_usda(const RenderScene &scene,
 
     Prim matGroupPrim(matGroup);
 
+    DCOUT("export " << scene.materials.size() << " materials");
+
     for (size_t i = 0; i < scene.materials.size(); i++) {
       // init with dummy object(Model Prim)
       Model dummy;
@@ -850,6 +1030,8 @@ bool export_to_usda(const RenderScene &scene,
       }
       
     }
+    stage.add_root_prim(std::move(matGroupPrim));
+  }
 
   usda_str =stage.ExportToString();
 
