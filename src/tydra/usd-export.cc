@@ -58,8 +58,7 @@ static bool FlattenSkelNode(const SkelNode &node,
 }
 
 
-// TODO: skelAnimationSource
-static bool ExportSkeleton(const SkelHierarchy &skel, Skeleton *dst, std::string *err) {
+static bool ExportSkeleton(const SkelHierarchy &skel, const std::string &animSourcePath, Skeleton *dst, std::string *err) {
 
   size_t num_joints{0};
   CountNodes(skel.root_node, num_joints);
@@ -91,6 +90,14 @@ static bool ExportSkeleton(const SkelHierarchy &skel, Skeleton *dst, std::string
 
   dst->bindTransforms.set_value(bindTransforms);
   dst->restTransforms.set_value(restTransforms);
+
+  if (animSourcePath.size()) {
+    Path animSourceTarget(animSourcePath, ""); 
+    Relationship animSourceRel;
+    animSourceRel.set(animSourceTarget);
+    // TODO: add `prepend` qualifier?
+    dst->animationSource = animSourceRel;
+  }
 
   dst->name = skel.prim_name;
 
@@ -963,7 +970,15 @@ bool export_to_usda(const RenderScene &scene,
 
     if ((scene.meshes[i].skel_id > -1) && (size_t(scene.meshes[i].skel_id) < scene.skeletons.size())) {
       DCOUT("Export Skeleton");
-      if (!detail::ExportSkeleton(scene.skeletons[size_t(scene.meshes[i].skel_id)], &skel, err)) {
+
+      const SkelHierarchy &src_skel = scene.skeletons[size_t(scene.meshes[i].skel_id)];
+
+      std::string src_animsource; // empty = no animationSource
+      if (src_skel.anim_id > -1) {
+        src_animsource = "/animations/" + scene.animations[size_t(src_skel.anim_id)].prim_name;
+      }
+
+      if (!detail::ExportSkeleton(src_skel, src_animsource, &skel, err)) {
         return false;
       }
 
@@ -977,11 +992,16 @@ bool export_to_usda(const RenderScene &scene,
       mesh.skeleton = skelRel;
 
     
+      // Add apiSchemas both for GeomMesh and Skeleton
+      //
       // prepend apiSchemas = ["SkelBindingAPI"]
+      //
       APISchemas skelAPISchema;
       skelAPISchema.listOpQual = ListEditQual::Prepend;
       skelAPISchema.names.push_back({APISchemas::APIName::SkelBindingAPI, ""});
       mesh.metas().apiSchemas = skelAPISchema;
+
+      skel.metas().apiSchemas = skelAPISchema;
 
       has_skel = true;
     }
@@ -1046,15 +1066,23 @@ bool export_to_usda(const RenderScene &scene,
 
   }
 
-  for (size_t i = 0; i < scene.animations.size(); i++) {
-    SkelAnimation skelAnim;
-    if (!detail::ExportSkelAnimation(scene.animations[i], &skelAnim, err)) {
-      return false;
-    }
+  {
+    Scope animGroup;
+    animGroup.name = "animations";
 
-    // TODO: Put SkelAnimation under SkelRoot
-    Prim prim(skelAnim);
-    stage.add_root_prim(std::move(prim));
+    Prim animGroupPrim(animGroup);
+
+    for (size_t i = 0; i < scene.animations.size(); i++) {
+      SkelAnimation skelAnim;
+      if (!detail::ExportSkelAnimation(scene.animations[i], &skelAnim, err)) {
+        return false;
+      }
+
+      // TODO: Put SkelAnimation under SkelRoot
+      Prim prim(skelAnim);
+      animGroupPrim.add_child(std::move(prim));
+    }
+    stage.add_root_prim(std::move(animGroupPrim));
   }
 
   {
