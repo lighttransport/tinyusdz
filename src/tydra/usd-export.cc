@@ -402,7 +402,7 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
   return true;
 }
 
-static bool ToGeomMesh(const RenderMesh &rmesh, GeomMesh *dst, std::string *err) {
+static bool ToGeomMesh(const RenderScene &scene, const RenderMesh &rmesh, GeomMesh *dst, std::string *err) {
 
   std::vector<int> fvCounts(rmesh.faceVertexCounts().size());
   for (size_t i = 0; i < rmesh.faceVertexCounts().size(); i++) {
@@ -465,6 +465,7 @@ static bool ToGeomMesh(const RenderMesh &rmesh, GeomMesh *dst, std::string *err)
   // TODO: Multi-texcoords support
   if (rmesh.texcoords.count(0)) {
     const auto &vattr = rmesh.texcoords.at(0);
+    DCOUT("export UV: " << vattr.name);
     std::vector<value::texcoord2f> texcoords(vattr.vertex_count());
     const float *psrc = reinterpret_cast<const float *>(vattr.buffer());
     for (size_t i = 0; i < vattr.vertex_count(); i++) {
@@ -512,7 +513,61 @@ static bool ToGeomMesh(const RenderMesh &rmesh, GeomMesh *dst, std::string *err)
     dst->set_primvar(geomBindTransform);
   }
 
-  // TODO: GeomSubset, Material assignment, ...
+  dst->doubleSided = rmesh.doubleSided;
+  if (!rmesh.is_rightHanded) {
+    dst->orientation.set_value(Orientation::LeftHanded);
+  }
+
+  bool has_material{false};
+
+  if (rmesh.material_id > -1) {
+    const RenderMaterial &rmat = scene.materials[size_t(rmesh.material_id)];
+    Relationship mat_rel;
+
+    Path mat_path("/materials/" + rmat.name, "");
+    mat_rel.set(mat_path);
+    dst->set_materialBinding(mat_rel);
+
+    has_material = true;
+
+    // TODO: backface material
+  }
+
+  if (rmesh.material_subsetMap.size()) {
+    // Unrestricted for now.
+    dst->set_subsetFamilyType(value::token("materialBind"), GeomSubset::FamilyType::Unrestricted);
+    for (const auto &matsubset : rmesh.material_subsetMap) {
+      GeomSubset subset;
+
+      std::vector<int> indices;
+      for (size_t i = 0; i < matsubset.second.indices().size(); i++) {
+        indices.push_back(int(matsubset.second.indices()[i]));
+      }
+
+      if (matsubset.second.material_id == -1) {
+        PUSH_ERROR_AND_RETURN(fmt::format("material_id is not assigned to material_subset {}", matsubset.first));
+      }
+      const RenderMaterial &rmat = scene.materials[size_t(matsubset.second.material_id)];
+
+      Path mat_path("/materials/" + rmat.name, "");
+      Relationship mat_rel;
+      mat_rel.set(mat_path);
+      subset.set_materialBinding(mat_rel);
+
+      // TODO: backface material
+    }
+
+    has_material = true;
+  }
+
+  if (has_material) {
+
+    APISchemas mbAPISchema;
+    mbAPISchema.listOpQual = ListEditQual::Prepend;
+    mbAPISchema.names.push_back({APISchemas::APIName::MaterialBindingAPI, ""});
+
+    dst->metas().apiSchemas = mbAPISchema;
+  }
 
   return true;
 }
@@ -961,7 +1016,7 @@ bool export_to_usda(const RenderScene &scene,
 
   for (size_t i = 0; i < scene.meshes.size(); i++) {
     GeomMesh mesh;
-    if (!detail::ToGeomMesh(scene.meshes[i], &mesh, err)) {
+    if (!detail::ToGeomMesh(scene, scene.meshes[i], &mesh, err)) {
       return false;
     }
 
@@ -999,8 +1054,12 @@ bool export_to_usda(const RenderScene &scene,
       APISchemas skelAPISchema;
       skelAPISchema.listOpQual = ListEditQual::Prepend;
       skelAPISchema.names.push_back({APISchemas::APIName::SkelBindingAPI, ""});
-      mesh.metas().apiSchemas = skelAPISchema;
-
+      if (mesh.metas().apiSchemas) {
+        // Assume existing apiSchemas uses prepend listEditOp.
+        mesh.metas().apiSchemas.value().names.push_back({APISchemas::APIName::SkelBindingAPI, ""});
+      } else {
+        mesh.metas().apiSchemas = skelAPISchema;
+      }
       skel.metas().apiSchemas = skelAPISchema;
 
       has_skel = true;
