@@ -5147,256 +5147,295 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
                                             const Path &abs_path,
                                             const SkelAnimation &skelAnim,
                                             Animation *anim_out) {
-  // The spec says 
+  // The spec says
   // """
   // An animation source is only valid if its translation, rotation, and scale components are all authored, storing arrays size to the same size as the authored joints array.
   // """
-
-  if (!skelAnim.joints.authored()) {
-    PUSH_ERROR_AND_RETURN(fmt::format("`joints` is not authored for SkelAnimation Prim : {}", abs_path));
-  }
+  //
+  // SkelAnimation contains
+  // - Joint animations(translation, rotation, scale)
+  // - BlendShape animations(weights)
 
   std::vector<value::token> joints;
-  if (!EvaluateTypedAttribute(env.stage, skelAnim.joints, "joints", &joints, &_err)) {
-    PUSH_ERROR_AND_RETURN(fmt::format("Failed to evaluate `joints` in SkelAnimation Prim : {}", abs_path));
+
+  if (skelAnim.joints.authored()) {
+    if (!EvaluateTypedAttribute(env.stage, skelAnim.joints, "joints", &joints, &_err)) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to evaluate `joints` in SkelAnimation Prim : {}", abs_path));
+    }
+
+    if (!skelAnim.rotations.authored() ||
+        !skelAnim.translations.authored() ||
+        !skelAnim.scales.authored()) {
+
+      PUSH_ERROR_AND_RETURN(fmt::format("`translations`, `rotations` and `scales` must be all authored for SkelAnimation Prim {}. authored flags: translations {}, rotations {}, scales {}", abs_path, skelAnim.translations.authored() ? "yes" : "no",
+      skelAnim.rotations.authored() ? "yes" : "no",
+      skelAnim.scales.authored() ? "yes" : "no"));
+    }
   }
 
+  // TODO: inbetweens BlendShape
+  std::vector<value::token> blendShapes;
+  if (skelAnim.blendShapes.authored()) {
+    if (!EvaluateTypedAttribute(env.stage, skelAnim.blendShapes, "blendShapes", &blendShapes, &_err)) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to evaluate `blendShapes` in SkelAnimation Prim : {}", abs_path));
+    }
 
-  if (!skelAnim.rotations.authored() ||
-      !skelAnim.translations.authored() ||
-      !skelAnim.scales.authored()) {
+    if (!skelAnim.blendShapeWeights.authored()) {
+      PUSH_ERROR_AND_RETURN(fmt::format("`blendShapeWeights` must be authored for SkelAnimation Prim {}", abs_path));
+    }
 
-    PUSH_ERROR_AND_RETURN(fmt::format("`translations`, `rotations` and `scales` must be all authored for SkelAnimation Prim {}. authored flags: translations {}, rotations {}, scales {}", abs_path, skelAnim.translations.authored() ? "yes" : "no",
-    skelAnim.rotations.authored() ? "yes" : "no",
-    skelAnim.scales.authored() ? "yes" : "no"));
   }
+
 
   //
   // Reorder values[channels][timeCode][jointId] into values[jointId][channels][timeCode]
-  // 
+  //
 
   std::map<std::string, std::map<AnimationChannel::ChannelType, AnimationChannel>> channelMap;
-  StringAndIdMap jointIdMap;
-  
-  for (const auto &joint : joints) {
-    uint64_t id = jointIdMap.size();
-    jointIdMap.add(joint.str(), id);
-  }
 
+  // Joint animations
+  if (joints.size()) {
+    StringAndIdMap jointIdMap;
 
-  Animatable<std::vector<value::float3>> translations;
-  if (!skelAnim.translations.get_value(&translations)) {
-    PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `translations` attribute of SkelAnimation. Maybe ValueBlock or connection? : {}", abs_path)); 
-  }
-
-  Animatable<std::vector<value::quatf>> rotations;
-  if (!skelAnim.rotations.get_value(&rotations)) {
-    PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `rotations` attribute of SkelAnimation. Maybe ValueBlock or connection? : {}", abs_path)); 
-  }
-
-  Animatable<std::vector<value::half3>> scales;
-  if (!skelAnim.scales.get_value(&scales)) {
-    PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `scales` attribute of SkelAnimation. Maybe ValueBlock or connection? : {}", abs_path)); 
-  }
-
-  //
-  // NOTE: When both timeSamples and default value are authored, timeSamples wins.
-  //
-  bool is_translations_timesamples = false;
-  bool is_rotations_timesamples = false;
-  bool is_scales_timesamples = false;
-
-  if (translations.is_timesamples()) {
-    DCOUT("Convert ttranslations");
-    const TypedTimeSamples<std::vector<value::float3>> &ts_txs = translations.get_timesamples();
-
-    if (ts_txs.get_samples().empty()) {
-      PUSH_ERROR_AND_RETURN(fmt::format("`translations` timeSamples in SkelAnimation is empty : {}", abs_path)); 
+    for (const auto &joint : joints) {
+      uint64_t id = jointIdMap.size();
+      jointIdMap.add(joint.str(), id);
     }
 
-    for (const auto &sample : ts_txs.get_samples()) {
-      if (!sample.blocked) {
-        // length check 
-        if (sample.value.size() != joints.size()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. timeCode {} translations.size {} must be equal to joints.size {} : {}", sample.t, sample.value.size(), joints.size(), abs_path)); 
-        }
+    Animatable<std::vector<value::float3>> translations;
+    if (!skelAnim.translations.get_value(&translations)) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `translations` attribute of SkelAnimation. Maybe ValueBlock or connection? : {}", abs_path));
+    }
 
-        for (size_t j = 0; j < sample.value.size(); j++) {
-          AnimationSample<value::float3> s;
-          s.t = float(sample.t);
-          s.value = sample.value[j];
+    Animatable<std::vector<value::quatf>> rotations;
+    if (!skelAnim.rotations.get_value(&rotations)) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `rotations` attribute of SkelAnimation. Maybe ValueBlock or connection? : {}", abs_path));
+    }
 
-          std::string jointName = jointIdMap.at(j);
-          auto &it = channelMap[jointName][AnimationChannel::ChannelType::Translation];
-          if (it.translations.samples.empty()) {
-            it.type = AnimationChannel::ChannelType::Translation;
+    Animatable<std::vector<value::half3>> scales;
+    if (!skelAnim.scales.get_value(&scales)) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `scales` attribute of SkelAnimation. Maybe ValueBlock or connection? : {}", abs_path));
+    }
+
+    //
+    // NOTE: When both timeSamples and default value are authored, timeSamples wins.
+    //
+    bool is_translations_timesamples = false;
+    bool is_rotations_timesamples = false;
+    bool is_scales_timesamples = false;
+
+    if (translations.is_timesamples()) {
+      DCOUT("Convert ttranslations");
+      const TypedTimeSamples<std::vector<value::float3>> &ts_txs = translations.get_timesamples();
+
+      if (ts_txs.get_samples().empty()) {
+        PUSH_ERROR_AND_RETURN(fmt::format("`translations` timeSamples in SkelAnimation is empty : {}", abs_path));
+      }
+
+      for (const auto &sample : ts_txs.get_samples()) {
+        if (!sample.blocked) {
+          // length check
+          if (sample.value.size() != joints.size()) {
+            PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. timeCode {} translations.size {} must be equal to joints.size {} : {}", sample.t, sample.value.size(), joints.size(), abs_path));
           }
-          it.translations.samples.push_back(s);
-        }
 
+          for (size_t j = 0; j < sample.value.size(); j++) {
+            AnimationSample<value::float3> s;
+            s.t = float(sample.t);
+            s.value = sample.value[j];
+
+            std::string jointName = jointIdMap.at(j);
+            auto &it = channelMap[jointName][AnimationChannel::ChannelType::Translation];
+            if (it.translations.samples.empty()) {
+              it.type = AnimationChannel::ChannelType::Translation;
+            }
+            it.translations.samples.push_back(s);
+          }
+
+        }
+      }
+      is_translations_timesamples = true;
+    }
+
+    if (rotations.is_timesamples()) {
+      const TypedTimeSamples<std::vector<value::quatf>> &ts_rots = rotations.get_timesamples();
+      DCOUT("Convert rotations");
+      for (const auto &sample : ts_rots.get_samples()) {
+        if (!sample.blocked) {
+          if (sample.value.size() != joints.size()) {
+            PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. timeCode {} rotations.size {} must be equal to joints.size {} : {}", sample.t, sample.value.size(), joints.size(), abs_path));
+          }
+          for (size_t j = 0; j < sample.value.size(); j++) {
+            AnimationSample<value::float4> s;
+            s.t = float(sample.t);
+            s.value[0] = sample.value[j][0];
+            s.value[1] = sample.value[j][1];
+            s.value[2] = sample.value[j][2];
+            s.value[3] = sample.value[j][3];
+
+            std::string jointName = jointIdMap.at(j);
+            auto &it = channelMap[jointName][AnimationChannel::ChannelType::Rotation];
+            if (it.rotations.samples.empty()) {
+              it.type = AnimationChannel::ChannelType::Rotation;
+            }
+            it.rotations.samples.push_back(s);
+          }
+
+        }
+      }
+      is_rotations_timesamples = true;
+    }
+
+    if (scales.is_timesamples()) {
+      const TypedTimeSamples<std::vector<value::half3>> &ts_scales = scales.get_timesamples();
+      DCOUT("Convert scales");
+      for (const auto &sample : ts_scales.get_samples()) {
+        if (!sample.blocked) {
+          if (sample.value.size() != joints.size()) {
+            PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. timeCode {} scales.size {} must be equal to joints.size {} : {}", sample.t, sample.value.size(), joints.size(), abs_path));
+          }
+
+          for (size_t j = 0; j < sample.value.size(); j++) {
+            AnimationSample<value::float3> s;
+            s.t = float(sample.t);
+            s.value[0] = value::half_to_float(sample.value[j][0]);
+            s.value[1] = value::half_to_float(sample.value[j][1]);
+            s.value[2] = value::half_to_float(sample.value[j][2]);
+
+            std::string jointName = jointIdMap.at(j);
+            auto &it = channelMap[jointName][AnimationChannel::ChannelType::Scale];
+            if (it.scales.samples.empty()) {
+              it.type = AnimationChannel::ChannelType::Scale;
+            }
+            it.scales.samples.push_back(s);
+          }
+
+        }
+      }
+      is_scales_timesamples = true;
+    }
+
+    // value at 'default' time.
+    std::vector<value::float3> translation;
+    std::vector<value::float4> rotation;
+    std::vector<value::float3> scale;
+
+    // Get value and also do length check for scalar(non timeSampled) animation value.
+    if (translations.is_scalar()) {
+      DCOUT("translation is not timeSampled");
+      if (!translations.get_scalar(&translation)) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `translations` attribute in SkelAnimation: {}", abs_path));
+      }
+      if (translation.size() != joints.size()) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. translations.default.size {} must be equal to joints.size {} : {}", translation.size(), joints.size(), abs_path));
+      }
+      is_translations_timesamples = false;
+    }
+
+    if (rotations.is_scalar()) {
+      DCOUT("rot is not timeSampled");
+      std::vector<value::quatf> _rotation;
+      if (!rotations.get_scalar(&_rotation)) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `rotations` attribute in SkelAnimation: {}", abs_path));
+      }
+      if (_rotation.size() != joints.size()) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. rotations.default.size {} must be equal to joints.size {} : {}", _rotation.size(), joints.size(), abs_path));
+      }
+      std::transform(_rotation.begin(), _rotation.end(), std::back_inserter(rotation), [](const value::quatf &v) {
+        value::float4 ret;
+        // pxrUSD's TfQuat also uses xyzw memory order.
+        ret[0] = v[0];
+        ret[1] = v[1];
+        ret[2] = v[2];
+        ret[3] = v[3];
+        return ret;
+      });
+      is_rotations_timesamples = false;
+    }
+
+    if (scales.is_scalar()) {
+      DCOUT("scale is not timeSampled");
+      std::vector<value::half3> _scale;
+      if (!scales.get_scalar(&_scale)) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `scales` attribute in SkelAnimation: {}", abs_path));
+      }
+      if (_scale.size() != joints.size()) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. scale.default.size {} must be equal to joints.size {} : {}", _scale.size(), joints.size(), abs_path));
+      }
+      // half -> float
+      std::transform(_scale.begin(), _scale.end(), std::back_inserter(scale), [](const value::half3 &v) {
+        value::float3 ret;
+        ret[0] = value::half_to_float(v[0]);
+        ret[1] = value::half_to_float(v[1]);
+        ret[2] = value::half_to_float(v[2]);
+        return ret;
+      });
+      is_scales_timesamples = false;
+    }
+
+    if (!is_translations_timesamples) {
+      DCOUT("Reorder translation samples");
+      // Create a channel value with single-entry
+      // Use USD TimeCode::Default for static sample.
+      for (const auto &joint : joints) {
+        channelMap[joint.str()][AnimationChannel::ChannelType::Translation].type = AnimationChannel::ChannelType::Translation;
+
+        AnimationSample<value::float3> s;
+        s.t = std::numeric_limits<float>::quiet_NaN();
+        uint64_t joint_id = jointIdMap.at(joint.str());
+        s.value = translation[joint_id];
+        channelMap[joint.str()][AnimationChannel::ChannelType::Translation].translations.samples.clear();
+        channelMap[joint.str()][AnimationChannel::ChannelType::Translation].translations.samples.push_back(s);
       }
     }
-    is_translations_timesamples = true;
-  }
 
-  if (rotations.is_timesamples()) {
-    const TypedTimeSamples<std::vector<value::quatf>> &ts_rots = rotations.get_timesamples();
-    DCOUT("Convert rotations");
-    for (const auto &sample : ts_rots.get_samples()) {
-      if (!sample.blocked) {
-        if (sample.value.size() != joints.size()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. timeCode {} rotations.size {} must be equal to joints.size {} : {}", sample.t, sample.value.size(), joints.size(), abs_path)); 
-        }
-        for (size_t j = 0; j < sample.value.size(); j++) {
-          AnimationSample<value::float4> s;
-          s.t = float(sample.t);
-          s.value[0] = sample.value[j][0];
-          s.value[1] = sample.value[j][1];
-          s.value[2] = sample.value[j][2];
-          s.value[3] = sample.value[j][3];
+    if (!is_rotations_timesamples) {
+      DCOUT("Reorder rotation samples");
+      for (const auto &joint : joints) {
+        channelMap[joint.str()][AnimationChannel::ChannelType::Rotation].type = AnimationChannel::ChannelType::Rotation;
 
-          std::string jointName = jointIdMap.at(j);
-          auto &it = channelMap[jointName][AnimationChannel::ChannelType::Rotation];
-          if (it.rotations.samples.empty()) {
-            it.type = AnimationChannel::ChannelType::Rotation;
-          }
-          it.rotations.samples.push_back(s);
-        }
-
+        AnimationSample<value::float4> s;
+        s.t = std::numeric_limits<float>::quiet_NaN();
+        uint64_t joint_id = jointIdMap.at(joint.str());
+        DCOUT("rot joint_id " << joint_id);
+        s.value = rotation[joint_id];
+        channelMap[joint.str()][AnimationChannel::ChannelType::Rotation].rotations.samples.clear();
+        channelMap[joint.str()][AnimationChannel::ChannelType::Rotation].rotations.samples.push_back(s);
       }
     }
-    is_rotations_timesamples = true;
-  }
 
-  if (scales.is_timesamples()) {
-    const TypedTimeSamples<std::vector<value::half3>> &ts_scales = scales.get_timesamples();
-    DCOUT("Convert scales");
-    for (const auto &sample : ts_scales.get_samples()) {
-      if (!sample.blocked) {
-        if (sample.value.size() != joints.size()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. timeCode {} scales.size {} must be equal to joints.size {} : {}", sample.t, sample.value.size(), joints.size(), abs_path)); 
-        }
+    if (!is_scales_timesamples) {
+      DCOUT("Reorder scale samples");
+      for (const auto &joint : joints) {
+        channelMap[joint.str()][AnimationChannel::ChannelType::Scale].type = AnimationChannel::ChannelType::Scale;
 
-        for (size_t j = 0; j < sample.value.size(); j++) {
-          AnimationSample<value::float3> s;
-          s.t = float(sample.t);
-          s.value[0] = value::half_to_float(sample.value[j][0]);
-          s.value[1] = value::half_to_float(sample.value[j][1]);
-          s.value[2] = value::half_to_float(sample.value[j][2]);
-
-          std::string jointName = jointIdMap.at(j);
-          auto &it = channelMap[jointName][AnimationChannel::ChannelType::Scale];
-          if (it.scales.samples.empty()) {
-            it.type = AnimationChannel::ChannelType::Scale;
-          }
-          it.scales.samples.push_back(s);
-        }
-
+        AnimationSample<value::float3> s;
+        s.t = std::numeric_limits<float>::quiet_NaN();
+        uint64_t joint_id = jointIdMap.at(joint.str());
+        s.value = scale[joint_id];
+        channelMap[joint.str()][AnimationChannel::ChannelType::Scale].scales.samples.clear();
+        channelMap[joint.str()][AnimationChannel::ChannelType::Scale].scales.samples.push_back(s);
       }
     }
-    is_scales_timesamples = true;
   }
 
-  // value at 'default' time.
-  std::vector<value::float3> translation;
-  std::vector<value::float4> rotation;
-  std::vector<value::float3> scale;
+  // BlendShape animations
+  if (blendShapes.size()) {
 
-  // Get value and also do length check for scalar(non timeSampled) animation value.
-  if (translations.is_scalar()) {
-    DCOUT("translation is not timeSampled");
-    if (!translations.get_scalar(&translation)) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `translations` attribute in SkelAnimation: {}", abs_path)); 
-    }
-    if (translation.size() != joints.size()) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. translations.default.size {} must be equal to joints.size {} : {}", translation.size(), joints.size(), abs_path)); 
-    }
-    is_translations_timesamples = false;
-  }
 
-  if (rotations.is_scalar()) {
-    DCOUT("rot is not timeSampled");
-    std::vector<value::quatf> _rotation;
-    if (!rotations.get_scalar(&_rotation)) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `rotations` attribute in SkelAnimation: {}", abs_path)); 
-    }
-    if (_rotation.size() != joints.size()) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. rotations.default.size {} must be equal to joints.size {} : {}", _rotation.size(), joints.size(), abs_path)); 
-    }
-    std::transform(_rotation.begin(), _rotation.end(), std::back_inserter(rotation), [](const value::quatf &v) {
-      value::float4 ret;
-      // pxrUSD's TfQuat also uses xyzw memory order.
-      ret[0] = v[0];
-      ret[1] = v[1];
-      ret[2] = v[2];
-      ret[3] = v[3];
-      return ret;
-    });
-    is_rotations_timesamples = false;
-  }
+    std::map<std::string, AnimationSampler<float>> weightsMap;
 
-  if (scales.is_scalar()) {
-    DCOUT("scale is not timeSampled");
-    std::vector<value::half3> _scale;
-    if (!scales.get_scalar(&_scale)) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `scales` attribute in SkelAnimation: {}", abs_path)); 
-    }
-    if (_scale.size() != joints.size()) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. scale.default.size {} must be equal to joints.size {} : {}", _scale.size(), joints.size(), abs_path)); 
-    }
-    // half -> float
-    std::transform(_scale.begin(), _scale.end(), std::back_inserter(scale), [](const value::half3 &v) {
-      value::float3 ret;
-      ret[0] = value::half_to_float(v[0]);
-      ret[1] = value::half_to_float(v[1]);
-      ret[2] = value::half_to_float(v[2]);
-      return ret;
-    });
-    is_scales_timesamples = false;
-  }
-
-  if (!is_translations_timesamples) {
-    DCOUT("Reorder translation samples");
-    // Create a channel value with single-entry
-    // Use USD TimeCode::Default for static sample.
-    for (const auto &joint : joints) {
-      channelMap[joint.str()][AnimationChannel::ChannelType::Translation].type = AnimationChannel::ChannelType::Translation;
-
-      AnimationSample<value::float3> s;
-      s.t = std::numeric_limits<float>::quiet_NaN();
-      uint64_t joint_id = jointIdMap.at(joint.str());
-      s.value = translation[joint_id];
-      channelMap[joint.str()][AnimationChannel::ChannelType::Translation].translations.samples.clear();
-      channelMap[joint.str()][AnimationChannel::ChannelType::Translation].translations.samples.push_back(s);
-    }
-  }
-
-  if (!is_rotations_timesamples) {
-    DCOUT("Reorder rotation samples");
-    for (const auto &joint : joints) {
-      channelMap[joint.str()][AnimationChannel::ChannelType::Rotation].type = AnimationChannel::ChannelType::Rotation;
-
-      AnimationSample<value::float4> s;
-      s.t = std::numeric_limits<float>::quiet_NaN();
-      uint64_t joint_id = jointIdMap.at(joint.str());
-      DCOUT("rot joint_id " << joint_id);
-      s.value = rotation[joint_id];
-      channelMap[joint.str()][AnimationChannel::ChannelType::Rotation].rotations.samples.clear();
-      channelMap[joint.str()][AnimationChannel::ChannelType::Rotation].rotations.samples.push_back(s);
-    }
-  }
-
-  if (!is_scales_timesamples) {
-    DCOUT("Reorder scale samples");
-    for (const auto &joint : joints) {
-      channelMap[joint.str()][AnimationChannel::ChannelType::Scale].type = AnimationChannel::ChannelType::Scale;
-
-      AnimationSample<value::float3> s;
-      s.t = std::numeric_limits<float>::quiet_NaN();
-      uint64_t joint_id = jointIdMap.at(joint.str());
-      s.value = scale[joint_id];
-      channelMap[joint.str()][AnimationChannel::ChannelType::Scale].scales.samples.clear();
-      channelMap[joint.str()][AnimationChannel::ChannelType::Scale].scales.samples.push_back(s);
+    // Blender 4.1 may export empty bendShapeWeights. We'll accept it.
+    //
+    // float[] blendShapeWeights
+    if (skelAnim.blendShapeWeights.is_value_empty()) {
+      for (const auto &bs : blendShapes) {
+        AnimationSample<float> s;
+        s.t = std::numeric_limits<float>::quiet_NaN();
+        s.value = 1.0f;
+        //s.value = scale[joint_id];
+        weightsMap[bs.str()].push_back(s);
+      }
     }
   }
 
@@ -5677,7 +5716,7 @@ bool RenderSceneConverter::ConvertSkeletonImpl(const RenderSceneConverterEnv &en
         } else {
           PUSH_ERROR_AND_RETURN(fmt::format("Target Prim of `skel:animationSource` must be `SkelAnimation` Prim, but got `{}`.", animSourcePrim->prim_type_name()));
         }
-        
+
 
       }
     } else {
