@@ -1602,6 +1602,7 @@ class RenderSceneConverter {
   StringAndIdMap textureMap;
   StringAndIdMap imageMap;
   StringAndIdMap bufferMap;
+  StringAndIdMap animationMap;
 
   int default_node{-1};
 
@@ -1614,6 +1615,7 @@ class RenderSceneConverter {
   std::vector<TextureImage> images;
   std::vector<BufferData> buffers;
   std::vector<SkelHierarchy> skeletons;
+  std::vector<Animation> animations;
 
   ///
   /// Convert GeomMesh to renderer-friendly mesh.
@@ -1777,9 +1779,10 @@ class RenderSceneConverter {
 
   //
   // Get Skeleton assigned to the GeomMesh Prim and convert it to SkelHierarchy.
+  // Also get SkelAnimation attached to Skeleton(if exists)
   //
-  bool ConvertSkeletonImpl(const RenderSceneConverterEnv &env, const std::string &mesh_abs_path, const tinyusdz::GeomMesh &mesh,
-                       SkelHierarchy *out_skel);
+  bool ConvertSkeletonImpl(const RenderSceneConverterEnv &env, const tinyusdz::GeomMesh &mesh,
+                       SkelHierarchy *out_skel, nonstd::optional<Animation> *out_anim);
 
   bool BuildNodeHierarchyImpl(
     const RenderSceneConverterEnv &env,

@@ -540,6 +540,8 @@ class SkelHierarchy {
 
   SkelNode root_node; 
 
+  int anim_id{-1};                        // Default animation(SkelAnimation) attached to Skeleton
+
  private:
 
 };
