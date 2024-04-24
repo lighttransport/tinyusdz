@@ -873,6 +873,7 @@ endif()
 
 add_library(${TINYUSDZ_TARGET_STATIC} STATIC ${TINYUSDZ_SOURCES} ${TINYUSDZ_DEP_SOURCES} ${TINYUSDZ_EXT_SOURCES})
 set_target_properties(${TINYUSDZ_TARGET_STATIC} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+add_sanitizers(${TINYUSDZ_TARGET_STATIC})
 #set_target_properties(tinyusdz_object PROPERTIES FOLDER "tinyusdz")
 
 # Target with namespace
@@ -884,7 +885,7 @@ if(TINYUSDZ_BUILD_SHARED_LIBS)
   #  ${TINYUSDZ_TARGET} SHARED $<TARGET_OBJECTS:tinyusdz_object>)
   add_library(
     ${TINYUSDZ_TARGET} SHARED ${TINYUSDZ_SOURCES} ${TINYUSDZ_DEP_SOURCES} ${TINYUSDZ_EXT_SOURCES})
-  #add_sanitizers(${TINYUSDZ_TARGET})
+  add_sanitizers(${TINYUSDZ_TARGET})
 
   # for dllexport
   target_compile_definitions(${TINYUSDZ_TARGET} PRIVATE "TINYUSDZ_COMPILE_LIBRARY")
