@@ -696,6 +696,11 @@ struct Animation {
 
   // key = joint, value = (key: channel_type, value: channel_value)
   std::map<std::string, std::map<AnimationChannel::ChannelType, AnimationChannel>> channels_map;
+
+  // For blendshapes
+  // key = blendshape name, value = weight
+  // TODO: in-between weight
+  std::map<std::string, AnimationSampler<float>> blendshape_weights_map;
 };
 
 struct Node {
