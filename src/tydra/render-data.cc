@@ -5423,7 +5423,7 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
   if (blendShapes.size()) {
 
 
-    std::map<std::string, AnimationSampler<float>> weightsMap;
+    std::map<std::string, std::vector<AnimationSample<float>>> weightsMap;
 
     // Blender 4.1 may export empty bendShapeWeights. We'll accept it.
     //
@@ -5433,9 +5433,38 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         AnimationSample<float> s;
         s.t = std::numeric_limits<float>::quiet_NaN();
         s.value = 1.0f;
-        //s.value = scale[joint_id];
         weightsMap[bs.str()].push_back(s);
       }
+    } else {
+
+      Animatable<std::vector<float>> weights;
+      if (!skelAnim.blendShapeWeights.get_value(&weights)) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `blendShapeWeights` attribute of SkelAnimation. Maybe ValueBlock or connection? : {}", abs_path));
+      }
+
+      if (weights.is_timesamples()) {
+        TODO
+      } else if (weights.is_scalar()) {
+        std::vector<float> ws;
+        if (!weights.get_scalar(&ws)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Failed to get default value of `blendShapeWeights` attribute of SkelAnimation is invalid : {}", abs_path));
+        }
+
+        if (ws.size() != blendShapes.size()) {
+          PUSH_ERROR_AND_RETURN(fmt::format("blendShapeWeights.size {} must be equal to blendShapes.size {} : {}", ws.size(), blendShapes.size(), abs_path));
+        }
+
+        for (size_t i = 0; i < blendShapes.size(); i++) {
+          AnimationSample<float> s;
+          s.t = std::numeric_limits<float>::quiet_NaN();
+          s.value = ws[i];
+          weightsMap[blendShapes[i].str()].push_back(s);
+        }
+
+      } else {
+        PUSH_ERROR_AND_RETURN(fmt::format("Internal error. `blendShapeWeights` attribute of SkelAnimation is invalid : {}", abs_path));
+      }
+
     }
   }
 
