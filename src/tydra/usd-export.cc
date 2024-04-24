@@ -1010,7 +1010,7 @@ bool export_to_usda(const RenderScene &scene,
     if (scene.meshes[i].targets.size()) {
 
       std::vector<value::token> bsNames;
-      Relationship bsTargets;
+      std::vector<Path> bsTargetPaths;
 
       for (const auto &target : scene.meshes[i].targets) {
         BlendShape bs;
@@ -1021,12 +1021,21 @@ bool export_to_usda(const RenderScene &scene,
         bss.emplace_back(bs);
         bsNames.push_back(value::token(target.first));
         // TODO: Set abs_path
-        Path targetPath = Path(mesh.name, "").AppendPrim(target.first);
-        bsTargets.targetPathVector.push_back(targetPath);
+        std::string bs_path;
+        if (has_skel) {
+          bs_path = "/skelRoot" + std::to_string(i) + "/" + mesh.name + "/" + target.first;
+        } else {
+          bs_path = "/" + mesh.name + "/" + target.first;
+        }
+        Path targetPath = Path(bs_path, "");
+        bsTargetPaths.push_back(targetPath);
       }
 
-      mesh.blendShapeTargets = bsTargets;
-      mesh.blendShapes = bsNames;
+      Relationship bsTargetRel;
+      bsTargetRel.set(bsTargetPaths);
+
+      mesh.blendShapeTargets = bsTargetRel;
+      mesh.blendShapes.set_value(bsNames);
 
     }
 
