@@ -11,7 +11,10 @@
 //     - [ ] linear sRGB <-> linear DisplayP3
 //   - [x] Compute tangentes and binormals
 //   - [x] displayColor, displayOpacity primvar(vertex color)
-//   - [ ] Support SkelAnimation and Skeleton
+//   - [x] Support Skeleton
+//   - [ ] Support SkelAnimation
+//     - [x] joint animation
+//     - [x] blendshape animation
 //   - [ ] Support Inbetween BlendShape
 //   - [ ] Support material binding collection(Collection API)
 //   - [ ] Support multiple skel animation
