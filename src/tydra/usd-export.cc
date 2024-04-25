@@ -75,7 +75,7 @@ static bool ExportSkeleton(const SkelHierarchy &skel, const std::string &animSou
 
   dst->joints.set_value(joints);
 
-  // TODO: Do not author jointNames when for all i: joints[i] == jointNames[i];
+  // Do not author jointNames when for all i: joints[i] == jointNames[i];
   bool name_is_same = true;
   for (size_t i = 0; i < num_joints; i++) {
     if (joints[i].str() != jointNames[i].str()) {
@@ -143,13 +143,49 @@ static bool ExportBlendShape(const ShapeTarget &target, BlendShape *dst, std::st
   return true;
 }
 
-// TODO: Support BlendShapes target
 static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::string *err) {
   (void)err;
   dst->name = anim.prim_name;
   if (anim.display_name.size()) {
     dst->metas().displayName = anim.display_name;
   }
+
+  auto float_to_uint = [](const float x) {
+    union Fp {
+      float f;
+      uint32_t u;
+    };
+    Fp fp;
+    fp.f = x;
+ 
+    return fp.u;
+  };
+
+  auto uint_to_float = [](const uint32_t x) {
+    union Fp {
+      float f;
+      uint32_t u;
+    };
+    Fp fp;
+    fp.u = x;
+ 
+    return fp.f;
+  };
+
+  // inf and nan(TimeCode::Default) aware upcast
+  auto float_to_double = [](const float x) {
+    if (std::isnan(x)) {
+      return value::TimeCode::Default();
+    }
+    if (std::isinf(x)) {
+      if (std::signbit(x)) {
+        return -std::numeric_limits<double>::infinity();
+      } else {
+        return std::numeric_limits<double>::infinity();
+      }
+    }
+    return double(x);
+  };
 
   if (anim.channels_map.size()) {
 
@@ -224,24 +260,25 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
     } else {
 
       // All joints should have same timeCode.
-      // First collect timeCodes
-      std::unordered_set<float> timeCodes;
+      // First collect timeCodes for the first joint.
+      //
+      // when timeCode is NaN(value::TimeCode::Default), the behavior(key compare in unordered_set) is undefined,
+      // so use byte representation.
+      std::unordered_set<uint32_t> timeCodes;
 
-      for (const auto &channels : anim.channels_map) {
-
-        const auto &tx_it = channels.second.find(AnimationChannel::ChannelType::Translation);
-        if (tx_it != channels.second.end()) {
+      {
+        const auto &tx_it = anim.channels_map.cbegin()->second.find(AnimationChannel::ChannelType::Translation);
+        if (tx_it != anim.channels_map.cbegin()->second.end()) {
           for (size_t t = 0; t < tx_it->second.translations.samples.size(); t++) {
-            timeCodes.insert(tx_it->second.translations.samples[t].t);
+            timeCodes.insert(float_to_uint(tx_it->second.translations.samples[t].t));
           }
         }
-
       }
 
       // key: timeCode. value: values for each joints.
       std::map<double, std::vector<value::float3>> ts_txs;
       for (const auto &tc : timeCodes) {
-        ts_txs[double(tc)].resize(joints.size()); 
+        ts_txs[float_to_double(uint_to_float(tc))].resize(joints.size()); 
       }
 
       // Pack channel values
@@ -252,12 +289,12 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
 
           for (size_t t = 0; t < tx_it->second.translations.samples.size(); t++) {
             float tc = tx_it->second.translations.samples[t].t;
-            if (!timeCodes.count(tc)) {
-              PUSH_ERROR_AND_RETURN(fmt::format("All animation channels have same timeCodes. timeCode {} is only seen in `translation` animation channel {}", tc, channels.first));
+            if (!timeCodes.count(float_to_uint(tc))) {
+              PUSH_ERROR_AND_RETURN(fmt::format("All animation channels should have same timeCodes. timeCode {} is only seen in `translation` animation channel of joint {}", tc, channels.first));
             }
             uint64_t joint_id = joint_idMap.at(channels.first);
 
-            std::vector<value::float3> &txs = ts_txs.at(double(tc));
+            std::vector<value::float3> &txs = ts_txs.at(float_to_double(tc));
             // just in case
             if (joint_id > txs.size()) {
               PUSH_ERROR_AND_RETURN(fmt::format("Internal error. joint_id {} exceeds # of joints {}", joint_id, txs.size()));
@@ -267,12 +304,21 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
         }
       }
 
-      Animatable<std::vector<value::float3>> ts;
-      for (const auto &s : ts_txs) {
-        ts.add_sample(s.first, s.second);
-      } 
+      if ((ts_txs.size() == 1) && (std::isnan(ts_txs.cbegin()->first))) {
+        // Author as static(default) value.
+        std::vector<value::float3> ts(joints.size());
+        for (size_t i = 0; i < ts_txs.cbegin()->second.size(); i++) {
+          ts[i] = ts_txs.cbegin()->second[i];
+        } 
+        dst->translations.set_value(ts);
+      } else {
+        Animatable<std::vector<value::float3>> ts;
+        for (const auto &s : ts_txs) {
+          ts.add_sample(s.first, s.second);
+        } 
 
-      dst->translations.set_value(ts);
+        dst->translations.set_value(ts);
+      }
     }
 
     if (no_rot_channel) {
@@ -287,14 +333,13 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
       
     } else {
 
-      std::unordered_set<float> timeCodes;
+      std::unordered_set<uint32_t> timeCodes;
 
-      for (const auto &channels : anim.channels_map) {
-
-        const auto &rot_it = channels.second.find(AnimationChannel::ChannelType::Rotation);
-        if (rot_it != channels.second.end()) {
+      {
+        const auto &rot_it = anim.channels_map.cbegin()->second.find(AnimationChannel::ChannelType::Rotation);
+        if (rot_it != anim.channels_map.cbegin()->second.end()) {
           for (size_t t = 0; t < rot_it->second.rotations.samples.size(); t++) {
-            timeCodes.insert(rot_it->second.rotations.samples[t].t);
+            timeCodes.insert(float_to_uint(rot_it->second.rotations.samples[t].t));
           }
         }
 
@@ -302,7 +347,7 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
 
       std::map<double, std::vector<value::quatf>> ts_rots;
       for (const auto &tc : timeCodes) {
-        ts_rots[double(tc)].resize(joints.size()); 
+        ts_rots[float_to_double(uint_to_float(tc))].resize(joints.size()); 
       }
 
       for (const auto &channels : anim.channels_map) {
@@ -312,12 +357,12 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
 
           for (size_t t = 0; t < rot_it->second.rotations.samples.size(); t++) {
             float tc = rot_it->second.rotations.samples[t].t;
-            if (!timeCodes.count(tc)) {
-              PUSH_ERROR_AND_RETURN(fmt::format("All animation channels have same timeCodes. timeCode {} is only seen in `rotation` animation channel {}", tc, channels.first));
+            if (!timeCodes.count(float_to_uint(tc))) {
+              PUSH_ERROR_AND_RETURN(fmt::format("All animation channels should have same timeCodes. timeCode {} is only seen in `rotation` animation channel of joint {}", tc, channels.first));
             }
             uint64_t joint_id = joint_idMap.at(channels.first);
 
-            std::vector<value::quatf> &rots = ts_rots.at(double(tc));
+            std::vector<value::quatf> &rots = ts_rots.at(float_to_double(tc));
             value::quatf v;
             v[0] = rot_it->second.rotations.samples[t].value[0];
             v[1] = rot_it->second.rotations.samples[t].value[1];
@@ -328,12 +373,21 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
         }
       }
 
-      Animatable<std::vector<value::quatf>> ts;
-      for (const auto &s : ts_rots) {
-        ts.add_sample(s.first, s.second);
-      } 
+      if ((ts_rots.size() == 1) && (std::isnan(ts_rots.cbegin()->first))) {
+        // Author as static(default) value.
+        std::vector<value::quatf> ts(joints.size());
+        for (size_t i = 0; i < ts_rots.cbegin()->second.size(); i++) {
+          ts[i] = ts_rots.cbegin()->second[i];
+        } 
+        dst->rotations.set_value(ts);
+      } else {
+        Animatable<std::vector<value::quatf>> ts;
+        for (const auto &s : ts_rots) {
+          ts.add_sample(s.first, s.second);
+        } 
 
-      dst->rotations.set_value(ts);
+        dst->rotations.set_value(ts);
+      }
     }
 
     if (no_scale_channel) {
@@ -344,14 +398,13 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
       dst->scales.set_value(scales);
       
     } else {
-      std::unordered_set<float> timeCodes;
+      std::unordered_set<uint32_t> timeCodes;
 
-      for (const auto &channels : anim.channels_map) {
-
-        const auto &scale_it = channels.second.find(AnimationChannel::ChannelType::Scale);
-        if (scale_it != channels.second.end()) {
+      {
+        const auto &scale_it = anim.channels_map.cbegin()->second.find(AnimationChannel::ChannelType::Scale);
+        if (scale_it != anim.channels_map.cbegin()->second.end()) {
           for (size_t t = 0; t < scale_it->second.scales.samples.size(); t++) {
-            timeCodes.insert(scale_it->second.scales.samples[t].t);
+            timeCodes.insert(float_to_uint(scale_it->second.scales.samples[t].t));
           }
         }
 
@@ -359,7 +412,7 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
 
       std::map<double, std::vector<value::half3>> ts_scales;
       for (const auto &tc : timeCodes) {
-        ts_scales[double(tc)].resize(joints.size()); 
+        ts_scales[float_to_double(uint_to_float(tc))].resize(joints.size()); 
       }
 
       for (const auto &channels : anim.channels_map) {
@@ -369,12 +422,12 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
 
           for (size_t t = 0; t < scale_it->second.scales.samples.size(); t++) {
             float tc = scale_it->second.scales.samples[t].t;
-            if (!timeCodes.count(tc)) {
-              PUSH_ERROR_AND_RETURN(fmt::format("All animation channels have same timeCodes. timeCode {} is only seen in `scale` animation channel {}", tc, channels.first));
+            if (!timeCodes.count(float_to_uint(tc))) {
+              PUSH_ERROR_AND_RETURN(fmt::format("All animation channels should have same timeCodes. timeCode {} is only seen in `scale` animation channel of joint {}", tc, channels.first));
             }
             uint64_t joint_id = joint_idMap.at(channels.first);
 
-            std::vector<value::half3> &scales = ts_scales.at(double(tc));
+            std::vector<value::half3> &scales = ts_scales.at(float_to_double(tc));
             value::half3 v;
             v[0] = value::float_to_half_full(scale_it->second.scales.samples[t].value[0]);
             v[1] = value::float_to_half_full(scale_it->second.scales.samples[t].value[1]);
@@ -384,12 +437,21 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
         }
       }
 
-      Animatable<std::vector<value::half3>> ts;
-      for (const auto &s : ts_scales) {
-        ts.add_sample(s.first, s.second);
-      } 
 
-      dst->scales.set_value(ts);
+      if ((ts_scales.size() == 1) && (std::isnan(ts_scales.cbegin()->first))) {
+        // Author as static(default) value.
+        std::vector<value::half3> ts(joints.size());
+        for (size_t i = 0; i < ts_scales.cbegin()->second.size(); i++) {
+          ts[i] = ts_scales.cbegin()->second[i];
+        } 
+        dst->scales.set_value(ts);
+      } else {
+        Animatable<std::vector<value::half3>> ts;
+        for (const auto &s : ts_scales) {
+          ts.add_sample(s.first, s.second);
+        } 
+        dst->scales.set_value(ts);
+      }
     }
   }
 
@@ -407,7 +469,57 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
     }
     dst->blendShapes = blendShapes;
 
-    // TODO: weights
+    std::unordered_set<uint32_t> timeCodes;
+    {
+      const auto &weights_it = anim.blendshape_weights_map.cbegin();
+      for (size_t t = 0; t < weights_it->second.size(); t++) {
+        timeCodes.insert(float_to_uint(weights_it->second[t].t));
+      }
+    }
+
+    std::map<double, std::vector<float>> ts_weights;
+    for (const auto &tc : timeCodes) {
+      ts_weights[float_to_double(uint_to_float(tc))].resize(blendShapes.size()); 
+    }
+
+    for (const auto &target : anim.blendshape_weights_map) {
+
+      for (size_t t = 0; t < target.second.size(); t++) {
+        float tc = target.second[t].t;
+        if (!timeCodes.count(float_to_uint(tc))) {
+          PUSH_ERROR_AND_RETURN(fmt::format("All blendshape weights should have same timeCodes. timeCode {} is only seen in `blendShapeWeights` animation channel of blendShape {}", tc, target.first));
+        }
+        uint64_t target_id = target_idMap.at(target.first);
+
+        std::vector<float> &weights = ts_weights.at(float_to_double(tc));
+        DCOUT("weights.size " << weights.size() << ", target_id " << target_id);
+        weights[size_t(target_id)] = target.second[t].value;
+      }
+    }
+
+    DCOUT("ts_weights.cbegin " << ts_weights.cbegin()->first);
+    DCOUT("ts_weights.cbegin isnan" << std::isnan(ts_weights.cbegin()->first));
+    if ((ts_weights.size() == 1) && (std::isnan(ts_weights.cbegin()->first))) {
+      DCOUT("static blendshape weights");
+      // Author as static(default) value.
+      std::vector<float> ts(blendShapes.size());
+      for (size_t i = 0; i < ts_weights.cbegin()->second.size(); i++) {
+        ts[i] = ts_weights.cbegin()->second[i];
+      } 
+      dst->blendShapeWeights.set_value(ts);
+    } else {
+
+      DCOUT("timeSampled blendshape weights");
+      Animatable<std::vector<float>> ts;
+      for (const auto &s : ts_weights) {
+        ts.add_sample(s.first, s.second);
+      } 
+
+      dst->blendShapeWeights.set_value(ts);
+    }
+  } else {
+    // Just author 'blendShapeWeights' without value.
+    dst->blendShapeWeights.set_value_empty();
   }
 
   dst->name = anim.prim_name;
