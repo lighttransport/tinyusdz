@@ -698,9 +698,9 @@ struct Animation {
   std::map<std::string, std::map<AnimationChannel::ChannelType, AnimationChannel>> channels_map;
 
   // For blendshapes
-  // key = blendshape name, value = weight
+  // key = blendshape name, value = timesamped weights
   // TODO: in-between weight
-  std::map<std::string, AnimationSampler<float>> blendshape_weights_map;
+  std::map<std::string, std::vector<AnimationSample<float>>> blendshape_weights_map;
 };
 
 struct Node {
