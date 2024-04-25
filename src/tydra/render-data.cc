@@ -2210,18 +2210,27 @@ static bool ComputeNormals(const std::vector<vec3> &vertices,
           fmt::format("Invalid face num {} at faceVertexCounts[{}]", nv, f));
     }
 
-    uint32_t vidx0 = faceVertexIndices[faceVertexIndexOffset + f + 0];
-    uint32_t vidx1 = faceVertexIndices[faceVertexIndexOffset + f + 1];
-    uint32_t vidx2 = faceVertexIndices[faceVertexIndexOffset + f + 2];
-
-    if ((vidx0 >= vertices.size()) || (vidx1 >= vertices.size()) ||
-        (vidx2 >= vertices.size())) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("vertexIndex exceeds vertices.size {}", vertices.size()));
-    }
-
     // For quad/polygon, first three vertices are used to compute face normal
     // (Assume quad/polygon plane is co-planar)
+    uint32_t vidx0 = faceVertexIndices[faceVertexIndexOffset + 0];
+    uint32_t vidx1 = faceVertexIndices[faceVertexIndexOffset + 1];
+    uint32_t vidx2 = faceVertexIndices[faceVertexIndexOffset + 2];
+
+    if (vidx0 >= vertices.size()) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("vertexIndex0 {} exceeds vertices.size {}", vidx0, vertices.size()));
+    } 
+  
+    if (vidx1 >= vertices.size()) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("vertexIndex1 {} exceeds vertices.size {}", vidx1, vertices.size()));
+    }
+    
+    if (vidx2 >= vertices.size()) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("vertexIndex2 {} exceeds vertices.size {}", vidx2, vertices.size()));
+    }
+
     float area{0.0f};
     value::float3 Nf = GeometricNormal(vertices[vidx0], vertices[vidx1],
                                        vertices[vidx2], area);
