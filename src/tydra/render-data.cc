@@ -5492,7 +5492,6 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
   // BlendShape animations
   if (blendShapes.size()) {
 
-
     std::map<std::string, std::vector<AnimationSample<float>>> weightsMap;
 
     // Blender 4.1 may export empty bendShapeWeights. We'll accept it.
@@ -5513,7 +5512,27 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
       }
 
       if (weights.is_timesamples()) {
-        TODO
+
+        const TypedTimeSamples<std::vector<float>> &ts_weights = weights.get_timesamples();
+        DCOUT("Convert timeSampledd weights");
+        for (const auto &sample : ts_weights.get_samples()) {
+          if (!sample.blocked) {
+            if (sample.value.size() != blendShapes.size()) {
+              PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. timeCode {} blendShapeWeights.size {} must be equal to blendShapes.size {} : {}", sample.t, sample.value.size(), blendShapes.size(), abs_path));
+            }
+
+            for (size_t j = 0; j < sample.value.size(); j++) {
+              AnimationSample<float> s;
+              s.t = float(sample.t);
+              s.value = sample.value[j];
+
+              const std::string &targetName = blendShapes[j].str();
+              weightsMap[targetName].push_back(s);
+            }
+
+          }
+        }
+
       } else if (weights.is_scalar()) {
         std::vector<float> ws;
         if (!weights.get_scalar(&ws)) {
@@ -5536,6 +5555,8 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
       }
 
     }
+
+    anim_out->blendshape_weights_map = std::move(weightsMap);
   }
 
   anim_out->abs_path = abs_path.full_path_name();
