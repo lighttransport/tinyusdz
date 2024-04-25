@@ -151,248 +151,263 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
     dst->metas().displayName = anim.display_name;
   }
 
-  if (anim.channels_map.empty()) {
-    // TODO: Warn message
-    return true;
-  }
+  if (anim.channels_map.size()) {
 
-  StringAndIdMap joint_idMap;
-  for (const auto &channels : anim.channels_map)
-  {
-    uint64_t joint_id = uint64_t(joint_idMap.size());
-    joint_idMap.add(channels.first, uint64_t(joint_id));
-  }
+    StringAndIdMap joint_idMap;
+    for (const auto &channels : anim.channels_map)
+    {
+      uint64_t joint_id = uint64_t(joint_idMap.size());
+      joint_idMap.add(channels.first, uint64_t(joint_id));
+    }
 
-  std::vector<value::token> joints(joint_idMap.size());
-  for (const auto &channels : anim.channels_map) {
-    joints[joint_idMap.at(channels.first)] = value::token(channels.first);
-  }
-  dst->joints = joints;
+    std::vector<value::token> joints(joint_idMap.size());
+    for (const auto &channels : anim.channels_map) {
+      joints[joint_idMap.at(channels.first)] = value::token(channels.first);
+    }
+    dst->joints = joints;
 
-  bool no_tx_channel{true};
-  bool no_rot_channel{true};
-  bool no_scale_channel{true};
+    bool no_tx_channel{true};
+    bool no_rot_channel{true};
+    bool no_scale_channel{true};
 
-  bool all_joints_has_tx_channel{true};
-  bool all_joints_has_rot_channel{true};
-  bool all_joints_has_scale_channel{true};
+    bool all_joints_has_tx_channel{true};
+    bool all_joints_has_rot_channel{true};
+    bool all_joints_has_scale_channel{true};
 
-  for (const auto &channels : anim.channels_map) {
+    for (const auto &channels : anim.channels_map) {
 
-    bool has_tx_channel;
-    bool has_rot_channel;
-    bool has_scale_channel;
+      bool has_tx_channel;
+      bool has_rot_channel;
+      bool has_scale_channel;
 
-    has_tx_channel = channels.second.count(AnimationChannel::ChannelType::Translation);
-    has_rot_channel = channels.second.count(AnimationChannel::ChannelType::Rotation);
-    has_scale_channel = channels.second.count(AnimationChannel::ChannelType::Scale);
+      has_tx_channel = channels.second.count(AnimationChannel::ChannelType::Translation);
+      has_rot_channel = channels.second.count(AnimationChannel::ChannelType::Rotation);
+      has_scale_channel = channels.second.count(AnimationChannel::ChannelType::Scale);
 
-    if (has_tx_channel) {
-      no_tx_channel = false;
+      if (has_tx_channel) {
+        no_tx_channel = false;
+      } else {
+        all_joints_has_tx_channel = false;
+      }
+
+      if (has_rot_channel) {
+        no_rot_channel = false;
+      } else {
+        all_joints_has_rot_channel = false;
+      }
+
+      if (has_scale_channel) {
+        no_scale_channel = false;
+      } else {
+        all_joints_has_scale_channel = false;
+      }
+    }
+
+    if (!no_tx_channel && !all_joints_has_tx_channel) {
+      PUSH_ERROR_AND_RETURN("translation channel partially exists among joints. No joints have animation channel or all joints have animation channels.");
+    }
+
+    if (!no_rot_channel && !all_joints_has_rot_channel) {
+      PUSH_ERROR_AND_RETURN("rotation channel partially exists among joints. No joints have animation channel or all joints have animation channels.");
+    }
+
+    if (!no_scale_channel && !all_joints_has_scale_channel) {
+      PUSH_ERROR_AND_RETURN("scale channel partially exists among joints. No joints have animation channel or all joints have animation channels.");
+    }
+
+    if (no_tx_channel) {
+      // Author static(default) value.
+      std::vector<value::float3> translations;
+      translations.assign(joints.size(), {1.0f, 1.0f, 1.0f});
+      
+      dst->translations.set_value(translations);
     } else {
-      all_joints_has_tx_channel = false;
+
+      // All joints should have same timeCode.
+      // First collect timeCodes
+      std::unordered_set<float> timeCodes;
+
+      for (const auto &channels : anim.channels_map) {
+
+        const auto &tx_it = channels.second.find(AnimationChannel::ChannelType::Translation);
+        if (tx_it != channels.second.end()) {
+          for (size_t t = 0; t < tx_it->second.translations.samples.size(); t++) {
+            timeCodes.insert(tx_it->second.translations.samples[t].t);
+          }
+        }
+
+      }
+
+      // key: timeCode. value: values for each joints.
+      std::map<double, std::vector<value::float3>> ts_txs;
+      for (const auto &tc : timeCodes) {
+        ts_txs[double(tc)].resize(joints.size()); 
+      }
+
+      // Pack channel values
+      for (const auto &channels : anim.channels_map) {
+
+        const auto &tx_it = channels.second.find(AnimationChannel::ChannelType::Translation);
+        if (tx_it != channels.second.end()) {
+
+          for (size_t t = 0; t < tx_it->second.translations.samples.size(); t++) {
+            float tc = tx_it->second.translations.samples[t].t;
+            if (!timeCodes.count(tc)) {
+              PUSH_ERROR_AND_RETURN(fmt::format("All animation channels have same timeCodes. timeCode {} is only seen in `translation` animation channel {}", tc, channels.first));
+            }
+            uint64_t joint_id = joint_idMap.at(channels.first);
+
+            std::vector<value::float3> &txs = ts_txs.at(double(tc));
+            // just in case
+            if (joint_id > txs.size()) {
+              PUSH_ERROR_AND_RETURN(fmt::format("Internal error. joint_id {} exceeds # of joints {}", joint_id, txs.size()));
+            }
+            txs[size_t(joint_id)] = tx_it->second.translations.samples[t].value;
+          }
+        }
+      }
+
+      Animatable<std::vector<value::float3>> ts;
+      for (const auto &s : ts_txs) {
+        ts.add_sample(s.first, s.second);
+      } 
+
+      dst->translations.set_value(ts);
     }
 
-    if (has_rot_channel) {
-      no_rot_channel = false;
+    if (no_rot_channel) {
+      // Author static(default) value.
+      std::vector<value::quatf> rots;
+      value::quatf q;
+      q.imag = {0.0f, 0.0f, 0.0f};
+      q.real = 1.0f;
+      rots.assign(joints.size(), q);
+
+      dst->rotations.set_value(rots);
+      
     } else {
-      all_joints_has_rot_channel = false;
+
+      std::unordered_set<float> timeCodes;
+
+      for (const auto &channels : anim.channels_map) {
+
+        const auto &rot_it = channels.second.find(AnimationChannel::ChannelType::Rotation);
+        if (rot_it != channels.second.end()) {
+          for (size_t t = 0; t < rot_it->second.rotations.samples.size(); t++) {
+            timeCodes.insert(rot_it->second.rotations.samples[t].t);
+          }
+        }
+
+      }
+
+      std::map<double, std::vector<value::quatf>> ts_rots;
+      for (const auto &tc : timeCodes) {
+        ts_rots[double(tc)].resize(joints.size()); 
+      }
+
+      for (const auto &channels : anim.channels_map) {
+
+        const auto &rot_it = channels.second.find(AnimationChannel::ChannelType::Rotation);
+        if (rot_it != channels.second.end()) {
+
+          for (size_t t = 0; t < rot_it->second.rotations.samples.size(); t++) {
+            float tc = rot_it->second.rotations.samples[t].t;
+            if (!timeCodes.count(tc)) {
+              PUSH_ERROR_AND_RETURN(fmt::format("All animation channels have same timeCodes. timeCode {} is only seen in `rotation` animation channel {}", tc, channels.first));
+            }
+            uint64_t joint_id = joint_idMap.at(channels.first);
+
+            std::vector<value::quatf> &rots = ts_rots.at(double(tc));
+            value::quatf v;
+            v[0] = rot_it->second.rotations.samples[t].value[0];
+            v[1] = rot_it->second.rotations.samples[t].value[1];
+            v[2] = rot_it->second.rotations.samples[t].value[2];
+            v[3] = rot_it->second.rotations.samples[t].value[3];
+            rots[size_t(joint_id)] = v;
+          }
+        }
+      }
+
+      Animatable<std::vector<value::quatf>> ts;
+      for (const auto &s : ts_rots) {
+        ts.add_sample(s.first, s.second);
+      } 
+
+      dst->rotations.set_value(ts);
     }
 
-    if (has_scale_channel) {
-      no_scale_channel = false;
+    if (no_scale_channel) {
+      // Author static(default) value.
+      std::vector<value::half3> scales;
+      scales.assign(joints.size(), {value::float_to_half_full(1.0f), value::float_to_half_full(1.0f), value::float_to_half_full(1.0f)});
+
+      dst->scales.set_value(scales);
+      
     } else {
-      all_joints_has_scale_channel = false;
-    }
-  }
+      std::unordered_set<float> timeCodes;
 
-  if (!no_tx_channel && !all_joints_has_tx_channel) {
-    PUSH_ERROR_AND_RETURN("translation channel partially exists among joints. No joints have animation channel or all joints have animation channels.");
-  }
+      for (const auto &channels : anim.channels_map) {
 
-  if (!no_rot_channel && !all_joints_has_rot_channel) {
-    PUSH_ERROR_AND_RETURN("rotation channel partially exists among joints. No joints have animation channel or all joints have animation channels.");
-  }
-
-  if (!no_scale_channel && !all_joints_has_scale_channel) {
-    PUSH_ERROR_AND_RETURN("scale channel partially exists among joints. No joints have animation channel or all joints have animation channels.");
-  }
-
-  if (no_tx_channel) {
-    // Author static(default) value.
-    std::vector<value::float3> translations;
-    translations.assign(joints.size(), {1.0f, 1.0f, 1.0f});
-    
-    dst->translations.set_value(translations);
-  } else {
-
-    // All joints should have same timeCode.
-    // First collect timeCodes
-    std::unordered_set<float> timeCodes;
-
-    for (const auto &channels : anim.channels_map) {
-
-      const auto &tx_it = channels.second.find(AnimationChannel::ChannelType::Translation);
-      if (tx_it != channels.second.end()) {
-        for (size_t t = 0; t < tx_it->second.translations.samples.size(); t++) {
-          timeCodes.insert(tx_it->second.translations.samples[t].t);
-        }
-      }
-
-    }
-
-    // key: timeCode. value: values for each joints.
-    std::map<double, std::vector<value::float3>> ts_txs;
-    for (const auto &tc : timeCodes) {
-      ts_txs[double(tc)].resize(joints.size()); 
-    }
-
-    // Pack channel values
-    for (const auto &channels : anim.channels_map) {
-
-      const auto &tx_it = channels.second.find(AnimationChannel::ChannelType::Translation);
-      if (tx_it != channels.second.end()) {
-
-        for (size_t t = 0; t < tx_it->second.translations.samples.size(); t++) {
-          float tc = tx_it->second.translations.samples[t].t;
-          if (!timeCodes.count(tc)) {
-            PUSH_ERROR_AND_RETURN(fmt::format("All animation channels have same timeCodes. timeCode {} is only seen in `translation` animation channel {}", tc, channels.first));
+        const auto &scale_it = channels.second.find(AnimationChannel::ChannelType::Scale);
+        if (scale_it != channels.second.end()) {
+          for (size_t t = 0; t < scale_it->second.scales.samples.size(); t++) {
+            timeCodes.insert(scale_it->second.scales.samples[t].t);
           }
-          uint64_t joint_id = joint_idMap.at(channels.first);
+        }
 
-          std::vector<value::float3> &txs = ts_txs.at(double(tc));
-          // just in case
-          if (joint_id > txs.size()) {
-            PUSH_ERROR_AND_RETURN(fmt::format("Internal error. joint_id {} exceeds # of joints {}", joint_id, txs.size()));
+      }
+
+      std::map<double, std::vector<value::half3>> ts_scales;
+      for (const auto &tc : timeCodes) {
+        ts_scales[double(tc)].resize(joints.size()); 
+      }
+
+      for (const auto &channels : anim.channels_map) {
+
+        const auto &scale_it = channels.second.find(AnimationChannel::ChannelType::Scale);
+        if (scale_it != channels.second.end()) {
+
+          for (size_t t = 0; t < scale_it->second.scales.samples.size(); t++) {
+            float tc = scale_it->second.scales.samples[t].t;
+            if (!timeCodes.count(tc)) {
+              PUSH_ERROR_AND_RETURN(fmt::format("All animation channels have same timeCodes. timeCode {} is only seen in `scale` animation channel {}", tc, channels.first));
+            }
+            uint64_t joint_id = joint_idMap.at(channels.first);
+
+            std::vector<value::half3> &scales = ts_scales.at(double(tc));
+            value::half3 v;
+            v[0] = value::float_to_half_full(scale_it->second.scales.samples[t].value[0]);
+            v[1] = value::float_to_half_full(scale_it->second.scales.samples[t].value[1]);
+            v[2] = value::float_to_half_full(scale_it->second.scales.samples[t].value[2]);
+            scales[size_t(joint_id)] = v;
           }
-          txs[size_t(joint_id)] = tx_it->second.translations.samples[t].value;
         }
       }
+
+      Animatable<std::vector<value::half3>> ts;
+      for (const auto &s : ts_scales) {
+        ts.add_sample(s.first, s.second);
+      } 
+
+      dst->scales.set_value(ts);
     }
-
-    Animatable<std::vector<value::float3>> ts;
-    for (const auto &s : ts_txs) {
-      ts.add_sample(s.first, s.second);
-    } 
-
-    dst->translations.set_value(ts);
   }
 
-  if (no_rot_channel) {
-    // Author static(default) value.
-    std::vector<value::quatf> rots;
-    value::quatf q;
-    q.imag = {0.0f, 0.0f, 0.0f};
-    q.real = 1.0f;
-    rots.assign(joints.size(), q);
-
-    dst->rotations.set_value(rots);
-    
-  } else {
-
-    std::unordered_set<float> timeCodes;
-
-    for (const auto &channels : anim.channels_map) {
-
-      const auto &rot_it = channels.second.find(AnimationChannel::ChannelType::Rotation);
-      if (rot_it != channels.second.end()) {
-        for (size_t t = 0; t < rot_it->second.rotations.samples.size(); t++) {
-          timeCodes.insert(rot_it->second.rotations.samples[t].t);
-        }
-      }
-
+  if (anim.blendshape_weights_map.size()) {
+    StringAndIdMap target_idMap;
+    for (const auto &target : anim.blendshape_weights_map)
+    {
+      uint64_t target_id = uint64_t(target_idMap.size());
+      target_idMap.add(target.first, uint64_t(target_id));
     }
 
-    std::map<double, std::vector<value::quatf>> ts_rots;
-    for (const auto &tc : timeCodes) {
-      ts_rots[double(tc)].resize(joints.size()); 
+    std::vector<value::token> blendShapes(target_idMap.size());
+    for (const auto &target : anim.blendshape_weights_map) {
+      blendShapes[target_idMap.at(target.first)] = value::token(target.first);
     }
+    dst->blendShapes = blendShapes;
 
-    for (const auto &channels : anim.channels_map) {
-
-      const auto &rot_it = channels.second.find(AnimationChannel::ChannelType::Rotation);
-      if (rot_it != channels.second.end()) {
-
-        for (size_t t = 0; t < rot_it->second.rotations.samples.size(); t++) {
-          float tc = rot_it->second.rotations.samples[t].t;
-          if (!timeCodes.count(tc)) {
-            PUSH_ERROR_AND_RETURN(fmt::format("All animation channels have same timeCodes. timeCode {} is only seen in `rotation` animation channel {}", tc, channels.first));
-          }
-          uint64_t joint_id = joint_idMap.at(channels.first);
-
-          std::vector<value::quatf> &rots = ts_rots.at(double(tc));
-          value::quatf v;
-          v[0] = rot_it->second.rotations.samples[t].value[0];
-          v[1] = rot_it->second.rotations.samples[t].value[1];
-          v[2] = rot_it->second.rotations.samples[t].value[2];
-          v[3] = rot_it->second.rotations.samples[t].value[3];
-          rots[size_t(joint_id)] = v;
-        }
-      }
-    }
-
-    Animatable<std::vector<value::quatf>> ts;
-    for (const auto &s : ts_rots) {
-      ts.add_sample(s.first, s.second);
-    } 
-
-    dst->rotations.set_value(ts);
-  }
-
-  if (no_scale_channel) {
-    // Author static(default) value.
-    std::vector<value::half3> scales;
-    scales.assign(joints.size(), {value::float_to_half_full(1.0f), value::float_to_half_full(1.0f), value::float_to_half_full(1.0f)});
-
-    dst->scales.set_value(scales);
-    
-  } else {
-    std::unordered_set<float> timeCodes;
-
-    for (const auto &channels : anim.channels_map) {
-
-      const auto &scale_it = channels.second.find(AnimationChannel::ChannelType::Scale);
-      if (scale_it != channels.second.end()) {
-        for (size_t t = 0; t < scale_it->second.scales.samples.size(); t++) {
-          timeCodes.insert(scale_it->second.scales.samples[t].t);
-        }
-      }
-
-    }
-
-    std::map<double, std::vector<value::half3>> ts_scales;
-    for (const auto &tc : timeCodes) {
-      ts_scales[double(tc)].resize(joints.size()); 
-    }
-
-    for (const auto &channels : anim.channels_map) {
-
-      const auto &scale_it = channels.second.find(AnimationChannel::ChannelType::Scale);
-      if (scale_it != channels.second.end()) {
-
-        for (size_t t = 0; t < scale_it->second.scales.samples.size(); t++) {
-          float tc = scale_it->second.scales.samples[t].t;
-          if (!timeCodes.count(tc)) {
-            PUSH_ERROR_AND_RETURN(fmt::format("All animation channels have same timeCodes. timeCode {} is only seen in `scale` animation channel {}", tc, channels.first));
-          }
-          uint64_t joint_id = joint_idMap.at(channels.first);
-
-          std::vector<value::half3> &scales = ts_scales.at(double(tc));
-          value::half3 v;
-          v[0] = value::float_to_half_full(scale_it->second.scales.samples[t].value[0]);
-          v[1] = value::float_to_half_full(scale_it->second.scales.samples[t].value[1]);
-          v[2] = value::float_to_half_full(scale_it->second.scales.samples[t].value[2]);
-          scales[size_t(joint_id)] = v;
-        }
-      }
-    }
-
-    Animatable<std::vector<value::half3>> ts;
-    for (const auto &s : ts_scales) {
-      ts.add_sample(s.first, s.second);
-    } 
-
-    dst->scales.set_value(ts);
+    // TODO: weights
   }
 
   dst->name = anim.prim_name;
