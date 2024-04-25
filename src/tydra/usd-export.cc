@@ -1104,13 +1104,25 @@ bool export_to_usda(const RenderScene &scene,
 
     }
 
-    // Add BlendShape prim under GeomMesh prim.
     Prim meshPrim(mesh);
 
+    // Add BlendShape prim under GeomMesh prim.
     if (bss.size()) {
       for (size_t t = 0; t < bss.size(); t++) {
         Prim bsPrim(bss[t]);
-        meshPrim.add_child(std::move(bsPrim));
+        if (!meshPrim.add_child(std::move(bsPrim), /* rename_primname_if_requred */false, err)) {
+          return false;
+        }
+      }
+    }
+
+    // Add GeomSubset prim under GeomMesh prim.
+    if (subsets.size()) {
+      for (size_t s = 0; s < subsets.size(); s++) {
+        Prim subsetPrim(subsets[s]);
+        if (!meshPrim.add_child(std::move(subsetPrim), /* rename_primname_if_required */false, err)) {
+          return false;
+        }
       }
     }
 
