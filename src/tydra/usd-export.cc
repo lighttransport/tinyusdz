@@ -402,7 +402,7 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
   return true;
 }
 
-static bool ToGeomMesh(const RenderScene &scene, const RenderMesh &rmesh, GeomMesh *dst, std::string *err) {
+static bool ToGeomMesh(const RenderScene &scene, const RenderMesh &rmesh, GeomMesh *dst, std::vector<GeomSubset> *dst_subsets, std::string *err) {
 
   std::vector<int> fvCounts(rmesh.faceVertexCounts().size());
   for (size_t i = 0; i < rmesh.faceVertexCounts().size(); i++) {
@@ -538,11 +538,14 @@ static bool ToGeomMesh(const RenderScene &scene, const RenderMesh &rmesh, GeomMe
     dst->set_subsetFamilyType(value::token("materialBind"), GeomSubset::FamilyType::Unrestricted);
     for (const auto &matsubset : rmesh.material_subsetMap) {
       GeomSubset subset;
+      subset.name = matsubset.first;
 
       std::vector<int> indices;
       for (size_t i = 0; i < matsubset.second.indices().size(); i++) {
         indices.push_back(int(matsubset.second.indices()[i]));
       }
+      subset.indices = indices;
+      subset.familyName = value::token("materialBind");
 
       if (matsubset.second.material_id == -1) {
         PUSH_ERROR_AND_RETURN(fmt::format("material_id is not assigned to material_subset {}", matsubset.first));
@@ -555,6 +558,8 @@ static bool ToGeomMesh(const RenderScene &scene, const RenderMesh &rmesh, GeomMe
       subset.set_materialBinding(mat_rel);
 
       // TODO: backface material
+      
+      dst_subsets->emplace_back(std::move(subset));
     }
 
     has_material = true;
@@ -1016,7 +1021,8 @@ bool export_to_usda(const RenderScene &scene,
 
   for (size_t i = 0; i < scene.meshes.size(); i++) {
     GeomMesh mesh;
-    if (!detail::ToGeomMesh(scene, scene.meshes[i], &mesh, err)) {
+    std::vector<GeomSubset> subsets;
+    if (!detail::ToGeomMesh(scene, scene.meshes[i], &mesh, &subsets, err)) {
       return false;
     }
 
