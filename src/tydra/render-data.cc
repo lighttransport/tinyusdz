@@ -11,7 +11,10 @@
 //     - [ ] linear sRGB <-> linear DisplayP3
 //   - [x] Compute tangentes and binormals
 //   - [x] displayColor, displayOpacity primvar(vertex color)
-//   - [ ] Support SkelAnimation and Skeleton
+//   - [x] Support Skeleton
+//   - [ ] Support SkelAnimation
+//     - [x] joint animation
+//     - [x] blendshape animation
 //   - [ ] Support Inbetween BlendShape
 //   - [ ] Support material binding collection(Collection API)
 //   - [ ] Support multiple skel animation
@@ -715,6 +718,7 @@ static bool TryConvertFacevaryingToVertex(
     if (!ret) {                                                           \
       return false;                                                       \
     }                                                                     \
+    dst->name = src.name;                                                 \
     dst->elementSize = 1;                                                 \
     dst->format = src.format;                                             \
     dst->variability = VertexVariability::Vertex;                         \
@@ -734,6 +738,7 @@ static bool TryConvertFacevaryingToVertex(
     if (!ret) {                                                        \
       return false;                                                    \
     }                                                                  \
+    dst->name = src.name;                                                 \
     dst->elementSize = 1;                                              \
     dst->format = src.format;                                          \
     dst->variability = VertexVariability::Vertex;                      \
@@ -753,6 +758,7 @@ static bool TryConvertFacevaryingToVertex(
     if (!ret) {                                                           \
       return false;                                                       \
     }                                                                     \
+    dst->name = src.name;                                                 \
     dst->elementSize = 1;                                                 \
     dst->format = src.format;                                             \
     dst->variability = VertexVariability::Vertex;                         \
@@ -2204,18 +2210,27 @@ static bool ComputeNormals(const std::vector<vec3> &vertices,
           fmt::format("Invalid face num {} at faceVertexCounts[{}]", nv, f));
     }
 
-    uint32_t vidx0 = faceVertexIndices[faceVertexIndexOffset + f + 0];
-    uint32_t vidx1 = faceVertexIndices[faceVertexIndexOffset + f + 1];
-    uint32_t vidx2 = faceVertexIndices[faceVertexIndexOffset + f + 2];
-
-    if ((vidx0 >= vertices.size()) || (vidx1 >= vertices.size()) ||
-        (vidx2 >= vertices.size())) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("vertexIndex exceeds vertices.size {}", vertices.size()));
-    }
-
     // For quad/polygon, first three vertices are used to compute face normal
     // (Assume quad/polygon plane is co-planar)
+    uint32_t vidx0 = faceVertexIndices[faceVertexIndexOffset + 0];
+    uint32_t vidx1 = faceVertexIndices[faceVertexIndexOffset + 1];
+    uint32_t vidx2 = faceVertexIndices[faceVertexIndexOffset + 2];
+
+    if (vidx0 >= vertices.size()) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("vertexIndex0 {} exceeds vertices.size {}", vidx0, vertices.size()));
+    } 
+  
+    if (vidx1 >= vertices.size()) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("vertexIndex1 {} exceeds vertices.size {}", vidx1, vertices.size()));
+    }
+    
+    if (vidx2 >= vertices.size()) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("vertexIndex2 {} exceeds vertices.size {}", vidx2, vertices.size()));
+    }
+
     float area{0.0f};
     value::float3 Nf = GeometricNormal(vertices[vidx0], vertices[vidx1],
                                        vertices[vidx2], area);
@@ -2633,6 +2648,7 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
         *std::max_element(out_indices.begin(), out_indices.end()) + 1;
     {
       std::vector<value::float3> tmp_points(numPoints);
+      // TODO: Use vertex_output[i].point_index?
       for (size_t i = 0; i < out_point_indices.size(); i++) {
         if (out_point_indices[i] >= mesh.points.size()) {
           PUSH_ERROR_AND_RETURN("Internal error. point index out-of-range.");
@@ -2678,7 +2694,60 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
       mesh.joint_and_weights.jointWeights.swap(tmp_weights);
     }
 
-    // TODO: Reorder BlendShape points
+    if (mesh.targets.size()) {
+      // For BlendShape, reordering pointIndices, pointOffsets and normalOffsets is not enough.
+      // Some points could be duplicated, so we need to find a mapping of org pointIdx -> pointIdx list in reordered points,
+      // Then splat point attributes accordingly.
+
+      // org pointIdx -> List of pointIdx in reordered points.
+      std::unordered_map<uint32_t, std::vector<uint32_t>> pointIdxRemap;
+
+      for (size_t i = 0; i < vertex_output.size(); i++) {
+        pointIdxRemap[vertex_output.point_indices[i]].push_back(uint32_t(i));
+      }
+     
+      for (auto &target : mesh.targets) {
+
+        std::vector<value::float3> tmpPointOffsets;
+        std::vector<value::float3> tmpNormalOffsets;
+        std::vector<uint32_t> tmpPointIndices;
+
+        for (size_t i = 0; i < target.second.pointIndices.size(); i++) {
+
+          uint32_t orgPointIdx = target.second.pointIndices[i];
+          if (!pointIdxRemap.count(orgPointIdx)) {
+            PUSH_ERROR_AND_RETURN("Invalid pointIndices value.");
+          }
+          const std::vector<uint32_t> &dstPointIndices = pointIdxRemap.at(orgPointIdx);
+
+          for (size_t k = 0; k < dstPointIndices.size(); k++) {
+            if (target.second.pointOffsets.size()) {
+              if (i >= target.second.pointOffsets.size()) {
+                PUSH_ERROR_AND_RETURN("Invalid pointOffsets.size.");
+              }
+              tmpPointOffsets.push_back(target.second.pointOffsets[i]);
+            }
+            if (target.second.normalOffsets.size()) {
+              if (i >= target.second.normalOffsets.size()) {
+                PUSH_ERROR_AND_RETURN("Invalid normalOffsets.size.");
+              }
+              tmpNormalOffsets.push_back(target.second.normalOffsets[i]);
+            }
+
+            tmpPointIndices.push_back(dstPointIndices[k]);
+          }
+        }
+
+        target.second.pointIndices.swap(tmpPointIndices);
+        target.second.pointOffsets.swap(tmpPointOffsets);
+        target.second.normalOffsets.swap(tmpNormalOffsets);
+      
+      }
+
+      // TODO: Inbetween BlendShapes
+
+    }
+
   }
 
   // Other 'facevarying' attributes are now 'vertex' variability
@@ -3739,6 +3808,7 @@ bool RenderSceneConverter::ConvertMesh(
     dst.normals.format = VertexAttributeFormat::Vec3;
     dst.normals.stride = 0;
     dst.normals.indices.clear();
+    dst.normals.name = "normals";
 
     if (!is_single_indexable) {
       auto result = VertexToFaceVarying(
