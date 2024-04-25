@@ -75,13 +75,13 @@ def Xform "root" (
             uniform matrix4d[] bindTransforms = [( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )]
             uniform token[] joints = ["joint1"]
             uniform matrix4d[] restTransforms = [( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )]
-            prepend rel skel:animationSource = </root/Plane/Skel/Anim>
+            #prepend rel skel:animationSource = </root/Plane/Skel/Anim>
 
-            def SkelAnimation "Anim"
-            {
-                uniform token[] blendShapes = ["Key_1"]
-                float[] blendShapeWeights
-            }
+            #def SkelAnimation "Anim"
+            #{
+            #    uniform token[] blendShapes = ["Key_1"]
+            #    float[] blendShapeWeights
+            #}
         }
     }
 
