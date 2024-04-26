@@ -3909,6 +3909,8 @@ bool RenderSceneConverter::ConvertMesh(
     }
   }
 
+  dst.is_single_indexable = is_single_indexable;
+
   dst.prim_name = mesh.name;
   dst.abs_path = abs_path.full_path_name();
   dst.display_name = mesh.metas().displayName.value_or("");

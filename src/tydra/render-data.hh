@@ -810,6 +810,7 @@ struct MaterialSubset {
 
 // Currently normals and texcoords are converted as facevarying attribute.
 struct RenderMesh {
+#if 0 // deprecated.
   //
   // Type of Vertex attributes of this mesh.
   //
@@ -825,14 +826,19 @@ struct RenderMesh {
                   // Facevaring(no VertexArray indices). This would impact
                   // rendering performance.
   };
+#endif
 
   std::string prim_name;     // Prim name
   std::string abs_path;      // Absolute Prim path in Stage
   std::string display_name;  // `displayName` Prim metadataum
 
-  VertexArrayType vertexArrayType{VertexArrayType::Facevarying};
+  // true: all vertex attributes are 'vertex'-varying. i.e, an App can simply use faceVertexIndices to draw mesh.
+  // false: some vertex attributes are 'facevarying'-varying. An app need to decompose 'points' and 'vertex'-varying attribute to 'facevarying' variability to draw a mesh.
+  bool is_single_indexable{false};
 
-  std::vector<vec3> points;  // varying is 'vertex'.
+  //VertexArrayType vertexArrayType{VertexArrayType::Facevarying};
+
+  std::vector<vec3> points;  // varying is always 'vertex'.
 
   ///
   /// Initialized with USD faceVertexIndices/faceVertexCounts in GeomMesh.

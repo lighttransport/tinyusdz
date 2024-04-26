@@ -492,15 +492,15 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
         uint64_t target_id = target_idMap.at(target.first);
 
         std::vector<float> &weights = ts_weights.at(float_to_double(tc));
-        DCOUT("weights.size " << weights.size() << ", target_id " << target_id);
+        //DCOUT("weights.size " << weights.size() << ", target_id " << target_id);
         weights[size_t(target_id)] = target.second[t].value;
       }
     }
 
-    DCOUT("ts_weights.cbegin " << ts_weights.cbegin()->first);
-    DCOUT("ts_weights.cbegin isnan" << std::isnan(ts_weights.cbegin()->first));
+    //DCOUT("ts_weights.cbegin " << ts_weights.cbegin()->first);
+    //DCOUT("ts_weights.cbegin isnan" << std::isnan(ts_weights.cbegin()->first));
     if ((ts_weights.size() == 1) && (std::isnan(ts_weights.cbegin()->first))) {
-      DCOUT("static blendshape weights");
+      //DCOUT("static blendshape weights");
       // Author as static(default) value.
       std::vector<float> ts(blendShapes.size());
       for (size_t i = 0; i < ts_weights.cbegin()->second.size(); i++) {
@@ -509,7 +509,7 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
       dst->blendShapeWeights.set_value(ts);
     } else {
 
-      DCOUT("timeSampled blendshape weights");
+      //DCOUT("timeSampled blendshape weights");
       Animatable<std::vector<float>> ts;
       for (const auto &s : ts_weights) {
         ts.add_sample(s.first, s.second);
