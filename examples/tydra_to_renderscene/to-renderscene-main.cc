@@ -203,7 +203,9 @@ int main(int argc, char **argv) {
     // env.asset_resolver(arr);
   }
 
-  double timecode = tinyusdz::value::TimeCode::Default();
+  // When Xform, Mesh, Material, etc. have time-varying values,
+  // values are evaluated at `timecode` time(except for animation values in SkelAnimation)
+  env.timecode = tinyusdz::value::TimeCode::Default();
   bool ret = converter.ConvertToRenderScene(env, &render_scene);
   if (!ret) {
     std::cerr << "Failed to convert USD Stage to RenderScene: \n" << converter.GetError() << "\n";
