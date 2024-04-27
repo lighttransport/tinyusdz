@@ -213,7 +213,7 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
     // Emit PBR material: https://github.com/tinyobjloader/tinyobjloader/blob/release/pbr-mtl.md
     
     if (scene.materials[mat_id].surfaceShader.diffuseColor.is_texture()) {
-      int32_t texId = scene.materials[mat_id].surfaceShader.diffuseColor.textureId;
+      int32_t texId = scene.materials[mat_id].surfaceShader.diffuseColor.texture_id;
       if ((texId < 0) || (texId >= int(scene.textures.size()))) {
         PUSH_ERROR_AND_RETURN(fmt::format("Invalid texture id {}. scene.textures.size = {}", texId, scene.textures.size()));
       }
@@ -235,7 +235,7 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
 
     if (scene.materials[mat_id].surfaceShader.useSpecularWorkFlow) {
       if (scene.materials[mat_id].surfaceShader.specularColor.is_texture()) {
-        int32_t texId = scene.materials[mat_id].surfaceShader.specularColor.textureId;
+        int32_t texId = scene.materials[mat_id].surfaceShader.specularColor.texture_id;
         if ((texId < 0) || (texId >= int(scene.textures.size()))) {
           PUSH_ERROR_AND_RETURN(fmt::format("Invalid texture id {}. scene.textures.size = {}", texId, scene.textures.size()));
         }
@@ -257,7 +257,7 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
     } else {
 
       if (scene.materials[mat_id].surfaceShader.metallic.is_texture()) {
-        int32_t texId = scene.materials[mat_id].surfaceShader.metallic.textureId;
+        int32_t texId = scene.materials[mat_id].surfaceShader.metallic.texture_id;
         if ((texId < 0) || (texId >= int(scene.textures.size()))) {
           PUSH_ERROR_AND_RETURN(fmt::format("Invalid texture id {}. scene.textures.size = {}", texId, scene.textures.size()));
         }
@@ -279,7 +279,7 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
     }
 
     if (scene.materials[mat_id].surfaceShader.roughness.is_texture()) {
-      int32_t texId = scene.materials[mat_id].surfaceShader.roughness.textureId;
+      int32_t texId = scene.materials[mat_id].surfaceShader.roughness.texture_id;
       if ((texId < 0) || (texId >= int(scene.textures.size()))) {
         PUSH_ERROR_AND_RETURN(fmt::format("Invalid texture id {}. scene.textures.size = {}", texId, scene.textures.size()));
       }
@@ -300,7 +300,7 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
     }
 
     if (scene.materials[mat_id].surfaceShader.emissiveColor.is_texture()) {
-      int32_t texId = scene.materials[mat_id].surfaceShader.emissiveColor.textureId;
+      int32_t texId = scene.materials[mat_id].surfaceShader.emissiveColor.texture_id;
       if ((texId < 0) || (texId >= int(scene.textures.size()))) {
         PUSH_ERROR_AND_RETURN(fmt::format("Invalid texture id {}. scene.textures.size = {}", texId, scene.textures.size()));
       }
@@ -322,7 +322,7 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
 
 
     if (scene.materials[mat_id].surfaceShader.opacity.is_texture()) {
-      int32_t texId = scene.materials[mat_id].surfaceShader.opacity.textureId;
+      int32_t texId = scene.materials[mat_id].surfaceShader.opacity.texture_id;
       if ((texId < 0) || (texId >= int(scene.textures.size()))) {
         PUSH_ERROR_AND_RETURN(fmt::format("Invalid texture id {}. scene.textures.size = {}", texId, scene.textures.size()));
       }
@@ -344,7 +344,7 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
 
     // emit as cleacoat thickness
     if (scene.materials[mat_id].surfaceShader.clearcoat.is_texture()) {
-      int32_t texId = scene.materials[mat_id].surfaceShader.clearcoat.textureId;
+      int32_t texId = scene.materials[mat_id].surfaceShader.clearcoat.texture_id;
       if ((texId < 0) || (texId >= int(scene.textures.size()))) {
         PUSH_ERROR_AND_RETURN(fmt::format("Invalid texture id {}. scene.textures.size = {}", texId, scene.textures.size()));
       }
@@ -365,7 +365,7 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
     }
 
     if (scene.materials[mat_id].surfaceShader.clearcoatRoughness.is_texture()) {
-      int32_t texId = scene.materials[mat_id].surfaceShader.clearcoatRoughness.textureId;
+      int32_t texId = scene.materials[mat_id].surfaceShader.clearcoatRoughness.texture_id;
       if ((texId < 0) || (texId >= int(scene.textures.size()))) {
         PUSH_ERROR_AND_RETURN(fmt::format("Invalid texture id {}. scene.textures.size = {}", texId, scene.textures.size()));
       }
@@ -386,7 +386,7 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
     }
 
     if (scene.materials[mat_id].surfaceShader.ior.is_texture()) {
-      int32_t texId = scene.materials[mat_id].surfaceShader.ior.textureId;
+      int32_t texId = scene.materials[mat_id].surfaceShader.ior.texture_id;
       if ((texId < 0) || (texId >= int(scene.textures.size()))) {
         PUSH_ERROR_AND_RETURN(fmt::format("Invalid texture id {}. scene.textures.size = {}", texId, scene.textures.size()));
       }
@@ -408,7 +408,7 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
     }
 
     if (scene.materials[mat_id].surfaceShader.occlusion.is_texture()) {
-      int32_t texId = scene.materials[mat_id].surfaceShader.occlusion.textureId;
+      int32_t texId = scene.materials[mat_id].surfaceShader.occlusion.texture_id;
       if ((texId < 0) || (texId >= int(scene.textures.size()))) {
         PUSH_ERROR_AND_RETURN(fmt::format("Invalid texture id {}. scene.textures.size = {}", texId, scene.textures.size()));
       }
@@ -430,7 +430,7 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
     }
 
     if (scene.materials[mat_id].surfaceShader.ior.is_texture()) {
-      int32_t texId = scene.materials[mat_id].surfaceShader.ior.textureId;
+      int32_t texId = scene.materials[mat_id].surfaceShader.ior.texture_id;
       if ((texId < 0) || (texId >= int(scene.textures.size()))) {
         PUSH_ERROR_AND_RETURN(fmt::format("Invalid texture id {}. scene.textures.size = {}", texId, scene.textures.size()));
       }

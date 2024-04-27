@@ -1061,7 +1061,7 @@ template <typename T>
 struct ShaderParam {
   ShaderParam(const T &t) { value = t; }
 
-  bool is_texture() const { return textureId >= 0; }
+  bool is_texture() const { return texture_id >= 0; }
 
   template <typename STy>
   void set_value(const STy &val) {
@@ -1075,7 +1075,7 @@ struct ShaderParam {
   }
 
   T value;
-  int32_t textureId{-1};  // negative = invalid
+  int32_t texture_id{-1};  // negative = invalid
 };
 
 // UsdPreviewSurface
