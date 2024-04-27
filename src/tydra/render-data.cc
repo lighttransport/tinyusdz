@@ -2296,7 +2296,7 @@ bool ListUVNames(const RenderMaterial &material,
                  StringAndIdMap &si_map) {
   // TODO: Use auto
   auto fun_vec3 = [&](const ShaderParam<vec3> &param) {
-    int32_t texId = param.textureId;
+    int32_t texId = param.texture_id;
     if ((texId >= 0) && (size_t(texId) < textures.size())) {
       const UVTexture &tex = textures[size_t(texId)];
       if (tex.varname_uv.size()) {
@@ -2310,7 +2310,7 @@ bool ListUVNames(const RenderMaterial &material,
   };
 
   auto fun_float = [&](const ShaderParam<float> &param) {
-    int32_t texId = param.textureId;
+    int32_t texId = param.texture_id;
     if ((texId >= 0) && (size_t(texId) < textures.size())) {
       const UVTexture &tex = textures[size_t(texId)];
       if (tex.varname_uv.size()) {
@@ -4711,7 +4711,7 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
     DCOUT(fmt::format("TexId {} = {}",
                       shader_abs_path.prim_part() + ".diffuseColor", texId));
 
-    dst_param.textureId = int32_t(texId);
+    dst_param.texture_id = int32_t(texId);
 
     return true;
   } else {
@@ -6742,7 +6742,7 @@ std::string DumpPreviewSurface(const PreviewSurfaceShader &shader,
 
   ss << pprint::Indent(indent + 1) << "diffuseColor = ";
   if (shader.diffuseColor.is_texture()) {
-    ss << "textureId[" << shader.diffuseColor.textureId << "]";
+    ss << "texture_id[" << shader.diffuseColor.texture_id << "]";
   } else {
     ss << shader.diffuseColor.value;
   }
@@ -6750,7 +6750,7 @@ std::string DumpPreviewSurface(const PreviewSurfaceShader &shader,
 
   ss << pprint::Indent(indent + 1) << "metallic = ";
   if (shader.metallic.is_texture()) {
-    ss << "textureId[" << shader.metallic.textureId << "]";
+    ss << "texture_id[" << shader.metallic.texture_id << "]";
   } else {
     ss << shader.metallic.value;
   }
@@ -6758,7 +6758,7 @@ std::string DumpPreviewSurface(const PreviewSurfaceShader &shader,
 
   ss << pprint::Indent(indent + 1) << "roughness = ";
   if (shader.roughness.is_texture()) {
-    ss << "textureId[" << shader.roughness.textureId << "]";
+    ss << "texture_id[" << shader.roughness.texture_id << "]";
   } else {
     ss << shader.roughness.value;
   }
@@ -6766,7 +6766,7 @@ std::string DumpPreviewSurface(const PreviewSurfaceShader &shader,
 
   ss << pprint::Indent(indent + 1) << "ior = ";
   if (shader.ior.is_texture()) {
-    ss << "textureId[" << shader.ior.textureId << "]";
+    ss << "texture_id[" << shader.ior.texture_id << "]";
   } else {
     ss << shader.ior.value;
   }
@@ -6774,7 +6774,7 @@ std::string DumpPreviewSurface(const PreviewSurfaceShader &shader,
 
   ss << pprint::Indent(indent + 1) << "clearcoat = ";
   if (shader.clearcoat.is_texture()) {
-    ss << "textureId[" << shader.clearcoat.textureId << "]";
+    ss << "texture_id[" << shader.clearcoat.texture_id << "]";
   } else {
     ss << shader.clearcoat.value;
   }
@@ -6782,7 +6782,7 @@ std::string DumpPreviewSurface(const PreviewSurfaceShader &shader,
 
   ss << pprint::Indent(indent + 1) << "clearcoatRoughness = ";
   if (shader.clearcoatRoughness.is_texture()) {
-    ss << "textureId[" << shader.clearcoatRoughness.textureId << "]";
+    ss << "texture_id[" << shader.clearcoatRoughness.texture_id << "]";
   } else {
     ss << shader.clearcoatRoughness.value;
   }
@@ -6790,7 +6790,7 @@ std::string DumpPreviewSurface(const PreviewSurfaceShader &shader,
 
   ss << pprint::Indent(indent + 1) << "opacity = ";
   if (shader.opacity.is_texture()) {
-    ss << "textureId[" << shader.opacity.textureId << "]";
+    ss << "texture_id[" << shader.opacity.texture_id << "]";
   } else {
     ss << shader.opacity.value;
   }
@@ -6798,7 +6798,7 @@ std::string DumpPreviewSurface(const PreviewSurfaceShader &shader,
 
   ss << pprint::Indent(indent + 1) << "opacityThreshold = ";
   if (shader.opacityThreshold.is_texture()) {
-    ss << "textureId[" << shader.opacityThreshold.textureId << "]";
+    ss << "texture_id[" << shader.opacityThreshold.texture_id << "]";
   } else {
     ss << shader.opacityThreshold.value;
   }
@@ -6806,7 +6806,7 @@ std::string DumpPreviewSurface(const PreviewSurfaceShader &shader,
 
   ss << pprint::Indent(indent + 1) << "normal = ";
   if (shader.normal.is_texture()) {
-    ss << "textureId[" << shader.normal.textureId << "]";
+    ss << "texture_id[" << shader.normal.texture_id << "]";
   } else {
     ss << shader.normal.value;
   }
@@ -6814,7 +6814,7 @@ std::string DumpPreviewSurface(const PreviewSurfaceShader &shader,
 
   ss << pprint::Indent(indent + 1) << "displacement = ";
   if (shader.displacement.is_texture()) {
-    ss << "textureId[" << shader.displacement.textureId << "]";
+    ss << "texture_id[" << shader.displacement.texture_id << "]";
   } else {
     ss << shader.displacement.value;
   }
@@ -6822,7 +6822,7 @@ std::string DumpPreviewSurface(const PreviewSurfaceShader &shader,
 
   ss << pprint::Indent(indent + 1) << "occlusion = ";
   if (shader.occlusion.is_texture()) {
-    ss << "textureId[" << shader.occlusion.textureId << "]";
+    ss << "texture_id[" << shader.occlusion.texture_id << "]";
   } else {
     ss << shader.occlusion.value;
   }

@@ -872,11 +872,11 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
     if (rmat.surfaceShader.diffuseColor.is_texture()) {
 
-      if (size_t(rmat.surfaceShader.diffuseColor.textureId) > scene.textures.size()) {
+      if (size_t(rmat.surfaceShader.diffuseColor.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'diffuseColor' texture.");
       }
     
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.diffuseColor.textureId)], "diffuseColor", abs_mat_path, shader_nodes)) {
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.diffuseColor.texture_id)], "diffuseColor", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'diffuseColor' texture.");
       }
 
@@ -893,11 +893,11 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
     if (rmat.surfaceShader.specularColor.is_texture()) {
 
-      if (size_t(rmat.surfaceShader.specularColor.textureId) > scene.textures.size()) {
+      if (size_t(rmat.surfaceShader.specularColor.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'specularColor' texture.");
       }
     
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.specularColor.textureId)], "specularColor", abs_mat_path, shader_nodes)) {
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.specularColor.texture_id)], "specularColor", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'specularColor' texture.");
       }
 
@@ -913,11 +913,11 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
     if (rmat.surfaceShader.emissiveColor.is_texture()) {
 
-      if (size_t(rmat.surfaceShader.emissiveColor.textureId) > scene.textures.size()) {
+      if (size_t(rmat.surfaceShader.emissiveColor.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'emissiveColor' texture.");
       }
     
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.emissiveColor.textureId)], "emissiveColor", abs_mat_path, shader_nodes)) {
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.emissiveColor.texture_id)], "emissiveColor", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'emissiveColor' texture.");
       }
 
@@ -933,11 +933,11 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
     if (rmat.surfaceShader.metallic.is_texture()) {
 
-      if (size_t(rmat.surfaceShader.metallic.textureId) > scene.textures.size()) {
+      if (size_t(rmat.surfaceShader.metallic.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'metallic' texture.");
       }
     
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.metallic.textureId)], "metallic", abs_mat_path, shader_nodes)) {
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.metallic.texture_id)], "metallic", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'metallic' texture.");
       }
 
@@ -949,11 +949,11 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
     if (rmat.surfaceShader.roughness.is_texture()) {
 
-      if (size_t(rmat.surfaceShader.roughness.textureId) > scene.textures.size()) {
+      if (size_t(rmat.surfaceShader.roughness.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'roughness' texture.");
       }
     
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.roughness.textureId)], "roughness", abs_mat_path, shader_nodes)) {
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.roughness.texture_id)], "roughness", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'roughness' texture.");
       }
 
@@ -965,11 +965,11 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
     if (rmat.surfaceShader.clearcoat.is_texture()) {
 
-      if (size_t(rmat.surfaceShader.clearcoat.textureId) > scene.textures.size()) {
+      if (size_t(rmat.surfaceShader.clearcoat.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'clearcoat' texture.");
       }
     
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.clearcoat.textureId)], "clearcoat", abs_mat_path, shader_nodes)) {
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.clearcoat.texture_id)], "clearcoat", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'clearcoat' texture.");
       }
 
@@ -981,11 +981,11 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
     if (rmat.surfaceShader.clearcoatRoughness.is_texture()) {
 
-      if (size_t(rmat.surfaceShader.clearcoatRoughness.textureId) > scene.textures.size()) {
+      if (size_t(rmat.surfaceShader.clearcoatRoughness.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'clearcoatRoughness' texture.");
       }
     
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.clearcoatRoughness.textureId)], "clearcoatRoughness", abs_mat_path, shader_nodes)) {
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.clearcoatRoughness.texture_id)], "clearcoatRoughness", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'clearcoatRoughness' texture.");
       }
 
@@ -997,11 +997,11 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
     if (rmat.surfaceShader.opacity.is_texture()) {
 
-      if (size_t(rmat.surfaceShader.opacity.textureId) > scene.textures.size()) {
+      if (size_t(rmat.surfaceShader.opacity.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'opacity' texture.");
       }
     
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.opacity.textureId)], "opacity", abs_mat_path, shader_nodes)) {
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.opacity.texture_id)], "opacity", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'opacity' texture.");
       }
 
@@ -1013,11 +1013,11 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
     if (rmat.surfaceShader.opacityThreshold.is_texture()) {
 
-      if (size_t(rmat.surfaceShader.opacityThreshold.textureId) > scene.textures.size()) {
+      if (size_t(rmat.surfaceShader.opacityThreshold.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'opacityThreshold' texture.");
       }
     
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.opacityThreshold.textureId)], "opacityThreshold", abs_mat_path, shader_nodes)) {
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.opacityThreshold.texture_id)], "opacityThreshold", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'opacityThreshold' texture.");
       }
 
@@ -1029,11 +1029,11 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
     if (rmat.surfaceShader.ior.is_texture()) {
 
-      if (size_t(rmat.surfaceShader.ior.textureId) > scene.textures.size()) {
+      if (size_t(rmat.surfaceShader.ior.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'ior' texture.");
       }
     
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.ior.textureId)], "ior", abs_mat_path, shader_nodes)) {
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.ior.texture_id)], "ior", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'ior' texture.");
       }
 
@@ -1045,11 +1045,11 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
     if (rmat.surfaceShader.occlusion.is_texture()) {
 
-      if (size_t(rmat.surfaceShader.occlusion.textureId) > scene.textures.size()) {
+      if (size_t(rmat.surfaceShader.occlusion.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'occlusion' texture.");
       }
     
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.occlusion.textureId)], "occlusion", abs_mat_path, shader_nodes)) {
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.occlusion.texture_id)], "occlusion", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'occlusion' texture.");
       }
 
@@ -1061,11 +1061,11 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
     if (rmat.surfaceShader.normal.is_texture()) {
 
-      if (size_t(rmat.surfaceShader.normal.textureId) > scene.textures.size()) {
+      if (size_t(rmat.surfaceShader.normal.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'normal' texture.");
       }
     
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.normal.textureId)], "normal", abs_mat_path, shader_nodes)) {
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.normal.texture_id)], "normal", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'normal' texture.");
       }
 
@@ -1081,11 +1081,11 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
     if (rmat.surfaceShader.displacement.is_texture()) {
 
-      if (size_t(rmat.surfaceShader.displacement.textureId) > scene.textures.size()) {
+      if (size_t(rmat.surfaceShader.displacement.texture_id) > scene.textures.size()) {
         PUSH_ERROR_AND_RETURN("Invalid texture_id for 'displacement' texture.");
       }
     
-      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.displacement.textureId)], "displacement", abs_mat_path, shader_nodes)) {
+      if (!ConstructUVTexture(scene.textures[size_t(rmat.surfaceShader.displacement.texture_id)], "displacement", abs_mat_path, shader_nodes)) {
         PUSH_ERROR_AND_RETURN("Failed to convert 'displacement' texture.");
       }
 
