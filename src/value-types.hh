@@ -233,7 +233,15 @@ class TimeCode {
     return std::numeric_limits<double>::quiet_NaN();
   }
 
+  // TODO: Deprecate `Get` and use `get`
   double Get(bool *is_default_timecode) {
+    if (is_default_timecode) {
+      (*is_default_timecode) = is_default();
+    }
+    return time_;
+  }
+
+  double get(bool *is_default_timecode) {
     if (is_default_timecode) {
       (*is_default_timecode) = is_default();
     }
@@ -242,11 +250,11 @@ class TimeCode {
 
   bool is_default() {
     // TODO: Bitwise comparison
-    return !std::isnan(time_);
+    return std::isnan(time_);
   }
 
  private:
-  double time_;
+  double time_{std::numeric_limits<double>::quiet_NaN()};
 };
 
 static_assert(sizeof(TimeCode) == 8, "Size of TimeCode must be 8.");
