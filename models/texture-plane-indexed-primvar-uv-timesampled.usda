@@ -38,7 +38,7 @@ def Xform "root" (
             texCoord2f[] primvars:UVMap = [(0, 0), (0.5, 0), (0.5, 1), (0, 1), (1, 0), (1, 1)] (
                 interpolation = "faceVarying"
             )
-            int[] primvats:UVMap:indices.timeSamples = {
+            int[] primvars:UVMap:indices.timeSamples = {
                 0: [0, 1, 2, 3, 1, 4, 5, 2],
                 10: [4, 2, 1, 0, 2, 5, 4, 1]
             }
