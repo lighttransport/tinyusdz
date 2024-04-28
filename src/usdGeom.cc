@@ -347,9 +347,9 @@ bool GeomPrimvar::flatten_with_indices(const double t, value::Value *dest, const
       uint32_t elementSize = _attr.metas().elementSize.value_or(1);
 
       std::vector<int32_t> indices;
-      // Get indices at default time
-      _indices.get(&indices);
-      
+      // Get indices at specified time
+      _indices.get(&indices, t, tinterp);
+
 #define APPLY_FUN(__ty)                                                  \
   case value::TypeTraits<__ty>::type_id() | value::TYPE_ID_1D_ARRAY_BIT: { \
     std::vector<__ty> value; \
