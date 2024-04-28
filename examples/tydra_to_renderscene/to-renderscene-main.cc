@@ -54,12 +54,17 @@ int main(int argc, char **argv) {
   if (argc < 2) {
     std::cout << "Usage: " << argv[0] << " input.usd [OPTIONS].\n";
     std::cout << "\n\nOptions\n\n";
+    std::cout << "  --timecode VALUE: Specify timecode value(e.g. 3.14)\n";
     std::cout << "  --noidxbuild: Do not rebuild vertex indices\n";
     std::cout << "  --notri: Do not triangulate mesh\n";
     std::cout << "  --dumpobj: Dump mesh as wavefront .obj(for visual debugging)\n";
     std::cout << "  --dumpusd: Dump scene as USD(USDA Ascii)\n";
     return EXIT_FAILURE;
   }
+
+  // When Xform, Mesh, Material, etc. have time-varying values,
+  // values are evaluated at `timecode` time(except for animation values in SkelAnimation)
+  double timecode = tinyusdz::value::TimeCode::Default();
 
   bool build_indices = true;
   bool triangulate = true;
@@ -75,6 +80,14 @@ int main(int argc, char **argv) {
       export_obj = true;
     } else if (strcmp(argv[i], "--dumpusd") == 0) {
       export_usd = true;
+    } else if (strcmp(argv[i], "--timecode") == 0) {
+      if ((i + 1) >= argc) {
+        std::cerr << "arg is missing for --timecode flag.\n";
+        return -1;
+      }
+      timecode = std::stod(argv[i+1]);
+      std::cout << "Use timecode: " << timecode << "\n";
+      i++;
     } else {
       filepath = argv[i];
     }
@@ -203,9 +216,7 @@ int main(int argc, char **argv) {
     // env.asset_resolver(arr);
   }
 
-  // When Xform, Mesh, Material, etc. have time-varying values,
-  // values are evaluated at `timecode` time(except for animation values in SkelAnimation)
-  env.timecode = tinyusdz::value::TimeCode::Default();
+  env.timecode = timecode;
   bool ret = converter.ConvertToRenderScene(env, &render_scene);
   if (!ret) {
     std::cerr << "Failed to convert USD Stage to RenderScene: \n" << converter.GetError() << "\n";
