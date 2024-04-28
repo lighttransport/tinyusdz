@@ -1018,7 +1018,7 @@ static bool TriangulateVertexAttribute(
 
       if (src_fvIdx >= num_vs) {
         PUSH_ERROR_AND_RETURN(
-            "Invalid index found in triangulatedFaceVertexIndices.");
+            fmt::format("triangulatedToOrigFaceVertexIndexMap[{}] {} exceeds num_vs {}.", f, src_fvIdx, num_vs));
       }
 
       buf.insert(
@@ -1081,7 +1081,6 @@ std::vector<const tinyusdz::GeomSubset *> GetMaterialBindGeomSubsets(
 
 //
 // name does not include "primvars:" prefix.
-// TODO: connected attribute.
 //
 nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
     const Stage &stage, const GeomMesh &mesh, const std::string &name,
@@ -1109,6 +1108,12 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
         primvar.get_type_name() + "\n");
   }
 
+  std::vector<value::texcoord2f> uvs;
+  if (!primvar.flatten_with_indices(t, &uvs, tinterp)) {
+    return nonstd::make_unexpected(
+        "Failed to retrieve texture coordinate primvar with concrete type.\n");
+  }
+
   if (primvar.get_interpolation() == Interpolation::Varying) {
     vattr.variability = VertexVariability::Varying;
   } else if (primvar.get_interpolation() == Interpolation::Constant) {
@@ -1121,11 +1126,8 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
     vattr.variability = VertexVariability::FaceVarying;
   }
 
-  std::vector<value::texcoord2f> uvs;
-  if (!primvar.flatten_with_indices(t, &uvs, tinterp)) {
-    return nonstd::make_unexpected(
-        "Failed to retrieve texture coordinate primvar with concrete type.\n");
-  }
+
+  DCOUT("texcoord " << name << " : " << uvs);
 
   vattr.format = VertexAttributeFormat::Vec2;
   vattr.data.resize(uvs.size() * sizeof(value::texcoord2f));
@@ -2992,6 +2994,10 @@ bool RenderSceneConverter::ConvertMesh(
     dst.material_subsetMap[ms.prim_name] = ms;
   }
 
+  uint32_t num_vertices = uint32_t(dst.points.size());
+  uint32_t num_faces = uint32_t(dst.usdFaceVertexCounts.size());
+  uint32_t num_face_vertex_indices = uint32_t(dst.usdFaceVertexIndices.size());
+
   //
   // List up texcoords in this mesh.
   // - If no material assigned to this mesh, look into
@@ -3043,10 +3049,32 @@ bool RenderSceneConverter::ConvertMesh(
           std::string uvname = it->second;
 
           if (!uvAttrs.count(uint32_t(slotId))) {
+            // FIXME: Use GetGeomPrimvar() & ToVertexAttribute()
             auto ret = GetTextureCoordinate(env.stage, mesh, uvname,
                                             env.timecode, env.tinterp);
             if (ret) {
-              const VertexAttribute vattr = ret.value();
+              const VertexAttribute &vattr = ret.value();
+
+              if (vattr.is_vertex()) {
+                if (vattr.vertex_count() != num_vertices) {
+                  PUSH_ERROR_AND_RETURN(fmt::format("Array length of texture coordinate `{}`(Prim path {}) must be {}, but got {}", uvname, abs_path.prim_part(), num_vertices, vattr.vertex_count()));
+                }
+              } else if (vattr.is_constant()) {
+                if (vattr.vertex_count() != 1) {
+                  PUSH_ERROR_AND_RETURN(fmt::format("Array length of texture coordinate `{}`(Prim path {}) must be {}, but got {}", uvname, abs_path.prim_part(), 1, vattr.vertex_count()));
+                }
+              } else if (vattr.is_uniform()) {
+                if (vattr.vertex_count() != num_faces) {
+                  PUSH_ERROR_AND_RETURN(fmt::format("Array length of texture coordinate `{}`(Prim path {}) must be {}, but got {}", uvname, abs_path.prim_part(), num_faces, vattr.vertex_count()));
+                }
+              } else if (vattr.is_facevarying()) {
+                if (vattr.vertex_count() != num_face_vertex_indices) {
+                  PUSH_ERROR_AND_RETURN(fmt::format("Array length of texture coordinate `{}`(Prim path {}) must be {}, but got {}", uvname, abs_path.prim_part(), num_face_vertex_indices, vattr.vertex_count()));
+                }
+              } else {
+                PUSH_ERROR_AND_RETURN("Internal error. Unknown variability of texcoord attribute.");
+                return false;
+              }
 
               uvAttrs[uint32_t(slotId)] = vattr;
             } else {
@@ -3059,9 +3087,6 @@ bool RenderSceneConverter::ConvertMesh(
     }
   }
 
-  uint32_t num_vertices = uint32_t(dst.points.size());
-  uint32_t num_faces = uint32_t(dst.usdFaceVertexCounts.size());
-  uint32_t num_face_vertex_indices = uint32_t(dst.usdFaceVertexIndices.size());
 
   if (mesh.has_primvar(env.mesh_config.default_tangents_primvar_name)) {
     GeomPrimvar pvar;
