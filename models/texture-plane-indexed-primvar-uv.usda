@@ -38,7 +38,7 @@ def Xform "root" (
             texCoord2f[] primvars:UVMap = [(0, 0), (0.5, 0), (0.5, 1), (0, 1), (1, 0), (1, 1)] (
                 interpolation = "faceVarying"
             )
-            int[] primvats:UVMap:indices = [0, 1, 2, 3, 1, 4, 5, 2]
+            int[] primvars:UVMap:indices = [0, 1, 2, 3, 1, 4, 5, 2]
             uniform token subdivisionScheme = "none"
         }
     }
