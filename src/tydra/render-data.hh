@@ -564,8 +564,9 @@ bool ToVertexAttribute(const GeomPrimvar &pvar, VertexAttribute &dst,
 
 enum class ColorSpace {
   sRGB,
-  Linear,
+  Linear,     // Linear sRGB
   Rec709,
+  Raw,        // Raw(physical quantity) value(e.g. normal maps, ao maps)
   Lin_ACEScg, // ACES CG colorspace(linear colorspace. no transfer curve applied)
   OCIO,
   Lin_DisplayP3,   // colorSpace 'lin_displayp3'
