@@ -1948,6 +1948,24 @@ value::token AttrMetas::get_colorSpace() const {
   return value::token();
 }
 
+bool AttrMetas::has_unauthoredValuesIndex() const {
+  return meta.count("unauthoredValuesIndex");
+}
+
+int AttrMetas::get_unauthoredValuesIndex() const {
+  if (!has_unauthoredValuesIndex()) {
+    return -1;
+  }
+
+  const MetaVariable &mv = meta.at("unauthoredValuesIndex");
+  int v;
+  if (mv.get_value<int>(&v)) {
+    return v;
+  }
+
+  return -1;
+}
+
 namespace {
 
 nonstd::optional<const PrimSpec *> GetPrimSpecAtPathRec(

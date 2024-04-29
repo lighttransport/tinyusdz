@@ -173,6 +173,9 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
     if (attr.metas().elementSize.has_value()) {
       primvar.set_elementSize(attr.metas().elementSize.value());
     }
+    if (attr.metas().has_unauthoredValuesIndex()) {
+      primvar.set_unauthoredValuesIndex(attr.metas().get_unauthoredValuesIndex());
+    }
 
   } else {
     SET_ERROR_AND_RETURN(fmt::format("{} is not Attribute. Maybe Relationship?", primvar_name));
