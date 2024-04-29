@@ -329,6 +329,11 @@ Edit path to MSVC SDK and Windows SDK in `bootstrap-clang-cl-win64.bat`, then
 
 See [examples](examples) directory for more examples, but may not actively maintained except for the above examples.
 
+#### Examples as external project
+
+* Vulkan rendering of USDZ model by extending Vulkan-glTF-PBR https://github.com/syoyo/Vulkan-glTF-USDZ-PBR
+  * Uses `rendermesh-refactor` branch
+  
 ### USDZ Data format
 
 See [prim_format.md](doc/prim_format.md) and [preview_surface.md](doc/preview_surface.md)
