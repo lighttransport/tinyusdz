@@ -4277,8 +4277,8 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
     // First look into `colorSpace` metadata of asset, then
     // look into `inputs:sourceColorSpace' attribute.
     // When both `colorSpace` metadata and `inputs:sourceColorSpace' attribute
-    // exists, `inputs:sourceColorSpace` wins.
-    // FIXME: Change to `colorSpace` metadata supersedes 'inputs:sourceColorSpace'?
+    // exists, `colorSpace` metadata supercedes.
+    // NOTE: `inputs:sourceColorSpace` attribute should be deprecated in favor of `colorSpace` metadata.
     bool inferColorSpaceFailed = false;
     if (texture.file.metas().has_colorSpace()) {
       ColorSpace cs;
@@ -4292,7 +4292,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
     }
 
     bool sourceColorSpaceSet = false;
-    {
+    if (inferColorSpaceFailed || !texture.file.metas().has_colorSpace()) {
       if (texture.sourceColorSpace.authored()) {
         UsdUVTexture::SourceColorSpace cs;
         if (texture.sourceColorSpace.get_value().get(env.timecode, &cs)) {
@@ -4300,7 +4300,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
             texImage.usdColorSpace = tydra::ColorSpace::sRGB;
             sourceColorSpaceSet = true;
           } else if (cs == UsdUVTexture::SourceColorSpace::Raw) {
-            texImage.usdColorSpace = tydra::ColorSpace::Linear;
+            texImage.usdColorSpace = tydra::ColorSpace::Raw;
             sourceColorSpaceSet = true;
           } else if (cs == UsdUVTexture::SourceColorSpace::Auto) {
             // TODO: Read colorspace from a file.
@@ -5999,7 +5999,11 @@ std::string to_string(ColorSpace cty) {
       break;
     }
     case ColorSpace::Linear: {
-      s = "linear";
+      s = "lin_srgb";
+      break;
+    }
+    case ColorSpace::Raw: {
+      s = "raw";
       break;
     }
     case ColorSpace::Rec709: {
@@ -6037,14 +6041,16 @@ bool InferColorSpace(const value::token &tok, ColorSpace *cty) {
   }
 
   if (tok.str() == "raw") {
-    (*cty) = ColorSpace::Linear;
+    (*cty) = ColorSpace::Raw;
   } else if (tok.str() == "Raw") {
-    (*cty) = ColorSpace::Linear;
+    (*cty) = ColorSpace::Raw;
   } else if (tok.str() == "srgb") {
     (*cty) = ColorSpace::sRGB;
   } else if (tok.str() == "sRGB") {
     (*cty) = ColorSpace::sRGB;
   } else if (tok.str() == "linear") {
+    (*cty) = ColorSpace::Linear;
+  } else if (tok.str() == "lin_srgb") {
     (*cty) = ColorSpace::Linear;
   } else if (tok.str() == "rec709") {
     (*cty) = ColorSpace::Rec709;
