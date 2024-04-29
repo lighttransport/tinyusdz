@@ -101,6 +101,7 @@ class GeomPrimvar {
     if (rhs._interpolation) {
       _interpolation = rhs._interpolation;
     }
+    _unauthoredValuesIndex = rhs._unauthoredValuesIndex;
   }
 
   GeomPrimvar &operator=(const GeomPrimvar &rhs) {
@@ -115,6 +116,7 @@ class GeomPrimvar {
     if (rhs._interpolation) {
       _interpolation = rhs._interpolation;
     }
+    _unauthoredValuesIndex = rhs._unauthoredValuesIndex;
 
     return *this;
   }
@@ -164,6 +166,18 @@ class GeomPrimvar {
 
   void set_interpolation(const Interpolation interp) {
     _interpolation = interp;
+  }
+
+  bool has_unauthoredValuesIndex() const {
+    return _unauthoredValuesIndex.has_value();
+  }
+
+  int get_unauthoredValuesIndex() const {
+    return _unauthoredValuesIndex.value_or(-1);
+  }
+
+  void set_unauthoredValuesIndex(int n) {
+    _unauthoredValuesIndex = n;
   }
 
   const TypedTimeSamples<std::vector<int32_t>> &get_indices() const {
@@ -269,6 +283,7 @@ class GeomPrimvar {
   TypedTimeSamples<std::vector<int32_t>> _indices;
 
   // Store Attribute meta separately.
+  nonstd::optional<int32_t> _unauthoredValuesIndex; // for sparse primvars in some DCC. default = -1.
   nonstd::optional<uint32_t> _elementSize;
   nonstd::optional<Interpolation> _interpolation;
 
