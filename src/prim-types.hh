@@ -1473,16 +1473,24 @@ class TypedAttribute {
     return (*this);
   }
 
-  void set_value(const T &v) { _attrib = v; }
+  void set_default(const T &v) { _attrib = v; }
+  bool has_default() const { return _attrib.has_value(); }
 
-  const nonstd::optional<T> get_value() const {
+  // alias to set_default
+  void set_value(const T &v) { set_default(v); }
+
+  const nonstd::optional<T> get_default() const {
     if (_attrib) {
       return _attrib.value();
     }
     return nonstd::nullopt;
   }
 
-  bool get_value(T *dst) const {
+  const nonstd::optional<T> get_value() const {
+    return get_default();
+  }
+
+  bool get_default(T *dst) const {
     if (!dst) return false;
 
     if (_attrib) {
@@ -1490,6 +1498,10 @@ class TypedAttribute {
       return true;
     }
     return false;
+  }
+
+  bool get_value(T *dst) const {
+    return get_default(dst);
   }
 
   bool is_blocked() const { return _blocked; }
@@ -1526,7 +1538,7 @@ class TypedAttribute {
   void set_value_empty() { _value_empty = true; }
 
   bool is_value_empty() const {
-    if (is_connection()) {
+    if (has_connection()) {
       return false;
     }
 
@@ -1566,7 +1578,7 @@ class TypedAttribute {
   bool _value_empty{false};  // applies `_attrib`
   std::vector<Path> _paths;
   nonstd::optional<T> _attrib;
-  bool _blocked{false};  // for `uniform` attribute.
+  bool _blocked{false};
 };
 
 ///
