@@ -1085,6 +1085,9 @@ struct AttrMetas {
   bool has_colorSpace() const;
   value::token get_colorSpace() const; // return empty when not authored or 'colorSpace' metadataum is not token type.
 
+  bool has_unauthoredValuesIndex() const;
+  int get_unauthoredValuesIndex() const; // return -1 when not authored or 'unauthoredValuesIndex' metadataum is not int type.
+
   bool authored() const {
     return (interpolation || elementSize || hidden || customData || weight ||
             connectability || outputName || renderType || sdrMetadata || displayName || bindMaterialAs || meta.size() || stringData.size());
