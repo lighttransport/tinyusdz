@@ -5,6 +5,7 @@
 // - [ ] Optimize Rec.709 conversion
 //
 #include <cmath>
+#include <sstream>
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -24,10 +25,17 @@
 
 #include "image-util.hh"
 #include "value-types.hh"
+#include "common-macros.inc"
+#include "tiny-format.hh"
 
 #if defined(TINYUSDZ_WITH_COLORIO)
 #include "external/tiny-color-io.h"
 #endif
+
+#define PushError(msg) \
+  if (err) { \
+    (*err) += msg; \
+  }
 
 // From https://www.nayuki.io/page/srgb-transform-library --------------------
 /*
@@ -336,26 +344,35 @@ float Rec709ToLinear(uint8_t v) {
 bool linear_f32_to_srgb_8bit(const std::vector<float> &in_img, size_t width,
                          size_t height,
                          size_t channels, size_t channel_stride,
-                         std::vector<uint8_t> *out_img) {
+                         std::vector<uint8_t> *out_img, std::string *err) {
 
-  if ((width == 0) ||
-    (height == 0) ||
-    (channels == 0) ||
-    (out_img == nullptr)) {
-    return false;
+  if (width == 0) {
+    PUSH_ERROR_AND_RETURN("width is zero.");
+  }
+
+  if (height == 0) {
+    PUSH_ERROR_AND_RETURN("height is zero.");
+  }
+
+  if (channels == 0) {
+    PUSH_ERROR_AND_RETURN("channels is zero.");
+  }
+
+  if (out_img == nullptr) {
+    PUSH_ERROR_AND_RETURN("`out_img` is nullptr.");
   }
 
   if (channel_stride == 0) {
     channel_stride = channels;
   } else {
     if (channel_stride < channels) {
-      return false;
+      PUSH_ERROR_AND_RETURN(fmt::format("channel_stride {} is smaller than input channels {}", channel_stride, channels));
     }
   }
 
   size_t dest_size = size_t(width) * size_t(height) * channel_stride;
   if (dest_size > in_img.size()) {
-    return false;
+    PUSH_ERROR_AND_RETURN(fmt::format("Insufficient input buffer size. must be the same or larger than {} but has {}", dest_size, in_img.size()));
   }
 
   out_img->resize(dest_size);
@@ -382,26 +399,35 @@ bool linear_f32_to_srgb_8bit(const std::vector<float> &in_img, size_t width,
 bool srgb_8bit_to_linear_f32(const std::vector<uint8_t> &in_img, size_t width,
                          size_t height,
                          size_t channels, size_t channel_stride,
-                         std::vector<float> *out_img) {
+                         std::vector<float> *out_img, std::string *err) {
 
-  if ((width == 0) ||
-    (height == 0) ||
-    (channels == 0) ||
-    (out_img == nullptr)) {
-    return false;
+  if (width == 0) {
+    PUSH_ERROR_AND_RETURN("width is zero.");
+  }
+
+  if (height == 0) {
+    PUSH_ERROR_AND_RETURN("height is zero.");
+  }
+
+  if (channels == 0) {
+    PUSH_ERROR_AND_RETURN("channels is zero.");
+  }
+
+  if (out_img == nullptr) {
+    PUSH_ERROR_AND_RETURN("`out_img` is nullptr.");
   }
 
   if (channel_stride == 0) {
     channel_stride = channels;
   } else {
     if (channel_stride < channels) {
-      return false;
+      PUSH_ERROR_AND_RETURN(fmt::format("channel_stride {} is smaller than input channels {}", channel_stride, channels));
     }
   }
 
   size_t dest_size = size_t(width) * size_t(height) * channel_stride;
   if (dest_size > in_img.size()) {
-    return false;
+    PUSH_ERROR_AND_RETURN(fmt::format("Insufficient input buffer size. must be the same or larger than {} but has {}", dest_size, in_img.size()));
   }
 
   out_img->resize(dest_size);
@@ -430,26 +456,35 @@ bool srgb_8bit_to_linear_f32(const std::vector<uint8_t> &in_img, size_t width,
 bool srgb_f32_to_linear_f32(const std::vector<float> &in_img, size_t width,
                          size_t height,
                          size_t channels, size_t channel_stride,
-                         std::vector<float> *out_img, const float scale_factor, const float bias, const float alpha_scale_factor, const float alpha_bias) {
+                         std::vector<float> *out_img, const float scale_factor, const float bias, const float alpha_scale_factor, const float alpha_bias, std::string *err) {
 
-  if ((width == 0) ||
-    (height == 0) ||
-    (channels == 0) ||
-    (out_img == nullptr)) {
-    return false;
+  if (width == 0) {
+    PUSH_ERROR_AND_RETURN("width is zero.");
+  }
+
+  if (height == 0) {
+    PUSH_ERROR_AND_RETURN("height is zero.");
+  }
+
+  if (channels == 0) {
+    PUSH_ERROR_AND_RETURN("channels is zero.");
+  }
+
+  if (out_img == nullptr) {
+    PUSH_ERROR_AND_RETURN("`out_img` is nullptr.");
   }
 
   if (channel_stride == 0) {
     channel_stride = channels;
   } else {
     if (channel_stride < channels) {
-      return false;
+      PUSH_ERROR_AND_RETURN(fmt::format("channel_stride {} is smaller than input channels {}", channel_stride, channels));
     }
   }
 
   size_t dest_size = size_t(width) * size_t(height) * channel_stride;
   if (dest_size > in_img.size()) {
-    return false;
+    PUSH_ERROR_AND_RETURN(fmt::format("Insufficient input buffer size. must be the same or larger than {} but has {}", dest_size, in_img.size()));
   }
 
   out_img->resize(dest_size);
@@ -479,26 +514,35 @@ bool srgb_f32_to_linear_f32(const std::vector<float> &in_img, size_t width,
 bool srgb_8bit_to_linear_8bit(const std::vector<uint8_t> &in_img, size_t width,
                          size_t height,
                          size_t channels, size_t channel_stride,
-                         std::vector<uint8_t> *out_img) {
+                         std::vector<uint8_t> *out_img, std::string *err) {
 
-  if ((width == 0) ||
-    (height == 0) ||
-    (channels == 0) ||
-    (out_img == nullptr)) {
-    return false;
+  if (width == 0) {
+    PUSH_ERROR_AND_RETURN("width is zero.");
+  }
+
+  if (height == 0) {
+    PUSH_ERROR_AND_RETURN("height is zero.");
+  }
+
+  if (channels == 0) {
+    PUSH_ERROR_AND_RETURN("channels is zero.");
+  }
+
+  if (out_img == nullptr) {
+    PUSH_ERROR_AND_RETURN("`out_img` is nullptr.");
   }
 
   if (channel_stride == 0) {
     channel_stride = channels;
   } else {
     if (channel_stride < channels) {
-      return false;
+      PUSH_ERROR_AND_RETURN(fmt::format("channel_stride {} is smaller than input channels {}", channel_stride, channels));
     }
   }
 
   size_t dest_size = size_t(width) * size_t(height) * channel_stride;
   if (dest_size > in_img.size()) {
-    return false;
+    PUSH_ERROR_AND_RETURN(fmt::format("Insufficient input buffer size. must be the same or larger than {} but has {}", dest_size, in_img.size()));
   }
 
   out_img->resize(dest_size);
@@ -532,17 +576,26 @@ bool srgb_8bit_to_linear_8bit(const std::vector<uint8_t> &in_img, size_t width,
 bool u8_to_f32_image(const std::vector<uint8_t> &in_img, size_t width,
                          size_t height,
                          size_t channels,
-                         std::vector<float> *out_img) {
-  if ((width == 0) ||
-    (height == 0) ||
-    (channels == 0) ||
-    (out_img == nullptr)) {
-    return false;
+                         std::vector<float> *out_img, std::string *err) {
+  if (width == 0) {
+    PUSH_ERROR_AND_RETURN("width is zero.");
+  }
+
+  if (height == 0) {
+    PUSH_ERROR_AND_RETURN("height is zero.");
+  }
+
+  if (channels == 0) {
+    PUSH_ERROR_AND_RETURN("channels is zero.");
+  }
+
+  if (out_img == nullptr) {
+    PUSH_ERROR_AND_RETURN("`out_img` is nullptr.");
   }
 
   size_t num_pixels = size_t(width) * size_t(height) * channels;
   if (num_pixels > in_img.size()) {
-    return false;
+    PUSH_ERROR_AND_RETURN(fmt::format("Insufficient input buffer size. must be the same or larger than {} but has {}", num_pixels, in_img.size()));
   }
 
   out_img->resize(num_pixels);
@@ -557,17 +610,26 @@ bool u8_to_f32_image(const std::vector<uint8_t> &in_img, size_t width,
 bool f32_to_u8_image(const std::vector<float> &in_img, size_t width,
                          size_t height,
                          size_t channels,
-                         std::vector<uint8_t> *out_img, float scale, float bias) {
-  if ((width == 0) ||
-    (height == 0) ||
-    (channels == 0) ||
-    (out_img == nullptr)) {
-    return false;
+                         std::vector<uint8_t> *out_img, float scale, float bias, std::string *err) {
+  if (width == 0) {
+    PUSH_ERROR_AND_RETURN("width is zero.");
+  }
+
+  if (height == 0) {
+    PUSH_ERROR_AND_RETURN("height is zero.");
+  }
+
+  if (channels == 0) {
+    PUSH_ERROR_AND_RETURN("channels is zero.");
+  }
+
+  if (out_img == nullptr) {
+    PUSH_ERROR_AND_RETURN("`out_img` is nullptr.");
   }
 
   size_t num_pixels = size_t(width) * size_t(height) * channels;
   if (num_pixels > in_img.size()) {
-    return false;
+    PUSH_ERROR_AND_RETURN(fmt::format("Insufficient input buffer size. must be the same or larger than {} but has {}", num_pixels, in_img.size()));
   }
 
   out_img->resize(num_pixels);
@@ -582,37 +644,46 @@ bool f32_to_u8_image(const std::vector<float> &in_img, size_t width,
 
 bool linear_displayp3_to_linear_sRGB(const std::vector<float> &in_img, size_t width,
                          size_t height, size_t channels,
-                         std::vector<float> *out_img) {
+                         std::vector<float> *out_img, std::string *err) {
 
-  // http://endavid.com/index.php?entry=79
-  // https://tech.metail.com/introduction-colour-spaces-dci-p3/
-  
-
-  if (!out_img) {
-    return false;
+  if (width == 0) {
+    PUSH_ERROR_AND_RETURN("width is zero.");
   }
-  
-  if (channels > 4) {
-    return false;
+
+  if (height == 0) {
+    PUSH_ERROR_AND_RETURN("height is zero.");
+  }
+
+  if (channels == 0) {
+    PUSH_ERROR_AND_RETURN("channels is zero.");
   }
 
   if ((channels != 3) && (channels != 4)) {
-    return false;
+    PUSH_ERROR_AND_RETURN(fmt::format("channels must be 3 or 4, but got {}", channels));
+  }
+
+  if (out_img == nullptr) {
+    PUSH_ERROR_AND_RETURN("`out_img` is nullptr.");
   }
 
   if (in_img.size() != (width * height * channels)) {
-    return false;
+    PUSH_ERROR_AND_RETURN(fmt::format("Input buffer size must be {}, but got {}", (width * height * channels), in_img.size()));
   }
 
   out_img->resize(in_img.size());
+
+  // http://endavid.com/index.php?entry=79
+  // https://tech.metail.com/introduction-colour-spaces-dci-p3/
+
+
 
   if (channels == 3) {
     for (size_t y = 0; y < height; y++) {
       for (size_t x = 0; x < width; x++) {
         float r, g, b;
-        r = in_img[3 * (y * width + x) + 0]; 
-        g = in_img[3 * (y * width + x) + 1]; 
-        b = in_img[3 * (y * width + x) + 2]; 
+        r = in_img[3 * (y * width + x) + 0];
+        g = in_img[3 * (y * width + x) + 1];
+        b = in_img[3 * (y * width + x) + 2];
 
         float out_rgb[3];
         out_rgb[0] = 1.2249f * r - 0.2247f * g;
@@ -634,10 +705,10 @@ bool linear_displayp3_to_linear_sRGB(const std::vector<float> &in_img, size_t wi
     for (size_t y = 0; y < height; y++) {
       for (size_t x = 0; x < width; x++) {
         float r, g, b, a;
-        r = in_img[4 * (y * width + x) + 0]; 
-        g = in_img[4 * (y * width + x) + 1]; 
-        b = in_img[4 * (y * width + x) + 2]; 
-        a = in_img[4 * (y * width + x) + 3]; 
+        r = in_img[4 * (y * width + x) + 0];
+        g = in_img[4 * (y * width + x) + 1];
+        b = in_img[4 * (y * width + x) + 2];
+        a = in_img[4 * (y * width + x) + 3];
 
         float out_rgb[3];
         out_rgb[0] = 1.2249f * r - 0.2247f * g;
@@ -662,37 +733,45 @@ bool linear_displayp3_to_linear_sRGB(const std::vector<float> &in_img, size_t wi
 
 bool linear_sRGB_to_linear_displayp3(const std::vector<float> &in_img, size_t width,
                          size_t height, size_t channels,
-                         std::vector<float> *out_img) {
+                         std::vector<float> *out_img, std::string *err) {
 
-  // http://endavid.com/index.php?entry=79
-  // https://tech.metail.com/introduction-colour-spaces-dci-p3/
-  
-
-  if (!out_img) {
-    return false;
+  if (width == 0) {
+    PUSH_ERROR_AND_RETURN("width is zero.");
   }
-  
-  if (channels > 4) {
-    return false;
+
+  if (height == 0) {
+    PUSH_ERROR_AND_RETURN("height is zero.");
+  }
+
+  if (channels == 0) {
+    PUSH_ERROR_AND_RETURN("channels is zero.");
   }
 
   if ((channels != 3) && (channels != 4)) {
-    return false;
+    PUSH_ERROR_AND_RETURN(fmt::format("channels must be 3 or 4, but got {}", channels));
   }
 
+  if (out_img == nullptr) {
+    PUSH_ERROR_AND_RETURN("`out_img` is nullptr.");
+  }
+
+
   if (in_img.size() != (width * height * channels)) {
-    return false;
+    PUSH_ERROR_AND_RETURN(fmt::format("Input buffer size must be {}, but got {}", (width * height * channels), in_img.size()));
   }
 
   out_img->resize(in_img.size());
+
+  // http://endavid.com/index.php?entry=79
+  // https://tech.metail.com/introduction-colour-spaces-dci-p3/
 
   if (channels == 3) {
     for (size_t y = 0; y < height; y++) {
       for (size_t x = 0; x < width; x++) {
         float r, g, b;
-        r = in_img[3 * (y * width + x) + 0]; 
-        g = in_img[3 * (y * width + x) + 1]; 
-        b = in_img[3 * (y * width + x) + 2]; 
+        r = in_img[3 * (y * width + x) + 0];
+        g = in_img[3 * (y * width + x) + 1];
+        b = in_img[3 * (y * width + x) + 2];
 
         float out_rgb[3];
         out_rgb[0] = 0.8225f * r + 0.1774f * g;
@@ -714,10 +793,10 @@ bool linear_sRGB_to_linear_displayp3(const std::vector<float> &in_img, size_t wi
     for (size_t y = 0; y < height; y++) {
       for (size_t x = 0; x < width; x++) {
         float r, g, b, a;
-        r = in_img[4 * (y * width + x) + 0]; 
-        g = in_img[4 * (y * width + x) + 1]; 
-        b = in_img[4 * (y * width + x) + 2]; 
-        a = in_img[4 * (y * width + x) + 3]; 
+        r = in_img[4 * (y * width + x) + 0];
+        g = in_img[4 * (y * width + x) + 1];
+        b = in_img[4 * (y * width + x) + 2];
+        a = in_img[4 * (y * width + x) + 3];
 
         float out_rgb[3];
         out_rgb[0] = 0.8225f * r + 0.1774f * g;
@@ -743,26 +822,35 @@ bool linear_sRGB_to_linear_displayp3(const std::vector<float> &in_img, size_t wi
 bool displayp3_f16_to_linear_f32(const std::vector<value::half> &in_img, size_t width,
                          size_t height,
                          size_t channels, size_t channel_stride,
-                         std::vector<float> *out_img, const float scale_factor, const float bias, const float alpha_scale_factor, const float alpha_bias) {
+                         std::vector<float> *out_img, const float scale_factor, const float bias, const float alpha_scale_factor, const float alpha_bias, std::string *err) {
 
-  if ((width == 0) ||
-    (height == 0) ||
-    (channels == 0) ||
-    (out_img == nullptr)) {
-    return false;
+  if (width == 0) {
+    PUSH_ERROR_AND_RETURN("width is zero.");
+  }
+
+  if (height == 0) {
+    PUSH_ERROR_AND_RETURN("height is zero.");
+  }
+
+  if (channels == 0) {
+    PUSH_ERROR_AND_RETURN("channels is zero.");
+  }
+
+  if (out_img == nullptr) {
+    PUSH_ERROR_AND_RETURN("`out_img` is nullptr.");
   }
 
   if (channel_stride == 0) {
     channel_stride = channels;
   } else {
     if (channel_stride < channels) {
-      return false;
+      PUSH_ERROR_AND_RETURN(fmt::format("channel_stride {} is smaller than input channels {}", channel_stride, channels));
     }
   }
 
   size_t dest_size = size_t(width) * size_t(height) * channel_stride;
   if (dest_size > in_img.size()) {
-    return false;
+    PUSH_ERROR_AND_RETURN(fmt::format("Insufficient input buffer size. must be the same or larger than {} but has {}", dest_size, in_img.size()));
   }
 
   out_img->resize(dest_size);
