@@ -4348,7 +4348,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
 
             bool ret = srgb_8bit_to_linear_8bit(
                 assetImageBuffer.data, width, height, channels,
-                /* channel stride */ channels, &imageBuffer.data);
+                /* channel stride */ channels, &imageBuffer.data, &_err);
             if (!ret) {
               PUSH_ERROR_AND_RETURN(
                   "Failed to convert sRGB u8 image to Linear u8 image.");
@@ -4362,7 +4362,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
             std::vector<float> buf;
             bool ret = srgb_8bit_to_linear_f32(
                 assetImageBuffer.data, width, height, channels,
-                /* channel stride */ channels, &buf);
+                /* channel stride */ channels, &buf, &_err);
             if (!ret) {
               PUSH_ERROR_AND_RETURN(
                   "Failed to convert sRGB u8 image to Linear f32 image.");
@@ -4387,7 +4387,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
 
             std::vector<float> buf;
             bool ret = u8_to_f32_image(assetImageBuffer.data, width, height,
-                                       channels, &buf);
+                                       channels, &buf, &_err);
             if (!ret) {
               PUSH_ERROR_AND_RETURN("Failed to convert u8 image to f32 image.");
             }
@@ -4418,18 +4418,25 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
 
           out_buf.resize(assetImageBuffer.data.size() / sizeof(float));
 
+          // TODO: scale factor & bias
+          float scale_factor = 1.0f;
+          float bias = 0.0f;
+          float alpha_scale_factor = 1.0f;
+          float alpha_bias = 0.0f;
+
           bool ret =
               srgb_f32_to_linear_f32(in_buf, width, height, channels,
-                                     /* channel stride */ channels, &out_buf);
-
-          imageBuffer.data.resize(assetImageBuffer.data.size());
-          memcpy(imageBuffer.data.data(), out_buf.data(),
-                 imageBuffer.data.size());
+                                     /* channel stride */ channels, &out_buf, scale_factor, bias, alpha_scale_factor, alpha_bias, &_err);
 
           if (!ret) {
             PUSH_ERROR_AND_RETURN(
                 "Failed to convert sRGB f32 image to Linear f32 image.");
           }
+
+          imageBuffer.data.resize(assetImageBuffer.data.size());
+          memcpy(imageBuffer.data.data(), out_buf.data(),
+                 imageBuffer.data.size());
+
 
         } else if (texImage.usdColorSpace == tydra::ColorSpace::Linear) {
           // no op
@@ -4466,7 +4473,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
               "linearlization)");
           std::vector<float> buf;
           bool ret = u8_to_f32_image(assetImageBuffer.data, width, height,
-                                     channels, &buf);
+                                     channels, &buf, &_err);
           if (!ret) {
             PUSH_ERROR_AND_RETURN("Failed to convert u8 image to f32 image.");
           }
