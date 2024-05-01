@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <vector>
+#include <string>
 
 namespace tinyusdz {
 
@@ -25,7 +26,7 @@ struct half;
 /// [0, 255] => [0.0, 1.0]
 ///
 bool u8_to_f32_image(const std::vector<uint8_t> &in_img,
-    size_t width, size_t height, size_t channels, std::vector<float> *out_img);
+    size_t width, size_t height, size_t channels, std::vector<float> *out_img, std::string *err = nullptr);
 
 ///
 /// Apply x' =  `scale_factor * x + bias`
@@ -34,7 +35,8 @@ bool u8_to_f32_image(const std::vector<uint8_t> &in_img,
 bool f32_to_u8_image(const std::vector<float> &in_img,
     size_t width, size_t height, size_t channels, std::vector<uint8_t> *out_img,
     float scale_factor=1.0f,
-    float bias=0.0f);
+    float bias=0.0f,
+    std::string *err = nullptr);
 
 ///
 /// Convert fp32 image in linear space to 8bit image in sRGB color space.
@@ -50,11 +52,12 @@ bool f32_to_u8_image(const std::vector<float> &in_img,
 /// linear for RGBA image.
 /// @param[out] out_image Image in sRGB colorspace. Image size is same with
 /// `in_image`
+/// @param[out] err Error message.
 ///
 /// @return true upon success. false when any parameter is invalid.
 bool linear_f32_to_srgb_8bit(const std::vector<float> &in_img, size_t width,
                          size_t height, size_t channels, size_t channel_stride,
-                         std::vector<uint8_t> *out_img);
+                         std::vector<uint8_t> *out_img, std::string *err = nullptr);
 
 ///
 /// Convert 8bit image in sRGB to fp32 image in linear sRGB color space.
@@ -74,20 +77,20 @@ bool linear_f32_to_srgb_8bit(const std::vector<float> &in_img, size_t width,
 /// @return true upon success. false when any parameter is invalid.
 bool srgb_8bit_to_linear_f32(const std::vector<uint8_t> &in_img, size_t width,
                          size_t height, size_t channels, size_t channel_stride,
-                         std::vector<float> *out_img);
+                         std::vector<float> *out_img, std::string *err = nullptr);
 
 bool srgb_8bit_to_linear_8bit(const std::vector<uint8_t> &in_img, size_t width,
                          size_t height, size_t channels, size_t channel_stride,
-                         std::vector<uint8_t> *out_img);
+                         std::vector<uint8_t> *out_img, std::string *err = nullptr);
 
 // Input texel value is transformed as: x' = in_img * scale_factor + bias for RGB
 // alpha' = in_img * alpha_scale_factor + alpha_bias for alpha channel.
 bool srgb_f32_to_linear_f32(const std::vector<float> &in_img, size_t width,
                          size_t height, size_t channels, size_t channel_stride,
-                         std::vector<float> *out_img, const float scale_factor = 1.0f, const float bias = 0.0f, const float alpha_scale_factor = 1.0f, const float alpha_bias = 0.0f);
+                         std::vector<float> *out_img, const float scale_factor = 1.0f, const float bias = 0.0f, const float alpha_scale_factor = 1.0f, const float alpha_bias = 0.0f, std::string *err = nullptr);
 
 ///
-/// Convert 8bit image in Rec.709 to fp32 image in linear color space.
+/// Convert 8bit image in Rec.709(gamma-applied) to fp32 image in linear color space(linear sRGB).
 ///
 /// @param[in] in_img Input image in Rec.709 color space. Image size =
 /// [width_byte_stride, height, channel_stride]
@@ -98,23 +101,23 @@ bool srgb_f32_to_linear_f32(const std::vector<float> &in_img, size_t width,
 /// @param[in] chanels Pixel channels to apply conversion. must be less than or
 /// equal to `channel_stride`
 /// @param[in] chanel_stride channel stride. For example, channels=3 and
-/// channel_stride=4 to apply inverse Rec.709 convertion to RGB channel but
+/// channel_stride=4 to apply inverse Rec.709 gamma(transfer function) to RGB channel but
 /// apply linear conversion to alpha channel for RGBA image.
-/// @param[out] out_image Image in linear color space. Image size is same with
+/// @param[out] out_image Image in linear Rec.709(=linear sRGB) color space. Image size is same with
 /// `in_image`
 ///
 /// @return true upon success. false when any parameter is invalid.
 bool rec709_8bit_to_linear_f32(const std::vector<uint8_t> &in_img, size_t width,
                          size_t width_byte_stride, size_t height,
                          size_t channels, size_t channel_stride,
-                         std::vector<float> *out_img);
+                         std::vector<float> *out_img, std::string *err = nullptr);
 
 ///
-/// Convert fp16 image in Display P3(P3-D65) to fp32 image in linear Display P3 color space.
+/// Convert fp16 image in Display P3(P3-D65, gamma-applied) to fp32 image in linear Display P3 color space.
 /// 
-/// The conversion is identical to sRGB -> linear sRGB, since Display P3 uses same gamma curve(transfer function) with sRGB.
+/// The conversion is identical to sRGB -> linear sRGB, since Display P3 uses the same gamma curve(transfer function) with sRGB.
 ///
-/// Input value is scaled by x' = x * scale + bias.
+/// Linearlized value is further modified by x' = x * scale + bias.
 ///
 /// @param[in] in_img Input image in Display P3 color space. Image size =
 /// [width_byte_stride, height, channel_stride]
@@ -135,7 +138,7 @@ bool rec709_8bit_to_linear_f32(const std::vector<uint8_t> &in_img, size_t width,
 /// @return true upon success. false when any parameter is invalid.
 bool displayp3_f16_to_linear_f32(const std::vector<value::half> &in_img, size_t width,
                          size_t height, size_t channels, size_t channel_stride,
-                         std::vector<float> *out_img, const float scale_factor = 1.0f, const float bias = 0.0f, const float alpha_scale_factor = 1.0f, const float alpha_bias = 0.0f);
+                         std::vector<float> *out_img, const float scale_factor = 1.0f, const float bias = 0.0f, const float alpha_scale_factor = 1.0f, const float alpha_bias = 0.0f, std::string *err = nullptr);
 
 ///
 /// Convert fp32 image in linear Display P3 color space to 10bit Display P3(10 bit for RGB, 2 bit for alpha, 32bit in total)
@@ -155,7 +158,7 @@ bool displayp3_f16_to_linear_f32(const std::vector<value::half> &in_img, size_t 
 /// `in_image`
 bool linear_f32_to_displayp3_u10(const std::vector<float> &in_img, size_t width,
                          size_t height, size_t channels,
-                         std::vector<uint32_t> *out_img);
+                         std::vector<uint32_t> *out_img, std::string *err = nullptr);
 
 ///
 /// Convert linear Display P3 color space to linear sRGB color space.
@@ -173,7 +176,7 @@ bool linear_f32_to_displayp3_u10(const std::vector<float> &in_img, size_t width,
 /// `in_image`
 bool linear_displayp3_to_linear_sRGB(const std::vector<float> &in_img, size_t width,
                          size_t height, size_t channels,
-                         std::vector<float> *out_img);
+                         std::vector<float> *out_img, std::string *err = nullptr);
 
 ///
 /// Convert linear sRGB color space to linear Display P3 color space.
@@ -191,7 +194,7 @@ bool linear_displayp3_to_linear_sRGB(const std::vector<float> &in_img, size_t wi
 /// `in_image`
 bool linear_sRGB_to_linear_displayp3(const std::vector<float> &in_img, size_t width,
                          size_t height, size_t channels,
-                         std::vector<float> *out_img);
+                         std::vector<float> *out_img, std::string *err = nullptr);
 
 ///
 /// Resize fp32 image in linear color space.
@@ -217,7 +220,7 @@ bool resize_image_f32(const std::vector<float> &src_img, size_t src_width,
                       size_t dest_width, size_t dest_width_byte_stride,
                       size_t dest_height,
 
-                      size_t channels, std::vector<float> *dest_img);
+                      size_t channels, std::vector<float> *dest_img, std::string *err = nullptr);
 
 ///
 /// Resize uint8 image in sRGB color space.
@@ -243,6 +246,6 @@ bool resize_image_u8_srgb(const std::vector<uint8_t> &src_img, size_t src_width,
                           size_t dest_width, size_t dest_width_byte_stride,
                           size_t dest_height,
 
-                          size_t channels, std::vector<uint8_t> *dest_img);
+                          size_t channels, std::vector<uint8_t> *dest_img, std::string *err =nullptr);
 
 }  // namespace tinyusdz
