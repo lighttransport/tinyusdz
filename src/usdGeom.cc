@@ -173,6 +173,9 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
     if (attr.metas().elementSize.has_value()) {
       primvar.set_elementSize(attr.metas().elementSize.value());
     }
+    if (attr.metas().has_unauthoredValuesIndex()) {
+      primvar.set_unauthoredValuesIndex(attr.metas().get_unauthoredValuesIndex());
+    }
 
   } else {
     SET_ERROR_AND_RETURN(fmt::format("{} is not Attribute. Maybe Relationship?", primvar_name));
@@ -347,9 +350,9 @@ bool GeomPrimvar::flatten_with_indices(const double t, value::Value *dest, const
       uint32_t elementSize = _attr.metas().elementSize.value_or(1);
 
       std::vector<int32_t> indices;
-      // Get indices at default time
-      _indices.get(&indices);
-      
+      // Get indices at specified time
+      _indices.get(&indices, t, tinterp);
+
 #define APPLY_FUN(__ty)                                                  \
   case value::TypeTraits<__ty>::type_id() | value::TYPE_ID_1D_ARRAY_BIT: { \
     std::vector<__ty> value; \
@@ -827,29 +830,29 @@ bool GeomSubset::ValidateSubsets(
         valid = false;
       }
     }
+  }
 
-    // Make sure every index appears exactly once if it's a partition.
-    if ((familyType == FamilyType::Partition) && (indicesInFamily.size() != elementCount)) {
-      ss << fmt::format("ValidateSubsets: The number of unique indices {} must be equal to input elementCount {}\n", indicesInFamily.size(), elementCount);
-      valid = false;
-    }
 
-    // Ensure that the indices are in the range [0, faceCount)
-    size_t maxIndex = static_cast<size_t>(*indicesInFamily.rbegin());
-    int minIndex = *indicesInFamily.begin();
+  // Make sure every index appears exactly once if it's a partition.
+  if ((familyType == FamilyType::Partition) && (indicesInFamily.size() != elementCount)) {
+    ss << fmt::format("ValidateSubsets: The number of unique indices {} must be equal to input elementCount {}\n", indicesInFamily.size(), elementCount);
+    valid = false;
+  }
 
-    if (maxIndex >= elementCount) {
-      ss << fmt::format("ValidateSubsets: All indices must be in range [0, elementSize {}), but one or more indices are greater than elementSize. Maximum = {}\n", elementCount, maxIndex);
+  // Ensure that the indices are in the range [0, faceCount)
+  size_t maxIndex = static_cast<size_t>(*indicesInFamily.rbegin());
+  int minIndex = *indicesInFamily.begin();
 
-      valid = false;
-    }
+  if (maxIndex >= elementCount) {
+    ss << fmt::format("ValidateSubsets: All indices must be in range [0, elementSize {}), but one or more indices are greater than elementSize. Maximum = {}\n", elementCount, maxIndex);
 
-    if (minIndex < 0) {
-      ss << fmt::format("ValidateSubsets: Found one or more indices that are less than 0. Minumum = {}\n", minIndex);
+    valid = false;
+  }
 
-      valid = false;
-    }
+  if (minIndex < 0) {
+    ss << fmt::format("ValidateSubsets: Found one or more indices that are less than 0. Minumum = {}\n", minIndex);
 
+    valid = false;
   }
 
   if (!valid) {

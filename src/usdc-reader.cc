@@ -1209,6 +1209,18 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
             kTag, "`colorSpace` must be type `token`, but got type `"
                       << fv.second.type_name() << "`");
       }
+    } else if (fv.first == "unauthoredValuesIndex") {
+      if (auto pv = fv.second.get_value<int>()) {
+        MetaVariable mv;
+        mv.set_name("unauthoredValuesIndex");
+        mv.set_value(pv.value());
+
+        meta.meta["unauthoredValuesIndex"] = mv;
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`unauthoredValuesIndex` must be type `int`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
     } else {
       // TODO: register unkown metadataum as custom metadata?
       PUSH_WARN("TODO: " << fv.first);
