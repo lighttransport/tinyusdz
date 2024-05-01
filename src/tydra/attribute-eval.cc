@@ -76,7 +76,25 @@ bool EvaluateAttributeImpl(
     return false;
   }
 
-  if (prop.is_connection()) {
+  // Evaluation order
+  // - attribute(default value, timeSampled value)
+  // - connection
+
+  if (prop.is_attribute()) {
+    DCOUT("IsAttrib");
+
+    const Attribute &attr = prop.get_attribute();
+
+    if (attr.is_blocked()) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Attribute `{}` is ValueBlocked(None).", attr_name));
+    }
+
+    if (!ToTerminalAttributeValue(attr, value, err, t, tinterp)) {
+      return false;
+    }
+
+  } else if (prop.is_connection()) {
     // Follow connection target Path(singple targetPath only).
     std::vector<Path> pv = prop.get_attribute().connections();
     if (pv.empty()) {
@@ -124,20 +142,6 @@ bool EvaluateAttributeImpl(
     PUSH_ERROR_AND_RETURN(fmt::format(
         "Attribute `{}` is a define-only attribute(no value assigned).",
         attr_name));
-  } else if (prop.is_attribute()) {
-    DCOUT("IsAttrib");
-
-    const Attribute &attr = prop.get_attribute();
-
-    if (attr.is_blocked()) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("Attribute `{}` is ValueBlocked(None).", attr_name));
-    }
-
-    if (!ToTerminalAttributeValue(attr, value, err, t, tinterp)) {
-      return false;
-    }
-
   } else {
     // ???
     PUSH_ERROR_AND_RETURN(

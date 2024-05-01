@@ -117,6 +117,9 @@ Attribute ToAttributeConnection(
     attr.variability() = Variability::Varying;
   }
 
+  // Copy metadata
+  attr.metas() =  input.metas();
+
   return attr;
 }
 
@@ -135,17 +138,29 @@ bool EvaluateTypedAnimatableAttribute(
     PUSH_ERROR_AND_RETURN("`value_out` param is nullptr.");
   }
 
+  // Eval order:
+  // - ValueBlocked?
+  // - has value?(default value or timesamped value)
+  // - has connection?
+
   if (tattr.is_blocked()) {
     if (err) {
       (*err) += "Attribute is Blocked.\n";
     }
     return false;
-  } else if (tattr.is_value_empty()) {
-    if (err) {
-      (*err) += "Attribute value is empty.\n";
+  } else if (tattr.has_value()) {
+    Animatable<T> value;
+    if (tattr.get_value(&value)) {
+      if (value.get(t, value_out, tinterp)) {
+        return true;
+      } else {
+        if (err) {
+          (*err) += fmt::format("Failed to get TypedAnimatableAttribute value: {} \n", attr_name);
+        }
+        return false;
+      }
     }
-    return false;
-  } else if (tattr.is_connection()) {
+  } else if (tattr.has_connections()) {
 
     // Follow targetPath
     Attribute attr = ToAttributeConnection(tattr);
@@ -167,19 +182,12 @@ bool EvaluateTypedAnimatableAttribute(
       (*err) += fmt::format("Type mismatch. Value producing attribute has type {}, but requested type is {}[]. Attribute: {}", value.type_name(), value::TypeTraits<T>::type_name(), attr_name);
     }
 
-  } else {
-    Animatable<T> value;
-    if (tattr.get_value(&value)) {
-      if (value.get(t, value_out, tinterp)) {
-        return true;
-      } else {
-        if (err) {
-          (*err) += fmt::format("Failed to get TypedAnimatableAttribute value: {} \n", attr_name);
-        }
-        return false;
-      }
+  } else if (tattr.is_value_empty()) {
+    if (err) {
+      (*err) += "Attribute value is empty.\n";
     }
-
+    return false;
+  } else {
     if (err) {
       (*err) += fmt::format("[Internal error] Invalid TypedAttribute? : {} \n", attr_name);
     }
