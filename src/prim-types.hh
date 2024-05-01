@@ -1473,24 +1473,15 @@ class TypedAttribute {
     return (*this);
   }
 
-  void set_default(const T &v) { _attrib = v; }
-  bool has_default() const { return _attrib.has_value(); }
-
-  // alias to set_default
-  void set_value(const T &v) { set_default(v); }
-
-  const nonstd::optional<T> get_default() const {
-    if (_attrib) {
-      return _attrib.value();
-    }
-    return nonstd::nullopt;
-  }
+  // 'default' value or timeSampled value(when T = Animatable)
+  void set_value(const T &v) { _attrib = v; }
+  bool has_value() const { return _attrib.has_value(); }
 
   const nonstd::optional<T> get_value() const {
-    return get_default();
+    return _attrib;
   }
 
-  bool get_default(T *dst) const {
+  bool get_value(T *dst) const {
     if (!dst) return false;
 
     if (_attrib) {
@@ -1500,16 +1491,12 @@ class TypedAttribute {
     return false;
   }
 
-  bool get_value(T *dst) const {
-    return get_default(dst);
-  }
-
   bool is_blocked() const { return _blocked; }
 
   // for `uniform` attribute only
   void set_blocked(bool onoff) { _blocked = onoff; }
 
-  bool is_connection() const { return _paths.size(); }
+  bool is_connection() const { return _paths.size() && !has_value(); }
 
   void set_connection(const Path &path) {
     _paths.clear();
@@ -1529,8 +1516,12 @@ class TypedAttribute {
     return nonstd::nullopt;
   }
 
-  bool has_connection() const {
+  bool has_connections() const {
     return _paths.size();
+  }
+
+  void clear_connections() {
+    _paths.clear();
   }
 
   // TODO: Supply set_connection_empty()?
@@ -1538,7 +1529,7 @@ class TypedAttribute {
   void set_value_empty() { _value_empty = true; }
 
   bool is_value_empty() const {
-    if (has_connection()) {
+    if (has_connections()) {
       return false;
     }
 
@@ -1563,7 +1554,7 @@ class TypedAttribute {
       return true;
     }
 
-    if (_paths.size()) {
+    if (has_connections()) {
       return true;
     }
 
