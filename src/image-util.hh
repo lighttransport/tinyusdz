@@ -197,6 +197,43 @@ bool linear_sRGB_to_linear_displayp3(const std::vector<float> &in_img, size_t wi
                          std::vector<float> *out_img, std::string *err = nullptr);
 
 ///
+/// Convert linear sRGB color space to ACEScg(AP1) color space.
+///
+/// Input image must be RGB or RGBA.
+/// (TODO: Support Mono, Lumi/Alpha)
+///
+/// When alpha channel is supplied, no conversion applied to alpha value.
+///
+/// @param[in] in_img Input image in linear sRGB color space. 
+/// @param[in] width Width pixels
+/// @param[in] height Height pixels
+/// @param[in] channels 3 = RGB, 4 = RGBA
+/// @param[out] out_img Image in ACEScg(AP1) color space. Image size is same with
+/// `in_image`
+bool linear_sRGB_to_ACEScg(const std::vector<float> &in_img, size_t width,
+                         size_t height, size_t channels,
+                         std::vector<float> *out_img, std::string *err = nullptr);
+
+///
+/// Convert ACEScg(AP1) color space to linear sRGB color space.
+/// Negative values are clamped.
+///
+/// Input image must be RGB or RGBA.
+/// (TODO: Support Mono, Lumi/Alpha)
+///
+/// When alpha channel is supplied, no conversion applied to alpha value.
+///
+/// @param[in] in_img Input image in ACEScg(AP1) color space. 
+/// @param[in] width Width pixels
+/// @param[in] height Height pixels
+/// @param[in] channels 3 = RGB, 4 = RGBA
+/// @param[out] out_img Image in linear sRGB color space. Image size is same with
+/// `in_image`
+bool ACEScg_to_linear_sRGB(const std::vector<float> &in_img, size_t width,
+                         size_t height, size_t channels,
+                         std::vector<float> *out_img, std::string *err = nullptr);
+
+///
 /// Resize fp32 image in linear color space.
 ///
 /// @param[in] in_image Input image in linear color space.
