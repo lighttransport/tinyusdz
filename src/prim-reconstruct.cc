@@ -103,14 +103,19 @@ static nonstd::optional<Animatable<T>> ConvertToAnimatable(const primvar::PrimVa
     return nonstd::nullopt;
   }
 
-  if (var.is_scalar()) {
+  bool ok = false;
+
+  if (var.has_value()) {
 
     if (auto pv = var.get_value<T>()) {
       dst.set(pv.value());
 
-      return std::move(dst);
+      ok = true;
+      //return std::move(dst);
     }
-  } else if (var.is_timesamples()) {
+  }
+
+  if (var.has_timesamples()) {
     for (size_t i = 0; i < var.ts_raw().size(); i++) {
       const value::TimeSamples::Sample &s = var.ts_raw().get_samples()[i];
 
@@ -126,6 +131,10 @@ static nonstd::optional<Animatable<T>> ConvertToAnimatable(const primvar::PrimVa
       }
     }
 
+    ok = true;
+  }
+
+  if (ok) {
     return std::move(dst);
   }
 
@@ -144,7 +153,9 @@ nonstd::optional<Animatable<Extent>> ConvertToAnimatable(const primvar::PrimVar 
     return nonstd::nullopt;
   }
 
-  if (var.is_scalar()) {
+  bool value_ok = false;
+
+  if (var.has_default()) {
 
     if (auto pv = var.get_value<std::vector<value::float3>>()) {
       if (pv.value().size() == 2) {
@@ -158,9 +169,12 @@ nonstd::optional<Animatable<Extent>> ConvertToAnimatable(const primvar::PrimVar 
         return nonstd::nullopt;
       }
 
-      return std::move(dst);
+      //return std::move(dst);
     }
-  } else if (var.is_timesamples()) {
+    value_ok = true;
+  }
+
+  if (var.has_timesamples()) {
     for (size_t i = 0; i < var.ts_raw().size(); i++) {
       const value::TimeSamples::Sample &s = var.ts_raw().get_samples()[i];
 
@@ -184,6 +198,11 @@ nonstd::optional<Animatable<Extent>> ConvertToAnimatable(const primvar::PrimVar 
       }
     }
 
+    value_ok = true;
+    //return std::move(dst);
+  }
+
+  if (value_ok) {
     return std::move(dst);
   }
 
@@ -201,7 +220,7 @@ static bool ConvertTokenAttributeToStringAttribute(
     out.set_blocked(true);
   } else if (inp.is_value_empty()) {
     out.set_value_empty();
-  } else if (inp.is_connection()) {
+  } else if (inp.has_connections()) {
     out.set_connections(inp.get_connections());
   } else {
     Animatable<value::token> toks;
@@ -238,7 +257,7 @@ static bool ConvertStringDataAttributeToStringAttribute(
     out.set_blocked(true);
   } else if (inp.is_value_empty()) {
     out.set_value_empty();
-  } else if (inp.is_connection()) {
+  } else if (inp.has_connections()) {
     out.set_connections(inp.get_connections());
   } else {
     Animatable<value::StringData> toks;
@@ -275,6 +294,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 {
   ParseResult ret;
 
+#if 0 // deprecated. TODO: Remove
   if (prop_name.compare(name + ".connect") == 0) {
     std::string propname = removeSuffix(name, ".connect");
     if (table.count(propname)) {
@@ -301,27 +321,21 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       ret.err = "Internal error. Unsupported/Unimplemented property type.";
       return ret;
     }
-  } else if (prop_name.compare(name) == 0) {
-    if (table.count(name)) {
-      ret.code = ParseResult::ResultCode::AlreadyProcessed;
-      return ret;
-    }
+#endif
+  if (prop_name.compare(name) == 0) {
+    //if (table.count(name)) {
+    //  ret.code = ParseResult::ResultCode::AlreadyProcessed;
+    //  return ret;
+    //}
 
     const Attribute &attr = prop.get_attribute();
 
-    if (prop.is_connection()) {
-      if (attr.is_connection()) { // Ensure Attribute is also return true for is_connection
-        target.set_connections(attr.connections());
-        target.metas() = attr.metas();
-        table.insert(prop_name);
-        ret.code = ParseResult::ResultCode::Success;
-      } else {
-        ret.code = ParseResult::ResultCode::InternalError;
-        ret.err = "Internal error. Invalid Property with Attribute connection.";
-      }
-      return ret;
+    if (attr.has_connections()) {
+      target.set_connections(attr.connections());
+      target.metas() = attr.metas();
+      table.insert(prop_name);
+      ret.code = ParseResult::ResultCode::Success;
     }
-
 
     std::string attr_type_name = attr.type_name();
     if ((value::TypeTraits<T>::type_name() == attr_type_name) || (value::TypeTraits<T>::underlying_type_name() == attr_type_name)) {
@@ -341,7 +355,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           target.set_blocked(true);
         } else if (attr.variability() == Variability::Uniform) {
           // e.g. "float radius = 1.2"
-          if (!attr.get_var().is_scalar()) {
+          if (attr.get_var().is_timesamples()) {
             ret.code = ParseResult::ResultCode::VariabilityMismatch;
             ret.err = fmt::format("TimeSample value is assigned to `uniform` property `{}", name);
             return ret;
@@ -355,33 +369,48 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
             return ret;
           }
 
-        } else if (attr.get_var().is_timesamples()) {
+        }
+      
+        Animatable<T> animatable_value;
+
+        bool value_ok = false;
+        if (attr.get_var().has_timesamples()) {
           // e.g. "float radius.timeSamples = {0: 1.2, 1: 2.3}"
 
-          Animatable<T> anim;
           if (auto av = ConvertToAnimatable<T>(attr.get_var())) {
-            anim = av.value();
-            target.set_value(anim);
+            animatable_value = av.value();
+            //target.set_value(anim);
           } else {
             // Conversion failed.
             DCOUT("ConvertToAnimatable failed.");
             ret.code = ParseResult::ResultCode::InternalError;
-            ret.err = "Converting Attribute data failed. Maybe TimeSamples have values with different types?";
+            ret.err = fmt::format("Converting timeSamples Attribute data failed for `{}`. Guess TimeSamples have values with different type(expected is `{}`)?", prop_name, value::TypeTraits<T>::type_name());
             return ret;
           }
-        } else if (attr.get_var().is_scalar()) {
-          if (auto pv = attr.get_value<T>()) {
-            target.set_value(pv.value());
+
+          value_ok = true;
+        }
+        
+        if (attr.get_var().has_value()) {
+          if (auto pv = attr.get_var().get_value<T>()) {
+            //target.set_value(pv.value());
+            animatable_value.set(pv.value());
           } else {
             ret.code = ParseResult::ResultCode::InternalError;
-            ret.err = "Invalid attribute value.";
+            ret.err = fmt::format("Internal error. Invalid attribute value? get_value<{}> failed.", value::TypeTraits<T>::type_name());
             return ret;
           }
-        } else {
+
+          value_ok = true;
+        }
+
+        if (!value_ok) {
           ret.code = ParseResult::ResultCode::InternalError;
-          ret.err = "Invalid attribute value.";
+          ret.err = "Internal error. Attribute does not have neither default nor timeSamples.";
           return ret;
         }
+
+        target.set_value(animatable_value);
 
         target.metas() = attr.metas();
         table.insert(name);
@@ -815,6 +844,7 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
 {
   ParseResult ret;
 
+#if 0
   if (prop_name.compare(name + ".connect") == 0) {
     std::string propname = removeSuffix(name, ".connect");
     if (table.count(propname)) {
@@ -842,29 +872,22 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
       ret.err = "Internal error. Unsupported/Unimplemented property type.";
       return ret;
     }
-  } else if (prop_name.compare(name) == 0) {
+#endif
+  if (prop_name.compare(name) == 0) {
     if (table.count(name)) {
       ret.code = ParseResult::ResultCode::AlreadyProcessed;
       return ret;
     }
 
-    if (prop.is_connection()) {
-      const Attribute &attr = prop.get_attribute();
-      if (attr.is_connection()) {
-        target.set_connections(attr.connections());
-        //target.variability = prop.attrib.variability;
-        target.metas() = prop.get_attribute().metas();
-        table.insert(prop_name);
-        ret.code = ParseResult::ResultCode::Success;
-        return ret;
-      } else {
-        ret.code = ParseResult::ResultCode::InternalError;
-        ret.err = "Internal error. Invalid property with connection.";
-        return ret;
-      }
-    }
-
     const Attribute &attr = prop.get_attribute();
+    if (attr.has_connections()) {
+      target.set_connections(attr.connections());
+      //target.variability = prop.attrib.variability;
+      target.metas() = prop.get_attribute().metas();
+      table.insert(prop_name);
+      ret.code = ParseResult::ResultCode::Success;
+      //return ret;
+    }
 
     std::string attr_type_name = attr.type_name();
     if (prop.get_property_type() == Property::Type::EmptyAttrib) {
