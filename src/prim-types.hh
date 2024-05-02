@@ -1680,7 +1680,31 @@ class TypedAttributeWithFallback {
 
   void set_value_empty() { _empty = true; }
 
-  bool is_value_empty() const { return _empty; }
+  bool has_connections() const { return _paths.size(); }
+
+  bool is_value_empty() const {
+    if (has_connections()) {
+      return false;
+    }
+
+    if (_empty) {
+      return true;
+    }
+
+    if (_attrib) {
+      return false;
+    }
+
+    return true;
+  }
+
+  bool has_value() const {
+    if (_empty) {
+      return false;
+    }
+
+    return true;
+  }
 
   const T &get_value() const {
     if (_attrib) {
@@ -1694,7 +1718,7 @@ class TypedAttributeWithFallback {
   // for `uniform` attribute only
   void set_blocked(bool onoff) { _blocked = onoff; }
 
-  bool is_connection() const { return _paths.size(); }
+  bool is_connection() const { return _paths.size() && !has_value() ; }
 
   void set_connection(const Path &path) {
     _paths.clear();
@@ -1713,6 +1737,8 @@ class TypedAttributeWithFallback {
 
     return nonstd::nullopt;
   }
+
+  void clear_connections() { _paths.clear(); }
 
   // value set?
   bool authored() const {
