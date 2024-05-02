@@ -28,7 +28,11 @@ bool EvaluateTypedAttributeImpl(
     const double t, const value::TimeSampleInterpolationType tinterp)
 {
 
-  if (attr.is_connection()) {
+  if (attr.has_value()) {
+
+    return attr.get_value(value);
+
+  } else if (attr.has_connection()) {
     // Follow connection target Path(singple targetPath only).
     std::vector<Path> pv = attr.connections();
     if (pv.empty()) {
@@ -82,7 +86,7 @@ bool EvaluateTypedAttributeImpl(
           fmt::format("Attribute `{}` is ValueBlocked(None).", attr_name));
   } else {
 
-    return attr.get_value(value);
+    PUSH_ERROR_AND_RETURN("Internal error. Invalid TypedAttribute<Animatable<T>> value.");
 
   }
 
