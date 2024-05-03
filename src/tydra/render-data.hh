@@ -51,9 +51,9 @@ using vec3 = value::float3;
 using vec4 = value::float4;
 using quat = value::float4; // (x, y, z, w)
 using mat2 = value::matrix2f;
-using mat3 = value::matrix3f;   
-using mat4 = value::matrix4f;   
-using dmat4 = value::matrix4d;  
+using mat3 = value::matrix3f;
+using mat4 = value::matrix4f;
+using dmat4 = value::matrix4d;
 
 // Simple string <-> id map
 struct StringAndIdMap {
@@ -564,10 +564,10 @@ bool ToVertexAttribute(const GeomPrimvar &pvar, VertexAttribute &dst,
 
 enum class ColorSpace {
   sRGB,
-  Linear,     // Linear sRGB
+  Lin_sRGB,     // Linear sRGB(D65)
   Rec709,
   Raw,        // Raw(physical quantity) value(e.g. normal maps, ao maps)
-  Lin_ACEScg, // ACES CG colorspace(linear colorspace. no transfer curve applied)
+  Lin_ACEScg, // ACES CG colorspace(AP1. D50)
   OCIO,
   Lin_DisplayP3,   // colorSpace 'lin_displayp3'
   sRGB_DisplayP3,  // colorSpace 'srgb_displayp3'
@@ -612,7 +612,7 @@ struct Cubemap
   // 3: -Y (bottom)
   // 4: +Z (back)
   // 5: -Z (front)
-  
+
   // LoD of cubemap
   std::vector<std::array<TextureImage, 6>> faces_lod;
 };
@@ -631,8 +631,8 @@ struct EnvmapLight
   std::string abs_path;
   std::string display_name;
 
-  double guideRadius{1.0e5}; 
-  std::string asset_name; // 'inputs:texture:file' 
+  double guideRadius{1.0e5};
+  std::string asset_name; // 'inputs:texture:file'
 
   std::vector<TextureImage> texture_lod;
 
@@ -669,7 +669,7 @@ struct AnimationChannel {
   AnimationChannel() = default;
 
   AnimationChannel(ChannelType ty) : type(ty) {
-  } 
+  }
 
   ChannelType type;
   // The following AnimationSampler is filled depending on ChannelType.
@@ -798,15 +798,15 @@ struct MaterialSubset {
   int backface_material_id{-1};
 
   // USD GeomSubset.indices. Index to a facet, i.e. index to GeomMesh.faceVertexCounts[], in USD GeomSubset
-  std::vector<int> usdIndices;  
+  std::vector<int> usdIndices;
 
   // Triangulated indices. Filled when `MeshConverterConfig::triangualte` is true
-  std::vector<int> triangulatedIndices;  
+  std::vector<int> triangulatedIndices;
 
   const std::vector<int> &indices() const {
     return triangulatedIndices.size() ? triangulatedIndices : usdIndices;
   }
-  
+
 };
 
 // Currently normals and texcoords are converted as facevarying attribute.
@@ -847,7 +847,7 @@ struct RenderMesh {
   ///
   /// But will be modified when `MeshConverterCondig::build_vertex_indices` is set to true
   /// (To make vertex attributes of the mesh single-indexable)
-  /// 
+  ///
   ///
   std::vector<uint32_t> usdFaceVertexIndices;
   std::vector<uint32_t> usdFaceVertexCounts;
@@ -870,7 +870,7 @@ struct RenderMesh {
   std::vector<uint32_t>
       triangulatedFaceCounts;  // used for rearrange face indices(e.g GeomSubset
                                // indices)
-                               
+
   const std::vector<uint32_t> &faceVertexIndices() const {
     return is_triangulated() ? triangulatedFaceVertexIndices : usdFaceVertexIndices;
   }
@@ -983,7 +983,7 @@ struct UVTexture {
   std::string prim_name; // element Prim name
   std::string abs_path; // Absolute Prim path
   std::string display_name; // displayName prim metadatum
-  
+
   // TextureWrap `black` in UsdUVTexture is mapped to `CLAMP_TO_BORDER`(app must
   // set border color to black) default is CLAMP_TO_EDGE and `useMetadata` wrap
   // mode is ignored.
@@ -1105,7 +1105,7 @@ struct RenderMaterial {
   std::string name;  // elementName in USD (e.g. "pbrMat")
   std::string
       abs_path;  // abosolute Prim path in USD (e.g. "/_material/scope/pbrMat")
-  std::string display_name; 
+  std::string display_name;
 
   PreviewSurfaceShader surfaceShader;
   // TODO: displacement, volume.
@@ -1114,10 +1114,10 @@ struct RenderMaterial {
 };
 
 // Simple Camera
-// 
+//
 // https://openusd.org/dev/api/class_usd_geom_camera.html
-// 
-// NOTE: Node's matrix is used for Camera matrix 
+//
+// NOTE: Node's matrix is used for Camera matrix
 // NOTE: "Y up" coordinate, right-handed coordinate space in USD.
 // NOTE: Unit uses tenths of a scene unit(i.e. [mm] by default).
 //       RenderSceneConverter adjusts property value to [mm] accounting for Stage's unitsPerMeter
@@ -1126,7 +1126,7 @@ struct RenderCamera {
   std::string name;  // elementName in USD (e.g. "frontCamera")
   std::string
       abs_path;  // abosolute GeomCamera Prim path in USD (e.g. "/xform/camera")
-  std::string display_name; 
+  std::string display_name;
 
   float znear{0.1f}; // clippingRange[0]
   float zfar{1000000.0f}; // clippingRange[1]
@@ -1180,10 +1180,10 @@ struct SceneMetadata
   double framesPerSecond{24.0};
   double timeCodesPerSecond{24.0};
   double metersPerUnit{1.0}; // default [m]
-  
+
   bool autoPlay{true};
 
-  // If you want to lookup more thing on USD Stage Metadata, Use Stage::metas() 
+  // If you want to lookup more thing on USD Stage Metadata, Use Stage::metas()
 };
 
 // Simple glTF-like Scene Graph
@@ -1195,7 +1195,7 @@ class RenderScene {
 
   uint32_t default_root_node{0}; // index to `nodes`.
 
-  std::vector<Node> nodes; 
+  std::vector<Node> nodes;
   std::vector<TextureImage> images;
   std::vector<RenderMaterial> materials;
   std::vector<RenderCamera> cameras;
@@ -1302,7 +1302,7 @@ struct MeshConverterConfig {
   //
   // NOTE: The algorithm is not robust to compute tangent/binormal for quad/polygons.
   // Set `triangulate` preferred when you want let Tydra compute tangent/binormal.
-  // 
+  //
   // NOTE: Computing tangent frame for multi-texcoord is not supported.
   //
   bool compute_tangents_and_binormals{true};
@@ -1352,6 +1352,13 @@ struct MaterialConverterConfig {
   // texel bit depth (i.e, for 8bit sRGB image, 8bit linear-space image is
   // produced)
   bool linearize_color_space{false};
+
+  //
+  // Set scene(working space) colorspace. This space must be linear colorspace.
+  // Possible choice is: Linear_sRGB(linear_srgb), Lin_ACEScg(ACEScg/AP1), Lin_DisplayP3(linear_displayp3)
+  // W.I.P: Curently Lin_sRGB is only supported.
+  //
+  ColorSpace scene_color_space{ColorSpace::Lin_sRGB};
 
   // Allow asset(texture, shader, etc) path with Windows backslashes(e.g.
   // ".\textures\cat.png")? When true, convert it to forward slash('/') on
