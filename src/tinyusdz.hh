@@ -261,12 +261,8 @@ bool ReadUSDZAssetInfoFromMemory(const uint8_t *addr, const size_t length, const
 ///
 /// Handy utility API to setup AssetResolutionResolver to load asset data from USDZ data.
 ///
-/// @param[inout] resolver Add asset resolution to the resolver.
-/// @param[out] resolver Add asset resolution to the resolver.
-/// @param[out] content data buffer(USDZ asset data). Must be retained until there is (potential) access to any asset, since AssetResolutionResolver and FileSystemHandler loads an asset from this buffer.
-/// @param[in] overwrite_asset_info. Overwrite asset info when an asset info already exists in `resolver`? This could be useful if you provide your own custom asset loader for specific asset name(Add asset info before `SetupAssertResolutionForUSDZ` call and set `Overwrite` false).
-/// @param[out] warn Warning message.
-/// @param[out] err Error message.
+/// @param[inout] resolver Add asset resolution to the resolver. The resolver retains the pointer to USDZAsset.
+/// @param[in] pusdzAsset Pointer to data struct(USDZAsset struct). Must be retained until there is (potential) access to any asset, since AssetResolutionResolver and FileSystemHandler loads an asset from this struct.
 ///
 /// @return upon success and setup `resolver` and `fsHandler`.
 ///
