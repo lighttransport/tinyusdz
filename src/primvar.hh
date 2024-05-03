@@ -50,6 +50,10 @@ struct PrimVar {
     return _value.type_id() != value::TypeId::TYPE_ID_INVALID;
   }
 
+  bool has_default() const {
+    return has_value();
+  }
+
   bool has_timesamples() const {
     return _ts.size();
   }
@@ -105,23 +109,33 @@ struct PrimVar {
     }
   }
 
-  // Type-safe way to get concrete value for non-timesamples data.
+  // TODO: Deprecate and use `get_default_value`
+  // Type-safe way to get concrete value of default value(non-timesamples value).
   // NOTE: This consumes lots of stack size(rougly 1000 bytes),
   // If you need to handle multiple types, use as() insted.
   // 
   template <class T>
   nonstd::optional<T> get_value() const {
 
-    if (!is_scalar()) {
+    if (is_blocked()) {
+      return nonstd::nullopt;
+    }
+
+    if (!has_default()) {
       return nonstd::nullopt;
     }
 
     return _value.get_value<T>();
   }
 
+  template <class T>
+  nonstd::optional<T> get_default_value() const {
+    return get_value<T>();
+  }
+
   nonstd::optional<double> get_ts_time(size_t idx) const {
 
-    if (!is_timesamples()) {
+    if (!has_timesamples()) {
       return nonstd::nullopt;
     }
 

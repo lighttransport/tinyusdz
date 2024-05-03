@@ -1358,7 +1358,7 @@ struct TypedTimeSamples {
 };
 
 //
-// Scalar or TimeSamples
+// Scalar and/or TimeSamples
 //
 template <typename T>
 struct Animatable {
@@ -1369,6 +1369,11 @@ struct Animatable {
     if (is_blocked()) {
       return false;
     }
+
+    if (_has_value) {
+      return false;
+    }
+
     return !_ts.empty();
   }
 
@@ -1376,6 +1381,7 @@ struct Animatable {
     if (is_blocked()) {
       return false;
     }
+    
     return _ts.empty();
   }
 
@@ -1400,7 +1406,7 @@ struct Animatable {
   }
 
   ///
-  /// Get scalar value.
+  /// Get scalar(default) value.
   ///
   bool get_scalar(T *v) const {
     if (!v) {
@@ -1409,12 +1415,13 @@ struct Animatable {
 
     if (is_blocked()) {
       return false;
-    } else if (is_scalar()) {
+    } else if (has_value()) {
       (*v) = _value;
       return true;
-    } else {  // timesamples
-      return false;
     }
+
+    // timesamples
+    return false;
   }
 
   // TimeSamples
@@ -1429,6 +1436,31 @@ struct Animatable {
   void set(const T &v) {
     _value = v;
     _blocked = false;
+    _has_value = true;
+  }
+
+  void set(const TypedTimeSamples<T> &ts) {
+    _ts = ts;
+  }
+
+  void set(TypedTimeSamples<T> &&ts) {
+    _ts = std::move(ts);
+  }
+
+  void clear_scalar() {
+    _has_value = false;
+  }
+
+  void clear_timesamples() {
+    _ts.samples().clear();
+  }
+
+  bool has_value() const {
+    return _has_value;
+  }
+
+  bool has_timesamples() const {
+    return _ts.size();
   }
 
   const TypedTimeSamples<T> &get_timesamples() const { return _ts; }
@@ -1442,6 +1474,7 @@ struct Animatable {
  private:
   // scalar
   T _value;
+  bool _has_value{false};
   bool _blocked{false};
 
   // timesamples
@@ -2436,10 +2469,14 @@ class Attribute {
       return false;
     }
 
+    if (has_value()) {
+      return false;
+    }
+
     return _paths.size();
   }
 
-  bool has_connection() const {
+  bool has_connections() const {
     return _paths.size();
   }
 

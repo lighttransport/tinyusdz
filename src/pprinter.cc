@@ -305,22 +305,34 @@ static std::string print_str_timesamples(const TypedTimeSamples<std::string> &v,
 }
 
 template <typename T>
-std::string print_animatable(const Animatable<T> &v,
+std::string print_animatable_default(const Animatable<T> &v,
                              const uint32_t indent = 0) {
+  (void)indent;
+
   std::stringstream ss;
 
-  if (v.is_timesamples()) {
-    ss << print_typed_timesamples(v.get_timesamples(), indent);
-  } else if (v.is_blocked()) {
+  if (v.is_blocked()) {
     ss << "None";
-  } else if (v.is_scalar()) {
+  }
+
+  if (v.has_value()) {
     T a;
     if (!v.get_scalar(&a)) {
       return "[Animatable: InternalError]";
     }
     ss << a;
-  } else {
-    return "[FIXME: Invalid Animatable]";
+  }
+
+  return ss.str();
+}
+
+template <typename T>
+std::string print_animatable_timesamples(const Animatable<T> &v,
+                             const uint32_t indent = 0) {
+  std::stringstream ss;
+
+  if (v.has_timesamples()) {
+    ss << print_typed_timesamples(v.get_timesamples(), indent);
   }
 
   return ss.str();
@@ -938,11 +950,39 @@ std::string print_typed_attr(
   std::stringstream ss;
 
   if (attr.authored()) {
-    ss << pprint::Indent(indent);
 
-    ss << value::TypeTraits<T>::type_name() << " " << name;
+    const auto &v = attr.get_value();
 
-    if (attr.is_connection()) {
+    {
+      if (v.has_value()) {
+        ss << pprint::Indent(indent);
+        ss << value::TypeTraits<T>::type_name() << " " << name;
+        ss << " = " << print_animatable_default(v, indent);
+
+      } else { // attr.is_value_empty()
+        // declare only
+        ss << pprint::Indent(indent);
+        ss << value::TypeTraits<T>::type_name() << " " << name;
+      }
+
+      if (attr.metas().authored()) {
+        ss << " (\n"
+           << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
+           << ")";
+      }
+      ss << "\n";
+    }
+
+    if (v.has_timesamples()) {
+      ss << pprint::Indent(indent);
+      ss << value::TypeTraits<T>::type_name() << " " << name;
+      ss << ".timeSamples = " << print_animatable_timesamples(v, indent);
+      ss << "\n";
+    }
+
+    if (attr.has_connections()) {
+      ss << pprint::Indent(indent);
+      ss << value::TypeTraits<T>::type_name() << " " << name;
       ss << ".connect = ";
 
       const std::vector<Path> &paths = attr.get_connections();
@@ -954,24 +994,9 @@ std::string print_typed_attr(
         ss << paths;
       }
 
-    } else if (attr.is_value_empty()) {
-      // nothing to do
-    } else {
-      auto v = attr.get_value();
-
-      if (v.is_timesamples()) {
-        ss << ".timeSamples";
-      }
-
-      ss << " = " << print_animatable(v, indent);
+      ss << "\n";
     }
 
-    if (attr.metas().authored()) {
-      ss << " (\n"
-         << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
-         << ")";
-    }
-    ss << "\n";
   }
 
   return ss.str();
@@ -1267,7 +1292,7 @@ std::string print_prop(const Property &prop, const std::string &prop_name,
       ss << "\n";
     }
 
-    if (attr.has_connection()) {
+    if (attr.has_connections()) {
 
       ss << pprint::Indent(indent);
 
