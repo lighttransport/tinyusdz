@@ -2221,13 +2221,13 @@ static bool ComputeNormals(const std::vector<vec3> &vertices,
     if (vidx0 >= vertices.size()) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("vertexIndex0 {} exceeds vertices.size {}", vidx0, vertices.size()));
-    } 
-  
+    }
+
     if (vidx1 >= vertices.size()) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("vertexIndex1 {} exceeds vertices.size {}", vidx1, vertices.size()));
     }
-    
+
     if (vidx2 >= vertices.size()) {
       PUSH_ERROR_AND_RETURN(
           fmt::format("vertexIndex2 {} exceeds vertices.size {}", vidx2, vertices.size()));
@@ -2707,7 +2707,7 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
       for (size_t i = 0; i < vertex_output.size(); i++) {
         pointIdxRemap[vertex_output.point_indices[i]].push_back(uint32_t(i));
       }
-     
+
       for (auto &target : mesh.targets) {
 
         std::vector<value::float3> tmpPointOffsets;
@@ -2743,7 +2743,7 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
         target.second.pointIndices.swap(tmpPointIndices);
         target.second.pointOffsets.swap(tmpPointOffsets);
         target.second.normalOffsets.swap(tmpNormalOffsets);
-      
+
       }
 
       // TODO: Inbetween BlendShapes
@@ -4303,13 +4303,20 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
             texImage.usdColorSpace = tydra::ColorSpace::Raw;
             sourceColorSpaceSet = true;
           } else if (cs == UsdUVTexture::SourceColorSpace::Auto) {
-            // TODO: Read colorspace from a file.
-            if ((texImage.assetTexelComponentType == ComponentType::UInt8) ||
-                (texImage.assetTexelComponentType == ComponentType::Int8)) {
+            // The spec says: https://openusd.org/release/spec_usdpreviewsurface.html
+            //
+            // auto : Check for gamma/color space metadata in the texture file itself; if metadata is indicative of sRGB, mark texture as sRGB . If no relevant metadata is found, mark texture as sRGB if it is either 8-bit and has 3 channels or if it is 8-bit and has 4 channels. Otherwise, do not mark texture as sRGB and use texture data as it was read from the texture.
+            //
+            if (((texImage.assetTexelComponentType == ComponentType::UInt8) ||
+                (texImage.assetTexelComponentType == ComponentType::Int8)) &&
+              ((texImage.channels == 3) || (texImage.channels ==4))) {
               texImage.usdColorSpace = tydra::ColorSpace::sRGB;
               sourceColorSpaceSet = true;
             } else {
-              texImage.usdColorSpace = tydra::ColorSpace::Linear;
+              PUSH_WARN(fmt::format("Infer colorSpace failed for {}. Set to Raw for now. Results may be wrong.", assetPath.GetAssetPath()));
+              // At least 'not' sRGB. For now set to Raw.
+
+              texImage.usdColorSpace = tydra::ColorSpace::Raw;
               sourceColorSpaceSet = true;
             }
           }
@@ -4329,6 +4336,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
 
     // Linearlization and widen texel bit depth if required.
     if (env.material_config.linearize_color_space) {
+      // TODO: Support ACEScg and Lin_DisplayP3
       DCOUT("linearlize colorspace.");
       size_t width = size_t(texImage.width);
       size_t height = size_t(texImage.height);
@@ -4374,9 +4382,9 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
                    sizeof(float) * buf.size());
           }
 
-          texImage.colorSpace = tydra::ColorSpace::Linear;
+          texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
 
-        } else if (texImage.usdColorSpace == tydra::ColorSpace::Linear) {
+        } else if (texImage.usdColorSpace == tydra::ColorSpace::Lin_sRGB) {
           if (env.material_config.preserve_texel_bitdepth) {
             // no op.
             imageBuffer = std::move(assetImageBuffer);
@@ -4397,7 +4405,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
                    sizeof(float) * buf.size());
           }
 
-          texImage.colorSpace = tydra::ColorSpace::Linear;
+          texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
 
         } else {
           PUSH_ERROR(fmt::format("TODO: Color space {}",
@@ -4438,7 +4446,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
                  imageBuffer.data.size());
 
 
-        } else if (texImage.usdColorSpace == tydra::ColorSpace::Linear) {
+        } else if (texImage.usdColorSpace == tydra::ColorSpace::Lin_sRGB) {
           // no op
           imageBuffer = std::move(assetImageBuffer);
 
@@ -6005,7 +6013,7 @@ std::string to_string(ColorSpace cty) {
       s = "srgb";
       break;
     }
-    case ColorSpace::Linear: {
+    case ColorSpace::Lin_sRGB: {
       s = "lin_srgb";
       break;
     }
@@ -6055,10 +6063,10 @@ bool InferColorSpace(const value::token &tok, ColorSpace *cty) {
     (*cty) = ColorSpace::sRGB;
   } else if (tok.str() == "sRGB") {
     (*cty) = ColorSpace::sRGB;
-  } else if (tok.str() == "linear") {
-    (*cty) = ColorSpace::Linear;
+  } else if (tok.str() == "linear") { // guess linear_srgb
+    (*cty) = ColorSpace::Lin_sRGB;
   } else if (tok.str() == "lin_srgb") {
-    (*cty) = ColorSpace::Linear;
+    (*cty) = ColorSpace::Lin_sRGB;
   } else if (tok.str() == "rec709") {
     (*cty) = ColorSpace::Rec709;
   } else if (tok.str() == "ocio") {
@@ -6069,7 +6077,7 @@ bool InferColorSpace(const value::token &tok, ColorSpace *cty) {
     (*cty) = ColorSpace::sRGB_DisplayP3;
 
     //
-    // seen in Apple's USDZ model
+    // seen in Apple's USDZ model(or OCIO?)
     //
 
   } else if (tok.str() == "ACES - ACEScg") {
