@@ -840,9 +840,9 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
 }
 
 
-/// Attrib/Property fieldSet example
+/// Property fieldSet example
 ///
-///   specTyppe = SpecTypeConnection
+///   specTyppe = SpecTypeAttribute
 ///
 ///     - typeName(token) : type name of Attribute(e.g. `float`)
 ///     - custom(bool) : `custom` qualifier
@@ -860,6 +860,10 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too much FieldValue pairs.");
   }
 
+  if (!prop) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Internal error. prop is nullptr.");
+  }
+
   bool custom{false};
   nonstd::optional<value::token> typeName;
   nonstd::optional<Interpolation> interpolation;
@@ -875,21 +879,27 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   nonstd::optional<value::StringData> comment;
   nonstd::optional<Variability> variability;
   AttrMeta meta; // for other not frequently-used attribute/relationship metadata.
-  Property::Type propType{Property::Type::EmptyAttrib};
+  //Property::Type propType{Property::Type::EmptyAttrib};
   Attribute attr;
 
-  bool is_scalar{false};
-
-  value::Value scalar;
+  value::Value defaultValue;
   Relationship rel;
 
-  // for consistency check
-  bool hasConnectionChildren{false};
+  // for attribute
+  bool hasDefault{false};
+  bool hasTimeSamples{false};
   bool hasConnectionPaths{false};
-  bool hasTargetChildren{false};
+
+  // for relationship
   bool hasTargetPaths{false};
 
+  // metadata(ignore these for now)
+  bool hasConnectionChildren{false};
+  bool hasTargetChildren{false};
+
   DCOUT("== List of Fields");
+
+  primvar::PrimVar var;
 
   // first detect typeName
   for (auto &fv : fvs) {
@@ -927,22 +937,22 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       // 'typeName' is already processed. nothing to do here.
       continue;
     } else if (fv.first == "default") {
-      propType = Property::Type::Attrib;
+      //propType = Property::Type::Attrib;
 
-      // Set scalar
+      // Set scalar(non-timesampled) value
       // TODO: Easier CrateValue to Attribute.var conversion
-      scalar = fv.second.get_raw();
-      is_scalar = true;
+      defaultValue = fv.second.get_raw();
+      hasDefault = true;
 
       // TODO: Handle UnregisteredValue in crate-reader.cc
       // UnregisteredValue is represented as string.
-      if (const auto pv = scalar.get_value<std::string>()) {
+      if (const auto pv = defaultValue.get_value<std::string>()) {
         if (typeName && (typeName.value().str() != "string")) {
           if (IsUnregisteredValueType(typeName.value().str())) {
             DCOUT("UnregisteredValue type: " << typeName.value().str());
 
             std::string local_err;
-            if (!ascii::ParseUnregistredValue(typeName.value().str(), pv.value(), &scalar, &local_err)) {
+            if (!ascii::ParseUnregistredValue(typeName.value().str(), pv.value(), &defaultValue, &local_err)) {
               PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse UnregisteredValue string with type `{}`: {}", typeName.value().str(), local_err));
             }
           }
@@ -950,18 +960,20 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       }
 
     } else if (fv.first == "timeSamples") {
-      propType = Property::Type::Attrib;
+      //propType = Property::Type::Attrib;
+      
+
+      hasTimeSamples = true;
 
       if (auto pv = fv.second.get_value<value::TimeSamples>()) {
-        primvar::PrimVar var;
         var.set_timesamples(pv.value());
-        attr.set_var(std::move(var));
+        //attr.set_var(std::move(var));
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "`timeSamples` is not TimeSamples data.");
       }
     } else if (fv.first == "interpolation") {
-      propType = Property::Type::Attrib;
+      //propType = Property::Type::Attrib;
 
       if (auto pv = fv.second.get_value<value::token>()) {
         DCOUT("  interpolation = " << pv.value().str());
@@ -976,8 +988,8 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
                                   "`interpolation` field is not `token` type.");
       }
     } else if (fv.first == "connectionPaths") {
-      // .connect
-      propType = Property::Type::Connection;
+      // Attribute connection(.connect)
+      //propType = Property::Type::Connection;
       hasConnectionPaths = true;
 
       if (auto pv = fv.second.get_value<ListOp<Path>>()) {
@@ -996,15 +1008,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
               kTag, "`connectionPaths` have empty Explicit items.");
         }
 
-        if (items.size() == 1) {
-          // Single
-          const Path path = items[0];
-
-          rel.set(path);
-
-        } else {
-          rel.set(items);  // [Path]
-        }
+        attr.set_connections(items); 
 
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
@@ -1012,7 +1016,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       }
     } else if (fv.first == "targetPaths") {
       // `rel`
-      propType = Property::Type::Relation;
+      //propType = Property::Type::Relation;
       hasTargetPaths = true;
 
       if (auto pv = fv.second.get_value<ListOp<Path>>()) {
@@ -1239,33 +1243,34 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
     // Validate existence of Path..
   }
 #else
-  (void)hasTargetPaths;
   (void)hasTargetChildren;
   (void)hasConnectionChildren;
   (void)hasConnectionPaths;
 #endif
 
-  if (is_scalar) {
+  // Do role type cast for default value.
+  // (TODO: do role type cast for timeSamples?)
+  if (hasDefault) {
     if (typeName) {
-      if (scalar.type_id() == value::TypeTraits<value::ValueBlock>::type_id()) {
+      if (defaultValue.type_id() == value::TypeTraits<value::ValueBlock>::type_id()) {
         // nothing to do
       } else {
         std::string reqTy = typeName.value().str();
-        std::string scalarTy = scalar.type_name();
+        std::string scalarTy = defaultValue.type_name();
 
         if (reqTy.compare(scalarTy) != 0) {
 
           // Some inlined? value uses less accuracy type(e.g. `half3`) than
           // typeName(e.g. `float3`) Use type specified in `typeName` as much as
           // possible.
-          bool ret = value::UpcastType(reqTy, scalar);
+          bool ret = value::UpcastType(reqTy, defaultValue);
           if (ret) {
             DCOUT(fmt::format("Upcast type from {} to {}.", scalarTy, reqTy));
           }
 
           // Optionally, cast to role type(in crate data, `typeName` uses role typename(e.g. `color3f`), whereas stored data uses base typename(e.g. VEC3F)
-          scalarTy = scalar.type_name();
-          if (value::RoleTypeCast(value::GetTypeId(reqTy), scalar)) {
+          scalarTy = defaultValue.type_name();
+          if (value::RoleTypeCast(value::GetTypeId(reqTy), defaultValue)) {
             DCOUT(fmt::format("Casted to Role type {} from type {}.", reqTy, scalarTy));
           } else {
             // Its ok.
@@ -1273,11 +1278,10 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         }
       }
     }
-    primvar::PrimVar var;
-    var.set_value(scalar);
-    attr.set_var(std::move(var));
+    //primvar::PrimVar var;
+    var.set_value(defaultValue);
 
-    if (scalar.type_id() == value::TypeTraits<value::ValueBlock>::type_id()) {
+    if (defaultValue.type_id() == value::TypeTraits<value::ValueBlock>::type_id()) {
       if (typeName) {
         // Use `typeName`
         attr.set_type_name(typeName.value().str());
@@ -1285,50 +1289,89 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
     }
   }
 
+  attr.set_var(std::move(var));
+
   // Attribute metas
-  if (interpolation) {
-    meta.interpolation = interpolation.value();
-  }
-  if (elementSize) {
-    meta.elementSize = elementSize.value();
-  }
-  if (hidden) {
-    meta.hidden = hidden.value();
-  }
-  if (customData) {
-    meta.customData = customData.value();
-  }
-  if (weight) {
-    meta.weight = weight.value();
-  }
-  if (comment) {
-    meta.comment = comment.value();
-  }
-  if (bindMaterialAs) {
-    meta.bindMaterialAs = bindMaterialAs.value();
-  }
-  if (outputName) {
-    meta.outputName = outputName.value();
-  }
-  if (sdrMetadata) {
-    meta.sdrMetadata = sdrMetadata.value();
-  }
-  if (connectability) {
-    meta.connectability = connectability.value();
-  }
-  if (renderType) {
-    meta.renderType = renderType.value();
+  {
+    if (interpolation) {
+      meta.interpolation = interpolation.value();
+    }
+    if (elementSize) {
+      meta.elementSize = elementSize.value();
+    }
+    if (hidden) {
+      meta.hidden = hidden.value();
+    }
+    if (customData) {
+      meta.customData = customData.value();
+    }
+    if (weight) {
+      meta.weight = weight.value();
+    }
+    if (comment) {
+      meta.comment = comment.value();
+    }
+    if (bindMaterialAs) {
+      meta.bindMaterialAs = bindMaterialAs.value();
+    }
+    if (outputName) {
+      meta.outputName = outputName.value();
+    }
+    if (sdrMetadata) {
+      meta.sdrMetadata = sdrMetadata.value();
+    }
+    if (connectability) {
+      meta.connectability = connectability.value();
+    }
+    if (renderType) {
+      meta.renderType = renderType.value();
+    }
   }
 
 
 
-  // FIXME: SpecType supercedes propType.
-  if (propType == Property::Type::EmptyAttrib) {
-    if (!prop) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Internal error. prop is nullptr.");
+  if (hasTargetPaths) {
+    // Relationship
+
+    // TODO: Report as error?
+    if (hasDefault) {
+      PUSH_WARN("Relationship property has `default` field. Ignore `default` field.");
     }
 
+    if (hasTimeSamples) {
+      PUSH_WARN("Relationship property has `timeSamples` field. Ignore `timeSamples` field.");
+    }
+
+    if (hasConnectionPaths) {
+      PUSH_WARN("Relationship property has `connectionPaths` field. Ignore `connectionPaths` field.");
+    }
+
+    if (variability) {
+      if (variability.value() == Variability::Varying) {
+        rel.set_varying_authored();
+      }
+    }
+    rel.metas() = meta;
+    (*prop) = Property(rel, custom);
+  } else if (hasDefault || hasTimeSamples || hasConnectionPaths) {
+
+    // Attribute
+    if (hasTargetPaths) {
+      PUSH_WARN("Attribute property has `targetPaths` field. Ignore `targetPaths` field.");
+    }
+
+    if (variability) {
+      attr.variability() = variability.value();
+    }
+    attr.metas() = meta;
+    (*prop) = Property(attr, custom);
+
+  } else {
+
+    // FIXME: SpecType supercedes propType.
+
     if (typeName) {
+      // declare only attribute, e.g.: float myval
       // typeName may be array type.
       std::string baseTypeName = typeName.value().str();
       if (endsWith(baseTypeName, "[]")) {
@@ -1367,52 +1410,6 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         PUSH_ERROR_AND_RETURN_TAG(kTag, "`typeName` field is missing.");
       }
     }
-  } else if (propType == Property::Type::Attrib) {
-
-    if (!prop) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Internal error. prop is nullptr.");
-    }
-
-    if (variability) {
-      attr.variability() = variability.value();
-    }
-    attr.metas() = meta;
-    (*prop) = Property(attr, custom);
-  } else if (propType == Property::Type::Connection) {
-
-    if (!prop) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Internal error. prop is nullptr.");
-    }
-
-    if (!typeName) {
-      PUSH_ERROR_AND_RETURN_TAG(
-          kTag, "`typeName` field is missing for Attribute Connection.");
-    }
-    if (rel.is_path()) {
-      (*prop) = Property(rel.targetPath, typeName.value().str(), custom);
-    } else if (rel.is_pathvector()) {
-      (*prop) = Property(rel.targetPathVector, typeName.value().str(), custom);
-    } else {
-      // ???
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "TODO:");
-    }
-
-    prop->attribute().metas() = meta;
-  } else if (propType == Property::Type::Relation) {
-
-    if (!prop) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Internal error. prop is nullptr.");
-    }
-
-    if (variability) {
-      if (variability.value() == Variability::Varying) {
-        rel.set_varying_authored();
-      }
-    }
-    rel.metas() = meta;
-    (*prop) = Property(rel, custom);
-  } else {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "TODO:");
   }
 
   return true;
