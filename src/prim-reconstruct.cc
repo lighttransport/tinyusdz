@@ -221,9 +221,13 @@ static bool ConvertTokenAttributeToStringAttribute(
     out.set_blocked(true);
   } else if (inp.is_value_empty()) {
     out.set_value_empty();
-  } else if (inp.has_connections()) {
+  }
+
+  if (inp.has_connections()) {
     out.set_connections(inp.get_connections());
-  } else {
+  }
+
+  if (inp.has_value()) {
     Animatable<value::token> toks;
     Animatable<std::string> strs;
     if (inp.get_value(&toks)) {
@@ -258,9 +262,14 @@ static bool ConvertStringDataAttributeToStringAttribute(
     out.set_blocked(true);
   } else if (inp.is_value_empty()) {
     out.set_value_empty();
-  } else if (inp.has_connections()) {
+  }
+
+
+  if (inp.has_connections()) {
     out.set_connections(inp.get_connections());
-  } else {
+  }
+  
+  if (inp.has_value()) {
     Animatable<value::StringData> toks;
     Animatable<std::string> strs;
     if (inp.get_value(&toks)) {
@@ -337,15 +346,21 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 
     const Attribute &attr = prop.get_attribute();
 
-    if (attr.has_connections()) {
-      target.set_connections(attr.connections());
-      target.metas() = attr.metas();
-      table.insert(prop_name);
-      ret.code = ParseResult::ResultCode::Success;
-    }
 
     std::string attr_type_name = attr.type_name();
     if ((value::TypeTraits<T>::type_name() == attr_type_name) || (value::TypeTraits<T>::underlying_type_name() == attr_type_name)) {
+
+      bool has_connections{false};
+      bool has_default{false};
+
+      if (attr.has_connections()) {
+        target.set_connections(attr.connections());
+        //target.metas() = attr.metas();
+        //table.insert(prop_name);
+        //ret.code = ParseResult::ResultCode::Success;
+        has_connections = true;
+      }
+
       if (prop.get_property_type() == Property::Type::EmptyAttrib) {
         DCOUT("Added prop with empty value: " << name);
         target.set_value_empty();
@@ -418,11 +433,17 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
         }
 
         target.set_value(animatable_value);
+        has_default = true;
+
+      }
+
+      if (has_connections || has_default) {
 
         target.metas() = attr.metas();
         table.insert(name);
         ret.code = ParseResult::ResultCode::Success;
         return ret;
+
       } else {
         DCOUT("Invalid Property.type");
         ret.err = "Invalid Property type(internal error)";
@@ -440,7 +461,6 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       return ret;
     }
 
-    return ret;
   }
 
   ret.code = ParseResult::ResultCode::Unmatched;
