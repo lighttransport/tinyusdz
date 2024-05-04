@@ -739,25 +739,9 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr,
 
     if (attr.is_blocked()) {
       ss << " = None";
-    } else if (attr.is_connection()) {
-      ss << ".connect = ";
-      const std::vector<Path> &paths = attr.get_connections();
-      if (paths.size() == 1) {
-        ss << paths[0];
-      } else if (paths.size() == 0) {
-        ss << "[InternalError]";
-      } else {
-        ss << paths;
-      }
-
     } else {
-      auto pv = attr.get_value();
-
-      if (pv) {
-        if (pv.value().is_timesamples()) {
-          ss << ".timeSamples = "
-             << print_typed_timesamples(pv.value().get_timesamples(), indent);
-        } else {
+      if (auto pv = attr.get_value()) {
+        if (pv.value().has_value()) {
           T a;
           if (pv.value().get_scalar(&a)) {
             ss << " = " << a;
@@ -774,6 +758,32 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr,
          << ")";
     }
     ss << "\n";
+
+    if (auto pv = attr.get_value()) {
+      if (pv.value().has_timesamples()) {
+        ss << pprint::Indent(indent);
+        ss << value::TypeTraits<T>::type_name() << " " << name;
+        ss << ".timeSamples = "
+           << print_typed_timesamples(pv.value().get_timesamples(), indent);
+      }
+    }
+
+    if (attr.has_connections()) {
+
+      ss << pprint::Indent(indent);
+      ss << value::TypeTraits<T>::type_name() << " " << name;
+
+      ss << ".connect = ";
+      const std::vector<Path> &paths = attr.get_connections();
+      if (paths.size() == 1) {
+        ss << paths[0];
+      } else if (paths.size() == 0) {
+        ss << "[InternalError]";
+      } else {
+        ss << paths;
+      }
+    }
+
   }
 
   return ss.str();
