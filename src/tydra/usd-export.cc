@@ -737,7 +737,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
     // TODO: Set colorSpace in attribute meta.
     if (src_teximg.colorSpace == ColorSpace::sRGB) {
       image_tex.sourceColorSpace = UsdUVTexture::SourceColorSpace::SRGB;
-    } else if (src_teximg.colorSpace == ColorSpace::Linear) {
+    } else if (src_teximg.colorSpace == ColorSpace::Raw) {
       image_tex.sourceColorSpace = UsdUVTexture::SourceColorSpace::Raw;
     } else {
       image_tex.sourceColorSpace = UsdUVTexture::SourceColorSpace::Auto;
