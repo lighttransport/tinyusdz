@@ -198,29 +198,34 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
       if (indexAttr.is_connection()) {
         SET_ERROR_AND_RETURN(
             "Attribute Connetion is not supported for index Attribute, since we need Stage info to find Prim referred by targetPath. Use Tydra API tydra::GetGeomPrimvar.");
-      } else if (indexAttr.is_timesamples()) {
-        const auto &ts = indexAttr.get_var().ts_raw();
-        TypedTimeSamples<std::vector<int32_t>> tss;
-        if (!tss.from_timesamples(ts)) {
-          SET_ERROR_AND_RETURN(fmt::format("Index Attribute seems not an timesamples with int[] type: {}", index_name));
-        }
-      
-        primvar.set_indices(tss);
-      } else if (indexAttr.is_blocked()) {
+      }
+
+      if (indexAttr.is_blocked()) {
         // ignore Index attribute.
-      } else if (indexAttr.is_value()) {
-        // Check if int[] type.
-        // TODO: Support uint[]?
-        std::vector<int32_t> indices;
-        if (!indexAttr.get_value(&indices)) {
-          SET_ERROR_AND_RETURN(
-              fmt::format("Index Attribute is not int[] type. Got {}",
-                          indexAttr.type_name()));
+      } else {
+
+        if (indexAttr.has_timesamples()) {
+          const auto &ts = indexAttr.get_var().ts_raw();
+          TypedTimeSamples<std::vector<int32_t>> tss;
+          if (!tss.from_timesamples(ts)) {
+            SET_ERROR_AND_RETURN(fmt::format("Index Attribute seems not an timesamples with int[] type: {}", index_name));
+          }
+
+          primvar.set_timesampled_indices(tss);
         }
 
-        primvar.set_indices(indices);
-      } else {
-        SET_ERROR_AND_RETURN("[Internal Error] Invalid Index Attribute.");
+        if (indexAttr.has_value()) {
+          // Check if int[] type.
+          // TODO: Support uint[]?
+          std::vector<int32_t> indices;
+          if (!indexAttr.get_value(&indices)) {
+            SET_ERROR_AND_RETURN(
+                fmt::format("Index Attribute is not int[] type. Got {}",
+                            indexAttr.type_name()));
+          }
+
+          primvar.set_default_indices(indices);
+        }
       }
     } else {
       // indices are optional, so ok to skip it.
