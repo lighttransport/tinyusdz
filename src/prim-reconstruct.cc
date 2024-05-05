@@ -2118,7 +2118,7 @@ bool ReconstructXformOpsFromProperties(
                 attr.type_name() + "`.");
           }
         } else if (auto rotZ = SplitXformOpToken(tok, kRotateZ)) {
-          op.op_type = XformOp::OpType::RotateY;
+          op.op_type = XformOp::OpType::RotateZ;
           op.suffix = rotZ.value();
 
           if (attr.get_var().is_timesamples()) {
