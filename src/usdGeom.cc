@@ -267,9 +267,13 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
 
       uint32_t elementSize = _attr.metas().elementSize.value_or(1);
 
-      std::vector<int32_t> indices;
       // Get indices at specified time
-      _indices.get(&indices, t, tinterp);
+      std::vector<int32_t> indices;
+      if (value::TimeCode(t).is_default()) {
+        indices = _indices;
+      } else {
+        _ts_indices.get(&indices, t, tinterp);
+      }
 
       std::vector<T> expanded_val;
       auto ret = ExpandWithIndices(value, elementSize, indices, &expanded_val);
@@ -356,7 +360,11 @@ bool GeomPrimvar::flatten_with_indices(const double t, value::Value *dest, const
 
       std::vector<int32_t> indices;
       // Get indices at specified time
-      _indices.get(&indices, t, tinterp);
+      if (value::TimeCode(t).is_default()) {
+        indices = _indices;
+      } else {
+        _ts_indices.get(&indices, t, tinterp);
+      }
 
 #define APPLY_FUN(__ty)                                                  \
   case value::TypeTraits<__ty>::type_id() | value::TYPE_ID_1D_ARRAY_BIT: { \
@@ -584,17 +592,26 @@ bool GPrim::set_primvar(const GeomPrimvar &primvar,
 
   props[primvar_name] = attr;
 
-  if (primvar.has_indices()) {
+  {
+    primvar::PrimVar var;
 
-    std::string index_name = primvar_name + kIndices;
-
-    Attribute indices;
-
-    for (const auto &sample : primvar.get_indices().get_samples()) {
-      indices.set_timesample(sample.value, sample.t);
+    if (primvar.has_default_indices()) {
+      var.set_value(primvar.get_default_indices());
     }
 
-    props[index_name] = indices;
+    if (primvar.has_timesampled_indices()) {
+      for (const auto &sample : primvar.get_timesampled_indices().get_samples()) {
+        var.set_timesample(sample.t, sample.value);
+      }
+    }
+
+    if (primvar.has_default_indices() || primvar.has_timesampled_indices()) {
+      Attribute indices;
+      indices.set_var(var);
+      std::string index_name = primvar_name + kIndices;
+      props[index_name] = indices;
+    }
+
   }
 
   return true;

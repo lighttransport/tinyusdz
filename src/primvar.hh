@@ -59,7 +59,7 @@ struct PrimVar {
   }
 
   bool is_scalar() const {
-    return _ts.empty();
+    return has_value() && _ts.empty();
   }
 
   bool is_timesamples() const {
@@ -90,11 +90,15 @@ struct PrimVar {
   }
 
   std::string type_name() const {
-    if (is_timesamples()) {
-      return _ts.type_name();
-    } else { // Assume scalar.
+    if (has_default()) {
       return _value.type_name();
     }
+      
+    if (has_timesamples()) {
+      return _ts.type_name();
+    }
+
+    return "[[InvalidType]]";
   }
 
   uint32_t type_id() const {
@@ -102,11 +106,16 @@ struct PrimVar {
       return value::TYPE_ID_INVALID;
     }
 
-    if (is_timesamples()) {
-      return _ts.type_id();
-    } else {
+    if (has_default()) {
       return _value.type_id();
     }
+
+    if (has_timesamples()) {
+      return _ts.type_id();
+    }
+
+    return value::TypeId::TYPE_ID_INVALID;
+
   }
 
   // TODO: Deprecate and use `get_default_value`
@@ -158,7 +167,7 @@ struct PrimVar {
   template <class T>
   nonstd::optional<T> get_ts_value(size_t idx) const {
 
-    if (!is_timesamples()) {
+    if (!has_timesamples()) {
       return nonstd::nullopt;
     }
 
@@ -173,7 +182,7 @@ struct PrimVar {
   // Check if specific TimeSample value for a specified index is ValueBlock or not.
   nonstd::optional<bool> is_ts_value_blocked(size_t idx) const {
 
-    if (!is_timesamples()) {
+    if (!has_timesamples()) {
       return nonstd::nullopt;
     }
 
@@ -276,7 +285,7 @@ struct PrimVar {
   }
 
   size_t num_timesamples() const {
-    if (is_timesamples()) {
+    if (has_timesamples()) {
       return _ts.size();
     }
     return 0;
