@@ -276,7 +276,7 @@ void CreateScene(tinyusdz::Stage *stage) {
         uvs.push_back({1.0f, 1.0f});
         uvs.push_back({0.0f, 1.0f});
 
-        uvPrimvar.set_value(uvs);
+        uvPrimvar.set_value(uvs); // value at 'default' time
         uvPrimvar.set_interpolation(tinyusdz::Interpolation::Vertex);
 
         std::vector<int> uvIndices;
@@ -285,8 +285,22 @@ void CreateScene(tinyusdz::Stage *stage) {
         uvIndices.push_back(3);
         uvIndices.push_back(2);
 
-        uvPrimvar.set_indices(uvIndices);
+        // set indices at 'default' time.
+        uvPrimvar.set_default_indices(uvIndices);
 
+        // NOTE: You can use `uvPrimvar.set_timesampled_indices` to set time-varying indices
+        // {
+        //   tinyusdz::TypedTimeSamples<std::vector<int>> uvIndicesTimeSampled;
+        //   std::vector<int> uvIndices3;
+        //   uvIndices3.push_back(1);
+        //   uvIndices3.push_back(0);
+        //   uvIndices3.push_back(2);
+        //   uvIndices3.push_back(3);
+        //   uvIndicesTimeSampled.add_sample(1.0, uvIndices);
+        //   uvIndicesTimeSampled.add_sample(3.0, uvIndices3);
+        //   uvPrimvar.set_timesampled_indices(uvIndicesTimeSampled);
+        // }
+    
         // primvar name is extracted from Primvar::name
         std::string err;
         if (!mesh.set_primvar(uvPrimvar, &err)) {
