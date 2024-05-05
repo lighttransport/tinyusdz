@@ -182,11 +182,17 @@ class GeomPrimvar {
     _unauthoredValuesIndex = n;
   }
 
+  
+  const std::vector<int32_t> &get_default_indices() const {
+    return _indices;
+  }
+
   const TypedTimeSamples<std::vector<int32_t>> &get_timesampled_indices() const {
     return _ts_indices;
   }
 
   bool has_default_indices() const { return !_indices.empty(); }
+  bool has_timesampled_indices() const { return _ts_indices.size(); }
 
   uint32_t type_id() const { return _attr.type_id(); }
   std::string type_name() const { return _attr.type_name(); }
