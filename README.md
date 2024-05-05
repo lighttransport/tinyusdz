@@ -36,10 +36,7 @@
   * [examples/openglviewer](examples/openglviewer) OpenGL viewer
   * [examples/sdlviewer](examples/sdlviewer) Software raytracing viewer 
 
-## "What if" Experimental feature
 
-* Gaussian Splatting support? https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/
- 
 ## Build status
 
 |         |   Linux                                  |  Windows                              |   macOS   |  iOS   | Android |
