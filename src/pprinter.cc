@@ -338,6 +338,7 @@ std::string print_animatable_timesamples(const Animatable<T> &v,
   return ss.str();
 }
 
+#if 0
 template <typename T>
 std::string print_animatable_token(const Animatable<T> &v,
                                    const uint32_t indent = 0) {
@@ -359,6 +360,7 @@ std::string print_animatable_token(const Animatable<T> &v,
 
   return ss.str();
 }
+#endif
 
 namespace {
 
@@ -765,6 +767,7 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr,
         ss << value::TypeTraits<T>::type_name() << " " << name;
         ss << ".timeSamples = "
            << print_typed_timesamples(pv.value().get_timesamples(), indent);
+        ss << "\n";
       }
     }
 
@@ -782,6 +785,7 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr,
       } else {
         ss << paths;
       }
+      ss << "\n";
     }
 
   }
@@ -796,12 +800,45 @@ static std::string print_str_attr(
 
   if (attr.authored()) {
     ss << pprint::Indent(indent);
-
     ss << value::TypeTraits<std::string>::type_name() << " " << name;
+
+    const auto &pv = attr.get_value();
 
     if (attr.is_blocked()) {
       ss << " = None";
-    } else if (attr.is_connection()) {
+    } else if (pv.has_value()) {
+
+      std::string a;
+      if (pv.value().get_scalar(&a)) {
+        // Do not use operator<<(std::string)
+        ss << " = " << tinyusdz::buildEscapedAndQuotedStringForUSDA(a);
+      } else {
+        ss << " = [InternalError]";
+      }
+    }
+
+    if (attr.metas().authored()) {
+      ss << "(\n"
+         << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
+         << ")";
+    }
+    ss << "\n";
+
+    if (pv && pv.value().has_timesamples()) {
+      ss << pprint::Indent(indent);
+      ss << value::TypeTraits<std::string>::type_name() << " " << name;
+
+      ss << ".timeSamples = "
+               << print_str_timesamples(pv.value().get_timesamples(), indent);
+
+      ss << "\n";
+    }
+
+    if (attr.has_connections()) {
+
+      ss << pprint::Indent(indent);
+      ss << value::TypeTraits<std::string>::type_name() << " " << name;
+
       ss << ".connect = ";
       const std::vector<Path> &paths = attr.get_connections();
       if (paths.size() == 1) {
@@ -812,31 +849,8 @@ static std::string print_str_attr(
         ss << paths;
       }
 
-    } else {
-      auto pv = attr.get_value();
-
-      if (pv) {
-        if (pv.value().is_timesamples()) {
-          ss << ".timeSamples = "
-             << print_str_timesamples(pv.value().get_timesamples(), indent);
-        } else {
-          std::string a;
-          if (pv.value().get_scalar(&a)) {
-            // Do not use operator<<(std::string)
-            ss << " = " << tinyusdz::buildEscapedAndQuotedStringForUSDA(a);
-          } else {
-            ss << " = [InternalError]";
-          }
-        }
-      }
+      ss << "\n";
     }
-
-    if (attr.metas().authored()) {
-      ss << "(\n"
-         << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
-         << ")";
-    }
-    ss << "\n";
   }
 
   return ss.str();
@@ -1085,7 +1099,44 @@ std::string print_typed_token_attr(
   std::stringstream ss;
 
   if (attr.authored()) {
-    if (attr.is_connection()) {
+
+    const auto &v = attr.get_value();
+
+    if (v.has_value()) {
+
+      ss << pprint::Indent(indent);
+      ss << "token " << name << " = ";
+
+      if (v.is_blocked()) {
+        ss << "None";
+      } else {
+        T a;
+        if (v.get_scalar(&a)) {
+          ss << quote(to_string(a));
+        } else { 
+          ss << "[Animatable: InternalError]";
+        }
+      }
+
+      if (attr.metas().authored()) {
+        ss << " (\n"
+           << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
+           << ")";
+      }
+      ss << "\n";
+    }
+
+    if (v.has_timesamples()) {
+
+      ss << pprint::Indent(indent);
+      ss << "token " << name << ".timeSamples = ";
+
+      ss << print_typed_token_timesamples(v.get_timesamples(), indent);
+      ss << "\n";
+    }
+
+
+    if (attr.has_connections()) {
       ss << pprint::Indent(indent);
 
       ss << "token " << name;
@@ -1100,26 +1151,9 @@ std::string print_typed_token_attr(
         ss << paths;
       }
 
-    } else {
-      auto v = attr.get_value();
-
-      ss << pprint::Indent(indent);
-
-      ss << "token " << name;
-
-      if (v.is_timesamples()) {
-        ss << ".timeSamples";
-      }
-
-      ss << " = " << print_animatable_token(v, indent);
+      ss << "\n";
     }
 
-    if (attr.metas().authored()) {
-      ss << " (\n"
-         << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
-         << ")";
-    }
-    ss << "\n";
   }
 
   return ss.str();
@@ -1132,7 +1166,25 @@ std::string print_typed_token_attr(const TypedAttributeWithFallback<T> &attr,
   std::stringstream ss;
 
   if (attr.authored()) {
-    if (attr.is_connection()) {
+
+    ss << pprint::Indent(indent);
+
+    ss << "uniform token " << name;
+
+    if (attr.is_blocked()) {
+      ss << " = None";
+    } else {
+      ss << " = " << quote(to_string(attr.get_value()));
+    }
+
+    if (attr.metas().authored()) {
+      ss << " (\n"
+         << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
+         << ")";
+    }
+    ss << "\n";
+
+    if (attr.has_connections()) {
       ss << pprint::Indent(indent);
 
       ss << "token " << name;
@@ -1146,24 +1198,8 @@ std::string print_typed_token_attr(const TypedAttributeWithFallback<T> &attr,
       } else {
         ss << paths;
       }
-    } else {
-      ss << pprint::Indent(indent);
-
-      ss << "uniform token " << name;
-
-      if (attr.is_blocked()) {
-        ss << " = None";
-      } else {
-        ss << " = " << quote(to_string(attr.get_value()));
-      }
+      ss << "\n";
     }
-
-    if (attr.metas().authored()) {
-      ss << " (\n"
-         << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
-         << ")";
-    }
-    ss << "\n";
   }
 
   return ss.str();
