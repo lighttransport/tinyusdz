@@ -2831,6 +2831,11 @@ struct XformOp {
   }
 
   template <class T>
+  void set_default(const T &v) {
+    _var.set_value(v);
+  }
+
+  template <class T>
   void set_timesample(const float t, const T &v) {
     _var.set_timesample(t, v);
   }
@@ -2840,6 +2845,10 @@ struct XformOp {
   void set_timesamples(value::TimeSamples &&v) { _var.set_timesamples(v); }
 
   bool is_timesamples() const { return _var.is_timesamples(); }
+  bool has_timesamples() const { return _var.has_timesamples(); }
+
+  bool is_default() const { return _var.is_scalar(); }
+  bool has_default() const { return _var.has_default(); }
 
   nonstd::optional<value::TimeSamples> get_timesamples() const {
     if (is_timesamples()) {
@@ -2853,6 +2862,10 @@ struct XformOp {
       return nonstd::nullopt;
     }
     return _var.value_raw();
+  }
+
+  nonstd::optional<value::Value> get_default() const {
+    return get_scalar();
   }
 
   // Type-safe way to get concrete value.

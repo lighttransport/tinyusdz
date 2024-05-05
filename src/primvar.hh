@@ -47,7 +47,7 @@ struct PrimVar {
     if (_blocked) {
       return true;
     }
-    return _value.type_id() != value::TypeId::TYPE_ID_INVALID;
+    return (_value.type_id() != value::TypeId::TYPE_ID_INVALID) && (_value.type_id() != value::TypeId::TYPE_ID_NULL);
   }
 
   bool has_default() const {
@@ -81,7 +81,7 @@ struct PrimVar {
 
   bool is_valid() const {
     if (has_timesamples()) {
-      if (_ts.type_id() == value::TypeId::TYPE_ID_INVALID) {
+      if ((_ts.type_id() == value::TypeId::TYPE_ID_INVALID) || (_ts.type_id() == value::TypeId::TYPE_ID_NULL)) {
         return false;
       }
     }
