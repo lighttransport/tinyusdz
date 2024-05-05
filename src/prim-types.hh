@@ -1358,7 +1358,7 @@ struct TypedTimeSamples {
 };
 
 //
-// Scalar and/or TimeSamples
+// Scalar(default) and/or TimeSamples
 //
 template <typename T>
 struct Animatable {
@@ -1397,12 +1397,17 @@ struct Animatable {
 
     if (is_blocked()) {
       return false;
-    } else if (is_scalar()) {
-      (*v) = _value;
-      return true;
-    } else {  // timesamples
-      return _ts.get(v, t, tinerp);
     }
+
+    if (value::TimeCode(t).is_default()) {
+      if (has_value()) {
+        (*v) = _value;
+        return true;
+      }
+    }
+      
+    // timesamples
+    return _ts.get(v, t, tinerp);
   }
 
   ///
@@ -1424,6 +1429,10 @@ struct Animatable {
     return false;
   }
 
+  bool get_default(T *v) const {
+    return get_scalar(v);
+  }
+
   // TimeSamples
   // void set(double t, const T &v);
 
@@ -1439,12 +1448,24 @@ struct Animatable {
     _has_value = true;
   }
 
+  void set_default(const T &v) {
+    set(v);
+  }
+
   void set(const TypedTimeSamples<T> &ts) {
     _ts = ts;
   }
 
   void set(TypedTimeSamples<T> &&ts) {
     _ts = std::move(ts);
+  }
+
+  void set_timesamples(const TypedTimeSamples<T> &ts) {
+    return set(ts);
+  }
+
+  void set_timesamples(TypedTimeSamples<T> &&ts) {
+    return set(ts);
   }
 
   void clear_scalar() {
@@ -1457,6 +1478,10 @@ struct Animatable {
 
   bool has_value() const {
     return _has_value;
+  }
+
+  bool has_default() const {
+    return has_value();
   }
 
   bool has_timesamples() const {
@@ -2421,17 +2446,24 @@ class Attribute {
       return false;
     }
 
-    if (is_timesamples()) {
-      return _var.get_interpolated_value(t, tinterp, dst);
-    } else {
-      nonstd::optional<T> v = _var.get_value<T>();
-      if (v) {
-        (*dst) = v.value();
-        return true;
+    if (value::TimeCode(t).is_default()) {
+      if (has_value()) {
+        nonstd::optional<T> v = _var.get_value<T>();
+        if (v) {
+          (*dst) = v.value();
+          return true;
+        } else {
+          return false;
+        }
       }
-
-      return false;
     }
+
+    if (has_timesamples()) {
+      return _var.get_interpolated_value(t, tinterp, dst);
+    }
+
+    return false;
+    
   }
 
   const AttrMeta &metas() const { return _metas; }
@@ -2499,6 +2531,10 @@ class Attribute {
   // check if Attribute has default value
   bool has_value() const {
     return _var.has_value(); 
+  }
+
+  bool has_default() const {
+    return has_value();
   }
 
   bool is_timesamples() const {
