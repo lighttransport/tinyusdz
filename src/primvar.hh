@@ -198,7 +198,7 @@ struct PrimVar {
   template <class T>
   const T* as() const {
 
-    if (!is_scalar()) {
+    if (!has_default()) {
       return nullptr;
     }
 
@@ -275,12 +275,28 @@ struct PrimVar {
 
   ///
   /// Get interpolated timesample value.
+  /// When input time is Default(qnan), return 'default' value if exists, otherwise return the first item of timesamples.
   ///
   bool get_interpolated_value(const double t, const value::TimeSampleInterpolationType tinterp, value::Value *v) const;
 
   
   template <typename T>
   bool get_interpolated_value(const double t, const value::TimeSampleInterpolationType tinterp, T *v) const {
+    if (!v) {
+      return false;
+    }
+
+    if (value::TimeCode(t).is_default()) {
+
+      if (auto pv = get_default_value<T>()) {
+        (*v) = pv.value();
+      }
+
+      if (_ts.empty()) {
+        return false;
+      }
+    }
+
     return _ts.get(v, t, tinterp);
   }
 
