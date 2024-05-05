@@ -688,7 +688,9 @@ int main(int argc, char **argv) {
       tinyusdz::GeomPrimvar primvar;
       std::string err;
       if (mesh->get_primvar("uv", &primvar, &err)) {
-        std::cout << "uv primvar is Indexed Primvar? " << primvar.has_indices()
+        std::cout << "uv primvar has default indices? " << primvar.has_default_indices()
+                  << "\n";
+        std::cout << "uv primvar has timesampled indices? " << primvar.has_timesampled_indices()
                   << "\n";
       } else {
         std::cerr << "get_primvar(\"uv\") failed. err = " << err << "\n";
