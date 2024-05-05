@@ -557,6 +557,64 @@ static bool ToGeomMesh(const RenderScene &scene, const RenderMesh &rmesh, GeomMe
     dst->meta.displayName = rmesh.display_name;
   }
 
+  if (!rmesh.vertex_colors.empty()) {
+
+    const auto &vattr = rmesh.vertex_colors;
+    std::vector<value::color3f> displayColor(vattr.vertex_count());
+    const float *psrc = reinterpret_cast<const float *>(vattr.buffer());
+    for (size_t i = 0; i < vattr.vertex_count(); i++) {
+      displayColor[i][0] = psrc[3 * i + 0];
+      displayColor[i][1] = psrc[3 * i + 1];
+      displayColor[i][2] = psrc[3 * i + 2];
+    }
+
+    GeomPrimvar displayColorPvar;
+    displayColorPvar.set_name("displayColor");
+    displayColorPvar.set_value(displayColor);
+    if (vattr.is_facevarying()) {
+      displayColorPvar.set_interpolation(Interpolation::FaceVarying);
+    } else if (vattr.is_vertex()) {
+      displayColorPvar.set_interpolation(Interpolation::Vertex);
+    } else if (vattr.is_uniform()) {
+      displayColorPvar.set_interpolation(Interpolation::Uniform);
+    } else if (vattr.is_constant()) {
+      displayColorPvar.set_interpolation(Interpolation::Constant);
+    } else {
+      PUSH_ERROR_AND_RETURN("Invalid variability in RenderMesh.vertex_colors");
+    }
+
+    // primvar name is extracted from Primvar::name
+    dst->set_primvar(displayColorPvar);
+  }
+
+  if (!rmesh.vertex_opacities.empty()) {
+
+    const auto &vattr = rmesh.vertex_opacities;
+    std::vector<float> displayOpacity(vattr.vertex_count());
+    const float *psrc = reinterpret_cast<const float *>(vattr.buffer());
+    for (size_t i = 0; i < vattr.vertex_count(); i++) {
+      displayOpacity[i] = psrc[i];
+    }
+
+    GeomPrimvar displayOpacityPvar;
+    displayOpacityPvar.set_name("displayOpacity");
+    displayOpacityPvar.set_value(displayOpacity);
+    if (vattr.is_facevarying()) {
+      displayOpacityPvar.set_interpolation(Interpolation::FaceVarying);
+    } else if (vattr.is_vertex()) {
+      displayOpacityPvar.set_interpolation(Interpolation::Vertex);
+    } else if (vattr.is_uniform()) {
+      displayOpacityPvar.set_interpolation(Interpolation::Uniform);
+    } else if (vattr.is_constant()) {
+      displayOpacityPvar.set_interpolation(Interpolation::Constant);
+    } else {
+      PUSH_ERROR_AND_RETURN("Invalid variability in RenderMesh.vertex_opacities");
+    }
+
+    // primvar name is extracted from Primvar::name
+    dst->set_primvar(displayOpacityPvar);
+  }
+
   if (!rmesh.normals.empty()) {
     // export as primvars:normals
 
@@ -807,8 +865,8 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
     }
 
     Animatable<std::string> varname;
-    // TODO: Read varname from RenderMesh.
-    varname = std::string("UVMap");
+    // TODO: Ensure primvar with 'varname_uv' exists in bound RenderMesh.
+    varname = tex.varname_uv;
     preader.varname.set_value(varname);
     preader.result.set_authored(true);
 
