@@ -2446,7 +2446,11 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim, const std::string &v
             fmt::format("Indexed GeomPrimVar with scalar PrimVar Attribute is not supported. PrimVar name: {}", primvar_name));
       }
 
-      if (indexAttr.is_connection()) {
+      // The order of evaluation:
+      // - default or timesamples
+      // - connection
+
+      if (indexAttr.is_connection()) { // attribute only contains 'connection'
         // follow targetPath to get Attribute 
         Attribute terminal_indexAttr;
         bool ret = tydra::GetTerminalAttribute(stage, indexAttr, index_name, &terminal_indexAttr, err);
@@ -2454,15 +2458,21 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim, const std::string &v
           return false;
         }
 
-        if (terminal_indexAttr.is_timesamples()) {
+        if (!terminal_indexAttr.has_value() && !terminal_indexAttr.has_timesamples()) {
+          PUSH_ERROR_AND_RETURN("[Internal Error] Invalid Terminal Index Attribute. Terminal Index Attribute does not have `default` or timesamples value.");
+        }
+
+        if (terminal_indexAttr.has_timesamples()) {
           const auto &ts = terminal_indexAttr.get_var().ts_raw();
           TypedTimeSamples<std::vector<int32_t>> tss;
           if (!tss.from_timesamples(ts)) {
             PUSH_ERROR_AND_RETURN(fmt::format("Index Attribute seems not an timesamples with int[] type: {}", index_name));
           }
         
-          primvar.set_indices(tss);
-        } else if (terminal_indexAttr.is_value()) {
+          primvar.set_timesampled_indices(tss);
+        }
+
+        if (terminal_indexAttr.has_value()) {
 
           // TODO: Support uint[]?
           std::vector<int32_t> indices;
@@ -2472,35 +2482,43 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim, const std::string &v
                             indexAttr.type_name()));
           }
 
-          primvar.set_indices(indices);
+          primvar.set_default_indices(indices);
 
         }
       
-      } else if (indexAttr.is_timesamples()) {
-        const auto &ts = indexAttr.get_var().ts_raw();
-        TypedTimeSamples<std::vector<int32_t>> tss;
-        if (!tss.from_timesamples(ts)) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Index Attribute seems not an timesamples with int[] type: {}", index_name));
-        }
-      
-        primvar.set_indices(tss);
       } else if (indexAttr.is_blocked()) {
         // Value blocked. e.g. `float2[] primvars:st:indices = None`
         // We can simply skip reading indices.
-      } else if (indexAttr.is_value()) {
-        // Check if int[] type.
-        // TODO: Support uint[]?
-        std::vector<int32_t> indices;
-        if (!indexAttr.get_value(&indices)) {
-          PUSH_ERROR_AND_RETURN(
-              fmt::format("Index Attribute is not int[] type. Got {}",
-                          indexAttr.type_name()));
+      } else {
+
+        if (!indexAttr.has_value() && !indexAttr.has_timesamples()) {
+          PUSH_ERROR_AND_RETURN("[Internal Error] Invalid Index Attribute. Index Attribute does not have `default` or timesamples value.");
         }
 
+        if (indexAttr.has_value()) {
+          // Check if int[] type.
+          // TODO: Support uint[]?
+          std::vector<int32_t> indices;
+          if (!indexAttr.get_value(&indices)) {
+            PUSH_ERROR_AND_RETURN(
+                fmt::format("Index Attribute is not int[] type. Got {}",
+                            indexAttr.type_name()));
+          }
 
-        primvar.set_indices(indices);
-      } else {
-        PUSH_ERROR_AND_RETURN("[Internal Error] Invalid Index Attribute.");
+
+          primvar.set_default_indices(indices);
+        }
+
+        if (indexAttr.has_timesamples()) {
+          const auto &ts = indexAttr.get_var().ts_raw();
+          TypedTimeSamples<std::vector<int32_t>> tss;
+          if (!tss.from_timesamples(ts)) {
+            PUSH_ERROR_AND_RETURN(fmt::format("Index Attribute seems not an timesamples with int[] type: {}", index_name));
+          }
+        
+          primvar.set_timesampled_indices(tss);
+        }
+
       }
     } else {
       // indices are optional, so ok to skip it.
