@@ -84,7 +84,12 @@ struct PrimVar {
       if ((_ts.type_id() == value::TypeId::TYPE_ID_INVALID) || (_ts.type_id() == value::TypeId::TYPE_ID_NULL)) {
         return false;
       }
+
+      // TODO: Check if the type of timesamples is the same with the type of 'default' value
+      return true;
     }
+
+    // TODO: Make blocked valid?
 
     return has_value();
   }

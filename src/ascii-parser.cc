@@ -4011,6 +4011,8 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
     bool attr_exists = props->count(attr_name) && props->at(attr_name).is_attribute();
     if (attr_exists) {
 
+      // TODO: Check if type is the same.
+
       // Check if variability is the same
       if (props->at(attr_name).attribute().variability() != variability) {
         PUSH_ERROR_AND_RETURN(fmt::format("Variability mismatch. Attribute `{}` already has variability `{}`, but timeSampled value has variability `{}`.", attr_name, to_string(props->at(attr_name).attribute().variability()), to_string(variability)));
@@ -4019,16 +4021,19 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
       props->at(attr_name).attribute().set_connection(abs_path);
     } else {
 
-      Property p(abs_path, /* value typename */ type_name, custom_qual);
-      if (value_blocked) {
-        p.attribute().set_blocked(true);
-      }
+      Attribute attr;
+      attr.set_type_name(type_name);
+      attr.set_connection(abs_path);
+      attr.variability() = variability;
 
-      p.attribute().variability() = variability;
+      //Property p(abs_path, /* value typename */ type_name, custom_qual);
+
+      //p.attribute().variability() = variability;
       //if (varying_authored) {
       //  p.attribute().set_varying_authored();
       //}
 
+      Property p(std::move(attr), custom_qual);
       (*props)[attr_name] = p;
     }
 
@@ -4125,329 +4130,340 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
     return true;
 
   } else {
-    Attribute attr;
+
+    Attribute _attr;
+    Attribute *pattr{nullptr};
+    bool attr_exists = props->count(attr_name) && props->at(attr_name).is_attribute();
+    DCOUT("attr_exists " << attr_exists);
+    if (attr_exists) {
+      pattr = &(props->at(attr_name).attribute());
+    } else {
+      pattr = &_attr;
+      pattr->set_name(primattr_name);
+    }
+
     if (!value_blocked) {
       // TODO: Refactor. ParseAttrMeta is currently called inside
       // ParseBasicPrimAttr()
       if (type_name == value::kBool) {
-        if (!ParseBasicPrimAttr<bool>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<bool>(array_qual, primattr_name, pattr)) {
           return false;
         }
       } else if (type_name == value::kInt) {
-        if (!ParseBasicPrimAttr<int>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<int>(array_qual, primattr_name, pattr)) {
           return false;
         }
       } else if (type_name == value::kInt2) {
         if (!ParseBasicPrimAttr<value::int2>(array_qual, primattr_name,
-                                             &attr)) {
+                                             pattr)) {
           return false;
         }
       } else if (type_name == value::kInt3) {
         if (!ParseBasicPrimAttr<value::int3>(array_qual, primattr_name,
-                                             &attr)) {
+                                             pattr)) {
           return false;
         }
       } else if (type_name == value::kInt4) {
         if (!ParseBasicPrimAttr<value::int4>(array_qual, primattr_name,
-                                             &attr)) {
+                                             pattr)) {
           return false;
         }
       } else if (type_name == value::kUInt) {
-        if (!ParseBasicPrimAttr<uint32_t>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<uint32_t>(array_qual, primattr_name, pattr)) {
           return false;
         }
       } else if (type_name == value::kUInt2) {
         if (!ParseBasicPrimAttr<value::uint2>(array_qual, primattr_name,
-                                              &attr)) {
+                                              pattr)) {
           return false;
         }
       } else if (type_name == value::kUInt3) {
         if (!ParseBasicPrimAttr<value::uint3>(array_qual, primattr_name,
-                                              &attr)) {
+                                              pattr)) {
           return false;
         }
       } else if (type_name == value::kUInt4) {
         if (!ParseBasicPrimAttr<value::uint4>(array_qual, primattr_name,
-                                              &attr)) {
+                                              pattr)) {
           return false;
         }
       } else if (type_name == value::kInt64) {
-        if (!ParseBasicPrimAttr<int64_t>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<int64_t>(array_qual, primattr_name, pattr)) {
           return false;
         }
       } else if (type_name == value::kUInt64) {
-        if (!ParseBasicPrimAttr<uint64_t>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<uint64_t>(array_qual, primattr_name, pattr)) {
           return false;
         }
       } else if (type_name == value::kDouble) {
-        if (!ParseBasicPrimAttr<double>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<double>(array_qual, primattr_name, pattr)) {
           return false;
         }
       } else if (type_name == value::kString) {
         if (!ParseBasicPrimAttr<value::StringData>(array_qual, primattr_name,
-                                                   &attr)) {
+                                                   pattr)) {
           return false;
         }
       } else if (type_name == value::kToken) {
         if (!ParseBasicPrimAttr<value::token>(array_qual, primattr_name,
-                                              &attr)) {
+                                              pattr)) {
           return false;
         }
       } else if (type_name == value::kHalf) {
         if (!ParseBasicPrimAttr<value::half>(array_qual, primattr_name,
-                                             &attr)) {
+                                             pattr)) {
           return false;
         }
       } else if (type_name == value::kHalf2) {
         if (!ParseBasicPrimAttr<value::half2>(array_qual, primattr_name,
-                                              &attr)) {
+                                              pattr)) {
           return false;
         }
       } else if (type_name == value::kHalf3) {
         if (!ParseBasicPrimAttr<value::half3>(array_qual, primattr_name,
-                                              &attr)) {
+                                              pattr)) {
           return false;
         }
       } else if (type_name == value::kHalf4) {
         if (!ParseBasicPrimAttr<value::half4>(array_qual, primattr_name,
-                                              &attr)) {
+                                              pattr)) {
           return false;
         }
       } else if (type_name == value::kFloat) {
-        if (!ParseBasicPrimAttr<float>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<float>(array_qual, primattr_name, pattr)) {
           return false;
         }
       } else if (type_name == value::kFloat2) {
         if (!ParseBasicPrimAttr<value::float2>(array_qual, primattr_name,
-                                               &attr)) {
+                                               pattr)) {
           return false;
         }
       } else if (type_name == value::kFloat3) {
         if (!ParseBasicPrimAttr<value::float3>(array_qual, primattr_name,
-                                               &attr)) {
+                                               pattr)) {
           return false;
         }
       } else if (type_name == value::kFloat4) {
         if (!ParseBasicPrimAttr<value::float4>(array_qual, primattr_name,
-                                               &attr)) {
+                                               pattr)) {
           return false;
         }
       } else if (type_name == value::kDouble2) {
         if (!ParseBasicPrimAttr<value::double2>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kDouble3) {
         if (!ParseBasicPrimAttr<value::double3>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kDouble4) {
         if (!ParseBasicPrimAttr<value::double4>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kQuath) {
         if (!ParseBasicPrimAttr<value::quath>(array_qual, primattr_name,
-                                              &attr)) {
+                                              pattr)) {
           return false;
         }
       } else if (type_name == value::kQuatf) {
         if (!ParseBasicPrimAttr<value::quatf>(array_qual, primattr_name,
-                                              &attr)) {
+                                              pattr)) {
           return false;
         }
       } else if (type_name == value::kQuatd) {
         if (!ParseBasicPrimAttr<value::quatd>(array_qual, primattr_name,
-                                              &attr)) {
+                                              pattr)) {
           return false;
         }
       } else if (type_name == value::kPoint3f) {
         if (!ParseBasicPrimAttr<value::point3f>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kColor3f) {
         if (!ParseBasicPrimAttr<value::color3f>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kColor4f) {
         if (!ParseBasicPrimAttr<value::color4f>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kPoint3d) {
         if (!ParseBasicPrimAttr<value::point3d>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kNormal3f) {
         if (!ParseBasicPrimAttr<value::normal3f>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kNormal3d) {
         if (!ParseBasicPrimAttr<value::normal3d>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kVector3f) {
         if (!ParseBasicPrimAttr<value::vector3f>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kVector3d) {
         if (!ParseBasicPrimAttr<value::vector3d>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kColor3d) {
         if (!ParseBasicPrimAttr<value::color3d>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kColor4d) {
         if (!ParseBasicPrimAttr<value::color4d>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kMatrix2f) {
         if (!ParseBasicPrimAttr<value::matrix2f>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kMatrix3f) {
         if (!ParseBasicPrimAttr<value::matrix3f>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kMatrix4f) {
         if (!ParseBasicPrimAttr<value::matrix4f>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kMatrix2d) {
         if (!ParseBasicPrimAttr<value::matrix2d>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kFloat3) {
         if (!ParseBasicPrimAttr<value::float3>(array_qual, primattr_name,
-                                               &attr)) {
+                                               pattr)) {
           return false;
         }
       } else if (type_name == value::kFloat4) {
         if (!ParseBasicPrimAttr<value::float4>(array_qual, primattr_name,
-                                               &attr)) {
+                                               pattr)) {
           return false;
         }
       } else if (type_name == value::kDouble2) {
         if (!ParseBasicPrimAttr<value::double2>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kDouble3) {
         if (!ParseBasicPrimAttr<value::double3>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kDouble4) {
         if (!ParseBasicPrimAttr<value::double4>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kPoint3f) {
         if (!ParseBasicPrimAttr<value::point3f>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kColor3f) {
         if (!ParseBasicPrimAttr<value::color3f>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kColor4f) {
         if (!ParseBasicPrimAttr<value::color4f>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kPoint3d) {
         if (!ParseBasicPrimAttr<value::point3d>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kNormal3f) {
         if (!ParseBasicPrimAttr<value::normal3f>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kNormal3d) {
         if (!ParseBasicPrimAttr<value::normal3d>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kVector3f) {
         if (!ParseBasicPrimAttr<value::vector3f>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kVector3d) {
         if (!ParseBasicPrimAttr<value::vector3d>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kColor3d) {
         if (!ParseBasicPrimAttr<value::color3d>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kColor4d) {
         if (!ParseBasicPrimAttr<value::color4d>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kMatrix2f) {
         if (!ParseBasicPrimAttr<value::matrix2f>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kMatrix3f) {
         if (!ParseBasicPrimAttr<value::matrix3f>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kMatrix4f) {
         if (!ParseBasicPrimAttr<value::matrix4f>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
 
       } else if (type_name == value::kMatrix2d) {
         if (!ParseBasicPrimAttr<value::matrix2d>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kMatrix3d) {
         if (!ParseBasicPrimAttr<value::matrix3d>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kMatrix4d) {
         if (!ParseBasicPrimAttr<value::matrix4d>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
 
       } else if (type_name == value::kTexCoord2f) {
         if (!ParseBasicPrimAttr<value::texcoord2f>(array_qual, primattr_name,
-                                                   &attr)) {
+                                                   pattr)) {
           return false;
         }
 
       } else if (type_name == value::kAssetPath) {
         if (!ParseBasicPrimAttr<value::AssetPath>(array_qual, primattr_name,
-                                                  &attr)) {
+                                                  pattr)) {
           return false;
         }
       } else {
@@ -4455,27 +4471,35 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
       }
     }
 
-    attr.variability() = variability;
+
     if (varying_authored) {
-      attr.set_varying_authored();
+      pattr->set_varying_authored();
     }
 
+    // TODO: Check if type is the same with existing attribute.
     if (value_blocked) {
       if (array_qual) {
-        attr.set_type_name(type_name + "[]");
+        pattr->set_type_name(type_name + "[]");
       } else {
-        attr.set_type_name(type_name);
+        pattr->set_type_name(type_name);
       }
-      attr.set_blocked(true);
+      pattr->set_blocked(true);
     }
 
-    attr.set_name(primattr_name);
-
     DCOUT("primattr: type = " << type_name << ", name = " << primattr_name);
+    DCOUT(" value_blocked " << value_blocked);
 
-    Property p(attr, custom_qual);
+    if (attr_exists) {
+      // Check if variability is the same
+      if (pattr->variability() != variability) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Variability mismatch. Attribute `{}` already has variability `{}`, but 'default' value has variability `{}`.", attr_name, to_string(pattr->variability()), to_string(variability)));
+      }
+    } else {
+      pattr->variability() = variability;
+      Property p(*pattr, custom_qual);
 
-    (*props)[primattr_name] = p;
+      (*props)[primattr_name] = p;
+    }
 
     return true;
   }

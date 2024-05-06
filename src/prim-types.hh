@@ -2673,7 +2673,7 @@ class Property {
   }
 
   // TODO: Deprecate this and use is_attribute_connection
-  bool is_connection() const { return _type == Type::Connection; }
+  //bool is_connection() const { return _type == Type::Connection; }
 
   bool is_attribute_connection() const {
     if (is_attribute()) {
@@ -2684,9 +2684,7 @@ class Property {
   }
 
   std::string value_type_name() const {
-    if (is_connection()) {
-      return _prop_value_type_name;
-    } else if (is_relationship()) {
+    if (is_relationship()) {
       // relation is typeless.
       return std::string();
     } else {
@@ -2726,9 +2724,6 @@ class Property {
   /// paths)
   ///
   nonstd::optional<Path> get_relationTarget() const {
-    if (!is_connection()) {
-      return nonstd::nullopt;
-    }
 
     if (_rel.is_path()) {
       return _rel.targetPath;
@@ -2748,10 +2743,6 @@ class Property {
   ///
   std::vector<Path> get_relationTargets() const {
     std::vector<Path> pv;
-
-    if (!is_connection()) {
-      return pv;
-    }
 
     if (_rel.is_path()) {
       pv.push_back(_rel.targetPath);
@@ -2845,28 +2836,34 @@ struct XformOp {
   bool is_timesamples() const { return _var.is_timesamples(); }
   bool has_timesamples() const { return _var.has_timesamples(); }
 
+  void set_blocked(bool onoff) { _is_blocked = onoff; }
+  void clear_blocked() { _is_blocked = false; }
+
+  // check if 'default' value is ValueBlock.
+  bool is_blocked() const { return _is_blocked || _var.is_blocked(); }
+
   bool is_default() const { return _var.is_scalar(); }
   bool has_default() const { return _var.has_default(); }
 
   nonstd::optional<value::TimeSamples> get_timesamples() const {
-    if (is_timesamples()) {
+    if (has_timesamples()) {
       return _var.ts_raw();
     }
     return nonstd::nullopt;
   }
 
   nonstd::optional<value::Value> get_scalar() const {
-    if (is_timesamples()) {
-      return nonstd::nullopt;
+    if (has_default()) {
+      return _var.value_raw();
     }
-    return _var.value_raw();
+    return nonstd::nullopt;
   }
 
   nonstd::optional<value::Value> get_default() const {
     return get_scalar();
   }
 
-  // Type-safe way to get concrete value.
+  // Type-safe way to get concrete 'default' value.
   template <class T>
   nonstd::optional<T> get_value() const {
     if (is_timesamples()) {
@@ -2879,6 +2876,10 @@ struct XformOp {
   const primvar::PrimVar &get_var() const { return _var; }
 
   primvar::PrimVar &var() { return _var; }
+
+ private:
+
+  bool _is_blocked{false};
 };
 
 // forward decl

@@ -2705,7 +2705,7 @@ bool GetTerminalAttributeImpl(
     return false;
   }
 
-  if (prop.is_connection()) {
+  if (prop.is_attribute_connection()) {
     // Follow connection target Path(singple targetPath only).
     std::vector<Path> pv = prop.get_attribute().connections();
     if (pv.empty()) {

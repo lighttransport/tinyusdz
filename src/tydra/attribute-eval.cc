@@ -80,21 +80,7 @@ bool EvaluateAttributeImpl(
   // - attribute(default value, timeSampled value)
   // - connection
 
-  if (prop.is_attribute()) {
-    DCOUT("IsAttrib");
-
-    const Attribute &attr = prop.get_attribute();
-
-    if (attr.is_blocked()) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("Attribute `{}` is ValueBlocked(None).", attr_name));
-    }
-
-    if (!ToTerminalAttributeValue(attr, value, err, t, tinterp)) {
-      return false;
-    }
-
-  } else if (prop.is_connection()) {
+  if (prop.is_attribute_connection()) {
     // Follow connection target Path(singple targetPath only).
     std::vector<Path> pv = prop.get_attribute().connections();
     if (pv.empty()) {
@@ -135,6 +121,20 @@ bool EvaluateAttributeImpl(
     } else {
       PUSH_ERROR_AND_RETURN(targetPrimRet.error());
     }
+  } else if (prop.is_attribute()) {
+    DCOUT("IsAttrib");
+
+    const Attribute &attr = prop.get_attribute();
+
+    if (attr.is_blocked()) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Attribute `{}` is ValueBlocked(None).", attr_name));
+    }
+
+    if (!ToTerminalAttributeValue(attr, value, err, t, tinterp)) {
+      return false;
+    }
+
   } else if (prop.is_relationship()) {
     PUSH_ERROR_AND_RETURN(
         fmt::format("Property `{}` is a Relation.", attr_name));
