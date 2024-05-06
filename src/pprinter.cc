@@ -743,7 +743,7 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr,
 
     has_default = (pv && pv.value().has_default());
     has_timesamples = (pv && pv.value().has_timesamples());
-      
+
     //
     // Emit default value(includes ValueBlock and empty definition) and metada
     //
@@ -911,16 +911,37 @@ std::string print_typed_attr(const TypedAttribute<T> &attr,
   std::stringstream ss;
 
   if (attr.authored()) {
-    ss << pprint::Indent(indent);
 
-    ss << "uniform ";
+    if (attr.metas().authored() || attr.is_blocked() || attr.has_value() || attr.is_value_empty()) {
+      ss << pprint::Indent(indent);
+      ss << "uniform ";
+      ss << value::TypeTraits<T>::type_name() << " " << name;
 
-    ss << value::TypeTraits<T>::type_name() << " " << name;
+      if (attr.is_blocked()) {
+        ss << " = None";
+      } else if (attr.is_value_empty()) {
+        // nothing to do
+      } else {
+        auto pv = attr.get_value();
+        if (pv) {
+          ss << " = " << pv.value();
+        }
+      }
 
-    if (attr.is_blocked()) {
-      ss << " = None";
-    } else if (attr.is_connection()) {
+      if (attr.metas().authored()) {
+        ss << " (\n"
+           << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
+           << ")";
+      }
+      ss << "\n";
+    }
+
+    if (attr.has_connections()) {
+      ss << pprint::Indent(indent);
+      ss << "uniform ";
+      ss << value::TypeTraits<T>::type_name() << " " << name;
       ss << ".connect = ";
+
       const std::vector<Path> &paths = attr.get_connections();
       if (paths.size() == 1) {
         ss << paths[0];
@@ -929,22 +950,9 @@ std::string print_typed_attr(const TypedAttribute<T> &attr,
       } else {
         ss << paths;
       }
-    } else if (attr.is_value_empty()) {
-      // nothing to do
 
-    } else {
-      auto pv = attr.get_value();
-      if (pv) {
-        ss << " = " << pv.value();
-      }
+      ss << "\n";
     }
-
-    if (attr.metas().authored()) {
-      ss << " (\n"
-         << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
-         << ")";
-    }
-    ss << "\n";
   }
 
   return ss.str();
@@ -993,7 +1001,7 @@ std::string print_typed_attr(
 
     const auto &v = attr.get_value();
 
-    {
+    if (attr.metas().authored() || v.has_value() || attr.is_value_empty()) {
       if (v.has_value()) {
         ss << pprint::Indent(indent);
         ss << value::TypeTraits<T>::type_name() << " " << name;
@@ -1074,15 +1082,31 @@ std::string print_typed_attr(const TypedAttributeWithFallback<T> &attr,
   std::stringstream ss;
 
   if (attr.authored()) {
-    ss << pprint::Indent(indent);
 
-    ss << "uniform ";
+    // default
+    {
+      ss << pprint::Indent(indent);
+      ss << "uniform ";
+      ss << value::TypeTraits<T>::type_name() << " " << name;
 
-    ss << value::TypeTraits<T>::type_name() << " " << name;
+      if (attr.is_blocked()) {
+        ss << " = None";
+      } else {
+        ss << " = " << attr.get_value();
+      }
 
-    if (attr.is_blocked()) {
-      ss << " = None";
-    } else if (attr.is_connection()) {
+      if (attr.metas().authored()) {
+        ss << " (\n"
+           << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
+           << ")";
+      }
+      ss << "\n";
+    }
+
+    if (attr.has_connections()) {
+      ss << pprint::Indent(indent);
+      ss << "uniform ";
+      ss << value::TypeTraits<T>::type_name() << " " << name;
       ss << ".connect = ";
 
       const std::vector<Path> &paths = attr.get_connections();
@@ -1093,16 +1117,7 @@ std::string print_typed_attr(const TypedAttributeWithFallback<T> &attr,
       } else {
         ss << paths;
       }
-    } else {
-      ss << " = " << attr.get_value();
     }
-
-    if (attr.metas().authored()) {
-      ss << " (\n"
-         << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
-         << ")";
-    }
-    ss << "\n";
   }
 
   return ss.str();
@@ -1118,11 +1133,9 @@ std::string print_typed_token_attr(
 
     const auto &v = attr.get_value();
 
-    if (v.has_value()) {
-
+    if (attr.metas().authored() || v.has_value() || attr.is_value_empty()) {
       ss << pprint::Indent(indent);
       ss << "token " << name << " = ";
-
       if (v.is_blocked()) {
         ss << "None";
       } else {
@@ -1171,6 +1184,7 @@ std::string print_typed_token_attr(
     }
 
   }
+
 
   return ss.str();
 }
@@ -1275,7 +1289,7 @@ std::string print_prop(const Property &prop, const std::string &prop_name,
     ss << print_rel_prop(prop, prop_name, indent);
 
     // Attribute or AttributeConnection
-  } else if (prop.is_attribute() || prop.is_connection()) {
+  } else if (prop.is_attribute()) {
     const Attribute &attr = prop.get_attribute();
 
     //
@@ -1288,7 +1302,7 @@ std::string print_prop(const Property &prop, const std::string &prop_name,
     // timeSamples and connect cannot have attrMeta
     // 
 
-    if (attr.has_value()) {
+    if (attr.metas().authored() || attr.has_value()) {
 
       ss << pprint::Indent(indent);
 
@@ -1308,7 +1322,7 @@ std::string print_prop(const Property &prop, const std::string &prop_name,
       ty = attr.type_name();
       ss << ty << " " << prop_name;
 
-      if (prop.is_empty()) {
+      if (!attr.has_value()) {
         // Nothing to do
       } else {
         // has value content
@@ -1318,7 +1332,7 @@ std::string print_prop(const Property &prop, const std::string &prop_name,
         if (attr.is_blocked()) {
           ss << "None";
         } else {
-          // is_scalar
+          // default value
           ss << value::pprint_value(attr.get_var().value_raw());
         }
       }
@@ -1485,39 +1499,55 @@ std::string print_xformOps(const std::vector<XformOp> &xformOps,
         varname += ":" + xformOp.suffix;
       }
 
-      if (printed_vars.count(varname)) {
-        continue;
+      DCOUT("has_default " << xformOp.has_default());
+      DCOUT("has_timesamples " << xformOp.has_timesamples());
+
+      if (xformOp.has_default()) {
+        if (printed_vars.count(varname)) {
+          continue;
+        }
+
+        printed_vars.insert(varname);
+
+        ss << pprint::Indent(indent);
+        ss << xformOp.get_value_type_name() << " ";
+        ss << varname;
+        ss << " = ";
+
+        if (xformOp.is_blocked()) {
+          ss << "None";
+        } else if (auto pv = xformOp.get_scalar()) {
+          ss << value::pprint_value(pv.value(), indent);
+        } else {
+          ss << "[InternalError]";
+        }
+
+        // TODO: metadata
+        ss << "\n";
       }
 
-      printed_vars.insert(varname);
+      if (xformOp.has_timesamples()) {
 
-      ss << pprint::Indent(indent);
+        if (printed_vars.count(varname + ".timeSamples")) {
+          continue;
+        }
 
-      ss << xformOp.get_value_type_name() << " ";
+        printed_vars.insert(varname + ".timeSamples");
 
-      ss << varname;
-
-      if (xformOp.is_timesamples()) {
+        ss << pprint::Indent(indent);
+        ss << xformOp.get_value_type_name() << " ";
+        ss << varname;
         ss << ".timeSamples";
-      }
+        ss << " = ";
 
-      ss << " = ";
-
-      if (xformOp.is_timesamples()) {
         if (auto pv = xformOp.get_timesamples()) {
           ss << print_timesamples(pv.value(), indent);
         } else {
           ss << "[InternalError]";
         }
-      } else {
-        if (auto pv = xformOp.get_scalar()) {
-          ss << value::pprint_value(pv.value(), indent);
-        } else {
-          ss << "[InternalError]";
-        }
+        ss << "\n";
       }
 
-      ss << "\n";
     }
   }
 
