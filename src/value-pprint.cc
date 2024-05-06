@@ -459,7 +459,9 @@ std::ostream &operator<<(std::ostream &ofs,
                          const tinyusdz::value::AssetPath &asset) {
   std::string in_s = asset.GetAssetPath();
 
-  if (!in_s.empty()) {
+  if (in_s.empty()) {
+    ofs << "@@";
+  } else {
     std::string quote_str = "@";
 
     std::string s;
