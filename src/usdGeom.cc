@@ -331,7 +331,7 @@ bool GeomPrimvar::flatten_with_indices(const double t, value::Value *dest, const
 
   bool processed = false;
 
-  if (_attr.is_value() || _attr.is_timesamples()) {
+  if (_attr.has_value() || _attr.has_timesamples()) {
     if (!IsSupportedGeomPrimvarType(_attr.type_id())) {
       if (err) {
         (*err) += fmt::format("Unsupported type for GeomPrimvar. type = `{}`",
@@ -427,13 +427,6 @@ bool GeomPrimvar::get_value(T *dest, std::string *err) const {
     return false;
   }
 
-  if (_attr.is_timesamples()) {
-    if (err) {
-      (*err) += "TimeSamples attribute is TODO.";
-    }
-    return false;
-  }
-
   if (_attr.is_blocked()) {
     if (err) {
       (*err) += "Attribute is blocked.";
@@ -441,7 +434,7 @@ bool GeomPrimvar::get_value(T *dest, std::string *err) const {
     return false;
   }
 
-  if (_attr.is_value()) {
+  if (_attr.has_value()) {
     if (!IsSupportedGeomPrimvarType(_attr.type_id())) {
       if (err) {
         (*err) += fmt::format("Unsupported type for GeomPrimvar. type = `{}`",
@@ -461,6 +454,22 @@ bool GeomPrimvar::get_value(T *dest, std::string *err) const {
         (*err) += fmt::format("Attribute value type mismatch. Requested type `{}` but Attribute has type `{}`", value::TypeTraits<T>::type_id(), _attr.type_name());
       }
       return false;
+    }
+  }
+
+  if (_attr.has_timesamples()) {
+    // Return the first sample.
+    const auto &ts = _attr.get_var().ts_raw();
+    if (ts.empty()) {
+      if (err) {
+        (*err) += "No TimeSample value in Attribute..";
+      }
+      return false;
+    }
+    
+    if (auto pv =ts.get_samples().at(0).value.as<T>()) {
+      (*dest) = (*pv);
+      return true;
     }
   }
 
@@ -494,7 +503,27 @@ bool GeomPrimvar::get_value(double timecode, T *dest, value::TimeSampleInterpola
     return false;
   }
 
-  if (_attr.is_timesamples()) {
+#if 0
+  if (value::TimeCode(timecode).is_default()) {
+
+    if (_attr.has_value()) {
+      if (auto pv = _attr.get_value<T>()) {
+
+        // copy
+        (*dest) = pv.value();
+        return true;
+
+      } else {
+        if (err) {
+          (*err) += fmt::format("Attribute value type mismatch. Requested type `{}` but Attribute has type `{}`", value::TypeTraits<T>::type_id(), _attr.type_name());
+        }
+        return false;
+      }
+    }
+
+  }
+
+  if (_attr.has_timesamples()) {
     T value;
 
     if (!_attr.get_value(timecode, &value, interp)) {
@@ -507,24 +536,24 @@ bool GeomPrimvar::get_value(double timecode, T *dest, value::TimeSampleInterpola
     // copy
     (*dest) = value;
     return true;
-
-  } else if (_attr.is_value()) {
-
-    if (auto pv = _attr.get_value<T>()) {
-
-      // copy
-      (*dest) = pv.value();
-      return true;
-
-    } else {
-      if (err) {
-        (*err) += fmt::format("Attribute value type mismatch. Requested type `{}` but Attribute has type `{}`", value::TypeTraits<T>::type_id(), _attr.type_name());
-      }
-      return false;
-    }
   }
 
   return false;
+#else
+  T value;
+
+  if (!_attr.get_value(timecode, &value, interp)) {
+    if (err) {
+      (*err) += fmt::format("Get Attribute value at time {} failed. Maybe type mismatch?. Requested type `{}` but Attribute has type `{}`", timecode, value::TypeTraits<T>::type_id(), _attr.type_name());
+    }
+    return false;
+  }
+
+  // copy
+  (*dest) = value;
+  return true;
+#endif
+
 }
 
 // instanciation
@@ -835,7 +864,7 @@ bool GeomSubset::ValidateSubsets(
       valid = false;
     }
 
-    if (indices.is_timesamples()) {
+    if (indices.is_timesamples() || !indices.has_value()) {
       ss << fmt::format("ValidateSubsets: TimeSampled GeomSubset.indices is not yet supported.\n");
       valid = false;
     }

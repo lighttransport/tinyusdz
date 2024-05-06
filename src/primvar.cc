@@ -26,12 +26,14 @@ bool PrimVar::get_interpolated_value(const double t, const value::TimeSampleInte
     return false;
   }
 
-  if (is_scalar()) {
-    (*dst) = _value;
-    return true;
+  if (value::TimeCode(t).is_default()) {
+    if (has_default()) {
+      (*dst) = _value;
+      return true;
+    }
   }
 
-  if (is_timesamples()) {
+  if (has_timesamples()) {
     const std::vector<value::TimeSamples::Sample> &samples = _ts.get_samples();
 
     if (samples.empty()) {
