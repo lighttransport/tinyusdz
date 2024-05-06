@@ -247,7 +247,7 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
     return false;
   }
 
-  if (_attr.is_timesamples() || _attr.is_value()) {
+  if (_attr.has_timesamples() || _attr.has_value()) {
 
     if (!IsSupportedGeomPrimvarType(_attr.type_id())) {
       if (err) {

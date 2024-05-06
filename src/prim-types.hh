@@ -2384,6 +2384,27 @@ class Attribute {
     _var = std::move(v);
   }
 
+  bool is_value() const {
+    if (is_connection()) {
+      return false;
+    }
+
+    if (is_timesamples()) {
+      return false;
+    }
+
+    if (is_blocked()) {
+      return false;
+    }
+
+    return true;
+  }
+
+  // check if Attribute has default value
+  bool has_value() const {
+    return _var.has_value(); 
+  }
+
   /// @brief Get the value of Attribute of specified type.
   /// @tparam T value type
   /// @return The value if the underlying PrimVar is type T. Return
@@ -2421,17 +2442,21 @@ class Attribute {
       return false;
     }
 
-    if (is_timesamples()) {
-      return _var.get_interpolated_value(t, tinterp, dst);
-    } else {
-      nonstd::optional<T> v = _var.get_value<T>();
-      if (v) {
-        (*dst) = v.value();
-        return true;
+    if (value::TimeCode(t).is_default()) {
+      if (has_value()) {
+        nonstd::optional<T> v = _var.get_value<T>();
+        if (v) {
+          (*dst) = v.value();
+          return true;
+        }
       }
-
-      return false;
     }
+
+    if (has_timesamples()) {
+      return _var.get_interpolated_value(t, tinterp, dst);
+    }
+
+    return false;
   }
 
   const AttrMeta &metas() const { return _metas; }
@@ -2480,26 +2505,6 @@ class Attribute {
     return _paths.size();
   }
 
-  bool is_value() const {
-    if (is_connection()) {
-      return false;
-    }
-
-    if (is_timesamples()) {
-      return false;
-    }
-
-    if (is_blocked()) {
-      return false;
-    }
-
-    return true;
-  }
-
-  // check if Attribute has default value
-  bool has_value() const {
-    return _var.has_value(); 
-  }
 
   bool is_timesamples() const {
     if (!is_value()) {
