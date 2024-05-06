@@ -101,6 +101,8 @@ static nonstd::optional<Animatable<T>> ConvertToAnimatable(const primvar::PrimVa
 
   if (!var.is_valid()) {
     DCOUT("is_valid failed");
+    DCOUT("has_value " << var.has_value());
+    DCOUT("has_timesamples " << var.has_timesamples());
     return nonstd::nullopt;
   }
 
@@ -438,6 +440,11 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
         }
       }
 
+      // connections only?
+      if (has_connections && (!has_timesamples && !has_default)) {
+        target.set_value_empty();
+      }
+
       if (has_connections || has_timesamples || has_default) {
 
         target.metas() = attr.metas();
@@ -575,7 +582,6 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
         return ret;
       }
     } else {
-      ret.code = ParseResult::ResultCode::Success;
       DCOUT("tyname = " << value::TypeTraits<T>::type_name() << ", attr.type = " << attr_type_name);
       ret.code = ParseResult::ResultCode::TypeMismatch;
       std::stringstream ss;
@@ -1064,7 +1070,7 @@ static ParseResult ParseShaderOutputTerminalAttribute(std::set<std::string> &tab
       return ret;
     }
 
-    if (prop.is_connection()) {
+    if (prop.is_attribute_connection()) {
       ret.code = ParseResult::ResultCode::ConnectionNotAllowed;
       ret.err = "Connection is not allowed for output terminal attribute.";
       return ret;
@@ -1287,6 +1293,9 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
       return ret;
     }
 
+    DCOUT("is_attribute = " << prop.is_attribute());
+    DCOUT("is_attribute_connection = " << prop.is_attribute_connection());
+
     // allow empty value
     if (prop.is_empty()) {
       target.set_empty();
@@ -1294,7 +1303,7 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
       table.insert(prop_name);
       ret.code = ParseResult::ResultCode::Success;
       return ret;
-    } else if (prop.is_connection()) {
+    } else if (prop.is_attribute_connection()) {
       const Attribute &attr = prop.get_attribute();
       if (attr.is_connection()) {
         target.set(attr.connections());
@@ -1309,10 +1318,8 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
         return ret;
       }
     } else {
-      std::stringstream ss;
-      ss  << "Property must be Attribute connection.";
       ret.code = ParseResult::ResultCode::InternalError;
-      ret.err = ss.str();
+      ret.err = fmt::format("Property `{}` must be Attribute connection.", prop_name);
       return ret;
     }
   }
@@ -1987,7 +1994,7 @@ bool ReconstructXformOpsFromProperties(
         if (it == properties.end()) {
           PUSH_ERROR_AND_RETURN("Property `" + tok + "` not found.");
         }
-        if (it->second.is_connection()) {
+        if (it->second.is_attribute_connection()) {
           PUSH_ERROR_AND_RETURN(
               "Connection(.connect) for xformOp attribute is not yet supported: "
               "`" +
@@ -2005,7 +2012,19 @@ bool ReconstructXformOpsFromProperties(
           }
 
           if (attr.get_var().has_default()) {
-            if (auto pvd = attr.get_value<value::matrix4d>()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::matrix4d>::type_id()) {
+                value::matrix4d dummy{value::matrix4d::identity()};
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:transform` must be type `matrix4d`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::matrix4d>()) {
               op.set_value(pvd.value());
             } else {
               PUSH_ERROR_AND_RETURN(
@@ -2023,7 +2042,22 @@ bool ReconstructXformOpsFromProperties(
           }
 
           if (attr.get_var().has_default()) {
-            if (auto pvd = attr.get_value<value::double3>()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+                value::double3 dummy{0.0, 0.0, 0.0};
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+                value::float3 dummy{0.0f, 0.0f, 0.0f};
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:translate` must be type `double3` or `float3`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::double3>()) {
               op.set_value(pvd.value());
             } else if (auto pvf = attr.get_value<value::float3>()) {
               op.set_value(pvf.value());
@@ -2043,7 +2077,22 @@ bool ReconstructXformOpsFromProperties(
           }
 
           if (attr.get_var().has_default()) {
-            if (auto pvd = attr.get_value<value::double3>()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+                value::double3 dummy{0.0, 0.0, 0.0};
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+                value::float3 dummy{0.0f, 0.0f, 0.0f};
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:scale` must be type `double3` or `float3`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::double3>()) {
               op.set_value(pvd.value());
             } else if (auto pvf = attr.get_value<value::float3>()) {
               op.set_value(pvf.value());
@@ -2063,7 +2112,22 @@ bool ReconstructXformOpsFromProperties(
           }
 
           if (attr.get_var().has_default()) {
-            if (auto pvd = attr.get_value<double>()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<double>::type_id()) {
+                double dummy(0.0);
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<float>::type_id()) {
+                float dummy(0.0f);
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:rotateX` must be type `double` or `float`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<double>()) {
               op.set_value(pvd.value());
             } else if (auto pvf = attr.get_value<float>()) {
               op.set_value(pvf.value());
@@ -2083,7 +2147,22 @@ bool ReconstructXformOpsFromProperties(
           }
 
           if (attr.get_var().has_default()) {
-            if (auto pvd = attr.get_value<double>()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<double>::type_id()) {
+                double dummy(0.0);
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<float>::type_id()) {
+                float dummy(0.0f);
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:rotateY` must be type `double` or `float`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<double>()) {
               op.set_value(pvd.value());
             } else if (auto pvf = attr.get_value<float>()) {
               op.set_value(pvf.value());
@@ -2103,7 +2182,22 @@ bool ReconstructXformOpsFromProperties(
           }
 
           if (attr.get_var().has_default()) {
-            if (auto pvd = attr.get_value<double>()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<double>::type_id()) {
+                double dummy(0.0);
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<float>::type_id()) {
+                float dummy(0.0f);
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:rotateZ` must be type `double` or `float`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<double>()) {
               op.set_value(pvd.value());
             } else if (auto pvf = attr.get_value<float>()) {
               op.set_value(pvf.value());
@@ -2123,7 +2217,22 @@ bool ReconstructXformOpsFromProperties(
           }
 
           if (attr.get_var().has_default()) {
-            if (auto pvd = attr.get_value<value::double3>()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+                value::double3 dummy{0.0, 0.0, 0.0};
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+                value::float3 dummy{0.0f, 0.0f, 0.0f};
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:rotateXYZ` must be type `double3` or `float3`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::double3>()) {
               op.set_value(pvd.value());
             } else if (auto pvf = attr.get_value<value::float3>()) {
               op.set_value(pvf.value());
@@ -2143,7 +2252,22 @@ bool ReconstructXformOpsFromProperties(
           }
 
           if (attr.get_var().has_default()) {
-            if (auto pvd = attr.get_value<value::double3>()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+                value::double3 dummy{0.0, 0.0, 0.0};
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+                value::float3 dummy{0.0f, 0.0f, 0.0f};
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:rotateXZY` must be type `double3` or `float3`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::double3>()) {
               op.set_value(pvd.value());
             } else if (auto pvf = attr.get_value<value::float3>()) {
               op.set_value(pvf.value());
@@ -2163,7 +2287,22 @@ bool ReconstructXformOpsFromProperties(
           }
 
           if (attr.get_var().has_default()) {
-            if (auto pvd = attr.get_value<value::double3>()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+                value::double3 dummy{0.0, 0.0, 0.0};
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+                value::float3 dummy{0.0f, 0.0f, 0.0f};
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:rotateYXZ` must be type `double3` or `float3`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::double3>()) {
               op.set_value(pvd.value());
             } else if (auto pvf = attr.get_value<value::float3>()) {
               op.set_value(pvf.value());
@@ -2183,7 +2322,22 @@ bool ReconstructXformOpsFromProperties(
           }
 
           if (attr.get_var().has_default()) {
-            if (auto pvd = attr.get_value<value::double3>()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+                value::double3 dummy{0.0, 0.0, 0.0};
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+                value::float3 dummy{0.0f, 0.0f, 0.0f};
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:rotateYZX` must be type `double3` or `float3`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::double3>()) {
               op.set_value(pvd.value());
             } else if (auto pvf = attr.get_value<value::float3>()) {
               op.set_value(pvf.value());
@@ -2203,7 +2357,22 @@ bool ReconstructXformOpsFromProperties(
           }
 
           if (attr.get_var().has_default()) {
-            if (auto pvd = attr.get_value<value::double3>()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+                value::double3 dummy{0.0, 0.0, 0.0};
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+                value::float3 dummy{0.0f, 0.0f, 0.0f};
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:rotateZXY` must be type `double3` or `float3`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::double3>()) {
               op.set_value(pvd.value());
             } else if (auto pvf = attr.get_value<value::float3>()) {
               op.set_value(pvf.value());
@@ -2223,7 +2392,22 @@ bool ReconstructXformOpsFromProperties(
           }
 
           if (attr.get_var().has_default()) {
-            if (auto pvd = attr.get_value<value::double3>()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+                value::double3 dummy{0.0, 0.0, 0.0};
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+                value::float3 dummy{0.0f, 0.0f, 0.0f};
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:rotateZYX` must be type `double3` or `float3`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::double3>()) {
               op.set_value(pvd.value());
             } else if (auto pvf = attr.get_value<value::float3>()) {
               op.set_value(pvf.value());
@@ -2243,7 +2427,26 @@ bool ReconstructXformOpsFromProperties(
           }
 
           if (attr.get_var().has_default()) {
-            if (auto pvd = attr.get_value<value::quatf>()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::quatf>::type_id()) {
+                value::quatf q;
+                q.real = 1.0f;
+                q.imag = {0.0f, 0.0f, 0.0f};
+                op.set_value(q);
+              } else if (attr.type_id() == value::TypeTraits<value::quatd>::type_id()) {
+                value::quatd q;
+                q.real = 1.0;
+                q.imag = {0.0, 0.0, 0.0};
+                op.set_value(q);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:orient` must be type `quatf` or `quatd`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::quatf>()) {
               op.set_value(pvd.value());
             } else if (auto pvf = attr.get_value<value::quatd>()) {
               op.set_value(pvf.value());
