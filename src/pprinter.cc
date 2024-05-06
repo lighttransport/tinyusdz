@@ -736,52 +736,57 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr,
 
   if (attr.authored()) {
 
-    if (attr.is_blocked()) {
+    bool is_value_empty = attr.is_value_empty();
+    bool has_default{false};
+    bool has_timesamples{false};
+    const auto &pv = attr.get_value();
+
+    has_default = (pv && pv.value().has_default());
+    has_timesamples = (pv && pv.value().has_timesamples());
+      
+    //
+    // Emit default value(includes ValueBlock and empty definition) and metada
+    //
+    // float a METADATA
+    // float a = None METADATA
+    // float a = 1.5 METADATA
+    // 
+    // Also emit this line if the attribute contains metadata
+    if (attr.metas().authored() || attr.is_blocked() || has_default || is_value_empty) {
+
       ss << pprint::Indent(indent);
       ss << value::TypeTraits<T>::type_name() << " " << name;
-      ss << " = None";
+
+      if (attr.is_blocked()) {
+        ss << " = None";
+      } else if (has_default) {
+        T a;
+        if (pv.value().get_scalar(&a)) {
+          ss << " = " << a;
+        } else {
+          ss << " = [InternalError]";
+        }
+      } else { // is_value_empty
+      }
+
       if (attr.metas().authored()) {
         ss << "(\n"
            << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
            << ")";
       }
       ss << "\n";
-    } else if (auto pv = attr.get_value()) {
-
-        ss << pprint::Indent(indent);
-        ss << value::TypeTraits<T>::type_name() << " " << name;
-
-        if (pv.value().has_value()) {
-          T a;
-          if (pv.value().get_scalar(&a)) {
-            ss << " = " << a;
-          } else {
-            ss << " = [InternalError]";
-          }
-        }
-        if (attr.metas().authored()) {
-          ss << "(\n"
-             << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
-             << ")";
-        }
-        ss << "\n";
-        }
-      }
-    } else {
-      if (attr.has_connections() || attr.
     }
 
-
-    if (auto pv = attr.get_value()) {
-      if (pv.value().has_timesamples()) {
-        ss << pprint::Indent(indent);
-        ss << value::TypeTraits<T>::type_name() << " " << name;
-        ss << ".timeSamples = "
-           << print_typed_timesamples(pv.value().get_timesamples(), indent);
-        ss << "\n";
-      }
+    // timesamples
+    if (has_timesamples) {
+      ss << pprint::Indent(indent);
+      ss << value::TypeTraits<T>::type_name() << " " << name;
+      ss << ".timeSamples = "
+         << print_typed_timesamples(pv.value().get_timesamples(), indent);
+      ss << "\n";
     }
 
+    // connection
     if (attr.has_connections()) {
 
       ss << pprint::Indent(indent);
