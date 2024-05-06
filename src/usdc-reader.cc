@@ -886,6 +886,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   Relationship rel;
 
   // for attribute
+  bool isValueBlock{false};
   bool hasDefault{false};
   bool hasTimeSamples{false};
   bool hasConnectionPaths{false};
@@ -912,6 +913,10 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
                                   "`typeName` field is not `token` type.");
       }
     }
+  }
+
+  if (typeName) { // this should be always true though.
+    attr.set_type_name(typeName.value().str());
   }
 
   for (auto &fv : fvs) {
@@ -1282,14 +1287,19 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
     var.set_value(defaultValue);
 
     if (defaultValue.type_id() == value::TypeTraits<value::ValueBlock>::type_id()) {
-      if (typeName) {
-        // Use `typeName`
-        attr.set_type_name(typeName.value().str());
-      }
+      isValueBlock = true;
     }
   }
 
   attr.set_var(std::move(var));
+
+  if (isValueBlock) {
+    // attr's type is replaced with ValueBlock type  by `set_var`, so overwrite type with typeName
+    if (typeName) {
+      // Use `typeName`
+      attr.set_type_name(typeName.value().str());
+    }
+  }
 
   // Attribute metas
   {

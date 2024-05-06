@@ -426,7 +426,7 @@ bool SerializeAttribute(const std::string &attr_name,
     return true;
   } else {
     const Animatable<T> &animatable_value = attr.get_value();
-    if (animatable_value.is_scalar()) {
+    if (animatable_value.has_default()) {
       T value;
       if (animatable_value.get_scalar(&value)) {
         value_ss << "\"" << to_xml_string(value) << "\"";
@@ -434,17 +434,9 @@ bool SerializeAttribute(const std::string &attr_name,
         PUSH_ERROR_AND_RETURN(fmt::format(
             "Failed to get the value at default time of `{}`", attr_name));
       }
-    } else if (animatable_value.is_timesamples()) {
-      // no time-varying attribute in MaterialX. Use the value at default
-      // timecode.
-      T value;
-      if (animatable_value.get(value::TimeCode::Default(), &value)) {
-        value_ss << "\"" << to_xml_string(value) << "\"";
-      } else {
-        PUSH_ERROR_AND_RETURN(fmt::format(
-            "Failed to get the value at default time of `{}`", attr_name));
-      }
-    } else {
+    } else { 
+      // no time-varying(timesamples) attribute in MaterialX.
+      
       PUSH_ERROR_AND_RETURN(
           fmt::format("Failed to get the value of `{}`", attr_name));
     }

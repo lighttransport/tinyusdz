@@ -1358,7 +1358,7 @@ struct TypedTimeSamples {
 };
 
 //
-// Scalar and/or TimeSamples
+// Scalar(default) and/or TimeSamples
 //
 template <typename T>
 struct Animatable {
@@ -1397,12 +1397,17 @@ struct Animatable {
 
     if (is_blocked()) {
       return false;
-    } else if (is_scalar()) {
-      (*v) = _value;
-      return true;
-    } else {  // timesamples
-      return _ts.get(v, t, tinerp);
     }
+
+    if (value::TimeCode(t).is_default()) {
+      if (has_value()) {
+        (*v) = _value;
+        return true;
+      }
+    }
+      
+    // timesamples
+    return _ts.get(v, t, tinerp);
   }
 
   ///
@@ -1424,6 +1429,10 @@ struct Animatable {
     return false;
   }
 
+  bool get_default(T *v) const {
+    return get_scalar(v);
+  }
+
   // TimeSamples
   // void set(double t, const T &v);
 
@@ -1439,12 +1448,24 @@ struct Animatable {
     _has_value = true;
   }
 
+  void set_default(const T &v) {
+    set(v);
+  }
+
   void set(const TypedTimeSamples<T> &ts) {
     _ts = ts;
   }
 
   void set(TypedTimeSamples<T> &&ts) {
     _ts = std::move(ts);
+  }
+
+  void set_timesamples(const TypedTimeSamples<T> &ts) {
+    return set(ts);
+  }
+
+  void set_timesamples(TypedTimeSamples<T> &&ts) {
+    return set(ts);
   }
 
   void clear_scalar() {
@@ -1457,6 +1478,10 @@ struct Animatable {
 
   bool has_value() const {
     return _has_value;
+  }
+
+  bool has_default() const {
+    return has_value();
   }
 
   bool has_timesamples() const {
@@ -2506,6 +2531,10 @@ class Attribute {
   }
 
 
+  bool has_default() const {
+    return has_value();
+  }
+
   bool is_timesamples() const {
     if (!is_value()) {
       return false;
@@ -2800,6 +2829,11 @@ struct XformOp {
   }
 
   template <class T>
+  void set_default(const T &v) {
+    _var.set_value(v);
+  }
+
+  template <class T>
   void set_timesample(const float t, const T &v) {
     _var.set_timesample(t, v);
   }
@@ -2809,6 +2843,10 @@ struct XformOp {
   void set_timesamples(value::TimeSamples &&v) { _var.set_timesamples(v); }
 
   bool is_timesamples() const { return _var.is_timesamples(); }
+  bool has_timesamples() const { return _var.has_timesamples(); }
+
+  bool is_default() const { return _var.is_scalar(); }
+  bool has_default() const { return _var.has_default(); }
 
   nonstd::optional<value::TimeSamples> get_timesamples() const {
     if (is_timesamples()) {
@@ -2822,6 +2860,10 @@ struct XformOp {
       return nonstd::nullopt;
     }
     return _var.value_raw();
+  }
+
+  nonstd::optional<value::Value> get_default() const {
+    return get_scalar();
   }
 
   // Type-safe way to get concrete value.

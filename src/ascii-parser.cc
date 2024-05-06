@@ -4103,6 +4103,11 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
 
       primvar::PrimVar var;
       var.set_timesamples(ts);
+      if (array_qual) {
+        pattr->set_type_name(type_name + "[]");
+      } else {
+        pattr->set_type_name(type_name);
+      }
       pattr->set_var(std::move(var));
       pattr->variability() = variability;
 
