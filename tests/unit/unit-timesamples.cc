@@ -148,4 +148,44 @@ void timesamples_test(void) {
     }      
   }
 
+  {
+    primvar::PrimVar pbar;
+    value::TimeSamples ts;
+    std::vector<value::float2> ts0 = {{0.0f, 5.0f}};
+    std::vector<value::float2> ts1 = {{10.0f, 15.0f}};
+
+    ts.add_sample(0, ts0);
+    ts.add_sample(1, ts1);
+    pbar.set_timesamples(ts);
+    std::vector<value::float2> default_value = {{100.0f, 200.0f}};
+    pbar.set_value(default_value); // default value
+
+    Attribute attr;
+    attr.set_var(pbar);
+
+    {
+      std::vector<value::float2> v;
+      TEST_CHECK(attr.get(value::TimeCode::Default(), &v, value::TimeSampleInterpolationType::Held));
+      TEST_CHECK(v.size() == 1);
+
+      TEST_CHECK(math::is_close(v[0][0], 100.0f));
+      TEST_CHECK(math::is_close(v[0][1], 200.0f));
+    }      
+
+    // Linear interpolation
+    {
+      std::vector<value::float2> vs;
+      TEST_CHECK(attr.get(0.0, &vs, value::TimeSampleInterpolationType::Linear));
+      TEST_CHECK(vs.size() == 1);
+      TEST_CHECK(math::is_close(vs[0][0], 0.0f));
+      TEST_CHECK(math::is_close(vs[0][1], 5.0f));
+
+      TEST_CHECK(attr.get(0.5, &vs, value::TimeSampleInterpolationType::Linear));
+      TEST_CHECK(vs.size() == 1);
+      TEST_CHECK(math::is_close(vs[0][0], 5.0f));
+      TEST_CHECK(math::is_close(vs[0][1], 10.0f));
+
+    }      
+  }
+
 }
