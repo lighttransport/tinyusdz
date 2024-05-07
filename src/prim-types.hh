@@ -1168,16 +1168,24 @@ struct TypedTimeSamples {
         return true;
       }
 
-      auto it = std::lower_bound(
+      // Held = nerarest preceding value for a gien time.
+      // example:
+      // input = 0.0: 100, 1.0: 200
+      //
+      // t -1.0 => 100(time 0.0)
+      // t 0.0 => 100(time 0.0)
+      // t 0.1 => 100(time 0.0)
+      // t 0.9 => 100(time 0.0)
+      // t 1.0 => 200(time 1.0)
+      //
+      // This can be achieved by using upper_bound, and subtract 1 from the found position.
+      auto it = std::upper_bound(
         _samples.begin(), _samples.end(), t,
-        [](const Sample &a, double tval) { return a.t < tval; });
+        [](double tval, const Sample &a) { return tval < a.t; });
 
-      if (it == _samples.end()) {
-        // ???
-        return false;
-      }
+      const auto it_minus_1 = (it == _samples.begin()) ? _samples.begin() : (it - 1);
 
-      (*dst) = it->value;
+      (*dst) = it_minus_1->value;
       return true;
     }
 

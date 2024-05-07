@@ -2412,16 +2412,13 @@ struct TimeSamples {
           return false;
         }
 
-        auto it = std::lower_bound(
+        auto it = std::upper_bound(
           _samples.begin(), _samples.end(), t,
-          [](const Sample &a, double tval) { return a.t < tval; });
+          [](double tval, const Sample &a) { return tval < a.t; });
 
-        if (it == _samples.end()) {
-          // ???
-          return false;
-        }
+        const auto it_minus_1 = (it == _samples.begin()) ? _samples.begin() : (it - 1);
 
-        const value::Value &v = it->value;
+        const value::Value &v = it_minus_1->value;
 
         if (const T *pv = v.as<T>()) {
           (*dst) = *pv;
@@ -2468,11 +2465,11 @@ struct TimeSamples {
         return true;
       }
 
-      auto it = std::lower_bound(
-          _samples.begin(), _samples.end(), t,
-          [](const Sample &a, double tval) { return a.t < tval; });
-
       if (interp == TimeSampleInterpolationType::Linear) {
+        auto it = std::lower_bound(
+            _samples.begin(), _samples.end(), t,
+            [](const Sample &a, double tval) { return a.t < tval; });
+
 
         // MS STL does not allow seek vector iterator before begin
         // Issue #110
@@ -2514,17 +2511,20 @@ struct TimeSamples {
         }
         return false;
       } else {
-        if (it == _samples.end()) {
-          // ???
-          return false;
-        }
+        // Held
+        auto it = std::upper_bound(
+          _samples.begin(), _samples.end(), t,
+          [](double tval, const Sample &a) { return tval < a.t; });
 
-        const value::Value &v = it->value;
+        const auto it_minus_1 = (it == _samples.begin()) ? _samples.begin() : (it - 1);
+
+        const value::Value &v = it_minus_1->value;
+
         if (const T *pv = v.as<T>()) {
           (*dst) = *pv;
           return true;
         }
-
+        
         return false;
       }
     }
