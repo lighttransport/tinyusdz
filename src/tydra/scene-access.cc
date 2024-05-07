@@ -336,7 +336,7 @@ bool VisitPrimsRec(const tinyusdz::Path &root_abs_path,
   return true;
 }
 
-#if 0
+#if 0 // TODO: Remove
 // Scalar-valued attribute.
 // TypedAttribute* => Attribute defined in USD schema, so not a custom attr.
 template<typename T>
@@ -380,8 +380,9 @@ void ToProperty(
 // Scalar-valued attribute.
 // TypedAttribute* => Attribute defined in USD schema, so not a custom attr.
 template <typename T>
-bool ToProperty(const TypedAttribute<T> &input, Property &output,
-                std::string *err) {
+bool ToProperty(const TypedAttribute<T> &input, Property &output, std::string *err) {
+
+#if 0 // old-code: TODO: Remove
   if (input.is_blocked()) {
     Attribute attr;
     attr.set_blocked(input.is_blocked());
@@ -431,6 +432,42 @@ bool ToProperty(const TypedAttribute<T> &input, Property &output,
       return false;
     }
   }
+#else
+
+  Attribute attr;
+  attr.variability() = Variability::Uniform;
+  attr.set_type_name(value::TypeTraits<T>::type_name());
+
+  if (input.is_blocked()) {
+    attr.set_blocked(input.is_blocked());
+  }
+
+  if (input.has_connections()) {
+    attr.set_connections(input.get_connections());
+  }
+
+  if (input.has_value()) {
+    // Includes !authored()
+    if (auto pv = input.get_value()) {
+      value::Value val(pv.value());
+      primvar::PrimVar pvar;
+      pvar.set_value(val);
+
+      attr.set_var(std::move(pvar));
+    } else {
+      if (err) {
+        (*err) += fmt::format("[InternalError] Invalid TypedAttribute<{}> value.", value::TypeTraits<T>::type_name());
+      }
+
+      return false;
+    }
+  }
+
+  attr.metas() = input.metas();
+
+  output = Property(std::move(attr), /* custom */false);
+
+#endif
 
   return true;
 }
@@ -438,115 +475,61 @@ bool ToProperty(const TypedAttribute<T> &input, Property &output,
 // Scalar or TimeSample-valued attribute.
 // TypedAttribute* => Attribute defined in USD schema, so not a custom attr.
 //
-// TODO: Support timeSampled attribute.
 template <typename T>
-bool ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output,
-                std::string *err) {
+bool ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output, std::string *err) {
+
+  (void)err;
+
+  Attribute attr;
+
+  attr.variability() = Variability::Varying;
+  attr.set_type_name(value::TypeTraits<T>::type_name());
+
   if (input.is_blocked()) {
-    DCOUT("Value is blocked");
-    Attribute attr;
     attr.set_blocked(input.is_blocked());
-    attr.variability() = Variability::Uniform;
-    attr.set_type_name(value::TypeTraits<T>::type_name());
-    output = Property(std::move(attr), /*custom*/ false);
-    return true;
-  } else if (input.is_value_empty()) {
-    DCOUT("Value is empty");
-    // type info only
-    output = Property::MakeEmptyAttrib(value::TypeTraits<T>::type_name(),
-                                       /* custom */ false);
-    return true;
-  } else if (input.is_connection()) {
-    DCOUT("IsConnection");
+  }
 
-    // Use Relation for Connection(as typed relationshipTarget)
-    // Single connection targetPath only.
-    std::vector<Path> pv = input.get_connections();
-    if (pv.empty()) {
-      DCOUT("??? Empty connectionTarget.");
+  if (input.has_connections()) {
+    
+    DCOUT("has_connections");
 
-      if (err) {
-        (*err) += fmt::format(
-            "[InternalError] Connection attribute but empty targetPaths.");
-      }
-      return false;
-    }
-    if (pv.size() == 1) {
-      DCOUT("targetPath = " << pv[0]);
-      output = Property(pv[0], /* type */ value::TypeTraits<T>::type_name(),
-                        /* custom */ false);
-    } else if (pv.size() > 1) {
-      DCOUT("targetPath = " << pv);
-      output = Property(pv, /* type */ value::TypeTraits<T>::type_name(),
-                        /* custom */ false);
-    } else {
-      DCOUT("??? GetConnection failue.");
-      if (err) {
-        (*err) += fmt::format(
-            "[InternalError] get_connection() to "
-            "TypedAttribute<Animatable<{}>> failed.",
-            value::TypeTraits<T>::type_name());
-      }
-      return false;
-    }
+    attr.set_connections(input.get_connections());
+  }
 
-    return true;
+  {
+    primvar::PrimVar pvar;
 
-  } else {
     // Includes !authored()
-    // FIXME: Currently scalar only.
     nonstd::optional<Animatable<T>> aval = input.get_value();
     if (aval) {
-      DCOUT("Value is authored");
-      if (aval.value().is_scalar()) {
-        DCOUT("Value is scalar");
-        T a;
-        if (aval.value().get_scalar(&a)) {
-          DCOUT("Value get ok");
-          // value::Value val(a);
-          Attribute attr;
-          // attr.set_type_name(value::TypeTraits<T>::type_name());
-          primvar::PrimVar pvar;
-          pvar.set_value(a);
-          attr.set_var(std::move(pvar));
-          // attr.set_value(val);
-          attr.variability() = Variability::Varying;
-          output = Property(attr, /* custom */ false);
-          return true;
-        } else {
-          DCOUT("Value get failed.");
-        }
-      } else if (aval.value().is_blocked()) {
-        DCOUT("Value is blocked");
-        Attribute attr;
-        attr.set_type_name(value::TypeTraits<T>::type_name());
+
+      if (aval.value().is_blocked()) {
         attr.set_blocked(true);
-        attr.variability() = Variability::Varying;
-        output = Property(std::move(attr), /*custom*/ false);
-        return true;
-      } else if (aval.value().is_timesamples()) {
-        DCOUT("TODO: Convert typed TimeSamples to value::TimeSamples");
-        if (err) {
-          (*err) += fmt::format(
-              "[TODO] TimeSamples value of TypedAttribute<Animatable<{}>> is "
-              "not yet implemented.",
-              value::TypeTraits<T>::type_name());
-        }
-        return false;
       }
-    } else {
-      DCOUT("Value is not authored");
+
+      if (aval.value().has_value()) {
+        T a;
+        if (aval.value().get_default(&a)) {
+          value::Value val(a);
+          pvar.set_value(val);
+        }
+      }
+
+      if (aval.value().has_timesamples()) {
+        value::TimeSamples ts = ToTypelessTimeSamples(aval.value().get_timesamples());
+        pvar.set_timesamples(ts);
+      }
+
+      if (aval.value().has_value() || aval.value().has_timesamples()) {
+        attr.set_var(std::move(pvar));
+      }
+
     }
   }
 
-  // fallback to Property with invalid value
-  DCOUT("Fallback to invalid value");
-  Property p;
-  p.set_property_type(Property::Type::EmptyAttrib);
-  p.attribute().set_type_name(value::TypeTraits<std::nullptr_t>::type_name());
-  p.set_custom(false);
+  attr.metas() = input.metas();
 
-  output = p;
+  output = Property(std::move(attr), /*custom*/ false);
 
   return true;
 }
@@ -558,6 +541,7 @@ bool ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output,
 template <typename T>
 bool ToProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
                 Property &output, std::string *err) {
+#if 0
   if (input.is_blocked()) {
     Attribute attr;
     attr.set_blocked(input.is_blocked());
@@ -633,6 +617,54 @@ bool ToProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
     attr.variability() = Variability::Varying;
     output = Property(attr, /* custom */ false);
   }
+#else
+
+  Attribute attr;
+  attr.variability() = Variability::Varying;
+  attr.set_type_name(value::TypeTraits<T>::type_name());
+
+  if (input.is_blocked()) {
+    attr.set_blocked(input.is_blocked());
+  }
+
+  if (input.has_connections()) {
+    attr.set_connections(input.get_connections());
+  }
+
+  {
+    // Includes !authored()
+    // FIXME: Currently scalar only.
+    Animatable<T> v = input.get_value();
+
+    primvar::PrimVar pvar;
+
+    if (v.has_timesamples()) {
+      value::TimeSamples ts = ToTypelessTimeSamples(v.get_timesamples());
+      pvar.set_timesamples(ts);
+    }
+
+    if (v.has_value()) {
+      T a;
+      if (v.get_scalar(&a)) {
+        value::Value val(a);
+        pvar.set_value(val);
+      } else {
+        DCOUT("??? Invalid Animatable value.");
+        if (err) {
+          (*err) += "[InternalError] Invalid Animatable value.";
+        }
+        return false;
+      }
+    }
+
+    attr.set_var(std::move(pvar));
+  }
+
+  attr.metas() = input.metas();
+
+  output = Property(std::move(attr), /* custom */ false);
+
+#endif
 
   return true;
 }
@@ -641,6 +673,7 @@ bool ToProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
 template <typename T>
 bool ToTokenProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
                      Property &output, std::string *err) {
+#if 0
   if (input.is_blocked()) {
     Attribute attr;
     attr.set_blocked(input.is_blocked());
@@ -712,6 +745,57 @@ bool ToTokenProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
     attr.variability() = Variability::Varying;
     output = Property(attr, /* custom */ false);
   }
+#else
+
+  Attribute attr;
+  attr.variability() = Variability::Varying;
+  attr.set_type_name(value::kToken);
+
+  if (input.is_blocked()) {
+    attr.set_blocked(input.is_blocked());
+  }
+
+  if (input.has_connections()) {
+    attr.set_connections(input.get_connections());
+  }
+
+  {
+    // Includes !authored()
+    const Animatable<T> &v = input.get_value();
+
+    primvar::PrimVar pvar;
+
+    if (v.has_timesamples()) {
+      value::TimeSamples ts =
+          EnumTimeSamplesToTypelessTimeSamples(v.get_timesamples());
+      pvar.set_timesamples(ts);
+    }
+
+    if (v.has_default()) {
+      T a;
+      if (v.get_default(&a)) {
+        // to token type
+        value::token tok(to_string(a));
+        value::Value val(tok);
+        pvar.set_value(val);
+      } else {
+        if (err) {
+          (*err) += "[InternalError] Invalid Animatable value.";
+        }
+        return false;
+      }
+    }
+
+    if (v.has_timesamples() || v.has_default()) {
+      attr.set_var(std::move(pvar));
+    }
+
+  }
+
+  attr.metas() = input.metas();
+
+  output = Property(attr, /* custom */ false);
+#endif
 
   return true;
 }
@@ -720,6 +804,7 @@ bool ToTokenProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
 template <typename T>
 bool ToTokenProperty(const TypedAttributeWithFallback<T> &input,
                      Property &output, std::string *err) {
+#if 0
   if (input.is_blocked()) {
     Attribute attr;
     attr.set_blocked(input.is_blocked());
@@ -788,6 +873,48 @@ bool ToTokenProperty(const TypedAttributeWithFallback<T> &input,
     attr.variability() = Variability::Uniform;
     output = Property(attr, /* custom */ false);
   }
+#endif
+
+  Attribute attr;
+  attr.variability() = Variability::Uniform;
+  attr.set_type_name(value::kToken);
+
+  if (input.is_blocked()) {
+    attr.set_blocked(input.is_blocked());
+  }
+
+  if (input.has_connections()) {
+    attr.set_connections(input.get_connections());
+  }
+
+  {
+    // Includes !authored()
+    // FIXME: Currently scalar only.
+    const Animatable<T> &v = input.get_value();
+
+    primvar::PrimVar pvar;
+
+    if (v.has_default()) {
+      T a;
+      if (v.get_scalar(&a)) {
+        // to token type
+        value::token tok(to_string(a));
+        value::Value val(tok);
+        pvar.set_value(val);
+      } else {
+        if (err) {
+          (*err) += "[InternalError] Invalid value.";
+        }
+        return false;
+      }
+
+      attr.set_var(std::move(pvar));
+    }
+
+  }
+
+  attr.metas() = input.metas();
+  output = Property(attr, /* custom */ false);
 
   return true;
 }
@@ -2482,11 +2609,16 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
     return false;
   }
 
+  // The order of Attribute value evaluation:
+  // - default or timesamples
+  // - connection
+
+
   if (it->second.is_attribute()) {
     const Attribute &attr = it->second.get_attribute();
 
-    if (attr.is_connection()) {
-      // follow targetPath to get Attribute
+    if (attr.is_connection()) { // attribute only contains 'connection'
+      // follow targetPath to get Attribute 
       Attribute terminal_attr;
       bool ret = tydra::GetTerminalAttribute(stage, attr, primvar_name,
                                              &terminal_attr, err);
@@ -2497,6 +2629,7 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
       primvar.set_value(terminal_attr);
 
     } else {
+      // default, timeSamples
       primvar.set_value(attr);
     }
 
@@ -2507,6 +2640,9 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
     }
     if (attr.metas().elementSize.has_value()) {
       primvar.set_elementSize(attr.metas().elementSize.value());
+    }
+    if (attr.metas().has_unauthoredValuesIndex()) {
+      primvar.set_unauthoredValuesIndex(attr.metas().get_unauthoredValuesIndex());
     }
     // TODO: copy other attribute metas?
 
@@ -2530,8 +2666,8 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
                         primvar_name));
       }
 
-      if (indexAttr.is_connection()) {
-        // follow targetPath to get Attribute
+      if (indexAttr.is_connection()) { // attribute only contains 'connection'
+        // follow targetPath to get Attribute 
         Attribute terminal_indexAttr;
         bool ret = tydra::GetTerminalAttribute(stage, indexAttr, index_name,
                                                &terminal_indexAttr, err);
@@ -2539,7 +2675,11 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
           return false;
         }
 
-        if (terminal_indexAttr.is_timesamples()) {
+        if (!terminal_indexAttr.has_value() && !terminal_indexAttr.has_timesamples()) {
+          PUSH_ERROR_AND_RETURN("[Internal Error] Invalid Terminal Index Attribute. Terminal Index Attribute does not have `default` or timesamples value.");
+        }
+
+        if (terminal_indexAttr.has_timesamples()) {
           const auto &ts = terminal_indexAttr.get_var().ts_raw();
           TypedTimeSamples<std::vector<int32_t>> tss;
           if (!tss.from_timesamples(ts)) {
@@ -2547,9 +2687,12 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
                 "Index Attribute seems not an timesamples with int[] type: {}",
                 index_name));
           }
+        
+          primvar.set_timesampled_indices(tss);
+        }
 
-          primvar.set_indices(tss);
-        } else if (terminal_indexAttr.is_value()) {
+        if (terminal_indexAttr.has_value()) {
+
           // TODO: Support uint[]?
           std::vector<int32_t> indices;
           if (!terminal_indexAttr.get_value(&indices)) {
@@ -2558,35 +2701,43 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
                             indexAttr.type_name()));
           }
 
-          primvar.set_indices(indices);
-        }
+          primvar.set_default_indices(indices);
 
-      } else if (indexAttr.is_timesamples()) {
-        const auto &ts = indexAttr.get_var().ts_raw();
-        TypedTimeSamples<std::vector<int32_t>> tss;
-        if (!tss.from_timesamples(ts)) {
-          PUSH_ERROR_AND_RETURN(fmt::format(
-              "Index Attribute seems not an timesamples with int[] type: {}",
-              index_name));
         }
-
-        primvar.set_indices(tss);
+      
       } else if (indexAttr.is_blocked()) {
         // Value blocked. e.g. `float2[] primvars:st:indices = None`
         // We can simply skip reading indices.
-      } else if (indexAttr.is_value()) {
-        // Check if int[] type.
-        // TODO: Support uint[]?
-        std::vector<int32_t> indices;
-        if (!indexAttr.get_value(&indices)) {
-          PUSH_ERROR_AND_RETURN(
-              fmt::format("Index Attribute is not int[] type. Got {}",
-                          indexAttr.type_name()));
+      } else {
+
+        if (!indexAttr.has_value() && !indexAttr.has_timesamples()) {
+          PUSH_ERROR_AND_RETURN("[Internal Error] Invalid Index Attribute. Index Attribute does not have `default` or timesamples value.");
         }
 
-        primvar.set_indices(indices);
-      } else {
-        PUSH_ERROR_AND_RETURN("[Internal Error] Invalid Index Attribute.");
+        if (indexAttr.has_value()) {
+          // Check if int[] type.
+          // TODO: Support uint[]?
+          std::vector<int32_t> indices;
+          if (!indexAttr.get_value(&indices)) {
+            PUSH_ERROR_AND_RETURN(
+                fmt::format("Index Attribute is not int[] type. Got {}",
+                            indexAttr.type_name()));
+          }
+
+
+          primvar.set_default_indices(indices);
+        }
+
+        if (indexAttr.has_timesamples()) {
+          const auto &ts = indexAttr.get_var().ts_raw();
+          TypedTimeSamples<std::vector<int32_t>> tss;
+          if (!tss.from_timesamples(ts)) {
+            PUSH_ERROR_AND_RETURN(fmt::format("Index Attribute seems not an timesamples with int[] type: {}", index_name));
+          }
+        
+          primvar.set_timesampled_indices(tss);
+        }
+
       }
     } else {
       // indices are optional, so ok to skip it.
@@ -2616,7 +2767,7 @@ bool GetTerminalAttributeImpl(const tinyusdz::Stage &stage,
     return false;
   }
 
-  if (prop.is_connection()) {
+  if (prop.is_attribute_connection()) {
     // Follow connection target Path(singple targetPath only).
     std::vector<Path> pv = prop.get_attribute().connections();
     if (pv.empty()) {
