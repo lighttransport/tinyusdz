@@ -2191,6 +2191,12 @@ struct LerpTraits<ty> { \
   static constexpr bool supported() { \
     return true; \
   } \
+};  \
+template <> \
+struct LerpTraits<std::vector<ty>> { \
+  static constexpr bool supported() { \
+    return true; \
+  } \
 }; 
 
 DEFINE_LERP_TRAIT(value::half)
@@ -2379,7 +2385,7 @@ struct TimeSamples {
     template<typename T, std::enable_if_t<!value::LerpTraits<T>::supported(), std::nullptr_t> = nullptr>
     bool get(T *dst, double t = value::TimeCode::Default(),
              value::TimeSampleInterpolationType interp =
-                 value::TimeSampleInterpolationType::Held) const {
+                 value::TimeSampleInterpolationType::Linear) const {
 
       (void)interp;
 
@@ -2434,7 +2440,7 @@ struct TimeSamples {
   template<typename T, std::enable_if_t<value::LerpTraits<T>::supported(), std::nullptr_t> = nullptr>
   bool get(T *dst, double t = value::TimeCode::Default(),
            TimeSampleInterpolationType interp =
-               TimeSampleInterpolationType::Held) const {
+               TimeSampleInterpolationType::Linear) const {
     if (!dst) {
       return false;
     }
