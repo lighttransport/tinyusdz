@@ -789,43 +789,50 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
     if (src_teximg.asset_identifier.empty()) {
       PUSH_ERROR_AND_RETURN(fmt::format("file asset name is empty for texture image `{}`", param_name));
     }
-    value::AssetPath fileAssetPath(src_teximg.asset_identifier);
-    image_tex.file = fileAssetPath;
+    Animatable<value::AssetPath> fileAssetPath;
+    fileAssetPath.set_default(src_teximg.asset_identifier);
+    image_tex.file.set_value(fileAssetPath);
 
     // TODO: Set colorSpace in attribute meta.
+    Animatable<UsdUVTexture::SourceColorSpace> sourceColorSpace;
     if (src_teximg.colorSpace == ColorSpace::sRGB) {
-      image_tex.sourceColorSpace = UsdUVTexture::SourceColorSpace::SRGB;
+      sourceColorSpace.set_default(UsdUVTexture::SourceColorSpace::SRGB);
     } else if (src_teximg.colorSpace == ColorSpace::Raw) {
-      image_tex.sourceColorSpace = UsdUVTexture::SourceColorSpace::Raw;
+      sourceColorSpace.set_default(UsdUVTexture::SourceColorSpace::Raw);
     } else {
-      image_tex.sourceColorSpace = UsdUVTexture::SourceColorSpace::Auto;
+      sourceColorSpace.set_default(UsdUVTexture::SourceColorSpace::Auto);
     }
+    image_tex.sourceColorSpace.set_value(sourceColorSpace);
     
     image_tex.st.set_connection(preaderPath);
 
+    Animatable<UsdUVTexture::Wrap> wrapS;
     if (tex.wrapS == UVTexture::WrapMode::CLAMP_TO_EDGE) {
-      image_tex.wrapS = UsdUVTexture::Wrap::Clamp;
+      wrapS.set_default(UsdUVTexture::Wrap::Clamp);
     } else if (tex.wrapS == UVTexture::WrapMode::REPEAT) {
-      image_tex.wrapS = UsdUVTexture::Wrap::Repeat;
+      wrapS.set_default(UsdUVTexture::Wrap::Repeat);
     } else if (tex.wrapS == UVTexture::WrapMode::MIRROR) {
-      image_tex.wrapS = UsdUVTexture::Wrap::Mirror;
+      wrapS.set_default(UsdUVTexture::Wrap::Mirror);
     } else if (tex.wrapS == UVTexture::WrapMode::CLAMP_TO_BORDER) {
-      image_tex.wrapS = UsdUVTexture::Wrap::Black;
+      wrapS.set_default(UsdUVTexture::Wrap::Black);
     } else {
-      image_tex.wrapS = UsdUVTexture::Wrap::Repeat;
+      wrapS.set_default(UsdUVTexture::Wrap::Repeat);
     }
+    image_tex.wrapS.set_value(wrapS);
 
+    Animatable<UsdUVTexture::Wrap> wrapT;
     if (tex.wrapT == UVTexture::WrapMode::CLAMP_TO_EDGE) {
-      image_tex.wrapT = UsdUVTexture::Wrap::Clamp;
+      wrapT.set_default(UsdUVTexture::Wrap::Clamp);
     } else if (tex.wrapT == UVTexture::WrapMode::REPEAT) {
-      image_tex.wrapT = UsdUVTexture::Wrap::Repeat;
+      wrapT.set_default(UsdUVTexture::Wrap::Repeat);
     } else if (tex.wrapT == UVTexture::WrapMode::MIRROR) {
-      image_tex.wrapT = UsdUVTexture::Wrap::Mirror;
+      wrapT.set_default(UsdUVTexture::Wrap::Mirror);
     } else if (tex.wrapT == UVTexture::WrapMode::CLAMP_TO_BORDER) {
-      image_tex.wrapT = UsdUVTexture::Wrap::Black;
+      wrapT.set_default(UsdUVTexture::Wrap::Black);
     } else {
-      image_tex.wrapT = UsdUVTexture::Wrap::Repeat;
+      wrapT.set_default(UsdUVTexture::Wrap::Repeat);
     }
+    image_tex.wrapT.set_value(wrapS);
 
     if (tex.outputChannel == UVTexture::Channel::R) {
       image_tex.outputsR.set_authored(true);
@@ -866,7 +873,8 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
     Animatable<std::string> varname;
     // TODO: Ensure primvar with 'varname_uv' exists in bound RenderMesh.
-    varname = tex.varname_uv;
+    DCOUT("varname = " << tex.varname_uv);
+    varname.set_default(tex.varname_uv);
     preader.varname.set_value(varname);
     preader.result.set_authored(true);
 
