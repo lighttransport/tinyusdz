@@ -295,6 +295,7 @@ struct PrimVar {
 
       if (auto pv = get_default_value<T>()) {
         (*v) = pv.value();
+        return true;
       }
 
       if (_ts.empty()) {
@@ -302,7 +303,18 @@ struct PrimVar {
       }
     }
 
-    return _ts.get(v, t, tinterp);
+    if (has_timesamples()) {
+      return _ts.get(v, t, tinterp);
+    }
+
+    if (has_default()) {
+      if (auto pv = get_default_value<T>()) {
+        (*v) = pv.value();
+        return true;
+      }
+    }
+
+    return false;
   }
 
   size_t num_timesamples() const {
