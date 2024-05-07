@@ -260,11 +260,6 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
     std::vector<T> value;
     if (_attr.get_value<std::vector<T>>(t, &value, tinterp)) {
 
-      if (_indices.empty()) {
-        (*dest) = value;
-        return true;
-      }
-
       uint32_t elementSize = _attr.metas().elementSize.value_or(1);
 
       // Get indices at specified time
