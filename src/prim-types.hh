@@ -2497,9 +2497,9 @@ class Attribute {
   }
 
   template <typename T>
-  bool get_value(const double t, T *dst,
-                 value::TimeSampleInterpolationType tinterp =
-                     value::TimeSampleInterpolationType::Linear) const {
+  bool get(const double t, T *dst,
+           value::TimeSampleInterpolationType tinterp =
+           value::TimeSampleInterpolationType::Linear) const {
     if (!dst) {
       return false;
     }
@@ -2518,8 +2518,18 @@ class Attribute {
       return _var.get_interpolated_value(t, tinterp, dst);
     }
 
-    return false;
+    // try to get 'defaut' value
+    return get_value(dst);
   }
+
+  // TODO: Deprecate 'get_value' API
+  template <typename T>
+  bool get_value(const double t, T *dst,
+                 value::TimeSampleInterpolationType tinterp =
+                     value::TimeSampleInterpolationType::Linear) const {
+    return get(t, dst, tinterp);
+  }
+
 
   const AttrMeta &metas() const { return _metas; }
   AttrMeta &metas() { return _metas; }
