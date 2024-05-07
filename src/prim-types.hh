@@ -1492,13 +1492,15 @@ struct Animatable {
 
   Animatable() {}
 
-  Animatable(const T &v) : _value(v) {}
+  Animatable(const T &v) {
+    set(v);
+  }
 
   // TODO: Init with timesamples
 
  private:
   // scalar
-  T _value;
+  T _value{};
   bool _has_value{false};
   bool _blocked{false};
 
