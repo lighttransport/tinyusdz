@@ -31,7 +31,10 @@ bool EvaluateTypedAttributeImpl(
     const double t, const value::TimeSampleInterpolationType tinterp)
 {
 
-  if (attr.is_connection()) {
+  if (attr.has_value()) {
+    return attr.get_value(value);
+
+  } else if (attr.has_connection()) {
     // Follow connection target Path(singple targetPath only).
     std::vector<Path> pv = attr.connections();
     if (pv.empty()) {
@@ -84,8 +87,8 @@ bool EvaluateTypedAttributeImpl(
       PUSH_ERROR_AND_RETURN(
           fmt::format("Attribute `{}` is ValueBlocked(None).", attr_name));
   } else {
-
-    return attr.get_value(value);
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Internal error. Attribute `{}` has invalid form of TypedAttributeWithFallback<{}>.", attr_name, value::TypeTraits<T>::type_name()));
 
   }
 
@@ -141,12 +144,15 @@ bool EvaluateTypedAttribute(
       (*err) += "Attribute is Blocked.\n";
     }
     return false;
+  } else if (tattr.has_value()) {
+    (*value_out) = tattr.get_value();
+    return true;
   } else if (tattr.is_value_empty()) {
     if (err) {
       (*err) += "Attribute value is empty.\n";
     }
     return false;
-  } else if (tattr.is_connection()) {
+  } else if (tattr.has_connections()) {
 
     // Follow targetPath 
     Attribute attr = ToAttributeConnection(tattr);
@@ -170,11 +176,11 @@ bool EvaluateTypedAttribute(
       (*err) += fmt::format("Type mismatch. Value producing attribute has type {}, but requested type is {}. Attribute: {}", value.type_name(), tattr.type_name(), attr_name);
     }
 
-  } else {
-    (*value_out) = tattr.get_value();
-    return true;
   }
-  return false;
+
+  PUSH_ERROR_AND_RETURN(fmt::format("Internal error. Attribute {} has invalid form of TypedAttributeWithFallback<{}>.",
+     attr_name, value::TypeTraits<T>::type_name()));
+
 }
 
 template<>

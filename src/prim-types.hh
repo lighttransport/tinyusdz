@@ -1358,7 +1358,7 @@ struct TypedTimeSamples {
 };
 
 //
-// Scalar or TimeSamples
+// Scalar(default) and/or TimeSamples
 //
 template <typename T>
 struct Animatable {
@@ -1369,6 +1369,11 @@ struct Animatable {
     if (is_blocked()) {
       return false;
     }
+
+    if (_has_value) {
+      return false;
+    }
+
     return !_ts.empty();
   }
 
@@ -1376,6 +1381,7 @@ struct Animatable {
     if (is_blocked()) {
       return false;
     }
+    
     return _ts.empty();
   }
 
@@ -1391,16 +1397,21 @@ struct Animatable {
 
     if (is_blocked()) {
       return false;
-    } else if (is_scalar()) {
-      (*v) = _value;
-      return true;
-    } else {  // timesamples
-      return _ts.get(v, t, tinerp);
     }
+
+    if (value::TimeCode(t).is_default()) {
+      if (has_value()) {
+        (*v) = _value;
+        return true;
+      }
+    }
+      
+    // timesamples
+    return _ts.get(v, t, tinerp);
   }
 
   ///
-  /// Get scalar value.
+  /// Get scalar(default) value.
   ///
   bool get_scalar(T *v) const {
     if (!v) {
@@ -1409,12 +1420,17 @@ struct Animatable {
 
     if (is_blocked()) {
       return false;
-    } else if (is_scalar()) {
+    } else if (has_value()) {
       (*v) = _value;
       return true;
-    } else {  // timesamples
-      return false;
     }
+
+    // timesamples
+    return false;
+  }
+
+  bool get_default(T *v) const {
+    return get_scalar(v);
   }
 
   // TimeSamples
@@ -1429,6 +1445,47 @@ struct Animatable {
   void set(const T &v) {
     _value = v;
     _blocked = false;
+    _has_value = true;
+  }
+
+  void set_default(const T &v) {
+    set(v);
+  }
+
+  void set(const TypedTimeSamples<T> &ts) {
+    _ts = ts;
+  }
+
+  void set(TypedTimeSamples<T> &&ts) {
+    _ts = std::move(ts);
+  }
+
+  void set_timesamples(const TypedTimeSamples<T> &ts) {
+    return set(ts);
+  }
+
+  void set_timesamples(TypedTimeSamples<T> &&ts) {
+    return set(ts);
+  }
+
+  void clear_scalar() {
+    _has_value = false;
+  }
+
+  void clear_timesamples() {
+    _ts.samples().clear();
+  }
+
+  bool has_value() const {
+    return _has_value;
+  }
+
+  bool has_default() const {
+    return has_value();
+  }
+
+  bool has_timesamples() const {
+    return _ts.size();
   }
 
   const TypedTimeSamples<T> &get_timesamples() const { return _ts; }
@@ -1442,6 +1499,7 @@ struct Animatable {
  private:
   // scalar
   T _value;
+  bool _has_value{false};
   bool _blocked{false};
 
   // timesamples
@@ -1476,23 +1534,16 @@ class TypedAttribute {
 
   TypedAttribute &operator=(const T &value) {
     _attrib = value;
-    _value_empty = false;
-
-    // fallback Value should be already set with `AttribWithFallback(const T&
-    // fallback)` constructor.
 
     return (*this);
   }
 
-  // TODO: Move constructor, Move assignment 
-
-  void set_value(const T &v) { _attrib = v; _value_empty = false; }
+  // 'default' value or timeSampled value(when T = Animatable)
+  void set_value(const T &v) { _attrib = v; }
+  bool has_value() const { return _attrib.has_value(); }
 
   const nonstd::optional<T> get_value() const {
-    if (_attrib) {
-      return _attrib.value();
-    }
-    return nonstd::nullopt;
+    return _attrib;
   }
 
   bool get_value(T *dst) const {
@@ -1510,7 +1561,7 @@ class TypedAttribute {
   // for `uniform` attribute only
   void set_blocked(bool onoff) { _blocked = onoff; if (onoff) _value_empty = false; }
 
-  bool is_connection() const { return _paths.size(); }
+  bool is_connection() const { return _paths.size() && !has_value(); }
 
   void set_connection(const Path &path) {
     _paths.clear();
@@ -1531,12 +1582,20 @@ class TypedAttribute {
     return nonstd::nullopt;
   }
 
+  bool has_connections() const {
+    return _paths.size();
+  }
+
+  void clear_connections() {
+    _paths.clear();
+  }
+
   // TODO: Supply set_connection_empty()?
 
   void set_value_empty() { _value_empty = true; }
 
   bool is_value_empty() const {
-    if (is_connection()) {
+    if (has_connections()) {
       return false;
     }
 
@@ -1557,7 +1616,7 @@ class TypedAttribute {
       return true;
     }
 
-    if (_paths.size()) {
+    if (has_connections()) {
       return true;
     }
 
@@ -1573,10 +1632,6 @@ class TypedAttribute {
     return false;
   }
 
-  void clear_connections() {
-    _paths.clear();
-  }
-
   void clear_value() {
     _attrib.reset();
     _value_empty = true;
@@ -1590,7 +1645,7 @@ class TypedAttribute {
   bool _value_empty{false};  // applies `_attrib`
   std::vector<Path> _paths;
   nonstd::optional<T> _attrib;
-  bool _blocked{false};  // for `uniform` attribute.
+  bool _blocked{false};
 };
 
 ///
@@ -1698,7 +1753,31 @@ class TypedAttributeWithFallback {
 
   void set_value_empty() { _empty = true; }
 
-  bool is_value_empty() const { return _empty; }
+  bool has_connections() const { return _paths.size(); }
+
+  bool is_value_empty() const {
+    if (has_connections()) {
+      return false;
+    }
+
+    if (_empty) {
+      return true;
+    }
+
+    if (_attrib) {
+      return false;
+    }
+
+    return true;
+  }
+
+  bool has_value() const {
+    if (_empty) {
+      return false;
+    }
+
+    return true;
+  }
 
   const T &get_value() const {
     if (_attrib) {
@@ -1712,7 +1791,7 @@ class TypedAttributeWithFallback {
   // for `uniform` attribute only
   void set_blocked(bool onoff) { _blocked = onoff; }
 
-  bool is_connection() const { return _paths.size(); }
+  bool is_connection() const { return _paths.size() && !has_value() ; }
 
   void set_connection(const Path &path) {
     _paths.clear();
@@ -1731,6 +1810,8 @@ class TypedAttributeWithFallback {
 
     return nonstd::nullopt;
   }
+
+  void clear_connections() { _paths.clear(); }
 
   // value set?
   bool authored() const {
@@ -2235,7 +2316,9 @@ enum class TimeSampleInterpolation {
 #endif
 
 // Attribute is a struct to hold generic attribute of a property(e.g. primvar)
-// of Prim
+// of Prim.
+// It can have multiple values(default value(or ValueBlock), timeSamples and connection) at once.
+//
 // TODO: Refactor
 class Attribute {
 
@@ -2346,6 +2429,27 @@ class Attribute {
     _var = std::move(v);
   }
 
+  bool is_value() const {
+    if (is_connection()) {
+      return false;
+    }
+
+    if (is_timesamples()) {
+      return false;
+    }
+
+    if (is_blocked()) {
+      return false;
+    }
+
+    return true;
+  }
+
+  // check if Attribute has default value
+  bool has_value() const {
+    return _var.has_value(); 
+  }
+
   /// @brief Get the value of Attribute of specified type.
   /// @tparam T value type
   /// @return The value if the underlying PrimVar is type T. Return
@@ -2383,27 +2487,39 @@ class Attribute {
       return false;
     }
 
-    if (is_timesamples()) {
-      return _var.get_interpolated_value(t, tinterp, dst);
-    } else {
-      nonstd::optional<T> v = _var.get_value<T>();
-      if (v) {
-        (*dst) = v.value();
-        return true;
+    if (value::TimeCode(t).is_default()) {
+      if (has_value()) {
+        nonstd::optional<T> v = _var.get_value<T>();
+        if (v) {
+          (*dst) = v.value();
+          return true;
+        }
       }
-
-      return false;
     }
+
+    if (has_timesamples()) {
+      return _var.get_interpolated_value(t, tinterp, dst);
+    }
+
+    return false;
   }
 
   const AttrMeta &metas() const { return _metas; }
   AttrMeta &metas() { return _metas; }
 
   const primvar::PrimVar &get_var() const { return _var; }
+  primvar::PrimVar &get_var() { return _var; }
 
   void set_blocked(bool onoff) { _var.set_blocked(onoff); }
 
-  bool is_blocked() const { return _var.is_blocked(); }
+  bool is_blocked() const {
+    if (has_timesamples()) {
+      return false;
+    }
+
+    return _var.is_blocked(); 
+  }
+  bool has_blocked() const { return _var.is_blocked(); }
 
   Variability &variability() { return _variability; }
   Variability variability() const { return _variability; }
@@ -2414,18 +2530,29 @@ class Attribute {
 
   bool is_varying_authored() const { return _varying_authored; }
 
-  bool is_connection() const { return _paths.size(); }
-
-  bool is_value() const {
-    if (is_connection()) {
+  bool is_connection() const {
+    if (has_timesamples()) {
       return false;
     }
 
-    if (is_blocked()) {
+    if (has_blocked()) {
       return false;
     }
 
-    return true;
+    if (has_value()) {
+      return false;
+    }
+
+    return _paths.size();
+  }
+
+  bool has_connections() const {
+    return _paths.size();
+  }
+
+
+  bool has_default() const {
+    return has_value();
   }
 
   bool is_timesamples() const {
@@ -2434,6 +2561,10 @@ class Attribute {
     }
 
     return _var.is_timesamples();
+  }
+
+  bool has_timesamples() const {
+    return _var.has_timesamples();
   }
 
   void set_connection(const Path &path) {
@@ -2562,7 +2693,7 @@ class Property {
   }
 
   // TODO: Deprecate this and use is_attribute_connection
-  bool is_connection() const { return _type == Type::Connection; }
+  //bool is_connection() const { return _type == Type::Connection; }
 
   bool is_attribute_connection() const {
     if (is_attribute()) {
@@ -2573,9 +2704,7 @@ class Property {
   }
 
   std::string value_type_name() const {
-    if (is_connection()) {
-      return _prop_value_type_name;
-    } else if (is_relationship()) {
+    if (is_relationship()) {
       // relation is typeless.
       return std::string();
     } else {
@@ -2615,9 +2744,6 @@ class Property {
   /// paths)
   ///
   nonstd::optional<Path> get_relationTarget() const {
-    if (!is_connection()) {
-      return nonstd::nullopt;
-    }
 
     if (_rel.is_path()) {
       return _rel.targetPath;
@@ -2637,10 +2763,6 @@ class Property {
   ///
   std::vector<Path> get_relationTargets() const {
     std::vector<Path> pv;
-
-    if (!is_connection()) {
-      return pv;
-    }
 
     if (_rel.is_path()) {
       pv.push_back(_rel.targetPath);
@@ -2718,6 +2840,11 @@ struct XformOp {
   }
 
   template <class T>
+  void set_default(const T &v) {
+    _var.set_value(v);
+  }
+
+  template <class T>
   void set_timesample(const float t, const T &v) {
     _var.set_timesample(t, v);
   }
@@ -2727,22 +2854,36 @@ struct XformOp {
   void set_timesamples(value::TimeSamples &&v) { _var.set_timesamples(v); }
 
   bool is_timesamples() const { return _var.is_timesamples(); }
+  bool has_timesamples() const { return _var.has_timesamples(); }
+
+  void set_blocked(bool onoff) { _is_blocked = onoff; }
+  void clear_blocked() { _is_blocked = false; }
+
+  // check if 'default' value is ValueBlock.
+  bool is_blocked() const { return _is_blocked || _var.is_blocked(); }
+
+  bool is_default() const { return _var.is_scalar(); }
+  bool has_default() const { return _var.has_default(); }
 
   nonstd::optional<value::TimeSamples> get_timesamples() const {
-    if (is_timesamples()) {
+    if (has_timesamples()) {
       return _var.ts_raw();
     }
     return nonstd::nullopt;
   }
 
   nonstd::optional<value::Value> get_scalar() const {
-    if (is_timesamples()) {
-      return nonstd::nullopt;
+    if (has_default()) {
+      return _var.value_raw();
     }
-    return _var.value_raw();
+    return nonstd::nullopt;
   }
 
-  // Type-safe way to get concrete value.
+  nonstd::optional<value::Value> get_default() const {
+    return get_scalar();
+  }
+
+  // Type-safe way to get concrete 'default' value.
   template <class T>
   nonstd::optional<T> get_value() const {
     if (is_timesamples()) {
@@ -2755,6 +2896,10 @@ struct XformOp {
   const primvar::PrimVar &get_var() const { return _var; }
 
   primvar::PrimVar &var() { return _var; }
+
+ private:
+
+  bool _is_blocked{false};
 };
 
 // forward decl
