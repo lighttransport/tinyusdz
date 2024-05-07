@@ -2385,7 +2385,7 @@ struct TimeSamples {
     template<typename T, std::enable_if_t<!value::LerpTraits<T>::supported(), std::nullptr_t> = nullptr>
     bool get(T *dst, double t = value::TimeCode::Default(),
              value::TimeSampleInterpolationType interp =
-                 value::TimeSampleInterpolationType::Held) const {
+                 value::TimeSampleInterpolationType::Linear) const {
 
       (void)interp;
 
@@ -2440,7 +2440,7 @@ struct TimeSamples {
   template<typename T, std::enable_if_t<value::LerpTraits<T>::supported(), std::nullptr_t> = nullptr>
   bool get(T *dst, double t = value::TimeCode::Default(),
            TimeSampleInterpolationType interp =
-               TimeSampleInterpolationType::Held) const {
+               TimeSampleInterpolationType::Linear) const {
     if (!dst) {
       return false;
     }
