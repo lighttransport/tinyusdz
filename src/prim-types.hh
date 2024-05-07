@@ -1405,9 +1405,16 @@ struct Animatable {
         return true;
       }
     }
-      
-    // timesamples
-    return _ts.get(v, t, tinerp);
+
+    if (has_timesamples()) {
+      return _ts.get(v, t, tinerp);
+    }
+    
+    if (has_default()) {
+      return get_scalar(v);
+    }
+
+    return false;
   }
 
   ///
