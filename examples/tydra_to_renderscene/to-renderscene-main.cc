@@ -216,6 +216,9 @@ int main(int argc, char **argv) {
     // env.asset_resolver(arr);
   }
 
+  if (!tinyusdz::value::TimeCode(timecode).is_default()) {
+    std::cout << "Use timecode : " << timecode << "\n";
+  }
   env.timecode = timecode;
   bool ret = converter.ConvertToRenderScene(env, &render_scene);
   if (!ret) {
