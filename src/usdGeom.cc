@@ -270,7 +270,11 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
       // Get indices at specified time
       std::vector<int32_t> indices;
       if (value::TimeCode(t).is_default()) {
-        indices = _indices;
+        if (has_default_indices()) {
+          indices = _indices;
+        } else if (has_timesampled_indices()) {
+          _ts_indices.get(&indices, t, tinterp);
+        }
       } else {
         _ts_indices.get(&indices, t, tinterp);
       }
