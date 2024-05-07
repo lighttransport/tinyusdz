@@ -2191,6 +2191,12 @@ struct LerpTraits<ty> { \
   static constexpr bool supported() { \
     return true; \
   } \
+};  \
+template <> \
+struct LerpTraits<std::vector<ty>> { \
+  static constexpr bool supported() { \
+    return true; \
+  } \
 }; 
 
 DEFINE_LERP_TRAIT(value::half)
