@@ -188,4 +188,15 @@ void timesamples_test(void) {
     }      
   }
 
+  {
+    TEST_CHECK(value::IsLerpSupportedType(value::TypeTraits<value::float2>::type_id()));
+    TEST_CHECK(value::IsLerpSupportedType(value::TypeTraits<std::vector<value::float2>>::type_id()));
+    TEST_CHECK(value::IsLerpSupportedType(value::TypeTraits<value::texcoord2f>::type_id()));
+    TEST_CHECK(value::IsLerpSupportedType(value::TypeTraits<std::vector<value::texcoord2f>>::type_id()));
+    TEST_CHECK(!value::IsLerpSupportedType(value::TypeTraits<int>::type_id()));
+    TEST_CHECK(!value::IsLerpSupportedType(value::TypeTraits<std::vector<int>>::type_id()));
+    TEST_CHECK(!value::IsLerpSupportedType(value::TypeTraits<std::string>::type_id()));
+    TEST_CHECK(!value::IsLerpSupportedType(value::TypeTraits<std::vector<std::string>>::type_id()));
+  }
+
 }
