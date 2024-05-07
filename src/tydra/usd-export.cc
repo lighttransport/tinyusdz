@@ -789,9 +789,8 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
     if (src_teximg.asset_identifier.empty()) {
       PUSH_ERROR_AND_RETURN(fmt::format("file asset name is empty for texture image `{}`", param_name));
     }
-    Animatable<value::AssetPath> fileAssetPath;
-    fileAssetPath.set_default(src_teximg.asset_identifier);
-    image_tex.file.set_value(fileAssetPath);
+    value::AssetPath fileAssetPath(src_teximg.asset_identifier);
+    image_tex.file = fileAssetPath;
 
     // TODO: Set colorSpace in attribute meta.
     Animatable<UsdUVTexture::SourceColorSpace> sourceColorSpace;
@@ -805,6 +804,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
     image_tex.sourceColorSpace.set_value(sourceColorSpace);
     
     image_tex.st.set_connection(preaderPath);
+    image_tex.st.set_value_empty(); // connection only
 
     Animatable<UsdUVTexture::Wrap> wrapS;
     if (tex.wrapS == UVTexture::WrapMode::CLAMP_TO_EDGE) {
