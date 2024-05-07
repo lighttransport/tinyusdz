@@ -110,5 +110,42 @@ void timesamples_test(void) {
     }      
   }
 
+  {
+    primvar::PrimVar pbar;
+    value::TimeSamples ts;
+    ts.add_sample(0, value::Value(0.0f));
+    ts.add_sample(1, value::Value(10.0f));
+    pbar.set_timesamples(ts);
+    pbar.set_value(2000.0f); // default value
+
+    Attribute attr;
+    attr.set_var(pbar);
+
+    {
+      float f;
+      TEST_CHECK(attr.get(value::TimeCode::Default(), &f, value::TimeSampleInterpolationType::Held));
+      // return the value of the first item(= timecode 0)
+      TEST_CHECK(math::is_close(f, 2000.0f));
+    }      
+
+    // Linear interpolation
+    {
+      float f;
+      TEST_CHECK(attr.get(-10.0, &f, value::TimeSampleInterpolationType::Linear));
+      TEST_CHECK(math::is_close(f, 0.0f));
+
+      TEST_CHECK(attr.get(0.0, &f, value::TimeSampleInterpolationType::Linear));
+      TEST_CHECK(math::is_close(f, 0.0f));
+
+      TEST_CHECK(attr.get(0.5, &f, value::TimeSampleInterpolationType::Linear));
+      TEST_CHECK(math::is_close(f, 5.0f));
+
+      TEST_CHECK(attr.get(1.0, &f, value::TimeSampleInterpolationType::Linear));
+      TEST_CHECK(math::is_close(f, 10.0f));
+
+      TEST_CHECK(attr.get(value::TimeCode::Default(), &f, value::TimeSampleInterpolationType::Linear));
+      TEST_CHECK(math::is_close(f, 2000.0f));
+    }      
+  }
 
 }
