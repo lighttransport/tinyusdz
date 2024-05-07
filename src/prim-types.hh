@@ -2563,7 +2563,11 @@ class Attribute {
   }
 
   bool is_timesamples() const {
-    if (!is_value()) {
+    if (has_default()) {
+      return false;
+    }
+
+    if (has_connections()) {
       return false;
     }
 
