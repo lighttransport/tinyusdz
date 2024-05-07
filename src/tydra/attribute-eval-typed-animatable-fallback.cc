@@ -28,7 +28,9 @@ bool EvaluateTypedAttributeImpl(
     const double t, const value::TimeSampleInterpolationType tinterp)
 {
 
-  if (attr.is_connection()) {
+  if (attr.has_value()) {
+    return attr.get_value(value);
+  } if (attr.has_connections()) {
     // Follow connection target Path(singple targetPath only).
     std::vector<Path> pv = attr.connections();
     if (pv.empty()) {
@@ -81,8 +83,8 @@ bool EvaluateTypedAttributeImpl(
       PUSH_ERROR_AND_RETURN(
           fmt::format("Attribute `{}` is ValueBlocked(None).", attr_name));
   } else {
-
-    return attr.get_value(value);
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Internal error. Invalid TypedAttributeWithFallback<Animatable<{}>>.", value::TypeTraits<T>::type_name()));
 
   }
 
@@ -140,12 +142,23 @@ bool EvaluateTypedAnimatableAttribute(
       (*err) += "Attribute is Blocked.\n";
     }
     return false;
+  } else if (tattr.has_value()) {
+    const Animatable<T> &value = tattr.get_value();
+    T v;
+    if (value.get(t, &v, tinterp)) {
+      return true;
+    } else {
+      if (err) {
+        (*err) += fmt::format("Failed to get TypedAnimatableAttribute value: {} \n", attr_name);
+      }
+      return false;
+    }
   } else if (tattr.is_value_empty()) {
     if (err) {
       (*err) += "Attribute value is empty.\n";
     }
     return false;
-  } else if (tattr.is_connection()) {
+  } else if (tattr.has_connections()) {
 
     // Follow targetPath
     Attribute attr = ToAttributeConnection(tattr);
@@ -170,15 +183,8 @@ bool EvaluateTypedAnimatableAttribute(
     }
 
   } else {
-    const Animatable<T> &value = tattr.get_value();
-    T v;
-    if (value.get(t, &v, tinterp)) {
-      return true;
-    } else {
-      if (err) {
-        (*err) += fmt::format("Failed to get TypedAnimatableAttribute value: {} \n", attr_name);
-      }
-      return false;
+    if (err) {
+      (*err) += fmt::format("Unsupported/Invalid TypedAnimatableAttribute value: {}", attr_name);
     }
   }
   return false;
@@ -207,7 +213,19 @@ bool EvaluateTypedAnimatableAttribute(
       (*err) += "Attribute value is empty.\n";
     }
     return false;
-  } else if (tattr.is_connection()) {
+  } else if (tattr.has_value()) {
+    const Animatable<std::string> &value = tattr.get_value();
+    std::string v;
+    if (value.get(t, &v, tinterp)) {
+      return true;
+    } else {
+      if (err) {
+        (*err) += fmt::format("Failed to get TypedAnimatableAttribute value: {} \n", attr_name);
+      }
+      return false;
+    }
+
+  } else if (tattr.has_connections()) {
 
     // Follow targetPath
     Attribute attr = ToAttributeConnection(tattr);
@@ -239,17 +257,9 @@ bool EvaluateTypedAnimatableAttribute(
     }
 
   } else {
-    const Animatable<std::string> &value = tattr.get_value();
-    std::string v;
-    if (value.get(t, &v, tinterp)) {
-      return true;
-    } else {
-      if (err) {
-        (*err) += fmt::format("Failed to get TypedAnimatableAttribute value: {} \n", attr_name);
-      }
-      return false;
+    if (err) {
+      (*err) += fmt::format("Unsupported/Invalid TypedAnimatableAttribute value: {}", attr_name);
     }
-
   }
   return false;
 }

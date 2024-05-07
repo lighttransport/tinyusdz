@@ -198,29 +198,34 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
       if (indexAttr.is_connection()) {
         SET_ERROR_AND_RETURN(
             "Attribute Connetion is not supported for index Attribute, since we need Stage info to find Prim referred by targetPath. Use Tydra API tydra::GetGeomPrimvar.");
-      } else if (indexAttr.is_timesamples()) {
-        const auto &ts = indexAttr.get_var().ts_raw();
-        TypedTimeSamples<std::vector<int32_t>> tss;
-        if (!tss.from_timesamples(ts)) {
-          SET_ERROR_AND_RETURN(fmt::format("Index Attribute seems not an timesamples with int[] type: {}", index_name));
-        }
-      
-        primvar.set_indices(tss);
-      } else if (indexAttr.is_blocked()) {
+      }
+
+      if (indexAttr.is_blocked()) {
         // ignore Index attribute.
-      } else if (indexAttr.is_value()) {
-        // Check if int[] type.
-        // TODO: Support uint[]?
-        std::vector<int32_t> indices;
-        if (!indexAttr.get_value(&indices)) {
-          SET_ERROR_AND_RETURN(
-              fmt::format("Index Attribute is not int[] type. Got {}",
-                          indexAttr.type_name()));
+      } else {
+
+        if (indexAttr.has_timesamples()) {
+          const auto &ts = indexAttr.get_var().ts_raw();
+          TypedTimeSamples<std::vector<int32_t>> tss;
+          if (!tss.from_timesamples(ts)) {
+            SET_ERROR_AND_RETURN(fmt::format("Index Attribute seems not an timesamples with int[] type: {}", index_name));
+          }
+
+          primvar.set_timesampled_indices(tss);
         }
 
-        primvar.set_indices(indices);
-      } else {
-        SET_ERROR_AND_RETURN("[Internal Error] Invalid Index Attribute.");
+        if (indexAttr.has_value()) {
+          // Check if int[] type.
+          // TODO: Support uint[]?
+          std::vector<int32_t> indices;
+          if (!indexAttr.get_value(&indices)) {
+            SET_ERROR_AND_RETURN(
+                fmt::format("Index Attribute is not int[] type. Got {}",
+                            indexAttr.type_name()));
+          }
+
+          primvar.set_default_indices(indices);
+        }
       }
     } else {
       // indices are optional, so ok to skip it.
@@ -242,7 +247,7 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
     return false;
   }
 
-  if (_attr.is_timesamples() || _attr.is_value()) {
+  if (_attr.has_timesamples() || _attr.has_value()) {
 
     if (!IsSupportedGeomPrimvarType(_attr.type_id())) {
       if (err) {
@@ -262,9 +267,13 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
 
       uint32_t elementSize = _attr.metas().elementSize.value_or(1);
 
-      std::vector<int32_t> indices;
       // Get indices at specified time
-      _indices.get(&indices, t, tinterp);
+      std::vector<int32_t> indices;
+      if (value::TimeCode(t).is_default()) {
+        indices = _indices;
+      } else {
+        _ts_indices.get(&indices, t, tinterp);
+      }
 
       std::vector<T> expanded_val;
       auto ret = ExpandWithIndices(value, elementSize, indices, &expanded_val);
@@ -322,7 +331,7 @@ bool GeomPrimvar::flatten_with_indices(const double t, value::Value *dest, const
 
   bool processed = false;
 
-  if (_attr.is_value() || _attr.is_timesamples()) {
+  if (_attr.has_value() || _attr.has_timesamples()) {
     if (!IsSupportedGeomPrimvarType(_attr.type_id())) {
       if (err) {
         (*err) += fmt::format("Unsupported type for GeomPrimvar. type = `{}`",
@@ -351,7 +360,11 @@ bool GeomPrimvar::flatten_with_indices(const double t, value::Value *dest, const
 
       std::vector<int32_t> indices;
       // Get indices at specified time
-      _indices.get(&indices, t, tinterp);
+      if (value::TimeCode(t).is_default()) {
+        indices = _indices;
+      } else {
+        _ts_indices.get(&indices, t, tinterp);
+      }
 
 #define APPLY_FUN(__ty)                                                  \
   case value::TypeTraits<__ty>::type_id() | value::TYPE_ID_1D_ARRAY_BIT: { \
@@ -414,13 +427,6 @@ bool GeomPrimvar::get_value(T *dest, std::string *err) const {
     return false;
   }
 
-  if (_attr.is_timesamples()) {
-    if (err) {
-      (*err) += "TimeSamples attribute is TODO.";
-    }
-    return false;
-  }
-
   if (_attr.is_blocked()) {
     if (err) {
       (*err) += "Attribute is blocked.";
@@ -428,7 +434,7 @@ bool GeomPrimvar::get_value(T *dest, std::string *err) const {
     return false;
   }
 
-  if (_attr.is_value()) {
+  if (_attr.has_value()) {
     if (!IsSupportedGeomPrimvarType(_attr.type_id())) {
       if (err) {
         (*err) += fmt::format("Unsupported type for GeomPrimvar. type = `{}`",
@@ -448,6 +454,22 @@ bool GeomPrimvar::get_value(T *dest, std::string *err) const {
         (*err) += fmt::format("Attribute value type mismatch. Requested type `{}` but Attribute has type `{}`", value::TypeTraits<T>::type_id(), _attr.type_name());
       }
       return false;
+    }
+  }
+
+  if (_attr.has_timesamples()) {
+    // Return the first sample.
+    const auto &ts = _attr.get_var().ts_raw();
+    if (ts.empty()) {
+      if (err) {
+        (*err) += "No TimeSample value in Attribute..";
+      }
+      return false;
+    }
+    
+    if (auto pv =ts.get_samples().at(0).value.as<T>()) {
+      (*dest) = (*pv);
+      return true;
     }
   }
 
@@ -481,7 +503,27 @@ bool GeomPrimvar::get_value(double timecode, T *dest, value::TimeSampleInterpola
     return false;
   }
 
-  if (_attr.is_timesamples()) {
+#if 0
+  if (value::TimeCode(timecode).is_default()) {
+
+    if (_attr.has_value()) {
+      if (auto pv = _attr.get_value<T>()) {
+
+        // copy
+        (*dest) = pv.value();
+        return true;
+
+      } else {
+        if (err) {
+          (*err) += fmt::format("Attribute value type mismatch. Requested type `{}` but Attribute has type `{}`", value::TypeTraits<T>::type_id(), _attr.type_name());
+        }
+        return false;
+      }
+    }
+
+  }
+
+  if (_attr.has_timesamples()) {
     T value;
 
     if (!_attr.get_value(timecode, &value, interp)) {
@@ -494,24 +536,24 @@ bool GeomPrimvar::get_value(double timecode, T *dest, value::TimeSampleInterpola
     // copy
     (*dest) = value;
     return true;
-
-  } else if (_attr.is_value()) {
-
-    if (auto pv = _attr.get_value<T>()) {
-
-      // copy
-      (*dest) = pv.value();
-      return true;
-
-    } else {
-      if (err) {
-        (*err) += fmt::format("Attribute value type mismatch. Requested type `{}` but Attribute has type `{}`", value::TypeTraits<T>::type_id(), _attr.type_name());
-      }
-      return false;
-    }
   }
 
   return false;
+#else
+  T value;
+
+  if (!_attr.get_value(timecode, &value, interp)) {
+    if (err) {
+      (*err) += fmt::format("Get Attribute value at time {} failed. Maybe type mismatch?. Requested type `{}` but Attribute has type `{}`", timecode, value::TypeTraits<T>::type_id(), _attr.type_name());
+    }
+    return false;
+  }
+
+  // copy
+  (*dest) = value;
+  return true;
+#endif
+
 }
 
 // instanciation
@@ -579,17 +621,26 @@ bool GPrim::set_primvar(const GeomPrimvar &primvar,
 
   props[primvar_name] = attr;
 
-  if (primvar.has_indices()) {
+  {
+    primvar::PrimVar var;
 
-    std::string index_name = primvar_name + kIndices;
-
-    Attribute indices;
-
-    for (const auto &sample : primvar.get_indices().get_samples()) {
-      indices.set_timesample(sample.value, sample.t);
+    if (primvar.has_default_indices()) {
+      var.set_value(primvar.get_default_indices());
     }
 
-    props[index_name] = indices;
+    if (primvar.has_timesampled_indices()) {
+      for (const auto &sample : primvar.get_timesampled_indices().get_samples()) {
+        var.set_timesample(sample.t, sample.value);
+      }
+    }
+
+    if (primvar.has_default_indices() || primvar.has_timesampled_indices()) {
+      Attribute indices;
+      indices.set_var(var);
+      std::string index_name = primvar_name + kIndices;
+      props[index_name] = indices;
+    }
+
   }
 
   return true;
@@ -813,7 +864,7 @@ bool GeomSubset::ValidateSubsets(
       valid = false;
     }
 
-    if (indices.is_timesamples()) {
+    if (indices.is_timesamples() || !indices.has_value()) {
       ss << fmt::format("ValidateSubsets: TimeSampled GeomSubset.indices is not yet supported.\n");
       valid = false;
     }
