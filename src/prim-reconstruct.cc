@@ -874,8 +874,6 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
 {
   ParseResult ret;
 
-  DCOUT("Parse Extent attribute.");
-
 #if 0
   if (prop_name.compare(name + ".connect") == 0) {
     std::string propname = removeSuffix(name, ".connect");
