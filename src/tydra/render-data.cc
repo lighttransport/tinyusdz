@@ -209,6 +209,7 @@ nonstd::expected<std::vector<uint8_t>, std::string> UniformToVertex(
     const std::vector<uint8_t> &inputs, const size_t stride_bytes,
     const std::vector<uint32_t> &faceVertexCounts,
     const std::vector<uint32_t> &faceVertexIndices) {
+  // NOTE: Uniform -> Vertex convertsion may give wrong result.
   std::vector<uint8_t> dst;
 
   if (stride_bytes == 0) {
@@ -229,14 +230,17 @@ nonstd::expected<std::vector<uint8_t>, std::string> UniformToVertex(
 
   size_t num_uniforms = inputs.size() / stride_bytes;
 
-  if (num_uniforms == faceVertexCounts.size()) {
+  if (num_uniforms != faceVertexCounts.size()) {
     return nonstd::make_unexpected(fmt::format(
         "The number of input uniform attributes {} must be the same with "
         "faceVertexCounts.size() {}",
         num_uniforms, faceVertexCounts.size()));
   }
 
-  dst.resize(num_uniforms * stride_bytes);
+  const uint32_t num_vertices =
+      *std::max_element(faceVertexIndices.cbegin(), faceVertexIndices.cend()) + 1;
+
+  dst.resize(num_vertices * stride_bytes);
 
   size_t fvIndexOffset{0};
 
@@ -253,13 +257,7 @@ nonstd::expected<std::vector<uint8_t>, std::string> UniformToVertex(
     for (size_t k = 0; k < cnt; k++) {
       uint32_t v_idx = faceVertexIndices[fvIndexOffset + k];
 
-      if (v_idx >= inputs.size()) {
-        return nonstd::make_unexpected(
-            fmt::format("vertexIndex {} is out-of-range for inputs.size {}.",
-                        v_idx, inputs.size()));
-      }
-
-      // may overwrite the value
+      // may overwrite the value when a vertex is referenced from multiple facet.
       memcpy(dst.data() + v_idx * stride_bytes,
              inputs.data() + i * stride_bytes, stride_bytes);
     }
@@ -445,7 +443,7 @@ static nonstd::expected<std::vector<uint8_t>, std::string> ConstantToVertex(
   }
 
   const uint32_t num_vertices =
-      *std::max_element(faceVertexIndices.cbegin(), faceVertexIndices.cend());
+      *std::max_element(faceVertexIndices.cbegin(), faceVertexIndices.cend()) + 1;
 
   std::vector<uint8_t> dst;
 
