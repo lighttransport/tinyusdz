@@ -1,0 +1,15 @@
+#usda 1.0
+(
+    upAxis = "Z"
+    metersPerUnit = 1
+    defaultPrim = "root"
+)
+
+def Xform "root"
+{
+    double3 xformOp:translate = ( 1, 2, 3 )
+    double3 xformOp:translate.timeSamples = {0: ( 4, 5, 6 ), 10: (14, 20, 30)}
+
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
