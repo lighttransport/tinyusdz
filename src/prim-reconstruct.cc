@@ -95,6 +95,7 @@ struct ParseResult
   std::string err;
 };
 
+#if 0
 inline std::string to_string(ParseResult::ResultCode rescode) {
   switch (rescode) {
     case ParseResult::ResultCode::Success: return "success";
@@ -109,6 +110,7 @@ inline std::string to_string(ParseResult::ResultCode rescode) {
   } 
   return "[[???ResultCode]]";
 }
+#endif
 
 template<typename T>
 static nonstd::optional<Animatable<T>> ConvertToAnimatable(const primvar::PrimVar &var)
@@ -692,6 +694,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       } else if (prop.get_property_type() == Property::Type::Attrib) {
 
         DCOUT("Adding typed attribute: " << name);
+        DCOUT("T.tyid = " << value::TypeTraits<T>::type_id() << ", var.tyid = " << attr.get_var().type_id());
 
         if (attr.is_blocked()) {
           DCOUT("Attribute is blocked: " << name);
@@ -700,22 +703,25 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
         }
 
         const auto &var = attr.get_var();
+        DCOUT("has_value = " << var.has_value());
 
-        if (auto av = ConvertToAnimatable<T>(var)) {
-          target.set_value(av.value());
-        } else {
-          DCOUT("ConvertToAnimatable failed.");
-          ret.code = ParseResult::ResultCode::InternalError;
-          ret.err = "Converting Attribute data failed. Maybe TimeSamples have values with different types?";
+        if (var.has_default() || var.has_timesamples()) {
+          if (auto av = ConvertToAnimatable<T>(var)) {
+            target.set_value(av.value());
+          } else {
+            DCOUT("ConvertToAnimatable failed.");
+            ret.code = ParseResult::ResultCode::InternalError;
+            ret.err = "Converting Attribute data failed. Maybe TimeSamples have values with different types?";
+            return ret;
+          }
+
+          DCOUT("Added typed attribute: " << name);
+
+          target.metas() = attr.metas();
+          table.insert(name);
+          ret.code = ParseResult::ResultCode::Success;
           return ret;
         }
-
-        DCOUT("Added typed attribute: " << name);
-
-        target.metas() = attr.metas();
-        table.insert(name);
-        ret.code = ParseResult::ResultCode::Success;
-        return ret;
       } else {
         DCOUT("Invalid Property.type");
         ret.err = "Invalid Property type(internal error)";
@@ -734,12 +740,14 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
     }
 
     if (attr.has_connections()) { // connection only
-      //target.variability = prop.attrib.variability;
+      DCOUT("Connection only attribute.");
       target.metas() = prop.get_attribute().metas();
       table.insert(prop_name);
       ret.code = ParseResult::ResultCode::Success;
+      return ret;
+    } else {
+      DCOUT("???.");
     }
-
     return ret;
   }
 
@@ -936,6 +944,7 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
     } else if (prop.get_property_type() == Property::Type::Attrib) {
 
       //bool has_default{false};
+      bool has_connections{false};
 
       if (attr.has_connections()) {
         target.set_connections(attr.connections());
@@ -944,7 +953,7 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
         //table.insert(prop_name);
         //ret.code = ParseResult::ResultCode::Success;
         //return ret;
-        //has_connections = true;
+        has_connections = true;
       }
 
       DCOUT("Adding typed attribute: " << name);
@@ -1010,22 +1019,34 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
         return ret;
       }
 #else
-      if (auto av = ConvertToAnimatable<Extent>(attr.get_var())) {
-        target.set_value(av.value());
-        
-      } else {
-        // Conversion failed.
-        DCOUT("ConvertToAnimatable failed.");
-        ret.code = ParseResult::ResultCode::InternalError;
-        ret.err = "Converting Attribute data failed. Maybe TimeSamples have values with different types or invalid array size?";
+      
+      const auto &var = attr.get_var();
+
+      if (var.has_default() || var.has_timesamples()) {
+        if (auto av = ConvertToAnimatable<Extent>(var)) {
+          target.set_value(av.value());
+        } else {
+          DCOUT("ConvertToAnimatable failed.");
+          ret.code = ParseResult::ResultCode::InternalError;
+          ret.err = "Converting Attribute data failed. Maybe TimeSamples have values with different types?";
+          return ret;
+        }
+
+        DCOUT("Added typed attribute: " << name);
+
+        target.metas() = attr.metas();
+        table.insert(name);
+        ret.code = ParseResult::ResultCode::Success;
         return ret;
       }
 
-      DCOUT("Added Extent attribute: " << name);
-      target.metas() = attr.metas();
-      table.insert(name);
-      ret.code = ParseResult::ResultCode::Success;
-      return ret;
+      if (has_connections) {
+        DCOUT("Added Extent connection attribute: " << name);
+        target.metas() = attr.metas();
+        table.insert(name);
+        ret.code = ParseResult::ResultCode::Success;
+        return ret;
+      }
 
 #endif
 
@@ -4106,31 +4127,15 @@ bool ReconstructShader<UsdPrimvarReader_int>(
         if (!ConvertTokenAttributeToStringAttribute(tok_attr, preader->varname)) {
           PUSH_ERROR_AND_RETURN("Failed to convert inputs:varname token type to string type.");
         }
-        DCOUT("`token` attribute is converted to `string` attribute.");
         continue;
       } else if (ret.code == ParseResult::ResultCode::TypeMismatch) {
-        //TypedAttribute<Animatable<value::StringData>> sdata_attr;
-        //auto sdret = ParseTypedAttribute(table, prop.first, prop.second, kInputsVarname, sdata_attr);
-        //if (sdret.code == ParseResult::ResultCode::Success) {
-        //  if (!ConvertStringDataAttributeToStringAttribute(sdata_attr, preader->varname)) {
-        //    PUSH_ERROR_AND_RETURN("Failed to convert inputs:varname StringData type to string type.");
-        //  }
-        //  DCOUT("StringData attribute is converted to `string` attribute.");
-        //  continue;
-        //} else if (sdret.code == ParseResult::ResultCode::TypeMismatch) {
-          auto sret = ParseTypedAttribute(table, prop.first, prop.second, kInputsVarname, preader->varname);
-          if (sret.code == ParseResult::ResultCode::Success) {
-            DCOUT("Parsed string typed inputs:varname.");
-            // ok
-            continue;
-          } else {
-            PUSH_ERROR_AND_RETURN(fmt::format("Faied to parse inputs:varname: {}", sret.err));
-          }
-        //} else {
-        //  PUSH_ERROR_AND_RETURN(fmt::format("Faied to parse inputs:varname: {} {}", to_string(sdret.code), sdret.err));
-        //}
-      } else {
-        PUSH_ERROR_AND_RETURN(fmt::format("{} {}", to_string(ret.code), ret.err));
+        ret = ParseTypedAttribute(table, prop.first, prop.second, "inputs:varname", preader->varname);
+        if (ret.code == ParseResult::ResultCode::Success) {
+          // ok
+          continue;
+        } else {
+          PUSH_ERROR_AND_RETURN(fmt::format("Faied to parse inputs:varname: {}", ret.err));
+        }
       }
     }
     PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:result",
