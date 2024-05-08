@@ -4230,6 +4230,8 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
     // Texel data is treated as byte array
     assetImageBuffer.componentType = ComponentType::UInt8;
 
+    bool tex_loaded{false};
+
     if (env.scene_config.load_texture_assets) {
       DCOUT("load texture : " << assetPath.GetAssetPath());
       std::string warn;
@@ -4241,7 +4243,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
         tex_loader_fun = DefaultTextureImageLoaderFunction;
       }
 
-      bool tex_ok = tex_loader_fun(
+      tex_loaded = tex_loader_fun(
           assetPath, assetInfo, env.asset_resolver, &texImage,
           &assetImageBuffer.data,
           env.material_config.texture_image_loader_function_userdata, &warn,
@@ -4252,7 +4254,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
         PushWarn(warn);
       }
 
-      if (!tex_ok && !env.material_config.allow_texture_load_failure) {
+      if (!tex_loaded && !env.material_config.allow_texture_load_failure) {
         PUSH_ERROR_AND_RETURN(fmt::format("Failed to load texture image: `{}` err = {}", assetPath.GetAssetPath(), err));
       }
 
@@ -4301,20 +4303,27 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
             texImage.usdColorSpace = tydra::ColorSpace::Raw;
             sourceColorSpaceSet = true;
           } else if (cs == UsdUVTexture::SourceColorSpace::Auto) {
-            // The spec says: https://openusd.org/release/spec_usdpreviewsurface.html
-            //
-            // auto : Check for gamma/color space metadata in the texture file itself; if metadata is indicative of sRGB, mark texture as sRGB . If no relevant metadata is found, mark texture as sRGB if it is either 8-bit and has 3 channels or if it is 8-bit and has 4 channels. Otherwise, do not mark texture as sRGB and use texture data as it was read from the texture.
-            //
-            if (((texImage.assetTexelComponentType == ComponentType::UInt8) ||
-                (texImage.assetTexelComponentType == ComponentType::Int8)) &&
-              ((texImage.channels == 3) || (texImage.channels ==4))) {
-              texImage.usdColorSpace = tydra::ColorSpace::sRGB;
-              sourceColorSpaceSet = true;
-            } else {
-              PUSH_WARN(fmt::format("Infer colorSpace failed for {}. Set to Raw for now. Results may be wrong.", assetPath.GetAssetPath()));
-              // At least 'not' sRGB. For now set to Raw.
 
-              texImage.usdColorSpace = tydra::ColorSpace::Raw;
+            if (tex_loaded) {
+
+              // The spec says: https://openusd.org/release/spec_usdpreviewsurface.html
+              //
+              // auto : Check for gamma/color space metadata in the texture file itself; if metadata is indicative of sRGB, mark texture as sRGB . If no relevant metadata is found, mark texture as sRGB if it is either 8-bit and has 3 channels or if it is 8-bit and has 4 channels. Otherwise, do not mark texture as sRGB and use texture data as it was read from the texture.
+              //
+              if (((texImage.assetTexelComponentType == ComponentType::UInt8) ||
+                  (texImage.assetTexelComponentType == ComponentType::Int8)) &&
+                ((texImage.channels == 3) || (texImage.channels ==4))) {
+                texImage.usdColorSpace = tydra::ColorSpace::sRGB;
+                sourceColorSpaceSet = true;
+              } else {
+                PUSH_WARN(fmt::format("Infer colorSpace failed for {}. Set to Raw for now. Results may be wrong.", assetPath.GetAssetPath()));
+                // At least 'not' sRGB. For now set to Raw.
+
+                texImage.usdColorSpace = tydra::ColorSpace::Raw;
+                sourceColorSpaceSet = true;
+              }
+            } else {
+              texImage.usdColorSpace = tydra::ColorSpace::Unknown;
               sourceColorSpaceSet = true;
             }
           }
@@ -4330,201 +4339,203 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
                       cs_token.str()));
     }
 
-    BufferData imageBuffer;
+    if (tex_loaded) {
+      BufferData imageBuffer;
 
-    // Linearlization and widen texel bit depth if required.
-    if (env.material_config.linearize_color_space) {
-      // TODO: Support ACEScg and Lin_DisplayP3
-      DCOUT("linearlize colorspace.");
-      size_t width = size_t(texImage.width);
-      size_t height = size_t(texImage.height);
-      size_t channels = size_t(texImage.channels);
+      // Linearlization and widen texel bit depth if required.
+      if (env.material_config.linearize_color_space) {
+        // TODO: Support ACEScg and Lin_DisplayP3
+        DCOUT("linearlize colorspace.");
+        size_t width = size_t(texImage.width);
+        size_t height = size_t(texImage.height);
+        size_t channels = size_t(texImage.channels);
 
-      if (channels > 4) {
-        PUSH_ERROR_AND_RETURN(
-            fmt::format("TODO: Multiband color channels(5 or more) are not "
-                        "supported(yet)."));
-      }
+        if (channels > 4) {
+          PUSH_ERROR_AND_RETURN(
+              fmt::format("TODO: Multiband color channels(5 or more) are not "
+                          "supported(yet)."));
+        }
 
-      if (assetImageBuffer.componentType == tydra::ComponentType::UInt8) {
-        if (texImage.usdColorSpace == tydra::ColorSpace::sRGB) {
-          if (env.material_config.preserve_texel_bitdepth) {
-            // u8 sRGB -> u8 Linear
-            imageBuffer.componentType = tydra::ComponentType::UInt8;
+        if (assetImageBuffer.componentType == tydra::ComponentType::UInt8) {
+          if (texImage.usdColorSpace == tydra::ColorSpace::sRGB) {
+            if (env.material_config.preserve_texel_bitdepth) {
+              // u8 sRGB -> u8 Linear
+              imageBuffer.componentType = tydra::ComponentType::UInt8;
 
-            bool ret = srgb_8bit_to_linear_8bit(
-                assetImageBuffer.data, width, height, channels,
-                /* channel stride */ channels, &imageBuffer.data, &_err);
-            if (!ret) {
-              PUSH_ERROR_AND_RETURN(
-                  "Failed to convert sRGB u8 image to Linear u8 image.");
+              bool ret = srgb_8bit_to_linear_8bit(
+                  assetImageBuffer.data, width, height, channels,
+                  /* channel stride */ channels, &imageBuffer.data, &_err);
+              if (!ret) {
+                PUSH_ERROR_AND_RETURN(
+                    "Failed to convert sRGB u8 image to Linear u8 image.");
+              }
+
+            } else {
+              DCOUT("u8 sRGB -> fp32 linear.");
+              // u8 sRGB -> fp32 Linear
+              imageBuffer.componentType = tydra::ComponentType::Float;
+
+              std::vector<float> buf;
+              bool ret = srgb_8bit_to_linear_f32(
+                  assetImageBuffer.data, width, height, channels,
+                  /* channel stride */ channels, &buf, &_err);
+              if (!ret) {
+                PUSH_ERROR_AND_RETURN(
+                    "Failed to convert sRGB u8 image to Linear f32 image.");
+              }
+
+              DCOUT("sz = " << buf.size());
+              imageBuffer.data.resize(buf.size() * sizeof(float));
+              memcpy(imageBuffer.data.data(), buf.data(),
+                     sizeof(float) * buf.size());
             }
+
+            texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
+
+          } else if (texImage.usdColorSpace == tydra::ColorSpace::Lin_sRGB) {
+            if (env.material_config.preserve_texel_bitdepth) {
+              // no op.
+              imageBuffer = std::move(assetImageBuffer);
+
+            } else {
+              // u8 -> fp32
+              imageBuffer.componentType = tydra::ComponentType::Float;
+
+              std::vector<float> buf;
+              bool ret = u8_to_f32_image(assetImageBuffer.data, width, height,
+                                         channels, &buf, &_err);
+              if (!ret) {
+                PUSH_ERROR_AND_RETURN("Failed to convert u8 image to f32 image.");
+              }
+
+              imageBuffer.data.resize(buf.size() * sizeof(float));
+              memcpy(imageBuffer.data.data(), buf.data(),
+                     sizeof(float) * buf.size());
+            }
+
+            texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
 
           } else {
-            DCOUT("u8 sRGB -> fp32 linear.");
-            // u8 sRGB -> fp32 Linear
-            imageBuffer.componentType = tydra::ComponentType::Float;
-
-            std::vector<float> buf;
-            bool ret = srgb_8bit_to_linear_f32(
-                assetImageBuffer.data, width, height, channels,
-                /* channel stride */ channels, &buf, &_err);
-            if (!ret) {
-              PUSH_ERROR_AND_RETURN(
-                  "Failed to convert sRGB u8 image to Linear f32 image.");
-            }
-
-            DCOUT("sz = " << buf.size());
-            imageBuffer.data.resize(buf.size() * sizeof(float));
-            memcpy(imageBuffer.data.data(), buf.data(),
-                   sizeof(float) * buf.size());
+            PUSH_ERROR(fmt::format("TODO: Color space {}",
+                                   to_string(texImage.usdColorSpace)));
           }
 
-          texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
+        } else if (assetImageBuffer.componentType ==
+                   tydra::ComponentType::Float) {
+          // ignore preserve_texel_bitdepth
 
-        } else if (texImage.usdColorSpace == tydra::ColorSpace::Lin_sRGB) {
-          if (env.material_config.preserve_texel_bitdepth) {
-            // no op.
+          if (texImage.usdColorSpace == tydra::ColorSpace::sRGB) {
+            // srgb f32 -> linear f32
+            std::vector<float> in_buf;
+            std::vector<float> out_buf;
+            in_buf.resize(assetImageBuffer.data.size() / sizeof(float));
+            memcpy(in_buf.data(), assetImageBuffer.data.data(),
+                   in_buf.size() * sizeof(float));
+
+            out_buf.resize(assetImageBuffer.data.size() / sizeof(float));
+
+            // TODO: scale factor & bias
+            float scale_factor = 1.0f;
+            float bias = 0.0f;
+            float alpha_scale_factor = 1.0f;
+            float alpha_bias = 0.0f;
+
+            bool ret =
+                srgb_f32_to_linear_f32(in_buf, width, height, channels,
+                                       /* channel stride */ channels, &out_buf, scale_factor, bias, alpha_scale_factor, alpha_bias, &_err);
+
+            if (!ret) {
+              PUSH_ERROR_AND_RETURN(
+                  "Failed to convert sRGB f32 image to Linear f32 image.");
+            }
+
+            imageBuffer.data.resize(assetImageBuffer.data.size());
+            memcpy(imageBuffer.data.data(), out_buf.data(),
+                   imageBuffer.data.size());
+
+
+          } else if (texImage.usdColorSpace == tydra::ColorSpace::Lin_sRGB) {
+            // no op
             imageBuffer = std::move(assetImageBuffer);
 
           } else {
-            // u8 -> fp32
-            imageBuffer.componentType = tydra::ComponentType::Float;
+            PUSH_ERROR(fmt::format("TODO: Color space {}",
+                                   to_string(texImage.usdColorSpace)));
+          }
 
+        } else {
+          PUSH_ERROR(fmt::format("TODO: asset texture texel format {}",
+                                 to_string(assetImageBuffer.componentType)));
+        }
+
+      } else {
+        // Same color space.
+        DCOUT("assetImageBuffer.sz = " << assetImageBuffer.data.size());
+
+        if (assetImageBuffer.componentType == tydra::ComponentType::UInt8) {
+          if (env.material_config.preserve_texel_bitdepth) {
+            // Do nothing.
+            imageBuffer = std::move(assetImageBuffer);
+
+          } else {
+            size_t width = size_t(texImage.width);
+            size_t height = size_t(texImage.height);
+            size_t channels = size_t(texImage.channels);
+
+            // u8 to f32, but no sRGB -> linear conversion(this would break
+            // UsdPreviewSurface's spec though)
+            PUSH_WARN(
+                "8bit sRGB texture is converted to fp32 sRGB texture(without "
+                "linearlization)");
             std::vector<float> buf;
             bool ret = u8_to_f32_image(assetImageBuffer.data, width, height,
                                        channels, &buf, &_err);
             if (!ret) {
               PUSH_ERROR_AND_RETURN("Failed to convert u8 image to f32 image.");
             }
+            imageBuffer.componentType = tydra::ComponentType::Float;
 
             imageBuffer.data.resize(buf.size() * sizeof(float));
             memcpy(imageBuffer.data.data(), buf.data(),
                    sizeof(float) * buf.size());
           }
 
-          texImage.colorSpace = tydra::ColorSpace::Lin_sRGB;
+          texImage.colorSpace = texImage.usdColorSpace;
 
-        } else {
-          PUSH_ERROR(fmt::format("TODO: Color space {}",
-                                 to_string(texImage.usdColorSpace)));
-        }
+        } else if (assetImageBuffer.componentType ==
+                   tydra::ComponentType::Float) {
+          // ignore preserve_texel_bitdepth
 
-      } else if (assetImageBuffer.componentType ==
-                 tydra::ComponentType::Float) {
-        // ignore preserve_texel_bitdepth
-
-        if (texImage.usdColorSpace == tydra::ColorSpace::sRGB) {
-          // srgb f32 -> linear f32
-          std::vector<float> in_buf;
-          std::vector<float> out_buf;
-          in_buf.resize(assetImageBuffer.data.size() / sizeof(float));
-          memcpy(in_buf.data(), assetImageBuffer.data.data(),
-                 in_buf.size() * sizeof(float));
-
-          out_buf.resize(assetImageBuffer.data.size() / sizeof(float));
-
-          // TODO: scale factor & bias
-          float scale_factor = 1.0f;
-          float bias = 0.0f;
-          float alpha_scale_factor = 1.0f;
-          float alpha_bias = 0.0f;
-
-          bool ret =
-              srgb_f32_to_linear_f32(in_buf, width, height, channels,
-                                     /* channel stride */ channels, &out_buf, scale_factor, bias, alpha_scale_factor, alpha_bias, &_err);
-
-          if (!ret) {
-            PUSH_ERROR_AND_RETURN(
-                "Failed to convert sRGB f32 image to Linear f32 image.");
-          }
-
-          imageBuffer.data.resize(assetImageBuffer.data.size());
-          memcpy(imageBuffer.data.data(), out_buf.data(),
-                 imageBuffer.data.size());
-
-
-        } else if (texImage.usdColorSpace == tydra::ColorSpace::Lin_sRGB) {
-          // no op
+          // f32 to f32, so no op
           imageBuffer = std::move(assetImageBuffer);
 
         } else {
-          PUSH_ERROR(fmt::format("TODO: Color space {}",
-                                 to_string(texImage.usdColorSpace)));
+          PUSH_ERROR(fmt::format("TODO: asset texture texel format {}",
+                                 to_string(assetImageBuffer.componentType)));
         }
-
-      } else {
-        PUSH_ERROR(fmt::format("TODO: asset texture texel format {}",
-                               to_string(assetImageBuffer.componentType)));
       }
 
-    } else {
-      // Same color space.
-      DCOUT("assetImageBuffer.sz = " << assetImageBuffer.data.size());
+      // Assign buffer id
+      texImage.buffer_id = int64_t(buffers.size());
 
-      if (assetImageBuffer.componentType == tydra::ComponentType::UInt8) {
-        if (env.material_config.preserve_texel_bitdepth) {
-          // Do nothing.
-          imageBuffer = std::move(assetImageBuffer);
+      // TODO: Share image data as much as possible.
+      // e.g. Texture A and B uses same image file, but texturing parameter is
+      // different.
+      buffers.emplace_back(imageBuffer);
 
-        } else {
-          size_t width = size_t(texImage.width);
-          size_t height = size_t(texImage.height);
-          size_t channels = size_t(texImage.channels);
+      tex.texture_image_id = int64_t(images.size());
 
-          // u8 to f32, but no sRGB -> linear conversion(this would break
-          // UsdPreviewSurface's spec though)
-          PUSH_WARN(
-              "8bit sRGB texture is converted to fp32 sRGB texture(without "
-              "linearlization)");
-          std::vector<float> buf;
-          bool ret = u8_to_f32_image(assetImageBuffer.data, width, height,
-                                     channels, &buf, &_err);
-          if (!ret) {
-            PUSH_ERROR_AND_RETURN("Failed to convert u8 image to f32 image.");
-          }
-          imageBuffer.componentType = tydra::ComponentType::Float;
+      images.emplace_back(texImage);
 
-          imageBuffer.data.resize(buf.size() * sizeof(float));
-          memcpy(imageBuffer.data.data(), buf.data(),
-                 sizeof(float) * buf.size());
-        }
-
-        texImage.colorSpace = texImage.usdColorSpace;
-
-      } else if (assetImageBuffer.componentType ==
-                 tydra::ComponentType::Float) {
-        // ignore preserve_texel_bitdepth
-
-        // f32 to f32, so no op
-        imageBuffer = std::move(assetImageBuffer);
-
-      } else {
-        PUSH_ERROR(fmt::format("TODO: asset texture texel format {}",
-                               to_string(assetImageBuffer.componentType)));
-      }
+      std::stringstream ss;
+      ss << "Loaded texture image " << assetPath.GetAssetPath()
+         << " : buffer_id " + std::to_string(texImage.buffer_id) << "\n";
+      ss << "  width x height x components " << texImage.width << " x "
+         << texImage.height << " x " << texImage.channels << "\n";
+      ss << "  colorSpace " << tinyusdz::tydra::to_string(texImage.colorSpace)
+         << "\n";
+      PushInfo(ss.str());
     }
-
-    // Assign buffer id
-    texImage.buffer_id = int64_t(buffers.size());
-
-    // TODO: Share image data as much as possible.
-    // e.g. Texture A and B uses same image file, but texturing parameter is
-    // different.
-    buffers.emplace_back(imageBuffer);
-
-    tex.texture_image_id = int64_t(images.size());
-
-    images.emplace_back(texImage);
-
-    std::stringstream ss;
-    ss << "Loaded texture image " << assetPath.GetAssetPath()
-       << " : buffer_id " + std::to_string(texImage.buffer_id) << "\n";
-    ss << "  width x height x components " << texImage.width << " x "
-       << texImage.height << " x " << texImage.channels << "\n";
-    ss << "  colorSpace " << tinyusdz::tydra::to_string(texImage.colorSpace)
-       << "\n";
-    PushInfo(ss.str());
   }
 
   //
@@ -6057,6 +6068,10 @@ std::string to_string(ColorSpace cty) {
     }
     case ColorSpace::Custom: {
       s = "custom";
+      break;
+    }
+    case ColorSpace::Unknown: {
+      s = "unknown";
       break;
     }
   }

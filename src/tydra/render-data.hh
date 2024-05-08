@@ -572,6 +572,7 @@ enum class ColorSpace {
   Lin_DisplayP3,   // colorSpace 'lin_displayp3'
   sRGB_DisplayP3,  // colorSpace 'srgb_displayp3'
   Custom,          // TODO: Custom colorspace
+  Unknown,         // Unknown color space. 
 };
 
 std::string to_string(ColorSpace cs);
