@@ -4897,6 +4897,16 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
       }
       surfacePath = paths[0];
     } else {
+      // May be PhysicsMaterial?
+      // Create dummy material
+     
+      PUSH_WARN(fmt::format("{}'s outputs:surface isn't authored, so not a valid Material/Shader. Create a default Material\n",
+                      mat_abs_path.full_path_name()));
+
+
+      (*rmat_out) = rmat;
+      return true;
+
       PUSH_ERROR_AND_RETURN(
           fmt::format("{}'s outputs:surface isn't authored.\n",
                       mat_abs_path.full_path_name()));
@@ -4987,6 +4997,12 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     // std::vector<const tinyusdz::GeomSubset *> subsets = GetGeomSubsets(;
 
     DCOUT("Mesh: " << abs_path);
+
+    if (!pmesh->points.authored()) {
+      // Maybe Collider mesh? Ignore for now.
+      DCOUT(fmt::format("Mesh {} does not author `points` attribute(Maybe Collider mesh?). Ignore it for now", abs_path)); 
+      return true;
+    }
 
     //
     // First convert Material assigned to GeomMesh.
