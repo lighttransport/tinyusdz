@@ -1,0 +1,12 @@
+#usda 1.0
+
+def SkelRoot "myskel" (
+    kind = "component"
+)
+{
+    float3[] extent = [(-1, 4, -10), (12, 12, 6)]
+    float3[] extent.timeSamples = {
+        2: [(-12, 5, -11), (12, 12, 6)],
+        3: [(-13, 5, -12), (13, 13, 7)],
+        4: [(-15, 5, -14), (14, 14, 8)]}
+}
