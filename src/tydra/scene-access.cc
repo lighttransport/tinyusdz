@@ -478,6 +478,7 @@ bool ToProperty(const TypedAttribute<T> &input, Property &output, std::string *e
 template <typename T>
 bool ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output, std::string *err) {
 
+  DCOUT("ToProperty ");
   (void)err;
 
   Attribute attr;
@@ -485,16 +486,22 @@ bool ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output, st
   attr.variability() = Variability::Varying;
   attr.set_type_name(value::TypeTraits<T>::type_name());
 
+  DCOUT("has_connections" << input.has_connections());
+  DCOUT("has_value " << input.has_value());
+  DCOUT("is_blocked " << input.is_blocked());
+
   if (input.is_blocked()) {
     attr.set_blocked(input.is_blocked());
   }
 
   if (input.has_connections()) {
     
-    DCOUT("has_connections");
 
     attr.set_connections(input.get_connections());
   }
+
+  //DCOUT("has_default " << input.has_default());
+  //DCOUT("has_timesamples " << input.has_timesamples());
 
   {
     primvar::PrimVar pvar;
@@ -524,6 +531,8 @@ bool ToProperty(const TypedAttribute<Animatable<T>> &input, Property &output, st
         attr.set_var(std::move(pvar));
       }
 
+    } else {
+      DCOUT("no animatable value.");
     }
   }
 
@@ -623,6 +632,8 @@ bool ToProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
   attr.variability() = Variability::Varying;
   attr.set_type_name(value::TypeTraits<T>::type_name());
 
+  DCOUT("has_connections " << input.has_connections());
+
   if (input.is_blocked()) {
     attr.set_blocked(input.is_blocked());
   }
@@ -637,6 +648,8 @@ bool ToProperty(const TypedAttributeWithFallback<Animatable<T>> &input,
     Animatable<T> v = input.get_value();
 
     primvar::PrimVar pvar;
+    DCOUT("has_timesamples " << v.has_timesamples());
+    DCOUT("has_value " << v.has_value());
 
     if (v.has_timesamples()) {
       value::TimeSamples ts = ToTypelessTimeSamples(v.get_timesamples());
