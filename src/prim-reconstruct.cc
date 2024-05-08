@@ -956,7 +956,7 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
         has_connections = true;
       }
 
-      DCOUT("Adding typed attribute: " << name);
+      DCOUT("Adding typed extent attribute: " << name);
 
       if (attr.is_blocked()) {
         // e.g. "float3[] extent = None"
@@ -1032,7 +1032,7 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
           return ret;
         }
 
-        DCOUT("Added typed attribute: " << name);
+        DCOUT("Added typed extent attribute: " << name);
 
         target.metas() = attr.metas();
         table.insert(name);
@@ -2864,12 +2864,12 @@ bool ReconstructPrim<SkelRoot>(
 
   // custom props only
   for (const auto &prop : properties) {
-    ADD_PROPERTY(table, prop, SkelRoot, root->props)
     PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, SkelRoot,
                    root->visibility, options.strict_allowedToken_check)
     PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, SkelRoot,
                        root->purpose, options.strict_allowedToken_check)
     PARSE_EXTENT_ATTRIBUTE(table, prop, kExtent, SkelRoot, root->extent)
+    ADD_PROPERTY(table, prop, SkelRoot, root->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
   }
 
