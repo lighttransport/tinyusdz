@@ -737,12 +737,18 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr,
   if (attr.authored()) {
 
     bool is_value_empty = attr.is_value_empty();
+    bool is_connection = attr.is_connection();
     bool has_default{false};
     bool has_timesamples{false};
+    bool is_timesamples{false};
     const auto &pv = attr.get_value();
+    DCOUT("is_value_empty " << is_value_empty);
+    DCOUT("is_connection " << is_connection);
+    DCOUT("is_timesamples " << is_timesamples);
 
     has_default = (pv && pv.value().has_default());
     has_timesamples = (pv && pv.value().has_timesamples());
+    is_timesamples = (pv && pv.value().is_timesamples());
 
     //
     // Emit default value(includes ValueBlock and empty definition) and metada
@@ -752,7 +758,8 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr,
     // float a = 1.5 METADATA
     // 
     // Also emit this line if the attribute contains metadata
-    if (attr.metas().authored() || attr.is_blocked() || has_default || is_value_empty) {
+    // Do not emit when Attribute is connection only or timesamples only.
+    if (attr.metas().authored() || attr.is_blocked() || has_default || is_value_empty || (!is_connection) || (!is_timesamples)) {
 
       ss << pprint::Indent(indent);
       ss << value::TypeTraits<T>::type_name() << " " << name;
@@ -815,32 +822,48 @@ static std::string print_str_attr(
   std::stringstream ss;
 
   if (attr.authored()) {
-    ss << pprint::Indent(indent);
-    ss << value::TypeTraits<std::string>::type_name() << " " << name;
 
+    bool is_value_empty = attr.is_value_empty();
+    bool is_connection = attr.is_connection();
+    bool has_default{false};
+    bool has_timesamples{false};
+    bool is_timesamples{false};
     const auto &pv = attr.get_value();
+    DCOUT("is_value_empty " << is_value_empty);
+    DCOUT("is_connection " << is_connection);
+    DCOUT("is_timesamples " << is_timesamples);
+    DCOUT("has_default " << has_default);
 
-    if (attr.is_blocked()) {
-      ss << " = None";
-    } else if (pv.has_value()) {
+    has_default = (pv && pv.value().has_default());
+    has_timesamples = (pv && pv.value().has_timesamples());
+    is_timesamples = (pv && pv.value().is_timesamples());
 
-      std::string a;
-      if (pv.value().get_scalar(&a)) {
-        // Do not use operator<<(std::string)
-        ss << " = " << tinyusdz::buildEscapedAndQuotedStringForUSDA(a);
-      } else {
-        ss << " = [InternalError]";
+    if (attr.metas().authored() || attr.is_blocked() || has_default || is_value_empty || ((!is_connection) && (!is_timesamples))) {
+      ss << pprint::Indent(indent);
+      ss << value::TypeTraits<std::string>::type_name() << " " << name;
+
+      if (attr.is_blocked()) {
+        ss << " = None";
+      } else if (pv.has_value()) {
+
+        std::string a;
+        if (pv.value().get_scalar(&a)) {
+          // Do not use operator<<(std::string)
+          ss << " = " << tinyusdz::buildEscapedAndQuotedStringForUSDA(a);
+        } else {
+          ss << " = [InternalError]";
+        }
       }
+
+      if (attr.metas().authored()) {
+        ss << "(\n"
+           << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
+           << ")";
+      }
+      ss << "\n";
     }
 
-    if (attr.metas().authored()) {
-      ss << "(\n"
-         << print_attr_metas(attr.metas(), indent + 1) << pprint::Indent(indent)
-         << ")";
-    }
-    ss << "\n";
-
-    if (pv && pv.value().has_timesamples()) {
+    if (has_timesamples) {
       ss << pprint::Indent(indent);
       ss << value::TypeTraits<std::string>::type_name() << " " << name;
 
