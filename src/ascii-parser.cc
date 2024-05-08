@@ -841,6 +841,7 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
   switch (tyid) {
     APPLY_TO_METAVARIABLE_TYPE(PARSE_BASE_TYPE)
     case value::TYPE_ID_STRING: {
+      // FIXME: Use std::string
       if (array_qual) {
         std::vector<value::StringData> strs;
         if (!ParseBasicTypeArray(&strs)) {
@@ -4200,7 +4201,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
           return false;
         }
       } else if (type_name == value::kString) {
-        if (!ParseBasicPrimAttr<value::StringData>(array_qual, primattr_name,
+        if (!ParseBasicPrimAttr<std::string>(array_qual, primattr_name,
                                                    pattr)) {
           return false;
         }
