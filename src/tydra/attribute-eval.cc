@@ -37,6 +37,11 @@ bool ToTerminalAttributeValue(
   value->meta() = attr.metas();
   value->variability() = attr.variability();
 
+  DCOUT("var has_default " << var.has_default());
+  DCOUT("var has_timesamples " << var.has_default());
+  DCOUT("var is_blocked " << var.is_blocked());
+  DCOUT("var is_valid " << var.is_valid());
+
   if (!var.is_valid()) {
     PUSH_ERROR_AND_RETURN("[InternalError] Attribute is invalid.");
   } else if (var.is_scalar()) {
