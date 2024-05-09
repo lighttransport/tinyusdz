@@ -1030,7 +1030,6 @@ std::string print_typed_attr(
 
     bool is_connection = attr.is_connection();
     bool is_timesamples = v.is_timesamples();
-    bool has_timesamples = v.has_timesamples();
     bool has_value = attr.has_value();
     bool is_value_empty = attr.is_value_empty();
 
@@ -1038,7 +1037,6 @@ std::string print_typed_attr(
     DCOUT("is_value_empty " << attr.is_value_empty());
     DCOUT("is_connection " << is_connection);
     DCOUT("is_timesamples " << is_timesamples);
-    DCOUT("has_timesamples " << has_timesamples);
     DCOUT("is_value_empty " << is_value_empty);
     DCOUT("has_value " << has_value);
 
