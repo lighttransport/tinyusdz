@@ -1399,8 +1399,12 @@ static ParseResult ParseShaderInputConnectionProperty(std::set<std::string> &tab
       __target = rel; \
       table.insert(prop.first); \
       DCOUT("Added rel " << __propname); \
+    } else if (rel.is_blocked()) { \
+      __target = rel; \
+      table.insert(prop.first); \
+      DCOUT("Added ValueBlocked rel " << __propname); \
     } else { \
-      PUSH_ERROR_AND_RETURN(fmt::format("`{}` target must be Path.", __propname)); \
+      PUSH_ERROR_AND_RETURN(fmt::format("Internal error. Property `{}` is not a valid Relationship.", __propname)); \
     } \
   }
 

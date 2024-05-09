@@ -3519,6 +3519,7 @@ bool AsciiParser::ParseRelationship(Relationship *result) {
       PUSH_ERROR_AND_RETURN("Failed to parse None.");
     }
 
+    DCOUT("Relationship valueblock.");
     result->set_blocked();
   } else {
     PUSH_ERROR_AND_RETURN("Unexpected char \"" + std::to_string(c) +
@@ -3804,7 +3805,8 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
       PUSH_ERROR_AND_RETURN("Failed to parse `rel` property.");
     }
 
-    if (!SkipWhitespace()) {
+    if (!SkipCommentAndWhitespaceAndNewline()) {
+      return false;
     }
 
     if (!LookChar1(&c)) {
