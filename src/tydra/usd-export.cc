@@ -198,7 +198,7 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
 
     std::vector<value::token> joints(joint_idMap.size());
     for (const auto &channels : anim.channels_map) {
-      joints[joint_idMap.at(channels.first)] = value::token(channels.first);
+      joints[size_t(joint_idMap.at(channels.first))] = value::token(channels.first);
     }
     dst->joints = joints;
 
@@ -307,7 +307,7 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
           if (tx_it->second.translations.static_value) {
             uint64_t joint_id = joint_idMap.at(channels.first);
             if ((joint_id +1) > static_txs.size()) {
-              static_txs.resize(joint_id+1);
+              static_txs.resize(size_t(joint_id+1));
             }
             static_txs[size_t(joint_id)] = tx_it->second.translations.static_value.value(); 
           }
@@ -382,7 +382,7 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
           if (rot_it->second.rotations.static_value) {
             uint64_t joint_id = joint_idMap.at(channels.first);
             if ((joint_id +1) > static_rots.size()) {
-              static_rots.resize(joint_id+1);
+              static_rots.resize(size_t(joint_id+1));
             }
             value::quatf v;
             v[0] = rot_it->second.rotations.static_value.value()[0];
@@ -457,7 +457,7 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
           if (scale_it->second.rotations.static_value) {
             uint64_t joint_id = joint_idMap.at(channels.first);
             if ((joint_id +1) > static_scales.size()) {
-              static_scales.resize(joint_id+1);
+              static_scales.resize(size_t(joint_id+1));
             }
             value::half3 v;
             v[0] = value::float_to_half_full(scale_it->second.scales.static_value.value()[0]);
@@ -492,7 +492,7 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
 
     std::vector<value::token> blendShapes(target_idMap.size());
     for (const auto &target : anim.blendshape_weights_map) {
-      blendShapes[target_idMap.at(target.first)] = value::token(target.first);
+      blendShapes[size_t(target_idMap.at(target.first))] = value::token(target.first);
     }
     dst->blendShapes = blendShapes;
 
@@ -527,7 +527,7 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
       if (target.second.static_value) {
         uint64_t target_id = target_idMap.at(target.first);
         if ((target_id +1) > static_weights.size()) {
-          static_weights.resize(target_id+1);
+          static_weights.resize(size_t(target_id+1));
         }
         static_weights[size_t(target_id)] = target.second.static_value.value(); 
       }
