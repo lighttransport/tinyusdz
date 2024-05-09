@@ -1575,8 +1575,9 @@ bool TriangulatePolygon(
       triangulatedFaceCounts.push_back(2);
 #endif
     } else {
+      // Use double for accuracy. `float` precision may classify small-are polygon as degenerated.
       // Find the normal axis of the polygon using Newell's method
-      T n = {BaseTy(0), BaseTy(0), BaseTy(0)};
+      value::double3 n = {0, 0, 0};
 
       size_t vi0;
       size_t vi0_2;
@@ -1608,13 +1609,19 @@ bool TriangulatePolygon(
         T b = {point1[0] + point2[0], point1[1] + point2[1],
                point1[2] + point2[2]};
 
-        n[0] += (a[1] * b[2]);
-        n[1] += (a[2] * b[0]);
-        n[2] += (a[0] * b[1]);
+        n[0] += double(a[1] * b[2]);
+        n[1] += double(a[2] * b[0]);
+        n[2] += double(a[0] * b[1]);
+        DCOUT("v0 " << v0);
+        DCOUT("v1 " << v1);
+        DCOUT("n " << n);
       }
-      BaseTy length_n = vlength(n);
+      //BaseTy length_n = vlength(n);
+      double length_n = vlength(n);
+      
       // Check if zero length normal
-      if (std::fabs(length_n) < std::numeric_limits<BaseTy>::epsilon()) {
+      if (std::fabs(length_n) < std::numeric_limits<double>::epsilon()) {
+        DCOUT("length_n " << length_n);
         err = "Degenerated polygon found.\n";
         return false;
       }
@@ -1623,7 +1630,9 @@ bool TriangulatePolygon(
       n = vnormalize(n);
 
       T axis_w, axis_v, axis_u;
-      axis_w = n;
+      axis_w[0] = BaseTy(n[0]);
+      axis_w[1] = BaseTy(n[1]);
+      axis_w[2] = BaseTy(n[2]);
       T a;
       if (std::fabs(axis_w[0]) > BaseTy(0.9999999)) {  // TODO: use 1.0 - eps?
         a = {BaseTy(0), BaseTy(1), BaseTy(0)};
