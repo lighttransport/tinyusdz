@@ -647,9 +647,9 @@ struct EnvmapLight
 // TOOD: Implement Animation sample resampler.
 
 // In USD, timeSamples are linearly interpolated by default.
-// For default value(value at static time), create a Sample at time `-inf`(USD TimeCode::Default)
 template <typename T>
 struct AnimationSampler {
+  nonstd::optional<T> static_value; // value at static time('default' time) if exist
   std::vector<AnimationSample<T>> samples;
 
   // No cubicSpline in USD
@@ -702,7 +702,7 @@ struct Animation {
   // For blendshapes
   // key = blendshape name, value = timesamped weights
   // TODO: in-between weight
-  std::map<std::string, std::vector<AnimationSample<float>>> blendshape_weights_map;
+  std::map<std::string, AnimationSampler<float>> blendshape_weights_map;
 };
 
 struct Node {

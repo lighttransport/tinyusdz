@@ -5354,14 +5354,18 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
       PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `scales` attribute of SkelAnimation. Maybe ValueBlock or connection? : {}", abs_path));
     }
 
-    //
-    // NOTE: When both timeSamples and default value are authored, timeSamples wins.
-    //
-    bool is_translations_timesamples = false;
-    bool is_rotations_timesamples = false;
-    bool is_scales_timesamples = false;
+    DCOUT("translations: has_timesamples " << translations.has_timesamples());
+    DCOUT("translations: has_default " << translations.has_default());
+    DCOUT("rotations: has_timesamples " << rotations.has_timesamples());
+    DCOUT("rotations: has_default " << rotations.has_default());
+    DCOUT("scales: has_timesamples " << scales.has_timesamples());
+    DCOUT("scales: has_default " << scales.has_default());
 
-    if (translations.is_timesamples()) {
+    //
+    // timesamples value
+    //
+
+    if (translations.has_timesamples()) {
       DCOUT("Convert ttranslations");
       const TypedTimeSamples<std::vector<value::float3>> &ts_txs = translations.get_timesamples();
 
@@ -5391,10 +5395,9 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
 
         }
       }
-      is_translations_timesamples = true;
     }
 
-    if (rotations.is_timesamples()) {
+    if (rotations.has_timesamples()) {
       const TypedTimeSamples<std::vector<value::quatf>> &ts_rots = rotations.get_timesamples();
       DCOUT("Convert rotations");
       for (const auto &sample : ts_rots.get_samples()) {
@@ -5420,10 +5423,9 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
 
         }
       }
-      is_rotations_timesamples = true;
     }
 
-    if (scales.is_timesamples()) {
+    if (scales.has_timesamples()) {
       const TypedTimeSamples<std::vector<value::half3>> &ts_scales = scales.get_timesamples();
       DCOUT("Convert scales");
       for (const auto &sample : ts_scales.get_samples()) {
@@ -5449,28 +5451,33 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
 
         }
       }
-      is_scales_timesamples = true;
     }
 
+    //
     // value at 'default' time.
-    std::vector<value::float3> translation;
-    std::vector<value::float4> rotation;
-    std::vector<value::float3> scale;
+    //
 
     // Get value and also do length check for scalar(non timeSampled) animation value.
-    if (translations.is_scalar()) {
-      DCOUT("translation is not timeSampled");
+    if (translations.has_default()) {
+      DCOUT("translation at default time");
+      std::vector<value::float3> translation;
       if (!translations.get_scalar(&translation)) {
         PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `translations` attribute in SkelAnimation: {}", abs_path));
       }
       if (translation.size() != joints.size()) {
         PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. translations.default.size {} must be equal to joints.size {} : {}", translation.size(), joints.size(), abs_path));
       }
-      is_translations_timesamples = false;
+      
+      for (size_t j = 0; j < joints.size(); j++) {
+        std::string jointName = jointIdMap.at(j);
+        auto &it = channelMap[jointName][AnimationChannel::ChannelType::Translation];
+        it.translations.static_value = translation[j];
+      }
     }
 
-    if (rotations.is_scalar()) {
-      DCOUT("rot is not timeSampled");
+    if (rotations.has_default()) {
+      DCOUT("rotations at default time");
+      std::vector<value::float4> rotation;
       std::vector<value::quatf> _rotation;
       if (!rotations.get_scalar(&_rotation)) {
         PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `rotations` attribute in SkelAnimation: {}", abs_path));
@@ -5487,11 +5494,17 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         ret[3] = v[3];
         return ret;
       });
-      is_rotations_timesamples = false;
+
+      for (size_t j = 0; j < joints.size(); j++) {
+        std::string jointName = jointIdMap.at(j);
+        auto &it = channelMap[jointName][AnimationChannel::ChannelType::Rotation];
+        it.rotations.static_value = rotation[j];
+      }
     }
 
-    if (scales.is_scalar()) {
-      DCOUT("scale is not timeSampled");
+    if (scales.has_default()) {
+      DCOUT("scales at default time");
+      std::vector<value::float3> scale;
       std::vector<value::half3> _scale;
       if (!scales.get_scalar(&_scale)) {
         PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `scales` attribute in SkelAnimation: {}", abs_path));
@@ -5507,9 +5520,15 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         ret[2] = value::half_to_float(v[2]);
         return ret;
       });
-      is_scales_timesamples = false;
+      for (size_t j = 0; j < joints.size(); j++) {
+        std::string jointName = jointIdMap.at(j);
+        auto &it = channelMap[jointName][AnimationChannel::ChannelType::Scale];
+        it.scales.static_value = scale[j];
+      }
     }
 
+
+#if 0 // TODO: remove
     if (!is_translations_timesamples) {
       DCOUT("Reorder translation samples");
       // Create a channel value with single-entry
@@ -5554,22 +5573,20 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         channelMap[joint.str()][AnimationChannel::ChannelType::Scale].scales.samples.push_back(s);
       }
     }
+#endif
   }
 
   // BlendShape animations
   if (blendShapes.size()) {
 
-    std::map<std::string, std::vector<AnimationSample<float>>> weightsMap;
+    std::map<std::string, AnimationSampler<float>> weightsMap;
 
     // Blender 4.1 may export empty bendShapeWeights. We'll accept it.
     //
     // float[] blendShapeWeights
     if (skelAnim.blendShapeWeights.is_value_empty()) {
       for (const auto &bs : blendShapes) {
-        AnimationSample<float> s;
-        s.t = std::numeric_limits<float>::quiet_NaN();
-        s.value = 1.0f;
-        weightsMap[bs.str()].push_back(s);
+        weightsMap[bs.str()].static_value = 1.0f;
       }
     } else {
 
@@ -5578,7 +5595,7 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `blendShapeWeights` attribute of SkelAnimation. Maybe ValueBlock or connection? : {}", abs_path));
       }
 
-      if (weights.is_timesamples()) {
+      if (weights.has_timesamples()) {
 
         const TypedTimeSamples<std::vector<float>> &ts_weights = weights.get_timesamples();
         DCOUT("Convert timeSampledd weights");
@@ -5594,13 +5611,14 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
               s.value = sample.value[j];
 
               const std::string &targetName = blendShapes[j].str();
-              weightsMap[targetName].push_back(s);
+              weightsMap[targetName].samples.push_back(s);
             }
 
           }
         }
+      }
 
-      } else if (weights.is_scalar()) {
+      if (weights.has_default()) {
         std::vector<float> ws;
         if (!weights.get_scalar(&ws)) {
           PUSH_ERROR_AND_RETURN(fmt::format("Failed to get default value of `blendShapeWeights` attribute of SkelAnimation is invalid : {}", abs_path));
@@ -5611,10 +5629,7 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         }
 
         for (size_t i = 0; i < blendShapes.size(); i++) {
-          AnimationSample<float> s;
-          s.t = std::numeric_limits<float>::quiet_NaN();
-          s.value = ws[i];
-          weightsMap[blendShapes[i].str()].push_back(s);
+          weightsMap[blendShapes[i].str()].static_value = ws[i];
         }
 
       } else {

@@ -281,6 +281,8 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
         ts_txs[float_to_double(uint_to_float(tc))].resize(joints.size()); 
       }
 
+      std::vector<value::float3> static_txs;
+
       // Pack channel values
       for (const auto &channels : anim.channels_map) {
 
@@ -301,24 +303,28 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
             }
             txs[size_t(joint_id)] = tx_it->second.translations.samples[t].value;
           }
+
+          if (tx_it->second.translations.static_value) {
+            uint64_t joint_id = joint_idMap.at(channels.first);
+            if ((joint_id +1) > static_txs.size()) {
+              static_txs.resize(joint_id+1);
+            }
+            static_txs[size_t(joint_id)] = tx_it->second.translations.static_value.value(); 
+          }
         }
       }
 
-      if ((ts_txs.size() == 1) && (std::isnan(ts_txs.cbegin()->first))) {
-        // Author as static(default) value.
-        std::vector<value::float3> ts(joints.size());
-        for (size_t i = 0; i < ts_txs.cbegin()->second.size(); i++) {
-          ts[i] = ts_txs.cbegin()->second[i];
-        } 
-        dst->translations.set_value(ts);
-      } else {
-        Animatable<std::vector<value::float3>> ts;
-        for (const auto &s : ts_txs) {
-          ts.add_sample(s.first, s.second);
-        } 
-
-        dst->translations.set_value(ts);
+      Animatable<std::vector<value::float3>> aval;
+      if (static_txs.size() == joints.size()) {
+        // Author static(default) value.
+        aval.set_default(static_txs);
       }
+
+      for (const auto &s : ts_txs) {
+        aval.add_sample(s.first, s.second);
+      } 
+
+      dst->translations.set_value(aval);
     }
 
     if (no_rot_channel) {
@@ -350,6 +356,8 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
         ts_rots[float_to_double(uint_to_float(tc))].resize(joints.size()); 
       }
 
+      std::vector<value::quatf> static_rots;
+
       for (const auto &channels : anim.channels_map) {
 
         const auto &rot_it = channels.second.find(AnimationChannel::ChannelType::Rotation);
@@ -370,24 +378,33 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
             v[3] = rot_it->second.rotations.samples[t].value[3];
             rots[size_t(joint_id)] = v;
           }
+
+          if (rot_it->second.rotations.static_value) {
+            uint64_t joint_id = joint_idMap.at(channels.first);
+            if ((joint_id +1) > static_rots.size()) {
+              static_rots.resize(joint_id+1);
+            }
+            value::quatf v;
+            v[0] = rot_it->second.rotations.static_value.value()[0];
+            v[1] = rot_it->second.rotations.static_value.value()[1];
+            v[2] = rot_it->second.rotations.static_value.value()[2];
+            v[3] = rot_it->second.rotations.static_value.value()[3];
+            static_rots[size_t(joint_id)] = v;
+          }
         }
       }
 
-      if ((ts_rots.size() == 1) && (std::isnan(ts_rots.cbegin()->first))) {
-        // Author as static(default) value.
-        std::vector<value::quatf> ts(joints.size());
-        for (size_t i = 0; i < ts_rots.cbegin()->second.size(); i++) {
-          ts[i] = ts_rots.cbegin()->second[i];
-        } 
-        dst->rotations.set_value(ts);
-      } else {
-        Animatable<std::vector<value::quatf>> ts;
-        for (const auto &s : ts_rots) {
-          ts.add_sample(s.first, s.second);
-        } 
-
-        dst->rotations.set_value(ts);
+      Animatable<std::vector<value::quatf>> aval;
+      if (static_rots.size() == joints.size()) {
+        // Author static(default) value.
+        aval.set_default(static_rots);
       }
+
+      for (const auto &s : ts_rots) {
+        aval.add_sample(s.first, s.second);
+      } 
+
+      dst->rotations.set_value(aval);
     }
 
     if (no_scale_channel) {
@@ -415,6 +432,8 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
         ts_scales[float_to_double(uint_to_float(tc))].resize(joints.size()); 
       }
 
+      std::vector<value::half3> static_scales;
+
       for (const auto &channels : anim.channels_map) {
 
         const auto &scale_it = channels.second.find(AnimationChannel::ChannelType::Scale);
@@ -434,24 +453,32 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
             v[2] = value::float_to_half_full(scale_it->second.scales.samples[t].value[2]);
             scales[size_t(joint_id)] = v;
           }
+
+          if (scale_it->second.rotations.static_value) {
+            uint64_t joint_id = joint_idMap.at(channels.first);
+            if ((joint_id +1) > static_scales.size()) {
+              static_scales.resize(joint_id+1);
+            }
+            value::half3 v;
+            v[0] = value::float_to_half_full(scale_it->second.scales.static_value.value()[0]);
+            v[1] = value::float_to_half_full(scale_it->second.scales.static_value.value()[1]);
+            v[2] = value::float_to_half_full(scale_it->second.scales.static_value.value()[2]);
+            static_scales[size_t(joint_id)] = v;
+          }
         }
       }
 
-
-      if ((ts_scales.size() == 1) && (std::isnan(ts_scales.cbegin()->first))) {
-        // Author as static(default) value.
-        std::vector<value::half3> ts(joints.size());
-        for (size_t i = 0; i < ts_scales.cbegin()->second.size(); i++) {
-          ts[i] = ts_scales.cbegin()->second[i];
-        } 
-        dst->scales.set_value(ts);
-      } else {
-        Animatable<std::vector<value::half3>> ts;
-        for (const auto &s : ts_scales) {
-          ts.add_sample(s.first, s.second);
-        } 
-        dst->scales.set_value(ts);
+      Animatable<std::vector<value::half3>> aval;
+      if (static_scales.size() == joints.size()) {
+        // Author static(default) value.
+        aval.set_default(static_scales);
       }
+
+      for (const auto &s : ts_scales) {
+        aval.add_sample(s.first, s.second);
+      } 
+
+      dst->scales.set_value(aval);
     }
   }
 
@@ -472,8 +499,8 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
     std::unordered_set<uint32_t> timeCodes;
     {
       const auto &weights_it = anim.blendshape_weights_map.cbegin();
-      for (size_t t = 0; t < weights_it->second.size(); t++) {
-        timeCodes.insert(float_to_uint(weights_it->second[t].t));
+      for (size_t t = 0; t < weights_it->second.samples.size(); t++) {
+        timeCodes.insert(float_to_uint(weights_it->second.samples[t].t));
       }
     }
 
@@ -481,11 +508,12 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
     for (const auto &tc : timeCodes) {
       ts_weights[float_to_double(uint_to_float(tc))].resize(blendShapes.size()); 
     }
+    std::vector<float> static_weights;
 
     for (const auto &target : anim.blendshape_weights_map) {
 
-      for (size_t t = 0; t < target.second.size(); t++) {
-        float tc = target.second[t].t;
+      for (size_t t = 0; t < target.second.samples.size(); t++) {
+        float tc = target.second.samples[t].t;
         if (!timeCodes.count(float_to_uint(tc))) {
           PUSH_ERROR_AND_RETURN(fmt::format("All blendshape weights should have same timeCodes. timeCode {} is only seen in `blendShapeWeights` animation channel of blendShape {}", tc, target.first));
         }
@@ -493,30 +521,29 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
 
         std::vector<float> &weights = ts_weights.at(float_to_double(tc));
         //DCOUT("weights.size " << weights.size() << ", target_id " << target_id);
-        weights[size_t(target_id)] = target.second[t].value;
+        weights[size_t(target_id)] = target.second.samples[t].value;
+      }
+
+      if (target.second.static_value) {
+        uint64_t target_id = target_idMap.at(target.first);
+        if ((target_id +1) > static_weights.size()) {
+          static_weights.resize(target_id+1);
+        }
+        static_weights[size_t(target_id)] = target.second.static_value.value(); 
       }
     }
 
-    //DCOUT("ts_weights.cbegin " << ts_weights.cbegin()->first);
-    //DCOUT("ts_weights.cbegin isnan" << std::isnan(ts_weights.cbegin()->first));
-    if ((ts_weights.size() == 1) && (std::isnan(ts_weights.cbegin()->first))) {
-      //DCOUT("static blendshape weights");
-      // Author as static(default) value.
-      std::vector<float> ts(blendShapes.size());
-      for (size_t i = 0; i < ts_weights.cbegin()->second.size(); i++) {
-        ts[i] = ts_weights.cbegin()->second[i];
-      } 
-      dst->blendShapeWeights.set_value(ts);
-    } else {
-
-      //DCOUT("timeSampled blendshape weights");
-      Animatable<std::vector<float>> ts;
-      for (const auto &s : ts_weights) {
-        ts.add_sample(s.first, s.second);
-      } 
-
-      dst->blendShapeWeights.set_value(ts);
+    Animatable<std::vector<float>> aval;
+    if (static_weights.size() == blendShapes.size()) {
+      // Author static(default) value.
+      aval.set_default(static_weights);
     }
+
+    for (const auto &s : ts_weights) {
+      aval.add_sample(s.first, s.second);
+    } 
+
+    dst->blendShapeWeights.set_value(aval);
   } else {
     // Just author 'blendShapeWeights' without value.
     dst->blendShapeWeights.set_value_empty();
@@ -948,6 +975,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
       Path connPath(abs_mat_path + "/Image_Texture_" + "diffuseColor", "outputs:rgb");
       surfaceShader.diffuseColor.set_connection(connPath);
+      surfaceShader.diffuseColor.set_value_empty();
     } else {
       value::color3f diffuseCol;
       diffuseCol.r = rmat.surfaceShader.diffuseColor.value[0];
@@ -969,6 +997,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
       Path connPath(abs_mat_path + "/Image_Texture_" + "specularColor", "outputs:rgb");
       surfaceShader.specularColor.set_connection(connPath);
+      surfaceShader.specularColor.set_value_empty();
     } else {
       value::color3f col;
       col.r = rmat.surfaceShader.specularColor.value[0];
@@ -989,6 +1018,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
       Path connPath(abs_mat_path + "/Image_Texture_" + "emissiveColor", "outputs:rgb");
       surfaceShader.emissiveColor.set_connection(connPath);
+      surfaceShader.emissiveColor.set_value_empty();
     } else {
       value::color3f col;
       col.r = rmat.surfaceShader.emissiveColor.value[0];
@@ -1009,6 +1039,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
       Path connPath(abs_mat_path + "/Image_Texture_" + "metallic", "outputs:r");
       surfaceShader.metallic.set_connection(connPath);
+      surfaceShader.metallic.set_value_empty();
     } else {
       surfaceShader.metallic = rmat.surfaceShader.metallic.value;
     }
@@ -1025,6 +1056,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
       Path connPath(abs_mat_path + "/Image_Texture_" + "roughness", "outputs:r");
       surfaceShader.roughness.set_connection(connPath);
+      surfaceShader.roughness.set_value_empty();
     } else {
       surfaceShader.roughness = rmat.surfaceShader.roughness.value;
     }
@@ -1041,6 +1073,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
       Path connPath(abs_mat_path + "/Image_Texture_" + "clearcoat", "outputs:r");
       surfaceShader.clearcoat.set_connection(connPath);
+      surfaceShader.clearcoat.set_value_empty();
     } else {
       surfaceShader.clearcoat = rmat.surfaceShader.clearcoat.value;
     }
@@ -1057,6 +1090,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
       Path connPath(abs_mat_path + "/Image_Texture_" + "clearcoatRoughness", "outputs:r");
       surfaceShader.clearcoatRoughness.set_connection(connPath);
+      surfaceShader.clearcoatRoughness.set_value_empty();
     } else {
       surfaceShader.clearcoatRoughness = rmat.surfaceShader.clearcoatRoughness.value;
     }
@@ -1073,6 +1107,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
       Path connPath(abs_mat_path + "/Image_Texture_" + "opacity", "outputs:r");
       surfaceShader.opacity.set_connection(connPath);
+      surfaceShader.opacity.set_value_empty();
     } else {
       surfaceShader.opacity = rmat.surfaceShader.opacity.value;
     }
@@ -1089,6 +1124,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
       Path connPath(abs_mat_path + "/Image_Texture_" + "opacityThreshold", "outputs:r");
       surfaceShader.opacityThreshold.set_connection(connPath);
+      surfaceShader.opacityThreshold.set_value_empty();
     } else {
       surfaceShader.opacityThreshold = rmat.surfaceShader.opacityThreshold.value;
     }
@@ -1105,6 +1141,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
       Path connPath(abs_mat_path + "/Image_Texture_" + "ior", "outputs:r");
       surfaceShader.ior.set_connection(connPath);
+      surfaceShader.ior.set_value_empty();
     } else {
       surfaceShader.ior = rmat.surfaceShader.ior.value;
     }
@@ -1121,6 +1158,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
       Path connPath(abs_mat_path + "/Image_Texture_" + "occlusion", "outputs:r");
       surfaceShader.occlusion.set_connection(connPath);
+      surfaceShader.occlusion.set_value_empty();
     } else {
       surfaceShader.occlusion = rmat.surfaceShader.occlusion.value;
     }
@@ -1137,6 +1175,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
       Path connPath(abs_mat_path + "/Image_Texture_" + "normal", "outputs:rgb");
       surfaceShader.normal.set_connection(connPath);
+      surfaceShader.normal.set_value_empty();
     } else {
       value::normal3f n;
       n[0] = rmat.surfaceShader.normal.value[0];
@@ -1157,6 +1196,8 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
       Path connPath(abs_mat_path + "/Image_Texture_" + "displacement", "outputs:rgb");
       surfaceShader.displacement.set_connection(connPath);
+      surfaceShader.displacement.set_value_empty();
+    
     } else {
       surfaceShader.displacement = rmat.surfaceShader.displacement.value;
     }

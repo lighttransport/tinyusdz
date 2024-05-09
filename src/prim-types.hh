@@ -1576,17 +1576,16 @@ class TypedAttribute {
   bool is_blocked() const { return _blocked; }
 
   // for `uniform` attribute only
-  void set_blocked(bool onoff) { _blocked = onoff; if (onoff) _value_empty = false; }
+  void set_blocked(bool onoff) { _blocked = onoff; }
 
   bool is_connection() const { return _paths.size() && !has_value(); }
 
   void set_connection(const Path &path) {
     _paths.clear();
     _paths.push_back(path);
-    _value_empty = false;
   }
 
-  void set_connections(const std::vector<Path> &paths) { _paths = paths; _value_empty = false; }
+  void set_connections(const std::vector<Path> &paths) { _paths = paths; }
 
   const std::vector<Path> &get_connections() const { return _paths; }
   const std::vector<Path> &connections() const { return _paths; }
