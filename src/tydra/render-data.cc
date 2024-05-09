@@ -1223,30 +1223,52 @@ bool ArrayValueToVertexAttribute(
   }
 
   if (auto pv = value.as<UnderlyingTy>()) {
-    if (variability == VertexVariability::Constant) {
+    switch (variability) {
+    case VertexVariability::Constant: {
       if (value_counts != elementSize) {
         PUSH_ERROR_AND_RETURN(fmt::format(
-            "# of items {} expected, but got {}. Variability = Constant",
-            elementSize, value_counts));
+            "{} # of items {} expected, but got {}. Variability = Constant",
+            name, elementSize, value_counts));
       }
-    } else if (variability == VertexVariability::Uniform) {
+      break;
+    }
+    case VertexVariability::Uniform: {
       if (value_counts != (elementSize * num_face_counts)) {
         PUSH_ERROR_AND_RETURN(fmt::format(
-            "# of items {} expected, but got {}. Variability = Uniform",
-            elementSize * num_face_counts, value_counts));
+            "{} # of items {} expected, but got {}. Variability = Uniform",
+            name, elementSize * num_face_counts, value_counts));
       }
-    } else if (variability == VertexVariability::Vertex) {
+      break;
+    }
+    case VertexVariability::Vertex: {
       if (value_counts != (elementSize * num_vertices)) {
         PUSH_ERROR_AND_RETURN(fmt::format(
-            "# of items {} expected, but got {}. Variability = Vertex",
-            elementSize * num_vertices, value_counts));
+            "{} # of items {} expected, but got {}. Variability = Vertex",
+            name, elementSize * num_vertices, value_counts));
       }
-    } else {  // facevarying
+      break; 
+    case VertexVariability::Varying: {
+      if (value_counts != (elementSize * num_vertices)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "{} # of items {} expected, but got {}. Variability = Varying",
+            name, elementSize * num_vertices, value_counts));
+      }
+      break;
+    }
+    case VertexVariability::FaceVarying: {
       if (value_counts != (elementSize * num_face_vertex_indices)) {
         PUSH_ERROR_AND_RETURN(fmt::format(
             "# of items {} expected, but got {}. Variability = FaceVarying",
             elementSize * num_face_vertex_indices, value_counts));
       }
+      break;
+    }
+    case VertexVariability::Indexed: {
+      PUSH_ERROR_AND_RETURN(fmt::format(
+            "{} Internal error. 'Indexed' variability is not supported."));
+      }
+      break;
+    }
     }
 
     dst.data.resize(value_counts * baseTySize);
