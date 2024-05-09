@@ -742,13 +742,17 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr,
     bool has_timesamples{false};
     bool is_timesamples{false};
     const auto &pv = attr.get_value();
-    DCOUT("is_value_empty " << is_value_empty);
-    DCOUT("is_connection " << is_connection);
-    DCOUT("is_timesamples " << is_timesamples);
 
     has_default = (pv && pv.value().has_default());
     has_timesamples = (pv && pv.value().has_timesamples());
     is_timesamples = (pv && pv.value().is_timesamples());
+
+    DCOUT("name " << name);
+    DCOUT("is_value_empty " << is_value_empty);
+    DCOUT("is_connection " << is_connection);
+    DCOUT("is_timesamples " << is_timesamples);
+    DCOUT("has_timesamples " << has_timesamples);
+    DCOUT("has_default " << has_default);
 
     //
     // Emit default value(includes ValueBlock and empty definition) and metada
@@ -759,7 +763,7 @@ std::string print_typed_attr(const TypedAttribute<Animatable<T>> &attr,
     // 
     // Also emit this line if the attribute contains metadata
     // Do not emit when Attribute is connection only or timesamples only.
-    if (attr.metas().authored() || attr.is_blocked() || has_default || is_value_empty || (!is_connection) || (!is_timesamples)) {
+    if (attr.metas().authored() || attr.is_blocked() || has_default || is_value_empty || ((!is_connection) && (!is_timesamples))) {
 
       ss << pprint::Indent(indent);
       ss << value::TypeTraits<T>::type_name() << " " << name;
@@ -935,7 +939,7 @@ std::string print_typed_attr(const TypedAttribute<T> &attr,
 
   if (attr.authored()) {
 
-    if (attr.metas().authored() || attr.is_blocked() || attr.has_value() || attr.is_value_empty()) {
+    if (attr.metas().authored() || attr.is_blocked() || attr.has_value() || attr.is_value_empty() || (!attr.is_connection())) {
       ss << pprint::Indent(indent);
       ss << "uniform ";
       ss << value::TypeTraits<T>::type_name() << " " << name;
@@ -1024,8 +1028,22 @@ std::string print_typed_attr(
 
     const auto &v = attr.get_value();
 
-    if (attr.metas().authored() || v.has_value() || attr.is_value_empty()) {
-      if (v.has_value()) {
+    bool is_connection = attr.is_connection();
+    bool is_timesamples = v.is_timesamples();
+    bool has_timesamples = v.has_timesamples();
+    bool has_value = attr.has_value();
+    bool is_value_empty = attr.is_value_empty();
+
+    DCOUT("name " << name);
+    DCOUT("is_value_empty " << attr.is_value_empty());
+    DCOUT("is_connection " << is_connection);
+    DCOUT("is_timesamples " << is_timesamples);
+    DCOUT("has_timesamples " << has_timesamples);
+    DCOUT("is_value_empty " << is_value_empty);
+    DCOUT("has_value " << has_value);
+
+    if (attr.metas().authored() || has_value || is_value_empty || ((!is_connection) && (!is_timesamples))) {
+      if (has_value) {
         ss << pprint::Indent(indent);
         ss << value::TypeTraits<T>::type_name() << " " << name;
         ss << " = " << print_animatable_default(v, indent);
@@ -1107,7 +1125,7 @@ std::string print_typed_attr(const TypedAttributeWithFallback<T> &attr,
   if (attr.authored()) {
 
     // default
-    {
+    if (attr.metas().authored() || attr.is_blocked() || (!attr.is_connection())) {
       ss << pprint::Indent(indent);
       ss << "uniform ";
       ss << value::TypeTraits<T>::type_name() << " " << name;
