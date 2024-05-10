@@ -1510,13 +1510,9 @@ nonstd::expected<T, std::string> EnumHandler(
 
 } // namespace
 
-// Work around until https://github.com/syoyo/tinyusdz/issues/154
-// clear table to allow the latter attribute can overwrite previous definition.
 #define PARSE_TYPED_ATTRIBUTE(__table, __prop, __name, __klass, __target) { \
   ParseResult ret = ParseTypedAttribute(__table, __prop.first, __prop.second, __name, __target); \
   if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
-    /* FIXME: workaround. clear table */ \
-    __table.erase(__name); \
     continue; /* got it */\
   } else if (ret.code == ParseResult::ResultCode::Unmatched) { \
     /* go next */ \
@@ -1864,17 +1860,18 @@ bool ParseTimeSampledEnumProperty(
     if (__table.count(__name)) { continue; } \
     if ((__prop.second.value_type_name() == value::TypeTraits<value::token>::type_name()) && __prop.second.is_attribute() && __prop.second.is_empty()) { \
       PUSH_WARN("No value assigned to `" << __name << "` token attribute. Set default token value."); \
-      /* TODO: attr meta __target.meta = attr.meta;  */                    \
+      __target.metas() = __prop.second.get_attribute().metas();                    \
       __table.insert(__name);                                              \
+      continue; \
     } else { \
       const Attribute &attr = __prop.second.get_attribute();                           \
       std::function<nonstd::expected<__enum_ty, std::string>(const std::string &)> fun = __enum_handler; \
       if (!ParseUniformEnumProperty(__name, __strict_check, fun, attr, &__target, warn, err)) { \
         return false; \
       } \
-      /* copy metas */ \
       __target.metas() = attr.metas(); \
-     __table.insert(__name);                                              \
+      __table.insert(__name);                                              \
+      continue; \
     } \
   } \
 }
@@ -1885,17 +1882,19 @@ bool ParseTimeSampledEnumProperty(
     if (__table.count(__name)) { continue; } \
     if ((__prop.second.value_type_name() == value::TypeTraits<value::token>::type_name()) && __prop.second.is_attribute() && __prop.second.is_empty()) { \
       PUSH_WARN("No value assigned to `" << __name << "` token attribute. Set default token value."); \
-      /* TODO: attr meta __target.meta = attr.meta;  */                    \
+      const Attribute &attr = __prop.second.get_attribute();                           \
+      __target.metas() = attr.metas();                    \
       __table.insert(__name);                                              \
+      continue; \
     } else { \
       const Attribute &attr = __prop.second.get_attribute();                           \
       std::function<nonstd::expected<__enum_ty, std::string>(const std::string &)> fun = __enum_handler; \
       if (!ParseTimeSampledEnumProperty(__name, __strict_check, fun, attr, &__target, warn, err)) { \
         return false; \
       } \
-      /* copy metas */ \
       __target.metas() = attr.metas(); \
      __table.insert(__name);                                              \
+     continue; \
     } \
   } \
 }
