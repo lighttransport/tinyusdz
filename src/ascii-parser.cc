@@ -4022,6 +4022,9 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
       }
 
       props->at(attr_name).attribute().set_connection(abs_path);
+
+      // Set PropType to Attrib(since previously created Property may have EmptyAttrib).
+      props->at(attr_name).set_property_type(Property::Type::Attrib);
     } else {
 
       Attribute attr;
@@ -4095,6 +4098,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
     Attribute *pattr{nullptr};
     bool attr_exists = props->count(attr_name) && props->at(attr_name).is_attribute();
     if (attr_exists) {
+      DCOUT("Attr exists");
       // Add timeSamples to existing Attribute
       pattr = &(props->at(attr_name).attribute());
 
@@ -4104,6 +4108,9 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
       }
 
       pattr->get_var().set_timesamples(ts);
+
+      // Set PropType to Attrib(since previously created Property may have EmptyAttrib).
+      props->at(attr_name).set_property_type(Property::Type::Attrib);
 
     } else {
       // new Attribute
@@ -4497,6 +4504,9 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
       if (pattr->variability() != variability) {
         PUSH_ERROR_AND_RETURN(fmt::format("Variability mismatch. Attribute `{}` already has variability `{}`, but 'default' value has variability `{}`.", attr_name, to_string(pattr->variability()), to_string(variability)));
       }
+
+      // Set PropType to Attrib(since previously created Property may have EmptyAttrib).
+      props->at(attr_name).set_property_type(Property::Type::Attrib);
     } else {
       pattr->variability() = variability;
       Property p(*pattr, custom_qual);
