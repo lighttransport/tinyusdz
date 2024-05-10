@@ -4,10 +4,10 @@
 
 ## High priority
 
-* [ ] Support multiple values in Attribute https://github.com/syoyo/tinyusdz/issues/154
+* [x] Support multiple values in Attribute https://github.com/syoyo/tinyusdz/issues/154
 * Tydra: Handy data structure converter for rendering https://github.com/syoyo/tinyusdz/issues/31
   * Working on the branch: https://github.com/syoyo/tinyusdz/tree/rendermesh-refactor  https://github.com/syoyo/tinyusdz/issues/148
-  * [ ] USD to RenderScene(OpenGL/Vulkan-like API friendly data structure) conversion https://github.com/syoyo/tinyusdz/issues/109
+  * [x] USD to RenderScene(OpenGL/Vulkan-like API friendly data structure) conversion https://github.com/syoyo/tinyusdz/issues/109
   * [x] GeomSubset/Material Binding API support for shading/texturing https://github.com/syoyo/tinyusdz/issues/103 
 * [x] UTF8 Identifier support https://github.com/syoyo/tinyusdz/issues/47
  
