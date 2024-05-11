@@ -2290,6 +2290,9 @@ struct TimeSamples {
     _dirty = false;
   }
 
+  bool has_sample_at(const double t) const;
+  bool get_sample_at(const double t, Sample **s);
+
   nonstd::optional<double> get_time(size_t idx) const {
     if (idx >= _samples.size()) {
       return nonstd::nullopt;
