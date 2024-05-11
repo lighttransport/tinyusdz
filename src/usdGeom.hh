@@ -182,6 +182,11 @@ class GeomPrimvar {
     _unauthoredValuesIndex = n;
   }
 
+  ///
+  /// Get indices at specified timecode.
+  /// Returns empty when appropriate indices does not exist for timecode 't'.
+  ///
+  std::vector<int32_t> get_indices(const double t = value::TimeCode::Default()) const;
   
   const std::vector<int32_t> &get_default_indices() const {
     return _indices;
@@ -265,6 +270,11 @@ class GeomPrimvar {
   }
 
   void set_name(const std::string &name) { _name = name; }
+
+  // Set indices for specified timecode 't'
+  // indices will be replaced when there is an indices at timecode 't'.
+  void set_indices(const std::vector<int32_t> &indices, const double t = value::TimeCode::Default());
+
 
   void set_default_indices(const std::vector<int32_t> &indices) {
     _indices = indices;

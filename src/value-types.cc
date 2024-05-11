@@ -9,6 +9,7 @@
 
 //
 #include "common-macros.inc"
+#include "math-util.inc"
 
 // For compile-time map
 // Another candidate is frozen: https://github.com/serge-sans-paille/frozen
@@ -1074,6 +1075,37 @@ bool FlexibleTypeCast(const value::Value &src, value::Value &dst) {
   return false;
 }
 #endif
+
+bool TimeSamples::has_sample_at(const double t) const {
+  if (_dirty) {
+    update();
+  }
+
+  const auto it = std::find_if(_samples.begin(), _samples.end(), [&t](const Sample &s) {
+    return math::is_close(t, s.t);
+  });
+
+  return (it != _samples.end());
+}
+
+bool TimeSamples::get_sample_at(const double t, Sample **dst) {
+  if (!dst) {
+    return false;
+  }
+
+  if (_dirty) {
+    update();
+  }
+
+  const auto it = std::find_if(_samples.begin(), _samples.end(), [&t](const Sample &sample) {
+    return math::is_close(t, sample.t);
+  });
+
+  if (it != _samples.end()) {
+    (*dst) = &(*it); 
+  }
+  return false;
+}
 
 }  // namespace value
 }  // namespace tinyusdz

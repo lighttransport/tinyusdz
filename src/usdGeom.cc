@@ -305,6 +305,41 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
   return false;
 }
 
+std::vector<int32_t> GeomPrimvar::get_indices(const double t) const {
+  if (value::TimeCode(t).is_default()) {
+    if (has_default_indices()) {
+      return get_default_indices();
+    }
+  }
+  
+  if (has_timesampled_indices()) {
+    std::vector<int32_t> indices;
+    if (get_timesampled_indices().get(&indices, t)) {
+      return indices;
+    }
+  }
+
+  if (has_default_indices()) {
+    return get_default_indices();
+  }
+
+  return std::vector<int32_t>();
+}
+
+void GeomPrimvar::set_indices(const std::vector<int32_t> &indices, const double t) {
+  if (value::TimeCode(t).is_default()) {
+    _indices = indices;
+  } else {
+    TypedTimeSamples<std::vector<int32_t>>::Sample *psample{nullptr};
+    if (_ts_indices.get_sample_at(t, &psample)) {
+      // overwrite content
+      psample->value = indices;
+    } else {
+      _ts_indices.add_sample(t, indices);
+    }
+  }
+}
+
 template <typename T>
 bool GeomPrimvar::flatten_with_indices(std::vector<T> *dest, std::string *err) const {
   return flatten_with_indices(value::TimeCode::Default(), dest, value::TimeSampleInterpolationType::Linear, err);
