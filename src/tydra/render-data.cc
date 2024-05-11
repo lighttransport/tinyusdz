@@ -5700,10 +5700,16 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
     rnode.display_name = prim->metas().displayName.value_or("");
 
     DCOUT("rnode.prim_name " << rnode.prim_name);
+    DCOUT("node.local_mat " << node.get_local_matrix());
+    DCOUT("node.has_resetXform " << node.has_resetXformStack());
+    DCOUT("prim.type_name " << prim->type_name());
+    DCOUT("prim.type_id " << prim->type_id());
+    DCOUT("xform " << value::TYPE_ID_GEOM_XFORM);
 
     if (prim->type_id() == value::TYPE_ID_GEOM_MESH) {
       // GeomMesh(GPrim) also has xform.
       rnode.local_matrix = node.get_local_matrix();
+      rnode.global_matrix = node.get_world_matrix();
       rnode.nodeType = NodeType::Mesh;
       rnode.has_resetXform = node.has_resetXformStack();
 
@@ -5714,22 +5720,31 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
       }
     } else if (prim->type_id() == value::TYPE_ID_GEOM_CAMERA) {
       rnode.local_matrix = node.get_local_matrix();
+      rnode.global_matrix = node.get_world_matrix();
       rnode.nodeType = NodeType::Mesh;
       rnode.has_resetXform = node.has_resetXformStack();
       rnode.nodeType = NodeType::Camera;
       rnode.id = -1;  // TODO: Assign index to cameras
-    } else if (prim->prim_id() == value::TYPE_ID_GEOM_XFORM) {
+    } else if (prim->type_id() == value::TYPE_ID_GEOM_XFORM) {
       rnode.local_matrix = node.get_local_matrix();
+      rnode.global_matrix = node.get_world_matrix();
+      DCOUT("rnode.local_matrix " << rnode.local_matrix);
       rnode.global_matrix = node.get_world_matrix();
       rnode.has_resetXform = node.has_resetXformStack();
       rnode.nodeType = NodeType::Xform;
-    } else if (prim->prim_id() == value::TYPE_ID_SCOPE) {
+    } else if (prim->type_id() == value::TYPE_ID_SCOPE) {
       // NOTE: get_local_matrix() should return identity matrix.
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
       rnode.has_resetXform = node.has_resetXformStack();
       rnode.nodeType = NodeType::Xform;
-    } else if (prim->prim_id() == value::TYPE_ID_MODEL) {
+    } else if (prim->type_id() == value::TYPE_ID_MODEL) {
+      rnode.local_matrix = node.get_local_matrix();
+      rnode.global_matrix = node.get_world_matrix();
+      rnode.has_resetXform = node.has_resetXformStack();
+      rnode.nodeType = NodeType::Xform;
+    } else if ((prim->type_id() > value::TYPE_ID_MODEL_BEGIN) && (prim->type_id() < value::TYPE_ID_GEOM_END)) {
+      // Other Geom prims(e.g. GeomCube)
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
       rnode.has_resetXform = node.has_resetXformStack();
@@ -5738,9 +5753,9 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
       rnode.has_resetXform = node.has_resetXformStack();
-      if (prim->prim_id() == value::TYPE_ID_LUX_DISTANT) {
+      if (prim->type_id() == value::TYPE_ID_LUX_DISTANT) {
         rnode.nodeType = NodeType::DirectionalLight;
-      } else if (prim->prim_id() == value::TYPE_ID_LUX_SPHERE) {
+      } else if (prim->type_id() == value::TYPE_ID_LUX_SPHERE) {
         // treat sphereLight as pointLight
         rnode.nodeType = NodeType::PointLight;
       } else {
@@ -5750,6 +5765,13 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
       rnode.id = -1;  // TODO: index to lights
     } else {
       // ignore other node types.
+      DCOUT("Unknown/Unsupported prim. " << prim->type_name());
+
+      // Setup as xform for now.
+      rnode.local_matrix = node.get_local_matrix();
+      rnode.global_matrix = node.get_world_matrix();
+      rnode.has_resetXform = node.has_resetXformStack();
+      rnode.nodeType = NodeType::Xform;
     }
   }
 
@@ -6601,6 +6623,8 @@ std::string DumpNode(const Node &node, uint32_t indent) {
      << quote(node.display_name) << "\n";
   ss << pprint::Indent(indent + 1) << "local_matrix "
      << quote(tinyusdz::to_string(node.local_matrix)) << "\n";
+  ss << pprint::Indent(indent + 1) << "global_matrix "
+     << quote(tinyusdz::to_string(node.global_matrix)) << "\n";
 
   if (node.children.size()) {
     ss << pprint::Indent(indent + 1) << "children {\n";
