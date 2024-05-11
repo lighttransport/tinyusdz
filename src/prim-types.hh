@@ -46,6 +46,7 @@
 #include "primvar.hh"
 //
 #include "value-eval-util.hh"
+#include "math-util.inc"
 
 namespace tinyusdz {
 
@@ -1308,6 +1309,37 @@ struct TypedTimeSamples {
     s.blocked = true;
     _samples.emplace_back(s);
     _dirty = true;
+  }
+
+  bool has_sample_at(const double t) const {
+    if (_dirty) {
+      update();
+    }
+
+    const auto it = std::find_if(_samples.begin(), _samples.end(), [&t](const Sample &s) {
+      return tinyusdz::math::is_close(t, s.t);
+    });
+
+    return (it != _samples.end());
+  }
+
+  bool get_sample_at(const double t, Sample **dst) {
+    if (!dst) {
+      return false;
+    }
+
+    if (_dirty) {
+      update();
+    }
+
+    const auto it = std::find_if(_samples.begin(), _samples.end(), [&t](const Sample &sample) {
+      return math::is_close(t, sample.t);
+    });
+
+    if (it != _samples.end()) {
+      (*dst) = &(*it); 
+    }
+    return false;
   }
 
   const std::vector<Sample> &get_samples() const {
