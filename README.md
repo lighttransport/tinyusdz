@@ -4,15 +4,26 @@
 
 ## High priority
 
-* [x] Support multiple values in Attribute https://github.com/syoyo/tinyusdz/issues/154
+* Prepare Release v0.8
+  * Core part should be ready for the release. 
+  * Write example viewer(work in progress)
+    * [examples/openglviewer](examples/openglviewer) OpenGL viewer
+    * [examples/sdlviewer](examples/sdlviewer) Software raytracing viewer 
+  * For Vulkan and Android Vulkan example, we can use  https://github.com/syoyo/Vulkan-glTF-USDZ-PBR for a while though )
+ 
+## Mid-term todo
+
+* better colorspace + wide-gamut support https://github.com/syoyo/tinyusdz/issues/142
+* Better skinning + blendshapes support
+  * Write example using mediapipe for motion tracking and face tracking with rigged USDZ model.  
+* MaterialX https://github.com/syoyo/tinyusdz/issues/86
+  * USD + MateriralX + PBR rendering example using https://github.com/lighttransport/pbrlab 
+* Improve interoperability with Blender USD export/import https://github.com/syoyo/tinyusdz/issues/98
 * Tydra: Handy data structure converter for rendering https://github.com/syoyo/tinyusdz/issues/31
   * Working on the branch: https://github.com/syoyo/tinyusdz/tree/rendermesh-refactor  https://github.com/syoyo/tinyusdz/issues/148
   * [x] USD to RenderScene(OpenGL/Vulkan-like API friendly data structure) conversion https://github.com/syoyo/tinyusdz/issues/109
   * [x] GeomSubset/Material Binding API support for shading/texturing https://github.com/syoyo/tinyusdz/issues/103 
 * [x] UTF8 Identifier support https://github.com/syoyo/tinyusdz/issues/47
- 
-## Mid-term todo
-
 * Collection API
   * [ ] https://github.com/syoyo/tinyusdz/issues/108
 * Experimental composition support https://github.com/syoyo/tinyusdz/issues/25
@@ -28,13 +39,6 @@
 * Support reading & compose some production USD scenes
   * [ ] Moana island v2.1 https://github.com/syoyo/tinyusdz/issues/90
   * [ ] ALAB USD production scene https://github.com/syoyo/tinyusdz/issues/91
-  
-* MaterialX https://github.com/syoyo/tinyusdz/issues/86
-  * USD + MateriralX + PBR rendering example using https://github.com/lighttransport/pbrlab
-* Improve interoperability with Blender USD export/import https://github.com/syoyo/tinyusdz/issues/98
-* Example viewer(work in progress)
-  * [examples/openglviewer](examples/openglviewer) OpenGL viewer
-  * [examples/sdlviewer](examples/sdlviewer) Software raytracing viewer 
 
 
 ## Build status
