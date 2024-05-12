@@ -5,11 +5,11 @@
 ## High priority
 
 * Prepare Release v0.8
-  * Core part should be ready for the release. 
-  * Write example viewer(work in progress)
+  * [x] Core part should be ready for the release. 
+  * [ ] Write a demo and example viewer(work in progress)
     * [examples/openglviewer](examples/openglviewer) OpenGL viewer
     * [examples/sdlviewer](examples/sdlviewer) Software raytracing viewer 
-  * For Vulkan and Android Vulkan example, we can use  https://github.com/syoyo/Vulkan-glTF-USDZ-PBR for a while though )
+  * For Vulkan and Android Vulkan example, we can use  https://github.com/syoyo/Vulkan-glTF-USDZ-PBR for a while though
  
 ## Mid-term todo
 
