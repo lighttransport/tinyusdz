@@ -2695,8 +2695,8 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
             "Internal error. Invalid elementSize in mesh.joint_and_weights.");
       }
       uint32_t elementSize = uint32_t(mesh.joint_and_weights.elementSize);
-      std::vector<int> tmp_indices(numPoints * elementSize);
-      std::vector<float> tmp_weights(numPoints * elementSize);
+      std::vector<int> tmp_indices(size_t(numPoints) * size_t(elementSize));
+      std::vector<float> tmp_weights(size_t(numPoints) * size_t(elementSize));
       for (size_t i = 0; i < out_point_indices.size(); i++) {
         if ((elementSize * out_point_indices[i]) >=
             mesh.joint_and_weights.jointIndices.size()) {
@@ -2704,9 +2704,9 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
               "Internal error. point index exceeds jointIndices.size.");
         }
         for (size_t k = 0; k < elementSize; k++) {
-          tmp_indices[elementSize * out_indices[i] + k] =
+          tmp_indices[size_t(elementSize) * size_t(out_indices[i]) + k] =
               mesh.joint_and_weights
-                  .jointIndices[elementSize * out_point_indices[i] + k];
+                  .jointIndices[size_t(elementSize) * size_t(out_point_indices[i]) + k];
         }
 
         if ((elementSize * out_point_indices[i]) >=
@@ -2716,9 +2716,9 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
         }
 
         for (size_t k = 0; k < elementSize; k++) {
-          tmp_weights[elementSize * out_indices[i] + k] =
+          tmp_weights[size_t(elementSize) * size_t(out_indices[i]) + k] =
               mesh.joint_and_weights
-                  .jointWeights[elementSize * out_point_indices[i] + k];
+                  .jointWeights[size_t(elementSize) * size_t(out_point_indices[i]) + k];
         }
       }
       mesh.joint_and_weights.jointIndices.swap(tmp_indices);
