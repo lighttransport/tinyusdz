@@ -10,8 +10,9 @@ Instead, we'd like to propose Tydra(Tiny Hydra), something like a three-headed m
 Currently Tydra is considering following three usecases in mind:
 
 - Runtime publishment(e.g. to glTF), DCC conversion and exchange for realtime graphics(AR, VR, MR, games, etc).
-- Scene conversion to GL/Vulkan renderer(e.g. WebGL rendering)
-- Scene conversion to Ray tracing renderer(e.g. Vulkan/OptiX ray tracing)
+- [x] Scene conversion to GL/Vulkan renderer(e.g. WebGL rendering)
+  See `../../examples/tydra_to_renderscene`  
+- [ ] Scene conversion to Ray tracing renderer(e.g. Vulkan/OptiX ray tracing)
   See `../../examples/sdlviewer/` for SW raytracing example.
 
 ## Status
@@ -24,21 +25,22 @@ Scene graph representation suited for OpenGL/Vulkan renderer.
 
 ### Status
 
-* [ ] Node xform
+* [x] Node xform
 * [x] Triangulate mesh
 * [ ] Subdivision surface support(subdivide mesh using OpenSubdiv)
 * [x] Resolve Material binding
   * [x] GeomSubset material binding
   * [ ] Collection material binding 
-* [ ] Load and setup Texture
+* [x] Load and setup Texture
   * Colorspace conversion
     * [x] sRGB <-> Linear
     * [x] rec709 <-> Linear
-    * [ ] OCIO LUT
-    *  
-* [ ] Skinning
-* [ ] BlendShape
-* [ ] Animation
+    * [x] displayP3 Linear <-> sRGB Linear
+    * [x] ACEScg(AP1, Linear) <-> sRGB Linear
+* [x] Skinning
+* [x] BlendShape
+* [x] Animation(SkelAnimation)
+* [ ] Xform animation(timesamples XformOps)
 * [ ] Lights
     
 ## TODO
