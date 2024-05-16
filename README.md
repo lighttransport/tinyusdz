@@ -21,7 +21,6 @@
   * USD + MateriralX + PBR rendering example using https://github.com/lighttransport/pbrlab 
 * Improve interoperability with Blender USD export/import https://github.com/syoyo/tinyusdz/issues/98
 * Tydra: Handy data structure converter for rendering https://github.com/syoyo/tinyusdz/issues/31
-  * Working on the branch: https://github.com/syoyo/tinyusdz/tree/rendermesh-refactor  https://github.com/syoyo/tinyusdz/issues/148
   * [x] USD to RenderScene(OpenGL/Vulkan-like API friendly data structure) conversion https://github.com/syoyo/tinyusdz/issues/109
   * [x] GeomSubset/Material Binding API support for shading/texturing https://github.com/syoyo/tinyusdz/issues/103 
 * [x] UTF8 Identifier support https://github.com/syoyo/tinyusdz/issues/47
