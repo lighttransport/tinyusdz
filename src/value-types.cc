@@ -1,5 +1,6 @@
-// SPDX-License-Identifier: MIT
-// Copyright 2022 - Present, Syoyo Fujita.
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2022 - 2023, Syoyo Fujita.
+// Copyright 2023 - Present, Light Transport Entertainment Inc.
 #include "value-types.hh"
 
 #include "str-util.hh"
@@ -8,6 +9,7 @@
 
 //
 #include "common-macros.inc"
+#include "math-util.inc"
 
 // For compile-time map
 // Another candidate is frozen: https://github.com/serge-sans-paille/frozen
@@ -29,32 +31,84 @@ namespace value {
 // (use slerp for quaternion type)
 bool IsLerpSupportedType(uint32_t tyid) {
 
-  // See underlying_type_id to simplify check for Role types(e.g. color3f)
-#define IS_SUPPORTED_TYPE(__tyid, __ty) \
-  if (__tyid == value::TypeTraits<__ty>::underlying_type_id()) return true
+  // TODO: Directly get underlying_typeid
+  bool has_underlying_tyid{false};
+  uint32_t underlying_tyid{TYPE_ID_INVALID};
 
-  IS_SUPPORTED_TYPE(tyid, value::half);
-  IS_SUPPORTED_TYPE(tyid, value::half2);
-  IS_SUPPORTED_TYPE(tyid, value::half3);
-  IS_SUPPORTED_TYPE(tyid, value::half4);
-  IS_SUPPORTED_TYPE(tyid, float);
-  IS_SUPPORTED_TYPE(tyid, value::float2);
-  IS_SUPPORTED_TYPE(tyid, value::float3);
-  IS_SUPPORTED_TYPE(tyid, value::float4);
-  IS_SUPPORTED_TYPE(tyid, double);
-  IS_SUPPORTED_TYPE(tyid, value::double2);
-  IS_SUPPORTED_TYPE(tyid, value::double3);
-  IS_SUPPORTED_TYPE(tyid, value::double4);
-  IS_SUPPORTED_TYPE(tyid, value::quath);
-  IS_SUPPORTED_TYPE(tyid, value::quatf);
-  IS_SUPPORTED_TYPE(tyid, value::quatd);
-  IS_SUPPORTED_TYPE(tyid, value::matrix2d);
-  IS_SUPPORTED_TYPE(tyid, value::matrix3d);
-  IS_SUPPORTED_TYPE(tyid, value::matrix4d);
+  if (auto pv = TryGetUnderlyingTypeName(tyid)) {
+    underlying_tyid = GetTypeId(pv.value());
+    has_underlying_tyid = true;
+  } 
+
+  // See also for underlying_type_id to simplify check for Role types(e.g. color3f)
+#define IS_SUPPORTED_TYPE(__tyid, __ty) \
+  if (__tyid == value::TypeTraits<__ty>::type_id()) { \
+    return true; \
+  } else if (__tyid == value::TypeTraits<__ty>::underlying_type_id()) { \
+    return true; \
+  } else if (__tyid & value::TYPE_ID_1D_ARRAY_BIT) { \
+    if ((__tyid & (~value::TYPE_ID_1D_ARRAY_BIT)) == (value::TypeTraits<__ty>::type_id())) { \
+      return true; \
+    } else if ((__tyid & (~value::TYPE_ID_1D_ARRAY_BIT)) == (value::TypeTraits<__ty>::underlying_type_id())) { \
+      return true; \
+    } \
+  }
+
+  // Assume __uty is underlying_type.
+#define IS_SUPPORTED_UNDERLYING_TYPE(__utyid, __uty) \
+  if (__utyid == value::TypeTraits<__uty>::type_id()) { \
+    return true; \
+  } else if (__utyid & value::TYPE_ID_1D_ARRAY_BIT) { \
+    if ((__utyid & (~value::TYPE_ID_1D_ARRAY_BIT)) == (value::TypeTraits<__uty>::type_id())) { \
+      return true; \
+    } \
+  }
+
+  IS_SUPPORTED_TYPE(tyid, value::half)
+  IS_SUPPORTED_TYPE(tyid, value::half2)
+  IS_SUPPORTED_TYPE(tyid, value::half3)
+  IS_SUPPORTED_TYPE(tyid, value::half4)
+  IS_SUPPORTED_TYPE(tyid, float)
+  IS_SUPPORTED_TYPE(tyid, value::float2)
+  IS_SUPPORTED_TYPE(tyid, value::float3)
+  IS_SUPPORTED_TYPE(tyid, value::float4)
+  IS_SUPPORTED_TYPE(tyid, double)
+  IS_SUPPORTED_TYPE(tyid, value::double2)
+  IS_SUPPORTED_TYPE(tyid, value::double3)
+  IS_SUPPORTED_TYPE(tyid, value::double4)
+  IS_SUPPORTED_TYPE(tyid, value::quath)
+  IS_SUPPORTED_TYPE(tyid, value::quatf)
+  IS_SUPPORTED_TYPE(tyid, value::quatd)
+  IS_SUPPORTED_TYPE(tyid, value::matrix2d)
+  IS_SUPPORTED_TYPE(tyid, value::matrix3d)
+  IS_SUPPORTED_TYPE(tyid, value::matrix4d)
+
+  if (has_underlying_tyid) {
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::half)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::half2)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::half3)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::half4)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, float)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::float2)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::float3)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::float4)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, double)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::double2)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::double3)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::double4)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::quath)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::quatf)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::quatd)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::matrix2d)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::matrix3d)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::matrix4d)
+  }
 
 #undef IS_SUPPORTED_TYPE
+#undef IS_SUPPORTED_UNDERLYING_TYPE
 
   return false;
+
 }
 
 bool Lerp(const value::Value &a, const value::Value &b, double dt, value::Value *dst) {
@@ -80,6 +134,15 @@ bool Lerp(const value::Value &a, const value::Value &b, double dt, value::Value 
     const __ty *v0 = a.as<__ty>(); \
     const __ty *v1 = b.as<__ty>(); \
     __ty c; \
+    if (v0 && v1) { \
+      c = lerp(*v0, *v1, dt); \
+      result = c; \
+      ok = true; \
+    } \
+  } else if (tyid == value::TypeTraits<std::vector<__ty>>::type_id()) { \
+    const std::vector<__ty> *v0 = a.as<std::vector<__ty>>(); \
+    const std::vector<__ty> *v1 = b.as<std::vector<__ty>>(); \
+    std::vector<__ty> c; \
     if (v0 && v1) { \
       c = lerp(*v0, *v1, dt); \
       result = c; \
@@ -135,129 +198,6 @@ bool Lerp(const value::Value &a, const value::Value &b, double dt, value::Value 
 
   return ok;
 }
-
-
-#if 0  // TODO: Remove
-bool Reconstructor::reconstruct(AttribMap &amap) {
-  err_.clear();
-
-  staticstruct::Reader r;
-
-#define CONVERT_TYPE_SCALAR(__ty, __value)       \
-  case TypeTraits<__ty>::type_id: {               \
-    __ty *p = reinterpret_cast<__ty *>(__value); \
-    staticstruct::Handler<__ty> _h(p);           \
-    return _h.write(&handler);                   \
-  }
-
-#define CONVERT_TYPE_1D(__ty, __value)                                     \
-  case (TypeTraits<__ty>::type_id | TYPE_ID_1D_ARRAY_BIT): {                \
-    std::vector<__ty> *p = reinterpret_cast<std::vector<__ty> *>(__value); \
-    staticstruct::Handler<std::vector<__ty>> _h(p);                        \
-    return _h.write(&handler);                                             \
-  }
-
-#define CONVERT_TYPE_2D(__ty, __value)                               \
-  case (TypeTraits<__ty>::type_id | TYPE_ID_2D_ARRAY_BIT): {          \
-    std::vector<std::vector<__ty>> *p =                              \
-        reinterpret_cast<std::vector<std::vector<__ty>> *>(__value); \
-    staticstruct::Handler<std::vector<std::vector<__ty>>> _h(p);     \
-    return _h.write(&handler);                                       \
-  }
-
-#define CONVERT_TYPE_LIST(__FUNC) \
-  __FUNC(half, v)                 \
-  __FUNC(half2, v)                \
-  __FUNC(half3, v)                \
-  __FUNC(half4, v)                \
-  __FUNC(int32_t, v)              \
-  __FUNC(uint32_t, v)             \
-  __FUNC(int2, v)                 \
-  __FUNC(int3, v)                 \
-  __FUNC(int4, v)                 \
-  __FUNC(uint2, v)                \
-  __FUNC(uint3, v)                \
-  __FUNC(uint4, v)                \
-  __FUNC(int64_t, v)              \
-  __FUNC(uint64_t, v)             \
-  __FUNC(float, v)                \
-  __FUNC(float2, v)               \
-  __FUNC(float3, v)               \
-  __FUNC(float4, v)               \
-  __FUNC(double, v)               \
-  __FUNC(double2, v)              \
-  __FUNC(double3, v)              \
-  __FUNC(double4, v)              \
-  __FUNC(quath, v)                \
-  __FUNC(quatf, v)                \
-  __FUNC(quatd, v)                \
-  __FUNC(vector3h, v)             \
-  __FUNC(vector3f, v)             \
-  __FUNC(vector3d, v)             \
-  __FUNC(normal3h, v)             \
-  __FUNC(normal3f, v)             \
-  __FUNC(normal3d, v)             \
-  __FUNC(point3h, v)              \
-  __FUNC(point3f, v)              \
-  __FUNC(point3d, v)              \
-  __FUNC(color3f, v)              \
-  __FUNC(color3d, v)              \
-  __FUNC(color4f, v)              \
-  __FUNC(color4d, v)              \
-  __FUNC(matrix2d, v)             \
-  __FUNC(matrix3d, v)             \
-  __FUNC(matrix4d, v)
-
-  bool ret = r.ParseStruct(
-      &h,
-      [&amap](std::string key, uint32_t flags, uint32_t user_type_id,
-              staticstruct::BaseHandler &handler) -> bool {
-        std::cout << "key = " << key << ", count = " << amap.attribs.count(key)
-                  << "\n";
-
-        if (!amap.attribs.count(key)) {
-          if (flags & staticstruct::Flags::Optional) {
-            return true;
-          } else {
-            return false;
-          }
-        }
-
-        auto &value = amap.attribs[key];
-        if (amap.attribs[key].type_id() == user_type_id) {
-          void *v = value.value();
-
-          switch (user_type_id) {
-            CONVERT_TYPE_SCALAR(bool, v)
-
-            CONVERT_TYPE_LIST(CONVERT_TYPE_SCALAR)
-            CONVERT_TYPE_LIST(CONVERT_TYPE_1D)
-            CONVERT_TYPE_LIST(CONVERT_TYPE_2D)
-
-            default: {
-              std::cerr << "Unsupported type: " << GetTypeName(user_type_id)
-                        << "\n";
-              return false;
-            }
-          }
-        } else {
-          std::cerr << "type: " << amap.attribs[key].type_name() << "(a.k.a "
-                    << amap.attribs[key].underlying_type_name()
-                    << ") expected but got " << GetTypeName(user_type_id)
-                    << " for attribute \"" << key << "\"\n";
-          return false;
-        }
-      },
-      &err_);
-
-  return ret;
-
-#undef CONVERT_TYPE_SCALAR
-#undef CONVERT_TYPE_1D
-#undef CONVERT_TYPE_2D
-#undef CONVERT_TYPE_LIST
-}
-#endif
 
 nonstd::optional<std::string> TryGetTypeName(uint32_t tyid) {
   MAPBOX_ETERNAL_CONSTEXPR const auto tynamemap =
@@ -780,6 +720,10 @@ half float_to_half_full(float _f) {
   return fp16;
 }
 
+matrix2f::matrix2f(const matrix2d &src) {
+  (*this) = src;
+}
+
 matrix2f &matrix2f::operator=(const matrix2d &src) {
 
   for (size_t j = 0; j < 2; j++) {
@@ -789,6 +733,10 @@ matrix2f &matrix2f::operator=(const matrix2d &src) {
   }
 
   return *this;
+}
+
+matrix3f::matrix3f(const matrix3d &src) {
+  (*this) = src;
 }
 
 matrix3f &matrix3f::operator=(const matrix3d &src) {
@@ -1127,6 +1075,37 @@ bool FlexibleTypeCast(const value::Value &src, value::Value &dst) {
   return false;
 }
 #endif
+
+bool TimeSamples::has_sample_at(const double t) const {
+  if (_dirty) {
+    update();
+  }
+
+  const auto it = std::find_if(_samples.begin(), _samples.end(), [&t](const Sample &s) {
+    return math::is_close(t, s.t);
+  });
+
+  return (it != _samples.end());
+}
+
+bool TimeSamples::get_sample_at(const double t, Sample **dst) {
+  if (!dst) {
+    return false;
+  }
+
+  if (_dirty) {
+    update();
+  }
+
+  const auto it = std::find_if(_samples.begin(), _samples.end(), [&t](const Sample &sample) {
+    return math::is_close(t, sample.t);
+  });
+
+  if (it != _samples.end()) {
+    (*dst) = &(*it); 
+  }
+  return false;
+}
 
 }  // namespace value
 }  // namespace tinyusdz

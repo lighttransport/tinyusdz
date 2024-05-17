@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+﻿// SPDX-License-Identifier: MIT
 #pragma once
 
 #include <algorithm>
@@ -7,8 +7,12 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <set>
+#include <cstdint>
 
 namespace tinyusdz {
+
+constexpr size_t kMaxUTF8Codepoint = 0x10ffff;
 
 enum class CharEncoding
 {
@@ -17,6 +21,17 @@ enum class CharEncoding
   UTF8BOM, // UTF8 + BOM
   UTF16LE  // UTF16 LE(Windows Unicode)
 };
+
+inline const std::string to_lower(const std::string &str) {
+  std::string result = str;
+  std::transform(result.begin(), result.end(), result.begin(), [](unsigned char c) {
+    if ((c >= 'A') && (c <= 'Z')) {
+      c += 32;
+    }
+    return static_cast<char>(c);
+  });
+  return result;
+}
 
 inline bool hasNewline(const std::string &str) {
   for (size_t i = 0; i < str.size(); i++) {
@@ -56,6 +71,10 @@ inline std::string removeSuffix(const std::string &str,
 
 inline bool contains(const std::string &str, char c) {
   return str.find(c) != std::string::npos;
+}
+
+inline bool contains_str(const std::string &str, const std::string &substr) {
+  return str.find(substr) != std::string::npos;
 }
 
 inline size_t counts(const std::string &str, char c) {
@@ -223,28 +242,41 @@ std::string unescapeControlSequence(const std::string &str);
 
 std::string buildEscapedAndQuotedStringForUSDA(const std::string &str);
 
+///
+/// Determine if input UTF-8 string is Unicode Identifier
+/// (UAX31 Default Identifier)
+///
+bool is_valid_utf8_identifier(const std::string &str);
+
 // TfIsValidIdentifier in pxrUSD equivalanet
-inline bool isValidIdentifier(const std::string &str) {
+// Supports UTF-8 identifier(UAX31 Default Identifier. pxrUSD supports UTF8 Identififer from 24.03)
+inline bool isValidIdentifier(const std::string &str, bool is_utf8 = true) {
 
   if (str.empty()) {
     return false;
   }
 
-  // first char
-  // [a-ZA-Z_]
-  if ((('a' <= str[0]) && (str[0] <= 'z')) || (('A' <= str[0]) && (str[0] <= 'Z')) || (str[0] == '_')) {
-    // ok
+  if (is_utf8) {
+    return is_valid_utf8_identifier(str);
   } else {
-    return false;
-  }
-
-  // remain chars
-  // [a-ZA-Z0-9_]
-  for (size_t i = 1; i < str.length(); i++) {
-    if ((('a' <= str[i]) && (str[i] <= 'z')) || (('A' <= str[i]) && (str[i] <= 'Z')) || (('0' <= str[i]) && (str[i] <= '9')) || (str[i] == '_')) {
+    // legacy
+    
+    // first char
+    // [a-ZA-Z_]
+    if ((('a' <= str[0]) && (str[0] <= 'z')) || (('A' <= str[0]) && (str[0] <= 'Z')) || (str[0] == '_')) {
       // ok
     } else {
       return false;
+    }
+
+    // remaining chars
+    // [a-ZA-Z0-9_]
+    for (size_t i = 1; i < str.length(); i++) {
+      if ((('a' <= str[i]) && (str[i] <= 'z')) || (('A' <= str[i]) && (str[i] <= 'Z')) || (('0' <= str[i]) && (str[i] <= '9')) || (str[i] == '_')) {
+        // ok
+      } else {
+        return false;
+      }
     }
   }
 
@@ -253,7 +285,10 @@ inline bool isValidIdentifier(const std::string &str) {
 
 
 // TfMakeValidIdentifier in pxrUSD equivalanet
-inline std::string makeIdentifierValid(const std::string &str) {
+// TODO: support UTF-8
+inline std::string makeIdentifierValid(const std::string &str, bool is_utf8 = true) {
+  (void)is_utf8;
+
   std::string s;
 
   if (str.empty()) {
@@ -281,6 +316,84 @@ inline std::string makeIdentifierValid(const std::string &str) {
 
   return s;
 }
+
+///
+/// Simply add number suffix to make unique string.
+///
+/// - plane -> plane1 
+/// - sphere1 -> sphere11 
+/// - xform4 -> xform41 
+///
+///
+bool makeUniqueName(std::multiset<std::string> &nameSet, const std::string &name, std::string *unique_name);
+
+
+///
+/// Determine if input string is valid UTF-8 string.
+///
+bool is_valid_utf8(const std::string &str);
+
+
+///
+/// Convert string buffer to list of UTF-8 chars.
+/// Example: 'こんにちは' => ['こ', 'ん', 'に', 'ち', 'は']
+///
+std::vector<std::string> to_utf8_chars(const std::string &str);
+
+///
+/// Convert UTF-8 char to codepoint.
+/// Return ~0u(0xffffffff) when input `u8char` is not a valid UTF-8 charcter.
+///
+uint32_t to_utf8_code(const std::string &u8char);
+
+///
+/// Convert UTF-8 string to codepoint values.
+///
+/// Return empty array when input is not a valid UTF-8 string.
+///
+std::vector<uint32_t> to_codepoints(const std::string &str);
+
+///
+/// Convert UTF-8 codepoint to UTF-8 string.
+///
+inline std::string codepoint_to_utf8(uint32_t code) {
+  if (code <= 0x7f) {
+    return std::string(1, char(code));
+  } else if (code <= 0x7ff) {
+    // 11bit: 110y-yyyx 10xx-xxxx
+    uint8_t buf[2];
+    buf[0] = uint8_t(((code >> 6) & 0x1f) | 0xc0);
+    buf[1] = uint8_t(((code >> 0) & 0x3f) | 0x80);
+    return std::string(reinterpret_cast<const char *>(&buf[0]), 2);
+  } else if (code <= 0xffff) {
+    // 16bit: 1110-yyyy 10yx-xxxx 10xx-xxxx
+    uint8_t buf[3];
+    buf[0] = uint8_t(((code >> 12) & 0x0f) | 0xe0);
+    buf[1] = uint8_t(((code >>  6) & 0x3f) | 0x80);
+    buf[2] = uint8_t(((code >>  0) & 0x3f) | 0x80);
+    return std::string(reinterpret_cast<const char *>(&buf[0]), 3);
+  } else if (code <= 0x10ffff) {
+    // 21bit: 1111-0yyy 10yy-xxxx 10xx-xxxx 10xx-xxxx
+    uint8_t buf[4];
+    buf[0] = uint8_t(((code >> 18) & 0x07) | 0xF0);
+    buf[1] = uint8_t(((code >> 12) & 0x3F) | 0x80);
+    buf[2] = uint8_t(((code >>  6) & 0x3F) | 0x80);
+    buf[3] = uint8_t(((code >>  0) & 0x3F) | 0x80);
+    return std::string(reinterpret_cast<const char *>(&buf[0]), 4);
+  }
+
+  // invalid
+  return std::string();
+}
+
+
+#if 0 // TODO
+///
+/// Convert UTF-8 code to UTF-8 char
+///
+/// Return empty string when input `code` is not a valid UTF-8 code.
+std::string to_utf8_char(const uint32_t code);
+#endif
 
 #if 0
 template<typename It>

@@ -30,9 +30,9 @@ NOTE: USDC(Binary) = Read only
 | Cone           | ✅    | ✅   |              |
 | BasisCurves    | ✅    | ✅   | for hair/fur |
 | NurbsPatch     |       |      |              |
-| NurbsCurves    |       |      |              |
+| NurbsCurves    | ✅    | ✅    |              |
 | HermiteCurves  |       |      |              |
-| PointInstancer |       |      |              |
+| PointInstancer | ✅    | ✅    |              |
 
 ## Camera(usdGeom)
 
@@ -63,11 +63,10 @@ NOTE: USDC(Binary) = Read only
 | -----------       | ----- | ---- | ------- |
 | UsdPreviewSurface | ✅    | ✅   |         |
 | UsdUVTexture      | ❕    | ❕   | 1.      |
-| UsdPrimvarReader  | ❕    | ❕   | 2.      |
+| UsdPrimvarReader  | ✅    | ✅   | 2.      |
 
 
 1. UDIM texture is not supported.
-2. Supported type for UsdPrimvarReader: `int`, `float`, `float2`, `float3` and `float4`
 
 ## Skinning, BlendShapes(usdSkel)
 
@@ -76,23 +75,33 @@ NOTE: USDC(Binary) = Read only
 | SkelRoot    | 🚧    | 🚧   | Parsing only |
 | Skeleton    | 🚧    | 🚧   | Parsing only |
 | SkelAnim    | 🚧    | 🚧   | Parsing only |
-| BlendShape  | ✅    | ✅   |              |
+| BlendShape  | ✅    | ✅   | Supports inbetween blendshape attribute |
 
 * Skinning evaulation/validation are work-in-progress.
 * Skeleton utility functions(e.g. build joint hiearchy from list of `token[]`) are work-in-progress.
 
 ## Work in progress
 
+* [x] Custom filesystem handler(Asset Resolution)
 * [ ] Composition(VariantSet) syntax
   * [x] VariantSet Ascii parse
   * [x] VariantSet Ascii print
-  * [ ] VariantSet Crate parse
+  * [x] VariantSet Crate parse
   * [ ] VariantSet(SpecTypeVariant) Crate write
 * [ ] USDC serialization
 * [ ] Skinning evaluation/validation
 * [ ] Tydra(scene/render delegation)
 * [ ] usdObj(wavefront .obj) support.
   * Please see [usdObj.md](usdObj.md)
+* [ ] C-API for other languages
+* [ ] Python binding and package.
+* [ ] Composition Arcs
+  * Parsing some Composition Arcs possible, needs Evaluation of it.
+  * [x] subLayers
+  * [x] references
+  * [x] payloads(delayed load)
+  * [x] variants/variantSets
+  * [ ] specializers(priority is low)
 
 ## TODO
 
@@ -101,24 +110,14 @@ NOTE: USDC(Binary) = Read only
 * [ ] MeshLight(GeometryLight)
 * [ ] Collection API
   * e.g. Light Sets
-* [ ] Composition Arcs
-  * Parsing some Composition Arcs possible, needs Evaluation of it.
-  * [ ] subLayers
-  * [ ] references
-  * [ ] payloads(delayed load)
-  * [ ] variants/variantSets(priority is low)
-  * [ ] specializers(priority is low)
 * [ ] Delayed load of Layer/Stage
 * [ ] Instancing
-* [ ] Custom filesystem handler(Asset Resolution)
 * [ ] Volume(usdVol)
   * [ ] MagicaVoxel vox for Volume?
   * [ ] VDBVolume support through TinyVDBIO? https://github.com/syoyo/tinyvdbio
 * [ ] Audio(usdAudio)
 * [ ] MaterialX support(usdMtlx)
 * [ ] Physics(usdPhysics)
-* [ ] Python binding and package.
-* [ ] C-API for other languages
 * [ ] and more...
 
 

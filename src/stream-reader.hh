@@ -203,8 +203,8 @@ class StreamReader {
       return false;
     }
 
-    unsigned short val =
-        *(reinterpret_cast<const unsigned short *>(&binary_[idx_]));
+    unsigned short val;
+    memcpy(&val, &binary_[idx_], sizeof(val));
 
     if (swap_endian_) {
       swap2(&val);
@@ -221,7 +221,8 @@ class StreamReader {
       return false;
     }
 
-    uint32_t val = *(reinterpret_cast<const uint32_t *>(&binary_[idx_]));
+    uint32_t val;
+    memcpy(&val, &binary_[idx_], sizeof(val));
 
     if (swap_endian_) {
       swap4(&val);
@@ -238,7 +239,8 @@ class StreamReader {
       return false;
     }
 
-    int val = *(reinterpret_cast<const int *>(&binary_[idx_]));
+    int val;
+    memcpy(&val, &binary_[idx_], sizeof(val));
 
     if (swap_endian_) {
       swap4(&val);
@@ -255,7 +257,8 @@ class StreamReader {
       return false;
     }
 
-    uint64_t val = *(reinterpret_cast<const uint64_t *>(&binary_[idx_]));
+    uint64_t val;
+    memcpy(&val, &binary_[idx_], sizeof(val));
 
     if (swap_endian_) {
       swap8(&val);
@@ -272,7 +275,8 @@ class StreamReader {
       return false;
     }
 
-    int64_t val = *(reinterpret_cast<const int64_t *>(&binary_[idx_]));
+    int64_t val;
+    memcpy(&val, &binary_[idx_], sizeof(val));
 
     if (swap_endian_) {
       swap8(&val);
@@ -345,6 +349,15 @@ class StreamReader {
 
   uint64_t tell() const { return uint64_t(idx_); }
   bool eof() const { return idx_ >= length_; }
+
+  bool is_nullchar() const {
+    if (idx_ < length_) {
+      return binary_[idx_] == '\0';
+    }
+
+    // TODO: report true when eof()?
+    return false;
+  }
 
   const uint8_t *data() const { return binary_; }
 

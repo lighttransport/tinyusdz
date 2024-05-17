@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache 2.0
 // `token` type
 #pragma once
 
@@ -110,7 +110,14 @@ class Token {
   }
 
   bool valid() const {
-    // TODO
+    if (!str_) {
+      return false;
+    }
+    
+    if (str_.value().string().empty()) {
+      return false;
+    }
+
     return true;
   }
 
@@ -147,7 +154,10 @@ class Token {
   const std::string &str() const { return str_; }
 
   bool valid() const {
-    // TODO
+    if (str().empty()) {
+      return false;
+    }
+
     return true;
   }
 
@@ -180,5 +190,17 @@ struct TokenKeyEqual {
 };
 
 #endif  // TINYUSDZ_USE_STRING_ID_FOR_TOKEN_TYPE
+
+inline bool operator==(const Token &lhs, const Token &rhs) {
+  return TokenKeyEqual()(lhs, rhs);
+}
+
+inline bool operator!=(const Token &lhs, const Token &rhs) {
+  return !TokenKeyEqual()(lhs, rhs);
+}
+
+inline bool operator<(const Token &lhs, const Token &rhs) {
+  return lhs.str() < rhs.str();
+}
 
 }  // namespace tinyusdz

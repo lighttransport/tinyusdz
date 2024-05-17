@@ -86,7 +86,7 @@ function(ADD_SDL2_LIB)
   set(SDL_STATIC
       ON
       CACHE INTERNAL "" FORCE)
-  add_subdirectory(../common/SDL2-2.24.0/ SDL2)
+  add_subdirectory(../common/SDL2-2.28.0/ SDL2)
 endfunction()
 
 if(EMSCRIPTEN)
@@ -96,13 +96,16 @@ if(EMSCRIPTEN)
   # Assume `suzanne.usdc` is coped to build directory with PRE_BUILD custom command
   # TODO: Read USD file from JS world
   # TODO: Use max memory size.
-  set(USE_FLAGS
-      "-s ASSERTIONS=1 -s USE_SDL=2 -s USE_FREETYPE=1 --embed-file suzanne.usdc"
+  set(USE_COMPILE_FLAGS
+      "-sUSE_SDL=2 -sUSE_FREETYPE=1"
   )
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${USE_FLAGS}")
-  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${USE_FLAGS}")
+  set(USE_LINK_FLAGS
+      "--embed-file suzanne.usdc"
+  )
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${USE_COMPILE_FLAGS}")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${USE_COMPILE_FLAGS}")
   set(CMAKE_EXE_LINKER_FLAGS
-      "${CMAKE_EXE_LINKER_FLAGS} ${USE_FLAGS} -s ALLOW_MEMORY_GROWTH=1")
+      "${CMAKE_EXE_LINKER_FLAGS} ${USE_LINK_FLAGS} -s ALLOW_MEMORY_GROWTH=1")
   set(CMAKE_EXECUTABLE_SUFFIX .html)
 
   set(USDVIEW_SDL2_LIBRARIES ${SDL2_LIBRARIES})

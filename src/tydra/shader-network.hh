@@ -1,7 +1,9 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache 2.0
 // Copyright 2022 - Present, Light Transport Entertainment, Inc.
 //
 // Shader network evaluation
+
+#pragma once
 
 #include <unordered_map>
 
@@ -14,10 +16,14 @@ namespace tinyusdz {
 class Path;
 class Stage;
 class Prim;
+class Layer;
+class PrimSpec;
+
 
 // forward decl of usdShade
 struct Material;
 struct Shader;
+enum class MaterialBindingStrength;
 
 template<typename T>
 struct UsdPrimvarReader;
@@ -69,42 +75,142 @@ extern template bool EvaluateShaderAttribute(const Stage &stage, const Shader &s
 
 
 ///
+/// Return true when...
+///
+/// - `bindMaterialAs` attribute metadata is "strongerThanDescendants"
+///
+bool DirectBindingStrongerThanDescendants(
+  const Stage &stage,
+  const Prim &prim,
+  const std::string &purpose);
+
+bool DirectBindingStrongerThanDescendants(
+  const Stage &stage,
+  const Path &abs_path,
+  const std::string &purpose);
+
+///
 /// Get material:binding target Path of given Prim.
-/// Do not seek `material:binding` of parent Path.
+///
+/// This API walk up Prim tree to the root and take into account 'material:binding' and 'material:binding:collection'.
+///
+/// https://openusd.org/release/wp_usdshade.html#material-resolve-determining-the-bound-material-for-any-geometry-prim
 ///
 /// @param[in] stage Prim
 /// @param[in] prim Prim
-/// @param[in] suffix extra suffix(e.g. empty string is given, look into `material:binding`. `correction` is given, look into `material:binding:correction`.)
-/// @param[out] materialPath Found target Path.
+/// @param[in] purpose. (Empty string is treated as "all-purpose")
+/// @param[out] materialPath Found Material target Path.
 /// @param[out] material THe pointer to found Material object in Stage(if no Material object found in Stage, returns nullptr)
 /// @return true when bound Material Path is found.
 ///
+
+#if 0 // TODO
 bool GetBoundMaterial(
   const Stage &stage,
   const Prim &prim,
-  const std::string &suffix,
+  const std::string &purpose,
+  tinyusdz::Path *materialPath, 
+  const Material **material,
+  std::string *err);
+#endif
+
+///
+/// `Path` version of `GetBoundMaterial`
+///
+bool GetBoundMaterial(
+  const Stage &stage,
+  const Path &abs_path,
+  const std::string &purpose,
   tinyusdz::Path *materialPath, 
   const Material **material,
   std::string *err);
 
 ///
-/// Find material:binding target Path from given Prim absolute path.
-/// The bahavior is:
+/// Get material:binding target Path of given Prim.
 ///
-/// 1. If material:binding is assigned to a Prim of given absolute path(e.g. "/xform/mesh0"), return it
-/// 2. Look into parent Prim's material:binding
+/// This API look into `material:binding` relationship of given Prim only,
+/// and do not account for parent's `material:binding`.
+/// Also, this API does not look into Material Binding Collection relationships(`material:binding:collection`)
 ///
 /// @param[in] stage Prim
 /// @param[in] prim Prim
-/// @param[in] suffix extra suffix(e.g. empty string is given, look into `material:binding`. `correction` is given, look into `material:binding:correction`.)
-/// @param[out] materialPath Found target Path.
+/// @param[in] purpose. (Empty string is treated as "all-purpose")
+/// @param[out] materialPath Found Material target Path.
 /// @param[out] material THe pointer to found Material object in Stage(if no Material object found in Stage, returns nullptr)
 /// @return true when bound Material Path is found.
 ///
-bool FindBoundMaterial(
+bool GetDirectlyBoundMaterial(
+  const Stage &stage,
+  const Prim &prim,
+  const std::string &purpose,
+  tinyusdz::Path *materialPath, 
+  const Material **material,
+  std::string *err);
+
+
+///
+/// `Path` version of `GetDirectlyBoundMaterial`
+///
+bool GetDirectlyBoundMaterial(
   const Stage &stage,
   const Path &abs_path,
-  const std::string &suffix,
+  const std::string &purpose,
+  tinyusdz::Path *materialPath, 
+  const Material **material,
+  std::string *err);
+
+///
+/// Layer + PrimSpec version
+///
+bool GetDirectlyBoundMaterial(
+  const Layer& layer,
+  const PrimSpec &ps,
+  const std::string &purpose,
+  tinyusdz::Path *materialPath, 
+  const Material **material,
+  std::string *err);
+
+///
+/// Layer + Path version
+///
+bool GetDirectlyBoundMaterial(
+  const Layer& layer,
+  const Path &abs_path,
+  const std::string &purpose,
+  tinyusdz::Path *materialPath, 
+  const Material **material,
+  std::string *err);
+
+
+///
+/// Get material:binding:collection target Path of given Prim.
+///
+/// This API look into `material:binding:collection` relationship of given Prim only,
+/// and do not account for parent's `material:binding:collection`.
+/// Also, this API does not look into Material Binding relationship(`material:binding`)
+///
+/// @param[in] stage Prim
+/// @param[in] prim Prim
+/// @param[in] purpose. (Empty string is treated as "all-purpose")
+/// @param[out] materialPath Found Material target Path.
+/// @param[out] material THe pointer to found Material object in Stage(if no Material object found in Stage, returns nullptr)
+/// @return true when bound Material Path is found.
+///
+bool GetDirectCollectionMaterialBinding(
+  const Stage &stage,
+  const Prim &prim,
+  const std::string &purpose,
+  tinyusdz::Path *materialPath, 
+  const Material **material,
+  std::string *err);
+
+///
+/// `Path` version of `GetDirectCollectionMaterialBinding`
+///
+bool GetDirectCollectionMaterialBinding(
+  const Stage &stage,
+  const Path &abs_path,
+  const std::string &purpose,
   tinyusdz::Path *materialPath, 
   const Material **material,
   std::string *err);

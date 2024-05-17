@@ -1,5 +1,6 @@
-// SPDX-License-Identifier: MIT
-// Copyright 2021 - Present, Syoyo Fujita.
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2021 - 2023, Syoyo Fujita.
+// Copyright 2023 - Present, Light Transport Entertainment Inc.
 //
 // To deal with too many sections in generated .obj error(happens in MinGW and MSVC)
 // Split ParseTimeSamples to two .cc files.
@@ -139,6 +140,11 @@ bool AsciiParser::ParseTimeSampleValue(const uint32_t type_id, value::Value *res
   PARSE_TYPE(type_id, value::point3f)
   PARSE_TYPE(type_id, value::texcoord2f)
   PARSE_TYPE(type_id, value::texcoord3f)
+  PARSE_TYPE(type_id, value::matrix2f)
+  PARSE_TYPE(type_id, value::matrix3f)
+  PARSE_TYPE(type_id, value::matrix4f)
+  PARSE_TYPE(type_id, value::matrix2d)
+  PARSE_TYPE(type_id, value::matrix3d)
   PARSE_TYPE(type_id, value::matrix4d) {
     PUSH_ERROR_AND_RETURN(" : TODO: timeSamples type " + value::GetTypeName(type_id));
   }

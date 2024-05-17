@@ -1,0 +1,123 @@
+#usda 1.0
+(
+    defaultPrim = "root"
+    doc = "Blender v4.1.0"
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+def Xform "root" (
+    customData = {
+        dictionary Blender = {
+            bool generated = 1
+        }
+    }
+)
+{
+    def SkelRoot "Plane"
+    {
+        matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+
+        def Mesh "Plane" (
+            prepend apiSchemas = ["SkelBindingAPI"]
+        )
+        {
+            float3[] extent = [(-1, -1, 0), (1, 1, 0)]
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 3, 2]
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (
+                interpolation = "faceVarying"
+            )
+            point3f[] points = [(-1, -1, 0), (1, -1, 0), (-1, 1, 0), (1, 1, 0)]
+            color3f[] primvars:Attribute = [(1, 1, 1), (1, 1, 1), (1, 1, 1), (1, 1, 1)] (
+                interpolation = "faceVarying"
+            )
+            float[] primvars:Bone = [0.66688883, 0.66688883, 0.33311108, 0.33311108] (
+                interpolation = "vertex"
+            )
+            float[] primvars:Bone_001 = [0.33311117, 0.33311117, 0.9974927, 0.99577236] (
+                interpolation = "vertex"
+            )
+            float[] primvars:Group = [0, 0, 0.99685806, 0.9927093] (
+                interpolation = "vertex"
+            )
+            bool[] primvars:sharp_face = [1] (
+                interpolation = "uniform"
+            )
+            int[] primvars:skel:jointIndices = [0, 0, 0, 0] (
+                elementSize = 1
+                interpolation = "vertex"
+            )
+            float[] primvars:skel:jointWeights = [1, 1, 1, 1] (
+                elementSize = 1
+                interpolation = "vertex"
+            )
+            texCoord2f[] primvars:UVMap = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+                interpolation = "faceVarying"
+            )
+            uniform token[] skel:blendShapes = ["Key_1"]
+            rel skel:blendShapeTargets = </root/Plane/Plane/Key_1>
+            prepend rel skel:skeleton = </root/Plane/Skel>
+            uniform token subdivisionScheme = "none"
+
+            def BlendShape "Key_1"
+            {
+                uniform vector3f[] offsets = [(0, 0, 0), (0, 0, 0), (0, 0, 1.4126259), (0, 0, 1.5390067)]
+                uniform int[] pointIndices = [0, 1, 2, 3]
+            }
+        }
+
+        def Skeleton "Skel" (
+            prepend apiSchemas = ["SkelBindingAPI"]
+        )
+        {
+            uniform matrix4d[] bindTransforms = [( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )]
+            uniform token[] joints = ["joint1"]
+            uniform matrix4d[] restTransforms = [( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )]
+            #prepend rel skel:animationSource = </root/Plane/Skel/Anim>
+
+            #def SkelAnimation "Anim"
+            #{
+            #    uniform token[] blendShapes = ["Key_1"]
+            #    float[] blendShapeWeights
+            #}
+        }
+    }
+
+    def Xform "Camera"
+    {
+        matrix4d xformOp:transform = ( (0.6859206557273865, 0.7276763319969177, 0, 0), (-0.32401347160339355, 0.305420845746994, 0.8953956365585327, 0), (0.6515582203865051, -0.6141703724861145, 0.44527140259742737, 0), (7.358891487121582, -6.925790786743164, 4.958309173583984, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+
+        def Camera "Camera"
+        {
+            float2 clippingRange = (0.1, 100)
+            float focalLength = 0.5
+            float horizontalAperture = 0.36
+            float horizontalApertureOffset = 0
+            token projection = "perspective"
+            float verticalAperture = 0.2025
+            float verticalApertureOffset = 0
+        }
+    }
+
+    def Xform "Light"
+    {
+        matrix4d xformOp:transform = ( (-0.29086464643478394, 0.9551711678504944, -0.05518905818462372, 0), (-0.7711008191108704, -0.1998833566904068, 0.6045247316360474, 0), (0.5663931965827942, 0.21839119493961334, 0.7946722507476807, 0), (4.076245307922363, 1.0054539442062378, 5.903861999511719, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+
+        def SphereLight "Light"
+        {
+            float3[] extent = [(-0.1, -0.1, -0.1), (0.1, 0.1, 0.1)]
+            color3f inputs:color = (1, 1, 1)
+            float inputs:diffuse = 1
+            float inputs:exposure = 0
+            float inputs:intensity = 318.30988
+            bool inputs:normalize = 1
+            float inputs:radius = 0.1
+            float inputs:specular = 1
+        }
+    }
+}
+

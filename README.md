@@ -1,6 +1,45 @@
-# Tiny USDZ library in C++14
+# Tiny USDZ/USDA/USDC library in C++14
 
-`TinyUSDZ` is secure, portable and dependency-free(depends only on C++ STL. Other 3rd-party libraries included. Yes, you don't need pxrUSD library!) USDZ/USDC/USDA library written in C++14.
+`TinyUSDZ` is secure, portable and dependency-free(depends only on C++ STL. Other 3rd-party libraries included. Yes, you don't need pxrUSD/OpenUSD library!) USDZ/USDC/USDA library written in C++14.
+
+## High priority
+
+* Prepare Release v0.8
+  * [x] Core part should be ready for the release. 
+  * [ ] Write a demo and example viewer(work in progress)
+    * [examples/openglviewer](examples/openglviewer) OpenGL viewer
+    * [examples/sdlviewer](examples/sdlviewer) Software raytracing viewer 
+  * For Vulkan and Android Vulkan example, we can use  https://github.com/syoyo/Vulkan-glTF-USDZ-PBR for a while though
+ 
+## Mid-term todo
+
+* Enhancement for wasm(e.g. write USDZ loader for three.js), webgpu https://github.com/syoyo/tinyusdz/issues/118 
+* better colorspace + wide-gamut support https://github.com/syoyo/tinyusdz/issues/142
+* Better skinning + blendshapes support
+  * Write example using mediapipe for motion tracking and face tracking with rigged USDZ model.  
+* MaterialX https://github.com/syoyo/tinyusdz/issues/86
+  * USD + MateriralX + PBR rendering example using https://github.com/lighttransport/pbrlab 
+* Improve interoperability with Blender USD export/import https://github.com/syoyo/tinyusdz/issues/98
+* Tydra: Handy data structure converter for rendering https://github.com/syoyo/tinyusdz/issues/31
+  * [x] USD to RenderScene(OpenGL/Vulkan-like API friendly data structure) conversion https://github.com/syoyo/tinyusdz/issues/109
+  * [x] GeomSubset/Material Binding API support for shading/texturing https://github.com/syoyo/tinyusdz/issues/103 
+* [x] UTF8 Identifier support https://github.com/syoyo/tinyusdz/issues/47
+* Collection API
+  * [ ] https://github.com/syoyo/tinyusdz/issues/108
+* Experimental composition support https://github.com/syoyo/tinyusdz/issues/25
+  * [x] subLayers
+  * [x] references
+  * [x] payload(no delayed load)
+  * [x] inherits 
+  * [x] variantSet
+  * [ ] Validate composition is correctly operated.
+* Better usdLux support https://github.com/syoyo/tinyusdz/issues/101 
+* [ ] Support parsing usd-wg USD aasets
+  * https://github.com/syoyo/tinyusdz/issues/135
+* Support reading & compose some production USD scenes
+  * [ ] Moana island v2.1 https://github.com/syoyo/tinyusdz/issues/90
+  * [ ] ALAB USD production scene https://github.com/syoyo/tinyusdz/issues/91
+
 
 ## Build status
 
@@ -10,20 +49,45 @@
 
 ## Supported platforms
 
-|         |   Linux                                  |  Windows                              |   macOS   |  iOS   | Android |  WASM(WASI)                    |
-|:-------:|:---------------------------------------- |:------------------------------------- |:---------:|:------:|:-------:|:------------------------------:|
-|   dev   | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> ✅ ARM64/ARM32  |✅         |✅      |✅       |✅ [sandbox/wasi](sandbox/wasi) |
+|         |   Linux                                  |  Windows                              |   macOS   |  iOS   | Android |  WASM(WASI)                    |  WASM(Emscripten) |
+|:-------:|:---------------------------------------- |:------------------------------------- |:---------:|:------:|:-------:|:------------------------------:|:-----------:|
+|   dev   | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> ✅ ARM64/ARM32  |✅         |✅      |✅       |✅ [sandbox/wasi](sandbox/wasi) | ✅ [sandbox/emscripten](sandbox/emscripten) |
+
+### Python binding(testing. currently not working)
+
+https://pypi.org/project/tinyusdz/
+
+Python binding is very early alpha testing stage. Not working at the moment.
+
+You can install Python prebuilt wheel using
+
+```
+$ python -m pip install tinyusdz
+```
+
+|         |   Linux                                  |  Windows                              |   macOS 11(Big Sur) or later  | macos 10  |
+|:-------:|:---------------------------------------- |:------------------------------------- |:-----------------------------:|:---------:|
+|   3.6(⚠️)   | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> ✅ ARM64  |🚫 | ✅ Intel |
+|   3.7   | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> ✅ ARM64  |✅ arm64 | 🚫 universal2 </br> ✅ Intel |
+|   3.8   | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> ✅ ARM64  |✅ arm64 | ✅ universal2 </br> ✅ Intel |
+|   3.9   | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> ✅ ARM64  |✅ arm64 | ✅ universal2 </br> ✅ Intel |
+|   3.10   | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> ✅ ARM64  |✅ arm64 | ✅ universal2 </br> ✅ Intel |
+|   3.11   | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> ✅ ARM64  |✅ arm64 | ✅ universal2 </br> ✅ Intel |
+
+⚠️  Python 3.6 is EOL and not recommended to use it. 3.6 bwheels is provided as long as cibuildwheels provides the build for it.
+NOTE: Windows ARM64 binary is provided using cross-compiling. Its not well tested.
 
 
 ## Status
 
 TinyUSDZ is in v0.8.0 release candidate.
 Core loading feature(both USDA and USDC) is now working and production-grade(And no seg fault for corrupted USDA/USDC/USDZ input).
+Somewhat working Tydra framwork for rendering USD model with OpenGL/Vulkan-like renderer. https://github.com/syoyo/tinyusdz/issues/148
 
-v0.8.0 is Flattened scene only(i.e, USDA/USDC generated by using pxrUSD's `usdcat --flatten` or USDZ scene).
-Composition features are work-in-progress(experimental Composition feature support in next major release v0.9.0(Q2/2023 expected) planned)
+v0.8.0 is basically Flattened scene only(i.e, USDA/USDC generated by using pxrUSD's `usdcat --flatten` or USDZ scene).
+Composition features are work-in-progress(experimental Composition feature support in v0.8.0. Better composition feature in next major release v0.9.0(Q3/2024 expected) planned)
 
-Remaining tasks for v0.8.0 release are writing examples, demos and utility functions(Tydra).
+Remaining tasks for v0.8.0 release are writing examples, demos and utility functions(Tydra. Especially access to Material/Shader attributes).
 
 * [x] USDZ/USDC(Crate) parser
   * USDC Crate version v0.8.0(most commonly used version as of 2022 Nov) or higher is supported.
@@ -31,11 +95,22 @@ Remaining tasks for v0.8.0 release are writing examples, demos and utility funct
 * [x] USDA parser(Hand-written from a scratch. No Bison/Flex dependency!)
 * [x] USDA writer
 * [x] Support basic Primitives(Xform, Mesh, BasisCurves, etc.), basic Lights and Shaders(UsdPreviewSurface, UsdUVTexture, UsdPrimvarReader)
-
+* **Experimental** support of some Composition features https://github.com/syoyo/tinyusdz/issues/25
+  * [x] subLayers
+  * [x] references
+  * [x] payload 
+  * [x] inherits
+  * [x] variants
+  * [ ] specializes
+  
 **Please see** [doc/status.md](doc/status.md) **for more details**
 
-* [ ] Write simple SDL viewer example(2022 Winter expected)
-* [ ] Write iOS and Android example(2022 Winter expected)
+* [ ] Basic C API(`c-tinyusd`) for language bindings
+  * [ ]  [examples/c_api_example](examples/c_api_example)
+  * [ ] Basic Python binding
+* [ ] Write simple SDL viewer example(2024 Summer expected)
+* [ ] Write iOS and Android example(2024 Winter expected)
+* [ ] Write Vision OS example?
 * [ ] Vulkan or OptiX/HIP RT raytracing viewer example
 * [ ] USD <-> glTF converter example
   * There is an independent work of USD to glTF binary GLB converter: https://github.com/fynv/usd2glb
@@ -91,20 +166,23 @@ TinyUSDZ does not support Reality Composer file format(`.reality`) since it uses
 
 TinyUSDZ focuses on loading/writing USDA/USDC/USDZ functionalities.
 Example viewer is just for demo purpose.
-Currently TinyUSDZ project is run as personal project by `syoyo` and `syoyo` does not provide commercial support as an individual.
+`syoyo` does not provide commercial support as an individual. 
 
 If you need commercial support, eco-system development(e.g. plug-ins, DCC tools on top of TinyUSDZ) or production-grade USDZ model viewer(e.g. embed TinyUSDZ to your AR app, 3D NFT Android mobile viewer capable of displaying (encrypted) USDZ model), please contact Light Transport Entertainment, Inc. : https://goo.gl/forms/1p6uGcOKWGpXPHkA2 
 
+We have a plan to manage TinyUSDZ project under Light Transport Entertainment Inc. 
+(By relicensing to Apatch 2.0)
 
 ## Projects using TinyUSDZ
 
+* Vulkan-glTF-USDZ-PBR: Example to draw USD model using Vulkan https://github.com/syoyo/Vulkan-glTF-USDZ-PBR
 * usd2glb: USD to glTF 2.0 GLB converter https://github.com/fynv/usd2glb
+* webgpu-cpp-usdz: WebGPU C++/Wasm USDZ Renderer(NOTE: It doesn't support much yet!) https://github.com/Twinklebear/webgpu-cpp-usdz
 
 ### Other related projects
 
 * UsdzSharpie: C# Simple implementation of Usdz file format ( https://github.com/UkooLabs/UsdzSharpie )
 * TinyGLTF: glTF 2.0 loader/saver ( https://github.com/syoyo/tinygltf )
-* USD-build-aarch64: Full USD build for AARCH64(Linux and Android): https://github.com/syoyo/USD-build-aarch64
 * BlenderUSDZ: It contains their own Python USDC parser/serializer. https://github.com/robmcrosby/BlenderUSDZ
 
 ## Supported platforms
@@ -138,7 +216,8 @@ If you need commercial support, eco-system development(e.g. plug-ins, DCC tools 
   * [x] MinGW gcc supported, but not recommended(You may got compilation failure depending on your build configuration: https://github.com/syoyo/tinyusdz/issues/33 , and linking takes too much time if you use default bfd linker.). If you want to compile TinyUSDZ in MinGW environment, llvm-mingw(clang) is recommended to use.
 
 
-Compilation with C++17 is also supported.
+Compilation with C++17 is also supported. 
+Compile on C++20 and C++23 could be possible, but not well tested, since C++20/C++23 compiler is not yet mature(as of 2024/01))
 
 ## Build
 
@@ -238,18 +317,26 @@ Edit path to MSVC SDK and Windows SDK in `bootstrap-clang-cl-win64.bat`, then
 ```
 
 
-### Examples
+### Tools and Examples
 
-* [usda_parser](examples/usda_parser/) Parse USDA and print it as Ascii.
-* [usdc_parser](examples/usdc_parser/) Parse USDC and print it as Ascii.
-* [Simple usdz_dump](examples/simple_usdz_dump/) Parse USDZ/USDA/USDC and print it as Ascii.
+* [tusdcat](examples/tusdcat/) Parse USDZ/USDA/USDC and print it as Ascii(similar to `usdcat` in pxrUSD).
+  * `tusdcat` also do USD composition(`flatten`) and contains TinyUSDZ Composition API usecase.
+* Deprecated. Use `tusdcat` [usda_parser](examples/usda_parser/) Parse USDA and print it as Ascii.
+* Deprecated. Use `tusdcat` [usdc_parser](examples/usdc_parser/) Parse USDC and print it as Ascii.
 * [Simple SDL viewer](examples/sdlviewer/)
   * Separated CMake build provided: See [Readme](examples/sdlviewer/README.md)
 * [api_tutorial](examples/api_tutorial/) Tutorial of TinyUSDZ Core API to construct a USD scene data.
 * [tydra_api](examples/tydra_api/) Tutorial of TinyUSDZ Tydra API to access/query/convert a USD scene data.
+* [asset_resolution](examples/asset_resolution/) Tutorial of using AssetResolutionResolver API to load USD from customized I/O(e.g. from Memory, Web, DB, ...)
+* [file_format](examples/file_format/) Tutorial of using custom FileFormat handler to load Prim data in custom fileformat.
 
 See [examples](examples) directory for more examples, but may not actively maintained except for the above examples.
 
+#### Examples as external project
+
+* Vulkan rendering of USDZ model by extending Vulkan-glTF-PBR https://github.com/syoyo/Vulkan-glTF-USDZ-PBR
+  * Uses `rendermesh-refactor` branch
+  
 ### USDZ Data format
 
 See [prim_format.md](doc/prim_format.md) and [preview_surface.md](doc/preview_surface.md)
@@ -396,8 +483,8 @@ You can build pure Windows build of TinyUSDZ on Linux CI machine.
 
 ## License
 
-TinyUSDZ is licensed under MIT license and Apache 2.0 license.
-(Doing relicensing from MIT to Apache 2.0. Will be fully relicensed to Apache 2.0 at some point)
+TinyUSDZ is primarily licensed under Apache 2.0 license.
+Some helper code is licensed under MIT license.
 
 ### Third party licenses
 
@@ -417,9 +504,7 @@ TinyUSDZ is licensed under MIT license and Apache 2.0 license.
 * expected-lite: BSL 1.0 license. https://github.com/martinmoene/expected-lite
 * mapbox/earcut.hpp: ISC license. https://github.com/mapbox/earcut.hpp
 * par_shapes.h generate parametric surfaces and other simple shapes: MIT license https://github.com/prideout/par
-* staticstruct: MIT license. https://github.com/syoyo/staticstruct
 * MaterialX: Apache 2.0 license. https://github.com/AcademySoftwareFoundation/MaterialX
-* tinyxml2: zlib license. https://github.com/leethomason/tinyxml2
 * string_id: zlib license. https://github.com/foonathan/string_id
 * cityhash: MIT license. https://github.com/google/cityhash
 * fast_float: Apache 2.0/MIT dual license. https://github.com/fastfloat/fast_float
@@ -439,10 +524,15 @@ TinyUSDZ is licensed under MIT license and Apache 2.0 license.
 * dtoa_milo.h: MIT License. https://github.com/miloyip/dtoa-benchmark
 * jeaiii/itoa: MIT License. https://github.com/jeaiii/itoa
 * alac: Apache 2.0 License. https://macosforge.github.io/alac/
-* UTF8-CPP: BSL 1.0 License. https://github.com/nemtrif/utfcpp
 * OpenFBX: MIT License. https://github.com/nem0/OpenFBX
 * floaxie: Apache 2.0 License. https://github.com/aclex/floaxie
 * boost math sin_pi/cos_pi: BSL 1.0 License. https://www.boost.org/
 * Vulkan: MIT License. https://github.com/SaschaWillems/Vulkan
 * Metal.cpp: Apache 2.0 License. https://github.com/bkaradzic/metal-cpp https://developer.apple.com/metal/cpp/
 * sRGB transform: MIT license. https://www.nayuki.io/page/srgb-transform-library
+* virtualGizmo3D: BSD-2 license. https://github.com/BrutPitt/virtualGizmo3D
+* nanozlib: Apache 2.0 license. https://github.com/lighttransport/nanozlib
+* lz4.py: MIT license. https://github.com/SE2Dev/PyCoD/blob/master/_lz4.py
+* pugixml: MIT license. https://github.com/zeux/pugixml
+* nanoflann: 2-clause BSD license. https://github.com/jlblancoc/nanoflann
+* tinymeshutils: MIT license. https://github.com/syoyo/tinymeshutils

@@ -2,7 +2,9 @@
 
 * magic header: "PXR-USDC" : 8 bytes
 * version number: uint8 x 8(0 = major, 1 = minor, 2 = patch, rest unused) :8 bytes
+  * Current(as of pxrUSD 23.05: default 0.8.0) 
 * int64_t tocOffset
+  * Byte offset to ToC(Table of Contents) 
 * int64_t _reserved[8]
 
 => total 88 bytes
@@ -20,7 +22,9 @@ From pxr/usd/usd/crateFile.cpp
 ```
 
 * TinyUSDZ should support at least v0.8.0(USD v20.11).
-  
+* TinyUSDZ has some support to load USDC version v0.7.0 or v0.4.0
+  * Moana island v2.1 USD file
+     
 ## Compression
 
 version 0.4.0 or later uses LZ4 for compression and interger compression(pxr original? compression. its backend still uses LZ4) for index arrays.
@@ -59,7 +63,7 @@ List of indices
 
 List of path indices.
 
-Need to reconstruct
+Paths are encoded in child-sibling tree.
                           
 ### SPECS
 

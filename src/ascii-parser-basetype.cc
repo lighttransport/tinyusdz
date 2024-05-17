@@ -1,5 +1,6 @@
-// SPDX-License-Identifier: MIT
-// Copyright 2021 - Present, Syoyo Fujita.
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2021 - 2022, Syoyo Fujita.
+// Copyright 2023 - Present, Light Transport Entertainment, Inc.
 //
 // Ascii Basic type parser
 //
@@ -31,6 +32,7 @@
 
 #include "ascii-parser.hh"
 #include "str-util.hh"
+#include "path-util.hh"
 #include "tiny-format.hh"
 
 //
@@ -140,6 +142,7 @@ int parseInt(const std::string &s, int *out_result) {
 }
 
 nonstd::expected<float, std::string> ParseFloat(const std::string &s) {
+
   // Parse with fast_float
   float result;
   auto ans = fast_float::from_chars(s.data(), s.data() + s.size(), result);
@@ -152,6 +155,7 @@ nonstd::expected<float, std::string> ParseFloat(const std::string &s) {
 }
 
 nonstd::expected<double, std::string> ParseDouble(const std::string &s) {
+
   // Parse with fast_float
   double result;
   auto ans = fast_float::from_chars(s.data(), s.data() + s.size(), result);
@@ -168,9 +172,97 @@ nonstd::expected<double, std::string> ParseDouble(const std::string &s) {
 //
 // -- Parse Basic Type
 //
+bool AsciiParser::ParseMatrix(value::matrix2f *result) {
+
+  if (!Expect('(')) {
+    return false;
+  }
+
+  std::vector<std::array<float, 2>> content;
+  if (!SepBy1TupleType<float, 2>(',', &content)) {
+    return false;
+  }
+
+  if (content.size() != 2) {
+    PushError("# of rows in matrix2f must be 2, but got " +
+              std::to_string(content.size()) + "\n");
+    return false;
+  }
+
+  if (!Expect(')')) {
+    return false;
+  }
+
+  for (size_t i = 0; i < 2; i++) {
+    result->m[i][0] = content[i][0];
+    result->m[i][1] = content[i][1];
+  }
+
+  return true;
+}
+
+bool AsciiParser::ParseMatrix(value::matrix3f *result) {
+
+  if (!Expect('(')) {
+    return false;
+  }
+
+  std::vector<std::array<float, 3>> content;
+  if (!SepBy1TupleType<float, 3>(',', &content)) {
+    return false;
+  }
+
+  if (content.size() != 3) {
+    PushError("# of rows in matrix3f must be 3, but got " +
+              std::to_string(content.size()) + "\n");
+    return false;
+  }
+
+  if (!Expect(')')) {
+    return false;
+  }
+
+  for (size_t i = 0; i < 3; i++) {
+    result->m[i][0] = content[i][0];
+    result->m[i][1] = content[i][1];
+    result->m[i][2] = content[i][2];
+  }
+
+  return true;
+}
+
+bool AsciiParser::ParseMatrix(value::matrix4f *result) {
+
+  if (!Expect('(')) {
+    return false;
+  }
+
+  std::vector<std::array<float, 4>> content;
+  if (!SepBy1TupleType<float, 4>(',', &content)) {
+    return false;
+  }
+
+  if (content.size() != 4) {
+    PushError("# of rows in matrix4f must be 4, but got " +
+              std::to_string(content.size()) + "\n");
+    return false;
+  }
+
+  if (!Expect(')')) {
+    return false;
+  }
+
+  for (size_t i = 0; i < 4; i++) {
+    result->m[i][0] = content[i][0];
+    result->m[i][1] = content[i][1];
+    result->m[i][2] = content[i][2];
+    result->m[i][3] = content[i][3];
+  }
+
+  return true;
+}
 
 bool AsciiParser::ParseMatrix(value::matrix2d *result) {
-  // Assume column major(OpenGL style).
 
   if (!Expect('(')) {
     return false;
@@ -200,7 +292,6 @@ bool AsciiParser::ParseMatrix(value::matrix2d *result) {
 }
 
 bool AsciiParser::ParseMatrix(value::matrix3d *result) {
-  // Assume column major(OpenGL style).
 
   if (!Expect('(')) {
     return false;
@@ -231,7 +322,6 @@ bool AsciiParser::ParseMatrix(value::matrix3d *result) {
 }
 
 bool AsciiParser::ParseMatrix(value::matrix4d *result) {
-  // Assume column major(OpenGL style).
 
   if (!Expect('(')) {
     return false;
@@ -269,12 +359,28 @@ bool AsciiParser::ReadBasicType(Path *value) {
       return false;
     }
 
-    (*value) = Path(str, "");
+    (*value) = pathutil::FromString(str);
 
     return true;
   } else {
     return false;
   }
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<Path> *value) {
+
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  Path v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
 }
 
 bool AsciiParser::ReadBasicType(value::matrix2d *value) {
@@ -346,8 +452,52 @@ bool AsciiParser::ReadBasicType(nonstd::optional<value::matrix4d> *value) {
   return false;
 }
 
-#if 0  // No `matrixNf` in USDA?
-template<>
+bool AsciiParser::ReadBasicType(value::matrix2f *value) {
+  if (value) {
+    return ParseMatrix(value);
+  } else {
+    return false;
+  }
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::matrix2f> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::matrix2f v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(value::matrix3f *value) {
+  if (value) {
+    return ParseMatrix(value);
+  } else {
+    return false;
+  }
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<value::matrix3f> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  value::matrix3f v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
 bool AsciiParser::ReadBasicType(value::matrix4f *value) {
   if (value) {
     return ParseMatrix(value);
@@ -356,9 +506,7 @@ bool AsciiParser::ReadBasicType(value::matrix4f *value) {
   }
 }
 
-template<>
-bool AsciiParser::ReadBasicType(
-    nonstd::optional<value::matrix4f> *value) {
+bool AsciiParser::ReadBasicType(nonstd::optional<value::matrix4f> *value) {
   if (MaybeNone()) {
     (*value) = nonstd::nullopt;
     return true;
@@ -372,7 +520,6 @@ bool AsciiParser::ReadBasicType(
 
   return false;
 }
-#endif
 
 ///
 /// Parse the array of tuple. some may be None(e.g. `float3`: [(0, 1, 2),
@@ -649,6 +796,23 @@ bool AsciiParser::ReadBasicType(nonstd::optional<bool> *value) {
 bool AsciiParser::ReadBasicType(int *value) {
   std::stringstream ss;
 
+  // pxrUSD allow floating-point value to `int` type.
+  // so first try fp parsing.
+  auto loc = CurrLoc();
+  std::string fp_str;
+  if (LexFloat(&fp_str)) {
+    auto flt = ParseDouble(fp_str);
+    if (!flt) {
+      PUSH_ERROR_AND_RETURN("Failed to parse floating value.");
+    } else {
+      (*value) = int(flt.value());
+      return true;
+    }
+  }
+
+  // revert
+  SeekTo(loc);
+
   // head character
   bool has_sign = false;
   // bool negative = false;
@@ -907,7 +1071,7 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
 
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
   try {
-    (*value) = std::stoull(ss.str());
+    (*value) = uint32_t(std::stoull(ss.str()));
   } catch (const std::invalid_argument &e) {
     (void)e;
     PushError("Not an 64bit unsigned integer literal.\n");
@@ -1508,7 +1672,7 @@ bool AsciiParser::SepBy1BasicType(const char sep, const char end_symbol, std::ve
   }
 
   while (!Eof()) {
-    if (!SkipWhitespaceAndNewline()) {
+    if (!SkipCommentAndWhitespaceAndNewline()) {
       return false;
     }
 
@@ -1520,7 +1684,7 @@ bool AsciiParser::SepBy1BasicType(const char sep, const char end_symbol, std::ve
 
     if (c == sep) {
       // Look next token
-      if (!SkipWhitespaceAndNewline()) {
+      if (!SkipCommentAndWhitespaceAndNewline()) {
         return false;
       }
 
@@ -1719,6 +1883,10 @@ bool AsciiParser::ParseBasicTypeArray(
     return false;
   }
 
+  if (!SkipCommentAndWhitespaceAndNewline()) {
+    return false;
+  }
+
   if (!Expect(']')) {
     return false;
   }
@@ -1755,6 +1923,10 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<T> *result) {
   }
 
   if (!SepBy1BasicType<T>(',', ']', result)) {
+    return false;
+  }
+
+  if (!SkipCommentAndWhitespaceAndNewline()) {
     return false;
   }
 
@@ -1795,7 +1967,7 @@ bool AsciiParser::SepBy1BasicType(const char sep,
 
   while (!Eof()) {
     // sep
-    if (!SkipWhitespaceAndNewline()) {
+    if (!SkipCommentAndWhitespaceAndNewline()) {
       return false;
     }
 
@@ -1805,6 +1977,10 @@ bool AsciiParser::SepBy1BasicType(const char sep,
     }
 
     if (c == sep) {
+      // Look next token
+      if (!SkipCommentAndWhitespaceAndNewline()) {
+        return false;
+      }
 
       char nc;
       if (!LookChar1(&nc)) {
@@ -1812,9 +1988,9 @@ bool AsciiParser::SepBy1BasicType(const char sep,
       }
 
       if (nc == end_symbol) {
+        // end
         break;
       }
-
     }
 
     if (c != sep) {
@@ -1959,7 +2135,6 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<Reference> *result) {
   if (c != '[') {
     Rewind(1);
 
-    DCOUT("Guess non-list version");
     // Guess non-list version
     Reference ref;
     bool triple_deliminated{false};
@@ -1992,7 +2167,81 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<Reference> *result) {
       Rewind(1);
     }
 
-    if (!SepBy1BasicType(',', result)) {
+
+    if (!SepBy1BasicType<Reference>(',', ']', result)) {
+      return false;
+    }
+    DCOUT("parsed ref array");
+
+    if (!SkipCommentAndWhitespaceAndNewline()) {
+      return false;
+    }
+
+    if (!Expect(']')) {
+      return false;
+    }
+
+  }
+
+  return true;
+}
+
+///
+/// Parse array of asset payload
+/// Allow non-list version
+///
+template<>
+bool AsciiParser::ParseBasicTypeArray(std::vector<Payload> *result) {
+  if (!SkipWhitespace()) {
+    return false;
+  }
+
+  char c;
+  if (!Char1(&c)) {
+    return false;
+  }
+
+  if (c != '[') {
+    Rewind(1);
+
+    DCOUT("Guess non-list version");
+    // Guess non-list version
+    Payload pl;
+    bool triple_deliminated{false};
+    if (!ParsePayload(&pl, &triple_deliminated)) {
+      return false;
+    }
+
+    (void)triple_deliminated;
+    result->clear();
+    result->push_back(pl);
+
+  } else {
+
+    if (!SkipCommentAndWhitespaceAndNewline()) {
+      return false;
+    }
+
+    // Empty array?
+    {
+      char ce;
+      if (!Char1(&ce)) {
+        return false;
+      }
+
+      if (ce == ']') {
+        result->clear();
+        return true;
+      }
+
+      Rewind(1);
+    }
+
+    if (!SepBy1BasicType(',', ']', result)) {
+      return false;
+    }
+
+    if (!SkipCommentAndWhitespaceAndNewline()) {
       return false;
     }
 
@@ -2003,6 +2252,7 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<Reference> *result) {
 
   return true;
 }
+
 
 ///
 /// Parse PathVector
@@ -2037,6 +2287,10 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<Path> *result) {
   }
 
   if (!SepBy1BasicType(',', ']', result)) {
+    return false;
+  }
+
+  if (!SkipCommentAndWhitespaceAndNewline()) {
     return false;
   }
 
@@ -2877,6 +3131,31 @@ bool AsciiParser::ReadBasicType(nonstd::optional<Reference> *value) {
   return false;
 }
 
+bool AsciiParser::ReadBasicType(Payload *value) {
+  bool triple_deliminated;
+  if (ParsePayload(value, &triple_deliminated)) {
+    return true;
+  }
+  (void)triple_deliminated;
+
+  return false;
+}
+
+bool AsciiParser::ReadBasicType(nonstd::optional<Payload> *value) {
+  if (MaybeNone()) {
+    (*value) = nonstd::nullopt;
+    return true;
+  }
+
+  Payload v;
+  if (ReadBasicType(&v)) {
+    (*value) = v;
+    return true;
+  }
+
+  return false;
+}
+
 // 1D array
 template <typename T>
 bool AsciiParser::ReadBasicType(std::vector<T> *value) {
@@ -3000,6 +3279,9 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color3d> *resu
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color4h> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color4f> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color4d> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2f> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3f> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4f> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2d> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3d> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4d> *result);

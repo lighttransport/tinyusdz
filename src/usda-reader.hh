@@ -1,11 +1,13 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2021 - 2023, Syoyo Fujita.
+// Copyright 2023 - Present, Light Transport Entertainment Inc.
 #pragma once
 
-#include <math.h>
 #include "tinyusdz.hh"
 #include "stream-reader.hh"
 
 #include "ascii-parser.hh"
+//#include "asset-resolution.hh"
 
 namespace tinyusdz {
 
@@ -13,7 +15,9 @@ namespace usda {
 
 struct USDAReaderConfig {
   bool allow_unknown_prims{true};
+  bool allow_unknown_shader{true};
   bool allow_unknown_apiSchema{true};
+  bool strict_allowedToken_check{false};
 };
 
 ///
@@ -38,8 +42,17 @@ class USDAReader {
 
   ///
   /// Base filesystem directory to search asset files.
+  /// TODO: Not used so remove it.
   ///
-  void SetBaseDir(const std::string &base_dir);
+  void set_base_dir(const std::string &base_dir); 
+  void SetBaseDir(const std::string &base_dir) { // Deprecared
+    set_base_dir(base_dir);
+  }
+
+  ///
+  /// Set AssetResolution resolver.
+  ///
+  //void set_asset_resolution_resolver(const AssetResolutionResolver &arr);
 
   ///
   /// Set reader option
@@ -54,51 +67,67 @@ class USDAReader {
   ///
   /// Check if header data is USDA
   ///
-  bool CheckHeader();
+  bool check_header();
+  bool CheckHeader() { // Deprecated
+    return check_header();
+  }
 
   ///
   /// Reader entry point
   ///
-  bool Read(LoadState state = LoadState::Toplevel);
-
-#if 0
+  /// `as_primspec` : Create PrimSpec instead of concrete(typed) Prim. Set true if you want to do composition
   ///
-  ///
-  ///
-  std::string GetDefaultPrimName() const;
-
-  ///
-  /// Get parsed toplevel "def" nodes(GPrim)
-  ///
-  std::vector<GPrim> GetGPrims();
-#endif
+  bool read(uint32_t load_state = static_cast<uint32_t>(LoadState::Toplevel), bool as_primspec = false);
+  bool Read(LoadState state = LoadState::Toplevel, bool as_primspec = false) { // Deprecated
+    uint32_t ustate = static_cast<uint32_t>(state);
+    return read(ustate, as_primspec);
+  }
 
   ///
-  /// Get error message(when `Parse` failed)
+  /// Get error message(when reading USDA failed)
   ///
-  std::string GetError();
+  std::string get_error();
+  std::string GetError() { // Deprecated
+    return get_error();
+  }
 
   ///
-  /// Get warning message(warnings in `Parse`)
+  /// Get warning message.
   ///
-  std::string GetWarning();
+  std::string get_warning();
+  std::string GetWarning() { // Deprecated
+    return get_warning();
+  }
 
   ///
   /// Get read USD scene data as Layer
-  /// Must be called after `Read`
+  /// Must be called after `read`
   ///
-  bool GetAsLayer(Layer *layer);
+  /// FIXME: Currently concrete(typed) Prims are not included in destination Layer.
+  /// If you use this function, you'll need to invoke `read` with `as_primspec=true`.
+  ///
+  ///
+  bool get_as_layer(Layer *layer);
+  bool GetAsLayer(Layer *layer) { // Deprecated
+    return get_as_layer(layer);
+  }
 
   ///
   /// Reconstruct Stage from loaded USD scene data.
   /// Must be called after `Read`
   ///
-  bool ReconstructStage();
+  bool reconstruct_stage();
+  bool ReconstructStage() { // Deprecated
+    return reconstruct_stage();
+  }
 
   ///
   /// Get as stage(scene graph). Must call `ReconstructStage` beforehand.
   ///
-  const Stage& GetStage() const;
+  const Stage& get_stage() const;
+  const Stage& GetStage() const { // Deprecated
+    return get_stage();
+  }
 
  private:
 #if defined(TINYUSDZ_DISABLE_MODULE_USDA_READER)

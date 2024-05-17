@@ -62,7 +62,7 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y build-essential
             sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-            ./scripts/bootstrap-gcc-aarch64-cross.sh
+            ./scripts/bootstrap-gcc-aarch64-cross-ci.sh
             cd build-cross
             make VERBOSE=1
 
@@ -104,8 +104,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
+    # ubuntu-latest(Ubuntu 22.04 as of 2024/01/03) has clang installed,
+    # so use clang
+    # TODO: Use libc++ for STL?
     - name: configure
-      run: ./scripts/bootstrap-cmake-linux.sh
+      run: CXX=clang++ CC=clang ./scripts/bootstrap-cmake-linux.sh
     - name: make
       run: cd build && make
     - name: tests

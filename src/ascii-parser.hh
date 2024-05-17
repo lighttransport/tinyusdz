@@ -1,16 +1,17 @@
-// SPDX-License-Identifier: MIT
-// Copyright 2021 - Present, Syoyo Fujita.
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2021 - 2022, Syoyo Fujita.
+// Copyright 2023 - Present, Light Transport Entertainment Inc.
 //
 // USD ASCII parser
 
 #pragma once
 
-//#include <functional>
+// #include <functional>
 #include <stdio.h>
 
 #include <stack>
 
-//#include "external/better-enums/enum.h"
+// #include "external/better-enums/enum.h"
 #include "composition.hh"
 #include "prim-types.hh"
 #include "stream-reader.hh"
@@ -57,6 +58,7 @@ struct PathIdentifier : std::string {
 struct AsciiParserOption {
   bool allow_unknown_prim{true};
   bool allow_unknown_apiSchema{true};
+  bool strict_allowedToken_check{false};
 };
 
 ///
@@ -143,7 +145,7 @@ class AsciiParser {
   }
 
   bool IsStageMeta(const std::string &name);
-  bool IsPrimMeta(const std::string &name);
+  bool IsRegisteredPrimMeta(const std::string &name);
 
   class VariableDef {
    public:
@@ -190,10 +192,14 @@ class AsciiParser {
     std::vector<int64_t> primIndices;  // primIdx of Reconstrcuted Prim.
     std::map<std::string, Property> props;
     std::vector<value::token> properties;
+
+    // for nested `variantSet` 
+    std::map<std::string, std::map<std::string, VariantContent>> variantSets;
   };
 
   // TODO: Use std::vector instead of std::map?
-  using VariantSetList = std::map<std::string, std::map<std::string, VariantContent>>;
+  using VariantSetList =
+      std::map<std::string, std::map<std::string, VariantContent>>;
 
   AsciiParser();
   AsciiParser(tinyusdz::StreamReader *sr);
@@ -231,7 +237,6 @@ class AsciiParser {
   // using PrimMetaProcessFunction = std::function<bool(const PrimMetas
   // &metas)>;
 
-
   ///
   /// Prim construction callback function
   /// TODO: Refactor arguments
@@ -252,9 +257,7 @@ class AsciiParser {
           const std::string &primTypeName, const Path &prim_name,
           const int64_t primIdx, const int64_t parentPrimIdx,
           const std::map<std::string, Property> &properties,
-          const PrimMetaMap &in_meta,
-          const VariantSetList &in_variantSetList)>;
-
+          const PrimMetaMap &in_meta, const VariantSetList &in_variantSetList)>;
 
   ///
   /// Register Prim construction callback function.
@@ -286,8 +289,7 @@ class AsciiParser {
       const std::string &primTypeName, const Path &prim_name,
       const int64_t primIdx, const int64_t parentPrimIdx,
       const std::map<std::string, Property> &properties,
-      const PrimMetaMap &in_meta,
-      const VariantSetList &in_variantSetLists)>;
+      const PrimMetaMap &in_meta, const VariantSetList &in_variantSetLists)>;
 
   void RegisterPrimSpecFunction(PrimSpecFunction fun) { _primspec_fun = fun; }
 
@@ -307,10 +309,22 @@ class AsciiParser {
   bool CheckHeader();
 
   ///
+  /// True: create PrimSpec instead of typed Prim.
+  /// Set true if you do USD composition.
+  ///
+  void set_primspec_mode(bool onoff) { _primspec_mode = onoff; }
+
+  ///
   /// Parser entry point
   ///
-  bool Parse(LoadState state = LoadState::Toplevel,
-             const AsciiParserOption &parser_option = AsciiParserOption());
+  /// @param[in] load_states Bit mask of LoadState
+  /// @param[in] parser_option Parse option(optional)
+  ///
+  /// TODO: Move `load_states` to AsciiParserOption?
+  ///
+  bool Parse(
+      const uint32_t load_states = static_cast<uint32_t>(LoadState::Toplevel),
+      const AsciiParserOption &parser_option = AsciiParserOption());
 
   ///
   /// Parse TimeSample value with specified array type of
@@ -390,6 +404,9 @@ class AsciiParser {
   bool ReadBasicType(nonstd::optional<value::color4h> *value);
   bool ReadBasicType(nonstd::optional<value::color4f> *value);
   bool ReadBasicType(nonstd::optional<value::color4d> *value);
+  bool ReadBasicType(nonstd::optional<value::matrix2f> *value);
+  bool ReadBasicType(nonstd::optional<value::matrix3f> *value);
+  bool ReadBasicType(nonstd::optional<value::matrix4f> *value);
   bool ReadBasicType(nonstd::optional<value::matrix2d> *value);
   bool ReadBasicType(nonstd::optional<value::matrix3d> *value);
   bool ReadBasicType(nonstd::optional<value::matrix4d> *value);
@@ -405,6 +422,7 @@ class AsciiParser {
   bool ReadBasicType(nonstd::optional<Path> *value);
   bool ReadBasicType(nonstd::optional<value::AssetPath> *value);
   bool ReadBasicType(nonstd::optional<Reference> *value);
+  bool ReadBasicType(nonstd::optional<Payload> *value);
   bool ReadBasicType(nonstd::optional<Identifier> *value);
   bool ReadBasicType(nonstd::optional<PathIdentifier> *value);
 
@@ -458,6 +476,9 @@ class AsciiParser {
   bool ReadBasicType(value::texcoord3h *value);
   bool ReadBasicType(value::texcoord3f *value);
   bool ReadBasicType(value::texcoord3d *value);
+  bool ReadBasicType(value::matrix2f *value);
+  bool ReadBasicType(value::matrix3f *value);
+  bool ReadBasicType(value::matrix4f *value);
   bool ReadBasicType(value::matrix2d *value);
   bool ReadBasicType(value::matrix3d *value);
   bool ReadBasicType(value::matrix4d *value);
@@ -467,6 +488,7 @@ class AsciiParser {
   bool ReadBasicType(Path *value);
   bool ReadBasicType(value::AssetPath *value);
   bool ReadBasicType(Reference *value);
+  bool ReadBasicType(Payload *value);
   bool ReadBasicType(Identifier *value);
   bool ReadBasicType(PathIdentifier *value);
 
@@ -476,7 +498,10 @@ class AsciiParser {
   template <typename T>
   bool ReadBasicType(std::vector<T> *value);
 
-  // Apprently, No float precision matrix in USDA
+  bool ParseMatrix(value::matrix2f *result);
+  bool ParseMatrix(value::matrix3f *result);
+  bool ParseMatrix(value::matrix4f *result);
+
   bool ParseMatrix(value::matrix2d *result);
   bool ParseMatrix(value::matrix3d *result);
   bool ParseMatrix(value::matrix4d *result);
@@ -544,6 +569,15 @@ class AsciiParser {
                        std::vector<nonstd::optional<std::array<T, N>>> *result);
 
   ///
+  /// Parses N occurences of tuple values with type 'T', separated by
+  /// `sep`. Allows 'None'
+  ///
+  template <typename T, size_t M, size_t N>
+  bool SepByNTupleType(
+      const char sep,
+      std::array<nonstd::optional<std::array<T, M>>, N> *result);
+
+  ///
   /// Parses 1 or more occurences of tuple values with type 'T', separated by
   /// `sep`
   ///
@@ -579,7 +613,8 @@ class AsciiParser {
   bool ParseVariants(VariantSelectionMap *out_map);
 
   bool MaybeListEditQual(tinyusdz::ListEditQual *qual);
-  bool MaybeVariability(tinyusdz::Variability *variability, bool *varying_authored);
+  bool MaybeVariability(tinyusdz::Variability *variability,
+                        bool *varying_authored);
 
   ///
   /// Try parsing single-quoted(`"`) string
@@ -622,6 +657,7 @@ class AsciiParser {
   ///
   std::string GetWarning();
 
+#if 0
   // Return the flag if the .usda is read from `references`
   bool IsReferenced() { return _referenced; }
 
@@ -630,10 +666,12 @@ class AsciiParser {
 
   // Return the flag if the .usda is read from `payload`
   bool IsPayloaded() { return _payloaded; }
+#endif
 
   // Return true if the .udsa is read in the top layer(stage)
   bool IsToplevel() {
-    return !IsReferenced() && !IsSubLayered() && !IsPayloaded();
+    return _toplevel;
+    // return !IsReferenced() && !IsSubLayered() && !IsPayloaded();
   }
 
   bool MaybeNone();
@@ -653,6 +691,10 @@ class AsciiParser {
   bool ReadIdentifier(std::string *token);  // no '"'
   bool ReadPathIdentifier(
       std::string *path_identifier);  // '<' + identifier + '>'
+
+  // read until newline
+  bool ReadUntilNewline(std::string *str);
+
 
   /// Parse magic
   /// #usda FLOAT
@@ -680,8 +722,8 @@ class AsciiParser {
 
   bool ParseCustomMetaValue();
 
-  // TODO: Return Path?
   bool ParseReference(Reference *out, bool *triple_deliminated);
+  bool ParsePayload(Payload *out, bool *triple_deliminated);
 
   // `#` style comment
   bool ParseSharpComment();
@@ -690,7 +732,10 @@ class AsciiParser {
   bool IsSupportedPrimType(const std::string &ty);
   bool IsSupportedAPISchema(const std::string &ty);
 
-  bool Eof() { return _sr->eof(); }
+  bool Eof() {
+    // end of buffer, or current char is nullchar('\0')
+    return _sr->eof() || _sr->is_nullchar();
+  }
 
   bool ParseRelationship(Relationship *result);
   bool ParseProperties(std::map<std::string, Property> *props,
@@ -735,7 +780,8 @@ class AsciiParser {
 
   // Parse `varianntSet` stmt
   bool ParseVariantSet(const int64_t primIdx, const int64_t parentPrimIdx,
-                       const uint32_t depth, std::map<std::string, VariantContent> *variantSetMap);
+                       const uint32_t depth,
+                       std::map<std::string, VariantContent> *variantSetMap);
 
   // --------------------------------------------
 
@@ -759,10 +805,13 @@ class AsciiParser {
   nonstd::optional<VariableDef> GetPrimMetaDefinition(const std::string &arg);
   nonstd::optional<VariableDef> GetPropMetaDefinition(const std::string &arg);
 
-  std::string GetCurrentPath();
-  bool PathStackDepth() { return _path_stack.size(); }
-  void PushPath(const std::string &p) { _path_stack.push(p); }
-  void PopPath() {
+  std::string GetCurrentPrimPath();
+  bool PrimPathStackDepth() { return _path_stack.size(); }
+  void PushPrimPath(const std::string &abs_path) {
+    // TODO: validate `abs_path` is really absolute full path.
+    _path_stack.push(abs_path);
+  }
+  void PopPrimPath() {
     if (!_path_stack.empty()) {
       _path_stack.pop();
     }
@@ -799,6 +848,8 @@ class AsciiParser {
   float _version{1.0f};
 
   // load flags
+  bool _toplevel{true};
+  // TODO: deprecate?
   bool _sub_layered{false};
   bool _referenced{false};
   bool _payloaded{false};
@@ -818,6 +869,8 @@ class AsciiParser {
   std::map<std::string, PrimConstructFunction> _prim_construct_fun_map;
   std::map<std::string, PostPrimConstructFunction> _post_prim_construct_fun_map;
 
+  bool _primspec_mode{false};
+
   // For composition. PrimSpec is typeless so single callback function only.
   PrimSpecFunction _primspec_fun{nullptr};
 };
@@ -832,7 +885,8 @@ class AsciiParser {
 /// @param[out] value Ascii representation of value.
 /// @param[out] err Parse error message when returning false.
 ///
-bool ParseUnregistredValue(const std::string &typeName, const std::string &str, value::Value *value, std::string *err);
+bool ParseUnregistredValue(const std::string &typeName, const std::string &str,
+                           value::Value *value, std::string *err);
 
 }  // namespace ascii
 
