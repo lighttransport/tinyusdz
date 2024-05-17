@@ -14,10 +14,10 @@
 //    asset inputs:file = @input.mtlx@
 //    ...
 // }
-// 
-// 
+//
+//
 // Corresponding USD Shader C++ class is defined in usdShade.hh.
-// 
+//
 // This module implements .mtlx load and access to its content.
 //
 // Based on MaterialX spec v1.38
@@ -31,8 +31,12 @@
 #include "asset-resolution.hh"
 #include "usdShade.hh"
 
-
 namespace tinyusdz {
+
+constexpr auto kMtlxUsdPreviewSurface = "MtlxUsdPreviewSurface";
+constexpr auto kMtlxAutodeskStandardSurface = "MtlxAutodeskStandaradSurface";
+
+namespace mtlx {
 
 // TODO: use tinyusdz::value?
 enum class MtlxType {
@@ -206,11 +210,6 @@ class UsdMtlx
   std::string version{"1.38"};
 };
 
-constexpr auto kMtlxUsdPreviewSurface = "MtlxUsdPreviewSurface";
-constexpr auto kMtlxAutodeskStandardSurface = "MtlxAutodeskStandaradSurface";
-
-
-namespace mtlx {
 
 enum class ColorSpace {
   Lin_rec709, // lin_rec709
@@ -242,7 +241,7 @@ struct MtlxModel {
 
   // Content of shader.
   // MtlxUsdPreviewSurface or MtlxAutodeskStandaradSurface
-  value::Value shader; 
+  value::Value shader;
 
   std::map<std::string, MtlxMaterial> surface_materials;
   std::map<std::string, value::Value> shaders; // MtlxUsdPreviewSurface or MtlxAutodeskStandaradSurface
