@@ -1,5 +1,6 @@
-// SPDX-License-Identifier: MIT
-// Copyright 2022 - Present, Syoyo Fujita.
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2022 - 2023, Syoyo Fujita.
+// Copyright 2023 - Present, Light Transport Entertainment Inc.
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -34,6 +35,161 @@ using matrix22d = linalg::aliases::double2x2;
 using double3x3 = linalg::aliases::double3x3;
 using double3 = linalg::aliases::double3;
 using double4 = linalg::aliases::double4;
+
+constexpr uint32_t kIdentityMaxUlps = 1;
+
+bool is_identity(const value::matrix2f &m) {
+  return math::almost_equals_by_ulps(m.m[0][0], 1.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[0][1], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[1][0], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[1][1], 0.0f, kIdentityMaxUlps);
+}
+
+bool is_identity(const value::matrix3f &m) {
+  return math::almost_equals_by_ulps(m.m[0][0], 1.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[0][1], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[0][2], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[1][0], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[1][1], 1.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[1][2], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[2][0], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[2][1], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[2][2], 1.0f, kIdentityMaxUlps);
+}
+
+bool is_identity(const value::matrix4f &m) {
+  return math::almost_equals_by_ulps(m.m[0][0], 1.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[0][1], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[0][2], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[0][3], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[1][0], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[1][1], 1.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[1][2], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[1][3], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[2][0], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[2][1], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[2][2], 1.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[2][3], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[3][0], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[3][1], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[3][2], 0.0f, kIdentityMaxUlps) &&
+         math::almost_equals_by_ulps(m.m[3][3], 1.0f, kIdentityMaxUlps);
+}
+
+bool is_identity(const value::matrix2d &m) {
+  return math::almost_equals_by_ulps(m.m[0][0], 1.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[0][1], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[1][0], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[1][1], 0.0, uint64_t(kIdentityMaxUlps));
+}
+
+bool is_identity(const value::matrix3d &m) {
+  return math::almost_equals_by_ulps(m.m[0][0], 1.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[0][1], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[0][2], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[1][0], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[1][1], 1.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[1][2], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[2][0], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[2][1], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[2][2], 1.0, uint64_t(kIdentityMaxUlps));
+}
+
+bool is_identity(const value::matrix4d &m) {
+  return math::almost_equals_by_ulps(m.m[0][0], 1.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[0][1], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[0][2], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[0][3], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[1][0], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[1][1], 1.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[1][2], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[1][3], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[2][0], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[2][1], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[2][2], 1.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[2][3], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[3][0], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[3][1], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[3][2], 0.0, uint64_t(kIdentityMaxUlps)) &&
+         math::almost_equals_by_ulps(m.m[3][3], 1.0, uint64_t(kIdentityMaxUlps));
+}
+
+bool is_close(const value::matrix2f &a, const value::matrix2f &b, const float eps) {
+  return math::is_close(a.m[0][0], b.m[0][0], eps) &&
+         math::is_close(a.m[0][1], b.m[0][1], eps) &&
+         math::is_close(a.m[1][0], b.m[1][0], eps) &&
+         math::is_close(a.m[1][1], b.m[1][1], eps);
+}
+
+bool is_close(const value::matrix3f &a, const value::matrix3f &b, const float eps) {
+  return math::is_close(a.m[0][0], b.m[0][0], eps) &&
+         math::is_close(a.m[0][1], b.m[0][1], eps) &&
+         math::is_close(a.m[0][2], b.m[0][2], eps) &&
+         math::is_close(a.m[1][0], b.m[1][0], eps) &&
+         math::is_close(a.m[1][1], b.m[1][1], eps) &&
+         math::is_close(a.m[1][2], b.m[1][2], eps) &&
+         math::is_close(a.m[2][0], b.m[2][0], eps) &&
+         math::is_close(a.m[2][1], b.m[2][1], eps) &&
+         math::is_close(a.m[2][2], b.m[2][2], eps);
+}
+
+bool is_close(const value::matrix4f &a, const value::matrix4f &b, const float eps) {
+  return math::is_close(a.m[0][0], b.m[0][0], eps) &&
+         math::is_close(a.m[0][1], b.m[0][1], eps) &&
+         math::is_close(a.m[0][2], b.m[0][2], eps) &&
+         math::is_close(a.m[0][3], b.m[0][3], eps) &&
+         math::is_close(a.m[1][0], b.m[1][0], eps) &&
+         math::is_close(a.m[1][1], b.m[1][1], eps) &&
+         math::is_close(a.m[1][2], b.m[1][2], eps) &&
+         math::is_close(a.m[1][3], b.m[1][3], eps) &&
+         math::is_close(a.m[2][0], b.m[2][0], eps) &&
+         math::is_close(a.m[2][1], b.m[2][1], eps) &&
+         math::is_close(a.m[2][2], b.m[2][2], eps) &&
+         math::is_close(a.m[2][3], b.m[2][3], eps) &&
+         math::is_close(a.m[3][0], b.m[3][0], eps) &&
+         math::is_close(a.m[3][1], b.m[3][1], eps) &&
+         math::is_close(a.m[3][2], b.m[3][2], eps) &&
+         math::is_close(a.m[3][3], b.m[3][3], eps);
+}
+
+
+bool is_close(const value::matrix2d &a, const value::matrix2d &b, const double eps) {
+  return math::is_close(a.m[0][0], b.m[0][0], eps) &&
+         math::is_close(a.m[0][1], b.m[0][1], eps) &&
+         math::is_close(a.m[1][0], b.m[1][0], eps) &&
+         math::is_close(a.m[1][1], b.m[1][1], eps);
+}
+
+bool is_close(const value::matrix3d &a, const value::matrix3d &b, const double eps) {
+  return math::is_close(a.m[0][0], b.m[0][0], eps) &&
+         math::is_close(a.m[0][1], b.m[0][1], eps) &&
+         math::is_close(a.m[0][2], b.m[0][2], eps) &&
+         math::is_close(a.m[1][0], b.m[1][0], eps) &&
+         math::is_close(a.m[1][1], b.m[1][1], eps) &&
+         math::is_close(a.m[1][2], b.m[1][2], eps) &&
+         math::is_close(a.m[2][0], b.m[2][0], eps) &&
+         math::is_close(a.m[2][1], b.m[2][1], eps) &&
+         math::is_close(a.m[2][2], b.m[2][2], eps);
+}
+
+bool is_close(const value::matrix4d &a, const value::matrix4d &b, const double eps) {
+  return math::is_close(a.m[0][0], b.m[0][0], eps) &&
+         math::is_close(a.m[0][1], b.m[0][1], eps) &&
+         math::is_close(a.m[0][2], b.m[0][2], eps) &&
+         math::is_close(a.m[0][3], b.m[0][3], eps) &&
+         math::is_close(a.m[1][0], b.m[1][0], eps) &&
+         math::is_close(a.m[1][1], b.m[1][1], eps) &&
+         math::is_close(a.m[1][2], b.m[1][2], eps) &&
+         math::is_close(a.m[1][3], b.m[1][3], eps) &&
+         math::is_close(a.m[2][0], b.m[2][0], eps) &&
+         math::is_close(a.m[2][1], b.m[2][1], eps) &&
+         math::is_close(a.m[2][2], b.m[2][2], eps) &&
+         math::is_close(a.m[2][3], b.m[2][3], eps) &&
+         math::is_close(a.m[3][0], b.m[3][0], eps) &&
+         math::is_close(a.m[3][1], b.m[3][1], eps) &&
+         math::is_close(a.m[3][2], b.m[3][2], eps) &&
+         math::is_close(a.m[3][3], b.m[3][3], eps);
+}
 
 value::quatf to_quaternion(const value::float3 &axis, const float angle) {
 
@@ -370,7 +526,7 @@ class XformEvaluator {
     rm.m[1][1] = c;
     rm.m[1][2] = s;
     rm.m[2][1] = -s;
-    rm.m[2][2] = c; 
+    rm.m[2][2] = c;
 
     m = m * rm;
 
@@ -387,8 +543,8 @@ class XformEvaluator {
 
     rm.m[0][0] = c;
     rm.m[0][2] = -s;
-    rm.m[2][0] = s; 
-    rm.m[2][2] = c; 
+    rm.m[2][0] = s;
+    rm.m[2][2] = c;
 
     m = m * rm;
 
@@ -405,9 +561,9 @@ class XformEvaluator {
     double c = math::cos_pi(k);
     double s = math::sin_pi(k);
 
-    rm.m[0][0] = c; 
-    rm.m[0][1] = s; 
-    rm.m[1][0] = -s; 
+    rm.m[0][0] = c;
+    rm.m[0][1] = s;
+    rm.m[1][0] = -s;
     rm.m[1][1] = c;
 
     m = m * rm;

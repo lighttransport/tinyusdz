@@ -10,11 +10,15 @@
 
 #include <map>
 
+#include "prim-type-macros.inc"
 #include "prim-types.hh"
 #include "stage.hh"
+#include "tiny-format.hh"
 #include "usdGeom.hh"
+#include "usdLux.hh"
 #include "usdShade.hh"
 #include "usdSkel.hh"
+#include "value-type-macros.inc"
 #include "value-types.hh"
 
 namespace tinyusdz {
@@ -32,12 +36,22 @@ template <typename T>
 using PathShaderMap =
     std::map<std::string, std::pair<const Shader *, const T *>>;
 
+// TODO: extern template to suppress possible `-Wundefined-func-template`?
+
 ///
 /// List Prim of type T from the Stage.
 /// Returns false when unsupported/unimplemented Prim type T is given.
 ///
 template <typename T>
 bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<T> &m /* output */);
+
+#define EXTERN_LISTPRIMS(__ty)                                 \
+  extern template bool ListPrims(const tinyusdz::Stage &stage, \
+                                 PathPrimMap<__ty> &m);
+
+APPLY_FUNC_TO_PRIM_TYPES(EXTERN_LISTPRIMS)
+
+#undef EXTERN_LISTPRIMS
 
 ///
 /// List Shader of shader type T from the Stage.
@@ -47,6 +61,26 @@ bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<T> &m /* output */);
 template <typename T>
 bool ListShaders(const tinyusdz::Stage &stage,
                  PathShaderMap<T> &m /* output */);
+
+extern template bool ListShaders(const tinyusdz::Stage &stage,
+                                 PathShaderMap<UsdPreviewSurface> &m);
+extern template bool ListShaders(const tinyusdz::Stage &stage,
+                                 PathShaderMap<UsdUVTexture> &m);
+
+extern template bool ListShaders(const tinyusdz::Stage &stage,
+                                 PathShaderMap<UsdPrimvarReader_string> &m);
+extern template bool ListShaders(const tinyusdz::Stage &stage,
+                                 PathShaderMap<UsdPrimvarReader_int> &m);
+extern template bool ListShaders(const tinyusdz::Stage &stage,
+                                 PathShaderMap<UsdPrimvarReader_float> &m);
+extern template bool ListShaders(const tinyusdz::Stage &stage,
+                                 PathShaderMap<UsdPrimvarReader_float2> &m);
+extern template bool ListShaders(const tinyusdz::Stage &stage,
+                                 PathShaderMap<UsdPrimvarReader_float3> &m);
+extern template bool ListShaders(const tinyusdz::Stage &stage,
+                                 PathShaderMap<UsdPrimvarReader_float4> &m);
+extern template bool ListShaders(const tinyusdz::Stage &stage,
+                                 PathShaderMap<UsdPrimvarReader_matrix> &m);
 
 ///
 /// Get parent Prim from Path.
@@ -104,8 +138,52 @@ bool VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun,
 /// @return true if Property found in given Prim.
 /// @return false if Property is not found in given Prim.
 ///
-bool GetProperty(const tinyusdz::Prim &prim, const std::string &attr_name,
+bool GetProperty(const tinyusdz::Prim &prim, const std::string &prop_name,
                  Property *prop, std::string *err);
+
+///
+/// Get List of Property(Attribute and Relationship) names of given Prim by
+/// name. It includes authored builtin Property names.
+///
+/// @param[in] prim Prim
+/// @param[out] prop_names Property names
+/// @param[out] err Error message(filled when returning false)
+///
+/// @return true upon success.
+/// @return false when something go wrong.
+///
+bool GetPropertyNames(const tinyusdz::Prim &prim,
+                      std::vector<std::string> *prop_names, std::string *err);
+
+///
+/// Get List of Attribute names of given Prim.
+/// It includes authored builtin Attribute names(e.g. "points" for `GeomMesh`).
+///
+/// @param[in] prim Prim
+/// @param[out] attr_names Attribute names
+/// @param[out] err Error message(filled when returning false)
+///
+/// @return true upon success.
+/// @return false when something go wrong.
+///
+bool GetAttributeNames(const tinyusdz::Prim &prim,
+                       std::vector<std::string> *attr_names, std::string *err);
+
+///
+/// Get List of Relationship names of given Prim.
+/// It includes authored builtin Relationship names(e.g. "proxyPrim" for
+/// `GeomMesh`).
+///
+/// @param[in] prim Prim
+/// @param[out] rel_names Relationship names
+/// @param[out] err Error message(filled when returning false)
+///
+/// @return true upon success.
+/// @return false when something go wrong.
+///
+bool GetRelationshipNames(const tinyusdz::Prim &prim,
+                          std::vector<std::string> *rel_names,
+                          std::string *err);
 
 ///
 /// Get Attribute of given Prim by name.
@@ -124,6 +202,16 @@ bool GetAttribute(const tinyusdz::Prim &prim, const std::string &attr_name,
                   Attribute *attr, std::string *err);
 
 ///
+/// Check if Prim has Attribute.
+///
+/// @param[in] prim Prim
+/// @param[in] attr_name Attribute name to query.
+///
+/// @return true if `attr_name` Attribute exists in the Prim.
+///
+bool HasAttribute(const tinyusdz::Prim &prim, const std::string &attr_name);
+
+///
 /// Get Relationship of given Prim by name.
 /// Similar to UsdPrim::GetRelationship() in pxrUSD.
 ///
@@ -139,136 +227,22 @@ bool GetAttribute(const tinyusdz::Prim &prim, const std::string &attr_name,
 bool GetRelationship(const tinyusdz::Prim &prim, const std::string &rel_name,
                      Relationship *rel, std::string *err);
 
-bool HasRelationship(const tinyusdz::Prim &prim, const std::string &rel_name);
-
 ///
-/// Terminal Attribute value at specified timecode.
+/// Check if Prim has Relationship.
 ///
-/// - No `None`(Value Blocked)
-/// - No connection(connection target is evaluated(fetch value producing
-/// attribute))
-/// - No timeSampled value
-///
-class TerminalAttributeValue {
- public:
-  TerminalAttributeValue() = default;
-
-  TerminalAttributeValue(const value::Value &v) : _empty{false}, _value(v) {}
-  TerminalAttributeValue(value::Value &&v)
-      : _empty{false}, _value(std::move(v)) {}
-
-  // "empty" attribute(type info only)
-  void set_empty_attribute(const std::string &type_name) {
-    _empty = true;
-    _type_name = type_name;
-  }
-
-  TerminalAttributeValue(const std::string &type_name) {
-    set_empty_attribute(type_name);
-  }
-
-  bool is_empty() const { return _empty; }
-
-  template <typename T>
-  const T *as() const {
-    if (_empty) {
-      return nullptr;
-    }
-    return _value.as<T>();
-  }
-
-  template <typename T>
-  bool is() const {
-    if (_empty) {
-      return false;
-    }
-
-    if (_value.as<T>()) {
-      return true;
-    }
-    return false;
-  }
-
-  void set_value(const value::Value &v) {
-    _value = v;
-    _empty = false;
-  }
-
-  void set_value(value::Value &&v) {
-    _value = std::move(v);
-    _empty = false;
-  }
-
-  const std::string type_name() const {
-    if (_empty) {
-      return _type_name;
-    }
-
-    return _value.type_name();
-  }
-
-  uint32_t type_id() const {
-    if (_empty) {
-      return value::GetTypeId(_type_name);
-    }
-
-    return _value.type_id();
-  }
-
-  Variability variability() const { return _variability; }
-  Variability &variability() { return _variability; }
-
-  const AttrMeta &meta() const { return _meta; }
-  AttrMeta &meta() { return _meta; }
-
- private:
-  bool _empty{true};
-  std::string _type_name;
-  Variability _variability{Variability::Varying};
-  value::Value _value{nullptr};
-  AttrMeta _meta;
-};
-
-///
-/// Evaluate Attribute of the specied Prim and retrieve terminal Attribute
-/// value.
-///
-/// - If the attribute is empty(e.g. `float outputs:r`), return "empty"
-/// Attribute
-/// - If the attribute is scalar value, simply returns it.
-/// - If the attribute is timeSamples value, evaluate the value at specified
-/// time.
-/// - If the attribute is connection, follow the connection target
-///
-/// @param[in] stage Stage
 /// @param[in] prim Prim
-/// @param[in] attr_name Attribute name
-/// @param[out] value Evaluated terminal attribute value.
-/// @param[out] err Error message(filled when false returned)
-/// @param[in] t (optional) TimeCode(for timeSamples Attribute)
-/// @param[in] tinterp (optional) Interpolation type for timeSamples value
+/// @param[in] rel_name Relationship name to query.
 ///
-/// Return false when:
+/// @return true if `rel_name` Relationship exists in the Prim.
 ///
-/// - If the attribute is None(ValueBlock)
-/// - Requested attribute not found in a Prim.
-/// - Invalid connection(e.g. type mismatch, circular referencing, targetPath
-/// points non-existing path, etc),
-/// - Other error happens.
-///
-bool EvaluateAttribute(
-    const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
-    const std::string &attr_name, TerminalAttributeValue *value,
-    std::string *err, const double t = tinyusdz::value::TimeCode::Default(),
-    const tinyusdz::value::TimeSampleInterpolationType tinterp =
-        tinyusdz::value::TimeSampleInterpolationType::Held);
+bool HasRelationship(const tinyusdz::Prim &prim, const std::string &rel_name);
 
 ///
 /// For efficient Xform retrieval from Stage.
 ///
 /// XformNode's pointer value and hierarchy become invalid when Prim is
-/// removed/added to Stage. If you change the content of Stage, please rebuild
-/// XformNode using BuildXformNodeFromStage() again
+/// removed/added from/to Stage. If you change the content of Stage, please
+/// rebuild XformNode using BuildXformNodeFromStage() again
 ///
 /// TODO: Use prim_id and deprecate the pointer to Prim.
 ///
@@ -286,8 +260,8 @@ struct XformNode {
 
   // world matrix = parent_world_matrix x local_matrix
   // Equivalent to GetLocalToWorldMatrix in pxrUSD
-  // if !resetXformStack! exists in Prim's xformOpOrder, this returns Prim's local matrix
-  // (clears parent's world matrix)
+  // if !resetXformStack! exists in Prim's xformOpOrder, this returns Prim's
+  // local matrix (clears parent's world matrix)
   const value::matrix4d &get_world_matrix() const { return _world_matrix; }
 
   const value::matrix4d &get_parent_world_matrix() const {
@@ -320,22 +294,263 @@ struct XformNode {
 };
 
 ///
-/// Build Xform scene hierachy from Stage.
+/// Build Xform hierachy from Stage.
 ///
-/// You can build Xform node graph using BuildXformNodeFromStage()
+/// Xform value is evaluated at specified time and timeSample interpolation
+/// type.
 ///
-/// Set a time, and compute xform of each Prim and store its cache(i.e. read
-/// only).
-///
-/// TODO: Support timeSamples.
 ///
 bool BuildXformNodeFromStage(
     const tinyusdz::Stage &stage, XformNode *root, /* out */
     const double t = tinyusdz::value::TimeCode::Default(),
     const tinyusdz::value::TimeSampleInterpolationType tinterp =
-        tinyusdz::value::TimeSampleInterpolationType::Held);
+        tinyusdz::value::TimeSampleInterpolationType::Linear);
 
 std::string DumpXformNode(const XformNode &root);
+
+///
+/// Get GeomSubset children of the given Prim path
+///
+/// The pointer address is valid until Stage's content is unchanged.
+///
+/// @param[in] familyName Get GeomSubset having this `familyName`. empty token =
+/// return all GeomSubsets.
+/// @param[in] prim_must_be_geommesh Prim path must point to GeomMesh Prim.
+///
+/// (TODO: Return id of GeomSubset Prim object, instead of the ponter address)
+///
+/// @return array of GeomSubset pointers. Empty array when failed or no
+/// GeomSubset Prim(with `familyName`) attached to the Prim.
+///
+///
+std::vector<const GeomSubset *> GetGeomSubsets(
+    const tinyusdz::Stage &stage, const tinyusdz::Path &prim_path,
+    const tinyusdz::value::token &familyName,
+    bool prim_must_be_geommesh = true);
+
+///
+/// Get GeomSubset children of the given Prim
+///
+/// The pointer address is valid until Stage's content is unchanged.
+///
+/// @param[in] familyName Get GeomSubset having this `familyName`. empty token =
+/// return all GeomSubsets.
+/// @param[in] prim_must_be_geommesh Prim must be GeomMesh Prim type.
+///
+/// (TODO: Return id of GeomSubset Prim object, instead of the ponter address)
+///
+/// @return array of GeomSubset pointers. Empty array when failed or no
+/// GeomSubset Prim(with `familyName`) attached to the Prim.
+///
+std::vector<const GeomSubset *> GetGeomSubsetChildren(
+    const tinyusdz::Prim &prim, const tinyusdz::value::token &familyName,
+    bool prim_must_be_geommesh = true);
+
+//
+// Get BlendShape prims in this GeomMesh Prim
+// (`skel:blendShapes`, `skel:blendShapeTargets`)
+//
+std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
+                std::string *err = nullptr);
+
+#if 0  // TODO
+///
+/// Get list of GeomSubset PrimSpecs attached to the PrimSpec
+/// Prim path must point to GeomMesh PrimSpec.
+///
+/// The pointer address is valid until Layer's content is unchanged.
+///
+/// (TODO: Return PrimSpec index instead of the ponter address)
+///
+std::vector<const PrimSpec *> GetGeomSubsetPrimSpecs(const tinyusdz::Layer &layer, const tinyusdz::Path &prim_path);
+
+std::vector<const PrimSpec *> GetGeomSubsetChildren(const tinyusdz::Path &prim_path);
+#endif
+
+///
+/// For composition. Convert Concrete Prim(Xform, GeomMesh, ...) to PrimSpec,
+/// generic Prim container.
+/// TODO: Move to *core* module?
+///
+bool PrimToPrimSpec(const Prim &prim, PrimSpec &ps, std::string *err);
+
+///
+/// For MaterialX
+/// TODO: Move to shader-network.hh?
+///
+bool ShaderToPrimSpec(const UsdUVTexture &node, PrimSpec &ps, std::string *warn,
+                      std::string *err);
+bool ShaderToPrimSpec(const UsdTransform2d &node, PrimSpec &ps,
+                      std::string *warn, std::string *err);
+
+template <typename T>
+bool ShaderToPrimSpec(const UsdPrimvarReader<T> &node, PrimSpec &ps,
+                      std::string *warn, std::string *err);
+
+//
+// Utilities and Query for CollectionAPI
+//
+
+///
+/// Get `Collection` object(properties defined in Collection API) from a given
+/// Prim.
+///
+/// @param[in] prim Prim
+/// @param[out] Pointer to the pointer of found Collection.
+/// @return true upon success.
+///
+bool GetCollection(const Prim &prim, const Collection **collection);
+
+class CollectionMembershipQuery {
+ public:
+ private:
+  std::map<Path, CollectionInstance::ExpansionRule> _expansionRuleMap;
+};
+
+///
+/// Get terminal Attribute. Similar to GetValueProducingAttribute in pxrUSD.
+///
+/// On the contrary to EvaluateAttribute, Do not evaluate Attribute value at
+/// specified time.
+///
+/// - if Attribute is connection, follow its targetPath recursively until
+/// encountering non-connection Attribute.
+/// - if Attribute is blocked, return Attribute ValueBlock.
+/// - if Attribute is timesamples, return TimeSamples Attribute.
+/// - if Attribute is scalar, return scalar Attribute.
+///
+/// @return true upon success.
+bool GetTerminalAttribute(const Stage &stage, const Attribute &attr,
+                          const std::string &attr_name, Attribute *attr_out,
+                          std::string *err);
+
+template <typename T>
+bool GetTerminalAttribute(const Stage &stage, const TypedAttribute<T> &attr,
+                          const std::string &attr_name, Attribute *attr_out,
+                          std::string *err) {
+  if (!attr_out) {
+    return false;
+  }
+
+  Attribute value;
+  if (attr.is_connection()) {
+    Attribute input;
+    input.set_connections(attr.connections());
+    return GetTerminalAttribute(stage, input, attr_name, attr_out, err);
+  } else if (attr.is_blocked()) {
+    value.metas() = attr.metas();
+    value.variability() = Variability::Uniform;
+    value.set_type_name(value::TypeTraits<T>::type_name());
+    value.set_blocked(true);
+    (*attr_out) = std::move(value);
+    return true;
+  } else if (attr.is_value_empty()) {
+    value.set_type_name(value::TypeTraits<T>::type_name());
+    value.metas() = attr.metas();
+    value.variability() = Variability::Uniform;
+  } else {
+    value.set_value(attr.get_value());
+    value.metas() = attr.metas();
+    value.variability() = Variability::Uniform;
+  }
+
+  (*attr_out) = std::move(value);
+  return true;
+}
+
+///
+/// Get Geom Primvar.
+///
+/// This API supports Connection Attribute(which requires finding Prim of
+/// targetPath in Stage).
+///
+/// example of Primvar with Connection Attribute:
+///
+///   texCoord2f[] primvars:uvs = </root/geom0.uvs>
+///   int[] primvars:uvs:indices.connection = </root/geom0.indices>
+///
+/// @param[in] stage Stage
+/// @param[in] prim The pointer to GPrim.
+/// @param[in] name Primvar name(`primvars:` prefix omitted)
+/// @param[out] primvar GeomPrimvar output.
+/// @param[out] err Error message.
+///
+/// @return true upon success.
+///
+bool GetGeomPrimvar(const Stage &stage, const GPrim *prim,
+                    const std::string &name, GeomPrimvar *primvar,
+                    std::string *err = nullptr);
+
+///
+/// Get Primvars in GPrim.
+///
+/// This API supports Connection Attribute(which requires finding Prim of
+/// targetPath in Stage).
+///
+std::vector<GeomPrimvar> GetGeomPrimvars(const Stage &stage, const GPrim &prim);
+
+///
+/// Build Collection Membership
+///
+/// It traverse collection paths starting from `seedCollectionInstance` in the
+/// Stage. Note: No circular referencing path allowed.
+///
+/// @returns CollectionMembershipQuery object. When encountered an error,
+/// CollectionMembershipQuery contains empty info(i.e, all query will fail)
+///
+CollectionMembershipQuery BuildCollectionMembershipQuery(
+    const Stage &stage, const CollectionInstance &seedCollectionInstance);
+
+bool IsPathIncluded(const CollectionMembershipQuery &query, const Stage &stage,
+                    const Path &abs_path,
+                    const CollectionInstance::ExpansionRule expansionRule =
+                        CollectionInstance::ExpansionRule::ExpandPrims);
+
+// TODO: Layer version
+// bool IsPathIncluded(const Layer &layer, const Path &abs_path, const
+// CollectionInstance::ExpansionRule expansionRule =
+// CollectionInstance::ExpansionRule::ExpandPrims);
+
+//
+// usdSkel
+//
+
+struct SkelNode {
+  //std::string jointElementName;  // elementName(leaf node name) of jointPath.
+  std::string joint_path;         // joints in UsdSkel. Relative or Absolute Prim
+                                 // path(e.g. "root/head", "/root/head")
+  std::string joint_name;         // jointNames in UsdSkel
+  int joint_id{-1};               // jointIndex(array index in UsdSkel joints)
+
+  value::matrix4d bind_transform{value::matrix4d::identity()};
+  value::matrix4d rest_transform{value::matrix4d::identity()};
+  //int parentNodeIndex{-1};
+
+  std::vector<SkelNode> children;
+};
+
+class SkelHierarchy {
+ public:
+  SkelHierarchy() = default;
+
+  std::string prim_name;                  // Skeleleton Prim name
+  std::string abs_path;                   // Absolute path to Skeleleton Prim
+  std::string display_name;               // `displayName` Prim meta
+
+  SkelNode root_node; 
+
+  int anim_id{-1};                        // Default animation(SkelAnimation) attached to Skeleton
+
+ private:
+
+};
+
+///
+/// Extract skeleleton info from Skeleton and build skeleton(bone) hierarchy.
+///
+bool BuildSkelHierarchy(const Skeleton &skel,
+                        SkelNode &dst, std::string *err = nullptr);
 
 //
 // For USDZ AR extensions

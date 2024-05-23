@@ -46,8 +46,6 @@ tinyusdz_sources=[
   # deps
   '../../src/external/fpng.cpp',
   '../../src/external/pystring.cpp',
-  '../../src/external/staticstruct.cc',
-  '../../src/external/tinyxml2/tinyxml2.cpp',
   #'../../src/external/string_id/string_id.cpp',
   #'../../src/external/string_id/error.cpp',
   #'../../src/external/string_id/database.cpp',
@@ -61,6 +59,14 @@ incdirs = include_directories(['../../src',
 # TINYUSDZ_FUZZER_BUILD = suppress some debug message
 executable('fuzz_tinyusdz',
   'tinyusdz_fuzzmain.cc',
+  tinyusdz_sources, 
+  install: true,
+  include_directories : incdirs,
+  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  link_args : '-fsanitize=address,fuzzer' )
+
+executable('fuzz_pathutil',
+  'pathutil_fuzzmain.cc',
   tinyusdz_sources, 
   install: true,
   include_directories : incdirs,
@@ -112,6 +118,13 @@ executable('fuzz_dr_mp3_decoding',
 
 executable('fuzz_dr_wav_decoding',
   'dr_wav_decoding_fuzzmain.cc',
+  install: true,
+  include_directories : incdirs,
+  cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],
+  link_args : '-fsanitize=address,fuzzer' )
+
+executable('fuzz_wuffs_jpeg_decoding',
+  'wuffs_jpeg_decoding_fuzzmain.cc',
   install: true,
   include_directories : incdirs,
   cpp_args : ['-fsanitize=address,fuzzer', '-DTINYUSDZ_FUZZER_BUILD=1'],

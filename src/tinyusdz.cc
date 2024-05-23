@@ -1,29 +1,6 @@
-/*
-Copyright (c) 2019 - Present, Syoyo Fujita.
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-    * Redistributions of source code must retain the above copyright
-      notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-      notice, this list of conditions and the following disclaimer in the
-      documentation and/or other materials provided with the distribution.
-    * Neither the name of the Syoyo Fujita nor the
-      names of its contributors may be used to endorse or promote products
-      derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL <COPYRIGHT HOLDER> BE LIABLE FOR ANY
-DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2019 - 2023, Syoyo Fujita.
+// Copyright 2023 - Present, Light Transport Entertinament Inc.
 
 #include <algorithm>
 #include <atomic>
@@ -92,7 +69,7 @@ namespace tinyusdz {
 
 // constexpr auto kTagUSDA = "[USDA]";
 // constexpr auto kTagUSDC = "[USDC]";
-constexpr auto kTagUSDZ = "[USDZ]";
+// constexpr auto kTagUSDZ = "[USDZ]";
 
 // For PUSH_ERROR_AND_RETURN
 #define PushError(s) \
@@ -147,6 +124,7 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
 
   usdc::USDCReaderConfig config;
   config.numThreads = options.num_threads;
+  config.strict_allowedToken_check = options.strict_allowedToken_check;
   usdc::USDCReader reader(&sr, config);
 
   if (!reader.ReadUSDC()) {
@@ -277,8 +255,26 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
     std::vector<char> local_header(30);
     memcpy(local_header.data(), addr + offset, 30);
 
-    // if we've reached the global header, stop reading
-    if (local_header[2] != 0x03 || local_header[3] != 0x04) break;
+    // Check signagure(first 4 bytes)
+    // Must be \x50\x4b\x03\x04
+    if ((local_header[0] == 0x50) && (local_header[1] == 0x4b) &&
+        (local_header[2] == 0x03) && (local_header[3] == 0x04)) {
+      // ok
+
+      // TODO: Check other header info(version, flags, crc32)
+    } else {
+      if (offset == 0) {
+        // Invalid header found.
+        if (err) {
+          (*err) += "PKZIP header not found.\n";
+        }
+        return false;
+      } else {
+        // not a local(global?) header
+        // Maybe near to the end of file.
+        break;
+      }
+    }
 
     offset += 30;
 
@@ -322,8 +318,8 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
 
     uint16_t compr_method = *reinterpret_cast<uint16_t *>(&local_header[0] + 8);
     // uint32_t compr_bytes = *reinterpret_cast<uint32_t*>(&local_header[0]+18);
-    uint32_t uncompr_bytes =
-        *reinterpret_cast<uint32_t *>(&local_header[0] + 22);
+    uint32_t uncompr_bytes;
+    memcpy(&uncompr_bytes, &local_header[22], sizeof(uncompr_bytes));
 
     // USDZ only supports uncompressed ZIP
     if (compr_method != 0) {
@@ -335,6 +331,7 @@ bool ParseUSDZHeader(const uint8_t *addr, const size_t length,
 
     if (assets) {
       USDZAssetInfo info;
+      DCOUT("USDZasset[" << assets->size() << "] " << varname << ", byte_begin " << offset << ", length " << uncompr_bytes << "\n");
       info.filename = varname;
       info.byte_begin = offset;
       info.byte_end = offset + uncompr_bytes;
@@ -493,6 +490,7 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
     }
   }
 
+#if 0 // TODO: Remove
   // Decode images
   for (size_t i = 0; i < assets.size(); i++) {
     const std::string &uri = assets[i].filename;
@@ -529,8 +527,9 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
         return false;
       }
 
-      if (asset_size > (options.max_allowed_asset_size_in_mb * 1024 * 1024)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTagUSDZ, "Asset file size too large.");
+      if (asset_size > (options.max_allowed_asset_size_in_mb * 1024ull * 1024ull)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTagUSDZ, fmt::format("Asset no[{}] file size too large. {} bytes (max_allowed_asset_size {})",
+          i, asset_size, options.max_allowed_asset_size_in_mb * 1024ull * 1024ull));
       }
 
       DCOUT("Image asset size: " << asset_size);
@@ -541,26 +540,26 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
 
         if (info) {
           if (info->width == 0) {
-            PUSH_ERROR_AND_RETURN_TAG(kTagUSDZ, "Image has zero width.");
+            PUSH_ERROR_AND_RETURN_TAG(kTagUSDZ, fmt::format("Assset no[{}] Image has zero width.", i));
           }
 
           if (info->width > options.max_image_width) {
             PUSH_ERROR_AND_RETURN_TAG(
-                kTagUSDZ, fmt::format("Asset no[{}] Image width too large", i));
+                kTagUSDZ, fmt::format("Asset no[{}] Image width too large. {} (max_image_width {})", i, info->width, options.max_image_width));
           }
 
           if (info->height == 0) {
-            PUSH_ERROR_AND_RETURN_TAG(kTagUSDZ, "Image has zero height.");
+            PUSH_ERROR_AND_RETURN_TAG(kTagUSDZ, fmt::format("Asset no[{}] Image has zero height.", i));
           }
 
           if (info->height > options.max_image_height) {
             PUSH_ERROR_AND_RETURN_TAG(
                 kTagUSDZ,
-                fmt::format("Asset no[{}] Image height too large", i));
+                fmt::format("Asset no[{}] Image height too large. {} (max_image_height {})", i, info->height, options.max_image_height));
           }
 
           if (info->channels == 0) {
-            PUSH_ERROR_AND_RETURN_TAG(kTagUSDZ, "Image has zero channels.");
+            PUSH_ERROR_AND_RETURN_TAG(kTagUSDZ, fmt::format("Asset no[{}] Image has zero channels.", i));
           }
 
           if (info->channels > options.max_image_channels) {
@@ -587,6 +586,7 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
       // TODO: Support other asserts(e.g. audio mp3)
     }
   }
+#endif
 
   return true;
 }
@@ -632,8 +632,6 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length,
                         const std::string &base_dir, Stage *stage,
                         std::string *warn, std::string *err,
                         const USDLoadOptions &options) {
-  (void)warn;
-
   if (addr == nullptr) {
     if (err) {
       (*err) = "null pointer for `addr` argument.\n";
@@ -650,10 +648,12 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length,
 
   tinyusdz::StreamReader sr(addr, length, /* swap endian */ false);
   tinyusdz::usda::USDAReader reader(&sr);
+  
+  tinyusdz::usda::USDAReaderConfig config;
+  config.strict_allowedToken_check = options.strict_allowedToken_check;
+  reader.set_reader_config(config);
 
   reader.SetBaseDir(base_dir);
-
-  (void)options;
 
   {
     bool ret = reader.Read();
@@ -680,6 +680,10 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length,
   }
 
   (*stage) = reader.GetStage();
+
+  if (warn) {
+    (*warn) += reader.GetWarning();
+  }
 
   return true;
 }
@@ -732,12 +736,77 @@ bool LoadUSDFromMemory(const uint8_t *addr, const size_t length,
     DCOUT("Detected as USDA.");
     return LoadUSDAFromMemory(addr, length, base_dir, stage, warn, err,
                               options);
-  } else {
+  } else if (IsUSDZ(addr, length)) {
     DCOUT("Detected as USDZ.");
-    // Guess USDZ
     return LoadUSDZFromMemory(addr, length, base_dir, stage, warn, err,
                               options);
+  } else {
+    if (err) {
+      (*err) += "Couldn't determine USD format(USDA/USDC/USDZ).\n";
+    }
+    return false;
   }
+}
+
+bool ReadUSDZAssetInfoFromMemory(const uint8_t *addr, const size_t length, const bool asset_on_memory, USDZAsset *asset,
+  std::string *warn, std::string *err) {
+
+  if (!asset) {
+    return false;
+  }
+
+  std::vector<USDZAssetInfo> assetInfos;
+  if (!ParseUSDZHeader(addr, length, &assetInfos, warn, err)) {
+    return false;
+  }
+
+  for (size_t i = 0; i < assetInfos.size(); i++) {
+    if (assetInfos[i].byte_begin > length) {
+      if (err) {
+        (*err) += "Invalid byte begin offset in USDZ asset header.";
+      }
+      return false;
+    }
+    if (assetInfos[i].byte_end > length) {
+      if (err) {
+        (*err) += "Invalid byte end offset in USDZ asset header.";
+      }
+      return false;
+    }
+    // Assume same filename does not exist.
+    asset->asset_map[assetInfos[i].filename] = std::make_pair(assetInfos[i].byte_begin, assetInfos[i].byte_end);
+  }
+
+  if (asset_on_memory) {
+    asset->data.clear();
+    asset->addr = addr;
+    asset->size = length;
+  } else {
+    // copy content
+    asset->data.resize(length);
+    memcpy(asset->data.data(), addr, length);
+    asset->addr = nullptr;
+    asset->size = 0;
+  }
+
+  return true;
+}
+
+bool ReadUSDZAssetInfoFromFile(const std::string &_filename, USDZAsset *asset,
+  std::string *warn, std::string *err, size_t max_memory_limit_in_mb) {
+
+  std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
+  std::string base_dir = io::GetBaseDir(_filename);
+
+  std::vector<uint8_t> data;
+  size_t max_bytes = 1024ull * 1024ull * max_memory_limit_in_mb;
+  if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
+                         /* userdata */ nullptr)) {
+    return false;
+  }
+
+  return ReadUSDZAssetInfoFromMemory(data.data(), data.size(), /* asset_on_memory */false, asset, warn, err);
+
 }
 
 //
@@ -819,6 +888,537 @@ bool IsUSDZ(const uint8_t *addr, const size_t length) {
   std::string err;
 
   return ParseUSDZHeader(addr, length, /* [out] assets */ nullptr, &warn, &err);
+}
+
+bool IsUSD(const std::string &filename, std::string *detected_format) {
+  if (IsUSDA(filename)) {
+    if (detected_format) {
+      (*detected_format) = "usda";
+    }
+    return true;
+  }
+
+  if (IsUSDC(filename)) {
+    if (detected_format) {
+      (*detected_format) = "usdc";
+    }
+    return true;
+  }
+
+  if (IsUSDZ(filename)) {
+    if (detected_format) {
+      (*detected_format) = "usdz";
+    }
+    return true;
+  }
+
+  return false;
+}
+
+bool IsUSD(const uint8_t *addr, const size_t length, std::string *detected_format) {
+  if (IsUSDA(addr, length)) {
+    if (detected_format) {
+      (*detected_format) = "usda";
+    }
+    return true;
+  }
+
+  if (IsUSDC(addr, length)) {
+    if (detected_format) {
+      (*detected_format) = "usdc";
+    }
+    return true;
+  }
+
+  if (IsUSDZ(addr, length)) {
+    if (detected_format) {
+      (*detected_format) = "usdz";
+    }
+    return true;
+  }
+
+  return false;
+}
+
+bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
+                        const std::string &filename, Layer *layer,
+                        std::string *warn, std::string *err,
+                        const USDLoadOptions &options) {
+  if (layer == nullptr) {
+    if (err) {
+      (*err) = "null pointer for `layer` argument.\n";
+    }
+    return false;
+  }
+
+  bool swap_endian = false;  // @FIXME
+
+  size_t max_length;
+
+  // 32bit env
+  if (sizeof(void *) == 4) {
+    if (options.max_memory_limit_in_mb > 4096) {  // exceeds 4GB
+      max_length = std::numeric_limits<uint32_t>::max();
+    } else {
+      max_length =
+          size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
+    }
+  } else {
+    // TODO: Set hard limit?
+    max_length =
+        size_t(1024) * size_t(1024) * size_t(options.max_memory_limit_in_mb);
+  }
+
+  DCOUT("Max length = " << max_length);
+
+  if (length > max_length) {
+    if (err) {
+      (*err) += "USDC data [" + filename +
+                "] is too large(size = " + std::to_string(length) +
+                ", which exceeds memory limit " + std::to_string(max_length) +
+                ".\n";
+    }
+
+    return false;
+  }
+
+  StreamReader sr(addr, length, swap_endian);
+
+  usdc::USDCReaderConfig config;
+  config.numThreads = options.num_threads;
+  config.strict_allowedToken_check = options.strict_allowedToken_check;
+  usdc::USDCReader reader(&sr, config);
+
+  if (!reader.ReadUSDC()) {
+    if (warn) {
+      (*warn) = reader.GetWarning();
+    }
+
+    if (err) {
+      (*err) = reader.GetError();
+    }
+    return false;
+  }
+
+  DCOUT("Loaded USDC file.");
+
+  {
+    if (!reader.get_as_layer(layer)) {
+      DCOUT("Failed to reconstruct Layer from Crate.");
+      if (warn) {
+        (*warn) = reader.GetWarning();
+      }
+
+      if (err) {
+        (*err) = reader.GetError();
+      }
+      return false;
+    }
+  }
+
+  if (warn) {
+    (*warn) = reader.GetWarning();
+  }
+
+  // Reconstruct OK but may have some error.
+  // TODO(syoyo): Return false in strict mode.
+  if (err) {
+    DCOUT(reader.GetError());
+    (*err) = reader.GetError();
+  }
+
+  DCOUT("Reconstructed Stage from USDC file.");
+
+  return true;
+}
+
+bool LoadUSDALayerFromMemory(const uint8_t *addr, const size_t length,
+                       const std::string &asset_name, Layer *dst_layer,
+                       std::string *warn, std::string *err,
+                       const USDLoadOptions &options) {
+
+  // TODO: options
+  (void)options;
+
+  if (!addr) {
+    if (err) {
+      (*err) += "addr arg is nullptr.\n";
+    }
+    return false;
+  }
+
+  if (length < 9) {
+    if (err) {
+      (*err) += "Input too short.\n";
+    }
+    return false;
+  }
+
+  if (!dst_layer) {
+    if (err) {
+      (*err) += "dst_layher arg is nullptr.\n";
+    }
+    return false;
+  }
+
+  tinyusdz::StreamReader sr(addr, length, /* swap endian */ false);
+  tinyusdz::usda::USDAReader reader(&sr);
+
+  tinyusdz::usda::USDAReaderConfig config;
+  config.strict_allowedToken_check = options.strict_allowedToken_check;
+  reader.set_reader_config(config);
+
+  uint32_t load_states = static_cast<uint32_t>(tinyusdz::LoadState::Toplevel);
+
+  bool as_primspec = true;
+
+  {
+    bool ret = reader.read(load_states, as_primspec);
+
+    if (!ret) {
+      if (err) {
+        (*err) += "Failed to parse USDA: " + asset_name + "\n";
+        (*err) += reader.get_error() + "\n";
+      }
+      return false;
+    }
+  }
+
+  tinyusdz::Layer layer;
+  bool ret = reader.get_as_layer(&layer);
+  if (!ret) {
+    if (err) {
+      (*err) += reader.get_error();
+    }
+    return false;
+  }
+
+  if (warn) {
+    if (reader.get_warning().size()) {
+      (*warn) += reader.get_warning();
+    }
+  }
+
+  (*dst_layer) = std::move(layer);
+
+  return true;
+}
+
+// Copy assetresolver state to all PrimSpec in the tree.
+static bool PropagateAssetResolverState(uint32_t depth, PrimSpec &ps,
+                                 const std::string &cwp,
+                                 const std::vector<std::string> &search_paths) {
+  if (depth > (1024 * 1024 * 512)) {
+    return false;
+  }
+
+  if (depth == 0) {
+    DCOUT("current_working_path: " << cwp);
+    DCOUT("search_paths: " << search_paths);
+  }
+
+  ps.set_asset_resolution_state(cwp, search_paths);
+
+  for (auto &child : ps.children()) {
+    if (!PropagateAssetResolverState(depth + 1, child, cwp, search_paths)) {
+      return false;
+    }
+  }
+
+    return true;
+}
+
+bool LoadLayerFromMemory(const uint8_t *addr, const size_t length,
+                       const std::string &asset_name, Layer *layer,
+                       std::string *warn, std::string *err,
+                       const USDLoadOptions &options) {
+
+  bool ret{false};
+
+  if (IsUSDC(addr, length)) {
+    DCOUT("Detected as USDC.");
+#if 1
+    ret = LoadUSDCLayerFromMemory(addr, length, asset_name, layer, warn, err,
+                              options);
+#else
+    if (err) {
+      (*err) += "TODO: Load USDC as Layer is not implemented yet.\n";
+    }
+    return false;
+#endif
+  } else if (IsUSDA(addr, length)) {
+    DCOUT("Detected as USDA.");
+    ret = LoadUSDALayerFromMemory(addr, length, asset_name, layer, warn, err,
+                              options);
+  } else if (IsUSDZ(addr, length)) {
+    DCOUT("Detected as USDZ.");
+#if 0
+    return LoadUSDZLayerFromMemory(addr, length, asset_name, layer, warn, err,
+                              options);
+#else
+    if (err) {
+      (*err) += "TODO: Load USDZ as Layer is not implemented yet.\n";
+    }
+    return false;
+#endif
+  } else {
+    if (err) {
+      (*err) += "Couldn't determine USD format(USDA/USDC/USDZ).\n";
+    }
+    return false;
+  }
+
+  if (ret) {
+    std::vector<std::string> search_paths; // empty
+    std::string basedir = io::GetBaseDir(asset_name);
+    // Save current working path to each PrimSpec in the layer
+    // for the subsequent composition operation.
+    for (auto &root_ps : layer->primspecs()) {
+      PropagateAssetResolverState(0, root_ps.second, basedir, search_paths);
+    }
+  }
+
+  return ret;
+}
+
+bool LoadLayerFromFile(const std::string &_filename, Layer *stage,
+                     std::string *warn, std::string *err,
+                     const USDLoadOptions &options) {
+
+  if (_filename.empty()) {
+    PUSH_ERROR_AND_RETURN("Input filename is empty.");
+  }
+
+  // TODO: Use AssetResolutionResolver.
+  std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
+  std::string base_dir = io::GetBaseDir(_filename);
+
+  std::vector<uint8_t> data;
+  size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);
+  if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
+                         /* userdata */ nullptr)) {
+    return false;
+  }
+
+  return LoadLayerFromMemory(data.data(), data.size(), filepath, stage, warn, err,
+                           options);
+}
+
+bool LoadLayerFromAsset(AssetResolutionResolver &resolver, const std::string &resolved_asset_name, Layer *layer,
+                     std::string *warn, std::string *err,
+                     const USDLoadOptions &options) {
+
+  if (resolved_asset_name.empty()) {
+    PUSH_ERROR_AND_RETURN("Input asset name is empty.");
+  }
+
+  resolver.set_max_asset_bytes_in_mb(options.max_allowed_asset_size_in_mb);
+
+  Asset asset;
+  if (!resolver.open_asset(resolved_asset_name, resolved_asset_name, &asset, warn, err)) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Failed to open asset `{}`.", resolved_asset_name));
+  }
+
+  return LoadLayerFromMemory(asset.data(), asset.size(), resolved_asset_name, layer, warn, err,
+                           options);
+}
+
+int USDZResolveAsset(const char *asset_name, const std::vector<std::string> &search_paths, std::string *resolved_asset_name, std::string *err, void *userdata) {
+
+  DCOUT("Resolve asset: " << asset_name);
+
+  if (!userdata) {
+    if (err) {
+      (*err) += "`userdata` must be non-null.\n";
+    }
+    return -2;
+  }
+
+  if (!asset_name) {
+    if (err) {
+      (*err) += "`asset_name` must be non-null.\n";
+    }
+    return -2;
+  }
+
+  if (!resolved_asset_name) {
+    if (err) {
+      (*err) += "`resolved_asset_name` must be non-null.\n";
+    }
+    return -2;
+  }
+
+  std::string asset_path = asset_name;
+
+  // Remove relative path prefix './' 
+  if (tinyusdz::startsWith(asset_path, "./")) {
+    asset_path = tinyusdz::removePrefix(asset_path, "./");
+  }
+
+  // Not used
+  (void)search_paths;
+
+  const USDZAsset *passet = reinterpret_cast<const USDZAsset *>(userdata);
+
+  if (passet->asset_map.count(asset_path)) {
+    DCOUT("Resolved asset: " << asset_name << " as " << asset_path);
+    (*resolved_asset_name) = asset_path;
+    return 0;
+  }
+
+  return -1; // not found
+}
+
+int USDZSizeAsset(const char *resolved_asset_name, uint64_t *nbytes, std::string *err, void *userdata) {
+
+  if (!userdata) {
+    if (err) {
+      (*err) += "`userdata` must be non-null.\n";
+    }
+    return -2;
+  }
+
+  if (!resolved_asset_name) {
+    if (err) {
+      (*err) += "`resolved_asset_name` must be non-null.\n";
+    }
+    return -2;
+  }
+
+  if (!nbytes) {
+    if (err) {
+      (*err) += "`nbytes` must be non-null.\n";
+    }
+    return -2;
+  }
+
+  const USDZAsset *passet = reinterpret_cast<const USDZAsset *>(userdata);
+
+  if (!passet->asset_map.count(resolved_asset_name)) {
+    if (err) {
+      (*err) += "resolved_asset_name `" + std::string(resolved_asset_name) + "` not found in USDZAsset.\n";
+    }
+    return -1;
+  }
+
+  std::pair<size_t, size_t> byte_range = passet->asset_map.at(resolved_asset_name);
+
+  if (byte_range.first >= byte_range.second) {
+    if (err) {
+      (*err) += "Invalid USDZAsset byte range.\n";
+    }
+    return -2;
+  }
+
+  (*nbytes) = byte_range.second - byte_range.first;
+
+  return 0;
+}
+
+int USDZReadAsset(const char *resolved_asset_name, uint64_t req_bytes, uint8_t *out_buf, uint64_t *nbytes, std::string *err, void *userdata) {
+  if (!userdata) {
+    if (err) {
+      (*err) += "`userdata` must be non-null.\n";
+    }
+    return -1;
+  }
+
+  if (!resolved_asset_name) {
+    if (err) {
+      (*err) += "`resolved_asset_name` must be non-null.\n";
+    }
+    return -2;
+  }
+
+  if (!out_buf) {
+    if (err) {
+      (*err) += "`out_buf` must be non-null.\n";
+    }
+    return -2;
+  }
+
+  if (!nbytes) {
+    if (err) {
+      (*err) += "`nbytes` must be non-null.\n";
+    }
+    return -2;
+  }
+
+  const USDZAsset *passet = reinterpret_cast<const USDZAsset *>(userdata);
+
+  if (!passet->asset_map.count(resolved_asset_name)) {
+    if (err) {
+      (*err) += "resolved_asset_name `" + std::string(resolved_asset_name) + "` not found in USDZAsset.\n";
+    }
+    return -1;
+  }
+
+  std::pair<size_t, size_t> byte_range = passet->asset_map.at(resolved_asset_name);
+
+  if (byte_range.first >= byte_range.second) {
+    if (err) {
+      (*err) += "Invalid USDZAsset byte range.\n";
+    }
+    return -2;
+  }
+
+  size_t sz = byte_range.second - byte_range.first;
+
+  if (sz > req_bytes) {
+    if (err) {
+      (*err) += "USDZAsset " + std::string(resolved_asset_name) + "'s size exceeds requested bytes.\n";
+    }
+    return -2;
+  }
+
+  if (byte_range.first + sz > passet->data.size()) {
+    if (err) {
+      (*err) += "Invalid USDZAsset size: " + std::string(resolved_asset_name) + "\n";
+    }
+    return -2;
+  }
+
+  memcpy(out_buf, passet->data.data() + byte_range.first, sz);
+  (*nbytes) = sz;
+
+  return 0;
+}
+
+bool SetupUSDZAssetResolution(
+  AssetResolutionResolver &resolver,
+  const USDZAsset *pusdzAsset)
+{
+  // https://openusd.org/release/spec_usdz.html
+  //
+  // [x] Image: png, jpeg(jpg), exr
+  // 
+  // TODO(LTE):
+  //
+  // [ ] USD: usda, usdc, usd 
+  // [ ] Audio: m4a, mp3, wav 
+
+  if (!pusdzAsset) {
+    return false;
+  }
+  // TODO: Validate Asset data.
+
+  AssetResolutionHandler handler;
+  handler.resolve_fun = USDZResolveAsset;
+  handler.size_fun = USDZSizeAsset;
+  handler.read_fun = USDZReadAsset;
+  handler.write_fun = nullptr; 
+  handler.userdata = reinterpret_cast<void *>(const_cast<USDZAsset *>(pusdzAsset));
+ 
+  resolver.register_asset_resolution_handler("png", handler);
+  resolver.register_asset_resolution_handler("PNG", handler);
+  resolver.register_asset_resolution_handler("JPG", handler);
+  resolver.register_asset_resolution_handler("jpg", handler);
+  resolver.register_asset_resolution_handler("jpeg", handler);
+  resolver.register_asset_resolution_handler("JPEG", handler);
+  resolver.register_asset_resolution_handler("exr", handler);
+  resolver.register_asset_resolution_handler("EXR", handler);
+   
+  return true;
 }
 
 }  // namespace tinyusdz

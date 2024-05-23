@@ -40,6 +40,7 @@ std::string to_string(Variability variability);
 std::string to_string(SpecType spec_type);
 std::string to_string(Kind kind);
 std::string to_string(const Reference &reference);
+std::string to_string(const Payload &payload);
 
 std::string to_string(const XformOp::OpType &ty);
 
@@ -130,6 +131,8 @@ std::string to_string(const GeomPoints &pts, const uint32_t indent = 0,
                       bool closing_brace = true);
 std::string to_string(const GeomBasisCurves &curves, const uint32_t indent = 0,
                       bool closing_brace = true);
+std::string to_string(const GeomNurbsCurves &curves, const uint32_t indent = 0,
+                      bool closing_brace = true);
 std::string to_string(const GeomCapsule &geom, const uint32_t indent = 0,
                       bool closing_brace = true);
 std::string to_string(const GeomCone &geom, const uint32_t indent = 0,
@@ -140,7 +143,6 @@ std::string to_string(const GeomCube &geom, const uint32_t indent = 0,
                       bool closing_brace = true);
 std::string to_string(const GeomCamera &camera, const uint32_t indent = 0,
                       bool closing_brace = true);
-
 std::string to_string(const GeomSubset &subset, const uint32_t indent = 0,
                       bool closing_brace = true);
 std::string to_string(const GeomSubset::ElementType ty);
@@ -149,6 +151,10 @@ std::string to_string(const GeomSubset::FamilyType ty);
 std::string to_string(const GeomBasisCurves::Wrap &v);
 std::string to_string(const GeomBasisCurves::Type &v);
 std::string to_string(const GeomBasisCurves::Basis &v);
+
+std::string to_string(const PointInstancer &instancer, const uint32_t indent = 0,
+                      bool closing_brace = true);
+
 
 std::string to_string(const SkelRoot &root, const uint32_t indent = 0,
                       bool closing_brace = true);
@@ -215,6 +221,11 @@ std::string to_string(const tinyusdz::Animatable<Visibility> &v,
 std::string to_string(const APISchemas::APIName &name);
 std::string to_string(const CustomDataType &customData);
 
+std::string to_string(const Layer &layer, const uint32_t indent = 0, bool closing_brace = true);
+std::string to_string(const PrimSpec &primspec, const uint32_t indent = 0, bool closing_brace = true);
+
+std::string to_string(const CollectionInstance::ExpansionRule rule);
+
 std::string print_xformOpOrder(const std::vector<XformOp> &xformOps,
                                const uint32_t indent);
 std::string print_xformOps(const std::vector<XformOp> &xformOps,
@@ -222,7 +233,7 @@ std::string print_xformOps(const std::vector<XformOp> &xformOps,
 std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent);
 
 // varname = optional variable name which is used when meta.get_name() is empty.
-std::string print_meta(const MetaVariable &meta, const uint32_t indent,
+std::string print_meta(const MetaVariable &meta, const uint32_t indent, bool emit_type_name,
                        const std::string &varname = std::string());
 std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent);
 std::string print_customData(const CustomDataType &customData,
@@ -231,6 +242,8 @@ std::string print_variantSelectionMap(const VariantSelectionMap &m,
                                       const uint32_t indent);
 std::string print_variantSetStmt(
     const std::map<std::string, VariantSet> &vslist, const uint32_t indent);
+std::string print_variantSetSpecStmt(
+    const std::map<std::string, VariantSetSpec> &vslist, const uint32_t indent);
 std::string print_payload(const prim::PayloadList &payload,
                           const uint32_t indent);
 std::string print_timesamples(const value::TimeSamples &v,
@@ -254,11 +267,11 @@ std::string print_props(const std::map<std::string, Property> &props,
                         const std::vector<value::token> &propNames,
                         uint32_t indent);
 
-// Forwad decl
-class Stage;
+std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent);
+std::string print_layer(const Layer &layer, const uint32_t indent);
 
-// Stage::ExportToString() in pxrUSD
-std::string to_string(const Stage &stage);
+std::string print_material_binding(const MaterialBinding *mb, const uint32_t indent);
+std::string print_collection(const Collection *coll, const uint32_t indent);
 
 }  // namespace tinyusdz
 
@@ -266,5 +279,6 @@ namespace std {
 
 std::ostream &operator<<(std::ostream &ofs, tinyusdz::Visibility v);
 std::ostream &operator<<(std::ostream &ofs, tinyusdz::Extent v);
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Layer &layer);
 
 }  // namespace std

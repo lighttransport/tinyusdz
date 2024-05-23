@@ -1,5 +1,6 @@
-// SPDX-License-Identifier: MIT
-// Copyright 2022-Present Syoyo Fujita.
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2020-2022 Syoyo Fujita.
+// Copyright 2023-Present Light Transport Entertainment Inc.
 //
 #pragma once
 
@@ -24,6 +25,8 @@ struct USDCReaderConfig {
 
   bool allow_unknown_prims = true;
   bool allow_unknown_apiSchemas = true;
+
+  bool strict_allowedToken_check = false;
 };
 
 class USDCReader {
@@ -38,6 +41,9 @@ class USDCReader {
   bool ReadUSDC();
 
   bool ReconstructStage(Stage *stage);
+
+  // For composition.
+  bool get_as_layer(Layer *layer);
 
   // Approximated memory usage in [mb]
   size_t GetMemoryUsage() const;

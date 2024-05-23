@@ -1,5 +1,6 @@
-// SPDX-License-Identifier: MIT
-// Copyright 2022 - Present, Syoyo Fujita.
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2022 - 2023, Syoyo Fujita.
+// Copyright 2023 - Present, Light Transport Entertainment Inc.
 
 //
 // NOTE: pxrUSD uses row-major format for matrix, so use row-major format in tinyusdz as well.
@@ -9,6 +10,20 @@
 #include "value-types.hh"
 
 namespace tinyusdz {
+
+bool is_identity(const value::matrix2f &m);
+bool is_identity(const value::matrix3f &m);
+bool is_identity(const value::matrix4f &m);
+bool is_identity(const value::matrix2d &m);
+bool is_identity(const value::matrix3d &m);
+bool is_identity(const value::matrix4d &m);
+
+bool is_close(const value::matrix2f &a, const value::matrix2f &b, const float eps = std::numeric_limits<float>::epsilon());
+bool is_close(const value::matrix3f &a, const value::matrix3f &b, const float eps = std::numeric_limits<float>::epsilon());
+bool is_close(const value::matrix4f &a, const value::matrix4f &b, const float eps = std::numeric_limits<float>::epsilon());
+bool is_close(const value::matrix2d &a, const value::matrix2d &b, const double eps = std::numeric_limits<double>::epsilon());
+bool is_close(const value::matrix3d &a, const value::matrix3d &b, const double eps = std::numeric_limits<double>::epsilon());
+bool is_close(const value::matrix4d &a, const value::matrix4d &b, const double eps = std::numeric_limits<double>::epsilon());
 
 value::quatf to_quaternion(const value::float3 &axis, const float angle);
 value::quatd to_quaternion(const value::double3 &axis, const double angle);
@@ -150,7 +165,7 @@ struct Xformable {
   /// Global = Parent x Local
   ///
   nonstd::expected<value::matrix4d, std::string> GetGlobalMatrix(
-      const value::matrix4d &parentMatrix, double t = value::TimeCode::Default(), value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held) const {
+      const value::matrix4d &parentMatrix, double t = value::TimeCode::Default(), value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear) const {
     bool resetXformStack{false};
 
     auto m = GetLocalMatrix(t, tinterp, &resetXformStack);
@@ -174,7 +189,7 @@ struct Xformable {
   ///
   /// @param[out] resetTransformStack Is xformOpOrder contains !resetTransformStack!? 
   ///
-  nonstd::expected<value::matrix4d, std::string> GetLocalMatrix(double t = value::TimeCode::Default(), value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Held, bool *resetTransformStack = nullptr) const {
+  nonstd::expected<value::matrix4d, std::string> GetLocalMatrix(double t = value::TimeCode::Default(), value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear, bool *resetTransformStack = nullptr) const {
     if (_dirty) {
       value::matrix4d m;
       std::string err;

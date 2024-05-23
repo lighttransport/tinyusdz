@@ -7,9 +7,13 @@ set(TEST_SOURCES
 	unit-handle-allocator.cc
 	unit-prim-types.cc
 	unit-primvar.cc
+	unit-pathutil.cc
+	unit-strutil.cc
 	unit-value-types.cc
 	unit-xform.cc
 	unit-math.cc
+	unit-ioutil.cc
+	unit-timesamples.cc
    )
 
 if (TINYUSDZ_WITH_PXR_COMPAT_API)

@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.16)
 
 set(BUILD_TARGET "usdz_glview")
 
-project(${BUILD_TARGET} CXX)
+project(${BUILD_TARGET} CXX C)
 
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED On)

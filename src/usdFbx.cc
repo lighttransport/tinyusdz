@@ -50,7 +50,7 @@ bool ReadFbxFromFile(const std::string &filepath, tinyusdz::GPrim *prim, std::st
 }
 
 
-bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::string *err)
+bool ReadFbxFromString(const std::string &str, tinyusdz::GPrim *prim, std::string *err)
 {
 #if !defined(TINYUSDZ_USE_USDFBX)
   (void)str;
@@ -61,11 +61,14 @@ bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::strin
   return false;
 #else
 
+  (void)str;
+  (void)prim;
   if (err) {
     (*err) = "TODO: Implement usdFbx importer.\n";
   }
 
   return false;
+#endif
 }
 
 } // namespace usdFbx

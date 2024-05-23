@@ -1,5 +1,6 @@
-// SPDX-License-Identifier: MIT
-// Copyright 2022 - Present, Syoyo Fujita.
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2022 - 2023, Syoyo Fujita.
+// Copyright 2023 - Present, Light Transport Entertainment Inc.
 #pragma once
 
 #include <string>
@@ -15,6 +16,11 @@
 namespace tinyusdz {
 namespace crate {
 
+// on: Use for-based PathIndex tree decoder to avoid potential buffer overflow(new implementation. its not well tested with fuzzer)
+// off: Use recursive function call to decode PathIndex tree(its been working for a years and tested with fuzzer)
+// TODO: After several battle-testing, make for-based PathIndex tree decoder default
+#define TINYUSDZ_CRATE_USE_FOR_BASED_PATH_INDEX_DECODER
+
 struct CrateReaderConfig {
   int numThreads = -1;
 
@@ -22,14 +28,14 @@ struct CrateReaderConfig {
   // Set limits to prevent infinite-loop, buffer-overrun, out-of-memory, etc.
   size_t maxTOCSections = 32;
 
-  size_t maxNumTokens = 1024 * 1024;
-  size_t maxNumStrings = 1024 * 1024;
-  size_t maxNumFields = 1024 * 1024;
-  size_t maxNumFieldSets = 1024 * 1024;
-  size_t maxNumSpecifiers = 1024 * 1024;
-  size_t maxNumPaths = 1024 * 1024;
+  size_t maxNumTokens = 1024 * 1024 * 64;
+  size_t maxNumStrings = 1024 * 1024 * 64;
+  size_t maxNumFields = 1024 * 1024 * 256;
+  size_t maxNumFieldSets = 1024 * 1024 * 256;
+  size_t maxNumSpecifiers = 1024 * 1024 * 256;
+  size_t maxNumPaths = 1024 * 1024 * 256;
 
-  size_t maxNumIndices = 1024 * 1024 * 16;
+  size_t maxNumIndices = 1024 * 1024 * 256;
   size_t maxDictElements = 256;
   size_t maxArrayElements = 1024 * 1024 * 1024;  // 1G
   size_t maxAssetPathElements = 512;
@@ -40,9 +46,10 @@ struct CrateReaderConfig {
   size_t maxVariantsMapElements = 128;
 
   size_t maxValueRecursion = 16; // Prevent recursive Value unpack(e.g. Value encodes itself)
+  size_t maxPathIndicesDecodeIteration = 1024 * 1024 * 256; // Prevent infinite loop BuildDecompressedPathsImpl
 
   // Generic int[] data
-  size_t maxInts = 1024 * 1024 * 4;
+  size_t maxInts = 1024 * 1024 * 1024;
 
   // Total memory budget for uncompressed USD data(vertices, `tokens`, ...)` in
   // [bytes].
@@ -261,13 +268,31 @@ class CrateReader {
   }
 
  private:
+
+#if defined(TINYUSDZ_CRATE_USE_FOR_BASED_PATH_INDEX_DECODER)
+  // To save stack usage
+  struct BuildDecompressedPathsArg {
+    std::vector<uint32_t> *pathIndexes{};
+    std::vector<int32_t> *elementTokenIndexes{};
+    std::vector<int32_t> *jumps{};
+    std::vector<bool> *visit_table{};
+    size_t startIndex{}; // usually 0
+    size_t endIndex{}; // inclusive. usually pathIndexes.size() - 1
+    Path parentPath;
+  };
+
+  bool BuildDecompressedPathsImpl(
+      BuildDecompressedPathsArg *arg);
+
+#else
   bool BuildDecompressedPathsImpl(
       std::vector<uint32_t> const &pathIndexes,
       std::vector<int32_t> const &elementTokenIndexes,
       std::vector<int32_t> const &jumps,
       std::vector<bool> &visit_table,  // track visited pathIndex to prevent
                                        // circular referencing
-      size_t curIndex, Path parentPath);
+      size_t curIndex, const Path &parentPath);
+#endif
 
   bool UnpackValueRep(const crate::ValueRep &rep, crate::CrateValue *value);
   bool UnpackInlinedValueRep(const crate::ValueRep &rep,

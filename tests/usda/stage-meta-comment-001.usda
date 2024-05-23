@@ -1,0 +1,7 @@
+#usda 1.0
+(
+  customLayerData = {
+    string name = "bora"
+    # hello this is comment
+  }
+)

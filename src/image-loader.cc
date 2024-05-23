@@ -1,21 +1,45 @@
 // Support files
-// 
+//
 // - OpenEXR(through TinyEXR). 16bit and 32bit
 // - TIFF/DNG(through TinyDNG). 8bit, 16bit and 32bit
-// - PNG, Jpeg, bmp, tga, ...(through SBI image). 8bit and 16bit(PNG)
+// - PNG(8bit, 16bit), Jpeg, bmp, tga, ...(through stb_image or wuffs).
 //
 // TODO:
 //
-// - [ ] Use fpng for 8bit PNG
+// - [ ] Use fpng for 8bit PNG when `stb_image` is used
 // - [ ] 10bit, 12bit and 14bit DNG image
 // - [ ] Support LoD tile, multi-channel for TIFF image
 //
+
 #if defined(TINYUSDZ_WITH_EXR)
 #include "external/tinyexr.h"
 #endif
 
+#if defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
+
+#ifndef TINYUSDZ_NO_WUFFS_IMPLEMENTATION
+#define WUFFS_IMPLEMENTATION
+
+#define WUFFS_CONFIG__MODULES
+#define WUFFS_CONFIG__MODULE__BASE
+#define WUFFS_CONFIG__MODULE__BMP
+//#define WUFFS_CONFIG__MODULE__GIF
+#define WUFFS_CONFIG__MODULE__PNG
+#define WUFFS_CONFIG__MODULE__JPEG
+//#define WUFFS_CONFIG__MODULE__WBMP
+#endif
+
+#else
+
+#if !defined( TINYUSDZ_NO_BUILTIN_IMAGE_LOADER)
+
+// stb_image
 #ifndef TINYUSDZ_NO_STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
+#endif
+
+#endif
+
 #endif
 
 #if defined(__clang__)
@@ -23,9 +47,24 @@
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
+#if defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
+
+#include "external/wuffs-unsupported-snapshot.c"
+
+#else
+
+#if !defined( TINYUSDZ_NO_BUILTIN_IMAGE_LOADER)
+
+// fpng, stb_image
 #include "external/fpng.h"
 
+// avoid duplicated symbols when tinyusdz is linked to an app/library whose also use stb_image.
+#define STB_IMAGE_STATIC
 #include "external/stb_image.h"
+
+#endif
+
+#endif
 
 #if defined(TINYUSDZ_WITH_TIFF)
 #ifndef TINYUSDZ_NO_TINY_DNG_LOADER_IMPLEMENTATION
@@ -60,6 +99,35 @@ namespace tinyusdz {
 namespace image {
 
 namespace {
+
+#if defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
+
+bool DecodeImageWUFF(const uint8_t *bytes, const size_t size,
+                    const std::string &uri, Image *image, std::string *warn,
+                    std::string *err) {
+
+  if (err) {
+    (*err) = "TODO: WUFF image loader.\n";
+  }
+
+  return false;
+
+}
+
+bool GetImageInfoWUFF(const uint8_t *bytes, const size_t size,
+                    const std::string &uri, uint32_t *width, uint32_t *height, uint32_t *channels, std::string *warn,
+                    std::string *err) {
+  if (err) {
+    (*err) = "TODO: WUFF image loader.\n";
+  }
+
+  return false;
+}
+
+
+#else
+
+#if !defined( TINYUSDZ_NO_BUILTIN_IMAGE_LOADER)
 
 // Decode image(png, jpg, ...) using STB
 // 16bit PNG is supported.
@@ -157,18 +225,25 @@ bool GetImageInfoSTB(const uint8_t *bytes, const size_t size,
 
   return false;
 }
+#endif
+#endif
 
 #if defined(TINYUSDZ_WITH_EXR)
 
 bool DecodeImageEXR(const uint8_t *bytes, const size_t size,
                     const std::string &uri, Image *image,
                     std::string *err) {
-  // TODO(syoyo): Multi-channel EXR
+  // TODO(syoyo):
+  // - [ ] Read fp16 image as fp16
+  // - [ ] Read int16 image as int16
+  // - [ ] Read int32 image as int32
+  // - [ ] Multi-channel EXR
 
   float *rgba = nullptr;
   int width;
   int height;
   const char *exrerr = nullptr;
+  // LoadEXRFromMemory always load EXR image as fp32 x RGBA
   int ret = LoadEXRFromMemory(&rgba, &width, &height, bytes, size, &exrerr);
 
   if (exrerr) {
@@ -308,7 +383,18 @@ nonstd::expected<image::ImageResult, std::string> LoadImageFromMemory(
   }
 #endif
 
+#if defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
+  bool ok = DecodeImageWUFF(addr, sz, uri, &ret.image, &ret.warning, &err);
+#elif !defined(TINYUSDZ_NO_BUILTIN_IMAGE_LOADER)
   bool ok = DecodeImageSTB(addr, sz, uri, &ret.image, &ret.warning, &err);
+#else
+  // TODO: Use user-supplied image loader
+  (void)addr;
+  (void)sz;
+  (void)uri;
+  bool ok = false;
+  err = "Image loading feature is disabled in this build. TODO: use user-supplied image loader\n";
+#endif
   if (!ok) {
     return nonstd::make_unexpected(err);
   }
@@ -329,14 +415,24 @@ nonstd::expected<image::ImageInfoResult, std::string> GetImageInfoFromMemory(
 #endif
 
 #if defined(TINYUSDZ_WITH_TIFF)
-  {
-    if (tinydng::IsDNGFromMemory(reinterpret_cast<const char *>(addr), uint32_t(sz), &msg)) {
+  if (tinydng::IsDNGFromMemory(reinterpret_cast<const char *>(addr), uint32_t(sz), &err)) {
 
       return nonstd::make_unexpected("TODO: TIFF/DNG format");
+
   }
 #endif
 
+#if defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
+  bool ok = GetImageInfoWUFF(addr, sz, uri, &ret.width, &ret.height, &ret.channels, &ret.warning, &err);
+#elif !defined(TINYUSDZ_NO_BUILTIN_IMAGE_LOADER)
   bool ok = GetImageInfoSTB(addr, sz, uri, &ret.width, &ret.height, &ret.channels, &ret.warning, &err);
+#else
+  (void)addr;
+  (void)sz;
+  (void)uri;
+  bool ok = false;
+  err = "Image loading feature is disabled in this build. TODO: use user-supplied image info function\n";
+#endif
   if (!ok) {
     return nonstd::make_unexpected(err);
   }

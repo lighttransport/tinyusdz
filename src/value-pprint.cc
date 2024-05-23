@@ -1,5 +1,6 @@
-// SPDX-License-Identifier: MIT
-// Copyright 2022 - Present, Syoyo Fujita.
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2022 - 2023, Syoyo Fujita.
+// Copyright 2023 - Present, Light Transport Entertainment Inc.
 
 #include "value-pprint.hh"
 
@@ -89,6 +90,67 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half3 &v) {
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::half4 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
+  return os;
+}
+
+// treat char vector type as byte
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::char2 &v) {
+  os << "(" << int(v[0]) << ", " << int(v[1]) << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::char3 &v) {
+  os << "(" << int(v[0]) << ", " << int(v[1]) << ", " << int(v[2]) << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::char4 &v) {
+  os << "(" << int(v[0]) << ", " << int(v[1]) << ", " << int(v[2]) << ", " << int(v[3]) << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::uchar2 &v) {
+  os << "(" << int(v[0]) << ", " << int(v[1]) << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::uchar3 &v) {
+  os << "(" << int(v[0]) << ", " << int(v[1]) << ", " << int(v[2]) << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::uchar4 &v) {
+  os << "(" << int(v[0]) << ", " << int(v[1]) << ", " << int(v[2]) << ", " << int(v[3]) << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::short2 &v) {
+  os << "(" << v[0] << ", " << v[1] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::short3 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::short4 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::ushort2 &v) {
+  os << "(" << v[0] << ", " << v[1] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::ushort3 &v) {
+  os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ")";
+  return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::ushort4 &v) {
   os << "(" << v[0] << ", " << v[1] << ", " << v[2] << ", " << v[3] << ")";
   return os;
 }
@@ -397,7 +459,9 @@ std::ostream &operator<<(std::ostream &ofs,
                          const tinyusdz::value::AssetPath &asset) {
   std::string in_s = asset.GetAssetPath();
 
-  if (!in_s.empty()) {
+  if (in_s.empty()) {
+    ofs << "@@";
+  } else {
     std::string quote_str = "@";
 
     std::string s;
@@ -634,13 +698,16 @@ namespace value {
   __FUNC(Xform)                 \
   __FUNC(GeomMesh)              \
   __FUNC(GeomSphere)            \
+  __FUNC(GeomSubset)            \
   __FUNC(GeomPoints)            \
   __FUNC(GeomCube)              \
   __FUNC(GeomCylinder)          \
   __FUNC(GeomCapsule)           \
   __FUNC(GeomCone)              \
   __FUNC(GeomBasisCurves)       \
+  __FUNC(GeomNurbsCurves)       \
   __FUNC(GeomCamera)            \
+  __FUNC(PointInstancer)        \
   __FUNC(SphereLight)        \
   __FUNC(DomeLight)          \
   __FUNC(DiskLight)          \
@@ -887,7 +954,7 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
         std::transform(p->begin(), p->end(), std::back_inserter(vs),
                        [](const value::token &tok) { return buildEscapedAndQuotedStringForUSDA(tok.str()); });
 
-        os << quote(vs);
+        os << vs;
       } else {
         os << "[InternalError: `token[]` type TypeId mismatch.]";
       }

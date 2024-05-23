@@ -24,8 +24,8 @@
 
     HOW TO READ A VOX SCENE (See demo_vox.cpp)
 
-    1. load a .vox file off disk into a memory buffer. 
-       
+    1. load a .vox file off disk into a memory buffer.
+
     2. construct a scene from the memory buffer:
        ogt_vox_scene* scene = ogt_vox_read_scene(buffer, buffer_size);
 
@@ -34,10 +34,10 @@
 
     4. destroy the scene:
        ogt_vox_destroy_scene(scene);
-    
+
     HOW TO MERGE MULTIPLE VOX SCENES (See merge_vox.cpp)
 
-    1. construct multiple scenes from files you want to merge. 
+    1. construct multiple scenes from files you want to merge.
 
         // read buffer1/buffer_size1 from "test1.vox"
         // read buffer2/buffer_size2 from "test2.vox"
@@ -109,7 +109,7 @@
     to an RGB-distance matched color when all 256 colors in the merged
     scene palette has been allocated.
 
-    You can explicitly control up to 255 merge palette colors by providing 
+    You can explicitly control up to 255 merge palette colors by providing
     those colors to ogt_vox_merge_scenes in the required_colors parameters eg.
 
         const ogt_vox_palette palette;  // load this via .vox or procedurally or whatever
@@ -148,12 +148,12 @@
            0       +-----+
              0     1     2     3
 
-     If you were to generate a mesh from this, clearly each vertex and each face would be on an integer 
-     coordinate eg. 1, 2, 3 etc. while the centre of each grid location (ie. the . in the above diagram) 
+     If you were to generate a mesh from this, clearly each vertex and each face would be on an integer
+     coordinate eg. 1, 2, 3 etc. while the centre of each grid location (ie. the . in the above diagram)
      will be on a coordinate that is halfway between integer coordinates. eg. 1.5, 2.5, 3.5 etc.
 
      To ensure your mesh is properly centered such that instance transforms are correctly applied, you
-     want the pivot to be treated as if it were (0,0,0) in model space. To achieve this, simply 
+     want the pivot to be treated as if it were (0,0,0) in model space. To achieve this, simply
      subtract the pivot from any geometry that is generated (eg. vertices in a mesh).
 
      For the 3x4x1 voxel model above, doing this would look like this:
@@ -169,12 +169,19 @@
           -2       +-----+
             -1     0     1     2
 
-   
+
 */
+
+
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
 #ifndef OGT_VOX_H__
 #define OGT_VOX_H__
 
-#if _MSC_VER == 1400	
+#if _MSC_VER == 1400
     // VS2005 doesn't have inttypes or stdint so we just define what we need here.
     typedef unsigned char uint8_t;
     typedef signed int    int32_t;
@@ -189,7 +196,7 @@
 		#define UINT8_MAX	((uint8_t)0xFF)
 	#endif
 #elif defined(_MSC_VER)
-    // general VS* 
+    // general VS*
     #include <inttypes.h>
 #elif __APPLE__
     // general Apple compiler
@@ -376,7 +383,7 @@
     #include <stdlib.h>
     #include <string.h>
     #include <stdio.h>
-    
+
     // MAKE_VOX_CHUNK_ID: used to construct a literal to describe a chunk in a .vox file.
     #define MAKE_VOX_CHUNK_ID(c0,c1,c2,c3)     ( (c0<<0) | (c1<<8) | (c2<<16) | (c3<<24) )
 
@@ -431,11 +438,11 @@
     };
 
     // internal math/helper utilities
-    static inline uint32_t _vox_max(uint32_t a, uint32_t b) { 
-        return (a > b) ? a : b; 
+    static inline uint32_t _vox_max(uint32_t a, uint32_t b) {
+        return (a > b) ? a : b;
     }
-    static inline uint32_t _vox_min(uint32_t a, uint32_t b) { 
-        return (a < b) ? a : b; 
+    static inline uint32_t _vox_min(uint32_t a, uint32_t b) {
+        return (a < b) ? a : b;
     }
 
     // string utilities
@@ -452,7 +459,7 @@
         #define _vox_strcasecmp(a,b)         strcasecmp(a,b)
         #define _vox_strcmp(a,b)             strcmp(a,b)
         #define _vox_strlen(a)               strlen(a)
-        #define _vox_sprintf(str,str_max,fmt,...)    snprintf(str, str_max, fmt, __VA_ARGS__)        
+        #define _vox_sprintf(str,str_max,fmt,...)    snprintf(str, str_max, fmt, __VA_ARGS__)
     #endif
 
     // 3d vector utilities
@@ -503,7 +510,7 @@
     // memory allocation utils.
     static void* _ogt_priv_alloc_default(size_t size) { return malloc(size); }
     static void  _ogt_priv_free_default(void* ptr)    { free(ptr); }
-    static ogt_vox_alloc_func g_alloc_func = _ogt_priv_alloc_default; // default function for allocating 
+    static ogt_vox_alloc_func g_alloc_func = _ogt_priv_alloc_default; // default function for allocating
     static ogt_vox_free_func  g_free_func = _ogt_priv_free_default;   // default  function for freeing.
 
     // set the provided allocate/free functions if they are non-null, otherwise reset to default allocate/free functions
@@ -727,7 +734,7 @@
 
         if (rotation_string != NULL) {
             // compute the per-row indexes into k_vectors[] array.
-            // unpack rotation bits. 
+            // unpack rotation bits.
             //  bits  : meaning
             //  0 - 1 : index of the non-zero entry in the first row
             //  2 - 3 : index of the non-zero entry in the second row
@@ -808,9 +815,9 @@
     {
         const _vox_scene_node_* node = &nodes[node_index];
         assert(node);
-        switch (node->node_type) 
+        switch (node->node_type)
         {
-            case k_nodetype_transform: 
+            case k_nodetype_transform:
             {
                 ogt_vox_transform new_transform = (generate_groups) ? node->u.transform.transform  // don't multiply by the parent transform. caller wants the group-relative transform
                         : _vox_transform_multiply(node->u.transform.transform, transform);         // flatten the transform if we're not generating groups: child transform * parent transform
@@ -819,7 +826,7 @@
                 generate_instances_for_node(nodes, node->u.transform.child_node_id, child_id_array, node->u.transform.layer_id, new_transform, model_ptrs, transform_last_name, node->u.transform.hidden, instances, string_data, groups, group_index, generate_groups);
                 break;
             }
-            case k_nodetype_group: 
+            case k_nodetype_group:
             {
                 // create a new group only if we're generating groups.
                 uint32_t next_group_index = 0;
@@ -841,11 +848,11 @@
                 }
                 break;
             }
-            case k_nodetype_shape: 
+            case k_nodetype_shape:
             {
                 assert(node->u.shape.model_id < model_ptrs.size());
                 if (node->u.shape.model_id < model_ptrs.size() &&    // model ID is valid
-                    model_ptrs[node->u.shape.model_id] != NULL )     // model is non-NULL.   
+                    model_ptrs[node->u.shape.model_id] != NULL )     // model is non-NULL.
                 {
                     assert(generate_groups || group_index == 0);     // if we're not generating groups, group_index should be zero to map to the root group.
                     ogt_vox_instance new_instance;
@@ -854,7 +861,7 @@
                     new_instance.layer_index = layer_index;
                     new_instance.group_index = group_index;
                     new_instance.hidden      = transform_last_hidden;
-                    // if we got a transform name, allocate space in string_data for it and keep track of the index 
+                    // if we got a transform name, allocate space in string_data for it and keep track of the index
                     // within string data. This will be patched to a real pointer at the very end.
                     new_instance.name = 0;
                     if (transform_last_name && transform_last_name[0]) {
@@ -920,8 +927,8 @@
         groups.reserve(0);
         string_data.reserve(256);
 
-        // push a sentinel character into these datastructures. This allows us to keep indexes 
-        // rather than pointers into data-structures that grow, and still allow an index of 0 
+        // push a sentinel character into these datastructures. This allows us to keep indexes
+        // rather than pointers into data-structures that grow, and still allow an index of 0
         // to means invalid
         string_data.push_back('X');
         child_ids.push_back(UINT32_MAX);
@@ -1084,7 +1091,7 @@
                     // parse the node dictionary - data is unused.
                     _vox_file_read_dict(&dict, fp);
 
-                    // setup the group node 
+                    // setup the group node
                     nodes.grow_to_fit_index(node_id);
                     _vox_scene_node_* group_node = &nodes[node_id];
                     group_node->node_type = k_nodetype_group;
@@ -1111,7 +1118,7 @@
                     uint32_t node_id = 0;
                     _vox_file_read(fp, &node_id, sizeof(node_id));
 
-                    // setup the shape node 
+                    // setup the shape node
                     nodes.grow_to_fit_index(node_id);
                     _vox_scene_node_* shape_node = &nodes[node_id];
                     shape_node->node_type = k_nodetype_shape;
@@ -1152,7 +1159,7 @@
                     layers[layer_id].name = NULL;
                     layers[layer_id].hidden = false;
 
-                    // if we got a layer name from the LAYR dictionary, allocate space in string_data for it and keep track of the index 
+                    // if we got a layer name from the LAYR dictionary, allocate space in string_data for it and keep track of the index
                     // within string data. This will be patched to a real pointer at the very end.
                     const char* name_string = _vox_dict_get_value_as_string(&dict, "_name", NULL);
                     if (name_string) {
@@ -1349,7 +1356,7 @@
             // add a single instance
             ogt_vox_instance new_instance;
             new_instance.model_index = 0;
-            new_instance.group_index = 0;			
+            new_instance.group_index = 0;
             new_instance.transform   = _vox_transform_identity();
             new_instance.layer_index = 0;
             new_instance.name        = 0;
@@ -1369,16 +1376,16 @@
             layers.push_back(new_layer);
         }
 
-        // To support index-level assumptions (eg. artists using top 16 colors for color/palette cycling, 
-        // other ranges for emissive etc), we must ensure the order of colors that the artist sees in the 
-        // magicavoxel tool matches the actual index we'll end up using here. Unfortunately, magicavoxel 
+        // To support index-level assumptions (eg. artists using top 16 colors for color/palette cycling,
+        // other ranges for emissive etc), we must ensure the order of colors that the artist sees in the
+        // magicavoxel tool matches the actual index we'll end up using here. Unfortunately, magicavoxel
         // does an unexpected thing when remapping colors in the editor using ctrl+drag within the palette.
-        // Instead of remapping all indices in all models, it just keeps track of a display index to actual 
+        // Instead of remapping all indices in all models, it just keeps track of a display index to actual
         // palette map and uses that to show reordered colors in the palette window. This is how that
         // map works:
         //   displaycolor[k] = paletteColor[imap[k]]
         // To ensure our indices are in the same order as displayed by magicavoxel within the palette
-        // window, we apply the mapping from the IMAP chunk both to the color palette and indices within each 
+        // window, we apply the mapping from the IMAP chunk both to the color palette and indices within each
         // voxel model.
         if (found_index_map_chunk)
         {
@@ -1427,7 +1434,7 @@
         }
 
         // check for models that are identical by doing a pair-wise compare. If we find identical
-        // models, we'll end up with NULL gaps in the model_ptrs array, but instances will have 
+        // models, we'll end up with NULL gaps in the model_ptrs array, but instances will have
         // been remapped to keep the earlier model.
         for (uint32_t i = 0; i < model_ptrs.size(); i++) {
             if (!model_ptrs[i])
@@ -1446,7 +1453,7 @@
         }
 
         // sometimes a model can be created which has no solid voxels within just due to the
-        // authoring flow within magicavoxel. We have already have prevented creation of 
+        // authoring flow within magicavoxel. We have already have prevented creation of
         // instances that refer to empty models, but here we want to compact the model_ptrs
         // array such that it contains no more NULL models. This also requires we remap the
         // indices for instances so they continue to refer to their correct models.
@@ -1590,7 +1597,7 @@
                 is_negative = f[i] < 0.0f ? true : false;
             }
             else {
-                assert(f[i] == 0.0f);   // must be zero 
+                assert(f[i] == 0.0f);   // must be zero
             }
         }
         assert(out_index != 3); // if you hit this, you probably have all zeroes in the vector!
@@ -1670,7 +1677,7 @@
 
         uint32_t node_dict_size =
             sizeof(uint32_t) + // num key value pairs
-            _vox_dict_key_value_size("_name",   name) +        
+            _vox_dict_key_value_size("_name",   name) +
             _vox_dict_key_value_size("_hidden", hidden_string);
 
         uint32_t frame_dict_size =
@@ -1720,7 +1727,7 @@
         _vox_file_write_uint32(fp, CHUNK_ID_VOX_);
         _vox_file_write_uint32(fp, 150);
 
-        // write the main chunk 
+        // write the main chunk
         _vox_file_write_uint32(fp, CHUNK_ID_MAIN);
         _vox_file_write_uint32(fp, 0);
         _vox_file_write_uint32(fp, 0);  // this main_chunk_child_size will get patched up once everything is written.
@@ -1740,7 +1747,7 @@
                     num_solid_voxels++;
             uint32_t chunk_size_xyzi = sizeof(uint32_t) + 4 * num_solid_voxels;
 
-            // write the SIZE chunk header 
+            // write the SIZE chunk header
             _vox_file_write_uint32(fp, CHUNK_ID_SIZE);
             _vox_file_write_uint32(fp, 12);
             _vox_file_write_uint32(fp, 0);
@@ -1787,8 +1794,8 @@
         }
         // write the group nodes for each of the groups in the scene
         for (uint32_t group_index = 0; group_index < scene->num_groups; group_index++) {
-            // count how many childnodes  there are. This is simply the sum of all 
-            // groups and instances that have this group as its parent 
+            // count how many childnodes  there are. This is simply the sum of all
+            // groups and instances that have this group as its parent
             uint32_t num_child_nodes = 0;
             for (uint32_t child_group_index = 0; child_group_index < scene->num_groups; child_group_index++)
                 if (scene->groups[child_group_index].parent_group_index == group_index)
@@ -2039,12 +2046,12 @@
             _vox_file_write_uint32(fp, 0);
             // write the layer chunk payload
             _vox_file_write_uint32(fp, i);                          // layer_id
-            _vox_file_write_uint32(fp, layer_dict_keyvalue_count);  // num keyvalue pairs in layer dictionary 
+            _vox_file_write_uint32(fp, layer_dict_keyvalue_count);  // num keyvalue pairs in layer dictionary
             _vox_file_write_dict_key_value(fp, "_name",   layer_name_string);
             _vox_file_write_dict_key_value(fp, "_hidden", hidden_string);
             _vox_file_write_uint32(fp, UINT32_MAX);                 // reserved id
         }
-        
+
         // we deliberately don't free the fp->data field, just pass the buffer pointer and size out to the caller
         *buffer_size = (uint32_t)fp->data.count;
         uint8_t* buffer_data = _vox_file_get_data(fp);
@@ -2059,7 +2066,7 @@
 
         return buffer_data;
     }
-    
+
     void* ogt_vox_malloc(size_t size) {
         return _vox_malloc(size);
     }
@@ -2072,7 +2079,7 @@
     static void compute_scene_bounding_box_x(const ogt_vox_scene * scene, int32_t & out_min_x, int32_t & out_max_x) {
         if (scene->num_instances && scene->num_models)
         {
-            // We don't apply orientation to the model dimensions and compute the exact min/max. 
+            // We don't apply orientation to the model dimensions and compute the exact min/max.
             // Instead we just conservatively use the maximum dimension of the model.
             int32_t scene_min_x =  0x7ffffff;
             int32_t scene_max_x = -0x7ffffff;
@@ -2088,9 +2095,9 @@
                 }
 
                 const ogt_vox_model* model = scene->models[instance->model_index];
-                // the instance_transform can be rotated, so we try to figure out whether the 
+                // the instance_transform can be rotated, so we try to figure out whether the
                 // model's local x, y or z size is aligned along the world x axis.
-                // One of the column vectors of the transform must have a non-zero in its 
+                // One of the column vectors of the transform must have a non-zero in its
                 // x field and the dimension associated with that column is the correct choice of rus.
                 int32_t max_dim = instance_transform.m00 != 0.0f ? model->size_x :
                                   instance_transform.m10 != 0.0f ? model->size_y :
@@ -2111,7 +2118,7 @@
         }
     }
 
-    // returns a mask of which color indices are used by the specified scene. 
+    // returns a mask of which color indices are used by the specified scene.
     // used_mask[0] can be false at the end of this if all models 100% fill their voxel grid with solid voxels, so callers
     // should handle that case properly.
     static void compute_scene_used_color_index_mask(bool* used_mask, const ogt_vox_scene * scene) {
@@ -2151,7 +2158,7 @@
             int32_t b_diff = (int32_t)color_to_find.b - (int32_t)palette[color_index].b;
             // There are 2 aspects of our treatment of color here you may want to experiment with:
             // 1. differences in R, differences in G, differences in B are weighted the same rather than perceptually. Different weightings may be better for you.
-            // 2. We treat R,G,B as if they are in a perceptually linear within each channel. eg. the differences between 
+            // 2. We treat R,G,B as if they are in a perceptually linear within each channel. eg. the differences between
             //    a value of 5 and 8 in any channel is perceptually the same as the difference between 233 and 236 in the same channel.
             int32_t score = (r_diff * r_diff) + (g_diff * g_diff) + (b_diff * b_diff);
             if (score < best_score) {
@@ -2193,8 +2200,8 @@
                         // scenes will end up having some of their colors remapped to different colors.
 
                         // A more holistic approach to color allocation may be necessary here eg.
-                        // we might allow the master palette to grow to more than 256 entries, and then use 
-                        // similarity/frequency metrics to reduce the palette from that down to 256 entries. This 
+                        // we might allow the master palette to grow to more than 256 entries, and then use
+                        // similarity/frequency metrics to reduce the palette from that down to 256 entries. This
                         // will mean all scenes will have be equally important if they have a high-frequency
                         // usage of a color.
                         master_index = find_closest_color_in_palette(master_palette, master_palette_count, color);
@@ -2244,7 +2251,7 @@
         layers[num_layers].name = "merged";
         num_layers++;
 
-        // magicavoxel expects exactly 1 root group, so if we have multiple scenes with multiple roots, 
+        // magicavoxel expects exactly 1 root group, so if we have multiple scenes with multiple roots,
         // we must ensure all merged scenes are parented to the same root group. Allocate it now for the
         // merged scene.
         uint32_t global_root_group_index = num_groups;
@@ -2266,7 +2273,7 @@
             if (!scene)
                 continue;
 
-            // update the master palette, and get the map of this scene's color indices into the master palette. 
+            // update the master palette, and get the map of this scene's color indices into the master palette.
             uint32_t scene_color_index_to_master_map[256];
             update_master_palette_from_scene(master_palette, master_palette_count, scene, scene_color_index_to_master_map);
 
@@ -2297,8 +2304,8 @@
                 models[num_models++] = override_model;
             }
 
-            // compute the scene bounding box on x dimension. this is used to offset instances 
-            // and groups in the merged model along X dimension such that they do not overlap 
+            // compute the scene bounding box on x dimension. this is used to offset instances
+            // and groups in the merged model along X dimension such that they do not overlap
             // with instances from another scene in the merged model.
             int32_t scene_min_x, scene_max_x;
             compute_scene_bounding_box_x(scene, scene_min_x, scene_max_x);
@@ -2379,6 +2386,10 @@
     }
 
  #endif // #ifdef OGT_VOX_IMPLEMENTATION
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 /* -------------------------------------------------------------------------------------------------------------------------------------------------
 
