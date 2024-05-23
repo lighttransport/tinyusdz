@@ -225,6 +225,7 @@ For Windows native build, we assume `ninja.exe` is installed on your system(You 
 * `TINYUSDZ_WITH_AUDIO` : Support loading audio(mp3 and wav).
 * `TINYUSDZ_WITH_EXR` : Support loading EXR format HDR texture through TinyEXR.
 * `TINYUSDZ_WITH_PXR_COMPAT_API` : Build with pxrUSD compatible API.
+* `TINYUSDZ_WITH_ASF_MATERIALX` : Build with ASF MaterialX library. Need first to `git submodule --init --recursive` to checkout MaterialX submodule.
 
 #### clang-cl on Windows
 
