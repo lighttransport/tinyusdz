@@ -1082,7 +1082,7 @@ struct ShaderParam {
 
 // UsdPreviewSurface
 struct PreviewSurfaceShader {
-  bool useSpecularWorkFlow{false};
+  bool useSpecularWorkflow{false};
 
   ShaderParam<vec3> diffuseColor{{0.18f, 0.18f, 0.18f}};
   ShaderParam<vec3> emissiveColor{{0.0f, 0.0f, 0.0f}};

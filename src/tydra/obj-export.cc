@@ -233,7 +233,7 @@ bool export_to_obj(const RenderScene &scene, const int mesh_id,
       ss << "Kd " << col[0] << " " << col[1] << " " << col[2] << "\n";
     }
 
-    if (scene.materials[mat_id].surfaceShader.useSpecularWorkFlow) {
+    if (scene.materials[mat_id].surfaceShader.useSpecularWorkflow) {
       if (scene.materials[mat_id].surfaceShader.specularColor.is_texture()) {
         int32_t texId = scene.materials[mat_id].surfaceShader.specularColor.texture_id;
         if ((texId < 0) || (texId >= int(scene.textures.size()))) {
