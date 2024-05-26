@@ -961,7 +961,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
     surfaceShader.outputsSurface.set_authored(
         true);  // Author `token outputs:surface`
 
-    surfaceShader.useSpecularWorkflow = rmat.surfaceShader.useSpecularWorkFlow ? 1 : 0;
+    surfaceShader.useSpecularWorkflow = rmat.surfaceShader.useSpecularWorkflow ? 1 : 0;
 
     if (rmat.surfaceShader.diffuseColor.is_texture()) {
 
