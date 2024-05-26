@@ -4827,11 +4827,11 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShader(
       int val;
       if (!shader.useSpecularWorkflow.get_value().get(env.timecode, &val)) {
         PUSH_ERROR_AND_RETURN(
-            fmt::format("Failed to get useSpcularWorkFlow value at time `{}`.",
+            fmt::format("Failed to get useSpcularWorkflow value at time `{}`.",
                         env.timecode));
       }
 
-      rshader.useSpecularWorkFlow = val ? true : false;
+      rshader.useSpecularWorkflow = val ? true : false;
     }
   }
 
@@ -6882,7 +6882,7 @@ std::string DumpPreviewSurface(const PreviewSurfaceShader &shader,
   ss << "PreviewSurfaceShader {\n";
 
   ss << pprint::Indent(indent + 1)
-     << "useSpecularWorkFlow = " << std::to_string(shader.useSpecularWorkFlow)
+     << "useSpecularWorkflow = " << std::to_string(shader.useSpecularWorkflow)
      << "\n";
 
   ss << pprint::Indent(indent + 1) << "diffuseColor = ";
