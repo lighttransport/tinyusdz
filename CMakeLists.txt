@@ -31,6 +31,7 @@ if (EMSCRIPTEN)
   # TODO: deprecate in next major version
   set(TINYUSDZ_DEFAULT_WITH_USDA_PARSER Off)
   set(TINYUSDZ_DEFAULT_WITH_USDC_PARSER Off)
+  set(TINYUSDZ_DEFAULT_WITH_ASF_MATERIALX Off)
 elseif(NOT PROJECT_IS_TOP_LEVEL)
   # assume tinyusdz is added from add_subdirectory()
   # disable tools, tests and examples build by default.
@@ -44,6 +45,7 @@ elseif(NOT PROJECT_IS_TOP_LEVEL)
   # TODO: deprecate in next major version
   set(TINYUSDZ_DEFAULT_WITH_USDA_PARSER Off)
   set(TINYUSDZ_DEFAULT_WITH_USDC_PARSER Off)
+  set(TINYUSDZ_DEFAULT_WITH_ASF_MATERIALX On)
 else()
   set(TINYUSDZ_DEFAULT_NO_WERROR OFF)
   set(TINYUSDZ_DEFAULT_PRODUCTION_BUILD Off)
@@ -52,6 +54,7 @@ else()
   set(TINYUSDZ_DEFAULT_BUILD_EXAMPLES On)
   set(TINYUSDZ_DEFAULT_WITH_C_API Off)
   set(TINYUSDZ_DEFAULT_WITH_PXR_COMPAT_API On)
+  set(TINYUSDZ_DEFAULT_WITH_ASF_MATERIALX Off)
   # TODO: deprecate in next major version
   set(TINYUSDZ_DEFAULT_WITH_USDA_PARSER Off)
   set(TINYUSDZ_DEFAULT_WITH_USDC_PARSER Off)
@@ -79,7 +82,12 @@ if(MSVC)
   # it looks it is hard to disable C++ exception for MSVC, so enable exception by default
   set(TINYUSDZ_CXX_EXCEPTIONS_DEFAULT On)
 else()
-  set(TINYUSDZ_CXX_EXCEPTIONS_DEFAULT Off)
+  # ASF MaterialX uses C++ exception
+  if (TINYUSDZ_WITH_ASF_MATERIALX) 
+    set(TINYUSDZ_CXX_EXCEPTIONS_DEFAULT On)
+  else()
+    set(TINYUSDZ_CXX_EXCEPTIONS_DEFAULT Off)
+  endif()
 endif()
 
 # Enable /MP flags(multi processor build) for Visual Studio
@@ -218,6 +226,10 @@ option(TINYUSDZ_WITH_COLORIO
        "Build with Color IO Baked LUT support(through tinycolorio)" ON)
 # ---------
 
+# -- ASF MaterialX --
+option(TINYUSDZ_WITH_ASF_MATERIALX "Build with ASF's MaterialX library" ${TINYUSDZ_DEFAULT_WITH_ASF_MATERIALX})
+
+
 # -- optional tool --
 # TODO: deperecate. Use tusdcat
 option(TINYUSDZ_WITH_TOOL_USDA_PARSER "Build with USDA parser program" Off)
@@ -349,6 +361,33 @@ if(TINYUSDZ_WITH_PYTHON)
   add_subdirectory(${PROJECT_SOURCE_DIR}/src/external/pybind11)
 endif()
 
+if(TINYUSDZ_WITH_ASF_MATERIALX)
+  function(ADD_ASF_MTLX_LIB)
+
+    set(MATERIALX_BUILD_PYTHON
+        OFF
+        CACHE INTERNAL "" FORCE)
+    set(MATERIALX_BUILD_VIEWER
+        OFF
+        CACHE INTERNAL "" FORCE)
+    set(MATERIALX_BUILD_GRAPH_EDITOR
+        OFF
+        CACHE INTERNAL "" FORCE)
+    set(MATERIALX_BUILD_TESTS
+        OFF
+        CACHE INTERNAL "" FORCE)
+    set(MATERIALX_TEST_RENDER
+        OFF
+        CACHE INTERNAL "" FORCE)
+
+    add_subdirectory(${PROJECT_SOURCE_DIR}/third_party/MaterialX)
+
+  endfunction()
+
+  add_asf_mtlx_lib()
+endif()
+
+
 set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/asset-resolution.cc
     ${PROJECT_SOURCE_DIR}/src/tinyusdz.cc
@@ -411,6 +450,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/tydra/shader-network.hh
     ${PROJECT_SOURCE_DIR}/src/tydra/render-data.cc
     ${PROJECT_SOURCE_DIR}/src/tydra/render-data.hh
+    ${PROJECT_SOURCE_DIR}/src/tydra/mtlx-material.cc
     )
 
 if(TINYUSDZ_WITH_PXR_COMPAT_API)
@@ -999,6 +1039,16 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   if(TINYUSDZ_WITH_USDVOX)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_USE_USDVOX")
+  endif()
+
+  if(TINYUSDZ_WITH_ASF_MATERIALX)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_ASF_MATERIALX")
+    if (APPLE) 
+      list(APPEND TINYUSDZ_EXT_LIBRARIES MaterialXFormat MaterialXRender MaterialXGenMsl MaterialXRenderMsl)
+    else()
+      list(APPEND TINYUSDZ_EXT_LIBRARIES MaterialXFormat MaterialXRender MaterialXGenGlsl MaterialXRenderGlsl)
+    endif()
   endif()
 
   target_link_libraries(${TINYUSDZ_LIB_TARGET} ${TINYUSDZ_EXT_LIBRARIES}

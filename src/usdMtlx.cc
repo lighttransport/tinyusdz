@@ -8,6 +8,11 @@
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
+#if defined(TINYUSDZ_WITH_ASF_MATERIALX)
+#endif
+
+//#include "external/tinyxml2/tinyxml2.h"
+//#include "external/jsonhpp/nlohmann/json.hpp"
 #include "external/pugixml.hpp"
 // #include "external/jsonhpp/nlohmann/json.hpp"
 
