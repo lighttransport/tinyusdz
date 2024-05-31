@@ -53,6 +53,7 @@
 |:-------:|:---------------------------------------- |:------------------------------------- |:---------:|:------:|:-------:|:------------------------------:|:-----------:|
 |   dev   | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> ✅ ARM64/ARM32  |✅         |✅      |✅       |✅ [sandbox/wasi](sandbox/wasi) | ✅ [sandbox/emscripten](sandbox/emscripten) |
 
+<!--
 ### Python binding(testing. currently not working)
 
 https://pypi.org/project/tinyusdz/
@@ -77,6 +78,7 @@ $ python -m pip install tinyusdz
 ⚠️  Python 3.6 is EOL and not recommended to use it. 3.6 bwheels is provided as long as cibuildwheels provides the build for it.
 NOTE: Windows ARM64 binary is provided using cross-compiling. Its not well tested.
 
+-->
 
 ## Status
 
