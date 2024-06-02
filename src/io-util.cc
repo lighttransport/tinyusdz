@@ -278,14 +278,23 @@ bool ReadWholeFile(std::vector<uint8_t> *out, std::string *err,
       }
       return false;
     }
-    size_t size = AAsset_getLength(asset);
-    if (size == 0) {
+    off_t len = AAsset_getLength(asset);
+    if (len <= 0) {
       if (err) {
         (*err) += "Invalid file size : " + filepath +
                   " (does the path point to a directory?)";
       }
       return false;
     }
+    size_t size = size_t(len);
+
+    if (size >= filesize_max) {
+        (*err) += "File size exceeds filesize_max : " + filepath +
+                  " (filesize_max " + std::to_string(filesize_max) + ")";
+
+        return false;
+    }
+
     out->resize(size);
     AAsset_read(asset, reinterpret_cast<char *>(&out->at(0)), size);
     AAsset_close(asset);
@@ -400,14 +409,16 @@ bool ReadFileHeader(std::vector<uint8_t> *out, std::string *err,
       }
       return false;
     }
-    size_t size = AAsset_getLength(asset);
-    if (size == 0) {
+    off_t len = AAsset_getLength(asset);
+    if (len <= 0) {
       if (err) {
         (*err) += "Invalid file size : " + filepath +
                   " (does the path point to a directory?)";
       }
       return false;
     }
+
+    size_t size = size_t(len);
 
     size = (std::min)(size_t(max_read_bytes), size);
     out->resize(size);
