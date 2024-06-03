@@ -13,6 +13,7 @@
  
 ## Mid-term todo
 
+* Performace optimization https://github.com/syoyo/tinyusdz/issues/164
 * Enhancement for wasm(e.g. write USDZ loader for three.js), webgpu https://github.com/syoyo/tinyusdz/issues/118 
 * better colorspace + wide-gamut support https://github.com/syoyo/tinyusdz/issues/142
 * Better skinning + blendshapes support
