@@ -282,7 +282,8 @@ inline double sin_pi(double x) { return sin_pi_imp(x); }
 inline double cos_pi(double x) { return cos_pi_imp(x); }
 
 //
-// is_close
+// is_close for scalar and vector types.
+// For matrix type, please use is_close in xform.hh
 //
 
 inline bool is_close(const value::half2 &a, const value::half2 &b,
@@ -296,6 +297,24 @@ inline bool is_close(const value::half3 &a, const value::half3 &b,
 }
 inline bool is_close(const value::half4 &a, const value::half4 &b,
                      const float eps = std::numeric_limits<float>::epsilon()) {
+  return is_close(a[0], b[0], eps) && is_close(a[1], b[1], eps) &&
+         is_close(a[2], b[2], eps) && is_close(a[3], b[3], eps);
+}
+
+inline bool is_close(const value::quath &a, const value::quath &b,
+                     const float eps = std::numeric_limits<float>::epsilon()) {
+  return is_close(a[0], b[0], eps) && is_close(a[1], b[1], eps) &&
+         is_close(a[2], b[2], eps) && is_close(a[3], b[3], eps);
+}
+
+inline bool is_close(const value::quatf &a, const value::quatf &b,
+                     const float eps = std::numeric_limits<float>::epsilon()) {
+  return is_close(a[0], b[0], eps) && is_close(a[1], b[1], eps) &&
+         is_close(a[2], b[2], eps) && is_close(a[3], b[3], eps);
+}
+
+inline bool is_close(const value::quatd &a, const value::quatd &b,
+                     const double eps = std::numeric_limits<double>::epsilon()) {
   return is_close(a[0], b[0], eps) && is_close(a[1], b[1], eps) &&
          is_close(a[2], b[2], eps) && is_close(a[3], b[3], eps);
 }
