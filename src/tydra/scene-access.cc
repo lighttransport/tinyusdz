@@ -79,8 +79,7 @@ bool TraverseRec(const std::string &path_prefix, const tinyusdz::Prim &prim,
 
   if (prim.is<T>()) {
     if (const T *pv = prim.as<T>()) {
-      std::cout << "Path : <" << prim_abs_path << "> is "
-                << tinyusdz::value::TypeTraits<T>::type_name() << ".\n";
+      DCOUT("Path : <" << prim_abs_path << "> is " << tinyusdz::value::TypeTraits<T>::type_name());
       itemmap[prim_abs_path] = pv;
     }
   }
