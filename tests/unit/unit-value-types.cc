@@ -7,6 +7,7 @@
 
 #include "unit-value-types.h"
 #include "value-types.hh"
+#include "value-pprint.hh"
 
 using namespace tinyusdz;
 
@@ -27,4 +28,11 @@ void value_types_test(void) {
 
   TEST_CHECK(!value::TryGetTypeName(value::TYPE_ID_ALL));
 
+  // pprint test
+  {
+    value::normal3f v{1.0f, 2.0f, 3.f};
+    std::string s = to_string(v);
+    TEST_CHECK(s == "(1, 2, 3)");
+  }
 }
+
