@@ -1883,6 +1883,8 @@ static bool emit_gprim_predefined(std::stringstream &ss, const GPrim *gprim,
 }
 #endif
 
+// Moved some 'to_string' to value-pprint.cc
+#if 0
 // TODO: Move to value-pprint.cc
 
 std::string to_string(bool v) {
@@ -2060,6 +2062,7 @@ std::string to_string(const value::matrix4d &v) {
   ss << v;
   return ss.str();
 }
+#endif
 
 std::string to_string(const APISchemas::APIName &name) {
   std::string s;
@@ -2106,6 +2109,7 @@ std::string to_string(const CustomDataType &custom) {
   return print_customData(custom, "", 0);
 }
 
+#if 0
 std::string to_string(const value::StringData &s) {
   std::stringstream ss;
   ss << s;
@@ -2118,6 +2122,7 @@ std::string to_string(const std::string &v) {
   // Escape backslash
   return quote(escapeBackslash(v));
 }
+#endif
 
 std::string to_string(const Reference &v) {
   std::stringstream ss;
@@ -4382,7 +4387,7 @@ std::string to_string(const XformOp::OpType &op) {
   return ss;
 }
 
-std::string to_string(const tinyusdz::value::token &v) { return v.str(); }
+//std::string to_string(const tinyusdz::value::token &v) { return v.str(); }
 
 std::string to_string(const DomeLight::TextureFormat &texformat) {
   std::string s = "[InvalidTextureFormat]";
