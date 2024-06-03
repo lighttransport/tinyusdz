@@ -142,7 +142,7 @@ nonstd::expected<const Prim *, std::string> Stage::GetPrimAtPath(
 
   DCOUT("Not found.");
   return nonstd::make_unexpected("Cannot find path <" + path.full_path_name() +
-                                 "> int the Stage.\n");
+                                 "> in the Stage.\n");
 }
 
 bool Stage::find_prim_at_path(const Path &path, const Prim *&prim,
