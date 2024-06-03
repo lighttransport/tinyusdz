@@ -111,6 +111,8 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::matrix2d &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::matrix3d &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::matrix4d &v);
 
+std::ostream &operator<<(std::ostream &os, const tinyusdz::value::frame4d &v);
+
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::AssetPath &v);
 
 // NOTE: Implemented in pprinter.cc
@@ -167,6 +169,7 @@ std::string to_string(int32_t v);
 std::string to_string(uint32_t v);
 std::string to_string(int64_t v);
 std::string to_string(uint64_t v);
+
 std::string to_string(const value::char2 &v);
 std::string to_string(const value::char3 &v);
 std::string to_string(const value::char4 &v);
@@ -185,7 +188,6 @@ std::string to_string(const value::float4 &v);
 std::string to_string(const value::double2 &v);
 std::string to_string(const value::double3 &v);
 std::string to_string(const value::double4 &v);
-std::string to_string(const value::double4 &v);
 std::string to_string(const value::texcoord2h &v);
 std::string to_string(const value::texcoord2f &v);
 std::string to_string(const value::texcoord2d &v);
@@ -194,7 +196,7 @@ std::string to_string(const value::texcoord3f &v);
 std::string to_string(const value::texcoord3d &v);
 std::string to_string(const value::StringData &s);
 std::string to_string(const value::token &s);
-std::string to_string(const std::string &s);
+std::string to_string(const std::string &s); // do USD specific escaping
 std::string to_string(const value::quath &v);
 std::string to_string(const value::quatf &v);
 std::string to_string(const value::quatd &v);
@@ -205,24 +207,24 @@ std::string to_string(const value::matrix2d &v);
 std::string to_string(const value::matrix3d &v);
 std::string to_string(const value::matrix4d &v);
 std::string to_string(const value::frame4d &v);
-std::string to_string(const value::half);
-std::string to_string(const value::half2);
-std::string to_string(const value::half3);
-std::string to_string(const value::half4);
-std::string to_string(const value::normal3h);
-std::string to_string(const value::normal3f);
-std::string to_string(const value::normal3d);
-std::string to_string(const value::vector3h);
-std::string to_string(const value::vector3f);
-std::string to_string(const value::vector3d);
-std::string to_string(const value::point3h);
-std::string to_string(const value::point3f);
-std::string to_string(const value::point3d);
-std::string to_string(const value::color3f);
-std::string to_string(const value::color3d);
-std::string to_string(const value::color4h);
-std::string to_string(const value::color4f);
-std::string to_string(const value::color4d);
+std::string to_string(const value::half &v);
+std::string to_string(const value::half2 &v);
+std::string to_string(const value::half3 &v);
+std::string to_string(const value::half4 &v);
+std::string to_string(const value::normal3h &v);
+std::string to_string(const value::normal3f &v);
+std::string to_string(const value::normal3d &v);
+std::string to_string(const value::vector3h &v);
+std::string to_string(const value::vector3f &v);
+std::string to_string(const value::vector3d &v);
+std::string to_string(const value::point3h &v);
+std::string to_string(const value::point3f &v);
+std::string to_string(const value::point3d &v);
+std::string to_string(const value::color3f &v);
+std::string to_string(const value::color3d &v);
+std::string to_string(const value::color4h &v);
+std::string to_string(const value::color4f &v);
+std::string to_string(const value::color4d &v);
 
 namespace value {
 
