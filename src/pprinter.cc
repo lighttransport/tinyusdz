@@ -85,12 +85,18 @@ std::string pquote(const Path &p) {
 
 namespace std {
 
-std::ostream &operator<<(std::ostream &ofs, tinyusdz::Visibility v) {
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Visibility v) {
   ofs << to_string(v);
   return ofs;
 }
 
-std::ostream &operator<<(std::ostream &ofs, tinyusdz::Extent v) {
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Extent v) {
+  ofs << to_string(v);
+
+  return ofs;
+}
+
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Interpolation v) {
   ofs << to_string(v);
 
   return ofs;

@@ -15,6 +15,7 @@
 #include "unit-ioutil.h"
 #include "unit-strutil.h"
 #include "unit-timesamples.h"
+#include "unit-pprint.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
