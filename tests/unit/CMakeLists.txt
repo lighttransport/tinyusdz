@@ -8,6 +8,7 @@ set(TEST_SOURCES
 	unit-prim-types.cc
 	unit-primvar.cc
 	unit-pathutil.cc
+	unit-pprint.cc
 	unit-strutil.cc
 	unit-value-types.cc
 	unit-xform.cc
