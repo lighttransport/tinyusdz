@@ -277,8 +277,9 @@ std::string print_collection(const Collection *coll, const uint32_t indent);
 
 namespace std {
 
-std::ostream &operator<<(std::ostream &ofs, tinyusdz::Visibility v);
-std::ostream &operator<<(std::ostream &ofs, tinyusdz::Extent v);
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Visibility v);
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Extent v);
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Interpolation v);
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Layer &layer);
 
 }  // namespace std
