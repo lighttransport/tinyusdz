@@ -1,7 +1,13 @@
 name: Build and upload to PyPI
 
-# Build on every branch push, tag push, and pull request change:
-on: [push, pull_request]
+# Run wheels build only when tag push for a while.
+on:
+  push:
+    tags:
+      - 'v*'
+
+## Build on every branch push, tag push, and pull request change:
+#on: [push, pull_request]
   
 jobs:
 
