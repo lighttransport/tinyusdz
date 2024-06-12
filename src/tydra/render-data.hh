@@ -1011,8 +1011,10 @@ struct UVTexture {
   vec4 fetch_uvw_channel(size_t faceId, float varyu, float varyv, float varyw,
                          Channel channel);
 
-  // output channel info
-  Channel outputChannel{Channel::RGB};
+  // Connected output channel(determined by connectionPath in UsdPreviewSurface)
+  Channel connectedOutputChannel{Channel::RGB};
+
+  std::set<Channel> authoredOutputChannels; // Authored `output:***` attribute in UsdUVTexture
 
   // bias and scale for texel value
   vec4 bias{0.0f, 0.0f, 0.0f, 0.0f};
