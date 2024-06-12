@@ -2039,12 +2039,98 @@ bool CrateReader::UnpackInlinedValueRep(const crate::ValueRep &rep,
       PUSH_ERROR("Quaternion type is not allowed for Inlined Value.");
       return false;
     }
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2D:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2F:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2H:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2I:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3D:
-    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3F:
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2D: {
+      // Value is represented in int8
+      int8_t data[2];
+      memcpy(&data, &d, 2);
+
+      value::double2 v;
+      v[0] = double(data[0]);
+      v[1] = double(data[1]);
+
+      DCOUT("value.double2 = " << v);
+
+      value->Set(v);
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2F: {
+      // Value is represented in int8
+      int8_t data[2];
+      memcpy(&data, &d, 2);
+
+      value::float2 v;
+      v[0] = float(data[0]);
+      v[1] = float(data[1]);
+
+      DCOUT("value.float2 = " << v);
+
+      value->Set(v);
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2H: {
+      // Value is represented in int8
+      int8_t data[2];
+      memcpy(&data, &d, 2);
+
+      value::half3 v;
+      v[0] = value::float_to_half_full(float(data[0]));
+      v[1] = value::float_to_half_full(float(data[1]));
+
+      DCOUT("value.half2 = " << v);
+
+      value->Set(v);
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2I: {
+      // Value is represented in int8
+      int8_t data[2];
+      memcpy(&data, &d, 2);
+
+      value::int2 v;
+      v[0] = int(data[0]);
+      v[1] = int(data[1]);
+
+      DCOUT("value.int2 = " << v);
+
+      value->Set(v);
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3D: {
+      // Value is represented in int8
+      int8_t data[3];
+      memcpy(&data, &d, 3);
+
+      value::double3 v;
+      v[0] = double(data[0]);
+      v[1] = double(data[1]);
+      v[2] = double(data[2]);
+
+      DCOUT("value.double3 = " << v);
+
+      value->Set(v);
+
+      return true;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3F: {
+      // Value is represented in int8
+      int8_t data[3];
+      memcpy(&data, &d, 3);
+
+      value::float3 v;
+      v[0] = float(data[0]);
+      v[1] = float(data[1]);
+      v[2] = float(data[2]);
+
+      DCOUT("value.float3 = " << v);
+
+      value->Set(v);
+
+      return true;
+    }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3H: {
       // Value is represented in int8
       int8_t data[3];
@@ -4342,7 +4428,7 @@ bool CrateReader::BuildDecompressedPathsImpl(
   auto rootPath = Path::make_root_path();
 
   const size_t maxIter = _config.maxPathIndicesDecodeIteration;
-    
+
   std::stack<size_t> startIndexStack;
   std::stack<size_t> endIndexStack;
   std::stack<Path> parentPathStack;
@@ -4697,7 +4783,7 @@ bool CrateReader::BuildNodeHierarchy(
   std::stack<int64_t> parentNodeIndexStack;
   std::stack<size_t> startIndexStack;
   std::stack<size_t> endIndexStack;
- 
+
   size_t nIter = 0;
   const size_t maxIter = _config.maxPathIndicesDecodeIteration;
 
