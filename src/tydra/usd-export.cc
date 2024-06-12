@@ -861,17 +861,19 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
     }
     image_tex.wrapT.set_value(wrapS);
 
-    if (tex.outputChannel == UVTexture::Channel::R) {
-      image_tex.outputsR.set_authored(true);
-    } else if (tex.outputChannel == UVTexture::Channel::G) {
-      image_tex.outputsG.set_authored(true);
-    } else if (tex.outputChannel == UVTexture::Channel::B) {
-      image_tex.outputsB.set_authored(true);
-    } else if (tex.outputChannel == UVTexture::Channel::RGB) {
-      image_tex.outputsRGB.set_authored(true);
-    } else if (tex.outputChannel == UVTexture::Channel::RGBA) {
-      PUSH_ERROR_AND_RETURN("rgba texture is not supported yet.");
-    } 
+    for (const auto &c : tex.authoredOutputChannels) {
+      if (c == UVTexture::Channel::R) {
+        image_tex.outputsR.set_authored(true);
+      } else if (c == UVTexture::Channel::G) {
+        image_tex.outputsG.set_authored(true);
+      } else if (c == UVTexture::Channel::B) {
+        image_tex.outputsB.set_authored(true);
+      } else if (c == UVTexture::Channel::RGB) {
+        image_tex.outputsRGB.set_authored(true);
+      } else if (c == UVTexture::Channel::RGBA) {
+        PUSH_ERROR_AND_RETURN("rgba texture is not supported yet.");
+      } 
+    }
 
     UsdTransform2d uv_xform;
     uv_xform.name = "place2d_" + param_name;

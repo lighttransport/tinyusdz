@@ -4190,7 +4190,7 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
   }
 
   if (tex_abs_path) {
-    (*tex_abs_path) = Path(prim_part, "");
+    (*tex_abs_path) = Path(prim_part, prop_part);
   }
 
   if (const Shader *pshader = prim->as<Shader>()) {
@@ -4570,22 +4570,34 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
   }
 
   //
-  // Set outputChannel
+  // Set authored outputChannels
   //
   if (texture.outputsRGB.authored()) {
-    tex.outputChannel = UVTexture::Channel::RGB;
-  } else if (texture.outputsA.authored()) {
-    tex.outputChannel = UVTexture::Channel::A;
-  } else if (texture.outputsR.authored()) {
-    tex.outputChannel = UVTexture::Channel::R;
-  } else if (texture.outputsG.authored()) {
-    tex.outputChannel = UVTexture::Channel::G;
-  } else if (texture.outputsB.authored()) {
-    tex.outputChannel = UVTexture::Channel::B;
-  } else {
-    PUSH_WARN("No valid output channel attribute authored. Default to RGB");
-    tex.outputChannel = UVTexture::Channel::RGB;
+    tex.authoredOutputChannels.insert(UVTexture::Channel::RGB);
   }
+
+  if (texture.outputsA.authored()) {
+    tex.authoredOutputChannels.insert(UVTexture::Channel::A);
+  }
+
+  if (texture.outputsR.authored()) {
+    tex.authoredOutputChannels.insert(UVTexture::Channel::R);
+  }
+
+  if (texture.outputsG.authored()) {
+    tex.authoredOutputChannels.insert(UVTexture::Channel::G);
+  }
+
+  if (texture.outputsB.authored()) {
+    tex.authoredOutputChannels.insert(UVTexture::Channel::B);
+  }
+
+#if 0 // TODO 
+  if (tex.authoredOutputChannels.empty()) { 
+    PUSH_WARN("No valid output channel attribute authored. Default to RGB");
+    tex.authoredOutputChannels.insert(UVTexture::Channel::RGB);
+  }
+#endif
 
   //
   // Convert other UVTexture parameters
@@ -4753,7 +4765,7 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
   if (param.is_blocked()) {
     PUSH_ERROR_AND_RETURN(fmt::format("{} attribute is blocked.", param_name));
   } else if (param.is_connection()) {
-    DCOUT(fmt::format("{] is attribute connection.", param_name));
+    DCOUT(fmt::format("{} is attribute connection.", param_name));
 
     const UsdUVTexture *ptex{nullptr};
     const Shader *pshader{nullptr};
@@ -4783,13 +4795,32 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
           "Failed to convert UVTexture connected to {}", param_name));
     }
 
+    // Extract connected outputChannel from prop part.
+    std::string prop_part = texPath.prop_part();
+
+    // TODO: Attribute type check.
+    if (prop_part == "outputs:r") {
+      rtex.connectedOutputChannel = tydra::UVTexture::Channel::R;
+    } else if (prop_part == "outputs:g") {
+      rtex.connectedOutputChannel = tydra::UVTexture::Channel::G;
+    } else if (prop_part == "outputs:b") {
+      rtex.connectedOutputChannel = tydra::UVTexture::Channel::B;
+    } else if (prop_part == "outputs:a") {
+      rtex.connectedOutputChannel = tydra::UVTexture::Channel::A;
+    } else if (prop_part == "outputs:rgb") {
+      rtex.connectedOutputChannel = tydra::UVTexture::Channel::RGB;
+    } else {
+      PUSH_ERROR_AND_RETURN(fmt::format("Unknown or invalid connection to a property of output channel: {}(Abs path {})", prop_part, texPath.full_path_name()));
+    }
+
+
     uint64_t texId = textures.size();
     textures.push_back(rtex);
 
     textureMap.add(texId, shader_abs_path.prim_part() + "." + param_name);
 
-    DCOUT(fmt::format("TexId {} = {}",
-                      shader_abs_path.prim_part() + ".diffuseColor", texId));
+    DCOUT(fmt::format("TexId {}.{} = {}",
+                      shader_abs_path.prim_part(), param_name, texId));
 
     dst_param.texture_id = int32_t(texId);
 
@@ -7005,8 +7036,16 @@ std::string DumpUVTexture(const UVTexture &texture, uint32_t indent) {
   ss << "UVTexture {\n";
   ss << pprint::Indent(indent + 1) << "primvar_name " << texture.varname_uv
      << "\n";
-  ss << pprint::Indent(indent + 1) << "outputChannel "
-     << to_string(texture.outputChannel) << "\n";
+  ss << pprint::Indent(indent + 1) << "connectedOutputChannel ";
+     ss << to_string(texture.connectedOutputChannel) << "\n";
+
+  ss << pprint::Indent(indent + 1) << "authoredOutputChannels ";
+
+  for (const auto &c : texture.authoredOutputChannels) {
+     ss << to_string(c) << " ";
+  }
+  ss << "\n";
+
   ss << pprint::Indent(indent + 1) << "bias " << texture.bias << "\n";
   ss << pprint::Indent(indent + 1) << "scale " << texture.scale << "\n";
   ss << pprint::Indent(indent + 1) << "wrapS " << to_string(texture.wrapS)
