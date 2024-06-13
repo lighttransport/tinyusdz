@@ -2741,8 +2741,13 @@ std::string print_variantSetStmt(
         }
       }
 
-      // ss << "# variantSet end\n";
-      ss << pprint::Indent(indent + 1) << "}\n";
+      // nested variantSets
+      if (item.second.variantSets().size()) {
+        ss << print_variantSetStmt(item.second.variantSets(), indent+1);
+      }
+
+      ss << pprint::Indent(indent+1) << "}\n";
+
     }
 
     ss << pprint::Indent(indent) << "}\n";
@@ -4594,6 +4599,7 @@ std::string print_prim(const Prim &prim, const uint32_t indent) {
 
   //
   // print variant
+  // TODO: Use print_variantSetStmt()
   //
   if (prim.variantSets().size()) {
     if (require_newline) {
@@ -4604,6 +4610,7 @@ std::string print_prim(const Prim &prim, const uint32_t indent) {
     // so set require_newline true
     require_newline = true;
 
+#if 0
     for (const auto &variantSet : prim.variantSets()) {
       ss << pprint::Indent(indent + 1) << "variantSet "
          << quote(variantSet.first) << " = {\n";
@@ -4660,6 +4667,9 @@ std::string print_prim(const Prim &prim, const uint32_t indent) {
 
       ss << pprint::Indent(indent + 1) << "}\n";
     }
+#else
+    ss << print_variantSetStmt(prim.variantSets(), indent+1);
+#endif
   }
 
   //
