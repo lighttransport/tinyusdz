@@ -2743,7 +2743,7 @@ std::string print_variantSetStmt(
 
       // nested variantSets
       if (item.second.variantSets().size()) {
-        ss << print_variantSetStmt(item.second.variantSets(), indent+1);
+        ss << print_variantSetStmt(item.second.variantSets(), indent+2);
       }
 
       ss << pprint::Indent(indent+1) << "}\n";
