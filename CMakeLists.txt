@@ -21,6 +21,7 @@ endif ()
 
 
 if (EMSCRIPTEN)
+  set(TINYUSDZ_DEFAULT_NO_WERROR ON)
   set(TINYUSDZ_DEFAULT_PRODUCTION_BUILD On)
   set(TINYUSDZ_DEFAULT_WITH_BUILTIN_IMAGE_LOADER On)
   set(TINYUSDZ_DEFAULT_BUILD_TESTS Off)
@@ -33,6 +34,7 @@ if (EMSCRIPTEN)
 elseif(NOT PROJECT_IS_TOP_LEVEL)
   # assume tinyusdz is added from add_subdirectory()
   # disable tools, tests and examples build by default.
+  set(TINYUSDZ_DEFAULT_NO_WERROR OFF)
   set(TINYUSDZ_DEFAULT_PRODUCTION_BUILD Off)
   set(TINYUSDZ_DEFAULT_WITH_BUILTIN_IMAGE_LOADER On)
   set(TINYUSDZ_DEFAULT_BUILD_TESTS Off)
@@ -43,6 +45,7 @@ elseif(NOT PROJECT_IS_TOP_LEVEL)
   set(TINYUSDZ_DEFAULT_WITH_USDA_PARSER Off)
   set(TINYUSDZ_DEFAULT_WITH_USDC_PARSER Off)
 else()
+  set(TINYUSDZ_DEFAULT_NO_WERROR OFF)
   set(TINYUSDZ_DEFAULT_PRODUCTION_BUILD Off)
   set(TINYUSDZ_DEFAULT_WITH_BUILTIN_IMAGE_LOADER On)
   set(TINYUSDZ_DEFAULT_BUILD_TESTS On)
@@ -66,7 +69,7 @@ option(TINYUSDZ_BUILD_TESTS "Build tests" ${TINYUSDZ_DEFAULT_BUILD_TESTS})
 option(TINYUSDZ_BUILD_BENCHMARKS
        "Build some bechmark tests(e.g. internal C++ data structures)" OFF)
 option(TINYUSDZ_BUILD_EXAMPLES
-       "Build examples(but not all examples area built in `examples` folder)"
+       "Build examples(but not all examples in `examples` folder are being built)"
        ${TINYUSDZ_DEFAULT_BUILD_EXAMPLES})
 option(TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER
        "Build with built-in image loader(stb_image and fpng). When disabled, app need to provide image loader callback to load images."
@@ -105,6 +108,7 @@ option(TINYUSDZ_CXX_EXCEPTIONS
 
 option(TINYUSDZ_WITH_USDMTLX "Build with MaterialX support" ON)
 option(TINYUSDZ_WITH_JSON "Build with JSON serialization support" OFF)
+option(TINYUSDZ_WITH_USD_TO_GLTF "Build with USD to glTF example" ON)
 option(TINYUSDZ_WITH_USDOBJ "Build with usdObj support(import wavefront .obj)"
        ON)
 option(TINYUSDZ_WITH_USDFBX "Build with usdFbx support(import FBX .fbx)"
@@ -224,7 +228,7 @@ option(TINYUSDZ_WITH_TOOL_USDC_PARSER "Build with USDC parser program" Off)
 option(TINYUSDZ_COMPILE_TIME_TRACE
        "Add -ftime-trace to profile compilation time(clang only)" OFF)
 option(TINYUSDZ_CUSTOM_COMPILE_FLAGS
-       "Add custom compile flags(described in CMakeLists.txt). For Developer only)" OFF)
+       "Use hard-coded custom compile flags(described in CMakeLists.txt). For Developer only)" OFF)
 # ---
 
 # cmake modules
@@ -388,11 +392,26 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
     ${PROJECT_SOURCE_DIR}/src/pprinter.cc
     ${PROJECT_SOURCE_DIR}/src/stage.cc
+    ${PROJECT_SOURCE_DIR}/src/stage.hh
     ${PROJECT_SOURCE_DIR}/src/tydra/facial.cc
+    ${PROJECT_SOURCE_DIR}/src/tydra/facial.hh
     ${PROJECT_SOURCE_DIR}/src/tydra/prim-apply.cc
+    ${PROJECT_SOURCE_DIR}/src/tydra/prim-apply.hh
     ${PROJECT_SOURCE_DIR}/src/tydra/scene-access.cc
+    ${PROJECT_SOURCE_DIR}/src/tydra/scene-access.hh
+    ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval.hh
+    ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval.cc
+    ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed.cc
+    ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-animatable.cc
+    ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-fallback.cc
+    ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-animatable-fallback.cc
+    ${PROJECT_SOURCE_DIR}/src/tydra/obj-export.cc
+    ${PROJECT_SOURCE_DIR}/src/tydra/usd-export.cc
     ${PROJECT_SOURCE_DIR}/src/tydra/shader-network.cc
-    ${PROJECT_SOURCE_DIR}/src/tydra/render-data.cc)
+    ${PROJECT_SOURCE_DIR}/src/tydra/shader-network.hh
+    ${PROJECT_SOURCE_DIR}/src/tydra/render-data.cc
+    ${PROJECT_SOURCE_DIR}/src/tydra/render-data.hh
+    )
 
 if(TINYUSDZ_WITH_PXR_COMPAT_API)
   list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/pxr-compat.cc)
@@ -403,11 +422,8 @@ set(TINYUSDZ_C_API_SOURCES ${PROJECT_SOURCE_DIR}/src/c-tinyusd.cc)
 set(TINYUSDZ_DEP_SOURCES
     ${PROJECT_SOURCE_DIR}/src/integerCoding.cpp
     ${PROJECT_SOURCE_DIR}/src/lz4-compression.cc
-    #${PROJECT_SOURCE_DIR}/src/pxrLZ4/lz4.cpp
     ${PROJECT_SOURCE_DIR}/src/lz4/lz4.c
-    ${PROJECT_SOURCE_DIR}/src/external/pystring.cpp
-    #${PROJECT_SOURCE_DIR}/src/external/staticstruct.cc
-    #${PROJECT_SOURCE_DIR}/src/external/tinyxml2/tinyxml2.cpp
+    #${PROJECT_SOURCE_DIR}/src/external/pystring.cpp
 )
 
 if (TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER)
@@ -640,341 +656,22 @@ if(TINYUSDZ_WITH_TIFF OR TINYUSDZ_WITH_EXR)
   endif()
 endif()
 
-#
-# -- target
-#
-
-#
-# To save compile time, use Object library(non-archival collections) for SHARED and Static lib.
-# NOTE: Static lib is always being built with PIC enabled.
-#
-#
-add_library(tinyusdz_object OBJECT ${TINYUSDZ_SOURCES} ${TINYUSDZ_DEP_SOURCES} ${TINYUSDZ_EXT_SOURCES})
-set_target_properties(tinyusdz_object PROPERTIES FOLDER "tinyusdz")
-set_target_properties(tinyusdz_object PROPERTIES POSITION_INDEPENDENT_CODE ON)
-
-# TinyUSDZ should compile well without /bigobj flag.
-# Uncommend if you encounter the following errror: fatal  error C1128: number of sections exceeded object file format limit: compile with /bigobj
-#if(MSVC)
-#  target_compile_options(tinyusdz_object PRIVATE /bigobj)
-#endif()
-
-if (MSVC)
-  if (TINYUSDZ_CXX_MP_FLAG)
-    target_compile_options(tinyusdz_object PRIVATE /MP${CMAKE_CXX_MP_NUM_PROCESSORS})
-  endif()
-endif()
-
-if(TINYUSDZ_DEBUG_PRINT)
-  target_compile_definitions(tinyusdz_object
-                             PRIVATE "TINYUSDZ_DEBUG_PRINT")
-endif()
-
-if(TINYUSDZ_PRODUCTION_BUILD)
-  target_compile_definitions(tinyusdz_object
-                             PRIVATE "TINYUSDZ_PRODUCTION_BUILD")
-endif()
-
-# default = enable module, so invert definition
-if(NOT TINYUSDZ_WITH_MODULE_USDA_READER)
-  target_compile_definitions(tinyusdz_object
-                             PRIVATE "TINYUSDZ_DISABLE_MODULE_USDA_READER")
-endif()
-
-if(NOT TINYUSDZ_WITH_MODULE_USDA_WRITER)
-  target_compile_definitions(tinyusdz_object
-                             PRIVATE "TINYUSDZ_DISABLE_MODULE_USDA_WRITER")
-endif()
-
-if(NOT TINYUSDZ_WITH_MODULE_USDC_READER)
-  target_compile_definitions(tinyusdz_object
-                             PRIVATE "TINYUSDZ_DISABLE_MODULE_USDC_READER")
-endif()
-
-if(NOT TINYUSDZ_WITH_MODULE_USDC_WRITER)
-  target_compile_definitions(tinyusdz_object
-                             PRIVATE "TINYUSDZ_DISABLE_MODULE_USDC_WRITER")
-endif()
-
-if(NOT TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER)
-  target_compile_definitions(tinyusdz_object PRIVATE "TINYUSDZ_NO_BUILTIN_IMAGE_LOADER")
-endif()
-
-if(TINYUSDZ_NO_STB_IMAGE_IMPLEMENTATION)
-  target_compile_definitions(tinyusdz_object PRIVATE "TINYUSDZ_NO_STB_IMAGE_IMPLEMENTATION")
-endif()
-
-if(TINYUSDZ_NO_STB_IMAGE_WRITE_IMPLEMENTATION)
-  target_compile_definitions(tinyusdz_object PRIVATE "TINYUSDZ_NO_STB_IMAGE_WRITE_IMPLEMENTATION")
-endif()
-
-target_include_directories(tinyusdz_object
-                           PRIVATE ${PROJECT_SOURCE_DIR}/src)
-
-#if(TINYUSDZ_WITH_JSON)
-##target_include_directories(
-##  ${TINYUSDZ_LIB_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
-#  target_include_directories(
-#    ${TINYUSDZ_LIB_TARGET}
-#    PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
-#endif()
-
-if(TINYUSDZ_WITH_USDMTLX)
-  target_compile_definitions(tinyusdz_object
-                             PRIVATE "TINYUSDZ_USE_USDMTLX")
-endif()
-
-if(TINYUSDZ_WITH_USDFBX)
-  target_compile_definitions(tinyusdz_object
-                             PRIVATE "TINYUSDZ_USE_USDFBX")
-endif()
-
-if(TINYUSDZ_WITH_USDOBJ)
-  target_compile_definitions(tinyusdz_object
-                             PRIVATE "TINYUSDZ_USE_USDOBJ")
-endif()
-
-if(TINYUSDZ_WITH_USDVOX)
-  target_compile_definitions(tinyusdz_object
-                             PRIVATE "TINYUSDZ_USE_USDVOX")
-endif()
-
-target_link_libraries(tinyusdz_object ${TINYUSDZ_EXT_LIBRARIES}
-                      ${CMAKE_DL_LIBS})
-
-if (TINYUSDZ_ENABLE_THREAD)
-  target_compile_definitions(tinyusdz_object
-                             PRIVATE "TINYUSDZ_ENABLE_THREAD")
-  target_link_libraries(tinyusdz_object Threads::Threads)
-endif()
-
-
-if(IOS)
-  target_compile_definitions(tinyusdz_object
-                             PRIVATE "TINYUSDZ_BUILD_IOS")
-endif()
-
-if(TINYUSDZ_WITH_TIFF)
-  target_compile_definitions(tinyusdz_object
-                             PRIVATE "TINYUSDZ_WITH_TIFF")
-endif(TINYUSDZ_WITH_TIFF)
-
-if(TINYUSDZ_WITH_EXR)
-  target_compile_definitions(tinyusdz_object
-                             PRIVATE "TINYUSDZ_WITH_EXR")
-endif(TINYUSDZ_WITH_EXR)
-
-if(TINYUSDZ_WITH_COLORIO)
-  target_compile_definitions(tinyusdz_object
-                             PRIVATE "TINYUSDZ_WITH_COLORIO")
-endif(TINYUSDZ_WITH_COLORIO)
-
-if(TINYUSDZ_WITH_AUDIO)
-  target_compile_definitions(tinyusdz_object
-                             PRIVATE "TINYUSDZ_WITH_AUDIO")
-endif(TINYUSDZ_WITH_AUDIO)
-
-if(TINYUSDZ_WITH_ALAC_AUDIO)
-  target_compile_definitions(tinuusdz_object
-                             PRIVATE "TINYUSDZ_WITH_ALAC_AUDIO")
-endif(TINYUSDZ_WITH_ALAC_AUDIO)
-
-if(TINYUSDZ_WITH_OPENSUBDIV)
-  target_include_directories(tinyusdz_object PRIVATE ${osd_DIR})
-  target_compile_definitions(tinyusdz_object
-                             PRIVATE "TINYUSDZ_WITH_OPENSUBDIV")
-endif(TINYUSDZ_WITH_OPENSUBDIV)
-
-if(NOT TINYUSDZ_CXX_EXCEPTIONS)
-  if(MSVC)
-    target_compile_options(tinyusdz_object PUBLIC /EHs-c-)
-  else()
-    target_compile_options(tinyusdz_object PUBLIC -fno-exceptions)
-  endif()
-endif()
-
-# TODO: USE set_target_properties(... PROPERTIES OUTPUT_NAME outname)?
-add_library(${TINYUSDZ_TARGET_STATIC} STATIC $<TARGET_OBJECTS:tinyusdz_object>)
-#add_sanitizers(${TINYUSDZ_TARGET_STATIC})
-
-# Target with namespace
-add_library(${TINYUSDZ_TARGET_STATIC_NS} ALIAS ${TINYUSDZ_TARGET_STATIC})
-
-
-if(TINYUSDZ_BUILD_SHARED_LIBS)
-  add_library(
-    ${TINYUSDZ_TARGET} SHARED $<TARGET_OBJECTS:tinyusdz_object>)
-  #add_sanitizers(${TINYUSDZ_TARGET})
-
-  # for dllexport
-  target_compile_definitions(${TINYUSDZ_TARGET} PRIVATE "TINYUSDZ_COMPILE_LIBRARY")
-  target_compile_definitions(${TINYUSDZ_TARGET} PRIVATE "TINYUSDZ_SHARED_LIBRARY")
-
-  set(TINYUSDZ_LIBS ${TINYUSDZ_TARGET_STATIC} ${TINYUSDZ_TARGET})
-else()
-  # static only
-  set(TINYUSDZ_LIBS ${TINYUSDZ_TARGET_STATIC})
-endif()
-
-if(WIN32 AND TINYUSDZ_WITH_PXR_COMPAT_API)
-  if(TINYUSDZ_BUILD_SHARED_LIBS)
-    target_compile_definitions(${TINYUSDZ_TARGET} PRIVATE "PXR_DYNAMIC")
-    target_compile_definitions(${TINYUSDZ_TARGET} PRIVATE "USD_EXPORTS")
-  endif()
-
-endif()
-
-# TODO: Remove
-##
-## -- common target props
-##
-#foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
-#
-#  # Current TinyUSDZ now should compile well without /bigobj flag.
-#  # Uncommend if you encounter the following errror: fatal  error C1128: number of sections exceeded object file format limit: compile with /bigobj
-#  #if(MSVC)
-#  #  target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE /bigobj)
-#  #endif()
-#
-#  if (MSVC)
-#    if (TINYUSDZ_CXX_MP_FLAG)
-#      target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE /MP${CMAKE_CXX_MP_NUM_PROCESSORS})
-#    endif()
-#  endif()
-#
-#  if(TINYUSDZ_DEBUG_PRINT)
-#    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-#                               PRIVATE "TINYUSDZ_DEBUG_PRINT")
-#  endif()
-#
-#  if(TINYUSDZ_PRODUCTION_BUILD)
-#    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-#                               PRIVATE "TINYUSDZ_PRODUCTION_BUILD")
-#  endif()
-#
-#  # default = enable module, so invert definition
-#  if(NOT TINYUSDZ_WITH_MODULE_USDA_READER)
-#    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-#                               PRIVATE "TINYUSDZ_DISABLE_MODULE_USDA_READER")
-#  endif()
-#
-#  if(NOT TINYUSDZ_WITH_MODULE_USDA_WRITER)
-#    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-#                               PRIVATE "TINYUSDZ_DISABLE_MODULE_USDA_WRITER")
-#  endif()
-#
-#  if(NOT TINYUSDZ_WITH_MODULE_USDC_READER)
-#    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-#                               PRIVATE "TINYUSDZ_DISABLE_MODULE_USDC_READER")
-#  endif()
-#
-#  if(NOT TINYUSDZ_WITH_MODULE_USDC_WRITER)
-#    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-#                               PRIVATE "TINYUSDZ_DISABLE_MODULE_USDC_WRITER")
-#  endif()
-#
-#  if(TINYUSDZ_NO_STB_IMAGE_IMPLEMENTATION)
-#    target_compile_definitions(${TINYUSDZ_LIB_TARGET} PRIVATE "TINYUSDZ_NO_STB_IMAGE_IMPLEMENTATION")
-#  endif()
-#
-#  if(TINYUSDZ_NO_STB_IMAGE_WRITE_IMPLEMENTATION)
-#    target_compile_definitions(${TINYUSDZ_LIB_TARGET} PRIVATE "TINYUSDZ_NO_STB_IMAGE_WRITE_IMPLEMENTATION")
-#  endif()
-#
-#  target_include_directories(${TINYUSDZ_LIB_TARGET}
-#                             PRIVATE ${PROJECT_SOURCE_DIR}/src)
-#
-#  #if(TINYUSDZ_WITH_JSON)
-#  ##target_include_directories(
-#  ##  ${TINYUSDZ_LIB_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
-#  #  target_include_directories(
-#  #    ${TINYUSDZ_LIB_TARGET}
-#  #    PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
-#  #endif()
-#
-#  if(TINYUSDZ_WITH_USDFBX)
-#    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-#                               PRIVATE "TINYUSDZ_USE_USDFBX")
-#  endif()
-#
-#  if(TINYUSDZ_WITH_USDOBJ)
-#    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-#                               PRIVATE "TINYUSDZ_USE_USDOBJ")
-#  endif()
-#
-#  if(TINYUSDZ_WITH_USDVOX)
-#    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-#                               PRIVATE "TINYUSDZ_USE_USDVOX")
-#  endif()
-#
-#  target_link_libraries(${TINYUSDZ_LIB_TARGET} ${TINYUSDZ_EXT_LIBRARIES}
-#                        ${CMAKE_DL_LIBS})
-#
-#  if (TINYUSDZ_ENABLE_THREAD)
-#    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-#                               PRIVATE "TINYUSDZ_ENABLE_THREAD")
-#    target_link_libraries(${TINYUSDZ_LIB_TARGET} Threads::Threads)
-#  endif()
-#
-#
-#  if(IOS)
-#    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-#                               PRIVATE "TINYUSDZ_BUILD_IOS")
-#  endif()
-#
-#  if(TINYUSDZ_WITH_TIFF)
-#    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-#                               PRIVATE "TINYUSDZ_WITH_TIFF")
-#  endif(TINYUSDZ_WITH_TIFF)
-#
-#  if(TINYUSDZ_WITH_EXR)
-#    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-#                               PRIVATE "TINYUSDZ_WITH_EXR")
-#  endif(TINYUSDZ_WITH_EXR)
-#
-#  if(TINYUSDZ_WITH_COLORIO)
-#    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-#                               PRIVATE "TINYUSDZ_WITH_COLORIO")
-#  endif(TINYUSDZ_WITH_COLORIO)
-#
-#  if(TINYUSDZ_WITH_AUDIO)
-#    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-#                               PRIVATE "TINYUSDZ_WITH_AUDIO")
-#  endif(TINYUSDZ_WITH_AUDIO)
-#
-#  if(TINYUSDZ_WITH_ALAC_AUDIO)
-#    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-#                               PRIVATE "TINYUSDZ_WITH_ALAC_AUDIO")
-#  endif(TINYUSDZ_WITH_ALAC_AUDIO)
-#
-#  if(TINYUSDZ_WITH_OPENSUBDIV)
-#    target_include_directories(${TINYUSDZ_LIB_TARGET} PRIVATE ${osd_DIR})
-#    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
-#                               PRIVATE "TINYUSDZ_WITH_OPENSUBDIV")
-#  endif(TINYUSDZ_WITH_OPENSUBDIV)
-#
-#  if(NOT TINYUSDZ_CXX_EXCEPTIONS)
-#    if(MSVC)
-#      target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE /EHs-c-)
-#    else()
-#      target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE -fno-exceptions)
-#    endif()
-#  endif()
-#
-#endforeach()
-
-
-
 # Increase warning level for clang.
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 
   set(TUSDZ_COMPILE_FLAGS
-      "-Weverything -Werror -Wno-poison-system-directories -Wno-padded -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-documentation -Wno-unused-member-function"
+      "-Weverything -Wno-poison-system-directories -Wno-padded -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-documentation -Wno-unused-member-function"
   )
+
+  option(TINYUSDZ_NO_WERROR "Don't set -Werror when building the tinyusdz library" ${TINYUSDZ_DEFAULT_NO_WERROR})
+  if (NOT TINYUSDZ_NO_WERROR)
+    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Werror")
+  endif()
 
   # clang17 seems enable -Wunsafe-buffer-usage when `-Weverything` is defined,
   # resulting compilation error for some raw array access without bound check.
   # https://reviews.llvm.org/D138940
+  # https://github.com/llvm/llvm-project/issues/64646
   # we need to suppress it as a work around.
   if (${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 16)
     set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-unsafe-buffer-usage")
@@ -995,6 +692,10 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 if(TINYUSDZ_CUSTOM_COMPILE_FLAGS)
+  #
+  # Overwrite existing TUSDZ_COMPILE_FLAGS
+  #
+
   #if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
     set(TUSDZ_CUSTOM_COMPILE_FLAGS "-fstack-usage ")
     set_source_files_properties(${TINYUSDZ_SOURCES}
@@ -1006,6 +707,358 @@ if(TINYUSDZ_CUSTOM_COMPILE_FLAGS)
     endif()
   #endif()
 endif()
+
+#
+# -- target
+#
+
+#
+# Disabled Object library for a while, since it has some issue on MSVC target.
+## To save compile time, use Object library(non-archival collections) for SHARED and Static lib.
+## NOTE: Static lib is always being built with PIC enabled.
+##
+##
+#add_library(tinyusdz_object OBJECT ${TINYUSDZ_SOURCES} ${TINYUSDZ_DEP_SOURCES} ${TINYUSDZ_EXT_SOURCES})
+#set_target_properties(tinyusdz_object PROPERTIES FOLDER "tinyusdz")
+#set_target_properties(tinyusdz_object PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# TinyUSDZ should compile well without /bigobj flag.
+# Uncommend if you encounter the following errror: fatal  error C1128: number of sections exceeded object file format limit: compile with /bigobj
+#if(MSVC)
+#  target_compile_options(tinyusdz_object PRIVATE /bigobj)
+#elif(WIN32)
+#  if (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+#    # guess mingw-gcc
+#    target_compile_options(tinyusdz_object PRIVATE "-Wa, -mbig-obj")
+#  endif()
+#endif()
+
+#if (MSVC)
+#  if (TINYUSDZ_CXX_MP_FLAG)
+#    target_compile_options(tinyusdz_object PRIVATE /MP${CMAKE_CXX_MP_NUM_PROCESSORS})
+#  endif()
+#endif()
+#
+#if(TINYUSDZ_DEBUG_PRINT)
+#  target_compile_definitions(tinyusdz_object
+#                             PRIVATE "TINYUSDZ_DEBUG_PRINT")
+#endif()
+#
+#if(TINYUSDZ_PRODUCTION_BUILD)
+#  target_compile_definitions(tinyusdz_object
+#                             PRIVATE "TINYUSDZ_PRODUCTION_BUILD")
+#endif()
+#
+## default = enable module, so invert definition
+#if(NOT TINYUSDZ_WITH_MODULE_USDA_READER)
+#  target_compile_definitions(tinyusdz_object
+#                             PRIVATE "TINYUSDZ_DISABLE_MODULE_USDA_READER")
+#endif()
+#
+#if(NOT TINYUSDZ_WITH_MODULE_USDA_WRITER)
+#  target_compile_definitions(tinyusdz_object
+#                             PRIVATE "TINYUSDZ_DISABLE_MODULE_USDA_WRITER")
+#endif()
+#
+#if(NOT TINYUSDZ_WITH_MODULE_USDC_READER)
+#  target_compile_definitions(tinyusdz_object
+#                             PRIVATE "TINYUSDZ_DISABLE_MODULE_USDC_READER")
+#endif()
+#
+#if(NOT TINYUSDZ_WITH_MODULE_USDC_WRITER)
+#  target_compile_definitions(tinyusdz_object
+#                             PRIVATE "TINYUSDZ_DISABLE_MODULE_USDC_WRITER")
+#endif()
+#
+#if(NOT TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER)
+#  target_compile_definitions(tinyusdz_object PRIVATE "TINYUSDZ_NO_BUILTIN_IMAGE_LOADER")
+#endif()
+#
+#if(TINYUSDZ_NO_STB_IMAGE_IMPLEMENTATION)
+#  target_compile_definitions(tinyusdz_object PRIVATE "TINYUSDZ_NO_STB_IMAGE_IMPLEMENTATION")
+#endif()
+#
+#if(TINYUSDZ_NO_STB_IMAGE_WRITE_IMPLEMENTATION)
+#  target_compile_definitions(tinyusdz_object PRIVATE "TINYUSDZ_NO_STB_IMAGE_WRITE_IMPLEMENTATION")
+#endif()
+#
+#target_include_directories(tinyusdz_object
+#                           PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
+#if(TINYUSDZ_WITH_JSON)
+##target_include_directories(
+##  ${TINYUSDZ_LIB_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
+#  target_include_directories(
+#    ${TINYUSDZ_LIB_TARGET}
+#    PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
+#endif()
+
+#if(TINYUSDZ_WITH_USDMTLX)
+#  target_compile_definitions(tinyusdz_object
+#                             PRIVATE "TINYUSDZ_USE_USDMTLX")
+#endif()
+#
+#if(TINYUSDZ_WITH_USDFBX)
+#  target_compile_definitions(tinyusdz_object
+#                             PRIVATE "TINYUSDZ_USE_USDFBX")
+#endif()
+#
+#if(TINYUSDZ_WITH_USDOBJ)
+#  target_compile_definitions(tinyusdz_object
+#                             PRIVATE "TINYUSDZ_USE_USDOBJ")
+#endif()
+#
+#if(TINYUSDZ_WITH_USDVOX)
+#  target_compile_definitions(tinyusdz_object
+#                             PRIVATE "TINYUSDZ_USE_USDVOX")
+#endif()
+
+#target_link_libraries(tinyusdz_object ${TINYUSDZ_EXT_LIBRARIES}
+#                      ${CMAKE_DL_LIBS})
+#
+#if (TINYUSDZ_ENABLE_THREAD)
+#  target_compile_definitions(tinyusdz_object
+#                             PRIVATE "TINYUSDZ_ENABLE_THREAD")
+#  target_link_libraries(tinyusdz_object Threads::Threads)
+#endif()
+#
+#
+#if(IOS)
+#  target_compile_definitions(tinyusdz_object
+#                             PRIVATE "TINYUSDZ_BUILD_IOS")
+#endif()
+#
+#if(TINYUSDZ_WITH_TIFF)
+#  target_compile_definitions(tinyusdz_object
+#                             PRIVATE "TINYUSDZ_WITH_TIFF")
+#endif(TINYUSDZ_WITH_TIFF)
+#
+#if(TINYUSDZ_WITH_EXR)
+#  target_compile_definitions(tinyusdz_object
+#                             PRIVATE "TINYUSDZ_WITH_EXR")
+#endif(TINYUSDZ_WITH_EXR)
+#
+#if(TINYUSDZ_WITH_COLORIO)
+#  target_compile_definitions(tinyusdz_object
+#                             PRIVATE "TINYUSDZ_WITH_COLORIO")
+#endif(TINYUSDZ_WITH_COLORIO)
+#
+#if(TINYUSDZ_WITH_AUDIO)
+#  target_compile_definitions(tinyusdz_object
+#                             PRIVATE "TINYUSDZ_WITH_AUDIO")
+#endif(TINYUSDZ_WITH_AUDIO)
+#
+#if(TINYUSDZ_WITH_ALAC_AUDIO)
+#  target_compile_definitions(tinuusdz_object
+#                             PRIVATE "TINYUSDZ_WITH_ALAC_AUDIO")
+#endif(TINYUSDZ_WITH_ALAC_AUDIO)
+#
+#if(TINYUSDZ_WITH_OPENSUBDIV)
+#  target_include_directories(tinyusdz_object PRIVATE ${osd_DIR})
+#  target_compile_definitions(tinyusdz_object
+#                             PRIVATE "TINYUSDZ_WITH_OPENSUBDIV")
+#endif(TINYUSDZ_WITH_OPENSUBDIV)
+#
+#if(NOT TINYUSDZ_CXX_EXCEPTIONS)
+#  if(MSVC)
+#    target_compile_options(tinyusdz_object PUBLIC /EHs-c-)
+#  else()
+#    target_compile_options(tinyusdz_object PUBLIC -fno-exceptions)
+#  endif()
+#endif()
+#
+# TODO: USE set_target_properties(... PROPERTIES OUTPUT_NAME outname)?
+#add_library(${TINYUSDZ_TARGET_STATIC} STATIC $<TARGET_OBJECTS:tinyusdz_object>)
+#add_sanitizers(${TINYUSDZ_TARGET_STATIC})
+
+add_library(${TINYUSDZ_TARGET_STATIC} STATIC ${TINYUSDZ_SOURCES} ${TINYUSDZ_DEP_SOURCES} ${TINYUSDZ_EXT_SOURCES})
+set_target_properties(${TINYUSDZ_TARGET_STATIC} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+add_sanitizers(${TINYUSDZ_TARGET_STATIC})
+#set_target_properties(tinyusdz_object PROPERTIES FOLDER "tinyusdz")
+
+# Target with namespace
+add_library(${TINYUSDZ_TARGET_STATIC_NS} ALIAS ${TINYUSDZ_TARGET_STATIC})
+
+
+if(TINYUSDZ_BUILD_SHARED_LIBS)
+  #add_library(
+  #  ${TINYUSDZ_TARGET} SHARED $<TARGET_OBJECTS:tinyusdz_object>)
+  add_library(
+    ${TINYUSDZ_TARGET} SHARED ${TINYUSDZ_SOURCES} ${TINYUSDZ_DEP_SOURCES} ${TINYUSDZ_EXT_SOURCES})
+  add_sanitizers(${TINYUSDZ_TARGET})
+
+  # for dllexport
+  target_compile_definitions(${TINYUSDZ_TARGET} PRIVATE "TINYUSDZ_COMPILE_LIBRARY")
+  target_compile_definitions(${TINYUSDZ_TARGET} PRIVATE "TINYUSDZ_SHARED_LIBRARY")
+
+  set(TINYUSDZ_LIBS ${TINYUSDZ_TARGET_STATIC} ${TINYUSDZ_TARGET})
+else()
+  # static only
+  set(TINYUSDZ_LIBS ${TINYUSDZ_TARGET_STATIC})
+endif()
+
+if(WIN32 AND TINYUSDZ_WITH_PXR_COMPAT_API)
+  if(TINYUSDZ_BUILD_SHARED_LIBS)
+    target_compile_definitions(${TINYUSDZ_TARGET} PRIVATE "PXR_DYNAMIC")
+    target_compile_definitions(${TINYUSDZ_TARGET} PRIVATE "USD_EXPORTS")
+  endif()
+
+endif()
+
+#
+# CMake's Object libary have some issue on MSVC build, so build STATIC and SHARED lib indepdendently.
+#
+
+#
+# -- common target props
+#
+foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
+
+  # Although TinyUSDZ should compile well without /bigobj flag,
+  # corrent TinyYSDZ need to use bigobj format otherwise we'll get: fatal  error C1128: number of sections exceeded object file format limit: compile with /bigobj
+  if(MSVC)
+    target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE /bigobj)
+  elseif(WIN32)
+    if (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+      # guess mingw-gcc
+      target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE "-Wa, -mbig-obj")
+    endif()
+  endif()
+
+  if (MSVC)
+    if (TINYUSDZ_CXX_MP_FLAG)
+      target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE /MP${CMAKE_CXX_MP_NUM_PROCESSORS})
+    endif()
+  endif()
+
+  if(TINYUSDZ_DEBUG_PRINT)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_DEBUG_PRINT")
+  endif()
+
+  if(TINYUSDZ_PRODUCTION_BUILD)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_PRODUCTION_BUILD")
+  endif()
+
+  # default = enable module, so invert definition
+  if(NOT TINYUSDZ_WITH_MODULE_USDA_READER)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_DISABLE_MODULE_USDA_READER")
+  endif()
+
+  if(NOT TINYUSDZ_WITH_MODULE_USDA_WRITER)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_DISABLE_MODULE_USDA_WRITER")
+  endif()
+
+  if(NOT TINYUSDZ_WITH_MODULE_USDC_READER)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_DISABLE_MODULE_USDC_READER")
+  endif()
+
+  if(NOT TINYUSDZ_WITH_MODULE_USDC_WRITER)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_DISABLE_MODULE_USDC_WRITER")
+  endif()
+
+  if(TINYUSDZ_NO_STB_IMAGE_IMPLEMENTATION)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET} PRIVATE "TINYUSDZ_NO_STB_IMAGE_IMPLEMENTATION")
+  endif()
+
+  if(TINYUSDZ_NO_STB_IMAGE_WRITE_IMPLEMENTATION)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET} PRIVATE "TINYUSDZ_NO_STB_IMAGE_WRITE_IMPLEMENTATION")
+  endif()
+
+  target_include_directories(${TINYUSDZ_LIB_TARGET}
+                             PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
+  #if(TINYUSDZ_WITH_JSON)
+  ##target_include_directories(
+  ##  ${TINYUSDZ_LIB_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
+  #  target_include_directories(
+  #    ${TINYUSDZ_LIB_TARGET}
+  #    PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
+  #endif()
+
+  if(TINYUSDZ_WITH_USDMTLX)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_USE_USDMTLX")
+  endif()
+
+  if(TINYUSDZ_WITH_USDFBX)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_USE_USDFBX")
+  endif()
+
+  if(TINYUSDZ_WITH_USDOBJ)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_USE_USDOBJ")
+  endif()
+
+  if(TINYUSDZ_WITH_USDVOX)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_USE_USDVOX")
+  endif()
+
+  target_link_libraries(${TINYUSDZ_LIB_TARGET} ${TINYUSDZ_EXT_LIBRARIES}
+                        ${CMAKE_DL_LIBS})
+
+  if (TINYUSDZ_ENABLE_THREAD)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_ENABLE_THREAD")
+    target_link_libraries(${TINYUSDZ_LIB_TARGET} Threads::Threads)
+  endif()
+
+
+  if(IOS)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_BUILD_IOS")
+  endif()
+
+  if(TINYUSDZ_WITH_TIFF)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_TIFF")
+  endif(TINYUSDZ_WITH_TIFF)
+
+  if(TINYUSDZ_WITH_EXR)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_EXR")
+  endif(TINYUSDZ_WITH_EXR)
+
+  if(TINYUSDZ_WITH_COLORIO)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_COLORIO")
+  endif(TINYUSDZ_WITH_COLORIO)
+
+  if(TINYUSDZ_WITH_AUDIO)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_AUDIO")
+  endif(TINYUSDZ_WITH_AUDIO)
+
+  if(TINYUSDZ_WITH_ALAC_AUDIO)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_ALAC_AUDIO")
+  endif(TINYUSDZ_WITH_ALAC_AUDIO)
+
+  if(TINYUSDZ_WITH_OPENSUBDIV)
+    target_include_directories(${TINYUSDZ_LIB_TARGET} PRIVATE ${osd_DIR})
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_OPENSUBDIV")
+  endif(TINYUSDZ_WITH_OPENSUBDIV)
+
+  if(NOT TINYUSDZ_CXX_EXCEPTIONS)
+    if(MSVC)
+      target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE /EHs-c-)
+    else()
+      target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE -fno-exceptions)
+    endif()
+  endif()
+
+endforeach()
+
+
+
 
 if(TINYUSDZ_WITH_C_API)
   if(TINYUSDZ_BUILD_SHARED_LIBS)
@@ -1129,9 +1182,12 @@ if(TINYUSDZ_BUILD_EXAMPLES)
   add_subdirectory(examples/api_tutorial)
   add_subdirectory(examples/file_format)
   add_subdirectory(examples/asset_resolution)
-  if (TINYUSDZ_WITH_JSON)
-    add_subdirectory(examples/usd_to_json)
-  endif()
+  #if (TINYUSDZ_WITH_JSON)
+  #  add_subdirectory(examples/usd_to_json)
+  #endif()
+  #if (TINYUSDZ_WITH_USD_TO_GLTF)
+  #  add_subdirectory(examples/usd_to_gltf)
+  #endif()
   if(TINYUSDZ_WITH_MODULE_USDA_WRITER)
     add_subdirectory(examples/save_usda)
   endif()

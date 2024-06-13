@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
+// Copyright 2022 - 2023, Syoyo Fujita.
+// Copyright 2023 - Present, Light Transport Entertainment Inc.
+// 
 #pragma once
 
 #include <cstddef>
@@ -6,6 +9,7 @@
 #include <vector>
 #include <algorithm>
 #include <map>
+#include <cstdint>
 
 #ifdef TINYUSDZ_ANDROID_LOAD_FROM_ASSETS
 #include <android/asset_manager.h>
@@ -116,6 +120,29 @@ bool ReadWholeFile(std::vector<uint8_t> *out, std::string *err,
 bool ReadFileHeader(std::vector<uint8_t> *out, std::string *err,
                    const std::string &filepath, uint32_t max_read_bytes = 128,
                    void *userdata = nullptr);
+
+
+///
+/// @return true when the system supports mmap. 
+///
+bool IsMMapSupported(); 
+
+// Simple mmap file handle struct
+struct MMapFileHandle
+{
+  std::string filename;
+  bool writable{false};
+  uint8_t *addr{nullptr};
+  size_t size{0};
+};
+
+///
+/// memory-map file.
+/// Returns false when file is not found, invalid, or mmap feature is not available.
+///
+bool MMapFile(const std::string &filepath, MMapFileHandle *handle, bool writable = false);
+
+bool UnmapFile(const MMapFileHandle &handle);
 
 ///
 /// Filepath is treated as WideChar(UNICODE) on Windows.

@@ -233,12 +233,17 @@ bool GetImageInfoSTB(const uint8_t *bytes, const size_t size,
 bool DecodeImageEXR(const uint8_t *bytes, const size_t size,
                     const std::string &uri, Image *image,
                     std::string *err) {
-  // TODO(syoyo): Multi-channel EXR
+  // TODO(syoyo):
+  // - [ ] Read fp16 image as fp16
+  // - [ ] Read int16 image as int16
+  // - [ ] Read int32 image as int32
+  // - [ ] Multi-channel EXR
 
   float *rgba = nullptr;
   int width;
   int height;
   const char *exrerr = nullptr;
+  // LoadEXRFromMemory always load EXR image as fp32 x RGBA
   int ret = LoadEXRFromMemory(&rgba, &width, &height, bytes, size, &exrerr);
 
   if (exrerr) {

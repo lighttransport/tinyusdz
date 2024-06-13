@@ -1,5 +1,6 @@
-// SPDX-License-Identifier: MIT
-// Copyright 2022 - Present, Syoyo Fujita.
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2022 - 2023, Syoyo Fujita.
+// Copyright 2023 - Present, Light Transport Entertainment Inc.
 //
 // UsdSkel(includes BlendShapes)
 #pragma once
@@ -302,6 +303,44 @@ struct SkelAnimation {
 // PackedJointAnimation is deprecated(Convert to SkelAnimation)
 // struct PackedJointAnimation {
 // };
+
+//
+// Some usdSkel utility functions
+//
+
+// Equivalent to pxrUSd's UsdSkelNormalizeWeights
+bool SkelNormalizeWeights(const std::vector<float> &weights, int numInfluencesPerComponent, const float eps = std::numeric_limits<float>::epsilon());
+bool SkelSortInfluences(const std::vector<int> indices, const std::vector<float> &weights, int numInfluencesPerComponent);
+
+#if 0 // move to Tydra
+struct SkelNode
+{
+  std::string joint;
+  std::string jointName;
+  int32_t parentIndex{-1}; // Index of parent SkelNode.
+  int32_t index; // Index of this SkelNode.
+  
+  value::matrix4d bindTransform{value::matrix4d::identity()};
+  value::matrix4d restTransform{value::matrix4d::identity()};
+};
+#endif
+
+//
+// Build Skeleleton Topology(hierarchy) from Skeleton's joints.
+// (Usually from Skeleton's `joints`attribute).
+// 
+// If you want to get handy, full Skeleton hierarchy information, Use Tydra's BuildSkelHierarchy() API.
+//
+// @param[in] `joints` Joint paths
+// @param[out] `dst` Built SkelTopology.  dst[i] = parent joint index. -1 for root joint.
+// @param[out] `err` Error message when `joints` info is invalid.
+//
+// @return true upon success. false when error.
+// 
+bool BuildSkelTopology(
+  const std::vector<value::token> &joints,
+  std::vector<int> &dst,
+  std::string *err);
 
 // import DEFINE_TYPE_TRAIT and DEFINE_ROLE_TYPE_TRAIT
 #include "define-type-trait.inc"

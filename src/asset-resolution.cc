@@ -58,9 +58,20 @@ bool AssetResolutionResolver::find(const std::string &assetPath) const {
     }
   }
 
+  if ((_current_working_path == ".") || (_current_working_path == "./")) {
+    std::string rpath = io::FindFile(assetPath, {});
+  } else {
+    // TODO: Only find when input path is relative.
+    std::string rpath = io::FindFile(assetPath, {_current_working_path});
+    if (rpath.size()) {
+      return true;
+    }
+  }
+
   // TODO: Cache resolition.
   std::string fpath = io::FindFile(assetPath, _search_paths);
   return fpath.size();
+
 }
 
 std::string AssetResolutionResolver::resolve(
@@ -88,14 +99,27 @@ std::string AssetResolutionResolver::resolve(
     }
   }
 
+  DCOUT("cwd = " << _current_working_path);
   DCOUT("search_paths = " << _search_paths);
   DCOUT("assetPath = " << assetPath);
+
+  std::string rpath;
+  if ((_current_working_path == ".") || (_current_working_path == "./")) {
+    rpath = io::FindFile(assetPath, {});
+  } else {
+    rpath = io::FindFile(assetPath, {_current_working_path});
+  }
+
+  if (rpath.size()) {
+    return rpath;
+  }
+
   // TODO: Cache resolition.
   return io::FindFile(assetPath, _search_paths);
 }
 
 bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const std::string &assetPath,
-                  Asset *asset_out, std::string *warn, std::string *err) {
+                  Asset *asset_out, std::string *warn, std::string *err) const {
 
   if (!asset_out) {
     if (err) {
@@ -103,6 +127,8 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
     }
     return false;
   }
+
+  DCOUT("Opening asset: " << resolvedPath);
 
   (void)assetPath;
   (void)warn;
@@ -124,6 +150,8 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
         }
         return false;
       }
+    
+      DCOUT("asset_size: " << sz);
 
       tinyusdz::Asset asset;
       asset.resize(size_t(sz));
@@ -153,6 +181,7 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
     }
   }
 
+  // Default: read from a file.
   std::vector<uint8_t> data;
   size_t max_bytes = 1024 * 1024 * _max_asset_bytes_in_mb;
   if (!io::ReadWholeFile(&data, err, resolvedPath, max_bytes,

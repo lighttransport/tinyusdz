@@ -57,6 +57,7 @@
 #endif
 
 #include "token-type.hh"
+#include "common-macros.inc"
 
 // forward decl
 namespace linb {
@@ -69,6 +70,7 @@ namespace value {
 
 // Identifier is the one used in USDA(Ascii)
 // See: https://graphics.pixar.com/usd/release/api/_usd__page__datatypes.html
+// NOTE: There are some TinyUSDZ specific types(e.g., short, char)
 constexpr auto kToken = "token";
 constexpr auto kString = "string";
 constexpr auto kPath =
@@ -78,12 +80,29 @@ constexpr auto kDictionary = "dictionary";
 constexpr auto kTimeCode = "timecode";
 
 constexpr auto kBool = "bool";
+constexpr auto kChar = "char";
+constexpr auto kChar2 = "char2";
+constexpr auto kChar3 = "char3";
+constexpr auto kChar4 = "char4";
 constexpr auto kUChar = "uchar";
+constexpr auto kUChar2 = "uchar2";
+constexpr auto kUChar3 = "uchar3";
+constexpr auto kUChar4 = "uchar4";
 constexpr auto kHalf = "half";
 constexpr auto kInt = "int";
 constexpr auto kUInt = "uint";
 constexpr auto kInt64 = "int64";
 constexpr auto kUInt64 = "uint64";
+
+constexpr auto kShort = "short";
+constexpr auto kShort2 = "short2";
+constexpr auto kShort3 = "short3";
+constexpr auto kShort4 = "short4";
+
+constexpr auto kUShort = "ushort";
+constexpr auto kUShort2 = "ushort2";
+constexpr auto kUShort3 = "ushort3";
+constexpr auto kUShort4 = "ushort4";
 
 constexpr auto kInt2 = "int2";
 constexpr auto kInt3 = "int3";
@@ -214,7 +233,15 @@ class TimeCode {
     return std::numeric_limits<double>::quiet_NaN();
   }
 
+  // TODO: Deprecate `Get` and use `get`
   double Get(bool *is_default_timecode) {
+    if (is_default_timecode) {
+      (*is_default_timecode) = is_default();
+    }
+    return time_;
+  }
+
+  double get(bool *is_default_timecode) {
     if (is_default_timecode) {
       (*is_default_timecode) = is_default();
     }
@@ -223,11 +250,11 @@ class TimeCode {
 
   bool is_default() {
     // TODO: Bitwise comparison
-    return !std::isnan(time_);
+    return std::isnan(time_);
   }
 
  private:
-  double time_;
+  double time_{std::numeric_limits<double>::quiet_NaN()};
 };
 
 static_assert(sizeof(TimeCode) == 8, "Size of TimeCode must be 8.");
@@ -264,6 +291,11 @@ enum TypeId {
 
   TYPE_ID_BOOL,
 
+  TYPE_ID_CHAR,
+  TYPE_ID_CHAR2,
+  TYPE_ID_CHAR3,
+  TYPE_ID_CHAR4,
+
   // TYPE_ID_INT8,
   TYPE_ID_HALF,
   TYPE_ID_INT32,
@@ -278,8 +310,22 @@ enum TypeId {
   TYPE_ID_INT4,
 
   TYPE_ID_UCHAR,  // uint8
+  TYPE_ID_UCHAR2,
+  TYPE_ID_UCHAR3,
+  TYPE_ID_UCHAR4,
+
   TYPE_ID_UINT32,
   TYPE_ID_UINT64,
+
+  TYPE_ID_SHORT,
+  TYPE_ID_SHORT2,
+  TYPE_ID_SHORT3,
+  TYPE_ID_SHORT4,
+
+  TYPE_ID_USHORT,
+  TYPE_ID_USHORT2,
+  TYPE_ID_USHORT3,
+  TYPE_ID_USHORT4,
 
   TYPE_ID_UINT2,
   TYPE_ID_UINT3,
@@ -374,7 +420,7 @@ enum TypeId {
   TYPE_ID_PATH_VECTOR,
   TYPE_ID_TOKEN_VECTOR,
   TYPE_ID_RELATIONSHIP,
-  
+
   // -- end of base type for Property.
 
   TYPE_ID_TIMESAMPLES,
@@ -425,6 +471,7 @@ enum TypeId {
   TYPE_ID_SHADER_BEGIN = 1 << 11,
   TYPE_ID_SHADER,
   TYPE_ID_MATERIAL,
+  TYPE_ID_NODEGRAPH,
   TYPE_ID_SHADER_END,
 
   // Types for usdImaging and usdMtlx
@@ -450,11 +497,11 @@ enum TypeId {
 
   TYPE_ID_IMAGING_END,
 
-  // Ttpes for usdVol
+  // Types for usdVol
   TYPE_ID_VOL_BEGIN = 1 << 12,
   TYPE_ID_VOL_END,
 
-  // Ttpes for usdSkel
+  // Types for usdSkel
   TYPE_ID_SKEL_BEGIN = 1 << 13,
   TYPE_ID_SKEL_ROOT,
   TYPE_ID_SKELETON,
@@ -463,6 +510,14 @@ enum TypeId {
   TYPE_ID_SKEL_END,
 
   TYPE_ID_MODEL_END,
+
+  
+  // Types for API
+  TYPE_ID_API_BEGIN = 1 << 14,
+  TYPE_ID_COLLECTION,
+  TYPE_ID_COLLECTION_INSTANCE,
+  TYPE_ID_MATERIAL_BINDING,
+  TYPE_ID_API_END,
 
   // Base ID for user data type(less than `TYPE_ID_1D_ARRAY_BIT-1`)
   TYPE_ID_USER_BEGIN = 1 << 16,
@@ -502,6 +557,27 @@ inline half operator/(const half &a, const half &b) {
   return float_to_half_full(half_to_float(a) / half_to_float(b));
 }
 
+inline half& operator+=(half &a, const half &b) {
+  a = float_to_half_full(half_to_float(a) + half_to_float(b));
+  return a;
+}
+
+inline half& operator-=(half &a, const half &b) {
+  a = float_to_half_full(half_to_float(a) - half_to_float(b));
+  return a;
+}
+
+inline half& operator*=(half &a, const half &b) {
+  a = float_to_half_full(half_to_float(a) * half_to_float(b));
+  return a;
+}
+
+// TODO: save div
+inline half& operator/=(half &a, const half &b) {
+  a = float_to_half_full(half_to_float(a) / half_to_float(b));
+  return a;
+}
+
 inline half operator+(const half &a, float b) {
   return float_to_half_full(half_to_float(a) + b);
 }
@@ -533,6 +609,22 @@ inline half operator*(float a, const half &b) {
 inline half operator/(float a, const half &b) {
   return float_to_half_full(a / half_to_float(b));
 }
+
+using char2 = std::array<char, 2>;
+using char3 = std::array<char, 3>;
+using char4 = std::array<char, 4>;
+
+using uchar2 = std::array<uint8_t, 2>;
+using uchar3 = std::array<uint8_t, 3>;
+using uchar4 = std::array<uint8_t, 4>;
+
+using short2 = std::array<int16_t, 2>;
+using short3 = std::array<int16_t, 3>;
+using short4 = std::array<int16_t, 4>;
+
+using ushort2 = std::array<uint16_t, 2>;
+using ushort3 = std::array<uint16_t, 3>;
+using ushort4 = std::array<uint16_t, 4>;
 
 using int2 = std::array<int32_t, 2>;
 using int3 = std::array<int32_t, 3>;
@@ -604,6 +696,7 @@ struct matrix2f {
     return m;
   }
 
+  matrix2f(const matrix2d &rhs);
   matrix2f &operator=(const matrix2d &rhs);
   
   float m[2][2];
@@ -683,6 +776,7 @@ struct matrix3f {
     return m;
   }
 
+  matrix3f(const matrix3d &rhs);
   matrix3f &operator=(const matrix3d &rhs);
 
   float m[3][3];
@@ -1153,6 +1247,8 @@ MTy MatSub(const MTy &m, const MTy &n) {
   return ret;
 }
 
+// TODO: division
+
 inline matrix2f operator+(const matrix2f &a, const matrix2f &b) {
   matrix2f ret = MatAdd<matrix2f, float, 2>(a, b);
   return ret;
@@ -1317,6 +1413,8 @@ struct point3h {
   half &operator[](size_t idx) { return *(&x + idx); }
 };
 
+#if 0 // move to value-eval-util.hh
+
 inline point3h operator+(const float a, const point3h &b) {
   return {a + b.x, a + b.y, a + b.z};
 }
@@ -1397,6 +1495,7 @@ inline point3h operator*(const point3h &a, const point3h &b) {
 inline point3h operator/(const point3h &a, const point3h &b) {
   return {a.x / b.x, a.y / b.y, a.z / b.z};
 }
+#endif
 
 struct point3f {
   float x, y, z;
@@ -1405,6 +1504,7 @@ struct point3f {
   float &operator[](size_t idx) { return *(&x + idx); }
 };
 
+#if 0
 inline point3f operator+(const float a, const point3f &b) {
   return {a + b.x, a + b.y, a + b.z};
 }
@@ -1485,6 +1585,7 @@ inline point3f operator*(const point3f &a, const point3f &b) {
 inline point3f operator/(const point3f &a, const point3f &b) {
   return {a.x / b.x, a.y / b.y, a.z / b.z};
 }
+#endif
 
 struct point3d {
   double x, y, z;
@@ -1493,6 +1594,7 @@ struct point3d {
   double &operator[](size_t idx) { return *(&x + idx); }
 };
 
+#if 0
 inline point3d operator+(const double a, const point3d &b) {
   return {a + b.x, a + b.y, a + b.z};
 }
@@ -1573,6 +1675,7 @@ inline point3d operator*(const point3d &a, const point3d &b) {
 inline point3d operator/(const point3d &a, const point3d &b) {
   return {a.x / b.x, a.y / b.y, a.z / b.z};
 }
+#endif
 
 struct color3h {
   half r, g, b;
@@ -1684,6 +1787,8 @@ struct TypeTraits<void> {
   static constexpr uint32_t underlying_type_id() { return TYPE_ID_VOID; }
   static std::string type_name() { return "void"; }
   static std::string underlying_type_name() { return "void"; }
+  static bool is_role_type() { return false; }
+  static bool is_array() { return false; }
 };
 
 DEFINE_TYPE_TRAIT(std::nullptr_t, "null", TYPE_ID_NULL, 1);
@@ -1694,11 +1799,31 @@ DEFINE_TYPE_TRAIT(bool, kBool, TYPE_ID_BOOL, 1);
 DEFINE_TYPE_TRAIT(uint8_t, kUChar, TYPE_ID_UCHAR, 1);
 DEFINE_TYPE_TRAIT(half, kHalf, TYPE_ID_HALF, 1);
 
+DEFINE_TYPE_TRAIT(int16_t, kShort, TYPE_ID_SHORT, 1);
+DEFINE_TYPE_TRAIT(uint16_t, kUShort, TYPE_ID_USHORT, 1);
+
 DEFINE_TYPE_TRAIT(int32_t, kInt, TYPE_ID_INT32, 1);
 DEFINE_TYPE_TRAIT(uint32_t, kUInt, TYPE_ID_UINT32, 1);
 
 DEFINE_TYPE_TRAIT(int64_t, kInt64, TYPE_ID_INT64, 1);
 DEFINE_TYPE_TRAIT(uint64_t, kUInt64, TYPE_ID_UINT64, 1);
+
+DEFINE_TYPE_TRAIT(char, kChar, TYPE_ID_CHAR, 1);
+DEFINE_TYPE_TRAIT(char2, kChar2, TYPE_ID_CHAR2, 2);
+DEFINE_TYPE_TRAIT(char3, kChar3, TYPE_ID_CHAR3, 3);
+DEFINE_TYPE_TRAIT(char4, kChar4, TYPE_ID_CHAR4, 4);
+
+DEFINE_TYPE_TRAIT(uchar2, kUChar2, TYPE_ID_UCHAR2, 2);
+DEFINE_TYPE_TRAIT(uchar3, kUChar3, TYPE_ID_UCHAR3, 3);
+DEFINE_TYPE_TRAIT(uchar4, kUChar4, TYPE_ID_UCHAR4, 4);
+
+DEFINE_TYPE_TRAIT(short2, kShort2, TYPE_ID_SHORT2, 2);
+DEFINE_TYPE_TRAIT(short3, kShort3, TYPE_ID_SHORT3, 3);
+DEFINE_TYPE_TRAIT(short4, kShort4, TYPE_ID_SHORT4, 4);
+
+DEFINE_TYPE_TRAIT(ushort2, kUShort2, TYPE_ID_USHORT2, 2);
+DEFINE_TYPE_TRAIT(ushort3, kUShort3, TYPE_ID_USHORT3, 3);
+DEFINE_TYPE_TRAIT(ushort4, kUShort4, TYPE_ID_USHORT4, 4);
 
 DEFINE_TYPE_TRAIT(int2, kInt2, TYPE_ID_INT2, 2);
 DEFINE_TYPE_TRAIT(int3, kInt3, TYPE_ID_INT3, 3);
@@ -1793,6 +1918,8 @@ struct TypeTraits<std::vector<T>> {
   using value_type = std::vector<T>;
   static constexpr uint32_t ndim() { return 1; } /* array dim */
   static constexpr uint32_t ncomp() { return TypeTraits<T>::ncomp(); }
+  // Return the size of base type
+  static constexpr size_t size() { return TypeTraits<T>::size(); }
   static constexpr uint32_t type_id() { return
       TypeTraits<T>::type_id() | TYPE_ID_1D_ARRAY_BIT; }
   static constexpr uint32_t get_type_id() {
@@ -1803,6 +1930,8 @@ struct TypeTraits<std::vector<T>> {
   static std::string underlying_type_name() {
     return TypeTraits<T>::underlying_type_name() + "[]";
   }
+  static constexpr bool is_role_type() { return TypeTraits<T>::is_role_type(); }
+  static constexpr bool is_array() { return true; }
 };
 
 #if 0  // Current pxrUSD does not support 2D array
@@ -1896,33 +2025,55 @@ class Value {
   uint32_t type_id() const { return v_.type_id(); }
   uint32_t underlying_type_id() const { return v_.underlying_type_id(); }
 
+  //
+  // Cast value to given type.
+  //
+  // when `strict_cast` is false(default behavior), it supports casting type among role type and underlying type.
+  // (e.g. "float3" -> "color3f", "color3f" -> "vector3f", "normal3f[]" -> "float3[]")
+  //
   // Return nullptr when type conversion failed.
   template <class T>
-  const T *as() const {
+  const T *as(bool strict_cast = false) const {
     if (TypeTraits<T>::type_id() == v_.type_id()) {
       return linb::any_cast<const T>(&v_);
-    } else if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
-      // `roll` type. Can be able to cast to underlying type since the memory
-      // layout does not change.
-      return linb::any_cast<const T>(&v_);
-    } else {
-      return nullptr;
+    } else if (!strict_cast) {
+      // NOTE: linb::any_cast does type_id check, so use linb::cast(~= reinterpret_cast) here
+      if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
+        if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
+          return linb::cast<const T>(&v_);
+        }
+      } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
+        if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
+          return linb::cast<const T>(&v_);
+        }
+      }
     }
+
+    return nullptr;
   }
 
+  // Non const version of `as`.
+  //
   // Return nullptr when type conversion failed.
   template <class T>
-  T *as() {
+  T *as(bool strict_cast = false) {
     if (TypeTraits<T>::type_id() == v_.type_id()) {
       return linb::any_cast<T>(&v_);
-    } else if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
-      // `roll` type. Can be able to cast to underlying type since the memory
-      // layout does not change.
-      return linb::any_cast<T>(&v_);
-    } else {
-      return nullptr;
+    } else if (!strict_cast) {
+      if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
+        if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
+          return linb::cast<T>(&v_);
+        }
+      } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
+        if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
+          return linb::cast<T>(&v_);
+        }
+      }
     }
+
+    return nullptr;
   }
+
 
 #if 0
   // Useful function to retrieve concrete value with type T.
@@ -1937,7 +2088,7 @@ class Value {
 
   // Type-safe way to get concrete value.
   template <class T>
-  nonstd::optional<T> get_value() const {
+  nonstd::optional<T> get_value(bool strict_cast = false) const {
     if (TypeTraits<T>::type_id() == v_.type_id()) {
       const T *pv = linb::any_cast<const T>(&v_);
       if (!pv) {
@@ -1946,15 +2097,21 @@ class Value {
       }
 
       return std::move(*pv);
-    } else if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
-      // `roll` type. Can be able to cast to underlying type since the memory
-      // layout does not change.
-      // Use force cast
-      // TODO: type-check
-      return std::move(*linb::cast<const T>(&v_));
+    } else if (!strict_cast) {
+
+      if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
+        if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
+          return std::move(*linb::cast<const T>(&v_));
+        }
+      } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
+        if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
+          return std::move(*linb::cast<const T>(&v_));
+        }
+      }
     }
     return nonstd::nullopt;
   }
+
 
   template <class T>
   Value &operator=(const T &v) {
@@ -2020,11 +2177,82 @@ enum class TimeSampleInterpolationType {
 
 bool IsLerpSupportedType(uint32_t tyid);
 
+template<class T>
+struct LerpTraits
+{
+  static constexpr bool supported() {
+    return false;
+  }
+};
+
+#define DEFINE_LERP_TRAIT(ty) \
+template <> \
+struct LerpTraits<ty> { \
+  static constexpr bool supported() { \
+    return true; \
+  } \
+};  \
+template <> \
+struct LerpTraits<std::vector<ty>> { \
+  static constexpr bool supported() { \
+    return true; \
+  } \
+}; 
+
+DEFINE_LERP_TRAIT(value::half)
+DEFINE_LERP_TRAIT(value::half2)
+DEFINE_LERP_TRAIT(value::half3)
+DEFINE_LERP_TRAIT(value::half4)
+DEFINE_LERP_TRAIT(float)
+DEFINE_LERP_TRAIT(value::float2)
+DEFINE_LERP_TRAIT(value::float3)
+DEFINE_LERP_TRAIT(value::float4)
+DEFINE_LERP_TRAIT(double)
+DEFINE_LERP_TRAIT(value::double2)
+DEFINE_LERP_TRAIT(value::double3)
+DEFINE_LERP_TRAIT(value::double4)
+DEFINE_LERP_TRAIT(value::quath)
+DEFINE_LERP_TRAIT(value::quatf)
+DEFINE_LERP_TRAIT(value::quatd)
+DEFINE_LERP_TRAIT(value::matrix2f)
+DEFINE_LERP_TRAIT(value::matrix3f)
+DEFINE_LERP_TRAIT(value::matrix4f)
+DEFINE_LERP_TRAIT(value::matrix2d)
+DEFINE_LERP_TRAIT(value::matrix3d)
+DEFINE_LERP_TRAIT(value::matrix4d)
+DEFINE_LERP_TRAIT(value::timecode)
+DEFINE_LERP_TRAIT(value::normal3h)
+DEFINE_LERP_TRAIT(value::normal3f)
+DEFINE_LERP_TRAIT(value::normal3d)
+DEFINE_LERP_TRAIT(value::vector3h)
+DEFINE_LERP_TRAIT(value::vector3f)
+DEFINE_LERP_TRAIT(value::vector3d)
+DEFINE_LERP_TRAIT(value::point3h)
+DEFINE_LERP_TRAIT(value::point3f)
+DEFINE_LERP_TRAIT(value::point3d)
+DEFINE_LERP_TRAIT(value::color3h)
+DEFINE_LERP_TRAIT(value::color3f)
+DEFINE_LERP_TRAIT(value::color3d)
+DEFINE_LERP_TRAIT(value::color4h)
+DEFINE_LERP_TRAIT(value::color4f)
+DEFINE_LERP_TRAIT(value::color4d)
+DEFINE_LERP_TRAIT(value::texcoord2h)
+DEFINE_LERP_TRAIT(value::texcoord2f)
+DEFINE_LERP_TRAIT(value::texcoord2d)
+DEFINE_LERP_TRAIT(value::texcoord3h)
+DEFINE_LERP_TRAIT(value::texcoord3f)
+DEFINE_LERP_TRAIT(value::texcoord3d)
+DEFINE_LERP_TRAIT(value::frame4d)
+
+#undef DEFINE_LERP_TRAIT
+
 ///
 /// @param[in] dt interpolator [0.0, 1.0)
 ///
 bool Lerp(const value::Value &a, const value::Value &b, double dt,
           value::Value *dst);
+
+
 
 // Handy, but may not be efficient for large time samples(e.g. 1M samples or
 // more)
@@ -2061,6 +2289,9 @@ struct TimeSamples {
 
     _dirty = false;
   }
+
+  bool has_sample_at(const double t) const;
+  bool get_sample_at(const double t, Sample **s);
 
   nonstd::optional<double> get_time(size_t idx) const {
     if (idx >= _samples.size()) {
@@ -2148,13 +2379,71 @@ struct TimeSamples {
   }
 
 #if 1  // TODO: Write implementation in .cc
+
+    // Get value at specified time.
+    // For non-interpolatable types(includes enums and unknown types)
+    //
+    // Return `Held` value even when TimeSampleInterpolationType is
+    // Linear. Returns nullopt when specified time is out-of-range.
+    template<typename T, std::enable_if_t<!value::LerpTraits<T>::supported(), std::nullptr_t> = nullptr>
+    bool get(T *dst, double t = value::TimeCode::Default(),
+             value::TimeSampleInterpolationType interp =
+                 value::TimeSampleInterpolationType::Linear) const {
+
+      (void)interp;
+
+      if (!dst) {
+        return false;
+      }
+
+      if (empty()) {
+        return false;
+      }
+
+      if (_dirty) {
+        update();
+      }
+
+      if (value::TimeCode(t).is_default()) {
+        // TODO: Handle bloked
+        if (const auto pv = _samples[0].value.as<T>()) {
+          (*dst) = *pv;
+          return true;
+        }
+        return false;
+      } else {
+
+        if (_samples.size() == 1) {
+          if (const auto pv = _samples[0].value.as<T>()) {
+            (*dst) = *pv;
+            return true;
+          }
+          return false;
+        }
+
+        auto it = std::upper_bound(
+          _samples.begin(), _samples.end(), t,
+          [](double tval, const Sample &a) { return tval < a.t; });
+
+        const auto it_minus_1 = (it == _samples.begin()) ? _samples.begin() : (it - 1);
+
+        const value::Value &v = it_minus_1->value;
+
+        if (const T *pv = v.as<T>()) {
+          (*dst) = *pv;
+          return true;
+        }
+        return false;
+      }
+  }
+
   // Get value at specified time.
   // Return linearly interpolated value when TimeSampleInterpolationType is
-  // Linear. Returns nullopt when specified time is out-of-range.
-  template <typename T>
+  // Linear. Returns false when samples is empty or some internal error.
+  template<typename T, std::enable_if_t<value::LerpTraits<T>::supported(), std::nullptr_t> = nullptr>
   bool get(T *dst, double t = value::TimeCode::Default(),
            TimeSampleInterpolationType interp =
-               TimeSampleInterpolationType::Held) const {
+               TimeSampleInterpolationType::Linear) const {
     if (!dst) {
       return false;
     }
@@ -2170,18 +2459,35 @@ struct TimeSamples {
     if (value::TimeCode(t).is_default()) {
       // FIXME: Use the first item for now.
       // TODO: Handle bloked
-      (*dst) = _samples[0].value;
-      return true;
+      if (const auto pv = _samples[0].value.as<T>()) {
+        (*dst) = *pv;
+        return true;
+      }
+      return false;
     } else {
-      auto it = std::lower_bound(
-          _samples.begin(), _samples.end(), t,
-          [](const Sample &a, double tval) { return a.t < tval; });
+
+      if (_samples.size() == 1) {
+        if (const auto pv = _samples[0].value.as<T>()) {
+          (*dst) = *pv;
+          return true;
+        }
+        return true;
+      }
 
       if (interp == TimeSampleInterpolationType::Linear) {
+        auto it = std::lower_bound(
+            _samples.begin(), _samples.end(), t,
+            [](const Sample &a, double tval) { return a.t < tval; });
+
+
+        // MS STL does not allow seek vector iterator before begin
+        // Issue #110
+        const auto it_minus_1 = (it == _samples.begin()) ? _samples.begin() : (it - 1);
+
         size_t idx0 = size_t(std::max(
             int64_t(0),
             std::min(int64_t(_samples.size() - 1),
-                     int64_t(std::distance(_samples.begin(), it - 1)))));
+                     int64_t(std::distance(_samples.begin(), it_minus_1)))));
         size_t idx1 =
             size_t(std::max(int64_t(0), std::min(int64_t(_samples.size() - 1),
                                                  int64_t(idx0) + 1)));
@@ -2200,21 +2506,35 @@ struct TimeSamples {
         // Just in case.
         dt = std::max(0.0, std::min(1.0, dt));
 
-        const T &p0 = _samples[idx0].value;
-        const T &p1 = _samples[idx1].value;
+        const value::Value &p0 = _samples[idx0].value;
+        const value::Value &p1 = _samples[idx1].value;
 
-        const T p = lerp(p0, p1, dt);
-
-        (*dst) = std::move(p);
-        return true;
-      } else {
-        if (it == _samples.end()) {
-          // ???
+        value::Value p;
+        if (!Lerp(p0, p1, dt, &p)) {
           return false;
         }
 
-        (*dst) = it->value;
-        return true;
+        if (const auto pv = p.as<T>()) {
+          (*dst) = *pv;
+          return true;
+        }
+        return false;
+      } else {
+        // Held
+        auto it = std::upper_bound(
+          _samples.begin(), _samples.end(), t,
+          [](double tval, const Sample &a) { return tval < a.t; });
+
+        const auto it_minus_1 = (it == _samples.begin()) ? _samples.begin() : (it - 1);
+
+        const value::Value &v = it_minus_1->value;
+
+        if (const T *pv = v.as<T>()) {
+          (*dst) = *pv;
+          return true;
+        }
+        
+        return false;
       }
     }
 
@@ -2380,6 +2700,7 @@ struct AttribMap {
 #endif
 
 }  // namespace value
+
 }  // namespace tinyusdz
 
 namespace tinyusdz {

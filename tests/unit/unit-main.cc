@@ -12,6 +12,10 @@
 #include "unit-customdata.h"
 #include "unit-handle-allocator.h"
 #include "unit-math.h"
+#include "unit-ioutil.h"
+#include "unit-strutil.h"
+#include "unit-timesamples.h"
+#include "unit-pprint.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
@@ -31,6 +35,9 @@ TEST_LIST = {
   { "math_sin_pi_test", math_sin_pi_test },
   { "math_sin_cos_pi_test", math_sin_cos_pi_test },
   { "pathutil_test", pathutil_test },
+  { "ioutil_test", ioutil_test },
+  { "strutil_test", strutil_test },
+  { "timesamples_test", timesamples_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif

@@ -28,3 +28,4 @@ void value_types_test(void) {
   TEST_CHECK(!value::TryGetTypeName(value::TYPE_ID_ALL));
 
 }
+

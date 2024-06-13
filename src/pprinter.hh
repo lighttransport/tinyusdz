@@ -224,6 +224,8 @@ std::string to_string(const CustomDataType &customData);
 std::string to_string(const Layer &layer, const uint32_t indent = 0, bool closing_brace = true);
 std::string to_string(const PrimSpec &primspec, const uint32_t indent = 0, bool closing_brace = true);
 
+std::string to_string(const CollectionInstance::ExpansionRule rule);
+
 std::string print_xformOpOrder(const std::vector<XformOp> &xformOps,
                                const uint32_t indent);
 std::string print_xformOps(const std::vector<XformOp> &xformOps,
@@ -231,7 +233,7 @@ std::string print_xformOps(const std::vector<XformOp> &xformOps,
 std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent);
 
 // varname = optional variable name which is used when meta.get_name() is empty.
-std::string print_meta(const MetaVariable &meta, const uint32_t indent,
+std::string print_meta(const MetaVariable &meta, const uint32_t indent, bool emit_type_name,
                        const std::string &varname = std::string());
 std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent);
 std::string print_customData(const CustomDataType &customData,
@@ -268,12 +270,16 @@ std::string print_props(const std::map<std::string, Property> &props,
 std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent);
 std::string print_layer(const Layer &layer, const uint32_t indent);
 
+std::string print_material_binding(const MaterialBinding *mb, const uint32_t indent);
+std::string print_collection(const Collection *coll, const uint32_t indent);
+
 }  // namespace tinyusdz
 
 namespace std {
 
-std::ostream &operator<<(std::ostream &ofs, tinyusdz::Visibility v);
-std::ostream &operator<<(std::ostream &ofs, tinyusdz::Extent v);
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Visibility v);
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Extent v);
+std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Interpolation v);
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Layer &layer);
 
 }  // namespace std
