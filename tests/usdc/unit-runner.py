@@ -8,13 +8,13 @@ if __name__ == '__main__':
     from argparse import ArgumentParser
     parser = ArgumentParser()
     parser.add_argument("--basedir", type=str, default="tests/usdc")
-    parser.add_argument("--app", type=str, default="./build/simple_usdz_dump")
+    parser.add_argument("--app", type=str, default="./build/test_tinyusdz")
     args = parser.parse_args()
 
     app = args.app    
 
     failed = []
-    false_negatives = []
+    #false_negatives = []
     
     print("Basedir: ", args.basedir)
     print("App: ", args.app)
@@ -32,12 +32,12 @@ if __name__ == '__main__':
         cnt += 1
 
     # failure expected
-    for fname in glob.glob(os.path.join(args.basedir, "fail-case/*.usdc")):
+    for fname in glob.glob(os.path.join(args.basedir, "failure-case/*.usdc")):
         cmd = [app, fname]
 
         ret = subprocess.call(cmd)
         if ret == 0:
-            false_negatives.append(fname)
+            failed.append(fname)
 
         cnt += 1
          
@@ -48,9 +48,9 @@ if __name__ == '__main__':
             # failed
             print("ERROR: parse failed for : ", fname)
 
-    if len(false_negatives) > 0:
-        for fname in false_negatives:
-            print("WARN: parse should fail but reported success : ", fname)
+    #if len(false_negatives) > 0:
+    #    for fname in false_negatives:
+    #        print("WARN: parse should fail but reported success : ", fname)
 
     print("Tested {} USDC files.".format(cnt))
 

@@ -71,8 +71,8 @@ set(TINYUSDZ_DEP_SOURCES
   #../../src/external/string_id/string_id.cpp
   #../../src/external/string_id/error.cpp
   #../../src/external/string_id/database.cpp
-  ../../src/external/staticstruct.cc
-  ../../src/external/tinyxml2/tinyxml2.cpp
+  #../../src/external/staticstruct.cc
+  #../../src/external/tinyxml2/tinyxml2.cpp
   )
   #../../src/external/ryu/ryu/s2d.c
   #../../src/external/ryu/ryu/s2f.c)

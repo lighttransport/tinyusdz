@@ -11,9 +11,9 @@
 #endif
 #endif
 //
-#include <cstdio>
 #include <algorithm>
 #include <atomic>
+#include <cstdio>
 //#include <cassert>
 #include <cstdlib>
 #include <fstream>
@@ -31,8 +31,8 @@
 #include <vector>
 
 #include "ascii-parser.hh"
-#include "str-util.hh"
 #include "path-util.hh"
+#include "str-util.hh"
 #include "tiny-format.hh"
 
 //
@@ -56,6 +56,7 @@
 
 //
 
+#include "common-macros.inc"
 #include "io-util.hh"
 #include "pprinter.hh"
 #include "prim-types.hh"
@@ -64,8 +65,6 @@
 #include "tinyusdz.hh"
 #include "value-pprint.hh"
 #include "value-types.hh"
-
-#include "common-macros.inc"
 
 namespace tinyusdz {
 
@@ -77,127 +76,247 @@ constexpr auto kConnectSuffix = ".connect";
 
 constexpr auto kAscii = "[ASCII]";
 
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<bool>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<int32_t>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::int2>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::int3>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::int4>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<uint32_t>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::uint2>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::uint3>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::uint4>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<int64_t>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<uint64_t>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::half>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::half2>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::half3>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::half4>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<float>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::float2>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::float3>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::float4>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<double>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::double2>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::double3>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::double4>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::quath>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::quatf>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::quatd>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::texcoord2h>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::texcoord2f>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::texcoord2d>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::texcoord3h>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::texcoord3f>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::texcoord3d>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::point3h>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::point3f>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::point3d>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::normal3h>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::normal3f>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::normal3d>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::vector3h>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::vector3f>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::vector3d>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::color3h>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::color3f>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::color3d>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::color4h>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::color4f>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::color4d>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::matrix2f>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::matrix3f>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::matrix4f>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::matrix2d>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::matrix3d>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::matrix4d>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::token>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::StringData>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<std::string>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<Reference>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<Payload>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<Path>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<value::AssetPath>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<bool>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<int32_t>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::int2>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::int3>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::int4>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<uint32_t>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::uint2>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::uint3>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::uint4>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<int64_t>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<uint64_t>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::half>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::half2>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::half3>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::half4>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<float>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::float2>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::float3>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::float4>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<double>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::double2>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::double3>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::double4>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::quath>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::quatf>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::quatd>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::texcoord2h>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::texcoord2f>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::texcoord2d>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::texcoord3h>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::texcoord3f>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::texcoord3d>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::point3h>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::point3f>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::point3d>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::normal3h>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::normal3f>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::normal3d>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::vector3h>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::vector3f>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::vector3d>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::color3h>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::color3f>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::color3d>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::color4h>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::color4f>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::color4d>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::matrix2f>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::matrix3f>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::matrix4f>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::matrix2d>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::matrix3d>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::matrix4d>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::token>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::StringData>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<std::string>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<Reference>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<Payload>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<Path>> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<nonstd::optional<value::AssetPath>> *result);
 
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<bool> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<int32_t> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::int2> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::int3> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::int4> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<uint32_t> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uint2> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uint3> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uint4> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<int64_t> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<uint64_t> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half2> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half3> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half4> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<float> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float2> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float3> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float4> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<double> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double2> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double3> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double4> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quath> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quatf> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::quatd> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::texcoord2h> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::texcoord2f> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::texcoord2d> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::texcoord3h> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::texcoord3f> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::texcoord3d> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::point3h> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::point3f> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::point3d> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::normal3h> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::normal3f> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::normal3d> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::vector3h> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::vector3f> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::vector3d> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color3h> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color3f> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color3d> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color4h> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color4f> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::color4d> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2f> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3f> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4f> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix2d> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix3d> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::matrix4d> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::token> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::StringData> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<std::string> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<Reference> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<Payload> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<Path> *result);
-extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<value::AssetPath> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<bool> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<int32_t> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::int2> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::int3> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::int4> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<uint32_t> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::uint2> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::uint3> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::uint4> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<int64_t> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<uint64_t> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::half> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::half2> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::half3> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::half4> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<float> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::float2> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::float3> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::float4> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<double> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::double2> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::double3> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::double4> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::quath> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::quatf> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::quatd> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::texcoord2h> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::texcoord2f> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::texcoord2d> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::texcoord3h> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::texcoord3f> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::texcoord3d> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::point3h> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::point3f> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::point3d> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::normal3h> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::normal3f> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::normal3d> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::vector3h> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::vector3f> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::vector3d> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::color3h> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::color3f> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::color3d> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::color4h> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::color4f> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::color4d> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::matrix2f> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::matrix3f> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::matrix4f> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::matrix2d> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::matrix3d> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::matrix4d> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::token> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::StringData> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<std::string> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<Reference> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<Payload> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<Path> *result);
+extern template bool AsciiParser::ParseBasicTypeArray(
+    std::vector<value::AssetPath> *result);
 
 static void RegisterStageMetas(
     std::map<std::string, AsciiParser::VariableDef> &metas) {
@@ -233,8 +352,8 @@ static void RegisterStageMetas(
 
   // USDZ extension
   metas["autoPlay"] = AsciiParser::VariableDef(value::kBool, "autoPlay");
-  metas["playbackMode"] = AsciiParser::VariableDef(value::kToken, "playbackMode");
-
+  metas["playbackMode"] =
+      AsciiParser::VariableDef(value::kToken, "playbackMode");
 }
 
 static void RegisterPrimMetas(
@@ -274,7 +393,8 @@ static void RegisterPrimMetas(
 
   metas["active"] = AsciiParser::VariableDef(value::kBool, "active");
   metas["hidden"] = AsciiParser::VariableDef(value::kBool, "hidden");
-  metas["instanceable"] = AsciiParser::VariableDef(value::kBool, "instanceable");
+  metas["instanceable"] =
+      AsciiParser::VariableDef(value::kBool, "instanceable");
 
   // ListOp
   metas["apiSchemas"] = AsciiParser::VariableDef(
@@ -282,17 +402,17 @@ static void RegisterPrimMetas(
 
   // usdShade
   // NOTE: items are expected to be all string type.
-  metas["sdrMetadata"] = AsciiParser::VariableDef(value::kDictionary, "sdrMetadata");
+  metas["sdrMetadata"] =
+      AsciiParser::VariableDef(value::kDictionary, "sdrMetadata");
 
-  metas["clips"] =
-      AsciiParser::VariableDef(value::kDictionary, "clips");
-
+  metas["clips"] = AsciiParser::VariableDef(value::kDictionary, "clips");
 
   // USDZ extension
   metas["sceneName"] = AsciiParser::VariableDef(value::kString, "sceneName");
 
   // Builtin from pxrUSD 23.xx
-  metas["displayName"] = AsciiParser::VariableDef(value::kString, "displayName");
+  metas["displayName"] =
+      AsciiParser::VariableDef(value::kString, "displayName");
 }
 
 static void RegisterPropMetas(
@@ -305,6 +425,10 @@ static void RegisterPropMetas(
   metas["customData"] =
       AsciiParser::VariableDef(value::kDictionary, "customData");
 
+  // for sparse primvars
+  metas["unauthoredValuesIndex"] =
+      AsciiParser::VariableDef(value::kInt, "unauthoredValuesIndex");
+
   // usdSkel
   metas["elementSize"] = AsciiParser::VariableDef(value::kInt, "elementSize");
 
@@ -313,21 +437,25 @@ static void RegisterPropMetas(
   metas["weight"] = AsciiParser::VariableDef(value::kDouble, "weight");
 
   // usdShade?
-  metas["colorSpace"] = AsciiParser::VariableDef(value::kInt, "colorSpace");
+  metas["colorSpace"] = AsciiParser::VariableDef(value::kToken, "colorSpace");
 
-  metas["interpolation"] = AsciiParser::VariableDef(value::kToken, "interpolation");
+  metas["interpolation"] =
+      AsciiParser::VariableDef(value::kToken, "interpolation");
 
   // usdShade
-  metas["bindMaterialAs"] = AsciiParser::VariableDef(value::kToken, "bindMaterialAs");
-  metas["connectability"] = AsciiParser::VariableDef(value::kToken, "connectability");
+  metas["bindMaterialAs"] =
+      AsciiParser::VariableDef(value::kToken, "bindMaterialAs");
+  metas["connectability"] =
+      AsciiParser::VariableDef(value::kToken, "connectability");
   metas["renderType"] = AsciiParser::VariableDef(value::kToken, "renderType");
   metas["outputName"] = AsciiParser::VariableDef(value::kToken, "outputName");
-  metas["sdrMetadata"] = AsciiParser::VariableDef(value::kDictionary, "sdrMetadata");
+  metas["sdrMetadata"] =
+      AsciiParser::VariableDef(value::kDictionary, "sdrMetadata");
 
   // Builtin from pxrUSD 23.xx
-  metas["displayName"] = AsciiParser::VariableDef(value::kString, "displayName");
+  metas["displayName"] =
+      AsciiParser::VariableDef(value::kString, "displayName");
 }
-
 
 static void RegisterPrimAttrTypes(std::set<std::string> &d) {
   d.clear();
@@ -510,14 +638,13 @@ std::string AsciiParser::GetError() {
     return std::string();
   }
 
-
   std::stringstream ss;
   while (!err_stack.empty()) {
     ErrorDiagnostic diag = err_stack.top();
 
-    ss << "err_stack[" << (err_stack.size() - 1) << "] USDA source near line " << (diag.cursor.row + 1) << ", col "
-       << (diag.cursor.col + 1) << ": ";
-    ss << diag.err; // assume message contains newline.
+    ss << "err_stack[" << (err_stack.size() - 1) << "] USDA source near line "
+       << (diag.cursor.row + 1) << ", col " << (diag.cursor.col + 1) << ": ";
+    ss << diag.err;  // assume message contains newline.
 
     err_stack.pop();
   }
@@ -536,7 +663,7 @@ std::string AsciiParser::GetWarning() {
 
     ss << "USDA source near line " << (diag.cursor.row + 1) << ", col "
        << (diag.cursor.col + 1) << ": ";
-    ss << diag.err; // assume message contains newline.
+    ss << diag.err;  // assume message contains newline.
 
     warn_stack.pop();
   }
@@ -546,64 +673,63 @@ std::string AsciiParser::GetWarning() {
 
 // -- end basic
 
-
 // types: Allowd in dict.
-// std::string is not included since its represented as StringData or std::string.
+// std::string is not included since its represented as StringData or
+// std::string.
 // TODO: Include timecode?
 #define APPLY_TO_METAVARIABLE_TYPE(__FUNC) \
-  __FUNC(value::token)         \
-  __FUNC(bool)                 \
-  __FUNC(value::half)                 \
-  __FUNC(value::half2)                \
-  __FUNC(value::half3)                \
-  __FUNC(value::half4)                \
-  __FUNC(int32_t)              \
-  __FUNC(uint32_t)             \
-  __FUNC(value::int2)                 \
-  __FUNC(value::int3)                 \
-  __FUNC(value::int4)                 \
-  __FUNC(value::uint2)                \
-  __FUNC(value::uint3)                \
-  __FUNC(value::uint4)                \
-  __FUNC(int64_t)              \
-  __FUNC(uint64_t)             \
-  __FUNC(float)                \
-  __FUNC(value::float2)               \
-  __FUNC(value::float3)               \
-  __FUNC(value::float4)               \
-  __FUNC(double)               \
-  __FUNC(value::double2)              \
-  __FUNC(value::double3)              \
-  __FUNC(value::double4)              \
-  __FUNC(value::matrix2f)             \
-  __FUNC(value::matrix3f)             \
-  __FUNC(value::matrix4f)             \
-  __FUNC(value::matrix2d)             \
-  __FUNC(value::matrix3d)             \
-  __FUNC(value::matrix4d)             \
-  __FUNC(value::quath)                \
-  __FUNC(value::quatf)                \
-  __FUNC(value::quatd)                \
-  __FUNC(value::normal3h)             \
-  __FUNC(value::normal3f)             \
-  __FUNC(value::normal3d)             \
-  __FUNC(value::vector3h)             \
-  __FUNC(value::vector3f)             \
-  __FUNC(value::vector3d)             \
-  __FUNC(value::point3h)              \
-  __FUNC(value::point3f)              \
-  __FUNC(value::point3d)              \
-  __FUNC(value::color3f)              \
-  __FUNC(value::color3d)              \
-  __FUNC(value::color4f)              \
-  __FUNC(value::color4d)              \
-  __FUNC(value::texcoord2h)           \
-  __FUNC(value::texcoord2f)           \
-  __FUNC(value::texcoord2d)           \
-  __FUNC(value::texcoord3h)           \
-  __FUNC(value::texcoord3f)           \
+  __FUNC(value::token)                     \
+  __FUNC(bool)                             \
+  __FUNC(value::half)                      \
+  __FUNC(value::half2)                     \
+  __FUNC(value::half3)                     \
+  __FUNC(value::half4)                     \
+  __FUNC(int32_t)                          \
+  __FUNC(uint32_t)                         \
+  __FUNC(value::int2)                      \
+  __FUNC(value::int3)                      \
+  __FUNC(value::int4)                      \
+  __FUNC(value::uint2)                     \
+  __FUNC(value::uint3)                     \
+  __FUNC(value::uint4)                     \
+  __FUNC(int64_t)                          \
+  __FUNC(uint64_t)                         \
+  __FUNC(float)                            \
+  __FUNC(value::float2)                    \
+  __FUNC(value::float3)                    \
+  __FUNC(value::float4)                    \
+  __FUNC(double)                           \
+  __FUNC(value::double2)                   \
+  __FUNC(value::double3)                   \
+  __FUNC(value::double4)                   \
+  __FUNC(value::matrix2f)                  \
+  __FUNC(value::matrix3f)                  \
+  __FUNC(value::matrix4f)                  \
+  __FUNC(value::matrix2d)                  \
+  __FUNC(value::matrix3d)                  \
+  __FUNC(value::matrix4d)                  \
+  __FUNC(value::quath)                     \
+  __FUNC(value::quatf)                     \
+  __FUNC(value::quatd)                     \
+  __FUNC(value::normal3h)                  \
+  __FUNC(value::normal3f)                  \
+  __FUNC(value::normal3d)                  \
+  __FUNC(value::vector3h)                  \
+  __FUNC(value::vector3f)                  \
+  __FUNC(value::vector3d)                  \
+  __FUNC(value::point3h)                   \
+  __FUNC(value::point3f)                   \
+  __FUNC(value::point3d)                   \
+  __FUNC(value::color3f)                   \
+  __FUNC(value::color3d)                   \
+  __FUNC(value::color4f)                   \
+  __FUNC(value::color4d)                   \
+  __FUNC(value::texcoord2h)                \
+  __FUNC(value::texcoord2f)                \
+  __FUNC(value::texcoord2d)                \
+  __FUNC(value::texcoord3h)                \
+  __FUNC(value::texcoord3f)                \
   __FUNC(value::texcoord3d)
-
 
 bool AsciiParser::ParseDictElement(std::string *out_key,
                                    MetaVariable *out_var) {
@@ -690,70 +816,77 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
 
   // TODO: Unify code with ParseMetaValue()
 
-#define PARSE_BASE_TYPE(__ty) case value::TypeTraits<__ty>::type_id(): { \
-    if (array_qual) { \
-      std::vector<__ty> vss; \
-      if (!ParseBasicTypeArray(&vss)) { \
-        PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse a value of type `{}[]`", value::TypeTraits<__ty>::type_name())); \
-      } \
-      var.set_value(vss); \
-    } else { \
-      __ty val; \
-      if (!ReadBasicType(&val)) { \
-        PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse a value of type `{}`", value::TypeTraits<__ty>::type_name())); \
-      } \
-      var.set_value(val); \
-    } \
-    break; \
+#define PARSE_BASE_TYPE(__ty)                                     \
+  case value::TypeTraits<__ty>::type_id(): {                      \
+    if (array_qual) {                                             \
+      std::vector<__ty> vss;                                      \
+      if (!ParseBasicTypeArray(&vss)) {                           \
+        PUSH_ERROR_AND_RETURN(                                    \
+            fmt::format("Failed to parse a value of type `{}[]`", \
+                        value::TypeTraits<__ty>::type_name()));   \
+      }                                                           \
+      var.set_value(vss);                                         \
+    } else {                                                      \
+      __ty val;                                                   \
+      if (!ReadBasicType(&val)) {                                 \
+        PUSH_ERROR_AND_RETURN(                                    \
+            fmt::format("Failed to parse a value of type `{}`",   \
+                        value::TypeTraits<__ty>::type_name()));   \
+      }                                                           \
+      var.set_value(val);                                         \
+    }                                                             \
+    break;                                                        \
   }
 
   switch (tyid) {
-  APPLY_TO_METAVARIABLE_TYPE(PARSE_BASE_TYPE)
-  case value::TYPE_ID_STRING: {
-    if (array_qual) {
-      std::vector<value::StringData> strs;
-      if (!ParseBasicTypeArray(&strs)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `string[]`");
+    APPLY_TO_METAVARIABLE_TYPE(PARSE_BASE_TYPE)
+    case value::TYPE_ID_STRING: {
+      // FIXME: Use std::string
+      if (array_qual) {
+        std::vector<value::StringData> strs;
+        if (!ParseBasicTypeArray(&strs)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse `string[]`");
+        }
+        var.set_value(strs);
+      } else {
+        value::StringData str;
+        if (!ReadBasicType(&str)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse `string`");
+        }
+        var.set_value(str);
       }
-      var.set_value(strs);
-    } else {
-      value::StringData str;
-      if (!ReadBasicType(&str)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `string`");
-      }
-      var.set_value(str);
+      break;
     }
-    break;
-  }
-  case value::TYPE_ID_ASSET_PATH: {
-    if (array_qual) {
-      std::vector<value::AssetPath> arrs;
-      if (!ParseBasicTypeArray(&arrs)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `asset[]`");
+    case value::TYPE_ID_ASSET_PATH: {
+      if (array_qual) {
+        std::vector<value::AssetPath> arrs;
+        if (!ParseBasicTypeArray(&arrs)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse `asset[]`");
+        }
+        var.set_value(arrs);
+      } else {
+        value::AssetPath asset;
+        if (!ReadBasicType(&asset)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse `asset`");
+        }
+        var.set_value(asset);
       }
-      var.set_value(arrs);
-    } else {
-      value::AssetPath asset;
-      if (!ReadBasicType(&asset)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `asset`");
-      }
-      var.set_value(asset);
+      break;
     }
-    break;
-  }
-  case value::TYPE_ID_DICT: {
-    Dictionary dict;
+    case value::TYPE_ID_DICT: {
+      Dictionary dict;
 
-    DCOUT("Parse dictionary");
-    if (!ParseDict(&dict)) {
-      PUSH_ERROR_AND_RETURN("Failed to parse `dictionary`");
+      DCOUT("Parse dictionary");
+      if (!ParseDict(&dict)) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `dictionary`");
+      }
+      var.set_value(dict);
+      break;
     }
-    var.set_value(dict);
-    break;
-  }
-  default: {
-    PUSH_ERROR_AND_RETURN("Unsupported or invalid type for Metadatum:" + type_name);
-  }
+    default: {
+      PUSH_ERROR_AND_RETURN("Unsupported or invalid type for Metadatum:" +
+                            type_name);
+    }
   }
 
 #undef PARSE_BASE_TYPE
@@ -792,12 +925,12 @@ bool AsciiParser::MaybeCustom() {
 }
 
 bool AsciiParser::ParseDict(std::map<std::string, MetaVariable> *out_dict) {
-  // '{' (type name '=' value)+ '}'
+  // '{' comment | (type name '=' value)+ '}'
   if (!Expect('{')) {
     return false;
   }
 
-  if (!SkipWhitespaceAndNewline()) {
+  if (!SkipCommentAndWhitespaceAndNewline()) {
     return false;
   }
 
@@ -820,7 +953,7 @@ bool AsciiParser::ParseDict(std::map<std::string, MetaVariable> *out_dict) {
         PUSH_ERROR_AND_RETURN("Failed to parse dict element.");
       }
 
-      if (!SkipWhitespaceAndNewline()) {
+      if (!SkipCommentAndWhitespaceAndNewline()) {
         return false;
       }
 
@@ -833,7 +966,7 @@ bool AsciiParser::ParseDict(std::map<std::string, MetaVariable> *out_dict) {
     }
   }
 
-  if (!SkipWhitespaceAndNewline()) {
+  if (!SkipCommentAndWhitespaceAndNewline()) {
     return false;
   }
 
@@ -1006,7 +1139,8 @@ bool AsciiParser::MaybeListEditQual(tinyusdz::ListEditQual *qual) {
   return true;
 }
 
-bool AsciiParser::MaybeVariability(tinyusdz::Variability *variability, bool *varying_authored) {
+bool AsciiParser::MaybeVariability(tinyusdz::Variability *variability,
+                                   bool *varying_authored) {
   if (!SkipWhitespace()) {
     return false;
   }
@@ -1041,7 +1175,6 @@ bool AsciiParser::MaybeVariability(tinyusdz::Variability *variability, bool *var
 bool AsciiParser::IsSupportedPrimType(const std::string &ty) {
   return _supported_prim_types.count(ty);
 }
-
 
 bool AsciiParser::IsSupportedPrimAttrType(const std::string &ty) {
   return _supported_prim_attr_types.count(ty);
@@ -1161,11 +1294,11 @@ bool AsciiParser::MaybeString(value::StringData *str) {
 
       if (nc == '\'') {
         ss << "'";
-        _sr->seek_from_current(1); // advance 1 char
+        _sr->seek_from_current(1);  // advance 1 char
         continue;
       } else if (nc == '"') {
         ss << "\"";
-        _sr->seek_from_current(1); // advance 1 char
+        _sr->seek_from_current(1);  // advance 1 char
         continue;
       }
     }
@@ -1262,22 +1395,18 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
         return false;
       }
 
-      if (buf[0] == '\'' &&
-          buf[1] == '\'' &&
-          buf[2] == '\'') {
+      if (buf[0] == '\'' && buf[1] == '\'' && buf[2] == '\'') {
         str_buf << "'''";
         // advance
         _sr->seek_from_current(3);
         locinfo.col += 3;
         continue;
-      } else if (buf[0] == '"' &&
-            buf[1] == '"' &&
-            buf[2] == '"') {
-          str_buf << "\"\"\"";
-          // advance
-          _sr->seek_from_current(3);
-          locinfo.col += 3;
-          continue;
+      } else if (buf[0] == '"' && buf[1] == '"' && buf[2] == '"') {
+        str_buf << "\"\"\"";
+        // advance
+        _sr->seek_from_current(3);
+        locinfo.col += 3;
+        continue;
       }
     }
 
@@ -1293,7 +1422,6 @@ bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
       double_quote_count = 0;
       single_quote_count = 0;
     }
-
 
     // Update loc info
     locinfo.col++;
@@ -1420,10 +1548,13 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
     ss << c;
   }
 
-  // ':' must lie in the middle of string literal
-  if (ss.str().back() == ':') {
-    PUSH_ERROR_AND_RETURN("PrimAttr name must not ends with `:`\n");
-    return false;
+  {
+    std::string name_err;
+    if (!pathutil::ValidatePropPath(Path("", ss.str()), &name_err)) {
+      PUSH_ERROR_AND_RETURN_TAG(
+          kAscii,
+          fmt::format("Invalid Property name `{}`: {}", ss.str(), name_err));
+    }
   }
 
   // '.' must lie in the middle of string literal
@@ -1432,7 +1563,6 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
     return false;
   }
 
-  // Currently we only support '.connect'
   std::string tok = ss.str();
 
   if (contains(tok, '.')) {
@@ -1550,7 +1680,6 @@ bool AsciiParser::ReadPathIdentifier(std::string *path_identifier) {
 }
 
 bool AsciiParser::ReadUntilNewline(std::string *str) {
-
   std::stringstream ss;
 
   while (!Eof()) {
@@ -1583,7 +1712,6 @@ bool AsciiParser::ReadUntilNewline(std::string *str) {
 
         break;
       }
-
     }
 
     ss << c;
@@ -1721,9 +1849,11 @@ bool AsciiParser::ParseStageMetaOpt() {
               "\"" +
               s + "\"(Note: Case sensitive)");
         } else {
-          PUSH_WARN("Ignore unknown `upAxis` value. Must be \"X\", \"Y\" or \"Z\", but got "
-          "\"" +
-          s + "\"(Note: Case sensitive). Use default upAxis `Y`.");
+          PUSH_WARN(
+              "Ignore unknown `upAxis` value. Must be \"X\", \"Y\" or \"Z\", "
+              "but got "
+              "\"" +
+              s + "\"(Note: Case sensitive). Use default upAxis `Y`.");
           _stage_metas.upAxis = Axis::Y;
         }
       }
@@ -1832,7 +1962,7 @@ bool AsciiParser::ParseStageMetaOpt() {
 }
 
 // Parse Stage meta
-// meta = ( metadata_opt )
+// meta = '(' (comment | metadata_opt)+ ')'
 //      ;
 bool AsciiParser::ParseStageMetas() {
   if (!Expect('(')) {
@@ -1864,7 +1994,7 @@ bool AsciiParser::ParseStageMetas() {
       return true;
 
     } else {
-      if (!SkipWhitespace()) {
+      if (!SkipCommentAndWhitespaceAndNewline()) {
         // eof
         return false;
       }
@@ -2064,7 +2194,8 @@ bool AsciiParser::SkipWhitespaceAndNewline(const bool allow_semicolon) {
   return true;
 }
 
-bool AsciiParser::SkipCommentAndWhitespaceAndNewline(const bool allow_semicolon) {
+bool AsciiParser::SkipCommentAndWhitespaceAndNewline(
+    const bool allow_semicolon) {
   // Skip multiple line of comments.
   while (!Eof()) {
     char c;
@@ -2259,8 +2390,8 @@ bool AsciiParser::ParseAssetIdentifier(value::AssetPath *out,
       // ok
     } else {
       std::string sstr{s};
-      PUSH_ERROR_AND_RETURN("Asset must start with '@', '\'' or '\"', but got '" + sstr +
-                            "'");
+      PUSH_ERROR_AND_RETURN(
+          "Asset must start with '@', '\'' or '\"', but got '" + sstr + "'");
     }
 
     std::string tok;
@@ -2380,10 +2511,10 @@ bool AsciiParser::ParseReference(Reference *out, bool *triple_deliminated) {
       // No Asset Identifier.
       out->asset_path = value::AssetPath("");
     } else {
-
       value::AssetPath ap;
       if (!ParseAssetIdentifier(&ap, triple_deliminated)) {
-        PUSH_ERROR_AND_RETURN_TAG(kAscii, "Failed to parse asset path identifier.");
+        PUSH_ERROR_AND_RETURN_TAG(kAscii,
+                                  "Failed to parse asset path identifier.");
       }
       out->asset_path = ap;
     }
@@ -2441,10 +2572,10 @@ bool AsciiParser::ParsePayload(Payload *out, bool *triple_deliminated) {
       // No Asset Identifier.
       out->asset_path = value::AssetPath("");
     } else {
-
       value::AssetPath ap;
       if (!ParseAssetIdentifier(&ap, triple_deliminated)) {
-        PUSH_ERROR_AND_RETURN_TAG(kAscii, "Failed to parse asset path identifier.");
+        PUSH_ERROR_AND_RETURN_TAG(kAscii,
+                                  "Failed to parse asset path identifier.");
       }
       out->asset_path = ap;
     }
@@ -2497,7 +2628,7 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
   if (endsWith(vartype, "[]")) {
     vartype = removeSuffix(vartype, "[]");
     array_qual = true;
-  } else if (def.allow_array_type) { // variable can be array
+  } else if (def.allow_array_type) {  // variable can be array
     // Seek '['
     char c;
     if (LookChar1(&c)) {
@@ -2509,21 +2640,26 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
 
   uint32_t tyid = value::GetTypeId(vartype);
 
-#define PARSE_BASE_TYPE(__ty) case value::TypeTraits<__ty>::type_id(): { \
-    if (array_qual) { \
-      std::vector<__ty> vss; \
-      if (!ParseBasicTypeArray(&vss)) { \
-        PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse a value of type `{}[]`", value::TypeTraits<__ty>::type_name())); \
-      } \
-      var.set_value(vss); \
-    } else { \
-      __ty val; \
-      if (!ReadBasicType(&val)) { \
-        PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse a value of type `{}`", value::TypeTraits<__ty>::type_name())); \
-      } \
-      var.set_value(val); \
-    } \
-    break; \
+#define PARSE_BASE_TYPE(__ty)                                     \
+  case value::TypeTraits<__ty>::type_id(): {                      \
+    if (array_qual) {                                             \
+      std::vector<__ty> vss;                                      \
+      if (!ParseBasicTypeArray(&vss)) {                           \
+        PUSH_ERROR_AND_RETURN(                                    \
+            fmt::format("Failed to parse a value of type `{}[]`", \
+                        value::TypeTraits<__ty>::type_name()));   \
+      }                                                           \
+      var.set_value(vss);                                         \
+    } else {                                                      \
+      __ty val;                                                   \
+      if (!ReadBasicType(&val)) {                                 \
+        PUSH_ERROR_AND_RETURN(                                    \
+            fmt::format("Failed to parse a value of type `{}`",   \
+                        value::TypeTraits<__ty>::type_name()));   \
+      }                                                           \
+      var.set_value(val);                                         \
+    }                                                             \
+    break;                                                        \
   }
 
   // Special treatment for "Reference" and "Payload"
@@ -2594,56 +2730,57 @@ bool AsciiParser::ParseMetaValue(const VariableDef &def, MetaVariable *outvar) {
     }
   } else {
     switch (tyid) {
-    APPLY_TO_METAVARIABLE_TYPE(PARSE_BASE_TYPE)
-    case value::TYPE_ID_STRING: {
-      if (array_qual) {
-        std::vector<std::string> strs;
-        if (!ParseBasicTypeArray(&strs)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse `string[]`");
+      APPLY_TO_METAVARIABLE_TYPE(PARSE_BASE_TYPE)
+      case value::TYPE_ID_STRING: {
+        if (array_qual) {
+          std::vector<std::string> strs;
+          if (!ParseBasicTypeArray(&strs)) {
+            PUSH_ERROR_AND_RETURN("Failed to parse `string[]`");
+          }
+          var.set_value(strs);
+        } else {
+          std::string str;
+          if (!ReadBasicType(&str)) {
+            PUSH_ERROR_AND_RETURN("Failed to parse `string`");
+          }
+          var.set_value(str);
         }
-        var.set_value(strs);
-      } else {
-        std::string str;
-        if (!ReadBasicType(&str)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse `string`");
-        }
-        var.set_value(str);
+        break;
       }
-      break;
-    }
-    case value::TYPE_ID_ASSET_PATH: {
-      if (array_qual) {
-        std::vector<value::AssetPath> arrs;
-        if (!ParseBasicTypeArray(&arrs)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse `asset[]`");
+      case value::TYPE_ID_ASSET_PATH: {
+        if (array_qual) {
+          std::vector<value::AssetPath> arrs;
+          if (!ParseBasicTypeArray(&arrs)) {
+            PUSH_ERROR_AND_RETURN("Failed to parse `asset[]`");
+          }
+          var.set_value(arrs);
+        } else {
+          value::AssetPath asset;
+          if (!ReadBasicType(&asset)) {
+            PUSH_ERROR_AND_RETURN("Failed to parse `asset`");
+          }
+          var.set_value(asset);
         }
-        var.set_value(arrs);
-      } else {
-        value::AssetPath asset;
-        if (!ReadBasicType(&asset)) {
-          PUSH_ERROR_AND_RETURN("Failed to parse `asset`");
-        }
-        var.set_value(asset);
+        break;
       }
-      break;
-    }
-    case value::TYPE_ID_DICT: {
-      Dictionary dict;
+      case value::TYPE_ID_DICT: {
+        Dictionary dict;
 
-      DCOUT("Parse dictionary");
-      if (!ParseDict(&dict)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse `dictionary`");
+        DCOUT("Parse dictionary");
+        if (!ParseDict(&dict)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse `dictionary`");
+        }
+        var.set_value(dict);
+        break;
       }
-      var.set_value(dict);
-      break;
-    }
-    default: {
-      std::string tyname = vartype;
-      if (array_qual) {
-        tyname += "[]";
+      default: {
+        std::string tyname = vartype;
+        if (array_qual) {
+          tyname += "[]";
+        }
+        PUSH_ERROR_AND_RETURN("Unsupported or invalid type for Metadatum:" +
+                              tyname);
       }
-      PUSH_ERROR_AND_RETURN("Unsupported or invalid type for Metadatum:" + tyname);
-    }
     }
   }
 
@@ -2769,7 +2906,6 @@ bool AsciiParser::LexFloat(std::string *result) {
     _sr->seek_from_current(-1);
     return true;
   }
-
 
   if (Eof()) {
     (*result) = ss.str();
@@ -2985,7 +3121,6 @@ AsciiParser::ParsePrimMeta() {
 
     return std::make_pair(qual, var);
   } else {
-
     if (auto pv = GetPrimMetaDefinition(varname)) {
       MetaVariable var;
       const auto vardef = pv.value();
@@ -2997,15 +3132,15 @@ AsciiParser::ParsePrimMeta() {
 
       return std::make_pair(qual, var);
     } else {
-      PUSH_ERROR(fmt::format("[Internal error] Unsupported/unimplemented PrimSpec metadata {}", varname));
+      PUSH_ERROR(fmt::format(
+          "[Internal error] Unsupported/unimplemented PrimSpec metadata {}",
+          varname));
       return nonstd::nullopt;
     }
   }
-
 }
 
-bool AsciiParser::ParsePrimMetas(
-    PrimMetaMap *args) {
+bool AsciiParser::ParsePrimMetas(PrimMetaMap *args) {
   // '(' args ')'
   // args = list of argument, separated by newline.
 
@@ -3136,8 +3271,18 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
 
       bool supported = _supported_prop_metas.count(varname);
       if (!supported) {
-        PUSH_ERROR_AND_RETURN_TAG(kAscii,
+        PUSH_ERROR_AND_RETURN_TAG(
+            kAscii,
             fmt::format("Unsupported Property metadatum name: {}", varname));
+      }
+
+      {
+        std::string name_err;
+        if (!pathutil::ValidatePropPath(Path("", varname), &name_err)) {
+          PUSH_ERROR_AND_RETURN_TAG(
+              kAscii,
+              fmt::format("Invalid Property name `{}`: {}", varname, name_err));
+        }
       }
 
       if (!SkipWhitespaceAndNewline()) {
@@ -3179,7 +3324,17 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
         // Add as custom meta value.
         MetaVariable metavar;
         metavar.set_value("colorSpace", tok);
-        out_meta->meta.emplace("colorSpace", metavar);
+        out_meta->meta["colorSpace"] = metavar;
+      } else if (varname == "unauthoredValuesIndex") {
+        int value;
+        if (!ReadBasicType(&value)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse `unauthoredValuesIndex`");
+        }
+
+        DCOUT("Got `unauthoredValuesIndex` meta : " << value);
+        MetaVariable metavar;
+        metavar.set_value("unauthoredValuesIndex", value);
+        out_meta->meta["unauthoredValuesIndex"] = metavar;
       } else if (varname == "customData") {
         Dictionary dict;
 
@@ -3203,7 +3358,8 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
         if (!ReadBasicType(&tok)) {
           PUSH_ERROR_AND_RETURN("Failed to parse `bindMaterialAs`");
         }
-        if ((tok.str() == kWeaderThanDescendants) || (tok.str() == kStrongerThanDescendants)) {
+        if ((tok.str() == kWeaderThanDescendants) ||
+            (tok.str() == kStrongerThanDescendants)) {
           // ok
         } else {
           // still valid though
@@ -3260,11 +3416,15 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
           metavar.set_name(varname);
 
           // add to custom meta
-          out_meta->meta.emplace(varname, metavar);
+          out_meta->meta[varname] = metavar;
 
         } else {
           // This should not happen though.
-          PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("[InternalErrror] Failed to parse Property metadataum `{}`", varname));
+          PUSH_ERROR_AND_RETURN_TAG(
+              kAscii,
+              fmt::format(
+                  "[InternalErrror] Failed to parse Property metadataum `{}`",
+                  varname));
         }
       }
 
@@ -3317,8 +3477,10 @@ bool AsciiParser::ParseRelationship(Relationship *result) {
     Path base_prim_path(GetCurrentPrimPath(), "");
     Path abs_path;
     std::string err;
-    if (!pathutil::ResolveRelativePath(base_prim_path, value, &abs_path, &err)) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Invalid relative Path: {}. error = {}", value, err));
+    if (!pathutil::ResolveRelativePath(base_prim_path, value, &abs_path,
+                                       &err)) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Invalid relative Path: {}. error = {}", value, err));
     }
 
     result->set(abs_path);
@@ -3334,8 +3496,10 @@ bool AsciiParser::ParseRelationship(Relationship *result) {
     for (size_t i = 0; i < values.size(); i++) {
       Path base_prim_path(GetCurrentPrimPath(), "");
       Path abs_path;
-      if (!pathutil::ResolveRelativePath(base_prim_path, values[i], &abs_path)) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Invalid relative Path: {}.", values[i].full_path_name()));
+      if (!pathutil::ResolveRelativePath(base_prim_path, values[i],
+                                         &abs_path)) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Invalid relative Path: {}.",
+                                          values[i].full_path_name()));
       }
 
       // replace
@@ -3350,11 +3514,12 @@ bool AsciiParser::ParseRelationship(Relationship *result) {
       PUSH_ERROR_AND_RETURN("Failed to parse None.");
     }
 
-    // Should be empty.
+    // Should be empty for None.
     if (value.has_value()) {
       PUSH_ERROR_AND_RETURN("Failed to parse None.");
     }
 
+    DCOUT("Relationship valueblock.");
     result->set_blocked();
   } else {
     PUSH_ERROR_AND_RETURN("Unexpected char \"" + std::to_string(c) +
@@ -3381,17 +3546,18 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
     } else {
       std::vector<T> value;
       if (!ParseBasicTypeArray(&value)) {
-        PUSH_ERROR_AND_RETURN("Failed to parse " +
-                              std::string(value::TypeTraits<T>::type_name()) +
-                              " array.");
+        PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse Primtive Attribute {} type = {}[]", primattr_name,
+                              std::string(value::TypeTraits<T>::type_name())));
       }
 
       // Empty array allowed.
-      DCOUT("Got it: ty = " + std::string(value::TypeTraits<T>::type_name()) +
+      DCOUT("Got it: primatrr " << primattr_name << ", ty = " + std::string(value::TypeTraits<T>::type_name()) +
             ", sz = " + std::to_string(value.size()));
       var.set_value(value);
     }
 
+#if 0
+  // FIXME: Disable duplicated parsing attribute connection here, since parsing attribute connection will be handled in ParsePrimProps().
   } else if (hasConnect(primattr_name)) {
     std::string value;  // TODO: Use Path
     if (!ReadPathIdentifier(&value)) {
@@ -3408,12 +3574,29 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
     // NOTE: Internally, USD(Crate) does not allow relative path.
     Path base_prim_path(GetCurrentPrimPath(), "");
     Path abs_path;
-    if (!pathutil::ResolveRelativePath(base_prim_path, connectionPath, &abs_path)) {
+    if (!pathutil::ResolveRelativePath(base_prim_path, connectionPath,
+                                       &abs_path)) {
       PUSH_ERROR_AND_RETURN(fmt::format("Invalid relative Path: {}.", value));
     }
 
     // TODO: Use Path
     var.set_value(abs_path.full_path_name());
+
+    // Check if attribute metadatum is not authored.
+    if (!SkipCommentAndWhitespaceAndNewline()) {
+      return false;
+    }
+
+    char c;
+    if (!LookChar1(&c)) {
+      return false;
+    }
+
+    if (c == '(') {
+      PUSH_ERROR_AND_RETURN(fmt::format("Attribute connection cannot have attribute metadataum: {}", primattr_name));
+    }
+
+#endif
   } else {
     nonstd::optional<T> value;
     if (!ReadBasicType(&value)) {
@@ -3461,24 +3644,26 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
   return true;
 }
 
-bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::vector<value::token> *propNames) {
-
+bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
+                                 std::vector<value::token> *propNames) {
   (void)propNames;
 
   // prim_prop : (custom?) (variability?) type (array_qual?) name '=' value
   //           | (custom?) type (array_qual?) name '=' value interpolation?
   //           | (custom?) (variability?) type (array_qual?) name interpolation?
   //           | (custom?) (listeditqual?) (variability?) rel attr_name = None
-  //           | (custom?) (listeditqual?) (variability?) rel attr_name = string meta
-  //           | (custom?) (listeditqual?) (variability?) rel attr_name = path meta
-  //           | (custom?) (listeditqual?) (variability?) rel attr_name = pathvector meta
-  //           | (custom?) (listeditqual?) (variability?) rel attr_name meta
+  //           | (custom?) (listeditqual?) (variability?) rel attr_name = string
+  //           meta | (custom?) (listeditqual?) (variability?) rel attr_name =
+  //           path meta | (custom?) (listeditqual?) (variability?) rel
+  //           attr_name = pathvector meta | (custom?) (listeditqual?)
+  //           (variability?) rel attr_name meta
   //           ;
 
   // NOTE:
   //  custom append varying ... is not allowed.
   //  append varying custom ... is not allowed.
-  //  append custom varying ... is allowed(decomposed into `custom varying ...` and `append varying ...`
+  //  append custom varying ... is allowed(decomposed into `custom varying ...`
+  //  and `append varying ...`
 
   // Skip comment
   if (!SkipCommentAndWhitespaceAndNewline()) {
@@ -3513,7 +3698,8 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
   if (!MaybeVariability(&variability, &varying_authored)) {
     return false;
   }
-  DCOUT("variability = " << to_string(variability) << ", varying_authored " << varying_authored);
+  DCOUT("variability = " << to_string(variability) << ", varying_authored "
+                         << varying_authored);
 
   std::string type_name;
 
@@ -3535,7 +3721,8 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
 
     if (variability == Variability::Uniform) {
       PUSH_ERROR_AND_RETURN(
-          "Explicit `uniform` variability keyword is not allowed for Relationship.");
+          "Explicit `uniform` variability keyword is not allowed for "
+          "Relationship.");
     }
 
     // - prim_identifier
@@ -3573,7 +3760,6 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
       if (!LookChar1(&c)) {
         return false;
       }
-
     }
 
     if (c != '=') {
@@ -3604,15 +3790,14 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
     }
 
     if (metap) {
-      PUSH_ERROR_AND_RETURN_TAG(kAscii, "Syntax error. Property metadatum must be defined after `=` and relationship target(s).");
+      PUSH_ERROR_AND_RETURN_TAG(
+          kAscii,
+          "Syntax error. Property metadatum must be defined after `=` and "
+          "relationship target(s).");
     }
 
     if (!SkipWhitespaceAndNewline()) {
       return false;
-    }
-
-    if (MaybeNone()) {
-      return true;
     }
 
     Relationship rel;
@@ -3620,7 +3805,8 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
       PUSH_ERROR_AND_RETURN("Failed to parse `rel` property.");
     }
 
-    if (!SkipWhitespace()) {
+    if (!SkipCommentAndWhitespaceAndNewline()) {
+      return false;
     }
 
     if (!LookChar1(&c)) {
@@ -3628,7 +3814,6 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
     }
 
     if (c == '(') {
-
       if (metap) {
         PUSH_ERROR_AND_RETURN_TAG(kAscii, "[InternalError] parser error.");
       }
@@ -3641,7 +3826,6 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
       }
 
       metap = meta;
-
     }
 
     DCOUT("Relationship with target: " << attr_name);
@@ -3664,6 +3848,12 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
   //
   // Attrib.
   //
+  
+  // Attribute cannot have 'varying' keyword
+  if (varying_authored) {
+    PUSH_ERROR_AND_RETURN_TAG(
+        kAscii, "Syntax error. `varying` keyword is not allowed for Attribute.");
+  }
 
   if (listop_qual != ListEditQual::ResetToExplicit) {
     PUSH_ERROR_AND_RETURN_TAG(
@@ -3743,7 +3933,6 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
   DCOUT("define only:" << define_only);
 
   if (define_only) {
-
     Rewind(1);
 
     // optional: attribute meta.
@@ -3804,29 +3993,64 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
     Path abs_path;
     std::string err;
     if (!pathutil::ResolveRelativePath(base_abs_path, path, &abs_path, &err)) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Invalid relative Path: {}. error = {}", path.full_path_name(), err));
+      PUSH_ERROR_AND_RETURN(fmt::format("Invalid relative Path: {}. error = {}",
+                                        path.full_path_name(), err));
     }
 
-    Property p(abs_path, /* value typename */ type_name, custom_qual);
-    if (value_blocked) {
-      p.attribute().set_blocked(true);
+    // Check if attribute metadatum is not authored.
+    if (!SkipCommentAndWhitespaceAndNewline()) {
+      return false;
     }
 
-    p.attribute().variability() = variability;
-    if (varying_authored) {
-      p.attribute().set_varying_authored();
+    char c;
+    if (!LookChar1(&c)) {
+      return false;
     }
 
-    (*props)[attr_name] = p;
+    if (c == '(') {
+      PUSH_ERROR_AND_RETURN(fmt::format("Attribute connection cannot have attribute metadataum: {}", attr_name));
+    }
 
-    DCOUT(fmt::format("Added {} as a attribute connection.", primattr_name));
+    bool attr_exists = props->count(attr_name) && props->at(attr_name).is_attribute();
+    if (attr_exists) {
+
+      // TODO: Check if type is the same.
+
+      // Check if variability is the same
+      if (props->at(attr_name).attribute().variability() != variability) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Variability mismatch. Attribute `{}` already has variability `{}`, but timeSampled value has variability `{}`.", attr_name, to_string(props->at(attr_name).attribute().variability()), to_string(variability)));
+      }
+
+      props->at(attr_name).attribute().set_connection(abs_path);
+
+      // Set PropType to Attrib(since previously created Property may have EmptyAttrib).
+      props->at(attr_name).set_property_type(Property::Type::Attrib);
+    } else {
+
+      Attribute attr;
+      attr.set_type_name(type_name);
+      attr.set_connection(abs_path);
+      attr.variability() = variability;
+
+      //Property p(abs_path, /* value typename */ type_name, custom_qual);
+
+      //p.attribute().variability() = variability;
+      //if (varying_authored) {
+      //  p.attribute().set_varying_authored();
+      //}
+
+      Property p(std::move(attr), custom_qual);
+      (*props)[attr_name] = p;
+    }
+
+    DCOUT(fmt::format("Added attribute connection to `{}`", attr_name));
 
     return true;
 
   } else if (isTimeSample) {
-    // float.timeSamples = None is not supported
+    // float.timeSamples = None is syntax error.
     if (value_blocked) {
-      PUSH_ERROR_AND_RETURN("ValueBlock to .timeSamples is not supported.");
+      PUSH_ERROR_AND_RETURN(fmt::format("Syntax error. ValueBlock to .timeSamples is invalid: {}", attr_name));
     }
 
     //
@@ -3841,349 +4065,415 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
     value::TimeSamples ts;
     if (array_qual) {
       if (!ParseTimeSamplesOfArray(type_name, &ts)) {
-        PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("Failed to parse TimeSamples of type {}[]", type_name));
+        PUSH_ERROR_AND_RETURN_TAG(
+            kAscii,
+            fmt::format("Failed to parse TimeSamples of type {}[]", type_name));
       }
     } else {
       if (!ParseTimeSamples(type_name, &ts)) {
-        PUSH_ERROR_AND_RETURN_TAG(kAscii, fmt::format("Failed to parse TimeSamples of type {}", type_name));
+        PUSH_ERROR_AND_RETURN_TAG(
+            kAscii,
+            fmt::format("Failed to parse TimeSamples of type {}", type_name));
       }
     }
 
-    //std::string varname = removeSuffix(primattr_name, ".timeSamples");
-    Attribute attr;
-    primvar::PrimVar var;
-    var.set_timesamples(ts);
+    // Attribute metadatum is not allowed for timeSamples.
+    if (!SkipCommentAndWhitespaceAndNewline()) {
+      return false;
+    }
 
-    attr.name() = attr_name;
-    attr.set_var(std::move(var));
+    char c;
+    if (!LookChar1(&c)) {
+      return false;
+    }
 
-    attr.variability() = variability;
-    if (varying_authored) {
-      attr.set_varying_authored();
+    if (c == '(') {
+      PUSH_ERROR_AND_RETURN(fmt::format("TimeSampled Attribute cannot have attribute metadataum: {}", attr_name));
     }
 
     DCOUT("timeSamples primattr: type = " << type_name
                                           << ", name = " << attr_name);
 
-    Property p(attr, custom_qual);
-    p.set_property_type(Property::Type::Attrib);
-    (*props)[attr_name] = p;
+    Attribute attr;
+    Attribute *pattr{nullptr};
+    bool attr_exists = props->count(attr_name) && props->at(attr_name).is_attribute();
+    if (attr_exists) {
+      DCOUT("Attr exists");
+      // Add timeSamples to existing Attribute
+      pattr = &(props->at(attr_name).attribute());
+
+      // Check if variability is the same
+      if (pattr->variability() != variability) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Variability mismatch. Attribute `{}` already has variability `{}`, but timeSampled value has variability `{}`.", attr_name, to_string(pattr->variability()), to_string(variability)));
+      }
+
+      pattr->get_var().set_timesamples(ts);
+
+      // Set PropType to Attrib(since previously created Property may have EmptyAttrib).
+      props->at(attr_name).set_property_type(Property::Type::Attrib);
+
+    } else {
+      // new Attribute
+      pattr = &attr;  
+
+      primvar::PrimVar var;
+      var.set_timesamples(ts);
+      if (array_qual) {
+        pattr->set_type_name(type_name + "[]");
+      } else {
+        pattr->set_type_name(type_name);
+      }
+      pattr->set_var(std::move(var));
+      pattr->variability() = variability;
+
+      //if (varying_authored) {
+      //  pattr->set_varying_authored();
+      //}
+
+      pattr->name() = attr_name;
+
+      Property p(attr, custom_qual);
+      p.set_property_type(Property::Type::Attrib);
+      (*props)[attr_name] = p;
+    }
 
     return true;
 
   } else {
-    Attribute attr;
-    if (!value_blocked) {
 
+    Attribute _attr;
+    Attribute *pattr{nullptr};
+    bool attr_exists = props->count(attr_name) && props->at(attr_name).is_attribute();
+    DCOUT("attr_exists " << attr_exists);
+    if (attr_exists) {
+      pattr = &(props->at(attr_name).attribute());
+    } else {
+      pattr = &_attr;
+      pattr->set_name(primattr_name);
+    }
+
+    if (!value_blocked) {
       // TODO: Refactor. ParseAttrMeta is currently called inside
       // ParseBasicPrimAttr()
       if (type_name == value::kBool) {
-        if (!ParseBasicPrimAttr<bool>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<bool>(array_qual, primattr_name, pattr)) {
           return false;
         }
       } else if (type_name == value::kInt) {
-        if (!ParseBasicPrimAttr<int>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<int>(array_qual, primattr_name, pattr)) {
           return false;
         }
       } else if (type_name == value::kInt2) {
-        if (!ParseBasicPrimAttr<value::int2>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::int2>(array_qual, primattr_name,
+                                             pattr)) {
           return false;
         }
       } else if (type_name == value::kInt3) {
-        if (!ParseBasicPrimAttr<value::int3>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::int3>(array_qual, primattr_name,
+                                             pattr)) {
           return false;
         }
       } else if (type_name == value::kInt4) {
-        if (!ParseBasicPrimAttr<value::int4>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::int4>(array_qual, primattr_name,
+                                             pattr)) {
           return false;
         }
       } else if (type_name == value::kUInt) {
-        if (!ParseBasicPrimAttr<uint32_t>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<uint32_t>(array_qual, primattr_name, pattr)) {
           return false;
         }
       } else if (type_name == value::kUInt2) {
-        if (!ParseBasicPrimAttr<value::uint2>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::uint2>(array_qual, primattr_name,
+                                              pattr)) {
           return false;
         }
       } else if (type_name == value::kUInt3) {
-        if (!ParseBasicPrimAttr<value::uint3>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::uint3>(array_qual, primattr_name,
+                                              pattr)) {
           return false;
         }
       } else if (type_name == value::kUInt4) {
-        if (!ParseBasicPrimAttr<value::uint4>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::uint4>(array_qual, primattr_name,
+                                              pattr)) {
           return false;
         }
       } else if (type_name == value::kInt64) {
-        if (!ParseBasicPrimAttr<int64_t>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<int64_t>(array_qual, primattr_name, pattr)) {
           return false;
         }
       } else if (type_name == value::kUInt64) {
-        if (!ParseBasicPrimAttr<uint64_t>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<uint64_t>(array_qual, primattr_name, pattr)) {
           return false;
         }
       } else if (type_name == value::kDouble) {
-        if (!ParseBasicPrimAttr<double>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<double>(array_qual, primattr_name, pattr)) {
           return false;
         }
       } else if (type_name == value::kString) {
-        if (!ParseBasicPrimAttr<value::StringData>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<std::string>(array_qual, primattr_name,
+                                                   pattr)) {
           return false;
         }
       } else if (type_name == value::kToken) {
-        if (!ParseBasicPrimAttr<value::token>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::token>(array_qual, primattr_name,
+                                              pattr)) {
           return false;
         }
       } else if (type_name == value::kHalf) {
-        if (!ParseBasicPrimAttr<value::half>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::half>(array_qual, primattr_name,
+                                             pattr)) {
           return false;
         }
       } else if (type_name == value::kHalf2) {
-        if (!ParseBasicPrimAttr<value::half2>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::half2>(array_qual, primattr_name,
+                                              pattr)) {
           return false;
         }
       } else if (type_name == value::kHalf3) {
-        if (!ParseBasicPrimAttr<value::half3>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::half3>(array_qual, primattr_name,
+                                              pattr)) {
           return false;
         }
       } else if (type_name == value::kHalf4) {
-        if (!ParseBasicPrimAttr<value::half4>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<value::half4>(array_qual, primattr_name,
+                                              pattr)) {
           return false;
         }
       } else if (type_name == value::kFloat) {
-        if (!ParseBasicPrimAttr<float>(array_qual, primattr_name, &attr)) {
+        if (!ParseBasicPrimAttr<float>(array_qual, primattr_name, pattr)) {
           return false;
         }
       } else if (type_name == value::kFloat2) {
         if (!ParseBasicPrimAttr<value::float2>(array_qual, primattr_name,
-                                               &attr)) {
+                                               pattr)) {
           return false;
         }
       } else if (type_name == value::kFloat3) {
         if (!ParseBasicPrimAttr<value::float3>(array_qual, primattr_name,
-                                               &attr)) {
+                                               pattr)) {
           return false;
         }
       } else if (type_name == value::kFloat4) {
         if (!ParseBasicPrimAttr<value::float4>(array_qual, primattr_name,
-                                               &attr)) {
+                                               pattr)) {
           return false;
         }
       } else if (type_name == value::kDouble2) {
         if (!ParseBasicPrimAttr<value::double2>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kDouble3) {
         if (!ParseBasicPrimAttr<value::double3>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kDouble4) {
         if (!ParseBasicPrimAttr<value::double4>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kQuath) {
         if (!ParseBasicPrimAttr<value::quath>(array_qual, primattr_name,
-                                                &attr)) {
+                                              pattr)) {
           return false;
         }
       } else if (type_name == value::kQuatf) {
         if (!ParseBasicPrimAttr<value::quatf>(array_qual, primattr_name,
-                                                &attr)) {
+                                              pattr)) {
           return false;
         }
       } else if (type_name == value::kQuatd) {
         if (!ParseBasicPrimAttr<value::quatd>(array_qual, primattr_name,
-                                                &attr)) {
+                                              pattr)) {
           return false;
         }
       } else if (type_name == value::kPoint3f) {
         if (!ParseBasicPrimAttr<value::point3f>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kColor3f) {
         if (!ParseBasicPrimAttr<value::color3f>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kColor4f) {
         if (!ParseBasicPrimAttr<value::color4f>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kPoint3d) {
         if (!ParseBasicPrimAttr<value::point3d>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kNormal3f) {
         if (!ParseBasicPrimAttr<value::normal3f>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kNormal3d) {
         if (!ParseBasicPrimAttr<value::normal3d>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kVector3f) {
         if (!ParseBasicPrimAttr<value::vector3f>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kVector3d) {
         if (!ParseBasicPrimAttr<value::vector3d>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kColor3d) {
         if (!ParseBasicPrimAttr<value::color3d>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kColor4d) {
         if (!ParseBasicPrimAttr<value::color4d>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kMatrix2f) {
         if (!ParseBasicPrimAttr<value::matrix2f>(array_qual, primattr_name,
-                                               &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kMatrix3f) {
         if (!ParseBasicPrimAttr<value::matrix3f>(array_qual, primattr_name,
-                                               &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kMatrix4f) {
         if (!ParseBasicPrimAttr<value::matrix4f>(array_qual, primattr_name,
-                                               &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kMatrix2d) {
         if (!ParseBasicPrimAttr<value::matrix2d>(array_qual, primattr_name,
-                                               &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kFloat3) {
         if (!ParseBasicPrimAttr<value::float3>(array_qual, primattr_name,
-                                               &attr)) {
+                                               pattr)) {
           return false;
         }
       } else if (type_name == value::kFloat4) {
         if (!ParseBasicPrimAttr<value::float4>(array_qual, primattr_name,
-                                               &attr)) {
+                                               pattr)) {
           return false;
         }
       } else if (type_name == value::kDouble2) {
         if (!ParseBasicPrimAttr<value::double2>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kDouble3) {
         if (!ParseBasicPrimAttr<value::double3>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kDouble4) {
         if (!ParseBasicPrimAttr<value::double4>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kPoint3f) {
         if (!ParseBasicPrimAttr<value::point3f>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kColor3f) {
         if (!ParseBasicPrimAttr<value::color3f>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kColor4f) {
         if (!ParseBasicPrimAttr<value::color4f>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kPoint3d) {
         if (!ParseBasicPrimAttr<value::point3d>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kNormal3f) {
         if (!ParseBasicPrimAttr<value::normal3f>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kNormal3d) {
         if (!ParseBasicPrimAttr<value::normal3d>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kVector3f) {
         if (!ParseBasicPrimAttr<value::vector3f>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kVector3d) {
         if (!ParseBasicPrimAttr<value::vector3d>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kColor3d) {
         if (!ParseBasicPrimAttr<value::color3d>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kColor4d) {
         if (!ParseBasicPrimAttr<value::color4d>(array_qual, primattr_name,
-                                                &attr)) {
+                                                pattr)) {
           return false;
         }
       } else if (type_name == value::kMatrix2f) {
         if (!ParseBasicPrimAttr<value::matrix2f>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kMatrix3f) {
         if (!ParseBasicPrimAttr<value::matrix3f>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kMatrix4f) {
         if (!ParseBasicPrimAttr<value::matrix4f>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
 
       } else if (type_name == value::kMatrix2d) {
         if (!ParseBasicPrimAttr<value::matrix2d>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kMatrix3d) {
         if (!ParseBasicPrimAttr<value::matrix3d>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
       } else if (type_name == value::kMatrix4d) {
         if (!ParseBasicPrimAttr<value::matrix4d>(array_qual, primattr_name,
-                                                 &attr)) {
+                                                 pattr)) {
           return false;
         }
 
       } else if (type_name == value::kTexCoord2f) {
         if (!ParseBasicPrimAttr<value::texcoord2f>(array_qual, primattr_name,
-                                                   &attr)) {
+                                                   pattr)) {
           return false;
         }
 
       } else if (type_name == value::kAssetPath) {
         if (!ParseBasicPrimAttr<value::AssetPath>(array_qual, primattr_name,
-                                                   &attr)) {
+                                                  pattr)) {
           return false;
         }
       } else {
@@ -4191,34 +4481,46 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props, std::ve
       }
     }
 
-    attr.variability() = variability;
+
     if (varying_authored) {
-      attr.set_varying_authored();
+      pattr->set_varying_authored();
     }
 
+    // TODO: Check if type is the same with existing attribute.
     if (value_blocked) {
       if (array_qual) {
-        attr.set_type_name(type_name + "[]");
+        pattr->set_type_name(type_name + "[]");
       } else {
-        attr.set_type_name(type_name);
+        pattr->set_type_name(type_name);
       }
-      attr.set_blocked(true);
+      pattr->set_blocked(true);
     }
 
-    attr.set_name(primattr_name);
-
     DCOUT("primattr: type = " << type_name << ", name = " << primattr_name);
+    DCOUT(" value_blocked " << value_blocked);
 
-    Property p(attr, custom_qual);
+    if (attr_exists) {
+      // Check if variability is the same
+      if (pattr->variability() != variability) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Variability mismatch. Attribute `{}` already has variability `{}`, but 'default' value has variability `{}`.", attr_name, to_string(pattr->variability()), to_string(variability)));
+      }
 
-    (*props)[primattr_name] = p;
+      // Set PropType to Attrib(since previously created Property may have EmptyAttrib).
+      props->at(attr_name).set_property_type(Property::Type::Attrib);
+    } else {
+      pattr->variability() = variability;
+      Property p(*pattr, custom_qual);
+
+      (*props)[primattr_name] = p;
+    }
 
     return true;
   }
 }
 
 // propNames stores list of property name in its appearance order.
-bool AsciiParser::ParseProperties(std::map<std::string, Property> *props, std::vector<value::token> *propNames) {
+bool AsciiParser::ParseProperties(std::map<std::string, Property> *props,
+                                  std::vector<value::token> *propNames) {
   // property : primm_attr
   //          | 'rel' name '=' path
   //          ;
@@ -4284,17 +4586,17 @@ bool AsciiParser::IsStageMeta(const std::string &name) {
   return _supported_stage_metas.count(name) ? true : false;
 }
 
-bool AsciiParser::ParseVariantSet(const int64_t primIdx,
-                                  const int64_t parentPrimIdx,
-                                  const uint32_t depth,
-                                  VariantSetContent *variantSetOut) {
+bool AsciiParser::ParseVariantSet(
+    const int64_t primIdx, const int64_t parentPrimIdx, const uint32_t depth,
+    VariantSetContent *variantSetContentOut) {
 
   if (depth > 1024 * 1024) {
     PUSH_ERROR_AND_RETURN_TAG(kAscii, "[InternalError] too deep nested call.");
   }
 
-  if (!variantSetOut) {
-    PUSH_ERROR_AND_RETURN_TAG(kAscii, "[InternalError] variantSetOut arg is nullptr.");
+  if (!variantSetContentOut) {
+    PUSH_ERROR_AND_RETURN_TAG(kAscii,
+                              "[InternalError] variantSetContentOut arg is nullptr.");
   }
 
   // variantSet =
@@ -4329,6 +4631,10 @@ bool AsciiParser::ParseVariantSet(const int64_t primIdx,
       Rewind(1);
     }
 
+    if (!SkipCommentAndWhitespaceAndNewline()) {
+      return false;
+    }
+
     // string
     std::string variantName;
     if (!ReadBasicType(&variantName)) {
@@ -4350,7 +4656,8 @@ bool AsciiParser::ParseVariantSet(const int64_t primIdx,
 
       if (mc == '(') {
         if (!ParsePrimMetas(&metas)) {
-          PUSH_ERROR_AND_RETURN_TAG(kAscii, "Failed to parse PrimSpec metas in variant statement.");
+          PUSH_ERROR_AND_RETURN_TAG(
+              kAscii, "Failed to parse PrimSpec metas in variant statement.");
         }
       }
     }
@@ -4472,10 +4779,13 @@ bool AsciiParser::ParseVariantSet(const int64_t primIdx,
           DCOUT(fmt::format("Done parse ParsePrimProps."));
         }
 
+        if (!SkipCommentAndWhitespaceAndNewline()) {
+          return false;
+        }
       }
     }
 
-    if (!SkipWhitespaceAndNewline()) {
+    if (!SkipCommentAndWhitespaceAndNewline()) {
       return false;
     }
 
@@ -4489,7 +4799,7 @@ bool AsciiParser::ParseVariantSet(const int64_t primIdx,
 
   variantSetContent.variantPrimIdx = primIdx;
 
-  (*variantSetOut) = std::move(variantSetContent);
+  (*variantSetContentOut) = std::move(variantSetContent);
 
   return true;
 }
@@ -4504,8 +4814,7 @@ bool AsciiParser::ParseVariantSet(const int64_t primIdx,
 ///
 ///
 bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
-                             const int64_t parentPrimIdx,
-                             const uint32_t depth,
+                             const int64_t parentPrimIdx, const uint32_t depth,
                              const bool in_variantStaement) {
   (void)in_variantStaement;
 
@@ -4533,17 +4842,20 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
   if (def == "def") {
     if (spec != Specifier::Def) {
       PUSH_ERROR_AND_RETURN_TAG(
-          kAscii, "Internal error. Invalid Specifier token combination. def = " << def << ", spec = " << to_string(spec));
+          kAscii, "Internal error. Invalid Specifier token combination. def = "
+                      << def << ", spec = " << to_string(spec));
     }
   } else if (def == "over") {
     if (spec != Specifier::Over) {
       PUSH_ERROR_AND_RETURN_TAG(
-          kAscii, "Internal error. Invalid Specifier token combination. def = " << def << ", spec = " << to_string(spec));
+          kAscii, "Internal error. Invalid Specifier token combination. def = "
+                      << def << ", spec = " << to_string(spec));
     }
   } else if (def == "class") {
     if (spec != Specifier::Class) {
       PUSH_ERROR_AND_RETURN_TAG(
-          kAscii, "Internal error. Invalid Specifier token combination. def = " << def << ", spec = " << to_string(spec));
+          kAscii, "Internal error. Invalid Specifier token combination. def = "
+                      << def << ", spec = " << to_string(spec));
     }
   }
 
@@ -4768,19 +5080,22 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
       Path pname(prim_name, "");
 
       // pass prim_type as is(empty = empty string)
-      nonstd::expected<bool, std::string> ret = _primspec_fun(
-          fullpath, spec, prim_type, pname, primIdx, parentPrimIdx, props, in_metas, variantSetList);
+      nonstd::expected<bool, std::string> ret =
+          _primspec_fun(fullpath, spec, prim_type, pname, primIdx,
+                        parentPrimIdx, props, in_metas, variantSetList);
 
       if (!ret) {
         // construction failed.
-        PUSH_ERROR_AND_RETURN(fmt::format("Constructing PrimSpec typeName `{}`, elementName `{}` failed: {}", prim_type, prim_name, ret.error()));
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Constructing PrimSpec typeName `{}`, elementName `{}` failed: {}",
+            prim_type, prim_name, ret.error()));
       }
     } else {
-      PUSH_ERROR_AND_RETURN_TAG(kAscii, "[Internal Error] PrimSpec handler is not found.");
+      PUSH_ERROR_AND_RETURN_TAG(
+          kAscii, "[Internal Error] PrimSpec handler is not found.");
     }
 
   } else {
-
     // Create typed Prim.
 
     if (prim_type.empty()) {
@@ -4802,8 +5117,9 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
 
       Path fullpath(GetCurrentPrimPath(), "");
       Path pname(prim_name, "");
-      nonstd::expected<bool, std::string> ret = construct_fun(
-          fullpath, spec, prim_type, pname, primIdx, parentPrimIdx, props, in_metas, variantSetList);
+      nonstd::expected<bool, std::string> ret =
+          construct_fun(fullpath, spec, prim_type, pname, primIdx,
+                        parentPrimIdx, props, in_metas, variantSetList);
 
       if (!ret) {
         // construction failed.
@@ -4816,8 +5132,6 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
           "TODO: Unsupported/Unimplemented Prim type: `{}`. Skipping parsing.",
           pTy));
     }
-
-
   }
 
   PopPrimPath();
@@ -4829,11 +5143,12 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
 /// Parser entry point
 /// TODO: Refactor and use unified code path regardless of LoadState.
 ///
-bool AsciiParser::Parse(const uint32_t load_states, const AsciiParserOption &parser_option) {
+bool AsciiParser::Parse(const uint32_t load_states,
+                        const AsciiParserOption &parser_option) {
   _toplevel = (load_states & static_cast<uint32_t>(LoadState::Toplevel));
   _sub_layered = (load_states & static_cast<uint32_t>(LoadState::Sublayer));
   _referenced = (load_states & static_cast<uint32_t>(LoadState::Reference));
-  _payloaded = (load_states &  static_cast<uint32_t>(LoadState::Payload));
+  _payloaded = (load_states & static_cast<uint32_t>(LoadState::Payload));
   _option = parser_option;
 
   bool header_ok = ParseMagicHeader();
@@ -4913,7 +5228,8 @@ bool AsciiParser::Parse(const uint32_t load_states, const AsciiParserOption &par
     int64_t primIdx = _prim_idx_assign_fun(-1);
     DCOUT("Enter parseDef. primIdx = " << primIdx
                                        << ", parentPrimIdx = root(-1)");
-    bool block_ok = ParseBlock(spec, primIdx, /* parent */ -1, /* depth */0, /* in_variantStmt */false);
+    bool block_ok = ParseBlock(spec, primIdx, /* parent */ -1, /* depth */ 0,
+                               /* in_variantStmt */ false);
     if (!block_ok) {
       PUSH_ERROR_AND_RETURN("Failed to parse `def` block.");
     }
@@ -4922,7 +5238,8 @@ bool AsciiParser::Parse(const uint32_t load_states, const AsciiParserOption &par
   return true;
 }
 
-bool ParseUnregistredValue(const std::string &_typeName, const std::string &str, value::Value *value, std::string *err) {
+bool ParseUnregistredValue(const std::string &_typeName, const std::string &str,
+                           value::Value *value, std::string *err) {
   if (!value) {
     if (err) {
       (*err) += "`value` argument is nullptr.\n";
@@ -4946,45 +5263,49 @@ bool ParseUnregistredValue(const std::string &_typeName, const std::string &str,
     return false;
   }
 
-  tinyusdz::StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()), str.size(), /* swap endian */ false);
+  tinyusdz::StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()),
+                            str.size(), /* swap endian */ false);
   tinyusdz::ascii::AsciiParser parser(&sr);
 
-#define PARSE_BASE_TYPE(__ty) case value::TypeTraits<__ty>::type_id(): { \
-    if (array_qual) { \
-      std::vector<__ty> vss; \
-      if (!parser.ParseBasicTypeArray(&vss)) { \
-        if (err) { \
-          (*err) = fmt::format("Failed to parse a value of type `{}[]`", value::TypeTraits<__ty>::type_name()); \
-        } \
-        return false; \
-      } \
-      dst = vss; \
-    } else { \
-      __ty val; \
-      if (!parser.ReadBasicType(&val)) { \
-        if (err) { \
-          (*err) = fmt::format("Failed to parse a value of type `{}`", value::TypeTraits<__ty>::type_name()); \
-        } \
-        return false; \
-      } \
-      dst = val; \
-    } \
-    break; \
+#define PARSE_BASE_TYPE(__ty)                                            \
+  case value::TypeTraits<__ty>::type_id(): {                             \
+    if (array_qual) {                                                    \
+      std::vector<__ty> vss;                                             \
+      if (!parser.ParseBasicTypeArray(&vss)) {                           \
+        if (err) {                                                       \
+          (*err) = fmt::format("Failed to parse a value of type `{}[]`", \
+                               value::TypeTraits<__ty>::type_name());    \
+        }                                                                \
+        return false;                                                    \
+      }                                                                  \
+      dst = vss;                                                         \
+    } else {                                                             \
+      __ty val;                                                          \
+      if (!parser.ReadBasicType(&val)) {                                 \
+        if (err) {                                                       \
+          (*err) = fmt::format("Failed to parse a value of type `{}`",   \
+                               value::TypeTraits<__ty>::type_name());    \
+        }                                                                \
+        return false;                                                    \
+      }                                                                  \
+      dst = val;                                                         \
+    }                                                                    \
+    break;                                                               \
   }
 
   value::Value dst;
 
-
   switch (typeId.value()) {
-  PARSE_BASE_TYPE(value::uint2)
-  PARSE_BASE_TYPE(value::uint3)
-  PARSE_BASE_TYPE(value::uint4)
-  default: {
-    if (err) {
-      (*err) = fmt::format("Unsupported or unimplemeneted type `{}`", typeName);
+    PARSE_BASE_TYPE(value::uint2)
+    PARSE_BASE_TYPE(value::uint3)
+    PARSE_BASE_TYPE(value::uint4)
+    default: {
+      if (err) {
+        (*err) =
+            fmt::format("Unsupported or unimplemeneted type `{}`", typeName);
+      }
+      return false;
     }
-    return false;
-  }
   }
 
   (*value) = std::move(dst);
@@ -4997,7 +5318,8 @@ bool ParseUnregistredValue(const std::string &_typeName, const std::string &str,
 
 #else  // TINYUSDZ_DISABLE_MODULE_USDA_READER
 
-bool ParseUnregistredValue(const std::string &typeName, const std::string &str, value::Value *value, std::string *err) {
+bool ParseUnregistredValue(const std::string &typeName, const std::string &str,
+                           value::Value *value, std::string *err) {
   if (err) {
     (*err) += "USDA_READER module is disabled.\n";
   }

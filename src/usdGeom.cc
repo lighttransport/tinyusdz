@@ -1,5 +1,6 @@
-// SPDX-License-Identifier: MIT
-// Copyright 2022 - Present, Syoyo Fujita.
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2022 - 2023, Syoyo Fujita.
+// Copyright 2023 - Present, Light Transport Entertainment Inc.
 //
 // UsdGeom API implementations
 
@@ -27,81 +28,25 @@
   }                               \
   return false
 
-// NOTE: Some types are not supported on pxrUSD(e.g. string)
-#define APPLY_GEOMPRIVAR_TYPE(__FUNC) \
-  __FUNC(value::half)                 \
-  __FUNC(value::half2)                \
-  __FUNC(value::half3)                \
-  __FUNC(value::half4)                \
-  __FUNC(int)                         \
-  __FUNC(value::int2)                 \
-  __FUNC(value::int3)                 \
-  __FUNC(value::int4)                 \
-  __FUNC(uint32_t)                    \
-  __FUNC(value::uint2)                \
-  __FUNC(value::uint3)                \
-  __FUNC(value::uint4)                \
-  __FUNC(float)                       \
-  __FUNC(value::float2)               \
-  __FUNC(value::float3)               \
-  __FUNC(value::float4)               \
-  __FUNC(double)                      \
-  __FUNC(value::double2)              \
-  __FUNC(value::double3)              \
-  __FUNC(value::double4)              \
-  __FUNC(value::matrix2d)             \
-  __FUNC(value::matrix3d)             \
-  __FUNC(value::matrix4d)             \
-  __FUNC(value::quath)                \
-  __FUNC(value::quatf)                \
-  __FUNC(value::quatd)                \
-  __FUNC(value::normal3h)             \
-  __FUNC(value::normal3f)             \
-  __FUNC(value::normal3d)             \
-  __FUNC(value::vector3h)             \
-  __FUNC(value::vector3f)             \
-  __FUNC(value::vector3d)             \
-  __FUNC(value::point3h)              \
-  __FUNC(value::point3f)              \
-  __FUNC(value::point3d)              \
-  __FUNC(value::color3f)              \
-  __FUNC(value::color3d)              \
-  __FUNC(value::color4f)              \
-  __FUNC(value::color4d)              \
-  __FUNC(value::texcoord2h)           \
-  __FUNC(value::texcoord2f)           \
-  __FUNC(value::texcoord2d)           \
-  __FUNC(value::texcoord3h)           \
-  __FUNC(value::texcoord3f)           \
-  __FUNC(value::texcoord3d)
-
-// TODO: Followings are not supported on pxrUSD. Enable it in TinyUSDZ?
-#if 0
- __FUNC(int64_t) \
-  __FUNC(uint64_t) \
-  __FUNC(std::string) \
-  __FUNC(bool)
-#endif
-
 namespace tinyusdz {
 
 namespace {
 
 constexpr auto kPrimvars = "primvars:";
 constexpr auto kIndices = ":indices";
-constexpr auto kPrimvarsNormals = "primvars:normals";
 
 ///
 /// Computes
 ///
 ///  for i in len(indices):
-///    dest[i] = values[indices[i]]
+///    for k in elementSize:
+///      dest[i*elementSize + k] = values[indices[i]*elementSize + k]
 ///
-/// `dest` = `values` when `indices` is empty
+/// `dest` is set to `values` when `indices` is empty
 ///
 template <typename T>
 nonstd::expected<bool, std::string> ExpandWithIndices(
-    const std::vector<T> &values, const std::vector<int32_t> &indices,
+    const std::vector<T> &values, uint32_t elementSize, const std::vector<int32_t> &indices,
     std::vector<T> *dest) {
   if (!dest) {
     return nonstd::make_unexpected("`dest` is nullptr.");
@@ -112,15 +57,25 @@ nonstd::expected<bool, std::string> ExpandWithIndices(
     return true;
   }
 
-  dest->resize(indices.size());
+  if (elementSize == 0) {
+    return false;
+  }
+
+  if ((values.size() % elementSize) != 0) {
+    return false;
+  }
+
+  dest->resize(indices.size() * elementSize);
 
   std::vector<size_t> invalidIndices;
 
   bool valid = true;
   for (size_t i = 0; i < indices.size(); i++) {
     int32_t idx = indices[i];
-    if ((idx >= 0) && (size_t(idx) < values.size())) {
-      (*dest)[i] = values[size_t(idx)];
+    if ((idx >= 0) && ((size_t(idx+1) * size_t(elementSize)) <= values.size())) {
+      for (size_t k = 0; k < elementSize; k++) {
+        (*dest)[i*elementSize + k] = values[size_t(idx)*elementSize + k];
+      }
     } else {
       invalidIndices.push_back(i);
       valid = false;
@@ -207,7 +162,6 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
     return false;
   }
 
-  // Currently connection attribute is not supported.
   if (it->second.is_attribute()) {
     const Attribute &attr = it->second.get_attribute();
 
@@ -219,9 +173,12 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
     if (attr.metas().elementSize.has_value()) {
       primvar.set_elementSize(attr.metas().elementSize.value());
     }
+    if (attr.metas().has_unauthoredValuesIndex()) {
+      primvar.set_unauthoredValuesIndex(attr.metas().get_unauthoredValuesIndex());
+    }
 
   } else {
-    SET_ERROR_AND_RETURN("GeomPrimvar of non-Attribute property is not supported.");
+    SET_ERROR_AND_RETURN(fmt::format("{} is not Attribute. Maybe Relationship?", primvar_name));
   }
 
   // has indices?
@@ -230,30 +187,45 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
 
   if (indexIt != props.end()) {
     if (indexIt->second.is_attribute()) {
+
+      if (!(primvar.get_attribute().type_id() & value::TYPE_ID_1D_ARRAY_BIT)) {
+        SET_ERROR_AND_RETURN(
+            fmt::format("Indexed GeomPrimVar with scalar PrimVar Attribute is not supported. PrimVar name: {}", primvar_name));
+      }
+
       const Attribute &indexAttr = indexIt->second.get_attribute();
 
       if (indexAttr.is_connection()) {
         SET_ERROR_AND_RETURN(
-            "TODO: Connetion is not supported for index Attribute at the "
-            "moment.");
-      } else if (indexAttr.is_timesamples()) {
-        SET_ERROR_AND_RETURN(
-            "TODO: Index attribute with timeSamples is not supported yet.");
-      } else if (indexAttr.is_blocked()) {
-        SET_ERROR_AND_RETURN("TODO: Index attribute is blocked(ValueBlock).");
-      } else if (indexAttr.is_value()) {
-        // Check if int[] type.
-        // TODO: Support uint[]?
-        std::vector<int32_t> indices;
-        if (!indexAttr.get_value(&indices)) {
-          SET_ERROR_AND_RETURN(
-              fmt::format("Index Attribute is not int[] type. Got {}",
-                          indexAttr.type_name()));
+            "Attribute Connetion is not supported for index Attribute, since we need Stage info to find Prim referred by targetPath. Use Tydra API tydra::GetGeomPrimvar.");
+      }
+
+      if (indexAttr.is_blocked()) {
+        // ignore Index attribute.
+      } else {
+
+        if (indexAttr.has_timesamples()) {
+          const auto &ts = indexAttr.get_var().ts_raw();
+          TypedTimeSamples<std::vector<int32_t>> tss;
+          if (!tss.from_timesamples(ts)) {
+            SET_ERROR_AND_RETURN(fmt::format("Index Attribute seems not an timesamples with int[] type: {}", index_name));
+          }
+
+          primvar.set_timesampled_indices(tss);
         }
 
-        primvar.set_indices(indices);
-      } else {
-        SET_ERROR_AND_RETURN("[Internal Error] Invalid Index Attribute.");
+        if (indexAttr.has_value()) {
+          // Check if int[] type.
+          // TODO: Support uint[]?
+          std::vector<int32_t> indices;
+          if (!indexAttr.get_value(&indices)) {
+            SET_ERROR_AND_RETURN(
+                fmt::format("Index Attribute is not int[] type. Got {}",
+                            indexAttr.type_name()));
+          }
+
+          primvar.set_default_indices(indices);
+        }
       }
     } else {
       // indices are optional, so ok to skip it.
@@ -265,8 +237,9 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
   return true;
 }
 
+
 template <typename T>
-bool GeomPrimvar::flatten_with_indices(std::vector<T> *dest, std::string *err) {
+bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, const value::TimeSampleInterpolationType tinterp, std::string *err) const {
   if (!dest) {
     if (err) {
       (*err) += "Output value is nullptr.";
@@ -274,14 +247,8 @@ bool GeomPrimvar::flatten_with_indices(std::vector<T> *dest, std::string *err) {
     return false;
   }
 
-  if (_attr.is_timesamples()) {
-    if (err) {
-      (*err) += "TimeSamples attribute is TODO.";
-    }
-    return false;
-  }
+  if (_attr.has_timesamples() || _attr.has_value()) {
 
-  if (_attr.is_value()) {
     if (!IsSupportedGeomPrimvarType(_attr.type_id())) {
       if (err) {
         (*err) += fmt::format("Unsupported type for GeomPrimvar. type = `{}`",
@@ -290,9 +257,25 @@ bool GeomPrimvar::flatten_with_indices(std::vector<T> *dest, std::string *err) {
       return false;
     }
 
-    if (auto pv = _attr.get_value<std::vector<T>>()) {
+    std::vector<T> value;
+    if (_attr.get_value<std::vector<T>>(t, &value, tinterp)) {
+
+      uint32_t elementSize = _attr.metas().elementSize.value_or(1);
+
+      // Get indices at specified time
+      std::vector<int32_t> indices;
+      if (value::TimeCode(t).is_default()) {
+        if (has_default_indices()) {
+          indices = _indices;
+        } else if (has_timesampled_indices()) {
+          _ts_indices.get(&indices, t, tinterp);
+        }
+      } else {
+        _ts_indices.get(&indices, t, tinterp);
+      }
+
       std::vector<T> expanded_val;
-      auto ret = ExpandWithIndices(pv.value(), _indices, &expanded_val);
+      auto ret = ExpandWithIndices(value, elementSize, indices, &expanded_val);
       if (ret) {
         (*dest) = expanded_val;
         // Currently we ignore ret.value()
@@ -308,25 +291,70 @@ bool GeomPrimvar::flatten_with_indices(std::vector<T> *dest, std::string *err) {
           }
         }
       }
+    } else {
+      if (err) {
+        (*err) += fmt::format(
+            "`{}[]` type requested, but Attribute is type `{}`",
+            value::TypeTraits<T>::type_name(), _attr.type_name());
+      }
     }
+  } else {
+    // TODO: Report error?
   }
 
   return false;
 }
 
+std::vector<int32_t> GeomPrimvar::get_indices(const double t) const {
+  if (value::TimeCode(t).is_default()) {
+    if (has_default_indices()) {
+      return get_default_indices();
+    }
+  }
+  
+  if (has_timesampled_indices()) {
+    std::vector<int32_t> indices;
+    if (get_timesampled_indices().get(&indices, t)) {
+      return indices;
+    }
+  }
+
+  if (has_default_indices()) {
+    return get_default_indices();
+  }
+
+  return std::vector<int32_t>();
+}
+
+void GeomPrimvar::set_indices(const std::vector<int32_t> &indices, const double t) {
+  if (value::TimeCode(t).is_default()) {
+    _indices = indices;
+  } else {
+    TypedTimeSamples<std::vector<int32_t>>::Sample *psample{nullptr};
+    if (_ts_indices.get_sample_at(t, &psample)) {
+      // overwrite content
+      psample->value = indices;
+    } else {
+      _ts_indices.add_sample(t, indices);
+    }
+  }
+}
+
+template <typename T>
+bool GeomPrimvar::flatten_with_indices(std::vector<T> *dest, std::string *err) const {
+  return flatten_with_indices(value::TimeCode::Default(), dest, value::TimeSampleInterpolationType::Linear, err);
+}
+
 // instanciation
 #define INSTANCIATE_FLATTEN_WITH_INDICES(__ty) \
-  template bool GeomPrimvar::flatten_with_indices(std::vector<__ty> *dest, std::string *err);
+  template bool GeomPrimvar::flatten_with_indices(std::vector<__ty> *dest, std::string *err) const; \
+  template bool GeomPrimvar::flatten_with_indices(const double t, std::vector<__ty> *dest, const value::TimeSampleInterpolationType tinterp, std::string *err) const;
 
 APPLY_GEOMPRIVAR_TYPE(INSTANCIATE_FLATTEN_WITH_INDICES)
 
 #undef INSTANCIATE_FLATTEN_WITH_INDICES
 
-bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) {
-  // using namespace simple_match;
-  // using namespace simple_match::placeholders;
-
-  value::Value val;
+bool GeomPrimvar::flatten_with_indices(const double t, value::Value *dest, const value::TimeSampleInterpolationType tinterp, std::string *err) const {
 
   if (!dest) {
     if (err) {
@@ -335,16 +363,9 @@ bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) {
     return false;
   }
 
-  if (_attr.is_timesamples()) {
-    if (err) {
-      (*err) += "TimeSamples attribute is TODO.";
-    }
-    return false;
-  }
-
   bool processed = false;
 
-  if (_attr.is_value()) {
+  if (_attr.has_value() || _attr.has_timesamples()) {
     if (!IsSupportedGeomPrimvarType(_attr.type_id())) {
       if (err) {
         (*err) += fmt::format("Unsupported type for GeomPrimvar. type = `{}`",
@@ -353,39 +374,38 @@ bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) {
       return false;
     }
 
+    value::Value val;
+
     if (!(_attr.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) {
-      // Nothing to do for scalar type.
-      (*dest) = _attr.get_var().value_raw();
+
+      // evaluate value at specified time and return it for scalar type.
+      value::Value v;
+      if (!_attr.get_var().get_interpolated_value(t, tinterp, &v)) {
+        if (err) {
+          (*err) += fmt::format("Failed to evaluate Attribute value.");
+        }
+        return false;
+      }
+      (*dest) = v;
     } else {
       std::string err_msg;
 
-#if 0
-#define APPLY_FUN(__ty)                                                      \
-  value::TypeTraits<__ty>::type_id | value::TYPE_ID_1D_ARRAY_BIT,            \
-      [this, &val, &processed, &err_msg]() {                                 \
-        std::vector<__ty> expanded_val;                                      \
-        if (auto pv = _attr.get_value<std::vector<__ty>>()) {                \
-          auto ret = ExpandWithIndices(pv.value(), _indices, &expanded_val); \
-          if (ret) {                                                         \
-            processed = ret.value();                                         \
-            if (processed) {                                                 \
-              val = expanded_val;                                            \
-            }                                                                \
-          } else {                                                           \
-            err_msg = ret.error();                                           \
-          }                                                                  \
-        }                                                                    \
-      },
+      uint32_t elementSize = _attr.metas().elementSize.value_or(1);
 
-      match(_attr.type_id(), APPLY_GEOMPRIVAR_TYPE(APPLY_FUN) _,
-            [&processed]() { processed = false; });
-#else
+      std::vector<int32_t> indices;
+      // Get indices at specified time
+      if (value::TimeCode(t).is_default()) {
+        indices = _indices;
+      } else {
+        _ts_indices.get(&indices, t, tinterp);
+      }
 
 #define APPLY_FUN(__ty)                                                  \
   case value::TypeTraits<__ty>::type_id() | value::TYPE_ID_1D_ARRAY_BIT: { \
+    std::vector<__ty> value; \
     std::vector<__ty> expanded_val;                                      \
-    if (auto pv = _attr.get_value<std::vector<__ty>>()) {                \
-      auto ret = ExpandWithIndices(pv.value(), _indices, &expanded_val); \
+    if (_attr.get_value(t, &value, tinterp)) {                \
+      auto ret = ExpandWithIndices(value, elementSize, indices, &expanded_val); \
       if (ret) {                                                         \
         processed = ret.value();                                         \
         if (processed) {                                                 \
@@ -397,8 +417,6 @@ bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) {
     }                                                                    \
     break;                                                               \
   }
-
-#endif
 
       switch (_attr.type_id()) {
         APPLY_GEOMPRIVAR_TYPE(APPLY_FUN)
@@ -427,23 +445,18 @@ bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) {
   return processed;
 }
 
+bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) const {
+  return flatten_with_indices(value::TimeCode::Default(), dest, value::TimeSampleInterpolationType::Linear, err);
+}
+
 template <typename T>
-bool GeomPrimvar::get_value(T *dest, std::string *err) {
+bool GeomPrimvar::get_value(T *dest, std::string *err) const {
   static_assert(tinyusdz::value::TypeTraits<T>::type_id() != value::TypeTraits<value::token>::type_id(), "`token` type is not supported as a GeomPrimvar");
   static_assert(tinyusdz::value::TypeTraits<T>::type_id() != value::TypeTraits<std::vector<value::token>>::type_id(), "`token[]` type is not supported as a GeomPrimvar");
-  static_assert(tinyusdz::value::TypeTraits<T>::type_id() != value::TypeTraits<std::string>::type_id(), "`string` type is not supported as a GeomPrimvar");
-  static_assert(tinyusdz::value::TypeTraits<T>::type_id() != value::TypeTraits<std::vector<std::string>>::type_id(), "`string[]` type is not supported as a GeomPrimvar");
 
   if (!dest) {
     if (err) {
       (*err) += "Output value is nullptr.";
-    }
-    return false;
-  }
-
-  if (_attr.is_timesamples()) {
-    if (err) {
-      (*err) += "TimeSamples attribute is TODO.";
     }
     return false;
   }
@@ -455,7 +468,7 @@ bool GeomPrimvar::get_value(T *dest, std::string *err) {
     return false;
   }
 
-  if (_attr.is_value()) {
+  if (_attr.has_value()) {
     if (!IsSupportedGeomPrimvarType(_attr.type_id())) {
       if (err) {
         (*err) += fmt::format("Unsupported type for GeomPrimvar. type = `{}`",
@@ -478,13 +491,111 @@ bool GeomPrimvar::get_value(T *dest, std::string *err) {
     }
   }
 
+  if (_attr.has_timesamples()) {
+    // Return the first sample.
+    const auto &ts = _attr.get_var().ts_raw();
+    if (ts.empty()) {
+      if (err) {
+        (*err) += "No TimeSample value in Attribute..";
+      }
+      return false;
+    }
+    
+    if (auto pv =ts.get_samples().at(0).value.as<T>()) {
+      (*dest) = (*pv);
+      return true;
+    }
+  }
+
   return false;
+}
+
+template <typename T>
+bool GeomPrimvar::get_value(double timecode, T *dest, value::TimeSampleInterpolationType interp, std::string *err) const {
+  static_assert(tinyusdz::value::TypeTraits<T>::type_id() != value::TypeTraits<value::token>::type_id(), "`token` type is not supported as a GeomPrimvar");
+  static_assert(tinyusdz::value::TypeTraits<T>::type_id() != value::TypeTraits<std::vector<value::token>>::type_id(), "`token[]` type is not supported as a GeomPrimvar");
+
+  if (!dest) {
+    if (err) {
+      (*err) += "Output value is nullptr.";
+    }
+    return false;
+  }
+
+  if (_attr.is_blocked()) {
+    if (err) {
+      (*err) += "Attribute is blocked.";
+    }
+    return false;
+  }
+
+  if (!IsSupportedGeomPrimvarType(_attr.type_id())) {
+    if (err) {
+      (*err) += fmt::format("Unsupported type for GeomPrimvar. type = `{}`",
+                            _attr.type_name());
+    }
+    return false;
+  }
+
+#if 0
+  if (value::TimeCode(timecode).is_default()) {
+
+    if (_attr.has_value()) {
+      if (auto pv = _attr.get_value<T>()) {
+
+        // copy
+        (*dest) = pv.value();
+        return true;
+
+      } else {
+        if (err) {
+          (*err) += fmt::format("Attribute value type mismatch. Requested type `{}` but Attribute has type `{}`", value::TypeTraits<T>::type_id(), _attr.type_name());
+        }
+        return false;
+      }
+    }
+
+  }
+
+  if (_attr.has_timesamples()) {
+    T value;
+
+    if (!_attr.get_value(timecode, &value, interp)) {
+      if (err) {
+        (*err) += fmt::format("Get Attribute value at time {} failed. Maybe type mismatch?. Requested type `{}` but Attribute has type `{}`", timecode, value::TypeTraits<T>::type_id(), _attr.type_name());
+      }
+      return false;
+    }
+
+    // copy
+    (*dest) = value;
+    return true;
+  }
+
+  return false;
+#else
+  T value;
+
+  if (!_attr.get_value(timecode, &value, interp)) {
+    if (err) {
+      (*err) += fmt::format("Get Attribute value at time {} failed. Maybe type mismatch?. Requested type `{}` but Attribute has type `{}`", timecode, value::TypeTraits<T>::type_id(), _attr.type_name());
+    }
+    return false;
+  }
+
+  // copy
+  (*dest) = value;
+  return true;
+#endif
+
 }
 
 // instanciation
 #define INSTANCIATE_GET_VALUE(__ty) \
-  template bool GeomPrimvar::get_value(__ty *dest, std::string *err); \
-  template bool GeomPrimvar::get_value(std::vector<__ty> *dest, std::string *err);
+  template bool GeomPrimvar::get_value(__ty *dest, std::string *err) const; \
+  template bool GeomPrimvar::get_value(double, __ty *dest, value::TimeSampleInterpolationType, std::string *err) const; \
+  template bool GeomPrimvar::get_value(std::vector<__ty> *dest, std::string *err) const; \
+  template bool GeomPrimvar::get_value(double, std::vector<__ty> *dest, value::TimeSampleInterpolationType, std::string *err) const;
 
 APPLY_GEOMPRIVAR_TYPE(INSTANCIATE_GET_VALUE)
 
@@ -542,16 +653,28 @@ bool GPrim::set_primvar(const GeomPrimvar &primvar,
     attr.metas().elementSize = primvar.get_elementSize();
   }
 
-  props.emplace(primvar_name, attr);
+  props[primvar_name] = attr;
 
-  if (primvar.has_indices()) {
+  {
+    primvar::PrimVar var;
 
-    std::string index_name = primvar_name + kIndices;
+    if (primvar.has_default_indices()) {
+      var.set_value(primvar.get_default_indices());
+    }
 
-    Attribute indices;
-    indices.set_value(primvar.get_indices());
+    if (primvar.has_timesampled_indices()) {
+      for (const auto &sample : primvar.get_timesampled_indices().get_samples()) {
+        var.set_timesample(sample.t, sample.value);
+      }
+    }
 
-    props.emplace(index_name, indices);
+    if (primvar.has_default_indices() || primvar.has_timesampled_indices()) {
+      Attribute indices;
+      indices.set_var(var);
+      std::string index_name = primvar_name + kIndices;
+      props[index_name] = indices;
+    }
+
   }
 
   return true;
@@ -616,37 +739,57 @@ const std::vector<value::normal3f> GeomMesh::get_normals(
     double time, value::TimeSampleInterpolationType interp) const {
   std::vector<value::normal3f> dst;
 
-  if (props.count(kPrimvarsNormals)) {
-    const auto prop = props.at(kPrimvarsNormals);
-    if (prop.is_relationship()) {
-      // TODO:
+  std::string err;
+  if (has_primvar("normals")) {
+    GeomPrimvar primvar;
+    if (!get_primvar("normals", &primvar, &err)) {
       return dst;
     }
 
-    if (prop.get_attribute().get_var().is_timesamples()) {
-      // TODO:
-      return dst;
-    }
-
-    if (prop.get_attribute().type_name() == "normal3f[]") {
-      if (auto pv =
-              prop.get_attribute().get_value<std::vector<value::normal3f>>()) {
-        dst = pv.value();
-      }
-    }
+    primvar.flatten_with_indices(time, &dst, interp);
+    return dst;
   } else if (normals.authored()) {
     if (normals.is_connection()) {
-      // TODO
+      // Not supported
       return dst;
     } else if (normals.is_blocked()) {
       return dst;
     }
 
-    if (normals.get_value()) {
-      std::vector<value::normal3f> val;
-      if (normals.get_value().value().get(time, &val, interp)) {
-        dst = std::move(val);
+    std::vector<int> indices;
+    if (props.count("normals:indices")) {
+      Attribute indexAttr = props.at("normals:indices").get_attribute();
+
+      if (indexAttr.is_connection()) {
+        // not supported.
+        return dst;
       }
+
+      if (!indexAttr.get_value(time, &indices, interp)) {
+        // err
+        return dst;
+      }
+
+    }
+
+    std::vector<value::normal3f> value;
+    if (!normals.get_value().value().get(time, &value, interp)) {
+      return dst;
+    }
+
+    if (indices.size()) {
+      uint32_t elementSize = normals.metas().elementSize.value_or(1);
+
+      std::vector<value::normal3f> expanded_normals;
+      auto ret = ExpandWithIndices(value, elementSize, indices, &expanded_normals);
+
+      if (!ret) {
+        return dst;
+      }
+
+      dst = expanded_normals;
+    } else {
+      dst = value;
     }
   }
 
@@ -654,8 +797,8 @@ const std::vector<value::normal3f> GeomMesh::get_normals(
 }
 
 Interpolation GeomMesh::get_normalsInterpolation() const {
-  if (props.count(kPrimvarsNormals)) {
-    const auto &prop = props.at(kPrimvarsNormals);
+  if (props.count("primvars:normals")) {
+    const auto &prop = props.at("primvars:normals");
     if (prop.get_attribute().type_name() == "normal3f[]") {
       if (prop.get_attribute().metas().interpolation) {
         return prop.get_attribute().metas().interpolation.value();
@@ -712,140 +855,99 @@ const std::vector<int32_t> GeomMesh::get_faceVertexIndices() const {
   return dst;
 }
 
-#if 0
-void GeomMesh::Initialize(const GPrim &gprim) {
-  name = gprim.name;
-  parent_id = gprim.parent_id;
+// static
+bool GeomSubset::ValidateSubsets(
+    const std::vector<const GeomSubset *> &subsets,
+    const size_t elementCount,
+    const FamilyType &familyType, std::string *err) {
 
-  props = gprim.props;
-
-#if 0
-  for (auto &prop_item : gprim.props) {
-    std::string attr_name = std::get<0>(prop_item);
-    const Property &prop = std::get<1>(prop_item);
-
-    if (prop.is_rel) {
-      //LOG_INFO("TODO: Rel property:" + attr_name);
-      continue;
-    }
-
-    const PrimAttrib &attr = prop.get_attribute();
-
-    if (attr_name == "points") {
-      //if (auto p = primvar::as_vector<value::float3>(&attr.var)) {
-      //  points = *p;
-      //}
-    } else if (attr_name == "faceVertexIndices") {
-      //if (auto p = primvar::as_vector<int>(&attr.var)) {
-      //  faceVertexIndices = *p;
-      //}
-    } else if (attr_name == "faceVertexCounts") {
-      //if (auto p = primvar::as_vector<int>(&attr.var)) {
-      //  faceVertexCounts = *p;
-      //}
-    } else if (attr_name == "normals") {
-      //if (auto p = primvar::as_vector<value::float3>(&attr.var)) {
-      //  normals.var = *p;
-      //  normals.interpolation = attr.interpolation;
-      //}
-    } else if (attr_name == "velocitiess") {
-      //if (auto p = primvar::as_vector<value::float3>(&attr.var)) {
-      //  velocitiess.var = (*p);
-      //  velocitiess.interpolation = attr.interpolation;
-      //}
-    } else if (attr_name == "primvars:uv") {
-      //if (auto pv2f = primvar::as_vector<Vec2f>(&attr.var)) {
-      //  st.buffer = (*pv2f);
-      //  st.interpolation = attr.interpolation;
-      //} else if (auto pv3f = primvar::as_vector<value::float3>(&attr.var)) {
-      //  st.buffer = (*pv3f);
-      //  st.interpolation = attr.interpolation;
-      //}
-    } else {
-      // Generic PrimAtrr
-      props[attr_name] = attr;
-    }
-
-  }
-#endif
-
-  doubleSided = gprim.doubleSided;
-  orientation = gprim.orientation;
-  visibility = gprim.visibility;
-  extent = gprim.extent;
-  purpose = gprim.purpose;
-
-  // displayColor = gprim.displayColor;
-  // displayOpacity = gprim.displayOpacity;
-
-#if 0  // TODO
-
-
-  // PrimVar(TODO: Remove)
-  UVCoords st;
-
-  //
-  // Properties
-  //
-
-#endif
-};
-#endif
-
-nonstd::expected<bool, std::string> GeomMesh::ValidateGeomSubset() {
-  std::stringstream ss;
-
-  if (geom_subset_children.empty()) {
+  if (subsets.empty()) {
     return true;
   }
 
-  auto CheckFaceIds = [](const size_t nfaces, const std::vector<uint32_t> ids) {
-    if (std::any_of(ids.begin(), ids.end(),
-                    [&nfaces](uint32_t id) { return id >= nfaces; })) {
+  // All subsets must have the same elementType.
+  GeomSubset::ElementType elementType = subsets[0]->elementType.get_value();
+  for (const auto psubset : subsets) {
+    if (psubset->elementType.get_value() != elementType) {
+      if (err) {
+        (*err) = fmt::format("GeomSubset {}'s elementType must be `{}`, but got `{}`.\n",
+          psubset->name, to_string(elementType), to_string(psubset->elementType.get_value()));
+      }
+
       return false;
     }
-
-    return true;
-  };
-
-  if (!faceVertexCounts.authored()) {
-    // No `faceVertexCounts` definition
-    ss << "`faceVerexCounts` attribute is not present in GeomMesh.\n";
-    return nonstd::make_unexpected(ss.str());
   }
 
-  if (faceVertexCounts.authored()) {
-    return nonstd::make_unexpected("TODO: Support faceVertexCounts.connect\n");
-  }
+  std::set<int32_t> indicesInFamily;
 
-  if (faceVertexCounts.get_value()) {
-    const auto fvp = faceVertexCounts.get_value();
-    std::vector<int32_t> fvc;
+  bool valid = true;
+  std::stringstream ss;
 
-    if (fvp.value().is_timesamples()) {
-      return nonstd::make_unexpected("TODO: faceVertexCounts.timeSamples\n");
+  // TODO: TimeSampled indices
+  for (const auto psubset : subsets) {
+    Animatable<std::vector<int32_t>> indices;
+    if (!psubset->indices.get_value(&indices)) {
+      ss << fmt::format("GeomSubset {}'s indices is not value Attribute. Connection or ValueBlock?\n",
+          psubset->name);
+
+      valid = false;
     }
 
-    if (!fvp.value().get_scalar(&fvc)) {
-      return nonstd::make_unexpected("Failed to get faceVertexCounts data.");
+    if (indices.is_blocked()) {
+      ss << fmt::format("GeomSubset {}'s indices is Value Blocked.\n", psubset->name);
+      valid = false;
     }
 
-    size_t n = fvc.size();
+    if (indices.is_timesamples() || !indices.has_value()) {
+      ss << fmt::format("ValidateSubsets: TimeSampled GeomSubset.indices is not yet supported.\n");
+      valid = false;
+    }
 
-    // Currently we only check if face ids are valid.
-    for (size_t i = 0; i < geom_subset_children.size(); i++) {
-      const GeomSubset &subset = geom_subset_children[i];
+    std::vector<int32_t> subsetIndices;
+    if (!indices.get_scalar(&subsetIndices)) {
+      ss << fmt::format("ValidateSubsets: Internal error. Failed to get GeomSubset.indices.\n");
+      valid = false;
+    }
 
-      if (!CheckFaceIds(n, subset.indices)) {
-        ss << "Face index out-of-range.\n";
-        return nonstd::make_unexpected(ss.str());
+    for (const int32_t index : subsetIndices) {
+      if (!indicesInFamily.insert(index).second && (familyType != FamilyType::Unrestricted)) {
+        ss << fmt::format("Found overlapping index {} in GeomSubset `{}`\n", index, psubset->name);
+        valid = false;
       }
     }
   }
 
-  // TODO
-  return nonstd::make_unexpected(
-      "TODO: Implent GeomMesh::ValidateGeomSubset\n");
+
+  // Make sure every index appears exactly once if it's a partition.
+  if ((familyType == FamilyType::Partition) && (indicesInFamily.size() != elementCount)) {
+    ss << fmt::format("ValidateSubsets: The number of unique indices {} must be equal to input elementCount {}\n", indicesInFamily.size(), elementCount);
+    valid = false;
+  }
+
+  // Ensure that the indices are in the range [0, faceCount)
+  size_t maxIndex = static_cast<size_t>(*indicesInFamily.rbegin());
+  int minIndex = *indicesInFamily.begin();
+
+  if (maxIndex >= elementCount) {
+    ss << fmt::format("ValidateSubsets: All indices must be in range [0, elementSize {}), but one or more indices are greater than elementSize. Maximum = {}\n", elementCount, maxIndex);
+
+    valid = false;
+  }
+
+  if (minIndex < 0) {
+    ss << fmt::format("ValidateSubsets: Found one or more indices that are less than 0. Minumum = {}\n", minIndex);
+
+    valid = false;
+  }
+
+  if (!valid) {
+    if (err) {
+      (*err) += ss.str();
+    }
+  }
+
+  return true;
+
 }
 
 }  // namespace tinyusdz

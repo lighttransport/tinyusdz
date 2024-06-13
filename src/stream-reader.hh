@@ -203,8 +203,8 @@ class StreamReader {
       return false;
     }
 
-    unsigned short val =
-        *(reinterpret_cast<const unsigned short *>(&binary_[idx_]));
+    unsigned short val;
+    memcpy(&val, &binary_[idx_], sizeof(val));
 
     if (swap_endian_) {
       swap2(&val);
@@ -221,7 +221,8 @@ class StreamReader {
       return false;
     }
 
-    uint32_t val = *(reinterpret_cast<const uint32_t *>(&binary_[idx_]));
+    uint32_t val;
+    memcpy(&val, &binary_[idx_], sizeof(val));
 
     if (swap_endian_) {
       swap4(&val);
@@ -238,7 +239,8 @@ class StreamReader {
       return false;
     }
 
-    int val = *(reinterpret_cast<const int *>(&binary_[idx_]));
+    int val;
+    memcpy(&val, &binary_[idx_], sizeof(val));
 
     if (swap_endian_) {
       swap4(&val);
@@ -255,7 +257,8 @@ class StreamReader {
       return false;
     }
 
-    uint64_t val = *(reinterpret_cast<const uint64_t *>(&binary_[idx_]));
+    uint64_t val;
+    memcpy(&val, &binary_[idx_], sizeof(val));
 
     if (swap_endian_) {
       swap8(&val);
@@ -272,7 +275,8 @@ class StreamReader {
       return false;
     }
 
-    int64_t val = *(reinterpret_cast<const int64_t *>(&binary_[idx_]));
+    int64_t val;
+    memcpy(&val, &binary_[idx_], sizeof(val));
 
     if (swap_endian_) {
       swap8(&val);

@@ -1,4 +1,5 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2023 - Present, Light Transport Entertainment, Inc.
 //
 // Predefined MaterialX shadingmodel & Built-in MaterialX XML import plugIn.
 // Import only. Export is not supported(yet).

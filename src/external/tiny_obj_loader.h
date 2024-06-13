@@ -24,12 +24,16 @@ THE SOFTWARE.
 
 //
 // version 2.0.0 : Add new object oriented API. 1.x API is still provided.
+//                 * Add python binding.
 //                 * Support line primitive.
 //                 * Support points primitive.
 //                 * Support multiple search path for .mtl(v1 API).
-//                 * Support vertex weight `vw`(as an tinyobj extension)
+//                 * Support vertex skinning weight `vw`(as an tinyobj
+//                 extension). Note that this differs vertex weight([w]
+//                 component in `v` line)
 //                 * Support escaped whitespece in mtllib
-//                 * Add robust triangulation using Mapbox earcut(TINYOBJLOADER_USE_MAPBOX_EARCUT).
+//                 * Add robust triangulation using Mapbox
+//                 earcut(TINYOBJLOADER_USE_MAPBOX_EARCUT).
 // version 1.4.0 : Modifed ParseTextureNameAndOption API
 // version 1.3.1 : Make ParseTextureNameAndOption API public
 // version 1.3.0 : Separate warning and error message(breaking API of LoadObj)
@@ -194,9 +198,9 @@ struct material_t {
 
   int dummy;  // Suppress padding warning.
 
-  std::string ambient_texname;             // map_Ka
-  std::string diffuse_texname;             // map_Kd
-  std::string specular_texname;            // map_Ks
+  std::string ambient_texname;   // map_Ka. For ambient or ambient occlusion.
+  std::string diffuse_texname;   // map_Kd
+  std::string specular_texname;  // map_Ks
   std::string specular_highlight_texname;  // map_Ns
   std::string bump_texname;                // map_bump, map_Bump, bump
   std::string displacement_texname;        // disp
@@ -352,10 +356,9 @@ struct index_t {
 
 struct mesh_t {
   std::vector<index_t> indices;
-  std::vector<unsigned char>
+  std::vector<unsigned int>
       num_face_vertices;          // The number of vertices per
-                                  // face. 3 = triangle, 4 = quad,
-                                  // ... Up to 255 vertices per face.
+                                  // face. 3 = triangle, 4 = quad, ...
   std::vector<int> material_ids;  // per-face material ID
   std::vector<unsigned int> smoothing_group_ids;  // per-face smoothing group
                                                   // ID(0 = off. positive value
@@ -421,6 +424,8 @@ struct attrib_t {
 struct callback_t {
   // W is optional and set to 1 if there is no `w` item in `v` line
   void (*vertex_cb)(void *user_data, real_t x, real_t y, real_t z, real_t w);
+  void (*vertex_color_cb)(void *user_data, real_t x, real_t y, real_t z,
+                          real_t r, real_t g, real_t b, bool has_color);
   void (*normal_cb)(void *user_data, real_t x, real_t y, real_t z);
 
   // y and z are optional and set to 0 if there is no `y` and/or `z` item(s) in
@@ -444,6 +449,7 @@ struct callback_t {
 
   callback_t()
       : vertex_cb(NULL),
+        vertex_color_cb(NULL),
         normal_cb(NULL),
         texcoord_cb(NULL),
         index_cb(NULL),
@@ -673,6 +679,7 @@ bool ParseTextureNameAndOption(std::string *texname, texture_option_t *texopt,
 #endif
 
 #include <array>
+
 #include "mapbox/earcut.hpp"
 
 #ifdef __clang__
@@ -796,8 +803,21 @@ static std::istream &safeGetline(std::istream &is, std::string &t) {
   (static_cast<unsigned int>((x) - '0') < static_cast<unsigned int>(10))
 #define IS_NEW_LINE(x) (((x) == '\r') || ((x) == '\n') || ((x) == '\0'))
 
+template <typename T>
+static inline std::string toString(const T &t) {
+  std::stringstream ss;
+  ss << t;
+  return ss.str();
+}
+
+struct warning_context {
+  std::string *warn;
+  size_t line_number;
+};
+
 // Make index zero-base, and also support relative index.
-static inline bool fixIndex(int idx, int n, int *ret) {
+static inline bool fixIndex(int idx, int n, int *ret, bool allow_zero,
+                            const warning_context &context) {
   if (!ret) {
     return false;
   }
@@ -809,11 +829,22 @@ static inline bool fixIndex(int idx, int n, int *ret) {
 
   if (idx == 0) {
     // zero is not allowed according to the spec.
-    return false;
+    if (context.warn) {
+      (*context.warn) +=
+          "A zero value index found (will have a value of -1 for normal and "
+          "tex indices. Line " +
+          toString(context.line_number) + ").\n";
+    }
+
+    (*ret) = idx - 1;
+    return allow_zero;
   }
 
   if (idx < 0) {
     (*ret) = n + idx;  // negative value = relative
+    if ((*ret) < 0) {
+      return false;  // invalid relative index
+    }
     return true;
   }
 
@@ -972,7 +1003,8 @@ static bool tryParseDouble(const char *s, const char *s_end, double *result) {
     while (end_not_reached && IS_DIGIT(*curr)) {
       // To avoid annoying MSVC's min/max macro definiton,
       // Use hardcoded int max value
-      if (exponent > (2147483647/10)) { // 2147483647 = std::numeric_limits<int>::max()
+      if (exponent >
+          (2147483647 / 10)) {  // 2147483647 = std::numeric_limits<int>::max()
         // Integer overflow
         goto fail;
       }
@@ -1034,6 +1066,7 @@ static inline void parseReal3(real_t *x, real_t *y, real_t *z,
   (*z) = parseReal(token, default_z);
 }
 
+#if 0  // not used
 static inline void parseV(real_t *x, real_t *y, real_t *z, real_t *w,
                           const char **token, const double default_x = 0.0,
                           const double default_y = 0.0,
@@ -1044,26 +1077,45 @@ static inline void parseV(real_t *x, real_t *y, real_t *z, real_t *w,
   (*z) = parseReal(token, default_z);
   (*w) = parseReal(token, default_w);
 }
+#endif
 
 // Extension: parse vertex with colors(6 items)
-static inline bool parseVertexWithColor(real_t *x, real_t *y, real_t *z,
-                                        real_t *r, real_t *g, real_t *b,
-                                        const char **token,
-                                        const double default_x = 0.0,
-                                        const double default_y = 0.0,
-                                        const double default_z = 0.0) {
+// Return 3: xyz, 4: xyzw, 6: xyzrgb
+// `r`: red(case 6) or [w](case 4)
+static inline int parseVertexWithColor(real_t *x, real_t *y, real_t *z,
+                                       real_t *r, real_t *g, real_t *b,
+                                       const char **token,
+                                       const double default_x = 0.0,
+                                       const double default_y = 0.0,
+                                       const double default_z = 0.0) {
+  // TODO: Check error
   (*x) = parseReal(token, default_x);
   (*y) = parseReal(token, default_y);
   (*z) = parseReal(token, default_z);
 
-  const bool found_color =
-      parseReal(token, r) && parseReal(token, g) && parseReal(token, b);
+  // - 4 components(x, y, z, w) ot 6 components
+  bool has_r = parseReal(token, r);
 
-  if (!found_color) {
+  if (!has_r) {
     (*r) = (*g) = (*b) = 1.0;
+    return 3;
   }
 
-  return found_color;
+  bool has_g = parseReal(token, g);
+
+  if (!has_g) {
+    (*g) = (*b) = 1.0;
+    return 4;
+  }
+
+  bool has_b = parseReal(token, b);
+
+  if (!has_b) {
+    (*r) = (*g) = (*b) = 1.0;
+    return 3;  // treated as xyz
+  }
+
+  return 6;
 }
 
 static inline bool parseOnOff(const char **token, bool default_value = true) {
@@ -1134,14 +1186,14 @@ static tag_sizes parseTagTriple(const char **token) {
 
 // Parse triples with index offsets: i, i/j/k, i//k, i/j
 static bool parseTriple(const char **token, int vsize, int vnsize, int vtsize,
-                        vertex_index_t *ret) {
+                        vertex_index_t *ret, const warning_context &context) {
   if (!ret) {
     return false;
   }
 
   vertex_index_t vi(-1);
 
-  if (!fixIndex(atoi((*token)), vsize, &(vi.v_idx))) {
+  if (!fixIndex(atoi((*token)), vsize, &vi.v_idx, false, context)) {
     return false;
   }
 
@@ -1155,7 +1207,7 @@ static bool parseTriple(const char **token, int vsize, int vnsize, int vtsize,
   // i//k
   if ((*token)[0] == '/') {
     (*token)++;
-    if (!fixIndex(atoi((*token)), vnsize, &(vi.vn_idx))) {
+    if (!fixIndex(atoi((*token)), vnsize, &vi.vn_idx, true, context)) {
       return false;
     }
     (*token) += strcspn((*token), "/ \t\r");
@@ -1164,7 +1216,7 @@ static bool parseTriple(const char **token, int vsize, int vnsize, int vtsize,
   }
 
   // i/j/k or i/j
-  if (!fixIndex(atoi((*token)), vtsize, &(vi.vt_idx))) {
+  if (!fixIndex(atoi((*token)), vtsize, &vi.vt_idx, true, context)) {
     return false;
   }
 
@@ -1176,7 +1228,7 @@ static bool parseTriple(const char **token, int vsize, int vnsize, int vtsize,
 
   // i/j/k
   (*token)++;  // skip '/'
-  if (!fixIndex(atoi((*token)), vnsize, &(vi.vn_idx))) {
+  if (!fixIndex(atoi((*token)), vnsize, &vi.vn_idx, true, context)) {
     return false;
   }
   (*token) += strcspn((*token), "/ \t\r");
@@ -1400,13 +1452,11 @@ static int pnpoly(int nvert, T *vertx, T *verty, T testx, T testy) {
 struct TinyObjPoint {
   real_t x, y, z;
   TinyObjPoint() : x(0), y(0), z(0) {}
-  TinyObjPoint(real_t x_, real_t y_, real_t z_) :
-    x(x_), y(y_), z(z_) {}
+  TinyObjPoint(real_t x_, real_t y_, real_t z_) : x(x_), y(y_), z(z_) {}
 };
 
 inline TinyObjPoint cross(const TinyObjPoint &v1, const TinyObjPoint &v2) {
-  return TinyObjPoint(v1.y * v2.z - v1.z * v2.y,
-                      v1.z * v2.x - v1.x * v2.z,
+  return TinyObjPoint(v1.y * v2.z - v1.z * v2.y, v1.z * v2.x - v1.x * v2.z,
                       v1.x * v2.y - v1.y * v2.x);
 }
 
@@ -1415,22 +1465,18 @@ inline real_t dot(const TinyObjPoint &v1, const TinyObjPoint &v2) {
 }
 
 inline real_t GetLength(TinyObjPoint &e) {
-	return std::sqrt(e.x*e.x + e.y*e.y + e.z*e.z);
+  return std::sqrt(e.x * e.x + e.y * e.y + e.z * e.z);
 }
 
 inline TinyObjPoint Normalize(TinyObjPoint e) {
-	real_t inv_length = 1.0 / GetLength(e);
-	return TinyObjPoint(e.x * inv_length, e.y * inv_length, e.z * inv_length );
+  real_t inv_length = real_t(1) / GetLength(e);
+  return TinyObjPoint(e.x * inv_length, e.y * inv_length, e.z * inv_length);
 }
 
-
-inline TinyObjPoint WorldToLocal(const TinyObjPoint& a,
-										  const TinyObjPoint& u,
-										  const TinyObjPoint& v,
-										  const TinyObjPoint& w) {
-  return TinyObjPoint(dot(a,u),dot(a,v),dot(a,w));
+inline TinyObjPoint WorldToLocal(const TinyObjPoint &a, const TinyObjPoint &u,
+                                 const TinyObjPoint &v, const TinyObjPoint &w) {
+  return TinyObjPoint(dot(a, u), dot(a, v), dot(a, w));
 }
-
 
 // TODO(syoyo): refactor function.
 static bool exportGroupsToShape(shape_t *shape, const PrimGroup &prim_group,
@@ -1573,7 +1619,8 @@ static bool exportGroupsToShape(shape_t *shape, const PrimGroup &prim_group,
           vertex_index_t i0 = face.vertex_indices[0];
           vertex_index_t i0_2 = i0;
 
-          // TMW change: Find the normal axis of the polygon using Newell's method
+          // TMW change: Find the normal axis of the polygon using Newell's
+          // method
           TinyObjPoint n;
           for (size_t k = 0; k < npolys; ++k) {
             i0 = face.vertex_indices[k % npolys];
@@ -1591,23 +1638,25 @@ static bool exportGroupsToShape(shape_t *shape, const PrimGroup &prim_group,
             real_t v0y_2 = v[vi0_2 * 3 + 1];
             real_t v0z_2 = v[vi0_2 * 3 + 2];
 
-            const TinyObjPoint point1(v0x,v0y,v0z);
-            const TinyObjPoint point2(v0x_2,v0y_2,v0z_2);
+            const TinyObjPoint point1(v0x, v0y, v0z);
+            const TinyObjPoint point2(v0x_2, v0y_2, v0z_2);
 
-            TinyObjPoint a(point1.x - point2.x, point1.y - point2.y, point1.z - point2.z);
-            TinyObjPoint b(point1.x + point2.x, point1.y + point2.y, point1.z + point2.z);
+            TinyObjPoint a(point1.x - point2.x, point1.y - point2.y,
+                           point1.z - point2.z);
+            TinyObjPoint b(point1.x + point2.x, point1.y + point2.y,
+                           point1.z + point2.z);
 
-            n.x += (a.x * b.z);
+            n.x += (a.y * b.z);
             n.y += (a.z * b.x);
             n.z += (a.x * b.y);
           }
           real_t length_n = GetLength(n);
-          //Check if zero length normal
-          if(length_n <= 0) {
+          // Check if zero length normal
+          if (length_n <= 0) {
             continue;
           }
-          //Negative is to flip the normal to the correct direction
-          real_t inv_length = -1.0f / length_n;
+          // Negative is to flip the normal to the correct direction
+          real_t inv_length = -real_t(1.0) / length_n;
           n.x *= inv_length;
           n.y *= inv_length;
           n.z *= inv_length;
@@ -1615,10 +1664,10 @@ static bool exportGroupsToShape(shape_t *shape, const PrimGroup &prim_group,
           TinyObjPoint axis_w, axis_v, axis_u;
           axis_w = n;
           TinyObjPoint a;
-          if(abs(axis_w.x) > 0.9999999) {
-            a = TinyObjPoint(0,1,0);
+          if (std::fabs(axis_w.x) > real_t(0.9999999)) {
+            a = TinyObjPoint(0, 1, 0);
           } else {
-            a = TinyObjPoint(1,0,0);
+            a = TinyObjPoint(1, 0, 0);
           }
           axis_v = Normalize(cross(axis_w, a));
           axis_u = cross(axis_w, axis_v);
@@ -1630,8 +1679,9 @@ static bool exportGroupsToShape(shape_t *shape, const PrimGroup &prim_group,
 
           std::vector<Point> polyline;
 
-          //TMW change: Find best normal and project v0x and v0y to those coordinates, instead of
-          //picking a plane aligned with an axis (which can flip polygons).
+          // TMW change: Find best normal and project v0x and v0y to those
+          // coordinates, instead of picking a plane aligned with an axis (which
+          // can flip polygons).
 
           // Fill polygon data(facevarying vertices).
           for (size_t k = 0; k < npolys; k++) {
@@ -1644,7 +1694,7 @@ static bool exportGroupsToShape(shape_t *shape, const PrimGroup &prim_group,
             real_t v0y = v[vi0 * 3 + 1];
             real_t v0z = v[vi0 * 3 + 2];
 
-            TinyObjPoint polypoint(v0x,v0y,v0z);
+            TinyObjPoint polypoint(v0x, v0y, v0z);
             TinyObjPoint loc = WorldToLocal(polypoint, axis_u, axis_v, axis_w);
 
             polyline.push_back({loc.x, loc.y});
@@ -1662,19 +1712,19 @@ static bool exportGroupsToShape(shape_t *shape, const PrimGroup &prim_group,
               index_t idx0, idx1, idx2;
               idx0.vertex_index = face.vertex_indices[indices[3 * k + 0]].v_idx;
               idx0.normal_index =
-                face.vertex_indices[indices[3 * k + 0]].vn_idx;
+                  face.vertex_indices[indices[3 * k + 0]].vn_idx;
               idx0.texcoord_index =
-                face.vertex_indices[indices[3 * k + 0]].vt_idx;
+                  face.vertex_indices[indices[3 * k + 0]].vt_idx;
               idx1.vertex_index = face.vertex_indices[indices[3 * k + 1]].v_idx;
               idx1.normal_index =
-                face.vertex_indices[indices[3 * k + 1]].vn_idx;
+                  face.vertex_indices[indices[3 * k + 1]].vn_idx;
               idx1.texcoord_index =
-                face.vertex_indices[indices[3 * k + 1]].vt_idx;
+                  face.vertex_indices[indices[3 * k + 1]].vt_idx;
               idx2.vertex_index = face.vertex_indices[indices[3 * k + 2]].v_idx;
               idx2.normal_index =
-                face.vertex_indices[indices[3 * k + 2]].vn_idx;
+                  face.vertex_indices[indices[3 * k + 2]].vn_idx;
               idx2.texcoord_index =
-                face.vertex_indices[indices[3 * k + 2]].vt_idx;
+                  face.vertex_indices[indices[3 * k + 2]].vt_idx;
 
               shape->mesh.indices.push_back(idx0);
               shape->mesh.indices.push_back(idx1);
@@ -1804,7 +1854,8 @@ static bool exportGroupsToShape(shape_t *shape, const PrimGroup &prim_group,
             // std::cout << "e0x, e0y, e1x, e1y " << e0x << ", " << e0y << ", "
             // << e1x << ", " << e1y << "\n";
 
-            real_t area = (vx[0] * vy[1] - vy[0] * vx[1]) * static_cast<real_t>(0.5);
+            real_t area =
+                (vx[0] * vy[1] - vy[0] * vx[1]) * static_cast<real_t>(0.5);
             // std::cout << "cross " << cross << ", area " << area << "\n";
             // if an internal angle
             if (cross * area < static_cast<real_t>(0.0)) {
@@ -1921,7 +1972,7 @@ static bool exportGroupsToShape(shape_t *shape, const PrimGroup &prim_group,
         }
 
         shape->mesh.num_face_vertices.push_back(
-            static_cast<unsigned char>(npolys));
+            static_cast<unsigned int>(npolys));
         shape->mesh.material_ids.push_back(material_id);  // per face
         shape->mesh.smoothing_group_ids.push_back(
             face.smoothing_group_id);  // per face
@@ -2087,9 +2138,14 @@ void LoadMtl(std::map<std::string, int> *material_map,
       // set new mtl name
       token += 7;
       {
-        std::stringstream sstr;
-        sstr << token;
-        material.name = sstr.str();
+        std::string namebuf = parseString(&token);
+        // TODO: empty name check?
+        if (namebuf.empty()) {
+          if (warning) {
+            (*warning) += "empty material name in `newmtl`\n";
+          }
+        }
+        material.name = namebuf;
       }
       continue;
     }
@@ -2253,7 +2309,7 @@ void LoadMtl(std::map<std::string, int> *material_map,
       continue;
     }
 
-    // ambient texture
+    // ambient or ambient occlusion texture
     if ((0 == strncmp(token, "map_Ka", 6)) && IS_SPACE(token[6])) {
       token += 7;
       ParseTextureNameAndOption(&(material.ambient_texname),
@@ -2533,10 +2589,11 @@ bool LoadObj(attrib_t *attrib, std::vector<shape_t> *shapes,
   std::stringstream errss;
 
   std::vector<real_t> v;
+  std::vector<real_t> vertex_weights;  // optional [w] component in `v`
   std::vector<real_t> vn;
   std::vector<real_t> vt;
   std::vector<real_t> vc;
-  std::vector<skin_weight_t> vw;
+  std::vector<skin_weight_t> vw;  // tinyobj extension: vertex skin weights
   std::vector<tag_t> tags;
   PrimGroup prim_group;
   std::string name;
@@ -2556,7 +2613,7 @@ bool LoadObj(attrib_t *attrib, std::vector<shape_t> *shapes,
 
   shape_t shape;
 
-  bool found_all_colors = true;
+  bool found_all_colors = true;  // check if all 'v' line has color info
 
   size_t line_num = 0;
   std::string linebuf;
@@ -2595,13 +2652,17 @@ bool LoadObj(attrib_t *attrib, std::vector<shape_t> *shapes,
       real_t x, y, z;
       real_t r, g, b;
 
-      found_all_colors &= parseVertexWithColor(&x, &y, &z, &r, &g, &b, &token);
+      int num_components = parseVertexWithColor(&x, &y, &z, &r, &g, &b, &token);
+      found_all_colors &= (num_components == 6);
 
       v.push_back(x);
       v.push_back(y);
       v.push_back(z);
 
-      if (found_all_colors || default_vcols_fallback) {
+      vertex_weights.push_back(
+          r);  // r = w, and initialized to 1.0 when `w` component is not found.
+
+      if ((num_components == 6) || default_vcols_fallback) {
         vc.push_back(r);
         vc.push_back(g);
         vc.push_back(b);
@@ -2678,6 +2739,10 @@ bool LoadObj(attrib_t *attrib, std::vector<shape_t> *shapes,
       vw.push_back(sw);
     }
 
+    warning_context context;
+    context.warn = warn;
+    context.line_number = line_num;
+
     // line
     if (token[0] == 'l' && IS_SPACE((token[1]))) {
       token += 2;
@@ -2688,13 +2753,12 @@ bool LoadObj(attrib_t *attrib, std::vector<shape_t> *shapes,
         vertex_index_t vi;
         if (!parseTriple(&token, static_cast<int>(v.size() / 3),
                          static_cast<int>(vn.size() / 3),
-                         static_cast<int>(vt.size() / 2), &vi)) {
+                         static_cast<int>(vt.size() / 2), &vi, context)) {
           if (err) {
-            std::stringstream ss;
-            ss << "Failed parse `l' line(e.g. zero value for vertex index. "
-                  "line "
-               << line_num << ".)\n";
-            (*err) += ss.str();
+            (*err) +=
+                "Failed to parse `l' line (e.g. a zero value for vertex index. "
+                "Line " +
+                toString(line_num) + ").\n";
           }
           return false;
         }
@@ -2720,13 +2784,12 @@ bool LoadObj(attrib_t *attrib, std::vector<shape_t> *shapes,
         vertex_index_t vi;
         if (!parseTriple(&token, static_cast<int>(v.size() / 3),
                          static_cast<int>(vn.size() / 3),
-                         static_cast<int>(vt.size() / 2), &vi)) {
+                         static_cast<int>(vt.size() / 2), &vi, context)) {
           if (err) {
-            std::stringstream ss;
-            ss << "Failed parse `p' line(e.g. zero value for vertex index. "
-                  "line "
-               << line_num << ".)\n";
-            (*err) += ss.str();
+            (*err) +=
+                "Failed to parse `p' line (e.g. a zero value for vertex index. "
+                "Line " +
+                toString(line_num) + ").\n";
           }
           return false;
         }
@@ -2756,12 +2819,12 @@ bool LoadObj(attrib_t *attrib, std::vector<shape_t> *shapes,
         vertex_index_t vi;
         if (!parseTriple(&token, static_cast<int>(v.size() / 3),
                          static_cast<int>(vn.size() / 3),
-                         static_cast<int>(vt.size() / 2), &vi)) {
+                         static_cast<int>(vt.size() / 2), &vi, context)) {
           if (err) {
-            std::stringstream ss;
-            ss << "Failed parse `f' line(e.g. zero value for face index. line "
-               << line_num << ".)\n";
-            (*err) += ss.str();
+            (*err) +=
+                "Failed to parse `f' line (e.g. a zero value for vertex index "
+                "or invalid relative vertex index). Line " +
+                toString(line_num) + ").\n";
           }
           return false;
         }
@@ -3050,14 +3113,16 @@ bool LoadObj(attrib_t *attrib, std::vector<shape_t> *shapes,
   if (greatest_vn_idx >= static_cast<int>(vn.size() / 3)) {
     if (warn) {
       std::stringstream ss;
-      ss << "Vertex normal indices out of bounds (line " << line_num << ".)\n\n";
+      ss << "Vertex normal indices out of bounds (line " << line_num
+         << ".)\n\n";
       (*warn) += ss.str();
     }
   }
   if (greatest_vt_idx >= static_cast<int>(vt.size() / 2)) {
     if (warn) {
       std::stringstream ss;
-      ss << "Vertex texcoord indices out of bounds (line " << line_num << ".)\n\n";
+      ss << "Vertex texcoord indices out of bounds (line " << line_num
+         << ".)\n\n";
       (*warn) += ss.str();
     }
   }
@@ -3079,7 +3144,7 @@ bool LoadObj(attrib_t *attrib, std::vector<shape_t> *shapes,
   }
 
   attrib->vertices.swap(v);
-  attrib->vertex_weights.swap(v);
+  attrib->vertex_weights.swap(vertex_weights);
   attrib->normals.swap(vn);
   attrib->texcoords.swap(vt);
   attrib->texcoord_ws.swap(vt);
@@ -3138,11 +3203,16 @@ bool LoadObjWithCallback(std::istream &inStream, const callback_t &callback,
     // vertex
     if (token[0] == 'v' && IS_SPACE((token[1]))) {
       token += 2;
-      // TODO(syoyo): Support parsing vertex color extension.
-      real_t x, y, z, w;  // w is optional. default = 1.0
-      parseV(&x, &y, &z, &w, &token);
+      real_t x, y, z;
+      real_t r, g, b;
+
+      int num_components = parseVertexWithColor(&x, &y, &z, &r, &g, &b, &token);
       if (callback.vertex_cb) {
-        callback.vertex_cb(user_data, x, y, z, w);
+        callback.vertex_cb(user_data, x, y, z, r);  // r=w is optional
+      }
+      if (callback.vertex_color_cb) {
+        bool found_color = (num_components == 6);
+        callback.vertex_color_cb(user_data, x, y, z, r, g, b, found_color);
       }
       continue;
     }

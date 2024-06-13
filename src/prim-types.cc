@@ -76,6 +76,45 @@ bool operator==(const Path &lhs, const Path &rhs) {
   return (lhs.full_path_name() == rhs.full_path_name());
 }
 
+bool ConvertTokenAttributeToStringAttribute(
+    const TypedAttribute<Animatable<value::token>> &inp,
+    TypedAttribute<Animatable<std::string>> &out) {
+  
+    out.metas() = inp.metas();
+  
+    if (inp.is_blocked()) {
+      out.set_blocked(true);
+    } else if (inp.is_value_empty()) {
+      out.set_value_empty();
+    } else if (inp.is_connection()) {
+      out.set_connections(inp.get_connections());
+    } else {
+      Animatable<value::token> toks;
+      Animatable<std::string> strs;
+      if (inp.get_value(&toks)) {
+        if (toks.is_scalar()) {
+          value::token tok;
+          toks.get_scalar(&tok);
+          strs.set(tok.str());
+        } else if (toks.is_timesamples()) {
+          auto tok_ts = toks.get_timesamples();
+  
+          for (auto &item : tok_ts.get_samples()) {
+            strs.add_sample(item.t, item.value.str());
+          }
+        } else if (toks.is_blocked()) {
+          // TODO
+          return false;
+        }
+      }
+      out.set_value(strs);
+    }
+  
+    return true;
+  }
+  
+
+
 //
 // -- Path
 //
@@ -1891,6 +1930,42 @@ void PrimMetas::update_from(const PrimMetas &rhs, const bool override_authored) 
   OverrideDictionary(meta, rhs.meta, override_authored);
 }
 
+bool AttrMetas::has_colorSpace() const {
+  return meta.count("colorSpace");
+}
+
+value::token AttrMetas::get_colorSpace() const {
+  if (!has_colorSpace()) {
+    return value::token();
+  }
+
+  const MetaVariable &mv = meta.at("colorSpace");
+  value::token tok;
+  if (mv.get_value<value::token>(&tok)) {
+    return tok;
+  }
+
+  return value::token();
+}
+
+bool AttrMetas::has_unauthoredValuesIndex() const {
+  return meta.count("unauthoredValuesIndex");
+}
+
+int AttrMetas::get_unauthoredValuesIndex() const {
+  if (!has_unauthoredValuesIndex()) {
+    return -1;
+  }
+
+  const MetaVariable &mv = meta.at("unauthoredValuesIndex");
+  int v;
+  if (mv.get_value<int>(&v)) {
+    return v;
+  }
+
+  return -1;
+}
+
 namespace {
 
 nonstd::optional<const PrimSpec *> GetPrimSpecAtPathRec(
@@ -2062,11 +2137,11 @@ bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps,
 
   if (path.is_relative_path()) {
     // TODO
-    PUSH_ERROR_AND_RETURN("Relative path is todo.");
+    PUSH_ERROR_AND_RETURN(fmt::format("TODO: Relative path: {}", path.full_path_name()));
   }
 
   if (!path.is_absolute_path()) {
-    PUSH_ERROR_AND_RETURN("path is not absolute path.");
+    PUSH_ERROR_AND_RETURN(fmt::format("Path is not absolute path: {}", path.full_path_name()));
   }
 
 #if defined(TINYUSDZ_ENABLE_THREAD)

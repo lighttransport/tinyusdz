@@ -40,6 +40,7 @@
 #include "usdSkel.hh"
 //#include "usdVox.hh"
 #include "stage.hh"
+#include "asset-resolution.hh"
 
 
 namespace tinyusdz {
@@ -62,6 +63,7 @@ struct USDLoadOptions {
   int32_t max_memory_limit_in_mb{16384};  // in [mb] Default 16GB
 
   ///
+  /// TODO: Deprecate
   /// Loads asset data(e.g. texture image, audio). Default is true.
   /// If you want to load asset data in your own way or don't need asset data to
   /// be loaded, Set this false.
@@ -167,6 +169,7 @@ bool LoadUSDFromMemory(const uint8_t *addr, const size_t length,
 
 ///
 /// Load USDZ(zip) from a file.
+/// It will load first USD file in USDZ container.
 ///
 /// @param[in] filename USDZ filename(UTF-8)
 /// @param[out] stage USD stage(scene graph).
@@ -187,8 +190,10 @@ bool LoadUSDZFromFile(const std::wstring &filename, Stage *stage,
                       const USDLoadOptions &options = USDLoadOptions());
 #endif
 
+
 ///
 /// Load USDZ(zip) from memory.
+/// It will load first USD file in USDZ container.
 ///
 /// @param[in] addr Memory address of USDZ data
 /// @param[in] length Byte length of USDZ data
@@ -204,6 +209,73 @@ bool LoadUSDZFromMemory(const uint8_t *addr, const size_t length,
                         const std::string &filename, Stage *stage,
                         std::string *warn, std::string *err,
                         const USDLoadOptions &options = USDLoadOptions());
+
+struct USDZAsset
+{
+  // key: asset name(USD, Image, Audio, ...), value = byte begin/end in USDZ data.
+  std::map<std::string, std::pair<size_t, size_t>> asset_map;
+
+  // When mmapped, `data` is empty, and `addr`(Usually pointer to mmaped address) and `size`  are set.
+  // When non-mmapped, `data` holds the copy of whole USDZ data.
+  std::vector<uint8_t> data; // USDZ itself
+  const uint8_t *addr{nullptr};
+  size_t size{0}; // in bytes.
+  
+  bool is_mmaped() const {
+    return !data.empty();
+  }
+};
+
+///
+/// Read USDZ(zip) asset info from a file.
+///
+/// Whole file content(USDZ) is copied into USDZAsset::data.
+/// If you want to save memory to load USDZ with assets, first read USDZ conent into memory(or Use io-util.hh::MMapFile() to mmap file), then use `ReadUSDZAssetInfoFromMemory with `assert_on_memory` true.
+///
+/// @param[in] filename USDZ filename(UTF-8)
+/// @param[out] asset USDZ asset info.
+/// @param[out] warn Warning message.
+/// @param[out] err Error message(filled when the function returns false)
+/// @param[in] max_file_size_in_mb Maximum file size
+///
+/// @return true upon success
+///
+bool ReadUSDZAssetInfoFromFile(const std::string &filename, USDZAsset *asset,
+  std::string *warn, std::string *err, size_t max_file_size_in_mb = 16384ull);
+
+///
+/// Read USDZ(zip) asset info from memory.
+///
+/// @param[in] addr Memory address
+/// @param[in] asset_on_memory When true, do not copy USDZ data(`length` bytes from `addr` address) to USDZAsset. Instead just retain `addr` and `length` in USDZAsset. Memory address `addr` must be retained during any asset data in USDZAsset is accessed. When false, USDZ data is copied into USDZAsset.
+/// 
+/// @param[out] asset USDZ asset info.
+/// @param[out] warn Warning message.
+/// @param[out] err Error message(filled when the function returns false)
+///
+/// @return true upon success
+///
+bool ReadUSDZAssetInfoFromMemory(const uint8_t *addr, const size_t length, const bool asset_on_memory, USDZAsset *asset,
+  std::string *warn, std::string *err);
+
+///
+/// Handy utility API to setup AssetResolutionResolver to load asset data from USDZ data.
+///
+/// @param[inout] resolver Add asset resolution to the resolver. The resolver retains the pointer to USDZAsset.
+/// @param[in] pusdzAsset Pointer to data struct(USDZAsset struct). Must be retained until there is (potential) access to any asset, since AssetResolutionResolver and FileSystemHandler loads an asset from this struct.
+///
+/// @return upon success and setup `resolver` and `fsHandler`.
+///
+bool SetupUSDZAssetResolution(
+  AssetResolutionResolver &resolver,
+  const USDZAsset *pusdzAsset);
+
+///
+/// Default AssetResolution handler for USDZ(read asset from USDZ container)
+///
+int USDZResolveAsset(const char *asset_name, const std::vector<std::string> &search_paths, std::string *resolved_asset_name, std::string *err, void *userdata);
+int USDZSizeAsset(const char *resolved_asset_name, uint64_t *nbytes, std::string *err, void *userdata);
+int USDZReadAsset(const char *resolved_asset_name, uint64_t req_bytes, uint8_t *out_buf, uint64_t *nbytes, std::string *err, void *userdata);
 
 ///
 /// Load USDC(binary) from a file.

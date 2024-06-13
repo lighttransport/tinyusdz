@@ -18,6 +18,8 @@ namespace tinyusdz {
 
 constexpr auto kMaterial = "Material";
 constexpr auto kShader = "Shader";
+constexpr auto kNodeGraph = "NodeGraph";
+constexpr auto kShaderNode = "ShaderNode";
 
 constexpr auto kShaderInfoId = "info:id";
 
@@ -35,10 +37,6 @@ constexpr auto kUsdPrimvarReader_point = "UsdPrimvarReader_point";
 constexpr auto kUsdPrimvarReader_vector = "UsdPrimvarReader_vector";
 constexpr auto kUsdPrimvarReader_matrix = "UsdPrimvarReader_matrix";
 
-// for bindMaterialAs
-constexpr auto kWeaderThanDescendants = "weakerThanDescendants";
-constexpr auto kStrongerThanDescendants = "strongerThanDescendants";
-
 // TODO: Inherit from Prim?
 struct UsdShadePrim {
   std::string name;
@@ -47,7 +45,7 @@ struct UsdShadePrim {
   int64_t parent_id{-1};
 
   PrimMeta meta; // TODO: move to private
-  
+
   const PrimMeta &metas() const { return meta; }
   PrimMeta &metas() { return meta; }
 
@@ -149,6 +147,8 @@ using UsdPrimvarReader_matrix  = UsdPrimvarReader<value::matrix4d>;
 
 struct UsdUVTexture : ShaderNode {
 
+  // NOTE: transparent black(0, 0, 0, 0) for "black"
+  //       https://github.com/PixarAnimationStudios/OpenUSD/commit/2cf6612b2b1d5a1a1031bc153867116c5963e605
   enum class Wrap {
     UseMetadata, // "useMetadata" (default)
     Black, // "black"
@@ -279,41 +279,49 @@ struct Shader : UsdShadePrim {
 namespace value {
 
 // Mateiral Prim
-DEFINE_TYPE_TRAIT(Material, "Material",
+DEFINE_TYPE_TRAIT(Material, kMaterial,
                   TYPE_ID_MATERIAL, 1);
 
 // Shader Prim
-DEFINE_TYPE_TRAIT(Shader, "Shader",
+DEFINE_TYPE_TRAIT(Shader, kShader,
                   TYPE_ID_SHADER, 1);
 
+// NodeGraph Prim
+DEFINE_TYPE_TRAIT(NodeGraph, kNodeGraph,
+                  TYPE_ID_NODEGRAPH, 1);
+
+
 // ShaderNodes
-DEFINE_TYPE_TRAIT(ShaderNode, "ShaderNode",
+DEFINE_TYPE_TRAIT(ShaderNode, kShaderNode,
                   TYPE_ID_IMAGING_SHADER_NODE, 1);
-DEFINE_TYPE_TRAIT(UsdPreviewSurface, "UsdPreviewSurface",
+DEFINE_TYPE_TRAIT(UsdPreviewSurface, kUsdPreviewSurface,
                   TYPE_ID_IMAGING_PREVIEWSURFACE, 1);
-DEFINE_TYPE_TRAIT(UsdUVTexture, "UsdUVTexture", TYPE_ID_IMAGING_UVTEXTURE, 1);
-DEFINE_TYPE_TRAIT(UsdPrimvarReader_float, "UsdPrimvarReader_float",
+DEFINE_TYPE_TRAIT(UsdUVTexture, kUsdUVTexture, TYPE_ID_IMAGING_UVTEXTURE, 1);
+DEFINE_TYPE_TRAIT(UsdPrimvarReader_float, kUsdPrimvarReader_float,
                   TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT, 1);
-DEFINE_TYPE_TRAIT(UsdPrimvarReader_float2, "UsdPrimvarReader_float2",
+DEFINE_TYPE_TRAIT(UsdPrimvarReader_float2, kUsdPrimvarReader_float2,
                   TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT2, 1);
-DEFINE_TYPE_TRAIT(UsdPrimvarReader_float3, "UsdPrimvarReader_float3",
+DEFINE_TYPE_TRAIT(UsdPrimvarReader_float3, kUsdPrimvarReader_float3,
                   TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT3, 1);
-DEFINE_TYPE_TRAIT(UsdPrimvarReader_float4, "UsdPrimvarReader_float4",
+DEFINE_TYPE_TRAIT(UsdPrimvarReader_float4, kUsdPrimvarReader_float4,
                   TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT4, 1);
-DEFINE_TYPE_TRAIT(UsdPrimvarReader_int, "UsdPrimvarReader_int",
+DEFINE_TYPE_TRAIT(UsdPrimvarReader_int, kUsdPrimvarReader_int,
                   TYPE_ID_IMAGING_PRIMVAR_READER_INT, 1);
-DEFINE_TYPE_TRAIT(UsdPrimvarReader_string, "UsdPrimvarReader_string",
+DEFINE_TYPE_TRAIT(UsdPrimvarReader_string, kUsdPrimvarReader_string,
                   TYPE_ID_IMAGING_PRIMVAR_READER_STRING, 1);
-DEFINE_TYPE_TRAIT(UsdPrimvarReader_vector, "UsdPrimvarReader_vector",
+DEFINE_TYPE_TRAIT(UsdPrimvarReader_vector, kUsdPrimvarReader_vector,
                   TYPE_ID_IMAGING_PRIMVAR_READER_VECTOR, 1);
-DEFINE_TYPE_TRAIT(UsdPrimvarReader_normal, "UsdPrimvarReader_normal",
+DEFINE_TYPE_TRAIT(UsdPrimvarReader_normal, kUsdPrimvarReader_normal,
                   TYPE_ID_IMAGING_PRIMVAR_READER_NORMAL, 1);
-DEFINE_TYPE_TRAIT(UsdPrimvarReader_point, "UsdPrimvarReader_point",
+DEFINE_TYPE_TRAIT(UsdPrimvarReader_point, kUsdPrimvarReader_point,
                   TYPE_ID_IMAGING_PRIMVAR_READER_POINT, 1);
-DEFINE_TYPE_TRAIT(UsdPrimvarReader_matrix, "UsdPrimvarReader_matrix",
+DEFINE_TYPE_TRAIT(UsdPrimvarReader_matrix, kUsdPrimvarReader_matrix,
                   TYPE_ID_IMAGING_PRIMVAR_READER_MATRIX, 1);
-DEFINE_TYPE_TRAIT(UsdTransform2d, "UsdTransform2d",
+DEFINE_TYPE_TRAIT(UsdTransform2d, kUsdTransform2d,
                   TYPE_ID_IMAGING_TRANSFORM_2D, 1);
+
+DEFINE_TYPE_TRAIT(MaterialBinding, "MaterialBindingAPI",
+                  TYPE_ID_MATERIAL_BINDING, 1);
 
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT

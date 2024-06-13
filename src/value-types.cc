@@ -1,5 +1,6 @@
-// SPDX-License-Identifier: MIT
-// Copyright 2022 - Present, Syoyo Fujita.
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2022 - 2023, Syoyo Fujita.
+// Copyright 2023 - Present, Light Transport Entertainment Inc.
 #include "value-types.hh"
 
 #include "str-util.hh"
@@ -8,6 +9,7 @@
 
 //
 #include "common-macros.inc"
+#include "math-util.inc"
 
 // For compile-time map
 // Another candidate is frozen: https://github.com/serge-sans-paille/frozen
@@ -29,32 +31,84 @@ namespace value {
 // (use slerp for quaternion type)
 bool IsLerpSupportedType(uint32_t tyid) {
 
-  // See underlying_type_id to simplify check for Role types(e.g. color3f)
-#define IS_SUPPORTED_TYPE(__tyid, __ty) \
-  if (__tyid == value::TypeTraits<__ty>::underlying_type_id()) return true
+  // TODO: Directly get underlying_typeid
+  bool has_underlying_tyid{false};
+  uint32_t underlying_tyid{TYPE_ID_INVALID};
 
-  IS_SUPPORTED_TYPE(tyid, value::half);
-  IS_SUPPORTED_TYPE(tyid, value::half2);
-  IS_SUPPORTED_TYPE(tyid, value::half3);
-  IS_SUPPORTED_TYPE(tyid, value::half4);
-  IS_SUPPORTED_TYPE(tyid, float);
-  IS_SUPPORTED_TYPE(tyid, value::float2);
-  IS_SUPPORTED_TYPE(tyid, value::float3);
-  IS_SUPPORTED_TYPE(tyid, value::float4);
-  IS_SUPPORTED_TYPE(tyid, double);
-  IS_SUPPORTED_TYPE(tyid, value::double2);
-  IS_SUPPORTED_TYPE(tyid, value::double3);
-  IS_SUPPORTED_TYPE(tyid, value::double4);
-  IS_SUPPORTED_TYPE(tyid, value::quath);
-  IS_SUPPORTED_TYPE(tyid, value::quatf);
-  IS_SUPPORTED_TYPE(tyid, value::quatd);
-  IS_SUPPORTED_TYPE(tyid, value::matrix2d);
-  IS_SUPPORTED_TYPE(tyid, value::matrix3d);
-  IS_SUPPORTED_TYPE(tyid, value::matrix4d);
+  if (auto pv = TryGetUnderlyingTypeName(tyid)) {
+    underlying_tyid = GetTypeId(pv.value());
+    has_underlying_tyid = true;
+  } 
+
+  // See also for underlying_type_id to simplify check for Role types(e.g. color3f)
+#define IS_SUPPORTED_TYPE(__tyid, __ty) \
+  if (__tyid == value::TypeTraits<__ty>::type_id()) { \
+    return true; \
+  } else if (__tyid == value::TypeTraits<__ty>::underlying_type_id()) { \
+    return true; \
+  } else if (__tyid & value::TYPE_ID_1D_ARRAY_BIT) { \
+    if ((__tyid & (~value::TYPE_ID_1D_ARRAY_BIT)) == (value::TypeTraits<__ty>::type_id())) { \
+      return true; \
+    } else if ((__tyid & (~value::TYPE_ID_1D_ARRAY_BIT)) == (value::TypeTraits<__ty>::underlying_type_id())) { \
+      return true; \
+    } \
+  }
+
+  // Assume __uty is underlying_type.
+#define IS_SUPPORTED_UNDERLYING_TYPE(__utyid, __uty) \
+  if (__utyid == value::TypeTraits<__uty>::type_id()) { \
+    return true; \
+  } else if (__utyid & value::TYPE_ID_1D_ARRAY_BIT) { \
+    if ((__utyid & (~value::TYPE_ID_1D_ARRAY_BIT)) == (value::TypeTraits<__uty>::type_id())) { \
+      return true; \
+    } \
+  }
+
+  IS_SUPPORTED_TYPE(tyid, value::half)
+  IS_SUPPORTED_TYPE(tyid, value::half2)
+  IS_SUPPORTED_TYPE(tyid, value::half3)
+  IS_SUPPORTED_TYPE(tyid, value::half4)
+  IS_SUPPORTED_TYPE(tyid, float)
+  IS_SUPPORTED_TYPE(tyid, value::float2)
+  IS_SUPPORTED_TYPE(tyid, value::float3)
+  IS_SUPPORTED_TYPE(tyid, value::float4)
+  IS_SUPPORTED_TYPE(tyid, double)
+  IS_SUPPORTED_TYPE(tyid, value::double2)
+  IS_SUPPORTED_TYPE(tyid, value::double3)
+  IS_SUPPORTED_TYPE(tyid, value::double4)
+  IS_SUPPORTED_TYPE(tyid, value::quath)
+  IS_SUPPORTED_TYPE(tyid, value::quatf)
+  IS_SUPPORTED_TYPE(tyid, value::quatd)
+  IS_SUPPORTED_TYPE(tyid, value::matrix2d)
+  IS_SUPPORTED_TYPE(tyid, value::matrix3d)
+  IS_SUPPORTED_TYPE(tyid, value::matrix4d)
+
+  if (has_underlying_tyid) {
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::half)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::half2)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::half3)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::half4)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, float)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::float2)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::float3)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::float4)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, double)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::double2)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::double3)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::double4)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::quath)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::quatf)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::quatd)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::matrix2d)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::matrix3d)
+    IS_SUPPORTED_UNDERLYING_TYPE(underlying_tyid, value::matrix4d)
+  }
 
 #undef IS_SUPPORTED_TYPE
+#undef IS_SUPPORTED_UNDERLYING_TYPE
 
   return false;
+
 }
 
 bool Lerp(const value::Value &a, const value::Value &b, double dt, value::Value *dst) {
@@ -80,6 +134,15 @@ bool Lerp(const value::Value &a, const value::Value &b, double dt, value::Value 
     const __ty *v0 = a.as<__ty>(); \
     const __ty *v1 = b.as<__ty>(); \
     __ty c; \
+    if (v0 && v1) { \
+      c = lerp(*v0, *v1, dt); \
+      result = c; \
+      ok = true; \
+    } \
+  } else if (tyid == value::TypeTraits<std::vector<__ty>>::type_id()) { \
+    const std::vector<__ty> *v0 = a.as<std::vector<__ty>>(); \
+    const std::vector<__ty> *v1 = b.as<std::vector<__ty>>(); \
+    std::vector<__ty> c; \
     if (v0 && v1) { \
       c = lerp(*v0, *v1, dt); \
       result = c; \
@@ -657,6 +720,10 @@ half float_to_half_full(float _f) {
   return fp16;
 }
 
+matrix2f::matrix2f(const matrix2d &src) {
+  (*this) = src;
+}
+
 matrix2f &matrix2f::operator=(const matrix2d &src) {
 
   for (size_t j = 0; j < 2; j++) {
@@ -666,6 +733,10 @@ matrix2f &matrix2f::operator=(const matrix2d &src) {
   }
 
   return *this;
+}
+
+matrix3f::matrix3f(const matrix3d &src) {
+  (*this) = src;
 }
 
 matrix3f &matrix3f::operator=(const matrix3d &src) {
@@ -1004,6 +1075,37 @@ bool FlexibleTypeCast(const value::Value &src, value::Value &dst) {
   return false;
 }
 #endif
+
+bool TimeSamples::has_sample_at(const double t) const {
+  if (_dirty) {
+    update();
+  }
+
+  const auto it = std::find_if(_samples.begin(), _samples.end(), [&t](const Sample &s) {
+    return math::is_close(t, s.t);
+  });
+
+  return (it != _samples.end());
+}
+
+bool TimeSamples::get_sample_at(const double t, Sample **dst) {
+  if (!dst) {
+    return false;
+  }
+
+  if (_dirty) {
+    update();
+  }
+
+  const auto it = std::find_if(_samples.begin(), _samples.end(), [&t](const Sample &sample) {
+    return math::is_close(t, sample.t);
+  });
+
+  if (it != _samples.end()) {
+    (*dst) = &(*it); 
+  }
+  return false;
+}
 
 }  // namespace value
 }  // namespace tinyusdz

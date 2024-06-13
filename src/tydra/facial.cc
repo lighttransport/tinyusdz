@@ -3,6 +3,7 @@
 
 #include <array>
 #include <string>
+#include <cstdint>
 
 //
 #include "facial.hh"

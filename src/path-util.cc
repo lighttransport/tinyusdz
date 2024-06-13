@@ -173,5 +173,74 @@ bool ResolveRelativePath(const Path &base_prim_path, const Path &relative_path, 
   return true;
 }
 
+bool ValidatePath(const Path &path, std::string *err) {
+  return ValidatePrimPath(path, err) && ValidatePropPath(path, err);
+}
+
+bool ValidatePrimPath(const Path &path, std::string *err) {
+  if (!path.is_valid()) {
+    if (err) {
+      (*err) = "Path is invalid.";
+    }
+    return false;
+  }
+
+  if (!path.is_prim_path()) {
+    if (err) {
+      (*err) = "Path is not Prim path.";
+    }
+    return false;
+  }
+
+  const std::vector<std::string> element_names = split(path.prim_part(), "/");
+
+  for (size_t i = 0; i < element_names.size(); i++) {
+    if (!ValidatePrimElementName(element_names[i])) {
+      if (err) {
+        (*err) = "Prim path is not composed of valid identifiers.";
+      }
+      
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool ValidatePropPath(const Path &path, std::string *err) {
+  if (path.prop_part() == ":") {
+    if (err) {
+      (*err) = "Proparty path is composed of namespace delimiter only(`:`).";
+    }
+    return false;
+  }
+
+  if (startsWith(path.prop_part(), ":")) {
+    if (err) {
+      (*err) = "Property path starts with namespace delimiter(`:`).";
+    }
+    return false;
+  }
+
+  if (endsWith(path.prop_part(), ":")) {
+    if (err) {
+      (*err) = "Property path ends with namespace delimiter(`:`).";
+    }
+    return false;
+  }
+
+  if (contains_str(path.prop_part(), "::")) {
+    if (err) {
+      (*err) = "Empty path among namespace delimiters(`::`) in Property path.";
+    }
+    return false;
+  }
+
+  // TODO: more validation
+
+  return true;
+
+}
+
 } // namespace pathutil
 } // namespace tinyusdz

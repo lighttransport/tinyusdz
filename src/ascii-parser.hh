@@ -796,7 +796,7 @@ class AsciiParser {
   // Parse `variantSet` stmt
   bool ParseVariantSet(const int64_t primIdx, const int64_t parentPrimIdx,
                        const uint32_t depth,
-                       VariantSetContent *variantSetMap);
+                       VariantSetContent *variantSetContent);
 
   // --------------------------------------------
 

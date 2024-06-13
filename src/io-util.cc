@@ -1,4 +1,7 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2022 - 2023, Syoyo Fujita.
+// Copyright 2023 - Present, Light Transport Entertainment Inc.
+// 
 #include <algorithm>
 #include <fstream>
 
@@ -15,6 +18,12 @@
 #endif
 
 #include <windows.h>  // include API for expanding a file path
+#include <io.h>
+
+#ifndef TINYUSDZ_MMAP_SUPPORTED
+#define TINYUSDZ_MMAP_SUPPORTED (1)
+#endif
+
 
 #ifdef _MSC_VER
 #undef NOMINMAX
@@ -38,14 +47,28 @@
 
 // non posix
 
+// TODO: Add mmmap or similar feature support to these system.
+
 #else
 
 // Assume Posix
 #include <wordexp.h>
 
+#include <sys/stat.h>
+#include <sys/mman.h>
+
+#ifndef TINYUSDZ_MMAP_SUPPORTED
+#define TINYUSDZ_MMAP_SUPPORTED (1)
+#endif
+
+
 #endif
 
 #endif  // _WIN32
+
+#ifndef TINYUSDZ_MMAP_SUPPORTED
+#define TINYUSDZ_MMAP_SUPPORTED (0)
+#endif
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -62,6 +85,7 @@
 #endif
 
 #include "io-util.hh"
+#include "str-util.hh"
 
 namespace tinyusdz {
 namespace io {
@@ -69,6 +93,95 @@ namespace io {
 #ifdef TINYUSDZ_ANDROID_LOAD_FROM_ASSETS
 AAssetManager *asset_manager = nullptr;
 #endif
+
+
+bool IsMMapSupported() {
+#if TINYUSDZ_MMAP_SUPPORTED
+  return true;
+#else
+  return false;
+#endif
+}
+
+bool MMapFile(const std::string &filepath, MMapFileHandle *handle, bool writable) {
+  (void)filepath;
+  (void)handle;
+  (void)writable;
+
+#if TINYUSDZ_MMAP_SUPPORTED
+#if defined(_WIN32)
+#if 0 // TODO
+  int fd = open(filepath.c_str(), writable ? O_RDWR : O_RDONLY);
+  HANDLE hFile = _get_ofhandle(fd);
+  HANDLE hMapping = CreateFileMapping(hFile, nullptr, PAGE_READWRITE, 0, 0, nullptr);
+      if (hMapping == nullptr) {
+        return false;
+      }
+      void *data = MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, 0);
+      if (!data) {
+        return false;
+      }
+      CloseHandle(hMapping);
+#else
+  return false;
+#endif
+#else // !WIN32
+  // assume posix
+  FILE *fp = fopen(filepath.c_str(), writable ? "rw" : "r");
+  int ret = std::fseek(fp, 0, SEEK_END);
+  if (ret != 0) {
+    fclose(fp);
+    return false;
+  } 
+
+  size_t size = size_t(std::ftell(fp));
+  std::fseek(fp, 0, SEEK_SET);
+
+  if (size == 0) {
+    return false;
+  }
+  
+  int fd = fileno(fp);
+  
+  int flags = MAP_PRIVATE; // delayed access 
+  void *addr = mmap(nullptr, size, writable ? PROT_READ|PROT_WRITE : PROT_READ, flags, fd, 0);
+  if (addr == MAP_FAILED) {
+    return false;
+  }
+
+  handle->addr = reinterpret_cast<uint8_t *>(addr);
+  handle->size = size;
+  handle->writable = writable;
+  handle->filename = filepath;
+  close(fd);
+
+  return true;
+#endif // !WIN32
+#else // !TINYUSDZ_MMAP_SUPPORTED
+  return false;
+#endif
+}
+
+bool UnmapFile(const MMapFileHandle &handle) {
+  (void)handle;
+#if TINYUSDZ_MMAP_SUPPORTED
+#if defined(_WIN32)
+  // TODO
+  return false;
+#else // !WIN32
+  if (handle.addr && handle.size) {
+    int ret = munmap(reinterpret_cast<void *>(handle.addr), handle.size);  
+    // ignore return code for now
+    (void)ret;
+    return true;
+  }
+  return false;
+#endif
+#else // !TINYUSDZ_MMAP_SUPPORTED
+  return false;
+#endif
+}
+
 
 std::string ExpandFilePath(const std::string &_filepath, void *) {
   std::string filepath = _filepath;
@@ -165,14 +278,23 @@ bool ReadWholeFile(std::vector<uint8_t> *out, std::string *err,
       }
       return false;
     }
-    size_t size = AAsset_getLength(asset);
-    if (size == 0) {
+    off_t len = AAsset_getLength(asset);
+    if (len <= 0) {
       if (err) {
         (*err) += "Invalid file size : " + filepath +
                   " (does the path point to a directory?)";
       }
       return false;
     }
+    size_t size = size_t(len);
+
+    if (size >= filesize_max) {
+        (*err) += "File size exceeds filesize_max : " + filepath +
+                  " (filesize_max " + std::to_string(filesize_max) + ")";
+
+        return false;
+    }
+
     out->resize(size);
     AAsset_read(asset, reinterpret_cast<char *>(&out->at(0)), size);
     AAsset_close(asset);
@@ -287,14 +409,16 @@ bool ReadFileHeader(std::vector<uint8_t> *out, std::string *err,
       }
       return false;
     }
-    size_t size = AAsset_getLength(asset);
-    if (size == 0) {
+    off_t len = AAsset_getLength(asset);
+    if (len <= 0) {
       if (err) {
         (*err) += "Invalid file size : " + filepath +
                   " (does the path point to a directory?)";
       }
       return false;
     }
+
+    size_t size = size_t(len);
 
     size = (std::min)(size_t(max_read_bytes), size);
     out->resize(size);
@@ -502,10 +626,24 @@ std::string JoinPath(const std::string &dir, const std::string &filename) {
   } else {
     // check '/'
     char lastChar = *dir.rbegin();
+
+    // TODO: Support more relative path case.
+
+    std::string basedir;
     if (lastChar != '/') {
-      return dir + std::string("/") + filename;
+      basedir = dir + std::string("/");
     } else {
-      return dir + filename;
+      basedir = dir;
+    }
+
+    if (basedir.size()) {
+      if (startsWith(filename, "./")) {
+        // strip "./"
+        return basedir + removePrefix(filename, "./");
+      }
+      return basedir + filename;
+    } else {
+      return filename;
     }
   }
 }
@@ -609,6 +747,13 @@ std::string FindFile(const std::string &filename,
 
   if (filename.empty()) {
     return filename;
+  }
+
+  if (search_paths.empty()) {
+    std::string absPath = io::ExpandFilePath(filename, /* userdata */ nullptr);
+    if (io::FileExists(absPath, /* userdata */ nullptr)) {
+      return absPath;
+    }
   }
 
   for (size_t i = 0; i < search_paths.size(); i++) {

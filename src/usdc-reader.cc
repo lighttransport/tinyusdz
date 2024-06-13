@@ -1,5 +1,6 @@
-// SPDX-License-Identifier: MIT
-// Copyright 2020-Present Syoyo Fujita.
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2020 - 2023, Syoyo Fujita.
+// Copyright 2023 - Present, Light Transport Entertainment Inc.
 //
 // USDC(Crate) reader
 //
@@ -84,6 +85,7 @@ RECONSTRUCT_PRIM_DECL(GeomCube);
 RECONSTRUCT_PRIM_DECL(GeomCone);
 RECONSTRUCT_PRIM_DECL(GeomCylinder);
 RECONSTRUCT_PRIM_DECL(GeomSphere);
+RECONSTRUCT_PRIM_DECL(GeomSubset);
 RECONSTRUCT_PRIM_DECL(GeomBasisCurves);
 RECONSTRUCT_PRIM_DECL(GeomNurbsCurves);
 RECONSTRUCT_PRIM_DECL(GeomCamera);
@@ -815,6 +817,11 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Property Prop.PropPart is empty");
       }
 
+      std::string prop_err;
+      if (!pathutil::ValidatePropPath(Path("", prop_name), &prop_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Invalid Property name `{}`: {}", prop_name, prop_err));
+      }
+
       Property prop;
       if (!ParseProperty(spec.spec_type, child_fvs, &prop)) {
         PUSH_ERROR_AND_RETURN_TAG(
@@ -824,7 +831,7 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
                 prop_name));
       }
 
-      props->emplace(prop_name, prop);
+      (*props)[prop_name] = prop;
       DCOUT("Add property : " << prop_name);
     }
   }
@@ -833,9 +840,9 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
 }
 
 
-/// Attrib/Property fieldSet example
+/// Property fieldSet example
 ///
-///   specTyppe = SpecTypeConnection
+///   specTyppe = SpecTypeAttribute
 ///
 ///     - typeName(token) : type name of Attribute(e.g. `float`)
 ///     - custom(bool) : `custom` qualifier
@@ -853,6 +860,10 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too much FieldValue pairs.");
   }
 
+  if (!prop) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Internal error. prop is nullptr.");
+  }
+
   bool custom{false};
   nonstd::optional<value::token> typeName;
   nonstd::optional<Interpolation> interpolation;
@@ -867,21 +878,29 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   nonstd::optional<CustomDataType> sdrMetadata;
   nonstd::optional<value::StringData> comment;
   nonstd::optional<Variability> variability;
-  Property::Type propType{Property::Type::EmptyAttrib};
+  AttrMeta meta; // for other not frequently-used attribute/relationship metadata.
+  //Property::Type propType{Property::Type::EmptyAttrib};
   Attribute attr;
 
-  bool is_scalar{false};
-
-  value::Value scalar;
+  value::Value defaultValue;
   Relationship rel;
 
-  // for consistency check
-  bool hasConnectionChildren{false};
+  // for attribute
+  bool isValueBlock{false};
+  bool hasDefault{false};
+  bool hasTimeSamples{false};
   bool hasConnectionPaths{false};
-  bool hasTargetChildren{false};
+
+  // for relationship
   bool hasTargetPaths{false};
 
+  // metadata(ignore these for now)
+  bool hasConnectionChildren{false};
+  bool hasTargetChildren{false};
+
   DCOUT("== List of Fields");
+
+  primvar::PrimVar var;
 
   // first detect typeName
   for (auto &fv : fvs) {
@@ -894,6 +913,10 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
                                   "`typeName` field is not `token` type.");
       }
     }
+  }
+
+  if (typeName) { // this should be always true though.
+    attr.set_type_name(typeName.value().str());
   }
 
   for (auto &fv : fvs) {
@@ -919,22 +942,22 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       // 'typeName' is already processed. nothing to do here.
       continue;
     } else if (fv.first == "default") {
-      propType = Property::Type::Attrib;
+      //propType = Property::Type::Attrib;
 
-      // Set scalar
+      // Set scalar(non-timesampled) value
       // TODO: Easier CrateValue to Attribute.var conversion
-      scalar = fv.second.get_raw();
-      is_scalar = true;
+      defaultValue = fv.second.get_raw();
+      hasDefault = true;
 
       // TODO: Handle UnregisteredValue in crate-reader.cc
       // UnregisteredValue is represented as string.
-      if (const auto pv = scalar.get_value<std::string>()) {
+      if (const auto pv = defaultValue.get_value<std::string>()) {
         if (typeName && (typeName.value().str() != "string")) {
           if (IsUnregisteredValueType(typeName.value().str())) {
             DCOUT("UnregisteredValue type: " << typeName.value().str());
 
             std::string local_err;
-            if (!ascii::ParseUnregistredValue(typeName.value().str(), pv.value(), &scalar, &local_err)) {
+            if (!ascii::ParseUnregistredValue(typeName.value().str(), pv.value(), &defaultValue, &local_err)) {
               PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse UnregisteredValue string with type `{}`: {}", typeName.value().str(), local_err));
             }
           }
@@ -942,18 +965,19 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       }
 
     } else if (fv.first == "timeSamples") {
-      propType = Property::Type::Attrib;
+      //propType = Property::Type::Attrib;
+      
+
+      hasTimeSamples = true;
 
       if (auto pv = fv.second.get_value<value::TimeSamples>()) {
-        primvar::PrimVar var;
         var.set_timesamples(pv.value());
-        attr.set_var(std::move(var));
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "`timeSamples` is not TimeSamples data.");
       }
     } else if (fv.first == "interpolation") {
-      propType = Property::Type::Attrib;
+      //propType = Property::Type::Attrib;
 
       if (auto pv = fv.second.get_value<value::token>()) {
         DCOUT("  interpolation = " << pv.value().str());
@@ -968,8 +992,8 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
                                   "`interpolation` field is not `token` type.");
       }
     } else if (fv.first == "connectionPaths") {
-      // .connect
-      propType = Property::Type::Connection;
+      // Attribute connection(.connect)
+      //propType = Property::Type::Connection;
       hasConnectionPaths = true;
 
       if (auto pv = fv.second.get_value<ListOp<Path>>()) {
@@ -988,15 +1012,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
               kTag, "`connectionPaths` have empty Explicit items.");
         }
 
-        if (items.size() == 1) {
-          // Single
-          const Path path = items[0];
-
-          rel.set(path);
-
-        } else {
-          rel.set(items);  // [Path]
-        }
+        attr.set_connections(items); 
 
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
@@ -1004,7 +1020,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       }
     } else if (fv.first == "targetPaths") {
       // `rel`
-      propType = Property::Type::Relation;
+      //propType = Property::Type::Relation;
       hasTargetPaths = true;
 
       if (auto pv = fv.second.get_value<ListOp<Path>>()) {
@@ -1188,7 +1204,33 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
                       << fv.second.type_name() << "`");
       }
 
+    } else if (fv.first == "colorSpace") {
+      if (auto pv = fv.second.get_value<value::token>()) {
+        
+        MetaVariable mv;
+        mv.set_name("colorSpace");
+        mv.set_value(pv.value());
+
+        meta.meta["colorSpace"] = mv;
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`colorSpace` must be type `token`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
+    } else if (fv.first == "unauthoredValuesIndex") {
+      if (auto pv = fv.second.get_value<int>()) {
+        MetaVariable mv;
+        mv.set_name("unauthoredValuesIndex");
+        mv.set_value(pv.value());
+
+        meta.meta["unauthoredValuesIndex"] = mv;
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`unauthoredValuesIndex` must be type `int`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
     } else {
+      // TODO: register unkown metadataum as custom metadata?
       PUSH_WARN("TODO: " << fv.first);
       DCOUT("TODO: " << fv.first);
     }
@@ -1205,33 +1247,34 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
     // Validate existence of Path..
   }
 #else
-  (void)hasTargetPaths;
   (void)hasTargetChildren;
   (void)hasConnectionChildren;
   (void)hasConnectionPaths;
 #endif
 
-  if (is_scalar) {
+  // Do role type cast for default value.
+  // (TODO: do role type cast for timeSamples?)
+  if (hasDefault) {
     if (typeName) {
-      if (scalar.type_id() == value::TypeTraits<value::ValueBlock>::type_id()) {
+      if (defaultValue.type_id() == value::TypeTraits<value::ValueBlock>::type_id()) {
         // nothing to do
       } else {
         std::string reqTy = typeName.value().str();
-        std::string scalarTy = scalar.type_name();
+        std::string scalarTy = defaultValue.type_name();
 
         if (reqTy.compare(scalarTy) != 0) {
 
           // Some inlined? value uses less accuracy type(e.g. `half3`) than
           // typeName(e.g. `float3`) Use type specified in `typeName` as much as
           // possible.
-          bool ret = value::UpcastType(reqTy, scalar);
+          bool ret = value::UpcastType(reqTy, defaultValue);
           if (ret) {
             DCOUT(fmt::format("Upcast type from {} to {}.", scalarTy, reqTy));
           }
 
           // Optionally, cast to role type(in crate data, `typeName` uses role typename(e.g. `color3f`), whereas stored data uses base typename(e.g. VEC3F)
-          scalarTy = scalar.type_name();
-          if (value::RoleTypeCast(value::GetTypeId(reqTy), scalar)) {
+          scalarTy = defaultValue.type_name();
+          if (value::RoleTypeCast(value::GetTypeId(reqTy), defaultValue)) {
             DCOUT(fmt::format("Casted to Role type {} from type {}.", reqTy, scalarTy));
           } else {
             // Its ok.
@@ -1239,63 +1282,104 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         }
       }
     }
-    primvar::PrimVar var;
-    var.set_value(scalar);
-    attr.set_var(std::move(var));
+    var.set_value(defaultValue);
 
-    if (scalar.type_id() == value::TypeTraits<value::ValueBlock>::type_id()) {
-      if (typeName) {
-        // Use `typeName`
-        attr.set_type_name(typeName.value().str());
-      }
+    if (defaultValue.type_id() == value::TypeTraits<value::ValueBlock>::type_id()) {
+      isValueBlock = true;
+    }
+  }
+
+  attr.set_var(std::move(var));
+
+  if (isValueBlock) {
+    // attr's type is replaced with ValueBlock type  by `set_var`, so overwrite type with typeName
+    if (typeName) {
+      // Use `typeName`
+      attr.set_type_name(typeName.value().str());
     }
   }
 
   // Attribute metas
-  AttrMeta meta;
-  if (interpolation) {
-    meta.interpolation = interpolation.value();
-  }
-  if (elementSize) {
-    meta.elementSize = elementSize.value();
-  }
-  if (hidden) {
-    meta.hidden = hidden.value();
-  }
-  if (customData) {
-    meta.customData = customData.value();
-  }
-  if (weight) {
-    meta.weight = weight.value();
-  }
-  if (comment) {
-    meta.comment = comment.value();
-  }
-  if (bindMaterialAs) {
-    meta.bindMaterialAs = bindMaterialAs.value();
-  }
-  if (outputName) {
-    meta.outputName = outputName.value();
-  }
-  if (sdrMetadata) {
-    meta.sdrMetadata = sdrMetadata.value();
-  }
-  if (connectability) {
-    meta.connectability = connectability.value();
-  }
-  if (renderType) {
-    meta.renderType = renderType.value();
+  {
+    if (interpolation) {
+      meta.interpolation = interpolation.value();
+    }
+    if (elementSize) {
+      meta.elementSize = elementSize.value();
+    }
+    if (hidden) {
+      meta.hidden = hidden.value();
+    }
+    if (customData) {
+      meta.customData = customData.value();
+    }
+    if (weight) {
+      meta.weight = weight.value();
+    }
+    if (comment) {
+      meta.comment = comment.value();
+    }
+    if (bindMaterialAs) {
+      meta.bindMaterialAs = bindMaterialAs.value();
+    }
+    if (outputName) {
+      meta.outputName = outputName.value();
+    }
+    if (sdrMetadata) {
+      meta.sdrMetadata = sdrMetadata.value();
+    }
+    if (connectability) {
+      meta.connectability = connectability.value();
+    }
+    if (renderType) {
+      meta.renderType = renderType.value();
+    }
   }
 
 
 
-  // FIXME: SpecType supercedes propType.
-  if (propType == Property::Type::EmptyAttrib) {
-    if (!prop) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Internal error. prop is nullptr.");
+  if (hasTargetPaths) {
+    // Relationship
+
+    // TODO: Report as error?
+    if (hasDefault) {
+      PUSH_WARN("Relationship property has `default` field. Ignore `default` field.");
     }
 
+    if (hasTimeSamples) {
+      PUSH_WARN("Relationship property has `timeSamples` field. Ignore `timeSamples` field.");
+    }
+
+    if (hasConnectionPaths) {
+      PUSH_WARN("Relationship property has `connectionPaths` field. Ignore `connectionPaths` field.");
+    }
+
+    if (variability) {
+      if (variability.value() == Variability::Varying) {
+        rel.set_varying_authored();
+      }
+    }
+    rel.metas() = meta;
+    (*prop) = Property(rel, custom);
+  } else if (hasDefault || hasTimeSamples || hasConnectionPaths) {
+
+    // Attribute
+    if (hasTargetPaths) {
+      PUSH_WARN("Attribute property has `targetPaths` field. Ignore `targetPaths` field.");
+    }
+
+    if (variability) {
+      attr.variability() = variability.value();
+    }
+    attr.metas() = meta;
+    (*prop) = Property(attr, custom);
+
+  } else {
+
+    // FIXME: SpecType supercedes propType.
+
     if (typeName) {
+      // declare only attribute, e.g.: float myval
       // typeName may be array type.
       std::string baseTypeName = typeName.value().str();
       if (endsWith(baseTypeName, "[]")) {
@@ -1334,52 +1418,6 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         PUSH_ERROR_AND_RETURN_TAG(kTag, "`typeName` field is missing.");
       }
     }
-  } else if (propType == Property::Type::Attrib) {
-
-    if (!prop) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Internal error. prop is nullptr.");
-    }
-
-    if (variability) {
-      attr.variability() = variability.value();
-    }
-    attr.metas() = meta;
-    (*prop) = Property(attr, custom);
-  } else if (propType == Property::Type::Connection) {
-
-    if (!prop) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Internal error. prop is nullptr.");
-    }
-
-    if (!typeName) {
-      PUSH_ERROR_AND_RETURN_TAG(
-          kTag, "`typeName` field is missing for Attribute Connection.");
-    }
-    if (rel.is_path()) {
-      (*prop) = Property(rel.targetPath, typeName.value().str(), custom);
-    } else if (rel.is_pathvector()) {
-      (*prop) = Property(rel.targetPathVector, typeName.value().str(), custom);
-    } else {
-      // ???
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "TODO:");
-    }
-
-    prop->attribute().metas() = meta;
-  } else if (propType == Property::Type::Relation) {
-
-    if (!prop) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Internal error. prop is nullptr.");
-    }
-
-    if (variability) {
-      if (variability.value() == Variability::Varying) {
-        rel.set_varying_authored();
-      }
-    }
-    rel.metas() = meta;
-    (*prop) = Property(rel, custom);
-  } else {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "TODO:");
   }
 
   return true;
@@ -1678,7 +1716,7 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
     return std::move(prim); \
   } else
 
-  if (typeName == "Model") {
+  if (typeName == "Model" || typeName == "__AnyType__") {
     // Code is mostly identical to RECONSTRUCT_PRIM.
     // Difference is store primTypeName to Model class itself.
     Model typed_prim;
@@ -1688,7 +1726,11 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
     }
     typed_prim.meta = meta;
     typed_prim.name = prim_name;
-    typed_prim.prim_type_name = primTypeName;
+    if (typeName == "__AnyType__") {
+      typed_prim.prim_type_name = "";
+    } else {
+      typed_prim.prim_type_name = primTypeName;
+    }
     typed_prim.spec = spec;
     typed_prim.propertyNames() = properties;
     typed_prim.primChildrenNames() = primChildren;
@@ -1714,7 +1756,7 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
   RECONSTRUCT_PRIM(GeomNurbsCurves, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(PointInstancer, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(GeomCamera, typeName, prim_name, spec)
-  // RECONSTRUCT_PRIM(GeomSubset, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(GeomSubset, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(SphereLight, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(DomeLight, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(CylinderLight, typeName, prim_name, spec)
@@ -2137,9 +2179,14 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
       }
 
     } else {
+      // TODO: support int, int[], uint, uint[], int64, uint64, ...
+      // https://github.com/syoyo/tinyusdz/issues/106
       if (auto pv = fv.second.as<std::string>()) {
         // Assume unregistered Prim metadatum
         primMeta.unregisteredMetas[fv.first] = (*pv);
+      } else if (auto ptv = fv.second.as<value::token>()) {
+        // store value as string type.
+        primMeta.unregisteredMetas[fv.first] = quote((*ptv).str());
       } else {
         DCOUT("PrimProp TODO: " << fv.first);
         PUSH_WARN("PrimProp TODO: " << fv.first);
@@ -2345,6 +2392,11 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
         std::string prim_name = elemPath.prim_part();
         std::string primTypeName = typeName.has_value() ? typeName.value() : "";
 
+        // __AnyType__
+        if (typeName.has_value() && typeName.value() == "__AnyType__") {
+          primTypeName = "";
+        }
+
         // Validation check should be already done in crate-reader, so no
         // further validation required.
         if (!ValidatePrimElementName(prim_name)) {
@@ -2507,6 +2559,10 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
         DCOUT("prim_name = " << prim_name);
 
         std::string primTypeName = typeName.has_value() ? typeName.value() : "";
+        // __AnyType__
+        if (typeName.has_value() && typeName.value() == "__AnyType__") {
+          primTypeName = "";
+        }
 
         // Something like '{shapeVariant=Capsule}'
 
@@ -2543,7 +2599,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
           if (_variantPrims.count(current)) {
             DCOUT("??? prim idx already set " << current);
           } else {
-            _variantPrims.emplace(current, variantPrim.value());
+            _variantPrims.emplace(current,  variantPrim.value());
             _variantPrimChildren[parent].push_back(current);
           }
         } else {
@@ -2779,9 +2835,8 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Specifier.");
         }
       } else {
-        PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                  "`specifier` field is missing for FieldSets "
-                                  "with SpecType::Prim.");
+        // Default = Over Prim.
+        specifier = Specifier::Over;
       }
 
       std::string pTyName;
@@ -2796,6 +2851,10 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
         DCOUT("elemPath.prim_name = " << elemPath.prim_part());
         std::string prim_name = elemPath.prim_part();
         std::string primTypeName = typeName.has_value() ? typeName.value() : "";
+        // __AnyType__
+        if (typeName.has_value() && typeName.value() == "__AnyType__") {
+          primTypeName = "";
+        }
 
         // Validation check should be already done in crate-reader, so no
         // further validation required.
@@ -2956,6 +3015,7 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
       } else {
         // Seems Variant is only composed of Properties.
         // Create pseudo `def` Prim
+        // FIXME: default is `Over`?
         specifier = Specifier::Def;
       }
 
@@ -2973,6 +3033,10 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
         DCOUT("prim_name = " << prim_name);
 
         std::string primTypeName = typeName.has_value() ? typeName.value() : "";
+        // __AnyType__
+        if (typeName.has_value() && typeName.value() == "__AnyType__") {
+          primTypeName = "";
+        }
 
         // Something like '{shapeVariant=Capsule}'
 
@@ -3011,7 +3075,7 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
           if (_variantPrims.count(current)) {
             DCOUT("??? prim idx already set " << current);
           } else {
-            _variantPrims.emplace(current, variantPrim.value());
+            _variantPrims[current] =  variantPrim.value();
             _variantPrimChildren[parent].push_back(current);
           }
         } else {
@@ -3034,7 +3098,7 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
               if (_variantPrims.count(current)) {
                 DCOUT("??? prim idx already set " << current);
               } else {
-                _variantPrims.emplace(current, variantPrim.value());
+                _variantPrims[current] = variantPrim.value();
                 _variantPrimChildren[parent].push_back(current);
               }
             } else {
@@ -3061,7 +3125,7 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
         if (_variantPrimSpecs.count(current)) {
           DCOUT("??? prim idx already set " << current);
         } else {
-          _variantPrimSpecs.emplace(current, variantPrimSpec);
+          _variantPrimSpecs[current] = variantPrimSpec;
           _variantPrimChildren[parent].push_back(current);
         }
 
@@ -3547,7 +3611,7 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
 
   if (parent == 0) {  // root prim
     if (primspec) {
-      layer->primspecs().emplace(primspec.value().name(), std::move(primspec.value()));
+      layer->primspecs()[primspec.value().name()] = std::move(primspec.value());
     }
   } else {
     if (_variantPrimSpecs.count(parent)) {

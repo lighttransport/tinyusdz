@@ -2,6 +2,7 @@
 // Copyright 2023 - Present, Light Transport Entertainment, Inc.
 #include "str-util.hh"
 
+#include "unicode-xid.hh"
 #include "common-macros.inc"
 
 namespace tinyusdz {
@@ -411,6 +412,22 @@ bool makeUniqueName(std::multiset<std::string> &nameSet,
 
 namespace detail {
 
+inline uint32_t utf8_len(const unsigned char c) {
+      if (c <= 127) {
+        // ascii
+        return 1;
+      } else if ((c & 0xE0) == 0xC0) {
+        return 2;
+      } else if ((c & 0xF0) == 0xE0) {
+        return 3;
+      } else if ((c & 0xF8) == 0xF0) {
+        return 4;
+      }
+
+      // invalid
+      return 0;
+}
+
 inline std::string extract_utf8_char(const std::string &str, uint32_t start_i,
                                      int &len) {
   len = 0;
@@ -452,6 +469,68 @@ inline std::string extract_utf8_char(const std::string &str, uint32_t start_i,
     len = 0;
     return std::string();
   }
+}
+
+inline uint32_t to_codepoint(const char *s, uint32_t &char_len) {
+  if (!s) {
+    char_len = 0;
+    return ~0u;
+  }
+
+  char_len = detail::utf8_len(static_cast<unsigned char>(s[0]));
+  if (char_len == 0) {
+    return ~0u;
+  }
+
+  uint32_t code = 0;
+  if (char_len == 1) {
+    unsigned char s0 = static_cast<unsigned char>(s[0]);
+    if (s0 > 0x7f) {
+      return ~0u;
+    }
+    code = uint32_t(s0) & 0x7f;
+  } else if (char_len == 2) {
+    // 11bit: 110y-yyyx 10xx-xxxx
+    unsigned char s0 = static_cast<unsigned char>(s[0]);
+    unsigned char s1 = static_cast<unsigned char>(s[1]);
+
+    if (((s0 & 0xe0) == 0xc0) && ((s1 & 0xc0) == 0x80)) {
+      code = (uint32_t(s0 & 0x1f) << 6) | (s1 & 0x3f);
+    } else {
+      return ~0u;
+    }
+  } else if (char_len == 3) {
+    // 16bit: 1110-yyyy 10yx-xxxx 10xx-xxxx
+    unsigned char s0 = static_cast<unsigned char>(s[0]);
+    unsigned char s1 = static_cast<unsigned char>(s[1]);
+    unsigned char s2 = static_cast<unsigned char>(s[2]);
+    if (((s0 & 0xf0) == 0xe0) && ((s1 & 0xc0) == 0x80) &&
+        ((s2 & 0xc0) == 0x80)) {
+      code =
+          (uint32_t(s0 & 0xf) << 12) | (uint32_t(s1 & 0x3f) << 6) | (s2 & 0x3f);
+    } else {
+      return ~0u;
+    }
+  } else if (char_len == 4) {
+    // 21bit: 1111-0yyy 10yy-xxxx 10xx-xxxx 10xx-xxxx
+    unsigned char s0 = static_cast<unsigned char>(s[0]);
+    unsigned char s1 = static_cast<unsigned char>(s[1]);
+    unsigned char s2 = static_cast<unsigned char>(s[2]);
+    unsigned char s3 = static_cast<unsigned char>(s[3]);
+    if (((s0 & 0xf8) == 0xf0) && ((s1 & 0xc0) == 0x80) &&
+        ((s2 & 0xc0) == 0x80) && ((s2 & 0xc0) == 0x80)) {
+      code = (uint32_t(s0 & 0x7) << 18) | (uint32_t(s1 & 0x3f) << 12) |
+             (uint32_t(s2 & 0x3f) << 6) | uint32_t(s3 & 0x3f);
+    } else {
+      return ~0u;
+    }
+  } else {
+    // ???
+    char_len = 0;
+    return ~0u;
+  }
+
+  return code;
 }
 
 }  // namespace detail
@@ -528,6 +607,7 @@ uint32_t to_utf8_code(const std::string &s) {
   return code;
 }
 
+
 #if 0
 std::string to_utf8_char(const uint32_t code) {
 
@@ -539,5 +619,60 @@ std::string to_utf8_char(const uint32_t code) {
 
 }
 #endif
+
+bool is_valid_utf8(const std::string &str) {
+  // TODO: Consider UTF-BOM?
+  for (size_t i = 0; i < str.size();) {
+    uint32_t len = detail::utf8_len(*reinterpret_cast<const unsigned char *>(&str[i]));
+    if (len == 0) {
+      return false;
+    }
+    i += len;
+  }
+  return true;
+}
+
+std::vector<uint32_t> to_codepoints(const std::string &str) {
+
+  std::vector<uint32_t> cps;
+
+  for (size_t i = 0; i < str.size(); ) {
+    uint32_t char_len;
+    uint32_t cp = detail::to_codepoint(str.c_str() + i, char_len);
+
+    if ((cp > kMaxUTF8Codepoint) || (char_len == 0)) {
+      return std::vector<uint32_t>();
+    }
+
+    cps.push_back(cp);
+
+    i += char_len;
+  }
+
+  return cps;
+}
+
+bool is_valid_utf8_identifier(const std::string &str) {
+  // First convert to codepoint values.
+  std::vector<uint32_t> codepoints = to_codepoints(str);
+
+  if (codepoints.empty()) {
+    return false;
+  }
+
+  // (XID_Start|_) (XID_Continue|_)+
+  
+  if ((codepoints[0] != '_') && !unicode_xid::is_xid_start(codepoints[0])) {
+    return false;
+  }
+
+  for (size_t i = 1; i < codepoints.size(); i++) {
+    if ((codepoints[i] != '_') && !unicode_xid::is_xid_continue(codepoints[i])) {
+      return false;
+    }
+  }
+
+  return true; 
+}
 
 }  // namespace tinyusdz

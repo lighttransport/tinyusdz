@@ -189,8 +189,19 @@ class AssetResolutionResolver {
     _search_paths = paths;
   }
 
-  void add_seartch_path(const std::string &path) {
+  void add_search_path(const std::string &path) {
     _search_paths.push_back(path);
+  }
+
+  //
+  // Asset is first seeked from the current working path(directory) when the Asset's path is a relative path.
+  // 
+  void set_current_working_path(const std::string &cwp) {
+    _current_working_path = cwp;
+  }
+
+  const std::string &current_working_path() const {
+    return _current_working_path;
   }
 
   const std::vector<std::string> &search_paths() const { return _search_paths; }
@@ -259,7 +270,7 @@ class AssetResolutionResolver {
   /// @return true upon success.
   ///
   bool open_asset(const std::string &resolvedPath, const std::string &assetPath,
-                  Asset *asset, std::string *warn, std::string *err);
+                  Asset *asset, std::string *warn, std::string *err) const;
 
   void set_userdata(void *userdata) { _userdata = userdata; }
   void *get_userdata() { return _userdata; }
@@ -278,6 +289,7 @@ class AssetResolutionResolver {
  private:
   //ResolvePathHandler _resolve_path_handler{nullptr};
   void *_userdata{nullptr};
+  std::string _current_working_path{"./"};
   std::vector<std::string> _search_paths;
   mutable size_t _max_asset_bytes_in_mb{1024*1024}; // default 1 TB
 
