@@ -2649,6 +2649,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
         (*primOut) = &_variantPrims.at(current);
       }
 
+#if 0 // TODO: Add variantPrim to _prim_table?
       // Add Vaiant to Prim table(this is required step to support nested VariantSet)
       DCOUT("add prim idx " << current);
       if (_prim_table.count(current)) {
@@ -2656,6 +2657,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
       } else {
         _prim_table.insert(current);
       }
+#endif
 
       break;
     }
@@ -2680,7 +2682,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
         _variantPropChildren[parent].push_back(current);
 
         DCOUT(
-            fmt::format("parent {} current [{}] Parsed Attribute {} under Variant. PathIndex {}",
+            fmt::format("parent {} current [{}] Parsed Property/Attribute {} under Variant. PathIndex {}",
                         parent, current, path.value().prop_part(), spec.path_index));
 
       } else {
@@ -3180,7 +3182,7 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
         _variantPropChildren[parent].push_back(current);
 
         DCOUT(
-            fmt::format("parent {} current [{}] Parsed Attribute {} under Variant. PathIndex {}",
+            fmt::format("parent {} current [{}] Parsed Property/Attribute {} under Variant. PathIndex {}",
                         parent, current, path.value().prop_part(), spec.path_index));
 
       } else {
@@ -3396,7 +3398,8 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
       stage->root_prims().emplace_back(std::move(*currPrimPtr));
     }
   } else {
-    if (_variantPrims.count(parent)) {
+    DCOUT("current " << current << ", parent " << parent);
+    if (is_parent_variant) {
       // Add to variantPrim
       DCOUT("parent " << parent << " is variantPrim");
       if (!prim) {
@@ -3451,8 +3454,8 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
           DCOUT("Added current " << current << " to variantPrim[" << parentVariantName << "]");
 
         } else {
-          DCOUT("Adding current " << current << " as child Prim of variatPrim parent " << parent);
           vp.children().emplace_back(std::move(*currPrimPtr));
+          DCOUT("Added current " << current << " as child Prim of variatPrim parent " << parent);
         }
       }
     } else if (currPrimPtr && parentPrimPtr) {
@@ -3487,6 +3490,8 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
         parentPrimPtr->children().emplace_back(std::move(*currPrimPtr));
         DCOUT("Added current " << current << " to parent " << parent);
       }
+    } else {
+      //DCOUT("??? currPrimPr? " << currPrimPtr << ", parentPrmPtr? " << parentPrimPtr);
     }
   }
 
