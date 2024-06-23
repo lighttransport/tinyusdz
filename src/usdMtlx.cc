@@ -377,7 +377,7 @@ bool ParseMaterialXValue(const std::string &str, T *value, std::string *err) {
                             str.size(), /* swap endian */ false);
   tinyusdz::ascii::AsciiParser parser(&sr);
 
-  T val;
+  T val{};
 
   if (!ParseValue(parser, val, err)) {
     return false;
@@ -522,14 +522,14 @@ static bool ConvertPlace2d(const pugi::xml_node &node, PrimSpec &ps,
   }
 
   if (pugi::xml_attribute pivot_attr = node.attribute("pivot")) {
-    value::float2 value;
+    value::float2 value{};
     if (!ParseMaterialXValue(pivot_attr.as_string(), &value, err)) {
       ps.props()["inputs:pivot"] = Property(Attribute::Uniform(value));
     }
   }
 
   if (pugi::xml_attribute scale_attr = node.attribute("scale")) {
-    value::float2 value;
+    value::float2 value{};
     if (!ParseMaterialXValue(scale_attr.as_string(), &value, err)) {
       PUSH_ERROR_AND_RETURN(
           "Failed to parse `rotate` attribute of `place2d`.\n");
@@ -538,7 +538,7 @@ static bool ConvertPlace2d(const pugi::xml_node &node, PrimSpec &ps,
   }
 
   if (pugi::xml_attribute rotate_attr = node.attribute("rotate")) {
-    float value;
+    float value{};
     if (!ParseMaterialXValue(rotate_attr.as_string(), &value, err)) {
       PUSH_ERROR_AND_RETURN(
           "Failed to parse `rotate` attribute of `place2d`.\n");
@@ -548,7 +548,7 @@ static bool ConvertPlace2d(const pugi::xml_node &node, PrimSpec &ps,
 
   pugi::xml_attribute offset_attr = node.attribute("offset");
   if (offset_attr) {
-    value::float2 value;
+    value::float2 value{};
     if (!ParseMaterialXValue(offset_attr.as_string(), &value, err)) {
       PUSH_ERROR_AND_RETURN(
           "Failed to parse `offset` attribute of `place2d`.\n");
