@@ -949,8 +949,8 @@ struct PrimMetas {
   nonstd::optional<Dictionary>
       assetInfo;  // 'assetInfo' // TODO: Use AssetInfo?
   nonstd::optional<Dictionary> customData;  // `customData`
-  nonstd::optional<value::StringData> doc;  // 'documentation'
-  nonstd::optional<value::StringData>
+  nonstd::optional<std::string> doc;  // 'documentation'
+  nonstd::optional<std::string>
       comment;  // 'comment'  (String only metadata value)
   nonstd::optional<APISchemas> apiSchemas;  // 'apiSchemas'
   nonstd::optional<Dictionary>
@@ -1051,7 +1051,7 @@ struct AttrMetas {
   nonstd::optional<Interpolation> interpolation;  // 'interpolation'
   nonstd::optional<uint32_t> elementSize;         // usdSkel 'elementSize'
   nonstd::optional<bool> hidden;                  // 'hidden'
-  nonstd::optional<value::StringData> comment;    // `comment`
+  nonstd::optional<std::string> comment;    // `comment`
   nonstd::optional<Dictionary> customData;        // `customData`
 
   nonstd::optional<double> weight;  // usdSkel inbetween BlendShape weight.
@@ -1077,7 +1077,7 @@ struct AttrMetas {
 
   // String only metadataum.
   // TODO: Represent as `MetaVariable`?
-  std::vector<value::StringData> stringData;
+  std::vector<std::string> stringData;
 
 
   //
@@ -4180,9 +4180,9 @@ struct LayerMetas {
   TypedAttributeWithFallback<double> endTimeCode{
       std::numeric_limits<double>::infinity()};
   std::vector<SubLayer> subLayers;  // `subLayers`
-  value::StringData comment;  // 'comment' In Stage meta, comment must be string
+  std::string comment;  // 'comment' In Stage meta, comment must be string
                               // only(`comment = "..."` is not allowed)
-  value::StringData doc;      // `documentation`
+  std::string doc;      // `documentation`
 
   CustomDataType customLayerData;  // customLayerData
 

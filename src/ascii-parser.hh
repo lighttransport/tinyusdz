@@ -74,7 +74,7 @@ class AsciiParser {
     nonstd::optional<Kind> kind;
 
     value::dict customData;  // `customData`
-    std::vector<value::StringData>
+    std::vector<std::string>
         strings;  // String only unregistered metadata.
   };
 
@@ -85,7 +85,7 @@ class AsciiParser {
     ///
     std::vector<value::AssetPath> subLayers;  // 'subLayers'
     value::token defaultPrim;                 // 'defaultPrim'
-    value::StringData doc;                    // 'doc' or 'documentation'
+    std::string doc;                    // 'doc' or 'documentation'
     nonstd::optional<Axis> upAxis;            // not specified = nullopt
     nonstd::optional<double> metersPerUnit;
     nonstd::optional<double> timeCodesPerSecond;
@@ -97,7 +97,7 @@ class AsciiParser {
     nonstd::optional<value::token> playbackMode;  // 'none' or 'loop'
 
     std::map<std::string, MetaVariable> customLayerData;  // `customLayerData`.
-    value::StringData comment;  // String only comment string.
+    std::string comment;  // String only comment string.
   };
 
   struct ParseState {
@@ -416,7 +416,6 @@ class AsciiParser {
   bool ReadBasicType(nonstd::optional<value::texcoord3h> *value);
   bool ReadBasicType(nonstd::optional<value::texcoord3f> *value);
   bool ReadBasicType(nonstd::optional<value::texcoord3d> *value);
-  bool ReadBasicType(nonstd::optional<value::StringData> *value);
   bool ReadBasicType(nonstd::optional<std::string> *value);
   bool ReadBasicType(nonstd::optional<value::token> *value);
   bool ReadBasicType(nonstd::optional<Path> *value);
@@ -482,7 +481,6 @@ class AsciiParser {
   bool ReadBasicType(value::matrix2d *value);
   bool ReadBasicType(value::matrix3d *value);
   bool ReadBasicType(value::matrix4d *value);
-  bool ReadBasicType(value::StringData *value);
   bool ReadBasicType(std::string *value);
   bool ReadBasicType(value::token *value);
   bool ReadBasicType(Path *value);
@@ -619,12 +617,12 @@ class AsciiParser {
   ///
   /// Try parsing single-quoted(`"`) string
   ///
-  bool MaybeString(value::StringData *str);
+  bool MaybeString(std::string *str);
 
   ///
   /// Try parsing triple-quited(`"""`) multi-line string.
   ///
-  bool MaybeTripleQuotedString(value::StringData *str);
+  bool MaybeTripleQuotedString(std::string *str);
 
   ///
   /// Parse assset path identifier.

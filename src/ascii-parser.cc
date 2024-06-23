@@ -185,8 +185,6 @@ extern template bool AsciiParser::ParseBasicTypeArray(
 extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<nonstd::optional<value::token>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(
-    std::vector<nonstd::optional<value::StringData>> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<nonstd::optional<std::string>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<nonstd::optional<Reference>> *result);
@@ -305,8 +303,6 @@ extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<value::matrix4d> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<value::token> *result);
-extern template bool AsciiParser::ParseBasicTypeArray(
-    std::vector<value::StringData> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<std::string> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(
@@ -843,13 +839,13 @@ bool AsciiParser::ParseDictElement(std::string *out_key,
     case value::TYPE_ID_STRING: {
       // FIXME: Use std::string
       if (array_qual) {
-        std::vector<value::StringData> strs;
+        std::vector<std::string> strs;
         if (!ParseBasicTypeArray(&strs)) {
           PUSH_ERROR_AND_RETURN("Failed to parse `string[]`");
         }
         var.set_value(strs);
       } else {
-        value::StringData str;
+        std::string str;
         if (!ReadBasicType(&str)) {
           PUSH_ERROR_AND_RETURN("Failed to parse `string`");
         }
@@ -1246,7 +1242,7 @@ bool AsciiParser::ReadStringLiteral(std::string *literal) {
   return true;
 }
 
-bool AsciiParser::MaybeString(value::StringData *str) {
+bool AsciiParser::MaybeString(std::string *str) {
   std::stringstream ss;
 
   if (!str) {
@@ -1327,17 +1323,14 @@ bool AsciiParser::MaybeString(value::StringData *str) {
                                            << start_cursor.row);
 
   size_t displayed_string_len = ss.str().size();
-  str->value = unescapeControlSequence(ss.str());
-  str->line_col = start_cursor.col;
-  str->line_row = start_cursor.row;
-  str->is_triple_quoted = false;
+  (*str) = unescapeControlSequence(ss.str());
 
   _curr_cursor.col += int(displayed_string_len + 2);  // +2 for quotation chars
 
   return true;
 }
 
-bool AsciiParser::MaybeTripleQuotedString(value::StringData *str) {
+bool AsciiParser::MaybeTripleQuotedString(std::string *str) {
   std::stringstream ss;
 
   auto loc = CurrLoc();
@@ -1774,7 +1767,7 @@ bool AsciiParser::ParseStageMetaOpt() {
   // Maybe string-only comment.
   // Comment cannot have multiple lines. The last one wins
   {
-    value::StringData str;
+    std::string str;
     if (MaybeTripleQuotedString(&str)) {
       _stage_metas.comment = str;
       return true;
@@ -1862,14 +1855,8 @@ bool AsciiParser::ParseStageMetaOpt() {
     }
   } else if ((varname == "doc") || (varname == "documentation")) {
     // `documentation` will be shorten to `doc`
-    if (auto pv = var.get_value<value::StringData>()) {
-      DCOUT("doc = " << to_string(pv.value()));
-      _stage_metas.doc = pv.value();
-    } else if (auto pvs = var.get_value<std::string>()) {
-      value::StringData sdata;
-      sdata.value = pvs.value();
-      sdata.is_triple_quoted = false;
-      _stage_metas.doc = sdata;
+    if (auto pvs = var.get_value<std::string>()) {
+      _stage_metas.doc = *pvs;
     } else {
       PUSH_ERROR_AND_RETURN(fmt::format("`{}` isn't a string value.", varname));
     }

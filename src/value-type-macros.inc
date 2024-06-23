@@ -56,7 +56,6 @@
   __FUNC(std::vector<value::AssetPath>)                \
   __FUNC(std::vector<value::token>)                    \
   __FUNC(std::vector<std::string>)                     \
-  __FUNC(std::vector<value::StringData>)               \
   __FUNC(std::vector<value::half>)                     \
   __FUNC(std::vector<value::half2>)                    \
   __FUNC(std::vector<value::half3>)                    \
@@ -110,8 +109,7 @@
 // Apply __FUNC to value types.
 #define APPLY_FUNC_TO_VALUE_TYPES(__FUNC) \
   APPLY_FUNC_TO_VALUE_TYPES_NO_STRING(__FUNC) \
-  __FUNC(std::string)                     \
-  __FUNC(value::StringData)               \
+  __FUNC(std::string)                     
 
 // Apply __FUNC to numeric value types.
 #define APPLY_FUNC_TO_NUMERIC_VALUE_TYPES(__FUNC) \

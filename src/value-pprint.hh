@@ -116,10 +116,6 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::frame4d &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::AssetPath &v);
 
 // NOTE: Implemented in pprinter.cc
-std::ostream &operator<<(std::ostream &os,
-                         const tinyusdz::value::StringData &v);
-
-// NOTE: Implemented in pprinter.cc
 std::ostream &operator<<(std::ostream &os, const tinyusdz::Path &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::Reference &v);
 std::ostream &operator<<(std::ostream &os, const tinyusdz::Payload &v);
@@ -194,7 +190,6 @@ std::string to_string(const value::texcoord2d &v);
 std::string to_string(const value::texcoord3h &v);
 std::string to_string(const value::texcoord3f &v);
 std::string to_string(const value::texcoord3d &v);
-std::string to_string(const value::StringData &s);
 std::string to_string(const value::token &s);
 std::string to_string(const std::string &s); // do USD specific escaping
 std::string to_string(const value::quath &v);

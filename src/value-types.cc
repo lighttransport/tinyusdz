@@ -810,7 +810,6 @@ size_t Value::array_size() const {
   __FUNC(bool)                 \
   __FUNC(value::token)                 \
   __FUNC(std::string)                 \
-  __FUNC(StringData)                 \
   __FUNC(half)                 \
   __FUNC(half2)                \
   __FUNC(half3)                \

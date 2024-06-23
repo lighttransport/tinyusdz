@@ -183,6 +183,7 @@ inline std::string Add1DArraySuffix(const std::string &c) { return c + "[]"; }
 
 using token = tinyusdz::Token;
 
+#if 0 // TODO: Remove
 // single or triple-quoted('"""' or ''') string
 struct StringData {
 
@@ -201,6 +202,7 @@ struct StringData {
   int line_row{0};
   int line_col{0};
 };
+#endif
 
 // SdfAssetPath
 class AssetPath {
@@ -1899,7 +1901,7 @@ DEFINE_ROLE_TYPE_TRAIT(texcoord3d, kTexCoord3d, TYPE_ID_TEXCOORD3D, double3);
 
 DEFINE_TYPE_TRAIT(token, kToken, TYPE_ID_TOKEN, 1);
 DEFINE_TYPE_TRAIT(std::string, kString, TYPE_ID_STRING, 1);
-DEFINE_TYPE_TRAIT(StringData, kString, TYPE_ID_STRING_DATA, 1);
+//DEFINE_TYPE_TRAIT(StringData, kString, TYPE_ID_STRING_DATA, 1);
 DEFINE_TYPE_TRAIT(dict, kDictionary, TYPE_ID_DICT, 1);
 
 DEFINE_TYPE_TRAIT(AssetPath, kAssetPath, TYPE_ID_ASSET_PATH, 1);
