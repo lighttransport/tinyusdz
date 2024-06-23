@@ -923,6 +923,7 @@ bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
   if (auto usdps = mtlx.shader.as<MtlxUsdPreviewSurface>()) {
     return detail::WriteMaterialXToString(*usdps, xml_str, warn, err);
   } else if (auto adskss = mtlx.shader.as<MtlxAutodeskStandardSurface>()) {
+    (void)adskss;
     // TODO
     PUSH_ERROR_AND_RETURN("TODO: AutodeskStandardSurface");
   } else {
