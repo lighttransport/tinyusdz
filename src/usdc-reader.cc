@@ -751,7 +751,7 @@ USDCReader::Impl::DecodeListOp(const ListOp<T> &arg) {
     }
   }
 
-  return std::move(dst);
+  return dst;
 }
 
 bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
@@ -2039,6 +2039,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
       }
     } else if (fv.first == "inherits") {  // `inherits` composition
       if (auto pvb = fv.second.as<value::ValueBlock>()) {
+        (void)pvb;
         // make empty array
         primMeta.inherits =
             std::make_pair(ListEditQual::ResetToExplicit, std::vector<Path>());
@@ -2067,6 +2068,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
 
     } else if (fv.first == "references") {  // `references` composition
       if (auto pvb = fv.second.as<value::ValueBlock>()) {
+        (void)pvb;
         // make empty array
         primMeta.references = std::make_pair(ListEditQual::ResetToExplicit,
                                              std::vector<Reference>());
@@ -2096,6 +2098,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
       }
     } else if (fv.first == "payload") {  // `payload` composition
       if (auto pvb = fv.second.as<value::ValueBlock>()) {
+        (void)pvb;
         // make empty array
         primMeta.payload = std::make_pair(ListEditQual::ResetToExplicit,
                                              std::vector<Payload>());

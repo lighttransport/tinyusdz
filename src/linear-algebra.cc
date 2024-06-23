@@ -46,8 +46,8 @@ value::quatf slerp(const value::quatf &a, const value::quatf &b, const float t) 
   linalg::vec<float, 4> qb;    
   linalg::vec<float, 4> qret;    
 
-  memcpy(&qa, &a, sizeof(float) * 4);
-  memcpy(&qb, &b, sizeof(float) * 4);
+  memcpy(reinterpret_cast<value::quatf *>(&qa), &a, sizeof(float) * 4);
+  memcpy(reinterpret_cast<value::quatf *>(&qb), &b, sizeof(float) * 4);
 
   qret = linalg::slerp(qa, qb, t);
   
@@ -61,8 +61,8 @@ value::quatd slerp(const value::quatd &a, const value::quatd &b, const double t)
   linalg::vec<double, 4> qb;    
   linalg::vec<double, 4> qret;    
 
-  memcpy(&qa, &a, sizeof(double) * 4);
-  memcpy(&qb, &b, sizeof(double) * 4);
+  memcpy(reinterpret_cast<value::quatd *>(&qa), &a, sizeof(double) * 4);
+  memcpy(reinterpret_cast<value::quatd *>(&qb), &b, sizeof(double) * 4);
 
   qret = linalg::slerp(qa, qb, t);
   
