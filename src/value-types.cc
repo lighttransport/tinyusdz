@@ -896,7 +896,7 @@ bool RoleTypeCast(const uint32_t roleTyId, value::Value &inout) {
         if (auto pv = inout.get_value<__srcBaseTy>()) {                        \
           __srcBaseTy val = pv.value();                                        \
           __roleTy newval;                                                     \
-          memcpy(&newval, &val, sizeof(__srcBaseTy));                          \
+          memcpy(reinterpret_cast<__srcBaseTy *>(&newval), &val, sizeof(__srcBaseTy));                          \
           inout = newval;                                                      \
           return true;                                                         \
         }                                                                      \
@@ -909,7 +909,7 @@ bool RoleTypeCast(const uint32_t roleTyId, value::Value &inout) {
           std::vector<__srcBaseTy> val = pv.value();                           \
           std::vector<__roleTy> newval;                                        \
           newval.resize(val.size());                                           \
-          memcpy(newval.data(), val.data(), sizeof(__srcBaseTy) * val.size()); \
+          memcpy(reinterpret_cast<__srcBaseTy *>(newval.data()), val.data(), sizeof(__srcBaseTy) * val.size()); \
           inout = newval;                                                      \
           return true;                                                         \
         }                                                                      \

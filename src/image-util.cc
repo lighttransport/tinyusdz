@@ -12,6 +12,12 @@
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-variable"
+#pragma GCC diagnostic ignored "-Wunused-function"
+#endif
+
 #if !defined(TINYUSDZ_NO_STB_IMAGE_RESIZE_IMPLEMENTATION)
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
 #endif
@@ -21,6 +27,10 @@
 
 #ifdef __clang__
 #pragma clang diagnostic pop
+#endif
+
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
 #endif
 
 #include "image-util.hh"
