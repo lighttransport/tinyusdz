@@ -10,6 +10,7 @@
     * [examples/openglviewer](examples/openglviewer) OpenGL viewer
     * [examples/sdlviewer](examples/sdlviewer) Software raytracing viewer 
   * For Vulkan and Android Vulkan example, please refer https://github.com/syoyo/Vulkan-glTF-USDZ-PBR for a while
+  * For OpenGL + MaterialX example, please refer ASF MaterialXViewer fork to load USD model through TinyUSDZ https://github.com/lighttransport/materialx
  
 ## Mid-term todo
 
