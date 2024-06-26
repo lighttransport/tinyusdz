@@ -155,13 +155,6 @@ USD itself is a generic container of 3D scene data.
 Tydra is an interface to Renderers/Viewers and other DCCs.
 Tydra may be something like Tiny version of pxrUSD Hydra, but its API is completely different. See [src/tydra/README.md](src/tydra/README.md) for the background.
 
-* Image color space
-  * sRGB
-  * Linear
-  * Rec.709
-  * [ ] Partial support of OCIO(OpenColor IO) through TinyColorIO https://github.com/syoyo/tinycolorio . Currently SPI3DLut only.
-* More details are T.B.W.
-
 ## Notice
 
 TinyUSDZ does not support Reality Composer file format(`.reality`) since it uses proprietary file format and we cannot understand it(so no conversion support from/to Reality also).
