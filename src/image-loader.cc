@@ -47,6 +47,13 @@
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-variable"
+#pragma GCC diagnostic ignored "-Wunused-function"
+#endif
+
+
 #if defined(TINYUSDZ_USE_WUFFS_IMAGE_LOADER)
 
 #include "external/wuffs-unsupported-snapshot.c"
@@ -90,6 +97,10 @@
 
 #if defined(__clang__)
 #pragma clang diagnostic pop
+#endif
+
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
 #endif
 
 #include "image-loader.hh"
