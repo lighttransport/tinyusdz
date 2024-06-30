@@ -3,6 +3,10 @@
 This viewer uses NanoRT(SW ray tracer) to render the model and display it using SDL2
 (So no OpenGL dependency)
 
+## Status 
+
+W.I.P.
+
 ## Requirements 
 
 * C++14 compiler

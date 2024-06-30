@@ -15,6 +15,12 @@
 #include <emscripten/html5.h>
 #endif
 
+// To avoid some C define symbol conflict with SDL(e.g. 'Bool')
+// tinyusdz headers muet be included before SDL
+#include "tinyusdz.hh"
+#include "tydra/render-data.hh"
+
+
 // ../common/SDL2
 #include <SDL.h>
 
@@ -33,12 +39,11 @@
 #include "imnodes.h"
 #include "roboto_mono_embed.inc.h"
 #include "virtualGizmo3D/vGizmo.h"
+#include "trackball.h"
 
 //
 #include "gui.hh"
 #include "simple-render.hh"
-#include "tinyusdz.hh"
-#include "trackball.h"
 
 #if defined(USDVIEW_USE_NATIVEFILEDIALOG)
 #include "nfd.h"
@@ -89,7 +94,7 @@ struct GUIContext {
   // std::array<float, 3> lookat = {0.0f, 0.0f, 0.0f};
   // std::array<float, 3> up = {0.0f, 1.0f, 0.0f};
 
-  example::RenderScene render_scene;
+  example::RTRenderScene rt_render_scene;
 
   example::Camera camera;
 
@@ -296,47 +301,21 @@ bool LoadModel(const std::string& filename, tinyusdz::Stage* stage) {
   std::string warn;
   std::string err;
 
-  if (ext.compare("usdz") == 0) {
-    std::cout << "usdz\n";
-    bool ret = tinyusdz::LoadUSDZFromFile(filename, stage, &warn, &err);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-    }
+  if (!tinyusdz::IsUSD(filename)) {
+    std::cerr << "ERR: file not found or file is not USD format : " << filename << "\n";
+    return false;
+  }
+
+  bool ret = tinyusdz::LoadUSDFromFile(filename, stage, &warn, &err);
+  if (warn.size()) {
+     std::cerr << "WARN : " << warn << "\n";
+  }
+
+  if (!ret) {
     if (!err.empty()) {
       std::cerr << "ERR : " << err << "\n";
     }
-
-    if (!ret) {
-      std::cerr << "Failed to load USDZ file: " << filename << "\n";
-      return false;
-    }
-  } else if (ext.compare("usda") == 0) {
-    std::cout << "usda\n";
-    bool ret = tinyusdz::LoadUSDAFromFile(filename, stage, &warn, &err);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-    }
-    if (!err.empty()) {
-      std::cerr << "ERR : " << err << "\n";
-    }
-
-    if (!ret) {
-      std::cerr << "Failed to load USDA file: " << filename << "\n";
-      return false;
-    }
-  } else {  // assume usdc
-    bool ret = tinyusdz::LoadUSDCFromFile(filename, stage, &warn, &err);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-    }
-    if (!err.empty()) {
-      std::cerr << "ERR : " << err << "\n";
-    }
-
-    if (!ret) {
-      std::cerr << "Failed to load USDC file: " << filename << "\n";
-      return false;
-    }
+    return false;
   }
 
   return true;
@@ -387,7 +366,7 @@ void RenderThread(GUIContext* ctx) {
       continue;
     }
 
-    example::Render(ctx->render_scene, ctx->camera, &ctx->aov);
+    example::Render(ctx->rt_render_scene, ctx->camera, &ctx->aov);
 
     ctx->update_texture = true;
 
@@ -842,7 +821,7 @@ int main(int argc, char** argv) {
     //}
 
     // Setup render mesh
-    if (!gui_ctx.render_scene.Setup()) {
+    if (!gui_ctx.rt_render_scene.Setup()) {
       std::cerr << "Failed to setup render mesh.\n";
       exit(-1);
     }

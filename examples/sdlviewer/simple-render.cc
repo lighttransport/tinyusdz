@@ -489,7 +489,7 @@ void BuildCameraFrame(float3* origin, float3* corner, float3* u, float3* v,
   }
 }
 
-bool Render(const RenderScene& scene, const Camera& cam, AOV* output) {
+bool Render(const RTRenderScene& scene, const Camera& cam, AOV* output) {
   int width = output->width;
   int height = output->height;
 
@@ -680,7 +680,7 @@ bool Render(const RenderScene& scene, const Camera& cam, AOV* output) {
   return true;
 }
 
-bool RenderLines(int start_y, int end_y, const RenderScene& scene,
+bool RenderLines(int start_y, int end_y, const RTRenderScene& scene,
                  const Camera& cam, AOV* output) {
   int width = output->width;
   int height = output->height;
@@ -835,7 +835,7 @@ bool RenderLines(int start_y, int end_y, const RenderScene& scene,
   return true;
 }
 
-bool RenderScene::Setup() {
+bool RTRenderScene::Setup() {
   //
   // Construct scene
   //
