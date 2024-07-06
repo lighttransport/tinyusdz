@@ -37,8 +37,10 @@
 //
 #include "gui.hh"
 #include "simple-render.hh"
-#include "tinyusdz.hh"
 #include "trackball.h"
+// 
+#include "tinyusdz.hh"
+#include "tydra/render-data.hh" // To convert USD Stage to OpenGL/Vulkan friendly data structure.
 
 #if defined(USDVIEW_USE_NATIVEFILEDIALOG)
 #include "nfd.h"
@@ -89,7 +91,7 @@ struct GUIContext {
   // std::array<float, 3> lookat = {0.0f, 0.0f, 0.0f};
   // std::array<float, 3> up = {0.0f, 1.0f, 0.0f};
 
-  example::RenderScene render_scene;
+  //example::RenderScene render_scene;
 
   example::Camera camera;
 
@@ -102,10 +104,21 @@ struct GUIContext {
   int render_width = 512;
   int render_height = 512;
 
-  // scene reload
   tinyusdz::Stage stage;
-  std::atomic<bool> request_reload{false};
   std::string filename;
+
+  // RenderScene: Scene graph object which is suited for GL/Vulkan renderer.
+  // Constructed from `tinyusdz::Stage`
+  tinyusdz::tydra::RenderScene render_scene;
+
+  // scene reload
+  std::atomic<bool> request_reload{false};
+
+  tinyusdz::AssetResolutionResolver arr;
+
+  // USDZ specific
+  // Byte range info for assets(textures, audio, etc)
+  tinyusdz::USDZAsset usdz_asset;
 
 #if __EMSCRIPTEN__ || defined(EMULATE_EMSCRIPTEN)
   bool render_finished{false};
@@ -290,53 +303,23 @@ static void ScreenActivate(SDL_Window* window) {
 #endif
 }
 
-bool LoadModel(const std::string& filename, tinyusdz::Stage* stage) {
-  std::string ext = str_tolower(GetFileExtension(filename));
+bool LoadModel(const std::string& filename, /* out */tinyusdz::Stage* stage) {
 
   std::string warn;
   std::string err;
 
-  if (ext.compare("usdz") == 0) {
-    std::cout << "usdz\n";
-    bool ret = tinyusdz::LoadUSDZFromFile(filename, stage, &warn, &err);
-    if (!warn.empty()) {
+  bool ret = tinyusdz::LoadUSDFromFile(filename, stage, &warn, &err);
+  if (!warn.empty()) {
       std::cerr << "WARN : " << warn << "\n";
-    }
-    if (!err.empty()) {
-      std::cerr << "ERR : " << err << "\n";
-    }
+  }
 
-    if (!ret) {
-      std::cerr << "Failed to load USDZ file: " << filename << "\n";
-      return false;
-    }
-  } else if (ext.compare("usda") == 0) {
-    std::cout << "usda\n";
-    bool ret = tinyusdz::LoadUSDAFromFile(filename, stage, &warn, &err);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-    }
-    if (!err.empty()) {
-      std::cerr << "ERR : " << err << "\n";
-    }
+  if (!err.empty()) {
+    std::cerr << "ERR : " << err << "\n";
+  }
 
-    if (!ret) {
-      std::cerr << "Failed to load USDA file: " << filename << "\n";
-      return false;
-    }
-  } else {  // assume usdc
-    bool ret = tinyusdz::LoadUSDCFromFile(filename, stage, &warn, &err);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-    }
-    if (!err.empty()) {
-      std::cerr << "ERR : " << err << "\n";
-    }
-
-    if (!ret) {
-      std::cerr << "Failed to load USDC file: " << filename << "\n";
-      return false;
-    }
+  if (!ret) {
+    std::cerr << "Failed to load USD file: " << filename << "\n";
+    return false;
   }
 
   return true;
@@ -387,7 +370,7 @@ void RenderThread(GUIContext* ctx) {
       continue;
     }
 
-    example::Render(ctx->render_scene, ctx->camera, &ctx->aov);
+    //example::Render(ctx->render_scene, ctx->camera, &ctx->aov);
 
     ctx->update_texture = true;
 
@@ -842,10 +825,10 @@ int main(int argc, char** argv) {
     //}
 
     // Setup render mesh
-    if (!gui_ctx.render_scene.Setup()) {
-      std::cerr << "Failed to setup render mesh.\n";
-      exit(-1);
-    }
+    //if (!gui_ctx.render_scene.Setup()) {
+    //  std::cerr << "Failed to setup render mesh.\n";
+    //  exit(-1);
+    //}
     std::cout << "Setup render mesh\n";
   }
 

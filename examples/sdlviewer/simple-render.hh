@@ -211,8 +211,8 @@ class RenderScene {
   std::vector<nanosg::Node<float, DrawGeomMesh>> nodes;
   nanosg::Scene<float, DrawGeomMesh> scene;
 
-  // Convert meshes and build BVH
-  bool Setup();
+  // Convert scene and build BVH
+  bool SetupFromStage(const tinyusdz::Stage &stage);
 };
 
 bool Render(const RenderScene &scene, const Camera &cam, AOV *output);
