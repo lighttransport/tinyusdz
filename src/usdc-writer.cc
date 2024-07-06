@@ -208,6 +208,7 @@ class Packer {
                    // by Index()(= ~0)
 };
 
+#if 0 // not used atm.
 crate::TokenIndex Packer::AddToken(const Token &token) {
   if (token_to_index_map.count(token)) {
     return token_to_index_map[token];
@@ -271,6 +272,7 @@ crate::FieldSetIndex Packer::AddFieldSet(
 
   return fieldset_to_index_map[fieldset];
 }
+#endif
 
 class Writer {
  public:

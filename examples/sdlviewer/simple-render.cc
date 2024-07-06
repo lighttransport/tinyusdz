@@ -3,7 +3,8 @@
 #include <cassert>
 #include <thread>
 
-// tinyusdz Tydra
+// tinyusdz & Tydra
+#include "io-util.hh"
 #include "tydra/render-data.hh"
 
 //
@@ -494,7 +495,7 @@ void BuildCameraFrame(float3* origin, float3* corner, float3* u, float3* v,
   }
 }
 
-bool Render(const RenderScene& scene, const Camera& cam, AOV* output) {
+bool Render(const RTRenderScene& scene, const Camera& cam, AOV* output) {
   int width = output->width;
   int height = output->height;
 
@@ -685,7 +686,7 @@ bool Render(const RenderScene& scene, const Camera& cam, AOV* output) {
   return true;
 }
 
-bool RenderLines(int start_y, int end_y, const RenderScene& scene,
+bool RenderLines(int start_y, int end_y, const RTRenderScene& scene,
                  const Camera& cam, AOV* output) {
   int width = output->width;
   int height = output->height;
@@ -840,14 +841,32 @@ bool RenderLines(int start_y, int end_y, const RenderScene& scene,
   return true;
 }
 
-bool RenderScene::SetupFromUSDFile(const std::string &usd_filename) {
+bool RTRenderScene::SetupFromUSDFile(const std::string &usd_filename) {
+
+  if (!tinyusdz::IsUSD(usd_filename)) {
+    std::cerr << "File not found or not a USD file: " << usd_filename << "\n";
+    return false;
+  }
+
+  std::string warn, err;
+  tinyusdz::Stage stage;
+  bool ret = tinyusdz::LoadUSDFromFile(usd_filename, &stage, &warn, &err);
+  if (warn.size()) {
+    std::cout << "WARN: " << warn << "\n";
+  }
+
+  if (!ret) {
+    std::cerr << "USD load error: " << err << "\n";
+    return false;
+  }
+
+  warn.clear();
 
 	// Convert USD Scene(Stage) to Vulkan-friendly scene data using TinyUSDZ Tydra
 	tinyusdz::tydra::RenderScene render_scene;
 	tinyusdz::tydra::RenderSceneConverter converter;
   tinyusdz::tydra::RenderSceneConverterEnv env(stage);
 
-  std::string warn, err;
 
   bool is_usdz = tinyusdz::IsUSDZ(usd_filename);
 
@@ -868,7 +887,7 @@ bool RenderScene::SetupFromUSDFile(const std::string &usd_filename) {
       // Setup AssetResolutionResolver to read a asset(file) from memory.
       if (!tinyusdz::ReadUSDZAssetInfoFromFile(usd_filename, &usdz_asset, &warn, &err  )) {
         std::cerr << "Failed to read USDZ assetInfo from file: " << err << "\n";
-        return;
+        return false;
       }
 
       if (warn.size()) {
@@ -880,7 +899,7 @@ bool RenderScene::SetupFromUSDFile(const std::string &usd_filename) {
       // NOTE: Pointer address of usdz_asset must be valid until the call of RenderSce  neConverter::ConvertToRenderScene.
       if (!tinyusdz::SetupUSDZAssetResolution(arr, &usdz_asset)) {
         std::cerr << "Failed to setup AssetResolution for USDZ asset\n";
-        return;
+        return false;
       };
 
       env.asset_resolver = arr;
@@ -890,10 +909,10 @@ bool RenderScene::SetupFromUSDFile(const std::string &usd_filename) {
     }
 
 			env.timecode = tinyusdz::value::TimeCode::Default();
-			bool ret = converter.ConvertToRenderScene(env, &render_scene);
+			ret = converter.ConvertToRenderScene(env, &render_scene);
 			if (!ret) {
 				std::cerr << "Failed to convert USD Stage to RenderScene: \n" << converter.GetError() << "\n";
-				return;
+				return false;
 			}
 
 			if (converter.GetWarning().size()) {

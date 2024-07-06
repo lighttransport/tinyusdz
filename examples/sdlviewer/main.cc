@@ -15,6 +15,12 @@
 #include <emscripten/html5.h>
 #endif
 
+// To avoid some C define symbol conflict with SDL(e.g. 'Bool')
+// tinyusdz headers muet be included before SDL
+#include "tinyusdz.hh"
+#include "tydra/render-data.hh"
+
+
 // ../common/SDL2
 #include <SDL.h>
 
@@ -33,6 +39,7 @@
 #include "imnodes.h"
 #include "roboto_mono_embed.inc.h"
 #include "virtualGizmo3D/vGizmo.h"
+#include "trackball.h"
 
 //
 #include "gui.hh"
@@ -91,7 +98,7 @@ struct GUIContext {
   // std::array<float, 3> lookat = {0.0f, 0.0f, 0.0f};
   // std::array<float, 3> up = {0.0f, 1.0f, 0.0f};
 
-  //example::RenderScene render_scene;
+  example::RTRenderScene rt_render_scene;
 
   example::Camera camera;
 
@@ -104,8 +111,8 @@ struct GUIContext {
   int render_width = 512;
   int render_height = 512;
 
-  tinyusdz::Stage stage;
-  std::string filename;
+  //tinyusdz::Stage stage;
+  std::string usd_filename;
 
   // RenderScene: Scene graph object which is suited for GL/Vulkan renderer.
   // Constructed from `tinyusdz::Stage`
@@ -308,17 +315,20 @@ bool LoadModel(const std::string& filename, /* out */tinyusdz::Stage* stage) {
   std::string warn;
   std::string err;
 
-  bool ret = tinyusdz::LoadUSDFromFile(filename, stage, &warn, &err);
-  if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
+  if (!tinyusdz::IsUSD(filename)) {
+    std::cerr << "ERR: file not found or file is not USD format : " << filename << "\n";
+    return false;
   }
 
-  if (!err.empty()) {
-    std::cerr << "ERR : " << err << "\n";
+  bool ret = tinyusdz::LoadUSDFromFile(filename, stage, &warn, &err);
+  if (warn.size()) {
+     std::cerr << "WARN : " << warn << "\n";
   }
 
   if (!ret) {
-    std::cerr << "Failed to load USD file: " << filename << "\n";
+    if (!err.empty()) {
+      std::cerr << "ERR : " << err << "\n";
+    }
     return false;
   }
 
@@ -334,11 +344,11 @@ void RenderThread(GUIContext* ctx) {
     }
 
     if (ctx->request_reload) {
-      ctx->stage = tinyusdz::Stage();  // reset
+      //ctx->stage = tinyusdz::Stage();  // reset
 
+#if 0 // TODO
       if (LoadModel(ctx->filename, &ctx->stage)) {
         Proc(ctx->stage);
-#if 0
         if (ctx->scene.geom_meshes.empty()) {
           std::cerr << "The scene contains no GeomMesh\n";
         } else {
@@ -356,8 +366,8 @@ void RenderThread(GUIContext* ctx) {
           }
           std::cout << "Setup render mesh\n";
         }
-#endif
       }
+#endif
 
       ctx->request_reload = false;
 
@@ -370,7 +380,7 @@ void RenderThread(GUIContext* ctx) {
       continue;
     }
 
-    //example::Render(ctx->render_scene, ctx->camera, &ctx->aov);
+    example::Render(ctx->rt_render_scene, ctx->camera, &ctx->aov);
 
     ctx->update_texture = true;
 
@@ -746,14 +756,9 @@ int main(int argc, char** argv) {
     filename = std::string(argv[1]);
   }
 
-  std::cout << "Loading file " << filename << "\n";
+  g_gui_ctx.usd_filename = filename;
 
-  bool init_with_empty = false;
-
-  if (!LoadModel(filename, &g_gui_ctx.stage)) {
-    init_with_empty = true;
-  }
-
+#if 0
   if (!init_with_empty) {
     std::cout << "Loaded USDC file\n";
 
@@ -763,6 +768,7 @@ int main(int argc, char** argv) {
     //  exit(-1);
     //}
   }
+#endif
 
   // Assume single monitor
   SDL_DisplayMode DM;
@@ -818,17 +824,17 @@ int main(int argc, char** argv) {
   GUIContext& gui_ctx = g_gui_ctx;
   gui_ctx.renderer = renderer;
 
-  if (!init_with_empty) {
+  if (gui_ctx.usd_filename.size()) {
     //for (size_t i = 0; i < g_gui_ctx.scene.geom_meshes.size(); i++) {
     //  example::DrawGeomMesh draw_mesh(&g_gui_ctx.scene.geom_meshes[i]);
     //  gui_ctx.render_scene.draw_meshes.push_back(draw_mesh);
     //}
 
     // Setup render mesh
-    //if (!gui_ctx.render_scene.Setup()) {
-    //  std::cerr << "Failed to setup render mesh.\n";
-    //  exit(-1);
-    //}
+    if (!gui_ctx.rt_render_scene.SetupFromUSDFile(gui_ctx.usd_filename)) {
+      std::cerr << "Failed to setup render mesh.\n";
+      exit(-1);
+    }
     std::cout << "Setup render mesh\n";
   }
 
@@ -973,7 +979,7 @@ int main(int argc, char** argv) {
         std::string fname = filepath;
 
         // Scene reloading is done in render thread.
-        g_gui_ctx.filename = fname;
+        g_gui_ctx.usd_filename = fname;
         g_gui_ctx.request_reload = true;
 
         SDL_free(filepath);
