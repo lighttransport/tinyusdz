@@ -1,8 +1,13 @@
-#include "simple-render.hh"
 
 #include <atomic>
 #include <cassert>
 #include <thread>
+
+// tinyusdz Tydra
+#include "tydra/render-data.hh"
+
+//
+#include "simple-render.hh"
 
 #include "nanort.h"
 #include "nanosg.h"
@@ -835,7 +840,66 @@ bool RenderLines(int start_y, int end_y, const RenderScene& scene,
   return true;
 }
 
-bool RenderScene::Setup() {
+bool RenderScene::SetupFromUSDFile(const std::string &usd_filename) {
+
+	// Convert USD Scene(Stage) to Vulkan-friendly scene data using TinyUSDZ Tydra
+	tinyusdz::tydra::RenderScene render_scene;
+	tinyusdz::tydra::RenderSceneConverter converter;
+  tinyusdz::tydra::RenderSceneConverterEnv env(stage);
+
+  std::string warn, err;
+
+  bool is_usdz = tinyusdz::IsUSDZ(usd_filename);
+
+			// In default, RenderSceneConverter triangulate meshes and build single vertex ind  ex.
+			// You can explicitly enable triangulation and vertex-indices build by
+			//env.mesh_config.triangulate = true;
+			//env.mesh_config.build_vertex_indices = true;
+
+			// Load textures as stored representaion(e.g. 8bit sRGB texture is read as 8bit sR  GB)
+			env.material_config.linearize_color_space = false;
+			env.material_config.preserve_texel_bitdepth = true;
+
+			std::string usd_basedir = tinyusdz::io::GetBaseDir(usd_filename);
+
+			tinyusdz::USDZAsset usdz_asset;
+
+    if (is_usdz) {
+      // Setup AssetResolutionResolver to read a asset(file) from memory.
+      if (!tinyusdz::ReadUSDZAssetInfoFromFile(usd_filename, &usdz_asset, &warn, &err  )) {
+        std::cerr << "Failed to read USDZ assetInfo from file: " << err << "\n";
+        return;
+      }
+
+      if (warn.size()) {
+        std::cout << warn << "\n";
+      }
+
+      tinyusdz::AssetResolutionResolver arr;
+
+      // NOTE: Pointer address of usdz_asset must be valid until the call of RenderSce  neConverter::ConvertToRenderScene.
+      if (!tinyusdz::SetupUSDZAssetResolution(arr, &usdz_asset)) {
+        std::cerr << "Failed to setup AssetResolution for USDZ asset\n";
+        return;
+      };
+
+      env.asset_resolver = arr;
+
+    } else {
+      env.set_search_paths({usd_basedir});
+    }
+
+			env.timecode = tinyusdz::value::TimeCode::Default();
+			bool ret = converter.ConvertToRenderScene(env, &render_scene);
+			if (!ret) {
+				std::cerr << "Failed to convert USD Stage to RenderScene: \n" << converter.GetError() << "\n";
+				return;
+			}
+
+			if (converter.GetWarning().size()) {
+				std::cout << "ConvertToRenderScene warn: " << converter.GetWarning() << "\n";
+			}
+
   //
   // Construct scene
   //
