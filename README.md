@@ -10,6 +10,7 @@
     * [examples/openglviewer](examples/openglviewer) OpenGL viewer
     * [examples/sdlviewer](examples/sdlviewer) Software raytracing viewer 
   * For Vulkan and Android Vulkan example, please refer https://github.com/syoyo/Vulkan-glTF-USDZ-PBR for a while
+  * For OpenGL + MaterialX example, please refer ASF MaterialXViewer fork to load USD model through TinyUSDZ https://github.com/lighttransport/materialx
  
 ## Mid-term todo
 
@@ -153,13 +154,6 @@ USD itself is a generic container of 3D scene data.
 
 Tydra is an interface to Renderers/Viewers and other DCCs.
 Tydra may be something like Tiny version of pxrUSD Hydra, but its API is completely different. See [src/tydra/README.md](src/tydra/README.md) for the background.
-
-* Image color space
-  * sRGB
-  * Linear
-  * Rec.709
-  * [ ] Partial support of OCIO(OpenColor IO) through TinyColorIO https://github.com/syoyo/tinycolorio . Currently SPI3DLut only.
-* More details are T.B.W.
 
 ## Notice
 

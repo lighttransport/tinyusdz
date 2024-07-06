@@ -2795,7 +2795,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(sizeof(double));
 
-        double v;
+        double v{0.0};
         if (!_sr->read_double(&v)) {
           PUSH_ERROR("Failed to read Double value.");
           return false;

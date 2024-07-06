@@ -689,6 +689,25 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
                                 PROPERTIES COMPILE_FLAGS ${TUSDZ_COMPILE_FLAGS})
   endif()
 
+# Increase warning level for gcc.
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+
+  set(TUSDZ_COMPILE_FLAGS
+      "-Wall "
+  )
+
+  option(TINYUSDZ_NO_WERROR "Don't set -Werror when building the tinyusdz library" ${TINYUSDZ_DEFAULT_NO_WERROR})
+  if (NOT TINYUSDZ_NO_WERROR)
+    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Werror")
+  endif()
+
+  set_source_files_properties(${TINYUSDZ_SOURCES}
+                              PROPERTIES COMPILE_FLAGS ${TUSDZ_COMPILE_FLAGS})
+
+  if (TINYUSDZ_WITH_C_API)
+    set_source_files_properties(${TINYUSDZ_C_API_SOURCES}
+                                PROPERTIES COMPILE_FLAGS ${TUSDZ_COMPILE_FLAGS})
+  endif()
 endif()
 
 if(TINYUSDZ_CUSTOM_COMPILE_FLAGS)
