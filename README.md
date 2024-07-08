@@ -169,7 +169,7 @@ Example viewer is just for demo purpose.
 
 If you need commercial support, eco-system development(e.g. plug-ins, DCC tools on top of TinyUSDZ) or production-grade USDZ model viewer(e.g. embed TinyUSDZ to your AR app, 3D NFT Android mobile viewer capable of displaying (encrypted) USDZ model), please contact Light Transport Entertainment, Inc. : [https://goo.gl/forms/1p6uGcOKWGpXPHkA2 ](https://forms.gle/PeDRAgYM5ET9SjGs5)
 
-We are also looking for sponsors. Please also contact Light Transport Entertainment, Inc. for details: [https://goo.gl/forms/1p6uGcOKWGpXPHkA2 ](https://forms.gle/PeDRAgYM5ET9SjGs5)
+We are also looking for sponsors. If you are interested in sponsoring(or donating) to TinyUSDZ project, please also contact Light Transport Entertainment, Inc. for details: [https://goo.gl/forms/1p6uGcOKWGpXPHkA2 ](https://forms.gle/PeDRAgYM5ET9SjGs5)
 
 
 ## Projects using TinyUSDZ
@@ -177,12 +177,14 @@ We are also looking for sponsors. Please also contact Light Transport Entertainm
 * Vulkan-glTF-USDZ-PBR: Example to draw USD model using Vulkan https://github.com/syoyo/Vulkan-glTF-USDZ-PBR
 * usd2glb: USD to glTF 2.0 GLB converter https://github.com/fynv/usd2glb
 * webgpu-cpp-usdz: WebGPU C++/Wasm USDZ Renderer(NOTE: It doesn't support much yet!) https://github.com/Twinklebear/webgpu-cpp-usdz
+* A secret project
+* Several DCC tools, plugins
 
 ### Other related projects
 
 * UsdzSharpie: C# Simple implementation of Usdz file format ( https://github.com/UkooLabs/UsdzSharpie )
 * TinyGLTF: glTF 2.0 loader/saver ( https://github.com/syoyo/tinygltf )
-* BlenderUSDZ: It contains their own Python USDC parser/serializer. https://github.com/robmcrosby/BlenderUSDZ
+
 
 ## Supported platforms
 
