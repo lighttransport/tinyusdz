@@ -2,6 +2,9 @@
 
 `TinyUSDZ` is secure, portable and dependency-free(depends only on C++ STL. Other 3rd-party libraries included. Yes, you don't need pxrUSD/OpenUSD library!) USDZ/USDC/USDA library written in C++14.
 
+![damagedhelmet_usdz](https://github.com/syoyo/tinyusdz/assets/18676/2419ddf6-4410-4bcc-b9c1-466bf29d3b20)
+(from https://github.com/syoyo/Vulkan-glTF-USDZ-PBR)
+
 ## High priority
 
 * Prepare Release v0.8
