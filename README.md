@@ -162,16 +162,15 @@ Tydra may be something like Tiny version of pxrUSD Hydra, but its API is complet
 
 TinyUSDZ does not support Reality Composer file format(`.reality`) since it uses proprietary file format and we cannot understand it(so no conversion support from/to Reality also).
 
-## Commercial support
+## Sponsorship and Commercial support
 
 TinyUSDZ focuses on loading/writing USDA/USDC/USDZ functionalities.
 Example viewer is just for demo purpose.
-`syoyo` does not provide commercial support as an individual. 
 
-If you need commercial support, eco-system development(e.g. plug-ins, DCC tools on top of TinyUSDZ) or production-grade USDZ model viewer(e.g. embed TinyUSDZ to your AR app, 3D NFT Android mobile viewer capable of displaying (encrypted) USDZ model), please contact Light Transport Entertainment, Inc. : https://goo.gl/forms/1p6uGcOKWGpXPHkA2 
+If you need commercial support, eco-system development(e.g. plug-ins, DCC tools on top of TinyUSDZ) or production-grade USDZ model viewer(e.g. embed TinyUSDZ to your AR app, 3D NFT Android mobile viewer capable of displaying (encrypted) USDZ model), please contact Light Transport Entertainment, Inc. : [https://goo.gl/forms/1p6uGcOKWGpXPHkA2 ](https://forms.gle/PeDRAgYM5ET9SjGs5)
 
-We have a plan to manage TinyUSDZ project under Light Transport Entertainment Inc. 
-(By relicensing to Apatch 2.0)
+We are also looking for sponsors. Please also contact Light Transport Entertainment, Inc. for details: [https://goo.gl/forms/1p6uGcOKWGpXPHkA2 ](https://forms.gle/PeDRAgYM5ET9SjGs5)
+
 
 ## Projects using TinyUSDZ
 
