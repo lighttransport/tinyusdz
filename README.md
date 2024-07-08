@@ -5,6 +5,9 @@
 ![damagedhelmet_usdz](https://github.com/syoyo/tinyusdz/assets/18676/2419ddf6-4410-4bcc-b9c1-466bf29d3b20)
 (from https://github.com/syoyo/Vulkan-glTF-USDZ-PBR)
 
+![materialx-tinyusdz](https://github.com/lighttransport/tinyusdz/assets/18676/5291f44f-b20a-4d4a-9b4a-16ffefccddc7)
+(from ASF MaterialXViewer fork to load USD model through TinyUSDZ https://github.com/lighttransport/materialx)
+
 ## High priority
 
 * Prepare Release v0.8
