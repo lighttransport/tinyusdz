@@ -3703,31 +3703,30 @@ bool RenderSceneConverter::ConvertMesh(
 
       if (skelPath.is_valid()) {
         SkelHierarchy skel;
-        nonstd::optional<Animation> anim;
-        if (!ConvertSkeletonImpl(env, mesh, &skel, &anim)) {
-          return false;
+        nonstd::optional <Animation> anim;
+        if (ConvertSkeletonImpl(env, mesh, &skel, &anim)) {
+          DCOUT("Converted skeleton attached to : " << abs_path);
+
+          auto it = std::find_if(skeletons.begin(), skeletons.end(), [&abs_path](const SkelHierarchy &sk) {
+                                     return sk.abs_path == abs_path.full_path_name();
+                                 });
+
+          if (anim) {
+              skel.anim_id = int(animations.size());
+              animations.emplace_back(anim.value());
+          }
+
+          int skel_id{0};
+          if (it != skeletons.end()) {
+              skel_id = int(std::distance(skeletons.begin(), it));
+          } else {
+              skel_id = int(skeletons.size());
+              skeletons.emplace_back(std::move(skel));
+          }
+
+          dst.skel_id = skel_id;
+
         }
-        DCOUT("Converted skeleton attached to : " << abs_path);
-
-        auto it = std::find_if(skeletons.begin(), skeletons.end(), [&abs_path](const SkelHierarchy &sk) {
-          return sk.abs_path == abs_path.full_path_name();
-        });
-
-        if (anim) {
-          skel.anim_id = int(animations.size());
-          animations.emplace_back(anim.value());
-        }
-
-        int skel_id{0};
-        if (it != skeletons.end()) {
-          skel_id = int(std::distance(skeletons.begin(), it));
-        } else {
-          skel_id = int(skeletons.size());
-          skeletons.emplace_back(std::move(skel));
-        }
-
-        dst.skel_id = skel_id;
-
       }
     }
 
