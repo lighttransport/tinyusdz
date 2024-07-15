@@ -180,7 +180,8 @@ We are also looking for sponsors. If you are interested in sponsoring(or donatin
 * Vulkan-glTF-USDZ-PBR: Example to draw USD model using Vulkan https://github.com/syoyo/Vulkan-glTF-USDZ-PBR
 * usd2glb: USD to glTF 2.0 GLB converter https://github.com/fynv/usd2glb
 * webgpu-cpp-usdz: WebGPU C++/Wasm USDZ Renderer(NOTE: It doesn't support much yet!) https://github.com/Twinklebear/webgpu-cpp-usdz
-* A secret project
+* assimp started to integrate TinyUSDZ : https://github.com/assimp/assimp/pull/5628
+* A secret project (*/ω＼*)
 * Several DCC tools, plugins
 
 ### Other related projects
