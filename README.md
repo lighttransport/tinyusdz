@@ -183,6 +183,7 @@ We are also looking for sponsors. If you are interested in sponsoring(or donatin
 * assimp started to integrate TinyUSDZ : https://github.com/assimp/assimp/pull/5628
 * A secret project (*/ω＼*)
 * Several DCC tools, plugins
+* Your projects here!(Please send PR)
 
 ### Other related projects
 
