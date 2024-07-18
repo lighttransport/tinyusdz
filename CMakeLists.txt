@@ -1085,7 +1085,7 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   if(TINYUSDZ_WITH_TYDRA)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_WITH_TYDRA")
-  endif(TINYUSDZ_WITH_OPENSUBDIV)
+  endif(TINYUSDZ_WITH_TYDRA)
 
   if(NOT TINYUSDZ_CXX_EXCEPTIONS)
     if(MSVC)
