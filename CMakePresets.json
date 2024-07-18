@@ -75,7 +75,6 @@
       "generator": "Visual Studio 16 2019",
       "architecture": { "value": "x64" },
       "binaryDir": "${sourceDir}/build/Debug",
-      "configurationType": "Debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_C_COMPILER": "cl",
@@ -89,7 +88,6 @@
       "generator": "Visual Studio 16 2019",
       "architecture": { "value": "x64" },
       "binaryDir": "${sourceDir}/build/Release",
-      "configurationType": "Release",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_C_COMPILER": "cl",
@@ -103,7 +101,6 @@
       "generator": "Visual Studio 17 2019",
       "architecture": { "value": "x64" },
       "binaryDir": "${sourceDir}/build/RelWithDebInfo",
-      "configurationType": "RelWithDebInfo",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "CMAKE_C_COMPILER": "cl",
@@ -117,7 +114,6 @@
       "generator": "Visual Studio 16 2019",
       "architecture": { "value": "x64" },
       "binaryDir": "${sourceDir}/build/MinSizeRel",
-      "configurationType": "MinSizeRel",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "MinSizeRel",
         "CMAKE_C_COMPILER": "cl",
