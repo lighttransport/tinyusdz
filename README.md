@@ -214,8 +214,8 @@ We are also looking for sponsors. If you are interested in sponsoring(or donatin
 
 * C++14 compiler
   * [x] gcc 4.9 or later
-  * [x] Visual Studio 2019 or later(2017 may compiles)
-    * VS2019 16.10 or later you can use `CMakePresets.json` for easier building.
+  * [x] Visual Studio 2019 or later. 2022 recommends.
+    * You can use `CMakePresets.json`, but seems troublesome in 2022. We recommend to use `vcsetup.bat` to setup .sln for a while.
     * [x] Can be compiled with standalone MSVC compilers(Build Tools for Visual Studio 2019)
   * [x] clang 3.4 or later https://clang.llvm.org/cxx_status.html
   * [x] llvm-mingw(clang) supported
