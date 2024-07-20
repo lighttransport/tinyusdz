@@ -34,6 +34,7 @@ THE SOFTWARE.
 
 #include <string>
 #include <vector>
+#include <array>
 
 namespace tinydng {
 
@@ -251,6 +252,9 @@ struct DNGImage {
   std::vector<unsigned char>
       data;  // Decoded pixel data(len = spp * width * height * bps / 8)
 
+  std::array<int32_t, 2> shutter_speed{0,0}; // numerator, denominator
+  std::array<int32_t, 2> aperture_value{0,0}; // numerator, denominator
+
   // Custom fields
   std::vector<FieldData> custom_fields;
 };
@@ -346,7 +350,7 @@ bool IsDNGFromMemory(const char* mem, unsigned int size, std::string* msg);
 #pragma clang diagnostic ignored "-Weverything"
 #endif
 
-#define TINY_DNG_LOADER_DEBUG
+//#define TINY_DNG_LOADER_DEBUG
 #ifdef TINY_DNG_LOADER_DEBUG
 #define TINY_DNG_DPRINTF(...) printf(__VA_ARGS__)
 #else
@@ -1928,6 +1932,8 @@ int lj92_encode(uint16_t* image, int width, int height, int bitdepth,
 #endif
 #endif
 
+// NOTE: - https://exiftool.org/TagNames/EXIF.html
+//       - https://helpx.adobe.com/photoshop/kb/dng-specification-tags.html
 typedef enum {
   TAG_NEW_SUBFILE_TYPE = 254,
   TAG_SUBFILE_TYPE = 255,
@@ -1941,6 +1947,11 @@ typedef enum {
   TAG_ROWS_PER_STRIP = 278,
   TAG_STRIP_BYTE_COUNTS = 279,
   TAG_PLANAR_CONFIGURATION = 284,
+  TAG_TRANSFER_FUNCTION = 301, // int16u[768]
+  TAG_SOFTWARE = 305, // string
+  TAG_MODIFY_DATA = 306, // string
+  TAG_ARTIST = 315, // string
+  //TAG_HOST_COMPUTER = 316,
   TAG_PREDICTOR = 317,
   TAG_SUB_IFDS = 330,
   TAG_TILE_WIDTH = 322,
@@ -1979,6 +1990,28 @@ typedef enum {
   TAG_CR2_SLICES = 50752,
   TAG_CR2_META2 = 50885,
 
+  TAG_EXPOSURE_TIME = 0x829a, // rational64u
+  TAG_F_NUMBER = 0x829d, // rational64u
+  TAG_EXPOSURE_PROGRAM = 0x8822, // int16u
+  TAG_GPS_INFO = 0x8825,
+  TAG_ISO = 0x8827, // int16u[n]
+
+  TAG_SHUTTER_SPEED_VALUE = 0x9201, // rational64s
+  TAG_APERTURE_VALUE = 0x9202, // rational64u
+  TAG_BRIGHTNESS_VALUE = 0x9203, // rational64s
+  TAG_EXPOSURE_COMPENSATION = 0x9204, // rational64s
+  TAG_MAX_APERTURE_VALUE = 0x9205, // rational64u
+  TAG_SUBJECT_DISTANCE = 0x9206, // rational64u
+  TAG_METERING_MODE = 0x9207, // int16u
+  TAG_LIGHT_SOURCE = 0x9208, // int16u
+  TAG_FLASH = 0x9209, // int16u
+  TAG_FOCAL_LENGTH = 0x920a, // rational64u
+  
+  TAG_LENS_INFO = 0xa432, // rational64u[4]
+  TAG_LENS_MAKE = 0xa433, // string
+  TAG_LENS_MODEL = 0xa434, // string
+  TAG_LENS_SERIAL_NUMBER = 0xa435, // string
+
   //
   // OpCodeList
   //
@@ -1986,10 +2019,11 @@ typedef enum {
   TAG_OPCODE_LIST2 = 0xc741,
   TAG_OPCODE_LIST3 = 0xc742,
 
-  TAG_NOISE_PROFILE = 51041,
+
+  TAG_NOISE_PROFILE = 0xc761,
 
   // DNG 1.6(Apple ProRAW)
-  // ahttps://helpx.adobe.com/photoshop/kb/dng-specification-tags.html
+  // https://helpx.adobe.com/photoshop/kb/dng-specification-tags.html
   TAG_SEMANTIC_NAME = 52526,  // Type: ASCII, Count: String length including
                               // null, Value: null-terminated string
 
@@ -2445,6 +2479,56 @@ class StreamReader {
       return false;
     }
     // never come here.
+  }
+
+  bool read_rational(int type, uint32_t* ret0, uint32_t *ret1) const {
+    // @todo { Support more types. }
+    
+    if (!ret0 || !ret1) {
+      return false;
+    }
+
+    if (type == TYPE_RATIONAL) {
+      unsigned int num;
+      if (!read4(&num)) {
+        return false;
+      }
+      unsigned int denom;
+      if (!read4(&denom)) {
+        return false;
+      }
+
+      (*ret0) = num;
+      (*ret1) = denom;
+      return true;
+    }
+
+    return false;
+  }
+
+  bool read_srational(int type, int32_t* ret0, int32_t *ret1) const {
+    // @todo { Support more types. }
+    
+    if (!ret0 || !ret1) {
+      return false;
+    }
+
+    if (type == TYPE_SRATIONAL) {
+      int num;
+      if (!read4(&num)) {
+        return false;
+      }
+      int denom;
+      if (!read4(&denom)) {
+        return false;
+      }
+
+      (*ret0) = num;
+      (*ret1) = denom;
+      return true;
+    }
+
+    return false;
   }
 
   //
@@ -4039,7 +4123,7 @@ static bool ParseTIFFIFD(const StreamReader& sr,
 
           return false;
         }
-        size_t readLen = len * sizeof(float);
+        //size_t readLen = len * sizeof(float);
 
         const size_t kMaxSamples = 1024 * 1024;
 
@@ -4112,7 +4196,7 @@ static bool ParseTIFFIFD(const StreamReader& sr,
             }
           }
 
-          if (len != (image.samples_per_pixel * 2)) {
+          if (size_t(len) != (size_t(image.samples_per_pixel) * 2)) {
             if (err) {
               (*err) += "Counts in NoisProfile must be 2 * SamplesPerPixel.\n";
             }
@@ -4501,7 +4585,7 @@ static bool ParseTIFFIFD(const StreamReader& sr,
         unsigned int strip_offset;
         if (!sr.read4(&strip_offset)) {
           if (err) {
-            (*err) += "Failed to read StripOffset value.";
+            (*err) += "Failed to read StripOffset value.\n";
           }
           return false;
         }
@@ -5847,7 +5931,7 @@ bool LoadDNGFromMemory(const char* mem, unsigned int size,
           }
           return false;
         }
-        TINY_DNG_DPRINTF("image.data.size = %lld\n", len);
+        TINY_DNG_DPRINTF("image.data.size = %u\n", uint32_t(len));
 
         image->data.resize(len);
         TINY_DNG_DPRINTF("image.data.size = %d\n", int(len));
