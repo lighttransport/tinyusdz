@@ -893,10 +893,32 @@ struct AssetInfo {
 struct APISchemas {
   // TinyUSDZ does not allow user-supplied API schema for now
   enum class APIName {
+    // usdShade
     MaterialBindingAPI,  // "MaterialBindingAPI"
-    SkelBindingAPI,      // "SkelBindingAPI"
-    ShapingAPI,         // "ShapingAPI"(usdLux)
+    ConnectableAPI, // "ConnectableAPI"
+    CoordSysAPI, // "CoordSysAPI"
+    NodeDefAPI, // "NodeDefAPI"
+
     CollectionAPI,      // "CollectionAPI"
+    // usdGeom
+    GeomModelAPI, // "GeomModelAPI"
+    MotionAPI, // "MotionAPI"
+    PrimvarsAPI, // "PrimvarsAPI"
+    VisibilityAPI, // "VisibilityAPI"
+    XformCommonAPI, // "XformCommonAPI"
+
+    // usdLux
+    LightAPI, // "LightAPI"
+    LightListAPI, // "LightListAPI"
+    ListAPI, // "ListAPI"
+    MeshLightAPI, // "MeshLightAPI"
+    ShapingAPI, // "ShapingAPI"
+    ShadowAPI,  // "ShadowAPI"
+    VolumeLightAPI,  // "VolumeLightAPI"
+
+    // usdSkel
+    SkelBindingAPI,      // "SkelBindingAPI"
+    
     // USDZ AR extensions
     Preliminary_AnchoringAPI,
     Preliminary_PhysicsColliderAPI,
