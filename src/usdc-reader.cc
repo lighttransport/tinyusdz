@@ -582,8 +582,42 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
       [](const value::token &tok) -> nonstd::optional<APISchemas::APIName> {
     if (tok.str() == "MaterialBindingAPI") {
       return APISchemas::APIName::MaterialBindingAPI;
+    } else if (tok.str() == "NodeDefAPI") {
+      return APISchemas::APIName::NodeDefAPI;
+    } else if (tok.str() == "CoordSysAPI") {
+      return APISchemas::APIName::CoordSysAPI;
+    } else if (tok.str() == "ConnectableAPI") {
+      return APISchemas::APIName::ConnectableAPI;
+    } else if (tok.str() == "CollectionAPI") {
+      return APISchemas::APIName::CollectionAPI;
     } else if (tok.str() == "SkelBindingAPI") {
       return APISchemas::APIName::SkelBindingAPI;
+    } else if (tok.str() == "VisibilityAPI") {
+      return APISchemas::APIName::VisibilityAPI;
+    } else if (tok.str() == "GeomModelAPI") {
+      return APISchemas::APIName::GeomModelAPI;
+    } else if (tok.str() == "MotionAPI") {
+      return APISchemas::APIName::MotionAPI;
+    } else if (tok.str() == "PrimvarsAPI") {
+      return APISchemas::APIName::PrimvarsAPI;
+    } else if (tok.str() == "XformCommonAPI") {
+      return APISchemas::APIName::XformCommonAPI;
+    } else if (tok.str() == "ListAPI") {
+      return APISchemas::APIName::ListAPI;
+    } else if (tok.str() == "LightListAPI") {
+      return APISchemas::APIName::LightListAPI;
+    } else if (tok.str() == "LightAPI") {
+      return APISchemas::APIName::LightAPI;
+    } else if (tok.str() == "MeshLightAPI") {
+      return APISchemas::APIName::MeshLightAPI;
+    } else if (tok.str() == "VolumeLightAPI") {
+      return APISchemas::APIName::VolumeLightAPI;
+    } else if (tok.str() == "ConnectableAPI") {
+      return APISchemas::APIName::ConnectableAPI;
+    } else if (tok.str() == "ShadowAPI") {
+      return APISchemas::APIName::ShadowAPI;
+    } else if (tok.str() == "ShapingAPI") {
+      return APISchemas::APIName::ShapingAPI;
     } else if (tok.str() == "Preliminary_AnchoringAPI") {
       return APISchemas::APIName::Preliminary_AnchoringAPI;
     } else if (tok.str() == "Preliminary_PhysicsColliderAPI") {
