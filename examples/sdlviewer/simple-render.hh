@@ -4,7 +4,9 @@
 
 #include "nanort.h"
 #include "nanosg.h"
+//
 #include "tinyusdz.hh"
+#include "tydra/render-data.hh"
 
 namespace example {
 
@@ -201,7 +203,7 @@ struct Image {
   int32_t channels{-1};  // e.g. 3 for RGB.
 };
 
-class RenderScene {
+class RTRenderScene {
  public:
   std::vector<DrawGeomMesh> draw_meshes;
   std::vector<Material> materials;
@@ -211,15 +213,14 @@ class RenderScene {
   std::vector<nanosg::Node<float, DrawGeomMesh>> nodes;
   nanosg::Scene<float, DrawGeomMesh> scene;
 
-  // Convert meshes and build BVH
-  bool Setup();
+  bool SetupFromUSDFile(const std::string &usd_filename);
 };
 
-bool Render(const RenderScene &scene, const Camera &cam, AOV *output);
+bool Render(const RTRenderScene &scene, const Camera &cam, AOV *output);
 
 // Render images for lines [start_y, end_y]
 // single-threaded. for webassembly.
-bool RenderLines(int start_y, int end_y, const RenderScene &scene,
+bool RenderLines(int start_y, int end_y, const RTRenderScene &scene,
                  const Camera &cam, AOV *output);
 
 }  // namespace example

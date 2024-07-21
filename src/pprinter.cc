@@ -2074,12 +2074,40 @@ std::string to_string(const APISchemas::APIName &name) {
   std::string s;
 
   switch (name) {
+    case APISchemas::APIName::VisibilityAPI: {
+      s = "VisibilityAPI";
+      break;
+    }
+    case APISchemas::APIName::XformCommonAPI: {
+      s = "XformCommonAPI";
+      break;
+    }
     case APISchemas::APIName::SkelBindingAPI: {
       s = "SkelBindingAPI";
       break;
     }
+    case APISchemas::APIName::MotionAPI: {
+      s = "MotionAPI";
+      break;
+    }
+    case APISchemas::APIName::PrimvarsAPI: {
+      s = "PrimvarsAPI";
+      break;
+    }
     case APISchemas::APIName::CollectionAPI: {
       s = "CollectionAPI";
+      break;
+    }
+    case APISchemas::APIName::ConnectableAPI: {
+      s = "ConnectableAPI";
+      break;
+    }
+    case APISchemas::APIName::CoordSysAPI: {
+      s = "CoordSysAPI";
+      break;
+    }
+    case APISchemas::APIName::NodeDefAPI: {
+      s = "NodeDefAPI";
       break;
     }
     case APISchemas::APIName::MaterialBindingAPI: {
@@ -2088,6 +2116,34 @@ std::string to_string(const APISchemas::APIName &name) {
     }
     case APISchemas::APIName::ShapingAPI: {
       s = "ShapingAPI";
+      break;
+    }
+    case APISchemas::APIName::ShadowAPI: {
+      s = "ShadowAPI";
+      break;
+    }
+    case APISchemas::APIName::GeomModelAPI: {
+      s = "GeomModelAPI";
+      break;
+    }
+    case APISchemas::APIName::ListAPI: {
+      s = "ListAPI";
+      break;
+    }
+    case APISchemas::APIName::LightAPI: {
+      s = "LightAPI";
+      break;
+    }
+    case APISchemas::APIName::LightListAPI: {
+      s = "LightListAPI";
+      break;
+    }
+    case APISchemas::APIName::VolumeLightAPI: {
+      s = "VolumeLightAPI";
+      break;
+    }
+    case APISchemas::APIName::MeshLightAPI: {
+      s = "MeshLightAPI";
       break;
     }
     case APISchemas::APIName::Preliminary_AnchoringAPI: {

@@ -74,6 +74,10 @@ option(TINYUSDZ_BUILD_EXAMPLES
 option(TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER
        "Build with built-in image loader(stb_image and fpng). When disabled, app need to provide image loader callback to load images."
        ${TINYUSDZ_DEFAULT_WITH_BUILTIN_IMAGE_LOADER})
+option(TINYUSDZ_WITH_TYDRA
+       "Build with Tydra module(Handly USD scene converter for the renderer, DCC, etc)."
+       ON)
+
 
 if(MSVC)
   # it looks it is hard to disable C++ exception for MSVC, so enable exception by default
@@ -128,7 +132,8 @@ option(TINYUSDZ_WITH_ALAC_AUDIO "Build with ALAC(as M4A) Audio support" OFF)
 option(TINYUSDZ_WITH_PYTHON "Build with Python binding through pybind11" OFF)
 
 if (TINYUSDZ_WITH_PYTHON)
-  # force enable C API + DLL build
+  # force enable Tydra C API + DLL build
+  set(TINYUSDZ_WITH_TYDRA ON CACHE INTERNAL "" FORCE)
   set(TINYUSDZ_WITH_C_API ON CACHE INTERNAL "" FORCE)
   set(TINYUSDZ_BUILD_SHARED_LIBS ON CACHE INTERNAL "" FORCE)
 endif()
@@ -140,6 +145,12 @@ option(
   OFF)
 
 option(TINYUSDZ_WITH_PXR_COMPAT_API "Build with pxr compatible API" ${TINYUSDZ_DEFAULT_WITH_PXR_COMPAT_API})
+
+# C API requires Tydra
+if (NOT TINYUSDZ_WITH_TYDRA AND TINYUSDZ_WITH_C_API)
+  message(WARNING "C API requires Tydra enabled, so disable C API build. Please do not set TINYUSDZ_WITH_TYDRA Off if you need C API library")
+  set(TINYUSDZ_WITH_C_API Off CACHE INTERNAL "" FORCE)
+endif ()
 
 # deprecated. to be removed
 #option(
@@ -393,25 +404,30 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/pprinter.cc
     ${PROJECT_SOURCE_DIR}/src/stage.cc
     ${PROJECT_SOURCE_DIR}/src/stage.hh
-    ${PROJECT_SOURCE_DIR}/src/tydra/facial.cc
-    ${PROJECT_SOURCE_DIR}/src/tydra/facial.hh
-    ${PROJECT_SOURCE_DIR}/src/tydra/prim-apply.cc
-    ${PROJECT_SOURCE_DIR}/src/tydra/prim-apply.hh
-    ${PROJECT_SOURCE_DIR}/src/tydra/scene-access.cc
-    ${PROJECT_SOURCE_DIR}/src/tydra/scene-access.hh
-    ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval.hh
-    ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval.cc
-    ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed.cc
-    ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-animatable.cc
-    ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-fallback.cc
-    ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-animatable-fallback.cc
-    ${PROJECT_SOURCE_DIR}/src/tydra/obj-export.cc
-    ${PROJECT_SOURCE_DIR}/src/tydra/usd-export.cc
-    ${PROJECT_SOURCE_DIR}/src/tydra/shader-network.cc
-    ${PROJECT_SOURCE_DIR}/src/tydra/shader-network.hh
-    ${PROJECT_SOURCE_DIR}/src/tydra/render-data.cc
-    ${PROJECT_SOURCE_DIR}/src/tydra/render-data.hh
     )
+
+if (TINYUSDZ_WITH_TYDRA)
+    list(APPEND TINYUSDZ_SOURCES
+        ${PROJECT_SOURCE_DIR}/src/tydra/facial.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/facial.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/prim-apply.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/prim-apply.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/scene-access.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/scene-access.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-animatable.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-fallback.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-animatable-fallback.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/obj-export.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/usd-export.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/shader-network.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/shader-network.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/render-data.hh
+        )
+endif (TINYUSDZ_WITH_TYDRA)
 
 if(TINYUSDZ_WITH_PXR_COMPAT_API)
   list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/pxr-compat.cc)
@@ -689,6 +705,25 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
                                 PROPERTIES COMPILE_FLAGS ${TUSDZ_COMPILE_FLAGS})
   endif()
 
+# Increase warning level for gcc.
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+
+  set(TUSDZ_COMPILE_FLAGS
+      "-Wall "
+  )
+
+  option(TINYUSDZ_NO_WERROR "Don't set -Werror when building the tinyusdz library" ${TINYUSDZ_DEFAULT_NO_WERROR})
+  if (NOT TINYUSDZ_NO_WERROR)
+    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Werror")
+  endif()
+
+  set_source_files_properties(${TINYUSDZ_SOURCES}
+                              PROPERTIES COMPILE_FLAGS ${TUSDZ_COMPILE_FLAGS})
+
+  if (TINYUSDZ_WITH_C_API)
+    set_source_files_properties(${TINYUSDZ_C_API_SOURCES}
+                                PROPERTIES COMPILE_FLAGS ${TUSDZ_COMPILE_FLAGS})
+  endif()
 endif()
 
 if(TINYUSDZ_CUSTOM_COMPILE_FLAGS)
@@ -1047,6 +1082,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
                                PRIVATE "TINYUSDZ_WITH_OPENSUBDIV")
   endif(TINYUSDZ_WITH_OPENSUBDIV)
 
+  if(TINYUSDZ_WITH_TYDRA)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_TYDRA")
+  endif(TINYUSDZ_WITH_TYDRA)
+
   if(NOT TINYUSDZ_CXX_EXCEPTIONS)
     if(MSVC)
       target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE /EHs-c-)
@@ -1177,8 +1217,11 @@ endif()
 
 if(TINYUSDZ_BUILD_EXAMPLES)
   add_subdirectory(examples/tusdcat)
-  add_subdirectory(examples/tydra_api)
-  add_subdirectory(examples/tydra_to_renderscene)
+  if (TINYUSDZ_WITH_TYDRA)
+    add_subdirectory(examples/tydra_api)
+    add_subdirectory(examples/tydra_to_renderscene)
+  endif ()
+
   add_subdirectory(examples/api_tutorial)
   add_subdirectory(examples/file_format)
   add_subdirectory(examples/asset_resolution)
