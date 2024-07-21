@@ -2531,12 +2531,12 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
                                   "(Internal errror) Element path not found.");
       }
 
-      // Assume parent(Prim) already exists(parsed)
+      // Assume parent(Prim or Variant(when nested)) already exists(parsed)
       // TODO: Confirm Crate format allow defining Prim after VariantSet
       // serialization.
-      if (!_prim_table.count(parent)) {
+      if (!_prim_table.count(parent) && !_variantPrims.count(parent) ) {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                  fmt::format("Parent Prim for the VariantSet not found. parent Prim = {}, VariantSet = {}", parent, elemPath.full_path_name()));
+                                  fmt::format("Parent Prim or Variant for the VariantSet not found. parent Prim/Variant = {}, isParentVariant = {}, VariantSet = {}", parent, _variantPrims.count(parent), elemPath.full_path_name()));
       }
 
 
@@ -3000,8 +3000,13 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
       break;
     }
     case SpecType::VariantSet: {
+
+      // VariantSet spec contains the info of variantChildren,
+      // and added to parent Prim or Variant(when Variant is nested)
+      // No child node would exist for VariantSet spec.
+      //
       // Assume parent(Prim) already exists(parsed)
-      // TODO: Confirm Crate format allow defining Prim after VariantSet
+      // TODO: Confirm Crate format whether it allows defining Prim spec after VariantSet spec
       // serialization.
       if (!_prim_table.count(parent)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
@@ -3054,8 +3059,12 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
       break;
     }
     case SpecType::Variant: {
-      // Since the Prim this Variant node belongs to is not yet reconstructed
+      // Since the (parent) Prim this Variant node belongs to is not yet reconstructed
       // during the Prim tree traversal, We manage variant node separately
+      
+
+      // TODO: Check if corresponding VariantSet Spec(which contains the list of VariantSetNames)
+      // is defined a priori.
 
       DCOUT(fmt::format("[{}] is a Variant node(parent = {}). prim_idx? = {}",
                         current, parent, _prim_table.count(current)));
