@@ -1060,10 +1060,18 @@ struct UDIMTexture {
   std::unordered_map<uint32_t, int32_t> imageTileIds;
 };
 
+// workaround for GCC
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+#endif
+
 // T or TextureId
 template <typename T>
-struct ShaderParam {
-  ShaderParam(const T &t) { value = t; }
+class ShaderParam {
+ public:
+  ShaderParam() = default;
+  ShaderParam(const T &t) : value(t) { }
 
   bool is_texture() const { return texture_id >= 0; }
 
@@ -1078,12 +1086,14 @@ struct ShaderParam {
     memcpy(&value, &val, sizeof(T));
   }
 
-  T value;
+ //private:
+  T value{};
   int32_t texture_id{-1};  // negative = invalid
 };
 
 // UsdPreviewSurface
-struct PreviewSurfaceShader {
+class PreviewSurfaceShader {
+ public:
   bool useSpecularWorkflow{false};
 
   ShaderParam<vec3> diffuseColor{{0.18f, 0.18f, 0.18f}};
@@ -1102,6 +1112,10 @@ struct PreviewSurfaceShader {
 
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
 };
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 // Material + Shader
 struct RenderMaterial {

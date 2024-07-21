@@ -801,6 +801,10 @@ class USDAReader::Impl {
                          "MaterialBindingAPI"),
           std::make_pair(APISchemas::APIName::ShapingAPI,
                          "ShapingAPI"),
+          std::make_pair(APISchemas::APIName::ShadowAPI,
+                         "ShadowAPI"),
+          std::make_pair(APISchemas::APIName::VolumeLightAPI,
+                         "VolumeLightAPI"),
           std::make_pair(APISchemas::APIName::Preliminary_PhysicsMaterialAPI,
                          "Preliminary_PhysicsMaterialAPI"),
           std::make_pair(APISchemas::APIName::Preliminary_PhysicsRigidBodyAPI,
@@ -808,7 +812,31 @@ class USDAReader::Impl {
           std::make_pair(APISchemas::APIName::Preliminary_PhysicsColliderAPI,
                          "Preliminary_PhysicsColliderAPI"),
           std::make_pair(APISchemas::APIName::Preliminary_AnchoringAPI,
-                         "Preliminary_AnchoringAPI")
+                         "Preliminary_AnchoringAPI"),
+          std::make_pair(APISchemas::APIName::LightAPI,
+                         "LightAPI"),
+          std::make_pair(APISchemas::APIName::MeshLightAPI,
+                         "MeshLightAPI"),
+          std::make_pair(APISchemas::APIName::LightListAPI,
+                         "LightListAPI"),
+          std::make_pair(APISchemas::APIName::ListAPI,
+                         "ListAPI"),
+          std::make_pair(APISchemas::APIName::MotionAPI,
+                         "MotionAPI"),
+          std::make_pair(APISchemas::APIName::PrimvarsAPI,
+                         "PrimvarsAPI"),
+          std::make_pair(APISchemas::APIName::GeomModelAPI,
+                         "GeomModelAPI"),
+          std::make_pair(APISchemas::APIName::VisibilityAPI,
+                         "VisibilityAPI"),
+          std::make_pair(APISchemas::APIName::XformCommonAPI,
+                         "XformCommonAPI"),
+          std::make_pair(APISchemas::APIName::NodeDefAPI,
+                         "NodeDefAPI"),
+          std::make_pair(APISchemas::APIName::CoordSysAPI,
+                         "CoordSysAPI"),
+          std::make_pair(APISchemas::APIName::ConnectableAPI,
+                         "ConnectableAPI")
       };
       return EnumHandler<APISchemas::APIName>("apiSchemas", tok, enums);
     };
@@ -1114,8 +1142,10 @@ class USDAReader::Impl {
               auto ret = ApiSchemaHandler(item.str());
               if (ret) {
                 apiSchemas.names.push_back({ret.value(), /* instanceName */""});
-              } else {
+              } else if (_config.allow_unknown_apiSchema) {
                 PUSH_WARN("(PrimMeta) " << ret.error());
+              } else {
+                PUSH_ERROR_AND_RETURN("Unknown or invalid apiSchema: " + ret.error());
               }
             }
           } else {

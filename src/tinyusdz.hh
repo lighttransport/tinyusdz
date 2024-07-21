@@ -71,13 +71,14 @@ struct USDLoadOptions {
   bool load_assets{true};
 
   ///
-  /// (experimental)
+  /// (Deprecated. to be removed in the future release)
   /// Do composition on load(Load sublayers, references, etc)
   /// For USDZ model, this should be false.
   ///
   bool do_composition{false};
 
   ///
+  /// (Deprecated. to be removed in the future release)
   /// Following load flags are valid when `do_composition` is set `true`.
   ///
   bool load_sublayers{false}; // true: Load `subLayers`
@@ -105,6 +106,11 @@ struct USDLoadOptions {
   /// allowedToken
   ///
   bool strict_allowedToken_check{false}; // Make parse error when token value is not in allowedToken list(when the schema defines allowedToken list)
+
+  ///
+  /// apiSchema
+  ///
+  bool strict_apiSchema_check{false}; // Make parse error when unknown apiSchema
   
   ///
   /// User-defined fileformat hander.
