@@ -1069,8 +1069,10 @@ class USDAReader::Impl {
               auto ret = ApiSchemaHandler(item.str());
               if (ret) {
                 apiSchemas.names.push_back({ret.value(), /* instanceName */""});
-              } else {
+              } else if (_config.allow_unknown_apiSchema) {
                 PUSH_WARN("(PrimMeta) " << ret.error());
+              } else {
+                PUSH_ERROR_AND_RETURN("Unknown or invalid apiSchema: " + ret.error());
               }
             }
           } else {
