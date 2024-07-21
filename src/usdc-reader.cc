@@ -355,7 +355,7 @@ class USDCReader::Impl {
 
  private:
   nonstd::expected<APISchemas, std::string> ToAPISchemas(
-      const ListOp<value::token> &);
+      const ListOp<value::token> &, bool ignore_unknown, std::string &warn);
 
   // ListOp<T> -> (ListEditOp, [T])
   template <typename T>
@@ -575,7 +575,7 @@ bool USDCReader::Impl::ReconstructGeomSubset(
 namespace {}
 
 nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
-    const ListOp<value::token> &arg) {
+    const ListOp<value::token> &arg, bool ignore_unknown, std::string &warn) {
   APISchemas schemas;
 
   auto SchemaHandler =
@@ -636,6 +636,9 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
       if (auto pv = SchemaHandler(item)) {
         std::string instanceName = "";  // TODO
         schemas.names.push_back({pv.value(), instanceName});
+      } else if (ignore_unknown) {
+        warn += "Ignored unknown or unsupported API schema: " +
+                                       item.str() + "\n";
       } else {
         return nonstd::make_unexpected("Invalid or Unsupported API schema: " +
                                        item.str());
@@ -657,6 +660,9 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
         if (auto pv = SchemaHandler(item)) {
           std::string instanceName = "";  // TODO
           schemas.names.push_back({pv.value(), instanceName});
+        } else if (ignore_unknown) {
+          warn += "Ignored unknown or unsupported API schema: " +
+                                         item.str() + "\n";
         } else {
           return nonstd::make_unexpected("Invalid or Unsupported API schema: " +
                                          item.str());
@@ -676,6 +682,9 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
         if (auto pv = SchemaHandler(item)) {
           std::string instanceName = "";  // TODO
           schemas.names.push_back({pv.value(), instanceName});
+        } else if (ignore_unknown) {
+          warn += "Ignored unknown or unsupported API schema: " +
+                                         item.str() + "\n";
         } else {
           return nonstd::make_unexpected("Invalid or Unsupported API schema: " +
                                          item.str());
@@ -694,6 +703,9 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
         if (auto pv = SchemaHandler(item)) {
           std::string instanceName = "";  // TODO
           schemas.names.push_back({pv.value(), instanceName});
+        } else if (ignore_unknown) {
+          warn += "Ignored unknown or unsupported API schema: " +
+                                         item.str() + "\n";
         } else {
           return nonstd::make_unexpected("Invalid or Unsupported API schema: " +
                                          item.str());
@@ -712,6 +724,9 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
         if (auto pv = SchemaHandler(item)) {
           std::string instanceName = "";  // TODO
           schemas.names.push_back({pv.value(), instanceName});
+        } else if (ignore_unknown) {
+          warn += "Ignored unknown or unsupported API schema: " +
+                                         item.str() + "\n";
         } else {
           return nonstd::make_unexpected("Invalid or Unsupported API schema: " +
                                          item.str());
@@ -730,6 +745,9 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
         if (auto pv = SchemaHandler(item)) {
           std::string instanceName = "";  // TODO
           schemas.names.push_back({pv.value(), instanceName});
+        } else if (ignore_unknown) {
+          warn += "Ignored unknown or unsupported API schema: " +
+                                         item.str() + "\n";
         } else {
           return nonstd::make_unexpected("Invalid or Unsupported API schema: " +
                                          item.str());
@@ -1115,9 +1133,8 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         DCOUT("elementSize = " << to_string(p));
 
         if ((p < 1) || (uint32_t(p) > _config.kMaxElementSize)) {
-          PUSH_ERROR_AND_RETURN_TAG(
-              kTag,
-              fmt::format("`elementSize` must be within [{}, {}), but got {}",
+          PUSH_WARN(
+              fmt::format("`elementSize` too large. Must be within [{}, {}), but got {}",
                           1, _config.kMaxElementSize, p));
         }
 
@@ -1947,11 +1964,15 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
       if (auto pv = fv.second.as<ListOp<value::token>>()) {
         auto listop = (*pv);
 
-        auto ret = ToAPISchemas(listop);
+        std::string warn;
+        auto ret = ToAPISchemas(listop, _config.allow_unknown_apiSchemas, warn);
         if (!ret) {
           PUSH_ERROR_AND_RETURN_TAG(
               kTag, "Failed to validate `apiSchemas`: " + ret.error());
         } else {
+          if (warn.size()) {
+            PUSH_WARN(warn);
+          }
           primMeta.apiSchemas = (*ret);
         }
         // DCOUT("apiSchemas = " << to_string(listop));
