@@ -24,3 +24,4 @@ Why built-in?
 * [ ] per-face material
   * Decode to GeomSubset?
 * [ ] Loading Skin weight(tinyobjloader's extension)
+* [ ] Optional: Do triangulation on .obj load. 
