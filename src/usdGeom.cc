@@ -574,7 +574,7 @@ bool GeomPrimvar::get_value(double timecode, T *dest, value::TimeSampleInterpola
 
   return false;
 #else
-  T value;
+  T value{};
 
   if (!_attr.get_value(timecode, &value, interp)) {
     if (err) {
