@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright 2024-Present Light Transport Entertainment Inc.
 #include "tiny-string.hh"
 
 #if defined(TINYUSDZ_USE_THREAD)
@@ -10,6 +12,8 @@
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
 #endif
+
+#include "external/fast_float/include/fast_float/fast_float.h"
 
 #define nssv_CONFIG_USR_SV_OPERATOR  0
 
