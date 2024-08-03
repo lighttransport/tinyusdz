@@ -848,7 +848,10 @@ int main(int argc, char** argv) {
     float ddpi, hdpi, vdpi;
     if (SDL_GetDisplayDPI(0, &ddpi, &hdpi, &vdpi) != 0) {
         fprintf(stderr, "Failed to obtain DPI information for display 0: %s\n", SDL_GetError());
-        exit(1);
+        // use default.
+        ddpi = 72.0f;
+        hdpi = 72.0f;
+        vdpi = 72.0f;
     }
     std::cout << "ddpi " << ddpi << ", hdpi " << hdpi << ", vdpi " << vdpi << "\n";
 
