@@ -693,6 +693,11 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-unsafe-buffer-usage")
   endif()
 
+  # this is actually a work around of false-positive behavior of clang in Androind NDK 27.
+  if (${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 17)
+    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-switch-default")
+  endif()
+
   if(TINYUSDZ_COMPILE_TIME_TRACE)
     set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -ftime-trace ")
   endif()
