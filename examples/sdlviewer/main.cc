@@ -394,7 +394,7 @@ std::string OpenFileDialog() {
   std::string path;
 
   nfdchar_t* outPath;
-  nfdfilteritem_t filterItem[1] = {{"USD file", "usda,usdc,usdz"}};
+  nfdfilteritem_t filterItem[1] = {{"USD file", "usd,usda,usdc,usdz"}};
 
   nfdresult_t result = NFD_OpenDialog(&outPath, filterItem, 1, NULL);
   if (result == NFD_OKAY) {
@@ -1041,15 +1041,18 @@ int main(int argc, char** argv) {
       update_display = true;
     }
 
-    // update |= ImGui::InputFloat3("eye", gui_ctx.camera.eye);
-    // update |= ImGui::InputFloat3("look_at", gui_ctx.camera.look_at);
-    // update |= ImGui::InputFloat3("up", gui_ctx.camera.up);
+    update |= ImGui::InputFloat3("eye", gui_ctx.camera.eye);
+    update |= ImGui::InputFloat3("look_at", gui_ctx.camera.look_at);
+    update |= ImGui::InputFloat3("up", gui_ctx.camera.up);
+
+#if 0
     update |=
         ImGui::SliderFloat("eye.z", &gui_ctx.camera.eye[2], -1000.0, 1000.0f);
+#endif
     update |= ImGui::SliderFloat("fov", &gui_ctx.camera.fov, 0.01f, 140.0f);
 
     // TODO: Validate coordinate definition.
-    if (ImGui::SliderFloat("yaw", &gui_ctx.yaw, -360.0f, 360.0f)) {
+    if (ImGui::SliderFloat("yaw", &gui_ctx.yaw, -180.0f, 180.0f)) {
       auto q = ToQuaternion(radians(gui_ctx.yaw), radians(gui_ctx.pitch),
                             radians(gui_ctx.roll));
       gui_ctx.camera.quat[0] = q[0];
@@ -1058,7 +1061,7 @@ int main(int argc, char** argv) {
       gui_ctx.camera.quat[3] = q[3];
       update = true;
     }
-    if (ImGui::SliderFloat("pitch", &gui_ctx.pitch, -360.0f, 360.0f)) {
+    if (ImGui::SliderFloat("pitch", &gui_ctx.pitch, -89.9f, 89.9f)) {
       auto q = ToQuaternion(radians(gui_ctx.yaw), radians(gui_ctx.pitch),
                             radians(gui_ctx.roll));
       gui_ctx.camera.quat[0] = q[0];
@@ -1067,6 +1070,7 @@ int main(int argc, char** argv) {
       gui_ctx.camera.quat[3] = q[3];
       update = true;
     }
+#if 0
     if (ImGui::SliderFloat("roll", &gui_ctx.roll, -360.0f, 360.0f)) {
       auto q = ToQuaternion(radians(gui_ctx.yaw), radians(gui_ctx.pitch),
                             radians(gui_ctx.roll));
@@ -1076,6 +1080,7 @@ int main(int argc, char** argv) {
       gui_ctx.camera.quat[3] = q[3];
       update = true;
     }
+#endif
     ImGui::End();
 
     ImGui::Begin("Image");
