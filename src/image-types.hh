@@ -36,11 +36,11 @@ struct Image {
 
 inline std::string to_string(Image::PixelFormat fmt) {
   std::string s{"[[InvalidPixelFormat]]"};
-  switch (fmt) {
-    case Image::PixelFormat::UInt: { s =  "uint"; break; }
-    case Image::PixelFormat::Int: { s =  "int"; break; }
-    case Image::PixelFormat::Float: { s =  "float"; break; }
-  }
+  // work around for false-positive behavior of `error: 'switch' missing 'default' label [-Werror,-Wswitch-default]`
+  // happens in NDK 27 clang
+  if (Image::PixelFormat::UInt == fmt) { s =  "uint"; }
+  else if (Image::PixelFormat::Int == fmt) { s =  "int"; }
+  else if (Image::PixelFormat::Float == fmt) { s =  "float"; }
 
   return s;
 }
