@@ -213,7 +213,7 @@ class RTRenderScene {
   std::vector<nanosg::Node<float, DrawGeomMesh>> nodes;
   nanosg::Scene<float, DrawGeomMesh> scene;
 
-  bool SetupFromUSDFile(const std::string &usd_filename);
+  bool SetupFromUSDFile(const std::string &usd_filename, std::string &warn, std::string &err);
 };
 
 bool Render(const RTRenderScene &scene, const Camera &cam, AOV *output);

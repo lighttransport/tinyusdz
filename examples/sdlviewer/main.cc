@@ -825,14 +825,17 @@ int main(int argc, char** argv) {
   gui_ctx.renderer = renderer;
 
   if (gui_ctx.usd_filename.size()) {
-    //for (size_t i = 0; i < g_gui_ctx.scene.geom_meshes.size(); i++) {
-    //  example::DrawGeomMesh draw_mesh(&g_gui_ctx.scene.geom_meshes[i]);
-    //  gui_ctx.render_scene.draw_meshes.push_back(draw_mesh);
-    //}
+    std::string warn, err;
 
     // Setup render mesh
-    if (!gui_ctx.rt_render_scene.SetupFromUSDFile(gui_ctx.usd_filename)) {
-      std::cerr << "Failed to setup render mesh.\n";
+    bool ret = gui_ctx.rt_render_scene.SetupFromUSDFile(gui_ctx.usd_filename, warn, err);
+    if (warn.size()) {
+      std::cout << "WARN: " << warn << "\n";
+    }
+
+    if (!ret) {
+      std::cerr << "Failed to load USD or setup render mesh.\n";
+      std::cerr << err << "\n";
       exit(-1);
     }
     std::cout << "Setup render mesh\n";
