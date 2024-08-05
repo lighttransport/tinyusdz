@@ -24,7 +24,8 @@
 * MaterialX https://github.com/syoyo/tinyusdz/issues/86
   * Write our own MaterialX parser
   * OpenPBR shading model support https://github.com/lighttransport/tinyusdz/issues/172
-  * USD + MateriralX + OpenPBR rendering verification using pbrlab? https://github.com/lighttransport/pbrlab 
+  * USD + MateriralX + OpenPBR rendering verification using pbrlab? https://github.com/lighttransport/pbrlab
+* Nested variantSet https://github.com/lighttransport/tinyusdz/issues/94 
 * Enhancement for wasm(e.g. write USDZ loader for three.js), webgpu https://github.com/syoyo/tinyusdz/issues/118 
 * better colorspace + wide-gamut support https://github.com/syoyo/tinyusdz/issues/142
 * Better skinning + blendshapes support
