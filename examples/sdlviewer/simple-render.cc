@@ -164,6 +164,28 @@ bool ConvertToRenderMesh(const tinyusdz::GeomSphere& sphere,
 }
 #endif
 
+namespace detail {
+
+// Build flattened mesh list.
+void MeshRec(const tinyusdz::tydra::Node &node,
+  std::vector<DrawGeomMesh<float>> &meshes) {
+
+  if (node.nodeType == tinyusdz::tydra::NodeType::Mesh) {
+    
+    DrawGeomMesh<float> mesh;
+    for (size_t i = 0; i < 4; i++) {
+      for (size_t j = 0; j < 4; j++) {
+        mesh.world_matrix[i][j] = node.global_matrix.m[i][j]; 
+      }
+    }
+
+    meshes.push_back(mesh);
+
+  }
+}
+
+} // namespace detail
+
 bool RTRenderScene::SetupFromUSDFile(const std::string &usd_filename,
   std::string &warn, std::string &err) {
 
@@ -251,6 +273,7 @@ bool RTRenderScene::SetupFromUSDFile(const std::string &usd_filename,
   }
 
   // TODO: Setup RTMesh
+
 
   return false;
 
