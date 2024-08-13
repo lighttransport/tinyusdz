@@ -1,0 +1,16 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+    defaultPrim = "hello"
+)
+
+def Cone "hello"
+(
+  # would report warning for HoudiniViewportGuideAPI
+  prepend apiSchemas = ["HoudiniViewportGuideAPI", "GeomModelAPI", "MotionAPI", "ListAPI", "LightListAPI"]
+)
+{
+  uniform token axis = "X"
+  double height = 1.2
+}

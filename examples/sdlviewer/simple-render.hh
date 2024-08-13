@@ -4,7 +4,9 @@
 
 #include "nanort.h"
 #include "nanosg.h"
+//
 #include "tinyusdz.hh"
+#include "tydra/render-data.hh"
 
 namespace example {
 
@@ -13,6 +15,64 @@ namespace example {
 using vec3 = tinyusdz::value::float3;
 using vec2 = tinyusdz::value::float2;
 using mat2 = tinyusdz::value::matrix2f;
+
+template<typename T>
+inline void lerp(T dst[3], const T v0[3], const T v1[3], const T v2[3], float u, float v) {
+  dst[0] = (static_cast<T>(1.0) - u - v) * v0[0] + u * v1[0] + v * v2[0];
+  dst[1] = (static_cast<T>(1.0) - u - v) * v0[1] + u * v1[1] + v * v2[1];
+  dst[2] = (static_cast<T>(1.0) - u - v) * v0[2] + u * v1[2] + v * v2[2];
+}
+
+template <typename T>
+inline T vlength(const T v[3]) {
+  const T d = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+  if (std::fabs(d) > std::numeric_limits<T>::epsilon()) {
+    return std::sqrt(d);
+  } else {
+    return static_cast<T>(0.0);
+  }
+}
+
+template <typename T>
+inline void vnormalize(T dst[3], const T v[3]) {
+  dst[0] = v[0];
+  dst[1] = v[1];
+  dst[2] = v[2];
+  const T len = vlength(v);
+  if (std::fabs(len) > std::numeric_limits<T>::epsilon()) {
+    const T inv_len = static_cast<T>(1.0) / len;
+    dst[0] *= inv_len;
+    dst[1] *= inv_len;
+    dst[2] *= inv_len;
+  }
+}
+
+template <typename T>
+inline void vcross(T dst[3], const T a[3], const T b[3]) {
+  dst[0] = a[1] * b[2] - a[2] * b[1];
+  dst[1] = a[2] * b[0] - a[0] * b[2];
+  dst[2] = a[0] * b[1] - a[1] * b[0];
+}
+
+template <typename T>
+inline void vsub(T dst[3], const T a[3], const T b[3]) {
+  dst[0] = a[0] - b[0];
+  dst[1] = a[1] - b[1];
+  dst[2] = a[2] - b[2];
+}
+
+template<typename T>
+inline void calculate_normal(T Nn[3], const T v0[3], const T v1[3], const T v2[3]) {
+  T v10[3];
+  T v20[3];
+
+  vsub(v10, v1, v0);
+  vsub(v20, v2, v0);
+
+  T N[3];
+  vcross(N, v20, v10);
+  vnormalize(Nn, N);
+}
 
 struct AOV {
   size_t width;
@@ -65,14 +125,12 @@ struct DrawNode {
 };
 
 //
-// Renderable Mesh class for tinyusdz::GeomMesh
-// Mesh data is converted to triangle meshes.
+// Mesh class used in NanoRT/NanoSG.
+// Currently mesh data must be triangulated and all attributes are facevarying.
 //
+template<typename T>
 struct DrawGeomMesh {
-  DrawGeomMesh(const tinyusdz::GeomMesh *p) : ref_mesh(p) {}
-
-  // Pointer to Reference GeomMesh.
-  const tinyusdz::GeomMesh *ref_mesh = nullptr;
+  DrawGeomMesh() {}
 
   ///
   /// Required accessor API for NanoSG
@@ -82,13 +140,156 @@ struct DrawGeomMesh {
     //return reinterpret_cast<const float *>(ref_mesh->points.data());
   }
 
+  const unsigned int *GetFaces() const {
+    return facevertex_indices.data();
+  }
+
   size_t GetVertexStrideBytes() const { return sizeof(float) * 3; }
+
+  ///
+  /// Get the geometric normal and the shading normal at `face_idx' th face.
+  ///
+  void GetNormal(float Ng[3], float Ns[3], const unsigned int face_idx, const float u, const float v) const {
+    // Compute geometric normal.
+    unsigned int f0, f1, f2;
+    float v0[3], v1[3], v2[3];
+
+    f0 = facevertex_indices[3 * face_idx + 0];
+    f1 = facevertex_indices[3 * face_idx + 1];
+    f2 = facevertex_indices[3 * face_idx + 2];
+
+    v0[0] = vertices[3 * f0 + 0];
+    v0[1] = vertices[3 * f0 + 1];
+    v0[2] = vertices[3 * f0 + 2];
+
+    v1[0] = vertices[3 * f1 + 0];
+    v1[1] = vertices[3 * f1 + 1];
+    v1[2] = vertices[3 * f1 + 2];
+
+    v2[0] = vertices[3 * f2 + 0];
+    v2[1] = vertices[3 * f2 + 1];
+    v2[2] = vertices[3 * f2 + 2];
+
+    calculate_normal(Ng, v0, v1, v2);
+
+    if (vertex_normals.size() > 0) {
+      uint32_t v0 = facevertex_indices[3 * face_idx]; 
+      uint32_t v1 = facevertex_indices[3 * face_idx]; 
+      uint32_t v2 = facevertex_indices[3 * face_idx]; 
+
+      float n0[3], n1[3], n2[3];
+
+      n0[0] = vertex_normals[3 * v0 + 0];
+      n0[1] = vertex_normals[3 * v0 + 1];
+      n0[2] = vertex_normals[3 * v0 + 2];
+
+      n1[0] = vertex_normals[3 * v1 + 0];
+      n1[1] = vertex_normals[3 * v1 + 1];
+      n1[2] = vertex_normals[3 * v1 + 2];
+
+      n2[0] = vertex_normals[3 * v2 + 0];
+      n2[1] = vertex_normals[3 * v2 + 1];
+      n2[2] = vertex_normals[3 * v2 + 2];
+
+      lerp(Ns, n0, n1, n2, u, v);
+    
+    } else if (facevarying_normals.size() > 0) {
+
+      float n0[3], n1[3], n2[3];
+
+      n0[0] = facevarying_normals[9 * face_idx + 0];
+      n0[1] = facevarying_normals[9 * face_idx + 1];
+      n0[2] = facevarying_normals[9 * face_idx + 2];
+
+      n1[0] = facevarying_normals[9 * face_idx + 3];
+      n1[1] = facevarying_normals[9 * face_idx + 4];
+      n1[2] = facevarying_normals[9 * face_idx + 5];
+
+      n2[0] = facevarying_normals[9 * face_idx + 6];
+      n2[1] = facevarying_normals[9 * face_idx + 7];
+      n2[2] = facevarying_normals[9 * face_idx + 8];
+
+      lerp(Ns, n0, n1, n2, u, v);
+
+    } else {
+
+      // Use geometric normal.
+      Ns[0] = Ng[0];
+      Ns[1] = Ng[1];
+      Ns[2] = Ng[2];
+
+    }
+
+  }
+
+  ///
+  /// Get texture coordinate at `face_idx' th face.
+  ///
+  void GetTexCoord(float tcoord[3], const unsigned int face_idx, const float u, const float v) {
+
+    if (vertex_uvs.size() > 0) {
+      uint32_t v0 = facevertex_indices[3 * face_idx]; 
+      uint32_t v1 = facevertex_indices[3 * face_idx]; 
+      uint32_t v2 = facevertex_indices[3 * face_idx]; 
+
+      float t0[3], t1[3], t2[3];
+
+      t0[0] = facevarying_uvs[6 * face_idx + 0];
+      t0[1] = facevarying_uvs[6 * face_idx + 1];
+      t0[2] = static_cast<T>(0.0);
+
+      t1[0] = facevarying_uvs[6 * face_idx + 2];
+      t1[1] = facevarying_uvs[6 * face_idx + 3];
+      t1[2] = static_cast<T>(0.0);
+
+      t2[0] = facevarying_uvs[6 * face_idx + 4];
+      t2[1] = facevarying_uvs[6 * face_idx + 5];
+      t2[2] = static_cast<T>(0.0);
+
+      lerp(tcoord, t0, t1, t2, u, v);
+
+    } else if (facevarying_uvs.size() > 0) {
+
+      float t0[3], t1[3], t2[3];
+
+      t0[0] = facevarying_uvs[6 * face_idx + 0];
+      t0[1] = facevarying_uvs[6 * face_idx + 1];
+      t0[2] = static_cast<T>(0.0);
+
+      t1[0] = facevarying_uvs[6 * face_idx + 2];
+      t1[1] = facevarying_uvs[6 * face_idx + 3];
+      t1[2] = static_cast<T>(0.0);
+
+      t2[0] = facevarying_uvs[6 * face_idx + 4];
+      t2[1] = facevarying_uvs[6 * face_idx + 5];
+      t2[2] = static_cast<T>(0.0);
+
+      lerp(tcoord, t0, t1, t2, u, v);
+
+    } else {
+
+      tcoord[0] = static_cast<T>(0.0);
+      tcoord[1] = static_cast<T>(0.0);
+      tcoord[2] = static_cast<T>(0.0);
+
+    }
+
+  }
+
+
+  ///
+  /// ---
+  ///
 
   std::vector<float> vertices;  // vec3f
   std::vector<uint32_t>
       facevertex_indices;  // triangulated indices. 3 x num_faces
+
+  std::vector<float> vertex_normals;    // 'vertex'-varying normals. 3 x 3 x num_verts
   std::vector<float> facevarying_normals;    // 3 x 3 x num_faces
-  std::vector<float> facevarying_texcoords;  // 2 x 3 x num_faces
+
+  std::vector<float> vertex_uvs;  // 2 x 3 x num_verts
+  std::vector<float> facevarying_uvs;  // 2 x 3 x num_faces
 
   // arbitrary primvars(including texcoords(float2))
   std::vector<Buffer<float>> float_primvars;
@@ -102,7 +303,9 @@ struct DrawGeomMesh {
 
   int material_id{-1};  // per-geom material. index to `RenderScene::materials`
 
-  nanort::BVHAccel<float> accel;
+  float world_matrix[4][4];
+
+  //nanort::BVHAccel<float> accel;
 };
 
 template<typename T>
@@ -201,25 +404,26 @@ struct Image {
   int32_t channels{-1};  // e.g. 3 for RGB.
 };
 
-class RenderScene {
+class RTRenderScene {
  public:
-  std::vector<DrawGeomMesh> draw_meshes;
+  std::vector<DrawGeomMesh<float>> draw_meshes;
   std::vector<Material> materials;
   std::vector<Texture> textures;
   std::vector<Image> images;
 
-  std::vector<nanosg::Node<float, DrawGeomMesh>> nodes;
-  nanosg::Scene<float, DrawGeomMesh> scene;
+  // <precision, ptr to mesh class>
+  //std::vector<nanosg::Node<float, DrawGeomMesh>> nodes;
+  nanosg::Scene<float, DrawGeomMesh<float>> scene;
 
-  // Convert meshes and build BVH
-  bool Setup();
+
+  bool SetupFromUSDFile(const std::string &usd_filename, std::string &warn, std::string &err);
 };
 
-bool Render(const RenderScene &scene, const Camera &cam, AOV *output);
+bool Render(const RTRenderScene &scene, const Camera &cam, AOV *output);
 
 // Render images for lines [start_y, end_y]
 // single-threaded. for webassembly.
-bool RenderLines(int start_y, int end_y, const RenderScene &scene,
+bool RenderLines(int start_y, int end_y, const RTRenderScene &scene,
                  const Camera &cam, AOV *output);
 
 }  // namespace example

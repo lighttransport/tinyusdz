@@ -2,6 +2,12 @@
 
 `TinyUSDZ` is secure, portable and dependency-free(depends only on C++ STL. Other 3rd-party libraries included. Yes, you don't need pxrUSD/OpenUSD library!) USDZ/USDC/USDA library written in C++14.
 
+<img src="https://github.com/syoyo/tinyusdz/assets/18676/2419ddf6-4410-4bcc-b9c1-466bf29d3b20" width="400px">
+(from https://github.com/syoyo/Vulkan-glTF-USDZ-PBR)
+
+<img src="https://github.com/lighttransport/tinyusdz/assets/18676/5291f44f-b20a-4d4a-9b4a-16ffefccddc7" width="400px">
+(from ASF MaterialXViewer fork https://github.com/lighttransport/materialx)
+
 ## High priority
 
 * Prepare Release v0.8
@@ -10,16 +16,21 @@
     * [examples/openglviewer](examples/openglviewer) OpenGL viewer
     * [examples/sdlviewer](examples/sdlviewer) Software raytracing viewer 
   * For Vulkan and Android Vulkan example, please refer https://github.com/syoyo/Vulkan-glTF-USDZ-PBR for a while
+  * For OpenGL + MaterialX example, please refer ASF MaterialXViewer fork to load USD model through TinyUSDZ https://github.com/lighttransport/materialx
  
 ## Mid-term todo
 
 * Performace optimization https://github.com/syoyo/tinyusdz/issues/164
+* MaterialX https://github.com/syoyo/tinyusdz/issues/86
+  * Write our own MaterialX parser
+  * OpenPBR shading model support https://github.com/lighttransport/tinyusdz/issues/172
+  * USD + MateriralX + OpenPBR rendering verification using pbrlab? https://github.com/lighttransport/pbrlab
+* Nested variantSet https://github.com/lighttransport/tinyusdz/issues/94 
 * Enhancement for wasm(e.g. write USDZ loader for three.js), webgpu https://github.com/syoyo/tinyusdz/issues/118 
 * better colorspace + wide-gamut support https://github.com/syoyo/tinyusdz/issues/142
 * Better skinning + blendshapes support
   * Write example using mediapipe for motion tracking and face tracking with rigged USDZ model.  
-* MaterialX https://github.com/syoyo/tinyusdz/issues/86
-  * USD + MateriralX + PBR rendering example using https://github.com/lighttransport/pbrlab 
+
 * Improve interoperability with Blender USD export/import https://github.com/syoyo/tinyusdz/issues/98
 * Tydra: Handy data structure converter for rendering https://github.com/syoyo/tinyusdz/issues/31
   * [x] USD to RenderScene(OpenGL/Vulkan-like API friendly data structure) conversion https://github.com/syoyo/tinyusdz/issues/109
@@ -154,39 +165,35 @@ USD itself is a generic container of 3D scene data.
 Tydra is an interface to Renderers/Viewers and other DCCs.
 Tydra may be something like Tiny version of pxrUSD Hydra, but its API is completely different. See [src/tydra/README.md](src/tydra/README.md) for the background.
 
-* Image color space
-  * sRGB
-  * Linear
-  * Rec.709
-  * [ ] Partial support of OCIO(OpenColor IO) through TinyColorIO https://github.com/syoyo/tinycolorio . Currently SPI3DLut only.
-* More details are T.B.W.
-
 ## Notice
 
 TinyUSDZ does not support Reality Composer file format(`.reality`) since it uses proprietary file format and we cannot understand it(so no conversion support from/to Reality also).
 
-## Commercial support
+## Sponsorship and Commercial support
 
 TinyUSDZ focuses on loading/writing USDA/USDC/USDZ functionalities.
 Example viewer is just for demo purpose.
-`syoyo` does not provide commercial support as an individual. 
 
-If you need commercial support, eco-system development(e.g. plug-ins, DCC tools on top of TinyUSDZ) or production-grade USDZ model viewer(e.g. embed TinyUSDZ to your AR app, 3D NFT Android mobile viewer capable of displaying (encrypted) USDZ model), please contact Light Transport Entertainment, Inc. : https://goo.gl/forms/1p6uGcOKWGpXPHkA2 
+If you need commercial support, eco-system development(e.g. plug-ins, DCC tools on top of TinyUSDZ) or production-grade USDZ model viewer(e.g. embed TinyUSDZ to your AR app, 3D NFT Android mobile viewer capable of displaying (encrypted) USDZ model), please contact Light Transport Entertainment, Inc. : [https://goo.gl/forms/1p6uGcOKWGpXPHkA2 ](https://forms.gle/PeDRAgYM5ET9SjGs5)
 
-We have a plan to manage TinyUSDZ project under Light Transport Entertainment Inc. 
-(By relicensing to Apatch 2.0)
+We are also looking for sponsors. If you are interested in sponsoring(or donating) to TinyUSDZ project, please also contact Light Transport Entertainment, Inc. for details: [https://goo.gl/forms/1p6uGcOKWGpXPHkA2 ](https://forms.gle/PeDRAgYM5ET9SjGs5)
+
 
 ## Projects using TinyUSDZ
 
 * Vulkan-glTF-USDZ-PBR: Example to draw USD model using Vulkan https://github.com/syoyo/Vulkan-glTF-USDZ-PBR
 * usd2glb: USD to glTF 2.0 GLB converter https://github.com/fynv/usd2glb
 * webgpu-cpp-usdz: WebGPU C++/Wasm USDZ Renderer(NOTE: It doesn't support much yet!) https://github.com/Twinklebear/webgpu-cpp-usdz
+* assimp started to integrate TinyUSDZ : https://github.com/assimp/assimp/pull/5628
+* A secret project (*/ω＼*)
+* Several DCC tools, plugins
+* Your projects here!(Please send PR)
 
 ### Other related projects
 
 * UsdzSharpie: C# Simple implementation of Usdz file format ( https://github.com/UkooLabs/UsdzSharpie )
 * TinyGLTF: glTF 2.0 loader/saver ( https://github.com/syoyo/tinygltf )
-* BlenderUSDZ: It contains their own Python USDC parser/serializer. https://github.com/robmcrosby/BlenderUSDZ
+
 
 ## Supported platforms
 
@@ -211,8 +218,8 @@ We have a plan to manage TinyUSDZ project under Light Transport Entertainment In
 
 * C++14 compiler
   * [x] gcc 4.9 or later
-  * [x] Visual Studio 2019 or later(2017 may compiles)
-    * VS2019 16.10 or later you can use `CMakePresets.json` for easier building.
+  * [x] Visual Studio 2019 or later. 2022 recommended.
+    * You can use `CMakePresets.json`, but seems a bit troublesome in VS2022 https://github.com/lighttransport/tinyusdz/pull/182#issuecomment-2236676598 . If you encounter an issue, use `vcsetup.bat` to setup .sln for a while.
     * [x] Can be compiled with standalone MSVC compilers(Build Tools for Visual Studio 2019)
   * [x] clang 3.4 or later https://clang.llvm.org/cxx_status.html
   * [x] llvm-mingw(clang) supported
