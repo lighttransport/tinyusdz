@@ -9,8 +9,11 @@ else()
 project(${BUILD_TARGET} CXX C)
 endif()
 
+set(USDVIEW_SDL2_LOCAL_PATH "${PROJECT_SOURCE_DIR}/../common/SDL2-2.30.6/")
 option(USDVIEW_USE_NATIVEFILEDIALOG
        "Use nativefiledialog. Requires gtk+-3 libs on linux to build" ON)
+option(USDVIEW_USE_LOCAL_SDL2
+       "Build SDL2 from source" ON)
 #option(USDVIEW_ENABLE_PHYSICS "Enable Physics(through Bullet3)" OFF)
 
 if(EMSCRIPTEN)
@@ -68,6 +71,13 @@ endif()
 
 # https://stackoverflow.com/questions/41700463/push-pop-a-cmake-variable
 function(ADD_SDL2_LIB)
+
+  if (NOT IS_DIRECTORY "${USDVIEW_SDL2_LOCAL_PATH}")
+    message(FATAL_ERROR "SDL2 folder " ${USDVIEW_SDL2_LOCAL_PATH} " is missing! "
+      "You probably did not download and unpack it. See <tinyusdz>/examples/common/README.sdl2 for the procedure.")
+  endif()
+
+
   # Disable OpenGL
   set(VIDEO_OPENGL
       OFF
@@ -86,7 +96,7 @@ function(ADD_SDL2_LIB)
   set(SDL_STATIC
       ON
       CACHE INTERNAL "" FORCE)
-  add_subdirectory(../common/SDL2-2.28.0/ SDL2)
+  add_subdirectory(${USDVIEW_SDL2_LOCAL_PATH} SDL2)
 endfunction()
 
 if(EMSCRIPTEN)
@@ -110,8 +120,24 @@ if(EMSCRIPTEN)
 
   set(USDVIEW_SDL2_LIBRARIES ${SDL2_LIBRARIES})
 else()
-  add_sdl2_lib()
-  set(USDVIEW_SDL2_LIBRARIES SDL2-static SDL2main)
+
+  if (USDVIEW_USE_LOCAL_SDL2) 
+      ADD_SDL2_LIB()
+      # include dir will be automatically added when linking with SDL2-static?
+      set(USDVIEW_SDL2_LIBRARIES SDL2-static SDL2main)
+  else()
+    find_package(SDL2)
+    if (SDL2_FOUND)
+      message(STATUS "Use system installed SDL2") 
+      message(STATUS ${SDL2_LIBRARIES})
+      set(USDVIEW_SDL2_INCLUDE_DIRS ${SDL2_INCLUDE_DIRS})
+      set(USDVIEW_SDL2_LIBRARIES ${SDL2_LIBRARIES})
+    else()
+      ADD_SDL2_LIB()
+      # include dir will be automatically added when linking with SDL2-static?
+      set(USDVIEW_SDL2_LIBRARIES SDL2-static SDL2main)
+    endif()
+  endif()
 endif()
 
 if(WIN32)
@@ -189,8 +215,9 @@ else()
   list(APPEND EXT_LIBRARIES ${X11_LIBRARIES})
 endif()
 
-target_link_libraries(${BUILD_TARGET} PRIVATE ${USDVIEW_SDL2_LIBRARIES} tinyusdz::tinyusdz_static
-                                              ${EXT_LIBRARIES} ${CMAKE_DL_LIBS})
+target_include_directories(${BUILD_TARGET} PUBLIC ${USDVIEW_SDL2_INCLUDE_DIRS})
+target_link_libraries(${BUILD_TARGET} PRIVATE tinyusdz::tinyusdz_static ${USDVIEW_SDL2_LIBRARIES}
+                                              ${EXT_LIBRARIES} PUBLIC ${CMAKE_DL_LIBS})
 
 if(EMSCRIPTEN)
   add_custom_command(

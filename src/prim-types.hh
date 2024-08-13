@@ -893,10 +893,32 @@ struct AssetInfo {
 struct APISchemas {
   // TinyUSDZ does not allow user-supplied API schema for now
   enum class APIName {
+    // usdShade
     MaterialBindingAPI,  // "MaterialBindingAPI"
-    SkelBindingAPI,      // "SkelBindingAPI"
-    ShapingAPI,         // "ShapingAPI"(usdLux)
+    ConnectableAPI, // "ConnectableAPI"
+    CoordSysAPI, // "CoordSysAPI"
+    NodeDefAPI, // "NodeDefAPI"
+
     CollectionAPI,      // "CollectionAPI"
+    // usdGeom
+    GeomModelAPI, // "GeomModelAPI"
+    MotionAPI, // "MotionAPI"
+    PrimvarsAPI, // "PrimvarsAPI"
+    VisibilityAPI, // "VisibilityAPI"
+    XformCommonAPI, // "XformCommonAPI"
+
+    // usdLux
+    LightAPI, // "LightAPI"
+    LightListAPI, // "LightListAPI"
+    ListAPI, // "ListAPI"
+    MeshLightAPI, // "MeshLightAPI"
+    ShapingAPI, // "ShapingAPI"
+    ShadowAPI,  // "ShadowAPI"
+    VolumeLightAPI,  // "VolumeLightAPI"
+
+    // usdSkel
+    SkelBindingAPI,      // "SkelBindingAPI"
+    
     // USDZ AR extensions
     Preliminary_AnchoringAPI,
     Preliminary_PhysicsColliderAPI,
@@ -1642,6 +1664,12 @@ class TypedAttribute {
 
   void set_value_empty() { _value_empty = true; }
 
+  //
+  // Check if the attribute is authored, but no value(including ValueBlock) assigned.
+  // e.g.
+  //
+  // float myval;
+  //
   bool is_value_empty() const {
     if (has_connections()) {
       return false;
@@ -1658,7 +1686,7 @@ class TypedAttribute {
     return _value_empty;
   }
 
-  // value set?
+  // The attribute authroed?
   bool authored() const {
     if (_attrib) {
       return true;
@@ -1803,6 +1831,12 @@ class TypedAttributeWithFallback {
 
   bool has_connections() const { return _paths.size(); }
 
+  //
+  // Check if the attribute is authored, but no value(including ValueBlock) assigned.
+  // e.g.
+  //
+  // float myval;
+  //
   bool is_value_empty() const {
     if (has_connections()) {
       return false;
