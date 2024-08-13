@@ -293,7 +293,7 @@ class StreamReader {
       return false;
     }
 
-    float value;
+    float value{};
     if (!read4(reinterpret_cast<int *>(&value))) {
       return false;
     }
@@ -308,7 +308,7 @@ class StreamReader {
       return false;
     }
 
-    double value;
+    double value{};
     if (!read8(reinterpret_cast<uint64_t *>(&value))) {
       return false;
     }

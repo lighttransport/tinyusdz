@@ -21,7 +21,7 @@ NOTE: USDC(Binary) = Read only
 | -----------    | ----- | ---- | -------      |
 | Xform          | ✅    | ✅   |              |
 | Mesh           | ✅    | ✅   |              |
-| GeomSubset     | 🚧    | 🚧   |              |
+| GeomSubset     | ✅    | ✅   |              |
 | Points         | ✅    | ✅   |              |
 | Cube           | ✅    | ✅   |              |
 | Cylinder       | ✅    | ✅   |              |
@@ -62,8 +62,8 @@ NOTE: USDC(Binary) = Read only
 | type              | Ascii | USDC | Comment |
 | -----------       | ----- | ---- | ------- |
 | UsdPreviewSurface | ✅    | ✅   |         |
-| UsdUVTexture      | ❕    | ❕   | 1.      |
-| UsdPrimvarReader  | ✅    | ✅   | 2.      |
+| UsdUVTexture      | ✅    | ✅   | 1.      |
+| UsdPrimvarReader  | ✅    | ✅   |         |
 
 
 1. UDIM texture is not supported.
@@ -90,7 +90,7 @@ NOTE: USDC(Binary) = Read only
   * [ ] VariantSet(SpecTypeVariant) Crate write
 * [ ] USDC serialization
 * [ ] Skinning evaluation/validation
-* [ ] Tydra(scene/render delegation)
+* [x] Tydra(scene/render delegation)
 * [ ] usdObj(wavefront .obj) support.
   * Please see [usdObj.md](usdObj.md)
 * [ ] C-API for other languages
