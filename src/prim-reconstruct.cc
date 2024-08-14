@@ -451,7 +451,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
             animatable_value.set(pv.value());
           } else {
             ret.code = ParseResult::ResultCode::InternalError;
-            ret.err = fmt::format("Internal error. Invalid attribute value? get_value<{}> failed.", value::TypeTraits<T>::type_name());
+            ret.err = fmt::format("Internal error. Invalid attribute value? get_value<{}> failed. Attribute has type {}", value::TypeTraits<T>::type_name(), attr.get_var().type_name());
             return ret;
           }
 

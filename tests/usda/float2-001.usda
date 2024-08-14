@@ -1,0 +1,5 @@
+#usda 1.0
+
+def "bora" {
+  float2 st = (1, 2)
+}

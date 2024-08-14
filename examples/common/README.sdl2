@@ -1,0 +1,13 @@
+We changed to remove SDL2 files from tinyusdz git repo to reduce repo size.
+
+Please download SDL2 source package from:
+
+https://github.com/libsdl-org/SDL/releases/download/release-2.30.6/SDL2-2.30.6.tar.gz
+
+and unpack here.
+
+Example script
+
+
+wget https://github.com/libsdl-org/SDL/releases/download/release-2.30.6/SDL2-2.30.6.tar.gz
+tar xvf SDL2-2.30.6.tar.gz
