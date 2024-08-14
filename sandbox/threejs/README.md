@@ -2,7 +2,13 @@
 
 ## Status 
 
-Very early stage. Not working.
+Very early stage. cli nodejs execution is getting working.
+
+## Building
+
+Requires emscripten + cmake(emcmake)
+
+See `bootstrap-emscripten-linux.sh` for details.
 
 ## Setup
 
