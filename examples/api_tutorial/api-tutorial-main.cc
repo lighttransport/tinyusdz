@@ -8,10 +8,14 @@
 #include "prim-pprint.hh"
 #include "value-pprint.hh"
 
+#if defined(TINYUSDZ_WITH_TYDRA)
+
 // Tydra is a collection of APIs to access/convert USD Prim data
 // (e.g. Get Prim's attribute by name)
 // See <tinyusdz>/examples/tydra_api for more info about Tydra API.
 #include "tydra/scene-access.hh"
+
+#endif
 
 //
 // create a Scene
@@ -655,7 +659,15 @@ int main(int argc, char **argv) {
       return -1;
     }
 
+    const tinyusdz::GeomMesh *mesh = prim->as<tinyusdz::GeomMesh>();
+    if (!mesh) {
+      std::cerr << "Expected GeomMesh.\n";
+      return -1;
+    }
+
+#if defined(TINYUSDZ_WITH_TYDRA)
     tinyusdz::Attribute attr;
+    // TODO: Use EvaluateAttribute
     if (tinyusdz::tydra::GetAttribute(*prim, "points", &attr, &err)) {
       std::cout << "point attribute type = " << attr.type_name() << "\n";
 
@@ -674,12 +686,10 @@ int main(int argc, char **argv) {
     } else {
       std::cerr << err << "\n";
     }
-
-    const tinyusdz::GeomMesh *mesh = prim->as<tinyusdz::GeomMesh>();
-    if (!mesh) {
-      std::cerr << "Expected GeomMesh.\n";
-      return -1;
-    }
+#else
+    // limitation: `points` attribute cannot be attribute connection
+    std::cout << "point attribute value = " << mesh->get_points() << "\n";
+#endif
 
     // GeomPrimvar
     // Access GeomPrimvar

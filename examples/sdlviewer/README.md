@@ -3,12 +3,23 @@
 This viewer uses NanoRT(SW ray tracer) to render the model and display it using SDL2
 (So no OpenGL dependency)
 
+## Status 
+
+W.I.P.
+
 ## Requirements 
 
 * C++14 compiler
   * external library imgui_sdl requires C++14
 * cmake
 * X11 related package(Linux only)
+* SDL2
+
+## Setup
+
+You may use system installed SDL2, but we recommend to build SDL2 from source codes.
+Please download SDL2 source package and unpack it to ../common/
+See ../common/README.sdl2 for details.
 
 ## Build
 

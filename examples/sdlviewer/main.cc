@@ -15,6 +15,12 @@
 #include <emscripten/html5.h>
 #endif
 
+// To avoid some C define symbol conflict with SDL(e.g. 'Bool')
+// tinyusdz headers muet be included before SDL
+#include "tinyusdz.hh"
+#include "tydra/render-data.hh"
+
+
 // ../common/SDL2
 #include <SDL.h>
 
@@ -33,12 +39,15 @@
 #include "imnodes.h"
 #include "roboto_mono_embed.inc.h"
 #include "virtualGizmo3D/vGizmo.h"
+#include "trackball.h"
 
 //
 #include "gui.hh"
 #include "simple-render.hh"
-#include "tinyusdz.hh"
 #include "trackball.h"
+// 
+#include "tinyusdz.hh"
+#include "tydra/render-data.hh" // To convert USD Stage to OpenGL/Vulkan friendly data structure.
 
 #if defined(USDVIEW_USE_NATIVEFILEDIALOG)
 #include "nfd.h"
@@ -89,7 +98,7 @@ struct GUIContext {
   // std::array<float, 3> lookat = {0.0f, 0.0f, 0.0f};
   // std::array<float, 3> up = {0.0f, 1.0f, 0.0f};
 
-  example::RenderScene render_scene;
+  example::RTRenderScene rt_render_scene;
 
   example::Camera camera;
 
@@ -102,10 +111,21 @@ struct GUIContext {
   int render_width = 512;
   int render_height = 512;
 
+  //tinyusdz::Stage stage;
+  std::string usd_filename;
+
+  // RenderScene: Scene graph object which is suited for GL/Vulkan renderer.
+  // Constructed from `tinyusdz::Stage`
+  tinyusdz::tydra::RenderScene render_scene;
+
   // scene reload
-  tinyusdz::Stage stage;
   std::atomic<bool> request_reload{false};
-  std::string filename;
+
+  tinyusdz::AssetResolutionResolver arr;
+
+  // USDZ specific
+  // Byte range info for assets(textures, audio, etc)
+  tinyusdz::USDZAsset usdz_asset;
 
 #if __EMSCRIPTEN__ || defined(EMULATE_EMSCRIPTEN)
   bool render_finished{false};
@@ -290,53 +310,26 @@ static void ScreenActivate(SDL_Window* window) {
 #endif
 }
 
-bool LoadModel(const std::string& filename, tinyusdz::Stage* stage) {
-  std::string ext = str_tolower(GetFileExtension(filename));
+bool LoadModel(const std::string& filename, /* out */tinyusdz::Stage* stage) {
 
   std::string warn;
   std::string err;
 
-  if (ext.compare("usdz") == 0) {
-    std::cout << "usdz\n";
-    bool ret = tinyusdz::LoadUSDZFromFile(filename, stage, &warn, &err);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-    }
+  if (!tinyusdz::IsUSD(filename)) {
+    std::cerr << "ERR: file not found or file is not USD format : " << filename << "\n";
+    return false;
+  }
+
+  bool ret = tinyusdz::LoadUSDFromFile(filename, stage, &warn, &err);
+  if (warn.size()) {
+     std::cerr << "WARN : " << warn << "\n";
+  }
+
+  if (!ret) {
     if (!err.empty()) {
       std::cerr << "ERR : " << err << "\n";
     }
-
-    if (!ret) {
-      std::cerr << "Failed to load USDZ file: " << filename << "\n";
-      return false;
-    }
-  } else if (ext.compare("usda") == 0) {
-    std::cout << "usda\n";
-    bool ret = tinyusdz::LoadUSDAFromFile(filename, stage, &warn, &err);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-    }
-    if (!err.empty()) {
-      std::cerr << "ERR : " << err << "\n";
-    }
-
-    if (!ret) {
-      std::cerr << "Failed to load USDA file: " << filename << "\n";
-      return false;
-    }
-  } else {  // assume usdc
-    bool ret = tinyusdz::LoadUSDCFromFile(filename, stage, &warn, &err);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-    }
-    if (!err.empty()) {
-      std::cerr << "ERR : " << err << "\n";
-    }
-
-    if (!ret) {
-      std::cerr << "Failed to load USDC file: " << filename << "\n";
-      return false;
-    }
+    return false;
   }
 
   return true;
@@ -351,11 +344,11 @@ void RenderThread(GUIContext* ctx) {
     }
 
     if (ctx->request_reload) {
-      ctx->stage = tinyusdz::Stage();  // reset
+      //ctx->stage = tinyusdz::Stage();  // reset
 
+#if 0 // TODO
       if (LoadModel(ctx->filename, &ctx->stage)) {
         Proc(ctx->stage);
-#if 0
         if (ctx->scene.geom_meshes.empty()) {
           std::cerr << "The scene contains no GeomMesh\n";
         } else {
@@ -373,8 +366,8 @@ void RenderThread(GUIContext* ctx) {
           }
           std::cout << "Setup render mesh\n";
         }
-#endif
       }
+#endif
 
       ctx->request_reload = false;
 
@@ -387,7 +380,7 @@ void RenderThread(GUIContext* ctx) {
       continue;
     }
 
-    example::Render(ctx->render_scene, ctx->camera, &ctx->aov);
+    example::Render(ctx->rt_render_scene, ctx->camera, &ctx->aov);
 
     ctx->update_texture = true;
 
@@ -401,7 +394,7 @@ std::string OpenFileDialog() {
   std::string path;
 
   nfdchar_t* outPath;
-  nfdfilteritem_t filterItem[1] = {{"USD file", "usda,usdc,usdz"}};
+  nfdfilteritem_t filterItem[1] = {{"USD file", "usd,usda,usdc,usdz"}};
 
   nfdresult_t result = NFD_OpenDialog(&outPath, filterItem, 1, NULL);
   if (result == NFD_OKAY) {
@@ -763,14 +756,9 @@ int main(int argc, char** argv) {
     filename = std::string(argv[1]);
   }
 
-  std::cout << "Loading file " << filename << "\n";
+  g_gui_ctx.usd_filename = filename;
 
-  bool init_with_empty = false;
-
-  if (!LoadModel(filename, &g_gui_ctx.stage)) {
-    init_with_empty = true;
-  }
-
+#if 0
   if (!init_with_empty) {
     std::cout << "Loaded USDC file\n";
 
@@ -780,6 +768,7 @@ int main(int argc, char** argv) {
     //  exit(-1);
     //}
   }
+#endif
 
   // Assume single monitor
   SDL_DisplayMode DM;
@@ -835,15 +824,18 @@ int main(int argc, char** argv) {
   GUIContext& gui_ctx = g_gui_ctx;
   gui_ctx.renderer = renderer;
 
-  if (!init_with_empty) {
-    //for (size_t i = 0; i < g_gui_ctx.scene.geom_meshes.size(); i++) {
-    //  example::DrawGeomMesh draw_mesh(&g_gui_ctx.scene.geom_meshes[i]);
-    //  gui_ctx.render_scene.draw_meshes.push_back(draw_mesh);
-    //}
+  if (gui_ctx.usd_filename.size()) {
+    std::string warn, err;
 
     // Setup render mesh
-    if (!gui_ctx.render_scene.Setup()) {
-      std::cerr << "Failed to setup render mesh.\n";
+    bool ret = gui_ctx.rt_render_scene.SetupFromUSDFile(gui_ctx.usd_filename, warn, err);
+    if (warn.size()) {
+      std::cout << "WARN: " << warn << "\n";
+    }
+
+    if (!ret) {
+      std::cerr << "Failed to load USD or setup render mesh.\n";
+      std::cerr << err << "\n";
       exit(-1);
     }
     std::cout << "Setup render mesh\n";
@@ -859,7 +851,10 @@ int main(int argc, char** argv) {
     float ddpi, hdpi, vdpi;
     if (SDL_GetDisplayDPI(0, &ddpi, &hdpi, &vdpi) != 0) {
         fprintf(stderr, "Failed to obtain DPI information for display 0: %s\n", SDL_GetError());
-        exit(1);
+        // use default.
+        ddpi = 72.0f;
+        hdpi = 72.0f;
+        vdpi = 72.0f;
     }
     std::cout << "ddpi " << ddpi << ", hdpi " << hdpi << ", vdpi " << vdpi << "\n";
 
@@ -990,7 +985,7 @@ int main(int argc, char** argv) {
         std::string fname = filepath;
 
         // Scene reloading is done in render thread.
-        g_gui_ctx.filename = fname;
+        g_gui_ctx.usd_filename = fname;
         g_gui_ctx.request_reload = true;
 
         SDL_free(filepath);
@@ -1049,15 +1044,18 @@ int main(int argc, char** argv) {
       update_display = true;
     }
 
-    // update |= ImGui::InputFloat3("eye", gui_ctx.camera.eye);
-    // update |= ImGui::InputFloat3("look_at", gui_ctx.camera.look_at);
-    // update |= ImGui::InputFloat3("up", gui_ctx.camera.up);
+    update |= ImGui::InputFloat3("eye", gui_ctx.camera.eye);
+    update |= ImGui::InputFloat3("look_at", gui_ctx.camera.look_at);
+    update |= ImGui::InputFloat3("up", gui_ctx.camera.up);
+
+#if 0
     update |=
         ImGui::SliderFloat("eye.z", &gui_ctx.camera.eye[2], -1000.0, 1000.0f);
+#endif
     update |= ImGui::SliderFloat("fov", &gui_ctx.camera.fov, 0.01f, 140.0f);
 
     // TODO: Validate coordinate definition.
-    if (ImGui::SliderFloat("yaw", &gui_ctx.yaw, -360.0f, 360.0f)) {
+    if (ImGui::SliderFloat("yaw", &gui_ctx.yaw, -180.0f, 180.0f)) {
       auto q = ToQuaternion(radians(gui_ctx.yaw), radians(gui_ctx.pitch),
                             radians(gui_ctx.roll));
       gui_ctx.camera.quat[0] = q[0];
@@ -1066,7 +1064,7 @@ int main(int argc, char** argv) {
       gui_ctx.camera.quat[3] = q[3];
       update = true;
     }
-    if (ImGui::SliderFloat("pitch", &gui_ctx.pitch, -360.0f, 360.0f)) {
+    if (ImGui::SliderFloat("pitch", &gui_ctx.pitch, -89.9f, 89.9f)) {
       auto q = ToQuaternion(radians(gui_ctx.yaw), radians(gui_ctx.pitch),
                             radians(gui_ctx.roll));
       gui_ctx.camera.quat[0] = q[0];
@@ -1075,6 +1073,7 @@ int main(int argc, char** argv) {
       gui_ctx.camera.quat[3] = q[3];
       update = true;
     }
+#if 0
     if (ImGui::SliderFloat("roll", &gui_ctx.roll, -360.0f, 360.0f)) {
       auto q = ToQuaternion(radians(gui_ctx.yaw), radians(gui_ctx.pitch),
                             radians(gui_ctx.roll));
@@ -1084,6 +1083,7 @@ int main(int argc, char** argv) {
       gui_ctx.camera.quat[3] = q[3];
       update = true;
     }
+#endif
     ImGui::End();
 
     ImGui::Begin("Image");
