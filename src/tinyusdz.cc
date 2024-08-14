@@ -648,9 +648,10 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length,
 
   tinyusdz::StreamReader sr(addr, length, /* swap endian */ false);
   tinyusdz::usda::USDAReader reader(&sr);
-  
+
   tinyusdz::usda::USDAReaderConfig config;
   config.strict_allowedToken_check = options.strict_allowedToken_check;
+  config.allow_unknown_apiSchema = !options.strict_apiSchema_check;
   reader.set_reader_config(config);
 
   reader.SetBaseDir(base_dir);
@@ -987,6 +988,7 @@ bool LoadUSDCLayerFromMemory(const uint8_t *addr, const size_t length,
   usdc::USDCReaderConfig config;
   config.numThreads = options.num_threads;
   config.strict_allowedToken_check = options.strict_allowedToken_check;
+  config.allow_unknown_apiSchemas = !options.strict_apiSchema_check;
   usdc::USDCReader reader(&sr, config);
 
   if (!reader.ReadUSDC()) {
@@ -1250,7 +1252,7 @@ int USDZResolveAsset(const char *asset_name, const std::vector<std::string> &sea
 
   std::string asset_path = asset_name;
 
-  // Remove relative path prefix './' 
+  // Remove relative path prefix './'
   if (tinyusdz::startsWith(asset_path, "./")) {
     asset_path = tinyusdz::removePrefix(asset_path, "./");
   }
@@ -1391,11 +1393,11 @@ bool SetupUSDZAssetResolution(
   // https://openusd.org/release/spec_usdz.html
   //
   // [x] Image: png, jpeg(jpg), exr
-  // 
+  //
   // TODO(LTE):
   //
-  // [ ] USD: usda, usdc, usd 
-  // [ ] Audio: m4a, mp3, wav 
+  // [ ] USD: usda, usdc, usd
+  // [ ] Audio: m4a, mp3, wav
 
   if (!pusdzAsset) {
     return false;
@@ -1406,9 +1408,9 @@ bool SetupUSDZAssetResolution(
   handler.resolve_fun = USDZResolveAsset;
   handler.size_fun = USDZSizeAsset;
   handler.read_fun = USDZReadAsset;
-  handler.write_fun = nullptr; 
+  handler.write_fun = nullptr;
   handler.userdata = reinterpret_cast<void *>(const_cast<USDZAsset *>(pusdzAsset));
- 
+
   resolver.register_asset_resolution_handler("png", handler);
   resolver.register_asset_resolution_handler("PNG", handler);
   resolver.register_asset_resolution_handler("JPG", handler);
@@ -1417,7 +1419,7 @@ bool SetupUSDZAssetResolution(
   resolver.register_asset_resolution_handler("JPEG", handler);
   resolver.register_asset_resolution_handler("exr", handler);
   resolver.register_asset_resolution_handler("EXR", handler);
-   
+
   return true;
 }
 

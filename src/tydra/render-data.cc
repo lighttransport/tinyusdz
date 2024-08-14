@@ -1246,7 +1246,7 @@ bool ArrayValueToVertexAttribute(
             "{} # of items {} expected, but got {}. Variability = Vertex",
             name, elementSize * num_vertices, value_counts));
       }
-      break; 
+      break;
     case VertexVariability::Varying: {
       if (value_counts != (elementSize * num_vertices)) {
         PUSH_ERROR_AND_RETURN(fmt::format(
@@ -1618,7 +1618,7 @@ bool TriangulatePolygon(
       }
       //BaseTy length_n = vlength(n);
       double length_n = vlength(n);
-      
+
       // Check if zero length normal
       if (std::fabs(length_n) < std::numeric_limits<double>::epsilon()) {
         DCOUT("length_n " << length_n);
@@ -1678,7 +1678,7 @@ bool TriangulatePolygon(
       size_t ntris = indices.size() / 3;
 
       // Up to 2GB tris.
-      if (ntris > (std::numeric_limits<int32_t>::max)()) {
+      if (ntris > size_t((std::numeric_limits<int32_t>::max)())) {
         err = "Too many triangles are generated.\n";
         return false;
       }
@@ -3494,7 +3494,7 @@ bool RenderSceneConverter::ConvertMesh(
 
           for (size_t k = 0; k < triangulatedFaceCounts[uint32_t(srcIndex)];
                k++) {
-            if ((baseFaceIndex + k) > (std::numeric_limits<int32_t>::max)()) {
+            if ((baseFaceIndex + k) > size_t((std::numeric_limits<int32_t>::max)())) {
               PUSH_ERROR_AND_RETURN(fmt::format("Index value exceeds 2GB."));
             }
             // assume triangulated faceIndex in each polygon is monotonically
@@ -4592,8 +4592,8 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
     tex.authoredOutputChannels.insert(UVTexture::Channel::B);
   }
 
-#if 0 // TODO 
-  if (tex.authoredOutputChannels.empty()) { 
+#if 0 // TODO
+  if (tex.authoredOutputChannels.empty()) {
     PUSH_WARN("No valid output channel attribute authored. Default to RGB");
     tex.authoredOutputChannels.insert(UVTexture::Channel::RGB);
   }
@@ -4972,7 +4972,7 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
     } else {
       // May be PhysicsMaterial?
       // Create dummy material
-     
+
       PUSH_WARN(fmt::format("{}'s outputs:surface isn't authored, so not a valid Material/Shader. Create a default Material\n",
                       mat_abs_path.full_path_name()));
 
@@ -5073,7 +5073,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
     if (!pmesh->points.authored()) {
       // Maybe Collider mesh? Ignore for now.
-      DCOUT(fmt::format("Mesh {} does not author `points` attribute(Maybe Collider mesh?). Ignore it for now", abs_path)); 
+      DCOUT(fmt::format("Mesh {} does not author `points` attribute(Maybe Collider mesh?). Ignore it for now", abs_path));
       return true;
     }
 
@@ -5105,7 +5105,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
           return false;
         }
 
-        if (mat_id >= (std::numeric_limits<int64_t>::max)()) {
+        if (mat_id >= size_t((std::numeric_limits<int32_t>::max)())) {
           if (err) {
             (*err) += "Material index too large.\n";
           }
@@ -5129,7 +5129,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
         // Assign new material ID
         uint64_t mat_id = rmaterials.size();
 
-        if (mat_id >= (std::numeric_limits<int64_t>::max)()) {
+        if (mat_id >= uint64_t((std::numeric_limits<int32_t>::max)())) {
           if (err) {
             (*err) += "Material index too large.\n";
           }
@@ -5325,7 +5325,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
       }
 
       uint64_t mesh_id = uint64_t(visitorEnv->converter->meshes.size());
-      if (mesh_id >= (std::numeric_limits<int64_t>::max)()) {
+      if (mesh_id >= size_t((std::numeric_limits<int32_t>::max)())) {
         if (err) {
           (*err) += "Mesh index too large.\n";
         }
@@ -5529,7 +5529,7 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
       if (translation.size() != joints.size()) {
         PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. translations.default.size {} must be equal to joints.size {} : {}", translation.size(), joints.size(), abs_path));
       }
-      
+
       for (size_t j = 0; j < joints.size(); j++) {
         std::string jointName = jointIdMap.at(j);
         auto &it = channelMap[jointName][AnimationChannel::ChannelType::Translation];

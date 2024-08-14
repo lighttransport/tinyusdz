@@ -11,7 +11,7 @@ Why built-in?
 ## Data structure
 
 * Shape(group/object) hierarchy is flattened to single mesh and no material.
-* Texcoords and normals are decoded as face-varying attribute.
+* Texcoords and normals are decoded(expanded) as face-varying attribute.
 
 ## Limitations
 
@@ -20,7 +20,9 @@ Why built-in?
 
 ## TODO
 
+* [ ] Construct Indexed Primvar for texcoords and normals(more USD friendly than expanding it to face-varying data?)
 * [ ] Preserve shape hierarchy
 * [ ] per-face material
   * Decode to GeomSubset?
 * [ ] Loading Skin weight(tinyobjloader's extension)
+* [ ] Optional: Do triangulation on .obj load. 

@@ -355,7 +355,7 @@ class USDCReader::Impl {
 
  private:
   nonstd::expected<APISchemas, std::string> ToAPISchemas(
-      const ListOp<value::token> &);
+      const ListOp<value::token> &, bool ignore_unknown, std::string &warn);
 
   // ListOp<T> -> (ListEditOp, [T])
   template <typename T>
@@ -575,15 +575,49 @@ bool USDCReader::Impl::ReconstructGeomSubset(
 namespace {}
 
 nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
-    const ListOp<value::token> &arg) {
+    const ListOp<value::token> &arg, bool ignore_unknown, std::string &warn) {
   APISchemas schemas;
 
   auto SchemaHandler =
       [](const value::token &tok) -> nonstd::optional<APISchemas::APIName> {
     if (tok.str() == "MaterialBindingAPI") {
       return APISchemas::APIName::MaterialBindingAPI;
+    } else if (tok.str() == "NodeDefAPI") {
+      return APISchemas::APIName::NodeDefAPI;
+    } else if (tok.str() == "CoordSysAPI") {
+      return APISchemas::APIName::CoordSysAPI;
+    } else if (tok.str() == "ConnectableAPI") {
+      return APISchemas::APIName::ConnectableAPI;
+    } else if (tok.str() == "CollectionAPI") {
+      return APISchemas::APIName::CollectionAPI;
     } else if (tok.str() == "SkelBindingAPI") {
       return APISchemas::APIName::SkelBindingAPI;
+    } else if (tok.str() == "VisibilityAPI") {
+      return APISchemas::APIName::VisibilityAPI;
+    } else if (tok.str() == "GeomModelAPI") {
+      return APISchemas::APIName::GeomModelAPI;
+    } else if (tok.str() == "MotionAPI") {
+      return APISchemas::APIName::MotionAPI;
+    } else if (tok.str() == "PrimvarsAPI") {
+      return APISchemas::APIName::PrimvarsAPI;
+    } else if (tok.str() == "XformCommonAPI") {
+      return APISchemas::APIName::XformCommonAPI;
+    } else if (tok.str() == "ListAPI") {
+      return APISchemas::APIName::ListAPI;
+    } else if (tok.str() == "LightListAPI") {
+      return APISchemas::APIName::LightListAPI;
+    } else if (tok.str() == "LightAPI") {
+      return APISchemas::APIName::LightAPI;
+    } else if (tok.str() == "MeshLightAPI") {
+      return APISchemas::APIName::MeshLightAPI;
+    } else if (tok.str() == "VolumeLightAPI") {
+      return APISchemas::APIName::VolumeLightAPI;
+    } else if (tok.str() == "ConnectableAPI") {
+      return APISchemas::APIName::ConnectableAPI;
+    } else if (tok.str() == "ShadowAPI") {
+      return APISchemas::APIName::ShadowAPI;
+    } else if (tok.str() == "ShapingAPI") {
+      return APISchemas::APIName::ShapingAPI;
     } else if (tok.str() == "Preliminary_AnchoringAPI") {
       return APISchemas::APIName::Preliminary_AnchoringAPI;
     } else if (tok.str() == "Preliminary_PhysicsColliderAPI") {
@@ -602,6 +636,9 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
       if (auto pv = SchemaHandler(item)) {
         std::string instanceName = "";  // TODO
         schemas.names.push_back({pv.value(), instanceName});
+      } else if (ignore_unknown) {
+        warn += "Ignored unknown or unsupported API schema: " +
+                                       item.str() + "\n";
       } else {
         return nonstd::make_unexpected("Invalid or Unsupported API schema: " +
                                        item.str());
@@ -623,6 +660,9 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
         if (auto pv = SchemaHandler(item)) {
           std::string instanceName = "";  // TODO
           schemas.names.push_back({pv.value(), instanceName});
+        } else if (ignore_unknown) {
+          warn += "Ignored unknown or unsupported API schema: " +
+                                         item.str() + "\n";
         } else {
           return nonstd::make_unexpected("Invalid or Unsupported API schema: " +
                                          item.str());
@@ -642,6 +682,9 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
         if (auto pv = SchemaHandler(item)) {
           std::string instanceName = "";  // TODO
           schemas.names.push_back({pv.value(), instanceName});
+        } else if (ignore_unknown) {
+          warn += "Ignored unknown or unsupported API schema: " +
+                                         item.str() + "\n";
         } else {
           return nonstd::make_unexpected("Invalid or Unsupported API schema: " +
                                          item.str());
@@ -660,6 +703,9 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
         if (auto pv = SchemaHandler(item)) {
           std::string instanceName = "";  // TODO
           schemas.names.push_back({pv.value(), instanceName});
+        } else if (ignore_unknown) {
+          warn += "Ignored unknown or unsupported API schema: " +
+                                         item.str() + "\n";
         } else {
           return nonstd::make_unexpected("Invalid or Unsupported API schema: " +
                                          item.str());
@@ -678,6 +724,9 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
         if (auto pv = SchemaHandler(item)) {
           std::string instanceName = "";  // TODO
           schemas.names.push_back({pv.value(), instanceName});
+        } else if (ignore_unknown) {
+          warn += "Ignored unknown or unsupported API schema: " +
+                                         item.str() + "\n";
         } else {
           return nonstd::make_unexpected("Invalid or Unsupported API schema: " +
                                          item.str());
@@ -696,6 +745,9 @@ nonstd::expected<APISchemas, std::string> USDCReader::Impl::ToAPISchemas(
         if (auto pv = SchemaHandler(item)) {
           std::string instanceName = "";  // TODO
           schemas.names.push_back({pv.value(), instanceName});
+        } else if (ignore_unknown) {
+          warn += "Ignored unknown or unsupported API schema: " +
+                                         item.str() + "\n";
         } else {
           return nonstd::make_unexpected("Invalid or Unsupported API schema: " +
                                          item.str());
@@ -751,7 +803,7 @@ USDCReader::Impl::DecodeListOp(const ListOp<T> &arg) {
     }
   }
 
-  return std::move(dst);
+  return dst;
 }
 
 bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
@@ -1081,9 +1133,8 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         DCOUT("elementSize = " << to_string(p));
 
         if ((p < 1) || (uint32_t(p) > _config.kMaxElementSize)) {
-          PUSH_ERROR_AND_RETURN_TAG(
-              kTag,
-              fmt::format("`elementSize` must be within [{}, {}), but got {}",
+          PUSH_WARN(
+              fmt::format("`elementSize` too large. Must be within [{}, {}), but got {}",
                           1, _config.kMaxElementSize, p));
         }
 
@@ -1913,11 +1964,15 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
       if (auto pv = fv.second.as<ListOp<value::token>>()) {
         auto listop = (*pv);
 
-        auto ret = ToAPISchemas(listop);
+        std::string warn;
+        auto ret = ToAPISchemas(listop, _config.allow_unknown_apiSchemas, warn);
         if (!ret) {
           PUSH_ERROR_AND_RETURN_TAG(
               kTag, "Failed to validate `apiSchemas`: " + ret.error());
         } else {
+          if (warn.size()) {
+            PUSH_WARN(warn);
+          }
           primMeta.apiSchemas = (*ret);
         }
         // DCOUT("apiSchemas = " << to_string(listop));
@@ -2039,6 +2094,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
       }
     } else if (fv.first == "inherits") {  // `inherits` composition
       if (auto pvb = fv.second.as<value::ValueBlock>()) {
+        (void)pvb;
         // make empty array
         primMeta.inherits =
             std::make_pair(ListEditQual::ResetToExplicit, std::vector<Path>());
@@ -2067,6 +2123,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
 
     } else if (fv.first == "references") {  // `references` composition
       if (auto pvb = fv.second.as<value::ValueBlock>()) {
+        (void)pvb;
         // make empty array
         primMeta.references = std::make_pair(ListEditQual::ResetToExplicit,
                                              std::vector<Reference>());
@@ -2096,6 +2153,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
       }
     } else if (fv.first == "payload") {  // `payload` composition
       if (auto pvb = fv.second.as<value::ValueBlock>()) {
+        (void)pvb;
         // make empty array
         primMeta.payload = std::make_pair(ListEditQual::ResetToExplicit,
                                              std::vector<Payload>());
