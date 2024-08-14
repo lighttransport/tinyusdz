@@ -51,7 +51,7 @@
 * Support reading & compose some production USD scenes
   * [ ] Moana island v2.1 https://github.com/syoyo/tinyusdz/issues/90
   * [ ] ALAB USD production scene https://github.com/syoyo/tinyusdz/issues/91
-
+  * [ ] Activision Caldera scene https://github.com/lighttransport/tinyusdz/issues/184
 
 ## Build status
 
