@@ -26,11 +26,11 @@
   * OpenPBR shading model support https://github.com/lighttransport/tinyusdz/issues/172
   * USD + MateriralX + OpenPBR rendering verification using pbrlab? https://github.com/lighttransport/pbrlab
 * Nested variantSet https://github.com/lighttransport/tinyusdz/issues/94 
-* Enhancement for wasm(e.g. write USDZ loader for three.js), webgpu https://github.com/syoyo/tinyusdz/issues/118 
+* Enhancement for wasm, webgpu https://github.com/syoyo/tinyusdz/issues/118
+  * Three.js loader addon(TinyUSDZLoader) https://github.com/lighttransport/tinyusdz/issues/185 
 * better colorspace + wide-gamut support https://github.com/syoyo/tinyusdz/issues/142
 * Better skinning + blendshapes support
   * Write example using mediapipe for motion tracking and face tracking with rigged USDZ model.  
-* Three.js loader addon(TinyUSDZLoader) https://github.com/lighttransport/tinyusdz/issues/185
 * Improve interoperability with Blender USD export/import https://github.com/syoyo/tinyusdz/issues/98
 * Tydra: Handy data structure converter for rendering https://github.com/syoyo/tinyusdz/issues/31
   * [x] USD to RenderScene(OpenGL/Vulkan-like API friendly data structure) conversion https://github.com/syoyo/tinyusdz/issues/109
