@@ -1,7 +1,7 @@
 # Assume this project is invoked by emcmake.
 cmake_minimum_required(VERSION 3.5.1)
 
-set(BUILD_TARGET "tinyusdzjs")
+set(BUILD_TARGET "tinyusdz")
 
 if (NOT EMSCRIPTEN)
   message(FATAL "Must be compiled with emscripten")
@@ -30,6 +30,9 @@ list(
 
 add_executable(${BUILD_TARGET} ${SOURCES})
 add_sanitizers(${BUILD_TARGET})
+
+set(EXT_COMPILE_OPTIONS "-sTOTAL_MEMORY=1024MB")
+
 target_compile_options(${BUILD_TARGET} PRIVATE ${EXT_COMPILE_OPTIONS})
 
 # tinyusdz dir
@@ -43,7 +46,15 @@ target_link_libraries(${BUILD_TARGET} PRIVATE tinyusdz::tinyusdz_static
 source_group("Source Files" FILES ${SOURCES})
 
 if (EMSCRIPTEN)
-    set(CMAKE_EXECUTABLE_SUFFIX ".html")
+    set_target_properties(
+        ${BUILD_TARGET}
+        PROPERTIES OUTPUT_NAME tinyusdz
+                   SUFFIX ".js"
+                   RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/dist)
+    #set(CMAKE_EXECUTABLE_SUFFIX ".html")
 endif()
 
-set_target_properties(${BUILD_TARGET} PROPERTIES LINK_FLAGS " --bind")
+set_target_properties(${BUILD_TARGET} PROPERTIES LINK_FLAGS "-s INITIAL_MEMORY=128MB -s TOTAL_MEMORY=1GB -sTOTAL_STACK=256MB -sASSERTIONS -s ALLOW_MEMORY_GROWTH=1 -s WASM=1 -sMODULARIZE -sEXPORT_ES6=1 --bind")
+
+# ENVIRONMENT=web
+# SINGLE_FILE=1
