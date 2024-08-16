@@ -10,16 +10,21 @@ Requires emscripten + cmake(emcmake)
 
 See `bootstrap-emscripten-linux.sh` for details.
 
-## Setup
+## Simple example
 
 We use `bun` + TypeScript.
+
+Copy `tinyusdz.js` and `tinyusdz.wasm`, and USD files to `simple` folder.
+Then in `simple` folder,
 
 ```
 $ bun install
 ```
 
+Then run
 
-## API design
+```
+$ bun run dev
+```
 
-Use GLTFLoader-like API as much as possible. 
 
