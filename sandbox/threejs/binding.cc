@@ -69,6 +69,70 @@ class TinyUSDZLoader {
     return render_scene_.meshes.size();
   }
 
+  emscripten::val getMaterial(int mat_id) const {
+
+    emscripten::val mat = emscripten::val::object();
+
+    if (!loaded_) {
+      return mat;
+    }
+
+    if (mat_id >= render_scene_.materials.size()) {
+      return mat;
+    }
+
+    // TODO
+    return mat;
+  }
+
+  emscripten::val getTexture(int tex_id) const {
+
+    emscripten::val tex = emscripten::val::object();
+
+    if (!loaded_) {
+      return tex;
+    }
+
+    if (tex_id >= render_scene_.textures.size()) {
+      return tex;
+    }
+
+    const auto &t = render_scene_.textures[tex_id];
+
+    tex.set("textureImageId", t.texture_image_id);
+    tex.set("wrapS", to_string(t.wrapS));
+    tex.set("wrapT", to_string(t.wrapS));
+    // TOOD: bias, scale, rot/scale/trans
+
+    return tex;
+  }
+
+  emscripten::val getImage(int img_id) const {
+
+    emscripten::val img = emscripten::val::object();
+
+    if (!loaded_) {
+      return img;
+    }
+
+    if (img_id >= render_scene_.images.size()) {
+      return img;
+    }
+
+    const auto &i = render_scene_.images[img_id];
+
+    if ((i.buffer_id > 0) && (i.buffer_id < render_scene_.buffers.size())) {
+      const auto &b = render_scene_.buffers[i.buffer_id];
+
+      // TODO: RGBA
+      
+      img.set("data", emscripten::typed_memory_view(b.data.size(), b.data.data()));
+    }
+
+
+    return img;
+  }
+
   emscripten::val getMesh(int mesh_id) const {
     emscripten::val mesh = emscripten::val::object();
 
