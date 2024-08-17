@@ -426,6 +426,8 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/shader-network.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.hh
         )
 endif (TINYUSDZ_WITH_TYDRA)
 
