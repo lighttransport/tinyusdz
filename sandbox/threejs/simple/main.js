@@ -2,10 +2,13 @@ import * as THREE from 'three';
 
 import initTinyUSDZ from './tinyusdz.js';
 
-const USDZ_FILEPATH = './suzanne.usdc';
+const USDZ_FILEPATH = './sneaker_airforce.usdz';
+//const USDZ_FILEPATH = './sneaker_pegasustrail.usdz';
+//const USDZ_FILEPATH = './suzanne.usdc';
 //const USDZ_FILEPATH = './cube.usdz';
-//const USDZ_FILEPATH = './texture-cat-plane.usda';
+//const USDZ_FILEPATH = './texture-cat-plane.usdz';
 //const USDZ_FILEPATH = './LemonMeringuePie.usdz';
+//const USDZ_FILEPATH = './pancakes.usdz';
 //const USDZ_FILEPATH = './robot.usda';
 //const USDZ_FILEPATH = './teapot.usdz';
 //const USDZ_FILEPATH = './DamagedHelmet.usdz';
@@ -37,17 +40,52 @@ initTinyUSDZ().then(function(TinyUSDZLoader) {
   geometry.setAttribute( 'position', new THREE.BufferAttribute( mesh.points, 3 ) );
   // TODO: set normal from mesh
 
+  if (mesh.hasOwnProperty('texcoords')) {
+    console.log(mesh.texcoords);
+    geometry.setAttribute( 'uv', new THREE.BufferAttribute( mesh.texcoords, 2 ) );
+  }
+
+  const usdMaterial = usd.getMaterial(mesh.materialId);
+  console.log("usdMat", usdMaterial);
+  if (usdMaterial.aaa) {
+    console.log("aaa");
+  }
+
+  var material;
+
+  if (usdMaterial.hasOwnProperty('diffuseColorTextureId')) {
+    const diffTex = usd.getTexture(usdMaterial.diffuseColorTextureId);
+
+    const img = usd.getImage(diffTex.textureImageId);
+    console.log(img);
+
+    // assume RGBA for now.
+    let image8Array = new Uint8ClampedArray(img.data);
+    let imgData = new ImageData(image8Array, img.width, img.height);
+
+    const texture = new THREE.DataTexture( imgData, img.width, img.height );
+    texture.flipY = true;
+    texture.needsUpdate = true;
+    
+    material = new THREE.MeshBasicMaterial({
+      map: texture
+    });
+  } else {
+    material = new THREE.MeshNormalMaterial();
+  }
+   
+
   // Assume triangulated indices.
   geometry.setIndex( new THREE.Uint32BufferAttribute(mesh.faceVertexIndices, 1) );
 
   geometry.computeVertexNormals();
 
   //const material = new THREE.MeshBasicMaterial( { color: 0x00ff00 } );
-  const material = new THREE.MeshNormalMaterial();
   const cube = new THREE.Mesh( geometry, material );
   scene.add( cube );
 
-  camera.position.z = 5;
+  camera.position.z = 25;
+  //camera.position.z = 0.5;
 
   function animate() {
 
