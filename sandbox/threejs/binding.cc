@@ -8,6 +8,47 @@
 
 using namespace emscripten;
 
+namespace detail {
+
+// To RGBA 
+bool ToRGBA(const std::vector<uint8_t> &src, int channels,
+  std::vector<uint8_t> &dst) {
+  
+  uint32_t npixels = src.size() / channels;
+  dst.resize(npixels * 4);
+
+  if (channels == 1) { // grayscale
+    for (size_t i = 0; i < npixels; i++) {
+      dst[4 * i + 0] = src[i];
+      dst[4 * i + 1] = src[i];
+      dst[4 * i + 2] = src[i];
+      dst[4 * i + 3] = 1.0f;
+    }
+  } else if (channels == 2) { // assume luminance + alpha
+    for (size_t i = 0; i < npixels; i++) {
+      dst[4 * i + 0] = src[2*i+0];
+      dst[4 * i + 1] = src[2*i+0];
+      dst[4 * i + 2] = src[2*i+0];
+      dst[4 * i + 3] = src[2*i+1];
+    }
+  } else if (channels == 3) {
+    for (size_t i = 0; i < npixels; i++) {
+      dst[4 * i + 0] = src[3*i+0];
+      dst[4 * i + 1] = src[3*i+1];
+      dst[4 * i + 2] = src[3*i+2];
+      dst[4 * i + 3] = 1.0f;
+    }
+  } else if (channels == 4) {
+    dst = src;
+  } else {
+    return false;
+  }
+
+  return true;
+}
+
+}
+
 ///
 /// Simple C++ wrapper class for Emscripten
 ///
@@ -28,6 +69,8 @@ class TinyUSDZLoader {
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size());
 
     tinyusdz::tydra::RenderSceneConverterEnv env(stage);
+
+    env.material_config.preserve_texel_bitdepth = true;
 
     if (is_usdz) {
       // Setup AssetResolutionResolver to read a asset(file) from memory.
@@ -81,7 +124,15 @@ class TinyUSDZLoader {
       return mat;
     }
 
-    // TODO
+    const auto &m = render_scene_.materials[mat_id];
+
+    if (m.surfaceShader.diffuseColor.is_texture()) {
+      mat.set("diffuseColorTextureId", m.surfaceShader.diffuseColor.texture_id);
+    } else {
+      // TODO
+      //mat.set("diffuseColor", m.surfaceShader.diffuseColor);
+    }
+
     return mat;
   }
 
@@ -99,9 +150,9 @@ class TinyUSDZLoader {
 
     const auto &t = render_scene_.textures[tex_id];
 
-    tex.set("textureImageId", t.texture_image_id);
-    tex.set("wrapS", to_string(t.wrapS));
-    tex.set("wrapT", to_string(t.wrapS));
+    tex.set("textureImageId", int(t.texture_image_id));
+    //tex.set("wrapS", to_string(t.wrapS));
+    //tex.set("wrapT", to_string(t.wrapT));
     // TOOD: bias, scale, rot/scale/trans
 
     return tex;
@@ -121,12 +172,15 @@ class TinyUSDZLoader {
 
     const auto &i = render_scene_.images[img_id];
 
-    if ((i.buffer_id > 0) && (i.buffer_id < render_scene_.buffers.size())) {
+    if ((i.buffer_id >= 0) && (i.buffer_id < render_scene_.buffers.size())) {
       const auto &b = render_scene_.buffers[i.buffer_id];
 
-      // TODO: RGBA
+      // TODO: Support HDR
       
       img.set("data", emscripten::typed_memory_view(b.data.size(), b.data.data()));
+      img.set("width", int(i.width));
+      img.set("height", int(i.height));
+      img.set("channels", int(i.channels));
     }
 
 
@@ -158,6 +212,20 @@ class TinyUSDZLoader {
     // vec3
     mesh.set("points", emscripten::typed_memory_view(rmesh.points.size() * 3, points_ptr)); 
 
+    {
+      // slot 0 hardcoded.
+      uint32_t uvSlotId = 0;
+      if (rmesh.texcoords.count(uvSlotId)) {
+        const float *uvs_ptr = reinterpret_cast<const float *>(rmesh.texcoords.at(uvSlotId).data.data());
+
+        // assume vec2
+        mesh.set("texcoords", emscripten::typed_memory_view(rmesh.texcoords.at(uvSlotId).vertex_count() * 2, uvs_ptr)); 
+      }
+    }
+
+    mesh.set("materialId", rmesh.material_id);
+
+
     return mesh;
   }
 
@@ -186,6 +254,9 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .constructor<const std::string &>()
       .function("getMesh", &TinyUSDZLoader::getMesh)
       .function("numMeshes", &TinyUSDZLoader::numMeshes)
+      .function("getMaterial", &TinyUSDZLoader::getMaterial)
+      .function("getTexture", &TinyUSDZLoader::getTexture)
+      .function("getImage", &TinyUSDZLoader::getImage)
       .function("ok", &TinyUSDZLoader::ok)
       .function("error", &TinyUSDZLoader::error);
 }
