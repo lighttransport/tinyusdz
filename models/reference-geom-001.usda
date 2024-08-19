@@ -1,0 +1,10 @@
+#usda 1.0
+
+# run with `tusdcat --flatten reference-geom-001.usda`
+
+def Mesh "bora" (
+  # reference(include) </Suzanne/Suzanne> (GeomMesh) to this 'bora' GeomMesh
+  references = @./suzanne.usdc@</Suzanne/Suzanne>
+) {
+
+}
