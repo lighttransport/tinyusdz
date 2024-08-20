@@ -31,6 +31,31 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Setup Emscripten SDK
+        run: |
+          git clone https://github.com/emscripten-core/emsdk.git
+          cd emsdk
+          # from https://github.com/Twinklebear/webgpu-cpp-usdz/blob/main/.github/workflows/deploy-page.yml
+          # TODO: 3.1.52 has a change to WebGPU API that is incompatible
+          # with the C++ bindings I have in the repo?
+          ./emsdk install 3.1.51
+          ./emsdk activate 3.1.51
+      - name: Configure
+        run: |
+          source ./emsdk/emsdk_env.sh
+          cd web
+          mkdir cmake-build
+          cd cmake-build
+          emcmake cmake .. -DCMAKE_BUILD_TYPE=MinSizeRel
+      - name: Build WASM build of tinyusdz
+        working-directory: ${{ github.workspace }}/web/cmake-build
+        run: |
+          source ../emsdk/emsdk_env.sh
+          make
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
       - name: Upload artifact
