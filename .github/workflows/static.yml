@@ -53,7 +53,7 @@ jobs:
       - name: Build WASM build of tinyusdz
         working-directory: ${{ github.workspace }}/web/cmake-build
         run: |
-          source ../emsdk/emsdk_env.sh
+          source ../../emsdk/emsdk_env.sh
           make
 
       - name: Setup Pages
