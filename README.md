@@ -2,11 +2,15 @@
 
 `TinyUSDZ` is secure, portable and dependency-free(depends only on C++ STL. Other 3rd-party libraries included. Yes, you don't need pxrUSD/OpenUSD library!) USDZ/USDC/USDA library written in C++14.
 
+[Wasm demo!](https://lighttransport.github.io/tinyusdz/index.html) (requires 60MB file download)
+
 <img src="https://github.com/syoyo/tinyusdz/assets/18676/2419ddf6-4410-4bcc-b9c1-466bf29d3b20" width="400px">
 (from https://github.com/syoyo/Vulkan-glTF-USDZ-PBR)
 
 <img src="https://github.com/lighttransport/tinyusdz/assets/18676/5291f44f-b20a-4d4a-9b4a-16ffefccddc7" width="400px">
 (from ASF MaterialXViewer fork https://github.com/lighttransport/materialx)
+
+
 
 ## High priority
 
