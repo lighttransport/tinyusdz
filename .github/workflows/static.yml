@@ -56,8 +56,17 @@ jobs:
           source ../../emsdk/emsdk_env.sh
           make
 
+      - name: otherasserts
+        working-directory: ${{ github.workspace }}/web/demo
+        run: |
+          sh download_asset.sh
+          cp UsdCookie.usdz ../dist
+          cp index.html ../dist
+          cp main.js ../dist
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
