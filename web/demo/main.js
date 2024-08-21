@@ -1,4 +1,5 @@
-import * as THREE from 'three';
+//import * as THREE from 'three';
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three/build/three.module.js';
 
 import initTinyUSDZ from 'https://lighttransport.github.io/tinyusdz/tinyusdz.js';
 
@@ -24,7 +25,8 @@ initTinyUSDZ().then(function(TinyUSDZLoader) {
 
   // First mesh only
   const mesh = usd.getMesh(0);
-  console.log(mesh);
+  //console.log("usd", usd)
+  //console.log("mesh", mesh);
 
   //const geometry = new THREE.BoxGeometry( 1, 1, 1 );
   const geometry = new THREE.BufferGeometry();
@@ -37,10 +39,10 @@ initTinyUSDZ().then(function(TinyUSDZLoader) {
   }
 
   const usdMaterial = usd.getMaterial(mesh.materialId);
-  console.log("usdMat", usdMaterial);
-  if (usdMaterial.aaa) {
-    console.log("aaa");
-  }
+  //console.log("usdMat", usdMaterial);
+  //if (usdMaterial.aaa) {
+  //  console.log("aaa");
+  //}
 
   var material;
 
@@ -80,8 +82,8 @@ initTinyUSDZ().then(function(TinyUSDZLoader) {
 
   function animate() {
 
-    cube.rotation.x += 0.01;
-    cube.rotation.y += 0.01;
+    //cube.rotation.x += 0.01;
+    cube.rotation.y += 0.02;
 
     renderer.render( scene, camera );
 
