@@ -138,49 +138,57 @@
       "name": "msvc_2022_debug",
       "displayName": "Debug",
       "configurePreset": "msvc_2022_debug",
-      "jobs":  8
+      "jobs":  8,
+      "configuration": "Debug"
     },
     {
       "name": "msvc_2022_release",
       "displayName": "Release",
       "configurePreset": "msvc_2022_release",
-      "jobs":  8
+      "jobs":  8,
+      "configuration": "Release"
     },
     {
       "name": "msvc_2022_relwithdebinfo",
       "displayName": "RelWithDebInfo",
       "configurePreset": "msvc_2022_relwithdebinfo",
-      "jobs":  8
+      "jobs":  8,
+      "configuration": "RelWithDebInfo"
     },
     {
       "name": "msvc_2022_minsizerel",
       "displayName": "MinSizeRel",
       "configurePreset": "msvc_2022_minsizerel",
-      "jobs":  8
+      "jobs":  8,
+      "configuration": "MinSizeRel"
     },
     {
       "name": "msvc_2019_debug",
       "displayName": "Debug",
       "configurePreset": "msvc_2019_debug",
-      "jobs":  8
+      "jobs":  8,
+      "configuration": "Debug"
     },
     {
       "name": "msvc_2019_release",
       "displayName": "Release",
       "configurePreset": "msvc_2019_release",
-      "jobs":  8
+      "jobs":  8,
+      "configuration": "Release"
     },
     {
       "name": "msvc_2019_relwithdebinfo",
       "displayName": "RelWithDebInfo",
       "configurePreset": "msvc_2019_relwithdebinfo",
-      "jobs":  8
+      "jobs":  8,
+      "configuration": "RelWithDebInfo"
     },
     {
       "name": "msvc_2019_minsizerel",
       "displayName": "MinSizeRel",
       "configurePreset": "msvc_2019_minsizerel",
-      "jobs":  8
+      "jobs":  8,
+      "configuration": "MinSizeRel"
     }
   ],
   "testPresets": [
