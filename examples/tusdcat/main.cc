@@ -34,7 +34,7 @@ static std::string str_tolower(std::string s) {
 }
 
 void print_help() {
-    std::cout << "Usage tusdcat [--flatten] [--composition=STRLIST] [--relative] [--extract-variants] [--parse-only] input.usda/usdc/usdz\n";
+    std::cout << "Usage tusdcat [--flatten] [--loadOnly] [--composition=STRLIST] [--relative] [--extract-variants] input.usda/usdc/usdz\n";
     std::cout << "\n --flatten (not fully implemented yet) Do composition(load sublayers, refences, payload, evaluate `over`, inherit, variants..)";
     std::cout << "  --composition: Specify which composition feature to be "
                  "enabled(valid when `--flatten` is supplied). Comma separated "
@@ -44,7 +44,7 @@ void print_help() {
                  "--composition=r,p --composition=references,subLayers\n";
     std::cout << "\n --extract-variants (w.i.p) Dump variants information to .json\n";
     std::cout << "\n --relative (not implemented yet) Print Path as relative Path\n";
-    std::cout << "\n --parse-only Parse USD file only(Check if input USD is valid or not)\n";
+    std::cout << "\n -l, --loadOnly Load(Parse) USD file only(Check if input USD is valid or not)\n";
 
 }
 
@@ -57,7 +57,7 @@ int main(int argc, char **argv) {
   bool has_flatten{false};
   bool has_relative{false};
   bool has_extract_variants{false};
-  bool parse_only{false};
+  bool load_only{false};
 
   constexpr int kMaxIteration = 128;
 
@@ -71,12 +71,12 @@ int main(int argc, char **argv) {
     if ((arg.compare("-h") == 0) || (arg.compare("--help") ==0)) {
       print_help();
       return EXIT_FAILURE;
-    } else if (arg.compare("--flatten") == 0) {
+    } else if ((arg.compare("-f") == 0) || (arg.compare("--flatten") == 0)) {
       has_flatten = true;
     } else if (arg.compare("--relative") == 0) {
       has_relative = true;
-    } else if (arg.compare("--parse-only") == 0) {
-      parse_only = true;
+    } else if ((arg.compare("-l") == 0) || (arg.compare("--loadOnly") == 0)) {
+      load_only = true;
     } else if (arg.compare("--extract-variants") == 0) {
       has_extract_variants = true;
     } else if (tinyusdz::startsWith(arg, "--composition=")) {
@@ -133,8 +133,8 @@ int main(int argc, char **argv) {
 
   if (has_flatten) {
 
-    if (parse_only) {
-      std::cerr << "--flatten and --parse-only cannot be specified at a time\n";
+    if (load_only) {
+      std::cerr << "--flatten and --loadOnly cannot be specified at a time\n";
       return EXIT_FAILURE;
     }
 
@@ -380,7 +380,7 @@ int main(int argc, char **argv) {
       return EXIT_FAILURE;
     }
 
-    if (parse_only) {
+    if (load_only) {
       return EXIT_SUCCESS;
     }
 
