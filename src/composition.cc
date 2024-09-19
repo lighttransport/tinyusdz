@@ -1331,8 +1331,7 @@ bool LayerToStage(const Layer &layer, Stage *stage_out, std::string *warn,
   for (const auto &primspec : layer.primspecs()) {
     if (auto pv =
             detail::ReconstructPrimFromPrimSpec(primspec.second, warn, err)) {
-      // TODO
-      (void)pv;
+      stage.add_root_prim(std::move(pv.value()));
     }
   }
 

@@ -2,11 +2,15 @@
 
 `TinyUSDZ` is secure, portable and dependency-free(depends only on C++ STL. Other 3rd-party libraries included. Yes, you don't need pxrUSD/OpenUSD library!) USDZ/USDC/USDA library written in C++14.
 
+[Wasm demo!](https://lighttransport.github.io/tinyusdz/index.html) (requires 10MB file download)
+
 <img src="https://github.com/syoyo/tinyusdz/assets/18676/2419ddf6-4410-4bcc-b9c1-466bf29d3b20" width="400px">
 (from https://github.com/syoyo/Vulkan-glTF-USDZ-PBR)
 
 <img src="https://github.com/lighttransport/tinyusdz/assets/18676/5291f44f-b20a-4d4a-9b4a-16ffefccddc7" width="400px">
 (from ASF MaterialXViewer fork https://github.com/lighttransport/materialx)
+
+
 
 ## High priority
 
@@ -24,12 +28,13 @@
 * MaterialX https://github.com/syoyo/tinyusdz/issues/86
   * Write our own MaterialX parser
   * OpenPBR shading model support https://github.com/lighttransport/tinyusdz/issues/172
-  * USD + MateriralX + OpenPBR rendering verification using pbrlab? https://github.com/lighttransport/pbrlab 
-* Enhancement for wasm(e.g. write USDZ loader for three.js), webgpu https://github.com/syoyo/tinyusdz/issues/118 
+  * USD + MateriralX + OpenPBR rendering verification using pbrlab? https://github.com/lighttransport/pbrlab
+* Nested variantSet https://github.com/lighttransport/tinyusdz/issues/94 
+* Enhancement for wasm, webgpu https://github.com/syoyo/tinyusdz/issues/118
+  * Three.js loader addon(TinyUSDZLoader) https://github.com/lighttransport/tinyusdz/issues/185 
 * better colorspace + wide-gamut support https://github.com/syoyo/tinyusdz/issues/142
 * Better skinning + blendshapes support
   * Write example using mediapipe for motion tracking and face tracking with rigged USDZ model.  
-
 * Improve interoperability with Blender USD export/import https://github.com/syoyo/tinyusdz/issues/98
 * Tydra: Handy data structure converter for rendering https://github.com/syoyo/tinyusdz/issues/31
   * [x] USD to RenderScene(OpenGL/Vulkan-like API friendly data structure) conversion https://github.com/syoyo/tinyusdz/issues/109
@@ -50,7 +55,7 @@
 * Support reading & compose some production USD scenes
   * [ ] Moana island v2.1 https://github.com/syoyo/tinyusdz/issues/90
   * [ ] ALAB USD production scene https://github.com/syoyo/tinyusdz/issues/91
-
+  * [ ] Activision Caldera scene https://github.com/lighttransport/tinyusdz/issues/184
 
 ## Build status
 
