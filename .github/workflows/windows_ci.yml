@@ -28,6 +28,12 @@ jobs:
         run: cmake --build build --config Release
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
+      - name: Archive production artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-win-x64-release
+          path: |
+            build/Release/tusdcat.exe
 
   # Windows(32bit) + Visual Studio 2019 build
   build-windows-msvc-win32:

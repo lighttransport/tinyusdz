@@ -6270,7 +6270,7 @@ bool CrateReader::ReadTOC() {
     // TODO: handle integer overflow.
     size_t end_offset = size_t(_toc.sections[i].start + _toc.sections[i].size);
     if (sizeof(void *) == 4) { // 32bit
-      if (end_offset > std::numeric_limits<int32_t>::max()) {
+      if (end_offset > size_t(std::numeric_limits<int32_t>::max())) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Section end offset exceeds 32bit max."));
       }
     }

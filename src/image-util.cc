@@ -17,6 +17,7 @@
 #pragma GCC diagnostic ignored "-Wunused-variable"
 #pragma GCC diagnostic ignored "-Wunused-function"
 #pragma GCC diagnostic ignored "-Warray-bounds"
+#pragma GCC diagnostic ignored "-Wunused-but-set-variable"
 #endif
 
 #if !defined(TINYUSDZ_NO_STB_IMAGE_RESIZE_IMPLEMENTATION)

@@ -427,6 +427,8 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/shader-network.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.hh
         )
 endif (TINYUSDZ_WITH_TYDRA)
 
@@ -692,6 +694,11 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   # we need to suppress it as a work around.
   if (${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 16)
     set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-unsafe-buffer-usage")
+  endif()
+
+  # this is actually a work around of false-positive behavior of clang in Androind NDK 27.
+  if (${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 17)
+    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-switch-default")
   endif()
 
   if(TINYUSDZ_COMPILE_TIME_TRACE)
