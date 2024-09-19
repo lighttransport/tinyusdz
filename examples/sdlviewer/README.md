@@ -13,6 +13,13 @@ W.I.P.
   * external library imgui_sdl requires C++14
 * cmake
 * X11 related package(Linux only)
+* SDL2
+
+## Setup
+
+You may use system installed SDL2, but we recommend to build SDL2 from source codes.
+Please download SDL2 source package and unpack it to ../common/
+See ../common/README.sdl2 for details.
 
 ## Build
 

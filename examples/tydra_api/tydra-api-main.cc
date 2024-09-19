@@ -139,66 +139,25 @@ int main(int argc, char **argv) {
 
   tinyusdz::Stage stage;
 
-  if (ext.compare("usdc") == 0) {
-    bool ret = tinyusdz::LoadUSDCFromFile(filepath, &stage, &warn, &err);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-    }
-    if (!err.empty()) {
-      std::cerr << "ERR : " << err << "\n";
-      // return EXIT_FAILURE;
-    }
-
-    if (!ret) {
-      std::cerr << "Failed to load USDC file: " << filepath << "\n";
-      return EXIT_FAILURE;
-    }
-  } else if (ext.compare("usda") == 0) {
-    bool ret = tinyusdz::LoadUSDAFromFile(filepath, &stage, &warn, &err);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-    }
-    if (!err.empty()) {
-      std::cerr << "ERR : " << err << "\n";
-      // return EXIT_FAILURE;
-    }
-
-    if (!ret) {
-      std::cerr << "Failed to load USDA file: " << filepath << "\n";
-      return EXIT_FAILURE;
-    }
-  } else if (ext.compare("usdz") == 0) {
-    // std::cout << "usdz\n";
-    bool ret = tinyusdz::LoadUSDZFromFile(filepath, &stage, &warn, &err);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-    }
-    if (!err.empty()) {
-      std::cerr << "ERR : " << err << "\n";
-      // return EXIT_FAILURE;
-    }
-
-    if (!ret) {
-      std::cerr << "Failed to load USDZ file: " << filepath << "\n";
-      return EXIT_FAILURE;
-    }
-
-  } else {
-    // try to auto detect format.
-    bool ret = tinyusdz::LoadUSDFromFile(filepath, &stage, &warn, &err);
-    if (!warn.empty()) {
-      std::cerr << "WARN : " << warn << "\n";
-    }
-    if (!err.empty()) {
-      std::cerr << "ERR : " << err << "\n";
-      // return EXIT_FAILURE;
-    }
-
-    if (!ret) {
-      std::cerr << "Failed to load USD file: " << filepath << "\n";
-      return EXIT_FAILURE;
-    }
+  if (!tinyusdz::IsUSD(filepath)) {
+    std::cerr << "File not found or not a USD format: " << filepath << "\n";
   }
+
+  bool ret = tinyusdz::LoadUSDFromFile(filepath, &stage, &warn, &err);
+  if (!warn.empty()) {
+    std::cerr << "WARN : " << warn << "\n";
+  }
+
+  if (!err.empty()) {
+    std::cerr << "ERR : " << err << "\n";
+  }
+
+  if (!ret) {
+    std::cerr << "Failed to load USD file: " << filepath << "\n";
+    return EXIT_FAILURE;
+  }
+
+  // bool is_usdz = tinyusdz::IsUSDZ(filepath);
 
   std::string s = stage.ExportToString();
   std::cout << s << "\n";

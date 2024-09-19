@@ -9,6 +9,8 @@
 #include "str-util.hh"
 #include "io-util.hh"
 
+#include "tydra/scene-access.hh"
+
 struct CompositionFeatures {
   bool subLayers{true};
   bool inherits{true};
@@ -31,9 +33,8 @@ static std::string str_tolower(std::string s) {
   return s;
 }
 
-int main(int argc, char **argv) {
-  if (argc < 2) {
-    std::cout << "Usage tusdcat [--flatten] [--composition=STRLIST] [--relative] [--extract-variants] input.usda/usdc/usdz\n";
+void print_help() {
+    std::cout << "Usage tusdcat [--flatten] [--loadOnly] [--composition=STRLIST] [--relative] [--extract-variants] input.usda/usdc/usdz\n";
     std::cout << "\n --flatten (not fully implemented yet) Do composition(load sublayers, refences, payload, evaluate `over`, inherit, variants..)";
     std::cout << "  --composition: Specify which composition feature to be "
                  "enabled(valid when `--flatten` is supplied). Comma separated "
@@ -43,12 +44,20 @@ int main(int argc, char **argv) {
                  "--composition=r,p --composition=references,subLayers\n";
     std::cout << "\n --extract-variants (w.i.p) Dump variants information to .json\n";
     std::cout << "\n --relative (not implemented yet) Print Path as relative Path\n";
+    std::cout << "\n -l, --loadOnly Load(Parse) USD file only(Check if input USD is valid or not)\n";
+
+}
+
+int main(int argc, char **argv) {
+  if (argc < 2) {
+    print_help();
     return EXIT_FAILURE;
   }
 
   bool has_flatten{false};
   bool has_relative{false};
   bool has_extract_variants{false};
+  bool load_only{false};
 
   constexpr int kMaxIteration = 128;
 
@@ -59,10 +68,15 @@ int main(int argc, char **argv) {
 
   for (size_t i = 1; i < argc; i++) {
     std::string arg = argv[i];
-    if (arg.compare("--flatten") == 0) {
+    if ((arg.compare("-h") == 0) || (arg.compare("--help") ==0)) {
+      print_help();
+      return EXIT_FAILURE;
+    } else if ((arg.compare("-f") == 0) || (arg.compare("--flatten") == 0)) {
       has_flatten = true;
     } else if (arg.compare("--relative") == 0) {
       has_relative = true;
+    } else if ((arg.compare("-l") == 0) || (arg.compare("--loadOnly") == 0)) {
+      load_only = true;
     } else if (arg.compare("--extract-variants") == 0) {
       has_extract_variants = true;
     } else if (tinyusdz::startsWith(arg, "--composition=")) {
@@ -118,6 +132,11 @@ int main(int argc, char **argv) {
   base_dir = tinyusdz::io::GetBaseDir(filepath);
 
   if (has_flatten) {
+
+    if (load_only) {
+      std::cerr << "--flatten and --loadOnly cannot be specified at a time\n";
+      return EXIT_FAILURE;
+    }
 
     // TODO: flatten for USDZ
     if (tinyusdz::IsUSDZ(filepath)) {
@@ -305,6 +324,7 @@ int main(int argc, char **argv) {
         std::cout << "# of composition iteration to resolve fully: " << (i + 1) << "\n";
         break;
       }
+
     }
 
     if (has_extract_variants) {
@@ -317,80 +337,51 @@ int main(int argc, char **argv) {
 
     }
 
+    tinyusdz::Stage comp_stage;
+    ret = LayerToStage(src_layer, &comp_stage, &warn, &err);
+    if (warn.size()) {
+      std::cout << warn<< "\n";
+    }
+
+    if (!ret) {
+      std::cerr << err << "\n";
+    }
+    
+    std::cout << comp_stage.ExportToString() << "\n";
+
+    using MeshMap = std::map<std::string, const tinyusdz::GeomMesh *>;
+    MeshMap meshmap;
+
+    tinyusdz::tydra::ListPrims(comp_stage, meshmap);
+
+    for (const auto &item : meshmap) {
+
+      std::cout << "Prim : " << item.first << "\n";
+    }
+
   } else {
 
     tinyusdz::Stage stage;
 
-    if (ext.compare("usdc") == 0) {
-      tinyusdz::USDLoadOptions options;
-      options.do_composition = has_flatten;
+    tinyusdz::USDLoadOptions options;
 
-      bool ret = tinyusdz::LoadUSDCFromFile(filepath, &stage, &warn, &err, options);
-      if (!warn.empty()) {
-        std::cerr << "WARN : " << warn << "\n";
-      }
-      if (!err.empty()) {
-        std::cerr << "ERR : " << err << "\n";
-        //return EXIT_FAILURE;
-      }
+    // auto detect format.
+    bool ret = tinyusdz::LoadUSDFromFile(filepath, &stage, &warn, &err, options);
+    if (!warn.empty()) {
+      std::cerr << "WARN : " << warn << "\n";
+    }
+    if (!err.empty()) {
+      std::cerr << "ERR : " << err << "\n";
+      //return EXIT_FAILURE;
+    }
 
-      if (!ret) {
-        std::cerr << "Failed to load USDC file: " << filepath << "\n";
-        return EXIT_FAILURE;
-      }
-    } else if (ext.compare("usda") == 0) {
-      tinyusdz::USDLoadOptions options;
-      options.do_composition = has_flatten;
+    if (!ret) {
+      std::cerr << "Failed to load USD file: " << filepath << "\n";
+      return EXIT_FAILURE;
+    }
 
-      bool ret = tinyusdz::LoadUSDAFromFile(filepath, &stage, &warn, &err, options);
-      if (!warn.empty()) {
-        std::cerr << "WARN : " << warn << "\n";
-      }
-      if (!err.empty()) {
-        std::cerr << "ERR : " << err << "\n";
-        //return EXIT_FAILURE;
-      }
-
-      if (!ret) {
-        std::cerr << "Failed to load USDA file: " << filepath << "\n";
-        return EXIT_FAILURE;
-      }
-    } else if (ext.compare("usdz") == 0) {
-      if (has_flatten) {
-        std::cout << "--flatten is ignored for USDZ model at the moment.\n";
-      }
-      //std::cout << "usdz\n";
-      bool ret = tinyusdz::LoadUSDZFromFile(filepath, &stage, &warn, &err);
-      if (!warn.empty()) {
-        std::cerr << "WARN : " << warn << "\n";
-      }
-      if (!err.empty()) {
-        std::cerr << "ERR : " << err << "\n";
-        //return EXIT_FAILURE;
-      }
-
-      if (!ret) {
-        std::cerr << "Failed to load USDZ file: " << filepath << "\n";
-        return EXIT_FAILURE;
-      }
-    } else {
-      tinyusdz::USDLoadOptions options;
-      options.do_composition = has_flatten;
-
-      // try to auto detect format.
-      bool ret = tinyusdz::LoadUSDFromFile(filepath, &stage, &warn, &err, options);
-      if (!warn.empty()) {
-        std::cerr << "WARN : " << warn << "\n";
-      }
-      if (!err.empty()) {
-        std::cerr << "ERR : " << err << "\n";
-        //return EXIT_FAILURE;
-      }
-
-      if (!ret) {
-        std::cerr << "Failed to load USD file: " << filepath << "\n";
-        return EXIT_FAILURE;
-      }
+    if (load_only) {
+      return EXIT_SUCCESS;
     }
 
     std::string s = stage.ExportToString(has_relative);
