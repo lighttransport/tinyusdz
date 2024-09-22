@@ -11,7 +11,7 @@
 #include <cstdlib>
 #include <cstring>
 
-#include "tiny-vector.hh"
+#include "tiny-container.hh"
 
 namespace tinyusdz {
 
@@ -34,27 +34,27 @@ static size_t strlen(const char *s, size_t max_len = 1024u*1024u*1024u) {
 
 
 template<size_t N = 8>
-struct string {
+struct tstring {
   static_assert(N >= 8, "N must be 8 or larger.");
 
  public:
 
-  string() {}
-  ~string() {
+  tstring() {}
+  ~tstring() {
     _delete_string();
   }
 
-  string(const char *s) { 
+  tstring(const char *s) { 
     _copy_string(s);
   }
 
-  string(const std::string &s) : string(s.c_str()) { 
+  tstring(const std::string &s) : tstring(s.c_str()) { 
   }
 
-  string(const string &rhs) : string(rhs.c_str()) {
+  tstring(const tstring &rhs) : tstring(rhs.c_str()) {
   }
 
-  string(string &&rhs) {
+  tstring(tstring &&rhs) {
 
     _delete_string();
     
@@ -62,7 +62,7 @@ struct string {
     _len = std::exchange(rhs._len, 0);
   }
 
-  string &operator=(const string &rhs) {
+  tstring &operator=(const tstring &rhs) {
     if (this == &rhs) {
       return *this;
     }
@@ -72,7 +72,7 @@ struct string {
     return *this;
   }
 
-  string &operator=(string &&rhs) noexcept {
+  tstring &operator=(tstring &&rhs) noexcept {
     if (this == &rhs) {
       return *this;
     }
@@ -138,20 +138,20 @@ struct string {
 };
 
 // just a retain the pointer address.
-struct string_view {
+struct tstring_view {
  public:
 
-  string_view() {}
-  ~string_view() {
+  constexpr tstring_view() {}
+  ~tstring_view() {
     _s = nullptr;
   }
 
-  string_view(const char *s) { 
+  constexpr tstring_view(const char *s) { 
     _len = strlen(s);    
     _s = s;
   }
 
-  string_view(const std::string &s) : string_view(s.c_str()) { 
+  constexpr tstring_view(const std::string &s) : tstring_view(s.c_str()) { 
   }
 
   const char *c_str() const {
@@ -169,6 +169,19 @@ struct string_view {
 };
 
 namespace str {
+
+bool parse_int(const tstring_view &sv, int32_t *ret);
+bool parse_int64(const tstring_view &sv, int64_t *ret);
+
+bool parse_uint(const tstring_view &sv, uint32_t *ret);
+bool parse_uint64(const tstring_view &sv, uint64_t *ret);
+
+bool parse_float(const tstring_view &sv, float *ret);
+bool parse_double(const tstring_view &sv, double *ret);
+
+bool parse_int_arary(const tstring_view &sv, std::vector<int32_t> *result, const char delimiter = ',');
+bool parse_float_arary(const tstring_view &sv, std::vector<float> *result, const char delimiter = ',');
+bool parse_double_arary(const tstring_view &sv, std::vector<double> *result, const char delimiter = ',');
 
 bool print_float_array(std::vector<float> &v,
   std::string &dst, const char delimiter = ',');
