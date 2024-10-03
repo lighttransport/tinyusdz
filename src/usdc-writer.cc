@@ -567,10 +567,10 @@ bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
 namespace tinyusdz {
 namespace usdc {
 
-bool SaveAsUSDCToFile(const std::string &filename, const Scene &scene,
+bool SaveAsUSDCToFile(const std::string &filename, const Stage &stage,
                       std::string *warn, std::string *err) {
   (void)filename;
-  (void)scene;
+  (void)stage;
   (void)warn;
 
   if (err) {
@@ -580,9 +580,9 @@ bool SaveAsUSDCToFile(const std::string &filename, const Scene &scene,
   return false;
 }
 
-bool SaveAsUSDCToMemory(const Scene &scene, std::vector<uint8_t> *output,
+bool SaveAsUSDCToMemory(const Stage &stage, std::vector<uint8_t> *output,
                         std::string *warn, std::string *err) {
-  (void)scene;
+  (void)stage;
   (void)output;
   (void)warn;
 
