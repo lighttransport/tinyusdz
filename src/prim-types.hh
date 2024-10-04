@@ -2755,9 +2755,10 @@ class Property {
 
   // Relationship(typeless)
   Property(Relationship &&r, bool custom = false)
-      : _rel(std::move(r)), _has_custom(custom) {
+      : _has_custom(custom) {
     _type = Type::Relation;
     set_listedit_qual(r.get_listedit_qual());
+    _rel = std::move(r);
   }
 
   // Attribute Connection: has type
@@ -3965,7 +3966,7 @@ class PrimSpec {
     return *this;
   }
 
-  PrimSpec &operator=(PrimSpec &&rhs) {
+  PrimSpec &operator=(PrimSpec &&rhs) noexcept {
     if (this != &rhs) {
       MoveFrom(rhs);
     }
