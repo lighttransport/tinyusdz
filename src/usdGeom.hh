@@ -268,7 +268,7 @@ class GeomPrimvar {
     _has_value = true;
   }
 
-  void set_value(const Attribute &&attr) {
+  void set_value(Attribute &&attr) {
     _attr = std::move(attr);
     _has_value = true;
   }
