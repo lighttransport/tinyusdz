@@ -284,7 +284,7 @@ class GeomPrimvar {
     _indices = indices;
   }
 
-  void set_default_indices(const std::vector<int32_t> &&indices) {
+  void set_default_indices(std::vector<int32_t> &&indices) {
     _indices = std::move(indices);
   }
 
