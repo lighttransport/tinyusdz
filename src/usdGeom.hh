@@ -197,7 +197,7 @@ class GeomPrimvar {
   }
 
   bool has_default_indices() const { return !_indices.empty(); }
-  bool has_timesampled_indices() const { return _ts_indices.size(); }
+  bool has_timesampled_indices() const { return _ts_indices.size() > 0; }
 
   bool has_indices() const {
     return has_default_indices() || has_timesampled_indices();
