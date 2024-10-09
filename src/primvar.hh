@@ -55,7 +55,7 @@ struct PrimVar {
   }
 
   bool has_timesamples() const {
-    return _ts.size();
+    return _ts.size() > 0;
   }
 
   bool is_scalar() const {
