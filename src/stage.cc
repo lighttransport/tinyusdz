@@ -230,7 +230,8 @@ bool Stage::find_prim_by_prim_id(const uint64_t prim_id, const Prim *&prim,
     auto ret = _prim_id_cache.find(prim_id);
     if (ret != _prim_id_cache.end()) {
       DCOUT("Found cache.");
-      return ret->second;
+      prim = ret->second;
+      return true;
     }
   }
 
