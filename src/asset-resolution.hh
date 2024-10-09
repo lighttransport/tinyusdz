@@ -228,7 +228,7 @@ class AssetResolutionResolver {
   }
 
   bool has_asset_resolution_handler(const std::string &ext_name) {
-    return _asset_resolution_handlers.count(ext_name);
+    return _asset_resolution_handlers.count(ext_name) > 0;
   }
 
 
