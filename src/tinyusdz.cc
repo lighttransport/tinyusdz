@@ -176,30 +176,68 @@ bool LoadUSDCFromFile(const std::string &_filename, Stage *stage,
                       const USDLoadOptions &options) {
   std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
 
-  std::vector<uint8_t> data;
-  size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);
-  if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
-                         /* userdata */ nullptr)) {
-    if (err) {
-      (*err) += "File not found or failed to read : \"" + filepath + "\"\n";
+  if (io::IsMMapSupported()) {
+    io::MMapFileHandle handle;
+    
+    {
+      std::string _err;
+      if (!io::MMapFile(filepath, &handle, /* writable */false, &_err)) {
+        if (err) {
+          (*err) += _err + "\n";
+        }
+        return false; 
+      }
+
+      if (_err.size()) {
+        if (warn) {
+          (*warn) += _err + "\n";
+        }
+      }
     }
 
-    return false;
-  }
+    bool ret = LoadUSDCFromMemory(handle.addr, size_t(handle.size), filepath, stage, warn,
+                              err, options);
 
-  DCOUT("File size: " + std::to_string(data.size()) + " bytes.");
+    {
+      std::string _err;
+      // Ignore unmap result for now.
+      io::UnmapFile(handle, &_err);
 
-  if (data.size() < (11 * 8)) {
-    // ???
-    if (err) {
-      (*err) += "File size too short. Looks like this file is not a USDC : \"" +
-                filepath + "\"\n";
+      if (_err.size()) {
+        if (warn) {
+          (*warn) += _err + "\n";
+        }
+      }
     }
-    return false;
-  }
 
-  return LoadUSDCFromMemory(data.data(), data.size(), filepath, stage, warn,
-                            err, options);
+    return ret;
+
+  } else {
+    std::vector<uint8_t> data;
+    size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);
+    if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
+                           /* userdata */ nullptr)) {
+      if (err) {
+        (*err) += "File not found or failed to read : \"" + filepath + "\"\n";
+      }
+
+      return false;
+    }
+
+    DCOUT("File size: " + std::to_string(data.size()) + " bytes.");
+
+    if (data.size() < (11 * 8)) {
+      // ???
+      if (err) {
+        (*err) += "File size too short. Looks like this file is not a USDC : \"" +
+                  filepath + "\"\n";
+      }
+      return false;
+    }
+
+    return LoadUSDCFromMemory(data.data(), data.size(), filepath, stage, warn,
+                              err, options);
+  }
 }
 
 namespace {
@@ -599,24 +637,62 @@ bool LoadUSDZFromFile(const std::string &_filename, Stage *stage,
 
   std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
 
-  std::vector<uint8_t> data;
-  size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);
-  if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
-                         /* userdata */ nullptr)) {
-    return false;
-  }
 
-  if (data.size() < (11 * 8) + 30) {  // 88 for USDC header, 30 for ZIP header
-    // ???
-    if (err) {
-      (*err) += "File size too short. Looks like this file is not a USDZ : \"" +
-                filepath + "\"\n";
+  if (io::IsMMapSupported()) {
+    io::MMapFileHandle handle;
+    
+    {
+      std::string _err;
+      if (!io::MMapFile(filepath, &handle, /* writable */false, &_err)) {
+        if (err) {
+          (*err) += _err + "\n";
+        }
+        return false; 
+      }
+
+      if (_err.size()) {
+        if (warn) {
+          (*warn) += _err + "\n";
+        }
+      }
     }
-    return false;
-  }
 
-  return LoadUSDZFromMemory(data.data(), data.size(), filepath, stage, warn,
-                            err, options);
+    bool ret = LoadUSDZFromMemory(handle.addr, size_t(handle.size), filepath, stage, warn,
+                              err, options);
+
+    {
+      std::string _err;
+      // Ignore unmap result for now.
+      io::UnmapFile(handle, &_err);
+
+      if (_err.size()) {
+        if (warn) {
+          (*warn) += _err + "\n";
+        }
+      }
+    }
+
+    return ret;
+  } else {
+    std::vector<uint8_t> data;
+    size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);
+    if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
+                           /* userdata */ nullptr)) {
+      return false;
+    }
+
+    if (data.size() < (11 * 8) + 30) {  // 88 for USDC header, 30 for ZIP header
+      // ???
+      if (err) {
+        (*err) += "File size too short. Looks like this file is not a USDZ : \"" +
+                  filepath + "\"\n";
+      }
+      return false;
+    }
+
+    return LoadUSDZFromMemory(data.data(), data.size(), filepath, stage, warn,
+                              err, options);
+  }
 }
 
 #ifdef _WIN32
@@ -695,17 +771,54 @@ bool LoadUSDAFromFile(const std::string &_filename, Stage *stage,
   std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
   std::string base_dir = io::GetBaseDir(_filename);
 
-  std::vector<uint8_t> data;
-  size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);
-  if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
-                         /* userdata */ nullptr)) {
-    if (err) {
-      (*err) += "File not found or failed to read : \"" + filepath + "\"\n";
-    }
-  }
+  if (io::IsMMapSupported()) {
+    io::MMapFileHandle handle;
+    
+    {
+      std::string _err;
+      if (!io::MMapFile(filepath, &handle, /* writable */false, &_err)) {
+        if (err) {
+          (*err) += _err + "\n";
+        }
+        return false; 
+      }
 
-  return LoadUSDAFromMemory(data.data(), data.size(), base_dir, stage, warn,
-                            err, options);
+      if (_err.size()) {
+        if (warn) {
+          (*warn) += _err + "\n";
+        }
+      }
+    }
+
+    bool ret = LoadUSDAFromMemory(handle.addr, size_t(handle.size), filepath, stage, warn,
+                              err, options);
+
+    {
+      std::string _err;
+      // Ignore unmap result for now.
+      io::UnmapFile(handle, &_err);
+
+      if (_err.size()) {
+        if (warn) {
+          (*warn) += _err + "\n";
+        }
+      }
+    }
+
+    return ret;
+  } else {
+    std::vector<uint8_t> data;
+    size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);
+    if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
+                           /* userdata */ nullptr)) {
+      if (err) {
+        (*err) += "File not found or failed to read : \"" + filepath + "\"\n";
+      }
+    }
+
+    return LoadUSDAFromMemory(data.data(), data.size(), base_dir, stage, warn,
+                              err, options);
+  }
 }
 
 bool LoadUSDFromFile(const std::string &_filename, Stage *stage,
@@ -714,15 +827,52 @@ bool LoadUSDFromFile(const std::string &_filename, Stage *stage,
   std::string filepath = io::ExpandFilePath(_filename, /* userdata */ nullptr);
   std::string base_dir = io::GetBaseDir(_filename);
 
-  std::vector<uint8_t> data;
-  size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);
-  if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
-                         /* userdata */ nullptr)) {
-    return false;
-  }
+  if (io::IsMMapSupported()) {
+    io::MMapFileHandle handle;
+    
+    {
+      std::string _err;
+      if (!io::MMapFile(filepath, &handle, /* writable */false, &_err)) {
+        if (err) {
+          (*err) += _err + "\n";
+        }
+        return false; 
+      }
 
-  return LoadUSDFromMemory(data.data(), data.size(), base_dir, stage, warn, err,
-                           options);
+      if (_err.size()) {
+        if (warn) {
+          (*warn) += _err + "\n";
+        }
+      }
+    }
+
+    bool ret = LoadUSDFromMemory(handle.addr, size_t(handle.size), filepath, stage, warn,
+                              err, options);
+
+    {
+      std::string _err;
+      // Ignore unmap result for now.
+      io::UnmapFile(handle, &_err);
+
+      if (_err.size()) {
+        if (warn) {
+          (*warn) += _err + "\n";
+        }
+      }
+    }
+
+    return ret;
+  } else {
+    std::vector<uint8_t> data;
+    size_t max_bytes = 1024 * 1024 * size_t(options.max_memory_limit_in_mb);
+    if (!io::ReadWholeFile(&data, err, filepath, max_bytes,
+                           /* userdata */ nullptr)) {
+      return false;
+    }
+
+    return LoadUSDFromMemory(data.data(), data.size(), base_dir, stage, warn, err,
+                             options);
+  }
 }
 
 bool LoadUSDFromMemory(const uint8_t *addr, const size_t length,
