@@ -214,7 +214,7 @@ bool MMapFile(const std::string &filepath, MMapFileHandle *handle,
       // advise the kernel to preload the mapped memory
       WIN32_MEMORY_RANGE_ENTRY range;
       range.VirtualAddress = addr;
-      range.NumberOfBytes = static_cast<SIZE_T>((std::min)(size, prefetch));
+      range.NumberOfBytes = static_cast<SIZE_T>((std::min)(size_t(size), prefetch));
       if (!pPrefetchVirtualMemory(GetCurrentProcess(), 1, &range, 0)) {
         // warn
         if (err) {
@@ -315,7 +315,7 @@ bool UnmapFile(const MMapFileHandle &handle, std::string *err) {
   return false;
 #else  // !WIN32
   if (handle.addr && handle.size) {
-    int ret = munmap(reinterpret_cast<void *>(handle.addr), handle.size);
+    int ret = munmap(reinterpret_cast<void *>(handle.addr), size_t(handle.size));
     if (!ret) {
       if (err) {
         (*err) += "warning: munmap failed.";
