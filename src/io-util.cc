@@ -90,6 +90,42 @@
 namespace tinyusdz {
 namespace io {
 
+#if defined(_WIN32)
+namespace {
+
+// from llama.cpp ----
+// MIT license
+std::string GetErrorMessageWin32(DWORD error_code) {
+    std::string ret;
+    LPSTR lpMsgBuf = NULL;
+    DWORD bufLen = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                                NULL, error_code, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&lpMsgBuf, 0, NULL);
+    if (!bufLen) {
+        ret = "Win32 error code: " + std::to_string(error_code);
+    } else {
+        ret = lpMsgBuf;
+        LocalFree(lpMsgBuf);
+    }
+
+    return ret;
+}
+
+static std::string llama_format_win_err(DWORD err) {
+    LPSTR buf;
+    size_t size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                                 NULL, err, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&buf, 0, NULL);
+    if (!size) {
+        return "FormatMessageA failed";
+    }
+    std::string ret(buf, size);
+    LocalFree(buf);
+    return ret;
+}
+// ----
+
+}
+#endif
+
 #ifdef TINYUSDZ_ANDROID_LOAD_FROM_ASSETS
 AAssetManager *asset_manager = nullptr;
 #endif
@@ -103,28 +139,87 @@ bool IsMMapSupported() {
 #endif
 }
 
-bool MMapFile(const std::string &filepath, MMapFileHandle *handle, bool writable) {
-  (void)filepath;
-  (void)handle;
-  (void)writable;
+bool MMapFile(const std::string &filepath, MMapFileHandle *handle, bool writable, std::string *err) {
 
 #if TINYUSDZ_MMAP_SUPPORTED
 #if defined(_WIN32)
-#if 0 // TODO
-  int fd = open(filepath.c_str(), writable ? O_RDWR : O_RDONLY);
-  HANDLE hFile = _get_ofhandle(fd);
-  HANDLE hMapping = CreateFileMapping(hFile, nullptr, PAGE_READWRITE, 0, 0, nullptr);
+  //int fd = open(filepath.c_str(), writable ? O_RDWR : O_RDONLY);
+  HANDLE hFile = CreateFile(filepath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (hFile == INVALID_HANDLE_VALUE) {
+    if (err) {
+      (*err) += "Failed to open file.";
+    }
+    return false;
+  }
+
+  uint64_t size{0};
+  {
+    LARGE_INTEGER sz{};
+    if (!GetFileSizeEx(hFile, &sz)) {
+      if (err) {
+        (*err) += "GetFileSizeEx failed: " + llama_format_win_err(GetLastError());
+      }
+      return false;
+    }
+
+    size = sz.QuadPart;
+  }
+  
+  HANDLE hMapping = CreateFileMapping(hFile, nullptr, writable ? PAGE_READWRITE : PAGE_READONLY, 0, 0, nullptr);
       if (hMapping == nullptr) {
+        if (err) {
+          (*err) += "CreateFileMapping failed: " + llama_format_win_err(GetLastError());
+        }
         return false;
       }
-      void *data = MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, 0);
-      if (!data) {
-        return false;
-      }
+      void *addr = MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, 0);
+      DWORD lastError = GetLastError();
       CloseHandle(hMapping);
-#else
-  return false;
-#endif
+      if (!addr) {
+        if (err) {
+          (*err) += "MapViewOfFile failed: " + llama_format_win_err(lastError);
+        }
+        return false;
+      }
+
+      size_t prefetch = 0;  // TODO
+      if (prefetch > 0) {
+  #if _WIN32_WINNT >= 0x602
+              // PrefetchVirtualMemory is only present on Windows 8 and above, so we dynamically load it
+              BOOL (WINAPI *pPrefetchVirtualMemory) (HANDLE, ULONG_PTR, PWIN32_MEMORY_RANGE_ENTRY, ULONG);
+              HMODULE hKernel32 = GetModuleHandleW(L"kernel32.dll");
+
+              // may fail on pre-Windows 8 systems
+              pPrefetchVirtualMemory = reinterpret_cast<decltype(pPrefetchVirtualMemory)> (GetProcAddress(hKernel32, "PrefetchVirtualMemory"));
+
+              if (pPrefetchVirtualMemory) {
+                  // advise the kernel to preload the mapped memory
+                  WIN32_MEMORY_RANGE_ENTRY range;
+                  range.VirtualAddress = addr;
+                  range.NumberOfBytes = static_cast<SIZE_T>( (std::min)(size, prefetch) );
+                  if (!pPrefetchVirtualMemory(GetCurrentProcess(), 1, &range, 0)) {
+                    // warn
+                    if (err) {
+                      (*err) += "warning: PrefetchVirtualMemory failed: " + llama_format_win_err(GetLastError());
+                    }
+                  }
+              }
+  #else
+              throw std::runtime_error("PrefetchVirtualMemory unavailable");
+              if (err) {
+                (*err) += "PrefetchVirtualMemory unavailable";
+              }
+              return false;
+  #endif
+          }
+  
+      handle->addr = reinterpret_cast<uint8_t *>(addr);
+      handle->size = size;
+      handle->writable = writable;
+      handle->filename = filepath;
+
+  return true;
+    
 #else // !WIN32
   // assume posix
   FILE *fp = fopen(filepath.c_str(), writable ? "rw" : "r");
@@ -150,7 +245,7 @@ bool MMapFile(const std::string &filepath, MMapFileHandle *handle, bool writable
   }
 
   handle->addr = reinterpret_cast<uint8_t *>(addr);
-  handle->size = size;
+  handle->size = uint64_t(size);
   handle->writable = writable;
   handle->filename = filepath;
   close(fd);
@@ -158,15 +253,26 @@ bool MMapFile(const std::string &filepath, MMapFileHandle *handle, bool writable
   return true;
 #endif // !WIN32
 #else // !TINYUSDZ_MMAP_SUPPORTED
+  (void)filepath;
+  (void)handle;
+  (void)writable;
   return false;
 #endif
 }
 
-bool UnmapFile(const MMapFileHandle &handle) {
-  (void)handle;
+bool UnmapFile(const MMapFileHandle &handle, std::string *err) {
 #if TINYUSDZ_MMAP_SUPPORTED
 #if defined(_WIN32)
-  // TODO
+  if (handle.addr && handle.size) {
+    if (!UnmapViewOfFile(handle.addr)) {
+      if (err) {
+        (*err) += "warning: UnmapViewOfFile failed: " + llama_format_win_err(GetLastError());
+      }
+      // May ok for now
+      return true;
+    }
+  }
+
   return false;
 #else // !WIN32
   if (handle.addr && handle.size) {
@@ -178,6 +284,7 @@ bool UnmapFile(const MMapFileHandle &handle) {
   return false;
 #endif
 #else // !TINYUSDZ_MMAP_SUPPORTED
+  (void)handle;
   return false;
 #endif
 }
