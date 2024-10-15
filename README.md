@@ -15,7 +15,8 @@
 ## High priority
 
 * Prepare Release v0.8
-  * [x] Core part should be ready for the release. 
+  * [x] Core part should be ready for the release.
+  * [ ] Support PLY and point primitive for Gaussian Splatting https://github.com/lighttransport/tinyusdz/issues/190
   * [ ] Write a demo and example viewer(work in progress)
     * [examples/openglviewer](examples/openglviewer) OpenGL viewer
     * [examples/sdlviewer](examples/sdlviewer) Software raytracing viewer 
