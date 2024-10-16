@@ -3293,6 +3293,9 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
   {
     const crate::CrateReader::Node &node = _nodes[size_t(current)];
     DCOUT("node.Children.size = " << node.GetChildren().size());
+    if (currPrimPtr) {
+        currPrimPtr->children().reserve(node.GetChildren().size());
+    }
     for (size_t i = 0; i < node.GetChildren().size(); i++) {
       DCOUT("Reconstuct Prim children: " << i << " / "
                                          << node.GetChildren().size());
