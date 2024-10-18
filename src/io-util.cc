@@ -316,7 +316,7 @@ bool UnmapFile(const MMapFileHandle &handle, std::string *err) {
 #else  // !WIN32
   if (handle.addr && handle.size) {
     int ret = munmap(reinterpret_cast<void *>(handle.addr), size_t(handle.size));
-    if (!ret) {
+    if (ret != 0) { // 0 = success
       if (err) {
         (*err) += "warning: munmap failed.";
       }
