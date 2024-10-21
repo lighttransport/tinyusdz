@@ -1289,6 +1289,10 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
       // replace
       ps.props().at(prop.first) = prop.second;
     }
+    else {
+      // re-add
+      ps.props()[prop.first] = prop.second;
+    }
   }
 
   // Overide child primspecs.
