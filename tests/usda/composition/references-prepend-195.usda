@@ -1,0 +1,19 @@
+#usda 1.0
+
+( defaultPrim = "a"
+
+"""
+repro scene for https://github.com/lighttransport/tinyusdz/pull/195
+Issue 195: base properties(e.g. 'HelloWorld') disappear after `--flatten`.
+"""
+)
+
+def "a" 
+(
+    prepend references = @./issue-195-ref.usda@
+)
+{
+    string HelloWorld = "Hello World"
+    double3 xformOp:translate = (259.9341506958008, 95.84612274169922, -0.5277154445648193)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}

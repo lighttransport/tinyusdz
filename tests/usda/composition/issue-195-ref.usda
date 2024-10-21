@@ -1,0 +1,21 @@
+#usda 1.0
+
+( defaultPrim = "a" )
+
+def Xform "a"
+(
+    kind = "component"
+    assetInfo = {
+	asset identifier = @assets/Refridgerator/Refridgerator.usd@
+	string name = "Refridgerator"
+    }
+    #payload = @./Refridgerator_payload.usd@</Refridgerator>
+    variants = {
+	string modelingVariant = "Decorated"
+    }
+    prepend variantSets = ["modelingVariant"]
+)
+{
+
+}
+
