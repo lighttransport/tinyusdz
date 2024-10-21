@@ -680,7 +680,7 @@ bool GPrim::set_primvar(const GeomPrimvar &primvar,
   return true;
 }
 
-bool GPrim::get_displayColor(value::color3f *dst, double t, const value::TimeSampleInterpolationType tinterp)
+bool GPrim::get_displayColor(value::color3f *dst, double t, const value::TimeSampleInterpolationType tinterp) const
 {
   // TODO: timeSamples
   (void)t;
@@ -696,7 +696,7 @@ bool GPrim::get_displayColor(value::color3f *dst, double t, const value::TimeSam
   return primvar.get_value(dst);
 }
 
-bool GPrim::get_displayOpacity(float *dst, double t, const value::TimeSampleInterpolationType tinterp)
+bool GPrim::get_displayOpacity(float *dst, double t, const value::TimeSampleInterpolationType tinterp) const
 {
   // TODO: timeSamples
   (void)t;

@@ -359,9 +359,9 @@ struct GPrim : Xformable, MaterialBinding, Collection {
       Purpose::Default};  // "uniform token purpose"
 
   // Handy API to get `primvars:displayColor` and `primvars:displayOpacity`
-  bool get_displayColor(value::color3f *col, const double t = value::TimeCode::Default(), const value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear);
+  bool get_displayColor(value::color3f *col, const double t = value::TimeCode::Default(), const value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear) const;
 
-  bool get_displayOpacity(float *opacity, const double t = value::TimeCode::Default(), const value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear);
+  bool get_displayOpacity(float *opacity, const double t = value::TimeCode::Default(), const value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear) const;
 
   RelationshipProperty proxyPrim;
 
