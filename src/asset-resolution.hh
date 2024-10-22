@@ -171,7 +171,7 @@ class AssetResolutionResolver {
     return (*this);
   }
 
-  AssetResolutionResolver &operator=(AssetResolutionResolver &&rhs) {
+  AssetResolutionResolver &operator=(AssetResolutionResolver &&rhs) noexcept {
     if (this != &rhs) {
       //_resolve_path_handler = rhs._resolve_path_handler;
       _asset_resolution_handlers = rhs._asset_resolution_handlers;
@@ -228,7 +228,7 @@ class AssetResolutionResolver {
   }
 
   bool has_asset_resolution_handler(const std::string &ext_name) {
-    return _asset_resolution_handlers.count(ext_name);
+    return _asset_resolution_handlers.count(ext_name) > 0;
   }
 
 
