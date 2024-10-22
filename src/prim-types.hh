@@ -86,7 +86,7 @@ class ordered_dict {
   }
 
   bool count(const std::string &key) const {
-    return _m.count(key);
+    return _m.count(key) > 0;
   }
 
   void insert(const std::string &key, const T &value) {
@@ -2635,11 +2635,11 @@ class Attribute {
       return false;
     }
 
-    return _paths.size();
+    return _paths.size() > 0;
   }
 
   bool has_connections() const {
-    return _paths.size();
+    return _paths.size() > 0;
   }
 
 
@@ -2755,9 +2755,10 @@ class Property {
 
   // Relationship(typeless)
   Property(Relationship &&r, bool custom = false)
-      : _rel(std::move(r)), _has_custom(custom) {
+      : _has_custom(custom) {
     _type = Type::Relation;
     set_listedit_qual(r.get_listedit_qual());
+    _rel = std::move(r);
   }
 
   // Attribute Connection: has type
@@ -3176,7 +3177,7 @@ class MaterialBinding {
     } else if (mat_purpose.str() == "preview") {
       return has_materialBindingPreview();
     } else {
-      return _materialBindingMap.count(mat_purpose.str());
+      return _materialBindingMap.count(mat_purpose.str()) > 0;
     }
   }
 
@@ -3256,7 +3257,7 @@ class MaterialBinding {
       return false;
     }
 
-    return _materialBindingCollectionMap.count(tok);
+    return _materialBindingCollectionMap.count(tok) > 0;
   }
 
   void set_materialBindingCollection(const value::token &tok, const value::token &mat_purpose, const Relationship &rel) {
@@ -3965,7 +3966,7 @@ class PrimSpec {
     return *this;
   }
 
-  PrimSpec &operator=(PrimSpec &&rhs) {
+  PrimSpec &operator=(PrimSpec &&rhs) noexcept {
     if (this != &rhs) {
       MoveFrom(rhs);
     }
@@ -4243,7 +4244,7 @@ class Layer {
 
   // Check if `primname` exists in root Prims?
   bool has_primspec(const std::string &primname) const {
-    return _prim_specs.count(primname);
+    return _prim_specs.count(primname) > 0;
   }
 
   ///
