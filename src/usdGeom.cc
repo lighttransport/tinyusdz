@@ -811,7 +811,7 @@ Interpolation GeomMesh::get_normalsInterpolation() const {
   return Interpolation::Vertex;  // default 'vertex'
 }
 
-const std::vector<int32_t> GeomMesh::get_faceVertexCounts() const {
+const std::vector<int32_t> GeomMesh::get_faceVertexCounts(double time) const {
   std::vector<int32_t> dst;
 
   if (!faceVertexCounts.authored() || faceVertexCounts.is_blocked()) {
@@ -825,15 +825,14 @@ const std::vector<int32_t> GeomMesh::get_faceVertexCounts() const {
 
   if (auto pv = faceVertexCounts.get_value()) {
     std::vector<int32_t> val;
-    // TOOD: timesamples
-    if (pv.value().get_scalar(&val)) {
+    if (pv.value().get(time, &val, value::TimeSampleInterpolationType::Held)) {
       dst = std::move(val);
     }
   }
   return dst;
 }
 
-const std::vector<int32_t> GeomMesh::get_faceVertexIndices() const {
+const std::vector<int32_t> GeomMesh::get_faceVertexIndices(double time) const {
   std::vector<int32_t> dst;
 
   if (!faceVertexIndices.authored() || faceVertexIndices.is_blocked()) {
@@ -847,8 +846,7 @@ const std::vector<int32_t> GeomMesh::get_faceVertexIndices() const {
 
   if (auto pv = faceVertexIndices.get_value()) {
     std::vector<int32_t> val;
-    // TOOD: timesamples
-    if (pv.value().get_scalar(&val)) {
+    if (pv.value().get(time, &val, value::TimeSampleInterpolationType::Held)) {
       dst = std::move(val);
     }
   }
