@@ -797,14 +797,14 @@ struct GeomMesh : GPrim {
   ///
   /// @return face vertex counts vector(copied)
   ///
-  const std::vector<int32_t> get_faceVertexCounts() const;
+  const std::vector<int32_t> get_faceVertexCounts(double time = value::TimeCode::Default()) const;
 
   ///
   /// @brief Returns `faceVertexIndices`.
   ///
   /// @return face vertex indices vector(copied)
   ///
-  const std::vector<int32_t> get_faceVertexIndices() const;
+  const std::vector<int32_t> get_faceVertexIndices(double time = value::TimeCode::Default()) const;
 
   //
   // SubD attribs.
