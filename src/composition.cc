@@ -944,14 +944,15 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
 }
 
 bool CompositeVariantRec(uint32_t depth, PrimSpec &primspec /* [inout] */,
-                         std::string *warn, std::string *err) {
+                         std::string *warn, std::string *err,
+			 VariantSelectionCallback variant_selection_callback, void *userdata) {
   if (depth > (1024 * 1024)) {
     PUSH_ERROR_AND_RETURN("Too deep.");
   }
 
   // Traverse children first.
   for (auto &child : primspec.children()) {
-    if (!CompositeVariantRec(depth + 1, child, warn, err)) {
+    if (!CompositeVariantRec(depth + 1, child, warn, err, variant_selection_callback, userdata)) {
       return false;
     }
   }
@@ -959,6 +960,12 @@ bool CompositeVariantRec(uint32_t depth, PrimSpec &primspec /* [inout] */,
   PrimSpec dst;
   std::map<std::string, std::string>
       variant_selection;  // empty = use variant settings in PrimSpec.
+
+  if (variant_selection_callback) {
+    if (!variant_selection_callback(primspec, &variant_selection, warn, err, userdata)) {
+      return false;
+    }
+  }
 
   if (!VariantSelectPrimSpec(dst, primspec, variant_selection, warn, err)) {
     return false;
@@ -1097,7 +1104,28 @@ bool CompositeVariant(const Layer &in_layer, Layer *composited_layer,
   Layer dst = in_layer;  // deep copy
 
   for (auto &item : dst.primspecs()) {
-    if (!CompositeVariantRec(/* depth */ 0, item.second, warn, err)) {
+    if (!CompositeVariantRec(/* depth */ 0, item.second, warn, err, nullptr, nullptr)) {
+      PUSH_ERROR_AND_RETURN("Composite `variantSet` failed.");
+    }
+  }
+
+  (*composited_layer) = dst;
+
+  DCOUT("Composite `variantSet` ok.");
+  return true;
+}
+
+bool CompositeVariantWithCallback(const Layer &in_layer, Layer *composited_layer,
+		std::string *warn, std::string *err,
+		VariantSelectionCallback variant_selection_callback, void *userdata) {
+  if (!composited_layer) {
+    return false;
+  }
+
+  Layer dst = in_layer;  // deep copy
+
+  for (auto &item : dst.primspecs()) {
+    if (!CompositeVariantRec(/* depth */ 0, item.second, warn, err, variant_selection_callback, userdata)) {
       PUSH_ERROR_AND_RETURN("Composite `variantSet` failed.");
     }
   }

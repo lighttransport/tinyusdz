@@ -167,6 +167,21 @@ bool CompositeVariant(
     Layer *composited_layer, std::string *warn, std::string *err);
 
 ///
+/// Resolve `variantSet` for each PrimSpec, and return composited(flattened) Layer
+/// to `composited_layer` in `layer`.
+/// Use a callback to select the specific variant (empty for default)
+/// To externally specify variants to select, Use `ApplyVariantSelector`.
+///
+typedef bool (*VariantSelectionCallback)(
+    const PrimSpec &primspec, std::map<std::string, std::string>* variant_selection,
+    std::string *warn, std::string *err,
+    void *userdata);
+
+bool CompositeVariantWithCallback(
+    const Layer &layer,
+    Layer *composited_layer, std::string *warn, std::string *err, VariantSelectionCallback variant_selection_callback, void *userdata);
+
+///
 /// Resolve `specializes` for each PrimSpec, and return composited(flattened) Layer
 /// to `composited_layer` in `layer`.
 ///
