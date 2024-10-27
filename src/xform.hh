@@ -190,11 +190,11 @@ struct Xformable {
   /// @param[out] resetTransformStack Is xformOpOrder contains !resetTransformStack!? 
   ///
   nonstd::expected<value::matrix4d, std::string> GetLocalMatrix(double t = value::TimeCode::Default(), value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear, bool *resetTransformStack = nullptr) const {
-    if (_dirty || t != value::TimeCode::Default()) {
+    if (_dirty || !value::TimeCode(t).is_default()) {
       value::matrix4d m;
       std::string err;
       if (EvaluateXformOps(t, tinterp, &m, resetTransformStack, &err)) {
-        if (t != value::TimeCode::Default()) {
+        if (value::TimeCode(t).is_default()) {
           _matrix = m;
           _dirty = false;
         }
