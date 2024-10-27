@@ -631,17 +631,17 @@ bool Xformable::EvaluateXformOps(double t,
                                  bool *resetXformStack,
                                  std::string *err) const {
   const auto RotateABC =
-      [](const XformOp &x) -> nonstd::expected<value::matrix4d, std::string> {
+      [t, tinterp](const XformOp &x) -> nonstd::expected<value::matrix4d, std::string> {
     value::double3 v;
-    if (auto h = x.get_value<value::half3>()) {
+    if (auto h = x.get_value<value::half3>(t, tinterp)) {
       v[0] = double(half_to_float(h.value()[0]));
       v[1] = double(half_to_float(h.value()[1]));
       v[2] = double(half_to_float(h.value()[2]));
-    } else if (auto f = x.get_value<value::float3>()) {
+    } else if (auto f = x.get_value<value::float3>(t, tinterp)) {
       v[0] = double(f.value()[0]);
       v[1] = double(f.value()[1]);
       v[2] = double(f.value()[2]);
-    } else if (auto d = x.get_value<value::double3>()) {
+    } else if (auto d = x.get_value<value::double3>(t, tinterp)) {
       v = d.value();
     } else {
       if (x.suffix.empty()) {
@@ -838,15 +838,6 @@ bool Xformable::EvaluateXformOps(double t,
     value::matrix4d m;  // local matrix
     Identity(&m);
 
-    if (x.is_timesamples()) {
-      (void)t;
-      (void)tinterp;
-      if (err) {
-        (*err) += "TODO: xformOp property with timeSamples.\n";
-      }
-      return false;
-    }
-
     switch (x.op_type) {
       case XformOp::OpType::ResetXformStack: {
         if (i != 0) {
@@ -865,14 +856,14 @@ bool Xformable::EvaluateXformOps(double t,
         break;
       }
       case XformOp::OpType::Transform: {
-        if (auto sxf = x.get_value<value::matrix4f>()) {
+        if (auto sxf = x.get_value<value::matrix4f>(t, tinterp)) {
           value::matrix4f mf = sxf.value();
           for (size_t j = 0; j < 4; j++) {
             for (size_t k = 0; k < 4; k++) {
               m.m[j][k] = double(mf.m[j][k]);
             }
           }
-        } else if (auto sxd = x.get_value<value::matrix4d>()) {
+        } else if (auto sxd = x.get_value<value::matrix4d>(t, tinterp)) {
           m = sxd.value();
         } else {
           if (err) {
@@ -911,15 +902,15 @@ bool Xformable::EvaluateXformOps(double t,
       case XformOp::OpType::Scale: {
         double sx, sy, sz;
 
-        if (auto sxh = x.get_value<value::half3>()) {
+        if (auto sxh = x.get_value<value::half3>(t, tinterp)) {
           sx = double(half_to_float(sxh.value()[0]));
           sy = double(half_to_float(sxh.value()[1]));
           sz = double(half_to_float(sxh.value()[2]));
-        } else if (auto sxf = x.get_value<value::float3>()) {
+        } else if (auto sxf = x.get_value<value::float3>(t, tinterp)) {
           sx = double(sxf.value()[0]);
           sy = double(sxf.value()[1]);
           sz = double(sxf.value()[2]);
-        } else if (auto sxd = x.get_value<value::double3>()) {
+        } else if (auto sxd = x.get_value<value::double3>(t, tinterp)) {
           sx = sxd.value()[0];
           sy = sxd.value()[1];
           sz = sxd.value()[2];
@@ -945,15 +936,15 @@ bool Xformable::EvaluateXformOps(double t,
       }
       case XformOp::OpType::Translate: {
         double tx, ty, tz;
-        if (auto txh = x.get_value<value::half3>()) {
+        if (auto txh = x.get_value<value::half3>(t, tinterp)) {
           tx = double(half_to_float(txh.value()[0]));
           ty = double(half_to_float(txh.value()[1]));
           tz = double(half_to_float(txh.value()[2]));
-        } else if (auto txf = x.get_value<value::float3>()) {
+        } else if (auto txf = x.get_value<value::float3>(t, tinterp)) {
           tx = double(txf.value()[0]);
           ty = double(txf.value()[1]);
           tz = double(txf.value()[2]);
-        } else if (auto txd = x.get_value<value::double3>()) {
+        } else if (auto txd = x.get_value<value::double3>(t, tinterp)) {
           tx = txd.value()[0];
           ty = txd.value()[1];
           tz = txd.value()[2];
@@ -980,11 +971,11 @@ bool Xformable::EvaluateXformOps(double t,
       // FIXME: Validate ROTATE_X, _Y, _Z implementation
       case XformOp::OpType::RotateX: {
         double angle;  // in degrees
-        if (auto h = x.get_value<value::half>()) {
+        if (auto h = x.get_value<value::half>(t, tinterp)) {
           angle = double(half_to_float(h.value()));
-        } else if (auto f = x.get_value<float>()) {
+        } else if (auto f = x.get_value<float>(t, tinterp)) {
           angle = double(f.value());
-        } else if (auto d = x.get_value<double>()) {
+        } else if (auto d = x.get_value<double>(t, tinterp)) {
           angle = d.value();
         } else {
           if (err) {
@@ -1020,11 +1011,11 @@ bool Xformable::EvaluateXformOps(double t,
       }
       case XformOp::OpType::RotateY: {
         double angle;  // in degrees
-        if (auto h = x.get_value<value::half>()) {
+        if (auto h = x.get_value<value::half>(t, tinterp)) {
           angle = double(half_to_float(h.value()));
-        } else if (auto f = x.get_value<float>()) {
+        } else if (auto f = x.get_value<float>(t, tinterp)) {
           angle = double(f.value());
-        } else if (auto d = x.get_value<double>()) {
+        } else if (auto d = x.get_value<double>(t, tinterp)) {
           angle = d.value();
         } else {
           if (err) {
@@ -1060,11 +1051,11 @@ bool Xformable::EvaluateXformOps(double t,
       }
       case XformOp::OpType::RotateZ: {
         double angle;  // in degrees
-        if (auto h = x.get_value<value::half>()) {
+        if (auto h = x.get_value<value::half>(t, tinterp)) {
           angle = double(half_to_float(h.value()));
-        } else if (auto f = x.get_value<float>()) {
+        } else if (auto f = x.get_value<float>(t, tinterp)) {
           angle = double(f.value());
-        } else if (auto d = x.get_value<double>()) {
+        } else if (auto d = x.get_value<double>(t, tinterp)) {
           angle = d.value();
         } else {
           if (err) {
@@ -1103,11 +1094,11 @@ bool Xformable::EvaluateXformOps(double t,
         // linalg::quat also stores elements in (x, y, z, w)
 
         value::matrix3d rm;
-        if (auto h = x.get_value<value::quath>()) {
+        if (auto h = x.get_value<value::quath>(t, tinterp)) {
           rm = to_matrix3x3(h.value());
-        } else if (auto f = x.get_value<value::quatf>()) {
+        } else if (auto f = x.get_value<value::quatf>(t, tinterp)) {
           rm = to_matrix3x3(f.value());
-        } else if (auto d = x.get_value<value::quatd>()) {
+        } else if (auto d = x.get_value<value::quatd>(t, tinterp)) {
           rm = to_matrix3x3(d.value());
         } else {
           if (err) {
