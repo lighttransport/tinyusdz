@@ -363,6 +363,13 @@ struct GPrim : Xformable, MaterialBinding, Collection {
 
   bool get_displayOpacity(float *opacity, const double t = value::TimeCode::Default(), const value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear) const;
 
+  const std::vector<value::color3f> get_displayColors(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
+
+  Interpolation get_displayColorsInterpolation() const;
+
   RelationshipProperty proxyPrim;
 
 #if 0

@@ -796,6 +796,23 @@ const std::vector<value::normal3f> GeomMesh::get_normals(
   return dst;
 }
 
+const std::vector<value::color3f> GPrim::get_displayColors(
+    double time, value::TimeSampleInterpolationType interp) const {
+  std::vector<value::color3f> dst;
+
+  std::string err;
+  if (has_primvar("displayColor")) {
+    GeomPrimvar primvar;
+    if (!get_primvar("displayColor", &primvar, &err)) {
+      return dst;
+    }
+
+    primvar.flatten_with_indices(time, &dst, interp);
+  }
+
+  return dst;
+}
+
 Interpolation GeomMesh::get_normalsInterpolation() const {
   if (props.count("primvars:normals")) {
     const auto &prop = props.at("primvars:normals");
@@ -806,6 +823,19 @@ Interpolation GeomMesh::get_normalsInterpolation() const {
     }
   } else if (normals.metas().interpolation) {
     return normals.metas().interpolation.value();
+  }
+
+  return Interpolation::Vertex;  // default 'vertex'
+}
+
+Interpolation GPrim::get_displayColorsInterpolation() const {
+  if (props.count("primvars:displayColor")) {
+    const auto &prop = props.at("primvars:displayColor");
+    if (prop.get_attribute().type_name() == "color3f[]") {
+      if (prop.get_attribute().metas().interpolation) {
+        return prop.get_attribute().metas().interpolation.value();
+      }
+    }
   }
 
   return Interpolation::Vertex;  // default 'vertex'
