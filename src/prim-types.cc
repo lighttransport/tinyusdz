@@ -38,6 +38,21 @@
 
 namespace tinyusdz {
 
+template<class InputIt1, class InputIt2>
+bool lexicographical_compare(InputIt1 first1, InputIt1 last1,
+                             InputIt2 first2, InputIt2 last2)
+{
+    for (; (first1 != last1) && (first2 != last2); ++first1, (void) ++first2)
+    {
+        if (*first1 < *first2)
+            return true;
+        if (*first2 < *first1)
+            return false;
+    }
+ 
+    return (first1 == last1) && (first2 != last2);
+}
+
 nonstd::optional<Interpolation> InterpolationFromString(const std::string &v) {
   if ("faceVarying" == v) {
     return Interpolation::FaceVarying;
@@ -380,7 +395,7 @@ bool Path::LessThan(const Path &lhs, const Path &rhs) {
       return lhs_prop_part.empty();
     }
 
-    return std::lexicographical_compare(
+    return ::tinyusdz::lexicographical_compare(
         lhs_prop_part.begin(), lhs_prop_part.end(), rhs_prop_part.begin(),
         rhs_prop_part.end());
 
@@ -425,7 +440,7 @@ bool Path::LessThan(const Path &lhs, const Path &rhs) {
     // DCOUT("child_idx = " << child_idx);
 
     // compare child node
-    return std::lexicographical_compare(
+    return ::tinyusdz::lexicographical_compare(
         lhs_prim_names[child_idx].begin(), lhs_prim_names[child_idx].end(),
         rhs_prim_names[child_idx].begin(), rhs_prim_names[child_idx].end());
   }
