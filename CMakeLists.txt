@@ -115,6 +115,8 @@ option(TINYUSDZ_WITH_JSON "Build with JSON serialization support" OFF)
 option(TINYUSDZ_WITH_USD_TO_GLTF "Build with USD to glTF example" ON)
 option(TINYUSDZ_WITH_USDOBJ "Build with usdObj support(import wavefront .obj)"
        ON)
+option(TINYUSDZ_WITH_USDPLY "Build with usdPly support(import Polygon File Format .ply)"
+       ON)
 option(TINYUSDZ_WITH_USDFBX "Build with usdFbx support(import FBX .fbx)"
        OFF)
 option(TINYUSDZ_WITH_USDVOX
@@ -471,6 +473,11 @@ endif()
 if(TINYUSDZ_WITH_USDOBJ)
   list(APPEND TINYUSDZ_DEP_SOURCES
        ${PROJECT_SOURCE_DIR}/src/external/tiny_obj_loader.cc)
+endif()
+
+if(TINYUSDZ_WITH_USDPLY)
+  list(APPEND TINYUSDZ_DEP_SOURCES
+       ${PROJECT_SOURCE_DIR}/src/external/nanoply.cc)
 endif()
 
 if(TINYUSDZ_WITH_USDVOX)
@@ -1036,6 +1043,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   if(TINYUSDZ_WITH_USDOBJ)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_USE_USDOBJ")
+  endif()
+
+  if(TINYUSDZ_WITH_USDPLY)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_USE_USDPLY")
   endif()
 
   if(TINYUSDZ_WITH_USDVOX)
