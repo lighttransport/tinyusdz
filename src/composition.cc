@@ -1221,6 +1221,11 @@ static bool OverridePrimSpecRec(uint32_t depth, PrimSpec &dst,
   if (depth > (1024 * 1024 * 128)) {
     PUSH_ERROR_AND_RETURN("PrimSpec tree too deep.");
   }
+  
+  // overrides can omit types (in such a case get it from the src)
+  if (dst.typeName().empty()) {
+      dst.typeName() = src.typeName();
+  }
 
   DCOUT("update_from");
   DCOUT(print_prim_metas(src.metas(), 1));
