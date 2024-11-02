@@ -181,7 +181,7 @@ Example viewer is just for demo purpose.
 
 If you need commercial support, eco-system development(e.g. plug-ins, DCC tools on top of TinyUSDZ) or production-grade USDZ model viewer(e.g. embed TinyUSDZ to your AR app, 3D NFT Android mobile viewer capable of displaying (encrypted) USDZ model), please contact Light Transport Entertainment, Inc. : [https://goo.gl/forms/1p6uGcOKWGpXPHkA2 ](https://forms.gle/PeDRAgYM5ET9SjGs5)
 
-We are also looking for sponsors. If you are interested in sponsoring(or donating) to TinyUSDZ project, please also contact Light Transport Entertainment, Inc. for details: [https://goo.gl/forms/1p6uGcOKWGpXPHkA2 ](https://forms.gle/PeDRAgYM5ET9SjGs5)
+We are also looking for sponsors. If you are interested in sponsoring(or donating to) TinyUSDZ project, use Github Sponsors to sponsor TinyUSDZ propject, or contact Light Transport Entertainment, Inc. for details: [https://goo.gl/forms/1p6uGcOKWGpXPHkA2 ](https://forms.gle/PeDRAgYM5ET9SjGs5)
 
 
 ## Projects using TinyUSDZ
