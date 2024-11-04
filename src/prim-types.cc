@@ -2175,7 +2175,8 @@ bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps,
     auto ret = _primspec_path_cache.find(path.prim_part());
     if (ret != _primspec_path_cache.end()) {
       DCOUT("Found cache.");
-      return ret->second;
+      (*ps) = ret->second;
+      return true;
     }
   }
 
