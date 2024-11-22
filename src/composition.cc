@@ -1255,9 +1255,11 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
   // Then override it with `dst`
   PrimSpec ps = src;  // copy
 
-  // Keep PrimSpec name, typeName and spec from `dst`
+  // Keep PrimSpec name, typeName (if not empty) and spec from `dst`
   ps.name() = dst.name();
-  ps.typeName() = dst.typeName();
+  if (!dst.typeName().empty()) {
+    ps.typeName() = dst.typeName();
+  }
   ps.specifier() = dst.specifier();
 
   // Override metadataum
