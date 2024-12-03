@@ -19,6 +19,7 @@
 
 #include <io.h>
 #include <windows.h>  // include API for expanding a file path
+#include <tchar.h>
 
 #ifndef TINYUSDZ_MMAP_SUPPORTED
 #define TINYUSDZ_MMAP_SUPPORTED (1)
@@ -153,9 +154,10 @@ bool MMapFile(const std::string &filepath, MMapFileHandle *handle,
 
 #if TINYUSDZ_MMAP_SUPPORTED
 #if defined(_WIN32)
-  // int fd = open(filepath.c_str(), writable ? O_RDWR : O_RDONLY);
+    std::basic_string<TCHAR> tFilepath(filepath.begin(), filepath.end());  // Using TCHAR string to automatically use normal or wide characters if UNICODE is enabled
+
   HANDLE hFile =
-      CreateFile(filepath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+        CreateFile(tFilepath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
                  OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
   if (hFile == INVALID_HANDLE_VALUE) {
     if (err) {
