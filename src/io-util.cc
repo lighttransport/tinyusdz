@@ -154,10 +154,10 @@ bool MMapFile(const std::string &filepath, MMapFileHandle *handle,
 
 #if TINYUSDZ_MMAP_SUPPORTED
 #if defined(_WIN32)
-    std::basic_string<TCHAR> tFilepath(filepath.begin(), filepath.end());  // Using TCHAR string to automatically use normal or wide characters if UNICODE is enabled
+  std::basic_string<TCHAR> tFilepath(filepath.begin(), filepath.end());  // Using TCHAR string to automatically use normal or wide characters if UNICODE is enabled
 
   HANDLE hFile =
-        CreateFile(tFilepath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+      CreateFile(tFilepath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
                  OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
   if (hFile == INVALID_HANDLE_VALUE) {
     if (err) {
