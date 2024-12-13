@@ -1,0 +1,14 @@
+{
+  "name": "tinyusdz",
+  "version": "0.0.1",
+  "description": "Tinyusdz wasm",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "usdz"
+  ],
+  "author": "",
+  "license": "ISC"
+}
