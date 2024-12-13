@@ -40,7 +40,7 @@ jobs:
       - name: Prepare npm
         working-directory: ${{ github.workspace }}/web/npm
         run: |
-          cp ../web/main.js .
+          cp ../dist/* .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
