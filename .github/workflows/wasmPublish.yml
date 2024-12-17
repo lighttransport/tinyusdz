@@ -2,9 +2,23 @@
 name: Build and publish wasm
 
 on:
-  # Runs on pushes targeting the default branch
-  push:
-    branches: ["dev"]
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'NPM Release Version'
+        required: true 
+        type: string
+        default: 1.0.0
+      NPM_tag:
+        description: 'NPM Tag'
+        required: true
+        type: string
+        default: preview
+      NPM_publish_arg:
+        description: 'NPM Publish arg'
+        required: false
+        type: string
+        default: --dry-run
 
 jobs:
   tinyusdz-wasm:
@@ -47,6 +61,11 @@ jobs:
         with:
           name: 'tinyusdz'
           path: ${{ github.workspace }}/web/npm
-          
-      - name: Deploy to NPM
-        uses: actions/deploy-pages@v4
+
+      - name: Version & Publish Package
+        run: |
+          npm version --no-git-tag-version ${{ github.event.inputs.release_version }}
+          npm publish --access public --tag ${{ github.event.inputs.NPM_tag }} ${{ github.event.inputs.NPM_publish_arg }}
+        working-directory: ${{ github.workspace }}/web/npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
