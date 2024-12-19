@@ -131,6 +131,9 @@ bool IsMMapSupported();
 struct MMapFileHandle
 {
   std::string filename;
+#if defined(WIN32)
+  std::wstring unicode_filename;
+#endif
   bool writable{false};
   uint8_t *addr{nullptr};
   uint64_t size{0};
@@ -138,19 +141,28 @@ struct MMapFileHandle
 
 ///
 /// memory-map file.
+///
+/// @param[in] filepath UTF8 filepath.
+///
 /// Returns false when file is not found, invalid, or mmap feature is not available.
 /// err = warning message when the API returns true.
 ///
 bool MMapFile(const std::string &filepath, MMapFileHandle *handle, bool writable, std::string *err);
+
+#ifdef _WIN32
+// Unicode(UTF16LE) version
+bool MMapFile(const std::wstring &filepath, MMapFileHandle *handle, bool writable, std::string *err);
+#endif
 
 ///
 /// err = warning message when the API returns true.
 ///
 bool UnmapFile(const MMapFileHandle &handle, std::string *err);
 
-///
-/// Filepath is treated as WideChar(UNICODE) on Windows.
-///
+
+/// 
+/// Write data to file(UTF8 filepath)
+/// 
 bool WriteWholeFile(const std::string &filepath,
                     const unsigned char *contents, size_t content_bytes, std::string *err);
 
