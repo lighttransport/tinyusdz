@@ -139,18 +139,9 @@ bool IsMMapSupported() {
 #endif
 }
 
-bool MMapFile(const std::string &filepath, MMapFileHandle *handle, bool writable, std::string *err) {
 
-#if TINYUSDZ_MMAP_SUPPORTED
 #if defined(_WIN32)
-  //int fd = open(filepath.c_str(), writable ? O_RDWR : O_RDONLY);
-  HANDLE hFile = CreateFile(filepath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-  if (hFile == INVALID_HANDLE_VALUE) {
-    if (err) {
-      (*err) += "Failed to open file.";
-    }
-    return false;
-  }
+bool MMapFileImplWin32(HANDLE hFile, MMapFileHandle *handle, bool writable, std::string *err) {
 
   uint64_t size{0};
   {
@@ -216,7 +207,31 @@ bool MMapFile(const std::string &filepath, MMapFileHandle *handle, bool writable
       handle->addr = reinterpret_cast<uint8_t *>(addr);
       handle->size = size;
       handle->writable = writable;
-      handle->filename = filepath;
+
+}
+#endif
+
+bool MMapFile(const std::string &filepath, MMapFileHandle *handle, bool writable, std::string *err) {
+
+#if TINYUSDZ_MMAP_SUPPORTED
+#if defined(_WIN32)
+  //int fd = open(filepath.c_str(), writable ? O_RDWR : O_RDONLY);
+
+  std::wstring unicode_filepath = UTF8ToWchar(filepath);
+  HANDLE hFile = CreateFileW(unicode_filepath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (hFile == INVALID_HANDLE_VALUE) {
+    if (err) {
+      (*err) += "Failed to open file.";
+    }
+    return false;
+  }
+
+  if (!MMapFileImplWin32(hFile, handle, writable, err)) {
+    return false;
+  }
+
+  handle->filename = filepath;
+  handle->unicode_filename = unicode_filepath;
 
   return true;
     
@@ -259,6 +274,38 @@ bool MMapFile(const std::string &filepath, MMapFileHandle *handle, bool writable
   return false;
 #endif
 }
+
+#if defined(_WIN32)
+bool MMapFile(const std::wstring &unicode_filepath, MMapFileHandle *handle, bool writable, std::string *err) {
+
+#if TINYUSDZ_MMAP_SUPPORTED
+  //int fd = open(filepath.c_str(), writable ? O_RDWR : O_RDONLY);
+
+  HANDLE hFile = CreateFileW(unicode_filepath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (hFile == INVALID_HANDLE_VALUE) {
+    if (err) {
+      (*err) += "Failed to open file.";
+    }
+    return false;
+  }
+
+  if (!MMapFileImplWin32(hFile, handle, writable, err)) {
+    return false;
+  }
+
+  handle->filename = WcharToUTF8(unicode_filepath);
+  handle->unicode_filename = unicode_filepath;
+
+  return true;
+    
+#else 
+  (void)unicode_filepath;
+  (void)handle;
+  (void)writable;
+  return false;
+#endif
+}
+#endif
 
 bool UnmapFile(const MMapFileHandle &handle, std::string *err) {
 #if TINYUSDZ_MMAP_SUPPORTED
