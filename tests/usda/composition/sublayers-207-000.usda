@@ -1,0 +1,47 @@
+#usda 1.0
+(
+    "Hello World"
+    doc = "Ops"
+    upAxis = "Z"
+
+    subLayers = [
+        @sublayers-207-001.usda@,
+        @sublayers-207-002.usda@
+    ]
+)
+
+def "One"
+{
+    def "Two"
+    {
+        string before = "before"
+        def Test "Three"
+        {
+            def Test "Four"
+            {
+                string value = "xyz"
+            }
+        }
+        string after = "after"
+    }
+}
+
+over "Root"
+{
+    over "Broken"
+    {
+        string value = "broken"
+    }
+
+    def "Child"
+    {
+        def "SubChild"
+        {
+            float value = 17
+        }
+
+        string another = "one"
+    }
+
+    string additional = "HEY!"
+}

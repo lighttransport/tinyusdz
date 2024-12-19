@@ -12,7 +12,7 @@
 //   - [x] Compute tangentes and binormals
 //   - [x] displayColor, displayOpacity primvar(vertex color)
 //   - [x] Support Skeleton
-//   - [ ] Support SkelAnimation
+//   - [x] Support SkelAnimation
 //     - [x] joint animation
 //     - [x] blendshape animation
 //   - [ ] Support Inbetween BlendShape
@@ -2835,7 +2835,7 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
 }
 
 bool RenderSceneConverter::ConvertMesh(
-    const RenderSceneConverterEnv &env, const Path &abs_path,
+    const RenderSceneConverterEnv &env, const Path &abs_prim_path,
     const GeomMesh &mesh, const MaterialPath &material_path,
     const std::map<std::string, MaterialPath> &subset_material_path_map,
     // const std::map<std::string, int64_t> &rmaterial_idMap,
@@ -2891,7 +2891,7 @@ bool RenderSceneConverter::ConvertMesh(
 
     if (points.empty()) {
       PUSH_ERROR_AND_RETURN(
-          fmt::format("`points` is empty. Prim {}", abs_path));
+          fmt::format("`points` is empty. Prim {}", abs_prim_path));
     }
 
     dst.points.resize(points.size());
@@ -2988,7 +2988,7 @@ bool RenderSceneConverter::ConvertMesh(
     MaterialSubset ms;
     ms.prim_name = psubset->name;
     // ms.prim_index = // TODO
-    ms.abs_path = abs_path.prim_part() + std::string("/") + psubset->name;
+    ms.abs_path = abs_prim_path.prim_part() + std::string("/") + psubset->name;
     ms.display_name = psubset->meta.displayName.value_or("");
 
     // TODO: Raise error when indices is empty?
@@ -3086,19 +3086,19 @@ bool RenderSceneConverter::ConvertMesh(
 
               if (vattr.is_vertex()) {
                 if (vattr.vertex_count() != num_vertices) {
-                  PUSH_ERROR_AND_RETURN(fmt::format("Array length of texture coordinate `{}`(Prim path {}) must be {}, but got {}", uvname, abs_path.prim_part(), num_vertices, vattr.vertex_count()));
+                  PUSH_ERROR_AND_RETURN(fmt::format("Array length of texture coordinate `{}`(Prim path {}) must be {}, but got {}", uvname, abs_prim_path.prim_part(), num_vertices, vattr.vertex_count()));
                 }
               } else if (vattr.is_constant()) {
                 if (vattr.vertex_count() != 1) {
-                  PUSH_ERROR_AND_RETURN(fmt::format("Array length of texture coordinate `{}`(Prim path {}) must be {}, but got {}", uvname, abs_path.prim_part(), 1, vattr.vertex_count()));
+                  PUSH_ERROR_AND_RETURN(fmt::format("Array length of texture coordinate `{}`(Prim path {}) must be {}, but got {}", uvname, abs_prim_path.prim_part(), 1, vattr.vertex_count()));
                 }
               } else if (vattr.is_uniform()) {
                 if (vattr.vertex_count() != num_faces) {
-                  PUSH_ERROR_AND_RETURN(fmt::format("Array length of texture coordinate `{}`(Prim path {}) must be {}, but got {}", uvname, abs_path.prim_part(), num_faces, vattr.vertex_count()));
+                  PUSH_ERROR_AND_RETURN(fmt::format("Array length of texture coordinate `{}`(Prim path {}) must be {}, but got {}", uvname, abs_prim_path.prim_part(), num_faces, vattr.vertex_count()));
                 }
               } else if (vattr.is_facevarying()) {
                 if (vattr.vertex_count() != num_face_vertex_indices) {
-                  PUSH_ERROR_AND_RETURN(fmt::format("Array length of texture coordinate `{}`(Prim path {}) must be {}, but got {}", uvname, abs_path.prim_part(), num_face_vertex_indices, vattr.vertex_count()));
+                  PUSH_ERROR_AND_RETURN(fmt::format("Array length of texture coordinate `{}`(Prim path {}) must be {}, but got {}", uvname, abs_prim_path.prim_part(), num_face_vertex_indices, vattr.vertex_count()));
                 }
               } else {
                 PUSH_ERROR_AND_RETURN("Internal error. Unknown variability of texcoord attribute.");
@@ -3707,20 +3707,32 @@ bool RenderSceneConverter::ConvertMesh(
         if (!ConvertSkeletonImpl(env, mesh, &skel, &anim)) {
           return false;
         }
-        DCOUT("Converted skeleton attached to : " << abs_path);
+        DCOUT("Converted skeleton attached to : " << abs_prim_path);
 
-        auto it = std::find_if(skeletons.begin(), skeletons.end(), [&abs_path](const SkelHierarchy &sk) {
-          return sk.abs_path == abs_path.full_path_name();
+        auto skel_it = std::find_if(skeletons.begin(), skeletons.end(), [&skelPath](const SkelHierarchy &sk) {
+          DCOUT("sk.abs_path " << sk.abs_path << ", skel_path " << skelPath.full_path_name());
+          return sk.abs_path == skelPath.full_path_name();
         });
 
         if (anim) {
-          skel.anim_id = int(animations.size());
-          animations.emplace_back(anim.value());
+
+          const auto &animAbsPath = anim.value().abs_path;
+          auto anim_it = std::find_if(animations.begin(), animations.end(), [&animAbsPath](const Animation &a) {
+            DCOUT("a.abs_path " << a.abs_path << ", anim_path " << animAbsPath);
+            return a.abs_path == animAbsPath;
+          });
+
+          if (anim_it != animations.end()) {
+            skel.anim_id = int(std::distance(animations.begin(), anim_it));
+          } else {
+            skel.anim_id = int(animations.size());
+            animations.emplace_back(anim.value());
+          }
         }
 
         int skel_id{0};
-        if (it != skeletons.end()) {
-          skel_id = int(std::distance(skeletons.begin(), it));
+        if (skel_it != skeletons.end()) {
+          skel_id = int(std::distance(skeletons.begin(), skel_it));
         } else {
           skel_id = int(skeletons.size());
           skeletons.emplace_back(std::move(skel));
@@ -3966,7 +3978,7 @@ bool RenderSceneConverter::ConvertMesh(
   dst.is_single_indexable = is_single_indexable;
 
   dst.prim_name = mesh.name;
-  dst.abs_path = abs_path.full_path_name();
+  dst.abs_path = abs_prim_path.full_path_name();
   dst.display_name = mesh.metas().displayName.value_or("");
 
   (*dstMesh) = std::move(dst);
@@ -6727,7 +6739,7 @@ std::string DumpMesh(const RenderMesh &mesh, uint32_t indent) {
     ss << pprint::Indent(indent + 1) << "}\n";
   }
 
-  ss << pprint::Indent(indent + 1) << "skek_id " << mesh.skel_id << "\n";
+  ss << pprint::Indent(indent + 1) << "skel_id " << mesh.skel_id << "\n";
 
   if (mesh.joint_and_weights.jointIndices.size()) {
     ss << pprint::Indent(indent + 1) << "skin {\n";
@@ -6810,6 +6822,8 @@ std::string DumpSkeleton(const SkelHierarchy &skel, uint32_t indent) {
 
   ss << pprint::Indent(indent + 1) << "name " << quote(skel.prim_name) << "\n";
   ss << pprint::Indent(indent + 1) << "abs_path " << quote(skel.abs_path)
+     << "\n";
+  ss << pprint::Indent(indent + 1) << "anim_id " << skel.anim_id
      << "\n";
   ss << pprint::Indent(indent + 1) << "display_name "
      << quote(skel.display_name) << "\n";

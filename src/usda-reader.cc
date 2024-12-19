@@ -68,7 +68,6 @@
 #include "str-util.hh"
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
-#include "usdObj.hh"
 #include "usdShade.hh"
 #include "value-pprint.hh"
 #include "value-types.hh"

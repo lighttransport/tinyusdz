@@ -680,7 +680,7 @@ bool GPrim::set_primvar(const GeomPrimvar &primvar,
   return true;
 }
 
-bool GPrim::get_displayColor(value::color3f *dst, double t, const value::TimeSampleInterpolationType tinterp)
+bool GPrim::get_displayColor(value::color3f *dst, double t, const value::TimeSampleInterpolationType tinterp) const
 {
   // TODO: timeSamples
   (void)t;
@@ -696,7 +696,7 @@ bool GPrim::get_displayColor(value::color3f *dst, double t, const value::TimeSam
   return primvar.get_value(dst);
 }
 
-bool GPrim::get_displayOpacity(float *dst, double t, const value::TimeSampleInterpolationType tinterp)
+bool GPrim::get_displayOpacity(float *dst, double t, const value::TimeSampleInterpolationType tinterp) const
 {
   // TODO: timeSamples
   (void)t;
@@ -796,6 +796,23 @@ const std::vector<value::normal3f> GeomMesh::get_normals(
   return dst;
 }
 
+const std::vector<value::color3f> GPrim::get_displayColors(
+    double time, value::TimeSampleInterpolationType interp) const {
+  std::vector<value::color3f> dst;
+
+  std::string err;
+  if (has_primvar("displayColor")) {
+    GeomPrimvar primvar;
+    if (!get_primvar("displayColor", &primvar, &err)) {
+      return dst;
+    }
+
+    primvar.flatten_with_indices(time, &dst, interp);
+  }
+
+  return dst;
+}
+
 Interpolation GeomMesh::get_normalsInterpolation() const {
   if (props.count("primvars:normals")) {
     const auto &prop = props.at("primvars:normals");
@@ -811,7 +828,20 @@ Interpolation GeomMesh::get_normalsInterpolation() const {
   return Interpolation::Vertex;  // default 'vertex'
 }
 
-const std::vector<int32_t> GeomMesh::get_faceVertexCounts() const {
+Interpolation GPrim::get_displayColorsInterpolation() const {
+  if (props.count("primvars:displayColor")) {
+    const auto &prop = props.at("primvars:displayColor");
+    if (prop.get_attribute().type_name() == "color3f[]") {
+      if (prop.get_attribute().metas().interpolation) {
+        return prop.get_attribute().metas().interpolation.value();
+      }
+    }
+  }
+
+  return Interpolation::Vertex;  // default 'vertex'
+}
+
+const std::vector<int32_t> GeomMesh::get_faceVertexCounts(double time) const {
   std::vector<int32_t> dst;
 
   if (!faceVertexCounts.authored() || faceVertexCounts.is_blocked()) {
@@ -825,15 +855,14 @@ const std::vector<int32_t> GeomMesh::get_faceVertexCounts() const {
 
   if (auto pv = faceVertexCounts.get_value()) {
     std::vector<int32_t> val;
-    // TOOD: timesamples
-    if (pv.value().get_scalar(&val)) {
+    if (pv.value().get(time, &val, value::TimeSampleInterpolationType::Held)) {
       dst = std::move(val);
     }
   }
   return dst;
 }
 
-const std::vector<int32_t> GeomMesh::get_faceVertexIndices() const {
+const std::vector<int32_t> GeomMesh::get_faceVertexIndices(double time) const {
   std::vector<int32_t> dst;
 
   if (!faceVertexIndices.authored() || faceVertexIndices.is_blocked()) {
@@ -847,8 +876,7 @@ const std::vector<int32_t> GeomMesh::get_faceVertexIndices() const {
 
   if (auto pv = faceVertexIndices.get_value()) {
     std::vector<int32_t> val;
-    // TOOD: timesamples
-    if (pv.value().get_scalar(&val)) {
+    if (pv.value().get(time, &val, value::TimeSampleInterpolationType::Held)) {
       dst = std::move(val);
     }
   }
