@@ -2980,14 +2980,26 @@ struct XformOp {
     return get_scalar();
   }
 
-  // Type-safe way to get concrete 'default' value.
   template <class T>
-  nonstd::optional<T> get_value() const {
+  nonstd::optional<T> get_value(double t = value::TimeCode::Default(), 
+          value::TimeSampleInterpolationType interp =
+               value::TimeSampleInterpolationType::Linear) const {
     if (is_timesamples()) {
+      T value;
+      if (get_interpolated_value(&value, t, interp)) {
+        return value;
+      }
       return nonstd::nullopt;
     }
 
     return _var.get_value<T>();
+  }
+
+  template <class T>
+  bool get_interpolated_value(T *dst, double t = value::TimeCode::Default(),
+           value::TimeSampleInterpolationType interp =
+               value::TimeSampleInterpolationType::Linear) const {
+    return _var.get_interpolated_value<T>(t, interp, dst);
   }
 
   const primvar::PrimVar &get_var() const { return _var; }

@@ -408,6 +408,46 @@ bool LoadAsset(AssetResolutionResolver &resolver,
   return true;
 }
 
+bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std::string *warn,
+                      std::string *err) {
+  (void)warn;
+
+  if (depth > (1024 * 1024 * 128)) {
+    PUSH_ERROR_AND_RETURN("PrimSpec tree too deep.");
+  }
+
+  // Combine metadataum
+  dst.metas().update_from(src.metas(), false);
+
+  // Combine properties
+  for (const auto &prop : src.props()) {
+    // add if not existent
+    if (dst.props().count(prop.first) == 0) {
+      dst.props()[prop.first] = prop.second;
+    }
+  }
+
+  // Combine child primspecs.
+  for (auto &child : src.children()) {
+    auto dst_it = std::find_if(
+        dst.children().begin(), dst.children().end(),
+        [&child](const PrimSpec &ps) { return ps.name() == child.name(); });
+
+    // if exists, combine properties and children
+    if (dst_it != dst.children().end()) {
+      if (!CombinePrimSpecRec(depth + 1, (*dst_it), child, warn, err)) {
+        return false;
+      }
+    }
+    // otherwise add it
+    else {
+      dst.children().push_back(child);
+    }
+  }
+
+  return true;
+}
+
 bool CompositeSublayersRec(AssetResolutionResolver &resolver,
                            const Layer &in_layer,
                            std::vector<std::set<std::string>> layer_names_stack,
@@ -424,10 +464,21 @@ bool CompositeSublayersRec(AssetResolutionResolver &resolver,
   layer_names_stack.emplace_back(std::set<std::string>());
   std::set<std::string> &curr_layer_names = layer_names_stack.back();
 
+  for (auto const &prim : in_layer.primspecs()) {
+    if (composited_layer->has_primspec(prim.first))
+    {
+      if (!CombinePrimSpecRec(0, composited_layer->primspecs().at(prim.first), prim.second, warn, err)) {
+        return false;
+      }
+    }
+    else {
+      composited_layer->add_primspec(prim.first, prim.second);
+    }
+  }
+
   for (const auto &layer : in_layer.metas().subLayers) {
     // TODO: subLayerOffset
     std::string sublayer_asset_path = layer.assetPath.GetAssetPath();
-    DCOUT("Load subLayer " << sublayer_asset_path);
 
     // Do cyclic referencing check.
     // TODO: Use resolved name?
@@ -458,45 +509,10 @@ bool CompositeSublayersRec(AssetResolutionResolver &resolver,
 
     curr_layer_names.insert(sublayer_asset_path);
 
-    Layer composited_sublayer;
-
     // Recursively load subLayer
     if (!CompositeSublayersRec(resolver, sublayer, layer_names_stack,
-                               &composited_sublayer, warn, err, options)) {
+                               composited_layer, warn, err, options)) {
       return false;
-    }
-
-    {
-      // 1/2. merge sublayer's sublayers
-
-      // NOTE: `over` specifier is ignored when merging Prims among different
-      // subLayers
-      for (auto &prim : composited_sublayer.primspecs()) {
-        if (composited_layer->has_primspec(prim.first)) {
-          // Skip
-        } else {
-          if (!composited_layer->emplace_primspec(prim.first, std::move(prim.second))) {
-            PUSH_ERROR_AND_RETURN(
-                fmt::format("Compositing PrimSpec {} in {} failed.", prim.first,
-                            layer_filepath));
-          }
-          DCOUT("add primspec: " << prim.first);
-        }
-      }
-
-      // 2/2. merge sublayer
-      for (auto &prim : sublayer.primspecs()) {
-        if (composited_layer->has_primspec(prim.first)) {
-          // Skip
-        } else {
-          if (!composited_layer->emplace_primspec(prim.first, std::move(prim.second))) {
-            PUSH_ERROR_AND_RETURN(
-                fmt::format("Compositing PrimSpec {} in {} failed.", prim.first,
-                            layer_filepath));
-          }
-          DCOUT("add primspec: " << prim.first);
-        }
-      }
     }
   }
 
@@ -517,51 +533,15 @@ bool CompositeSublayers(AssetResolutionResolver &resolver,
 
   std::vector<std::set<std::string>> layer_names_stack;
 
+  // keep metas from the root layer
+  composited_layer->metas() = in_layer.metas();
+
   DCOUT("Resolve subLayers..");
   if (!CompositeSublayersRec(resolver, in_layer, layer_names_stack,
                              composited_layer, warn, err, options)) {
     PUSH_ERROR_AND_RETURN("Composite subLayers failed.");
   }
 
-  // merge Prims in root layer.
-  // NOTE: local Prims(prims in root layer) wins against subLayer's Prim
-  DCOUT("in_layer # of primspecs: " << in_layer.primspecs().size());
-  for (auto &prim : in_layer.primspecs()) {
-    DCOUT("in_layer.prim: " << prim.first);
-    if (composited_layer->has_primspec(prim.first)) {
-      // over
-      if (prim.second.specifier() == Specifier::Class) {
-        // TODO: Simply ignore?
-        DCOUT("TODO: `class` Prim");
-      } else if (prim.second.specifier() == Specifier::Over) {
-        PrimSpec &dst = composited_layer->primspecs()[prim.first];
-        if (!OverridePrimSpec(dst, prim.second, warn, err)) {
-          return false;
-        }
-      } else if (prim.second.specifier() == Specifier::Def) {
-        DCOUT("overewrite prim: " << prim.first);
-        // overwrite
-        if (!composited_layer->replace_primspec(prim.first, prim.second)) {
-          PUSH_ERROR_AND_RETURN(
-              fmt::format("Failed to replace PrimSpec: {}", prim.first));
-        }
-      } else {
-        /// ???
-        PUSH_ERROR_AND_RETURN(fmt::format("Prim {} has invalid Prim specifier.",
-                                          prim.second.name()));
-      }
-    } else {
-      if (!composited_layer->add_primspec(prim.first, prim.second)) {
-        PUSH_ERROR_AND_RETURN(
-            fmt::format("Compositing PrimSpec {} in {} failed.", prim.first,
-                        in_layer.name()));
-      }
-      DCOUT("added primspec: " << prim.first);
-    }
-  }
-
-  composited_layer->metas() = in_layer.metas();
-  // Remove subLayers metadatum
   composited_layer->metas().subLayers.clear();
 
   DCOUT("Composite subLayers ok.");
@@ -1275,9 +1255,11 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
   // Then override it with `dst`
   PrimSpec ps = src;  // copy
 
-  // Keep PrimSpec name, typeName and spec from `dst`
+  // Keep PrimSpec name, typeName (if not empty) and spec from `dst`
   ps.name() = dst.name();
-  ps.typeName() = dst.typeName();
+  if (!dst.typeName().empty()) {
+    ps.typeName() = dst.typeName();
+  }
   ps.specifier() = dst.specifier();
 
   // Override metadataum
@@ -1288,6 +1270,10 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
     if (ps.props().count(prop.first)) {
       // replace
       ps.props().at(prop.first) = prop.second;
+    }
+    else {
+      // re-add
+      ps.props()[prop.first] = prop.second;
     }
   }
 

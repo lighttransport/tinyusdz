@@ -340,6 +340,8 @@ class CrateReader {
   bool ReadFloatArray(bool is_compressed, std::vector<float> *d);
   bool ReadDoubleArray(bool is_compressed, std::vector<double> *d);
 
+  bool ReadDoubleVector(std::vector<double> *d);
+
   // template <class T>
   // struct IsIntType {
   //   static const bool value =
