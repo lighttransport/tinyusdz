@@ -7,17 +7,21 @@ mkdir ${builddir}
 
 
 # path to libcxx(built with msan)
-LIBCXX_MSAN_DIR=${curdir}/libcxx_msan/dist
+LIBCXX_MSAN_DIR=${curdir}/llvm_project_msan_dist
 
 # Specify sanitizer flag directly to CXX compiler
 
-export CXX="clang++-18 -fsanitize=memory"
-export CC="clang-18 -fsanitize=memory"
+export CXX="clang++-18 -fsanitize=memory -fsanitize-memory-track-origins -fno-omit-frame-pointer "
+export CC="clang-18 -fsanitize=memory -fsanitize-memory-track-origins -fno-omit-frame-pointer "
+
+#
+# Use isystem for custom built libcxx to suppress clang's warnings.
+#
 
 cd ${builddir} && cmake \
   -DCMAKE_TOOLCHAIN_FILE=cmake/lld-linux.toolchain.cmake \
-  -DCMAKE_CXX_FLAGS="-fsanitize=memory -I${LIBCXX_MSAN_DIR}/include -I${LIBCXX_MSAN_DIR}/include/c++/v1 -stdlib=libc++ " \
-  -DCMAKE_EXE_LINKER_FLAGS="-L${LIBCXX_MSAN_DIR}/lib -lc++abi " \
+  -DCMAKE_CXX_FLAGS="-fsanitize=memory -fno-omit-frame-pointer -fsanitize-memory-track-origins -isystem ${LIBCXX_MSAN_DIR}/include -isystem ${LIBCXX_MSAN_DIR}/include/c++/v1 -nostdinc++ " \
+  -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath,${LIBCXX_MSAN_DIR}/lib -lc++ -lc++abi -lunwind " \
   -DCMAKE_AR=/usr/bin/llvm-ar \
   -DCMAKE_VERBOSE_MAKEFILE=1 \
   -DTINYUSDZ_WITH_OPENSUBDIV=0 \
