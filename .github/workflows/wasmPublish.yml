@@ -68,7 +68,6 @@ jobs:
           node-version: '20.x'
           registry-url: 'https://registry.npmjs.org'
       - run: |
-          npm ci
           npm version --no-git-tag-version ${{ github.event.inputs.release_version }} --allow-same-version
           npm publish --access public --tag ${{ github.event.inputs.NPM_tag }} ${{ github.event.inputs.NPM_publish_arg }}
         working-directory: ${{ github.workspace }}/web/npm
