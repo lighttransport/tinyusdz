@@ -470,6 +470,10 @@ See [python/README.md](python/README.md) and [doc/python_binding.md](doc/python_
 
 CI build script is a build script trying to build TinyUSDZ in self-contained manner as much as possible(including custom Python build)
 
+## Build with Sanitizers
+
+See wiki page: https://github.com/lighttransport/tinyusdz/wiki/Building-TinyUSDZ-with-Sanitizers  
+
 ### Linux/macOS
 
 T.B.W.
