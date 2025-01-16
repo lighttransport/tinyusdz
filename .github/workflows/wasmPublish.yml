@@ -64,7 +64,7 @@ jobs:
 
       - name: Version & Publish Package
         run: |
-          npm version --no-git-tag-version ${{ github.event.inputs.release_version }}
+          npm version --no-git-tag-version ${{ github.event.inputs.release_version }} --allow-same-version
           npm publish --access public --tag ${{ github.event.inputs.NPM_tag }} ${{ github.event.inputs.NPM_publish_arg }}
         working-directory: ${{ github.workspace }}/web/npm
         env:
