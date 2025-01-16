@@ -18,7 +18,6 @@ on:
         description: 'NPM Publish arg'
         required: false
         type: string
-        default: --dry-run
 
 jobs:
   tinyusdz-wasm:
