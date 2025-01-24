@@ -18,7 +18,6 @@ on:
         description: 'NPM Publish arg'
         required: false
         type: string
-        default: --dry-run
 
 jobs:
   tinyusdz-wasm:
@@ -63,7 +62,12 @@ jobs:
           path: ${{ github.workspace }}/web/npm
 
       - name: Version & Publish Package
-        run: |
+        # Setup .npmrc file to publish to npm
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          registry-url: 'https://registry.npmjs.org'
+      - run: |
           npm version --no-git-tag-version ${{ github.event.inputs.release_version }} --allow-same-version
           npm publish --access public --tag ${{ github.event.inputs.NPM_tag }} ${{ github.event.inputs.NPM_publish_arg }}
         working-directory: ${{ github.workspace }}/web/npm
