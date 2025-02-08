@@ -756,9 +756,6 @@ struct GeomMesh : GPrim {
   // Make SkelBindingAPI first citizen.
   nonstd::optional<Relationship> skeleton;  // rel skel:skeleton
 
-  // For Explicit Joint Orders
-  TypedAttribute<std::vector<value::token>> joints; // uniform token[] skel:joints
-
   //
   // Utility functions
   //
@@ -906,8 +903,9 @@ struct GeomMesh : GPrim {
 
 #endif
 
-  // Get Explicit Joint orders:  skel:joints or primvars:skel:joints
-  bool get_joints(std::vector<value::token> *joints) const;
+  // Get Explicit Joint orders: uniform token[] type.
+  //  `skel:joints` or `primvars:skel:joints`
+  std::vector<value::token> get_joints() const;
 
 #if 0 // Deprecated: Use tydra::GetGeomSubsets() instead.
   ///
