@@ -883,6 +883,14 @@ const std::vector<int32_t> GeomMesh::get_faceVertexIndices(double time) const {
   return dst;
 }
 
+const std::vector<value::token> GeomMesh::get_joints() const {
+  if (props.count("primvars:skel:joint")) {
+
+  } else {
+    return joints;
+  }
+}
+
 // static
 bool GeomSubset::ValidateSubsets(
     const std::vector<const GeomSubset *> &subsets,
