@@ -555,3 +555,4 @@ Some helper code is licensed under MIT license.
 * pugixml: MIT license. https://github.com/zeux/pugixml
 * nanoflann: 2-clause BSD license. https://github.com/jlblancoc/nanoflann
 * tinymeshutils: MIT license. https://github.com/syoyo/tinymeshutils
+* criterion(for benchmark): MIT license. https://github.com/p-ranav/criterion
