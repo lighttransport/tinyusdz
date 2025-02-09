@@ -54,8 +54,6 @@ constexpr auto kMaterialBinding = "material:binding";
 constexpr auto kMaterialBindingCollection = "material:binding:collection";
 constexpr auto kMaterialBindingPreview = "material:binding:preview";
 constexpr auto kSkelSkeleton = "skel:skeleton";
-// Explit Joint Order
-constexpr auto kSkelJoints = "skel:joints";
 constexpr auto kSkelAnimationSource = "skel:animationSource";
 constexpr auto kSkelBlendShapes = "skel:blendShapes";
 constexpr auto kSkelBlendShapeTargets = "skel:blendShapeTargets";
@@ -3740,8 +3738,6 @@ bool ReconstructPrim<GeomMesh>(
 
       }
     }
-
-    PARSE_TYPED_ATTRIBUTE(table, prop, kSkelJoints, GeomMesh, mesh->joints)
 
     // generic
     ADD_PROPERTY(table, prop, GeomMesh, mesh->props)

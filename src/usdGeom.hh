@@ -903,8 +903,7 @@ struct GeomMesh : GPrim {
 
 #endif
 
-  // Get Explicit Joint orders: uniform token[] type.
-  //  `skel:joints` or `primvars:skel:joints`
+  // Get Explicit Joint orders: `uniform token[] skel:joints`
   std::vector<value::token> get_joints() const;
 
 #if 0 // Deprecated: Use tydra::GetGeomSubsets() instead.
