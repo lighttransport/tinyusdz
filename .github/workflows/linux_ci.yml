@@ -122,6 +122,9 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
+
+    - name: prep
+      run: cat /proc/cpuinfo
     # ubuntu-latest(Ubuntu 22.04 as of 2024/01/03) has clang installed,
     # so use clang
     # TODO: Use libc++ for STL?
