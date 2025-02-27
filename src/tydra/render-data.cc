@@ -3705,6 +3705,7 @@ bool RenderSceneConverter::ConvertMesh(
       if (skelPath.is_valid()) {
         SkelHierarchy skel;
         nonstd::optional<Animation> anim;
+        // TODO: cache skeleton conversion
         if (!ConvertSkeletonImpl(env, mesh, &skel, &anim)) {
           return false;
         }
@@ -3737,6 +3738,7 @@ bool RenderSceneConverter::ConvertMesh(
         } else {
           skel_id = int(skeletons.size());
           skeletons.emplace_back(std::move(skel));
+          DCOUT("add skeleton\n");
         }
 
         dst.skel_id = skel_id;
