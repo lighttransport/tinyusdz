@@ -15,6 +15,7 @@
 //   - [x] Support SkelAnimation
 //     - [x] joint animation
 //     - [x] blendshape animation
+//     - [x] explicit joint order
 //   - [ ] Support Inbetween BlendShape
 //   - [ ] Support material binding collection(Collection API)
 //   - [ ] Support multiple skel animation
@@ -3704,6 +3705,7 @@ bool RenderSceneConverter::ConvertMesh(
       if (skelPath.is_valid()) {
         SkelHierarchy skel;
         nonstd::optional<Animation> anim;
+        // TODO: cache skeleton conversion
         if (!ConvertSkeletonImpl(env, mesh, &skel, &anim)) {
           return false;
         }
@@ -3736,11 +3738,51 @@ bool RenderSceneConverter::ConvertMesh(
         } else {
           skel_id = int(skeletons.size());
           skeletons.emplace_back(std::move(skel));
+          DCOUT("add skeleton\n");
         }
 
         dst.skel_id = skel_id;
 
       }
+    }
+
+    // Explicit joint orders
+    // If the mesh has `skel:joints`, remap jointIndex.
+    {
+      std::vector<value::token> joints = mesh.get_joints();
+      //if ((dst.skel_id >= 0) && joints.size()) {
+      //  DCOUT("has explicit joint orders.\n");
+      //}
+
+      const auto &skel = skeletons[size_t(dst.skel_id)];
+
+      std::map<std::string, int> name_to_index_map = BuildSkelNameToIndexMap(skel);
+
+      std::unordered_map<int, int> index_remap;
+
+      for (size_t i = 0; i < joints.size(); i++) {
+        std::string joint_name = joints[i].str();
+        
+        if (!name_to_index_map.count(joint_name)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("joint_name {} not found in Skeleton", joint_name));
+        }
+
+        int dst_idx = name_to_index_map.at(joint_name);
+        index_remap[int(i)] = dst_idx;
+
+        //DCOUT("remap " << i << " to " << dst_idx);
+      }
+
+      for (size_t i = 0; i < dst.joint_and_weights.jointIndices.size(); i++) {
+        int src_idx = dst.joint_and_weights.jointIndices[i];
+        if (index_remap.count(src_idx)) {
+          int dst_idx = index_remap[src_idx];
+
+          dst.joint_and_weights.jointIndices[i] = dst_idx;
+          //DCOUT("jointIndex modified: remap " << src_idx << " to " << dst_idx);
+        }
+      }
+
     }
 
     // geomBindTransform(optional).
