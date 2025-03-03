@@ -3076,5 +3076,30 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
   return true;
 }
 
+namespace {
+
+void BuildSkelNameToIndexMapRec(const SkelNode &node, std::map<std::string, int> &m) {
+
+  if (node.joint_name.size() && (node.joint_id >= 0)) {
+    m[node.joint_name] = node.joint_id;
+  }
+
+  for (const auto &child : node.children) {
+    BuildSkelNameToIndexMapRec(child, m);
+  }
+
+}
+
+} // namespace
+
+std::map<std::string, int> BuildSkelNameToIndexMap(const SkelHierarchy &skel) {
+
+  std::map<std::string, int> m;
+
+  BuildSkelNameToIndexMapRec(skel.root_node, m);
+  
+  return m;
+}
+
 }  // namespace tydra
 }  // namespace tinyusdz
