@@ -608,7 +608,8 @@ std::vector<GeomPrimvar> GPrim::get_primvars() const {
     if (startsWith(prop.first, kPrimvars)) {
       // skip `:indices`. Attribute with `:indices` suffix is handled in
       // `get_primvar`
-      if (props.count(prop.first + kIndices)) {
+      // Also skips primvar attribute with `:indices` suffix only.
+      if (endsWith(prop.first, kIndices)) {
         continue;
       }
 
