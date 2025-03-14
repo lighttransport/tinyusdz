@@ -1253,7 +1253,15 @@ bool export_to_usda(const RenderScene &scene,
     stage.metas().upAxis = Axis::Z;
   }
 
+  SkelRoot skelRoot;
+  skelRoot.set_name("skelRoot"); 
+  Prim skelRootPrim(skelRoot);
+
+  bool has_skelroot{false};
+
   // TODO: Construct Node hierarchy
+
+  std::unordered_map<uint32_t, Skeleton> skelMap;
 
   for (size_t i = 0; i < scene.meshes.size(); i++) {
     GeomMesh mesh;
@@ -1262,29 +1270,46 @@ bool export_to_usda(const RenderScene &scene,
       return false;
     }
 
-    Skeleton skel;
     bool has_skel{false};
 
     if ((scene.meshes[i].skel_id > -1) && (size_t(scene.meshes[i].skel_id) < scene.skeletons.size())) {
       DCOUT("Export Skeleton");
 
-      const SkelHierarchy &src_skel = scene.skeletons[size_t(scene.meshes[i].skel_id)];
+      uint32_t skel_id = uint32_t(scene.meshes[i].skel_id);
+      std::string skel_name;
+      if (!skelMap.count(skel_id)) {
+        const SkelHierarchy &src_skel = scene.skeletons[size_t(scene.meshes[i].skel_id)];
 
-      std::string src_animsource; // empty = no animationSource
-      if (src_skel.anim_id > -1) {
-        src_animsource = "/animations/" + scene.animations[size_t(src_skel.anim_id)].prim_name;
+        std::string src_animsource; // empty = no animationSource
+        if (src_skel.anim_id > -1) {
+          src_animsource = "/animations/" + scene.animations[size_t(src_skel.anim_id)].prim_name;
+        }
+
+        Skeleton skel;
+        if (!detail::ExportSkeleton(src_skel, src_animsource, &skel, err)) {
+          return false;
+        }
+        skel_name = skel.name;
+
+        APISchemas skelAPISchema;
+        skelAPISchema.listOpQual = ListEditQual::Prepend;
+        skelAPISchema.names.push_back({APISchemas::APIName::SkelBindingAPI, ""});
+        skel.metas().apiSchemas = skelAPISchema;
+
+        skelMap[skel_id] = std::move(skel);
+      } else {
+        skel_name = skelMap[skel_id].name;
       }
 
-      if (!detail::ExportSkeleton(src_skel, src_animsource, &skel, err)) {
-        return false;
-      }
+      has_skel = true;
+      has_skelroot = true;
 
       // Add some skel settings to GeomMesh.
       
       // rel skel:skeleton
       Relationship skelRel;
       // FIXME: Set abs_path 
-      Path skelTargetPath("/skelRoot" + std::to_string(i) + "/" + skel.name, "");
+      Path skelTargetPath("/skelRoot/" + skel_name, "");
       skelRel.set(skelTargetPath);
       mesh.skeleton = skelRel;
 
@@ -1302,9 +1327,7 @@ bool export_to_usda(const RenderScene &scene,
       } else {
         mesh.metas().apiSchemas = skelAPISchema;
       }
-      skel.metas().apiSchemas = skelAPISchema;
 
-      has_skel = true;
     }
 
     std::vector<BlendShape> bss;
@@ -1324,7 +1347,7 @@ bool export_to_usda(const RenderScene &scene,
         // TODO: Set abs_path
         std::string bs_path;
         if (has_skel) {
-          bs_path = "/skelRoot" + std::to_string(i) + "/" + mesh.name + "/" + target.first;
+          bs_path = "/skelRoot/" + mesh.name + "/" + target.first;
         } else {
           bs_path = "/" + mesh.name + "/" + target.first;
         }
@@ -1364,16 +1387,7 @@ bool export_to_usda(const RenderScene &scene,
 
     if (has_skel) {
 
-      SkelRoot skelRoot;
-      skelRoot.set_name("skelRoot" + std::to_string(i)); 
-
-      Prim skelPrim(skel);
-
-      Prim skelRootPrim(skelRoot);
-      skelRootPrim.add_child(std::move(meshPrim), /* rename_primname_if_require */true);
-      skelRootPrim.add_child(std::move(skelPrim), /* rename_primname_if_require */true);
-
-      stage.add_root_prim(std::move(skelRootPrim));
+      skelRootPrim.add_child(std::move(meshPrim), /* rename_primname_if_require */false);
 
     } else {
       // Put Prims under Scope Prim
@@ -1388,6 +1402,17 @@ bool export_to_usda(const RenderScene &scene,
 
   }
 
+  if (has_skelroot) {
+
+    for (const auto &item : skelMap) {
+      Prim skelPrim(item.second);
+      skelRootPrim.add_child(std::move(skelPrim), /* rename_primname_if_require */false);
+    }
+
+    stage.add_root_prim(std::move(skelRootPrim));
+  }
+
+  // TODO: Move to SkelRoot
   {
     Scope animGroup;
     animGroup.name = "animations";
