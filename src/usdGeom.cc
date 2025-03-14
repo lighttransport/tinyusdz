@@ -884,6 +884,58 @@ const std::vector<int32_t> GeomMesh::get_faceVertexIndices(double time) const {
   return dst;
 }
 
+std::vector<value::token> GeomMesh::get_joints() const {
+  constexpr auto kSkelJoints = "skel:joints";
+#if 0
+  if (has_primvar(kSkelJoints)) {
+    // 'primvars:skel:joints'
+    std::string err;
+    GeomPrimvar primvar;
+    if (!get_primvar(kSkelJoints, &primvar, &err)) {
+      DCOUT("Invalid `skel:joints` primvar. err = " << err);
+      return {};
+    }
+
+    if (primvar.has_indices()) {
+      // indexed primvar for skel:joint is not supported 
+      DCOUT("Indexed primvar is not supported for `skel:joints`");
+      return {};
+    }
+
+    const Attribute &attr = primvar.get_attribute();
+    if (!attr.is_uniform()) {
+      DCOUT("`skel:joints` must be uniform attribute");
+      return {};
+    }
+
+    std::vector<value::token> dst;
+    if (!primvar.get_value(&dst)) {
+      DCOUT("`skel:joints` must be token[] type, but got " << primvar.type_name());
+    }
+  } else {
+#endif
+  {
+    // lookup `skel:joints` prop
+    if (!props.count(kSkelJoints)) {
+      return {};
+    }
+
+    const auto &prop = props.at(kSkelJoints);
+    if (prop.get_attribute().is_uniform() && prop.get_attribute().type_name() == "token[]") {
+      
+      std::vector<value::token> dst;
+      if (!prop.get_attribute().get_value(&dst)) {
+        return {};
+      }
+
+      return dst;
+      
+    } 
+    DCOUT("`skel:joints` must be uniform token[] attribute, but got " << prop.value_type_name() << " (or Relationship))");
+  }
+  return {};
+}
+
 // static
 bool GeomSubset::ValidateSubsets(
     const std::vector<const GeomSubset *> &subsets,
