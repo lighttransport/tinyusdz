@@ -454,7 +454,7 @@ static bool ExportSkelAnimation(const Animation &anim, SkelAnimation *dst, std::
             scales[size_t(joint_id)] = v;
           }
 
-          if (scale_it->second.rotations.static_value) {
+          if (scale_it->second.scales.static_value) {
             uint64_t joint_id = joint_idMap.at(channels.first);
             if ((joint_id +1) > static_scales.size()) {
               static_scales.resize(size_t(joint_id+1));
