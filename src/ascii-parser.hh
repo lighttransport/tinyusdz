@@ -100,6 +100,19 @@ class AsciiParser {
     value::StringData comment;  // String only comment string.
   };
 
+  struct ReferenceMetas {
+    nonstd::optional<double> offset; // offset
+    nonstd::optional<double> scale; // scale
+    std::map<std::string, MetaVariable> customLayerData;  // `customLayerData`.
+  };
+
+  struct PayloadMetas {
+    nonstd::optional<double> offset; // offset
+    nonstd::optional<double> scale; // scale
+    // No customData for Payload.
+    //std::map<std::string, MetaVariable> customLayerData; 
+  };
+
   struct ParseState {
     int64_t loc{-1};  // byte location in StreamReder
   };
@@ -800,6 +813,8 @@ class AsciiParser {
                           Attribute *out_attr);
 
   bool ParseStageMeta(std::pair<ListEditQual, MetaVariable> *out);
+  bool ParseReferenceMetas(ReferenceMetas *out);
+  bool ParsePayloadMetas(ReferenceMetas *out);
 
   nonstd::optional<VariableDef> GetStageMetaDefinition(const std::string &name);
   nonstd::optional<VariableDef> GetPrimMetaDefinition(const std::string &arg);

@@ -556,3 +556,4 @@ Some helper code is licensed under MIT license.
 * nanoflann: 2-clause BSD license. https://github.com/jlblancoc/nanoflann
 * tinymeshutils: MIT license. https://github.com/syoyo/tinymeshutils
 * criterion(for benchmark): MIT license. https://github.com/p-ranav/criterion
+* usdBVHAnim: Apache 2.0 License. https://github.com/jbrd/usdBVHAnim
