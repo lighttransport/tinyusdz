@@ -25,6 +25,7 @@
  
 ## Mid-term todo
 
+* USD import/export feature using TinyUSDZ for robotics/sim2real/digitalTwin/genAI tools https://github.com/lighttransport/tinyusdz/issues/226
 * Performace optimization https://github.com/syoyo/tinyusdz/issues/164
 * MaterialX https://github.com/syoyo/tinyusdz/issues/86
   * Write our own MaterialX parser
