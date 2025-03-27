@@ -1085,6 +1085,7 @@ struct AttrMetas {
   nonstd::optional<Dictionary> sdrMetadata; // NOTE: applies to attr(also seen in prim meta)
 
   nonstd::optional<std::string> displayName;  // 'displayName'
+  nonstd::optional<std::string> displayGroup;  // 'displayGroup'
 
 
   //
@@ -1113,7 +1114,7 @@ struct AttrMetas {
 
   bool authored() const {
     return (interpolation || elementSize || hidden || customData || weight ||
-            connectability || outputName || renderType || sdrMetadata || displayName || bindMaterialAs || meta.size() || stringData.size());
+            connectability || outputName || renderType || sdrMetadata || displayName || displayGroup || bindMaterialAs || meta.size() || stringData.size());
   }
 };
 
@@ -4230,6 +4231,9 @@ struct LayerMetas {
   value::StringData comment;  // 'comment' In Stage meta, comment must be string
                               // only(`comment = "..."` is not allowed)
   value::StringData doc;      // `documentation`
+
+  // UsdPhysics
+  TypedAttributeWithFallback<double> kilogramsPerUnit{1.0};
 
   CustomDataType customLayerData;  // customLayerData
 

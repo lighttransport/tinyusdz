@@ -688,6 +688,11 @@ std::string print_attr_metas(const AttrMeta &meta, const uint32_t indent) {
        << "displayName = " << quote(meta.displayName.value()) << "\n";
   }
 
+  if (meta.displayGroup) {
+    ss << pprint::Indent(indent)
+       << "displayGroup = " << quote(meta.displayGroup.value()) << "\n";
+  }
+
   if (meta.outputName) {
     ss << pprint::Indent(indent)
        << "outputName = " << quote(to_string(meta.outputName.value())) << "\n";
@@ -4505,6 +4510,11 @@ std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
   if (metas.metersPerUnit.authored()) {
     meta_ss << pprint::Indent(indent)
             << "metersPerUnit = " << metas.metersPerUnit.get_value() << "\n";
+  }
+
+  if (metas.kilogramsPerUnit.authored()) {
+    meta_ss << pprint::Indent(indent)
+            << "kilogramsPerUnit = " << metas.kilogramsPerUnit.get_value() << "\n";
   }
 
   if (metas.upAxis.authored()) {
