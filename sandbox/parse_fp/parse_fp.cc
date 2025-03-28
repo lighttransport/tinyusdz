@@ -1,11 +1,39 @@
 #include <vector>
 #include <iostream>
+#include <sstream>
+#include <chrono>
+
+#include <random>
+
+std::string gen_floatarray(size_t n, bool delim_at_end) {
+
+  std::stringstream ss;
+
+  std::random_device rd;
+
+  std::mt19937 engine(rd());
+  std::uniform_real_distribution<> dist(-10000.0, 10000.0);
+
+  ss << "[";
+  for (size_t i = 0; i < n; i++) {
+    double f = dist(engine);
+    ss << std::to_string(f);
+    if (delim_at_end) {
+      ss << ",";
+    } else if (i < (n-1)) {
+      ss << ",";
+    }
+  }
+  ss << "]";
+
+  return ss.str();
+}
 
 struct Lexer {
 
   void skip_whitespaces() {
 
-    while (eof()) {
+    while (!eof()) {
 
       char s = *curr;
       if ((s == ' ') || (s == '\t') || (s == '\f') || (s == '\n') || (s == '\r') || (s == '\v')) {
@@ -18,7 +46,7 @@ struct Lexer {
 
   bool skip_until_delim_or_close_paren(const char delim, const char close_paren) {
 
-    while (eof()) {
+    while (!eof()) {
 
       char s = *curr;
       if ((s == delim) || (s == close_paren)) {
@@ -84,7 +112,7 @@ struct Lexer {
     bool has_dot = false;
 
     // oneOf [0-9, eE, -+]
-    while (eof() || (n >= n_trunc_chars)) {
+    while (!eof() || (n < n_trunc_chars)) {
       char c;
       look_char1(&c);
       if ((c == '-') || (c == '+')) {
@@ -112,6 +140,7 @@ struct Lexer {
     }
 
     if (n == 0) {
+      len = 0;
       return false;
     }
 
@@ -121,10 +150,21 @@ struct Lexer {
     return true;
   }
 
+  void push_error(const std::string &msg) {
+    err_ += msg + "\n";
+  }
+
+  std::string get_error() const {
+    return err_;
+  }
+
   const char *p_begin{nullptr};
   const char *p_end{nullptr};
 
   const char *curr{nullptr};
+
+ private:
+  std::string err_;
 };
 
 
@@ -140,9 +180,12 @@ bool lex_float_array(
   const char *p_begin,
   const char *p_end,
   std::vector<fp_lex_span> &result,
+  std::string &err,
   bool allow_delim_at_last = true, char delim = ',', char open_paren = '[', char close_paren = ']') {
 
-  if (p_begin <= p_end) {
+  if (p_begin >= p_end) {
+    err = "Invalid input\n";
+  
     return false;
   }
 
@@ -156,28 +199,80 @@ bool lex_float_array(
   {
     char c;
     if (!lexer.char1(&c)) {
+      err = "Input too short.\n";
       return false;
     }
 
     if (c != open_paren) {
+      err = "Input does not begin with open parenthesis character.\n";
       return false;
     }
   }
 
   lexer.skip_whitespaces();
 
-  for (const char *curr = p_begin; curr < p_end; curr++) {
-    if (*curr == '\0') {
-      return false;
+  while (!lexer.eof()) {
+
+    bool prev_is_delim = false;
+
+    // is ','?
+    {
+      char c;
+      if (!lexer.look_char1(&c)) {
+        lexer.push_error("Invalid character found.");
+        err = lexer.get_error();
+        return false;
+      } 
+
+      if (c == delim) {
+        // Array element starts with delimiter, e.g. '[ ,'
+        if (result.empty()) {
+          lexer.push_error("Array element starts with the delimiter character.");
+          err = lexer.get_error();
+          return false;
+        }
+        prev_is_delim = true;
+        lexer.consume_char1();
+      }
+
+      lexer.skip_whitespaces();
+    }
+
+    // is ']'?
+    {
+      char c;
+      if (!lexer.look_char1(&c)) {
+        lexer.push_error("Failed to read a character.");
+        err = lexer.get_error();
+        return false;
+      }
+
+      if (c == close_paren) {
+        if (prev_is_delim) {
+          if (allow_delim_at_last) {
+            // ok
+            return true;
+          } else {
+            lexer.push_error("Delimiter character is not allowed before the closing parenthesis character.");
+            err = lexer.get_error();
+            return false;
+          }
+        } else {
+          // ok
+          return true;
+        }
+      }
     }
 
     fp_lex_span sp;
-    sp.p_begin = curr;
+    sp.p_begin = lexer.curr;
 
     uint16_t length{0};
     bool truncated{false};
 
     if (!lexer.lex_float(length, truncated)) {
+      lexer.push_error("Input is not a floating point literal.");
+      err = lexer.get_error();
       return false;
     }
 
@@ -186,6 +281,8 @@ bool lex_float_array(
     if (truncated) {
       // skip until encountering delim or close_paren.
       if (!lexer.skip_until_delim_or_close_paren(delim, close_paren)) {
+        lexer.push_error("Failed to seek to delimiter or closing parenthesis character.");
+        err = lexer.get_error();
         return false;
       }
     }
@@ -196,40 +293,39 @@ bool lex_float_array(
     lexer.skip_whitespaces();
   }
 
-  lexer.skip_whitespaces();
-
-  if (allow_delim_at_last) {
-    char c;
-    if (!lexer.look_char1(&c)) {
-      return false;
-    } 
-
-    if (c == delim) {
-      lexer.consume_char1();
-    }
-
-    lexer.skip_whitespaces();
-  }
-
-  // ']'
-  {
-    char c;
-    if (!lexer.char1(&c)) {
-      return false;
-    }
-
-    if (c != close_paren) {
-      return false;
-    }
-  }
-
-  return false;
+  return true;
 }
 
 int main(int argc, char **argv)
 {
   std::vector<fp_lex_span> result;
   result.reserve(1024*1024);
+
+  bool delim_at_end = true;
+  size_t n = 1024*1024*32;
+  if (argc > 1) {
+    n = std::stoi(argv[1]);
+  }
+  if (argc > 2) {
+    delim_at_end = std::stoi(argv[2]) > 0;
+  }
+
+  std::string input = gen_floatarray(n, delim_at_end);
+  //std::cout << input << "\n";
+
+  auto start = std::chrono::steady_clock::now();
+
+  std::string err;
+  if (!lex_float_array(input.c_str(), input.c_str() + input.size(), result, err)) {
+    std::cerr << "parse error\n";
+    std::cerr << err << "\n";
+    return -1;
+  }
+  auto end = std::chrono::steady_clock::now();
+
+  std::cout << "n elems " << result.size() << "\n";
+
+  std::cout << "lex time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << " [ms]\n";
 
   return 0;
 }
