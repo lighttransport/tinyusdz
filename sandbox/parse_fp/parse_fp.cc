@@ -174,6 +174,12 @@ struct fp_lex_span
   uint16_t length{0};
 };
 
+template<size_t N>
+struct vec_lex_span
+{
+  fp_lex_span vspans[N];
+};
+
 // '[' + fp0 + "," + fp1 + ", " ... ']'
 // allow_delim_at_last is true: '[' + fp0 + "," + fp1 + ", " ... "," + ']'
 bool lex_float_array(
@@ -181,7 +187,10 @@ bool lex_float_array(
   const char *p_end,
   std::vector<fp_lex_span> &result,
   std::string &err,
-  bool allow_delim_at_last = true, char delim = ',', char open_paren = '[', char close_paren = ']') {
+  const bool allow_delim_at_last = true,
+  const char delim = ',',
+  const char open_paren = '[',
+  const char close_paren = ']') {
 
   if (p_begin >= p_end) {
     err = "Invalid input\n";
@@ -281,6 +290,143 @@ bool lex_float_array(
     if (truncated) {
       // skip until encountering delim or close_paren.
       if (!lexer.skip_until_delim_or_close_paren(delim, close_paren)) {
+        lexer.push_error("Failed to seek to delimiter or closing parenthesis character.");
+        err = lexer.get_error();
+        return false;
+      }
+    }
+  
+
+    result.emplace_back(std::move(sp));
+
+    lexer.skip_whitespaces();
+  }
+
+  return true;
+}
+
+bool lex_vec2_array(
+  Lexer &lexer,
+  std::string &err,
+  vec_lex_span<2> &result,
+  const char vec_open_paren = '(',
+  const char vec_close_paren = ')') {
+
+  return false;
+}
+
+
+bool lex_float2_array(
+  const char *p_begin,
+  const char *p_end,
+  std::vector<vec_lex_span<2>> &result,
+  std::string &err,
+  bool allow_delim_at_last = true, 
+  const char delim = ',', 
+  const char arr_open_paren = '[',
+  const char arr_close_paren = ']',
+  const char vec_open_paren = '(',
+  const char vec_close_paren = ')') {
+
+  if (p_begin >= p_end) {
+    err = "Invalid input\n";
+  
+    return false;
+  }
+
+  Lexer lexer;
+  lexer.p_begin = p_begin;
+  lexer.p_end = p_end;
+  lexer.curr = p_begin;
+
+  
+  // '['
+  {
+    char c;
+    if (!lexer.char1(&c)) {
+      err = "Input too short.\n";
+      return false;
+    }
+
+    if (c != arr_open_paren) {
+      err = "Input does not begin with open parenthesis character.\n";
+      return false;
+    }
+  }
+
+  lexer.skip_whitespaces();
+
+  while (!lexer.eof()) {
+
+    bool prev_is_delim = false;
+
+    // is ','?
+    {
+      char c;
+      if (!lexer.look_char1(&c)) {
+        lexer.push_error("Invalid character found.");
+        err = lexer.get_error();
+        return false;
+      } 
+
+      if (c == delim) {
+        // Array element starts with delimiter, e.g. '[ ,'
+        if (result.empty()) {
+          lexer.push_error("Array element starts with the delimiter character.");
+          err = lexer.get_error();
+          return false;
+        }
+        prev_is_delim = true;
+        lexer.consume_char1();
+      }
+
+      lexer.skip_whitespaces();
+    }
+
+    // is ']'?
+    {
+      char c;
+      if (!lexer.look_char1(&c)) {
+        lexer.push_error("Failed to read a character.");
+        err = lexer.get_error();
+        return false;
+      }
+
+      if (c == arr_close_paren) {
+        if (prev_is_delim) {
+          if (allow_delim_at_last) {
+            // ok
+            return true;
+          } else {
+            lexer.push_error("Delimiter character is not allowed before the closing parenthesis character.");
+            err = lexer.get_error();
+            return false;
+          }
+        } else {
+          // ok
+          return true;
+        }
+      }
+    }
+
+    // '(' + fp + ',' + fp + ')'
+    fp_lex_span sp;
+    sp.p_begin = lexer.curr;
+
+    uint16_t length{0};
+    bool truncated{false};
+
+    if (!lexer.lex_float(length, truncated)) {
+      lexer.push_error("Input is not a floating point literal.");
+      err = lexer.get_error();
+      return false;
+    }
+
+    sp.length = length;
+
+    if (truncated) {
+      // skip until encountering delim or close_paren.
+      if (!lexer.skip_until_delim_or_close_paren(delim, arr_close_paren)) {
         lexer.push_error("Failed to seek to delimiter or closing parenthesis character.");
         err = lexer.get_error();
         return false;
