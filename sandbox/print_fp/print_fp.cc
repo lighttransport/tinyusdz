@@ -26,6 +26,51 @@ std::vector<float> gen_floats(size_t n) {
   return dst;
 }
 
+//
+// based on fmtlib
+// 
+
+// TOOD: Use builtin_clz insturction 
+// T = uint32 or uint64
+template<typename T>
+inline int count_digits(T n) {
+  int count = 1;
+  for (;;) {
+    // Integer division is slow so do it for a group of four digits instead
+    // of for every digit. The idea comes from the talk by Alexandrescu
+    // "Three Optimization Tips for C++". See speed-test for a comparison.
+    if (n < 10) return count;
+    if (n < 100) return count + 1;
+    if (n < 1000) return count + 2;
+    if (n < 10000) return count + 3;
+    n /= 10000u;
+    count += 4;
+  }
+}
+
+char *write_float(const float f, char *buf)
+{
+
+  auto ret = jkj::dragonbox::to_decimal(f);
+
+  // print human-readable float for the value in range [1e-4, 1e+6]
+  const int exp_lower = -4;
+  const int exp_upper = 6;
+
+  auto significand = ret.significand;
+  int significand_size = count_digits(significand);
+
+  int output_exp = ret.exponent + significand_size - 1;
+  bool use_exp_format = (output_exp < exp_lower) || (output_exp >= exp_upper); 
+  
+  if (use_exp_format) {
+  } else {
+  }
+  
+  // TODO
+  return nullptr;
+}
+
 std::string print_floats(const std::vector<float> &v) {
   
   char buffer[40];
