@@ -50,6 +50,21 @@ inline int count_digits(T n) {
   }
 }
 
+  // Converts value in the range [0, 100) to a string.
+  // GCC generates slightly better code when value is pointer-size.
+  inline auto digits2(size_t value) -> const char* {
+    // Align data since unaligned access may be slower when crossing a
+    // hardware-specific boundary.
+    alignas(2) static const char data[] =
+        "0001020304050607080910111213141516171819"
+        "2021222324252627282930313233343536373839"
+        "4041424344454647484950515253545556575859"
+        "6061626364656667686970717273747576777879"
+        "8081828384858687888990919293949596979899";
+    return &data[value * 2];
+  }
+
+
   // Writes a two-digit value to out.
   inline void write2digits(char* out, size_t value) {
     //if (!is_constant_evaluated() && std::is_same<Char, char>::value &&
@@ -60,6 +75,39 @@ inline int count_digits(T n) {
     *out++ = static_cast<char>('0' + value / 10);
     *out = static_cast<char>('0' + value % 10);
   }
+
+  // Writes the exponent exp in the form "[+-]d{2,3}" to buffer.
+ char *write_exponent(int exp, char *out) {
+    //FMT_ASSERT(-10000 < exp && exp < 10000, "exponent out of range");
+    if (exp < 0) {
+      *out++ = '-';
+      exp = -exp;
+    } else {
+      *out++ = '+';
+    }
+    auto uexp = static_cast<uint32_t>(exp);
+    //if (is_constant_evaluated()) {
+    //  if (uexp < 10) *out++ = '0';
+    //  return format_decimal<Char>(out, uexp, count_digits(uexp));
+    //}
+    if (uexp >= 100u) {
+      const char* top = digits2(uexp / 100);
+      if (uexp >= 1000u) *out++ = top[0];
+      *out++ = static_cast<char>(top[1]);
+      uexp %= 100;
+    }
+    const char* d = digits2(uexp);
+    *out++ = static_cast<char>(d[0]);
+    *out++ = static_cast<char>(d[1]);
+    return out;
+  }
+
+inline char *fill_n(char *p, int n, char c) {
+  for (int i = 0; i < n; i++, p++) {
+    *p = c; 
+  }
+  return p;
+}
 
 inline char *format_decimal(char* out, uint64_t value, uint32_t size) {
     //FMT_ASSERT(size >= count_digits(value), "invalid digit count");
@@ -112,6 +160,7 @@ char *write_float(const float f, char *buf)
   const int exp_lower = -4;
   const int exp_upper = 16; // (15 + 1) for double, (6+1) for float
   char exp_char = 'e';
+  char zero_char = '0';
 
   auto significand = ret.significand;
   int significand_size = count_digits(significand);
@@ -135,10 +184,67 @@ char *write_float(const float f, char *buf)
 
     if (is_negative) {
       *buf++ = '-'; 
-      buf = write_significand(buf, significand, significand_size, 1, decimal_point);
     }
-  } else {
+
+      buf = write_significand(buf, significand, significand_size, 1, decimal_point);
+
+      if (num_zeros > 0) buf = fill_n(buf, num_zeros, zero_char);
+      *buf++ = exp_char;
+      return write_exponent(output_exp, buf);
   }
+
+    int exp = f.exponent + significand_size;
+    if (f.exponent >= 0) {
+      // 1234e5 -> 123400000[.0+]
+      size += to_unsigned(f.exponent);
+      int num_zeros = specs.precision - exp;
+      abort_fuzzing_if(num_zeros > 5000);
+      if (specs.alt()) {
+        ++size;
+        if (num_zeros <= 0 && specs.type() != presentation_type::fixed)
+          num_zeros = 0;
+        if (num_zeros > 0) size += to_unsigned(num_zeros);
+      }
+      auto grouping = Grouping(loc, specs.localized());
+      size += to_unsigned(grouping.count_separators(exp));
+      return write_padded<Char, align::right>(out, specs, size, [&](iterator it) {
+        if (s != sign::none) *it++ = detail::getsign<Char>(s);
+        it = write_significand<Char>(it, significand, significand_size,
+                                     f.exponent, grouping);
+        if (!specs.alt()) return it;
+        *it++ = decimal_point;
+        return num_zeros > 0 ? detail::fill_n(it, num_zeros, zero) : it;
+      });
+    } else if (exp > 0) {
+      // 1234e-2 -> 12.34[0+]
+      int num_zeros = specs.alt() ? specs.precision - significand_size : 0;
+      size += 1 + static_cast<unsigned>(max_of(num_zeros, 0));
+      auto grouping = Grouping(loc, specs.localized());
+      size += to_unsigned(grouping.count_separators(exp));
+      return write_padded<Char, align::right>(out, specs, size, [&](iterator it) {
+        if (s != sign::none) *it++ = detail::getsign<Char>(s);
+        it = write_significand(it, significand, significand_size, exp,
+                               decimal_point, grouping);
+        return num_zeros > 0 ? detail::fill_n(it, num_zeros, zero) : it;
+      });
+    }
+    // 1234e-6 -> 0.001234
+    int num_zeros = -exp;
+    if (significand_size == 0 && specs.precision >= 0 &&
+        specs.precision < num_zeros) {
+      num_zeros = specs.precision;
+    }
+    bool pointy = num_zeros != 0 || significand_size != 0 || specs.alt();
+    size += 1 + (pointy ? 1 : 0) + to_unsigned(num_zeros);
+    return write_padded<Char, align::right>(out, specs, size, [&](iterator it) {
+      if (s != sign::none) *it++ = detail::getsign<Char>(s);
+      *it++ = zero;
+      if (!pointy) return it;
+      *it++ = decimal_point;
+      it = detail::fill_n(it, num_zeros, zero);
+      return write_significand<Char>(it, significand, significand_size);
+    });
+
   
   // TODO
   return nullptr;
@@ -181,6 +287,7 @@ std::string print_floats(const std::vector<float> &v) {
 }
 #endif
 
+#if 0
 std::string print_floats(const std::vector<float> &v) {
   
   char buffer[25];
@@ -198,15 +305,15 @@ std::string print_floats(const std::vector<float> &v) {
       curr += 2;
     }
 
-    char *e = dtoa_milo(v[i], buffer);
-    size_t len = e - buffer; // includes position of '\0'
+    //char *e = dtoa_milo(v[i], buffer);
+    //size_t len = e - buffer; // includes position of '\0'
 
     // +2 for ', '
-    if ((curr + len + 2) >= dst.size()) {
-      dst.resize((curr + len) + 2);
-    }
+    //if ((curr + len + 2) >= dst.size()) {
+    //  dst.resize((curr + len) + 2);
+    //}
 
-    memcpy(dst.data() + curr, buffer, len);
+    //memcpy(dst.data() + curr, buffer, len);
 
     curr += len;
   }
@@ -214,6 +321,7 @@ std::string print_floats(const std::vector<float> &v) {
   std::string s(dst.data(), curr);
   return s;
 }
+#endif
 
 int main(int argc, char **argv)
 {
@@ -229,9 +337,9 @@ int main(int argc, char **argv)
   double d = 1.0;
   for (size_t i = 0; i < 32; i++) {
     char buf[25];
-    char *p = dtoa_milo(d, buf);
-    *p = '\0';
-    std::cout << buf << "\n";
+    //char *p = dtoa_milo(d, buf);
+    //*p = '\0';
+    //std::cout << buf << "\n";
 
     {
       auto ret = jkj::dragonbox::to_decimal(d);
@@ -263,12 +371,12 @@ int main(int argc, char **argv)
 
   auto start = std::chrono::steady_clock::now();
 
-  std::string s = print_floats(arr);
-  auto end = std::chrono::steady_clock::now();
+  //std::string s = print_floats(arr);
+  //auto end = std::chrono::steady_clock::now();
 
-  std::cout << "n elems " << arr.size() << "\n";
+  //std::cout << "n elems " << arr.size() << "\n";
 
-  std::cout << "print : " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << " [ms]\n";
+  //std::cout << "print : " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << " [ms]\n";
 
   //std::cout << s << "\n";
 
