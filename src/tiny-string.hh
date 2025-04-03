@@ -34,27 +34,27 @@ static size_t strlen(const char *s, size_t max_len = 1024u*1024u*1024u) {
 
 
 template<size_t N = 8>
-struct tstring {
+struct tstring_n {
   static_assert(N >= 8, "N must be 8 or larger.");
 
  public:
 
-  tstring() {}
-  ~tstring() {
+  tstring_n() {}
+  ~tstring_n() {
     _delete_string();
   }
 
-  tstring(const char *s) { 
+  tstring_n(const char *s) { 
     _copy_string(s);
   }
 
-  tstring(const std::string &s) : tstring(s.c_str()) { 
+  tstring_n(const std::string &s) : tstring_n(s.c_str()) { 
   }
 
-  tstring(const tstring &rhs) : tstring(rhs.c_str()) {
+  tstring_n(const tstring_n &rhs) : tstring_n(rhs.c_str()) {
   }
 
-  tstring(tstring &&rhs) {
+  tstring_n(tstring_n &&rhs) {
 
     _delete_string();
     
@@ -62,7 +62,7 @@ struct tstring {
     _len = std::exchange(rhs._len, 0);
   }
 
-  tstring &operator=(const tstring &rhs) {
+  tstring_n &operator=(const tstring_n &rhs) {
     if (this == &rhs) {
       return *this;
     }
@@ -72,7 +72,7 @@ struct tstring {
     return *this;
   }
 
-  tstring &operator=(tstring &&rhs) noexcept {
+  tstring_n &operator=(tstring_n &&rhs) noexcept {
     if (this == &rhs) {
       return *this;
     }
@@ -86,7 +86,7 @@ struct tstring {
   }
 
   const char *c_str() const {
-    return reinterpret_cast<char *>(_buf);
+    return reinterpret_cast<const char *>(_buf);
   }
 
   size_t size() const {
@@ -94,7 +94,7 @@ struct tstring {
   }
 
   std::string to_std_string() {
-    char *p = reinterpret_cast<char *>(_buf);
+    const char *p = reinterpret_cast<const char *>(_buf);
     std::string s(p, _len);
     return s;
   }
@@ -137,6 +137,8 @@ struct tstring {
   size_t _len{0};
 };
 
+using tstring = tstring_n<>;
+
 // just a retain the pointer address.
 struct tstring_view {
  public:
@@ -154,12 +156,47 @@ struct tstring_view {
   constexpr tstring_view(const std::string &s) : tstring_view(s.c_str()) { 
   }
 
+  constexpr tstring_view(const tstring &s) : tstring_view(s.c_str()) { 
+  }
+
   const char *c_str() const {
     return _s;
   }
 
   size_t size() const {
     return _len;
+  }
+
+  // C++20
+  bool starts_with( tstring_view sv ) const noexcept
+  {
+    size_t sv_size = sv.size();
+
+    if (_len < sv_size) {
+      return false;
+    }
+    const char *sv_str = sv.c_str();
+
+    for (size_t i = 0; i < sv_size; i++) {
+      if (_s[i] != sv_str[i]) {
+        return false;
+      }
+    }   
+    return true;
+  }
+
+  bool starts_with( const char *s) const {
+    size_t s_size = strlen(s);
+
+    if (_len < s_size) {
+      return false;
+    }
+    for (size_t i = 0; i < s_size; i++) {
+      if (_s[i] != s[i]) {
+        return false;
+      }
+    }   
+    return true;
   }
 
  private:
@@ -185,7 +222,6 @@ bool parse_double_arary(const tstring_view &sv, std::vector<double> *result, con
 
 bool print_float_array(std::vector<float> &v,
   std::string &dst, const char delimiter = ',');
-
 
 }
 
