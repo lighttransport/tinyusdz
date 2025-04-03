@@ -7,6 +7,7 @@
 
 #include "unit-strutil.h"
 #include "str-util.hh"
+#include "tiny-string.hh"
 
 using namespace tinyusdz;
 
@@ -37,4 +38,14 @@ void strutil_test(void) {
     TEST_CHECK(!isValidIdentifier(s));
 
   }
+}
+
+void tinystring_test(void) {
+  
+  tstring s("hello");
+  tstring_view v0(s);
+  tstring_view v1(s);
+
+  TEST_CHECK(v0 == v1);
+
 }
