@@ -43,9 +43,26 @@ void strutil_test(void) {
 void tinystring_test(void) {
   
   tstring s("hello");
+  tstring s2("bora");
+  tstring s3("ll");
+  tstring s4("hellobora");
   tstring_view v0(s);
   tstring_view v1(s);
+  tstring_view v2(s2);
+  tstring_view v3(s3);
+  tstring_view v4(s4);
 
   TEST_CHECK(v0 == v1);
+  TEST_CHECK(v0 != v2);
+
+  TEST_CHECK(v0.contains(v0));
+  TEST_CHECK(v0.contains(v3));
+  TEST_CHECK(!v0.contains(v2));
+
+  TEST_CHECK(!v4.starts_with(v2));
+  TEST_CHECK(v4.starts_with(v0));
+
+  TEST_CHECK(!v4.ends_with(v0));
+  TEST_CHECK(v4.ends_with(v2));
 
 }
