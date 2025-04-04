@@ -10,7 +10,6 @@
 #include <memory>
 #include <cstdlib>
 #include <cstring>
-#include <iostream> // dbg
 
 #include "tiny-container.hh"
 
@@ -60,7 +59,7 @@ struct tstring_n {
 
     _delete_string();
     
-    _buf = std::exchange(rhs._buf, nullptr);
+    _u = std::exchange(rhs._u, nullptr);
     _len = std::exchange(rhs._len, 0);
   }
 
@@ -81,17 +80,17 @@ struct tstring_n {
 
     _delete_string();
     
-    _buf = std::exchange(rhs._buf, nullptr);
+    _u = std::exchange(rhs._u, nullptr);
     _len = std::exchange(rhs._len, 0);
 
     return *this;
   }
 
   const char *c_str() const {
-    if (_len >= N) {
-      return *reinterpret_cast<const char **>(&_buf);
+    if (_len > N) {
+      return reinterpret_cast<const char *>(_u._ptr);
     } else {
-      return reinterpret_cast<const char *>(_buf);
+      return reinterpret_cast<const char *>(_u._buf);
     }
   }
 
@@ -101,10 +100,10 @@ struct tstring_n {
 
   std::string to_std_string() {
     const char *p;
-    if (_len < N) {
-      p = reinterpret_cast<const char *>(_buf);
+    if (_len > N) {
+      p = reinterpret_cast<const char *>(_u._ptr);
     } else {
-      p = *reinterpret_cast<const char **>(&_buf);
+      p = reinterpret_cast<const char *>(_u.buf);
     }
     std::string s(p, _len);
     return s;
@@ -112,11 +111,10 @@ struct tstring_n {
 
  private:
   void _delete_string() {
-    if (_len >= N) {
-      char **p = reinterpret_cast<char **>(&_buf);
-      delete[] (*p);
+    if ((_len > N) && (_u._ptr)) {
+      delete[] _u._ptr;
     }
-    memset(_buf, 0, 8);
+    memset(_u._buf, 0, 8);
     _len = 0;
   }
 
@@ -135,21 +133,25 @@ struct tstring_n {
     //char *dst = reinterpret_cast<char *>(_buf);
 
     _len = strlen(s);    
-    if (_len >= N) {
+    if (_len > N) {
       char *dst = new char[_len+1];
       memcpy(dst, s, _len);
       dst[_len] = '\0';
 
-      *(reinterpret_cast<char **>(&_buf[0])) = dst;
+      _u._ptr = dst;
     } else {
-      memcpy(_buf, s, _len);
+      memcpy(_u._buf, s, _len);
+      _u._buf[_len] = '\0';
     }
 
   }
 
   // TODO: Ues custom vector class.
-  //char *_s{nullptr}; // end with '\0'
-  char _buf[N+1]{}; // store pointer address when _len > N
+  union {
+    char _buf[N+1]{};
+    char *_ptr;
+  } _u;
+
   size_t _len{0};
 };
 
@@ -201,17 +203,15 @@ struct tstring_view {
     return _len;
   }
 
-  // C++20
-  bool starts_with( tstring_view sv ) const noexcept
+  // C++20-like API
+  bool starts_with( const tstring_view &sv ) const noexcept
   {
     size_t sv_size = sv.size();
 
-    std::cout << "len " << _len << ", sv_size " << sv_size << "\n";
     if (_len < sv_size) {
       return false;
     }
     const char *sv_str = sv.c_str();
-    std::cout << "sv_str " << sv_str << "\n";
 
     for (size_t i = 0; i < sv_size; i++) {
       if (_s[i] != sv_str[i]) {
@@ -224,8 +224,6 @@ struct tstring_view {
   bool starts_with( const char *s) const {
     size_t s_size = strlen(s);
 
-    std::cout << "len " << _len << ", s_size " << s_size << "\n";
-
     if (_len < s_size) {
       return false;
     }
@@ -237,7 +235,7 @@ struct tstring_view {
     return true;
   }
 
-  bool ends_with( tstring_view sv ) const noexcept
+  bool ends_with( const tstring_view &sv ) const noexcept
   {
     size_t sv_size = sv.size();
 
@@ -299,7 +297,7 @@ struct tstring_view {
     return true;
   }
 
-  bool contains( tstring_view sv) const {
+  bool contains( const tstring_view &sv) const {
     return contains(sv.c_str());
   }
 
@@ -307,6 +305,31 @@ struct tstring_view {
   // TODO: Ues custom vector class.
   const char *_s{nullptr}; // end with '\0'
   size_t _len{0};
+};
+
+// Simple std::ostringstream like class
+class tostringstream
+{
+ public:
+    
+    tostringstream &operator<<( const tstring &str );
+    tostringstream &operator<<( const tstring_view &str );
+
+    void write(const char *p, const size_t n);
+
+    uint64_t size() const {
+      return binary_.size();
+    }
+
+    std::string str() const;
+    tstring tstr() const;
+
+    
+    const char *data() const { return binary_.data(); }
+
+ private:
+  const std::vector<char> binary_;
+  mutable uint64_t idx_{0};
 };
 
 namespace str {
