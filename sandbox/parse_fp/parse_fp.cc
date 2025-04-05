@@ -2,8 +2,13 @@
 #include <iostream>
 #include <sstream>
 #include <chrono>
+#include <thread>
+#include <mutex>
+#include <atomic>
 
 #include <random>
+
+#include "fast_float.h"
 
 std::string gen_floatarray(size_t n, bool delim_at_end) {
 
@@ -31,6 +36,14 @@ std::string gen_floatarray(size_t n, bool delim_at_end) {
 
 struct Lexer {
 
+  void init(const char *_p_begin, const char *_p_end, size_t row = 0, size_t column = 0) {
+    p_begin = _p_begin;
+    p_end = _p_end;
+    curr = p_begin;
+    row_ = row;
+    column_ = column;
+  }
+
   void skip_whitespaces() {
 
     while (!eof()) {
@@ -38,6 +51,24 @@ struct Lexer {
       char s = *curr;
       if ((s == ' ') || (s == '\t') || (s == '\f') || (s == '\n') || (s == '\r') || (s == '\v')) {
         curr++;
+        column_++;
+
+        if (s == '\r') {
+
+          // '\r\n'?
+          if (!eof()) {
+            char c{'\0'};
+            look_char1(&c);
+            if (c == '\n') {
+              curr++;
+            }
+          } 
+          rows_++;
+          column_ = 0;
+        } else if (s == '\n') {
+          rows_++;
+          column_ = 0;
+        }
       }
       break;
     }   
@@ -54,6 +85,24 @@ struct Lexer {
       }
 
       curr++;
+        column_++;
+
+        if (s == '\r') {
+
+          // '\r\n'?
+          if (!eof()) {
+            char c{'\0'};
+            look_char1(&c);
+            if (c == '\n') {
+              curr++;
+            }
+          } 
+          rows_++;
+          column_ = 0;
+        } else if (s == '\n') {
+          rows_++;
+          column_ = 0;
+        }
     }   
 
     return false;
@@ -65,6 +114,13 @@ struct Lexer {
     }
     *result = *curr;
     curr++;
+
+    column_++;
+
+    if ((*result == '\r') || (*result == '\n')) {
+       rows_++;
+       column_ = 0;
+     }
 
     return true;
   }
@@ -82,7 +138,13 @@ struct Lexer {
     if (eof()) {
       return false;
     }
+    char c = *curr;
     curr++;
+
+    if ((c == '\r') || (c == '\n')) {
+       rows_++;
+       column_ = 0;
+     }
 
     return true;
   }
@@ -91,6 +153,7 @@ struct Lexer {
     return (curr >= p_end);
   }
 
+#if 0
   inline bool unwind_char1() {
     if (curr <= p_begin) {
       return false;
@@ -99,6 +162,7 @@ struct Lexer {
     curr--;
     return true;
   }
+#endif
 
   bool lex_float(uint16_t &len, bool &truncated) {
 
@@ -151,7 +215,7 @@ struct Lexer {
   }
 
   void push_error(const std::string &msg) {
-    err_ += msg + "\n";
+    err_ += msg + " (near line " + std::to_string(row_) + ", column " + std::to_string(column_) + ")\n";
   }
 
   std::string get_error() const {
@@ -162,6 +226,9 @@ struct Lexer {
   const char *p_end{nullptr};
 
   const char *curr{nullptr};
+
+  size_t row_{0};
+  size_t column_{0};
 
  private:
   std::string err_;
@@ -335,9 +402,7 @@ bool lex_float2_array(
   }
 
   Lexer lexer;
-  lexer.p_begin = p_begin;
-  lexer.p_end = p_end;
-  lexer.curr = p_begin;
+  lexer.init(p_begin, p_end);
 
   
   // '['
@@ -409,32 +474,13 @@ bool lex_float2_array(
       }
     }
 
-    // '(' + fp + ',' + fp + ')'
-    fp_lex_span sp;
-    sp.p_begin = lexer.curr;
-
-    uint16_t length{0};
-    bool truncated{false};
-
-    if (!lexer.lex_float(length, truncated)) {
-      lexer.push_error("Input is not a floating point literal.");
+    vec_lex_span<2> v_sp;
+    if (!lex_vec2_array(lexer, err, v_sp)) {
       err = lexer.get_error();
       return false;
     }
 
-    sp.length = length;
-
-    if (truncated) {
-      // skip until encountering delim or close_paren.
-      if (!lexer.skip_until_delim_or_close_paren(delim, arr_close_paren)) {
-        lexer.push_error("Failed to seek to delimiter or closing parenthesis character.");
-        err = lexer.get_error();
-        return false;
-      }
-    }
-  
-
-    result.emplace_back(std::move(sp));
+    result.emplace_back(std::move(v_sp));
 
     lexer.skip_whitespaces();
   }
@@ -442,11 +488,77 @@ bool lex_float2_array(
   return true;
 }
 
+bool do_parse(
+  uint32_t nthreads,
+  const std::vector<fp_lex_span> &spans,
+  std::vector<double> &results) {
+
+  auto start = std::chrono::steady_clock::now();
+
+  results.resize(spans.size());
+
+  if (spans.size() > (1024*128)) {
+
+    nthreads = (std::min)((std::max)(1u, nthreads), 256u);
+
+    std::mutex mutex;
+    std::atomic<size_t> cnt(0);
+    std::atomic<bool> parse_failed{false};
+    std::vector<std::thread> threads;
+
+    for (uint32_t i = 0; i < nthreads; i++) {
+      threads.emplace_back(std::thread([&] {
+
+        size_t j; 
+
+        while ((j = cnt++) < results.size()) {
+
+          double fp;
+          auto answer = fast_float::from_chars(spans[i].p_begin, spans[i].p_begin + spans[i].length, fp);
+          if (answer.ec != std::errc()) { parse_failed = true; }
+
+          results[j] = fp;
+        }
+
+      }));
+
+    }
+
+    for (auto &&th : threads) {
+      th.join();
+    }
+
+    if (parse_failed) {
+      std::cerr << "parsing failure\n";
+      return false;
+    }
+
+  } else {
+
+    for (size_t i = 0; i < spans.size(); i++) {
+
+      //std::string s(spans[i].p_begin, spans[i].length);
+      double fp;
+      auto answer = fast_float::from_chars(spans[i].p_begin, spans[i].p_begin + spans[i].length, fp);
+      if (answer.ec != std::errc()) { std::cerr << "parsing failure\n"; return false; }
+
+      results[i] = fp;
+    }
+  }
+  auto end = std::chrono::steady_clock::now();
+
+  std::cout << "n threasd: " << nthreads << "\n";
+  std::cout << "n elems: " << spans.size() << "\n";
+  std::cout << "parse time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << " [ms]\n";
+
+  return true;
+}
+
 int main(int argc, char **argv)
 {
-  std::vector<fp_lex_span> result;
-  result.reserve(1024*1024);
+  std::vector<fp_lex_span> lex_results;
 
+  uint32_t nthreads = 1;
   bool delim_at_end = true;
   size_t n = 1024*1024*32;
   if (argc > 1) {
@@ -455,6 +567,10 @@ int main(int argc, char **argv)
   if (argc > 2) {
     delim_at_end = std::stoi(argv[2]) > 0;
   }
+  if (argc > 3) {
+    nthreads = std::stoi(argv[3]);
+  }
+  lex_results.reserve(n);
 
   std::string input = gen_floatarray(n, delim_at_end);
   //std::cout << input << "\n";
@@ -462,16 +578,25 @@ int main(int argc, char **argv)
   auto start = std::chrono::steady_clock::now();
 
   std::string err;
-  if (!lex_float_array(input.c_str(), input.c_str() + input.size(), result, err)) {
+  if (!lex_float_array(input.c_str(), input.c_str() + input.size(), lex_results, err)) {
     std::cerr << "parse error\n";
     std::cerr << err << "\n";
     return -1;
   }
   auto end = std::chrono::steady_clock::now();
 
-  std::cout << "n elems " << result.size() << "\n";
+  std::cout << "n elems " << lex_results.size() << "\n";
+  std::cout << "size " << input.size() << "\n";
 
   std::cout << "lex time: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << " [ms]\n";
+ 
 
+  std::vector<double> parse_results;
+  parse_results.reserve(n);
+
+  do_parse(nthreads, lex_results, parse_results);
+  //for (const auto &fp : parse_results) {
+  //  std::cout << std::to_string(fp) << "\n";
+  //}
   return 0;
 }
