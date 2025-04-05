@@ -1,2 +1,2 @@
 all:
-	clang++ -O2 -g parse_fp.cc
+	clang++-17 -O2 -g -stdlib=libc++ parse_fp.cc
