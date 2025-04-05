@@ -202,6 +202,7 @@ struct vec_lex_span
 
 namespace internal {
 
+#if 0
 // '[' + fp0 + "," + fp1 + ", " ... ']'
 // allow_delim_at_last is true: '[' + fp0 + "," + fp1 + ", " ... "," + ']'
 static bool lex_float_array(
@@ -326,6 +327,7 @@ static bool lex_float_array(
 
   return true;
 }
+#endif
 
 } // namespace internal
 
