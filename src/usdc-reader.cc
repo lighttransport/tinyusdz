@@ -374,16 +374,16 @@ class USDCReader::Impl {
                             StageMetas *out);
 
   bool AddVariantChildrenToPrimNode(
-      int32_t parent_prim_idx, const std::vector<value::token> &variantChildren) {
+      int32_t parent_prim_idx, int32_t prim_idx, const std::vector<value::token> &variantChildren) {
     if (parent_prim_idx < 0) {
       return false;
     }
 
-    if (_variantChildren.count(uint32_t(parent_prim_idx))) {
-      PUSH_WARN("Multiple Field with VariantSet SpecType detected.");
+    if (prim_idx < 0) {
+      return false;
     }
 
-    _variantChildren[uint32_t(parent_prim_idx)] = variantChildren;
+    _variantChildren[uint32_t(parent_prim_idx)].emplace(prim_idx, variantChildren);
 
     return true;
   }
@@ -432,8 +432,9 @@ class USDCReader::Impl {
 
   // std::vector<PrimNode> _prim_nodes;
 
-  // VariantSet Spec. variantChildren
-  std::map<uint32_t, std::vector<value::token>> _variantChildren;
+  // VariantSet Spec.
+  // key = parent idx, value = (prim_id, variantChildren name)
+  std::map<uint32_t, std::unordered_map<int32_t, std::vector<value::token>>> _variantChildren;
 
   std::map<int32_t, Prim> _prims; // For Stage
 
@@ -2556,7 +2557,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
       DCOUT("SpecTypeVariantSet: Add variantChildren(" << current << ") to parent Prim " << parent);
       // Add variantChildren to prim node.
       // TODO: elemPath
-      if (!AddVariantChildrenToPrimNode(parent, variantChildren)) {
+      if (!AddVariantChildrenToPrimNode(parent, current, variantChildren)) {
         return false;
       }
 
@@ -3050,11 +3051,9 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
 
       // Add variantChildren to prim node.
       // TODO: elemPath
-      if (!AddVariantChildrenToPrimNode(parent, variantChildren)) {
+      if (!AddVariantChildrenToPrimNode(parent, current, variantChildren)) {
         return false;
       }
-
-      //_variantSetChildren[parent].push_back(current); 
 
       break;
     }
@@ -3489,6 +3488,21 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
         Prim &vp = *parentPrimPtr;
 
         if (is_current_variant) {
+          DCOUT("nested variantSet. parent.variantSets.size" << vp.variantSets().size());
+          for (const auto &vs : vp.variantSets()) {
+            DCOUT("vs" << vs.first);
+          }
+
+          // Look into variantChildren
+          if (!_variantChildren.count(uint32_t(parent))) {
+            PUSH_ERROR_AND_RETURN("Internal error. parent Prim must have variantChildren.");
+          }
+
+          if (!_variantChildren[uint32_t(parent)].count(current)) {
+            PUSH_ERROR_AND_RETURN("Internal error. parent Prim must have current Prim as variantChildren.");
+          }
+
+          // HACK:
           // Nested variantSet.
           // Add current to parent Prim's variantSet
           
@@ -3508,6 +3522,8 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
             parentVariantSetName = toks[0];
             parentVariantName = toks[1];
           }
+          DCOUT("curr prim.element_name " << currPrimPtr->element_name());
+          DCOUT("vp.element_name " << vp.element_name());
           DCOUT("parent variantSetName " << parentVariantSetName << ", variantName " << parentVariantName);
 
           // TODO: Ensure Prim path of 'current' has the same variantSetName/variantName of 'parent' Prim.
