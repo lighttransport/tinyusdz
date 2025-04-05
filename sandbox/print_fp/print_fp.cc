@@ -25,11 +25,15 @@ std::vector<float> gen_floats(size_t n) {
   return dst;
 }
 
-//
+// ----------------------------------------------------------------------
 // based on fmtlib
+// Copyright (c) 2012 - present, Victor Zverovich and {fmt} contributors
+// MIT license.
 //
 
-// TOOD: Use builtin_clz insturction
+namespace internal {
+
+// TOOD: Use builtin_clz insturction?
 // T = uint32 or uint64
 template <typename T>
 inline int count_digits(T n) {
@@ -157,16 +161,19 @@ inline char* write_significand(char* out, uint64_t significand,
   return end;
 }
 
-char* write_float(const double f, char* buf) {
+// Use dragonbox algorithm to print floating point value.
+// Use to_deciamal and do human-readable pretty printing for some value range(e.g. print 1e-3 as 0.001) 
+// 
+// exp_upper: (15 + 1) for double, (6+1) for float
+char* dtoa_dragonbox(const double f, char* buf, int exp_upper = 16) {
   const int spec_precision = -1;  // unlimited
 
   bool is_negative = std::signbit(f);
 
   auto ret = jkj::dragonbox::to_decimal(f);
 
-  // print human-readable float for the value in range [1e-4, 1e+16]
+  // print human-readable float for the value in range [1e-exp_lower, 1e+exp_upper]
   const int exp_lower = -4;
-  const int exp_upper = 16;  // (15 + 1) for double, (6+1) for float
   char exp_char = 'e';
   char zero_char = '0';
 
@@ -285,6 +292,14 @@ char* write_float(const double f, char* buf) {
   return format_decimal(buf, significand, significand_size);
 }
 
+char* dtoa_dragonbox(const float f, char* buf) {
+  return dtoa_dragonbox(double(f), buf, 7);
+}
+
+} // namespace internal
+
+// -------------------------------------------------------------
+
 std::string print_floats(const std::vector<float> &v) {
   
   char buffer[40]; // 25 should be enough
@@ -302,7 +317,7 @@ std::string print_floats(const std::vector<float> &v) {
       curr += 2;
     }
 
-    char *e = write_float(v[i], buffer);
+    char *e = internal::dtoa_dragonbox(v[i], buffer);
     size_t len = e - buffer; // includes '\0'
 
     // +2 for ', '
@@ -369,7 +384,7 @@ int main(int argc, char** argv) {
   for (size_t i = 0; i < 32; i++) {
     char buf[25];
 
-    char *p = write_float(d, buf);
+    char *p = internal::dtoa_dragonbox(d, buf);
     *p = '\0';
     std::cout << "db " << buf << "\n";
 
