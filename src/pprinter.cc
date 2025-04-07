@@ -2742,7 +2742,7 @@ std::string print_variantSetStmt(
     const std::map<std::string, VariantSet> &vslist, const uint32_t indent) {
   std::stringstream ss;
 
-  // ss << "# variantSet.size = " << std::to_string(vslist.size()) << "\n";
+  ss << "# DBG: variantSet.size = " << std::to_string(vslist.size()) << "\n";
   for (const auto &variantSet : vslist) {
     if (variantSet.second.variantSet.empty()) {
       continue;
@@ -2799,6 +2799,7 @@ std::string print_variantSetStmt(
 
       // nested variantSets
       if (item.second.variantSets().size()) {
+        ss << "# DBG nested variantSets
         ss << print_variantSetStmt(item.second.variantSets(), indent+2);
       }
 
