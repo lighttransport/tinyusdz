@@ -452,11 +452,11 @@ class USDCReader::Impl {
   // key = parent idx, value = (prim_id, (variantSetName, variantChildren names))
   std::map<uint32_t, std::unordered_map<int32_t, std::pair<std::string, std::vector<value::token>>>> _variantChildren;
 
-  std::map<int32_t, Prim> _prims; // For Stage
+  std::unordered_map<int32_t, Prim> _prims; // For Stage
 
   // For Prim/Props defined as Variant(SpecType::VariantSet)
   // key = path index.
-  std::map<int32_t, Prim> _variantPrims; // For Stage
+  std::unordered_map<int32_t, Prim> _variantPrims; // For Stage
   std::map<int32_t, PrimSpec> _variantPrimSpecs; // For Layer
   std::map<int32_t, std::pair<Path, Property>> _variantProps;
   std::map<int32_t, Variant> _variants;
@@ -2687,7 +2687,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
 
         if (variantPrim) {
           if (variantPrim.value().metas().variantSets) {
-            DCOUT("variantPrim.meta.variantSets = " << variantPrim.value().metas().variantSets.value().second);
+            DCOUT("current " << current << ", variantPrim.meta.variantSets = " << variantPrim.value().metas().variantSets.value().second);
           }
           // Prim name
           variantPrim.value().element_path() =
@@ -3424,6 +3424,11 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
     const Prim &variantPrim = _variantPrims.at(current);
 
     DCOUT("variant prim name: " << variantPrim.element_name());
+      if (variantPrim.metas().variantSets) {
+        DCOUT("vp.metas.variantSets" << to_string(variantPrim.metas().variantSets.value().second));
+      } else {
+        DCOUT("vp.metas.variantSets none");
+      }
 
 
     // element_name must be variant: "{variant=value}"
@@ -3507,14 +3512,16 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
       if (vs.name.empty()) {
         vs.name = variantSetName;
       }
-      if (vp.metas().variantSets) {
-        DCOUT("vp.metas.variantSets" << to_string(vp.metas().variantSets.value().second));
-      } else {
-        DCOUT("vp.metas.variantSets none");
-      }
-      vs.variantSet[variantName].metas() = vp.metas();
-      DCOUT("# of primChildren = " << vp.children().size());
-      vs.variantSet[variantName].primChildren() = std::move(vp.children());
+      //if (vp.metas().variantSets) {
+      //  DCOUT("vp.metas.variantSets" << to_string(vp.metas().variantSets.value().second));
+      //} else {
+      //  DCOUT("vp.metas.variantSets none");
+      //}
+      //vs.variantSet[variantName].metas() = vp.metas();
+      //
+      // HACK
+      //DCOUT("# of primChildren = " << vp.children().size());
+      //vs.variantSet[variantName].primChildren() = std::move(vp.children());
 
     }
   }
@@ -3608,15 +3615,15 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
           }
 
           vs.variantSet[currentVariantName].primChildren().emplace_back(*currPrimPtr);
-          DCOUT("Added current " << current << "(variantName " << currentVariantName << " to variantPrim[" << currentVariantSetName << "]");
+          DCOUT("Added current " << current << " variantSet [" << currentVariantSetName << "], variant [" << currentVariantName << "] to parent " << vp.element_name());
 
         } else {
+          DCOUT("Added current " << current << " current.element_name " << currPrimPtr->element_name() << " as child Prim of variatPrim parent " << parent << ", parent.element_name " << vp.element_name());
           vp.children().emplace_back(std::move(*currPrimPtr));
-          DCOUT("Added current " << current << " as child Prim of variatPrim parent " << parent);
         }
       }
     } else if (currPrimPtr && parentPrimPtr) {
-      DCOUT("current " << current << " is variantPrim?" << is_current_variant);
+      DCOUT("current " << current << " is variantPrim? " << is_current_variant);
       if (is_current_variant) {
 
         if (!is_variantElementName(currPrimPtr->element_name())) {
@@ -3636,13 +3643,21 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
         }
         DCOUT("variantSetName " << variantSetName << ", variantName " << variantName);
 
+        Prim &vp = *currPrimPtr;
+        if (vp.metas().variantSets) {
+          DCOUT("vp.metas.variantSets" << to_string(vp.metas().variantSets.value().second));
+        } else {
+          DCOUT("vp..metas.variantSets none");
+        }
+
         VariantSet &vs = parentPrimPtr->variantSets()[variantSetName];
 
         if (vs.name.empty()) {
           vs.name = variantSetName;
         }
+        vs.variantSet[variantName].metas() = vp.metas();
         vs.variantSet[variantName].primChildren().emplace_back(std::move(*currPrimPtr));
-        DCOUT("Added current " << current << " to parent's variantPrim[" << variantName << "]");
+        DCOUT("Added current " << current << " to parent's variantSet [" << variantSetName << "], variant [" << variantName << "]");
       } else {
         parentPrimPtr->children().emplace_back(std::move(*currPrimPtr));
         DCOUT("Added current " << current << " to parent " << parent);
