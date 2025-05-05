@@ -133,6 +133,7 @@ struct MMapFileHandle
   std::string filename;
 #if defined(WIN32)
   std::wstring unicode_filename;
+  void *hFile = nullptr;
 #endif
   bool writable{false};
   uint8_t *addr{nullptr};
