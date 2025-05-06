@@ -14,17 +14,19 @@
 
 ## High priority
 
+
 * Prepare Release v0.8
   * [x] Core part should be ready for the release.
-  * [ ] Support PLY and point primitive for Gaussian Splatting https://github.com/lighttransport/tinyusdz/issues/190
   * [ ] Write a demo and example viewer(work in progress)
     * [examples/openglviewer](examples/openglviewer) OpenGL viewer
     * [examples/sdlviewer](examples/sdlviewer) Software raytracing viewer 
   * For Vulkan and Android Vulkan example, please refer https://github.com/syoyo/Vulkan-glTF-USDZ-PBR for a while
   * For OpenGL + MaterialX example, please refer ASF MaterialXViewer fork to load USD model through TinyUSDZ https://github.com/lighttransport/materialx
  
+
 ## Mid-term todo
 
+* Support PLY and point primitive for Gaussian Splatting https://github.com/lighttransport/tinyusdz/issues/190
 * USD import/export feature using TinyUSDZ for robotics/sim2real/digitalTwin/genAI tools https://github.com/lighttransport/tinyusdz/issues/226
 * Performace optimization https://github.com/syoyo/tinyusdz/issues/164
 * MaterialX https://github.com/syoyo/tinyusdz/issues/86
