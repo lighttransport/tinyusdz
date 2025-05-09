@@ -4792,7 +4792,7 @@ static int stbi__create_png_image_raw(stbi__png *a, stbi_uc *raw, stbi__uint32 r
          stbi_uc *in = cur;
          stbi_uc *out = dest;
          stbi_uc inb = 0;
-         stbi__uint32 nsmp = (size_t)x * img_n;
+         size_t nsmp = (size_t)x * img_n;
 
          // expand bits to bytes first
          if (depth == 4) {
