@@ -3021,6 +3021,7 @@ struct Variant {
   const std::vector<Prim> &primChildren() const { return _primChildren; }
   std::vector<Prim> &primChildren() { return _primChildren; }
 
+  // For nested variantSet
   const std::map<std::string, VariantSet> &variantSets() const { return _variantSets; }
   std::map<std::string, VariantSet> &variantSets() { return _variantSets; }
 

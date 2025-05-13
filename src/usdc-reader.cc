@@ -3479,7 +3479,6 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
     DCOUT(fmt::format("{} has variant Prim ", currPrimPtr->element_name()));
 
-
     for (const auto &item : _variantPrimChildren.at(current)) {
 
       DCOUT("variantPrim " << item);
@@ -3507,21 +3506,23 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
       DCOUT("variantSetName " << variantSetName << ", variantName " << variantName);
 
-      VariantSet &vs = currPrimPtr->variantSets()[variantSetName];
-
-      if (vs.name.empty()) {
-        vs.name = variantSetName;
-      }
-      //if (vp.metas().variantSets) {
-      //  DCOUT("vp.metas.variantSets" << to_string(vp.metas().variantSets.value().second));
-      //} else {
-      //  DCOUT("vp.metas.variantSets none");
-      //}
-      //vs.variantSet[variantName].metas() = vp.metas();
-      //
       // HACK
-      //DCOUT("# of primChildren = " << vp.children().size());
-      //vs.variantSet[variantName].primChildren() = std::move(vp.children());
+      if (is_current_variant) {
+        VariantSet &vs = currPrimPtr->variantSets()[variantSetName];
+
+        if (vs.name.empty()) {
+          vs.name = variantSetName;
+        }
+        if (vp.metas().variantSets) {
+          DCOUT("vp.metas.variantSets" << to_string(vp.metas().variantSets.value().second));
+        } else {
+          DCOUT("vp.metas.variantSets none");
+        }
+        vs.variantSet[variantName].metas() = vp.metas();
+        
+        DCOUT("# of primChildren = " << vp.children().size());
+        vs.variantSet[variantName].primChildren() = std::move(vp.children());
+      }
 
     }
   }
@@ -3619,7 +3620,25 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
         } else {
           DCOUT("Added current " << current << " current.element_name " << currPrimPtr->element_name() << " as child Prim of variatPrim parent " << parent << ", parent.element_name " << vp.element_name());
-          vp.children().emplace_back(std::move(*currPrimPtr));
+          
+          std::string parentVariantSetName;
+          std::string parentVariantName;
+          {
+            std::array<std::string, 2> toks;
+            if (!tokenize_variantElement(vp.element_name(), &toks)) {
+              PUSH_ERROR_AND_RETURN("Invalid variant element_name.");
+            }
+
+            parentVariantSetName = toks[0];
+            parentVariantName = toks[1];
+          }
+          DCOUT("curr prim.element_name " << currPrimPtr->element_name());
+          DCOUT("vp.element_name " << vp.element_name());
+          DCOUT("parent variantSetName " << parentVariantSetName << ", variantName " << parentVariantName);
+
+          VariantSet &vs = vp.variantSets()[parentVariantSetName];
+          vs.variantSet[parentVariantName].primChildren().emplace_back(std::move(*currPrimPtr));
+          //vp.children().emplace_back(std::move(*currPrimPtr));
         }
       }
     } else if (currPrimPtr && parentPrimPtr) {
