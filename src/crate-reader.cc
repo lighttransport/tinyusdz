@@ -607,7 +607,9 @@ bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
         _err += "Failed to read compressed ints in ReadFloatArray.\n";
         return false;
       }
-      std::copy(ints.begin(), ints.end(), d->data());
+      for (size_t i = 0; i < length; i++) {
+        d->data()[i] = float(ints[i]);
+      }
     } else if (code == 't') {
       // Lookup table & indexes.
       uint32_t lutSize;
