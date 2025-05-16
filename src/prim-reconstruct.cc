@@ -141,13 +141,13 @@ static nonstd::optional<Animatable<T>> ConvertToAnimatable(const primvar::PrimVa
       const value::TimeSamples::Sample &s = var.ts_raw().get_samples()[i];
 
       // Attribute Block?
-      if (s.blocked) {
+      if (s.blocked || s.value.is_none()) {
         dst.add_blocked_sample(s.t);
       } else if (auto pv = s.value.get_value<T>()) {
         dst.add_sample(s.t, pv.value());
       } else {
         // Type mismatch
-        DCOUT(i << "/" << var.ts_raw().size() << " type mismatch.");
+        DCOUT(i << "/" << var.ts_raw().size() << " type mismatch. expected " << value::TypeTraits<T>::type_name() << ", but got " << s.value.type_name());
         return nonstd::nullopt;
       }
     }
@@ -200,7 +200,7 @@ nonstd::optional<Animatable<Extent>> ConvertToAnimatable(const primvar::PrimVar 
       const value::TimeSamples::Sample &s = var.ts_raw().get_samples()[i];
 
       // Attribute Block?
-      if (s.blocked) {
+      if (s.blocked || s.value.is_none()) {
         dst.add_blocked_sample(s.t);
       } else if (auto pv = s.value.get_value<std::vector<value::float3>>()) {
         if (pv.value().size() == 2) {
