@@ -16,7 +16,7 @@
 
 ## High priority
 
-* Improve WASM binding https://github.com/lighttransport/tinyusdz/issuese/190
+* Improve WASM binding https://github.com/lighttransport/tinyusdz/issuese/234
 * Prepare Release v0.8
   * [x] Core part should be ready for the release.
   * [ ] Write a demo and example viewer(work in progress)
