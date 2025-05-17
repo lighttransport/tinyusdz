@@ -16,7 +16,7 @@
 
 ## High priority
 
-
+* Improve WASM binding https://github.com/lighttransport/tinyusdz/issuese/190
 * Prepare Release v0.8
   * [x] Core part should be ready for the release.
   * [ ] Write a demo and example viewer(work in progress)
@@ -28,7 +28,7 @@
 
 ## Mid-term todo
 
-* Support PLY and point primitive for Gaussian Splatting https://github.com/lighttransport/tinyusdz/issues/190
+* Support PLY and point primitive for Gaussian Splatting https://github.com/lighttransport/tinyusdz/issuese/190
 * USD import/export feature using TinyUSDZ for robotics/sim2real/digitalTwin/genAI tools https://github.com/lighttransport/tinyusdz/issues/226
 * Performace optimization https://github.com/syoyo/tinyusdz/issues/164
 * MaterialX https://github.com/syoyo/tinyusdz/issues/86
