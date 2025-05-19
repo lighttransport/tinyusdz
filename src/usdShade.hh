@@ -198,6 +198,13 @@ struct UsdUVTexture : ShaderNode {
 // $USD/pxr/usdImaging/plugin/usdShaders/shaders/shaderDefs.usda
 
 struct UsdPreviewSurface : ShaderNode {
+  
+  // From 2.6
+  // NOTE: When opacityThreshold is non-zero, opacityMode is ignored. 
+  enum class OpacityMode {
+    Transparent, // "transparent" : the material will still receive a lighting response
+    Presence, // "presence" : no lighting response
+  };
 
   TypedAttributeWithFallback<Animatable<value::color3f>> diffuseColor{value::color3f{0.18f, 0.18f, 0.18f}};  // "inputs:diffuseColor"
   TypedAttributeWithFallback<Animatable<value::color3f>> emissiveColor{value::color3f{0.0f, 0.0f, 0.0f}};  // "inputs:emissiveColor"
@@ -216,6 +223,9 @@ struct UsdPreviewSurface : ShaderNode {
   TypedAttributeWithFallback<Animatable<float>> clearcoatRoughness{0.01f};  // "inputs:clearcoatRouighness"
   TypedAttributeWithFallback<Animatable<float>> roughness{0.5f};  // "inputs:roughness"
   TypedAttributeWithFallback<Animatable<float>> opacity{1.0f};  // "inputs:opacity"
+
+  TypedAttributeWithFallback<Animatable<OpacityMode>> opacityMode{OpacityMode::Transparent};  // "inputs:opacityMode"
+
   TypedAttributeWithFallback<Animatable<float>> opacityThreshold{0.0f};  // "inputs:opacityThreshold"
   TypedAttributeWithFallback<Animatable<float>> ior{1.5f};  // "inputs:ior"
 
