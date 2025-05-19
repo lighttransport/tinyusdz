@@ -2451,6 +2451,23 @@ std::string to_string(tinyusdz::CollectionInstance::ExpansionRule rule) {
   return s;
 }
 
+std::string to_string(const tinyusdz::UsdPreviewSurface::OpacityMode v) {
+  std::string s;
+
+  switch (v) {
+    case tinyusdz::UsdPreviewSurface::OpacityMode::Transparent: {
+      s = "transparent";
+      break;
+    }
+    case tinyusdz::UsdPreviewSurface::OpacityMode::Presence: {
+      s = "presence";
+      break;
+    }
+  }
+
+  return s;
+}
+
 std::string to_string(const tinyusdz::UsdUVTexture::SourceColorSpace v) {
   std::string s;
 
@@ -3947,6 +3964,8 @@ static std::string print_shader_params(const UsdPreviewSurface &shader,
                          indent);
   ss << print_typed_attr(shader.roughness, "inputs:roughness", indent);
   ss << print_typed_attr(shader.opacity, "inputs:opacity", indent);
+  ss << print_typed_token_attr(shader.opacityMode, "inputs:opacityMode",
+                         indent);
   ss << print_typed_attr(shader.opacityThreshold, "inputs:opacityThreshold",
                          indent);
   ss << print_typed_attr(shader.normal, "inputs:normal", indent);
