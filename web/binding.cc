@@ -126,12 +126,32 @@ class TinyUSDZLoader {
 
     const auto &m = render_scene_.materials[mat_id];
 
+    // UsdPreviewSurface like shader param
+    // [ ] diffuseColor : color3f or texture
+    // [ ] emissiveColor : color3f or texture
+    // [ ] useSpecularWorkflow : bool
+    // * SpecularWorkflow
+    //   [ ] specularColor : color3f or texture
+    // * MetalnessWorkflow
+    //   [ ] metallic : float or texture
+    // [ ] roughness : float or texture
+    // [ ] clearcoat : float or texture
+    // [ ] clearcoatRoughness : float or texture
+    // [ ] opacity : float or texture
+    // [ ] opacityMode(from 2.6) : transparent or presence
+    // [ ] opacityThreshold : float or texture
+    // [ ] ior : float or texture
+    // [ ] normal : normal3f or texture
+    // [ ] displacement : float or texture
+    // [ ] occlusion : float or texture
+
+    mat.set("diffuseColor", m.surfaceShader.diffuseColor);
     if (m.surfaceShader.diffuseColor.is_texture()) {
       mat.set("diffuseColorTextureId", m.surfaceShader.diffuseColor.texture_id);
-    } else {
-      // TODO
-      //mat.set("diffuseColor", m.surfaceShader.diffuseColor);
     }
+
+    mat.set("emissiveColor", m.surfaceShader.emissiveColor);
+    mat.set("occlusion", m.surfaceShader.occlusion);
 
     return mat;
   }
