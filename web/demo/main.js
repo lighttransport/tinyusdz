@@ -10,6 +10,97 @@ const usd_data = await usd_res.arrayBuffer();
 
 const usd_binary = new Uint8Array(usd_data);
 
+//
+// Convert UsdPreviewSureface to MeshPhysicalMaterial
+// - [x] diffuseColor -> color
+// - [x] ior -> ior
+// - [x] clearcoat -> clearcoat
+// - [x] clearcoatRoughness -> clearcoatRoughness
+// - [x] specularColor -> specular
+// - [x] roughness -> specularRoughness 
+// - [x] metallic -> metalness
+// - [x] emissiveColor -> emissive
+// - [x] opacity -> opacity
+// - [x] occlusion -> aoMap
+// - [x] normal -> normalMap
+// - [ ] TODO: displacement -> displacementMap
+function ConvertUsdPreviewSurfaceToMeshPhysicalMaterial(usdMaterial) {
+  const material = new THREE.MeshPhysicalMaterial();
+
+  material.color = new THREE.Color(0.18, 0.18, 0.18)
+  if (usdMaterial.hasOwnProperty('diffuseColor')) {
+    const color = usdMaterial.diffuseColor;
+    material.color = new THREE.Color(color[0], color[1], color[2]);
+  } 
+
+  material.ior = 1.5;
+  if (usdMaterial.hasOwnProperty('ior')) {
+    material.ior = usdMaterial.ior;
+  }
+
+  material.clearcoat = 0.0;
+  if (usdMaterial.hasOwnProperty('clearcoat')) {
+    material.clearcoat = usdMaterial.clearcoat;
+  }   
+
+  material.clearcoatRoughness = 0.0;
+  if (usdMaterial.hasOwnProperty('clearcoatRoughness')) {
+    material.clearcoatRoughness = usdMaterial.clearcoatRoughness;
+  }
+
+  material.useSpecularWorkflow = false;
+  if (usdMaterial.hasOwnProperty('useSpecularWorkflow')) 
+    material.useSpecularWorkflow = usdMaterial.useSpecularWorkflow;
+  }
+
+  if (material.useSpecularWorkflow) {
+    material.specular = new THREE.Color(0.0, 0.0, 0.0);
+    if (usdMaterial.hasOwnProperty('specularColor')) {
+      const color = usdMaterial.specularColor;
+      material.specular = new THREE.Color(color[0], color[1], color[2]);
+    }
+  } else {
+    material.metalness = 0.0;
+    if (usdMaterial.hasOwnProperty('metallic')) {
+      material.metalness = usdMaterial.metallic;
+    }
+  }
+
+  if (usdMateiral.hasOwnProperty('roughness')) {
+    material.specularRoughness = usdMaterial.roughness;
+  }
+
+  if (usdMaterial.hasOwnProperty('emissiveColor')) {
+    const color = usdMaterial.emissiveColor;
+    material.emissive = new THREE.Color(color[0], color[1], color[2]);
+  } 
+
+  // TODO: aoMap
+  //if (usdMaterial.hasOwnProperty('occlusionTextureId')) {
+  //  const occlusionTex = usdMaterial.occlusionTextureId;
+  //  const img = usd.getImage(occlusionTex.textureImageId);
+  //  console.log(img);
+
+  //  // assume RGBA for now.
+  //  let image8Array = new Uint8ClampedArray(img.data);
+  //  let imgData = new ImageData(image8Array, img.width, img.height);
+
+  //  const texture = new THREE.DataTexture( imgData, img.width, img.height );
+  //  texture.flipY = true;
+  //  texture.needsUpdate = true;
+
+  //  material.aoMap = texture;
+  //} 
+
+
+  // TOOD: displacement
+
+
+  return material;
+
+}
+
+
 initTinyUSDZ().then(function(TinyUSDZLoader) {
 
   const usd = new TinyUSDZLoader.TinyUSDZLoader(usd_binary);
