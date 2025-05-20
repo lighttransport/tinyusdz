@@ -18,6 +18,11 @@ list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/../cmake)
 #list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/../../cmake/sanitizers)
 #find_package(Sanitizers) # Address sanitizer (-DSANITIZE_ADDRESS=ON)
 
+if (CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
+  # Use Oz to reduce size further than Os
+  set(CMAKE_CXX_FLAGS_MINSIZEREL "-Oz -DNODEBUG")
+endif()
+
 # [tinyusdz]
 add_subdirectory(../  tinyusdz)
 
@@ -53,8 +58,8 @@ if (EMSCRIPTEN)
 endif()
 
 # TODO: Adjust memory size.
-# 4MB stack
-set_target_properties(${BUILD_TARGET} PROPERTIES LINK_FLAGS "-sENVIRONMENT='web,worker' -sSTACK_SIZE=4000000 -sASSERTIONS -s ALLOW_MEMORY_GROWTH=1 -sMODULARIZE=1 -sEXPORT_ES6 -sINVOKE_RUN=0 --bind")
+# 2MB stack
+set_target_properties(${BUILD_TARGET} PROPERTIES LINK_FLAGS "-sENVIRONMENT='web,worker' -sSTACK_SIZE=2000000 -sASSERTIONS -s ALLOW_MEMORY_GROWTH=1 -sMODULARIZE=1 -sEXPORT_ES6 -sINVOKE_RUN=0 --bind")
 
 # ENVIRONMENT=web
 # SINGLE_FILE=1

@@ -1,7 +1,11 @@
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2024-Present Light Transport Entertainment, Inc.
+//
 #include <emscripten/bind.h>
 
 #include <vector>
 
+#include "external/fast_float/include/fast_float/bigint.h"
 #include "tinyusdz.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
@@ -51,6 +55,8 @@ bool ToRGBA(const std::vector<uint8_t> &src, int channels,
 
 ///
 /// Simple C++ wrapper class for Emscripten
+///
+/// TODO: Provide Three.js GLTFLoader like interface.
 ///
 class TinyUSDZLoader {
  public:
@@ -108,6 +114,21 @@ class TinyUSDZLoader {
   }
   ~TinyUSDZLoader() {}
 
+  emscripten::val loadAsync(const std::string &binary) {
+    tinyusdz::Layer layer;
+
+    // TODO: 
+    return emscripten::val::null();
+  }
+
+
+  emscripten::val loadAsLayer(const std::string &binary) {
+    tinyusdz::Layer layer;
+
+    // TODO: 
+    return emscripten::val::null();
+  }
+
   int numMeshes() const {
     return render_scene_.meshes.size();
   }
@@ -127,31 +148,95 @@ class TinyUSDZLoader {
     const auto &m = render_scene_.materials[mat_id];
 
     // UsdPreviewSurface like shader param
-    // [ ] diffuseColor : color3f or texture
-    // [ ] emissiveColor : color3f or texture
-    // [ ] useSpecularWorkflow : bool
+    // [x] diffuseColor : color3f or texture
+    // [x] emissiveColor : color3f or texture
+    // [x] useSpecularWorkflow : bool
     // * SpecularWorkflow
-    //   [ ] specularColor : color3f or texture
+    //   [x] specularColor : color3f or texture
     // * MetalnessWorkflow
-    //   [ ] metallic : float or texture
-    // [ ] roughness : float or texture
-    // [ ] clearcoat : float or texture
-    // [ ] clearcoatRoughness : float or texture
-    // [ ] opacity : float or texture
+    //   [x] metallic : float or texture
+    // [x] roughness : float or texture
+    // [x] clearcoat : float or texture
+    // [x] clearcoatRoughness : float or texture
+    // [x] opacity : float or texture
     // [ ] opacityMode(from 2.6) : transparent or presence
-    // [ ] opacityThreshold : float or texture
-    // [ ] ior : float or texture
-    // [ ] normal : normal3f or texture
-    // [ ] displacement : float or texture
-    // [ ] occlusion : float or texture
+    // [x] opacityThreshold : float or texture
+    // [x] ior : float or texture
+    // [x] normal : normal3f or texture
+    // [x] displacement : float or texture
+    // [x] occlusion : float or texture
 
-    mat.set("diffuseColor", m.surfaceShader.diffuseColor);
+    mat.set("diffuseColor", m.surfaceShader.diffuseColor.value);
     if (m.surfaceShader.diffuseColor.is_texture()) {
       mat.set("diffuseColorTextureId", m.surfaceShader.diffuseColor.texture_id);
     }
 
-    mat.set("emissiveColor", m.surfaceShader.emissiveColor);
-    mat.set("occlusion", m.surfaceShader.occlusion);
+    mat.set("emissiveColor", m.surfaceShader.emissiveColor.value);
+    if (m.surfaceShader.emissiveColor.is_texture()) {
+      mat.set("emissiveColorTextureId", m.surfaceShader.emissiveColor.texture_id);
+    }
+
+    mat.set("useSpecularWorkflow", m.surfaceShader.useSpecularWorkflow);
+    if (m.surfaceShader.useSpecularWorkflow) {
+      mat.set("specularColor", m.surfaceShader.specularColor.value);
+      if (m.surfaceShader.specularColor.is_texture()) {
+        mat.set("specularColorTextureId", m.surfaceShader.specularColor.texture_id);
+      }
+
+    } else {
+      mat.set("metallic", m.surfaceShader.metallic.value);
+      if (m.surfaceShader.metallic.is_texture()) {
+        mat.set("metallicTextureId", m.surfaceShader.metallic.texture_id);
+      }
+    }
+
+    mat.set("roughness", m.surfaceShader.roughness.value);
+    if (m.surfaceShader.roughness.is_texture()) {
+      mat.set("roughnessTextureId", m.surfaceShader.roughness.texture_id);
+    }
+
+    mat.set("cleacoat", m.surfaceShader.clearcoat.value);
+    if (m.surfaceShader.clearcoat.is_texture()) {
+      mat.set("cleacoatTextureId", m.surfaceShader.clearcoat.texture_id);
+    }
+
+    mat.set("clearcoatRoughness", m.surfaceShader.clearcoatRoughness.value);
+    if (m.surfaceShader.clearcoatRoughness.is_texture()) {
+      mat.set("clearcoatRoughnessTextureId", m.surfaceShader.clearcoatRoughness.texture_id);
+    }
+
+    mat.set("opacity", m.surfaceShader.opacity.value);
+    if (m.surfaceShader.opacity.is_texture()) {
+      mat.set("opacityTextureId", m.surfaceShader.opacity.texture_id);
+    }
+
+    // TODO
+    //mat.set("opacityMode", m.surfaceShader.opacityMode);
+
+    mat.set("opacityThreshold", m.surfaceShader.opacityThreshold.value);
+    if (m.surfaceShader.opacityThreshold.is_texture()) {
+      mat.set("opacityThresholdTextureId", m.surfaceShader.opacityThreshold.texture_id);
+    }
+
+    mat.set("ior", m.surfaceShader.ior.value);
+      if (m.surfaceShader.ior.is_texture()) {
+        mat.set("iorTextureId", m.surfaceShader.ior.texture_id);
+      }
+
+    mat.set("normal", m.surfaceShader.normal.value);
+    if (m.surfaceShader.normal.is_texture()) {
+      mat.set("normalTextureId", m.surfaceShader.normal.texture_id);
+    }
+
+    mat.set("displacement", m.surfaceShader.displacement.value);
+    if (m.surfaceShader.displacement.is_texture()) {
+      mat.set("displacementTextureId", m.surfaceShader.displacement.texture_id);
+    }
+
+    mat.set("occlusion", m.surfaceShader.occlusion.value);
+    if (m.surfaceShader.occlusion.is_texture()) {
+      mat.set("occlusionTextureId", m.surfaceShader.occlusion.texture_id);
+    }
 
     return mat;
   }
@@ -260,6 +345,15 @@ class TinyUSDZLoader {
 
   tinyusdz::tydra::RenderScene render_scene_;
   tinyusdz::USDZAsset usdz_asset_;
+};
+
+///
+/// USD composition 
+///
+class TinyUSDZComposer
+{
+  // TODO
+
 };
 
 // Register STL
