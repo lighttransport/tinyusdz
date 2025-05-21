@@ -57,9 +57,9 @@ if (EMSCRIPTEN)
     #set(CMAKE_EXECUTABLE_SUFFIX ".html")
 endif()
 
-# TODO: Adjust memory size.
-# 2MB stack
-set_target_properties(${BUILD_TARGET} PROPERTIES LINK_FLAGS "-sENVIRONMENT='web,worker' -sSTACK_SIZE=2000000 -sASSERTIONS -s ALLOW_MEMORY_GROWTH=1 -sMODULARIZE=1 -sEXPORT_ES6 -sINVOKE_RUN=0 --bind")
+# TODO: Adjust memory size. 
+# 128kB stack
+set_target_properties(${BUILD_TARGET} PROPERTIES LINK_FLAGS "-sENVIRONMENT='web,worker' -sSTACK_SIZE=128000 -sASSERTIONS -s ALLOW_MEMORY_GROWTH=1 -sMODULARIZE=1 -sEXPORT_ES6 -sINVOKE_RUN=0 --bind")
 
 # ENVIRONMENT=web
 # SINGLE_FILE=1

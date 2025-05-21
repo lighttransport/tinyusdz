@@ -1,7 +1,11 @@
 //import * as THREE from 'three';
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three/build/three.module.js';
 
-import initTinyUSDZ from 'https://lighttransport.github.io/tinyusdz/tinyusdz.js';
+import { GUI } from 'https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.module.js';
+
+//import initTinyUSDZ from 'https://lighttransport.github.io/tinyusdz/tinyusdz.js';
+// For developer
+import initTinyUSDZ from './tinyusdz.js';
 
 const USDZ_FILEPATH = './UsdCookie.usdz';
 
@@ -49,7 +53,7 @@ function ConvertUsdPreviewSurfaceToMeshPhysicalMaterial(usdMaterial) {
   }
 
   material.useSpecularWorkflow = false;
-  if (usdMaterial.hasOwnProperty('useSpecularWorkflow')) 
+  if (usdMaterial.hasOwnProperty('useSpecularWorkflow')) {
     material.useSpecularWorkflow = usdMaterial.useSpecularWorkflow;
   }
 
@@ -103,8 +107,31 @@ function ConvertUsdPreviewSurfaceToMeshPhysicalMaterial(usdMaterial) {
 
 initTinyUSDZ().then(function(TinyUSDZLoader) {
 
+  const gui = new GUI();
+
+  // FIXME
+  let y_rot_value = 0.02;
+  
+  // Create a parameters object
+  const params = {
+    rotationSpeed: y_rot_value,
+    wireframe: false,
+    //color: material.color.getHex()
+  };
+
+  // Add controls
+  gui.add(params, 'rotationSpeed', 0, 0.1).name('Rotation Speed').onChange((value) => {
+    y_rot_value = value;
+  });
+  //gui.add(params, 'wireframe').onChange((value) => {
+  //  material.wireframe = value;
+  //});
+  //gui.addColor(params, 'color').onChange((value) => {
+  //  material.color.setHex(value);
+  //});
+
   const usd = new TinyUSDZLoader.TinyUSDZLoader(usd_binary);
-  console.log(usd.numMeshes());
+  //console.log(usd.numMeshes());
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
@@ -125,7 +152,7 @@ initTinyUSDZ().then(function(TinyUSDZLoader) {
   // TODO: set normal from mesh
 
   if (mesh.hasOwnProperty('texcoords')) {
-    console.log(mesh.texcoords);
+    //console.log(mesh.texcoords);
     geometry.setAttribute( 'uv', new THREE.BufferAttribute( mesh.texcoords, 2 ) );
   }
 
@@ -141,7 +168,7 @@ initTinyUSDZ().then(function(TinyUSDZLoader) {
     const diffTex = usd.getTexture(usdMaterial.diffuseColorTextureId);
 
     const img = usd.getImage(diffTex.textureImageId);
-    console.log(img);
+    //console.log(img);
 
     // assume RGBA for now.
     let image8Array = new Uint8ClampedArray(img.data);
@@ -165,8 +192,8 @@ initTinyUSDZ().then(function(TinyUSDZLoader) {
   geometry.computeVertexNormals();
 
   //const material = new THREE.MeshBasicMaterial( { color: 0x00ff00 } );
-  const cube = new THREE.Mesh( geometry, material );
-  scene.add( cube );
+  const mesh0 = new THREE.Mesh( geometry, material );
+  scene.add( mesh0 );
 
   //camera.position.z = 25;
   camera.position.z = 1.0;
@@ -174,7 +201,7 @@ initTinyUSDZ().then(function(TinyUSDZLoader) {
   function animate() {
 
     //cube.rotation.x += 0.01;
-    cube.rotation.y += 0.02;
+    mesh0.rotation.y += y_rot_value;
 
     renderer.render( scene, camera );
 
