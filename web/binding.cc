@@ -171,11 +171,11 @@ class TinyUSDZLoader {
       mat.set("diffuseColorTextureId", m.surfaceShader.diffuseColor.texture_id);
     }
 
+#if 1
     mat.set("emissiveColor", m.surfaceShader.emissiveColor.value);
     if (m.surfaceShader.emissiveColor.is_texture()) {
       mat.set("emissiveColorTextureId", m.surfaceShader.emissiveColor.texture_id);
     }
-
     mat.set("useSpecularWorkflow", m.surfaceShader.useSpecularWorkflow);
     if (m.surfaceShader.useSpecularWorkflow) {
       mat.set("specularColor", m.surfaceShader.specularColor.value);
@@ -237,6 +237,7 @@ class TinyUSDZLoader {
     if (m.surfaceShader.occlusion.is_texture()) {
       mat.set("occlusionTextureId", m.surfaceShader.occlusion.texture_id);
     }
+#endif
 
     return mat;
   }
@@ -356,11 +357,89 @@ class TinyUSDZComposer
 
 };
 
+#if 0
+// Helper to register std::array
+namespace emscripten {
+    namespace internal {
+        template<typename T, size_t N>
+        struct TypeID<std::array<T, N>> {
+            static constexpr TYPEID get() {
+                return TypeID<val>::get();
+            }
+        };
+    }
+}
+
+// Convert std::array<float, 3> to/from JavaScript array
+namespace emscripten {
+    namespace internal {
+        template<>
+        struct BindingType<std::array<float, 3>> {
+            typedef std::array<float, 3> WireType;
+            static WireType toWireType(const std::array<float, 3>& arr) {
+                return arr;
+            }
+            static std::array<float, 3> fromWireType(const WireType& arr) {
+                return arr;
+            }
+        };
+    }
+}
+#endif
+
+
 // Register STL
 EMSCRIPTEN_BINDINGS(stl_wrappters) {
   register_vector<float>("VectorFloat");
   register_vector<int>("VectorInt");
   register_vector<uint32_t>("VectorUInt");
+}
+
+// Register the array type
+EMSCRIPTEN_BINDINGS(array_bindings) {
+    value_array<std::array<float, 2>>("Float2Array")
+        .element(emscripten::index<0>())
+        .element(emscripten::index<1>());
+    value_array<std::array<float, 3>>("Float3Array")
+        .element(emscripten::index<0>())
+        .element(emscripten::index<1>())
+        .element(emscripten::index<2>());
+    value_array<std::array<float, 4>>("Float4Array")
+        .element(emscripten::index<0>())
+        .element(emscripten::index<1>())
+        .element(emscripten::index<2>())
+        .element(emscripten::index<3>());
+
+    //  for mat33
+    value_array<std::array<float, 9>>("Mat33")
+        .element(emscripten::index<0>())
+        .element(emscripten::index<1>())
+        .element(emscripten::index<2>())
+        .element(emscripten::index<3>())
+        .element(emscripten::index<4>())
+        .element(emscripten::index<5>())
+        .element(emscripten::index<6>())
+        .element(emscripten::index<7>())
+        .element(emscripten::index<8>());
+
+    //  for mat44
+    value_array<std::array<float, 16>>("Mat44")
+        .element(emscripten::index<0>())
+        .element(emscripten::index<1>())
+        .element(emscripten::index<2>())
+        .element(emscripten::index<3>())
+        .element(emscripten::index<4>())
+        .element(emscripten::index<5>())
+        .element(emscripten::index<6>())
+        .element(emscripten::index<7>())
+        .element(emscripten::index<8>())
+        .element(emscripten::index<9>())
+        .element(emscripten::index<10>())
+        .element(emscripten::index<11>())
+        .element(emscripten::index<12>())
+        .element(emscripten::index<13>())
+        .element(emscripten::index<14>())
+        .element(emscripten::index<15>());
 }
 
 EMSCRIPTEN_BINDINGS(tinyusdz_module) {
