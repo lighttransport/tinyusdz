@@ -8,6 +8,8 @@ tinyusdz.wasm
 
 2025/05. emsdk 4.0.8. -Oz : 1.6 MB
 
+with asyncify: 4 MB
+
 # stack size
 
 128k => ok.
