@@ -2,8 +2,10 @@
 // Copyright 2024-Present Light Transport Entertainment, Inc.
 //
 #include <emscripten/bind.h>
+#include <emscripten/em_js.h>
 
 #include <vector>
+#include <string>
 
 #include "external/fast_float/include/fast_float/bigint.h"
 #include "tinyusdz.hh"
@@ -53,6 +55,41 @@ bool ToRGBA(const std::vector<uint8_t> &src, int channels,
 
 }
 
+// JavaScript helper function for async loading
+EM_JS(void, setupAsyncLoader, (), {
+  // Ensure we have the _createAsyncLoader function set up
+  Module._createAsyncLoader = function(loaderPtr, binary) {
+    return new Promise((resolve, reject) => {
+      // Ensure the module is fully loaded before using wrapPointer
+      const tryWrap = () => {
+        // Check if wrapPointer is available yet
+        if (typeof Module.wrapPointer !== 'function') {
+          console.log('Module.wrapPointer not available yet, waiting...');
+          // Try again in 100ms
+          setTimeout(tryWrap, 100);
+          return;
+        }
+        
+        try {
+          const loader = Module.wrapPointer(loaderPtr, Module.TinyUSDZLoader);
+          const success = loader.loadFromBinary(binary);
+          if (success) {
+            resolve(loader);
+          } else {
+            reject(new Error(loader.error ? loader.error() : 'Unknown error loading USD'));
+          }
+        } catch (error) {
+          console.error('Error in async loader:', error);
+          reject(error);
+        }
+      };
+      
+      // Start the process
+      tryWrap();
+    });
+  };
+});
+
 ///
 /// Simple C++ wrapper class for Emscripten
 ///
@@ -60,16 +97,28 @@ bool ToRGBA(const std::vector<uint8_t> &src, int channels,
 ///
 class TinyUSDZLoader {
  public:
+  // Default constructor for async loading
+  TinyUSDZLoader() : loaded_(false) {}
+
   ///
   /// `binary` is the buffer for TinyUSDZ binary(e.g. buffer read by
   /// fs.readFileSync) std::string can be used as UInt8Array in JS layer.
   ///
   TinyUSDZLoader(const std::string &binary) {
+    loadFromBinary(binary);
+  }
+
+  // Synchronous load method that can be called from async wrapper
+  bool loadFromBinary(const std::string &binary) {
     tinyusdz::Stage stage;
 
     loaded_ = tinyusdz::LoadUSDFromMemory(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
         "dummy.usda", &stage, &warn_, &error_);
+
+    if (!loaded_) {
+      return false;
+    }
 
     bool is_usdz = tinyusdz::IsUSDZ(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size());
@@ -110,15 +159,20 @@ class TinyUSDZLoader {
     if (!loaded_) {
       std::cerr << "Failed to convert USD Stage to RenderScene: \n"
                 << converter.GetError() << "\n";
+      error_ = converter.GetError();
+      return false;
     }
+    
+    return true;
   }
   ~TinyUSDZLoader() {}
 
   emscripten::val loadAsync(const std::string &binary) {
-    tinyusdz::Layer layer;
-
-    // TODO: 
-    return emscripten::val::null();
+    return emscripten::val::global("Promise").new_(
+      emscripten::val::module_property("_createAsyncLoader"),
+      emscripten::val(reinterpret_cast<uintptr_t>(this)),
+      binary
+    );
   }
 
 
@@ -171,7 +225,6 @@ class TinyUSDZLoader {
       mat.set("diffuseColorTextureId", m.surfaceShader.diffuseColor.texture_id);
     }
 
-#if 1
     mat.set("emissiveColor", m.surfaceShader.emissiveColor.value);
     if (m.surfaceShader.emissiveColor.is_texture()) {
       mat.set("emissiveColorTextureId", m.surfaceShader.emissiveColor.texture_id);
@@ -237,7 +290,6 @@ class TinyUSDZLoader {
     if (m.surfaceShader.occlusion.is_texture()) {
       mat.set("occlusionTextureId", m.surfaceShader.occlusion.texture_id);
     }
-#endif
 
     return mat;
   }
@@ -387,16 +439,73 @@ namespace emscripten {
 }
 #endif
 
+// TODO: quaternion type.
 
 // Register STL
 EMSCRIPTEN_BINDINGS(stl_wrappters) {
   register_vector<float>("VectorFloat");
-  register_vector<int>("VectorInt");
+  register_vector<int16_t>("VectorInt16");
+  register_vector<uint16_t>("VectorUInt16");
   register_vector<uint32_t>("VectorUInt");
+  register_vector<int>("VectorInt");
+  register_vector<std::string>("VectorStrin");
 }
 
 // Register the array type
 EMSCRIPTEN_BINDINGS(array_bindings) {
+
+    value_array<std::array<int16_t, 2>>("Short2Array")
+        .element(emscripten::index<0>())
+        .element(emscripten::index<1>());
+    value_array<std::array<int16_t, 3>>("Short3Array")
+        .element(emscripten::index<0>())
+        .element(emscripten::index<1>())
+        .element(emscripten::index<2>());
+    value_array<std::array<int16_t, 4>>("Short4Array")
+        .element(emscripten::index<0>())
+        .element(emscripten::index<1>())
+        .element(emscripten::index<2>())
+        .element(emscripten::index<3>());
+
+    value_array<std::array<uint16_t, 2>>("UShort2Array")
+        .element(emscripten::index<0>())
+        .element(emscripten::index<1>());
+    value_array<std::array<uint16_t, 3>>("UShort3Array")
+        .element(emscripten::index<0>())
+        .element(emscripten::index<1>())
+        .element(emscripten::index<2>());
+    value_array<std::array<uint16_t, 4>>("UShort4Array")
+        .element(emscripten::index<0>())
+        .element(emscripten::index<1>())
+        .element(emscripten::index<2>())
+        .element(emscripten::index<3>());
+
+    value_array<std::array<int, 2>>("Int2Array")
+        .element(emscripten::index<0>())
+        .element(emscripten::index<1>());
+    value_array<std::array<int, 3>>("Int3Array")
+        .element(emscripten::index<0>())
+        .element(emscripten::index<1>())
+        .element(emscripten::index<2>());
+    value_array<std::array<int, 4>>("Int4Array")
+        .element(emscripten::index<0>())
+        .element(emscripten::index<1>())
+        .element(emscripten::index<2>())
+        .element(emscripten::index<3>());
+
+    value_array<std::array<uint32_t, 2>>("UInt2Array")
+        .element(emscripten::index<0>())
+        .element(emscripten::index<1>());
+    value_array<std::array<uint32_t, 3>>("UInt3Array")
+        .element(emscripten::index<0>())
+        .element(emscripten::index<1>())
+        .element(emscripten::index<2>());
+    value_array<std::array<uint32_t, 4>>("UInt4Array")
+        .element(emscripten::index<0>())
+        .element(emscripten::index<1>())
+        .element(emscripten::index<2>())
+        .element(emscripten::index<3>());
+
     value_array<std::array<float, 2>>("Float2Array")
         .element(emscripten::index<0>())
         .element(emscripten::index<1>());
@@ -444,7 +553,10 @@ EMSCRIPTEN_BINDINGS(array_bindings) {
 
 EMSCRIPTEN_BINDINGS(tinyusdz_module) {
   class_<TinyUSDZLoader>("TinyUSDZLoader")
-      .constructor<const std::string &>()
+      .constructor<>()  // Default constructor for async loading
+      .constructor<const std::string &>()  // Keep original for compatibility
+      .function("loadAsync", &TinyUSDZLoader::loadAsync)
+      .function("loadFromBinary", &TinyUSDZLoader::loadFromBinary)
       .function("getMesh", &TinyUSDZLoader::getMesh)
       .function("numMeshes", &TinyUSDZLoader::numMeshes)
       .function("getMaterial", &TinyUSDZLoader::getMaterial)
@@ -452,4 +564,7 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("getImage", &TinyUSDZLoader::getImage)
       .function("ok", &TinyUSDZLoader::ok)
       .function("error", &TinyUSDZLoader::error);
+  
+  // Setup the async loader helper when module is loaded
+  emscripten::function("setupAsyncLoader", &setupAsyncLoader);
 }
