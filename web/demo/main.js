@@ -151,7 +151,12 @@ function ConvertUsdPreviewSurfaceToMeshPhysicalMaterial(usdMaterial, usd) {
 }
 
 
-initTinyUSDZ().then(function(TinyUSDZLoader) {
+initTinyUSDZ().then(async function(TinyUSDZLoader) {
+
+  // Setup the async loader helper before attempting to use it
+  console.log("Setting up async loader...");
+  TinyUSDZLoader.setupAsyncLoader();
+  console.log("Async loader setup complete.");
 
   const gui = new GUI();
 
@@ -167,7 +172,6 @@ initTinyUSDZ().then(function(TinyUSDZLoader) {
     wireframe: false,
     ambient: ambient,
     exposure: exposure,
-    //color: material.color.getHex()
   };
 
   // Add controls
@@ -182,19 +186,12 @@ initTinyUSDZ().then(function(TinyUSDZLoader) {
     exposure = value;
     renderer.toneMappingExposure = exposure;
   });
-  //gui.addColor(params, 'color').onChange((value) => {
-  //  material.color.setHex(value);
-  //});
-
-  const usd = new TinyUSDZLoader.TinyUSDZLoader(usd_binary);
-  //console.log(usd.numMeshes());
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
 
   const renderer = new THREE.WebGLRenderer();
   renderer.setSize( window.innerWidth, window.innerHeight );
-  renderer.setAnimationLoop( animate );
   
   // Set up better rendering for PBR materials
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -210,51 +207,97 @@ initTinyUSDZ().then(function(TinyUSDZLoader) {
   directionalLight.position.set(5, 5, 5);
   scene.add(directionalLight);
 
-  // First mesh only
-  const mesh = usd.getMesh(0);
-  //console.log("usd", usd)
-  //console.log("mesh", mesh);
+  // Add loading indicator
+  const loadingDiv = document.createElement('div');
+  loadingDiv.innerHTML = 'Loading USD file...';
+  loadingDiv.style.position = 'absolute';
+  loadingDiv.style.top = '50%';
+  loadingDiv.style.left = '50%';
+  loadingDiv.style.transform = 'translate(-50%, -50%)';
+  loadingDiv.style.color = 'white';
+  loadingDiv.style.fontSize = '20px';
+  loadingDiv.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+  loadingDiv.style.padding = '20px';
+  loadingDiv.style.borderRadius = '10px';
+  document.body.appendChild(loadingDiv);
 
-  //const geometry = new THREE.BoxGeometry( 1, 1, 1 );
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute( 'position', new THREE.BufferAttribute( mesh.points, 3 ) );
-  // TODO: set normal from mesh
+  try {
+    // Create loader instance without loading
+    const usd = new TinyUSDZLoader.TinyUSDZLoader();
+    
+    // Load asynchronously with detailed error handling
+    console.log('Starting async USD loading...');
+    console.log('Module functions:', Object.keys(TinyUSDZLoader).join(', '));
+    console.log('usd_binary length:', usd_binary.length);
+    
+    try {
+      await usd.loadAsync(usd_binary);
+      console.log('USD loading completed!');
+    } catch (error) {
+      console.error('Async loading error:', error);
+      throw new Error(`Failed to load USD file asynchronously: ${error.message}`);
+    }
+    console.log('USD loading completed!');
+    
+    // Remove loading indicator
+    document.body.removeChild(loadingDiv);
+    
+    // First mesh only
+    const mesh = usd.getMesh(0);
+    console.log("mesh loaded:", mesh);
 
-  if (mesh.hasOwnProperty('texcoords')) {
-    //console.log(mesh.texcoords);
-    geometry.setAttribute( 'uv', new THREE.BufferAttribute( mesh.texcoords, 2 ) );
-  }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute( 'position', new THREE.BufferAttribute( mesh.points, 3 ) );
 
-  const usdMaterial = usd.getMaterial(mesh.materialId);
-  //console.log("usdMat", usdMaterial);
-  //if (usdMaterial.aaa) {
-  //  console.log("aaa");
-  //}
+    if (mesh.hasOwnProperty('texcoords')) {
+      geometry.setAttribute( 'uv', new THREE.BufferAttribute( mesh.texcoords, 2 ) );
+    }
 
-  var material;
+    const usdMaterial = usd.getMaterial(mesh.materialId);
+    console.log("usdMaterial:", usdMaterial);
 
-  // Use the proper material conversion function
-  material = ConvertUsdPreviewSurfaceToMeshPhysicalMaterial(usdMaterial, usd);
-   
+    var material;
 
-  // Assume triangulated indices.
-  geometry.setIndex( new THREE.Uint32BufferAttribute(mesh.faceVertexIndices, 1) );
+    // Use the proper material conversion function
+    material = ConvertUsdPreviewSurfaceToMeshPhysicalMaterial(usdMaterial, usd);
+     
+    // Assume triangulated indices.
+    geometry.setIndex( new THREE.Uint32BufferAttribute(mesh.faceVertexIndices, 1) );
 
-  geometry.computeVertexNormals();
+    geometry.computeVertexNormals();
 
-  //const material = new THREE.MeshBasicMaterial( { color: 0x00ff00 } );
-  const mesh0 = new THREE.Mesh( geometry, material );
-  scene.add( mesh0 );
+    const mesh0 = new THREE.Mesh( geometry, material );
+    scene.add( mesh0 );
 
-  //camera.position.z = 25;
-  camera.position.z = 1.0;
+    camera.position.z = 1.0;
 
-  function animate() {
+    function animate() {
+      mesh0.rotation.y += y_rot_value;
+      renderer.render( scene, camera );
+    }
 
-    //cube.rotation.x += 0.01;
-    mesh0.rotation.y += y_rot_value;
-
-    renderer.render( scene, camera );
-
+    renderer.setAnimationLoop( animate );
+    
+  } catch (error) {
+    console.error('Failed to load USD file:', error);
+    
+    // Remove loading indicator
+    if (document.body.contains(loadingDiv)) {
+      document.body.removeChild(loadingDiv);
+    }
+    
+    // Show error message
+    const errorDiv = document.createElement('div');
+    errorDiv.innerHTML = `Error loading USD file: ${error.message}`;
+    errorDiv.style.position = 'absolute';
+    errorDiv.style.top = '50%';
+    errorDiv.style.left = '50%';
+    errorDiv.style.transform = 'translate(-50%, -50%)';
+    errorDiv.style.color = 'red';
+    errorDiv.style.fontSize = '16px';
+    errorDiv.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
+    errorDiv.style.padding = '20px';
+    errorDiv.style.borderRadius = '10px';
+    document.body.appendChild(errorDiv);
   }
 });
