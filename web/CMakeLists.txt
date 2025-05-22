@@ -1,5 +1,5 @@
 # Assume this project is invoked by emcmake.
-cmake_minimum_required(VERSION 3.5.1)
+cmake_minimum_required(VERSION 3.16)
 
 set(BUILD_TARGET "tinyusdz")
 
