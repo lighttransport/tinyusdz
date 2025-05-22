@@ -21,27 +21,50 @@ const usd_binary = new Uint8Array(usd_data);
 // - [x] clearcoat -> clearcoat
 // - [x] clearcoatRoughness -> clearcoatRoughness
 // - [x] specularColor -> specular
-// - [x] roughness -> specularRoughness 
+// - [x] roughness -> roughness 
 // - [x] metallic -> metalness
 // - [x] emissiveColor -> emissive
 // - [x] opacity -> opacity
 // - [x] occlusion -> aoMap
 // - [x] normal -> normalMap
-// - [ ] TODO: displacement -> displacementMap
-function ConvertUsdPreviewSurfaceToMeshPhysicalMaterial(usdMaterial) {
+// - [x] displacement -> displacementMap
+function ConvertUsdPreviewSurfaceToMeshPhysicalMaterial(usdMaterial, usd) {
   const material = new THREE.MeshPhysicalMaterial();
 
-  material.color = new THREE.Color(0.18, 0.18, 0.18)
+  // Helper function to create texture from USD texture ID
+  function createTextureFromUSD(textureId) {
+    if (textureId === undefined) return null;
+    
+    const tex = usd.getTexture(textureId);
+    const img = usd.getImage(tex.textureImageId);
+    
+    const image8Array = new Uint8ClampedArray(img.data);
+    const texture = new THREE.DataTexture(image8Array, img.width, img.height);
+    texture.format = THREE.RGBAFormat;
+    texture.flipY = true;
+    texture.needsUpdate = true;
+    
+    return texture;
+  }
+
+  // Diffuse color and texture
+  material.color = new THREE.Color(0.18, 0.18, 0.18);
   if (usdMaterial.hasOwnProperty('diffuseColor')) {
     const color = usdMaterial.diffuseColor;
     material.color = new THREE.Color(color[0], color[1], color[2]);
-  } 
+  }
+  
+  if (usdMaterial.hasOwnProperty('diffuseColorTextureId')) {
+    material.map = createTextureFromUSD(usdMaterial.diffuseColorTextureId);
+  }
 
+  // IOR
   material.ior = 1.5;
   if (usdMaterial.hasOwnProperty('ior')) {
     material.ior = usdMaterial.ior;
   }
 
+  // Clearcoat
   material.clearcoat = 0.0;
   if (usdMaterial.hasOwnProperty('clearcoat')) {
     material.clearcoat = usdMaterial.clearcoat;
@@ -52,6 +75,7 @@ function ConvertUsdPreviewSurfaceToMeshPhysicalMaterial(usdMaterial) {
     material.clearcoatRoughness = usdMaterial.clearcoatRoughness;
   }
 
+  // Workflow selection
   material.useSpecularWorkflow = false;
   if (usdMaterial.hasOwnProperty('useSpecularWorkflow')) {
     material.useSpecularWorkflow = usdMaterial.useSpecularWorkflow;
@@ -63,45 +87,67 @@ function ConvertUsdPreviewSurfaceToMeshPhysicalMaterial(usdMaterial) {
       const color = usdMaterial.specularColor;
       material.specular = new THREE.Color(color[0], color[1], color[2]);
     }
+    if (usdMaterial.hasOwnProperty('specularColorTextureId')) {
+      material.specularMap = createTextureFromUSD(usdMaterial.specularColorTextureId);
+    }
   } else {
     material.metalness = 0.0;
     if (usdMaterial.hasOwnProperty('metallic')) {
       material.metalness = usdMaterial.metallic;
     }
+    if (usdMaterial.hasOwnProperty('metallicTextureId')) {
+      material.metalnessMap = createTextureFromUSD(usdMaterial.metallicTextureId);
+    }
   }
 
-  if (usdMateiral.hasOwnProperty('roughness')) {
-    material.specularRoughness = usdMaterial.roughness;
+  // Roughness
+  material.roughness = 0.5;
+  if (usdMaterial.hasOwnProperty('roughness')) {
+    material.roughness = usdMaterial.roughness;
+  }
+  if (usdMaterial.hasOwnProperty('roughnessTextureId')) {
+    material.roughnessMap = createTextureFromUSD(usdMaterial.roughnessTextureId);
   }
 
+  // Emissive
   if (usdMaterial.hasOwnProperty('emissiveColor')) {
     const color = usdMaterial.emissiveColor;
     material.emissive = new THREE.Color(color[0], color[1], color[2]);
-  } 
+  }
+  if (usdMaterial.hasOwnProperty('emissiveColorTextureId')) {
+    material.emissiveMap = createTextureFromUSD(usdMaterial.emissiveColorTextureId);
+  }
 
-  // TODO: aoMap
-  //if (usdMaterial.hasOwnProperty('occlusionTextureId')) {
-  //  const occlusionTex = usdMaterial.occlusionTextureId;
-  //  const img = usd.getImage(occlusionTex.textureImageId);
-  //  console.log(img);
+  // Opacity
+  material.opacity = 1.0;
+  if (usdMaterial.hasOwnProperty('opacity')) {
+    material.opacity = usdMaterial.opacity;
+    if (material.opacity < 1.0) {
+      material.transparent = true;
+    }
+  }
+  if (usdMaterial.hasOwnProperty('opacityTextureId')) {
+    material.alphaMap = createTextureFromUSD(usdMaterial.opacityTextureId);
+    material.transparent = true;
+  }
 
-  //  // assume RGBA for now.
-  //  let image8Array = new Uint8ClampedArray(img.data);
-  //  let imgData = new ImageData(image8Array, img.width, img.height);
+  // Ambient Occlusion
+  if (usdMaterial.hasOwnProperty('occlusionTextureId')) {
+    material.aoMap = createTextureFromUSD(usdMaterial.occlusionTextureId);
+  }
 
-  //  const texture = new THREE.DataTexture( imgData, img.width, img.height );
-  //  texture.flipY = true;
-  //  texture.needsUpdate = true;
+  // Normal Map
+  if (usdMaterial.hasOwnProperty('normalTextureId')) {
+    material.normalMap = createTextureFromUSD(usdMaterial.normalTextureId);
+  }
 
-  //  material.aoMap = texture;
-  //} 
-
-
-  // TOOD: displacement
-
+  // Displacement Map
+  if (usdMaterial.hasOwnProperty('displacementTextureId')) {
+    material.displacementMap = createTextureFromUSD(usdMaterial.displacementTextureId);
+    material.displacementScale = 1.0;
+  }
 
   return material;
-
 }
 
 
@@ -111,11 +157,16 @@ initTinyUSDZ().then(function(TinyUSDZLoader) {
 
   // FIXME
   let y_rot_value = 0.02;
+  let exposure = 3.0;
+  let ambient = 0.4
+  let ambientLight = new THREE.AmbientLight(0x404040, ambient);
   
   // Create a parameters object
   const params = {
     rotationSpeed: y_rot_value,
     wireframe: false,
+    ambient: ambient,
+    exposure: exposure,
     //color: material.color.getHex()
   };
 
@@ -123,9 +174,14 @@ initTinyUSDZ().then(function(TinyUSDZLoader) {
   gui.add(params, 'rotationSpeed', 0, 0.1).name('Rotation Speed').onChange((value) => {
     y_rot_value = value;
   });
-  //gui.add(params, 'wireframe').onChange((value) => {
-  //  material.wireframe = value;
-  //});
+  gui.add(params, 'ambient', 0, 10).name('Ambient').onChange((value) => {
+    ambient = value;
+    ambientLight.intensity = ambient;
+  });
+  gui.add(params, 'exposure', 0, 10).name('Intensity').onChange((value) => {
+    exposure = value;
+    renderer.toneMappingExposure = exposure;
+  });
   //gui.addColor(params, 'color').onChange((value) => {
   //  material.color.setHex(value);
   //});
@@ -139,7 +195,20 @@ initTinyUSDZ().then(function(TinyUSDZLoader) {
   const renderer = new THREE.WebGLRenderer();
   renderer.setSize( window.innerWidth, window.innerHeight );
   renderer.setAnimationLoop( animate );
+  
+  // Set up better rendering for PBR materials
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = exposure;
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  
   document.body.appendChild( renderer.domElement );
+
+  // Add basic lighting for PBR materials
+  scene.add(ambientLight);
+  
+  const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
+  directionalLight.position.set(5, 5, 5);
+  scene.add(directionalLight);
 
   // First mesh only
   const mesh = usd.getMesh(0);
@@ -164,26 +233,8 @@ initTinyUSDZ().then(function(TinyUSDZLoader) {
 
   var material;
 
-  if (usdMaterial.hasOwnProperty('diffuseColorTextureId')) {
-    const diffTex = usd.getTexture(usdMaterial.diffuseColorTextureId);
-
-    const img = usd.getImage(diffTex.textureImageId);
-    //console.log(img);
-
-    // assume RGBA for now.
-    let image8Array = new Uint8ClampedArray(img.data);
-    let imgData = new ImageData(image8Array, img.width, img.height);
-
-    const texture = new THREE.DataTexture( imgData, img.width, img.height );
-    texture.flipY = true;
-    texture.needsUpdate = true;
-    
-    material = new THREE.MeshBasicMaterial({
-      map: texture
-    });
-  } else {
-    material = new THREE.MeshNormalMaterial();
-  }
+  // Use the proper material conversion function
+  material = ConvertUsdPreviewSurfaceToMeshPhysicalMaterial(usdMaterial, usd);
    
 
   // Assume triangulated indices.

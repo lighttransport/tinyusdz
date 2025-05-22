@@ -23,6 +23,11 @@ if (CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
   set(CMAKE_CXX_FLAGS_MINSIZEREL "-Oz -DNODEBUG")
 endif()
 
+option(TINYUSDZ_WASM_DEV "Developer mode." OFF)
+if (TINYUSDZ_WASM_DEV)
+  message(STATUS "dev build")
+endif()
+
 # [tinyusdz]
 add_subdirectory(../  tinyusdz)
 
@@ -49,11 +54,18 @@ target_link_libraries(${BUILD_TARGET} PRIVATE tinyusdz::tinyusdz_static
 source_group("Source Files" FILES ${SOURCES})
 
 if (EMSCRIPTEN)
+
+    if (TINYUSDZ_WASM_DEV)
+      set(OUTPUT_WASM_DIR ${PROJECT_SOURCE_DIR}/demo)
+    else()
+      set(OUTPUT_WASM_DIR ${PROJECT_SOURCE_DIR}/dist)
+    endif()
+
     set_target_properties(
         ${BUILD_TARGET}
         PROPERTIES OUTPUT_NAME tinyusdz
                    SUFFIX ".js"
-                   RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/dist)
+                   RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_WASM_DIR})
     #set(CMAKE_EXECUTABLE_SUFFIX ".html")
 endif()
 
