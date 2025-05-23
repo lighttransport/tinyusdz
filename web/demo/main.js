@@ -151,11 +151,11 @@ function ConvertUsdPreviewSurfaceToMeshPhysicalMaterial(usdMaterial, usd) {
 }
 
 
-initTinyUSDZ().then(async function(TinyUSDZLoader) {
+initTinyUSDZ().then(async function(TinyUSDZLoaderNative) {
 
   // Setup the async loader helper before attempting to use it
   console.log("Setting up async loader...");
-  TinyUSDZLoader.setupAsyncLoader();
+  TinyUSDZLoaderNative.setupAsyncLoader();
   console.log("Async loader setup complete.");
 
   const gui = new GUI();
@@ -223,11 +223,11 @@ initTinyUSDZ().then(async function(TinyUSDZLoader) {
 
   try {
     // Create loader instance without loading
-    const usd = new TinyUSDZLoader.TinyUSDZLoader();
+    const usd = new TinyUSDZLoaderNative.TinyUSDZLoaderNative();
     
     // Load asynchronously with detailed error handling
     console.log('Starting async USD loading...');
-    console.log('Module functions:', Object.keys(TinyUSDZLoader).join(', '));
+    console.log('Module functions:', Object.keys(TinyUSDZLoaderNative).join(', '));
     console.log('usd_binary length:', usd_binary.length);
     
     try {

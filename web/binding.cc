@@ -55,39 +55,23 @@ bool ToRGBA(const std::vector<uint8_t> &src, int channels,
 
 }
 
-// JavaScript helper function for async loading
-EM_JS(void, setupAsyncLoader, (), {
-  // Ensure we have the _createAsyncLoader function set up
-  Module._createAsyncLoader = function(loaderPtr, binary) {
-    return new Promise((resolve, reject) => {
-      // Ensure the module is fully loaded before using wrapPointer
-      const tryWrap = () => {
-        // Check if wrapPointer is available yet
-        if (typeof Module.wrapPointer !== 'function') {
-          console.log('Module.wrapPointer not available yet, waiting...');
-          // Try again in 100ms
-          setTimeout(tryWrap, 100);
-          return;
-        }
-        
-        try {
-          const loader = Module.wrapPointer(loaderPtr, Module.TinyUSDZLoader);
-          const success = loader.loadFromBinary(binary);
-          if (success) {
-            resolve(loader);
-          } else {
-            reject(new Error(loader.error ? loader.error() : 'Unknown error loading USD'));
-          }
-        } catch (error) {
-          console.error('Error in async loader:', error);
-          reject(error);
-        }
-      };
-      
-      // Start the process
-      tryWrap();
-    });
-  };
+// forward decl.
+class TinyUSDZLoaderNative;
+
+// Async loading function using EM_ASYNC_JS
+EM_ASYNC_JS(bool, loadAsyncImpl, (TinyUSDZLoaderNative* loader, const char* binary_data, int binary_size), {
+  // Convert C string to JavaScript string
+  const binary = UTF8ToString(binary_data, binary_size);
+  
+  // Call the synchronous loadFromBinary method
+  const success = Module.TinyUSDZLoaderNative.prototype.loadFromBinary.call(loader, binary);
+  
+  if (!success) {
+    const errorMsg = Module.TinyUSDZLoaderNative.prototype.error.call(loader);
+    throw new Error(errorMsg || 'Unknown error loading USD');
+  }
+  
+  return success;
 });
 
 ///
@@ -95,16 +79,16 @@ EM_JS(void, setupAsyncLoader, (), {
 ///
 /// TODO: Provide Three.js GLTFLoader like interface.
 ///
-class TinyUSDZLoader {
+class TinyUSDZLoaderNative {
  public:
   // Default constructor for async loading
-  TinyUSDZLoader() : loaded_(false) {}
+  TinyUSDZLoaderNative() : loaded_(false) {}
 
   ///
   /// `binary` is the buffer for TinyUSDZ binary(e.g. buffer read by
   /// fs.readFileSync) std::string can be used as UInt8Array in JS layer.
   ///
-  TinyUSDZLoader(const std::string &binary) {
+  TinyUSDZLoaderNative(const std::string &binary) {
     loadFromBinary(binary);
   }
 
@@ -165,13 +149,25 @@ class TinyUSDZLoader {
     
     return true;
   }
-  ~TinyUSDZLoader() {}
+  ~TinyUSDZLoaderNative() {}
 
   emscripten::val loadAsync(const std::string &binary) {
     return emscripten::val::global("Promise").new_(
-      emscripten::val::module_property("_createAsyncLoader"),
-      emscripten::val(reinterpret_cast<uintptr_t>(this)),
-      binary
+      emscripten::val::module_property("asyncifyWrapper"),
+      emscripten::val([this, binary](emscripten::val resolve, emscripten::val reject) {
+        try {
+          bool success = loadAsyncImpl(this, binary.c_str(), binary.size());
+          if (success) {
+            resolve(emscripten::val(this));
+          } else {
+            reject(emscripten::val(this->error()));
+          }
+        } catch (const std::exception& e) {
+          reject(emscripten::val(std::string("Exception: ") + e.what()));
+        } catch (...) {
+          reject(emscripten::val("Unknown exception during loading"));
+        }
+      })
     );
   }
 
@@ -552,19 +548,16 @@ EMSCRIPTEN_BINDINGS(array_bindings) {
 }
 
 EMSCRIPTEN_BINDINGS(tinyusdz_module) {
-  class_<TinyUSDZLoader>("TinyUSDZLoader")
+  class_<TinyUSDZLoaderNative>("TinyUSDZLoaderNative")
       .constructor<>()  // Default constructor for async loading
       .constructor<const std::string &>()  // Keep original for compatibility
-      .function("loadAsync", &TinyUSDZLoader::loadAsync)
-      .function("loadFromBinary", &TinyUSDZLoader::loadFromBinary)
-      .function("getMesh", &TinyUSDZLoader::getMesh)
-      .function("numMeshes", &TinyUSDZLoader::numMeshes)
-      .function("getMaterial", &TinyUSDZLoader::getMaterial)
-      .function("getTexture", &TinyUSDZLoader::getTexture)
-      .function("getImage", &TinyUSDZLoader::getImage)
-      .function("ok", &TinyUSDZLoader::ok)
-      .function("error", &TinyUSDZLoader::error);
-  
-  // Setup the async loader helper when module is loaded
-  emscripten::function("setupAsyncLoader", &setupAsyncLoader);
+      //.function("loadAsync", &TinyUSDZLoaderNative::loadAsync)
+      .function("loadFromBinary", &TinyUSDZLoaderNative::loadFromBinary)
+      .function("getMesh", &TinyUSDZLoaderNative::getMesh)
+      .function("numMeshes", &TinyUSDZLoaderNative::numMeshes)
+      .function("getMaterial", &TinyUSDZLoaderNative::getMaterial)
+      .function("getTexture", &TinyUSDZLoaderNative::getTexture)
+      .function("getImage", &TinyUSDZLoaderNative::getImage)
+      .function("ok", &TinyUSDZLoaderNative::ok)
+      .function("error", &TinyUSDZLoaderNative::error);
 }
