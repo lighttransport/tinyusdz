@@ -55,6 +55,7 @@ bool ToRGBA(const std::vector<uint8_t> &src, int channels,
 
 }
 
+#if defined(TINYUSDZ_WASM_ASYNCIFY)
 // forward decl.
 class TinyUSDZLoaderNative;
 
@@ -73,6 +74,7 @@ EM_ASYNC_JS(bool, loadAsyncImpl, (TinyUSDZLoaderNative* loader, const char* bina
   
   return success;
 });
+#endif
 
 ///
 /// Simple C++ wrapper class for Emscripten
@@ -151,6 +153,7 @@ class TinyUSDZLoaderNative {
   }
   ~TinyUSDZLoaderNative() {}
 
+#if defined(TINYUSDZ_WASM_ASYNCIFY)
   emscripten::val loadAsync(const std::string &binary) {
     return emscripten::val::global("Promise").new_(
       emscripten::val::module_property("asyncifyWrapper"),
@@ -170,6 +173,7 @@ class TinyUSDZLoaderNative {
       })
     );
   }
+#endif
 
 
   emscripten::val loadAsLayer(const std::string &binary) {
@@ -551,7 +555,9 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
   class_<TinyUSDZLoaderNative>("TinyUSDZLoaderNative")
       .constructor<>()  // Default constructor for async loading
       .constructor<const std::string &>()  // Keep original for compatibility
-      //.function("loadAsync", &TinyUSDZLoaderNative::loadAsync)
+#if defined(TINYUSDZ_WASM_ASYNCIFY)
+      .function("loadAsync", &TinyUSDZLoaderNative::loadAsync)
+#endif
       .function("loadFromBinary", &TinyUSDZLoaderNative::loadFromBinary)
       .function("getMesh", &TinyUSDZLoaderNative::getMesh)
       .function("numMeshes", &TinyUSDZLoaderNative::numMeshes)
