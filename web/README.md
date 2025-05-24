@@ -2,6 +2,10 @@ See <tinyusdz>/.github/workflows/wasmPublish.yml or `bootstrap-linux.sh` to buil
 
 wasm binary will be output to `dist` folder.
 
+# Note
+
+* asyncify is disabled since it increases code size ~2.5x
+
 # Code size
 
 tinyusdz.wasm
