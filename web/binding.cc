@@ -111,6 +111,11 @@ class TinyUSDZLoaderNative {
 
     tinyusdz::tydra::RenderSceneConverterEnv env(stage);
 
+    //
+    // false = Load Texture in JS Layer
+    //
+    //env.scene_config.load_texture_assets = false;
+
     env.material_config.preserve_texel_bitdepth = true;
 
     if (is_usdz) {
@@ -369,6 +374,12 @@ class TinyUSDZLoaderNative {
     const float *points_ptr = reinterpret_cast<const float *>(rmesh.points.data());
     // vec3
     mesh.set("points", emscripten::typed_memory_view(rmesh.points.size() * 3, points_ptr)); 
+
+    if (!rmesh.normals.empty()) {
+      const float *normals_ptr = reinterpret_cast<const float *>(rmesh.normals.data.data());
+
+        mesh.set("normals", emscripten::typed_memory_view(rmesh.normals.vertex_count() * 3, normals_ptr)); 
+    }
 
     {
       // slot 0 hardcoded.
