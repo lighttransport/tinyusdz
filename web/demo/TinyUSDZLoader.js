@@ -150,6 +150,15 @@ function ConvertUsdPreviewSurfaceToMeshPhysicalMaterial(usdMaterial, usd) {
  * ```
  */
 
+class TinyUSDZParser
+{
+  constructor( options = {} ) {
+
+    this.options = {};
+
+   }
+}
+
 // TODO
 //
 // [ ] Material callback(like GLTFLoader)
@@ -164,6 +173,15 @@ class TinyUSDZLoader extends Loader {
         this.native_ = null;
 
         this.usd = null; // USD scene
+     
+        // texture loader callback
+      // null = Use TinyUSDZ's builtin image loader(C++ native module)
+        this.texLoader = null;  
+
+
+        this.imageCache = {};
+        this.textureCache = {};
+
     }
 
     // Initialize the native WASM module
@@ -218,13 +236,14 @@ class TinyUSDZLoader extends Loader {
             });
     }
 
-    // Use loadSync in base Loader class
+    /**
+     * Set texture callback
+      */ 
+    setTextureLoader( texLoader ) {
+      this.texLoader = texLoader;
+    }
 
-    //loadAsync(url, onProgress) {
-    //    return new Promise((resolve, reject) => {
-    //        this.load(url, resolve, onProgress, reject);
-    //    });
-    //}
+    // NOTE: Use loadSync() in base Loader class
 
 }
 
