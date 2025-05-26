@@ -2,7 +2,7 @@
 import initTinyUSDZNative from './tinyusdz.js';
 
 // TODO :  use 'from 'three''
-import { Loader } from 'https://cdn.jsdelivr.net/npm/three/build/three.module.js';
+import { Loader } from 'three'; // or https://cdn.jsdelivr.net/npm/three/build/three.module.js';
 
 
 //
@@ -150,13 +150,12 @@ function ConvertUsdPreviewSurfaceToMeshPhysicalMaterial(usdMaterial, usd) {
  * ```
  */
 
-class TinyUSDZParser
-{
-  constructor( options = {} ) {
+class TinyUSDZParser {
+    constructor(options = {}) {
 
-    this.options = {};
+        this.options = {};
 
-   }
+    }
 }
 
 // TODO
@@ -173,10 +172,10 @@ class TinyUSDZLoader extends Loader {
         this.native_ = null;
 
         this.usd = null; // USD scene
-     
+
         // texture loader callback
-      // null = Use TinyUSDZ's builtin image loader(C++ native module)
-        this.texLoader = null;  
+        // null = Use TinyUSDZ's builtin image loader(C++ native module)
+        this.texLoader = null;
 
 
         this.imageCache = {};
@@ -186,7 +185,7 @@ class TinyUSDZLoader extends Loader {
 
     // Initialize the native WASM module
     // This is async but the load() method handles it internally with promises
-        // Initialize the native WASM module
+    // Initialize the native WASM module
     // This is async but the load() method handles it internally with promises
     async init() {
         if (!this.native_) {
@@ -205,10 +204,10 @@ class TinyUSDZLoader extends Loader {
     //
     load(url, onLoad, onProgress, onError) {
         console.log('url', url);
-        
+
         // Create a promise chain to handle initialization and loading
         const initPromise = this.native_ ? Promise.resolve() : this.init();
-        
+
         initPromise
             .then(() => {
                 this.usd_ = new this.native_.TinyUSDZLoaderNative();
@@ -238,12 +237,13 @@ class TinyUSDZLoader extends Loader {
 
     /**
      * Set texture callback
-      */ 
-    setTextureLoader( texLoader ) {
-      this.texLoader = texLoader;
+      */
+    setTextureLoader(texLoader) {
+        this.texLoader = texLoader;
     }
 
     // NOTE: Use loadSync() in base Loader class
+
 
 }
 

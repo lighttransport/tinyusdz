@@ -1,5 +1,5 @@
-//import * as THREE from 'three';
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three/build/three.module.js';
+import * as THREE from 'three';
+//import * as THREE from 'https://cdn.jsdelivr.net/npm/three/build/three.module.js';
 
 import { GUI } from 'https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.module.js';
 
@@ -7,6 +7,7 @@ import { GUI } from 'https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.mo
 // For developer
 //import initTinyUSDZ from './tinyusdz.js';
 import { TinyUSDZLoader } from './TinyUSDZLoader.js'
+import { TinyUSDZLoaderUtils } from './TinyUSDZLoaderUtils.js'
 
 //const USDZ_FILEPATH = './UsdCookie.usdz';
 
@@ -269,7 +270,10 @@ console.log("usdMaterial:", usdMaterial);
 const pbrMaterial = new THREE.MeshPhysicalMaterial();
 
 const normalMat = new THREE.MeshNormalMaterial();
-const baseMat = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+
+const usd_util = new TinyUSDZLoaderUtils();
+
+const baseMat = TinyUSDZLoaderUtils.createDefaultMaterial();
 
 const mesh0 = new THREE.Mesh(geometry, baseMat);
 //const mesh0 = new THREE.Mesh(geometry, baseMat);
