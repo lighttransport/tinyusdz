@@ -3,6 +3,7 @@
 //
 #include <emscripten/bind.h>
 #include <emscripten/em_js.h>
+#include <emscripten/console.h>
 
 #include <vector>
 #include <string>
@@ -15,6 +16,50 @@
 using namespace emscripten;
 
 namespace detail {
+
+std::array<double, 9> toArray(const tinyusdz::value::matrix3d &m) {
+  std::array<double, 9> ret;
+
+  ret[0] = m.m[0][0];
+  ret[1] = m.m[0][1];
+  ret[2] = m.m[0][2];
+
+  ret[3] = m.m[1][0];
+  ret[4] = m.m[1][1];
+  ret[5] = m.m[1][2];
+
+  ret[6] = m.m[2][0];
+  ret[7] = m.m[2][1];
+  ret[8] = m.m[2][2];
+
+  return ret;
+}
+
+std::array<double, 16> toArray(const tinyusdz::value::matrix4d &m) {
+  std::array<double, 16> ret;
+
+  ret[0] = m.m[0][0];
+  ret[1] = m.m[0][1];
+  ret[2] = m.m[0][2];
+  ret[3] = m.m[0][3];
+
+  ret[4] = m.m[1][0];
+  ret[5] = m.m[1][1];
+  ret[6] = m.m[1][2];
+  ret[7] = m.m[1][3];
+
+  ret[8] = m.m[2][0];
+  ret[9] = m.m[2][1];
+  ret[10] = m.m[2][2];
+  ret[11] = m.m[2][3];
+
+  ret[12] = m.m[3][0];
+  ret[13] = m.m[3][1];
+  ret[14] = m.m[3][2];
+  ret[15] = m.m[3][3];
+
+  return ret;
+}
 
 // To RGBA 
 bool ToRGBA(const std::vector<uint8_t> &src, int channels,
@@ -364,9 +409,9 @@ class TinyUSDZLoaderNative {
     const tinyusdz::tydra::RenderMesh &rmesh = render_scene_.meshes[size_t(mesh_id)];
 
     // TODO: Use three.js scene description format?
-    mesh.set("prim_name", rmesh.prim_name);
-    mesh.set("display_name", rmesh.prim_name);
-    mesh.set("abs_path", rmesh.abs_path);
+    mesh.set("primName", rmesh.prim_name);
+    mesh.set("displayName", rmesh.display_name);
+    mesh.set("absPath", rmesh.abs_path);
     const uint32_t *indices_ptr = rmesh.faceVertexIndices().data();
     mesh.set("faceVertexIndices", emscripten::typed_memory_view(rmesh.faceVertexIndices().size(), indices_ptr));
     const uint32_t *counts_ptr = rmesh.faceVertexCounts().data();
@@ -398,11 +443,62 @@ class TinyUSDZLoaderNative {
     return mesh;
   }
 
+
+  emscripten::val getScene() {
+    return buildNodeRec(render_scene_.default_root_node); 
+  }
+
   bool ok() const { return loaded_; }
 
-  const std::string error() const { return error_; }
+  const std::string &error() const { return error_; }
 
  private:
+
+  // Simple glTF-like Node
+  emscripten::val buildNodeRec(int node_id) {
+
+    emscripten::val node = emscripten::val::object();
+
+    //emscripten_console_log("node_id %d", node_id);
+    std::cout << "node_id " << node_id << "\n";
+
+    if ((node_id < 0) || (node_id >= render_scene_.nodes.size())) {
+      return node;
+    }
+
+    const tinyusdz::tydra::Node &rnode = render_scene_.nodes[size_t(node_id)];
+
+
+    node.set("primName", rnode.prim_name);
+    node.set("displayName", rnode.display_name);
+    node.set("absPath", rnode.abs_path);
+
+    std::string nodeTypeStr = to_string(rnode.nodeType);
+    node.set("nodeType", nodeTypeStr);
+
+    node.set("nodeId", rnode.id);
+
+    std::array<double, 16> localMatrix = detail::toArray(rnode.local_matrix);
+    std::array<double, 16> globalMatrix = detail::toArray(rnode.global_matrix);
+
+    node.set("localMatrix", localMatrix);
+    node.set("globalMatrix", globalMatrix);
+    node.set("hasResetXform", rnode.has_resetXform);
+
+
+    emscripten::val children = emscripten::val::array();
+
+    for (const tinyusdz::tydra::Node &child : rnode.children) {
+      emscripten::val child_val = buildNodeRec(child.id);
+
+    //  children.call<void>("push", child_val);
+    } 
+
+    node.set("children", children);
+
+    return node;
+  }
+
   bool loaded_{false};
   std::string warn_;
   std::string error_;
@@ -414,10 +510,24 @@ class TinyUSDZLoaderNative {
 ///
 /// USD composition 
 ///
-class TinyUSDZComposer
+class TinyUSDZComposerNative
 {
-  // TODO
+ public:
+  // Default constructor for async loading
+  TinyUSDZComposerNative() : loaded_(false) {}
 
+
+  bool loaded() const { return loaded_; }
+  const std::string &error() const { return error_; }
+
+ private:
+
+  bool loaded_{false};
+  std::string warn_;
+  std::string error_;
+
+  tinyusdz::Layer root_layer_;
+  
 };
 
 #if 0
@@ -542,8 +652,37 @@ EMSCRIPTEN_BINDINGS(array_bindings) {
         .element(emscripten::index<7>())
         .element(emscripten::index<8>());
 
+    value_array<std::array<double, 9>>("DMat33")
+        .element(emscripten::index<0>())
+        .element(emscripten::index<1>())
+        .element(emscripten::index<2>())
+        .element(emscripten::index<3>())
+        .element(emscripten::index<4>())
+        .element(emscripten::index<5>())
+        .element(emscripten::index<6>())
+        .element(emscripten::index<7>())
+        .element(emscripten::index<8>());
+
     //  for mat44
     value_array<std::array<float, 16>>("Mat44")
+        .element(emscripten::index<0>())
+        .element(emscripten::index<1>())
+        .element(emscripten::index<2>())
+        .element(emscripten::index<3>())
+        .element(emscripten::index<4>())
+        .element(emscripten::index<5>())
+        .element(emscripten::index<6>())
+        .element(emscripten::index<7>())
+        .element(emscripten::index<8>())
+        .element(emscripten::index<9>())
+        .element(emscripten::index<10>())
+        .element(emscripten::index<11>())
+        .element(emscripten::index<12>())
+        .element(emscripten::index<13>())
+        .element(emscripten::index<14>())
+        .element(emscripten::index<15>());
+
+    value_array<std::array<double, 16>>("DMat44")
         .element(emscripten::index<0>())
         .element(emscripten::index<1>())
         .element(emscripten::index<2>())
@@ -575,6 +714,13 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("getMaterial", &TinyUSDZLoaderNative::getMaterial)
       .function("getTexture", &TinyUSDZLoaderNative::getTexture)
       .function("getImage", &TinyUSDZLoaderNative::getImage)
+      .function("getScene", &TinyUSDZLoaderNative::getScene)
       .function("ok", &TinyUSDZLoaderNative::ok)
       .function("error", &TinyUSDZLoaderNative::error);
+
+  class_<TinyUSDZComposerNative>("TinyUSDZComposerNative")
+      .constructor<>()  // Default constructor for async loading
+      .function("ok", &TinyUSDZComposerNative::loaded)
+      .function("error", &TinyUSDZComposerNative::error);
 }
+

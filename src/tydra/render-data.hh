@@ -147,6 +147,8 @@ enum class NodeType {
   // TODO(more lights)...
 };
 
+std::string to_string(NodeType ntype);
+
 enum class ComponentType {
   UInt8,
   Int8,
