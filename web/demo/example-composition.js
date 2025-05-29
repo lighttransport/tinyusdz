@@ -113,6 +113,11 @@ async function loadScenes() {
 
   console.log("loaded!");
 
+  const scene = suzanneData.getScene();
+
+  //const composer = new TinyUSDZComposer();
+  //console.log("composer", composer.loaded())
+
 }
 
 
@@ -125,3 +130,5 @@ const renderer = new THREE.WebGLRenderer();
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
+console.log("loading scenes...");
+await loadScenes();
