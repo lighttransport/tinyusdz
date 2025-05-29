@@ -445,7 +445,15 @@ class TinyUSDZLoaderNative {
 
 
   emscripten::val getScene() {
-    return buildNodeRec(render_scene_.default_root_node); 
+    emscripten::val val = emscripten::val::object();
+
+    // TODO: Specify root_node
+    if ((render_scene_.default_root_node < 0) || (render_scene_.default_root_node >= render_scene_.nodes.size())) {
+      return val;
+    }
+
+    val = buildNodeRec(render_scene_.nodes[render_scene_.default_root_node]); 
+    return val;
   }
 
   bool ok() const { return loaded_; }
@@ -455,19 +463,9 @@ class TinyUSDZLoaderNative {
  private:
 
   // Simple glTF-like Node
-  emscripten::val buildNodeRec(int node_id) {
+  emscripten::val buildNodeRec(const tinyusdz::tydra::Node &rnode) {
 
     emscripten::val node = emscripten::val::object();
-
-    //emscripten_console_log("node_id %d", node_id);
-    std::cout << "node_id " << node_id << "\n";
-
-    if ((node_id < 0) || (node_id >= render_scene_.nodes.size())) {
-      return node;
-    }
-
-    const tinyusdz::tydra::Node &rnode = render_scene_.nodes[size_t(node_id)];
-
 
     node.set("primName", rnode.prim_name);
     node.set("displayName", rnode.display_name);
@@ -476,7 +474,7 @@ class TinyUSDZLoaderNative {
     std::string nodeTypeStr = to_string(rnode.nodeType);
     node.set("nodeType", nodeTypeStr);
 
-    node.set("nodeId", rnode.id);
+    node.set("contentId", rnode.id); // e.g. index to Mesh if nodeType == 'mesh'
 
     std::array<double, 16> localMatrix = detail::toArray(rnode.local_matrix);
     std::array<double, 16> globalMatrix = detail::toArray(rnode.global_matrix);
@@ -489,9 +487,9 @@ class TinyUSDZLoaderNative {
     emscripten::val children = emscripten::val::array();
 
     for (const tinyusdz::tydra::Node &child : rnode.children) {
-      emscripten::val child_val = buildNodeRec(child.id);
+      emscripten::val child_val = buildNodeRec(child);
 
-    //  children.call<void>("push", child_val);
+      children.call<void>("push", child_val);
     } 
 
     node.set("children", children);
