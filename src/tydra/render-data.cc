@@ -6277,6 +6277,23 @@ bool InferColorSpace(const value::token &tok, ColorSpace *cty) {
   return true;
 }
 
+std::string to_string(NodeType ntype) {
+  if (ntype == NodeType::Xform) {
+    return "xform";
+  } else if (ntype == NodeType::Mesh) {
+    return "mesh";
+  } else if (ntype == NodeType::Camera) {
+    return "camera";
+  } else if (ntype == NodeType::PointLight) {
+    return "pointLight";
+  } else if (ntype == NodeType::DirectionalLight) {
+    return "directionalLight";
+  } else if (ntype == NodeType::Skeleton) {
+    return "skeleton";
+  }
+  return "???";
+}
+
 std::string to_string(ComponentType cty) {
   std::string s;
   switch (cty) {
@@ -6673,22 +6690,6 @@ std::string DumpVertexAttribute(const VertexAttribute &vattr, uint32_t indent) {
   return ss.str();
 }
 
-inline std::string to_string(NodeType ntype) {
-  if (ntype == NodeType::Xform) {
-    return "xform";
-  } else if (ntype == NodeType::Mesh) {
-    return "mesh";
-  } else if (ntype == NodeType::Camera) {
-    return "camera";
-  } else if (ntype == NodeType::PointLight) {
-    return "pointLight";
-  } else if (ntype == NodeType::DirectionalLight) {
-    return "directionalLight";
-  } else if (ntype == NodeType::Skeleton) {
-    return "skeleton";
-  }
-  return "???";
-}
 
 std::string DumpNode(const Node &node, uint32_t indent) {
   std::stringstream ss;

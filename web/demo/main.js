@@ -169,6 +169,8 @@ initTinyUSDZ().then(async function(TinyUSDZLoaderNative) {
 });
 */
 
+const manager = new THREE.LoadingManager();
+
 const gui = new GUI();
 
 // FIXME
@@ -211,16 +213,27 @@ gui.add(params, 'shader_normal').name('NormalMaterial').onChange((value) => {
   //jrenderer.toneMappingExposure = exposure;
 });
 
-const usdLoader = new TinyUSDZLoader();
-const usd = await usdLoader.loadAsync('./UsdCookie.usdz');
-console.log('USD file loaded:', usd);
+const suzanne_filename = "./suzanne.usdc";
+const cookie_filename = "./UsdCookie.usdc";
+
+// Initialize loading manager with URL callback.
+const objectURLs = [];
+manager.setURLModifier((url) => {
+
+  console.log(url);
+
+  url = URL.createObjectURL(blobs[url]);
+  objectURLs.push(url);
+  return url;
+
+});
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+camera.position.z = 5;
 
 const renderer = new THREE.WebGLRenderer();
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setAnimationLoop(animate);
 document.body.appendChild(renderer.domElement);
 
 //const geometry = new THREE.BoxGeometry(1, 1, 1);
@@ -228,76 +241,90 @@ document.body.appendChild(renderer.domElement);
 //const cube = new THREE.Mesh(geometry, material);
 //scene.add(cube);
 
-camera.position.z = 5;
 
-function usdMeshToThreeMesh( mesh )
-{
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute( 'position', new THREE.BufferAttribute( mesh.points, 3 ) );
+const usdLoader = new TinyUSDZLoader();
+//const usd = await usdLoader.loadAsync(cookie_filename);
+//const usd = await usdLoader.loadAsync(suzanne_filename);
 
-    // Assume mesh is triangulated.
-    // itemsize = 1 since Index expects IntArray for VertexIndices in Three.js?
-    geometry.setIndex(new THREE.BufferAttribute( mesh.faceVertexIndices, 1 ));
+//
+usdLoader.load(suzanne_filename, (usd) => {
+  console.log('USD file loaded:', usd);
 
-    if (mesh.hasOwnProperty('texcoords')) {
-      geometry.setAttribute( 'uv', new THREE.BufferAttribute( mesh.texcoords, 2 ) );
-    }
-
-    //// faceVarying normals
-    if (mesh.hasOwnProperty('normals')) {
-      geometry.setAttribute( 'normal', new THREE.BufferAttribute( mesh.normals, 3 ) );
-    } else {
-      geometry.computeVertexNormals();
-    }
-
-    return geometry;
-}
-
-if (usd.numMeshes() < 1) {
-  console.error("No meshes in USD");
-}
-
-// First mesh only
-const mesh = usd.getMesh(0);
-console.log("mesh loaded:", mesh);
-
-const geometry = usdMeshToThreeMesh( mesh );
-
-const usdMaterial = usd.getMaterial(mesh.materialId);
-console.log("usdMaterial:", usdMaterial);
-
-//const pbrMaterial = TinyUSDZLoader.ConvertUsdPreviewSurfaceToMeshPhysicalMaterial(usdMaterial, usd);
-const pbrMaterial = new THREE.MeshPhysicalMaterial();
-
-const normalMat = new THREE.MeshNormalMaterial();
-
-const usd_util = new TinyUSDZLoaderUtils();
-
-const baseMat = TinyUSDZLoaderUtils.createDefaultMaterial();
-
-const mesh0 = new THREE.Mesh(geometry, baseMat);
-//const mesh0 = new THREE.Mesh(geometry, baseMat);
-scene.add(mesh0);
-
-function animate() {
-
-  //cube.rotation.x += 0.01;
-  mesh0.rotation.y += y_rot_value;
-  camera.position.z = camera_z;
-
-  if (material_changed) {
-    material_changed = false;
-
-    if (shader_normal) {
-      mesh0.material = normalMat;
-    } else {
-      mesh0.material = pbrMaterial;
-    }
+  if (usd.numMeshes() < 1) {
+    console.error("No meshes in USD");
   }
 
-    
-  
-  renderer.render(scene, camera);
+  // First mesh only
+  const mesh = usd.getMesh(0);
+  console.log("mesh loaded:", mesh);
 
+  const geometry = usdMeshToThreeMesh(mesh);
+
+  const usdMaterial = usd.getMaterial(mesh.materialId);
+  console.log("usdMaterial:", usdMaterial);
+
+  //const pbrMaterial = TinyUSDZLoader.ConvertUsdPreviewSurfaceToMeshPhysicalMaterial(usdMaterial, usd);
+  const pbrMaterial = new THREE.MeshPhysicalMaterial();
+
+  const normalMat = new THREE.MeshNormalMaterial();
+
+  const usd_util = new TinyUSDZLoaderUtils();
+
+  const baseMat = TinyUSDZLoaderUtils.createDefaultMaterial();
+
+  const mesh0 = new THREE.Mesh(geometry, baseMat);
+  //const mesh0 = new THREE.Mesh(geometry, baseMat);
+  scene.add(mesh0);
+
+  function animate() {
+
+    //cube.rotation.x += 0.01;
+    mesh0.rotation.y += y_rot_value;
+    camera.position.z = camera_z;
+
+    if (material_changed) {
+      material_changed = false;
+
+      if (shader_normal) {
+        mesh0.material = normalMat;
+      } else {
+        mesh0.material = pbrMaterial;
+      }
+    }
+
+
+
+    renderer.render(scene, camera);
+
+  }
+
+  renderer.setAnimationLoop(animate);
+
+});
+
+
+
+function usdMeshToThreeMesh(mesh) {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(mesh.points, 3));
+
+  // Assume mesh is triangulated.
+  // itemsize = 1 since Index expects IntArray for VertexIndices in Three.js?
+  geometry.setIndex(new THREE.BufferAttribute(mesh.faceVertexIndices, 1));
+
+  if (mesh.hasOwnProperty('texcoords')) {
+    geometry.setAttribute('uv', new THREE.BufferAttribute(mesh.texcoords, 2));
+  }
+
+  //// faceVarying normals
+  if (mesh.hasOwnProperty('normals')) {
+    geometry.setAttribute('normal', new THREE.BufferAttribute(mesh.normals, 3));
+  } else {
+    geometry.computeVertexNormals();
+  }
+
+  return geometry;
 }
+
+
 
