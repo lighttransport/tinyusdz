@@ -20,6 +20,11 @@ class TinyUSDZComposer {
     }
 
     // Additional methods for composing USDZ files can be added here
+
+    addScene(scene) {
+      console.warn("TODO");
+    }
+
 }
 
 
