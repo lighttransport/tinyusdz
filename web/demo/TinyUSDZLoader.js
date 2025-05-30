@@ -171,7 +171,7 @@ class TinyUSDZLoader extends Loader {
 
         this.native_ = null;
 
-        this.usd = null; // USD scene
+        this.assetResolver_ = null;
 
         // texture loader callback
         // null = Use TinyUSDZ's builtin image loader(C++ native module)
@@ -200,10 +200,18 @@ class TinyUSDZLoader extends Loader {
     }
 
     //
+    // Set AssetResolver callback.
+    // This is used to resolve asset paths(e.g. textures, usd files) in the USD.
+    // For web app, usually we'll convert asset path to URI
+    setAssetResolver( callback ) {
+        this.assetResolver_ = callback;
+    }
+
+    //
     // Load a USDZ/USDA/USDC file from a URL as USD Stage(Freezed scene graph)
     //
     load(url, onLoad, onProgress, onError) {
-        console.log('url', url);
+        //console.log('url', url);
 
         // Create a promise chain to handle initialization and loading
         const initPromise = this.native_ ? Promise.resolve() : this.init();
@@ -219,7 +227,7 @@ class TinyUSDZLoader extends Loader {
             })
             .then((usd_data) => {
                 const usd_binary = new Uint8Array(usd_data);
-                return this.usd_.loadFromBinary(usd_binary);
+                return this.parse(usd_binary);
             })
             .then(() => {
                 console.log('# of meshes', this.usd_.numMeshes());
@@ -235,6 +243,19 @@ class TinyUSDZLoader extends Loader {
             });
     }
 
+    //
+    // Parse a USDZ/USDA/USDC binary data
+    //
+    parse( binary /* Uint8Array */ ) {
+
+        // FIXME: initialize usd_
+        if (!this.usd_) {
+            console.error('TinyUSDZLoader: Native module is not initialized.');
+            return Promise.reject(new Error('TinyUSDZLoader: Native module is not initialized.'));
+        }
+        return this.usd_.loadFromBinary(binary);
+    }
+
     /**
      * Set texture callback
       */
@@ -244,6 +265,10 @@ class TinyUSDZLoader extends Loader {
 
     // NOTE: Use loadSync() in base Loader class
 
+
+    addLayer() {
+        console.warn('TinyUSDZLoader: addLayer() is not implemented.');
+    }
 
 }
 
