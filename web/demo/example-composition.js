@@ -5,6 +5,7 @@ import { GUI } from 'https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.mo
 import { TinyUSDZLoader } from './TinyUSDZLoader.js'
 import { TinyUSDZLoaderUtils } from './TinyUSDZLoaderUtils.js'
 import { TinyUSDZComposer } from './TinyUSDZComposer.js'
+import { createTypeReferenceDirectiveResolutionCache } from 'typescript';
 
 const manager = new THREE.LoadingManager();
 
@@ -76,7 +77,7 @@ function usdMeshToThreeMesh(mesh) {
 
 function setupMesh(usd) {
 
- // First mesh only
+  // First mesh only
   const mesh = usd.getMesh(0);
   console.log("mesh loaded:", mesh);
 
@@ -99,6 +100,56 @@ function setupMesh(usd) {
   return threeMesh;
 }
 
+// arr = float array with 16 elements(row major order)
+function toMatrix4(a) {
+  const m = new THREE.Matrix4();
+
+  m.set(a[0], a[1], a[2], a[3],
+    a[4], a[5], a[6], a[7],
+    a[8], a[9], a[10], a[11],
+    a[12], a[13], a[14], a[15]);
+}
+
+// scene: threejs Scene
+// parentNode: Parent node(Object3D) in Three.js scene graph.
+// node: Current node in USD scene graph.
+function buildTheeSceneRecursively(usdScene /* TinyUSDZLoader.Scene */, usdNode /* TinyUSDZLoader.Node */)
+ /* => THREE.Object3D */ {
+
+  var node = new THREE.Group();
+
+  node.name = node.primName;
+  node.custom['displayName'] = node.displayName;
+  node.custom['absPath'] = node.absPath;
+
+  if (usdNode.nodeType == 'xform') {
+    // intermediate xform node
+    // TODO: create THREE.Group and apply transform.
+    node.matrix = toMatrix4(node.localMatrix);
+
+  } else if (usdNode.nodeType == 'mesh') {
+
+    // contentId is the mesh ID in the USD scene.
+    const mesh = usdScene.getMesh(node.contentId);
+
+    const threeMesh = setupMesh(mesh);
+    //threeScene.add(mesh);
+
+  } else {
+    // ???
+
+  }
+
+  // traverse children
+  for (const child of usdNode.children) {
+    const childNode = buildTheeSceneRecursively(threeScene, usdScene, child);
+    node.add(childNode);
+  }
+
+  return node;
+
+}
+
 async function loadScenes() {
 
   const loader = new TinyUSDZLoader();
@@ -113,7 +164,17 @@ async function loadScenes() {
 
   console.log("loaded!");
 
-  const scene = suzanneData.getScene();
+  const usd_scene = suzanneData.getScene();
+  console.log("scene:", usd_scene);
+
+  const threeScene = buildTheeSceneRecursively(usd_scene); 
+  renderer.scene.add(threeScene);
+
+
+
+
+  // TODO: Provide `traverse` function like glTFLoader?
+
 
   //const composer = new TinyUSDZComposer();
   //console.log("composer", composer.loaded())
