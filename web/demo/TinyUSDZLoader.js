@@ -213,12 +213,14 @@ class TinyUSDZLoader extends Loader {
     load(url, onLoad, onProgress, onError) {
         //console.log('url', url);
 
+        const scope = this;
+
         // Create a promise chain to handle initialization and loading
         const initPromise = this.native_ ? Promise.resolve() : this.init();
 
         initPromise
             .then(() => {
-                this.usd_ = new this.native_.TinyUSDZLoaderNative();
+                //usd_ = new this.native_.TinyUSDZLoaderNative();
                 return fetch(url);
             })
             .then((response) => {
@@ -227,13 +229,14 @@ class TinyUSDZLoader extends Loader {
             })
             .then((usd_data) => {
                 const usd_binary = new Uint8Array(usd_data);
-                return this.parse(usd_binary);
-            })
-            .then(() => {
-                console.log('# of meshes', this.usd_.numMeshes());
-                if (onLoad) {
-                    onLoad(this.usd_);
-                }
+
+                console.log('Loaded USD binary data:', usd_binary.length, 'bytes');
+                //return this.parse(usd_binary);
+
+                scope.parse(usd_binary, function(usd) {
+                    onLoad(usd);
+                } , onError);
+
             })
             .catch((error) => {
                 console.error('TinyUSDZLoader: Error initializing native module:', error);
@@ -246,14 +249,38 @@ class TinyUSDZLoader extends Loader {
     //
     // Parse a USDZ/USDA/USDC binary data
     //
-    parse( binary /* Uint8Array */ ) {
+    parse( binary /* ArrayBuffer */, onLoad, onError ) {
 
-        // FIXME: initialize usd_
-        if (!this.usd_) {
-            console.error('TinyUSDZLoader: Native module is not initialized.');
-            return Promise.reject(new Error('TinyUSDZLoader: Native module is not initialized.'));
+      const _onError = function ( e ) {
+
+        if ( onError ) {
+
+          onError( e );
+
+        } else {
+
+          console.error( e );
+
         }
-        return this.usd_.loadFromBinary(binary);
+
+        //scope.manager.itemError( url );
+        //scope.manager.itemEnd( url );
+
+      };
+
+        if (!this.native_) {
+            console.error('TinyUSDZLoader: Native module is not initialized.');
+            _onError(new Error('TinyUSDZLoader: Native module is not initialized.'));
+        }
+
+        const usd = new this.native_.TinyUSDZLoaderNative();
+
+        const ok = usd.loadFromBinary(binary);
+        if (!ok) {
+            _onError(new Error('TinyUSDZLoader: Failed to load USD from binary data.'));
+        } else {
+            onLoad(usd);
+        }
     }
 
     /**
