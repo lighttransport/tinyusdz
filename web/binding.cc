@@ -443,19 +443,31 @@ class TinyUSDZLoaderNative {
     return mesh;
   }
 
+  int getDefaultRootNodeId() {
+    return render_scene_.default_root_node;
+  }
 
-  emscripten::val getScene() {
+  emscripten::val getDefaultRootNode() {
+    return getRootNode(getDefaultRootNodeId());
+  }
+
+  emscripten::val getRootNode(int idx) {
     emscripten::val val = emscripten::val::object();
 
-    // TODO: Specify root_node
-    if ((render_scene_.default_root_node < 0) || (render_scene_.default_root_node >= render_scene_.nodes.size())) {
+    if ((idx < 0) || (idx >= render_scene_.nodes.size())) {
       return val;
     }
 
-    val = buildNodeRec(render_scene_.nodes[render_scene_.default_root_node]); 
+    val = buildNodeRec(render_scene_.nodes[size_t(idx)]); 
     return val;
   }
 
+
+  int numRootNodes() {
+    return render_scene_.nodes.size();
+  }
+
+  // TODO: Deprecate
   bool ok() const { return loaded_; }
 
   const std::string &error() const { return error_; }
@@ -712,7 +724,10 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("getMaterial", &TinyUSDZLoaderNative::getMaterial)
       .function("getTexture", &TinyUSDZLoaderNative::getTexture)
       .function("getImage", &TinyUSDZLoaderNative::getImage)
-      .function("getScene", &TinyUSDZLoaderNative::getScene)
+      .function("getDefaultRootNodeId", &TinyUSDZLoaderNative::getDefaultRootNodeId)
+      .function("getRootNode", &TinyUSDZLoaderNative::getRootNode)
+      .function("getDefaultRootNode", &TinyUSDZLoaderNative::getDefaultRootNode)
+      .function("numRootNodes", &TinyUSDZLoaderNative::numRootNodes)
       .function("ok", &TinyUSDZLoaderNative::ok)
       .function("error", &TinyUSDZLoaderNative::error);
 

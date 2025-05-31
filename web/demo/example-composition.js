@@ -24,7 +24,7 @@ manager.setURLModifier((url) => {
 const gui = new GUI();
 
 // FIXME
-let y_rot_value = 0.02;
+let rot_scale = 1;
 let exposure = 3.0;
 let ambient = 0.4
 let ambientLight = new THREE.AmbientLight(0x404040, ambient);
@@ -34,7 +34,7 @@ let material_changed = false;
 
 // Create a parameters object
 const params = {
-  rotationSpeed: y_rot_value,
+  rotationSpeed: rot_scale,
   camera_z: camera_z,
   shader_normal: shader_normal,
 };
@@ -43,8 +43,8 @@ const params = {
 gui.add(params, 'camera_z', 0, 10).name('Camera Z').onChange((value) => {
   camera_z = value;
 });
-gui.add(params, 'rotationSpeed', 0, 0.1).name('Rotation Speed').onChange((value) => {
-  y_rot_value = value;
+gui.add(params, 'rotationSpeed', 0, 10).name('Rotation Speed').onChange((value) => {
+  rot_scale = value;
 });
 gui.add(params, 'shader_normal').name('NormalMaterial').onChange((value) => {
   shader_normal = value;
@@ -75,15 +75,14 @@ function usdMeshToThreeMesh(mesh) {
 }
 
 
-function setupMesh(usd) {
+function setupMesh(mesh /* TinyUSDZLoaderNative::RenderMesh */, usdScene) {
 
   // First mesh only
-  const mesh = usd.getMesh(0);
   console.log("mesh loaded:", mesh);
 
   const geometry = usdMeshToThreeMesh(mesh);
 
-  const usdMaterial = usd.getMaterial(mesh.materialId);
+  const usdMaterial = usdScene.getMaterial(mesh.materialId);
   console.log("usdMaterial:", usdMaterial);
 
   //const pbrMaterial = TinyUSDZLoader.ConvertUsdPreviewSurfaceToMeshPhysicalMaterial(usdMaterial, usd);
@@ -95,7 +94,8 @@ function setupMesh(usd) {
 
   const baseMat = TinyUSDZLoaderUtils.createDefaultMaterial();
 
-  const threeMesh = new THREE.Mesh(geometry, baseMat);
+  // HACK
+  const threeMesh = new THREE.Mesh(geometry, /*baseMat*/ normalMat);
 
   return threeMesh;
 }
@@ -108,41 +108,44 @@ function toMatrix4(a) {
     a[4], a[5], a[6], a[7],
     a[8], a[9], a[10], a[11],
     a[12], a[13], a[14], a[15]);
+
+  return m;
 }
 
-// scene: threejs Scene
-// parentNode: Parent node(Object3D) in Three.js scene graph.
-// node: Current node in USD scene graph.
-function buildTheeSceneRecursively(usdScene /* TinyUSDZLoader.Scene */, usdNode /* TinyUSDZLoader.Node */)
+function buildThreeNodeRecursively(usdNode /* TinyUSDZLoader.Node */, usdScene /* TinyUSDZLoader.Scene */ = null)
  /* => THREE.Object3D */ {
 
   var node = new THREE.Group();
 
-  node.name = node.primName;
-  node.custom['displayName'] = node.displayName;
-  node.custom['absPath'] = node.absPath;
-
   if (usdNode.nodeType == 'xform') {
+
     // intermediate xform node
     // TODO: create THREE.Group and apply transform.
-    node.matrix = toMatrix4(node.localMatrix);
+    node.matrix = toMatrix4(usdNode.localMatrix);
 
   } else if (usdNode.nodeType == 'mesh') {
 
+    //console.log("usdScene:", usdScene);
     // contentId is the mesh ID in the USD scene.
-    const mesh = usdScene.getMesh(node.contentId);
+    const mesh = usdScene.getMesh(usdNode.contentId);
+    console.log("mesh:", mesh);
 
-    const threeMesh = setupMesh(mesh);
-    //threeScene.add(mesh);
+    const threeMesh = setupMesh(mesh, usdScene);
+    node = threeMesh;
 
   } else {
     // ???
 
   }
 
+  node.name = usdNode.primName;
+  node.userData['primMeta.displayName'] = usdNode.displayName;
+  node.userData['primMeta.absPath'] = usdNode.absPath;
+
+
   // traverse children
   for (const child of usdNode.children) {
-    const childNode = buildTheeSceneRecursively(threeScene, usdScene, child);
+    const childNode = buildThreeNodeRecursively(child, usdScene);
     node.add(childNode);
   }
 
@@ -155,29 +158,35 @@ async function loadScenes() {
   const loader = new TinyUSDZLoader();
 
   const suzanne_filename = "./suzanne.usdc";
-  const cookie_filename = "./UsdCookie.usdc";
+  const cookie_filename = "./UsdCookie.usdz";
 
-  const [cookieData, suzanneData] = await Promise.all([
+  var threeScenes = []
+
+  const usd_scenes = await Promise.all([
     loader.loadAsync(cookie_filename),
     loader.loadAsync(suzanne_filename),
   ]);
 
-  console.log("loaded!");
+  console.log("usd_scenes:", usd_scenes);
 
-  const usd_scene = suzanneData.getScene();
-  console.log("scene:", usd_scene);
+  var xoffset = 0;
+  for (const usd_scene of usd_scenes) {
 
-  const threeScene = buildTheeSceneRecursively(usd_scene); 
-  renderer.scene.add(threeScene);
+    console.log("usd_scene:", usd_scene);
 
+    const usdRootNode = usd_scene.getDefaultRootNode();
+    console.log("scene:", usdRootNode);
 
+    const threeNode = buildThreeNodeRecursively(usdRootNode, usd_scene); 
 
+    // HACK
+    threeNode.position.x += xoffset;
+    xoffset += 2.0
 
-  // TODO: Provide `traverse` function like glTFLoader?
+    threeScenes.push(threeNode);
+  }
 
-
-  //const composer = new TinyUSDZComposer();
-  //console.log("composer", composer.loaded())
+  return threeScenes;
 
 }
 
@@ -192,4 +201,33 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
 console.log("loading scenes...");
-await loadScenes();
+const rootNodes = await loadScenes();
+
+for (const rootNode of rootNodes) {
+  scene.add(rootNode);
+}
+
+  function animate() {
+
+    for (const rootNode of rootNodes) {
+      rootNode.rotation.y += 0.01 * rot_scale;
+      rootNode.rotation.x += 0.02 * rot_scale;
+    }
+
+    camera.position.z = camera_z;
+
+    if (material_changed) {
+      material_changed = false;
+
+      if (shader_normal) {
+        mesh0.material = normalMat;
+      } else {
+        mesh0.material = pbrMaterial;
+      }
+    }
+
+    renderer.render(scene, camera);
+
+  }
+
+  renderer.setAnimationLoop(animate);
