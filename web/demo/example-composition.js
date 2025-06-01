@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { HDRCubeTextureLoader } from 'three/addons/loaders/HDRCubeTextureLoader.js';
 
 import { GUI } from 'https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.module.js';
 
@@ -23,32 +24,128 @@ manager.setURLModifier((url) => {
 
 const gui = new GUI();
 
-// FIXME
-let rot_scale = 1;
-let exposure = 3.0;
-let ambient = 0.4
-let ambientLight = new THREE.AmbientLight(0x404040, ambient);
-let camera_z = 1.4; // TODO: Compute best fit from scene's bbox.
-let shader_normal = false;
-let material_changed = false;
+let ui_state = {}
+ui_state['rot_scale'] = 1.0;
+ui_state['defaultMtl'] = TinyUSDZLoaderUtils.createDefaultMaterial();
+
+ui_state['exposure'] = 3.0;
+ui_state['ambient'] = 0.4;
+let ambientLight = new THREE.AmbientLight(0x404040, ui_state['ambient']);
+ui_state['camera_z'] = 4; // TODO: Compute best fit from scene's bbox.
+ui_state['shader_normal'] = false;
+ui_state['material_changed'] = false;
+
+// Default PBR mateiral params
+ui_state['diffuse'] = new THREE.Color(49, 49, 49); // 0.18
+ui_state['emissive'] = new THREE.Color(0, 0, 0);
+ui_state['roughness'] = 0.5;
+ui_state['metalness'] = 0.0;
+ui_state['clearcoat'] = 0.0;
+ui_state['clearcoatRoughness'] = 0.0;
+ui_state['ior'] = 1.5;
+ui_state['specularIntensity'] = 1.0;
+ui_state['opacity'] = 1.0;
 
 // Create a parameters object
 const params = {
-  rotationSpeed: rot_scale,
-  camera_z: camera_z,
-  shader_normal: shader_normal,
+  rotationSpeed: ui_state['rot_scale'],
+  camera_z: ui_state['camera_z'],
+  shader_normal: ui_state['shader_normal'],
+  diffuse: ui_state['diffuse'],
+  emissive: ui_state['emissive'],
+  roughness: ui_state['roughness'],
+  metalness: ui_state['metalness'],
+  clearcoat: ui_state['clearcoat'],
+  clearcoatRoughness: ui_state['clearcoatRoughness'],
+  specularIntensity: ui_state['specularIntensity'],
+  opacity: ui_state['opacity'],
+  ior: ui_state['ior'],
 };
 
 // Add controls
-gui.add(params, 'camera_z', 0, 10).name('Camera Z').onChange((value) => {
-  camera_z = value;
+gui.add(params, 'camera_z', 0, 20).name('Camera Z').onChange((value) => {
+  ui_state['camera_z'] = value;
 });
 gui.add(params, 'rotationSpeed', 0, 10).name('Rotation Speed').onChange((value) => {
-  rot_scale = value;
+  ui_state['rot_scale'] = value;
 });
+
+gui.addColor(params, 'diffuse').name('color').onChange((value) => {
+  ui_state['diffuse'] = value;
+
+  ui_state['material_changed'] = true;
+  //jrenderer.toneMappingExposure = exposure;
+});
+
+gui.addColor(params, 'emissive').name('emissive').onChange((value) => {
+  ui_state['emissive'] = value;
+
+  ui_state['material_changed'] = true;
+  //jrenderer.toneMappingExposure = exposure;
+});
+
+gui.add(params, 'roughness', 0.0, 1.0, 0.01).name('roughness').onChange((value) => {
+  ui_state['roughness'] = value;
+
+  ui_state['material_changed'] = true;
+  //jrenderer.toneMappingExposure = exposure;
+});
+
+gui.add(params, 'metalness', 0.0, 1.0, 0.01).name('metalness').onChange((value) => {
+  ui_state['metalness'] = value;
+
+  ui_state['material_changed'] = true;
+  //jrenderer.toneMappingExposure = exposure;
+});
+
+gui.add(params, 'ior', 1.0, 2.4, 0.1).name('ior').onChange((value) => {
+  ui_state['ior'] = value;
+
+  ui_state['material_changed'] = true;
+  //jrenderer.toneMappingExposure = exposure;
+});
+
+gui.add(params, 'clearcoat', 0.0, 1.0, 0.01).name('clearcoat').onChange((value) => {
+  ui_state['clearcoat'] = value;
+
+  ui_state['material_changed'] = true;
+  //jrenderer.toneMappingExposure = exposure;
+});
+
+gui.add(params, 'clearcoatRoughness', 0.0, 1.0).step(0.01).name('clearcoatRoughness').onChange((value) => {
+  ui_state['clearcoatRoughness'] = value;
+
+  ui_state['material_changed'] = true;
+  //jrenderer.toneMappingExposure = exposure;
+});
+
+gui.add(params, 'specularIntensity', 0.0, 1.0, 0.01).name('specular').onChange((value) => {
+  ui_state['specularIntensity'] = value;
+
+  ui_state['material_changed'] = true;
+  //jrenderer.toneMappingExposure = exposure;
+});
+
+gui.add(params, 'opacity', 0.0, 1.0, 0.01).name('opacity').onChange((value) => {
+  ui_state['opacity'] = value;
+
+  ui_state['material_changed'] = true;
+  //jrenderer.toneMappingExposure = exposure;
+});
+
+/* TODO
+gui.add(params, 'transmission', 0.0, 1.0, 0.01).name('transmission').onChange((value) => {
+  ui_state['transmission'] = value;
+
+  ui_state['material_changed'] = true;
+  //jrenderer.toneMappingExposure = exposure;
+});
+*/
+
 gui.add(params, 'shader_normal').name('NormalMaterial').onChange((value) => {
-  shader_normal = value;
-  material_changed = true;
+  ui_state['shader_normal'] = value;
+
+  ui_state['material_changed'] = true;
   //jrenderer.toneMappingExposure = exposure;
 });
 
@@ -64,18 +161,33 @@ function usdMeshToThreeMesh(mesh) {
     geometry.setAttribute('uv', new THREE.BufferAttribute(mesh.texcoords, 2));
   }
 
-  //// faceVarying normals
+  // faceVarying normals
   if (mesh.hasOwnProperty('normals')) {
     geometry.setAttribute('normal', new THREE.BufferAttribute(mesh.normals, 3));
   } else {
     geometry.computeVertexNormals();
   }
 
+  if (mesh.hasOwnProperty('vertexColors')) {
+    geometry.setAttribute('color', new THREE.BufferAttribute(mesh.vertexColors, 3));
+
+  }
+
+  // Only compute tangents if we have both UV coordinates and normals
+  if (mesh.hasOwnProperty('tangents')) {
+    geometry.setAttribute('tangent', new THREE.BufferAttribute(mesh.tangents, 3));
+  } else if (mesh.hasOwnProperty('texcoords') && (mesh.hasOwnProperty('normals') || geometry.attributes.normal)) {
+    // TODO: try MikTSpace tangent algorithm: https://threejs.org/docs/#examples/en/utils/BufferGeometryUtils.computeMikkTSpaceTangents 
+    geometry.computeTangents();
+  }
+
+  // TODO: vertex opacities(per-vertex alpha)
+
   return geometry;
 }
 
 
-function setupMesh(mesh /* TinyUSDZLoaderNative::RenderMesh */, usdScene) {
+function setupMesh(mesh /* TinyUSDZLoaderNative::RenderMesh */, defaultMtl, usdScene) {
 
   // First mesh only
   console.log("mesh loaded:", mesh);
@@ -86,16 +198,13 @@ function setupMesh(mesh /* TinyUSDZLoaderNative::RenderMesh */, usdScene) {
   console.log("usdMaterial:", usdMaterial);
 
   //const pbrMaterial = TinyUSDZLoader.ConvertUsdPreviewSurfaceToMeshPhysicalMaterial(usdMaterial, usd);
-  const pbrMaterial = new THREE.MeshPhysicalMaterial();
 
   const normalMat = new THREE.MeshNormalMaterial();
 
   const usd_util = new TinyUSDZLoaderUtils();
 
-  const baseMat = TinyUSDZLoaderUtils.createDefaultMaterial();
-
   // HACK
-  const threeMesh = new THREE.Mesh(geometry, /*baseMat*/ normalMat);
+  const threeMesh = new THREE.Mesh(geometry, /*baseMat*/ defaultMtl);
 
   return threeMesh;
 }
@@ -130,7 +239,8 @@ function buildThreeNodeRecursively(usdNode /* TinyUSDZLoader.Node */, usdScene /
     const mesh = usdScene.getMesh(usdNode.contentId);
     console.log("mesh:", mesh);
 
-    const threeMesh = setupMesh(mesh, usdScene);
+    // HACK: material
+    const threeMesh = setupMesh(mesh, ui_state['defaultMtl'], usdScene);
     node = threeMesh;
 
   } else {
@@ -163,7 +273,7 @@ async function loadScenes() {
   var threeScenes = []
 
   const usd_scenes = await Promise.all([
-    loader.loadAsync(cookie_filename),
+    //loader.loadAsync(cookie_filename),
     loader.loadAsync(suzanne_filename),
   ]);
 
@@ -193,8 +303,19 @@ async function loadScenes() {
 
 
 const scene = new THREE.Scene();
+
+const envmap = await new HDRCubeTextureLoader()
+  .setPath( 'textures/cube/pisaHDR/' )
+  .loadAsync( [ 'px.hdr', 'nx.hdr', 'py.hdr', 'ny.hdr', 'pz.hdr', 'nz.hdr' ] )
+scene.background = envmap;
+scene.environment = envmap;
+
+// Assign envmap to material
+// Otherwise some material parameters like clarcoat will not work properly.
+ui_state['defaultMtl'].envMap = envmap;
+
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-camera.position.z = 5;
+camera.position.z = ui_state['camera_z'];
 
 const renderer = new THREE.WebGLRenderer();
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -210,21 +331,50 @@ for (const rootNode of rootNodes) {
   function animate() {
 
     for (const rootNode of rootNodes) {
-      rootNode.rotation.y += 0.01 * rot_scale;
-      rootNode.rotation.x += 0.02 * rot_scale;
+      rootNode.rotation.y += 0.01 * ui_state['rot_scale'];
+      rootNode.rotation.x += 0.02 * ui_state['rot_scale'];
     }
 
-    camera.position.z = camera_z;
+    camera.position.z = ui_state['camera_z'];
 
-    if (material_changed) {
-      material_changed = false;
+    if (ui_state['material_changed']) {
+      ui_state['material_changed'] = false;
 
-      if (shader_normal) {
-        mesh0.material = normalMat;
+      if (ui_state['shader_normal']) {
+        //mesh0.material = normalMat;
+
+        for (const rootNode of rootNodes) {
+          rootNode.rotation.y += 0.01 * ui_state['rot_scale'];
+          rootNode.rotation.x += 0.02 * ui_state['rot_scale'];
+        }
       } else {
-        mesh0.material = pbrMaterial;
+        //mesh0.material = pbrMaterial;
       }
+
+
+      // HACK
+      ui_state['defaultMtl'].color.r = ui_state['diffuse'].r / 255.0;
+      ui_state['defaultMtl'].color.g = ui_state['diffuse'].g / 255.0;
+      ui_state['defaultMtl'].color.b = ui_state['diffuse'].b / 255.0;
+      console.log("diffuse", ui_state['diffuse']);
+      console.log("mat_diffuse", ui_state['defaultMtl'].color);
+
+      ui_state['defaultMtl'].emissive.r = ui_state['emissive'].r / 255.0;
+      ui_state['defaultMtl'].emissive.g = ui_state['emissive'].g / 255.0;
+      ui_state['defaultMtl'].emissive.b = ui_state['emissive'].b / 255.0;
+
+      ui_state['defaultMtl'].roughness = ui_state['roughness'];
+      ui_state['defaultMtl'].metalness = ui_state['metalness'];
+      ui_state['defaultMtl'].ior = ui_state['ior'];
+      ui_state['defaultMtl'].clearcoat = ui_state['clearcoat'];
+      ui_state['defaultMtl'].clearcoatRoughness = ui_state['clearcoatRoughness'];
+      ui_state['defaultMtl'].specularIntensity = ui_state['specularIntensity'];
+      ui_state['defaultMtl'].opacity = ui_state['opacity'];
+      ui_state['defaultMtl'].transparent = (ui_state['opacity'] < 1.0);
+
+      ui_state['defaultMtl'].needsUpdate = true;
     }
+
 
     renderer.render(scene, camera);
 
