@@ -2,11 +2,11 @@
 // Copyright 2024-Present Light Transport Entertainment, Inc.
 //
 #include <emscripten/bind.h>
-#include <emscripten/em_js.h>
 #include <emscripten/console.h>
+#include <emscripten/em_js.h>
 
-#include <vector>
 #include <string>
+#include <vector>
 
 #include "external/fast_float/include/fast_float/bigint.h"
 #include "tinyusdz.hh"
@@ -61,32 +61,31 @@ std::array<double, 16> toArray(const tinyusdz::value::matrix4d &m) {
   return ret;
 }
 
-// To RGBA 
+// To RGBA
 bool ToRGBA(const std::vector<uint8_t> &src, int channels,
-  std::vector<uint8_t> &dst) {
-  
+            std::vector<uint8_t> &dst) {
   uint32_t npixels = src.size() / channels;
   dst.resize(npixels * 4);
 
-  if (channels == 1) { // grayscale
+  if (channels == 1) {  // grayscale
     for (size_t i = 0; i < npixels; i++) {
       dst[4 * i + 0] = src[i];
       dst[4 * i + 1] = src[i];
       dst[4 * i + 2] = src[i];
       dst[4 * i + 3] = 1.0f;
     }
-  } else if (channels == 2) { // assume luminance + alpha
+  } else if (channels == 2) {  // assume luminance + alpha
     for (size_t i = 0; i < npixels; i++) {
-      dst[4 * i + 0] = src[2*i+0];
-      dst[4 * i + 1] = src[2*i+0];
-      dst[4 * i + 2] = src[2*i+0];
-      dst[4 * i + 3] = src[2*i+1];
+      dst[4 * i + 0] = src[2 * i + 0];
+      dst[4 * i + 1] = src[2 * i + 0];
+      dst[4 * i + 2] = src[2 * i + 0];
+      dst[4 * i + 3] = src[2 * i + 1];
     }
   } else if (channels == 3) {
     for (size_t i = 0; i < npixels; i++) {
-      dst[4 * i + 0] = src[3*i+0];
-      dst[4 * i + 1] = src[3*i+1];
-      dst[4 * i + 2] = src[3*i+2];
+      dst[4 * i + 0] = src[3 * i + 0];
+      dst[4 * i + 1] = src[3 * i + 1];
+      dst[4 * i + 2] = src[3 * i + 2];
       dst[4 * i + 3] = 1.0f;
     }
   } else if (channels == 4) {
@@ -98,28 +97,180 @@ bool ToRGBA(const std::vector<uint8_t> &src, int channels,
   return true;
 }
 
-}
+}  // namespace detail
 
 #if defined(TINYUSDZ_WASM_ASYNCIFY)
 // forward decl.
 class TinyUSDZLoaderNative;
 
 // Async loading function using EM_ASYNC_JS
-EM_ASYNC_JS(bool, loadAsyncImpl, (TinyUSDZLoaderNative* loader, const char* binary_data, int binary_size), {
-  // Convert C string to JavaScript string
-  const binary = UTF8ToString(binary_data, binary_size);
-  
-  // Call the synchronous loadFromBinary method
-  const success = Module.TinyUSDZLoaderNative.prototype.loadFromBinary.call(loader, binary);
-  
-  if (!success) {
-    const errorMsg = Module.TinyUSDZLoaderNative.prototype.error.call(loader);
-    throw new Error(errorMsg || 'Unknown error loading USD');
-  }
-  
-  return success;
-});
+EM_ASYNC_JS(bool, loadAsyncImpl,
+            (TinyUSDZLoaderNative * loader, const char *binary_data,
+             int binary_size),
+            {
+              // Convert C string to JavaScript string
+              const binary = UTF8ToString(binary_data, binary_size);
+
+              // Call the synchronous loadFromBinary method
+              const success =
+                  Module.TinyUSDZLoaderNative.prototype.loadFromBinary.call(
+                      loader, binary);
+
+              if (!success) {
+                const errorMsg =
+                    Module.TinyUSDZLoaderNative.prototype.error.call(loader);
+                throw new Error(errorMsg || 'Unknown error loading USD');
+              }
+
+              return success;
+            });
 #endif
+
+struct HTTPAssetResolutionResolver {
+  static int Resolve(const char *asset_name,
+                     const std::vector<std::string> &search_paths,
+                     std::string *resolved_asset_name, std::string *err,
+                     void *userdata) {
+    (void)err;
+    (void)userdata;
+    (void)search_paths;
+
+    if (!asset_name) {
+      return -2;  // err
+    }
+
+    if (!resolved_asset_name) {
+      return -2;  // err
+    }
+
+#if 0  // TODO
+    if (g_map.count(asset_name)) {
+      (*resolved_asset_name) = asset_name;
+      return 0;  // OK
+    }
+#endif
+
+    return -1;  // failed to resolve.
+  }
+
+  // AssetResoltion handlers
+  static int Size(const char *asset_name, uint64_t *nbytes, std::string *err,
+                  void *userdata) {
+    (void)userdata;
+
+    if (!asset_name) {
+      if (err) {
+        (*err) += "asset_name arg is nullptr.\n";
+      }
+      return -1;
+    }
+
+    if (!nbytes) {
+      if (err) {
+        (*err) += "nbytes arg is nullptr.\n";
+      }
+      return -1;
+    }
+
+#if 0  // TODO
+    if (g_map.count(asset_name)) {
+      // Use strlen()(length until the first appearance of '\0' character), since
+      // std::string::size() reports buffer size, not bytes until the first
+      // appearance of '\0' character.
+      (*nbytes) = strlen(g_map[asset_name].c_str());
+      return 0;  // OK
+    }
+#endif
+
+    return -1;
+  }
+
+  static int Read(const char *asset_name, uint64_t req_nbytes, uint8_t *out_buf,
+                  uint64_t *nbytes, std::string *err, void *userdata) {
+    if (!asset_name) {
+      if (err) {
+        (*err) += "asset_name arg is nullptr.\n";
+      }
+      return -3;
+    }
+
+    if (!nbytes) {
+      if (err) {
+        (*err) += "nbytes arg is nullptr.\n";
+      }
+      return -3;
+    }
+
+    if (req_nbytes < 9) {  // at least 9 bytes(strlen("#usda 1.0")) or more
+      return -2;
+    }
+
+#if 0  // TODO
+    if (g_map.count(asset_name)) {
+      size_t sz = strlen(g_map[asset_name].c_str());
+      if (sz > req_nbytes) {
+        if (err) {
+          (*err) += "Insufficient dst buffer size.\n";
+        }
+        return -4;
+      }
+
+      std::cout << "read asset: " << asset_name << "\n";
+
+      memcpy(out_buf, &g_map[asset_name][0], sz);
+
+      (*nbytes) = sz;
+      return 0;
+    }
+#endif
+
+    //
+    return -1;
+  }
+};
+
+bool SetupHTTPAssetResolution(
+    tinyusdz::AssetResolutionResolver &resolver,
+    /* must be the persistent pointer address until usd load finishes */
+    const HTTPAssetResolutionResolver *p) {
+  if (!p) {
+    return false;
+  }
+
+  // https://openusd.org/release/spec_usdz.html
+  //
+  // [x] Image: png, jpeg(jpg), exr
+  // [x] USD: usda, usdc, usd
+  //
+  // TODO(LTE):
+  // [ ] Audio: m4a, mp3, wav
+
+  tinyusdz::AssetResolutionHandler handler;
+  handler.resolve_fun = HTTPAssetResolutionResolver::Resolve;
+  handler.size_fun = HTTPAssetResolutionResolver::Size;
+  handler.read_fun = HTTPAssetResolutionResolver::Read;
+  handler.write_fun = nullptr;
+  handler.userdata =
+      reinterpret_cast<void *>(const_cast<HTTPAssetResolutionResolver *>(p));
+
+  resolver.register_asset_resolution_handler("png", handler);
+  resolver.register_asset_resolution_handler("PNG", handler);
+  resolver.register_asset_resolution_handler("JPG", handler);
+  resolver.register_asset_resolution_handler("jpg", handler);
+  resolver.register_asset_resolution_handler("jpeg", handler);
+  resolver.register_asset_resolution_handler("JPEG", handler);
+  resolver.register_asset_resolution_handler("exr", handler);
+  resolver.register_asset_resolution_handler("EXR", handler);
+
+  resolver.register_asset_resolution_handler("usd", handler);
+  resolver.register_asset_resolution_handler("USD", handler);
+  resolver.register_asset_resolution_handler("usda", handler);
+  resolver.register_asset_resolution_handler("USDA", handler);
+  resolver.register_asset_resolution_handler("usdc", handler);
+  resolver.register_asset_resolution_handler("USDC", handler);
+
+  return true;
+}
 
 ///
 /// Simple C++ wrapper class for Emscripten
@@ -128,9 +279,19 @@ EM_ASYNC_JS(bool, loadAsyncImpl, (TinyUSDZLoaderNative* loader, const char* bina
 ///
 class TinyUSDZLoaderNative {
  public:
+  struct CompositionFeatures {
+    bool subLayers{true};
+    bool inherits{true};
+    bool variantSets{true};
+    bool references{true};
+    bool payload{true};  // Not 'payloads'
+    bool specializes{true};
+  };
+
   // Default constructor for async loading
   TinyUSDZLoaderNative() : loaded_(false) {}
 
+#if 0
   ///
   /// `binary` is the buffer for TinyUSDZ binary(e.g. buffer read by
   /// fs.readFileSync) std::string can be used as UInt8Array in JS layer.
@@ -138,11 +299,13 @@ class TinyUSDZLoaderNative {
   TinyUSDZLoaderNative(const std::string &binary) {
     loadFromBinary(binary);
   }
+#endif
 
-  // Synchronous load method that can be called from async wrapper
   bool loadFromBinary(const std::string &binary) {
-    tinyusdz::Stage stage;
+    bool is_usdz = tinyusdz::IsUSDZ(
+        reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size());
 
+    tinyusdz::Stage stage;
     loaded_ = tinyusdz::LoadUSDFromMemory(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
         "dummy.usda", &stage, &warn_, &error_);
@@ -151,19 +314,17 @@ class TinyUSDZLoaderNative {
       return false;
     }
 
-    bool is_usdz = tinyusdz::IsUSDZ(
-        reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size());
-
     tinyusdz::tydra::RenderSceneConverterEnv env(stage);
 
     //
     // false = Load Texture in JS Layer
     //
-    //env.scene_config.load_texture_assets = false;
+    // env.scene_config.load_texture_assets = false;
 
     env.material_config.preserve_texel_bitdepth = true;
 
     if (is_usdz) {
+      // TODO: Support USDZ + Composition
       // Setup AssetResolutionResolver to read a asset(file) from memory.
       bool asset_on_memory =
           false;  // duplicate asset data from USDZ(binary) to UDSZAsset struct.
@@ -173,6 +334,7 @@ class TinyUSDZLoaderNative {
               asset_on_memory, &usdz_asset_, &warn_, &error_)) {
         std::cerr << "Failed to read USDZ assetInfo. \n";
         loaded_ = false;
+        return false;
       }
 
       tinyusdz::AssetResolutionResolver arr;
@@ -182,6 +344,16 @@ class TinyUSDZLoaderNative {
       if (!tinyusdz::SetupUSDZAssetResolution(arr, &usdz_asset_)) {
         std::cerr << "Failed to setup AssetResolution for USDZ asset\n";
         loaded_ = false;
+        return false;
+      }
+
+      env.asset_resolver = arr;
+    } else {
+      tinyusdz::AssetResolutionResolver arr;
+      if (!SetupHTTPAssetResolution(arr, &http_resolver_)) {
+        std::cerr << "Failed to setup HTTPAssetResolution\n";
+        loaded_ = false;
+        return false;
       }
 
       env.asset_resolver = arr;
@@ -198,7 +370,7 @@ class TinyUSDZLoaderNative {
       error_ = converter.GetError();
       return false;
     }
-    
+
     return true;
   }
   ~TinyUSDZLoaderNative() {}
@@ -206,39 +378,35 @@ class TinyUSDZLoaderNative {
 #if defined(TINYUSDZ_WASM_ASYNCIFY)
   emscripten::val loadAsync(const std::string &binary) {
     return emscripten::val::global("Promise").new_(
-      emscripten::val::module_property("asyncifyWrapper"),
-      emscripten::val([this, binary](emscripten::val resolve, emscripten::val reject) {
-        try {
-          bool success = loadAsyncImpl(this, binary.c_str(), binary.size());
-          if (success) {
-            resolve(emscripten::val(this));
-          } else {
-            reject(emscripten::val(this->error()));
+        emscripten::val::module_property("asyncifyWrapper"),
+        emscripten::val([this, binary](emscripten::val resolve,
+                                       emscripten::val reject) {
+          try {
+            bool success = loadAsyncImpl(this, binary.c_str(), binary.size());
+            if (success) {
+              resolve(emscripten::val(this));
+            } else {
+              reject(emscripten::val(this->error()));
+            }
+          } catch (const std::exception &e) {
+            reject(emscripten::val(std::string("Exception: ") + e.what()));
+          } catch (...) {
+            reject(emscripten::val("Unknown exception during loading"));
           }
-        } catch (const std::exception& e) {
-          reject(emscripten::val(std::string("Exception: ") + e.what()));
-        } catch (...) {
-          reject(emscripten::val("Unknown exception during loading"));
-        }
-      })
-    );
+        }));
   }
 #endif
-
 
   emscripten::val loadAsLayer(const std::string &binary) {
     tinyusdz::Layer layer;
 
-    // TODO: 
+    // TODO:
     return emscripten::val::null();
   }
 
-  int numMeshes() const {
-    return render_scene_.meshes.size();
-  }
+  int numMeshes() const { return render_scene_.meshes.size(); }
 
   emscripten::val getMaterial(int mat_id) const {
-
     emscripten::val mat = emscripten::val::object();
 
     if (!loaded_) {
@@ -277,13 +445,15 @@ class TinyUSDZLoaderNative {
 
     mat.set("emissiveColor", m.surfaceShader.emissiveColor.value);
     if (m.surfaceShader.emissiveColor.is_texture()) {
-      mat.set("emissiveColorTextureId", m.surfaceShader.emissiveColor.texture_id);
+      mat.set("emissiveColorTextureId",
+              m.surfaceShader.emissiveColor.texture_id);
     }
     mat.set("useSpecularWorkflow", m.surfaceShader.useSpecularWorkflow);
     if (m.surfaceShader.useSpecularWorkflow) {
       mat.set("specularColor", m.surfaceShader.specularColor.value);
       if (m.surfaceShader.specularColor.is_texture()) {
-        mat.set("specularColorTextureId", m.surfaceShader.specularColor.texture_id);
+        mat.set("specularColorTextureId",
+                m.surfaceShader.specularColor.texture_id);
       }
 
     } else {
@@ -305,7 +475,8 @@ class TinyUSDZLoaderNative {
 
     mat.set("clearcoatRoughness", m.surfaceShader.clearcoatRoughness.value);
     if (m.surfaceShader.clearcoatRoughness.is_texture()) {
-      mat.set("clearcoatRoughnessTextureId", m.surfaceShader.clearcoatRoughness.texture_id);
+      mat.set("clearcoatRoughnessTextureId",
+              m.surfaceShader.clearcoatRoughness.texture_id);
     }
 
     mat.set("opacity", m.surfaceShader.opacity.value);
@@ -314,17 +485,18 @@ class TinyUSDZLoaderNative {
     }
 
     // TODO
-    //mat.set("opacityMode", m.surfaceShader.opacityMode);
+    // mat.set("opacityMode", m.surfaceShader.opacityMode);
 
     mat.set("opacityThreshold", m.surfaceShader.opacityThreshold.value);
     if (m.surfaceShader.opacityThreshold.is_texture()) {
-      mat.set("opacityThresholdTextureId", m.surfaceShader.opacityThreshold.texture_id);
+      mat.set("opacityThresholdTextureId",
+              m.surfaceShader.opacityThreshold.texture_id);
     }
 
     mat.set("ior", m.surfaceShader.ior.value);
-      if (m.surfaceShader.ior.is_texture()) {
-        mat.set("iorTextureId", m.surfaceShader.ior.texture_id);
-      }
+    if (m.surfaceShader.ior.is_texture()) {
+      mat.set("iorTextureId", m.surfaceShader.ior.texture_id);
+    }
 
     mat.set("normal", m.surfaceShader.normal.value);
     if (m.surfaceShader.normal.is_texture()) {
@@ -345,7 +517,6 @@ class TinyUSDZLoaderNative {
   }
 
   emscripten::val getTexture(int tex_id) const {
-
     emscripten::val tex = emscripten::val::object();
 
     if (!loaded_) {
@@ -359,15 +530,14 @@ class TinyUSDZLoaderNative {
     const auto &t = render_scene_.textures[tex_id];
 
     tex.set("textureImageId", int(t.texture_image_id));
-    //tex.set("wrapS", to_string(t.wrapS));
-    //tex.set("wrapT", to_string(t.wrapT));
-    // TOOD: bias, scale, rot/scale/trans
+    // tex.set("wrapS", to_string(t.wrapS));
+    // tex.set("wrapT", to_string(t.wrapT));
+    //  TOOD: bias, scale, rot/scale/trans
 
     return tex;
   }
 
   emscripten::val getImage(int img_id) const {
-
     emscripten::val img = emscripten::val::object();
 
     if (!loaded_) {
@@ -384,13 +554,13 @@ class TinyUSDZLoaderNative {
       const auto &b = render_scene_.buffers[i.buffer_id];
 
       // TODO: Support HDR
-      
-      img.set("data", emscripten::typed_memory_view(b.data.size(), b.data.data()));
+
+      img.set("data",
+              emscripten::typed_memory_view(b.data.size(), b.data.data()));
       img.set("width", int(i.width));
       img.set("height", int(i.height));
       img.set("channels", int(i.channels));
     }
-
 
     return img;
   }
@@ -406,46 +576,55 @@ class TinyUSDZLoaderNative {
       return mesh;
     }
 
-    const tinyusdz::tydra::RenderMesh &rmesh = render_scene_.meshes[size_t(mesh_id)];
+    const tinyusdz::tydra::RenderMesh &rmesh =
+        render_scene_.meshes[size_t(mesh_id)];
 
     // TODO: Use three.js scene description format?
     mesh.set("primName", rmesh.prim_name);
     mesh.set("displayName", rmesh.display_name);
     mesh.set("absPath", rmesh.abs_path);
     const uint32_t *indices_ptr = rmesh.faceVertexIndices().data();
-    mesh.set("faceVertexIndices", emscripten::typed_memory_view(rmesh.faceVertexIndices().size(), indices_ptr));
+    mesh.set("faceVertexIndices",
+             emscripten::typed_memory_view(rmesh.faceVertexIndices().size(),
+                                           indices_ptr));
     const uint32_t *counts_ptr = rmesh.faceVertexCounts().data();
-    mesh.set("faceVertexCounts", emscripten::typed_memory_view(rmesh.faceVertexCounts().size(), counts_ptr));
-    const float *points_ptr = reinterpret_cast<const float *>(rmesh.points.data());
+    mesh.set("faceVertexCounts",
+             emscripten::typed_memory_view(rmesh.faceVertexCounts().size(),
+                                           counts_ptr));
+    const float *points_ptr =
+        reinterpret_cast<const float *>(rmesh.points.data());
     // vec3
-    mesh.set("points", emscripten::typed_memory_view(rmesh.points.size() * 3, points_ptr)); 
+    mesh.set("points", emscripten::typed_memory_view(rmesh.points.size() * 3,
+                                                     points_ptr));
 
     if (!rmesh.normals.empty()) {
-      const float *normals_ptr = reinterpret_cast<const float *>(rmesh.normals.data.data());
+      const float *normals_ptr =
+          reinterpret_cast<const float *>(rmesh.normals.data.data());
 
-        mesh.set("normals", emscripten::typed_memory_view(rmesh.normals.vertex_count() * 3, normals_ptr)); 
+      mesh.set("normals", emscripten::typed_memory_view(
+                              rmesh.normals.vertex_count() * 3, normals_ptr));
     }
 
     {
       // slot 0 hardcoded.
       uint32_t uvSlotId = 0;
       if (rmesh.texcoords.count(uvSlotId)) {
-        const float *uvs_ptr = reinterpret_cast<const float *>(rmesh.texcoords.at(uvSlotId).data.data());
+        const float *uvs_ptr = reinterpret_cast<const float *>(
+            rmesh.texcoords.at(uvSlotId).data.data());
 
         // assume vec2
-        mesh.set("texcoords", emscripten::typed_memory_view(rmesh.texcoords.at(uvSlotId).vertex_count() * 2, uvs_ptr)); 
+        mesh.set("texcoords",
+                 emscripten::typed_memory_view(
+                     rmesh.texcoords.at(uvSlotId).vertex_count() * 2, uvs_ptr));
       }
     }
 
     mesh.set("materialId", rmesh.material_id);
 
-
     return mesh;
   }
 
-  int getDefaultRootNodeId() {
-    return render_scene_.default_root_node;
-  }
+  int getDefaultRootNodeId() { return render_scene_.default_root_node; }
 
   emscripten::val getDefaultRootNode() {
     return getRootNode(getDefaultRootNodeId());
@@ -458,14 +637,13 @@ class TinyUSDZLoaderNative {
       return val;
     }
 
-    val = buildNodeRec(render_scene_.nodes[size_t(idx)]); 
+    val = buildNodeRec(render_scene_.nodes[size_t(idx)]);
     return val;
   }
 
+  int numRootNodes() { return render_scene_.nodes.size(); }
 
-  int numRootNodes() {
-    return render_scene_.nodes.size();
-  }
+  void setEnableComposition(bool enabled) { enableComposition_ = enabled; }
 
   // TODO: Deprecate
   bool ok() const { return loaded_; }
@@ -473,10 +651,8 @@ class TinyUSDZLoaderNative {
   const std::string &error() const { return error_; }
 
  private:
-
   // Simple glTF-like Node
   emscripten::val buildNodeRec(const tinyusdz::tydra::Node &rnode) {
-
     emscripten::val node = emscripten::val::object();
 
     node.set("primName", rnode.prim_name);
@@ -486,7 +662,8 @@ class TinyUSDZLoaderNative {
     std::string nodeTypeStr = to_string(rnode.nodeType);
     node.set("nodeType", nodeTypeStr);
 
-    node.set("contentId", rnode.id); // e.g. index to Mesh if nodeType == 'mesh'
+    node.set("contentId",
+             rnode.id);  // e.g. index to Mesh if nodeType == 'mesh'
 
     std::array<double, 16> localMatrix = detail::toArray(rnode.local_matrix);
     std::array<double, 16> globalMatrix = detail::toArray(rnode.global_matrix);
@@ -495,14 +672,13 @@ class TinyUSDZLoaderNative {
     node.set("globalMatrix", globalMatrix);
     node.set("hasResetXform", rnode.has_resetXform);
 
-
     emscripten::val children = emscripten::val::array();
 
     for (const tinyusdz::tydra::Node &child : rnode.children) {
       emscripten::val child_val = buildNodeRec(child);
 
       children.call<void>("push", child_val);
-    } 
+    }
 
     node.set("children", children);
 
@@ -510,34 +686,32 @@ class TinyUSDZLoaderNative {
   }
 
   bool loaded_{false};
+  bool enableComposition_{false};
   std::string warn_;
   std::string error_;
 
   tinyusdz::tydra::RenderScene render_scene_;
   tinyusdz::USDZAsset usdz_asset_;
+  HTTPAssetResolutionResolver http_resolver_;
 };
 
 ///
-/// USD composition 
+/// USD composition
 ///
-class TinyUSDZComposerNative
-{
+class TinyUSDZComposerNative {
  public:
   // Default constructor for async loading
   TinyUSDZComposerNative() : loaded_(false) {}
-
 
   bool loaded() const { return loaded_; }
   const std::string &error() const { return error_; }
 
  private:
-
   bool loaded_{false};
   std::string warn_;
   std::string error_;
 
   tinyusdz::Layer root_layer_;
-  
 };
 
 #if 0
@@ -584,137 +758,136 @@ EMSCRIPTEN_BINDINGS(stl_wrappters) {
 
 // Register the array type
 EMSCRIPTEN_BINDINGS(array_bindings) {
+  value_array<std::array<int16_t, 2>>("Short2Array")
+      .element(emscripten::index<0>())
+      .element(emscripten::index<1>());
+  value_array<std::array<int16_t, 3>>("Short3Array")
+      .element(emscripten::index<0>())
+      .element(emscripten::index<1>())
+      .element(emscripten::index<2>());
+  value_array<std::array<int16_t, 4>>("Short4Array")
+      .element(emscripten::index<0>())
+      .element(emscripten::index<1>())
+      .element(emscripten::index<2>())
+      .element(emscripten::index<3>());
 
-    value_array<std::array<int16_t, 2>>("Short2Array")
-        .element(emscripten::index<0>())
-        .element(emscripten::index<1>());
-    value_array<std::array<int16_t, 3>>("Short3Array")
-        .element(emscripten::index<0>())
-        .element(emscripten::index<1>())
-        .element(emscripten::index<2>());
-    value_array<std::array<int16_t, 4>>("Short4Array")
-        .element(emscripten::index<0>())
-        .element(emscripten::index<1>())
-        .element(emscripten::index<2>())
-        .element(emscripten::index<3>());
+  value_array<std::array<uint16_t, 2>>("UShort2Array")
+      .element(emscripten::index<0>())
+      .element(emscripten::index<1>());
+  value_array<std::array<uint16_t, 3>>("UShort3Array")
+      .element(emscripten::index<0>())
+      .element(emscripten::index<1>())
+      .element(emscripten::index<2>());
+  value_array<std::array<uint16_t, 4>>("UShort4Array")
+      .element(emscripten::index<0>())
+      .element(emscripten::index<1>())
+      .element(emscripten::index<2>())
+      .element(emscripten::index<3>());
 
-    value_array<std::array<uint16_t, 2>>("UShort2Array")
-        .element(emscripten::index<0>())
-        .element(emscripten::index<1>());
-    value_array<std::array<uint16_t, 3>>("UShort3Array")
-        .element(emscripten::index<0>())
-        .element(emscripten::index<1>())
-        .element(emscripten::index<2>());
-    value_array<std::array<uint16_t, 4>>("UShort4Array")
-        .element(emscripten::index<0>())
-        .element(emscripten::index<1>())
-        .element(emscripten::index<2>())
-        .element(emscripten::index<3>());
+  value_array<std::array<int, 2>>("Int2Array")
+      .element(emscripten::index<0>())
+      .element(emscripten::index<1>());
+  value_array<std::array<int, 3>>("Int3Array")
+      .element(emscripten::index<0>())
+      .element(emscripten::index<1>())
+      .element(emscripten::index<2>());
+  value_array<std::array<int, 4>>("Int4Array")
+      .element(emscripten::index<0>())
+      .element(emscripten::index<1>())
+      .element(emscripten::index<2>())
+      .element(emscripten::index<3>());
 
-    value_array<std::array<int, 2>>("Int2Array")
-        .element(emscripten::index<0>())
-        .element(emscripten::index<1>());
-    value_array<std::array<int, 3>>("Int3Array")
-        .element(emscripten::index<0>())
-        .element(emscripten::index<1>())
-        .element(emscripten::index<2>());
-    value_array<std::array<int, 4>>("Int4Array")
-        .element(emscripten::index<0>())
-        .element(emscripten::index<1>())
-        .element(emscripten::index<2>())
-        .element(emscripten::index<3>());
+  value_array<std::array<uint32_t, 2>>("UInt2Array")
+      .element(emscripten::index<0>())
+      .element(emscripten::index<1>());
+  value_array<std::array<uint32_t, 3>>("UInt3Array")
+      .element(emscripten::index<0>())
+      .element(emscripten::index<1>())
+      .element(emscripten::index<2>());
+  value_array<std::array<uint32_t, 4>>("UInt4Array")
+      .element(emscripten::index<0>())
+      .element(emscripten::index<1>())
+      .element(emscripten::index<2>())
+      .element(emscripten::index<3>());
 
-    value_array<std::array<uint32_t, 2>>("UInt2Array")
-        .element(emscripten::index<0>())
-        .element(emscripten::index<1>());
-    value_array<std::array<uint32_t, 3>>("UInt3Array")
-        .element(emscripten::index<0>())
-        .element(emscripten::index<1>())
-        .element(emscripten::index<2>());
-    value_array<std::array<uint32_t, 4>>("UInt4Array")
-        .element(emscripten::index<0>())
-        .element(emscripten::index<1>())
-        .element(emscripten::index<2>())
-        .element(emscripten::index<3>());
+  value_array<std::array<float, 2>>("Float2Array")
+      .element(emscripten::index<0>())
+      .element(emscripten::index<1>());
+  value_array<std::array<float, 3>>("Float3Array")
+      .element(emscripten::index<0>())
+      .element(emscripten::index<1>())
+      .element(emscripten::index<2>());
+  value_array<std::array<float, 4>>("Float4Array")
+      .element(emscripten::index<0>())
+      .element(emscripten::index<1>())
+      .element(emscripten::index<2>())
+      .element(emscripten::index<3>());
 
-    value_array<std::array<float, 2>>("Float2Array")
-        .element(emscripten::index<0>())
-        .element(emscripten::index<1>());
-    value_array<std::array<float, 3>>("Float3Array")
-        .element(emscripten::index<0>())
-        .element(emscripten::index<1>())
-        .element(emscripten::index<2>());
-    value_array<std::array<float, 4>>("Float4Array")
-        .element(emscripten::index<0>())
-        .element(emscripten::index<1>())
-        .element(emscripten::index<2>())
-        .element(emscripten::index<3>());
+  //  for mat33
+  value_array<std::array<float, 9>>("Mat33")
+      .element(emscripten::index<0>())
+      .element(emscripten::index<1>())
+      .element(emscripten::index<2>())
+      .element(emscripten::index<3>())
+      .element(emscripten::index<4>())
+      .element(emscripten::index<5>())
+      .element(emscripten::index<6>())
+      .element(emscripten::index<7>())
+      .element(emscripten::index<8>());
 
-    //  for mat33
-    value_array<std::array<float, 9>>("Mat33")
-        .element(emscripten::index<0>())
-        .element(emscripten::index<1>())
-        .element(emscripten::index<2>())
-        .element(emscripten::index<3>())
-        .element(emscripten::index<4>())
-        .element(emscripten::index<5>())
-        .element(emscripten::index<6>())
-        .element(emscripten::index<7>())
-        .element(emscripten::index<8>());
+  value_array<std::array<double, 9>>("DMat33")
+      .element(emscripten::index<0>())
+      .element(emscripten::index<1>())
+      .element(emscripten::index<2>())
+      .element(emscripten::index<3>())
+      .element(emscripten::index<4>())
+      .element(emscripten::index<5>())
+      .element(emscripten::index<6>())
+      .element(emscripten::index<7>())
+      .element(emscripten::index<8>());
 
-    value_array<std::array<double, 9>>("DMat33")
-        .element(emscripten::index<0>())
-        .element(emscripten::index<1>())
-        .element(emscripten::index<2>())
-        .element(emscripten::index<3>())
-        .element(emscripten::index<4>())
-        .element(emscripten::index<5>())
-        .element(emscripten::index<6>())
-        .element(emscripten::index<7>())
-        .element(emscripten::index<8>());
+  //  for mat44
+  value_array<std::array<float, 16>>("Mat44")
+      .element(emscripten::index<0>())
+      .element(emscripten::index<1>())
+      .element(emscripten::index<2>())
+      .element(emscripten::index<3>())
+      .element(emscripten::index<4>())
+      .element(emscripten::index<5>())
+      .element(emscripten::index<6>())
+      .element(emscripten::index<7>())
+      .element(emscripten::index<8>())
+      .element(emscripten::index<9>())
+      .element(emscripten::index<10>())
+      .element(emscripten::index<11>())
+      .element(emscripten::index<12>())
+      .element(emscripten::index<13>())
+      .element(emscripten::index<14>())
+      .element(emscripten::index<15>());
 
-    //  for mat44
-    value_array<std::array<float, 16>>("Mat44")
-        .element(emscripten::index<0>())
-        .element(emscripten::index<1>())
-        .element(emscripten::index<2>())
-        .element(emscripten::index<3>())
-        .element(emscripten::index<4>())
-        .element(emscripten::index<5>())
-        .element(emscripten::index<6>())
-        .element(emscripten::index<7>())
-        .element(emscripten::index<8>())
-        .element(emscripten::index<9>())
-        .element(emscripten::index<10>())
-        .element(emscripten::index<11>())
-        .element(emscripten::index<12>())
-        .element(emscripten::index<13>())
-        .element(emscripten::index<14>())
-        .element(emscripten::index<15>());
-
-    value_array<std::array<double, 16>>("DMat44")
-        .element(emscripten::index<0>())
-        .element(emscripten::index<1>())
-        .element(emscripten::index<2>())
-        .element(emscripten::index<3>())
-        .element(emscripten::index<4>())
-        .element(emscripten::index<5>())
-        .element(emscripten::index<6>())
-        .element(emscripten::index<7>())
-        .element(emscripten::index<8>())
-        .element(emscripten::index<9>())
-        .element(emscripten::index<10>())
-        .element(emscripten::index<11>())
-        .element(emscripten::index<12>())
-        .element(emscripten::index<13>())
-        .element(emscripten::index<14>())
-        .element(emscripten::index<15>());
+  value_array<std::array<double, 16>>("DMat44")
+      .element(emscripten::index<0>())
+      .element(emscripten::index<1>())
+      .element(emscripten::index<2>())
+      .element(emscripten::index<3>())
+      .element(emscripten::index<4>())
+      .element(emscripten::index<5>())
+      .element(emscripten::index<6>())
+      .element(emscripten::index<7>())
+      .element(emscripten::index<8>())
+      .element(emscripten::index<9>())
+      .element(emscripten::index<10>())
+      .element(emscripten::index<11>())
+      .element(emscripten::index<12>())
+      .element(emscripten::index<13>())
+      .element(emscripten::index<14>())
+      .element(emscripten::index<15>());
 }
 
 EMSCRIPTEN_BINDINGS(tinyusdz_module) {
   class_<TinyUSDZLoaderNative>("TinyUSDZLoaderNative")
       .constructor<>()  // Default constructor for async loading
-      .constructor<const std::string &>()  // Keep original for compatibility
+  //.constructor<const std::string &>()  // Keep original for compatibility
 #if defined(TINYUSDZ_WASM_ASYNCIFY)
       .function("loadAsync", &TinyUSDZLoaderNative::loadAsync)
 #endif
@@ -724,10 +897,13 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("getMaterial", &TinyUSDZLoaderNative::getMaterial)
       .function("getTexture", &TinyUSDZLoaderNative::getTexture)
       .function("getImage", &TinyUSDZLoaderNative::getImage)
-      .function("getDefaultRootNodeId", &TinyUSDZLoaderNative::getDefaultRootNodeId)
+      .function("getDefaultRootNodeId",
+                &TinyUSDZLoaderNative::getDefaultRootNodeId)
       .function("getRootNode", &TinyUSDZLoaderNative::getRootNode)
       .function("getDefaultRootNode", &TinyUSDZLoaderNative::getDefaultRootNode)
       .function("numRootNodes", &TinyUSDZLoaderNative::numRootNodes)
+      .function("setEnableComposition",
+                &TinyUSDZLoaderNative::setEnableComposition)
       .function("ok", &TinyUSDZLoaderNative::ok)
       .function("error", &TinyUSDZLoaderNative::error);
 
