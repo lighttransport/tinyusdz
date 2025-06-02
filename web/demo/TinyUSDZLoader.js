@@ -29,6 +29,7 @@ class TinyUSDZLoader extends Loader {
         this.imageCache = {};
         this.textureCache = {};
 
+        this.enableComposition_ = false;
     }
 
     // Initialize the native WASM module
@@ -47,11 +48,15 @@ class TinyUSDZLoader extends Loader {
         return this;
     }
 
-    //
+    setEnableComposition(enabled) {
+        this.enableComposition_ = enabled;
+    }
+
+
     // Set AssetResolver callback.
     // This is used to resolve asset paths(e.g. textures, usd files) in the USD.
     // For web app, usually we'll convert asset path to URI
-    setAssetResolver( callback ) {
+    setAssetResolver(callback) {
         this.assetResolver_ = callback;
     }
 
@@ -81,9 +86,9 @@ class TinyUSDZLoader extends Loader {
                 console.log('Loaded USD binary data:', usd_binary.length, 'bytes');
                 //return this.parse(usd_binary);
 
-                scope.parse(usd_binary, function(usd) {
+                scope.parse(usd_binary, url, function (usd) {
                     onLoad(usd);
-                } , onError);
+                }, onError);
 
             })
             .catch((error) => {
@@ -97,24 +102,24 @@ class TinyUSDZLoader extends Loader {
     //
     // Parse a USDZ/USDA/USDC binary data
     //
-    parse( binary /* ArrayBuffer */, onLoad, onError ) {
+    parse(binary /* ArrayBuffer */, filePath /* optional */, onLoad, onError) {
 
-      const _onError = function ( e ) {
+        const _onError = function (e) {
 
-        if ( onError ) {
+            if (onError) {
 
-          onError( e );
+                onError(e);
 
-        } else {
+            } else {
 
-          console.error( e );
+                console.error(e);
 
-        }
+            }
 
-        //scope.manager.itemError( url );
-        //scope.manager.itemEnd( url );
+            //scope.manager.itemError( url );
+            //scope.manager.itemEnd( url );
 
-      };
+        };
 
         if (!this.native_) {
             console.error('TinyUSDZLoader: Native module is not initialized.');
@@ -123,7 +128,7 @@ class TinyUSDZLoader extends Loader {
 
         const usd = new this.native_.TinyUSDZLoaderNative();
 
-        const ok = usd.loadFromBinary(binary);
+        const ok = usd.loadFromBinary(binary, filePath);
         if (!ok) {
             _onError(new Error('TinyUSDZLoader: Failed to load USD from binary data.'));
         } else {

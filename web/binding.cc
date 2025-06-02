@@ -301,18 +301,19 @@ class TinyUSDZLoaderNative {
   }
 #endif
 
-  bool loadFromBinary(const std::string &binary) {
+  bool loadFromBinary(const std::string &binary, const std::string &filename) {
     bool is_usdz = tinyusdz::IsUSDZ(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size());
 
     tinyusdz::Stage stage;
     loaded_ = tinyusdz::LoadUSDFromMemory(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
-        "dummy.usda", &stage, &warn_, &error_);
+        filename, &stage, &warn_, &error_);
 
     if (!loaded_) {
       return false;
     }
+
 
     tinyusdz::tydra::RenderSceneConverterEnv env(stage);
 
@@ -370,6 +371,8 @@ class TinyUSDZLoaderNative {
       error_ = converter.GetError();
       return false;
     }
+
+    filename_ = filename;
 
     return true;
   }
@@ -645,6 +648,11 @@ class TinyUSDZLoaderNative {
 
   void setEnableComposition(bool enabled) { enableComposition_ = enabled; }
 
+  // Return filename passed to loadFromBinary.
+  std::string getURI() const {
+    return filename_;
+  }
+
   // TODO: Deprecate
   bool ok() const { return loaded_; }
 
@@ -687,6 +695,7 @@ class TinyUSDZLoaderNative {
 
   bool loaded_{false};
   bool enableComposition_{false};
+  std::string filename_;
   std::string warn_;
   std::string error_;
 
@@ -892,6 +901,7 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("loadAsync", &TinyUSDZLoaderNative::loadAsync)
 #endif
       .function("loadFromBinary", &TinyUSDZLoaderNative::loadFromBinary)
+      .function("getURI", &TinyUSDZLoaderNative::getURI)
       .function("getMesh", &TinyUSDZLoaderNative::getMesh)
       .function("numMeshes", &TinyUSDZLoaderNative::numMeshes)
       .function("getMaterial", &TinyUSDZLoaderNative::getMaterial)
