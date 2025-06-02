@@ -150,65 +150,95 @@ bool AsciiParser::ParseTimeSampleValueOfArrayType(const uint32_t type_id, value:
     return true;
   }
 
+  // Use the runtime dispatch implementation
+  return ParseTimeSampleValueOfArrayTypeRuntimeDispatch(type_id, result);
+
+}
+
+bool AsciiParser::ParseTimeSampleValueOfArrayTypeRuntimeDispatch(const uint32_t type_id, value::Value *result) {
+  // Implementation moved here to avoid circular call
+  if (!result) {
+    return false;
+  }
+
+  if (MaybeNone()) {
+    (*result) = value::ValueBlock();
+    return true;
+  }
+
   value::Value val;
 
-#define PARSE_TYPE(__tyid, __type)                       \
+#define PARSE_ARRAY_TYPE(__tyid, __type)                       \
   if (__tyid == value::TypeTraits<__type>::type_id()) {             \
     std::vector<__type> typed_val; \
     if (!ParseBasicTypeArray(&typed_val)) {                             \
-      PUSH_ERROR_AND_RETURN("Failed to parse value with requested type `" + value::GetTypeName(__tyid) + "[]`"); \
+      PUSH_ERROR_AND_RETURN("Failed to parse array value with requested type `" + value::GetTypeName(__tyid) + "[]`"); \
     }                                                                  \
     val = value::Value(typed_val); \
   } else
 
-  // NOTE: `string` does not support multi-line string.
-  PARSE_TYPE(type_id, value::AssetPath)
-  PARSE_TYPE(type_id, value::token)
-  PARSE_TYPE(type_id, std::string)
-  PARSE_TYPE(type_id, float)
-  PARSE_TYPE(type_id, int32_t)
-  PARSE_TYPE(type_id, uint32_t)
-  PARSE_TYPE(type_id, int64_t)
-  PARSE_TYPE(type_id, uint64_t)
-  PARSE_TYPE(type_id, value::half)
-  PARSE_TYPE(type_id, value::half2)
-  PARSE_TYPE(type_id, value::half3)
-  PARSE_TYPE(type_id, value::half4)
-  PARSE_TYPE(type_id, float)
-  PARSE_TYPE(type_id, value::float2)
-  PARSE_TYPE(type_id, value::float3)
-  PARSE_TYPE(type_id, value::float4)
-  PARSE_TYPE(type_id, double)
-  PARSE_TYPE(type_id, value::double2)
-  PARSE_TYPE(type_id, value::double3)
-  PARSE_TYPE(type_id, value::double4)
-  PARSE_TYPE(type_id, value::quath)
-  PARSE_TYPE(type_id, value::quatf)
-  PARSE_TYPE(type_id, value::quatd)
-  PARSE_TYPE(type_id, value::color3f)
-  PARSE_TYPE(type_id, value::color4f)
-  PARSE_TYPE(type_id, value::color3d)
-  PARSE_TYPE(type_id, value::color4d)
-  PARSE_TYPE(type_id, value::vector3f)
-  PARSE_TYPE(type_id, value::normal3f)
-  PARSE_TYPE(type_id, value::point3f)
-  PARSE_TYPE(type_id, value::texcoord2f)
-  PARSE_TYPE(type_id, value::texcoord3f)
-  PARSE_TYPE(type_id, value::matrix2f)
-  PARSE_TYPE(type_id, value::matrix3f)
-  PARSE_TYPE(type_id, value::matrix4f)
-  PARSE_TYPE(type_id, value::matrix2d)
-  PARSE_TYPE(type_id, value::matrix3d)
-  PARSE_TYPE(type_id, value::matrix4d) {
-    PUSH_ERROR_AND_RETURN(" : TODO: timeSamples type " + value::GetTypeName(type_id));
+  // Parse array types using the existing ParseBasicTypeArray template functions
+  // All these types have explicit extern template declarations in this file
+  PARSE_ARRAY_TYPE(type_id, bool)
+  PARSE_ARRAY_TYPE(type_id, int32_t)
+  PARSE_ARRAY_TYPE(type_id, uint32_t)
+  PARSE_ARRAY_TYPE(type_id, int64_t)
+  PARSE_ARRAY_TYPE(type_id, uint64_t)
+  PARSE_ARRAY_TYPE(type_id, value::half)
+  PARSE_ARRAY_TYPE(type_id, value::half2)
+  PARSE_ARRAY_TYPE(type_id, value::half3)
+  PARSE_ARRAY_TYPE(type_id, value::half4)
+  PARSE_ARRAY_TYPE(type_id, float)
+  PARSE_ARRAY_TYPE(type_id, value::float2)
+  PARSE_ARRAY_TYPE(type_id, value::float3)
+  PARSE_ARRAY_TYPE(type_id, value::float4)
+  PARSE_ARRAY_TYPE(type_id, double)
+  PARSE_ARRAY_TYPE(type_id, value::double2)
+  PARSE_ARRAY_TYPE(type_id, value::double3)
+  PARSE_ARRAY_TYPE(type_id, value::double4)
+  PARSE_ARRAY_TYPE(type_id, value::texcoord2h)
+  PARSE_ARRAY_TYPE(type_id, value::texcoord2f)
+  PARSE_ARRAY_TYPE(type_id, value::texcoord2d)
+  PARSE_ARRAY_TYPE(type_id, value::texcoord3h)
+  PARSE_ARRAY_TYPE(type_id, value::texcoord3f)
+  PARSE_ARRAY_TYPE(type_id, value::texcoord3d)
+  PARSE_ARRAY_TYPE(type_id, value::point3h)
+  PARSE_ARRAY_TYPE(type_id, value::point3f)
+  PARSE_ARRAY_TYPE(type_id, value::point3d)
+  PARSE_ARRAY_TYPE(type_id, value::normal3h)
+  PARSE_ARRAY_TYPE(type_id, value::normal3f)
+  PARSE_ARRAY_TYPE(type_id, value::normal3d)
+  PARSE_ARRAY_TYPE(type_id, value::vector3h)
+  PARSE_ARRAY_TYPE(type_id, value::vector3f)
+  PARSE_ARRAY_TYPE(type_id, value::vector3d)
+  PARSE_ARRAY_TYPE(type_id, value::color3h)
+  PARSE_ARRAY_TYPE(type_id, value::color3f)
+  PARSE_ARRAY_TYPE(type_id, value::color3d)
+  PARSE_ARRAY_TYPE(type_id, value::color4h)
+  PARSE_ARRAY_TYPE(type_id, value::color4f)
+  PARSE_ARRAY_TYPE(type_id, value::color4d)
+  PARSE_ARRAY_TYPE(type_id, value::matrix2f)
+  PARSE_ARRAY_TYPE(type_id, value::matrix3f)
+  PARSE_ARRAY_TYPE(type_id, value::matrix4f)
+  PARSE_ARRAY_TYPE(type_id, value::matrix2d)
+  PARSE_ARRAY_TYPE(type_id, value::matrix3d)
+  PARSE_ARRAY_TYPE(type_id, value::matrix4d)
+  PARSE_ARRAY_TYPE(type_id, value::quath)
+  PARSE_ARRAY_TYPE(type_id, value::quatf)
+  PARSE_ARRAY_TYPE(type_id, value::quatd)
+  PARSE_ARRAY_TYPE(type_id, value::token)
+  PARSE_ARRAY_TYPE(type_id, value::StringData)
+  PARSE_ARRAY_TYPE(type_id, std::string)
+  PARSE_ARRAY_TYPE(type_id, Reference)
+  PARSE_ARRAY_TYPE(type_id, Path)
+  PARSE_ARRAY_TYPE(type_id, value::AssetPath) {
+    PUSH_ERROR_AND_RETURN("Unsupported array type: " + value::GetTypeName(type_id) + "[]");
   }
 
-#undef PARSE_TYPE
+#undef PARSE_ARRAY_TYPE
 
   (*result) = val;
-
   return true;
-
 }
 
 // `type_name` does not contain "[]"

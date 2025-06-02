@@ -52,20 +52,6 @@ void itoa(uint64_t n, char *b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
 void itoa(int64_t n, char *b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
 #endif
 
-inline std::string dtos(const float v) {
-  char buf[floaxie::max_buffer_size<float>()];
-  size_t n = floaxie::ftoa(v, buf);
-
-  return std::string(buf, buf + n);
-}
-
-inline std::string dtos(const double v) {
-  char buf[128];
-  dtoa_milo(v, buf);
-
-  return std::string(buf);
-}
-
 }  // namespace
 
 }  // namespace tinyusdz

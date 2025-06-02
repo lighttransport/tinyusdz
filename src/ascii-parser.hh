@@ -355,6 +355,13 @@ class AsciiParser {
   bool ParseTimeSampleValueOfArrayType(const std::string &type_name,
                                        value::Value *result);
 
+  ///
+  /// Runtime dispatch version of ParseTimeSampleValueOfArrayType
+  /// This reduces template compilation overhead
+  ///
+  bool ParseTimeSampleValueOfArrayTypeRuntimeDispatch(const uint32_t base_type_id,
+                                                      value::Value *result);
+
   // TODO: ParseBasicType?
   bool ParsePurpose(Purpose *result);
 
@@ -427,29 +434,30 @@ class AsciiParser {
   bool ReadBasicType(nonstd::optional<Identifier> *value);
   bool ReadBasicType(nonstd::optional<PathIdentifier> *value);
 
-  // template <typename T>
-  // bool ReadBasicType(T *value);
+  // Basic non-optional types 
+  bool ReadBasicType(PathIdentifier *value);
 
+  // Basic non-optional types 
   bool ReadBasicType(bool *value);
+  bool ReadBasicType(int *value);
+  bool ReadBasicType(uint32_t *value);
+  bool ReadBasicType(int64_t *value);
+  bool ReadBasicType(uint64_t *value);
+  bool ReadBasicType(float *value);
+  bool ReadBasicType(double *value);
   bool ReadBasicType(value::half *value);
   bool ReadBasicType(value::half2 *value);
   bool ReadBasicType(value::half3 *value);
   bool ReadBasicType(value::half4 *value);
-  bool ReadBasicType(int32_t *value);
   bool ReadBasicType(value::int2 *value);
   bool ReadBasicType(value::int3 *value);
   bool ReadBasicType(value::int4 *value);
-  bool ReadBasicType(uint32_t *value);
   bool ReadBasicType(value::uint2 *value);
   bool ReadBasicType(value::uint3 *value);
   bool ReadBasicType(value::uint4 *value);
-  bool ReadBasicType(int64_t *value);
-  bool ReadBasicType(uint64_t *value);
-  bool ReadBasicType(float *value);
   bool ReadBasicType(value::float2 *value);
   bool ReadBasicType(value::float3 *value);
   bool ReadBasicType(value::float4 *value);
-  bool ReadBasicType(double *value);
   bool ReadBasicType(value::double2 *value);
   bool ReadBasicType(value::double3 *value);
   bool ReadBasicType(value::double4 *value);
@@ -491,7 +499,8 @@ class AsciiParser {
   bool ReadBasicType(Reference *value);
   bool ReadBasicType(Payload *value);
   bool ReadBasicType(Identifier *value);
-  bool ReadBasicType(PathIdentifier *value);
+
+  // std::array ReadBasicType overloads (handled by value:: typedef aliases above)
 
   template <typename T>
   bool ReadBasicType(nonstd::optional<std::vector<T>> *value);
@@ -542,6 +551,24 @@ class AsciiParser {
                        std::vector<T> *result);
 
   ///
+  /// Parses 1 or more occurences of value with tuple type 'T', separated by `sep`
+  ///
+  template <typename T, size_t N>
+  bool SepBy1TupleType(const char sep, std::vector<nonstd::optional<std::array<T, N>>> *result);
+
+  ///
+  /// Parses 1 or more occurences of value with tuple type 'T', separated by `sep`
+  ///
+  template <typename T, size_t N>
+  bool SepBy1TupleType(const char sep, std::vector<std::array<T, N>> *result);
+
+  ///
+  /// Parses 1 or more occurences of value with basic type 'T', separated by `sep`
+  ///
+  template <typename T>
+  bool SepBy1BasicType(const char sep, std::vector<nonstd::optional<T>> *result);
+
+  ///
   /// Parse '[', Sep1By(','), ']'
   ///
   template <typename T>
@@ -554,39 +581,20 @@ class AsciiParser {
   bool ParseBasicTypeArray(std::vector<T> *result);
 
   ///
-  /// Parses 1 or more occurences of value with basic type 'T', separated by
-  /// `sep`
+  /// Runtime implementation for ParseBasicTypeArray (used by runtime dispatch)
+  /// This reduces template instantiation overhead
   ///
   template <typename T>
-  bool SepBy1BasicType(const char sep,
-                       std::vector<nonstd::optional<T>> *result);
+  bool ParseBasicTypeArrayImpl(std::vector<T> *result);
+
+  template <typename T>
+  bool ParseBasicTypeArrayImpl(std::vector<nonstd::optional<T>> *result);
 
   ///
-  /// Parses 1 or more occurences of tuple values with type 'T', separated by
-  /// `sep`. Allows 'None'
+  /// Runtime dispatch version - parses array based on type ID instead of templates
   ///
-  template <typename T, size_t N>
-  bool SepBy1TupleType(const char sep,
-                       std::vector<nonstd::optional<std::array<T, N>>> *result);
-
-  ///
-  /// Parses N occurences of tuple values with type 'T', separated by
-  /// `sep`. Allows 'None'
-  ///
-  template <typename T, size_t M, size_t N>
-  bool SepByNTupleType(
-      const char sep,
-      std::array<nonstd::optional<std::array<T, M>>, N> *result);
-
-  ///
-  /// Parses 1 or more occurences of tuple values with type 'T', separated by
-  /// `sep`
-  ///
-  template <typename T, size_t N>
-  bool SepBy1TupleType(const char sep, std::vector<std::array<T, N>> *result);
-
-  bool ParseDictElement(std::string *out_key, MetaVariable *out_var);
-  bool ParseDict(std::map<std::string, MetaVariable> *out_dict);
+  bool ParseBasicTypeArrayByTypeId(uint32_t type_id, void* result_ptr);
+  bool ParseOptionalBasicTypeArrayByTypeId(uint32_t type_id, void* result_ptr);
 
   ///
   /// Parse TimeSample data(scalar type) and store it to type-erased data
@@ -612,6 +620,12 @@ class AsciiParser {
   ///
   bool ParseVariantsElement(std::string *out_key, std::string *out_var);
   bool ParseVariants(VariantSelectionMap *out_map);
+
+  ///
+  /// Parse dictionary elements and dictionaries (used in meta parsing)
+  ///
+  bool ParseDictElement(std::string *out_key, MetaVariable *out_var);
+  bool ParseDict(std::map<std::string, MetaVariable> *out_dict);
 
   bool MaybeListEditQual(tinyusdz::ListEditQual *qual);
   bool MaybeVariability(tinyusdz::Variability *variability,

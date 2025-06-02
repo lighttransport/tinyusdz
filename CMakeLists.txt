@@ -408,6 +408,10 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/usdObj.cc
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
     ${PROJECT_SOURCE_DIR}/src/pprinter.cc
+    ${PROJECT_SOURCE_DIR}/src/pprinter-geom.cc
+    ${PROJECT_SOURCE_DIR}/src/pprinter-light.cc
+    ${PROJECT_SOURCE_DIR}/src/pprinter-material.cc
+    ${PROJECT_SOURCE_DIR}/src/pprinter-util.cc
     ${PROJECT_SOURCE_DIR}/src/stage.cc
     ${PROJECT_SOURCE_DIR}/src/stage.hh
     )

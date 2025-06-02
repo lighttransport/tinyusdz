@@ -9,6 +9,18 @@
 #include <sstream>
 
 #include "value-types.hh"
+#include "external/dtoa_milo.h"
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wfloat-equal"
+#pragma clang diagnostic ignored "-Wsign-conversion"
+#pragma clang diagnostic ignored "-Wimplicit-int-conversion"
+#pragma clang diagnostic ignored "-Wfloat-conversion"
+#endif
+#include "external/floaxie/floaxie/ftoa.h"
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 // forward decl
 namespace tinyusdz {
@@ -163,6 +175,18 @@ std::ostream &operator<<(std::ostream &os, const std::vector<uint64_t> &v);
 }  // namespace std
 
 namespace tinyusdz {
+
+inline std::string dtos(const float v) {
+  char buf[floaxie::max_buffer_size<float>()];
+  size_t n = floaxie::ftoa(v, buf);
+  return std::string(buf, buf + n);
+}
+
+inline std::string dtos(const double v) {
+  char buf[128];
+  dtoa_milo(v, buf);
+  return std::string(buf);
+}
 
 std::string to_string(bool v);
 std::string to_string(int32_t v);
