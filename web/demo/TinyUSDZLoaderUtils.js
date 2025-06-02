@@ -51,15 +51,15 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
     // - [x] occlusion -> aoMap
     // - [x] normal -> normalMap
     // - [x] displacement -> displacementMap
-    static convertUsdMaterialToMeshPhysicalMaterial(usdMaterial, usd) {
+    static convertUsdMaterialToMeshPhysicalMaterial(usdMaterial, usdScene) {
         const material = new THREE.MeshPhysicalMaterial();
 
         // Helper function to create texture from USD texture ID
         function createTextureFromUSD(textureId) {
             if (textureId === undefined) return null;
 
-            const tex = usd.getTexture(textureId);
-            const img = usd.getImage(tex.textureImageId);
+            const tex = usdScene.getTexture(textureId);
+            const img = usdScene.getImage(tex.textureImageId);
 
             const image8Array = new Uint8ClampedArray(img.data);
             const texture = new THREE.DataTexture(image8Array, img.width, img.height);
@@ -79,6 +79,8 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         if (usdMaterial.hasOwnProperty('diffuseColorTextureId')) {
             material.map = createTextureFromUSD(usdMaterial.diffuseColorTextureId);
+            console.log("has diffuse tex");
+
         }
 
         // IOR
@@ -105,13 +107,13 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         }
 
         if (material.useSpecularWorkflow) {
-            material.specular = new THREE.Color(0.0, 0.0, 0.0);
+            material.specularColor = new THREE.Color(0.0, 0.0, 0.0);
             if (usdMaterial.hasOwnProperty('specularColor')) {
                 const color = usdMaterial.specularColor;
-                material.specular = new THREE.Color(color[0], color[1], color[2]);
+                material.specularColor = new THREE.Color(color[0], color[1], color[2]);
             }
             if (usdMaterial.hasOwnProperty('specularColorTextureId')) {
-                material.specularMap = createTextureFromUSD(usdMaterial.specularColorTextureId);
+                material.specularColorMap = createTextureFromUSD(usdMaterial.specularColorTextureId);
             }
         } else {
             material.metalness = 0.0;
@@ -172,6 +174,133 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         return material;
     }
+
+    static convertUsdMeshToThreeMesh(mesh) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(mesh.points, 3));
+
+      // Assume mesh is triangulated.
+      // itemsize = 1 since Index expects IntArray for VertexIndices in Three.js?
+      geometry.setIndex(new THREE.BufferAttribute(mesh.faceVertexIndices, 1));
+
+      if (mesh.hasOwnProperty('texcoords')) {
+        geometry.setAttribute('uv', new THREE.BufferAttribute(mesh.texcoords, 2));
+      }
+
+      // TODO: uv1
+
+      // faceVarying normals
+      if (mesh.hasOwnProperty('normals')) {
+        geometry.setAttribute('normal', new THREE.BufferAttribute(mesh.normals, 3));
+      } else {
+        geometry.computeVertexNormals();
+      }
+
+      if (mesh.hasOwnProperty('vertexColors')) {
+        geometry.setAttribute('color', new THREE.BufferAttribute(mesh.vertexColors, 3));
+
+      }
+
+      // Only compute tangents if we have both UV coordinates and normals
+      if (mesh.hasOwnProperty('tangents')) {
+        geometry.setAttribute('tangent', new THREE.BufferAttribute(mesh.tangents, 3));
+      } else if (mesh.hasOwnProperty('texcoords') && (mesh.hasOwnProperty('normals') || geometry.attributes.normal)) {
+        // TODO: try MikTSpace tangent algorithm: https://threejs.org/docs/#examples/en/utils/BufferGeometryUtils.computeMikkTSpaceTangents 
+        geometry.computeTangents();
+      }
+
+      // TODO: vertex opacities(per-vertex alpha)
+
+      return geometry;
+    }
+
+    static setupMesh(mesh /* TinyUSDZLoaderNative::RenderMesh */, defaultMtl, usdScene, options) {
+
+        const geometry = this.convertUsdMeshToThreeMesh(mesh);
+
+        const normalMtl = new THREE.MeshNormalMaterial();
+
+        let mtl = null;
+
+        //console.log("overrideMaterial:", options.overrideMaterial);
+        if (options.overrideMaterial) {
+            mtl = defaultMtl || normalMtl
+        } else {
+
+            const usdMaterial = usdScene.getMaterial(mesh.materialId);
+
+            const pbrMaterial = this.convertUsdMaterialToMeshPhysicalMaterial(usdMaterial, usdScene);
+            //console.log("pbrMaterial:", pbrMaterial);
+
+
+            // Setting envmap is required for PBR materials to work correctly(e.g. clearcoat)
+            pbrMaterial.envMap = options.envMap || null;
+            pbrMaterial.envMapIntensity = options.envMapIntensity || 1.0;
+
+            console.log("envmap:", options.envMap);
+
+            mtl = pbrMaterial || defaultMtl || normalMtl;
+        }
+
+        const threeMesh = new THREE.Mesh(geometry, mtl );
+
+        return threeMesh;
+    }
+
+
+    // arr = float array with 16 elements(row major order)
+    static toMatrix4(a) {
+      const m = new THREE.Matrix4();
+
+      m.set(a[0], a[1], a[2], a[3],
+        a[4], a[5], a[6], a[7],
+        a[8], a[9], a[10], a[11],
+        a[12], a[13], a[14], a[15]);
+
+      return m;
+    }
+
+    // Supported options
+    // 'overrideMaterial' : Override usd material with defaultMtl.
+
+  static buildThreeNode(usdNode /* TinyUSDZLoader.Node */, defaultMtl = null, usdScene /* TinyUSDZLoader.Scene */ = null, options = {})
+   /* => THREE.Object3D */ {
+
+    var node = new THREE.Group();
+
+    if (usdNode.nodeType == 'xform') {
+
+      // intermediate xform node
+      // TODO: create THREE.Group and apply transform.
+      node.matrix = this.toMatrix4(usdNode.localMatrix);
+
+    } else if (usdNode.nodeType == 'mesh') {
+
+      // contentId is the mesh ID in the USD scene.
+      const mesh = usdScene.getMesh(usdNode.contentId);
+
+      const threeMesh = this.setupMesh(mesh, defaultMtl, usdScene, options);
+      node = threeMesh;
+
+    } else {
+      // ???
+
+    }
+
+    node.name = usdNode.primName;
+    node.userData['primMeta.displayName'] = usdNode.displayName;
+    node.userData['primMeta.absPath'] = usdNode.absPath;
+
+
+    // traverse children
+    for (const child of usdNode.children) {
+      const childNode = this.buildThreeNode(child, defaultMtl, usdScene, options);
+      node.add(childNode);
+    }
+
+    return node;
+  }
+
 }
 
 export { TinyUSDZLoaderUtils };
