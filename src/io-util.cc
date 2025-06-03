@@ -343,7 +343,8 @@ bool MMapFile(const std::wstring &unicode_filepath, MMapFileHandle *handle, bool
 bool UnmapFile(const MMapFileHandle &handle, std::string *err) {
 #if TINYUSDZ_MMAP_SUPPORTED
 #if defined(_WIN32)
-  bool result = false;  
+  bool result = true;
+
   if (handle.addr && handle.size) {
     if (!UnmapViewOfFile(handle.addr)) {
       if (err) {
@@ -351,12 +352,24 @@ bool UnmapFile(const MMapFileHandle &handle, std::string *err) {
                   llama_format_win_err(GetLastError());
       }
 
-      result = true;
-    }
+      // may ok for now.
+      // result = false;
+    } 
+  } else {
+    // arg is invalid
+    result = false;
   }
 
-  if (handle.hFile != nullptr)
-      CloseHandle(handle.hFile);
+  if (handle.hFile != nullptr) {
+    if (!CloseHandle(handle.hFile)) {
+      if (err) {
+        (*err) += "CloseHandle failed: " +
+                  llama_format_win_err(GetLastError());
+      }
+      
+      result =false; 
+    }
+  }
 
   return result;
 #else  // !WIN32
