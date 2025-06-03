@@ -28,7 +28,7 @@ let ui_state = {}
 ui_state['rot_scale'] = 1.0;
 ui_state['defaultMtl'] = TinyUSDZLoaderUtils.createDefaultMaterial();
 
-ui_state['envMapIntensity'] = 3.0; // good for pisaHDR;
+ui_state['envMapIntensity'] = 3.14; // pi is good for pisaHDR;
 ui_state['ambient'] = 0.4;
 let ambientLight = new THREE.AmbientLight(0x404040, ui_state['ambient']);
 ui_state['camera_z'] = 4; // TODO: Compute best fit from scene's bbox.
@@ -57,6 +57,10 @@ async function loadScenes() {
 
   const loader = new TinyUSDZLoader();
 
+  // it is recommended to call init() before loadAsync()
+  // (wait loading/compiling wasm module in the early stage))
+  await loader.init();
+
   const suzanne_filename = "./suzanne-pbr.usda";
   const texcat_filename = "./texture-cat-plane.usdz";
   const cookie_filename = "./UsdCookie.usdz";
@@ -76,7 +80,7 @@ async function loadScenes() {
   const options = {
     overrideMaterial: false, // override USD material with defaultMtl(default 'false')
     envMap: defaultMtl.envMap, // reuse envmap from defaultMtl
-    envMapIntensity: ui_state['envmapIntensity'], // default envmap intensity
+    envMapIntensity: ui_state['envMapIntensity'], // default envmap intensity
   }
 
   var offset = -(usd_scenes.length-1) * 1.5;
