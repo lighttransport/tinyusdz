@@ -241,6 +241,7 @@ bool MMapFile(const std::string &filepath, MMapFileHandle *handle, bool writable
     return false;
   }
 
+  handle->hFile = hFile;  
   handle->filename = filepath;
   handle->unicode_filename = unicode_filepath;
 
@@ -320,9 +321,11 @@ bool MMapFile(const std::wstring &unicode_filepath, MMapFileHandle *handle, bool
   }
 
   if (!MMapFileImplWin32(hFile, handle, writable, err)) {
+    CloseHandle(hFile);
     return false;
   }
 
+  handle->hFile = hFile; 
   handle->filename = WcharToUTF8(unicode_filepath);
   handle->unicode_filename = unicode_filepath;
 
@@ -340,18 +343,35 @@ bool MMapFile(const std::wstring &unicode_filepath, MMapFileHandle *handle, bool
 bool UnmapFile(const MMapFileHandle &handle, std::string *err) {
 #if TINYUSDZ_MMAP_SUPPORTED
 #if defined(_WIN32)
+  bool result = true;
+
   if (handle.addr && handle.size) {
     if (!UnmapViewOfFile(handle.addr)) {
       if (err) {
         (*err) += "warning: UnmapViewOfFile failed: " +
                   llama_format_win_err(GetLastError());
       }
-      // May ok for now
-      return true;
+
+      // may be ok for now.
+      // result = false;
+    } 
+  } else {
+    // arg is invalid
+    result = false;
+  }
+
+  if (handle.hFile != nullptr) {
+    if (!CloseHandle(handle.hFile)) {
+      if (err) {
+        (*err) += "CloseHandle failed: " +
+                  llama_format_win_err(GetLastError());
+      }
+      
+      result =false; 
     }
   }
 
-  return false;
+  return result;
 #else  // !WIN32
   if (handle.addr && handle.size) {
     int ret = munmap(reinterpret_cast<void *>(handle.addr), size_t(handle.size));
