@@ -352,7 +352,7 @@ bool UnmapFile(const MMapFileHandle &handle, std::string *err) {
                   llama_format_win_err(GetLastError());
       }
 
-      // may ok for now.
+      // may be ok for now.
       // result = false;
     } 
   } else {
