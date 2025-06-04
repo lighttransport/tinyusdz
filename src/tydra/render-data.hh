@@ -601,6 +601,7 @@ struct TextureImage {
 
   int64_t buffer_id{-1};  // index to buffer_id(texel data)
 
+  bool decoded{false}; // true if texture data(buffer_id) is decoded. false if buffer_id contains raw image data(e.g. JPEG data)
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
 };
 

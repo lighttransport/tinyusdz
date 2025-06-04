@@ -4265,6 +4265,53 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
                   prim->prim_type_name()));
 }
 
+static bool RawAssetRead(
+    const value::AssetPath &assetPath, const AssetInfo &assetInfo,
+    const AssetResolutionResolver &assetResolver,
+    Asset *assetOut,
+    std::string &resolvedPathOut,
+    void *userdata, std::string *warn,
+    std::string *err) {
+  if (!assetOut) {
+    if (err) {
+      (*err) = "`assetOut` argument is nullptr\n";
+    }
+    return false;
+  }
+
+  // TODO: assetInfo
+  (void)assetInfo;
+  (void)userdata;
+  (void)warn;
+
+  std::string resolvedPath = assetResolver.resolve(assetPath.GetAssetPath());
+
+  if (resolvedPath.empty()) {
+    if (err) {
+      (*err) += fmt::format("Failed to resolve asset path: {}\n",
+                            assetPath.GetAssetPath());
+    }
+    return false;
+  }
+
+  Asset asset;
+  bool ret = assetResolver.open_asset(resolvedPath, assetPath.GetAssetPath(),
+                                      &asset, warn, err);
+  if (!ret) {
+    if (err) {
+      (*err) += fmt::format("Failed to open asset: {}", resolvedPath);
+    }
+    return false;
+  }
+
+  DCOUT("Resolved asset path = " << resolvedPath);
+
+  resolvedPathOut = resolvedPath;
+  (*assetOut) = std::move(asset);
+
+  return true;
+}
+
 }  // namespace
 
 // Convert UsdUVTexture shader node.
@@ -4351,11 +4398,40 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
 
       // store unresolved asset path.
       texImage.asset_identifier = assetPath.GetAssetPath();
+      texImage.decoded = true;
 
     } else {
-      // store resolved asset path.
-      texImage.asset_identifier =
-          env.asset_resolver.resolve(assetPath.GetAssetPath());
+
+      Asset asset;
+      std::string resolvedPath;
+      if (RawAssetRead(assetPath, assetInfo, env.asset_resolver, &asset, resolvedPath, /* userdata */nullptr, /* warn */nullptr, &err )) {
+        
+        // store resolved asset path.
+        texImage.asset_identifier = resolvedPath;
+        
+
+        BufferData imageBuffer;
+        imageBuffer.componentType = tydra::ComponentType::UInt8;
+
+        imageBuffer.data.resize(asset.size());
+        memcpy(imageBuffer.data.data(), asset.data(), asset.size());
+
+        // Assign buffer id
+        texImage.buffer_id = int64_t(buffers.size());
+
+        // TODO: Share image data as much as possible.
+        // e.g. Texture A and B uses same image file, but texturing parameter is
+        // different.
+        buffers.emplace_back(imageBuffer);
+        
+        texImage.decoded = false;
+      
+      } else {
+        // store resolved asset path.
+        texImage.asset_identifier = env.asset_resolver.resolve(assetPath.GetAssetPath());
+        texImage.decoded = false;
+      }
+
     }
 
     // colorSpace.
@@ -6183,6 +6259,7 @@ bool DefaultTextureImageLoaderFunction(
 
   return true;
 }
+
 
 std::string to_string(ColorSpace cty) {
   std::string s;
