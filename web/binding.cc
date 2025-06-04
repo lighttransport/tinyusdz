@@ -320,7 +320,8 @@ class TinyUSDZLoaderNative {
     //
     // false = Load Texture in JS Layer
     //
-    // env.scene_config.load_texture_assets = false;
+
+    env.scene_config.load_texture_assets = loadTextureOnLoad_;
 
     env.material_config.preserve_texel_bitdepth = true;
 
@@ -647,6 +648,9 @@ class TinyUSDZLoaderNative {
   int numRootNodes() { return render_scene_.nodes.size(); }
 
   void setEnableComposition(bool enabled) { enableComposition_ = enabled; }
+  void setLoadTextureOnLoad(bool onoff) {
+    loadTextureOnLoad_ = onoff;
+  }
 
   // Return filename passed to loadFromBinary.
   std::string getURI() const {
@@ -695,6 +699,8 @@ class TinyUSDZLoaderNative {
 
   bool loaded_{false};
   bool enableComposition_{false};
+  bool loadTextureOnLoad_{false};
+
   std::string filename_;
   std::string warn_;
   std::string error_;
@@ -914,6 +920,8 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("numRootNodes", &TinyUSDZLoaderNative::numRootNodes)
       .function("setEnableComposition",
                 &TinyUSDZLoaderNative::setEnableComposition)
+      .function("setLoadTextureOnLoad",
+                &TinyUSDZLoaderNative::setLoadTextureOnLoad)
       .function("ok", &TinyUSDZLoaderNative::ok)
       .function("error", &TinyUSDZLoaderNative::error);
 
