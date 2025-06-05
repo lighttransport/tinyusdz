@@ -592,7 +592,7 @@ struct TextureImage {
 
   ColorSpace colorSpace{ColorSpace::sRGB};  // color space of texel data.
   ColorSpace usdColorSpace{
-      ColorSpace::sRGB};  // original color space info in UsdUVTexture
+      ColorSpace::sRGB};  // original color space info in UsdUVTexture(asset meta or sourceColorSpace attrib)
 
   int32_t width{-1};
   int32_t height{-1};
