@@ -4425,11 +4425,14 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
         buffers.emplace_back(imageBuffer);
         
         texImage.decoded = false;
+        DCOUT("texture image is read, but not decoded.");
       
       } else {
         // store resolved asset path.
         texImage.asset_identifier = env.asset_resolver.resolve(assetPath.GetAssetPath());
         texImage.decoded = false;
+
+        DCOUT("store asset path.");
       }
 
     }
@@ -4696,6 +4699,21 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
       ss << "  colorSpace " << tinyusdz::tydra::to_string(texImage.colorSpace)
          << "\n";
       PushInfo(ss.str());
+    } else {
+
+      tex.texture_image_id = int64_t(images.size());
+
+      images.emplace_back(texImage);
+
+      std::stringstream ss;
+      ss << "Loaded texture image " << assetPath.GetAssetPath()
+         << " : buffer_id " + std::to_string(texImage.buffer_id) << "\n";
+      ss << "  width x height x components " << texImage.width << " x "
+         << texImage.height << " x " << texImage.channels << "\n";
+      ss << "  colorSpace " << tinyusdz::tydra::to_string(texImage.colorSpace)
+         << "\n";
+      PushInfo(ss.str());
+
     }
   }
 
@@ -7215,6 +7233,8 @@ std::string DumpImage(const TextureImage &image, uint32_t indent) {
   ss << "TextureImage {\n";
   ss << pprint::Indent(indent + 1) << "asset_identifier \""
      << image.asset_identifier << "\"\n";
+  ss << pprint::Indent(indent + 1) << "decoded \""
+     << image.decoded << "\"\n";
   ss << pprint::Indent(indent + 1) << "channels "
      << std::to_string(image.channels) << "\n";
   ss << pprint::Indent(indent + 1) << "width " << std::to_string(image.width)
@@ -7225,6 +7245,8 @@ std::string DumpImage(const TextureImage &image, uint32_t indent) {
      << std::to_string(image.miplevel) << "\n";
   ss << pprint::Indent(indent + 1) << "colorSpace "
      << to_string(image.colorSpace) << "\n";
+  ss << pprint::Indent(indent + 1) << "usdColorSpace "
+     << to_string(image.usdColorSpace) << "\n";
   ss << pprint::Indent(indent + 1) << "bufferID "
      << std::to_string(image.buffer_id) << "\n";
 
