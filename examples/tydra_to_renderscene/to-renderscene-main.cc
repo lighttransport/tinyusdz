@@ -24,6 +24,56 @@
 #include "value-pprint.hh"
 #include "value-types.hh"
 
+static int NullARResolve(const char *asset_name,
+                       const std::vector<std::string> &search_paths,
+                       std::string *resolved_asset_name, std::string *err,
+                       void *userdata) {
+  (void)err;
+  (void)userdata;
+  (void)search_paths;
+  (void)asset_name;
+  (void)resolved_asset_name;
+  return -1;
+}
+
+static int NullARSize(const char *asset_name, uint64_t *nbytes, std::string *err,
+                    void *userdata) {
+  (void)userdata;
+  (void)asset_name;
+  (void)nbytes;
+  (void)err;
+
+  return -1;
+}
+
+static int NullARRead(const char *asset_name, uint64_t req_nbytes, uint8_t *out_buf,
+             uint64_t *nbytes, std::string *err, void *userdata) {
+  
+  (void)asset_name;
+  (void)req_nbytes;
+  (void)out_buf;
+  (void)nbytes;
+  (void)err;
+  (void)userdata;
+
+  return -1;
+}
+
+static bool SetupNullAssetResolution(
+  tinyusdz::AssetResolutionResolver &resolver)
+{
+  tinyusdz::AssetResolutionHandler handler;
+  handler.resolve_fun = NullARResolve;
+  handler.size_fun = NullARSize;
+  handler.read_fun = NullARRead;
+  handler.write_fun = nullptr;
+  handler.userdata = nullptr;
+
+  resolver.register_wildcard_asset_resolution_handler(handler);
+
+  return true;
+}
+
 int main(int argc, char **argv) {
   if (argc < 2) {
     std::cout << "Usage: " << argv[0] << " input.usd [OPTIONS].\n";
@@ -31,6 +81,8 @@ int main(int argc, char **argv) {
     std::cout << "  --timecode VALUE: Specify timecode value(e.g. 3.14)\n";
     std::cout << "  --noidxbuild: Do not rebuild vertex indices\n";
     std::cout << "  --notri: Do not triangulate mesh\n";
+    std::cout << "  --notexload: Do not load textures\n";
+    std::cout << "  --noar: Do not use (default) AssertResolver\n";
     std::cout << "  --nousdprint: Do not print parsed USD\n";
     std::cout
         << "  --dumpobj: Dump mesh as wavefront .obj(for visual debugging)\n";
@@ -48,6 +100,8 @@ int main(int argc, char **argv) {
   bool export_obj = false;
   bool export_usd = false;
   bool no_usdprint = false;
+  bool no_texload = false;
+  bool no_assetresolver = false;
 
   std::string filepath;
   for (int i = 1; i < argc; i++) {
@@ -57,6 +111,10 @@ int main(int argc, char **argv) {
       build_indices = false;
     } else if (strcmp(argv[i], "--nousdprint") == 0) {
       no_usdprint = true;
+    } else if (strcmp(argv[i], "--notexload") == 0) {
+      no_texload = true;
+    } else if (strcmp(argv[i], "--noar") == 0) {
+      no_assetresolver = true;
     } else if (strcmp(argv[i], "--dumpobj") == 0) {
       export_obj = true;
     } else if (strcmp(argv[i], "--dumpusd") == 0) {
@@ -117,6 +175,9 @@ int main(int argc, char **argv) {
             << "\n";
   env.mesh_config.build_vertex_indices = build_indices;
 
+  std::cout << "Load texture data : " << (!no_texload ? "true" : "false") << "\n";
+  env.scene_config.load_texture_assets = !no_texload;
+
   // Add base directory of .usd file to search path.
   std::string usd_basedir = tinyusdz::io::GetBaseDir(filepath);
   std::cout << "Add seach path: " << usd_basedir << "\n";
@@ -135,22 +196,26 @@ int main(int argc, char **argv) {
 
     tinyusdz::AssetResolutionResolver arr;
 
-    // NOTE: Pointer address of usdz_asset must be valid until the call of
-    // RenderSceneConverter::ConvertToRenderScene.
-    if (!tinyusdz::SetupUSDZAssetResolution(arr, &usdz_asset)) {
-      std::cerr << "Failed to setup AssetResolution for USDZ asset\n";
-      exit(-1);
-    };
+    if (no_assetresolver) {
+      SetupNullAssetResolution(arr);
+    } else {
+      // NOTE: Pointer address of usdz_asset must be valid until the call of
+      // RenderSceneConverter::ConvertToRenderScene.
+      if (!tinyusdz::SetupUSDZAssetResolution(arr, &usdz_asset)) {
+        std::cerr << "Failed to setup AssetResolution for USDZ asset\n";
+        exit(-1);
+      };
+    }
 
     env.asset_resolver = arr;
 
   } else {
     env.set_search_paths({usd_basedir});
 
-    // TODO: Add example to set user-defined AssetResolutionResolver
-    // AssetResolutionResolver arr;
-    // ...
-    // env.asset_resolver(arr);
+    if (no_assetresolver) {
+      SetupNullAssetResolution(env.asset_resolver);
+      std::cout << "Null asset resolver\n";
+    }
   }
 
   if (!tinyusdz::value::TimeCode(timecode).is_default()) {
