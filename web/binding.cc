@@ -4,6 +4,7 @@
 #include <emscripten/bind.h>
 #include <emscripten/console.h>
 #include <emscripten/em_js.h>
+#include <emscripten/fetch.h>
 
 #include <string>
 #include <vector>
@@ -12,6 +13,25 @@
 #include "tinyusdz.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
+
+void downloadSucceeded(emscripten_fetch_t *fetch) {
+  printf("Finished downloading %llu bytes from URL %s.\n", fetch->numBytes, fetch->url);
+  // The data is now available at fetch->data[0] through fetch->data[fetch->numBytes-1];
+  emscripten_fetch_close(fetch); // Free data associated with the fetch.
+}
+
+void downloadFailed(emscripten_fetch_t *fetch) {
+  printf("Downloading %s failed, HTTP failure status code: %d.\n", fetch->url, fetch->status);
+  emscripten_fetch_close(fetch); // Also free data on failure.
+}
+
+void downloadProgress(emscripten_fetch_t *fetch) {
+  if (fetch->totalBytes) {
+    printf("Downloading %s.. %.2f%% complete.\n", fetch->url, fetch->dataOffset * 100.0 / fetch->totalBytes);
+  } else {
+    printf("Downloading %s.. %lld bytes complete.\n", fetch->url, fetch->dataOffset + fetch->numBytes);
+  }
+}
 
 using namespace emscripten;
 
@@ -126,7 +146,9 @@ EM_ASYNC_JS(bool, loadAsyncImpl,
             });
 #endif
 
-struct HTTPAssetResolutionResolver {
+
+// Use Emscripten's FETCH API
+struct FetchAssetResolutionResolver {
   static int Resolve(const char *asset_name,
                      const std::vector<std::string> &search_paths,
                      std::string *resolved_asset_name, std::string *err,
@@ -229,45 +251,23 @@ struct HTTPAssetResolutionResolver {
   }
 };
 
-bool SetupHTTPAssetResolution(
+bool SetupFetchAssetResolution(
     tinyusdz::AssetResolutionResolver &resolver,
     /* must be the persistent pointer address until usd load finishes */
-    const HTTPAssetResolutionResolver *p) {
+    const FetchAssetResolutionResolver *p) {
   if (!p) {
     return false;
   }
 
-  // https://openusd.org/release/spec_usdz.html
-  //
-  // [x] Image: png, jpeg(jpg), exr
-  // [x] USD: usda, usdc, usd
-  //
-  // TODO(LTE):
-  // [ ] Audio: m4a, mp3, wav
-
   tinyusdz::AssetResolutionHandler handler;
-  handler.resolve_fun = HTTPAssetResolutionResolver::Resolve;
-  handler.size_fun = HTTPAssetResolutionResolver::Size;
-  handler.read_fun = HTTPAssetResolutionResolver::Read;
+  handler.resolve_fun = FetchAssetResolutionResolver::Resolve;
+  handler.size_fun = FetchAssetResolutionResolver::Size;
+  handler.read_fun = FetchAssetResolutionResolver::Read;
   handler.write_fun = nullptr;
   handler.userdata =
-      reinterpret_cast<void *>(const_cast<HTTPAssetResolutionResolver *>(p));
+      reinterpret_cast<void *>(const_cast<FetchAssetResolutionResolver *>(p));
 
-  resolver.register_asset_resolution_handler("png", handler);
-  resolver.register_asset_resolution_handler("PNG", handler);
-  resolver.register_asset_resolution_handler("JPG", handler);
-  resolver.register_asset_resolution_handler("jpg", handler);
-  resolver.register_asset_resolution_handler("jpeg", handler);
-  resolver.register_asset_resolution_handler("JPEG", handler);
-  resolver.register_asset_resolution_handler("exr", handler);
-  resolver.register_asset_resolution_handler("EXR", handler);
-
-  resolver.register_asset_resolution_handler("usd", handler);
-  resolver.register_asset_resolution_handler("USD", handler);
-  resolver.register_asset_resolution_handler("usda", handler);
-  resolver.register_asset_resolution_handler("USDA", handler);
-  resolver.register_asset_resolution_handler("usdc", handler);
-  resolver.register_asset_resolution_handler("USDC", handler);
+  resolver.register_wildcard_asset_resolution_handler(handler);
 
   return true;
 }
@@ -352,8 +352,8 @@ class TinyUSDZLoaderNative {
       env.asset_resolver = arr;
     } else {
       tinyusdz::AssetResolutionResolver arr;
-      if (!SetupHTTPAssetResolution(arr, &http_resolver_)) {
-        std::cerr << "Failed to setup HTTPAssetResolution\n";
+      if (!SetupFetchAssetResolution(arr, &http_resolver_)) {
+        std::cerr << "Failed to setup FetchAssetResolution\n";
         loaded_ = false;
         return false;
       }
@@ -707,7 +707,7 @@ class TinyUSDZLoaderNative {
 
   tinyusdz::tydra::RenderScene render_scene_;
   tinyusdz::USDZAsset usdz_asset_;
-  HTTPAssetResolutionResolver http_resolver_;
+  FetchAssetResolutionResolver http_resolver_;
 };
 
 ///

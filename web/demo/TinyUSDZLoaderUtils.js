@@ -2,12 +2,178 @@ import * as THREE from 'three';
 
 import { LoaderUtils } from "three"
 
+const wait = async (ms) => {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      resolve();
+    }, ms)
+  });
+}
+
+function createCheckerTexture() {
+    // Create checker pattern placeholder
+    const width = 64;
+    const height = 64;
+    const size = width * height;
+    const data = new Uint8Array(4 * size);
+
+    const checkerSize = 8;
+    const color1 = [200, 200, 200, 255]; // Light gray
+    const color2 = [100, 100, 100, 255]; // Dark gray
+
+    for (let i = 0; i < height; i++) {
+        for (let j = 0; j < width; j++) {
+            const index = (i * width + j) * 4;
+            
+            const checkerX = Math.floor(j / checkerSize);
+            const checkerY = Math.floor(i / checkerSize);
+            const isEven = (checkerX + checkerY) % 2 === 0;
+            
+            const color = isEven ? color1 : color2;
+            
+            data[index] = color[0];     // R
+            data[index + 1] = color[1]; // G
+            data[index + 2] = color[2]; // B
+            data[index + 3] = color[3]; // A
+        }
+    }
+
+    const texture = new THREE.DataTexture(data, width, height);
+    texture.format = THREE.RGBAFormat;
+    texture.needsUpdate = true;
+
+    console.log("checker");
+    return texture;
+}
+
+// TODO delete
+//class DelayedTexture extends THREE.Texture {
+//    constructor(uri, usd) {
+//        // Start with a placeholder
+//        super();
+//        
+//        this.uri = uri;
+//        this.loaded = false;
+//        this.loading = false;
+//        
+//        // Create placeholder
+//        //this.createPlaceholder();
+//    }
+//
+//    createPlaceholder() {
+//        // Create checker pattern placeholder
+//        const width = 64;
+//        const height = 64;
+//        const size = width * height;
+//        const data = new Uint8Array(4 * size);
+//
+//        const checkerSize = 8;
+//        const color1 = [200, 200, 200, 255]; // Light gray
+//        const color2 = [100, 100, 100, 255]; // Dark gray
+//
+//        for (let i = 0; i < height; i++) {
+//            for (let j = 0; j < width; j++) {
+//                const index = (i * width + j) * 4;
+//                
+//                const checkerX = Math.floor(j / checkerSize);
+//                const checkerY = Math.floor(i / checkerSize);
+//                const isEven = (checkerX + checkerY) % 2 === 0;
+//                
+//                const color = isEven ? color1 : color2;
+//                
+//                data[index] = color[0];     // R
+//                data[index + 1] = color[1]; // G
+//                data[index + 2] = color[2]; // B
+//                data[index + 3] = color[3]; // A
+//            }
+//        }
+//
+//        // Set texture properties
+//        this.image = { data: data, width: width, height: height };
+//        this.format = THREE.RGBAFormat;
+//        this.type = THREE.UnsignedByteType;
+//        this.needsUpdate = true;
+//        this.flipY = false;
+//    }
+//
+//    async load() {
+//        if (this.loaded || this.loading) return;
+//        
+//        this.loading = true;
+//        
+//        try {
+//            const actualTexture = await this.loadAsync(this.uri);
+//            
+//            // Copy properties from loaded texture
+//            this.image = actualTexture.image;
+//            this.format = actualTexture.format;
+//            this.type = actualTexture.type;
+//            this.flipY = actualTexture.flipY;
+//            this.needsUpdate = true;
+//            this.loaded = true;
+//            
+//            console.log('Delayed texture loaded:', this.uri);
+//        } catch (error) {
+//            console.error('Failed to load delayed texture:', error);
+//        } finally {
+//            this.loading = false;
+//        }
+//    }
+//}
 
 
 class TinyUSDZLoaderUtils extends LoaderUtils {
 
     constructor() {
         super();
+    }
+
+    static async getDataFromURI(uri) {
+        try {
+            const response = await fetch(url);
+            if (!response.ok) {
+                return [null, new Error(`Response status: ${response.status}`)];
+            }
+
+            const buf = await response.arrayBuiffer();
+            const data = new Uint8Array(buf);
+
+            return [data, null];
+
+        } catch (error) {
+            return [null, error];
+        }
+    }
+
+    static async getTextureFromURI(uri) {
+
+        try {
+            const loader = THREE.TextureLoader();
+
+            loader.loadAsync(uri).then
+
+            //console.log(json);
+        } catch (error) {
+            return [null, error];
+        }
+    }
+
+    static async getTextureFromURI(usd, textureId) {
+
+
+        if (textureId === undefined) return null;
+
+        const tex = usd.getTexture(textureId);
+        const img = usd.getImage(tex.textureImageId);
+
+        const image8Array = new Uint8ClampedArray(img.data);
+        const texture = new THREE.DataTexture(image8Array, img.width, img.height);
+        texture.format = THREE.RGBAFormat;
+        texture.flipY = true;
+        texture.needsUpdate = true;
+
+        return texture;
+
     }
 
     static getTextureFromUSD(usd, textureId) {
@@ -18,7 +184,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         const image8Array = new Uint8ClampedArray(img.data);
         const texture = new THREE.DataTexture(image8Array, img.width, img.height);
-        texture.format = THREE.RGBAFormat;
+        texture.format = THREE.RGBAFormat; // FIXME
         texture.flipY = true;
         texture.needsUpdate = true;
 
@@ -78,7 +244,13 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         }
 
         if (usdMaterial.hasOwnProperty('diffuseColorTextureId')) {
-            material.map = createTextureFromUSD(usdMaterial.diffuseColorTextureId);
+            //material.map = createTextureFromUSD(usdMaterial.diffuseColorTextureId);
+            (async() => {
+                await wait(5000);
+                const texture = createCheckerTexture();
+                material.map = texture;
+                material.needsUpdate = true;
+            })();
             console.log("has diffuse tex");
 
         }

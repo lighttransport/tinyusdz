@@ -20,7 +20,7 @@ list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/../cmake)
 
 if (CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
   # Use Oz to reduce size further than Os
-  set(CMAKE_CXX_FLAGS_MINSIZEREL "-Oz -DNODEBUG")
+  set(CMAKE_CXX_FLAGS_MINSIZEREL "-Oz -DNDEBUG")
 endif()
 
 option(TINYUSDZ_WASM_DEV "Developer mode." OFF)
@@ -71,8 +71,8 @@ endif()
 
 # TODO: Adjust memory size. 
 # 512kB stack
-# NOTE: ASYNCIFY increase the wasm size to around 4 MB
-set_target_properties(${BUILD_TARGET} PROPERTIES LINK_FLAGS "-sENVIRONMENT='web,worker' -sSTACK_SIZE=512000 -sASSERTIONS -s ALLOW_MEMORY_GROWTH=1 -sMODULARIZE=1 -sEXPORT_ES6 -sINVOKE_RUN=0 --bind")
+# NOTE: ASYNCIFY increase the wasm size to around 4~6 MB
+set_target_properties(${BUILD_TARGET} PROPERTIES LINK_FLAGS "-Oz -sENVIRONMENT='web,worker' -sSTACK_SIZE=512000 -sASSERTIONS -s ALLOW_MEMORY_GROWTH=1 -sMODULARIZE=1 -sEXPORT_ES6 -sINVOKE_RUN=0 --bind")
 
 # ENVIRONMENT=web
 # SINGLE_FILE=1
