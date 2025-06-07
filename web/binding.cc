@@ -534,9 +534,9 @@ class TinyUSDZLoaderNative {
     const auto &t = render_scene_.textures[tex_id];
 
     tex.set("textureImageId", int(t.texture_image_id));
-    // tex.set("wrapS", to_string(t.wrapS));
-    // tex.set("wrapT", to_string(t.wrapT));
-    //  TOOD: bias, scale, rot/scale/trans
+    tex.set("wrapS", to_string(t.wrapS));
+    tex.set("wrapT", to_string(t.wrapT));
+    //  TOOD: bias, scale, rot/scale/trans, etc
 
     return tex;
   }
@@ -554,6 +554,15 @@ class TinyUSDZLoaderNative {
 
     const auto &i = render_scene_.images[img_id];
 
+    img.set("width", int(i.width));
+    img.set("height", int(i.height));
+    img.set("channels", int(i.channels));
+    img.set("uri", i.asset_identifier);
+    img.set("decoded", bool(i.decoded));
+    img.set("colorSpace", to_string(i.colorSpace));
+    img.set("usdColorSpace", to_string(i.usdColorSpace));
+    img.set("bufferId", int(i.buffer_id));
+
     if ((i.buffer_id >= 0) && (i.buffer_id < render_scene_.buffers.size())) {
       const auto &b = render_scene_.buffers[i.buffer_id];
 
@@ -561,9 +570,6 @@ class TinyUSDZLoaderNative {
 
       img.set("data",
               emscripten::typed_memory_view(b.data.size(), b.data.data()));
-      img.set("width", int(i.width));
-      img.set("height", int(i.height));
-      img.set("channels", int(i.channels));
     }
 
     return img;
