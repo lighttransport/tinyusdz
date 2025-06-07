@@ -68,9 +68,9 @@ async function loadScenes() {
   var threeScenes = []
 
   const usd_scenes = await Promise.all([
-    loader.loadAsync(texcat_filename),
+    //loader.loadAsync(texcat_filename),
     loader.loadAsync(cookie_filename),
-    loader.loadAsync(suzanne_filename),
+    //loader.loadAsync(suzanne_filename),
   ]);
 
   console.log("usd_scenes:", usd_scenes);

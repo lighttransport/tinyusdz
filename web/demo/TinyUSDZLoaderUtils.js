@@ -3,11 +3,11 @@ import * as THREE from 'three';
 import { LoaderUtils } from "three"
 
 const wait = async (ms) => {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      resolve();
-    }, ms)
-  });
+    return new Promise((resolve) => {
+        setTimeout(() => {
+            resolve();
+        }, ms)
+    });
 }
 
 function createCheckerTexture() {
@@ -24,13 +24,13 @@ function createCheckerTexture() {
     for (let i = 0; i < height; i++) {
         for (let j = 0; j < width; j++) {
             const index = (i * width + j) * 4;
-            
+
             const checkerX = Math.floor(j / checkerSize);
             const checkerY = Math.floor(i / checkerSize);
             const isEven = (checkerX + checkerY) % 2 === 0;
-            
+
             const color = isEven ? color1 : color2;
-            
+
             data[index] = color[0];     // R
             data[index + 1] = color[1]; // G
             data[index + 2] = color[2]; // B
@@ -145,18 +145,101 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         }
     }
 
-    static async getTextureFromURI(uri) {
-
-        try {
-            const loader = THREE.TextureLoader();
-
-            loader.loadAsync(uri).then
-
-            //console.log(json);
-        } catch (error) {
-            return [null, error];
+    // Extract file extension from URI/path
+    static getFileExtension(uri) {
+        if (!uri || typeof uri !== 'string') return '';
+        
+        // Remove query parameters and hash
+        const cleanUri = uri.split('?')[0].split('#')[0];
+        
+        // Get the last part after the last dot
+        const lastDotIndex = cleanUri.lastIndexOf('.');
+        if (lastDotIndex === -1 || lastDotIndex === cleanUri.length - 1) {
+            return '';
         }
+        
+        return cleanUri.substring(lastDotIndex + 1).toLowerCase();
     }
+
+    // Determine MIME type from file extension
+    static getMimeTypeFromExtension(extension) {
+        const mimeTypes = {
+            // Images
+            'jpg': 'image/jpeg',
+            'jpeg': 'image/jpeg',
+            'png': 'image/png',
+            'gif': 'image/gif',
+            'webp': 'image/webp',
+            'bmp': 'image/bmp',
+            'tiff': 'image/tiff',
+            'tif': 'image/tiff',
+            'svg': 'image/svg+xml',
+            'ico': 'image/x-icon',
+            
+            // HDR/EXR formats
+            'hdr': 'image/vnd.radiance',
+            'exr': 'image/x-exr',
+            'rgbe': 'image/vnd.radiance',
+            
+            // 3D/USD formats
+            'usd': 'model/vnd.usdz+zip',
+            'usda': 'model/vnd.usd+ascii',
+            'usdc': 'model/vnd.usd+binary',
+            'usdz': 'model/vnd.usdz+zip',
+            
+            // Other common formats
+            'json': 'application/json',
+            'xml': 'application/xml',
+            'txt': 'text/plain',
+            'bin': 'application/octet-stream'
+        };
+        
+        return mimeTypes[extension.toLowerCase()] || null;
+    }
+
+    // Helper method to determine MIME type
+    static getMimeType(texImage) {
+
+        if (texImage.uri) {
+            const mime = this.getMimeTypeFromExtension(this.getFileExtension(texImage.uri));
+            if (mime != null) {
+                return mime;
+            }
+        }
+
+        // Try to detect from magic bytes if available
+        const data = new Uint8Array(texImage.data);
+        if (data.length >= 4) {
+            // PNG magic bytes: 89 50 4E 47
+            if (data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4E && data[3] === 0x47) {
+                return 'image/png';
+            }
+            // JPEG magic bytes: FF D8 FF
+            if (data[0] === 0xFF && data[1] === 0xD8 && data[2] === 0xFF) {
+                return 'image/jpeg';
+            }
+            // WEBP magic bytes: 52 49 46 46 ... 57 45 42 50
+            if (data[0] === 0x52 && data[1] === 0x49 && data[2] === 0x46 && data[3] === 0x46) {
+                return 'image/webp';
+            }
+        }
+
+        // Default fallback
+        return 'image/png';
+    }
+
+    //static async getTextureFromURI(uri) {
+
+    //    try {
+    //        const loader = THREE.TextureLoader();
+
+    //        loader.loadAsync(uri).then
+
+    //        //console.log(json);
+    //    } catch (error) {
+    //        return [null, error];
+    //    }
+    //}
 
     static async getTextureFromURI(usd, textureId) {
 
@@ -176,19 +259,84 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
     }
 
-    static getTextureFromUSD(usd, textureId) {
-        if (textureId === undefined) return null;
+    // texOut: THREE.Texture
+    static async getCheckerTextgure() {
 
-        const tex = usd.getTexture(textureId);
-        const img = usd.getImage(tex.textureImageId);
+        await wait(5000);
+        return loader.loadAsync('./textures/texture-cat.jpg');
+    }
 
-        const image8Array = new Uint8ClampedArray(img.data);
-        const texture = new THREE.DataTexture(image8Array, img.width, img.height);
-        texture.format = THREE.RGBAFormat; // FIXME
-        texture.flipY = true;
-        texture.needsUpdate = true;
+    static async getTextureFromUSD(usdScene, textureId) {
+        if (textureId === undefined) return Promise.reject(new Error("textureId undefined"));
 
-        return texture;
+
+        // HACK
+        //await wait(3000);
+
+        const tex = usdScene.getTexture(textureId);
+
+        const texImage = usdScene.getImage(tex.textureImageId);
+        console.log("Loading texture from URI:", texImage);
+
+        // there are 3 states for texture:
+        // 1. URI only. Need to fetch texture(file) from URI in JS layer.
+        // 2. Texture is loaded from USDZ file, but not yet decoded(Use Three.js or JS library to decode)
+        // 3. Texture is decoded and ready to use in Three.js.
+
+        if (texImage.uri && (texImage.bufferId == -1)) {
+            // Case 1: URI only
+
+            const loader = new THREE.TextureLoader();
+
+            // TODO: Use HDR/EXR loader if a uri is HDR/EXR file.
+            return loader.loadAsync(texImage.uri);
+
+        } else if (texImage.bufferId >= 0 && texImage.data) {
+            console.log("case 2 or 3");
+
+            if (texImage.decoded) {
+                console.log("case 3");
+
+                const image8Array = new Uint8ClampedArray(texImage.data);
+                const texture = new THREE.DataTexture(image8Array, texImage.width, texImage.height);
+                if (texImage.channels == 1) {
+                    texture.format = THREE.LuminanceFormat;
+                } else if (texImage.channels == 2) {
+                    texture.format = THREE.LuminanceAlphaFormat;
+                } else if (texImage.channels == 3) {
+                    // Recent three.js does not support RGBFormat.
+                    return Promise.reject(new Error("RGB image is not supported"));
+                } else if (texImage.channels == 4) {
+                    texture.format = THREE.RGBAFormat;
+                } else {
+                    return Promise.reject(new Error("Unsupported image channels: " + texImage.channels));
+                }
+                texture.flipY = true;
+                texture.needsUpdate = true;
+
+                return Promise.resolve(texture);
+
+            } else {
+                console.log("case 3");
+                try {
+                    const blob = new Blob([texImage.data], { type: this.getMimeType(texImage) });
+                    const blobUrl = URL.createObjectURL(blob);
+
+                    const loader = new THREE.TextureLoader();
+
+                    console.log("blobUrl", blobUrl);
+                    // TODO: Use HDR/EXR loader if a uri is HDR/EXR file.
+                    return loader.loadAsync(blobUrl);
+                } catch (error) {
+                    console.error("Failed to create Blob from texture data:", error);
+                    return Promise.reject(new Error("Failed to create Blob from texture data"));
+                }
+            }
+
+        } else {
+            console.log("case 3");
+            return Promise.reject(new Error("Invalid USD texture info"));
+        }
     }
 
     static createDefaultMaterial() {
@@ -219,6 +367,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
     // - [x] displacement -> displacementMap
     static convertUsdMaterialToMeshPhysicalMaterial(usdMaterial, usdScene) {
         const material = new THREE.MeshPhysicalMaterial();
+        const loader = new THREE.TextureLoader();
 
         // Helper function to create texture from USD texture ID
         function createTextureFromUSD(textureId) {
@@ -245,13 +394,22 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         if (usdMaterial.hasOwnProperty('diffuseColorTextureId')) {
             //material.map = createTextureFromUSD(usdMaterial.diffuseColorTextureId);
-            (async() => {
-                await wait(5000);
-                const texture = createCheckerTexture();
+
+            this.getTextureFromUSD(usdScene, usdMaterial.diffuseColorTextureId).then((texture) => {
+                console.log("gettex");
                 material.map = texture;
                 material.needsUpdate = true;
-            })();
-            console.log("has diffuse tex");
+            }).catch((err) => {
+                console.error("failed to load texture. uri not exists or Cross-Site origin header is not set in the web server?", err);
+            });
+
+            //(async() => {
+            //    await wait(5000);
+            //    const texture = createCheckerTexture();
+            //    material.map = texture;
+            //    material.needsUpdate = true;
+            //})();
+            //console.log("has diffuse tex");
 
         }
 
@@ -348,42 +506,42 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
     }
 
     static convertUsdMeshToThreeMesh(mesh) {
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute('position', new THREE.BufferAttribute(mesh.points, 3));
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.BufferAttribute(mesh.points, 3));
 
-      // Assume mesh is triangulated.
-      // itemsize = 1 since Index expects IntArray for VertexIndices in Three.js?
-      geometry.setIndex(new THREE.BufferAttribute(mesh.faceVertexIndices, 1));
+        // Assume mesh is triangulated.
+        // itemsize = 1 since Index expects IntArray for VertexIndices in Three.js?
+        geometry.setIndex(new THREE.BufferAttribute(mesh.faceVertexIndices, 1));
 
-      if (mesh.hasOwnProperty('texcoords')) {
-        geometry.setAttribute('uv', new THREE.BufferAttribute(mesh.texcoords, 2));
-      }
+        if (mesh.hasOwnProperty('texcoords')) {
+            geometry.setAttribute('uv', new THREE.BufferAttribute(mesh.texcoords, 2));
+        }
 
-      // TODO: uv1
+        // TODO: uv1
 
-      // faceVarying normals
-      if (mesh.hasOwnProperty('normals')) {
-        geometry.setAttribute('normal', new THREE.BufferAttribute(mesh.normals, 3));
-      } else {
-        geometry.computeVertexNormals();
-      }
+        // faceVarying normals
+        if (mesh.hasOwnProperty('normals')) {
+            geometry.setAttribute('normal', new THREE.BufferAttribute(mesh.normals, 3));
+        } else {
+            geometry.computeVertexNormals();
+        }
 
-      if (mesh.hasOwnProperty('vertexColors')) {
-        geometry.setAttribute('color', new THREE.BufferAttribute(mesh.vertexColors, 3));
+        if (mesh.hasOwnProperty('vertexColors')) {
+            geometry.setAttribute('color', new THREE.BufferAttribute(mesh.vertexColors, 3));
 
-      }
+        }
 
-      // Only compute tangents if we have both UV coordinates and normals
-      if (mesh.hasOwnProperty('tangents')) {
-        geometry.setAttribute('tangent', new THREE.BufferAttribute(mesh.tangents, 3));
-      } else if (mesh.hasOwnProperty('texcoords') && (mesh.hasOwnProperty('normals') || geometry.attributes.normal)) {
-        // TODO: try MikTSpace tangent algorithm: https://threejs.org/docs/#examples/en/utils/BufferGeometryUtils.computeMikkTSpaceTangents 
-        geometry.computeTangents();
-      }
+        // Only compute tangents if we have both UV coordinates and normals
+        if (mesh.hasOwnProperty('tangents')) {
+            geometry.setAttribute('tangent', new THREE.BufferAttribute(mesh.tangents, 3));
+        } else if (mesh.hasOwnProperty('texcoords') && (mesh.hasOwnProperty('normals') || geometry.attributes.normal)) {
+            // TODO: try MikTSpace tangent algorithm: https://threejs.org/docs/#examples/en/utils/BufferGeometryUtils.computeMikkTSpaceTangents 
+            geometry.computeTangents();
+        }
 
-      // TODO: vertex opacities(per-vertex alpha)
+        // TODO: vertex opacities(per-vertex alpha)
 
-      return geometry;
+        return geometry;
     }
 
     static setupMesh(mesh /* TinyUSDZLoaderNative::RenderMesh */, defaultMtl, usdScene, options) {
@@ -414,7 +572,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             mtl = pbrMaterial || defaultMtl || normalMtl;
         }
 
-        const threeMesh = new THREE.Mesh(geometry, mtl );
+        const threeMesh = new THREE.Mesh(geometry, mtl);
 
         return threeMesh;
     }
@@ -422,56 +580,56 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
     // arr = float array with 16 elements(row major order)
     static toMatrix4(a) {
-      const m = new THREE.Matrix4();
+        const m = new THREE.Matrix4();
 
-      m.set(a[0], a[1], a[2], a[3],
-        a[4], a[5], a[6], a[7],
-        a[8], a[9], a[10], a[11],
-        a[12], a[13], a[14], a[15]);
+        m.set(a[0], a[1], a[2], a[3],
+            a[4], a[5], a[6], a[7],
+            a[8], a[9], a[10], a[11],
+            a[12], a[13], a[14], a[15]);
 
-      return m;
+        return m;
     }
 
     // Supported options
     // 'overrideMaterial' : Override usd material with defaultMtl.
 
-  static buildThreeNode(usdNode /* TinyUSDZLoader.Node */, defaultMtl = null, usdScene /* TinyUSDZLoader.Scene */ = null, options = {})
+    static buildThreeNode(usdNode /* TinyUSDZLoader.Node */, defaultMtl = null, usdScene /* TinyUSDZLoader.Scene */ = null, options = {})
    /* => THREE.Object3D */ {
 
-    var node = new THREE.Group();
+        var node = new THREE.Group();
 
-    if (usdNode.nodeType == 'xform') {
+        if (usdNode.nodeType == 'xform') {
 
-      // intermediate xform node
-      // TODO: create THREE.Group and apply transform.
-      node.matrix = this.toMatrix4(usdNode.localMatrix);
+            // intermediate xform node
+            // TODO: create THREE.Group and apply transform.
+            node.matrix = this.toMatrix4(usdNode.localMatrix);
 
-    } else if (usdNode.nodeType == 'mesh') {
+        } else if (usdNode.nodeType == 'mesh') {
 
-      // contentId is the mesh ID in the USD scene.
-      const mesh = usdScene.getMesh(usdNode.contentId);
+            // contentId is the mesh ID in the USD scene.
+            const mesh = usdScene.getMesh(usdNode.contentId);
 
-      const threeMesh = this.setupMesh(mesh, defaultMtl, usdScene, options);
-      node = threeMesh;
+            const threeMesh = this.setupMesh(mesh, defaultMtl, usdScene, options);
+            node = threeMesh;
 
-    } else {
-      // ???
+        } else {
+            // ???
 
+        }
+
+        node.name = usdNode.primName;
+        node.userData['primMeta.displayName'] = usdNode.displayName;
+        node.userData['primMeta.absPath'] = usdNode.absPath;
+
+
+        // traverse children
+        for (const child of usdNode.children) {
+            const childNode = this.buildThreeNode(child, defaultMtl, usdScene, options);
+            node.add(childNode);
+        }
+
+        return node;
     }
-
-    node.name = usdNode.primName;
-    node.userData['primMeta.displayName'] = usdNode.displayName;
-    node.userData['primMeta.absPath'] = usdNode.absPath;
-
-
-    // traverse children
-    for (const child of usdNode.children) {
-      const childNode = this.buildThreeNode(child, defaultMtl, usdScene, options);
-      node.add(childNode);
-    }
-
-    return node;
-  }
 
 }
 
