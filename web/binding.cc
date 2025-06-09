@@ -8,29 +8,92 @@
 
 #include <string>
 #include <vector>
+#include <chrono>
+#include <thread>
 
 #include "external/fast_float/include/fast_float/bigint.h"
 #include "tinyusdz.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
 
+// FIXME
+
+
+struct FetchData
+{
+  bool done{false};
+  std::string data;
+};
+
 void downloadSucceeded(emscripten_fetch_t *fetch) {
   printf("Finished downloading %llu bytes from URL %s.\n", fetch->numBytes, fetch->url);
+
+  FetchData *p = reinterpret_cast<FetchData *>(fetch->userData);
+  p->data = std::string(fetch->data, fetch->numBytes);
+  p->done = true;
+
   // The data is now available at fetch->data[0] through fetch->data[fetch->numBytes-1];
   emscripten_fetch_close(fetch); // Free data associated with the fetch.
+
 }
 
 void downloadFailed(emscripten_fetch_t *fetch) {
   printf("Downloading %s failed, HTTP failure status code: %d.\n", fetch->url, fetch->status);
+
+  FetchData *p = reinterpret_cast<FetchData *>(fetch->userData);
+  p->data = std::string();
+  p->done = true;
+
   emscripten_fetch_close(fetch); // Also free data on failure.
 }
 
+#if 0 // For Fetch File API. not used a.t.m
 void downloadProgress(emscripten_fetch_t *fetch) {
   if (fetch->totalBytes) {
     printf("Downloading %s.. %.2f%% complete.\n", fetch->url, fetch->dataOffset * 100.0 / fetch->totalBytes);
   } else {
     printf("Downloading %s.. %lld bytes complete.\n", fetch->url, fetch->dataOffset + fetch->numBytes);
   }
+}
+#endif
+
+
+std::string readFileSync(const std::string &uri) {
+  FetchData data;
+  data.done = false;
+
+  std::cout << "uri " << uri << "\n";
+  emscripten_fetch_attr_t attr;
+  emscripten_fetch_attr_init(&attr);
+  std::string buf;
+  attr.userData = reinterpret_cast<void *>(&data);
+  strcpy(attr.requestMethod, "GET");
+  attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY | EMSCRIPTEN_FETCH_SYNCHRONOUS | EMSCRIPTEN_FETCH_REPLACE;
+  //attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY | EMSCRIPTEN_FETCH_REPLACE;
+  attr.onsuccess = downloadSucceeded;
+  attr.onerror = downloadFailed;
+  emscripten_fetch_t *fetch = emscripten_fetch(&attr, uri.c_str()); // Blocks here until the operation is complete.
+  //if (fetch->status == 200) {
+  //  printf("Finished downloading %llu bytes from URL %s.\n", fetch->numBytes, fetch->url);
+  //  // The data is now available at fetch->data[0] through fetch->data[fetch->numBytes-1];
+  //} else {
+  //  printf("Downloading %s failed, HTTP failure status code: %d.\n", fetch->url, fetch->status);
+  //}
+
+  //std::string buf(fetch->data, fetch->numBytes);
+  //emscripten_fetch_close(fetch);
+  //
+
+  int cnt{0};
+  while (!data.done) {
+
+    // Sleep for 100 milliseconds
+    //emscripten_sleep(100);
+    
+  }
+
+  printf("fs.size %d\n", data.data.size());
+  return data.data;
 }
 
 using namespace emscripten;
@@ -146,9 +209,9 @@ EM_ASYNC_JS(bool, loadAsyncImpl,
             });
 #endif
 
-
-// Use Emscripten's FETCH API
-struct FetchAssetResolutionResolver {
+#if 0
+// Use Emscripten's FS API(Synchronous)
+struct EMFSAssetResolutionResolver {
   static int Resolve(const char *asset_name,
                      const std::vector<std::string> &search_paths,
                      std::string *resolved_asset_name, std::string *err,
@@ -165,14 +228,19 @@ struct FetchAssetResolutionResolver {
       return -2;  // err
     }
 
-#if 0  // TODO
-    if (g_map.count(asset_name)) {
-      (*resolved_asset_name) = asset_name;
-      return 0;  // OK
-    }
-#endif
+    using namespace emscripten;
 
-    return -1;  // failed to resolve.
+    val fs = val::global("FS");
+    try {
+        val analyzePath = fs.call<val>("analyzePath", asset_name);
+        if (analyzePath["exists"].as<bool>()) {
+          return 0; // ok
+        } else {
+          return -1;
+        }
+    } catch (...) {
+        return -1;
+    }
   }
 
   // AssetResoltion handlers
@@ -227,28 +295,168 @@ struct FetchAssetResolutionResolver {
       return -2;
     }
 
-#if 0  // TODO
-    if (g_map.count(asset_name)) {
-      size_t sz = strlen(g_map[asset_name].c_str());
-      if (sz > req_nbytes) {
-        if (err) {
-          (*err) += "Insufficient dst buffer size.\n";
+#if 0
+    using namespace emscripten;
+    val fs = val::global("FS");
+    
+    std::string content;
+
+    try {
+        // Check if file exists
+        val analyzePath = fs.call<val>("analyzePath", asset_name);
+        bool exists = analyzePath["exists"].as<bool>();
+        
+        if (!exists) {
+            return -1;
         }
-        return -4;
+        
+        // Read file
+        val readFile = fs.call<val>("readFile", filename, val::object());
+        readFile.set("encoding", std::string("utf8"));
+        
+        tring content = readFile.as<std::string>();
+        return content;
+    } catch (const std::exception& e) {
+        return "";
+    }
+    
+      
+    if (size > 0 && !buffer.empty()) {
+      int retcode = 0; // ok
+      if (size > req_nbytes) {
+        retcode = -4;
+      } else {
+        memcpy(out_buf, buffer.data(), size);
       }
 
-      std::cout << "read asset: " << asset_name << "\n";
-
-      memcpy(out_buf, &g_map[asset_name][0], sz);
-
-      (*nbytes) = sz;
-      return 0;
+      return retcode;
     }
 #endif
+      
+    return -1;
+  }
+};
+
+bool SetupEMFSAssetResolution(
+    tinyusdz::AssetResolutionResolver &resolver,
+    /* must be the persistent pointer address until usd load finishes */
+    const EMFSAssetResolutionResolver *p) {
+  if (!p) {
+    return false;
+  }
+
+  tinyusdz::AssetResolutionHandler handler;
+  handler.resolve_fun = EMFSAssetResolutionResolver::Resolve;
+  handler.size_fun = EMFSAssetResolutionResolver::Size;
+  handler.read_fun = EMFSAssetResolutionResolver::Read;
+  handler.write_fun = nullptr;
+  handler.userdata =
+      reinterpret_cast<void *>(const_cast<EMFSAssetResolutionResolver *>(p));
+
+  resolver.register_wildcard_asset_resolution_handler(handler);
+
+  return true;
+}
+#endif
+
+#if 1 
+// Use Emscripten's FETCH API
+struct FetchAssetResolutionResolver {
+  static int Resolve(const char *asset_name,
+                     const std::vector<std::string> &search_paths,
+                     std::string *resolved_asset_name, std::string *err,
+                     void *userdata) {
+    (void)err;
+    (void)userdata;
+    (void)search_paths;
+
+    if (!asset_name) {
+      return -2;  // err
+    }
+
+    if (!resolved_asset_name) {
+      return -2;  // err
+    }
+
+    // TODO: searchpath
+    (*resolved_asset_name) = asset_name;
+    return 0;  // OK
+  }
+
+  // AssetResoltion handlers
+  static int Size(const char *asset_name, uint64_t *nbytes, std::string *err,
+                  void *userdata) {
+    (void)userdata;
+
+    if (!asset_name) {
+      if (err) {
+        (*err) += "asset_name arg is nullptr.\n";
+      }
+      return -1;
+    }
+
+    if (!nbytes) {
+      if (err) {
+        (*err) += "nbytes arg is nullptr.\n";
+      }
+      return -1;
+    }
+
+    std::string content = readFileSync(asset_name);
+
+    if (content.size()) {
+      FetchAssetResolutionResolver *p = reinterpret_cast<FetchAssetResolutionResolver *>(userdata);
+
+      (*nbytes) = uint64_t(content.size());
+      p->cache[asset_name] = content;
+      return 0;  // OK
+    }
+
+
+    return -1;
+  }
+
+  static int Read(const char *asset_name, uint64_t req_nbytes, uint8_t *out_buf,
+                  uint64_t *nbytes, std::string *err, void *userdata) {
+    if (!asset_name) {
+      if (err) {
+        (*err) += "asset_name arg is nullptr.\n";
+      }
+      return -3;
+    }
+
+    if (!nbytes) {
+      if (err) {
+        (*err) += "nbytes arg is nullptr.\n";
+      }
+      return -3;
+    }
+
+    if (req_nbytes < 9) {  // at least 9 bytes(strlen("#usda 1.0")) or more
+      return -2;
+    }
+
+    FetchAssetResolutionResolver *p = reinterpret_cast<FetchAssetResolutionResolver *>(userdata);
+
+    // Size() is called before Read(), so look at cache table.
+    if (p->cache.count(asset_name)) {
+      const std::string &c = p->cache[asset_name];
+      if (c.size() > req_nbytes) {
+        return -2;
+      }
+      memcpy(out_buf, c.data(), c.size());
+      (*nbytes) = c.size();
+      return 0;
+    }
 
     //
     return -1;
   }
+
+  // TODO: Use IndexDB?
+  //
+  // <uri, bytes>
+  std::map<std::string, std::string> cache;
 };
 
 bool SetupFetchAssetResolution(
@@ -271,11 +479,10 @@ bool SetupFetchAssetResolution(
 
   return true;
 }
+#endif
 
 ///
 /// Simple C++ wrapper class for Emscripten
-///
-/// TODO: Provide Three.js GLTFLoader like interface.
 ///
 class TinyUSDZLoaderNative {
  public:
@@ -290,6 +497,7 @@ class TinyUSDZLoaderNative {
 
   // Default constructor for async loading
   TinyUSDZLoaderNative() : loaded_(false) {}
+  ~TinyUSDZLoaderNative() {}
 
 #if 0
   ///
@@ -301,19 +509,7 @@ class TinyUSDZLoaderNative {
   }
 #endif
 
-  bool loadFromBinary(const std::string &binary, const std::string &filename) {
-    bool is_usdz = tinyusdz::IsUSDZ(
-        reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size());
-
-    tinyusdz::Stage stage;
-    loaded_ = tinyusdz::LoadUSDFromMemory(
-        reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
-        filename, &stage, &warn_, &error_);
-
-    if (!loaded_) {
-      return false;
-    }
-
+  bool stageToRenderScene(const tinyusdz::Stage &stage, bool is_usdz, const std::string &binary) {
 
     tinyusdz::tydra::RenderSceneConverterEnv env(stage);
 
@@ -373,11 +569,248 @@ class TinyUSDZLoaderNative {
       return false;
     }
 
-    filename_ = filename;
-
     return true;
   }
-  ~TinyUSDZLoaderNative() {}
+
+
+
+  bool loadFromBinary(const std::string &binary, const std::string &filename) {
+
+    std::cout << "loadFromBinary\n";
+    std::cout << "enableComposition: " << enableComposition_ << "\n";
+
+    if (enableComposition_) {
+      return loadAndCompositeFromBinary(binary, filename);
+    }
+
+    bool is_usdz = tinyusdz::IsUSDZ(
+        reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size());
+
+    tinyusdz::Stage stage;
+    loaded_ = tinyusdz::LoadUSDFromMemory(
+        reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
+        filename, &stage, &warn_, &error_);
+
+    if (!loaded_) {
+      return false;
+    }
+
+    filename_ = filename;
+
+#if 0
+    tinyusdz::tydra::RenderSceneConverterEnv env(stage);
+
+    //
+    // false = Load Texture in JS Layer
+    //
+
+    env.scene_config.load_texture_assets = loadTextureOnLoad_;
+
+    env.material_config.preserve_texel_bitdepth = true;
+
+    if (is_usdz) {
+      // TODO: Support USDZ + Composition
+      // Setup AssetResolutionResolver to read a asset(file) from memory.
+      bool asset_on_memory =
+          false;  // duplicate asset data from USDZ(binary) to UDSZAsset struct.
+
+      if (!tinyusdz::ReadUSDZAssetInfoFromMemory(
+              reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
+              asset_on_memory, &usdz_asset_, &warn_, &error_)) {
+        std::cerr << "Failed to read USDZ assetInfo. \n";
+        loaded_ = false;
+        return false;
+      }
+
+      tinyusdz::AssetResolutionResolver arr;
+
+      // NOTE: Pointer address of usdz_asset must be valid until the call of
+      // RenderSceneConverter::ConvertToRenderScene.
+      if (!tinyusdz::SetupUSDZAssetResolution(arr, &usdz_asset_)) {
+        std::cerr << "Failed to setup AssetResolution for USDZ asset\n";
+        loaded_ = false;
+        return false;
+      }
+
+      env.asset_resolver = arr;
+    } else {
+      tinyusdz::AssetResolutionResolver arr;
+      if (!SetupFetchAssetResolution(arr, &http_resolver_)) {
+        std::cerr << "Failed to setup FetchAssetResolution\n";
+        loaded_ = false;
+        return false;
+      }
+
+      env.asset_resolver = arr;
+    }
+
+    // RenderScene: Scene graph object which is suited for GL/Vulkan renderer
+    tinyusdz::tydra::RenderSceneConverter converter;
+
+    // env.timecode = timecode; // TODO
+    loaded_ = converter.ConvertToRenderScene(env, &render_scene_);
+    if (!loaded_) {
+      std::cerr << "Failed to convert USD Stage to RenderScene: \n"
+                << converter.GetError() << "\n";
+      error_ = converter.GetError();
+      return false;
+    }
+#else
+    return stageToRenderScene(stage, is_usdz, binary);
+#endif
+
+  }
+
+
+  //
+  //  Current limitation: can't specify usdz for USD to be composited(e.g. subLayer'ed, reference'ed)
+  //  Toplevel USD can be USDZ.
+  //
+  bool loadAndCompositeFromBinary(const std::string &binary, const std::string &filename) {
+
+    std::cout << "loadAndComposite " << std::endl;
+    
+    // HACK
+    std::string f = readFileSync("texture-cat-plane.usda");
+    std::cout << "f.sz " << f.size() << "\n";
+
+    bool is_usdz = tinyusdz::IsUSDZ(
+        reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size());
+    
+    tinyusdz::Layer root_layer;
+    bool ret = tinyusdz::LoadLayerFromMemory(reinterpret_cast<const uint8_t*>(binary.data()), binary.size(), filename, &root_layer, &warn_, &error_);
+
+      if (!ret) {
+        return false;
+      }
+
+      tinyusdz::Stage stage;
+      stage.metas() = root_layer.metas();
+
+      std::string warn;
+
+      tinyusdz::AssetResolutionResolver resolver;
+      const std::string base_dir = "./"; // FIXME
+      resolver.set_current_working_path(base_dir);
+      resolver.set_search_paths({base_dir});
+    
+      filename_ = filename;
+
+      // TODO: Control composition feature flag from JS layer.
+      CompositionFeatures comp_features;
+      constexpr int kMaxIteration = 32; // Reduce iterations for web
+
+      //
+      // LIVRPS strength ordering
+      // - [x] Local(subLayers)
+      // - [x] Inherits
+      // - [x] VariantSets
+      // - [x] References
+      // - [x] Payload
+      // - [ ] Specializes
+      //
+
+      tinyusdz::Layer src_layer = root_layer;
+      if (comp_features.subLayers) {
+        tinyusdz::Layer composited_layer;
+        if (!tinyusdz::CompositeSublayers(resolver, src_layer, &composited_layer, &warn_, &error_)) {
+          //std::cerr << "Failed to composite subLayers: " << err << "\n";
+          return false;
+        }
+
+        std::cout << "# `subLayers` composited\n";
+        //std::cout << composited_layer << "\n";
+
+        src_layer = std::move(composited_layer);
+      }
+
+      // TODO: Find more better way to Recursively resolve references/payload/variants
+      for (int i = 0; i < kMaxIteration; i++) {
+
+        bool has_unresolved = false;
+
+        if (comp_features.references) {
+          if (!src_layer.check_unresolved_references()) {
+            std::cout << "# iter " << i << ": no unresolved references.\n";
+          } else {
+            has_unresolved = true;
+
+            tinyusdz::Layer composited_layer;
+            if (!tinyusdz::CompositeReferences(resolver, src_layer, &composited_layer, &warn_, &error_)) {
+              return false;
+            }
+
+
+            src_layer = std::move(composited_layer);
+          }
+        }
+
+
+        if (comp_features.payload) {
+          if (!src_layer.check_unresolved_payload()) {
+            std::cout << "# iter " << i << ": no unresolved payload.\n";
+          } else {
+            has_unresolved = true;
+
+            tinyusdz::Layer composited_layer;
+            if (!tinyusdz::CompositePayload(resolver, src_layer, &composited_layer, &warn_, &error_)) {
+              return false;
+            }
+
+            src_layer = std::move(composited_layer);
+          }
+        }
+
+        if (comp_features.inherits) {
+          if (!src_layer.check_unresolved_inherits()) {
+            std::cout << "# iter " << i << ": no unresolved inherits.\n";
+          } else {
+            has_unresolved = true;
+
+            tinyusdz::Layer composited_layer;
+            if (!tinyusdz::CompositeInherits(src_layer, &composited_layer, &warn_, &error_)) {
+              return false;
+            }
+
+            src_layer = std::move(composited_layer);
+          }
+        }
+
+        if (comp_features.variantSets) {
+          if (!src_layer.check_unresolved_variant()) {
+            std::cout << "# iter " << i << ": no unresolved variant.\n";
+          } else {
+            has_unresolved = true;
+
+            tinyusdz::Layer composited_layer;
+            if (!tinyusdz::CompositeVariant(src_layer, &composited_layer, &warn_, &error_)) {
+              return false;
+            }
+
+            src_layer = std::move(composited_layer);
+          }
+        }
+
+
+        std::cout << "# has_unresolved_references: " << src_layer.check_unresolved_references() << "\n";
+        std::cout << "# all resolved? " << !has_unresolved << "\n";
+
+        if (!has_unresolved) {
+          std::cout << "# of composition iteration to resolve fully: " << (i + 1) << "\n";
+          break;
+        }
+
+      }
+
+      tinyusdz::Stage comp_stage;
+      ret = LayerToStage(src_layer, &comp_stage, &warn_, &error_);
+
+      if (!ret) {
+        return false;
+      }
+
+      return stageToRenderScene(stage, is_usdz, binary);
+  }
 
 #if defined(TINYUSDZ_WASM_ASYNCIFY)
   emscripten::val loadAsync(const std::string &binary) {
@@ -667,8 +1100,11 @@ class TinyUSDZLoaderNative {
   bool ok() const { return loaded_; }
 
   const std::string &error() const { return error_; }
+  const std::string &warn() const { return warn_; }
 
  private:
+
+
   // Simple glTF-like Node
   emscripten::val buildNodeRec(const tinyusdz::tydra::Node &rnode) {
     emscripten::val node = emscripten::val::object();
@@ -913,6 +1349,7 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("loadAsync", &TinyUSDZLoaderNative::loadAsync)
 #endif
       .function("loadFromBinary", &TinyUSDZLoaderNative::loadFromBinary)
+      .function("loadAndCompositeFromBinary", &TinyUSDZLoaderNative::loadFromBinary)
       .function("getURI", &TinyUSDZLoaderNative::getURI)
       .function("getMesh", &TinyUSDZLoaderNative::getMesh)
       .function("numMeshes", &TinyUSDZLoaderNative::numMeshes)
