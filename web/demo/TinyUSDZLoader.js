@@ -49,6 +49,7 @@ class TinyUSDZLoader extends Loader {
     }
 
     setEnableComposition(enabled) {
+
         this.enableComposition_ = enabled;
     }
 
@@ -128,9 +129,10 @@ class TinyUSDZLoader extends Loader {
 
         const usd = new this.native_.TinyUSDZLoaderNative();
 
+        usd.setEnableComposition(this.enableComposition_);
         const ok = usd.loadFromBinary(binary, filePath);
         if (!ok) {
-            _onError(new Error('TinyUSDZLoader: Failed to load USD from binary data.'));
+            _onError(new Error('TinyUSDZLoader: Failed to load USD from binary data.', {cause: usd.error()}));
         } else {
             onLoad(usd);
         }

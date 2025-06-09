@@ -2,126 +2,6 @@ import * as THREE from 'three';
 
 import { LoaderUtils } from "three"
 
-const wait = async (ms) => {
-    return new Promise((resolve) => {
-        setTimeout(() => {
-            resolve();
-        }, ms)
-    });
-}
-
-function createCheckerTexture() {
-    // Create checker pattern placeholder
-    const width = 64;
-    const height = 64;
-    const size = width * height;
-    const data = new Uint8Array(4 * size);
-
-    const checkerSize = 8;
-    const color1 = [200, 200, 200, 255]; // Light gray
-    const color2 = [100, 100, 100, 255]; // Dark gray
-
-    for (let i = 0; i < height; i++) {
-        for (let j = 0; j < width; j++) {
-            const index = (i * width + j) * 4;
-
-            const checkerX = Math.floor(j / checkerSize);
-            const checkerY = Math.floor(i / checkerSize);
-            const isEven = (checkerX + checkerY) % 2 === 0;
-
-            const color = isEven ? color1 : color2;
-
-            data[index] = color[0];     // R
-            data[index + 1] = color[1]; // G
-            data[index + 2] = color[2]; // B
-            data[index + 3] = color[3]; // A
-        }
-    }
-
-    const texture = new THREE.DataTexture(data, width, height);
-    texture.format = THREE.RGBAFormat;
-    texture.needsUpdate = true;
-
-    console.log("checker");
-    return texture;
-}
-
-// TODO delete
-//class DelayedTexture extends THREE.Texture {
-//    constructor(uri, usd) {
-//        // Start with a placeholder
-//        super();
-//        
-//        this.uri = uri;
-//        this.loaded = false;
-//        this.loading = false;
-//        
-//        // Create placeholder
-//        //this.createPlaceholder();
-//    }
-//
-//    createPlaceholder() {
-//        // Create checker pattern placeholder
-//        const width = 64;
-//        const height = 64;
-//        const size = width * height;
-//        const data = new Uint8Array(4 * size);
-//
-//        const checkerSize = 8;
-//        const color1 = [200, 200, 200, 255]; // Light gray
-//        const color2 = [100, 100, 100, 255]; // Dark gray
-//
-//        for (let i = 0; i < height; i++) {
-//            for (let j = 0; j < width; j++) {
-//                const index = (i * width + j) * 4;
-//                
-//                const checkerX = Math.floor(j / checkerSize);
-//                const checkerY = Math.floor(i / checkerSize);
-//                const isEven = (checkerX + checkerY) % 2 === 0;
-//                
-//                const color = isEven ? color1 : color2;
-//                
-//                data[index] = color[0];     // R
-//                data[index + 1] = color[1]; // G
-//                data[index + 2] = color[2]; // B
-//                data[index + 3] = color[3]; // A
-//            }
-//        }
-//
-//        // Set texture properties
-//        this.image = { data: data, width: width, height: height };
-//        this.format = THREE.RGBAFormat;
-//        this.type = THREE.UnsignedByteType;
-//        this.needsUpdate = true;
-//        this.flipY = false;
-//    }
-//
-//    async load() {
-//        if (this.loaded || this.loading) return;
-//        
-//        this.loading = true;
-//        
-//        try {
-//            const actualTexture = await this.loadAsync(this.uri);
-//            
-//            // Copy properties from loaded texture
-//            this.image = actualTexture.image;
-//            this.format = actualTexture.format;
-//            this.type = actualTexture.type;
-//            this.flipY = actualTexture.flipY;
-//            this.needsUpdate = true;
-//            this.loaded = true;
-//            
-//            console.log('Delayed texture loaded:', this.uri);
-//        } catch (error) {
-//            console.error('Failed to load delayed texture:', error);
-//        } finally {
-//            this.loading = false;
-//        }
-//    }
-//}
-
-
 class TinyUSDZLoaderUtils extends LoaderUtils {
 
     constructor() {
@@ -228,55 +108,14 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         return 'image/png';
     }
 
-    //static async getTextureFromURI(uri) {
-
-    //    try {
-    //        const loader = THREE.TextureLoader();
-
-    //        loader.loadAsync(uri).then
-
-    //        //console.log(json);
-    //    } catch (error) {
-    //        return [null, error];
-    //    }
-    //}
-
-    static async getTextureFromURI(usd, textureId) {
-
-
-        if (textureId === undefined) return null;
-
-        const tex = usd.getTexture(textureId);
-        const img = usd.getImage(tex.textureImageId);
-
-        const image8Array = new Uint8ClampedArray(img.data);
-        const texture = new THREE.DataTexture(image8Array, img.width, img.height);
-        texture.format = THREE.RGBAFormat;
-        texture.flipY = true;
-        texture.needsUpdate = true;
-
-        return texture;
-
-    }
-
-    // texOut: THREE.Texture
-    static async getCheckerTextgure() {
-
-        await wait(5000);
-        return loader.loadAsync('./textures/texture-cat.jpg');
-    }
-
     static async getTextureFromUSD(usdScene, textureId) {
         if (textureId === undefined) return Promise.reject(new Error("textureId undefined"));
 
 
-        // HACK
-        //await wait(3000);
-
         const tex = usdScene.getTexture(textureId);
 
         const texImage = usdScene.getImage(tex.textureImageId);
-        console.log("Loading texture from URI:", texImage);
+        //console.log("Loading texture from URI:", texImage);
 
         // there are 3 states for texture:
         // 1. URI only. Need to fetch texture(file) from URI in JS layer.
@@ -292,10 +131,10 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             return loader.loadAsync(texImage.uri);
 
         } else if (texImage.bufferId >= 0 && texImage.data) {
-            console.log("case 2 or 3");
+            //console.log("case 2 or 3");
 
             if (texImage.decoded) {
-                console.log("case 3");
+                //console.log("case 3");
 
                 const image8Array = new Uint8ClampedArray(texImage.data);
                 const texture = new THREE.DataTexture(image8Array, texImage.width, texImage.height);
@@ -317,14 +156,14 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 return Promise.resolve(texture);
 
             } else {
-                console.log("case 3");
+                //console.log("case 3");
                 try {
                     const blob = new Blob([texImage.data], { type: this.getMimeType(texImage) });
                     const blobUrl = URL.createObjectURL(blob);
 
                     const loader = new THREE.TextureLoader();
 
-                    console.log("blobUrl", blobUrl);
+                    //console.log("blobUrl", blobUrl);
                     // TODO: Use HDR/EXR loader if a uri is HDR/EXR file.
                     return loader.loadAsync(blobUrl);
                 } catch (error) {
@@ -334,7 +173,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             }
 
         } else {
-            console.log("case 3");
+            //console.log("case 3");
             return Promise.reject(new Error("Invalid USD texture info"));
         }
     }
@@ -369,22 +208,6 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         const material = new THREE.MeshPhysicalMaterial();
         const loader = new THREE.TextureLoader();
 
-        // Helper function to create texture from USD texture ID
-        function createTextureFromUSD(textureId) {
-            if (textureId === undefined) return null;
-
-            const tex = usdScene.getTexture(textureId);
-            const img = usdScene.getImage(tex.textureImageId);
-
-            const image8Array = new Uint8ClampedArray(img.data);
-            const texture = new THREE.DataTexture(image8Array, img.width, img.height);
-            texture.format = THREE.RGBAFormat;
-            texture.flipY = true;
-            texture.needsUpdate = true;
-
-            return texture;
-        }
-
         // Diffuse color and texture
         material.color = new THREE.Color(0.18, 0.18, 0.18);
         if (usdMaterial.hasOwnProperty('diffuseColor')) {
@@ -393,24 +216,13 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         }
 
         if (usdMaterial.hasOwnProperty('diffuseColorTextureId')) {
-            //material.map = createTextureFromUSD(usdMaterial.diffuseColorTextureId);
-
             this.getTextureFromUSD(usdScene, usdMaterial.diffuseColorTextureId).then((texture) => {
-                console.log("gettex");
+                //console.log("gettex");
                 material.map = texture;
                 material.needsUpdate = true;
             }).catch((err) => {
                 console.error("failed to load texture. uri not exists or Cross-Site origin header is not set in the web server?", err);
             });
-
-            //(async() => {
-            //    await wait(5000);
-            //    const texture = createCheckerTexture();
-            //    material.map = texture;
-            //    material.needsUpdate = true;
-            //})();
-            //console.log("has diffuse tex");
-
         }
 
         // IOR
@@ -443,7 +255,12 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 material.specularColor = new THREE.Color(color[0], color[1], color[2]);
             }
             if (usdMaterial.hasOwnProperty('specularColorTextureId')) {
-                material.specularColorMap = createTextureFromUSD(usdMaterial.specularColorTextureId);
+                this.getTextureFromUSD(usdScene, usdMaterial.specularColorTextureId).then((texture) => {
+                    material.specularColorMap = texture;
+                    material.needsUpdate = true;
+                }).catch((err) => {
+                    console.error("failed to load specular color texture", err);
+                });
             }
         } else {
             material.metalness = 0.0;
@@ -451,7 +268,12 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 material.metalness = usdMaterial.metallic;
             }
             if (usdMaterial.hasOwnProperty('metallicTextureId')) {
-                material.metalnessMap = createTextureFromUSD(usdMaterial.metallicTextureId);
+                this.getTextureFromUSD(usdScene, usdMaterial.metallicTextureId).then((texture) => {
+                    material.metalnessMap = texture;
+                    material.needsUpdate = true;
+                }).catch((err) => {
+                    console.error("failed to load metallic texture", err);
+                });
             }
         }
 
@@ -461,7 +283,12 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             material.roughness = usdMaterial.roughness;
         }
         if (usdMaterial.hasOwnProperty('roughnessTextureId')) {
-            material.roughnessMap = createTextureFromUSD(usdMaterial.roughnessTextureId);
+            this.getTextureFromUSD(usdScene, usdMaterial.roughnessTextureId).then((texture) => {
+                material.roughnessMap = texture;
+                material.needsUpdate = true;
+            }).catch((err) => {
+                console.error("failed to load roughness texture", err);
+            });
         }
 
         // Emissive
@@ -470,7 +297,12 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             material.emissive = new THREE.Color(color[0], color[1], color[2]);
         }
         if (usdMaterial.hasOwnProperty('emissiveColorTextureId')) {
-            material.emissiveMap = createTextureFromUSD(usdMaterial.emissiveColorTextureId);
+            this.getTextureFromUSD(usdScene, usdMaterial.emissiveColorTextureId).then((texture) => {
+                material.emissiveMap = texture;
+                material.needsUpdate = true;
+            }).catch((err) => {
+                console.error("failed to load emissive texture", err);
+            });
         }
 
         // Opacity
@@ -482,24 +314,44 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             }
         }
         if (usdMaterial.hasOwnProperty('opacityTextureId')) {
-            material.alphaMap = createTextureFromUSD(usdMaterial.opacityTextureId);
-            material.transparent = true;
+            this.getTextureFromUSD(usdScene, usdMaterial.opacityTextureId).then((texture) => {
+                material.alphaMap = texture;
+                material.transparent = true;
+                material.needsUpdate = true;
+            }).catch((err) => {
+                console.error("failed to load opacity texture", err);
+            });
         }
 
         // Ambient Occlusion
         if (usdMaterial.hasOwnProperty('occlusionTextureId')) {
-            material.aoMap = createTextureFromUSD(usdMaterial.occlusionTextureId);
+            this.getTextureFromUSD(usdScene, usdMaterial.occlusionTextureId).then((texture) => {
+                material.aoMap = texture;
+                material.needsUpdate = true;
+            }).catch((err) => {
+                console.error("failed to load occlusion texture", err);
+            });
         }
 
         // Normal Map
         if (usdMaterial.hasOwnProperty('normalTextureId')) {
-            material.normalMap = createTextureFromUSD(usdMaterial.normalTextureId);
+            this.getTextureFromUSD(usdScene, usdMaterial.normalTextureId).then((texture) => {
+                material.normalMap = texture;
+                material.needsUpdate = true;
+            }).catch((err) => {
+                console.error("failed to load normal texture", err);
+            });
         }
 
         // Displacement Map
         if (usdMaterial.hasOwnProperty('displacementTextureId')) {
-            material.displacementMap = createTextureFromUSD(usdMaterial.displacementTextureId);
-            material.displacementScale = 1.0;
+            this.getTextureFromUSD(usdScene, usdMaterial.displacementTextureId).then((texture) => {
+                material.displacementMap = texture;
+                material.displacementScale = 1.0;
+                material.needsUpdate = true;
+            }).catch((err) => {
+                console.error("failed to load displacement texture", err);
+            });
         }
 
         return material;
@@ -567,7 +419,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             pbrMaterial.envMap = options.envMap || null;
             pbrMaterial.envMapIntensity = options.envMapIntensity || 1.0;
 
-            console.log("envmap:", options.envMap);
+            //console.log("envmap:", options.envMap);
 
             mtl = pbrMaterial || defaultMtl || normalMtl;
         }
@@ -621,11 +473,13 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         node.userData['primMeta.displayName'] = usdNode.displayName;
         node.userData['primMeta.absPath'] = usdNode.absPath;
 
+        if (usdNode.hasOwnProperty('children')) {
 
-        // traverse children
-        for (const child of usdNode.children) {
-            const childNode = this.buildThreeNode(child, defaultMtl, usdScene, options);
-            node.add(childNode);
+            // traverse children
+            for (const child of usdNode.children) {
+                const childNode = this.buildThreeNode(child, defaultMtl, usdScene, options);
+                node.add(childNode);
+            }
         }
 
         return node;
