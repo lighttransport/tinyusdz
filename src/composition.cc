@@ -448,6 +448,7 @@ bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std:
   return true;
 }
 
+
 bool CompositeSublayersRec(AssetResolutionResolver &resolver,
                            const Layer &in_layer,
                            std::vector<std::set<std::string>> layer_names_stack,
@@ -522,6 +523,22 @@ bool CompositeSublayersRec(AssetResolutionResolver &resolver,
 }
 
 }  // namespace
+
+std::vector<std::string> ExtractSublayerAssetPaths(const Layer &layer) {
+
+  std::vector<std::string> paths;
+
+  for (const auto &sublayer : layer.metas().subLayers) {
+    std::string sublayer_asset_path = sublayer.assetPath.GetAssetPath();
+    
+    paths.push_back(sublayer_asset_path);
+  }
+
+  return paths;
+
+}
+
+
 
 bool CompositeSublayers(AssetResolutionResolver &resolver,
                         const Layer &in_layer, Layer *composited_layer,

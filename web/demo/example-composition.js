@@ -68,10 +68,12 @@ async function loadScenes() {
 
   var threeScenes = []
 
-  const usd_scene = await loader.loadAsync(usd_filename);
-
+  const usd_layer = await loader.loadAsLayerAsync(usd_filename);
   //console.log("warn", usd_scene.warn());
-  console.log("usd_scene:", usd_scene);
+  console.log("usd_layer:", usd_layer);
+
+  console.log("extractSublayer", TinyUSDZComposer.extractSublayerAssetPaths(usd_layer));
+
 
   const defaultMtl = ui_state['defaultMtl'];
 
@@ -81,12 +83,12 @@ async function loadScenes() {
     envMapIntensity: ui_state['envMapIntensity'], // default envmap intensity
   }
 
-  const usdRootNode = usd_scene.getDefaultRootNode();
-  console.log("usdRootNode:", usdRootNode);
+  //const usdRootNode = usd_scene.getDefaultRootNode();
+  //console.log("usdRootNode:", usdRootNode);
 
-  const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options); 
+  //const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options); 
 
-  threeScenes.push(threeNode);
+  //threeScenes.push(threeNode);
 
   return threeScenes;
 

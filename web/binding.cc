@@ -5,6 +5,7 @@
 #include <emscripten/console.h>
 #include <emscripten/em_js.h>
 #include <emscripten/fetch.h>
+#include <emscripten/emscripten.h>
 
 #include <string>
 #include <vector>
@@ -16,16 +17,15 @@
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
 
-// FIXME
 
-
+#if 0
 struct FetchData
 {
   bool done{false};
   std::string data;
 };
 
-void downloadSucceeded(emscripten_fetch_t *fetch) {
+static void downloadSucceeded(emscripten_fetch_t *fetch) {
   printf("Finished downloading %llu bytes from URL %s.\n", fetch->numBytes, fetch->url);
 
   FetchData *p = reinterpret_cast<FetchData *>(fetch->userData);
@@ -37,7 +37,7 @@ void downloadSucceeded(emscripten_fetch_t *fetch) {
 
 }
 
-void downloadFailed(emscripten_fetch_t *fetch) {
+static void downloadFailed(emscripten_fetch_t *fetch) {
   printf("Downloading %s failed, HTTP failure status code: %d.\n", fetch->url, fetch->status);
 
   FetchData *p = reinterpret_cast<FetchData *>(fetch->userData);
@@ -47,7 +47,6 @@ void downloadFailed(emscripten_fetch_t *fetch) {
   emscripten_fetch_close(fetch); // Also free data on failure.
 }
 
-#if 0 // For Fetch File API. not used a.t.m
 void downloadProgress(emscripten_fetch_t *fetch) {
   if (fetch->totalBytes) {
     printf("Downloading %s.. %.2f%% complete.\n", fetch->url, fetch->dataOffset * 100.0 / fetch->totalBytes);
@@ -58,7 +57,8 @@ void downloadProgress(emscripten_fetch_t *fetch) {
 #endif
 
 
-std::string readFileSync(const std::string &uri) {
+#if 0 // TODO: remove 
+static std::string readFileSync(const std::string &uri) {
   FetchData data;
   data.done = false;
 
@@ -68,7 +68,7 @@ std::string readFileSync(const std::string &uri) {
   std::string buf;
   attr.userData = reinterpret_cast<void *>(&data);
   strcpy(attr.requestMethod, "GET");
-  attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY | EMSCRIPTEN_FETCH_SYNCHRONOUS | EMSCRIPTEN_FETCH_REPLACE;
+  attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY | EMSCRIPTEN_FETCH_REPLACE;
   //attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY | EMSCRIPTEN_FETCH_REPLACE;
   attr.onsuccess = downloadSucceeded;
   attr.onerror = downloadFailed;
@@ -88,13 +88,16 @@ std::string readFileSync(const std::string &uri) {
   while (!data.done) {
 
     // Sleep for 100 milliseconds
-    //emscripten_sleep(100);
+ 
+    // Need ASYNCIFY
+    emscripten_sleep(10);
     
   }
 
-  printf("fs.size %d\n", data.data.size());
+  printf("fs.size %d\n", int(data.data.size()));
   return data.data;
 }
+#endif
 
 using namespace emscripten;
 
@@ -181,33 +184,6 @@ bool ToRGBA(const std::vector<uint8_t> &src, int channels,
 }
 
 }  // namespace detail
-
-#if defined(TINYUSDZ_WASM_ASYNCIFY)
-// forward decl.
-class TinyUSDZLoaderNative;
-
-// Async loading function using EM_ASYNC_JS
-EM_ASYNC_JS(bool, loadAsyncImpl,
-            (TinyUSDZLoaderNative * loader, const char *binary_data,
-             int binary_size),
-            {
-              // Convert C string to JavaScript string
-              const binary = UTF8ToString(binary_data, binary_size);
-
-              // Call the synchronous loadFromBinary method
-              const success =
-                  Module.TinyUSDZLoaderNative.prototype.loadFromBinary.call(
-                      loader, binary);
-
-              if (!success) {
-                const errorMsg =
-                    Module.TinyUSDZLoaderNative.prototype.error.call(loader);
-                throw new Error(errorMsg || 'Unknown error loading USD');
-              }
-
-              return success;
-            });
-#endif
 
 #if 0
 // Use Emscripten's FS API(Synchronous)
@@ -360,8 +336,8 @@ bool SetupEMFSAssetResolution(
 #endif
 
 #if 1 
-// Use Emscripten's FETCH API
-struct FetchAssetResolutionResolver {
+struct EMAssetResolutionResolver {
+
   static int Resolve(const char *asset_name,
                      const std::vector<std::string> &search_paths,
                      std::string *resolved_asset_name, std::string *err,
@@ -402,18 +378,11 @@ struct FetchAssetResolutionResolver {
       return -1;
     }
 
-    std::string content = readFileSync(asset_name);
+    EMAssetResolutionResolver *p = reinterpret_cast<EMAssetResolutionResolver *>(userdata);
+    const std::string &binary = p->get(asset_name);
 
-    if (content.size()) {
-      FetchAssetResolutionResolver *p = reinterpret_cast<FetchAssetResolutionResolver *>(userdata);
-
-      (*nbytes) = uint64_t(content.size());
-      p->cache[asset_name] = content;
-      return 0;  // OK
-    }
-
-
-    return -1;
+    (*nbytes) = uint64_t(binary.size());
+    return 0;  // OK
   }
 
   static int Read(const char *asset_name, uint64_t req_nbytes, uint8_t *out_buf,
@@ -436,44 +405,64 @@ struct FetchAssetResolutionResolver {
       return -2;
     }
 
-    FetchAssetResolutionResolver *p = reinterpret_cast<FetchAssetResolutionResolver *>(userdata);
+    EMAssetResolutionResolver *p = reinterpret_cast<EMAssetResolutionResolver *>(userdata);
 
-    // Size() is called before Read(), so look at cache table.
-    if (p->cache.count(asset_name)) {
-      const std::string &c = p->cache[asset_name];
+    if (p->has(asset_name)) {
+      const std::string &c = p->get(asset_name);
       if (c.size() > req_nbytes) {
         return -2;
       }
       memcpy(out_buf, c.data(), c.size());
       (*nbytes) = c.size();
-      return 0;
+      return 0; // ok
     }
 
-    //
     return -1;
+  }
+
+  // Assume content is loaded in JS layer.
+  bool add(const std::string &asset_name, const std::string &binary) {
+    bool overwritten = has(asset_name);
+      
+    cache[asset_name] = binary;
+    
+    return overwritten;
+  }
+
+  bool has(const std::string &asset_name) {
+    return cache.count(asset_name);
+  }
+
+  const std::string &get(const std::string &asset_name) {
+    if (!cache.count(asset_name)) {
+      return empty_;
+    } 
+
+    return cache.at(asset_name);
   }
 
   // TODO: Use IndexDB?
   //
   // <uri, bytes>
   std::map<std::string, std::string> cache;
+  std::string empty_;
 };
 
-bool SetupFetchAssetResolution(
+bool SetupEMAssetResolution(
     tinyusdz::AssetResolutionResolver &resolver,
     /* must be the persistent pointer address until usd load finishes */
-    const FetchAssetResolutionResolver *p) {
+    const EMAssetResolutionResolver *p) {
   if (!p) {
     return false;
   }
 
   tinyusdz::AssetResolutionHandler handler;
-  handler.resolve_fun = FetchAssetResolutionResolver::Resolve;
-  handler.size_fun = FetchAssetResolutionResolver::Size;
-  handler.read_fun = FetchAssetResolutionResolver::Read;
+  handler.resolve_fun = EMAssetResolutionResolver::Resolve;
+  handler.size_fun = EMAssetResolutionResolver::Size;
+  handler.read_fun = EMAssetResolutionResolver::Read;
   handler.write_fun = nullptr;
   handler.userdata =
-      reinterpret_cast<void *>(const_cast<FetchAssetResolutionResolver *>(p));
+      reinterpret_cast<void *>(const_cast<EMAssetResolutionResolver *>(p));
 
   resolver.register_wildcard_asset_resolution_handler(handler);
 
@@ -548,7 +537,7 @@ class TinyUSDZLoaderNative {
       env.asset_resolver = arr;
     } else {
       tinyusdz::AssetResolutionResolver arr;
-      if (!SetupFetchAssetResolution(arr, &http_resolver_)) {
+      if (!SetupEMAssetResolution(arr, &em_resolver_)) {
         std::cerr << "Failed to setup FetchAssetResolution\n";
         loaded_ = false;
         return false;
@@ -572,6 +561,24 @@ class TinyUSDZLoaderNative {
     return true;
   }
 
+  bool loadAsLayerFromBinary(const std::string &binary, const std::string &filename) {
+
+
+    bool is_usdz = tinyusdz::IsUSDZ(
+        reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size());
+
+    loaded_ = tinyusdz::LoadLayerFromMemory(
+        reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
+        filename, &layer_, &warn_, &error_);
+
+    if (!loaded_) {
+      return false;
+    }
+
+    filename_ = filename;
+
+    return true;
+  }
 
 
   bool loadFromBinary(const std::string &binary, const std::string &filename) {
@@ -635,7 +642,7 @@ class TinyUSDZLoaderNative {
       env.asset_resolver = arr;
     } else {
       tinyusdz::AssetResolutionResolver arr;
-      if (!SetupFetchAssetResolution(arr, &http_resolver_)) {
+      if (!SetupFetchAssetResolution(arr, &em_resolver_)) {
         std::cerr << "Failed to setup FetchAssetResolution\n";
         loaded_ = false;
         return false;
@@ -669,10 +676,6 @@ class TinyUSDZLoaderNative {
   bool loadAndCompositeFromBinary(const std::string &binary, const std::string &filename) {
 
     std::cout << "loadAndComposite " << std::endl;
-    
-    // HACK
-    std::string f = readFileSync("texture-cat-plane.usda");
-    std::cout << "f.sz " << f.size() << "\n";
 
     bool is_usdz = tinyusdz::IsUSDZ(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size());
@@ -690,6 +693,10 @@ class TinyUSDZLoaderNative {
       std::string warn;
 
       tinyusdz::AssetResolutionResolver resolver;
+      if (!SetupEMAssetResolution(resolver, &em_resolver_)) {
+        std::cerr << "Failed to setup FetchAssetResolution\n";
+        return false;
+      }
       const std::string base_dir = "./"; // FIXME
       resolver.set_current_working_path(base_dir);
       resolver.set_search_paths({base_dir});
@@ -812,34 +819,7 @@ class TinyUSDZLoaderNative {
       return stageToRenderScene(stage, is_usdz, binary);
   }
 
-#if defined(TINYUSDZ_WASM_ASYNCIFY)
-  emscripten::val loadAsync(const std::string &binary) {
-    return emscripten::val::global("Promise").new_(
-        emscripten::val::module_property("asyncifyWrapper"),
-        emscripten::val([this, binary](emscripten::val resolve,
-                                       emscripten::val reject) {
-          try {
-            bool success = loadAsyncImpl(this, binary.c_str(), binary.size());
-            if (success) {
-              resolve(emscripten::val(this));
-            } else {
-              reject(emscripten::val(this->error()));
-            }
-          } catch (const std::exception &e) {
-            reject(emscripten::val(std::string("Exception: ") + e.what()));
-          } catch (...) {
-            reject(emscripten::val("Unknown exception during loading"));
-          }
-        }));
-  }
-#endif
-
-  emscripten::val loadAsLayer(const std::string &binary) {
-    tinyusdz::Layer layer;
-
-    // TODO:
-    return emscripten::val::null();
-  }
+  
 
   int numMeshes() const { return render_scene_.meshes.size(); }
 
@@ -1091,9 +1071,21 @@ class TinyUSDZLoaderNative {
     loadTextureOnLoad_ = onoff;
   }
 
-  // Return filename passed to loadFromBinary.
+  // Return filename passed to loadFromBinary/loadAsLayerFromBinary.
   std::string getURI() const {
     return filename_;
+  }
+
+  emscripten::val extractSublayerAssetPaths() {
+    emscripten::val arr = emscripten::val::array();
+
+    
+    std::vector<std::string> paths = tinyusdz::ExtractSublayerAssetPaths(layer_);
+    for (size_t i = 0; i < paths.size(); i++) {
+     arr.call<void>("push", paths[i]);
+    }
+
+    return arr;
   }
 
   // TODO: Deprecate
@@ -1147,9 +1139,10 @@ class TinyUSDZLoaderNative {
   std::string warn_;
   std::string error_;
 
+  tinyusdz::Layer layer_;
   tinyusdz::tydra::RenderScene render_scene_;
   tinyusdz::USDZAsset usdz_asset_;
-  FetchAssetResolutionResolver http_resolver_;
+  EMAssetResolutionResolver em_resolver_;
 };
 
 ///
@@ -1210,7 +1203,7 @@ EMSCRIPTEN_BINDINGS(stl_wrappters) {
   register_vector<uint16_t>("VectorUInt16");
   register_vector<uint32_t>("VectorUInt");
   register_vector<int>("VectorInt");
-  register_vector<std::string>("VectorStrin");
+  register_vector<std::string>("VectorString");
 }
 
 // Register the array type
@@ -1348,6 +1341,7 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
 #if defined(TINYUSDZ_WASM_ASYNCIFY)
       .function("loadAsync", &TinyUSDZLoaderNative::loadAsync)
 #endif
+      .function("loadAsLayerFromBinary", &TinyUSDZLoaderNative::loadAsLayerFromBinary)
       .function("loadFromBinary", &TinyUSDZLoaderNative::loadFromBinary)
       .function("loadAndCompositeFromBinary", &TinyUSDZLoaderNative::loadFromBinary)
       .function("getURI", &TinyUSDZLoaderNative::getURI)
@@ -1365,6 +1359,9 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::setEnableComposition)
       .function("setLoadTextureOnLoad",
                 &TinyUSDZLoaderNative::setLoadTextureOnLoad)
+      .function("extractSublayerAssetPaths",
+                &TinyUSDZLoaderNative::extractSublayerAssetPaths)
+    
       .function("ok", &TinyUSDZLoaderNative::ok)
       .function("error", &TinyUSDZLoaderNative::error);
 

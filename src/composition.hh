@@ -75,6 +75,22 @@ struct PayloadCompositionOptions {
   std::map<std::string, FileFormatHandler> fileformats;
 };
 
+
+///
+/// Extract subLayers asset paths
+///
+std::vector<std::string> ExtractSublayerAssetPaths(const Layer &layer);
+
+///
+/// Extract references asset paths
+///
+std::vector<std::string> ExtractReferencesAssetPaths(const Layer &layer);
+
+///
+/// Extract payload asset paths
+///
+std::vector<std::string> ExtractPayloadAssetPaths(const Layer &layer);
+
 ///
 /// Return true when any PrimSpec in the Layer contains `references` Prim metadataum
 ///
