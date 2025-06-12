@@ -632,7 +632,6 @@ static bool FindPrimSpecAt(const Path &path, const PrimSpec &rootPS,
 }
 #endif
 
-
 bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
                             const std::vector<std::string> &asset_search_paths,
                             const Layer &in_layer,
@@ -1035,7 +1034,50 @@ bool CompositeInheritsRec(uint32_t depth, const Layer &layer,
   return true;
 }
 
-}  // namespace
+bool ExtractReferencesAssetPathsImpl(uint32_t depth, const PrimSpec &primspec, std::vector<std::string> &paths) {
+
+  if (depth > 1024*1024) {
+    return false;
+  }
+
+  // Traverse children first.
+  for (auto &child : primspec.children()) {
+    if (!ExtractReferencesAssetPathsImpl(depth + 1, child, paths)) {
+      return false;
+    }
+  }
+
+  if (primspec.metas().references) {
+    // TODO: qualifier
+    //const ListEditQual &qual = primspec.metas().references.value().first;
+    const auto &refecences = primspec.metas().references.value().second;
+
+    for (const auto &reference : refecences) {
+
+      paths.push_back(reference.asset_path.GetAssetPath());
+    }
+
+  }
+
+  return true;
+
+}
+
+} // namespace
+
+
+std::vector<std::string> ExtractReferencesAssetPaths(const Layer &layer) {
+
+  std::vector<std::string> paths;
+
+  for (const auto &ps : layer.primspecs()) {
+    ExtractReferencesAssetPathsImpl(0, ps.second, paths);
+  }
+
+  return paths;
+
+}
+
 
 bool CompositeReferences(AssetResolutionResolver &resolver,
                          const Layer &in_layer, Layer *composited_layer,

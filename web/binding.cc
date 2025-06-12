@@ -381,6 +381,8 @@ struct EMAssetResolutionResolver {
     EMAssetResolutionResolver *p = reinterpret_cast<EMAssetResolutionResolver *>(userdata);
     const std::string &binary = p->get(asset_name);
 
+    std::cout << asset_name << ".size " << binary.size() << "\n";
+
     (*nbytes) = uint64_t(binary.size());
     return 0;  // OK
   }
@@ -439,6 +441,10 @@ struct EMAssetResolutionResolver {
     } 
 
     return cache.at(asset_name);
+  }
+
+  void clear() {
+    cache.clear();
   }
 
   // TODO: Use IndexDB?
@@ -1088,6 +1094,74 @@ class TinyUSDZLoaderNative {
     return arr;
   }
 
+  emscripten::val extractReferencesAssetPaths() {
+    emscripten::val arr = emscripten::val::array();
+
+    
+    std::vector<std::string> paths = tinyusdz::ExtractReferencesAssetPaths(layer_);
+    for (size_t i = 0; i < paths.size(); i++) {
+     arr.call<void>("push", paths[i]);
+    }
+
+    return arr;
+  }
+
+  bool composeSublayers() {
+
+    tinyusdz::AssetResolutionResolver resolver;
+    if (!SetupEMAssetResolution(resolver, &em_resolver_)) {
+      std::cerr << "Failed to setup EMAssetResolution\n";
+      return false;
+    }
+    const std::string base_dir = "./"; // FIXME
+    resolver.set_current_working_path(base_dir);
+    resolver.set_search_paths({base_dir});
+
+    if (!tinyusdz::CompositeSublayers(resolver, layer_, &composed_layer_, &warn_, &error_)) {
+      std::cerr << "Failed to composite subLayers: \n";
+      return false;
+    }
+
+    composited_ = true;
+
+    return true;
+  }
+
+  bool composedLayerToRenderScene() {
+    tinyusdz::Stage stage;
+
+    if (!tinyusdz::LayerToStage(composed_layer_, &stage, &warn_, &error_)) {
+      std::cerr << "Failed to LayerToStage \n";
+      return false;
+    }
+
+    std::string empty;
+    return stageToRenderScene(stage, /* TODO: is_usdz*/false, empty);
+
+  }
+
+  void clearAssets() {
+    em_resolver_.clear();
+  }
+
+  void setAsset(const std::string &name, const std::string &binary) {
+    em_resolver_.add(name, binary);
+  }
+
+  void hasAsset(const std::string &name) {
+    em_resolver_.has(name);
+  }
+
+  emscripten::val getAsset(const std::string &name) {
+    emscripten::val val;
+    if (em_resolver_.has(name)) {
+      const std::string &content = em_resolver_.get(name);
+      val.set("name", name);
+      val.set("data", emscripten::typed_memory_view(content.size(), content.data()));
+    }
+    return val;
+  }
+
   // TODO: Deprecate
   bool ok() const { return loaded_; }
 
@@ -1140,6 +1214,9 @@ class TinyUSDZLoaderNative {
   std::string error_;
 
   tinyusdz::Layer layer_;
+  tinyusdz::Layer composed_layer_;
+  bool composited_{false};
+
   tinyusdz::tydra::RenderScene render_scene_;
   tinyusdz::USDZAsset usdz_asset_;
   EMAssetResolutionResolver em_resolver_;
@@ -1361,7 +1438,23 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::setLoadTextureOnLoad)
       .function("extractSublayerAssetPaths",
                 &TinyUSDZLoaderNative::extractSublayerAssetPaths)
+
+      .function("composeSublayers",
+                &TinyUSDZLoaderNative::composeSublayers)
+
+      .function("composedLayerToRenderScene",
+                &TinyUSDZLoaderNative::composedLayerToRenderScene)
     
+    
+      .function("setAsset",
+                &TinyUSDZLoaderNative::setAsset)
+      .function("hasAsset",
+                &TinyUSDZLoaderNative::hasAsset)
+      .function("getAsset",
+                &TinyUSDZLoaderNative::getAsset)
+      .function("clearAssets",
+                &TinyUSDZLoaderNative::clearAssets)
+
       .function("ok", &TinyUSDZLoaderNative::ok)
       .function("error", &TinyUSDZLoaderNative::error);
 

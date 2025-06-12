@@ -5,6 +5,50 @@ import initTinyUSDZNative from './tinyusdz.js';
 import { Loader } from 'three'; // or https://cdn.jsdelivr.net/npm/three/build/three.module.js';
 
 
+class FetchAssetResolver {
+    constructor() {
+        this.assetCache = new Map();
+    }
+
+    async resolveAsync(uri) {
+        try {
+            const response = await fetch(uri);
+            if (!response.ok) {
+                throw new Error(`Failed to fetch asset: ${uri}`);
+            }
+            const data = await response.arrayBuffer();
+            console.log(`Fetched asset ${uri} successfully, size: ${data.byteLength} bytes`);
+            this.assetCache.set(uri, data);
+            console.log(data);
+            return Promise.resolve([uri, data]);
+        } catch (error) {
+            console.error(`Error resolving asset ${uri}:`, error);
+            throw error;
+        }
+    }
+
+    getAsset(uri) {
+        if (this.assetCache.has(uri)) {
+            return this.assetCache.get(uri);
+        } else {
+            console.warn(`Asset not found in cache: ${uri}`);
+            return null;
+        }
+    }
+
+    hasAsset(uri) {
+        return this.assetCache.has(uri);
+    }
+
+    setAsset(uri, data) {
+        this.assetCache.set(uri, data);
+    }
+
+    clearCache() {
+        this.assetCache.clear();
+    }
+
+}
 
 // TODO
 //
@@ -227,4 +271,4 @@ class TinyUSDZLoader extends Loader {
 
 }
 
-export { TinyUSDZLoader };
+export { TinyUSDZLoader, FetchAssetResolver };

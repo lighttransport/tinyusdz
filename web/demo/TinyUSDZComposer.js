@@ -25,12 +25,31 @@ class TinyUSDZComposer {
     //  console.warn("TODO");
     //}
 
+    //
+    // uds_layer : TinyUSDZLoaderNative instance after loadAsLayer/loadAsLayerAsync 
+    //
     static extractSublayerAssetPaths(usd_layer) {
         if (!usd_layer || !usd_layer.extractSublayerAssetPaths) {
-            console.warn("TinyUSDZComposer: Invalid USD layer or method not available.");
+            console.warn("TinyUSDZComposer: Invalid USD layer or extractSublayerAssetPaths not available.");
             return [];
         }
         return usd_layer.extractSublayerAssetPaths();
+    }
+
+    static extractReferencesAssetPaths(usd_layer) {
+        if (!usd_layer || !usd_layer.extractReferencesAssetPaths) {
+            console.warn("TinyUSDZComposer: Invalid USD layer or extractReferencesAssetPaths not available.");
+            return [];
+        }
+        return usd_layer.extractReferencesAssetPaths();
+    }
+
+    static composeSublayer(usd_layer) {
+        if (!usd_layer || !usd_layer.composeSublayer) {
+            console.warn("TinyUSDZComposer: Invalid USD layer or composeSublayer not available.");
+            return [];
+        }
+        return usd_layer.composeSublayer();
     }
 
 }

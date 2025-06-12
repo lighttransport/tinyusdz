@@ -3,10 +3,11 @@ import { HDRCubeTextureLoader } from 'three/addons/loaders/HDRCubeTextureLoader.
 
 import { GUI } from 'https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.module.js';
 
-import { TinyUSDZLoader } from './TinyUSDZLoader.js'
+import { FetchAssetResolver, TinyUSDZLoader } from './TinyUSDZLoader.js'
 import { TinyUSDZLoaderUtils } from './TinyUSDZLoaderUtils.js'
 import { TinyUSDZComposer } from './TinyUSDZComposer.js'
 import { createTypeReferenceDirectiveResolutionCache } from 'typescript';
+import { subclip } from 'three/src/animation/AnimationUtils.js';
 
 const manager = new THREE.LoadingManager();
 
@@ -53,6 +54,8 @@ gui.add(params, 'rotationSpeed', 0, 10).name('Rotation Speed').onChange((value) 
 });
 
 
+let assetResolver = new FetchAssetResolver();
+
 async function loadScenes() {
 
   const loader = new TinyUSDZLoader();
@@ -72,8 +75,25 @@ async function loadScenes() {
   //console.log("warn", usd_scene.warn());
   console.log("usd_layer:", usd_layer);
 
-  console.log("extractSublayer", TinyUSDZComposer.extractSublayerAssetPaths(usd_layer));
+  //
+  // Extract sublayer asset paths(file URLs) from the USD subLayer.
+  // Read asset with fetch() in JS layer.
+  // Set asset binary to usd_layer so that the content of asset is found in C++ layer.
+  //
+  const sublayerAssetPaths = TinyUSDZComposer.extractSublayerAssetPaths(usd_layer);
+  console.log("extractSublayer", sublayerAssetPaths);
 
+  await Promise.all(sublayerAssetPaths.map(async (sublayerPath) => {
+      const [uri, binary] = await assetResolver.resolveAsync(sublayerPath);
+      console.log("sublayerPath:", sublayerPath, "binary:", binary.byteLength, "bytes");
+      return usd_layer.setAsset(sublayerPath, binary);
+    }));
+
+  if (!usd_layer.composeSublayers()) {
+    throw new Error("Failed to compose sublayers:", usd_layer.getError());
+  }
+
+  usd_layer.composedLayerToRenderScene();
 
   const defaultMtl = ui_state['defaultMtl'];
 
@@ -83,8 +103,8 @@ async function loadScenes() {
     envMapIntensity: ui_state['envMapIntensity'], // default envmap intensity
   }
 
-  //const usdRootNode = usd_scene.getDefaultRootNode();
-  //console.log("usdRootNode:", usdRootNode);
+  const usdRootNode = usd_layer.getDefaultRootNode();
+  console.log("usdRootNode:", usdRootNode);
 
   //const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options); 
 
