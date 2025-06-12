@@ -1118,6 +1118,7 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
   // - propertyNames()
   // - primChildrenNames()
 
+
 #define RECONSTRUCT_PRIM(__primty)                                       \
   if (primspec.typeName() == value::TypeTraits<__primty>::type_name()) { \
     __primty typed_prim;                                                 \
@@ -1174,7 +1175,7 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
   RECONSTRUCT_PRIM(GeomCapsule)
   RECONSTRUCT_PRIM(GeomBasisCurves)
   RECONSTRUCT_PRIM(GeomCamera)
-  // RECONSTRUCT_PRIM(GeomSubset)
+  RECONSTRUCT_PRIM(GeomSubset)
   RECONSTRUCT_PRIM(SphereLight)
   RECONSTRUCT_PRIM(DomeLight)
   RECONSTRUCT_PRIM(CylinderLight)
@@ -1191,6 +1192,23 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
   }
 
 #undef RECONSTRUCT_PRIM
+}
+
+static nonstd::optional<Prim> ReconstructPrimFromPrimSpecRec(
+    const PrimSpec &primspec, std::string *warn, std::string *err) {
+
+  auto pprim = ReconstructPrimFromPrimSpec(primspec, warn, err);
+  if (!pprim) {
+    return nonstd::nullopt;
+  }
+  
+  for (size_t i = 0; i < primspec.children().size(); i++) {
+    if (auto pv = ReconstructPrimFromPrimSpecRec(primspec.children()[i], warn, err)) {
+      pprim.value().children().emplace_back(std::move(pv.value()));
+    }
+  }
+
+  return pprim;
 }
 
 static bool OverridePrimSpecRec(uint32_t depth, PrimSpec &dst,
@@ -1316,7 +1334,7 @@ bool LayerToStage(const Layer &layer, Stage *stage_out, std::string *warn,
   // TODO: primChildren metadatum
   for (const auto &primspec : layer.primspecs()) {
     if (auto pv =
-            detail::ReconstructPrimFromPrimSpec(primspec.second, warn, err)) {
+            detail::ReconstructPrimFromPrimSpecRec(primspec.second, warn, err)) {
       stage.add_root_prim(std::move(pv.value()));
     }
   }
