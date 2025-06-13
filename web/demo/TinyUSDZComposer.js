@@ -52,6 +52,36 @@ class TinyUSDZComposer {
         return usd_layer.composeSublayer();
     }
 
+
+    /*
+    static async resolveSublayerAssets(depth, usd_layer, assetResolver) {
+
+        if (depth > 16) {
+            console.warn("TinyUSDZComposer: Maximum recursion depth reached while resolving sublayer assets.");
+            return;
+        }
+
+        if (!usd_layer || !assetResolver) {
+            console.warn("TinyUSDZComposer: Invalid USD layer or asset resolver.");
+            return;
+        }
+
+        const sublayerAssetPaths = this.extractSublayerAssetPaths(usd_layer);
+        console.log("extractSublayer", sublayerAssetPaths);
+
+        await Promise.all(sublayerAssetPaths.map(async (sublayerPath) => {
+            const [uri, binary] = await assetResolver.resolveAsync(sublayerPath);
+            console.log("sublayerPath:", sublayerPath, "binary:", binary.byteLength, "bytes");
+
+            
+            
+
+            return usd_layer.setAsset(sublayerPath, binary);
+            }));
+
+    }
+    */
+
 }
 
 

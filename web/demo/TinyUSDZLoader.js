@@ -19,7 +19,6 @@ class FetchAssetResolver {
             const data = await response.arrayBuffer();
             console.log(`Fetched asset ${uri} successfully, size: ${data.byteLength} bytes`);
             this.assetCache.set(uri, data);
-            console.log(data);
             return Promise.resolve([uri, data]);
         } catch (error) {
             console.error(`Error resolving asset ${uri}:`, error);
@@ -78,8 +77,6 @@ class TinyUSDZLoader extends Loader {
 
     // Initialize the native WASM module
     // This is async but the load() method handles it internally with promises
-    // Initialize the native WASM module
-    // This is async but the load() method handles it internally with promises
     async init() {
         if (!this.native_) {
             console.log('Initializing native module...');
@@ -122,7 +119,7 @@ class TinyUSDZLoader extends Loader {
                 return fetch(url);
             })
             .then((response) => {
-                console.log('fetch USDZ file done:', url);
+                console.log('fetch USD file done:', url);
                 return response.arrayBuffer();
             })
             .then((usd_data) => {
