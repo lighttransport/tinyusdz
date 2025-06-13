@@ -28,16 +28,16 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
     // Extract file extension from URI/path
     static getFileExtension(uri) {
         if (!uri || typeof uri !== 'string') return '';
-        
+
         // Remove query parameters and hash
         const cleanUri = uri.split('?')[0].split('#')[0];
-        
+
         // Get the last part after the last dot
         const lastDotIndex = cleanUri.lastIndexOf('.');
         if (lastDotIndex === -1 || lastDotIndex === cleanUri.length - 1) {
             return '';
         }
-        
+
         return cleanUri.substring(lastDotIndex + 1).toLowerCase();
     }
 
@@ -55,25 +55,25 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             'tif': 'image/tiff',
             'svg': 'image/svg+xml',
             'ico': 'image/x-icon',
-            
+
             // HDR/EXR formats
             'hdr': 'image/vnd.radiance',
             'exr': 'image/x-exr',
             'rgbe': 'image/vnd.radiance',
-            
+
             // 3D/USD formats
             'usd': 'model/vnd.usdz+zip',
             'usda': 'model/vnd.usd+ascii',
             'usdc': 'model/vnd.usd+binary',
             'usdz': 'model/vnd.usdz+zip',
-            
+
             // Other common formats
             'json': 'application/json',
             'xml': 'application/xml',
             'txt': 'text/plain',
             'bin': 'application/octet-stream'
         };
-        
+
         return mimeTypes[extension.toLowerCase()] || null;
     }
 
@@ -213,6 +213,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         if (usdMaterial.hasOwnProperty('diffuseColor')) {
             const color = usdMaterial.diffuseColor;
             material.color = new THREE.Color(color[0], color[1], color[2]);
+            console.log("diffuseColor:", material.color);
         }
 
         if (usdMaterial.hasOwnProperty('diffuseColorTextureId')) {
@@ -410,6 +411,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         } else {
 
             const usdMaterial = usdScene.getMaterial(mesh.materialId);
+            console.log("usdMaterial:", usdMaterial);
 
             const pbrMaterial = this.convertUsdMaterialToMeshPhysicalMaterial(usdMaterial, usdScene);
             //console.log("pbrMaterial:", pbrMaterial);
