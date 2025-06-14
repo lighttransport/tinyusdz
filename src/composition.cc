@@ -132,6 +132,61 @@ bool IsBuiltinFileFormat(const std::string &name) {
   return false;
 }
 
+bool ReplaceRootPrimPathRec(
+  uint32_t depth,
+  const Path &srcPrefix,
+  const Path &dstPrefix,
+  PrimSpec &ps,
+  std::string *warn,
+  std::string *err) {
+
+  (void)warn;
+
+  if (depth > (1024 * 1024 * 128)) {
+    PUSH_ERROR_AND_RETURN("PrimSpec tree too deep.");
+  }
+
+  for (auto &prop : ps.props()) {
+
+    if (prop.second.is_relationship()) {
+
+      Relationship &rel = prop.second.relationship();
+
+      if (rel.is_path()) {
+        if (rel.targetPath.has_prefix(srcPrefix)) {
+          rel.targetPath.replace_prefix(srcPrefix, dstPrefix);
+        }
+      } else if (rel.is_pathvector()) {
+
+        for (auto &path : rel.targetPathVector) {
+          if (path.has_prefix(srcPrefix)) {
+            path.replace_prefix(srcPrefix, dstPrefix);
+          }
+        }
+      }
+
+    } else if (prop.second.is_attribute_connection()) {
+
+      Attribute &attr = prop.second.attribute();
+      for (auto &connPath : attr.connections()) {
+        if (connPath.has_prefix(srcPrefix)) {
+          connPath.replace_prefix(srcPrefix, dstPrefix);
+        }
+      }
+    }
+
+  }
+
+  // Combine child primspecs.
+  for (auto &child : ps.children()) {
+    if (!ReplaceRootPrimPathRec(depth + 1, srcPrefix, dstPrefix, child, warn, err)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 // Copy assetresolver state to all PrimSpec in the tree.
 bool PropagateAssetResolverState(uint32_t depth, PrimSpec &ps,
                                  const std::string &cwp,
@@ -618,6 +673,7 @@ static bool FindPrimSpecAt(const Path &path, const PrimSpec &rootPS,
 
 bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
                             const std::vector<std::string> &asset_search_paths,
+                            const Path &dst_prim_path,
                             const Layer &in_layer,
                             PrimSpec &primspec /* [inout] */, std::string *warn,
                             std::string *err,
@@ -628,7 +684,8 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
 
   // Traverse children first.
   for (auto &child : primspec.children()) {
-    if (!CompositeReferencesRec(depth + 1, resolver, asset_search_paths, in_layer, child,
+    const Path parent_prim_path = dst_prim_path.AppendPrim(child.name());
+    if (!CompositeReferencesRec(depth + 1, resolver, asset_search_paths, parent_prim_path, in_layer, child,
                                 warn, err, options)) {
       return false;
     }
@@ -681,6 +738,11 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
         if (!src_ps) {
           // LoadAsset allowed not-found or unsupported file. so do nothing.
           continue;
+        }
+
+        // Replace prim path prefix
+        if (!ReplaceRootPrimPathRec(0, reference.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
+          return false;
         }
 
         // `inherits` op
@@ -743,6 +805,11 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
         if (!src_ps) {
           // LoadAsset allowed not-found or unsupported file. so do nothing.
           continue;
+        }
+
+        // Replace prim path prefix
+        if (!ReplaceRootPrimPathRec(0, reference.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
+          return false;
         }
 
         // `over` op
@@ -1033,7 +1100,8 @@ bool CompositeReferences(AssetResolutionResolver &resolver,
   Layer dst = in_layer;  // deep copy
 
   for (auto &item : dst.primspecs()) {
-    if (!CompositeReferencesRec(/* depth */ 0, resolver, search_paths, in_layer,
+    Path primPath(item.first, "");
+    if (!CompositeReferencesRec(/* depth */ 0, resolver, search_paths, primPath, in_layer,
                                 item.second, warn, err, options)) {
       PUSH_ERROR_AND_RETURN("Composite `references` failed.");
     }

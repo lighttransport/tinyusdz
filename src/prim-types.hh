@@ -559,6 +559,16 @@ class Path {
   bool has_prefix(const Path &rhs) const;
 
   ///
+  /// Replace Prim path prefix.
+  /// example.
+  /// srcPrefix = /bora/dora
+  /// dstPrefix = /bora2/dora2
+  /// 
+  /// /bora/dora/muda -> /bora2/dora2/muda 
+  ///
+  bool replace_prefix(const Path &srcPrefix, const Path &dstPrefix);
+
+  ///
   /// @returns true if a path is '/' only
   ///
   bool is_root_path() const {
@@ -662,6 +672,8 @@ class Path {
   }
 
  private:
+  void _update(const std::string &p, const std::string &prop);
+
   std::string _prim_part;     // e.g. /Model/MyMesh, MySphere
   std::string _prop_part;     // e.g. visibility (`.` is not included)
   std::string _variant_part;  // e.g. `variantColor` for {variantColor=green}
