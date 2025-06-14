@@ -4183,7 +4183,7 @@ class PrimSpec {
 
   std::map<std::string, VariantSetSpec> _variantSets;
 
-  std::vector<value::token> _primChildren;  // List of child PrimSPec nodes
+  std::vector<value::token> _primChildren;  // List of child PrimSpec nodes
   std::vector<value::token> _properties;    // List of property names
   std::vector<value::token> _variantChildren;
 

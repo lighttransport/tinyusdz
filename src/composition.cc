@@ -1141,7 +1141,7 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
     return std::move(prim);                                              \
   } else
 
-  if (primspec.typeName() == "Model") {
+  if (primspec.typeName().empty() || primspec.typeName() == "Model") {
     // Code is mostly identical to RECONSTRUCT_PRIM.
     // Difference is store primTypeName to Model class itself.
     Model typed_prim;
