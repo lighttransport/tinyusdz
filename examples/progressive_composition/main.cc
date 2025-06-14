@@ -201,6 +201,8 @@ int main(int argc, char **argv) {
     tinyusdz::Layer src_layer = root_layer;
     if (comp_features.subLayers) {
 
+      // NOTE: subLayers are resolved recursively.
+
       std::vector<std::string> subLayerAssetPaths = tinyusdz::ExtractSublayerAssetPaths(src_layer);
       for (size_t i = 0; i < subLayerAssetPaths.size(); i++) {
           std::cout << "subLayer asset path: " << subLayerAssetPaths[i] << "\n";
