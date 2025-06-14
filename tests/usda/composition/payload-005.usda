@@ -1,0 +1,10 @@
+#usda 1.0
+
+def "root" (
+)
+{
+  def "sub" (
+  	payload = @pbr-mtl.usda@</root_pbr>
+  ) {
+  }
+}
