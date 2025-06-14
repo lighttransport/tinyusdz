@@ -1,0 +1,10 @@
+#usda 1.0
+
+def "root" (
+)
+{
+  def "sub" (
+  	references = @pbr-mtl.usda@</root_pbr>
+  ) {
+  }
+}

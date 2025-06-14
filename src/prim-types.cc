@@ -134,7 +134,7 @@ bool ConvertTokenAttributeToStringAttribute(
 // -- Path
 //
 
-Path::Path(const std::string &p, const std::string &prop) {
+void Path::_update(const std::string &p, const std::string &prop) {
   //
   // For absolute path, starts with '/' and no other '/' exists.
   // For property part, '.' exists only once.
@@ -308,6 +308,10 @@ Path::Path(const std::string &p, const std::string &prop) {
   }
 }
 
+Path::Path(const std::string &p, const std::string &prop) {
+  _update(p, prop); 
+}
+
 Path Path::append_property(const std::string &elem) {
   Path &p = (*this);
 
@@ -363,6 +367,22 @@ const Path Path::AppendProperty(const std::string &elem) const {
   p.append_property(elem);
 
   return p;
+}
+
+bool Path::replace_prefix(const Path &srcPrefix, const Path &dstPrefix) {
+  const std::string &srcPrefixStr = srcPrefix.prim_part();
+  const std::string &dstPrefixStr = dstPrefix.prim_part();
+
+  std::string pathStr = prim_part();
+  if (startsWith(pathStr, srcPrefixStr)) {
+    pathStr = dstPrefixStr + removePrefix(pathStr, srcPrefixStr);
+
+    _update(pathStr, prop_part());
+
+    return true;
+  }
+
+  return false;
 }
 
 // TODO: Do test more.
