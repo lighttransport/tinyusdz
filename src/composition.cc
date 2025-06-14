@@ -142,6 +142,9 @@ bool ReplaceRootPrimPathRec(
 
   (void)warn;
 
+  DCOUT("srcPrefix: " << srcPrefix);
+  DCOUT("dstPrefix: " << dstPrefix);
+
   if (depth > (1024 * 1024 * 128)) {
     PUSH_ERROR_AND_RETURN("PrimSpec tree too deep.");
   }
@@ -855,6 +858,7 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
 
 bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
                          const std::vector<std::string> &asset_search_paths,
+                         const Path &dst_prim_path,
                          const Layer &in_layer,
                          PrimSpec &primspec /* [inout] */, std::string *warn,
                          std::string *err,
@@ -865,7 +869,8 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
 
   // Traverse children first.
   for (auto &child : primspec.children()) {
-    if (!CompositePayloadRec(depth + 1, resolver, asset_search_paths, in_layer, child,
+    const Path parent_prim_path = dst_prim_path.AppendPrim(child.name());
+    if (!CompositePayloadRec(depth + 1, resolver, asset_search_paths, parent_prim_path, in_layer, child,
                              warn, err, options)) {
       return false;
     }
@@ -916,6 +921,11 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
         if (!src_ps) {
           // LoadAsset allowed not-found or unsupported file. so do nothing.
           continue;
+        }
+
+        // Replace prim path prefix
+        if (!ReplaceRootPrimPathRec(0, pl.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
+          return false;
         }
 
         // `inherits` op
@@ -979,6 +989,11 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
         if (!src_ps) {
           // LoadAsset allowed not-found or unsupported file. so do nothing.
           continue;
+        }
+
+        // Replace prim path prefix
+        if (!ReplaceRootPrimPathRec(0, pl.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
+          return false;
         }
 
         // `over` op
@@ -1159,7 +1174,7 @@ bool CompositeReferences(AssetResolutionResolver &resolver,
   Layer dst = in_layer;  // deep copy
 
   for (auto &item : dst.primspecs()) {
-    Path primPath(item.first, "");
+    Path primPath("/" + item.first, "");
     if (!CompositeReferencesRec(/* depth */ 0, resolver, search_paths, primPath, in_layer,
                                 item.second, warn, err, options)) {
       PUSH_ERROR_AND_RETURN("Composite `references` failed.");
@@ -1182,8 +1197,9 @@ bool CompositePayload(AssetResolutionResolver &resolver, const Layer &in_layer,
   Layer dst = in_layer;  // deep copy
 
   for (auto &item : dst.primspecs()) {
+    Path primPath("/" + item.first, "");
     if (!CompositePayloadRec(/* depth */ 0, resolver,
-                             item.second.get_asset_search_paths(), in_layer, item.second,
+                             item.second.get_asset_search_paths(), primPath, in_layer, item.second,
                              warn, err, options)) {
       PUSH_ERROR_AND_RETURN("Composite `payload` failed.");
     }
