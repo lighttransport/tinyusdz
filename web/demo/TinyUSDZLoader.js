@@ -1,8 +1,11 @@
-// WASM module.
-import initTinyUSDZNative from './tinyusdz.js';
+// Use zstd compression for wasm
+import { decompress } from 'fzstd';
 
 // TODO :  use 'from 'three''
 import { Loader } from 'three'; // or https://cdn.jsdelivr.net/npm/three/build/three.module.js';
+
+// WASM module of TinyUSDZ.
+import initTinyUSDZNative from './tinyusdz.js';
 
 
 class FetchAssetResolver {
@@ -73,6 +76,33 @@ class TinyUSDZLoader extends Loader {
         this.textureCache = {};
 
         this.enableComposition_ = false;
+
+        this.useZstdCompressedWasm_ = true;
+        this.wasmPath_ = './tinyusdz.wasm';
+        this.compressedWasmPath_ = './tinyusdz.wasm.zst';
+    }
+
+    // Decompress zstd compressed WASM
+    async decompressZstdWasm(compressedPath) {
+        try {
+            console.log(`Loading compressed WASM from: ${compressedPath}`);
+            const response = await fetch(compressedPath);
+            if (!response.ok) {
+                throw new Error(`Failed to fetch compressed WASM: ${response.statusText}`);
+            }
+
+            const compressedData = await response.arrayBuffer();
+            console.log(`Compressed WASM size: ${compressedData.byteLength} bytes`);
+
+            // Decompress using zstd
+            const decompressedData = decompress(new Uint8Array(compressedData));
+            console.log(`Decompressed WASM size: ${decompressedData.byteLength} bytes`);
+
+            return decompressedData;
+        } catch (error) {
+            console.error('Error decompressing zstd WASM:', error);
+            throw error;
+        }
     }
 
     // Initialize the native WASM module
@@ -80,7 +110,20 @@ class TinyUSDZLoader extends Loader {
     async init() {
         if (!this.native_) {
             console.log('Initializing native module...');
-            this.native_ = await initTinyUSDZNative({});
+
+            let wasmBinary = null;
+            
+            if (this.useZstdCompressedWasm_) {
+                // Load and decompress zstd compressed WASM
+                wasmBinary = await this.decompressZstdWasm(this.compressedWasmPath_);
+
+                console.log('Decompressed WASM binary loaded:', wasmBinary.byteLength, 'bytes');
+            }
+
+            // Initialize with custom WASM binary if decompressed
+            const initOptions = wasmBinary ? { wasmBinary } : {};
+
+            this.native_ = await initTinyUSDZNative(initOptions);
             if (!this.native_) {
                 throw new Error('TinyUSDZLoader: Failed to initialize native module.');
             }

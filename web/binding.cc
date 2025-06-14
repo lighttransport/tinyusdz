@@ -1106,6 +1106,18 @@ class TinyUSDZLoaderNative {
     return arr;
   }
 
+  emscripten::val extractPayloadAssetPaths() {
+    emscripten::val arr = emscripten::val::array();
+
+    
+    std::vector<std::string> paths = tinyusdz::ExtractPayloadAssetPaths(layer_);
+    for (size_t i = 0; i < paths.size(); i++) {
+     arr.call<void>("push", paths[i]);
+    }
+
+    return arr;
+  }
+
   bool composeSublayers() {
 
     tinyusdz::AssetResolutionResolver resolver;
@@ -1127,6 +1139,26 @@ class TinyUSDZLoaderNative {
     return true;
   }
 
+  bool hasSublayers() {
+    return layer_.metas().subLayers.size();
+  }
+
+  bool hasReferences() {
+    return tinyusdz::HasReferences(layer_);
+  }
+
+  bool hasPayload() {
+    return tinyusdz::HasPayload(layer_);
+  }
+
+  bool hasInherits() {
+    return tinyusdz::HasInherits(layer_);
+  }
+
+  bool hasVariants() {
+    return layer_.check_unresolved_variant();
+  }
+  
   bool composedLayerToRenderScene() {
     tinyusdz::Stage stage;
 
@@ -1441,6 +1473,31 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
 
       .function("composeSublayers",
                 &TinyUSDZLoaderNative::composeSublayers)
+
+      .function("hasReferences",
+                &TinyUSDZLoaderNative::hasReferences)
+
+      .function("composeReferences",
+                &TinyUSDZLoaderNative::composeReferences)
+
+      .function("hasPayload",
+                &TinyUSDZLoaderNative::hasPayload)
+
+      .function("composePayload",
+                &TinyUSDZLoaderNative::composePayload)
+
+      .function("hasInherits",
+                &TinyUSDZLoaderNative::hasInherits)
+
+      .function("composeInherits",
+                &TinyUSDZLoaderNative::composeInherits)
+
+      // TODO: nested variants
+      .function("hasVariants",
+                &TinyUSDZLoaderNative::hasInherits)
+
+      .function("composeInherits",
+                &TinyUSDZLoaderNative::composeInherits)
 
       .function("composedLayerToRenderScene",
                 &TinyUSDZLoaderNative::composedLayerToRenderScene)

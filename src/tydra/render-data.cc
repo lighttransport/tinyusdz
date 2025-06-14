@@ -3050,7 +3050,7 @@ bool RenderSceneConverter::ConvertMesh(
           env.stage, mesh, env.mesh_config.default_texcoords_primvar_name,
           env.timecode, env.tinterp);
       if (ret) {
-        const VertexAttribute vattr = ret.value();
+        const VertexAttribute &vattr = ret.value();
 
         // Use slotId 0
         uvAttrs[0] = vattr;
@@ -5395,6 +5395,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
             visitorEnv->env->stage, /* GeomMesh prim path */ abs_path,
             /* purpose */ "", &bound_material_path, &bound_material, err);
 
+        DCOUT("Bound material found: " << ret);
         if (ret && bound_material) {
           int64_t rmaterial_id = -1;  // not used
 
@@ -6056,6 +6057,8 @@ bool RenderSceneConverter::ConvertToRenderScene(
       render_scene.default_root_node = uint32_t(default_node);
     }
   }
+  std::cout << "# of root_nodes" << root_nodes.size() << "\n";
+
   render_scene.nodes = std::move(root_nodes);
   render_scene.meshes = std::move(meshes);
   render_scene.textures = std::move(textures);
