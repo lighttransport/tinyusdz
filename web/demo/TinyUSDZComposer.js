@@ -2,7 +2,7 @@
 //import initTinyUSDZNative from './tinyusdz.js';
 
 class TinyUSDZComposer {
-  
+
     constructor() {
         //this.native_ = null;
     }
@@ -28,12 +28,29 @@ class TinyUSDZComposer {
     //
     // uds_layer : TinyUSDZLoaderNative instance after loadAsLayer/loadAsLayerAsync 
     //
+
+    static hasSublayer(usd_layer) {
+        if (!usd_layer || !usd_layer.hasSublayer) {
+            console.warn("TinyUSDZComposer: Invalid USD layer or hasSublayer not available.");
+            return false;
+        }
+        return usd_layer.hasSublayer();
+    }
+
     static extractSublayerAssetPaths(usd_layer) {
         if (!usd_layer || !usd_layer.extractSublayerAssetPaths) {
             console.warn("TinyUSDZComposer: Invalid USD layer or extractSublayerAssetPaths not available.");
             return [];
         }
         return usd_layer.extractSublayerAssetPaths();
+    }
+
+    static hasReferences(usd_layer) {
+        if (!usd_layer || !usd_layer.hasReferences) {
+            console.warn("TinyUSDZComposer: Invalid USD layer or hasReferences not available.");
+            return false;
+        }
+        return usd_layer.hasReferences();
     }
 
     static extractReferencesAssetPaths(usd_layer) {
@@ -44,6 +61,22 @@ class TinyUSDZComposer {
         return usd_layer.extractReferencesAssetPaths();
     }
 
+    static hasPayload(usd_layer) {
+        if (!usd_layer || !usd_layer.hasPayload) {
+            console.warn("TinyUSDZComposer: Invalid USD layer or hasPayload not available.");
+            return false;
+        }
+        return usd_layer.hasPayload();
+    }
+
+    static extractPayloadAssetPaths(usd_layer) {
+        if (!usd_layer || !usd_layer.extractPayloadAssetPaths) {
+            console.warn("TinyUSDZComposer: Invalid USD layer or extractPayloadAssetPaths not available.");
+            return [];
+        }
+        return usd_layer.extractPayloadAssetPaths();
+    }
+
     static composeSublayer(usd_layer) {
         if (!usd_layer || !usd_layer.composeSublayer) {
             console.warn("TinyUSDZComposer: Invalid USD layer or composeSublayer not available.");
@@ -51,6 +84,40 @@ class TinyUSDZComposer {
         }
         return usd_layer.composeSublayer();
     }
+
+    static composeReferences(usd_layer) {
+        if (!usd_layer || !usd_layer.composeReferences) {
+            console.warn("TinyUSDZComposer: Invalid USD layer or composeReferences not available.");
+            return [];
+        }
+        return usd_layer.composeReferences();
+    }
+
+    static composePayload(usd_layer) {
+        if (!usd_layer || !usd_layer.composePayload) {
+            console.warn("TinyUSDZComposer: Invalid USD layer or composePayload not available.");
+            return [];
+        }
+        return usd_layer.composePayload();
+    }
+
+    static hasInherits(usd_layer) {
+        if (!usd_layer || !usd_layer.hasInherits) {
+            console.warn("TinyUSDZComposer: Invalid USD layer or hasInherits not available.");
+            return false;
+        }
+        return usd_layer.hasInherits();
+    }
+
+    static composeInherits(usd_layer) {
+        if (!usd_layer || !usd_layer.composeInherits) {
+            console.warn("TinyUSDZComposer: Invalid USD layer or composeInherits not available.");
+            return [];
+        }
+        return usd_layer.composeInherits();
+    }
+
+    // TOOD: variants
 
 
     /*

@@ -6,6 +6,7 @@ import { GUI } from 'https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.mo
 import { FetchAssetResolver, TinyUSDZLoader } from './TinyUSDZLoader.js'
 import { TinyUSDZLoaderUtils } from './TinyUSDZLoaderUtils.js'
 import { TinyUSDZComposer } from './TinyUSDZComposer.js'
+import { reduceEachLeadingCommentRange } from 'typescript';
 
 const manager = new THREE.LoadingManager();
 
@@ -78,6 +79,73 @@ async function resolveSublayerAssets(depth, assetMap, usd_layer, loader) {
     }));
 }
 
+async function progressiveComposition(usd_layer, assetMap, loader) {
+  // LIVRPS
+  // [x] local(subLayer)
+  // [ ] inherits
+  // [ ] variants
+  // [x] references
+  // [ ] payload
+  // [ ] specializes
+
+  // Resolving subLayer is recursive.
+  await resolveSublayerAssets(0, assetMap, usd_layer, loader);
+
+  for (const [uri, binary] of assetMap.entries()) {
+    console.log("setAsset:", uri, "binary:", binary.byteLength, "bytes");
+    usd_layer.setAsset(uri, binary);
+  }
+
+  if (!usd_layer.composeSublayers()) {
+    throw new Error("Failed to compose sublayers:", usd_layer.error());
+  }
+
+
+  // others are iterative.
+  const kMaxIter = 16;
+
+  for (let i = 0; i < kMaxIter; i++) {
+    if (!TinyUSDZComposer.hasReferences(usd_layer) &&
+        !TinyUSDZComposer.hasPayload(usd_layer) &&
+        !TinyUSDZComposer.hasInheritsd(usd_layer)) {
+          break;
+        }
+
+    if (TinyUSDZComposer.hasReferences(usd_layer)) {
+      const referencesAssetPaths = TinyUSDZComposer.extractReferencesAssetPaths(usd_layer);
+
+      await Promise.all(referencesAssetPaths.map(async (assetPath) => {
+          const [uri, binary] = await assetResolver.resolveAsync(assetPath);
+          console.log("referencesPath:", assetPath, "binary:", binary.byteLength, "bytes");
+
+          assetMap.set(uri, binary);
+          usd_layer.setAsset(uri, binary);
+        }));
+
+      if (!usd_layer.composeReferences()) {
+        throw new Error("Failed to compose references:", usd_layer.error());
+      }
+    }
+
+    if (TinyUSDZComposer.hasPayload(usd_layer)) {
+      const payloadAssetPaths = TinyUSDZComposer.extractPayloadAssetPaths(usd_layer);
+
+      await Promise.all(payloadAssetPaths.map(async (assetPath) => {
+          const [uri, binary] = await assetResolver.resolveAsync(assetPath);
+          console.log("payloadAssetPath:", assetPath, "binary:", binary.byteLength, "bytes");
+
+          assetMap.set(uri, binary);
+          usd_layer.setAsset(uri, binary);
+        }));
+
+      if (!usd_layer.composePayload()) {
+        throw new Error("Failed to compose payload:", usd_layer.error());
+      }
+    }
+  }
+}
+
+
 
 
 
@@ -89,7 +157,8 @@ async function loadScenes() {
   // (wait loading/compiling wasm module in the early stage))
   await loader.init();
 
-  const usd_filename = "./usd-composite-sample.usda";
+  //const usd_filename = "./usd-composite-sample.usda";
+  const usd_filename = "./references-001.usda";
 
   // TODO: Expose asset resolver callabck
   loader.setEnableComposition(true);
@@ -106,9 +175,10 @@ async function loadScenes() {
   // Set asset binary to usd_layer so that the content of asset is found in C++ layer.
   //
   let assetMap = new Map();
-  await resolveSublayerAssets(0, assetMap, usd_layer, loader);
-  console.log("resolveSublayerAssets done");
-  console.log("assetMap:", assetMap);
+  //await resolveSublayerAssets(0, assetMap, usd_layer, loader);
+  await progressiveComposition(usd_layer, assetMap, loader);
+  //console.log("resolveSublayerAssets done");
+  //console.log("assetMap:", assetMap);
 
   //const sublayerAssetPaths = TinyUSDZComposer.extractSublayerAssetPaths(usd_layer);
   //console.log("extractSublayer", sublayerAssetPaths);
@@ -119,14 +189,6 @@ async function loadScenes() {
   //    return usd_layer.setAsset(sublayerPath, binary);
   //  }));
 
-  for (const [uri, binary] of assetMap.entries()) {
-    console.log("setAsset:", uri, "binary:", binary.byteLength, "bytes");
-    usd_layer.setAsset(uri, binary);
-  }
-
-  if (!usd_layer.composeSublayers()) {
-    throw new Error("Failed to compose sublayers:", usd_layer.error());
-  }
 
   usd_layer.composedLayerToRenderScene();
 

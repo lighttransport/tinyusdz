@@ -1173,6 +1173,28 @@ class TinyUSDZLoaderNative {
     return tinyusdz::HasPayload(layer_);
   }
 
+  bool composePayload() {
+
+    tinyusdz::AssetResolutionResolver resolver;
+    if (!SetupEMAssetResolution(resolver, &em_resolver_)) {
+      std::cerr << "Failed to setup EMAssetResolution\n";
+      return false;
+    }
+    const std::string base_dir = "./"; // FIXME
+    resolver.set_current_working_path(base_dir);
+    resolver.set_search_paths({base_dir});
+
+    if (!tinyusdz::CompositePayload(resolver, layer_, &composed_layer_, &warn_, &error_)) {
+      std::cerr << "Failed to composite payload: \n";
+      return false;
+    }
+
+    composited_ = true;
+
+    return true;
+  }
+
+
   bool hasInherits() {
     return tinyusdz::HasInherits(layer_);
   }
@@ -1492,6 +1514,10 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::setLoadTextureOnLoad)
       .function("extractSublayerAssetPaths",
                 &TinyUSDZLoaderNative::extractSublayerAssetPaths)
+      .function("extractReferencesAssetPaths",
+                &TinyUSDZLoaderNative::extractReferencesAssetPaths)
+      .function("extractPayloadAssetPaths",
+                &TinyUSDZLoaderNative::extractPayloadAssetPaths)
 
       .function("composeSublayers",
                 &TinyUSDZLoaderNative::composeSublayers)
@@ -1502,13 +1528,13 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("composeReferences",
                 &TinyUSDZLoaderNative::composeReferences)
 
-#if 0 // TODO
       .function("hasPayload",
                 &TinyUSDZLoaderNative::hasPayload)
 
       .function("composePayload",
                 &TinyUSDZLoaderNative::composePayload)
 
+#if 0 // TODO
       .function("hasInherits",
                 &TinyUSDZLoaderNative::hasInherits)
 

@@ -1187,6 +1187,53 @@ bool CompositeReferences(AssetResolutionResolver &resolver,
   return true;
 }
 
+namespace {
+
+bool ExtractPayloadAssetPathsImpl(uint32_t depth, const PrimSpec &primspec, std::vector<std::string> &paths) {
+
+  if (depth > 1024*1024) {
+    return false;
+  }
+
+  // Traverse children first.
+  for (auto &child : primspec.children()) {
+    if (!ExtractPayloadAssetPathsImpl(depth + 1, child, paths)) {
+      return false;
+    }
+  }
+
+  if (primspec.metas().payload) {
+    // TODO: qualifier
+    //const ListEditQual &qual = primspec.metas().references.value().first;
+    const auto &payload = primspec.metas().payload.value().second;
+
+    for (const auto &pl : payload) {
+
+      paths.push_back(pl.asset_path.GetAssetPath());
+    }
+
+  }
+
+  return true;
+
+}
+
+} // namespace
+
+
+std::vector<std::string> ExtractPayloadAssetPaths(const Layer &layer) {
+
+  std::vector<std::string> paths;
+
+  for (const auto &ps : layer.primspecs()) {
+    ExtractPayloadAssetPathsImpl(0, ps.second, paths);
+  }
+
+  return paths;
+
+}
+
+
 bool CompositePayload(AssetResolutionResolver &resolver, const Layer &in_layer,
                       Layer *composited_layer, std::string *warn,
                       std::string *err, PayloadCompositionOptions options) {
