@@ -1531,7 +1531,6 @@ bool ReferenceLayerToPrimSpec(PrimSpec &dst, const Layer &layer,
 }
 #endif
 
-#if 0
 bool HasReferences(const Layer &layer, const bool force_check,
                    const ReferencesCompositionOptions options) {
   if (!force_check) {
@@ -1559,7 +1558,6 @@ bool HasOver(const Layer &layer) { return layer.check_over_primspec(); }
 bool HasSpecializes(const Layer &layer) {
   return layer.check_unresolved_specializes();
 }
-#endif
 
 namespace {
 
