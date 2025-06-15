@@ -77,7 +77,8 @@ class TinyUSDZLoader extends Loader {
 
         this.enableComposition_ = false;
 
-        this.useZstdCompressedWasm_ = true;
+        // Default: do NOT use zstd compressed WASM.
+        this.useZstdCompressedWasm_ = false;
         this.wasmPath_ = './tinyusdz.wasm';
         this.compressedWasmPath_ = './tinyusdz.wasm.zst';
     }

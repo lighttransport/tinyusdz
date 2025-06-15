@@ -452,6 +452,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         var node = new THREE.Group();
 
+        console.log("usdNode.nodeType:", usdNode.nodeType, "primName:", usdNode.primName, "absPath:", usdNode.absPath);
         if (usdNode.nodeType == 'xform') {
 
             // intermediate xform node
