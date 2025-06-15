@@ -1118,6 +1118,11 @@ class TinyUSDZLoaderNative {
     return arr;
   }
 
+  bool hasSublayers() {
+    return layer_.metas().subLayers.size();
+  }
+
+
   bool composeSublayers() {
 
     tinyusdz::AssetResolutionResolver resolver;
@@ -1139,12 +1144,29 @@ class TinyUSDZLoaderNative {
     return true;
   }
 
-  bool hasSublayers() {
-    return layer_.metas().subLayers.size();
-  }
-
   bool hasReferences() {
     return tinyusdz::HasReferences(layer_);
+  }
+
+  bool composeReferences() {
+
+    tinyusdz::AssetResolutionResolver resolver;
+    if (!SetupEMAssetResolution(resolver, &em_resolver_)) {
+      std::cerr << "Failed to setup EMAssetResolution\n";
+      return false;
+    }
+    const std::string base_dir = "./"; // FIXME
+    resolver.set_current_working_path(base_dir);
+    resolver.set_search_paths({base_dir});
+
+    if (!tinyusdz::CompositeReferences(resolver, layer_, &composed_layer_, &warn_, &error_)) {
+      std::cerr << "Failed to composite references: \n";
+      return false;
+    }
+
+    composited_ = true;
+
+    return true;
   }
 
   bool hasPayload() {
@@ -1480,6 +1502,7 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("composeReferences",
                 &TinyUSDZLoaderNative::composeReferences)
 
+#if 0 // TODO
       .function("hasPayload",
                 &TinyUSDZLoaderNative::hasPayload)
 
@@ -1496,8 +1519,9 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("hasVariants",
                 &TinyUSDZLoaderNative::hasInherits)
 
-      .function("composeInherits",
+      .function("composeVariants",
                 &TinyUSDZLoaderNative::composeInherits)
+#endif
 
       .function("composedLayerToRenderScene",
                 &TinyUSDZLoaderNative::composedLayerToRenderScene)
