@@ -127,6 +127,13 @@ bool HasSpecializes(const Layer &layer);
 bool HasInherits(const Layer &layer);
 
 ///
+/// Return true when any PrimSpec in the Layer contains `variants` Prim metadataum.
+///
+/// @param[in] layer Layer
+///
+bool HasVariants(const Layer &layer);
+
+///
 /// Return true when any PrimSpec in the Layer contains `over` Prim.
 ///
 /// @param[in] layer Layer
