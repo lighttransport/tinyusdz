@@ -376,6 +376,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-timesamples.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-timesamples-array.cc
     ${PROJECT_SOURCE_DIR}/src/audio-loader.cc
+    ${PROJECT_SOURCE_DIR}/src/base122.cc
     ${PROJECT_SOURCE_DIR}/src/usda-reader.cc
     ${PROJECT_SOURCE_DIR}/src/usdc-reader.cc
     ${PROJECT_SOURCE_DIR}/src/usda-writer.cc
