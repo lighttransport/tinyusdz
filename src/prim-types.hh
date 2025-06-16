@@ -2998,7 +2998,7 @@ struct XformOp {
           value::TimeSampleInterpolationType interp =
                value::TimeSampleInterpolationType::Linear) const {
     if (is_timesamples()) {
-      T value;
+      T value{};
       if (get_interpolated_value(&value, t, interp)) {
         return value;
       }
