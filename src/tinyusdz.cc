@@ -1256,6 +1256,160 @@ bool LoadUSDALayerFromMemory(const uint8_t *addr, const size_t length,
   return true;
 }
 
+bool LoadUSDZLayerFromMemory(const uint8_t *addr, const size_t length,
+                        const std::string &filename, Layer *layer,
+                        std::string *warn, std::string *err,
+                        const USDLoadOptions &options) {
+  if (layer == nullptr) {
+    if (err) {
+      (*err) = "null pointer for `layer` argument.\n";
+    }
+    return false;
+  }
+
+  std::vector<USDZAssetInfo> assets;
+  if (!ParseUSDZHeader(addr, length, &assets, warn, err)) {
+    return false;
+  }
+
+#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
+  for (size_t i = 0; i < assets.size(); i++) {
+    DCOUT("[" << i << "] " << assets[i].filename << " : byte range ("
+              << assets[i].byte_begin << ", " << assets[i].byte_end << ")");
+  }
+#endif
+
+  int32_t usdc_index = -1;
+  int32_t usda_index = -1;
+  {
+    bool warned = false;  // to report single warning message.
+    for (size_t i = 0; i < assets.size(); i++) {
+      std::string ext = str_tolower(GetFileExtension(assets[i].filename));
+      if (ext.compare("usdc") == 0) {
+        if ((usdc_index > -1) && (!warned)) {
+          if (warn) {
+            (*warn) +=
+                "Multiple USDC files were found in USDZ. Use the first found "
+                "one: " +
+                assets[size_t(usdc_index)].filename + "]\n";
+          }
+          warned = true;
+        }
+
+        if (usdc_index == -1) {
+          usdc_index = int32_t(i);
+        }
+      } else if (ext.compare("usda") == 0) {
+        if ((usda_index > -1) && (!warned)) {
+          if (warn) {
+            (*warn) +=
+                "Multiple USDA files were found in USDZ. Use the first found "
+                "one: " +
+                assets[size_t(usda_index)].filename + "]\n";
+          }
+          warned = true;
+        }
+        if (usda_index == -1) {
+          usda_index = int32_t(i);
+        }
+      }
+    }
+  }
+
+  if ((usdc_index == -1) && (usda_index == -1)) {
+    if (err) {
+      (*err) += "Neither USDC nor USDA file found in USDZ\n";
+    }
+    return false;
+  }
+
+  if ((usdc_index >= 0) && (usda_index >= 0)) {
+    if (warn) {
+      (*warn) += "Both USDA and USDC file found. Use USDC file [" +
+                 assets[size_t(usdc_index)].filename + "]\n";
+    }
+  }
+
+  if (usdc_index >= 0) {
+    const size_t start_addr_offset = assets[size_t(usdc_index)].byte_begin;
+    const size_t end_addr_offset = assets[size_t(usdc_index)].byte_end;
+    if (end_addr_offset < start_addr_offset) {
+      if (err) {
+        (*err) +=
+            "Invalid start/end offset to USDC data: [" + filename + "].\n";
+      }
+      return false;
+    }
+    const size_t usdc_size = end_addr_offset - start_addr_offset;
+
+    if (start_addr_offset > length) {
+      if (err) {
+        (*err) += "Invalid start offset to USDC data: [" + filename + "].\n";
+      }
+      return false;
+    }
+
+    if (end_addr_offset > length) {
+      if (err) {
+        (*err) += "Invalid end offset to USDC data: [" + filename + "].\n";
+      }
+      return false;
+    }
+
+    const uint8_t *usdc_addr = addr + start_addr_offset;
+    bool ret = LoadUSDCLayerFromMemory(usdc_addr, usdc_size, filename, layer, warn,
+                                  err, options);
+
+    if (!ret) {
+      if (err) {
+        (*err) += "Failed to load USDC: [" + filename + "].\n";
+      }
+
+      return false;
+    }
+  } else if (usda_index >= 0) {
+    const size_t start_addr_offset = assets[size_t(usda_index)].byte_begin;
+    const size_t end_addr_offset = assets[size_t(usda_index)].byte_end;
+    if (end_addr_offset < start_addr_offset) {
+      if (err) {
+        (*err) +=
+            "Invalid start/end offset to USDA data: [" + filename + "].\n";
+      }
+      return false;
+    }
+    const size_t usda_size = end_addr_offset - start_addr_offset;
+
+    if (start_addr_offset > length) {
+      if (err) {
+        (*err) += "Invalid start offset to USDA data: [" + filename + "].\n";
+      }
+      return false;
+    }
+
+    if (end_addr_offset > length) {
+      if (err) {
+        (*err) += "Invalid end offset to USDA data: [" + filename + "].\n";
+      }
+      return false;
+    }
+
+    const uint8_t *usda_addr = addr + start_addr_offset;
+    bool ret = LoadUSDALayerFromMemory(usda_addr, usda_size, filename, layer, warn,
+                                  err, options);
+
+    if (!ret) {
+      if (err) {
+        (*err) += "Failed to load USDA: [" + filename + "].\n";
+      }
+
+      return false;
+    }
+  }
+
+  return true;
+}
+
+
 // Copy assetresolver state to all PrimSpec in the tree.
 static bool PropagateAssetResolverState(uint32_t depth, PrimSpec &ps,
                                  const std::string &cwp,
@@ -1304,7 +1458,8 @@ bool LoadLayerFromMemory(const uint8_t *addr, const size_t length,
                               options);
   } else if (IsUSDZ(addr, length)) {
     DCOUT("Detected as USDZ.");
-#if 0
+#if 1
+    // TODO: asset
     return LoadUSDZLayerFromMemory(addr, length, asset_name, layer, warn, err,
                               options);
 #else

@@ -95,9 +95,8 @@ std::string GetExtension(const std::string &name) {
 bool IsUSDFileFormat(const std::string &name) {
   std::string ext = GetExtension(name);
 
-  // no 'usdz'
   return (ext.compare("usd") == 0) || (ext.compare("usda") == 0) ||
-         (ext.compare("usdc") == 0);
+         (ext.compare("usdc") == 0) || (ext.compare("usdz") == 0);
 }
 
 #if defined(TINYUSDZ_WITH_USDOBJ)
@@ -1598,6 +1597,10 @@ bool HasPayload(const Layer &layer, const bool force_check,
 
 bool HasInherits(const Layer &layer) {
   return layer.check_unresolved_inherits();
+}
+
+bool HasVariants(const Layer &layer) {
+  return layer.check_unresolved_variant();
 }
 
 bool HasOver(const Layer &layer) { return layer.check_over_primspec(); }
