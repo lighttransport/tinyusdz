@@ -53,102 +53,6 @@ gui.add(params, 'rotationSpeed', 0, 10).name('Rotation Speed').onChange((value) 
 });
 
 
-let assetResolver = new FetchAssetResolver();
-
-// Recursively resolve sublayer assets.
-async function resolveSublayerAssets(depth, assetMap, usd_layer, loader) {
-
-  if (depth > 16) {
-    console.warn("TinyUSDZComposer: Maximum recursion depth reached while resolving sublayer assets.");
-    return;
-  }
-  const sublayerAssetPaths = TinyUSDZComposer.extractSublayerAssetPaths(usd_layer);
-  console.log("extractSublayer", sublayerAssetPaths);
-
-  await Promise.all(sublayerAssetPaths.map(async (sublayerPath) => {
-      const [uri, binary] = await assetResolver.resolveAsync(sublayerPath);
-      console.log("sublayerPath:", sublayerPath, "binary:", binary.byteLength, "bytes");
-
-      console.log("Loading sublayer:", sublayerPath);
-      const sublayer = await loader.loadAsLayerAsync(sublayerPath);
-
-      console.log("sublayer:", sublayer);
-      await resolveSublayerAssets(depth + 1, assetMap, sublayer, loader);
-
-      assetMap.set(sublayerPath, binary);
-    }));
-}
-
-async function progressiveComposition(usd_layer, assetMap, loader) {
-  // LIVRPS
-  // [x] local(subLayer)
-  // [ ] inherits
-  // [ ] variants
-  // [x] references
-  // [ ] payload
-  // [ ] specializes
-
-  // Resolving subLayer is recursive.
-  await resolveSublayerAssets(0, assetMap, usd_layer, loader);
-
-  for (const [uri, binary] of assetMap.entries()) {
-    console.log("setAsset:", uri, "binary:", binary.byteLength, "bytes");
-    usd_layer.setAsset(uri, binary);
-  }
-
-  if (!usd_layer.composeSublayers()) {
-    throw new Error("Failed to compose sublayers:", usd_layer.error());
-  }
-
-
-  // others are iterative.
-  const kMaxIter = 16;
-
-  for (let i = 0; i < kMaxIter; i++) {
-    if (!TinyUSDZComposer.hasReferences(usd_layer) &&
-        !TinyUSDZComposer.hasPayload(usd_layer) &&
-        !TinyUSDZComposer.hasInheritsd(usd_layer)) {
-          break;
-        }
-
-    if (TinyUSDZComposer.hasReferences(usd_layer)) {
-      const referencesAssetPaths = TinyUSDZComposer.extractReferencesAssetPaths(usd_layer);
-
-      await Promise.all(referencesAssetPaths.map(async (assetPath) => {
-          const [uri, binary] = await assetResolver.resolveAsync(assetPath);
-          console.log("referencesPath:", assetPath, "binary:", binary.byteLength, "bytes");
-
-          assetMap.set(uri, binary);
-          usd_layer.setAsset(uri, binary);
-        }));
-
-      if (!usd_layer.composeReferences()) {
-        throw new Error("Failed to compose references:", usd_layer.error());
-      }
-    }
-
-    if (TinyUSDZComposer.hasPayload(usd_layer)) {
-      const payloadAssetPaths = TinyUSDZComposer.extractPayloadAssetPaths(usd_layer);
-
-      await Promise.all(payloadAssetPaths.map(async (assetPath) => {
-          const [uri, binary] = await assetResolver.resolveAsync(assetPath);
-          console.log("payloadAssetPath:", assetPath, "binary:", binary.byteLength, "bytes");
-
-          assetMap.set(uri, binary);
-          usd_layer.setAsset(uri, binary);
-        }));
-
-      if (!usd_layer.composePayload()) {
-        throw new Error("Failed to compose payload:", usd_layer.error());
-      }
-    }
-  }
-}
-
-
-
-
-
 async function loadScenes() {
 
   const loader = new TinyUSDZLoader();
@@ -157,40 +61,38 @@ async function loadScenes() {
   // (wait loading/compiling wasm module in the early stage))
   await loader.init();
 
-  //const usd_filename = "./usd-composite-sample.usda";
-  const usd_filename = "./references-001.usda";
-
-  // TODO: Expose asset resolver callabck
-  loader.setEnableComposition(true);
-
-  var threeScenes = []
-
-  const usd_layer = await loader.loadAsLayerAsync(usd_filename);
-  //console.log("warn", usd_scene.warn());
-  console.log("usd_layer:", usd_layer);
+  const usd_filename = "./usd-composite-sample.usda"; // Read two suzanne model as sublayer.
+  //const usd_filename = "./references-001.usda"; // Read Suzanne.usda as reference.
+  //const usd_filename = "./references-002.usda"; // read UsdCookie.usdz as reference: No textures(this is expected behavior)
+  //const usd_filename = "./references-003.usda"; // read texture-cat-plane.usda as reference: Do texturing(use three.js's TextureLoader)
 
   //
-  // Extract sublayer asset paths(file URLs) from the USD subLayer(in recursively).
-  // Read asset with fetch() in JS layer.
-  // Set asset binary to usd_layer so that the content of asset is found in C++ layer.
+  // ============================================================
+  // Loading USD and do USD composition.
+  // 1. First load root USD file as a Layer.
+  // 2. Setup USDZComposer
+  // 3. Do USD composition(USDZComposer.progressiveComposition)
+  // 4. Convert composited USD Layer to RenderScene(Three.js friendly scene graph)
   //
-  let assetMap = new Map();
-  //await resolveSublayerAssets(0, assetMap, usd_layer, loader);
-  await progressiveComposition(usd_layer, assetMap, loader);
-  //console.log("resolveSublayerAssets done");
-  //console.log("assetMap:", assetMap);
+  // ============================================================
+  //
 
-  //const sublayerAssetPaths = TinyUSDZComposer.extractSublayerAssetPaths(usd_layer);
-  //console.log("extractSublayer", sublayerAssetPaths);
+  let usd_layer = await loader.loadAsLayerAsync(usd_filename);
 
-  //await Promise.all(sublayerAssetPaths.map(async (sublayerPath) => {
-  //    const [uri, binary] = await assetResolver.resolveAsync(sublayerPath);
-  //    console.log("sublayerPath:", sublayerPath, "binary:", binary.byteLength, "bytes");
-  //    return usd_layer.setAsset(sublayerPath, binary);
-  //  }));
+  let composer = new TinyUSDZComposer();
+  composer.setLayer(usd_layer);
+  composer.setUSDLoader(loader);
 
+  await composer.progressiveComposition();
 
-  usd_layer.composedLayerToRenderScene();
+  // layer(usd_layer) in the Composer instance now contains composited USD layer
+  usd_layer = composer.getLayer(); 
+
+  // Dump composited USD layer.
+  //console.log(usd_layer.layerToString()); 
+
+  // Convert layer(or compositedLayer) to RenderScene(Three.js friendly scene graph)
+  usd_layer.layerToRenderScene();
 
   const defaultMtl = ui_state['defaultMtl'];
 
@@ -200,7 +102,10 @@ async function loadScenes() {
     envMapIntensity: ui_state['envMapIntensity'], // default envmap intensity
   }
 
+  var threeScenes = []
+
   console.log("numRootNodes:", usd_layer.numRootNodes());
+  const xoffset = -(usd_layer.numRootNodes() - 1);
   for (let i = 0; i < usd_layer.numRootNodes(); i++) {
     const usdRootNode = usd_layer.getRootNode(i);
     console.log("usdRootNode:", usdRootNode);
@@ -208,7 +113,7 @@ async function loadScenes() {
     const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_layer, options); 
 
     // HACK
-    threeNode.position.x += 2 * i;
+    threeNode.position.x += 2 * i + xoffset;
 
     threeScenes.push(threeNode);
   }

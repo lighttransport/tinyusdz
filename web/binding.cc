@@ -14,90 +14,20 @@
 
 #include "external/fast_float/include/fast_float/bigint.h"
 #include "tinyusdz.hh"
+#include "pprinter.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
 
+// Handling Asset
+// Due to the limitatrion of C++(synchronous) initiated async file(fetch) read,
+// We decided to fetch asset in JavaScript layer.
+//
+// 1. First list up assets(textures, USD scenes(for composition)
+// 2. Load(fetch) assets to memory in JavaScript layer
+// 3. Set binary data to EMAssetResolutionResolver.
+// 4. Use EMAssetResolutionResolver to load asset(simply lookup binary data by asset name)
+//
 
-#if 0
-struct FetchData
-{
-  bool done{false};
-  std::string data;
-};
-
-static void downloadSucceeded(emscripten_fetch_t *fetch) {
-  printf("Finished downloading %llu bytes from URL %s.\n", fetch->numBytes, fetch->url);
-
-  FetchData *p = reinterpret_cast<FetchData *>(fetch->userData);
-  p->data = std::string(fetch->data, fetch->numBytes);
-  p->done = true;
-
-  // The data is now available at fetch->data[0] through fetch->data[fetch->numBytes-1];
-  emscripten_fetch_close(fetch); // Free data associated with the fetch.
-
-}
-
-static void downloadFailed(emscripten_fetch_t *fetch) {
-  printf("Downloading %s failed, HTTP failure status code: %d.\n", fetch->url, fetch->status);
-
-  FetchData *p = reinterpret_cast<FetchData *>(fetch->userData);
-  p->data = std::string();
-  p->done = true;
-
-  emscripten_fetch_close(fetch); // Also free data on failure.
-}
-
-void downloadProgress(emscripten_fetch_t *fetch) {
-  if (fetch->totalBytes) {
-    printf("Downloading %s.. %.2f%% complete.\n", fetch->url, fetch->dataOffset * 100.0 / fetch->totalBytes);
-  } else {
-    printf("Downloading %s.. %lld bytes complete.\n", fetch->url, fetch->dataOffset + fetch->numBytes);
-  }
-}
-#endif
-
-
-#if 0 // TODO: remove 
-static std::string readFileSync(const std::string &uri) {
-  FetchData data;
-  data.done = false;
-
-  std::cout << "uri " << uri << "\n";
-  emscripten_fetch_attr_t attr;
-  emscripten_fetch_attr_init(&attr);
-  std::string buf;
-  attr.userData = reinterpret_cast<void *>(&data);
-  strcpy(attr.requestMethod, "GET");
-  attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY | EMSCRIPTEN_FETCH_REPLACE;
-  //attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY | EMSCRIPTEN_FETCH_REPLACE;
-  attr.onsuccess = downloadSucceeded;
-  attr.onerror = downloadFailed;
-  emscripten_fetch_t *fetch = emscripten_fetch(&attr, uri.c_str()); // Blocks here until the operation is complete.
-  //if (fetch->status == 200) {
-  //  printf("Finished downloading %llu bytes from URL %s.\n", fetch->numBytes, fetch->url);
-  //  // The data is now available at fetch->data[0] through fetch->data[fetch->numBytes-1];
-  //} else {
-  //  printf("Downloading %s failed, HTTP failure status code: %d.\n", fetch->url, fetch->status);
-  //}
-
-  //std::string buf(fetch->data, fetch->numBytes);
-  //emscripten_fetch_close(fetch);
-  //
-
-  int cnt{0};
-  while (!data.done) {
-
-    // Sleep for 100 milliseconds
- 
-    // Need ASYNCIFY
-    emscripten_sleep(10);
-    
-  }
-
-  printf("fs.size %d\n", int(data.data.size()));
-  return data.data;
-}
-#endif
 
 using namespace emscripten;
 
@@ -431,11 +361,11 @@ struct EMAssetResolutionResolver {
     return overwritten;
   }
 
-  bool has(const std::string &asset_name) {
+  bool has(const std::string &asset_name) const {
     return cache.count(asset_name);
   }
 
-  const std::string &get(const std::string &asset_name) {
+  const std::string &get(const std::string &asset_name) const {
     if (!cache.count(asset_name)) {
       return empty_;
     } 
@@ -508,11 +438,8 @@ class TinyUSDZLoaderNative {
 
     tinyusdz::tydra::RenderSceneConverterEnv env(stage);
 
-    //
-    // false = Load Texture in JS Layer
-    //
-
-    env.scene_config.load_texture_assets = loadTextureOnLoad_;
+    // load texture in C++ image loader? default = false(Use JS to decode texture image)
+    env.scene_config.load_texture_assets = loadTextureInNative_;
 
     env.material_config.preserve_texel_bitdepth = true;
 
@@ -581,6 +508,7 @@ class TinyUSDZLoaderNative {
       return false;
     }
 
+    loaded_as_layer_ = true;
     filename_ = filename;
 
     return true;
@@ -589,12 +517,9 @@ class TinyUSDZLoaderNative {
 
   bool loadFromBinary(const std::string &binary, const std::string &filename) {
 
-    std::cout << "loadFromBinary\n";
-    std::cout << "enableComposition: " << enableComposition_ << "\n";
-
-    if (enableComposition_) {
-      return loadAndCompositeFromBinary(binary, filename);
-    }
+    //if (enableComposition_) {
+    //  return loadAndCompositeFromBinary(binary, filename);
+    //}
 
     bool is_usdz = tinyusdz::IsUSDZ(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size());
@@ -608,6 +533,7 @@ class TinyUSDZLoaderNative {
       return false;
     }
 
+    loaded_as_layer_ = false;
     filename_ = filename;
 
 #if 0
@@ -617,7 +543,7 @@ class TinyUSDZLoaderNative {
     // false = Load Texture in JS Layer
     //
 
-    env.scene_config.load_texture_assets = loadTextureOnLoad_;
+    env.scene_config.load_texture_assets = loadTextureInNative_;
 
     env.material_config.preserve_texel_bitdepth = true;
 
@@ -675,6 +601,7 @@ class TinyUSDZLoaderNative {
   }
 
 
+#if 0 // TODO: Remove
   //
   //  Current limitation: can't specify usdz for USD to be composited(e.g. subLayer'ed, reference'ed)
   //  Toplevel USD can be USDZ.
@@ -824,8 +751,8 @@ class TinyUSDZLoaderNative {
 
       return stageToRenderScene(stage, is_usdz, binary);
   }
+#endif
 
-  
 
   int numMeshes() const { return render_scene_.meshes.size(); }
 
@@ -1073,8 +1000,8 @@ class TinyUSDZLoaderNative {
   int numRootNodes() { return render_scene_.nodes.size(); }
 
   void setEnableComposition(bool enabled) { enableComposition_ = enabled; }
-  void setLoadTextureOnLoad(bool onoff) {
-    loadTextureOnLoad_ = onoff;
+  void setLoadTextureInNative(bool onoff) {
+    loadTextureInNative_ = onoff;
   }
 
   // Return filename passed to loadFromBinary/loadAsLayerFromBinary.
@@ -1119,7 +1046,8 @@ class TinyUSDZLoaderNative {
   }
 
   bool hasSublayers() {
-    return layer_.metas().subLayers.size();
+    const tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
+    return curr.metas().subLayers.size();
   }
 
 
@@ -1134,8 +1062,17 @@ class TinyUSDZLoaderNative {
     resolver.set_current_working_path(base_dir);
     resolver.set_search_paths({base_dir});
 
+    if (composited_) {
+      layer_ = std::move(composed_layer_);
+    }
+
     if (!tinyusdz::CompositeSublayers(resolver, layer_, &composed_layer_, &warn_, &error_)) {
       std::cerr << "Failed to composite subLayers: \n";
+      if (composited_) {
+        // make 'layer_' and 'composed_layer_' invalid
+        loaded_as_layer_ = false;
+        composited_ = false;
+      }
       return false;
     }
 
@@ -1145,7 +1082,7 @@ class TinyUSDZLoaderNative {
   }
 
   bool hasReferences() {
-    return tinyusdz::HasReferences(layer_);
+    return tinyusdz::HasReferences(composited_ ? composed_layer_ : layer_, /* force_check */true);
   }
 
   bool composeReferences() {
@@ -1159,8 +1096,18 @@ class TinyUSDZLoaderNative {
     resolver.set_current_working_path(base_dir);
     resolver.set_search_paths({base_dir});
 
+
+    if (composited_) {
+      layer_ = std::move(composed_layer_);
+    }
+
     if (!tinyusdz::CompositeReferences(resolver, layer_, &composed_layer_, &warn_, &error_)) {
       std::cerr << "Failed to composite references: \n";
+      if (composited_) {
+        // make 'layer_' and 'composed_layer_' invalid
+        loaded_as_layer_ = false;
+        composited_ = false;
+      }
       return false;
     }
 
@@ -1170,7 +1117,7 @@ class TinyUSDZLoaderNative {
   }
 
   bool hasPayload() {
-    return tinyusdz::HasPayload(layer_);
+    return tinyusdz::HasPayload(layer_, /* force_check */true);
   }
 
   bool composePayload() {
@@ -1184,8 +1131,17 @@ class TinyUSDZLoaderNative {
     resolver.set_current_working_path(base_dir);
     resolver.set_search_paths({base_dir});
 
+    if (composited_) {
+      layer_ = std::move(composed_layer_);
+    }
+
     if (!tinyusdz::CompositePayload(resolver, layer_, &composed_layer_, &warn_, &error_)) {
       std::cerr << "Failed to composite payload: \n";
+      if (composited_) {
+        // make 'layer_' and 'composed_layer_' invalid
+        loaded_as_layer_ = false;
+        composited_ = false;
+      }
       return false;
     }
 
@@ -1196,17 +1152,67 @@ class TinyUSDZLoaderNative {
 
 
   bool hasInherits() {
-    return tinyusdz::HasInherits(layer_);
+    return tinyusdz::HasInherits(composited_ ? composed_layer_ : layer_ );
+  }
+
+  bool composeInherits() {
+
+    if (composited_) {
+      layer_ = std::move(composed_layer_);
+    }
+
+    if (!tinyusdz::CompositeInherits( layer_, &composed_layer_, &warn_, &error_)) {
+      std::cerr << "Failed to composite inherits: \n";
+      if (composited_) {
+        // make 'layer_' and 'composed_layer_' invalid
+        loaded_as_layer_ = false;
+        composited_ = false;
+      }
+      return false;
+    }
+
+    composited_ = true;
+
+    return true;
   }
 
   bool hasVariants() {
-    return layer_.check_unresolved_variant();
+    return tinyusdz::HasVariants(composited_ ? composed_layer_ : layer_ );
+  }
+
+  bool composeVariants() {
+
+    if (composited_) {
+      layer_ = std::move(composed_layer_);
+    }
+
+    if (!tinyusdz::CompositeVariant( layer_, &composed_layer_, &warn_, &error_)) {
+      std::cerr << "Failed to composite variant: \n";
+      if (composited_) {
+        // make 'layer_' and 'composed_layer_' invalid
+        loaded_as_layer_ = false;
+        composited_ = false;
+      }
+      return false;
+    }
+
+    composited_ = true;
+
+    return true;
   }
   
-  bool composedLayerToRenderScene() {
+  bool layerToRenderScene() {
+
+    if (!loaded_as_layer_) {
+      std::cerr << "not loaded as layer\n";
+      return false;
+    }
+
     tinyusdz::Stage stage;
 
-    if (!tinyusdz::LayerToStage(composed_layer_, &stage, &warn_, &error_)) {
+    const tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
+
+    if (!tinyusdz::LayerToStage(curr, &stage, &warn_, &error_)) {
       std::cerr << "Failed to LayerToStage \n";
       return false;
     }
@@ -1214,6 +1220,19 @@ class TinyUSDZLoaderNative {
     std::string empty;
     return stageToRenderScene(stage, /* TODO: is_usdz*/false, empty);
 
+  }
+
+  std::string layerToString() const {
+    if (!loaded_) {
+      return std::string();
+    }
+    if (!loaded_as_layer_) {
+      return std::string();
+    }
+
+    const tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
+
+    return tinyusdz::to_string(curr);
   }
 
   void clearAssets() {
@@ -1224,17 +1243,33 @@ class TinyUSDZLoaderNative {
     em_resolver_.add(name, binary);
   }
 
-  void hasAsset(const std::string &name) {
+  void hasAsset(const std::string &name) const {
     em_resolver_.has(name);
   }
 
-  emscripten::val getAsset(const std::string &name) {
+  emscripten::val getAsset(const std::string &name) const {
     emscripten::val val;
     if (em_resolver_.has(name)) {
       const std::string &content = em_resolver_.get(name);
       val.set("name", name);
       val.set("data", emscripten::typed_memory_view(content.size(), content.data()));
     }
+    return val;
+  }
+
+  emscripten::val extractUnresolvedTexturePaths() const {
+    emscripten::val val;
+
+    // Assume USD is converted to RenderScene before calling this function.
+    
+    for (const tinyusdz::tydra::TextureImage &texImg : render_scene_.images) {
+      // 
+      if (texImg.buffer_id == -1) {
+        std::string path = texImg.asset_identifier;
+        val.call<void>("push", path);
+      }
+    }
+
     return val;
   }
 
@@ -1281,9 +1316,11 @@ class TinyUSDZLoaderNative {
     return node;
   }
 
+
   bool loaded_{false};
+  bool loaded_as_layer_{false};
   bool enableComposition_{false};
-  bool loadTextureOnLoad_{false};
+  bool loadTextureInNative_{false}; // true: Let JavaScript to decode texture image.
 
   std::string filename_;
   std::string warn_;
@@ -1496,7 +1533,10 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
 #endif
       .function("loadAsLayerFromBinary", &TinyUSDZLoaderNative::loadAsLayerFromBinary)
       .function("loadFromBinary", &TinyUSDZLoaderNative::loadFromBinary)
-      .function("loadAndCompositeFromBinary", &TinyUSDZLoaderNative::loadFromBinary)
+      //.function("loadAndCompositeFromBinary", &TinyUSDZLoaderNative::loadFromBinary)
+      
+      // For Stage 
+      .function("extractUnresolvedTexturePaths", &TinyUSDZLoaderNative::extractUnresolvedTexturePaths)
       .function("getURI", &TinyUSDZLoaderNative::getURI)
       .function("getMesh", &TinyUSDZLoaderNative::getMesh)
       .function("numMeshes", &TinyUSDZLoaderNative::numMeshes)
@@ -1508,10 +1548,11 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("getRootNode", &TinyUSDZLoaderNative::getRootNode)
       .function("getDefaultRootNode", &TinyUSDZLoaderNative::getDefaultRootNode)
       .function("numRootNodes", &TinyUSDZLoaderNative::numRootNodes)
+      .function("setLoadTextureInNative",
+                &TinyUSDZLoaderNative::setLoadTextureInNative)
+
       .function("setEnableComposition",
                 &TinyUSDZLoaderNative::setEnableComposition)
-      .function("setLoadTextureOnLoad",
-                &TinyUSDZLoaderNative::setLoadTextureOnLoad)
       .function("extractSublayerAssetPaths",
                 &TinyUSDZLoaderNative::extractSublayerAssetPaths)
       .function("extractReferencesAssetPaths",
@@ -1534,7 +1575,6 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("composePayload",
                 &TinyUSDZLoaderNative::composePayload)
 
-#if 0 // TODO
       .function("hasInherits",
                 &TinyUSDZLoaderNative::hasInherits)
 
@@ -1546,11 +1586,10 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::hasInherits)
 
       .function("composeVariants",
-                &TinyUSDZLoaderNative::composeInherits)
-#endif
+                &TinyUSDZLoaderNative::composeVariants)
 
-      .function("composedLayerToRenderScene",
-                &TinyUSDZLoaderNative::composedLayerToRenderScene)
+      .function("layerToRenderScene",
+                &TinyUSDZLoaderNative::layerToRenderScene)
     
     
       .function("setAsset",
@@ -1561,6 +1600,9 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::getAsset)
       .function("clearAssets",
                 &TinyUSDZLoaderNative::clearAssets)
+
+      .function("layerToString",
+                &TinyUSDZLoaderNative::layerToString)
 
       .function("ok", &TinyUSDZLoaderNative::ok)
       .function("error", &TinyUSDZLoaderNative::error);
