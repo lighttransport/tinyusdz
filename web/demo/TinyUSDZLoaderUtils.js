@@ -127,6 +127,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
             const loader = new THREE.TextureLoader();
 
+            //console.log("Loading texture from URI:", texImage.uri);
             // TODO: Use HDR/EXR loader if a uri is HDR/EXR file.
             return loader.loadAsync(texImage.uri);
 

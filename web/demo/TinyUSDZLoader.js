@@ -54,9 +54,7 @@ class FetchAssetResolver {
 
 // TODO
 //
-// [ ] Material callback(like GLTFLoader)
-// [ ] Texture load callback(load texture in Three.js)
-// [ ] USD Composition support
+// Polish API
 //
 class TinyUSDZLoader extends Loader {
 
@@ -69,13 +67,11 @@ class TinyUSDZLoader extends Loader {
 
         // texture loader callback
         // null = Use TinyUSDZ's builtin image loader(C++ native module)
-        this.texLoader = null;
+        //this.texLoader = null;
 
 
         this.imageCache = {};
         this.textureCache = {};
-
-        this.enableComposition_ = false;
 
         // Default: do NOT use zstd compressed WASM.
         this.useZstdCompressedWasm_ = false;
@@ -133,21 +129,18 @@ class TinyUSDZLoader extends Loader {
         return this;
     }
 
-    setEnableComposition(enabled) {
 
-        this.enableComposition_ = enabled;
-    }
-
-
+    // TODO: remove
     // Set AssetResolver callback.
     // This is used to resolve asset paths(e.g. textures, usd files) in the USD.
     // For web app, usually we'll convert asset path to URI
-    setAssetResolver(callback) {
-        this.assetResolver_ = callback;
-    }
+    //setAssetResolver(callback) {
+    //    this.assetResolver_ = callback;
+    //}
 
     //
     // Load a USDZ/USDA/USDC file from a URL as USD Stage(Freezed scene graph)
+    // NOTE: for loadAsync(), Use base Loader class's loadAsync() method
     //
     load(url, onLoad, onProgress, onError) {
         //console.log('url', url);
@@ -214,7 +207,6 @@ class TinyUSDZLoader extends Loader {
 
         const usd = new this.native_.TinyUSDZLoaderNative();
 
-        //usd.setEnableComposition(this.enableComposition_);
         const ok = usd.loadFromBinary(binary, filePath);
         if (!ok) {
             _onError(new Error('TinyUSDZLoader: Failed to load USD from binary data.', {cause: usd.error()}));
@@ -258,18 +250,17 @@ class TinyUSDZLoader extends Loader {
                 return fetch(url);
             })
             .then((response) => {
-                console.log('fetch USDZ file done:', url);
+                //console.log('fetch USDZ file done:', url);
                 return response.arrayBuffer();
             })
             .then((usd_data) => {
                 const usd_binary = new Uint8Array(usd_data);
 
-                console.log('Loaded USD binary data:', usd_binary.length, 'bytes');
+                //console.log('Loaded USD binary data:', usd_binary.length, 'bytes');
                 //return this.parse(usd_binary);
 
                 const usd = new this.native_.TinyUSDZLoaderNative();
 
-                //usd.setEnableComposition(this.enableComposition_);
                 const ok = usd.loadAsLayerFromBinary(usd_binary, url);
                 if (!ok) {
                     _onError(new Error('TinyUSDZLoader: Failed to load USD as Layer from binary data.', {cause: usd.error()}));
@@ -296,19 +287,14 @@ class TinyUSDZLoader extends Loader {
 		} );
     }
 
-    /**
-     * Set texture callback
-      */
-    setTextureLoader(texLoader) {
-        this.texLoader = texLoader;
-    }
-
-    // NOTE: Use loadSync() in base Loader class
-
-
-    //addLayer() {
-    //    console.warn('TinyUSDZLoader: addLayer() is not implemented.');
+    ///**
+    // * Set texture callback
+    //  */
+    //setTextureLoader(texLoader) {
+    //    this.texLoader = texLoader;
     //}
+
+
 
 }
 
