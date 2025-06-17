@@ -17,5 +17,8 @@
     "usdz"
   ],
   "author": "Light Transport Entertainment Inc. and many contributors",
-  "license": "Apache 2.0 and MIT"
+  "license": "Apache 2.0 and MIT",
+  "dependencies": {
+    "three": ">=0.177.0"
+  }
 }
