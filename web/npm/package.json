@@ -3,6 +3,13 @@
   "version": "0.9.0",
   "description": "Tinyusdz wasm",
   "main": "tinyusdz.js",
+  "files": [
+    "tinyusdz.js",
+    "tinyusdz.wasn",
+    "TinyUSDZLoader.js",
+    "TinyUSDZLoaderUtils.js",
+    "TinyUSDZComposer.js"
+  ],
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
