@@ -13,8 +13,9 @@ NOTE: USDC(Binary) = Read only
 * Robust USDA ASCII parsing(No segfault for corrupted input)
 * ASCII export
 * Robust USDC parsing(No segfault for corrupted input)
-* USDZ parsing
+* Robust USDZ parsing(No segfault for corrupted input)
 * Tydra: Vulkan/OpenGL friendly scene graph conversion
+* Basic USD composition support.
 * JS/WASM support
   * Supports loading USDA/USDC/USDZ 
   * Supports basic composition.
