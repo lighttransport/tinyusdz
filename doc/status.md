@@ -1,4 +1,4 @@
-# Implementation status(v0.8.0)
+# Implementation status(v0.9.0)
 
 * ✅ = Supported.
 * ❕ = Partially supported or has limitation.
@@ -8,6 +8,19 @@
 NOTE: TinyUSDZ API is subject to change
 NOTE: USDC(Binary) = Read only
 
+## Core features
+
+* Robust USDA ASCII parsing(No segfault for corrupted input)
+* ASCII export
+* Robust USDC parsing(No segfault for corrupted input)
+* Robust USDZ parsing(No segfault for corrupted input)
+* Tydra: Vulkan/OpenGL friendly scene graph conversion
+* Basic USD composition support.
+* JS/WASM support
+  * Supports loading USDA/USDC/USDZ 
+  * Supports basic composition.
+  * UsdPreviewSurface is converted to Three.js MeshPhysicalMaterial
+       
 ## Generic Prim types
 
 | type        | Ascii | USDC | Comment               |
@@ -21,7 +34,7 @@ NOTE: USDC(Binary) = Read only
 | -----------    | ----- | ---- | -------      |
 | Xform          | ✅    | ✅   |              |
 | Mesh           | ✅    | ✅   |              |
-| GeomSubset     | ✅    | ✅   |              |
+| GeomSubset     | ✅    | ✅   |  Supports 'point' type  |
 | Points         | ✅    | ✅   |              |
 | Cube           | ✅    | ✅   |              |
 | Cylinder       | ✅    | ✅   |              |
@@ -72,31 +85,31 @@ NOTE: USDC(Binary) = Read only
 
 | type        | Ascii | USDC | Comment      |
 | ----------- | ----- | ---- | -------      |
-| SkelRoot    | 🚧    | 🚧   | Parsing only |
-| Skeleton    | 🚧    | 🚧   | Parsing only |
-| SkelAnim    | 🚧    | 🚧   | Parsing only |
+| SkelRoot    | ✅    | ✅   | Parsing only |
+| Skeleton    | ✅    | ✅   | Parsing only |
+| SkelAnim    | ✅    | ✅   | Parsing only |
 | BlendShape  | ✅    | ✅   | Supports inbetween blendshape attribute |
 
-* Skinning evaulation/validation are work-in-progress.
-* Skeleton utility functions(e.g. build joint hiearchy from list of `token[]`) are work-in-progress.
+* Skeleton utility functions(e.g. build joint hiearchy from list of `token[]`) are provided in Tydra.
 
 ## Work in progress
 
 * [x] Custom filesystem handler(Asset Resolution)
 * [ ] Composition(VariantSet) syntax
+  * [ ] Nested variant 
   * [x] VariantSet Ascii parse
   * [x] VariantSet Ascii print
   * [x] VariantSet Crate parse
   * [ ] VariantSet(SpecTypeVariant) Crate write
 * [ ] USDC serialization
-* [ ] Skinning evaluation/validation
+* [x] Skinning evaluation/validation
 * [x] Tydra(scene/render delegation)
 * [ ] usdObj(wavefront .obj) support.
   * Please see [usdObj.md](usdObj.md)
 * [ ] C-API for other languages
 * [ ] Python binding and package.
 * [ ] Composition Arcs
-  * Parsing some Composition Arcs possible, needs Evaluation of it.
+  * Parsing some Composition Arcs possible, needs more testing/validations.
   * [x] subLayers
   * [x] references
   * [x] payloads(delayed load)
