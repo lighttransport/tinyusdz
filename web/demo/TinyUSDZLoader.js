@@ -1,5 +1,5 @@
-// Use zstd compression for wasm
-import { decompress } from 'fzstd';
+// Uncomment if you use zstd compression for wasm
+//import { decompress } from 'fzstd';
 
 import { Loader } from 'three'; // or https://cdn.jsdelivr.net/npm/three/build/three.module.js';
 
