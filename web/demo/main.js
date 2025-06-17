@@ -5,22 +5,6 @@ import { GUI } from 'https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.mo
 
 import { TinyUSDZLoader } from './TinyUSDZLoader.js'
 import { TinyUSDZLoaderUtils } from './TinyUSDZLoaderUtils.js'
-import { TinyUSDZComposer } from './TinyUSDZComposer.js'
-import { createTypeReferenceDirectiveResolutionCache } from 'typescript';
-
-const manager = new THREE.LoadingManager();
-
-// Initialize loading manager with URL callback.
-const objectURLs = [];
-manager.setURLModifier((url) => {
-
-  console.log(url);
-
-  url = URL.createObjectURL(blobs[url]);
-  objectURLs.push(url);
-  return url;
-
-});
 
 const gui = new GUI();
 
@@ -73,8 +57,6 @@ async function loadScenes() {
     //loader.loadAsync(suzanne_filename),
   ]);
 
-  console.log("usd_scenes:", usd_scenes);
-
   const defaultMtl = ui_state['defaultMtl'];
 
   const options = {
@@ -86,23 +68,17 @@ async function loadScenes() {
   var offset = -(usd_scenes.length-1) * 1.5;
   for (const usd_scene of usd_scenes) {
 
-    //console.log("usd_scene:", usd_scene);
-
     const usdRootNode = usd_scene.getDefaultRootNode();
-    //console.log("scene:", usdRootNode);
 
     const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options); 
 
-    // HACK
     if (usd_scene.getURI().includes('UsdCookie')) {
-      //console.log("UsdCookie");
       // Add exra scaling
       threeNode.scale.x *= 2.5;
       threeNode.scale.y *= 2.5;
       threeNode.scale.z *= 2.5;
     }
 
-    // HACK
     threeNode.position.x += offset;
     offset += 3.0;
 
@@ -134,7 +110,6 @@ const renderer = new THREE.WebGLRenderer();
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
-console.log("loading scenes...");
 const rootNodes = await loadScenes();
 
 for (const rootNode of rootNodes) {

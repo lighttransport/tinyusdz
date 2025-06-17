@@ -59,6 +59,7 @@ jobs:
         working-directory: ${{ github.workspace }}/web/npm
         run: |
           cp ../dist/* .
+          cp ../demo/TinyUSDZ*.js .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

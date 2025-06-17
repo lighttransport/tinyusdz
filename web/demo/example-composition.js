@@ -3,24 +3,9 @@ import { HDRCubeTextureLoader } from 'three/addons/loaders/HDRCubeTextureLoader.
 
 import { GUI } from 'https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.module.js';
 
-import { FetchAssetResolver, TinyUSDZLoader } from './TinyUSDZLoader.js'
+import { TinyUSDZLoader } from './TinyUSDZLoader.js'
 import { TinyUSDZLoaderUtils } from './TinyUSDZLoaderUtils.js'
 import { TinyUSDZComposer } from './TinyUSDZComposer.js'
-import { reduceEachLeadingCommentRange } from 'typescript';
-
-const manager = new THREE.LoadingManager();
-
-// Initialize loading manager with URL callback.
-const objectURLs = [];
-manager.setURLModifier((url) => {
-
-  console.log(url);
-
-  url = URL.createObjectURL(blobs[url]);
-  objectURLs.push(url);
-  return url;
-
-});
 
 const gui = new GUI();
 
@@ -86,7 +71,7 @@ async function loadScenes() {
   await composer.progressiveComposition();
 
   // layer(usd_layer) in the Composer instance now contains composited USD layer
-  usd_layer = composer.getLayer(); 
+  usd_layer = composer.getLayer();
 
   // Dump composited USD layer.
   //console.log(usd_layer.layerToString()); 
@@ -104,13 +89,11 @@ async function loadScenes() {
 
   var threeScenes = []
 
-  console.log("numRootNodes:", usd_layer.numRootNodes());
   const xoffset = -(usd_layer.numRootNodes() - 1);
   for (let i = 0; i < usd_layer.numRootNodes(); i++) {
     const usdRootNode = usd_layer.getRootNode(i);
-    console.log("usdRootNode:", usdRootNode);
 
-    const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_layer, options); 
+    const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_layer, options);
 
     // HACK
     threeNode.position.x += 2 * i + xoffset;
@@ -127,8 +110,8 @@ async function loadScenes() {
 const scene = new THREE.Scene();
 
 const envmap = await new HDRCubeTextureLoader()
-  .setPath( 'textures/cube/pisaHDR/' )
-  .loadAsync( [ 'px.hdr', 'nx.hdr', 'py.hdr', 'ny.hdr', 'pz.hdr', 'nz.hdr' ] )
+  .setPath('textures/cube/pisaHDR/')
+  .loadAsync(['px.hdr', 'nx.hdr', 'py.hdr', 'ny.hdr', 'pz.hdr', 'nz.hdr'])
 scene.background = envmap;
 scene.environment = envmap;
 
@@ -143,25 +126,24 @@ const renderer = new THREE.WebGLRenderer();
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
-console.log("loading scenes...");
 const rootNodes = await loadScenes();
 
 for (const rootNode of rootNodes) {
   scene.add(rootNode);
 }
 
-  function animate() {
+function animate() {
 
-    for (const rootNode of rootNodes) {
-      rootNode.rotation.y += 0.01 * ui_state['rot_scale'];
-      rootNode.rotation.x += 0.02 * ui_state['rot_scale'];
-    }
-
-    camera.position.z = ui_state['camera_z'];
-
-
-    renderer.render(scene, camera);
-
+  for (const rootNode of rootNodes) {
+    rootNode.rotation.y += 0.01 * ui_state['rot_scale'];
+    rootNode.rotation.x += 0.02 * ui_state['rot_scale'];
   }
 
-  renderer.setAnimationLoop(animate);
+  camera.position.z = ui_state['camera_z'];
+
+
+  renderer.render(scene, camera);
+
+}
+
+renderer.setAnimationLoop(animate);
