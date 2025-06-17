@@ -58,8 +58,11 @@ jobs:
       - name: Prepare npm
         working-directory: ${{ github.workspace }}/web/npm
         run: |
-          cp ../dist/* .
-          cp ../demo/TinyUSDZ*.js .
+          cp ../dist/tinyusdz.js .
+          cp ../dist/tinyusdz.wasm .
+          cp ../demo/TinyUSDZLoader.js .
+          cp ../demo/TinyUSDZLoaderUtils.js .
+          cp ../demo/TinyUSDZComposer.js .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
