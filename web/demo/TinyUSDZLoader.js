@@ -1,7 +1,6 @@
 // Use zstd compression for wasm
 import { decompress } from 'fzstd';
 
-// TODO :  use 'from 'three''
 import { Loader } from 'three'; // or https://cdn.jsdelivr.net/npm/three/build/three.module.js';
 
 // WASM module of TinyUSDZ.
@@ -20,7 +19,7 @@ class FetchAssetResolver {
                 throw new Error(`Failed to fetch asset: ${uri}`);
             }
             const data = await response.arrayBuffer();
-            console.log(`Fetched asset ${uri} successfully, size: ${data.byteLength} bytes`);
+            //console.log(`Fetched asset ${uri} successfully, size: ${data.byteLength} bytes`);
             this.assetCache.set(uri, data);
             return Promise.resolve([uri, data]);
         } catch (error) {
@@ -82,18 +81,18 @@ class TinyUSDZLoader extends Loader {
     // Decompress zstd compressed WASM
     async decompressZstdWasm(compressedPath) {
         try {
-            console.log(`Loading compressed WASM from: ${compressedPath}`);
+            //console.log(`Loading compressed WASM from: ${compressedPath}`);
             const response = await fetch(compressedPath);
             if (!response.ok) {
                 throw new Error(`Failed to fetch compressed WASM: ${response.statusText}`);
             }
 
             const compressedData = await response.arrayBuffer();
-            console.log(`Compressed WASM size: ${compressedData.byteLength} bytes`);
+            //console.log(`Compressed WASM size: ${compressedData.byteLength} bytes`);
 
             // Decompress using zstd
             const decompressedData = decompress(new Uint8Array(compressedData));
-            console.log(`Decompressed WASM size: ${decompressedData.byteLength} bytes`);
+            //console.log(`Decompressed WASM size: ${decompressedData.byteLength} bytes`);
 
             return decompressedData;
         } catch (error) {
@@ -106,7 +105,7 @@ class TinyUSDZLoader extends Loader {
     // This is async but the load() method handles it internally with promises
     async init() {
         if (!this.native_) {
-            console.log('Initializing native module...');
+            //console.log('Initializing native module...');
 
             let wasmBinary = null;
             
@@ -114,7 +113,7 @@ class TinyUSDZLoader extends Loader {
                 // Load and decompress zstd compressed WASM
                 wasmBinary = await this.decompressZstdWasm(this.compressedWasmPath_);
 
-                console.log('Decompressed WASM binary loaded:', wasmBinary.byteLength, 'bytes');
+                //console.log('Decompressed WASM binary loaded:', wasmBinary.byteLength, 'bytes');
             }
 
             // Initialize with custom WASM binary if decompressed
@@ -124,7 +123,7 @@ class TinyUSDZLoader extends Loader {
             if (!this.native_) {
                 throw new Error('TinyUSDZLoader: Failed to initialize native module.');
             }
-            console.log('Native module initialized');
+            //console.log('Native module initialized');
         }
         return this;
     }
@@ -156,14 +155,13 @@ class TinyUSDZLoader extends Loader {
                 return fetch(url);
             })
             .then((response) => {
-                console.log('fetch USD file done:', url);
+                //console.log('fetch USD file done:', url);
                 return response.arrayBuffer();
             })
             .then((usd_data) => {
                 const usd_binary = new Uint8Array(usd_data);
 
-                console.log('Loaded USD binary data:', usd_binary.length, 'bytes');
-                //return this.parse(usd_binary);
+                //console.log('Loaded USD binary data:', usd_binary.length, 'bytes');
 
                 scope.parse(usd_binary, url, function (usd) {
                     onLoad(usd);

@@ -311,7 +311,7 @@ struct EMAssetResolutionResolver {
     EMAssetResolutionResolver *p = reinterpret_cast<EMAssetResolutionResolver *>(userdata);
     const std::string &binary = p->get(asset_name);
 
-    std::cout << asset_name << ".size " << binary.size() << "\n";
+    //std::cout << asset_name << ".size " << binary.size() << "\n";
 
     (*nbytes) = uint64_t(binary.size());
     return 0;  // OK

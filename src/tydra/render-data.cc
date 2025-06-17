@@ -6057,7 +6057,6 @@ bool RenderSceneConverter::ConvertToRenderScene(
       render_scene.default_root_node = uint32_t(default_node);
     }
   }
-  std::cout << "# of root_nodes" << root_nodes.size() << "\n";
 
   render_scene.nodes = std::move(root_nodes);
   render_scene.meshes = std::move(meshes);

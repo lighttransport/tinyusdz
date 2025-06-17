@@ -214,7 +214,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         if (usdMaterial.hasOwnProperty('diffuseColor')) {
             const color = usdMaterial.diffuseColor;
             material.color = new THREE.Color(color[0], color[1], color[2]);
-            console.log("diffuseColor:", material.color);
+            //console.log("diffuseColor:", material.color);
         }
 
         if (usdMaterial.hasOwnProperty('diffuseColorTextureId')) {
@@ -412,7 +412,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         } else {
 
             const usdMaterial = usdScene.getMaterial(mesh.materialId);
-            console.log("usdMaterial:", usdMaterial);
+            //console.log("usdMaterial:", usdMaterial);
 
             const pbrMaterial = this.convertUsdMaterialToMeshPhysicalMaterial(usdMaterial, usdScene);
             //console.log("pbrMaterial:", pbrMaterial);
@@ -453,7 +453,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         var node = new THREE.Group();
 
-        console.log("usdNode.nodeType:", usdNode.nodeType, "primName:", usdNode.primName, "absPath:", usdNode.absPath);
+        //console.log("usdNode.nodeType:", usdNode.nodeType, "primName:", usdNode.primName, "absPath:", usdNode.absPath);
         if (usdNode.nodeType == 'xform') {
 
             // intermediate xform node

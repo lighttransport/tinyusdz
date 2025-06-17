@@ -6,7 +6,6 @@ import { FetchAssetResolver } from "./TinyUSDZLoader";
 class TinyUSDZComposer {
 
     constructor() {
-        //this.native_ = null;
 
         this.usdLayer_ = null; // This will hold the USD layer after loading.
         this.assetMap_ = new Map();
@@ -156,16 +155,16 @@ class TinyUSDZComposer {
             return;
         }
         const sublayerAssetPaths = TinyUSDZComposer.extractSublayerAssetPaths(usdLayer);
-        console.log("extractSublayer", sublayerAssetPaths);
+        //console.log("extractSublayer", sublayerAssetPaths);
 
         await Promise.all(sublayerAssetPaths.map(async (sublayerPath) => {
             const [uri, binary] = await this.assetResolver_.resolveAsync(sublayerPath);
-            console.log("sublayerPath:", sublayerPath, "binary:", binary.byteLength, "bytes");
+            //console.log("sublayerPath:", sublayerPath, "binary:", binary.byteLength, "bytes");
 
-            console.log("Loading sublayer:", sublayerPath);
+            //console.log("Loading sublayer:", sublayerPath);
             const sublayer = await this.usdLoader_.loadAsLayerAsync(sublayerPath);
 
-            console.log("sublayer:", sublayer);
+            //console.log("sublayer:", sublayer);
             await this.resolveSublayerAssets(depth + 1, sublayer);
 
             this.assetMap_.set(sublayerPath, binary);
@@ -195,7 +194,7 @@ class TinyUSDZComposer {
         await this.resolveSublayerAssets(/* depth */0, this.usdLayer_);
 
         for (const [uri, binary] of this.assetMap_.entries()) {
-            console.log("setAsset:", uri, "binary:", binary.byteLength, "bytes");
+            //console.log("setAsset:", uri, "binary:", binary.byteLength, "bytes");
             this.usdLayer_.setAsset(uri, binary);
         }
 
@@ -212,11 +211,11 @@ class TinyUSDZComposer {
             // In each composition operation, usd_layer may be modified(merged with sublayers, etc).
             // And we iterate until no more composition is needed.
 
-            console.log("iter", i);
-            console.log("hasReferences:", TinyUSDZComposer.hasReferences(this.usdLayer_));
-            console.log("hasPayload:", TinyUSDZComposer.hasPayload(this.usdLayer_));
-            console.log("hasInherits:", TinyUSDZComposer.hasInherits(this.usdLayer_));
-            console.log("hasVariants:", TinyUSDZComposer.hasVariants(this.usdLayer_));
+            //console.log("iter", i);
+            //console.log("hasReferences:", TinyUSDZComposer.hasReferences(this.usdLayer_));
+            //console.log("hasPayload:", TinyUSDZComposer.hasPayload(this.usdLayer_));
+            //console.log("hasInherits:", TinyUSDZComposer.hasInherits(this.usdLayer_));
+            //console.log("hasVariants:", TinyUSDZComposer.hasVariants(this.usdLayer_));
 
             if (!TinyUSDZComposer.hasReferences(this.usdLayer_) &&
                 !TinyUSDZComposer.hasPayload(this.usdLayer_) &&
@@ -243,13 +242,13 @@ class TinyUSDZComposer {
 
                 await Promise.all(referencesAssetPaths.map(async (assetPath) => {
                     const [uri, binary] = await this.assetResolver_.resolveAsync(assetPath);
-                    console.log("referencesPath:", assetPath, "binary:", binary.byteLength, "bytes");
+                    //console.log("referencesPath:", assetPath, "binary:", binary.byteLength, "bytes");
 
                     this.assetMap_.set(uri, binary);
                     this.usdLayer_.setAsset(uri, binary);
                 }));
 
-                console.log("do composeReferences");
+                //console.log("do composeReferences");
                 if (!this.usdLayer_.composeReferences()) {
                     throw new Error("Failed to compose references:", this.usdLayer_.error());
                 }
@@ -260,7 +259,7 @@ class TinyUSDZComposer {
 
                 await Promise.all(payloadAssetPaths.map(async (assetPath) => {
                     const [uri, binary] = await this.assetResolver_.resolveAsync(assetPath);
-                    console.log("payloadAssetPath:", assetPath, "binary:", binary.byteLength, "bytes");
+                    //console.log("payloadAssetPath:", assetPath, "binary:", binary.byteLength, "bytes");
 
                     this.assetMap_.set(uri, binary);
                     this.usdLayer_.setAsset(uri, binary);
