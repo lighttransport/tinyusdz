@@ -5,7 +5,7 @@
   "main": "tinyusdz.js",
   "files": [
     "tinyusdz.js",
-    "tinyusdz.wasn",
+    "tinyusdz.wasm",
     "TinyUSDZLoader.js",
     "TinyUSDZLoaderUtils.js",
     "TinyUSDZComposer.js"
