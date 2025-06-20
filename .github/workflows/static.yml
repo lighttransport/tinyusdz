@@ -39,10 +39,8 @@ jobs:
           git clone https://github.com/emscripten-core/emsdk.git
           cd emsdk
           # from https://github.com/Twinklebear/webgpu-cpp-usdz/blob/main/.github/workflows/deploy-page.yml
-          # TODO: 3.1.52 has a change to WebGPU API that is incompatible
-          # with the C++ bindings I have in the repo?
-          ./emsdk install 3.1.51
-          ./emsdk activate 3.1.51
+          ./emsdk install 4.0.9
+          ./emsdk activate 4.0.9
       - name: Configure
         run: |
           source ./emsdk/emsdk_env.sh
@@ -62,6 +60,12 @@ jobs:
           cp UsdCookie.usdz ../dist
           cp index.html ../dist
           cp main.js ../dist
+          cp example-composition.js ../dist
+          cp usd-composite-sample.usda ../dist
+          cp references*.usda ../dist
+          cp texture-cat-plane.usda ../dist
+          cp suzanne-pbr.usda ../dist
+          cp -r textures ../dist
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
