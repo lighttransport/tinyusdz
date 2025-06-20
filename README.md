@@ -4,7 +4,7 @@
 
 [![GitHub Sponsors](https://img.shields.io/badge/Sponsor-❤️-pink?logo=github)](https://github.com/sponsors/lighttransport)
 
-[Wasm demo!](https://lighttransport.github.io/tinyusdz/index.html) (requires 10MB file download)
+<!-- [Wasm demo!](https://lighttransport.github.io/tinyusdz/index.html) -->
 
 <img src="https://github.com/syoyo/tinyusdz/assets/18676/2419ddf6-4410-4bcc-b9c1-466bf29d3b20" width="400px">
 (from https://github.com/syoyo/Vulkan-glTF-USDZ-PBR)
@@ -17,19 +17,19 @@
 ## High priority
 
 * Improve WASM/Three.js binding https://github.com/lighttransport/tinyusdz/issues/234
-* Prepare Release v0.8
+* Prepare Release v0.9.0
   * [x] Core part should be ready for the release.
-  * [ ] Write a demo and example viewer(work in progress)
-    * [examples/openglviewer](examples/openglviewer) OpenGL viewer
-    * [examples/sdlviewer](examples/sdlviewer) Software raytracing viewer 
-  * For Vulkan and Android Vulkan example, please refer https://github.com/syoyo/Vulkan-glTF-USDZ-PBR for a while
-  * For OpenGL + MaterialX example, please refer ASF MaterialXViewer fork to load USD model through TinyUSDZ https://github.com/lighttransport/materialx
+  * [ ] Write a web demo
+
  
 
 ## Mid-term todo
 
-* Support PLY and point primitive for Gaussian Splatting https://github.com/lighttransport/tinyusdz/issues/190
 * USD import/export feature using TinyUSDZ for robotics/sim2real/digitalTwin/genAI tools https://github.com/lighttransport/tinyusdz/issues/226
+* Write/improve examples and demos 
+  * For Vulkan and Android Vulkan example, please refer https://github.com/syoyo/Vulkan-glTF-USDZ-PBR for a while
+  * For OpenGL + MaterialX example, please refer ASF MaterialXViewer fork to load USD model through TinyUSDZ https://github.com/lighttransport/materialx
+* Support PLY and point primitive for Gaussian Splatting https://github.com/lighttransport/tinyusdz/issues/190
 * Performace optimization https://github.com/syoyo/tinyusdz/issues/164
 * MaterialX https://github.com/syoyo/tinyusdz/issues/86
   * Write our own MaterialX parser
@@ -561,3 +561,4 @@ Some helper code is licensed under MIT license.
 * nanoflann: 2-clause BSD license. https://github.com/jlblancoc/nanoflann
 * tinymeshutils: MIT license. https://github.com/syoyo/tinymeshutils
 * criterion(for benchmark): MIT license. https://github.com/p-ranav/criterion
+* yyjson: MIT license. https://github.com/ibireme/yyjson
