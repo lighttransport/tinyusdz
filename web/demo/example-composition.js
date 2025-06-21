@@ -46,10 +46,10 @@ async function loadScenes() {
   // (wait loading/compiling wasm module in the early stage))
   await loader.init();
 
-  const usd_filename = "./usd-composite-sample.usda"; // Read two suzanne model as sublayer.
-  //const usd_filename = "./references-001.usda"; // Read Suzanne.usda as reference.
-  //const usd_filename = "./references-002.usda"; // read UsdCookie.usdz as reference: No textures(this is expected behavior)
-  //const usd_filename = "./references-003.usda"; // read texture-cat-plane.usda as reference: Do texturing(use three.js's TextureLoader)
+  const usd_filename = "./assets/usd-composite-sample.usda"; // Read two suzanne model as sublayer.
+  //const usd_filename = "./assets/references-001.usda"; // Read Suzanne.usda as reference.
+  //const usd_filename = "./assets/references-002.usda"; // read UsdCookie.usdz as reference: No textures(this is expected behavior)
+  //const usd_filename = "./assets/references-003.usda"; // read texture-cat-plane.usda as reference: Do texturing(use three.js's TextureLoader)
 
   //
   // ============================================================
@@ -67,6 +67,10 @@ async function loadScenes() {
   let composer = new TinyUSDZComposer();
   composer.setLayer(usd_layer);
   composer.setUSDLoader(loader);
+
+  // NOTE: baseDir and assetSearchPaths are w.i.p.
+  composer.setBaseWorkingPath("./assets");
+  composer.setAssetSearchPaths(["./assets"]); // optional
 
   await composer.progressiveComposition();
 
@@ -109,41 +113,47 @@ async function loadScenes() {
 
 const scene = new THREE.Scene();
 
-const envmap = await new HDRCubeTextureLoader()
-  .setPath('textures/cube/pisaHDR/')
-  .loadAsync(['px.hdr', 'nx.hdr', 'py.hdr', 'ny.hdr', 'pz.hdr', 'nz.hdr'])
-scene.background = envmap;
-scene.environment = envmap;
+async function initScene() {
 
-// Assign envmap to material
-// Otherwise some material parameters like clarcoat will not work properly.
-ui_state['defaultMtl'].envMap = envmap;
+  const envmap = await new HDRCubeTextureLoader()
+    .setPath('assets/textures/cube/pisaHDR/')
+    .loadAsync(['px.hdr', 'nx.hdr', 'py.hdr', 'ny.hdr', 'pz.hdr', 'nz.hdr'])
+  scene.background = envmap;
+  scene.environment = envmap;
 
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-camera.position.z = ui_state['camera_z'];
+  // Assign envmap to material
+  // Otherwise some material parameters like clarcoat will not work properly.
+  ui_state['defaultMtl'].envMap = envmap;
 
-const renderer = new THREE.WebGLRenderer();
-renderer.setSize(window.innerWidth, window.innerHeight);
-document.body.appendChild(renderer.domElement);
-
-const rootNodes = await loadScenes();
-
-for (const rootNode of rootNodes) {
-  scene.add(rootNode);
-}
-
-function animate() {
-
-  for (const rootNode of rootNodes) {
-    rootNode.rotation.y += 0.01 * ui_state['rot_scale'];
-    rootNode.rotation.x += 0.02 * ui_state['rot_scale'];
-  }
-
+  const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
   camera.position.z = ui_state['camera_z'];
 
+  const renderer = new THREE.WebGLRenderer();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
 
-  renderer.render(scene, camera);
+  const rootNodes = await loadScenes();
+
+  for (const rootNode of rootNodes) {
+    scene.add(rootNode);
+  }
+
+  function animate() {
+
+    for (const rootNode of rootNodes) {
+      rootNode.rotation.y += 0.01 * ui_state['rot_scale'];
+      rootNode.rotation.x += 0.02 * ui_state['rot_scale'];
+    }
+
+    camera.position.z = ui_state['camera_z'];
+
+
+    renderer.render(scene, camera);
+
+  }
+
+  renderer.setAnimationLoop(animate);
 
 }
 
-renderer.setAnimationLoop(animate);
+initScene();

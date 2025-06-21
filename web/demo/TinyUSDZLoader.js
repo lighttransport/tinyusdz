@@ -151,11 +151,9 @@ class TinyUSDZLoader extends Loader {
 
         initPromise
             .then(() => {
-                //usd_ = new this.native_.TinyUSDZLoaderNative();
                 return fetch(url);
             })
             .then((response) => {
-                //console.log('fetch USD file done:', url);
                 return response.arrayBuffer();
             })
             .then((usd_data) => {
@@ -261,7 +259,7 @@ class TinyUSDZLoader extends Loader {
 
                 const ok = usd.loadAsLayerFromBinary(usd_binary, url);
                 if (!ok) {
-                    _onError(new Error('TinyUSDZLoader: Failed to load USD as Layer from binary data.', {cause: usd.error()}));
+                    _onError(new Error('TinyUSDZLoader: Failed to load USD as Layer from binary data. url: ' + url, {cause: usd.error()}));
                 } else {
                     onLoad(usd);
                 }

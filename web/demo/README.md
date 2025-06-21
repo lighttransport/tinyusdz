@@ -38,6 +38,15 @@ export default defineConfig({
 });
 ```
 
+## Deploy
+
+```
+$ bun run build
+(or vite build)
+```
+
+Content will be installed to ../dist
+
 ## Demo info
 
 UsdCookie.usdz : Each asset has a license declared in the readme, typically CC0 or something highly permissive

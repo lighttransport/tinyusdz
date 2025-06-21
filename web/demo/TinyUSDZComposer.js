@@ -1,6 +1,3 @@
-// WASM module.
-//import initTinyUSDZNative from './tinyusdz.js';
-
 import { FetchAssetResolver } from "./TinyUSDZLoader";  
 
 class TinyUSDZComposer {
@@ -11,6 +8,10 @@ class TinyUSDZComposer {
         this.assetMap_ = new Map();
         this.usdLoader_ = null; // TinyUSDZLoaderNative instance
         this.assetResolver_ = new FetchAssetResolver(); // 'fetch' Asset resolver 
+      
+        this.assetSearchPaths_ = ["./"];
+        this.baseWorkingPath_ = "./";
+
     }
 
     static hasSublayer(usd_layer) {
@@ -147,6 +148,22 @@ class TinyUSDZComposer {
         return this.usdLoader_;
     }
 
+    setAssetSearchPaths(paths) {
+        this.assetSearchPaths_ = paths;
+    }
+
+    getAssetSearchPaths() {
+        return this.assetSearchPaths_;
+    }
+
+    setBaseWorkingPath(path) {
+        this.baseWorkingPath_ = path;
+    }
+
+    getBaseWorkingPath() {
+        return this.baseWorkingPath_;
+    }
+
     // Recursively resolve sublayer assets.
     async resolveSublayerAssets(depth, usdLayer) {
 
@@ -181,6 +198,12 @@ class TinyUSDZComposer {
             throw new Error("TinyUSDZComposer: setUSDLoader() is not called.");
         }
 
+        this.usdLayer_.clearAssetSearchPaths();
+        for (const path of this.assetSearchPaths_) {
+            this.usdLayer_.addAssetSearchPath(path);
+        }
+
+        this.usdLayer_.setBaseWorkingPath(this.baseWorkingPath_);
 
         // LIVRPS
         // [x] local(subLayer)

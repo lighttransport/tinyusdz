@@ -65,7 +65,7 @@ def Xform "root" (
             def Shader "Image_Texture"
             {
                 uniform token info:id = "UsdUVTexture"
-                asset inputs:file = @./textures/texture-cat.jpg@
+                asset inputs:file = @./assets/textures/texture-cat.jpg@
                 token inputs:sourceColorSpace = "sRGB"
                 float2 inputs:st.connect = </root/_materials/Material_001/uvmap.outputs:result>
                 token inputs:wrapS = "repeat"

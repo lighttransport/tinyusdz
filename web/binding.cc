@@ -115,157 +115,6 @@ bool ToRGBA(const std::vector<uint8_t> &src, int channels,
 
 }  // namespace detail
 
-#if 0
-// Use Emscripten's FS API(Synchronous)
-struct EMFSAssetResolutionResolver {
-  static int Resolve(const char *asset_name,
-                     const std::vector<std::string> &search_paths,
-                     std::string *resolved_asset_name, std::string *err,
-                     void *userdata) {
-    (void)err;
-    (void)userdata;
-    (void)search_paths;
-
-    if (!asset_name) {
-      return -2;  // err
-    }
-
-    if (!resolved_asset_name) {
-      return -2;  // err
-    }
-
-    using namespace emscripten;
-
-    val fs = val::global("FS");
-    try {
-        val analyzePath = fs.call<val>("analyzePath", asset_name);
-        if (analyzePath["exists"].as<bool>()) {
-          return 0; // ok
-        } else {
-          return -1;
-        }
-    } catch (...) {
-        return -1;
-    }
-  }
-
-  // AssetResoltion handlers
-  static int Size(const char *asset_name, uint64_t *nbytes, std::string *err,
-                  void *userdata) {
-    (void)userdata;
-
-    if (!asset_name) {
-      if (err) {
-        (*err) += "asset_name arg is nullptr.\n";
-      }
-      return -1;
-    }
-
-    if (!nbytes) {
-      if (err) {
-        (*err) += "nbytes arg is nullptr.\n";
-      }
-      return -1;
-    }
-
-#if 0  // TODO
-    if (g_map.count(asset_name)) {
-      // Use strlen()(length until the first appearance of '\0' character), since
-      // std::string::size() reports buffer size, not bytes until the first
-      // appearance of '\0' character.
-      (*nbytes) = strlen(g_map[asset_name].c_str());
-      return 0;  // OK
-    }
-#endif
-
-    return -1;
-  }
-
-  static int Read(const char *asset_name, uint64_t req_nbytes, uint8_t *out_buf,
-                  uint64_t *nbytes, std::string *err, void *userdata) {
-    if (!asset_name) {
-      if (err) {
-        (*err) += "asset_name arg is nullptr.\n";
-      }
-      return -3;
-    }
-
-    if (!nbytes) {
-      if (err) {
-        (*err) += "nbytes arg is nullptr.\n";
-      }
-      return -3;
-    }
-
-    if (req_nbytes < 9) {  // at least 9 bytes(strlen("#usda 1.0")) or more
-      return -2;
-    }
-
-#if 0
-    using namespace emscripten;
-    val fs = val::global("FS");
-    
-    std::string content;
-
-    try {
-        // Check if file exists
-        val analyzePath = fs.call<val>("analyzePath", asset_name);
-        bool exists = analyzePath["exists"].as<bool>();
-        
-        if (!exists) {
-            return -1;
-        }
-        
-        // Read file
-        val readFile = fs.call<val>("readFile", filename, val::object());
-        readFile.set("encoding", std::string("utf8"));
-        
-        tring content = readFile.as<std::string>();
-        return content;
-    } catch (const std::exception& e) {
-        return "";
-    }
-    
-      
-    if (size > 0 && !buffer.empty()) {
-      int retcode = 0; // ok
-      if (size > req_nbytes) {
-        retcode = -4;
-      } else {
-        memcpy(out_buf, buffer.data(), size);
-      }
-
-      return retcode;
-    }
-#endif
-      
-    return -1;
-  }
-};
-
-bool SetupEMFSAssetResolution(
-    tinyusdz::AssetResolutionResolver &resolver,
-    /* must be the persistent pointer address until usd load finishes */
-    const EMFSAssetResolutionResolver *p) {
-  if (!p) {
-    return false;
-  }
-
-  tinyusdz::AssetResolutionHandler handler;
-  handler.resolve_fun = EMFSAssetResolutionResolver::Resolve;
-  handler.size_fun = EMFSAssetResolutionResolver::Size;
-  handler.read_fun = EMFSAssetResolutionResolver::Read;
-  handler.write_fun = nullptr;
-  handler.userdata =
-      reinterpret_cast<void *>(const_cast<EMFSAssetResolutionResolver *>(p));
-
-  resolver.register_wildcard_asset_resolution_handler(handler);
-
-  return true;
-}
-#endif
-
-#if 1 
 struct EMAssetResolutionResolver {
 
   static int Resolve(const char *asset_name,
@@ -404,7 +253,6 @@ bool SetupEMAssetResolution(
 
   return true;
 }
-#endif
 
 ///
 /// Simple C++ wrapper class for Emscripten
@@ -1004,6 +852,30 @@ class TinyUSDZLoaderNative {
     loadTextureInNative_ = onoff;
   }
 
+  emscripten::val getAssetSearchPaths() const {
+    emscripten::val arr = emscripten::val::array();
+    for (size_t i = 0; i < search_paths_.size(); i++) {
+     arr.call<void>("push", search_paths_[i]);
+    }
+    return arr;
+  }
+
+  void setBaseWorkingPath(const std::string &path) {
+    base_dir_ = path;
+  }
+
+  std::string getBaseWorkingPath() const {
+    return base_dir_;
+  }
+
+  void clearAssetSearchPaths() {
+    search_paths_.clear();
+  }
+
+  void addAssetSearchPath(const std::string &path) {
+    search_paths_.push_back(path);
+  }
+
   // Return filename passed to loadFromBinary/loadAsLayerFromBinary.
   std::string getURI() const {
     return filename_;
@@ -1329,6 +1201,8 @@ class TinyUSDZLoaderNative {
   tinyusdz::Layer layer_;
   tinyusdz::Layer composed_layer_;
   bool composited_{false};
+  std::vector<std::string> search_paths_;
+  std::string base_dir_{"./"};
 
   tinyusdz::tydra::RenderScene render_scene_;
   tinyusdz::USDZAsset usdz_asset_;
@@ -1603,6 +1477,12 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
 
       .function("layerToString",
                 &TinyUSDZLoaderNative::layerToString)
+
+      .function("setBaseWorkingPath", &TinyUSDZLoaderNative::setBaseWorkingPath)
+      .function("getBaseWorkingPath", &TinyUSDZLoaderNative::getBaseWorkingPath)
+      .function("clearAssetSearchPaths", &TinyUSDZLoaderNative::clearAssetSearchPaths)
+      .function("addAssetSearchPath", &TinyUSDZLoaderNative::addAssetSearchPath)
+      .function("getAssetSearchPaths", &TinyUSDZLoaderNative::getAssetSearchPaths)
 
       .function("ok", &TinyUSDZLoaderNative::ok)
       .function("error", &TinyUSDZLoaderNative::error);
