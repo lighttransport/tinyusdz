@@ -45,9 +45,9 @@ async function loadScenes() {
   // (wait loading/compiling wasm module in the early stage))
   await loader.init();
 
-  const suzanne_filename = "./suzanne-pbr.usda";
-  const texcat_filename = "./texture-cat-plane.usdz";
-  const cookie_filename = "./UsdCookie.usdz";
+  const suzanne_filename = "./assets/suzanne-pbr.usda";
+  const texcat_filename = "./assets/texture-cat-plane.usdz";
+  const cookie_filename = "./assets/UsdCookie.usdz";
 
   var threeScenes = []
 
@@ -93,28 +93,30 @@ async function loadScenes() {
 
 const scene = new THREE.Scene();
 
-const envmap = await new HDRCubeTextureLoader()
-  .setPath( 'textures/cube/pisaHDR/' )
-  .loadAsync( [ 'px.hdr', 'nx.hdr', 'py.hdr', 'ny.hdr', 'pz.hdr', 'nz.hdr' ] )
-scene.background = envmap;
-scene.environment = envmap;
+async function initScene() {
 
-// Assign envmap to material
-// Otherwise some material parameters like clarcoat will not work properly.
-ui_state['defaultMtl'].envMap = envmap;
+  const envmap = await new HDRCubeTextureLoader()
+    .setPath( 'assets/textures/cube/pisaHDR/' )
+    .loadAsync( [ 'px.hdr', 'nx.hdr', 'py.hdr', 'ny.hdr', 'pz.hdr', 'nz.hdr' ] )
+  scene.background = envmap;
+  scene.environment = envmap;
 
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-camera.position.z = ui_state['camera_z'];
+  // Assign envmap to material
+  // Otherwise some material parameters like clarcoat will not work properly.
+  ui_state['defaultMtl'].envMap = envmap;
 
-const renderer = new THREE.WebGLRenderer();
-renderer.setSize(window.innerWidth, window.innerHeight);
-document.body.appendChild(renderer.domElement);
+  const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+  camera.position.z = ui_state['camera_z'];
 
-const rootNodes = await loadScenes();
+  const renderer = new THREE.WebGLRenderer();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
 
-for (const rootNode of rootNodes) {
-  scene.add(rootNode);
-}
+  const rootNodes = await loadScenes();
+
+  for (const rootNode of rootNodes) {
+    scene.add(rootNode);
+  }
 
   function animate() {
 
@@ -131,3 +133,6 @@ for (const rootNode of rootNodes) {
   }
 
   renderer.setAnimationLoop(animate);
+}
+
+initScene();

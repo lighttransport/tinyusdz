@@ -1,0 +1,14 @@
+#usda 1.0
+
+def Xform "root" 
+{
+  double3 xformOp:translate = (4, 5, 6)
+  uniform token[] xformOpOrder = ["xformOp:translate"]
+
+  def "content" 
+    ( prepend references = @assets/suzanne-pbr.usda@</root_pbr> )
+  {
+  }
+
+
+}
