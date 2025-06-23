@@ -4,14 +4,24 @@
   "description": "Tinyusdz wasm",
   "main": "tinyusdz.js",
   "files": [
-    "../js/src/tinyusdz/tinyusdz.js",
-    "../js/src/tinyusdz/tinyusdz.wasm",
-    "../js/src/tinyusdz/TinyUSDZLoader.js",
-    "../js/src/tinyusdz/TinyUSDZLoaderUtils.js",
-    "../js/src/tinyusdz/TinyUSDZComposer.js"
+    "./dist/tinyusdz.js",
+    "./dist/tinyusdz.wasm",
+    "./dist/TinyUSDZLoader.js",
+    "./dist/TinyUSDZLoaderUtils.js",
+    "./dist/TinyUSDZComposer.js"
   ],
   "scripts": {
+    "copy:lic": "cpx '../../LICENSE' './dist/'",
+    "copy:em": "cpx '../dist/tinyusdz.*' './dist/'",
+    "copy:js": "cpx '../js/src/tinyusdz/**/*' './dist'",
+    "copy:all": "npm run copy:lic && npm run copy:em && npm run copy:js",
+    "build": "npm run copy:all",
+    "build:clean": "rimraf dist && npm run build",
     "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "devDependencies": {
+    "cpx": "^1.5.0",
+    "rimraf": "^5.0.0"
   },
   "keywords": [
     "usd",

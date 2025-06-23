@@ -58,14 +58,14 @@ jobs:
       - name: Prepare npm
         working-directory: ${{ github.workspace }}/web/npm
         run: |
-          cp ../dist/tinyusdz.js ../js/src/tinyusdz/
-          cp ../dist/tinyusdz.wasm ../js/src/tinyusdz/
+          npm install
+          npm run build
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: 'tinyusdz'
-          path: ${{ github.workspace }}/web/npm
+          path: ${{ github.workspace }}/web/npm/dist
 
       - name: Version & Publish Package
         # Setup .npmrc file to publish to npm
