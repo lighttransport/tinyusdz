@@ -76,6 +76,6 @@ jobs:
       - run: |
           npm version --no-git-tag-version ${{ github.event.inputs.release_version }} --allow-same-version
           npm publish --access public --tag ${{ github.event.inputs.NPM_tag }} ${{ github.event.inputs.NPM_publish_arg }}
-        working-directory: ${{ github.workspace }}/web/npm
+        working-directory: ${{ github.workspace }}/web/npm/dist
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
