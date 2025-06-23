@@ -1,0 +1,21 @@
+{
+  "name": "tinyusdz",
+  "private": false,
+  "version": "0.9.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@types/three": "^0.160.0",
+    "typescript": "^5.8.3",
+    "vite": "^5.4.19",
+    "@types/bun": "latest"
+  },
+  "dependencies": {
+    "three": "^0.160.1"
+  },
+  "0module": "index.ts"
+}

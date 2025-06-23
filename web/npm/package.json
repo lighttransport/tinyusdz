@@ -4,20 +4,25 @@
   "description": "Tinyusdz wasm",
   "main": "tinyusdz.js",
   "files": [
-    "tinyusdz.js",
-    "tinyusdz.wasm",
-    "TinyUSDZLoader.js",
-    "TinyUSDZLoaderUtils.js",
-    "TinyUSDZComposer.js"
+    "../js/src/tinyusdz/tinyusdz.js",
+    "../js/src/tinyusdz/tinyusdz.wasm",
+    "../js/src/tinyusdz/TinyUSDZLoader.js",
+    "../js/src/tinyusdz/TinyUSDZLoaderUtils.js",
+    "../js/src/tinyusdz/TinyUSDZComposer.js"
   ],
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
+    "usd",
     "usdz"
   ],
   "author": "Light Transport Entertainment Inc. and many contributors",
   "license": "Apache 2.0 and MIT",
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/lighttransport/tinyusdz"
+  },
   "dependencies": {
     "three": ">=0.177.0"
   }
