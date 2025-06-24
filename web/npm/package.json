@@ -16,7 +16,8 @@
     "copy:em": "cpx '../dist/tinyusdz.*' './dist/'",
     "copy:js": "cpx '../js/src/tinyusdz/**/*' './dist'",
     "copy:pkg": "cpx 'package.json' './dist'",
-    "copy:all": "npm run copy:lic && npm run copy:em && npm run copy:js && npm run copy:pkg",
+    "copy:md": "cpx 'readme.md' './dist'",
+    "copy:all": "npm run copy:lic && npm run copy:em && npm run copy:js && npm run copy:pkg && npm run copy:md",
     "build": "npm run copy:all",
     "build:clean": "rimraf dist && npm run build",
     "test": "echo \"Error: no test specified\" && exit 1"
