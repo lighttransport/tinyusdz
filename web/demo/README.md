@@ -19,7 +19,7 @@ $ bun run dev
 ## Run with tinyusdz npm package with vite.
 
 For some reason, vite cannot find tinyusdz.wasm file for caching(optimzieDeps).
-Please `exclude` tinyusdz package to `vite.config.ts` file as a work around.
+Please `exclude` tinyusdz package in `vite.config.ts` or `vite.config.js` file as a work around.
 
 ```ts
 import { defineConfig } from 'vite';
