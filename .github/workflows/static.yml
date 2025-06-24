@@ -57,15 +57,11 @@ jobs:
       - name: otherasserts
         working-directory: ${{ github.workspace }}/web/demo
         run: |
-          cp UsdCookie.usdz ../dist
+          #bun run build
+          cp -r assets ../dist
           cp index.html ../dist
           cp main.js ../dist
           cp example-composition.js ../dist
-          cp usd-composite-sample.usda ../dist
-          cp references*.usda ../dist
-          cp texture-cat-plane.usda ../dist
-          cp suzanne-pbr.usda ../dist
-          cp -r textures ../dist
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
