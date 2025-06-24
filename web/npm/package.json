@@ -4,17 +4,19 @@
   "description": "Tinyusdz wasm",
   "main": "tinyusdz.js",
   "files": [
-    "./dist/tinyusdz.js",
-    "./dist/tinyusdz.wasm",
-    "./dist/TinyUSDZLoader.js",
-    "./dist/TinyUSDZLoaderUtils.js",
-    "./dist/TinyUSDZComposer.js"
+    "tinyusdz.js",
+    "tinyusdz.wasm",
+    "TinyUSDZLoader.js",
+    "TinyUSDZLoaderUtils.js",
+    "TinyUSDZComposer.js",
+    "LICENSE"
   ],
   "scripts": {
     "copy:lic": "cpx '../../LICENSE' './dist/'",
     "copy:em": "cpx '../dist/tinyusdz.*' './dist/'",
     "copy:js": "cpx '../js/src/tinyusdz/**/*' './dist'",
-    "copy:all": "npm run copy:lic && npm run copy:em && npm run copy:js",
+    "copy:pkg": "cpx 'package.json' './dist'",
+    "copy:all": "npm run copy:lic && npm run copy:em && npm run copy:js && npm run copy:pkg",
     "build": "npm run copy:all",
     "build:clean": "rimraf dist && npm run build",
     "test": "echo \"Error: no test specified\" && exit 1"
