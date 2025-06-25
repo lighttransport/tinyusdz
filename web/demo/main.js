@@ -3,8 +3,8 @@ import { HDRCubeTextureLoader } from 'three/addons/loaders/HDRCubeTextureLoader.
 
 import { GUI } from 'https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.module.js';
 
-import { TinyUSDZLoader } from './TinyUSDZLoader.js'
-import { TinyUSDZLoaderUtils } from './TinyUSDZLoaderUtils.js'
+import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js'
+import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js'
 
 const gui = new GUI();
 
