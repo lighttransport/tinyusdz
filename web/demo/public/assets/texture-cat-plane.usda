@@ -57,7 +57,7 @@ def Xform "root" (
                 float inputs:ior = 1.5
                 float inputs:metallic = 0
                 float inputs:opacity = 1
-                float inputs:roughness = 0.5
+                float inputs:roughness = 0.85
                 float inputs:specular = 0.5
                 token outputs:surface
             }

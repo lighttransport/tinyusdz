@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<title>TinyUSDZ Web Demos - 3D USD File Loader</title>
+		<meta name="description" content="Explore TinyUSDZ demos featuring 3D USD file viewing, loading, and interactive examples">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<link rel="stylesheet" href="./demos.css">
+	</head>
+	<body>
+		<header class="header">
+			<h1>TinyUSDZ Demos</h1>
+			<p>Explore our collection of interactive 3D USD file JS/WASM demos and examples. TinyUSDZ is a lightweight USD file reader/writer implementation.</p>
+		</header>
+
+		<div class="container">
+			<div class="demo-grid">
+				<!-- Main Interactive Demo -->
+				<div class="demo-card">
+					<div class="demo-image demo-placeholder">
+						<span>Basic USDZ loading</span>
+            <img src="./assets/usdz-load.jpg" alt="USDZ Viewer" onerror="this.parentElement.innerHTML='<div class=demo-placeholder><span>USDZ load</span></div>'"> 
+					</div>
+					<div class="demo-tag">Featured</div>
+					<div class="demo-content">
+						<h3 class="demo-title">Basic USDZ loading</h3>
+						<p class="demo-description">
+							Experience our main interactive USDZ file viewer with PBR shading capabilities.
+						</p>
+						<div class="demo-links">
+							<a href="./index.html" class="demo-link">
+								🚀 View Demo
+							</a>
+							<a href="./main.js" class="demo-link secondary">
+								📄 View Source
+							</a>
+						</div>
+					</div>
+				</div>
+
+				<!-- Texture Cat Plane Demo -->
+				<div class="demo-card">
+					<div class="demo-image">
+						<img src="../models/textures/texture-cat.jpg" alt="Texture Cat Demo" onerror="this.parentElement.innerHTML='<div class=demo-placeholder><span>Texture Cat Demo</span></div>'">
+					</div>
+					<div class="demo-content">
+						<h3 class="demo-title">Texture Cat Plane</h3>
+						<p class="demo-description">
+							A simple textured plane demonstration featuring procedural textures and UV mapping examples.
+						</p>
+						<div class="demo-links">
+							<a href="./index.html?model=texture-cat-plane.usdz" class="demo-link">
+								🎨 View Demo
+							</a>
+							<a href="../models/texture-cat-plane.usdz" class="demo-link secondary">
+								📦 Download USD
+							</a>
+						</div>
+					</div>
+				</div>
+
+				<!-- Suzanne Demo -->
+				<div class="demo-card">
+					<div class="demo-image demo-placeholder">
+						<span>Suzanne Model</span>
+					</div>
+					<div class="demo-content">
+						<h3 class="demo-title">Suzanne (Blender Monkey)</h3>
+						<p class="demo-description">
+							The classic Blender monkey head model with PBR materials, showcasing complex geometry and material properties.
+						</p>
+						<div class="demo-links">
+							<a href="./index.html?model=suzanne.usda" class="demo-link">
+								🐵 View Demo
+							</a>
+							<a href="../models/suzanne.usda" class="demo-link secondary">
+								📄 View USDA
+							</a>
+						</div>
+					</div>
+				</div>
+
+				<!-- Composition Demo -->
+				<div class="demo-card">
+					<div class="demo-image demo-placeholder">
+						<span>USD Composition</span>
+					</div>
+					<div class="demo-content">
+						<h3 class="demo-title">USD Composition Example</h3>
+						<p class="demo-description">
+							Demonstrates USD's powerful composition features including references, payloads, and layer composition.
+						</p>
+						<div class="demo-links">
+							<a href="./example-composition.js" class="demo-link">
+								🔗 View Example
+							</a>
+							<a href="../doc/composition.md" class="demo-link secondary">
+								📚 Documentation
+							</a>
+						</div>
+					</div>
+				</div>
+
+				<!-- PreviewSurface Experiment -->
+				<div class="demo-card">
+					<div class="demo-image demo-placeholder">
+						<span>Material Preview</span>
+					</div>
+					<div class="demo-tag">Experimental</div>
+					<div class="demo-content">
+						<h3 class="demo-title">PreviewSurface Materials</h3>
+						<p class="demo-description">
+							Experimental material preview system showcasing USD PreviewSurface shader implementation and real-time material editing.
+						</p>
+						<div class="demo-links">
+							<a href="./previewsurface-experiment.js" class="demo-link">
+								🧪 View Experiment
+							</a>
+							<a href="../doc/preview_surface.md" class="demo-link secondary">
+								📖 Read More
+							</a>
+						</div>
+					</div>
+				</div>
+
+			</div>
+		</div>
+
+		<footer class="footer">
+			<p>
+				TinyUSDZ is an open-source project. 
+				<a href="https://github.com/lighttransport/tinyusdz" target="_blank">View on GitHub</a>
+			</p>
+		</footer>
+
+		<script>
+			// Simple script to handle model loading parameters
+			document.addEventListener('DOMContentLoaded', function() {
+				// Add click tracking for demo links
+				const demoLinks = document.querySelectorAll('.demo-link');
+				demoLinks.forEach(link => {
+					link.addEventListener('click', function(e) {
+						// Add some visual feedback
+						this.style.transform = 'scale(0.95)';
+						setTimeout(() => {
+							this.style.transform = '';
+						}, 150);
+					});
+				});
+
+				// Lazy load images
+				const images = document.querySelectorAll('img');
+				images.forEach(img => {
+					img.addEventListener('load', function() {
+						this.style.opacity = '1';
+					});
+				});
+			});
+		</script>
+	</body>
+</html>
