@@ -140,9 +140,9 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 const image8Array = new Uint8ClampedArray(texImage.data);
                 const texture = new THREE.DataTexture(image8Array, texImage.width, texImage.height);
                 if (texImage.channels == 1) {
-                    texture.format = THREE.LuminanceFormat;
+                    texture.format = THREE.RedFormat;
                 } else if (texImage.channels == 2) {
-                    texture.format = THREE.LuminanceAlphaFormat;
+                    texture.format = THREE.RGFormat;
                 } else if (texImage.channels == 3) {
                     // Recent three.js does not support RGBFormat.
                     return Promise.reject(new Error("RGB image is not supported"));

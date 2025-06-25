@@ -9,17 +9,18 @@
     "preview": "vite preview"
   },
   "devDependencies": {
-    "@types/three": "^0.160.0",
+    "@types/bun": "latest",
+    "@types/three": ">=0.177.0",
     "typescript": "^5.8.3",
-    "vite": "^5.4.19",
-    "@types/bun": "latest"
+    "vite": "^6.1.6"
   },
   "dependencies": {
     "fzstd": "^0.1.1",
     "gsap": "^3.13.0",
     "lil-gui": "^0.19.2",
     "stats.js": "^0.17.0",
-    "three": "^0.160.1"
+    "three": ">=0.177.0",
+    "tinyusdz": "^0.9.0-rc10"
   },
   "0module": "index.ts"
 }
