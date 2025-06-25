@@ -11,11 +11,12 @@
   "devDependencies": {
     "@types/three": "^0.160.0",
     "typescript": "^5.8.3",
-    "vite": "^5.4.19",
+    "vite": "^6.1.6",
     "@types/bun": "latest"
   },
   "dependencies": {
-    "three": "^0.160.1"
+    "fzstd": "^0.1.1",
+    "three": ">=0.177.0"
   },
   "0module": "index.ts"
 }
