@@ -135,7 +135,6 @@ async function initScene() {
       // TODO: Cache materials in the scene.
       scene.traverse((object) => {
         if (object.material) {
-          console.log("mtl update");
           if (Object.prototype.hasOwnProperty.call(object.material, 'envMapIntensity')) {
             object.material.envMapIntensity = ui_state['envMapIntensity'];
             object.material.needsUpdate = true;
