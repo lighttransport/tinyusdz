@@ -1,6 +1,3 @@
-// Uncomment if you use zstd compression for wasm
-//import { decompress } from 'fzstd';
-
 import { Loader } from 'three'; // or https://cdn.jsdelivr.net/npm/three/build/three.module.js';
 
 // WASM module of TinyUSDZ.
@@ -74,15 +71,19 @@ class TinyUSDZLoader extends Loader {
 
         // Default: do NOT use zstd compressed WASM.
         this.useZstdCompressedWasm_ = false;
-        this.wasmPath_ = './tinyusdz.wasm';
-        this.compressedWasmPath_ = './tinyusdz.wasm.zst';
+        this.compressedWasmPath_ = 'tinyusdz.wasm.zst';
     }
 
     // Decompress zstd compressed WASM
     async decompressZstdWasm(compressedPath) {
         try {
-            //console.log(`Loading compressed WASM from: ${compressedPath}`);
-            const response = await fetch(compressedPath);
+            const fzstd = await import('fzstd');
+
+            const wasmURL = new URL(compressedPath, import.meta.url).href;
+
+            //console.log(`Loading compressed WASM from: ${wasmURL}`);
+            const response = await fetch(wasmURL);
+            //console.log(response);
             if (!response.ok) {
                 throw new Error(`Failed to fetch compressed WASM: ${response.statusText}`);
             }
@@ -90,8 +91,26 @@ class TinyUSDZLoader extends Loader {
             const compressedData = await response.arrayBuffer();
             //console.log(`Compressed WASM size: ${compressedData.byteLength} bytes`);
 
+            if (compressedData.byteLength < 1024*64) {
+                throw new Error('Compressed WASM size is unusually small, may not be valid zstd compressed data.');
+            }
+
+            // Check zstd magic number (0x28B52FFD in little-endian)
+            const magicBytes = new Uint8Array(compressedData, 0, 4);
+            const expectedMagic = [0x28, 0xB5, 0x2F, 0xFD]; // Little-endian representation
+            //console.log(magicBytes);
+            //console.log(expectedMagic);
+            
+            if (compressedData.byteLength < 4 || 
+                magicBytes[0] !== expectedMagic[0] || 
+                magicBytes[1] !== expectedMagic[1] || 
+                magicBytes[2] !== expectedMagic[2] || 
+                magicBytes[3] !== expectedMagic[3]) {
+                throw new Error('Invalid zstd file: magic number mismatch');
+            }
+
             // Decompress using zstd
-            const decompressedData = decompress(new Uint8Array(compressedData));
+            const decompressedData = fzstd.decompress(new Uint8Array(compressedData));
             //console.log(`Decompressed WASM size: ${decompressedData.byteLength} bytes`);
 
             return decompressedData;
@@ -103,7 +122,12 @@ class TinyUSDZLoader extends Loader {
 
     // Initialize the native WASM module
     // This is async but the load() method handles it internally with promises
-    async init() {
+    async init( options = {}) {
+
+        if (Object.prototype.hasOwnProperty.call(options, 'useZstdCompressedWasm')) {
+          this.useZstdCompressedWasm_ = options.useZstdCompressedWasm;
+        }
+
         if (!this.native_) {
             //console.log('Initializing native module...');
 
@@ -113,7 +137,6 @@ class TinyUSDZLoader extends Loader {
                 // Load and decompress zstd compressed WASM
                 wasmBinary = await this.decompressZstdWasm(this.compressedWasmPath_);
 
-                //console.log('Decompressed WASM binary loaded:', wasmBinary.byteLength, 'bytes');
             }
 
             // Initialize with custom WASM binary if decompressed

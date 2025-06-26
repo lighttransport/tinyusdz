@@ -43,17 +43,18 @@ async function loadScenes() {
 
   // it is recommended to call init() before loadAsync()
   // (wait loading/compiling wasm module in the early stage))
-  await loader.init();
+  //await loader.init({useZstdCompressedWasm: true});
+  await loader.init({useZstdCompressedWasm: true});
 
   const suzanne_filename = "./assets/suzanne-pbr.usda";
-  const texcat_filename = "./assets/texture-cat-plane.usdz";
+  const texcat_filename = "./assets/texture-cat-plane.usda";
   const cookie_filename = "./assets/UsdCookie.usdz";
 
   var threeScenes = []
 
   const usd_scenes = await Promise.all([
-    //loader.loadAsync(texcat_filename),
-    loader.loadAsync(cookie_filename),
+    loader.loadAsync(texcat_filename),
+    //loader.loadAsync(cookie_filename),
     //loader.loadAsync(suzanne_filename),
   ]);
 
@@ -122,7 +123,7 @@ async function initScene() {
 
     for (const rootNode of rootNodes) {
       rootNode.rotation.y += 0.01 * ui_state['rot_scale'];
-      rootNode.rotation.x += 0.02 * ui_state['rot_scale'];
+      //rootNode.rotation.x += 0.02 * ui_state['rot_scale'];
     }
 
     camera.position.z = ui_state['camera_z'];
