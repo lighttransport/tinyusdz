@@ -27,9 +27,9 @@ const params = {
 };
 
 // Add controls
-gui.add(params, 'envMapIntensity', 0, 20, 0.1).name('envMapIntensity').onChange((value) => {
-  ui_state['envMapIntensity'] = value;
-});
+//gui.add(params, 'envMapIntensity', 0, 20, 0.1).name('envMapIntensity').onChange((value) => {
+//  ui_state['envMapIntensity'] = value;
+//});
 gui.add(params, 'camera_z', 0, 20).name('Camera Z').onChange((value) => {
   ui_state['camera_z'] = value;
 });
