@@ -4,7 +4,7 @@
 
 [![GitHub Sponsors](https://img.shields.io/badge/Sponsor-❤️-pink?logo=github)](https://github.com/sponsors/lighttransport)
 
-<!-- [Wasm demo!](https://lighttransport.github.io/tinyusdz/index.html) -->
+[Wasm demo!](https://lighttransport.github.io/tinyusdz/demos.html) (Preview)
 
 <img src="https://github.com/syoyo/tinyusdz/assets/18676/2419ddf6-4410-4bcc-b9c1-466bf29d3b20" width="400px">
 (from https://github.com/syoyo/Vulkan-glTF-USDZ-PBR)
