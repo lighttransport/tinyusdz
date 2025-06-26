@@ -46,3 +46,14 @@ async function loadScenes() {
 } 
 ```
 
+## Using zstd compressed wasm
+
+TinyUSDZ WASM module consumes around 2 MB(as of 2025 Jun).
+npm package contains zstd compressed WASM(roughly 420kb as of 2025 Jun).
+
+If you want to use zstd compressed WASM, set 'useZstdCompressedWasm' true in `init()` arg.
+
+```
+  const loader = new TinyUSDZLoader();
+  await loader.init({useZstdCompressedWasm: true});
+```
