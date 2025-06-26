@@ -66,8 +66,8 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # Upload web/dist folder
-          path: ${{ github.workspace }}/web/dist
+          # Upload web/demo/dist folder
+          path: ${{ github.workspace }}/web/demo/dist
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
