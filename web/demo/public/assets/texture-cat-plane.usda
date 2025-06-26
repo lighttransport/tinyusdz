@@ -57,15 +57,17 @@ def Xform "root" (
                 float inputs:ior = 1.5
                 float inputs:metallic = 0
                 float inputs:opacity = 1
-                float inputs:roughness = 0.85
-                float inputs:specular = 0.5
+                float inputs:roughness = 0.95
+                float inputs:specular = 0.05
                 token outputs:surface
             }
 
             def Shader "Image_Texture"
             {
                 uniform token info:id = "UsdUVTexture"
-                asset inputs:file = @./assets/textures/texture-cat.jpg@
+                #asset inputs:file = @./assets/textures/texture-cat.jpg@
+                # WASM TinyUSDZ supports reading texture file from URL
+		asset inputs:file = @https://raw.githubusercontent.com/lighttransport/tinyusdz/171ae289c32a714d46961a5dcf9155ddd7183403/models/textures/texture-cat.jpg@
                 token inputs:sourceColorSpace = "sRGB"
                 float2 inputs:st.connect = </root/_materials/Material_001/uvmap.outputs:result>
                 token inputs:wrapS = "repeat"
