@@ -6,7 +6,7 @@
   "files": [
     "tinyusdz.js",
     "tinyusdz.wasm",
-    "tinyusdz.wasm.zstd",
+    "tinyusdz.wasm.zst",
     "TinyUSDZLoader.js",
     "TinyUSDZLoaderUtils.js",
     "TinyUSDZComposer.js",
