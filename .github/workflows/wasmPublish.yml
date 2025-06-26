@@ -28,6 +28,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+      - name: Instsall tools
+        run: |
+          sudo apt install zstd
       - name: Setup Emscripten SDK
         run: |
           git clone https://github.com/emscripten-core/emsdk.git
