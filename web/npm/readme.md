@@ -4,6 +4,12 @@ JS/WASM version of TinyUSDZ.
 
 See `<tinyusdz>/.github/workflows/wasmPublish.yml` to assemble files for npm packaging.
 
+## Install
+
+```
+$ npm install tinyusdz
+```
+
 ## Quick usage
 
 We only provide a loader for Three.js at the moment.
