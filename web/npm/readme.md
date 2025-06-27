@@ -63,7 +63,7 @@ If you want to use zstd compressed WASM, set 'useZstdCompressedWasm' true in `in
 
 ## Find more on TinyUSDZ module
 
-See https://github.com/lighttransport/tinyusdz/tree/dev/web/demo 
+See https://github.com/lighttransport/tinyusdz/tree/release/web/demo 
 
 ## NPM packaging
 
