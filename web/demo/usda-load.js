@@ -43,7 +43,7 @@ async function loadScenes() {
 
   // it is recommended to call init() before loadAsync()
   // (wait loading/compiling wasm module in the early stage))
-  await loader.init();
+  await loader.init({useZstdCompressedWasm: true});
 
   const texcat_filename = "./assets/texture-cat-plane.usda";
 
