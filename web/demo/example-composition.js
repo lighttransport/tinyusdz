@@ -44,7 +44,7 @@ async function loadScenes() {
 
   // it is recommended to call init() before loadAsync()
   // (wait loading/compiling wasm module in the early stage))
-  await loader.init();
+  await loader.init({useZstdCompressedWasm: true});
 
   const usd_filename = "./assets/usd-composite-sample.usda"; // Read two suzanne model as sublayer.
   //const usd_filename = "./assets/references-001.usda"; // Read Suzanne.usda as reference.
