@@ -824,6 +824,7 @@ class TinyUSDZLoaderNative {
     }
 
     mesh.set("materialId", rmesh.material_id);
+    mesh.set("doubleSided", rmesh.doubleSided);
 
     return mesh;
   }

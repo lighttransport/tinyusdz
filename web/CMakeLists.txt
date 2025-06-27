@@ -23,9 +23,9 @@ if (CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
   set(CMAKE_CXX_FLAGS_MINSIZEREL "-Oz -DNDEBUG")
 endif()
 
-option(TINYUSDZ_WASM_DEV "Developer mode." OFF)
-if (TINYUSDZ_WASM_DEV)
-  message(STATUS "dev build")
+option(TINYUSDZ_WASM_DEMODEV "Demo developer mode(install WASM modules to demo/node_modules/tinyusdz." OFF)
+if (TINYUSDZ_WASM_DEMODEV)
+  message(STATUS "demodev build")
 endif()
 
 # [tinyusdz]
@@ -55,10 +55,10 @@ source_group("Source Files" FILES ${SOURCES})
 
 if (EMSCRIPTEN)
 
-    if (TINYUSDZ_WASM_DEV)
-      set(OUTPUT_WASM_DIR ${PROJECT_SOURCE_DIR}/demo)
+    if (TINYUSDZ_WASM_DEMODEV)
+      set(OUTPUT_WASM_DIR ${PROJECT_SOURCE_DIR}/demo/node_modules/tinyusdz/)
     else()
-      set(OUTPUT_WASM_DIR ${PROJECT_SOURCE_DIR}/dist)
+      set(OUTPUT_WASM_DIR ${PROJECT_SOURCE_DIR}/js/src/tinyusdz/)
     endif()
 
     set_target_properties(

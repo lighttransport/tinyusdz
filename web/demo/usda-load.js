@@ -5,7 +5,6 @@ import { GUI } from 'https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.mo
 
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js'
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js'
-import { TinyUSDZComposer } from 'tinyusdz/TinyUSDZComposer.js'
 
 const gui = new GUI();
 
@@ -46,42 +45,13 @@ async function loadScenes() {
   // (wait loading/compiling wasm module in the early stage))
   await loader.init({useZstdCompressedWasm: true});
 
-  const usd_filename = "./assets/usd-composite-sample.usda"; // Read two suzanne model as sublayer.
-  //const usd_filename = "./assets/references-001.usda"; // Read Suzanne.usda as reference.
-  //const usd_filename = "./assets/references-002.usda"; // read UsdCookie.usdz as reference: No textures(this is expected behavior)
-  //const usd_filename = "./assets/references-003.usda"; // read texture-cat-plane.usda as reference: Do texturing(use three.js's TextureLoader)
+  const texcat_filename = "./assets/texture-cat-plane.usda";
 
-  //
-  // ============================================================
-  // Loading USD and do USD composition.
-  // 1. First load root USD file as a Layer.
-  // 2. Setup USDZComposer
-  // 3. Do USD composition(USDZComposer.progressiveComposition)
-  // 4. Convert composited USD Layer to RenderScene(Three.js friendly scene graph)
-  //
-  // ============================================================
-  //
+  var threeScenes = []
 
-  let usd_layer = await loader.loadAsLayerAsync(usd_filename);
-
-  let composer = new TinyUSDZComposer();
-  composer.setLayer(usd_layer);
-  composer.setUSDLoader(loader);
-
-  // NOTE: baseDir and assetSearchPaths are w.i.p.
-  composer.setBaseWorkingPath("./assets");
-  composer.setAssetSearchPaths(["./assets"]); // optional
-
-  await composer.progressiveComposition();
-
-  // layer(usd_layer) in the Composer instance now contains composited USD layer
-  usd_layer = composer.getLayer();
-
-  // Dump composited USD layer.
-  //console.log(usd_layer.layerToString()); 
-
-  // Convert layer(or compositedLayer) to RenderScene(Three.js friendly scene graph)
-  usd_layer.layerToRenderScene();
+  const usd_scenes = await Promise.all([
+    loader.loadAsync(texcat_filename),
+  ]);
 
   const defaultMtl = ui_state['defaultMtl'];
 
@@ -91,16 +61,22 @@ async function loadScenes() {
     envMapIntensity: ui_state['envMapIntensity'], // default envmap intensity
   }
 
-  var threeScenes = []
+  var offset = -(usd_scenes.length-1) * 1.5;
+  for (const usd_scene of usd_scenes) {
 
-  const xoffset = -(usd_layer.numRootNodes() - 1);
-  for (let i = 0; i < usd_layer.numRootNodes(); i++) {
-    const usdRootNode = usd_layer.getRootNode(i);
+    const usdRootNode = usd_scene.getDefaultRootNode();
 
-    const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_layer, options);
+    const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options); 
 
-    // HACK
-    threeNode.position.x += 2 * i + xoffset;
+    if (usd_scene.getURI().includes('UsdCookie')) {
+      // Add exra scaling
+      threeNode.scale.x *= 2.5;
+      threeNode.scale.y *= 2.5;
+      threeNode.scale.z *= 2.5;
+    }
+
+    threeNode.position.x += offset;
+    offset += 3.0;
 
     threeScenes.push(threeNode);
   }
@@ -116,8 +92,8 @@ const scene = new THREE.Scene();
 async function initScene() {
 
   const envmap = await new HDRCubeTextureLoader()
-    .setPath('assets/textures/cube/pisaHDR/')
-    .loadAsync(['px.hdr', 'nx.hdr', 'py.hdr', 'ny.hdr', 'pz.hdr', 'nz.hdr'])
+    .setPath( 'assets/textures/cube/pisaHDR/' )
+    .loadAsync( [ 'px.hdr', 'nx.hdr', 'py.hdr', 'ny.hdr', 'pz.hdr', 'nz.hdr' ] )
   scene.background = envmap;
   scene.environment = envmap;
 
@@ -153,7 +129,6 @@ async function initScene() {
   }
 
   renderer.setAnimationLoop(animate);
-
 }
 
 initScene();

@@ -28,6 +28,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+      - name: Instsall tools
+        run: |
+          sudo apt install zstd
       - name: Setup Emscripten SDK
         run: |
           git clone https://github.com/emscripten-core/emsdk.git
@@ -58,17 +61,14 @@ jobs:
       - name: Prepare npm
         working-directory: ${{ github.workspace }}/web/npm
         run: |
-          cp ../dist/tinyusdz.js .
-          cp ../dist/tinyusdz.wasm .
-          cp ../demo/TinyUSDZLoader.js .
-          cp ../demo/TinyUSDZLoaderUtils.js .
-          cp ../demo/TinyUSDZComposer.js .
+          npm install
+          npm run build
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: 'tinyusdz'
-          path: ${{ github.workspace }}/web/npm
+          path: ${{ github.workspace }}/web/npm/dist
 
       - name: Version & Publish Package
         # Setup .npmrc file to publish to npm
@@ -79,6 +79,6 @@ jobs:
       - run: |
           npm version --no-git-tag-version ${{ github.event.inputs.release_version }} --allow-same-version
           npm publish --access public --tag ${{ github.event.inputs.NPM_tag }} ${{ github.event.inputs.NPM_publish_arg }}
-        working-directory: ${{ github.workspace }}/web/npm
+        working-directory: ${{ github.workspace }}/web/npm/dist
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

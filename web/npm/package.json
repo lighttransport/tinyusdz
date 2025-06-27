@@ -6,18 +6,38 @@
   "files": [
     "tinyusdz.js",
     "tinyusdz.wasm",
+    "tinyusdz.wasm.zst",
     "TinyUSDZLoader.js",
     "TinyUSDZLoaderUtils.js",
-    "TinyUSDZComposer.js"
+    "TinyUSDZComposer.js",
+    "LICENSE"
   ],
   "scripts": {
+    "copy:lic": "cpx '../../LICENSE' './dist/'",
+    "copy:js": "cpx '../js/src/tinyusdz/*.js' './dist'",
+    "copy:wasm": "cpx '../js/src/tinyusdz/*.wasm' './dist'",
+    "copy:pkg": "cpx 'package.json' './dist'",
+    "copy:md": "cpx 'readme.md' './dist'",
+    "copy:all": "npm run copy:lic && npm run copy:wasm && npm run copy:js && npm run copy:pkg && npm run copy:md",
+    "comp:wasm": "zstd -19 -f ./dist/tinyusdz.wasm",
+    "build": "npm run copy:all && npm run comp:wasm",
+    "build:clean": "rimraf dist && npm run build",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
+  "devDependencies": {
+    "cpx": "^1.5.0",
+    "rimraf": "^5.0.0"
+  },
   "keywords": [
+    "usd",
     "usdz"
   ],
   "author": "Light Transport Entertainment Inc. and many contributors",
   "license": "Apache 2.0 and MIT",
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/lighttransport"
+  },
   "dependencies": {
     "three": ">=0.177.0"
   }
