@@ -140,9 +140,9 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
                 const image8Array = new Uint8ClampedArray(texImage.data);
                 const texture = new THREE.DataTexture(image8Array, texImage.width, texImage.height);
                 if (texImage.channels == 1) {
-                    texture.format = THREE.LuminanceFormat;
+                    texture.format = THREE.RedFormat;
                 } else if (texImage.channels == 2) {
-                    texture.format = THREE.LuminanceAlphaFormat;
+                    texture.format = THREE.RGFormat;
                 } else if (texImage.channels == 3) {
                     // Recent three.js does not support RGBFormat.
                     return Promise.reject(new Error("RGB image is not supported"));
@@ -211,13 +211,13 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         // Diffuse color and texture
         material.color = new THREE.Color(0.18, 0.18, 0.18);
-        if (usdMaterial.hasOwnProperty('diffuseColor')) {
+        if (Object.prototype.hasOwnProperty.call(usdMaterial, 'diffuseColor')) {
             const color = usdMaterial.diffuseColor;
             material.color = new THREE.Color(color[0], color[1], color[2]);
             //console.log("diffuseColor:", material.color);
         }
 
-        if (usdMaterial.hasOwnProperty('diffuseColorTextureId')) {
+        if (Object.prototype.hasOwnProperty.call(usdMaterial, 'diffuseColorTextureId')) {
             this.getTextureFromUSD(usdScene, usdMaterial.diffuseColorTextureId).then((texture) => {
                 //console.log("gettex");
                 material.map = texture;
@@ -229,34 +229,34 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         // IOR
         material.ior = 1.5;
-        if (usdMaterial.hasOwnProperty('ior')) {
+        if (Object.prototype.hasOwnProperty.call(usdMaterial, 'ior')) {
             material.ior = usdMaterial.ior;
         }
 
         // Clearcoat
         material.clearcoat = 0.0;
-        if (usdMaterial.hasOwnProperty('clearcoat')) {
+        if (Object.prototype.hasOwnProperty.call(usdMaterial, 'clearcoat')) {
             material.clearcoat = usdMaterial.clearcoat;
         }
 
         material.clearcoatRoughness = 0.0;
-        if (usdMaterial.hasOwnProperty('clearcoatRoughness')) {
+        if (Object.prototype.hasOwnProperty.call(usdMaterial, 'clearcoatRoughness')) {
             material.clearcoatRoughness = usdMaterial.clearcoatRoughness;
         }
 
         // Workflow selection
         material.useSpecularWorkflow = false;
-        if (usdMaterial.hasOwnProperty('useSpecularWorkflow')) {
+        if (Object.prototype.hasOwnProperty.call(usdMaterial, 'useSpecularWorkflow')) {
             material.useSpecularWorkflow = usdMaterial.useSpecularWorkflow;
         }
 
         if (material.useSpecularWorkflow) {
             material.specularColor = new THREE.Color(0.0, 0.0, 0.0);
-            if (usdMaterial.hasOwnProperty('specularColor')) {
+            if (Object.prototype.hasOwnProperty.call(usdMaterial, 'specularColor')) {
                 const color = usdMaterial.specularColor;
                 material.specularColor = new THREE.Color(color[0], color[1], color[2]);
             }
-            if (usdMaterial.hasOwnProperty('specularColorTextureId')) {
+            if (Object.prototype.hasOwnProperty.call(usdMaterial, 'specularColorTextureId')) {
                 this.getTextureFromUSD(usdScene, usdMaterial.specularColorTextureId).then((texture) => {
                     material.specularColorMap = texture;
                     material.needsUpdate = true;
@@ -266,10 +266,10 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             }
         } else {
             material.metalness = 0.0;
-            if (usdMaterial.hasOwnProperty('metallic')) {
+            if (Object.prototype.hasOwnProperty.call(usdMaterial, 'metallic')) {
                 material.metalness = usdMaterial.metallic;
             }
-            if (usdMaterial.hasOwnProperty('metallicTextureId')) {
+            if (Object.prototype.hasOwnProperty.call(usdMaterial, 'metallicTextureId')) {
                 this.getTextureFromUSD(usdScene, usdMaterial.metallicTextureId).then((texture) => {
                     material.metalnessMap = texture;
                     material.needsUpdate = true;
@@ -281,10 +281,10 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         // Roughness
         material.roughness = 0.5;
-        if (usdMaterial.hasOwnProperty('roughness')) {
+        if (Object.prototype.hasOwnProperty.call(usdMaterial, 'roughness')) {
             material.roughness = usdMaterial.roughness;
         }
-        if (usdMaterial.hasOwnProperty('roughnessTextureId')) {
+        if (Object.prototype.hasOwnProperty.call(usdMaterial, 'roughnessTextureId')) {
             this.getTextureFromUSD(usdScene, usdMaterial.roughnessTextureId).then((texture) => {
                 material.roughnessMap = texture;
                 material.needsUpdate = true;
@@ -294,11 +294,11 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         }
 
         // Emissive
-        if (usdMaterial.hasOwnProperty('emissiveColor')) {
+        if (Object.prototype.hasOwnProperty.call(usdMaterial, 'emissiveColor')) {
             const color = usdMaterial.emissiveColor;
             material.emissive = new THREE.Color(color[0], color[1], color[2]);
         }
-        if (usdMaterial.hasOwnProperty('emissiveColorTextureId')) {
+        if (Object.prototype.hasOwnProperty.call(usdMaterial, 'emissiveColorTextureId')) {
             this.getTextureFromUSD(usdScene, usdMaterial.emissiveColorTextureId).then((texture) => {
                 material.emissiveMap = texture;
                 material.needsUpdate = true;
@@ -309,13 +309,13 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         // Opacity
         material.opacity = 1.0;
-        if (usdMaterial.hasOwnProperty('opacity')) {
+        if (Object.prototype.hasOwnProperty.call(usdMaterial, 'opacity')) {
             material.opacity = usdMaterial.opacity;
             if (material.opacity < 1.0) {
                 material.transparent = true;
             }
         }
-        if (usdMaterial.hasOwnProperty('opacityTextureId')) {
+        if (Object.prototype.hasOwnProperty.call(usdMaterial, 'opacityTextureId')) {
             this.getTextureFromUSD(usdScene, usdMaterial.opacityTextureId).then((texture) => {
                 material.alphaMap = texture;
                 material.transparent = true;
@@ -326,7 +326,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         }
 
         // Ambient Occlusion
-        if (usdMaterial.hasOwnProperty('occlusionTextureId')) {
+        if (Object.prototype.hasOwnProperty.call(usdMaterial, 'occlusionTextureId')) {
             this.getTextureFromUSD(usdScene, usdMaterial.occlusionTextureId).then((texture) => {
                 material.aoMap = texture;
                 material.needsUpdate = true;
@@ -336,7 +336,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         }
 
         // Normal Map
-        if (usdMaterial.hasOwnProperty('normalTextureId')) {
+        if (Object.prototype.hasOwnProperty.call(usdMaterial, 'normalTextureId')) {
             this.getTextureFromUSD(usdScene, usdMaterial.normalTextureId).then((texture) => {
                 material.normalMap = texture;
                 material.needsUpdate = true;
@@ -346,7 +346,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         }
 
         // Displacement Map
-        if (usdMaterial.hasOwnProperty('displacementTextureId')) {
+        if (Object.prototype.hasOwnProperty.call(usdMaterial, 'displacementTextureId')) {
             this.getTextureFromUSD(usdScene, usdMaterial.displacementTextureId).then((texture) => {
                 material.displacementMap = texture;
                 material.displacementScale = 1.0;
@@ -367,33 +367,39 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         // itemsize = 1 since Index expects IntArray for VertexIndices in Three.js?
         geometry.setIndex(new THREE.BufferAttribute(mesh.faceVertexIndices, 1));
 
-        if (mesh.hasOwnProperty('texcoords')) {
+        if (Object.prototype.hasOwnProperty.call(mesh, 'texcoords')) {
             geometry.setAttribute('uv', new THREE.BufferAttribute(mesh.texcoords, 2));
         }
 
         // TODO: uv1
 
         // faceVarying normals
-        if (mesh.hasOwnProperty('normals')) {
+        if (Object.prototype.hasOwnProperty.call(mesh, 'normals')) {
             geometry.setAttribute('normal', new THREE.BufferAttribute(mesh.normals, 3));
         } else {
             geometry.computeVertexNormals();
         }
 
-        if (mesh.hasOwnProperty('vertexColors')) {
+        if (Object.prototype.hasOwnProperty.call(mesh, 'vertexColors')) {
             geometry.setAttribute('color', new THREE.BufferAttribute(mesh.vertexColors, 3));
 
         }
 
         // Only compute tangents if we have both UV coordinates and normals
-        if (mesh.hasOwnProperty('tangents')) {
+        if (Object.prototype.hasOwnProperty.call(mesh, 'tangents')) {
             geometry.setAttribute('tangent', new THREE.BufferAttribute(mesh.tangents, 3));
-        } else if (mesh.hasOwnProperty('texcoords') && (mesh.hasOwnProperty('normals') || geometry.attributes.normal)) {
+        } else if (Object.prototype.hasOwnProperty.call(mesh, 'texcoords') && (Object.prototype.hasOwnProperty.call(mesh, 'normals') || geometry.attributes.normal)) {
             // TODO: try MikTSpace tangent algorithm: https://threejs.org/docs/#examples/en/utils/BufferGeometryUtils.computeMikkTSpaceTangents 
             geometry.computeTangents();
         }
 
         // TODO: vertex opacities(per-vertex alpha)
+
+        // Three.js does not have sideness attribute in Mesh.
+        // Store doubleSided param to customData
+        if (Object.prototype.hasOwnProperty.call(mesh, 'doubleSided')) {
+          geometry.userData['doubleSided'] = mesh.doubleSided;
+        }
 
         return geometry;
     }
@@ -413,6 +419,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
             const usdMaterial = usdScene.getMaterial(mesh.materialId);
             //console.log("usdMaterial:", usdMaterial);
+         
 
             const pbrMaterial = this.convertUsdMaterialToMeshPhysicalMaterial(usdMaterial, usdScene);
             //console.log("pbrMaterial:", pbrMaterial);
@@ -423,6 +430,15 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             pbrMaterial.envMapIntensity = options.envMapIntensity || 1.0;
 
             //console.log("envmap:", options.envMap);
+
+            // Sideness is determined by the mesh
+            if (Object.prototype.hasOwnProperty.call(geometry.userData, 'doubleSided')) {
+              if (geometry.userData.doubleSided) {
+                 
+                usdMaterial.side = THREE.DoubleSide;
+                pbrMaterial.side = THREE.DoubleSide;
+              }
+            } 
 
             mtl = pbrMaterial || defaultMtl || normalMtl;
         }
@@ -477,7 +493,7 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         node.userData['primMeta.displayName'] = usdNode.displayName;
         node.userData['primMeta.absPath'] = usdNode.absPath;
 
-        if (usdNode.hasOwnProperty('children')) {
+        if (Object.prototype.hasOwnProperty.call(usdNode, 'children')) {
 
             // traverse children
             for (const child of usdNode.children) {

@@ -3,8 +3,8 @@ import { HDRCubeTextureLoader } from 'three/addons/loaders/HDRCubeTextureLoader.
 
 import { GUI } from 'https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.module.js';
 
-import { TinyUSDZLoader } from './TinyUSDZLoader.js'
-import { TinyUSDZLoaderUtils } from './TinyUSDZLoaderUtils.js'
+import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js'
+import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js'
 
 const gui = new GUI();
 
@@ -15,7 +15,8 @@ ui_state['defaultMtl'] = TinyUSDZLoaderUtils.createDefaultMaterial();
 ui_state['envMapIntensity'] = 3.14; // pi is good for pisaHDR;
 ui_state['ambient'] = 0.4;
 let ambientLight = new THREE.AmbientLight(0x404040, ui_state['ambient']);
-ui_state['camera_z'] = 4; // TODO: Compute best fit from scene's bbox.
+ui_state['camera_z'] = 3.14; // TODO: Compute best fit from scene's bbox.
+ui_state['needsMtlUpdate'] = false;
 
 
 // Create a parameters object
@@ -28,6 +29,8 @@ const params = {
 // Add controls
 gui.add(params, 'envMapIntensity', 0, 20, 0.1).name('envMapIntensity').onChange((value) => {
   ui_state['envMapIntensity'] = value;
+  ui_state['needsMtlUpdate'] = true;
+  
 });
 gui.add(params, 'camera_z', 0, 20).name('Camera Z').onChange((value) => {
   ui_state['camera_z'] = value;
@@ -43,7 +46,10 @@ async function loadScenes() {
 
   // it is recommended to call init() before loadAsync()
   // (wait loading/compiling wasm module in the early stage))
-  await loader.init();
+  //await loader.init();
+
+  // Use zstd compressed tinyusdz.wasm to save the bandwidth.
+  await loader.init({useZstdCompressedWasm: true});
 
   const suzanne_filename = "./assets/suzanne-pbr.usda";
   const texcat_filename = "./assets/texture-cat-plane.usdz";
@@ -127,6 +133,20 @@ async function initScene() {
 
     camera.position.z = ui_state['camera_z'];
 
+    if (ui_state['needsMtlUpdate']) {
+
+      // TODO: Cache materials in the scene.
+      scene.traverse((object) => {
+        if (object.material) {
+          if (Object.prototype.hasOwnProperty.call(object.material, 'envMapIntensity')) {
+            object.material.envMapIntensity = ui_state['envMapIntensity'];
+            object.material.needsUpdate = true;
+          }
+        }
+      });
+
+      ui_state['needsMtlUpdate'] = false;
+    }
 
     renderer.render(scene, camera);
 

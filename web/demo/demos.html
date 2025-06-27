@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<title>TinyUSDZ Web Demos - 3D USD File Loader</title>
+		<meta name="description" content="Explore TinyUSDZ demos featuring 3D USD file viewing, loading, and interactive examples">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<link rel="stylesheet" href="./demos.css">
+	</head>
+	<body>
+		<header class="header">
+			<h1>TinyUSDZ Demos</h1>
+			<p>Explore our collection of interactive 3D USD file JS/WASM demos and examples. TinyUSDZ is a lightweight USD file reader/writer implementation.</p>
+		</header>
+
+		<div class="container">
+			<div class="demo-grid">
+				<!-- Main Interactive Demo -->
+				<div class="demo-card">
+					<div class="demo-image">
+            <img src="./assets/usdz-load.jpg" alt="USDZ Viewer" onerror="this.parentElement.innerHTML='<div class=demo-placeholder><span>USDZ load</span></div>'"> 
+					</div>
+					<div class="demo-tag">Featured</div>
+					<div class="demo-content">
+						<h3 class="demo-title">Basic USDZ loading</h3>
+						<p class="demo-description">
+							Experience our main USDZ file loading in the browser with PBR shading capabilities.
+						</p>
+						<div class="demo-links">
+							<a href="./index.html" class="demo-link">
+								🚀 View Demo
+							</a>
+							<!-- <a href="./main.js" class="demo-link secondary">
+								📄 View Source
+							</a> -->
+						</div>
+					</div>
+				</div>
+
+				<!-- Texture Cat Plane Demo -->
+				<div class="demo-card">
+					<div class="demo-image">
+						<img src="./assets/usda-load.jpg" alt="Texture Cat Demo" onerror="this.parentElement.innerHTML='<div class=demo-placeholder><span>Texture Cat Demo</span></div>'">
+					</div>
+					<div class="demo-content">
+						<h3 class="demo-title">Texture Cat Plane</h3>
+						<p class="demo-description">
+							A simple textured plane demonstration featuring reading USDA and fetching texture from URL.
+						</p>
+						<div class="demo-links">
+							<a href="./usda-load.html" class="demo-link">
+								🎨 View Demo
+							</a>
+						</div>
+					</div>
+				</div>
+
+				<!-- Suzanne composition Demo -->
+				<div class="demo-card">
+					<div class="demo-image">
+						<img src="./assets/basic-usd-composition.jpg" alt="USD composition Demo" onerror="this.parentElement.innerHTML='<div class=demo-placeholder><span>USD Composition Demo</span></div>'">
+					</div>
+					<div class="demo-content">
+						<h3 class="demo-title">USD composition</h3>
+						<p class="demo-description">
+							A demo showing the feature of basic USD composition on the web.
+						</p>
+						<div class="demo-links">
+							<a href="./basic-usd-composite.html" class="demo-link">
+								🐵 View Demo
+							</a>
+						</div>
+					</div>
+				</div>
+
+				<!-- Suzanne composition Demo -->
+				<div class="demo-card">
+					<div class="demo-image demo-placeholder">
+						<span>Source code</span>
+					</div>
+					<div class="demo-content">
+						<h3 class="demo-title">Source code</h3>
+						<p class="demo-description">
+							Source code of this TinyUSDZ demos.
+						</p>
+						<div class="demo-links">
+							<a href="https://github.com/lighttransport/tinyusdz/tree/dev/web/demo" class="demo-link">
+								 View sources
+							</a>
+						</div>
+					</div>
+				</div>
+
+			</div>
+		</div>
+
+		<footer class="footer">
+			<p>
+				TinyUSDZ is an open-source project. 
+				<a href="https://github.com/lighttransport/tinyusdz" target="_blank">View on GitHub</a>
+			</p>
+		</footer>
+
+		<script>
+			// Simple script to handle model loading parameters
+			document.addEventListener('DOMContentLoaded', function() {
+				// Add click tracking for demo links
+				const demoLinks = document.querySelectorAll('.demo-link');
+				demoLinks.forEach(link => {
+					link.addEventListener('click', function(e) {
+						// Add some visual feedback
+						this.style.transform = 'scale(0.95)';
+						setTimeout(() => {
+							this.style.transform = '';
+						}, 150);
+					});
+				});
+
+				// Lazy load images
+				const images = document.querySelectorAll('img');
+				images.forEach(img => {
+					img.addEventListener('load', function() {
+						this.style.opacity = '1';
+					});
+				});
+			});
+		</script>
+	</body>
+</html>

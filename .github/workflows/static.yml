@@ -2,9 +2,8 @@
 name: Deploy static content to Pages
 
 on:
-  # Runs on pushes targeting the default branch
   push:
-    branches: ["web", "npm-refactor"]
+    branches: ["web", "npm-refactor", "npm"]
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
@@ -57,11 +56,8 @@ jobs:
       - name: otherasserts
         working-directory: ${{ github.workspace }}/web/demo
         run: |
-          #bun run build
-          cp -r assets ../dist
-          cp index.html ../dist
-          cp main.js ../dist
-          cp example-composition.js ../dist
+          bun install
+          bun run build
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -69,8 +65,8 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # Upload web/dist folder
-          path: ${{ github.workspace }}/web/dist
+          # Upload web/demo/dist folder
+          path: ${{ github.workspace }}/web/demo/dist
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
