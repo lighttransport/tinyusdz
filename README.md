@@ -219,7 +219,7 @@ We are also looking for sponsors. If you are interested in sponsoring(or donatin
   * [x] clang-cl + MSVC SDK cross compile
 * [x] WebAssembly
   * Emscripten
-    * See [examples/sdlviewer/](examples/sdlviewer) example.
+    * See [web/demo](web/demo).
 * [x] WASI(through WASI toolchain)
   * See [sandbox/wasi](sandbox/wasi)
 
