@@ -463,6 +463,7 @@ if(TINYUSDZ_WITH_USDMTLX)
 endif()
 
 if(TINYUSDZ_WITH_JSON)
+  list(APPEND TINYUSDZ_DEP_SOURCES  ${PROJECT_SOURCE_DIR}/src/external/yyjson.c)
   list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/json-to-usd.cc)
   list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/usd-to-json.cc)
 endif()
