@@ -5,6 +5,10 @@
 See `demo` folder.
 It uses npm package of `tinyusdz`, so no WASM building required.
 
+## Technical note on JS/WASM version of TinyUSDZ
+
+Please see wiki https://github.com/lighttransport/tinyusdz/wiki/WASM-and-JavaScript-module
+
 ## For library developers
 
 See `js` folder for JS codes.
