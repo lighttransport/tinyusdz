@@ -2,7 +2,10 @@
 
 JS/WASM version of TinyUSDZ.
 
-See `<tinyusdz>/.github/workflows/wasmPublish.yml` to assemble files for npm packaging.
+## Demos
+
+[Github pages](https://lighttransport.github.io/tinyusdz/demos.html)
+
 
 ## Install
 
@@ -57,3 +60,11 @@ If you want to use zstd compressed WASM, set 'useZstdCompressedWasm' true in `in
   const loader = new TinyUSDZLoader();
   await loader.init({useZstdCompressedWasm: true});
 ```
+
+## Find more on TinyUSDZ module
+
+See https://github.com/lighttransport/tinyusdz/tree/dev/web/demo 
+
+## NPM packaging
+
+See `<tinyusdz>/.github/workflows/wasmPublish.yml` to assemble files for npm packaging.
