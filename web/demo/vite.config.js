@@ -1,5 +1,7 @@
 import { defineConfig } from 'vite'
 import path from 'path'
+import { compression } from 'vite-plugin-compression2'
+import { viteStaticCopy } from 'vite-plugin-static-copy'
 
 // Do not minify(we want to make demo website simple)
 // base: "./" => make asset path relative(required for static hosting of tinyusdz demo page at github pages)
@@ -26,4 +28,15 @@ export default defineConfig({
     optimizeDeps: {
         exclude: ['tinyusdz'],
     },
+    // Use only 'gzip' for a while('zstd' is avaiable for node > 22.15.0)
+    plugins: [
+      compression({algorithms: ['gzip']}),
+      viteStaticCopy({
+        targets: [
+          { src: 'node_modules/tinyusdz/tinyusdz.wasm.zst',
+            dest: 'assets/'
+          },
+        ],
+      }),
+    ],
 });

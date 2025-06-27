@@ -20,7 +20,9 @@
     "lil-gui": "^0.19.2",
     "stats.js": "^0.17.0",
     "three": ">=0.177.0",
-    "tinyusdz": "0.9.0-rc13"
+    "tinyusdz": "0.9.0-rc.2",
+    "vite-plugin-compression2": "^2.2.0",
+    "vite-plugin-static-copy": "^3.1.0"
   },
   "0module": "index.ts"
 }

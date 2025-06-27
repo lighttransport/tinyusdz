@@ -15,7 +15,7 @@ ui_state['defaultMtl'] = TinyUSDZLoaderUtils.createDefaultMaterial();
 ui_state['envMapIntensity'] = 3.14; // pi is good for pisaHDR;
 ui_state['ambient'] = 0.4;
 let ambientLight = new THREE.AmbientLight(0x404040, ui_state['ambient']);
-ui_state['camera_z'] = 4; // TODO: Compute best fit from scene's bbox.
+ui_state['camera_z'] = 3.14; // TODO: Compute best fit from scene's bbox.
 ui_state['needsMtlUpdate'] = false;
 
 
@@ -46,7 +46,10 @@ async function loadScenes() {
 
   // it is recommended to call init() before loadAsync()
   // (wait loading/compiling wasm module in the early stage))
-  await loader.init();
+  //await loader.init();
+
+  // Use zstd compressed tinyusdz.wasm to save the bandwidth.
+  await loader.init({useZstdCompressedWasm: true});
 
   const suzanne_filename = "./assets/suzanne-pbr.usda";
   const texcat_filename = "./assets/texture-cat-plane.usdz";
