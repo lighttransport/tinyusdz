@@ -10,6 +10,7 @@
  </a>
 </p>
 
+[![npm version](https://img.shields.io/npm/v/tinyusdz.svg)](https://www.npmjs.com/package/tinyusdz)
 
 ## Releases
 
