@@ -90,7 +90,7 @@ endif()
 # Enable /MP flags(multi processor build) for Visual Studio
 # Based on VTK's Cmake
 # No need to set this if you use Ninja Generator
-if(MSVC)
+if(MSVC AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   # default on.
   # disable MP or reduce cores if you have less memory
   set(TINYUSDZ_CXX_MP_FLAG ON CACHE BOOL "Build with /MP flag enabled")
