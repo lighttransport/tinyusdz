@@ -20,6 +20,8 @@
 * Tydra: Convert USD model to OpenGL/Vulkan/Three.js friendly scene graph.
 * Basic USD composition.
 * JS/WASM binding of TinyUSDZ. https://github.com/lighttransport/tinyusdz/tree/release/web
+
+More on the status: https://github.com/lighttransport/tinyusdz/blob/release/doc/status.md
  
 
 ## Mid-term todo
