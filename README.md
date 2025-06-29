@@ -24,6 +24,9 @@
 
 More on the status: https://github.com/lighttransport/tinyusdz/blob/release/doc/status.md
  
+## High priority
+
+* Support MCP interface for AI agents: https://github.com/lighttransport/tinyusdz/issues/243
 
 ## Mid-term todo
 
