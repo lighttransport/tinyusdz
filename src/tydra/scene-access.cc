@@ -2667,7 +2667,10 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
   std::string index_name = primvar_name + kIndices;
   const auto indexIt = gprim->props.find(index_name);
 
-  if (indexIt != gprim->props.end()) {
+  // Primvar indices are only relevant for non-constant interpolation modes
+  bool constant_interpolation = primvar.get_interpolation() == tinyusdz::Interpolation::Constant;
+
+  if (indexIt != gprim->props.end() && !constant_interpolation) {
     if (indexIt->second.is_attribute()) {
       const Attribute &indexAttr = indexIt->second.get_attribute();
 
