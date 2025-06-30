@@ -112,7 +112,7 @@ option(TINYUSDZ_CXX_EXCEPTIONS
        ${TINYUSDZ_CXX_EXCEPTIONS_DEFAULT})
 
 option(TINYUSDZ_WITH_USDMTLX "Build with MaterialX support" ON)
-option(TINYUSDZ_WITH_JSON "Build with JSON serialization support" OFF)
+option(TINYUSDZ_WITH_JSON "Build with JSON support" ON)
 option(TINYUSDZ_WITH_USD_TO_GLTF "Build with USD to glTF example" ON)
 option(TINYUSDZ_WITH_USDOBJ "Build with usdObj support(import wavefront .obj)"
        ON)
@@ -435,6 +435,8 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp.hh
         )
 endif (TINYUSDZ_WITH_TYDRA)
 
