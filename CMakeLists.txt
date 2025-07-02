@@ -78,6 +78,9 @@ option(TINYUSDZ_WITH_BUILTIN_IMAGE_LOADER
 option(TINYUSDZ_WITH_TYDRA
        "Build with Tydra module(Handly USD scene converter for the renderer, DCC, etc)."
        ON)
+option(TINYUSDZ_WITH_MCP_SERVER
+       "Build with C++ MCP server(http server) support."
+       OFF)
 
 
 if(MSVC)
@@ -435,8 +438,8 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.hh
-        ${PROJECT_SOURCE_DIR}/src/tydra/mcp.cc
-        ${PROJECT_SOURCE_DIR}/src/tydra/mcp.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-server.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-server.hh
         )
 endif (TINYUSDZ_WITH_TYDRA)
 
@@ -551,6 +554,12 @@ if(TINYUSDZ_WITH_ALAC_AUDIO)
        ${PROJECT_SOURCE_DIR}/src/external/alac/codec/matrix_enc.c
   )
 endif(TINYUSDZ_WITH_ALAC_AUDIO)
+
+if(TINYUSDZ_WITH_MCP_SERVER)
+  list(APPEND TINYUSDZ_DEP_SOURCES
+       ${PROJECT_SOURCE_DIR}/src/external/civetweb/civetweb.c
+  )
+endif(TINYUSDZ_WITH_MCP_SERVER)
 
 if(TINYUSDZ_WITH_OPENSUBDIV)
 
@@ -684,6 +693,7 @@ if(TINYUSDZ_WITH_TIFF OR TINYUSDZ_WITH_EXR)
     list(APPEND TINYUSDZ_EXT_LIBRARIES ZLIB::ZLIB)
   endif()
 endif()
+
 
 # Increase warning level for clang.
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -1093,6 +1103,15 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_WITH_ALAC_AUDIO")
   endif(TINYUSDZ_WITH_ALAC_AUDIO)
+
+  if(TINYUSDZ_WITH_MCP_SERVER)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_MCP_SERVER")
+
+    # use dll for SSL + OPENSSL_API_3.0
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "OPENSSL_API_3_0")
+  endif(TINYUSDZ_WITH_MCP_SERVER)
 
   if(TINYUSDZ_WITH_OPENSUBDIV)
     target_include_directories(${TINYUSDZ_LIB_TARGET} PRIVATE ${osd_DIR})

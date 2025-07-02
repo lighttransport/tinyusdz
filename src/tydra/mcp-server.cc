@@ -1,5 +1,7 @@
 #include "mcp-server.hh"
 
+#if defined(TINYUSDZ_WITH_MCP_SERVER)
+
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
@@ -64,11 +66,11 @@ enum JsonRpcErrorCode {
 // Method handler function type
 using MethodHandler = std::function<nlohmann::json(const nlohmann::json&)>;
 
-class MCPServerImpl {
+class MCPServer::Impl {
  public:
   // Constructor and destructor
-  MCPServerImpl() = default;
-  ~MCPServerImpl() {
+  Impl() = default;
+  ~Impl() {
     if (ctx_) {
       mg_stop(ctx_);
     }
@@ -101,8 +103,8 @@ class MCPServerImpl {
 };
 
 // Static HTTP handler implementation
-int MCPServerImpl::http_handler(struct mg_connection *conn, void *user_data) {
-  MCPServerImpl* server = static_cast<MCPServerImpl*>(user_data);
+int MCPServer::Impl::http_handler(struct mg_connection *conn, void *user_data) {
+  MCPServer::Impl* server = static_cast<MCPServer::Impl*>(user_data);
   
   const struct mg_request_info *request_info = mg_get_request_info(conn);
   
@@ -114,7 +116,7 @@ int MCPServerImpl::http_handler(struct mg_connection *conn, void *user_data) {
     int bytes_read;
     
     while ((bytes_read = mg_read(conn, buffer, sizeof(buffer))) > 0) {
-      body.append(buffer, bytes_read);
+      body.append(buffer, size_t(bytes_read));
     }
     
     // Parse and process JSON-RPC request
@@ -150,10 +152,9 @@ int MCPServerImpl::http_handler(struct mg_connection *conn, void *user_data) {
   return 404; // Not found
 }
 
-JsonRpcRequest MCPServerImpl::parse_request(const std::string& json_str) {
+JsonRpcRequest MCPServer::Impl::parse_request(const std::string& json_str) {
   JsonRpcRequest request;
   
-  try {
     nlohmann::json json_obj = nlohmann::json::parse(json_str);
     
     if (json_obj.contains("jsonrpc")) {
@@ -168,14 +169,11 @@ JsonRpcRequest MCPServerImpl::parse_request(const std::string& json_str) {
     if (json_obj.contains("id")) {
       request.id = json_obj["id"];
     }
-  } catch (const std::exception&) {
-    // Parse error will be handled by process_request
-  }
   
   return request;
 }
 
-JsonRpcResponse MCPServerImpl::process_request(const JsonRpcRequest& request) {
+JsonRpcResponse MCPServer::Impl::process_request(const JsonRpcRequest& request) {
   // Validate JSON-RPC version
   if (request.jsonrpc != "2.0") {
     return create_error_response(INVALID_REQUEST, "Invalid JSON-RPC version", request.id);
@@ -188,7 +186,6 @@ JsonRpcResponse MCPServerImpl::process_request(const JsonRpcRequest& request) {
   }
   
   // Execute method handler
-  try {
     nlohmann::json result = handler_it->second(request.params);
     
     JsonRpcResponse response;
@@ -196,12 +193,9 @@ JsonRpcResponse MCPServerImpl::process_request(const JsonRpcRequest& request) {
     response.result = result;
     
     return response;
-  } catch (const std::exception& e) {
-    return create_error_response(INTERNAL_ERROR, e.what(), request.id);
-  }
 }
 
-JsonRpcResponse MCPServerImpl::create_error_response(int code, const std::string& message, const nlohmann::json& id) {
+JsonRpcResponse MCPServer::Impl::create_error_response(int code, const std::string& message, const nlohmann::json& id) {
   JsonRpcResponse response;
   response.id = id;
   response.error = nlohmann::json{
@@ -212,20 +206,25 @@ JsonRpcResponse MCPServerImpl::create_error_response(int code, const std::string
   return response;
 }
 
-void MCPServerImpl::register_method(const std::string& method, MethodHandler handler) {
+void MCPServer::Impl::register_method(const std::string& method, MethodHandler handler) {
   method_handlers_[method] = handler;
 }
 
-bool MCPServerImpl::init(int port, const std::string &host) {
+bool MCPServer::Impl::init(int port, const std::string &host) {
+  // TODO
+  (void)host;
+
   // CivetWeb options
-  const char *options[] = {
-    "listening_ports", std::to_string(port).c_str(),
-    "num_threads", "4",
-    NULL
-  };
-  
+  std::string port_str = std::to_string(port);
+  std::vector<const char *> options;
+
+  options.push_back("listening_ports");
+  options.push_back(port_str.c_str());
+  options.push_back("num_threads");
+  options.push_back("4");
+
   // Initialize the server
-  ctx_ = mg_start(NULL, this, options);
+  ctx_ = mg_start(NULL, this, options.data());
   if (!ctx_) {
     return false; // Failed to start server
   }
@@ -236,7 +235,7 @@ bool MCPServerImpl::init(int port, const std::string &host) {
   return true; // Server initialized successfully
 }
 
-bool MCPServerImpl::run() {
+bool MCPServer::Impl::run() {
   if (!ctx_) {
     return false;
   }
@@ -246,10 +245,29 @@ bool MCPServerImpl::run() {
   return true;
 }
 
-MCPServer::MCPServer() : impl_(new tydra::MCPServerImpl()) {}
+MCPServer::MCPServer() : impl_(new tydra::MCPServer::Impl()) {}
 bool MCPServer::init(int port, const std::string &host) {
   return impl_->init(port, host);
 }
 
 } // namespace tydra
 } // namespace tinyusdz
+
+
+#else
+
+namespace tinyusdz {
+namespace tydra {
+
+MCPServer::MCPServer() {}
+bool MCPServer::init(int port, const std::string &host) {
+  (void)port;
+  (void)host;
+  return false;
+}
+
+} // namespace tydra
+} // namespace tinyusdz
+
+#endif
+
