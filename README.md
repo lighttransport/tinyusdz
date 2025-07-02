@@ -567,3 +567,4 @@ Some helper code is licensed under MIT license.
 * tinymeshutils: MIT license. https://github.com/syoyo/tinymeshutils
 * criterion(for benchmark): MIT license. https://github.com/p-ranav/criterion
 * yyjson: MIT license. https://github.com/ibireme/yyjson
+* civetweb: MIT license. https://github.com/civetweb/civetweb
