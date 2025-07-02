@@ -395,4 +395,9 @@ inline std::string join(const std::string& sep, It& v)
 }
 #endif
 
+// Simple atof replacement
+// Returns qNaN for invalid input.
+double atof(const char *s);
+double atof(const std::string &s);
+
 }  // namespace tinyusdz
