@@ -707,4 +707,14 @@ std::string makeIdentifierValid(const std::string &str, bool is_utf8) {
   return s;
 }
 
+double atof(const char *p) {
+  // TODO: Use from_chars
+  return std::atof(p);
+}
+
+double atof(const std::string &s) {
+  return atof(s.c_str());
+}
+
+
 }  // namespace tinyusdz

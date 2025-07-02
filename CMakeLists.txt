@@ -370,6 +370,7 @@ if(TINYUSDZ_WITH_PYTHON)
 endif()
 
 set(TINYUSDZ_SOURCES
+    ${PROJECT_SOURCE_DIR}/src/arg-parser.cc
     ${PROJECT_SOURCE_DIR}/src/asset-resolution.cc
     ${PROJECT_SOURCE_DIR}/src/tinyusdz.cc
     ${PROJECT_SOURCE_DIR}/src/xform.cc
@@ -1257,6 +1258,10 @@ if(TINYUSDZ_BUILD_EXAMPLES)
   if (TINYUSDZ_WITH_TYDRA)
     add_subdirectory(examples/tydra_api)
     add_subdirectory(examples/tydra_to_renderscene)
+
+    if (TINYUSDZ_WITH_MCP_SERVER)
+      add_subdirectory(examples/mcp_server)
+    endif()
   endif ()
 
   add_subdirectory(examples/api_tutorial)
