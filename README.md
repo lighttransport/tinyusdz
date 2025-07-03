@@ -568,3 +568,4 @@ Some helper code is licensed under MIT license.
 * criterion(for benchmark): MIT license. https://github.com/p-ranav/criterion
 * yyjson: MIT license. https://github.com/ibireme/yyjson
 * civetweb: MIT license. https://github.com/civetweb/civetweb
+* libsais: Apache 2.0 license. https://github.com/IlyaGrebnov/libsais

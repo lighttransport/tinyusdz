@@ -431,6 +431,7 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-animatable.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-fallback.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed-animatable-fallback.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/command-and-history.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/obj-export.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/usd-export.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/shader-network.cc
@@ -439,6 +440,7 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-server.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-server.hh
         )
