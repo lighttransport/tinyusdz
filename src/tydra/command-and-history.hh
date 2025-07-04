@@ -48,16 +48,16 @@ struct EditHistory
 // We only support queues for now(no history graph)
 class HistoryQueue
 {
+ public:
   constexpr static uint32_t kMaxHistories = 1024ul * 1024ul;
 
-  std::deque<EditHistory> history_queues;
+  bool push(EditHistory &&hist);
 
-  bool Push(EditHistory &&hist);
-
-  bool Undo();
-  bool Redo();
+  bool undo();
+  bool redo();
 
  private:
+  std::deque<EditHistory> history_queues;
   std::deque<EditHistory> undo_queues;
   
 };

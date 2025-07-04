@@ -3,7 +3,7 @@
 namespace tinyusdz {
 namespace tydra {
 
-bool HistoryQueue::Push(EditHistory &&hist) {
+bool HistoryQueue::push(EditHistory &&hist) {
   if (history_queues.size() > kMaxHistories) {
     return false;
   }
@@ -13,7 +13,7 @@ bool HistoryQueue::Push(EditHistory &&hist) {
   return true;
 }
 
-bool HistoryQueue::Undo() {
+bool HistoryQueue::undo() {
   if (history_queues.empty()) {
     return false;
   }
@@ -29,7 +29,7 @@ bool HistoryQueue::Undo() {
   return true;
 }
 
-bool HistoryQueue::Redo() {
+bool HistoryQueue::redo() {
   if (undo_queues.empty()) {
     return false;
   }
