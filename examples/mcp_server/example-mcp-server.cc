@@ -1,14 +1,24 @@
 #include <iostream>
 
+#include "prim-types.hh"
 #include "tydra/mcp-server.hh"
+#include "tydra/command-and-history.hh"
 #include "arg-parser.hh"
 
 int main(int argc, char **argv) {
 
-#if !defined(TINYUSDZ_WITH_MCP_SERVER)
-  std::cerr << "TinyUSDZ is not built with `TINYUSDZ_WITH_MCP_SERVER` cmake option)" << "\n";
-#endif
+  using namespace tinyusdz;
 
+  Layer empty;
+  
+  tydra::EditHistory hist;
+  hist.layer = std::move(empty);
+
+  tydra::HistoryQueue queue;
+  if (!queue.push(std::move(hist))) {
+    return -1;
+  }
+  
   return 0;
 
 }
