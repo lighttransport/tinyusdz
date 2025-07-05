@@ -185,6 +185,134 @@ bool PrimToJSONRec(json &root, const tinyusdz::Prim& prim, int depth) {
   return true;
 }
 
+json ToJSON(const tinyusdz::Layer& layer) {
+  json j;
+
+  // Layer name
+  j["name"] = layer.name();
+  j["typeName"] = "Layer";
+
+  // Layer metadata
+  const LayerMetas& metas = layer.metas();
+  
+  json layerMetas;
+  
+  // Basic layer properties
+  if (metas.upAxis.authored()) {
+    layerMetas["upAxis"] = to_string(metas.upAxis.get_value());
+  }
+  
+  if (!metas.defaultPrim.str().empty()) {
+    layerMetas["defaultPrim"] = metas.defaultPrim.str();
+  }
+  
+  if (metas.metersPerUnit.authored()) {
+    layerMetas["metersPerUnit"] = metas.metersPerUnit.get_value();
+  }
+  
+  if (metas.timeCodesPerSecond.authored()) {
+    layerMetas["timeCodesPerSecond"] = metas.timeCodesPerSecond.get_value();
+  }
+  
+  if (metas.framesPerSecond.authored()) {
+    layerMetas["framesPerSecond"] = metas.framesPerSecond.get_value();
+  }
+  
+  if (metas.startTimeCode.authored()) {
+    layerMetas["startTimeCode"] = metas.startTimeCode.get_value();
+  }
+  
+  if (metas.endTimeCode.authored()) {
+    layerMetas["endTimeCode"] = metas.endTimeCode.get_value();
+  }
+  
+  if (metas.kilogramsPerUnit.authored()) {
+    layerMetas["kilogramsPerUnit"] = metas.kilogramsPerUnit.get_value();
+  }
+  
+  // SubLayers
+  if (metas.subLayers.size() > 0) {
+    json subLayersArray = json::array();
+    for (const auto& subLayer : metas.subLayers) {
+      json subLayerObj;
+      subLayerObj["assetPath"] = subLayer.assetPath.GetAssetPath();
+      // TODO: layerOffset
+      //if (subLayer.layerOffset.offset != 0.0 || subLayer.layerOffset.scale != 1.0) {
+      //  json layerOffsetObj;
+      //  layerOffsetObj["offset"] = subLayer.layerOffset.offset;
+      //  layerOffsetObj["scale"] = subLayer.layerOffset.scale;
+      //  subLayerObj["layerOffset"] = layerOffsetObj;
+      //}
+      subLayersArray.push_back(subLayerObj);
+    }
+    layerMetas["subLayers"] = subLayersArray;
+  }
+  
+  // Documentation and comment
+  if (!metas.doc.value.empty()) {
+    layerMetas["doc"] = metas.doc.value;
+  }
+  
+  if (!metas.comment.value.empty()) {
+    layerMetas["comment"] = metas.comment.value;
+  }
+  
+  // Custom layer data
+  if (metas.customLayerData.size() > 0) {
+    json customData;
+    for (const auto& item : metas.customLayerData) {
+      // TODO: Implement proper custom data serialization
+      customData[item.first] = "[CustomData]";
+    }
+    layerMetas["customLayerData"] = customData;
+  }
+  
+  // USDZ extensions
+  if (metas.autoPlay.authored()) {
+    layerMetas["autoPlay"] = metas.autoPlay.get_value();
+  }
+  
+  if (metas.playbackMode.authored()) {
+    auto playbackMode = metas.playbackMode.get_value();
+    if (playbackMode == LayerMetas::PlaybackMode::PlaybackModeLoop) {
+      layerMetas["playbackMode"] = "loop";
+    } else {
+      layerMetas["playbackMode"] = "none";
+    }
+  }
+  
+  // PrimChildren
+  if (metas.primChildren.size() > 0) {
+    json primChildrenArray = json::array();
+    for (const auto& primChild : metas.primChildren) {
+      primChildrenArray.push_back(primChild.str());
+    }
+    layerMetas["primChildren"] = primChildrenArray;
+  }
+  
+  // Only add metas if there's content
+  if (!layerMetas.empty()) {
+    j["metas"] = layerMetas;
+  }
+  
+  // PrimSpecs
+  const auto& primspecs = layer.primspecs();
+  if (primspecs.size() > 0) {
+    json primSpecsObj;
+    for (const auto& item : primspecs) {
+      // TODO: Implement PrimSpec to JSON conversion
+      json primSpecJson;
+      primSpecJson["name"] = item.first;
+      primSpecJson["typeName"] = "PrimSpec";
+      // Add basic PrimSpec info - would need ToJSON for PrimSpec
+      primSpecsObj[item.first] = primSpecJson;
+    }
+    j["primSpecs"] = primSpecsObj;
+  }
+
+  return j;
+}
+
 }  // namespace
 
 

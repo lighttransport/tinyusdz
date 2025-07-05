@@ -56,6 +56,9 @@ class HistoryQueue
   bool undo();
   bool redo();
 
+  // Serialize the history queue to a JSON string
+  std::string to_json_string() const;
+
  private:
   std::deque<EditHistory> history_queues;
   std::deque<EditHistory> undo_queues;
