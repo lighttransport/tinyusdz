@@ -14,6 +14,4 @@ namespace tinyusdz {
 bool JSONToUSD(const std::string &json_string, tinyusdz::Stage *stage, std::string *warn, std::string *err);
 
 
-std::string to_json(const tinyusdz::Layer &layer);
-
 } // namespace tinyusd
