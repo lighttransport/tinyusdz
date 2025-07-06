@@ -326,6 +326,10 @@ if(TINYUSDZ_USE_CCACHE)
 endif()
 
 
+if (TINYUSDZ_WITH_MCP_SERVER)
+  set(TINYUSDZ_WITH_JSON On)
+endif()
+
 if(TINYUSDZ_WITH_PYTHON)
 
   # For the time beging, we stick with pybind11, since PyPI manylinux2014(probably mostly used architectrue as of 2022/Aug) does not support C++17.
@@ -475,6 +479,7 @@ if(TINYUSDZ_WITH_JSON)
   list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/json-to-usd.cc)
   list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/usd-to-json.cc)
   list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/json-writer.cc)
+  list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/json-util.cc)
 endif()
 
 if(TINYUSDZ_WITH_USDFBX)
@@ -559,6 +564,7 @@ if(TINYUSDZ_WITH_ALAC_AUDIO)
 endif(TINYUSDZ_WITH_ALAC_AUDIO)
 
 if(TINYUSDZ_WITH_MCP_SERVER)
+
   list(APPEND TINYUSDZ_DEP_SOURCES
        ${PROJECT_SOURCE_DIR}/src/external/civetweb/civetweb.c
   )

@@ -57,7 +57,8 @@ class HistoryQueue
   bool redo();
 
   // Serialize the history queue to a JSON string
-  std::string to_json_string() const;
+  // `dump_layer` : Include JSON dump of `Layer` in each EditHistory.
+  std::string to_json_string(bool dump_layer = false) const;
 
  private:
   std::deque<EditHistory> history_queues;
