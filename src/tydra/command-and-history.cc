@@ -2,16 +2,7 @@
 
 #include "command-and-history.hh"
 
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Weverything"
-#endif
-
-#include "external/jsonhpp/nlohmann/json.hpp"
-
-#ifdef __clang__
-#pragma clang diagnostic pop
-#endif
+#include "json-util.hh"
 
 
 namespace tinyusdz {
@@ -54,8 +45,8 @@ bool HistoryQueue::redo() {
   return true;
 }
 
-std::string HistoryQueue::to_json_string() const {
-  nlohmann::json j;
+std::string HistoryQueue::to_json_string(bool dump_layer) const {
+  json j;
   j["history"] = nlohmann::json::array();
 
   for (const auto &hist : history_queues) {
@@ -64,8 +55,11 @@ std::string HistoryQueue::to_json_string() const {
     hist_json["op"] = static_cast<int>(hist.op);
     hist_json["arg"] = hist.arg;
     hist_json["id"] = hist.id;
-    // Serialize layer if needed
-    // hist_json["layer"] = ...; // Implement layer serialization if necessary
+
+    if (dump_layer) {
+      // TODO: Serialize layer if needed
+      // hist_json["layer"] = ...; // Implement layer serialization if necessary
+    }
 
     j["history"].push_back(hist_json);
   }
