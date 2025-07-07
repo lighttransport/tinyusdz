@@ -222,6 +222,7 @@ bool MCPServer::Impl::init(int port, const std::string &host) {
   options.push_back(port_str.c_str());
   options.push_back("num_threads");
   options.push_back("4");
+  options.push_back(nullptr);
 
   // Initialize the server
   ctx_ = mg_start(NULL, this, options.data());
