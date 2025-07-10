@@ -81,6 +81,8 @@ class MCPServer::Impl {
 
   // Run the server
   bool run();
+
+  bool stop();
   
   // Register a JSON-RPC method handler
   void register_method(const std::string& method, MethodHandler handler);
@@ -261,11 +263,21 @@ namespace tinyusdz {
 namespace tydra {
 
 MCPServer::MCPServer() {}
+
 bool MCPServer::init(int port, const std::string &host) {
   (void)port;
   (void)host;
   return false;
 }
+
+bool MCPServer::run() {
+  return false;
+}
+
+bool MCPServer::stop() {
+  return false;
+}
+
 
 } // namespace tydra
 } // namespace tinyusdz
