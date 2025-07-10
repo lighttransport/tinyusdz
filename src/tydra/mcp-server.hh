@@ -12,7 +12,7 @@ class MCPServer
   MCPServer();
   bool init(int port, const std::string &host = "localhost");
   bool run();
-
+  bool stop();
 
  private:
   class Impl;
