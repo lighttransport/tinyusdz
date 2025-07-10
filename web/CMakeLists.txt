@@ -18,9 +18,21 @@ list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/../cmake)
 #list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/../../cmake/sanitizers)
 #find_package(Sanitizers) # Address sanitizer (-DSANITIZE_ADDRESS=ON)
 
+
+option(TINYUSDZ_WASM64 "Use wasm64(memory64). Available only for Chrome and Firefox as of 2025 Jul" OFF)
+
+
 if (CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
+
   # Use Oz to reduce size further than Os
-  set(CMAKE_CXX_FLAGS_MINSIZEREL "-Oz -DNDEBUG")
+  if (TINYUSDZ_WASM64)
+    set(CMAKE_CXX_FLAGS_MINSIZEREL "-Oz -DNDEBUG -sMEMORY64")
+    set(CMAKE_C_FLAGS_MINSIZEREL "-Oz -DNDEBUG -sMEMORY64")
+  else()
+    set(CMAKE_CXX_FLAGS_MINSIZEREL "-Oz -DNDEBUG") # -sMEMORY64"
+    set(CMAKE_C_FLAGS_MINSIZEREL "-Oz -DNDEBUG") # -sMEMORY64"
+  endif()
+
 endif()
 
 option(TINYUSDZ_WASM_DEMODEV "Demo developer mode(install WASM modules to demo/node_modules/tinyusdz." OFF)
@@ -42,6 +54,9 @@ add_executable(${BUILD_TARGET} ${SOURCES})
 add_sanitizers(${BUILD_TARGET})
 
 target_compile_options(${BUILD_TARGET} PRIVATE ${EXT_COMPILE_OPTIONS})
+if (TINYUSDZ_WASM64)
+  set_target_properties(${BUILD_TARGET} PROPERTIES COMPILE_FLAGS "-sMEMORY64=1")
+endif()
 
 # tinyusdz dir
 target_include_directories(${BUILD_TARGET}
@@ -70,9 +85,21 @@ if (EMSCRIPTEN)
 endif()
 
 # TODO: Adjust memory size. 
+# TODO: -sMEMORY64
 # 512kB stack
 # NOTE: ASYNCIFY increase the wasm size to around 4~6 MB
-set_target_properties(${BUILD_TARGET} PROPERTIES LINK_FLAGS "-Oz -sENVIRONMENT='web,worker' -sSTACK_SIZE=512000 -sASSERTIONS -s ALLOW_MEMORY_GROWTH=1 -sMODULARIZE=1 -sEXPORT_ES6 -sINVOKE_RUN=0 --bind")
+
+set(TINYUSDZ_EMCC_LINK_FLAGS "-Oz -sENVIRONMENT='web,worker' -sSTACK_SIZE=512000 -sALLOW_MEMORY_GROWTH=1 -sMODULARIZE=1 -sEXPORT_ES6 -sINVOKE_RUN=0 --bind ")
+
+if (TINYUSDZ_WASM64)
+  # assertion=1 cause runtime error(Cannot mix BigInt and ... in assert()), so use 2
+  #list(APPEND TINYUSDZ_EMCC_LINK_FLAGS " -sASSERTIONS=2 -sMEMORY64 -sMAXIMUM_MEMORY=4GB")
+else()
+  string(APPEND TINYUSDZ_EMCC_LINK_FLAGS " -sASSERTIONS=1 ")
+endif()
+message(STATUS ${TINYUSDZ_EMCC_LINK_FLAGS})
+
+set_target_properties(${BUILD_TARGET} PROPERTIES LINK_FLAGS "${TINYUSDZ_EMCC_LINK_FLAGS}")
 
 # ENVIRONMENT=web
 # SINGLE_FILE=1
