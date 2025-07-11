@@ -429,6 +429,8 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/prim-apply.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/scene-access.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/scene-access.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/scene-analysis.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/scene-analysis.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/attribute-eval-typed.cc
@@ -445,6 +447,7 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/mcp-tools.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-server.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-server.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/diff-and-compare.cc

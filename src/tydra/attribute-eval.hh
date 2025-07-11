@@ -145,6 +145,14 @@ bool EvaluateAttribute(
     const tinyusdz::value::TimeSampleInterpolationType tinterp =
         tinyusdz::value::TimeSampleInterpolationType::Linear);
 
+// Layer/PrimSpec version
+bool EvaluateAttribute(
+    const tinyusdz::Layer &layer, const tinyusdz::PrimSpec &ps,
+    const std::string &attr_name, TerminalAttributeValue *value,
+    std::string *err, const double t = tinyusdz::value::TimeCode::Default(),
+    const tinyusdz::value::TimeSampleInterpolationType tinterp =
+        tinyusdz::value::TimeSampleInterpolationType::Linear);
+
 ///
 /// Evaluate Attribute and retrieve terminal Attribute value.
 ///
