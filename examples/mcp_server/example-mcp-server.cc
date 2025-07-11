@@ -1,5 +1,11 @@
 #include <iostream>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+
 #include "prim-types.hh"
 #include "tydra/mcp-server.hh"
 #include "tydra/command-and-history.hh"
@@ -20,24 +26,28 @@ int main(int argc, char **argv) {
 
   }
 
-  std::cout << "is_setr " << parser.is_set("--port") << "\n";
+  int port = 8085;
 
   double portval;
-  if (!parser.get("--port", portval)) {
-    std::cerr << "--port is missing or invalid\n";
-    return -1;
+  if (parser.is_set("--port")) {
+    if (!parser.get("--port", portval)) {
+      std::cerr << "--port is missing or invalid\n";
+      return -1;
+    }
+    port = int(portval);
   }
 
-  int port = int(portval);
   
-  std::string hostname;
-  if (!parser.get("--host", hostname)) {
-    std::cerr << "--host is missing or invalid\n";
-    return -1;
+  std::string hostname = "localhost";
+  if (parser.is_set("--host")) {
+    if (!parser.get("--host", hostname)) {
+      std::cerr << "--host is missing or invalid\n";
+      return -1;
+    }
   }
 
-  std::cout << "port " << port << "\n";
-  std::cout << "hostname " << hostname << "\n";
+
+  std::cout << "http://" + hostname << ":" << port << "/mcp" << "\n";
 
   tydra::MCPServer server;
   if (!server.init(port, hostname)) {
@@ -45,16 +55,27 @@ int main(int argc, char **argv) {
     return -1;
   }
 
+  bool done =false;
+  while (!done) {
 
-  Layer empty;
-  
-  tydra::EditHistory hist;
-  hist.layer = std::move(empty);
+#ifdef _WIN32
+      Sleep(1000);
+#else
+      sleep(1);
+#endif
 
-  tydra::HistoryQueue queue;
-  if (!queue.push(std::move(hist))) {
-    return -1;
+    //Layer empty;
+    //
+    //tydra::EditHistory hist;
+    //hist.layer = std::move(empty);
+
+    //tydra::HistoryQueue queue;
+    //if (!queue.push(std::move(hist))) {
+    //  return -1;
+    //}
   }
+
+  server.stop();
   
   return 0;
 
