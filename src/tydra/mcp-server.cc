@@ -82,7 +82,11 @@ class MCPServer::Impl {
   // Run the server
   bool run();
 
-  bool stop();
+  bool stop() {
+    // Nothing to do here.
+    // mg_stop() is called in dtor.
+    return true;
+  }
   
   // Register a JSON-RPC method handler
   void register_method(const std::string& method, MethodHandler handler);
@@ -91,8 +95,8 @@ class MCPServer::Impl {
   struct mg_context *ctx_ = nullptr; // Pointer to the CivetWeb context
   std::map<std::string, MethodHandler> method_handlers_;
   
-  // Static callback for HTTP requests
-  static int http_handler(struct mg_connection *conn, void *user_data);
+  // Static callback for MCP requests(POST + jsonrpc)
+  static int mcp_handler(struct mg_connection *conn, void *user_data);
   
   // Process JSON-RPC request
   JsonRpcResponse process_request(const JsonRpcRequest& request);
@@ -104,8 +108,7 @@ class MCPServer::Impl {
   JsonRpcResponse create_error_response(int code, const std::string& message, const nlohmann::json& id = nullptr);
 };
 
-// Static HTTP handler implementation
-int MCPServer::Impl::http_handler(struct mg_connection *conn, void *user_data) {
+int MCPServer::Impl::mcp_handler(struct mg_connection *conn, void *user_data) {
   MCPServer::Impl* server = static_cast<MCPServer::Impl*>(user_data);
   
   const struct mg_request_info *request_info = mg_get_request_info(conn);
@@ -157,20 +160,28 @@ int MCPServer::Impl::http_handler(struct mg_connection *conn, void *user_data) {
 JsonRpcRequest MCPServer::Impl::parse_request(const std::string& json_str) {
   JsonRpcRequest request;
   
-    nlohmann::json json_obj = nlohmann::json::parse(json_str);
-    
-    if (json_obj.contains("jsonrpc")) {
-      request.jsonrpc = json_obj["jsonrpc"];
-    }
-    if (json_obj.contains("method")) {
-      request.method = json_obj["method"];
-    }
-    if (json_obj.contains("params")) {
-      request.params = json_obj["params"];
-    }
-    if (json_obj.contains("id")) {
-      request.id = json_obj["id"];
-    }
+  nlohmann::json json_obj;
+  if (!nlohmann::json::accept(json_str)) {
+    // Return invalid request on parse error
+    request.method = "";
+    request.jsonrpc = "";
+    return request;
+  }
+  
+  json_obj = nlohmann::json::parse(json_str);
+  
+  if (json_obj.contains("jsonrpc")) {
+    request.jsonrpc = json_obj["jsonrpc"];
+  }
+  if (json_obj.contains("method")) {
+    request.method = json_obj["method"];
+  }
+  if (json_obj.contains("params")) {
+    request.params = json_obj["params"];
+  }
+  if (json_obj.contains("id")) {
+    request.id = json_obj["id"];
+  }
   
   return request;
 }
@@ -188,13 +199,13 @@ JsonRpcResponse MCPServer::Impl::process_request(const JsonRpcRequest& request) 
   }
   
   // Execute method handler
-    nlohmann::json result = handler_it->second(request.params);
-    
-    JsonRpcResponse response;
-    response.id = request.id;
-    response.result = result;
-    
-    return response;
+  nlohmann::json result = handler_it->second(request.params);
+  
+  JsonRpcResponse response;
+  response.id = request.id;
+  response.result = result;
+  
+  return response;
 }
 
 JsonRpcResponse MCPServer::Impl::create_error_response(int code, const std::string& message, const nlohmann::json& id) {
@@ -216,6 +227,36 @@ bool MCPServer::Impl::init(int port, const std::string &host) {
   // TODO
   (void)host;
 
+  // Register MCP initialize method
+  register_method("initialize", [](const nlohmann::json& params) -> nlohmann::json {
+    // Extract client info if provided
+    std::string client_name = "unknown";
+    std::string client_version = "unknown";
+    
+    if (params.contains("clientInfo")) {
+      auto client_info = params["clientInfo"];
+      if (client_info.contains("name")) {
+        client_name = client_info["name"];
+      }
+      if (client_info.contains("version")) {
+        client_version = client_info["version"];
+      }
+    }
+    
+    // Return server capabilities
+    return nlohmann::json{
+      {"protocolVersion", "2025-03-26"},
+      {"serverInfo", {
+        {"name", "tinyusdz-mcp-server"},
+        {"version", "1.0.0"}
+      }},
+      {"capabilities", {
+        {"tools", nlohmann::json::object()},
+        {"resources", nlohmann::json::object()}
+      }}
+    };
+  });
+
   // CivetWeb options
   std::string port_str = std::to_string(port);
   std::vector<const char *> options;
@@ -232,8 +273,8 @@ bool MCPServer::Impl::init(int port, const std::string &host) {
     return false; // Failed to start server
   }
   
-  // Register HTTP handler for JSON-RPC endpoint
-  mg_set_request_handler(ctx_, "/jsonrpc", http_handler, this);
+  // Register HTTP handler for MCP endpoint
+  mg_set_request_handler(ctx_, "/mcp", mcp_handler, this);
   
   return true; // Server initialized successfully
 }
@@ -251,6 +292,14 @@ bool MCPServer::Impl::run() {
 MCPServer::MCPServer() : impl_(new tydra::MCPServer::Impl()) {}
 bool MCPServer::init(int port, const std::string &host) {
   return impl_->init(port, host);
+}
+
+bool MCPServer::run() {
+  return impl_->run();
+}
+
+bool MCPServer::stop() {
+  return impl_->stop();
 }
 
 } // namespace tydra
