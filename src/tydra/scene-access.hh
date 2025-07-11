@@ -459,6 +459,44 @@ bool GetTerminalAttribute(const Stage &stage, const TypedAttribute<T> &attr,
   return true;
 }
 
+bool GetTerminalAttribute(const Layer &layer, const Attribute &attr,
+                          const std::string &attr_name, Attribute *attr_out,
+                          std::string *err);
+
+template <typename T>
+bool GetTerminalAttribute(const Layer &layer, const TypedAttribute<T> &attr,
+                          const std::string &attr_name, Attribute *attr_out,
+                          std::string *err) {
+  if (!attr_out) {
+    return false;
+  }
+
+  Attribute value;
+  if (attr.is_connection()) {
+    Attribute input;
+    input.set_connections(attr.connections());
+    return GetTerminalAttribute(layer, input, attr_name, attr_out, err);
+  } else if (attr.is_blocked()) {
+    value.metas() = attr.metas();
+    value.variability() = Variability::Uniform;
+    value.set_type_name(value::TypeTraits<T>::type_name());
+    value.set_blocked(true);
+    (*attr_out) = std::move(value);
+    return true;
+  } else if (attr.is_value_empty()) {
+    value.set_type_name(value::TypeTraits<T>::type_name());
+    value.metas() = attr.metas();
+    value.variability() = Variability::Uniform;
+  } else {
+    value.set_value(attr.get_value());
+    value.metas() = attr.metas();
+    value.variability() = Variability::Uniform;
+  }
+
+  (*attr_out) = std::move(value);
+  return true;
+}
+
 ///
 /// Get Geom Primvar.
 ///

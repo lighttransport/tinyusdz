@@ -257,6 +257,14 @@ bool MCPServer::Impl::init(int port, const std::string &host) {
     };
   });
 
+  register_method("notifications/initialized", [](const nlohmann::json& params) -> nlohmann::json {
+    // no response required
+    (void)params;
+    
+    // Return server capabilities
+    return nlohmann::json::object();
+  });
+
   // CivetWeb options
   std::string port_str = std::to_string(port);
   std::vector<const char *> options;
