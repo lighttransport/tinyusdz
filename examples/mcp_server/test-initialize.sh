@@ -16,3 +16,11 @@ curl -X POST \
     "id": 1
   }' \
   http://localhost:8085/mcp
+
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "notifications/initialized"
+  }' \
+  http://localhost:8085/mcp
