@@ -19,12 +19,9 @@ namespace tydra {
 namespace mcp {
 
 // for 'tools/list'
-bool GetToolsList(
-  nlohmann::json &result);
+bool GetResourcesList(
+  std::vector<std::string> &toolslist);
 
-
-// TODO: Batch call tools
-bool CallTool(const std::string &tool_name, const nlohmann::json &param);
 
 } // namespace mcp
 } // namespace tydra

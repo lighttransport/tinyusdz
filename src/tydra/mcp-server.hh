@@ -5,6 +5,7 @@
 
 namespace tinyusdz {
 namespace tydra {
+namespace mcp {
 
 class MCPServer
 {
@@ -20,6 +21,7 @@ class MCPServer
  
 };
 
+} // namespace mcp
 } // namespace tydra
 } // namespace tinyusdz
 

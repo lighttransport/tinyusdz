@@ -1,4 +1,5 @@
 #include "mcp-server.hh"
+#include "mcp-tools.hh"
 
 #if defined(TINYUSDZ_WITH_MCP_SERVER)
 
@@ -21,6 +22,7 @@
 
 namespace tinyusdz {
 namespace tydra {
+namespace mcp {
 
 // JSON-RPC request structure
 struct JsonRpcRequest {
@@ -127,18 +129,23 @@ int MCPServer::Impl::mcp_handler(struct mg_connection *conn, void *user_data) {
     // Parse and process JSON-RPC request
     JsonRpcRequest rpc_request = server->parse_request(body);
     JsonRpcResponse rpc_response = server->process_request(rpc_request);
+
+    if (rpc_request.is_notification()) {
+      // Just acknowledge. No response.
+    } else {
     
-    // Send JSON-RPC response
-    std::string response_json = rpc_response.to_json().dump();
-    
-    mg_printf(conn,
-              "HTTP/1.1 200 OK\r\n"
-              "Content-Type: application/json\r\n"
-              "Content-Length: %d\r\n"
-              "\r\n"
-              "%s",
-              static_cast<int>(response_json.length()),
-              response_json.c_str());
+      // Send JSON-RPC response
+      std::string response_json = rpc_response.to_json().dump();
+      
+      mg_printf(conn,
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: application/json\r\n"
+                "Content-Length: %d\r\n"
+                "\r\n"
+                "%s",
+                static_cast<int>(response_json.length()),
+                response_json.c_str());
+    }
     
     return 200; // Request handled
   }
@@ -257,6 +264,17 @@ bool MCPServer::Impl::init(int port, const std::string &host) {
     };
   });
 
+  register_method("tools/list",[](const nlohmann::json &params) -> nlohmann::json {
+
+    (void)params;
+
+    nlohmann::json j;
+    mcp::GetToolsList(j);
+    
+    return j;
+
+  });
+
   register_method("notifications/initialized", [](const nlohmann::json& params) -> nlohmann::json {
     // no response required
     (void)params;
@@ -297,7 +315,7 @@ bool MCPServer::Impl::run() {
   return true;
 }
 
-MCPServer::MCPServer() : impl_(new tydra::MCPServer::Impl()) {}
+MCPServer::MCPServer() : impl_(new tydra::mcp::MCPServer::Impl()) {}
 bool MCPServer::init(int port, const std::string &host) {
   return impl_->init(port, host);
 }
@@ -310,6 +328,7 @@ bool MCPServer::stop() {
   return impl_->stop();
 }
 
+} // namespace mcp
 } // namespace tydra
 } // namespace tinyusdz
 
@@ -318,6 +337,7 @@ bool MCPServer::stop() {
 
 namespace tinyusdz {
 namespace tydra {
+namespace mcp {
 
 MCPServer::MCPServer() {}
 
@@ -336,6 +356,7 @@ bool MCPServer::stop() {
 }
 
 
+} // namespace mcp
 } // namespace tydra
 } // namespace tinyusdz
 
