@@ -3,9 +3,7 @@ curl -X POST \
   -d '{
     "jsonrpc": "2.0",
     "method": "tools/list",
-    "params": {
-      },
-    },
+    "params": {},
     "id": 2
   }' \
   http://localhost:8085/mcp

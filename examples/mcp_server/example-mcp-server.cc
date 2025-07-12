@@ -49,7 +49,7 @@ int main(int argc, char **argv) {
 
   std::cout << "http://" + hostname << ":" << port << "/mcp" << "\n";
 
-  tydra::MCPServer server;
+  tydra::mcp::MCPServer server;
   if (!server.init(port, hostname)) {
     std::cerr << "Failed to init MCP server.\n";
     return -1;
