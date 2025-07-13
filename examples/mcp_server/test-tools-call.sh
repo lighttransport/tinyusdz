@@ -4,10 +4,9 @@ curl -X POST \
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "tusdcat",
+      "name": "get_version",
       "arguments": {
-        "text": "#usda 1.0\n def \"bora\" { }"
-      },
+      }
     },
     "id": 2
   }' \
