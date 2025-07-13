@@ -1,5 +1,6 @@
 #include "mcp-server.hh"
 #include "mcp-tools.hh"
+#include "mcp-resources.hh"
 
 #if defined(TINYUSDZ_WITH_MCP_SERVER)
 
@@ -22,8 +23,11 @@
 
 // TODO
 //
+// [ ] Roots(from Protocol revision 2025-06-18)
+//
 // Server notification
 //
+// [ ] resources/list_changed
 // [ ] tools/list_changed
 
 namespace tinyusdz {
@@ -284,6 +288,52 @@ bool MCPServer::Impl::init(int port, const std::string &host) {
         {"resources", nlohmann::json::object()}
       }}
     };
+  });
+
+  register_method("notifications/cancelled",[](const nlohmann::json &params, std::string &err) -> nlohmann::json {
+
+    if (!params.contains("requestId")) {
+      err = "`requestId` is missing in params.";
+      return {};
+    }
+
+    // TODO: Parse optional 'reason' string.
+    err += "notifications/cancelled is TODO\n";
+
+    return {};
+  });
+
+  register_method("resources/list",[](const nlohmann::json &params, std::string &err) -> nlohmann::json {
+
+    (void)err;
+    (void)params;
+
+    nlohmann::json j;
+    mcp::GetResourcesList(j);
+    
+    return j;
+
+  });
+
+  register_method("resources/read",[](const nlohmann::json &params, std::string &err) -> nlohmann::json {
+
+    (void)err;
+    (void)params;
+
+    if (!params.contains("uri")) {
+      err = "`name` is missing in params.";
+      return {};
+    }
+
+    std::string uri = params["uri"];
+    nlohmann::json result;
+    if (!mcp::ReadResource(uri, result)) {
+      err += "Failed to read resource: " + uri;
+      return {};
+    }
+    
+    return result;
+
   });
 
   register_method("tools/list",[](const nlohmann::json &params, std::string &err) -> nlohmann::json {

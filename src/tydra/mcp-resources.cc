@@ -1,4 +1,4 @@
-#include "mcp-tools.hh"
+#include "mcp-resources.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -15,6 +15,20 @@ namespace tinyusdz {
 namespace tydra {
 namespace mcp {
 
+bool GetResourcesList(nlohmann::json &result) {
+  // TODO
+  (void)result;
+
+  return false;
+}
+
+bool ReadResource(const std::string &uri, nlohmann::json &result) {
+  // TODO
+  (void)uri;
+  (void)result;
+
+  return false;
+}
 
 
 } // namespace mcp

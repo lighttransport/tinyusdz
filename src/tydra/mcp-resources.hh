@@ -18,10 +18,12 @@ namespace tinyusdz {
 namespace tydra {
 namespace mcp {
 
-// for 'tools/list'
+// for 'resources/list'
 bool GetResourcesList(
-  std::vector<std::string> &toolslist);
+  nlohmann::json &resources);
 
+bool ReadResource(const std::string &uri, nlohmann::json &content);
+  
 
 } // namespace mcp
 } // namespace tydra
