@@ -24,7 +24,7 @@ bool GetToolsList(
 
 
 // TODO: Batch call tools
-bool CallTool(const std::string &tool_name, const nlohmann::json &param);
+bool CallTool(const std::string &tool_name, const nlohmann::json &args, nlohmann::json &result);
 
 } // namespace mcp
 } // namespace tydra
