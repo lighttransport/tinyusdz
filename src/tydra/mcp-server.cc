@@ -246,6 +246,15 @@ bool MCPServer::Impl::init(int port, const std::string &host) {
   // TODO
   (void)host;
 
+  register_method("ping", [](const nlohmann::json& params, std::string &err) -> nlohmann::json {
+    (void)err;
+    (void)params;
+
+    // The receiver MUST respond promptly with an empty response
+    return nlohmann::json{
+      {"result", nlohmann::json::object()}};
+  });
+
   // Register MCP initialize method
   register_method("initialize", [](const nlohmann::json& params, std::string &err) -> nlohmann::json {
     (void)err;
