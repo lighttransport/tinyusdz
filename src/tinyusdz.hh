@@ -46,9 +46,9 @@
 namespace tinyusdz {
 
 constexpr int version_major = 0;
-constexpr int version_minor = 8;
-constexpr int version_micro = 0;
-constexpr auto version_rev = "rc5";  // extra revision suffix
+constexpr int version_minor = 9;
+constexpr int version_micro = 1;
+constexpr auto version_rev = "";  // extra revision suffix(e.g. "rc.1")
 
 struct USDLoadOptions {
   ///
