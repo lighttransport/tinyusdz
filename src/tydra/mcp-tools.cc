@@ -1,4 +1,5 @@
 #include "mcp-tools.hh"
+#include "tinyusdz.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -14,6 +15,31 @@
 namespace tinyusdz {
 namespace tydra {
 namespace mcp {
+
+namespace {
+bool GetVersion(nlohmann::json &result);
+
+bool GetVersion(nlohmann::json &result) {
+  
+  std::string ver_str = std::to_string(tinyusdz::version_major) + "." + std::to_string(tinyusdz::version_minor) + "." + std::to_string(tinyusdz::version_micro);
+  std::string rev = tinyusdz::version_rev;
+  
+  if (rev.size()) {
+    ver_str += "." + rev;
+  }
+
+  nlohmann::json content;
+  content["type"] = "text";
+  content["text"] = ver_str;
+
+  result["content"] = nlohmann::json::array();
+  result["content"].push_back(content);
+
+  return true;
+
+}
+
+} // namespace
 
 bool GetToolsList(nlohmann::json &result) {
 
@@ -35,6 +61,18 @@ bool GetToolsList(nlohmann::json &result) {
   }
 
   return true;
+}
+
+
+bool CallTool(const std::string &tool_name, const nlohmann::json &args, nlohmann::json &result) {
+  (void)args;
+
+  if (tool_name == "get_version") {
+    return GetVersion(result);
+  }
+
+  // tool not found.
+  return false;
 }
 
 

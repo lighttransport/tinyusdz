@@ -20,6 +20,12 @@
 #include <map>
 #include <string>
 
+// TODO
+//
+// Server notification
+//
+// [ ] tools/list_changed
+
 namespace tinyusdz {
 namespace tydra {
 namespace mcp {
@@ -66,7 +72,7 @@ enum JsonRpcErrorCode {
 };
 
 // Method handler function type
-using MethodHandler = std::function<nlohmann::json(const nlohmann::json&)>;
+using MethodHandler = std::function<nlohmann::json(const nlohmann::json&, std::string &)>;
 
 class MCPServer::Impl {
  public:
@@ -206,11 +212,17 @@ JsonRpcResponse MCPServer::Impl::process_request(const JsonRpcRequest& request) 
   }
   
   // Execute method handler
-  nlohmann::json result = handler_it->second(request.params);
+  std::string err;
+  nlohmann::json result = handler_it->second(request.params, err);
   
   JsonRpcResponse response;
-  response.id = request.id;
-  response.result = result;
+
+  if (err.size()) {
+    response = create_error_response(INVALID_PARAMS, err, request.id);
+  } else {
+    response.id = request.id;
+    response.result = result;
+  }
   
   return response;
 }
@@ -235,7 +247,8 @@ bool MCPServer::Impl::init(int port, const std::string &host) {
   (void)host;
 
   // Register MCP initialize method
-  register_method("initialize", [](const nlohmann::json& params) -> nlohmann::json {
+  register_method("initialize", [](const nlohmann::json& params, std::string &err) -> nlohmann::json {
+    (void)err;
     // Extract client info if provided
     std::string client_name = "unknown";
     std::string client_version = "unknown";
@@ -264,8 +277,9 @@ bool MCPServer::Impl::init(int port, const std::string &host) {
     };
   });
 
-  register_method("tools/list",[](const nlohmann::json &params) -> nlohmann::json {
+  register_method("tools/list",[](const nlohmann::json &params, std::string &err) -> nlohmann::json {
 
+    (void)err;
     (void)params;
 
     nlohmann::json j;
@@ -275,9 +289,34 @@ bool MCPServer::Impl::init(int port, const std::string &host) {
 
   });
 
-  register_method("notifications/initialized", [](const nlohmann::json& params) -> nlohmann::json {
+  register_method("tools/call",[](const nlohmann::json &params, std::string &err) -> nlohmann::json {
+
+    (void)err;
+    
+    if (!params.contains("name")) {
+      err = "`name` is missing in params.";
+      return {};
+    }
+
+    std::string tool_name = params["name"];
+    nlohmann::json empty{};
+    nlohmann::json result;
+    
+    bool ret = mcp::CallTool(tool_name, params.contains("arguments") ? params["arguments"] : empty, result);
+
+    if (!ret) {
+      err = "Unknown tool: " + tool_name;
+      return {};
+    }
+
+    return result;
+
+  });
+
+  register_method("notifications/initialized", [](const nlohmann::json& params, std::string &err) -> nlohmann::json {
     // no response required
     (void)params;
+    (void)err;
     
     // Return server capabilities
     return nlohmann::json::object();
