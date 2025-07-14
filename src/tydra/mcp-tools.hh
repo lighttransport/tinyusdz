@@ -3,6 +3,8 @@
 #include <vector>
 #include <string>
 
+#include "mcp-context.hh"
+
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
@@ -24,7 +26,7 @@ bool GetToolsList(
 
 
 // TODO: Batch call tools
-bool CallTool(const std::string &tool_name, const nlohmann::json &args, nlohmann::json &result);
+bool CallTool(Context &ctx, const std::string &tool_name, const nlohmann::json &args, nlohmann::json &result, std::string &err);
 
 } // namespace mcp
 } // namespace tydra
