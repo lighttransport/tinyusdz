@@ -23,7 +23,14 @@
 * JS/WASM binding of TinyUSDZ. https://github.com/lighttransport/tinyusdz/tree/release/web
 
 More on the status: https://github.com/lighttransport/tinyusdz/blob/release/doc/status.md
- 
+
+## Branches
+
+* `release` Release branch
+* `dev` Develop branch(merged into `release` after feature freeze and testing)
+  * Basically, use `dev` branch to submit PR 
+* `npm` Branch for NPM packaging&upload(developer only)
+  
 ## High priority
 
 * Support MCP interface for AI agents: https://github.com/lighttransport/tinyusdz/issues/243
