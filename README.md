@@ -78,7 +78,7 @@ More on the status: https://github.com/lighttransport/tinyusdz/blob/release/doc/
 
 |         |   Linux                                  |  Windows                              |   macOS   |  iOS   | Android |  WASM(WASI)                    |  WASM(Emscripten) |
 |:-------:|:---------------------------------------- |:------------------------------------- |:---------:|:------:|:-------:|:------------------------------:|:-----------:|
-| release | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> ✅ ARM64  |✅         |✅      |✅       |✅ [sandbox/wasi](sandbox/wasi) | ✅ [web](web) |
+| release | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> ✅ ARM64  |✅         |✅      |✅       |❓ [sandbox/wasi](sandbox/wasi) | ✅ [web](web) |
 
 <!--
 ### Python binding(testing. currently not working)
