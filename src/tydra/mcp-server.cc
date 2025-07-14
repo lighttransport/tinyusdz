@@ -1,6 +1,7 @@
 #include "mcp-server.hh"
 #include "mcp-tools.hh"
 #include "mcp-resources.hh"
+#include "mcp-context.hh"
 
 #if defined(TINYUSDZ_WITH_MCP_SERVER)
 
@@ -118,6 +119,8 @@ class MCPServer::Impl {
   
   // Create JSON-RPC error response
   JsonRpcResponse create_error_response(int code, const std::string& message, const nlohmann::json& id = nullptr);
+
+  Context mcp_ctx_;
 };
 
 int MCPServer::Impl::mcp_handler(struct mg_connection *conn, void *user_data) {
@@ -348,9 +351,8 @@ bool MCPServer::Impl::init(int port, const std::string &host) {
 
   });
 
-  register_method("tools/call",[](const nlohmann::json &params, std::string &err) -> nlohmann::json {
+  register_method("tools/call",[this](const nlohmann::json &params, std::string &err) -> nlohmann::json {
 
-    (void)err;
     
     if (!params.contains("name")) {
       err = "`name` is missing in params.";
@@ -361,7 +363,8 @@ bool MCPServer::Impl::init(int port, const std::string &host) {
     nlohmann::json empty{};
     nlohmann::json result;
     
-    bool ret = mcp::CallTool(tool_name, params.contains("arguments") ? params["arguments"] : empty, result);
+    std::string err_;
+    bool ret = mcp::CallTool(mcp_ctx_, tool_name, params.contains("arguments") ? params["arguments"] : empty, result, err_);
 
     if (!ret) {
       err = "Unknown tool: " + tool_name;

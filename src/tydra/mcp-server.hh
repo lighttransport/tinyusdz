@@ -2,8 +2,10 @@
 #pragma once
 
 #include <string>
+#include <map>
 
 namespace tinyusdz {
+
 namespace tydra {
 namespace mcp {
 
