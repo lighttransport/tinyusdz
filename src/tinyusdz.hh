@@ -365,7 +365,7 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length,
 ///
 /// @return true upon success
 ///
-bool LoadLayerFromFile(const std::string &filename, Layer *stage,
+bool LoadLayerFromFile(const std::string &filename, Layer *layer,
                      std::string *warn, std::string *err,
                      const USDLoadOptions &options = USDLoadOptions());
 
