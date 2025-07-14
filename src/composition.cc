@@ -64,6 +64,7 @@ RECONSTRUCT_PRIM_DECL(SphereLight);
 RECONSTRUCT_PRIM_DECL(DomeLight);
 RECONSTRUCT_PRIM_DECL(DiskLight);
 RECONSTRUCT_PRIM_DECL(DistantLight);
+RECONSTRUCT_PRIM_DECL(RectLight);
 RECONSTRUCT_PRIM_DECL(CylinderLight);
 RECONSTRUCT_PRIM_DECL(SkelRoot);
 RECONSTRUCT_PRIM_DECL(SkelAnimation);
@@ -1370,6 +1371,7 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
   RECONSTRUCT_PRIM(CylinderLight)
   RECONSTRUCT_PRIM(DiskLight)
   RECONSTRUCT_PRIM(DistantLight)
+  RECONSTRUCT_PRIM(RectLight)
   RECONSTRUCT_PRIM(SkelRoot)
   RECONSTRUCT_PRIM(Skeleton)
   RECONSTRUCT_PRIM(SkelAnimation)
