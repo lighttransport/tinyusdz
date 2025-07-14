@@ -567,6 +567,7 @@ static void RegisterPrimTypes(std::set<std::string> &d) {
   d.insert("DomeLight");
   d.insert("DiskLight");
   d.insert("DistantLight");
+  d.insert("RectLight");
   d.insert("CylinderLight");
   // d.insert("PortalLight");
   d.insert("Camera");
