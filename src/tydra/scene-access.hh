@@ -608,5 +608,6 @@ bool BuildSkelHierarchy(const Skeleton &skel,
 bool ListSceneNames(const tinyusdz::Prim &root,
                     std::vector<std::pair<bool, std::string>> *sceneNames);
 
+
 }  // namespace tydra
 }  // namespace tinyusdz
