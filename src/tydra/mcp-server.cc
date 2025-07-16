@@ -2,6 +2,7 @@
 #include "mcp-tools.hh"
 #include "mcp-resources.hh"
 #include "mcp-context.hh"
+#include "uuid-gen.hh"
 
 #if defined(TINYUSDZ_WITH_MCP_SERVER)
 
@@ -21,6 +22,7 @@
 #include <functional>
 #include <map>
 #include <string>
+#include <unordered_set>
 
 // TODO
 //
@@ -104,6 +106,14 @@ class MCPServer::Impl {
   // Register a JSON-RPC method handler
   void register_method(const std::string& method, MethodHandler handler);
 
+  std::string genSessionID() {
+    return uuid_gen_.generate();
+  }
+
+  void addSessionID(const std::string &s) {
+    sessions_.insert(s);
+  }
+
  private:
   struct mg_context *ctx_ = nullptr; // Pointer to the CivetWeb context
   std::map<std::string, MethodHandler> method_handlers_;
@@ -121,12 +131,18 @@ class MCPServer::Impl {
   JsonRpcResponse create_error_response(int code, const std::string& message, const nlohmann::json& id = nullptr);
 
   Context mcp_ctx_;
+  UUIDGenerator uuid_gen_;
+
+
+  std::unordered_set<std::string> sessions_;
 };
 
 int MCPServer::Impl::mcp_handler(struct mg_connection *conn, void *user_data) {
   MCPServer::Impl* server = static_cast<MCPServer::Impl*>(user_data);
   
   const struct mg_request_info *request_info = mg_get_request_info(conn);
+
+  DCOUT("req_method " << request_info->request_method);
   
   // Handle POST requests for JSON-RPC
   if (strcmp(request_info->request_method, "POST") == 0) {
@@ -138,26 +154,50 @@ int MCPServer::Impl::mcp_handler(struct mg_connection *conn, void *user_data) {
     while ((bytes_read = mg_read(conn, buffer, sizeof(buffer))) > 0) {
       body.append(buffer, size_t(bytes_read));
     }
+    DCOUT("body " << body);
     
     // Parse and process JSON-RPC request
     JsonRpcRequest rpc_request = server->parse_request(body);
     JsonRpcResponse rpc_response = server->process_request(rpc_request);
 
     if (rpc_request.is_notification()) {
-      // Just acknowledge. No response.
+        // Return 202 
+      mg_printf(conn,
+                "HTTP/1.1 202 Accepted\r\n"
+                "Content-Length: 0\r\n"
+                "\r\n");
     } else {
     
       // Send JSON-RPC response
       std::string response_json = rpc_response.to_json().dump();
+
+      if (rpc_request.method == "initialize") {
+
+        std::string sess_id = server->genSessionID();
+        server->addSessionID(sess_id);
+
+        mg_printf(conn,
+                  "HTTP/1.1 200 OK\r\n"
+                  "Content-Type: application/json\r\n"
+                  "mcp-session-id: %s\r\n"
+                  "Content-Length: %d\r\n"
+                  "\r\n"
+                  "%s",
+                  sess_id.c_str(),
+                  static_cast<int>(response_json.length()),
+                  response_json.c_str());
+      }
       
-      mg_printf(conn,
-                "HTTP/1.1 200 OK\r\n"
-                "Content-Type: application/json\r\n"
-                "Content-Length: %d\r\n"
-                "\r\n"
-                "%s",
-                static_cast<int>(response_json.length()),
-                response_json.c_str());
+      else {
+        mg_printf(conn,
+                  "HTTP/1.1 200 OK\r\n"
+                  "Content-Type: application/json\r\n"
+                  "Content-Length: %d\r\n"
+                  "\r\n"
+                  "%s",
+                  static_cast<int>(response_json.length()),
+                  response_json.c_str());
+      }
     }
     
     return 200; // Request handled
