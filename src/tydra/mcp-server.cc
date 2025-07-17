@@ -27,11 +27,10 @@
 // TODO
 //
 // [ ] Roots(from Protocol revision 2025-06-18)
-//
-// Server notification
-//
-// [ ] resources/list_changed
-// [ ] tools/list_changed
+// [ ] Use mcp-session-id in resources and tools.
+// [ ] Server notification
+//   [ ] resources/list_changed
+//   [ ] tools/list_changed
 
 namespace tinyusdz {
 namespace tydra {
@@ -79,7 +78,33 @@ enum JsonRpcErrorCode {
 };
 
 // Method handler function type
-using MethodHandler = std::function<nlohmann::json(const nlohmann::json&, std::string &)>;
+// <params, sess_id, err>
+using MethodHandler = std::function<nlohmann::json(const nlohmann::json&, const std::string &, std::string &)>;
+
+
+namespace {
+
+bool has_header(const struct mg_request_info *ri, const char *name) {
+    for (int i = 0; i < ri->num_headers; i++) {
+        DCOUT("header" + std::string(ri->http_headers[i].name));
+        if (strcmp(ri->http_headers[i].name, name) == 0) {
+          return true;
+        }
+    }
+    return false;
+}
+
+std::string get_header_value(const struct mg_request_info *ri, const char *name) {
+    for (int i = 0; i < ri->num_headers; i++) {
+        if (strcmp(ri->http_headers[i].name, name) == 0) {
+            return std::string(ri->http_headers[i].value);
+        }
+    }
+    return {};
+}
+
+
+} // namespace
 
 class MCPServer::Impl {
  public:
@@ -122,7 +147,7 @@ class MCPServer::Impl {
   static int mcp_handler(struct mg_connection *conn, void *user_data);
   
   // Process JSON-RPC request
-  JsonRpcResponse process_request(const JsonRpcRequest& request);
+  JsonRpcResponse process_request(const JsonRpcRequest& request, const std::string &sess_id);
   
   // Parse JSON-RPC request from string
   JsonRpcRequest parse_request(const std::string& json_str);
@@ -143,6 +168,13 @@ int MCPServer::Impl::mcp_handler(struct mg_connection *conn, void *user_data) {
   const struct mg_request_info *request_info = mg_get_request_info(conn);
 
   DCOUT("req_method " << request_info->request_method);
+
+  std::string mcp_sess_id;
+  // TODO: Support Mcp-Session-Id?
+  if (has_header(request_info, "mcp-session-id")) {
+    mcp_sess_id = get_header_value(request_info, "mcp-session-id");
+    DCOUT("mcp-session-id " << mcp_sess_id);
+  }
   
   // Handle POST requests for JSON-RPC
   if (strcmp(request_info->request_method, "POST") == 0) {
@@ -158,7 +190,7 @@ int MCPServer::Impl::mcp_handler(struct mg_connection *conn, void *user_data) {
     
     // Parse and process JSON-RPC request
     JsonRpcRequest rpc_request = server->parse_request(body);
-    JsonRpcResponse rpc_response = server->process_request(rpc_request);
+    JsonRpcResponse rpc_response = server->process_request(rpc_request, mcp_sess_id);
 
     if (rpc_request.is_notification()) {
         // Return 202 
@@ -246,7 +278,7 @@ JsonRpcRequest MCPServer::Impl::parse_request(const std::string& json_str) {
   return request;
 }
 
-JsonRpcResponse MCPServer::Impl::process_request(const JsonRpcRequest& request) {
+JsonRpcResponse MCPServer::Impl::process_request(const JsonRpcRequest& request, const std::string &sess_id) {
   // Validate JSON-RPC version
   if (request.jsonrpc != "2.0") {
     return create_error_response(INVALID_REQUEST, "Invalid JSON-RPC version", request.id);
@@ -260,7 +292,7 @@ JsonRpcResponse MCPServer::Impl::process_request(const JsonRpcRequest& request) 
   
   // Execute method handler
   std::string err;
-  nlohmann::json result = handler_it->second(request.params, err);
+  nlohmann::json result = handler_it->second(request.params, sess_id, err);
   
   JsonRpcResponse response;
 
@@ -293,7 +325,8 @@ bool MCPServer::Impl::init(int port, const std::string &host) {
   // TODO
   (void)host;
 
-  register_method("ping", [](const nlohmann::json& params, std::string &err) -> nlohmann::json {
+  register_method("ping", [](const nlohmann::json& params, const std::string &sess_id, std::string &err) -> nlohmann::json {
+    (void)sess_id;
     (void)err;
     (void)params;
 
@@ -303,7 +336,8 @@ bool MCPServer::Impl::init(int port, const std::string &host) {
   });
 
   // Register MCP initialize method
-  register_method("initialize", [](const nlohmann::json& params, std::string &err) -> nlohmann::json {
+  register_method("initialize", [](const nlohmann::json& params, const std::string sess_id, std::string &err) -> nlohmann::json {
+    (void)sess_id;
     (void)err;
     // Extract client info if provided
     std::string client_name = "unknown";
@@ -333,7 +367,8 @@ bool MCPServer::Impl::init(int port, const std::string &host) {
     };
   });
 
-  register_method("notifications/cancelled",[](const nlohmann::json &params, std::string &err) -> nlohmann::json {
+  register_method("notifications/cancelled",[](const nlohmann::json &params, const std::string &sess_id, std::string &err) -> nlohmann::json {
+    (void)sess_id;
 
     if (!params.contains("requestId")) {
       err = "`requestId` is missing in params.";
@@ -346,10 +381,11 @@ bool MCPServer::Impl::init(int port, const std::string &host) {
     return {};
   });
 
-  register_method("resources/list",[](const nlohmann::json &params, std::string &err) -> nlohmann::json {
+  register_method("resources/list",[](const nlohmann::json &params, const std::string &sess_id, std::string &err) -> nlohmann::json {
 
     (void)err;
     (void)params;
+    (void)sess_id;
 
     nlohmann::json j;
     mcp::GetResourcesList(j);
@@ -358,10 +394,11 @@ bool MCPServer::Impl::init(int port, const std::string &host) {
 
   });
 
-  register_method("resources/read",[](const nlohmann::json &params, std::string &err) -> nlohmann::json {
+  register_method("resources/read",[](const nlohmann::json &params, const std::string &sess_id, std::string &err) -> nlohmann::json {
 
     (void)err;
     (void)params;
+    (void)sess_id;
 
     if (!params.contains("uri")) {
       err = "`name` is missing in params.";
@@ -379,10 +416,11 @@ bool MCPServer::Impl::init(int port, const std::string &host) {
 
   });
 
-  register_method("tools/list",[](const nlohmann::json &params, std::string &err) -> nlohmann::json {
+  register_method("tools/list",[](const nlohmann::json &params, const std::string &sess_id, std::string &err) -> nlohmann::json {
 
     (void)err;
     (void)params;
+    (void)sess_id;
 
     nlohmann::json j;
     mcp::GetToolsList(j);
@@ -391,8 +429,9 @@ bool MCPServer::Impl::init(int port, const std::string &host) {
 
   });
 
-  register_method("tools/call",[this](const nlohmann::json &params, std::string &err) -> nlohmann::json {
+  register_method("tools/call",[this](const nlohmann::json &params, const std::string &sess_id, std::string &err) -> nlohmann::json {
 
+    (void)sess_id;
     
     if (!params.contains("name")) {
       err = "`name` is missing in params.";
@@ -415,10 +454,11 @@ bool MCPServer::Impl::init(int port, const std::string &host) {
 
   });
 
-  register_method("notifications/initialized", [](const nlohmann::json& params, std::string &err) -> nlohmann::json {
+  register_method("notifications/initialized", [](const nlohmann::json& params, const std::string &sess_id, std::string &err) -> nlohmann::json {
     // no response required
     (void)params;
     (void)err;
+    (void)sess_id;
     
     // Return server capabilities
     return nlohmann::json::object();
