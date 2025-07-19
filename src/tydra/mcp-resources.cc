@@ -11,19 +11,38 @@
 #pragma clang diagnostic pop
 #endif
 
+using namespace nlohmann;
+
 namespace tinyusdz {
 namespace tydra {
 namespace mcp {
 
-bool GetResourcesList(nlohmann::json &result) {
-  // TODO
-  (void)result;
+bool ListResourcesImpl(const Context &ctx, json &result) {
+  for (const auto &res_uuid : ctx.resources) {
+    
+    if (!result.layers.count(res_uuid)) {
+      continue;
+    }
 
-  return false;
+    json res_j;
+
+
+    res_j["uri"] = result.layers[res_uuid].uri;
+    res_j["name"] = result.layers[res_uuid].uri; // FIXME
+    res_j["mimeType"] = "application/octet-stream"; // FIXME
+
+    result["resources"].push_back(res_j);
+  }
+
 }
 
-bool ReadResource(const std::string &uri, nlohmann::json &result) {
+bool GetResourcesList(const Context &ctx, nlohmann::json &result) {
+  return ListResourcesImpl(ctx, result);
+}
+
+bool ReadResource(const Contect &ctx, const std::string &uuid, nlohmann::json &result) {
   // TODO
+  (void)ctx;
   (void)uri;
   (void)result;
 

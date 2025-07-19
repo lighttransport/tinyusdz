@@ -14,15 +14,19 @@
 #pragma clang diagnostic pop
 #endif
 
+#include "mcp-resources.hh"
+#include "mcp-context.hh"
+
 namespace tinyusdz {
 namespace tydra {
 namespace mcp {
 
 // for 'resources/list'
 bool GetResourcesList(
+  const Context &ctx,
   nlohmann::json &resources);
 
-bool ReadResource(const std::string &uri, nlohmann::json &content);
+bool ReadResource(const Context &ctx, const std::string &uri, nlohmann::json &content);
   
 
 } // namespace mcp
