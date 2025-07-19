@@ -2,7 +2,8 @@
 
 #include <memory>
 #include <string>
-#include <map>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "prim-types.hh"
 
@@ -22,8 +23,9 @@ struct Context
 
   // loaded USD assets
   // key = UUID
-  std::map<std::string, USDLayer> layers;
+  std::unordered_map<std::string, USDLayer> layers;
 
+  std::unordered_set<std::string> resources;
 };
 
 } // namespace mcp
