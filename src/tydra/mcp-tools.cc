@@ -83,6 +83,7 @@ bool LoadUSDLayerFromFile(Context &ctx, const nlohmann::json &args, nlohmann::js
   usd_layer.layer = std::move(layer);
 
   ctx.layers.emplace(uuid, std::move(usd_layer));
+  ctx.resources.insert(uuid);
 
   DCOUT("loaded USD as Layer");
 
@@ -200,6 +201,12 @@ bool CallTool(Context &ctx, const std::string &tool_name, const nlohmann::json &
   } else if (tool_name == "list_primspecs") {
     DCOUT("list_primspecs");
     return ListPrimSpecs(ctx, args, result, err);
+#if 0
+  } else if (tool_name == "get_texture_asset") {
+    return GetTextureAsset(ctx, args, result, err);
+  } else if (tool_name == "change_texture_asset") {
+    return ChangeTextureAsset(ctx, args, result, err);
+#endif
   }
 
   // tool not found.
