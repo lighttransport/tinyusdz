@@ -15,6 +15,7 @@ namespace mcp {
 struct USDLayer
 {
   std::string uri;
+  std::string name;
   Layer layer;
 };
 
