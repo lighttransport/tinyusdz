@@ -8,9 +8,23 @@
 // TODO: Use floaxie also for double?
 #include "external/dtoa_milo.h"
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
+// nlohmann json
+#include "external/jsonhpp/nlohmann/json.hpp"
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+
+#include "common-macros.inc"
 
 namespace tinyusdz {
 namespace json {
+
 
 namespace detail {
 
