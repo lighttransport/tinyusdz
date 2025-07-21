@@ -18,6 +18,9 @@
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
 
+#include "tydra/mcp-resources.hh"
+#include "tydra/mcp-tools.hh"
+
 // Handling Asset
 // Due to the limitatrion of C++(synchronous) initiated async file(fetch) read,
 // We decided to fetch asset in JavaScript layer.
@@ -1146,6 +1149,38 @@ class TinyUSDZLoaderNative {
     return val;
   }
 
+  emscripten::val mcpToolsList() const {
+    emscripten::val val;
+
+    // TODO
+
+    return val;
+  }
+
+  emscripten::val mcpToolsCall() const {
+    emscripten::val val;
+
+    // TODO
+
+    return val;
+  }
+
+  emscripten::val mcpResourcesList() const {
+    emscripten::val val;
+
+    // TODO
+
+    return val;
+  }
+
+  emscripten::val mcpResourcesRead() const {
+    emscripten::val val;
+
+    // TODO
+
+    return val;
+  }
+
   // TODO: Deprecate
   bool ok() const { return loaded_; }
 
@@ -1484,6 +1519,13 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("clearAssetSearchPaths", &TinyUSDZLoaderNative::clearAssetSearchPaths)
       .function("addAssetSearchPath", &TinyUSDZLoaderNative::addAssetSearchPath)
       .function("getAssetSearchPaths", &TinyUSDZLoaderNative::getAssetSearchPaths)
+
+
+      // MCP
+      .function("mcpResourcesList", &TinyUSDZLoaderNative::mcpResourcesList)
+      .function("mcpResourcesRead", &TinyUSDZLoaderNative::mcpResourcesRead)
+      .function("mcpToolsList", &TinyUSDZLoaderNative::mcpToolsList)
+      .function("mcpToolsCall", &TinyUSDZLoaderNative::mcpToolsCall)
 
       .function("ok", &TinyUSDZLoaderNative::ok)
       .function("error", &TinyUSDZLoaderNative::error);
