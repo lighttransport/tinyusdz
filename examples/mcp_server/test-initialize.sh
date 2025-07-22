@@ -1,7 +1,7 @@
 set -v
 
 hostname=localhost
-port_no=8086
+port_no=8085
 entrypoint=mcp
 
 #      "protocolVersion": "2025-03-26",
@@ -11,13 +11,13 @@ entrypoint=mcp
 #  -H "Sec-Fetch-Mode: cors" \
 curl -X POST \
   -H "Content-Type: application/json" \
-  -H "Accept: application/json,text/event-stream" \
+  -H "Accept: application/json, text/event-stream" \
   -D response_headers.txt \
   -d '{
     "jsonrpc": "2.0",
     "method": "initialize",
     "params": {
-      "protocolVersion": "2024-11-05",
+     "protocolVersion": "2024-11-05",
       "capabilities": {
       },
       "clientInfo": {
@@ -33,14 +33,15 @@ grep -i "mcp-session-id" response_headers.txt | cut -d' ' -f2 > sess_id.txt
 
 sleep 1
 
-sess_id=`cat sess_id.txt`
-sess_header="Mcp-Session-Id: ${sess_id}"
+# remove '\r'
+sess_id=`cat sess_id.txt | tr -d '\r'`
+sess_header="mcp-session-id: ${sess_id}"
 echo $sess_header
 
 curl -v -X POST \
   -H "Content-Type: application/json" \
-  -H "Accept: application/json,text/event-stream" \
-  -H "$sess_header" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "${sess_header}" \
   -d '{
     "jsonrpc": "2.0",
     "method": "notifications/initialized"
