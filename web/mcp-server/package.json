@@ -16,7 +16,7 @@
     "typescript": "^5"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.15.1",
+    "@modelcontextprotocol/sdk": "^1.16.0",
     "path": "^0.12.7",
     "vite": "^7.0.4"
   }
