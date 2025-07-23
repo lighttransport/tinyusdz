@@ -89,7 +89,7 @@ endif()
 # 512kB stack
 # NOTE: ASYNCIFY increase the wasm size to around 4~6 MB
 
-set(TINYUSDZ_EMCC_LINK_FLAGS "-Oz -sENVIRONMENT='web,worker' -sSTACK_SIZE=512000 -sALLOW_MEMORY_GROWTH=1 -sMODULARIZE=1 -sEXPORT_ES6 -sINVOKE_RUN=0 --bind ")
+set(TINYUSDZ_EMCC_LINK_FLAGS "-Oz -sENVIRONMENT='web,worker,node' -sSTACK_SIZE=512000 -sALLOW_MEMORY_GROWTH=1 -sMODULARIZE=1 -sEXPORT_ES6 -sINVOKE_RUN=0 --bind ")
 
 if (TINYUSDZ_WASM64)
   # assertion=1 cause runtime error(Cannot mix BigInt and ... in assert()), so use 2

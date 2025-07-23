@@ -5,7 +5,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
-import { TinyUSDZLoader } from "tinyusdz/TinyUSDLoader.js";
+//import { TinyUSDZLoader } from "tinyusdz/TinyUSDLoader.js";
 
 const portno = 8085;
 
@@ -13,9 +13,9 @@ const app = express();
 app.use(express.json());
 
 // Map to store transports by session ID
-const transports: { [sessionId: string]: StreamableHTTPServerTransport } = {};
+const transports = {};
 
-const session = Map();
+const session = new Map();
 
 // Handle POST requests for client-to-server communication
 app.post('/mcp', async (req, res) => {
@@ -23,8 +23,9 @@ app.post('/mcp', async (req, res) => {
   console.log(req.headers);
   console.log(req.body);
   // Check for existing session ID
-  const sessionId = req.headers['mcp-session-id'] as string | undefined;
-  let transport: StreamableHTTPServerTransport;
+  const sessionId = req.headers['mcp-session-id'] || undefined;
+  console.log("sessionId", sessionId);
+  let transport = null;
 
   if (sessionId && transports[sessionId]) {
     // Reuse existing transport
@@ -57,24 +58,23 @@ app.post('/mcp', async (req, res) => {
       version: "1.0.0"
     });
 
-    server.registerTool("version",
+    server.registerTool("get_version",
       {
         title: "Get TinyUSDZ version",
         description: "Get TinyUSDZ version",
-        inputSchema: { }
+        inputSchema: {}
       },
       async ({ }) => {
-
-
-        return { content: [
-            { type: 'text',
+        return {
+          content: [
+            {
+              type: 'text',
               text: "v0.9.0"
             }
-        ],
-      })
-        
-    );
-                          
+          ],
+        }
+      });
+
     server.registerTool("add",
       {
         title: "Addition Tool",
@@ -108,13 +108,13 @@ app.post('/mcp', async (req, res) => {
 });
 
 // Reusable handler for GET and DELETE requests
-const handleSessionRequest = async (req: express.Request, res: express.Response) => {
-  const sessionId = req.headers['mcp-session-id'] as string | undefined;
+const handleSessionRequest = async (req, res) => {
+  const sessionId = req.headers['mcp-session-id'];
   if (!sessionId || !transports[sessionId]) {
     res.status(400).send('Invalid or missing session ID');
     return;
   }
-  
+
   const transport = transports[sessionId];
   await transport.handleRequest(req, res);
 };
