@@ -15,6 +15,7 @@
     "vite": "^6.1.6"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.15.1",
     "fzstd": "^0.1.1",
     "gsap": "^3.13.0",
     "lil-gui": "^0.19.2",
