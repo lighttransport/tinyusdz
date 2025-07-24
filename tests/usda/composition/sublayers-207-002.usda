@@ -1,0 +1,19 @@
+#usda 1.0
+
+def Scope "SecondLayer"
+{
+
+}
+
+def Scope "SecondLayerCheck"
+{
+    
+}
+
+def "Root"
+{
+    def "AdditionalScope"
+    {
+        
+    }
+}

@@ -209,6 +209,8 @@ std::string to_string(const UsdPrimvarReader_float4 &shader,
 std::string to_string(const UsdPrimvarReader_int &shader,
                       const uint32_t indent = 0, bool closing_brace = true);
 
+std::string to_string(const UsdPreviewSurface::OpacityMode v);
+
 std::string to_string(const UsdUVTexture::SourceColorSpace v);
 std::string to_string(const UsdUVTexture::Wrap v);
 

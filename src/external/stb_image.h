@@ -4792,7 +4792,7 @@ static int stbi__create_png_image_raw(stbi__png *a, stbi_uc *raw, stbi__uint32 r
          stbi_uc *in = cur;
          stbi_uc *out = dest;
          stbi_uc inb = 0;
-         stbi__uint32 nsmp = x*img_n;
+         size_t nsmp = (size_t)x * img_n;
 
          // expand bits to bytes first
          if (depth == 4) {
@@ -4827,7 +4827,7 @@ static int stbi__create_png_image_raw(stbi__png *a, stbi_uc *raw, stbi__uint32 r
       } else if (depth == 16) {
          // convert the image data from big-endian to platform-native
          stbi__uint16 *dest16 = (stbi__uint16*)dest;
-         stbi__uint32 nsmp = x*img_n;
+         size_t nsmp = (size_t)x * img_n;
 
          if (img_n == out_n) {
             for (i = 0; i < nsmp; ++i, ++dest16, cur += 2)

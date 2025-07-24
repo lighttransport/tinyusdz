@@ -88,6 +88,7 @@ class AsciiParser {
     value::StringData doc;                    // 'doc' or 'documentation'
     nonstd::optional<Axis> upAxis;            // not specified = nullopt
     nonstd::optional<double> metersPerUnit;
+    nonstd::optional<double> kilogramsPerUnit;
     nonstd::optional<double> timeCodesPerSecond;
     nonstd::optional<double> startTimeCode;
     nonstd::optional<double> endTimeCode;

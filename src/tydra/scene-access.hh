@@ -546,6 +546,8 @@ class SkelHierarchy {
 
 };
 
+std::map<std::string, int> BuildSkelNameToIndexMap(const SkelHierarchy &skel);
+
 ///
 /// Extract skeleleton info from Skeleton and build skeleton(bone) hierarchy.
 ///

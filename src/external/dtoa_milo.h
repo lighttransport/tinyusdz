@@ -6,6 +6,7 @@
 #include <cassert>
 #include <cmath>
 #include <limits>
+#include <cstring>
 
 //#if defined(_MSC_VER)
 //#include "msinttypes/stdint.h"
