@@ -36,7 +36,7 @@ sleep 1
 # remove '\r'
 sess_id=`cat sess_id.txt | tr -d '\r'`
 sess_header="mcp-session-id: ${sess_id}"
-echo $sess_header
+#echo $sess_header
 
 curl -v -X POST \
   -H "Content-Type: application/json" \
