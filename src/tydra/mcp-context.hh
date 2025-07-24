@@ -26,7 +26,8 @@ struct Context
   // key = UUID
   std::unordered_map<std::string, USDLayer> layers;
 
-  std::unordered_set<std::string> resources;
+  // key = URI, value = UUID
+  std::unordered_map<std::string, std::string> resources;
 };
 
 } // namespace mcp

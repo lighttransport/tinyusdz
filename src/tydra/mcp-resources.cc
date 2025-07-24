@@ -21,23 +21,25 @@ namespace mcp {
 namespace {
 
 static bool ListResourcesImpl(const Context &ctx, json &result) {
-  for (const auto &res_uuid : ctx.resources) {
+
+  result["resources"] = nlohmann::json::array();
+
+  for (const auto &res : ctx.resources) {
     
-    if (!ctx.layers.count(res_uuid)) {
+    if (!ctx.layers.count(res.second)) {
       continue;
     }
 
     json res_j;
 
 
-    res_j["uri"] = ctx.layers.at(res_uuid).uri;
-    res_j["name"] = ctx.layers.at(res_uuid).uri; // FIXME
+    res_j["uri"] = ctx.layers.at(res.second).uri;
+    res_j["name"] = ctx.layers.at(res.second).uri; // FIXME
     res_j["mimeType"] = "application/octet-stream"; // FIXME
     // TODO: size, title, description
 
     result["resources"].push_back(res_j);
   }
-
 
   return true;
 }
@@ -45,18 +47,20 @@ static bool ListResourcesImpl(const Context &ctx, json &result) {
 } // namespace
 
 bool GetResourcesList(const Context &ctx, nlohmann::json &result) {
+  
   return ListResourcesImpl(ctx, result);
 }
 
-bool ReadResource(const Context &ctx, const std::string &uuid, nlohmann::json &result) {
+bool ReadResource(const Context &ctx, const std::string &uri, nlohmann::json &result) {
   // TODO: multiple resources
   
-  (void)uuid;
-  (void)result;
 
-  if (!ctx.resources.count(uuid)) {
+  if (!ctx.resources.count(uri)) {
+    // TODO: report error
     return false;
   }
+
+  const std::string &uuid = ctx.resources.at(uri);
 
   if (!ctx.layers.count(uuid)) {
     // This should not happen though.
@@ -64,8 +68,8 @@ bool ReadResource(const Context &ctx, const std::string &uuid, nlohmann::json &r
   }
 
   json res;
-  res["uri"] = ctx.layers.at(uuid).uri;
-  res["name"] = ctx.layers.at(uuid).name;
+  res["uri"] = uri;
+  res["name"] = uri; // FIXME
   res["mimeType"] = "text/plain";
   // TODO: title
 
