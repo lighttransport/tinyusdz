@@ -22,6 +22,7 @@ namespace mcp {
 
 // for 'tools/list'
 bool GetToolsList(
+  Context &ctx,
   nlohmann::json &result);
 
 

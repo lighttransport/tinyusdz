@@ -12,14 +12,26 @@
 #include <chrono>
 #include <thread>
 
-#include "external/fast_float/include/fast_float/bigint.h"
+//#include "external/fast_float/include/fast_float/bigint.h"
 #include "tinyusdz.hh"
 #include "pprinter.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
 
+#include "tydra/mcp-context.hh"
 #include "tydra/mcp-resources.hh"
 #include "tydra/mcp-tools.hh"
+
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
+#include "external/jsonhpp/nlohmann/json.hpp"
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 // Handling Asset
 // Due to the limitatrion of C++(synchronous) initiated async file(fetch) read,
@@ -1149,36 +1161,125 @@ class TinyUSDZLoaderNative {
     return val;
   }
 
-  emscripten::val mcpToolsList() const {
-    emscripten::val val;
+  bool mcpCreateContext(const std::string &session_id) {
+    
+    if (mcp_ctx_.count(session_id)) {
+      // Context already exists
+      return false;
+    }
 
-    // TODO
+    mcp_ctx_[session_id] = tinyusdz::tydra::mcp::Context();
+    mcp_session_id_ = session_id;
 
-    return val;
+    return true;
   }
 
-  emscripten::val mcpToolsCall() const {
-    emscripten::val val;
+  bool mcpSelectContext(const std::string &session_id) {
+    
+    if (!mcp_ctx_.count(session_id)) {
+      // Context does not exist
+      return false;
+    }
 
-    // TODO
+    mcp_session_id_ = session_id;
 
-    return val;
+    return true;
   }
 
-  emscripten::val mcpResourcesList() const {
-    emscripten::val val;
 
-    // TODO
+  // return JSON string
+  std::string mcpToolsList() {
 
-    return val;
+    if (!mcp_ctx_.count(mcp_session_id_)) {
+      // TODO: better error message
+      return "{ \"error\": \"invalid session_id\"}";
+    }
+
+    //Context &ctx = mcp_ctx_.at(mcp_session_id_);
+    tinyusdz::tydra::mcp::Context &ctx = mcp_global_ctx_;
+
+    nlohmann::json result;
+    if (!tinyusdz::tydra::mcp::GetToolsList(ctx, result)) {
+      std::cerr << "[tydra:mcp:GetToolsList] failed." << "\n";
+      // TODO: Report error more nice way.
+    }
+
+    std::string s_result = result.dump();
+
+    return s_result;
   }
 
-  emscripten::val mcpResourcesRead() const {
-    emscripten::val val;
+  // args: JSON string
+  // return JSON string
+  std::string mcpToolsCall(const std::string &tool_name, const std::string &args) {
 
-    // TODO
+    if (!mcp_ctx_.count(mcp_session_id_)) {
+      // TODO: better error message
+      return "{ \"error\": \"invalid session_id\"}";
+    }
 
-    return val;
+    nlohmann::json j_args = nlohmann::json::parse(args);
+
+    //Context &ctx = mcp_ctx_.at(mcp_session_id_);
+    auto &ctx = mcp_global_ctx_;
+
+    nlohmann::json result;
+
+    std::string err;
+    if (!tinyusdz::tydra::mcp::CallTool(ctx, tool_name, j_args, result, err)) {
+      // TODO: Report error more nice way.
+      std::cerr << "[tydra:mcp:CallTool]" << err << "\n";
+    }
+    
+    std::string s_result = result.dump();
+
+    return s_result;
+  }
+
+  std::string mcpResourcesList() {
+
+    std::cout << "res list\n";
+
+    if (!mcp_ctx_.count(mcp_session_id_)) {
+      // TODO: better error message
+      return "{ \"error\": \"invalid session_id\"}";
+    }
+
+    //Context &ctx = mcp_ctx_.at(mcp_session_id_);
+    auto &ctx = mcp_global_ctx_;
+
+    nlohmann::json result;
+
+    if (!tinyusdz::tydra::mcp::GetResourcesList(ctx, result)) {
+      // TODO: Report error more nice way.
+      std::cerr << "[tydra:mcp:ListResources] failed\n";
+    }
+    
+    std::string s_result = result.dump();
+
+    return s_result;
+  }
+
+  std::string mcpResourcesRead(const std::string &uri) {
+
+    if (!mcp_ctx_.count(mcp_session_id_)) {
+      // TODO: better error message
+      return "{ \"error\": \"invalid session_id\"}";
+    }
+
+    //Context &ctx = mcp_ctx_.at(mcp_session_id_);
+    auto &ctx = mcp_global_ctx_;
+
+    nlohmann::json content;
+
+    if (!tinyusdz::tydra::mcp::ReadResource(ctx, uri, content)) {
+      // TODO: Report error more nice way.
+      std::cerr << "[tydra:mcp:ReadResources] failed\n";
+    }
+    
+    std::string s_content = content.dump();
+
+    return s_content;
   }
 
   // TODO: Deprecate
@@ -1243,6 +1344,12 @@ class TinyUSDZLoaderNative {
   tinyusdz::tydra::RenderScene render_scene_;
   tinyusdz::USDZAsset usdz_asset_;
   EMAssetResolutionResolver em_resolver_;
+
+  // key = session_id
+  std::unordered_map<std::string, tinyusdz::tydra::mcp::Context> mcp_ctx_;
+  std::string mcp_session_id_;
+
+  tinyusdz::tydra::mcp::Context mcp_global_ctx_;
 };
 
 ///
@@ -1522,6 +1629,8 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
 
 
       // MCP
+      .function("mcpCreateContext", &TinyUSDZLoaderNative::mcpCreateContext)
+      .function("mcpSelectContext", &TinyUSDZLoaderNative::mcpSelectContext)
       .function("mcpResourcesList", &TinyUSDZLoaderNative::mcpResourcesList)
       .function("mcpResourcesRead", &TinyUSDZLoaderNative::mcpResourcesRead)
       .function("mcpToolsList", &TinyUSDZLoaderNative::mcpToolsList)
