@@ -760,8 +760,11 @@ static inline bool is_base64(unsigned char c) {
 }
 #endif
 
-std::string base64_encode(unsigned char const *bytes_to_encode,
-                          unsigned int in_len) {
+#ifdef __SSE2__
+#else
+// Fallback implementation (original) 
+static std::string base64_encode_scalar(unsigned char const *bytes_to_encode,
+                                       unsigned int in_len) {
   std::string ret;
   int i = 0;
   int j = 0;
@@ -803,6 +806,111 @@ std::string base64_encode(unsigned char const *bytes_to_encode,
   }
 
   return ret;
+}
+#endif
+
+// SSE2-optimized base64 encode implementation
+#ifdef __SSE2__
+static std::string base64_encode_sse(unsigned char const *bytes_to_encode, unsigned int in_len) {
+  if (in_len == 0) return std::string();
+  
+  const char base64_chars[64] = {
+    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
+    'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
+    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
+    'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '+', '/'
+  };
+
+  // Calculate output size
+  const size_t output_len = ((in_len + 2) / 3) * 4;
+  std::string result;
+  result.reserve(output_len);
+  
+  size_t input_pos = 0;
+  
+  // Process 12 bytes at a time using SSE2 (produces 16 base64 characters)
+  while (input_pos + 12 <= in_len) {
+    // Load 12 input bytes (will process as 4 groups of 3 bytes each)
+    alignas(16) uint8_t input_block[16] = {0};
+    
+    // Copy 12 bytes, leaving last 4 bytes as zero padding
+    for (int i = 0; i < 12; i++) {
+      input_block[i] = bytes_to_encode[input_pos + i];
+    }
+    
+    // Load input data into SSE register (currently unused but reserved for future vectorization)
+    (void)_mm_load_si128(reinterpret_cast<const __m128i*>(input_block));
+    
+    // Process 4 groups of 3 bytes each
+    alignas(16) uint8_t output_indices[16];
+    
+    for (int group = 0; group < 4; group++) {
+      int base_idx = group * 3;
+      
+      // Extract 3 bytes for this group
+      uint8_t b0 = input_block[base_idx];
+      uint8_t b1 = input_block[base_idx + 1];
+      uint8_t b2 = input_block[base_idx + 2];
+      
+      // Convert 3 bytes to 4 base64 indices
+      output_indices[group * 4] = (b0 >> 2) & 0x3F;
+      output_indices[group * 4 + 1] = ((b0 & 0x03) << 4) | ((b1 >> 4) & 0x0F);
+      output_indices[group * 4 + 2] = ((b1 & 0x0F) << 2) | ((b2 >> 6) & 0x03);
+      output_indices[group * 4 + 3] = b2 & 0x3F;
+    }
+    
+    // Convert indices to base64 characters using table lookup
+    for (int i = 0; i < 16; i++) {
+      result.push_back(base64_chars[output_indices[i]]);
+    }
+    
+    input_pos += 12;
+  }
+  
+  // Handle remaining bytes with scalar code
+  while (input_pos + 3 <= in_len) {
+    uint8_t b0 = bytes_to_encode[input_pos];
+    uint8_t b1 = bytes_to_encode[input_pos + 1];
+    uint8_t b2 = bytes_to_encode[input_pos + 2];
+    
+    result.push_back(base64_chars[(b0 >> 2) & 0x3F]);
+    result.push_back(base64_chars[((b0 & 0x03) << 4) | ((b1 >> 4) & 0x0F)]);
+    result.push_back(base64_chars[((b1 & 0x0F) << 2) | ((b2 >> 6) & 0x03)]);
+    result.push_back(base64_chars[b2 & 0x3F]);
+    
+    input_pos += 3;
+  }
+  
+  // Handle final 1-2 bytes if present
+  if (input_pos < in_len) {
+    uint8_t b0 = bytes_to_encode[input_pos];
+    uint8_t b1 = (input_pos + 1 < in_len) ? bytes_to_encode[input_pos + 1] : 0;
+    
+    result.push_back(base64_chars[(b0 >> 2) & 0x3F]);
+    result.push_back(base64_chars[((b0 & 0x03) << 4) | ((b1 >> 4) & 0x0F)]);
+    
+    if (input_pos + 1 < in_len) {
+      result.push_back(base64_chars[((b1 & 0x0F) << 2)]);
+    } else {
+      result.push_back('=');
+    }
+    result.push_back('=');
+  }
+  
+  return result;
+}
+#endif // __SSE2__
+
+std::string base64_encode(unsigned char const *bytes_to_encode,
+                          unsigned int in_len) {
+#ifdef __SSE2__
+  // Use SSE2 optimized version if available
+  return base64_encode_sse(bytes_to_encode, in_len);
+#else
+  // Use scalar fallback implementation
+  return base64_encode_scalar(bytes_to_encode, in_len);
+#endif
 }
 
 // SSE2-optimized base64 decode implementation
