@@ -6,6 +6,81 @@ import { GUI } from 'https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.mo
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js'
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js'
 
+// Loading bar elements
+const loadingContainer = document.createElement('div');
+loadingContainer.id = 'loading-container';
+loadingContainer.style.cssText = `
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  font-family: Arial, sans-serif;
+  color: white;
+`;
+
+const loadingText = document.createElement('div');
+loadingText.id = 'loading-text';
+loadingText.textContent = 'Loading...';
+loadingText.style.cssText = `
+  font-size: 24px;
+  margin-bottom: 20px;
+`;
+
+const progressBarContainer = document.createElement('div');
+progressBarContainer.style.cssText = `
+  width: 300px;
+  height: 20px;
+  background: #333;
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 10px;
+`;
+
+const progressBar = document.createElement('div');
+progressBar.id = 'progress-bar';
+progressBar.style.cssText = `
+  width: 0%;
+  height: 100%;
+  background: linear-gradient(90deg, #4CAF50, #8BC34A);
+  border-radius: 10px;
+  transition: width 0.3s ease;
+`;
+
+const progressText = document.createElement('div');
+progressText.id = 'progress-text';
+progressText.textContent = '0%';
+progressText.style.cssText = `
+  font-size: 14px;
+  color: #ccc;
+`;
+
+progressBarContainer.appendChild(progressBar);
+loadingContainer.appendChild(loadingText);
+loadingContainer.appendChild(progressBarContainer);
+loadingContainer.appendChild(progressText);
+document.body.appendChild(loadingContainer);
+
+// Function to update loading progress
+function updateLoadingProgress(progress, message = 'Loading...') {
+  loadingText.textContent = message;
+  progressBar.style.width = `${progress}%`;
+  progressText.textContent = `${Math.round(progress)}%`;
+}
+
+// Function to hide loading screen
+function hideLoadingScreen() {
+  loadingContainer.style.display = 'none';
+}
+
+
+
 const gui = new GUI();
 
 let ui_state = {}
@@ -17,6 +92,7 @@ ui_state['ambient'] = 0.4;
 let ambientLight = new THREE.AmbientLight(0x404040, ui_state['ambient']);
 ui_state['camera_z'] = 3.14; // TODO: Compute best fit from scene's bbox.
 ui_state['needsMtlUpdate'] = false;
+ui_state['renderer'] = null;
 
 
 // Create a parameters object
@@ -24,6 +100,7 @@ const params = {
   envMapIntensity: ui_state['envMapIntensity'],
   rotationSpeed: ui_state['rot_scale'],
   camera_z: ui_state['camera_z'],
+  take_screenshot: takeScreenshot
 };
 
 // Add controls
@@ -38,30 +115,47 @@ gui.add(params, 'camera_z', 0, 20).name('Camera Z').onChange((value) => {
 gui.add(params, 'rotationSpeed', 0, 10).name('Rotation Speed').onChange((value) => {
   ui_state['rot_scale'] = value;
 });
+gui.add(params, 'take_screenshot').name('Take Screenshot');
 
+
+function takeScreenshot() {
+
+  const renderer = ui_state['renderer'];
+  const quality = 0.92; // JPEG quality, if you want to use JPEG format
+
+  const img = renderer.domElement.toDataURL('image/jpeg', quality)
+  console.log('Screenshot taken:', img);
+
+  return img;
+}
 
 async function loadScenes() {
+
+  updateLoadingProgress(20, 'Initializing TinyUSDZLoader...');
 
   const loader = new TinyUSDZLoader();
 
   // it is recommended to call init() before loadAsync()
   // (wait loading/compiling wasm module in the early stage))
-  //await loader.init();
+  await loader.init();
 
   // Use zstd compressed tinyusdz.wasm to save the bandwidth.
-  await loader.init({useZstdCompressedWasm: true});
+  //await loader.init({useZstdCompressedWasm: true});
 
   const suzanne_filename = "./assets/suzanne-pbr.usda";
   const texcat_filename = "./assets/texture-cat-plane.usdz";
   const cookie_filename = "./assets/UsdCookie.usdz";
+  const usd_filename = "./assets/suzanne-pbr.usda";
 
   var threeScenes = []
 
   const usd_scenes = await Promise.all([
     //loader.loadAsync(texcat_filename),
-    loader.loadAsync(cookie_filename),
+    loader.loadAsync(usd_filename),
     //loader.loadAsync(suzanne_filename),
   ]);
+
+  hideLoadingScreen();
 
   const defaultMtl = ui_state['defaultMtl'];
 
@@ -114,8 +208,13 @@ async function initScene() {
   const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
   camera.position.z = ui_state['camera_z'];
 
-  const renderer = new THREE.WebGLRenderer();
+  const renderer = new THREE.WebGLRenderer({
+    preserveDrawingBuffer: true, // for screenshot
+    alpha: true, // Enable transparency
+    antialias: true
+  });
   renderer.setSize(window.innerWidth, window.innerHeight);
+  ui_state['renderer'] = renderer; // Store renderer in ui_state
   document.body.appendChild(renderer.domElement);
 
   const rootNodes = await loadScenes();
