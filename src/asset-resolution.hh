@@ -220,15 +220,39 @@ class AssetResolutionResolver {
     _asset_resolution_handlers[ext_name] = handler;
   }
 
+  void register_wildcard_asset_resolution_handler(AssetResolutionHandler handler) {
+    _asset_resolution_handlers["*"] = handler;
+  }
+
   bool unregister_asset_resolution_handler(const std::string &ext_name) {
     if (_asset_resolution_handlers.count(ext_name)) {
       _asset_resolution_handlers.erase(ext_name);
+      return true;
     }
     return false;
   }
 
+  bool unregister_wildcard_asset_resolution_handler() {
+    if (_asset_resolution_handlers.count("*")) {
+      _asset_resolution_handlers.erase("*");
+      return true;
+    }
+    return false;
+  }
+
+
   bool has_asset_resolution_handler(const std::string &ext_name) {
-    return _asset_resolution_handlers.count(ext_name) > 0;
+    if (_asset_resolution_handlers.count(ext_name)) {
+      return true;
+    }
+    return false;
+  }
+
+  bool has_wildcard_asset_resolution_handler() {
+    if (_asset_resolution_handlers.count("*")) {
+      return true;
+    }
+    return false;
   }
 
 

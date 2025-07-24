@@ -1,0 +1,10 @@
+#usda 1.0
+
+def Shader "OpacityMode"
+{
+    uniform token info:id = "UsdPreviewSurface"
+    token inputs:opacityMode = "transparent"
+
+    token outputs:displacement
+    token outputs:surface
+}

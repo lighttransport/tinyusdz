@@ -38,6 +38,21 @@
 
 namespace tinyusdz {
 
+template<class InputIt1, class InputIt2>
+bool lexicographical_compare(InputIt1 first1, InputIt1 last1,
+                             InputIt2 first2, InputIt2 last2)
+{
+    for (; (first1 != last1) && (first2 != last2); ++first1, (void) ++first2)
+    {
+        if (*first1 < *first2)
+            return true;
+        if (*first2 < *first1)
+            return false;
+    }
+ 
+    return (first1 == last1) && (first2 != last2);
+}
+
 nonstd::optional<Interpolation> InterpolationFromString(const std::string &v) {
   if ("faceVarying" == v) {
     return Interpolation::FaceVarying;
@@ -119,7 +134,7 @@ bool ConvertTokenAttributeToStringAttribute(
 // -- Path
 //
 
-Path::Path(const std::string &p, const std::string &prop) {
+void Path::_update(const std::string &p, const std::string &prop) {
   //
   // For absolute path, starts with '/' and no other '/' exists.
   // For property part, '.' exists only once.
@@ -293,6 +308,10 @@ Path::Path(const std::string &p, const std::string &prop) {
   }
 }
 
+Path::Path(const std::string &p, const std::string &prop) {
+  _update(p, prop); 
+}
+
 Path Path::append_property(const std::string &elem) {
   Path &p = (*this);
 
@@ -350,6 +369,22 @@ const Path Path::AppendProperty(const std::string &elem) const {
   return p;
 }
 
+bool Path::replace_prefix(const Path &srcPrefix, const Path &dstPrefix) {
+  const std::string &srcPrefixStr = srcPrefix.prim_part();
+  const std::string &dstPrefixStr = dstPrefix.prim_part();
+
+  std::string pathStr = prim_part();
+  if (startsWith(pathStr, srcPrefixStr)) {
+    pathStr = dstPrefixStr + removePrefix(pathStr, srcPrefixStr);
+
+    _update(pathStr, prop_part());
+
+    return true;
+  }
+
+  return false;
+}
+
 // TODO: Do test more.
 // Current implementation may not behave as in pxrUSD's SdfPath's
 // _LessThanInternal implementation
@@ -380,7 +415,7 @@ bool Path::LessThan(const Path &lhs, const Path &rhs) {
       return lhs_prop_part.empty();
     }
 
-    return std::lexicographical_compare(
+    return ::tinyusdz::lexicographical_compare(
         lhs_prop_part.begin(), lhs_prop_part.end(), rhs_prop_part.begin(),
         rhs_prop_part.end());
 
@@ -425,7 +460,7 @@ bool Path::LessThan(const Path &lhs, const Path &rhs) {
     // DCOUT("child_idx = " << child_idx);
 
     // compare child node
-    return std::lexicographical_compare(
+    return ::tinyusdz::lexicographical_compare(
         lhs_prim_names[child_idx].begin(), lhs_prim_names[child_idx].end(),
         rhs_prim_names[child_idx].begin(), rhs_prim_names[child_idx].end());
   }
@@ -2160,7 +2195,8 @@ bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps,
     auto ret = _primspec_path_cache.find(path.prim_part());
     if (ret != _primspec_path_cache.end()) {
       DCOUT("Found cache.");
-      return ret->second;
+      (*ps) = ret->second;
+      return true;
     }
   }
 

@@ -1,91 +1,158 @@
-//import * as THREE from 'three';
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three/build/three.module.js';
+import * as THREE from 'three';
+import { HDRCubeTextureLoader } from 'three/addons/loaders/HDRCubeTextureLoader.js';
 
-import initTinyUSDZ from 'https://lighttransport.github.io/tinyusdz/tinyusdz.js';
+import { GUI } from 'https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.module.js';
 
-const USDZ_FILEPATH = './UsdCookie.usdz';
+import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js'
+import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js'
 
-const usd_res = await fetch(USDZ_FILEPATH);
-const usd_data = await usd_res.arrayBuffer();
+const gui = new GUI();
 
-const usd_binary = new Uint8Array(usd_data);
+let ui_state = {}
+ui_state['rot_scale'] = 1.0;
+ui_state['defaultMtl'] = TinyUSDZLoaderUtils.createDefaultMaterial();
 
-initTinyUSDZ().then(function(TinyUSDZLoader) {
+ui_state['envMapIntensity'] = 3.14; // pi is good for pisaHDR;
+ui_state['ambient'] = 0.4;
+let ambientLight = new THREE.AmbientLight(0x404040, ui_state['ambient']);
+ui_state['camera_z'] = 3.14; // TODO: Compute best fit from scene's bbox.
+ui_state['needsMtlUpdate'] = false;
 
-  const usd = new TinyUSDZLoader.TinyUSDZLoader(usd_binary);
-  console.log(usd.numMeshes());
 
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
+// Create a parameters object
+const params = {
+  envMapIntensity: ui_state['envMapIntensity'],
+  rotationSpeed: ui_state['rot_scale'],
+  camera_z: ui_state['camera_z'],
+};
+
+// Add controls
+gui.add(params, 'envMapIntensity', 0, 20, 0.1).name('envMapIntensity').onChange((value) => {
+  ui_state['envMapIntensity'] = value;
+  ui_state['needsMtlUpdate'] = true;
+  
+});
+gui.add(params, 'camera_z', 0, 20).name('Camera Z').onChange((value) => {
+  ui_state['camera_z'] = value;
+});
+gui.add(params, 'rotationSpeed', 0, 10).name('Rotation Speed').onChange((value) => {
+  ui_state['rot_scale'] = value;
+});
+
+
+async function loadScenes() {
+
+  const loader = new TinyUSDZLoader();
+
+  // it is recommended to call init() before loadAsync()
+  // (wait loading/compiling wasm module in the early stage))
+  //await loader.init();
+
+  // Use zstd compressed tinyusdz.wasm to save the bandwidth.
+  await loader.init({useZstdCompressedWasm: true});
+
+  const suzanne_filename = "./assets/suzanne-pbr.usda";
+  const texcat_filename = "./assets/texture-cat-plane.usdz";
+  const cookie_filename = "./assets/UsdCookie.usdz";
+
+  var threeScenes = []
+
+  const usd_scenes = await Promise.all([
+    //loader.loadAsync(texcat_filename),
+    loader.loadAsync(cookie_filename),
+    //loader.loadAsync(suzanne_filename),
+  ]);
+
+  const defaultMtl = ui_state['defaultMtl'];
+
+  const options = {
+    overrideMaterial: false, // override USD material with defaultMtl(default 'false')
+    envMap: defaultMtl.envMap, // reuse envmap from defaultMtl
+    envMapIntensity: ui_state['envMapIntensity'], // default envmap intensity
+  }
+
+  var offset = -(usd_scenes.length-1) * 1.5;
+  for (const usd_scene of usd_scenes) {
+
+    const usdRootNode = usd_scene.getDefaultRootNode();
+
+    const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options); 
+
+    if (usd_scene.getURI().includes('UsdCookie')) {
+      // Add exra scaling
+      threeNode.scale.x *= 2.5;
+      threeNode.scale.y *= 2.5;
+      threeNode.scale.z *= 2.5;
+    }
+
+    threeNode.position.x += offset;
+    offset += 3.0;
+
+    threeScenes.push(threeNode);
+  }
+
+  return threeScenes;
+
+}
+
+
+
+const scene = new THREE.Scene();
+
+async function initScene() {
+
+  const envmap = await new HDRCubeTextureLoader()
+    .setPath( 'assets/textures/cube/pisaHDR/' )
+    .loadAsync( [ 'px.hdr', 'nx.hdr', 'py.hdr', 'ny.hdr', 'pz.hdr', 'nz.hdr' ] )
+  scene.background = envmap;
+  scene.environment = envmap;
+
+  // Assign envmap to material
+  // Otherwise some material parameters like clarcoat will not work properly.
+  ui_state['defaultMtl'].envMap = envmap;
+
+  const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+  camera.position.z = ui_state['camera_z'];
 
   const renderer = new THREE.WebGLRenderer();
-  renderer.setSize( window.innerWidth, window.innerHeight );
-  renderer.setAnimationLoop( animate );
-  document.body.appendChild( renderer.domElement );
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
 
-  // First mesh only
-  const mesh = usd.getMesh(0);
-  //console.log("usd", usd)
-  //console.log("mesh", mesh);
+  const rootNodes = await loadScenes();
 
-  //const geometry = new THREE.BoxGeometry( 1, 1, 1 );
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute( 'position', new THREE.BufferAttribute( mesh.points, 3 ) );
-  // TODO: set normal from mesh
-
-  if (mesh.hasOwnProperty('texcoords')) {
-    console.log(mesh.texcoords);
-    geometry.setAttribute( 'uv', new THREE.BufferAttribute( mesh.texcoords, 2 ) );
+  for (const rootNode of rootNodes) {
+    scene.add(rootNode);
   }
-
-  const usdMaterial = usd.getMaterial(mesh.materialId);
-  //console.log("usdMat", usdMaterial);
-  //if (usdMaterial.aaa) {
-  //  console.log("aaa");
-  //}
-
-  var material;
-
-  if (usdMaterial.hasOwnProperty('diffuseColorTextureId')) {
-    const diffTex = usd.getTexture(usdMaterial.diffuseColorTextureId);
-
-    const img = usd.getImage(diffTex.textureImageId);
-    console.log(img);
-
-    // assume RGBA for now.
-    let image8Array = new Uint8ClampedArray(img.data);
-    let imgData = new ImageData(image8Array, img.width, img.height);
-
-    const texture = new THREE.DataTexture( imgData, img.width, img.height );
-    texture.flipY = true;
-    texture.needsUpdate = true;
-    
-    material = new THREE.MeshBasicMaterial({
-      map: texture
-    });
-  } else {
-    material = new THREE.MeshNormalMaterial();
-  }
-   
-
-  // Assume triangulated indices.
-  geometry.setIndex( new THREE.Uint32BufferAttribute(mesh.faceVertexIndices, 1) );
-
-  geometry.computeVertexNormals();
-
-  //const material = new THREE.MeshBasicMaterial( { color: 0x00ff00 } );
-  const cube = new THREE.Mesh( geometry, material );
-  scene.add( cube );
-
-  //camera.position.z = 25;
-  camera.position.z = 1.0;
 
   function animate() {
 
-    //cube.rotation.x += 0.01;
-    cube.rotation.y += 0.02;
+    for (const rootNode of rootNodes) {
+      rootNode.rotation.y += 0.01 * ui_state['rot_scale'];
+      rootNode.rotation.x += 0.02 * ui_state['rot_scale'];
+    }
 
-    renderer.render( scene, camera );
+    camera.position.z = ui_state['camera_z'];
+
+    if (ui_state['needsMtlUpdate']) {
+
+      // TODO: Cache materials in the scene.
+      scene.traverse((object) => {
+        if (object.material) {
+          if (Object.prototype.hasOwnProperty.call(object.material, 'envMapIntensity')) {
+            object.material.envMapIntensity = ui_state['envMapIntensity'];
+            object.material.needsUpdate = true;
+          }
+        }
+      });
+
+      ui_state['needsMtlUpdate'] = false;
+    }
+
+    renderer.render(scene, camera);
 
   }
-});
+
+  renderer.setAnimationLoop(animate);
+}
+
+initScene();

@@ -1,0 +1,33 @@
+#usda 1.0
+
+def Xform "root_pbr" (
+    customData = {
+        dictionary Blender = {
+            bool generated = 1
+        }
+    }
+)
+{
+    def Scope "_materials"
+    {
+        def Material "Material_001"
+        {
+            token outputs:surface.connect = </root_pbr/_materials/Material_001/Principled_BSDF.outputs:surface>
+            custom string userProperties:blender:data_name = "Material.001"
+
+            def Shader "Principled_BSDF"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.44181473, 0.80033877, 0.24098793)
+                float inputs:ior = 1.5
+                float inputs:metallic = 0.38488
+                float inputs:clearcoat = 0.52921
+                float inputs:clearcoatRoughness = 0.03
+                float inputs:roughness = 0.5
+                float inputs:opacity = 1
+                token outputs:surface
+                float inputs:specular = 0.5
+            }
+        }
+    }
+}

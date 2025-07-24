@@ -559,6 +559,16 @@ class Path {
   bool has_prefix(const Path &rhs) const;
 
   ///
+  /// Replace Prim path prefix.
+  /// example.
+  /// srcPrefix = /bora/dora
+  /// dstPrefix = /bora2/dora2
+  /// 
+  /// /bora/dora/muda -> /bora2/dora2/muda 
+  ///
+  bool replace_prefix(const Path &srcPrefix, const Path &dstPrefix);
+
+  ///
   /// @returns true if a path is '/' only
   ///
   bool is_root_path() const {
@@ -662,6 +672,8 @@ class Path {
   }
 
  private:
+  void _update(const std::string &p, const std::string &prop);
+
   std::string _prim_part;     // e.g. /Model/MyMesh, MySphere
   std::string _prop_part;     // e.g. visibility (`.` is not included)
   std::string _variant_part;  // e.g. `variantColor` for {variantColor=green}
@@ -1085,6 +1097,7 @@ struct AttrMetas {
   nonstd::optional<Dictionary> sdrMetadata; // NOTE: applies to attr(also seen in prim meta)
 
   nonstd::optional<std::string> displayName;  // 'displayName'
+  nonstd::optional<std::string> displayGroup;  // 'displayGroup'
 
 
   //
@@ -1113,7 +1126,7 @@ struct AttrMetas {
 
   bool authored() const {
     return (interpolation || elementSize || hidden || customData || weight ||
-            connectability || outputName || renderType || sdrMetadata || displayName || bindMaterialAs || meta.size() || stringData.size());
+            connectability || outputName || renderType || sdrMetadata || displayName || displayGroup || bindMaterialAs || meta.size() || stringData.size());
   }
 };
 
@@ -2980,14 +2993,26 @@ struct XformOp {
     return get_scalar();
   }
 
-  // Type-safe way to get concrete 'default' value.
   template <class T>
-  nonstd::optional<T> get_value() const {
+  nonstd::optional<T> get_value(double t = value::TimeCode::Default(), 
+          value::TimeSampleInterpolationType interp =
+               value::TimeSampleInterpolationType::Linear) const {
     if (is_timesamples()) {
+      T value{};
+      if (get_interpolated_value(&value, t, interp)) {
+        return value;
+      }
       return nonstd::nullopt;
     }
 
     return _var.get_value<T>();
+  }
+
+  template <class T>
+  bool get_interpolated_value(T *dst, double t = value::TimeCode::Default(),
+           value::TimeSampleInterpolationType interp =
+               value::TimeSampleInterpolationType::Linear) const {
+    return _var.get_interpolated_value<T>(t, interp, dst);
   }
 
   const primvar::PrimVar &get_var() const { return _var; }
@@ -4170,7 +4195,7 @@ class PrimSpec {
 
   std::map<std::string, VariantSetSpec> _variantSets;
 
-  std::vector<value::token> _primChildren;  // List of child PrimSPec nodes
+  std::vector<value::token> _primChildren;  // List of child PrimSpec nodes
   std::vector<value::token> _properties;    // List of property names
   std::vector<value::token> _variantChildren;
 
@@ -4218,6 +4243,9 @@ struct LayerMetas {
   value::StringData comment;  // 'comment' In Stage meta, comment must be string
                               // only(`comment = "..."` is not allowed)
   value::StringData doc;      // `documentation`
+
+  // UsdPhysics
+  TypedAttributeWithFallback<double> kilogramsPerUnit{1.0};
 
   CustomDataType customLayerData;  // customLayerData
 

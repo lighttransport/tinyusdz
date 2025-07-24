@@ -363,6 +363,13 @@ struct GPrim : Xformable, MaterialBinding, Collection {
 
   bool get_displayOpacity(float *opacity, const double t = value::TimeCode::Default(), const value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear) const;
 
+  const std::vector<value::color3f> get_displayColors(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
+
+  Interpolation get_displayColorsInterpolation() const;
+
   RelationshipProperty proxyPrim;
 
 #if 0
@@ -797,14 +804,14 @@ struct GeomMesh : GPrim {
   ///
   /// @return face vertex counts vector(copied)
   ///
-  const std::vector<int32_t> get_faceVertexCounts() const;
+  const std::vector<int32_t> get_faceVertexCounts(double time = value::TimeCode::Default()) const;
 
   ///
   /// @brief Returns `faceVertexIndices`.
   ///
   /// @return face vertex indices vector(copied)
   ///
-  const std::vector<int32_t> get_faceVertexIndices() const;
+  const std::vector<int32_t> get_faceVertexIndices(double time = value::TimeCode::Default()) const;
 
   //
   // SubD attribs.
@@ -895,6 +902,9 @@ struct GeomMesh : GPrim {
   std::vector<GeomSubset> geom_subset_children;
 
 #endif
+
+  // Get Explicit Joint orders: `uniform token[] skel:joints`
+  std::vector<value::token> get_joints() const;
 
 #if 0 // Deprecated: Use tydra::GetGeomSubsets() instead.
   ///
