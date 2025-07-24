@@ -381,20 +381,20 @@ bool MCPServer::Impl::init(int port, const std::string &host) {
     return {};
   });
 
-  register_method("resources/list",[](const nlohmann::json &params, const std::string &sess_id, std::string &err) -> nlohmann::json {
+  register_method("resources/list",[this](const nlohmann::json &params, const std::string &sess_id, std::string &err) -> nlohmann::json {
 
     (void)err;
     (void)params;
     (void)sess_id;
 
     nlohmann::json j;
-    mcp::GetResourcesList(j);
+    mcp::GetResourcesList(mcp_ctx_, j);
     
     return j;
 
   });
 
-  register_method("resources/read",[](const nlohmann::json &params, const std::string &sess_id, std::string &err) -> nlohmann::json {
+  register_method("resources/read",[this](const nlohmann::json &params, const std::string &sess_id, std::string &err) -> nlohmann::json {
 
     (void)err;
     (void)params;
@@ -407,7 +407,7 @@ bool MCPServer::Impl::init(int port, const std::string &host) {
 
     std::string uri = params["uri"];
     nlohmann::json result;
-    if (!mcp::ReadResource(uri, result)) {
+    if (!mcp::ReadResource(mcp_ctx_, uri, result)) {
       err += "Failed to read resource: " + uri;
       return {};
     }
@@ -416,14 +416,14 @@ bool MCPServer::Impl::init(int port, const std::string &host) {
 
   });
 
-  register_method("tools/list",[](const nlohmann::json &params, const std::string &sess_id, std::string &err) -> nlohmann::json {
+  register_method("tools/list",[this](const nlohmann::json &params, const std::string &sess_id, std::string &err) -> nlohmann::json {
 
     (void)err;
     (void)params;
     (void)sess_id;
 
     nlohmann::json j;
-    mcp::GetToolsList(j);
+    mcp::GetToolsList(mcp_ctx_, j);
     
     return j;
 

@@ -1,9 +1,12 @@
+#include <string>
+
 #include "mcp-tools.hh"
 #include "mcp-server.hh"
 #include "mcp-context.hh"
-#include <string>
 #include "tinyusdz.hh"
 #include "uuid-gen.hh"
+#include "str-util.hh"
+#include "pprinter.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -21,8 +24,30 @@ namespace tydra {
 namespace mcp {
 
 namespace {
+
+inline std::string decode_datauri(const std::string &data) {
+
+  const std::string prefix = "data:application/octet-stream;base64,";
+
+  if (!startsWith(data, prefix)) {
+    return {};
+  }
+
+  if (data.size() <= prefix.size()) {
+    return {};
+  }
+
+  // TODO: save memory
+  std::string binary = base64_decode(removePrefix(data, prefix));
+
+  return binary;
+
+
+}
+
 bool GetVersion(nlohmann::json &result);
 bool LoadUSDLayerFromFile(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err);
+bool LoadUSDLayerFromDataURI(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err);
 
 
 bool GetVersion(nlohmann::json &result) {
@@ -83,7 +108,65 @@ bool LoadUSDLayerFromFile(Context &ctx, const nlohmann::json &args, nlohmann::js
   usd_layer.layer = std::move(layer);
 
   ctx.layers.emplace(uuid, std::move(usd_layer));
-  ctx.resources.insert(uuid);
+  ctx.resources.emplace(uri, uuid);
+
+  DCOUT("loaded USD as Layer");
+
+  nlohmann::json content;
+  content["type"] = "text";
+  content["text"] = uuid;
+
+  result["content"] = nlohmann::json::array();
+  result["content"].push_back(content);
+
+  return true;
+}
+
+bool LoadUSDLayerFromDataURI(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+  DCOUT("args " << args);
+  if (!args.contains("uri")) {
+    DCOUT("uri param not found");
+    err = "`uri` param not found.\n";
+    return false; 
+  }
+  if (!args.contains("name")) {
+    DCOUT("name param not found");
+    err = "`name` param not found.\n";
+    return false; 
+  }
+
+  std::string name = args["name"];
+
+  std::string binary = decode_datauri(args.at("uri"));
+  
+  Layer layer;
+  std::string warn;
+  USDLoadOptions options; 
+  if (!LoadLayerFromMemory(reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(), name, &layer, &warn, &err, options)) {
+    DCOUT("Failed to load layer from DataURI: " << err);
+    err = "Failed to load layer from DataURI: " + err + "\n";
+    return false;
+  }
+
+  if (!warn.empty()) {
+    result["warnings"] = warn;
+  }
+
+  std::string uuid = generateUUID();
+
+  if (ctx.layers.count(uuid)) {
+    DCOUT("uuid conflict");
+    // This should not be happen.
+    err = "Internal error. UUID conflict\n";
+    return false;
+  }
+
+  USDLayer usd_layer;
+  usd_layer.uri = name;
+  usd_layer.layer = std::move(layer);
+
+  ctx.layers.emplace(uuid, std::move(usd_layer));
+  ctx.resources.emplace(name, uuid);
 
   DCOUT("loaded USD as Layer");
 
@@ -127,9 +210,47 @@ bool ListPrimSpecs(Context &ctx, const nlohmann::json &args, nlohmann::json &res
   return true;
 }
 
+bool ToUSDA(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+  DCOUT("args " << args);
+  if (!args.contains("uri")) {
+    DCOUT("uri param not found");
+    err = "`uri` param not found.\n";
+    return false; 
+  }
+
+  std::string uri = args.at("uri");
+  
+  if (!ctx.resources.count(uri)) {
+    err = "Resource not found: " + uri + "\n";
+    return false; 
+  }
+
+  std::string uuid = ctx.resources.at(uri);
+
+  if (!ctx.layers.count(uuid)) {
+    // This should not happen though.
+    err = "Internal error. No corresponding Layer found\n";
+    return false;
+  }
+
+  nlohmann::json content;
+  content["type"] = "text";
+  content["mimeType"] = "text/plain";
+
+  const Layer &layer = ctx.layers.at(uuid).layer;
+  std::string str = to_string(layer); // to USDA
+  content["text"] = str;
+
+  result["content"] = nlohmann::json::array();
+  result["content"].push_back(content);
+
+  return true;
+}
+
 } // namespace
 
-bool GetToolsList(nlohmann::json &result) {
+bool GetToolsList(Context &ctx, nlohmann::json &result) {
+  (void)ctx;
 
   result["tools"] = nlohmann::json::array();
 
@@ -150,8 +271,8 @@ bool GetToolsList(nlohmann::json &result) {
 
   {
     nlohmann::json j;
-    j["name"] = "load_usd_layer";
-    j["description"] = "Load USD as Layer from URI(currently local file only)";
+    j["name"] = "load_usd_layer_from_file";
+    j["description"] = "Load USD as Layer from a file(only works in C++ native binary)";
 
     nlohmann::json schema;
     schema["type"] = "object";
@@ -159,6 +280,25 @@ bool GetToolsList(nlohmann::json &result) {
     schema["properties"]["uri"] ={{"type", "string"}};
 
     schema["required"] = nlohmann::json::array({"uri"});
+
+    j["inputSchema"] = schema;
+
+    result["tools"].push_back(j);
+
+  }
+
+  {
+    nlohmann::json j;
+    j["name"] = "load_usd_layer_from_datauri";
+    j["description"] = "Load USD as Layer from DataURI";
+
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    schema["properties"]["uri"] ={{"type", "string"}};
+    schema["properties"]["name"] ={{"type", "string"}};
+
+    schema["required"] = nlohmann::json::array({"uri", "name"});
 
     j["inputSchema"] = schema;
 
@@ -184,6 +324,24 @@ bool GetToolsList(nlohmann::json &result) {
 
   }
 
+  {
+    nlohmann::json j;
+    j["name"] = "to_usda";
+    j["description"] = "Convert USD Layer to USDA text";
+
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    schema["properties"]["uri"] ={{"type", "string"}};
+
+    schema["required"] = nlohmann::json::array({"uri"});
+
+    j["inputSchema"] = schema;
+
+    result["tools"].push_back(j);
+
+  }
+
   std::cout << result << "\n";
 
   return true;
@@ -195,9 +353,15 @@ bool CallTool(Context &ctx, const std::string &tool_name, const nlohmann::json &
 
   if (tool_name == "get_version") {
     return GetVersion(result);
-  } else if (tool_name == "load_usd_layer") {
-    DCOUT("load_usd_layer");
+  } else if (tool_name == "load_usd_layer_from_file") {
+    DCOUT("load_usd_layer_from_file");
     return LoadUSDLayerFromFile(ctx, args, result, err);
+  } else if (tool_name == "to_usda") {
+    DCOUT("to_usda");
+    return ToUSDA(ctx, args, result, err);
+  } else if (tool_name == "load_usd_layer_from_datauri") {
+    DCOUT("load_usd_layer_datauri");
+    return LoadUSDLayerFromDataURI(ctx, args, result, err);
   } else if (tool_name == "list_primspecs") {
     DCOUT("list_primspecs");
     return ListPrimSpecs(ctx, args, result, err);
