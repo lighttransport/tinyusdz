@@ -71,7 +71,7 @@ source_group("Source Files" FILES ${SOURCES})
 if (EMSCRIPTEN)
 
     if (TINYUSDZ_WASM_DEMODEV)
-      set(OUTPUT_WASM_DIR ${PROJECT_SOURCE_DIR}/demo/node_modules/tinyusdz/)
+      set(OUTPUT_WASM_DIR ${PROJECT_SOURCE_DIR}/mcp-server/node_modules/tinyusdz/)
     else()
       set(OUTPUT_WASM_DIR ${PROJECT_SOURCE_DIR}/js/src/tinyusdz/)
     endif()

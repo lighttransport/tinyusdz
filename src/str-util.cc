@@ -5,6 +5,10 @@
 #include "unicode-xid.hh"
 #include "common-macros.inc"
 
+#ifdef __SSE2__
+#include <emmintrin.h>
+#endif
+
 namespace tinyusdz {
 
 std::string buildEscapedAndQuotedStringForUSDA(const std::string &str) {
@@ -749,9 +753,12 @@ double atof(const std::string &s) {
 #pragma clang diagnostic ignored "-Wconversion"
 #endif
 
+#ifdef __SSE2__
+#else
 static inline bool is_base64(unsigned char c) {
   return (isalnum(c) || (c == '+') || (c == '/'));
 }
+#endif
 
 std::string base64_encode(unsigned char const *bytes_to_encode,
                           unsigned int in_len) {
@@ -798,7 +805,133 @@ std::string base64_encode(unsigned char const *bytes_to_encode,
   return ret;
 }
 
+// SSE2-optimized base64 decode implementation
+#ifdef __SSE2__
+static std::string base64_decode_sse(std::string const &encoded_string) {
+  const size_t input_len = encoded_string.size();
+  if (input_len == 0) return std::string();
+  
+  // Lookup table for base64 decoding (256 entries, -1 for invalid chars)
+  static const int8_t decode_table[256] = {
+    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1,
+    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1,
+    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,62, -1,-1,-1,63,
+    52,53,54,55, 56,57,58,59, 60,61,-1,-1, -1,-2,-1,-1,
+    -1, 0, 1, 2,  3, 4, 5, 6,  7, 8, 9,10, 11,12,13,14,
+    15,16,17,18, 19,20,21,22, 23,24,25,-1, -1,-1,-1,-1,
+    -1,26,27,28, 29,30,31,32, 33,34,35,36, 37,38,39,40,
+    41,42,43,44, 45,46,47,48, 49,50,51,-1, -1,-1,-1,-1,
+    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1,
+    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1,
+    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1,
+    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1,
+    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1,
+    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1,
+    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1,
+    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1
+  };
+  
+  // Calculate output size (remove padding)
+  size_t padding = 0;
+  if (input_len >= 1 && encoded_string[input_len - 1] == '=') padding++;
+  if (input_len >= 2 && encoded_string[input_len - 2] == '=') padding++;
+  
+  const size_t output_len = (input_len * 3) / 4 - padding;
+  std::string result;
+  result.reserve(output_len);
+  
+  const uint8_t* input = reinterpret_cast<const uint8_t*>(encoded_string.data());
+  size_t input_pos = 0;
+  
+  // Process 16 bytes at a time using SSE2
+  while (input_pos + 16 <= input_len) {
+    // Load 16 input bytes
+    __m128i input_chunk = _mm_loadu_si128(reinterpret_cast<const __m128i*>(input + input_pos));
+    
+    // Decode using lookup table (split into two 8-byte chunks for table lookup)
+    alignas(16) uint8_t input_bytes[16];
+    _mm_store_si128(reinterpret_cast<__m128i*>(input_bytes), input_chunk);
+    
+    alignas(16) int8_t decoded[16];
+    bool valid = true;
+    
+    for (int i = 0; i < 16; i++) {
+      decoded[i] = decode_table[input_bytes[i]];
+      if (decoded[i] < 0 && input_bytes[i] != '=') {
+        valid = false;
+        break;
+      }
+    }
+    
+    if (!valid) break; // Fall back to scalar processing for invalid chars
+    
+    // Pack groups of 4 decoded bytes into 3 output bytes
+    for (int group = 0; group < 4; group++) {
+      if (input_pos + group * 4 + 3 >= input_len) break;
+      
+      int base_idx = group * 4;
+      if (decoded[base_idx] >= 0 && decoded[base_idx + 1] >= 0 && 
+          decoded[base_idx + 2] >= 0 && decoded[base_idx + 3] >= 0) {
+        
+        uint32_t combined = (static_cast<uint32_t>(decoded[base_idx]) << 18) |
+                           (static_cast<uint32_t>(decoded[base_idx + 1]) << 12) |
+                           (static_cast<uint32_t>(decoded[base_idx + 2]) << 6) |
+                           static_cast<uint32_t>(decoded[base_idx + 3]);
+        
+        result.push_back(static_cast<char>((combined >> 16) & 0xFF));
+        result.push_back(static_cast<char>((combined >> 8) & 0xFF));
+        result.push_back(static_cast<char>(combined & 0xFF));
+      }
+    }
+    
+    input_pos += 16;
+  }
+  
+  // Process remaining bytes with scalar code
+  while (input_pos + 4 <= input_len) {
+    uint8_t a = input[input_pos];
+    uint8_t b = input[input_pos + 1];
+    uint8_t c = input[input_pos + 2];
+    uint8_t d = input[input_pos + 3];
+    
+    if (a == '=' || b == '=') break;
+    
+    int8_t da = decode_table[a];
+    int8_t db = decode_table[b];
+    int8_t dc = decode_table[c];
+    int8_t dd = decode_table[d];
+    
+    if (da < 0 || db < 0) break;
+    
+    uint32_t combined = (static_cast<uint32_t>(da) << 18) |
+                       (static_cast<uint32_t>(db) << 12);
+    
+    result.push_back(static_cast<char>((combined >> 16) & 0xFF));
+    
+    if (c != '=' && dc >= 0) {
+      combined |= static_cast<uint32_t>(dc) << 6;
+      result.push_back(static_cast<char>((combined >> 8) & 0xFF));
+      
+      if (d != '=' && dd >= 0) {
+        combined |= static_cast<uint32_t>(dd);
+        result.push_back(static_cast<char>(combined & 0xFF));
+      }
+    }
+    
+    input_pos += 4;
+  }
+  
+  return result;
+}
+#endif // __SSE2__
+
+// Fallback implementation (original)
 std::string base64_decode(std::string const &encoded_string) {
+#ifdef __SSE2__
+  // Use SSE2 optimized version if available
+  return base64_decode_sse(encoded_string);
+#else
+  // Original scalar implementation
   int in_len = static_cast<int>(encoded_string.size());
   int i = 0;
   int j = 0;
@@ -847,6 +980,7 @@ std::string base64_decode(std::string const &encoded_string) {
   }
 
   return ret;
+#endif // __SSE2__
 }
 #ifdef __clang__
 #pragma clang diagnostic pop
