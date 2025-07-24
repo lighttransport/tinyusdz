@@ -400,4 +400,8 @@ inline std::string join(const std::string& sep, It& v)
 double atof(const char *s);
 double atof(const std::string &s);
 
+std::string base64_encode(unsigned char const *bytes_to_encode,
+                          unsigned int in_len);
+std::string base64_decode(std::string const &encoded_string);
+
 }  // namespace tinyusdz
