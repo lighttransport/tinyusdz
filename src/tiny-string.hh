@@ -171,10 +171,10 @@ struct tstring_view {
     _s = s;
   }
 
-  constexpr tstring_view(const std::string &s) : tstring_view(s.c_str()) { 
+  tstring_view(const std::string &s) : tstring_view(s.c_str()) { 
   }
 
-  constexpr tstring_view(const tstring &s) : tstring_view(s.c_str()) { 
+  tstring_view(const tstring &s) : tstring_view(s.c_str()) { 
   }
 
   bool operator==(const tstring_view &rhs) {

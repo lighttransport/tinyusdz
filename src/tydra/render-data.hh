@@ -147,6 +147,8 @@ enum class NodeType {
   // TODO(more lights)...
 };
 
+std::string to_string(NodeType ntype);
+
 enum class ComponentType {
   UInt8,
   Int8,
@@ -590,7 +592,7 @@ struct TextureImage {
 
   ColorSpace colorSpace{ColorSpace::sRGB};  // color space of texel data.
   ColorSpace usdColorSpace{
-      ColorSpace::sRGB};  // original color space info in UsdUVTexture
+      ColorSpace::sRGB};  // original color space info in UsdUVTexture(asset meta or sourceColorSpace attrib)
 
   int32_t width{-1};
   int32_t height{-1};
@@ -599,6 +601,7 @@ struct TextureImage {
 
   int64_t buffer_id{-1};  // index to buffer_id(texel data)
 
+  bool decoded{false}; // true if texture data(buffer_id) is decoded. false if buffer_id contains raw image data(e.g. JPEG data)
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
 };
 

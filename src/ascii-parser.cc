@@ -350,6 +350,10 @@ static void RegisterStageMetas(
   metas["subLayers"] = AsciiParser::VariableDef(value::kAssetPath, "subLayers",
                                                 /* allow array type */ true);
 
+  // UsdPhysics
+  metas["kilogramsPerUnit"] =
+      AsciiParser::VariableDef(value::kDouble, "kilogramsPerUnit");
+
   // USDZ extension
   metas["autoPlay"] = AsciiParser::VariableDef(value::kBool, "autoPlay");
   metas["playbackMode"] =
@@ -413,6 +417,7 @@ static void RegisterPrimMetas(
   // Builtin from pxrUSD 23.xx
   metas["displayName"] =
       AsciiParser::VariableDef(value::kString, "displayName");
+
 }
 
 static void RegisterPropMetas(
@@ -455,6 +460,10 @@ static void RegisterPropMetas(
   // Builtin from pxrUSD 23.xx
   metas["displayName"] =
       AsciiParser::VariableDef(value::kString, "displayName");
+
+  // Builtin from pxrUSD 24.xx?
+  metas["displayGroup"] =
+      AsciiParser::VariableDef(value::kString, "displayGroup");
 }
 
 static void RegisterPrimAttrTypes(std::set<std::string> &d) {
@@ -1883,6 +1892,17 @@ bool AsciiParser::ParseStageMetaOpt() {
       _stage_metas.metersPerUnit = pvd.value();
     } else {
       PUSH_ERROR_AND_RETURN("`metersPerUnit` isn't a floating-point value.");
+    }
+  } else if (varname == "kilogramsPerUnit") {
+    DCOUT("ty = " << var.type_name());
+    if (auto pv = var.get_value<float>()) {
+      DCOUT("kilogramsPerUnit = " << pv.value());
+      _stage_metas.kilogramsPerUnit = double(pv.value());
+    } else if (auto pvd = var.get_value<double>()) {
+      DCOUT("kilogramsPerUnit = " << pvd.value());
+      _stage_metas.kilogramsPerUnit = pvd.value();
+    } else {
+      PUSH_ERROR_AND_RETURN("`kilogramsPerUnit` isn't a floating-point value.");
     }
   } else if (varname == "timeCodesPerSecond") {
     DCOUT("ty = " << var.type_name());
@@ -3374,6 +3394,13 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
         }
         DCOUT("displayName: " << str);
         out_meta->displayName = str;
+      } else if (varname == "displayGroup") {
+        std::string str;
+        if (!ReadStringLiteral(&str)) {
+          PUSH_ERROR_AND_RETURN("Failed to parse `displayGroup`(string type)");
+        }
+        DCOUT("displayGroup: " << str);
+        out_meta->displayGroup = str;
 
       } else if (varname == "connectability") {
         value::token tok;

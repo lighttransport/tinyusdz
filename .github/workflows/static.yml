@@ -2,9 +2,8 @@
 name: Deploy static content to Pages
 
 on:
-  # Runs on pushes targeting the default branch
   push:
-    branches: ["dev"]
+    branches: ["web", "npm-refactor", "npm"]
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
@@ -39,10 +38,8 @@ jobs:
           git clone https://github.com/emscripten-core/emsdk.git
           cd emsdk
           # from https://github.com/Twinklebear/webgpu-cpp-usdz/blob/main/.github/workflows/deploy-page.yml
-          # TODO: 3.1.52 has a change to WebGPU API that is incompatible
-          # with the C++ bindings I have in the repo?
-          ./emsdk install 3.1.51
-          ./emsdk activate 3.1.51
+          ./emsdk install 4.0.9
+          ./emsdk activate 4.0.9
       - name: Configure
         run: |
           source ./emsdk/emsdk_env.sh
@@ -59,9 +56,8 @@ jobs:
       - name: otherasserts
         working-directory: ${{ github.workspace }}/web/demo
         run: |
-          cp UsdCookie.usdz ../dist
-          cp index.html ../dist
-          cp main.js ../dist
+          bun install
+          bun run build
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -69,8 +65,8 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # Upload web/dist folder
-          path: ${{ github.workspace }}/web/dist
+          # Upload web/demo/dist folder
+          path: ${{ github.workspace }}/web/demo/dist
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

@@ -15,6 +15,7 @@
 //   - [x] Support SkelAnimation
 //     - [x] joint animation
 //     - [x] blendshape animation
+//     - [x] explicit joint order
 //   - [ ] Support Inbetween BlendShape
 //   - [ ] Support material binding collection(Collection API)
 //   - [ ] Support multiple skel animation
@@ -3049,7 +3050,7 @@ bool RenderSceneConverter::ConvertMesh(
           env.stage, mesh, env.mesh_config.default_texcoords_primvar_name,
           env.timecode, env.tinterp);
       if (ret) {
-        const VertexAttribute vattr = ret.value();
+        const VertexAttribute &vattr = ret.value();
 
         // Use slotId 0
         uvAttrs[0] = vattr;
@@ -3704,6 +3705,7 @@ bool RenderSceneConverter::ConvertMesh(
       if (skelPath.is_valid()) {
         SkelHierarchy skel;
         nonstd::optional<Animation> anim;
+        // TODO: cache skeleton conversion
         if (!ConvertSkeletonImpl(env, mesh, &skel, &anim)) {
           return false;
         }
@@ -3736,11 +3738,51 @@ bool RenderSceneConverter::ConvertMesh(
         } else {
           skel_id = int(skeletons.size());
           skeletons.emplace_back(std::move(skel));
+          DCOUT("add skeleton\n");
         }
 
         dst.skel_id = skel_id;
 
       }
+    }
+
+    // Explicit joint orders
+    // If the mesh has `skel:joints`, remap jointIndex.
+    {
+      std::vector<value::token> joints = mesh.get_joints();
+      //if ((dst.skel_id >= 0) && joints.size()) {
+      //  DCOUT("has explicit joint orders.\n");
+      //}
+
+      const auto &skel = skeletons[size_t(dst.skel_id)];
+
+      std::map<std::string, int> name_to_index_map = BuildSkelNameToIndexMap(skel);
+
+      std::unordered_map<int, int> index_remap;
+
+      for (size_t i = 0; i < joints.size(); i++) {
+        std::string joint_name = joints[i].str();
+        
+        if (!name_to_index_map.count(joint_name)) {
+          PUSH_ERROR_AND_RETURN(fmt::format("joint_name {} not found in Skeleton", joint_name));
+        }
+
+        int dst_idx = name_to_index_map.at(joint_name);
+        index_remap[int(i)] = dst_idx;
+
+        //DCOUT("remap " << i << " to " << dst_idx);
+      }
+
+      for (size_t i = 0; i < dst.joint_and_weights.jointIndices.size(); i++) {
+        int src_idx = dst.joint_and_weights.jointIndices[i];
+        if (index_remap.count(src_idx)) {
+          int dst_idx = index_remap[src_idx];
+
+          dst.joint_and_weights.jointIndices[i] = dst_idx;
+          //DCOUT("jointIndex modified: remap " << src_idx << " to " << dst_idx);
+        }
+      }
+
     }
 
     // geomBindTransform(optional).
@@ -4223,6 +4265,53 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
                   prim->prim_type_name()));
 }
 
+static bool RawAssetRead(
+    const value::AssetPath &assetPath, const AssetInfo &assetInfo,
+    const AssetResolutionResolver &assetResolver,
+    Asset *assetOut,
+    std::string &resolvedPathOut,
+    void *userdata, std::string *warn,
+    std::string *err) {
+  if (!assetOut) {
+    if (err) {
+      (*err) = "`assetOut` argument is nullptr\n";
+    }
+    return false;
+  }
+
+  // TODO: assetInfo
+  (void)assetInfo;
+  (void)userdata;
+  (void)warn;
+
+  std::string resolvedPath = assetResolver.resolve(assetPath.GetAssetPath());
+
+  if (resolvedPath.empty()) {
+    if (err) {
+      (*err) += fmt::format("Failed to resolve asset path: {}\n",
+                            assetPath.GetAssetPath());
+    }
+    return false;
+  }
+
+  Asset asset;
+  bool ret = assetResolver.open_asset(resolvedPath, assetPath.GetAssetPath(),
+                                      &asset, warn, err);
+  if (!ret) {
+    if (err) {
+      (*err) += fmt::format("Failed to open asset: {}", resolvedPath);
+    }
+    return false;
+  }
+
+  DCOUT("Resolved asset path = " << resolvedPath);
+
+  resolvedPathOut = resolvedPath;
+  (*assetOut) = std::move(asset);
+
+  return true;
+}
+
 }  // namespace
 
 // Convert UsdUVTexture shader node.
@@ -4309,11 +4398,43 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
 
       // store unresolved asset path.
       texImage.asset_identifier = assetPath.GetAssetPath();
+      texImage.decoded = true;
 
     } else {
-      // store resolved asset path.
-      texImage.asset_identifier =
-          env.asset_resolver.resolve(assetPath.GetAssetPath());
+
+      Asset asset;
+      std::string resolvedPath;
+      if (RawAssetRead(assetPath, assetInfo, env.asset_resolver, &asset, resolvedPath, /* userdata */nullptr, /* warn */nullptr, &err )) {
+        
+        // store resolved asset path.
+        texImage.asset_identifier = resolvedPath;
+        
+
+        BufferData imageBuffer;
+        imageBuffer.componentType = tydra::ComponentType::UInt8;
+
+        imageBuffer.data.resize(asset.size());
+        memcpy(imageBuffer.data.data(), asset.data(), asset.size());
+
+        // Assign buffer id
+        texImage.buffer_id = int64_t(buffers.size());
+
+        // TODO: Share image data as much as possible.
+        // e.g. Texture A and B uses same image file, but texturing parameter is
+        // different.
+        buffers.emplace_back(imageBuffer);
+        
+        texImage.decoded = false;
+        DCOUT("texture image is read, but not decoded.");
+      
+      } else {
+        // store resolved asset path.
+        texImage.asset_identifier = env.asset_resolver.resolve(assetPath.GetAssetPath());
+        texImage.decoded = false;
+
+        DCOUT("store asset path.");
+      }
+
     }
 
     // colorSpace.
@@ -4578,6 +4699,21 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
       ss << "  colorSpace " << tinyusdz::tydra::to_string(texImage.colorSpace)
          << "\n";
       PushInfo(ss.str());
+    } else {
+
+      tex.texture_image_id = int64_t(images.size());
+
+      images.emplace_back(texImage);
+
+      std::stringstream ss;
+      ss << "Loaded texture image " << assetPath.GetAssetPath()
+         << " : buffer_id " + std::to_string(texImage.buffer_id) << "\n";
+      ss << "  width x height x components " << texImage.width << " x "
+         << texImage.height << " x " << texImage.channels << "\n";
+      ss << "  colorSpace " << tinyusdz::tydra::to_string(texImage.colorSpace)
+         << "\n";
+      PushInfo(ss.str());
+
     }
   }
 
@@ -5259,6 +5395,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
             visitorEnv->env->stage, /* GeomMesh prim path */ abs_path,
             /* purpose */ "", &bound_material_path, &bound_material, err);
 
+        DCOUT("Bound material found: " << ret);
         if (ret && bound_material) {
           int64_t rmaterial_id = -1;  // not used
 
@@ -5920,6 +6057,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
       render_scene.default_root_node = uint32_t(default_node);
     }
   }
+
   render_scene.nodes = std::move(root_nodes);
   render_scene.meshes = std::move(meshes);
   render_scene.textures = std::move(textures);
@@ -6142,6 +6280,7 @@ bool DefaultTextureImageLoaderFunction(
   return true;
 }
 
+
 std::string to_string(ColorSpace cty) {
   std::string s;
   switch (cty) {
@@ -6233,6 +6372,23 @@ bool InferColorSpace(const value::token &tok, ColorSpace *cty) {
   }
 
   return true;
+}
+
+std::string to_string(NodeType ntype) {
+  if (ntype == NodeType::Xform) {
+    return "xform";
+  } else if (ntype == NodeType::Mesh) {
+    return "mesh";
+  } else if (ntype == NodeType::Camera) {
+    return "camera";
+  } else if (ntype == NodeType::PointLight) {
+    return "pointLight";
+  } else if (ntype == NodeType::DirectionalLight) {
+    return "directionalLight";
+  } else if (ntype == NodeType::Skeleton) {
+    return "skeleton";
+  }
+  return "???";
 }
 
 std::string to_string(ComponentType cty) {
@@ -6631,22 +6787,6 @@ std::string DumpVertexAttribute(const VertexAttribute &vattr, uint32_t indent) {
   return ss.str();
 }
 
-inline std::string to_string(NodeType ntype) {
-  if (ntype == NodeType::Xform) {
-    return "xform";
-  } else if (ntype == NodeType::Mesh) {
-    return "mesh";
-  } else if (ntype == NodeType::Camera) {
-    return "camera";
-  } else if (ntype == NodeType::PointLight) {
-    return "pointLight";
-  } else if (ntype == NodeType::DirectionalLight) {
-    return "directionalLight";
-  } else if (ntype == NodeType::Skeleton) {
-    return "skeleton";
-  }
-  return "???";
-}
 
 std::string DumpNode(const Node &node, uint32_t indent) {
   std::stringstream ss;
@@ -7095,6 +7235,8 @@ std::string DumpImage(const TextureImage &image, uint32_t indent) {
   ss << "TextureImage {\n";
   ss << pprint::Indent(indent + 1) << "asset_identifier \""
      << image.asset_identifier << "\"\n";
+  ss << pprint::Indent(indent + 1) << "decoded \""
+     << image.decoded << "\"\n";
   ss << pprint::Indent(indent + 1) << "channels "
      << std::to_string(image.channels) << "\n";
   ss << pprint::Indent(indent + 1) << "width " << std::to_string(image.width)
@@ -7105,6 +7247,8 @@ std::string DumpImage(const TextureImage &image, uint32_t indent) {
      << std::to_string(image.miplevel) << "\n";
   ss << pprint::Indent(indent + 1) << "colorSpace "
      << to_string(image.colorSpace) << "\n";
+  ss << pprint::Indent(indent + 1) << "usdColorSpace "
+     << to_string(image.usdColorSpace) << "\n";
   ss << pprint::Indent(indent + 1) << "bufferID "
      << std::to_string(image.buffer_id) << "\n";
 

@@ -54,10 +54,38 @@ bool AssetResolutionResolver::find(const std::string &assetPath) const {
       return sz > 0;
 
     } else {
-      DCOUT("Either Resolve function or Size function is nullptr. Fallback to built-in file handler.");
+      DCOUT("Either Resolve function or Size function is nullptr. Fallback to wildcard handler or built-in file handler.");
     }
   }
 
+  // wildcard
+  if (_asset_resolution_handlers.count("*")) {
+    if (_asset_resolution_handlers.at("*").resolve_fun && _asset_resolution_handlers.at("*").size_fun) {
+      std::string resolvedPath;
+      std::string err;
+
+      // Use custom handler's userdata
+      void *userdata = _asset_resolution_handlers.at("*").userdata;
+
+      int ret = _asset_resolution_handlers.at("*").resolve_fun(assetPath.c_str(), _search_paths, &resolvedPath, &err, userdata);
+      if (ret != 0) {
+        return false;
+      }
+
+      uint64_t sz{0};
+      ret = _asset_resolution_handlers.at("*").size_fun(resolvedPath.c_str(), &sz, &err, userdata);
+      if (ret != 0) {
+        return false;
+      }
+
+      return sz > 0;
+
+    }
+
+    return false;
+  }  
+
+  // default fallback: File-based 
   if ((_current_working_path == ".") || (_current_working_path == "./")) {
     std::string rpath = io::FindFile(assetPath, {});
   } else {
@@ -95,8 +123,28 @@ std::string AssetResolutionResolver::resolve(
       return resolvedPath;
 
     } else {
-      DCOUT("Resolve function is nullptr. Fallback to built-in file handler.");
+      DCOUT("Resolve function is nullptr. Fallback to wildcard handler or built-in file handler.");
     }
+  }
+
+  if (_asset_resolution_handlers.count("*")) {
+    if (_asset_resolution_handlers.at("*").resolve_fun) {
+      std::string resolvedPath;
+      std::string err;
+
+      // Use custom handler's userdata
+      void *userdata = _asset_resolution_handlers.at("*").userdata;
+
+      int ret = _asset_resolution_handlers.at("*").resolve_fun(assetPath.c_str(), _search_paths, &resolvedPath, &err, userdata);
+      if (ret != 0) {
+        return std::string();
+      }
+
+      return resolvedPath;
+
+    }
+
+    return std::string();
   }
 
   DCOUT("cwd = " << _current_working_path);
@@ -179,6 +227,52 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
     } else {
       DCOUT("Resolve function is nullptr. Fallback to built-in file handler.");
     }
+  }
+
+  if (_asset_resolution_handlers.count("*")) {
+    if (_asset_resolution_handlers.at("*").size_fun && _asset_resolution_handlers.at("*").read_fun) {
+
+      // Use custom handler's userdata
+      void *userdata = _asset_resolution_handlers.at("*").userdata;
+
+      // Get asset size.
+      uint64_t sz{0};
+      int ret = _asset_resolution_handlers.at("*").size_fun(resolvedPath.c_str(), &sz, err, userdata);
+      if (ret != 0) {
+        if (err) {
+          (*err) += "Get size of asset through handler failed.\n";
+        }
+        return false;
+      }
+    
+      DCOUT("asset_size: " << sz);
+
+      tinyusdz::Asset asset;
+      asset.resize(size_t(sz));
+
+      uint64_t read_size{0};
+
+      ret = _asset_resolution_handlers.at("*").read_fun(resolvedPath.c_str(), /* req_size */asset.size(), asset.data(), &read_size, err, userdata);
+
+      if (ret != 0) {
+        if (err) {
+          (*err) += "Read asset through handler failed.\n";
+        }
+        return false;
+      }
+
+      if (read_size < sz) {
+        asset.resize(size_t(read_size));
+        // May optimize memory usage
+        asset.shrink_to_fit();
+      }
+
+      (*asset_out) = std::move(asset);
+
+      return true;
+    }
+
+    return false;
   }
 
   // Default: read from a file.

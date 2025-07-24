@@ -1,5 +1,5 @@
 # Assume this project is invoked by emcmake.
-cmake_minimum_required(VERSION 3.5.1)
+cmake_minimum_required(VERSION 3.16)
 
 set(BUILD_TARGET "tinyusdz")
 
@@ -17,6 +17,16 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/../cmake)
 #list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/../../cmake/sanitizers)
 #find_package(Sanitizers) # Address sanitizer (-DSANITIZE_ADDRESS=ON)
+
+if (CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
+  # Use Oz to reduce size further than Os
+  set(CMAKE_CXX_FLAGS_MINSIZEREL "-Oz -DNDEBUG")
+endif()
+
+option(TINYUSDZ_WASM_DEMODEV "Demo developer mode(install WASM modules to demo/node_modules/tinyusdz." OFF)
+if (TINYUSDZ_WASM_DEMODEV)
+  message(STATUS "demodev build")
+endif()
 
 # [tinyusdz]
 add_subdirectory(../  tinyusdz)
@@ -44,17 +54,25 @@ target_link_libraries(${BUILD_TARGET} PRIVATE tinyusdz::tinyusdz_static
 source_group("Source Files" FILES ${SOURCES})
 
 if (EMSCRIPTEN)
+
+    if (TINYUSDZ_WASM_DEMODEV)
+      set(OUTPUT_WASM_DIR ${PROJECT_SOURCE_DIR}/demo/node_modules/tinyusdz/)
+    else()
+      set(OUTPUT_WASM_DIR ${PROJECT_SOURCE_DIR}/js/src/tinyusdz/)
+    endif()
+
     set_target_properties(
         ${BUILD_TARGET}
         PROPERTIES OUTPUT_NAME tinyusdz
                    SUFFIX ".js"
-                   RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/dist)
+                   RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_WASM_DIR})
     #set(CMAKE_EXECUTABLE_SUFFIX ".html")
 endif()
 
-# TODO: Adjust memory size.
-# 4MB stack
-set_target_properties(${BUILD_TARGET} PROPERTIES LINK_FLAGS "-sENVIRONMENT='web,worker' -sSTACK_SIZE=4000000 -sASSERTIONS -s ALLOW_MEMORY_GROWTH=1 -sMODULARIZE=1 -sEXPORT_ES6 -sINVOKE_RUN=0 --bind")
+# TODO: Adjust memory size. 
+# 512kB stack
+# NOTE: ASYNCIFY increase the wasm size to around 4~6 MB
+set_target_properties(${BUILD_TARGET} PROPERTIES LINK_FLAGS "-Oz -sENVIRONMENT='web,worker' -sSTACK_SIZE=512000 -sASSERTIONS -s ALLOW_MEMORY_GROWTH=1 -sMODULARIZE=1 -sEXPORT_ES6 -sINVOKE_RUN=0 --bind")
 
 # ENVIRONMENT=web
 # SINGLE_FILE=1

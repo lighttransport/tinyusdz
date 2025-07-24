@@ -2,29 +2,46 @@
 
 `TinyUSDZ` is secure, portable and dependency-free(depends only on C++ STL. Other 3rd-party libraries included. Yes, you don't need pxrUSD/OpenUSD library!) USDZ/USDC/USDA library written in C++14.
 
-[Wasm demo!](https://lighttransport.github.io/tinyusdz/index.html) (requires 10MB file download)
+[![GitHub Sponsors](https://img.shields.io/badge/Sponsor-❤️-pink?logo=github)](https://github.com/sponsors/lighttransport)
 
-<img src="https://github.com/syoyo/tinyusdz/assets/18676/2419ddf6-4410-4bcc-b9c1-466bf29d3b20" width="400px">
-(from https://github.com/syoyo/Vulkan-glTF-USDZ-PBR)
+<p align="center">
+ <a href="https://lighttransport.github.io/tinyusdz/demos.html", target="_blank"> 
+   <img src="screenshots/demos.jpg" width="800px">
+ </a>
+</p>
 
-<img src="https://github.com/lighttransport/tinyusdz/assets/18676/5291f44f-b20a-4d4a-9b4a-16ffefccddc7" width="400px">
-(from ASF MaterialXViewer fork https://github.com/lighttransport/materialx)
+[![npm version](https://img.shields.io/npm/v/tinyusdz.svg)](https://www.npmjs.com/package/tinyusdz)
 
+## Releases
 
+### 25.07 v0.9.x 
 
+* Robust USDA/USDC/USDZ parsing.
+* Robust USDA writer.
+* Tydra: Convert USD model to OpenGL/Vulkan/Three.js friendly scene graph.
+* Basic USD composition.
+* JS/WASM binding of TinyUSDZ. https://github.com/lighttransport/tinyusdz/tree/release/web
+
+More on the status: https://github.com/lighttransport/tinyusdz/blob/release/doc/status.md
+
+## Branches
+
+* `release` Release branch
+* `dev` Develop branch(merged into `release` after feature freeze and testing)
+  * Basically, use `dev` branch to submit PR 
+* `npm` Branch for NPM packaging&upload(developer only)
+  
 ## High priority
 
-* Prepare Release v0.8
-  * [x] Core part should be ready for the release.
-  * [ ] Support PLY and point primitive for Gaussian Splatting https://github.com/lighttransport/tinyusdz/issues/190
-  * [ ] Write a demo and example viewer(work in progress)
-    * [examples/openglviewer](examples/openglviewer) OpenGL viewer
-    * [examples/sdlviewer](examples/sdlviewer) Software raytracing viewer 
-  * For Vulkan and Android Vulkan example, please refer https://github.com/syoyo/Vulkan-glTF-USDZ-PBR for a while
-  * For OpenGL + MaterialX example, please refer ASF MaterialXViewer fork to load USD model through TinyUSDZ https://github.com/lighttransport/materialx
- 
+* Support MCP interface for AI agents: https://github.com/lighttransport/tinyusdz/issues/243
+
 ## Mid-term todo
 
+* USD import/export feature using TinyUSDZ for robotics/sim2real/digitalTwin/genAI tools https://github.com/lighttransport/tinyusdz/issues/226
+* Write/improve examples and demos 
+  * For Vulkan and Android Vulkan example, please refer https://github.com/syoyo/Vulkan-glTF-USDZ-PBR for a while
+  * For OpenGL + MaterialX example, please refer ASF MaterialXViewer fork to load USD model through TinyUSDZ https://github.com/lighttransport/materialx
+* Support PLY and point primitive for Gaussian Splatting https://github.com/lighttransport/tinyusdz/issues/190
 * Performace optimization https://github.com/syoyo/tinyusdz/issues/164
 * MaterialX https://github.com/syoyo/tinyusdz/issues/86
   * Write our own MaterialX parser
@@ -62,13 +79,13 @@
 
 |         |   Linux                                  |  Windows                              |   macOS   |  iOS   | Android |
 |:-------:|:---------------------------------------- |:------------------------------------- |:---------:|:------:|:-------:|
-| dev     | [![Linux Build](https://github.com/syoyo/tinyusdz/actions/workflows/linux_ci.yml/badge.svg)](https://github.com/syoyo/tinyusdz/actions/workflows/linux_ci.yml) | [![Windows CI build](https://github.com/syoyo/tinyusdz/actions/workflows/windows_ci.yml/badge.svg)](https://github.com/syoyo/tinyusdz/actions/workflows/windows_ci.yml) </br> [![Windows ARM CI build](https://github.com/syoyo/tinyusdz/actions/workflows/windows_arm_ci.yml/badge.svg)](https://github.com/syoyo/tinyusdz/actions/workflows/windows_arm_ci.yml)  | [![macOS Build](https://github.com/syoyo/tinyusdz/actions/workflows/macos_ci.yml/badge.svg)](https://github.com/syoyo/tinyusdz/actions/workflows/macos_ci.yml) | [![iOS Build](https://github.com/syoyo/tinyusdz/actions/workflows/ios_ci.yml/badge.svg)](https://github.com/syoyo/tinyusdz/actions/workflows/ios_ci.yml) | [![Android arm64v8a Build](https://github.com/syoyo/tinyusdz/actions/workflows/android_ci.yml/badge.svg)](https://github.com/syoyo/tinyusdz/actions/workflows/android_ci.yml) |
+| release | [![Linux Build](https://github.com/syoyo/tinyusdz/actions/workflows/linux_ci.yml/badge.svg)](https://github.com/syoyo/tinyusdz/actions/workflows/linux_ci.yml) | [![Windows CI build](https://github.com/syoyo/tinyusdz/actions/workflows/windows_ci.yml/badge.svg)](https://github.com/syoyo/tinyusdz/actions/workflows/windows_ci.yml) </br> [![Windows ARM CI build](https://github.com/syoyo/tinyusdz/actions/workflows/windows_arm_ci.yml/badge.svg)](https://github.com/syoyo/tinyusdz/actions/workflows/windows_arm_ci.yml)  | [![macOS Build](https://github.com/syoyo/tinyusdz/actions/workflows/macos_ci.yml/badge.svg)](https://github.com/syoyo/tinyusdz/actions/workflows/macos_ci.yml) | [![iOS Build](https://github.com/syoyo/tinyusdz/actions/workflows/ios_ci.yml/badge.svg)](https://github.com/syoyo/tinyusdz/actions/workflows/ios_ci.yml) | [![Android arm64v8a Build](https://github.com/syoyo/tinyusdz/actions/workflows/android_ci.yml/badge.svg)](https://github.com/syoyo/tinyusdz/actions/workflows/android_ci.yml) |
 
 ## Supported platforms
 
 |         |   Linux                                  |  Windows                              |   macOS   |  iOS   | Android |  WASM(WASI)                    |  WASM(Emscripten) |
 |:-------:|:---------------------------------------- |:------------------------------------- |:---------:|:------:|:-------:|:------------------------------:|:-----------:|
-|   dev   | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> ✅ ARM64/ARM32  |✅         |✅      |✅       |✅ [sandbox/wasi](sandbox/wasi) | ✅ [sandbox/emscripten](sandbox/emscripten) |
+| release | ✅ 64bit </br> ✅ 32bit </br> ✅ aarch64 | ✅ 64bit </br> ✅ 32bit </br> ✅ ARM64  |✅         |✅      |✅       |❓ [sandbox/wasi](sandbox/wasi) | ✅ [web](web) |
 
 <!--
 ### Python binding(testing. currently not working)
@@ -99,14 +116,10 @@ NOTE: Windows ARM64 binary is provided using cross-compiling. Its not well teste
 
 ## Status
 
-TinyUSDZ is in v0.8.0 release candidate.
 Core loading feature(both USDA and USDC) is now working and production-grade(And no seg fault for corrupted USDA/USDC/USDZ input).
 Somewhat working Tydra framwork for rendering USD model with OpenGL/Vulkan-like renderer. https://github.com/syoyo/tinyusdz/issues/148
 
-v0.8.0 is basically Flattened scene only(i.e, USDA/USDC generated by using pxrUSD's `usdcat --flatten` or USDZ scene).
-Composition features are work-in-progress(experimental Composition feature support in v0.8.0. Better composition feature in next major release v0.9.0(Q3/2024 expected) planned)
-
-Remaining tasks for v0.8.0 release are writing examples, demos and utility functions(Tydra. Especially access to Material/Shader attributes).
+v0.9.0 has better JS/WASM support and some USD composition features(including composition in JS/WASM).
 
 * [x] USDZ/USDC(Crate) parser
   * USDC Crate version v0.8.0(most commonly used version as of 2022 Nov) or higher is supported.
@@ -121,20 +134,20 @@ Remaining tasks for v0.8.0 release are writing examples, demos and utility funct
   * [x] inherits
   * [x] variants
   * [ ] specializes
-  
+* [x] web demo
+        
 **Please see** [doc/status.md](doc/status.md) **for more details**
 
 * [ ] Basic C API(`c-tinyusd`) for language bindings
   * [ ]  [examples/c_api_example](examples/c_api_example)
   * [ ] Basic Python binding
-* [ ] Write simple SDL viewer example(2024 Summer expected)
-* [ ] Write iOS and Android example(2024 Winter expected)
+* [ ] Write simple SDL viewer example(2025 Spring expected)
+* [ ] Write iOS and Android example(2025  expected)
 * [ ] Write Vision OS example?
 * [ ] Vulkan or OptiX/HIP RT raytracing viewer example
 * [ ] USD <-> glTF converter example
   * There is an independent work of USD to glTF binary GLB converter: https://github.com/fynv/usd2glb
-* [ ] Web demo with Three.js?
-  * [ ] Three.js started to support USDZ with Ascii format, but no USDC support yet: https://github.com/mrdoob/three.js/issues/14219
+
 
 ## Discussions
 
@@ -181,7 +194,7 @@ Example viewer is just for demo purpose.
 
 If you need commercial support, eco-system development(e.g. plug-ins, DCC tools on top of TinyUSDZ) or production-grade USDZ model viewer(e.g. embed TinyUSDZ to your AR app, 3D NFT Android mobile viewer capable of displaying (encrypted) USDZ model), please contact Light Transport Entertainment, Inc. : [https://goo.gl/forms/1p6uGcOKWGpXPHkA2 ](https://forms.gle/PeDRAgYM5ET9SjGs5)
 
-We are also looking for sponsors. If you are interested in sponsoring(or donating) to TinyUSDZ project, please also contact Light Transport Entertainment, Inc. for details: [https://goo.gl/forms/1p6uGcOKWGpXPHkA2 ](https://forms.gle/PeDRAgYM5ET9SjGs5)
+We are also looking for sponsors. If you are interested in sponsoring(or donating to) TinyUSDZ project, use Github Sponsors to sponsor TinyUSDZ propject, or contact Light Transport Entertainment, Inc. for details: [https://goo.gl/forms/1p6uGcOKWGpXPHkA2 ](https://forms.gle/PeDRAgYM5ET9SjGs5)
 
 
 ## Projects using TinyUSDZ
@@ -189,7 +202,6 @@ We are also looking for sponsors. If you are interested in sponsoring(or donatin
 * Vulkan-glTF-USDZ-PBR: Example to draw USD model using Vulkan https://github.com/syoyo/Vulkan-glTF-USDZ-PBR
 * usd2glb: USD to glTF 2.0 GLB converter https://github.com/fynv/usd2glb
 * webgpu-cpp-usdz: WebGPU C++/Wasm USDZ Renderer(NOTE: It doesn't support much yet!) https://github.com/Twinklebear/webgpu-cpp-usdz
-* assimp started to integrate TinyUSDZ : https://github.com/assimp/assimp/pull/5628
 * A secret project (*/ω＼*)
 * Several DCC tools, plugins
 * Your projects here!(Please send PR)
@@ -215,7 +227,7 @@ We are also looking for sponsors. If you are interested in sponsoring(or donatin
   * [x] clang-cl + MSVC SDK cross compile
 * [x] WebAssembly
   * Emscripten
-    * See [examples/sdlviewer/](examples/sdlviewer) example.
+    * See [web/demo](web/demo).
 * [x] WASI(through WASI toolchain)
   * See [sandbox/wasi](sandbox/wasi)
 
@@ -470,6 +482,10 @@ See [python/README.md](python/README.md) and [doc/python_binding.md](doc/python_
 
 CI build script is a build script trying to build TinyUSDZ in self-contained manner as much as possible(including custom Python build)
 
+## Build with Sanitizers
+
+See wiki page: https://github.com/lighttransport/tinyusdz/wiki/Building-TinyUSDZ-with-Sanitizers  
+
 ### Linux/macOS
 
 T.B.W.
@@ -553,3 +569,5 @@ Some helper code is licensed under MIT license.
 * nanoflann: 2-clause BSD license. https://github.com/jlblancoc/nanoflann
 * tinymeshutils: MIT license. https://github.com/syoyo/tinymeshutils
 * dragonbox : Apache 2.0 or Boost 1.0 license(tinyusdz prefer Boost 1.0 license) https://github.com/jk-jeon/dragonbox
+* criterion(for benchmark): MIT license. https://github.com/p-ranav/criterion
+* yyjson: MIT license. https://github.com/ibireme/yyjson

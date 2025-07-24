@@ -141,13 +141,13 @@ static nonstd::optional<Animatable<T>> ConvertToAnimatable(const primvar::PrimVa
       const value::TimeSamples::Sample &s = var.ts_raw().get_samples()[i];
 
       // Attribute Block?
-      if (s.blocked) {
+      if (s.blocked || s.value.is_none()) {
         dst.add_blocked_sample(s.t);
       } else if (auto pv = s.value.get_value<T>()) {
         dst.add_sample(s.t, pv.value());
       } else {
         // Type mismatch
-        DCOUT(i << "/" << var.ts_raw().size() << " type mismatch.");
+        DCOUT(i << "/" << var.ts_raw().size() << " type mismatch. expected " << value::TypeTraits<T>::type_name() << ", but got " << s.value.type_name());
         return nonstd::nullopt;
       }
     }
@@ -200,7 +200,7 @@ nonstd::optional<Animatable<Extent>> ConvertToAnimatable(const primvar::PrimVar 
       const value::TimeSamples::Sample &s = var.ts_raw().get_samples()[i];
 
       // Attribute Block?
-      if (s.blocked) {
+      if (s.blocked || s.value.is_none()) {
         dst.add_blocked_sample(s.t);
       } else if (auto pv = s.value.get_value<std::vector<value::float3>>()) {
         if (pv.value().size() == 2) {
@@ -3985,6 +3985,18 @@ bool ReconstructShader<UsdPreviewSurface>(
   (void)references;
   (void)options;
 
+  auto OpacityModeHandler = [](const std::string &tok)
+      -> nonstd::expected<UsdPreviewSurface::OpacityMode, std::string> {
+    using EnumTy = std::pair<UsdPreviewSurface::OpacityMode, const char *>;
+    const std::vector<EnumTy> enums = {
+        std::make_pair(UsdPreviewSurface::OpacityMode::Transparent, "transparent"),
+        std::make_pair(UsdPreviewSurface::OpacityMode::Presence, "presence"),
+    };
+
+    return EnumHandler<UsdPreviewSurface::OpacityMode>(
+        "inputs:opacityMode", tok, enums);
+  };
+
   std::set<std::string> table;
   table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
   for (auto &prop : properties) {
@@ -4004,6 +4016,11 @@ bool ReconstructShader<UsdPreviewSurface>(
                          UsdPreviewSurface, surface->clearcoatRoughness)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:opacity", UsdPreviewSurface,
                          surface->opacity)
+    // From 2.6
+    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, "inputs:opacityMode",
+                       UsdPreviewSurface::OpacityMode, OpacityModeHandler, UsdPreviewSurface,
+                       surface->opacityMode, options.strict_allowedToken_check)
+
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:opacityThreshold",
                          UsdPreviewSurface, surface->opacityThreshold)
     PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:ior", UsdPreviewSurface,

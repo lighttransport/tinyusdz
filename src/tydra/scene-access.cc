@@ -2667,7 +2667,10 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
   std::string index_name = primvar_name + kIndices;
   const auto indexIt = gprim->props.find(index_name);
 
-  if (indexIt != gprim->props.end()) {
+  // Primvar indices are only relevant for non-constant interpolation modes
+  bool constant_interpolation = primvar.get_interpolation() == tinyusdz::Interpolation::Constant;
+
+  if (indexIt != gprim->props.end() && !constant_interpolation) {
     if (indexIt->second.is_attribute()) {
       const Attribute &indexAttr = indexIt->second.get_attribute();
 
@@ -3074,6 +3077,31 @@ bool BuildSkelHierarchy(const Skeleton &skel, SkelNode &dst, std::string *err) {
   dst = root;
 
   return true;
+}
+
+namespace {
+
+void BuildSkelNameToIndexMapRec(const SkelNode &node, std::map<std::string, int> &m) {
+
+  if (node.joint_name.size() && (node.joint_id >= 0)) {
+    m[node.joint_name] = node.joint_id;
+  }
+
+  for (const auto &child : node.children) {
+    BuildSkelNameToIndexMapRec(child, m);
+  }
+
+}
+
+} // namespace
+
+std::map<std::string, int> BuildSkelNameToIndexMap(const SkelHierarchy &skel) {
+
+  std::map<std::string, int> m;
+
+  BuildSkelNameToIndexMapRec(skel.root_node, m);
+  
+  return m;
 }
 
 }  // namespace tydra
