@@ -210,6 +210,97 @@ bool ListPrimSpecs(Context &ctx, const nlohmann::json &args, nlohmann::json &res
   return true;
 }
 
+bool ListScreenshots(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+  (void)args;
+  (void)err;
+
+  result["content"] = nlohmann::json::array();
+
+  for (const auto &it : ctx.screenshots) {
+    nlohmann::json content;
+    content["type"] = "text";
+    content["text"] = it.first; // name
+    result["content"].push_back(content);
+  }
+  
+  return true;
+}
+
+bool SaveScreenshot(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+  DCOUT("args " << args);
+  if (!args.contains("name")) {
+    DCOUT("name param not found");
+    err = "`name` param not found.\n";
+    return false; 
+  }
+  if (!args.contains("data")) {
+    DCOUT("data param not found");
+    err = "`data` param not found.\n";
+    return false; 
+  }
+  if (!args.contains("mimeType")) {
+    DCOUT("mimeType param not found");
+    err = "`mimeType` param not found.\n";
+    return false; 
+  }
+
+  std::string name = args["name"];
+  std::string data = args["data"];
+  std::string mimeType = args["mimeType"];
+
+  Screenshot screenshot;
+  screenshot.uuid = UUIDGenerator::generateUUID();
+  screenshot.data = data;
+  screenshot.mimeType = mimeType;
+
+  ctx.screenshots[name] = screenshot;
+
+  result["content"] = nlohmann::json::array();
+
+  nlohmann::json content;
+  content["type"] = "text";
+  content["text"] = screenshot.uuid;
+  result["content"].push_back(content);
+  
+  return true;
+}
+
+bool ReadScreenshot(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+  DCOUT("args " << args);
+  if (!args.contains("name")) {
+    DCOUT("name param not found");
+    err = "`name` param not found.\n";
+    return false; 
+  }
+
+  std::string name = args["name"];
+
+  if (!ctx.screenshots.count(name)) {
+    DCOUT("Screenshot not found: " << name);
+    err = "Screenshot not found: " + name;
+    return false;
+  }
+
+  const auto &screenshot = ctx.screenshots.at(name);
+
+  result["content"] = nlohmann::json::array();
+
+  nlohmann::json content;
+  content["type"] = "image";
+  content["data"] = screenshot.data; // base64-encoded-data
+  content["mimeType"] = screenshot.mimeType;
+
+  // optional
+  content["annotations"] = nlohmann::json::object();
+  content["annotations"]["audience"] = nlohmann::json::array();
+  content["annotations"]["audience"].push_back("user");
+  content["annotations"]["priority"] = 0.9;
+
+  result["content"].push_back(content);
+  
+  return true;
+}
+
 bool ToUSDA(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
   DCOUT("args " << args);
   if (!args.contains("uri")) {
@@ -342,6 +433,60 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
 
   }
 
+  {
+    nlohmann::json j;
+    j["name"] = "save_screenshot";
+    j["description"] = "Save screenshot image(`data` is a base64 encoded string of image data)";
+
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    schema["properties"]["data"] ={{"type", "string"}};
+    schema["properties"]["name"] ={{"type", "string"}};
+    schema["properties"]["mimeType"] ={{"type", "string"}};
+
+    schema["required"] = nlohmann::json::array({"data", "name", "mimeType"});
+
+    j["inputSchema"] = schema;
+
+    result["tools"].push_back(j);
+
+  }
+
+  {
+    nlohmann::json j;
+    j["name"] = "list_screenshots";
+    j["description"] = "List screenshot image names";
+
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+
+    j["inputSchema"] = schema;
+
+    result["tools"].push_back(j);
+
+  }
+
+  {
+    nlohmann::json j;
+    j["name"] = "read_screenshot";
+    j["description"] = "Read screenshot image";
+
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    schema["properties"]["name"] ={{"type", "string"}};
+
+    schema["required"] = nlohmann::json::array({"name"});
+
+    j["inputSchema"] = schema;
+
+    result["tools"].push_back(j);
+
+  }
+
+
   std::cout << result << "\n";
 
   return true;
@@ -365,6 +510,12 @@ bool CallTool(Context &ctx, const std::string &tool_name, const nlohmann::json &
   } else if (tool_name == "list_primspecs") {
     DCOUT("list_primspecs");
     return ListPrimSpecs(ctx, args, result, err);
+  } else if (tool_name == "list_screenshots") {
+    return ListScreenshots(ctx, args, result, err);
+  } else if (tool_name == "save_screenshot") {
+    return SaveScreenshot(ctx, args, result, err);
+  } else if (tool_name == "read_screenshot") {
+    return ReadScreenshot(ctx, args, result, err);
 #if 0
   } else if (tool_name == "get_texture_asset") {
     return GetTextureAsset(ctx, args, result, err);
