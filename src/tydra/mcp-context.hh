@@ -19,6 +19,13 @@ struct USDLayer
   Layer layer;
 };
 
+struct Screenshot
+{
+  std::string uuid;
+  std::string mimeType;
+  std::string data; // base64 encoded image data.
+};
+
 struct Context
 {
 
@@ -28,6 +35,9 @@ struct Context
 
   // key = URI, value = UUID
   std::unordered_map<std::string, std::string> resources;
+
+  // key = name
+  std::unordered_map<std::string, Screenshot> screenshots;
 };
 
 } // namespace mcp
