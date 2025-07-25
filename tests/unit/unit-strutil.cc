@@ -66,3 +66,134 @@ void tinystring_test(void) {
   TEST_CHECK(v4.ends_with(v2));
 
 }
+
+void parse_int_test(void) {
+  using namespace tinyusdz::str;
+  
+  int32_t result;
+  
+  // Basic positive numbers
+  {
+    tstring_view sv("123");
+    TEST_CHECK(parse_int(sv, &result));
+    TEST_CHECK(result == 123);
+  }
+  
+  // Basic negative numbers
+  {
+    tstring_view sv("-456");
+    TEST_CHECK(parse_int(sv, &result));
+    TEST_CHECK(result == -456);
+  }
+  
+  // Zero
+  {
+    tstring_view sv("0");
+    TEST_CHECK(parse_int(sv, &result));
+    TEST_CHECK(result == 0);
+  }
+  
+  // Positive sign
+  {
+    tstring_view sv("+789");
+    TEST_CHECK(parse_int(sv, &result));
+    TEST_CHECK(result == 789);
+  }
+  
+  // Maximum int32_t value
+  {
+    tstring_view sv("2147483647");
+    TEST_CHECK(parse_int(sv, &result));
+    TEST_CHECK(result == 2147483647);
+  }
+  
+  // Minimum int32_t value
+  {
+    tstring_view sv("-2147483648");
+    TEST_CHECK(parse_int(sv, &result));
+    TEST_CHECK(result == -2147483648);
+  }
+  
+  // Empty string
+  {
+    tstring_view sv("");
+    TEST_CHECK(!parse_int(sv, &result));
+  }
+  
+  // Just a sign
+  {
+    tstring_view sv("-");
+    TEST_CHECK(!parse_int(sv, &result));
+  }
+  
+  {
+    tstring_view sv("+");
+    TEST_CHECK(!parse_int(sv, &result));
+  }
+  
+  // Non-numeric characters
+  {
+    tstring_view sv("123a");
+    TEST_CHECK(!parse_int(sv, &result));
+  }
+  
+  {
+    tstring_view sv("a123");
+    TEST_CHECK(!parse_int(sv, &result));
+  }
+  
+  {
+    tstring_view sv("12.3");
+    TEST_CHECK(!parse_int(sv, &result));
+  }
+  
+  // Overflow cases
+  {
+    tstring_view sv("2147483648");  // INT32_MAX + 1
+    TEST_CHECK(!parse_int(sv, &result));
+  }
+  
+  {
+    tstring_view sv("-2147483649");  // INT32_MIN - 1
+    TEST_CHECK(!parse_int(sv, &result));
+  }
+  
+  // Very large numbers
+  {
+    tstring_view sv("999999999999999999");
+    TEST_CHECK(!parse_int(sv, &result));
+  }
+  
+  {
+    tstring_view sv("-999999999999999999");
+    TEST_CHECK(!parse_int(sv, &result));
+  }
+  
+  // Leading/trailing spaces (should fail since parse_int doesn't handle whitespace)
+  {
+    tstring_view sv(" 123");
+    TEST_CHECK(!parse_int(sv, &result));
+  }
+  
+  {
+    tstring_view sv("123 ");
+    TEST_CHECK(!parse_int(sv, &result));
+  }
+  
+  // Multiple signs
+  {
+    tstring_view sv("++123");
+    TEST_CHECK(!parse_int(sv, &result));
+  }
+  
+  {
+    tstring_view sv("--123");
+    TEST_CHECK(!parse_int(sv, &result));
+  }
+  
+  {
+    tstring_view sv("+-123");
+    TEST_CHECK(!parse_int(sv, &result));
+  }
+  
+}

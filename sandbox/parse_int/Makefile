@@ -1,5 +1,5 @@
 all:
-	clang++-17 -O2 -g -stdlib=libc++ parse_int.cc -o parse_int
+	clang++ -O2 -g -stdlib=libc++ parse_int.cc -o parse_int ../../src/tiny-string.cc
 
 clean:
 	rm -f parse_int a.out
