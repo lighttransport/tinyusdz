@@ -331,9 +331,424 @@ static bool lex_float_array(
 
 } // namespace internal
 
+bool parse_int(const tstring_view &sv, int32_t *ret) {
+  const char* str = sv.c_str();
+  size_t len = sv.size();
+  
+  if (len == 0) {
+    return false;
+  }
+  
+  bool negative = false;
+  size_t start = 0;
+  
+  if (str[0] == '-') {
+    negative = true;
+    start = 1;
+  } else if (str[0] == '+') {
+    start = 1;
+  }
+  
+  if (start >= len) {
+    return false;
+  }
+  
+  int64_t result = 0;
+  for (size_t i = start; i < len; i++) {
+    if (str[i] < '0' || str[i] > '9') {
+      return false;
+    }
+    result = result * 10 + (str[i] - '0');
+    
+    // Check for overflow
+    if (negative && result > static_cast<int64_t>(std::numeric_limits<int32_t>::max()) + 1) {
+      return false;
+    }
+    if (!negative && result > std::numeric_limits<int32_t>::max()) {
+      return false;
+    }
+  }
+  
+  *ret = negative ? -static_cast<int32_t>(result) : static_cast<int32_t>(result);
+  return true;
+}
+
+bool parse_int64(const tstring_view &sv, int64_t *ret) {
+  const char* str = sv.c_str();
+  size_t len = sv.size();
+  
+  if (len == 0) {
+    return false;
+  }
+  
+  bool negative = false;
+  size_t start = 0;
+  
+  if (str[0] == '-') {
+    negative = true;
+    start = 1;
+  } else if (str[0] == '+') {
+    start = 1;
+  }
+  
+  if (start >= len) {
+    return false;
+  }
+  
+  uint64_t result = 0;
+  for (size_t i = start; i < len; i++) {
+    if (str[i] < '0' || str[i] > '9') {
+      return false;
+    }
+    result = result * 10 + (str[i] - '0');
+    
+    // Check for overflow
+    if (negative && result > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) + 1) {
+      return false;
+    }
+    if (!negative && result > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+      return false;
+    }
+  }
+  
+  *ret = negative ? -static_cast<int64_t>(result) : static_cast<int64_t>(result);
+  return true;
+}
+
+bool parse_uint(const tstring_view &sv, uint32_t *ret) {
+  const char* str = sv.c_str();
+  size_t len = sv.size();
+  
+  if (len == 0) {
+    return false;
+  }
+  
+  size_t start = 0;
+  if (str[0] == '+') {
+    start = 1;
+  }
+  
+  if (start >= len) {
+    return false;
+  }
+  
+  uint64_t result = 0;
+  for (size_t i = start; i < len; i++) {
+    if (str[i] < '0' || str[i] > '9') {
+      return false;
+    }
+    result = result * 10 + (str[i] - '0');
+    
+    // Check for overflow
+    if (result > std::numeric_limits<uint32_t>::max()) {
+      return false;
+    }
+  }
+  
+  *ret = static_cast<uint32_t>(result);
+  return true;
+}
+
+bool parse_uint64(const tstring_view &sv, uint64_t *ret) {
+  const char* str = sv.c_str();
+  size_t len = sv.size();
+  
+  if (len == 0) {
+    return false;
+  }
+  
+  size_t start = 0;
+  if (str[0] == '+') {
+    start = 1;
+  }
+  
+  if (start >= len) {
+    return false;
+  }
+  
+  uint64_t result = 0;
+  for (size_t i = start; i < len; i++) {
+    if (str[i] < '0' || str[i] > '9') {
+      return false;
+    }
+    
+    // Check for overflow before multiplication
+    if (result > (std::numeric_limits<uint64_t>::max() - (str[i] - '0')) / 10) {
+      return false;
+    }
+    
+    result = result * 10 + (str[i] - '0');
+  }
+  
+  *ret = result;
+  return true;
+}
+
+bool parse_float(const tstring_view &sv, float *ret) {
+  auto result = fast_float::from_chars(sv.c_str(), sv.c_str() + sv.size(), *ret);
+  return result.ec == std::errc{};
+}
+
+bool parse_double(const tstring_view &sv, double *ret) {
+  auto result = fast_float::from_chars(sv.c_str(), sv.c_str() + sv.size(), *ret);
+  return result.ec == std::errc{};
+}
+
+bool parse_float_arary(const tstring_view &sv, std::vector<float> *result, const char delimiter) {
+  if (!result) {
+    return false;
+  }
+
+  result->clear();
+
+  if (sv.size() == 0) {
+    return false;
+  }
+
+  const char *p = sv.c_str();
+  const char *end = p + sv.size();
+  
+  // Skip leading whitespace and '['
+  while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
+    p++;
+  }
+  
+  if (p >= end || *p != '[') {
+    return false;
+  }
+  p++; // skip '['
+  
+  // Skip whitespace after '['
+  while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
+    p++;
+  }
+  
+  // Handle empty array
+  if (p < end && *p == ']') {
+    return true;
+  }
+  
+  while (p < end) {
+    // Skip whitespace
+    while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
+      p++;
+    }
+    
+    if (p >= end) break;
+    
+    // Check for closing bracket
+    if (*p == ']') {
+      break;
+    }
+    
+    // Find the end of the number
+    const char *num_start = p;
+    while (p < end && *p != delimiter && *p != ']' && 
+           *p != ' ' && *p != '\t' && *p != '\n' && *p != '\r') {
+      p++;
+    }
+    
+    if (p == num_start) {
+      return false; // No number found
+    }
+    
+    // Parse the number
+    float value;
+    auto parse_result = fast_float::from_chars(num_start, p, value);
+    if (parse_result.ec != std::errc{}) {
+      return false;
+    }
+    
+    result->push_back(value);
+    
+    // Skip whitespace after number
+    while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
+      p++;
+    }
+    
+    // Handle delimiter or end
+    if (p < end && *p == delimiter) {
+      p++; // skip delimiter
+    } else if (p < end && *p == ']') {
+      break; // end of array
+    }
+  }
+  
+  return true;
+}
+
+bool parse_double_arary(const tstring_view &sv, std::vector<double> *result, const char delimiter) {
+  if (!result) {
+    return false;
+  }
+
+  result->clear();
+
+  if (sv.size() == 0) {
+    return false;
+  }
+
+  const char *p = sv.c_str();
+  const char *end = p + sv.size();
+  
+  // Skip leading whitespace and '['
+  while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
+    p++;
+  }
+  
+  if (p >= end || *p != '[') {
+    return false;
+  }
+  p++; // skip '['
+  
+  // Skip whitespace after '['
+  while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
+    p++;
+  }
+  
+  // Handle empty array
+  if (p < end && *p == ']') {
+    return true;
+  }
+  
+  while (p < end) {
+    // Skip whitespace
+    while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
+      p++;
+    }
+    
+    if (p >= end) break;
+    
+    // Check for closing bracket
+    if (*p == ']') {
+      break;
+    }
+    
+    // Find the end of the number
+    const char *num_start = p;
+    while (p < end && *p != delimiter && *p != ']' && 
+           *p != ' ' && *p != '\t' && *p != '\n' && *p != '\r') {
+      p++;
+    }
+    
+    if (p == num_start) {
+      return false; // No number found
+    }
+    
+    // Parse the number
+    double value;
+    auto parse_result = fast_float::from_chars(num_start, p, value);
+    if (parse_result.ec != std::errc{}) {
+      return false;
+    }
+    
+    result->push_back(value);
+    
+    // Skip whitespace after number
+    while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
+      p++;
+    }
+    
+    // Handle delimiter or end
+    if (p < end && *p == delimiter) {
+      p++; // skip delimiter
+    } else if (p < end && *p == ']') {
+      break; // end of array
+    }
+  }
+  
+  return true;
+}
+
+bool parse_int_arary(const tstring_view &sv, std::vector<int32_t> *result, const char delimiter) {
+  if (!result) {
+    return false;
+  }
+
+  result->clear();
+
+  if (sv.size() == 0) {
+    return false;
+  }
+
+  const char *p = sv.c_str();
+  const char *end = p + sv.size();
+  
+  // Skip leading whitespace and '['
+  while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
+    p++;
+  }
+  
+  if (p >= end || *p != '[') {
+    return false;
+  }
+  p++; // skip '['
+  
+  // Skip whitespace after '['
+  while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
+    p++;
+  }
+  
+  // Handle empty array
+  if (p < end && *p == ']') {
+    return true;
+  }
+  
+  while (p < end) {
+    // Skip whitespace
+    while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
+      p++;
+    }
+    
+    if (p >= end) break;
+    
+    // Check for closing bracket
+    if (*p == ']') {
+      break;
+    }
+    
+    // Find the end of the number
+    const char *num_start = p;
+    while (p < end && *p != delimiter && *p != ']' && 
+           *p != ' ' && *p != '\t' && *p != '\n' && *p != '\r') {
+      p++;
+    }
+    
+    if (p == num_start) {
+      return false; // No number found
+    }
+    
+    // Parse the number  
+    int32_t value;
+    tstring_view num_view(num_start);
+    // Create a temporary view with the correct length
+    size_t num_len = p - num_start;
+    std::string num_str(num_start, num_len);
+    tstring_view temp_view(num_str.c_str());
+    if (!parse_int(temp_view, &value)) {
+      return false;
+    }
+    
+    result->push_back(value);
+    
+    // Skip whitespace after number
+    while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
+      p++;
+    }
+    
+    // Handle delimiter or end
+    if (p < end && *p == delimiter) {
+      p++; // skip delimiter
+    } else if (p < end && *p == ']') {
+      break; // end of array
+    }
+  }
+  
+  return true;
+}
+
 bool print_float_array(std::vector<float> &v,
   std::string &dst, const char delimiter) {
-
 
   // TODO
   (void)v;
