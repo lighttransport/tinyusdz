@@ -8,6 +8,8 @@
 #include <random>
 #include <charconv>
 
+#include "../../src/tiny-string.hh"
+
 std::string gen_intarray(size_t n, bool delim_at_end) {
   std::stringstream ss;
   std::random_device rd;
@@ -333,8 +335,8 @@ bool do_parse(
 
         while ((j = cnt++) < results.size()) {
           int64_t val;
-          auto answer = std::from_chars(spans[j].p_begin, spans[j].p_begin + spans[j].length, val);
-          if (answer.ec != std::errc()) { 
+          tinyusdz::tstring_view ts(spans[j].p_begin, size_t(spans[j].length));
+          if (!tinyusdz::str::parse_int64(ts, &val)) {
             parse_failed = true; 
           }
 
@@ -355,8 +357,8 @@ bool do_parse(
   } else {
     for (size_t i = 0; i < spans.size(); i++) {
       int64_t val;
-      auto answer = std::from_chars(spans[i].p_begin, spans[i].p_begin + spans[i].length, val);
-      if (answer.ec != std::errc()) { 
+      tinyusdz::tstring_view ts(spans[i].p_begin, size_t(spans[i].length));
+      if (!tinyusdz::str::parse_int64(ts, &val)) {
         std::cerr << "parsing failure\n"; 
         return false; 
       }
