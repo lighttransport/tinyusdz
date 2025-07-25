@@ -400,7 +400,7 @@ bool parse_int64(const tstring_view &sv, int64_t *ret) {
     if (str[i] < '0' || str[i] > '9') {
       return false;
     }
-    result = result * 10 + (str[i] - '0');
+    result = result * 10ull + uint64_t(str[i] - '0');
     
     // Check for overflow
     if (negative && result > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) + 1) {
@@ -437,7 +437,7 @@ bool parse_uint(const tstring_view &sv, uint32_t *ret) {
     if (str[i] < '0' || str[i] > '9') {
       return false;
     }
-    result = result * 10 + (str[i] - '0');
+    result = result * 10 + uint64_t(str[i] - '0');
     
     // Check for overflow
     if (result > std::numeric_limits<uint32_t>::max()) {
@@ -473,11 +473,11 @@ bool parse_uint64(const tstring_view &sv, uint64_t *ret) {
     }
     
     // Check for overflow before multiplication
-    if (result > (std::numeric_limits<uint64_t>::max() - (str[i] - '0')) / 10) {
+    if (result > (std::numeric_limits<uint64_t>::max() - uint64_t(str[i] - '0')) / 10) {
       return false;
     }
     
-    result = result * 10 + (str[i] - '0');
+    result = result * 10 + uint64_t(str[i] - '0');
   }
   
   *ret = result;
@@ -714,7 +714,7 @@ bool parse_int_arary(const tstring_view &sv, std::vector<int32_t> *result, const
       p++;
     }
     
-    if (p == num_start) {
+    if (p <= num_start) {
       return false; // No number found
     }
     
@@ -722,7 +722,7 @@ bool parse_int_arary(const tstring_view &sv, std::vector<int32_t> *result, const
     int32_t value;
     tstring_view num_view(num_start);
     // Create a temporary view with the correct length
-    size_t num_len = p - num_start;
+    size_t num_len = size_t(p - num_start);
     std::string num_str(num_start, num_len);
     tstring_view temp_view(num_str.c_str());
     if (!parse_int(temp_view, &value)) {

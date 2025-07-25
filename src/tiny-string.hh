@@ -171,6 +171,11 @@ struct tstring_view {
     _s = s;
   }
 
+  constexpr tstring_view(const char *s, size_t n) { 
+    _len = n;
+    _s = s;
+  }
+
   tstring_view(const std::string &s) : tstring_view(s.c_str()) { 
   }
 
