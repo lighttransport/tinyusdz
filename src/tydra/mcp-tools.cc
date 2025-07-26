@@ -25,6 +25,7 @@ namespace mcp {
 
 namespace {
 
+#if 0
 inline std::string decode_datauri(const std::string &data) {
 
   const std::string prefix = "data:application/octet-stream;base64,";
@@ -41,13 +42,22 @@ inline std::string decode_datauri(const std::string &data) {
   std::string binary = base64_decode(removePrefix(data, prefix));
 
   return binary;
+}
+#endif
+
+inline std::string decode_data(const std::string &data) {
+
+  // TODO: save memory
+  std::string binary = base64_decode(data);
+
+  return binary;
 
 
 }
 
 bool GetVersion(nlohmann::json &result);
 bool LoadUSDLayerFromFile(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err);
-bool LoadUSDLayerFromDataURI(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err);
+bool LoadUSDLayerFromData(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err);
 
 
 bool GetVersion(nlohmann::json &result) {
@@ -122,7 +132,7 @@ bool LoadUSDLayerFromFile(Context &ctx, const nlohmann::json &args, nlohmann::js
   return true;
 }
 
-bool LoadUSDLayerFromDataURI(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+bool LoadUSDLayerFromData(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
   DCOUT("args " << args);
   if (!args.contains("uri")) {
     DCOUT("uri param not found");
@@ -136,15 +146,16 @@ bool LoadUSDLayerFromDataURI(Context &ctx, const nlohmann::json &args, nlohmann:
   }
 
   std::string name = args["name"];
+  const std::string& data = args["data"];
 
-  std::string binary = decode_datauri(args.at("uri"));
+  std::string binary = decode_data(data);
   
   Layer layer;
   std::string warn;
   USDLoadOptions options; 
   if (!LoadLayerFromMemory(reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(), name, &layer, &warn, &err, options)) {
-    DCOUT("Failed to load layer from DataURI: " << err);
-    err = "Failed to load layer from DataURI: " + err + "\n";
+    DCOUT("Failed to load layer from Data: " << err);
+    err = "Failed to load layer from Data: " + err + "\n";
     return false;
   }
 
@@ -380,16 +391,16 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
 
   {
     nlohmann::json j;
-    j["name"] = "load_usd_layer_from_datauri";
-    j["description"] = "Load USD as Layer from DataURI";
+    j["name"] = "load_usd_layer_from_data";
+    j["description"] = "Load USD as Layer from base64 encoded data string";
 
     nlohmann::json schema;
     schema["type"] = "object";
     schema["properties"] = nlohmann::json::object();
-    schema["properties"]["uri"] ={{"type", "string"}};
+    schema["properties"]["data"] ={{"type", "string"}};
     schema["properties"]["name"] ={{"type", "string"}};
 
-    schema["required"] = nlohmann::json::array({"uri", "name"});
+    schema["required"] = nlohmann::json::array({"data", "name"});
 
     j["inputSchema"] = schema;
 
@@ -423,9 +434,9 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
     nlohmann::json schema;
     schema["type"] = "object";
     schema["properties"] = nlohmann::json::object();
-    schema["properties"]["uri"] ={{"type", "string"}};
+    schema["properties"]["name"] ={{"type", "string"}};
 
-    schema["required"] = nlohmann::json::array({"uri"});
+    schema["required"] = nlohmann::json::array({"name"});
 
     j["inputSchema"] = schema;
 
@@ -504,9 +515,9 @@ bool CallTool(Context &ctx, const std::string &tool_name, const nlohmann::json &
   } else if (tool_name == "to_usda") {
     DCOUT("to_usda");
     return ToUSDA(ctx, args, result, err);
-  } else if (tool_name == "load_usd_layer_from_datauri") {
-    DCOUT("load_usd_layer_datauri");
-    return LoadUSDLayerFromDataURI(ctx, args, result, err);
+  } else if (tool_name == "load_usd_layer_from_data") {
+    DCOUT("load_usd_layer_data");
+    return LoadUSDLayerFromData(ctx, args, result, err);
   } else if (tool_name == "list_primspecs") {
     DCOUT("list_primspecs");
     return ListPrimSpecs(ctx, args, result, err);

@@ -8,6 +8,8 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import initTinyUSDZNative from "tinyusdz/tinyusdz.js";
 
+import cors from 'cors';
+
 //import { TinyUSDZMCPServer } from "tinyusdz/TinyUSDMCPServer.js";
 
 const portno = 8085;
@@ -18,6 +20,14 @@ const app = express();
 // Increase limit for larger requests(e.g. DataURI representation of USD file)
 app.use(bodyParser.json({limit: '50mb'})); // Increase limit for larger requests  
 app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' })); // Increase limit for larger requests    
+
+// CORS configuration requied for browser-based MCP clients
+app.use(cors({
+  origin: '*', // Configure appropriately for production, for example:
+  // origin: ['https://your-remote-domain.com', 'https://your-other-remote-domain.com'],
+  exposedHeaders: ['Mcp-Session-Id'],
+  allowedHeaders: ['Content-Type', 'mcp-session-id', 'mcp-protocol-version'],
+}));
 
 // Map to store transports by session ID
 const transports = {};
