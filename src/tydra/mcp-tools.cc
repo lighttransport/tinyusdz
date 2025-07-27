@@ -55,8 +55,24 @@ inline std::string decode_data(const std::string &data) {
 
 }
 
+static std::string FindUUID(const std::string &name, const std::unordered_map<std::string, USDLayer> &layers) {
+
+  for (const auto &it : layers) {
+    if (it.second.name == name) {
+      return it.first;
+    }
+  }
+
+  return {};
+}
+ 
+
 bool GetVersion(nlohmann::json &result);
+bool GetUSDDescription(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err);
+bool GetAllUSDDescriptions(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err);
+#if !defined(__EMSCRIPTEN__)
 bool LoadUSDLayerFromFile(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err);
+#endif
 bool LoadUSDLayerFromData(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err);
 
 
@@ -81,6 +97,7 @@ bool GetVersion(nlohmann::json &result) {
 }
 
 
+#if !defined(__EMSCRIPTEN__)
 bool LoadUSDLayerFromFile(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
   DCOUT("args " << args);
   if (!args.contains("uri")) {
@@ -89,7 +106,15 @@ bool LoadUSDLayerFromFile(Context &ctx, const nlohmann::json &args, nlohmann::js
     return false; 
   }
 
+  if (!args.contains("name")) {
+    DCOUT("name param not found");
+    err = "`name` param not found.\n";
+    return false; 
+  }
+
   std::string uri = args["uri"];
+  std::string name = args["name"];
+  std::string description = args["description"];
   
   Layer layer;
   std::string warn;
@@ -104,18 +129,17 @@ bool LoadUSDLayerFromFile(Context &ctx, const nlohmann::json &args, nlohmann::js
     result["warnings"] = warn;
   }
 
-  std::string uuid = generateUUID();
+  std::string uuid = FindUUID(name, ctx.layers);
 
-  if (ctx.layers.count(uuid)) {
-    DCOUT("uuid conflict");
-    // This should not be happen.
-    err = "Internal error. UUID conflict\n";
-    return false;
+  if (uuid.empty()) {
+    uuid = generateUUID();
   }
 
   USDLayer usd_layer;
   usd_layer.uri = uri;
+  usd_layer.name = name;
   usd_layer.layer = std::move(layer);
+  usd_layer.description = description;
 
   ctx.layers.emplace(uuid, std::move(usd_layer));
   ctx.resources.emplace(uri, uuid);
@@ -131,12 +155,13 @@ bool LoadUSDLayerFromFile(Context &ctx, const nlohmann::json &args, nlohmann::js
 
   return true;
 }
+#endif
 
 bool LoadUSDLayerFromData(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
   DCOUT("args " << args);
-  if (!args.contains("uri")) {
-    DCOUT("uri param not found");
-    err = "`uri` param not found.\n";
+  if (!args.contains("data")) {
+    DCOUT("data param not found");
+    err = "`data` param not found.\n";
     return false; 
   }
   if (!args.contains("name")) {
@@ -147,6 +172,7 @@ bool LoadUSDLayerFromData(Context &ctx, const nlohmann::json &args, nlohmann::js
 
   std::string name = args["name"];
   const std::string& data = args["data"];
+  std::string description = args["description"];
 
   std::string binary = decode_data(data);
   
@@ -163,17 +189,17 @@ bool LoadUSDLayerFromData(Context &ctx, const nlohmann::json &args, nlohmann::js
     result["warnings"] = warn;
   }
 
-  std::string uuid = generateUUID();
+  // Replace content if `name` already exists.
+  std::string uuid = FindUUID(name, ctx.layers);
 
-  if (ctx.layers.count(uuid)) {
-    DCOUT("uuid conflict");
-    // This should not be happen.
-    err = "Internal error. UUID conflict\n";
-    return false;
+  if (uuid.empty()) {
+    uuid = generateUUID();
   }
 
   USDLayer usd_layer;
-  usd_layer.uri = name;
+  usd_layer.name = name;
+  usd_layer.uri = name; // FIXME
+  usd_layer.description = description;
   usd_layer.layer = std::move(layer);
 
   ctx.layers.emplace(uuid, std::move(usd_layer));
@@ -193,13 +219,18 @@ bool LoadUSDLayerFromData(Context &ctx, const nlohmann::json &args, nlohmann::js
 
 bool ListPrimSpecs(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
   DCOUT("args " << args);
-  if (!args.contains("uuid")) {
-    DCOUT("uuid param not found");
-    err = "`uuid` param not found.\n";
-    return false; 
-  }
 
   std::string uuid = args["uuid"];
+  std::string name = args["uuid"];
+
+  if (uuid.empty() && name.empty()) {
+    err = "Either `name` or `uuid` arg required\n";
+    return false;
+  }
+
+  if (uuid.empty()) {
+    uuid = FindUUID(name, ctx.layers);
+  }
 
   if (!ctx.layers.count(uuid)) {
     DCOUT("Layer not found: " << uuid);
@@ -312,6 +343,51 @@ bool ReadScreenshot(Context &ctx, const nlohmann::json &args, nlohmann::json &re
   return true;
 }
 
+bool GetUSDDescription(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+  DCOUT("args " << args);
+  if (!args.contains("name")) {
+    DCOUT("name param not found");
+    err = "`name` param not found.\n";
+    return false; 
+  }
+
+  std::string name = args.at("name");
+
+  std::string uuid = FindUUID(name, ctx.layers);
+  
+  if (!ctx.layers.count(uuid)) {
+    // This should not happen though.
+    err = "Internal error. No corresponding Layer found\n";
+    return false;
+  }
+
+  nlohmann::json content;
+  content["type"] = "text";
+  content["text"] = ctx.layers.at(uuid).description;
+
+  result["content"] = nlohmann::json::array();
+  result["content"].push_back(content);
+
+  return true;
+}
+
+bool GetAllUSDDescriptions(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+  (void)args;
+  (void)err;
+
+  result["content"] = nlohmann::json::array();
+
+  for (const auto &it : ctx.layers) {
+    nlohmann::json content;
+    content["type"] = "text";
+    content["text"] = it.second.name + ":" + it.second.description;
+
+    result["content"].push_back(content);
+  }
+
+  return true;
+}
+
 bool ToUSDA(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
   DCOUT("args " << args);
   if (!args.contains("uri")) {
@@ -373,6 +449,37 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
 
   {
     nlohmann::json j;
+    j["name"] = "get_all_usd_descriptions";
+    j["description"] = "Get description of all USD asset";
+
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    //schena["required"] = nlohmann::json::array();
+
+    j["inputSchema"] = schema;
+
+    result["tools"].push_back(j);
+  }
+
+  {
+    nlohmann::json j;
+    j["name"] = "get_usd_description";
+    j["description"] = "Get description of USD asset";
+
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    schema["properties"]["name"] ={{"type", "string"}}; // TODO: accept multiple names
+    //schena["required"] = nlohmann::json::array();
+
+    j["inputSchema"] = schema;
+
+    result["tools"].push_back(j);
+  }
+
+  {
+    nlohmann::json j;
     j["name"] = "load_usd_layer_from_file";
     j["description"] = "Load USD as Layer from a file(only works in C++ native binary)";
 
@@ -380,8 +487,10 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
     schema["type"] = "object";
     schema["properties"] = nlohmann::json::object();
     schema["properties"]["uri"] ={{"type", "string"}};
+    schema["properties"]["name"] ={{"type", "string"}};
+    schema["properties"]["description"] ={{"type", "string"}}; // optional
 
-    schema["required"] = nlohmann::json::array({"uri"});
+    schema["required"] = nlohmann::json::array({"uri", "name"});
 
     j["inputSchema"] = schema;
 
@@ -399,6 +508,7 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
     schema["properties"] = nlohmann::json::object();
     schema["properties"]["data"] ={{"type", "string"}};
     schema["properties"]["name"] ={{"type", "string"}};
+    schema["properties"]["description"] ={{"type", "string"}}; // optional
 
     schema["required"] = nlohmann::json::array({"data", "name"});
 
@@ -411,14 +521,15 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
   {
     nlohmann::json j;
     j["name"] = "list_primspecs";
-    j["description"] = "List root PrimSpecs in loaded USD Layer";
+    j["description"] = "List root PrimSpecs in loaded USD Layer(uuid or name)";
 
     nlohmann::json schema;
     schema["type"] = "object";
     schema["properties"] = nlohmann::json::object();
     schema["properties"]["uuid"] ={{"type", "string"}};
+    schema["properties"]["name"] ={{"type", "string"}};
 
-    schema["required"] = nlohmann::json::array({"uuid"});
+    //schema["required"] = nlohmann::json::array({"uuid"});
 
     j["inputSchema"] = schema;
 
@@ -509,9 +620,15 @@ bool CallTool(Context &ctx, const std::string &tool_name, const nlohmann::json &
 
   if (tool_name == "get_version") {
     return GetVersion(result);
+  } else if (tool_name == "get_all_usd_descriptions") {
+    return GetAllUSDDescriptions(ctx, args, result, err);
+  } else if (tool_name == "get_usd_description") {
+    return GetUSDDescription(ctx, args, result, err);
+#if !defined(__EMSCRIPTEN__)
   } else if (tool_name == "load_usd_layer_from_file") {
     DCOUT("load_usd_layer_from_file");
     return LoadUSDLayerFromFile(ctx, args, result, err);
+#endif
   } else if (tool_name == "to_usda") {
     DCOUT("to_usda");
     return ToUSDA(ctx, args, result, err);
