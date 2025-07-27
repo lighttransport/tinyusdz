@@ -16,6 +16,7 @@ struct USDLayer
 {
   std::string uri;
   std::string name;
+  std::string description; // optional
   Layer layer;
 };
 
