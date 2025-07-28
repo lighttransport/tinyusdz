@@ -1,2 +1,2 @@
 all:
-	clang++-17 -O2 -g -stdlib=libc++ parse_fp.cc
+	g++ -O2 -g -I../../src/external/fast_float/include parse_fp.cc -o parse_fp -pthread
