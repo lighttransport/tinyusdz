@@ -74,6 +74,10 @@ bool GetAllUSDDescriptions(Context &ctx, const nlohmann::json &args, nlohmann::j
 bool LoadUSDLayerFromFile(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err);
 #endif
 bool LoadUSDLayerFromData(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err);
+bool StoreAsset(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err);
+bool ReadAsset(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err);
+bool GetAssetDescription(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err);
+bool GetAllAssetDescriptions(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err);
 
 
 bool GetVersion(nlohmann::json &result) {
@@ -142,7 +146,6 @@ bool LoadUSDLayerFromFile(Context &ctx, const nlohmann::json &args, nlohmann::js
   usd_layer.description = description;
 
   ctx.layers.emplace(uuid, std::move(usd_layer));
-  ctx.resources.emplace(uri, uuid);
 
   DCOUT("loaded USD as Layer");
 
@@ -203,9 +206,71 @@ bool LoadUSDLayerFromData(Context &ctx, const nlohmann::json &args, nlohmann::js
   usd_layer.layer = std::move(layer);
 
   ctx.layers.emplace(uuid, std::move(usd_layer));
-  ctx.resources.emplace(name, uuid);
 
   DCOUT("loaded USD as Layer");
+
+  nlohmann::json content;
+  content["type"] = "text";
+  content["text"] = uuid;
+
+  result["content"] = nlohmann::json::array();
+  result["content"].push_back(content);
+
+  return true;
+}
+
+bool ReadAsset(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+  DCOUT("args " << args);
+  if (!args.contains("name")) {
+    DCOUT("name param not found");
+    err = "`name` param not found.\n";
+    return false; 
+  }
+
+  std::string name = args["name"];
+
+  if (!ctx.assets.count(name)) {
+    err = "Asset not found: " + name + "\n";
+    return false;
+  }
+  const std::string& data = ctx.assets.at(name).data;
+
+  nlohmann::json content;
+  content["type"] = "text";
+  content["text"] = data;
+
+  result["content"] = nlohmann::json::array();
+  result["content"].push_back(content);
+
+  return true;
+}
+
+bool StoreAsset(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+  DCOUT("args " << args);
+  if (!args.contains("data")) {
+    DCOUT("data param not found");
+    err = "`data` param not found.\n";
+    return false; 
+  }
+  if (!args.contains("name")) {
+    DCOUT("name param not found");
+    err = "`name` param not found.\n";
+    return false; 
+  }
+
+  std::string name = args["name"];
+  const std::string& data = args["data"];
+  std::string description = args["description"];
+
+  std::string uuid = generateUUID();
+
+  MCPAsset asset;
+  asset.name = name;
+  asset.data = data;
+  asset.description = description;
+  asset.uuid = uuid;
+
+  ctx.assets.emplace(name, std::move(asset));
 
   nlohmann::json content;
   content["type"] = "text";
@@ -388,22 +453,62 @@ bool GetAllUSDDescriptions(Context &ctx, const nlohmann::json &args, nlohmann::j
   return true;
 }
 
+bool GetAssetDescription(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+  DCOUT("args " << args);
+  if (!args.contains("name")) {
+    DCOUT("name param not found");
+    err = "`name` param not found.\n";
+    return false; 
+  }
+
+  std::string name = args.at("name");
+
+  std::string uuid = FindUUID(name, ctx.layers);
+  
+  if (!ctx.assets.count(uuid)) {
+    // This should not happen though.
+    err = "Internal error. No corresponding Layer found\n";
+    return false;
+  }
+
+  nlohmann::json content;
+  content["type"] = "text";
+  content["text"] = ctx.assets.at(uuid).description;
+
+  result["content"] = nlohmann::json::array();
+  result["content"].push_back(content);
+
+  return true;
+}
+
+bool GetAllAssetDescriptions(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+  (void)args;
+  (void)err;
+
+  result["content"] = nlohmann::json::array();
+
+  for (const auto &it : ctx.assets) {
+    nlohmann::json content;
+    content["type"] = "text";
+    content["text"] = it.second.name + ":" + it.second.description;
+
+    result["content"].push_back(content);
+  }
+
+  return true;
+}
+
 bool ToUSDA(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
   DCOUT("args " << args);
   if (!args.contains("uri")) {
-    DCOUT("uri param not found");
-    err = "`uri` param not found.\n";
+    DCOUT("name param not found");
+    err = "`name` param not found.\n";
     return false; 
   }
 
-  std::string uri = args.at("uri");
+  std::string name = args.at("name");
   
-  if (!ctx.resources.count(uri)) {
-    err = "Resource not found: " + uri + "\n";
-    return false; 
-  }
-
-  std::string uuid = ctx.resources.at(uri);
+  std::string uuid = FindUUID(name, ctx.layers);
 
   if (!ctx.layers.count(uuid)) {
     // This should not happen though.
@@ -424,6 +529,51 @@ bool ToUSDA(Context &ctx, const nlohmann::json &args, nlohmann::json &result, st
 
   return true;
 }
+
+bool SelectAssets(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+  DCOUT("args " << args);
+  if (!args.contains("names")) {
+    DCOUT("names param not found");
+    err = "`names` param not found.\n";
+    return false; 
+  }
+
+  std::vector<std::string> names = args.at("names");
+
+  ctx.selected_assets.clear();
+  for (const auto &name : names) {
+    if (ctx.assets.count(name)) {
+      ctx.selected_assets.push_back(name);
+    }
+  }
+
+  //nlohmann::json content;
+  //content["type"] = "text";
+  //content["text"] = ctx.assets.at(uuid).description;
+
+  result["content"] = nlohmann::json::array();
+  //result["content"].push_back(content);
+
+  return true;
+}
+
+bool GetSelectedAssets(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+  (void)err;
+  (void)args;
+  DCOUT("args " << args);
+
+  result["content"] = nlohmann::json::array();
+  for (const auto &name : ctx.selected_assets) {
+    nlohmann::json content;
+    content["type"] = "text";
+    content["text"] = name;
+    result["content"].push_back(content);
+  }
+
+
+  return true;
+}
+
 
 } // namespace
 
@@ -450,7 +600,7 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
   {
     nlohmann::json j;
     j["name"] = "get_all_usd_descriptions";
-    j["description"] = "Get description of all USD asset";
+    j["description"] = "Get description of all loaded USD Layers";
 
     nlohmann::json schema;
     schema["type"] = "object";
@@ -465,7 +615,39 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
   {
     nlohmann::json j;
     j["name"] = "get_usd_description";
-    j["description"] = "Get description of USD asset";
+    j["description"] = "Get description of loaded USD Layer";
+
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    schema["properties"]["name"] ={{"type", "string"}}; // TODO: accept multiple names
+    
+    schema["required"] = nlohmann::json::array({"name"});
+
+    j["inputSchema"] = schema;
+
+    result["tools"].push_back(j);
+  }
+
+  {
+    nlohmann::json j;
+    j["name"] = "get_all_asset_descriptions";
+    j["description"] = "Get description of all Assets";
+
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    //schena["required"] = nlohmann::json::array();
+
+    j["inputSchema"] = schema;
+
+    result["tools"].push_back(j);
+  }
+
+  {
+    nlohmann::json j;
+    j["name"] = "get_asset_description";
+    j["description"] = "Get description of Asset";
 
     nlohmann::json schema;
     schema["type"] = "object";
@@ -517,6 +699,62 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
     result["tools"].push_back(j);
 
   }
+
+  {
+    nlohmann::json j;
+    j["name"] = "load_usd_layer_from_asset";
+    j["description"] = "Load USD as Layer from Asset";
+
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    schema["properties"]["name"] ={{"type", "string"}};
+
+    schema["required"] = nlohmann::json::array({"name"});
+
+    j["inputSchema"] = schema;
+
+    result["tools"].push_back(j);
+
+  }
+
+  {
+    nlohmann::json j;
+    j["name"] = "read_asset";
+    j["description"] = "Read asset as base64 string";
+
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    schema["properties"]["name"] ={{"type", "string"}};
+
+    schema["required"] = nlohmann::json::array({"name"});
+
+    j["inputSchema"] = schema;
+
+    result["tools"].push_back(j);
+  }
+
+  {
+    nlohmann::json j;
+    j["name"] = "store_asset";
+    j["description"] = "Store asset(e.g. USD, texture). `data` is base64 encoded string.";
+
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    schema["properties"]["data"] ={{"type", "string"}};
+    schema["properties"]["name"] ={{"type", "string"}};
+    schema["properties"]["description"] ={{"type", "string"}}; // optional
+
+    schema["required"] = nlohmann::json::array({"data", "name"});
+
+    j["inputSchema"] = schema;
+
+    result["tools"].push_back(j);
+
+  }
+
 
   {
     nlohmann::json j;
@@ -608,7 +846,37 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
 
   }
 
+  {
+    nlohmann::json j;
+    j["name"] = "select_assets";
+    j["description"] = "Select assets. Specify by the array of asset names.";
 
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    // string[]
+    schema["properties"]["names"] ={{"type", "array"}, {"items", {"type", "string"}}};
+    schema["required"] = nlohmann::json::array({"names"});
+
+    j["inputSchema"] = schema;
+
+    result["tools"].push_back(j);
+  }
+
+  {
+    nlohmann::json j;
+    j["name"] = "get_selected_assets";
+    j["description"] = "Get selected asset names";
+
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+
+    j["inputSchema"] = schema;
+
+    result["tools"].push_back(j);
+
+  }
   std::cout << result << "\n";
 
   return true;
@@ -644,6 +912,20 @@ bool CallTool(Context &ctx, const std::string &tool_name, const nlohmann::json &
     return SaveScreenshot(ctx, args, result, err);
   } else if (tool_name == "read_screenshot") {
     return ReadScreenshot(ctx, args, result, err);
+  } else if (tool_name == "read_asset") {
+    DCOUT("read_asset");
+    return ReadAsset(ctx, args, result, err);
+  } else if (tool_name == "store_asset") {
+    DCOUT("store_asset");
+    return StoreAsset(ctx, args, result, err);
+  } else if (tool_name == "get_all_asset_descriptions") {
+    return GetAllAssetDescriptions(ctx, args, result, err);
+  } else if (tool_name == "get_asset_description") {
+    return GetAssetDescription(ctx, args, result, err);
+  } else if (tool_name == "select_assets") {
+    return SelectAssets(ctx, args, result, err);
+  } else if (tool_name == "get_selected_assets") {
+    return GetSelectedAssets(ctx, args, result, err);
 #if 0
   } else if (tool_name == "get_texture_asset") {
     return GetTextureAsset(ctx, args, result, err);

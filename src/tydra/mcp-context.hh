@@ -12,6 +12,15 @@ namespace tinyusdz {
 namespace tydra {
 namespace mcp {
 
+// Generic Asset(USD, textures, etc.)
+struct MCPAsset
+{
+  std::string name;
+  std::string data; // base64 encoded asset data
+  std::string description; // optional
+  std::string uuid;
+};
+
 struct USDLayer
 {
   std::string uri;
@@ -34,8 +43,10 @@ struct Context
   // key = UUID
   std::unordered_map<std::string, USDLayer> layers;
 
-  // key = URI, value = UUID
-  std::unordered_map<std::string, std::string> resources;
+  // key = name
+  std::unordered_map<std::string, MCPAsset> assets;
+
+  std::vector<std::string> selected_assets;
 
   // key = name
   std::unordered_map<std::string, Screenshot> screenshots;
