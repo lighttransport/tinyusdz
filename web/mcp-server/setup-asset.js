@@ -50,7 +50,7 @@ for (const [filename, description] of Object.entries(descriptions)) {
   console.log(`base64data: ${base64data.substring(0, 100)}...`);
 
   await client.callTool({
-    name: "load_usd_layer_from_data",
+    name: "store_asset",
     arguments: {
       "name": filename,
       "data": base64data,
@@ -66,7 +66,7 @@ for (const [filename, description] of Object.entries(descriptions)) {
 
 
 const descs = await client.callTool({
-    name: "get_all_usd_descriptions",
+    name: "get_all_asset_descriptions",
     arguments: {
     }});
 console.log("Descriptions:", descs);
