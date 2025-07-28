@@ -30,6 +30,7 @@ ui_state['mcpServerConnected'] = "Not connected";
 ui_state['mcpClient'] = null;
 
 ui_state['screenshot'] = null;
+ui_state['usdLoader'] = null;
 
 
 // Create a parameters object
@@ -41,7 +42,9 @@ const params = {
   connectMcpServer: connectMCPServer,
   mcpServerConnected: ui_state['mcpServerConnected'],
   take_screenshot: takeScreenshot,
-  send_screenshot_to_mcp: sendScreenshotToMCP
+  send_screenshot_to_mcp: sendScreenshotToMCP,
+  read_selected_assets: readSelectedAssets,
+  clear_scene: clearScene
 };
 
 // Add controls
@@ -64,6 +67,8 @@ gui.add(params, 'connectMcpServer').name('Connect MCP Server');
 gui.add(params, 'mcpServerConnected').name('MCP Server Connected').listen();
 gui.add(params, 'take_screenshot').name('Take Screenshot');
 gui.add(params, 'send_screenshot_to_mcp').name('Send screenshot to MCP');
+gui.add(params, 'read_selected_assets').name('Read selected assets');
+gui.add(params, 'clear_scene').name('Clear Scene');
 
 
 function takeScreenshot() {
@@ -108,6 +113,33 @@ function sendScreenshotToMCP() {
   }).catch((error) => {
     console.error('Error sending screenshot to MCP:', error);
   });
+
+}
+
+async function readSelectedAssets() {
+
+  const client = ui_state['mcpClient']; 
+  if (!client) {
+    console.error('MCP client is not connected');
+    return;
+  } 
+
+  client.callTool({
+    name: 'get_selected_assets',
+    arguments: {
+    }
+  }).then((response) => {
+    const names = [];
+    for (const item of response.content) {
+      names.push(item.text);
+    }
+    console.log('Selected assets:', names);
+
+    reloadScenes(ui_state['usdLoader'], names);
+  }).catch((error) => {
+    console.error('Error getting selected assets:', error);
+  });
+
 
 }
 
@@ -165,6 +197,29 @@ async function connectMCPServer() {
   params.mcpServerConnected = ui_state['mcpServerConnected']; // Update GUI parameter
 }
 
+async function getAsset(name) {
+  const client = ui_state['mcpClient']; 
+  if (!client) {
+    console.error('MCP client is not connected');
+    return;
+  } 
+
+  try {
+    const response = await client.callTool({
+      name: 'read_asset',
+      arguments: {
+        name: name
+      }
+    });
+    console.log('Asset retrieved:', response);
+    // data is base64 encoded
+    // add mime type prefix
+    return "data:application/octet-stream;base64, " + response.content[0].text;
+  } catch (error) {
+    console.error('Error retrieving asset:', error);
+  } 
+}
+
 async function loadScenes() {
 
   const loader = new TinyUSDZLoader();
@@ -172,6 +227,8 @@ async function loadScenes() {
   // it is recommended to call init() before loadAsync()
   // (wait loading/compiling wasm module in the early stage))
   await loader.init();
+
+  ui_state['usdLoader'] = loader; // Store loader in ui_state
 
   // Use zstd compressed tinyusdz.wasm to save the bandwidth.
   //await loader.init({useZstdCompressedWasm: true});
@@ -218,6 +275,114 @@ async function loadScenes() {
   }
 
   return threeScenes;
+
+}
+
+function clearScene() {
+  // Remove all objects from the scene except lights and environment
+  const objectsToRemove = [];
+  
+  scene.traverse((object) => {
+    // Keep lights, cameras, and the scene itself
+    if (object !== scene && 
+        !object.isLight && 
+        !object.isCamera && 
+        object.parent === scene) {
+      objectsToRemove.push(object);
+    }
+  });
+
+  // Remove objects
+  objectsToRemove.forEach((object) => {
+    scene.remove(object);
+    
+    // Dispose of geometries and materials to free memory
+    if (object.geometry) {
+      object.geometry.dispose();
+    }
+    
+    if (object.material) {
+      if (Array.isArray(object.material)) {
+        object.material.forEach((material) => {
+          if (material.map) material.map.dispose();
+          if (material.normalMap) material.normalMap.dispose();
+          if (material.roughnessMap) material.roughnessMap.dispose();
+          if (material.metalnessMap) material.metalnessMap.dispose();
+          material.dispose();
+        });
+      } else {
+        if (object.material.map) object.material.map.dispose();
+        if (object.material.normalMap) object.material.normalMap.dispose();
+        if (object.material.roughnessMap) object.material.roughnessMap.dispose();
+        if (object.material.metalnessMap) object.material.metalnessMap.dispose();
+        object.material.dispose();
+      }
+    }
+  });
+
+  console.log('Scene cleared');
+}
+
+async function reloadScenes(loader, asset_names) {
+
+  // Clear existing scenes first
+  clearScene();
+
+  var threeScenes = []
+
+  var usd_scenes = [];
+  for (const asset_name of asset_names) {
+    console.log('Loading asset:', asset_name);
+
+    const datauri = await getAsset(asset_name);
+    console.log('Data URI for asset:', datauri);
+
+    const usd_scene = await loader.loadAsync(datauri);
+    console.log('Loaded USD scene:', usd_scene);
+
+    usd_scenes.push(usd_scene);
+  }
+
+  const defaultMtl = ui_state['defaultMtl'];
+
+  const options = {
+    overrideMaterial: false, // override USD material with defaultMtl(default 'false')
+    envMap: defaultMtl.envMap, // reuse envmap from defaultMtl
+    envMapIntensity: ui_state['envMapIntensity'], // default envmap intensity
+  }
+
+  var offset = -(usd_scenes.length-1) * 1.5;
+  for (const usd_scene of usd_scenes) {
+
+    const usdRootNode = usd_scene.getDefaultRootNode();
+
+    const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options); 
+
+    if (usd_scene.getURI().includes('UsdCookie')) {
+      // Add exra scaling
+      threeNode.scale.x *= 2.5;
+      threeNode.scale.y *= 2.5;
+      threeNode.scale.z *= 2.5;
+    }
+
+    threeNode.position.x += offset;
+    offset += 3.0;
+
+    threeScenes.push(threeNode);
+  }
+
+  var offset = -(usd_scenes.length-1) * 1.5;
+
+  for (const rootNode of threeScenes) {
+
+    rootNode.position.x += offset;
+    offset += 3.0;
+
+    // HACK. upAxis
+    rootNode.rotation.x = -Math.PI / 2; // Rotate to match Y-up axis
+    //rootNode.rotation.z = Math.PI/2; // Rotate to match Y-up axis
+    scene.add(rootNode);
+  }
 
 }
 
