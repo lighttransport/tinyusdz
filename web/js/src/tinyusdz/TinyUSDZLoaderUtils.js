@@ -318,7 +318,9 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         if (Object.prototype.hasOwnProperty.call(usdMaterial, 'opacityTextureId')) {
             this.getTextureFromUSD(usdScene, usdMaterial.opacityTextureId).then((texture) => {
                 material.alphaMap = texture;
-                material.transparent = true;
+                // FIXME. disable opacity texture for a while.
+                // transparent = true will create completely transparent material for some reason.
+                //material.transparent = true; 
                 material.needsUpdate = true;
             }).catch((err) => {
                 console.error("failed to load opacity texture", err);

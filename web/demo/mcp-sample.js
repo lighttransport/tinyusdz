@@ -371,12 +371,7 @@ async function reloadScenes(loader, asset_names) {
     threeScenes.push(threeNode);
   }
 
-  var offset = -(usd_scenes.length-1) * 1.5;
-
   for (const rootNode of threeScenes) {
-
-    rootNode.position.x += offset;
-    offset += 3.0;
 
     // HACK. upAxis
     rootNode.rotation.x = -Math.PI / 2; // Rotate to match Y-up axis
