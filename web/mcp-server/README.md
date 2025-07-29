@@ -1,21 +1,32 @@
 # mcp-server
 
-This project was created using `bun init` in bun v1.2.13. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.
-
 To install dependencies:
 
 ```bash
 $ bun install
+# or node install
 
 ```
+
+## Run server
 
 To run:
 
 ```bash
 $ bun server-http.js
+# or node server-http.js
 ```
 
-## Claude for Desktop
+In default settings, this will start MCP server at http://localhost:8085/mcp
+
+### Setup asset data
+
+```bash
+$ bun setup-asset.js
+# or node setup-asset.js
+```
+
+## Connect from Claude for Desktop
 
 Curently we only support connecting MCP through developer config(Stdio transport)
 

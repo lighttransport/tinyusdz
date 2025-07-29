@@ -18,8 +18,9 @@ const app = express();
 //app.use(express.json());
 
 // Increase limit for larger requests(e.g. DataURI representation of USD file)
-app.use(bodyParser.json({limit: '50mb'})); // Increase limit for larger requests  
-app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' })); // Increase limit for larger requests    
+// Assume express 14.6.0+(bodyParser is now included in express.js)
+app.use(express.json({limit: '50mb'})); // Increase limit for larger requests  
+app.use(express.urlencoded({ extended: true, limit: '50mb' })); // Increase limit for larger requests    
 
 // CORS configuration requied for browser-based MCP clients
 app.use(cors({
