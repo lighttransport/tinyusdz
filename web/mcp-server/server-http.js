@@ -100,14 +100,14 @@ initTinyUSDZNative().then(function (TinyUSDZ) {
 
       server.server.setRequestHandler(ReadResourceRequestSchema, async (request, extra) => {
         const sessionId = server.server.transport.sessionId;
-        console.log("read resource", sessionId);
+        //console.log("read resource", sessionId);
 
         const uri = request.params.uri;
-        console.log("uri", uri);
+        //console.log("uri", uri);
 
         tusd.mcpSelectContext(sessionId);
         const resources_str = tusd.mcpResourcesRead(uri);
-        console.log("resources_str", resources_str);
+        //console.log("resources_str", resources_str);
 
         const j = JSON.parse(resources_str);
         return j;
@@ -133,18 +133,18 @@ initTinyUSDZNative().then(function (TinyUSDZ) {
 
         const sessionId = server.server.transport.sessionId;
 
-        console.log("sessId", sessionId);
-        console.log("tusd", tusd);
+        //console.log("sessId", sessionId);
+        //console.log("tusd", tusd);
 
         tusd.mcpSelectContext(sessionId);
 
         const tool_name = request.params.name;
         const args = JSON.stringify(request.params.arguments);
         console.log("tool_name", tool_name);
-        console.log("args", args);
+        //console.log("args", args);
 
         const result_str = tusd.mcpToolsCall(tool_name, args);
-        console.log("result_str", result_str);
+        //console.log("result_str", result_str);
 
         const j = JSON.parse(result_str)
         return j;

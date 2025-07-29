@@ -1,18 +1,19 @@
 # mcp-server
 
+This project was created using `bun init` in bun v1.2.13. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.
+
 To install dependencies:
 
 ```bash
-bun install
+$ bun install
+
 ```
 
 To run:
 
 ```bash
-bun run index.ts
+$ bun server-http.js
 ```
-
-This project was created using `bun init` in bun v1.2.13. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.
 
 ## Claude for Desktop
 
@@ -40,5 +41,9 @@ Then, edit `claude_desktop_config.json` (Through `Settings` -> `Developer` -> `E
 
 It will be required to add `"-y"` to args if you didn't install `mcp-remote` yet.
 
-NOTE: No authorization(API key) required at the moment.
-NOTE: It is recommended to terminate Claude for Desktop process from Task Manager(Windows) or Force quit app(macOS), then restart to reflect changes of .json.
+NOTE: No authorization(API key) supported at the moment.
+NOTE: It is recommended to terminate Claude for Desktop process from Task Manager(Windows) or Force quit app(macOS), then restart to reflect changes of `claude_desktop_config.json`
+
+## TODO
+
+* Run MCP server in a browser(service worker or 
