@@ -13,7 +13,7 @@ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 
 
 
-const gui = new GUI( {width: 450});
+const gui = new GUI({ width: 450 });
 
 let ui_state = {}
 ui_state['rot_scale'] = 1.0;
@@ -51,7 +51,7 @@ const params = {
 gui.add(params, 'envMapIntensity', 0, 20, 0.1).name('envMapIntensity').onChange((value) => {
   ui_state['envMapIntensity'] = value;
   ui_state['needsMtlUpdate'] = true;
-  
+
 });
 gui.add(params, 'camera_z', 0, 20).name('Camera Z').onChange((value) => {
   ui_state['camera_z'] = value;
@@ -93,11 +93,11 @@ function sendScreenshotToMCP() {
     return;
   }
 
-  const client = ui_state['mcpClient']; 
+  const client = ui_state['mcpClient'];
   if (!client) {
     console.error('MCP client is not connected');
     return;
-  } 
+  }
 
   // strip mime prefix
   const img_base64 = screenshot.replace(/^.*,/, '');
@@ -118,11 +118,11 @@ function sendScreenshotToMCP() {
 
 async function readSelectedAssets() {
 
-  const client = ui_state['mcpClient']; 
+  const client = ui_state['mcpClient'];
   if (!client) {
     console.error('MCP client is not connected');
     return;
-  } 
+  }
 
   client.callTool({
     name: 'get_selected_assets',
@@ -185,7 +185,7 @@ async function connectMCPServer() {
     params.mcpServerConnected = ui_state['mcpServerConnected']; // Update GUI parameter
 
     return;
-  } 
+  }
 
   const tools = await client.listTools();
   console.log(tools);
@@ -198,11 +198,11 @@ async function connectMCPServer() {
 }
 
 async function getAsset(name) {
-  const client = ui_state['mcpClient']; 
+  const client = ui_state['mcpClient'];
   if (!client) {
     console.error('MCP client is not connected');
     return;
-  } 
+  }
 
   try {
     const response = await client.callTool({
@@ -217,7 +217,7 @@ async function getAsset(name) {
     return "data:application/octet-stream;base64, " + response.content[0].text;
   } catch (error) {
     console.error('Error retrieving asset:', error);
-  } 
+  }
 }
 
 async function loadScenes() {
@@ -237,6 +237,9 @@ async function loadScenes() {
   const texcat_filename = "./assets/texture-cat-plane.usdz";
   const cookie_filename = "./assets/UsdCookie.usdz";
   const usd_filename = "./assets/suzanne-pbr.usda";
+  //const usd_filename = "./assets/black-rock.usdz";
+  //const usd_filename = "./assets/brown-rock.usdz";
+  //const usd_filename = "./assets/rock-surface.usdz";
 
   var threeScenes = []
 
@@ -254,12 +257,12 @@ async function loadScenes() {
     envMapIntensity: ui_state['envMapIntensity'], // default envmap intensity
   }
 
-  var offset = -(usd_scenes.length-1) * 1.5;
+  var offset = -(usd_scenes.length - 1) * 1.5;
   for (const usd_scene of usd_scenes) {
 
     const usdRootNode = usd_scene.getDefaultRootNode();
 
-    const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options); 
+    const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
 
     if (usd_scene.getURI().includes('UsdCookie')) {
       // Add exra scaling
@@ -281,13 +284,13 @@ async function loadScenes() {
 function clearScene() {
   // Remove all objects from the scene except lights and environment
   const objectsToRemove = [];
-  
+
   scene.traverse((object) => {
     // Keep lights, cameras, and the scene itself
-    if (object !== scene && 
-        !object.isLight && 
-        !object.isCamera && 
-        object.parent === scene) {
+    if (object !== scene &&
+      !object.isLight &&
+      !object.isCamera &&
+      object.parent === scene) {
       objectsToRemove.push(object);
     }
   });
@@ -295,12 +298,12 @@ function clearScene() {
   // Remove objects
   objectsToRemove.forEach((object) => {
     scene.remove(object);
-    
+
     // Dispose of geometries and materials to free memory
     if (object.geometry) {
       object.geometry.dispose();
     }
-    
+
     if (object.material) {
       if (Array.isArray(object.material)) {
         object.material.forEach((material) => {
@@ -351,12 +354,12 @@ async function reloadScenes(loader, asset_names) {
     envMapIntensity: ui_state['envMapIntensity'], // default envmap intensity
   }
 
-  var offset = -(usd_scenes.length-1) * 1.5;
+  var offset = -(usd_scenes.length - 1) * 1.5;
   for (const usd_scene of usd_scenes) {
 
     const usdRootNode = usd_scene.getDefaultRootNode();
 
-    const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options); 
+    const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
 
     if (usd_scene.getURI().includes('UsdCookie')) {
       // Add exra scaling
@@ -371,12 +374,16 @@ async function reloadScenes(loader, asset_names) {
     threeScenes.push(threeNode);
   }
 
+  ui_state['threeNodes'] = [];
+
   for (const rootNode of threeScenes) {
 
     // HACK. upAxis
     rootNode.rotation.x = -Math.PI / 2; // Rotate to match Y-up axis
-    //rootNode.rotation.z = Math.PI/2; // Rotate to match Y-up axis
+    rootNode.rotation.z = Math.PI/2; // Rotate to match Y-up axis
     scene.add(rootNode);
+
+    ui_state['threeNodes'].push(rootNode);
   }
 
 }
@@ -388,8 +395,8 @@ const scene = new THREE.Scene();
 async function initScene() {
 
   const envmap = await new HDRCubeTextureLoader()
-    .setPath( 'assets/textures/cube/pisaHDR/' )
-    .loadAsync( [ 'px.hdr', 'nx.hdr', 'py.hdr', 'ny.hdr', 'pz.hdr', 'nz.hdr' ] )
+    .setPath('assets/textures/cube/pisaHDR/')
+    .loadAsync(['px.hdr', 'nx.hdr', 'py.hdr', 'ny.hdr', 'pz.hdr', 'nz.hdr'])
   scene.background = envmap;
   scene.environment = envmap;
 
@@ -411,17 +418,22 @@ async function initScene() {
 
   const rootNodes = await loadScenes();
 
+  ui_state['threeNodes'] = []
+
   for (const rootNode of rootNodes) {
 
     // HACK. upAxis
     rootNode.rotation.x = -Math.PI / 2; // Rotate to match Y-up axis
-    rootNode.rotation.z = Math.PI/2; // Rotate to match Y-up axis
+    rootNode.rotation.z = Math.PI / 2; // Rotate to match Y-up axis
     scene.add(rootNode);
+
+    ui_state['threeNodes'].push(rootNode);
   }
 
   function animate() {
 
-    for (const rootNode of rootNodes) {
+    const threeNodes = ui_state['threeNodes'];
+    for (const rootNode of threeNodes) {
       rootNode.rotation.z += 0.01 * ui_state['rot_scale'];
       //rootNode.rotation.x += 0.02 * ui_state['rot_scale'];
     }
