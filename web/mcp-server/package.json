@@ -10,7 +10,7 @@
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "tinyusdz": "^0.9.1"
+    "tinyusdz": "0.9.5-rc.3"
   },
   "peerDependencies": {
     "typescript": "^5"
