@@ -4,11 +4,12 @@ import path from 'path';
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { assert } from "node:console";
 
-const assetFolder = "/mnt/n/data/tinyusdz/mcp/assets";
+const assetFolder = "/mnt/n/data/tinyusdz/mcp/african_slate_quarry";
 const url = "http://localhost:8085/mcp";
 
-const descFilename = path.join(assetFolder, "asset-description.json")
+const descFilename = path.join(assetFolder, "asset-descriptions.json")
 
 const descriptions = JSON.parse(await fs.readFile(descFilename));
 console.log(descriptions);
@@ -39,9 +40,14 @@ try {
 }
 
 const tools = await client.listTools();
-console.log(tools);
+//console.log(tools);
 
-for (const [filename, description] of Object.entries(descriptions)) {
+for (const [key, value] of Object.entries(descriptions)) {
+  console.log(`Processing asset: ${key}`);
+  const filename = value.usd_filename;
+  const description = value.description;
+  assert(filename)
+  assert(description)
   console.log(`filename: ${filename}, desc: ${description}`);
 
   const fullPath = path.join(assetFolder, filename);
@@ -60,13 +66,14 @@ for (const [filename, description] of Object.entries(descriptions)) {
     console.log("Setup asset result:", result);
   }).catch((error) => {
     console.error("Error setting up asset:", error);
-  }); 
+  });
 
 }
 
 
 const descs = await client.callTool({
-    name: "get_all_asset_descriptions",
-    arguments: {
-    }});
+  name: "get_all_asset_descriptions",
+  arguments: {
+  }
+});
 console.log("Descriptions:", descs);
