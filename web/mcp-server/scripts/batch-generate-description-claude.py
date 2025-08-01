@@ -10,6 +10,12 @@ claude_cmd = "claude"
 usdz_path = "/mnt/n/data/tinyusdz/mcp/african_slate_quarry/usds"
 screenshot_path = "/mnt/n/data/tinyusdz/mcp/african_slate_quarry/screenshots"
 
+if len(sys.argv) > 1:
+    usdz_path = sys.argv[1]
+
+if len(sys.argv) > 2:
+    screenshot_path = sys.argv[2]
+
 prompt_template = "Generate a description from the image. Focus its shape and appearance(PBR material parameter), ignore background and environment: \n\n" 
 
 ps = []
@@ -23,7 +29,7 @@ for item in glob.glob(os.path.join(usdz_path, "*.usdz")):
         continue
 
     prompt = prompt_template + f"Image: {screenshot_file}\n"
-    print(prompt)
+    print("Adding ", usdz_file)
 
     ps.append((usdz_file, prompt))
 
@@ -43,7 +49,15 @@ for p in ps:
   j = json.loads(result.stdout)
   description = j.get("result", "")
 
-  content = '{"usd_filename": "%s", "description": "%s"}\n' % (p[0], description)
+  outj = {}
+
+  # use basename for usd and screenshot
+  basename = os.path.basename(p[0])
+  outj['usd_filename'] = str(basename)
+  outj['screenshot_filename'] = str(os.path.splitext(basename)[0] + ".png")
+  outj['description'] = description
+
+  content = json.dumps(outj, ensure_ascii=True)
   output_file = p[0].with_suffix('.json')
   with open(output_file, 'w') as f:
       f.write(content)  
