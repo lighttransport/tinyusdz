@@ -15,7 +15,9 @@
 
 #pragma once
 
-#include "tinyusdz.hh"
+#include <string>
+
+class GPrim;
 
 namespace tinyusdz {
 

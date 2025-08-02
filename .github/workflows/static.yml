@@ -1,0 +1,72 @@
+# Simple workflow for deploying static content to GitHub Pages
+name: Deploy static content to Pages
+
+on:
+  push:
+    branches: ["web", "npm-refactor", "npm"]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
+# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  # Single deploy job since we're just deploying
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Setup Emscripten SDK
+        run: |
+          git clone https://github.com/emscripten-core/emsdk.git
+          cd emsdk
+          # from https://github.com/Twinklebear/webgpu-cpp-usdz/blob/main/.github/workflows/deploy-page.yml
+          ./emsdk install 4.0.9
+          ./emsdk activate 4.0.9
+      - name: Configure
+        run: |
+          source ./emsdk/emsdk_env.sh
+          cd web
+          mkdir cmake-build
+          cd cmake-build
+          emcmake cmake .. -DCMAKE_BUILD_TYPE=MinSizeRel
+      - name: Build WASM build of tinyusdz
+        working-directory: ${{ github.workspace }}/web/cmake-build
+        run: |
+          source ../../emsdk/emsdk_env.sh
+          make
+
+      - name: otherasserts
+        working-directory: ${{ github.workspace }}/web/demo
+        run: |
+          bun install
+          bun run build
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # Upload web/demo/dist folder
+          path: ${{ github.workspace }}/web/demo/dist
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

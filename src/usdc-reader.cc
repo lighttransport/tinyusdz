@@ -1292,6 +1292,22 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
             kTag, "`colorSpace` must be type `token`, but got type `"
                       << fv.second.type_name() << "`");
       }
+    } else if (fv.first == "displayName") {
+      if (auto pv = fv.second.get_value<std::string>()) {
+        meta.displayName = pv.value();
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`displayName` must be type `string`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
+    } else if (fv.first == "displayGroup") {
+      if (auto pv = fv.second.get_value<std::string>()) {
+        meta.displayGroup = pv.value();
+      } else {
+        PUSH_ERROR_AND_RETURN_TAG(
+            kTag, "`displayGroup` must be type `string`, but got type `"
+                      << fv.second.type_name() << "`");
+      }
     } else if (fv.first == "unauthoredValuesIndex") {
       if (auto pv = fv.second.get_value<int>()) {
         MetaVariable mv;
@@ -1530,6 +1546,7 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
   ///     - customLayerData(dict)
   ///     - defaultPrim(token)
   ///     - metersPerUnit(double)
+  ///     - kilogramsPerUnit(double)
   ///     - timeCodesPerSecond(double)
   ///     - upAxis(token)
   ///     - documentation(string) : `doc`
@@ -1570,6 +1587,17 @@ bool USDCReader::Impl::ReconstrcutStageMeta(
             fv.second.type_name() + "'");
       }
       DCOUT("metersPerUnit = " << metas->metersPerUnit.get_value());
+    } else if (fv.first == "kilogramsPerUnit") {
+      if (auto vf = fv.second.get_value<float>()) {
+        metas->kilogramsPerUnit = double(vf.value());
+      } else if (auto vd = fv.second.get_value<double>()) {
+        metas->kilogramsPerUnit = vd.value();
+      } else {
+        PUSH_ERROR_AND_RETURN(
+            "`kilogramsPerUnit` value must be double or float type, but got '" +
+            fv.second.type_name() + "'");
+      }
+      DCOUT("kilogramsPerUnit = " << metas->kilogramsPerUnit.get_value());
     } else if (fv.first == "timeCodesPerSecond") {
       if (auto vf = fv.second.get_value<float>()) {
         metas->timeCodesPerSecond = double(vf.value());

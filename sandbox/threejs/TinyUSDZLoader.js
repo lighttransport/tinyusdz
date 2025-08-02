@@ -1,3 +1,4 @@
+// W.I.P.
 // Based on GLTFLoader and USDZLoader
 // https://github.com/mrdoob/three.js/blob/master/examples/jsm/loaders/USDZLoader.js
 // https://github.com/mrdoob/three.js/blob/master/examples/jsm/loaders/GLTFLoader.js

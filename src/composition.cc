@@ -95,9 +95,8 @@ std::string GetExtension(const std::string &name) {
 bool IsUSDFileFormat(const std::string &name) {
   std::string ext = GetExtension(name);
 
-  // no 'usdz'
   return (ext.compare("usd") == 0) || (ext.compare("usda") == 0) ||
-         (ext.compare("usdc") == 0);
+         (ext.compare("usdc") == 0) || (ext.compare("usdz") == 0);
 }
 
 #if defined(TINYUSDZ_WITH_USDOBJ)
@@ -130,6 +129,64 @@ bool IsBuiltinFileFormat(const std::string &name) {
 #endif
 
   return false;
+}
+
+bool ReplaceRootPrimPathRec(
+  uint32_t depth,
+  const Path &srcPrefix,
+  const Path &dstPrefix,
+  PrimSpec &ps,
+  std::string *warn,
+  std::string *err) {
+
+  (void)warn;
+
+  DCOUT("srcPrefix: " << srcPrefix);
+  DCOUT("dstPrefix: " << dstPrefix);
+
+  if (depth > (1024 * 1024 * 128)) {
+    PUSH_ERROR_AND_RETURN("PrimSpec tree too deep.");
+  }
+
+  for (auto &prop : ps.props()) {
+
+    if (prop.second.is_relationship()) {
+
+      Relationship &rel = prop.second.relationship();
+
+      if (rel.is_path()) {
+        if (rel.targetPath.has_prefix(srcPrefix)) {
+          rel.targetPath.replace_prefix(srcPrefix, dstPrefix);
+        }
+      } else if (rel.is_pathvector()) {
+
+        for (auto &path : rel.targetPathVector) {
+          if (path.has_prefix(srcPrefix)) {
+            path.replace_prefix(srcPrefix, dstPrefix);
+          }
+        }
+      }
+
+    } else if (prop.second.is_attribute_connection()) {
+
+      Attribute &attr = prop.second.attribute();
+      for (auto &connPath : attr.connections()) {
+        if (connPath.has_prefix(srcPrefix)) {
+          connPath.replace_prefix(srcPrefix, dstPrefix);
+        }
+      }
+    }
+
+  }
+
+  // Combine child primspecs.
+  for (auto &child : ps.children()) {
+    if (!ReplaceRootPrimPathRec(depth + 1, srcPrefix, dstPrefix, child, warn, err)) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 // Copy assetresolver state to all PrimSpec in the tree.
@@ -408,6 +465,47 @@ bool LoadAsset(AssetResolutionResolver &resolver,
   return true;
 }
 
+bool CombinePrimSpecRec(uint32_t depth, PrimSpec &dst, const PrimSpec &src, std::string *warn,
+                      std::string *err) {
+  (void)warn;
+
+  if (depth > (1024 * 1024 * 128)) {
+    PUSH_ERROR_AND_RETURN("PrimSpec tree too deep.");
+  }
+
+  // Combine metadataum
+  dst.metas().update_from(src.metas(), false);
+
+  // Combine properties
+  for (const auto &prop : src.props()) {
+    // add if not existent
+    if (dst.props().count(prop.first) == 0) {
+      dst.props()[prop.first] = prop.second;
+    }
+  }
+
+  // Combine child primspecs.
+  for (auto &child : src.children()) {
+    auto dst_it = std::find_if(
+        dst.children().begin(), dst.children().end(),
+        [&child](const PrimSpec &ps) { return ps.name() == child.name(); });
+
+    // if exists, combine properties and children
+    if (dst_it != dst.children().end()) {
+      if (!CombinePrimSpecRec(depth + 1, (*dst_it), child, warn, err)) {
+        return false;
+      }
+    }
+    // otherwise add it
+    else {
+      dst.children().push_back(child);
+    }
+  }
+
+  return true;
+}
+
+
 bool CompositeSublayersRec(AssetResolutionResolver &resolver,
                            const Layer &in_layer,
                            std::vector<std::set<std::string>> layer_names_stack,
@@ -424,10 +522,21 @@ bool CompositeSublayersRec(AssetResolutionResolver &resolver,
   layer_names_stack.emplace_back(std::set<std::string>());
   std::set<std::string> &curr_layer_names = layer_names_stack.back();
 
+  for (auto const &prim : in_layer.primspecs()) {
+    if (composited_layer->has_primspec(prim.first))
+    {
+      if (!CombinePrimSpecRec(0, composited_layer->primspecs().at(prim.first), prim.second, warn, err)) {
+        return false;
+      }
+    }
+    else {
+      composited_layer->add_primspec(prim.first, prim.second);
+    }
+  }
+
   for (const auto &layer : in_layer.metas().subLayers) {
     // TODO: subLayerOffset
     std::string sublayer_asset_path = layer.assetPath.GetAssetPath();
-    DCOUT("Load subLayer " << sublayer_asset_path);
 
     // Do cyclic referencing check.
     // TODO: Use resolved name?
@@ -458,45 +567,10 @@ bool CompositeSublayersRec(AssetResolutionResolver &resolver,
 
     curr_layer_names.insert(sublayer_asset_path);
 
-    Layer composited_sublayer;
-
     // Recursively load subLayer
     if (!CompositeSublayersRec(resolver, sublayer, layer_names_stack,
-                               &composited_sublayer, warn, err, options)) {
+                               composited_layer, warn, err, options)) {
       return false;
-    }
-
-    {
-      // 1/2. merge sublayer's sublayers
-
-      // NOTE: `over` specifier is ignored when merging Prims among different
-      // subLayers
-      for (auto &prim : composited_sublayer.primspecs()) {
-        if (composited_layer->has_primspec(prim.first)) {
-          // Skip
-        } else {
-          if (!composited_layer->emplace_primspec(prim.first, std::move(prim.second))) {
-            PUSH_ERROR_AND_RETURN(
-                fmt::format("Compositing PrimSpec {} in {} failed.", prim.first,
-                            layer_filepath));
-          }
-          DCOUT("add primspec: " << prim.first);
-        }
-      }
-
-      // 2/2. merge sublayer
-      for (auto &prim : sublayer.primspecs()) {
-        if (composited_layer->has_primspec(prim.first)) {
-          // Skip
-        } else {
-          if (!composited_layer->emplace_primspec(prim.first, std::move(prim.second))) {
-            PUSH_ERROR_AND_RETURN(
-                fmt::format("Compositing PrimSpec {} in {} failed.", prim.first,
-                            layer_filepath));
-          }
-          DCOUT("add primspec: " << prim.first);
-        }
-      }
     }
   }
 
@@ -506,6 +580,22 @@ bool CompositeSublayersRec(AssetResolutionResolver &resolver,
 }
 
 }  // namespace
+
+std::vector<std::string> ExtractSublayerAssetPaths(const Layer &layer) {
+
+  std::vector<std::string> paths;
+
+  for (const auto &sublayer : layer.metas().subLayers) {
+    std::string sublayer_asset_path = sublayer.assetPath.GetAssetPath();
+    
+    paths.push_back(sublayer_asset_path);
+  }
+
+  return paths;
+
+}
+
+
 
 bool CompositeSublayers(AssetResolutionResolver &resolver,
                         const Layer &in_layer, Layer *composited_layer,
@@ -517,51 +607,15 @@ bool CompositeSublayers(AssetResolutionResolver &resolver,
 
   std::vector<std::set<std::string>> layer_names_stack;
 
+  // keep metas from the root layer
+  composited_layer->metas() = in_layer.metas();
+
   DCOUT("Resolve subLayers..");
   if (!CompositeSublayersRec(resolver, in_layer, layer_names_stack,
                              composited_layer, warn, err, options)) {
     PUSH_ERROR_AND_RETURN("Composite subLayers failed.");
   }
 
-  // merge Prims in root layer.
-  // NOTE: local Prims(prims in root layer) wins against subLayer's Prim
-  DCOUT("in_layer # of primspecs: " << in_layer.primspecs().size());
-  for (auto &prim : in_layer.primspecs()) {
-    DCOUT("in_layer.prim: " << prim.first);
-    if (composited_layer->has_primspec(prim.first)) {
-      // over
-      if (prim.second.specifier() == Specifier::Class) {
-        // TODO: Simply ignore?
-        DCOUT("TODO: `class` Prim");
-      } else if (prim.second.specifier() == Specifier::Over) {
-        PrimSpec &dst = composited_layer->primspecs()[prim.first];
-        if (!OverridePrimSpec(dst, prim.second, warn, err)) {
-          return false;
-        }
-      } else if (prim.second.specifier() == Specifier::Def) {
-        DCOUT("overewrite prim: " << prim.first);
-        // overwrite
-        if (!composited_layer->replace_primspec(prim.first, prim.second)) {
-          PUSH_ERROR_AND_RETURN(
-              fmt::format("Failed to replace PrimSpec: {}", prim.first));
-        }
-      } else {
-        /// ???
-        PUSH_ERROR_AND_RETURN(fmt::format("Prim {} has invalid Prim specifier.",
-                                          prim.second.name()));
-      }
-    } else {
-      if (!composited_layer->add_primspec(prim.first, prim.second)) {
-        PUSH_ERROR_AND_RETURN(
-            fmt::format("Compositing PrimSpec {} in {} failed.", prim.first,
-                        in_layer.name()));
-      }
-      DCOUT("added primspec: " << prim.first);
-    }
-  }
-
-  composited_layer->metas() = in_layer.metas();
-  // Remove subLayers metadatum
   composited_layer->metas().subLayers.clear();
 
   DCOUT("Composite subLayers ok.");
@@ -635,9 +689,9 @@ static bool FindPrimSpecAt(const Path &path, const PrimSpec &rootPS,
 }
 #endif
 
-
 bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
                             const std::vector<std::string> &asset_search_paths,
+                            const Path &dst_prim_path,
                             const Layer &in_layer,
                             PrimSpec &primspec /* [inout] */, std::string *warn,
                             std::string *err,
@@ -648,7 +702,8 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
 
   // Traverse children first.
   for (auto &child : primspec.children()) {
-    if (!CompositeReferencesRec(depth + 1, resolver, asset_search_paths, in_layer, child,
+    const Path parent_prim_path = dst_prim_path.AppendPrim(child.name());
+    if (!CompositeReferencesRec(depth + 1, resolver, asset_search_paths, parent_prim_path, in_layer, child,
                                 warn, err, options)) {
       return false;
     }
@@ -701,6 +756,11 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
         if (!src_ps) {
           // LoadAsset allowed not-found or unsupported file. so do nothing.
           continue;
+        }
+
+        // Replace prim path prefix
+        if (!ReplaceRootPrimPathRec(0, reference.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
+          return false;
         }
 
         // `inherits` op
@@ -765,6 +825,11 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
           continue;
         }
 
+        // Replace prim path prefix
+        if (!ReplaceRootPrimPathRec(0, reference.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
+          return false;
+        }
+
         // `over` op
         if (!OverridePrimSpec(primspec, *src_ps, warn, err)) {
           PUSH_ERROR_AND_RETURN(fmt::format("Failed to reference layer `{}`",
@@ -792,6 +857,7 @@ bool CompositeReferencesRec(uint32_t depth, AssetResolutionResolver &resolver,
 
 bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
                          const std::vector<std::string> &asset_search_paths,
+                         const Path &dst_prim_path,
                          const Layer &in_layer,
                          PrimSpec &primspec /* [inout] */, std::string *warn,
                          std::string *err,
@@ -802,7 +868,8 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
 
   // Traverse children first.
   for (auto &child : primspec.children()) {
-    if (!CompositePayloadRec(depth + 1, resolver, asset_search_paths, in_layer, child,
+    const Path parent_prim_path = dst_prim_path.AppendPrim(child.name());
+    if (!CompositePayloadRec(depth + 1, resolver, asset_search_paths, parent_prim_path, in_layer, child,
                              warn, err, options)) {
       return false;
     }
@@ -853,6 +920,11 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
         if (!src_ps) {
           // LoadAsset allowed not-found or unsupported file. so do nothing.
           continue;
+        }
+
+        // Replace prim path prefix
+        if (!ReplaceRootPrimPathRec(0, pl.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
+          return false;
         }
 
         // `inherits` op
@@ -916,6 +988,11 @@ bool CompositePayloadRec(uint32_t depth, AssetResolutionResolver &resolver,
         if (!src_ps) {
           // LoadAsset allowed not-found or unsupported file. so do nothing.
           continue;
+        }
+
+        // Replace prim path prefix
+        if (!ReplaceRootPrimPathRec(0, pl.prim_path, dst_prim_path, *const_cast<PrimSpec *>(src_ps), warn, err)) {
+          return false;
         }
 
         // `over` op
@@ -1038,7 +1115,50 @@ bool CompositeInheritsRec(uint32_t depth, const Layer &layer,
   return true;
 }
 
-}  // namespace
+bool ExtractReferencesAssetPathsImpl(uint32_t depth, const PrimSpec &primspec, std::vector<std::string> &paths) {
+
+  if (depth > 1024*1024) {
+    return false;
+  }
+
+  // Traverse children first.
+  for (auto &child : primspec.children()) {
+    if (!ExtractReferencesAssetPathsImpl(depth + 1, child, paths)) {
+      return false;
+    }
+  }
+
+  if (primspec.metas().references) {
+    // TODO: qualifier
+    //const ListEditQual &qual = primspec.metas().references.value().first;
+    const auto &refecences = primspec.metas().references.value().second;
+
+    for (const auto &reference : refecences) {
+
+      paths.push_back(reference.asset_path.GetAssetPath());
+    }
+
+  }
+
+  return true;
+
+}
+
+} // namespace
+
+
+std::vector<std::string> ExtractReferencesAssetPaths(const Layer &layer) {
+
+  std::vector<std::string> paths;
+
+  for (const auto &ps : layer.primspecs()) {
+    ExtractReferencesAssetPathsImpl(0, ps.second, paths);
+  }
+
+  return paths;
+
+}
+
 
 bool CompositeReferences(AssetResolutionResolver &resolver,
                          const Layer &in_layer, Layer *composited_layer,
@@ -1053,7 +1173,8 @@ bool CompositeReferences(AssetResolutionResolver &resolver,
   Layer dst = in_layer;  // deep copy
 
   for (auto &item : dst.primspecs()) {
-    if (!CompositeReferencesRec(/* depth */ 0, resolver, search_paths, in_layer,
+    Path primPath("/" + item.first, "");
+    if (!CompositeReferencesRec(/* depth */ 0, resolver, search_paths, primPath, in_layer,
                                 item.second, warn, err, options)) {
       PUSH_ERROR_AND_RETURN("Composite `references` failed.");
     }
@@ -1065,6 +1186,53 @@ bool CompositeReferences(AssetResolutionResolver &resolver,
   return true;
 }
 
+namespace {
+
+bool ExtractPayloadAssetPathsImpl(uint32_t depth, const PrimSpec &primspec, std::vector<std::string> &paths) {
+
+  if (depth > 1024*1024) {
+    return false;
+  }
+
+  // Traverse children first.
+  for (auto &child : primspec.children()) {
+    if (!ExtractPayloadAssetPathsImpl(depth + 1, child, paths)) {
+      return false;
+    }
+  }
+
+  if (primspec.metas().payload) {
+    // TODO: qualifier
+    //const ListEditQual &qual = primspec.metas().references.value().first;
+    const auto &payload = primspec.metas().payload.value().second;
+
+    for (const auto &pl : payload) {
+
+      paths.push_back(pl.asset_path.GetAssetPath());
+    }
+
+  }
+
+  return true;
+
+}
+
+} // namespace
+
+
+std::vector<std::string> ExtractPayloadAssetPaths(const Layer &layer) {
+
+  std::vector<std::string> paths;
+
+  for (const auto &ps : layer.primspecs()) {
+    ExtractPayloadAssetPathsImpl(0, ps.second, paths);
+  }
+
+  return paths;
+
+}
+
+
 bool CompositePayload(AssetResolutionResolver &resolver, const Layer &in_layer,
                       Layer *composited_layer, std::string *warn,
                       std::string *err, PayloadCompositionOptions options) {
@@ -1075,8 +1243,9 @@ bool CompositePayload(AssetResolutionResolver &resolver, const Layer &in_layer,
   Layer dst = in_layer;  // deep copy
 
   for (auto &item : dst.primspecs()) {
+    Path primPath("/" + item.first, "");
     if (!CompositePayloadRec(/* depth */ 0, resolver,
-                             item.second.get_asset_search_paths(), in_layer, item.second,
+                             item.second.get_asset_search_paths(), primPath, in_layer, item.second,
                              warn, err, options)) {
       PUSH_ERROR_AND_RETURN("Composite `payload` failed.");
     }
@@ -1138,6 +1307,7 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
   // - propertyNames()
   // - primChildrenNames()
 
+
 #define RECONSTRUCT_PRIM(__primty)                                       \
   if (primspec.typeName() == value::TypeTraits<__primty>::type_name()) { \
     __primty typed_prim;                                                 \
@@ -1160,7 +1330,7 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
     return std::move(prim);                                              \
   } else
 
-  if (primspec.typeName() == "Model") {
+  if (primspec.typeName().empty() || primspec.typeName() == "Model") {
     // Code is mostly identical to RECONSTRUCT_PRIM.
     // Difference is store primTypeName to Model class itself.
     Model typed_prim;
@@ -1194,7 +1364,7 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
   RECONSTRUCT_PRIM(GeomCapsule)
   RECONSTRUCT_PRIM(GeomBasisCurves)
   RECONSTRUCT_PRIM(GeomCamera)
-  // RECONSTRUCT_PRIM(GeomSubset)
+  RECONSTRUCT_PRIM(GeomSubset)
   RECONSTRUCT_PRIM(SphereLight)
   RECONSTRUCT_PRIM(DomeLight)
   RECONSTRUCT_PRIM(CylinderLight)
@@ -1211,6 +1381,23 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
   }
 
 #undef RECONSTRUCT_PRIM
+}
+
+static nonstd::optional<Prim> ReconstructPrimFromPrimSpecRec(
+    const PrimSpec &primspec, std::string *warn, std::string *err) {
+
+  auto pprim = ReconstructPrimFromPrimSpec(primspec, warn, err);
+  if (!pprim) {
+    return nonstd::nullopt;
+  }
+  
+  for (size_t i = 0; i < primspec.children().size(); i++) {
+    if (auto pv = ReconstructPrimFromPrimSpecRec(primspec.children()[i], warn, err)) {
+      pprim.value().children().emplace_back(std::move(pv.value()));
+    }
+  }
+
+  return pprim;
 }
 
 static bool OverridePrimSpecRec(uint32_t depth, PrimSpec &dst,
@@ -1275,9 +1462,11 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
   // Then override it with `dst`
   PrimSpec ps = src;  // copy
 
-  // Keep PrimSpec name, typeName and spec from `dst`
+  // Keep PrimSpec name, typeName (if not empty) and spec from `dst`
   ps.name() = dst.name();
-  ps.typeName() = dst.typeName();
+  if (!dst.typeName().empty()) {
+    ps.typeName() = dst.typeName();
+  }
   ps.specifier() = dst.specifier();
 
   // Override metadataum
@@ -1288,6 +1477,10 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
     if (ps.props().count(prop.first)) {
       // replace
       ps.props().at(prop.first) = prop.second;
+    }
+    else {
+      // re-add
+      ps.props()[prop.first] = prop.second;
     }
   }
 
@@ -1330,9 +1523,8 @@ bool LayerToStage(const Layer &layer, Stage *stage_out, std::string *warn,
   // TODO: primChildren metadatum
   for (const auto &primspec : layer.primspecs()) {
     if (auto pv =
-            detail::ReconstructPrimFromPrimSpec(primspec.second, warn, err)) {
-      // TODO
-      (void)pv;
+            detail::ReconstructPrimFromPrimSpecRec(primspec.second, warn, err)) {
+      stage.add_root_prim(std::move(pv.value()));
     }
   }
 
@@ -1385,7 +1577,6 @@ bool ReferenceLayerToPrimSpec(PrimSpec &dst, const Layer &layer,
 }
 #endif
 
-#if 0
 bool HasReferences(const Layer &layer, const bool force_check,
                    const ReferencesCompositionOptions options) {
   if (!force_check) {
@@ -1408,12 +1599,15 @@ bool HasInherits(const Layer &layer) {
   return layer.check_unresolved_inherits();
 }
 
+bool HasVariants(const Layer &layer) {
+  return layer.check_unresolved_variant();
+}
+
 bool HasOver(const Layer &layer) { return layer.check_over_primspec(); }
 
 bool HasSpecializes(const Layer &layer) {
   return layer.check_unresolved_specializes();
 }
-#endif
 
 namespace {
 
