@@ -608,7 +608,8 @@ std::vector<GeomPrimvar> GPrim::get_primvars() const {
     if (startsWith(prop.first, kPrimvars)) {
       // skip `:indices`. Attribute with `:indices` suffix is handled in
       // `get_primvar`
-      if (props.count(prop.first + kIndices)) {
+      // Also skips primvar attribute with `:indices` suffix only.
+      if (endsWith(prop.first, kIndices)) {
         continue;
       }
 
@@ -680,7 +681,7 @@ bool GPrim::set_primvar(const GeomPrimvar &primvar,
   return true;
 }
 
-bool GPrim::get_displayColor(value::color3f *dst, double t, const value::TimeSampleInterpolationType tinterp)
+bool GPrim::get_displayColor(value::color3f *dst, double t, const value::TimeSampleInterpolationType tinterp) const
 {
   // TODO: timeSamples
   (void)t;
@@ -696,7 +697,7 @@ bool GPrim::get_displayColor(value::color3f *dst, double t, const value::TimeSam
   return primvar.get_value(dst);
 }
 
-bool GPrim::get_displayOpacity(float *dst, double t, const value::TimeSampleInterpolationType tinterp)
+bool GPrim::get_displayOpacity(float *dst, double t, const value::TimeSampleInterpolationType tinterp) const
 {
   // TODO: timeSamples
   (void)t;
@@ -796,6 +797,23 @@ const std::vector<value::normal3f> GeomMesh::get_normals(
   return dst;
 }
 
+const std::vector<value::color3f> GPrim::get_displayColors(
+    double time, value::TimeSampleInterpolationType interp) const {
+  std::vector<value::color3f> dst;
+
+  std::string err;
+  if (has_primvar("displayColor")) {
+    GeomPrimvar primvar;
+    if (!get_primvar("displayColor", &primvar, &err)) {
+      return dst;
+    }
+
+    primvar.flatten_with_indices(time, &dst, interp);
+  }
+
+  return dst;
+}
+
 Interpolation GeomMesh::get_normalsInterpolation() const {
   if (props.count("primvars:normals")) {
     const auto &prop = props.at("primvars:normals");
@@ -811,7 +829,20 @@ Interpolation GeomMesh::get_normalsInterpolation() const {
   return Interpolation::Vertex;  // default 'vertex'
 }
 
-const std::vector<int32_t> GeomMesh::get_faceVertexCounts() const {
+Interpolation GPrim::get_displayColorsInterpolation() const {
+  if (props.count("primvars:displayColor")) {
+    const auto &prop = props.at("primvars:displayColor");
+    if (prop.get_attribute().type_name() == "color3f[]") {
+      if (prop.get_attribute().metas().interpolation) {
+        return prop.get_attribute().metas().interpolation.value();
+      }
+    }
+  }
+
+  return Interpolation::Vertex;  // default 'vertex'
+}
+
+const std::vector<int32_t> GeomMesh::get_faceVertexCounts(double time) const {
   std::vector<int32_t> dst;
 
   if (!faceVertexCounts.authored() || faceVertexCounts.is_blocked()) {
@@ -825,15 +856,14 @@ const std::vector<int32_t> GeomMesh::get_faceVertexCounts() const {
 
   if (auto pv = faceVertexCounts.get_value()) {
     std::vector<int32_t> val;
-    // TOOD: timesamples
-    if (pv.value().get_scalar(&val)) {
+    if (pv.value().get(time, &val, value::TimeSampleInterpolationType::Held)) {
       dst = std::move(val);
     }
   }
   return dst;
 }
 
-const std::vector<int32_t> GeomMesh::get_faceVertexIndices() const {
+const std::vector<int32_t> GeomMesh::get_faceVertexIndices(double time) const {
   std::vector<int32_t> dst;
 
   if (!faceVertexIndices.authored() || faceVertexIndices.is_blocked()) {
@@ -847,12 +877,63 @@ const std::vector<int32_t> GeomMesh::get_faceVertexIndices() const {
 
   if (auto pv = faceVertexIndices.get_value()) {
     std::vector<int32_t> val;
-    // TOOD: timesamples
-    if (pv.value().get_scalar(&val)) {
+    if (pv.value().get(time, &val, value::TimeSampleInterpolationType::Held)) {
       dst = std::move(val);
     }
   }
   return dst;
+}
+
+std::vector<value::token> GeomMesh::get_joints() const {
+  constexpr auto kSkelJoints = "skel:joints";
+#if 0
+  if (has_primvar(kSkelJoints)) {
+    // 'primvars:skel:joints'
+    std::string err;
+    GeomPrimvar primvar;
+    if (!get_primvar(kSkelJoints, &primvar, &err)) {
+      DCOUT("Invalid `skel:joints` primvar. err = " << err);
+      return {};
+    }
+
+    if (primvar.has_indices()) {
+      // indexed primvar for skel:joint is not supported 
+      DCOUT("Indexed primvar is not supported for `skel:joints`");
+      return {};
+    }
+
+    const Attribute &attr = primvar.get_attribute();
+    if (!attr.is_uniform()) {
+      DCOUT("`skel:joints` must be uniform attribute");
+      return {};
+    }
+
+    std::vector<value::token> dst;
+    if (!primvar.get_value(&dst)) {
+      DCOUT("`skel:joints` must be token[] type, but got " << primvar.type_name());
+    }
+  } else {
+#endif
+  {
+    // lookup `skel:joints` prop
+    if (!props.count(kSkelJoints)) {
+      return {};
+    }
+
+    const auto &prop = props.at(kSkelJoints);
+    if (prop.get_attribute().is_uniform() && prop.get_attribute().type_name() == "token[]") {
+      
+      std::vector<value::token> dst;
+      if (!prop.get_attribute().get_value(&dst)) {
+        return {};
+      }
+
+      return dst;
+      
+    } 
+    DCOUT("`skel:joints` must be uniform token[] attribute, but got " << prop.value_type_name() << " (or Relationship))");
+  }
+  return {};
 }
 
 // static

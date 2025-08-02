@@ -68,7 +68,6 @@
 #include "str-util.hh"
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
-#include "usdObj.hh"
 #include "usdShade.hh"
 #include "value-pprint.hh"
 #include "value-types.hh"
@@ -729,6 +728,10 @@ class USDAReader::Impl {
           _stage.metas().defaultPrim = metas.defaultPrim;
           if (metas.metersPerUnit) {
             _stage.metas().metersPerUnit = metas.metersPerUnit.value();
+          }
+
+          if (metas.kilogramsPerUnit) {
+            _stage.metas().kilogramsPerUnit = metas.kilogramsPerUnit.value();
           }
 
           if (metas.timeCodesPerSecond) {

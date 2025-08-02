@@ -675,4 +675,36 @@ bool is_valid_utf8_identifier(const std::string &str) {
   return true; 
 }
 
+std::string makeIdentifierValid(const std::string &str, bool is_utf8) {
+  // TODO: utf8 support
+  (void)is_utf8;
+
+  std::string s;
+
+  if (str.empty()) {
+    // return '_'
+    return "_";
+  }
+
+  // first char
+  // [a-ZA-Z_]
+  if ((('a' <= str[0]) && (str[0] <= 'z')) || (('A' <= str[0]) && (str[0] <= 'Z')) || (str[0] == '_')) {
+    s.push_back(str[0]);
+  } else {
+    s.push_back('_');
+  }
+
+  // remain chars
+  // [a-ZA-Z0-9_]
+  for (size_t i = 1; i < str.length(); i++) {
+    if ((('a' <= str[i]) && (str[i] <= 'z')) || (('A' <= str[i]) && (str[i] <= 'Z')) || (('0' <= str[i]) && (str[i] <= '9')) || (str[i] == '_')) {
+      s.push_back(str[i]);
+    } else {
+      s.push_back('_');
+    }
+  }
+
+  return s;
+}
+
 }  // namespace tinyusdz

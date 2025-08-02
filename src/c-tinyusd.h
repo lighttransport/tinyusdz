@@ -690,7 +690,7 @@ C_TINYUSD_EXPORT int c_tinyusd_attribute_meta_get(
 
 
 #if 0
-   Get i'th targetPaths
+/*   Get i'th targetPaths */
 C_TINYUSD_EXPORT int c_tinyusd_attribute_connection_get(CTinyUSDAttribute *attr, uint32_t n, const CTinyUSDPath *connectionPaths);
 #endif
 

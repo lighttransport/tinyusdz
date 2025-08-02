@@ -190,12 +190,17 @@ struct Xformable {
   /// @param[out] resetTransformStack Is xformOpOrder contains !resetTransformStack!? 
   ///
   nonstd::expected<value::matrix4d, std::string> GetLocalMatrix(double t = value::TimeCode::Default(), value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear, bool *resetTransformStack = nullptr) const {
-    if (_dirty) {
+    if (_dirty || !value::TimeCode(t).is_default()) {
       value::matrix4d m;
       std::string err;
       if (EvaluateXformOps(t, tinterp, &m, resetTransformStack, &err)) {
-        _matrix = m;
-        _dirty = false;
+        if (value::TimeCode(t).is_default()) {
+          _matrix = m;
+          _dirty = false;
+        }
+        else {
+          return m;
+        }
       } else {
         return nonstd::make_unexpected(err);
       }
@@ -205,6 +210,15 @@ struct Xformable {
   }
 
   void set_dirty(bool onoff) { _dirty = onoff; }
+
+  bool has_timesamples() const {
+    for (size_t i = 0; i < xformOps.size(); i++) {
+      if (xformOps[i].has_timesamples()) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   // Return `token[]` representation of `xformOps`
   std::vector<value::token> xformOpOrder() const;

@@ -197,7 +197,7 @@ class GeomPrimvar {
   }
 
   bool has_default_indices() const { return !_indices.empty(); }
-  bool has_timesampled_indices() const { return _ts_indices.size(); }
+  bool has_timesampled_indices() const { return _ts_indices.size() > 0; }
 
   bool has_indices() const {
     return has_default_indices() || has_timesampled_indices();
@@ -268,7 +268,7 @@ class GeomPrimvar {
     _has_value = true;
   }
 
-  void set_value(const Attribute &&attr) {
+  void set_value(Attribute &&attr) {
     _attr = std::move(attr);
     _has_value = true;
   }
@@ -284,7 +284,7 @@ class GeomPrimvar {
     _indices = indices;
   }
 
-  void set_default_indices(const std::vector<int32_t> &&indices) {
+  void set_default_indices(std::vector<int32_t> &&indices) {
     _indices = std::move(indices);
   }
 
@@ -359,9 +359,16 @@ struct GPrim : Xformable, MaterialBinding, Collection {
       Purpose::Default};  // "uniform token purpose"
 
   // Handy API to get `primvars:displayColor` and `primvars:displayOpacity`
-  bool get_displayColor(value::color3f *col, const double t = value::TimeCode::Default(), const value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear);
+  bool get_displayColor(value::color3f *col, const double t = value::TimeCode::Default(), const value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear) const;
 
-  bool get_displayOpacity(float *opacity, const double t = value::TimeCode::Default(), const value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear);
+  bool get_displayOpacity(float *opacity, const double t = value::TimeCode::Default(), const value::TimeSampleInterpolationType tinterp = value::TimeSampleInterpolationType::Linear) const;
+
+  const std::vector<value::color3f> get_displayColors(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
+
+  Interpolation get_displayColorsInterpolation() const;
 
   RelationshipProperty proxyPrim;
 
@@ -797,14 +804,14 @@ struct GeomMesh : GPrim {
   ///
   /// @return face vertex counts vector(copied)
   ///
-  const std::vector<int32_t> get_faceVertexCounts() const;
+  const std::vector<int32_t> get_faceVertexCounts(double time = value::TimeCode::Default()) const;
 
   ///
   /// @brief Returns `faceVertexIndices`.
   ///
   /// @return face vertex indices vector(copied)
   ///
-  const std::vector<int32_t> get_faceVertexIndices() const;
+  const std::vector<int32_t> get_faceVertexIndices(double time = value::TimeCode::Default()) const;
 
   //
   // SubD attribs.
@@ -895,6 +902,9 @@ struct GeomMesh : GPrim {
   std::vector<GeomSubset> geom_subset_children;
 
 #endif
+
+  // Get Explicit Joint orders: `uniform token[] skel:joints`
+  std::vector<value::token> get_joints() const;
 
 #if 0 // Deprecated: Use tydra::GetGeomSubsets() instead.
   ///

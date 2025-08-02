@@ -607,7 +607,9 @@ bool CrateReader::ReadFloatArray(bool is_compressed, std::vector<float> *d) {
         _err += "Failed to read compressed ints in ReadFloatArray.\n";
         return false;
       }
-      std::copy(ints.begin(), ints.end(), d->data());
+      for (size_t i = 0; i < length; i++) {
+        d->data()[i] = float(ints[i]);
+      }
     } else if (code == 't') {
       // Lookup table & indexes.
       uint32_t lutSize;
@@ -669,6 +671,11 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
     }
 
     length = size_t(n);
+  }
+
+  if (length == 0) {
+    d->clear();
+    return true;
   }
 
   if (length > _config.maxArrayElements) {
@@ -758,6 +765,40 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
 
     return true;
   }
+}
+
+bool CrateReader::ReadDoubleVector(std::vector<double> *d) {
+  size_t length;
+
+  uint64_t n;
+  if (!_sr->read8(&n)) {
+    _err += "Failed to read the number of array elements.\n";
+    return false;
+  }
+
+  length = size_t(n);
+
+  if (length == 0) {
+    d->clear();
+    return true;
+  }
+
+  if (length > _config.maxArrayElements) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many array elements.");
+  }
+
+  CHECK_MEMORY_USAGE(length * sizeof(double));
+
+  d->resize(length);
+
+  // TODO(syoyo): Zero-copy
+  if (!_sr->read(sizeof(double) * length, sizeof(double) * length,
+                 reinterpret_cast<uint8_t *>(d->data()))) {
+    _err += "Failed to read double vector data.\n";
+    return false;
+  }
+
+  return true;
 }
 
 bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
@@ -4113,7 +4154,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE_VECTOR: {
       std::vector<double> v;
-      if (!ReadDoubleArray(rep.IsCompressed(), &v)) {
+      if (!ReadDoubleVector(&v)) {
         _err += "Failed to read DoubleVector value\n";
         return false;
       }
@@ -6270,7 +6311,7 @@ bool CrateReader::ReadTOC() {
     // TODO: handle integer overflow.
     size_t end_offset = size_t(_toc.sections[i].start + _toc.sections[i].size);
     if (sizeof(void *) == 4) { // 32bit
-      if (end_offset > std::numeric_limits<int32_t>::max()) {
+      if (end_offset > size_t(std::numeric_limits<int32_t>::max())) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Section end offset exceeds 32bit max."));
       }
     }

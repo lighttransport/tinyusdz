@@ -64,6 +64,7 @@ endif ()
 option(TINYUSDZ_USE_CCACHE "Use ccache for faster recompile." ON)
 option(TINYUSDZ_BUILD_SHARED_LIBS "Build as dll?" ${BUILD_SHARED_LIBS})
 option(TINYUSDZ_ENABLE_THREAD "Build with C++11 std::thread support?(threading support is not implemented yet)" OFF)
+option(TINYUSDZ_MSAN "Build with MSAN support(for developer only)" OFF)
 option(TINYUSDZ_WITH_C_API "Enable C API." ${TINYUSDZ_DEFAULT_WITH_C_API})
 option(TINYUSDZ_BUILD_TESTS "Build tests" ${TINYUSDZ_DEFAULT_BUILD_TESTS})
 option(TINYUSDZ_BUILD_BENCHMARKS
@@ -89,7 +90,7 @@ endif()
 # Enable /MP flags(multi processor build) for Visual Studio
 # Based on VTK's Cmake
 # No need to set this if you use Ninja Generator
-if(MSVC)
+if(MSVC AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   # default on.
   # disable MP or reduce cores if you have less memory
   set(TINYUSDZ_CXX_MP_FLAG ON CACHE BOOL "Build with /MP flag enabled")
@@ -281,8 +282,13 @@ if (PROJECT_IS_TOP_LEVEL)
     # for pybind11
     set(CMAKE_CXX_STANDARD 14)
   else()
-    # Require strict C++14 mode(e.g. `-std=c++14`)
-    set(CMAKE_CXX_STANDARD 14)
+    if (TINYUSDZ_MSAN)
+      # Require strict C++17 or later for MSAN build
+      set(CMAKE_CXX_STANDARD 17)
+    else()
+      # Require strict C++14 mode(e.g. `-std=c++14`)
+      set(CMAKE_CXX_STANDARD 14)
+    endif()
   endif()
   set(CMAKE_CXX_STANDARD_REQUIRED ON)
   set(CMAKE_CXX_EXTENSIONS OFF)
@@ -370,6 +376,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-timesamples.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-timesamples-array.cc
     ${PROJECT_SOURCE_DIR}/src/audio-loader.cc
+    ${PROJECT_SOURCE_DIR}/src/base122.cc
     ${PROJECT_SOURCE_DIR}/src/usda-reader.cc
     ${PROJECT_SOURCE_DIR}/src/usdc-reader.cc
     ${PROJECT_SOURCE_DIR}/src/usda-writer.cc
@@ -426,6 +433,8 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/shader-network.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.hh
         )
 endif (TINYUSDZ_WITH_TYDRA)
 
@@ -454,8 +463,10 @@ if(TINYUSDZ_WITH_USDMTLX)
 endif()
 
 if(TINYUSDZ_WITH_JSON)
+  list(APPEND TINYUSDZ_DEP_SOURCES  ${PROJECT_SOURCE_DIR}/src/external/yyjson.c)
   list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/json-to-usd.cc)
   list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/usd-to-json.cc)
+  list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/json-writer.cc)
 endif()
 
 if(TINYUSDZ_WITH_USDFBX)
@@ -691,6 +702,11 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   # we need to suppress it as a work around.
   if (${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 16)
     set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-unsafe-buffer-usage")
+  endif()
+
+  # this is actually a work around of false-positive behavior of clang in Androind NDK 27.
+  if (${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 17)
+    set(TUSDZ_COMPILE_FLAGS "${TUSDZ_COMPILE_FLAGS} -Wno-switch-default")
   endif()
 
   if(TINYUSDZ_COMPILE_TIME_TRACE)
@@ -1225,6 +1241,7 @@ if(TINYUSDZ_BUILD_EXAMPLES)
   add_subdirectory(examples/api_tutorial)
   add_subdirectory(examples/file_format)
   add_subdirectory(examples/asset_resolution)
+  add_subdirectory(examples/progressive_composition)
   #if (TINYUSDZ_WITH_JSON)
   #  add_subdirectory(examples/usd_to_json)
   #endif()
