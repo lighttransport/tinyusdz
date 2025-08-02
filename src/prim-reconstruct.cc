@@ -3900,11 +3900,11 @@ bool ReconstructPrim<GeomSubset>(
 }
 
 template <>
-bool ReconstructPrim<PointInstancer>(
+bool ReconstructPrim<GeomPointInstancer>(
     const Specifier &spec,
     const PropertyMap &properties,
     const ReferenceList &references,
-    PointInstancer *instancer,
+    GeomPointInstancer *instancer,
     std::string *warn,
     std::string *err,
     const PrimReconstructOptions &options) {
@@ -3913,7 +3913,7 @@ bool ReconstructPrim<PointInstancer>(
   (void)references;
   (void)options;
 
-  DCOUT("Reconstruct PointInstancer.");
+  DCOUT("Reconstruct GeomPointInstancer.");
 
   std::set<std::string> table;
   if (!ReconstructGPrimProperties(spec, table, properties, instancer, warn, err, options.strict_allowedToken_check)) {
@@ -3922,17 +3922,18 @@ bool ReconstructPrim<PointInstancer>(
 
   for (const auto &prop : properties) {
     PARSE_TARGET_PATHS_RELATION(table, prop, "prototypes", instancer->prototypes)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "protoIndices", PointInstancer, instancer->protoIndices)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "ids", PointInstancer, instancer->ids)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "positions", PointInstancer, instancer->positions)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "orientations", PointInstancer, instancer->orientations)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "scales", PointInstancer, instancer->scales)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "velocities", PointInstancer, instancer->velocities)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "accelerations", PointInstancer, instancer->accelerations)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "angularVelocities", PointInstancer, instancer->angularVelocities)
-    PARSE_TYPED_ATTRIBUTE(table, prop, "invisibleIds", PointInstancer, instancer->invisibleIds)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "protoIndices", GeomPointInstancer, instancer->protoIndices)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "ids", GeomPointInstancer, instancer->ids)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "positions", GeomPointInstancer, instancer->positions)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "orientations", GeomPointInstancer, instancer->orientations)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "scales", GeomPointInstancer, instancer->scales)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "velocities", GeomPointInstancer, instancer->velocities)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "accelerations", GeomPointInstancer, instancer->accelerations)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "angularVelocities", GeomPointInstancer, instancer->angularVelocities)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "invisibleIds", GeomPointInstancer, instancer->invisibleIds)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inactiveIds", GeomPointInstancer, instancer->inactiveIds)
 
-    ADD_PROPERTY(table, prop, PointInstancer, instancer->props)
+    ADD_PROPERTY(table, prop, GeomPointInstancer, instancer->props)
     PARSE_PROPERTY_END_MAKE_ERROR(table, prop)
   }
 
