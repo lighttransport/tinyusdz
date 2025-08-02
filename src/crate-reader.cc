@@ -24,6 +24,7 @@
 #include <unordered_set>
 #include <stack>
 #include <limits>
+#include <stdexcept>
 
 #include "crate-format.hh"
 #include "crate-pprint.hh"
@@ -70,6 +71,34 @@ bool SafeMultiply(T a, T b, T* result) {
   }
   *result = a * b;
   return true;
+}
+
+// Safe resize utility to prevent memory exhaustion attacks
+template<typename Container>
+bool SafeResize(Container& container, size_t new_size, size_t max_size) {
+  if (new_size > max_size) {
+    return false; // Size exceeds safety limit
+  }
+  // Note: We cannot use exceptions as they are disabled in this build
+  // Instead, we rely on the max_size check and existing memory budget controls
+  container.resize(new_size);
+  return true;
+}
+
+// Safe array access utility to prevent out-of-bounds access
+template<typename Container>
+bool SafeAccess(const Container& container, size_t index, typename Container::value_type& result) {
+  if (index >= container.size()) {
+    return false; // Index out of bounds
+  }
+  result = container[index];
+  return true;
+}
+
+// Safe pointer validation utility
+template<typename T>
+bool ValidatePointer(T* ptr) {
+  return ptr != nullptr;
 }
 
 //constexpr auto kTypeName = "typeName";
@@ -251,7 +280,9 @@ bool CrateReader::ReadIndices(std::vector<crate::Index> *indices) {
 
   CHECK_MEMORY_USAGE(datalen);
 
-  indices->resize(size_t(n));
+  if (!SafeResize(*indices, size_t(n), _config.maxArrayElements)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to resize indices array - size limit exceeded or memory allocation failed.");
+  }
 
   if (datalen != _sr->read(datalen, datalen,
                           reinterpret_cast<uint8_t *>(indices->data()))) {
@@ -1151,19 +1182,31 @@ bool CrateReader::ReadPathArray(std::vector<Path> *d) {
       return false;
     }
 
-    CHECK_MEMORY_USAGE(size_t(n) * sizeof(crate::Index));
+    // Check for integer overflow in multiplication
+    size_t alloc_size;
+    if (!SafeMultiply(size_t(n), sizeof(crate::Index), &alloc_size)) {
+      _err += "Integer overflow in Path ListOp data size calculation.\n";
+      return false;
+    }
+    CHECK_MEMORY_USAGE(alloc_size);
 
-    std::vector<crate::Index> ivalue(static_cast<size_t>(n));
+    std::vector<crate::Index> ivalue;
+    if (!SafeResize(ivalue, static_cast<size_t>(n), _config.maxArrayElements)) {
+      _err += "Failed to allocate memory for Path ListOp data.\n"; 
+      return false;
+    }
 
-    if (!_sr->read(size_t(n) * sizeof(crate::Index),
-                   size_t(n) * sizeof(crate::Index),
+    if (!_sr->read(alloc_size, alloc_size,
                    reinterpret_cast<uint8_t *>(ivalue.data()))) {
       _err += "Failed to read ListOp data.\n";
       return false;
     }
 
-    // reconstruct
-    result.resize(static_cast<size_t>(n));
+    // reconstruct  
+    if (!SafeResize(result, static_cast<size_t>(n), _config.maxArrayElements)) {
+      _err += "Failed to allocate memory for Path result array.\n";
+      return false;
+    }
     for (size_t i = 0; i < n; i++) {
       if (auto pv = GetPath(ivalue[i])) {
         result[i] = pv.value();
