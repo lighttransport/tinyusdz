@@ -2557,7 +2557,7 @@ struct TimeSamples {
 /// When src type is scalar type and dest type is vector, the value of src type is scattered to the value of dest type.
 ///
 /// No lexical cast feature involved.
-/// TODO: overflow check
+/// Includes overflow checking for numeric conversions
 ///
 /// Considers role type.
 /// example:

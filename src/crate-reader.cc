@@ -23,6 +23,7 @@
 
 #include <unordered_set>
 #include <stack>
+#include <limits>
 
 #include "crate-format.hh"
 #include "crate-pprint.hh"
@@ -56,6 +57,20 @@
 
 namespace tinyusdz {
 namespace crate {
+
+// Safe multiplication utility to prevent integer overflow
+template<typename T>
+bool SafeMultiply(T a, T b, T* result) {
+  if (a == 0 || b == 0) {
+    *result = 0;
+    return true;
+  }
+  if (a > std::numeric_limits<T>::max() / b) {
+    return false; // Overflow would occur
+  }
+  *result = a * b;
+  return true;
+}
 
 //constexpr auto kTypeName = "typeName";
 //constexpr auto kToken = "Token";
@@ -224,7 +239,11 @@ bool CrateReader::ReadIndices(std::vector<crate::Index> *indices) {
 
   DCOUT("ReadIndices: n = " << n);
 
-  size_t datalen = size_t(n) * sizeof(crate::Index);
+  // Check for integer overflow in multiplication
+  size_t datalen;
+  if (!SafeMultiply(size_t(n), sizeof(crate::Index), &datalen)) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Integer overflow in indices data size calculation.");
+  }
 
   if (datalen > _sr->size()) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Indices data exceeds USDC size.");
@@ -6308,7 +6327,10 @@ bool CrateReader::ReadTOC() {
       PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Section start byte offset exceeds input USDC data size."));
     }
 
-    // TODO: handle integer overflow.
+    // Check for integer overflow before addition
+    if (static_cast<uint64_t>(_toc.sections[i].start) > static_cast<uint64_t>(std::numeric_limits<size_t>::max()) - static_cast<uint64_t>(_toc.sections[i].size)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Integer overflow in section offset + size calculation."));
+    }
     size_t end_offset = size_t(_toc.sections[i].start + _toc.sections[i].size);
     if (sizeof(void *) == 4) { // 32bit
       if (end_offset > size_t(std::numeric_limits<int32_t>::max())) {
