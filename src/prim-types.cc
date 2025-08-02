@@ -1776,7 +1776,7 @@ bool CastToXformable(const Prim &prim, const Xformable **xformable) {
   TRY_CAST(GeomCone)
   TRY_CAST(GeomCapsule)
   TRY_CAST(GeomPoints)
-  // TRY_CAST(GeomPointInstancer)
+  TRY_CAST(GeomPointInstancer)
   TRY_CAST(GeomCamera)
   TRY_CAST(SkelRoot)
   TRY_CAST(Skeleton)

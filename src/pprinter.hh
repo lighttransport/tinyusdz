@@ -152,7 +152,7 @@ std::string to_string(const GeomBasisCurves::Wrap &v);
 std::string to_string(const GeomBasisCurves::Type &v);
 std::string to_string(const GeomBasisCurves::Basis &v);
 
-std::string to_string(const PointInstancer &instancer, const uint32_t indent = 0,
+std::string to_string(const GeomPointInstancer &instancer, const uint32_t indent = 0,
                       bool closing_brace = true);
 
 
