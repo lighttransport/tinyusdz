@@ -3523,7 +3523,7 @@ std::string to_string(const GeomCapsule &geom, const uint32_t indent,
   return ss.str();
 }
 
-std::string to_string(const PointInstancer &instancer, const uint32_t indent,
+std::string to_string(const GeomPointInstancer &instancer, const uint32_t indent,
                       bool closing_brace) {
   std::stringstream ss;
 
@@ -3545,6 +3545,7 @@ std::string to_string(const PointInstancer &instancer, const uint32_t indent,
   ss << print_typed_attr(instancer.protoIndices, "protoIndices", indent + 1);
   ss << print_typed_attr(instancer.ids, "ids", indent + 1);
   ss << print_typed_attr(instancer.invisibleIds, "invisibleIds", indent + 1);
+  ss << print_typed_attr(instancer.inactiveIds, "inactiveIds", indent + 1);
   ss << print_typed_attr(instancer.positions, "positions", indent + 1);
   ss << print_typed_attr(instancer.orientations, "orientations", indent + 1);
   ss << print_typed_attr(instancer.scales, "scales", indent + 1);
