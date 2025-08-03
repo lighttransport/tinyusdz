@@ -3589,9 +3589,9 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
           // Nested variantSet.
           // Add current to parent Prim's variantSet
           DCOUT("nested variantSet. parent.variantSets.size" << vp.variantSets().size());
-          for (const auto &vs : vp.variantSets()) {
-            DCOUT("  vs" << vs.first);
-          }
+          //for (const auto &vs : vp.variantSets()) {
+          //  DCOUT("  vs" << vs.first);
+          //}
 
           // Look into variantChildren
           if (!_variantChildren.count(uint32_t(parent))) {

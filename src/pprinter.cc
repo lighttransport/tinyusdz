@@ -2821,7 +2821,7 @@ std::string print_variantSetStmt(
 
       // nested variantSets
       if (item.second.variantSets().size()) {
-        ss << "# DBG nested variantSets
+        ss << "# DBG nested variantSets\n";
         ss << print_variantSetStmt(item.second.variantSets(), indent+2);
       }
 
