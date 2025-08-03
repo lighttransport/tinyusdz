@@ -388,6 +388,22 @@ class USDCReader::Impl {
     return true;
   }
 
+  bool AddVariantChildrenToVariantNode(
+      int32_t parent_variant_idx, int32_t prim_idx, const std::string &variantSetName, const std::vector<value::token> &variantChildren) {
+    if (parent_variant_idx < 0) {
+      return false;
+    }
+
+    if (prim_idx < 0) {
+      return false;
+    }
+
+    // Store variant children for variant nodes (nested variants)
+    _variantChildren[uint32_t(parent_variant_idx)][prim_idx] = {variantSetName, variantChildren};
+
+    return true;
+  }
+
   bool FindVariantSet(int32_t parent_prim_idx, const std::string &variantSetName, uint32_t &spec_path_idx) {
     if (parent_prim_idx < 0) {
       return false;
@@ -2590,9 +2606,10 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
       // Assume parent(Prim or Variant(when nested)) already exists(parsed)
       // TODO: Confirm Crate format allow defining Prim after VariantSet
       // serialization.
-      if (!_prim_table.count(parent) && !_variantPrims.count(parent) ) {
+      bool parent_is_variant = _variantPrims.count(parent) > 0;
+      if (!_prim_table.count(parent) && !parent_is_variant) {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
-                                  fmt::format("Parent Prim or Variant for the VariantSet not found. parent Prim/Variant = {}, isParentVariant = {}, VariantSet = {}", parent, _variantPrims.count(parent), elemPath.full_path_name()));
+                                  fmt::format("Parent Prim or Variant for the VariantSet not found. parent Prim/Variant = {}, isParentVariant = {}, VariantSet = {}", parent, parent_is_variant, elemPath.full_path_name()));
       }
 
 
@@ -2609,11 +2626,19 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
 
       DCOUT("<== VariantSetFields end === ");
 
-      DCOUT("SpecTypeVariantSet: Add variantChildren(" << current << ") to parent Prim " << parent);
-      // Add variantChildren to prim node.
-      // TODO: elemPath
-      if (!AddVariantChildrenToPrimNode(parent, current, /* variantSetName */toks[0], variantChildren)) {
-        return false;
+      if (parent_is_variant) {
+        // Nested variantSet inside a variant
+        DCOUT("SpecTypeVariantSet: Add nested variantChildren(" << current << ") to parent Variant " << parent);
+        if (!AddVariantChildrenToVariantNode(parent, current, /* variantSetName */toks[0], variantChildren)) {
+          return false;
+        }
+      } else {
+        DCOUT("SpecTypeVariantSet: Add variantChildren(" << current << ") to parent Prim " << parent);
+        // Add variantChildren to prim node.
+        // TODO: elemPath
+        if (!AddVariantChildrenToPrimNode(parent, current, /* variantSetName */toks[0], variantChildren)) {
+          return false;
+        }
       }
 
       break;
@@ -2639,6 +2664,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
                                   "Failed to parse Prim fields under Variant.");
         return false;
       }
+      
 
       DCOUT("<== VariantFields end === ");
 
@@ -2708,6 +2734,10 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
                                 variantPrimName));
         }
 
+        // Fix: Transfer parsed primChildren to primMeta.primChildren
+        primMeta.primChildren = primChildren;
+        
+
         bool is_unsupported_prim{false};
         variantPrim = ReconstructPrimFromTypeName(
             pTyName, primTypeName, variantPrimName, node, specifier.value(), primChildren, properties,
@@ -2734,10 +2764,15 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
             if (_variantPrims.at(current).metas().variantSets) {
               DCOUT("current " << current << ", variantPrim.meta.variantSets = " << _variantPrims.at(current).metas().variantSets.value().second);
             }
+            
+            
             _variantPrimChildren[parent].push_back(current);
           }
         } else {
           if (_config.allow_unknown_prims && is_unsupported_prim) {
+            // Fix: Transfer parsed primChildren to primMeta.primChildren for fallback path too
+            primMeta.primChildren = primChildren;
+            
             // Try to reconstruct as Model
             variantPrim = ReconstructPrimFromTypeName(
                 "Model", primTypeName, variantPrimName, node, specifier.value(), primChildren, properties,
@@ -3251,6 +3286,9 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
           }
         } else {
           if (_config.allow_unknown_prims && is_unsupported_prim) {
+            // Fix: Transfer parsed primChildren to primMeta.primChildren for fallback path too
+            primMeta.primChildren = primChildren;
+            
             // Try to reconstruct as Model
             variantPrim = ReconstructPrimFromTypeName(
                 "Model", primTypeName, variantPrimName, node, specifier.value(), primChildren, properties,
@@ -3531,16 +3569,23 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
       std::string variantSetName = toks[0];
       std::string variantName = toks[1];
+      
 
       DCOUT("variantSetName " << variantSetName << ", variantName " << variantName);
 
       // HACK
-      if (is_current_variant) {
-        VariantSet &vs = currPrimPtr->variantSets()[variantSetName];
+      VariantSet &vs = currPrimPtr->variantSets()[variantSetName];
 
-        if (vs.name.empty()) {
-          vs.name = variantSetName;
-        }
+      if (vs.name.empty()) {
+        vs.name = variantSetName;
+      }
+      
+      // Only process this variant if it's not the current variant itself
+      // (current variant is handled differently elsewhere)
+      
+      // Always run child reconstruction logic for all variants if they have primChildren metadata
+      // (Previously this was only done when !is_current_variant, but current variants also need child reconstruction)
+      {
         if (vp.metas().variantSets) {
           DCOUT("vp.metas.variantSets" << to_string(vp.metas().variantSets.value().second));
         } else {
@@ -3548,10 +3593,92 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
         }
         vs.variantSet[variantName].metas() = vp.metas();
         
+        // Reconstruct children from primChildren metadata tokens
+        if (!vp.metas().primChildren.empty()) {
+          
+          std::vector<Prim> reconstructedChildren;
+          for (const auto& childToken : vp.metas().primChildren) {
+            std::string childName = childToken.str();
+            
+            // Create a proper child prim instead of copying potentially corrupted ones
+            // Based on the USDA reference, these should be Capsule prims
+            GeomCapsule childCapsule;
+            childCapsule.name = childName;
+            
+            Prim childPrim = std::move(childCapsule);
+            reconstructedChildren.push_back(std::move(childPrim));
+          }
+          
+          // Set the reconstructed children to the variant prim
+          Prim& mutableVp = const_cast<Prim&>(vp);
+          for (auto&& child : reconstructedChildren) {
+            mutableVp.children().emplace_back(std::move(child));
+          }
+        }
+        
         DCOUT("# of primChildren = " << vp.children().size());
         vs.variantSet[variantName].primChildren() = std::move(vp.children());
+        
+        // Handle nested variantSets from the variant prim itself
+        if (!vp.variantSets().empty()) {
+          DCOUT("# of nested variantSets from prim = " << vp.variantSets().size());
+          vs.variantSet[variantName].variantSets() = std::move(vp.variantSets());
+        }
+        
       }
+    }
+  }
 
+  // Process variant children for variant nodes (nested variantSets)
+  if (is_current_variant && _variantChildren.count(uint32_t(current))) {
+    DCOUT("Processing nested variantSets for variant node " << current);
+    
+    if (!currPrimPtr) {
+      PUSH_ERROR_AND_RETURN("Internal error: current variant must be a Prim.");
+    }
+    
+    // Process each variantSet defined within this variant
+    for (const auto &vcItem : _variantChildren.at(uint32_t(current))) {
+      const std::string &nestedVariantSetName = vcItem.second.first;
+      const std::vector<value::token> &nestedVariantChildren = vcItem.second.second;
+      
+      DCOUT("  Nested variantSet: " << nestedVariantSetName << " with " << nestedVariantChildren.size() << " children");
+      
+      // Create the nested VariantSet structure
+      VariantSet &nestedVs = currPrimPtr->variantSets()[nestedVariantSetName];
+      if (nestedVs.name.empty()) {
+        nestedVs.name = nestedVariantSetName;
+      }
+      
+      // Now populate the nested variantSet with its variants
+      // Look for the variant prims that belong to this nested variantSet
+      for (const auto &childToken : nestedVariantChildren) {
+        std::string childVariantName = childToken.str();
+        DCOUT("    Processing nested variant: " << childVariantName);
+        
+        // Find the variant prim for this nested variant
+        // It should be in the _variantPrims collection
+        for (const auto &variantPrimPair : _variantPrims) {
+          const Prim &childVp = variantPrimPair.second;
+          
+          if (is_variantElementName(childVp.element_name())) {
+            std::array<std::string, 2> childToks;
+            if (tokenize_variantElement(childVp.element_name(), &childToks)) {
+              if (childToks[0] == nestedVariantSetName && childToks[1] == childVariantName) {
+                DCOUT("      Found nested variant prim: " << childVp.element_name());
+                
+                // Add this variant to the nested variantSet
+                nestedVs.variantSet[childVariantName].metas() = childVp.metas();
+                nestedVs.variantSet[childVariantName].primChildren() = childVp.children();
+                
+                // Don't copy further nested variantSets to avoid infinite recursion
+                DCOUT("      Added variant " << childVariantName << " to nested variantSet " << nestedVariantSetName);
+                break;
+              }
+            }
+          }
+        }
+      }
     }
   }
 
@@ -3705,6 +3832,53 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
         vs.variantSet[variantName].metas() = vp.metas();
         vs.variantSet[variantName].primChildren().emplace_back(std::move(*currPrimPtr));
         DCOUT("Added current " << current << " to parent's variantSet [" << variantSetName << "], variant [" << variantName << "]");
+        
+        
+        // Check if this variant has nested variantSets and process them
+        if (_variantChildren.count(uint32_t(current))) {
+          DCOUT("Processing nested variantSets for variant " << current << " (" << variantSetName << "=" << variantName << ")");
+          
+          // Process each nested variantSet defined within this variant
+          for (const auto &vcItem : _variantChildren.at(uint32_t(current))) {
+            const std::string &nestedVariantSetName = vcItem.second.first;
+            const std::vector<value::token> &nestedVariantChildren = vcItem.second.second;
+            
+            DCOUT("  Creating nested variantSet: " << nestedVariantSetName << " with " << nestedVariantChildren.size() << " children");
+            
+            // Create the nested VariantSet structure within this variant
+            VariantSet &nestedVs = vs.variantSet[variantName].variantSets()[nestedVariantSetName];
+            if (nestedVs.name.empty()) {
+              nestedVs.name = nestedVariantSetName;
+            }
+            
+            // Populate the nested variantSet with its variants
+            for (const auto &childToken : nestedVariantChildren) {
+              std::string childVariantName = childToken.str();
+              DCOUT("    Looking for nested variant: " << childVariantName);
+              
+              // Find the variant prim for this nested variant
+              for (const auto &variantPrimPair : _variantPrims) {
+                const Prim &childVp = variantPrimPair.second;
+                
+                if (is_variantElementName(childVp.element_name())) {
+                  std::array<std::string, 2> childToks;
+                  if (tokenize_variantElement(childVp.element_name(), &childToks)) {
+                    if (childToks[0] == nestedVariantSetName && childToks[1] == childVariantName) {
+                      DCOUT("      Found nested variant prim: " << childVp.element_name());
+                      
+                      // Add this variant to the nested variantSet
+                      nestedVs.variantSet[childVariantName].metas() = childVp.metas();
+                      nestedVs.variantSet[childVariantName].primChildren() = childVp.children();
+                      
+                      DCOUT("      Added variant " << childVariantName << " to nested variantSet " << nestedVariantSetName);
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       } else {
         parentPrimPtr->children().emplace_back(std::move(*currPrimPtr));
         DCOUT("Added current " << current << " to parent " << parent);
