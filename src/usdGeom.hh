@@ -1089,7 +1089,7 @@ struct GeomPoints : public GPrim {
 //
 // Point instancer(TODO).
 //
-struct PointInstancer : public GPrim {
+struct GeomPointInstancer : public GPrim {
   nonstd::optional<Relationship> prototypes;  // rel prototypes
 
   TypedAttribute<Animatable<std::vector<int32_t>>>
@@ -1109,6 +1109,8 @@ struct PointInstancer : public GPrim {
       angularVelocities;  // vector3f[] angularVelocities
   TypedAttribute<Animatable<std::vector<int64_t>>>
       invisibleIds;  // int64[] invisibleIds
+  TypedAttribute<std::vector<int64_t>>
+      inactiveIds;  // int64[] inactiveIds
 };
 
 
@@ -1134,7 +1136,7 @@ DEFINE_TYPE_TRAIT(GeomCapsule, kGeomCapsule, TYPE_ID_GEOM_CAPSULE, 1);
 DEFINE_TYPE_TRAIT(GeomPoints, kGeomPoints, TYPE_ID_GEOM_POINTS, 1);
 DEFINE_TYPE_TRAIT(GeomSubset, kGeomSubset, TYPE_ID_GEOM_GEOMSUBSET, 1);
 DEFINE_TYPE_TRAIT(GeomCamera, kGeomCamera, TYPE_ID_GEOM_CAMERA, 1);
-DEFINE_TYPE_TRAIT(PointInstancer, kPointInstancer, TYPE_ID_GEOM_POINT_INSTANCER,
+DEFINE_TYPE_TRAIT(GeomPointInstancer, kPointInstancer, TYPE_ID_GEOM_POINT_INSTANCER,
                   1);
 
 #undef DEFINE_TYPE_TRAIT
