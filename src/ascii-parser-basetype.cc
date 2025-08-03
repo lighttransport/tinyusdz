@@ -48,6 +48,21 @@
 // external
 
 #include "external/fast_float/include/fast_float/fast_float.h"
+
+#define CHECK_MEMORY_USAGE(__nbytes) do { \
+  _memory_usage += (__nbytes); \
+  if (_memory_usage > _max_memory_limit_bytes) { \
+    PushError(fmt::format("Memory limit exceeded. Limit: {} MB, Current usage: {} MB", \
+      _max_memory_limit_bytes / (1024*1024), _memory_usage / (1024*1024))); \
+    return false; \
+  }  \
+  } while(0)
+
+#define REDUCE_MEMORY_USAGE(__nbytes) do { \
+  if (_memory_usage >= (__nbytes)) { \
+    _memory_usage -= (__nbytes); \
+  } \
+  } while(0)
 #include "external/jsteemann/atoi.h"
 //#include "external/simple_match/include/simple_match/simple_match.hpp"
 #include "nonstd/expected.hpp"
@@ -1549,6 +1564,7 @@ bool AsciiParser::SepBy1BasicType(const char sep,
       return false;
     }
 
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
   }
 
@@ -1578,6 +1594,7 @@ bool AsciiParser::SepBy1BasicType(const char sep,
       break;
     }
 
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
   }
 
@@ -1608,6 +1625,7 @@ bool AsciiParser::SepBy1BasicType(const char sep, std::vector<T> *result) {
       return false;
     }
 
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
   }
 
@@ -1637,6 +1655,7 @@ bool AsciiParser::SepBy1BasicType(const char sep, std::vector<T> *result) {
       break;
     }
 
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
   }
 
@@ -1668,6 +1687,7 @@ bool AsciiParser::SepBy1BasicType(const char sep, const char end_symbol, std::ve
       return false;
     }
 
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
   }
 
@@ -1714,6 +1734,7 @@ bool AsciiParser::SepBy1BasicType(const char sep, const char end_symbol, std::ve
       break;
     }
 
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
 
 
@@ -1749,6 +1770,7 @@ bool AsciiParser::SepBy1TupleType(
       return false;
     }
 
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
   }
 
@@ -1779,7 +1801,8 @@ bool AsciiParser::SepBy1TupleType(
       if (!ParseBasicTypeTuple<T, N>(&value)) {
         break;
       }
-      result->push_back(value);
+      CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
+    result->push_back(value);
     }
   }
 
@@ -1811,6 +1834,7 @@ bool AsciiParser::SepBy1TupleType(const char sep,
       return false;
     }
 
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
   }
 
@@ -1839,6 +1863,7 @@ bool AsciiParser::SepBy1TupleType(const char sep,
       break;
     }
 
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
   }
 
@@ -1962,6 +1987,7 @@ bool AsciiParser::SepBy1BasicType(const char sep,
 
     (void)triple_deliminated;
 
+    CHECK_MEMORY_USAGE(sizeof(Reference));
     result->push_back(ref);
   }
 
@@ -2010,6 +2036,7 @@ bool AsciiParser::SepBy1BasicType(const char sep,
     }
 
     (void)triple_deliminated;
+    CHECK_MEMORY_USAGE(sizeof(Reference));
     result->push_back(ref);
   }
 
@@ -2144,6 +2171,7 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<Reference> *result) {
 
     (void)triple_deliminated;
     result->clear();
+    CHECK_MEMORY_USAGE(sizeof(Reference));
     result->push_back(ref);
 
   } else {
