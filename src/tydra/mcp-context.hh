@@ -12,12 +12,20 @@ namespace tinyusdz {
 namespace tydra {
 namespace mcp {
 
+struct Image
+{
+  std::string name; // optional
+  std::string mimeType; // 'image/jpeg' or 'image/png' for now
+  std::string data; // based64 encoded image
+};
+
 // Generic Asset(USD, textures, etc.)
 struct MCPAsset
 {
   std::string name;
   std::string data; // base64 encoded asset data
   std::string description; // optional
+  Image preview; // preview image of the asset(optional)
   std::string uuid;
 };
 
