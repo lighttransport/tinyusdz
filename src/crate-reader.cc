@@ -83,7 +83,7 @@ namespace crate {
 //
 // --
 //
-CrateReader::CrateReader(StreamReader *sr, const CrateReaderConfig &config) : _sr(sr), _impl(nullptr) {
+CrateReader::CrateReader(StreamReader *sr, const CrateReaderConfig &config) : _sr(sr), _memoryUsage(0), _impl(nullptr) {
   _config = config;
   if (_config.numThreads == -1) {
 #if defined(__wasi__)
@@ -5606,6 +5606,7 @@ bool CrateReader::ReadTokens() {
     }
 
     value::token tok(str);
+    CHECK_MEMORY_USAGE(sizeof(value::token) + str.size());
 
     DCOUT("token[" << i << "] = " << tok);
     _tokens.push_back(tok);

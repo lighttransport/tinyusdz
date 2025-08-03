@@ -125,6 +125,7 @@ bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
   usdc::USDCReaderConfig config;
   config.numThreads = options.num_threads;
   config.strict_allowedToken_check = options.strict_allowedToken_check;
+  config.kMaxAllowedMemoryInMB = size_t(options.max_memory_limit_in_mb);
   usdc::USDCReader reader(&sr, config);
 
   if (!reader.ReadUSDC()) {
@@ -728,6 +729,7 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length,
   tinyusdz::usda::USDAReaderConfig config;
   config.strict_allowedToken_check = options.strict_allowedToken_check;
   config.allow_unknown_apiSchema = !options.strict_apiSchema_check;
+  config.max_memory_limit_in_mb = size_t(options.max_memory_limit_in_mb);
   reader.set_reader_config(config);
 
   reader.SetBaseDir(base_dir);
