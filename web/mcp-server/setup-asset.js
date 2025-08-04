@@ -5,6 +5,22 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { assert } from "node:console";
+import { isConstructorTypeNode } from "typescript";
+
+// Function to get MIME type from file extension
+function getMimeType(filename) {
+  const ext = path.extname(filename).toLowerCase();
+  const mimeTypes = {
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.bmp': 'image/bmp',
+    '.svg': 'image/svg+xml'
+  };
+  return mimeTypes[ext] || 'application/octet-stream';
+}
 
 const assetFolder = "/mnt/n/data/tinyusdz/mcp/african_slate_quarry";
 const url = "http://localhost:8085/mcp";
@@ -46,22 +62,43 @@ for (const [key, value] of Object.entries(descriptions)) {
   console.log(`Processing asset: ${key}`);
   const filename = value.usd_filename;
   const description = value.description;
+  const preview = value.screenshot_filename;
   assert(filename)
   assert(description)
   console.log(`filename: ${filename}, desc: ${description}`);
+  if (!preview) {
+    console.warn(`No preview image specified for ${filename}`);
+  } else {
+    console.log(`Preview image: ${preview}`);
+  }
 
   const fullPath = path.join(assetFolder, filename);
 
   const base64data = await fs.readFile(fullPath, "base64");
   console.log(`base64data: ${base64data.substring(0, 100)}...`);
 
+  let args = {
+    "name": filename,
+    "data": base64data,
+    "description": description
+  };
+
+  if (preview) {
+    const previewPath = path.join(assetFolder, preview);
+    const previewData = await fs.readFile(previewPath, "base64");
+    console.log(`previewData: ${previewData.substring(0, 100)}...`);
+    args.preview = {
+      name: preview, // base filename
+      data: previewData,
+      mimeType: getMimeType(preview)
+    };
+  }
+
+  console.log("args:", args);
+
   await client.callTool({
     name: "store_asset",
-    arguments: {
-      "name": filename,
-      "data": base64data,
-      "description": description
-    }
+    arguments: args
   }).then((result) => {
     console.log("Setup asset result:", result);
   }).catch((error) => {
