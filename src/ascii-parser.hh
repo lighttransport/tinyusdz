@@ -305,6 +305,13 @@ class AsciiParser {
   void SetStream(tinyusdz::StreamReader *sr);
 
   ///
+  /// Set memory limit in MB
+  ///
+  void SetMaxMemoryLimit(size_t limit_mb) {
+    _max_memory_limit_bytes = limit_mb * 1024ull * 1024ull;
+  }
+
+  ///
   /// Check if header data is USDA
   ///
   bool CheckHeader();
@@ -552,6 +559,13 @@ class AsciiParser {
   ///
   template <typename T>
   bool ParseBasicTypeArray(std::vector<T> *result);
+
+  ///
+  /// Optimized float array parsing using tiny-string
+  ///
+  bool ParseFloatArrayOptimized(std::vector<float> *result);
+  bool ParseDoubleArrayOptimized(std::vector<double> *result);
+  bool ParseIntArrayOptimized(std::vector<int32_t> *result);
 
   ///
   /// Parses 1 or more occurences of value with basic type 'T', separated by
@@ -860,6 +874,10 @@ class AsciiParser {
   std::string _base_dir;
 
   StageMetas _stage_metas;
+
+  // Memory tracking
+  uint64_t _max_memory_limit_bytes{128ull * 1024ull * 1024ull * 1024ull}; // Default 128GB
+  uint64_t _memory_usage{0};
 
   //
   // Callbacks

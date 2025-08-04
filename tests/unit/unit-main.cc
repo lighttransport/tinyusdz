@@ -37,6 +37,8 @@ TEST_LIST = {
   { "pathutil_test", pathutil_test },
   { "ioutil_test", ioutil_test },
   { "strutil_test", strutil_test },
+  { "tinystring_test", tinystring_test },
+  { "parse_int_test", parse_int_test },
   { "timesamples_test", timesamples_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
