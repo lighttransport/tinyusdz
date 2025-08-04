@@ -166,7 +166,7 @@ struct tstring_view {
     _s = nullptr;
   }
 
-  constexpr tstring_view(const char *s) { 
+  tstring_view(const char *s) { 
     _len = strlen(s);    
     _s = s;
   }
