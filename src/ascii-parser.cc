@@ -57,6 +57,23 @@
 //
 
 #include "common-macros.inc"
+
+#define CHECK_MEMORY_USAGE(__nbytes) do { \
+  _memory_usage += (__nbytes); \
+  if (_memory_usage > _max_memory_limit_bytes) { \
+    PushError(fmt::format("Memory limit exceeded. Limit: {} MB, Current usage: {} MB", \
+      _max_memory_limit_bytes / (1024*1024), _memory_usage / (1024*1024))); \
+    return false; \
+  }  \
+  } while(0)
+
+#if 0
+#define REDUCE_MEMORY_USAGE(__nbytes) do { \
+  if (_memory_usage >= (__nbytes)) { \
+    _memory_usage -= (__nbytes); \
+  } \
+  } while(0)
+#endif
 #include "io-util.hh"
 #include "pprinter.hh"
 #include "prim-types.hh"
@@ -1891,6 +1908,7 @@ bool AsciiParser::ParseStageMetaOpt() {
     if (var.get_value(&paths)) {
       DCOUT("subLayers = " << paths);
       for (const auto &item : paths) {
+        CHECK_MEMORY_USAGE(sizeof(value::AssetPath) + item.GetAssetPath().length());
         _stage_metas.subLayers.push_back(item);
       }
     } else {
@@ -3319,6 +3337,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
       {
         value::StringData sdata;
         if (MaybeTripleQuotedString(&sdata)) {
+          CHECK_MEMORY_USAGE(sizeof(value::StringData) + sdata.value.length());
           out_meta->stringData.push_back(sdata);
 
           DCOUT("Add triple-quoted string to attr meta:" << to_string(sdata));
@@ -3327,6 +3346,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
           }
           continue;
         } else if (MaybeString(&sdata)) {
+          CHECK_MEMORY_USAGE(sizeof(value::StringData) + sdata.value.length());
           out_meta->stringData.push_back(sdata);
 
           DCOUT("Add string to attr meta:" << to_string(sdata));
@@ -4809,6 +4829,7 @@ bool AsciiParser::ParseVariantSet(
         DCOUT(fmt::format("Done parse `{}` block.", to_string(child_spec)));
 
         DCOUT(fmt::format("Add primIdx {} to variant {}", idx, variantName));
+        CHECK_MEMORY_USAGE(sizeof(int64_t));
         variantContent.primIndices.push_back(idx);
 
       } else {
