@@ -243,11 +243,35 @@ bool ReadAsset(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
     err = "Asset not found: " + name;
     return false;
   }
-  const std::string &data = ctx.assets.at(name).data;
+  const MCPAsset &asset = ctx.assets.at(name);
+
+  // Check instance_id if provided
+  if (args.contains("instance_id") && args["instance_id"].is_number_integer()) {
+    int requested_instance_id = args["instance_id"];
+    if (asset.instance_id != requested_instance_id) {
+      err = "Asset '" + name + "' instance_id mismatch. Expected: " + 
+            std::to_string(requested_instance_id) + ", Found: " + 
+            std::to_string(asset.instance_id);
+      return false;
+    }
+  }
+
+  // Create JSON response with asset data and transform information
+  nlohmann::json asset_data;
+  asset_data["name"] = asset.name;
+  asset_data["data"] = asset.data;
+  asset_data["description"] = asset.description;
+  asset_data["uuid"] = asset.uuid;
+  
+  // Add instance and transform parameters
+  asset_data["instance_id"] = asset.instance_id;
+  asset_data["position"] = nlohmann::json::array({asset.position[0], asset.position[1], asset.position[2]});
+  asset_data["scale"] = nlohmann::json::array({asset.scale[0], asset.scale[1], asset.scale[2]});
+  asset_data["rotation"] = nlohmann::json::array({asset.rotation[0], asset.rotation[1], asset.rotation[2]});
 
   nlohmann::json content;
   content["type"] = "text";
-  content["text"] = data;
+  content["text"] = asset_data.dump();
 
   result["content"] = nlohmann::json::array();
   result["content"].push_back(content);
@@ -554,8 +578,8 @@ bool GetAssetDescription(Context &ctx, const nlohmann::json &args,
   asset_info["description"] = asset.description;
   asset_info["uuid"] = asset.uuid;
 
-  // Add preview data if available
-  if (!asset.preview.data.empty()) {
+  // Add preview data if available and requested
+  if (include_preview && !asset.preview.data.empty()) {
     asset_info["preview"] = nlohmann::json::object();
     asset_info["preview"]["data"] = asset.preview.data;
     asset_info["preview"]["mimeType"] = asset.preview.mimeType;
@@ -654,27 +678,83 @@ bool ToUSDA(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
 bool SelectAssets(Context &ctx, const nlohmann::json &args,
                   nlohmann::json &result, std::string &err) {
   DCOUT("args " << args);
-  if (!args.contains("names")) {
-    DCOUT("names param not found");
-    err = "`names` param not found.";
+  if (!args.contains("assets")) {
+    DCOUT("assets param not found");
+    err = "`assets` param not found.";
     return false;
   }
 
-  std::vector<std::string> names = args.at("names");
-
-  ctx.selected_assets.clear();
-  for (const auto &name : names) {
-    if (ctx.assets.count(name)) {
-      ctx.selected_assets.push_back(name);
-    }
+  if (!args["assets"].is_array()) {
+    err = "`assets` must be an array.";
+    return false;
   }
 
-  // nlohmann::json content;
-  // content["type"] = "text";
-  // content["text"] = ctx.assets.at(uuid).description;
+  const auto &assets = args["assets"];
+
+  ctx.selected_assets.clear();
+  
+  for (const auto &asset_obj : assets) {
+    if (!asset_obj.is_object()) {
+      err = "Each asset must be an object.";
+      return false;
+    }
+    
+    if (!asset_obj.contains("name")) {
+      err = "Asset object must contain 'name' field.";
+      return false;
+    }
+    
+    std::string name = asset_obj["name"];
+    
+    if (!ctx.assets.count(name)) {
+      DCOUT("Asset not found: " << name);
+      continue; // Skip assets that don't exist
+    }
+    
+    // Default instance and transform parameters
+    int instance_id = 0;
+    std::array<float, 3> position = {0.0f, 0.0f, 0.0f};
+    std::array<float, 3> scale = {1.0f, 1.0f, 1.0f};
+    std::array<float, 3> rotation = {0.0f, 0.0f, 0.0f};
+    
+    // Parse instance_id
+    if (asset_obj.contains("instance_id") && asset_obj["instance_id"].is_number_integer()) {
+      instance_id = asset_obj["instance_id"];
+    }
+    
+    // Parse individual transform parameters for this asset
+    if (asset_obj.contains("position") && asset_obj["position"].is_array() && asset_obj["position"].size() == 3) {
+      position[0] = asset_obj["position"][0];
+      position[1] = asset_obj["position"][1];
+      position[2] = asset_obj["position"][2];
+    }
+    
+    if (asset_obj.contains("scale") && asset_obj["scale"].is_array() && asset_obj["scale"].size() == 3) {
+      scale[0] = asset_obj["scale"][0];
+      scale[1] = asset_obj["scale"][1];
+      scale[2] = asset_obj["scale"][2];
+    }
+    
+    if (asset_obj.contains("rotation") && asset_obj["rotation"].is_array() && asset_obj["rotation"].size() == 3) {
+      rotation[0] = asset_obj["rotation"][0];
+      rotation[1] = asset_obj["rotation"][1];
+      rotation[2] = asset_obj["rotation"][2];
+    }
+    
+    // Update the asset with its individual transform parameters
+    ctx.assets[name].instance_id = instance_id;
+    ctx.assets[name].position = position;
+    ctx.assets[name].scale = scale;
+    ctx.assets[name].rotation = rotation;
+    ctx.selected_assets.push_back(name);
+    
+    DCOUT("Selected asset '" << name << "' (instance_id: " << instance_id << ") with transform - Position: [" 
+          << position[0] << ", " << position[1] << ", " << position[2] << "], "
+          << "Scale: [" << scale[0] << ", " << scale[1] << ", " << scale[2] << "], "
+          << "Rotation: [" << rotation[0] << ", " << rotation[1] << ", " << rotation[2] << "]");
+  }
 
   result["content"] = nlohmann::json::array();
-  // result["content"].push_back(content);
 
   return true;
 }
@@ -687,9 +767,14 @@ bool GetSelectedAssets(Context &ctx, const nlohmann::json &args,
 
   result["content"] = nlohmann::json::array();
   for (const auto &name : ctx.selected_assets) {
+    // Create JSON object with name and instance_id
+    nlohmann::json asset_info;
+    asset_info["name"] = name;
+    asset_info["instance_id"] = ctx.assets.at(name).instance_id;
+    
     nlohmann::json content;
     content["type"] = "text";
-    content["text"] = name;
+    content["text"] = asset_info.dump();
     result["content"].push_back(content);
   }
 
@@ -848,12 +933,13 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
   {
     nlohmann::json j;
     j["name"] = "read_asset";
-    j["description"] = "Read asset as base64 string";
+    j["description"] = "Read asset as JSON string containing data, instance_id, transform parameters (position, scale, rotation), and metadata";
 
     nlohmann::json schema;
     schema["type"] = "object";
     schema["properties"] = nlohmann::json::object();
     schema["properties"]["name"] = {{"type", "string"}};
+    schema["properties"]["instance_id"] = {{"type", "integer"}, {"description", "Optional instance ID to match against the asset's instance_id"}};
 
     schema["required"] = nlohmann::json::array({"name"});
 
@@ -989,15 +1075,37 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
   {
     nlohmann::json j;
     j["name"] = "select_assets";
-    j["description"] = "Select assets. Specify by the array of asset names.";
+    j["description"] = "Select assets with individual transform parameters. Specify array of asset objects with name and optional transform parameters.";
 
     nlohmann::json schema;
     schema["type"] = "object";
     schema["properties"] = nlohmann::json::object();
-    // string[]
-    schema["properties"]["names"] = {{"type", "array"},
-                                     {"items", {"type", "string"}}};
-    schema["required"] = nlohmann::json::array({"names"});
+    
+    // Array of asset objects
+    nlohmann::json assetSchema;
+    assetSchema["type"] = "object";
+    assetSchema["properties"] = nlohmann::json::object();
+    assetSchema["properties"]["name"] = {{"type", "string"}, {"description", "Asset name"}};
+    assetSchema["properties"]["instance_id"] = {{"type", "integer"}, {"description", "Instance ID for the asset"}};
+    assetSchema["properties"]["position"] = {{"type", "array"},
+                                             {"items", {"type", "number"}},
+                                             {"minItems", 3},
+                                             {"maxItems", 3},
+                                             {"description", "Position as [x, y, z]"}};
+    assetSchema["properties"]["scale"] = {{"type", "array"},
+                                          {"items", {"type", "number"}},
+                                          {"minItems", 3},
+                                          {"maxItems", 3},
+                                          {"description", "Scale as [x, y, z]"}};
+    assetSchema["properties"]["rotation"] = {{"type", "array"},
+                                             {"items", {"type", "number"}},
+                                             {"minItems", 3},
+                                             {"maxItems", 3},
+                                             {"description", "Rotation as [x, y, z] in degrees"}};
+    assetSchema["required"] = nlohmann::json::array({"name"});
+
+    schema["properties"]["assets"] = {{"type", "array"}, {"items", assetSchema}};
+    schema["required"] = nlohmann::json::array({"assets"});
 
     j["inputSchema"] = schema;
 
@@ -1007,7 +1115,7 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
   {
     nlohmann::json j;
     j["name"] = "get_selected_assets";
-    j["description"] = "Get selected asset names";
+    j["description"] = "Get selected assets as JSON strings containing name and instance_id";
 
     nlohmann::json schema;
     schema["type"] = "object";
