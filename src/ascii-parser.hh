@@ -876,8 +876,8 @@ class AsciiParser {
   StageMetas _stage_metas;
 
   // Memory tracking
-  size_t _max_memory_limit_bytes{128ull * 1024ull * 1024ull * 1024ull}; // Default 128GB
-  size_t _memory_usage{0};
+  uint64_t _max_memory_limit_bytes{128ull * 1024ull * 1024ull * 1024ull}; // Default 128GB
+  uint64_t _memory_usage{0};
 
   //
   // Callbacks
