@@ -1202,6 +1202,9 @@ class TinyUSDZLoaderNative {
     if (!tinyusdz::tydra::mcp::GetToolsList(ctx, result)) {
       std::cerr << "[tydra:mcp:GetToolsList] failed." << "\n";
       // TODO: Report error more nice way.
+      result = nlohmann::json::object();
+      result["isError"] = true;
+      result["content"] = nlohmann::json::array();
     }
 
     std::string s_result = result.dump();
@@ -1229,6 +1232,18 @@ class TinyUSDZLoaderNative {
     if (!tinyusdz::tydra::mcp::CallTool(ctx, tool_name, j_args, result, err)) {
       // TODO: Report error more nice way.
       std::cerr << "[tydra:mcp:CallTool]" << err << "\n";
+      result = nlohmann::json::object();
+      result["isError"] = true;
+      result["content"] = nlohmann::json::array();
+
+      nlohmann::json e;
+      e["type"] = "text";
+
+      nlohmann::json msg;
+      msg["error"] = err;
+      e["text"] = msg.dump();
+
+      result["content"].push_back(e);
     }
     
     std::string s_result = result.dump();
@@ -1237,8 +1252,6 @@ class TinyUSDZLoaderNative {
   }
 
   std::string mcpResourcesList() {
-
-    std::cout << "res list\n";
 
     if (!mcp_ctx_.count(mcp_session_id_)) {
       // TODO: better error message
@@ -1253,6 +1266,9 @@ class TinyUSDZLoaderNative {
     if (!tinyusdz::tydra::mcp::GetResourcesList(ctx, result)) {
       // TODO: Report error more nice way.
       std::cerr << "[tydra:mcp:ListResources] failed\n";
+      result = nlohmann::json::object();
+      result["isError"] = true;
+      //result["content"] = nlohmann::json::array();
     }
     
     std::string s_result = result.dump();
@@ -1275,6 +1291,9 @@ class TinyUSDZLoaderNative {
     if (!tinyusdz::tydra::mcp::ReadResource(ctx, uri, content)) {
       // TODO: Report error more nice way.
       std::cerr << "[tydra:mcp:ReadResources] failed\n";
+      content = nlohmann::json::object();
+      content["isError"] = true;
+      //content["content"] = nlohmann::json::array();
     }
     
     std::string s_content = content.dump();
