@@ -67,11 +67,13 @@
   }  \
   } while(0)
 
+#if 0
 #define REDUCE_MEMORY_USAGE(__nbytes) do { \
   if (_memory_usage >= (__nbytes)) { \
     _memory_usage -= (__nbytes); \
   } \
   } while(0)
+#endif
 #include "io-util.hh"
 #include "pprinter.hh"
 #include "prim-types.hh"
