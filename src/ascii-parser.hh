@@ -305,6 +305,13 @@ class AsciiParser {
   void SetStream(tinyusdz::StreamReader *sr);
 
   ///
+  /// Set memory limit in MB
+  ///
+  void SetMaxMemoryLimit(size_t limit_mb) {
+    _max_memory_limit_bytes = limit_mb * 1024ull * 1024ull;
+  }
+
+  ///
   /// Check if header data is USDA
   ///
   bool CheckHeader();
@@ -867,6 +874,10 @@ class AsciiParser {
   std::string _base_dir;
 
   StageMetas _stage_metas;
+
+  // Memory tracking
+  size_t _max_memory_limit_bytes{128ull * 1024ull * 1024ull * 1024ull}; // Default 128GB
+  size_t _memory_usage{0};
 
   //
   // Callbacks
