@@ -2,6 +2,8 @@ import bpy
 import os
 from pathlib import Path
 import bmesh
+from mathutils import Vector
+import json
 
 def asset_object_filter(obj):
     print(obj)
@@ -9,6 +11,36 @@ def asset_object_filter(obj):
         return True
     
     return False
+
+
+def get_mesh_bounding_box(obj):
+    """
+    Compute the bounding box of a mesh object in world coordinates.
+    
+    Args:
+        obj: Blender mesh object
+        
+    Returns:
+        tuple: (min_coords, max_coords, center, dimensions)
+    """
+    # Method 1: Using object's bound_box (fastest, world space)
+    bbox_corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
+    
+    # Find min/max coordinates
+    min_x = min(corner.x for corner in bbox_corners)
+    max_x = max(corner.x for corner in bbox_corners)
+    min_y = min(corner.y for corner in bbox_corners)
+    max_y = max(corner.y for corner in bbox_corners)
+    min_z = min(corner.z for corner in bbox_corners)
+    max_z = max(corner.z for corner in bbox_corners)
+    
+    min_coords = Vector((min_x, min_y, min_z))
+    max_coords = Vector((max_x, max_y, max_z))
+    center = (min_coords + max_coords) / 2
+    dimensions = max_coords - min_coords
+    
+    return min_coords, max_coords, center, dimensions
+
 
 def export_selected_as_usdz(filepath, **kwargs):
     """Export selected objects as USDZ file"""
@@ -19,6 +51,34 @@ def export_selected_as_usdz(filepath, **kwargs):
         print("No objects selected for export")
         return False
     
+    # Get all bounding box corners
+    all_corners = []
+    for obj in selected_objects:
+        bbox_corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
+        all_corners.extend(bbox_corners)
+    
+    # Find min/max coordinates
+    min_x = min(corner.x for corner in all_corners)
+    max_x = max(corner.x for corner in all_corners)
+    min_y = min(corner.y for corner in all_corners)
+    max_y = max(corner.y for corner in all_corners)
+    min_z = min(corner.z for corner in all_corners)
+    max_z = max(corner.z for corner in all_corners)
+    
+    min_coords = Vector((min_x, min_y, min_z))
+    max_coords = Vector((max_x, max_y, max_z))
+    
+    # FIXME: pivot
+    pivot = [0.0, 0.0, 0.0]
+    
+    meta_jsonpath = os.path.splitext(filepath)[0] + "-meta.json"
+    
+    meta = {}
+    meta["pivot_position"] = pivot
+    meta["bmin"] = [min_x, min_y, min_z]
+    meta["bmax"] = [max_x, max_y, max_z]
+    
+    
     # Ensure filepath has .usdz extension
     filepath = Path(filepath)
     if filepath.suffix.lower() != '.usdz':
@@ -26,6 +86,12 @@ def export_selected_as_usdz(filepath, **kwargs):
     
     # Create directory if it doesn't exist
     filepath.parent.mkdir(parents=True, exist_ok=True)
+
+
+    # ouput meta
+    with open(meta_jsonpath, "w") as meta_f:
+        meta_f.write(json.dumps(meta))
+        
     
     print(f"Exporting {len(selected_objects)} selected objects to: {filepath}")
     
