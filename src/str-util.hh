@@ -357,6 +357,17 @@ inline std::string codepoint_to_utf8(uint32_t code) {
 }
 
 
+//
+// float/double to string 
+// Currently tinyusdz uses dragonbox algorithm
+//
+// buffer must be at least 25 bytes.
+// filled string is not null-terminated.
+// (Use *(dtoa(f, buf)) = '\0' if you want null-terminated string)
+//
+char *dtoa(float f, char *buf);
+char *dtoa(double f, char *buf);
+
 #if 0 // TODO
 ///
 /// Convert UTF-8 code to UTF-8 char
