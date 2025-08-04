@@ -79,7 +79,7 @@ namespace tinyusdz {
 //#define PushWarn(s) if (warn) { (*warn) += s; }
 
 // Helper function to format magic header bytes for error messages
-std::string FormatMagicHeader(const uint8_t *addr, const size_t length, size_t max_bytes = 16) {
+static std::string FormatMagicHeader(const uint8_t *addr, const size_t length, size_t max_bytes = 16) {
   if (!addr || length == 0) {
     return "(empty)";
   }
