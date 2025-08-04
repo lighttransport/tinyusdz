@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -27,6 +28,12 @@ struct MCPAsset
   std::string description; // optional
   Image preview; // preview image of the asset(optional)
   std::string uuid;
+  
+  // Instance and transform parameters
+  int instance_id = 0; // Instance ID for the asset
+  std::array<float, 3> position = {0.0f, 0.0f, 0.0f}; // x, y, z
+  std::array<float, 3> scale = {1.0f, 1.0f, 1.0f}; // x, y, z
+  std::array<float, 3> rotation = {0.0f, 0.0f, 0.0f}; // x, y, z Euler angles in degrees
 };
 
 struct USDLayer
