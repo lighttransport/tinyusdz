@@ -78,6 +78,31 @@ namespace tinyusdz {
   }
 //#define PushWarn(s) if (warn) { (*warn) += s; }
 
+// Helper function to format magic header bytes for error messages
+static std::string FormatMagicHeader(const uint8_t *addr, const size_t length, size_t max_bytes = 16) {
+  if (!addr || length == 0) {
+    return "(empty)";
+  }
+  
+  std::string result = "0x";
+  size_t bytes_to_show = std::min(length, max_bytes);
+  
+  for (size_t i = 0; i < bytes_to_show; i++) {
+    char hex[3];
+    snprintf(hex, sizeof(hex), "%02x", addr[i]);
+    result += hex;
+    if (i < bytes_to_show - 1) {
+      result += " ";
+    }
+  }
+  
+  if (length > max_bytes) {
+    result += "...";
+  }
+  
+  return result;
+}
+
 bool LoadUSDCFromMemory(const uint8_t *addr, const size_t length,
                         const std::string &filename, Stage *stage,
                         std::string *warn, std::string *err,
@@ -895,7 +920,11 @@ bool LoadUSDFromMemory(const uint8_t *addr, const size_t length,
                               options);
   } else {
     if (err) {
-      (*err) += "Couldn't determine USD format(USDA/USDC/USDZ).\n";
+      (*err) += "Couldn't determine USD format(USDA/USDC/USDZ). ";
+      (*err) += "Found magic header: " + FormatMagicHeader(addr, length, 8) + ", ";
+      (*err) += "expected: \"#usda 1.0\" (0x23 75 73 64 61 20 31 2e 30) for USDA, ";
+      (*err) += "\"PXR-USDC\" (0x50 58 52 2d 55 53 44 43) for USDC, ";
+      (*err) += "or ZIP signature (0x50 4b 03 04) for USDZ.\n";
     }
     return false;
   }
@@ -1472,7 +1501,11 @@ bool LoadLayerFromMemory(const uint8_t *addr, const size_t length,
 #endif
   } else {
     if (err) {
-      (*err) += "Couldn't determine USD format(USDA/USDC/USDZ).\n";
+      (*err) += "Couldn't determine USD format(USDA/USDC/USDZ). ";
+      (*err) += "Found magic header: " + FormatMagicHeader(addr, length, 8) + ", ";
+      (*err) += "expected: \"#usda 1.0\" (0x23 75 73 64 61 20 31 2e 30) for USDA, ";
+      (*err) += "\"PXR-USDC\" (0x50 58 52 2d 55 53 44 43) for USDC, ";
+      (*err) += "or ZIP signature (0x50 4b 03 04) for USDZ.\n";
     }
     return false;
   }
