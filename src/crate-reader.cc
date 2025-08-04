@@ -71,7 +71,7 @@ namespace crate {
   } while(0)
 
 #define REDUCE_MEMORY_USAGE(__nbytes) do { \
-  if (_memoryUsage < (__nbytes)) { \
+  if (_memoryUsage >= (__nbytes)) { \
     _memoryUsage -= (__nbytes); \
   } \
   } while(0)
