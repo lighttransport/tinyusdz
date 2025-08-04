@@ -1,12 +1,13 @@
+#include "mcp-tools.hh"
+
 #include <string>
 
-#include "mcp-tools.hh"
-#include "mcp-server.hh"
 #include "mcp-context.hh"
+#include "mcp-server.hh"
+#include "pprinter.hh"
+#include "str-util.hh"
 #include "tinyusdz.hh"
 #include "uuid-gen.hh"
-#include "str-util.hh"
-#include "pprinter.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -46,17 +47,15 @@ inline std::string decode_datauri(const std::string &data) {
 #endif
 
 inline std::string decode_data(const std::string &data) {
-
   // TODO: save memory
   std::string binary = base64_decode(data);
 
   return binary;
-
-
 }
 
-static std::string FindUUID(const std::string &name, const std::unordered_map<std::string, USDLayer> &layers) {
-
+static std::string FindUUID(
+    const std::string &name,
+    const std::unordered_map<std::string, USDLayer> &layers) {
   for (const auto &it : layers) {
     if (it.second.name == name) {
       return it.first;
@@ -65,27 +64,35 @@ static std::string FindUUID(const std::string &name, const std::unordered_map<st
 
   return {};
 }
- 
 
 bool GetVersion(nlohmann::json &result);
-bool GetUSDDescription(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err);
-bool GetAllUSDDescriptions(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err);
+bool GetUSDDescription(Context &ctx, const nlohmann::json &args,
+                       nlohmann::json &result, std::string &err);
+bool GetAllUSDDescriptions(Context &ctx, const nlohmann::json &args,
+                           nlohmann::json &result, std::string &err);
 #if !defined(__EMSCRIPTEN__)
-bool LoadUSDLayerFromFile(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err);
+bool LoadUSDLayerFromFile(Context &ctx, const nlohmann::json &args,
+                          nlohmann::json &result, std::string &err);
 #endif
-bool LoadUSDLayerFromData(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err);
-bool StoreAsset(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err);
-bool ReadAsset(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err);
-bool ReadAssetPreview(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err);
-bool GetAssetDescription(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err);
-bool GetAllAssetDescriptions(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err);
-
+bool LoadUSDLayerFromData(Context &ctx, const nlohmann::json &args,
+                          nlohmann::json &result, std::string &err);
+bool StoreAsset(Context &ctx, const nlohmann::json &args,
+                nlohmann::json &result, std::string &err);
+bool ReadAsset(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
+               std::string &err);
+bool ReadAssetPreview(Context &ctx, const nlohmann::json &args,
+                      nlohmann::json &result, std::string &err);
+bool GetAssetDescription(Context &ctx, const nlohmann::json &args,
+                         nlohmann::json &result, std::string &err);
+bool GetAllAssetDescriptions(Context &ctx, const nlohmann::json &args,
+                             nlohmann::json &result, std::string &err);
 
 bool GetVersion(nlohmann::json &result) {
-  
-  std::string ver_str = std::to_string(tinyusdz::version_major) + "." + std::to_string(tinyusdz::version_minor) + "." + std::to_string(tinyusdz::version_micro);
+  std::string ver_str = std::to_string(tinyusdz::version_major) + "." +
+                        std::to_string(tinyusdz::version_minor) + "." +
+                        std::to_string(tinyusdz::version_micro);
   std::string rev = tinyusdz::version_rev;
-  
+
   if (rev.size()) {
     ver_str += "." + rev;
   }
@@ -98,32 +105,31 @@ bool GetVersion(nlohmann::json &result) {
   result["content"].push_back(content);
 
   return true;
-
 }
 
-
 #if !defined(__EMSCRIPTEN__)
-bool LoadUSDLayerFromFile(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+bool LoadUSDLayerFromFile(Context &ctx, const nlohmann::json &args,
+                          nlohmann::json &result, std::string &err) {
   DCOUT("args " << args);
   if (!args.contains("uri")) {
     DCOUT("uri param not found");
-    err = "`uri` param not found.\n";
-    return false; 
+    err = "`uri` param not found.";
+    return false;
   }
 
   if (!args.contains("name")) {
     DCOUT("name param not found");
-    err = "`name` param not found.\n";
-    return false; 
+    err = "`name` param not found.";
+    return false;
   }
 
   std::string uri = args["uri"];
   std::string name = args["name"];
   std::string description = args["description"];
-  
+
   Layer layer;
   std::string warn;
-  USDLoadOptions options; 
+  USDLoadOptions options;
   if (!LoadLayerFromFile(uri, &layer, &warn, &err, options)) {
     DCOUT("Failed to load layer from file: " << err);
     err = "Failed to load layer from file: " + err + "\n";
@@ -161,29 +167,31 @@ bool LoadUSDLayerFromFile(Context &ctx, const nlohmann::json &args, nlohmann::js
 }
 #endif
 
-bool LoadUSDLayerFromData(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+bool LoadUSDLayerFromData(Context &ctx, const nlohmann::json &args,
+                          nlohmann::json &result, std::string &err) {
   DCOUT("args " << args);
   if (!args.contains("data")) {
     DCOUT("data param not found");
-    err = "`data` param not found.\n";
-    return false; 
+    err = "`data` param not found.";
+    return false;
   }
   if (!args.contains("name")) {
     DCOUT("name param not found");
-    err = "`name` param not found.\n";
-    return false; 
+    err = "`name` param not found.";
+    return false;
   }
 
   std::string name = args["name"];
-  const std::string& data = args["data"];
+  const std::string &data = args["data"];
   std::string description = args["description"];
 
   std::string binary = decode_data(data);
-  
+
   Layer layer;
   std::string warn;
-  USDLoadOptions options; 
-  if (!LoadLayerFromMemory(reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(), name, &layer, &warn, &err, options)) {
+  USDLoadOptions options;
+  if (!LoadLayerFromMemory(reinterpret_cast<const uint8_t *>(binary.c_str()),
+                           binary.size(), name, &layer, &warn, &err, options)) {
     DCOUT("Failed to load layer from Data: " << err);
     err = "Failed to load layer from Data: " + err + "\n";
     return false;
@@ -202,7 +210,7 @@ bool LoadUSDLayerFromData(Context &ctx, const nlohmann::json &args, nlohmann::js
 
   USDLayer usd_layer;
   usd_layer.name = name;
-  usd_layer.uri = name; // FIXME
+  usd_layer.uri = name;  // FIXME
   usd_layer.description = description;
   usd_layer.layer = std::move(layer);
 
@@ -220,21 +228,22 @@ bool LoadUSDLayerFromData(Context &ctx, const nlohmann::json &args, nlohmann::js
   return true;
 }
 
-bool ReadAsset(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+bool ReadAsset(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
+               std::string &err) {
   DCOUT("args " << args);
   if (!args.contains("name")) {
     DCOUT("name param not found");
-    err = "`name` param not found.\n";
-    return false; 
+    err = "`name` param not found.";
+    return false;
   }
 
   std::string name = args["name"];
 
   if (!ctx.assets.count(name)) {
-    err = "Asset not found: " + name + "\n";
+    err = "Asset not found: " + name;
     return false;
   }
-  const std::string& data = ctx.assets.at(name).data;
+  const std::string &data = ctx.assets.at(name).data;
 
   nlohmann::json content;
   content["type"] = "text";
@@ -246,21 +255,22 @@ bool ReadAsset(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
   return true;
 }
 
-bool StoreAsset(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+bool StoreAsset(Context &ctx, const nlohmann::json &args,
+                nlohmann::json &result, std::string &err) {
   DCOUT("args " << args);
   if (!args.contains("data")) {
     DCOUT("data param not found");
-    err = "`data` param not found.\n";
-    return false; 
+    err = "`data` param not found.";
+    return false;
   }
   if (!args.contains("name")) {
     DCOUT("name param not found");
-    err = "`name` param not found.\n";
-    return false; 
+    err = "`name` param not found.";
+    return false;
   }
 
   std::string name = args["name"];
-  const std::string& data = args["data"];
+  const std::string &data = args["data"];
   std::string description = args["description"];
 
   std::string uuid = generateUUID();
@@ -273,13 +283,14 @@ bool StoreAsset(Context &ctx, const nlohmann::json &args, nlohmann::json &result
 
   // Handle preview image if provided
   if (args.contains("preview") && args["preview"].is_object()) {
-    const auto& preview = args["preview"];
-    
+    const auto &preview = args["preview"];
+
     // Check for required preview fields
     if (preview.contains("data") && preview.contains("mimeType")) {
+      std::cout << "has_preview\n";
       asset.preview.data = preview["data"];
       asset.preview.mimeType = preview["mimeType"];
-      
+
       // Optional preview name
       if (preview.contains("name")) {
         asset.preview.name = preview["name"];
@@ -299,7 +310,8 @@ bool StoreAsset(Context &ctx, const nlohmann::json &args, nlohmann::json &result
   return true;
 }
 
-bool ListPrimSpecs(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+bool ListPrimSpecs(Context &ctx, const nlohmann::json &args,
+                   nlohmann::json &result, std::string &err) {
   DCOUT("args " << args);
 
   std::string uuid = args["uuid"];
@@ -330,11 +342,12 @@ bool ListPrimSpecs(Context &ctx, const nlohmann::json &args, nlohmann::json &res
     content["text"] = ps.first;
     result["content"].push_back(content);
   }
-  
+
   return true;
 }
 
-bool ListScreenshots(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+bool ListScreenshots(Context &ctx, const nlohmann::json &args,
+                     nlohmann::json &result, std::string &err) {
   (void)args;
   (void)err;
 
@@ -343,29 +356,30 @@ bool ListScreenshots(Context &ctx, const nlohmann::json &args, nlohmann::json &r
   for (const auto &it : ctx.screenshots) {
     nlohmann::json content;
     content["type"] = "text";
-    content["text"] = it.first; // name
+    content["text"] = it.first;  // name
     result["content"].push_back(content);
   }
-  
+
   return true;
 }
 
-bool SaveScreenshot(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+bool SaveScreenshot(Context &ctx, const nlohmann::json &args,
+                    nlohmann::json &result, std::string &err) {
   DCOUT("args " << args);
   if (!args.contains("name")) {
     DCOUT("name param not found");
-    err = "`name` param not found.\n";
-    return false; 
+    err = "`name` param not found.";
+    return false;
   }
   if (!args.contains("data")) {
     DCOUT("data param not found");
-    err = "`data` param not found.\n";
-    return false; 
+    err = "`data` param not found.";
+    return false;
   }
   if (!args.contains("mimeType")) {
     DCOUT("mimeType param not found");
-    err = "`mimeType` param not found.\n";
-    return false; 
+    err = "`mimeType` param not found.";
+    return false;
   }
 
   std::string name = args["name"];
@@ -385,28 +399,29 @@ bool SaveScreenshot(Context &ctx, const nlohmann::json &args, nlohmann::json &re
   content["type"] = "text";
   content["text"] = screenshot.uuid;
   result["content"].push_back(content);
-  
+
   return true;
 }
 
-bool ReadAssetPreview(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+bool ReadAssetPreview(Context &ctx, const nlohmann::json &args,
+                      nlohmann::json &result, std::string &err) {
   DCOUT("args " << args);
   if (!args.contains("name")) {
     DCOUT("name param not found");
-    err = "`name` param not found.\n";
-    return false; 
+    err = "`name` param not found.";
+    return false;
   }
 
   std::string name = args["name"];
 
   // Assets are stored by name
   if (!ctx.assets.count(name)) {
-    err = "Asset not found: " + name + "\n";
+    err = "Asset not found: " + name;
     return false;
   }
 
-  const auto& asset = ctx.assets.at(name);
-  
+  const auto &asset = ctx.assets.at(name);
+
   if (asset.preview.data.empty()) {
     err = "Asset '" + name + "' has no preview image\n";
     return false;
@@ -418,18 +433,19 @@ bool ReadAssetPreview(Context &ctx, const nlohmann::json &args, nlohmann::json &
   content["type"] = "image";
   content["data"] = asset.preview.data;
   content["mimeType"] = asset.preview.mimeType;
-  
+
   result["content"].push_back(content);
-  
+
   return true;
 }
 
-bool ReadScreenshot(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+bool ReadScreenshot(Context &ctx, const nlohmann::json &args,
+                    nlohmann::json &result, std::string &err) {
   DCOUT("args " << args);
   if (!args.contains("name")) {
     DCOUT("name param not found");
-    err = "`name` param not found.\n";
-    return false; 
+    err = "`name` param not found.";
+    return false;
   }
 
   std::string name = args["name"];
@@ -446,7 +462,7 @@ bool ReadScreenshot(Context &ctx, const nlohmann::json &args, nlohmann::json &re
 
   nlohmann::json content;
   content["type"] = "image";
-  content["data"] = screenshot.data; // base64-encoded-data
+  content["data"] = screenshot.data;  // base64-encoded-data
   content["mimeType"] = screenshot.mimeType;
 
   // optional
@@ -456,22 +472,23 @@ bool ReadScreenshot(Context &ctx, const nlohmann::json &args, nlohmann::json &re
   content["annotations"]["priority"] = 0.9;
 
   result["content"].push_back(content);
-  
+
   return true;
 }
 
-bool GetUSDDescription(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+bool GetUSDDescription(Context &ctx, const nlohmann::json &args,
+                       nlohmann::json &result, std::string &err) {
   DCOUT("args " << args);
   if (!args.contains("name")) {
     DCOUT("name param not found");
-    err = "`name` param not found.\n";
-    return false; 
+    err = "`name` param not found.";
+    return false;
   }
 
   std::string name = args.at("name");
 
   std::string uuid = FindUUID(name, ctx.layers);
-  
+
   if (!ctx.layers.count(uuid)) {
     // This should not happen though.
     err = "Internal error. No corresponding Layer found\n";
@@ -488,7 +505,8 @@ bool GetUSDDescription(Context &ctx, const nlohmann::json &args, nlohmann::json 
   return true;
 }
 
-bool GetAllUSDDescriptions(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+bool GetAllUSDDescriptions(Context &ctx, const nlohmann::json &args,
+                           nlohmann::json &result, std::string &err) {
   (void)args;
   (void)err;
 
@@ -505,37 +523,51 @@ bool GetAllUSDDescriptions(Context &ctx, const nlohmann::json &args, nlohmann::j
   return true;
 }
 
-bool GetAssetDescription(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+bool GetAssetDescription(Context &ctx, const nlohmann::json &args,
+                         nlohmann::json &result, std::string &err) {
   DCOUT("args " << args);
   if (!args.contains("name")) {
     DCOUT("name param not found");
-    err = "`name` param not found.\n";
-    return false; 
+    err = "`name` param not found.";
+    return false;
   }
 
   std::string name = args.at("name");
 
+  bool include_preview = false;
+  if (args.contains("include_preview")) {
+    include_preview = args["include_preview"];
+  }
+
   // Assets are stored by name, not UUID
   if (!ctx.assets.count(name)) {
-    err = "Asset not found: " + name + "\n";
+    err = "Asset not found: " + name;
     return false;
   }
 
-  const auto& asset = ctx.assets.at(name);
+  const auto &asset = ctx.assets.at(name);
 
+  // Create structured JSON for the asset
+  nlohmann::json asset_info;
+  asset_info["name"] = name;
+  asset_info["asset_name"] = asset.name;
+  asset_info["description"] = asset.description;
+  asset_info["uuid"] = asset.uuid;
+
+  // Add preview data if available
+  if (!asset.preview.data.empty()) {
+    asset_info["preview"] = nlohmann::json::object();
+    asset_info["preview"]["data"] = asset.preview.data;
+    asset_info["preview"]["mimeType"] = asset.preview.mimeType;
+    if (!asset.preview.name.empty()) {
+      asset_info["preview"]["name"] = asset.preview.name;
+    }
+  }
+
+  // Return as JSON string
   nlohmann::json content;
   content["type"] = "text";
-  
-  // Build description including preview info if available
-  std::string desc = asset.description;
-  if (!asset.preview.data.empty()) {
-    desc += "\n[Has preview: " + asset.preview.mimeType;
-    if (!asset.preview.name.empty()) {
-      desc += ", name: " + asset.preview.name;
-    }
-    desc += "]";
-  }
-  content["text"] = desc;
+  content["text"] = asset_info.dump();
 
   result["content"] = nlohmann::json::array();
   result["content"].push_back(content);
@@ -543,45 +575,60 @@ bool GetAssetDescription(Context &ctx, const nlohmann::json &args, nlohmann::jso
   return true;
 }
 
-bool GetAllAssetDescriptions(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+bool GetAllAssetDescriptions(Context &ctx, const nlohmann::json &args,
+                             nlohmann::json &result, std::string &err) {
   (void)args;
   (void)err;
+
+  bool include_preview = false;
+  if (args.contains("include_preview")) {
+    include_preview = args["include_preview"];
+  }
 
   result["content"] = nlohmann::json::array();
 
   for (const auto &it : ctx.assets) {
-    {
-      nlohmann::json desc_content;
-      desc_content["type"] = "text";
-      desc_content["text"] = it.second.name + ":" + it.second.description;
+    // Create structured JSON for each asset
+    nlohmann::json asset_info;
+    asset_info["name"] = it.first;
+    asset_info["asset_name"] = it.second.name;
+    asset_info["description"] = it.second.description;
+    asset_info["uuid"] = it.second.uuid;
 
-      result["content"].push_back(desc_content);
+    if (include_preview) {
+      // Add preview data if available
+      if (!it.second.preview.data.empty()) {
+        asset_info["preview"] = nlohmann::json::object();
+        asset_info["preview"]["data"] = it.second.preview.data;
+        asset_info["preview"]["mimeType"] = it.second.preview.mimeType;
+        if (!it.second.preview.name.empty()) {
+          asset_info["preview"]["name"] = it.second.preview.name;
+        }
+      }
     }
 
-    {
-      nlohmann::json img_content;
-      img_content["type"] = "text";
-      img_content["mimeType"] = it.second.preview.mimeType;
-      img_content["data"] = it.second.preview.data;
+    // Return as JSON string
+    nlohmann::json content;
+    content["type"] = "text";
+    content["text"] = asset_info.dump();
 
-      result["content"].push_back(img_content);
-    }
-
+    result["content"].push_back(content);
   }
 
   return true;
 }
 
-bool ToUSDA(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+bool ToUSDA(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
+            std::string &err) {
   DCOUT("args " << args);
   if (!args.contains("uri")) {
     DCOUT("name param not found");
-    err = "`name` param not found.\n";
-    return false; 
+    err = "`name` param not found.";
+    return false;
   }
 
   std::string name = args.at("name");
-  
+
   std::string uuid = FindUUID(name, ctx.layers);
 
   if (!ctx.layers.count(uuid)) {
@@ -595,7 +642,7 @@ bool ToUSDA(Context &ctx, const nlohmann::json &args, nlohmann::json &result, st
   content["mimeType"] = "text/plain";
 
   const Layer &layer = ctx.layers.at(uuid).layer;
-  std::string str = to_string(layer); // to USDA
+  std::string str = to_string(layer);  // to USDA
   content["text"] = str;
 
   result["content"] = nlohmann::json::array();
@@ -604,12 +651,13 @@ bool ToUSDA(Context &ctx, const nlohmann::json &args, nlohmann::json &result, st
   return true;
 }
 
-bool SelectAssets(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+bool SelectAssets(Context &ctx, const nlohmann::json &args,
+                  nlohmann::json &result, std::string &err) {
   DCOUT("args " << args);
   if (!args.contains("names")) {
     DCOUT("names param not found");
-    err = "`names` param not found.\n";
-    return false; 
+    err = "`names` param not found.";
+    return false;
   }
 
   std::vector<std::string> names = args.at("names");
@@ -621,17 +669,18 @@ bool SelectAssets(Context &ctx, const nlohmann::json &args, nlohmann::json &resu
     }
   }
 
-  //nlohmann::json content;
-  //content["type"] = "text";
-  //content["text"] = ctx.assets.at(uuid).description;
+  // nlohmann::json content;
+  // content["type"] = "text";
+  // content["text"] = ctx.assets.at(uuid).description;
 
   result["content"] = nlohmann::json::array();
-  //result["content"].push_back(content);
+  // result["content"].push_back(content);
 
   return true;
 }
 
-bool GetSelectedAssets(Context &ctx, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+bool GetSelectedAssets(Context &ctx, const nlohmann::json &args,
+                       nlohmann::json &result, std::string &err) {
   (void)err;
   (void)args;
   DCOUT("args " << args);
@@ -644,12 +693,10 @@ bool GetSelectedAssets(Context &ctx, const nlohmann::json &args, nlohmann::json 
     result["content"].push_back(content);
   }
 
-
   return true;
 }
 
-
-} // namespace
+}  // namespace
 
 bool GetToolsList(Context &ctx, nlohmann::json &result) {
   (void)ctx;
@@ -664,7 +711,7 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
     nlohmann::json schema;
     schema["type"] = "object";
     schema["properties"] = nlohmann::json::object();
-    //schena["required"] = nlohmann::json::array();
+    // schena["required"] = nlohmann::json::array();
 
     j["inputSchema"] = schema;
 
@@ -679,7 +726,7 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
     nlohmann::json schema;
     schema["type"] = "object";
     schema["properties"] = nlohmann::json::object();
-    //schena["required"] = nlohmann::json::array();
+    // schena["required"] = nlohmann::json::array();
 
     j["inputSchema"] = schema;
 
@@ -694,8 +741,9 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
     nlohmann::json schema;
     schema["type"] = "object";
     schema["properties"] = nlohmann::json::object();
-    schema["properties"]["name"] ={{"type", "string"}}; // TODO: accept multiple names
-    
+    schema["properties"]["name"] = {
+        {"type", "string"}};  // TODO: accept multiple names
+
     schema["required"] = nlohmann::json::array({"name"});
 
     j["inputSchema"] = schema;
@@ -706,12 +754,15 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
   {
     nlohmann::json j;
     j["name"] = "get_all_asset_descriptions";
-    j["description"] = "Get description of all Assets";
+    j["description"] =
+        "Get description of all Assets(The response is JSON string). Optionally include preview image data by setting `include_preview` argument.";
 
     nlohmann::json schema;
     schema["type"] = "object";
     schema["properties"] = nlohmann::json::object();
-    //schena["required"] = nlohmann::json::array();
+    schema["properties"]["include_preview"] = {
+        {"type", "boolean"}}; 
+    // schena["required"] = nlohmann::json::array();
 
     j["inputSchema"] = schema;
 
@@ -721,13 +772,17 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
   {
     nlohmann::json j;
     j["name"] = "get_asset_description";
-    j["description"] = "Get description of Asset";
+    j["description"] = "Get description of Asset(The response is JSON string). Optionally include preview image data by setting `include_preview` argument.";
 
     nlohmann::json schema;
     schema["type"] = "object";
     schema["properties"] = nlohmann::json::object();
-    schema["properties"]["name"] ={{"type", "string"}}; // TODO: accept multiple names
-    //schena["required"] = nlohmann::json::array();
+    schema["properties"]["name"] = {
+        {"type", "string"}};  // TODO: accept multiple names
+    schema["properties"]["include_preview"] = {
+        {"type", "boolean"}};  // include preview image in the response?
+
+    schema["required"] = nlohmann::json::array({"name"});
 
     j["inputSchema"] = schema;
 
@@ -737,21 +792,21 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
   {
     nlohmann::json j;
     j["name"] = "load_usd_layer_from_file";
-    j["description"] = "Load USD as Layer from a file(only works in C++ native binary)";
+    j["description"] =
+        "Load USD as Layer from a file(only works in C++ native binary)";
 
     nlohmann::json schema;
     schema["type"] = "object";
     schema["properties"] = nlohmann::json::object();
-    schema["properties"]["uri"] ={{"type", "string"}};
-    schema["properties"]["name"] ={{"type", "string"}};
-    schema["properties"]["description"] ={{"type", "string"}}; // optional
+    schema["properties"]["uri"] = {{"type", "string"}};
+    schema["properties"]["name"] = {{"type", "string"}};
+    schema["properties"]["description"] = {{"type", "string"}};  // optional
 
     schema["required"] = nlohmann::json::array({"uri", "name"});
 
     j["inputSchema"] = schema;
 
     result["tools"].push_back(j);
-
   }
 
   {
@@ -762,16 +817,15 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
     nlohmann::json schema;
     schema["type"] = "object";
     schema["properties"] = nlohmann::json::object();
-    schema["properties"]["data"] ={{"type", "string"}};
-    schema["properties"]["name"] ={{"type", "string"}};
-    schema["properties"]["description"] ={{"type", "string"}}; // optional
+    schema["properties"]["data"] = {{"type", "string"}};
+    schema["properties"]["name"] = {{"type", "string"}};
+    schema["properties"]["description"] = {{"type", "string"}};  // optional
 
     schema["required"] = nlohmann::json::array({"data", "name"});
 
     j["inputSchema"] = schema;
 
     result["tools"].push_back(j);
-
   }
 
   {
@@ -782,14 +836,13 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
     nlohmann::json schema;
     schema["type"] = "object";
     schema["properties"] = nlohmann::json::object();
-    schema["properties"]["name"] ={{"type", "string"}};
+    schema["properties"]["name"] = {{"type", "string"}};
 
     schema["required"] = nlohmann::json::array({"name"});
 
     j["inputSchema"] = schema;
 
     result["tools"].push_back(j);
-
   }
 
   {
@@ -800,7 +853,7 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
     nlohmann::json schema;
     schema["type"] = "object";
     schema["properties"] = nlohmann::json::object();
-    schema["properties"]["name"] ={{"type", "string"}};
+    schema["properties"]["name"] = {{"type", "string"}};
 
     schema["required"] = nlohmann::json::array({"name"});
 
@@ -812,34 +865,39 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
   {
     nlohmann::json j;
     j["name"] = "store_asset";
-    j["description"] = "Store asset(e.g. USD, texture) with optional preview image. `data` is base64 encoded string.";
+    j["description"] =
+        "Store asset(e.g. USD, texture) with optional preview image. `data` is "
+        "base64 encoded string.";
 
     nlohmann::json schema;
     schema["type"] = "object";
     schema["properties"] = nlohmann::json::object();
-    schema["properties"]["data"] ={{"type", "string"}};
-    schema["properties"]["name"] ={{"type", "string"}};
-    schema["properties"]["description"] ={{"type", "string"}}; // optional
-    
+    schema["properties"]["data"] = {{"type", "string"}};
+    schema["properties"]["name"] = {{"type", "string"}};
+    schema["properties"]["description"] = {{"type", "string"}};  // optional
+
     // Add preview object schema
     nlohmann::json previewSchema;
     previewSchema["type"] = "object";
     previewSchema["properties"] = nlohmann::json::object();
-    previewSchema["properties"]["data"] = {{"type", "string"}, {"description", "Base64 encoded preview image"}};
-    previewSchema["properties"]["mimeType"] = {{"type", "string"}, {"description", "MIME type (e.g. 'image/png', 'image/jpeg')"}};
-    previewSchema["properties"]["name"] = {{"type", "string"}, {"description", "Optional name for the preview image"}};
+    previewSchema["properties"]["data"] = {
+        {"type", "string"}, {"description", "Base64 encoded preview image"}};
+    previewSchema["properties"]["mimeType"] = {
+        {"type", "string"},
+        {"description", "MIME type (e.g. 'image/png', 'image/jpeg')"}};
+    previewSchema["properties"]["name"] = {
+        {"type", "string"},
+        {"description", "Optional name for the preview image"}};
     previewSchema["required"] = nlohmann::json::array({"data", "mimeType"});
-    
-    schema["properties"]["preview"] = previewSchema; // optional
+
+    schema["properties"]["preview"] = previewSchema;  // optional
 
     schema["required"] = nlohmann::json::array({"data", "name"});
 
     j["inputSchema"] = schema;
 
     result["tools"].push_back(j);
-
   }
-
 
   {
     nlohmann::json j;
@@ -849,15 +907,14 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
     nlohmann::json schema;
     schema["type"] = "object";
     schema["properties"] = nlohmann::json::object();
-    schema["properties"]["uuid"] ={{"type", "string"}};
-    schema["properties"]["name"] ={{"type", "string"}};
+    schema["properties"]["uuid"] = {{"type", "string"}};
+    schema["properties"]["name"] = {{"type", "string"}};
 
-    //schema["required"] = nlohmann::json::array({"uuid"});
+    // schema["required"] = nlohmann::json::array({"uuid"});
 
     j["inputSchema"] = schema;
 
     result["tools"].push_back(j);
-
   }
 
   {
@@ -868,34 +925,34 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
     nlohmann::json schema;
     schema["type"] = "object";
     schema["properties"] = nlohmann::json::object();
-    schema["properties"]["name"] ={{"type", "string"}};
+    schema["properties"]["name"] = {{"type", "string"}};
 
     schema["required"] = nlohmann::json::array({"name"});
 
     j["inputSchema"] = schema;
 
     result["tools"].push_back(j);
-
   }
 
   {
     nlohmann::json j;
     j["name"] = "save_screenshot";
-    j["description"] = "Save screenshot image(`data` is a base64 encoded string of image data)";
+    j["description"] =
+        "Save screenshot image(`data` is a base64 encoded string of image "
+        "data)";
 
     nlohmann::json schema;
     schema["type"] = "object";
     schema["properties"] = nlohmann::json::object();
-    schema["properties"]["data"] ={{"type", "string"}};
-    schema["properties"]["name"] ={{"type", "string"}};
-    schema["properties"]["mimeType"] ={{"type", "string"}};
+    schema["properties"]["data"] = {{"type", "string"}};
+    schema["properties"]["name"] = {{"type", "string"}};
+    schema["properties"]["mimeType"] = {{"type", "string"}};
 
     schema["required"] = nlohmann::json::array({"data", "name", "mimeType"});
 
     j["inputSchema"] = schema;
 
     result["tools"].push_back(j);
-
   }
 
   {
@@ -910,7 +967,6 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
     j["inputSchema"] = schema;
 
     result["tools"].push_back(j);
-
   }
 
   {
@@ -921,14 +977,13 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
     nlohmann::json schema;
     schema["type"] = "object";
     schema["properties"] = nlohmann::json::object();
-    schema["properties"]["name"] ={{"type", "string"}};
+    schema["properties"]["name"] = {{"type", "string"}};
 
     schema["required"] = nlohmann::json::array({"name"});
 
     j["inputSchema"] = schema;
 
     result["tools"].push_back(j);
-
   }
 
   {
@@ -940,7 +995,8 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
     schema["type"] = "object";
     schema["properties"] = nlohmann::json::object();
     // string[]
-    schema["properties"]["names"] ={{"type", "array"}, {"items", {"type", "string"}}};
+    schema["properties"]["names"] = {{"type", "array"},
+                                     {"items", {"type", "string"}}};
     schema["required"] = nlohmann::json::array({"names"});
 
     j["inputSchema"] = schema;
@@ -960,9 +1016,8 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
     j["inputSchema"] = schema;
 
     result["tools"].push_back(j);
-
   }
-  
+
   {
     nlohmann::json j;
     j["name"] = "read_asset_preview";
@@ -971,7 +1026,8 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
     nlohmann::json schema;
     schema["type"] = "object";
     schema["properties"] = nlohmann::json::object();
-    schema["properties"]["name"] = {{"type", "string"}, {"description", "Asset name"}};
+    schema["properties"]["name"] = {{"type", "string"},
+                                    {"description", "Asset name"}};
 
     schema["required"] = nlohmann::json::array({"name"});
 
@@ -979,14 +1035,15 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
 
     result["tools"].push_back(j);
   }
-  
+
   std::cout << result << "\n";
 
   return true;
 }
 
-
-bool CallTool(Context &ctx, const std::string &tool_name, const nlohmann::json &args, nlohmann::json &result, std::string &err) {
+bool CallTool(Context &ctx, const std::string &tool_name,
+              const nlohmann::json &args, nlohmann::json &result,
+              std::string &err) {
   (void)args;
 
   if (tool_name == "get_version") {
@@ -1044,7 +1101,6 @@ bool CallTool(Context &ctx, const std::string &tool_name, const nlohmann::json &
   return false;
 }
 
-
-} // namespace mcp
-} // namespace tydra
-} // namespace tinyusdz
+}  // namespace mcp
+}  // namespace tydra
+}  // namespace tinyusdz
