@@ -20,6 +20,18 @@ struct Image
   std::string data; // based64 encoded image
 };
 
+struct AssetSelection
+{
+  std::string asset_name;
+
+  // Instance and transform parameters
+  int instance_id = 0; // Instance ID for the asset
+  std::array<float, 3> position = {0.0f, 0.0f, 0.0f}; // x, y, z
+  std::array<float, 3> scale = {1.0f, 1.0f, 1.0f}; // x, y, z
+  std::array<float, 3> rotation = {0.0f, 0.0f, 0.0f}; // x, y, z Euler angles in degrees
+
+};
+
 // Generic Asset(USD, textures, etc.)
 struct MCPAsset
 {
@@ -29,11 +41,11 @@ struct MCPAsset
   Image preview; // preview image of the asset(optional)
   std::string uuid;
   
-  // Instance and transform parameters
-  int instance_id = 0; // Instance ID for the asset
-  std::array<float, 3> position = {0.0f, 0.0f, 0.0f}; // x, y, z
-  std::array<float, 3> scale = {1.0f, 1.0f, 1.0f}; // x, y, z
-  std::array<float, 3> rotation = {0.0f, 0.0f, 0.0f}; // x, y, z Euler angles in degrees
+  
+  // Geometry and bounding box parameters
+  std::array<float, 3> pivot_position = {0.0f, 0.0f, 0.0f}; // pivot point for rotation and scaling
+  std::array<float, 3> bmin = {-1.0f, -1.0f, -1.0f}; // bounding box minimum
+  std::array<float, 3> bmax = {1.0f, 1.0f, 1.0f}; // bounding box maximum
 };
 
 struct USDLayer
@@ -61,7 +73,7 @@ struct Context
   // key = name
   std::unordered_map<std::string, MCPAsset> assets;
 
-  std::vector<std::string> selected_assets;
+  std::vector<AssetSelection> selected_assets;
 
   // key = name
   std::unordered_map<std::string, Screenshot> screenshots;

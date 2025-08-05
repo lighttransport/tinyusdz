@@ -25,6 +25,15 @@ for f in files:
     print(basename)
 
     j = json.loads(open(in_json_file).read())
+
+    # optional meta
+    in_metajson_file = os.path.splitext(f)[0] + "-meta.json"
+    print(in_metajson_file)
+
+    if os.path.exists(in_metajson_file):
+        meta_j = json.loads(open(in_metajson_file).read())
+        j.update(meta_j)
+
     js[basename] = j
 
 out_j = json.dumps(js)
