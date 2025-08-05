@@ -238,23 +238,37 @@ bool ReadAsset(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
   }
 
   std::string name = args["name"];
+  int instance_id = -1;
+  if (args.contains("instance_id")) {
+    instance_id = args["instance_id"];
+  }
 
-  if (!ctx.assets.count(name)) {
+  AssetSelection asset_selection;
+  bool found_selection = false;
+
+  // simple linear search
+  for (const auto &selection : ctx.selected_assets) {
+    if (selection.asset_name == name && (instance_id == -1 || selection.instance_id == instance_id)) {
+
+      asset_selection = selection;
+      found_selection = true;
+
+      DCOUT("Found matching asset selection: " << selection.asset_name);
+      break;
+    }
+  } 
+
+  if (!found_selection) {
+    err = "Asset selection not found for name: " + name;
+    return false;
+  }
+
+  if (!ctx.assets.count(asset_selection.asset_name)) {
     err = "Asset not found: " + name;
     return false;
   }
-  const MCPAsset &asset = ctx.assets.at(name);
 
-  // Check instance_id if provided
-  if (args.contains("instance_id") && args["instance_id"].is_number_integer()) {
-    int requested_instance_id = args["instance_id"];
-    if (asset.instance_id != requested_instance_id) {
-      err = "Asset '" + name + "' instance_id mismatch. Expected: " + 
-            std::to_string(requested_instance_id) + ", Found: " + 
-            std::to_string(asset.instance_id);
-      return false;
-    }
-  }
+  const MCPAsset &asset = ctx.assets.at(asset_selection.asset_name);
 
   // Create JSON response with asset data and transform information
   nlohmann::json asset_data;
@@ -264,10 +278,15 @@ bool ReadAsset(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
   asset_data["uuid"] = asset.uuid;
   
   // Add instance and transform parameters
-  asset_data["instance_id"] = asset.instance_id;
-  asset_data["position"] = nlohmann::json::array({asset.position[0], asset.position[1], asset.position[2]});
-  asset_data["scale"] = nlohmann::json::array({asset.scale[0], asset.scale[1], asset.scale[2]});
-  asset_data["rotation"] = nlohmann::json::array({asset.rotation[0], asset.rotation[1], asset.rotation[2]});
+  asset_data["instance_id"] = asset_selection.instance_id;
+  asset_data["position"] = nlohmann::json::array({asset_selection.position[0], asset_selection.position[1], asset_selection.position[2]});
+  asset_data["scale"] = nlohmann::json::array({asset_selection.scale[0], asset_selection.scale[1], asset_selection.scale[2]});
+  asset_data["rotation"] = nlohmann::json::array({asset_selection.rotation[0], asset_selection.rotation[1], asset_selection.rotation[2]});
+
+  // Add geometry and bounding box parameters
+  asset_data["pivot_position"] = nlohmann::json::array({asset.pivot_position[0], asset.pivot_position[1], asset.pivot_position[2]});
+  asset_data["bmin"] = nlohmann::json::array({asset.bmin[0], asset.bmin[1], asset.bmin[2]});
+  asset_data["bmax"] = nlohmann::json::array({asset.bmax[0], asset.bmax[1], asset.bmax[2]});
 
   nlohmann::json content;
   content["type"] = "text";
@@ -320,6 +339,25 @@ bool StoreAsset(Context &ctx, const nlohmann::json &args,
         asset.preview.name = preview["name"];
       }
     }
+  }
+
+  // Handle geometry and bounding box parameters if provided
+  if (args.contains("pivot_position") && args["pivot_position"].is_array() && args["pivot_position"].size() == 3) {
+    asset.pivot_position[0] = args["pivot_position"][0];
+    asset.pivot_position[1] = args["pivot_position"][1];
+    asset.pivot_position[2] = args["pivot_position"][2];
+  }
+
+  if (args.contains("bmin") && args["bmin"].is_array() && args["bmin"].size() == 3) {
+    asset.bmin[0] = args["bmin"][0];
+    asset.bmin[1] = args["bmin"][1];
+    asset.bmin[2] = args["bmin"][2];
+  }
+
+  if (args.contains("bmax") && args["bmax"].is_array() && args["bmax"].size() == 3) {
+    asset.bmax[0] = args["bmax"][0];
+    asset.bmax[1] = args["bmax"][1];
+    asset.bmax[2] = args["bmax"][2];
   }
 
   ctx.assets.emplace(name, std::move(asset));
@@ -577,6 +615,11 @@ bool GetAssetDescription(Context &ctx, const nlohmann::json &args,
   asset_info["asset_name"] = asset.name;
   asset_info["description"] = asset.description;
   asset_info["uuid"] = asset.uuid;
+  
+  // Add geometry and bounding box parameters
+  asset_info["pivot_position"] = nlohmann::json::array({asset.pivot_position[0], asset.pivot_position[1], asset.pivot_position[2]});
+  asset_info["bmin"] = nlohmann::json::array({asset.bmin[0], asset.bmin[1], asset.bmin[2]});
+  asset_info["bmax"] = nlohmann::json::array({asset.bmax[0], asset.bmax[1], asset.bmax[2]});
 
   // Add preview data if available and requested
   if (include_preview && !asset.preview.data.empty()) {
@@ -618,6 +661,11 @@ bool GetAllAssetDescriptions(Context &ctx, const nlohmann::json &args,
     asset_info["asset_name"] = it.second.name;
     asset_info["description"] = it.second.description;
     asset_info["uuid"] = it.second.uuid;
+    
+    // Add geometry and bounding box parameters
+    asset_info["pivot_position"] = nlohmann::json::array({it.second.pivot_position[0], it.second.pivot_position[1], it.second.pivot_position[2]});
+    asset_info["bmin"] = nlohmann::json::array({it.second.bmin[0], it.second.bmin[1], it.second.bmin[2]});
+    asset_info["bmax"] = nlohmann::json::array({it.second.bmax[0], it.second.bmax[1], it.second.bmax[2]});
 
     if (include_preview) {
       // Add preview data if available
@@ -677,7 +725,7 @@ bool ToUSDA(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
 
 bool SelectAssets(Context &ctx, const nlohmann::json &args,
                   nlohmann::json &result, std::string &err) {
-  DCOUT("args " << args);
+  std::cout << "select_assets"  << args << "\n";
   if (!args.contains("assets")) {
     DCOUT("assets param not found");
     err = "`assets` param not found.";
@@ -707,8 +755,8 @@ bool SelectAssets(Context &ctx, const nlohmann::json &args,
     std::string name = asset_obj["name"];
     
     if (!ctx.assets.count(name)) {
-      DCOUT("Asset not found: " << name);
-      continue; // Skip assets that don't exist
+      err = "Asset not found" + name;
+      return false;
     }
     
     // Default instance and transform parameters
@@ -716,6 +764,11 @@ bool SelectAssets(Context &ctx, const nlohmann::json &args,
     std::array<float, 3> position = {0.0f, 0.0f, 0.0f};
     std::array<float, 3> scale = {1.0f, 1.0f, 1.0f};
     std::array<float, 3> rotation = {0.0f, 0.0f, 0.0f};
+    
+    // Default geometry and bounding box parameters
+    std::array<float, 3> pivot_position = {0.0f, 0.0f, 0.0f};
+    std::array<float, 3> bmin = {-1.0f, -1.0f, -1.0f};
+    std::array<float, 3> bmax = {1.0f, 1.0f, 1.0f};
     
     // Parse instance_id
     if (asset_obj.contains("instance_id") && asset_obj["instance_id"].is_number_integer()) {
@@ -741,17 +794,44 @@ bool SelectAssets(Context &ctx, const nlohmann::json &args,
       rotation[2] = asset_obj["rotation"][2];
     }
     
-    // Update the asset with its individual transform parameters
-    ctx.assets[name].instance_id = instance_id;
-    ctx.assets[name].position = position;
-    ctx.assets[name].scale = scale;
-    ctx.assets[name].rotation = rotation;
-    ctx.selected_assets.push_back(name);
+    // Parse geometry and bounding box parameters
+    if (asset_obj.contains("pivot_position") && asset_obj["pivot_position"].is_array() && asset_obj["pivot_position"].size() == 3) {
+      pivot_position[0] = asset_obj["pivot_position"][0];
+      pivot_position[1] = asset_obj["pivot_position"][1];
+      pivot_position[2] = asset_obj["pivot_position"][2];
+    }
     
-    DCOUT("Selected asset '" << name << "' (instance_id: " << instance_id << ") with transform - Position: [" 
+    if (asset_obj.contains("bmin") && asset_obj["bmin"].is_array() && asset_obj["bmin"].size() == 3) {
+      bmin[0] = asset_obj["bmin"][0];
+      bmin[1] = asset_obj["bmin"][1];
+      bmin[2] = asset_obj["bmin"][2];
+    }
+    
+    if (asset_obj.contains("bmax") && asset_obj["bmax"].is_array() && asset_obj["bmax"].size() == 3) {
+      bmax[0] = asset_obj["bmax"][0];
+      bmax[1] = asset_obj["bmax"][1];
+      bmax[2] = asset_obj["bmax"][2];
+    }
+    
+    // Update the asset with its individual transform parameters
+    AssetSelection selection;
+    selection.asset_name = name;
+    selection.instance_id = instance_id;
+    selection.position = position;
+    selection.scale = scale;
+    selection.rotation = rotation;
+    //selection.pivot_position = pivot_position;
+    //selection.bmin = bmin;
+    //selection.bmax = bmax;
+    ctx.selected_assets.push_back(selection);
+    
+    std::cout << "Selected asset '" << name << "' (instance_id: " << instance_id << ") with transform - Position: [" 
           << position[0] << ", " << position[1] << ", " << position[2] << "], "
           << "Scale: [" << scale[0] << ", " << scale[1] << ", " << scale[2] << "], "
-          << "Rotation: [" << rotation[0] << ", " << rotation[1] << ", " << rotation[2] << "]");
+          << "Rotation: [" << rotation[0] << ", " << rotation[1] << ", " << rotation[2] << "], "
+          << "Pivot: [" << pivot_position[0] << ", " << pivot_position[1] << ", " << pivot_position[2] << "], "
+          << "BMin: [" << bmin[0] << ", " << bmin[1] << ", " << bmin[2] << "], "
+          << "BMax: [" << bmax[0] << ", " << bmax[1] << ", " << bmax[2] << "]";
   }
 
   result["content"] = nlohmann::json::array();
@@ -766,11 +846,11 @@ bool GetSelectedAssets(Context &ctx, const nlohmann::json &args,
   DCOUT("args " << args);
 
   result["content"] = nlohmann::json::array();
-  for (const auto &name : ctx.selected_assets) {
+  for (const auto &selection : ctx.selected_assets) {
     // Create JSON object with name and instance_id
     nlohmann::json asset_info;
-    asset_info["name"] = name;
-    asset_info["instance_id"] = ctx.assets.at(name).instance_id;
+    asset_info["name"] = selection.asset_name;
+    asset_info["instance_id"] = selection.instance_id;
     
     nlohmann::json content;
     content["type"] = "text";
@@ -952,7 +1032,7 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
     nlohmann::json j;
     j["name"] = "store_asset";
     j["description"] =
-        "Store asset(e.g. USD, texture) with optional preview image. `data` is "
+        "Store asset(e.g. USD, texture) with optional preview image and geometry parameters (pivot_position, bmin, bmax). `data` is "
         "base64 encoded string.";
 
     nlohmann::json schema;
@@ -977,6 +1057,23 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
     previewSchema["required"] = nlohmann::json::array({"data", "mimeType"});
 
     schema["properties"]["preview"] = previewSchema;  // optional
+
+    // Add geometry and bounding box parameters
+    schema["properties"]["pivot_position"] = {{"type", "array"},
+                                              {"items", {"type", "number"}},
+                                              {"minItems", 3},
+                                              {"maxItems", 3},
+                                              {"description", "Pivot position as [x, y, z] for rotation and scaling"}};
+    schema["properties"]["bmin"] = {{"type", "array"},
+                                    {"items", {"type", "number"}},
+                                    {"minItems", 3},
+                                    {"maxItems", 3},
+                                    {"description", "Bounding box minimum as [x, y, z]"}};
+    schema["properties"]["bmax"] = {{"type", "array"},
+                                    {"items", {"type", "number"}},
+                                    {"minItems", 3},
+                                    {"maxItems", 3},
+                                    {"description", "Bounding box maximum as [x, y, z]"}};
 
     schema["required"] = nlohmann::json::array({"data", "name"});
 
@@ -1102,6 +1199,21 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
                                              {"minItems", 3},
                                              {"maxItems", 3},
                                              {"description", "Rotation as [x, y, z] in degrees"}};
+    assetSchema["properties"]["pivot_position"] = {{"type", "array"},
+                                                   {"items", {"type", "number"}},
+                                                   {"minItems", 3},
+                                                   {"maxItems", 3},
+                                                   {"description", "Pivot position as [x, y, z] for rotation and scaling"}};
+    assetSchema["properties"]["bmin"] = {{"type", "array"},
+                                         {"items", {"type", "number"}},
+                                         {"minItems", 3},
+                                         {"maxItems", 3},
+                                         {"description", "Bounding box minimum as [x, y, z]"}};
+    assetSchema["properties"]["bmax"] = {{"type", "array"},
+                                         {"items", {"type", "number"}},
+                                         {"minItems", 3},
+                                         {"maxItems", 3},
+                                         {"description", "Bounding box maximum as [x, y, z]"}};
     assetSchema["required"] = nlohmann::json::array({"name"});
 
     schema["properties"]["assets"] = {{"type", "array"}, {"items", assetSchema}};

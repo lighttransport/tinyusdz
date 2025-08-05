@@ -653,19 +653,24 @@ async function connectMCPServer() {
   params.mcpServerConnected = ui_state['mcpServerConnected']; // Update GUI parameter
 }
 
-async function getAsset(name) {
+async function getAsset(asset_info) {
   const client = ui_state['mcpClient'];
   if (!client) {
     console.error('MCP client is not connected');
     return;
   }
 
+  let args = {};
+  args.name = asset_info.name;
+  if (asset_info.instance_id) {
+    args.instance_id = asset_info.instance_id;
+  } 
+  console.log('args:', args);
+
   try {
     const response = await client.callTool({
       name: 'read_asset',
-      arguments: {
-        name: name
-      }
+      arguments: args
     });
     console.log('Asset retrieved:', response);
     
@@ -685,6 +690,7 @@ async function getAsset(name) {
       position: assetInfo.position || [0, 0, 0],
       scale: assetInfo.scale || [1, 1, 1],
       rotation: assetInfo.rotation || [0, 0, 0] // XYZ angles in degrees
+      ,
     };
   } catch (error) {
     console.error('Error retrieving asset:', error);
@@ -807,16 +813,16 @@ async function reloadScenes(loader, asset_names) {
   var assetTransforms = [] // Store transform info for each asset
 
   var usd_scenes = [];
-  for (const asset_name of asset_names) {
-    console.log('Loading asset:', asset_name);
+  for (const asset_jsoninfo of asset_names) {
+    console.log('Loading asset:', asset_jsoninfo);
 
-    const assetInfo = await getAsset(asset_name);
+    const assetInfo = await getAsset(JSON.parse(asset_jsoninfo));
     if (!assetInfo) {
-      console.error('Failed to load asset:', asset_name);
+      console.error('Failed to load asset:', asset_jsoninfo);
       continue;
     }
-    
-    console.log('Asset info for', asset_name, ':', assetInfo);
+
+    console.log('Asset info for', asset_jsoninfo, ':', assetInfo);
 
     const usd_scene = await loader.loadAsync(assetInfo.dataUri);
     console.log('Loaded USD scene:', usd_scene);
