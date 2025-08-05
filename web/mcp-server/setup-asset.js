@@ -63,9 +63,18 @@ for (const [key, value] of Object.entries(descriptions)) {
   const filename = value.usd_filename;
   const description = value.description;
   const preview = value.screenshot_filename;
+  
+  // Read geometry parameters from value, with defaults if not specified
+  const pivot_position = value.pivot_position || [0.0, 0.0, 0.0];
+  const bmin = value.bmin || [-1.0, -1.0, -1.0];
+  const bmax = value.bmax || [1.0, 1.0, 1.0];
+  
   assert(filename)
   assert(description)
   console.log(`filename: ${filename}, desc: ${description}`);
+  console.log(`pivot_position: [${pivot_position.join(', ')}]`);
+  console.log(`bmin: [${bmin.join(', ')}]`);
+  console.log(`bmax: [${bmax.join(', ')}]`);
   if (!preview) {
     console.warn(`No preview image specified for ${filename}`);
   } else {
@@ -80,7 +89,10 @@ for (const [key, value] of Object.entries(descriptions)) {
   let args = {
     "name": filename,
     "data": base64data,
-    "description": description
+    "description": description,
+    "pivot_position": pivot_position,
+    "bmin": bmin,
+    "bmax": bmax
   };
 
   if (preview) {
