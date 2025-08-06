@@ -23,7 +23,7 @@ ui_state['rot_scale'] = 1.0;
 ui_state['enable_rotation'] = false;
 ui_state['defaultMtl'] = TinyUSDZLoaderUtils.createDefaultMaterial();
 
-ui_state['envMapIntensity'] = 3.14; // pi is good for pisaHDR;
+ui_state['envMapIntensity'] = 1.0; // NOTE: pi(3.14) is good for pisaHDR;
 ui_state['ambient'] = 0.4;
 ui_state['envMapType'] = 'goegap'; // 'pisa', 'goegap', 'studio'
 ui_state['debugMaterial'] = {
@@ -54,7 +54,7 @@ ui_state['transformControls'] = null;
 ui_state['selectedObject'] = null;
 ui_state['gizmoMode'] = 'translate'; // 'translate', 'rotate', 'scale'
 ui_state['gizmoSpace'] = 'local'; // 'local', 'world'
-ui_state['gizmoEnabled'] = true;
+ui_state['gizmoEnabled'] = false;
 ui_state['raycaster'] = new THREE.Raycaster();
 ui_state['mouse'] = new THREE.Vector2();
 
@@ -889,10 +889,10 @@ async function loadScenes() {
   const suzanne_filename = "./assets/suzanne-pbr.usda";
   const texcat_filename = "./assets/texture-cat-plane.usdz";
   const cookie_filename = "./assets/UsdCookie.usdz";
-  //const usd_filename = "./assets/suzanne-pbr.usda";
+  const usd_filename = "./assets/suzanne-pbr.usda";
   //const usd_filename = "./assets/black-rock.usdz";
   //const usd_filename = "./assets/brown-rock.usdz";
-  const usd_filename = "./assets/rock-surface.usdz";
+  //const usd_filename = "./assets/rock-surface.usdz";
 
   var threeScenes = []
 
@@ -1161,18 +1161,22 @@ async function initScene() {
 
   // Initialize TransformControls
   const transformControls = new TransformControls(camera, renderer.domElement);
-  
-  // Set properties after creation but before adding to scene
   transformControls.setMode(ui_state['gizmoMode']);
+  transformControls.visible = ui_state['gizmoEnabled'];
   transformControls.setSpace(ui_state['gizmoSpace']); // Use the space setting from ui_state
   
-  // Important: Add to scene BEFORE setting visibility to avoid issues
-  scene.add(transformControls);
+  // Check if transformControls is a valid THREE.Object3D before adding
+  console.log('TransformControls type:', transformControls);
+  console.log('Is Object3D:', transformControls instanceof THREE.Object3D);
+  console.log('TransformControls constructor:', TransformControls);
   
-  // Set visibility after adding to scene
-  transformControls.visible = ui_state['gizmoEnabled'];
-  
-  console.log('TransformControls initialized and added to scene successfully');
+  // Add to scene - TransformControls extends Object3D so this should work
+  try {
+    scene.add(transformControls);
+    console.log('TransformControls successfully added to scene');
+  } catch (error) {
+    console.error('Error adding TransformControls to scene:', error);
+  }
   
   ui_state['transformControls'] = transformControls;
   
