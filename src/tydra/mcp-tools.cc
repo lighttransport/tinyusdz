@@ -725,7 +725,7 @@ bool ToUSDA(Context &ctx, const nlohmann::json &args, nlohmann::json &result,
 
 bool SelectAssets(Context &ctx, const nlohmann::json &args,
                   nlohmann::json &result, std::string &err) {
-  std::cout << "select_assets"  << args << "\n";
+  std::cout << "select_assets"  << args << "\n");
   if (!args.contains("assets")) {
     DCOUT("assets param not found");
     err = "`assets` param not found.";
