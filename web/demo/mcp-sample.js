@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { HDRCubeTextureLoader } from 'three/addons/loaders/HDRCubeTextureLoader.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
 
 import { GUI } from 'https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.module.js';
 
@@ -48,6 +49,15 @@ ui_state['mcpClient'] = null;
 ui_state['screenshot'] = null;
 ui_state['usdLoader'] = null;
 
+// Transform controls state
+ui_state['transformControls'] = null;
+ui_state['selectedObject'] = null;
+ui_state['gizmoMode'] = 'translate'; // 'translate', 'rotate', 'scale'
+ui_state['gizmoSpace'] = 'local'; // 'local', 'world'
+ui_state['gizmoEnabled'] = true;
+ui_state['raycaster'] = new THREE.Raycaster();
+ui_state['mouse'] = new THREE.Vector2();
+
 
 // Create a parameters object
 const params = {
@@ -64,6 +74,10 @@ const params = {
   clear_scene: clearScene,
   reset_camera: resetCamera,
   fit_to_scene: fitToScene,
+  // Transform gizmo parameters
+  gizmoEnabled: ui_state['gizmoEnabled'],
+  gizmoMode: ui_state['gizmoMode'],
+  gizmoSpace: ui_state['gizmoSpace'],
   // Material debug parameters
   debugMaterialEnabled: ui_state['debugMaterial'].enabled,
   diffuseR: ui_state['debugMaterial'].diffuseColor.r,
@@ -106,6 +120,63 @@ gui.add(params, 'read_selected_assets').name('Read selected assets');
 gui.add(params, 'clear_scene').name('Clear Scene');
 gui.add(params, 'reset_camera').name('Reset Camera');
 gui.add(params, 'fit_to_scene').name('Fit to Scene');
+
+// Transform Gizmo Controls
+const gizmoFolder = gui.addFolder('Transform Gizmo');
+gizmoFolder.add(params, 'gizmoEnabled').name('Enable Gizmo').onChange((value) => {
+  ui_state['gizmoEnabled'] = value;
+  const transformControls = ui_state['transformControls'];
+  if (transformControls) {
+    transformControls.visible = value;
+    if (!value) {
+      transformControls.detach();
+      ui_state['selectedObject'] = null;
+    }
+  }
+});
+gizmoFolder.add(params, 'gizmoMode', ['translate', 'rotate', 'scale']).name('Gizmo Mode').onChange((value) => {
+  ui_state['gizmoMode'] = value;
+  const transformControls = ui_state['transformControls'];
+  if (transformControls) {
+    transformControls.setMode(value);
+  }
+});
+
+gizmoFolder.add(params, 'gizmoSpace', ['local', 'world']).name('Gizmo Space').onChange((value) => {
+  ui_state['gizmoSpace'] = value;
+  const transformControls = ui_state['transformControls'];
+  if (transformControls) {
+    transformControls.setSpace(value);
+  }
+});
+
+// Add debug button for gizmo
+const gizmoDebug = {
+  showGizmoInfo: function() {
+    const transformControls = ui_state['transformControls'];
+    const selectedObject = ui_state['selectedObject'];
+    console.log('=== Gizmo Debug Info ===');
+    console.log('Gizmo enabled:', ui_state['gizmoEnabled']);
+    console.log('Transform controls:', transformControls);
+    console.log('Selected object:', selectedObject);
+    if (transformControls) {
+      console.log('Gizmo visible:', transformControls.visible);
+      console.log('Gizmo mode:', transformControls.getMode());
+      console.log('Gizmo space:', transformControls.space);
+      console.log('Gizmo object attached:', transformControls.object);
+    }
+    if (selectedObject) {
+      console.log('Selected object position:', selectedObject.position);
+      console.log('Selected object rotation:', selectedObject.rotation);
+      console.log('Selected object scale:', selectedObject.scale);
+      console.log('Selected object parent:', selectedObject.parent);
+    }
+    console.log('=== End Debug Info ===');
+  }
+};
+gizmoFolder.add(gizmoDebug, 'showGizmoInfo').name('Debug Gizmo Info');
+
+gizmoFolder.open();
 
 // Material Debug Controls
 const materialFolder = gui.addFolder('Material Debug');
@@ -439,6 +510,110 @@ function updateGUIDisplay() {
       materialFolder.__controllers[i].updateDisplay();
     }
   }
+}
+
+function onMouseClick(event) {
+  if (!ui_state['gizmoEnabled']) return;
+  
+  const transformControls = ui_state['transformControls'];
+  if (transformControls && transformControls.dragging) return; // Don't select while dragging gizmo
+  
+  // Calculate mouse position in normalized device coordinates (-1 to +1) for both components
+  ui_state['mouse'].x = (event.clientX / window.innerWidth) * 2 - 1;
+  ui_state['mouse'].y = -(event.clientY / window.innerHeight) * 2 + 1;
+  
+  // Update the picking ray with the camera and mouse position
+  ui_state['raycaster'].setFromCamera(ui_state['mouse'], ui_state['camera']);
+  
+  // Calculate objects intersecting the picking ray
+  const intersectableObjects = [];
+  scene.traverse((object) => {
+    if (object.isMesh && object.visible) {
+      intersectableObjects.push(object);
+    }
+  });
+  
+  const intersects = ui_state['raycaster'].intersectObjects(intersectableObjects, false);
+  
+  if (intersects.length > 0) {
+    const selectedObject = intersects[0].object;
+    
+    // Find the wrapper group (USD_Asset_Wrapper) by traversing up
+    let wrapperNode = selectedObject;
+    while (wrapperNode.parent && wrapperNode.parent !== scene) {
+      wrapperNode = wrapperNode.parent;
+    }
+    
+    // If we found a wrapper node that's directly under the scene, get the USD root node inside it
+    if (wrapperNode && wrapperNode.parent === scene && wrapperNode.name === 'USD_Asset_Wrapper') {
+      // Get the actual USD root node (first child of the wrapper)
+      const usdRootNode = wrapperNode.children[0];
+      
+      console.log('Selected object:', selectedObject);
+      console.log('Wrapper node:', wrapperNode);
+      console.log('USD root node:', usdRootNode);
+      
+      // Ensure the USD root node has valid transform values before attaching gizmo
+      if (usdRootNode && isFinite(usdRootNode.position.x) && isFinite(usdRootNode.position.y) && isFinite(usdRootNode.position.z)) {
+        // Attach transform controls to the USD root node instead of the wrapper
+        if (transformControls) {
+          transformControls.attach(usdRootNode);
+          ui_state['selectedObject'] = usdRootNode;
+          console.log('Transform controls attached to USD root node:', usdRootNode);
+          console.log('USD root position:', usdRootNode.position);
+          console.log('USD root rotation:', usdRootNode.rotation);
+          console.log('USD root scale:', usdRootNode.scale);
+        }
+      } else {
+        console.warn('USD root node has invalid transform values, cannot attach gizmo');
+      }
+    }
+  } else {
+    // Clicked on empty space, deselect
+    if (transformControls) {
+      transformControls.detach();
+      ui_state['selectedObject'] = null;
+      console.log('Object deselected');
+    }
+  }
+}
+
+function onKeyDown(event) {
+  const transformControls = ui_state['transformControls'];
+  if (!transformControls || !ui_state['gizmoEnabled']) return;
+  
+  switch (event.code) {
+    case 'KeyT':
+      transformControls.setMode('translate');
+      ui_state['gizmoMode'] = 'translate';
+      params.gizmoMode = 'translate';
+      break;
+    case 'KeyR':
+      transformControls.setMode('rotate');
+      ui_state['gizmoMode'] = 'rotate';
+      params.gizmoMode = 'rotate';
+      break;
+    case 'KeyS':
+      transformControls.setMode('scale');
+      ui_state['gizmoMode'] = 'scale';
+      params.gizmoMode = 'scale';
+      break;
+    case 'KeyX':
+      // Toggle between local and world space
+      const newSpace = ui_state['gizmoSpace'] === 'local' ? 'world' : 'local';
+      transformControls.setSpace(newSpace);
+      ui_state['gizmoSpace'] = newSpace;
+      params.gizmoSpace = newSpace;
+      console.log('Gizmo space switched to:', newSpace);
+      break;
+    case 'Escape':
+      transformControls.detach();
+      ui_state['selectedObject'] = null;
+      break;
+  }
+  
+  // Update GUI display to reflect mode change
+  updateGUIDisplay();
 }
 
 function resetCamera() {
@@ -885,13 +1060,20 @@ async function reloadScenes(loader, asset_names) {
   ui_state['threeNodes'] = [];
 
   for (const rootNode of threeScenes) {
+    // Create a wrapper group to handle the Y-up axis conversion
+    const wrapperGroup = new THREE.Group();
+    wrapperGroup.name = 'USD_Asset_Wrapper';
+    
+    // Apply the Y-up axis rotation to the wrapper instead of the root node
+    wrapperGroup.rotation.x = -Math.PI / 2; // Rotate to match Y-up axis
+    
+    // Add the USD root node to the wrapper (keeping its original transform)
+    wrapperGroup.add(rootNode);
+    
+    // Add the wrapper to the scene instead of the root node directly
+    scene.add(wrapperGroup);
 
-    // HACK. upAxis
-    rootNode.rotation.x = -Math.PI / 2; // Rotate to match Y-up axis
-    rootNode.rotation.z = Math.PI/2; // Rotate to match Y-up axis
-    scene.add(rootNode);
-
-    ui_state['threeNodes'].push(rootNode);
+    ui_state['threeNodes'].push(wrapperGroup); // Store wrapper instead of rootNode
   }
 
   // Apply specularColor = 0 to all MeshPhysicalMaterials in newly loaded scenes
@@ -977,18 +1159,75 @@ async function initScene() {
   controls.update();
   ui_state['controls'] = controls;
 
+  // Initialize TransformControls
+  const transformControls = new TransformControls(camera, renderer.domElement);
+  
+  // Set properties after creation but before adding to scene
+  transformControls.setMode(ui_state['gizmoMode']);
+  transformControls.setSpace(ui_state['gizmoSpace']); // Use the space setting from ui_state
+  
+  // Important: Add to scene BEFORE setting visibility to avoid issues
+  scene.add(transformControls);
+  
+  // Set visibility after adding to scene
+  transformControls.visible = ui_state['gizmoEnabled'];
+  
+  console.log('TransformControls initialized and added to scene successfully');
+  
+  ui_state['transformControls'] = transformControls;
+  
+  // Add event listeners for transform controls
+  transformControls.addEventListener('dragging-changed', (event) => {
+    controls.enabled = !event.value; // Disable orbit controls while dragging gizmo
+  });
+  
+  transformControls.addEventListener('change', () => {
+    // Add callback for when transform changes with NaN protection
+    const selectedObject = ui_state['selectedObject'];
+    if (selectedObject) {
+      // Check for NaN values and reset if found
+      if (!isFinite(selectedObject.position.x) || !isFinite(selectedObject.position.y) || !isFinite(selectedObject.position.z)) {
+        console.warn('NaN detected in position, resetting to origin');
+        selectedObject.position.set(0, 0, 0);
+      }
+      if (!isFinite(selectedObject.rotation.x) || !isFinite(selectedObject.rotation.y) || !isFinite(selectedObject.rotation.z)) {
+        console.warn('NaN detected in rotation, resetting to zero');
+        selectedObject.rotation.set(0, 0, 0);
+      }
+      if (!isFinite(selectedObject.scale.x) || !isFinite(selectedObject.scale.y) || !isFinite(selectedObject.scale.z)) {
+        console.warn('NaN detected in scale, resetting to one');
+        selectedObject.scale.set(1, 1, 1);
+      }
+      
+      console.log('Transform changed - Position:', selectedObject.position, 'Rotation:', selectedObject.rotation, 'Scale:', selectedObject.scale);
+    }
+  });
+  
+  // Add mouse event listener for object selection
+  renderer.domElement.addEventListener('click', onMouseClick);
+  
+  // Add keyboard event listeners for gizmo mode switching
+  window.addEventListener('keydown', onKeyDown);
+
   const rootNodes = await loadScenes();
 
   ui_state['threeNodes'] = []
 
   for (const rootNode of rootNodes) {
+    // Create a wrapper group to handle the Y-up axis conversion
+    const wrapperGroup = new THREE.Group();
+    wrapperGroup.name = 'USD_Asset_Wrapper';
+    
+    // Apply the Y-up axis rotation to the wrapper instead of the root node
+    wrapperGroup.rotation.x = -Math.PI / 2; // Rotate to match Y-up axis
+    
+    // Add the USD root node to the wrapper (keeping its original transform)
+    wrapperGroup.add(rootNode);
+    
+    // Add the wrapper to the scene instead of the root node directly
+    scene.add(wrapperGroup);
 
-    // HACK. upAxis
-    rootNode.rotation.x = -Math.PI / 2; // Rotate to match Y-up axis
-    //rootNode.rotation.z = 0; // Rotate to match Y-up axis
-    scene.add(rootNode);
-
-    ui_state['threeNodes'].push(rootNode);
+    ui_state['threeNodes'].push(wrapperGroup); // Store wrapper instead of rootNode
   }
 
   // Apply specularColor = 0 to all MeshPhysicalMaterials in the initial scene
@@ -1103,9 +1342,24 @@ function onWindowResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+    
+    // Update transform controls if they exist
+    const transformControls = ui_state['transformControls'];
+    if (transformControls) {
+      transformControls.handleResize();
+    }
   }
 }
 
 window.addEventListener('resize', onWindowResize);
+
+// Cleanup function for when the page is unloaded
+window.addEventListener('beforeunload', () => {
+  const renderer = ui_state['renderer'];
+  if (renderer && renderer.domElement) {
+    renderer.domElement.removeEventListener('click', onMouseClick);
+  }
+  window.removeEventListener('keydown', onKeyDown);
+});
 
 initScene();
