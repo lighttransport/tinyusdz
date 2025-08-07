@@ -54,7 +54,7 @@ ui_state['transformControls'] = null;
 ui_state['selectedObject'] = null;
 ui_state['gizmoMode'] = 'translate'; // 'translate', 'rotate', 'scale'
 ui_state['gizmoSpace'] = 'local'; // 'local', 'world'
-ui_state['gizmoEnabled'] = false;
+ui_state['gizmoEnabled'] = true;
 ui_state['raycaster'] = new THREE.Raycaster();
 ui_state['mouse'] = new THREE.Vector2();
 
@@ -700,6 +700,7 @@ function fitToScene() {
   controls.update();
   
   console.log(`Fitted to scene - Center: (${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)}), Distance: ${paddedDistance.toFixed(2)}`);
+
 }
 
 function takeScreenshot() {
@@ -766,7 +767,7 @@ async function readSelectedAssets() {
     }
     console.log('Selected assets:', names);
 
-    reloadScenes(ui_state['usdLoader'], names);
+    reloadScenes(ui_state['usdLoader'], ui_state['renderer'], names);
   }).catch((error) => {
     console.error('Error getting selected assets:', error);
   });
@@ -889,15 +890,15 @@ async function loadScenes() {
   const suzanne_filename = "./assets/suzanne-pbr.usda";
   const texcat_filename = "./assets/texture-cat-plane.usdz";
   const cookie_filename = "./assets/UsdCookie.usdz";
-  const usd_filename = "./assets/suzanne-pbr.usda";
-  //const usd_filename = "./assets/black-rock.usdz";
+  //const usd_filename = "./assets/suzanne-pbr.usda";
+  const usd_filename = "./assets/black-rock.usdz";
   //const usd_filename = "./assets/brown-rock.usdz";
   //const usd_filename = "./assets/rock-surface.usdz";
 
   var threeScenes = []
 
   const usd_scenes = await Promise.all([
-    //loader.loadAsync(texcat_filename),
+    loader.loadAsync(suzanne_filename),
     loader.loadAsync(usd_filename),
     //loader.loadAsync(suzanne_filename),
   ]);
@@ -979,7 +980,7 @@ function clearScene() {
   console.log('Scene cleared');
 }
 
-async function reloadScenes(loader, asset_names) {
+async function reloadScenes(loader, renderer, asset_names) {
 
   // Clear existing scenes first
   clearScene();
@@ -1106,11 +1107,68 @@ async function reloadScenes(loader, asset_names) {
   // Read material parameters from the newly loaded scene
   readMaterialParamsFromScene();
 
+  fitToScene();
+
+  //scene.updateMatrix();
+  console.log(ui_state['camera']);
+  const transformControls = createTransformControlsHelper(ui_state['camera'], renderer);
+
+  // re-add transform controls helper
+  scene.add(transformControls.getHelper());
 }
 
 
 
 const scene = new THREE.Scene();
+
+function createTransformControlsHelper(camera, renderer) {
+
+  // Initialize TransformControls
+  const transformControls = new TransformControls(camera, renderer.domElement);
+  //transformControls.setMode(ui_state['gizmoMode']);
+  transformControls.visible = ui_state['gizmoEnabled'];
+  //transformControls.setSpace(ui_state['gizmoSpace']); // Use the space setting from ui_state
+  
+  // Check if transformControls is a valid THREE.Object3D before adding
+  console.log('TransformControls type:', transformControls);
+  console.log('Is Object3D:', transformControls instanceof THREE.Object3D);
+  console.log('TransformControls constructor:', TransformControls);
+  
+  
+  ui_state['transformControls'] = transformControls;
+  
+  const controls = ui_state['controls'];
+
+  // Add event listeners for transform controls
+  transformControls.addEventListener('dragging-changed', (event) => {
+    controls.enabled = !event.value; // Disable orbit controls while dragging gizmo
+  });
+  
+  transformControls.addEventListener('change', () => {
+    // Add callback for when transform changes with NaN protection
+    const selectedObject = ui_state['selectedObject'];
+    if (selectedObject) {
+      // Check for NaN values and reset if found
+      if (!isFinite(selectedObject.position.x) || !isFinite(selectedObject.position.y) || !isFinite(selectedObject.position.z)) {
+        console.warn('NaN detected in position, resetting to origin');
+        selectedObject.position.set(0, 0, 0);
+      }
+      if (!isFinite(selectedObject.rotation.x) || !isFinite(selectedObject.rotation.y) || !isFinite(selectedObject.rotation.z)) {
+        console.warn('NaN detected in rotation, resetting to zero');
+        selectedObject.rotation.set(0, 0, 0);
+      }
+      if (!isFinite(selectedObject.scale.x) || !isFinite(selectedObject.scale.y) || !isFinite(selectedObject.scale.z)) {
+        console.warn('NaN detected in scale, resetting to one');
+        selectedObject.scale.set(1, 1, 1);
+      }
+      
+      console.log('Transform changed - Position:', selectedObject.position, 'Rotation:', selectedObject.rotation, 'Scale:', selectedObject.scale);
+    }
+  });
+  
+
+  return transformControls;
+}
 
 async function initScene() {
 
@@ -1159,54 +1217,9 @@ async function initScene() {
   controls.update();
   ui_state['controls'] = controls;
 
-  // Initialize TransformControls
-  const transformControls = new TransformControls(camera, renderer.domElement);
-  transformControls.setMode(ui_state['gizmoMode']);
-  transformControls.visible = ui_state['gizmoEnabled'];
-  transformControls.setSpace(ui_state['gizmoSpace']); // Use the space setting from ui_state
-  
-  // Check if transformControls is a valid THREE.Object3D before adding
-  console.log('TransformControls type:', transformControls);
-  console.log('Is Object3D:', transformControls instanceof THREE.Object3D);
-  console.log('TransformControls constructor:', TransformControls);
-  
-  // Add to scene - TransformControls extends Object3D so this should work
-  try {
-    scene.add(transformControls);
-    console.log('TransformControls successfully added to scene');
-  } catch (error) {
-    console.error('Error adding TransformControls to scene:', error);
-  }
-  
-  ui_state['transformControls'] = transformControls;
-  
-  // Add event listeners for transform controls
-  transformControls.addEventListener('dragging-changed', (event) => {
-    controls.enabled = !event.value; // Disable orbit controls while dragging gizmo
-  });
-  
-  transformControls.addEventListener('change', () => {
-    // Add callback for when transform changes with NaN protection
-    const selectedObject = ui_state['selectedObject'];
-    if (selectedObject) {
-      // Check for NaN values and reset if found
-      if (!isFinite(selectedObject.position.x) || !isFinite(selectedObject.position.y) || !isFinite(selectedObject.position.z)) {
-        console.warn('NaN detected in position, resetting to origin');
-        selectedObject.position.set(0, 0, 0);
-      }
-      if (!isFinite(selectedObject.rotation.x) || !isFinite(selectedObject.rotation.y) || !isFinite(selectedObject.rotation.z)) {
-        console.warn('NaN detected in rotation, resetting to zero');
-        selectedObject.rotation.set(0, 0, 0);
-      }
-      if (!isFinite(selectedObject.scale.x) || !isFinite(selectedObject.scale.y) || !isFinite(selectedObject.scale.z)) {
-        console.warn('NaN detected in scale, resetting to one');
-        selectedObject.scale.set(1, 1, 1);
-      }
-      
-      console.log('Transform changed - Position:', selectedObject.position, 'Rotation:', selectedObject.rotation, 'Scale:', selectedObject.scale);
-    }
-  });
-  
+
+  const transformControls = createTransformControlsHelper(camera, renderer);
+
   // Add mouse event listener for object selection
   renderer.domElement.addEventListener('click', onMouseClick);
   
@@ -1261,15 +1274,33 @@ async function initScene() {
     }
   });
 
+
   // Update the scene and ensure all transforms are applied before fitting
-  scene.updateMatrixWorld(true);
+  //scene.updateMatrixWorld(true);
+
+  // Add to scene - TransformControls extends Object3D so this should work
+  //try {
+  //} catch (error) {
+  //  console.error('Error adding TransformControls to scene:', error);
+  //}
   
   // Read material parameters from the loaded scene
   readMaterialParamsFromScene();
   
   // Use requestAnimationFrame to ensure the scene is fully rendered before fitting
   requestAnimationFrame(() => {
+
     fitToScene();
+
+    scene.add(transformControls.getHelper());
+
+    if (ui_state['threeNodes'].length > 0) {
+      //transformControls.attach(ui_state['threeNodes'][0]); // Attach to the first root node by default
+    }
+    console.log(transformControls.getHelper());
+    //scene.add(transformControls.getHelper());
+    console.log('TransformControls successfully added to scene');
+
   });
 
   function animate() {
