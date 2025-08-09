@@ -14,6 +14,33 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 
+// Add CSS for selection box
+const style = document.createElement('style');
+style.textContent = `
+  .selection-box {
+    position: absolute;
+    border: 2px dashed #00ff00;
+    background-color: rgba(0, 255, 0, 0.1);
+    pointer-events: none;
+    z-index: 1000;
+  }
+  
+  .region-selection-status {
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    background: rgba(0, 255, 0, 0.8);
+    color: white;
+    padding: 10px;
+    border-radius: 5px;
+    font-family: Arial, sans-serif;
+    font-size: 14px;
+    z-index: 1001;
+    display: none;
+  }
+`;
+document.head.appendChild(style);
+
 
 
 const gui = new GUI({ width: 450 });
@@ -52,11 +79,20 @@ ui_state['usdLoader'] = null;
 // Transform controls state
 ui_state['transformControls'] = null;
 ui_state['selectedObject'] = null;
+ui_state['selectedObjects'] = []; // Array for multiple selection
 ui_state['gizmoMode'] = 'translate'; // 'translate', 'rotate', 'scale'
 ui_state['gizmoSpace'] = 'local'; // 'local', 'world'
 ui_state['gizmoEnabled'] = true;
 ui_state['raycaster'] = new THREE.Raycaster();
 ui_state['mouse'] = new THREE.Vector2();
+
+// Region selection state
+ui_state['regionSelectionEnabled'] = false;
+ui_state['isSelecting'] = false;
+ui_state['selectionBox'] = null;
+ui_state['selectionHelper'] = null;
+ui_state['selectionStart'] = new THREE.Vector2();
+ui_state['selectionEnd'] = new THREE.Vector2();
 
 
 // Create a parameters object
@@ -78,6 +114,8 @@ const params = {
   gizmoEnabled: ui_state['gizmoEnabled'],
   gizmoMode: ui_state['gizmoMode'],
   gizmoSpace: ui_state['gizmoSpace'],
+  // Region selection parameters
+  regionSelectionEnabled: ui_state['regionSelectionEnabled'],
   // Material debug parameters
   debugMaterialEnabled: ui_state['debugMaterial'].enabled,
   diffuseR: ui_state['debugMaterial'].diffuseColor.r,
@@ -150,15 +188,52 @@ gizmoFolder.add(params, 'gizmoSpace', ['local', 'world']).name('Gizmo Space').on
   }
 });
 
+// Region Selection Controls
+gizmoFolder.add(params, 'regionSelectionEnabled').name('Region Selection Mode').onChange((value) => {
+  ui_state['regionSelectionEnabled'] = value;
+  const controls = ui_state['controls'];
+  const statusIndicator = ui_state['statusIndicator'];
+  
+  if (value) {
+    // Disable OrbitControls when region selection is enabled
+    if (controls) {
+      controls.enabled = false;
+    }
+    if (statusIndicator) {
+      statusIndicator.style.display = 'block';
+    }
+    console.log('Region selection mode enabled - OrbitControls disabled');
+    
+    // Clear any existing selection when switching modes
+    clearSelection();
+  } else {
+    // Re-enable OrbitControls when region selection is disabled
+    if (controls) {
+      controls.enabled = true;
+    }
+    if (statusIndicator) {
+      statusIndicator.style.display = 'none';
+    }
+    console.log('Region selection mode disabled - OrbitControls enabled');
+    
+    // Clear selection when disabling
+    clearSelection();
+  }
+});
+
 // Add debug button for gizmo
 const gizmoDebug = {
   showGizmoInfo: function() {
     const transformControls = ui_state['transformControls'];
     const selectedObject = ui_state['selectedObject'];
+    const selectedObjects = ui_state['selectedObjects'];
     console.log('=== Gizmo Debug Info ===');
     console.log('Gizmo enabled:', ui_state['gizmoEnabled']);
+    console.log('Region selection enabled:', ui_state['regionSelectionEnabled']);
     console.log('Transform controls:', transformControls);
-    console.log('Selected object:', selectedObject);
+    console.log('Selected object (single):', selectedObject);
+    console.log('Selected objects (array):', selectedObjects);
+    console.log('Selection count:', selectedObjects.length);
     if (transformControls) {
       console.log('Gizmo visible:', transformControls.visible);
       console.log('Gizmo mode:', transformControls.getMode());
@@ -170,6 +245,7 @@ const gizmoDebug = {
       console.log('Selected object rotation:', selectedObject.rotation);
       console.log('Selected object scale:', selectedObject.scale);
       console.log('Selected object parent:', selectedObject.parent);
+      console.log('Is multi-selection group:', selectedObject.userData.isMultiSelectionGroup);
     }
     console.log('=== End Debug Info ===');
   }
@@ -512,7 +588,243 @@ function updateGUIDisplay() {
   }
 }
 
+function createSelectionBox() {
+  const selectionBox = document.createElement('div');
+  selectionBox.className = 'selection-box';
+  selectionBox.style.display = 'none';
+  document.body.appendChild(selectionBox);
+  
+  // Also create status indicator
+  const statusIndicator = document.createElement('div');
+  statusIndicator.className = 'region-selection-status';
+  statusIndicator.textContent = 'Region Selection Mode - Drag to select multiple objects (Press Q to toggle)';
+  document.body.appendChild(statusIndicator);
+  ui_state['statusIndicator'] = statusIndicator;
+  
+  return selectionBox;
+}
+
+function updateSelectionBox() {
+  const selectionBox = ui_state['selectionBox'];
+  if (!selectionBox) return;
+  
+  const start = ui_state['selectionStart'];
+  const end = ui_state['selectionEnd'];
+  
+  const left = Math.min(start.x, end.x);
+  const top = Math.min(start.y, end.y);
+  const width = Math.abs(end.x - start.x);
+  const height = Math.abs(end.y - start.y);
+  
+  selectionBox.style.left = left + 'px';
+  selectionBox.style.top = top + 'px';
+  selectionBox.style.width = width + 'px';
+  selectionBox.style.height = height + 'px';
+  selectionBox.style.display = 'block';
+}
+
+function hideSelectionBox() {
+  const selectionBox = ui_state['selectionBox'];
+  if (selectionBox) {
+    selectionBox.style.display = 'none';
+  }
+}
+
+function getObjectsInSelectionBox() {
+  const camera = ui_state['camera'];
+  const start = ui_state['selectionStart'];
+  const end = ui_state['selectionEnd'];
+  
+  // Convert screen coordinates to normalized device coordinates
+  const left = Math.min(start.x, end.x);
+  const top = Math.min(start.y, end.y);
+  const right = Math.max(start.x, end.x);
+  const bottom = Math.max(start.y, end.y);
+  
+  const leftNDC = (left / window.innerWidth) * 2 - 1;
+  const rightNDC = (right / window.innerWidth) * 2 - 1;
+  const topNDC = -(top / window.innerHeight) * 2 + 1;
+  const bottomNDC = -(bottom / window.innerHeight) * 2 + 1;
+  
+  const selectedObjects = [];
+  const selectableObjects = [];
+  
+  // Get all selectable objects (USD root nodes)
+  scene.traverse((object) => {
+    if (object.name === 'USD_Asset_Wrapper' && object.parent === scene) {
+      const usdRootNode = object.children[0];
+      if (usdRootNode) {
+        selectableObjects.push(usdRootNode);
+      }
+    }
+  });
+  
+  // Check if each object's center is within the selection box
+  for (const obj of selectableObjects) {
+    // Get world position of the object
+    const worldPosition = new THREE.Vector3();
+    obj.getWorldPosition(worldPosition);
+    
+    // Project to screen coordinates
+    const screenPosition = worldPosition.clone();
+    screenPosition.project(camera);
+    
+    // Convert to screen pixel coordinates
+    const screenX = (screenPosition.x + 1) / 2 * window.innerWidth;
+    const screenY = -(screenPosition.y - 1) / 2 * window.innerHeight;
+    
+    // Check if within selection box
+    if (screenX >= left && screenX <= right && screenY >= top && screenY <= bottom) {
+      selectedObjects.push(obj);
+    }
+  }
+  
+  return selectedObjects;
+}
+
+function clearSelection() {
+  const transformControls = ui_state['transformControls'];
+  if (transformControls) {
+    transformControls.detach();
+  }
+  
+  // Clean up multi-selection group if it exists
+  const selectedObject = ui_state['selectedObject'];
+  if (selectedObject && selectedObject.userData.isMultiSelectionGroup) {
+    // Clean up userData from selected objects
+    const selectedObjects = ui_state['selectedObjects'];
+    for (const obj of selectedObjects) {
+      delete obj.userData.multiSelectionGroup;
+      delete obj.userData.originalWorldPosition;
+      delete obj.userData.originalLocalPosition;
+      delete obj.userData.originalLocalRotation;
+      delete obj.userData.originalLocalScale;
+      delete obj.userData.selectionIndex;
+    }
+    
+    // Remove the group from scene
+    scene.remove(selectedObject);
+    console.log('Multi-selection group removed');
+  }
+  
+  ui_state['selectedObject'] = null;
+  ui_state['selectedObjects'] = [];
+  
+  console.log('Selection cleared');
+}
+
+function selectObjects(objects) {
+  clearSelection();
+  
+  if (objects.length === 0) {
+    console.log('No objects selected');
+    return;
+  }
+  
+  ui_state['selectedObjects'] = objects;
+  
+  if (objects.length === 1) {
+    // Single object selection - attach gizmo to the object
+    const transformControls = ui_state['transformControls'];
+    if (transformControls) {
+      transformControls.attach(objects[0]);
+      ui_state['selectedObject'] = objects[0];
+    }
+    console.log('Single object selected:', objects[0]);
+  } else {
+    // Multiple object selection - create a group for transformation
+    const group = new THREE.Group();
+    group.name = 'MultiSelectionGroup';
+    
+    // Calculate the center of all selected objects in world coordinates
+    const center = new THREE.Vector3();
+    const objectPositions = [];
+    
+    for (const obj of objects) {
+      const worldPos = new THREE.Vector3();
+      obj.getWorldPosition(worldPos);
+      objectPositions.push(worldPos.clone());
+      center.add(worldPos);
+    }
+    center.divideScalar(objects.length);
+    
+    group.position.copy(center);
+    scene.add(group);
+    
+    // Store references to selected objects and their original states
+    group.userData.isMultiSelectionGroup = true;
+    group.userData.selectedObjects = objects;
+    group.userData.originalPositions = objectPositions;
+    group.userData.originalCenter = center.clone();
+    
+    // Store original transforms for each selected object
+    for (let i = 0; i < objects.length; i++) {
+      const obj = objects[i];
+      obj.userData.multiSelectionGroup = group;
+      obj.userData.originalWorldPosition = objectPositions[i].clone();
+      obj.userData.originalLocalPosition = obj.position.clone();
+      obj.userData.originalLocalRotation = obj.rotation.clone();
+      obj.userData.originalLocalScale = obj.scale.clone();
+      obj.userData.selectionIndex = i;
+    }
+    
+    const transformControls = ui_state['transformControls'];
+    if (transformControls) {
+      transformControls.attach(group);
+      ui_state['selectedObject'] = group;
+    }
+    
+    console.log('Multiple objects selected:', objects.length, 'Group created at:', center);
+  }
+}
+
+function onMouseDown(event) {
+  // Prevent default to avoid text selection
+  event.preventDefault();
+  
+  if (ui_state['regionSelectionEnabled']) {
+    // Start region selection
+    ui_state['isSelecting'] = true;
+    ui_state['selectionStart'].set(event.clientX, event.clientY);
+    ui_state['selectionEnd'].set(event.clientX, event.clientY);
+    
+    const selectionBox = ui_state['selectionBox'];
+    if (selectionBox) {
+      updateSelectionBox();
+    }
+    
+    console.log('Region selection started');
+  }
+}
+
+function onMouseMove(event) {
+  if (ui_state['regionSelectionEnabled'] && ui_state['isSelecting']) {
+    // Update selection box
+    ui_state['selectionEnd'].set(event.clientX, event.clientY);
+    updateSelectionBox();
+  }
+}
+
+function onMouseUp(event) {
+  if (ui_state['regionSelectionEnabled'] && ui_state['isSelecting']) {
+    // End region selection
+    ui_state['isSelecting'] = false;
+    hideSelectionBox();
+    
+    // Get objects within selection box
+    const selectedObjects = getObjectsInSelectionBox();
+    selectObjects(selectedObjects);
+    
+    console.log('Region selection completed, objects selected:', selectedObjects.length);
+  }
+}
+
 function onMouseClick(event) {
+  if (ui_state['regionSelectionEnabled']) {
+    // In region selection mode, clicks are handled by mouse down/up
+    return;
+  }
+  
   if (!ui_state['gizmoEnabled']) return;
   
   const transformControls = ui_state['transformControls'];
@@ -559,6 +871,7 @@ function onMouseClick(event) {
         if (transformControls) {
           transformControls.attach(usdRootNode);
           ui_state['selectedObject'] = usdRootNode;
+          ui_state['selectedObjects'] = [usdRootNode]; // Update multiple selection array too
           console.log('Transform controls attached to USD root node:', usdRootNode);
           console.log('USD root position:', usdRootNode.position);
           console.log('USD root rotation:', usdRootNode.rotation);
@@ -570,11 +883,8 @@ function onMouseClick(event) {
     }
   } else {
     // Clicked on empty space, deselect
-    if (transformControls) {
-      transformControls.detach();
-      ui_state['selectedObject'] = null;
-      console.log('Object deselected');
-    }
+    clearSelection();
+    console.log('Object deselected');
   }
 }
 
@@ -607,8 +917,26 @@ function onKeyDown(event) {
       console.log('Gizmo space switched to:', newSpace);
       break;
     case 'Escape':
-      transformControls.detach();
-      ui_state['selectedObject'] = null;
+      clearSelection();
+      break;
+    case 'KeyQ':
+      // Toggle region selection mode with Q key
+      ui_state['regionSelectionEnabled'] = !ui_state['regionSelectionEnabled'];
+      params.regionSelectionEnabled = ui_state['regionSelectionEnabled'];
+      
+      const controls = ui_state['controls'];
+      const statusIndicator = ui_state['statusIndicator'];
+      if (ui_state['regionSelectionEnabled']) {
+        if (controls) controls.enabled = false;
+        if (statusIndicator) statusIndicator.style.display = 'block';
+        console.log('Region selection mode enabled (Q key) - OrbitControls disabled');
+      } else {
+        if (controls) controls.enabled = true;
+        if (statusIndicator) statusIndicator.style.display = 'none';
+        console.log('Region selection mode disabled (Q key) - OrbitControls enabled');
+      }
+      clearSelection();
+      updateGUIDisplay();
       break;
   }
   
@@ -898,8 +1226,8 @@ async function loadScenes() {
   var threeScenes = []
 
   const usd_scenes = await Promise.all([
-    loader.loadAsync(suzanne_filename),
-    loader.loadAsync(usd_filename),
+    //loader.loadAsync(suzanne_filename),
+    //loader.loadAsync(usd_filename),
     //loader.loadAsync(suzanne_filename),
   ]);
 
@@ -1067,6 +1395,8 @@ async function reloadScenes(loader, renderer, asset_names) {
     
     // Apply the Y-up axis rotation to the wrapper instead of the root node
     wrapperGroup.rotation.x = -Math.PI / 2; // Rotate to match Y-up axis
+    //wrapperGroup.rotation.y = -Math.PI; // Rotate to match Y-up axis
+    //wrapperGroup.rotation.z = Math.PI / 2; // Rotate to match Y-up axis
     
     // Add the USD root node to the wrapper (keeping its original transform)
     wrapperGroup.add(rootNode);
@@ -1141,7 +1471,11 @@ function createTransformControlsHelper(camera, renderer) {
 
   // Add event listeners for transform controls
   transformControls.addEventListener('dragging-changed', (event) => {
-    controls.enabled = !event.value; // Disable orbit controls while dragging gizmo
+    // Only enable/disable orbit controls if not in region selection mode
+    if (!ui_state['regionSelectionEnabled']) {
+      controls.enabled = !event.value; // Disable orbit controls while dragging gizmo
+    }
+    // In region selection mode, keep OrbitControls disabled
   });
   
   transformControls.addEventListener('change', () => {
@@ -1162,10 +1496,113 @@ function createTransformControlsHelper(camera, renderer) {
         selectedObject.scale.set(1, 1, 1);
       }
       
+      // Handle multi-selection group transformation
+      if (selectedObject.userData.isMultiSelectionGroup) {
+        const selectedObjects = ui_state['selectedObjects'];
+        const originalCenter = selectedObject.userData.originalCenter;
+        
+        // Ensure we still have valid selected objects
+        if (!selectedObjects || selectedObjects.length === 0) {
+          console.warn('Multi-selection group lost its selected objects');
+          return;
+        }
+        
+        // Calculate transformation deltas
+        const groupPosition = selectedObject.position;
+        const groupRotation = selectedObject.rotation;
+        const groupScale = selectedObject.scale;
+        
+        // Calculate position delta
+        const positionDelta = new THREE.Vector3();
+        positionDelta.subVectors(groupPosition, originalCenter);
+        
+        // Apply transformations to each selected object
+        for (let i = 0; i < selectedObjects.length; i++) {
+          const obj = selectedObjects[i];
+          
+          // Ensure object still has required userData
+          if (!obj.userData.originalWorldPosition || !obj.userData.originalLocalPosition) {
+            console.warn('Object missing original transform data, skipping:', obj);
+            continue;
+          }
+          
+          const originalWorldPos = obj.userData.originalWorldPosition;
+          const originalLocalPos = obj.userData.originalLocalPosition;
+          const originalLocalRot = obj.userData.originalLocalRotation;
+          const originalLocalScale = obj.userData.originalLocalScale;
+          
+          // Calculate relative position from original center
+          const relativePos = new THREE.Vector3();
+          relativePos.subVectors(originalWorldPos, originalCenter);
+          
+          // Apply rotation to relative position
+          const rotatedRelativePos = relativePos.clone();
+          
+          // Create rotation matrix from group rotation
+          const rotationMatrix = new THREE.Matrix4();
+          rotationMatrix.makeRotationFromEuler(groupRotation);
+          
+          // Apply rotation to the relative position
+          rotatedRelativePos.applyMatrix4(rotationMatrix);
+          
+          // Apply scale to the relative position
+          rotatedRelativePos.multiply(groupScale);
+          
+          // Calculate new world position
+          const newWorldPos = originalCenter.clone();
+          newWorldPos.add(rotatedRelativePos);
+          newWorldPos.add(positionDelta);
+          
+          // Convert world position back to local position in the wrapper coordinate system
+          // The objects are children of wrapper groups with -90 degree X rotation
+          const wrapper = obj.parent;
+          if (wrapper && wrapper.name === 'USD_Asset_Wrapper') {
+            // Convert from world space to wrapper's local space
+            const localPos = newWorldPos.clone();
+            wrapper.worldToLocal(localPos);
+            obj.position.copy(localPos);
+          } else {
+            // Fallback: set world position directly
+            obj.position.copy(newWorldPos);
+          }
+          
+          // Apply rotation (additive to original)
+          obj.rotation.copy(originalLocalRot);
+          obj.rotation.x += groupRotation.x;
+          obj.rotation.y += groupRotation.y;
+          obj.rotation.z += groupRotation.z;
+          
+          // Apply scale (multiplicative with original)
+          obj.scale.copy(originalLocalScale);
+          obj.scale.multiply(groupScale);
+        }
+        
+        console.log('Multi-selection transform applied to', selectedObjects.length, 'objects');
+      }
+      
       console.log('Transform changed - Position:', selectedObject.position, 'Rotation:', selectedObject.rotation, 'Scale:', selectedObject.scale);
     }
   });
   
+  transformControls.addEventListener('objectChange', () => {
+    // This fires when the attached object changes
+    const selectedObjects = ui_state['selectedObjects'];
+    if (selectedObjects.length > 1) {
+      console.log('Multi-selection transform updated, objects count:', selectedObjects.length);
+    }
+    
+    // Check if the gizmo got detached unexpectedly in region selection mode
+    if (ui_state['regionSelectionEnabled'] && selectedObjects.length > 0 && !transformControls.object) {
+      console.warn('TransformControls detached unexpectedly in region selection mode, re-attaching...');
+      
+      // Re-attach to the current selected object
+      const selectedObject = ui_state['selectedObject'];
+      if (selectedObject) {
+        transformControls.attach(selectedObject);
+        console.log('TransformControls re-attached to:', selectedObject);
+      }
+    }
+  });
 
   return transformControls;
 }
@@ -1220,7 +1657,13 @@ async function initScene() {
 
   const transformControls = createTransformControlsHelper(camera, renderer);
 
-  // Add mouse event listener for object selection
+  // Create selection box for region selection
+  ui_state['selectionBox'] = createSelectionBox();
+
+  // Add mouse event listeners for both single click selection and region selection
+  renderer.domElement.addEventListener('mousedown', onMouseDown);
+  renderer.domElement.addEventListener('mousemove', onMouseMove);
+  renderer.domElement.addEventListener('mouseup', onMouseUp);
   renderer.domElement.addEventListener('click', onMouseClick);
   
   // Add keyboard event listeners for gizmo mode switching
@@ -1318,6 +1761,17 @@ async function initScene() {
     if (controls) {
       controls.update();
     }
+    
+    // Ensure TransformControls stays attached in region selection mode
+    if (ui_state['regionSelectionEnabled'] && ui_state['selectedObjects'].length > 0) {
+      const transformControls = ui_state['transformControls'];
+      const selectedObject = ui_state['selectedObject'];
+      
+      if (transformControls && selectedObject && !transformControls.object) {
+        console.log('Re-attaching TransformControls in region selection mode');
+        transformControls.attach(selectedObject);
+      }
+    }
 
     if (ui_state['needsMtlUpdate']) {
 
@@ -1392,9 +1846,24 @@ window.addEventListener('resize', onWindowResize);
 window.addEventListener('beforeunload', () => {
   const renderer = ui_state['renderer'];
   if (renderer && renderer.domElement) {
+    renderer.domElement.removeEventListener('mousedown', onMouseDown);
+    renderer.domElement.removeEventListener('mousemove', onMouseMove);
+    renderer.domElement.removeEventListener('mouseup', onMouseUp);
     renderer.domElement.removeEventListener('click', onMouseClick);
   }
   window.removeEventListener('keydown', onKeyDown);
+  
+  // Remove selection box
+  const selectionBox = ui_state['selectionBox'];
+  if (selectionBox && selectionBox.parentNode) {
+    selectionBox.parentNode.removeChild(selectionBox);
+  }
+  
+  // Remove status indicator
+  const statusIndicator = ui_state['statusIndicator'];
+  if (statusIndicator && statusIndicator.parentNode) {
+    statusIndicator.parentNode.removeChild(statusIndicator);
+  }
 });
 
 initScene();
