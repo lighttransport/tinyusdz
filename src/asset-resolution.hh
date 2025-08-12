@@ -1,11 +1,29 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2022 - Present, Light Transport Entertainment, Inc.
-//
-// Asset Resolution utilities
-// https://graphics.pixar.com/usd/release/api/ar_page_front.html
-//
-// To avoid a confusion with AR(Argumented Reality), we doesn't use abberation
-// `ar`, `Ar` and `AR`. ;-)
+
+///
+/// @file asset-resolution.hh
+/// @brief Asset resolution system for USD files and resources
+///
+/// Provides abstraction for loading assets from various sources (filesystem,
+/// memory, URLs, custom storage, etc.). Similar to ArAsset system in pxrUSD.
+/// 
+/// Key classes:
+/// - Asset: Abstract asset container with data buffer
+/// - AssetResolutionResolver: Resolver for finding and loading assets
+/// - FileSystemHandler: Interface for custom file systems
+///
+/// The system allows USD to load assets from:
+/// - Local filesystem
+/// - Memory buffers  
+/// - Network URLs
+/// - Custom storage backends (databases, cloud storage, etc.)
+///
+/// Note: To avoid confusion with AR (Augmented Reality), we don't use
+/// abbreviations like `ar`, `Ar` and `AR`. 
+///
+/// Reference: https://graphics.pixar.com/usd/release/api/ar_page_front.html
+///
 #pragma once
 
 #include <cstdint>

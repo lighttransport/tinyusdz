@@ -22,43 +22,67 @@ namespace crate {
 // TODO: After several battle-testing, make for-based PathIndex tree decoder default
 #define TINYUSDZ_CRATE_USE_FOR_BASED_PATH_INDEX_DECODER
 
+///
+/// Configuration for secure USDC (Crate binary) parsing.
+/// These limits are essential for security to prevent malicious files from
+/// causing infinite loops, buffer overruns, or out-of-memory conditions.
+///
 struct CrateReaderConfig {
-  int numThreads = -1;
+  int numThreads = -1;                   ///< Number of threads (-1 = auto-detect)
 
-  // For malcious Crate data.
-  // Set limits to prevent infinite-loop, buffer-overrun, out-of-memory, etc.
-  size_t maxTOCSections = 32;
+  // Security limits for malicious Crate data
+  size_t maxTOCSections = 32;            ///< Maximum number of TOC sections
 
-  size_t maxNumTokens = 1024 * 1024 * 64;
-  size_t maxNumStrings = 1024 * 1024 * 64;
-  size_t maxNumFields = 1024 * 1024 * 256;
-  size_t maxNumFieldSets = 1024 * 1024 * 256;
-  size_t maxNumSpecifiers = 1024 * 1024 * 256;
-  size_t maxNumPaths = 1024 * 1024 * 256;
+  size_t maxNumTokens = 1024 * 1024 * 64;        ///< Max tokens (64M)
+  size_t maxNumStrings = 1024 * 1024 * 64;       ///< Max string entries (64M)
+  size_t maxNumFields = 1024 * 1024 * 256;       ///< Max field entries (256M)
+  size_t maxNumFieldSets = 1024 * 1024 * 256;    ///< Max fieldset entries (256M)
+  size_t maxNumSpecifiers = 1024 * 1024 * 256;   ///< Max spec entries (256M)
+  size_t maxNumPaths = 1024 * 1024 * 256;        ///< Max path entries (256M)
 
-  size_t maxNumIndices = 1024 * 1024 * 256;
-  size_t maxDictElements = 256;
-  size_t maxArrayElements = 1024 * 1024 * 1024;  // 1G
-  size_t maxAssetPathElements = 512;
+  size_t maxNumIndices = 1024 * 1024 * 256;      ///< Max index entries (256M)
+  size_t maxDictElements = 256;                   ///< Max dictionary elements
+  size_t maxArrayElements = 1024 * 1024 * 1024;  ///< Max array elements (1B)
+  size_t maxAssetPathElements = 512;              ///< Max asset path components
 
-  size_t maxTokenLength = 4096;  // Maximum allowed length of `token` string
-  size_t maxStringLength = 1024 * 1024 * 64;
+  size_t maxTokenLength = 4096;                   ///< Max token string length
+  size_t maxStringLength = 1024 * 1024 * 64;     ///< Max string length (64MB)
 
-  size_t maxVariantsMapElements = 128;
+  size_t maxVariantsMapElements = 128;            ///< Max variant map elements
 
-  size_t maxValueRecursion = 16; // Prevent recursive Value unpack(e.g. Value encodes itself)
-  size_t maxPathIndicesDecodeIteration = 1024 * 1024 * 256; // Prevent infinite loop BuildDecompressedPathsImpl
+  size_t maxValueRecursion = 16;                         ///< Max value unpack recursion depth
+  size_t maxPathIndicesDecodeIteration = 1024 * 1024 * 256; ///< Max path decode iterations
 
-  // Generic int[] data
-  size_t maxInts = 1024 * 1024 * 1024;
+  size_t maxInts = 1024 * 1024 * 1024;            ///< Max generic int array size (1B)
 
-  // Total memory budget for uncompressed USD data(vertices, `tokens`, ...)` in
-  // [bytes].
-  size_t maxMemoryBudget = std::numeric_limits<int32_t>::max();  // Default 2GB
+  ///< Total memory budget for uncompressed data in bytes (default 2GB)
+  size_t maxMemoryBudget = std::numeric_limits<int32_t>::max();
 };
 
 ///
-/// Crate(binary data) reader
+/// Secure USDC (Crate binary format) reader.
+/// 
+/// This reader provides memory-safe parsing of USD binary files with extensive
+/// security checks and configurable limits to prevent malicious file attacks.
+/// The Crate format is Pixar's binary serialization of USD data.
+///
+/// Key security features:
+/// - Memory budget enforcement
+/// - Bounds checking on all reads  
+/// - Configurable limits on data structures
+/// - Protection against infinite loops and recursion
+///
+/// Usage:
+/// ```cpp
+/// tinyusdz::StreamReader reader(filename);
+/// tinyusdz::crate::CrateReader cratereader(&reader);
+/// tinyusdz::Layer layer;
+/// if (cratereader.Read(&layer)) {
+///   // Success - use the layer
+/// } else {
+///   std::cerr << "Read error: " << cratereader.GetError() << std::endl;
+/// }
+/// ```
 ///
 class CrateReader {
  public:
