@@ -58,11 +58,10 @@ UBENCH(perf, timesamples_double_10M)
 {
   constexpr size_t ns = 10 * 10000;
 
-  tinyusdz::value::TimeSamples ts;
+  tinyusdz::TypedTimeSamples<double> ts;
 
   for (size_t i = 0; i < ns; i++) {
-    ts.times.push_back(double(i));
-    ts.values.push_back(double(i));
+    ts.add_sample(double(i), double(i));
   }
 }
 
@@ -110,5 +109,7 @@ UBENCH(perf, string_vector_10M)
 //
 //  return 0;
 //}
+
+#include "mandelbulb-mesh.cc"
 
 UBENCH_MAIN();
