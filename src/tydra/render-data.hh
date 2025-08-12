@@ -1,9 +1,38 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2022 - 2023, Syoyo Fujita.
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
-//
-// Render data structure suited for WebGL and Raytracing render
-//
+
+///
+/// @file render-data.hh
+/// @brief Tydra render-friendly data structures and conversion utilities
+///
+/// The Tydra framework converts USD scene graphs into render-friendly
+/// data structures optimized for graphics APIs like OpenGL/WebGL, Vulkan,
+/// and raytracing engines. This header defines the core RenderScene and
+/// related data structures.
+///
+/// Key features:
+/// - Flattened scene representation with pre-computed transforms
+/// - GPU-friendly data layout (vertex buffers, index buffers)
+/// - Material and texture management
+/// - Animation support
+/// - Multiple rendering backend support (WebGL, Vulkan, raytracing)
+///
+/// Main classes:
+/// - RenderScene: Top-level render scene container
+/// - RenderMesh: GPU-ready mesh data with materials
+/// - RenderMaterial: Processed material definitions
+/// - RenderTexture: Texture resources and samplers
+/// - RenderCamera: Camera parameters for rendering
+/// - RenderLight: Light definitions for shading
+///
+/// The conversion process:
+/// ```cpp
+/// tinyusdz::tydra::RenderScene renderScene;
+/// tinyusdz::tydra::RenderSceneConverter converter;
+/// bool success = converter.ConvertToRenderScene(stage, &renderScene);
+/// ```
+///
 #pragma once
 
 #include <algorithm>
@@ -55,7 +84,11 @@ using mat3 = value::matrix3f;
 using mat4 = value::matrix4f;
 using dmat4 = value::matrix4d;
 
-// Simple string <-> id map
+///
+/// Bidirectional mapping between strings and numeric IDs.
+/// Useful for converting between human-readable names and efficient
+/// numeric identifiers in render data structures.
+///
 struct StringAndIdMap {
   void add(uint64_t key, const std::string &val) {
     _i_to_s[key] = val;
