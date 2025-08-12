@@ -1,15 +1,33 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2022 - 2023, Syoyo Fujita.
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
-//
-// Material and Shader. And more, TinyUSDZ implmenents some usdImaging stuff here.
-//
-// TODO:
-//   - [ ] Consider `interfaceOnly` connection
-//   - [ ] Strict usdShade interpretation https://graphics.pixar.com/usd/release/api/usd_shade_page_front.html
-//   - [ ] MaterialX support(in usdMtlx.hh)
-//   - [ ] NodeGraph support
-//
+
+///
+/// @file usdShade.hh  
+/// @brief USD Shading schema definitions
+///
+/// Implements material and shader primitives following USD's UsdShade schema.
+/// Includes Material, Shader, and supporting classes for building shading
+/// networks. TinyUSDZ also implements some UsdImaging utilities here.
+///
+/// Key classes:
+/// - Material: Material binding and organization
+/// - Shader: Individual shader nodes (e.g., UsdPreviewSurface, UsdUVTexture)
+/// - UsdShadePrim: Base class for shading primitives
+/// - Various shader input/output types
+///
+/// Supported shader types:
+/// - UsdPreviewSurface: Physically-based material model
+/// - UsdUVTexture: 2D texture sampling
+/// - UsdTransform2d: 2D transformations
+/// - UsdPrimvarReader_*: Primitive variable readers
+///
+/// TODO:
+/// - [ ] Consider `interfaceOnly` connection
+/// - [ ] Strict usdShade interpretation https://graphics.pixar.com/usd/release/api/usd_shade_page_front.html
+/// - [ ] MaterialX support (in usdMtlx.hh)
+/// - [ ] NodeGraph support
+///
 #pragma once
 
 #include "prim-types.hh"
