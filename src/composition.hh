@@ -1,8 +1,34 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2022-Present Light Transport Entertainment Inc.
-//
-// Layer and Prim composition features.
-//
+
+///
+/// @file composition.hh
+/// @brief USD Layer and Prim composition system
+///
+/// Implements USD's composition arcs system for building complex scenes
+/// from multiple layers and referenced assets. Composition allows USD
+/// scenes to reference, inherit from, and specialize other USD files.
+///
+/// Supported composition arcs:
+/// - References: Include content from other USD files
+/// - Payloads: Deferred loading of heavy content  
+/// - Inherits: Class-like inheritance between prims
+/// - Specializes: Variant-like specialization (TODO)
+/// - SubLayers: Layer-level composition
+/// - VariantSets: Multiple versions of content (TODO)
+/// - Overs: Overrides of existing content
+///
+/// Key concepts:
+/// - Layer: Individual USD file or memory content
+/// - Stage: Composed result of multiple layers
+/// - Composition arcs: Rules for combining layers
+/// - Load states: Control what gets loaded when
+///
+/// TODO items:
+/// - [ ] Compose `specializes`
+/// - [ ] Compose `variantSets`
+/// - [ ] Consider `active` Prim metadatum
+///
 #pragma once
 
 #include "asset-resolution.hh"

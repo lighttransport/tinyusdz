@@ -1,4 +1,13 @@
 // SPDX-License-Identifier: Apache 2.0
+
+///
+/// @file prim-types.hh
+/// @brief Core USD primitive type definitions and data structures
+///
+/// Contains fundamental USD concepts including Prim (primitive), Layer,
+/// Properties, Attributes, Relationships, and supporting data structures.
+/// These form the building blocks of USD scene graphs.
+///
 #pragma once
 
 #ifdef _MSC_VER
@@ -50,7 +59,11 @@
 
 namespace tinyusdz {
 
-// Simple Python-like OrderedDict
+///
+/// Simple Python-like OrderedDict implementation.
+/// Preserves insertion order while providing O(1) key-based lookup.
+/// Used throughout USD data structures where order matters.
+///
 template <typename T>
 class ordered_dict {
  public:
