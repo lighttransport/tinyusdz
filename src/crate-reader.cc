@@ -28,6 +28,7 @@
 #include "crate-pprint.hh"
 #include "integerCoding.h"
 #include "lz4-compression.hh"
+#include "memory-budget.hh"
 #include "path-util.hh"
 #include "pprinter.hh"
 #include "prim-types.hh"
@@ -63,18 +64,11 @@ namespace crate {
 
 #define kTag "[Crate]"
 
-#define CHECK_MEMORY_USAGE(__nbytes) do { \
-  _memoryUsage += (__nbytes); \
-  if (_memoryUsage > _config.maxMemoryBudget) { \
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Reached to max memory budget."); \
-  }  \
-  } while(0)
+#define CHECK_MEMORY_USAGE(__nbytes) \
+  MEMORY_BUDGET_CHECK(memory_manager_, (__nbytes), kTag)
 
-#define REDUCE_MEMORY_USAGE(__nbytes) do { \
-  if (_memoryUsage < (__nbytes)) { \
-    _memoryUsage -= (__nbytes); \
-  } \
-  } while(0)
+#define REDUCE_MEMORY_USAGE(__nbytes) \
+  memory_manager_.Release(__nbytes)
 
 
 
@@ -83,7 +77,8 @@ namespace crate {
 //
 // --
 //
-CrateReader::CrateReader(StreamReader *sr, const CrateReaderConfig &config) : _sr(sr), _impl(nullptr) {
+CrateReader::CrateReader(StreamReader *sr, const CrateReaderConfig &config) 
+    : _sr(sr), memory_manager_(config.maxMemoryBudget), _impl(nullptr) {
   _config = config;
   if (_config.numThreads == -1) {
 #if defined(__wasi__)

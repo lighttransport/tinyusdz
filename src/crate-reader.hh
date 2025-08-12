@@ -10,6 +10,7 @@
 #include "nonstd/optional.hpp"
 //
 #include "crate-format.hh"
+#include "memory-budget.hh"
 #include "prim-types.hh"
 #include "stream-reader.hh"
 
@@ -177,7 +178,7 @@ class CrateReader {
 
   // Approximated memory usage in [mb]
   size_t GetMemoryUsageInMB() const {
-    return size_t(_memoryUsage / 1024 / 1024);
+    return memory_manager_.GetUsageInMB();
   }
 
   /// -------------------------------------
@@ -420,8 +421,8 @@ class CrateReader {
 
   CrateReaderConfig _config;
 
-  // Approximated uncompressed memory usage(vertices, `tokens`, ...) in bytes.
-  uint64_t _memoryUsage{0};
+  // RAII Memory budget manager
+  mutable MemoryBudgetManager memory_manager_;
 
   class Impl;
   Impl *_impl;
