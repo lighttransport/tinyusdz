@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "ascii-parser.hh"
+#include "parser-timing.hh"
 #include "path-util.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
@@ -5124,13 +5125,19 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
 ///
 bool AsciiParser::Parse(const uint32_t load_states,
                         const AsciiParserOption &parser_option) {
+  TINYUSDZ_PROFILE_FUNCTION("ascii-parser");
+  
   _toplevel = (load_states & static_cast<uint32_t>(LoadState::Toplevel));
   _sub_layered = (load_states & static_cast<uint32_t>(LoadState::Sublayer));
   _referenced = (load_states & static_cast<uint32_t>(LoadState::Reference));
   _payloaded = (load_states & static_cast<uint32_t>(LoadState::Payload));
   _option = parser_option;
 
-  bool header_ok = ParseMagicHeader();
+  bool header_ok;
+  {
+    TINYUSDZ_PROFILE_SCOPE("ascii-parser", "ParseMagicHeader");
+    header_ok = ParseMagicHeader();
+  }
   if (!header_ok) {
     PUSH_ERROR_AND_RETURN("Failed to parse USDA magic header.\n");
   }
@@ -5150,6 +5157,7 @@ bool AsciiParser::Parse(const uint32_t load_states,
 
     if (c == '(') {
       // stage meta.
+      TINYUSDZ_PROFILE_SCOPE("ascii-parser", "ParseStageMetas");
       if (!ParseStageMetas()) {
         PUSH_ERROR_AND_RETURN("Failed to parse Stage metas.");
       }
@@ -5170,47 +5178,54 @@ bool AsciiParser::Parse(const uint32_t load_states,
   PushPrimPath("/");
 
   // parse blocks
-  while (!Eof()) {
-    if (!SkipCommentAndWhitespaceAndNewline()) {
-      return false;
-    }
+  {
+    TINYUSDZ_PROFILE_SCOPE("ascii-parser", "ParseBlocks");
+    while (!Eof()) {
+      if (!SkipCommentAndWhitespaceAndNewline()) {
+        return false;
+      }
 
-    if (Eof()) {
-      // Whitespaces in the end of line.
-      break;
-    }
+      if (Eof()) {
+        // Whitespaces in the end of line.
+        break;
+      }
 
-    // Look ahead token
-    auto curr_loc = _sr->tell();
+      // Look ahead token
+      auto curr_loc = _sr->tell();
 
-    Identifier tok;
-    if (!ReadBasicType(&tok)) {
-      PUSH_ERROR_AND_RETURN("Identifier expected.\n");
-    }
+      Identifier tok;
+      if (!ReadBasicType(&tok)) {
+        PUSH_ERROR_AND_RETURN("Identifier expected.\n");
+      }
 
-    // Rewind
-    if (!SeekTo(curr_loc)) {
-      return false;
-    }
+      // Rewind
+      if (!SeekTo(curr_loc)) {
+        return false;
+      }
 
-    Specifier spec{Specifier::Invalid};
-    if (tok == "def") {
-      spec = Specifier::Def;
-    } else if (tok == "over") {
-      spec = Specifier::Over;
-    } else if (tok == "class") {
-      spec = Specifier::Class;
-    } else {
-      PUSH_ERROR_AND_RETURN("Invalid specifier token '" + tok + "'");
-    }
+      Specifier spec{Specifier::Invalid};
+      if (tok == "def") {
+        spec = Specifier::Def;
+      } else if (tok == "over") {
+        spec = Specifier::Over;
+      } else if (tok == "class") {
+        spec = Specifier::Class;
+      } else {
+        PUSH_ERROR_AND_RETURN("Invalid specifier token '" + tok + "'");
+      }
 
-    int64_t primIdx = _prim_idx_assign_fun(-1);
-    DCOUT("Enter parseDef. primIdx = " << primIdx
-                                       << ", parentPrimIdx = root(-1)");
-    bool block_ok = ParseBlock(spec, primIdx, /* parent */ -1, /* depth */ 0,
-                               /* in_variantStmt */ false);
-    if (!block_ok) {
-      PUSH_ERROR_AND_RETURN("Failed to parse `def` block.");
+      int64_t primIdx = _prim_idx_assign_fun(-1);
+      DCOUT("Enter parseDef. primIdx = " << primIdx
+                                         << ", parentPrimIdx = root(-1)");
+      bool block_ok;
+      {
+        TINYUSDZ_PROFILE_SCOPE("ascii-parser", "ParseBlock");
+        block_ok = ParseBlock(spec, primIdx, /* parent */ -1, /* depth */ 0,
+                             /* in_variantStmt */ false);
+      }
+      if (!block_ok) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `def` block.");
+      }
     }
   }
 
