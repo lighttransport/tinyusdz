@@ -30,6 +30,7 @@
 #include <vector>
 
 #include "usda-reader.hh"
+#include "parser-timing.hh"
 
 //
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDA_READER)
@@ -1634,6 +1635,7 @@ bool USDAReader::Impl::ReconstructPrim(
 ///
 
 bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
+  TINYUSDZ_PROFILE_FUNCTION("usda-reader");
 
   ///
   /// Convert parser option.
