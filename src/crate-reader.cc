@@ -25,6 +25,7 @@
 #include <stack>
 
 #include "crate-format.hh"
+#include "parser-timing.hh"
 #include "crate-pprint.hh"
 #include "integerCoding.h"
 #include "lz4-compression.hh"
@@ -5442,6 +5443,7 @@ bool CrateReader::ReadSection(crate::Section *s) {
 }
 
 bool CrateReader::ReadTokens() {
+  TINYUSDZ_PROFILE_SCOPE("crate-reader", "ReadTokens");
   if ((_tokens_index < 0) || (_tokens_index >= int64_t(_toc.sections.size()))) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid index for `TOKENS` section.");
   }
@@ -5619,6 +5621,7 @@ bool CrateReader::ReadTokens() {
 }
 
 bool CrateReader::ReadStrings() {
+  TINYUSDZ_PROFILE_SCOPE("crate-reader", "ReadStrings");
   if ((_strings_index < 0) ||
       (_strings_index >= int64_t(_toc.sections.size()))) {
     _err += "Invalid index for `STRINGS` section.\n";
@@ -6129,6 +6132,7 @@ bool CrateReader::ReadSpecs() {
 }
 
 bool CrateReader::ReadPaths() {
+  TINYUSDZ_PROFILE_SCOPE("crate-reader", "ReadPaths");
   if ((_paths_index < 0) || (_paths_index >= int64_t(_toc.sections.size()))) {
     PUSH_ERROR("Invalid index for `PATHS` section.");
     return false;
@@ -6188,6 +6192,7 @@ bool CrateReader::ReadPaths() {
 }
 
 bool CrateReader::ReadBootStrap() {
+  TINYUSDZ_PROFILE_FUNCTION("crate-reader");
   // parse header.
   uint8_t magic[8];
   if (8 != _sr->read(/* req */ 8, /* dst len */ 8, magic)) {
@@ -6249,6 +6254,7 @@ bool CrateReader::ReadBootStrap() {
 }
 
 bool CrateReader::ReadTOC() {
+  TINYUSDZ_PROFILE_FUNCTION("crate-reader");
 
   DCOUT(fmt::format("Memory budget: {} bytes", _config.maxMemoryBudget));
 
