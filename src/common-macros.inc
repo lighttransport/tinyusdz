@@ -12,9 +12,8 @@
 #define PUSH_ERROR_AND_RETURN(s)                         \
   do {                                                   \
     std::ostringstream ss_e;                             \
-    ss_e << "[error]"                                    \
-         << ":" << __func__ << "():" << __LINE__ << " "; \
-    ss_e << s << "\n";                                   \
+    ss_e << __func__ << "():" << __LINE__ << " ";       \
+    ss_e << s;                                           \
     PushError(ss_e.str());                               \
     return false;                                        \
   } while (0)
@@ -22,8 +21,8 @@
 #define PUSH_ERROR_AND_RETURN_TAG(tag, s)                                    \
   do {                                                                       \
     std::ostringstream ss_e;                                                 \
-    ss_e << "[error]" << tag << ":" << __func__ << "():" << __LINE__ << " "; \
-    ss_e << s << "\n";                                                       \
+    ss_e << tag << ":" << __func__ << "():" << __LINE__ << " ";              \
+    ss_e << s;                                                               \
     PushError(ss_e.str());                                                   \
     return false;                                                            \
   } while (0)
@@ -31,18 +30,16 @@
 #define PUSH_ERROR(s)                                    \
   do {                                                   \
     std::ostringstream ss_e;                             \
-    ss_e << "[error]"                                    \
-         << ":" << __func__ << "():" << __LINE__ << " "; \
-    ss_e << s << "\n";                                   \
+    ss_e << __func__ << "():" << __LINE__ << " ";       \
+    ss_e << s;                                           \
     PushError(ss_e.str());                               \
   } while (0)
 
 #define PUSH_WARN(s)                                     \
   do {                                                   \
     std::ostringstream ss_w;                             \
-    ss_w << "[warn]"                                     \
-         << ":" << __func__ << "():" << __LINE__ << " "; \
-    ss_w << s << "\n";                                   \
+    ss_w << __func__ << "():" << __LINE__ << " ";       \
+    ss_w << s;                                           \
     PushWarn(ss_w.str());                                \
   } while (0)
 
@@ -51,9 +48,9 @@
 #define PUSH_ERROR_AND_RETURN(s)                                          \
   do {                                                                    \
     std::ostringstream ss_e;                                              \
-    ss_e << "[error]" << __FILE__ << ":" << __func__ << "():" << __LINE__ \
+    ss_e << __FILE__ << ":" << __func__ << "():" << __LINE__              \
          << " ";                                                          \
-    ss_e << s << "\n";                                                    \
+    ss_e << s;                                                            \
     PushError(ss_e.str());                                                \
     return false;                                                         \
   } while (0)
@@ -61,9 +58,9 @@
 #define PUSH_ERROR_AND_RETURN_TAG(tag, s)                   \
   do {                                                      \
     std::ostringstream ss_e;                                \
-    ss_e << "[error]" << __FILE__ << tag << ":" << __func__ \
+    ss_e << __FILE__ << tag << ":" << __func__             \
          << "():" << __LINE__ << " ";                       \
-    ss_e << s << "\n";                                      \
+    ss_e << s;                                              \
     PushError(ss_e.str());                                  \
     return false;                                           \
   } while (0)
@@ -71,18 +68,18 @@
 #define PUSH_ERROR(s)                                                     \
   do {                                                                    \
     std::ostringstream ss_e;                                              \
-    ss_e << "[error]" << __FILE__ << ":" << __func__ << "():" << __LINE__ \
+    ss_e << __FILE__ << ":" << __func__ << "():" << __LINE__              \
          << " ";                                                          \
-    ss_e << s << "\n";                                                    \
+    ss_e << s;                                                            \
     PushError(ss_e.str());                                                \
   } while (0)
 
 #define PUSH_WARN(s)                                                     \
   do {                                                                   \
     std::ostringstream ss_w;                                             \
-    ss_w << "[warn]" << __FILE__ << ":" << __func__ << "():" << __LINE__ \
+    ss_w << __FILE__ << ":" << __func__ << "():" << __LINE__              \
          << " ";                                                         \
-    ss_w << s << "\n";                                                   \
+    ss_w << s;                                                           \
     PushWarn(ss_w.str());                                                \
   } while (0)
 

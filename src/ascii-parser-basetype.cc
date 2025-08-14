@@ -48,6 +48,21 @@
 // external
 
 #include "external/fast_float/include/fast_float/fast_float.h"
+
+#define CHECK_MEMORY_USAGE(__nbytes) do { \
+  _memory_usage += (__nbytes); \
+  if (_memory_usage > _max_memory_limit_bytes) { \
+    PushError(fmt::format("Memory limit exceeded. Limit: {} MB, Current usage: {} MB", \
+      _max_memory_limit_bytes / (1024*1024), _memory_usage / (1024*1024))); \
+    return false; \
+  }  \
+  } while(0)
+
+#define REDUCE_MEMORY_USAGE(__nbytes) do { \
+  if (_memory_usage >= (__nbytes)) { \
+    _memory_usage -= (__nbytes); \
+  } \
+  } while(0)
 #include "external/jsteemann/atoi.h"
 //#include "external/simple_match/include/simple_match/simple_match.hpp"
 #include "nonstd/expected.hpp"
@@ -75,6 +90,7 @@
 #include "value-types.hh"
 
 #include "common-macros.inc"
+#include "tiny-string.hh"
 
 namespace tinyusdz {
 
@@ -1549,6 +1565,7 @@ bool AsciiParser::SepBy1BasicType(const char sep,
       return false;
     }
 
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
   }
 
@@ -1578,6 +1595,7 @@ bool AsciiParser::SepBy1BasicType(const char sep,
       break;
     }
 
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
   }
 
@@ -1608,6 +1626,7 @@ bool AsciiParser::SepBy1BasicType(const char sep, std::vector<T> *result) {
       return false;
     }
 
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
   }
 
@@ -1637,6 +1656,7 @@ bool AsciiParser::SepBy1BasicType(const char sep, std::vector<T> *result) {
       break;
     }
 
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
   }
 
@@ -1668,6 +1688,7 @@ bool AsciiParser::SepBy1BasicType(const char sep, const char end_symbol, std::ve
       return false;
     }
 
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
   }
 
@@ -1714,6 +1735,7 @@ bool AsciiParser::SepBy1BasicType(const char sep, const char end_symbol, std::ve
       break;
     }
 
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
 
 
@@ -1749,6 +1771,7 @@ bool AsciiParser::SepBy1TupleType(
       return false;
     }
 
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
   }
 
@@ -1779,7 +1802,8 @@ bool AsciiParser::SepBy1TupleType(
       if (!ParseBasicTypeTuple<T, N>(&value)) {
         break;
       }
-      result->push_back(value);
+      CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
+    result->push_back(value);
     }
   }
 
@@ -1811,6 +1835,7 @@ bool AsciiParser::SepBy1TupleType(const char sep,
       return false;
     }
 
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
   }
 
@@ -1839,6 +1864,7 @@ bool AsciiParser::SepBy1TupleType(const char sep,
       break;
     }
 
+    CHECK_MEMORY_USAGE(sizeof(nonstd::optional<T>) + sizeof(T));
     result->push_back(value);
   }
 
@@ -1962,6 +1988,7 @@ bool AsciiParser::SepBy1BasicType(const char sep,
 
     (void)triple_deliminated;
 
+    CHECK_MEMORY_USAGE(sizeof(Reference));
     result->push_back(ref);
   }
 
@@ -2010,6 +2037,7 @@ bool AsciiParser::SepBy1BasicType(const char sep,
     }
 
     (void)triple_deliminated;
+    CHECK_MEMORY_USAGE(sizeof(Reference));
     result->push_back(ref);
   }
 
@@ -2144,6 +2172,7 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<Reference> *result) {
 
     (void)triple_deliminated;
     result->clear();
+    CHECK_MEMORY_USAGE(sizeof(Reference));
     result->push_back(ref);
 
   } else {
@@ -3181,6 +3210,141 @@ bool AsciiParser::ReadBasicType(nonstd::optional<std::vector<T>> *value) {
 // -- end basic
 
 //
+// Optimized array parsing using tiny-string
+//
+
+bool AsciiParser::ParseFloatArrayOptimized(std::vector<float> *result) {
+  if (!result) {
+    return false;
+  }
+
+  // Find the end of the array by matching brackets
+  if (!Expect('[')) {
+    return false;
+  }
+  
+  int bracket_depth = 1;
+  std::string array_str = "[";
+  
+  while (bracket_depth > 0) {
+    char c;
+    if (!Char1(&c)) {
+      PushError("Unexpected end of input while parsing float array");
+      return false;
+    }
+    
+    array_str += c;
+    
+    if (c == '[') {
+      bracket_depth++;
+    } else if (c == ']') {
+      bracket_depth--;
+    }
+  }
+  
+  // Use tiny-string optimized parsing
+  tstring_view sv(array_str.c_str());
+  if (!str::parse_float_arary(sv, result)) {
+    PushError("Failed to parse float array with tiny-string");
+    return false;
+  }
+  
+  return true;
+}
+
+bool AsciiParser::ParseDoubleArrayOptimized(std::vector<double> *result) {
+  if (!result) {
+    return false;
+  }
+
+  // Find the end of the array by matching brackets
+  if (!Expect('[')) {
+    return false;
+  }
+  
+  int bracket_depth = 1;
+  std::string array_str = "[";
+  
+  while (bracket_depth > 0) {
+    char c;
+    if (!Char1(&c)) {
+      PushError("Unexpected end of input while parsing double array");
+      return false;
+    }
+    
+    array_str += c;
+    
+    if (c == '[') {
+      bracket_depth++;
+    } else if (c == ']') {
+      bracket_depth--;
+    }
+  }
+  
+  // Use tiny-string optimized parsing
+  tstring_view sv(array_str.c_str());
+  if (!str::parse_double_arary(sv, result)) {
+    PushError("Failed to parse double array with tiny-string");
+    return false;
+  }
+  
+  return true;
+}
+
+bool AsciiParser::ParseIntArrayOptimized(std::vector<int32_t> *result) {
+  if (!result) {
+    return false;
+  }
+
+  // Find the end of the array by matching brackets
+  if (!Expect('[')) {
+    return false;
+  }
+  
+  int bracket_depth = 1;
+  std::string array_str = "[";
+  
+  while (bracket_depth > 0) {
+    char c;
+    if (!Char1(&c)) {
+      PushError("Unexpected end of input while parsing int array");
+      return false;
+    }
+    
+    array_str += c;
+    
+    if (c == '[') {
+      bracket_depth++;
+    } else if (c == ']') {
+      bracket_depth--;
+    }
+  }
+  
+  // Use tiny-string optimized parsing
+  tstring_view sv(array_str.c_str());
+  if (!str::parse_int_arary(sv, result)) {
+    PushError("Failed to parse int array with tiny-string");
+    return false;
+  }
+  
+  return true;
+}
+
+//
+// Template specializations for optimized parsing
+//
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<float> *result) {
+  return ParseFloatArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<double> *result) {
+  return ParseDoubleArrayOptimized(result);
+}
+
+//
 // Explicit template instanciations
 //
 
@@ -3250,11 +3414,12 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half> *result)
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half2> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half3> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half4> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<float> *result);
+// Note: float and double arrays now use optimized implementations
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<float> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float2> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float3> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float4> *result);
-template bool AsciiParser::ParseBasicTypeArray(std::vector<double> *result);
+// template bool AsciiParser::ParseBasicTypeArray(std::vector<double> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double2> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double3> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double4> *result);
