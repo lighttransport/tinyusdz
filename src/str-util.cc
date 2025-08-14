@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2023 - Present, Light Transport Entertainment, Inc.
+
+#include <cmath>
 #include "str-util.hh"
 
 #include "unicode-xid.hh"
@@ -7,6 +9,18 @@
 
 #ifdef __SSE2__
 #include <emmintrin.h>
+#endif
+
+// external
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
+#include "external/dragonbox/dragonbox_to_chars.h"
+
+#ifdef __clang__
+#pragma clang diagnostic pop
 #endif
 
 namespace tinyusdz {
@@ -711,392 +725,285 @@ std::string makeIdentifierValid(const std::string &str, bool is_utf8) {
   return s;
 }
 
-double atof(const char *p) {
-  // TODO: Use from_chars
-  return std::atof(p);
+// ----------------------------------------------------------------------
+// based on fmtlib
+// Copyright (c) 2012 - present, Victor Zverovich and {fmt} contributors
+// MIT license.
+//
+
+namespace internal {
+
+// TOOD: Use builtin_clz insturction?
+// T = uint32 or uint64
+template <typename T>
+inline int count_digits(T n) {
+  int count = 1;
+  for (;;) {
+    // Integer division is slow so do it for a group of four digits instead
+    // of for every digit. The idea comes from the talk by Alexandrescu
+    // "Three Optimization Tips for C++". See speed-test for a comparison.
+    if (n < 10) return count;
+    if (n < 100) return count + 1;
+    if (n < 1000) return count + 2;
+    if (n < 10000) return count + 3;
+    n /= 10000u;
+    count += 4;
+  }
 }
 
-double atof(const std::string &s) {
-  return atof(s.c_str());
+// Converts value in the range [0, 100) to a string.
+// GCC generates slightly better code when value is pointer-size.
+inline auto digits2(size_t value) -> const char* {
+  // Align data since unaligned access may be slower when crossing a
+  // hardware-specific boundary.
+  alignas(2) static const char data[] =
+      "0001020304050607080910111213141516171819"
+      "2021222324252627282930313233343536373839"
+      "4041424344454647484950515253545556575859"
+      "6061626364656667686970717273747576777879"
+      "8081828384858687888990919293949596979899";
+  return &data[value * 2];
 }
 
-/*
-   base64.cpp and base64.h
-
-   Copyright (C) 2004-2008 René Nyffenegger
-
-   This source code is provided 'as-is', without any express or implied
-   warranty. In no event will the author be held liable for any damages
-   arising from the use of this software.
-
-   Permission is granted to anyone to use this software for any purpose,
-   including commercial applications, and to alter it and redistribute it
-   freely, subject to the following restrictions:
-
-   1. The origin of this source code must not be misrepresented; you must not
-      claim that you wrote the original source code. If you use this source code
-      in a product, an acknowledgment in the product documentation would be
-      appreciated but is not required.
-
-   2. Altered source versions must be plainly marked as such, and must not be
-      misrepresented as being the original source code.
-
-   3. This notice may not be removed or altered from any source distribution.
-
-   René Nyffenegger rene.nyffenegger@adp-gmbh.ch
-
-*/
-
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wsign-conversion"
-#pragma clang diagnostic ignored "-Wconversion"
-#endif
-
-#ifdef __SSE2__
-#else
-static inline bool is_base64(unsigned char c) {
-  return (isalnum(c) || (c == '+') || (c == '/'));
-}
-#endif
-
-#ifdef __SSE2__
-#else
-// Fallback implementation (original) 
-static std::string base64_encode_scalar(unsigned char const *bytes_to_encode,
-                                       unsigned int in_len) {
-  std::string ret;
-  int i = 0;
-  int j = 0;
-  unsigned char char_array_3[3];
-  unsigned char char_array_4[4];
-
-  const char *base64_chars =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-      "abcdefghijklmnopqrstuvwxyz"
-      "0123456789+/";
-
-  while (in_len--) {
-    char_array_3[i++] = *(bytes_to_encode++);
-    if (i == 3) {
-      char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
-      char_array_4[1] =
-          ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
-      char_array_4[2] =
-          ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
-      char_array_4[3] = char_array_3[2] & 0x3f;
-
-      for (i = 0; (i < 4); i++) ret += base64_chars[char_array_4[i]];
-      i = 0;
-    }
-  }
-
-  if (i) {
-    for (j = i; j < 3; j++) char_array_3[j] = '\0';
-
-    char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
-    char_array_4[1] =
-        ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
-    char_array_4[2] =
-        ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
-
-    for (j = 0; (j < i + 1); j++) ret += base64_chars[char_array_4[j]];
-
-    while ((i++ < 3)) ret += '=';
-  }
-
-  return ret;
-}
-#endif
-
-// SSE2-optimized base64 encode implementation
-#ifdef __SSE2__
-static std::string base64_encode_sse(unsigned char const *bytes_to_encode, unsigned int in_len) {
-  if (in_len == 0) return std::string();
-  
-  const char base64_chars[64] = {
-    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
-    'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
-    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
-    'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
-    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '+', '/'
-  };
-
-  // Calculate output size
-  const size_t output_len = ((in_len + 2) / 3) * 4;
-  std::string result;
-  result.reserve(output_len);
-  
-  size_t input_pos = 0;
-  
-  // Process 12 bytes at a time using SSE2 (produces 16 base64 characters)
-  while (input_pos + 12 <= in_len) {
-    // Load 12 input bytes (will process as 4 groups of 3 bytes each)
-    alignas(16) uint8_t input_block[16] = {0};
-    
-    // Copy 12 bytes, leaving last 4 bytes as zero padding
-    for (int i = 0; i < 12; i++) {
-      input_block[i] = bytes_to_encode[input_pos + i];
-    }
-    
-    // Load input data into SSE register (currently unused but reserved for future vectorization)
-    (void)_mm_load_si128(reinterpret_cast<const __m128i*>(input_block));
-    
-    // Process 4 groups of 3 bytes each
-    alignas(16) uint8_t output_indices[16];
-    
-    for (int group = 0; group < 4; group++) {
-      int base_idx = group * 3;
-      
-      // Extract 3 bytes for this group
-      uint8_t b0 = input_block[base_idx];
-      uint8_t b1 = input_block[base_idx + 1];
-      uint8_t b2 = input_block[base_idx + 2];
-      
-      // Convert 3 bytes to 4 base64 indices
-      output_indices[group * 4] = (b0 >> 2) & 0x3F;
-      output_indices[group * 4 + 1] = ((b0 & 0x03) << 4) | ((b1 >> 4) & 0x0F);
-      output_indices[group * 4 + 2] = ((b1 & 0x0F) << 2) | ((b2 >> 6) & 0x03);
-      output_indices[group * 4 + 3] = b2 & 0x3F;
-    }
-    
-    // Convert indices to base64 characters using table lookup
-    for (int i = 0; i < 16; i++) {
-      result.push_back(base64_chars[output_indices[i]]);
-    }
-    
-    input_pos += 12;
-  }
-  
-  // Handle remaining bytes with scalar code
-  while (input_pos + 3 <= in_len) {
-    uint8_t b0 = bytes_to_encode[input_pos];
-    uint8_t b1 = bytes_to_encode[input_pos + 1];
-    uint8_t b2 = bytes_to_encode[input_pos + 2];
-    
-    result.push_back(base64_chars[(b0 >> 2) & 0x3F]);
-    result.push_back(base64_chars[((b0 & 0x03) << 4) | ((b1 >> 4) & 0x0F)]);
-    result.push_back(base64_chars[((b1 & 0x0F) << 2) | ((b2 >> 6) & 0x03)]);
-    result.push_back(base64_chars[b2 & 0x3F]);
-    
-    input_pos += 3;
-  }
-  
-  // Handle final 1-2 bytes if present
-  if (input_pos < in_len) {
-    uint8_t b0 = bytes_to_encode[input_pos];
-    uint8_t b1 = (input_pos + 1 < in_len) ? bytes_to_encode[input_pos + 1] : 0;
-    
-    result.push_back(base64_chars[(b0 >> 2) & 0x3F]);
-    result.push_back(base64_chars[((b0 & 0x03) << 4) | ((b1 >> 4) & 0x0F)]);
-    
-    if (input_pos + 1 < in_len) {
-      result.push_back(base64_chars[((b1 & 0x0F) << 2)]);
-    } else {
-      result.push_back('=');
-    }
-    result.push_back('=');
-  }
-  
-  return result;
-}
-#endif // __SSE2__
-
-std::string base64_encode(unsigned char const *bytes_to_encode,
-                          unsigned int in_len) {
-#ifdef __SSE2__
-  // Use SSE2 optimized version if available
-  return base64_encode_sse(bytes_to_encode, in_len);
-#else
-  // Use scalar fallback implementation
-  return base64_encode_scalar(bytes_to_encode, in_len);
-#endif
+// Writes a two-digit value to out.
+inline void write2digits(char* out, size_t value) {
+  // if (!is_constant_evaluated() && std::is_same<Char, char>::value &&
+  //     !FMT_OPTIMIZE_SIZE) {
+  //   memcpy(out, digits2(value), 2);
+  //   return;
+  // }
+  *out++ = static_cast<char>('0' + value / 10);
+  *out = static_cast<char>('0' + value % 10);
 }
 
-// SSE2-optimized base64 decode implementation
-#ifdef __SSE2__
-static std::string base64_decode_sse(std::string const &encoded_string) {
-  const size_t input_len = encoded_string.size();
-  if (input_len == 0) return std::string();
-  
-  // Lookup table for base64 decoding (256 entries, -1 for invalid chars)
-  static const int8_t decode_table[256] = {
-    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1,
-    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1,
-    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,62, -1,-1,-1,63,
-    52,53,54,55, 56,57,58,59, 60,61,-1,-1, -1,-2,-1,-1,
-    -1, 0, 1, 2,  3, 4, 5, 6,  7, 8, 9,10, 11,12,13,14,
-    15,16,17,18, 19,20,21,22, 23,24,25,-1, -1,-1,-1,-1,
-    -1,26,27,28, 29,30,31,32, 33,34,35,36, 37,38,39,40,
-    41,42,43,44, 45,46,47,48, 49,50,51,-1, -1,-1,-1,-1,
-    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1,
-    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1,
-    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1,
-    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1,
-    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1,
-    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1,
-    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1,
-    -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1
-  };
-  
-  // Calculate output size (remove padding)
-  size_t padding = 0;
-  if (input_len >= 1 && encoded_string[input_len - 1] == '=') padding++;
-  if (input_len >= 2 && encoded_string[input_len - 2] == '=') padding++;
-  
-  const size_t output_len = (input_len * 3) / 4 - padding;
-  std::string result;
-  result.reserve(output_len);
-  
-  const uint8_t* input = reinterpret_cast<const uint8_t*>(encoded_string.data());
-  size_t input_pos = 0;
-  
-  // Process 16 bytes at a time using SSE2
-  while (input_pos + 16 <= input_len) {
-    // Load 16 input bytes
-    __m128i input_chunk = _mm_loadu_si128(reinterpret_cast<const __m128i*>(input + input_pos));
-    
-    // Decode using lookup table (split into two 8-byte chunks for table lookup)
-    alignas(16) uint8_t input_bytes[16];
-    _mm_store_si128(reinterpret_cast<__m128i*>(input_bytes), input_chunk);
-    
-    alignas(16) int8_t decoded[16];
-    bool valid = true;
-    
-    for (int i = 0; i < 16; i++) {
-      decoded[i] = decode_table[input_bytes[i]];
-      if (decoded[i] < 0 && input_bytes[i] != '=') {
-        valid = false;
-        break;
-      }
-    }
-    
-    if (!valid) break; // Fall back to scalar processing for invalid chars
-    
-    // Pack groups of 4 decoded bytes into 3 output bytes
-    for (int group = 0; group < 4; group++) {
-      if (input_pos + group * 4 + 3 >= input_len) break;
-      
-      int base_idx = group * 4;
-      if (decoded[base_idx] >= 0 && decoded[base_idx + 1] >= 0 && 
-          decoded[base_idx + 2] >= 0 && decoded[base_idx + 3] >= 0) {
-        
-        uint32_t combined = (static_cast<uint32_t>(decoded[base_idx]) << 18) |
-                           (static_cast<uint32_t>(decoded[base_idx + 1]) << 12) |
-                           (static_cast<uint32_t>(decoded[base_idx + 2]) << 6) |
-                           static_cast<uint32_t>(decoded[base_idx + 3]);
-        
-        result.push_back(static_cast<char>((combined >> 16) & 0xFF));
-        result.push_back(static_cast<char>((combined >> 8) & 0xFF));
-        result.push_back(static_cast<char>(combined & 0xFF));
-      }
-    }
-    
-    input_pos += 16;
+// Writes the exponent exp in the form "[+-]d{2,3}" to buffer.
+static char* write_exponent(int exp, char* out) {
+  // FMT_ASSERT(-10000 < exp && exp < 10000, "exponent out of range");
+  if (exp < 0) {
+    *out++ = '-';
+    exp = -exp;
+  } else {
+    *out++ = '+';
   }
-  
-  // Process remaining bytes with scalar code
-  while (input_pos + 4 <= input_len) {
-    uint8_t a = input[input_pos];
-    uint8_t b = input[input_pos + 1];
-    uint8_t c = input[input_pos + 2];
-    uint8_t d = input[input_pos + 3];
-    
-    if (a == '=' || b == '=') break;
-    
-    int8_t da = decode_table[a];
-    int8_t db = decode_table[b];
-    int8_t dc = decode_table[c];
-    int8_t dd = decode_table[d];
-    
-    if (da < 0 || db < 0) break;
-    
-    uint32_t combined = (static_cast<uint32_t>(da) << 18) |
-                       (static_cast<uint32_t>(db) << 12);
-    
-    result.push_back(static_cast<char>((combined >> 16) & 0xFF));
-    
-    if (c != '=' && dc >= 0) {
-      combined |= static_cast<uint32_t>(dc) << 6;
-      result.push_back(static_cast<char>((combined >> 8) & 0xFF));
-      
-      if (d != '=' && dd >= 0) {
-        combined |= static_cast<uint32_t>(dd);
-        result.push_back(static_cast<char>(combined & 0xFF));
-      }
-    }
-    
-    input_pos += 4;
+  auto uexp = static_cast<uint32_t>(exp);
+  // if (is_constant_evaluated()) {
+  //   if (uexp < 10) *out++ = '0';
+  //   return format_decimal<Char>(out, uexp, count_digits(uexp));
+  // }
+  if (uexp >= 100u) {
+    const char* top = digits2(uexp / 100);
+    if (uexp >= 1000u) *out++ = top[0];
+    *out++ = static_cast<char>(top[1]);
+    uexp %= 100;
   }
-  
-  return result;
+  const char* d = digits2(uexp);
+  *out++ = static_cast<char>(d[0]);
+  *out++ = static_cast<char>(d[1]);
+  return out;
 }
-#endif // __SSE2__
 
-// Fallback implementation (original)
-std::string base64_decode(std::string const &encoded_string) {
-#ifdef __SSE2__
-  // Use SSE2 optimized version if available
-  return base64_decode_sse(encoded_string);
-#else
-  // Original scalar implementation
-  int in_len = static_cast<int>(encoded_string.size());
-  int i = 0;
-  int j = 0;
-  int in_ = 0;
-  unsigned char char_array_4[4], char_array_3[3];
-  std::string ret;
-
-  const std::string base64_chars =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-      "abcdefghijklmnopqrstuvwxyz"
-      "0123456789+/";
-
-  while (in_len-- && (encoded_string[in_] != '=') &&
-         is_base64(encoded_string[in_])) {
-    char_array_4[i++] = encoded_string[in_];
-    in_++;
-    if (i == 4) {
-      for (i = 0; i < 4; i++)
-        char_array_4[i] =
-            static_cast<unsigned char>(base64_chars.find(char_array_4[i]));
-
-      char_array_3[0] =
-          (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
-      char_array_3[1] =
-          ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
-      char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
-
-      for (i = 0; (i < 3); i++) ret += char_array_3[i];
-      i = 0;
-    }
+inline char* fill_n(char* p, int n, char c) {
+  for (int i = 0; i < n; i++, p++) {
+    *p = c;
   }
-
-  if (i) {
-    for (j = i; j < 4; j++) char_array_4[j] = 0;
-
-    for (j = 0; j < 4; j++)
-      char_array_4[j] =
-          static_cast<unsigned char>(base64_chars.find(char_array_4[j]));
-
-    char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
-    char_array_3[1] =
-        ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
-    char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
-
-    for (j = 0; (j < i - 1); j++) ret += char_array_3[j];
-  }
-
-  return ret;
-#endif // __SSE2__
+  return p;
 }
-#ifdef __clang__
-#pragma clang diagnostic pop
-#endif
 
-/*
-   -- end base64.cpp and base64.h
-*/
+inline void format_decimal_impl(char* out, uint64_t value, uint32_t size) {
+  // FMT_ASSERT(size >= count_digits(value), "invalid digit count");
+  unsigned n = size;
+  while (value >= 100) {
+    // Integer division is slow so do it for a group of two digits instead
+    // of for every digit. The idea comes from the talk by Alexandrescu
+    // "Three Optimization Tips for C++". See speed-test for a comparison.
+    n -= 2;
+    write2digits(out + n, static_cast<unsigned>(value % 100));
+    value /= 100;
+  }
+  if (value >= 10) {
+    n -= 2;
+    write2digits(out + n, static_cast<unsigned>(value));
+  } else {
+    out[--n] = static_cast<char>('0' + value);
+  }
+  //return out + n;
+}
 
+inline char* format_decimal(char* out, uint64_t value, uint32_t num_digits) {
+  format_decimal_impl(out, value, num_digits);
+  return out + num_digits;
+}
+
+inline char* write_significand_e(char* out, uint64_t significand,
+                                 int significand_size, int exponent) {
+  out = format_decimal(out, significand, uint32_t(significand_size));
+  return fill_n(out, exponent, '0');
+}
+
+inline char* write_significand(char* out, uint64_t significand,
+                               int significand_size, int integral_size,
+                               char decimal_point) {
+  if (!decimal_point) return format_decimal(out, significand, uint32_t(significand_size));
+  out += significand_size + 1;
+  char* end = out;
+  int floating_size = significand_size - integral_size;
+  for (int i = floating_size / 2; i > 0; --i) {
+    out -= 2;
+    write2digits(out, static_cast<std::size_t>(significand % 100));
+    significand /= 100;
+  }
+  if (floating_size % 2 != 0) {
+    *--out = static_cast<char>('0' + significand % 10);
+    significand /= 10;
+  }
+  *--out = decimal_point;
+  format_decimal(out - integral_size, significand, uint32_t(integral_size));
+  return end;
+}
+
+// Use dragonbox algorithm to print floating point value.
+// Use to_deciamal and do human-readable pretty printing for some value range(e.g. print 1e-3 as 0.001) 
+// 
+// exp_upper: (15 + 1) for double, (6+1) for float
+static char* dtoa_dragonbox(const double f, char* buf, int exp_upper = 16) {
+  //const int spec_precision = -1;  // unlimited
+
+  bool is_negative = std::signbit(f);
+
+  auto ret = jkj::dragonbox::to_decimal(f);
+
+  // print human-readable float for the value in range [1e-exp_lower, 1e+exp_upper]
+  const int exp_lower = -4;
+  char exp_char = 'e';
+  char zero_char = '0';
+
+  auto significand = ret.significand;
+  int significand_size = count_digits(significand);
+
+  //size_t size = size_t(significand_size) + (is_negative ? 1u : 0u);
+
+  int output_exp = ret.exponent + significand_size - 1;
+  bool use_exp_format = (output_exp < exp_lower) || (output_exp >= exp_upper);
+
+  char decimal_point = '.';
+  if (use_exp_format) {
+    int num_zeros = 0;
+    if (significand_size == 1) {
+      decimal_point = '\0';
+    }
+    //auto abs_output_exp = output_exp >= 0 ? output_exp : -output_exp;
+    //int exp_digits = 2;
+    //if (abs_output_exp >= 100) exp_digits = abs_output_exp >= 1000 ? 4 : 3;
+
+    //size += (decimal_point ? 1u : 0u) + 2u + size_t(exp_digits);
+
+    if (is_negative) {
+      *buf++ = '-';
+    }
+
+    buf =
+        write_significand(buf, significand, significand_size, 1, decimal_point);
+
+    if (num_zeros > 0) buf = fill_n(buf, num_zeros, zero_char);
+    *buf++ = exp_char;
+    return write_exponent(output_exp, buf);
+  }
+
+  int exp = ret.exponent + significand_size;
+  if (ret.exponent >= 0) {
+    // 1234e5 -> 123400000[.0+]
+    //size += static_cast<size_t>(ret.exponent);
+    //int num_zeros = spec_precision - exp;
+    // abort_fuzzing_if(num_zeros > 5000);
+    // if (specs.alt()) {
+    //   ++size;
+    //   if (num_zeros <= 0 && specs.type() != presentation_type::fixed)
+    //     num_zeros = 0;
+    //   if (num_zeros > 0) size += size_t(num_zeros);
+    // }
+    // auto grouping = Grouping(loc, specs.localized());
+    // size += size_t(grouping.count_separators(exp));
+    // return write_padded<Char, align::right>(out, specs, size, [&](iterator
+    // it) {
+    //   if (s != sign::none) *it++ = detail::getsign<Char>(s);
+    //   it = write_significand<Char>(it, significand, significand_size,
+    //                                f.exponent, grouping);
+    //   if (!specs.alt()) return it;
+    //   *it++ = decimal_point;
+    //   return num_zeros > 0 ? detail::fill_n(it, num_zeros, zero) : it;
+    // });
+
+    if (is_negative) {
+      *buf++ = '-';
+    }
+
+    return write_significand_e(buf, significand, significand_size,
+                               ret.exponent);
+
+  } else if (exp > 0) {
+    // 1234e-2 -> 12.34[0+]
+    // int num_zeros = specs.alt() ? spec_precision - significand_size : 0;
+    // size += 1 + static_cast<unsigned>(max_of(num_zeros, 0));
+    //size += 1;
+    // auto grouping = Grouping(loc, specs.localized());
+    // size += size_t(grouping.count_separators(exp));
+    // return write_padded<Char, align::right>(out, specs, size, [&](iterator
+    // it) {
+    //   if (s != sign::none) *it++ = detail::getsign<Char>(s);
+    //   it = write_significand(it, significand, significand_size, exp,
+    //                          decimal_point, grouping);
+    //   return num_zeros > 0 ? detail::fill_n(it, num_zeros, zero) : it;
+    // });
+    if (is_negative) {
+      *buf++ = '-';
+    }
+
+    return write_significand(buf, significand, significand_size, exp,
+                             decimal_point);
+  }
+  // 1234e-6 -> 0.001234
+  int num_zeros = -exp;
+  // if (significand_size == 0 && specs.precision >= 0 &&
+  //     specs.precision < num_zeros) {
+  //   num_zeros = spec_precision;
+  // }
+  bool pointy = num_zeros != 0 || significand_size != 0;  // || specs.alt();
+  //size += 1u + (pointy ? 1u : 0u) + size_t(num_zeros);
+  // return write_padded<Char, align::right>(out, specs, size, [&](iterator it)
+  // {
+  //   if (s != sign::none) *it++ = detail::getsign<Char>(s);
+  //   *it++ = zero;
+  //   if (!pointy) return it;
+  //   *it++ = decimal_point;
+  //   it = detail::fill_n(it, num_zeros, zero);
+  //   return write_significand<Char>(it, significand, significand_size);
+  // });
+
+  if (is_negative) {
+    *buf++ = '-';
+  }
+
+  *buf++ = zero_char;
+
+  if (!pointy) return buf;
+  *buf++ = decimal_point;
+  buf = fill_n(buf, num_zeros, zero_char);
+
+  return format_decimal(buf, significand, uint32_t(significand_size));
+}
+
+static char* dtoa_dragonbox(const float f, char* buf) {
+  return dtoa_dragonbox(double(f), buf, 7);
+}
+
+} // namespace internal
+
+char *dtoa(float f, char *buffer) {
+  return internal::dtoa_dragonbox(f, buffer);
+}
+
+char *dtoa(double f, char *buffer) {
+  return internal::dtoa_dragonbox(f, buffer);
+}
 
 }  // namespace tinyusdz
