@@ -320,6 +320,7 @@ class USDAReader::Impl {
 
   void set_reader_config(const USDAReaderConfig &config) {
     _config = config;
+    _parser.SetMaxMemoryLimit(config.max_memory_limit_in_mb);
   }
 
   const USDAReaderConfig get_reader_config() const {
