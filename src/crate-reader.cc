@@ -5603,6 +5603,7 @@ bool CrateReader::ReadTokens() {
     }
 
     value::token tok(str);
+    CHECK_MEMORY_USAGE(sizeof(value::token) + str.size());
 
     DCOUT("token[" << i << "] = " << tok);
     _tokens.push_back(tok);
