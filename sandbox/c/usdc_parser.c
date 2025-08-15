@@ -97,7 +97,8 @@ int usdc_is_compressed(usdc_value_rep_t rep) {
 }
 
 uint32_t usdc_get_type_id(usdc_value_rep_t rep) {
-    return (uint32_t)((rep.data >> 48) & 0xFFFF);
+    /* Extract the type ID from bits 48-55 (8 bits for type) */
+    return (uint32_t)((rep.data >> 48) & 0xFF);
 }
 
 uint64_t usdc_get_payload(usdc_value_rep_t rep) {
@@ -147,16 +148,26 @@ int usdc_parse_token_magic(const char *data, size_t size) {
 
 int usdc_parse_decompressed_tokens(usdc_reader_t *reader, const char *data, size_t data_size, size_t num_tokens) {
     /* Parse decompressed token data 
-     * Format: ";-)" followed by null-terminated strings */
+     * Format varies by version:
+     * - 0.8.0+: ";-)" magic marker followed by null-terminated strings
+     * - 0.7.0 and earlier: directly null-terminated strings (no magic marker)
+     */
     
-    if (!usdc_parse_token_magic(data, data_size)) {
-        usdc_set_error(reader, "Invalid token magic marker");
-        return 0;
+    const char *ptr = data;
+    size_t remaining = data_size;
+    
+    /* Check if this uses the newer format with magic marker */
+    int has_magic_marker = usdc_parse_token_magic(data, data_size);
+    
+    if (has_magic_marker) {
+        /* Skip magic marker for 0.8.0+ format */
+        ptr = data + 3;
+        remaining = data_size - 3;
+    } else {
+        /* 0.7.0 format - no magic marker, tokens start immediately */
+        ptr = data;
+        remaining = data_size;
     }
-    
-    /* Skip magic marker */
-    const char *ptr = data + 3;
-    size_t remaining = data_size - 3;
     
     /* Parse tokens */
     for (size_t i = 0; i < num_tokens && remaining > 0; i++) {
@@ -1130,6 +1141,11 @@ int usdc_read_fields_section(usdc_reader_t *reader, usdc_section_t *section) {
         return 0;
     }
     
+    if (num_fields == 0) {
+        reader->num_fields = 0;
+        return 1;  /* Empty fields is OK */
+    }
+    
     reader->num_fields = (size_t)num_fields;
     
     /* Allocate fields array */
@@ -1145,18 +1161,127 @@ int usdc_read_fields_section(usdc_reader_t *reader, usdc_section_t *section) {
     }
     usdc_update_memory_usage(reader, fields_size);
     
-    /* Read each field */
-    for (size_t i = 0; i < reader->num_fields; i++) {
-        /* Read token index */
-        if (!usdc_read_uint32(reader, &reader->fields[i].token_index.value)) {
-            return 0;
-        }
-        
-        /* Read value representation */
-        if (!usdc_read_uint64(reader, &reader->fields[i].value_rep.data)) {
+    /* Read token indices (compressed integers) */
+    uint32_t *temp_indices = (uint32_t *)malloc(reader->num_fields * sizeof(uint32_t));
+    if (!temp_indices) {
+        usdc_set_error(reader, "Failed to allocate temp indices");
+        return 0;
+    }
+    
+    /* For now, try to read compressed integers. If that fails, use fallback */
+    size_t working_space_size = usdc_get_integer_working_space_size(reader->num_fields);
+    char *working_space = (char *)malloc(working_space_size);
+    if (!working_space) {
+        free(temp_indices);
+        usdc_set_error(reader, "Failed to allocate working space");
+        return 0;
+    }
+    
+    /* Read the compressed data size first */
+    uint64_t compressed_size;
+    if (!usdc_read_uint64(reader, &compressed_size)) {
+        free(temp_indices);
+        free(working_space);
+        return 0;
+    }
+    
+    if (compressed_size > section->size) {
+        free(temp_indices);
+        free(working_space);
+        usdc_set_error(reader, "Invalid compressed indices size");
+        return 0;
+    }
+    
+    /* Read compressed data */
+    char *compressed_data = (char *)malloc(compressed_size);
+    if (!compressed_data) {
+        free(temp_indices);
+        free(working_space);
+        usdc_set_error(reader, "Failed to allocate compressed data buffer");
+        return 0;
+    }
+    
+    if (!usdc_read_bytes(reader, compressed_data, compressed_size)) {
+        free(temp_indices);
+        free(working_space);
+        free(compressed_data);
+        return 0;
+    }
+    
+    /* Try to decompress using USD integer compression */
+    int success = usdc_usd_integer_decompress(compressed_data, compressed_size, 
+                                             temp_indices, reader->num_fields,
+                                             working_space, working_space_size);
+    if (!success) {
+        /* Fallback: try simple decompression */
+        size_t decompressed_count = usdc_integer_decompress(compressed_data, compressed_size,
+                                                           temp_indices, reader->num_fields);
+        if (decompressed_count != reader->num_fields) {
+            free(temp_indices);
+            free(working_space);
+            free(compressed_data);
+            usdc_set_error(reader, "Failed to decompress field token indices");
             return 0;
         }
     }
+    
+    /* Copy token indices */
+    for (size_t i = 0; i < reader->num_fields; i++) {
+        reader->fields[i].token_index.value = temp_indices[i];
+    }
+    
+    free(temp_indices);
+    free(working_space);
+    free(compressed_data);
+    
+    /* Read value representations (LZ4 compressed) */
+    uint64_t reps_compressed_size;
+    if (!usdc_read_uint64(reader, &reps_compressed_size)) {
+        return 0;
+    }
+    
+    if (reps_compressed_size > section->size) {
+        usdc_set_error(reader, "Invalid value reps compressed size");
+        return 0;
+    }
+    
+    /* Read compressed value reps */
+    char *compressed_reps = (char *)malloc(reps_compressed_size);
+    if (!compressed_reps) {
+        usdc_set_error(reader, "Failed to allocate value reps buffer");
+        return 0;
+    }
+    
+    if (!usdc_read_bytes(reader, compressed_reps, reps_compressed_size)) {
+        free(compressed_reps);
+        return 0;
+    }
+    
+    /* Decompress value representations using LZ4 */
+    size_t uncompressed_reps_size = reader->num_fields * sizeof(uint64_t);
+    uint64_t *reps_data = (uint64_t *)malloc(uncompressed_reps_size);
+    if (!reps_data) {
+        free(compressed_reps);
+        usdc_set_error(reader, "Failed to allocate reps data");
+        return 0;
+    }
+    
+    int lz4_result = usdc_lz4_decompress(compressed_reps, (char *)reps_data,
+                                        (int)reps_compressed_size, (int)uncompressed_reps_size);
+    if (lz4_result <= 0) {
+        free(compressed_reps);
+        free(reps_data);
+        usdc_set_error(reader, "Failed to LZ4 decompress value representations");
+        return 0;
+    }
+    
+    /* Copy value representations */
+    for (size_t i = 0; i < reader->num_fields; i++) {
+        reader->fields[i].value_rep.data = reps_data[i];
+    }
+    
+    free(compressed_reps);
+    free(reps_data);
     
     return 1;
 }
@@ -1750,6 +1875,33 @@ int usdc_parse_inlined_value(usdc_reader_t *reader, usdc_value_rep_t rep, usdc_p
             parsed_value->value.string_index = (uint32_t)(payload & 0xFFFFFFFF);
             break;
             
+        case USDC_DATA_TYPE_SPECIFIER:
+            /* Specifier values: 0=def, 1=over, 2=class */
+            parsed_value->value.uint_val = (uint32_t)(payload & 0xFF);
+            break;
+            
+        case USDC_DATA_TYPE_VARIABILITY:
+            /* Variability values: 0=varying, 1=uniform, 2=config */
+            parsed_value->value.uint_val = (uint32_t)(payload & 0xFF);
+            break;
+            
+        case USDC_DATA_TYPE_PERMISSION:
+            /* Permission values */
+            parsed_value->value.uint_val = (uint32_t)(payload & 0xFF);
+            break;
+            
+        case USDC_DATA_TYPE_TOKEN_VECTOR:
+            /* Token vectors are non-inlined arrays typically */
+            if (payload == 0) {
+                /* Empty vector */
+                parsed_value->array_size = 0;
+                parsed_value->value.data_ptr = NULL;
+            } else {
+                usdc_set_error(reader, "Non-empty token vector should not be inlined");
+                return 0;
+            }
+            break;
+            
         default:
             usdc_set_error(reader, "Inlined value type not supported");
             return 0;
@@ -1788,6 +1940,8 @@ int usdc_parse_non_inlined_value(usdc_reader_t *reader, usdc_value_rep_t rep, us
                 return usdc_parse_token_array(reader, offset, parsed_value);
             case USDC_DATA_TYPE_STRING:
                 return usdc_parse_string_array(reader, offset, parsed_value);
+            case USDC_DATA_TYPE_TOKEN_VECTOR:
+                return usdc_parse_token_array(reader, offset, parsed_value);
             default:
                 usdc_set_error(reader, "Array type not supported");
                 return 0;
@@ -2332,6 +2486,38 @@ void usdc_print_parsed_value(usdc_reader_t *reader, usdc_parsed_value_t *parsed_
             case USDC_DATA_TYPE_STRING:
                 printf("string[%u]", parsed_value->value.string_index);
                 break;
+            case USDC_DATA_TYPE_SPECIFIER:
+                {
+                    const char *spec_names[] = {"def", "over", "class"};
+                    uint32_t spec_val = parsed_value->value.uint_val;
+                    if (spec_val < 3) {
+                        printf("%s", spec_names[spec_val]);
+                    } else {
+                        printf("spec[%u]", spec_val);
+                    }
+                }
+                break;
+            case USDC_DATA_TYPE_VARIABILITY:
+                {
+                    const char *var_names[] = {"varying", "uniform", "config"};
+                    uint32_t var_val = parsed_value->value.uint_val;
+                    if (var_val < 3) {
+                        printf("%s", var_names[var_val]);
+                    } else {
+                        printf("variability[%u]", var_val);
+                    }
+                }
+                break;
+            case USDC_DATA_TYPE_PERMISSION:
+                printf("permission[%u]", parsed_value->value.uint_val);
+                break;
+            case USDC_DATA_TYPE_TOKEN_VECTOR:
+                if (parsed_value->array_size == 0) {
+                    printf("[]");
+                } else {
+                    printf("token_vector[%zu]", parsed_value->array_size);
+                }
+                break;
             default:
                 printf("(unsupported type)");
                 break;
@@ -2368,56 +2554,220 @@ int usdc_read_specs_section(usdc_reader_t *reader, usdc_section_t *section) {
         return 0;
     }
     
-    /* Calculate number of specs (each spec is 12 bytes: 3 * uint32) */
-    uint64_t num_specs = section->size / 12;
+    /* Read number of specs */
+    uint64_t num_specs;
+    if (!usdc_read_uint64(reader, &num_specs)) {
+        return 0;
+    }
     
-    /* Security check */
+    if (num_specs == 0) {
+        usdc_set_error(reader, "SPECS section cannot be empty");
+        return 0;
+    }
+    
     if (num_specs > USDC_MAX_SPECS) {
         usdc_set_error(reader, "Too many specs");
         return 0;
     }
     
-    /* Memory check */
-    if (!usdc_check_memory_limit(reader, num_specs * sizeof(usdc_spec_t))) {
+    reader->num_specs = (size_t)num_specs;
+    
+    /* Allocate specs array */
+    size_t specs_size = reader->num_specs * sizeof(usdc_spec_t);
+    if (!usdc_check_memory_limit(reader, specs_size)) {
         return 0;
     }
     
-    /* Allocate specs array */
-    if (num_specs > 0) {
-        reader->specs = (usdc_spec_t*)malloc(num_specs * sizeof(usdc_spec_t));
-        if (!reader->specs) {
-            usdc_set_error(reader, "Failed to allocate specs array");
-            return 0;
-        }
-        
-        /* Read each spec */
-        for (uint64_t i = 0; i < num_specs; i++) {
-            if (!usdc_read_uint32(reader, &reader->specs[i].path_index.value)) {
-                usdc_set_error(reader, "Failed to read spec path index");
-                return 0;
-            }
-            if (!usdc_read_uint32(reader, &reader->specs[i].fieldset_index.value)) {
-                usdc_set_error(reader, "Failed to read spec fieldset index");
-                return 0;
-            }
-            uint32_t spec_type_raw;
-            if (!usdc_read_uint32(reader, &spec_type_raw)) {
-                usdc_set_error(reader, "Failed to read spec type");
-                return 0;
-            }
-            
-            /* Validate spec type */
-            if (spec_type_raw > USDC_SPEC_TYPE_VARIANT_SET) {
-                reader->specs[i].spec_type = USDC_SPEC_TYPE_UNKNOWN;
-            } else {
-                reader->specs[i].spec_type = (usdc_spec_type_t)spec_type_raw;
-            }
-        }
-        
-        usdc_update_memory_usage(reader, num_specs * sizeof(usdc_spec_t));
+    reader->specs = (usdc_spec_t *)malloc(specs_size);
+    if (!reader->specs) {
+        usdc_set_error(reader, "Failed to allocate memory for specs");
+        return 0;
+    }
+    usdc_update_memory_usage(reader, specs_size);
+    
+    /* Prepare working space for integer decompression */
+    size_t working_space_size = usdc_get_integer_working_space_size(reader->num_specs);
+    char *working_space = (char *)malloc(working_space_size);
+    if (!working_space) {
+        usdc_set_error(reader, "Failed to allocate working space for specs");
+        return 0;
     }
     
-    reader->num_specs = (size_t)num_specs;
+    /* Temporary space for decompressed integers */
+    uint32_t *temp_indices = (uint32_t *)malloc(reader->num_specs * sizeof(uint32_t));
+    if (!temp_indices) {
+        free(working_space);
+        usdc_set_error(reader, "Failed to allocate temp indices for specs");
+        return 0;
+    }
+    
+    /* Read path indices (compressed) */
+    uint64_t path_indexes_size;
+    if (!usdc_read_uint64(reader, &path_indexes_size)) {
+        free(working_space);
+        free(temp_indices);
+        return 0;
+    }
+    
+    if (path_indexes_size > section->size) {
+        free(working_space);
+        free(temp_indices);
+        usdc_set_error(reader, "Invalid path indexes size");
+        return 0;
+    }
+    
+    char *compressed_path_data = (char *)malloc(path_indexes_size);
+    if (!compressed_path_data) {
+        free(working_space);
+        free(temp_indices);
+        usdc_set_error(reader, "Failed to allocate compressed path data");
+        return 0;
+    }
+    
+    if (!usdc_read_bytes(reader, compressed_path_data, path_indexes_size)) {
+        free(working_space);
+        free(temp_indices);
+        free(compressed_path_data);
+        return 0;
+    }
+    
+    /* Try to decompress path indices using USD compression */
+    int success = usdc_usd_integer_decompress(compressed_path_data, path_indexes_size,
+                                             temp_indices, reader->num_specs,
+                                             working_space, working_space_size);
+    if (!success) {
+        /* Fallback: try simple decompression */
+        size_t decompressed_count = usdc_integer_decompress(compressed_path_data, path_indexes_size,
+                                                           temp_indices, reader->num_specs);
+        if (decompressed_count != reader->num_specs) {
+            free(working_space);
+            free(temp_indices);
+            free(compressed_path_data);
+            usdc_set_error(reader, "Failed to decompress spec path indices");
+            return 0;
+        }
+    }
+    
+    /* Copy path indices */
+    for (size_t i = 0; i < reader->num_specs; i++) {
+        reader->specs[i].path_index.value = temp_indices[i];
+    }
+    free(compressed_path_data);
+    
+    /* Read fieldset indices (compressed) */
+    uint64_t fset_indexes_size;
+    if (!usdc_read_uint64(reader, &fset_indexes_size)) {
+        free(working_space);
+        free(temp_indices);
+        return 0;
+    }
+    
+    if (fset_indexes_size > section->size) {
+        free(working_space);
+        free(temp_indices);
+        usdc_set_error(reader, "Invalid fieldset indexes size");
+        return 0;
+    }
+    
+    char *compressed_fset_data = (char *)malloc(fset_indexes_size);
+    if (!compressed_fset_data) {
+        free(working_space);
+        free(temp_indices);
+        usdc_set_error(reader, "Failed to allocate compressed fieldset data");
+        return 0;
+    }
+    
+    if (!usdc_read_bytes(reader, compressed_fset_data, fset_indexes_size)) {
+        free(working_space);
+        free(temp_indices);
+        free(compressed_fset_data);
+        return 0;
+    }
+    
+    /* Try to decompress fieldset indices */
+    success = usdc_usd_integer_decompress(compressed_fset_data, fset_indexes_size,
+                                         temp_indices, reader->num_specs,
+                                         working_space, working_space_size);
+    if (!success) {
+        /* Fallback: try simple decompression */
+        size_t decompressed_count = usdc_integer_decompress(compressed_fset_data, fset_indexes_size,
+                                                           temp_indices, reader->num_specs);
+        if (decompressed_count != reader->num_specs) {
+            free(working_space);
+            free(temp_indices);
+            free(compressed_fset_data);
+            usdc_set_error(reader, "Failed to decompress spec fieldset indices");
+            return 0;
+        }
+    }
+    
+    /* Copy fieldset indices */
+    for (size_t i = 0; i < reader->num_specs; i++) {
+        reader->specs[i].fieldset_index.value = temp_indices[i];
+    }
+    free(compressed_fset_data);
+    
+    /* Read spec types (compressed) */
+    uint64_t spectype_size;
+    if (!usdc_read_uint64(reader, &spectype_size)) {
+        free(working_space);
+        free(temp_indices);
+        return 0;
+    }
+    
+    if (spectype_size > section->size) {
+        free(working_space);
+        free(temp_indices);
+        usdc_set_error(reader, "Invalid spectype size");
+        return 0;
+    }
+    
+    char *compressed_spectype_data = (char *)malloc(spectype_size);
+    if (!compressed_spectype_data) {
+        free(working_space);
+        free(temp_indices);
+        usdc_set_error(reader, "Failed to allocate compressed spectype data");
+        return 0;
+    }
+    
+    if (!usdc_read_bytes(reader, compressed_spectype_data, spectype_size)) {
+        free(working_space);
+        free(temp_indices);
+        free(compressed_spectype_data);
+        return 0;
+    }
+    
+    /* Try to decompress spec types */
+    success = usdc_usd_integer_decompress(compressed_spectype_data, spectype_size,
+                                         temp_indices, reader->num_specs,
+                                         working_space, working_space_size);
+    if (!success) {
+        /* Fallback: try simple decompression */
+        size_t decompressed_count = usdc_integer_decompress(compressed_spectype_data, spectype_size,
+                                                           temp_indices, reader->num_specs);
+        if (decompressed_count != reader->num_specs) {
+            free(working_space);
+            free(temp_indices);
+            free(compressed_spectype_data);
+            usdc_set_error(reader, "Failed to decompress spec types");
+            return 0;
+        }
+    }
+    
+    /* Copy spec types */
+    for (size_t i = 0; i < reader->num_specs; i++) {
+        uint32_t spec_type_raw = temp_indices[i];
+        if (spec_type_raw > USDC_SPEC_TYPE_VARIANT_SET) {
+            reader->specs[i].spec_type = USDC_SPEC_TYPE_UNKNOWN;
+        } else {
+            reader->specs[i].spec_type = (usdc_spec_type_t)spec_type_raw;
+        }
+    }
+    
+    free(working_space);
+    free(temp_indices);
+    free(compressed_spectype_data);
+    
     return 1;
 }
 
@@ -2532,44 +2882,90 @@ int usdc_read_fieldsets_section(usdc_reader_t *reader, usdc_section_t *section) 
         }
     }
     
-    /* Build simplified fieldsets */
-    /* For now, create individual fieldsets with single field indices */
-    /* A proper implementation would parse the separator indices (~0) */
+    /* Build live fieldsets by parsing separators (value 0 or USDC_INVALID_INDEX) */
+    /* Count actual fieldsets by counting separators */
+    size_t actual_fieldset_count = 0;
+    size_t current_start = 0;
+    
+    for (size_t i = 0; i < num_fieldsets; i++) {
+        if (decompressed_indices[i] == 0 || decompressed_indices[i] == USDC_INVALID_INDEX) {
+            /* Found separator, this completes a fieldset */
+            if (i > current_start) {
+                actual_fieldset_count++;
+            }
+            current_start = i + 1;
+        }
+    }
+    
+    /* Handle final fieldset if no trailing separator */
+    if (current_start < num_fieldsets) {
+        actual_fieldset_count++;
+    }
+    
+    if (actual_fieldset_count == 0) {
+        actual_fieldset_count = 1; /* At least one fieldset */
+    }
     
     /* Memory check */
-    if (!usdc_check_memory_limit(reader, num_fieldsets * sizeof(usdc_fieldset_t))) {
+    if (!usdc_check_memory_limit(reader, actual_fieldset_count * sizeof(usdc_fieldset_t))) {
         free(decompressed_indices);
         return 0;
     }
     
-    reader->fieldsets = (usdc_fieldset_t*)malloc(num_fieldsets * sizeof(usdc_fieldset_t));
+    /* Allocate fieldsets array */
+    reader->fieldsets = (usdc_fieldset_t*)calloc(actual_fieldset_count, sizeof(usdc_fieldset_t));
     if (!reader->fieldsets) {
         free(decompressed_indices);
         usdc_set_error(reader, "Failed to allocate fieldsets array");
         return 0;
     }
     
-    /* Create simplified fieldsets (one field index per fieldset) */
-    for (uint64_t i = 0; i < num_fieldsets; i++) {
-        reader->fieldsets[i].field_indices = (usdc_index_t*)malloc(sizeof(usdc_index_t));
-        if (!reader->fieldsets[i].field_indices) {
-            /* Cleanup previously allocated fieldsets */
-            for (uint64_t j = 0; j < i; j++) {
-                free(reader->fieldsets[j].field_indices);
-            }
-            free(reader->fieldsets);
-            free(decompressed_indices);
-            usdc_set_error(reader, "Failed to allocate fieldset field indices");
-            return 0;
-        }
+    /* Build fieldsets from decompressed indices */
+    size_t fieldset_idx = 0;
+    current_start = 0;
+    
+    for (size_t i = 0; i <= num_fieldsets; i++) {
+        int is_separator = (i == num_fieldsets) || 
+                          (decompressed_indices[i] == 0) || 
+                          (decompressed_indices[i] == USDC_INVALID_INDEX);
         
-        reader->fieldsets[i].field_indices[0].value = decompressed_indices[i];
-        reader->fieldsets[i].num_field_indices = 1;
+        if (is_separator && i > current_start && fieldset_idx < actual_fieldset_count) {
+            /* Create fieldset with indices from current_start to i-1 */
+            size_t field_count = i - current_start;
+            
+            reader->fieldsets[fieldset_idx].num_field_indices = field_count;
+            reader->fieldsets[fieldset_idx].field_indices = 
+                (usdc_index_t*)malloc(field_count * sizeof(usdc_index_t));
+            
+            if (!reader->fieldsets[fieldset_idx].field_indices) {
+                /* Cleanup on failure */
+                for (size_t j = 0; j < fieldset_idx; j++) {
+                    free(reader->fieldsets[j].field_indices);
+                }
+                free(reader->fieldsets);
+                free(decompressed_indices);
+                usdc_set_error(reader, "Failed to allocate fieldset field indices");
+                return 0;
+            }
+            
+            /* Copy field indices (validate them) */
+            for (size_t j = 0; j < field_count; j++) {
+                uint32_t field_idx = decompressed_indices[current_start + j];
+                if (field_idx < reader->num_fields) {
+                    reader->fieldsets[fieldset_idx].field_indices[j].value = field_idx;
+                } else {
+                    reader->fieldsets[fieldset_idx].field_indices[j].value = USDC_INVALID_INDEX;
+                }
+            }
+            
+            fieldset_idx++;
+            current_start = i + 1;
+        }
     }
     
     free(decompressed_indices);
-    reader->num_fieldsets = (size_t)num_fieldsets;
-    usdc_update_memory_usage(reader, num_fieldsets * sizeof(usdc_fieldset_t));
+    reader->num_fieldsets = actual_fieldset_count;
+    usdc_update_memory_usage(reader, actual_fieldset_count * sizeof(usdc_fieldset_t));
     
     return 1;
 }
