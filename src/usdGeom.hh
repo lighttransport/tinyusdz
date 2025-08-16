@@ -1,13 +1,25 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2022 - 2023, Syoyo Fujita.
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
-//
-// UsdGeom
-//
-// TODO
-//
-// - [ ] Replace nonstd::optional<T> member to RelationshipProperty or TypedAttribute***<T>
-//
+
+///
+/// @file usdGeom.hh
+/// @brief USD Geometry schema definitions
+///
+/// Implements geometry primitives and related utilities following USD's
+/// UsdGeom schema. Includes basic geometry types like Mesh, Cube, Sphere,
+/// BasisCurves, Camera, and supporting classes like GeomPrimvar for
+/// primitive variables (vertex data, texture coordinates, etc).
+///
+/// Key classes:
+/// - GPrim: Base class for geometry primitives
+/// - GeomPrimvar: Wrapper for primvars (per-vertex data)
+/// - Mesh, Cube, Sphere, etc.: Specific geometry types
+/// - Xform: Transformation primitive
+///
+/// TODO:
+/// - [ ] Replace nonstd::optional<T> member to RelationshipProperty or TypedAttribute***<T>
+///
 #pragma once
 
 #include "prim-types.hh"

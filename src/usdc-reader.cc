@@ -19,6 +19,7 @@
 #endif
 
 #include "usdc-reader.hh"
+#include "parser-timing.hh"
 
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDC_READER)
 
@@ -3781,6 +3782,7 @@ bool USDCReader::Impl::ToLayer(Layer *layer) {
 }
 
 bool USDCReader::Impl::ReadUSDC() {
+  TINYUSDZ_PROFILE_FUNCTION("usdc-reader");
   if (crate_reader) {
     delete crate_reader;
   }
@@ -3807,30 +3809,42 @@ bool USDCReader::Impl::ReadUSDC() {
   _warn.clear();
   _err.clear();
 
-  if (!crate_reader->ReadBootStrap()) {
-    _warn = crate_reader->GetWarning();
-    _err = crate_reader->GetError();
-    return false;
+  {
+    TINYUSDZ_PROFILE_SCOPE("usdc-reader", "ReadBootStrap");
+    if (!crate_reader->ReadBootStrap()) {
+      _warn = crate_reader->GetWarning();
+      _err = crate_reader->GetError();
+      return false;
+    }
   }
 
-  if (!crate_reader->ReadTOC()) {
-    _warn = crate_reader->GetWarning();
-    _err = crate_reader->GetError();
-    return false;
+  {
+    TINYUSDZ_PROFILE_SCOPE("usdc-reader", "ReadTOC");
+    if (!crate_reader->ReadTOC()) {
+      _warn = crate_reader->GetWarning();
+      _err = crate_reader->GetError();
+      return false;
+    }
   }
 
   // Read known sections
 
-  if (!crate_reader->ReadTokens()) {
-    _warn = crate_reader->GetWarning();
-    _err = crate_reader->GetError();
-    return false;
+  {
+    TINYUSDZ_PROFILE_SCOPE("usdc-reader", "ReadTokens");
+    if (!crate_reader->ReadTokens()) {
+      _warn = crate_reader->GetWarning();
+      _err = crate_reader->GetError();
+      return false;
+    }
   }
 
-  if (!crate_reader->ReadStrings()) {
-    _warn = crate_reader->GetWarning();
-    _err = crate_reader->GetError();
-    return false;
+  {
+    TINYUSDZ_PROFILE_SCOPE("usdc-reader", "ReadStrings");
+    if (!crate_reader->ReadStrings()) {
+      _warn = crate_reader->GetWarning();
+      _err = crate_reader->GetError();
+      return false;
+    }
   }
 
   if (!crate_reader->ReadFields()) {

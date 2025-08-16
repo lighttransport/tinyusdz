@@ -1,8 +1,26 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2022 - 2023, Syoyo Fujita.
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
-//
-// UsdSkel(includes BlendShapes)
+
+///
+/// @file usdSkel.hh
+/// @brief USD Skeleton and Animation schema definitions
+///
+/// Implements skeletal animation primitives following USD's UsdSkel schema.
+/// Includes support for skeletons, bone hierarchies, skinning, and blend shapes.
+///
+/// Key classes:
+/// - SkelRoot: Root of skeletal hierarchy
+/// - Skeleton: Bone structure and joint transforms
+/// - SkelAnimation: Animation data for skeletons
+/// - BlendShape: Facial/blend shape animation support
+///
+/// Features:
+/// - Joint hierarchies and transformations
+/// - Skinning weight computation
+/// - Animation curves and keyframes
+/// - Blend shape targets and weights
+///
 #pragma once
 
 #include "prim-types.hh"

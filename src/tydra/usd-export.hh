@@ -1,21 +1,35 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2024 - Present, Light Transport Entertainment Inc.
-//
-// Simple RenderScene -> USD exporter.
-// For debugging whether RenderScene is correctly constructed from USD :-)
-//
-// Supports USDA only at the moment.
-//
-// - Features
-//   - [ ] RenderMesh
-//   -  [x] Polygon mesh
-//   -  [ ] Subdivision mesh
-//   - [x] RenderMaterial/Texture(export texture filename only)
-//   - [ ] Skinning
-//   - [ ] BlendShapes
-//   - [ ] Animations
-//   - [ ] Hair
-//
+
+///
+/// @file usd-export.hh
+/// @brief Export Tydra render data back to USD format
+///
+/// Provides "round-trip" functionality for exporting TinyUSDZ render scenes
+/// back to USD format. This is primarily useful for debugging and validating
+/// that RenderScene data structures are correctly constructed from USD input.
+///
+/// Current support (USDA ASCII only):
+/// - ✅ Polygon meshes with vertices, normals, UVs
+/// - ✅ Materials and texture references (filenames only)
+/// - ❌ Subdivision surfaces
+/// - ❌ Skeletal animation and skinning
+/// - ❌ Blend shapes
+/// - ❌ Time-sampled animations  
+/// - ❌ Hair/curves
+/// - ❌ USDC binary output
+///
+/// This exporter helps verify the fidelity of USD → RenderScene → USD
+/// conversion pipelines and can be used for debugging complex scene issues.
+///
+/// Usage:
+/// ```cpp
+/// std::string usda_content;
+/// std::string warn, err;  
+/// bool success = tinyusdz::tydra::export_to_usda(
+///   render_scene, usda_content, &warn, &err);
+/// ```
+///
 #pragma once
 
 #include "render-data.hh"

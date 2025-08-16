@@ -52,20 +52,43 @@ struct PathIdentifier : std::string {
   // using std::string;
 };
 
-// Parser option.
-// For strict configuration(e.g. read USDZ on Mobile), should disallow unknown
-// items.
+///
+/// Parser configuration options.
+/// For strict configurations (e.g. reading USDZ on mobile devices), 
+/// should disallow unknown items for security and performance.
+///
 struct AsciiParserOption {
-  bool allow_unknown_prim{true};
-  bool allow_unknown_apiSchema{true};
-  bool strict_allowedToken_check{false};
+  bool allow_unknown_prim{true};         ///< Allow parsing unknown prim types
+  bool allow_unknown_apiSchema{true};    ///< Allow parsing unknown API schemas
+  bool strict_allowedToken_check{false}; ///< Enforce strict token validation
 };
 
 ///
 /// Test if input file is USDA ascii format.
 ///
+/// @param[in] filename Path to file to check
+/// @param[in] max_filesize Maximum file size to read (0 = no limit)
+/// @return true if file is in USDA ASCII format
+///
 bool IsUSDA(const std::string &filename, size_t max_filesize = 0);
 
+///
+/// Hand-written USDA (USD ASCII) format parser.
+/// This parser provides secure, dependency-free parsing of USD ASCII files
+/// with comprehensive error handling and configurable strictness levels.
+///
+/// Usage:
+/// ```cpp
+/// tinyusdz::StreamReader reader(filename);
+/// tinyusdz::ascii::AsciiParser parser(&reader);
+/// tinyusdz::Layer layer;
+/// if (parser.Parse(&layer)) {
+///   // Success - use the layer
+/// } else {
+///   std::cerr << "Parse error: " << parser.GetError() << std::endl;
+/// }
+/// ```
+///
 class AsciiParser {
  public:
   // TODO: refactor
@@ -303,6 +326,13 @@ class AsciiParser {
   /// Set ASCII data stream
   ///
   void SetStream(tinyusdz::StreamReader *sr);
+
+  ///
+  /// Set memory limit in MB
+  ///
+  void SetMaxMemoryLimit(size_t limit_mb) {
+    _max_memory_limit_bytes = limit_mb * 1024ull * 1024ull;
+  }
 
   ///
   /// Check if header data is USDA
@@ -552,6 +582,13 @@ class AsciiParser {
   ///
   template <typename T>
   bool ParseBasicTypeArray(std::vector<T> *result);
+
+  ///
+  /// Optimized float array parsing using tiny-string
+  ///
+  bool ParseFloatArrayOptimized(std::vector<float> *result);
+  bool ParseDoubleArrayOptimized(std::vector<double> *result);
+  bool ParseIntArrayOptimized(std::vector<int32_t> *result);
 
   ///
   /// Parses 1 or more occurences of value with basic type 'T', separated by
@@ -860,6 +897,10 @@ class AsciiParser {
   std::string _base_dir;
 
   StageMetas _stage_metas;
+
+  // Memory tracking
+  uint64_t _max_memory_limit_bytes{128ull * 1024ull * 1024ull * 1024ull}; // Default 128GB
+  uint64_t _memory_usage{0};
 
   //
   // Callbacks
