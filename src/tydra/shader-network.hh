@@ -1,8 +1,33 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2022 - Present, Light Transport Entertainment, Inc.
-//
-// Shader network evaluation
 
+///
+/// @file shader-network.hh
+/// @brief USD shader network evaluation and material processing
+///
+/// Provides utilities for evaluating USD shader networks and resolving
+/// material connections. This includes following shader attribute connections,
+/// evaluating shader nodes, and extracting final material parameters.
+///
+/// Key features:
+/// - Shader attribute connection resolution
+/// - Material binding evaluation  
+/// - UsdPreviewSurface parameter extraction
+/// - Texture coordinate and primvar evaluation
+/// - Shader network traversal and evaluation
+///
+/// Main functions:
+/// - EvaluateShaderAttribute(): Follow connections and evaluate values
+/// - ResolveMaterialBinding(): Find materials bound to geometry
+/// - ExtractShaderParameters(): Get final shader node values
+///
+/// The shader evaluation system handles:
+/// - Direct attribute values
+/// - Time-sampled animations
+/// - Shader node connections
+/// - Primvar readers and texture coordinates
+/// - Material inheritance and overrides
+///
 #pragma once
 
 #include <unordered_map>

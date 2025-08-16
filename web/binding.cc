@@ -21,6 +21,8 @@
 #include "tydra/mcp-context.hh"
 #include "tydra/mcp-resources.hh"
 #include "tydra/mcp-tools.hh"
+#include "usd-to-json.hh"
+#include "json-to-usd.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -1301,6 +1303,75 @@ class TinyUSDZLoaderNative {
     return s_content;
   }
 
+  // JSON <-> USD Layer conversion methods
+  std::string layerToJSON() const {
+    if (!loaded_as_layer_) {
+      return "{\"error\": \"No layer loaded\"}";
+    }
+
+    const tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
+    
+    try {
+      nlohmann::json json_obj = tinyusdz::ToJSON(curr);
+      return json_obj.dump(2); // Pretty print with 2 spaces
+    } catch (const std::exception& e) {
+      return "{\"error\": \"Failed to convert layer to JSON: " + std::string(e.what()) + "\"}";
+    }
+  }
+
+  std::string layerToJSONWithOptions(bool embedBuffers, const std::string& arrayMode) const {
+    if (!loaded_as_layer_) {
+      return "{\"error\": \"No layer loaded\"}";
+    }
+
+    const tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
+    
+    try {
+      tinyusdz::USDToJSONOptions options;
+      options.embedBuffers = embedBuffers;
+      
+      if (arrayMode == "buffer") {
+        options.arrayMode = tinyusdz::ArraySerializationMode::Buffer;
+      } else {
+        options.arrayMode = tinyusdz::ArraySerializationMode::Base64;
+      }
+
+      std::string json_str, warn, err;
+      bool success = tinyusdz::to_json_string(curr, options, &json_str, &warn, &err);
+      
+      if (!success) {
+        return "{\"error\": \"Failed to convert layer to JSON: " + err + "\"}";
+      }
+      
+      return json_str;
+    } catch (const std::exception& e) {
+      return "{\"error\": \"Failed to convert layer to JSON: " + std::string(e.what()) + "\"}";
+    }
+  }
+
+  bool loadLayerFromJSON(const std::string& json_string) {
+    std::string warn, err;
+    
+    bool success = tinyusdz::JSONToLayer(json_string, &layer_, &warn, &err);
+    
+    if (success) {
+      loaded_ = true;
+      loaded_as_layer_ = true;
+      composited_ = false;
+      warn_ = warn;
+      error_.clear();
+      filename_ = "from_json.usd";
+    } else {
+      loaded_ = false;
+      loaded_as_layer_ = false;
+      composited_ = false;
+      warn_ = warn;
+      error_ = err;
+    }
+    
+    return success;
+  }
+
   // TODO: Deprecate
   bool ok() const { return loaded_; }
 
@@ -1639,6 +1710,14 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
 
       .function("layerToString",
                 &TinyUSDZLoaderNative::layerToString)
+      
+      // JSON conversion methods
+      .function("layerToJSON",
+                &TinyUSDZLoaderNative::layerToJSON)
+      .function("layerToJSONWithOptions",
+                &TinyUSDZLoaderNative::layerToJSONWithOptions)
+      .function("loadLayerFromJSON",
+                &TinyUSDZLoaderNative::loadLayerFromJSON)
 
       .function("setBaseWorkingPath", &TinyUSDZLoaderNative::setBaseWorkingPath)
       .function("getBaseWorkingPath", &TinyUSDZLoaderNative::getBaseWorkingPath)

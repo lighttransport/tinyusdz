@@ -1,11 +1,43 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2022-Present Light Transport Entertainment, Inc.
-//
-// Scene access API
-//
-// NOTE: Tydra API does not use nonstd::optional and nonstd::expected,
-// std::functions and other non basic STL feature for easier language bindings.
-//
+
+///
+/// @file scene-access.hh
+/// @brief High-level USD scene traversal and query API
+///
+/// Provides convenient functions for querying and accessing USD scene data.
+/// This API is designed for ease of use and language binding compatibility
+/// by avoiding C++ specific features like nonstd::optional, nonstd::expected,
+/// and std::function.
+///
+/// Key features:
+/// - Template-based prim listing and filtering
+/// - Path-based scene graph traversal
+/// - Shader and material queries
+/// - Type-safe prim access
+/// - Animation and geometry utilities
+///
+/// Main functions:
+/// - ListPrims(): Find all prims of a specific type
+/// - ListShaders(): Find all shaders of a specific type
+/// - VisitPrims(): Traverse scene hierarchy with callbacks
+/// - GetPrimAtPath(): Direct path-based prim access
+///
+/// Usage example:
+/// ```cpp
+/// tinyusdz::tydra::PathPrimMap<GeomMesh> meshes;
+/// if (tinyusdz::tydra::ListPrims(stage, meshes)) {
+///   for (const auto &pair : meshes) {
+///     const std::string &path = pair.first;
+///     const GeomMesh *mesh = pair.second;
+///     // Process mesh...
+///   }
+/// }
+/// ```
+///
+/// Note: This API avoids nonstd::optional, nonstd::expected, std::function
+/// and other advanced STL features for easier language bindings.
+///
 #pragma once
 
 #include <map>
@@ -24,14 +56,21 @@
 namespace tinyusdz {
 namespace tydra {
 
-// key = fully absolute Prim path in string(e.g. "/xform/geom0")
+///
+/// Map from absolute prim path to prim pointer of type T.
+/// Key = fully absolute Prim path string (e.g. "/xform/geom0")
+/// Value = const pointer to prim of type T
+///
 template <typename T>
 using PathPrimMap = std::map<std::string, const T *>;
 
-//
-// value = pair of Shader Prim which contains the Shader type T("info:id") and
-// its concrete Shader type(UsdPreviewSurface)
-//
+///
+/// Map from shader path to shader data.
+/// Key = absolute path to shader prim
+/// Value = pair of (Shader prim containing "info:id", concrete shader type instance)
+/// The first element is the generic Shader prim, the second is the typed shader
+/// (e.g., UsdPreviewSurface, UsdUVTexture)
+///
 template <typename T>
 using PathShaderMap =
     std::map<std::string, std::pair<const Shader *, const T *>>;
