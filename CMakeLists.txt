@@ -403,6 +403,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/value-pprint.cc
     ${PROJECT_SOURCE_DIR}/src/value-types.cc
     ${PROJECT_SOURCE_DIR}/src/tiny-format.cc
+    ${PROJECT_SOURCE_DIR}/src/tiny-string.cc
     ${PROJECT_SOURCE_DIR}/src/io-util.cc
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
     ${PROJECT_SOURCE_DIR}/src/image-writer.cc
@@ -421,6 +422,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/stage.hh
     ${PROJECT_SOURCE_DIR}/src/uuid-gen.cc
     ${PROJECT_SOURCE_DIR}/src/uuid-gen.hh
+    ${PROJECT_SOURCE_DIR}/src/parser-timing.cc
 
     )
 
