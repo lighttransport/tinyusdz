@@ -31,4 +31,10 @@ bool JSONToLayer(const std::string &json_string, tinyusdz::Layer *layer, std::st
 ///
 bool JSONToPrimSpec(const std::string &json_string, tinyusdz::PrimSpec *ps, std::string *warn, std::string *err);
 
+///
+/// Convert JSON object to GeomMesh
+///
+///
+bool JSONToGeomMesh(const std::string &json_string, tinyusdz::GeomMesh *mesh, std::string *warn, std::string *err);
+
 } // namespace tinyusd

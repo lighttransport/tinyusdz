@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "ascii-parser.hh"
+#include "parser-timing.hh"
 #include "path-util.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
@@ -57,6 +58,23 @@
 //
 
 #include "common-macros.inc"
+
+#define CHECK_MEMORY_USAGE(__nbytes) do { \
+  _memory_usage += (__nbytes); \
+  if (_memory_usage > _max_memory_limit_bytes) { \
+    PushError(fmt::format("Memory limit exceeded. Limit: {} MB, Current usage: {} MB", \
+      _max_memory_limit_bytes / (1024*1024), _memory_usage / (1024*1024))); \
+    return false; \
+  }  \
+  } while(0)
+
+#if 0
+#define REDUCE_MEMORY_USAGE(__nbytes) do { \
+  if (_memory_usage >= (__nbytes)) { \
+    _memory_usage -= (__nbytes); \
+  } \
+  } while(0)
+#endif
 #include "io-util.hh"
 #include "pprinter.hh"
 #include "prim-types.hh"
@@ -649,14 +667,41 @@ std::string AsciiParser::GetError() {
   }
 
   std::stringstream ss;
+  
+  // Track unique error messages to avoid duplicates
+  std::set<std::string> seen_errors;
+  std::vector<ErrorDiagnostic> errors;
+  
+  // Collect all errors
   while (!err_stack.empty()) {
-    ErrorDiagnostic diag = err_stack.top();
-
-    ss << "err_stack[" << (err_stack.size() - 1) << "] USDA source near line "
-       << (diag.cursor.row + 1) << ", col " << (diag.cursor.col + 1) << ": ";
-    ss << diag.err;  // assume message contains newline.
-
+    errors.push_back(err_stack.top());
     err_stack.pop();
+  }
+  
+  // Process errors in reverse order (oldest first)
+  for (auto it = errors.rbegin(); it != errors.rend(); ++it) {
+    const ErrorDiagnostic& diag = *it;
+    
+    // Create a unique key for this error location and message
+    std::stringstream error_key;
+    error_key << diag.cursor.row << ":" << diag.cursor.col << ":" << diag.err;
+    
+    // Skip duplicate errors
+    if (seen_errors.count(error_key.str()) > 0) {
+      continue;
+    }
+    seen_errors.insert(error_key.str());
+    
+    // Format error with precise location
+    ss << "USDA error at line " << (diag.cursor.row + 1) 
+       << ", column " << (diag.cursor.col + 1) << ": ";
+    
+    // Remove redundant newlines from error message
+    std::string clean_err = diag.err;
+    if (!clean_err.empty() && clean_err.back() == '\n') {
+      clean_err.pop_back();
+    }
+    ss << clean_err << "\n";
   }
 
   return ss.str();
@@ -668,14 +713,41 @@ std::string AsciiParser::GetWarning() {
   }
 
   std::stringstream ss;
+  
+  // Track unique warning messages to avoid duplicates
+  std::set<std::string> seen_warnings;
+  std::vector<ErrorDiagnostic> warnings;
+  
+  // Collect all warnings
   while (!warn_stack.empty()) {
-    ErrorDiagnostic diag = warn_stack.top();
-
-    ss << "USDA source near line " << (diag.cursor.row + 1) << ", col "
-       << (diag.cursor.col + 1) << ": ";
-    ss << diag.err;  // assume message contains newline.
-
+    warnings.push_back(warn_stack.top());
     warn_stack.pop();
+  }
+  
+  // Process warnings in reverse order (oldest first)
+  for (auto it = warnings.rbegin(); it != warnings.rend(); ++it) {
+    const ErrorDiagnostic& diag = *it;
+    
+    // Create a unique key for this warning location and message
+    std::stringstream warning_key;
+    warning_key << diag.cursor.row << ":" << diag.cursor.col << ":" << diag.err;
+    
+    // Skip duplicate warnings
+    if (seen_warnings.count(warning_key.str()) > 0) {
+      continue;
+    }
+    seen_warnings.insert(warning_key.str());
+    
+    // Format warning with precise location
+    ss << "USDA warning at line " << (diag.cursor.row + 1) 
+       << ", column " << (diag.cursor.col + 1) << ": ";
+    
+    // Remove redundant newlines from warning message
+    std::string clean_warn = diag.err;
+    if (!clean_warn.empty() && clean_warn.back() == '\n') {
+      clean_warn.pop_back();
+    }
+    ss << clean_warn << "\n";
   }
 
   return ss.str();
@@ -1837,6 +1909,7 @@ bool AsciiParser::ParseStageMetaOpt() {
     if (var.get_value(&paths)) {
       DCOUT("subLayers = " << paths);
       for (const auto &item : paths) {
+        CHECK_MEMORY_USAGE(sizeof(value::AssetPath) + item.GetAssetPath().length());
         _stage_metas.subLayers.push_back(item);
       }
     } else {
@@ -3265,6 +3338,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
       {
         value::StringData sdata;
         if (MaybeTripleQuotedString(&sdata)) {
+          CHECK_MEMORY_USAGE(sizeof(value::StringData) + sdata.value.length());
           out_meta->stringData.push_back(sdata);
 
           DCOUT("Add triple-quoted string to attr meta:" << to_string(sdata));
@@ -3273,6 +3347,7 @@ bool AsciiParser::ParseAttrMeta(AttrMeta *out_meta) {
           }
           continue;
         } else if (MaybeString(&sdata)) {
+          CHECK_MEMORY_USAGE(sizeof(value::StringData) + sdata.value.length());
           out_meta->stringData.push_back(sdata);
 
           DCOUT("Add string to attr meta:" << to_string(sdata));
@@ -4755,6 +4830,7 @@ bool AsciiParser::ParseVariantSet(
         DCOUT(fmt::format("Done parse `{}` block.", to_string(child_spec)));
 
         DCOUT(fmt::format("Add primIdx {} to variant {}", idx, variantName));
+        CHECK_MEMORY_USAGE(sizeof(int64_t));
         variantContent.primIndices.push_back(idx);
 
       } else {
@@ -5124,13 +5200,19 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
 ///
 bool AsciiParser::Parse(const uint32_t load_states,
                         const AsciiParserOption &parser_option) {
+  TINYUSDZ_PROFILE_FUNCTION("ascii-parser");
+  
   _toplevel = (load_states & static_cast<uint32_t>(LoadState::Toplevel));
   _sub_layered = (load_states & static_cast<uint32_t>(LoadState::Sublayer));
   _referenced = (load_states & static_cast<uint32_t>(LoadState::Reference));
   _payloaded = (load_states & static_cast<uint32_t>(LoadState::Payload));
   _option = parser_option;
 
-  bool header_ok = ParseMagicHeader();
+  bool header_ok;
+  {
+    TINYUSDZ_PROFILE_SCOPE("ascii-parser", "ParseMagicHeader");
+    header_ok = ParseMagicHeader();
+  }
   if (!header_ok) {
     PUSH_ERROR_AND_RETURN("Failed to parse USDA magic header.\n");
   }
@@ -5150,6 +5232,7 @@ bool AsciiParser::Parse(const uint32_t load_states,
 
     if (c == '(') {
       // stage meta.
+      TINYUSDZ_PROFILE_SCOPE("ascii-parser", "ParseStageMetas");
       if (!ParseStageMetas()) {
         PUSH_ERROR_AND_RETURN("Failed to parse Stage metas.");
       }
@@ -5170,47 +5253,54 @@ bool AsciiParser::Parse(const uint32_t load_states,
   PushPrimPath("/");
 
   // parse blocks
-  while (!Eof()) {
-    if (!SkipCommentAndWhitespaceAndNewline()) {
-      return false;
-    }
+  {
+    TINYUSDZ_PROFILE_SCOPE("ascii-parser", "ParseBlocks");
+    while (!Eof()) {
+      if (!SkipCommentAndWhitespaceAndNewline()) {
+        return false;
+      }
 
-    if (Eof()) {
-      // Whitespaces in the end of line.
-      break;
-    }
+      if (Eof()) {
+        // Whitespaces in the end of line.
+        break;
+      }
 
-    // Look ahead token
-    auto curr_loc = _sr->tell();
+      // Look ahead token
+      auto curr_loc = _sr->tell();
 
-    Identifier tok;
-    if (!ReadBasicType(&tok)) {
-      PUSH_ERROR_AND_RETURN("Identifier expected.\n");
-    }
+      Identifier tok;
+      if (!ReadBasicType(&tok)) {
+        PUSH_ERROR_AND_RETURN("Identifier expected.\n");
+      }
 
-    // Rewind
-    if (!SeekTo(curr_loc)) {
-      return false;
-    }
+      // Rewind
+      if (!SeekTo(curr_loc)) {
+        return false;
+      }
 
-    Specifier spec{Specifier::Invalid};
-    if (tok == "def") {
-      spec = Specifier::Def;
-    } else if (tok == "over") {
-      spec = Specifier::Over;
-    } else if (tok == "class") {
-      spec = Specifier::Class;
-    } else {
-      PUSH_ERROR_AND_RETURN("Invalid specifier token '" + tok + "'");
-    }
+      Specifier spec{Specifier::Invalid};
+      if (tok == "def") {
+        spec = Specifier::Def;
+      } else if (tok == "over") {
+        spec = Specifier::Over;
+      } else if (tok == "class") {
+        spec = Specifier::Class;
+      } else {
+        PUSH_ERROR_AND_RETURN("Invalid specifier token '" + tok + "'");
+      }
 
-    int64_t primIdx = _prim_idx_assign_fun(-1);
-    DCOUT("Enter parseDef. primIdx = " << primIdx
-                                       << ", parentPrimIdx = root(-1)");
-    bool block_ok = ParseBlock(spec, primIdx, /* parent */ -1, /* depth */ 0,
-                               /* in_variantStmt */ false);
-    if (!block_ok) {
-      PUSH_ERROR_AND_RETURN("Failed to parse `def` block.");
+      int64_t primIdx = _prim_idx_assign_fun(-1);
+      DCOUT("Enter parseDef. primIdx = " << primIdx
+                                         << ", parentPrimIdx = root(-1)");
+      bool block_ok;
+      {
+        TINYUSDZ_PROFILE_SCOPE("ascii-parser", "ParseBlock");
+        block_ok = ParseBlock(spec, primIdx, /* parent */ -1, /* depth */ 0,
+                             /* in_variantStmt */ false);
+      }
+      if (!block_ok) {
+        PUSH_ERROR_AND_RETURN("Failed to parse `def` block.");
+      }
     }
   }
 

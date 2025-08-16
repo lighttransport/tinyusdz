@@ -18,12 +18,876 @@
 
 #include "common-macros.inc"
 #include "pprinter.hh"
+#include "str-util.hh"
 
 using namespace nlohmann;
 
 namespace tinyusdz {
 
+// Implementation of USDToJSONContext::AddArrayData
+size_t USDToJSONContext::AddArrayData(const void* data, size_t elementSize, size_t elementCount, 
+                                       const std::string& componentType, const std::string& type) {
+  if (!data || elementCount == 0) {
+    return SIZE_MAX;  // Invalid accessor index
+  }
+  
+  size_t totalBytes = elementSize * elementCount;
+  
+  // Create or use existing buffer
+  if (buffers.empty()) {
+    buffers.emplace_back();
+  }
+  
+  JSONBuffer& buffer = buffers.back();
+  size_t bufferIndex = buffers.size() - 1;
+  size_t byteOffset = buffer.data.size();
+  
+  // Add data to buffer with proper alignment
+  const uint8_t* srcData = static_cast<const uint8_t*>(data);
+  buffer.data.insert(buffer.data.end(), srcData, srcData + totalBytes);
+  buffer.byteLength = buffer.data.size();
+  
+  // Create buffer view
+  JSONBufferView bufferView;
+  bufferView.buffer = bufferIndex;
+  bufferView.byteOffset = byteOffset;
+  bufferView.byteLength = totalBytes;
+  bufferView.byteStride = 0;  // Tightly packed
+  
+  size_t bufferViewIndex = bufferViews.size();
+  bufferViews.push_back(bufferView);
+  
+  // Create accessor
+  JSONAccessor accessor;
+  accessor.bufferView = bufferViewIndex;
+  accessor.byteOffset = 0;
+  accessor.componentType = componentType;
+  accessor.count = elementCount;
+  accessor.type = type;
+  
+  size_t accessorIndex = accessors.size();
+  accessors.push_back(accessor);
+  
+  return accessorIndex;
+}
+
 namespace {
+
+// Helper functions for array serialization to base64
+template<typename T>
+std::string SerializeArrayToBase64(const std::vector<T>& array) {
+  if (array.empty()) {
+    return "";
+  }
+  
+  const unsigned char* bytes = reinterpret_cast<const unsigned char*>(array.data());
+  size_t byte_size = array.size() * sizeof(T);
+  
+  return base64_encode(bytes, static_cast<unsigned int>(byte_size));
+}
+
+// Specialized versions for different types
+std::string SerializeIntArrayToBase64(const std::vector<int>& array) {
+  return SerializeArrayToBase64(array);
+}
+
+std::string SerializeFloatArrayToBase64(const std::vector<float>& array) {
+  return SerializeArrayToBase64(array);
+}
+
+std::string SerializeDoubleArrayToBase64(const std::vector<double>& array) {
+  return SerializeArrayToBase64(array);
+}
+
+// Helper functions for mixed-mode serialization
+template<typename T>
+json SerializeArrayData(const std::vector<T>& array, USDToJSONContext* context, 
+                        const std::string& componentType, const std::string& type) {
+  if (array.empty()) {
+    return json::object();
+  }
+  
+  if (!context || context->options.arrayMode == ArraySerializationMode::Base64) {
+    // Base64 mode
+    return json{
+      {"data", SerializeArrayToBase64(array)},
+      {"count", array.size()},
+      {"type", type + "[]"}
+    };
+  } else {
+    // Buffer/accessor mode
+    size_t accessorIndex = context->AddArrayData(array.data(), sizeof(T), array.size(), componentType, type);
+    if (accessorIndex == SIZE_MAX) {
+      // Fallback to base64 on error
+      return json{
+        {"data", SerializeArrayToBase64(array)},
+        {"count", array.size()},
+        {"type", type + "[]"}
+      };
+    }
+    
+    return json{
+      {"accessor", accessorIndex},
+      {"count", array.size()},
+      {"type", type + "[]"}
+    };
+  }
+}
+
+// Helper function to serialize attribute metadata
+json SerializeAttributeMetadata(const AttrMetas& metas) {
+  json metadata;
+  
+  // Serialize interpolation
+  if (metas.interpolation) {
+    switch (metas.interpolation.value()) {
+      case Interpolation::Constant:
+        metadata["interpolation"] = "constant";
+        break;
+      case Interpolation::Uniform:
+        metadata["interpolation"] = "uniform";
+        break;
+      case Interpolation::Varying:
+        metadata["interpolation"] = "varying";
+        break;
+      case Interpolation::Vertex:
+        metadata["interpolation"] = "vertex";
+        break;
+      case Interpolation::FaceVarying:
+        metadata["interpolation"] = "faceVarying";
+        break;
+      default:
+        break;
+    }
+  }
+  
+  // Serialize elementSize
+  if (metas.elementSize) {
+    metadata["elementSize"] = metas.elementSize.value();
+  }
+  
+  // Serialize hidden
+  if (metas.hidden) {
+    metadata["hidden"] = metas.hidden.value();
+  }
+  
+  // Serialize comment
+  if (metas.comment) {
+    metadata["comment"] = metas.comment.value().value;
+  }
+  
+  // Serialize weight (for BlendShapes)
+  if (metas.weight) {
+    metadata["weight"] = metas.weight.value();
+  }
+  
+  // Serialize usdShade metadata
+  if (metas.connectability) {
+    metadata["connectability"] = metas.connectability.value().str();
+  }
+  
+  if (metas.outputName) {
+    metadata["outputName"] = metas.outputName.value().str();
+  }
+  
+  if (metas.renderType) {
+    metadata["renderType"] = metas.renderType.value().str();
+  }
+  
+  // Serialize display metadata
+  if (metas.displayName) {
+    metadata["displayName"] = metas.displayName.value();
+  }
+  
+  if (metas.displayGroup) {
+    metadata["displayGroup"] = metas.displayGroup.value();
+  }
+  
+  // Serialize bindMaterialAs
+  if (metas.bindMaterialAs) {
+    metadata["bindMaterialAs"] = metas.bindMaterialAs.value().str();
+  }
+  
+  // Serialize customData
+  if (metas.customData) {
+    json customDataJson;
+    const auto& customData = metas.customData.value();
+    for (const auto& item : customData) {
+      // For now, serialize as string representation
+      // TODO: Implement proper Dictionary to JSON conversion
+      customDataJson[item.first] = "[CustomData]";
+    }
+    if (!customDataJson.empty()) {
+      metadata["customData"] = customDataJson;
+    }
+  }
+  
+  // Serialize sdrMetadata
+  if (metas.sdrMetadata) {
+    json sdrJson;
+    const auto& sdrData = metas.sdrMetadata.value();
+    for (const auto& item : sdrData) {
+      // For now, serialize as string representation
+      // TODO: Implement proper Dictionary to JSON conversion
+      sdrJson[item.first] = "[SdrMetadata]";
+    }
+    if (!sdrJson.empty()) {
+      metadata["sdrMetadata"] = sdrJson;
+    }
+  }
+  
+  // Serialize other custom metadata
+  for (const auto& item : metas.meta) {
+    // TODO: Implement proper MetaVariable to JSON conversion
+    metadata[item.first] = "[MetaVariable]";
+  }
+  
+  // Serialize string data
+  if (!metas.stringData.empty()) {
+    json stringArray = json::array();
+    for (const auto& str : metas.stringData) {
+      stringArray.push_back(str.value);
+    }
+    metadata["stringData"] = stringArray;
+  }
+  
+  return metadata;
+}
+
+// Specialized array serialization functions
+json SerializeIntArray(const std::vector<int>& array, USDToJSONContext* context = nullptr) {
+  return SerializeArrayData(array, context, "UNSIGNED_INT", "SCALAR");
+}
+
+json SerializeFloatArray(const std::vector<float>& array, USDToJSONContext* context = nullptr) {
+  return SerializeArrayData(array, context, "FLOAT", "SCALAR");
+}
+
+json SerializeDoubleArray(const std::vector<double>& array, USDToJSONContext* context = nullptr) {
+  return SerializeArrayData(array, context, "FLOAT", "SCALAR");  // Note: JSON doesn't distinguish float/double
+}
+
+// Overloaded functions with attribute metadata support
+template<typename T>
+json SerializeArrayDataWithMetadata(const std::vector<T>& array, const AttrMetas* metas, USDToJSONContext* context, 
+                                     const std::string& componentType, const std::string& type) {
+  json result = SerializeArrayData(array, context, componentType, type);
+  
+  // Add metadata if present and array is not empty
+  if (metas && metas->authored() && !array.empty()) {
+    json metadata = SerializeAttributeMetadata(*metas);
+    if (!metadata.empty()) {
+      result["metadata"] = metadata;
+    }
+  }
+  
+  return result;
+}
+
+// Metadata-aware array serialization functions
+json SerializeIntArrayWithMetadata(const std::vector<int>& array, const AttrMetas* metas = nullptr, USDToJSONContext* context = nullptr) {
+  return SerializeArrayDataWithMetadata(array, metas, context, "UNSIGNED_INT", "SCALAR");
+}
+
+json SerializeFloatArrayWithMetadata(const std::vector<float>& array, const AttrMetas* metas = nullptr, USDToJSONContext* context = nullptr) {
+  return SerializeArrayDataWithMetadata(array, metas, context, "FLOAT", "SCALAR");
+}
+
+json SerializeDoubleArrayWithMetadata(const std::vector<double>& array, const AttrMetas* metas = nullptr, USDToJSONContext* context = nullptr) {
+  return SerializeArrayDataWithMetadata(array, metas, context, "FLOAT", "SCALAR");
+}
+
+// Vector serialization helpers
+json SerializePoint3fArray(const std::vector<value::point3f>& points, USDToJSONContext* context = nullptr) {
+  if (points.empty()) {
+    return json::object();
+  }
+  
+  // Convert to flat float array
+  std::vector<float> float_data;
+  float_data.reserve(points.size() * 3);
+  for (const auto& pt : points) {
+    float_data.push_back(pt[0]);
+    float_data.push_back(pt[1]);
+    float_data.push_back(pt[2]);
+  }
+  
+  if (!context || context->options.arrayMode == ArraySerializationMode::Base64) {
+    return json{
+      {"data", SerializeFloatArrayToBase64(float_data)},
+      {"count", points.size()},
+      {"type", "point3f[]"}
+    };
+  } else {
+    size_t accessorIndex = context->AddArrayData(float_data.data(), sizeof(float), float_data.size(), "FLOAT", "VEC3");
+    if (accessorIndex == SIZE_MAX) {
+      return json{
+        {"data", SerializeFloatArrayToBase64(float_data)},
+        {"count", points.size()},
+        {"type", "point3f[]"}
+      };
+    }
+    
+    return json{
+      {"accessor", accessorIndex},
+      {"count", points.size()},
+      {"type", "point3f[]"}
+    };
+  }
+}
+
+json SerializeNormal3fArray(const std::vector<value::normal3f>& normals, USDToJSONContext* context = nullptr) {
+  if (normals.empty()) {
+    return json::object();
+  }
+  
+  // Convert to flat float array
+  std::vector<float> float_data;
+  float_data.reserve(normals.size() * 3);
+  for (const auto& n : normals) {
+    float_data.push_back(n[0]);
+    float_data.push_back(n[1]);
+    float_data.push_back(n[2]);
+  }
+  
+  if (!context || context->options.arrayMode == ArraySerializationMode::Base64) {
+    return json{
+      {"data", SerializeFloatArrayToBase64(float_data)},
+      {"count", normals.size()},
+      {"type", "normal3f[]"}
+    };
+  } else {
+    size_t accessorIndex = context->AddArrayData(float_data.data(), sizeof(float), float_data.size(), "FLOAT", "VEC3");
+    if (accessorIndex == SIZE_MAX) {
+      return json{
+        {"data", SerializeFloatArrayToBase64(float_data)},
+        {"count", normals.size()},
+        {"type", "normal3f[]"}
+      };
+    }
+    
+    return json{
+      {"accessor", accessorIndex},
+      {"count", normals.size()},
+      {"type", "normal3f[]"}
+    };
+  }
+}
+
+// Vector array serialization helpers for integer types
+json SerializeInt2Array(const std::vector<value::int2>& vectors, USDToJSONContext* context = nullptr) {
+  if (vectors.empty()) {
+    return json::object();
+  }
+  
+  // Convert to flat int array
+  std::vector<int> int_data;
+  int_data.reserve(vectors.size() * 2);
+  for (const auto& v : vectors) {
+    int_data.push_back(v[0]);
+    int_data.push_back(v[1]);
+  }
+  
+  if (!context || context->options.arrayMode == ArraySerializationMode::Base64) {
+    return json{
+      {"data", SerializeIntArrayToBase64(int_data)},
+      {"count", vectors.size()},
+      {"type", "int2[]"}
+    };
+  } else {
+    size_t accessorIndex = context->AddArrayData(int_data.data(), sizeof(int), int_data.size(), "UNSIGNED_INT", "VEC2");
+    if (accessorIndex == SIZE_MAX) {
+      return json{
+        {"data", SerializeIntArrayToBase64(int_data)},
+        {"count", vectors.size()},
+        {"type", "int2[]"}
+      };
+    }
+    
+    return json{
+      {"accessor", accessorIndex},
+      {"count", vectors.size()},
+      {"type", "int2[]"}
+    };
+  }
+}
+
+json SerializeInt3Array(const std::vector<value::int3>& vectors, USDToJSONContext* context = nullptr) {
+  if (vectors.empty()) {
+    return json::object();
+  }
+  
+  // Convert to flat int array
+  std::vector<int> int_data;
+  int_data.reserve(vectors.size() * 3);
+  for (const auto& v : vectors) {
+    int_data.push_back(v[0]);
+    int_data.push_back(v[1]);
+    int_data.push_back(v[2]);
+  }
+  
+  if (!context || context->options.arrayMode == ArraySerializationMode::Base64) {
+    return json{
+      {"data", SerializeIntArrayToBase64(int_data)},
+      {"count", vectors.size()},
+      {"type", "int3[]"}
+    };
+  } else {
+    size_t accessorIndex = context->AddArrayData(int_data.data(), sizeof(int), int_data.size(), "UNSIGNED_INT", "VEC3");
+    if (accessorIndex == SIZE_MAX) {
+      return json{
+        {"data", SerializeIntArrayToBase64(int_data)},
+        {"count", vectors.size()},
+        {"type", "int3[]"}
+      };
+    }
+    
+    return json{
+      {"accessor", accessorIndex},
+      {"count", vectors.size()},
+      {"type", "int3[]"}
+    };
+  }
+}
+
+json SerializeInt4Array(const std::vector<value::int4>& vectors, USDToJSONContext* context = nullptr) {
+  if (vectors.empty()) {
+    return json::object();
+  }
+  
+  // Convert to flat int array
+  std::vector<int> int_data;
+  int_data.reserve(vectors.size() * 4);
+  for (const auto& v : vectors) {
+    int_data.push_back(v[0]);
+    int_data.push_back(v[1]);
+    int_data.push_back(v[2]);
+    int_data.push_back(v[3]);
+  }
+  
+  if (!context || context->options.arrayMode == ArraySerializationMode::Base64) {
+    return json{
+      {"data", SerializeIntArrayToBase64(int_data)},
+      {"count", vectors.size()},
+      {"type", "int4[]"}
+    };
+  } else {
+    size_t accessorIndex = context->AddArrayData(int_data.data(), sizeof(int), int_data.size(), "UNSIGNED_INT", "VEC4");
+    if (accessorIndex == SIZE_MAX) {
+      return json{
+        {"data", SerializeIntArrayToBase64(int_data)},
+        {"count", vectors.size()},
+        {"type", "int4[]"}
+      };
+    }
+    
+    return json{
+      {"accessor", accessorIndex},
+      {"count", vectors.size()},
+      {"type", "int4[]"}
+    };
+  }
+}
+
+// Vector array serialization helpers for float types
+json SerializeFloat2Array(const std::vector<value::float2>& vectors, USDToJSONContext* context = nullptr) {
+  if (vectors.empty()) {
+    return json::object();
+  }
+  
+  // Convert to flat float array
+  std::vector<float> float_data;
+  float_data.reserve(vectors.size() * 2);
+  for (const auto& v : vectors) {
+    float_data.push_back(v[0]);
+    float_data.push_back(v[1]);
+  }
+  
+  if (!context || context->options.arrayMode == ArraySerializationMode::Base64) {
+    return json{
+      {"data", SerializeFloatArrayToBase64(float_data)},
+      {"count", vectors.size()},
+      {"type", "float2[]"}
+    };
+  } else {
+    size_t accessorIndex = context->AddArrayData(float_data.data(), sizeof(float), float_data.size(), "FLOAT", "VEC2");
+    if (accessorIndex == SIZE_MAX) {
+      return json{
+        {"data", SerializeFloatArrayToBase64(float_data)},
+        {"count", vectors.size()},
+        {"type", "float2[]"}
+      };
+    }
+    
+    return json{
+      {"accessor", accessorIndex},
+      {"count", vectors.size()},
+      {"type", "float2[]"}
+    };
+  }
+}
+
+json SerializeFloat4Array(const std::vector<value::float4>& vectors, USDToJSONContext* context = nullptr) {
+  if (vectors.empty()) {
+    return json::object();
+  }
+  
+  // Convert to flat float array
+  std::vector<float> float_data;
+  float_data.reserve(vectors.size() * 4);
+  for (const auto& v : vectors) {
+    float_data.push_back(v[0]);
+    float_data.push_back(v[1]);
+    float_data.push_back(v[2]);
+    float_data.push_back(v[3]);
+  }
+  
+  if (!context || context->options.arrayMode == ArraySerializationMode::Base64) {
+    return json{
+      {"data", SerializeFloatArrayToBase64(float_data)},
+      {"count", vectors.size()},
+      {"type", "float4[]"}
+    };
+  } else {
+    size_t accessorIndex = context->AddArrayData(float_data.data(), sizeof(float), float_data.size(), "FLOAT", "VEC4");
+    if (accessorIndex == SIZE_MAX) {
+      return json{
+        {"data", SerializeFloatArrayToBase64(float_data)},
+        {"count", vectors.size()},
+        {"type", "float4[]"}
+      };
+    }
+    
+    return json{
+      {"accessor", accessorIndex},
+      {"count", vectors.size()},
+      {"type", "float4[]"}
+    };
+  }
+}
+
+// Vector array serialization helpers for half types
+json SerializeHalf2Array(const std::vector<value::half2>& vectors, USDToJSONContext* context = nullptr) {
+  if (vectors.empty()) {
+    return json::object();
+  }
+  
+  // Convert to flat float array (convert half to float for JSON)
+  std::vector<float> float_data;
+  float_data.reserve(vectors.size() * 2);
+  for (const auto& v : vectors) {
+    float_data.push_back(value::half_to_float(v[0]));
+    float_data.push_back(value::half_to_float(v[1]));
+  }
+  
+  if (!context || context->options.arrayMode == ArraySerializationMode::Base64) {
+    return json{
+      {"data", SerializeFloatArrayToBase64(float_data)},
+      {"count", vectors.size()},
+      {"type", "half2[]"}
+    };
+  } else {
+    size_t accessorIndex = context->AddArrayData(float_data.data(), sizeof(float), float_data.size(), "FLOAT", "VEC2");
+    if (accessorIndex == SIZE_MAX) {
+      return json{
+        {"data", SerializeFloatArrayToBase64(float_data)},
+        {"count", vectors.size()},
+        {"type", "half2[]"}
+      };
+    }
+    
+    return json{
+      {"accessor", accessorIndex},
+      {"count", vectors.size()},
+      {"type", "half2[]"}
+    };
+  }
+}
+
+json SerializeHalf3Array(const std::vector<value::half3>& vectors, USDToJSONContext* context = nullptr) {
+  if (vectors.empty()) {
+    return json::object();
+  }
+  
+  // Convert to flat float array (convert half to float for JSON)
+  std::vector<float> float_data;
+  float_data.reserve(vectors.size() * 3);
+  for (const auto& v : vectors) {
+    float_data.push_back(value::half_to_float(v[0]));
+    float_data.push_back(value::half_to_float(v[1]));
+    float_data.push_back(value::half_to_float(v[2]));
+  }
+  
+  if (!context || context->options.arrayMode == ArraySerializationMode::Base64) {
+    return json{
+      {"data", SerializeFloatArrayToBase64(float_data)},
+      {"count", vectors.size()},
+      {"type", "half3[]"}
+    };
+  } else {
+    size_t accessorIndex = context->AddArrayData(float_data.data(), sizeof(float), float_data.size(), "FLOAT", "VEC3");
+    if (accessorIndex == SIZE_MAX) {
+      return json{
+        {"data", SerializeFloatArrayToBase64(float_data)},
+        {"count", vectors.size()},
+        {"type", "half3[]"}
+      };
+    }
+    
+    return json{
+      {"accessor", accessorIndex},
+      {"count", vectors.size()},
+      {"type", "half3[]"}
+    };
+  }
+}
+
+json SerializeHalf4Array(const std::vector<value::half4>& vectors, USDToJSONContext* context = nullptr) {
+  if (vectors.empty()) {
+    return json::object();
+  }
+  
+  // Convert to flat float array (convert half to float for JSON)
+  std::vector<float> float_data;
+  float_data.reserve(vectors.size() * 4);
+  for (const auto& v : vectors) {
+    float_data.push_back(value::half_to_float(v[0]));
+    float_data.push_back(value::half_to_float(v[1]));
+    float_data.push_back(value::half_to_float(v[2]));
+    float_data.push_back(value::half_to_float(v[3]));
+  }
+  
+  if (!context || context->options.arrayMode == ArraySerializationMode::Base64) {
+    return json{
+      {"data", SerializeFloatArrayToBase64(float_data)},
+      {"count", vectors.size()},
+      {"type", "half4[]"}
+    };
+  } else {
+    size_t accessorIndex = context->AddArrayData(float_data.data(), sizeof(float), float_data.size(), "FLOAT", "VEC4");
+    if (accessorIndex == SIZE_MAX) {
+      return json{
+        {"data", SerializeFloatArrayToBase64(float_data)},
+        {"count", vectors.size()},
+        {"type", "half4[]"}
+      };
+    }
+    
+    return json{
+      {"accessor", accessorIndex},
+      {"count", vectors.size()},
+      {"type", "half4[]"}
+    };
+  }
+}
+
+// Metadata-aware vector serialization functions
+json SerializePoint3fArrayWithMetadata(const std::vector<value::point3f>& points, const AttrMetas* metas = nullptr, USDToJSONContext* context = nullptr) {
+  if (points.empty()) {
+    return json::object();
+  }
+  
+  // Convert to flat float array
+  std::vector<float> float_data;
+  float_data.reserve(points.size() * 3);
+  for (const auto& pt : points) {
+    float_data.push_back(pt[0]);
+    float_data.push_back(pt[1]);
+    float_data.push_back(pt[2]);
+  }
+  
+  json result;
+  if (!context || context->options.arrayMode == ArraySerializationMode::Base64) {
+    result = json{
+      {"data", SerializeFloatArrayToBase64(float_data)},
+      {"count", points.size()},
+      {"type", "point3f[]"}
+    };
+  } else {
+    size_t accessorIndex = context->AddArrayData(float_data.data(), sizeof(float), float_data.size(), "FLOAT", "VEC3");
+    if (accessorIndex == SIZE_MAX) {
+      result = json{
+        {"data", SerializeFloatArrayToBase64(float_data)},
+        {"count", points.size()},
+        {"type", "point3f[]"}
+      };
+    } else {
+      result = json{
+        {"accessor", accessorIndex},
+        {"count", points.size()},
+        {"type", "point3f[]"}
+      };
+    }
+  }
+  
+  // Add metadata if present
+  if (metas && metas->authored()) {
+    json metadata = SerializeAttributeMetadata(*metas);
+    if (!metadata.empty()) {
+      result["metadata"] = metadata;
+    }
+  }
+  
+  return result;
+}
+
+json SerializeNormal3fArrayWithMetadata(const std::vector<value::normal3f>& normals, const AttrMetas* metas = nullptr, USDToJSONContext* context = nullptr) {
+  if (normals.empty()) {
+    return json::object();
+  }
+  
+  // Convert to flat float array
+  std::vector<float> float_data;
+  float_data.reserve(normals.size() * 3);
+  for (const auto& n : normals) {
+    float_data.push_back(n[0]);
+    float_data.push_back(n[1]);
+    float_data.push_back(n[2]);
+  }
+  
+  json result;
+  if (!context || context->options.arrayMode == ArraySerializationMode::Base64) {
+    result = json{
+      {"data", SerializeFloatArrayToBase64(float_data)},
+      {"count", normals.size()},
+      {"type", "normal3f[]"}
+    };
+  } else {
+    size_t accessorIndex = context->AddArrayData(float_data.data(), sizeof(float), float_data.size(), "FLOAT", "VEC3");
+    if (accessorIndex == SIZE_MAX) {
+      result = json{
+        {"data", SerializeFloatArrayToBase64(float_data)},
+        {"count", normals.size()},
+        {"type", "normal3f[]"}
+      };
+    } else {
+      result = json{
+        {"accessor", accessorIndex},
+        {"count", normals.size()},
+        {"type", "normal3f[]"}
+      };
+    }
+  }
+  
+  // Add metadata if present
+  if (metas && metas->authored()) {
+    json metadata = SerializeAttributeMetadata(*metas);
+    if (!metadata.empty()) {
+      result["metadata"] = metadata;
+    }
+  }
+  
+  return result;
+}
+
+// Matrix array serialization
+template<typename MatrixType>
+std::string SerializeMatrixArrayToBase64(const std::vector<MatrixType>& array) {
+  return SerializeArrayToBase64(array);
+}
+
+// Specialized matrix serializers
+std::string SerializeMatrix2fArrayToBase64(const std::vector<value::matrix2f>& array) {
+  if (array.empty()) {
+    return "";
+  }
+  
+  std::vector<float> float_data;
+  float_data.reserve(array.size() * 4);
+  for (const auto& mat : array) {
+    for (int i = 0; i < 2; ++i) {
+      for (int j = 0; j < 2; ++j) {
+        float_data.push_back(mat.m[i][j]);
+      }
+    }
+  }
+  return SerializeFloatArrayToBase64(float_data);
+}
+
+std::string SerializeMatrix3fArrayToBase64(const std::vector<value::matrix3f>& array) {
+  if (array.empty()) {
+    return "";
+  }
+  
+  std::vector<float> float_data;
+  float_data.reserve(array.size() * 9);
+  for (const auto& mat : array) {
+    for (int i = 0; i < 3; ++i) {
+      for (int j = 0; j < 3; ++j) {
+        float_data.push_back(mat.m[i][j]);
+      }
+    }
+  }
+  return SerializeFloatArrayToBase64(float_data);
+}
+
+std::string SerializeMatrix4fArrayToBase64(const std::vector<value::matrix4f>& array) {
+  if (array.empty()) {
+    return "";
+  }
+  
+  std::vector<float> float_data;
+  float_data.reserve(array.size() * 16);
+  for (const auto& mat : array) {
+    for (int i = 0; i < 4; ++i) {
+      for (int j = 0; j < 4; ++j) {
+        float_data.push_back(mat.m[i][j]);
+      }
+    }
+  }
+  return SerializeFloatArrayToBase64(float_data);
+}
+
+std::string SerializeMatrix2dArrayToBase64(const std::vector<value::matrix2d>& array) {
+  if (array.empty()) {
+    return "";
+  }
+  
+  std::vector<double> double_data;
+  double_data.reserve(array.size() * 4);
+  for (const auto& mat : array) {
+    for (int i = 0; i < 2; ++i) {
+      for (int j = 0; j < 2; ++j) {
+        double_data.push_back(mat.m[i][j]);
+      }
+    }
+  }
+  return SerializeDoubleArrayToBase64(double_data);
+}
+
+std::string SerializeMatrix3dArrayToBase64(const std::vector<value::matrix3d>& array) {
+  if (array.empty()) {
+    return "";
+  }
+  
+  std::vector<double> double_data;
+  double_data.reserve(array.size() * 9);
+  for (const auto& mat : array) {
+    for (int i = 0; i < 3; ++i) {
+      for (int j = 0; j < 3; ++j) {
+        double_data.push_back(mat.m[i][j]);
+      }
+    }
+  }
+  return SerializeDoubleArrayToBase64(double_data);
+}
+
+std::string SerializeMatrix4dArrayToBase64(const std::vector<value::matrix4d>& array) {
+  if (array.empty()) {
+    return "";
+  }
+  
+  std::vector<double> double_data;
+  double_data.reserve(array.size() * 16);
+  for (const auto& mat : array) {
+    for (int i = 0; i < 4; ++i) {
+      for (int j = 0; j < 4; ++j) {
+        double_data.push_back(mat.m[i][j]);
+      }
+    }
+  }
+  return SerializeDoubleArrayToBase64(double_data);
+}
 
 json ToJSON(tinyusdz::Xform& xform) {
   json j;
@@ -46,85 +910,111 @@ json ToJSON(tinyusdz::Xform& xform) {
 }
 
 json ToJSON(tinyusdz::GeomMesh& mesh) {
+  return ToJSON(mesh, nullptr);  // Use base64 mode by default
+}
+
+json ToJSON(tinyusdz::GeomMesh& mesh, USDToJSONContext* context) {
   json j;
 
-#if 0
+  j["name"] = mesh.name;
+  j["typeName"] = "GeomMesh";
 
-  if (mesh.points.size()) {
-    j["points"] = mesh.points;
-  }
-
-  if (mesh.faceVertexCounts.size()) {
-    j["faceVertexCounts"] = mesh.faceVertexCounts;
-  }
-
-  if (mesh.faceVertexIndices.size()) {
-    j["faceVertexIndices"] = mesh.faceVertexIndices;
-  }
-
-  {
-    auto normals = mesh.normals.buffer.GetAsVec3fArray();
-    if (normals.size()) {
-      j["normals"] = normals;
+  // Serialize geometry arrays using context-aware method
+  
+  // Points array (point3f[])
+  if (mesh.points.authored()) {
+    auto points_opt = mesh.points.get_value();
+    if (points_opt) {
+      std::vector<value::point3f> points_data;
+      if (points_opt.value().get(value::TimeCode::Default(), &points_data)) {
+        j["points"] = SerializePoint3fArrayWithMetadata(points_data, &mesh.points.metas(), context);
+      }
     }
   }
-  // TODO: Subdivision surface
-  j["doubleSided"] = mesh.doubleSided;
 
-  j["purpose"] = mesh.purpose;
-
-  {
-    std::string v = "inherited";
-    if (mesh.visibility == tinyusdz::VisibilityInvisible) {
-      v = "invisible";
+  // Face vertex counts (int[])
+  if (mesh.faceVertexCounts.authored()) {
+    auto face_counts_opt = mesh.faceVertexCounts.get_value();
+    if (face_counts_opt) {
+      std::vector<int> face_counts_data;
+      if (face_counts_opt.value().get(value::TimeCode::Default(), &face_counts_data)) {
+        j["faceVertexCounts"] = SerializeIntArrayWithMetadata(face_counts_data, &mesh.faceVertexCounts.metas(), context);
+      }
     }
-    j["visibility"] = v;
   }
 
-
-  if (mesh.extent.Valid()) {
-    j["extent"] = mesh.extent.to_array();
+  // Face vertex indices (int[])
+  if (mesh.faceVertexIndices.authored()) {
+    auto face_indices_opt = mesh.faceVertexIndices.get_value();
+    if (face_indices_opt) {
+      std::vector<int> face_indices_data;
+      if (face_indices_opt.value().get(value::TimeCode::Default(), &face_indices_data)) {
+        j["faceVertexIndices"] = SerializeIntArrayWithMetadata(face_indices_data, &mesh.faceVertexIndices.metas(), context);
+      }
+    }
   }
 
-  // subd
-  {
-    std::string scheme = "none";
-    if (mesh.subdivisionScheme == tinyusdz::SubdivisionSchemeCatmullClark) {
-      scheme = "catmullClark";
-    } else if (mesh.subdivisionScheme == tinyusdz::SubdivisionSchemeLoop) {
-      scheme = "loop";
-    } else if (mesh.subdivisionScheme == tinyusdz::SubdivisionSchemeBilinear) {
-      scheme = "bilinear";
+  // Normals array (normal3f[])
+  if (mesh.normals.authored()) {
+    auto normals_opt = mesh.normals.get_value();
+    if (normals_opt) {
+      std::vector<value::normal3f> normals_data;
+      if (normals_opt.value().get(value::TimeCode::Default(), &normals_data)) {
+        j["normals"] = SerializeNormal3fArrayWithMetadata(normals_data, &mesh.normals.metas(), context);
+      }
     }
-
-    j["subdivisionScheme"] = scheme;
-
-    if (mesh.cornerIndices.size()) {
-      j["cornerIndices"] = mesh.cornerIndices;
-    }
-    if (mesh.cornerSharpnesses.size()) {
-      j["cornerSharpness"] = mesh.cornerSharpnesses;
-    }
-
-    if (mesh.creaseIndices.size()) {
-      j["creaseIndices"] = mesh.creaseIndices;
-    }
-
-    if (mesh.creaseLengths.size()) {
-      j["creaseLengths"] = mesh.creaseLengths;
-    }
-
-    if (mesh.creaseSharpnesses.size()) {
-      j["creaseSharpnesses"] = mesh.creaseSharpnesses;
-    }
-
-    if (mesh.interpolateBoundary.size()) {
-      j["interpolateBoundary"] = mesh.interpolateBoundary;
-    }
-
   }
 
-#endif
+  // Subdivision surface arrays
+  if (mesh.cornerIndices.authored()) {
+    auto corner_indices_opt = mesh.cornerIndices.get_value();
+    if (corner_indices_opt) {
+      std::vector<int> corner_indices_data;
+      if (corner_indices_opt.value().get(value::TimeCode::Default(), &corner_indices_data)) {
+        j["cornerIndices"] = SerializeIntArrayWithMetadata(corner_indices_data, &mesh.cornerIndices.metas(), context);
+      }
+    }
+  }
+
+  if (mesh.cornerSharpnesses.authored()) {
+    auto corner_sharpnesses_opt = mesh.cornerSharpnesses.get_value();
+    if (corner_sharpnesses_opt) {
+      std::vector<float> corner_sharpnesses_data;
+      if (corner_sharpnesses_opt.value().get(value::TimeCode::Default(), &corner_sharpnesses_data)) {
+        j["cornerSharpnesses"] = SerializeFloatArrayWithMetadata(corner_sharpnesses_data, &mesh.cornerSharpnesses.metas(), context);
+      }
+    }
+  }
+
+  if (mesh.creaseIndices.authored()) {
+    auto crease_indices_opt = mesh.creaseIndices.get_value();
+    if (crease_indices_opt) {
+      std::vector<int> crease_indices_data;
+      if (crease_indices_opt.value().get(value::TimeCode::Default(), &crease_indices_data)) {
+        j["creaseIndices"] = SerializeIntArrayWithMetadata(crease_indices_data, &mesh.creaseIndices.metas(), context);
+      }
+    }
+  }
+
+  if (mesh.creaseLengths.authored()) {
+    auto crease_lengths_opt = mesh.creaseLengths.get_value();
+    if (crease_lengths_opt) {
+      std::vector<int> crease_lengths_data;
+      if (crease_lengths_opt.value().get(value::TimeCode::Default(), &crease_lengths_data)) {
+        j["creaseLengths"] = SerializeIntArrayWithMetadata(crease_lengths_data, &mesh.creaseLengths.metas(), context);
+      }
+    }
+  }
+
+  if (mesh.creaseSharpnesses.authored()) {
+    auto crease_sharpnesses_opt = mesh.creaseSharpnesses.get_value();
+    if (crease_sharpnesses_opt) {
+      std::vector<float> crease_sharpnesses_data;
+      if (crease_sharpnesses_opt.value().get(value::TimeCode::Default(), &crease_sharpnesses_data)) {
+        j["creaseSharpnesses"] = SerializeFloatArrayWithMetadata(crease_sharpnesses_data, &mesh.creaseSharpnesses.metas(), context);
+      }
+    }
+  }
 
   return j;
 }
@@ -185,7 +1075,72 @@ bool PrimToJSONRec(json &root, const tinyusdz::Prim& prim, int depth) {
   return true;
 }
 
+// Helper function to serialize context to JSON
+json SerializeContextToJSON(const USDToJSONContext& context) {
+  json j;
+  
+  // Serialize buffers
+  if (!context.buffers.empty()) {
+    json buffers_array = json::array();
+    for (size_t i = 0; i < context.buffers.size(); ++i) {
+      const auto& buffer = context.buffers[i];
+      json buffer_obj;
+      buffer_obj["byteLength"] = buffer.byteLength;
+      
+      if (context.options.embedBuffers) {
+        // Embed as data URI
+        std::string base64_data = base64_encode(buffer.data.data(), static_cast<unsigned int>(buffer.data.size()));
+        buffer_obj["uri"] = "data:application/octet-stream;base64," + base64_data;
+      } else {
+        // External file reference
+        buffer_obj["uri"] = context.options.bufferPrefix + std::to_string(i) + ".bin";
+      }
+      
+      buffers_array.push_back(buffer_obj);
+    }
+    j["buffers"] = buffers_array;
+  }
+  
+  // Serialize buffer views
+  if (!context.bufferViews.empty()) {
+    json bufferViews_array = json::array();
+    for (const auto& bufferView : context.bufferViews) {
+      json bufferView_obj;
+      bufferView_obj["buffer"] = bufferView.buffer;
+      bufferView_obj["byteOffset"] = bufferView.byteOffset;
+      bufferView_obj["byteLength"] = bufferView.byteLength;
+      if (bufferView.byteStride > 0) {
+        bufferView_obj["byteStride"] = bufferView.byteStride;
+      }
+      bufferViews_array.push_back(bufferView_obj);
+    }
+    j["bufferViews"] = bufferViews_array;
+  }
+  
+  // Serialize accessors
+  if (!context.accessors.empty()) {
+    json accessors_array = json::array();
+    for (const auto& accessor : context.accessors) {
+      json accessor_obj;
+      accessor_obj["bufferView"] = accessor.bufferView;
+      accessor_obj["byteOffset"] = accessor.byteOffset;
+      accessor_obj["componentType"] = accessor.componentType;
+      accessor_obj["count"] = accessor.count;
+      accessor_obj["type"] = accessor.type;
+      accessors_array.push_back(accessor_obj);
+    }
+    j["accessors"] = accessors_array;
+  }
+  
+  return j;
+}
+
 json ToJSON(const tinyusdz::Layer& layer) {
+  USDToJSONContext context;  // Default context (base64 mode)
+  return ToJSON(layer, context);
+}
+
+json ToJSON(const tinyusdz::Layer& layer, USDToJSONContext& context) {
   json j;
 
   // Layer name
@@ -300,7 +1255,7 @@ json ToJSON(const tinyusdz::Layer& layer) {
   if (primspecs.size() > 0) {
     json primSpecsObj;
     for (const auto& item : primspecs) {
-      // TODO: Implement PrimSpec to JSON conversion
+      // TODO: Implement PrimSpec to JSON conversion with context
       json primSpecJson;
       primSpecJson["name"] = item.first;
       primSpecJson["typeName"] = "PrimSpec";
@@ -308,6 +1263,20 @@ json ToJSON(const tinyusdz::Layer& layer) {
       primSpecsObj[item.first] = primSpecJson;
     }
     j["primSpecs"] = primSpecsObj;
+  }
+  
+  // Add buffer/accessor data if using buffer mode
+  if (context.options.arrayMode == ArraySerializationMode::Buffer) {
+    json contextData = SerializeContextToJSON(context);
+    if (contextData.contains("buffers")) {
+      j["buffers"] = contextData["buffers"];
+    }
+    if (contextData.contains("bufferViews")) {
+      j["bufferViews"] = contextData["bufferViews"];
+    }
+    if (contextData.contains("accessors")) {
+      j["accessors"] = contextData["accessors"];
+    }
   }
 
   return j;

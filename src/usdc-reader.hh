@@ -21,7 +21,7 @@ struct USDCReaderConfig {
   uint32_t kMaxTokenLength = 4096; // Max length of `token`
   uint32_t kMaxStringLength = 1024*1024*64; // Max length of `string` data
   uint32_t kMaxElementSize = 8192; // Max allowed value for `elementSize`
-  size_t kMaxAllowedMemoryInMB = 1024*16; //Max allowed memory usage in [mb]
+  size_t kMaxAllowedMemoryInMB = 1024*128; //Max allowed memory usage in [mb]
 
   bool allow_unknown_prims = true;
   bool allow_unknown_apiSchemas = true;
