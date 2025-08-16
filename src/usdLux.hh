@@ -1,8 +1,25 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2022 - 2023, Syoyo Fujita.
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
-//
-// UsdLux LightSource
+
+///
+/// @file usdLux.hh
+/// @brief USD Lighting schema definitions
+///
+/// Implements light source primitives following USD's UsdLux schema.
+/// Supports various light types commonly used in rendering applications.
+///
+/// Supported light types:
+/// - SphereLight: Point light with sphere shape
+/// - CylinderLight: Cylindrical area light  
+/// - DomeLight: Environment/HDR lighting
+/// - DiskLight: Disk-shaped area light
+/// - RectLight: Rectangular area light
+/// - DistantLight: Directional light (sun/moon)
+/// - GeometryLight: Light emitted from geometry
+/// - PortalLight: Portal for environment lighting
+/// - PluginLight: Custom light implementations
+///
 #pragma once
 
 #include "prim-types.hh"

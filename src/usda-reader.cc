@@ -30,6 +30,7 @@
 #include <vector>
 
 #include "usda-reader.hh"
+#include "parser-timing.hh"
 
 //
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDA_READER)
@@ -319,6 +320,7 @@ class USDAReader::Impl {
 
   void set_reader_config(const USDAReaderConfig &config) {
     _config = config;
+    _parser.SetMaxMemoryLimit(config.max_memory_limit_in_mb);
   }
 
   const USDAReaderConfig get_reader_config() const {
@@ -1634,6 +1636,7 @@ bool USDAReader::Impl::ReconstructPrim(
 ///
 
 bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
+  TINYUSDZ_PROFILE_FUNCTION("usda-reader");
 
   ///
   /// Convert parser option.
