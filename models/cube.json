@@ -1,0 +1,1352 @@
+{
+  "format": "usdc",
+  "version": "1.0",
+  "metadata": {},
+  "prims": {
+    "tokens": [
+      "C",
+      "\u000e\u0003",
+      "s\u0002",
+      "ð{;-)",
+      "Z",
+      "upAxis",
+      "metersPerUnit",
+      "Blender v2.93.1",
+      "documentation",
+      "Camera",
+      "Light",
+      "Cube",
+      "_materials",
+      "primChildren",
+      "specifier",
+      "Xform",
+      "typeName",
+      "xformOp:trans\f",
+      "\u0004\u0012",
+      "ð\u0001Order",
+      "properties\u000b",
+      "1jecx",
+      "ð\bfocalLength",
+      "horizontalA*",
+      "Pure",
+      "v2",
+      "\u0017c\u0011",
+      "\u000e$",
+      "mOffset*",
+      "\u0003\u0017",
+      "ú\u0018clippingRange",
+      "Mesh",
+      "points",
+      "faceVertexCou\u0011",
+      "QIndic¨",
+      "ô\u0018imvars:UVMap",
+      "normals",
+      "subdivisionScheme",
+      "+\u0001ò\f:binding",
+      "doubleSided",
+      "SphereZ\u0001Ôinputs:radius\u000e",
+      "intensity\u0011",
+      "Tcolor\r",
+      "p\u0001cular",
+      "Me",
+      "°",
+      "previewShaX\u00011outT",
+      "0surÓ",
+      "\u0013",
+      "\u0017",
+      "tinfo:idF",
+      "diffuseCZ",
+      "roughnes",
+      "ò\u0016metallic",
+      "float2",
+      "default",
+      "bool",
+      "variabil¨",
+      "2t[]&",
+      "³",
+      "token",
+      "UsdP",
+      "\u0003",
+      "\u0001Å",
+      "ã3f",
+      "targetPathsB\u0001 3f=",
+      "\u00010ary.\u0001",
+      "\u0001\u0001Brpol\u0002Bconn\u001e\u0002\u00025",
+      "\u0001°\u0001\u00014",
+      "\u0001¬\u0001@ord2A",
+      "0per\u001b\u0001tive",
+      "non\u0001àrix4d",
+      "token[]"
+    ],
+    "strings": [
+      ""
+    ],
+    "fields": [
+      {
+        "index": 0,
+        "token": 61,
+        "tokenName": "UsdP",
+        "valueRep": {
+          "data": "59",
+          "typeId": 0,
+          "payload": "59",
+          "isArray": false,
+          "isInlined": false,
+          "isCompressed": false
+        },
+        "value": {
+          "hasValue": true,
+          "needsValueReader": true,
+          "valueRep": {
+            "data": "59",
+            "typeId": 0,
+            "payload": "59",
+            "isArray": false,
+            "isInlined": false,
+            "isCompressed": false
+          }
+        }
+      },
+      {
+        "index": 1,
+        "token": 20992,
+        "tokenName": "<unknown:20992>",
+        "valueRep": {
+          "data": "6142915734248092928",
+          "typeId": 64,
+          "payload": "5842514736384",
+          "isArray": false,
+          "isInlined": true,
+          "isCompressed": false
+        },
+        "value": {
+          "hasValue": true,
+          "needsValueReader": true,
+          "valueRep": {
+            "data": "6142915734248092928",
+            "typeId": 64,
+            "payload": "5842514736384",
+            "isArray": false,
+            "isInlined": true,
+            "isCompressed": false
+          }
+        }
+      },
+      {
+        "index": 2,
+        "token": 21053525,
+        "tokenName": "<unknown:21053525>",
+        "valueRep": {
+          "data": "12826255054365458945",
+          "typeId": 0,
+          "payload": "3315614286337",
+          "isArray": true,
+          "isInlined": false,
+          "isCompressed": true
+        },
+        "value": {
+          "hasValue": true,
+          "needsValueReader": true,
+          "valueRep": {
+            "data": "12826255054365458945",
+            "typeId": 0,
+            "payload": "3315614286337",
+            "isArray": true,
+            "isInlined": false,
+            "isCompressed": true
+          }
+        }
+      },
+      {
+        "index": 3,
+        "token": 66914045,
+        "tokenName": "<unknown:66914045>",
+        "valueRep": {
+          "data": "15422805622384680702",
+          "typeId": 8,
+          "payload": "228698454417150",
+          "isArray": true,
+          "isInlined": true,
+          "isCompressed": false
+        },
+        "value": {
+          "hasValue": true,
+          "needsValueReader": true,
+          "valueRep": {
+            "data": "15422805622384680702",
+            "typeId": 8,
+            "payload": "228698454417150",
+            "isArray": true,
+            "isInlined": true,
+            "isCompressed": false
+          }
+        }
+      },
+      {
+        "index": 4,
+        "token": 3523283746,
+        "tokenName": "<unknown:3523283746>",
+        "valueRep": {
+          "data": "5622652450",
+          "typeId": 0,
+          "payload": "5622652450",
+          "isArray": false,
+          "isInlined": false,
+          "isCompressed": false
+        },
+        "value": {
+          "hasValue": true,
+          "needsValueReader": true,
+          "valueRep": {
+            "data": "5622652450",
+            "typeId": 0,
+            "payload": "5622652450",
+            "isArray": false,
+            "isInlined": false,
+            "isCompressed": false
+          }
+        }
+      },
+      {
+        "index": 5,
+        "token": 0,
+        "tokenName": "C",
+        "valueRep": {
+          "data": "4575657222482927616",
+          "typeId": 128,
+          "payload": "1074503680",
+          "isArray": false,
+          "isInlined": false,
+          "isCompressed": true
+        },
+        "value": {
+          "hasValue": true,
+          "needsValueReader": true,
+          "valueRep": {
+            "data": "4575657222482927616",
+            "typeId": 128,
+            "payload": "1074503680",
+            "isArray": false,
+            "isInlined": false,
+            "isCompressed": true
+          }
+        }
+      },
+      {
+        "index": 6,
+        "token": 1074266112,
+        "tokenName": "<unknown:1074266112>",
+        "valueRep": {
+          "data": "9288705776814592",
+          "typeId": 33,
+          "payload": "31545362944",
+          "isArray": false,
+          "isInlined": false,
+          "isCompressed": false
+        },
+        "value": {
+          "hasValue": true,
+          "needsValueReader": true,
+          "valueRep": {
+            "data": "9288705776814592",
+            "typeId": 33,
+            "payload": "31545362944",
+            "isArray": false,
+            "isInlined": false,
+            "isCompressed": false
+          }
+        }
+      },
+      {
+        "index": 7,
+        "token": 1342178857,
+        "tokenName": "<unknown:1342178857>",
+        "valueRep": {
+          "data": "8088477026475837197",
+          "typeId": 64,
+          "payload": "12095718426381",
+          "isArray": false,
+          "isInlined": true,
+          "isCompressed": true
+        },
+        "value": {
+          "hasValue": true,
+          "needsValueReader": true,
+          "valueRep": {
+            "data": "8088477026475837197",
+            "typeId": 64,
+            "payload": "12095718426381",
+            "isArray": false,
+            "isInlined": true,
+            "isCompressed": true
+          }
+        }
+      },
+      {
+        "index": 8,
+        "token": 691208200,
+        "tokenName": "<unknown:691208200>",
+        "valueRep": {
+          "data": "10106089868901222161",
+          "typeId": 64,
+          "payload": "12305081829137",
+          "isArray": true,
+          "isInlined": false,
+          "isCompressed": false
+        },
+        "value": {
+          "hasValue": true,
+          "needsValueReader": true,
+          "valueRep": {
+            "data": "10106089868901222161",
+            "typeId": 64,
+            "payload": "12305081829137",
+            "isArray": true,
+            "isInlined": false,
+            "isCompressed": false
+          }
+        }
+      },
+      {
+        "index": 9,
+        "token": 691208200,
+        "tokenName": "<unknown:691208200>",
+        "valueRep": {
+          "data": "13564854382721767697",
+          "typeId": 64,
+          "payload": "12305081833745",
+          "isArray": true,
+          "isInlined": false,
+          "isCompressed": true
+        },
+        "value": {
+          "hasValue": true,
+          "needsValueReader": true,
+          "valueRep": {
+            "data": "13564854382721767697",
+            "typeId": 64,
+            "payload": "12305081833745",
+            "isArray": true,
+            "isInlined": false,
+            "isCompressed": true
+          }
+        }
+      },
+      {
+        "index": 10,
+        "token": 691208200,
+        "tokenName": "<unknown:691208200>",
+        "valueRep": {
+          "data": "17311849272694022673",
+          "typeId": 64,
+          "payload": "12305081836049",
+          "isArray": true,
+          "isInlined": true,
+          "isCompressed": true
+        },
+        "value": {
+          "hasValue": true,
+          "needsValueReader": true,
+          "valueRep": {
+            "data": "17311849272694022673",
+            "typeId": 64,
+            "payload": "12305081836049",
+            "isArray": true,
+            "isInlined": true,
+            "isCompressed": true
+          }
+        }
+      },
+      {
+        "index": 11,
+        "token": 692060168,
+        "tokenName": "<unknown:692060168>",
+        "valueRep": {
+          "data": "4827866664628989952",
+          "typeId": 0,
+          "payload": "7864087818240",
+          "isArray": false,
+          "isInlined": true,
+          "isCompressed": false
+        },
+        "value": {
+          "hasValue": true,
+          "needsValueReader": true,
+          "valueRep": {
+            "data": "4827866664628989952",
+            "typeId": 0,
+            "payload": "7864087818240",
+            "isArray": false,
+            "isInlined": true,
+            "isCompressed": false
+          }
+        }
+      },
+      {
+        "index": 12,
+        "token": 339741440,
+        "tokenName": "<unknown:339741440>",
+        "valueRep": {
+          "data": "3175882266011435016",
+          "typeId": 19,
+          "payload": "103785103368",
+          "isArray": false,
+          "isInlined": false,
+          "isCompressed": true
+        },
+        "value": {
+          "hasValue": true,
+          "needsValueReader": true,
+          "valueRep": {
+            "data": "3175882266011435016",
+            "typeId": 19,
+            "payload": "103785103368",
+            "isArray": false,
+            "isInlined": false,
+            "isCompressed": true
+          }
+        }
+      },
+      {
+        "index": 13,
+        "token": 789774352,
+        "tokenName": "<unknown:789774352>",
+        "valueRep": {
+          "data": "4557476036018192",
+          "typeId": 16,
+          "payload": "53876408647696",
+          "isArray": false,
+          "isInlined": false,
+          "isCompressed": false
+        },
+        "value": {
+          "hasValue": true,
+          "needsValueReader": true,
+          "valueRep": {
+            "data": "4557476036018192",
+            "typeId": 16,
+            "payload": "53876408647696",
+            "isArray": false,
+            "isInlined": false,
+            "isCompressed": false
+          }
+        }
+      },
+      {
+        "index": 14,
+        "token": 587206401,
+        "tokenName": "<unknown:587206401>",
+        "valueRep": {
+          "data": "5769392701577363763",
+          "typeId": 17,
+          "payload": "103939047731",
+          "isArray": false,
+          "isInlined": true,
+          "isCompressed": false
+        },
+        "value": {
+          "hasValue": true,
+          "needsValueReader": true,
+          "valueRep": {
+            "data": "5769392701577363763",
+            "typeId": 17,
+            "payload": "103939047731",
+            "isArray": false,
+            "isInlined": true,
+            "isCompressed": false
+          }
+        }
+      },
+      {
+        "index": 15,
+        "token": 53608465,
+        "tokenName": "<unknown:53608465>",
+        "valueRep": {
+          "data": "72568173535267",
+          "typeId": 0,
+          "payload": "72568173535267",
+          "isArray": false,
+          "isInlined": false,
+          "isCompressed": false
+        },
+        "value": {
+          "hasValue": true,
+          "needsValueReader": true,
+          "valueRep": {
+            "data": "72568173535267",
+            "typeId": 0,
+            "payload": "72568173535267",
+            "isArray": false,
+            "isInlined": false,
+            "isCompressed": false
+          }
+        }
+      },
+      {
+        "index": 16,
+        "token": 15745608,
+        "tokenName": "<unknown:15745608>",
+        "valueRep": {
+          "data": "519391735940383232",
+          "typeId": 53,
+          "payload": "70403909222912",
+          "isArray": false,
+          "isInlined": false,
+          "isCompressed": false
+        },
+        "value": {
+          "hasValue": true,
+          "needsValueReader": true,
+          "valueRep": {
+            "data": "519391735940383232",
+            "typeId": 53,
+            "payload": "70403909222912",
+            "isArray": false,
+            "isInlined": false,
+            "isCompressed": false
+          }
+        }
+      },
+      {
+        "index": 17,
+        "token": 184566528,
+        "tokenName": "<unknown:184566528>",
+        "valueRep": {
+          "data": "4684026324393146131",
+          "typeId": 1,
+          "payload": "1236951119635",
+          "isArray": false,
+          "isInlined": true,
+          "isCompressed": false
+        },
+        "value": {
+          "hasValue": true,
+          "needsValueReader": true,
+          "valueRep": {
+            "data": "4684026324393146131",
+            "typeId": 1,
+            "payload": "1236951119635",
+            "isArray": false,
+            "isInlined": true,
+            "isCompressed": false
+          }
+        }
+      },
+      {
+        "index": 18,
+        "token": 1075326976,
+        "tokenName": "<unknown:1075326976>",
+        "valueRep": {
+          "data": "3477095571678828544",
+          "typeId": 65,
+          "payload": "35184372094976",
+          "isArray": false,
+          "isInlined": false,
+          "isCompressed": true
+        },
+        "value": {
+          "hasValue": true,
+          "needsValueReader": true,
+          "valueRep": {
+            "data": "3477095571678828544",
+            "typeId": 65,
+            "payload": "35184372094976",
+            "isArray": false,
+            "isInlined": false,
+            "isCompressed": true
+          }
+        }
+      },
+      {
+        "index": 19,
+        "token": 3436004096,
+        "tokenName": "<unknown:3436004096>",
+        "valueRep": {
+          "data": "1225339755639094800",
+          "typeId": 1,
+          "payload": "79182017609232",
+          "isArray": false,
+          "isInlined": false,
+          "isCompressed": false
+        },
+        "value": {
+          "hasValue": true,
+          "needsValueReader": true,
+          "valueRep": {
+            "data": "1225339755639094800",
+            "typeId": 1,
+            "payload": "79182017609232",
+            "isArray": false,
+            "isInlined": false,
+            "isCompressed": false
+          }
+        }
+      },
+      {
+        "index": 20,
+        "token": 855648428,
+        "tokenName": "<unknown:855648428>",
+        "valueRep": {
+          "data": "9230183511669870848",
+          "typeId": 24,
+          "payload": "56075374039296",
+          "isArray": true,
+          "isInlined": false,
+          "isCompressed": false
+        },
+        "value": {
+          "hasValue": true,
+          "needsValueReader": true,
+          "valueRep": {
+            "data": "9230183511669870848",
+            "typeId": 24,
+            "payload": "56075374039296",
+            "isArray": true,
+            "isInlined": false,
+            "isCompressed": false
+          }
+        }
+      },
+      {
+        "index": 21,
+        "token": 285216826,
+        "tokenName": "<unknown:285216826>",
+        "valueRep": {
+          "data": "1222745990801195042",
+          "typeId": 248,
+          "payload": "18691970105378",
+          "isArray": false,
+          "isInlined": false,
+          "isCompressed": false
+        },
+        "value": {
+          "hasValue": true,
+          "needsValueReader": true,
+          "valueRep": {
+            "data": "1222745990801195042",
+            "typeId": 248,
+            "payload": "18691970105378",
+            "isArray": false,
+            "isInlined": false,
+            "isCompressed": false
+          }
+        }
+      },
+      {
+        "index": 22,
+        "token": 2149069568,
+        "tokenName": "<unknown:2149069568>",
+        "valueRep": {
+          "data": "114019424520438624",
+          "typeId": 149,
+          "payload": "22058952622944",
+          "isArray": false,
+          "isInlined": false,
+          "isCompressed": false
+        },
+        "value": {
+          "hasValue": true,
+          "needsValueReader": true,
+          "valueRep": {
+            "data": "114019424520438624",
+            "typeId": 149,
+            "payload": "22058952622944",
+            "isArray": false,
+            "isInlined": false,
+            "isCompressed": false
+          }
+        }
+      },
+      {
+        "index": 23,
+        "token": 33591297,
+        "tokenName": "<unknown:33591297>",
+        "valueRep": {
+          "data": "1747699023141277952",
+          "typeId": 65,
+          "payload": "20892744814848",
+          "isArray": false,
+          "isInlined": false,
+          "isCompressed": false
+        },
+        "value": {
+          "hasValue": true,
+          "needsValueReader": true,
+          "valueRep": {
+            "data": "1747699023141277952",
+            "typeId": 65,
+            "payload": "20892744814848",
+            "isArray": false,
+            "isInlined": false,
+            "isCompressed": false
+          }
+        }
+      },
+      {
+        "index": 24,
+        "token": 69738496,
+        "tokenName": "<unknown:69738496>",
+        "valueRep": {
+          "data": "12123706908609675520",
+          "typeId": 64,
+          "payload": "16711728300288",
+          "isArray": true,
+          "isInlined": false,
+          "isCompressed": true
+        },
+        "value": {
+          "hasValue": true,
+          "needsValueReader": true,
+          "valueRep": {
+            "data": "12123706908609675520",
+            "typeId": 64,
+            "payload": "16711728300288",
+            "isArray": true,
+            "isInlined": false,
+            "isCompressed": true
+          }
+        }
+      },
+      {
+        "index": 25,
+        "token": 1108344848,
+        "tokenName": "<unknown:1108344848>",
+        "valueRep": {
+          "data": "86523915",
+          "typeId": 0,
+          "payload": "86523915",
+          "isArray": false,
+          "isInlined": false,
+          "isCompressed": false
+        },
+        "value": {
+          "hasValue": true,
+          "needsValueReader": true,
+          "valueRep": {
+            "data": "86523915",
+            "typeId": 0,
+            "payload": "86523915",
+            "isArray": false,
+            "isInlined": false,
+            "isCompressed": false
+          }
+        }
+      },
+      {
+        "index": 26,
+        "token": 8552459,
+        "tokenName": "<unknown:8552459>",
+        "valueRep": {
+          "data": "9437184",
+          "typeId": 0,
+          "payload": "9437184",
+          "isArray": false,
+          "isInlined": false,
+          "isCompressed": false
+        },
+        "value": {
+          "hasValue": true,
+          "needsValueReader": true,
+          "valueRep": {
+            "data": "9437184",
+            "typeId": 0,
+            "payload": "9437184",
+            "isArray": false,
+            "isInlined": false,
+            "isCompressed": false
+          }
+        }
+      }
+    ],
+    "specs": [
+      {
+        "index": 0,
+        "path": 41,
+        "pathString": "<path:41>",
+        "fieldSet": 0,
+        "specType": 20,
+        "fields": [
+          0,
+          144,
+          0,
+          17362944,
+          16777216,
+          1410618373,
+          1430605905,
+          1347503425,
+          1431651668,
+          87317,
+          1431331824,
+          1431655761,
+          89478469,
+          4161141760,
+          100008965,
+          117830916,
+          4060546547,
+          99617285,
+          218492684,
+          3926918636,
+          3843680279,
+          35447580,
+          534781922,
+          52420354,
+          183968734,
+          635053532,
+          153082114,
+          3607764952,
+          534121247,
+          303748364,
+          600911316,
+          3710111757,
+          4231253553,
+          304335877,
+          485958603,
+          3373801418,
+          37275448,
+          3305322694,
+          3273907772,
+          41,
+          0,
+          41,
+          0,
+          50,
+          0,
+          18935808,
+          1358954496,
+          1096094741,
+          1364546884,
+          570425685,
+          67689475,
+          568394255,
+          201841923,
+          551879171,
+          34397699,
+          351207938,
+          33687789,
+          3474434,
+          0,
+          4026531840,
+          4294967075,
+          1427445247,
+          1163216197,
+          22107477,
+          401212929,
+          83756513,
+          3894476541,
+          4228306457,
+          4277994498,
+          3541625127,
+          821887233,
+          2907811869,
+          654574078,
+          0,
+          0,
+          5616,
+          85262336,
+          1073825088,
+          22102341,
+          4111269633,
+          251527679,
+          4261543924,
+          33552394,
+          4278256126,
+          2752001,
+          0,
+          1310720,
+          0,
+          1073741824,
+          1,
+          11534340,
+          344064,
+          33554432,
+          2425599,
+          0,
+          4060086272,
+          772,
+          341136640,
+          1075056641,
+          20993092,
+          67437824,
+          79691778,
+          68219652,
+          3439592450,
+          385876022,
+          0,
+          0,
+          1520,
+          327680,
+          16,
+          20,
+          4227794688,
+          456967,
+          0,
+          1330905088,
+          1397638475,
+          0,
+          0,
+          87293952,
+          0,
+          42663936,
+          0,
+          1414725632,
+          1196312914,
+          83,
+          0,
+          129957888,
+          0,
+          786432,
+          0
+        ]
+      },
+      {
+        "index": 1,
+        "path": 81920,
+        "pathString": "<path:81920>",
+        "fieldSet": 262144,
+        "specType": 1073742000,
+        "fields": []
+      },
+      {
+        "index": 2,
+        "path": 50266624,
+        "pathString": "<path:50266624>",
+        "fieldSet": 37,
+        "specType": 0,
+        "fields": []
+      },
+      {
+        "index": 3,
+        "path": 1426063360,
+        "pathString": "<path:1426063360>",
+        "fieldSet": 268506197,
+        "specType": 1413758996,
+        "fields": []
+      },
+      {
+        "index": 4,
+        "path": 132101,
+        "pathString": "<path:132101>",
+        "fieldSet": 4077126848,
+        "specType": 67240976,
+        "fields": []
+      },
+      {
+        "index": 5,
+        "path": 5888,
+        "pathString": "<path:5888>",
+        "fieldSet": 0,
+        "specType": 99614720,
+        "fields": [
+          0,
+          144,
+          0,
+          17362944,
+          16777216,
+          1410618373,
+          1430605905,
+          1347503425,
+          1431651668,
+          87317,
+          1431331824,
+          1431655761,
+          89478469,
+          4161141760,
+          100008965,
+          117830916,
+          4060546547,
+          99617285,
+          218492684,
+          3926918636,
+          3843680279,
+          35447580,
+          534781922,
+          52420354,
+          183968734,
+          635053532,
+          153082114,
+          3607764952,
+          534121247,
+          303748364,
+          600911316,
+          3710111757,
+          4231253553,
+          304335877,
+          485958603,
+          3373801418,
+          37275448,
+          3305322694,
+          3273907772,
+          41,
+          0,
+          41,
+          0,
+          50,
+          0,
+          18935808,
+          1358954496,
+          1096094741,
+          1364546884,
+          570425685,
+          67689475,
+          568394255,
+          201841923,
+          551879171,
+          34397699,
+          351207938,
+          33687789,
+          3474434,
+          0,
+          4026531840,
+          4294967075,
+          1427445247,
+          1163216197,
+          22107477,
+          401212929,
+          83756513,
+          3894476541,
+          4228306457,
+          4277994498,
+          3541625127,
+          821887233,
+          2907811869,
+          654574078,
+          0,
+          0,
+          5616,
+          85262336,
+          1073825088,
+          22102341,
+          4111269633,
+          251527679,
+          4261543924,
+          33552394,
+          4278256126,
+          2752001,
+          0,
+          1310720,
+          0,
+          1073741824,
+          1,
+          11534340,
+          344064,
+          33554432,
+          2425599,
+          0,
+          4060086272,
+          772,
+          341136640,
+          1075056641,
+          20993092,
+          67437824,
+          79691778,
+          68219652,
+          3439592450,
+          385876022,
+          0,
+          0,
+          1520,
+          327680,
+          16,
+          20,
+          4227794688,
+          456967,
+          0,
+          1330905088,
+          1397638475,
+          0,
+          0,
+          87293952,
+          0,
+          42663936,
+          0,
+          1414725632,
+          1196312914,
+          83,
+          0,
+          129957888,
+          0,
+          786432,
+          0
+        ]
+      },
+      {
+        "index": 6,
+        "path": 1048581,
+        "pathString": "<path:1048581>",
+        "fieldSet": 1310720,
+        "specType": 117440512,
+        "fields": []
+      }
+    ],
+    "paths": [
+      {
+        "index": 0,
+        "isAbsolute": true,
+        "elements": [
+          "C",
+          "intensity\u0011",
+          "C",
+          "tinfo:idF",
+          "C"
+        ],
+        "pathString": "/C/intensity\u0011/C/tinfo:idF/C"
+      },
+      {
+        "index": 1,
+        "isAbsolute": false,
+        "elements": [],
+        "pathString": ""
+      },
+      {
+        "index": 2,
+        "isAbsolute": true,
+        "elements": [],
+        "pathString": "/"
+      },
+      {
+        "index": 3,
+        "isAbsolute": false,
+        "elements": [],
+        "pathString": ""
+      },
+      {
+        "index": 4,
+        "isAbsolute": true,
+        "elements": [],
+        "pathString": "/"
+      },
+      {
+        "index": 5,
+        "isAbsolute": true,
+        "elements": [],
+        "pathString": "/"
+      },
+      {
+        "index": 6,
+        "isAbsolute": true,
+        "elements": [],
+        "pathString": "/"
+      },
+      {
+        "index": 7,
+        "isAbsolute": true,
+        "elements": [],
+        "pathString": "/"
+      },
+      {
+        "index": 8,
+        "isAbsolute": true,
+        "elements": [],
+        "pathString": "/"
+      },
+      {
+        "index": 9,
+        "isAbsolute": true,
+        "elements": [],
+        "pathString": "/"
+      },
+      {
+        "index": 10,
+        "isAbsolute": false,
+        "elements": [],
+        "pathString": ""
+      },
+      {
+        "index": 11,
+        "isAbsolute": true,
+        "elements": [],
+        "pathString": "/"
+      },
+      {
+        "index": 12,
+        "isAbsolute": false,
+        "elements": [],
+        "pathString": ""
+      },
+      {
+        "index": 13,
+        "isAbsolute": false,
+        "elements": [],
+        "pathString": ""
+      },
+      {
+        "index": 14,
+        "isAbsolute": false,
+        "elements": [],
+        "pathString": ""
+      },
+      {
+        "index": 15,
+        "isAbsolute": true,
+        "elements": [],
+        "pathString": "/"
+      },
+      {
+        "index": 16,
+        "isAbsolute": true,
+        "elements": [],
+        "pathString": "/"
+      },
+      {
+        "index": 17,
+        "isAbsolute": true,
+        "elements": [],
+        "pathString": "/"
+      },
+      {
+        "index": 18,
+        "isAbsolute": true,
+        "elements": [],
+        "pathString": "/"
+      },
+      {
+        "index": 19,
+        "isAbsolute": true,
+        "elements": [],
+        "pathString": "/"
+      },
+      {
+        "index": 20,
+        "isAbsolute": true,
+        "elements": [],
+        "pathString": "/"
+      },
+      {
+        "index": 21,
+        "isAbsolute": true,
+        "elements": [],
+        "pathString": "/"
+      },
+      {
+        "index": 22,
+        "isAbsolute": true,
+        "elements": [],
+        "pathString": "/"
+      },
+      {
+        "index": 23,
+        "isAbsolute": false,
+        "elements": [],
+        "pathString": ""
+      },
+      {
+        "index": 24,
+        "isAbsolute": true,
+        "elements": [],
+        "pathString": "/"
+      },
+      {
+        "index": 25,
+        "isAbsolute": true,
+        "elements": [],
+        "pathString": "/"
+      },
+      {
+        "index": 26,
+        "isAbsolute": true,
+        "elements": [],
+        "pathString": "/"
+      },
+      {
+        "index": 27,
+        "isAbsolute": false,
+        "elements": [],
+        "pathString": ""
+      },
+      {
+        "index": 28,
+        "isAbsolute": false,
+        "elements": [],
+        "pathString": ""
+      },
+      {
+        "index": 29,
+        "isAbsolute": false,
+        "elements": [],
+        "pathString": ""
+      },
+      {
+        "index": 30,
+        "isAbsolute": false,
+        "elements": [],
+        "pathString": ""
+      },
+      {
+        "index": 31,
+        "isAbsolute": false,
+        "elements": [],
+        "pathString": ""
+      },
+      {
+        "index": 32,
+        "isAbsolute": false,
+        "elements": [],
+        "pathString": ""
+      },
+      {
+        "index": 33,
+        "isAbsolute": true,
+        "elements": [],
+        "pathString": "/"
+      },
+      {
+        "index": 34,
+        "isAbsolute": true,
+        "elements": [],
+        "pathString": "/"
+      },
+      {
+        "index": 35,
+        "isAbsolute": true,
+        "elements": [],
+        "pathString": "/"
+      },
+      {
+        "index": 36,
+        "isAbsolute": false,
+        "elements": [],
+        "pathString": ""
+      },
+      {
+        "index": 37,
+        "isAbsolute": false,
+        "elements": [],
+        "pathString": ""
+      },
+      {
+        "index": 38,
+        "isAbsolute": false,
+        "elements": [],
+        "pathString": ""
+      },
+      {
+        "index": 39,
+        "isAbsolute": true,
+        "elements": [],
+        "pathString": "/"
+      }
+    ]
+  },
+  "timeSamples": {},
+  "statistics": {
+    "generatedAt": "2025-08-16T17:45:30.060Z",
+    "conversionOptions": {
+      "includeMetadata": true,
+      "includeTimeSamples": true,
+      "preserveTypes": true,
+      "compactArrays": true,
+      "maxArrayLength": 10,
+      "maxDepth": 20,
+      "indent": 2,
+      "sortKeys": false,
+      "defaultSpecifier": "def",
+      "defaultVariability": "varying"
+    },
+    "tokenCount": 73,
+    "stringCount": 1,
+    "fieldCount": 27,
+    "specCount": 7,
+    "pathCount": 40,
+    "timeSampleCount": 0
+  }
+}

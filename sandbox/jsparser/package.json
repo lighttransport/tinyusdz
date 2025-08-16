@@ -1,0 +1,52 @@
+{
+  "name": "usd-js-parser",
+  "version": "1.0.0",
+  "description": "Pure JavaScript USD parser supporting both USDA (ASCII) and USDC (binary) formats based on TinyUSDZ",
+  "main": "usda-parser.js",
+  "scripts": {
+    "test": "node test.js && node usdc-test.js && node lz4-test.js",
+    "test-usda": "node test.js",
+    "test-usdc": "node usdc-test.js",
+    "test-lz4": "node lz4-test.js",
+    "example": "node example.js",
+    "example-usdc": "node usdc-example.js"
+  },
+  "keywords": [
+    "usd",
+    "usda",
+    "usdc",
+    "crate",
+    "parser",
+    "pixar",
+    "3d",
+    "graphics",
+    "binary",
+    "ascii",
+    "tinyusdz"
+  ],
+  "author": "TinyUSDZ Project",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=12.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lighttransport/tinyusdz.git",
+    "directory": "sandbox/jsparser"
+  },
+  "files": [
+    "usda-lexer.js",
+    "usda-parser.js",
+    "usdc-parser.js",
+    "usdc-value-reader.js",
+    "binary-reader.js",
+    "lz4-decoder.js",
+    "test.js",
+    "usdc-test.js",
+    "lz4-test.js",
+    "example.js",
+    "usdc-example.js",
+    "README.md",
+    "README-USDC.md"
+  ]
+}
