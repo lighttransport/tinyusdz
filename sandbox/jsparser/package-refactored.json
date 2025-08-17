@@ -1,0 +1,121 @@
+{
+  "name": "@tinyusdz/js-parser",
+  "version": "2.0.0",
+  "description": "Pure JavaScript USD parser with USDA and USDC support - Refactored Edition",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./core": "./src/core/usd-parser.js",
+    "./types": "./src/types/index.js",
+    "./utils": "./src/utils/index.js",
+    "./parsers": "./src/parsers/index.js"
+  },
+  "files": [
+    "src/",
+    "tests/",
+    "examples/",
+    "docs/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node tests/refactored-test.js",
+    "test:legacy": "node test.js && node usdc-test.js && node usd-json-test.js",
+    "test:all": "npm run test && npm run test:legacy",
+    "example": "node examples/basic-usage.js",
+    "example:legacy": "node example.js",
+    "lint": "eslint src/ tests/ examples/",
+    "format": "prettier --write src/ tests/ examples/",
+    "docs": "jsdoc -c jsdoc.conf.js",
+    "build": "rollup -c rollup.config.js",
+    "build:browser": "rollup -c rollup.config.browser.js",
+    "dev": "rollup -c rollup.config.js --watch",
+    "clean": "rm -rf dist/ docs/api/",
+    "prepublishOnly": "npm run test && npm run build"
+  },
+  "keywords": [
+    "usd",
+    "universal-scene-description",
+    "usda",
+    "usdc",
+    "usdz",
+    "3d",
+    "graphics",
+    "parser",
+    "javascript",
+    "pixar",
+    "animation",
+    "scene-graph",
+    "tinyusdz"
+  ],
+  "author": "TinyUSDZ Contributors",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lighttransport/tinyusdz.git",
+    "directory": "sandbox/jsparser"
+  },
+  "homepage": "https://github.com/lighttransport/tinyusdz/tree/main/sandbox/jsparser",
+  "bugs": {
+    "url": "https://github.com/lighttransport/tinyusdz/issues"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "devDependencies": {
+    "@rollup/plugin-node-resolve": "^15.0.0",
+    "@rollup/plugin-terser": "^0.4.0",
+    "eslint": "^8.0.0",
+    "jsdoc": "^4.0.0",
+    "prettier": "^3.0.0",
+    "rollup": "^3.0.0"
+  },
+  "browserslist": [
+    "defaults",
+    "not IE 11"
+  ],
+  "peerDependencies": {},
+  "optionalDependencies": {},
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/lighttransport"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "moduleDirectories": [
+    "src"
+  ],
+  "directories": {
+    "test": "tests",
+    "example": "examples",
+    "doc": "docs"
+  },
+  "config": {
+    "commitizen": {
+      "path": "cz-conventional-changelog"
+    }
+  },
+  "prettier": {
+    "semi": true,
+    "singleQuote": true,
+    "tabWidth": 2,
+    "trailingComma": "es5"
+  },
+  "eslintConfig": {
+    "env": {
+      "es6": true,
+      "node": true,
+      "browser": true
+    },
+    "parserOptions": {
+      "ecmaVersion": 2022,
+      "sourceType": "module"
+    },
+    "rules": {
+      "no-unused-vars": "warn",
+      "no-console": "off"
+    }
+  }
+}
