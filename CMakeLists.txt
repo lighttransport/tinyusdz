@@ -85,6 +85,14 @@ option(TINYUSDZ_WITH_QJS
        "Build with QuickJS(JavaScript) support."
        OFF)
 
+option(TINYUSDZ_WITH_GEOGRAM
+       "Build with Geogram library support for advanced geometry processing."
+       OFF)
+
+option(TINYUSDZ_WITH_WAMR
+       "Build with WAMR (WebAssembly Micro Runtime) support for executing WASM in Tydra."
+       OFF)
+
 
 if(MSVC)
   # it looks it is hard to disable C++ exception for MSVC, so enable exception by default
@@ -464,6 +472,13 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/diff-and-compare.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/diff-and-compare.hh
         )
+    
+    if(TINYUSDZ_WITH_WAMR)
+        list(APPEND TINYUSDZ_SOURCES
+            ${PROJECT_SOURCE_DIR}/src/tydra/wasm-runtime.cc
+            ${PROJECT_SOURCE_DIR}/src/tydra/wasm-runtime.hh
+        )
+    endif(TINYUSDZ_WITH_WAMR)
 endif (TINYUSDZ_WITH_TYDRA)
 
 if(TINYUSDZ_WITH_PXR_COMPAT_API)
@@ -723,6 +738,115 @@ if(TINYUSDZ_WITH_OPENSUBDIV)
   list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/subdiv.cc)
 
 endif(TINYUSDZ_WITH_OPENSUBDIV)
+
+if(TINYUSDZ_WITH_GEOGRAM)
+  # Geogram basic core files (header-only minimal set)
+  set(GEOGRAM_BASIC_SOURCES
+    # Start with empty list - headers are included via include directories
+  )
+
+  # For now, just provide headers for Geogram integration
+  # Advanced functionality can be added later as needed
+  set(GEOGRAM_POINTS_SOURCES
+    # Core geometry processing headers are available
+  )
+
+  set(GEOGRAM_DELAUNAY_SOURCES
+    # Core triangulation headers are available
+  )
+
+  # Minimal triangle library (C code, no exceptions)
+  set(GEOGRAM_THIRD_PARTY_SOURCES
+    ${PROJECT_SOURCE_DIR}/src/external/geogram/geogram/third_party/triangle/triangle.c
+  )
+
+  # Combine all Geogram sources
+  set(GEOGRAM_ALL_SOURCES
+    ${GEOGRAM_BASIC_SOURCES}
+    ${GEOGRAM_POINTS_SOURCES}
+    ${GEOGRAM_DELAUNAY_SOURCES}
+    ${GEOGRAM_THIRD_PARTY_SOURCES}
+  )
+
+  # Add Geogram sources to TinyUSDZ
+  list(APPEND TINYUSDZ_DEP_SOURCES ${GEOGRAM_ALL_SOURCES})
+
+  # Add Geogram include directory
+  set(GEOGRAM_INCLUDE_DIR ${PROJECT_SOURCE_DIR}/src/external/geogram)
+
+  # Set Geogram-specific compile properties
+  set_source_files_properties(${GEOGRAM_ALL_SOURCES}
+                              PROPERTIES COMPILE_DEFINITIONS "GEO_STATIC_LIBS;GEOGRAM_WITH_LEGACY_NUMERICS")
+
+endif(TINYUSDZ_WITH_GEOGRAM)
+
+if(TINYUSDZ_WITH_WAMR)
+  # WAMR core sources (minimal runtime for WebAssembly execution)
+  set(WAMR_CORE_SOURCES
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/iwasm/common/wasm_runtime_common.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/iwasm/common/wasm_native.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/iwasm/common/wasm_exec_env.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/iwasm/common/wasm_memory.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/iwasm/common/wasm_c_api.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/iwasm/interpreter/wasm_loader.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/iwasm/interpreter/wasm_runtime.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/iwasm/interpreter/wasm_interp_classic.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/iwasm/libraries/libc-builtin/libc_builtin_wrapper.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/mem-alloc/mem_alloc.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/mem-alloc/ems/ems_alloc.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/mem-alloc/ems/ems_hmu.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/mem-alloc/ems/ems_kfc.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/utils/bh_assert.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/utils/bh_common.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/utils/bh_hashmap.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/utils/bh_list.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/utils/bh_log.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/utils/bh_queue.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/utils/bh_vector.c
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/utils/runtime_timer.c
+  )
+
+  # Add WAMR platform-specific sources
+  if(WIN32)
+    list(APPEND WAMR_CORE_SOURCES
+      ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/platform/windows/platform_init.c
+    )
+  else()
+    list(APPEND WAMR_CORE_SOURCES
+      ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/platform/linux/platform_init.c
+    )
+  endif()
+
+  # Add WAMR sources to TinyUSDZ
+  list(APPEND TINYUSDZ_DEP_SOURCES ${WAMR_CORE_SOURCES})
+
+  # Add WAMR include directories
+  set(WAMR_INCLUDE_DIRS
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/iwasm/include
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/iwasm/interpreter
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/iwasm/common
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/utils
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/mem-alloc
+    ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/platform/include
+  )
+  
+  # Add platform-specific include directory
+  if(WIN32)
+    list(APPEND WAMR_INCLUDE_DIRS ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/platform/windows)
+  else()
+    list(APPEND WAMR_INCLUDE_DIRS ${PROJECT_SOURCE_DIR}/src/external/wamr/core/shared/platform/linux)
+  endif()
+
+  # Set WAMR-specific compile definitions
+  if(WIN32)
+    set_source_files_properties(${WAMR_CORE_SOURCES}
+                                PROPERTIES COMPILE_DEFINITIONS "BH_PLATFORM_WINDOWS=1")
+  else()
+    set_source_files_properties(${WAMR_CORE_SOURCES}
+                                PROPERTIES COMPILE_DEFINITIONS "BH_PLATFORM_LINUX=1")
+  endif()
+
+endif(TINYUSDZ_WITH_WAMR)
 
 if(TINYUSDZ_WITH_TIFF OR TINYUSDZ_WITH_EXR)
   if(TINYUSDZ_USE_SYSTEM_ZLIB)
@@ -1176,6 +1300,31 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_WITH_TYDRA")
   endif(TINYUSDZ_WITH_TYDRA)
+
+  if(TINYUSDZ_WITH_GEOGRAM)
+    target_include_directories(${TINYUSDZ_LIB_TARGET} PRIVATE ${GEOGRAM_INCLUDE_DIR})
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_GEOGRAM")
+    # Geogram-specific definitions
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "GEO_STATIC_LIBS")
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "GEOGRAM_WITH_LEGACY_NUMERICS")
+  endif(TINYUSDZ_WITH_GEOGRAM)
+
+  if(TINYUSDZ_WITH_WAMR)
+    target_include_directories(${TINYUSDZ_LIB_TARGET} PRIVATE ${WAMR_INCLUDE_DIRS})
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_WAMR")
+    # WAMR-specific definitions
+    if(WIN32)
+      target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                                 PRIVATE "BH_PLATFORM_WINDOWS=1")
+    else()
+      target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                                 PRIVATE "BH_PLATFORM_LINUX=1")
+    endif()
+  endif(TINYUSDZ_WITH_WAMR)
 
   if(NOT TINYUSDZ_CXX_EXCEPTIONS)
     if(MSVC)
