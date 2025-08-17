@@ -571,3 +571,4 @@ Some helper code is licensed under MIT license.
 * yyjson: MIT license. https://github.com/ibireme/yyjson
 * civetweb: MIT license. https://github.com/civetweb/civetweb
 * libsais: Apache 2.0 license. https://github.com/IlyaGrebnov/libsais
+* quickjs-ng: MIT license: https://github.com/quickjs-ng/quickjs

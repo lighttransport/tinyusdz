@@ -81,6 +81,9 @@ option(TINYUSDZ_WITH_TYDRA
 option(TINYUSDZ_WITH_MCP_SERVER
        "Build with C++ MCP server(http server) support."
        OFF)
+option(TINYUSDZ_WITH_QJS
+       "Build with QuickJS(JavaScript) support."
+       OFF)
 
 
 if(MSVC)
@@ -581,6 +584,17 @@ if(TINYUSDZ_WITH_MCP_SERVER)
   )
 endif(TINYUSDZ_WITH_MCP_SERVER)
 
+if(TINYUSDZ_WITH_QJS)
+
+  list(APPEND TINYUSDZ_DEP_SOURCES
+       ${PROJECT_SOURCE_DIR}/src/external/quickjs-ng/cutils.c
+       ${PROJECT_SOURCE_DIR}/src/external/quickjs-ng/libregexp.c
+       ${PROJECT_SOURCE_DIR}/src/external/quickjs-ng/libunicode.c
+       ${PROJECT_SOURCE_DIR}/src/external/quickjs-ng/quickjs.c
+       ${PROJECT_SOURCE_DIR}/src/external/quickjs-ng/xsum.c
+  )
+endif(TINYUSDZ_WITH_QJS)
+
 if(TINYUSDZ_WITH_OPENSUBDIV)
 
   # https://stackoverflow.com/questions/41700463/push-pop-a-cmake-variable
@@ -1014,6 +1028,18 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
     endif()
   endif()
 
+  # Set a 8MB default stack size on Windows.
+  # It defaults to 1MB on MSVC, which is the same as our current JS stack size,
+  # so it will overflow and crash otherwise.
+  # On MinGW it defaults to 2MB.
+  if (TINYUSDZ_WITH_QJS) 
+    if(WIN32)
+       if(MSVC)
+           target_compile_options(${TINYUSDZ_LIB_TARGET} PRIVATE /STACK:8388608)
+       endif()
+    endif()
+  endif()
+
   if(TINYUSDZ_DEBUG_PRINT)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_DEBUG_PRINT")
@@ -1132,6 +1158,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "OPENSSL_API_3_0")
   endif(TINYUSDZ_WITH_MCP_SERVER)
+
+  if(TINYUSDZ_WITH_QJS)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_QJS")
+  endif(TINYUSDZ_WITH_QJS)
 
   if(TINYUSDZ_WITH_OPENSUBDIV)
     target_include_directories(${TINYUSDZ_LIB_TARGET} PRIVATE ${osd_DIR})
