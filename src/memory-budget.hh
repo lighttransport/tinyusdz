@@ -118,8 +118,8 @@ class MemoryBudgetGuard {
 
 #define MEMORY_BUDGET_CHECK(manager, bytes, error_tag) \
   do { \
-    auto __guard = MemoryBudgetGuard<bool>(manager, bytes, error_tag); \
-    if (!__guard.IsValid()) { \
+    auto memory_guard = MemoryBudgetGuard<bool>(manager, bytes, error_tag); \
+    if (!memory_guard.IsValid()) { \
       PUSH_ERROR_AND_RETURN_TAG(error_tag, "Reached maximum memory budget"); \
     } \
   } while(0)
