@@ -116,6 +116,7 @@ The library implements multiple security layers:
 - `TINYUSDZ_WITH_TYDRA=ON` - Include Tydra conversion framework (default ON)
 - `TINYUSDZ_WITH_AUDIO=ON` - Support audio file loading (mp3/wav)
 - `TINYUSDZ_WITH_EXR=ON` - Enable EXR/HDR texture support via TinyEXR
+- `TINYUSDZ_WITH_GEOGRAM=ON` - Enable Geogram library for advanced geometry processing
 - `TINYUSDZ_BUILD_TESTS=ON` - Build unit tests
 - `TINYUSDZ_BUILD_EXAMPLES=ON` - Build example applications
 
