@@ -140,12 +140,16 @@ class ParserProfiler {
   std::map<std::string, ParserTimer> timers_;
 };
 
+// Helper macro for variable name concatenation
+#define TINYUSDZ_CONCAT_IMPL(x, y) x##y
+#define TINYUSDZ_CONCAT(x, y) TINYUSDZ_CONCAT_IMPL(x, y)
+
 // Convenience macros for profiling
 #define TINYUSDZ_PROFILE_FUNCTION(parser_name) \
-  tinyusdz::ScopedTimer timer_scope(tinyusdz::ParserProfiler::GetInstance().GetTimer(parser_name), __FUNCTION__)
+  tinyusdz::ScopedTimer TINYUSDZ_CONCAT(timer_scope_, __LINE__)(tinyusdz::ParserProfiler::GetInstance().GetTimer(parser_name), __FUNCTION__)
 
 #define TINYUSDZ_PROFILE_SCOPE(parser_name, scope_name) \
-  tinyusdz::ScopedTimer timer_scope(tinyusdz::ParserProfiler::GetInstance().GetTimer(parser_name), scope_name)
+  tinyusdz::ScopedTimer TINYUSDZ_CONCAT(timer_scope_, __LINE__)(tinyusdz::ParserProfiler::GetInstance().GetTimer(parser_name), scope_name)
 
 #define TINYUSDZ_PROFILE_START(parser_name, operation) \
   if (tinyusdz::ParserProfiler::GetInstance().GetConfig().enable_profiling) { \

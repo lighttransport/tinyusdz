@@ -49,7 +49,7 @@ ParserTimer::Duration ParserTimer::GetAverageTime(const std::string& operation_n
   if (it == timing_data_.end() || it->second.count == 0) {
     return Duration{0};
   }
-  return Duration{it->second.total_time.count() / it->second.count};
+  return Duration{static_cast<uint64_t>(it->second.total_time.count()) / it->second.count};
 }
 
 std::vector<std::string> ParserTimer::GetOperationNames() const {
@@ -85,7 +85,7 @@ std::string ParserTimer::GenerateReport() const {
   }
 
   // Header
-  oss << std::left << std::setw(max_name_width) << "Operation"
+  oss << std::left << std::setw(static_cast<int>(max_name_width)) << "Operation"
       << std::right << std::setw(12) << "Total (ms)"
       << std::setw(10) << "Count"
       << std::setw(12) << "Avg (ms)" << "\n";
@@ -104,10 +104,10 @@ std::string ParserTimer::GenerateReport() const {
     const std::string& name = pair.first;
     const TimingData& data = pair.second;
     
-    double total_ms = data.total_time.count() / 1000000.0;
-    double avg_ms = (data.count > 0) ? total_ms / data.count : 0.0;
+    double total_ms = static_cast<double>(data.total_time.count()) / 1000000.0;
+    double avg_ms = (data.count > 0) ? total_ms / static_cast<double>(data.count) : 0.0;
     
-    oss << std::left << std::setw(max_name_width) << name
+    oss << std::left << std::setw(static_cast<int>(max_name_width)) << name
         << std::right << std::setw(12) << total_ms
         << std::setw(10) << data.count
         << std::setw(12) << avg_ms << "\n";
@@ -130,7 +130,10 @@ ScopedTimer::~ScopedTimer() {
 }
 
 ParserProfiler& ParserProfiler::GetInstance() {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wexit-time-destructors"
   static ParserProfiler instance;
+#pragma clang diagnostic pop
   return instance;
 }
 
