@@ -23,6 +23,7 @@
 #include "tydra/mcp-tools.hh"
 #include "usd-to-json.hh"
 #include "json-to-usd.hh"
+#include "sha256.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -132,6 +133,15 @@ bool ToRGBA(const std::vector<uint8_t> &src, int channels,
 
 }  // namespace detail
 
+struct AssetCacheEntry {
+  std::string binary;
+  std::string sha256_hash;
+  
+  AssetCacheEntry() = default;
+  AssetCacheEntry(const std::string& data) 
+    : binary(data), sha256_hash(tinyusdz::sha256(data.c_str(), data.size())) {}
+};
+
 struct EMAssetResolutionResolver {
 
   static int Resolve(const char *asset_name,
@@ -175,11 +185,11 @@ struct EMAssetResolutionResolver {
     }
 
     EMAssetResolutionResolver *p = reinterpret_cast<EMAssetResolutionResolver *>(userdata);
-    const std::string &binary = p->get(asset_name);
+    const AssetCacheEntry &entry = p->get(asset_name);
 
-    //std::cout << asset_name << ".size " << binary.size() << "\n";
+    //std::cout << asset_name << ".size " << entry.binary.size() << "\n";
 
-    (*nbytes) = uint64_t(binary.size());
+    (*nbytes) = uint64_t(entry.binary.size());
     return 0;  // OK
   }
 
@@ -206,12 +216,12 @@ struct EMAssetResolutionResolver {
     EMAssetResolutionResolver *p = reinterpret_cast<EMAssetResolutionResolver *>(userdata);
 
     if (p->has(asset_name)) {
-      const std::string &c = p->get(asset_name);
-      if (c.size() > req_nbytes) {
+      const AssetCacheEntry &entry = p->get(asset_name);
+      if (entry.binary.size() > req_nbytes) {
         return -2;
       }
-      memcpy(out_buf, c.data(), c.size());
-      (*nbytes) = c.size();
+      memcpy(out_buf, entry.binary.data(), entry.binary.size());
+      (*nbytes) = entry.binary.size();
       return 0; // ok
     }
 
@@ -222,7 +232,7 @@ struct EMAssetResolutionResolver {
   bool add(const std::string &asset_name, const std::string &binary) {
     bool overwritten = has(asset_name);
       
-    cache[asset_name] = binary;
+    cache[asset_name] = AssetCacheEntry(binary);
     
     return overwritten;
   }
@@ -231,12 +241,55 @@ struct EMAssetResolutionResolver {
     return cache.count(asset_name);
   }
 
-  const std::string &get(const std::string &asset_name) const {
+  const AssetCacheEntry &get(const std::string &asset_name) const {
     if (!cache.count(asset_name)) {
-      return empty_;
+      return empty_entry_;
     } 
 
     return cache.at(asset_name);
+  }
+
+  std::string getHash(const std::string &asset_name) const {
+    if (!cache.count(asset_name)) {
+      return std::string();
+    }
+    return cache.at(asset_name).sha256_hash;
+  }
+
+  bool verifyHash(const std::string &asset_name, const std::string &expected_hash) const {
+    if (!cache.count(asset_name)) {
+      return false;
+    }
+    return cache.at(asset_name).sha256_hash == expected_hash;
+  }
+
+  emscripten::val getCacheDataAsMemoryView(const std::string &asset_name) const {
+    if (!cache.count(asset_name)) {
+      return emscripten::val::undefined();
+    }
+    const AssetCacheEntry &entry = cache.at(asset_name);
+    return emscripten::val(emscripten::typed_memory_view(entry.binary.size(), 
+                                                         reinterpret_cast<const uint8_t*>(entry.binary.data())));
+  }
+
+  // Zero-copy method using raw pointers for direct Uint8Array access
+  bool addFromRawPointer(const std::string &asset_name, uintptr_t dataPtr, size_t size) {
+    if (size == 0) {
+      return false;
+    }
+    
+    // Direct access to the data without copying during read
+    const uint8_t* data = reinterpret_cast<const uint8_t*>(dataPtr);
+    
+    // Only copy once into our storage format
+    std::string binary;
+    binary.reserve(size);
+    binary.assign(reinterpret_cast<const char*>(data), size);
+    
+    bool overwritten = has(asset_name);
+    cache[asset_name] = AssetCacheEntry(std::move(binary));
+    
+    return overwritten;
   }
 
   void clear() {
@@ -245,9 +298,9 @@ struct EMAssetResolutionResolver {
 
   // TODO: Use IndexDB?
   //
-  // <uri, bytes>
-  std::map<std::string, std::string> cache;
-  std::string empty_;
+  // <uri, AssetCacheEntry>
+  std::map<std::string, AssetCacheEntry> cache;
+  AssetCacheEntry empty_entry_;
 };
 
 bool SetupEMAssetResolution(
@@ -1133,18 +1186,35 @@ class TinyUSDZLoaderNative {
     em_resolver_.add(name, binary);
   }
 
-  void hasAsset(const std::string &name) const {
-    em_resolver_.has(name);
+  bool hasAsset(const std::string &name) const {
+    return em_resolver_.has(name);
+  }
+
+  std::string getAssetHash(const std::string &name) const {
+    return em_resolver_.getHash(name);
+  }
+
+  bool verifyAssetHash(const std::string &name, const std::string &expected_hash) const {
+    return em_resolver_.verifyHash(name, expected_hash);
   }
 
   emscripten::val getAsset(const std::string &name) const {
     emscripten::val val;
     if (em_resolver_.has(name)) {
-      const std::string &content = em_resolver_.get(name);
+      const AssetCacheEntry &entry = em_resolver_.get(name);
       val.set("name", name);
-      val.set("data", emscripten::typed_memory_view(content.size(), content.data()));
+      val.set("data", emscripten::typed_memory_view(entry.binary.size(), entry.binary.data()));
+      val.set("sha256", entry.sha256_hash);
     }
     return val;
+  }
+
+  emscripten::val getAssetCacheDataAsMemoryView(const std::string &name) const {
+    return em_resolver_.getCacheDataAsMemoryView(name);
+  }
+
+  bool setAssetFromRawPointer(const std::string &name, uintptr_t dataPtr, size_t size) {
+    return em_resolver_.addFromRawPointer(name, dataPtr, size);
   }
 
   emscripten::val extractUnresolvedTexturePaths() const {
@@ -1705,6 +1775,14 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::hasAsset)
       .function("getAsset",
                 &TinyUSDZLoaderNative::getAsset)
+      .function("getAssetCacheDataAsMemoryView",
+                &TinyUSDZLoaderNative::getAssetCacheDataAsMemoryView)
+      .function("setAssetFromRawPointer",
+                &TinyUSDZLoaderNative::setAssetFromRawPointer, emscripten::allow_raw_pointers())
+      .function("getAssetHash",
+                &TinyUSDZLoaderNative::getAssetHash)
+      .function("verifyAssetHash",
+                &TinyUSDZLoaderNative::verifyAssetHash)
       .function("clearAssets",
                 &TinyUSDZLoaderNative::clearAssets)
 
