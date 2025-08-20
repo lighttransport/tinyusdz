@@ -1,0 +1,23 @@
+{
+  "name": "tinyusdz-web-tests",
+  "version": "1.0.0",
+  "description": "Node.js tests for TinyUSDZ WebAssembly bindings",
+  "main": "test-memory-view.js",
+  "scripts": {
+    "test": "node test-memory-view-mock.js && node test-zero-copy-mock.js && echo 'Note: Run actual tests after building WebAssembly module'",
+    "test-memory-view": "node test-memory-view.js",
+    "test-zero-copy": "node test-zero-copy-mock.js",
+    "test-mock": "node test-memory-view-mock.js && node test-zero-copy-mock.js"
+  },
+  "keywords": [
+    "tinyusdz",
+    "webassembly",
+    "usd",
+    "test"
+  ],
+  "author": "TinyUSDZ Contributors",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
