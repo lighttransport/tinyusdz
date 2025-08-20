@@ -461,6 +461,8 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp-server.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/diff-and-compare.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/diff-and-compare.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/usdrender.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/usdrender.hh
         )
 endif (TINYUSDZ_WITH_TYDRA)
 
