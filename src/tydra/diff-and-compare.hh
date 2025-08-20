@@ -32,5 +32,19 @@ void Diff(const Layer &lhs, const Layer &rhs,
   /* key = primspec path */
   std::unordered_map<std::string, PropDiff> &propDiffs);
 
+///
+/// Generate text-based diff output similar to 'diff' command
+///
+std::string DiffToText(const Layer &lhs, const Layer &rhs, 
+                       const std::string &lhs_name = "left",
+                       const std::string &rhs_name = "right");
+
+///
+/// Generate JSON-based diff output
+///
+std::string DiffToJSON(const Layer &lhs, const Layer &rhs,
+                       const std::string &lhs_name = "left", 
+                       const std::string &rhs_name = "right");
+
 } // namespace tydra
 } // namespace tinyusdz

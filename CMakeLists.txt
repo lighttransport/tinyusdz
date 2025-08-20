@@ -1461,9 +1461,14 @@ if(TINYUSDZ_BUILD_EXAMPLES)
   if (TINYUSDZ_WITH_TYDRA)
     add_subdirectory(examples/tydra_api)
     add_subdirectory(examples/tydra_to_renderscene)
+    add_subdirectory(examples/usddiff)
 
     if (TINYUSDZ_WITH_MCP_SERVER)
       add_subdirectory(examples/mcp_server)
+    endif()
+
+    if (TINYUSDZ_WITH_QJS)
+      add_subdirectory(examples/js-script)
     endif()
   endif ()
 
