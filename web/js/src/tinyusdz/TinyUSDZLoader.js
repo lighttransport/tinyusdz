@@ -54,7 +54,14 @@ class FetchAssetResolver {
 //
 class TinyUSDZLoader extends Loader {
 
-    constructor(manager) {
+    /**
+     * Constructor for TinyUSDZLoader
+     * @param {*} manager - THREE.js manager
+     * @param {Object} options - Configuration options
+     * @param {number} options.maxMemoryLimitMB - Maximum memory limit in MB (default: 2048 for WASM32, 8192 for WASM64)
+     * @param {boolean} options.useZstdCompressedWasm - Use compressed WASM (default: false)
+     */
+    constructor(manager, options = {}) {
         super(manager);
 
         this.native_ = null;
@@ -70,8 +77,12 @@ class TinyUSDZLoader extends Loader {
         this.textureCache = {};
 
         // Default: do NOT use zstd compressed WASM.
-        this.useZstdCompressedWasm_ = false;
+        this.useZstdCompressedWasm_ = options.useZstdCompressedWasm || false;
         this.compressedWasmPath_ = 'tinyusdz.wasm.zst';
+
+        // Memory limit in MB - defaults are set by the native module based on WASM architecture
+        // (2GB for WASM32, 8GB for WASM64). If not specified, the native default will be used.
+        this.maxMemoryLimitMB_ = options.maxMemoryLimitMB;
     }
 
     // Decompress zstd compressed WASM
@@ -151,6 +162,37 @@ class TinyUSDZLoader extends Loader {
         return this;
     }
 
+    /**
+     * Set maximum memory limit for USD loading in MB
+     * @param {number} limitMB - Memory limit in megabytes
+     */
+    setMaxMemoryLimitMB(limitMB) {
+        if (typeof limitMB !== 'number' || limitMB <= 0) {
+            throw new Error('Memory limit must be a positive number');
+        }
+        this.maxMemoryLimitMB_ = limitMB;
+    }
+
+    /**
+     * Get current maximum memory limit in MB
+     * @returns {number|undefined} Memory limit in megabytes, or undefined if using native default
+     */
+    getMaxMemoryLimitMB() {
+        return this.maxMemoryLimitMB_;
+    }
+
+    /**
+     * Get the native default memory limit in MB
+     * @returns {Promise<number>} Native default memory limit in megabytes
+     */
+    async getNativeDefaultMemoryLimitMB() {
+        if (!this.native_) {
+            await this.init();
+        }
+        const tempUsd = new this.native_.TinyUSDZLoaderNative();
+        return tempUsd.getMaxMemoryLimitMB();
+    }
+
 
     // TODO: remove
     // Set AssetResolver callback.
@@ -160,11 +202,17 @@ class TinyUSDZLoader extends Loader {
     //    this.assetResolver_ = callback;
     //}
 
-    //
-    // Load a USDZ/USDA/USDC file from a URL as USD Stage(Freezed scene graph)
-    // NOTE: for loadAsync(), Use base Loader class's loadAsync() method
-    //
-    load(url, onLoad, onProgress, onError) {
+    /**
+     * Load a USDZ/USDA/USDC file from a URL as USD Stage(Freezed scene graph)
+     * NOTE: for loadAsync(), Use base Loader class's loadAsync() method
+     * @param {string} url - URL to load from
+     * @param {Function} onLoad - Success callback
+     * @param {Function} onProgress - Progress callback
+     * @param {Function} onError - Error callback
+     * @param {Object} options - Loading options
+     * @param {number} options.maxMemoryLimitMB - Override memory limit for this load
+     */
+    load(url, onLoad, onProgress, onError, options = {}) {
         //console.log('url', url);
 
         const scope = this;
@@ -186,7 +234,7 @@ class TinyUSDZLoader extends Loader {
 
                 scope.parse(usd_binary, url, function (usd) {
                     onLoad(usd);
-                }, onError);
+                }, onError, options);
 
             })
             .catch((error) => {
@@ -197,10 +245,16 @@ class TinyUSDZLoader extends Loader {
             });
     }
 
-    //
-    // Parse a USDZ/USDA/USDC binary data
-    //
-    parse(binary /* ArrayBuffer */, filePath /* optional */, onLoad, onError) {
+    /**
+     * Parse a USDZ/USDA/USDC binary data
+     * @param {ArrayBuffer} binary - Binary USD data
+     * @param {string} filePath - Optional file path
+     * @param {Function} onLoad - Success callback
+     * @param {Function} onError - Error callback
+     * @param {Object} options - Parsing options
+     * @param {number} options.maxMemoryLimitMB - Override memory limit for this parse
+     */
+    parse(binary /* ArrayBuffer */, filePath /* optional */, onLoad, onError, options = {}) {
 
         const _onError = function (e) {
 
@@ -226,6 +280,12 @@ class TinyUSDZLoader extends Loader {
 
         const usd = new this.native_.TinyUSDZLoaderNative();
 
+        // Set memory limit before loading if specified (otherwise use native default)
+        const memoryLimit = options.maxMemoryLimitMB || this.maxMemoryLimitMB_;
+        if (memoryLimit !== undefined) {
+            usd.setMaxMemoryLimitMB(memoryLimit);
+        }
+
         const ok = usd.loadFromBinary(binary, filePath);
         if (!ok) {
             _onError(new Error('TinyUSDZLoader: Failed to load USD from binary data.', {cause: usd.error()}));
@@ -234,10 +294,16 @@ class TinyUSDZLoader extends Loader {
         }
     }
 
-    //
-    // Load a USDZ/USDA/USDC file from a URL as USD Layer(for composition)
-    //
-    loadAsLayer(url, onLoad, onProgress, onError) {
+    /**
+     * Load a USDZ/USDA/USDC file from a URL as USD Layer(for composition)
+     * @param {string} url - URL to load from
+     * @param {Function} onLoad - Success callback
+     * @param {Function} onProgress - Progress callback
+     * @param {Function} onError - Error callback
+     * @param {Object} options - Loading options
+     * @param {number} options.maxMemoryLimitMB - Override memory limit for this load
+     */
+    loadAsLayer(url, onLoad, onProgress, onError, options = {}) {
         //console.log('url', url);
 
         const scope = this;
@@ -280,6 +346,12 @@ class TinyUSDZLoader extends Loader {
 
                 const usd = new this.native_.TinyUSDZLoaderNative();
 
+                // Set memory limit before loading if specified (otherwise use native default)
+                const memoryLimit = options.maxMemoryLimitMB || this.maxMemoryLimitMB_;
+                if (memoryLimit !== undefined) {
+                    usd.setMaxMemoryLimitMB(memoryLimit);
+                }
+
                 const ok = usd.loadAsLayerFromBinary(usd_binary, url);
                 if (!ok) {
                     _onError(new Error('TinyUSDZLoader: Failed to load USD as Layer from binary data. url: ' + url, {cause: usd.error()}));
@@ -296,12 +368,12 @@ class TinyUSDZLoader extends Loader {
             });
     }
 
-    async loadAsLayerAsync(url, onProgress) {
+    async loadAsLayerAsync(url, onProgress, options = {}) {
      	const scope = this;
 
 		return new Promise( function ( resolve, reject ) {
 
-			scope.loadAsLayer( url, resolve, onProgress, reject );
+			scope.loadAsLayer( url, resolve, onProgress, reject, options );
 
 		} );
     }
