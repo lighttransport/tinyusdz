@@ -418,9 +418,12 @@ class TinyUSDZLoaderNative {
     bool is_usdz = tinyusdz::IsUSDZ(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size());
 
+    tinyusdz::USDLoadOptions options;
+    options.max_memory_limit_in_mb = max_memory_limit_mb_;
+
     loaded_ = tinyusdz::LoadLayerFromMemory(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
-        filename, &layer_, &warn_, &error_);
+        filename, &layer_, &warn_, &error_, options);
 
     if (!loaded_) {
       return false;
@@ -442,10 +445,13 @@ class TinyUSDZLoaderNative {
     bool is_usdz = tinyusdz::IsUSDZ(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size());
 
+    tinyusdz::USDLoadOptions options;
+    options.max_memory_limit_in_mb = max_memory_limit_mb_;
+
     tinyusdz::Stage stage;
     loaded_ = tinyusdz::LoadUSDFromMemory(
         reinterpret_cast<const uint8_t *>(binary.c_str()), binary.size(),
-        filename, &stage, &warn_, &error_);
+        filename, &stage, &warn_, &error_, options);
 
     if (!loaded_) {
       return false;
@@ -921,6 +927,14 @@ class TinyUSDZLoaderNative {
   void setEnableComposition(bool enabled) { enableComposition_ = enabled; }
   void setLoadTextureInNative(bool onoff) {
     loadTextureInNative_ = onoff;
+  }
+
+  void setMaxMemoryLimitMB(int32_t limit_mb) {
+    max_memory_limit_mb_ = limit_mb;
+  }
+
+  int32_t getMaxMemoryLimitMB() const {
+    return max_memory_limit_mb_;
   }
 
   emscripten::val getAssetSearchPaths() const {
@@ -1490,6 +1504,13 @@ class TinyUSDZLoaderNative {
   bool loaded_as_layer_{false};
   bool enableComposition_{false};
   bool loadTextureInNative_{false}; // true: Let JavaScript to decode texture image.
+  
+  // Set appropriate default memory limits based on WASM architecture
+#ifdef TINYUSDZ_WASM_MEMORY64
+  int32_t max_memory_limit_mb_{8192}; // 8GB for MEMORY64
+#else
+  int32_t max_memory_limit_mb_{2048}; // 2GB for 32-bit WASM
+#endif
 
   std::string filename_;
   std::string warn_;
@@ -1727,6 +1748,11 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("numRootNodes", &TinyUSDZLoaderNative::numRootNodes)
       .function("setLoadTextureInNative",
                 &TinyUSDZLoaderNative::setLoadTextureInNative)
+
+      .function("setMaxMemoryLimitMB",
+                &TinyUSDZLoaderNative::setMaxMemoryLimitMB)
+      .function("getMaxMemoryLimitMB",
+                &TinyUSDZLoaderNative::getMaxMemoryLimitMB)
 
       .function("setEnableComposition",
                 &TinyUSDZLoaderNative::setEnableComposition)
