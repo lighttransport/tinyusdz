@@ -56,6 +56,7 @@ add_sanitizers(${BUILD_TARGET})
 target_compile_options(${BUILD_TARGET} PRIVATE ${EXT_COMPILE_OPTIONS})
 if (TINYUSDZ_WASM64)
   set_target_properties(${BUILD_TARGET} PROPERTIES COMPILE_FLAGS "-sMEMORY64=1")
+  target_compile_definitions(${BUILD_TARGET} PRIVATE TINYUSDZ_WASM_MEMORY64=1)
 endif()
 
 # tinyusdz dir

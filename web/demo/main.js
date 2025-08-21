@@ -133,7 +133,17 @@ async function loadScenes() {
 
   updateLoadingProgress(20, 'Initializing TinyUSDZLoader...');
 
+  // Create loader with optional memory limit
+  // Default: 2GB for WASM32, 8GB for WASM64
+  // const loader = new TinyUSDZLoader(null, { maxMemoryLimitMB: 512 }); // Set 512MB limit
   const loader = new TinyUSDZLoader();
+
+  // You can also set memory limit after creation:
+  // loader.setMaxMemoryLimitMB(1024); // Set 1GB limit
+  
+  // Or check the native default:
+  // const defaultLimit = await loader.getNativeDefaultMemoryLimitMB();
+  // console.log(`Native default memory limit: ${defaultLimit} MB`);
 
   // it is recommended to call init() before loadAsync()
   // (wait loading/compiling wasm module in the early stage))
