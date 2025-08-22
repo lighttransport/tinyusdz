@@ -128,7 +128,7 @@ std::string sha256(const char *binary, size_t size) {
     }
 
     for (int i = 0; i < 8; i++) {
-        msg[new_len + i] = static_cast<uint8_t>((bit_len >> (56 - i * 8)) & 0xff);
+        msg[new_len + size_t(i)] = static_cast<uint8_t>((bit_len >> (56 - i * 8)) & 0xff);
     }
 
     for (size_t i = 0; i < new_len + 8; i += 64) {

@@ -1395,12 +1395,8 @@ class TinyUSDZLoaderNative {
 
     const tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
     
-    try {
-      nlohmann::json json_obj = tinyusdz::ToJSON(curr);
-      return json_obj.dump(2); // Pretty print with 2 spaces
-    } catch (const std::exception& e) {
-      return "{\"error\": \"Failed to convert layer to JSON: " + std::string(e.what()) + "\"}";
-    }
+    nlohmann::json json_obj = tinyusdz::ToJSON(curr);
+    return json_obj.dump(2); // Pretty print with 2 spaces
   }
 
   std::string layerToJSONWithOptions(bool embedBuffers, const std::string& arrayMode) const {
@@ -1410,27 +1406,23 @@ class TinyUSDZLoaderNative {
 
     const tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
     
-    try {
-      tinyusdz::USDToJSONOptions options;
-      options.embedBuffers = embedBuffers;
-      
-      if (arrayMode == "buffer") {
-        options.arrayMode = tinyusdz::ArraySerializationMode::Buffer;
-      } else {
-        options.arrayMode = tinyusdz::ArraySerializationMode::Base64;
-      }
-
-      std::string json_str, warn, err;
-      bool success = tinyusdz::to_json_string(curr, options, &json_str, &warn, &err);
-      
-      if (!success) {
-        return "{\"error\": \"Failed to convert layer to JSON: " + err + "\"}";
-      }
-      
-      return json_str;
-    } catch (const std::exception& e) {
-      return "{\"error\": \"Failed to convert layer to JSON: " + std::string(e.what()) + "\"}";
+    tinyusdz::USDToJSONOptions options;
+    options.embedBuffers = embedBuffers;
+    
+    if (arrayMode == "buffer") {
+      options.arrayMode = tinyusdz::ArraySerializationMode::Buffer;
+    } else {
+      options.arrayMode = tinyusdz::ArraySerializationMode::Base64;
     }
+
+    std::string json_str, warn, err;
+    bool success = tinyusdz::to_json_string(curr, options, &json_str, &warn, &err);
+    
+    if (!success) {
+      return "{\"error\": \"Failed to convert layer to JSON: " + err + "\"}";
+    }
+    
+    return json_str;
   }
 
   bool loadLayerFromJSON(const std::string& json_string) {

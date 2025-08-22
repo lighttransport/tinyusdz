@@ -130,4 +130,4 @@ bool to_json_string(const tinyusdz::Layer &layer, const USDToJSONOptions& option
 ///
 nlohmann::json ToJSON(tinyusdz::GeomMesh& mesh, USDToJSONContext* context);
 
-} // namespace tinyusd
+} // namespace tinyusdz
