@@ -86,19 +86,24 @@ std::string SerializeArrayToBase64(const std::vector<T>& array) {
   return base64_encode(bytes, static_cast<unsigned int>(byte_size));
 }
 
+#if 0
 // Specialized versions for different types
 std::string SerializeIntArrayToBase64(const std::vector<int>& array) {
   return SerializeArrayToBase64(array);
 }
+#endif
 
 std::string SerializeFloatArrayToBase64(const std::vector<float>& array) {
   return SerializeArrayToBase64(array);
 }
 
+#if 0
 std::string SerializeDoubleArrayToBase64(const std::vector<double>& array) {
   return SerializeArrayToBase64(array);
 }
+#endif
 
+#if 0
 // Helper functions for mixed-mode serialization
 template<typename T>
 json SerializeArrayData(const std::vector<T>& array, USDToJSONContext* context, 
@@ -133,6 +138,7 @@ json SerializeArrayData(const std::vector<T>& array, USDToJSONContext* context,
     };
   }
 }
+#endif
 
 // Helper function to serialize attribute metadata
 json SerializeAttributeMetadata(const AttrMetas& metas) {
@@ -156,7 +162,8 @@ json SerializeAttributeMetadata(const AttrMetas& metas) {
       case Interpolation::FaceVarying:
         metadata["interpolation"] = "faceVarying";
         break;
-      default:
+      case Interpolation::Invalid:
+        metadata["interpolation"] = "[[invalid]]";
         break;
     }
   }
@@ -254,6 +261,7 @@ json SerializeAttributeMetadata(const AttrMetas& metas) {
   return metadata;
 }
 
+#if 0
 // Specialized array serialization functions
 json SerializeIntArray(const std::vector<int>& array, USDToJSONContext* context = nullptr) {
   return SerializeArrayData(array, context, "UNSIGNED_INT", "SCALAR");
@@ -266,7 +274,9 @@ json SerializeFloatArray(const std::vector<float>& array, USDToJSONContext* cont
 json SerializeDoubleArray(const std::vector<double>& array, USDToJSONContext* context = nullptr) {
   return SerializeArrayData(array, context, "FLOAT", "SCALAR");  // Note: JSON doesn't distinguish float/double
 }
+#endif
 
+#if 0
 // Overloaded functions with attribute metadata support
 template<typename T>
 json SerializeArrayDataWithMetadata(const std::vector<T>& array, const AttrMetas* metas, USDToJSONContext* context, 
@@ -283,16 +293,22 @@ json SerializeArrayDataWithMetadata(const std::vector<T>& array, const AttrMetas
   
   return result;
 }
+#endif
 
+#if 0
 // Metadata-aware array serialization functions
 json SerializeIntArrayWithMetadata(const std::vector<int>& array, const AttrMetas* metas = nullptr, USDToJSONContext* context = nullptr) {
   return SerializeArrayDataWithMetadata(array, metas, context, "UNSIGNED_INT", "SCALAR");
 }
+#endif
 
+#if 0
 json SerializeFloatArrayWithMetadata(const std::vector<float>& array, const AttrMetas* metas = nullptr, USDToJSONContext* context = nullptr) {
   return SerializeArrayDataWithMetadata(array, metas, context, "FLOAT", "SCALAR");
 }
+#endif
 
+#if 0
 json SerializeDoubleArrayWithMetadata(const std::vector<double>& array, const AttrMetas* metas = nullptr, USDToJSONContext* context = nullptr) {
   return SerializeArrayDataWithMetadata(array, metas, context, "FLOAT", "SCALAR");
 }
@@ -680,6 +696,7 @@ json SerializeHalf4Array(const std::vector<value::half4>& vectors, USDToJSONCont
     };
   }
 }
+#endif
 
 // Metadata-aware vector serialization functions
 json SerializePoint3fArrayWithMetadata(const std::vector<value::point3f>& points, const AttrMetas* metas = nullptr, USDToJSONContext* context = nullptr) {
@@ -731,6 +748,7 @@ json SerializePoint3fArrayWithMetadata(const std::vector<value::point3f>& points
   return result;
 }
 
+#if 0
 json SerializeNormal3fArrayWithMetadata(const std::vector<value::normal3f>& normals, const AttrMetas* metas = nullptr, USDToJSONContext* context = nullptr) {
   if (normals.empty()) {
     return json::object();
@@ -779,7 +797,9 @@ json SerializeNormal3fArrayWithMetadata(const std::vector<value::normal3f>& norm
   
   return result;
 }
+#endif
 
+#if 0
 // Matrix array serialization
 template<typename MatrixType>
 std::string SerializeMatrixArrayToBase64(const std::vector<MatrixType>& array) {
@@ -888,6 +908,7 @@ std::string SerializeMatrix4dArrayToBase64(const std::vector<value::matrix4d>& a
   }
   return SerializeDoubleArrayToBase64(double_data);
 }
+#endif
 
 json ToJSON(tinyusdz::Xform& xform) {
   json j;
@@ -913,6 +934,7 @@ json ToJSON(tinyusdz::GeomMesh& mesh) {
   return ToJSON(mesh, nullptr);  // Use base64 mode by default
 }
 
+#if 0
 json ToJSON(tinyusdz::GeomMesh& mesh, USDToJSONContext* context) {
   json j;
 
@@ -1018,10 +1040,30 @@ json ToJSON(tinyusdz::GeomMesh& mesh, USDToJSONContext* context) {
 
   return j;
 }
+#endif
 
 json ToJSON(tinyusdz::GeomBasisCurves& curves) {
+  
   json j;
+  j["name"] = curves.name;
+  j["typeName"] = "GeomBasisCurves";
 
+  // TODO
+  USDToJSONContext *context = nullptr;
+
+  // Points array (point3f[])
+  if (curves.points.authored()) {
+    auto points_opt = curves.points.get_value();
+    if (points_opt) {
+      std::vector<value::point3f> points_data;
+      if (points_opt.value().get(value::TimeCode::Default(), &points_data)) {
+        j["points"] = SerializePoint3fArrayWithMetadata(points_data, &curves.points.metas(), context);
+      }
+    }
+  }
+
+  // TODO: Serialize other attribs
+  
   return j;
 }
 
@@ -1135,6 +1177,11 @@ json SerializeContextToJSON(const USDToJSONContext& context) {
   return j;
 }
 
+
+
+}  // namespace
+
+
 json ToJSON(const tinyusdz::Layer& layer) {
   USDToJSONContext context;  // Default context (base64 mode)
   return ToJSON(layer, context);
@@ -1151,7 +1198,6 @@ json ToJSON(const tinyusdz::Layer& layer, USDToJSONContext& context) {
   const LayerMetas& metas = layer.metas();
   
   json layerMetas;
-  
   // Basic layer properties
   if (metas.upAxis.authored()) {
     layerMetas["upAxis"] = to_string(metas.upAxis.get_value());
@@ -1282,9 +1328,6 @@ json ToJSON(const tinyusdz::Layer& layer, USDToJSONContext& context) {
   return j;
 }
 
-}  // namespace
-
-
 nonstd::expected<std::string, std::string> ToJSON(
     const tinyusdz::Stage& stage) {
   json j;  // root
@@ -1324,5 +1367,32 @@ nonstd::expected<std::string, std::string> ToJSON(
 
   return str;
 }
+
+bool to_json_string(const tinyusdz::Layer &layer, std::string *json_str, std::string *warn, std::string *err) {
+  if (!json_str) {
+    return false;
+  }
+
+  (void)warn;
+  (void)err;
+
+  USDToJSONContext context;  // Default context (base64 mode)
+  json j = ToJSON(layer, context);
+
+  (*json_str) = j.dump();
+
+  return true;
+
+}
+
+bool to_json_string(const tinyusdz::Layer &layer, const USDToJSONOptions& options, std::string *json_str, std::string *warn, std::string *err) {
+
+  // TODO: options
+  (void)options;
+  
+  return to_json_string(layer, json_str, warn, err);
+
+}
+
 
 }  // namespace tinyusdz

@@ -28,15 +28,18 @@ namespace json {
 
 namespace detail {
 
+#if 0
 inline std::string dtos(const double v) {
   char buf[64];
   dtoa_milo(v, buf);
 
   return std::string(buf);
 }
+#endif
 
 
-bool WriteInt(const int value, std::string *out_json) {
+#if 0
+static bool WriteInt(const int value, std::string *out_json) {
   if (!out_json) return false;
 
   (*out_json) = detail::dtos(double(value));
@@ -45,7 +48,7 @@ bool WriteInt(const int value, std::string *out_json) {
   
 }
 
-bool WriteString(const std::string &str, std::string *out_json) {
+static bool WriteString(const std::string &str, std::string *out_json) {
   if (!out_json) return false;
 
   // Escape quotes and backslashes
@@ -63,7 +66,7 @@ bool WriteString(const std::string &str, std::string *out_json) {
 
 // Base122 encoding using 122 printable ASCII characters
 // Excludes: " (34), \ (92), DEL (127), and non-printable control characters
-std::string EncodeBase122(const std::vector<uint8_t> &data) {
+static std::string EncodeBase122(const std::vector<uint8_t> &data) {
   // Base122 character set (122 printable ASCII characters)
   static const char kBase122Chars[] = 
     "!#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`"
@@ -111,7 +114,7 @@ std::string EncodeBase122(const std::vector<uint8_t> &data) {
 }
 
 // Base64 encoding using standard base64 character set
-std::string EncodeBase64(const std::vector<uint8_t> &data) {
+static std::string EncodeBase64(const std::vector<uint8_t> &data) {
   static const char kBase64Chars[] = 
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   
@@ -127,9 +130,9 @@ std::string EncodeBase64(const std::vector<uint8_t> &data) {
     int padding = 0;
     
     // Pack 3 bytes into 24 bits
-    buffer = (data[i] << 16);
+    buffer = (uint32_t(data[i]) << 16);
     if (i + 1 < data.size()) {
-      buffer |= (data[i + 1] << 8);
+      buffer |= (uint32_t(data[i + 1]) << 8);
     } else {
       padding++;
     }
@@ -148,10 +151,14 @@ std::string EncodeBase64(const std::vector<uint8_t> &data) {
   
   return result;
 }
+#endif
 
 } // namespace detal
 
 bool JsonWriter::to_json(const tinyusdz::Layer &layer, std::string *out_json) {
+
+  (void)layer;
+  (void)out_json;
 
   // TODO
   return false;
