@@ -225,21 +225,24 @@ bool DeserializeArrayFromBase64(const std::string& base64_data, std::vector<T>* 
   return true;
 }
 
+#if 0
 // Specialized versions for different types
-bool DeserializeIntArrayFromBase64(const std::string& base64_data, std::vector<int>* result) {
+static bool DeserializeIntArrayFromBase64(const std::string& base64_data, std::vector<int>* result) {
+  return DeserializeArrayFromBase64(base64_data, result);
+}
+#endif
+
+static bool DeserializeFloatArrayFromBase64(const std::string& base64_data, std::vector<float>* result) {
   return DeserializeArrayFromBase64(base64_data, result);
 }
 
-bool DeserializeFloatArrayFromBase64(const std::string& base64_data, std::vector<float>* result) {
-  return DeserializeArrayFromBase64(base64_data, result);
-}
-
-bool DeserializeDoubleArrayFromBase64(const std::string& base64_data, std::vector<double>* result) {
+#if 0 // TODO
+static bool DeserializeDoubleArrayFromBase64(const std::string& base64_data, std::vector<double>* result) {
   return DeserializeArrayFromBase64(base64_data, result);
 }
 
 // Vector deserialization helpers for integer types
-bool DeserializeInt2ArrayFromBase64(const std::string& base64_data, std::vector<value::int2>* result) {
+static bool DeserializeInt2ArrayFromBase64(const std::string& base64_data, std::vector<value::int2>* result) {
   if (!result) {
     return false;
   }
@@ -264,7 +267,7 @@ bool DeserializeInt2ArrayFromBase64(const std::string& base64_data, std::vector<
   return true;
 }
 
-bool DeserializeInt3ArrayFromBase64(const std::string& base64_data, std::vector<value::int3>* result) {
+static bool DeserializeInt3ArrayFromBase64(const std::string& base64_data, std::vector<value::int3>* result) {
   if (!result) {
     return false;
   }
@@ -290,7 +293,7 @@ bool DeserializeInt3ArrayFromBase64(const std::string& base64_data, std::vector<
   return true;
 }
 
-bool DeserializeInt4ArrayFromBase64(const std::string& base64_data, std::vector<value::int4>* result) {
+static bool DeserializeInt4ArrayFromBase64(const std::string& base64_data, std::vector<value::int4>* result) {
   if (!result) {
     return false;
   }
@@ -318,7 +321,7 @@ bool DeserializeInt4ArrayFromBase64(const std::string& base64_data, std::vector<
 }
 
 // Vector deserialization helpers for float types
-bool DeserializeFloat2ArrayFromBase64(const std::string& base64_data, std::vector<value::float2>* result) {
+static bool DeserializeFloat2ArrayFromBase64(const std::string& base64_data, std::vector<value::float2>* result) {
   if (!result) {
     return false;
   }
@@ -343,7 +346,7 @@ bool DeserializeFloat2ArrayFromBase64(const std::string& base64_data, std::vecto
   return true;
 }
 
-bool DeserializeFloat4ArrayFromBase64(const std::string& base64_data, std::vector<value::float4>* result) {
+static bool DeserializeFloat4ArrayFromBase64(const std::string& base64_data, std::vector<value::float4>* result) {
   if (!result) {
     return false;
   }
@@ -371,7 +374,7 @@ bool DeserializeFloat4ArrayFromBase64(const std::string& base64_data, std::vecto
 }
 
 // Vector deserialization helpers for half types
-bool DeserializeHalf2ArrayFromBase64(const std::string& base64_data, std::vector<value::half2>* result) {
+static bool DeserializeHalf2ArrayFromBase64(const std::string& base64_data, std::vector<value::half2>* result) {
   if (!result) {
     return false;
   }
@@ -396,7 +399,7 @@ bool DeserializeHalf2ArrayFromBase64(const std::string& base64_data, std::vector
   return true;
 }
 
-bool DeserializeHalf3ArrayFromBase64(const std::string& base64_data, std::vector<value::half3>* result) {
+static bool DeserializeHalf3ArrayFromBase64(const std::string& base64_data, std::vector<value::half3>* result) {
   if (!result) {
     return false;
   }
@@ -422,7 +425,7 @@ bool DeserializeHalf3ArrayFromBase64(const std::string& base64_data, std::vector
   return true;
 }
 
-bool DeserializeHalf4ArrayFromBase64(const std::string& base64_data, std::vector<value::half4>* result) {
+static bool DeserializeHalf4ArrayFromBase64(const std::string& base64_data, std::vector<value::half4>* result) {
   if (!result) {
     return false;
   }
@@ -448,9 +451,11 @@ bool DeserializeHalf4ArrayFromBase64(const std::string& base64_data, std::vector
   
   return true;
 }
+#endif
 
 // Attribute metadata deserialization
-bool DeserializeAttributeMetadata(const nlohmann::json& metadata_json, AttrMetas* metas, std::string* err = nullptr) {
+static bool DeserializeAttributeMetadata(const nlohmann::json& metadata_json, AttrMetas* metas, std::string* err = nullptr) {
+  (void)err;
   if (!metas || !metadata_json.is_object()) {
     return false;
   }
@@ -500,7 +505,7 @@ bool DeserializeAttributeMetadata(const nlohmann::json& metadata_json, AttrMetas
 }
 
 // Helper function to parse array data from JSON (supports both base64 and accessor modes)
-bool ParseArrayFromJSON(const nlohmann::json& j, JSONToUSDContext* context, std::string* base64_data, 
+static bool ParseArrayFromJSON(const nlohmann::json& j, JSONToUSDContext* context, std::string* base64_data, 
                         size_t* accessor_index, size_t* count, std::string* type, std::string* err) {
   if (!j.is_object()) {
     if (err) {
@@ -575,7 +580,7 @@ bool ParseArrayFromJSON(const nlohmann::json& j, JSONToUSDContext* context, std:
 
 // Template helper for parsing and deserializing arrays
 template<typename T>
-bool ParseAndDeserializeArray(const nlohmann::json& array_json, JSONToUSDContext* context, 
+static bool ParseAndDeserializeArray(const nlohmann::json& array_json, JSONToUSDContext* context, 
                               const std::string& expected_type, std::vector<T>* result, std::string* err) {
   std::string base64_data, type;
   size_t accessor_index, count;
@@ -636,7 +641,7 @@ bool ParseAndDeserializeArrayWithMetadata(const nlohmann::json& array_json, JSON
 }
 
 // Specialized metadata-aware parsing for point3f arrays
-bool ParsePoint3fArrayWithMetadata(const nlohmann::json& array_json, JSONToUSDContext* context, 
+static bool ParsePoint3fArrayWithMetadata(const nlohmann::json& array_json, JSONToUSDContext* context, 
                                   std::vector<value::point3f>* result, AttrMetas* metas, std::string* err) {
   if (!array_json.is_object()) {
     if (err) (*err) = "Points array must be an object";
@@ -691,7 +696,7 @@ bool ParsePoint3fArrayWithMetadata(const nlohmann::json& array_json, JSONToUSDCo
 }
 
 // Specialized metadata-aware parsing for normal3f arrays
-bool ParseNormal3fArrayWithMetadata(const nlohmann::json& array_json, JSONToUSDContext* context, 
+static bool ParseNormal3fArrayWithMetadata(const nlohmann::json& array_json, JSONToUSDContext* context, 
                                    std::vector<value::normal3f>* result, AttrMetas* metas, std::string* err) {
   if (!array_json.is_object()) {
     if (err) (*err) = "Normals array must be an object";
@@ -727,7 +732,9 @@ bool ParseNormal3fArrayWithMetadata(const nlohmann::json& array_json, JSONToUSDC
 }
 
 // JSON to GeomMesh conversion (with context support)
-bool JSONToGeomMesh(const nlohmann::json& j, GeomMesh* mesh, JSONToUSDContext* context, std::string* warn, std::string* err) {
+static bool JSONToGeomMesh(const nlohmann::json& j, GeomMesh* mesh, JSONToUSDContext* context, std::string* warn, std::string* err) {
+  (void)warn;
+
   if (!mesh) {
     if (err) {
       (*err) = "Internal error: mesh is null";
@@ -846,12 +853,10 @@ bool JSONToGeomMesh(const nlohmann::json& j, GeomMesh* mesh, JSONToUSDContext* c
 
 } // namespace detail
 
-// Original JSONToGeomMesh without context (for backward compatibility)
-bool JSONToGeomMesh(const nlohmann::json& j, GeomMesh* mesh, std::string* warn, std::string* err) {
-  return detail::JSONToGeomMesh(j, mesh, nullptr, warn, err);
-}
+#if 0
+static bool ParseStringArray(const nlohmann::json &j, std::vector<std::string> *result, std::string *warn, std::string *err) {
+  (void)warn;
 
-bool ParseStringArray(const nlohmann::json &j, std::vector<std::string> *result, std::string *warn, std::string *err) {
   if (!result) {
     if (err) {
       (*err) = "Internal error.";
@@ -885,7 +890,10 @@ bool ParseStringArray(const nlohmann::json &j, std::vector<std::string> *result,
   return true;
 }
 
-bool JSONToPropertyImpl(const nlohmann::json &j, PrimSpec *ps, std::string *warn, std::string *err) {
+static bool JSONToPropertyImpl(const nlohmann::json &j, PrimSpec *ps, std::string *warn, std::string *err) {
+  (void)warn;
+  (void)ps;
+
   // TODO:
   // [ ] timeSamples
   // [ ] None
@@ -902,8 +910,13 @@ bool JSONToPropertyImpl(const nlohmann::json &j, PrimSpec *ps, std::string *warn
 
   return true;
 }
+#endif
 
-bool JSONToPrimSpecImpl(const nlohmann::json &j, PrimSpec *ps, std::string *warn, std::string *err) {
+static bool JSONToPrimSpecImpl(const nlohmann::json &j, PrimSpec *ps, std::string *warn, std::string *err) {
+  (void)err;
+  (void)warn;
+  (void)ps;
+
   if (j.contains("metadata")) {
     nlohmann::json meta = j["metadata"];
 
