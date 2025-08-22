@@ -3,7 +3,30 @@
 
 #if defined(TINYUSDZ_WITH_QJS)
 // external
+
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-variable"
+#pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#pragma GCC diagnostic ignored "-Wdisabled-macro-expansion"
+#endif
+
 #include "external/quickjs-ng/quickjs.h"
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+
 #include <sstream>
 #include <iomanip>
 #include <cmath>
@@ -17,6 +40,19 @@ namespace tydra {
 
 
 #if defined(TINYUSDZ_WITH_QJS)
+
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-variable"
+#pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#pragma GCC diagnostic ignored "-Wdisabled-macro-expansion"
+#endif
 
 static std::string LayerMetasToJSON(const LayerMetas* metas) {
   if (!metas) {
@@ -33,7 +69,7 @@ static std::string LayerMetasToJSON(const LayerMetas* metas) {
     case Axis::X: oss << "X"; break;
     case Axis::Y: oss << "Y"; break;
     case Axis::Z: oss << "Z"; break;
-    default: oss << "Invalid"; break;
+    case Axis::Invalid: oss << "Invalid"; break;
   }
   oss << "\",";
   
@@ -83,7 +119,7 @@ static std::string LayerMetasToJSON(const LayerMetas* metas) {
   switch (metas->playbackMode.get_value()) {
     case LayerMetas::PlaybackMode::PlaybackModeNone: oss << "PlaybackModeNone"; break;
     case LayerMetas::PlaybackMode::PlaybackModeLoop: oss << "PlaybackModeLoop"; break;
-    default: oss << "Unknown"; break;
+    //default: oss << "Unknown"; break;
   }
   oss << "\",";
   
@@ -302,6 +338,7 @@ static std::string AttributeToJSON(const Attribute* attr) {
     case Variability::Varying: variability_str = "Varying"; break;
     case Variability::Uniform: variability_str = "Uniform"; break;
     case Variability::Config: variability_str = "Config"; break;
+    case Variability::Invalid: variability_str = "Invalid"; break;
   }
   oss << "\"variability\":\"" << variability_str << "\",";
   
@@ -969,6 +1006,14 @@ bool RunJSScriptWithAttribute(const std::string &js_code, const Attribute* attri
 
   return success;
 }
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 
 #else
 
