@@ -434,6 +434,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/uuid-gen.cc
     ${PROJECT_SOURCE_DIR}/src/uuid-gen.hh
     ${PROJECT_SOURCE_DIR}/src/parser-timing.cc
+    ${PROJECT_SOURCE_DIR}/src/sha256.cc
 
     )
 
@@ -508,11 +509,13 @@ if(TINYUSDZ_WITH_USDMTLX)
 endif()
 
 if(TINYUSDZ_WITH_JSON)
+  list(APPEND TINYUSDZ_SOURCES
+    ${PROJECT_SOURCE_DIR}/src/json-to-usd.cc
+    ${PROJECT_SOURCE_DIR}/src/usd-to-json.cc
+    ${PROJECT_SOURCE_DIR}/src/json-writer.cc
+    ${PROJECT_SOURCE_DIR}/src/json-util.cc)
+
   list(APPEND TINYUSDZ_DEP_SOURCES  ${PROJECT_SOURCE_DIR}/src/external/yyjson.c)
-  list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/json-to-usd.cc)
-  list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/usd-to-json.cc)
-  list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/json-writer.cc)
-  list(APPEND TINYUSDZ_DEP_SOURCES ${PROJECT_SOURCE_DIR}/src/json-util.cc)
 endif()
 
 if(TINYUSDZ_WITH_USDFBX)
