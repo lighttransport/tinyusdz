@@ -71,12 +71,12 @@ bool load_usd_file(const std::string &filename, tinyusdz::Layer *layer, std::str
   layer->set_name(filename);
   
   // Add root prims to layer
-  for (const auto &rootPrim : stage.GetRootPrims()) {
-    tinyusdz::PrimSpec primSpec(tinyusdz::Specifier::Def, rootPrim.GetElementName());
+  for (const auto &rootPrim : stage.root_prims()) {
+    tinyusdz::PrimSpec primSpec(tinyusdz::Specifier::Def, rootPrim.element_name());
     
     // Convert Prim to PrimSpec (simplified)
     // TODO: This could be enhanced to preserve more Prim information
-    layer->add_primspec(rootPrim.GetElementName(), primSpec);
+    layer->add_primspec(rootPrim.element_name(), primSpec);
   }
   
   return true;
