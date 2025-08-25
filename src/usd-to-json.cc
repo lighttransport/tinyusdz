@@ -86,24 +86,19 @@ std::string SerializeArrayToBase64(const std::vector<T>& array) {
   return base64_encode(bytes, static_cast<unsigned int>(byte_size));
 }
 
-#if 0
 // Specialized versions for different types
 std::string SerializeIntArrayToBase64(const std::vector<int>& array) {
   return SerializeArrayToBase64(array);
 }
-#endif
 
 std::string SerializeFloatArrayToBase64(const std::vector<float>& array) {
   return SerializeArrayToBase64(array);
 }
 
-#if 0
 std::string SerializeDoubleArrayToBase64(const std::vector<double>& array) {
   return SerializeArrayToBase64(array);
 }
-#endif
 
-#if 0
 // Helper functions for mixed-mode serialization
 template<typename T>
 json SerializeArrayData(const std::vector<T>& array, USDToJSONContext* context, 
@@ -138,7 +133,6 @@ json SerializeArrayData(const std::vector<T>& array, USDToJSONContext* context,
     };
   }
 }
-#endif
 
 // Helper function to serialize attribute metadata
 json SerializeAttributeMetadata(const AttrMetas& metas) {
@@ -261,8 +255,11 @@ json SerializeAttributeMetadata(const AttrMetas& metas) {
   return metadata;
 }
 
-#if 0
 // Specialized array serialization functions
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-function"
+#pragma clang diagnostic ignored "-Wunused-template"
+
 json SerializeIntArray(const std::vector<int>& array, USDToJSONContext* context = nullptr) {
   return SerializeArrayData(array, context, "UNSIGNED_INT", "SCALAR");
 }
@@ -274,9 +271,7 @@ json SerializeFloatArray(const std::vector<float>& array, USDToJSONContext* cont
 json SerializeDoubleArray(const std::vector<double>& array, USDToJSONContext* context = nullptr) {
   return SerializeArrayData(array, context, "FLOAT", "SCALAR");  // Note: JSON doesn't distinguish float/double
 }
-#endif
 
-#if 0
 // Overloaded functions with attribute metadata support
 template<typename T>
 json SerializeArrayDataWithMetadata(const std::vector<T>& array, const AttrMetas* metas, USDToJSONContext* context, 
@@ -293,22 +288,16 @@ json SerializeArrayDataWithMetadata(const std::vector<T>& array, const AttrMetas
   
   return result;
 }
-#endif
 
-#if 0
 // Metadata-aware array serialization functions
 json SerializeIntArrayWithMetadata(const std::vector<int>& array, const AttrMetas* metas = nullptr, USDToJSONContext* context = nullptr) {
   return SerializeArrayDataWithMetadata(array, metas, context, "UNSIGNED_INT", "SCALAR");
 }
-#endif
 
-#if 0
 json SerializeFloatArrayWithMetadata(const std::vector<float>& array, const AttrMetas* metas = nullptr, USDToJSONContext* context = nullptr) {
   return SerializeArrayDataWithMetadata(array, metas, context, "FLOAT", "SCALAR");
 }
-#endif
 
-#if 0
 json SerializeDoubleArrayWithMetadata(const std::vector<double>& array, const AttrMetas* metas = nullptr, USDToJSONContext* context = nullptr) {
   return SerializeArrayDataWithMetadata(array, metas, context, "FLOAT", "SCALAR");
 }
@@ -696,7 +685,6 @@ json SerializeHalf4Array(const std::vector<value::half4>& vectors, USDToJSONCont
     };
   }
 }
-#endif
 
 // Metadata-aware vector serialization functions
 json SerializePoint3fArrayWithMetadata(const std::vector<value::point3f>& points, const AttrMetas* metas = nullptr, USDToJSONContext* context = nullptr) {
@@ -748,7 +736,6 @@ json SerializePoint3fArrayWithMetadata(const std::vector<value::point3f>& points
   return result;
 }
 
-#if 0
 json SerializeNormal3fArrayWithMetadata(const std::vector<value::normal3f>& normals, const AttrMetas* metas = nullptr, USDToJSONContext* context = nullptr) {
   if (normals.empty()) {
     return json::object();
@@ -797,9 +784,7 @@ json SerializeNormal3fArrayWithMetadata(const std::vector<value::normal3f>& norm
   
   return result;
 }
-#endif
 
-#if 0
 // Matrix array serialization
 template<typename MatrixType>
 std::string SerializeMatrixArrayToBase64(const std::vector<MatrixType>& array) {
@@ -908,7 +893,11 @@ std::string SerializeMatrix4dArrayToBase64(const std::vector<value::matrix4d>& a
   }
   return SerializeDoubleArrayToBase64(double_data);
 }
-#endif
+
+#pragma clang diagnostic pop
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-function"
 
 json ToJSON(tinyusdz::Xform& xform) {
   json j;
@@ -934,7 +923,6 @@ json ToJSON(tinyusdz::GeomMesh& mesh) {
   return ToJSON(mesh, nullptr);  // Use base64 mode by default
 }
 
-#if 0
 json ToJSON(tinyusdz::GeomMesh& mesh, USDToJSONContext* context) {
   json j;
 
@@ -1040,7 +1028,6 @@ json ToJSON(tinyusdz::GeomMesh& mesh, USDToJSONContext* context) {
 
   return j;
 }
-#endif
 
 json ToJSON(tinyusdz::GeomBasisCurves& curves) {
   
@@ -1385,6 +1372,8 @@ bool to_json_string(const tinyusdz::Layer &layer, std::string *json_str, std::st
 
 }
 
+#pragma clang diagnostic pop
+
 bool to_json_string(const tinyusdz::Layer &layer, const USDToJSONOptions& options, std::string *json_str, std::string *warn, std::string *err) {
 
   // TODO: options
@@ -1392,6 +1381,281 @@ bool to_json_string(const tinyusdz::Layer &layer, const USDToJSONOptions& option
   
   return to_json_string(layer, json_str, warn, err);
 
+}
+
+// ================================================================
+// Property, Attribute, and Relationship to JSON conversion
+// ================================================================
+
+json ToJSON(const tinyusdz::Attribute& attribute, USDToJSONContext* /* context */) {
+  json j;
+  
+  // Basic attribute information
+  j["name"] = attribute.name();
+  j["typeName"] = attribute.type_name();
+  
+  // Variability
+  switch (attribute.variability()) {
+    case Variability::Varying:
+      j["variability"] = "varying";
+      break;
+    case Variability::Uniform:
+      j["variability"] = "uniform";
+      break;
+    case Variability::Config:
+      j["variability"] = "config";
+      break;
+    case Variability::Invalid:
+      j["variability"] = "invalid";
+      break;
+  }
+  
+  // Interpolation (from metadata)
+  if (attribute.metas().interpolation) {
+    switch (attribute.metas().interpolation.value()) {
+      case Interpolation::Invalid:
+        j["interpolation"] = "invalid";
+        break;
+      case Interpolation::Constant:
+        j["interpolation"] = "constant";
+        break;
+      case Interpolation::Uniform:
+        j["interpolation"] = "uniform";
+        break;
+      case Interpolation::Varying:
+        j["interpolation"] = "varying";
+        break;
+      case Interpolation::Vertex:
+        j["interpolation"] = "vertex";
+        break;
+      case Interpolation::FaceVarying:
+        j["interpolation"] = "faceVarying";
+        break;
+    }
+  }
+  
+  // Attribute metadata
+  if (attribute.metas().authored()) {
+    j["metadata"] = SerializeAttributeMetadata(attribute.metas());
+  }
+  
+  // Connection information
+  if (attribute.is_connection()) {
+    j["isConnection"] = true;
+    auto connections = attribute.connections();
+    if (connections.size() == 1) {
+      j["connection"] = connections[0].full_path_name();
+    } else if (connections.size() > 1) {
+      json connections_array = json::array();
+      for (const auto& conn : connections) {
+        connections_array.push_back(conn.full_path_name());
+      }
+      j["connections"] = connections_array;
+    }
+  } else {
+    j["isConnection"] = false;
+  }
+  
+  // Value information
+  if (attribute.is_blocked()) {
+    j["hasValue"] = false;
+    j["valueType"] = "blocked";
+    j["value"] = nullptr;
+  } else {
+    // Check if attribute has value by accessing the internal value container
+    const auto& var = attribute.get_var();
+    if (var.is_valid()) {
+      j["hasValue"] = true;
+      j["valueType"] = "data";
+      
+      // For now, serialize as a string representation
+      // TODO: Implement proper value type serialization based on type_id
+      j["value"] = "[Attribute value - serialization not yet implemented]";
+      
+      // Store type information for debugging
+      j["valueTypeName"] = attribute.type_name();
+    } else {
+      j["hasValue"] = false;
+      j["valueType"] = "empty";
+      j["value"] = nullptr;
+    }
+  }
+  
+  // Time samples information
+  if (attribute.is_timesamples()) {
+    j["hasTimeSamples"] = true;
+    // TODO: Serialize time sample data
+    j["timeSamples"] = "[TimeSamples data - not yet serialized]";
+  } else {
+    j["hasTimeSamples"] = false;
+  }
+  
+  return j;
+}
+
+json ToJSON(const tinyusdz::Relationship& relationship) {
+  json j;
+  
+  j["type"] = "relationship";
+  
+  // List edit qualifier
+  switch (relationship.get_listedit_qual()) {
+    case ListEditQual::ResetToExplicit:
+      j["listEditQual"] = "resetToExplicit";
+      break;
+    case ListEditQual::Append:
+      j["listEditQual"] = "append";
+      break;
+    case ListEditQual::Add:
+      j["listEditQual"] = "add";
+      break;
+    case ListEditQual::Delete:
+      j["listEditQual"] = "delete";
+      break;
+    case ListEditQual::Prepend:
+      j["listEditQual"] = "prepend";
+      break;
+    case ListEditQual::Order:
+      j["listEditQual"] = "order";
+      break;
+    case ListEditQual::Invalid:
+      j["listEditQual"] = "invalid";
+      break;
+  }
+  
+  // Relationship value type and targets
+  switch (relationship.type) {
+    case Relationship::Type::DefineOnly:
+      j["valueType"] = "defineOnly";
+      j["hasTargets"] = false;
+      break;
+      
+    case Relationship::Type::Path:
+      j["valueType"] = "path";
+      j["hasTargets"] = true;
+      j["target"] = relationship.targetPath.full_path_name();
+      break;
+      
+    case Relationship::Type::PathVector:
+      {
+        j["valueType"] = "pathVector";
+        j["hasTargets"] = true;
+        json targets_array = json::array();
+        for (const auto& path : relationship.targetPathVector) {
+          targets_array.push_back(path.full_path_name());
+        }
+        j["targets"] = targets_array;
+        j["targetCount"] = relationship.targetPathVector.size();
+        break;
+      }
+      
+    case Relationship::Type::ValueBlock:
+      j["valueType"] = "valueBlock";
+      j["hasTargets"] = false;
+      j["blocked"] = true;
+      break;
+  }
+  
+  return j;
+}
+
+json ToJSON(const tinyusdz::Property& property, USDToJSONContext* context) {
+  json j;
+  
+  // Property type
+  switch (property.get_property_type()) {
+    case Property::Type::EmptyAttrib:
+      j["propertyType"] = "emptyAttribute";
+      j["typeName"] = property.value_type_name();
+      break;
+      
+    case Property::Type::Attrib:
+      j["propertyType"] = "attribute";
+      j["attribute"] = ToJSON(property.get_attribute(), context);
+      break;
+      
+    case Property::Type::Relation:
+      j["propertyType"] = "relationship";
+      j["relationship"] = ToJSON(property.get_relationship());
+      break;
+      
+    case Property::Type::NoTargetsRelation:
+      j["propertyType"] = "noTargetsRelationship";
+      j["relationship"] = ToJSON(property.get_relationship());
+      break;
+      
+    case Property::Type::Connection:
+      j["propertyType"] = "connection";
+      j["attribute"] = ToJSON(property.get_attribute(), context);
+      j["valueTypeName"] = property.value_type_name();
+      break;
+  }
+  
+  // Custom flag
+  j["isCustom"] = property.has_custom();
+  
+  // List edit qualifier (mainly for relationships)
+  switch (property.get_listedit_qual()) {
+    case ListEditQual::ResetToExplicit:
+      j["listEditQual"] = "resetToExplicit";
+      break;
+    case ListEditQual::Append:
+      j["listEditQual"] = "append";
+      break;
+    case ListEditQual::Add:
+      j["listEditQual"] = "add";
+      break;
+    case ListEditQual::Delete:
+      j["listEditQual"] = "delete";
+      break;
+    case ListEditQual::Prepend:
+      j["listEditQual"] = "prepend";
+      break;
+    case ListEditQual::Order:
+      j["listEditQual"] = "order";
+      break;
+    case ListEditQual::Invalid:
+      j["listEditQual"] = "invalid";
+      break;
+  }
+  
+  // Convenience methods for relationships
+  if (property.is_relationship()) {
+    auto target = property.get_relationTarget();
+    if (target) {
+      j["relationTarget"] = target->full_path_name();
+    }
+    
+    auto targets = property.get_relationTargets();
+    if (!targets.empty()) {
+      json targets_array = json::array();
+      for (const auto& t : targets) {
+        targets_array.push_back(t.full_path_name());
+      }
+      j["relationTargets"] = targets_array;
+    }
+  }
+  
+  // Helper flags
+  j["isAttribute"] = property.is_attribute();
+  j["isRelationship"] = property.is_relationship();
+  j["isEmpty"] = property.is_empty();
+  j["isAttributeConnection"] = property.is_attribute_connection();
+  
+  return j;
+}
+
+json PropertiesToJSON(const std::map<std::string, tinyusdz::Property>& properties, USDToJSONContext* context) {
+  json j = json::object();
+  
+  for (const auto& prop_pair : properties) {
+    const std::string& prop_name = prop_pair.first;
+    const Property& property = prop_pair.second;
+    
+    j[prop_name] = ToJSON(property, context);
+  }
+  
+  return j;
 }
 
 
