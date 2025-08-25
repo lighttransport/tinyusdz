@@ -1,17 +1,10 @@
 # Assume this project is invoked by emcmake.
 cmake_minimum_required(VERSION 3.16)
 
-set(BUILD_TARGET "tinyusdz")
 
 if (NOT EMSCRIPTEN)
   message(FATAL "Must be compiled with emscripten")
 endif()
-
-project(${BUILD_TARGET} CXX C)
-
-set(CMAKE_CXX_STANDARD 14)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
 
 # cmake modules
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/../cmake)
@@ -21,6 +14,17 @@ list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/../cmake)
 
 option(TINYUSDZ_WASM64 "Use wasm64(memory64). Available only for Chrome and Firefox as of 2025 Jul" OFF)
 
+if (TINYUSDZ_WASM64)
+  set(BUILD_TARGET "tinyusdz_64")
+else()
+  set(BUILD_TARGET "tinyusdz")
+endif()
+
+project(${BUILD_TARGET} CXX C)
+
+set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 if (CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
 
@@ -79,7 +83,7 @@ if (EMSCRIPTEN)
 
     set_target_properties(
         ${BUILD_TARGET}
-        PROPERTIES OUTPUT_NAME tinyusdz
+        PROPERTIES OUTPUT_NAME ${BUILD_TARGET}
                    SUFFIX ".js"
                    RUNTIME_OUTPUT_DIRECTORY ${OUTPUT_WASM_DIR})
     #set(CMAKE_EXECUTABLE_SUFFIX ".html")
