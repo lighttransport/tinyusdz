@@ -130,4 +130,24 @@ bool to_json_string(const tinyusdz::Layer &layer, const USDToJSONOptions& option
 ///
 nlohmann::json ToJSON(tinyusdz::GeomMesh& mesh, USDToJSONContext* context);
 
+///
+/// Convert Attribute to JSON
+///
+nlohmann::json ToJSON(const tinyusdz::Attribute& attribute, USDToJSONContext* context = nullptr);
+
+///
+/// Convert Relationship to JSON
+///
+nlohmann::json ToJSON(const tinyusdz::Relationship& relationship);
+
+///
+/// Convert Property to JSON
+///
+nlohmann::json ToJSON(const tinyusdz::Property& property, USDToJSONContext* context = nullptr);
+
+///
+/// Convert Properties map to JSON
+///
+nlohmann::json PropertiesToJSON(const std::map<std::string, tinyusdz::Property>& properties, USDToJSONContext* context = nullptr);
+
 } // namespace tinyusdz

@@ -151,6 +151,7 @@ static std::string LayerMetasToJSON(const LayerMetas* metas) {
 
 static const LayerMetas* g_current_layer_metas = nullptr;
 static const Attribute* g_current_attribute = nullptr;
+static const class Layer* g_current_layer = nullptr;
 
 // JavaScript fp16 library and TUSDZFloat16Array implementation
 static const char* fp16_library_js = R"(
@@ -845,6 +846,223 @@ static std::string AttributeToJSON(const Attribute* attr) {
   return oss.str();
 }
 
+static std::string PrimMetasToJSON(const PrimMeta* metas) {
+  if (!metas) {
+    return "null";
+  }
+  
+  std::ostringstream oss;
+  oss << std::setprecision(17);
+  oss << "{";
+  
+  // Basic metadata flags
+  oss << "\"active\":";
+  if (metas->active.has_value()) {
+    oss << (metas->active.value() ? "true" : "false");
+  } else {
+    oss << "null";
+  }
+  oss << ",";
+  
+  oss << "\"hidden\":";
+  if (metas->hidden.has_value()) {
+    oss << (metas->hidden.value() ? "true" : "false");
+  } else {
+    oss << "null";
+  }
+  oss << ",";
+  
+  oss << "\"instanceable\":";
+  if (metas->instanceable.has_value()) {
+    oss << (metas->instanceable.value() ? "true" : "false");
+  } else {
+    oss << "null";
+  }
+  oss << ",";
+  
+  // Kind
+  oss << "\"kind\":\"" << metas->get_kind() << "\",";
+  
+  // Documentation and comment
+  oss << "\"documentation\":";
+  if (metas->doc.has_value()) {
+    oss << "\"" << metas->doc.value().value << "\"";
+  } else {
+    oss << "null";
+  }
+  oss << ",";
+  
+  oss << "\"comment\":";
+  if (metas->comment.has_value()) {
+    oss << "\"" << metas->comment.value().value << "\"";
+  } else {
+    oss << "null";
+  }
+  oss << ",";
+  
+  // Display name and scene name (extensions)
+  oss << "\"displayName\":";
+  if (metas->displayName.has_value()) {
+    oss << "\"" << metas->displayName.value() << "\"";
+  } else {
+    oss << "null";
+  }
+  oss << ",";
+  
+  oss << "\"sceneName\":";
+  if (metas->sceneName.has_value()) {
+    oss << "\"" << metas->sceneName.value() << "\"";
+  } else {
+    oss << "null";
+  }
+  oss << ",";
+  
+  // References count
+  oss << "\"hasReferences\":";
+  if (metas->references.has_value() && !metas->references.value().second.empty()) {
+    oss << "true,";
+    oss << "\"referencesCount\":" << metas->references.value().second.size();
+  } else {
+    oss << "false,";
+    oss << "\"referencesCount\":0";
+  }
+  oss << ",";
+  
+  // Payload count
+  oss << "\"hasPayload\":";
+  if (metas->payload.has_value() && !metas->payload.value().second.empty()) {
+    oss << "true,";
+    oss << "\"payloadCount\":" << metas->payload.value().second.size();
+  } else {
+    oss << "false,";
+    oss << "\"payloadCount\":0";
+  }
+  oss << ",";
+  
+  // Inherits count
+  oss << "\"hasInherits\":";
+  if (metas->inherits.has_value() && !metas->inherits.value().second.empty()) {
+    oss << "true,";
+    oss << "\"inheritsCount\":" << metas->inherits.value().second.size();
+  } else {
+    oss << "false,";
+    oss << "\"inheritsCount\":0";
+  }
+  oss << ",";
+  
+  // Variants info
+  oss << "\"hasVariants\":";
+  if (metas->variants.has_value() && !metas->variants.value().empty()) {
+    oss << "true,";
+    oss << "\"variantsCount\":" << metas->variants.value().size() << ",";
+    oss << "\"variantNames\":[";
+    bool first = true;
+    for (const auto& variant : metas->variants.value()) {
+      if (!first) oss << ",";
+      oss << "\"" << variant.first << "\"";
+      first = false;
+    }
+    oss << "]";
+  } else {
+    oss << "false,";
+    oss << "\"variantsCount\":0,";
+    oss << "\"variantNames\":[]";
+  }
+  oss << ",";
+  
+  // VariantSets info
+  oss << "\"hasVariantSets\":";
+  if (metas->variantSets.has_value() && !metas->variantSets.value().second.empty()) {
+    oss << "true,";
+    oss << "\"variantSetsCount\":" << metas->variantSets.value().second.size() << ",";
+    oss << "\"variantSetNames\":[";
+    bool first = true;
+    for (const auto& varSet : metas->variantSets.value().second) {
+      if (!first) oss << ",";
+      oss << "\"" << varSet << "\"";
+      first = false;
+    }
+    oss << "]";
+  } else {
+    oss << "false,";
+    oss << "\"variantSetsCount\":0,";
+    oss << "\"variantSetNames\":[]";
+  }
+  oss << ",";
+  
+  // Custom data and unregistered metas
+  oss << "\"hasCustomData\":" << (metas->customData.has_value() ? "true" : "false") << ",";
+  oss << "\"hasAssetInfo\":" << (metas->assetInfo.has_value() ? "true" : "false") << ",";
+  oss << "\"unregisteredMetasCount\":" << metas->unregisteredMetas.size() << ",";
+  
+  // Unregistered metadata names
+  oss << "\"unregisteredMetaNames\":[";
+  bool first = true;
+  for (const auto& meta : metas->unregisteredMetas) {
+    if (!first) oss << ",";
+    oss << "\"" << meta.first << "\"";
+    first = false;
+  }
+  oss << "],";
+  
+  // Authored flag
+  oss << "\"authored\":" << (metas->authored() ? "true" : "false");
+  
+  oss << "}";
+  return oss.str();
+}
+
+static std::string PrimSpecToJSON(const PrimSpec* ps) {
+  if (!ps) {
+    return "null";
+  }
+  
+  std::ostringstream oss;
+  oss << std::setprecision(17);
+  oss << "{";
+  
+  // Basic PrimSpec info
+  oss << "\"name\":\"" << ps->name() << "\",";
+  oss << "\"typeName\":\"" << ps->typeName() << "\",";
+  oss << "\"specifier\":\"";
+  switch (ps->specifier()) {
+    case Specifier::Def: oss << "def"; break;
+    case Specifier::Over: oss << "over"; break;
+    case Specifier::Class: oss << "class"; break;
+    case Specifier::Invalid: oss << "invalid"; break;
+  }
+  oss << "\",";
+  
+  // Add property count
+  oss << "\"propertyCount\":" << ps->props().size() << ",";
+  
+  // Add children count
+  oss << "\"childrenCount\":" << ps->children().size() << ",";
+  
+  // Property names array
+  oss << "\"propertyNames\":[";
+  bool first = true;
+  for (const auto& prop : ps->props()) {
+    if (!first) oss << ",";
+    oss << "\"" << prop.first << "\"";
+    first = false;
+  }
+  oss << "],";
+  
+  // Children names array
+  oss << "\"childrenNames\":[";
+  first = true;
+  for (const auto& child : ps->children()) {
+    if (!first) oss << ",";
+    oss << "\"" << child.name() << "\"";
+    first = false;
+  }
+  oss << "]";
+  
+  oss << "}";
+  return oss.str();
+}
+
 static JSValue js_getLayerMetas(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv, int magic, JSValueConst *func_data) {
   std::string json = LayerMetasToJSON(g_current_layer_metas);
   
@@ -859,6 +1077,88 @@ static JSValue js_getAttribute(JSContext *ctx, JSValueConst this_val, int argc, 
   std::string json = AttributeToJSON(g_current_attribute);
   
   JSValue result = JS_ParseJSON(ctx, json.c_str(), json.length(), "<attribute>");
+  if (JS_IsException(result)) {
+    return JS_EXCEPTION;
+  }
+  return result;
+}
+
+static JSValue js_findPrimSpecByPath(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv, int magic, JSValueConst *func_data) {
+  if (!g_current_layer) {
+    return JS_NULL;
+  }
+
+  if (argc < 1) {
+    return JS_ThrowTypeError(ctx, "findPrimSpecByPath requires 1 argument (path string)");
+  }
+
+  const char *path_str = JS_ToCString(ctx, argv[0]);
+  if (!path_str) {
+    return JS_EXCEPTION;
+  }
+
+  // Parse the path string into a Path object
+  tinyusdz::Path path(path_str);
+  if (!path.is_valid()) {
+    JS_FreeCString(ctx, path_str);
+    return JS_NULL;
+  }
+
+  // Find the PrimSpec
+  const PrimSpec *ps = nullptr;
+  std::string err;
+  bool found = g_current_layer->find_primspec_at(path, &ps, &err);
+  
+  JS_FreeCString(ctx, path_str);
+  
+  if (!found || !ps) {
+    return JS_NULL;
+  }
+
+  // Convert PrimSpec to JSON and parse it
+  std::string json = PrimSpecToJSON(ps);
+  JSValue result = JS_ParseJSON(ctx, json.c_str(), json.length(), "<primspec>");
+  if (JS_IsException(result)) {
+    return JS_EXCEPTION;
+  }
+  return result;
+}
+
+static JSValue js_getPrimSpecMetadata(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv, int magic, JSValueConst *func_data) {
+  if (!g_current_layer) {
+    return JS_NULL;
+  }
+
+  if (argc < 1) {
+    return JS_ThrowTypeError(ctx, "getPrimSpecMetadata requires 1 argument (path string)");
+  }
+
+  const char *path_str = JS_ToCString(ctx, argv[0]);
+  if (!path_str) {
+    return JS_EXCEPTION;
+  }
+
+  // Parse the path string into a Path object
+  tinyusdz::Path path(path_str);
+  if (!path.is_valid()) {
+    JS_FreeCString(ctx, path_str);
+    return JS_NULL;
+  }
+
+  // Find the PrimSpec
+  const PrimSpec *ps = nullptr;
+  std::string err;
+  bool found = g_current_layer->find_primspec_at(path, &ps, &err);
+  
+  JS_FreeCString(ctx, path_str);
+  
+  if (!found || !ps) {
+    return JS_NULL;
+  }
+
+  // Convert PrimSpec metadata to JSON and parse it
+  std::string json = PrimMetasToJSON(&ps->metas());
+  JSValue result = JS_ParseJSON(ctx, json.c_str(), json.length(), "<primspec_metadata>");
   if (JS_IsException(result)) {
     return JS_EXCEPTION;
   }
@@ -1007,6 +1307,57 @@ bool RunJSScriptWithAttribute(const std::string &js_code, const Attribute* attri
   return success;
 }
 
+bool RunJSScriptWithLayer(const std::string &js_code, const class Layer* layer, std::string &err) {
+  JSRuntime *rt = JS_NewRuntime();
+  if (!rt) {
+    err = "Failed to create JavaScript runtime";
+    return false;
+  }
+
+  JSContext *ctx = JS_NewContext(rt);
+  if (!ctx) {
+    err = "Failed to create JavaScript context";
+    JS_FreeRuntime(rt);
+    return false;
+  }
+
+  // Set the global Layer pointer and add functions to the global context
+  g_current_layer = layer;
+  JSValue global_obj = JS_GetGlobalObject(ctx);
+  
+  JSValue findFunc = JS_NewCFunctionData(ctx, js_findPrimSpecByPath, 1, 0, 0, nullptr);
+  JS_SetPropertyStr(ctx, global_obj, "findPrimSpecByPath", findFunc);
+  
+  JSValue metaFunc = JS_NewCFunctionData(ctx, js_getPrimSpecMetadata, 1, 0, 0, nullptr);
+  JS_SetPropertyStr(ctx, global_obj, "getPrimSpecMetadata", metaFunc);
+  
+  JS_FreeValue(ctx, global_obj);
+
+  JSValue result = JS_Eval(ctx, js_code.c_str(), js_code.length(),
+                          "<eval>", JS_EVAL_TYPE_GLOBAL);
+
+  bool success = true;
+  if (JS_IsException(result)) {
+    success = false;
+    
+    JSValue exception = JS_GetException(ctx);
+    const char *error_str = JS_ToCString(ctx, exception);
+    if (error_str) {
+      err = std::string("JavaScript error: ") + error_str;
+      JS_FreeCString(ctx, error_str);
+    } else {
+      err = "JavaScript error: unable to get error message";
+    }
+    JS_FreeValue(ctx, exception);
+  }
+
+  JS_FreeValue(ctx, result);
+  JS_FreeContext(ctx);
+  JS_FreeRuntime(rt);
+
+  return success;
+}
+
 #if defined(__clang__)
 #pragma clang diagnostic pop
 #endif
@@ -1034,6 +1385,13 @@ bool RunJSScriptWithAttribute(const std::string &js_code, const Attribute* attri
   err = "JavaScript is not supported in this build.\n";
   (void)js_code;
   (void)attribute;
+  return false;
+}
+
+bool RunJSScriptWithLayer(const std::string &js_code, const class Layer* layer, std::string &err) {
+  err = "JavaScript is not supported in this build.\n";
+  (void)js_code;
+  (void)layer;
   return false;
 }
 #endif
