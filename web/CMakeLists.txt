@@ -1,11 +1,6 @@
 # Assume this project is invoked by emcmake.
 cmake_minimum_required(VERSION 3.16)
 
-
-if (NOT EMSCRIPTEN)
-  message(FATAL "Must be compiled with emscripten")
-endif()
-
 # cmake modules
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/../cmake)
 #list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/../../cmake/sanitizers)
@@ -38,6 +33,11 @@ if (CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
   endif()
 
 endif()
+
+if (NOT EMSCRIPTEN)
+  message(FATAL "Must be compiled with emscripten")
+endif()
+
 
 option(TINYUSDZ_WASM_DEMODEV "Demo developer mode(install WASM modules to demo/node_modules/tinyusdz." OFF)
 if (TINYUSDZ_WASM_DEMODEV)
