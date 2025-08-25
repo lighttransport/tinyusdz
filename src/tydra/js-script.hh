@@ -13,6 +13,8 @@ bool RunJSScriptWithLayerMetas(const std::string &js_code, const LayerMetas* lay
 
 bool RunJSScriptWithAttribute(const std::string &js_code, const Attribute* attribute, std::string &err);
 
+bool RunJSScriptWithLayer(const std::string &js_code, const class Layer* layer, std::string &err);
+
 
 } // namespace tydra
 } // namespace tinyusdz
