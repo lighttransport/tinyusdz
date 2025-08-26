@@ -258,9 +258,14 @@ json SerializeAttributeMetadata(const AttrMetas& metas) {
 }
 
 // Specialized array serialization functions
+#ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-function"
 #pragma clang diagnostic ignored "-Wunused-template"
+#elif defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#endif
 
 json SerializeIntArray(const std::vector<int>& array, USDToJSONContext* context = nullptr) {
   return SerializeArrayData(array, context, "UNSIGNED_INT", "SCALAR");
@@ -896,10 +901,19 @@ std::string SerializeMatrix4dArrayToBase64(const std::vector<value::matrix4d>& a
   return SerializeDoubleArrayToBase64(double_data);
 }
 
+#ifdef __clang__
 #pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 
+#ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-function"
+#elif defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#endif
 
 json ToJSON(tinyusdz::Xform& xform) {
   json j;
@@ -1325,7 +1339,11 @@ bool to_json_string(const tinyusdz::Layer &layer, std::string *json_str, std::st
 
 }
 
+#ifdef __clang__
 #pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 
 bool to_json_string(const tinyusdz::Layer &layer, const USDToJSONOptions& options, std::string *json_str, std::string *warn, std::string *err) {
 
