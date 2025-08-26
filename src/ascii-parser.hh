@@ -6,7 +6,7 @@
 
 #pragma once
 
-// #include <functional>
+#include <functional>
 #include <stdio.h>
 
 #include <stack>
@@ -51,6 +51,14 @@ struct Identifier : std::string {
 struct PathIdentifier : std::string {
   // using std::string;
 };
+
+///
+/// Progress callback function type.
+/// @param[in] progress Progress value between 0.0 and 1.0
+/// @param[in] userptr User-provided pointer for custom data
+/// @return true to continue parsing, false to cancel
+///
+using ProgressCallback = std::function<bool(float progress, void *userptr)>;
 
 ///
 /// Parser configuration options.
@@ -332,6 +340,16 @@ class AsciiParser {
   ///
   void SetMaxMemoryLimit(size_t limit_mb) {
     _max_memory_limit_bytes = limit_mb * 1024ull * 1024ull;
+  }
+
+  ///
+  /// Set progress callback function
+  /// @param[in] callback Progress callback function
+  /// @param[in] userptr User-provided pointer for custom data
+  ///
+  void SetProgressCallback(ProgressCallback callback, void *userptr = nullptr) {
+    _progress_callback = callback;
+    _progress_userptr = userptr;
   }
 
   ///
@@ -915,6 +933,15 @@ class AsciiParser {
 
   // For composition. PrimSpec is typeless so single callback function only.
   PrimSpecFunction _primspec_fun{nullptr};
+
+  // Progress callback
+  ProgressCallback _progress_callback;  // Default-initialized (empty)
+  void *_progress_userptr{nullptr};
+
+  ///
+  /// Call progress callback and return false if parsing should be cancelled
+  ///
+  bool ReportProgress();
 };
 
 ///
