@@ -1,5 +1,6 @@
 #include "js-script.hh"
 #include "prim-types.hh"
+#include "tinyusdz.hh"
 
 #if defined(TINYUSDZ_WITH_QJS)
 // external
@@ -1098,7 +1099,8 @@ static JSValue js_findPrimSpecByPath(JSContext *ctx, JSValueConst this_val, int 
   }
 
   // Parse the path string into a Path object
-  tinyusdz::Path path(path_str);
+  std::string prim_path = std::string(path_str);
+  tinyusdz::Path path(prim_path, "");
   if (!path.is_valid()) {
     JS_FreeCString(ctx, path_str);
     return JS_NULL;
@@ -1139,7 +1141,7 @@ static JSValue js_getPrimSpecMetadata(JSContext *ctx, JSValueConst this_val, int
   }
 
   // Parse the path string into a Path object
-  tinyusdz::Path path(path_str);
+  tinyusdz::Path path(path_str, "");
   if (!path.is_valid()) {
     JS_FreeCString(ctx, path_str);
     return JS_NULL;
