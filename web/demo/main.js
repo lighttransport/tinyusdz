@@ -6,6 +6,21 @@ import { GUI } from 'https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.mo
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js'
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js'
 
+function checkMemory64Support() {
+  try {
+    // Try creating a 64-bit memory
+    const memory = new WebAssembly.Memory({
+      initial: 1,
+      maximum: 65536,
+      index: 'i64'  // This specifies 64-bit indexing
+    });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+
 // Loading bar elements
 const loadingContainer = document.createElement('div');
 loadingContainer.id = 'loading-container';
@@ -107,7 +122,7 @@ const params = {
 gui.add(params, 'envMapIntensity', 0, 20, 0.1).name('envMapIntensity').onChange((value) => {
   ui_state['envMapIntensity'] = value;
   ui_state['needsMtlUpdate'] = true;
-  
+
 });
 gui.add(params, 'camera_z', 0, 20).name('Camera Z').onChange((value) => {
   ui_state['camera_z'] = value;
@@ -138,16 +153,19 @@ async function loadScenes() {
   // const loader = new TinyUSDZLoader(null, { maxMemoryLimitMB: 512 }); // Set 512MB limit
   const loader = new TinyUSDZLoader();
 
-  // You can also set memory limit after creation:
-  // loader.setMaxMemoryLimitMB(1024); // Set 1GB limit
-  
-  // Or check the native default:
-  // const defaultLimit = await loader.getNativeDefaultMemoryLimitMB();
-  // console.log(`Native default memory limit: ${defaultLimit} MB`);
-
   // it is recommended to call init() before loadAsync()
   // (wait loading/compiling wasm module in the early stage))
-  await loader.init();
+  //await loader.init();
+
+  const useMemory64 = checkMemory64Support();
+  console.log('64-bit memory support:', useMemory64);
+  await loader.init({useMemory64});
+
+  // You can set memory limit for USD loading.
+  // The limit is only effective to USD loading.
+  // No limit for asset data(e.g. textures) and Three.js data, etc.
+  loader.setMaxMemoryLimitMB(250);
+
 
   // Use zstd compressed tinyusdz.wasm to save the bandwidth.
   //await loader.init({useZstdCompressedWasm: true});
@@ -155,7 +173,8 @@ async function loadScenes() {
   const suzanne_filename = "./assets/suzanne-pbr.usda";
   const texcat_filename = "./assets/texture-cat-plane.usdz";
   const cookie_filename = "./assets/UsdCookie.usdz";
-  const usd_filename = "./assets/suzanne-pbr.usda";
+  //const usd_filename = "./assets/suzanne-pbr.usda";
+  const usd_filename = "./assets/suzanne-subd-lv6.usdc";
 
   var threeScenes = []
 
@@ -175,12 +194,12 @@ async function loadScenes() {
     envMapIntensity: ui_state['envMapIntensity'], // default envmap intensity
   }
 
-  var offset = -(usd_scenes.length-1) * 1.5;
+  var offset = -(usd_scenes.length - 1) * 1.5;
   for (const usd_scene of usd_scenes) {
 
     const usdRootNode = usd_scene.getDefaultRootNode();
 
-    const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options); 
+    const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
 
     if (usd_scene.getURI().includes('UsdCookie')) {
       // Add exra scaling
@@ -206,8 +225,8 @@ const scene = new THREE.Scene();
 async function initScene() {
 
   const envmap = await new HDRCubeTextureLoader()
-    .setPath( 'assets/textures/cube/pisaHDR/' )
-    .loadAsync( [ 'px.hdr', 'nx.hdr', 'py.hdr', 'ny.hdr', 'pz.hdr', 'nz.hdr' ] )
+    .setPath('assets/textures/cube/pisaHDR/')
+    .loadAsync(['px.hdr', 'nx.hdr', 'py.hdr', 'ny.hdr', 'pz.hdr', 'nz.hdr'])
   scene.background = envmap;
   scene.environment = envmap;
 
