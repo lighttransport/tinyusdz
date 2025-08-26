@@ -1,8 +1,6 @@
 import { Loader } from 'three'; // or https://cdn.jsdelivr.net/npm/three/build/three.module.js';
 
-// WASM module of TinyUSDZ.
-import initTinyUSDZNative from './tinyusdz.js';
-
+// tinyusdz module are dynamically imported at TinyUSDZLoader
 
 class FetchAssetResolver {
     constructor() {
@@ -80,6 +78,10 @@ class TinyUSDZLoader extends Loader {
         this.useZstdCompressedWasm_ = options.useZstdCompressedWasm || false;
         this.compressedWasmPath_ = 'tinyusdz.wasm.zst';
 
+        this.useMemory64_ = false;
+        this.compressedWasm64Path_ = 'tinyusdz_64.wasm.zst';
+
+
         // Memory limit in MB - defaults are set by the native module based on WASM architecture
         // (2GB for WASM32, 8GB for WASM64). If not specified, the native default will be used.
         this.maxMemoryLimitMB_ = options.maxMemoryLimitMB;
@@ -139,19 +141,60 @@ class TinyUSDZLoader extends Loader {
           this.useZstdCompressedWasm_ = options.useZstdCompressedWasm;
         }
 
+        if (Object.prototype.hasOwnProperty.call(options, 'useMemory64')) {
+          this.useMemory64_ = options.useMemory64;
+        }
+
         if (!this.native_) {
             //console.log('Initializing native module...');
+          
+            // WASM module of TinyUSDZ.
+            const url = new URL(import.meta.url);
+
+            //let initTinyUSDZNative = null;
+          
+
+            //console.log("arg:", url.searchParams.get("memory64"));
+            let use_memory64 = this.useMemory64_;
+            if (url.searchParams.get("memory64") == "true") {
+              use_memory64 = true;
+            }
+            console.log(use_memory64);
+
+
+            let initTinyUSDZNative = null;
+
+            // Use dynamic import based on memory64 parameter
+            if (use_memory64) {
+                console.log("Loading 64bit module");
+                const module = await import('./tinyusdz_64.js');
+                initTinyUSDZNative = module.default;
+            } else {
+                console.log("Loading 32bit module");
+                const module = await import('./tinyusdz.js');
+                initTinyUSDZNative = module.default;
+            }
 
             let wasmBinary = null;
-            
+
             if (this.useZstdCompressedWasm_) {
                 // Load and decompress zstd compressed WASM
-                wasmBinary = await this.decompressZstdWasm(this.compressedWasmPath_);
+                wasmBinary = await this.decompressZstdWasm(use_memory64 ? this.compressedWasm64Path_ : this.compressedWasmPath_);
 
             }
 
             // Initialize with custom WASM binary if decompressed
-            const initOptions = wasmBinary ? { wasmBinary } : {};
+            const initOptions = {}
+            if (wasmBinary) {
+              initOptions.wasmBinary = wasmBinary;
+            }
+            //initOptions.locateFile = function(path, scriptDirectory) {
+            //  // Redirect WASM file loading to your custom file
+            //  if (path.endsWith('.wasm')) {
+            //    return './src/tinyusdz/tinyusdz_64.wasm';
+            //  }
+            //  return scriptDirectory + path;
+            //}
 
             this.native_ = await initTinyUSDZNative(initOptions);
             if (!this.native_) {
