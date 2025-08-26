@@ -8,6 +8,7 @@
 #include "pprinter.hh"
 #include "str-util.hh"
 #include "io-util.hh"
+#include "usd-to-json.hh"
 
 #include "tydra/scene-access.hh"
 
@@ -34,7 +35,7 @@ static std::string str_tolower(std::string s) {
 }
 
 void print_help() {
-    std::cout << "Usage tusdcat [--flatten] [--loadOnly] [--composition=STRLIST] [--relative] [--extract-variants] input.usda/usdc/usdz\n";
+    std::cout << "Usage tusdcat [--flatten] [--loadOnly] [--composition=STRLIST] [--relative] [--extract-variants] [-j|--json] input.usda/usdc/usdz\n";
     std::cout << "\n --flatten (not fully implemented yet) Do composition(load sublayers, refences, payload, evaluate `over`, inherit, variants..)";
     std::cout << "  --composition: Specify which composition feature to be "
                  "enabled(valid when `--flatten` is supplied). Comma separated "
@@ -45,6 +46,7 @@ void print_help() {
     std::cout << "\n --extract-variants (w.i.p) Dump variants information to .json\n";
     std::cout << "\n --relative (not implemented yet) Print Path as relative Path\n";
     std::cout << "\n -l, --loadOnly Load(Parse) USD file only(Check if input USD is valid or not)\n";
+    std::cout << "\n -j, --json Output parsed USD as JSON string\n";
 
 }
 
@@ -58,6 +60,7 @@ int main(int argc, char **argv) {
   bool has_relative{false};
   bool has_extract_variants{false};
   bool load_only{false};
+  bool json_output{false};
 
   constexpr int kMaxIteration = 128;
 
@@ -77,6 +80,8 @@ int main(int argc, char **argv) {
       has_relative = true;
     } else if ((arg.compare("-l") == 0) || (arg.compare("--loadOnly") == 0)) {
       load_only = true;
+    } else if ((arg.compare("-j") == 0) || (arg.compare("--json") == 0)) {
+      json_output = true;
     } else if (arg.compare("--extract-variants") == 0) {
       has_extract_variants = true;
     } else if (tinyusdz::startsWith(arg, "--composition=")) {
@@ -159,7 +164,17 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
       }
 
-      std::cout << to_string(stage) << "\n";
+      if (json_output) {
+        auto json_result = tinyusdz::ToJSON(stage);
+        if (json_result) {
+          std::cout << json_result.value() << "\n";
+        } else {
+          std::cerr << "Failed to convert USDZ stage to JSON: " << json_result.error() << "\n";
+          return EXIT_FAILURE;
+        }
+      } else {
+        std::cout << to_string(stage) << "\n";
+      }
 
       return EXIT_SUCCESS;
     }
@@ -347,7 +362,17 @@ int main(int argc, char **argv) {
       std::cerr << err << "\n";
     }
     
-    std::cout << comp_stage.ExportToString() << "\n";
+    if (json_output) {
+      auto json_result = tinyusdz::ToJSON(comp_stage);
+      if (json_result) {
+        std::cout << json_result.value() << "\n";
+      } else {
+        std::cerr << "Failed to convert composed stage to JSON: " << json_result.error() << "\n";
+        return EXIT_FAILURE;
+      }
+    } else {
+      std::cout << comp_stage.ExportToString() << "\n";
+    }
 
     using MeshMap = std::map<std::string, const tinyusdz::GeomMesh *>;
     MeshMap meshmap;
@@ -384,8 +409,18 @@ int main(int argc, char **argv) {
       return EXIT_SUCCESS;
     }
 
-    std::string s = stage.ExportToString(has_relative);
-    std::cout << s << "\n";
+    if (json_output) {
+      auto json_result = tinyusdz::ToJSON(stage);
+      if (json_result) {
+        std::cout << json_result.value() << "\n";
+      } else {
+        std::cerr << "Failed to convert stage to JSON: " << json_result.error() << "\n";
+        return EXIT_FAILURE;
+      }
+    } else {
+      std::string s = stage.ExportToString(has_relative);
+      std::cout << s << "\n";
+    }
 
     if (has_extract_variants) {
       tinyusdz::Dictionary dict;
