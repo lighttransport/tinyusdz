@@ -2,7 +2,9 @@
 // Copyright 2022 - Present, Syoyo Fujita.
 #include "usd-to-json.hh"
 
+#include <algorithm>
 #include "tinyusdz.hh"
+#include "io-util.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -919,115 +921,6 @@ json ToJSON(tinyusdz::Xform& xform) {
   return j;
 }
 
-json ToJSON(tinyusdz::GeomMesh& mesh) {
-  return ToJSON(mesh, nullptr);  // Use base64 mode by default
-}
-
-json ToJSON(tinyusdz::GeomMesh& mesh, USDToJSONContext* context) {
-  json j;
-
-  j["name"] = mesh.name;
-  j["typeName"] = "GeomMesh";
-
-  // Serialize geometry arrays using context-aware method
-  
-  // Points array (point3f[])
-  if (mesh.points.authored()) {
-    auto points_opt = mesh.points.get_value();
-    if (points_opt) {
-      std::vector<value::point3f> points_data;
-      if (points_opt.value().get(value::TimeCode::Default(), &points_data)) {
-        j["points"] = SerializePoint3fArrayWithMetadata(points_data, &mesh.points.metas(), context);
-      }
-    }
-  }
-
-  // Face vertex counts (int[])
-  if (mesh.faceVertexCounts.authored()) {
-    auto face_counts_opt = mesh.faceVertexCounts.get_value();
-    if (face_counts_opt) {
-      std::vector<int> face_counts_data;
-      if (face_counts_opt.value().get(value::TimeCode::Default(), &face_counts_data)) {
-        j["faceVertexCounts"] = SerializeIntArrayWithMetadata(face_counts_data, &mesh.faceVertexCounts.metas(), context);
-      }
-    }
-  }
-
-  // Face vertex indices (int[])
-  if (mesh.faceVertexIndices.authored()) {
-    auto face_indices_opt = mesh.faceVertexIndices.get_value();
-    if (face_indices_opt) {
-      std::vector<int> face_indices_data;
-      if (face_indices_opt.value().get(value::TimeCode::Default(), &face_indices_data)) {
-        j["faceVertexIndices"] = SerializeIntArrayWithMetadata(face_indices_data, &mesh.faceVertexIndices.metas(), context);
-      }
-    }
-  }
-
-  // Normals array (normal3f[])
-  if (mesh.normals.authored()) {
-    auto normals_opt = mesh.normals.get_value();
-    if (normals_opt) {
-      std::vector<value::normal3f> normals_data;
-      if (normals_opt.value().get(value::TimeCode::Default(), &normals_data)) {
-        j["normals"] = SerializeNormal3fArrayWithMetadata(normals_data, &mesh.normals.metas(), context);
-      }
-    }
-  }
-
-  // Subdivision surface arrays
-  if (mesh.cornerIndices.authored()) {
-    auto corner_indices_opt = mesh.cornerIndices.get_value();
-    if (corner_indices_opt) {
-      std::vector<int> corner_indices_data;
-      if (corner_indices_opt.value().get(value::TimeCode::Default(), &corner_indices_data)) {
-        j["cornerIndices"] = SerializeIntArrayWithMetadata(corner_indices_data, &mesh.cornerIndices.metas(), context);
-      }
-    }
-  }
-
-  if (mesh.cornerSharpnesses.authored()) {
-    auto corner_sharpnesses_opt = mesh.cornerSharpnesses.get_value();
-    if (corner_sharpnesses_opt) {
-      std::vector<float> corner_sharpnesses_data;
-      if (corner_sharpnesses_opt.value().get(value::TimeCode::Default(), &corner_sharpnesses_data)) {
-        j["cornerSharpnesses"] = SerializeFloatArrayWithMetadata(corner_sharpnesses_data, &mesh.cornerSharpnesses.metas(), context);
-      }
-    }
-  }
-
-  if (mesh.creaseIndices.authored()) {
-    auto crease_indices_opt = mesh.creaseIndices.get_value();
-    if (crease_indices_opt) {
-      std::vector<int> crease_indices_data;
-      if (crease_indices_opt.value().get(value::TimeCode::Default(), &crease_indices_data)) {
-        j["creaseIndices"] = SerializeIntArrayWithMetadata(crease_indices_data, &mesh.creaseIndices.metas(), context);
-      }
-    }
-  }
-
-  if (mesh.creaseLengths.authored()) {
-    auto crease_lengths_opt = mesh.creaseLengths.get_value();
-    if (crease_lengths_opt) {
-      std::vector<int> crease_lengths_data;
-      if (crease_lengths_opt.value().get(value::TimeCode::Default(), &crease_lengths_data)) {
-        j["creaseLengths"] = SerializeIntArrayWithMetadata(crease_lengths_data, &mesh.creaseLengths.metas(), context);
-      }
-    }
-  }
-
-  if (mesh.creaseSharpnesses.authored()) {
-    auto crease_sharpnesses_opt = mesh.creaseSharpnesses.get_value();
-    if (crease_sharpnesses_opt) {
-      std::vector<float> crease_sharpnesses_data;
-      if (crease_sharpnesses_opt.value().get(value::TimeCode::Default(), &crease_sharpnesses_data)) {
-        j["creaseSharpnesses"] = SerializeFloatArrayWithMetadata(crease_sharpnesses_data, &mesh.creaseSharpnesses.metas(), context);
-      }
-    }
-  }
-
-  return j;
-}
 
 json ToJSON(tinyusdz::GeomBasisCurves& curves) {
   
@@ -1168,6 +1061,66 @@ json SerializeContextToJSON(const USDToJSONContext& context) {
 
 }  // namespace
 
+// GeomMesh ToJSON functions (moved outside anonymous namespace for proper linking)
+static json ToJSON(tinyusdz::GeomMesh& mesh) {
+  USDToJSONContext context;  // Use default context
+  return ToJSON(mesh, &context);
+}
+
+json ToJSON(tinyusdz::GeomMesh& mesh, USDToJSONContext* context) {
+  json j;
+
+  j["name"] = mesh.name;
+  j["typeName"] = "GeomMesh";
+
+  // Serialize geometry arrays using context-aware method
+  
+  // Points array (point3f[])
+  if (mesh.points.authored()) {
+    auto points_opt = mesh.points.get_value();
+    if (points_opt) {
+      std::vector<value::point3f> points_data;
+      if (points_opt.value().get(value::TimeCode::Default(), &points_data)) {
+        j["points"] = SerializePoint3fArrayWithMetadata(points_data, &mesh.points.metas(), context);
+      }
+    }
+  }
+
+  // Face vertex counts (int[])
+  if (mesh.faceVertexCounts.authored()) {
+    auto counts_opt = mesh.faceVertexCounts.get_value();
+    if (counts_opt) {
+      std::vector<int> counts_data;
+      if (counts_opt.value().get(value::TimeCode::Default(), &counts_data)) {
+        j["faceVertexCounts"] = SerializeIntArrayWithMetadata(counts_data, &mesh.faceVertexCounts.metas(), context);
+      }
+    }
+  }
+
+  // Face vertex indices (int[])
+  if (mesh.faceVertexIndices.authored()) {
+    auto indices_opt = mesh.faceVertexIndices.get_value();
+    if (indices_opt) {
+      std::vector<int> indices_data;
+      if (indices_opt.value().get(value::TimeCode::Default(), &indices_data)) {
+        j["faceVertexIndices"] = SerializeIntArrayWithMetadata(indices_data, &mesh.faceVertexIndices.metas(), context);
+      }
+    }
+  }
+
+  // Normals (normal3f[])
+  if (mesh.normals.authored()) {
+    auto normals_opt = mesh.normals.get_value();
+    if (normals_opt) {
+      std::vector<value::normal3f> normals_data;
+      if (normals_opt.value().get(value::TimeCode::Default(), &normals_data)) {
+        j["normals"] = SerializeNormal3fArrayWithMetadata(normals_data, &mesh.normals.metas(), context);
+      }
+    }
+  }
+
+  return j;
+}
 
 json ToJSON(const tinyusdz::Layer& layer) {
   USDToJSONContext context;  // Default context (base64 mode)
@@ -1656,6 +1609,306 @@ json PropertiesToJSON(const std::map<std::string, tinyusdz::Property>& propertie
   }
   
   return j;
+}
+
+// ================================================================
+// Additional Stage to JSON conversion support
+// ================================================================
+
+// Helper function to convert Stage to JSON object (for internal use)
+json ToJSON(const tinyusdz::Stage& stage, USDToJSONContext* context) {
+  (void)context; // Currently unused
+  
+  // Reuse existing implementation pattern but return json object instead of string
+  json j;  // root
+
+  auto jstageMetas = ToJSON(stage.metas());
+  if (jstageMetas) {
+    // Stage metadatum is represented as properties.
+    if (!jstageMetas->is_null()) {
+      j["properties"] = *jstageMetas;
+    }
+  }
+
+  j["version"] = 1.0;
+
+  json cj;
+  for (const auto& item : stage.root_prims()) {
+    if (!PrimToJSONRec(cj, item, 0)) {
+      return json::object(); // Return empty on error
+    }
+  }
+
+  j["primChildren"] = cj;
+  
+  return j;
+}
+
+// Overload with options
+nonstd::expected<std::string, std::string> ToJSON(const tinyusdz::Stage &stage, const USDToJSONOptions& options) {
+  USDToJSONContext context(options);
+  json j = ToJSON(stage, &context);
+  
+  if (j.empty()) {
+    return nonstd::make_unexpected("Failed to convert Stage to JSON");
+  }
+  
+  std::string json_str = j.dump(2); // Pretty print with 2-space indent
+  return json_str;
+}
+
+// ================================================================
+// USDZ to JSON conversion implementation
+// ================================================================
+
+namespace {
+  // Helper function for case conversion
+  std::string str_tolower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    return s;
+  }
+}
+
+bool USDZAssetsToJSON(const tinyusdz::USDZAsset& usdz_asset, std::string* assets_json,
+                      std::string* warn, std::string* err) {
+  if (!assets_json) {
+    if (err) {
+      (*err) += "assets_json parameter is null\n";
+    }
+    return false;
+  }
+
+  json assets_obj = json::object();
+  
+  for (const auto& asset_pair : usdz_asset.asset_map) {
+    const std::string& filename = asset_pair.first;
+    size_t byte_begin = asset_pair.second.first;
+    size_t byte_end = asset_pair.second.second;
+    
+    // Validate byte range
+    if (byte_begin >= byte_end) {
+      if (warn) {
+        (*warn) += "Invalid byte range for asset: " + filename + "\n";
+      }
+      continue;
+    }
+    
+    size_t asset_size = byte_end - byte_begin;
+    const uint8_t* asset_data = nullptr;
+    
+    // Get asset data based on storage mode
+    if (!usdz_asset.data.empty()) {
+      // Data stored in vector
+      if (byte_end > usdz_asset.data.size()) {
+        if (warn) {
+          (*warn) += "Asset byte range exceeds data size for: " + filename + "\n";
+        }
+        continue;
+      }
+      asset_data = usdz_asset.data.data() + byte_begin;
+    } else if (usdz_asset.addr && usdz_asset.size > 0) {
+      // Data stored via memory mapping
+      if (byte_end > usdz_asset.size) {
+        if (warn) {
+          (*warn) += "Asset byte range exceeds mapped size for: " + filename + "\n";
+        }
+        continue;
+      }
+      asset_data = usdz_asset.addr + byte_begin;
+    } else {
+      if (warn) {
+        (*warn) += "No data available for asset: " + filename + "\n";
+      }
+      continue;
+    }
+    
+    // Convert to base64
+    std::string base64_data = base64_encode(asset_data, static_cast<unsigned int>(asset_size));
+    
+    // Create asset info object
+    json asset_info;
+    asset_info["filename"] = filename;
+    asset_info["size"] = asset_size;
+    asset_info["data"] = base64_data;
+    
+    assets_obj[filename] = asset_info;
+  }
+  
+  (*assets_json) = assets_obj.dump(2);
+  return true;
+}
+
+bool USDZToJSONFromMemory(const uint8_t* addr, size_t length, const std::string& filename,
+                          USDZToJSONResult* result, std::string* warn, std::string* err,
+                          const USDToJSONOptions& options) {
+  if (!addr || length == 0) {
+    if (err) {
+      (*err) += "Invalid memory address or length\n";
+    }
+    return false;
+  }
+  
+  if (!result) {
+    if (err) {
+      (*err) += "result parameter is null\n";
+    }
+    return false;
+  }
+  
+  // Parse USDZ and extract asset information
+  USDZAsset usdz_asset;
+  if (!ReadUSDZAssetInfoFromMemory(addr, length, true, &usdz_asset, warn, err)) {
+    return false;
+  }
+  
+  // Find main USD file (prefer USDC over USDA)
+  std::string main_usd_filename;
+  std::string main_usd_ext;
+  
+  for (const auto& asset_pair : usdz_asset.asset_map) {
+    const std::string& asset_filename = asset_pair.first;
+    std::string ext = str_tolower(io::GetFileExtension(asset_filename));
+    
+    if (ext == "usdc" || ext == "usda") {
+      if (main_usd_filename.empty() || (ext == "usdc" && main_usd_ext == "usda")) {
+        main_usd_filename = asset_filename;
+        main_usd_ext = ext;
+      }
+    }
+  }
+  
+  if (main_usd_filename.empty()) {
+    if (err) {
+      (*err) += "No USD file found in USDZ archive\n";
+    }
+    return false;
+  }
+  
+  result->main_usd_filename = main_usd_filename;
+  
+  // Extract USD content and convert to JSON
+  auto usd_asset_iter = usdz_asset.asset_map.find(main_usd_filename);
+  if (usd_asset_iter == usdz_asset.asset_map.end()) {
+    if (err) {
+      (*err) += "Could not find main USD file in asset map: " + main_usd_filename + "\n";
+    }
+    return false;
+  }
+  
+  size_t usd_byte_begin = usd_asset_iter->second.first;
+  size_t usd_byte_end = usd_asset_iter->second.second;
+  size_t usd_size = usd_byte_end - usd_byte_begin;
+  
+  const uint8_t* usd_data = usdz_asset.addr + usd_byte_begin;
+  
+  // Load USD from memory and convert to JSON
+  Stage stage;
+  std::string usd_warn, usd_err;
+  
+  bool usd_loaded = false;
+  if (main_usd_ext == "usdc") {
+    usd_loaded = LoadUSDCFromMemory(usd_data, usd_size, filename, &stage, &usd_warn, &usd_err);
+  } else if (main_usd_ext == "usda") {
+    std::string base_dir = io::GetBaseDir(filename);
+    usd_loaded = LoadUSDAFromMemory(usd_data, usd_size, base_dir, &stage, &usd_warn, &usd_err);
+  }
+  
+  if (!usd_loaded) {
+    if (err) {
+      (*err) += "Failed to load USD content from USDZ: " + usd_err + "\n";
+    }
+    return false;
+  }
+  
+  if (!usd_warn.empty() && warn) {
+    (*warn) += "USD loading warnings: " + usd_warn + "\n";
+  }
+  
+  // Convert Stage to JSON
+  auto stage_json_result = ToJSON(stage, options);
+  if (!stage_json_result) {
+    if (err) {
+      (*err) += "Failed to convert USD Stage to JSON: " + stage_json_result.error() + "\n";
+    }
+    return false;
+  }
+  
+  result->usd_json = stage_json_result.value();
+  
+  // Extract all asset filenames (excluding the main USD file)
+  for (const auto& asset_pair : usdz_asset.asset_map) {
+    const std::string& asset_filename = asset_pair.first;
+    result->asset_filenames.push_back(asset_filename);
+  }
+  
+  // Convert assets to JSON
+  if (!USDZAssetsToJSON(usdz_asset, &result->assets_json, warn, err)) {
+    return false;
+  }
+  
+  return true;
+}
+
+bool USDZToJSON(const std::string& filename, USDZToJSONResult* result,
+                std::string* warn, std::string* err,
+                const USDToJSONOptions& options) {
+  if (!result) {
+    if (err) {
+      (*err) += "result parameter is null\n";
+    }
+    return false;
+  }
+  
+  // Read USDZ file into memory
+  std::string filepath = io::ExpandFilePath(filename, nullptr);
+  
+  if (io::IsMMapSupported()) {
+    // Use memory mapping for better performance with large files
+    io::MMapFileHandle handle;
+    std::string mmap_err;
+    
+    if (!io::MMapFile(filepath, &handle, false, &mmap_err)) {
+      if (err) {
+        (*err) += "Failed to memory map file: " + mmap_err + "\n";
+      }
+      return false;
+    }
+    
+    if (!mmap_err.empty() && warn) {
+      (*warn) += "Memory mapping warning: " + mmap_err + "\n";
+    }
+    
+    bool success = USDZToJSONFromMemory(handle.addr, size_t(handle.size), filepath, 
+                                        result, warn, err, options);
+    
+    // Clean up memory mapping
+    std::string unmap_err;
+    io::UnmapFile(handle, &unmap_err);
+    if (!unmap_err.empty() && warn) {
+      (*warn) += "Memory unmap warning: " + unmap_err + "\n";
+    }
+    
+    return success;
+    
+  } else {
+    // Read entire file into memory
+    std::vector<uint8_t> data;
+    size_t max_bytes = 1024 * 1024 * 1024;  // 1GB default limit
+    
+    if (!io::ReadWholeFile(&data, err, filepath, max_bytes, nullptr)) {
+      return false;
+    }
+    
+    if (data.empty()) {
+      if (err) {
+        (*err) += "File is empty: " + filepath + "\n";
+      }
+      return false;
+    }
+    
+    return USDZToJSONFromMemory(data.data(), data.size(), filepath, result, warn, err, options);
+  }
 }
 
 

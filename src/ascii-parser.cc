@@ -4628,6 +4628,11 @@ bool AsciiParser::ParseProperties(std::map<std::string, Property> *props,
   //          | 'rel' name '=' path
   //          ;
 
+  // Report progress and check for cancellation
+  if (!ReportProgress()) {
+    PUSH_ERROR_AND_RETURN("Parsing cancelled by progress callback.");
+  }
+
   if (!SkipWhitespace()) {
     return false;
   }
@@ -4675,6 +4680,32 @@ void AsciiParser::Setup() {
   RegisterPrimAttrTypes(_supported_prim_attr_types);
   RegisterPrimTypes(_supported_prim_types);
   RegisterAPISchemas(_supported_api_schemas);
+}
+
+bool AsciiParser::ReportProgress() {
+  // Check if callback exists and is callable
+  if (!_progress_callback) {
+    return true;  // No callback, continue parsing
+  }
+  
+  if (!_sr) {
+    return true;  // No stream reader, can't compute progress
+  }
+  
+  // Calculate progress based on current position in stream
+  uint64_t current_pos = _sr->tell();
+  uint64_t total_size = _sr->size();
+  
+  float progress = 0.0f;
+  if (total_size > 0) {
+    progress = static_cast<float>(current_pos) / static_cast<float>(total_size);
+    // Clamp to [0, 1] range
+    if (progress > 1.0f) progress = 1.0f;
+    if (progress < 0.0f) progress = 0.0f;
+  }
+  
+  // Call the callback and return its result
+  return _progress_callback(progress, _progress_userptr);
 }
 
 AsciiParser::~AsciiParser() {}
@@ -4877,6 +4908,11 @@ bool AsciiParser::ParseBlock(const Specifier spec, const int64_t primIdx,
   (void)in_variantStaement;
 
   DCOUT("ParseBlock");
+
+  // Report progress and check for cancellation
+  if (!ReportProgress()) {
+    PUSH_ERROR_AND_RETURN("Parsing cancelled by progress callback.");
+  }
 
   if (!SkipCommentAndWhitespaceAndNewline()) {
     DCOUT("SkipCommentAndWhitespaceAndNewline failed");
