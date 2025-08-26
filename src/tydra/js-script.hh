@@ -3,6 +3,7 @@
 namespace tinyusdz {
 
 struct LayerMetas;
+class Layer;
 class Attribute;
 
 namespace tydra {
