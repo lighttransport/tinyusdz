@@ -106,6 +106,11 @@ nonstd::expected<std::string, std::string> ToJSON(const tinyusdz::Stage &stage);
 nonstd::expected<std::string, std::string> ToJSON(const tinyusdz::Stage &stage, const USDToJSONOptions& options);
 
 ///
+/// Convert USD Stage to JSON (nlohmann::json object)
+///
+nlohmann::json ToJSON(const tinyusdz::Stage &stage, USDToJSONContext* context);
+
+///
 /// Convert USD Layer to JSON (nlohmann::json object)
 ///
 nlohmann::json ToJSON(const tinyusdz::Layer &layer);
@@ -149,5 +154,62 @@ nlohmann::json ToJSON(const tinyusdz::Property& property, USDToJSONContext* cont
 /// Convert Properties map to JSON
 ///
 nlohmann::json PropertiesToJSON(const std::map<std::string, tinyusdz::Property>& properties, USDToJSONContext* context = nullptr);
+
+///
+/// USDZ to JSON conversion result structure
+///
+struct USDZToJSONResult {
+  std::string usd_json;          // JSON representation of USD content
+  std::string assets_json;       // JSON representation of assets (filename -> base64 data)
+  std::string main_usd_filename; // Name of the main USD file in USDZ
+  std::vector<std::string> asset_filenames; // List of all asset filenames
+  
+  USDZToJSONResult() = default;
+};
+
+///
+/// Convert USDZ file to JSON (separate USD content and assets)
+///
+/// @param[in] filename Path to USDZ file
+/// @param[out] result USDZ to JSON conversion result
+/// @param[out] warn Warning messages
+/// @param[out] err Error messages
+/// @param[in] options Conversion options
+///
+/// @return true on success, false on failure
+///
+bool USDZToJSON(const std::string& filename, USDZToJSONResult* result,
+                std::string* warn, std::string* err,
+                const USDToJSONOptions& options = USDToJSONOptions());
+
+///
+/// Convert USDZ from memory to JSON (separate USD content and assets)
+///
+/// @param[in] addr Pointer to USDZ data in memory
+/// @param[in] length Size of USDZ data in bytes
+/// @param[in] filename Filename (for reference, can be empty)
+/// @param[out] result USDZ to JSON conversion result
+/// @param[out] warn Warning messages
+/// @param[out] err Error messages
+/// @param[in] options Conversion options
+///
+/// @return true on success, false on failure
+///
+bool USDZToJSONFromMemory(const uint8_t* addr, size_t length, const std::string& filename,
+                          USDZToJSONResult* result, std::string* warn, std::string* err,
+                          const USDToJSONOptions& options = USDToJSONOptions());
+
+///
+/// Extract assets from USDZ and convert to JSON map (filename -> base64 data)
+///
+/// @param[in] usdz_asset USDZ asset data structure
+/// @param[out] assets_json JSON string containing asset map
+/// @param[out] warn Warning messages
+/// @param[out] err Error messages
+///
+/// @return true on success, false on failure
+///
+bool USDZAssetsToJSON(const tinyusdz::USDZAsset& usdz_asset, std::string* assets_json,
+                      std::string* warn, std::string* err);
 
 } // namespace tinyusdz
