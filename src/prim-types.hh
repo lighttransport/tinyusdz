@@ -2705,6 +2705,11 @@ class Attribute {
   const std::vector<Path> &connections() const { return _paths; }
   std::vector<Path> &connections() { return _paths; }
 
+  ///
+  /// Estimate memory usage of this Attribute in bytes
+  ///
+  size_t estimate_memory_usage() const;
+
  private:
   std::string _name;  // attrib name
   Variability _variability{
