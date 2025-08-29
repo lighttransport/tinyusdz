@@ -987,6 +987,11 @@ struct RenderMesh {
   // Plese look into corresponding Prim( stage::find_prim_at_path(abs_path) )
 
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
+  
+  ///
+  /// Estimate memory usage of this RenderMesh in bytes
+  ///
+  size_t estimate_memory_usage() const;
 };
 
 enum class UVReaderFloatComponentType {
@@ -1259,6 +1264,11 @@ class RenderScene {
   std::vector<SkelHierarchy> skeletons;
   std::vector<BufferData>
       buffers;  // Various data storage(e.g. texel/image data).
+
+  ///
+  /// Estimate total memory usage of this RenderScene in bytes
+  ///
+  size_t estimate_memory_usage() const;
 
 };
 
