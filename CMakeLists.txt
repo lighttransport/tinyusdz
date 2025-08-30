@@ -435,6 +435,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/uuid-gen.hh
     ${PROJECT_SOURCE_DIR}/src/parser-timing.cc
     ${PROJECT_SOURCE_DIR}/src/sha256.cc
+    ${PROJECT_SOURCE_DIR}/src/typed-array.cc
 
     )
 

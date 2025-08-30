@@ -7405,5 +7405,119 @@ std::string DumpRenderScene(const RenderScene &scene,
   return ss.str();
 }
 
+// Memory usage estimation implementations
+
+size_t RenderMesh::estimate_memory_usage() const {
+  size_t total = sizeof(RenderMesh);
+  
+  // String storage
+  total += prim_name.capacity();
+  total += abs_path.capacity(); 
+  total += display_name.capacity();
+  
+  // Vertex data
+  total += points.capacity() * sizeof(vec3);
+  
+  // Index data
+  total += usdFaceVertexIndices.capacity() * sizeof(uint32_t);
+  total += usdFaceVertexCounts.capacity() * sizeof(uint32_t);
+  total += triangulatedFaceVertexIndices.capacity() * sizeof(uint32_t);
+  total += triangulatedFaceVertexCounts.capacity() * sizeof(uint32_t);
+  total += triangulatedToOrigFaceVertexIndexMap.capacity() * sizeof(size_t);
+  total += triangulatedFaceCounts.capacity() * sizeof(uint32_t);
+  
+  // Vertex attributes helper
+  auto estimate_vertex_attr = [](const VertexAttribute& attr) -> size_t {
+    size_t size = sizeof(VertexAttribute);
+    size += attr.name.capacity();
+    size += attr.data.capacity();
+    size += attr.indices.capacity() * sizeof(uint32_t);
+    return size;
+  };
+  
+  total += estimate_vertex_attr(normals);
+  total += estimate_vertex_attr(tangents);
+  total += estimate_vertex_attr(binormals);
+  total += estimate_vertex_attr(vertex_colors);
+  total += estimate_vertex_attr(vertex_opacities);
+  
+  // Texcoords map
+  for (const auto& texcoord_pair : texcoords) {
+    total += sizeof(uint32_t) + estimate_vertex_attr(texcoord_pair.second);
+  }
+  
+  // StringAndIdMap for texcoords
+  total += texcoordSlotIdMap.size() * (sizeof(uint64_t) + sizeof(std::string));
+  for (auto it = texcoordSlotIdMap.s_begin(); it != texcoordSlotIdMap.s_end(); ++it) {
+    total += it->first.capacity();
+  }
+  
+  // Joint and weights (basic estimate)
+  total += sizeof(JointAndWeight);
+  // TODO: Add detailed JointAndWeight internal memory estimation
+  
+  // Blend shapes
+  for (const auto& blend_shape_pair : targets) {
+    total += blend_shape_pair.first.capacity() + sizeof(ShapeTarget);
+    // TODO: Add detailed ShapeTarget internal memory estimation
+  }
+  
+  // Material subset map
+  for (const auto& subset_pair : material_subsetMap) {
+    total += subset_pair.first.capacity() + sizeof(MaterialSubset);
+    // TODO: Add detailed MaterialSubset internal memory estimation
+  }
+  
+  return total;
+}
+
+size_t RenderScene::estimate_memory_usage() const {
+  size_t total = sizeof(RenderScene);
+  
+  // Scene metadata and filename
+  total += usd_filename.capacity();
+  // Note: SceneMetadata memory would need detailed estimation
+  total += sizeof(SceneMetadata);
+  
+  // Estimate containers
+  total += nodes.capacity() * sizeof(Node);
+  (void)nodes; // Suppress unused variable warning
+  
+  total += images.capacity() * sizeof(TextureImage);
+  (void)images; // Suppress unused variable warning
+  
+  total += materials.capacity() * sizeof(RenderMaterial);
+  (void)materials; // Suppress unused variable warning
+  
+  total += cameras.capacity() * sizeof(RenderCamera);
+  total += lights.capacity() * sizeof(RenderLight);
+  
+  total += textures.capacity() * sizeof(UVTexture);
+  for (const auto& texture : textures) {
+    total += texture.prim_name.capacity();
+    total += texture.abs_path.capacity();
+    total += texture.display_name.capacity();
+  }
+  
+  // Meshes - use the detailed estimation
+  total += meshes.capacity() * sizeof(RenderMesh);
+  for (const auto& mesh : meshes) {
+    total += mesh.estimate_memory_usage() - sizeof(RenderMesh); // Avoid double-counting base size
+  }
+  
+  total += animations.capacity() * sizeof(Animation);
+  (void)animations; // Suppress unused variable warning
+  
+  total += skeletons.capacity() * sizeof(SkelHierarchy);
+  (void)skeletons; // Suppress unused variable warning
+  
+  total += buffers.capacity() * sizeof(BufferData);
+  for (const auto& buffer : buffers) {
+    total += buffer.data.capacity();
+  }
+  
+  return total;
+}
+
 }  // namespace tydra
 }  // namespace tinyusdz
