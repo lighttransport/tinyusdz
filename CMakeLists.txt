@@ -401,6 +401,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/usda-writer.cc
     ${PROJECT_SOURCE_DIR}/src/usdc-writer.cc
     ${PROJECT_SOURCE_DIR}/src/composition.cc
+    ${PROJECT_SOURCE_DIR}/src/chunk-reader.cc
     ${PROJECT_SOURCE_DIR}/src/crate-reader.cc
     ${PROJECT_SOURCE_DIR}/src/crate-format.cc
     ${PROJECT_SOURCE_DIR}/src/crate-writer.cc
