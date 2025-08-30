@@ -8,11 +8,15 @@
 #include <algorithm>
 #include <cstring>
 #include <iostream>
+#include <chrono>
 
 namespace tinyusdz {
 
 ChunkReader::ChunkReader(size_t total_size, const Config& config)
-    : config_(config), total_size_(total_size), current_offset_(0), current_cache_size_(0) {
+    : config_(config), total_size_(total_size), current_offset_(0),
+      current_sliding_window_size_(0), current_random_cache_size_(0), current_preload_size_(0),
+      last_accessed_chunk_(SIZE_MAX), sequential_access_count_(0), in_sequential_mode_(false),
+      global_timestamp_(0) {
   // Validate configuration
   if (config_.chunk_size == 0) {
     config_.chunk_size = 1024 * 1024; // 1MB default
@@ -36,6 +40,18 @@ ChunkReader::ChunkReader(size_t total_size, const Config& config)
   if (max_chunks_by_buffer < config_.max_chunks) {
     config_.max_chunks = max_chunks_by_buffer;
   }
+  
+  // Validate allocation ratios
+  float total_ratio = config_.sliding_window_ratio + config_.random_cache_ratio + config_.preload_ratio;
+  if (total_ratio > 100.1f || total_ratio < 99.9f) {
+    // Normalize ratios if they don't sum to 100
+    config_.sliding_window_ratio = (config_.sliding_window_ratio / total_ratio) * 100.0f;
+    config_.random_cache_ratio = (config_.random_cache_ratio / total_ratio) * 100.0f;
+    config_.preload_ratio = (config_.preload_ratio / total_ratio) * 100.0f;
+  }
+  
+  // Initialize cache sizes and structures
+  InitializeCacheSizes();
 }
 
 ChunkReader::~ChunkReader() {
@@ -73,7 +89,18 @@ nonstd::expected<ChunkReader::ReadResult, std::string> ChunkReader::Read(size_t 
     std::lock_guard<std::mutex> lock(cache_mutex_);
     
     for (size_t chunk_id = start_chunk; chunk_id <= end_chunk; ++chunk_id) {
-      if (chunk_cache_.find(chunk_id) == chunk_cache_.end()) {
+      // Check caches directly without calling IsChunkCached to avoid mutex issues
+      bool cached = false;
+      
+      if (sliding_window_ && sliding_window_->contains(chunk_id)) {
+        cached = true;
+      } else if (random_cache_.find(chunk_id) != random_cache_.end()) {
+        cached = true;
+      } else if (preload_cache_.find(chunk_id) != preload_cache_.end()) {
+        cached = true;
+      }
+      
+      if (!cached) {
         result.required_chunks.push_back(chunk_id);
         result.fully_cached = false;
       }
@@ -83,7 +110,17 @@ nonstd::expected<ChunkReader::ReadResult, std::string> ChunkReader::Read(size_t 
     if (!result.fully_cached) {
       // Find contiguous cached chunks from the start
       for (size_t chunk_id = start_chunk; chunk_id <= end_chunk; ++chunk_id) {
-        if (chunk_cache_.find(chunk_id) != chunk_cache_.end()) {
+        bool cached = false;
+        
+        if (sliding_window_ && sliding_window_->contains(chunk_id)) {
+          cached = true;
+        } else if (random_cache_.find(chunk_id) != random_cache_.end()) {
+          cached = true;
+        } else if (preload_cache_.find(chunk_id) != preload_cache_.end()) {
+          cached = true;
+        }
+        
+        if (cached) {
           size_t chunk_start = chunk_id * config_.chunk_size;
           size_t chunk_end = std::min(chunk_start + config_.chunk_size, total_size_);
           
@@ -159,12 +196,20 @@ nonstd::expected<size_t, std::string> ChunkReader::ReadDirect(size_t offset, siz
     } else {
       // Only use cached chunks
       std::lock_guard<std::mutex> lock(cache_mutex_);
-      auto it = chunk_cache_.find(chunk_id);
-      if (it == chunk_cache_.end()) {
+      
+      // Try to find chunk in any cache
+      chunk = FindInSlidingWindow(chunk_id);
+      if (!chunk) {
+        chunk = FindInRandomCache(chunk_id);
+      }
+      if (!chunk) {
+        chunk = FindInPreloadCache(chunk_id);
+      }
+      
+      if (!chunk) {
         // Chunk not in cache and force_load is false
         break;
       }
-      chunk = it->second.chunk;
     }
     
     // Calculate how much to read from this chunk
@@ -295,20 +340,58 @@ void ChunkReader::Prefetch(size_t offset, size_t size) {
   size_t end_offset = std::min(offset + size, total_size_);
   size_t end_chunk = GetChunkId(end_offset);
   
-  // Prefetch chunks asynchronously (could be improved with actual async loading)
+  std::lock_guard<std::mutex> lock(cache_mutex_);
+  
+  // Prefetch chunks into preload cache
   for (size_t chunk_id = start_chunk; chunk_id <= end_chunk; ++chunk_id) {
-    // Try to load the chunk if not already cached
-    if (!IsChunkCached(chunk_id)) {
-      LoadChunk(chunk_id); // Ignore errors during prefetch
+    // Skip if already cached anywhere
+    if (IsChunkCached(chunk_id)) {
+      continue;
+    }
+    
+    // Load chunk for preload cache
+    cache_mutex_.unlock();
+    auto chunk_result = LoadChunk(chunk_id);
+    cache_mutex_.lock();
+    
+    if (chunk_result) {
+      InsertIntoPreloadCache(chunk_id, chunk_result.value());
     }
   }
 }
 
 void ChunkReader::ClearCache() {
   std::lock_guard<std::mutex> lock(cache_mutex_);
-  chunk_cache_.clear();
-  lru_list_.clear();
-  current_cache_size_ = 0;
+  
+  // Clear sliding window
+  if (sliding_window_) {
+    sliding_window_->chunks.assign(sliding_window_->capacity, nullptr);
+    sliding_window_->head = 0;
+    sliding_window_->tail = 0;
+    sliding_window_->size = 0;
+    sliding_window_->base_chunk_id = 0;
+  }
+  
+  // Clear random cache
+  random_cache_.clear();
+  random_cache_lru_.clear();
+  if (two_q_cache_) {
+    two_q_cache_->a1_fifo.clear();
+    two_q_cache_->am_lru.clear();
+  }
+  if (tiny_lfu_sketch_) {
+    tiny_lfu_sketch_->sketch.assign(tiny_lfu_sketch_->size, 0);
+    tiny_lfu_sketch_->total_count = 0;
+  }
+  
+  // Clear preload cache
+  preload_cache_.clear();
+  preload_lru_.clear();
+  
+  // Reset sizes
+  current_sliding_window_size_ = 0;
+  current_random_cache_size_ = 0;
+  current_preload_size_ = 0;
 }
 
 ChunkReader::Stats ChunkReader::GetStats() const {
@@ -320,18 +403,44 @@ void ChunkReader::ResetStats() {
 }
 
 bool ChunkReader::IsChunkCached(size_t chunk_id) const {
-  std::lock_guard<std::mutex> lock(cache_mutex_);
-  return chunk_cache_.find(chunk_id) != chunk_cache_.end();
+  // Note: This method should NOT acquire the mutex if called from within
+  // a method that already holds it. For now, we'll make it work safely.
+  
+  // Check sliding window
+  if (sliding_window_ && sliding_window_->contains(chunk_id)) {
+    return true;
+  }
+  
+  // Check random cache  
+  if (random_cache_.find(chunk_id) != random_cache_.end()) {
+    return true;
+  }
+  
+  // Check preload cache
+  if (preload_cache_.find(chunk_id) != preload_cache_.end()) {
+    return true;
+  }
+  
+  return false;
 }
 
 size_t ChunkReader::GetCacheSize() const {
   std::lock_guard<std::mutex> lock(cache_mutex_);
-  return current_cache_size_;
+  return current_sliding_window_size_ + current_random_cache_size_ + current_preload_size_;
 }
 
 size_t ChunkReader::GetCachedChunkCount() const {
   std::lock_guard<std::mutex> lock(cache_mutex_);
-  return chunk_cache_.size();
+  size_t total = 0;
+  
+  if (sliding_window_) {
+    total += sliding_window_->size;
+  }
+  
+  total += random_cache_.size();
+  total += preload_cache_.size();
+  
+  return total;
 }
 
 nonstd::expected<std::shared_ptr<ChunkReader::Chunk>, std::string> 
@@ -368,16 +477,35 @@ nonstd::expected<std::shared_ptr<ChunkReader::Chunk>, std::string>
 ChunkReader::GetChunk(size_t chunk_id) {
   std::lock_guard<std::mutex> lock(cache_mutex_);
   
-  // Check if chunk is in cache
-  auto it = chunk_cache_.find(chunk_id);
-  if (it != chunk_cache_.end()) {
-    // Cache hit
+  // Detect access pattern
+  DetectAccessPattern(chunk_id);
+  
+  // Try to find chunk in different caches
+  std::shared_ptr<Chunk> chunk;
+  
+  // Check sliding window first (most likely for sequential access)
+  chunk = FindInSlidingWindow(chunk_id);
+  if (chunk) {
     stats_.cache_hits++;
-    
-    // Update LRU order
-    UpdateLRU(chunk_id);
-    
-    return it->second.chunk;
+    return chunk;
+  }
+  
+  // Check random access cache
+  chunk = FindInRandomCache(chunk_id);
+  if (chunk) {
+    stats_.cache_hits++;
+    return chunk;
+  }
+  
+  // Check preload cache
+  chunk = FindInPreloadCache(chunk_id);
+  if (chunk) {
+    stats_.cache_hits++;
+    // Move from preload to appropriate main cache
+    preload_cache_.erase(chunk_id);
+    current_preload_size_ -= chunk->size;
+    InsertIntoCache(chunk_id, chunk);
+    return chunk;
   }
   
   // Cache miss
@@ -393,79 +521,22 @@ ChunkReader::GetChunk(size_t chunk_id) {
     return chunk_result;
   }
   
-  auto chunk = chunk_result.value();
+  chunk = chunk_result.value();
   
-  // Check if we need to evict chunks
-  while (IsCacheFull() || 
-         (current_cache_size_ + chunk->size > config_.max_buffer_size)) {
-    EvictLRU();
-  }
-  
-  // Add to cache
-  CacheEntry entry;
-  entry.chunk = chunk;
-  
-  // Add to front of LRU list (most recently used)
-  lru_list_.push_front(chunk_id);
-  entry.lru_iterator = lru_list_.begin();
-  
-  chunk_cache_[chunk_id] = entry;
-  current_cache_size_ += chunk->size;
+  // Insert into appropriate cache
+  InsertIntoCache(chunk_id, chunk);
   
   return chunk;
 }
 
-void ChunkReader::UpdateLRU(size_t chunk_id) {
-  // Note: caller must hold cache_mutex_
-  auto it = chunk_cache_.find(chunk_id);
-  if (it == chunk_cache_.end()) {
-    return;
-  }
-  
-  // Remove from current position in LRU list
-  lru_list_.erase(it->second.lru_iterator);
-  
-  // Add to front (most recently used)
-  lru_list_.push_front(chunk_id);
-  it->second.lru_iterator = lru_list_.begin();
-}
-
-void ChunkReader::EvictLRU() {
-  // Note: caller must hold cache_mutex_
-  if (lru_list_.empty()) {
-    return;
-  }
-  
-  // Get least recently used chunk
-  size_t chunk_id = lru_list_.back();
-  lru_list_.pop_back();
-  
-  // Remove from cache
-  auto it = chunk_cache_.find(chunk_id);
-  if (it != chunk_cache_.end()) {
-    current_cache_size_ -= it->second.chunk->size;
-    chunk_cache_.erase(it);
-    
-    // Update statistics
-    stats_.chunks_evicted++;
-  }
-}
-
-bool ChunkReader::IsCacheFull() const {
-  // Note: caller must hold cache_mutex_
-  return chunk_cache_.size() >= config_.max_chunks;
-}
 
 nonstd::expected<size_t, std::string> ChunkReader::LoadChunks(const std::vector<size_t>& chunk_ids) {
   size_t loaded_count = 0;
   
   for (size_t chunk_id : chunk_ids) {
     // Check if already cached
-    {
-      std::lock_guard<std::mutex> lock(cache_mutex_);
-      if (chunk_cache_.find(chunk_id) != chunk_cache_.end()) {
-        continue; // Already cached
-      }
+    if (IsChunkCached(chunk_id)) {
+      continue; // Already cached
     }
     
     // Load the chunk
@@ -478,6 +549,342 @@ nonstd::expected<size_t, std::string> ChunkReader::LoadChunks(const std::vector<
   }
   
   return loaded_count;
+}
+
+void ChunkReader::InitializeCacheSizes() {
+  // Calculate cache sizes based on ratios
+  size_t total_chunk_capacity = config_.max_buffer_size / config_.chunk_size;
+  
+  sliding_window_size_ = static_cast<size_t>(total_chunk_capacity * config_.sliding_window_ratio / 100.0f);
+  random_cache_size_ = static_cast<size_t>(total_chunk_capacity * config_.random_cache_ratio / 100.0f);
+  preload_size_ = static_cast<size_t>(total_chunk_capacity * config_.preload_ratio / 100.0f);
+  
+  // Ensure at least 1 chunk for each cache if total capacity allows
+  if (sliding_window_size_ == 0 && total_chunk_capacity > 0) sliding_window_size_ = 1;
+  if (random_cache_size_ == 0 && total_chunk_capacity > 1) random_cache_size_ = 1;
+  if (preload_size_ == 0 && total_chunk_capacity > 2) preload_size_ = 1;
+  
+  // Adjust if total exceeds capacity
+  size_t total_allocated = sliding_window_size_ + random_cache_size_ + preload_size_;
+  if (total_allocated > total_chunk_capacity) {
+    // Scale down proportionally
+    sliding_window_size_ = (sliding_window_size_ * total_chunk_capacity) / total_allocated;
+    random_cache_size_ = (random_cache_size_ * total_chunk_capacity) / total_allocated;
+    preload_size_ = total_chunk_capacity - sliding_window_size_ - random_cache_size_;
+  }
+  
+  // Initialize sliding window ring buffer
+  if (sliding_window_size_ > 0) {
+    sliding_window_ = std::make_unique<RingBuffer>(sliding_window_size_);
+  }
+  
+  // Initialize 2Q cache structures
+  if (random_cache_size_ > 0) {
+    if (config_.cache_algorithm == Config::ALGORITHM_2Q) {
+      two_q_cache_ = std::make_unique<TwoQCache>(random_cache_size_);
+    } else if (config_.cache_algorithm == Config::ALGORITHM_TINYLFU) {
+      tiny_lfu_sketch_ = std::make_unique<TinyLFUSketch>(random_cache_size_ * 4);
+    }
+  }
+}
+
+void ChunkReader::DetectAccessPattern(size_t chunk_id) {
+  if (last_accessed_chunk_ != SIZE_MAX) {
+    if (chunk_id == last_accessed_chunk_ + 1) {
+      sequential_access_count_++;
+      if (sequential_access_count_ >= 3) {
+        in_sequential_mode_ = true;
+      }
+    } else {
+      sequential_access_count_ = 0;
+      if (sequential_access_count_ == 0) {
+        in_sequential_mode_ = false;
+      }
+    }
+  }
+  last_accessed_chunk_ = chunk_id;
+}
+
+std::shared_ptr<ChunkReader::Chunk> ChunkReader::FindInSlidingWindow(size_t chunk_id) {
+  if (!sliding_window_ || !sliding_window_->contains(chunk_id)) {
+    return nullptr;
+  }
+  
+  size_t index = sliding_window_->get_index(chunk_id);
+  return sliding_window_->chunks[index];
+}
+
+std::shared_ptr<ChunkReader::Chunk> ChunkReader::FindInRandomCache(size_t chunk_id) {
+  auto it = random_cache_.find(chunk_id);
+  if (it == random_cache_.end()) {
+    return nullptr;
+  }
+  
+  // Update access information based on algorithm
+  CacheEntry& entry = it->second;
+  entry.access_time = ++global_timestamp_;
+  entry.access_count++;
+  
+  switch (config_.cache_algorithm) {
+    case Config::ALGORITHM_2Q:
+      Update2Q(chunk_id, entry);
+      break;
+    case Config::ALGORITHM_TINYLFU:
+      UpdateTinyLFU(chunk_id, entry);
+      break;
+    case Config::ALGORITHM_SLRU:
+      // Move to front of LRU list
+      random_cache_lru_.erase(entry.list_iterator);
+      random_cache_lru_.push_front(chunk_id);
+      entry.list_iterator = random_cache_lru_.begin();
+      break;
+  }
+  
+  return entry.chunk;
+}
+
+std::shared_ptr<ChunkReader::Chunk> ChunkReader::FindInPreloadCache(size_t chunk_id) {
+  auto it = preload_cache_.find(chunk_id);
+  return (it != preload_cache_.end()) ? it->second : nullptr;
+}
+
+void ChunkReader::InsertIntoCache(size_t chunk_id, std::shared_ptr<Chunk> chunk) {
+  // Choose cache based on access pattern and availability
+  if (in_sequential_mode_ && sliding_window_) {
+    InsertIntoSlidingWindow(chunk_id, chunk);
+  } else if (random_cache_size_ > 0) {
+    InsertIntoRandomCache(chunk_id, chunk);
+  } else if (sliding_window_) {
+    InsertIntoSlidingWindow(chunk_id, chunk);
+  }
+}
+
+void ChunkReader::InsertIntoSlidingWindow(size_t chunk_id, std::shared_ptr<Chunk> chunk) {
+  if (!sliding_window_) return;
+  
+  // Evict if necessary
+  while (current_sliding_window_size_ + chunk->size > sliding_window_size_ * config_.chunk_size) {
+    EvictFromSlidingWindow();
+  }
+  
+  // Handle sequential insertion
+  if (sliding_window_->is_empty()) {
+    sliding_window_->base_chunk_id = chunk_id;
+    sliding_window_->tail = 0;
+    sliding_window_->head = 0;
+    sliding_window_->size = 1;
+    sliding_window_->chunks[0] = chunk;
+  } else {
+    // Check if this extends the window
+    if (chunk_id == sliding_window_->base_chunk_id + sliding_window_->size) {
+      // Extend window forward
+      if (sliding_window_->is_full()) {
+        // Advance tail and update base_chunk_id
+        sliding_window_->chunks[sliding_window_->tail] = nullptr;
+        sliding_window_->tail = (sliding_window_->tail + 1) % sliding_window_->capacity;
+        sliding_window_->base_chunk_id++;
+        sliding_window_->size--;
+        current_sliding_window_size_ -= config_.chunk_size;
+      }
+      
+      sliding_window_->head = (sliding_window_->head + 1) % sliding_window_->capacity;
+      sliding_window_->chunks[sliding_window_->head] = chunk;
+      sliding_window_->size++;
+    } else {
+      // Non-sequential access, clear and restart window
+      sliding_window_->chunks.assign(sliding_window_->capacity, nullptr);
+      sliding_window_->base_chunk_id = chunk_id;
+      sliding_window_->head = 0;
+      sliding_window_->tail = 0;
+      sliding_window_->size = 1;
+      sliding_window_->chunks[0] = chunk;
+      current_sliding_window_size_ = chunk->size;
+    }
+  }
+  
+  current_sliding_window_size_ += chunk->size;
+}
+
+void ChunkReader::InsertIntoRandomCache(size_t chunk_id, std::shared_ptr<Chunk> chunk) {
+  // Evict if necessary
+  while (current_random_cache_size_ + chunk->size > random_cache_size_ * config_.chunk_size) {
+    EvictFromRandomCache();
+  }
+  
+  CacheEntry entry;
+  entry.chunk = chunk;
+  entry.cache_type = CACHE_RANDOM_ACCESS;
+  entry.access_time = ++global_timestamp_;
+  entry.access_count = 1;
+  
+  switch (config_.cache_algorithm) {
+    case Config::ALGORITHM_2Q:
+      entry.in_a1 = true;
+      two_q_cache_->a1_fifo.push_back(chunk_id);
+      entry.list_iterator = --two_q_cache_->a1_fifo.end();
+      break;
+      
+    case Config::ALGORITHM_TINYLFU:
+      entry.frequency = 1;
+      tiny_lfu_sketch_->increment(chunk_id);
+      random_cache_lru_.push_front(chunk_id);
+      entry.list_iterator = random_cache_lru_.begin();
+      break;
+      
+    case Config::ALGORITHM_SLRU:
+      random_cache_lru_.push_front(chunk_id);
+      entry.list_iterator = random_cache_lru_.begin();
+      break;
+  }
+  
+  random_cache_[chunk_id] = entry;
+  current_random_cache_size_ += chunk->size;
+}
+
+void ChunkReader::InsertIntoPreloadCache(size_t chunk_id, std::shared_ptr<Chunk> chunk) {
+  // Evict if necessary
+  while (current_preload_size_ + chunk->size > preload_size_ * config_.chunk_size) {
+    EvictFromPreloadCache();
+  }
+  
+  preload_cache_[chunk_id] = chunk;
+  preload_lru_.push_front(chunk_id);
+  current_preload_size_ += chunk->size;
+}
+
+void ChunkReader::EvictFromSlidingWindow() {
+  if (!sliding_window_ || sliding_window_->is_empty()) return;
+  
+  // Remove from tail
+  auto chunk = sliding_window_->chunks[sliding_window_->tail];
+  sliding_window_->chunks[sliding_window_->tail] = nullptr;
+  sliding_window_->tail = (sliding_window_->tail + 1) % sliding_window_->capacity;
+  sliding_window_->base_chunk_id++;
+  sliding_window_->size--;
+  
+  if (chunk) {
+    current_sliding_window_size_ -= chunk->size;
+    stats_.chunks_evicted++;
+  }
+}
+
+void ChunkReader::EvictFromRandomCache() {
+  if (random_cache_.empty()) return;
+  
+  size_t victim_chunk_id;
+  
+  switch (config_.cache_algorithm) {
+    case Config::ALGORITHM_2Q: {
+      // Evict from A1 queue first (FIFO), then from Am queue (LRU)
+      if (!two_q_cache_->a1_fifo.empty()) {
+        victim_chunk_id = two_q_cache_->a1_fifo.front();
+        two_q_cache_->a1_fifo.pop_front();
+      } else if (!two_q_cache_->am_lru.empty()) {
+        victim_chunk_id = two_q_cache_->am_lru.back();
+        two_q_cache_->am_lru.pop_back();
+      } else {
+        return;
+      }
+      break;
+    }
+    
+    case Config::ALGORITHM_TINYLFU: {
+      // Evict least frequently used item
+      uint8_t min_freq = 255;
+      auto victim_it = random_cache_.end();
+      
+      for (auto it = random_cache_.begin(); it != random_cache_.end(); ++it) {
+        uint8_t freq = tiny_lfu_sketch_->estimate(it->first);
+        if (freq < min_freq) {
+          min_freq = freq;
+          victim_it = it;
+        }
+      }
+      
+      if (victim_it != random_cache_.end()) {
+        victim_chunk_id = victim_it->first;
+        random_cache_lru_.erase(victim_it->second.list_iterator);
+      } else {
+        return;
+      }
+      break;
+    }
+    
+    case Config::ALGORITHM_SLRU: {
+      // Simple LRU eviction
+      if (!random_cache_lru_.empty()) {
+        victim_chunk_id = random_cache_lru_.back();
+        random_cache_lru_.pop_back();
+      } else {
+        return;
+      }
+      break;
+    }
+  }
+  
+  auto it = random_cache_.find(victim_chunk_id);
+  if (it != random_cache_.end()) {
+    current_random_cache_size_ -= it->second.chunk->size;
+    random_cache_.erase(it);
+    stats_.chunks_evicted++;
+  }
+}
+
+void ChunkReader::EvictFromPreloadCache() {
+  if (preload_lru_.empty()) return;
+  
+  size_t victim_chunk_id = preload_lru_.back();
+  preload_lru_.pop_back();
+  
+  auto it = preload_cache_.find(victim_chunk_id);
+  if (it != preload_cache_.end()) {
+    current_preload_size_ -= it->second->size;
+    preload_cache_.erase(it);
+    stats_.chunks_evicted++;
+  }
+}
+
+void ChunkReader::Update2Q(size_t chunk_id, CacheEntry& entry) {
+  if (entry.in_a1) {
+    // Move from A1 to Am
+    two_q_cache_->a1_fifo.erase(entry.list_iterator);
+    
+    // Evict from Am if necessary
+    while (two_q_cache_->am_lru.size() >= two_q_cache_->am_max_size) {
+      size_t evict_id = two_q_cache_->am_lru.back();
+      two_q_cache_->am_lru.pop_back();
+      auto evict_it = random_cache_.find(evict_id);
+      if (evict_it != random_cache_.end()) {
+        current_random_cache_size_ -= evict_it->second.chunk->size;
+        random_cache_.erase(evict_it);
+      }
+    }
+    
+    two_q_cache_->am_lru.push_front(chunk_id);
+    entry.list_iterator = two_q_cache_->am_lru.begin();
+    entry.in_a1 = false;
+  } else {
+    // Already in Am, move to front
+    two_q_cache_->am_lru.erase(entry.list_iterator);
+    two_q_cache_->am_lru.push_front(chunk_id);
+    entry.list_iterator = two_q_cache_->am_lru.begin();
+  }
+}
+
+void ChunkReader::UpdateTinyLFU(size_t chunk_id, CacheEntry& entry) {
+  tiny_lfu_sketch_->increment(chunk_id);
+  entry.frequency = tiny_lfu_sketch_->estimate(chunk_id);
+  
+  // Move to front of LRU list
+  random_cache_lru_.erase(entry.list_iterator);
+  random_cache_lru_.push_front(chunk_id);
+  entry.list_iterator = random_cache_lru_.begin();
+}
+
+bool ChunkReader::IsAnyCacheFull() const {
+  return (sliding_window_ && sliding_window_->is_full()) ||
+         (current_random_cache_size_ >= random_cache_size_ * config_.chunk_size) ||
+         (current_preload_size_ >= preload_size_ * config_.chunk_size);
 }
 
 } // namespace tinyusdz
