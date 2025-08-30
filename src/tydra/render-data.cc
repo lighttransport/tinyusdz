@@ -7439,19 +7439,13 @@ size_t RenderScene::estimate_memory_usage() const {
   
   // Estimate containers
   total += nodes.capacity() * sizeof(Node);
-  for (const auto& node : nodes) {
-    // TODO: Add detailed Node memory estimation if needed
-  }
+  (void)nodes; // Suppress unused variable warning
   
   total += images.capacity() * sizeof(TextureImage);
-  for (const auto& image : images) {
-    // TODO: Add detailed TextureImage memory estimation if needed
-  }
+  (void)images; // Suppress unused variable warning
   
   total += materials.capacity() * sizeof(RenderMaterial);
-  for (const auto& material : materials) {
-    // TODO: Add detailed RenderMaterial memory estimation if needed
-  }
+  (void)materials; // Suppress unused variable warning
   
   total += cameras.capacity() * sizeof(RenderCamera);
   total += lights.capacity() * sizeof(RenderLight);
@@ -7470,14 +7464,10 @@ size_t RenderScene::estimate_memory_usage() const {
   }
   
   total += animations.capacity() * sizeof(Animation);
-  for (const auto& animation : animations) {
-    // TODO: Add detailed Animation memory estimation if needed
-  }
+  (void)animations; // Suppress unused variable warning
   
   total += skeletons.capacity() * sizeof(SkelHierarchy);
-  for (const auto& skeleton : skeletons) {
-    // TODO: Add detailed SkelHierarchy memory estimation if needed
-  }
+  (void)skeletons; // Suppress unused variable warning
   
   total += buffers.capacity() * sizeof(BufferData);
   for (const auto& buffer : buffers) {

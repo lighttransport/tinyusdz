@@ -57,6 +57,7 @@
 #endif
 
 #include "token-type.hh"
+#include "typed-array.hh"
 #include "common-macros.inc"
 
 // forward decl
@@ -2074,6 +2075,78 @@ class Value {
     return nullptr;
   }
 
+  //
+  // Get TypedArrayView to the underlying data.
+  //
+  // Returns a view over array data if the value contains an array type that's compatible
+  // with the requested element type T. For non-array types, returns an empty view.
+  // 
+  // The view provides zero-copy access to the underlying data with type safety validation.
+  //
+  // Template parameter T: the desired element type for the view
+  // Parameter strict_cast: if true, requires exact type match; if false, allows compatible type casting
+  //
+  // Returns: TypedArrayView<T> - may be empty if type conversion is not possible
+  //
+  template <class T>
+  TypedArrayView<const T> as_view(bool strict_cast = false) const {
+    // Check if this is an array type
+    if (!(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) {
+      // Not an array type - return empty view
+      return TypedArrayView<const T>();
+    }
+
+    // For arrays, we need to check if we can safely view the underlying data as T
+    uint32_t underlying_type_id = v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT);
+    uint32_t target_type_id = TypeTraits<T>::underlying_type_id();
+
+    if (strict_cast) {
+      // Strict cast - requires exact underlying type match
+      if (underlying_type_id != target_type_id) {
+        return TypedArrayView<const T>();
+      }
+    } else {
+      // Non-strict cast - allow compatible types (same underlying type)
+      if (underlying_type_id != target_type_id) {
+        return TypedArrayView<const T>();
+      }
+    }
+
+    // Try to get the array data and create a view
+    return create_array_view_helper<T>(strict_cast);
+  }
+
+  //
+  // Non-const version of as_view() for mutable access
+  //
+  template <class T>
+  TypedArrayView<T> as_view(bool strict_cast = false) {
+    // Check if this is an array type
+    if (!(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) {
+      // Not an array type - return empty view
+      return TypedArrayView<T>();
+    }
+
+    // For arrays, we need to check if we can safely view the underlying data as T
+    uint32_t underlying_type_id = v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT);
+    uint32_t target_type_id = TypeTraits<T>::underlying_type_id();
+
+    if (strict_cast) {
+      // Strict cast - requires exact underlying type match
+      if (underlying_type_id != target_type_id) {
+        return TypedArrayView<T>();
+      }
+    } else {
+      // Non-strict cast - allow compatible types (same underlying type)  
+      if (underlying_type_id != target_type_id) {
+        return TypedArrayView<T>();
+      }
+    }
+
+    // Try to get the array data and create a view
+    return create_array_view_helper_mutable<T>(strict_cast);
+  }
+
 
 #if 0
   // Useful function to retrieve concrete value with type T.
@@ -2136,6 +2209,181 @@ class Value {
  private:
   // any_value v_;
   linb::any v_{nullptr};
+
+  // Helper methods for as_view() implementation
+  template <class T>
+  TypedArrayView<const T> create_array_view_helper(bool strict_cast) const {
+    // Try common array types that could contain T elements
+    
+    // Direct type match - try std::vector<T>
+    if (auto* vec = as<std::vector<T>>(strict_cast)) {
+      return TypedArrayView<const T>(*vec);
+    }
+    
+    // Try related types based on underlying type compatibility
+    if (!strict_cast) {
+      // Handle role type conversions (e.g., float3 <-> vector3f <-> normal3f)
+      uint32_t target_underlying_id = TypeTraits<T>::underlying_type_id();
+      
+      switch (target_underlying_id) {
+        case TYPE_ID_FLOAT: {
+          if (auto* vec = as<std::vector<float>>(false)) {
+            return TypedArrayView<const T>(reinterpret_cast<const T*>(vec->data()), vec->size());
+          }
+          break;
+        }
+        case TYPE_ID_DOUBLE: {
+          if (auto* vec = as<std::vector<double>>(false)) {
+            return TypedArrayView<const T>(reinterpret_cast<const T*>(vec->data()), vec->size());
+          }
+          break;
+        }
+        case TYPE_ID_FLOAT3: {
+          // Try float3, vector3f, normal3f, color3f, point3f
+          if (auto* vec = as<std::vector<float3>>(false)) {
+            return TypedArrayView<const T>(reinterpret_cast<const T*>(vec->data()), vec->size());
+          }
+          if (auto* vec = as<std::vector<vector3f>>(false)) {
+            return TypedArrayView<const T>(reinterpret_cast<const T*>(vec->data()), vec->size());
+          }
+          if (auto* vec = as<std::vector<normal3f>>(false)) {
+            return TypedArrayView<const T>(reinterpret_cast<const T*>(vec->data()), vec->size());
+          }
+          if (auto* vec = as<std::vector<color3f>>(false)) {
+            return TypedArrayView<const T>(reinterpret_cast<const T*>(vec->data()), vec->size());
+          }
+          if (auto* vec = as<std::vector<point3f>>(false)) {
+            return TypedArrayView<const T>(reinterpret_cast<const T*>(vec->data()), vec->size());
+          }
+          break;
+        }
+        case TYPE_ID_FLOAT2: {
+          // Try float2, texcoord2f
+          if (auto* vec = as<std::vector<float2>>(false)) {
+            return TypedArrayView<const T>(reinterpret_cast<const T*>(vec->data()), vec->size());
+          }
+          if (auto* vec = as<std::vector<texcoord2f>>(false)) {
+            return TypedArrayView<const T>(reinterpret_cast<const T*>(vec->data()), vec->size());
+          }
+          break;
+        }
+        case TYPE_ID_FLOAT4: {
+          // Try float4, color4f
+          if (auto* vec = as<std::vector<float4>>(false)) {
+            return TypedArrayView<const T>(reinterpret_cast<const T*>(vec->data()), vec->size());
+          }
+          if (auto* vec = as<std::vector<color4f>>(false)) {
+            return TypedArrayView<const T>(reinterpret_cast<const T*>(vec->data()), vec->size());
+          }
+          break;
+        }
+        case TYPE_ID_INT32: {
+          if (auto* vec = as<std::vector<int32_t>>(false)) {
+            return TypedArrayView<const T>(reinterpret_cast<const T*>(vec->data()), vec->size());
+          }
+          break;
+        }
+        case TYPE_ID_UINT32: {
+          if (auto* vec = as<std::vector<uint32_t>>(false)) {
+            return TypedArrayView<const T>(reinterpret_cast<const T*>(vec->data()), vec->size());
+          }
+          break;
+        }
+        default:
+          break;
+      }
+    }
+    
+    // No compatible type found
+    return TypedArrayView<const T>();
+  }
+
+  template <class T>
+  TypedArrayView<T> create_array_view_helper_mutable(bool strict_cast) {
+    // Try common array types that could contain T elements
+    
+    // Direct type match - try std::vector<T>
+    if (auto* vec = as<std::vector<T>>(strict_cast)) {
+      return TypedArrayView<T>(*vec);
+    }
+    
+    // Try related types based on underlying type compatibility
+    if (!strict_cast) {
+      // Handle role type conversions (e.g., float3 <-> vector3f <-> normal3f)
+      uint32_t target_underlying_id = TypeTraits<T>::underlying_type_id();
+      
+      switch (target_underlying_id) {
+        case TYPE_ID_FLOAT: {
+          if (auto* vec = as<std::vector<float>>(false)) {
+            return TypedArrayView<T>(reinterpret_cast<T*>(vec->data()), vec->size());
+          }
+          break;
+        }
+        case TYPE_ID_DOUBLE: {
+          if (auto* vec = as<std::vector<double>>(false)) {
+            return TypedArrayView<T>(reinterpret_cast<T*>(vec->data()), vec->size());
+          }
+          break;
+        }
+        case TYPE_ID_FLOAT3: {
+          // Try float3, vector3f, normal3f, color3f, point3f
+          if (auto* vec = as<std::vector<float3>>(false)) {
+            return TypedArrayView<T>(reinterpret_cast<T*>(vec->data()), vec->size());
+          }
+          if (auto* vec = as<std::vector<vector3f>>(false)) {
+            return TypedArrayView<T>(reinterpret_cast<T*>(vec->data()), vec->size());
+          }
+          if (auto* vec = as<std::vector<normal3f>>(false)) {
+            return TypedArrayView<T>(reinterpret_cast<T*>(vec->data()), vec->size());
+          }
+          if (auto* vec = as<std::vector<color3f>>(false)) {
+            return TypedArrayView<T>(reinterpret_cast<T*>(vec->data()), vec->size());
+          }
+          if (auto* vec = as<std::vector<point3f>>(false)) {
+            return TypedArrayView<T>(reinterpret_cast<T*>(vec->data()), vec->size());
+          }
+          break;
+        }
+        case TYPE_ID_FLOAT2: {
+          // Try float2, texcoord2f
+          if (auto* vec = as<std::vector<float2>>(false)) {
+            return TypedArrayView<T>(reinterpret_cast<T*>(vec->data()), vec->size());
+          }
+          if (auto* vec = as<std::vector<texcoord2f>>(false)) {
+            return TypedArrayView<T>(reinterpret_cast<T*>(vec->data()), vec->size());
+          }
+          break;
+        }
+        case TYPE_ID_FLOAT4: {
+          // Try float4, color4f
+          if (auto* vec = as<std::vector<float4>>(false)) {
+            return TypedArrayView<T>(reinterpret_cast<T*>(vec->data()), vec->size());
+          }
+          if (auto* vec = as<std::vector<color4f>>(false)) {
+            return TypedArrayView<T>(reinterpret_cast<T*>(vec->data()), vec->size());
+          }
+          break;
+        }
+        case TYPE_ID_INT32: {
+          if (auto* vec = as<std::vector<int32_t>>(false)) {
+            return TypedArrayView<T>(reinterpret_cast<T*>(vec->data()), vec->size());
+          }
+          break;
+        }
+        case TYPE_ID_UINT32: {
+          if (auto* vec = as<std::vector<uint32_t>>(false)) {
+            return TypedArrayView<T>(reinterpret_cast<T*>(vec->data()), vec->size());
+          }
+          break;
+        }
+        default:
+          break;
+      }
+    }
+    
+    // No compatible type found
+    return TypedArrayView<T>();
+  }
 };
 
 // TimeSample interpolation type.
