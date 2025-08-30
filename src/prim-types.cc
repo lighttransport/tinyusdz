@@ -2303,4 +2303,32 @@ bool Layer::check_over_primspec(const uint32_t max_depth) const {
   return _has_over_primspec;
 }
 
+// Memory usage estimation implementation for Attribute
+size_t Attribute::estimate_memory_usage() const {
+  size_t total = sizeof(Attribute);
+  
+  // String storage
+  total += _name.capacity();
+  total += _type_name.capacity();
+  
+  // PrimVar memory - basic estimate
+  // TODO: For more accurate estimation, PrimVar should have its own estimate_memory_usage method
+  total += sizeof(primvar::PrimVar);
+  // The PrimVar contains value::Value and value::TimeSamples which can be large
+  // This is a basic estimate - actual size depends on the stored data type and time samples
+  
+  // Connection paths
+  total += _paths.capacity() * sizeof(Path);
+  for (const auto& path : _paths) {
+    // Path internally contains strings, estimate their capacity
+    total += path.full_path_name().capacity();
+  }
+  
+  // Attribute metadata
+  total += sizeof(AttrMeta); // Basic size of metadata structure
+  // TODO: Add detailed AttrMeta internal memory estimation if needed
+  
+  return total;
+}
+
 }  // namespace tinyusdz
