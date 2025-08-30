@@ -93,6 +93,10 @@ option(TINYUSDZ_WITH_WAMR
        "Build with WAMR (WebAssembly Micro Runtime) support for executing WASM in Tydra."
        OFF)
 
+option(TINYUSDZ_WITH_COROUTINE
+       "Build with C++20 coroutine support."
+       OFF)
+
 
 if(MSVC)
   # it looks it is hard to disable C++ exception for MSVC, so enable exception by default
@@ -290,7 +294,10 @@ endif()
 
 if (PROJECT_IS_TOP_LEVEL)
   message(STATUS "TinyUSDZ is being built as toplevel project so set CXX standard here.")
-  if(TINYUSDZ_WITH_PYTHON)
+  if(TINYUSDZ_WITH_COROUTINE)
+    # Coroutine support requires C++20
+    set(CMAKE_CXX_STANDARD 20)
+  elseif(TINYUSDZ_WITH_PYTHON)
     #set(CMAKE_CXX_STANDARD 17) # nanobind requires C++17
 
     # for pybind11
@@ -1331,6 +1338,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
                                  PRIVATE "BH_PLATFORM_LINUX=1")
     endif()
   endif(TINYUSDZ_WITH_WAMR)
+
+  if(TINYUSDZ_WITH_COROUTINE)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_COROUTINE")
+  endif(TINYUSDZ_WITH_COROUTINE)
 
   if(NOT TINYUSDZ_CXX_EXCEPTIONS)
     if(MSVC)
