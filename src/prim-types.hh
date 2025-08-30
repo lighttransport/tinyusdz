@@ -2621,6 +2621,101 @@ class Attribute {
     return get(t, dst, tinterp);
   }
 
+  /// @brief Get TypedArrayView to the underlying array data of this Attribute.
+  /// 
+  /// Returns a zero-copy view over array data for scalar (default) values only.
+  /// This method does NOT support timesamples - only works with default values.
+  /// For non-array types or timesamples, returns an empty view.
+  ///
+  /// The view provides efficient access to array data without copying, enabling
+  /// memory-optimized processing of vertex attributes, indices, and other array data.
+  ///
+  /// @tparam T The desired element type for the view
+  /// @param strict_cast If true, requires exact type match; if false, allows compatible role type casting
+  /// @return TypedArrayView<const T> - may be empty if type conversion not possible or attribute has timesamples
+  ///
+  /// Example:
+  /// ```cpp
+  /// // Get view of vertex positions as float3
+  /// auto positions_view = position_attr.get_value_view<value::float3>();
+  /// if (!positions_view.empty()) {
+  ///   for (const auto& pos : positions_view) {
+  ///     // Process position without copying data
+  ///   }
+  /// }
+  ///
+  /// // Get view as compatible role type
+  /// auto normals_view = normal_attr.get_value_view<value::vector3f>();  // float3 -> vector3f
+  /// ```
+  template <typename T>
+  TypedArrayView<const T> get_value_view(bool strict_cast = false) const {
+    // Only support scalar (default) values, not timesamples
+    if (has_timesamples()) {
+      return TypedArrayView<const T>();  // Empty view for timesamples
+    }
+    
+    if (is_blocked()) {
+      return TypedArrayView<const T>();  // Empty view for blocked attributes
+    }
+    
+    if (is_connection()) {
+      return TypedArrayView<const T>();  // Empty view for connections
+    }
+    
+    if (!has_value()) {
+      return TypedArrayView<const T>();  // Empty view if no value
+    }
+    
+    // Get the underlying value and create a view using Value::as_view()
+    const primvar::PrimVar& pvar = get_var();
+    const value::Value& val = pvar.value_raw();
+    
+    return val.as_view<T>(strict_cast);
+  }
+
+  /// @brief Mutable version of get_value_view() for write access to array data.
+  ///
+  /// Same as get_value_view() but returns a mutable view that allows modification
+  /// of the underlying array data. Only works with scalar (default) values.
+  ///
+  /// @tparam T The desired element type for the view  
+  /// @param strict_cast If true, requires exact type match; if false, allows compatible role type casting
+  /// @return TypedArrayView<T> - may be empty if type conversion not possible or attribute has timesamples
+  ///
+  /// Example:
+  /// ```cpp
+  /// // Get mutable view and modify data in-place
+  /// auto positions_view = position_attr.get_value_view<value::float3>();
+  /// if (!positions_view.empty()) {
+  ///   positions_view[0] = {1.0f, 2.0f, 3.0f};  // Modifies original data
+  /// }
+  /// ```
+  template <typename T>
+  TypedArrayView<T> get_value_view(bool strict_cast = false) {
+    // Only support scalar (default) values, not timesamples
+    if (has_timesamples()) {
+      return TypedArrayView<T>();  // Empty view for timesamples
+    }
+    
+    if (is_blocked()) {
+      return TypedArrayView<T>();  // Empty view for blocked attributes
+    }
+    
+    if (is_connection()) {
+      return TypedArrayView<T>();  // Empty view for connections
+    }
+    
+    if (!has_value()) {
+      return TypedArrayView<T>();  // Empty view if no value
+    }
+    
+    // Get the underlying value and create a view using Value::as_view()
+    primvar::PrimVar& pvar = get_var();
+    value::Value& val = pvar.value_raw();
+    
+    return val.as_view<T>(strict_cast);
+  }
+
 
   const AttrMeta &metas() const { return _metas; }
   AttrMeta &metas() { return _metas; }
@@ -2704,6 +2799,11 @@ class Attribute {
 
   const std::vector<Path> &connections() const { return _paths; }
   std::vector<Path> &connections() { return _paths; }
+
+  ///
+  /// Estimate memory usage of this Attribute in bytes
+  ///
+  size_t estimate_memory_usage() const;
 
  private:
   std::string _name;  // attrib name
