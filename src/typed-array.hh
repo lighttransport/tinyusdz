@@ -358,7 +358,7 @@ public:
 
         size_type src_count = size();
         size_type required_bytes = src_count * sizeof(N);
-        size_type current_bytes = _storage.size();
+        //size_type current_bytes = _storage.size();
 
         // Check if we can expand in-place or need reallocation
         if (required_bytes <= _storage.capacity()) {
@@ -403,9 +403,10 @@ public:
         size_type current_bytes = _storage.size();
         
         // Check if expansion exceeds the growth limit
-        double growth_ratio = static_cast<double>(required_bytes) / current_bytes;
+        double growth_ratio = static_cast<double>(required_bytes) / static_cast<double>(current_bytes);
         if (growth_ratio > max_growth_factor) {
-            throw std::runtime_error("transform_with_limit: required buffer growth exceeds limit");
+            //throw std::runtime_error("transform_with_limit: required buffer growth exceeds limit");
+            return result;
         }
         
         // Proceed with transformation
