@@ -43,6 +43,8 @@
 #include "usdShade.hh"
 #include "value-pprint.hh"
 
+//#include <iostream>
+
 #if defined(TINYUSDZ_WITH_COLORIO)
 #include "external/tiny-color-io.h"
 #endif
@@ -974,6 +976,23 @@ static bool ToVertexVaryingAttribute(
 }
 #endif
 
+#if 0
+static void DumpTriangle(
+  const std::vector<value::float3> &points,
+  const std::vector<uint32_t> &faces) {
+  std::cout << "# ntris = \n";
+  for (size_t v = 0; v < points.size(); v++) {
+    std::cout << "v " << points[v][0] << " " << points[v][1] << " " << points[v][2] << "\n";
+  }
+  std::cout << "f ";
+  for (size_t f = 0; f < faces.size(); f++) {
+    std::cout << " " << faces[f];
+  }
+  std::cout << "\n";
+}
+#endif
+
+
 ///
 /// Triangulate VeretexAttribute data.
 ///
@@ -1505,7 +1524,7 @@ bool TriangulatePolygon(
     std::vector<uint32_t> &triangulatedFaceVertexCounts,
     std::vector<uint32_t> &triangulatedFaceVertexIndices,
     std::vector<size_t> &triangulatedToOrigFaceVertexIndexMap,
-    std::vector<uint32_t> &triangulatedFaceCounts, std::string &err) {
+    std::vector<uint32_t> &triangulatedFaceCounts, std::string &warn, std::string &err) {
   triangulatedFaceVertexCounts.clear();
   triangulatedFaceVertexIndices.clear();
 
@@ -1582,6 +1601,8 @@ bool TriangulatePolygon(
 
       size_t vi0;
       size_t vi0_2;
+
+      //std::cout << "npoly " << npolys << "\n";
 
       for (size_t k = 0; k < npolys; ++k) {
         vi0 = faceVertexIndices[faceIndexOffset + k];
@@ -1665,10 +1686,17 @@ bool TriangulatePolygon(
       }
 
       std::vector<std::vector<Point2D>> polygon_2d;
+      polygon_2d.push_back(polyline);
       // Single polygon only(no holes)
 
       std::vector<uint32_t> indices = mapbox::earcut<uint32_t>(polygon_2d);
       //  => result = 3 * faces, clockwise
+
+      if (indices.empty()) {
+        warn += "Failed to triangualte a polygon. input is not CCW, have holes or invalid topology.\n";
+
+        //DumpTriangle(points, indices);
+      }
 
       if ((indices.size() % 3) != 0) {
         // This should not be happen, though.
@@ -1677,6 +1705,8 @@ bool TriangulatePolygon(
       }
 
       size_t ntris = indices.size() / 3;
+      //std::cout << "ntris " << ntris << "\n";
+      
 
       // Up to 2GB tris.
       if (ntris > size_t((std::numeric_limits<int32_t>::max)())) {
@@ -1684,23 +1714,25 @@ bool TriangulatePolygon(
         return false;
       }
 
-      for (size_t k = 0; k < ntris; k++) {
-        triangulatedFaceVertexCounts.push_back(3);
-        triangulatedFaceVertexIndices.push_back(
-            faceVertexIndices[faceIndexOffset + indices[3 * k + 0]]);
-        triangulatedFaceVertexIndices.push_back(
-            faceVertexIndices[faceIndexOffset + indices[3 * k + 1]]);
-        triangulatedFaceVertexIndices.push_back(
-            faceVertexIndices[faceIndexOffset + indices[3 * k + 2]]);
+      if (ntris > 0) {
+        for (size_t k = 0; k < ntris; k++) {
+          triangulatedFaceVertexCounts.push_back(3);
+          triangulatedFaceVertexIndices.push_back(
+              faceVertexIndices[faceIndexOffset + indices[3 * k + 0]]);
+          triangulatedFaceVertexIndices.push_back(
+              faceVertexIndices[faceIndexOffset + indices[3 * k + 1]]);
+          triangulatedFaceVertexIndices.push_back(
+              faceVertexIndices[faceIndexOffset + indices[3 * k + 2]]);
 
-        triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset +
-                                                       indices[3 * k + 0]);
-        triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset +
-                                                       indices[3 * k + 1]);
-        triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset +
-                                                       indices[3 * k + 2]);
+          triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset +
+                                                         indices[3 * k + 0]);
+          triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset +
+                                                         indices[3 * k + 1]);
+          triangulatedToOrigFaceVertexIndexMap.push_back(faceIndexOffset +
+                                                         indices[3 * k + 2]);
+        }
+        triangulatedFaceCounts.push_back(uint32_t(ntris));
       }
-      triangulatedFaceCounts.push_back(uint32_t(ntris));
     }
 
     faceIndexOffset += npolys;
@@ -2488,8 +2520,14 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
           ? mesh.triangulatedFaceVertexIndices
           : mesh.usdFaceVertexIndices;
 
+  //std::cout << "triangulatedFaceVertexIndices.max_value: " << *std::max_element(mesh.triangulatedFaceVertexIndices.begin(), mesh.triangulatedFaceVertexIndices.end() << "\n");
+
+  //std::cout << "usdFaceVertexIndices.min_value: " << *std::min_element(mesh.usdFaceVertexIndices.begin(), mesh.usdFaceVertexIndices.end() << "\n");
+  //std::cout << "usdFaceVertexIndices.max_value: " << *std::max_element(mesh.usdFaceVertexIndices.begin(), mesh.usdFaceVertexIndices.end() << "\n");
+  
   DefaultVertexInput<DefaultPackedVertexData> vertex_input;
 
+  size_t num_verts = mesh.points.size();
   size_t num_fvs = fvIndices.size();
   vertex_input.point_indices = fvIndices;
   vertex_input.uv0s.assign(num_fvs, {0.0f, 0.0f});
@@ -2616,9 +2654,13 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
 
   for (size_t i = 0; i < num_fvs; i++) {
     size_t fvi = fvIndices[i];
-    if (fvi >= num_fvs) {
+    if (fvi >= num_verts) {
+      PUSH_ERROR("usdFaceVertexIndices.min_value: " << *std::min_element(mesh.usdFaceVertexIndices.begin(), mesh.usdFaceVertexIndices.end()) << "\n");
+      PUSH_ERROR("usdFaceVertexIndices.max_value: " << *std::max_element(mesh.usdFaceVertexIndices.begin(), mesh.usdFaceVertexIndices.end()) << "\n");
+      PUSH_ERROR("triangulatedFaceVertexIndices.min_value: " << *std::min_element(mesh.triangulatedFaceVertexIndices.begin(), mesh.triangulatedFaceVertexIndices.end()) << "\n");
+      PUSH_ERROR("triangulatedFaceVertexIndices.max_value: " << *std::max_element(mesh.triangulatedFaceVertexIndices.begin(), mesh.triangulatedFaceVertexIndices.end()) << "\n");
       PUSH_ERROR_AND_RETURN(fmt::format(
-          "Invalid faceVertexIndex {}. Must be less than {}", fvi, num_fvs));
+          "Invalid faceVertexIndex {}. Must be less than {}(triangulated = {})", fvi, num_fvs, mesh.triangulatedFaceVertexIndices.size() ? "true" : "faise"));
     }
 
     if (normals_ptr) {
@@ -3434,7 +3476,7 @@ bool RenderSceneConverter::ConvertMesh(
             dst.points, dst.usdFaceVertexCounts, dst.usdFaceVertexIndices,
             triangulatedFaceVertexCounts, triangulatedFaceVertexIndices,
             triangulatedToOrigFaceVertexIndexMap, triangulatedFaceCounts,
-            err)) {
+            _warn, err)) {
       PUSH_ERROR_AND_RETURN("Triangulation failed: " + err);
     }
 
