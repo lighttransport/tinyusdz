@@ -346,7 +346,7 @@ private:
     size_t size;         ///< Current number of chunks
     size_t base_chunk_id; ///< ID of chunk at tail position
     
-    RingBuffer(size_t cap) : capacity(cap), head(0), tail(0), size(0), base_chunk_id(0) {
+    RingBuffer(size_t cap) : head(0), tail(0), capacity(cap), size(0), base_chunk_id(0) {
       chunks.resize(cap);
     }
     
