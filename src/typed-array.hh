@@ -1,6 +1,5 @@
-// SPDX-License-Identifier: Apache 2.0
-// Copyright 2024 - Present, Syoyo Fujita.
-// Copyright 2024 - Present, Light Transport Entertainment Inc.
+// SPDX-License-Identifier: MIT
+// Copyright 2025 - Present, Light Transport Entertainment Inc.
 
 ///
 /// TypedArray: A type-safe wrapper around std::vector<uint8_t> with nonstd::span views
