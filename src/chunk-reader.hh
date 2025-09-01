@@ -116,7 +116,7 @@ public:
     
     double hit_rate() const {
       if (total_reads == 0) return 0.0;
-      return static_cast<double>(cache_hits) / total_reads;
+      return static_cast<double>(cache_hits) / double(total_reads);
     }
   };
 
