@@ -127,3 +127,4 @@ inline size_t EstimateMemorySize(const std::vector<uint32_t>& data) {
 
 }  // namespace tydra
 }  // namespace tinyusdz
+
