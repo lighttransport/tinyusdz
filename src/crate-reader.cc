@@ -21,6 +21,7 @@
 #include <thread>
 #endif
 
+#include <algorithm>
 #include <unordered_set>
 #include <stack>
 
@@ -106,6 +107,19 @@ CrateReader::CrateReader(StreamReader *sr, const CrateReaderConfig &config)
 CrateReader::~CrateReader() {
   //delete _impl;
   //_impl = nullptr;
+}
+
+bool CrateReader::ReportProgress(float progress) {
+  // Check if callback exists and is callable
+  if (!_progress_callback) {
+    return true;  // No callback, continue parsing
+  }
+  
+  // Clamp progress to [0.0, 1.0]
+  progress = std::max(0.0f, std::min(1.0f, progress));
+  
+  // Call the callback and return its result
+  return _progress_callback(progress, _progress_userptr);
 }
 
 std::string CrateReader::GetError() { return _err; }
@@ -5444,6 +5458,12 @@ bool CrateReader::ReadSection(crate::Section *s) {
 
 bool CrateReader::ReadTokens() {
   TINYUSDZ_PROFILE_SCOPE("crate-reader", "ReadTokens");
+  
+  // Report progress (20%)
+  if (!ReportProgress(0.2f)) {
+    PUSH_ERROR("Parsing cancelled by progress callback.");
+    return false;
+  }
   if ((_tokens_index < 0) || (_tokens_index >= int64_t(_toc.sections.size()))) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid index for `TOKENS` section.");
   }
@@ -5623,6 +5643,12 @@ bool CrateReader::ReadTokens() {
 
 bool CrateReader::ReadStrings() {
   TINYUSDZ_PROFILE_SCOPE("crate-reader", "ReadStrings");
+  
+  // Report progress (30%)
+  if (!ReportProgress(0.3f)) {
+    PUSH_ERROR("Parsing cancelled by progress callback.");
+    return false;
+  }
   if ((_strings_index < 0) ||
       (_strings_index >= int64_t(_toc.sections.size()))) {
     _err += "Invalid index for `STRINGS` section.\n";
@@ -5655,6 +5681,12 @@ bool CrateReader::ReadStrings() {
 }
 
 bool CrateReader::ReadFields() {
+  // Report progress (40%)
+  if (!ReportProgress(0.4f)) {
+    PUSH_ERROR("Parsing cancelled by progress callback.");
+    return false;
+  }
+  
   if ((_fields_index < 0) || (_fields_index >= int64_t(_toc.sections.size()))) {
     _err += "Invalid index for `FIELDS` section.\n";
     return false;
@@ -5787,6 +5819,12 @@ bool CrateReader::ReadFields() {
 }
 
 bool CrateReader::ReadFieldSets() {
+  // Report progress (50%)
+  if (!ReportProgress(0.5f)) {
+    PUSH_ERROR("Parsing cancelled by progress callback.");
+    return false;
+  }
+  
   if ((_fieldsets_index < 0) ||
       (_fieldsets_index >= int64_t(_toc.sections.size()))) {
     _err += "Invalid index for `FIELDSETS` section.\n";
@@ -5892,6 +5930,12 @@ bool CrateReader::ReadFieldSets() {
 }
 
 bool CrateReader::BuildLiveFieldSets() {
+  // Report progress (80%)
+  if (!ReportProgress(0.8f)) {
+    PUSH_ERROR("Parsing cancelled by progress callback.");
+    return false;
+  }
+  
   for (auto fsBegin = _fieldset_indices.begin(),
             fsEnd = std::find(fsBegin, _fieldset_indices.end(), crate::Index());
        fsBegin != _fieldset_indices.end();
@@ -5947,6 +5991,12 @@ bool CrateReader::BuildLiveFieldSets() {
 }
 
 bool CrateReader::ReadSpecs() {
+  // Report progress (60%)
+  if (!ReportProgress(0.6f)) {
+    PUSH_ERROR("Parsing cancelled by progress callback.");
+    return false;
+  }
+  
   if ((_specs_index < 0) || (_specs_index >= int64_t(_toc.sections.size()))) {
     PUSH_ERROR("Invalid index for `SPECS` section.");
     return false;
@@ -6134,6 +6184,12 @@ bool CrateReader::ReadSpecs() {
 
 bool CrateReader::ReadPaths() {
   TINYUSDZ_PROFILE_SCOPE("crate-reader", "ReadPaths");
+  
+  // Report progress (70%)
+  if (!ReportProgress(0.7f)) {
+    PUSH_ERROR("Parsing cancelled by progress callback.");
+    return false;
+  }
   if ((_paths_index < 0) || (_paths_index >= int64_t(_toc.sections.size()))) {
     PUSH_ERROR("Invalid index for `PATHS` section.");
     return false;
@@ -6194,6 +6250,13 @@ bool CrateReader::ReadPaths() {
 
 bool CrateReader::ReadBootStrap() {
   TINYUSDZ_PROFILE_FUNCTION("crate-reader");
+  
+  // Report initial progress
+  if (!ReportProgress(0.0f)) {
+    PUSH_ERROR("Parsing cancelled by progress callback.");
+    return false;
+  }
+  
   // parse header.
   uint8_t magic[8];
   if (8 != _sr->read(/* req */ 8, /* dst len */ 8, magic)) {
@@ -6256,6 +6319,12 @@ bool CrateReader::ReadBootStrap() {
 
 bool CrateReader::ReadTOC() {
   TINYUSDZ_PROFILE_FUNCTION("crate-reader");
+  
+  // Report progress (10% after bootstrap)
+  if (!ReportProgress(0.1f)) {
+    PUSH_ERROR("Parsing cancelled by progress callback.");
+    return false;
+  }
 
   DCOUT(fmt::format("Memory budget: {} bytes", _config.maxMemoryBudget));
 
