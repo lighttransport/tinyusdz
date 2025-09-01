@@ -249,6 +249,11 @@ class USDCReader::Impl {
   const USDCReaderConfig get_reader_config() const {
     return _config;
   }
+  
+  void set_progress_callback(usdc::ProgressCallback callback, void *userptr) {
+    _progress_callback = callback;
+    _progress_userptr = userptr;
+  }
 
   bool ReadUSDC();
 
@@ -398,6 +403,9 @@ class USDCReader::Impl {
   std::string _warn;
 
   USDCReaderConfig _config;
+  
+  usdc::ProgressCallback _progress_callback;
+  void *_progress_userptr{nullptr};
 
   // Tracks the memory used(In advisorily manner since counting memory usage is
   // done by manually, so not all memory consumption could be tracked)
@@ -3476,6 +3484,14 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
 bool USDCReader::Impl::ReconstructStage(Stage *stage) {
 
+  // Report progress (90% - starting reconstruction)
+  if (_progress_callback) {
+    if (!_progress_callback(0.9f, _progress_userptr)) {
+      PUSH_ERROR("Reconstruction cancelled by progress callback.");
+      return false;
+    }
+  }
+
   // format test
   DCOUT(fmt::format("# of Paths = {}", crate_reader->NumPaths()));
 
@@ -3805,6 +3821,11 @@ bool USDCReader::Impl::ReadUSDC() {
   }
 
   crate_reader = new crate::CrateReader(_sr, config);
+  
+  // Pass progress callback to crate reader if set
+  if (_progress_callback) {
+    crate_reader->SetProgressCallback(_progress_callback, _progress_userptr);
+  }
 
   _warn.clear();
   _err.clear();
@@ -3889,6 +3910,11 @@ bool USDCReader::Impl::ReadUSDC() {
 
   DCOUT("Read Crate.");
 
+  // Report final progress (100%)
+  if (_progress_callback) {
+    _progress_callback(1.0f, _progress_userptr);
+  }
+
   return true;
 }
 
@@ -3910,6 +3936,10 @@ void USDCReader::set_reader_config(const USDCReaderConfig &config) {
 
 const USDCReaderConfig USDCReader::get_reader_config() const {
   return impl_->get_reader_config();
+}
+
+void USDCReader::SetProgressCallback(ProgressCallback callback, void *userptr) {
+  impl_->set_progress_callback(callback, userptr);
 }
 
 bool USDCReader::ReconstructStage(Stage *stage) {
