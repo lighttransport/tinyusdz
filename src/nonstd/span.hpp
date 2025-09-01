@@ -1,7 +1,7 @@
 //
 // Simple span implementation for C++14 compatibility
 //
-// Based on C++20 std::span but simplified for TinyUSDZ needs
+// Based on C++20 std::span and span-lite, but simplified for TinyUSDZ needs
 //
 
 #ifndef NONSTD_SPAN_HPP
