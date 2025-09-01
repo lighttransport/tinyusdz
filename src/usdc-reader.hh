@@ -4,11 +4,20 @@
 //
 #pragma once
 
+#include <functional>
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
 
 namespace tinyusdz {
 namespace usdc {
+
+///
+/// Progress callback function type.
+/// @param[in] progress Progress value between 0.0 and 1.0
+/// @param[in] userptr User-provided pointer for custom data
+/// @return true to continue parsing, false to cancel
+///
+using ProgressCallback = std::function<bool(float progress, void *userptr)>;
 
 ///
 /// USDC(Crate) reader
@@ -37,6 +46,14 @@ class USDCReader {
 
   void set_reader_config(const USDCReaderConfig &config);
   const USDCReaderConfig get_reader_config() const;
+
+  ///
+  /// Set progress callback for monitoring parsing progress.
+  ///
+  /// @param[in] callback Function to call during parsing to report progress
+  /// @param[in] userptr User-provided pointer for custom data
+  ///
+  void SetProgressCallback(ProgressCallback callback, void *userptr = nullptr);
 
   bool ReadUSDC();
 
