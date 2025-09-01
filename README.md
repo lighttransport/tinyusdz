@@ -533,6 +533,7 @@ Some helper code is licensed under MIT license.
 * SDL2 : zlib license. https://www.libsdl.org/index.php
 * optional-lite: BSL 1.0 license. https://github.com/martinmoene/optional-lite
 * expected-lite: BSL 1.0 license. https://github.com/martinmoene/expected-lite
+* span-lite: BSL 1.0 license. https://github.com/martinmoene/span-lite
 * string-view-lite: BSL 1.0 license. https://github.com/martinmoene/string-view-lite
 * mapbox/earcut.hpp: ISC license. https://github.com/mapbox/earcut.hpp
 * par_shapes.h generate parametric surfaces and other simple shapes: MIT license https://github.com/prideout/par

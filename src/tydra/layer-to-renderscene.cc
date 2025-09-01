@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <unordered_map>
 #include <cstring>
+#include <vector>
 
 #include "../prim-types.hh"
 #include "../usdGeom.hh"
@@ -17,13 +18,16 @@ namespace tydra {
 
 namespace {
 
+#if 0
 template<typename T>
 void MoveVector(std::vector<T>& src, std::vector<T>& dst) {
   dst = std::move(src);
   src.clear();
   src.shrink_to_fit();
 }
+#endif
 
+#if 0
 template<typename T>
 void ExtractAndClearAnimatable(Animatable<T>& src, T* default_val, TypedTimeSamples<T>* ts) {
   if (src.has_value() && default_val) {
@@ -37,6 +41,7 @@ void ExtractAndClearAnimatable(Animatable<T>& src, T* default_val, TypedTimeSamp
   src.clear_scalar();
   src.clear_timesamples();
 }
+#endif
 
 // TODO: Fix these functions once Property API is clarified
 // bool ConvertPrimvarToVertexAttribute(
@@ -112,6 +117,8 @@ bool LayerToRenderSceneConverter::ConvertLayer(
     RenderScene* render_scene,
     std::string* warn,
     std::string* err) {
+
+  (void)warn;
   
   if (!layer || !render_scene) {
     if (err) {
@@ -182,6 +189,7 @@ bool LayerToRenderSceneConverter::ConvertLayerInPlace(
     std::string* warn,
     std::string* err) {
   
+  (void)warn;
   if (!layer || !render_scene) {
     if (err) {
       *err = "Invalid input: layer or render_scene is null";
@@ -269,6 +277,8 @@ bool LayerToRenderSceneConverter::ConvertPrimSpec(
     RenderMesh* render_mesh,
     std::string* warn,
     std::string* err) {
+
+  (void)warn;
   
   if (!prim_spec || !render_mesh) {
     if (err) {
@@ -286,6 +296,8 @@ bool LayerToRenderSceneConverter::ConvertPrimSpecInPlace(
     std::string* warn,
     std::string* err) {
   
+  (void)warn;
+
   if (!prim_spec || !render_mesh) {
     if (err) {
       *err = "Invalid input: prim_spec or render_mesh is null";
@@ -304,6 +316,8 @@ bool LayerToRenderSceneConverter::ConvertGeomMeshPrimSpec(
     const PrimSpec* prim_spec,
     RenderMesh* render_mesh,
     bool free_source) {
+
+  (void)free_source;
   
   if (!prim_spec || !render_mesh) {
     return false;
@@ -457,6 +471,7 @@ bool LayerToRenderSceneConverter::ConvertMaterialPrimSpec(
     RenderMaterial* render_material,
     bool free_source) {
   
+  (void)free_source;
   if (!prim_spec || !render_material) {
     return false;
   }
@@ -471,6 +486,7 @@ bool LayerToRenderSceneConverter::ConvertXformPrimSpec(
     Node* node,
     bool free_source) {
   
+  (void)free_source;
   if (!prim_spec || !node) {
     return false;
   }
