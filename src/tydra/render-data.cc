@@ -2933,13 +2933,17 @@ bool RenderSceneConverter::ConvertMesh(
     }
 
     if (points.empty()) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("`points` is empty. Prim {}", abs_prim_path));
-    }
 
-    dst.points.resize(points.size());
-    memcpy(dst.points.data(), points.data(),
-           sizeof(value::float3) * points.size());
+      // maybe points is explicitly authored, but empty.
+      // point3f points = []
+
+      //PUSH_ERROR_AND_RETURN(
+      //    fmt::format("`points` is empty. Prim {}", abs_prim_path));
+    } else {
+      dst.points.resize(points.size());
+      memcpy(dst.points.data(), points.data(),
+             sizeof(value::float3) * points.size());
+    }
   }
 
   {
@@ -3792,36 +3796,36 @@ bool RenderSceneConverter::ConvertMesh(
     // If the mesh has `skel:joints`, remap jointIndex.
     {
       std::vector<value::token> joints = mesh.get_joints();
-      //if ((dst.skel_id >= 0) && joints.size()) {
-      //  DCOUT("has explicit joint orders.\n");
-      //}
+      if ((dst.skel_id >= 0) && (dst.skel_id < int(skeletons.size())) && joints.size()) {
+        //  DCOUT("has explicit joint orders.\n");
 
-      const auto &skel = skeletons[size_t(dst.skel_id)];
+        const auto &skel = skeletons[size_t(dst.skel_id)];
 
-      std::map<std::string, int> name_to_index_map = BuildSkelNameToIndexMap(skel);
+        std::map<std::string, int> name_to_index_map = BuildSkelNameToIndexMap(skel);
 
-      std::unordered_map<int, int> index_remap;
+        std::unordered_map<int, int> index_remap;
 
-      for (size_t i = 0; i < joints.size(); i++) {
-        std::string joint_name = joints[i].str();
-        
-        if (!name_to_index_map.count(joint_name)) {
-          PUSH_ERROR_AND_RETURN(fmt::format("joint_name {} not found in Skeleton", joint_name));
+        for (size_t i = 0; i < joints.size(); i++) {
+          std::string joint_name = joints[i].str();
+          
+          if (!name_to_index_map.count(joint_name)) {
+            PUSH_ERROR_AND_RETURN(fmt::format("joint_name {} not found in Skeleton", joint_name));
+          }
+
+          int dst_idx = name_to_index_map.at(joint_name);
+          index_remap[int(i)] = dst_idx;
+
+          //DCOUT("remap " << i << " to " << dst_idx);
         }
 
-        int dst_idx = name_to_index_map.at(joint_name);
-        index_remap[int(i)] = dst_idx;
+        for (size_t i = 0; i < dst.joint_and_weights.jointIndices.size(); i++) {
+          int src_idx = dst.joint_and_weights.jointIndices[i];
+          if (index_remap.count(src_idx)) {
+            int dst_idx = index_remap[src_idx];
 
-        //DCOUT("remap " << i << " to " << dst_idx);
-      }
-
-      for (size_t i = 0; i < dst.joint_and_weights.jointIndices.size(); i++) {
-        int src_idx = dst.joint_and_weights.jointIndices[i];
-        if (index_remap.count(src_idx)) {
-          int dst_idx = index_remap[src_idx];
-
-          dst.joint_and_weights.jointIndices[i] = dst_idx;
-          //DCOUT("jointIndex modified: remap " << src_idx << " to " << dst_idx);
+            dst.joint_and_weights.jointIndices[i] = dst_idx;
+            //DCOUT("jointIndex modified: remap " << src_idx << " to " << dst_idx);
+          }
         }
       }
 
