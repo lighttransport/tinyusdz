@@ -1,4 +1,5 @@
 #include "json-writer.hh"
+#include "layer.hh"
 #include "str-util.hh"
 #include <string>
 

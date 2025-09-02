@@ -6,6 +6,7 @@
 #include "prim-apply.hh"
 #include "attribute-eval.hh"
 #include "scene-analysis.hh"
+#include "../layer.hh"
 
 namespace tinyusdz {
 namespace tydra {
