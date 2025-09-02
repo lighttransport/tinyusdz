@@ -39,11 +39,13 @@ public:
 
     // Constructor with size
     explicit TypedArray(size_type count) {
+        _is_view = false;
         resize(count);
     }
 
     // Constructor with size and default value
     TypedArray(size_type count, const T& value) {
+        _is_view = false;
         resize(count, value);
     }
 
@@ -55,7 +57,7 @@ public:
         }
     }
 
-    // Constructor from existing data
+    // Constructor from existing data (copies data)
     TypedArray(const T* data, size_type count) {
         if (data && count > 0) {
             _storage.resize(count * sizeof(T));
@@ -63,45 +65,128 @@ public:
         }
     }
 
+    // View constructor - creates a non-owning view over external data
+    // When is_view=true, no allocation occurs, just stores pointer and size
+    TypedArray(T* data, size_type count, bool is_view) {
+        if (is_view && data && count > 0) {
+            _view_ptr = data;
+            _view_size = count;
+            _is_view = true;
+        } else if (!is_view && data && count > 0) {
+            // Non-view mode: copy data
+            _storage.resize(count * sizeof(T));
+            std::memcpy(_storage.data(), data, count * sizeof(T));
+        }
+    }
+
     // Copy constructor
-    TypedArray(const TypedArray& other) = default;
+    TypedArray(const TypedArray& other) {
+        if (other._is_view) {
+            // Copy view properties
+            _view_ptr = other._view_ptr;
+            _view_size = other._view_size;
+            _is_view = true;
+        } else {
+            // Copy storage
+            _storage = other._storage;
+            _is_view = false;
+        }
+    }
 
     // Move constructor
-    TypedArray(TypedArray&& other) noexcept = default;
+    TypedArray(TypedArray&& other) noexcept {
+        if (other._is_view) {
+            _view_ptr = other._view_ptr;
+            _view_size = other._view_size;
+            _is_view = true;
+            other._view_ptr = nullptr;
+            other._view_size = 0;
+        } else {
+            _storage = std::move(other._storage);
+            _is_view = false;
+        }
+    }
 
     // Copy assignment
-    TypedArray& operator=(const TypedArray& other) = default;
+    TypedArray& operator=(const TypedArray& other) {
+        if (this != &other) {
+            if (other._is_view) {
+                _storage.clear();
+                _view_ptr = other._view_ptr;
+                _view_size = other._view_size;
+                _is_view = true;
+            } else {
+                _view_ptr = nullptr;
+                _view_size = 0;
+                _storage = other._storage;
+                _is_view = false;
+            }
+        }
+        return *this;
+    }
 
     // Move assignment
-    TypedArray& operator=(TypedArray&& other) noexcept = default;
+    TypedArray& operator=(TypedArray&& other) noexcept {
+        if (this != &other) {
+            if (other._is_view) {
+                _storage.clear();
+                _view_ptr = other._view_ptr;
+                _view_size = other._view_size;
+                _is_view = true;
+                other._view_ptr = nullptr;
+                other._view_size = 0;
+            } else {
+                _view_ptr = nullptr;
+                _view_size = 0;
+                _storage = std::move(other._storage);
+                _is_view = false;
+            }
+        }
+        return *this;
+    }
 
     // Destructor
     ~TypedArray() = default;
 
+    // Check if this is a view (non-owning)
+    bool is_view() const noexcept {
+        return _is_view;
+    }
+
+    // Create a view from this array
+    TypedArray create_view() const {
+        return TypedArray(const_cast<T*>(data()), size(), true);
+    }
+
+    // Static helper to create a view
+    static TypedArray make_view(T* data, size_type count) {
+        return TypedArray(data, count, true);
+    }
+
     // Size operations
     size_type size() const noexcept {
-        return _storage.size() / sizeof(T);
+        return _is_view ? _view_size : (_storage.size() / sizeof(T));
     }
 
     size_type capacity() const noexcept {
-        return _storage.capacity() / sizeof(T);
+        return _is_view ? _view_size : (_storage.capacity() / sizeof(T));
     }
 
     bool empty() const noexcept {
-        return _storage.empty();
+        return _is_view ? (_view_size == 0) : _storage.empty();
     }
 
     size_type max_size() const noexcept {
-        return _storage.max_size() / sizeof(T);
+        return _is_view ? _view_size : (_storage.max_size() / sizeof(T));
     }
 
     // Data access
     pointer data() noexcept {
-        return reinterpret_cast<pointer>(_storage.data());
+        return _is_view ? _view_ptr : reinterpret_cast<pointer>(_storage.data());
     }
 
     const_pointer data() const noexcept {
-        return reinterpret_cast<const_pointer>(_storage.data());
+        return _is_view ? const_cast<const_pointer>(_view_ptr) : reinterpret_cast<const_pointer>(_storage.data());
     }
 
     // Element access
@@ -227,14 +312,30 @@ public:
 
     // Modifiers
     void clear() noexcept {
-        _storage.clear();
+        if (_is_view) {
+            // For view mode, just reset the view
+            _view_ptr = nullptr;
+            _view_size = 0;
+        } else {
+            _storage.clear();
+        }
     }
 
     void resize(size_type count) {
+        if (_is_view) {
+            // Cannot resize a view - this would require allocation
+            // Could throw an exception or assert, but for now just return
+            assert(!_is_view && "Cannot resize a TypedArray view");
+            return;
+        }
         _storage.resize(count * sizeof(T));
     }
 
     void resize(size_type count, const T& value) {
+        if (_is_view) {
+            assert(!_is_view && "Cannot resize a TypedArray view");
+            return;
+        }
         size_type old_size = size();
         _storage.resize(count * sizeof(T));
         
@@ -245,26 +346,44 @@ public:
     }
 
     void reserve(size_type new_capacity) {
+        if (_is_view) {
+            assert(!_is_view && "Cannot reserve capacity for a TypedArray view");
+            return;
+        }
         _storage.reserve(new_capacity * sizeof(T));
     }
 
     void shrink_to_fit() {
-        _storage.shrink_to_fit();
+        if (!_is_view) {
+            _storage.shrink_to_fit();
+        }
     }
 
     void push_back(const T& value) {
+        if (_is_view) {
+            assert(!_is_view && "Cannot push_back to a TypedArray view");
+            return;
+        }
         size_type old_size = size();
         resize(old_size + 1);
         data()[old_size] = value;
     }
 
     void push_back(T&& value) {
+        if (_is_view) {
+            assert(!_is_view && "Cannot push_back to a TypedArray view");
+            return;
+        }
         size_type old_size = size();
         resize(old_size + 1);
         data()[old_size] = std::move(value);
     }
 
     void pop_back() {
+        if (_is_view) {
+            assert(!_is_view && "Cannot pop_back from a TypedArray view");
+            return;
+        }
         if (!empty()) {
             resize(size() - 1);
         }
@@ -420,22 +539,33 @@ public:
 
     // Get raw storage access (advanced usage)
     std::vector<uint8_t>& storage() noexcept {
+        assert(!_is_view && "Cannot get storage from a TypedArray view");
         return _storage;
     }
 
     const std::vector<uint8_t>& storage() const noexcept {
+        assert(!_is_view && "Cannot get storage from a TypedArray view");
         return _storage;
     }
 
     // Swap
     void swap(TypedArray& other) noexcept {
-        _storage.swap(other._storage);
+        if (_is_view || other._is_view) {
+            // Swap all members including view state
+            std::swap(_storage, other._storage);
+            std::swap(_view_ptr, other._view_ptr);
+            std::swap(_view_size, other._view_size);
+            std::swap(_is_view, other._is_view);
+        } else {
+            _storage.swap(other._storage);
+        }
     }
 
     // Comparison operators
     bool operator==(const TypedArray& other) const {
-        return size() == other.size() && 
-               std::memcmp(data(), other.data(), size() * sizeof(T)) == 0;
+        if (size() != other.size()) return false;
+        if (size() == 0) return true;
+        return std::memcmp(data(), other.data(), size() * sizeof(T)) == 0;
     }
 
     bool operator!=(const TypedArray& other) const {
@@ -444,6 +574,9 @@ public:
 
 private:
     std::vector<uint8_t> _storage;
+    T* _view_ptr = nullptr;        // Pointer to external data when in view mode
+    size_type _view_size = 0;       // Size of view in elements
+    bool _is_view = false;          // Flag indicating view mode
     
     // Helper method implementations for C++14 compatibility (instead of if constexpr)
     template<typename N, typename Func>
