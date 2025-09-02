@@ -31,6 +31,7 @@
 #include "stream-reader.hh"
 #include "tiny-format.hh"
 #include "tinyusdz.hh"
+#include "layer.hh"
 #include "usda-reader.hh"
 #include "usdc-reader.hh"
 #include "value-pprint.hh"
