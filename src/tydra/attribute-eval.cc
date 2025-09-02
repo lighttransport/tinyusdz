@@ -5,6 +5,7 @@
 #include "scene-access.hh"
 
 #include "common-macros.inc"
+#include "layer.hh"
 #include "pprinter.hh"
 #include "tiny-format.hh"
 #include "value-pprint.hh"
