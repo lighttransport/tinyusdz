@@ -165,6 +165,7 @@ int main(int argc, char **argv) {
       }
 
       if (json_output) {
+#if defined(TINYUSDZ_WITH_JSON)
         auto json_result = tinyusdz::ToJSON(stage);
         if (json_result) {
           std::cout << json_result.value() << "\n";
@@ -174,6 +175,10 @@ int main(int argc, char **argv) {
         }
       } else {
         std::cout << to_string(stage) << "\n";
+#else
+      std::cerr << "JSON output is not supported in this build\n";
+      return EXIT_FAILURE;
+#endif
       }
 
       return EXIT_SUCCESS;
@@ -363,6 +368,7 @@ int main(int argc, char **argv) {
     }
     
     if (json_output) {
+#if defined(TINYUSDZ_WITH_JSON)
       auto json_result = tinyusdz::ToJSON(comp_stage);
       if (json_result) {
         std::cout << json_result.value() << "\n";
@@ -370,6 +376,9 @@ int main(int argc, char **argv) {
         std::cerr << "Failed to convert composed stage to JSON: " << json_result.error() << "\n";
         return EXIT_FAILURE;
       }
+#else
+      std::cerr << "JSON output is not supported in this build\n";
+#endif
     } else {
       std::cout << comp_stage.ExportToString() << "\n";
     }
@@ -410,6 +419,7 @@ int main(int argc, char **argv) {
     }
 
     if (json_output) {
+#if defined(TINYUSDZ_WITH_JSON)
       auto json_result = tinyusdz::ToJSON(stage);
       if (json_result) {
         std::cout << json_result.value() << "\n";
@@ -417,6 +427,9 @@ int main(int argc, char **argv) {
         std::cerr << "Failed to convert stage to JSON: " << json_result.error() << "\n";
         return EXIT_FAILURE;
       }
+#else
+      std::cerr << "JSON output is not supported in this build\n";
+#endif
     } else {
       std::string s = stage.ExportToString(has_relative);
       std::cout << s << "\n";
