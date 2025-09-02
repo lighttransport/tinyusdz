@@ -268,8 +268,8 @@ nonstd::expected<bool, std::string> ChunkReader::Read2(size_t offset, uint16_t* 
   }
   
   // Assume little-endian for now (can be made configurable)
-  *value = static_cast<uint16_t>(buffer[0]) | 
-           (static_cast<uint16_t>(buffer[1]) << 8);
+  *value = uint16_t(static_cast<uint16_t>(buffer[0]) | 
+           (static_cast<uint16_t>(buffer[1]) << 8));
   
   return true;
 }
@@ -555,9 +555,9 @@ void ChunkReader::InitializeCacheSizes() {
   // Calculate cache sizes based on ratios
   size_t total_chunk_capacity = config_.max_buffer_size / config_.chunk_size;
   
-  sliding_window_size_ = static_cast<size_t>(total_chunk_capacity * config_.sliding_window_ratio / 100.0f);
-  random_cache_size_ = static_cast<size_t>(total_chunk_capacity * config_.random_cache_ratio / 100.0f);
-  preload_size_ = static_cast<size_t>(total_chunk_capacity * config_.preload_ratio / 100.0f);
+  sliding_window_size_ = static_cast<size_t>((double(total_chunk_capacity) * double(config_.sliding_window_ratio)) / 100.0);
+  random_cache_size_ = static_cast<size_t>((double(total_chunk_capacity) * double(config_.random_cache_ratio)) / 100.0);
+  preload_size_ = static_cast<size_t>((double(total_chunk_capacity) * double(config_.preload_ratio)) / 100.0);
   
   // Ensure at least 1 chunk for each cache if total capacity allows
   if (sliding_window_size_ == 0 && total_chunk_capacity > 0) sliding_window_size_ = 1;
