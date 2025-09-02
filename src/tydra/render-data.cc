@@ -2937,8 +2937,10 @@ bool RenderSceneConverter::ConvertMesh(
       // maybe points is explicitly authored, but empty.
       // point3f points = []
 
+      dst.points.clear();
       //PUSH_ERROR_AND_RETURN(
       //    fmt::format("`points` is empty. Prim {}", abs_prim_path));
+
     } else {
       dst.points.resize(points.size());
       memcpy(dst.points.data(), points.data(),
