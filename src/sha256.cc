@@ -1,8 +1,9 @@
-#include "sha256.hh"
-
 #include <cstring>
 #include <iomanip>
 #include <sstream>
+#include <cstdint>
+
+#include "sha256.hh"
 
 namespace tinyusdz {
 
