@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "../prim-types.hh"
+#include "../layer.hh"
 #include "../usdGeom.hh"
 #include "../value-types.hh"
 #include "../tinyusdz.hh"
