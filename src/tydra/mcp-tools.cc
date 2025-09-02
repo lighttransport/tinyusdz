@@ -5,6 +5,7 @@
 #include "mcp-context.hh"
 #include "mcp-server.hh"
 #include "pprinter.hh"
+#include "layer.hh"
 #include "str-util.hh"
 #include "tinyusdz.hh"
 #include "uuid-gen.hh"
