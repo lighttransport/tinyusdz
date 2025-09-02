@@ -6039,6 +6039,12 @@ bool RenderSceneConverter::ConvertToRenderScene(
   if (!scene) {
     PUSH_ERROR_AND_RETURN("nullptr for RenderScene argument.");
   }
+  
+  // Report initial progress
+  if (!CallProgressCallback(0.0f)) {
+    PushError("Conversion cancelled by user.\n");
+    return false;
+  }
 
   // 1. Convert Xform
   // 2. Convert Material/Texture
@@ -6054,6 +6060,12 @@ bool RenderSceneConverter::ConvertToRenderScene(
   XformNode xform_node;
   if (!BuildXformNodeFromStage(env.stage, &xform_node, env.timecode)) {
     PUSH_ERROR_AND_RETURN("Failed to build Xform node hierarchy.\n");
+  }
+  
+  // Report progress after xform building (20%)
+  if (!CallProgressCallback(0.2f)) {
+    PushError("Conversion cancelled by user.\n");
+    return false;
   }
 
   std::string err;
@@ -6074,12 +6086,24 @@ bool RenderSceneConverter::ConvertToRenderScene(
   if (!ret) {
     PUSH_ERROR_AND_RETURN(err);
   }
+  
+  // Report progress after mesh/material conversion (70%)
+  if (!CallProgressCallback(0.7f)) {
+    PushError("Conversion cancelled by user.\n");
+    return false;
+  }
 
   //
   // 5. Build node hierarchy from XformNode and meshes, materials, skeletons,
   // etc.
   //
   if (!BuildNodeHierarchy(env, xform_node)) {
+    return false;
+  }
+  
+  // Report progress after node hierarchy building (90%)
+  if (!CallProgressCallback(0.9f)) {
+    PushError("Conversion cancelled by user.\n");
     return false;
   }
 
@@ -6110,6 +6134,10 @@ bool RenderSceneConverter::ConvertToRenderScene(
   render_scene.animations = std::move(animations);
 
   (*scene) = std::move(render_scene);
+  
+  // Report completion (100%)
+  CallProgressCallback(1.0f);
+  
   return true;
 }
 
@@ -7403,6 +7431,18 @@ std::string DumpRenderScene(const RenderScene &scene,
   // ss << "TODO: AnimationChannel, ...\n";
 
   return ss.str();
+}
+
+void RenderSceneConverter::SetProgressCallback(ProgressCallback callback, void *userptr) {
+  _progress_callback = callback;
+  _progress_userptr = userptr;
+}
+
+bool RenderSceneConverter::CallProgressCallback(float progress) {
+  if (_progress_callback) {
+    return _progress_callback(progress, _progress_userptr);
+  }
+  return true; // Continue if no callback set
 }
 
 }  // namespace tydra
