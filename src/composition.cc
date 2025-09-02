@@ -17,6 +17,7 @@
 #include "prim-pprint.hh"
 #include "prim-reconstruct.hh"
 #include "prim-types.hh"
+#include "layer.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
 #include "tinyusdz.hh"
