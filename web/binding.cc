@@ -11,6 +11,9 @@
 #include <vector>
 #include <chrono>
 #include <thread>
+#include <random>
+#include <sstream>
+#include <iomanip>
 
 //#include "external/fast_float/include/fast_float/bigint.h"
 #include "tinyusdz.hh"
@@ -133,13 +136,82 @@ bool ToRGBA(const std::vector<uint8_t> &src, int channels,
 
 }  // namespace detail
 
+// Simple UUID v4 generator
+std::string generateUUID() {
+  static std::random_device rd;
+  static std::mt19937 gen(rd());
+  static std::uniform_int_distribution<> dis(0, 15);
+  static std::uniform_int_distribution<> dis2(8, 11);
+
+  std::stringstream ss;
+  ss << std::hex;
+  
+  // Generate 32 hex characters with hyphens at positions 8, 12, 16, 20
+  for (int i = 0; i < 36; i++) {
+    if (i == 8 || i == 13 || i == 18 || i == 23) {
+      ss << "-";
+    } else if (i == 14) {
+      ss << "4";  // Version 4 UUID
+    } else if (i == 19) {
+      ss << dis2(gen);  // Variant bits
+    } else {
+      ss << dis(gen);
+    }
+  }
+  
+  return ss.str();
+}
+
 struct AssetCacheEntry {
   std::string binary;
   std::string sha256_hash;
+  std::string uuid;
   
-  AssetCacheEntry() = default;
+  AssetCacheEntry() : uuid(generateUUID()) {}
   AssetCacheEntry(const std::string& data) 
-    : binary(data), sha256_hash(tinyusdz::sha256(data.c_str(), data.size())) {}
+    : binary(data), 
+      sha256_hash(tinyusdz::sha256(data.c_str(), data.size())),
+      uuid(generateUUID()) {}
+};
+
+// Progress callback function type for streaming
+using ProgressCallback = std::function<void(const std::string&, size_t, size_t)>;
+
+// Streaming asset entry that builds incrementally
+struct StreamingAssetEntry {
+  std::string binary;
+  size_t expected_size;
+  size_t current_size;
+  std::string sha256_hash;
+  std::string uuid;
+  ProgressCallback progress_callback;
+  
+  StreamingAssetEntry() : expected_size(0), current_size(0), uuid(generateUUID()) {}
+  
+  bool appendChunk(const std::string& chunk) {
+    binary.append(chunk);
+    current_size = binary.size();
+    
+    if (progress_callback && expected_size > 0) {
+      progress_callback(sha256_hash, current_size, expected_size);
+    }
+    
+    return current_size <= expected_size;
+  }
+  
+  bool isComplete() const {
+    return expected_size > 0 && current_size >= expected_size;
+  }
+  
+  AssetCacheEntry finalize() {
+    if (isComplete()) {
+      sha256_hash = tinyusdz::sha256(binary.c_str(), binary.size());
+      AssetCacheEntry entry(binary);
+      entry.uuid = uuid;  // Preserve the UUID from streaming
+      return entry;
+    }
+    return AssetCacheEntry();
+  }
 };
 
 struct EMAssetResolutionResolver {
@@ -263,6 +335,88 @@ struct EMAssetResolutionResolver {
     return cache.at(asset_name).sha256_hash == expected_hash;
   }
 
+  std::string getUUID(const std::string &asset_name) const {
+    if (!cache.count(asset_name)) {
+      return std::string();
+    }
+    return cache.at(asset_name).uuid;
+  }
+
+  std::string getStreamingUUID(const std::string &asset_name) const {
+    if (!streaming_cache.count(asset_name)) {
+      return std::string();
+    }
+    return streaming_cache.at(asset_name).uuid;
+  }
+
+  // Get all asset UUIDs
+  emscripten::val getAssetUUIDs() const {
+    emscripten::val uuids = emscripten::val::object();
+    for (const auto &pair : cache) {
+      uuids.set(pair.first, pair.second.uuid);
+    }
+    return uuids;
+  }
+
+  // Find asset by UUID
+  std::string findAssetByUUID(const std::string &uuid) const {
+    for (const auto &pair : cache) {
+      if (pair.second.uuid == uuid) {
+        return pair.first;
+      }
+    }
+    return std::string();
+  }
+
+  // Get asset by UUID
+  const AssetCacheEntry &getByUUID(const std::string &uuid) const {
+    for (const auto &pair : cache) {
+      if (pair.second.uuid == uuid) {
+        return pair.second;
+      }
+    }
+    return empty_entry_;
+  }
+
+  // Check if asset exists by UUID
+  bool hasByUUID(const std::string &uuid) const {
+    for (const auto &pair : cache) {
+      if (pair.second.uuid == uuid) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Delete asset by name
+  bool deleteAsset(const std::string &asset_name) {
+    if (!cache.count(asset_name)) {
+      return false;
+    }
+    cache.erase(asset_name);
+    return true;
+  }
+
+  // Delete asset by UUID
+  bool deleteAssetByUUID(const std::string &uuid) {
+    for (auto it = cache.begin(); it != cache.end(); ++it) {
+      if (it->second.uuid == uuid) {
+        cache.erase(it);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Delete streaming asset if exists
+  bool deleteStreamingAsset(const std::string &asset_name) {
+    if (!streaming_cache.count(asset_name)) {
+      return false;
+    }
+    streaming_cache.erase(asset_name);
+    return true;
+  }
+
   emscripten::val getCacheDataAsMemoryView(const std::string &asset_name) const {
     if (!cache.count(asset_name)) {
       return emscripten::val::undefined();
@@ -294,12 +448,74 @@ struct EMAssetResolutionResolver {
 
   void clear() {
     cache.clear();
+    streaming_cache.clear();
+  }
+
+  // Streaming asset methods
+  bool startStreamingAsset(const std::string &asset_name, size_t expected_size) {
+    streaming_cache[asset_name] = StreamingAssetEntry();
+    streaming_cache[asset_name].expected_size = expected_size;
+    streaming_cache[asset_name].current_size = 0;
+    return true;
+  }
+  
+  bool appendAssetChunk(const std::string &asset_name, const std::string &chunk) {
+    if (!streaming_cache.count(asset_name)) {
+      return false;
+    }
+    return streaming_cache[asset_name].appendChunk(chunk);
+  }
+  
+  bool finalizeStreamingAsset(const std::string &asset_name) {
+    if (!streaming_cache.count(asset_name)) {
+      return false;
+    }
+    
+    StreamingAssetEntry &entry = streaming_cache[asset_name];
+    if (!entry.isComplete()) {
+      return false;
+    }
+    
+    cache[asset_name] = entry.finalize();
+    streaming_cache.erase(asset_name);
+    return true;
+  }
+  
+  bool isStreamingAssetComplete(const std::string &asset_name) const {
+    if (!streaming_cache.count(asset_name)) {
+      return false;
+    }
+    return streaming_cache.at(asset_name).isComplete();
+  }
+  
+  emscripten::val getStreamingProgress(const std::string &asset_name) const {
+    emscripten::val progress = emscripten::val::object();
+    
+    if (!streaming_cache.count(asset_name)) {
+      progress.set("exists", false);
+      return progress;
+    }
+    
+    const StreamingAssetEntry &entry = streaming_cache.at(asset_name);
+    progress.set("exists", true);
+    progress.set("current", double(entry.current_size));
+    progress.set("total", double(entry.expected_size));
+    progress.set("complete", entry.isComplete());
+    progress.set("uuid", entry.uuid);
+    if (entry.expected_size > 0) {
+      progress.set("percentage", (double(entry.current_size) / double(entry.expected_size)) * 100.0);
+    } else {
+      progress.set("percentage", 0.0);
+    }
+    
+    return progress;
   }
 
   // TODO: Use IndexDB?
   //
   // <uri, AssetCacheEntry>
   std::map<std::string, AssetCacheEntry> cache;
+  std::map<std::string, StreamingAssetEntry> streaming_cache;
   AssetCacheEntry empty_entry_;
 };
 
@@ -1200,6 +1416,27 @@ class TinyUSDZLoaderNative {
     em_resolver_.add(name, binary);
   }
 
+  // Streaming asset methods
+  bool startStreamingAsset(const std::string &name, size_t expected_size) {
+    return em_resolver_.startStreamingAsset(name, expected_size);
+  }
+  
+  bool appendAssetChunk(const std::string &name, const std::string &chunk) {
+    return em_resolver_.appendAssetChunk(name, chunk);
+  }
+  
+  bool finalizeStreamingAsset(const std::string &name) {
+    return em_resolver_.finalizeStreamingAsset(name);
+  }
+  
+  bool isStreamingAssetComplete(const std::string &name) const {
+    return em_resolver_.isStreamingAssetComplete(name);
+  }
+  
+  emscripten::val getStreamingProgress(const std::string &name) const {
+    return em_resolver_.getStreamingProgress(name);
+  }
+
   bool hasAsset(const std::string &name) const {
     return em_resolver_.has(name);
   }
@@ -1213,14 +1450,83 @@ class TinyUSDZLoaderNative {
   }
 
   emscripten::val getAsset(const std::string &name) const {
-    emscripten::val val;
+    emscripten::val val = emscripten::val::object();
     if (em_resolver_.has(name)) {
       const AssetCacheEntry &entry = em_resolver_.get(name);
       val.set("name", name);
       val.set("data", emscripten::typed_memory_view(entry.binary.size(), entry.binary.data()));
       val.set("sha256", entry.sha256_hash);
+      val.set("uuid", entry.uuid);
     }
     return val;
+  }
+
+  std::string getAssetUUID(const std::string &name) const {
+    return em_resolver_.getUUID(name);
+  }
+
+  std::string getStreamingAssetUUID(const std::string &name) const {
+    return em_resolver_.getStreamingUUID(name);
+  }
+
+  emscripten::val getAllAssetUUIDs() const {
+    return em_resolver_.getAssetUUIDs();
+  }
+
+  std::string findAssetByUUID(const std::string &uuid) const {
+    return em_resolver_.findAssetByUUID(uuid);
+  }
+
+  // Get asset by UUID instead of name
+  emscripten::val getAssetByUUID(const std::string &uuid) const {
+    emscripten::val val = emscripten::val::object();
+    
+    if (!em_resolver_.hasByUUID(uuid)) {
+      val.set("error", "Asset not found with UUID: " + uuid);
+      return val;
+    }
+    
+    const AssetCacheEntry &entry = em_resolver_.getByUUID(uuid);
+    const std::string name = em_resolver_.findAssetByUUID(uuid);
+    
+    val.set("name", name);
+    val.set("data", emscripten::typed_memory_view(entry.binary.size(), 
+                                                   reinterpret_cast<const uint8_t*>(entry.binary.data())));
+    val.set("sha256", entry.sha256_hash);
+    val.set("uuid", entry.uuid);
+    
+    return val;
+  }
+
+  // Delete asset by name or UUID
+  bool deleteAsset(const std::string &nameOrUuid) {
+    // First try to delete by name
+    if (em_resolver_.deleteAsset(nameOrUuid)) {
+      return true;
+    }
+    
+    // If not found by name, try to delete by UUID
+    return em_resolver_.deleteAssetByUUID(nameOrUuid);
+  }
+
+  // Delete asset specifically by UUID
+  bool deleteAssetByUUID(const std::string &uuid) {
+    return em_resolver_.deleteAssetByUUID(uuid);
+  }
+
+  // Delete asset specifically by name
+  bool deleteAssetByName(const std::string &name) {
+    return em_resolver_.deleteAsset(name);
+  }
+
+  // Get number of cached assets
+  size_t getAssetCount() const {
+    return em_resolver_.cache.size();
+  }
+
+  // Check if asset exists (by name or UUID)
+  bool assetExists(const std::string &nameOrUuid) const {
+    return em_resolver_.has(nameOrUuid) || em_resolver_.hasByUUID(nameOrUuid);
   }
 
   emscripten::val getAssetCacheDataAsMemoryView(const std::string &name) const {
@@ -1789,6 +2095,16 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
     
       .function("setAsset",
                 &TinyUSDZLoaderNative::setAsset)
+      .function("startStreamingAsset",
+                &TinyUSDZLoaderNative::startStreamingAsset)
+      .function("appendAssetChunk",
+                &TinyUSDZLoaderNative::appendAssetChunk)
+      .function("finalizeStreamingAsset",
+                &TinyUSDZLoaderNative::finalizeStreamingAsset)
+      .function("isStreamingAssetComplete",
+                &TinyUSDZLoaderNative::isStreamingAssetComplete)
+      .function("getStreamingProgress",
+                &TinyUSDZLoaderNative::getStreamingProgress)
       .function("hasAsset",
                 &TinyUSDZLoaderNative::hasAsset)
       .function("getAsset",
@@ -1801,6 +2117,26 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::getAssetHash)
       .function("verifyAssetHash",
                 &TinyUSDZLoaderNative::verifyAssetHash)
+      .function("getAssetUUID",
+                &TinyUSDZLoaderNative::getAssetUUID)
+      .function("getStreamingAssetUUID",
+                &TinyUSDZLoaderNative::getStreamingAssetUUID)
+      .function("getAllAssetUUIDs",
+                &TinyUSDZLoaderNative::getAllAssetUUIDs)
+      .function("findAssetByUUID",
+                &TinyUSDZLoaderNative::findAssetByUUID)
+      .function("getAssetByUUID",
+                &TinyUSDZLoaderNative::getAssetByUUID)
+      .function("deleteAsset",
+                &TinyUSDZLoaderNative::deleteAsset)
+      .function("deleteAssetByUUID",
+                &TinyUSDZLoaderNative::deleteAssetByUUID)
+      .function("deleteAssetByName",
+                &TinyUSDZLoaderNative::deleteAssetByName)
+      .function("getAssetCount",
+                &TinyUSDZLoaderNative::getAssetCount)
+      .function("assetExists",
+                &TinyUSDZLoaderNative::assetExists)
       .function("clearAssets",
                 &TinyUSDZLoaderNative::clearAssets)
 
