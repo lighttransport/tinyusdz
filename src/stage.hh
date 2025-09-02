@@ -242,6 +242,13 @@ class Stage {
     return _err;
   }
 
+  ///
+  /// Estimate memory usage of this Stage in bytes
+  ///
+  /// @return Estimated memory usage in bytes
+  ///
+  size_t estimate_memory_usage() const;
+
  private:
 
 #if defined(TINYUSDZ_ENABLE_THREAD)
