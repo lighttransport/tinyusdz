@@ -7,6 +7,7 @@
 #include <unordered_set>
 
 #include "prim-types.hh"
+#include "../layer.hh"
 
 namespace tinyusdz {
 

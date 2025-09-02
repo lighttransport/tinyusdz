@@ -8,6 +8,7 @@
 #include <deque>
 
 #include "prim-types.hh"
+#include "../layer.hh"
 
 namespace tinyusdz {
 namespace tydra {

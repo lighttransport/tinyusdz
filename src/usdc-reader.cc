@@ -28,6 +28,7 @@
 #include <unordered_set>
 
 #include "prim-types.hh"
+#include "layer.hh"
 #include "tinyusdz.hh"
 #include "value-types.hh"
 #if defined(__wasi__)
