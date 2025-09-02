@@ -37,6 +37,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <unordered_map>
 
 #include "asset-resolution.hh"
@@ -73,6 +74,14 @@ using UsdPrimvarReader_string = UsdPrimvarReader<std::string>;
 using UsdPrimvarReader_matrix4d = UsdPrimvarReader<value::matrix4d>;
 
 namespace tydra {
+
+///
+/// Progress callback function type for RenderSceneConverter.
+/// @param[in] progress Progress value between 0.0 and 1.0
+/// @param[in] userptr User-provided pointer for custom data
+/// @return true to continue conversion, false to cancel
+///
+using ProgressCallback = std::function<bool(float progress, void *userptr)>;
 
 // GLSL like data types
 using vec2 = value::float2;
@@ -1651,6 +1660,14 @@ class RenderSceneConverter {
   RenderSceneConverter(RenderSceneConverter &&rhs) = delete;
 
   ///
+  /// Set progress callback for monitoring conversion progress.
+  ///
+  /// @param[in] callback Function to call during conversion to report progress
+  /// @param[in] userptr User-provided pointer for custom data
+  ///
+  void SetProgressCallback(ProgressCallback callback, void *userptr = nullptr);
+
+  ///
   /// All-in-one Stage to RenderScene conversion.
   ///
   /// Convert Stage to RenderScene.
@@ -1866,9 +1883,20 @@ class RenderSceneConverter {
   void PushWarn(const std::string &msg) { _warn += msg; }
   void PushError(const std::string &msg) { _err += msg; }
 
+  ///
+  /// Call progress callback if set.
+  /// @param[in] progress Progress value between 0.0 and 1.0
+  /// @return true to continue, false to cancel
+  ///
+  bool CallProgressCallback(float progress);
+
   std::string _info;
   std::string _err;
   std::string _warn;
+
+  // Progress callback
+  ProgressCallback _progress_callback{nullptr};
+  void *_progress_userptr{nullptr};
 };
 
 // For debug
