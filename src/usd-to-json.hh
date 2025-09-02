@@ -9,7 +9,7 @@
 #endif
 
 #include "nonstd/expected.hpp"
-#include "external/jsonhpp/nlohmann/json.hpp"
+#include "external/jsonhpp/nlohmann/json_fwd.hpp"
 
 #ifdef __clang__
 #pragma clang diagnostic pop

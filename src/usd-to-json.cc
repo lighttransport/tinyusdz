@@ -6,6 +6,8 @@
 #include "tinyusdz.hh"
 #include "io-util.hh"
 
+#if defined(TINYUSDZ_WITH_JSON)
+
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
@@ -1928,6 +1930,11 @@ bool USDZToJSON(const std::string& filename, USDZToJSONResult* result,
     return USDZToJSONFromMemory(data.data(), data.size(), filepath, result, warn, err, options);
   }
 }
+
+#else
+
+
+#endif
 
 
 }  // namespace tinyusdz

@@ -1213,13 +1213,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   target_include_directories(${TINYUSDZ_LIB_TARGET}
                              PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
-  #if(TINYUSDZ_WITH_JSON)
-  ##target_include_directories(
-  ##  ${TINYUSDZ_LIB_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
-  #  target_include_directories(
-  #    ${TINYUSDZ_LIB_TARGET}
-  #    PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
-  #endif()
+  if(TINYUSDZ_WITH_JSON)
+    #target_include_directories(
+    #  ${TINYUSDZ_LIB_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src/external/jsonhpp/)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET} PRIVATE "TINYUSDZ_WITH_JSON")
+  endif()
 
   if(TINYUSDZ_WITH_USDMTLX)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
