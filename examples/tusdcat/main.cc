@@ -5,6 +5,7 @@
 #include <sstream>
 
 #include "tinyusdz.hh"
+#include "layer.hh"
 #include "pprinter.hh"
 #include "str-util.hh"
 #include "io-util.hh"
@@ -34,8 +35,28 @@ static std::string str_tolower(std::string s) {
   return s;
 }
 
+static std::string format_memory_size(size_t bytes) {
+  const char* units[] = {"B", "KB", "MB", "GB", "TB"};
+  int unit_index = 0;
+  double size = static_cast<double>(bytes);
+  
+  while (size >= 1024.0 && unit_index < 4) {
+    size /= 1024.0;
+    unit_index++;
+  }
+  
+  std::stringstream ss;
+  if (unit_index == 0) {
+    ss << static_cast<size_t>(size) << " " << units[unit_index];
+  } else {
+    ss.precision(2);
+    ss << std::fixed << size << " " << units[unit_index];
+  }
+  return ss.str();
+}
+
 void print_help() {
-    std::cout << "Usage tusdcat [--flatten] [--loadOnly] [--composition=STRLIST] [--relative] [--extract-variants] [-j|--json] input.usda/usdc/usdz\n";
+    std::cout << "Usage tusdcat [--flatten] [--loadOnly] [--composition=STRLIST] [--relative] [--extract-variants] [--memstat] [-j|--json] input.usda/usdc/usdz\n";
     std::cout << "\n --flatten (not fully implemented yet) Do composition(load sublayers, refences, payload, evaluate `over`, inherit, variants..)";
     std::cout << "  --composition: Specify which composition feature to be "
                  "enabled(valid when `--flatten` is supplied). Comma separated "
@@ -47,6 +68,7 @@ void print_help() {
     std::cout << "\n --relative (not implemented yet) Print Path as relative Path\n";
     std::cout << "\n -l, --loadOnly Load(Parse) USD file only(Check if input USD is valid or not)\n";
     std::cout << "\n -j, --json Output parsed USD as JSON string\n";
+    std::cout << "\n --memstat Print memory usage statistics for loaded Layer and Stage\n";
 
 }
 
@@ -61,6 +83,7 @@ int main(int argc, char **argv) {
   bool has_extract_variants{false};
   bool load_only{false};
   bool json_output{false};
+  bool memstat{false};
 
   constexpr int kMaxIteration = 128;
 
@@ -84,6 +107,8 @@ int main(int argc, char **argv) {
       json_output = true;
     } else if (arg.compare("--extract-variants") == 0) {
       has_extract_variants = true;
+    } else if (arg.compare("--memstat") == 0) {
+      memstat = true;
     } else if (tinyusdz::startsWith(arg, "--composition=")) {
       std::string value_str = tinyusdz::removePrefix(arg, "--composition=");
       if (value_str.empty()) {
@@ -164,6 +189,13 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
       }
 
+      if (memstat) {
+        size_t stage_mem = stage.estimate_memory_usage();
+        std::cout << "# Memory Statistics (Stage from USDZ)\n";
+        std::cout << "  Stage memory usage: " << format_memory_size(stage_mem) 
+                  << " (" << stage_mem << " bytes)\n\n";
+      }
+
       if (json_output) {
 #if defined(TINYUSDZ_WITH_JSON)
         auto json_result = tinyusdz::ToJSON(stage);
@@ -194,6 +226,13 @@ int main(int argc, char **argv) {
       std::cerr << "Failed to read USD data as Layer: \n";
       std::cerr << err << "\n";
       return -1;
+    }
+
+    if (memstat) {
+      size_t layer_mem = root_layer.estimate_memory_usage();
+      std::cout << "# Memory Statistics (Layer)\n";
+      std::cout << "  Layer memory usage: " << format_memory_size(layer_mem) 
+                << " (" << layer_mem << " bytes)\n\n";
     }
 
     std::cout << "# input\n";
@@ -367,6 +406,13 @@ int main(int argc, char **argv) {
       std::cerr << err << "\n";
     }
     
+    if (memstat) {
+      size_t stage_mem = comp_stage.estimate_memory_usage();
+      std::cout << "\n# Memory Statistics (Stage after composition)\n";
+      std::cout << "  Stage memory usage: " << format_memory_size(stage_mem) 
+                << " (" << stage_mem << " bytes)\n\n";
+    }
+    
     if (json_output) {
 #if defined(TINYUSDZ_WITH_JSON)
       auto json_result = tinyusdz::ToJSON(comp_stage);
@@ -415,7 +461,20 @@ int main(int argc, char **argv) {
     }
 
     if (load_only) {
+      if (memstat) {
+        size_t stage_mem = stage.estimate_memory_usage();
+        std::cout << "# Memory Statistics (Stage)\n";
+        std::cout << "  Stage memory usage: " << format_memory_size(stage_mem) 
+                  << " (" << stage_mem << " bytes)\n";
+      }
       return EXIT_SUCCESS;
+    }
+
+    if (memstat) {
+      size_t stage_mem = stage.estimate_memory_usage();
+      std::cout << "# Memory Statistics (Stage)\n";
+      std::cout << "  Stage memory usage: " << format_memory_size(stage_mem) 
+                << " (" << stage_mem << " bytes)\n\n";
     }
 
     if (json_output) {
