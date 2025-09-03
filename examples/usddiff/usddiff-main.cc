@@ -15,6 +15,8 @@
 #include <vector>
 
 #include "tinyusdz.hh"
+#include "layer.hh"
+#include "prim-types.hh"
 #include "tydra/diff-and-compare.hh"
 #include "io-util.hh"
 
