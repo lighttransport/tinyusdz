@@ -817,7 +817,7 @@ bool CrateReader::ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d) 
     *d = TypedArray<float>(const_cast<float*>(reinterpret_cast<const float*>(data_ptr)), length, true);
     
     // Advance the stream position
-    if (!_sr->seek_from_current(sizeof(float) * length)) {
+    if (!_sr->seek_from_current(int64_t(sizeof(float) * length))) {
       _err += "Failed to advance stream position.\n";
       return false;
     }
@@ -941,7 +941,7 @@ bool CrateReader::ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d
     *d = TypedArray<double>(const_cast<double*>(reinterpret_cast<const double*>(data_ptr)), length, true);
     
     // Advance the stream position
-    if (!_sr->seek_from_current(sizeof(double) * length)) {
+    if (!_sr->seek_from_current(int64_t(sizeof(double) * length))) {
       _err += "Failed to advance stream position.\n";
       return false;
     }
@@ -1064,7 +1064,7 @@ bool CrateReader::ReadIntArrayTyped(bool is_compressed, TypedArray<T> *d) {
     *d = TypedArray<T>(const_cast<T*>(reinterpret_cast<const T*>(data_ptr)), length, true);
     
     // Advance the stream position
-    if (!_sr->seek_from_current(sizeof(T) * length)) {
+    if (!_sr->seek_from_current(int64_t(sizeof(T) * length))) {
       _err += "Failed to advance stream position.\n";
       return false;
     }
