@@ -36,6 +36,9 @@ struct USDCReaderConfig {
   bool allow_unknown_apiSchemas = true;
 
   bool strict_allowedToken_check = false;
+  
+  // Memory optimization: use mmap for uncompressed arrays
+  bool use_mmap = false;
 };
 
 class USDCReader {
