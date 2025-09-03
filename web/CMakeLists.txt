@@ -17,7 +17,9 @@ endif()
 
 project(${BUILD_TARGET} CXX C)
 
-set(CMAKE_CXX_STANDARD 14)
+# Make C++20 default to use C++20 coroutine.
+# Emscripten 4.0 or above supports(C++20)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -25,11 +27,11 @@ if (CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
 
   # Use Oz to reduce size further than Os
   if (TINYUSDZ_WASM64)
-    set(CMAKE_CXX_FLAGS_MINSIZEREL "-Oz -DNDEBUG -sMEMORY64")
-    set(CMAKE_C_FLAGS_MINSIZEREL "-Oz -DNDEBUG -sMEMORY64")
+    set(CMAKE_CXX_FLAGS_MINSIZEREL "-O3 -Oz -DNDEBUG -sMEMORY64")
+    set(CMAKE_C_FLAGS_MINSIZEREL "-O3 -Oz -DNDEBUG -sMEMORY64")
   else()
-    set(CMAKE_CXX_FLAGS_MINSIZEREL "-Oz -DNDEBUG") # -sMEMORY64"
-    set(CMAKE_C_FLAGS_MINSIZEREL "-Oz -DNDEBUG") # -sMEMORY64"
+    set(CMAKE_CXX_FLAGS_MINSIZEREL "-O3 -Oz -DNDEBUG") # -sMEMORY64"
+    set(CMAKE_C_FLAGS_MINSIZEREL "-O3 -Oz -DNDEBUG") # -sMEMORY64"
   endif()
 
 endif()
@@ -89,12 +91,21 @@ if (EMSCRIPTEN)
     #set(CMAKE_EXECUTABLE_SUFFIX ".html")
 endif()
 
-# TODO: Adjust memory size. 
-# TODO: -sMEMORY64
-# 512kB stack
-# NOTE: ASYNCIFY increase the wasm size to around 4~6 MB
 
-set(TINYUSDZ_EMCC_LINK_FLAGS "-Oz -sENVIRONMENT='web,worker,node' -sSTACK_SIZE=512000 -sALLOW_MEMORY_GROWTH=1 -sMODULARIZE=1 -sEXPORT_ES6 -sINVOKE_RUN=0 --bind ")
+# for debugging
+# --memoryprofiler 
+# --source-map-base http://localhost:8021/ 
+
+# flags = try to lower heap memory use
+set(TINYUSDZ_EMCC_LINK_FLAGS "-Oz -sENVIRONMENT='web,worker,node' \
+ -sMALLOC=emmalloc \
+ -sSTACK_SIZE=512000 \
+ -sALLOW_MEMORY_GROWTH=1 \
+ -sFILESYSTEM=0 \
+ -sSAFE_HEAP=0 \
+ -sWASM_BIGINT=1 \
+ -sMODULARIZE=1 -sEXPORT_ES6 \
+ -sINVOKE_RUN=0 --bind ")
 
 if (TINYUSDZ_WASM64)
   # assertion=1 cause runtime error(Cannot mix BigInt and ... in assert()), so use 2

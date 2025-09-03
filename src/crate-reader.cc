@@ -21,6 +21,7 @@
 #include <thread>
 #endif
 
+#include <algorithm>
 #include <unordered_set>
 #include <stack>
 
@@ -106,6 +107,19 @@ CrateReader::CrateReader(StreamReader *sr, const CrateReaderConfig &config)
 CrateReader::~CrateReader() {
   //delete _impl;
   //_impl = nullptr;
+}
+
+bool CrateReader::ReportProgress(float progress) {
+  // Check if callback exists and is callable
+  if (!_progress_callback) {
+    return true;  // No callback, continue parsing
+  }
+  
+  // Clamp progress to [0.0, 1.0]
+  progress = std::max(0.0f, std::min(1.0f, progress));
+  
+  // Call the callback and return its result
+  return _progress_callback(progress, _progress_userptr);
 }
 
 std::string CrateReader::GetError() { return _err; }
@@ -762,6 +776,327 @@ bool CrateReader::ReadDoubleArray(bool is_compressed, std::vector<double> *d) {
     return true;
   }
 }
+
+// TypedArray version with mmap support for float arrays
+bool CrateReader::ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d) {
+  size_t length;
+  // < ver 0.7.0  use 32bit
+  if (VERSION_LESS_THAN_0_8_0(_version)) {
+      uint32_t shapesize; // not used
+      if (!_sr->read4(&shapesize)) {
+        PUSH_ERROR("Failed to read the number of array elements.");
+        return false;
+      }
+    uint32_t n;
+    if (!_sr->read4(&n)) {
+      _err += "Failed to read the number of array elements.\n";
+      return false;
+    }
+    length = size_t(n);
+  } else {
+    uint64_t n;
+    if (!_sr->read8(&n)) {
+      _err += "Failed to read the number of array elements.\n";
+      return false;
+    }
+    length = size_t(n);
+  }
+
+  if (length > _config.maxArrayElements) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many array elements.");
+  }
+
+  CHECK_MEMORY_USAGE(length * sizeof(float));
+
+  if (!is_compressed && _config.use_mmap) {
+    // Use TypedArray view mode - no allocation, just point to mmap'd data
+    uint64_t current_pos = _sr->tell();
+    const uint8_t* data_ptr = _sr->data() + current_pos;
+    
+    // Create a view over the mmap'd data
+    *d = TypedArray<float>(const_cast<float*>(reinterpret_cast<const float*>(data_ptr)), length, true);
+    
+    // Advance the stream position
+    if (!_sr->seek_from_current(int64_t(sizeof(float) * length))) {
+      _err += "Failed to advance stream position.\n";
+      return false;
+    }
+    
+    return true;
+  } else {
+    // Fall back to regular allocation for compressed data or when mmap is disabled
+    d->resize(length);
+    
+    if (!is_compressed) {
+      if (!_sr->read(sizeof(float) * length, sizeof(float) * length,
+                     reinterpret_cast<uint8_t *>(d->data()))) {
+        _err += "Failed to read float array data.\n";
+        return false;
+      }
+      return true;
+    } else {
+      // Handle compressed data - same as original implementation
+      if (length < crate::kMinCompressedArraySize) {
+        size_t sz = sizeof(float) * length;
+        if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
+          _err += "Failed to read uncompressed array data.\n";
+          return false;
+        }
+        return true;
+      }
+
+      char code;
+      if (!_sr->read1(&code)) {
+        _err += "Failed to read the code.\n";
+        return false;
+      }
+
+      if (code == 'i') {
+        std::vector<int32_t> ints;
+        ints.resize(length);
+        if (!ReadCompressedInts(ints.data(), ints.size())) {
+          _err += "Failed to read compressed ints in ReadFloatArrayTyped.\n";
+          return false;
+        }
+        for (size_t i = 0; i < length; i++) {
+          d->data()[i] = float(ints[i]);
+        }
+      } else if (code == 't') {
+        uint32_t lutSize;
+        if (!_sr->read4(&lutSize)) {
+          _err += "Failed to read lutSize in ReadFloatArrayTyped.\n";
+          return false;
+        }
+
+        std::vector<float> lut;
+        lut.resize(lutSize);
+        if (!_sr->read(sizeof(float) * lutSize, sizeof(float) * lutSize,
+                       reinterpret_cast<uint8_t *>(lut.data()))) {
+          _err += "Failed to read lut table in ReadFloatArrayTyped.\n";
+          return false;
+        }
+
+        std::vector<uint32_t> indexes;
+        indexes.resize(length);
+        if (!ReadCompressedInts(indexes.data(), indexes.size())) {
+          _err += "Failed to read lut indices in ReadFloatArrayTyped.\n";
+          return false;
+        }
+
+        auto o = d->data();
+        for (auto index : indexes) {
+          *o++ = lut[index];
+        }
+      } else {
+        _err += "Invalid code. Data is corrupted\n";
+        return false;
+      }
+      return true;
+    }
+  }
+}
+
+// TypedArray version with mmap support for double arrays
+bool CrateReader::ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d) {
+  size_t length;
+  // < ver 0.7.0  use 32bit
+  if (VERSION_LESS_THAN_0_8_0(_version)) {
+      uint32_t shapesize; // not used
+      if (!_sr->read4(&shapesize)) {
+        PUSH_ERROR("Failed to read the number of array elements.");
+        return false;
+      }
+    uint32_t n;
+    if (!_sr->read4(&n)) {
+      _err += "Failed to read the number of array elements.\n";
+      return false;
+    }
+    length = size_t(n);
+  } else {
+    uint64_t n;
+    if (!_sr->read8(&n)) {
+      _err += "Failed to read the number of array elements.\n";
+      return false;
+    }
+    length = size_t(n);
+  }
+
+  if (length == 0) {
+    d->clear();
+    return true;
+  }
+
+  if (length > _config.maxArrayElements) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many array elements.");
+  }
+
+  CHECK_MEMORY_USAGE(length * sizeof(double));
+
+  if (!is_compressed && _config.use_mmap) {
+    // Use TypedArray view mode - no allocation, just point to mmap'd data
+    uint64_t current_pos = _sr->tell();
+    const uint8_t* data_ptr = _sr->data() + current_pos;
+    
+    // Create a view over the mmap'd data
+    *d = TypedArray<double>(const_cast<double*>(reinterpret_cast<const double*>(data_ptr)), length, true);
+    
+    // Advance the stream position
+    if (!_sr->seek_from_current(int64_t(sizeof(double) * length))) {
+      _err += "Failed to advance stream position.\n";
+      return false;
+    }
+    
+    return true;
+  } else {
+    // Fall back to regular allocation for compressed data or when mmap is disabled
+    d->resize(length);
+    
+    if (!is_compressed) {
+      if (!_sr->read(sizeof(double) * length, sizeof(double) * length,
+                     reinterpret_cast<uint8_t *>(d->data()))) {
+        _err += "Failed to read double array data.\n";
+        return false;
+      }
+      return true;
+    } else {
+      // Handle compressed data - same as original implementation
+      if (length < crate::kMinCompressedArraySize) {
+        size_t sz = sizeof(double) * length;
+        if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
+          _err += "Failed to read uncompressed array data.\n";
+          return false;
+        }
+        return true;
+      }
+
+      char code;
+      if (!_sr->read1(&code)) {
+        _err += "Failed to read the code.\n";
+        return false;
+      }
+
+      if (code == 'i') {
+        std::vector<int64_t> ints;
+        ints.resize(length);
+        if (!ReadCompressedInts(ints.data(), ints.size())) {
+          _err += "Failed to read compressed ints in ReadDoubleArrayTyped.\n";
+          return false;
+        }
+        std::copy(ints.begin(), ints.end(), d->data());
+      } else if (code == 't') {
+        uint32_t lutSize;
+        if (!_sr->read4(&lutSize)) {
+          _err += "Failed to read lutSize in ReadDoubleArrayTyped.\n";
+          return false;
+        }
+
+        std::vector<double> lut;
+        lut.resize(lutSize);
+        if (!_sr->read(sizeof(double) * lutSize, sizeof(double) * lutSize,
+                       reinterpret_cast<uint8_t *>(lut.data()))) {
+          _err += "Failed to read lut table in ReadDoubleArrayTyped.\n";
+          return false;
+        }
+
+        std::vector<uint32_t> indexes;
+        indexes.resize(length);
+        if (!ReadCompressedInts(indexes.data(), indexes.size())) {
+          _err += "Failed to read lut indices in ReadDoubleArrayTyped.\n";
+          return false;
+        }
+
+        auto o = d->data();
+        for (auto index : indexes) {
+          *o++ = lut[index];
+        }
+      } else {
+        _err += "Invalid code. Data is corrupted\n";
+        return false;
+      }
+      return true;
+    }
+  }
+}
+
+// Template implementation for TypedArray version with mmap support for integer arrays
+template <typename T>
+bool CrateReader::ReadIntArrayTyped(bool is_compressed, TypedArray<T> *d) {
+  size_t length{0};
+  // < ver 0.7.0  use 32bit
+  if (VERSION_LESS_THAN_0_8_0(_version)) {
+      uint32_t shapesize; // not used
+      if (!_sr->read4(&shapesize)) {
+        PUSH_ERROR("Failed to read the number of array elements.");
+        return false;
+      }
+    uint32_t n;
+    if (!_sr->read4(&n)) {
+      _err += "Failed to read the number of array elements.\n";
+      return false;
+    }
+    length = size_t(n);
+  } else {
+    uint64_t n;
+    if (!_sr->read8(&n)) {
+      _err += "Failed to read the number of array elements.\n";
+      return false;
+    }
+    length = size_t(n);
+  }
+
+  if (length == 0) {
+    d->clear();
+    return true;
+  }
+
+  if (length > _config.maxInts) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many int elements.");
+  }
+
+  CHECK_MEMORY_USAGE(length * sizeof(T));
+
+  if (!is_compressed && _config.use_mmap) {
+    // Use TypedArray view mode - no allocation, just point to mmap'd data
+    uint64_t current_pos = _sr->tell();
+    const uint8_t* data_ptr = _sr->data() + current_pos;
+    
+    // Create a view over the mmap'd data
+    *d = TypedArray<T>(const_cast<T*>(reinterpret_cast<const T*>(data_ptr)), length, true);
+    
+    // Advance the stream position
+    if (!_sr->seek_from_current(int64_t(sizeof(T) * length))) {
+      _err += "Failed to advance stream position.\n";
+      return false;
+    }
+    
+    return true;
+  } else {
+    // Fall back to regular allocation for compressed data or when mmap is disabled
+    d->resize(length);
+    
+    if (!is_compressed) {
+      if (!_sr->read(sizeof(T) * length, sizeof(T) * length,
+                     reinterpret_cast<uint8_t *>(d->data()))) {
+        _err += "Failed to read int array data.\n";
+        return false;
+      }
+      return true;
+    } else {
+      // Handle compressed data
+      if (!ReadCompressedInts(d->data(), length)) {
+        _err += "Failed to read compressed int array.\n";
+        return false;
+      }
+      return true;
+    }
+  }
+}
+
+// Explicit template instantiations for common integer types
+template bool CrateReader::ReadIntArrayTyped<int32_t>(bool, TypedArray<int32_t>*);
+template bool CrateReader::ReadIntArrayTyped<uint32_t>(bool, TypedArray<uint32_t>*);
+template bool CrateReader::ReadIntArrayTyped<int64_t>(bool, TypedArray<int64_t>*);
+template bool CrateReader::ReadIntArrayTyped<uint64_t>(bool, TypedArray<uint64_t>*);
 
 bool CrateReader::ReadDoubleVector(std::vector<double> *d) {
   size_t length;
@@ -5444,6 +5779,12 @@ bool CrateReader::ReadSection(crate::Section *s) {
 
 bool CrateReader::ReadTokens() {
   TINYUSDZ_PROFILE_SCOPE("crate-reader", "ReadTokens");
+  
+  // Report progress (20%)
+  if (!ReportProgress(0.2f)) {
+    PUSH_ERROR("Parsing cancelled by progress callback.");
+    return false;
+  }
   if ((_tokens_index < 0) || (_tokens_index >= int64_t(_toc.sections.size()))) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid index for `TOKENS` section.");
   }
@@ -5623,6 +5964,12 @@ bool CrateReader::ReadTokens() {
 
 bool CrateReader::ReadStrings() {
   TINYUSDZ_PROFILE_SCOPE("crate-reader", "ReadStrings");
+  
+  // Report progress (30%)
+  if (!ReportProgress(0.3f)) {
+    PUSH_ERROR("Parsing cancelled by progress callback.");
+    return false;
+  }
   if ((_strings_index < 0) ||
       (_strings_index >= int64_t(_toc.sections.size()))) {
     _err += "Invalid index for `STRINGS` section.\n";
@@ -5655,6 +6002,12 @@ bool CrateReader::ReadStrings() {
 }
 
 bool CrateReader::ReadFields() {
+  // Report progress (40%)
+  if (!ReportProgress(0.4f)) {
+    PUSH_ERROR("Parsing cancelled by progress callback.");
+    return false;
+  }
+  
   if ((_fields_index < 0) || (_fields_index >= int64_t(_toc.sections.size()))) {
     _err += "Invalid index for `FIELDS` section.\n";
     return false;
@@ -5787,6 +6140,12 @@ bool CrateReader::ReadFields() {
 }
 
 bool CrateReader::ReadFieldSets() {
+  // Report progress (50%)
+  if (!ReportProgress(0.5f)) {
+    PUSH_ERROR("Parsing cancelled by progress callback.");
+    return false;
+  }
+  
   if ((_fieldsets_index < 0) ||
       (_fieldsets_index >= int64_t(_toc.sections.size()))) {
     _err += "Invalid index for `FIELDSETS` section.\n";
@@ -5892,6 +6251,12 @@ bool CrateReader::ReadFieldSets() {
 }
 
 bool CrateReader::BuildLiveFieldSets() {
+  // Report progress (80%)
+  if (!ReportProgress(0.8f)) {
+    PUSH_ERROR("Parsing cancelled by progress callback.");
+    return false;
+  }
+  
   for (auto fsBegin = _fieldset_indices.begin(),
             fsEnd = std::find(fsBegin, _fieldset_indices.end(), crate::Index());
        fsBegin != _fieldset_indices.end();
@@ -5947,6 +6312,12 @@ bool CrateReader::BuildLiveFieldSets() {
 }
 
 bool CrateReader::ReadSpecs() {
+  // Report progress (60%)
+  if (!ReportProgress(0.6f)) {
+    PUSH_ERROR("Parsing cancelled by progress callback.");
+    return false;
+  }
+  
   if ((_specs_index < 0) || (_specs_index >= int64_t(_toc.sections.size()))) {
     PUSH_ERROR("Invalid index for `SPECS` section.");
     return false;
@@ -6134,6 +6505,12 @@ bool CrateReader::ReadSpecs() {
 
 bool CrateReader::ReadPaths() {
   TINYUSDZ_PROFILE_SCOPE("crate-reader", "ReadPaths");
+  
+  // Report progress (70%)
+  if (!ReportProgress(0.7f)) {
+    PUSH_ERROR("Parsing cancelled by progress callback.");
+    return false;
+  }
   if ((_paths_index < 0) || (_paths_index >= int64_t(_toc.sections.size()))) {
     PUSH_ERROR("Invalid index for `PATHS` section.");
     return false;
@@ -6194,6 +6571,13 @@ bool CrateReader::ReadPaths() {
 
 bool CrateReader::ReadBootStrap() {
   TINYUSDZ_PROFILE_FUNCTION("crate-reader");
+  
+  // Report initial progress
+  if (!ReportProgress(0.0f)) {
+    PUSH_ERROR("Parsing cancelled by progress callback.");
+    return false;
+  }
+  
   // parse header.
   uint8_t magic[8];
   if (8 != _sr->read(/* req */ 8, /* dst len */ 8, magic)) {
@@ -6256,6 +6640,12 @@ bool CrateReader::ReadBootStrap() {
 
 bool CrateReader::ReadTOC() {
   TINYUSDZ_PROFILE_FUNCTION("crate-reader");
+  
+  // Report progress (10% after bootstrap)
+  if (!ReportProgress(0.1f)) {
+    PUSH_ERROR("Parsing cancelled by progress callback.");
+    return false;
+  }
 
   DCOUT(fmt::format("Memory budget: {} bytes", _config.maxMemoryBudget));
 
