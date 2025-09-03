@@ -16,6 +16,7 @@ See `js` folder for JS codes.
 ## Building WASM module
 
 Emscripten and emcmake required.
+TinyUSDZ is beging built with C++20 to use C++20 coruntine to support async over JS/WASM boundary, without requiring sASYNCIFY and JSPI(JavaScript Promise Integration)
 
 ### Standard WASM32 build (2GB memory limit)
 

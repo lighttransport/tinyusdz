@@ -11,6 +11,7 @@
 #pragma clang diagnostic pop
 #endif
 
+#include "layer.hh"
 #include "str-util.hh"
 #include "common-macros.inc"
 #include "usdGeom.hh"

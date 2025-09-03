@@ -31,6 +31,7 @@ if (EMSCRIPTEN)
   # TODO: deprecate in next major version
   set(TINYUSDZ_DEFAULT_WITH_USDA_PARSER Off)
   set(TINYUSDZ_DEFAULT_WITH_USDC_PARSER Off)
+  set(TINYUSDZ_DEFAULT_WITH_COROUTINE On)
 elseif(NOT PROJECT_IS_TOP_LEVEL)
   # assume tinyusdz is added from add_subdirectory()
   # disable tools, tests and examples build by default.
@@ -44,6 +45,7 @@ elseif(NOT PROJECT_IS_TOP_LEVEL)
   # TODO: deprecate in next major version
   set(TINYUSDZ_DEFAULT_WITH_USDA_PARSER Off)
   set(TINYUSDZ_DEFAULT_WITH_USDC_PARSER Off)
+  set(TINYUSDZ_DEFAULT_WITH_COROUTINE Off)
 else()
   set(TINYUSDZ_DEFAULT_NO_WERROR OFF)
   set(TINYUSDZ_DEFAULT_PRODUCTION_BUILD Off)
@@ -55,6 +57,7 @@ else()
   # TODO: deprecate in next major version
   set(TINYUSDZ_DEFAULT_WITH_USDA_PARSER Off)
   set(TINYUSDZ_DEFAULT_WITH_USDC_PARSER Off)
+  set(TINYUSDZ_DEFAULT_WITH_COROUTINE Off)
 
   # For Visual Studio
   set_property(GLOBAL PROPERTY USE_FOLDERS ON)
@@ -92,6 +95,10 @@ option(TINYUSDZ_WITH_GEOGRAM
 option(TINYUSDZ_WITH_WAMR
        "Build with WAMR (WebAssembly Micro Runtime) support for executing WASM in Tydra."
        OFF)
+
+option(TINYUSDZ_WITH_COROUTINE
+       "Build with C++20 coroutine support."
+       ${TINYUSDZ_DEFAULT_WITH_COROUTINE})
 
 
 if(MSVC)
@@ -290,7 +297,11 @@ endif()
 
 if (PROJECT_IS_TOP_LEVEL)
   message(STATUS "TinyUSDZ is being built as toplevel project so set CXX standard here.")
-  if(TINYUSDZ_WITH_PYTHON)
+  if(TINYUSDZ_WITH_COROUTINE)
+    message(STATUS "Use C++20 for c++20 coroutine.")
+    # Coroutine support requires C++20
+    set(CMAKE_CXX_STANDARD 20)
+  elseif(TINYUSDZ_WITH_PYTHON)
     #set(CMAKE_CXX_STANDARD 17) # nanobind requires C++17
 
     # for pybind11
@@ -401,6 +412,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/usda-writer.cc
     ${PROJECT_SOURCE_DIR}/src/usdc-writer.cc
     ${PROJECT_SOURCE_DIR}/src/composition.cc
+    ${PROJECT_SOURCE_DIR}/src/chunk-reader.cc
     ${PROJECT_SOURCE_DIR}/src/crate-reader.cc
     ${PROJECT_SOURCE_DIR}/src/crate-format.cc
     ${PROJECT_SOURCE_DIR}/src/crate-writer.cc
@@ -409,6 +421,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct.cc
     ${PROJECT_SOURCE_DIR}/src/prim-composition.cc
     ${PROJECT_SOURCE_DIR}/src/prim-types.cc
+    ${PROJECT_SOURCE_DIR}/src/layer.cc
     ${PROJECT_SOURCE_DIR}/src/primvar.cc
     ${PROJECT_SOURCE_DIR}/src/str-util.cc
     ${PROJECT_SOURCE_DIR}/src/value-pprint.cc
@@ -435,6 +448,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/uuid-gen.hh
     ${PROJECT_SOURCE_DIR}/src/parser-timing.cc
     ${PROJECT_SOURCE_DIR}/src/sha256.cc
+    ${PROJECT_SOURCE_DIR}/src/typed-array.cc
 
     )
 
@@ -461,6 +475,8 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/shader-network.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/layer-to-renderscene.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/layer-to-renderscene.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/mcp.cc
@@ -1328,6 +1344,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
                                  PRIVATE "BH_PLATFORM_LINUX=1")
     endif()
   endif(TINYUSDZ_WITH_WAMR)
+
+  if(TINYUSDZ_WITH_COROUTINE)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_COROUTINE")
+  endif(TINYUSDZ_WITH_COROUTINE)
 
   if(NOT TINYUSDZ_CXX_EXCEPTIONS)
     if(MSVC)
