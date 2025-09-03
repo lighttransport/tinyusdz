@@ -14,6 +14,7 @@
 #include "memory-budget.hh"
 #include "prim-types.hh"
 #include "stream-reader.hh"
+#include "typed-array.hh"
 
 namespace tinyusdz {
 namespace crate {
@@ -38,6 +39,7 @@ using ProgressCallback = std::function<bool(float progress, void *userptr)>;
 ///
 struct CrateReaderConfig {
   int numThreads = -1;                   ///< Number of threads (-1 = auto-detect)
+  bool use_mmap = false;                 ///< Use mmap for reading uncompressed arrays
 
   // Security limits for malicious Crate data
   size_t maxTOCSections = 32;            ///< Maximum number of TOC sections
@@ -230,11 +232,11 @@ class CrateReader {
   ///
   size_t NumNodes() const { return _nodes.size(); }
 
-  const std::vector<Node> GetNodes() const { return _nodes; }
+  const std::vector<Node> &GetNodes() const { return _nodes; }
 
-  const std::vector<value::token> GetTokens() const { return _tokens; }
+  const std::vector<value::token> &GetTokens() const { return _tokens; }
 
-  const std::vector<crate::Index> GetStringIndices() const {
+  const std::vector<crate::Index> &GetStringIndices() const {
     return _string_indices;
   }
 
@@ -382,10 +384,18 @@ class CrateReader {
   // integral array
   template <typename T>
   bool ReadIntArray(bool is_compressed, std::vector<T> *d);
+  
+  // TypedArray versions for mmap support
+  template <typename T>
+  bool ReadIntArrayTyped(bool is_compressed, TypedArray<T> *d);
 
   bool ReadHalfArray(bool is_compressed, std::vector<value::half> *d);
   bool ReadFloatArray(bool is_compressed, std::vector<float> *d);
   bool ReadDoubleArray(bool is_compressed, std::vector<double> *d);
+  
+  // TypedArray versions for mmap support
+  bool ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d);
+  bool ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d);
 
   bool ReadDoubleVector(std::vector<double> *d);
 
