@@ -806,6 +806,7 @@ class AsciiParser {
 
   bool Char1(char *c);
   bool CharN(size_t n, std::vector<char> *nc);
+  bool CharN(size_t n, char *dst); // assume dest has n >= bytes
 
   bool Rewind(size_t offset);
   uint64_t CurrLoc();
