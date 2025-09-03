@@ -2163,6 +2163,10 @@ bool AsciiParser::CharN(size_t n, std::vector<char> *nc) {
   return ok;
 }
 
+bool AsciiParser::CharN(size_t n, char *dst) {
+  return _sr->read(n, n, reinterpret_cast<uint8_t*>(dst));
+}
+
 bool AsciiParser::Rewind(size_t offset) {
   if (!_sr->seek_from_current(-int64_t(offset))) {
     return false;
