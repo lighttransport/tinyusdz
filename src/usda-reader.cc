@@ -30,6 +30,7 @@
 #include <vector>
 
 #include "usda-reader.hh"
+#include "layer.hh"
 #include "parser-timing.hh"
 
 //

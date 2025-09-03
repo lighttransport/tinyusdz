@@ -2,9 +2,86 @@ import { Loader } from 'three'; // or https://cdn.jsdelivr.net/npm/three/build/t
 
 // tinyusdz module are dynamically imported at TinyUSDZLoader
 
+// Simple fileLoader both works for nodejs and the browser.
+class FileFetcher {
+  constructor() {
+    this.is_node = typeof process !== "undefined" &&
+      process.versions != null &&
+      process.versions.node != null;
+
+    this.fs = null;
+    this.path = null;
+    this.initialized = false;
+  }
+
+  async init() {
+    if (this.initialized) return;
+    
+    if (this.is_node) {
+      try {
+        const { createRequire } = await import("module");
+        const require = createRequire(import.meta.url);
+        this.fs = require('fs');
+        this.path = require('path');
+      } catch (error) {
+        console.warn('Failed to initialize Node.js modules:', error);
+        this.is_node = false;
+      }
+    }
+    this.initialized = true;
+  }
+
+  // Return: File object.
+  async fetch(url) {
+    await this.init();
+    
+    if (this.is_node) {
+      // Node.js environment - use fs.readFileSync
+      try {
+        if (url.startsWith('file://')) {
+          url = url.substring(7); // Remove file:// prefix
+        }
+        
+        const data = this.fs.readFileSync(url);
+        const fileName = this.path.basename(url);
+        
+        // Create Blob from the buffer data
+        const blob = new Blob([data], { type: 'application/octet-stream' });
+        
+        // Create File object from Blob
+        const file = new File([blob], fileName, { 
+          type: 'application/octet-stream',
+          lastModified: Date.now()
+        });
+        
+        return file;
+      } catch (error) {
+        throw new Error(`Failed to read file: ${url} - ${error.message}`);
+      }
+    } else {
+      // Browser environment - use fetch API and convert to File
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch: ${response.statusText}`);
+      }
+      
+      const blob = await response.blob();
+      const fileName = url.split('/').pop() || 'unknown';
+      const file = new File([blob], fileName, { 
+        type: blob.type || 'application/octet-stream',
+        lastModified: Date.now()
+      });
+      
+      return file;
+    }
+  }
+}
+
 class FetchAssetResolver {
     constructor() {
         this.assetCache = new Map();
+
+        this.fetcher = new FileFetcher();
     }
 
     async resolveAsync(uri) {
@@ -73,6 +150,8 @@ class TinyUSDZLoader extends Loader {
 
         this.imageCache = {};
         this.textureCache = {};
+
+        this.fetcher = new FileFetcher();
 
         // Default: do NOT use zstd compressed WASM.
         this.useZstdCompressedWasm_ = options.useZstdCompressedWasm || false;
@@ -265,17 +344,18 @@ class TinyUSDZLoader extends Loader {
 
         initPromise
             .then(() => {
-                return fetch(url);
+                return this.fetcher.fetch(url);
             })
             .then((response) => {
-                return response.arrayBuffer();
+                // File
+                return response;
             })
-            .then((usd_data) => {
-                const usd_binary = new Uint8Array(usd_data);
+            .then((usd_file) => {
+                //const usd_binary = new Uint8Array(usd_data);
 
                 //console.log('Loaded USD binary data:', usd_binary.length, 'bytes');
 
-                scope.parse(usd_binary, url, function (usd) {
+                scope.parse(usd_file, url, function (usd) {
                     onLoad(usd);
                 }, onError, options);
 
@@ -421,6 +501,77 @@ class TinyUSDZLoader extends Loader {
 		} );
     }
 
+    loadTest(url, onLoad, onProgress, onError, options = {}) {
+
+        const scope = this;
+
+        const _onError = function (e) {
+
+            if (onError) {
+
+                onError(e);
+
+            } else {
+
+                console.error(e);
+
+            }
+
+            //scope.manager.itemError( url );
+            //scope.manager.itemEnd( url );
+
+        };
+
+
+        // Create a promise chain to handle initialization and loading
+        const initPromise = this.native_ ? Promise.resolve() : this.init();
+
+        initPromise
+            .then(() => {
+                return fetch(url);
+            })
+            .then((response) => {
+                return response.arrayBuffer();
+            })
+            .then((usd_data) => {
+
+                const usd = new this.native_.TinyUSDZLoaderNative();
+
+                // Set memory limit before loading if specified (otherwise use native default)
+                const memoryLimit = options.maxMemoryLimitMB || this.maxMemoryLimitMB_;
+                if (memoryLimit !== undefined) {
+                    usd.setMaxMemoryLimitMB(memoryLimit);
+                }
+
+                const u8data = new Uint8Array(usd_data);
+                //console.log(u8data);
+                const ok = usd.loadTest(url, u8data);
+                if (!ok) {
+                    _onError(new Error('TinyUSDZLoader: Failed to load USD as Layer from binary data. url: ' + url, {cause: usd.error()}));
+                } else {
+                    onLoad(usd);
+                }
+
+            })
+            .catch((error) => {
+                console.error('TinyUSDZLoader: Error initializing native module:', error);
+                if (onError) {
+                    onError(error);
+                }
+            });
+    }
+
+    async loadTestAsync(url, onProgress, options = {}) {
+     	const scope = this;
+
+		return new Promise( function ( resolve, reject ) {
+
+			scope.loadTest( url, resolve, onProgress, reject, options );
+
+		} );
+    }
+
+
     ///**
     // * Set texture callback
     //  */
@@ -428,7 +579,7 @@ class TinyUSDZLoader extends Loader {
     //    this.texLoader = texLoader;
     //}
 
-
+    
 
 }
 

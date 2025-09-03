@@ -2621,6 +2621,101 @@ class Attribute {
     return get(t, dst, tinterp);
   }
 
+  /// @brief Get TypedArrayView to the underlying array data of this Attribute.
+  /// 
+  /// Returns a zero-copy view over array data for scalar (default) values only.
+  /// This method does NOT support timesamples - only works with default values.
+  /// For non-array types or timesamples, returns an empty view.
+  ///
+  /// The view provides efficient access to array data without copying, enabling
+  /// memory-optimized processing of vertex attributes, indices, and other array data.
+  ///
+  /// @tparam T The desired element type for the view
+  /// @param strict_cast If true, requires exact type match; if false, allows compatible role type casting
+  /// @return TypedArrayView<const T> - may be empty if type conversion not possible or attribute has timesamples
+  ///
+  /// Example:
+  /// ```cpp
+  /// // Get view of vertex positions as float3
+  /// auto positions_view = position_attr.get_value_view<value::float3>();
+  /// if (!positions_view.empty()) {
+  ///   for (const auto& pos : positions_view) {
+  ///     // Process position without copying data
+  ///   }
+  /// }
+  ///
+  /// // Get view as compatible role type
+  /// auto normals_view = normal_attr.get_value_view<value::vector3f>();  // float3 -> vector3f
+  /// ```
+  template <typename T>
+  TypedArrayView<const T> get_value_view(bool strict_cast = false) const {
+    // Only support scalar (default) values, not timesamples
+    if (has_timesamples()) {
+      return TypedArrayView<const T>();  // Empty view for timesamples
+    }
+    
+    if (is_blocked()) {
+      return TypedArrayView<const T>();  // Empty view for blocked attributes
+    }
+    
+    if (is_connection()) {
+      return TypedArrayView<const T>();  // Empty view for connections
+    }
+    
+    if (!has_value()) {
+      return TypedArrayView<const T>();  // Empty view if no value
+    }
+    
+    // Get the underlying value and create a view using Value::as_view()
+    const primvar::PrimVar& pvar = get_var();
+    const value::Value& val = pvar.value_raw();
+    
+    return val.as_view<T>(strict_cast);
+  }
+
+  /// @brief Mutable version of get_value_view() for write access to array data.
+  ///
+  /// Same as get_value_view() but returns a mutable view that allows modification
+  /// of the underlying array data. Only works with scalar (default) values.
+  ///
+  /// @tparam T The desired element type for the view  
+  /// @param strict_cast If true, requires exact type match; if false, allows compatible role type casting
+  /// @return TypedArrayView<T> - may be empty if type conversion not possible or attribute has timesamples
+  ///
+  /// Example:
+  /// ```cpp
+  /// // Get mutable view and modify data in-place
+  /// auto positions_view = position_attr.get_value_view<value::float3>();
+  /// if (!positions_view.empty()) {
+  ///   positions_view[0] = {1.0f, 2.0f, 3.0f};  // Modifies original data
+  /// }
+  /// ```
+  template <typename T>
+  TypedArrayView<T> get_value_view(bool strict_cast = false) {
+    // Only support scalar (default) values, not timesamples
+    if (has_timesamples()) {
+      return TypedArrayView<T>();  // Empty view for timesamples
+    }
+    
+    if (is_blocked()) {
+      return TypedArrayView<T>();  // Empty view for blocked attributes
+    }
+    
+    if (is_connection()) {
+      return TypedArrayView<T>();  // Empty view for connections
+    }
+    
+    if (!has_value()) {
+      return TypedArrayView<T>();  // Empty view if no value
+    }
+    
+    // Get the underlying value and create a view using Value::as_view()
+    primvar::PrimVar& pvar = get_var();
+    value::Value& val = pvar.value_raw();
+    
+    return val.as_view<T>(strict_cast);
+  }
+
 
   const AttrMeta &metas() const { return _metas; }
   AttrMeta &metas() { return _metas; }
@@ -2704,6 +2799,11 @@ class Attribute {
 
   const std::vector<Path> &connections() const { return _paths; }
   std::vector<Path> &connections() { return _paths; }
+
+  ///
+  /// Estimate memory usage of this Attribute in bytes
+  ///
+  size_t estimate_memory_usage() const;
 
  private:
   std::string _name;  // attrib name
@@ -4273,276 +4373,9 @@ struct LayerMetas {
 };
 
 
-// Similar to SdfLayer or Stage
-// It is basically hold the list of PrimSpec and Layer metadatum.
-class Layer {
- public:
-  const std::string name() const { return _name; }
-
-  void set_name(const std::string name) { _name = name; }
-
-  void clear_primspecs() { _prim_specs.clear(); }
-
-  // Check if `primname` exists in root Prims?
-  bool has_primspec(const std::string &primname) const {
-    return _prim_specs.count(primname) > 0;
-  }
-
-  ///
-  /// Add PrimSpec(copy PrimSpec instance).
-  ///
-  /// @return false when `name` already exists in `primspecs`, `name` is empty
-  /// string or `name` contains invalid character to be used in Prim
-  /// element_name.
-  ///
-  bool add_primspec(const std::string &name, const PrimSpec &ps) {
-    if (name.empty()) {
-      return false;
-    }
-
-    if (!ValidatePrimElementName(name)) {
-      return false;
-    }
-
-    if (has_primspec(name)) {
-      return false;
-    }
-
-    _prim_specs.emplace(name, ps);
-
-    return true;
-  }
-
-  ///
-  /// Add PrimSpec.
-  ///
-  /// @return false when `name` already exists in `primspecs`, `name` is empty
-  /// string or `name` contains invalid character to be used in Prim
-  /// element_name.
-  ///
-  bool emplace_primspec(const std::string &name, PrimSpec &&ps) {
-    if (name.empty()) {
-      return false;
-    }
-
-    if (!ValidatePrimElementName(name)) {
-      return false;
-    }
-
-    if (has_primspec(name)) {
-      return false;
-    }
-
-    _prim_specs.emplace(name, std::move(ps));
-
-    return true;
-  }
-
-  ///
-  /// Replace PrimSpec(copy PrimSpec instance)
-  ///
-  /// @return false when `name` does not exist in `primspecs`, `name` is empty
-  /// string or `name` contains invalid character to be used in Prim
-  /// element_name.
-  ///
-  bool replace_primspec(const std::string &name, const PrimSpec &ps) {
-    if (name.empty()) {
-      return false;
-    }
-
-    if (!ValidatePrimElementName(name)) {
-      return false;
-    }
-
-    if (!has_primspec(name)) {
-      return false;
-    }
-
-    _prim_specs.at(name) = ps;
-
-    return true;
-  }
-
-  ///
-  /// Replace PrimSpec
-  ///
-  /// @return false when `name` does not exist in `primspecs`, `name` is empty
-  /// string or `name` contains invalid character to be used in Prim
-  /// element_name.
-  ///
-  bool replace_primspec(const std::string &name, PrimSpec &&ps) {
-    if (name.empty()) {
-      return false;
-    }
-
-    if (!ValidatePrimElementName(name)) {
-      return false;
-    }
-
-    if (!has_primspec(name)) {
-      return false;
-    }
-
-    _prim_specs.at(name) = std::move(ps);
-
-    return true;
-  }
-
-  const std::unordered_map<std::string, PrimSpec> &primspecs() const {
-    return _prim_specs;
-  }
-
-  std::unordered_map<std::string, PrimSpec> &primspecs() { return _prim_specs; }
-
-  const LayerMetas &metas() const { return _metas; }
-  LayerMetas &metas() { return _metas; }
-
-  bool has_unresolved_references() const {
-    return _has_unresolved_references;
-  }
-
-  bool has_unresolved_payload() const {
-    return _has_unresolved_payload;
-  }
-
-  bool has_unresolved_variant() const {
-    return _has_unresolved_variant;
-  }
-
-  bool has_over_primspec() const {
-    return _has_over_primspec;
-  }
-
-  bool has_class_primspec() const {
-    return _has_class_primspec;
-  }
-
-  bool has_unresolved_inherits() const {
-    return _has_unresolved_inherits;
-  }
-
-  bool has_unresolved_specializes() const {
-    return _has_unresolved_specializes;
-  }
-
-  ///
-  /// Check if PrimSpec tree contains any `references` and cache the result.
-  ///
-  /// @param[in] max_depth Maximum PrimSpec traversal depth.
-  /// @returns true if PrimSpec tree contains any (unresolved) `references`. false if not.
-  ///
-  bool check_unresolved_references(const uint32_t max_depth = 1024 * 1024) const;
-
-  ///
-  /// Check if PrimSpec tree contains any `payload` and cache the result.
-  ///
-  /// @param[in] max_depth Maximum PrimSpec traversal depth.
-  /// @returns true if PrimSpec tree contains any (unresolved) `payload`. false if not.
-  ///
-  bool check_unresolved_payload(const uint32_t max_depth = 1024 * 1024) const;
-
-  ///
-  /// Check if PrimSpec tree contains any `variant` and cache the result.
-  ///
-  /// @param[in] max_depth Maximum PrimSpec traversal depth.
-  /// @returns true if PrimSpec tree contains any (unresolved) `variant`. false if not.
-  ///
-  bool check_unresolved_variant(const uint32_t max_depth = 1024 * 1024) const;
-
-  ///
-  /// Check if PrimSpec tree contains any `specializes` and cache the result.
-  ///
-  /// @param[in] max_depth Maximum PrimSpec traversal depth.
-  /// @returns true if PrimSpec tree contains any (unresolved) `specializes`. false if not.
-  ///
-  bool check_unresolved_specializes(const uint32_t max_depth = 1024 * 1024) const;
-
-  ///
-  /// Check if PrimSpec tree contains any `inherits` and cache the result.
-  ///
-  /// @param[in] max_depth Maximum PrimSpec traversal depth.
-  /// @returns true if PrimSpec tree contains any (unresolved) `inherits`. false if not.
-  ///
-  bool check_unresolved_inherits(const uint32_t max_depth = 1024 * 1024) const;
-
-  ///
-  /// Check if PrimSpec tree contains any Prim with `over` specifier and cache the result.
-  ///
-  /// @param[in] max_depth Maximum PrimSpec traversal depth.
-  /// @returns true if PrimSpec tree contains any Prim with `over` specifier. false if not.
-  ///
-  bool check_over_primspec(const uint32_t max_depth = 1024 * 1024) const;
-
-  ///
-  /// Find a PrimSpec at `path` and returns it if found.
-  ///
-  /// @param[in] path PrimSpec path to find.
-  /// @param[out] ps Pointer to PrimSpec pointer
-  /// @param[out] err Error message
-  ///
-  bool find_primspec_at(const Path &path, const PrimSpec **ps, std::string *err) const;
-
-
-  ///
-  /// Set state for AssetResolution in the subsequent composition operation.
-  ///
-  void set_asset_resolution_state(
-    const std::string &cwp, const std::vector<std::string> &search_paths, void *userdata=nullptr) {
-    _current_working_path = cwp;
-    _asset_search_paths = search_paths;
-    _asset_resolution_userdata = userdata;
-  }
-
-  void get_asset_resolution_state(
-    std::string &cwp, std::vector<std::string> &search_paths, void *&userdata) {
-    cwp = _current_working_path;
-    search_paths = _asset_search_paths;
-    userdata = _asset_resolution_userdata;
-  }
-
-  const std::string get_current_working_path() const {
-    return _current_working_path;
-  }
-
-  const std::vector<std::string> get_asset_search_paths() const {
-    return _asset_search_paths;
-  }
-
- private:
-  std::string _name;  // layer name ~= USD filename
-
-  // key = prim name
-  std::unordered_map<std::string, PrimSpec> _prim_specs;
-  LayerMetas _metas;
-
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  mutable std::mutex _mutex;
-#endif
-
-  // Cached primspec path.
-  // key : prim_part string (e.g. "/path/bora")
-  mutable std::map<std::string, const PrimSpec *> _primspec_path_cache;
-  mutable bool _dirty{true};
-
-  // Cached flags for composition.
-  // true by default even PrimSpec tree does not contain any `references`, `payload`, etc.
-  mutable bool _has_unresolved_references{true};
-  mutable bool _has_unresolved_payload{true};
-  mutable bool _has_unresolved_variant{true};
-  mutable bool _has_unresolved_inherits{true};
-  mutable bool _has_unresolved_specializes{true};
-  mutable bool _has_over_primspec{true};
-  mutable bool _has_class_primspec{true};
-
-  //
-  // Record AssetResolution state(search paths, current working directory)
-  // when this layer is opened by compostion(`references`, `payload`, `subLayers`)
-  //
-  mutable std::string _current_working_path;
-  mutable std::vector<std::string> _asset_search_paths;
-  mutable void *_asset_resolution_userdata{nullptr};
-
-};
+// Forward declaration for Layer class
+// Layer class has been moved to layer.hh
+class Layer;
 
 
 nonstd::optional<Interpolation> InterpolationFromString(const std::string &v);
