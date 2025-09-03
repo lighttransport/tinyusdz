@@ -28,6 +28,7 @@
 #include <unordered_set>
 
 #include "prim-types.hh"
+#include "layer.hh"
 #include "tinyusdz.hh"
 #include "value-types.hh"
 #if defined(__wasi__)
@@ -249,6 +250,11 @@ class USDCReader::Impl {
   const USDCReaderConfig get_reader_config() const {
     return _config;
   }
+  
+  void set_progress_callback(usdc::ProgressCallback callback, void *userptr) {
+    _progress_callback = callback;
+    _progress_userptr = userptr;
+  }
 
   bool ReadUSDC();
 
@@ -398,38 +404,42 @@ class USDCReader::Impl {
   std::string _warn;
 
   USDCReaderConfig _config;
+  
+  usdc::ProgressCallback _progress_callback;
+  void *_progress_userptr{nullptr};
 
   // Tracks the memory used(In advisorily manner since counting memory usage is
   // done by manually, so not all memory consumption could be tracked)
   size_t memory_used{0};  // in bytes.
 
   nonstd::optional<Path> GetPath(crate::Index index) const {
-    if (index.value < _paths.size()) {
-      return _paths[index.value];
+    if (index.value < _paths->size()) {
+      return (*_paths)[index.value];
     }
 
     return nonstd::nullopt;
   }
 
   nonstd::optional<Path> GetElemPath(crate::Index index) const {
-    if (index.value < _elemPaths.size()) {
-      return _elemPaths[index.value];
+    if (index.value < _elemPaths->size()) {
+      return (*_elemPaths)[index.value];
     }
 
     return nonstd::nullopt;
   }
 
-  // TODO: Do not copy data from crate_reader.
-  std::vector<crate::CrateReader::Node> _nodes;
-  std::vector<crate::Spec> _specs;
-  std::vector<crate::Field> _fields;
-  std::vector<crate::Index> _fieldset_indices;
-  std::vector<crate::Index> _string_indices;
-  std::vector<Path> _paths;
-  std::vector<Path> _elemPaths;
+  // Use const references to avoid copying data from crate_reader when possible
+  // NOTE: These are only valid while crate_reader exists
+  const std::vector<crate::CrateReader::Node> *_nodes = nullptr;
+  const std::vector<crate::Spec> *_specs = nullptr;
+  const std::vector<crate::Field> *_fields = nullptr;
+  const std::vector<crate::Index> *_fieldset_indices = nullptr;
+  const std::vector<crate::Index> *_string_indices = nullptr;
+  const std::vector<Path> *_paths = nullptr;
+  const std::vector<Path> *_elemPaths = nullptr;
 
-  std::map<crate::Index, crate::FieldValuePairVector>
-      _live_fieldsets;  // <fieldset index, List of field with unpacked Values>
+  const std::map<crate::Index, crate::FieldValuePairVector>
+      *_live_fieldsets = nullptr;  // <fieldset index, List of field with unpacked Values>
 
   // std::vector<PrimNode> _prim_nodes;
 
@@ -479,9 +489,9 @@ bool USDCReader::Impl::ReconstructGeomSubset(
 
   for (size_t i = 0; i < node.GetChildren().size(); i++) {
     int child_index = int(node.GetChildren()[i]);
-    if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
+    if ((child_index < 0) || (child_index >= int(_nodes->size()))) {
       PUSH_ERROR("Invalid child node id: " + std::to_string(child_index) +
-                 ". Must be in range [0, " + std::to_string(_nodes.size()) +
+                 ". Must be in range [0, " + std::to_string(_nodes->size()) +
                  ")");
       return false;
     }
@@ -496,28 +506,28 @@ bool USDCReader::Impl::ReconstructGeomSubset(
 
     uint32_t spec_index =
         path_index_to_spec_index_map.at(uint32_t(child_index));
-    if (spec_index >= _specs.size()) {
+    if (spec_index >= _specs->size()) {
       PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
-                 ". Must be in range [0, " + std::to_string(_specs.size()) +
+                 ". Must be in range [0, " + std::to_string(_specs->size()) +
                  ")");
       return false;
     }
 
-    const crate::Spec &spec = _specs[spec_index];
+    const crate::Spec &spec = (*_specs)[spec_index];
 
     Path path = GetPath(spec.path_index);
     DCOUT("Path prim part: " << path.prim_part()
                              << ", prop part: " << path.prop_part()
                              << ", spec_index = " << spec_index);
 
-    if (!_live_fieldsets.count(spec.fieldset_index)) {
+    if (!_live_fieldsets->count(spec.fieldset_index)) {
       _err += "FieldSet id: " + std::to_string(spec.fieldset_index.value) +
               " must exist in live fieldsets.\n";
       return false;
     }
 
     const FieldValuePairVector &child_fields =
-        _live_fieldsets.at(spec.fieldset_index);
+        _live_fieldsets->at(spec.fieldset_index);
 
     {
       std::string prop_name = path.prop_part();
@@ -812,9 +822,9 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
                                         prim::PropertyMap *props) {
   for (size_t i = 0; i < pathIndices.size(); i++) {
     int child_index = int(pathIndices[i]);
-    if ((child_index < 0) || (child_index >= int(_nodes.size()))) {
+    if ((child_index < 0) || (child_index >= int(_nodes->size()))) {
       PUSH_ERROR("Invalid child node id: " + std::to_string(child_index) +
-                 ". Must be in range [0, " + std::to_string(_nodes.size()) +
+                 ". Must be in range [0, " + std::to_string(_nodes->size()) +
                  ")");
       return false;
     }
@@ -826,14 +836,14 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
     }
 
     uint32_t spec_index = psmap.at(uint32_t(child_index));
-    if (spec_index >= _specs.size()) {
+    if (spec_index >= _specs->size()) {
       PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
-                 ". Must be in range [0, " + std::to_string(_specs.size()) +
+                 ". Must be in range [0, " + std::to_string(_specs->size()) +
                  ")");
       return false;
     }
 
-    const crate::Spec &spec = _specs[spec_index];
+    const crate::Spec &spec = (*_specs)[spec_index];
 
     // Property must be Attribute or Relationship
     if ((spec.spec_type == SpecType::Attribute) ||
@@ -853,14 +863,14 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
                              << ", prop part: " << path.value().prop_part()
                              << ", spec_index = " << spec_index);
 
-    if (!_live_fieldsets.count(spec.fieldset_index)) {
+    if (!_live_fieldsets->count(spec.fieldset_index)) {
       PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
                  " must exist in live fieldsets.");
       return false;
     }
 
     const crate::FieldValuePairVector &child_fvs =
-        _live_fieldsets.at(spec.fieldset_index);
+        _live_fieldsets->at(spec.fieldset_index);
 
     {
       std::string prop_name = path.value().prop_part();
@@ -2323,7 +2333,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
                                            Stage *stage,
                                            nonstd::optional<Prim> *primOut) {
   (void)level;
-  const crate::CrateReader::Node &node = _nodes[size_t(current)];
+  const crate::CrateReader::Node &node = (*_nodes)[size_t(current)];
 
   DCOUT(fmt::format("parent = {}, curent = {}, is_parent_variant = {}", parent, current, is_parent_variant));
 
@@ -2348,13 +2358,13 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
   }
 
   uint32_t spec_index = psmap.at(uint32_t(current));
-  if (spec_index >= _specs.size()) {
+  if (spec_index >= _specs->size()) {
     PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
-               ". Must be in range [0, " + std::to_string(_specs.size()) + ")");
+               ". Must be in range [0, " + std::to_string(_specs->size()) + ")");
     return false;
   }
 
-  const crate::Spec &spec = _specs[spec_index];
+  const crate::Spec &spec = (*_specs)[spec_index];
 
   DCOUT(pprint::Indent(uint32_t(level))
         << "  specTy = " << to_string(spec.spec_type));
@@ -2370,14 +2380,14 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
     }
   }
 
-  if (!_live_fieldsets.count(spec.fieldset_index)) {
+  if (!_live_fieldsets->count(spec.fieldset_index)) {
     PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
                " must exist in live fieldsets.");
     return false;
   }
 
   const crate::FieldValuePairVector &fvs =
-      _live_fieldsets.at(spec.fieldset_index);
+      _live_fieldsets->at(spec.fieldset_index);
 
   if (fvs.size() > _config.kMaxFieldValuePairs) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too much FieldValue pairs.");
@@ -2786,7 +2796,7 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
                                            Layer *layer,
                                            nonstd::optional<PrimSpec> *primOut) {
   (void)level;
-  const crate::CrateReader::Node &node = _nodes[size_t(current)];
+  const crate::CrateReader::Node &node = (*_nodes)[size_t(current)];
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
   std::cout << pprint::Indent(uint32_t(level)) << "lv[" << level
@@ -2809,13 +2819,13 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
   }
 
   uint32_t spec_index = psmap.at(uint32_t(current));
-  if (spec_index >= _specs.size()) {
+  if (spec_index >= _specs->size()) {
     PUSH_ERROR("Invalid specifier id: " + std::to_string(spec_index) +
-               ". Must be in range [0, " + std::to_string(_specs.size()) + ")");
+               ". Must be in range [0, " + std::to_string(_specs->size()) + ")");
     return false;
   }
 
-  const crate::Spec &spec = _specs[spec_index];
+  const crate::Spec &spec = (*_specs)[spec_index];
 
   DCOUT(pprint::Indent(uint32_t(level))
         << "  specTy = " << to_string(spec.spec_type));
@@ -2831,14 +2841,14 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
     }
   }
 
-  if (!_live_fieldsets.count(spec.fieldset_index)) {
+  if (!_live_fieldsets->count(spec.fieldset_index)) {
     PUSH_ERROR("FieldSet id: " + std::to_string(spec.fieldset_index.value) +
                " must exist in live fieldsets.");
     return false;
   }
 
   const crate::FieldValuePairVector &fvs =
-      _live_fieldsets.at(spec.fieldset_index);
+      _live_fieldsets->at(spec.fieldset_index);
 
   if (fvs.size() > _config.kMaxFieldValuePairs) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "Too much FieldValue pairs.");
@@ -3292,9 +3302,9 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
         << std::to_string(parent) << ", current = " << current
         << ", level = " << std::to_string(level));
 
-  if ((current < 0) || (current >= int(_nodes.size()))) {
+  if ((current < 0) || (current >= int(_nodes->size()))) {
     PUSH_ERROR("Invalid current node id: " + std::to_string(current) +
-               ". Must be in range [0, " + std::to_string(_nodes.size()) + ")");
+               ". Must be in range [0, " + std::to_string(_nodes->size()) + ")");
     return false;
   }
 
@@ -3320,7 +3330,7 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
   // Traverse children
   {
-    const crate::CrateReader::Node &node = _nodes[size_t(current)];
+    const crate::CrateReader::Node &node = (*_nodes)[size_t(current)];
     DCOUT("node.Children.size = " << node.GetChildren().size());
     for (size_t i = 0; i < node.GetChildren().size(); i++) {
       DCOUT("Reconstuct Prim children: " << i << " / "
@@ -3476,6 +3486,14 @@ bool USDCReader::Impl::ReconstructPrimRecursively(
 
 bool USDCReader::Impl::ReconstructStage(Stage *stage) {
 
+  // Report progress (90% - starting reconstruction)
+  if (_progress_callback) {
+    if (!_progress_callback(0.9f, _progress_userptr)) {
+      PUSH_ERROR("Reconstruction cancelled by progress callback.");
+      return false;
+    }
+  }
+
   // format test
   DCOUT(fmt::format("# of Paths = {}", crate_reader->NumPaths()));
 
@@ -3484,32 +3502,32 @@ bool USDCReader::Impl::ReconstructStage(Stage *stage) {
     return true;
   }
 
-  // TODO: Directly access data in crate_reader.
-  _nodes = crate_reader->GetNodes();
-  _specs = crate_reader->GetSpecs();
-  _fields = crate_reader->GetFields();
-  _fieldset_indices = crate_reader->GetFieldsetIndices();
-  _paths = crate_reader->GetPaths();
-  _elemPaths = crate_reader->GetElemPaths();
-  _live_fieldsets = crate_reader->GetLiveFieldSets();
+  // Use references to avoid copying data from crate_reader
+  _nodes = &crate_reader->GetNodes();
+  _specs = &crate_reader->GetSpecs();
+  _fields = &crate_reader->GetFields();
+  _fieldset_indices = &crate_reader->GetFieldsetIndices();
+  _paths = &crate_reader->GetPaths();
+  _elemPaths = &crate_reader->GetElemPaths();
+  _live_fieldsets = &crate_reader->GetLiveFieldSets();
 
   PathIndexToSpecIndexMap
       path_index_to_spec_index_map;  // path_index -> spec_index
 
   {
-    for (size_t i = 0; i < _specs.size(); i++) {
-      if (_specs[i].path_index.value == ~0u) {
+    for (size_t i = 0; i < _specs->size(); i++) {
+      if ((*_specs)[i].path_index.value == ~0u) {
         continue;
       }
 
       // path_index should be unique.
-      if (path_index_to_spec_index_map.count(_specs[i].path_index.value) != 0) {
+      if (path_index_to_spec_index_map.count((*_specs)[i].path_index.value) != 0) {
         PUSH_ERROR_AND_RETURN("Multiple PathIndex found in Crate data.");
       }
 
       DCOUT(fmt::format("path index[{}] -> spec index [{}]",
-                        _specs[i].path_index.value, uint32_t(i)));
-      path_index_to_spec_index_map[_specs[i].path_index.value] = uint32_t(i);
+                        (*_specs)[i].path_index.value, uint32_t(i)));
+      path_index_to_spec_index_map[(*_specs)[i].path_index.value] = uint32_t(i);
     }
   }
 
@@ -3541,9 +3559,9 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
         << std::to_string(parent) << ", current = " << current
         << ", level = " << std::to_string(level));
 
-  if ((current < 0) || (current >= int(_nodes.size()))) {
+  if ((current < 0) || (current >= int(_nodes->size()))) {
     PUSH_ERROR("Invalid current node id: " + std::to_string(current) +
-               ". Must be in range [0, " + std::to_string(_nodes.size()) + ")");
+               ". Must be in range [0, " + std::to_string(_nodes->size()) + ")");
     return false;
   }
 
@@ -3567,7 +3585,7 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
   }
 
   {
-    const crate::CrateReader::Node &node = _nodes[size_t(current)];
+    const crate::CrateReader::Node &node = (*_nodes)[size_t(current)];
     DCOUT("node.Children.size = " << node.GetChildren().size());
     for (size_t i = 0; i < node.GetChildren().size(); i++) {
       DCOUT("Reconstuct Prim children: " << i << " / "
@@ -3735,32 +3753,32 @@ bool USDCReader::Impl::ToLayer(Layer *layer) {
     return true;
   }
 
-  // TODO: Directly access data in crate_reader.
-  _nodes = crate_reader->GetNodes();
-  _specs = crate_reader->GetSpecs();
-  _fields = crate_reader->GetFields();
-  _fieldset_indices = crate_reader->GetFieldsetIndices();
-  _paths = crate_reader->GetPaths();
-  _elemPaths = crate_reader->GetElemPaths();
-  _live_fieldsets = crate_reader->GetLiveFieldSets();
+  // Use references to avoid copying data from crate_reader
+  _nodes = &crate_reader->GetNodes();
+  _specs = &crate_reader->GetSpecs();
+  _fields = &crate_reader->GetFields();
+  _fieldset_indices = &crate_reader->GetFieldsetIndices();
+  _paths = &crate_reader->GetPaths();
+  _elemPaths = &crate_reader->GetElemPaths();
+  _live_fieldsets = &crate_reader->GetLiveFieldSets();
 
   PathIndexToSpecIndexMap
       path_index_to_spec_index_map;  // path_index -> spec_index
 
   {
-    for (size_t i = 0; i < _specs.size(); i++) {
-      if (_specs[i].path_index.value == ~0u) {
+    for (size_t i = 0; i < _specs->size(); i++) {
+      if ((*_specs)[i].path_index.value == ~0u) {
         continue;
       }
 
       // path_index should be unique.
-      if (path_index_to_spec_index_map.count(_specs[i].path_index.value) != 0) {
+      if (path_index_to_spec_index_map.count((*_specs)[i].path_index.value) != 0) {
         PUSH_ERROR_AND_RETURN("Multiple PathIndex found in Crate data.");
       }
 
       DCOUT(fmt::format("path index[{}] -> spec index [{}]",
-                        _specs[i].path_index.value, uint32_t(i)));
-      path_index_to_spec_index_map[_specs[i].path_index.value] = uint32_t(i);
+                        (*_specs)[i].path_index.value, uint32_t(i)));
+      path_index_to_spec_index_map[(*_specs)[i].path_index.value] = uint32_t(i);
     }
   }
 
@@ -3787,11 +3805,12 @@ bool USDCReader::Impl::ReadUSDC() {
     delete crate_reader;
   }
 
-  // TODO: Setup CrateReaderConfig.
+  // Setup CrateReaderConfig.
   crate::CrateReaderConfig config;
 
   // Transfer settings
   config.numThreads = _config.numThreads;
+  config.use_mmap = _config.use_mmap;  // Enable mmap for memory optimization
 
   size_t sz_mb = _config.kMaxAllowedMemoryInMB;
   if (sizeof(size_t) == 4) {
@@ -3805,6 +3824,11 @@ bool USDCReader::Impl::ReadUSDC() {
   }
 
   crate_reader = new crate::CrateReader(_sr, config);
+  
+  // Pass progress callback to crate reader if set
+  if (_progress_callback) {
+    crate_reader->SetProgressCallback(_progress_callback, _progress_userptr);
+  }
 
   _warn.clear();
   _err.clear();
@@ -3889,6 +3913,11 @@ bool USDCReader::Impl::ReadUSDC() {
 
   DCOUT("Read Crate.");
 
+  // Report final progress (100%)
+  if (_progress_callback) {
+    _progress_callback(1.0f, _progress_userptr);
+  }
+
   return true;
 }
 
@@ -3910,6 +3939,10 @@ void USDCReader::set_reader_config(const USDCReaderConfig &config) {
 
 const USDCReaderConfig USDCReader::get_reader_config() const {
   return impl_->get_reader_config();
+}
+
+void USDCReader::SetProgressCallback(ProgressCallback callback, void *userptr) {
+  impl_->set_progress_callback(callback, userptr);
 }
 
 bool USDCReader::ReconstructStage(Stage *stage) {

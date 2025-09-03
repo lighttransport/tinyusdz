@@ -3,6 +3,7 @@
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
 #pragma once
 
+#include <functional>
 #include <string>
 #include <unordered_set>
 
@@ -13,9 +14,18 @@
 #include "memory-budget.hh"
 #include "prim-types.hh"
 #include "stream-reader.hh"
+#include "typed-array.hh"
 
 namespace tinyusdz {
 namespace crate {
+
+///
+/// Progress callback function type.
+/// @param[in] progress Progress value between 0.0 and 1.0
+/// @param[in] userptr User-provided pointer for custom data
+/// @return true to continue parsing, false to cancel
+///
+using ProgressCallback = std::function<bool(float progress, void *userptr)>;
 
 // on: Use for-based PathIndex tree decoder to avoid potential buffer overflow(new implementation. its not well tested with fuzzer)
 // off: Use recursive function call to decode PathIndex tree(its been working for a years and tested with fuzzer)
@@ -29,6 +39,7 @@ namespace crate {
 ///
 struct CrateReaderConfig {
   int numThreads = -1;                   ///< Number of threads (-1 = auto-detect)
+  bool use_mmap = false;                 ///< Use mmap for reading uncompressed arrays
 
   // Security limits for malicious Crate data
   size_t maxTOCSections = 32;            ///< Maximum number of TOC sections
@@ -179,6 +190,17 @@ class CrateReader {
               const CrateReaderConfig &config = CrateReaderConfig());
   ~CrateReader();
 
+  ///
+  /// Set progress callback for monitoring parsing progress.
+  ///
+  /// @param[in] callback Function to call during parsing to report progress
+  /// @param[in] userptr User-provided pointer for custom data
+  ///
+  void SetProgressCallback(ProgressCallback callback, void *userptr = nullptr) {
+    _progress_callback = callback;
+    _progress_userptr = userptr;
+  }
+
   bool ReadBootStrap();
   bool ReadTOC();
 
@@ -210,11 +232,11 @@ class CrateReader {
   ///
   size_t NumNodes() const { return _nodes.size(); }
 
-  const std::vector<Node> GetNodes() const { return _nodes; }
+  const std::vector<Node> &GetNodes() const { return _nodes; }
 
-  const std::vector<value::token> GetTokens() const { return _tokens; }
+  const std::vector<value::token> &GetTokens() const { return _tokens; }
 
-  const std::vector<crate::Index> GetStringIndices() const {
+  const std::vector<crate::Index> &GetStringIndices() const {
     return _string_indices;
   }
 
@@ -293,6 +315,8 @@ class CrateReader {
   }
 
  private:
+  /// Report progress during parsing
+  bool ReportProgress(float progress);
 
 #if defined(TINYUSDZ_CRATE_USE_FOR_BASED_PATH_INDEX_DECODER)
   // To save stack usage
@@ -360,10 +384,18 @@ class CrateReader {
   // integral array
   template <typename T>
   bool ReadIntArray(bool is_compressed, std::vector<T> *d);
+  
+  // TypedArray versions for mmap support
+  template <typename T>
+  bool ReadIntArrayTyped(bool is_compressed, TypedArray<T> *d);
 
   bool ReadHalfArray(bool is_compressed, std::vector<value::half> *d);
   bool ReadFloatArray(bool is_compressed, std::vector<float> *d);
   bool ReadDoubleArray(bool is_compressed, std::vector<double> *d);
+  
+  // TypedArray versions for mmap support
+  bool ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d);
+  bool ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d);
 
   bool ReadDoubleVector(std::vector<double> *d);
 
@@ -439,6 +471,9 @@ class CrateReader {
   void PushWarn(const std::string &s) const { _warn += s; }
   mutable std::string _err;
   mutable std::string _warn;
+
+  ProgressCallback _progress_callback;  // Default-initialized (empty)
+  void *_progress_userptr{nullptr};
 
   // To prevent recursive Value unpack(The Value encodes itself)
   std::unordered_set<uint64_t> unpackRecursionGuard;

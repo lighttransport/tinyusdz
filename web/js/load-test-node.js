@@ -16,9 +16,15 @@ function reportMemUsage() {
 function loadFile(filename) {
   try {
     const data = fs.readFileSync(filename);
-    const base64 = data.toString('base64');
     const mimeType = 'application/octet-stream';
-    return `data:${mimeType};base64,${base64}`;
+    const blob = new Blob([data], { type: mimeType });
+
+    const f = new File([blob], filename, { type: blob.type });
+
+    return f;
+    //const base64 = data.toString('base64');
+    //data = null;
+    //return `data:${mimeType};base64,${base64}`;
     //console.log(data);
   } catch (err) {
     console.error(err);
@@ -49,13 +55,20 @@ const usd_filename = "../../models/suzanne-subd-lv6.usdc";
 async function initScene() {
 
   const loader = new TinyUSDZLoader();
-  const memory64 = checkMemory64Support();
-  await loader.init({useMemory64: true});
-  loader.setMaxMemoryLimitMB(150);
+  const memory64 = false; //checkMemory64Support();
+  await loader.init({useMemory64: false});
+  loader.setMaxMemoryLimitMB(200);
 
-  const usd = await loader.loadAsync(loadFile(usd_filename));
+  const f = loadFile(usd_filename);
 
-  const usdRootNode = usd.getDefaultRootNode();
+  const url = URL.createObjectURL(f);
+  //const url = URL.createObjectURL(data);
+  //const fdata = fetch(url);
+  //const usd = await loader.loadTestAsync(url);
+  //
+  const usd = await loader.loadAsLayerAsync(url);
+
+  //const usdRootNode = usd.getDefaultRootNode();
   //console.log(usdRootNode);
 
   reportMemUsage();

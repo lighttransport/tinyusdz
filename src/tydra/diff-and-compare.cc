@@ -1,4 +1,5 @@
 #include "diff-and-compare.hh"
+#include "../layer.hh"
 #include <sstream>
 #include <algorithm>
 #include <iostream>

@@ -29,12 +29,7 @@
 #pragma clang diagnostic pop
 #endif
 
-#define PushError(msg) \
-  do {                 \
-    if (err) {         \
-      (*err) += msg;   \
-    }                  \
-  } while (0)
+// PushError macro removed - Layer implementation moved to layer.cc
 
 namespace tinyusdz {
 
@@ -2006,301 +2001,40 @@ int AttrMetas::get_unauthoredValuesIndex() const {
 
 namespace {
 
-nonstd::optional<const PrimSpec *> GetPrimSpecAtPathRec(
-    const PrimSpec *parent, const std::string &parent_path, const Path &path,
-    uint32_t depth) {
-  if (depth > (1024 * 1024 * 128)) {
-    // Too deep.
-    return nonstd::nullopt;
-  }
+// GetPrimSpecAtPathRec function moved to layer.cc
 
-  if (!parent) {
-    return nonstd::nullopt;
-  }
-
-  std::string abs_path;
-  {
-    std::string elementName = parent->name();
-
-    abs_path = parent_path + "/" + elementName;
-
-    if (abs_path == path.full_path_name()) {
-      return parent;
-    }
-  }
-
-  for (const auto &child : parent->children()) {
-    if (auto pv = GetPrimSpecAtPathRec(&child, abs_path, path, depth + 1)) {
-      return pv.value();
-    }
-  }
-
-  // not found
-  return nonstd::nullopt;
-}
-
-bool HasReferencesRec(uint32_t depth, const PrimSpec &primspec,
-                      const uint32_t max_depth = 1024 * 128) {
-  if (depth > max_depth) {
-    // too deep
-    return false;
-  }
-
-  if (primspec.metas().references) {
-    return true;
-  }
-
-  for (auto &child : primspec.children()) {
-    if (HasReferencesRec(depth + 1, child, max_depth)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-bool HasPayloadRec(uint32_t depth, const PrimSpec &primspec,
-                   const uint32_t max_depth = 1024 * 128) {
-  if (depth > max_depth) {
-    // too deep
-    return false;
-  }
-
-  if (primspec.metas().payload) {
-    return true;
-  }
-
-  for (auto &child : primspec.children()) {
-    if (HasPayloadRec(depth + 1, child, max_depth)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-bool HasVariantRec(uint32_t depth, const PrimSpec &primspec,
-                   const uint32_t max_depth = 1024 * 128) {
-  if (depth > max_depth) {
-    // too deep
-    return false;
-  }
-
-  // TODO: Also check if PrimSpec::variantSets is empty?
-  if (primspec.metas().variants && primspec.metas().variantSets) {
-    return true;
-  }
-
-  for (auto &child : primspec.children()) {
-    if (HasVariantRec(depth + 1, child, max_depth)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-bool HasInheritsRec(uint32_t depth, const PrimSpec &primspec,
-                    const uint32_t max_depth = 1024 * 128) {
-  if (depth > max_depth) {
-    // too deep
-    return false;
-  }
-
-  if (primspec.metas().inherits) {
-    return true;
-  }
-
-  for (auto &child : primspec.children()) {
-    if (HasInheritsRec(depth + 1, child, max_depth)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-bool HasSpecializesRec(uint32_t depth, const PrimSpec &primspec,
-                    const uint32_t max_depth = 1024 * 128) {
-  if (depth > max_depth) {
-    // too deep
-    return false;
-  }
-
-  if (primspec.metas().specializes) {
-    return true;
-  }
-
-  for (auto &child : primspec.children()) {
-    if (HasSpecializesRec(depth + 1, child, max_depth)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-bool HasOverRec(uint32_t depth, const PrimSpec &primspec,
-                       const uint32_t max_depth = 1024 * 128) {
-  if (depth > max_depth) {
-    // too deep
-    return false;
-  }
-
-  if (primspec.specifier() == Specifier::Over) {
-    return true;
-  }
-
-  for (auto &child : primspec.children()) {
-    if (HasOverRec(depth + 1, child, max_depth)) {
-      return true;
-    }
-  }
-
-  return false;
-}
+// Helper functions moved to layer.cc
 
 }  // namespace
 
-bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps,
-                             std::string *err) const {
-  if (!ps) {
-    PUSH_ERROR_AND_RETURN("Invalid PrimSpec dst argument");
+// All Layer methods moved to layer.cc
+
+// Memory usage estimation implementation for Attribute
+size_t Attribute::estimate_memory_usage() const {
+  size_t total = sizeof(Attribute);
+  
+  // String storage
+  total += _name.capacity();
+  total += _type_name.capacity();
+  
+  // PrimVar memory - basic estimate
+  // TODO: For more accurate estimation, PrimVar should have its own estimate_memory_usage method
+  total += sizeof(primvar::PrimVar);
+  // The PrimVar contains value::Value and value::TimeSamples which can be large
+  // This is a basic estimate - actual size depends on the stored data type and time samples
+  
+  // Connection paths
+  total += _paths.capacity() * sizeof(Path);
+  for (const auto& path : _paths) {
+    // Path internally contains strings, estimate their capacity
+    total += path.full_path_name().capacity();
   }
-
-  if (!path.is_valid()) {
-    DCOUT("Invalid path.");
-    PUSH_ERROR_AND_RETURN("Invalid path");
-  }
-
-  if (path.is_relative_path()) {
-    // TODO
-    PUSH_ERROR_AND_RETURN(fmt::format("TODO: Relative path: {}", path.full_path_name()));
-  }
-
-  if (!path.is_absolute_path()) {
-    PUSH_ERROR_AND_RETURN(fmt::format("Path is not absolute path: {}", path.full_path_name()));
-  }
-
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  // TODO: Only take a lock when dirty.
-  std::lock_guard<std::mutex> lock(_mutex);
-#endif
-
-  if (_dirty) {
-    DCOUT("clear cache.");
-    // Clear cache.
-    _primspec_path_cache.clear();
-
-    _dirty = false;
-  } else {
-    // First find from a cache.
-    auto ret = _primspec_path_cache.find(path.prim_part());
-    if (ret != _primspec_path_cache.end()) {
-      DCOUT("Found cache.");
-      (*ps) = ret->second;
-      return true;
-    }
-  }
-
-  // Brute-force search.
-  for (const auto &parent : _prim_specs) {
-    if (auto pv = GetPrimSpecAtPathRec(&parent.second, /* parent_path */ "",
-                                       path, /* depth */ 0)) {
-      (*ps) = pv.value();
-
-      // Add to cache.
-      // Assume pointer address does not change unless dirty state changes.
-      _primspec_path_cache[path.prim_part()] = pv.value();
-      return true;
-    }
-  }
-
-  return false;
-}
-
-bool Layer::check_unresolved_references(const uint32_t max_depth) const {
-  bool ret = false;
-
-  for (const auto &item : _prim_specs) {
-    if (HasReferencesRec(/* depth */ 0, item.second, max_depth)) {
-      ret = true;
-      break;
-    }
-  }
-
-  _has_unresolved_references = ret;
-  return _has_unresolved_references;
-}
-
-bool Layer::check_unresolved_payload(const uint32_t max_depth) const {
-  bool ret = false;
-
-  for (const auto &item : _prim_specs) {
-    if (HasPayloadRec(/* depth */ 0, item.second, max_depth)) {
-      ret = true;
-      break;
-    }
-  }
-
-  _has_unresolved_payload = ret;
-  return _has_unresolved_payload;
-}
-
-bool Layer::check_unresolved_variant(const uint32_t max_depth) const {
-  bool ret = false;
-
-  for (const auto &item : _prim_specs) {
-    if (HasVariantRec(/* depth */ 0, item.second, max_depth)) {
-      ret = true;
-      break;
-    }
-  }
-
-  _has_unresolved_variant = ret;
-  return _has_unresolved_variant;
-}
-
-bool Layer::check_unresolved_inherits(const uint32_t max_depth) const {
-  bool ret = false;
-
-  for (const auto &item : _prim_specs) {
-    if (HasInheritsRec(/* depth */ 0, item.second, max_depth)) {
-      ret = true;
-      break;
-    }
-  }
-
-  _has_unresolved_inherits = ret;
-  return _has_unresolved_inherits;
-}
-
-bool Layer::check_unresolved_specializes(const uint32_t max_depth) const {
-  bool ret = false;
-
-  for (const auto &item : _prim_specs) {
-    if (HasSpecializesRec(/* depth */ 0, item.second, max_depth)) {
-      ret = true;
-      break;
-    }
-  }
-
-  _has_unresolved_specializes = ret;
-  return _has_unresolved_specializes;
-}
-
-bool Layer::check_over_primspec(const uint32_t max_depth) const {
-  bool ret = false;
-
-  for (const auto &item : _prim_specs) {
-    if (HasOverRec(/* depth */ 0, item.second, max_depth)) {
-      ret = true;
-      break;
-    }
-  }
-
-  _has_over_primspec = ret;
-  return _has_over_primspec;
+  
+  // Attribute metadata
+  total += sizeof(AttrMeta); // Basic size of metadata structure
+  // TODO: Add detailed AttrMeta internal memory estimation if needed
+  
+  return total;
 }
 
 }  // namespace tinyusdz

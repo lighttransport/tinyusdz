@@ -134,6 +134,19 @@ bool ToRGBA(const std::vector<uint8_t> &src, int channels,
   return true;
 }
 
+std::vector<uint8_t> uint8arrayToBuffer(const emscripten::val& u8) {
+  size_t n = u8["byteLength"].as<size_t>();
+  std::vector<uint8_t> v(n);
+
+  // Copy JS typed array -> v (one memcpy under the hood)
+  emscripten::val view = emscripten::val::global("Uint8Array").new_(u8["buffer"], u8["byteOffset"], n);
+  emscripten::val heapView = emscripten::val(emscripten::typed_memory_view(n, v.data()));
+  heapView.call<void>("set", view);
+
+  return v;
+}
+
+
 }  // namespace detail
 
 // Simple UUID v4 generator
@@ -676,6 +689,7 @@ class TinyUSDZLoaderNative {
     loaded_as_layer_ = false;
     filename_ = filename;
 
+    std::cout << "loaded\n";
 #if 0
     tinyusdz::tydra::RenderSceneConverterEnv env(stage);
 
@@ -738,6 +752,34 @@ class TinyUSDZLoaderNative {
     return stageToRenderScene(stage, is_usdz, binary);
 #endif
 
+  }
+
+  // u8 : Uint8Array object.
+  bool loadTest(const std::string &filename, const emscripten::val &u8) {
+
+    std::vector<uint8_t> binary = detail::uint8arrayToBuffer(u8);
+
+    bool is_usdz = tinyusdz::IsUSDZ(
+        reinterpret_cast<const uint8_t *>(binary.data()), binary.size());
+
+    tinyusdz::USDLoadOptions options;
+    options.max_memory_limit_in_mb = max_memory_limit_mb_;
+
+    tinyusdz::Stage stage;
+    loaded_ = tinyusdz::LoadUSDFromMemory(
+        reinterpret_cast<const uint8_t *>(binary.data()), binary.size(),
+        filename, &stage, &warn_, &error_, options);
+
+    if (!loaded_) {
+      return false;
+    }
+
+    loaded_as_layer_ = false;
+    filename_ = filename;
+
+    //std::cout << "loaded\n";
+
+    return true;
   }
 
 
@@ -2029,6 +2071,7 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
 #endif
       .function("loadAsLayerFromBinary", &TinyUSDZLoaderNative::loadAsLayerFromBinary)
       .function("loadFromBinary", &TinyUSDZLoaderNative::loadFromBinary)
+      .function("loadTest", &TinyUSDZLoaderNative::loadTest)
       //.function("loadAndCompositeFromBinary", &TinyUSDZLoaderNative::loadFromBinary)
       
       // For Stage 
