@@ -1,5 +1,6 @@
 #include "js-script.hh"
 #include "prim-types.hh"
+#include "layer.hh"
 #include "tinyusdz.hh"
 
 #if defined(TINYUSDZ_WITH_QJS)

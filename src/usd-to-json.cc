@@ -3,6 +3,7 @@
 #include "usd-to-json.hh"
 
 #include <algorithm>
+#include "layer.hh"
 #include "tinyusdz.hh"
 #include "io-util.hh"
 
