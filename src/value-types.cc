@@ -1076,6 +1076,209 @@ bool FlexibleTypeCast(const value::Value &src, value::Value &dst) {
 }
 #endif
 
+// Get byte size for a given type_id
+static size_t GetTypeSize(uint32_t type_id) {
+  // Remove array bit if present
+  uint32_t base_type_id = type_id & (~TYPE_ID_1D_ARRAY_BIT);
+  
+  // Create a compile-time lookup table using switch
+  switch (base_type_id) {
+    // Primitives
+    case TYPE_ID_BOOL: return sizeof(bool);
+    case TYPE_ID_CHAR: return sizeof(char);
+    case TYPE_ID_CHAR2: return sizeof(char) * 2;
+    case TYPE_ID_CHAR3: return sizeof(char) * 3;
+    case TYPE_ID_CHAR4: return sizeof(char) * 4;
+    
+    // Half precision
+    case TYPE_ID_HALF: return sizeof(half);
+    case TYPE_ID_HALF2: return sizeof(half) * 2;
+    case TYPE_ID_HALF3: return sizeof(half) * 3;
+    case TYPE_ID_HALF4: return sizeof(half) * 4;
+    
+    // Integers
+    case TYPE_ID_INT32: return sizeof(int32_t);
+    case TYPE_ID_INT2: return sizeof(int32_t) * 2;
+    case TYPE_ID_INT3: return sizeof(int32_t) * 3;
+    case TYPE_ID_INT4: return sizeof(int32_t) * 4;
+    case TYPE_ID_INT64: return sizeof(int64_t);
+    
+    // Unsigned integers
+    case TYPE_ID_UCHAR: return sizeof(uint8_t);
+    case TYPE_ID_UCHAR2: return sizeof(uint8_t) * 2;
+    case TYPE_ID_UCHAR3: return sizeof(uint8_t) * 3;
+    case TYPE_ID_UCHAR4: return sizeof(uint8_t) * 4;
+    case TYPE_ID_UINT32: return sizeof(uint32_t);
+    case TYPE_ID_UINT2: return sizeof(uint32_t) * 2;
+    case TYPE_ID_UINT3: return sizeof(uint32_t) * 3;
+    case TYPE_ID_UINT4: return sizeof(uint32_t) * 4;
+    case TYPE_ID_UINT64: return sizeof(uint64_t);
+    
+    // Short integers
+    case TYPE_ID_SHORT: return sizeof(int16_t);
+    case TYPE_ID_SHORT2: return sizeof(int16_t) * 2;
+    case TYPE_ID_SHORT3: return sizeof(int16_t) * 3;
+    case TYPE_ID_SHORT4: return sizeof(int16_t) * 4;
+    case TYPE_ID_USHORT: return sizeof(uint16_t);
+    case TYPE_ID_USHORT2: return sizeof(uint16_t) * 2;
+    case TYPE_ID_USHORT3: return sizeof(uint16_t) * 3;
+    case TYPE_ID_USHORT4: return sizeof(uint16_t) * 4;
+    
+    // Floats
+    case TYPE_ID_FLOAT: return sizeof(float);
+    case TYPE_ID_FLOAT2: return sizeof(float) * 2;
+    case TYPE_ID_FLOAT3: return sizeof(float) * 3;
+    case TYPE_ID_FLOAT4: return sizeof(float) * 4;
+    
+    // Doubles
+    case TYPE_ID_DOUBLE: return sizeof(double);
+    case TYPE_ID_DOUBLE2: return sizeof(double) * 2;
+    case TYPE_ID_DOUBLE3: return sizeof(double) * 3;
+    case TYPE_ID_DOUBLE4: return sizeof(double) * 4;
+    
+    // Quaternions
+    case TYPE_ID_QUATH: return sizeof(half) * 4;
+    case TYPE_ID_QUATF: return sizeof(float) * 4;
+    case TYPE_ID_QUATD: return sizeof(double) * 4;
+    
+    // Matrices
+    case TYPE_ID_MATRIX2F: return sizeof(float) * 4;   // 2x2
+    case TYPE_ID_MATRIX3F: return sizeof(float) * 9;   // 3x3
+    case TYPE_ID_MATRIX4F: return sizeof(float) * 16;  // 4x4
+    case TYPE_ID_MATRIX2D: return sizeof(double) * 4;  // 2x2
+    case TYPE_ID_MATRIX3D: return sizeof(double) * 9;  // 3x3
+    case TYPE_ID_MATRIX4D: return sizeof(double) * 16; // 4x4
+    
+    // Colors (role types - same memory as their underlying types)
+    case TYPE_ID_COLOR3H: return sizeof(half) * 3;
+    case TYPE_ID_COLOR3F: return sizeof(float) * 3;
+    case TYPE_ID_COLOR3D: return sizeof(double) * 3;
+    case TYPE_ID_COLOR4H: return sizeof(half) * 4;
+    case TYPE_ID_COLOR4F: return sizeof(float) * 4;
+    case TYPE_ID_COLOR4D: return sizeof(double) * 4;
+    
+    // Points (role types)
+    case TYPE_ID_POINT3H: return sizeof(half) * 3;
+    case TYPE_ID_POINT3F: return sizeof(float) * 3;
+    case TYPE_ID_POINT3D: return sizeof(double) * 3;
+    
+    // Normals (role types)
+    case TYPE_ID_NORMAL3H: return sizeof(half) * 3;
+    case TYPE_ID_NORMAL3F: return sizeof(float) * 3;
+    case TYPE_ID_NORMAL3D: return sizeof(double) * 3;
+    
+    // Vectors (role types)
+    case TYPE_ID_VECTOR3H: return sizeof(half) * 3;
+    case TYPE_ID_VECTOR3F: return sizeof(float) * 3;
+    case TYPE_ID_VECTOR3D: return sizeof(double) * 3;
+    
+    // Texture coordinates (role types)
+    case TYPE_ID_TEXCOORD2H: return sizeof(half) * 2;
+    case TYPE_ID_TEXCOORD2F: return sizeof(float) * 2;
+    case TYPE_ID_TEXCOORD2D: return sizeof(double) * 2;
+    case TYPE_ID_TEXCOORD3H: return sizeof(half) * 3;
+    case TYPE_ID_TEXCOORD3F: return sizeof(float) * 3;
+    case TYPE_ID_TEXCOORD3D: return sizeof(double) * 3;
+    
+    // Special types
+    case TYPE_ID_FRAME4D: return sizeof(double) * 16; // 4x4 matrix
+    case TYPE_ID_EXTENT: return sizeof(float) * 6;    // float3[2]
+    case TYPE_ID_TIMECODE: return sizeof(double);
+    
+    // String/token types - estimate with typical sizes
+    case TYPE_ID_TOKEN: return 32;  // Estimate for typical token string
+    case TYPE_ID_STRING: return 64; // Estimate for typical string
+    case TYPE_ID_STRING_DATA: return 64; // Estimate for string data
+    case TYPE_ID_ASSET_PATH: return 128; // Estimate for asset paths
+    
+    // Special values
+    case TYPE_ID_VOID: return 0;
+    case TYPE_ID_NULL: return 0;
+    case TYPE_ID_MONOSTATE: return 0;
+    case TYPE_ID_VALUEBLOCK: return 0;
+    
+    // Complex types - return base struct size
+    case TYPE_ID_DICT: return sizeof(void*) * 2; // Rough estimate for map overhead
+    case TYPE_ID_CUSTOMDATA: return sizeof(void*) * 2;
+    
+    // Default for unknown types
+    default: return sizeof(void*); // Pointer size as fallback
+  }
+}
+
+size_t Value::estimate_memory_usage() const {
+  size_t total_size = sizeof(Value); // Base object size
+  
+  if (is_empty() || is_none()) {
+    return total_size;
+  }
+  
+  uint32_t tid = type_id();
+  
+  // Check if it's an array type
+  if (tid & TYPE_ID_1D_ARRAY_BIT) {
+    // For arrays, compute element size * array count
+    size_t element_size = GetTypeSize(tid);
+    size_t element_count = array_size();
+    
+    // Add array storage overhead (vector typically has 3 pointers)
+    total_size += sizeof(void*) * 3; 
+    
+    // Add actual data size
+    total_size += element_size * element_count;
+    
+    // Handle special cases for string arrays
+    uint32_t base_type = tid & (~TYPE_ID_1D_ARRAY_BIT);
+    if (base_type == TYPE_ID_STRING || base_type == TYPE_ID_TOKEN || 
+        base_type == TYPE_ID_STRING_DATA || base_type == TYPE_ID_ASSET_PATH) {
+      // For string arrays, add estimated string sizes
+      if (auto* vec = as<std::vector<std::string>>()) {
+        for (const auto& str : *vec) {
+          total_size += str.capacity();
+        }
+      } else if (auto* vec = as<std::vector<value::token>>()) {
+        for (const auto& tok : *vec) {
+          total_size += tok.str().capacity();
+        }
+      }
+    }
+  } else {
+    // For scalar types
+    size_t type_size = GetTypeSize(tid);
+    total_size += type_size;
+    
+    // Handle dynamic string types specially
+    if (tid == TYPE_ID_STRING || tid == TYPE_ID_STRING_DATA) {
+      if (auto* str = as<std::string>()) {
+        total_size += str->capacity();
+      }
+    } else if (tid == TYPE_ID_TOKEN) {
+      if (auto* tok = as<value::token>()) {
+        total_size += tok->str().capacity();
+      }
+    } else if (tid == TYPE_ID_ASSET_PATH) {
+      if (auto* path = as<value::AssetPath>()) {
+        total_size += path->GetAssetPath().length();
+        total_size += path->GetResolvedPath().length();
+      }
+    } else if (tid == TYPE_ID_DICT || tid == TYPE_ID_CUSTOMDATA) {
+      // For dictionary types, estimate based on typical usage
+      if (auto* dict = as<value::dict>()) {
+        // Map overhead + estimated key/value sizes
+        total_size += dict->size() * (32 + sizeof(void*) * 4);
+        // Recursively compute values (simplified - just add base estimates)
+        for (const auto& kv : *dict) {
+          total_size += kv.first.capacity();
+          // For values, use a rough estimate
+          total_size += 64; // Average value size estimate
+        }
+      }
+    }
+  }
+  
+  return total_size;
+}
+
 bool TimeSamples::has_sample_at(const double t) const {
   if (_dirty) {
     update();
