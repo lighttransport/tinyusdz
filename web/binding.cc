@@ -782,6 +782,187 @@ class TinyUSDZLoaderNative {
     return true;
   }
 
+  // Test function for value::Value memory usage estimation
+  emscripten::val testValueMemoryUsage() {
+    emscripten::val result = emscripten::val::object();
+    emscripten::val tests = emscripten::val::array();
+    
+    // Test 1: Empty value
+    {
+      tinyusdz::value::Value v;
+      size_t mem = v.estimate_memory_usage();
+      emscripten::val test = emscripten::val::object();
+      test.set("name", "Empty value");
+      test.set("bytes", mem);
+      tests.call<void>("push", test);
+    }
+    
+    // Test 2: Simple types
+    {
+      tinyusdz::value::Value v1(42);  // int32
+      emscripten::val test = emscripten::val::object();
+      test.set("name", "int32(42)");
+      test.set("bytes", v1.estimate_memory_usage());
+      tests.call<void>("push", test);
+    }
+    {
+      tinyusdz::value::Value v2(3.14f);  // float
+      emscripten::val test = emscripten::val::object();
+      test.set("name", "float(3.14)");
+      test.set("bytes", v2.estimate_memory_usage());
+      tests.call<void>("push", test);
+    }
+    {
+      tinyusdz::value::Value v3(2.718);  // double
+      emscripten::val test = emscripten::val::object();
+      test.set("name", "double(2.718)");
+      test.set("bytes", v3.estimate_memory_usage());
+      tests.call<void>("push", test);
+    }
+    
+    // Test 3: Vector types
+    {
+      tinyusdz::value::float3 f3{1.0f, 2.0f, 3.0f};
+      tinyusdz::value::Value v(f3);
+      emscripten::val test = emscripten::val::object();
+      test.set("name", "float3");
+      test.set("bytes", v.estimate_memory_usage());
+      tests.call<void>("push", test);
+    }
+    
+    // Test 4: Matrix types
+    {
+      tinyusdz::value::matrix4d m4d;
+      tinyusdz::value::Value v(m4d);
+      emscripten::val test = emscripten::val::object();
+      test.set("name", "matrix4d");
+      test.set("bytes", v.estimate_memory_usage());
+      tests.call<void>("push", test);
+    }
+    
+    // Test 5: String type
+    {
+      std::string str = "Hello, World! This is a test string.";
+      tinyusdz::value::Value v(str);
+      emscripten::val test = emscripten::val::object();
+      test.set("name", "string('" + str + "')");
+      test.set("bytes", v.estimate_memory_usage());
+      tests.call<void>("push", test);
+    }
+    
+    // Test 6: Token type
+    {
+      tinyusdz::value::token tok("myToken");
+      tinyusdz::value::Value v(tok);
+      emscripten::val test = emscripten::val::object();
+      test.set("name", "token('myToken')");
+      test.set("bytes", v.estimate_memory_usage());
+      tests.call<void>("push", test);
+    }
+    
+    // Test 7: Array of floats
+    {
+      std::vector<float> floats = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f};
+      tinyusdz::value::Value v(floats);
+      emscripten::val test = emscripten::val::object();
+      test.set("name", "float array (5 elements)");
+      test.set("bytes", v.estimate_memory_usage());
+      tests.call<void>("push", test);
+    }
+    
+    // Test 8: Array of float3
+    {
+      std::vector<tinyusdz::value::float3> vec3s = {
+        {1.0f, 0.0f, 0.0f},
+        {0.0f, 1.0f, 0.0f},
+        {0.0f, 0.0f, 1.0f}
+      };
+      tinyusdz::value::Value v(vec3s);
+      emscripten::val test = emscripten::val::object();
+      test.set("name", "float3 array (3 elements)");
+      test.set("bytes", v.estimate_memory_usage());
+      tests.call<void>("push", test);
+    }
+    
+    // Test 9: Array of strings
+    {
+      std::vector<std::string> strings = {"one", "two", "three", "four"};
+      tinyusdz::value::Value v(strings);
+      emscripten::val test = emscripten::val::object();
+      test.set("name", "string array (4 elements)");
+      test.set("bytes", v.estimate_memory_usage());
+      tests.call<void>("push", test);
+    }
+    
+    // Test 10: Color types (role types)
+    {
+      tinyusdz::value::color3f c3f{1.0f, 0.5f, 0.0f};
+      tinyusdz::value::Value v(c3f);
+      emscripten::val test = emscripten::val::object();
+      test.set("name", "color3f");
+      test.set("bytes", v.estimate_memory_usage());
+      tests.call<void>("push", test);
+    }
+    
+    // Test 11: Normal types (role types)
+    {
+      tinyusdz::value::normal3f n3f{0.0f, 1.0f, 0.0f};
+      tinyusdz::value::Value v(n3f);
+      emscripten::val test = emscripten::val::object();
+      test.set("name", "normal3f");
+      test.set("bytes", v.estimate_memory_usage());
+      tests.call<void>("push", test);
+    }
+    
+    // Test 12: TimeSamples
+    {
+      tinyusdz::value::TimeSamples ts;
+      ts.add_sample(0.0, tinyusdz::value::Value(1.0f));
+      ts.add_sample(1.0, tinyusdz::value::Value(2.0f));
+      ts.add_sample(2.0, tinyusdz::value::Value(3.0f));
+      size_t mem = ts.estimate_memory_usage();
+      emscripten::val test = emscripten::val::object();
+      test.set("name", "TimeSamples (3 samples)");
+      test.set("bytes", mem);
+      tests.call<void>("push", test);
+    }
+    
+    // Test 13: Large array test
+    {
+      std::vector<float> large_array(10000, 1.0f);
+      tinyusdz::value::Value v(large_array);
+      emscripten::val test = emscripten::val::object();
+      test.set("name", "float array (10000 elements)");
+      test.set("bytes", v.estimate_memory_usage());
+      tests.call<void>("push", test);
+    }
+    
+    // Test 14: Half precision types
+    {
+      tinyusdz::value::half h(1.5f);
+      tinyusdz::value::Value v(h);
+      emscripten::val test = emscripten::val::object();
+      test.set("name", "half(1.5)");
+      test.set("bytes", v.estimate_memory_usage());
+      tests.call<void>("push", test);
+    }
+    
+    // Test 15: Quaternion types
+    {
+      tinyusdz::value::quatf q{0.0f, 0.0f, 0.0f, 1.0f};
+      tinyusdz::value::Value v(q);
+      emscripten::val test = emscripten::val::object();
+      test.set("name", "quatf");
+      test.set("bytes", v.estimate_memory_usage());
+      tests.call<void>("push", test);
+    }
+    
+    result.set("tests", tests);
+    result.set("success", true);
+    
+    return result;
+  }
+
 
 #if 0 // TODO: Remove
   //
@@ -2072,6 +2253,7 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("loadAsLayerFromBinary", &TinyUSDZLoaderNative::loadAsLayerFromBinary)
       .function("loadFromBinary", &TinyUSDZLoaderNative::loadFromBinary)
       .function("loadTest", &TinyUSDZLoaderNative::loadTest)
+      .function("testValueMemoryUsage", &TinyUSDZLoaderNative::testValueMemoryUsage)
       //.function("loadAndCompositeFromBinary", &TinyUSDZLoaderNative::loadFromBinary)
       
       // For Stage 

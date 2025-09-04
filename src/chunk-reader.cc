@@ -771,7 +771,7 @@ void ChunkReader::EvictFromSlidingWindow() {
 void ChunkReader::EvictFromRandomCache() {
   if (random_cache_.empty()) return;
   
-  size_t victim_chunk_id;
+  size_t victim_chunk_id = 0;
   
   switch (config_.cache_algorithm) {
     case Config::ALGORITHM_2Q: {
@@ -820,6 +820,16 @@ void ChunkReader::EvictFromRandomCache() {
       }
       break;
     }
+    
+    default:
+      // Default to SLRU behavior
+      if (!random_cache_lru_.empty()) {
+        victim_chunk_id = random_cache_lru_.back();
+        random_cache_lru_.pop_back();
+      } else {
+        return;
+      }
+      break;
   }
   
   auto it = random_cache_.find(victim_chunk_id);
