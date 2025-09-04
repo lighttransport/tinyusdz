@@ -2206,14 +2206,7 @@ class Value {
 
   bool is_none() const { return v_.type_id() == value::TYPE_ID_VALUEBLOCK; }
 
-  size_t estimate_memory_usage() const {
-    if (is_array()) {
-      // TODO: sizeof(type)
-      return 4 * array_size();
-    }
-    // Assume scalar.
-    return sizeof(Value);
-  }
+  size_t estimate_memory_usage() const;
 
  private:
   // any_value v_;
