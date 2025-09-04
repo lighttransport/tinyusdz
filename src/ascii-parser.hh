@@ -16,6 +16,7 @@
 #include "prim-types.hh"
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
+#include "typed-array.hh"
 
 //
 #ifdef __clang__
@@ -600,6 +601,12 @@ class AsciiParser {
   ///
   template <typename T>
   bool ParseBasicTypeArray(std::vector<T> *result);
+
+  ///
+  /// Parse '[', Sep1By(','), ']' using TypedArray<T> for memory optimization
+  ///
+  template <typename T>
+  bool ParseBasicTypeArray(TypedArray<T> *result);
 
   ///
   /// Optimized float array parsing using tiny-string

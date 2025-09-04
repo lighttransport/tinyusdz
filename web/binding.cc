@@ -783,9 +783,16 @@ class TinyUSDZLoaderNative {
   }
 
   // Test function for value::Value memory usage estimation
-  emscripten::val testValueMemoryUsage() {
+  // arrayLength: optional parameter to specify the size of array tests (default: 10000)
+  emscripten::val testValueMemoryUsage(emscripten::val arrayLengthVal) {
     emscripten::val result = emscripten::val::object();
     emscripten::val tests = emscripten::val::array();
+    
+    // Get array length from parameter or use default
+    int arrayLength = 10000;
+    if (!arrayLengthVal.isUndefined() && !arrayLengthVal.isNull()) {
+      arrayLength = arrayLengthVal.as<int>();
+    }
     
     // Test 1: Empty value
     {
@@ -927,12 +934,37 @@ class TinyUSDZLoaderNative {
       tests.call<void>("push", test);
     }
     
-    // Test 13: Large array test
+    // Test 13: Large array test (using specified array length)
     {
-      std::vector<float> large_array(10000, 1.0f);
+      std::vector<float> large_array(arrayLength, 1.0f);
       tinyusdz::value::Value v(large_array);
       emscripten::val test = emscripten::val::object();
-      test.set("name", "float array (10000 elements)");
+      test.set("name", "float array (" + std::to_string(arrayLength) + " elements)");
+      test.set("bytes", v.estimate_memory_usage());
+      tests.call<void>("push", test);
+    }
+    
+    // Test 13b: Large float3 array test (using specified array length / 3)
+    {
+      int vec3Count = std::max(1, arrayLength / 3);
+      std::vector<tinyusdz::value::float3> large_vec3_array;
+      large_vec3_array.reserve(vec3Count);
+      for (int i = 0; i < vec3Count; ++i) {
+        large_vec3_array.push_back({static_cast<float>(i), static_cast<float>(i+1), static_cast<float>(i+2)});
+      }
+      tinyusdz::value::Value v(large_vec3_array);
+      emscripten::val test = emscripten::val::object();
+      test.set("name", "float3 array (" + std::to_string(vec3Count) + " elements)");
+      test.set("bytes", v.estimate_memory_usage());
+      tests.call<void>("push", test);
+    }
+    
+    // Test 13c: Large int array test (using specified array length)
+    {
+      std::vector<int32_t> large_int_array(arrayLength, 42);
+      tinyusdz::value::Value v(large_int_array);
+      emscripten::val test = emscripten::val::object();
+      test.set("name", "int32 array (" + std::to_string(arrayLength) + " elements)");
       test.set("bytes", v.estimate_memory_usage());
       tests.call<void>("push", test);
     }
@@ -957,8 +989,19 @@ class TinyUSDZLoaderNative {
       tests.call<void>("push", test);
     }
     
+    // Calculate total memory
+    size_t totalMemory = 0;
+    int numTests = tests["length"].as<int>();
+    for (int i = 0; i < numTests; ++i) {
+      emscripten::val test = tests[i];
+      totalMemory += test["bytes"].as<size_t>();
+    }
+    
     result.set("tests", tests);
     result.set("success", true);
+    result.set("totalTests", numTests);
+    result.set("totalMemory", totalMemory);
+    result.set("arrayLength", arrayLength);
     
     return result;
   }
