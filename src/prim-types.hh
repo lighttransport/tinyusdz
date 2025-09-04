@@ -2216,6 +2216,7 @@ class Relationship {
   //
   enum class Type { DefineOnly, Path, PathVector, ValueBlock };
 
+  // TODO: move to private
   Type type{Type::DefineOnly};
   Path targetPath;
   std::vector<Path> targetPathVector;
@@ -2257,6 +2258,8 @@ class Relationship {
 
   const AttrMeta &metas() const { return _metas; }
   AttrMeta &metas() { return _metas; }
+
+  size_t estimate_memory_usage() const;
 
  private:
   AttrMeta _metas;
@@ -2997,6 +3000,8 @@ class Property {
   }
 
   ListEditQual get_listedit_qual() const { return _listOpQual; }
+
+  size_t estimate_memory_usage() const;
 
  private:
   Attribute _attrib;  // attribute(value or ".connect")

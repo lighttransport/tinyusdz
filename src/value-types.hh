@@ -2206,6 +2206,15 @@ class Value {
 
   bool is_none() const { return v_.type_id() == value::TYPE_ID_VALUEBLOCK; }
 
+  size_t estimate_memory_usage() const {
+    if (is_array()) {
+      // TODO: sizeof(type)
+      return 4 * array_size();
+    }
+    // Assume scalar.
+    return sizeof(Value);
+  }
+
  private:
   // any_value v_;
   linb::any v_{nullptr};
@@ -2384,6 +2393,7 @@ class Value {
     // No compatible type found
     return TypedArrayView<T>();
   }
+
 };
 
 // TimeSample interpolation type.
@@ -2792,6 +2802,16 @@ struct TimeSamples {
     return false;
   }
 #endif
+
+  size_t estimate_memory_usage() const {
+    size_t total = sizeof(TimeSamples);
+    for (const auto &sample : _samples) {
+      total += sizeof(Sample);
+      total += sample.value.estimate_memory_usage();
+    }
+
+    return total;
+  }
 
  private:
   mutable std::vector<Sample> _samples;
