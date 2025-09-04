@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "cli": "vite-node load-test.js"
+    "cli": "vite-node load-test.js",
+    "test:memory": "vite-node memory-usage-test.js"
   },
   "devDependencies": {
     "@types/bun": "latest",
