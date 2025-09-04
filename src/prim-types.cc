@@ -2009,6 +2009,31 @@ namespace {
 
 // All Layer methods moved to layer.cc
 
+size_t Property::estimate_memory_usage() const {
+  size_t total = sizeof(Property);
+
+  // String storage
+  total += _prop_value_type_name.capacity();
+
+  total += _attrib.estimate_memory_usage();
+  total += _rel.estimate_memory_usage();
+
+  return total;
+
+}
+
+size_t Relationship::estimate_memory_usage() const {
+  size_t total = sizeof(Relationship);
+
+  total += targetPath.full_path_name().size();
+  for (const auto& path : targetPathVector) {
+    // Path internally contains strings, estimate their capacity
+    total += path.full_path_name().size();
+  }
+
+  return total;
+}
+
 // Memory usage estimation implementation for Attribute
 size_t Attribute::estimate_memory_usage() const {
   size_t total = sizeof(Attribute);

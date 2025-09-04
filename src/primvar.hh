@@ -339,6 +339,13 @@ struct PrimVar {
   value::TimeSamples &ts_raw() {
     return _ts;
   }
+
+  size_t estimate_memory_usage() const {
+    size_t total = sizeof(PrimVar);
+    total += _value.estimate_memory_usage();
+    total += _ts.estimate_memory_usage();
+    return total;
+  }
 };
 
 
