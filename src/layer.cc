@@ -194,13 +194,8 @@ static size_t EstimatePrimSpecMemory(const PrimSpec& ps) {
   // Properties map
   for (const auto& prop_pair : ps.props()) {
     total += prop_pair.first.capacity(); // key string
-    total += sizeof(Property); // Property base size
-    // Note: Property contains complex types that would need deeper estimation
-    // This is a simplified estimate
+    total += prop_pair.second.estimate_memory_usage(); 
   }
-  
-  // Skip relationships for now - PrimSpec may not have this method
-  // TODO: Add relationship estimation if needed
   
   // Children vector
   for (const auto& child : ps.children()) {
