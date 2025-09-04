@@ -34,6 +34,7 @@
 #include "str-util.hh"
 #include "path-util.hh"
 #include "tiny-format.hh"
+#include "typed-array.hh"
 
 //
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDA_READER)
@@ -1963,6 +1964,58 @@ bool AsciiParser::ParseBasicTypeArray(std::vector<T> *result) {
 }
 
 ///
+/// Parse '[', Sep1By(','), ']' using TypedArray<T> for memory optimization
+///
+template <typename T>
+bool AsciiParser::ParseBasicTypeArray(TypedArray<T> *result) {
+  if (!Expect('[')) {
+    return false;
+  }
+
+  if (!SkipCommentAndWhitespaceAndNewline()) {
+    return false;
+  }
+
+  // Empty array?
+  {
+    char c;
+    if (!Char1(&c)) {
+      return false;
+    }
+
+    if (c == ']') {
+      result->clear();
+      return true;
+    }
+
+    Rewind(1);
+  }
+
+  // Parse elements into a temporary vector first
+  std::vector<T> temp_result;
+  if (!SepBy1BasicType<T>(',', ']', &temp_result)) {
+    return false;
+  }
+
+  if (!SkipCommentAndWhitespaceAndNewline()) {
+    return false;
+  }
+
+  if (!Expect(']')) {
+    return false;
+  }
+
+  // Transfer to TypedArray for memory optimization
+  result->clear();
+  result->reserve(temp_result.size());
+  for (const auto& item : temp_result) {
+    result->push_back(item);
+  }
+  
+  return true;
+}
+
+///
 /// Parses 1 or more occurences of asset references, separated by
 /// `sep`
 /// TODO: Parse LayerOffset: e.g. `(offset = 10; scale = 2)`
@@ -3459,6 +3512,67 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<std::string> *result)
 //template bool AsciiParser::ParseBasicTypeArray(std::vector<Reference> *result);
 //template bool AsciiParser::ParseBasicTypeArray(std::vector<Path> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::AssetPath> *result);
+
+// 
+// TypedArray template instantiations for memory optimization
+//
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<bool> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<int32_t> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::int2> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::int3> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::int4> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<uint32_t> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::uint2> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::uint3> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::uint4> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<int64_t> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<uint64_t> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::half> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::half2> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::half3> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::half4> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<float> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::float2> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::float3> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::float4> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<double> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::double2> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::double3> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::double4> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::texcoord2h> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::texcoord2f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::texcoord2d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::texcoord3h> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::texcoord3f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::texcoord3d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::point3h> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::point3f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::point3d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::normal3h> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::normal3f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::normal3d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::vector3h> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::vector3f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::vector3d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::color3h> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::color3f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::color3d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::color4h> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::color4f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::color4d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::matrix2f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::matrix3f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::matrix4f> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::matrix2d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::matrix3d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::matrix4d> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::quath> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::quatf> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::quatd> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::token> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::StringData> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<std::string> *result);
+template bool AsciiParser::ParseBasicTypeArray(TypedArray<value::AssetPath> *result);
 
 
 }  // namespace ascii
