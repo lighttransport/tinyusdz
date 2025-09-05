@@ -421,6 +421,10 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct.cc
     ${PROJECT_SOURCE_DIR}/src/prim-composition.cc
     ${PROJECT_SOURCE_DIR}/src/prim-types.cc
+    ${PROJECT_SOURCE_DIR}/src/attribute.cc
+    ${PROJECT_SOURCE_DIR}/src/property.cc
+    ${PROJECT_SOURCE_DIR}/src/relationship.cc
+    ${PROJECT_SOURCE_DIR}/src/primspec.cc
     ${PROJECT_SOURCE_DIR}/src/layer.cc
     ${PROJECT_SOURCE_DIR}/src/primvar.cc
     ${PROJECT_SOURCE_DIR}/src/str-util.cc

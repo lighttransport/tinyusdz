@@ -2009,57 +2009,9 @@ namespace {
 
 // All Layer methods moved to layer.cc
 
-size_t Property::estimate_memory_usage() const {
-  size_t total = sizeof(Property);
+// Property::estimate_memory_usage() is now implemented in property.cc
+// Relationship::estimate_memory_usage() is now implemented in relationship.cc
 
-  // String storage
-  total += _prop_value_type_name.capacity();
-
-  total += _attrib.estimate_memory_usage();
-  total += _rel.estimate_memory_usage();
-
-  return total;
-
-}
-
-size_t Relationship::estimate_memory_usage() const {
-  size_t total = sizeof(Relationship);
-
-  total += targetPath.full_path_name().size();
-  for (const auto& path : targetPathVector) {
-    // Path internally contains strings, estimate their capacity
-    total += path.full_path_name().size();
-  }
-
-  return total;
-}
-
-// Memory usage estimation implementation for Attribute
-size_t Attribute::estimate_memory_usage() const {
-  size_t total = sizeof(Attribute);
-  
-  // String storage
-  total += _name.capacity();
-  total += _type_name.capacity();
-  
-  // PrimVar memory - basic estimate
-  // TODO: For more accurate estimation, PrimVar should have its own estimate_memory_usage method
-  total += sizeof(primvar::PrimVar);
-  // The PrimVar contains value::Value and value::TimeSamples which can be large
-  // This is a basic estimate - actual size depends on the stored data type and time samples
-  
-  // Connection paths
-  total += _paths.capacity() * sizeof(Path);
-  for (const auto& path : _paths) {
-    // Path internally contains strings, estimate their capacity
-    total += path.full_path_name().capacity();
-  }
-  
-  // Attribute metadata
-  total += sizeof(AttrMeta); // Basic size of metadata structure
-  // TODO: Add detailed AttrMeta internal memory estimation if needed
-  
-  return total;
-}
+// Attribute::estimate_memory_usage() is now implemented in attribute.cc
 
 }  // namespace tinyusdz
