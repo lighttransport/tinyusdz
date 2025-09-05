@@ -2032,19 +2032,29 @@ namespace value {
 ///
 class Value {
  public:
-  Value() = default;
+  Value() {
+    TUSDZ_LOG_I("Value default constructor called");
+  }
 
   // Copy constructor
-  Value(const Value& rhs) : v_(rhs.v_) {}
+  Value(const Value& rhs) : v_(rhs.v_) {
+    TUSDZ_LOG_I("Value copy constructor called");
+  }
 
   // Move constructor
-  Value(Value&& rhs) noexcept : v_(std::move(rhs.v_)) {}
+  Value(Value&& rhs) noexcept : v_(std::move(rhs.v_)) {
+    TUSDZ_LOG_I("Value move constructor called");
+  }
 
   template <class T>
-  Value(const T &v) : v_(v) {}
+  Value(const T &v) : v_(v) {
+    TUSDZ_LOG_I("Value templated constructor called with type: " << typeid(T).name());
+  }
 
   template <class T>
-  Value(T &&v) noexcept : v_(std::move(v)) {}
+  Value(T &&v) noexcept : v_(std::move(v)) {
+    TUSDZ_LOG_I("Value templated move constructor called with type: " << typeid(T).name());
+  }
 
   // template <class T>
   // Value(T &&v) : v_(v) {}
@@ -2219,6 +2229,7 @@ class Value {
 
   // Copy assignment operator
   Value& operator=(const Value& rhs) {
+    TUSDZ_LOG_I("Value copy assignment operator called");
     if (this != &rhs) {
       v_ = rhs.v_;
     }
@@ -2227,6 +2238,7 @@ class Value {
 
   // Move assignment operator
   Value& operator=(Value&& rhs) noexcept {
+    TUSDZ_LOG_I("Value move assignment operator called");
     if (this != &rhs) {
       v_ = std::move(rhs.v_);
     }
@@ -2235,6 +2247,7 @@ class Value {
 
   template <class T>
   Value &operator=(const T &v) {
+    TUSDZ_LOG_I("Value templated assignment operator called with type: " << typeid(T).name());
     v_ = v;
     return (*this);
   }

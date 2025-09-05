@@ -2434,7 +2434,9 @@ enum class TimeSampleInterpolation {
 class Attribute {
 
  public:
-  Attribute() = default;
+  Attribute() {
+    TUSDZ_LOG_I("Attribute default constructor called");
+  }
 
   // Copy constructor
   Attribute(const Attribute& rhs) 
@@ -2444,7 +2446,9 @@ class Attribute {
       _type_name(rhs._type_name),
       _var(rhs._var),
       _paths(rhs._paths),
-      _metas(rhs._metas) {}
+      _metas(rhs._metas) {
+    TUSDZ_LOG_I("Attribute copy constructor called");
+  }
 
   // Move constructor
   Attribute(Attribute&& rhs) noexcept
@@ -2455,12 +2459,14 @@ class Attribute {
       _var(std::move(rhs._var)),
       _paths(std::move(rhs._paths)),
       _metas(std::move(rhs._metas)) {
+    TUSDZ_LOG_I("Attribute move constructor called");
     rhs._variability = Variability::Varying;
     rhs._varying_authored = false;
   }
 
   // Copy assignment operator
   Attribute& operator=(const Attribute& rhs) {
+    TUSDZ_LOG_I("Attribute copy assignment operator called");
     if (this != &rhs) {
       _name = rhs._name;
       _variability = rhs._variability;
@@ -2475,6 +2481,7 @@ class Attribute {
 
   // Move assignment operator
   Attribute& operator=(Attribute&& rhs) noexcept {
+    TUSDZ_LOG_I("Attribute move assignment operator called");
     if (this != &rhs) {
       _name = std::move(rhs._name);
       _variability = rhs._variability;
@@ -2902,7 +2909,9 @@ class Property {
                  // this and use Attrib.
   };
 
-  Property() = default;
+  Property() {
+    TUSDZ_LOG_I("Property default constructor called");
+  }
 
   // TODO: Deprecate this constructor.
   // Property(const std::string &type_name, bool custom = false)
@@ -2967,6 +2976,56 @@ class Property {
     _attrib.set_connections(paths);
     _attrib.set_type_name(prop_value_type_name);
     _type = Type::Connection;
+  }
+
+  // Copy constructor
+  Property(const Property& rhs) 
+      : _attrib(rhs._attrib),
+        _listOpQual(rhs._listOpQual),
+        _type(rhs._type),
+        _rel(rhs._rel),
+        _prop_value_type_name(rhs._prop_value_type_name),
+        _has_custom(rhs._has_custom) {
+    TUSDZ_LOG_I("Property copy constructor called");
+  }
+
+  // Move constructor
+  Property(Property&& rhs) noexcept
+      : _attrib(std::move(rhs._attrib)),
+        _listOpQual(rhs._listOpQual),
+        _type(rhs._type),
+        _rel(std::move(rhs._rel)),
+        _prop_value_type_name(std::move(rhs._prop_value_type_name)),
+        _has_custom(rhs._has_custom) {
+    TUSDZ_LOG_I("Property move constructor called");
+  }
+
+  // Copy assignment operator
+  Property& operator=(const Property& rhs) {
+    TUSDZ_LOG_I("Property copy assignment operator called");
+    if (this != &rhs) {
+      _type = rhs._type;
+      _attrib = rhs._attrib;
+      _rel = rhs._rel;
+      _prop_value_type_name = rhs._prop_value_type_name;
+      _has_custom = rhs._has_custom;
+      _listOpQual = rhs._listOpQual;
+    }
+    return *this;
+  }
+
+  // Move assignment operator
+  Property& operator=(Property&& rhs) noexcept {
+    TUSDZ_LOG_I("Property move assignment operator called");
+    if (this != &rhs) {
+      _type = rhs._type;
+      _attrib = std::move(rhs._attrib);
+      _rel = std::move(rhs._rel);
+      _prop_value_type_name = std::move(rhs._prop_value_type_name);
+      _has_custom = rhs._has_custom;
+      _listOpQual = rhs._listOpQual;
+    }
+    return *this;
   }
 
   bool is_attribute() const {
@@ -4148,21 +4207,29 @@ class PrimNode {
 /// Properties(Relationships and Attributes)
 class PrimSpec {
  public:
-  PrimSpec() = default;
+  PrimSpec() {
+    TUSDZ_LOG_I("PrimSpec default constructor called");
+  }
 
   PrimSpec(const Specifier &spec, const std::string &name)
-      : _specifier(spec), _name(name) {}
+      : _specifier(spec), _name(name) {
+    TUSDZ_LOG_I("PrimSpec constructor called with spec and name: " << name);
+  }
   PrimSpec(const Specifier &spec, const std::string &typeName,
            const std::string &name)
-      : _specifier(spec), _typeName(typeName), _name(name) {}
+      : _specifier(spec), _typeName(typeName), _name(name) {
+    TUSDZ_LOG_I("PrimSpec constructor called with spec, typeName, and name: " << name);
+  }
 
   PrimSpec(const PrimSpec &rhs) {
+    TUSDZ_LOG_I("PrimSpec copy constructor called");
     if (this != &rhs) {
       CopyFrom(rhs);
     }
   }
 
   PrimSpec &operator=(const PrimSpec &rhs) {
+    TUSDZ_LOG_I("PrimSpec copy assignment operator called");
     if (this != &rhs) {
       CopyFrom(rhs);
     }
@@ -4171,6 +4238,7 @@ class PrimSpec {
   }
 
   PrimSpec &operator=(PrimSpec &&rhs) noexcept {
+    TUSDZ_LOG_I("PrimSpec move assignment operator called");
     if (this != &rhs) {
       MoveFrom(rhs);
     }
