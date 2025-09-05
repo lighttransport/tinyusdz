@@ -33,6 +33,7 @@
 #endif
 
 #include "value-types.hh"
+#include "common-macros.inc"
 
 namespace tinyusdz {
 namespace primvar {
@@ -43,22 +44,28 @@ struct PrimVar {
   value::TimeSamples _ts; // For TimeSamples value.
 
   // Default constructor
-  PrimVar() = default;
+  PrimVar() {
+    TUSDZ_LOG_I("PrimVar default ctor");
+  }
 
   // Copy constructor
   PrimVar(const PrimVar& rhs) 
-    : _value(rhs._value), _blocked(rhs._blocked), _ts(rhs._ts) {}
+    : _value(rhs._value), _blocked(rhs._blocked), _ts(rhs._ts) {
+    TUSDZ_LOG_I("PrimVar copy ctor");
+  }
 
   // Move constructor
   PrimVar(PrimVar&& rhs) noexcept
     : _value(std::move(rhs._value)), 
       _blocked(rhs._blocked), 
       _ts(std::move(rhs._ts)) {
+    TUSDZ_LOG_I("PrimVar move ctor");
     rhs._blocked = false;
   }
 
   // Copy assignment operator
   PrimVar& operator=(const PrimVar& rhs) {
+    TUSDZ_LOG_I("PrimVar copy assignment op");
     if (this != &rhs) {
       _value = rhs._value;
       _blocked = rhs._blocked;
@@ -69,6 +76,7 @@ struct PrimVar {
 
   // Move assignment operator
   PrimVar& operator=(PrimVar&& rhs) noexcept {
+    TUSDZ_LOG_I("PrimVar move assignment op");
     if (this != &rhs) {
       _value = std::move(rhs._value);
       _blocked = rhs._blocked;
@@ -80,6 +88,7 @@ struct PrimVar {
 
   template<typename T>
   PrimVar(T &&v) noexcept : _value(std::move(v)) {
+    TUSDZ_LOG_I("PrimVar templated ctor");
   }
 
   bool has_value() const {
