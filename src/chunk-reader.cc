@@ -820,16 +820,6 @@ void ChunkReader::EvictFromRandomCache() {
       }
       break;
     }
-    
-    default:
-      // Default to SLRU behavior
-      if (!random_cache_lru_.empty()) {
-        victim_chunk_id = random_cache_lru_.back();
-        random_cache_lru_.pop_back();
-      } else {
-        return;
-      }
-      break;
   }
   
   auto it = random_cache_.find(victim_chunk_id);
