@@ -158,7 +158,7 @@ static bool MyRead(const tinyusdz::Asset &asset,
   memcpy(&val, asset.data(), 4);
 
   tinyusdz::Attribute attr;
-  attr.set_value(val);
+  attr.set_value(std::move(val));
   attr.set_name("myval");
   attr.variability() = tinyusdz::Variability::Uniform;
 
