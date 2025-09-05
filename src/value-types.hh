@@ -2034,6 +2034,12 @@ class Value {
  public:
   Value() = default;
 
+  // Copy constructor
+  Value(const Value& rhs) : v_(rhs.v_) {}
+
+  // Move constructor
+  Value(Value&& rhs) noexcept : v_(std::move(rhs.v_)) {}
+
   template <class T>
   Value(const T &v) : v_(v) {}
 
@@ -2211,6 +2217,22 @@ class Value {
   }
 
 
+  // Copy assignment operator
+  Value& operator=(const Value& rhs) {
+    if (this != &rhs) {
+      v_ = rhs.v_;
+    }
+    return *this;
+  }
+
+  // Move assignment operator
+  Value& operator=(Value&& rhs) noexcept {
+    if (this != &rhs) {
+      v_ = std::move(rhs.v_);
+    }
+    return *this;
+  }
+
   template <class T>
   Value &operator=(const T &v) {
     v_ = v;
@@ -2232,6 +2254,11 @@ class Value {
   bool is_none() const { return v_.type_id() == value::TYPE_ID_VALUEBLOCK; }
 
   size_t estimate_memory_usage() const;
+
+  template <class T>
+  void set_value(T &&v) noexcept {
+      v_(v);
+  }
 
  private:
   // any_value v_;
