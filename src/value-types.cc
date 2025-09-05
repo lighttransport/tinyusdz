@@ -1236,8 +1236,8 @@ size_t Value::estimate_memory_usage() const {
         for (const auto& str : *vec) {
           total_size += str.capacity();
         }
-      } else if (auto* vec = as<std::vector<value::token>>()) {
-        for (const auto& tok : *vec) {
+      } else if (auto* tokVec = as<std::vector<value::token>>()) {
+        for (const auto& tok : *tokVec) {
           total_size += tok.str().capacity();
         }
       }
