@@ -24,7 +24,7 @@ void SimpleScene(tinyusdz::Stage *stage)
   translate[0] = 1.0;
   translate[1] = 2.0;
   translate[2] = 3.0;
-  op.set_value(translate);
+  op.set_value(std::move(translate));
 
   xform.xformOps.push_back(op);
 
@@ -41,7 +41,7 @@ void SimpleScene(tinyusdz::Stage *stage)
 
     pts.push_back({0.0f, 1.0f, 0.0f});
 
-    mesh.points.set_value(pts);
+    mesh.points.set_value(std::move(pts));
   }
 
   {
@@ -50,7 +50,7 @@ void SimpleScene(tinyusdz::Stage *stage)
     std::vector<int> counts;
     counts.push_back(3);
     counts.push_back(3);
-    mesh.faceVertexCounts.set_value(counts);
+    mesh.faceVertexCounts.set_value(std::move(counts));
 
     indices.push_back(0);
     indices.push_back(1);
@@ -60,7 +60,7 @@ void SimpleScene(tinyusdz::Stage *stage)
     indices.push_back(2);
     indices.push_back(3);
 
-    mesh.faceVertexIndices.set_value(indices);
+    mesh.faceVertexIndices.set_value(std::move(indices));
   }
 
   // primvar and custom attribute can be added to generic Property container `props`
@@ -80,7 +80,7 @@ void SimpleScene(tinyusdz::Stage *stage)
       uvs.push_back({0.0f, 1.0f});
 
       // Fast path. Set the value directly to Attribute.
-      uvAttr.set_value(uvs);
+      uvAttr.set_value(std::move(uvs));
 
       // or we can first build primvar::PrimVar
       //tinyusdz::primvar::PrimVar uvVar;
@@ -109,7 +109,7 @@ void SimpleScene(tinyusdz::Stage *stage)
 
 
       tinyusdz::primvar::PrimVar uvIndexVar;
-      uvIndexVar.set_value(uvIndices);
+      uvIndexVar.set_value(std::move(uvIndices));
       uvIndexAttr.set_var(std::move(uvIndexVar));
 
       tinyusdz::Property uvIndexProp(uvIndexAttr, /* custom*/false);
