@@ -1935,6 +1935,28 @@ struct TypeTraits<std::vector<T>> {
   static constexpr bool is_array() { return true; }
 };
 
+template <typename T>
+struct TypeTraits<TypedArray<T>> {
+  using value_type = TypedArray<T>;
+  static constexpr uint32_t ndim() { return 1; } /* array dim */
+  static constexpr uint32_t ncomp() { return TypeTraits<T>::ncomp(); }
+  // Return the size of base type
+  static constexpr size_t size() { return TypeTraits<T>::size(); }
+  static constexpr uint32_t type_id() { return
+      TypeTraits<T>::type_id() | TYPE_ID_1D_ARRAY_BIT; }
+  static constexpr uint32_t get_type_id() {
+      return TypeTraits<T>::type_id() | TYPE_ID_1D_ARRAY_BIT; }
+  static constexpr uint32_t underlying_type_id() {
+      return TypeTraits<T>::underlying_type_id() | TYPE_ID_1D_ARRAY_BIT; }
+  static std::string type_name() { return TypeTraits<T>::type_name() + "[]"; }
+  static std::string underlying_type_name() {
+    return TypeTraits<T>::underlying_type_name() + "[]";
+  }
+  static constexpr bool is_role_type() { return TypeTraits<T>::is_role_type(); }
+  static constexpr bool is_array() { return true; }
+};
+
+
 #if 0  // Current pxrUSD does not support 2D array
 // 2D Array
 // TODO(syoyo): support 3D array?
@@ -2014,6 +2036,9 @@ class Value {
 
   template <class T>
   Value(const T &v) : v_(v) {}
+
+  template <class T>
+  Value(T &&v) noexcept : v_(std::move(v)) {}
 
   // template <class T>
   // Value(T &&v) : v_(v) {}
