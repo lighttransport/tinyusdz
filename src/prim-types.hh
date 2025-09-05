@@ -2436,6 +2436,59 @@ class Attribute {
  public:
   Attribute() = default;
 
+  // Copy constructor
+  Attribute(const Attribute& rhs) 
+    : _name(rhs._name),
+      _variability(rhs._variability),
+      _varying_authored(rhs._varying_authored),
+      _type_name(rhs._type_name),
+      _var(rhs._var),
+      _paths(rhs._paths),
+      _metas(rhs._metas) {}
+
+  // Move constructor
+  Attribute(Attribute&& rhs) noexcept
+    : _name(std::move(rhs._name)),
+      _variability(rhs._variability),
+      _varying_authored(rhs._varying_authored),
+      _type_name(std::move(rhs._type_name)),
+      _var(std::move(rhs._var)),
+      _paths(std::move(rhs._paths)),
+      _metas(std::move(rhs._metas)) {
+    rhs._variability = Variability::Varying;
+    rhs._varying_authored = false;
+  }
+
+  // Copy assignment operator
+  Attribute& operator=(const Attribute& rhs) {
+    if (this != &rhs) {
+      _name = rhs._name;
+      _variability = rhs._variability;
+      _varying_authored = rhs._varying_authored;
+      _type_name = rhs._type_name;
+      _var = rhs._var;
+      _paths = rhs._paths;
+      _metas = rhs._metas;
+    }
+    return *this;
+  }
+
+  // Move assignment operator
+  Attribute& operator=(Attribute&& rhs) noexcept {
+    if (this != &rhs) {
+      _name = std::move(rhs._name);
+      _variability = rhs._variability;
+      _varying_authored = rhs._varying_authored;
+      _type_name = std::move(rhs._type_name);
+      _var = std::move(rhs._var);
+      _paths = std::move(rhs._paths);
+      _metas = std::move(rhs._metas);
+      rhs._variability = Variability::Varying;
+      rhs._varying_authored = false;
+    }
+    return *this;
+  }
+
   ///
   /// Construct Attribute with typed value(`float`, `token`, ...).
   ///
@@ -2522,6 +2575,14 @@ class Attribute {
       _type_name = value::TypeTraits<T>::type_name();
     }
     _var.set_value(v);
+  }
+
+  template <typename T>
+  void set_value(T &&v) {
+    if (_type_name.empty()) {
+      _type_name = value::TypeTraits<T>::type_name();
+    }
+    _var.set_value(std::move(v));
   }
 
   void set_var(primvar::PrimVar &v) {

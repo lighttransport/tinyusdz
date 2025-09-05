@@ -3731,7 +3731,7 @@ bool AsciiParser::ParseBasicPrimAttr(bool array_qual,
   if (blocked) {
     // There is still have a type for ValueBlock.
     value::ValueBlock noneval;
-    attr.set_value(noneval);
+    attr.set_value(std::move(noneval));
     attr.set_blocked(true);
     if (array_qual) {
       attr.set_type_name(value::TypeTraits<T>::type_name() + "[]");

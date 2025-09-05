@@ -42,6 +42,46 @@ struct PrimVar {
   bool _blocked{false}; // ValueBlocked.
   value::TimeSamples _ts; // For TimeSamples value.
 
+  // Default constructor
+  PrimVar() = default;
+
+  // Copy constructor
+  PrimVar(const PrimVar& rhs) 
+    : _value(rhs._value), _blocked(rhs._blocked), _ts(rhs._ts) {}
+
+  // Move constructor
+  PrimVar(PrimVar&& rhs) noexcept
+    : _value(std::move(rhs._value)), 
+      _blocked(rhs._blocked), 
+      _ts(std::move(rhs._ts)) {
+    rhs._blocked = false;
+  }
+
+  // Copy assignment operator
+  PrimVar& operator=(const PrimVar& rhs) {
+    if (this != &rhs) {
+      _value = rhs._value;
+      _blocked = rhs._blocked;
+      _ts = rhs._ts;
+    }
+    return *this;
+  }
+
+  // Move assignment operator
+  PrimVar& operator=(PrimVar&& rhs) noexcept {
+    if (this != &rhs) {
+      _value = std::move(rhs._value);
+      _blocked = rhs._blocked;
+      _ts = std::move(rhs._ts);
+      rhs._blocked = false;
+    }
+    return *this;
+  }
+
+  template<typename T>
+  PrimVar(T &&v) noexcept : _value(std::move(v)) {
+  }
+
   bool has_value() const {
     // ValueBlock is treated as having a value.
     if (_blocked) {

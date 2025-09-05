@@ -2259,7 +2259,7 @@ bool PrimToPrimSpecImpl(const Xform &p, PrimSpec &ps, std::string *err) {
   // TODO..
   std::vector<value::token> toks;
   Attribute xformOpOrderAttr;
-  xformOpOrderAttr.set_value(toks);
+  xformOpOrderAttr.set_value(std::move(toks));
   ps.props().emplace("xformOpOrder",
                      Property(xformOpOrderAttr, /* custom */ false));
 
