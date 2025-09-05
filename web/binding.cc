@@ -18,6 +18,7 @@
 //#include "external/fast_float/include/fast_float/bigint.h"
 #include "tinyusdz.hh"
 #include "pprinter.hh"
+#include "value-types.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
 
@@ -971,7 +972,7 @@ class TinyUSDZLoaderNative {
     
     // Test 14: Half precision types
     {
-      tinyusdz::value::half h(1.5f);
+      tinyusdz::value::half h(tinyusdz::value::float_to_half_full(1.5f));
       tinyusdz::value::Value v(h);
       emscripten::val test = emscripten::val::object();
       test.set("name", "half(1.5)");
@@ -1002,6 +1003,43 @@ class TinyUSDZLoaderNative {
     result.set("totalTests", numTests);
     result.set("totalMemory", totalMemory);
     result.set("arrayLength", arrayLength);
+    
+    return result;
+  }
+
+  emscripten::val testLayer(emscripten::val arrayLengthVal) {
+    
+    // Get array length from parameter or use default
+    int arrayLength = 10000;
+    if (!arrayLengthVal.isUndefined() && !arrayLengthVal.isNull()) {
+      arrayLength = arrayLengthVal.as<int>();
+    }
+    
+    std::cout << "arrayLen " << arrayLength << "\n";
+#if 0
+    // create Attrib
+    std::vector<tinyusdz::value::point3f> points(arrayLength);
+    tinyusdz::Attribute attr;
+    attr.set_value(std::move(points));
+
+    std::cout << "Attr.memusage " << attr.estimate_memory_usage() << "\n";
+    size_t totalMemory = 0; //attr.estimate_memory_usage();
+#else
+    tinyusdz::TypedArray<tinyusdz::value::point3f> points(arrayLength);
+    //tinyusdz::Attribute attr;
+    //attr.set_value(std::move(points));
+    
+    tinyusdz::primvar::PrimVar var(std::move(points));
+
+    //std::vector<tinyusdz::value::point3f> points(arrayLength);
+    //tinyusdz::value::Value v(std::move(points));
+    size_t totalMemory = points.size() * sizeof(tinyusdz::value::point3f);
+    std::cout << "totalMemory " << totalMemory << "\n";
+#endif
+    
+    
+    emscripten::val result = emscripten::val::object();
+    result.set("totalMemory", totalMemory);
     
     return result;
   }
@@ -2297,6 +2335,7 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("loadFromBinary", &TinyUSDZLoaderNative::loadFromBinary)
       .function("loadTest", &TinyUSDZLoaderNative::loadTest)
       .function("testValueMemoryUsage", &TinyUSDZLoaderNative::testValueMemoryUsage)
+      .function("testLayer", &TinyUSDZLoaderNative::testLayer)
       //.function("loadAndCompositeFromBinary", &TinyUSDZLoaderNative::loadFromBinary)
       
       // For Stage 
