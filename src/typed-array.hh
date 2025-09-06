@@ -78,19 +78,8 @@ public:
         }
     }
 
-    // Copy constructor
-    TypedArray(const TypedArray& other) {
-        if (other._is_view) {
-            // Copy view properties
-            _view_ptr = other._view_ptr;
-            _view_size = other._view_size;
-            _is_view = true;
-        } else {
-            // Copy storage
-            _storage = other._storage;
-            _is_view = false;
-        }
-    }
+    // Copy constructor - deleted to prevent accidental copies
+    TypedArray(const TypedArray& other) = delete;
 
     // Move constructor
     TypedArray(TypedArray&& other) noexcept {
@@ -106,23 +95,8 @@ public:
         }
     }
 
-    // Copy assignment
-    TypedArray& operator=(const TypedArray& other) {
-        if (this != &other) {
-            if (other._is_view) {
-                _storage.clear();
-                _view_ptr = other._view_ptr;
-                _view_size = other._view_size;
-                _is_view = true;
-            } else {
-                _view_ptr = nullptr;
-                _view_size = 0;
-                _storage = other._storage;
-                _is_view = false;
-            }
-        }
-        return *this;
-    }
+    // Copy assignment - deleted to prevent accidental copies
+    TypedArray& operator=(const TypedArray& other) = delete;
 
     // Move assignment
     TypedArray& operator=(TypedArray&& other) noexcept {
@@ -146,6 +120,24 @@ public:
 
     // Destructor
     ~TypedArray() = default;
+
+    // Explicit copy method - creates a deep copy of the array
+    TypedArray copy() const {
+        TypedArray result;
+        if (_is_view) {
+            // Copy data from view into new storage
+            result._storage.resize(_view_size * sizeof(T));
+            if (_view_ptr && _view_size > 0) {
+                std::memcpy(result._storage.data(), _view_ptr, _view_size * sizeof(T));
+            }
+            result._is_view = false;
+        } else {
+            // Copy storage
+            result._storage = _storage;
+            result._is_view = false;
+        }
+        return result;
+    }
 
     // Check if this is a view (non-owning)
     bool is_view() const noexcept {
@@ -923,6 +915,545 @@ TypedArrayView<T> reinterpret_typed_array_view_mutable(const TypedArrayView<U>& 
 template<typename T>
 TypedArray<T> make_typed_array(nonstd::span<const T> sp) {
     return TypedArray<T>(sp.data(), sp.size());
+}
+
+///
+/// ChunkedTypedArray: A typed array backed by chunked storage buffers
+/// Provides memory-efficient storage for very large arrays by dividing storage into chunks
+/// Does not provide direct data() access, only element access via at() method
+///
+template<typename T>
+class ChunkedTypedArray {
+public:
+    using value_type = T;
+    using size_type = std::size_t;
+    using difference_type = std::ptrdiff_t;
+    using reference = T&;
+    using const_reference = const T&;
+    using pointer = T*;
+    using const_pointer = const T*;
+
+    // Default chunk size: 64MB
+    static constexpr size_type DEFAULT_CHUNK_SIZE = 64 * 1024 * 1024;
+
+    // Default constructor
+    ChunkedTypedArray() : _chunk_size_bytes(DEFAULT_CHUNK_SIZE), _total_size(0) {
+        _elements_per_chunk = _chunk_size_bytes / sizeof(T);
+        if (_elements_per_chunk == 0) {
+            _elements_per_chunk = 1;  // At least one element per chunk
+        }
+    }
+
+    // Constructor with custom chunk size (in bytes)
+    explicit ChunkedTypedArray(size_type chunk_size_bytes) 
+        : _chunk_size_bytes(chunk_size_bytes), _total_size(0) {
+        if (_chunk_size_bytes == 0) {
+            _chunk_size_bytes = DEFAULT_CHUNK_SIZE;
+        }
+        _elements_per_chunk = _chunk_size_bytes / sizeof(T);
+        if (_elements_per_chunk == 0) {
+            _elements_per_chunk = 1;  // At least one element per chunk
+        }
+    }
+
+    // Constructor with size
+    explicit ChunkedTypedArray(size_type count, size_type chunk_size_bytes = DEFAULT_CHUNK_SIZE)
+        : _chunk_size_bytes(chunk_size_bytes), _total_size(count) {
+        if (_chunk_size_bytes == 0) {
+            _chunk_size_bytes = DEFAULT_CHUNK_SIZE;
+        }
+        _elements_per_chunk = _chunk_size_bytes / sizeof(T);
+        if (_elements_per_chunk == 0) {
+            _elements_per_chunk = 1;  // At least one element per chunk
+        }
+        allocate_chunks_for_size(count);
+    }
+
+    // Constructor with size and default value
+    ChunkedTypedArray(size_type count, const T& value, size_type chunk_size_bytes = DEFAULT_CHUNK_SIZE)
+        : _chunk_size_bytes(chunk_size_bytes), _total_size(count) {
+        if (_chunk_size_bytes == 0) {
+            _chunk_size_bytes = DEFAULT_CHUNK_SIZE;
+        }
+        _elements_per_chunk = _chunk_size_bytes / sizeof(T);
+        if (_elements_per_chunk == 0) {
+            _elements_per_chunk = 1;  // At least one element per chunk
+        }
+        allocate_chunks_for_size(count);
+        
+        // Initialize all elements with the given value
+        for (size_type i = 0; i < count; ++i) {
+            at(i) = value;
+        }
+    }
+
+    // Constructor from initializer list
+    ChunkedTypedArray(std::initializer_list<T> init, size_type chunk_size_bytes = DEFAULT_CHUNK_SIZE)
+        : _chunk_size_bytes(chunk_size_bytes), _total_size(init.size()) {
+        if (_chunk_size_bytes == 0) {
+            _chunk_size_bytes = DEFAULT_CHUNK_SIZE;
+        }
+        _elements_per_chunk = _chunk_size_bytes / sizeof(T);
+        if (_elements_per_chunk == 0) {
+            _elements_per_chunk = 1;  // At least one element per chunk
+        }
+        allocate_chunks_for_size(init.size());
+        
+        size_type idx = 0;
+        for (const auto& item : init) {
+            at(idx++) = item;
+        }
+    }
+
+    // Copy constructor - deleted to prevent accidental copies
+    ChunkedTypedArray(const ChunkedTypedArray& other) = delete;
+
+    // Move constructor
+    ChunkedTypedArray(ChunkedTypedArray&& other) noexcept
+        : _chunks(std::move(other._chunks)),
+          _chunk_size_bytes(other._chunk_size_bytes),
+          _elements_per_chunk(other._elements_per_chunk),
+          _total_size(other._total_size) {
+        other._total_size = 0;
+    }
+
+    // Copy assignment - deleted to prevent accidental copies
+    ChunkedTypedArray& operator=(const ChunkedTypedArray& other) = delete;
+
+    // Move assignment
+    ChunkedTypedArray& operator=(ChunkedTypedArray&& other) noexcept {
+        if (this != &other) {
+            _chunks = std::move(other._chunks);
+            _chunk_size_bytes = other._chunk_size_bytes;
+            _elements_per_chunk = other._elements_per_chunk;
+            _total_size = other._total_size;
+            other._total_size = 0;
+        }
+        return *this;
+    }
+
+    // Destructor
+    ~ChunkedTypedArray() = default;
+
+    // Explicit copy method - creates a deep copy of the chunked array
+    ChunkedTypedArray copy() const {
+        ChunkedTypedArray result;  // Use default constructor
+        result._chunk_size_bytes = _chunk_size_bytes;
+        result._elements_per_chunk = _elements_per_chunk;
+        result._total_size = _total_size;
+        result._front_offset = _front_offset;
+        
+        // Deep copy each chunk
+        result._chunks.reserve(_chunks.size());
+        for (const auto& chunk : _chunks) {
+            result._chunks.push_back(chunk.copy());  // Use TypedArray's copy method
+        }
+        
+        return result;
+    }
+
+    // Size operations
+    size_type size() const noexcept {
+        return _total_size;
+    }
+
+    bool empty() const noexcept {
+        return _total_size == 0;
+    }
+
+    size_type chunk_count() const noexcept {
+        return _chunks.size();
+    }
+
+    size_type chunk_size_bytes() const noexcept {
+        return _chunk_size_bytes;
+    }
+
+    size_type elements_per_chunk() const noexcept {
+        return _elements_per_chunk;
+    }
+
+    // Element access (main interface - no data() method provided)
+    // No error checking for performance
+    reference at(size_type index) {
+        // Convert logical index to physical index
+        size_type physical_index = index - _front_offset;
+        size_type chunk_idx = physical_index / _elements_per_chunk;
+        size_type element_idx = physical_index % _elements_per_chunk;
+        return reinterpret_cast<T*>(_chunks[chunk_idx].data())[element_idx];
+    }
+
+    const_reference at(size_type index) const {
+        // Convert logical index to physical index
+        size_type physical_index = index - _front_offset;
+        size_type chunk_idx = physical_index / _elements_per_chunk;
+        size_type element_idx = physical_index % _elements_per_chunk;
+        return reinterpret_cast<const T*>(_chunks[chunk_idx].data())[element_idx];
+    }
+
+    // Operator[] for convenience - no bounds checking for performance
+    reference operator[](size_type index) {
+        // Convert logical index to physical index
+        size_type physical_index = index - _front_offset;
+        size_type chunk_idx = physical_index / _elements_per_chunk;
+        size_type element_idx = physical_index % _elements_per_chunk;
+        return reinterpret_cast<T*>(_chunks[chunk_idx].data())[element_idx];
+    }
+
+    const_reference operator[](size_type index) const {
+        // Convert logical index to physical index
+        size_type physical_index = index - _front_offset;
+        size_type chunk_idx = physical_index / _elements_per_chunk;
+        size_type element_idx = physical_index % _elements_per_chunk;
+        return reinterpret_cast<const T*>(_chunks[chunk_idx].data())[element_idx];
+    }
+
+    // Front and back access - returns pointer (nullptr if empty)
+    pointer front_ptr() {
+        if (empty()) return nullptr;
+        return &at(_front_offset);  // First valid logical index
+    }
+
+    const_pointer front_ptr() const {
+        if (empty()) return nullptr;
+        return &at(_front_offset);  // First valid logical index
+    }
+
+    pointer back_ptr() {
+        if (empty()) return nullptr;
+        return &at(_front_offset + _total_size - 1);  // Last valid logical index
+    }
+
+    const_pointer back_ptr() const {
+        if (empty()) return nullptr;
+        return &at(_front_offset + _total_size - 1);  // Last valid logical index
+    }
+
+    // Front and back access - no error checking for performance
+    reference front() {
+        return at(_front_offset);  // First valid logical index
+    }
+
+    const_reference front() const {
+        return at(_front_offset);  // First valid logical index
+    }
+
+    reference back() {
+        return at(_front_offset + _total_size - 1);  // Last valid logical index
+    }
+
+    const_reference back() const {
+        return at(_front_offset + _total_size - 1);  // Last valid logical index
+    }
+
+    // Modifiers
+    void clear() noexcept {
+        _chunks.clear();
+        _total_size = 0;
+        _front_offset = 0;
+    }
+
+    void resize(size_type count) {
+        if (count == _total_size) {
+            return;
+        }
+
+        if (count < _total_size) {
+            // Shrinking - remove unnecessary chunks
+            size_type needed_chunks = (count + _elements_per_chunk - 1) / _elements_per_chunk;
+            if (needed_chunks < _chunks.size()) {
+                _chunks.resize(needed_chunks);
+            }
+            // Resize the last chunk if necessary
+            if (needed_chunks > 0 && count > 0) {
+                size_type last_chunk_elements = count - (needed_chunks - 1) * _elements_per_chunk;
+                size_type last_chunk_bytes = last_chunk_elements * sizeof(T);
+                _chunks.back().resize(last_chunk_bytes);
+            }
+        } else {
+            // Growing - allocate new chunks
+            allocate_chunks_for_size(count);
+        }
+        _total_size = count;
+    }
+
+    void resize(size_type count, const T& value) {
+        size_type old_size = _total_size;
+        resize(count);
+        
+        // Initialize new elements with the given value
+        for (size_type i = old_size; i < count; ++i) {
+            at(i) = value;
+        }
+    }
+
+    void push_back(const T& value) {
+        resize(_total_size + 1);
+        back() = value;
+    }
+
+    void push_back(T&& value) {
+        resize(_total_size + 1);
+        back() = std::move(value);
+    }
+
+    bool pop_back() {
+        if (empty()) {
+            return false;
+        }
+        resize(_total_size - 1);
+        return true;
+    }
+
+    // Reserve capacity (pre-allocate chunks)
+    void reserve(size_type new_capacity) {
+        if (new_capacity <= capacity()) {
+            return;
+        }
+        
+        size_type needed_chunks = (new_capacity + _elements_per_chunk - 1) / _elements_per_chunk;
+        _chunks.reserve(needed_chunks);
+    }
+
+    // Get current capacity (in elements)
+    size_type capacity() const noexcept {
+        return _chunks.size() * _elements_per_chunk;
+    }
+
+    // Shrink chunks to fit actual size
+    void shrink_to_fit() {
+        if (empty()) {
+            _chunks.clear();
+            return;
+        }
+        
+        // Remove excess chunks
+        size_type needed_chunks = (_total_size + _elements_per_chunk - 1) / _elements_per_chunk;
+        if (needed_chunks < _chunks.size()) {
+            _chunks.resize(needed_chunks);
+        }
+        
+        // Shrink the last chunk
+        if (!_chunks.empty()) {
+            size_type last_chunk_elements = _total_size - (needed_chunks - 1) * _elements_per_chunk;
+            size_type last_chunk_bytes = last_chunk_elements * sizeof(T);
+            _chunks.back().resize(last_chunk_bytes);
+            _chunks.back().shrink_to_fit();
+        }
+        
+        // Shrink chunk vector itself
+        _chunks.shrink_to_fit();
+    }
+
+    // Copy data to a contiguous buffer (useful for exporting)
+    // Copies the actual data in physical order (ignoring the logical offset)
+    // Returns true on success, false if dest is null or array is empty
+    bool copy_to(T* dest) const {
+        if (empty() || !dest) {
+            return false;
+        }
+        
+        size_type copied = 0;
+        for (size_type chunk_idx = 0; chunk_idx < _chunks.size(); ++chunk_idx) {
+            size_type elements_in_chunk = std::min(_elements_per_chunk, _total_size - copied);
+            size_type bytes_to_copy = elements_in_chunk * sizeof(T);
+            std::memcpy(dest + copied, _chunks[chunk_idx].data(), bytes_to_copy);
+            copied += elements_in_chunk;
+        }
+        return true;
+    }
+
+    // Copy data from a contiguous buffer
+    // Replaces all current data and resets the front offset
+    // Returns true on success, false if src is null
+    bool copy_from(const T* src, size_type count) {
+        if (!src) {
+            return false;
+        }
+        
+        if (count == 0) {
+            clear();
+            return true;
+        }
+        
+        clear();  // This resets _front_offset to 0
+        resize(count);
+        size_type copied = 0;
+        for (size_type chunk_idx = 0; chunk_idx < _chunks.size(); ++chunk_idx) {
+            size_type elements_to_copy = std::min(_elements_per_chunk, count - copied);
+            size_type bytes_to_copy = elements_to_copy * sizeof(T);
+            std::memcpy(_chunks[chunk_idx].data(), src + copied, bytes_to_copy);
+            copied += elements_to_copy;
+        }
+        return true;
+    }
+
+    // Get chunk at specific index (for advanced usage)
+    // Returns nullptr if chunk_index is out of range
+    const TypedArray<uint8_t>* get_chunk(size_type chunk_index) const {
+        if (chunk_index >= _chunks.size()) return nullptr;
+        return &_chunks[chunk_index];
+    }
+
+    TypedArray<uint8_t>* get_chunk(size_type chunk_index) {
+        if (chunk_index >= _chunks.size()) return nullptr;
+        return &_chunks[chunk_index];
+    }
+
+    // Swap
+    void swap(ChunkedTypedArray& other) noexcept {
+        _chunks.swap(other._chunks);
+        std::swap(_chunk_size_bytes, other._chunk_size_bytes);
+        std::swap(_elements_per_chunk, other._elements_per_chunk);
+        std::swap(_total_size, other._total_size);
+        std::swap(_front_offset, other._front_offset);
+    }
+
+    // Comparison operators
+    bool operator==(const ChunkedTypedArray& other) const {
+        if (_total_size != other._total_size) {
+            return false;
+        }
+        // Compare elements using physical indices (0 to _total_size-1)
+        for (size_type i = 0; i < _total_size; ++i) {
+            // Use physical indices for comparison (add offset to get logical index)
+            if (at(_front_offset + i) != other.at(other._front_offset + i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool operator!=(const ChunkedTypedArray& other) const {
+        return !(*this == other);
+    }
+
+    // Memory usage statistics
+    size_type memory_usage() const noexcept {
+        size_type total = 0;
+        for (const auto& chunk : _chunks) {
+            total += chunk.capacity();
+        }
+        return total;
+    }
+
+    // Free chunk from front - removes the first chunk and adjusts indices
+    // After this operation, element [0] corresponds to what was [elements_per_chunk] before
+    // Returns true if a chunk was freed, false if empty
+    bool free_chunk_front() {
+        if (_chunks.empty()) {
+            return false;
+        }
+        
+        // Calculate how many elements we're removing
+        size_type elements_to_remove = std::min(_elements_per_chunk, _total_size);
+        
+        // Remove the first chunk
+        _chunks.erase(_chunks.begin());
+        
+        // Adjust total size and offset
+        _total_size -= elements_to_remove;
+        _front_offset += elements_to_remove;
+        return true;
+    }
+
+    // Free chunk from back - removes the last chunk
+    // Returns true if a chunk was freed, false if empty
+    bool free_chunk_back() {
+        if (_chunks.empty()) {
+            return false;
+        }
+        
+        // Calculate how many elements are in the last chunk
+        size_type last_chunk_elements;
+        if (_chunks.size() == 1) {
+            // Only one chunk - it contains all remaining elements
+            last_chunk_elements = _total_size;
+        } else {
+            // Multiple chunks - calculate elements in last chunk
+            size_type elements_in_full_chunks = (_chunks.size() - 1) * _elements_per_chunk;
+            last_chunk_elements = _total_size - elements_in_full_chunks;
+        }
+        
+        // Remove the last chunk
+        _chunks.pop_back();
+        
+        // Adjust total size
+        _total_size -= last_chunk_elements;
+        return true;
+    }
+
+    // Get the logical index offset (for supporting free_chunk_front)
+    size_type index_offset() const noexcept {
+        return _front_offset;
+    }
+
+    // Get the first valid logical index
+    size_type begin_index() const noexcept {
+        return _front_offset;
+    }
+
+    // Get one past the last valid logical index
+    size_type end_index() const noexcept {
+        return _front_offset + _total_size;
+    }
+
+    // Check if a logical index is valid
+    bool is_valid_index(size_type index) const noexcept {
+        return index >= _front_offset && index < (_front_offset + _total_size);
+    }
+
+    // Reset the front offset (useful after multiple free_chunk_front operations)
+    // NOTE: This doesn't reorganize data, just resets the logical indexing
+    void reset_front_offset() noexcept {
+        _front_offset = 0;
+    }
+
+private:
+    // Allocate chunks to accommodate the given size
+    void allocate_chunks_for_size(size_type count) {
+        if (count == 0) {
+            _chunks.clear();
+            return;
+        }
+        
+        size_type needed_chunks = (count + _elements_per_chunk - 1) / _elements_per_chunk;
+        
+        // Allocate new chunks if needed
+        while (_chunks.size() < needed_chunks) {
+            _chunks.emplace_back();
+            if (_chunks.size() < needed_chunks) {
+                // Full chunk
+                _chunks.back().resize(_elements_per_chunk * sizeof(T));
+            } else {
+                // Last chunk - may be partial
+                size_type remaining_elements = count - (_chunks.size() - 1) * _elements_per_chunk;
+                _chunks.back().resize(remaining_elements * sizeof(T));
+            }
+        }
+        
+        // Resize the last chunk if it exists and needs adjustment
+        if (!_chunks.empty()) {
+            size_type last_chunk_elements = count - (needed_chunks - 1) * _elements_per_chunk;
+            size_type last_chunk_bytes = last_chunk_elements * sizeof(T);
+            if (_chunks.back().size() != last_chunk_bytes) {
+                _chunks.back().resize(last_chunk_bytes);
+            }
+        }
+    }
+
+private:
+    std::vector<TypedArray<uint8_t>> _chunks;   // Storage chunks using TypedArray
+    size_type _chunk_size_bytes;                // Size of each chunk in bytes
+    size_type _elements_per_chunk;              // Number of T elements per chunk
+    size_type _total_size;                      // Total number of elements
+    size_type _front_offset = 0;                // Logical offset for indexing after free_chunk_front
+};
+
+// Non-member swap
+template<typename T>
+void swap(ChunkedTypedArray<T>& lhs, ChunkedTypedArray<T>& rhs) noexcept {
+    lhs.swap(rhs);
 }
 
 } // namespace tinyusdz
