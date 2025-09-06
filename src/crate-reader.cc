@@ -2773,7 +2773,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           v[i] = data[i] ? true : false;
         }
 
-        value->Set(v);
+        value->Set(std::move(v));
         return true;
 
       } else {
@@ -2908,7 +2908,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           }
         }
 
-        value->Set(tokens);
+        value->Set(std::move(tokens));
         return true;
       } else {
         return false;
@@ -2951,7 +2951,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         DCOUT("stringArray = " << stringArray);
 
         // TODO: Use token type?
-        value->Set(stringArray);
+        value->Set(std::move(stringArray));
 
         return true;
       } else {
@@ -2990,7 +2990,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         DCOUT("IntArray = " << value::print_array_snipped(v));
 
-        value->Set(v);
+        value->Set(std::move(v));
         return true;
       } else {
         return false;
@@ -3017,7 +3017,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         DCOUT("UIntArray = " << value::print_array_snipped(v));
 
-        value->Set(v);
+        value->Set(std::move(v));
         return true;
       } else {
         return false;
@@ -3042,7 +3042,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         DCOUT("Int64Array = " << v);
 
-        value->Set(v);
+        value->Set(std::move(v));
         return true;
       } else {
         COMPRESS_UNSUPPORTED_CHECK(dty)
@@ -3082,7 +3082,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         DCOUT("UInt64Array = " << value::print_array_snipped(v));
 
-        value->Set(v);
+        value->Set(std::move(v));
         return true;
       } else {
         COMPRESS_UNSUPPORTED_CHECK(dty)
@@ -3114,7 +3114,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        value->Set(v);
+        value->Set(std::move(v));
 
         return true;
       } else {
@@ -3136,7 +3136,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         DCOUT("FloatArray = " << value::print_array_snipped(v));
 
-        value->Set(v);
+        value->Set(std::move(v));
 
         return true;
       } else {
@@ -3159,7 +3159,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         DCOUT("DoubleArray = " << value::print_array_snipped(v));
-        value->Set(v);
+        value->Set(std::move(v));
 
         return true;
       } else {
@@ -3230,7 +3230,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        value->Set(v);
+        value->Set(std::move(v));
 
       } else {
         static_assert(sizeof(value::matrix2d) == (8 * 4), "");
@@ -3300,7 +3300,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        value->Set(v);
+        value->Set(std::move(v));
 
       } else {
         static_assert(sizeof(value::matrix3d) == (8 * 9), "");
@@ -3371,7 +3371,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           return false;
         }
 
-        value->Set(v);
+        value->Set(std::move(v));
 
       } else {
         static_assert(sizeof(value::matrix4d) == (8 * 16), "");
@@ -3440,7 +3440,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         DCOUT("Quatf[] = " << v);
 
-        value->Set(v);
+        value->Set(std::move(v));
 
       } else {
         COMPRESS_UNSUPPORTED_CHECK(dty)
@@ -3508,7 +3508,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         DCOUT("Quatf[] = " << v);
 
-        value->Set(v);
+        value->Set(std::move(v));
 
       } else {
         COMPRESS_UNSUPPORTED_CHECK(dty)
@@ -3577,7 +3577,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         DCOUT("Quath[] = " << v);
 
-        value->Set(v);
+        value->Set(std::move(v));
 
       } else {
         COMPRESS_UNSUPPORTED_CHECK(dty)
@@ -3648,7 +3648,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         DCOUT("double2[] = " << value::print_array_snipped(v));
 
-        value->Set(v);
+        value->Set(std::move(v));
         return true;
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::double2));
@@ -3717,7 +3717,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         DCOUT("float2[] = " << value::print_array_snipped(v));
 
-        value->Set(v);
+        value->Set(std::move(v));
         return true;
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::float2));
@@ -3905,7 +3905,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         DCOUT("double3[] = " << value::print_array_snipped(v));
-        value->Set(v);
+        value->Set(std::move(v));
 
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::double3));
@@ -3968,7 +3968,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         DCOUT("float3f[] = " << value::print_array_snipped(v));
-        value->Set(v);
+        value->Set(std::move(v));
 
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::float3));
