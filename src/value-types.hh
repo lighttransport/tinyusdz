@@ -2252,6 +2252,15 @@ class Value {
     return (*this);
   }
 
+#if 0
+  template <class T>
+  Value &operator=(T &&v) noexcept {
+    TUSDZ_LOG_I("Value templated move assignment operator called with type: " << typeid(T).name());
+    v_ = v;
+    return (*this);
+  }
+#endif
+
   const linb::any &get_raw() const { return v_; }
 
   bool is_array() const { return (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT); }
@@ -2270,7 +2279,9 @@ class Value {
 
   template <class T>
   void set_value(T &&v) noexcept {
-      v_(v);
+      TUSDZ_LOG_I("set_value move");
+      linb::any(v).swap(v_);
+      //v_.(v);
   }
 
  private:

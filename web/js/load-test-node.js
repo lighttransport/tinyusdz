@@ -50,7 +50,7 @@ function checkMemory64Support() {
 
 console.log("memory64:", checkMemory64Support());
 
-const usd_filename = "../../models/suzanne-subd-lv6.usdc";
+const usd_filename = "../../models/suzanne-subd-lv5.usdc";
 
 async function initScene() {
 
@@ -64,9 +64,9 @@ async function initScene() {
   const url = URL.createObjectURL(f);
   //const url = URL.createObjectURL(data);
   //const fdata = fetch(url);
-  //const usd = await loader.loadTestAsync(url);
+  const usd = await loader.loadTestAsync(url);
   //
-  const usd = await loader.loadAsLayerAsync(url);
+  //const usd = await loader.loadAsLayerAsync(url);
 
   //const usdRootNode = usd.getDefaultRootNode();
   //console.log(usdRootNode);

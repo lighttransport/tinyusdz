@@ -261,7 +261,20 @@ struct PrimVar {
 
   template <class T>
   void set_value(const T &v) {
+    TUSDZ_LOG_I("set_value cosnt_ref");
     _value = v;
+  }
+
+  template <class T>
+  void set_value(T &&v) {
+    TUSDZ_LOG_I("set_value move");
+
+    // _value = std::move(v) is not possible since
+    // Value's underlying linb::any does not provide templated move constructor.
+    // so create Value object first, then call move ctor.
+    value::Value src(std::move(v));
+
+    _value = std::move(src);
   }
 
   void clear_value() {
