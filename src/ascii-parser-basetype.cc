@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <atomic>
 //#include <cassert>
+#include <cctype>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -3271,38 +3272,142 @@ bool AsciiParser::ParseFloatArrayOptimized(std::vector<float> *result) {
     return false;
   }
 
-  // Find the end of the array by matching brackets
+  result->clear();
+  
   if (!Expect('[')) {
     return false;
   }
   
-  int bracket_depth = 1;
-  std::string array_str = "[";
-  
-  while (bracket_depth > 0) {
-    char c;
-    if (!Char1(&c)) {
-      PushError("Unexpected end of input while parsing float array");
-      return false;
-    }
-    
-    array_str += c;
-    
-    if (c == '[') {
-      bracket_depth++;
-    } else if (c == ']') {
-      bracket_depth--;
-    }
-  }
-  
-  // Use tiny-string optimized parsing
-  tstring_view sv(array_str.c_str());
-  if (!str::parse_float_arary(sv, result)) {
-    PushError("Failed to parse float array with tiny-string");
+  if (!SkipCommentAndWhitespaceAndNewline()) {
     return false;
   }
   
-  return true;
+  // Check for empty array
+  {
+    char c;
+    if (!LookChar1(&c)) {
+      return false;
+    }
+    
+    if (c == ']') {
+      if (!Char1(&c)) {  // consume the ']'
+        return false;
+      }
+      return true;  // empty array
+    }
+  }
+  
+  // Pre-allocate space for efficiency
+  result->reserve(64);  // Initial reservation
+  
+  // Use a fixed-size buffer for parsing individual float values
+  constexpr size_t BUFFER_SIZE = 128;
+  char buffer[BUFFER_SIZE];
+  size_t buffer_pos = 0;
+  
+  bool parsing_number = false;
+  bool expect_comma = false;
+  
+  while (!Eof()) {
+    char c;
+    if (!Char1(&c)) {
+      return false;
+    }
+    
+    // Skip whitespace and comments
+    if (std::isspace(c) || c == '\n' || c == '\r') {
+      if (parsing_number && buffer_pos > 0) {
+        // End of number - parse it
+        buffer[buffer_pos] = '\0';
+        
+        // Use fast float parsing
+        char* end_ptr;
+        float value = std::strtof(buffer, &end_ptr);
+        
+        if (end_ptr == buffer) {
+          PushError("Invalid float value in array");
+          return false;
+        }
+        
+        result->push_back(value);
+        buffer_pos = 0;
+        parsing_number = false;
+        expect_comma = true;
+      }
+      continue;
+    }
+    
+    if (c == '#') {
+      // Comment - skip to end of line
+      if (!SkipUntilNewline()) {
+        return false;
+      }
+      continue;
+    }
+    
+    if (c == ',') {
+      if (parsing_number && buffer_pos > 0) {
+        // End of number - parse it
+        buffer[buffer_pos] = '\0';
+        
+        char* end_ptr;
+        float value = std::strtof(buffer, &end_ptr);
+        
+        if (end_ptr == buffer) {
+          PushError("Invalid float value in array");
+          return false;
+        }
+        
+        result->push_back(value);
+        buffer_pos = 0;
+        parsing_number = false;
+      }
+      expect_comma = false;
+      continue;
+    }
+    
+    if (c == ']') {
+      if (parsing_number && buffer_pos > 0) {
+        // End of last number - parse it
+        buffer[buffer_pos] = '\0';
+        
+        char* end_ptr;
+        float value = std::strtof(buffer, &end_ptr);
+        
+        if (end_ptr == buffer) {
+          PushError("Invalid float value in array");
+          return false;
+        }
+        
+        result->push_back(value);
+      }
+      return true;  // Successfully parsed array
+    }
+    
+    // Part of a number
+    if ((c >= '0' && c <= '9') || c == '-' || c == '+' || c == '.' || 
+        c == 'e' || c == 'E' || c == 'i' || c == 'n' || c == 'f' || c == 'a') {
+      if (expect_comma && !parsing_number) {
+        PushError("Expected comma between array elements");
+        return false;
+      }
+      
+      if (buffer_pos >= BUFFER_SIZE - 1) {
+        PushError("Float value too long in array");
+        return false;
+      }
+      
+      buffer[buffer_pos++] = c;
+      parsing_number = true;
+      expect_comma = false;
+    } else {
+      PushError(std::string("Unexpected character '") + c + "' in float array");
+      return false;
+    }
+  }
+  
+  PushError("Unexpected end of input while parsing float array");
+  return false;
 }
 
 bool AsciiParser::ParseDoubleArrayOptimized(std::vector<double> *result) {
@@ -3310,78 +3415,146 @@ bool AsciiParser::ParseDoubleArrayOptimized(std::vector<double> *result) {
     return false;
   }
 
-  // Find the end of the array by matching brackets
+  result->clear();
+  
   if (!Expect('[')) {
     return false;
   }
   
-  int bracket_depth = 1;
-  std::string array_str = "[";
+  if (!SkipCommentAndWhitespaceAndNewline()) {
+    return false;
+  }
   
-  while (bracket_depth > 0) {
+  // Check for empty array
+  {
     char c;
-    if (!Char1(&c)) {
-      PushError("Unexpected end of input while parsing double array");
+    if (!LookChar1(&c)) {
       return false;
     }
     
-    array_str += c;
-    
-    if (c == '[') {
-      bracket_depth++;
-    } else if (c == ']') {
-      bracket_depth--;
+    if (c == ']') {
+      if (!Char1(&c)) {  // consume the ']'
+        return false;
+      }
+      return true;  // empty array
     }
   }
   
-  // Use tiny-string optimized parsing
-  tstring_view sv(array_str.c_str());
-  if (!str::parse_double_arary(sv, result)) {
-    PushError("Failed to parse double array with tiny-string");
-    return false;
-  }
+  // Pre-allocate space for efficiency
+  result->reserve(64);  // Initial reservation
   
-  return true;
-}
-
-bool AsciiParser::ParseIntArrayOptimized(std::vector<int32_t> *result) {
-  if (!result) {
-    return false;
-  }
-
-  // Find the end of the array by matching brackets
-  if (!Expect('[')) {
-    return false;
-  }
+  // Use a fixed-size buffer for parsing individual double values
+  constexpr size_t BUFFER_SIZE = 128;
+  char buffer[BUFFER_SIZE];
+  size_t buffer_pos = 0;
   
-  int bracket_depth = 1;
-  std::string array_str = "[";
+  bool parsing_number = false;
+  bool expect_comma = false;
   
-  while (bracket_depth > 0) {
+  while (!Eof()) {
     char c;
     if (!Char1(&c)) {
-      PushError("Unexpected end of input while parsing int array");
       return false;
     }
     
-    array_str += c;
+    // Skip whitespace and comments
+    if (std::isspace(c) || c == '\n' || c == '\r') {
+      if (parsing_number && buffer_pos > 0) {
+        // End of number - parse it
+        buffer[buffer_pos] = '\0';
+        
+        // Use fast double parsing
+        char* end_ptr;
+        double value = std::strtod(buffer, &end_ptr);
+        
+        if (end_ptr == buffer) {
+          PushError("Invalid double value in array");
+          return false;
+        }
+        
+        result->push_back(value);
+        buffer_pos = 0;
+        parsing_number = false;
+        expect_comma = true;
+      }
+      continue;
+    }
     
-    if (c == '[') {
-      bracket_depth++;
-    } else if (c == ']') {
-      bracket_depth--;
+    if (c == '#') {
+      // Comment - skip to end of line
+      if (!SkipUntilNewline()) {
+        return false;
+      }
+      continue;
+    }
+    
+    if (c == ',') {
+      if (parsing_number && buffer_pos > 0) {
+        // End of number - parse it
+        buffer[buffer_pos] = '\0';
+        
+        char* end_ptr;
+        double value = std::strtod(buffer, &end_ptr);
+        
+        if (end_ptr == buffer) {
+          PushError("Invalid double value in array");
+          return false;
+        }
+        
+        result->push_back(value);
+        buffer_pos = 0;
+        parsing_number = false;
+      }
+      expect_comma = false;
+      continue;
+    }
+    
+    if (c == ']') {
+      if (parsing_number && buffer_pos > 0) {
+        // End of last number - parse it
+        buffer[buffer_pos] = '\0';
+        
+        char* end_ptr;
+        double value = std::strtod(buffer, &end_ptr);
+        
+        if (end_ptr == buffer) {
+          PushError("Invalid double value in array");
+          return false;
+        }
+        
+        result->push_back(value);
+      }
+      return true;  // Successfully parsed array
+    }
+    
+    // Part of a number
+    if ((c >= '0' && c <= '9') || c == '-' || c == '+' || c == '.' || 
+        c == 'e' || c == 'E' || c == 'i' || c == 'n' || c == 'f' || c == 'a') {
+      if (expect_comma && !parsing_number) {
+        PushError("Expected comma between array elements");
+        return false;
+      }
+      
+      if (buffer_pos >= BUFFER_SIZE - 1) {
+        PushError("Double value too long in array");
+        return false;
+      }
+      
+      buffer[buffer_pos++] = c;
+      parsing_number = true;
+      expect_comma = false;
+    } else {
+      PushError(std::string("Unexpected character '") + c + "' in double array");
+      return false;
     }
   }
   
-  // Use tiny-string optimized parsing
-  tstring_view sv(array_str.c_str());
-  if (!str::parse_int_arary(sv, result)) {
-    PushError("Failed to parse int array with tiny-string");
-    return false;
-  }
-  
-  return true;
+  PushError("Unexpected end of input while parsing double array");
+  return false;
 }
+
+// Note: ParseIntArrayOptimized can be implemented similarly if needed
+// Currently not used since there's no template specialization for int32_t arrays
 
 //
 // Template specializations for optimized parsing

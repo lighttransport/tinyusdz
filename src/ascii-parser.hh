@@ -609,11 +609,11 @@ class AsciiParser {
   bool ParseBasicTypeArray(TypedArray<T> *result);
 
   ///
-  /// Optimized float array parsing using tiny-string
+  /// Optimized float/double array parsing using fixed-size buffers
+  /// to minimize memory allocations and object creation
   ///
   bool ParseFloatArrayOptimized(std::vector<float> *result);
   bool ParseDoubleArrayOptimized(std::vector<double> *result);
-  bool ParseIntArrayOptimized(std::vector<int32_t> *result);
 
   ///
   /// Parses 1 or more occurences of value with basic type 'T', separated by
