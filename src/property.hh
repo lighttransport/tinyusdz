@@ -270,3 +270,4 @@ class Property {
 #ifndef TINYUSDZ_INSIDE_PRIM_TYPES
 }  // namespace tinyusdz
 #endif
+

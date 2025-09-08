@@ -23,3 +23,4 @@ size_t Property::estimate_memory_usage() const {
 }
 
 }  // namespace tinyusdz
+

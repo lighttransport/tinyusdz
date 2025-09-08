@@ -252,3 +252,4 @@ class PrimSpec {
 #ifndef TINYUSDZ_INSIDE_PRIM_TYPES
 }  // namespace tinyusdz
 #endif
+

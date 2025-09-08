@@ -397,3 +397,4 @@ template TypedArrayView<value::int3> Attribute::get_value_view<value::int3>(bool
 template TypedArrayView<value::int4> Attribute::get_value_view<value::int4>(bool);
 
 }  // namespace tinyusdz
+

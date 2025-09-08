@@ -38,6 +38,63 @@ enum class Variability {
 };
 #endif
 
+// Metadata for Property(Relationship and Attribute)
+struct AttrMetas {
+  // frequently used items
+  // nullopt = not specified in USD data
+  nonstd::optional<Interpolation> interpolation;  // 'interpolation'
+  nonstd::optional<uint32_t> elementSize;         // usdSkel 'elementSize'
+  nonstd::optional<bool> hidden;                  // 'hidden'
+  nonstd::optional<value::StringData> comment;    // `comment`
+  nonstd::optional<Dictionary> customData;        // `customData`
+
+  nonstd::optional<double> weight;  // usdSkel inbetween BlendShape weight.
+
+  // usdShade
+  nonstd::optional<value::token> connectability; // NOTE: applies to attr
+  nonstd::optional<value::token> outputName; // NOTE: applies to rel
+  nonstd::optional<value::token> renderType; // NOTE: applies to prop
+  nonstd::optional<Dictionary> sdrMetadata; // NOTE: applies to attr(also seen in prim meta)
+
+  nonstd::optional<std::string> displayName;  // 'displayName'
+  nonstd::optional<std::string> displayGroup;  // 'displayGroup'
+
+
+  //
+  // MaterialBinding
+  //
+  // Could be arbitrary token value so use `token[]` type.
+  // For now, either `weakerThanDescendants` or `strongerThanDescendants` are
+  // valid token.
+  nonstd::optional<value::token> bindMaterialAs;  // 'bindMaterialAs' NOTE: applies to rel.
+
+  std::map<std::string, MetaVariable> meta;  // other meta values
+
+  // String only metadataum.
+  // TODO: Represent as `MetaVariable`?
+  std::vector<value::StringData> stringData;
+
+
+  //
+  // Some handy methods for non-frequently used metadatum.
+  //
+  bool has_colorSpace() const;
+  value::token get_colorSpace() const; // return empty when not authored or 'colorSpace' metadataum is not token type.
+
+  bool has_unauthoredValuesIndex() const;
+  int get_unauthoredValuesIndex() const; // return -1 when not authored or 'unauthoredValuesIndex' metadataum is not int type.
+
+  bool authored() const {
+    return (interpolation || elementSize || hidden || customData || weight ||
+            connectability || outputName || renderType || sdrMetadata || displayName || displayGroup || bindMaterialAs || meta.size() || stringData.size());
+  }
+};
+
+// For backward compatibility
+using AttrMeta = AttrMetas;
+
+using PropMetas = AttrMetas;
+
 ///
 /// @brief USD Attribute class
 ///
@@ -375,3 +432,4 @@ class Attribute {
 #ifndef TINYUSDZ_INSIDE_PRIM_TYPES
 }  // namespace tinyusdz
 #endif
+

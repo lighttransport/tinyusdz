@@ -72,7 +72,7 @@ class Logger {
       case LogLevel::Warn: return "WARN";
       case LogLevel::Error: return "ERROR";
       case LogLevel::Critical: return "CRITICAL";
-      default: return "UNKNOWN";
+      case LogLevel::Off: return "UNKNOWN";
     }
   }
 };

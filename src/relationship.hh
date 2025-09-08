@@ -17,13 +17,14 @@
 #include "nonstd/optional.hpp"
 
 #include "value-types.hh"
+#include "path.hh"
 
 #ifndef TINYUSDZ_INSIDE_PRIM_TYPES
 namespace tinyusdz {
 #endif
 
 // Forward declarations
-class Path;
+//class Path;
 struct AttrMetas;
 using AttrMeta = AttrMetas;
 enum class ListEditQual;
@@ -188,3 +189,4 @@ class RelationshipProperty {
 #ifndef TINYUSDZ_INSIDE_PRIM_TYPES
 }  // namespace tinyusdz
 #endif
+

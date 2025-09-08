@@ -1090,6 +1090,7 @@ struct PrimMetas {
 // For backward compatibility
 using PrimMeta = PrimMetas;
 
+#if 0
 // Metadata for Property(Relationship and Attribute)
 // TODO: Rename to PropMetas
 struct AttrMetas {
@@ -1147,6 +1148,7 @@ struct AttrMetas {
 using AttrMeta = AttrMetas;
 
 using PropMetas = AttrMetas;
+#endif
 
 // TODO: Move to value-types.hh?
 //

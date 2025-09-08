@@ -104,3 +104,4 @@ void PrimSpec::MoveFrom(PrimSpec &rhs) {
 }
 
 }  // namespace tinyusdz
+
