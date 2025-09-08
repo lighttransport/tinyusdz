@@ -933,34 +933,34 @@ public:
     using pointer = T*;
     using const_pointer = const T*;
 
-    // Default chunk size: 64MB
-    static constexpr size_type DEFAULT_CHUNK_SIZE = 64 * 1024 * 1024;
+    // Tiered chunk sizes
+    static constexpr size_type CHUNK_SIZE_64KB = 64 * 1024;           // 64KB for allocations up to 64MB
+    static constexpr size_type CHUNK_SIZE_256KB = 256 * 1024;         // 256KB for 64MB ~ 256MB
+    static constexpr size_type CHUNK_SIZE_1MB = 1024 * 1024;          // 1MB for 256MB ~ 1GB
+    static constexpr size_type CHUNK_SIZE_4MB = 4 * 1024 * 1024;      // 4MB for 1GB+
+    
+    // Allocation thresholds
+    static constexpr size_type THRESHOLD_64MB = 64 * 1024 * 1024;
+    static constexpr size_type THRESHOLD_256MB = 256 * 1024 * 1024;
+    static constexpr size_type THRESHOLD_1GB = 1024 * 1024 * 1024;
 
     // Default constructor
-    ChunkedTypedArray() : _chunk_size_bytes(DEFAULT_CHUNK_SIZE), _total_size(0) {
-        _elements_per_chunk = _chunk_size_bytes / sizeof(T);
-        if (_elements_per_chunk == 0) {
-            _elements_per_chunk = 1;  // At least one element per chunk
-        }
+    ChunkedTypedArray() : _total_size(0) {
+        // No allocation yet, will determine chunk size when data is added
     }
 
-    // Constructor with custom chunk size (in bytes)
-    explicit ChunkedTypedArray(size_type chunk_size_bytes) 
-        : _chunk_size_bytes(chunk_size_bytes), _total_size(0) {
-        if (_chunk_size_bytes == 0) {
-            _chunk_size_bytes = DEFAULT_CHUNK_SIZE;
-        }
-        _elements_per_chunk = _chunk_size_bytes / sizeof(T);
-        if (_elements_per_chunk == 0) {
-            _elements_per_chunk = 1;  // At least one element per chunk
-        }
-    }
-
-    // Constructor with size
-    explicit ChunkedTypedArray(size_type count, size_type chunk_size_bytes = DEFAULT_CHUNK_SIZE)
-        : _chunk_size_bytes(chunk_size_bytes), _total_size(count) {
-        if (_chunk_size_bytes == 0) {
-            _chunk_size_bytes = DEFAULT_CHUNK_SIZE;
+    // Constructor with size (with optional custom chunk size)
+    explicit ChunkedTypedArray(size_type count, size_type chunk_size_bytes = 0)
+        : _total_size(count) {
+        if (chunk_size_bytes != 0) {
+            // User specified custom chunk size
+            _chunk_size_bytes = chunk_size_bytes;
+            _use_fixed_chunk_size = true;
+        } else {
+            // Auto-determine chunk size based on total allocation
+            size_type total_bytes = count * sizeof(T);
+            _chunk_size_bytes = calculate_chunk_size(total_bytes);
+            _use_fixed_chunk_size = false;
         }
         _elements_per_chunk = _chunk_size_bytes / sizeof(T);
         if (_elements_per_chunk == 0) {
@@ -970,10 +970,17 @@ public:
     }
 
     // Constructor with size and default value
-    ChunkedTypedArray(size_type count, const T& value, size_type chunk_size_bytes = DEFAULT_CHUNK_SIZE)
-        : _chunk_size_bytes(chunk_size_bytes), _total_size(count) {
-        if (_chunk_size_bytes == 0) {
-            _chunk_size_bytes = DEFAULT_CHUNK_SIZE;
+    ChunkedTypedArray(size_type count, const T& value, size_type chunk_size_bytes = 0)
+        : _total_size(count) {
+        if (chunk_size_bytes != 0) {
+            // User specified custom chunk size
+            _chunk_size_bytes = chunk_size_bytes;
+            _use_fixed_chunk_size = true;
+        } else {
+            // Auto-determine chunk size based on total allocation
+            size_type total_bytes = count * sizeof(T);
+            _chunk_size_bytes = calculate_chunk_size(total_bytes);
+            _use_fixed_chunk_size = false;
         }
         _elements_per_chunk = _chunk_size_bytes / sizeof(T);
         if (_elements_per_chunk == 0) {
@@ -988,10 +995,17 @@ public:
     }
 
     // Constructor from initializer list
-    ChunkedTypedArray(std::initializer_list<T> init, size_type chunk_size_bytes = DEFAULT_CHUNK_SIZE)
-        : _chunk_size_bytes(chunk_size_bytes), _total_size(init.size()) {
-        if (_chunk_size_bytes == 0) {
-            _chunk_size_bytes = DEFAULT_CHUNK_SIZE;
+    ChunkedTypedArray(std::initializer_list<T> init, size_type chunk_size_bytes = 0)
+        : _total_size(init.size()) {
+        if (chunk_size_bytes != 0) {
+            // User specified custom chunk size
+            _chunk_size_bytes = chunk_size_bytes;
+            _use_fixed_chunk_size = true;
+        } else {
+            // Auto-determine chunk size based on total allocation
+            size_type total_bytes = init.size() * sizeof(T);
+            _chunk_size_bytes = calculate_chunk_size(total_bytes);
+            _use_fixed_chunk_size = false;
         }
         _elements_per_chunk = _chunk_size_bytes / sizeof(T);
         if (_elements_per_chunk == 0) {
@@ -1042,6 +1056,7 @@ public:
         result._elements_per_chunk = _elements_per_chunk;
         result._total_size = _total_size;
         result._front_offset = _front_offset;
+        result._use_fixed_chunk_size = _use_fixed_chunk_size;
         
         // Deep copy each chunk
         result._chunks.reserve(_chunks.size());
@@ -1171,7 +1186,17 @@ public:
                 _chunks.back().resize(last_chunk_bytes);
             }
         } else {
-            // Growing - allocate new chunks
+            // Growing - may need to recalculate chunk size for tiered allocation
+            if (!_use_fixed_chunk_size && _chunks.empty()) {
+                // First allocation or after clear() - recalculate chunk size
+                size_type total_bytes = count * sizeof(T);
+                _chunk_size_bytes = calculate_chunk_size(total_bytes);
+                _elements_per_chunk = _chunk_size_bytes / sizeof(T);
+                if (_elements_per_chunk == 0) {
+                    _elements_per_chunk = 1;
+                }
+            }
+            // Allocate new chunks
             allocate_chunks_for_size(count);
         }
         _total_size = count;
@@ -1410,6 +1435,19 @@ public:
     }
 
 private:
+    // Calculate appropriate chunk size based on total allocation size
+    size_type calculate_chunk_size(size_type total_bytes) const {
+        if (total_bytes <= THRESHOLD_64MB) {
+            return CHUNK_SIZE_64KB;
+        } else if (total_bytes <= THRESHOLD_256MB) {
+            return CHUNK_SIZE_256KB;
+        } else if (total_bytes <= THRESHOLD_1GB) {
+            return CHUNK_SIZE_1MB;
+        } else {
+            return CHUNK_SIZE_4MB;
+        }
+    }
+
     // Allocate chunks to accommodate the given size
     void allocate_chunks_for_size(size_type count) {
         if (count == 0) {
@@ -1444,10 +1482,11 @@ private:
 
 private:
     std::vector<TypedArray<uint8_t>> _chunks;   // Storage chunks using TypedArray
-    size_type _chunk_size_bytes;                // Size of each chunk in bytes
-    size_type _elements_per_chunk;              // Number of T elements per chunk
+    size_type _chunk_size_bytes = CHUNK_SIZE_64KB; // Size of each chunk in bytes (default to smallest)
+    size_type _elements_per_chunk = 0;          // Number of T elements per chunk
     size_type _total_size;                      // Total number of elements
     size_type _front_offset = 0;                // Logical offset for indexing after free_chunk_front
+    bool _use_fixed_chunk_size = false;         // Whether to use fixed or tiered chunk size
 };
 
 // Non-member swap
