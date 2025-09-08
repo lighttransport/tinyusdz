@@ -29,8 +29,6 @@
 #include <utility>
 #include <cstdint>
 
-#include "logger.hh"
-
 #if 0
 //#include "value-type.hh"
 
@@ -137,7 +135,7 @@ public:
     {
         static_assert(std::is_copy_constructible<typename std::decay<ValueType>::type>::value,
             "T shall satisfy the CopyConstructible requirements.");
-        TUSDZ_LOG_I("linb::any templated move constructor called");
+        TUSDZ_LOG_I("linb::any templated constructor called");
         this->construct(std::forward<ValueType>(value));
     }
 

@@ -307,7 +307,7 @@ class USDCReader::Impl {
   bool ReconstructPrimSpecNode(int parent, int current, int level,
                            bool is_parent_variant,
                            const PathIndexToSpecIndexMap &psmap, Layer *layer,
-                           PrimSpec *primOut);
+                           nonstd::optional<PrimSpec> *primOut);
 
   ///
   /// Reconstruct Prim from given `typeName` string(e.g. "Xform")
@@ -820,7 +820,6 @@ USDCReader::Impl::DecodeListOp(const ListOp<T> &arg) {
 bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
                                         const PathIndexToSpecIndexMap &psmap,
                                         prim::PropertyMap *props) {
-
   for (size_t i = 0; i < pathIndices.size(); i++) {
     int child_index = int(pathIndices[i]);
     if ((child_index < 0) || (child_index >= int(_nodes->size()))) {
@@ -895,7 +894,7 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
                 prop_name));
       }
 
-      (*props)[prop_name] = std::move(prop);
+      (*props)[prop_name] = prop;
       DCOUT("Add property : " << prop_name);
     }
   }
@@ -946,7 +945,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
   //Property::Type propType{Property::Type::EmptyAttrib};
   Attribute attr;
 
-  nonstd::optional<value::Value> defaultValue;
+  value::Value defaultValue;
   Relationship rel;
 
   // for attribute
@@ -1009,28 +1008,21 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       //propType = Property::Type::Attrib;
 
       // Set scalar(non-timesampled) value
-      TUSDZ_LOG_I("defaultValue");
-
-      // UNSAFE: de-const for memory optimization
-      // TODO: Use typedarray
-      defaultValue = std::move(*const_cast<value::Value *>(fv.second.get_raw_ptr()));
-      TUSDZ_LOG_I("defaultValue end");
+      // TODO: Easier CrateValue to Attribute.var conversion
+      defaultValue = fv.second.get_raw();
       hasDefault = true;
 
       // TODO: Handle UnregisteredValue in crate-reader.cc
       // UnregisteredValue is represented as string.
-      if (const auto pv = defaultValue.value().get_value<std::string>()) {
+      if (const auto pv = defaultValue.get_value<std::string>()) {
         if (typeName && (typeName.value().str() != "string")) {
           if (IsUnregisteredValueType(typeName.value().str())) {
             DCOUT("UnregisteredValue type: " << typeName.value().str());
 
             std::string local_err;
-            value::Value v;
-            if (!ascii::ParseUnregistredValue(typeName.value().str(), pv.value(), &v, &local_err)) {
+            if (!ascii::ParseUnregistredValue(typeName.value().str(), pv.value(), &defaultValue, &local_err)) {
               PUSH_ERROR_AND_RETURN(fmt::format("Failed to parse UnregisteredValue string with type `{}`: {}", typeName.value().str(), local_err));
             }
-
-            defaultValue = std::move(v);
           }
         }
       }
@@ -1042,7 +1034,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       hasTimeSamples = true;
 
       if (auto pv = fv.second.get_value<value::TimeSamples>()) {
-        var.set_timesamples(std::move(pv.value()));
+        var.set_timesamples(pv.value());
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "`timeSamples` is not TimeSamples data.");
@@ -1281,7 +1273,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         mv.set_name("colorSpace");
         mv.set_value(pv.value());
 
-        meta.meta["colorSpace"] = std::move(mv);
+        meta.meta["colorSpace"] = mv;
       } else {
         PUSH_ERROR_AND_RETURN_TAG(
             kTag, "`colorSpace` must be type `token`, but got type `"
@@ -1340,27 +1332,27 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
 
   // Do role type cast for default value.
   // (TODO: do role type cast for timeSamples?)
-  if (defaultValue.has_value()) {
+  if (hasDefault) {
     if (typeName) {
-      if (defaultValue.value().type_id() == value::TypeTraits<value::ValueBlock>::type_id()) {
+      if (defaultValue.type_id() == value::TypeTraits<value::ValueBlock>::type_id()) {
         // nothing to do
       } else {
         std::string reqTy = typeName.value().str();
-        std::string scalarTy = defaultValue.value().type_name();
+        std::string scalarTy = defaultValue.type_name();
 
         if (reqTy.compare(scalarTy) != 0) {
 
           // Some inlined? value uses less accuracy type(e.g. `half3`) than
           // typeName(e.g. `float3`) Use type specified in `typeName` as much as
           // possible.
-          bool ret = value::UpcastType(reqTy, defaultValue.value());
+          bool ret = value::UpcastType(reqTy, defaultValue);
           if (ret) {
             DCOUT(fmt::format("Upcast type from {} to {}.", scalarTy, reqTy));
           }
 
           // Optionally, cast to role type(in crate data, `typeName` uses role typename(e.g. `color3f`), whereas stored data uses base typename(e.g. VEC3F)
-          scalarTy = defaultValue.value().type_name();
-          if (value::RoleTypeCast(value::GetTypeId(reqTy), defaultValue.value())) {
+          scalarTy = defaultValue.type_name();
+          if (value::RoleTypeCast(value::GetTypeId(reqTy), defaultValue)) {
             DCOUT(fmt::format("Casted to Role type {} from type {}.", reqTy, scalarTy));
           } else {
             // Its ok.
@@ -1368,9 +1360,9 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         }
       }
     }
-    var.set_value(std::move(defaultValue.value()));
+    var.set_value(defaultValue);
 
-    if (defaultValue.value().type_id() == value::TypeTraits<value::ValueBlock>::type_id()) {
+    if (defaultValue.type_id() == value::TypeTraits<value::ValueBlock>::type_id()) {
       isValueBlock = true;
     }
   }
@@ -1458,7 +1450,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       attr.variability() = variability.value();
     }
     attr.metas() = meta;
-    (*prop) = Property(std::move(attr), custom);
+    (*prop) = Property(attr, custom);
 
   } else {
 
@@ -2534,7 +2526,7 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
         }
 
         if (primOut) {
-          (*primOut) = std::move(prim);
+          (*primOut) = prim;
         }
       }
 
@@ -2802,7 +2794,7 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
                                            bool is_parent_variant,
                                            const PathIndexToSpecIndexMap &psmap,
                                            Layer *layer,
-                                           PrimSpec *primOut) {
+                                           nonstd::optional<PrimSpec> *primOut) {
   (void)level;
   const crate::CrateReader::Node &node = (*_nodes)[size_t(current)];
 
@@ -3002,16 +2994,12 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
         if (!BuildPropertyMap(node.GetChildren(), psmap, &props)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to build PropertyMap.");
         }
-        TUSDZ_LOG_I("props add");
-        primspec.props() = std::move(props);
-        TUSDZ_LOG_I("props add done");
+        primspec.props() = props;
         primspec.metas() = primMeta;
         // TODO: primChildren, properties
 
         if (primOut) {
-          TUSDZ_LOG_I("primOut move");
-          (*primOut) = std::move(primspec);
-          TUSDZ_LOG_I("primOut move done");
+          (*primOut) = primspec;
         }
 #endif
       }
@@ -3226,7 +3214,7 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
         if (!BuildPropertyMap(node.GetChildren(), psmap, &props)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to build PropertyMap.");
         }
-        variantPrimSpec.props() = std::move(props);
+        variantPrimSpec.props() = props;
         variantPrimSpec.metas() = primMeta;
 
         // Store variantPrimSpec to temporary buffer.
@@ -3582,18 +3570,18 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
   // null : parent node is Property or other Spec type.
   // non-null : parent node is PrimSpec
   PrimSpec *currPrimSpecPtr = nullptr;
-  PrimSpec *primspecPtr{nullptr};
+  nonstd::optional<PrimSpec> primspec;
 
   // Assume parent node is already processed.
   bool is_parent_variant = _variantPrims.count(parent);
 
   if (!ReconstructPrimSpecNode(parent, current, level, is_parent_variant, psmap,
-                           layer, primspecPtr)) {
+                           layer, &primspec)) {
     return false;
   }
 
-  if (primspecPtr) {
-    currPrimSpecPtr = primspecPtr;
+  if (primspec) {
+    currPrimSpecPtr = &(primspec.value());
   }
 
   {
@@ -3667,7 +3655,7 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
       std::string prop_name = std::get<0>(pp).prop_part();
       DCOUT(fmt::format("  node_index = {}, prop name {}", item, prop_name));
 
-      variant.props()[prop_name] = std::move(std::get<1>(pp));
+      variant.props()[prop_name] = std::get<1>(pp);
     }
 
     VariantSetSpec &vs = parentPrimSpec->variantSets()[variantSetName];
@@ -3684,11 +3672,11 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
     // - currentPrim <- current
     //   - variant Prim children
 
-    if (!primspecPtr) {
+    if (!primspec) {
       PUSH_ERROR_AND_RETURN("Internal error: must be Prim.");
     }
 
-    DCOUT(fmt::format("{} has variant PrimSpec ", primspecPtr->name()));
+    DCOUT(fmt::format("{} has variant PrimSpec ", primspec->name()));
 
 
     for (const auto &item : _variantPrimChildren.at(current)) {
@@ -3714,7 +3702,7 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
       std::string variantSetName = toks[0];
       std::string variantName = toks[1];
 
-      VariantSetSpec &vs = primspecPtr->variantSets()[variantSetName];
+      VariantSetSpec &vs = primspec->variantSets()[variantSetName];
 
       if (vs.name.empty()) {
         vs.name = variantSetName;
@@ -3727,31 +3715,24 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
   }
 
   if (parent == 0) {  // root prim
-    if (primspecPtr) {
-      TUSDZ_LOG_I("root primspec.add"); 
-      std::string name = primspecPtr->name();
-      layer->primspecs()[name] = std::move(*primspecPtr);
-      TUSDZ_LOG_I("root primspec.add done"); 
+    if (primspec) {
+      layer->primspecs()[primspec.value().name()] = std::move(primspec.value());
     }
   } else {
     if (_variantPrimSpecs.count(parent)) {
       // Add to variantPrim
       DCOUT("parent is variantPrim: " << parent);
-      if (!primspecPtr) {
+      if (!primspec) {
         // FIXME: Validate current should be Prim.
         PUSH_WARN("parent is variantPrim, but current is not Prim.");
       } else {
         DCOUT("Adding prim to child...");
         PrimSpec &vps = _variantPrimSpecs.at(parent);
-        vps.children().emplace_back(std::move(*primspecPtr));
+        vps.children().emplace_back(std::move(primspec.value()));
       }
-    } else if (primspecPtr && parentPrimSpec) {
+    } else if (primspec && parentPrimSpec) {
       // Add to parent prim.
-      TUSDZ_LOG_I("children.add"); 
-      //parentPrimSpec->children().emplace_back(std::move(primspec.value()));
-      parentPrimSpec->children().resize(parentPrimSpec->children().size() + 1);
-      parentPrimSpec->children().back() = std::move(*primspecPtr);
-      TUSDZ_LOG_I("children.add done"); 
+      parentPrimSpec->children().emplace_back(std::move(primspec.value()));
     }
   }
 

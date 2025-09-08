@@ -18,7 +18,6 @@
 //#include "external/fast_float/include/fast_float/bigint.h"
 #include "tinyusdz.hh"
 #include "pprinter.hh"
-#include "typed-array.hh"
 #include "value-types.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
@@ -136,16 +135,16 @@ bool ToRGBA(const std::vector<uint8_t> &src, int channels,
   return true;
 }
 
-bool uint8arrayToBuffer(const emscripten::val& u8, tinyusdz::TypedArray<uint8_t> &buf) {
+std::vector<uint8_t> uint8arrayToBuffer(const emscripten::val& u8) {
   size_t n = u8["byteLength"].as<size_t>();
-  buf.resize(n);
+  std::vector<uint8_t> v(n);
 
   // Copy JS typed array -> v (one memcpy under the hood)
   emscripten::val view = emscripten::val::global("Uint8Array").new_(u8["buffer"], u8["byteOffset"], n);
-  emscripten::val heapView = emscripten::val(emscripten::typed_memory_view(n, buf.data()));
+  emscripten::val heapView = emscripten::val(emscripten::typed_memory_view(n, v.data()));
   heapView.call<void>("set", view);
 
-  return true;
+  return v;
 }
 
 
@@ -178,18 +177,14 @@ std::string generateUUID() {
 }
 
 struct AssetCacheEntry {
-  std::string sha256_hash;
   std::string binary;
+  std::string sha256_hash;
   std::string uuid;
   
   AssetCacheEntry() : uuid(generateUUID()) {}
   AssetCacheEntry(const std::string& data) 
-    : sha256_hash(tinyusdz::sha256(data.c_str(), data.size())),
-      binary(data), 
-      uuid(generateUUID()) {}
-  AssetCacheEntry(std::string&& data) noexcept
-    : sha256_hash(tinyusdz::sha256(data.c_str(), data.size())),
-      binary(std::move(data)), 
+    : binary(data), 
+      sha256_hash(tinyusdz::sha256(data.c_str(), data.size())),
       uuid(generateUUID()) {}
 };
 
@@ -225,9 +220,7 @@ struct StreamingAssetEntry {
   AssetCacheEntry finalize() {
     if (isComplete()) {
       sha256_hash = tinyusdz::sha256(binary.c_str(), binary.size());
-      AssetCacheEntry entry;
-      entry.sha256_hash = sha256_hash;
-      entry.binary = std::move(binary);
+      AssetCacheEntry entry(binary);
       entry.uuid = uuid;  // Preserve the UUID from streaming
       return entry;
     }
@@ -497,7 +490,7 @@ struct EMAssetResolutionResolver {
       return false;
     }
     
-    cache[asset_name] = std::move(entry.finalize());
+    cache[asset_name] = entry.finalize();
     streaming_cache.erase(asset_name);
     return true;
   }
@@ -765,17 +758,14 @@ class TinyUSDZLoaderNative {
   // u8 : Uint8Array object.
   bool loadTest(const std::string &filename, const emscripten::val &u8) {
 
-    tinyusdz::TypedArray<uint8_t> binary;
-    detail::uint8arrayToBuffer(u8, binary);
-    std::cout << "binary.size = " << binary.size() << "\n";
+    std::vector<uint8_t> binary = detail::uint8arrayToBuffer(u8);
 
-    //bool is_usdz = tinyusdz::IsUSDZ(
-    //    reinterpret_cast<const uint8_t *>(binary.data()), binary.size());
+    bool is_usdz = tinyusdz::IsUSDZ(
+        reinterpret_cast<const uint8_t *>(binary.data()), binary.size());
 
     tinyusdz::USDLoadOptions options;
     options.max_memory_limit_in_mb = max_memory_limit_mb_;
 
-#if 0
     tinyusdz::Stage stage;
     loaded_ = tinyusdz::LoadUSDFromMemory(
         reinterpret_cast<const uint8_t *>(binary.data()), binary.size(),
@@ -784,17 +774,6 @@ class TinyUSDZLoaderNative {
     if (!loaded_) {
       return false;
     }
-#else
-    std::cout << "layer\n";
-    tinyusdz::Layer layer;
-    loaded_ = tinyusdz::LoadLayerFromMemory(
-        reinterpret_cast<const uint8_t *>(binary.data()), binary.size(),
-        filename, &layer, &warn_, &error_, options);
-
-    if (!loaded_) {
-      return false;
-    }
-#endif
 
     loaded_as_layer_ = false;
     filename_ = filename;
@@ -1037,7 +1016,7 @@ class TinyUSDZLoaderNative {
     }
     
     std::cout << "arrayLen " << arrayLength << "\n";
-#if 1
+#if 0
     // create Attrib
     std::vector<tinyusdz::value::point3f> points(arrayLength);
     tinyusdz::Attribute attr;
@@ -1047,13 +1026,10 @@ class TinyUSDZLoaderNative {
     size_t totalMemory = 0; //attr.estimate_memory_usage();
 #else
     tinyusdz::TypedArray<tinyusdz::value::point3f> points(arrayLength);
-    tinyusdz::Attribute attr;
-    //std::cout << "attr.set_value\n";
+    //tinyusdz::Attribute attr;
     //attr.set_value(std::move(points));
     
-    tinyusdz::primvar::PrimVar var;
-    std::cout << "pvar";
-    var.set_value(std::move(points));
+    tinyusdz::primvar::PrimVar var(std::move(points));
 
     //std::vector<tinyusdz::value::point3f> points(arrayLength);
     //tinyusdz::value::Value v(std::move(points));
