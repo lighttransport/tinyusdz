@@ -3688,7 +3688,7 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
       PUSH_ERROR_AND_RETURN("Internal error: must be Prim.");
     }
 
-    DCOUT(fmt::format("{} has variant PrimSpec ", primspec->name()));
+    DCOUT(fmt::format("{} has variant PrimSpec ", primspecPtr->name()));
 
 
     for (const auto &item : _variantPrimChildren.at(current)) {
