@@ -77,37 +77,37 @@ class GeomPrimvar {
 
  public:
   GeomPrimvar() : _has_value(false) {
-    TUSDZ_LOG_I("GeomPrimvar default constructor called");
+    //TUSDZ_LOG_I("GeomPrimvar default constructor called");
   }
 
   GeomPrimvar(const Attribute &attr) : _attr(attr) {
-    TUSDZ_LOG_I("GeomPrimvar constructor called with Attribute");
+    //TUSDZ_LOG_I("GeomPrimvar constructor called with Attribute");
     _has_value = true;
   }
 
   GeomPrimvar(const Attribute &attr, const std::vector<int32_t> &indices) : _attr(attr)
   {
-    TUSDZ_LOG_I("GeomPrimvar constructor called with Attribute and indices vector");
+    //TUSDZ_LOG_I("GeomPrimvar constructor called with Attribute and indices vector");
     _indices = indices;
     _has_value = true;
   }
 
   GeomPrimvar(const Attribute &attr, const TypedTimeSamples<std::vector<int32_t>> &indices) : _attr(attr)
   {
-    TUSDZ_LOG_I("GeomPrimvar constructor called with Attribute and const TypedTimeSamples indices");
+    //TUSDZ_LOG_I("GeomPrimvar constructor called with Attribute and const TypedTimeSamples indices");
     _ts_indices = indices;
     _has_value = true;
   }
 
   GeomPrimvar(const Attribute &attr, TypedTimeSamples<std::vector<int32_t>> &&indices) : _attr(attr)
   {
-    TUSDZ_LOG_I("GeomPrimvar constructor called with Attribute and move TypedTimeSamples indices");
+    //TUSDZ_LOG_I("GeomPrimvar constructor called with Attribute and move TypedTimeSamples indices");
     _ts_indices = std::move(indices);
     _has_value = true;
   }
 
   GeomPrimvar(const GeomPrimvar &rhs) {
-    TUSDZ_LOG_I("GeomPrimvar copy constructor called");
+    //TUSDZ_LOG_I("GeomPrimvar copy constructor called");
     _name = rhs._name;
     _attr = rhs._attr;
     _indices = rhs._indices;
@@ -124,7 +124,7 @@ class GeomPrimvar {
   }
 
   GeomPrimvar &operator=(const GeomPrimvar &rhs) {
-    TUSDZ_LOG_I("GeomPrimvar copy assignment operator called");
+    //TUSDZ_LOG_I("GeomPrimvar copy assignment operator called");
     _name = rhs._name;
     _attr = rhs._attr;
     _indices = rhs._indices;
@@ -152,12 +152,12 @@ class GeomPrimvar {
         _unauthoredValuesIndex(rhs._unauthoredValuesIndex),
         _elementSize(rhs._elementSize),
         _interpolation(rhs._interpolation) {
-    TUSDZ_LOG_I("GeomPrimvar move constructor called");
+    //TUSDZ_LOG_I("GeomPrimvar move constructor called");
   }
 
   // Move assignment operator
   GeomPrimvar& operator=(GeomPrimvar&& rhs) noexcept {
-    TUSDZ_LOG_I("GeomPrimvar move assignment operator called");
+    //TUSDZ_LOG_I("GeomPrimvar move assignment operator called");
     if (this != &rhs) {
       _name = std::move(rhs._name);
       _attr = std::move(rhs._attr);

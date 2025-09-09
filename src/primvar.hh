@@ -45,13 +45,13 @@ struct PrimVar {
 
   // Default constructor
   PrimVar() {
-    TUSDZ_LOG_I("PrimVar default ctor");
+    //TUSDZ_LOG_I("PrimVar default ctor");
   }
 
   // Copy constructor
   PrimVar(const PrimVar& rhs) 
     : _value(rhs._value), _blocked(rhs._blocked), _ts(rhs._ts) {
-    TUSDZ_LOG_I("PrimVar copy ctor");
+    //TUSDZ_LOG_I("PrimVar copy ctor");
   }
 
   // Move constructor
@@ -59,13 +59,13 @@ struct PrimVar {
     : _value(std::move(rhs._value)), 
       _blocked(rhs._blocked), 
       _ts(std::move(rhs._ts)) {
-    TUSDZ_LOG_I("PrimVar move ctor");
+    //TUSDZ_LOG_I("PrimVar move ctor");
     rhs._blocked = false;
   }
 
   // Copy assignment operator
   PrimVar& operator=(const PrimVar& rhs) {
-    TUSDZ_LOG_I("PrimVar copy assignment op");
+    //TUSDZ_LOG_I("PrimVar copy assignment op");
     if (this != &rhs) {
       _value = rhs._value;
       _blocked = rhs._blocked;
@@ -76,7 +76,7 @@ struct PrimVar {
 
   // Move assignment operator
   PrimVar& operator=(PrimVar&& rhs) noexcept {
-    TUSDZ_LOG_I("PrimVar move assignment op");
+    //TUSDZ_LOG_I("PrimVar move assignment op");
     if (this != &rhs) {
       _value = std::move(rhs._value);
       _blocked = rhs._blocked;
@@ -88,7 +88,7 @@ struct PrimVar {
 
   template<typename T>
   PrimVar(T &&v) noexcept : _value(std::move(v)) {
-    TUSDZ_LOG_I("PrimVar templated ctor");
+    //TUSDZ_LOG_I("PrimVar templated ctor");
   }
 
   bool has_value() const {
@@ -96,7 +96,9 @@ struct PrimVar {
     if (_blocked) {
       return true;
     }
-    return (_value.type_id() != value::TypeId::TYPE_ID_INVALID) && (_value.type_id() != value::TypeId::TYPE_ID_NULL);
+    bool ret = (_value.type_id() != value::TypeId::TYPE_ID_INVALID) && (_value.type_id() != value::TypeId::TYPE_ID_NULL);
+    //TUSDZ_LOG_I("has_value " << ret);
+    return ret;
   }
 
   bool has_default() const {
@@ -261,13 +263,14 @@ struct PrimVar {
 
   template <class T>
   void set_value(const T &v) {
-    TUSDZ_LOG_I("set_value cosnt_ref");
+    //TUSDZ_LOG_I("set_value cosnt_ref");
     _value = v;
   }
 
+#if 0 // TODO
   template <class T>
   void set_value(T &&v) {
-    TUSDZ_LOG_I("set_value move");
+    //TUSDZ_LOG_I("set_value move");
 
     // _value = std::move(v) is not possible since
     // Value's underlying linb::any does not provide templated move constructor.
@@ -276,6 +279,7 @@ struct PrimVar {
 
     _value = std::move(src);
   }
+#endif
 
   void clear_value() {
     _value = nullptr;

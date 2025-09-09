@@ -1956,6 +1956,27 @@ struct TypeTraits<TypedArray<T>> {
   static constexpr bool is_array() { return true; }
 };
 
+template <typename T>
+struct TypeTraits<ChunkedTypedArray<T>> {
+  using value_type = TypedArray<T>;
+  static constexpr uint32_t ndim() { return 1; } /* array dim */
+  static constexpr uint32_t ncomp() { return TypeTraits<T>::ncomp(); }
+  // Return the size of base type
+  static constexpr size_t size() { return TypeTraits<T>::size(); }
+  static constexpr uint32_t type_id() { return
+      TypeTraits<T>::type_id() | TYPE_ID_1D_ARRAY_BIT; }
+  static constexpr uint32_t get_type_id() {
+      return TypeTraits<T>::type_id() | TYPE_ID_1D_ARRAY_BIT; }
+  static constexpr uint32_t underlying_type_id() {
+      return TypeTraits<T>::underlying_type_id() | TYPE_ID_1D_ARRAY_BIT; }
+  static std::string type_name() { return TypeTraits<T>::type_name() + "[]"; }
+  static std::string underlying_type_name() {
+    return TypeTraits<T>::underlying_type_name() + "[]";
+  }
+  static constexpr bool is_role_type() { return TypeTraits<T>::is_role_type(); }
+  static constexpr bool is_array() { return true; }
+};
+
 
 #if 0  // Current pxrUSD does not support 2D array
 // 2D Array
@@ -2033,27 +2054,27 @@ namespace value {
 class Value {
  public:
   Value() {
-    TUSDZ_LOG_I("Value default constructor called");
+    //TUSDZ_LOG_I("Value default constructor called");
   }
 
   // Copy constructor
   Value(const Value& rhs) : v_(rhs.v_) {
-    TUSDZ_LOG_I("Value copy constructor called");
+    //TUSDZ_LOG_I("Value copy constructor called");
   }
 
   // Move constructor
   Value(Value&& rhs) noexcept : v_(std::move(rhs.v_)) {
-    TUSDZ_LOG_I("Value move constructor called");
+    //TUSDZ_LOG_I("Value move constructor called");
   }
 
   template <class T>
   Value(const T &v) : v_(v) {
-    TUSDZ_LOG_I("Value templated constructor called with type: " << typeid(T).name());
+    //TUSDZ_LOG_I("Value templated constructor called with type: " << typeid(T).name());
   }
 
   template <class T>
   Value(T &&v) noexcept : v_(std::move(v)) {
-    TUSDZ_LOG_I("Value templated move constructor called with type: " << typeid(T).name());
+    //TUSDZ_LOG_I("Value templated move constructor called with type: " << typeid(T).name());
   }
 
   // template <class T>
@@ -2229,7 +2250,7 @@ class Value {
 
   // Copy assignment operator
   Value& operator=(const Value& rhs) {
-    TUSDZ_LOG_I("Value copy assignment operator called");
+    //TUSDZ_LOG_I("Value copy assignment operator called");
     if (this != &rhs) {
       v_ = rhs.v_;
     }
@@ -2238,7 +2259,7 @@ class Value {
 
   // Move assignment operator
   Value& operator=(Value&& rhs) noexcept {
-    TUSDZ_LOG_I("Value move assignment operator called");
+    //TUSDZ_LOG_I("Value move assignment operator called");
     if (this != &rhs) {
       v_ = std::move(rhs.v_);
     }
@@ -2247,7 +2268,7 @@ class Value {
 
   template <class T>
   Value &operator=(const T &v) {
-    TUSDZ_LOG_I("Value templated assignment operator called with type: " << typeid(T).name());
+    //TUSDZ_LOG_I("Value templated assignment operator called with type: " << typeid(T).name());
     v_ = v;
     return (*this);
   }
@@ -2255,7 +2276,7 @@ class Value {
 #if 0
   template <class T>
   Value &operator=(T &&v) noexcept {
-    TUSDZ_LOG_I("Value templated move assignment operator called with type: " << typeid(T).name());
+    //TUSDZ_LOG_I("Value templated move assignment operator called with type: " << typeid(T).name());
     v_ = v;
     return (*this);
   }
@@ -2277,12 +2298,14 @@ class Value {
 
   size_t estimate_memory_usage() const;
 
+#if 0 // TODO
   template <class T>
   void set_value(T &&v) noexcept {
-      TUSDZ_LOG_I("set_value move");
+      //TUSDZ_LOG_I("set_value move");
       linb::any(v).swap(v_);
       //v_.(v);
   }
+#endif
 
  private:
   // any_value v_;

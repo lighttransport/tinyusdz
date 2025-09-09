@@ -29,7 +29,7 @@
 #include <utility>
 #include <cstdint>
 
-#include "logger.hh"
+//#include "logger.hh"
 
 #if 0
 //#include "value-type.hh"
@@ -95,14 +95,14 @@ public:
     any() :
         vtable(nullptr)
     {
-        TUSDZ_LOG_I("linb::any default constructor called");
+        //TUSDZ_LOG_I("linb::any default constructor called");
     }
 
     /// Constructs an object of type any with an equivalent state as other.
     any(const any& rhs) :
         vtable(rhs.vtable)
     {
-        TUSDZ_LOG_I("linb::any copy constructor called");
+        //TUSDZ_LOG_I("linb::any copy constructor called");
         if(!rhs.empty())
         {
             rhs.vtable->copy(rhs.storage, this->storage);
@@ -114,7 +114,7 @@ public:
     any(any&& rhs) noexcept :
         vtable(rhs.vtable)
     {
-        TUSDZ_LOG_I("linb::any move constructor called");
+        //TUSDZ_LOG_I("linb::any move constructor called");
         if(!rhs.empty())
         {
             rhs.vtable->move(rhs.storage, this->storage);
@@ -137,14 +137,14 @@ public:
     {
         static_assert(std::is_copy_constructible<typename std::decay<ValueType>::type>::value,
             "T shall satisfy the CopyConstructible requirements.");
-        TUSDZ_LOG_I("linb::any templated move constructor called");
+        //TUSDZ_LOG_I("linb::any templated move constructor called");
         this->construct(std::forward<ValueType>(value));
     }
 
     /// Has the same effect as any(rhs).swap(*this). No effects if an exception is thrown.
     any& operator=(const any& rhs)
     {
-        TUSDZ_LOG_I("linb::any copy assignment operator called");
+        //TUSDZ_LOG_I("linb::any copy assignment operator called");
         any(rhs).swap(*this);
         return *this;
     }
@@ -155,7 +155,7 @@ public:
     /// but otherwise unspecified state.
     any& operator=(any&& rhs) noexcept
     {
-        TUSDZ_LOG_I("linb::any move assignment operator called");
+        //TUSDZ_LOG_I("linb::any move assignment operator called");
         any(std::move(rhs)).swap(*this);
         return *this;
     }
@@ -169,7 +169,7 @@ public:
     {
         static_assert(std::is_copy_constructible<typename std::decay<ValueType>::type>::value,
             "T shall satisfy the CopyConstructible requirements.");
-        TUSDZ_LOG_I("linb::any templated assignment operator called");
+        //TUSDZ_LOG_I("linb::any templated assignment operator called");
         any(std::forward<ValueType>(value)).swap(*this);
         return *this;
     }
