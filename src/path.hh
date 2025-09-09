@@ -395,3 +395,4 @@ class Path {
   bool _valid{false};
 };
 
+} // namespace tinyusdz

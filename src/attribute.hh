@@ -13,30 +13,35 @@
 #include <string>
 #include <vector>
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
 #include "nonstd/expected.hpp"
 #include "nonstd/optional.hpp"
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 #include "primvar.hh"
 #include "value-types.hh"
 #include "value-eval-util.hh"
+#include "path.hh"
+#include "enum-types.hh"
+#include "dictionary.hh"
+#include "logger.hh"
 
-#ifndef TINYUSDZ_INSIDE_PRIM_TYPES
+//#ifndef TINYUSDZ_INSIDE_PRIM_TYPES
 namespace tinyusdz {
-#endif
+//#endif
 
 // Forward declarations - these must be defined before including this file
 class Path;
 struct AttrMetas;
 using AttrMeta = AttrMetas;
 
-#ifndef TINYUSDZ_INSIDE_PRIM_TYPES
-enum class Variability {
-  Varying,  // 0
-  Uniform,
-  Config,
-  Invalid
-};
-#endif
 
 // Metadata for Property(Relationship and Attribute)
 struct AttrMetas {
@@ -429,7 +434,353 @@ class Attribute {
   AttrMeta* _metas{nullptr};  // Using pointer to avoid incomplete type issues
 };
 
-#ifndef TINYUSDZ_INSIDE_PRIM_TYPES
+///
+/// Template attribute classes with type safety
+///
+/// Attribute with type information.
+/// For attribute with `uniform` qualifier or TimeSamples, but don't have
+/// `.connect`(Connection)
+///
+/// - `authored() = true` : Attribute value is authored(attribute is
+/// described in USDA/USDC)
+/// - `authored() = false` : Attribute value is not authored(not described
+/// in USD). If you call `get()`, fallback value is returned.
+///
+template <typename T>
+class TypedAttribute {
+ public:
+  static std::string type_name() { return value::TypeTraits<T>::type_name(); }
+
+  static uint32_t type_id() { return value::TypeTraits<T>::type_id(); }
+
+  TypedAttribute() = default;
+
+  TypedAttribute &operator=(const T &value) {
+    _attrib = value;
+
+    return (*this);
+  }
+
+  // 'default' value or timeSampled value(when T = Animatable)
+  void set_value(const T &v) { _attrib = v; }
+  bool has_value() const { return _attrib.has_value(); }
+
+  const nonstd::optional<T> get_value() const {
+    return _attrib;
+  }
+
+  bool get_value(T *dst) const {
+    if (!dst) return false;
+
+    if (_attrib) {
+      (*dst) = _attrib.value();
+      return true;
+    }
+    return false;
+  }
+
+  bool is_blocked() const { return _blocked; }
+
+  // for `uniform` attribute only
+  void set_blocked(bool onoff) { _blocked = onoff; }
+
+  bool is_connection() const { return _paths.size() && !has_value(); }
+
+  void set_connection(const Path &path) {
+    _paths.clear();
+    _paths.push_back(path);
+  }
+
+  void set_connections(const std::vector<Path> &paths) { _paths = paths; }
+
+  const std::vector<Path> &get_connections() const { return _paths; }
+  const std::vector<Path> &connections() const { return _paths; }
+
+  const nonstd::optional<Path> get_connection() const {
+    if (_paths.size()) {
+      return _paths[0];
+    }
+
+    return nonstd::nullopt;
+  }
+
+  bool has_connections() const {
+    return _paths.size();
+  }
+
+  void clear_connections() {
+    _paths.clear();
+  }
+
+  // TODO: Supply set_connection_empty()?
+
+  void set_value_empty() { _value_empty = true; }
+
+  //
+  // Check if the attribute is authored, but no value(including ValueBlock) assigned.
+  // e.g.
+  //
+  // float myval;
+  //
+  bool is_value_empty() const {
+    if (has_connections()) {
+      return false;
+    }
+
+    if (_attrib.has_value()) {
+      return false;
+    }
+
+    if (_blocked) {
+      return false;
+    }
+
+    return _value_empty;
+  }
+
+  // The attribute authroed?
+  bool authored() const {
+    if (_attrib) {
+      return true;
+    }
+
+    if (has_connections()) {
+      return true;
+    }
+
+    if (_value_empty) {
+      // Declare only.
+      return true;
+    }
+
+    if (_blocked) {
+      return true;
+    }
+
+    return false;
+  }
+
+  void clear_value() {
+    _attrib.reset();
+    _value_empty = true;
+  }
+
+  const AttrMeta &metas() const { return _metas; }
+  AttrMeta &metas() { return _metas; }
+
+ private:
+  AttrMeta _metas;
+  bool _value_empty{false};  // applies `_attrib`
+  std::vector<Path> _paths;
+  nonstd::optional<T> _attrib;
+  bool _blocked{false};
+};
+
+///
+/// Tyeped Terminal(Output) Attribute(No value assign, no fallback(default)
+/// value, no connection)
+///
+/// - `authored() = true` : Attribute value is authored(attribute is
+/// described in USDA/USDC)
+/// - `authored() = false` : Attribute value is not authored(not described
+/// in USD).
+///
+template <typename T>
+class TypedTerminalAttribute {
+ public:
+  void set_authored(bool onoff) { _authored = onoff; }
+
+  // value set?
+  bool authored() const { return _authored; }
+
+  static std::string type_name() { return value::TypeTraits<T>::type_name(); }
+  static uint32_t type_id() { return value::TypeTraits<T>::type_id(); }
+
+  // Actual type is a typeName in USDA or USDC
+  // for example, we accect float3 type for TypedTerminalAttribute<color3f> and
+  // print/serialize this attribute value with actual type.
+  //
+  void set_actual_type_name(const std::string &type_name) {
+    _actual_type_name = type_name;
+  }
+
+  bool has_actual_type() const { return _actual_type_name.size(); }
+
+  const std::string &get_actual_type_name() const { return _actual_type_name; }
+
+  const AttrMeta &metas() const { return _metas; }
+  AttrMeta &metas() { return _metas; }
+
+ private:
+  AttrMeta _metas;
+  bool _authored{false};
+  std::string _actual_type_name;
+};
+
+template <typename T>
+class TypedAttributeWithFallback;
+
+///
+/// Attribute with fallback(default) value.
+/// For attribute with `uniform` qualifier or TimeSamples, but don't have
+/// `.connect`(Connection)
+///
+/// - `authored() = true` : Attribute value is authored(attribute is
+/// described in USDA/USDC)
+/// - `authored() = false` : Attribute value is not authored(not described
+/// in USD). If you call `get()`, fallback value is returned.
+///
+template <typename T>
+class TypedAttributeWithFallback {
+ public:
+  static std::string type_name() { return value::TypeTraits<T>::type_name(); }
+  static uint32_t type_id() { return value::TypeTraits<T>::type_id(); }
+
+  TypedAttributeWithFallback() = delete;
+
+  ///
+  /// Init with fallback value;
+  ///
+  TypedAttributeWithFallback(const T &fallback) : _fallback(fallback) {}
+
+  TypedAttributeWithFallback &operator=(const T &value) {
+    _attrib = value;
+
+    // fallback Value should be already set with `AttribWithFallback(const T&
+    // fallback)` constructor.
+
+    return (*this);
+  }
+
+  //
+  // FIXME: Defininig copy constructor, move constructor and  move assignment
+  // operator Gives compilation error :-(. so do not define it.
+  //
+
+  // AttribWithFallback(const AttribWithFallback &rhs) {
+  //   attrib = rhs.attrib;
+  //   fallback = rhs.fallback;
+  // }
+
+  // AttribWithFallback &operator=(T&& value) noexcept {
+  //   if (this != &value) {
+  //       attrib = std::move(value.attrib);
+  //       fallback = std::move(value.fallback);
+  //   }
+  //   return (*this);
+  // }
+
+  // AttribWithFallback(AttribWithFallback &&rhs) noexcept {
+  //   if (this != &rhs) {
+  //       attrib = std::move(rhs.attrib);
+  //       fallback = std::move(rhs.fallback);
+  //   }
+  // }
+
+  void set_value(const T &v) { _attrib = v; }
+
+  void set_value_empty() { _empty = true; }
+
+  bool has_connections() const { return _paths.size(); }
+
+  //
+  // Check if the attribute is authored, but no value(including ValueBlock) assigned.
+  // e.g.
+  //
+  // float myval;
+  //
+  bool is_value_empty() const {
+    if (has_connections()) {
+      return false;
+    }
+
+    if (_empty) {
+      return true;
+    }
+
+    if (_attrib) {
+      return false;
+    }
+
+    return true;
+  }
+
+  bool has_value() const {
+    if (_empty) {
+      return false;
+    }
+
+    return true;
+  }
+
+  const T &get_value() const {
+    if (_attrib) {
+      return _attrib.value();
+    }
+    return _fallback;
+  }
+
+  bool is_blocked() const { return _blocked; }
+
+  // for `uniform` attribute only
+  void set_blocked(bool onoff) { _blocked = onoff; }
+
+  bool is_connection() const { return _paths.size() && !has_value() ; }
+
+  void set_connection(const Path &path) {
+    _paths.clear();
+    _paths.push_back(path);
+  }
+
+  void set_connections(const std::vector<Path> &paths) { _paths = paths; }
+
+  const std::vector<Path> &get_connections() const { return _paths; }
+  const std::vector<Path> &connections() const { return _paths; }
+
+  const nonstd::optional<Path> get_connection() const {
+    if (_paths.size()) {
+      return _paths[0];
+    }
+
+    return nonstd::nullopt;
+  }
+
+  void clear_connections() { _paths.clear(); }
+
+  // value set?
+  bool authored() const {
+    if (_empty) {  // authored with empty value.
+      return true;
+    }
+    if (_attrib) {
+      return true;
+    }
+    if (_paths.size()) {
+      return true;
+    }
+    if (_blocked) {
+      return true;
+    }
+    return false;
+  }
+
+  const AttrMeta &metas() const { return _metas; }
+  AttrMeta &metas() { return _metas; }
+
+ private:
+  AttrMeta _metas;
+  std::vector<Path> _paths;
+  nonstd::optional<T> _attrib;
+  bool _empty{false};
+  T _fallback;
+  bool _blocked{false};  // for `uniform` attribute.
+};
+
+template <typename T>
+using TypedAnimatableAttributeWithFallback =
+    TypedAttributeWithFallback<Animatable<T>>;
+
+//#ifndef TINYUSDZ_INSIDE_PRIM_TYPES
 }  // namespace tinyusdz
-#endif
+//#endif
 
