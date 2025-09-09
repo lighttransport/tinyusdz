@@ -895,7 +895,7 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
                 prop_name));
       }
 
-      (*props)[prop_name] = std::move(prop);
+      (*props)[prop_name] = prop;
       DCOUT("Add property : " << prop_name);
     }
   }
@@ -1009,12 +1009,13 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       //propType = Property::Type::Attrib;
 
       // Set scalar(non-timesampled) value
-      TUSDZ_LOG_I("defaultValue");
+      //TUSDZ_LOG_I("defaultValue");
 
-      // UNSAFE: de-const for memory optimization
-      // TODO: Use typedarray
-      defaultValue = std::move(*const_cast<value::Value *>(fv.second.get_raw_ptr()));
-      TUSDZ_LOG_I("defaultValue end");
+      // TODO: Use move
+      // FYI: This doesn't work 
+      //defaultValue = std::move(*const_cast<value::Value *>(fv.second.get_raw_ptr()));
+      defaultValue = fv.second.get_raw();
+      //TUSDZ_LOG_I("defaultValue end");
       hasDefault = true;
 
       // TODO: Handle UnregisteredValue in crate-reader.cc
@@ -1368,14 +1369,14 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         }
       }
     }
-    var.set_value(std::move(defaultValue.value()));
+    var.set_value(defaultValue.value());
 
     if (defaultValue.value().type_id() == value::TypeTraits<value::ValueBlock>::type_id()) {
       isValueBlock = true;
     }
   }
 
-  attr.set_var(std::move(var));
+  attr.set_var(var);
 
   if (isValueBlock) {
     // attr's type is replaced with ValueBlock type  by `set_var`, so overwrite type with typeName
@@ -3002,16 +3003,16 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
         if (!BuildPropertyMap(node.GetChildren(), psmap, &props)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to build PropertyMap.");
         }
-        TUSDZ_LOG_I("props add");
+        //TUSDZ_LOG_I("props add");
         primspec.props() = std::move(props);
-        TUSDZ_LOG_I("props add done");
+        //TUSDZ_LOG_I("props add done");
         primspec.metas() = primMeta;
         // TODO: primChildren, properties
 
         if (primOut) {
-          TUSDZ_LOG_I("primOut move");
+          //TUSDZ_LOG_I("primOut move");
           (*primOut) = std::move(primspec);
-          TUSDZ_LOG_I("primOut move done");
+          //TUSDZ_LOG_I("primOut move done");
         }
 #endif
       }
@@ -3226,7 +3227,7 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
         if (!BuildPropertyMap(node.GetChildren(), psmap, &props)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to build PropertyMap.");
         }
-        variantPrimSpec.props() = std::move(props);
+        variantPrimSpec.props() = props;
         variantPrimSpec.metas() = primMeta;
 
         // Store variantPrimSpec to temporary buffer.
@@ -3728,10 +3729,13 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
 
   if (parent == 0) {  // root prim
     if (primspecPtr) {
-      TUSDZ_LOG_I("root primspec.add"); 
+      //TUSDZ_LOG_I("root primspec.add"); 
       std::string name = primspecPtr->name();
+
+      // memopt
       layer->primspecs()[name] = std::move(*primspecPtr);
-      TUSDZ_LOG_I("root primspec.add done"); 
+      //layer->primspecs()[name] = *primspecPtr;
+      //TUSDZ_LOG_I("root primspec.add done"); 
     }
   } else {
     if (_variantPrimSpecs.count(parent)) {
@@ -3747,11 +3751,14 @@ bool USDCReader::Impl::ReconstructPrimSpecRecursively(
       }
     } else if (primspecPtr && parentPrimSpec) {
       // Add to parent prim.
-      TUSDZ_LOG_I("children.add"); 
-      //parentPrimSpec->children().emplace_back(std::move(primspec.value()));
+      //TUSDZ_LOG_I("children.add"); 
+      //parentPrimSpec->children().emplace_back(std::move(*primspecPtr));
+      
+
+      // memopt
       parentPrimSpec->children().resize(parentPrimSpec->children().size() + 1);
       parentPrimSpec->children().back() = std::move(*primspecPtr);
-      TUSDZ_LOG_I("children.add done"); 
+      //TUSDZ_LOG_I("children.add done"); 
     }
   }
 

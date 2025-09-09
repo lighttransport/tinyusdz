@@ -2908,7 +2908,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           }
         }
 
-        value->Set(std::move(tokens));
+        value->Set(tokens);
         return true;
       } else {
         return false;
@@ -3125,13 +3125,13 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT: {
       if (rep.IsArray()) {
         if (rep.GetPayload() == 0) { // empty array
-          TypedArray<float> empty_v;
+          std::vector<float> empty_v;
           value->Set(std::move(empty_v));
           return true;
         }
         
-        TypedArray<float> v;
-        if (!ReadFloatArrayTyped(rep.IsCompressed(), &v)) {
+        std::vector<float> v;
+        if (!ReadFloatArray(rep.IsCompressed(), &v)) {
           PUSH_ERROR("Failed to read float array value.");
           return false;
         }
@@ -3151,13 +3151,13 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE: {
       if (rep.IsArray()) {
         if (rep.GetPayload() == 0) { // empty array
-          TypedArray<double> empty_v;
+          std::vector<double> empty_v;
           value->Set(std::move(empty_v));
           return true;
         }
         
-        TypedArray<double> v;
-        if (!ReadDoubleArrayTyped(rep.IsCompressed(), &v)) {
+        std::vector<double> v;
+        if (!ReadDoubleArray(rep.IsCompressed(), &v)) {
           PUSH_ERROR("Failed to read Double value.");
           return false;
         }
@@ -3756,6 +3756,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         DCOUT("float2[] = " << value::print_array_snipped(v));
+        //TUSDZ_LOG_D("float2[] = " << value::print_array_snipped(v));
 
         value->Set(std::move(v));
         return true;
@@ -4002,7 +4003,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       if (rep.IsArray()) {
         if (rep.GetPayload() == 0) { // empty array
-          TypedArray<value::float3> empty_v;
+          std::vector<value::float3> empty_v;
           value->Set(std::move(empty_v));
           return true;
         }
@@ -4033,8 +4034,10 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(n * sizeof(value::float3));
 
-        TypedArray<value::float3> v;
+#if 0
+        //TypedArray<value::float3> v;
         if (!rep.IsCompressed() && _config.use_mmap) {
+          TypedArray<value::float3> v;
           // Use TypedArray view mode - no allocation, just point to mmap'd data
           uint64_t current_pos = _sr->tell();
           const uint8_t* data_ptr = _sr->data() + current_pos;
@@ -4047,8 +4050,15 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
             PUSH_ERROR("Failed to advance stream reader position.");
             return false;
           }
+          DCOUT("float3f[] = " << value::print_array_snipped(v));
+          value->Set(std::move(v));
         } else {
+#else
+        {
+#endif
           // Regular allocation for compressed data or when mmap is disabled
+          // TODO: Chunked
+          std::vector<value::float3> v;
           v.resize(static_cast<size_t>(n));
           if (!_sr->read(size_t(n) * sizeof(value::float3),
                          size_t(n) * sizeof(value::float3),
@@ -4056,10 +4066,10 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
             PUSH_ERROR("Failed to read float3 array.");
             return false;
           }
+          DCOUT("float3f[] = " << value::print_array_snipped(v));
+          value->Set(std::move(v));
         }
 
-        DCOUT("float3f[] = " << value::print_array_snipped(v));
-        value->Set(std::move(v));
 
       } else {
         CHECK_MEMORY_USAGE(sizeof(value::float3));
@@ -4083,7 +4093,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       if (rep.IsArray()) {
         if (rep.GetPayload() == 0) { // empty array
-          TypedArray<value::half3> empty_v;
+          //TypedArray<value::half3> empty_v;
+          std::vector<value::half3> empty_v;
           value->Set(std::move(empty_v));
           return true;
         }
@@ -4113,7 +4124,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(n * sizeof(value::half3));
 
-        TypedArray<value::half3> v;
+        std::vector<value::half3> v;
+#if 0
         if (!rep.IsCompressed() && _config.use_mmap) {
           // Use TypedArray view mode - no allocation, just point to mmap'd data
           uint64_t current_pos = _sr->tell();
@@ -4128,6 +4140,9 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
             return false;
           }
         } else {
+#else
+        {
+#endif
           // Regular allocation for compressed data or when mmap is disabled
           v.resize(static_cast<size_t>(n));
           if (!_sr->read(size_t(n) * sizeof(value::half3),
@@ -4162,7 +4177,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       if (rep.IsArray()) {
         if (rep.GetPayload() == 0) { // empty array
-          TypedArray<value::int3> empty_v;
+          std::vector<value::int3> empty_v;
           value->Set(std::move(empty_v));
           return true;
         }
@@ -4192,7 +4207,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(n * sizeof(value::int3));
 
-        TypedArray<value::int3> v;
+        std::vector<value::int3> v;
+#if 0
         if (!rep.IsCompressed() && _config.use_mmap) {
           // Use TypedArray view mode - no allocation, just point to mmap'd data
           uint64_t current_pos = _sr->tell();
@@ -4207,6 +4223,9 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
             return false;
           }
         } else {
+#else
+        {
+#endif
           // Regular allocation for compressed data or when mmap is disabled
           v.resize(static_cast<size_t>(n));
           if (!_sr->read(size_t(n) * sizeof(value::int3),
@@ -4241,7 +4260,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       if (rep.IsArray()) {
         if (rep.GetPayload() == 0) { // empty array
-          TypedArray<value::double4> empty_v;
+          std::vector<value::double4> empty_v;
           value->Set(std::move(empty_v));
           return true;
         }
@@ -4272,7 +4291,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(n * sizeof(value::double4));
 
-        TypedArray<value::double4> v;
+        std::vector<value::double4> v;
+#if 0
         if (!rep.IsCompressed() && _config.use_mmap) {
           // Use TypedArray view mode - no allocation, just point to mmap'd data
           uint64_t current_pos = _sr->tell();
@@ -4287,6 +4307,9 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
             return false;
           }
         } else {
+#else
+        {
+#endif
           // Regular allocation for compressed data or when mmap is disabled
           v.resize(static_cast<size_t>(n));
           if (!_sr->read(size_t(n) * sizeof(value::double4),
@@ -4321,7 +4344,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
       if (rep.IsArray()) {
         if (rep.GetPayload() == 0) { // empty array
-          TypedArray<value::float4> empty_v;
+          std::vector<value::float4> empty_v;
           value->Set(std::move(empty_v));
           return true;
         }
@@ -4351,7 +4374,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         CHECK_MEMORY_USAGE(n * sizeof(value::float4));
 
-        TypedArray<value::float4> v;
+        std::vector<value::float4> v;
+#if 0
         if (!rep.IsCompressed() && _config.use_mmap) {
           // Use TypedArray view mode - no allocation, just point to mmap'd data
           uint64_t current_pos = _sr->tell();
@@ -4366,6 +4390,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
             return false;
           }
         } else {
+#else
+        {
           // Regular allocation for compressed data or when mmap is disabled
           v.resize(static_cast<size_t>(n));
           if (!_sr->read(size_t(n) * sizeof(value::float4),
@@ -4375,6 +4401,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
             return false;
           }
         }
+#endif
 
         DCOUT("float4[] = " << value::print_array_snipped(v));
         value->Set(std::move(v));

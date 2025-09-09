@@ -1385,6 +1385,10 @@ struct MeshConverterConfig {
   // ConvertMesh. Only effective to floating-point vertex data.
   //
   float facevarying_to_vertex_eps = std::numeric_limits<float>::epsilon();
+
+  // When true, free GeomMesh data after converting it to save memory usage.
+  // For emscripten.
+  bool lowmem{false};
 };
 
 struct MaterialConverterConfig {
