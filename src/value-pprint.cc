@@ -892,9 +892,12 @@ std::string pprint_value(const value::Value &v, const uint32_t indent,
 
 #define ARRAY1DTYPE_CASE_EXPR(__ty)                      \
   case TypeTraits<std::vector<__ty>>::type_id(): {       \
-    auto p = v.as<std::vector<__ty>>();                  \
-    if (p) {                                             \
+    if (auto p = v.as<std::vector<__ty>>()) {            \
       os << (*p);                                        \
+    } else if (auto tp = v.as<TypedArray<__ty>>()) {            \
+      os << (*tp);                                        \
+    } else if (auto ctp = v.as<ChunkedTypedArray<__ty>>()) {            \
+      os << (*ctp);                                        \
     } else {                                             \
       os << "[InternalError: 1D type TypeId mismatch.]"; \
     }                                                    \

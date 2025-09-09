@@ -462,14 +462,21 @@ class CrateValue {
 
 
   SET_TYPE_LIST(SET_TYPE_1D)
-  SET_TYPE_LIST(MOVE_SET_TYPE_1D)
+  // FIXME
+  //SET_TYPE_LIST(MOVE_SET_TYPE_1D)
 
   // TypedArray Set methods for efficient array handling with mmap support
 #define SET_TYPE_TYPED_ARRAY(__ty) void Set(const TypedArray<__ty> &v) { value_ = v; }
 #define MOVE_SET_TYPE_TYPED_ARRAY(__ty) void Set(TypedArray<__ty> &&v) { value::Value src(std::move(v)); value_ = std::move(src); }
-  
+
   SET_TYPE_LIST(SET_TYPE_TYPED_ARRAY)
   SET_TYPE_LIST(MOVE_SET_TYPE_TYPED_ARRAY)
+
+#define SET_TYPE_CHUNKED_TYPED_ARRAY(__ty) void Set(const ChunkedTypedArray<__ty> &v) { value_ = v; }
+#define MOVE_SET_TYPE_CHUNKED_TYPED_ARRAY(__ty) void Set(ChunkedTypedArray<__ty> &&v) { value::Value src(std::move(v)); value_ = std::move(src); }
+  
+  SET_TYPE_LIST(SET_TYPE_CHUNKED_TYPED_ARRAY)
+  SET_TYPE_LIST(MOVE_SET_TYPE_CHUNKED_TYPED_ARRAY)
 
 #if 0 // TODO: Unsafe so Remove
   // Useful function to retrieve concrete value with type T.

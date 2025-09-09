@@ -1928,19 +1928,15 @@ bool ParseTimeSampledEnumProperty(
    } \
  }
 
-bool ReconstructXformOpsFromProperties(
-  const Specifier &spec,
-  std::set<std::string> &table, /* inout */
+static bool ReconstructXformOpFromToken(
+
+  const std::string &token, int i,
   const std::map<std::string, Property> &properties,
-  std::vector<XformOp> *xformOps,
-  std::string *err)
-{
-
-  if (spec == Specifier::Class) {
-    // Do not materialize xformOps here.
-    return true;
+  std::set<std::string> &table, /* inout */
+  std::vector<XformOp> *xformOps, std::string *err) {
+  if (!xformOps) {
+    PUSH_ERROR_AND_RETURN("Internal error: xformOps ptr is null");
   }
-
 
   constexpr auto kTranslate = "xformOp:translate";
   constexpr auto kTransform = "xformOp:transform";
@@ -1989,14 +1985,608 @@ bool ReconstructXformOpsFromProperties(
     return nonstd::nullopt;
   };
 
+  std::string tok = token;
+        XformOp op;
+
+        DCOUT("xformOp token = " << tok);
+
+        if (startsWith(tok, "!resetXformStack!")) {
+          if (tok.compare("!resetXformStack!") != 0) {
+            PUSH_ERROR_AND_RETURN(
+                "`!resetXformStack!` must be defined solely(not to be a prefix "
+                "to \"xformOp:*\")");
+          }
+
+          if (i != 0) {
+            PUSH_ERROR_AND_RETURN(
+                "`!resetXformStack!` must appear at the first element of "
+                "xformOpOrder list.");
+          }
+
+          op.op_type = XformOp::OpType::ResetXformStack;
+          xformOps->emplace_back(op);
+
+          // skip looking up property
+          return true;
+        }
+
+        if (startsWith(tok, "!invert!")) {
+          DCOUT("invert!");
+          op.inverted = true;
+          tok = removePrefix(tok, "!invert!");
+          DCOUT("tok = " << tok);
+        }
+
+        auto it = properties.find(tok);
+        if (it == properties.end()) {
+          PUSH_ERROR_AND_RETURN("Property `" + tok + "` not found.");
+        }
+        if (it->second.is_attribute_connection()) {
+          PUSH_ERROR_AND_RETURN(
+              "Connection(.connect) for xformOp attribute is not yet supported: "
+              "`" +
+              tok + "`");
+        }
+        const Attribute &attr = it->second.get_attribute();
+
+        // Check `xformOp` namespace
+        if (auto xfm = SplitXformOpToken(tok, kTransform)) {
+          op.op_type = XformOp::OpType::Transform;
+          op.suffix = xfm.value();  // may contain nested namespaces
+
+          if (attr.get_var().has_timesamples()) {
+            op.set_timesamples(attr.get_var().ts_raw());
+          }
+
+          if (attr.get_var().has_default()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::matrix4d>::type_id()) {
+                value::matrix4d dummy{value::matrix4d::identity()};
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:transform` must be type `matrix4d`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::matrix4d>()) {
+              op.set_value(pvd.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:transform` must be type `matrix4d`, but got type `" +
+                  attr.type_name() + "`.");
+            }
+          }
+
+        } else if (auto tx = SplitXformOpToken(tok, kTranslate)) {
+          op.op_type = XformOp::OpType::Translate;
+          op.suffix = tx.value();
+
+          if (attr.get_var().has_timesamples()) {
+            op.set_timesamples(attr.get_var().ts_raw());
+          }
+
+          if (attr.get_var().has_default()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+                value::double3 dummy{0.0, 0.0, 0.0};
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+                value::float3 dummy{0.0f, 0.0f, 0.0f};
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:translate` must be type `double3` or `float3`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::double3>()) {
+              op.set_value(pvd.value());
+            } else if (auto pvf = attr.get_value<value::float3>()) {
+              op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:translate` must be type `double3` or `float3`, but "
+                  "got type `" +
+                  attr.type_name() + "`.");
+            }
+          }
+        } else if (auto scale = SplitXformOpToken(tok, kScale)) {
+          op.op_type = XformOp::OpType::Scale;
+          op.suffix = scale.value();
+
+          if (attr.get_var().has_timesamples()) {
+            op.set_timesamples(attr.get_var().ts_raw());
+          }
+
+          if (attr.get_var().has_default()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+                value::double3 dummy{0.0, 0.0, 0.0};
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+                value::float3 dummy{0.0f, 0.0f, 0.0f};
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:scale` must be type `double3` or `float3`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::double3>()) {
+              op.set_value(pvd.value());
+            } else if (auto pvf = attr.get_value<value::float3>()) {
+              op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:scale` must be type `double3` or `float3`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
+          }
+        } else if (auto rotX = SplitXformOpToken(tok, kRotateX)) {
+          op.op_type = XformOp::OpType::RotateX;
+          op.suffix = rotX.value();
+
+          if (attr.get_var().has_timesamples()) {
+            op.set_timesamples(attr.get_var().ts_raw());
+          }
+
+          if (attr.get_var().has_default()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<double>::type_id()) {
+                double dummy(0.0);
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<float>::type_id()) {
+                float dummy(0.0f);
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:rotateX` must be type `double` or `float`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<double>()) {
+              op.set_value(pvd.value());
+            } else if (auto pvf = attr.get_value<float>()) {
+              op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:rotateX` must be type `double` or `float`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
+          }
+        } else if (auto rotY = SplitXformOpToken(tok, kRotateY)) {
+          op.op_type = XformOp::OpType::RotateY;
+          op.suffix = rotY.value();
+
+          if (attr.get_var().has_timesamples()) {
+            op.set_timesamples(attr.get_var().ts_raw());
+          }
+
+          if (attr.get_var().has_default()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<double>::type_id()) {
+                double dummy(0.0);
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<float>::type_id()) {
+                float dummy(0.0f);
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:rotateY` must be type `double` or `float`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<double>()) {
+              op.set_value(pvd.value());
+            } else if (auto pvf = attr.get_value<float>()) {
+              op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:rotateY` must be type `double` or `float`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
+          }
+        } else if (auto rotZ = SplitXformOpToken(tok, kRotateZ)) {
+          op.op_type = XformOp::OpType::RotateZ;
+          op.suffix = rotZ.value();
+
+          if (attr.get_var().has_timesamples()) {
+            op.set_timesamples(attr.get_var().ts_raw());
+          }
+
+          if (attr.get_var().has_default()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<double>::type_id()) {
+                double dummy(0.0);
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<float>::type_id()) {
+                float dummy(0.0f);
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:rotateZ` must be type `double` or `float`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<double>()) {
+              op.set_value(pvd.value());
+            } else if (auto pvf = attr.get_value<float>()) {
+              op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:rotateZ` must be type `double` or `float`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
+          }
+        } else if (auto rotateXYZ = SplitXformOpToken(tok, kRotateXYZ)) {
+          op.op_type = XformOp::OpType::RotateXYZ;
+          op.suffix = rotateXYZ.value();
+
+          if (attr.get_var().has_timesamples()) {
+            op.set_timesamples(attr.get_var().ts_raw());
+          }
+
+          if (attr.get_var().has_default()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+                value::double3 dummy{0.0, 0.0, 0.0};
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+                value::float3 dummy{0.0f, 0.0f, 0.0f};
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:rotateXYZ` must be type `double3` or `float3`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::double3>()) {
+              op.set_value(pvd.value());
+            } else if (auto pvf = attr.get_value<value::float3>()) {
+              op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:rotateXYZ` must be type `double3` or `float3`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
+          }
+        } else if (auto rotateXZY = SplitXformOpToken(tok, kRotateXZY)) {
+          op.op_type = XformOp::OpType::RotateXZY;
+          op.suffix = rotateXZY.value();
+
+          if (attr.get_var().has_timesamples()) {
+            op.set_timesamples(attr.get_var().ts_raw());
+          }
+
+          if (attr.get_var().has_default()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+                value::double3 dummy{0.0, 0.0, 0.0};
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+                value::float3 dummy{0.0f, 0.0f, 0.0f};
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:rotateXZY` must be type `double3` or `float3`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::double3>()) {
+              op.set_value(pvd.value());
+            } else if (auto pvf = attr.get_value<value::float3>()) {
+              op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:rotateXZY` must be type `double3` or `float3`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
+          }
+        } else if (auto rotateYXZ = SplitXformOpToken(tok, kRotateYXZ)) {
+          op.op_type = XformOp::OpType::RotateYXZ;
+          op.suffix = rotateYXZ.value();
+
+          if (attr.get_var().has_timesamples()) {
+            op.set_timesamples(attr.get_var().ts_raw());
+          }
+
+          if (attr.get_var().has_default()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+                value::double3 dummy{0.0, 0.0, 0.0};
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+                value::float3 dummy{0.0f, 0.0f, 0.0f};
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:rotateYXZ` must be type `double3` or `float3`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::double3>()) {
+              op.set_value(pvd.value());
+            } else if (auto pvf = attr.get_value<value::float3>()) {
+              op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:rotateYXZ` must be type `double3` or `float3`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
+          }
+        } else if (auto rotateYZX = SplitXformOpToken(tok, kRotateYZX)) {
+          op.op_type = XformOp::OpType::RotateYZX;
+          op.suffix = rotateYZX.value();
+
+          if (attr.get_var().has_timesamples()) {
+            op.set_timesamples(attr.get_var().ts_raw());
+          }
+
+          if (attr.get_var().has_default()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+                value::double3 dummy{0.0, 0.0, 0.0};
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+                value::float3 dummy{0.0f, 0.0f, 0.0f};
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:rotateYZX` must be type `double3` or `float3`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::double3>()) {
+              op.set_value(pvd.value());
+            } else if (auto pvf = attr.get_value<value::float3>()) {
+              op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:rotateYZX` must be type `double3` or `float3`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
+          }
+        } else if (auto rotateZXY = SplitXformOpToken(tok, kRotateZXY)) {
+          op.op_type = XformOp::OpType::RotateZXY;
+          op.suffix = rotateZXY.value();
+
+          if (attr.get_var().has_timesamples()) {
+            op.set_timesamples(attr.get_var().ts_raw());
+          }
+
+          if (attr.get_var().has_default()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+                value::double3 dummy{0.0, 0.0, 0.0};
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+                value::float3 dummy{0.0f, 0.0f, 0.0f};
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:rotateZXY` must be type `double3` or `float3`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::double3>()) {
+              op.set_value(pvd.value());
+            } else if (auto pvf = attr.get_value<value::float3>()) {
+              op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:rotateZXY` must be type `double3` or `float3`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
+          }
+        } else if (auto rotateZYX = SplitXformOpToken(tok, kRotateZYX)) {
+          op.op_type = XformOp::OpType::RotateZYX;
+          op.suffix = rotateZYX.value();
+
+          if (attr.get_var().has_timesamples()) {
+            op.set_timesamples(attr.get_var().ts_raw());
+          }
+
+          if (attr.get_var().has_default()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::double3>::type_id()) {
+                value::double3 dummy{0.0, 0.0, 0.0};
+                op.set_value(dummy);
+              } else if (attr.type_id() == value::TypeTraits<value::float3>::type_id()) {
+                value::float3 dummy{0.0f, 0.0f, 0.0f};
+                op.set_value(dummy);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:rotateZYX` must be type `double3` or `float3`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::double3>()) {
+              op.set_value(pvd.value());
+            } else if (auto pvf = attr.get_value<value::float3>()) {
+              op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:rotateZYX` must be type `double3` or `float3`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
+          }
+        } else if (auto orient = SplitXformOpToken(tok, kOrient)) {
+          op.op_type = XformOp::OpType::Orient;
+          op.suffix = orient.value();
+
+          if (attr.get_var().has_timesamples()) {
+            op.set_timesamples(attr.get_var().ts_raw());
+          }
+
+          if (attr.get_var().has_default()) {
+            if (attr.has_blocked()) {
+              // Set dummy value for `op.get_value_type_id/op.get_value_type_name'
+              if (attr.type_id() == value::TypeTraits<value::quatf>::type_id()) {
+                value::quatf q;
+                q.real = 1.0f;
+                q.imag = {0.0f, 0.0f, 0.0f};
+                op.set_value(q);
+              } else if (attr.type_id() == value::TypeTraits<value::quatd>::type_id()) {
+                value::quatd q;
+                q.real = 1.0;
+                q.imag = {0.0, 0.0, 0.0};
+                op.set_value(q);
+              } else {
+                PUSH_ERROR_AND_RETURN(
+                    "`xformOp:orient` must be type `quatf` or `quatd`, but got "
+                    "type `" +
+                    attr.type_name() + "`.");
+              }
+              op.set_blocked(true);
+            } else if (auto pvd = attr.get_value<value::quatf>()) {
+              op.set_value(pvd.value());
+            } else if (auto pvf = attr.get_value<value::quatd>()) {
+              op.set_value(pvf.value());
+            } else {
+              PUSH_ERROR_AND_RETURN(
+                  "`xformOp:orient` must be type `quatf` or `quatd`, but got "
+                  "type `" +
+                  attr.type_name() + "`.");
+            }
+          }
+        } else {
+          PUSH_ERROR_AND_RETURN(
+              "token for xformOpOrder must have namespace `xformOp:***`, or .");
+        }
+
+        xformOps->emplace_back(op);
+        table.insert(tok);
+
+    return true;
+  }
+
+
+bool ReconstructXformOpsFromProperties(
+  const Specifier &spec,
+  std::set<std::string> &table, /* inout */
+  const std::map<std::string, Property> &properties,
+  std::vector<XformOp> *xformOps,
+  std::string *err)
+{
+
+  if (spec == Specifier::Class) {
+    // Do not materialize xformOps here.
+    return true;
+  }
+
+#if 0
+
+  constexpr auto kTranslate = "xformOp:translate";
+  constexpr auto kTransform = "xformOp:transform";
+  constexpr auto kScale = "xformOp:scale";
+  constexpr auto kRotateX = "xformOp:rotateX";
+  constexpr auto kRotateY = "xformOp:rotateY";
+  constexpr auto kRotateZ = "xformOp:rotateZ";
+  constexpr auto kRotateXYZ = "xformOp:rotateXYZ";
+  constexpr auto kRotateXZY = "xformOp:rotateXZY";
+  constexpr auto kRotateYXZ = "xformOp:rotateYXZ";
+  constexpr auto kRotateYZX = "xformOp:rotateYZX";
+  constexpr auto kRotateZXY = "xformOp:rotateZXY";
+  constexpr auto kRotateZYX = "xformOp:rotateZYX";
+  constexpr auto kOrient = "xformOp:orient";
+
+  // false : no prefix found.
+  // true : return suffix(first namespace ':' is ommited.).
+  // - "" for prefix only "xformOp:translate"
+  // - "blender:pivot" for "xformOp:translate:blender:pivot"
+  auto SplitXformOpToken =
+      [](const std::string &s,
+         const std::string &prefix) -> nonstd::optional<std::string> {
+    if (startsWith(s, prefix)) {
+      if (s.compare(prefix) == 0) {
+        // prefix only.
+        return std::string();  // empty suffix
+      } else {
+        std::string suffix = removePrefix(s, prefix);
+        DCOUT("suffix = " << suffix);
+        if (suffix.length() == 1) {  // maybe namespace only.
+          return nonstd::nullopt;
+        }
+
+        // remove namespace ':'
+        if (suffix[0] == ':') {
+          // ok
+          suffix.erase(0, 1);
+        } else {
+          return nonstd::nullopt;
+        }
+
+        return std::move(suffix);
+      }
+    }
+
+    return nonstd::nullopt;
+  };
+#endif
+
   // Lookup xform values from `xformOpOrder`
   // TODO: TimeSamples, Connection
   if (properties.count("xformOpOrder")) {
     // array of string
     auto prop = properties.at("xformOpOrder");
 
+    // 'uniform' check
+    if (prop.get_attribute().variability() != Variability::Uniform) {
+      PUSH_ERROR_AND_RETURN("`xformOpOrder` must have `uniform` variability.");
+    }
+
+    //const Attribute &attr = prop.get_attribute();
+    //const auto &v = attr.get_var();
+    //TUSDZ_LOG_I("attr.value.type " << v.type_name());
+
     if (prop.is_relationship()) {
       PUSH_ERROR_AND_RETURN("Relationship for `xformOpOrder` is not supported.");
+    } else if (auto tpv =
+                   prop.get_attribute().get_value<TypedArray<value::token>>()) {
+
+
+      for (size_t i = 0; i < tpv.value().size(); i++) {
+        const auto &item = tpv.value()[i];
+
+        if (!ReconstructXformOpFromToken(item.str(), int(i), properties, table, xformOps, err)) {
+          return false;
+        }
+      }
     } else if (auto pv =
                    prop.get_attribute().get_value<std::vector<value::token>>()) {
 
@@ -2007,6 +2597,11 @@ bool ReconstructXformOpsFromProperties(
 
       for (size_t i = 0; i < pv.value().size(); i++) {
         const auto &item = pv.value()[i];
+
+        if (!ReconstructXformOpFromToken(item.str(), int(i), properties, table, xformOps, err)) {
+          return false;
+        }
+#if 0
 
         XformOp op;
 
@@ -2514,6 +3109,7 @@ bool ReconstructXformOpsFromProperties(
 
         xformOps->emplace_back(op);
         table.insert(tok);
+#endif
       }
 
     } else {
