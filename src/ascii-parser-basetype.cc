@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <array>
 //#include <cassert>
 #include <cstdlib>
 #include <fstream>
@@ -2388,8 +2389,8 @@ bool AsciiParser::MaybeNonFinite(T *out) {
   auto loc = CurrLoc();
 
   // "-inf", "inf" or "nan"
-  std::vector<char> buf(4);
-  if (!CharN(3, &buf)) {
+  std::array<char, 4> buf;
+  if (!CharN(3, &buf[0])) {
     return false;
   }
   SeekTo(loc);
@@ -2404,7 +2405,7 @@ bool AsciiParser::MaybeNonFinite(T *out) {
     return true;
   }
 
-  bool ok = CharN(4, &buf);
+  bool ok = CharN(4, &buf[0]);
   SeekTo(loc);
 
   if (ok) {
@@ -2415,6 +2416,7 @@ bool AsciiParser::MaybeNonFinite(T *out) {
     }
 
     // NOTE: support "-nan"?
+    // FYI pxrusd does not support -nan
   }
 
   return false;
