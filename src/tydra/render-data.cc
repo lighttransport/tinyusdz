@@ -2530,13 +2530,6 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
   size_t num_verts = mesh.points.size();
   size_t num_fvs = fvIndices.size();
   vertex_input.point_indices = fvIndices;
-  vertex_input.uv0s.assign(num_fvs, {0.0f, 0.0f});
-  vertex_input.uv1s.assign(num_fvs, {0.0f, 0.0f});
-  vertex_input.normals.assign(num_fvs, {0.0f, 0.0f, 0.0f});
-  vertex_input.tangents.assign(num_fvs, {0.0f, 0.0f, 0.0f});
-  vertex_input.binormals.assign(num_fvs, {0.0f, 0.0f, 0.0f});
-  vertex_input.colors.assign(num_fvs, {0.0f, 0.0f, 0.0f});
-  vertex_input.opacities.assign(num_fvs, 0.0f);
 
   if (mesh.normals.vertex_count()) {
     if (!mesh.normals.is_facevarying()) {
@@ -2652,6 +2645,35 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
                 mesh.vertex_opacities.get_data().data())
           : nullptr;
 
+  
+  if (texcoord0_ptr) {
+    vertex_input.uv0s.assign(num_fvs, {0.0f, 0.0f});
+  }
+
+  if (texcoord1_ptr) {
+    vertex_input.uv1s.assign(num_fvs, {0.0f, 0.0f});
+  }
+
+  if (normals_ptr) {
+    vertex_input.normals.assign(num_fvs, {0.0f, 0.0f, 0.0f});
+  }
+
+  if (tangents_ptr) {
+    vertex_input.tangents.assign(num_fvs, {0.0f, 0.0f, 0.0f});
+  }
+
+  if (binormals_ptr) {
+    vertex_input.binormals.assign(num_fvs, {0.0f, 0.0f, 0.0f});
+  }
+
+  if (colors_ptr) {
+    vertex_input.colors.assign(num_fvs, {0.0f, 0.0f, 0.0f});
+  }
+
+  if (opacities_ptr) {
+    vertex_input.opacities.assign(num_fvs, 0.0f);
+  }
+
   for (size_t i = 0; i < num_fvs; i++) {
     size_t fvi = fvIndices[i];
     if (fvi >= num_verts) {
@@ -2690,6 +2712,7 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
   std::vector<uint32_t> out_point_indices;  // to reorder position data
   DefaultVertexOutput<DefaultPackedVertexData> vertex_output;
 
+
   BuildIndices<DefaultVertexInput<DefaultPackedVertexData>,
                DefaultVertexOutput<DefaultPackedVertexData>,
                DefaultPackedVertexData, DefaultPackedVertexDataHasher,
@@ -2706,11 +2729,7 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
         << out_indices.size() << ", reduced "
         << (fvIndices.size() - out_indices.size()) << " indices.");
 
-  if (mesh.is_triangulated()) {
-    mesh.triangulatedFaceVertexIndices = out_indices;
-  } else {
-    mesh.usdFaceVertexIndices = out_indices;
-  }
+
 
   //
   // Reorder 'vertex' varying attributes(points, jointIndices/jointWeights,
@@ -2874,6 +2893,13 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
     mesh.vertex_opacities.variability = VertexVariability::Vertex;
   }
 
+  if (mesh.is_triangulated()) {
+    mesh.triangulatedFaceVertexIndices = std::move(out_indices);
+  } else {
+    mesh.usdFaceVertexIndices = std::move(out_indices);
+  }
+
+
   return true;
 }
 
@@ -2942,10 +2968,20 @@ bool RenderSceneConverter::ConvertMesh(
       //    fmt::format("`points` is empty. Prim {}", abs_prim_path));
 
     } else {
+
+      //if (env.mesh_config.lowmem) {
+      //  auto *pmesh = const_cast<GeomMesh *>(&mesh);
+      //  std::vector<value::point3f> empty;
+      //  pmesh->points = empty;
+      //}
+
       dst.points.resize(points.size());
       memcpy(dst.points.data(), points.data(),
              sizeof(value::float3) * points.size());
+
+      std::vector<value::point3f>().swap(points); 
     }
+
   }
 
   {
@@ -3000,6 +3036,7 @@ bool RenderSceneConverter::ConvertMesh(
       sumCounts += size_t(counts[i]);
     }
   }
+
 
   //
   // 2. bindMaterial GeoMesh and GeomSubset.
@@ -3244,6 +3281,8 @@ bool RenderSceneConverter::ConvertMesh(
     }
   }
 
+
+
   //
   // Check if the Mesh can be drawn with single index buffer during converting
   // normals/texcoords/displayColors/displayOpacities, since OpenGL and Vulkan
@@ -3457,6 +3496,7 @@ bool RenderSceneConverter::ConvertMesh(
     }
   }
 
+
   ///
   /// 4. Triangulate
   ///  - triangulate faceVertexCounts, faceVertexIndices
@@ -3615,6 +3655,7 @@ bool RenderSceneConverter::ConvertMesh(
         std::move(triangulatedToOrigFaceVertexIndexMap);
     dst.triangulatedFaceCounts = std::move(triangulatedFaceCounts);
   }
+
 
   //
   // 5. Vertex skin weights(jointIndex and jointWeights)
@@ -3933,6 +3974,7 @@ bool RenderSceneConverter::ConvertMesh(
     DCOUT("Converted blendshape target: " << bs->name);
   }
 
+
   //
   // 7. Compute normals
   //
@@ -3979,6 +4021,7 @@ bool RenderSceneConverter::ConvertMesh(
       dst.normals.variability = VertexVariability::FaceVarying;
     }
   }
+
 
   //
   // 8. Build indices
