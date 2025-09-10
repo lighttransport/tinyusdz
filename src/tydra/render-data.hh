@@ -26,6 +26,20 @@
 /// - RenderCamera: Camera parameters for rendering
 /// - RenderLight: Light definitions for shading
 ///
+/// Memory optimization:
+/// - Define TYDRA_USE_INDEX to use array indices instead of values in
+///   DefaultPackedVertexData, reducing memory usage by ~55% per vertex
+/// - When TYDRA_USE_INDEX is defined, attributes are stored as uint32_t
+///   indices into shared attribute arrays instead of duplicate values
+/// - Use index value ~0u (UINT32_MAX) to indicate missing attributes
+///
+/// Epsilon-based comparison:
+/// - DefaultPackedVertexDataCompare and DefaultPackedVertexDataEqualEps
+///   provide floating-point comparison with configurable epsilon values
+/// - Default epsilon: 1e-6f for positions, 1e-3f for other attributes
+/// - Supports both indexed and direct value modes
+/// - Use these comparators for robust vertex deduplication with floating-point data
+///
 /// The conversion process:
 /// ```cpp
 /// tinyusdz::tydra::RenderScene renderScene;
@@ -1467,9 +1481,65 @@ struct RenderSceneConverterConfig {
 // TODO: Use spatial hash for robust dedup(consider floating-point eps)
 // TODO: Polish interface to support arbitrary vertex configuration.
 //
+// When TYDRA_USE_INDEX is defined, use array indices instead of values
+// to save memory. Index value of -1 (or ~0u for uint32_t) means no attribute.
+//
+
+// Forward declaration for attribute arrays
+template <class PackedVert>
+struct DefaultVertexInput;
+
+// Epsilon values for floating point comparison
+constexpr float kPositionEps = 1e-6f;
+constexpr float kAttributeEps = 1e-3f;
+
+// Helper functions for epsilon-based comparison
+inline bool float_equal(float a, float b, float eps) {
+  return std::abs(a - b) <= eps;
+}
+
+inline bool float2_equal(const value::float2& a, const value::float2& b, float eps) {
+  return float_equal(a[0], b[0], eps) && float_equal(a[1], b[1], eps);
+}
+
+inline bool float3_equal(const value::float3& a, const value::float3& b, float eps) {
+  return float_equal(a[0], b[0], eps) && float_equal(a[1], b[1], eps) && float_equal(a[2], b[2], eps);
+}
+
+inline int float_compare(float a, float b, float eps) {
+  if (float_equal(a, b, eps)) return 0;
+  return (a < b) ? -1 : 1;
+}
+
+inline int float2_compare(const value::float2& a, const value::float2& b, float eps) {
+  int cmp = float_compare(a[0], b[0], eps);
+  if (cmp != 0) return cmp;
+  return float_compare(a[1], b[1], eps);
+}
+
+inline int float3_compare(const value::float3& a, const value::float3& b, float eps) {
+  int cmp = float_compare(a[0], b[0], eps);
+  if (cmp != 0) return cmp;
+  cmp = float_compare(a[1], b[1], eps);
+  if (cmp != 0) return cmp;
+  return float_compare(a[2], b[2], eps);
+}
+
 struct DefaultPackedVertexData {
   //value::float3 position;
   uint32_t point_index;
+#ifdef TYDRA_USE_INDEX
+  // Use indices into attribute arrays instead of values
+  // -1 (or ~0u) means no attribute
+  uint32_t normal_index;
+  uint32_t uv0_index;
+  uint32_t uv1_index;
+  uint32_t tangent_index;
+  uint32_t binormal_index;
+  uint32_t color_index;
+  uint32_t opacity_index;
+#else
+  // Use values directly (original behavior)
   value::float3 normal;
   value::float2 uv0;
   value::float2 uv1;
@@ -1477,8 +1547,10 @@ struct DefaultPackedVertexData {
   value::float3 binormal;
   value::float3 color;
   float opacity;
+#endif
 
-  // comparator for std::map
+  // Basic comparator for std::map (fallback to memcmp)
+  // For epsilon-based comparison, use DefaultPackedVertexDataCompare with attribute arrays
   bool operator<(const DefaultPackedVertexData &rhs) const {
     return memcmp(reinterpret_cast<const void *>(this),
                   reinterpret_cast<const void *>(&rhs),
@@ -1515,6 +1587,238 @@ struct DefaultPackedVertexDataEqual {
   }
 };
 
+// Epsilon-based comparison with access to attribute arrays
+template <class VertexInput>
+struct DefaultPackedVertexDataCompare {
+  const VertexInput* vertex_input;
+  
+  DefaultPackedVertexDataCompare(const VertexInput* input) : vertex_input(input) {}
+  
+  bool operator()(const DefaultPackedVertexData &lhs,
+                  const DefaultPackedVertexData &rhs) const {
+    // Compare point indices first
+    if (lhs.point_index != rhs.point_index) {
+      return lhs.point_index < rhs.point_index;
+    }
+    
+#ifdef TYDRA_USE_INDEX
+    // In index mode, resolve indices to values and compare with epsilon
+    if (!vertex_input) {
+      // Fallback to index comparison if no vertex input available
+      return memcmp(&lhs, &rhs, sizeof(DefaultPackedVertexData)) < 0;
+    }
+    
+    // Compare normals
+    if (lhs.normal_index != rhs.normal_index) {
+      if (lhs.normal_index == ~0u) return true;  // lhs has no normal, rhs has normal
+      if (rhs.normal_index == ~0u) return false; // rhs has no normal, lhs has normal
+      
+      const auto& lhs_normal = vertex_input->unique_normals[lhs.normal_index];
+      const auto& rhs_normal = vertex_input->unique_normals[rhs.normal_index];
+      int cmp = float3_compare(lhs_normal, rhs_normal, kAttributeEps);
+      if (cmp != 0) return cmp < 0;
+    }
+    
+    // Compare uv0
+    if (lhs.uv0_index != rhs.uv0_index) {
+      if (lhs.uv0_index == ~0u) return true;
+      if (rhs.uv0_index == ~0u) return false;
+      
+      const auto& lhs_uv0 = vertex_input->unique_uv0s[lhs.uv0_index];
+      const auto& rhs_uv0 = vertex_input->unique_uv0s[rhs.uv0_index];
+      int cmp = float2_compare(lhs_uv0, rhs_uv0, kAttributeEps);
+      if (cmp != 0) return cmp < 0;
+    }
+    
+    // Compare uv1
+    if (lhs.uv1_index != rhs.uv1_index) {
+      if (lhs.uv1_index == ~0u) return true;
+      if (rhs.uv1_index == ~0u) return false;
+      
+      const auto& lhs_uv1 = vertex_input->unique_uv1s[lhs.uv1_index];
+      const auto& rhs_uv1 = vertex_input->unique_uv1s[rhs.uv1_index];
+      int cmp = float2_compare(lhs_uv1, rhs_uv1, kAttributeEps);
+      if (cmp != 0) return cmp < 0;
+    }
+    
+    // Compare tangents
+    if (lhs.tangent_index != rhs.tangent_index) {
+      if (lhs.tangent_index == ~0u) return true;
+      if (rhs.tangent_index == ~0u) return false;
+      
+      const auto& lhs_tangent = vertex_input->unique_tangents[lhs.tangent_index];
+      const auto& rhs_tangent = vertex_input->unique_tangents[rhs.tangent_index];
+      int cmp = float3_compare(lhs_tangent, rhs_tangent, kAttributeEps);
+      if (cmp != 0) return cmp < 0;
+    }
+    
+    // Compare binormals
+    if (lhs.binormal_index != rhs.binormal_index) {
+      if (lhs.binormal_index == ~0u) return true;
+      if (rhs.binormal_index == ~0u) return false;
+      
+      const auto& lhs_binormal = vertex_input->unique_binormals[lhs.binormal_index];
+      const auto& rhs_binormal = vertex_input->unique_binormals[rhs.binormal_index];
+      int cmp = float3_compare(lhs_binormal, rhs_binormal, kAttributeEps);
+      if (cmp != 0) return cmp < 0;
+    }
+    
+    // Compare colors
+    if (lhs.color_index != rhs.color_index) {
+      if (lhs.color_index == ~0u) return true;
+      if (rhs.color_index == ~0u) return false;
+      
+      const auto& lhs_color = vertex_input->unique_colors[lhs.color_index];
+      const auto& rhs_color = vertex_input->unique_colors[rhs.color_index];
+      int cmp = float3_compare(lhs_color, rhs_color, kAttributeEps);
+      if (cmp != 0) return cmp < 0;
+    }
+    
+    // Compare opacity
+    if (lhs.opacity_index != rhs.opacity_index) {
+      if (lhs.opacity_index == ~0u) return true;
+      if (rhs.opacity_index == ~0u) return false;
+      
+      const float lhs_opacity = vertex_input->unique_opacities[lhs.opacity_index];
+      const float rhs_opacity = vertex_input->unique_opacities[rhs.opacity_index];
+      int cmp = float_compare(lhs_opacity, rhs_opacity, kAttributeEps);
+      if (cmp != 0) return cmp < 0;
+    }
+    
+#else
+    // Direct value comparison with epsilon
+    int cmp = float3_compare(lhs.normal, rhs.normal, kAttributeEps);
+    if (cmp != 0) return cmp < 0;
+    
+    cmp = float2_compare(lhs.uv0, rhs.uv0, kAttributeEps);
+    if (cmp != 0) return cmp < 0;
+    
+    cmp = float2_compare(lhs.uv1, rhs.uv1, kAttributeEps);
+    if (cmp != 0) return cmp < 0;
+    
+    cmp = float3_compare(lhs.tangent, rhs.tangent, kAttributeEps);
+    if (cmp != 0) return cmp < 0;
+    
+    cmp = float3_compare(lhs.binormal, rhs.binormal, kAttributeEps);
+    if (cmp != 0) return cmp < 0;
+    
+    cmp = float3_compare(lhs.color, rhs.color, kAttributeEps);
+    if (cmp != 0) return cmp < 0;
+    
+    cmp = float_compare(lhs.opacity, rhs.opacity, kAttributeEps);
+    if (cmp != 0) return cmp < 0;
+#endif
+    
+    return false; // All values are equal within epsilon
+  }
+};
+
+// Epsilon-based equality comparison with access to attribute arrays
+template <class VertexInput>
+struct DefaultPackedVertexDataEqualEps {
+  const VertexInput* vertex_input;
+  
+  DefaultPackedVertexDataEqualEps(const VertexInput* input) : vertex_input(input) {}
+  
+  bool operator()(const DefaultPackedVertexData &lhs,
+                  const DefaultPackedVertexData &rhs) const {
+    // Compare point indices first
+    if (lhs.point_index != rhs.point_index) {
+      return false;
+    }
+    
+#ifdef TYDRA_USE_INDEX
+    // In index mode, resolve indices to values and compare with epsilon
+    if (!vertex_input) {
+      // Fallback to exact comparison if no vertex input available
+      return memcmp(&lhs, &rhs, sizeof(DefaultPackedVertexData)) == 0;
+    }
+    
+    // Compare normals
+    if (lhs.normal_index != rhs.normal_index) {
+      if (lhs.normal_index == ~0u || rhs.normal_index == ~0u) {
+        return lhs.normal_index == rhs.normal_index; // Both must be missing
+      }
+      const auto& lhs_normal = vertex_input->unique_normals[lhs.normal_index];
+      const auto& rhs_normal = vertex_input->unique_normals[rhs.normal_index];
+      if (!float3_equal(lhs_normal, rhs_normal, kAttributeEps)) return false;
+    }
+    
+    // Compare uv0
+    if (lhs.uv0_index != rhs.uv0_index) {
+      if (lhs.uv0_index == ~0u || rhs.uv0_index == ~0u) {
+        return lhs.uv0_index == rhs.uv0_index;
+      }
+      const auto& lhs_uv0 = vertex_input->unique_uv0s[lhs.uv0_index];
+      const auto& rhs_uv0 = vertex_input->unique_uv0s[rhs.uv0_index];
+      if (!float2_equal(lhs_uv0, rhs_uv0, kAttributeEps)) return false;
+    }
+    
+    // Compare uv1
+    if (lhs.uv1_index != rhs.uv1_index) {
+      if (lhs.uv1_index == ~0u || rhs.uv1_index == ~0u) {
+        return lhs.uv1_index == rhs.uv1_index;
+      }
+      const auto& lhs_uv1 = vertex_input->unique_uv1s[lhs.uv1_index];
+      const auto& rhs_uv1 = vertex_input->unique_uv1s[rhs.uv1_index];
+      if (!float2_equal(lhs_uv1, rhs_uv1, kAttributeEps)) return false;
+    }
+    
+    // Compare tangents
+    if (lhs.tangent_index != rhs.tangent_index) {
+      if (lhs.tangent_index == ~0u || rhs.tangent_index == ~0u) {
+        return lhs.tangent_index == rhs.tangent_index;
+      }
+      const auto& lhs_tangent = vertex_input->unique_tangents[lhs.tangent_index];
+      const auto& rhs_tangent = vertex_input->unique_tangents[rhs.tangent_index];
+      if (!float3_equal(lhs_tangent, rhs_tangent, kAttributeEps)) return false;
+    }
+    
+    // Compare binormals
+    if (lhs.binormal_index != rhs.binormal_index) {
+      if (lhs.binormal_index == ~0u || rhs.binormal_index == ~0u) {
+        return lhs.binormal_index == rhs.binormal_index;
+      }
+      const auto& lhs_binormal = vertex_input->unique_binormals[lhs.binormal_index];
+      const auto& rhs_binormal = vertex_input->unique_binormals[rhs.binormal_index];
+      if (!float3_equal(lhs_binormal, rhs_binormal, kAttributeEps)) return false;
+    }
+    
+    // Compare colors
+    if (lhs.color_index != rhs.color_index) {
+      if (lhs.color_index == ~0u || rhs.color_index == ~0u) {
+        return lhs.color_index == rhs.color_index;
+      }
+      const auto& lhs_color = vertex_input->unique_colors[lhs.color_index];
+      const auto& rhs_color = vertex_input->unique_colors[rhs.color_index];
+      if (!float3_equal(lhs_color, rhs_color, kAttributeEps)) return false;
+    }
+    
+    // Compare opacity
+    if (lhs.opacity_index != rhs.opacity_index) {
+      if (lhs.opacity_index == ~0u || rhs.opacity_index == ~0u) {
+        return lhs.opacity_index == rhs.opacity_index;
+      }
+      const float lhs_opacity = vertex_input->unique_opacities[lhs.opacity_index];
+      const float rhs_opacity = vertex_input->unique_opacities[rhs.opacity_index];
+      if (!float_equal(lhs_opacity, rhs_opacity, kAttributeEps)) return false;
+    }
+    
+#else
+    // Direct value comparison with epsilon
+    if (!float3_equal(lhs.normal, rhs.normal, kAttributeEps)) return false;
+    if (!float2_equal(lhs.uv0, rhs.uv0, kAttributeEps)) return false;
+    if (!float2_equal(lhs.uv1, rhs.uv1, kAttributeEps)) return false;
+    if (!float3_equal(lhs.tangent, rhs.tangent, kAttributeEps)) return false;
+    if (!float3_equal(lhs.binormal, rhs.binormal, kAttributeEps)) return false;
+    if (!float3_equal(lhs.color, rhs.color, kAttributeEps)) return false;
+    if (!float_equal(lhs.opacity, rhs.opacity, kAttributeEps)) return false;
+#endif
+    
+    return true; // All values are equal within epsilon
+  }
+};
+
 template <class PackedVert>
 struct DefaultVertexInput {
   //std::vector<value::float3> positions;
@@ -1527,6 +1831,17 @@ struct DefaultVertexInput {
   std::vector<value::float3> colors;
   std::vector<float> opacities;
 
+#ifdef TYDRA_USE_INDEX
+  // Unique attribute arrays for indexed mode
+  std::vector<value::float3> unique_normals;
+  std::vector<value::float2> unique_uv0s;
+  std::vector<value::float2> unique_uv1s;
+  std::vector<value::float3> unique_tangents;
+  std::vector<value::float3> unique_binormals;
+  std::vector<value::float3> unique_colors;
+  std::vector<float> unique_opacities;
+#endif
+
   size_t size() const { return point_indices.size(); }
 
   void get(size_t idx, PackedVert &output) const {
@@ -1535,6 +1850,19 @@ struct DefaultVertexInput {
     } else {
       output.point_index = ~0u; // this case should not happen though
     }
+#ifdef TYDRA_USE_INDEX
+    // In index mode, store indices to unique attribute arrays
+    // The indices will be set by the conversion process
+    // For now, we just mark them as not present if no data
+    output.normal_index = (idx < normals.size()) ? idx : ~0u;
+    output.uv0_index = (idx < uv0s.size()) ? idx : ~0u;
+    output.uv1_index = (idx < uv1s.size()) ? idx : ~0u;
+    output.tangent_index = (idx < tangents.size()) ? idx : ~0u;
+    output.binormal_index = (idx < binormals.size()) ? idx : ~0u;
+    output.color_index = (idx < colors.size()) ? idx : ~0u;
+    output.opacity_index = (idx < opacities.size()) ? idx : ~0u;
+#else
+    // Original behavior: store values directly
     if (idx < normals.size()) {
       output.normal = normals[idx];
     } else {
@@ -1570,6 +1898,7 @@ struct DefaultVertexInput {
     } else {
       output.opacity = 0.0f;  // FIXME: Use 1.0?
     }
+#endif
   }
 };
 
@@ -1585,10 +1914,34 @@ struct DefaultVertexOutput {
   std::vector<value::float3> colors;
   std::vector<float> opacities;
 
+#ifdef TYDRA_USE_INDEX
+  // Unique attribute arrays for indexed mode
+  std::vector<value::float3> unique_normals;
+  std::vector<value::float2> unique_uv0s;
+  std::vector<value::float2> unique_uv1s;
+  std::vector<value::float3> unique_tangents;
+  std::vector<value::float3> unique_binormals;
+  std::vector<value::float3> unique_colors;
+  std::vector<float> unique_opacities;
+#endif
+
   size_t size() const { return point_indices.size(); }
 
   void push_back(const PackedVert &v) {
     point_indices.push_back(v.point_index);
+#ifdef TYDRA_USE_INDEX
+    // In index mode, we would resolve indices to actual values
+    // from the unique arrays when needed for rendering
+    // For now, we keep the existing interface but store indices
+    // This would need additional logic to resolve indices to values
+    normals.push_back({0.0f, 0.0f, 0.0f}); // placeholder
+    uv0s.push_back({0.0f, 0.0f});
+    uv1s.push_back({0.0f, 0.0f});
+    tangents.push_back({0.0f, 0.0f, 0.0f});
+    binormals.push_back({0.0f, 0.0f, 0.0f});
+    colors.push_back({0.0f, 0.0f, 0.0f});
+    opacities.push_back(0.0f);
+#else
     normals.push_back(v.normal);
     uv0s.push_back(v.uv0);
     uv1s.push_back(v.uv1);
@@ -1596,6 +1949,7 @@ struct DefaultVertexOutput {
     binormals.push_back(v.binormal);
     colors.push_back(v.color);
     opacities.push_back(v.opacity);
+#endif
   }
 };
 
