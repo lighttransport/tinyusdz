@@ -1,4 +1,6 @@
 #include "layer-to-renderscene.hh"
+#include "common-utils.hh"
+#include "common-types.hh"
 
 #include <algorithm>
 #include <unordered_map>
