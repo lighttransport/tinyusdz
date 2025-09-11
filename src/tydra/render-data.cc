@@ -29,6 +29,8 @@
 //
 #include <numeric>
 
+#include "common-utils.hh"
+#include "common-types.hh"
 #include "image-loader.hh"
 #include "image-util.hh"
 #include "image-types.hh"
@@ -62,6 +64,10 @@
 // NOTE: HalfEdge is not used atm.
 #include "external/half-edge.hh"
 
+#ifdef TYDRA_ROBUST_TANGENT
+#include "robust-tangent.hh"
+#endif
+
 // For triangulation.
 // TODO: Use tinyobjloader's triangulation
 #include "external/mapbox/earcut/earcut.hpp"
@@ -89,10 +95,7 @@ namespace tydra {
 
 namespace {
 
-#define PushError(msg) \
-  if (err) {           \
-    (*err) += msg;     \
-  }
+#define PushError(msg) TYDRA_PUSH_ERROR(err, msg)
 
 inline std::string to_string(const UVTexture::Channel channel) {
   if (channel == UVTexture::Channel::RGB) {
@@ -839,10 +842,7 @@ static bool ToFaceVaryingAttribute(const std::string &attr_name,
   VertexAttribute *dst,
   std::string *err) {
 
-#define PushError(msg) \
-  if (err) {           \
-    (*err) += msg;     \
-  }
+#define PushError(msg) TYDRA_PUSH_ERROR(err, msg)
 
   if (!dst) {
     PUSH_ERROR_AND_RETURN("'dest' parameter is nullptr.");
@@ -918,10 +918,7 @@ static bool ToVertexVaryingAttribute(
   VertexAttribute *dst,
   std::string *err) {
 
-#define PushError(msg) \
-  if (err) {           \
-    (*err) += msg;     \
-  }
+#define PushError(msg) TYDRA_PUSH_ERROR(err, msg)
 
   if (!dst) {
     PUSH_ERROR_AND_RETURN("'dest' parameter is nullptr.");
@@ -1969,6 +1966,118 @@ struct ComputeTangentVertexOutput {
 /// @param[out] out_vertex_indices Vertex indices.
 /// @param[out] err Error message.
 ///
+#ifdef TYDRA_ROBUST_TANGENT
+/// Wrapper function to use robust tangent computation
+static bool ComputeTangentsAndBinormalsRobust(
+    const std::vector<vec3> &vertices,
+    const std::vector<uint32_t> &faceVertexCounts,
+    const std::vector<uint32_t> &faceVertexIndices,
+    const std::vector<vec2> &texcoords, const std::vector<vec3> &normals,
+    bool is_facevarying_input,  // false: 'vertex' varying
+    std::vector<vec3> *tangents, std::vector<vec3> *binormals,
+    std::vector<uint32_t> *out_vertex_indices, std::string *err) {
+  
+  if (!tangents || !binormals || !out_vertex_indices) {
+    PUSH_ERROR_AND_RETURN("Output arguments are nullptr.");
+  }
+
+  if (vertices.empty()) {
+    PUSH_ERROR_AND_RETURN("vertices is empty.");
+  }
+
+  if (faceVertexIndices.size() < 3) {
+    PUSH_ERROR_AND_RETURN("faceVertexIndices.size < 3");
+  }
+
+  // Convert tydra data structures to robust tangent computation format
+  MeshData mesh;
+  
+  // Copy vertices
+  for (const auto& v : vertices) {
+    mesh.positions.emplace_back(v[0], v[1], v[2]);
+  }
+  
+  // Copy normals (if available)
+  if (!normals.empty()) {
+    for (const auto& n : normals) {
+      mesh.normals.emplace_back(n[0], n[1], n[2]);
+    }
+  }
+  
+  // Copy texcoords (if available)
+  if (!texcoords.empty()) {
+    for (const auto& uv : texcoords) {
+      mesh.texcoords.emplace_back(uv[0], uv[1]);
+    }
+  }
+
+  // Convert face indices to triangles
+  // Handle both triangle and polygon cases
+  size_t faceVertexIndexOffset = 0;
+  bool hasFaceVertexCounts = !faceVertexCounts.empty();
+  
+  if (hasFaceVertexCounts) {
+    for (size_t i = 0; i < faceVertexCounts.size(); i++) {
+      size_t nv = faceVertexCounts[i];
+      if (nv < 3) continue;
+      
+      // Triangulate polygon faces (simple fan triangulation)
+      for (size_t f = 0; f < nv - 2; f++) {
+        uint32_t i0 = faceVertexIndices[faceVertexIndexOffset];
+        uint32_t i1 = faceVertexIndices[faceVertexIndexOffset + f + 1];
+        uint32_t i2 = faceVertexIndices[faceVertexIndexOffset + f + 2];
+        mesh.triangles.emplace_back(i0, i1, i2);
+      }
+      faceVertexIndexOffset += nv;
+    }
+  } else {
+    // All triangles
+    for (size_t i = 0; i < faceVertexIndices.size(); i += 3) {
+      mesh.triangles.emplace_back(
+        faceVertexIndices[i],
+        faceVertexIndices[i + 1], 
+        faceVertexIndices[i + 2]
+      );
+    }
+  }
+
+  // Configure robust tangent computation options
+  TangentComputeOptions options;
+  options.useLengyelMethod = true;
+  options.weightByArea = true;
+  options.weightByAngle = true;
+  options.orthogonalize = true;
+  options.normalize = true;
+
+  // Compute tangent spaces
+  auto tangentSpaces = TangentComputer::ComputeTangentSpaces(mesh, options);
+  
+  if (tangentSpaces.empty()) {
+    PUSH_ERROR_AND_RETURN("Failed to compute tangent spaces.");
+  }
+
+  // Convert back to tydra format
+  tangents->clear();
+  binormals->clear();
+  tangents->resize(tangentSpaces.size());
+  binormals->resize(tangentSpaces.size());
+  
+  for (size_t i = 0; i < tangentSpaces.size(); i++) {
+    const auto& ts = tangentSpaces[i];
+    (*tangents)[i] = vec3{ts.tangent.x, ts.tangent.y, ts.tangent.z};
+    (*binormals)[i] = vec3{ts.binormal.x, ts.binormal.y, ts.binormal.z};
+  }
+
+  // Create identity vertex indices for now (robust computation already handles vertex sharing)
+  out_vertex_indices->clear();
+  for (size_t i = 0; i < faceVertexIndices.size(); i++) {
+    out_vertex_indices->push_back(static_cast<uint32_t>(i));
+  }
+
+  return true;
+}
+#endif
+
 static bool ComputeTangentsAndBinormals(
     const std::vector<vec3> &vertices,
     const std::vector<uint32_t> &faceVertexCounts,
@@ -4139,12 +4248,21 @@ bool RenderSceneConverter::ConvertMesh(
     std::vector<vec3> binormals;
     std::vector<uint32_t> vertex_indices;
 
+#ifdef TYDRA_ROBUST_TANGENT
+    if (!ComputeTangentsAndBinormalsRobust(dst.points, dst.faceVertexCounts(),
+                                          dst.faceVertexIndices(), texcoords,
+                                          normals, !is_single_indexable, &tangents,
+                                          &binormals, &vertex_indices, &_err)) {
+      PUSH_ERROR_AND_RETURN("Failed to compute tangents/binormals with robust method.");
+    }
+#else
     if (!ComputeTangentsAndBinormals(dst.points, dst.faceVertexCounts(),
                                      dst.faceVertexIndices(), texcoords,
                                      normals, !is_single_indexable, &tangents,
                                      &binormals, &vertex_indices, &_err)) {
       PUSH_ERROR_AND_RETURN("Failed to compute tangents/binormals.");
     }
+#endif
 
     // 1. Firstly, always convert tangents/binormals to 'facevarying'
     // variability
