@@ -32,6 +32,7 @@ if (EMSCRIPTEN)
   set(TINYUSDZ_DEFAULT_WITH_USDA_PARSER Off)
   set(TINYUSDZ_DEFAULT_WITH_USDC_PARSER Off)
   set(TINYUSDZ_DEFAULT_WITH_COROUTINE On)
+  set(TINYUSDZ_DEFAULT_WITH_MESHOPT On)
 elseif(NOT PROJECT_IS_TOP_LEVEL)
   # assume tinyusdz is added from add_subdirectory()
   # disable tools, tests and examples build by default.
@@ -46,6 +47,7 @@ elseif(NOT PROJECT_IS_TOP_LEVEL)
   set(TINYUSDZ_DEFAULT_WITH_USDA_PARSER Off)
   set(TINYUSDZ_DEFAULT_WITH_USDC_PARSER Off)
   set(TINYUSDZ_DEFAULT_WITH_COROUTINE Off)
+  set(TINYUSDZ_DEFAULT_WITH_MESHOPT Off)
 else()
   set(TINYUSDZ_DEFAULT_NO_WERROR OFF)
   set(TINYUSDZ_DEFAULT_PRODUCTION_BUILD Off)
@@ -58,6 +60,7 @@ else()
   set(TINYUSDZ_DEFAULT_WITH_USDA_PARSER Off)
   set(TINYUSDZ_DEFAULT_WITH_USDC_PARSER Off)
   set(TINYUSDZ_DEFAULT_WITH_COROUTINE Off)
+  set(TINYUSDZ_DEFAULT_WITH_MESHOPT Off)
 
   # For Visual Studio
   set_property(GLOBAL PROPERTY USE_FOLDERS ON)
@@ -249,6 +252,9 @@ option(TINYUSDZ_WITH_EXR "Build with EXR HDR texture support" ON)
 # -- ColorIO --
 option(TINYUSDZ_WITH_COLORIO
        "Build with Color IO Baked LUT support(through tinycolorio)" ON)
+
+option(TINYUSDZ_WITH_MESHOPT
+       "Build with meshoptimizer support for mesh optimization" ${TINYUSDZ_DEFAULT_WITH_MESHOPT})
 # ---------
 
 # -- optional tool --
@@ -869,6 +875,30 @@ if(TINYUSDZ_WITH_WAMR)
 
 endif(TINYUSDZ_WITH_WAMR)
 
+if(TINYUSDZ_WITH_MESHOPT)
+  # meshoptimizer source files
+  set(MESHOPTIMIZER_SOURCES
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/allocator.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/clusterizer.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/indexanalyzer.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/indexcodec.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/indexgenerator.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/overdrawoptimizer.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/partition.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/quantization.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/rasterizer.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/simplifier.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/spatialorder.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/stripifier.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/vcacheoptimizer.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/vertexcodec.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/vertexfilter.cpp
+    ${PROJECT_SOURCE_DIR}/src/external/meshoptimizer/vfetchoptimizer.cpp
+  )
+
+  list(APPEND TINYUSDZ_DEP_SOURCES ${MESHOPTIMIZER_SOURCES})
+endif(TINYUSDZ_WITH_MESHOPT)
+
 if(TINYUSDZ_WITH_TIFF OR TINYUSDZ_WITH_EXR)
   if(TINYUSDZ_USE_SYSTEM_ZLIB)
     list(APPEND TINYUSDZ_EXT_LIBRARIES ZLIB::ZLIB)
@@ -1349,6 +1379,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_WITH_COROUTINE")
   endif(TINYUSDZ_WITH_COROUTINE)
+
+  if(TINYUSDZ_WITH_MESHOPT)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_MESHOPT")
+  endif(TINYUSDZ_WITH_MESHOPT)
 
   if(NOT TINYUSDZ_CXX_EXCEPTIONS)
     if(MSVC)
