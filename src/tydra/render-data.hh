@@ -63,12 +63,14 @@
 
 #include "asset-resolution.hh"
 #include "nonstd/expected.hpp"
+#include "typed-array.hh"
 #include "usdGeom.hh"
 #include "usdShade.hh"
 #include "usdSkel.hh"
 #include "value-types.hh"
 
 // tydra
+#include "common-types.hh"
 #include "scene-access.hh"
 #include "spatial-hashes.hh"
 
@@ -104,6 +106,15 @@ namespace tydra {
 /// @return true to continue conversion, false to cancel
 ///
 using ProgressCallback = std::function<bool(float progress, void *userptr)>;
+
+// Conditional typedef for ChunkedVectorArray based on TYDRA_USE_CHUNKED_ARRAY
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+template<typename T>
+using ChunkedVectorArray = tinyusdz::ChunkedTypedArray<T>;
+#else
+template<typename T>
+using ChunkedVectorArray = std::vector<T>;
+#endif
 
 // GLSL like data types
 using vec2 = value::float2;
@@ -231,7 +242,11 @@ std::string to_string(ComponentType ty);
 struct BufferData {
   ComponentType componentType{ComponentType::UInt8};
   //uint8_t count{1};           // # of components. up to 256
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<uint8_t> data;  // binary data. size is dividable by sizeof(componentType)
+#else
   std::vector<uint8_t> data;  // binary data. size is dividable by sizeof(componentType)
+#endif
 
   // TODO: Stride?
 };
@@ -485,7 +500,11 @@ struct VertexAttribute {
   uint32_t stride{0};  //  We don't support packed(interleaved) vertex data, so
                        //  stride is usually sizeof(VertexAttributeFormat) *
                        //  elementSize. 0 = tightly packed.
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<uint8_t> data;  // raw binary data(TODO: Use Buffer ID?)
+#else
   std::vector<uint8_t> data;  // raw binary data(TODO: Use Buffer ID?)
+#endif
   std::vector<uint32_t>
       indices;  // Dedicated Index buffer. Set when variability == Indexed.
                 // empty = Use externally provided vertex index buffer
@@ -682,7 +701,11 @@ struct Cubemap
   // 5: -Z (front)
 
   // LoD of cubemap
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<std::array<TextureImage, 6>> faces_lod;
+#else
   std::vector<std::array<TextureImage, 6>> faces_lod;
+#endif
 };
 
 // Envmap lightsource
@@ -702,7 +725,11 @@ struct EnvmapLight
   double guideRadius{1.0e5};
   std::string asset_name; // 'inputs:texture:file'
 
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<TextureImage> texture_lod;
+#else
   std::vector<TextureImage> texture_lod;
+#endif
 
   // Utility
   bool to_cubemap(Cubemap &cubemap);
@@ -717,7 +744,11 @@ struct EnvmapLight
 template <typename T>
 struct AnimationSampler {
   nonstd::optional<T> static_value; // value at static time('default' time) if exist
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<AnimationSample<T>> samples;
+#else
   std::vector<AnimationSample<T>> samples;
+#endif
 
   // No cubicSpline in USD
   enum class Interpolation {
@@ -782,7 +813,11 @@ struct Node {
   int32_t id{-1};  // Index to node content(e.g. meshes[id] when nodeTypes ==
                    // Mesh). -1 = no corresponding content exists for this node.
 
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<Node> children;
+#else
   std::vector<Node> children;
+#endif
 
   // Every node have its transform at specified timecode.
   // `resetXform` is encoded in global matrix.
@@ -794,8 +829,13 @@ struct Node {
 
   bool is_identity_matrix() { return is_identity(local_matrix); }
 
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<AnimationChannel>
+      node_animations;  // xform animations(timesamples)
+#else
   std::vector<AnimationChannel>
       node_animations;  // xform animations(timesamples)
+#endif
 
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
 };
@@ -803,8 +843,13 @@ struct Node {
 // BlendShape shape target.
 
 struct InbetweenShapeTarget {
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<vec3> pointOffsets;
+  ChunkedVectorArray<vec3> normalOffsets;
+#else
   std::vector<vec3> pointOffsets;
   std::vector<vec3> normalOffsets;
+#endif
   float weight{0.5f};  // TODO: Init with invalid weight?
 };
 
@@ -813,9 +858,14 @@ struct ShapeTarget {
   std::string abs_path;      // Absolute prim path
   std::string display_name;  // `displayName` prim meta
 
-  std::vector<uint32_t> pointIndices;
+  std::vector<uint32_t> pointIndices; // Keep int array as std::vector
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<vec3> pointOffsets;
+  ChunkedVectorArray<vec3> normalOffsets;
+#else
   std::vector<vec3> pointOffsets;
   std::vector<vec3> normalOffsets;
+#endif
 
   // key = weight
   std::unordered_map<float, InbetweenShapeTarget> inbetweens;
@@ -829,10 +879,14 @@ struct JointAndWeight {
   // NOTE: variability of jointIndices and jointWeights are 'vertex'
   // NOTE: Values in jointIndices and jointWeights will be reordered when `MeshConverterConfig::build_vertex_indices` is set true.
   //
-  std::vector<int> jointIndices;  // int[] primvars:skel:jointIndices
+  std::vector<int> jointIndices;  // int[] primvars:skel:jointIndices - Keep int array as std::vector
 
   // NOTE: weight is converted from USD as-is. not normalized.
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<float> jointWeights;  // float[] primvars:skel:jointWeight;
+#else
   std::vector<float> jointWeights;  // float[] primvars:skel:jointWeight;
+#endif
 
   int elementSize{1}; // # of weights per vertex
 };
@@ -907,7 +961,11 @@ struct RenderMesh {
 
   //VertexArrayType vertexArrayType{VertexArrayType::Facevarying};
 
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<vec3> points;  // varying is always 'vertex'.
+#else
   std::vector<vec3> points;  // varying is always 'vertex'.
+#endif
 
   ///
   /// Initialized with USD faceVertexIndices/faceVertexCounts in GeomMesh.
@@ -1284,6 +1342,19 @@ class RenderScene {
 
   uint32_t default_root_node{0}; // index to `nodes`.
 
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<Node> nodes;
+  ChunkedVectorArray<TextureImage> images;
+  ChunkedVectorArray<RenderMaterial> materials;
+  ChunkedVectorArray<RenderCamera> cameras;
+  ChunkedVectorArray<RenderLight> lights;
+  ChunkedVectorArray<UVTexture> textures;
+  ChunkedVectorArray<RenderMesh> meshes;
+  ChunkedVectorArray<Animation> animations;
+  ChunkedVectorArray<SkelHierarchy> skeletons;
+  ChunkedVectorArray<BufferData>
+      buffers;  // Various data storage(e.g. texel/image data).
+#else
   std::vector<Node> nodes;
   std::vector<TextureImage> images;
   std::vector<RenderMaterial> materials;
@@ -1295,6 +1366,7 @@ class RenderScene {
   std::vector<SkelHierarchy> skeletons;
   std::vector<BufferData>
       buffers;  // Various data storage(e.g. texel/image data).
+#endif
 
   ///
   /// Estimate total memory usage of this RenderScene in bytes
@@ -1381,6 +1453,14 @@ struct MeshConverterConfig {
   // index-buffer only (e.g. OpenGL/Vulkan)
   //
   bool build_vertex_indices{true};
+
+  //
+  // When true, and mesh isn't single_indexable, skip BuildIndices for faster
+  // and reduced temporary memory processing. Vertex attributes are all expanded
+  // to facevertex varying. This option takes precedence over build_vertex_indices
+  // when the mesh cannot be single-indexed.
+  //
+  bool prefer_non_indexed{false};
 
   //
   // Compute normals if not present in the mesh.
@@ -1830,7 +1910,16 @@ struct DefaultPackedVertexDataEqualEps {
 template <class PackedVert>
 struct DefaultVertexInput {
   //std::vector<value::float3> positions;
-  std::vector<uint32_t> point_indices;
+  std::vector<uint32_t> point_indices; // Keep int array as std::vector
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<value::float3> normals;
+  ChunkedVectorArray<value::float2> uv0s;
+  ChunkedVectorArray<value::float2> uv1s;
+  ChunkedVectorArray<value::float3> tangents;
+  ChunkedVectorArray<value::float3> binormals;
+  ChunkedVectorArray<value::float3> colors;
+  ChunkedVectorArray<float> opacities;
+#else
   std::vector<value::float3> normals;
   std::vector<value::float2> uv0s;
   std::vector<value::float2> uv1s;
@@ -1838,9 +1927,19 @@ struct DefaultVertexInput {
   std::vector<value::float3> binormals;
   std::vector<value::float3> colors;
   std::vector<float> opacities;
+#endif
 
 #ifdef TYDRA_USE_INDEX
   // Unique attribute arrays for indexed mode
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<value::float3> unique_normals;
+  ChunkedVectorArray<value::float2> unique_uv0s;
+  ChunkedVectorArray<value::float2> unique_uv1s;
+  ChunkedVectorArray<value::float3> unique_tangents;
+  ChunkedVectorArray<value::float3> unique_binormals;
+  ChunkedVectorArray<value::float3> unique_colors;
+  ChunkedVectorArray<float> unique_opacities;
+#else
   std::vector<value::float3> unique_normals;
   std::vector<value::float2> unique_uv0s;
   std::vector<value::float2> unique_uv1s;
@@ -1848,6 +1947,7 @@ struct DefaultVertexInput {
   std::vector<value::float3> unique_binormals;
   std::vector<value::float3> unique_colors;
   std::vector<float> unique_opacities;
+#endif
 #endif
 
   size_t size() const { return point_indices.size(); }
@@ -1913,7 +2013,16 @@ struct DefaultVertexInput {
 template <class PackedVert>
 struct DefaultVertexOutput {
   //std::vector<value::float3> positions;
-  std::vector<uint32_t> point_indices;
+  std::vector<uint32_t> point_indices; // Keep int array as std::vector
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<value::float3> normals;
+  ChunkedVectorArray<value::float2> uv0s;
+  ChunkedVectorArray<value::float2> uv1s;
+  ChunkedVectorArray<value::float3> tangents;
+  ChunkedVectorArray<value::float3> binormals;
+  ChunkedVectorArray<value::float3> colors;
+  ChunkedVectorArray<float> opacities;
+#else
   std::vector<value::float3> normals;
   std::vector<value::float2> uv0s;
   std::vector<value::float2> uv1s;
@@ -1921,9 +2030,19 @@ struct DefaultVertexOutput {
   std::vector<value::float3> binormals;
   std::vector<value::float3> colors;
   std::vector<float> opacities;
+#endif
 
 #ifdef TYDRA_USE_INDEX
   // Unique attribute arrays for indexed mode
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<value::float3> unique_normals;
+  ChunkedVectorArray<value::float2> unique_uv0s;
+  ChunkedVectorArray<value::float2> unique_uv1s;
+  ChunkedVectorArray<value::float3> unique_tangents;
+  ChunkedVectorArray<value::float3> unique_binormals;
+  ChunkedVectorArray<value::float3> unique_colors;
+  ChunkedVectorArray<float> unique_opacities;
+#else
   std::vector<value::float3> unique_normals;
   std::vector<value::float2> unique_uv0s;
   std::vector<value::float2> unique_uv1s;
@@ -1931,6 +2050,7 @@ struct DefaultVertexOutput {
   std::vector<value::float3> unique_binormals;
   std::vector<value::float3> unique_colors;
   std::vector<float> unique_opacities;
+#endif
 #endif
 
   size_t size() const { return point_indices.size(); }
@@ -2182,6 +2302,18 @@ class RenderSceneConverter {
 
   int default_node{-1};
 
+#ifdef TYDRA_USE_CHUNKED_ARRAY
+  ChunkedVectorArray<Node> root_nodes;
+  ChunkedVectorArray<RenderMesh> meshes;
+  ChunkedVectorArray<RenderMaterial> materials;
+  ChunkedVectorArray<RenderCamera> cameras;
+  ChunkedVectorArray<RenderLight> lights;
+  ChunkedVectorArray<UVTexture> textures;
+  ChunkedVectorArray<TextureImage> images;
+  ChunkedVectorArray<BufferData> buffers;
+  ChunkedVectorArray<SkelHierarchy> skeletons;
+  ChunkedVectorArray<Animation> animations;
+#else
   std::vector<Node> root_nodes;
   std::vector<RenderMesh> meshes;
   std::vector<RenderMaterial> materials;
@@ -2192,6 +2324,7 @@ class RenderSceneConverter {
   std::vector<BufferData> buffers;
   std::vector<SkelHierarchy> skeletons;
   std::vector<Animation> animations;
+#endif
 
   ///
   /// Convert GeomMesh to renderer-friendly mesh.
