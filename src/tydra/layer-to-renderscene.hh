@@ -6,6 +6,7 @@
 #include <functional>
 
 #include "../prim-types.hh"
+#include "common-types.hh"
 #include "render-data.hh"
 
 namespace tinyusdz {
