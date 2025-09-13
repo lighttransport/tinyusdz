@@ -202,6 +202,11 @@ option(TINYUSDZ_WITH_MODULE_USDA_WRITER "Build with USDA writer feature" ON)
 # USDC(Crate binary) reader is mandatory in most situation, so this option is primarily for developer build.
 option(TINYUSDZ_WITH_MODULE_USDC_READER "Build with USDC reader feature" ON)
 option(TINYUSDZ_WITH_MODULE_USDC_WRITER "Build with USDC writer feature" ON)
+
+# -- parser optimizations --
+option(TINYUSDZ_PARSER_OPT 
+       "Enable optimized array parsing with two-phase parsing and fixed buffers" 
+       ON)
 # -------------
 
 # -- STB --
@@ -1353,6 +1358,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_WITH_COROUTINE")
   endif(TINYUSDZ_WITH_COROUTINE)
+
+  if(TINYUSDZ_PARSER_OPT)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_PARSER_OPT")
+  endif(TINYUSDZ_PARSER_OPT)
 
   if(NOT TINYUSDZ_CXX_EXCEPTIONS)
     if(MSVC)

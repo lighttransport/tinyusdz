@@ -3267,6 +3267,8 @@ bool AsciiParser::ReadBasicType(nonstd::optional<std::vector<T>> *value) {
 // Optimized array parsing using tiny-string
 //
 
+#ifdef TINYUSDZ_PARSER_OPT
+
 bool AsciiParser::ParseFloatArrayOptimized(std::vector<float> *result) {
   if (!result) {
     return false;
@@ -3298,7 +3300,7 @@ bool AsciiParser::ParseFloatArrayOptimized(std::vector<float> *result) {
   }
   
   // Pre-allocate space for efficiency
-  result->reserve(64);  // Initial reservation
+  result->reserve(std::min(size_t(64), _array_parse_chunk_size));  // Initial reservation
   
   // Use a fixed-size buffer for parsing individual float values
   constexpr size_t BUFFER_SIZE = 128;
@@ -3441,7 +3443,7 @@ bool AsciiParser::ParseDoubleArrayOptimized(std::vector<double> *result) {
   }
   
   // Pre-allocate space for efficiency
-  result->reserve(64);  // Initial reservation
+  result->reserve(std::min(size_t(64), _array_parse_chunk_size));  // Initial reservation
   
   // Use a fixed-size buffer for parsing individual double values
   constexpr size_t BUFFER_SIZE = 128;
@@ -3553,13 +3555,1120 @@ bool AsciiParser::ParseDoubleArrayOptimized(std::vector<double> *result) {
   return false;
 }
 
-// Note: ParseIntArrayOptimized can be implemented similarly if needed
-// Currently not used since there's no template specialization for int32_t arrays
+// Optimized integer array parsing with lexing phase and chunked allocation
+bool AsciiParser::ParseIntArrayOptimized(std::vector<int32_t> *result) {
+  if (!result) {
+    return false;
+  }
+
+  result->clear();
+  
+  if (!Expect('[')) {
+    return false;
+  }
+  
+  if (!SkipCommentAndWhitespaceAndNewline()) {
+    return false;
+  }
+  
+  // Check for empty array
+  {
+    char c;
+    if (!LookChar1(&c)) {
+      return false;
+    }
+    
+    if (c == ']') {
+      if (!Char1(&c)) {  // consume the ']'
+        return false;
+      }
+      return true;  // empty array
+    }
+  }
+  
+  // Save current position for potential re-scan
+  auto start_pos = CurrLoc();
+  
+  // Phase 1: Lexing - count commas to estimate array size
+  size_t comma_count = 0;
+  bool found_end = false;
+  
+  while (!Eof() && !found_end) {
+    char c;
+    if (!LookChar1(&c)) {
+      break;
+    }
+    
+    if (c == ']') {
+      found_end = true;
+      break;
+    } else if (c == ',') {
+      comma_count++;
+      if (!Char1(&c)) return false;
+    } else if (c == '#') {
+      // Skip comment
+      if (!Char1(&c)) return false;
+      if (!SkipUntilNewline()) return false;
+    } else if (std::isspace(c) || c == '\n' || c == '\r') {
+      if (!Char1(&c)) return false;
+    } else if ((c >= '0' && c <= '9') || c == '-' || c == '+') {
+      // Part of a number, just consume
+      if (!Char1(&c)) return false;
+    } else {
+      if (!Char1(&c)) return false;
+    }
+  }
+  
+  if (!found_end) {
+    PushError("Missing closing ']' in integer array");
+    return false;
+  }
+  
+  // Estimate array size: comma_count + 1 elements
+  size_t estimated_size = comma_count + 1;
+  
+  // Reserve space based on estimation
+  result->reserve(estimated_size);
+  
+  // Reset to start position for actual parsing
+  SeekTo(start_pos);
+  
+  // Phase 2: Actual parsing with chunked processing
+  constexpr size_t BUFFER_SIZE = 32;
+  const size_t CHUNK_SIZE = _array_parse_chunk_size;  // Use configurable chunk size
+  
+  char buffer[BUFFER_SIZE];
+  size_t buffer_pos = 0;
+  size_t items_parsed = 0;
+  
+  bool parsing_number = false;
+  bool expect_comma = false;
+  
+  // Pre-allocate first chunk if needed
+  if (estimated_size > CHUNK_SIZE) {
+    result->reserve(((estimated_size / CHUNK_SIZE) + 1) * CHUNK_SIZE);
+  }
+  
+  while (!Eof()) {
+    char c;
+    if (!Char1(&c)) {
+      return false;
+    }
+    
+    // Skip whitespace and comments
+    if (std::isspace(c) || c == '\n' || c == '\r') {
+      if (parsing_number && buffer_pos > 0) {
+        // End of number - parse it
+        buffer[buffer_pos] = '\0';
+        
+        char* end_ptr;
+        long value = std::strtol(buffer, &end_ptr, 10);
+        
+        if (end_ptr == buffer) {
+          PushError("Invalid integer value in array");
+          return false;
+        }
+        
+        // Check for overflow
+        if (value > INT32_MAX || value < INT32_MIN) {
+          PushError("Integer value out of range in array");
+          return false;
+        }
+        
+        result->push_back(static_cast<int32_t>(value));
+        items_parsed++;
+        
+        // Check if we need to grow capacity in chunks
+        if (items_parsed % CHUNK_SIZE == 0 && result->capacity() < estimated_size) {
+          result->reserve(result->capacity() + CHUNK_SIZE);
+        }
+        
+        buffer_pos = 0;
+        parsing_number = false;
+        expect_comma = true;
+      }
+      continue;
+    }
+    
+    if (c == '#') {
+      // Comment - skip to end of line
+      if (!SkipUntilNewline()) {
+        return false;
+      }
+      continue;
+    }
+    
+    if (c == ',') {
+      if (parsing_number && buffer_pos > 0) {
+        // End of number - parse it
+        buffer[buffer_pos] = '\0';
+        
+        char* end_ptr;
+        long value = std::strtol(buffer, &end_ptr, 10);
+        
+        if (end_ptr == buffer) {
+          PushError("Invalid integer value in array");
+          return false;
+        }
+        
+        // Check for overflow
+        if (value > INT32_MAX || value < INT32_MIN) {
+          PushError("Integer value out of range in array");
+          return false;
+        }
+        
+        result->push_back(static_cast<int32_t>(value));
+        items_parsed++;
+        
+        // Check if we need to grow capacity in chunks
+        if (items_parsed % CHUNK_SIZE == 0 && result->capacity() < estimated_size) {
+          result->reserve(result->capacity() + CHUNK_SIZE);
+        }
+        
+        buffer_pos = 0;
+        parsing_number = false;
+      }
+      expect_comma = false;
+      continue;
+    }
+    
+    if (c == ']') {
+      if (parsing_number && buffer_pos > 0) {
+        // End of last number - parse it
+        buffer[buffer_pos] = '\0';
+        
+        char* end_ptr;
+        long value = std::strtol(buffer, &end_ptr, 10);
+        
+        if (end_ptr == buffer) {
+          PushError("Invalid integer value in array");
+          return false;
+        }
+        
+        // Check for overflow
+        if (value > INT32_MAX || value < INT32_MIN) {
+          PushError("Integer value out of range in array");
+          return false;
+        }
+        
+        result->push_back(static_cast<int32_t>(value));
+      }
+      return true;  // Successfully parsed array
+    }
+    
+    // Part of a number
+    if ((c >= '0' && c <= '9') || (c == '-' && buffer_pos == 0) || (c == '+' && buffer_pos == 0)) {
+      if (expect_comma && !parsing_number) {
+        PushError("Expected comma between array elements");
+        return false;
+      }
+      
+      if (buffer_pos >= BUFFER_SIZE - 1) {
+        PushError("Integer value too long in array");
+        return false;
+      }
+      
+      buffer[buffer_pos++] = c;
+      parsing_number = true;
+      expect_comma = false;
+    } else {
+      PushError(std::string("Unexpected character '") + c + "' in integer array");
+      return false;
+    }
+  }
+  
+  PushError("Unexpected end of input while parsing integer array");
+  return false;
+}
+
+// Optimized int64 array parsing with lexing phase and chunked allocation
+bool AsciiParser::ParseInt64ArrayOptimized(std::vector<int64_t> *result) {
+  if (!result) {
+    return false;
+  }
+
+  result->clear();
+  
+  if (!Expect('[')) {
+    return false;
+  }
+  
+  if (!SkipCommentAndWhitespaceAndNewline()) {
+    return false;
+  }
+  
+  // Check for empty array
+  {
+    char c;
+    if (!LookChar1(&c)) {
+      return false;
+    }
+    
+    if (c == ']') {
+      if (!Char1(&c)) {  // consume the ']'
+        return false;
+      }
+      return true;  // empty array
+    }
+  }
+  
+  // Save current position for potential re-scan
+  auto start_pos = CurrLoc();
+  
+  // Phase 1: Lexing - count commas to estimate array size
+  size_t comma_count = 0;
+  bool found_end = false;
+  
+  while (!Eof() && !found_end) {
+    char c;
+    if (!LookChar1(&c)) {
+      break;
+    }
+    
+    if (c == ']') {
+      found_end = true;
+      break;
+    } else if (c == ',') {
+      comma_count++;
+      if (!Char1(&c)) return false;
+    } else if (c == '#') {
+      // Skip comment
+      if (!Char1(&c)) return false;
+      if (!SkipUntilNewline()) return false;
+    } else if (std::isspace(c) || c == '\n' || c == '\r') {
+      if (!Char1(&c)) return false;
+    } else if ((c >= '0' && c <= '9') || c == '-' || c == '+') {
+      // Part of a number, just consume
+      if (!Char1(&c)) return false;
+    } else {
+      if (!Char1(&c)) return false;
+    }
+  }
+  
+  if (!found_end) {
+    PushError("Missing closing ']' in int64 array");
+    return false;
+  }
+  
+  // Estimate array size: comma_count + 1 elements
+  size_t estimated_size = comma_count + 1;
+  
+  // Reserve space based on estimation
+  result->reserve(estimated_size);
+  
+  // Reset to start position for actual parsing
+  SeekTo(start_pos);
+  
+  // Phase 2: Actual parsing with chunked processing
+  constexpr size_t BUFFER_SIZE = 32;
+  const size_t CHUNK_SIZE = _array_parse_chunk_size;  // Use configurable chunk size
+  
+  char buffer[BUFFER_SIZE];
+  size_t buffer_pos = 0;
+  size_t items_parsed = 0;
+  
+  bool parsing_number = false;
+  bool expect_comma = false;
+  
+  // Pre-allocate first chunk if needed
+  if (estimated_size > CHUNK_SIZE) {
+    result->reserve(((estimated_size / CHUNK_SIZE) + 1) * CHUNK_SIZE);
+  }
+  
+  while (!Eof()) {
+    char c;
+    if (!Char1(&c)) {
+      return false;
+    }
+    
+    // Skip whitespace and comments
+    if (std::isspace(c) || c == '\n' || c == '\r') {
+      if (parsing_number && buffer_pos > 0) {
+        // End of number - parse it
+        buffer[buffer_pos] = '\0';
+        
+        // Use fast int64 parsing
+        char* end_ptr;
+        long long value = std::strtoll(buffer, &end_ptr, 10);
+        
+        if (end_ptr == buffer) {
+          PushError("Invalid int64 value in array");
+          return false;
+        }
+        
+        result->push_back(static_cast<int64_t>(value));
+        items_parsed++;
+        
+        // Check if we need to grow capacity in chunks
+        if (items_parsed % CHUNK_SIZE == 0 && result->capacity() < estimated_size) {
+          result->reserve(result->capacity() + CHUNK_SIZE);
+        }
+        
+        buffer_pos = 0;
+        parsing_number = false;
+        expect_comma = true;
+      }
+      continue;
+    }
+    
+    if (c == '#') {
+      // Comment - skip to end of line
+      if (!SkipUntilNewline()) {
+        return false;
+      }
+      continue;
+    }
+    
+    if (c == ',') {
+      if (parsing_number && buffer_pos > 0) {
+        // End of number - parse it
+        buffer[buffer_pos] = '\0';
+        
+        char* end_ptr;
+        long long value = std::strtoll(buffer, &end_ptr, 10);
+        
+        if (end_ptr == buffer) {
+          PushError("Invalid int64 value in array");
+          return false;
+        }
+        
+        result->push_back(static_cast<int64_t>(value));
+        items_parsed++;
+        
+        // Check if we need to grow capacity in chunks
+        if (items_parsed % CHUNK_SIZE == 0 && result->capacity() < estimated_size) {
+          result->reserve(result->capacity() + CHUNK_SIZE);
+        }
+        
+        buffer_pos = 0;
+        parsing_number = false;
+      }
+      expect_comma = false;
+      continue;
+    }
+    
+    if (c == ']') {
+      if (parsing_number && buffer_pos > 0) {
+        // End of last number - parse it
+        buffer[buffer_pos] = '\0';
+        
+        char* end_ptr;
+        long long value = std::strtoll(buffer, &end_ptr, 10);
+        
+        if (end_ptr == buffer) {
+          PushError("Invalid int64 value in array");
+          return false;
+        }
+        
+        result->push_back(static_cast<int64_t>(value));
+      }
+      return true;  // Successfully parsed array
+    }
+    
+    // Part of a number
+    if ((c >= '0' && c <= '9') || (c == '-' && buffer_pos == 0) || (c == '+' && buffer_pos == 0)) {
+      if (expect_comma && !parsing_number) {
+        PushError("Expected comma between array elements");
+        return false;
+      }
+      
+      if (buffer_pos >= BUFFER_SIZE - 1) {
+        PushError("Int64 value too long in array");
+        return false;
+      }
+      
+      buffer[buffer_pos++] = c;
+      parsing_number = true;
+      expect_comma = false;
+    } else {
+      PushError(std::string("Unexpected character '") + c + "' in int64 array");
+      return false;
+    }
+  }
+  
+  PushError("Unexpected end of input while parsing int64 array");
+  return false;
+}
+
+// Optimized float2 array parsing with tuple lexing
+bool AsciiParser::ParseFloat2ArrayOptimized(std::vector<value::float2> *result) {
+  if (!result) {
+    return false;
+  }
+
+  result->clear();
+  
+  if (!Expect('[')) {
+    return false;
+  }
+  
+  if (!SkipCommentAndWhitespaceAndNewline()) {
+    return false;
+  }
+  
+  // Check for empty array
+  {
+    char c;
+    if (!LookChar1(&c)) {
+      return false;
+    }
+    
+    if (c == ']') {
+      if (!Char1(&c)) {  // consume the ']'
+        return false;
+      }
+      return true;  // empty array
+    }
+  }
+  
+  // Save current position for potential re-scan
+  auto start_pos = CurrLoc();
+  
+  // Phase 1: Lexing - count tuples by counting opening parentheses
+  size_t tuple_count = 0;
+  bool found_end = false;
+  int paren_depth = 0;
+  
+  while (!Eof() && !found_end) {
+    char c;
+    if (!LookChar1(&c)) {
+      break;
+    }
+    
+    if (c == ']' && paren_depth == 0) {
+      found_end = true;
+      break;
+    } else if (c == '(' && paren_depth == 0) {
+      tuple_count++;
+      paren_depth++;
+      if (!Char1(&c)) return false;
+    } else if (c == '(') {
+      paren_depth++;
+      if (!Char1(&c)) return false;
+    } else if (c == ')') {
+      paren_depth--;
+      if (!Char1(&c)) return false;
+    } else if (c == '#') {
+      // Skip comment
+      if (!Char1(&c)) return false;
+      if (!SkipUntilNewline()) return false;
+    } else {
+      if (!Char1(&c)) return false;
+    }
+  }
+  
+  if (!found_end) {
+    PushError("Missing closing ']' in float2 array");
+    return false;
+  }
+  
+  // Reserve space based on tuple count
+  result->reserve(tuple_count);
+  
+  // Reset to start position for actual parsing
+  SeekTo(start_pos);
+  
+  // Phase 2: Actual parsing with chunked processing
+  constexpr size_t BUFFER_SIZE = 32;
+  const size_t CHUNK_SIZE = _array_parse_chunk_size;
+  
+  char buffer[2][BUFFER_SIZE];  // Two buffers for two floats
+  size_t buffer_pos[2] = {0, 0};
+  size_t items_parsed = 0;
+  int current_component = 0;  // 0 or 1 for float2
+  bool in_tuple = false;
+  
+  // Pre-allocate first chunk if needed
+  if (tuple_count > CHUNK_SIZE) {
+    result->reserve(((tuple_count / CHUNK_SIZE) + 1) * CHUNK_SIZE);
+  }
+  
+  value::float2 current_tuple;
+  
+  while (!Eof()) {
+    char c;
+    if (!Char1(&c)) {
+      return false;
+    }
+    
+    // Skip whitespace and comments
+    if (std::isspace(c) || c == '\n' || c == '\r') {
+      if (in_tuple && buffer_pos[current_component] > 0) {
+        // Parse current number
+        buffer[current_component][buffer_pos[current_component]] = '\0';
+        char* end_ptr;
+        float value = std::strtof(buffer[current_component], &end_ptr);
+        if (end_ptr == buffer[current_component]) {
+          PushError("Invalid float value in float2 array");
+          return false;
+        }
+        current_tuple[current_component] = value;
+        buffer_pos[current_component] = 0;
+      }
+      continue;
+    }
+    
+    if (c == '#') {
+      // Comment - skip to end of line
+      if (!SkipUntilNewline()) {
+        return false;
+      }
+      continue;
+    }
+    
+    if (c == '(') {
+      if (in_tuple) {
+        PushError("Nested parentheses in float2 array");
+        return false;
+      }
+      in_tuple = true;
+      current_component = 0;
+      continue;
+    }
+    
+    if (c == ')') {
+      if (!in_tuple) {
+        PushError("Unexpected ')' in float2 array");
+        return false;
+      }
+      
+      // Parse last component if any
+      if (buffer_pos[current_component] > 0) {
+        buffer[current_component][buffer_pos[current_component]] = '\0';
+        char* end_ptr;
+        float value = std::strtof(buffer[current_component], &end_ptr);
+        if (end_ptr == buffer[current_component]) {
+          PushError("Invalid float value in float2 array");
+          return false;
+        }
+        current_tuple[current_component] = value;
+        buffer_pos[current_component] = 0;
+      }
+      
+      // Add tuple to result
+      result->push_back(current_tuple);
+      items_parsed++;
+      
+      // Check if we need to grow capacity in chunks
+      if (items_parsed % CHUNK_SIZE == 0 && result->capacity() < tuple_count) {
+        result->reserve(result->capacity() + CHUNK_SIZE);
+      }
+      
+      in_tuple = false;
+      current_component = 0;
+      continue;
+    }
+    
+    if (c == ',') {
+      if (in_tuple) {
+        // Parse current component
+        if (buffer_pos[current_component] > 0) {
+          buffer[current_component][buffer_pos[current_component]] = '\0';
+          char* end_ptr;
+          float value = std::strtof(buffer[current_component], &end_ptr);
+          if (end_ptr == buffer[current_component]) {
+            PushError("Invalid float value in float2 array");
+            return false;
+          }
+          current_tuple[current_component] = value;
+          buffer_pos[current_component] = 0;
+        }
+        
+        current_component++;
+        if (current_component >= 2) {
+          PushError("Too many components in float2 tuple");
+          return false;
+        }
+      }
+      continue;
+    }
+    
+    if (c == ']') {
+      if (in_tuple) {
+        PushError("Unclosed tuple in float2 array");
+        return false;
+      }
+      return true;  // Successfully parsed array
+    }
+    
+    // Part of a number
+    if (in_tuple && ((c >= '0' && c <= '9') || c == '-' || c == '+' || c == '.' || 
+                     c == 'e' || c == 'E' || c == 'i' || c == 'n' || c == 'f' || c == 'a')) {
+      if (buffer_pos[current_component] >= BUFFER_SIZE - 1) {
+        PushError("Float value too long in float2 array");
+        return false;
+      }
+      
+      buffer[current_component][buffer_pos[current_component]++] = c;
+    } else if (!in_tuple) {
+      // Skip characters between tuples
+      continue;
+    } else {
+      PushError(std::string("Unexpected character '") + c + "' in float2 array");
+      return false;
+    }
+  }
+  
+  PushError("Unexpected end of input while parsing float2 array");
+  return false;
+}
+
+// Optimized float3 array parsing with tuple lexing
+bool AsciiParser::ParseFloat3ArrayOptimized(std::vector<value::float3> *result) {
+  if (!result) {
+    return false;
+  }
+
+  result->clear();
+  
+  if (!Expect('[')) {
+    return false;
+  }
+  
+  if (!SkipCommentAndWhitespaceAndNewline()) {
+    return false;
+  }
+  
+  // Check for empty array
+  {
+    char c;
+    if (!LookChar1(&c)) {
+      return false;
+    }
+    
+    if (c == ']') {
+      if (!Char1(&c)) {  // consume the ']'
+        return false;
+      }
+      return true;  // empty array
+    }
+  }
+  
+  // Save current position for potential re-scan
+  auto start_pos = CurrLoc();
+  
+  // Phase 1: Lexing - count tuples by counting opening parentheses
+  size_t tuple_count = 0;
+  bool found_end = false;
+  int paren_depth = 0;
+  
+  while (!Eof() && !found_end) {
+    char c;
+    if (!LookChar1(&c)) {
+      break;
+    }
+    
+    if (c == ']' && paren_depth == 0) {
+      found_end = true;
+      break;
+    } else if (c == '(' && paren_depth == 0) {
+      tuple_count++;
+      paren_depth++;
+      if (!Char1(&c)) return false;
+    } else if (c == '(') {
+      paren_depth++;
+      if (!Char1(&c)) return false;
+    } else if (c == ')') {
+      paren_depth--;
+      if (!Char1(&c)) return false;
+    } else if (c == '#') {
+      // Skip comment
+      if (!Char1(&c)) return false;
+      if (!SkipUntilNewline()) return false;
+    } else {
+      if (!Char1(&c)) return false;
+    }
+  }
+  
+  if (!found_end) {
+    PushError("Missing closing ']' in float3 array");
+    return false;
+  }
+  
+  // Reserve space based on tuple count
+  result->reserve(tuple_count);
+  
+  // Reset to start position for actual parsing
+  SeekTo(start_pos);
+  
+  // Phase 2: Actual parsing with chunked processing
+  constexpr size_t BUFFER_SIZE = 32;
+  const size_t CHUNK_SIZE = _array_parse_chunk_size;
+  
+  char buffer[3][BUFFER_SIZE];  // Three buffers for three floats
+  size_t buffer_pos[3] = {0, 0, 0};
+  size_t items_parsed = 0;
+  int current_component = 0;  // 0, 1, or 2 for float3
+  bool in_tuple = false;
+  
+  // Pre-allocate first chunk if needed
+  if (tuple_count > CHUNK_SIZE) {
+    result->reserve(((tuple_count / CHUNK_SIZE) + 1) * CHUNK_SIZE);
+  }
+  
+  value::float3 current_tuple;
+  
+  while (!Eof()) {
+    char c;
+    if (!Char1(&c)) {
+      return false;
+    }
+    
+    // Skip whitespace and comments
+    if (std::isspace(c) || c == '\n' || c == '\r') {
+      if (in_tuple && buffer_pos[current_component] > 0) {
+        // Parse current number
+        buffer[current_component][buffer_pos[current_component]] = '\0';
+        char* end_ptr;
+        float value = std::strtof(buffer[current_component], &end_ptr);
+        if (end_ptr == buffer[current_component]) {
+          PushError("Invalid float value in float3 array");
+          return false;
+        }
+        current_tuple[current_component] = value;
+        buffer_pos[current_component] = 0;
+      }
+      continue;
+    }
+    
+    if (c == '#') {
+      // Comment - skip to end of line
+      if (!SkipUntilNewline()) {
+        return false;
+      }
+      continue;
+    }
+    
+    if (c == '(') {
+      if (in_tuple) {
+        PushError("Nested parentheses in float3 array");
+        return false;
+      }
+      in_tuple = true;
+      current_component = 0;
+      continue;
+    }
+    
+    if (c == ')') {
+      if (!in_tuple) {
+        PushError("Unexpected ')' in float3 array");
+        return false;
+      }
+      
+      // Parse last component if any
+      if (buffer_pos[current_component] > 0) {
+        buffer[current_component][buffer_pos[current_component]] = '\0';
+        char* end_ptr;
+        float value = std::strtof(buffer[current_component], &end_ptr);
+        if (end_ptr == buffer[current_component]) {
+          PushError("Invalid float value in float3 array");
+          return false;
+        }
+        current_tuple[current_component] = value;
+        buffer_pos[current_component] = 0;
+      }
+      
+      // Add tuple to result
+      result->push_back(current_tuple);
+      items_parsed++;
+      
+      // Check if we need to grow capacity in chunks
+      if (items_parsed % CHUNK_SIZE == 0 && result->capacity() < tuple_count) {
+        result->reserve(result->capacity() + CHUNK_SIZE);
+      }
+      
+      in_tuple = false;
+      current_component = 0;
+      continue;
+    }
+    
+    if (c == ',') {
+      if (in_tuple) {
+        // Parse current component
+        if (buffer_pos[current_component] > 0) {
+          buffer[current_component][buffer_pos[current_component]] = '\0';
+          char* end_ptr;
+          float value = std::strtof(buffer[current_component], &end_ptr);
+          if (end_ptr == buffer[current_component]) {
+            PushError("Invalid float value in float3 array");
+            return false;
+          }
+          current_tuple[current_component] = value;
+          buffer_pos[current_component] = 0;
+        }
+        
+        current_component++;
+        if (current_component >= 3) {
+          PushError("Too many components in float3 tuple");
+          return false;
+        }
+      }
+      continue;
+    }
+    
+    if (c == ']') {
+      if (in_tuple) {
+        PushError("Unclosed tuple in float3 array");
+        return false;
+      }
+      return true;  // Successfully parsed array
+    }
+    
+    // Part of a number
+    if (in_tuple && ((c >= '0' && c <= '9') || c == '-' || c == '+' || c == '.' || 
+                     c == 'e' || c == 'E' || c == 'i' || c == 'n' || c == 'f' || c == 'a')) {
+      if (buffer_pos[current_component] >= BUFFER_SIZE - 1) {
+        PushError("Float value too long in float3 array");
+        return false;
+      }
+      
+      buffer[current_component][buffer_pos[current_component]++] = c;
+    } else if (!in_tuple) {
+      // Skip characters between tuples
+      continue;
+    } else {
+      PushError(std::string("Unexpected character '") + c + "' in float3 array");
+      return false;
+    }
+  }
+  
+  PushError("Unexpected end of input while parsing float3 array");
+  return false;
+}
+
+// Optimized float4 array parsing with tuple lexing
+bool AsciiParser::ParseFloat4ArrayOptimized(std::vector<value::float4> *result) {
+  if (!result) {
+    return false;
+  }
+
+  result->clear();
+  
+  if (!Expect('[')) {
+    return false;
+  }
+  
+  if (!SkipCommentAndWhitespaceAndNewline()) {
+    return false;
+  }
+  
+  // Check for empty array
+  {
+    char c;
+    if (!LookChar1(&c)) {
+      return false;
+    }
+    
+    if (c == ']') {
+      if (!Char1(&c)) {  // consume the ']'
+        return false;
+      }
+      return true;  // empty array
+    }
+  }
+  
+  // Save current position for potential re-scan
+  auto start_pos = CurrLoc();
+  
+  // Phase 1: Lexing - count tuples by counting opening parentheses
+  size_t tuple_count = 0;
+  bool found_end = false;
+  int paren_depth = 0;
+  
+  while (!Eof() && !found_end) {
+    char c;
+    if (!LookChar1(&c)) {
+      break;
+    }
+    
+    if (c == ']' && paren_depth == 0) {
+      found_end = true;
+      break;
+    } else if (c == '(' && paren_depth == 0) {
+      tuple_count++;
+      paren_depth++;
+      if (!Char1(&c)) return false;
+    } else if (c == '(') {
+      paren_depth++;
+      if (!Char1(&c)) return false;
+    } else if (c == ')') {
+      paren_depth--;
+      if (!Char1(&c)) return false;
+    } else if (c == '#') {
+      // Skip comment
+      if (!Char1(&c)) return false;
+      if (!SkipUntilNewline()) return false;
+    } else {
+      if (!Char1(&c)) return false;
+    }
+  }
+  
+  if (!found_end) {
+    PushError("Missing closing ']' in float4 array");
+    return false;
+  }
+  
+  // Reserve space based on tuple count
+  result->reserve(tuple_count);
+  
+  // Reset to start position for actual parsing
+  SeekTo(start_pos);
+  
+  // Phase 2: Actual parsing with chunked processing
+  constexpr size_t BUFFER_SIZE = 32;
+  const size_t CHUNK_SIZE = _array_parse_chunk_size;
+  
+  char buffer[4][BUFFER_SIZE];  // Four buffers for four floats
+  size_t buffer_pos[4] = {0, 0, 0, 0};
+  size_t items_parsed = 0;
+  int current_component = 0;  // 0, 1, 2, or 3 for float4
+  bool in_tuple = false;
+  
+  // Pre-allocate first chunk if needed
+  if (tuple_count > CHUNK_SIZE) {
+    result->reserve(((tuple_count / CHUNK_SIZE) + 1) * CHUNK_SIZE);
+  }
+  
+  value::float4 current_tuple;
+  
+  while (!Eof()) {
+    char c;
+    if (!Char1(&c)) {
+      return false;
+    }
+    
+    // Skip whitespace and comments
+    if (std::isspace(c) || c == '\n' || c == '\r') {
+      if (in_tuple && buffer_pos[current_component] > 0) {
+        // Parse current number
+        buffer[current_component][buffer_pos[current_component]] = '\0';
+        char* end_ptr;
+        float value = std::strtof(buffer[current_component], &end_ptr);
+        if (end_ptr == buffer[current_component]) {
+          PushError("Invalid float value in float4 array");
+          return false;
+        }
+        current_tuple[current_component] = value;
+        buffer_pos[current_component] = 0;
+      }
+      continue;
+    }
+    
+    if (c == '#') {
+      // Comment - skip to end of line
+      if (!SkipUntilNewline()) {
+        return false;
+      }
+      continue;
+    }
+    
+    if (c == '(') {
+      if (in_tuple) {
+        PushError("Nested parentheses in float4 array");
+        return false;
+      }
+      in_tuple = true;
+      current_component = 0;
+      continue;
+    }
+    
+    if (c == ')') {
+      if (!in_tuple) {
+        PushError("Unexpected ')' in float4 array");
+        return false;
+      }
+      
+      // Parse last component if any
+      if (buffer_pos[current_component] > 0) {
+        buffer[current_component][buffer_pos[current_component]] = '\0';
+        char* end_ptr;
+        float value = std::strtof(buffer[current_component], &end_ptr);
+        if (end_ptr == buffer[current_component]) {
+          PushError("Invalid float value in float4 array");
+          return false;
+        }
+        current_tuple[current_component] = value;
+        buffer_pos[current_component] = 0;
+      }
+      
+      // Add tuple to result
+      result->push_back(current_tuple);
+      items_parsed++;
+      
+      // Check if we need to grow capacity in chunks
+      if (items_parsed % CHUNK_SIZE == 0 && result->capacity() < tuple_count) {
+        result->reserve(result->capacity() + CHUNK_SIZE);
+      }
+      
+      in_tuple = false;
+      current_component = 0;
+      continue;
+    }
+    
+    if (c == ',') {
+      if (in_tuple) {
+        // Parse current component
+        if (buffer_pos[current_component] > 0) {
+          buffer[current_component][buffer_pos[current_component]] = '\0';
+          char* end_ptr;
+          float value = std::strtof(buffer[current_component], &end_ptr);
+          if (end_ptr == buffer[current_component]) {
+            PushError("Invalid float value in float4 array");
+            return false;
+          }
+          current_tuple[current_component] = value;
+          buffer_pos[current_component] = 0;
+        }
+        
+        current_component++;
+        if (current_component >= 4) {
+          PushError("Too many components in float4 tuple");
+          return false;
+        }
+      }
+      continue;
+    }
+    
+    if (c == ']') {
+      if (in_tuple) {
+        PushError("Unclosed tuple in float4 array");
+        return false;
+      }
+      return true;  // Successfully parsed array
+    }
+    
+    // Part of a number
+    if (in_tuple && ((c >= '0' && c <= '9') || c == '-' || c == '+' || c == '.' || 
+                     c == 'e' || c == 'E' || c == 'i' || c == 'n' || c == 'f' || c == 'a')) {
+      if (buffer_pos[current_component] >= BUFFER_SIZE - 1) {
+        PushError("Float value too long in float4 array");
+        return false;
+      }
+      
+      buffer[current_component][buffer_pos[current_component]++] = c;
+    } else if (!in_tuple) {
+      // Skip characters between tuples
+      continue;
+    } else {
+      PushError(std::string("Unexpected character '") + c + "' in float4 array");
+      return false;
+    }
+  }
+  
+  PushError("Unexpected end of input while parsing float4 array");
+  return false;
+}
+
+#endif // TINYUSDZ_PARSER_OPT (for optimized function implementations)
 
 //
 // Template specializations for optimized parsing
+// Use TINYUSDZ_PARSER_OPT macro to enable/disable optimizations
 //
 
+#ifdef TINYUSDZ_PARSER_OPT
+
+// When optimization is enabled, use optimized implementations
 template <>
 bool AsciiParser::ParseBasicTypeArray(std::vector<float> *result) {
   return ParseFloatArrayOptimized(result);
@@ -3569,6 +4678,38 @@ template <>
 bool AsciiParser::ParseBasicTypeArray(std::vector<double> *result) {
   return ParseDoubleArrayOptimized(result);
 }
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<int32_t> *result) {
+  return ParseIntArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<int64_t> *result) {
+  return ParseInt64ArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::float2> *result) {
+  return ParseFloat2ArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::float3> *result) {
+  return ParseFloat3ArrayOptimized(result);
+}
+
+template <>
+bool AsciiParser::ParseBasicTypeArray(std::vector<value::float4> *result) {
+  return ParseFloat4ArrayOptimized(result);
+}
+
+#else
+
+// When optimization is disabled, use the generic template implementation
+// No specializations needed - will fall back to generic ParseBasicTypeArray<T>
+
+#endif // TINYUSDZ_PARSER_OPT
 
 //
 // Explicit template instanciations
@@ -3626,7 +4767,9 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<nonstd::optional<valu
 #endif
 
 template bool AsciiParser::ParseBasicTypeArray(std::vector<bool> *result);
+#ifndef TINYUSDZ_PARSER_OPT
 template bool AsciiParser::ParseBasicTypeArray(std::vector<int32_t> *result);
+#endif
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::int2> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::int3> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::int4> *result);
@@ -3634,18 +4777,26 @@ template bool AsciiParser::ParseBasicTypeArray(std::vector<uint32_t> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uint2> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uint3> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::uint4> *result);
+#ifndef TINYUSDZ_PARSER_OPT
 template bool AsciiParser::ParseBasicTypeArray(std::vector<int64_t> *result);
+#endif
 template bool AsciiParser::ParseBasicTypeArray(std::vector<uint64_t> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half2> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half3> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::half4> *result);
-// Note: float and double arrays now use optimized implementations
-// template bool AsciiParser::ParseBasicTypeArray(std::vector<float> *result);
+#ifdef TINYUSDZ_PARSER_OPT
+// When optimization is enabled, float/double/int use specialized implementations
+// float2/3/4 also use specialized implementations
+#else
+// When optimization is disabled, need explicit instantiations for all types
+template bool AsciiParser::ParseBasicTypeArray(std::vector<float> *result);
+template bool AsciiParser::ParseBasicTypeArray(std::vector<double> *result);
+#endif
+
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float2> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float3> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::float4> *result);
-// template bool AsciiParser::ParseBasicTypeArray(std::vector<double> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double2> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double3> *result);
 template bool AsciiParser::ParseBasicTypeArray(std::vector<value::double4> *result);

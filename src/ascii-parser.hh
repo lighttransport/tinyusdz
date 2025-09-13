@@ -243,6 +243,18 @@ class AsciiParser {
   ~AsciiParser();
 
   ///
+  /// Set chunk size for array parsing optimization.
+  /// Default is 16384. Larger values reduce allocations for very large arrays.
+  ///
+  void SetArrayParseChunkSize(size_t chunk_size) {
+    _array_parse_chunk_size = chunk_size;
+  }
+  
+  size_t GetArrayParseChunkSize() const {
+    return _array_parse_chunk_size;
+  }
+
+  ///
   /// Assign index to primitive for index-based prim scene graph representation.
   /// -1 = root
   ///
@@ -611,9 +623,22 @@ class AsciiParser {
   ///
   /// Optimized float/double array parsing using fixed-size buffers
   /// to minimize memory allocations and object creation
+  /// Enable with TINYUSDZ_PARSER_OPT macro
   ///
+#ifdef TINYUSDZ_PARSER_OPT
   bool ParseFloatArrayOptimized(std::vector<float> *result);
   bool ParseDoubleArrayOptimized(std::vector<double> *result);
+  bool ParseIntArrayOptimized(std::vector<int32_t> *result);
+  bool ParseInt64ArrayOptimized(std::vector<int64_t> *result);
+  
+  ///
+  /// Optimized float vector array parsing with tuple lexing
+  /// Handles parentheses for tuples like (1.0, 2.0)
+  ///
+  bool ParseFloat2ArrayOptimized(std::vector<value::float2> *result);
+  bool ParseFloat3ArrayOptimized(std::vector<value::float3> *result);
+  bool ParseFloat4ArrayOptimized(std::vector<value::float4> *result);
+#endif // TINYUSDZ_PARSER_OPT
 
   ///
   /// Parses 1 or more occurences of value with basic type 'T', separated by
@@ -887,6 +912,9 @@ class AsciiParser {
   std::stack<std::string> _path_stack;
 
   Cursor _curr_cursor;
+  
+  // Array parsing optimization settings
+  size_t _array_parse_chunk_size = 16384;  // Default 16K items per chunk
 
   // Supported Prim types
   std::set<std::string> _supported_prim_types;
