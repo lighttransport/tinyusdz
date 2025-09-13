@@ -369,4 +369,12 @@ std::string print_array_snipped(const std::vector<T> &vals, size_t N = 16) {
 // closing_brace = true);
 
 }  // namespace value
+
+#ifdef TINYUSDZ_PPRINT_OPT
+namespace detail {
+// Forward declaration of ChunkedBuffer for testing
+class ChunkedBuffer;
+}  // namespace detail
+#endif
+
 }  // namespace tinyusdz

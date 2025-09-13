@@ -41,6 +41,329 @@
 #pragma clang diagnostic pop
 #endif
 
+#ifdef TINYUSDZ_PPRINT_OPT
+#include "external/dragonbox/dragonbox_to_chars.h"
+#include <type_traits>
+#include <limits>
+#include <cstring>
+#include <array>
+
+namespace tinyusdz {
+
+// Forward declaration for half_to_float
+namespace value {
+  float half_to_float(const value::half &h);
+}
+
+namespace detail {
+
+// Chunked buffer for minimizing allocations during float array printing
+class ChunkedBuffer {
+public:
+  static constexpr size_t kChunkSize = 4096;  // 4KB chunks
+  
+  ChunkedBuffer() {
+    chunks_.reserve(16);  // Reserve space for 16 chunks initially
+    newChunk();
+  }
+  
+  ~ChunkedBuffer() = default;
+  
+  ChunkedBuffer(const ChunkedBuffer&) = delete;
+  ChunkedBuffer& operator=(const ChunkedBuffer&) = delete;
+  ChunkedBuffer(ChunkedBuffer&&) = default;
+  ChunkedBuffer& operator=(ChunkedBuffer&&) = default;
+  
+  // Append const char* data with known length
+  void append(const char* data, size_t len) {
+    if (current_pos_ + len <= kChunkSize) {
+      // Fits in current chunk
+      std::memcpy(chunks_.back().data() + current_pos_, data, len);
+      current_pos_ += len;
+    } else {
+      // Need to split across chunks or create new chunk
+      size_t remaining = len;
+      size_t offset = 0;
+      
+      while (remaining > 0) {
+        size_t available = kChunkSize - current_pos_;
+        size_t to_copy = std::min(remaining, available);
+        
+        std::memcpy(chunks_.back().data() + current_pos_, data + offset, to_copy);
+        current_pos_ += to_copy;
+        remaining -= to_copy;
+        offset += to_copy;
+        
+        if (remaining > 0) {
+          newChunk();
+        }
+      }
+    }
+    total_size_ += len;
+  }
+  
+  // Append single character
+  void append(char c) {
+    if (current_pos_ >= kChunkSize) {
+      newChunk();
+    }
+    chunks_.back()[current_pos_++] = c;
+    total_size_++;
+  }
+  
+  // Append const char* (null-terminated)
+  void append(const char* str) {
+    append(str, std::strlen(str));
+  }
+  
+  // Convert to std::string
+  std::string to_string() const {
+    std::string result;
+    result.reserve(total_size_);
+    
+    for (size_t i = 0; i < chunks_.size() - 1; ++i) {
+      result.append(chunks_[i].data(), kChunkSize);
+    }
+    
+    // Last chunk may be partially filled
+    if (!chunks_.empty()) {
+      result.append(chunks_.back().data(), current_pos_);
+    }
+    
+    return result;
+  }
+  
+  // Stream-like operator<< for const char*
+  ChunkedBuffer& operator<<(const char* str) {
+    append(str);
+    return *this;
+  }
+  
+  // Stream-like operator<< for char
+  ChunkedBuffer& operator<<(char c) {
+    append(c);
+    return *this;
+  }
+  
+  // Stream-like operator<< for float (optimized)
+  ChunkedBuffer& operator<<(float f) {
+    char buf[32];  // Enough for any float representation
+    char* end = jkj::dragonbox::to_chars(f, buf);
+    append(buf, end - buf);
+    return *this;
+  }
+  
+  // Stream-like operator<< for double (optimized)  
+  ChunkedBuffer& operator<<(double d) {
+    char buf[32];  // Enough for any double representation
+    char* end = jkj::dragonbox::to_chars(d, buf);
+    append(buf, end - buf);
+    return *this;
+  }
+  
+  // Fast integer to string conversion
+  template<typename T>
+  typename std::enable_if<std::is_integral<T>::value, ChunkedBuffer&>::type
+  operator<<(T value) {
+    char buf[32];  // Enough for any 64-bit integer
+    char* p = buf + sizeof(buf);
+    char* end = p;
+    
+    bool negative = false;
+    if (std::is_signed<T>::value && value < 0) {
+      negative = true;
+      // Handle minimum value edge case
+      if (value == std::numeric_limits<T>::min()) {
+        // Special case for minimum value
+        const char* min_str = nullptr;
+        if (sizeof(T) == 4) {
+          min_str = "-2147483648";
+        } else if (sizeof(T) == 8) {
+          min_str = "-9223372036854775808";
+        }
+        if (min_str) {
+          append(min_str);
+          return *this;
+        }
+      }
+      value = -value;
+    }
+    
+    // Convert to string backwards
+    typename std::make_unsigned<T>::type uvalue = value;
+    do {
+      *--p = '0' + (uvalue % 10);
+      uvalue /= 10;
+    } while (uvalue > 0);
+    
+    if (negative) {
+      *--p = '-';
+    }
+    
+    append(p, end - p);
+    return *this;
+  }
+  
+  // Optimized float array types (float2, float3, float4)
+  template<size_t N>
+  ChunkedBuffer& operator<<(const std::array<float, N>& v) {
+    append('(');
+    for (size_t i = 0; i < N; i++) {
+      if (i > 0) append(", ");
+      *this << v[i];  // Uses dragonbox float conversion
+    }
+    append(')');
+    return *this;
+  }
+  
+  // Optimized double array types (double2, double3, double4)
+  template<size_t N>
+  ChunkedBuffer& operator<<(const std::array<double, N>& v) {
+    append('(');
+    for (size_t i = 0; i < N; i++) {
+      if (i > 0) append(", ");
+      *this << v[i];  // Uses dragonbox double conversion
+    }
+    append(')');
+    return *this;
+  }
+  
+  // Optimized integer array types (int2, int3, int4, uint2, uint3, uint4)
+  template<size_t N, typename T>
+  typename std::enable_if<std::is_integral<T>::value, ChunkedBuffer&>::type
+  operator<<(const std::array<T, N>& v) {
+    append('(');
+    for (size_t i = 0; i < N; i++) {
+      if (i > 0) append(", ");
+      *this << v[i];  // Uses optimized integer conversion
+    }
+    append(')');
+    return *this;
+  }
+  
+  // Optimized half array types (half2, half3, half4) - convert to float first
+  template<size_t N>
+  ChunkedBuffer& operator<<(const std::array<tinyusdz::value::half, N>& v) {
+    append('(');
+    for (size_t i = 0; i < N; i++) {
+      if (i > 0) append(", ");
+      float f = tinyusdz::value::half_to_float(v[i]);
+      *this << f;  // Uses dragonbox float conversion
+    }
+    append(')');
+    return *this;
+  }
+  
+  // Forward declarations for matrix types
+  struct matrix2f;
+  struct matrix3f; 
+  struct matrix4f;
+  struct matrix2d;
+  struct matrix3d;
+  struct matrix4d;
+  
+  // Optimized matrix2f printing
+  ChunkedBuffer& operator<<(const tinyusdz::value::matrix2f& m) {
+    append("( (");
+    for (int i = 0; i < 2; i++) {
+      if (i > 0) append("), (");
+      for (int j = 0; j < 2; j++) {
+        if (j > 0) append(", ");
+        *this << m.m[i][j];
+      }
+    }
+    append(") )");
+    return *this;
+  }
+  
+  // Optimized matrix3f printing
+  ChunkedBuffer& operator<<(const tinyusdz::value::matrix3f& m) {
+    append("( (");
+    for (int i = 0; i < 3; i++) {
+      if (i > 0) append("), (");
+      for (int j = 0; j < 3; j++) {
+        if (j > 0) append(", ");
+        *this << m.m[i][j];
+      }
+    }
+    append(") )");
+    return *this;
+  }
+  
+  // Optimized matrix4f printing
+  ChunkedBuffer& operator<<(const tinyusdz::value::matrix4f& m) {
+    append("( (");
+    for (int i = 0; i < 4; i++) {
+      if (i > 0) append("), (");
+      for (int j = 0; j < 4; j++) {
+        if (j > 0) append(", ");
+        *this << m.m[i][j];
+      }
+    }
+    append(") )");
+    return *this;
+  }
+  
+  // Optimized matrix2d printing
+  ChunkedBuffer& operator<<(const tinyusdz::value::matrix2d& m) {
+    append("( (");
+    for (int i = 0; i < 2; i++) {
+      if (i > 0) append("), (");
+      for (int j = 0; j < 2; j++) {
+        if (j > 0) append(", ");
+        *this << m.m[i][j];
+      }
+    }
+    append(") )");
+    return *this;
+  }
+  
+  // Optimized matrix3d printing
+  ChunkedBuffer& operator<<(const tinyusdz::value::matrix3d& m) {
+    append("( (");
+    for (int i = 0; i < 3; i++) {
+      if (i > 0) append("), (");
+      for (int j = 0; j < 3; j++) {
+        if (j > 0) append(", ");
+        *this << m.m[i][j];
+      }
+    }
+    append(") )");
+    return *this;
+  }
+  
+  // Optimized matrix4d printing
+  ChunkedBuffer& operator<<(const tinyusdz::value::matrix4d& m) {
+    append("( (");
+    for (int i = 0; i < 4; i++) {
+      if (i > 0) append("), (");
+      for (int j = 0; j < 4; j++) {
+        if (j > 0) append(", ");
+        *this << m.m[i][j];
+      }
+    }
+    append(") )");
+    return *this;
+  }
+  
+  size_t size() const { return total_size_; }
+  bool empty() const { return total_size_ == 0; }
+  
+private:
+  void newChunk() {
+    chunks_.emplace_back();
+    current_pos_ = 0;
+  }
+  
+  std::vector<std::array<char, kChunkSize>> chunks_;
+  size_t current_pos_ = 0;
+  size_t total_size_ = 0;
+};
+
+}  // namespace detail
+}  // namespace tinyusdz
+#endif  // TINYUSDZ_PPRINT_OPT
+
 namespace tinyusdz {
 
 namespace {
@@ -551,6 +874,21 @@ std::ostream &operator<<(std::ostream &ofs,
 
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<double> &v) {
+#ifdef TINYUSDZ_PPRINT_OPT
+  // Use chunked buffer with dragonbox for optimal performance
+  tinyusdz::detail::ChunkedBuffer buf;
+  buf << '[';
+  
+  for (size_t i = 0; i < v.size(); i++) {
+    if (i > 0) {
+      buf << ", ";
+    }
+    buf << v[i];  // Uses dragonbox via ChunkedBuffer::operator<<(double)
+  }
+  buf << ']';
+  
+  ofs << buf.to_string();
+#else
   // Not sure what is the HARD-LIMT buffer length for dtoa_milo,
   // but according to std::numeric_limits<double>::digits10(=15),
   // 32 should be sufficient, but allocate 128 just in case
@@ -567,12 +905,28 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<double> &v) {
     ofs << std::string(buf);
   }
   ofs << "]";
+#endif
 
   return ofs;
 }
 
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<float> &v) {
+#ifdef TINYUSDZ_PPRINT_OPT
+  // Use chunked buffer with dragonbox for optimal performance
+  tinyusdz::detail::ChunkedBuffer buf;
+  buf << '[';
+  
+  for (size_t i = 0; i < v.size(); i++) {
+    if (i > 0) {
+      buf << ", ";
+    }
+    buf << v[i];  // Uses dragonbox via ChunkedBuffer::operator<<(float)
+  }
+  buf << ']';
+  
+  ofs << buf.to_string();
+#else
   // Use floaxie
   char buf[128];
 
@@ -587,12 +941,28 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<float> &v) {
     ofs << std::string(buf);
   }
   ofs << "]";
+#endif
 
   return ofs;
 }
 
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<int32_t> &v) {
+#ifdef TINYUSDZ_PPRINT_OPT
+  // Use chunked buffer with optimized integer conversion
+  tinyusdz::detail::ChunkedBuffer buf;
+  buf << '[';
+  
+  for (size_t i = 0; i < v.size(); i++) {
+    if (i > 0) {
+      buf << ", ";
+    }
+    buf << v[i];  // Uses optimized integer conversion
+  }
+  buf << ']';
+  
+  ofs << buf.to_string();
+#else
 #if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
   // numeric_limits<uint64_t>::digits10 is 19, so 32 should suffice.
   char buf[32];
@@ -611,12 +981,28 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<int32_t> &v) {
 #endif
   }
   ofs << "]";
+#endif
 
   return ofs;
 }
 
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<uint32_t> &v) {
+#ifdef TINYUSDZ_PPRINT_OPT
+  // Use chunked buffer with optimized integer conversion
+  tinyusdz::detail::ChunkedBuffer buf;
+  buf << '[';
+  
+  for (size_t i = 0; i < v.size(); i++) {
+    if (i > 0) {
+      buf << ", ";
+    }
+    buf << v[i];  // Uses optimized integer conversion
+  }
+  buf << ']';
+  
+  ofs << buf.to_string();
+#else
 #if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
   char buf[32];
 #endif
@@ -634,12 +1020,28 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<uint32_t> &v) {
 #endif
   }
   ofs << "]";
+#endif
 
   return ofs;
 }
 
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<int64_t> &v) {
+#ifdef TINYUSDZ_PPRINT_OPT
+  // Use chunked buffer with optimized integer conversion
+  tinyusdz::detail::ChunkedBuffer buf;
+  buf << '[';
+  
+  for (size_t i = 0; i < v.size(); i++) {
+    if (i > 0) {
+      buf << ", ";
+    }
+    buf << v[i];  // Uses optimized integer conversion
+  }
+  buf << ']';
+  
+  ofs << buf.to_string();
+#else
 #if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
   // numeric_limits<uint64_t>::digits10 is 19, so 32 should suffice.
   char buf[32];
@@ -658,12 +1060,28 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<int64_t> &v) {
 #endif
   }
   ofs << "]";
+#endif
 
   return ofs;
 }
 
 template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<uint64_t> &v) {
+#ifdef TINYUSDZ_PPRINT_OPT
+  // Use chunked buffer with optimized integer conversion
+  tinyusdz::detail::ChunkedBuffer buf;
+  buf << '[';
+  
+  for (size_t i = 0; i < v.size(); i++) {
+    if (i > 0) {
+      buf << ", ";
+    }
+    buf << v[i];  // Uses optimized integer conversion
+  }
+  buf << ']';
+  
+  ofs << buf.to_string();
+#else
 #if defined(TINYUSDZ_LOCAL_USE_JEAIII_ITOA)
   char buf[32];
 #endif
@@ -681,6 +1099,7 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<uint64_t> &v) {
 #endif
   }
   ofs << "]";
+#endif
 
   return ofs;
 }
