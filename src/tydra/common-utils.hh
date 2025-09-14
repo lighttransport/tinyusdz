@@ -9,8 +9,8 @@
 
 namespace tinyusdz {
 // Forward declarations
-template<typename T> class Animatable;
-template<typename T> class TypedTimeSamples;
+template<typename T> struct Animatable;
+template<typename T> struct TypedTimeSamples;
 }  // namespace tinyusdz
 
 namespace tinyusdz {
@@ -112,3 +112,4 @@ std::string SanitizeAssetPath(const std::string& path, bool allow_backslashes = 
 }  // namespace utils
 }  // namespace tydra  
 }  // namespace tinyusdz
+
