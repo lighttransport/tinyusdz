@@ -135,3 +135,4 @@ private:
 }  // namespace common
 }  // namespace tydra
 }  // namespace tinyusdz
+

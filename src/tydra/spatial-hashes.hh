@@ -110,7 +110,7 @@ inline void computeGridCoords(const T pos[3], const T origin[3], T cellSize,
 // Get 27 neighbor offsets for 3x3x3 neighborhood search
 inline std::array<std::array<int, 3>, 27> getNeighborOffsets() {
     std::array<std::array<int, 3>, 27> offsets;
-    int idx = 0;
+    size_t idx = 0;
     for (int dx = -1; dx <= 1; dx++) {
         for (int dy = -1; dy <= 1; dy++) {
             for (int dz = -1; dz <= 1; dz++) {
@@ -471,3 +471,4 @@ private:
 } // namespace spatial
 } // namespace tydra
 } // namespace tinyusdz
+
