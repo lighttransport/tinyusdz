@@ -172,7 +172,7 @@ bool GetDirectlyBoundMaterial(
   const Stage &_stage,
   const Prim &prim,
   const std::string &purpose,
-  tinyusdz::Path *materialPath,
+  Path *materialPath,
   const Material **material,
   std::string *err) {
 
@@ -221,7 +221,7 @@ bool GetDirectlyBoundMaterial(
   const Stage &stage,
   const Path &abs_path,
   const std::string &purpose,
-  tinyusdz::Path *materialPath, 
+  Path *materialPath, 
   const Material **material,
   std::string *err) {
 
@@ -237,7 +237,7 @@ bool GetDirectCollectionMaterialBinding(
   const Stage &_stage,
   const Prim &prim,
   const std::string &purpose,
-  tinyusdz::Path *materialPath,
+  Path *materialPath,
   const Material **material,
   std::string *err) {
 
@@ -321,7 +321,7 @@ bool GetBoundMaterial(
   const Stage &_stage,
   const Prim &prim,
   const std::string &purpose,
-  tinyusdz::Path *materialPath,
+  Path *materialPath,
   const Material **materiand,
   std::string *err) {
 
@@ -339,7 +339,7 @@ bool GetBoundMaterial(
   const Stage &_stage,
   const Path &abs_path,
   const std::string &materialPurpose,
-  tinyusdz::Path *materialPath,
+  Path *materialPath,
   const Material **material,
   std::string *err) {
 

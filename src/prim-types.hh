@@ -38,6 +38,11 @@
 
 //
 #include "value-types.hh"
+#include "path.hh"
+#include "extent.hh"
+#include "xformop.hh"
+#include "metadata.hh"
+#include "collection.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -57,17 +62,15 @@
 #include "value-eval-util.hh"
 #include "math-util.inc"
 
-//#define TINYUSDZ_INSIDE_PRIM_TYPES
 #include "attribute.hh"
-//#undef TINYUSDZ_INSIDE_PRIM_TYPES
-#include "api-schemas.hh"
-#include "define-type-trait.hh"
 #include "dictionary.hh"
 #include "enum-types.hh"
 #include "list-op.hh"
+#include "relationship.hh"
 #include "material-binding.hh"
 #include "ordered-dict.hh"
 #include "timesamples.hh"
+#include "api-schemas.hh"
 
 namespace tinyusdz {
 
@@ -89,383 +92,6 @@ namespace tinyusdz {
 // If you want to validate a Prim path(e.g. "/root/xform1"),
 // Use ValidatePrimPath() in path-util.hh
 bool ValidatePrimElementName(const std::string &tok);
-
-///
-/// Simlar to SdfPath.
-/// NOTE: We are doging refactoring of Path class, so the following comment may
-/// not be correct.
-///
-/// We don't need the performance for USDZ, so use naiive implementation
-/// to represent Path.
-/// Path is something like Unix path, delimited by `/`, ':' and '.'
-/// Square brackets('<', '>' is not included)
-///
-/// Root path is represented as prim path "/" and elementPath ""(empty).
-///
-/// Example:
-///
-/// - `/muda/bora.dora` : prim_part is `/muda/bora`, prop_part is `.dora`.
-/// - `bora` : Could be Element(leaf) path or Relative path
-///
-/// ':' is a namespce delimiter(example `input:muda`).
-///
-/// Limitations:
-///
-/// - Relational attribute path(`[` `]`. e.g. `/muda/bora[/ari].dora`) is not
-/// supported.
-/// - Variant chars('{' '}') is not supported(yet).
-/// - Relative path(e.g. '../') is not yet supported(TODO)
-///
-/// and have more limitatons.
-///
-class Path {
- public:
-  // Similar to SdfPathNode
-  enum class PathType {
-    Prim,
-    PrimProperty,
-    RelationalAttribute,
-    MapperArg,
-    Target,
-    Mapper,
-    PrimVariantSelection,
-    Expression,
-    Root,
-  };
-
-  Path() : _valid(false) {}
-
-  static Path make_root_path() {
-    Path p = Path("/", "");
-    // elementPath is empty for root.
-    p._element = "";
-    p._valid = true;
-    return p;
-  }
-
-  // Create Path both from Prim Path and Prop
-  // If `prim` starts
-  // "/aaa", "bora" => /aaa.bora
-  // "/aaa", "" => /aaa (prim only)
-  // "", "bora" => .bora (property only)
-  //
-  // Note: This constructor may fail to extract elementName from given `prim`
-  // and `prop`. It is highly recommended to use AppendPrim() and AppendProperty
-  // to. construct Path hierarchy(e.g. `/aaa/xform/geom.points`) so that
-  // elementName is set correctly.
-  Path(const std::string &prim, const std::string &prop);
-
-  // : prim_part(prim), valid(true) {}
-  // Path(const std::string &prim, const std::string &prop)
-  //    : prim_part(prim), prop_part(prop) {}
-
-  Path(const Path &rhs) = default;
-
-  Path &operator=(const Path &rhs) {
-    this->_valid = rhs._valid;
-
-    this->_prim_part = rhs._prim_part;
-    this->_prop_part = rhs._prop_part;
-    this->_element = rhs._element;
-
-    return (*this);
-  }
-
-  std::string full_path_name() const {
-    std::string s;
-    if (!_valid) {
-      s += "#INVALID#";
-    }
-
-    s += _prim_part;
-    if (_prop_part.empty()) {
-      return s;
-    }
-
-    s += "." + _prop_part;
-
-    return s;
-  }
-
-  const std::string &prim_part() const { return _prim_part; }
-  const std::string &prop_part() const { return _prop_part; }
-
-  const std::string &variant_part() const {
-    _variant_part_str =
-        "{" + _variant_part + "=" + _variant_selection_part + "}";
-    return _variant_part_str;
-  }
-
-  void set_path_type(const PathType ty) { _path_type = ty; }
-
-  bool get_path_type(PathType &ty) {
-    if (_path_type) {
-      ty = _path_type.value();
-    }
-    return false;
-  }
-
-  // IsPropertyPath: PrimProperty or RelationalAttribute
-  bool is_property_path() const {
-    if (_path_type) {
-      if ((_path_type.value() == PathType::PrimProperty ||
-           (_path_type.value() == PathType::RelationalAttribute))) {
-        return true;
-      }
-    }
-
-    // TODO: RelationalAttribute
-    if (_prim_part.empty()) {
-      return false;
-    }
-
-    if (_prop_part.size()) {
-      return true;
-    }
-
-    return false;
-  }
-
-  // Is Prim path?
-  bool is_prim_path() const {
-    if (_prop_part.size()) {
-      return false;
-    }
-
-    if (_prim_part.size()) {
-      return true;
-    }
-
-    return false;
-  }
-
-  // Is Prim's property path?
-  // True when both PrimPart and PropPart are not empty.
-  bool is_prim_property_path() const {
-    if (_prim_part.empty()) {
-      return false;
-    }
-    if (_prop_part.size()) {
-      return true;
-    }
-    return false;
-  }
-
-  bool is_valid() const { return _valid; }
-
-  bool is_empty() {
-    return (_prim_part.empty() && _variant_part.empty() && _prop_part.empty());
-  }
-
-  // static Path RelativePath() { return Path("."); }
-
-  // Append property path(change internal state)
-  Path append_property(const std::string &elem);
-
-  // Append prim or variantSelection path(change internal state)
-  Path append_element(const std::string &elem);
-  Path append_prim(const std::string &elem) {
-    return append_element(elem);
-  }  // for legacy
-
-  // Const version. Does not change internal state.
-  const Path AppendProperty(const std::string &elem) const;
-  const Path AppendPrim(const std::string &elem) const;
-  const Path AppendElement(const std::string &elem) const;
-
-  // Get element name(the last element of Path. i.e. Prim's name, Property's
-  // name)
-  const std::string &element_name() const;
-
-  ///
-  /// Split a path to the root(common ancestor) and its siblings
-  ///
-  /// example:
-  ///
-  /// - / -> [/, Empty]
-  /// - /bora -> [/bora, Empty]
-  /// - /bora/dora -> [/bora, /dora]
-  /// - /bora/dora/muda -> [/bora, /dora/muda]
-  /// - bora -> [Empty, bora]
-  /// - .muda -> [Empty, .muda]
-  ///
-  std::pair<Path, Path> split_at_root() const;
-
-  ///
-  /// TODO: Deprecate(use get_parent_path() instead)
-  ///
-  /// Get parent Prim path.
-  /// If the given path is a root Prim path(e.g. "/bora"), same Path is
-  /// returned.
-  ///
-  /// example:
-  ///
-  /// - / -> invalid Path
-  /// - /bora -> /bora
-  /// - /bora/dora -> /bora
-  /// - /bora/dora.prop -> /bora/dora
-  /// - dora/bora -> dora
-  /// - dora -> invalid Path
-  /// - .dora -> invalid Path(path is property path)
-  Path get_parent_prim_path() const;
-
-  ///
-  /// Get parent Path.
-  /// If the given path is the root path("/") same Path is returned.
-  ///
-  /// example:
-  ///
-  /// - / -> invalid Path
-  /// - /bora -> /
-  /// - /bora/dora -> /bora
-  /// - /bora/dora.prop -> /bora/dora
-  /// - dora/bora -> dora
-  /// - dora -> invalid Path
-  /// - .dora -> invalid Path(path is property path)
-  Path get_parent_path() const;
-
-  ///
-  /// Check if this Path has same prefix for given Path
-  ///
-  /// example.
-  /// rhs path: /bora/dora
-  ///
-  /// /bora/dora/muda -> true
-  /// /bora/dora2 -> fase
-  ///
-  /// If the prefix path contains prop part, compare it with ==
-  /// (assume no hierarchy in property part)
-  ///
-  bool has_prefix(const Path &rhs) const;
-
-  ///
-  /// Replace Prim path prefix.
-  /// example.
-  /// srcPrefix = /bora/dora
-  /// dstPrefix = /bora2/dora2
-  /// 
-  /// /bora/dora/muda -> /bora2/dora2/muda 
-  ///
-  bool replace_prefix(const Path &srcPrefix, const Path &dstPrefix);
-
-  ///
-  /// @returns true if a path is '/' only
-  ///
-  bool is_root_path() const {
-    if (!_valid) {
-      return false;
-    }
-
-    if ((_prim_part.size() == 1) && (_prim_part[0] == '/')) {
-      return true;
-    }
-
-    return false;
-  }
-
-  ///
-  /// @returns true if a path is root prim: e.g. '/bora'
-  ///
-  bool is_root_prim() const {
-    if (!_valid) {
-      return false;
-    }
-
-    if (is_root_path()) {
-      return false;
-    }
-
-    if ((_prim_part.size() > 1) && (_prim_part[0] == '/')) {
-      // no other '/' except for the fist one
-      if (_prim_part.find_last_of('/') == 0) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  bool is_absolute_path() const {
-    if (_prim_part.size() && _prim_part[0] == '/') {
-      return true;
-    }
-
-    return false;
-  }
-
-  bool is_relative_path() const {
-    if (_prim_part.size()) {
-      return !is_absolute_path();
-    }
-
-    return true;  // prop part only
-  }
-
-#if 0 // TODO: rmove
-  bool is_variant_selection_path() const {
-    if (!is_valid()) {
-      return false;
-    }
-
-    if (_variant_part.size()) {
-      return true;
-    }
-
-    return false;
-  }
-#endif
-
-  // Strip '/'
-  Path &make_relative() {
-    if (is_absolute_path() && (_prim_part.size() > 1)) {
-      // Remove first '/'
-      _prim_part.erase(0, 1);
-    }
-    return *this;
-  }
-
-  const Path make_relative(Path &&rhs) {
-    (*this) = std::move(rhs);
-
-    return make_relative();
-  }
-
-  static const Path make_relative(const Path &rhs) {
-    Path p = rhs;  // copy
-    return p.make_relative();
-  }
-
-  static bool LessThan(const Path &lhs, const Path &rhs);
-
-  // To sort paths lexicographically.
-  // TODO: consider abs and relative path correctly
-  bool operator<(const Path &rhs) const {
-    if (full_path_name() == rhs.full_path_name()) {
-      return false;
-    }
-
-    if (prim_part().empty() || rhs.prim_part().empty()) {
-      return prim_part().empty() && rhs.prim_part().size();
-    }
-
-    return LessThan(*this, rhs);
-  }
-
- private:
-  void _update(const std::string &p, const std::string &prop);
-
-  std::string _prim_part;     // e.g. /Model/MyMesh, MySphere
-  std::string _prop_part;     // e.g. visibility (`.` is not included)
-  std::string _variant_part;  // e.g. `variantColor` for {variantColor=green}
-  std::string _variant_selection_part;  // e.g. `green` for {variantColor=green}
-                                        // . Could be empty({variantColor=}).
-  mutable std::string _variant_part_str;  // str buffer for variant_part()
-  mutable std::string _element;           // Element name
-
-  nonstd::optional<PathType> _path_type;  // Currently optional.
-
-  bool _valid{false};
-};
 
 #if 0
 ///
@@ -524,16 +150,6 @@ using VariantSelectionMap = std::map<std::string, std::string>;
 
 
 
-struct AssetInfo {
-  // builtin fields
-  value::AssetPath identifier;
-  std::string name;
-  std::vector<value::AssetPath> payloadAssetDependencies;
-  std::string version;
-
-  // Other fields
-  Dictionary _fields;
-};
 
 
 // USDZ AR class?
@@ -545,137 +161,7 @@ struct AssetInfo {
 // Preliminary_Text,
 
 
-// SdfLayerOffset
-struct LayerOffset {
-  double _offset{0.0};
-  double _scale{1.0};
-};
 
-// SdfReference
-struct Reference {
-  value::AssetPath asset_path;
-  Path prim_path;
-  LayerOffset layerOffset;
-  Dictionary customData;
-};
-
-// SdfPayload
-struct Payload {
-  value::AssetPath asset_path;  // std::string in SdfPayload
-  Path prim_path;
-  LayerOffset layerOffset;  // from 0.8.0
-  // No customData for Payload
-
-  // NOTE: pxrUSD encodes `payload = None` as Payload with empty paths in USDC(Crate).
-  // (Not ValueBlock)
-  bool is_none() const {
-    return asset_path.GetAssetPath().empty() && !prim_path.is_valid();
-  }
-};
-
-// Metadata for Prim
-struct PrimMetas {
-  nonstd::optional<bool> active;  // 'active'
-  nonstd::optional<bool> hidden;  // 'hidden'
-  nonstd::optional<Kind> kind;    // 'kind'. user-defined kind value is stored in _kind_str;
-  std::string _kind_str;
-
-  nonstd::optional<Dictionary>
-      assetInfo;  // 'assetInfo' // TODO: Use AssetInfo?
-  nonstd::optional<Dictionary> customData;  // `customData`
-  nonstd::optional<value::StringData> doc;  // 'documentation'
-  nonstd::optional<value::StringData>
-      comment;  // 'comment'  (String only metadata value)
-  nonstd::optional<APISchemas> apiSchemas;  // 'apiSchemas'
-  nonstd::optional<Dictionary>
-      sdrMetadata;  // 'sdrMetadata' (usdShade Prim only?)
-
-  nonstd::optional<bool> instanceable; // 'instanceable'
-  nonstd::optional<Dictionary> clips; // 'clips'
-
-  // String representation of Kind.
-  // For user-defined Kind, it returns `_kind_str`
-  const std::string get_kind() const;
-
-  //
-  // AssetInfo utility function
-  //
-  // Convert CustomDataType to AssetInfo
-  AssetInfo get_assetInfo(bool *authored = nullptr) const;
-
-  //
-  // Compositions
-  //
-  nonstd::optional<std::pair<ListEditQual, std::vector<Reference>>> references;
-  nonstd::optional<std::pair<ListEditQual, std::vector<Payload>>>
-      payload;  // NOTE: not `payloads`
-  nonstd::optional<std::pair<ListEditQual, std::vector<Path>>>
-      inherits;  // 'inherits'
-  nonstd::optional<std::pair<ListEditQual, std::vector<std::string>>>
-      variantSets;  // 'variantSets'. Could be `token` but treat as
-                    // `string`(Crate format uses `string`)
-
-  nonstd::optional<VariantSelectionMap> variants;  // `variants`
-
-  nonstd::optional<std::pair<ListEditQual, std::vector<Path>>>
-      specializes;  // 'specializes'
-
-  // USDZ extensions
-  nonstd::optional<std::string> sceneName;  // 'sceneName'
-
-  // Omniverse extensions(TODO: Use UTF8 string type?)
-  // https://github.com/PixarAnimationStudios/USD/pull/2055
-  nonstd::optional<std::string> displayName;  // 'displayName'
-
-  // Unregistered metadatum. value is represented as string.
-  std::map<std::string, std::string> unregisteredMetas;
-
-  Dictionary meta;  // other non-buitin meta values. TODO: remove this variable
-                    // and use `customData` instead, since pxrUSD does not allow
-                    // non-builtin Prim metadatum
-
-  ///
-  /// Update metadatum with rhs(authored metadataum only)
-  ///
-  /// @param[in] override_authored true: override this.metadataum(authored or not-authored) when rhs.metadatum is authoerd, false override only when this.metadatum is not authored and rhs.metadataum is authored.
-  ///
-  void update_from(const PrimMetas &rhs, bool override_authored = true);
-
-
-#if 0
-  // String only metadataum.
-  // TODO: Represent as `MetaVariable`?
-  std::vector<value::StringData> stringData;
-#endif
-
-  // FIXME: Find a better way to detect Prim meta is authored...
-  bool authored() const {
-    return (active || hidden || kind || customData || references || payload ||
-            inherits || variants || variantSets || specializes || displayName ||
-            sceneName || doc || comment || unregisteredMetas.size() || meta.size() || apiSchemas ||
-            sdrMetadata || assetInfo || instanceable || clips);
-  }
-
-  //
-  // Infos used indirectly.
-  //
-
-  // Used to display/traverse Prim items based on this array
-  // USDA: By appearance. USDC: "primChildren" TokenVector field
-  std::vector<value::token> primChildren;
-
-  // Used to display/traverse Property items based on this array
-  // USDA: By appearance. USDC: "properties" TokenVector field
-  std::vector<value::token> properties;
-
-  nonstd::optional<std::pair<ListEditQual, std::vector<Path>>> inheritPaths;
-
-  nonstd::optional<std::vector<value::token>> variantChildren;
-  nonstd::optional<std::vector<value::token>> variantSetChildren;
-};
-
-// For backward compatibility
-using PrimMeta = PrimMetas;
 
 #if 0
 // Metadata for Property(Relationship and Attribute)
@@ -828,71 +314,6 @@ inline void Identity(value::matrix4d *mat) {
   }
 }
 
-struct Extent {
-  value::float3 lower{{std::numeric_limits<float>::infinity(),
-                       std::numeric_limits<float>::infinity(),
-                       std::numeric_limits<float>::infinity()}};
-
-  value::float3 upper{{-std::numeric_limits<float>::infinity(),
-                       -std::numeric_limits<float>::infinity(),
-                       -std::numeric_limits<float>::infinity()}};
-
-  Extent() = default;
-
-  Extent(const value::float3 &l, const value::float3 &u) : lower(l), upper(u) {}
-
-  bool is_valid() const {
-    if (lower[0] > upper[0]) return false;
-    if (lower[1] > upper[1]) return false;
-    if (lower[2] > upper[2]) return false;
-
-    return std::isfinite(lower[0]) && std::isfinite(lower[1]) &&
-           std::isfinite(lower[2]) && std::isfinite(upper[0]) &&
-           std::isfinite(upper[1]) && std::isfinite(upper[2]);
-  }
-
-  std::array<std::array<float, 3>, 2> to_array() const {
-    std::array<std::array<float, 3>, 2> ret;
-    ret[0][0] = lower[0];
-    ret[0][1] = lower[1];
-    ret[0][2] = lower[2];
-    ret[1][0] = upper[0];
-    ret[1][1] = upper[1];
-    ret[1][2] = upper[2];
-
-    return ret;
-  }
-
-  const Extent &union_with(const value::float3 &p) {
-    lower[0] = (std::min)(lower[0], p[0]);
-    lower[1] = (std::min)(lower[1], p[1]);
-    lower[2] = (std::min)(lower[2], p[2]);
-
-    upper[0] = (std::max)(upper[0], p[0]);
-    upper[1] = (std::max)(upper[1], p[1]);
-    upper[2] = (std::max)(upper[2], p[2]);
-
-    return *this;
-  }
-
-  const Extent &union_with(const value::point3f &p) {
-    union_with(value::float3{p.x, p.y, p.z});
-
-    return *this;
-  }
-
-  const Extent &union_with(const Extent &box) {
-    lower[0] = (std::min)(lower[0], box.lower[0]);
-    lower[1] = (std::min)(lower[1], box.lower[1]);
-    lower[2] = (std::min)(lower[2], box.lower[2]);
-
-    upper[0] = (std::max)(upper[0], box.upper[0]);
-    upper[1] = (std::max)(upper[1], box.upper[1]);
-    upper[2] = (std::max)(upper[2], box.upper[2]);
-
-    return *this;
-  }
-};
 
 #if 0
 struct ConnectionPath {
@@ -918,9 +339,6 @@ struct ConnectionPath {
 // Relationship(typeless property)
 //
 // Relationship class is now defined in relationship.hh
-#define TINYUSDZ_INSIDE_PRIM_TYPES
-#include "relationship.hh"
-#undef TINYUSDZ_INSIDE_PRIM_TYPES
 
 // RelationshipProperty class is now defined in relationship.hh
 
@@ -1002,141 +420,11 @@ enum class TimeSampleInterpolation {
 // It can have multiple values(default value(or ValueBlock), timeSamples and connection) at once.
 //
 // TODO: Refactor
-// Attribute class is now defined in attribute.hh
-//#define TINYUSDZ_INSIDE_PRIM_TYPES
-//#include "attribute.hh"
-//#undef TINYUSDZ_INSIDE_PRIM_TYPES
 
 // Property class is now defined in property.hh
-#define TINYUSDZ_INSIDE_PRIM_TYPES
 #include "property.hh"
-#undef TINYUSDZ_INSIDE_PRIM_TYPES
 
 // Property class definition is complete in property.hh
-struct XformOp {
-  enum class OpType {
-    // matrix
-    Transform,
-
-    // vector3
-    Translate,
-    Scale,
-
-    // scalar
-    RotateX,
-    RotateY,
-    RotateZ,
-
-    // vector3
-    RotateXYZ,
-    RotateXZY,
-    RotateYXZ,
-    RotateYZX,
-    RotateZXY,
-    RotateZYX,
-
-    // quaternion
-    Orient,
-
-    // Special token
-    ResetXformStack,  // !resetXformStack!
-  };
-
-  // OpType op;
-  OpType op_type;
-  bool inverted{false};  // true when `!inverted!` prefix
-  std::string
-      suffix;  // may contain nested namespaces. e.g. suffix will be
-               // ":blender:pivot" for "xformOp:translate:blender:pivot". Suffix
-               // will be empty for "xformOp:translate"
-
-  primvar::PrimVar _var;
-  // const value::TimeSamples &get_ts() const { return _var.ts_raw(); }
-
-  std::string get_value_type_name() const { return _var.type_name(); }
-
-  uint32_t get_value_type_id() const { return _var.type_id(); }
-
-  // TODO: Check if T is valid type.
-  template <class T>
-  void set_value(const T &v) {
-    _var.set_value(v);
-  }
-
-  template <class T>
-  void set_default(const T &v) {
-    _var.set_value(v);
-  }
-
-  template <class T>
-  void set_timesample(const float t, const T &v) {
-    _var.set_timesample(t, v);
-  }
-
-  void set_timesamples(const value::TimeSamples &v) { _var.set_timesamples(v); }
-
-  void set_timesamples(value::TimeSamples &&v) { _var.set_timesamples(v); }
-
-  bool is_timesamples() const { return _var.is_timesamples(); }
-  bool has_timesamples() const { return _var.has_timesamples(); }
-
-  void set_blocked(bool onoff) { _is_blocked = onoff; }
-  void clear_blocked() { _is_blocked = false; }
-
-  // check if 'default' value is ValueBlock.
-  bool is_blocked() const { return _is_blocked || _var.is_blocked(); }
-
-  bool is_default() const { return _var.is_scalar(); }
-  bool has_default() const { return _var.has_default(); }
-
-  nonstd::optional<value::TimeSamples> get_timesamples() const {
-    if (has_timesamples()) {
-      return _var.ts_raw();
-    }
-    return nonstd::nullopt;
-  }
-
-  nonstd::optional<value::Value> get_scalar() const {
-    if (has_default()) {
-      return _var.value_raw();
-    }
-    return nonstd::nullopt;
-  }
-
-  nonstd::optional<value::Value> get_default() const {
-    return get_scalar();
-  }
-
-  template <class T>
-  nonstd::optional<T> get_value(double t = value::TimeCode::Default(), 
-          value::TimeSampleInterpolationType interp =
-               value::TimeSampleInterpolationType::Linear) const {
-    if (is_timesamples()) {
-      T value{};
-      if (get_interpolated_value(&value, t, interp)) {
-        return value;
-      }
-      return nonstd::nullopt;
-    }
-
-    return _var.get_value<T>();
-  }
-
-  template <class T>
-  bool get_interpolated_value(T *dst, double t = value::TimeCode::Default(),
-           value::TimeSampleInterpolationType interp =
-               value::TimeSampleInterpolationType::Linear) const {
-    return _var.get_interpolated_value<T>(t, interp, dst);
-  }
-
-  const primvar::PrimVar &get_var() const { return _var; }
-
-  primvar::PrimVar &var() { return _var; }
-
- private:
-
-  bool _is_blocked{false};
-};
 
 // forward decl
 struct Model;
@@ -1183,12 +471,8 @@ struct VariantSet {
   std::map<std::string, Variant> variantSet;
 };
 
-// For variantSet statement in PrimSpec(composition).
-struct VariantSetSpec
-{
-  std::string name;
-  std::map<std::string, PrimSpec> variantSet;
-};
+// Forward declaration - definition moved after PrimSpec include
+struct VariantSetSpec;
 
 // Collection API
 // https://openusd.org/release/api/class_usd_collection_a_p_i.html
@@ -1197,95 +481,6 @@ constexpr auto kExpandPrims = "expandPrims";
 constexpr auto kExplicitOnly = "explicitOnly";
 constexpr auto kExpandPrimsAndProperties = "expandPrimsAndProperties";
 
-struct CollectionInstance {
-
-  enum class ExpansionRule {
-    ExpandPrims, // "expandPrims" (default)
-    ExplicitOnly, // "explicitOnly"
-    ExpandPrimsAndProperties, // "expandPrimsAndProperties"
-  };
-
-  TypedAttributeWithFallback<ExpansionRule> expansionRule{ExpansionRule::ExpandPrims}; // uniform token collection:collectionName:expansionRule
-  TypedAttributeWithFallback<Animatable<bool>> includeRoot{false}; // bool collection:<collectionName>:includeRoot
-  nonstd::optional<Relationship> includes; // rel collection:<collectionName>:includes
-  nonstd::optional<Relationship> excludes; // rel collection:<collectionName>:excludes
-
-};
-
-class Collection
-{
- public:
-  const ordered_dict<CollectionInstance> instances() const {
-    return _instances;
-  }
-
-  bool add_instance(const std::string &name, CollectionInstance &instance) {
-    if (_instances.count(name)) {
-      return false;
-    }
-
-    _instances.insert(name, instance);
-
-    return true;
-  }
-
-  bool get_instance(const std::string &name, const CollectionInstance **coll) const {
-    if (!coll) {
-      return false;
-    }
-
-    return _instances.at(name, coll);
-  }
-
-  CollectionInstance &get_or_add_instance(const std::string &name) {
-    return _instances.get_or_add(name);
-  }
-
-  bool has_instance(const std::string &name) const {
-    return _instances.count(name);
-  }
-
-  bool del_instance(const std::string &name) {
-    return _instances.erase(name);
-  }
-
- private:
-  ordered_dict<CollectionInstance> _instances;
-};
-
-
-
-// Generic primspec container.
-// Unknown or unsupported Prim type are also reprenseted as Model for now.
-struct Model : public Collection, MaterialBinding {
-  std::string name;
-
-  std::string prim_type_name;  // e.g. "" for `def "bora" {}`, "UnknownPrim" for
-                               // `def UnknownPrim "bora" {}`
-  Specifier spec{Specifier::Def};
-
-  int64_t parent_id{-1};  // Index to parent node
-
-  PrimMeta meta;
-
-  std::pair<ListEditQual, std::vector<Reference>> references;
-  std::pair<ListEditQual, std::vector<Payload>> payload;
-
-  // std::map<std::string, VariantSet> variantSets;
-
-  std::map<std::string, Property> props;
-
-  const std::vector<value::token> &primChildrenNames() const {
-    return _primChildren;
-  }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
-
- private:
-  std::vector<value::token> _primChildren;
-  std::vector<value::token> _properties;
-};
 
 #if 0  // TODO: Remove
 // Generic "class" Node
@@ -1305,56 +500,6 @@ struct Klass {
 //
 
 
-// Simple volume class.
-// Currently this is just an placeholder. Not implemented.
-
-struct OpenVDBAsset {
-  std::string fieldDataType{"float"};
-  std::string fieldName{"density"};
-  std::string filePath;  // asset
-};
-
-// MagicaVoxel Vox
-struct VoxAsset {
-  std::string fieldDataType{"float"};
-  std::string fieldName{"density"};
-  std::string filePath;  // asset
-};
-
-struct Volume {
-  OpenVDBAsset vdb;
-  VoxAsset vox;
-};
-
-// `Scope` is uncommon in graphics community, its something like `Group`.
-// From USD doc: Scope is the simplest grouping primitive, and does not carry
-// the baggage of transformability.
-struct Scope : Collection, MaterialBinding {
-  std::string name;
-  Specifier spec{Specifier::Def};
-
-  int64_t parent_id{-1};
-
-  PrimMeta meta;
-
-  TypedAttributeWithFallback<Animatable<Visibility>> visibility{Visibility::Inherited};
-  Purpose purpose{Purpose::Default};
-
-  std::map<std::string, VariantSet> variantSet;
-
-  std::map<std::string, Property> props;
-
-  const std::vector<value::token> &primChildrenNames() const {
-    return _primChildren;
-  }
-  const std::vector<value::token> &propertyNames() const { return _properties; }
-  std::vector<value::token> &primChildrenNames() { return _primChildren; }
-  std::vector<value::token> &propertyNames() { return _properties; }
-
- private:
-  std::vector<value::token> _primChildren;
-  std::vector<value::token> _properties;
-};
 
 ///
 /// Get elementName from Prim(e.g., Xform::name, GeomMesh::name)
@@ -1749,57 +894,9 @@ class PrimNode {
 /// Its composed primarily of name, specifier, PrimMeta and
 /// Properties(Relationships and Attributes)
 // PrimSpec class is now defined in primspec.hh
-#define TINYUSDZ_INSIDE_PRIM_TYPES
 #include "primspec.hh"
-#undef TINYUSDZ_INSIDE_PRIM_TYPES
 
-struct SubLayer
-{
-  value::AssetPath assetPath;
-  LayerOffset layerOffset;
-};
-
-
-struct LayerMetas {
-  enum class PlaybackMode {
-    PlaybackModeNone,
-    PlaybackModeLoop,
-  };
-
-  // TODO: Support more predefined properties: reference =
-  // <pxrUSD>/pxr/usd/sdf/wrapLayer.cpp Scene global setting
-  TypedAttributeWithFallback<Axis> upAxis{
-      Axis::
-          Y};  // This can be changed by plugInfo.json in USD:
-               // https://graphics.pixar.com/usd/dev/api/group___usd_geom_up_axis__group.html#gaf16b05f297f696c58a086dacc1e288b5
-  value::token defaultPrim;                               // prim node name
-  TypedAttributeWithFallback<double> metersPerUnit{1.0};  // default [m]
-  TypedAttributeWithFallback<double> timeCodesPerSecond{
-      24.0};  // default 24 fps
-  TypedAttributeWithFallback<double> framesPerSecond{24.0};
-  TypedAttributeWithFallback<double> startTimeCode{
-      0.0};  // FIXME: default = -inf?
-  TypedAttributeWithFallback<double> endTimeCode{
-      std::numeric_limits<double>::infinity()};
-  std::vector<SubLayer> subLayers;  // `subLayers`
-  value::StringData comment;  // 'comment' In Stage meta, comment must be string
-                              // only(`comment = "..."` is not allowed)
-  value::StringData doc;      // `documentation`
-
-  // UsdPhysics
-  TypedAttributeWithFallback<double> kilogramsPerUnit{1.0};
-
-  CustomDataType customLayerData;  // customLayerData
-
-  // USDZ extension
-  TypedAttributeWithFallback<bool> autoPlay{
-      true};  // default(or not authored) = auto play
-  TypedAttributeWithFallback<PlaybackMode> playbackMode{
-      PlaybackMode::PlaybackModeLoop};
-
-  // Indirectly used.
-  std::vector<value::token> primChildren;
-};
+// VariantSetSpec is now defined in primspec.hh after PrimSpec class
 
 
 // Forward declaration for Layer class
@@ -1850,5 +947,8 @@ using PayloadList = std::pair<ListEditQual, std::vector<Payload>>;
 ((      GfMultiInterval,     MultiInterval))
 
 */
+
+// Include type traits after all types are defined
+#include "define-type-trait.hh"
 
 }  // namespace tinyusdz

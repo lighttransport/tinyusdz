@@ -18,6 +18,7 @@
 #endif
 #endif
 
+#include "primspec.hh"
 #include "usdc-reader.hh"
 #include "parser-timing.hh"
 
@@ -26,7 +27,6 @@
 #include <stack>
 #include <unordered_map>
 #include <unordered_set>
-
 #include "prim-types.hh"
 #include "layer.hh"
 #include "tinyusdz.hh"
@@ -2012,7 +2012,7 @@ bool USDCReader::Impl::ParsePrimSpec(const crate::FieldValuePairVector &fvs,
           if (warn.size()) {
             PUSH_WARN(warn);
           }
-          primMeta.apiSchemas = (*ret);
+          primMeta.apiSchemas = new APISchemas(*ret);
         }
         // DCOUT("apiSchemas = " << to_string(listop));
       } else {

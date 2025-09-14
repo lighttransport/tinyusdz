@@ -217,7 +217,7 @@ std::string to_string(const UsdUVTexture::Wrap v);
 std::string to_string(const GeomCamera::Projection &proj);
 std::string to_string(const GeomCamera::StereoRole &role);
 
-std::string to_string(const tinyusdz::Animatable<Visibility> &v,
+std::string to_string(const Animatable<Visibility> &v,
                       const uint32_t indent = 0, bool closing_brace = true);
 
 std::string to_string(const APISchemas::APIName &name);

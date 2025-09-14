@@ -7,8 +7,8 @@
 // TODO:
 //   - [ ] Refactor code
 //
+#include "primspec.hh"
 #include "prim-reconstruct.hh"
-
 #include "prim-types.hh"
 #include "str-util.hh"
 #include "io-util.hh"
@@ -1084,7 +1084,7 @@ static nonstd::expected<bool, std::string> CheckAllowedTokens(
     toks.push_back(std::get<1>(allowedTokens[i]));
   }
 
-  std::string s = join(", ", tinyusdz::quote(toks));
+  std::string s = join(", ", quote(toks));
 
   return nonstd::make_unexpected("Allowed tokens are [" + s + "] but got " +
                                  quote(tok) + ".");
@@ -1482,7 +1482,7 @@ static nonstd::expected<bool, std::string> CheckAllowedTokens(
     toks.push_back(std::get<1>(allowedTokens[i]));
   }
 
-  std::string s = join(", ", tinyusdz::quote(toks));
+  std::string s = join(", ", quote(toks));
 
   return nonstd::make_unexpected("Allowed tokens are [" + s + "] but got " +
                                  quote(tok) + ".");

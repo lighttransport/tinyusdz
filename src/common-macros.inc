@@ -175,9 +175,9 @@ class Logger {
 #else
 #define TUSDZ_LOG_I(x)                                                          \
   do {                                                                          \
-    if (tinyusdz::logging::Logger::getInstance().shouldLog(                    \
-            tinyusdz::logging::LogLevel::Info)) {                              \
-      (*tinyusdz::logging::Logger::getInstance().getStream())                  \
+    if (::tinyusdz::logging::Logger::getInstance().shouldLog(                    \
+            ::tinyusdz::logging::LogLevel::Info)) {                              \
+      (*::tinyusdz::logging::Logger::getInstance().getStream())                  \
           << "[INFO] " << __FILE__ << ":" << __func__ << ":"                   \
           << std::to_string(__LINE__) << " " << x << "\n";                     \
     }                                                                           \
@@ -193,9 +193,9 @@ class Logger {
 #else
 #define TUSDZ_LOG_D(x)                                                          \
   do {                                                                          \
-    if (tinyusdz::logging::Logger::getInstance().shouldLog(                    \
-            tinyusdz::logging::LogLevel::Debug)) {                             \
-      (*tinyusdz::logging::Logger::getInstance().getStream())                  \
+    if (::tinyusdz::logging::Logger::getInstance().shouldLog(                    \
+            ::tinyusdz::logging::LogLevel::Debug)) {                             \
+      (*::tinyusdz::logging::Logger::getInstance().getStream())                  \
           << "[DEBUG] " << __FILE__ << ":" << __func__ << ":"                  \
           << std::to_string(__LINE__) << " " << x << "\n";                     \
     }                                                                           \
@@ -203,9 +203,9 @@ class Logger {
 
 #define TUSDZ_LOG_W(x)                                                          \
   do {                                                                          \
-    if (tinyusdz::logging::Logger::getInstance().shouldLog(                    \
-            tinyusdz::logging::LogLevel::Warn)) {                              \
-      (*tinyusdz::logging::Logger::getInstance().getStream())                  \
+    if (::tinyusdz::logging::Logger::getInstance().shouldLog(                    \
+            ::tinyusdz::logging::LogLevel::Warn)) {                              \
+      (*::tinyusdz::logging::Logger::getInstance().getStream())                  \
           << "[WARN] " << __FILE__ << ":" << __func__ << ":"                   \
           << std::to_string(__LINE__) << " " << x << "\n";                     \
     }                                                                           \
@@ -213,9 +213,9 @@ class Logger {
 
 #define TUSDZ_LOG_E(x)                                                          \
   do {                                                                          \
-    if (tinyusdz::logging::Logger::getInstance().shouldLog(                    \
-            tinyusdz::logging::LogLevel::Error)) {                             \
-      (*tinyusdz::logging::Logger::getInstance().getStream())                  \
+    if (::tinyusdz::logging::Logger::getInstance().shouldLog(                    \
+            ::tinyusdz::logging::LogLevel::Error)) {                             \
+      (*::tinyusdz::logging::Logger::getInstance().getStream())                  \
           << "[ERROR] " << __FILE__ << ":" << __func__ << ":"                  \
           << std::to_string(__LINE__) << " " << x << "\n";                     \
     }                                                                           \
@@ -223,9 +223,9 @@ class Logger {
 
 #define TUSDZ_LOG_C(x)                                                          \
   do {                                                                          \
-    if (tinyusdz::logging::Logger::getInstance().shouldLog(                    \
-            tinyusdz::logging::LogLevel::Critical)) {                          \
-      (*tinyusdz::logging::Logger::getInstance().getStream())                  \
+    if (::tinyusdz::logging::Logger::getInstance().shouldLog(                    \
+            ::tinyusdz::logging::LogLevel::Critical)) {                          \
+      (*::tinyusdz::logging::Logger::getInstance().getStream())                  \
           << "[CRITICAL] " << __FILE__ << ":" << __func__ << ":"               \
           << std::to_string(__LINE__) << " " << x << "\n";                     \
     }                                                                           \

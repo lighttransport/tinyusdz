@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2024-Present Light Transport Entertainment, Inc.
 //
+#include "../primspec.hh"
 #include "attribute-eval.hh"
 #include "scene-access.hh"
 
@@ -68,10 +69,10 @@ bool ToTerminalAttributeValue(
 // visited_paths : To prevent circular referencing of attribute connection.
 //
 bool EvaluateAttributeImpl(
-    const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
+    const Stage &stage, const Prim &prim,
     const std::string &attr_name, TerminalAttributeValue *value,
     std::string *err, std::set<std::string> &visited_paths, const double t,
-    const tinyusdz::value::TimeSampleInterpolationType tinterp) {
+    const value::TimeSampleInterpolationType tinterp) {
 
   DCOUT("Prim : " << prim.element_path().element_name() << "("
                   << prim.type_name() << ") attr_name " << attr_name);
@@ -158,10 +159,10 @@ bool EvaluateAttributeImpl(
 }
 
 bool EvaluateAttributeImpl(
-    const tinyusdz::Stage &stage, const tinyusdz::Attribute &attr,
+    const Stage &stage, const Attribute &attr,
     const std::string &attr_name, TerminalAttributeValue *value,
     std::string *err, std::set<std::string> &visited_paths, const double t,
-    const tinyusdz::value::TimeSampleInterpolationType tinterp) {
+    const value::TimeSampleInterpolationType tinterp) {
 
   if (attr.is_connection()) {
     // Follow connection target Path(singple targetPath only).
@@ -221,10 +222,10 @@ bool EvaluateAttributeImpl(
 }  // namespace
 
 bool EvaluateAttribute(
-    const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
+    const Stage &stage, const Prim &prim,
     const std::string &attr_name, TerminalAttributeValue *value,
     std::string *err, const double t,
-    const tinyusdz::value::TimeSampleInterpolationType tinterp) {
+    const value::TimeSampleInterpolationType tinterp) {
   std::set<std::string> visited_paths;
 
   return EvaluateAttributeImpl(stage, prim, attr_name, value, err,
@@ -232,10 +233,10 @@ bool EvaluateAttribute(
 }
 
 bool EvaluateAttribute(
-    const tinyusdz::Stage &stage, const Attribute &attr,
+    const Stage &stage, const Attribute &attr,
     const std::string &attr_name, TerminalAttributeValue *value,
     std::string *err, const double t,
-    const tinyusdz::value::TimeSampleInterpolationType tinterp) {
+    const value::TimeSampleInterpolationType tinterp) {
   std::set<std::string> visited_paths;
 
   return EvaluateAttributeImpl(stage, attr, attr_name, value, err,
@@ -244,10 +245,10 @@ bool EvaluateAttribute(
 
 // Layer/PrimSpec version
 bool EvaluateAttribute(
-    const tinyusdz::Layer &layer, const tinyusdz::PrimSpec &ps,
+    const Layer &layer, const PrimSpec &ps,
     const std::string &attr_name, TerminalAttributeValue *value,
     std::string *err, const double t,
-    const tinyusdz::value::TimeSampleInterpolationType tinterp) {
+    const value::TimeSampleInterpolationType tinterp) {
   (void)layer;
   
   if (!value) {

@@ -32,22 +32,22 @@ namespace image {
 
 namespace {
 
-bool DetectFileFormatFromExtension(const std::string &_ext, tinyusdz::image::WriteImageFormat &format) {
+bool DetectFileFormatFromExtension(const std::string &_ext, image::WriteImageFormat &format) {
 
   std::string ext = to_lower(_ext);
 
   if (ext == "bmp") {
-    format = tinyusdz::image::WriteImageFormat::BMP;
+    format = image::WriteImageFormat::BMP;
   } else if (ext == "png") {
-    format = tinyusdz::image::WriteImageFormat::PNG;
+    format = image::WriteImageFormat::PNG;
   } else if ((ext == "jpg") || (ext == "jpeg")) {
-    format = tinyusdz::image::WriteImageFormat::JPEG;
+    format = image::WriteImageFormat::JPEG;
   } else if ((ext == "tiff") || (ext == "tif")) {
-    format = tinyusdz::image::WriteImageFormat::TIFF;
+    format = image::WriteImageFormat::TIFF;
   } else if (ext == "dng") {
-    format = tinyusdz::image::WriteImageFormat::DNG;
+    format = image::WriteImageFormat::DNG;
   } else if (ext == "exr") {
-    format = tinyusdz::image::WriteImageFormat::EXR;
+    format = image::WriteImageFormat::EXR;
   }
 
   return false;
@@ -60,28 +60,28 @@ nonstd::expected<bool, std::string> WriteImageToFile(
     WriteOption option) {
 
 
-  tinyusdz::image::WriteImageFormat format = option.format;
+  image::WriteImageFormat format = option.format;
 
-  if (format == tinyusdz::image::WriteImageFormat::Autodetect) {
+  if (format == image::WriteImageFormat::Autodetect) {
     if (!DetectFileFormatFromExtension(io::GetFileExtension(filename), format)) {
       return nonstd::make_unexpected("Failed to determine image file format from extension: " + filename);
     }
   }
 
-  if ((format == tinyusdz::image::WriteImageFormat::BMP) ||
-      (format == tinyusdz::image::WriteImageFormat::JPEG)) {
+  if ((format == image::WriteImageFormat::BMP) ||
+      (format == image::WriteImageFormat::JPEG)) {
     // Currently LDR only
     if (image.bpp != 8) {
       return nonstd::make_unexpected("8bit only for BMP/JPEG output.");
     }
 
-  } else if (format == tinyusdz::image::WriteImageFormat::EXR) {
+  } else if (format == image::WriteImageFormat::EXR) {
 
     if (image.bpp == 8) {
       return nonstd::make_unexpected("Invalid bit per pixel(8) for EXR output.");
     }
 
-  } else if (format == tinyusdz::image::WriteImageFormat::TIFF) {
+  } else if (format == image::WriteImageFormat::TIFF) {
 
     if (image.bpp == 8) {
 
@@ -93,7 +93,7 @@ nonstd::expected<bool, std::string> WriteImageToFile(
       return nonstd::make_unexpected("Invalid bit per pixel for EXR output.");
     }
 
-  } else if (format == tinyusdz::image::WriteImageFormat::DNG) {
+  } else if (format == image::WriteImageFormat::DNG) {
     // 16bit only for DNG
     if (image.bpp != 16) {
       return nonstd::make_unexpected("Bit per pixel must be 16 for DNG output.");
@@ -120,7 +120,7 @@ nonstd::expected<std::vector<uint8_t>, std::string> WriteImageToMemory(
   (void)option;
 
   // TODO: Autodetect format
-  if (option.format == tinyusdz::image::WriteImageFormat::Autodetect) {
+  if (option.format == image::WriteImageFormat::Autodetect) {
     return nonstd::make_unexpected("TODO: Autodetect image format.");
   }
 

@@ -33,7 +33,7 @@ class USDAReader {
   };
 
   USDAReader() = delete;
-  USDAReader(tinyusdz::StreamReader *sr);
+  USDAReader(StreamReader *sr);
 
   USDAReader(const USDAReader &rhs) = delete;
   USDAReader(USDAReader &&rhs) = delete;

@@ -28,14 +28,13 @@
 #include "primvar.hh"
 #include "value-types.hh"
 #include "value-eval-util.hh"
+#include "timesamples.hh"
 #include "path.hh"
 #include "enum-types.hh"
 #include "dictionary.hh"
-#include "logger.hh"
+#include "common-macros.inc"
 
-//#ifndef TINYUSDZ_INSIDE_PRIM_TYPES
 namespace tinyusdz {
-//#endif
 
 // Forward declarations - these must be defined before including this file
 class Path;
@@ -780,7 +779,5 @@ template <typename T>
 using TypedAnimatableAttributeWithFallback =
     TypedAttributeWithFallback<Animatable<T>>;
 
-//#ifndef TINYUSDZ_INSIDE_PRIM_TYPES
 }  // namespace tinyusdz
-//#endif
 

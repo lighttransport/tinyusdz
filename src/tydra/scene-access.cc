@@ -3,6 +3,7 @@
 //
 
 // src
+#include "primspec.hh"
 #include "common-macros.inc"
 #include "pprinter.hh"
 #include "prim-pprint.hh"
@@ -67,7 +68,7 @@ value::TimeSamples EnumTimeSamplesToTypelessTimeSamples(
 }
 
 template <typename T>
-bool TraverseRec(const std::string &path_prefix, const tinyusdz::Prim &prim,
+bool TraverseRec(const std::string &path_prefix, const Prim &prim,
                  uint32_t depth, PathPrimMap<T> &itemmap) {
   if (depth > 1024 * 128) {
     // Too deep
@@ -79,7 +80,7 @@ bool TraverseRec(const std::string &path_prefix, const tinyusdz::Prim &prim,
 
   if (prim.is<T>()) {
     if (const T *pv = prim.as<T>()) {
-      DCOUT("Path : <" << prim_abs_path << "> is " << tinyusdz::value::TypeTraits<T>::type_name());
+      DCOUT("Path : <" << prim_abs_path << "> is " << value::TypeTraits<T>::type_name());
       itemmap[prim_abs_path] = pv;
     }
   }
@@ -96,7 +97,7 @@ bool TraverseRec(const std::string &path_prefix, const tinyusdz::Prim &prim,
 // Specialization for Shader type.
 template <typename ShaderTy>
 bool TraverseShaderRec(const std::string &path_prefix,
-                       const tinyusdz::Prim &prim, uint32_t depth,
+                       const Prim &prim, uint32_t depth,
                        PathShaderMap<ShaderTy> &itemmap) {
   if (depth > 1024 * 128) {
     // Too deep
@@ -123,7 +124,7 @@ bool TraverseShaderRec(const std::string &path_prefix,
   return true;
 }
 
-bool ListSceneNamesRec(const tinyusdz::Prim &root, uint32_t depth,
+bool ListSceneNamesRec(const Prim &root, uint32_t depth,
                        std::vector<std::pair<bool, std::string>> *sceneNames) {
   if (!sceneNames) {
     return false;
@@ -147,7 +148,7 @@ bool ListSceneNamesRec(const tinyusdz::Prim &root, uint32_t depth,
 }  // namespace
 
 template <typename T>
-bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<T> &m /* output */) {
+bool ListPrims(const Stage &stage, PathPrimMap<T> &m /* output */) {
   // Should report error at compilation stege.
   static_assert(
       (value::TypeId::TYPE_ID_MODEL_BEGIN <= value::TypeTraits<T>::type_id()) &&
@@ -170,7 +171,7 @@ bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<T> &m /* output */) {
 }
 
 template <typename T>
-bool ListShaders(const tinyusdz::Stage &stage,
+bool ListShaders(const Stage &stage,
                  PathShaderMap<T> &m /* output */) {
   // Concrete Shader type(e.g. UsdPreviewSurface) is classified as Imaging
   // Should report error at compilation stege.
@@ -196,8 +197,8 @@ bool ListShaders(const tinyusdz::Stage &stage,
   return true;
 }
 
-const Prim *GetParentPrim(const tinyusdz::Stage &stage,
-                          const tinyusdz::Path &path, std::string *err) {
+const Prim *GetParentPrim(const Stage &stage,
+                          const Path &path, std::string *err) {
   if (!path.is_valid()) {
     if (err) {
       (*err) = "Input Path " + tinyusdz::to_string(path) + " is invalid.\n";
@@ -226,7 +227,7 @@ const Prim *GetParentPrim(const tinyusdz::Stage &stage,
     return nullptr;
   }
 
-  tinyusdz::Path parentPath = path.get_parent_prim_path();
+  Path parentPath = path.get_parent_prim_path();
 
   nonstd::expected<const Prim *, std::string> ret =
       stage.GetPrimAtPath(parentPath);
@@ -245,36 +246,36 @@ const Prim *GetParentPrim(const tinyusdz::Stage &stage,
 // Template Instanciations
 //
 #define LISTPRIMS_INSTANCIATE(__ty) \
-  template bool ListPrims(const tinyusdz::Stage &stage, PathPrimMap<__ty> &m);
+  template bool ListPrims(const Stage &stage, PathPrimMap<__ty> &m);
 
 APPLY_FUNC_TO_PRIM_TYPES(LISTPRIMS_INSTANCIATE)
 
 #undef LISTPRIMS_INSTANCIATE
 
-template bool ListShaders(const tinyusdz::Stage &stage,
+template bool ListShaders(const Stage &stage,
                           PathShaderMap<UsdPreviewSurface> &m);
-template bool ListShaders(const tinyusdz::Stage &stage,
+template bool ListShaders(const Stage &stage,
                           PathShaderMap<UsdUVTexture> &m);
 
-template bool ListShaders(const tinyusdz::Stage &stage,
+template bool ListShaders(const Stage &stage,
                           PathShaderMap<UsdPrimvarReader_string> &m);
-template bool ListShaders(const tinyusdz::Stage &stage,
+template bool ListShaders(const Stage &stage,
                           PathShaderMap<UsdPrimvarReader_int> &m);
-template bool ListShaders(const tinyusdz::Stage &stage,
+template bool ListShaders(const Stage &stage,
                           PathShaderMap<UsdPrimvarReader_float> &m);
-template bool ListShaders(const tinyusdz::Stage &stage,
+template bool ListShaders(const Stage &stage,
                           PathShaderMap<UsdPrimvarReader_float2> &m);
-template bool ListShaders(const tinyusdz::Stage &stage,
+template bool ListShaders(const Stage &stage,
                           PathShaderMap<UsdPrimvarReader_float3> &m);
-template bool ListShaders(const tinyusdz::Stage &stage,
+template bool ListShaders(const Stage &stage,
                           PathShaderMap<UsdPrimvarReader_float4> &m);
-template bool ListShaders(const tinyusdz::Stage &stage,
+template bool ListShaders(const Stage &stage,
                           PathShaderMap<UsdPrimvarReader_matrix> &m);
 
 namespace {
 
-bool VisitPrimsRec(const tinyusdz::Path &root_abs_path,
-                   const tinyusdz::Prim &root, int32_t level,
+bool VisitPrimsRec(const Path &root_abs_path,
+                   const Prim &root, int32_t level,
                    VisitPrimFunction visitor_fun, void *userdata,
                    std::string *err) {
   std::string fun_error;
@@ -1872,7 +1873,7 @@ bool GetPrimPropertyNamesImpl(const GeomSubset &subset,
 
 }  // namespace
 
-bool VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun,
+bool VisitPrims(const Stage &stage, VisitPrimFunction visitor_fun,
                 void *userdata, std::string *err) {
   // if `primChildren` is available, use it
   if (stage.metas().primChildren.size() == stage.root_prims().size()) {
@@ -1915,7 +1916,7 @@ bool VisitPrims(const tinyusdz::Stage &stage, VisitPrimFunction visitor_fun,
   return true;
 }
 
-bool GetProperty(const tinyusdz::Prim &prim, const std::string &attr_name,
+bool GetProperty(const Prim &prim, const std::string &attr_name,
                  Property *out_prop, std::string *err) {
 #define GET_PRIM_PROPERTY(__ty)                                         \
   if (prim.is<__ty>()) {                                                \
@@ -1951,7 +1952,7 @@ bool GetProperty(const tinyusdz::Prim &prim, const std::string &attr_name,
   return true;
 }
 
-bool GetPropertyNames(const tinyusdz::Prim &prim,
+bool GetPropertyNames(const Prim &prim,
                       std::vector<std::string> *out_prop_names,
                       std::string *err) {
 #define GET_PRIM_PROPERTY_NAMES(__ty)                                     \
@@ -1986,7 +1987,7 @@ bool GetPropertyNames(const tinyusdz::Prim &prim,
   return true;
 }
 
-bool GetRelationshipNames(const tinyusdz::Prim &prim,
+bool GetRelationshipNames(const Prim &prim,
                           std::vector<std::string> *out_rel_names,
                           std::string *err) {
 #define GET_PRIM_RELATIONSHIP_NAMES(__ty)                                 \
@@ -2020,7 +2021,7 @@ bool GetRelationshipNames(const tinyusdz::Prim &prim,
   return true;
 }
 
-bool GetAttribute(const tinyusdz::Prim &prim, const std::string &attr_name,
+bool GetAttribute(const Prim &prim, const std::string &attr_name,
                   Attribute *out_attr, std::string *err) {
   if (!out_attr) {
     PUSH_ERROR_AND_RETURN("`out_attr` argument is nullptr.");
@@ -2040,7 +2041,7 @@ bool GetAttribute(const tinyusdz::Prim &prim, const std::string &attr_name,
   PUSH_ERROR_AND_RETURN(fmt::format("{} is not a Attribute.", attr_name));
 }
 
-bool GetRelationship(const tinyusdz::Prim &prim, const std::string &rel_name,
+bool GetRelationship(const Prim &prim, const std::string &rel_name,
                      Relationship *out_rel, std::string *err) {
   if (!out_rel) {
     PUSH_ERROR_AND_RETURN("`out_rel` argument is nullptr.");
@@ -2061,7 +2062,7 @@ bool GetRelationship(const tinyusdz::Prim &prim, const std::string &rel_name,
   return true;
 }
 
-bool ListSceneNames(const tinyusdz::Prim &root,
+bool ListSceneNames(const Prim &root,
                     std::vector<std::pair<bool, std::string>> *sceneNames) {
   if (!sceneNames) {
     return false;
@@ -2091,10 +2092,10 @@ bool ListSceneNames(const tinyusdz::Prim &root,
 namespace {
 
 bool BuildXformNodeFromStageRec(
-    const tinyusdz::Stage &stage, const Path &parent_abs_path, const Prim *prim,
+    const Stage &stage, const Path &parent_abs_path, const Prim *prim,
     XformNode *nodeOut, /* out */
     value::matrix4d rootMat, const double t,
-    const tinyusdz::value::TimeSampleInterpolationType tinterp) {
+    const value::TimeSampleInterpolationType tinterp) {
   if (!nodeOut) {
     return false;
   }
@@ -2187,9 +2188,9 @@ std::string DumpXformNodeRec(const XformNode &node, uint32_t indent) {
 }  // namespace local
 
 bool BuildXformNodeFromStage(
-    const tinyusdz::Stage &stage, XformNode *rootNode, /* out */
+    const Stage &stage, XformNode *rootNode, /* out */
     const double t,
-    const tinyusdz::value::TimeSampleInterpolationType tinterp) {
+    const value::TimeSampleInterpolationType tinterp) {
   if (!rootNode) {
     return false;
   }
@@ -2328,8 +2329,8 @@ bool ShaderToPrimSpec(const UsdTransform2d &node, PrimSpec &ps,
 }
 
 std::vector<const GeomSubset *> GetGeomSubsets(
-    const tinyusdz::Stage &stage, const tinyusdz::Path &prim_path,
-    const tinyusdz::value::token &familyName, bool prim_must_be_geommesh) {
+    const Stage &stage, const Path &prim_path,
+    const value::token &familyName, bool prim_must_be_geommesh) {
   std::vector<const GeomSubset *> result;
 
   const Prim *pprim{nullptr};
@@ -2372,7 +2373,7 @@ std::vector<const GeomSubset *> GetGeomSubsets(
 }
 
 std::vector<const GeomSubset *> GetGeomSubsetChildren(
-    const tinyusdz::Prim &prim, const tinyusdz::value::token &familyName,
+    const Prim &prim, const value::token &familyName,
     bool prim_must_be_geommesh) {
   std::vector<const GeomSubset *> result;
 
@@ -2479,17 +2480,17 @@ bool IsPathIncluded(const CollectionMembershipQuery &query, const Stage &stage,
   return false;
 }
 
-std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
-GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
+std::vector<std::pair<std::string, const BlendShape *>>
+GetBlendShapes(const Stage &stage, const Prim &prim,
                std::string *err) {
-  std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> dst;
+  std::vector<std::pair<std::string, const BlendShape *>> dst;
 
   auto *pmesh = prim.as<GeomMesh>();
   if (!pmesh) {
     if (err) {
       (*err) += "Prim must be GeomMesh.\n";
     }
-    return std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>{};
+    return std::vector<std::pair<std::string, const BlendShape *>>{};
   }
 
   //
@@ -2505,7 +2506,7 @@ GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
         (*err) += "Failed to get `skel:blendShapes` attribute.\n";
       }
       return std::vector<
-          std::pair<std::string, const tinyusdz::BlendShape *>>{};
+          std::pair<std::string, const BlendShape *>>{};
     }
 
     if (pmesh->blendShapeTargets.value().is_path()) {
@@ -2516,21 +2517,21 @@ GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
               "`skel:blendShapeTargets`.\n";
         }
         return std::vector<
-            std::pair<std::string, const tinyusdz::BlendShape *>>{};
+            std::pair<std::string, const BlendShape *>>{};
       }
 
       const Path &targetPath = pmesh->blendShapeTargets.value().targetPath;
       const Prim *bsprim{nullptr};
       if (!stage.find_prim_at_path(targetPath, bsprim, err)) {
         return std::vector<
-            std::pair<std::string, const tinyusdz::BlendShape *>>{};
+            std::pair<std::string, const BlendShape *>>{};
       }
       if (!bsprim) {
         if (err) {
           (*err) += "Internal error. BlendShape Prim is nullptr.\n";
         }
         return std::vector<
-            std::pair<std::string, const tinyusdz::BlendShape *>>{};
+            std::pair<std::string, const BlendShape *>>{};
       }
 
       if (const auto *bs = bsprim->as<BlendShape>()) {
@@ -2541,7 +2542,7 @@ GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
                                 targetPath.full_path_name());
         }
         return std::vector<
-            std::pair<std::string, const tinyusdz::BlendShape *>>{};
+            std::pair<std::string, const BlendShape *>>{};
       }
 
     } else if (pmesh->blendShapeTargets.value().is_pathvector()) {
@@ -2553,7 +2554,7 @@ GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
               "`skel:blendShapeTargets`.\n";
         }
         return std::vector<
-            std::pair<std::string, const tinyusdz::BlendShape *>>{};
+            std::pair<std::string, const BlendShape *>>{};
       }
     } else {
       if (err) {
@@ -2562,7 +2563,7 @@ GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
             "relationship.\n";
       }
       return std::vector<
-          std::pair<std::string, const tinyusdz::BlendShape *>>{};
+          std::pair<std::string, const BlendShape *>>{};
     }
 
     for (size_t i = 0;
@@ -2572,14 +2573,14 @@ GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
       const Prim *bsprim{nullptr};
       if (!stage.find_prim_at_path(targetPath, bsprim, err)) {
         return std::vector<
-            std::pair<std::string, const tinyusdz::BlendShape *>>{};
+            std::pair<std::string, const BlendShape *>>{};
       }
       if (!bsprim) {
         if (err) {
           (*err) += "Internal error. BlendShape Prim is nullptr.";
         }
         return std::vector<
-            std::pair<std::string, const tinyusdz::BlendShape *>>{};
+            std::pair<std::string, const BlendShape *>>{};
       }
 
       if (const auto *bs = bsprim->as<BlendShape>()) {
@@ -2590,7 +2591,7 @@ GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
                                 targetPath.full_path_name());
         }
         return std::vector<
-            std::pair<std::string, const tinyusdz::BlendShape *>>{};
+            std::pair<std::string, const BlendShape *>>{};
       }
     }
   }
@@ -2668,7 +2669,7 @@ bool GetGeomPrimvar(const Stage &stage, const GPrim *gprim,
   const auto indexIt = gprim->props.find(index_name);
 
   // Primvar indices are only relevant for non-constant interpolation modes
-  bool constant_interpolation = primvar.get_interpolation() == tinyusdz::Interpolation::Constant;
+  bool constant_interpolation = primvar.get_interpolation() == Interpolation::Constant;
 
   if (indexIt != gprim->props.end() && !constant_interpolation) {
     if (indexIt->second.is_attribute()) {
@@ -2769,8 +2770,8 @@ namespace {
 //
 // visited_paths : To prevent circular referencing of attribute connection.
 //
-bool GetTerminalAttributeImpl(const tinyusdz::Stage &stage,
-                              const tinyusdz::Prim &prim,
+bool GetTerminalAttributeImpl(const Stage &stage,
+                              const Prim &prim,
                               const std::string &attr_name, Attribute *value,
                               std::string *err,
                               std::set<std::string> &visited_paths) {
@@ -2845,8 +2846,8 @@ bool GetTerminalAttributeImpl(const tinyusdz::Stage &stage,
 
 }  // namespace
 
-bool GetTerminalAttribute(const tinyusdz::Stage &stage,
-                          const tinyusdz::Attribute &attr,
+bool GetTerminalAttribute(const Stage &stage,
+                          const Attribute &attr,
                           const std::string &attr_name, Attribute *value,
                           std::string *err) {
   if (!value) {

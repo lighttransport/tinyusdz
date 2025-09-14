@@ -3,6 +3,7 @@
 //
 
 // src/tydra
+#include "../primspec.hh"
 #include "prim-apply.hh"
 #include "attribute-eval.hh"
 #include "scene-analysis.hh"

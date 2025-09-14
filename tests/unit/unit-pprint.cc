@@ -17,7 +17,7 @@ void value_type_pprint_test(void) {
 
   {
     std::stringstream ss;
-    tinyusdz::Interpolation interp = tinyusdz::Interpolation::Vertex;
+    Interpolation interp = Interpolation::Vertex;
     ss << interp;
     TEST_CHECK(ss.str() == "vertex");
   }

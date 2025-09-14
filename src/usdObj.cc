@@ -38,7 +38,7 @@ namespace {
 
 }
 
-bool ReadObjFromFile(const std::string &filepath, tinyusdz::GPrim *prim, std::string *err)
+bool ReadObjFromFile(const std::string &filepath, GPrim *prim, std::string *err)
 {
 #if !defined(TINYUSDZ_USE_USDOBJ)
   (void)filepath;
@@ -64,7 +64,7 @@ bool ReadObjFromFile(const std::string &filepath, tinyusdz::GPrim *prim, std::st
 }
 
 
-bool ReadObjFromString(const std::string &str, tinyusdz::GPrim *prim, std::string *err)
+bool ReadObjFromString(const std::string &str, GPrim *prim, std::string *err)
 {
 #if !defined(TINYUSDZ_USE_USDOBJ)
   (void)str;

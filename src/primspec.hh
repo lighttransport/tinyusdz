@@ -16,23 +16,18 @@
 #include "nonstd/expected.hpp"
 #include "nonstd/optional.hpp"
 
+#include "common-macros.inc"
 #include "value-types.hh"
+#include "enum-types.hh"
+#include "metadata.hh"
 #include "property.hh"
 
-#ifndef TINYUSDZ_INSIDE_PRIM_TYPES
 namespace tinyusdz {
-#endif
 
 // Forward declarations
 class Path;
 class Prim;
-struct PrimMetas;
-using PrimMeta = PrimMetas;
 struct VariantSetSpec;
-struct Reference;
-struct Payload;
-enum class Specifier;
-enum class ListEditQual;
 
 using VariantSelectionMap = std::map<std::string, std::string>;
 
@@ -249,7 +244,13 @@ class PrimSpec {
   std::vector<std::string> _asset_search_paths;
 };
 
-#ifndef TINYUSDZ_INSIDE_PRIM_TYPES
+// For variantSet statement in PrimSpec(composition).
+// Definition must come after PrimSpec is fully defined
+struct VariantSetSpec
+{
+  std::string name;
+  std::map<std::string, PrimSpec> variantSet;
+};
+
 }  // namespace tinyusdz
-#endif
 

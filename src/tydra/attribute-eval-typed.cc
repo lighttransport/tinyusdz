@@ -24,7 +24,7 @@ namespace tydra {
 //
 template<typename T>
 bool EvaluateTypedAttributeImpl(
-    const tinyusdz::Stage &stage, const TypedAttribute<T> &attr,
+    const Stage &stage, const TypedAttribute<T> &attr,
     const std::string &attr_name,
     T *value,
     std::string *err,
@@ -127,7 +127,7 @@ Attribute ToAttributeConnection(
 
 template<typename T>
 bool EvaluateTypedAttribute(
-    const tinyusdz::Stage &stage, const TypedAttribute<T> &tattr,
+    const Stage &stage, const TypedAttribute<T> &tattr,
     const std::string &attr_name,
     T *value_out,
     std::string *err) {
@@ -184,7 +184,7 @@ bool EvaluateTypedAttribute(
 
 template<typename T>
 bool EvaluateTypedAttribute(
-    const tinyusdz::Stage &stage, const TypedAttribute<std::string> &tattr,
+    const Stage &stage, const TypedAttribute<std::string> &tattr,
     const std::string &attr_name,
     std::string *value_out,
     std::string *err) {
@@ -248,7 +248,7 @@ bool EvaluateTypedAttribute(
 
 // template instanciations
 #define EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE(__ty) \
-template bool EvaluateTypedAttribute(const tinyusdz::Stage &stage, const TypedAttribute<__ty> &attr, const std::string &attr_name, __ty *value, std::string *err);
+template bool EvaluateTypedAttribute(const Stage &stage, const TypedAttribute<__ty> &attr, const std::string &attr_name, __ty *value, std::string *err);
 
 APPLY_FUNC_TO_VALUE_TYPES_NO_STRING(EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE)
 

@@ -1774,13 +1774,13 @@ class RenderSceneConverter {
   ///
   ///
   bool ConvertMesh(
-      const RenderSceneConverterEnv &env, const tinyusdz::Path &mesh_abs_path,
-      const tinyusdz::GeomMesh &mesh, const MaterialPath &material_path,
+      const RenderSceneConverterEnv &env, const Path &mesh_abs_path,
+      const GeomMesh &mesh, const MaterialPath &material_path,
       const std::map<std::string, MaterialPath> &subset_material_path_map,
       //const std::map<std::string, int64_t> &rmaterial_map,
       const StringAndIdMap &rmaterial_map,
-      const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
-      const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+      const std::vector<const GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const BlendShape *>>
           &blendshapes,
       RenderMesh *dst);
 
@@ -1790,8 +1790,8 @@ class RenderSceneConverter {
   /// @return true when success.
   ///
   bool ConvertMaterial(const RenderSceneConverterEnv &env,
-                       const tinyusdz::Path &abs_mat_path,
-                       const tinyusdz::Material &material,
+                       const Path &abs_mat_path,
+                       const Material &material,
                        RenderMaterial *rmat_out);
 
   ///
@@ -1805,8 +1805,8 @@ class RenderSceneConverter {
   /// @return true when success.
   ///
   bool ConvertPreviewSurfaceShader(const RenderSceneConverterEnv &env,
-                                   const tinyusdz::Path &shader_abs_path,
-                                   const tinyusdz::UsdPreviewSurface &shader,
+                                   const Path &shader_abs_path,
+                                   const UsdPreviewSurface &shader,
                                    PreviewSurfaceShader *pss_out);
 
   ///
@@ -1880,7 +1880,7 @@ class RenderSceneConverter {
   // Get Skeleton assigned to the GeomMesh Prim and convert it to SkelHierarchy.
   // Also get SkelAnimation attached to Skeleton(if exists)
   //
-  bool ConvertSkeletonImpl(const RenderSceneConverterEnv &env, const tinyusdz::GeomMesh &mesh,
+  bool ConvertSkeletonImpl(const RenderSceneConverterEnv &env, const GeomMesh &mesh,
                        SkelHierarchy *out_skel, nonstd::optional<Animation> *out_anim);
 
   bool BuildNodeHierarchyImpl(

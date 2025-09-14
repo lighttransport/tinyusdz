@@ -228,7 +228,7 @@ std::string to_string(const value::color4d &v);
 
 namespace value {
 
-std::string pprint_value(const tinyusdz::value::Value &v,
+std::string pprint_value(const value::Value &v,
                          const uint32_t indent = 0, bool closing_brace = true);
 
 // Print first N and last N items.

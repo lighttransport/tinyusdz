@@ -1902,6 +1902,7 @@ DEFINE_TYPE_TRAIT(token, kToken, TYPE_ID_TOKEN, 1);
 DEFINE_TYPE_TRAIT(std::string, kString, TYPE_ID_STRING, 1);
 DEFINE_TYPE_TRAIT(StringData, kString, TYPE_ID_STRING_DATA, 1);
 DEFINE_TYPE_TRAIT(dict, kDictionary, TYPE_ID_DICT, 1);
+// CustomDataType TypeTraits is defined in dictionary.hh after the type is defined
 
 DEFINE_TYPE_TRAIT(AssetPath, kAssetPath, TYPE_ID_ASSET_PATH, 1);
 

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright 2022 - Present, Syoyo Fujita.
+#include "primspec.hh"
 #include "usd-to-json.hh"
 
 #include <algorithm>
@@ -918,7 +919,7 @@ std::string SerializeMatrix4dArrayToBase64(const std::vector<value::matrix4d>& a
 #pragma GCC diagnostic ignored "-Wunused-function"
 #endif
 
-json ToJSON(tinyusdz::Xform& xform) {
+json ToJSON(Xform& xform) {
   json j;
 
   j["name"] = xform.name;
@@ -939,7 +940,7 @@ json ToJSON(tinyusdz::Xform& xform) {
 }
 
 
-json ToJSON(tinyusdz::GeomBasisCurves& curves) {
+json ToJSON(GeomBasisCurves& curves) {
   
   json j;
   j["name"] = curves.name;
@@ -964,8 +965,8 @@ json ToJSON(tinyusdz::GeomBasisCurves& curves) {
   return j;
 }
 
-json ToJSON(const tinyusdz::value::Value &v) {
-  if (auto pv = v.get_value<tinyusdz::Xform>()) {
+json ToJSON(const value::Value &v) {
+  if (auto pv = v.get_value<Xform>()) {
     return ToJSON(pv.value());
   }
 
@@ -975,7 +976,7 @@ json ToJSON(const tinyusdz::value::Value &v) {
 
 }
 
-nonstd::expected<json, std::string> ToJSON(const tinyusdz::StageMetas& metas) {
+nonstd::expected<json, std::string> ToJSON(const StageMetas& metas) {
   json j;
 
   if (metas.upAxis.authored()) {
@@ -990,7 +991,7 @@ nonstd::expected<json, std::string> ToJSON(const tinyusdz::StageMetas& metas) {
   return j;
 }
 
-bool PrimToJSONRec(json &root, const tinyusdz::Prim& prim, int depth) {
+bool PrimToJSONRec(json &root, const Prim& prim, int depth) {
   json j = ToJSON(prim.data());
 
   json jchildren = json::object();
@@ -1079,12 +1080,12 @@ json SerializeContextToJSON(const USDToJSONContext& context) {
 }  // namespace
 
 // GeomMesh ToJSON functions (moved outside anonymous namespace for proper linking)
-static json ToJSON(tinyusdz::GeomMesh& mesh) {
+static json ToJSON(GeomMesh& mesh) {
   USDToJSONContext context;  // Use default context
   return ToJSON(mesh, &context);
 }
 
-json ToJSON(tinyusdz::GeomMesh& mesh, USDToJSONContext* context) {
+json ToJSON(GeomMesh& mesh, USDToJSONContext* context) {
   json j;
 
   j["name"] = mesh.name;
@@ -1139,12 +1140,12 @@ json ToJSON(tinyusdz::GeomMesh& mesh, USDToJSONContext* context) {
   return j;
 }
 
-json ToJSON(const tinyusdz::Layer& layer) {
+json ToJSON(const Layer& layer) {
   USDToJSONContext context;  // Default context (base64 mode)
   return ToJSON(layer, context);
 }
 
-json ToJSON(const tinyusdz::Layer& layer, USDToJSONContext& context) {
+json ToJSON(const Layer& layer, USDToJSONContext& context) {
   json j;
 
   // Layer name
@@ -1286,7 +1287,7 @@ json ToJSON(const tinyusdz::Layer& layer, USDToJSONContext& context) {
 }
 
 nonstd::expected<std::string, std::string> ToJSON(
-    const tinyusdz::Stage& stage) {
+    const Stage& stage) {
   json j;  // root
 
   auto jstageMetas = ToJSON(stage.metas());
@@ -1325,7 +1326,7 @@ nonstd::expected<std::string, std::string> ToJSON(
   return str;
 }
 
-bool to_json_string(const tinyusdz::Layer &layer, std::string *json_str, std::string *warn, std::string *err) {
+bool to_json_string(const Layer &layer, std::string *json_str, std::string *warn, std::string *err) {
   if (!json_str) {
     return false;
   }
@@ -1348,7 +1349,7 @@ bool to_json_string(const tinyusdz::Layer &layer, std::string *json_str, std::st
 #pragma GCC diagnostic pop
 #endif
 
-bool to_json_string(const tinyusdz::Layer &layer, const USDToJSONOptions& options, std::string *json_str, std::string *warn, std::string *err) {
+bool to_json_string(const Layer &layer, const USDToJSONOptions& options, std::string *json_str, std::string *warn, std::string *err) {
 
   // TODO: options
   (void)options;
@@ -1361,7 +1362,7 @@ bool to_json_string(const tinyusdz::Layer &layer, const USDToJSONOptions& option
 // Property, Attribute, and Relationship to JSON conversion
 // ================================================================
 
-json ToJSON(const tinyusdz::Attribute& attribute, USDToJSONContext* /* context */) {
+json ToJSON(const Attribute& attribute, USDToJSONContext* /* context */) {
   json j;
   
   // Basic attribute information
@@ -1467,7 +1468,7 @@ json ToJSON(const tinyusdz::Attribute& attribute, USDToJSONContext* /* context *
   return j;
 }
 
-json ToJSON(const tinyusdz::Relationship& relationship) {
+json ToJSON(const Relationship& relationship) {
   json j;
   
   j["type"] = "relationship";
@@ -1533,7 +1534,7 @@ json ToJSON(const tinyusdz::Relationship& relationship) {
   return j;
 }
 
-json ToJSON(const tinyusdz::Property& property, USDToJSONContext* context) {
+json ToJSON(const Property& property, USDToJSONContext* context) {
   json j;
   
   // Property type
@@ -1619,7 +1620,7 @@ json ToJSON(const tinyusdz::Property& property, USDToJSONContext* context) {
   return j;
 }
 
-json PropertiesToJSON(const std::map<std::string, tinyusdz::Property>& properties, USDToJSONContext* context) {
+json PropertiesToJSON(const std::map<std::string, Property>& properties, USDToJSONContext* context) {
   json j = json::object();
   
   for (const auto& prop_pair : properties) {
@@ -1637,7 +1638,7 @@ json PropertiesToJSON(const std::map<std::string, tinyusdz::Property>& propertie
 // ================================================================
 
 // Helper function to convert Stage to JSON object (for internal use)
-json ToJSON(const tinyusdz::Stage& stage, USDToJSONContext* context) {
+json ToJSON(const Stage& stage, USDToJSONContext* context) {
   (void)context; // Currently unused
   
   // Reuse existing implementation pattern but return json object instead of string
@@ -1666,7 +1667,7 @@ json ToJSON(const tinyusdz::Stage& stage, USDToJSONContext* context) {
 }
 
 // Overload with options
-nonstd::expected<std::string, std::string> ToJSON(const tinyusdz::Stage &stage, const USDToJSONOptions& options) {
+nonstd::expected<std::string, std::string> ToJSON(const Stage &stage, const USDToJSONOptions& options) {
   USDToJSONContext context(options);
   json j = ToJSON(stage, &context);
   
@@ -1691,7 +1692,7 @@ namespace {
   }
 }
 
-bool USDZAssetsToJSON(const tinyusdz::USDZAsset& usdz_asset, std::string* assets_json,
+bool USDZAssetsToJSON(const USDZAsset& usdz_asset, std::string* assets_json,
                       std::string* warn, std::string* err) {
   if (!assets_json) {
     if (err) {

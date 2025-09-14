@@ -1,3 +1,4 @@
+#include "../primspec.hh"
 #include "layer-to-renderscene.hh"
 
 #include <algorithm>

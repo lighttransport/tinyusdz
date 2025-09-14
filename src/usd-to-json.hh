@@ -96,64 +96,64 @@ struct USDToJSONContext {
 ///
 /// @returns JSON string or error message(std::string) when failed to convert.
 ///
-nonstd::expected<std::string, std::string> ToJSON(const tinyusdz::Stage &stage);
+nonstd::expected<std::string, std::string> ToJSON(const Stage &stage);
 
 ///
 /// Convert USD Stage to JSON with options
 ///
 /// @returns JSON string or error message(std::string) when failed to convert.
 ///
-nonstd::expected<std::string, std::string> ToJSON(const tinyusdz::Stage &stage, const USDToJSONOptions& options);
+nonstd::expected<std::string, std::string> ToJSON(const Stage &stage, const USDToJSONOptions& options);
 
 ///
 /// Convert USD Stage to JSON (nlohmann::json object)
 ///
-nlohmann::json ToJSON(const tinyusdz::Stage &stage, USDToJSONContext* context);
+nlohmann::json ToJSON(const Stage &stage, USDToJSONContext* context);
 
 ///
 /// Convert USD Layer to JSON (nlohmann::json object)
 ///
-nlohmann::json ToJSON(const tinyusdz::Layer &layer);
+nlohmann::json ToJSON(const Layer &layer);
 
 ///
 /// Convert USD Layer to JSON with context (nlohmann::json object)
 ///
-nlohmann::json ToJSON(const tinyusdz::Layer &layer, USDToJSONContext& context);
+nlohmann::json ToJSON(const Layer &layer, USDToJSONContext& context);
 
 ///
 /// Convert USD Layer to JSON
 ///
-bool to_json_string(const tinyusdz::Layer &layer, std::string *json_str, std::string *warn, std::string *err);
+bool to_json_string(const Layer &layer, std::string *json_str, std::string *warn, std::string *err);
 
 ///
 /// Convert USD Layer to JSON with options
 ///
-bool to_json_string(const tinyusdz::Layer &layer, const USDToJSONOptions& options, std::string *json_str, std::string *warn, std::string *err);
+bool to_json_string(const Layer &layer, const USDToJSONOptions& options, std::string *json_str, std::string *warn, std::string *err);
 
 ///
 /// Convert GeomMesh to JSON with context
 ///
-nlohmann::json ToJSON(tinyusdz::GeomMesh& mesh, USDToJSONContext* context);
+nlohmann::json ToJSON(GeomMesh& mesh, USDToJSONContext* context);
 
 ///
 /// Convert Attribute to JSON
 ///
-nlohmann::json ToJSON(const tinyusdz::Attribute& attribute, USDToJSONContext* context = nullptr);
+nlohmann::json ToJSON(const Attribute& attribute, USDToJSONContext* context = nullptr);
 
 ///
 /// Convert Relationship to JSON
 ///
-nlohmann::json ToJSON(const tinyusdz::Relationship& relationship);
+nlohmann::json ToJSON(const Relationship& relationship);
 
 ///
 /// Convert Property to JSON
 ///
-nlohmann::json ToJSON(const tinyusdz::Property& property, USDToJSONContext* context = nullptr);
+nlohmann::json ToJSON(const Property& property, USDToJSONContext* context = nullptr);
 
 ///
 /// Convert Properties map to JSON
 ///
-nlohmann::json PropertiesToJSON(const std::map<std::string, tinyusdz::Property>& properties, USDToJSONContext* context = nullptr);
+nlohmann::json PropertiesToJSON(const std::map<std::string, Property>& properties, USDToJSONContext* context = nullptr);
 
 ///
 /// USDZ to JSON conversion result structure
@@ -209,7 +209,7 @@ bool USDZToJSONFromMemory(const uint8_t* addr, size_t length, const std::string&
 ///
 /// @return true on success, false on failure
 ///
-bool USDZAssetsToJSON(const tinyusdz::USDZAsset& usdz_asset, std::string* assets_json,
+bool USDZAssetsToJSON(const USDZAsset& usdz_asset, std::string* assets_json,
                       std::string* warn, std::string* err);
 
 } // namespace tinyusdz

@@ -177,19 +177,19 @@ class TerminalAttributeValue {
 /// - Other error happens.
 ///
 bool EvaluateAttribute(
-    const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
+    const Stage &stage, const Prim &prim,
     const std::string &attr_name, TerminalAttributeValue *value,
-    std::string *err, const double t = tinyusdz::value::TimeCode::Default(),
-    const tinyusdz::value::TimeSampleInterpolationType tinterp =
-        tinyusdz::value::TimeSampleInterpolationType::Linear);
+    std::string *err, const double t = value::TimeCode::Default(),
+    const value::TimeSampleInterpolationType tinterp =
+        value::TimeSampleInterpolationType::Linear);
 
 // Layer/PrimSpec version
 bool EvaluateAttribute(
-    const tinyusdz::Layer &layer, const tinyusdz::PrimSpec &ps,
+    const Layer &layer, const PrimSpec &ps,
     const std::string &attr_name, TerminalAttributeValue *value,
-    std::string *err, const double t = tinyusdz::value::TimeCode::Default(),
-    const tinyusdz::value::TimeSampleInterpolationType tinterp =
-        tinyusdz::value::TimeSampleInterpolationType::Linear);
+    std::string *err, const double t = value::TimeCode::Default(),
+    const value::TimeSampleInterpolationType tinterp =
+        value::TimeSampleInterpolationType::Linear);
 
 ///
 /// Evaluate Attribute and retrieve terminal Attribute value.
@@ -210,11 +210,11 @@ bool EvaluateAttribute(
 /// @param[in] tinterp (optional) Interpolation type for timeSamples value
 ///
 bool EvaluateAttribute(
-    const tinyusdz::Stage &stage, const Attribute &attr,
+    const Stage &stage, const Attribute &attr,
     const std::string &attr_name, TerminalAttributeValue *value,
-    std::string *err, const double t = tinyusdz::value::TimeCode::Default(),
-    const tinyusdz::value::TimeSampleInterpolationType tinterp =
-        tinyusdz::value::TimeSampleInterpolationType::Linear);
+    std::string *err, const double t = value::TimeCode::Default(),
+    const value::TimeSampleInterpolationType tinterp =
+        value::TimeSampleInterpolationType::Linear);
 
 
 //
@@ -222,7 +222,7 @@ bool EvaluateAttribute(
 //
 template<typename T>
 bool EvaluateTypedAttribute(
-    const tinyusdz::Stage &stage,
+    const Stage &stage,
     const TypedAttribute<T> &attr,
     const std::string &attr_name,
     T *value,
@@ -231,45 +231,45 @@ bool EvaluateTypedAttribute(
 
 // NOTE: std::string uses the specialization, so no extern template.
 #define EXTERN_EVALUATE_TYPED_ATTRIBUTE(__ty) \
-extern template bool EvaluateTypedAttribute(const tinyusdz::Stage &stage, const TypedAttribute<__ty> &attr, const std::string &attr_name, __ty *value, std::string *err);
+extern template bool EvaluateTypedAttribute(const Stage &stage, const TypedAttribute<__ty> &attr, const std::string &attr_name, __ty *value, std::string *err);
 
 APPLY_FUNC_TO_VALUE_TYPES_NO_STRING(EXTERN_EVALUATE_TYPED_ATTRIBUTE)
-template<> bool EvaluateTypedAttribute(const tinyusdz::Stage &stage, const TypedAttribute<std::string> &attr, const std::string &attr_name, std::string *value, std::string *err);
+template<> bool EvaluateTypedAttribute(const Stage &stage, const TypedAttribute<std::string> &attr, const std::string &attr_name, std::string *value, std::string *err);
 
 #undef EXTERN_EVALUATE_TYPED_ATTRIBUTE
 
 template<typename T>
 bool EvaluateTypedAnimatableAttribute(
-    const tinyusdz::Stage &stage,
+    const Stage &stage,
     const TypedAttribute<Animatable<T>> &attr,
     const std::string &attr_name,
     T *value,
-    std::string *err, const double t = tinyusdz::value::TimeCode::Default(),
-    const tinyusdz::value::TimeSampleInterpolationType tinterp =
-        tinyusdz::value::TimeSampleInterpolationType::Linear);
+    std::string *err, const double t = value::TimeCode::Default(),
+    const value::TimeSampleInterpolationType tinterp =
+        value::TimeSampleInterpolationType::Linear);
 
 #define EXTERN_EVALUATE_TYPED_ATTRIBUTE(__ty) \
-extern template bool EvaluateTypedAnimatableAttribute(const tinyusdz::Stage &stage, const TypedAttribute<Animatable<__ty>> &attr, const std::string &attr_name, __ty *value, std::string *err, const double t, const value::TimeSampleInterpolationType tinter);
+extern template bool EvaluateTypedAnimatableAttribute(const Stage &stage, const TypedAttribute<Animatable<__ty>> &attr, const std::string &attr_name, __ty *value, std::string *err, const double t, const value::TimeSampleInterpolationType tinter);
 
 APPLY_FUNC_TO_VALUE_TYPES_NO_STRING(EXTERN_EVALUATE_TYPED_ATTRIBUTE)
-template<> bool EvaluateTypedAnimatableAttribute(const tinyusdz::Stage &stage, const TypedAttribute<Animatable<std::string>> &attr, const std::string &attr_name, std::string *value, std::string *err, const double t, const value::TimeSampleInterpolationType tinter);
+template<> bool EvaluateTypedAnimatableAttribute(const Stage &stage, const TypedAttribute<Animatable<std::string>> &attr, const std::string &attr_name, std::string *value, std::string *err, const double t, const value::TimeSampleInterpolationType tinter);
 
 #undef EXTERN_EVALUATE_TYPED_ATTRIBUTE
 
 template<typename T>
 bool EvaluateTypedAttribute(
-    const tinyusdz::Stage &stage,
+    const Stage &stage,
     const TypedAttributeWithFallback<T> &attr,
     const std::string &attr_name,
     T *value,
     std::string *err);
 
 #define EXTERN_EVALUATE_TYPED_ATTRIBUTE(__ty) \
-extern template bool EvaluateTypedAttribute(const tinyusdz::Stage &stage, const TypedAttributeWithFallback<__ty> &attr, const std::string &attr_name, __ty *value, std::string *err);
+extern template bool EvaluateTypedAttribute(const Stage &stage, const TypedAttributeWithFallback<__ty> &attr, const std::string &attr_name, __ty *value, std::string *err);
 
 APPLY_FUNC_TO_VALUE_TYPES_NO_STRING(EXTERN_EVALUATE_TYPED_ATTRIBUTE)
 template<> bool EvaluateTypedAttribute(
-    const tinyusdz::Stage &stage,
+    const Stage &stage,
     const TypedAttributeWithFallback<std::string> &attr,
     const std::string &attr_name,
     std::string *value,
@@ -279,24 +279,24 @@ template<> bool EvaluateTypedAttribute(
 
 template<typename T>
 bool EvaluateTypedAnimatableAttribute(
-    const tinyusdz::Stage &stage,
+    const Stage &stage,
     const TypedAttributeWithFallback<Animatable<T>> &attr,
     const std::string &attr_name,
     T *value,
-    std::string *err, const double t = tinyusdz::value::TimeCode::Default(),
-    const tinyusdz::value::TimeSampleInterpolationType tinterp =
-        tinyusdz::value::TimeSampleInterpolationType::Linear);
+    std::string *err, const double t = value::TimeCode::Default(),
+    const value::TimeSampleInterpolationType tinterp =
+        value::TimeSampleInterpolationType::Linear);
 
 #define EXTERN_EVALUATE_TYPED_ATTRIBUTE(__ty) \
-extern template bool EvaluateTypedAnimatableAttribute(const tinyusdz::Stage &stage, const TypedAttributeWithFallback<Animatable<__ty>> &attr, const std::string &attr_name, __ty *value, std::string *err, const double t, const value::TimeSampleInterpolationType tinter);
+extern template bool EvaluateTypedAnimatableAttribute(const Stage &stage, const TypedAttributeWithFallback<Animatable<__ty>> &attr, const std::string &attr_name, __ty *value, std::string *err, const double t, const value::TimeSampleInterpolationType tinter);
 
 APPLY_FUNC_TO_VALUE_TYPES_NO_STRING(EXTERN_EVALUATE_TYPED_ATTRIBUTE)
 template<> bool EvaluateTypedAnimatableAttribute(
-    const tinyusdz::Stage &stage,
+    const Stage &stage,
     const TypedAttributeWithFallback<Animatable<std::string>> &attr,
     const std::string &attr_name,
     std::string *value,
-    std::string *err, const double t, const tinyusdz::value::TimeSampleInterpolationType tinterp);
+    std::string *err, const double t, const value::TimeSampleInterpolationType tinterp);
 
 #undef EXTERN_EVALUATE_TYPED_ATTRIBUTE
 

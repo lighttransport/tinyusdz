@@ -5,8 +5,8 @@
 // USD ASCII pretty printer.
 //
 //
+#include "primspec.hh"
 #include "pprinter.hh"
-
 #include "prim-pprint.hh"
 #include "prim-types.hh"
 #include "layer.hh"
@@ -601,7 +601,7 @@ std::string print_prim_metas(const PrimMeta &meta, const uint32_t indent) {
   }
 
   if (meta.apiSchemas) {
-    auto schemas = meta.apiSchemas.value();
+    auto schemas = *meta.apiSchemas;
 
     if (schemas.names.size()) {
       ss << pprint::Indent(indent) << to_string(schemas.listOpQual)
@@ -865,7 +865,7 @@ static std::string print_str_attr(
         std::string a;
         if (pv.value().get_scalar(&a)) {
           // Do not use operator<<(std::string)
-          ss << " = " << tinyusdz::buildEscapedAndQuotedStringForUSDA(a);
+          ss << " = " << buildEscapedAndQuotedStringForUSDA(a);
         } else {
           ss << " = [InternalError]";
         }
@@ -2313,19 +2313,19 @@ std::string print_meta(const MetaVariable &meta, const uint32_t indent, bool emi
   return ss.str();
 }
 
-std::string to_string(tinyusdz::GeomMesh::InterpolateBoundary v) {
+std::string to_string(GeomMesh::InterpolateBoundary v) {
   std::string s;
 
   switch (v) {
-    case tinyusdz::GeomMesh::InterpolateBoundary::InterpolateBoundaryNone: {
+    case GeomMesh::InterpolateBoundary::InterpolateBoundaryNone: {
       s = "none";
       break;
     }
-    case tinyusdz::GeomMesh::InterpolateBoundary::EdgeAndCorner: {
+    case GeomMesh::InterpolateBoundary::EdgeAndCorner: {
       s = "edgeAndCorner";
       break;
     }
-    case tinyusdz::GeomMesh::InterpolateBoundary::EdgeOnly: {
+    case GeomMesh::InterpolateBoundary::EdgeOnly: {
       s = "edgeOnly";
       break;
     }
@@ -2334,23 +2334,23 @@ std::string to_string(tinyusdz::GeomMesh::InterpolateBoundary v) {
   return s;
 }
 
-std::string to_string(tinyusdz::GeomMesh::SubdivisionScheme v) {
+std::string to_string(GeomMesh::SubdivisionScheme v) {
   std::string s;
 
   switch (v) {
-    case tinyusdz::GeomMesh::SubdivisionScheme::CatmullClark: {
+    case GeomMesh::SubdivisionScheme::CatmullClark: {
       s = "catmullClark";
       break;
     }
-    case tinyusdz::GeomMesh::SubdivisionScheme::Loop: {
+    case GeomMesh::SubdivisionScheme::Loop: {
       s = "loop";
       break;
     }
-    case tinyusdz::GeomMesh::SubdivisionScheme::Bilinear: {
+    case GeomMesh::SubdivisionScheme::Bilinear: {
       s = "bilinear";
       break;
     }
-    case tinyusdz::GeomMesh::SubdivisionScheme::SubdivisionSchemeNone: {
+    case GeomMesh::SubdivisionScheme::SubdivisionSchemeNone: {
       s = "none";
       break;
     }
@@ -2359,32 +2359,32 @@ std::string to_string(tinyusdz::GeomMesh::SubdivisionScheme v) {
   return s;
 }
 
-std::string to_string(tinyusdz::GeomMesh::FaceVaryingLinearInterpolation v) {
+std::string to_string(GeomMesh::FaceVaryingLinearInterpolation v) {
   std::string s;
 
   switch (v) {
-    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::CornersPlus1: {
+    case GeomMesh::FaceVaryingLinearInterpolation::CornersPlus1: {
       s = "cornersPlus1";
       break;
     }
-    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::CornersPlus2: {
+    case GeomMesh::FaceVaryingLinearInterpolation::CornersPlus2: {
       s = "cornersPlus2";
       break;
     }
-    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::CornersOnly: {
+    case GeomMesh::FaceVaryingLinearInterpolation::CornersOnly: {
       s = "cornersOnly";
       break;
     }
-    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::Boundaries: {
+    case GeomMesh::FaceVaryingLinearInterpolation::Boundaries: {
       s = "boundaries";
       break;
     }
-    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::
+    case GeomMesh::FaceVaryingLinearInterpolation::
         FaceVaryingLinearInterpolationNone: {
       s = "none";
       break;
     }
-    case tinyusdz::GeomMesh::FaceVaryingLinearInterpolation::All: {
+    case GeomMesh::FaceVaryingLinearInterpolation::All: {
       s = "all";
       break;
     }
@@ -2393,15 +2393,15 @@ std::string to_string(tinyusdz::GeomMesh::FaceVaryingLinearInterpolation v) {
   return s;
 }
 
-std::string to_string(tinyusdz::GeomSubset::ElementType v) {
+std::string to_string(GeomSubset::ElementType v) {
   std::string s;
 
   switch (v) {
-    case tinyusdz::GeomSubset::ElementType::Face: {
+    case GeomSubset::ElementType::Face: {
       s = "face";
       break;
     }
-    case tinyusdz::GeomSubset::ElementType::Point: {
+    case GeomSubset::ElementType::Point: {
       s = "point";
       break;
     }
@@ -2410,19 +2410,19 @@ std::string to_string(tinyusdz::GeomSubset::ElementType v) {
   return s;
 }
 
-std::string to_string(tinyusdz::GeomSubset::FamilyType v) {
+std::string to_string(GeomSubset::FamilyType v) {
   std::string s;
 
   switch (v) {
-    case tinyusdz::GeomSubset::FamilyType::Partition: {
+    case GeomSubset::FamilyType::Partition: {
       s = "partition";
       break;
     }
-    case tinyusdz::GeomSubset::FamilyType::NonOverlapping: {
+    case GeomSubset::FamilyType::NonOverlapping: {
       s = "nonOverlapping";
       break;
     }
-    case tinyusdz::GeomSubset::FamilyType::Unrestricted: {
+    case GeomSubset::FamilyType::Unrestricted: {
       s = "unrestricted";
       break;
     }
@@ -2431,19 +2431,19 @@ std::string to_string(tinyusdz::GeomSubset::FamilyType v) {
   return s;
 }
 
-std::string to_string(tinyusdz::CollectionInstance::ExpansionRule rule) {
+std::string to_string(CollectionInstance::ExpansionRule rule) {
   std::string s;
 
   switch (rule) {
-    case tinyusdz::CollectionInstance::ExpansionRule::ExplicitOnly: {
+    case CollectionInstance::ExpansionRule::ExplicitOnly: {
       s = kExplicitOnly;
       break;
     }
-    case tinyusdz::CollectionInstance::ExpansionRule::ExpandPrims: {
+    case CollectionInstance::ExpansionRule::ExpandPrims: {
       s = kExpandPrims;
       break;
     }
-    case tinyusdz::CollectionInstance::ExpansionRule::ExpandPrimsAndProperties: {
+    case CollectionInstance::ExpansionRule::ExpandPrimsAndProperties: {
       s = kExpandPrimsAndProperties;
       break;
     }
@@ -2452,15 +2452,15 @@ std::string to_string(tinyusdz::CollectionInstance::ExpansionRule rule) {
   return s;
 }
 
-std::string to_string(const tinyusdz::UsdPreviewSurface::OpacityMode v) {
+std::string to_string(const UsdPreviewSurface::OpacityMode v) {
   std::string s;
 
   switch (v) {
-    case tinyusdz::UsdPreviewSurface::OpacityMode::Transparent: {
+    case UsdPreviewSurface::OpacityMode::Transparent: {
       s = "transparent";
       break;
     }
-    case tinyusdz::UsdPreviewSurface::OpacityMode::Presence: {
+    case UsdPreviewSurface::OpacityMode::Presence: {
       s = "presence";
       break;
     }
@@ -2469,19 +2469,19 @@ std::string to_string(const tinyusdz::UsdPreviewSurface::OpacityMode v) {
   return s;
 }
 
-std::string to_string(const tinyusdz::UsdUVTexture::SourceColorSpace v) {
+std::string to_string(const UsdUVTexture::SourceColorSpace v) {
   std::string s;
 
   switch (v) {
-    case tinyusdz::UsdUVTexture::SourceColorSpace::Auto: {
+    case UsdUVTexture::SourceColorSpace::Auto: {
       s = "auto";
       break;
     }
-    case tinyusdz::UsdUVTexture::SourceColorSpace::Raw: {
+    case UsdUVTexture::SourceColorSpace::Raw: {
       s = "raw";
       break;
     }
-    case tinyusdz::UsdUVTexture::SourceColorSpace::SRGB: {
+    case UsdUVTexture::SourceColorSpace::SRGB: {
       s = "sRGB";
       break;
     }
@@ -2490,27 +2490,27 @@ std::string to_string(const tinyusdz::UsdUVTexture::SourceColorSpace v) {
   return s;
 }
 
-std::string to_string(const tinyusdz::UsdUVTexture::Wrap v) {
+std::string to_string(const UsdUVTexture::Wrap v) {
   std::string s;
 
   switch (v) {
-    case tinyusdz::UsdUVTexture::Wrap::UseMetadata: {
+    case UsdUVTexture::Wrap::UseMetadata: {
       s = "useMetadata";
       break;
     }
-    case tinyusdz::UsdUVTexture::Wrap::Black: {
+    case UsdUVTexture::Wrap::Black: {
       s = "black";
       break;
     }
-    case tinyusdz::UsdUVTexture::Wrap::Clamp: {
+    case UsdUVTexture::Wrap::Clamp: {
       s = "clamp";
       break;
     }
-    case tinyusdz::UsdUVTexture::Wrap::Repeat: {
+    case UsdUVTexture::Wrap::Repeat: {
       s = "repeat";
       break;
     }
-    case tinyusdz::UsdUVTexture::Wrap::Mirror: {
+    case UsdUVTexture::Wrap::Mirror: {
       s = "mirror";
       break;
     }
@@ -2520,19 +2520,19 @@ std::string to_string(const tinyusdz::UsdUVTexture::Wrap v) {
 }
 
 std::string to_string(tinyusdz::Kind v) {
-  if (v == tinyusdz::Kind::Model) {
+  if (v == Kind::Model) {
     return "model";
-  } else if (v == tinyusdz::Kind::Group) {
+  } else if (v == Kind::Group) {
     return "group";
-  } else if (v == tinyusdz::Kind::Assembly) {
+  } else if (v == Kind::Assembly) {
     return "assembly";
-  } else if (v == tinyusdz::Kind::Component) {
+  } else if (v == Kind::Component) {
     return "component";
-  } else if (v == tinyusdz::Kind::Subcomponent) {
+  } else if (v == Kind::Subcomponent) {
     return "subcomponent";
-  } else if (v == tinyusdz::Kind::SceneLibrary) {
+  } else if (v == Kind::SceneLibrary) {
     return "sceneLibrary";
-  } else if (v == tinyusdz::Kind::UserDef) {
+  } else if (v == Kind::UserDef) {
     // Should use PrimMeta::get_kind() to get actual Kind string value.
     return "[[InternalError. UserDefKind]]";
   } else {
@@ -2541,11 +2541,11 @@ std::string to_string(tinyusdz::Kind v) {
 }
 
 std::string to_string(tinyusdz::Axis v) {
-  if (v == tinyusdz::Axis::X) {
+  if (v == Axis::X) {
     return "X";
-  } else if (v == tinyusdz::Axis::Y) {
+  } else if (v == Axis::Y) {
     return "Y";
-  } else if (v == tinyusdz::Axis::Z) {
+  } else if (v == Axis::Z) {
     return "Z";
   } else {
     return "[[InvalidAxis]]";
@@ -2553,7 +2553,7 @@ std::string to_string(tinyusdz::Axis v) {
 }
 
 std::string to_string(tinyusdz::Visibility v) {
-  if (v == tinyusdz::Visibility::Inherited) {
+  if (v == Visibility::Inherited) {
     return "inherited";
   } else {
     return "invisible";
@@ -2561,7 +2561,7 @@ std::string to_string(tinyusdz::Visibility v) {
 }
 
 std::string to_string(tinyusdz::Orientation o) {
-  if (o == tinyusdz::Orientation::RightHanded) {
+  if (o == Orientation::RightHanded) {
     return "rightHanded";
   } else {
     return "leftHanded";
@@ -2569,17 +2569,17 @@ std::string to_string(tinyusdz::Orientation o) {
 }
 
 std::string to_string(tinyusdz::ListEditQual v) {
-  if (v == tinyusdz::ListEditQual::ResetToExplicit) {
+  if (v == ListEditQual::ResetToExplicit) {
     return "";  // unqualified
-  } else if (v == tinyusdz::ListEditQual::Append) {
+  } else if (v == ListEditQual::Append) {
     return "append";
-  } else if (v == tinyusdz::ListEditQual::Add) {
+  } else if (v == ListEditQual::Add) {
     return "add";
-  } else if (v == tinyusdz::ListEditQual::Delete) {
+  } else if (v == ListEditQual::Delete) {
     return "delete";
-  } else if (v == tinyusdz::ListEditQual::Prepend) {
+  } else if (v == ListEditQual::Prepend) {
     return "prepend";
-  } else if (v == tinyusdz::ListEditQual::Order) {
+  } else if (v == ListEditQual::Order) {
     return "order";
   }
 
@@ -2634,11 +2634,11 @@ std::string to_string(tinyusdz::SpecType ty) {
 }
 
 std::string to_string(tinyusdz::Specifier s) {
-  if (s == tinyusdz::Specifier::Def) {
+  if (s == Specifier::Def) {
     return "def";
-  } else if (s == tinyusdz::Specifier::Over) {
+  } else if (s == Specifier::Over) {
     return "over";
-  } else if (s == tinyusdz::Specifier::Class) {
+  } else if (s == Specifier::Class) {
     return "class";
   } else {
     return "[[SpecifierInvalid]]";
@@ -2646,9 +2646,9 @@ std::string to_string(tinyusdz::Specifier s) {
 }
 
 std::string to_string(tinyusdz::Permission s) {
-  if (s == tinyusdz::Permission::Public) {
+  if (s == Permission::Public) {
     return "public";
-  } else if (s == tinyusdz::Permission::Private) {
+  } else if (s == Permission::Private) {
     return "private";
   } else {
     return "[[PermissionInvalid]]";
@@ -2676,11 +2676,11 @@ std::string to_string(tinyusdz::Purpose purpose) {
 }
 
 std::string to_string(tinyusdz::Variability v) {
-  if (v == tinyusdz::Variability::Varying) {
+  if (v == Variability::Varying) {
     return "varying";
-  } else if (v == tinyusdz::Variability::Uniform) {
+  } else if (v == Variability::Uniform) {
     return "uniform";
-  } else if (v == tinyusdz::Variability::Config) {
+  } else if (v == Variability::Config) {
     return "config";
   } else {
     return "\"[[VariabilityInvalid]]\"";
@@ -2724,9 +2724,9 @@ std::string to_string(const tinyusdz::AnimatableVisibility &v, const uint32_t in
 std::string to_string(const tinyusdz::Klass &klass, uint32_t indent, bool closing_brace) {
   std::stringstream ss;
 
-  ss << tinyusdz::pprint::Indent(indent) << "class " << klass.name << " (\n";
-  ss << tinyusdz::pprint::Indent(indent) << ")\n";
-  ss << tinyusdz::pprint::Indent(indent) << "{\n";
+  ss << pprint::Indent(indent) << "class " << klass.name << " (\n";
+  ss << pprint::Indent(indent) << ")\n";
+  ss << pprint::Indent(indent) << "{\n";
 
   for (auto prop : klass.props) {
 
@@ -2735,8 +2735,8 @@ std::string to_string(const tinyusdz::Klass &klass, uint32_t indent, bool closin
     } else {
       //const PrimAttrib &attrib = prop.second.GetAttrib();
 #if 0  // TODO
-      if (auto p = tinyusdz::primvar::as_basic<double>(&pattr->var)) {
-        ss << tinyusdz::pprint::Indent(indent);
+      if (auto p = primvar::as_basic<double>(&pattr->var)) {
+        ss << pprint::Indent(indent);
         if (pattr->custom) {
           ss << " custom ";
         }
@@ -2754,7 +2754,7 @@ std::string to_string(const tinyusdz::Klass &klass, uint32_t indent, bool closin
   }
 
   if (closing_brace) {
-    ss << tinyusdz::pprint::Indent(indent) << "}\n";
+    ss << pprint::Indent(indent) << "}\n";
   }
 
   return ss.str();
@@ -4475,7 +4475,7 @@ std::string to_string(const XformOp::OpType &op) {
   return ss;
 }
 
-//std::string to_string(const tinyusdz::value::token &v) { return v.str(); }
+//std::string to_string(const value::token &v) { return v.str(); }
 
 std::string to_string(const DomeLight::TextureFormat &texformat) {
   std::string s = "[InvalidTextureFormat]";

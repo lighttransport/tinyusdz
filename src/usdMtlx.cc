@@ -18,6 +18,7 @@
 
 #include <sstream>
 
+#include "primspec.hh"
 #include "usdMtlx.hh"
 
 #if defined(TINYUSDZ_USE_USDMTLX)
@@ -107,10 +108,10 @@ bool is_supported_type(const std::string &typeName) {
 }
 
 template <typename T>
-bool ParseValue(tinyusdz::ascii::AsciiParser &parser, T &ret, std::string *err);
+bool ParseValue(ascii::AsciiParser &parser, T &ret, std::string *err);
 
 template <>
-bool ParseValue<int>(tinyusdz::ascii::AsciiParser &parser, int &ret,
+bool ParseValue<int>(ascii::AsciiParser &parser, int &ret,
                      std::string *err) {
   int val;
   if (!parser.ReadBasicType(&val)) {
@@ -124,7 +125,7 @@ bool ParseValue<int>(tinyusdz::ascii::AsciiParser &parser, int &ret,
 }
 
 template <>
-bool ParseValue<bool>(tinyusdz::ascii::AsciiParser &parser, bool &ret,
+bool ParseValue<bool>(ascii::AsciiParser &parser, bool &ret,
                       std::string *err) {
   bool val;
   if (!parser.ReadBasicType(&val)) {
@@ -138,7 +139,7 @@ bool ParseValue<bool>(tinyusdz::ascii::AsciiParser &parser, bool &ret,
 }
 
 template <>
-bool ParseValue<float>(tinyusdz::ascii::AsciiParser &parser, float &ret,
+bool ParseValue<float>(ascii::AsciiParser &parser, float &ret,
                        std::string *err) {
   float val;
   if (!parser.ReadBasicType(&val)) {
@@ -152,7 +153,7 @@ bool ParseValue<float>(tinyusdz::ascii::AsciiParser &parser, float &ret,
 }
 
 template <>
-bool ParseValue<std::string>(tinyusdz::ascii::AsciiParser &parser,
+bool ParseValue<std::string>(ascii::AsciiParser &parser,
                              std::string &ret, std::string *err) {
   std::string val;
   if (!parser.ReadBasicType(&val)) {
@@ -167,7 +168,7 @@ bool ParseValue<std::string>(tinyusdz::ascii::AsciiParser &parser,
 }
 
 template <>
-bool ParseValue<value::float2>(tinyusdz::ascii::AsciiParser &parser,
+bool ParseValue<value::float2>(ascii::AsciiParser &parser,
                                value::float2 &ret, std::string *err) {
   std::vector<float> values;
   if (!parser.SepBy1BasicType(',', &values)) {
@@ -189,7 +190,7 @@ bool ParseValue<value::float2>(tinyusdz::ascii::AsciiParser &parser,
 }
 
 template <>
-bool ParseValue<value::float3>(tinyusdz::ascii::AsciiParser &parser,
+bool ParseValue<value::float3>(ascii::AsciiParser &parser,
                                value::float3 &ret, std::string *err) {
   std::vector<float> values;
   if (!parser.SepBy1BasicType(',', &values)) {
@@ -212,7 +213,7 @@ bool ParseValue<value::float3>(tinyusdz::ascii::AsciiParser &parser,
 }
 
 template <>
-bool ParseValue<value::vector3f>(tinyusdz::ascii::AsciiParser &parser,
+bool ParseValue<value::vector3f>(ascii::AsciiParser &parser,
                                  value::vector3f &ret, std::string *err) {
   std::vector<float> values;
   if (!parser.SepBy1BasicType(',', &values)) {
@@ -235,7 +236,7 @@ bool ParseValue<value::vector3f>(tinyusdz::ascii::AsciiParser &parser,
 }
 
 template <>
-bool ParseValue<value::normal3f>(tinyusdz::ascii::AsciiParser &parser,
+bool ParseValue<value::normal3f>(ascii::AsciiParser &parser,
                                  value::normal3f &ret, std::string *err) {
   std::vector<float> values;
   if (!parser.SepBy1BasicType(',', &values)) {
@@ -259,7 +260,7 @@ bool ParseValue<value::normal3f>(tinyusdz::ascii::AsciiParser &parser,
 
 
 template <>
-bool ParseValue<value::color3f>(tinyusdz::ascii::AsciiParser &parser,
+bool ParseValue<value::color3f>(ascii::AsciiParser &parser,
                                  value::color3f &ret, std::string *err) {
   std::vector<float> values;
   if (!parser.SepBy1BasicType(',', &values)) {
@@ -282,7 +283,7 @@ bool ParseValue<value::color3f>(tinyusdz::ascii::AsciiParser &parser,
 }
 
 template <>
-bool ParseValue<value::float4>(tinyusdz::ascii::AsciiParser &parser,
+bool ParseValue<value::float4>(ascii::AsciiParser &parser,
                                value::float4 &ret, std::string *err) {
   std::vector<float> values;
   if (!parser.SepBy1BasicType(',', &values)) {
@@ -334,9 +335,9 @@ bool ParseMaterialXValue(const std::string &typeName, const std::string &str,
         fmt::format("Invalid/unsupported type: {}", typeName));
   }
 
-  tinyusdz::StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()),
+  StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()),
                             str.size(), /* swap endian */ false);
-  tinyusdz::ascii::AsciiParser parser(&sr);
+  ascii::AsciiParser parser(&sr);
 
   if (typeName.compare("integer") == 0) {
     int val;
@@ -373,9 +374,9 @@ bool ParseMaterialXValue(const std::string &typeName, const std::string &str,
 
 template <typename T>
 bool ParseMaterialXValue(const std::string &str, T *value, std::string *err) {
-  tinyusdz::StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()),
+  StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()),
                             str.size(), /* swap endian */ false);
-  tinyusdz::ascii::AsciiParser parser(&sr);
+  ascii::AsciiParser parser(&sr);
 
   T val{};
 

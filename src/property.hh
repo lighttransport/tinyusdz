@@ -20,9 +20,7 @@
 #include "attribute.hh"
 #include "relationship.hh"
 
-#ifndef TINYUSDZ_INSIDE_PRIM_TYPES
 namespace tinyusdz {
-#endif
 
 // Forward declarations
 class Path;
@@ -267,7 +265,5 @@ class Property {
                             // deprecated though
 };
 
-#ifndef TINYUSDZ_INSIDE_PRIM_TYPES
 }  // namespace tinyusdz
-#endif
 

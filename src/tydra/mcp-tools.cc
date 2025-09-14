@@ -1,7 +1,7 @@
+#include "primspec.hh"
 #include "mcp-tools.hh"
 
 #include <string>
-
 #include "mcp-context.hh"
 #include "mcp-server.hh"
 #include "pprinter.hh"
@@ -89,10 +89,10 @@ bool GetAllAssetDescriptions(Context &ctx, const nlohmann::json &args,
                              nlohmann::json &result, std::string &err);
 
 bool GetVersion(nlohmann::json &result) {
-  std::string ver_str = std::to_string(tinyusdz::version_major) + "." +
-                        std::to_string(tinyusdz::version_minor) + "." +
-                        std::to_string(tinyusdz::version_micro);
-  std::string rev = tinyusdz::version_rev;
+  std::string ver_str = std::to_string(version_major) + "." +
+                        std::to_string(version_minor) + "." +
+                        std::to_string(version_micro);
+  std::string rev = version_rev;
 
   if (rev.size()) {
     ver_str += "." + rev;

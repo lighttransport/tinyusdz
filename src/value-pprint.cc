@@ -1108,25 +1108,25 @@ std::string to_string(uint64_t v) {
   return ss.str();
 }
 
-std::string to_string(const tinyusdz::value::half &v) {
+std::string to_string(const value::half &v) {
   std::stringstream ss;
   ss << v;
   return ss.str();
 }
 
-std::string to_string(const tinyusdz::value::half2 &v) {
+std::string to_string(const value::half2 &v) {
   std::stringstream ss;
   ss << v;
   return ss.str();
 }
 
-std::string to_string(const tinyusdz::value::half3 &v) {
+std::string to_string(const value::half3 &v) {
   std::stringstream ss;
   ss << v;
   return ss.str();
 }
 
-std::string to_string(const tinyusdz::value::half4 &v) {
+std::string to_string(const value::half4 &v) {
   std::stringstream ss;
   ss << v;
   return ss.str();

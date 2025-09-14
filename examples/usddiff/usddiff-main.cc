@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "primspec.hh"
 #include "tinyusdz.hh"
 #include "layer.hh"
 #include "prim-types.hh"

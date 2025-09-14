@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2025 Light Transport Entertainment Inc.
 
+#include "primspec.hh"
 #include "layer.hh"
 #include "prim-types.hh"  // For PrimSpec, LayerMetas, etc.
 #include "path-util.hh"   // For Path

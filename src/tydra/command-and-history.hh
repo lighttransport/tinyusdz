@@ -43,7 +43,7 @@ struct EditHistory
   std::string arg;
   uint64_t id;
 
-  tinyusdz::Layer layer;
+  Layer layer;
 };
 
 // We only support queues for now(no history graph)

@@ -1101,7 +1101,7 @@ static JSValue js_findPrimSpecByPath(JSContext *ctx, JSValueConst this_val, int 
 
   // Parse the path string into a Path object
   std::string prim_path = std::string(path_str);
-  tinyusdz::Path path(prim_path, "");
+  Path path(prim_path, "");
   if (!path.is_valid()) {
     JS_FreeCString(ctx, path_str);
     return JS_NULL;
@@ -1142,7 +1142,7 @@ static JSValue js_getPrimSpecMetadata(JSContext *ctx, JSValueConst this_val, int
   }
 
   // Parse the path string into a Path object
-  tinyusdz::Path path(path_str, "");
+  Path path(path_str, "");
   if (!path.is_valid()) {
     JS_FreeCString(ctx, path_str);
     return JS_NULL;

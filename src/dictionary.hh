@@ -157,3 +157,15 @@ class MetaVariable {
 //                  1);  // TODO: Unify with `dict`?
 
 }  // namespace tinyusdz
+
+// Define TypeTraits for CustomDataType in the value namespace
+namespace tinyusdz {
+namespace value {
+
+// Import DEFINE_TYPE_TRAIT macro (normally included via value-types.hh)
+#include "define-type-trait.inc"
+
+DEFINE_TYPE_TRAIT(CustomDataType, "customData", TYPE_ID_CUSTOMDATA, 1);
+
+}  // namespace value
+}  // namespace tinyusdz

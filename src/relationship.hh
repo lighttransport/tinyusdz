@@ -19,9 +19,7 @@
 #include "value-types.hh"
 #include "path.hh"
 
-#ifndef TINYUSDZ_INSIDE_PRIM_TYPES
 namespace tinyusdz {
-#endif
 
 // Forward declarations
 //class Path;
@@ -186,7 +184,5 @@ class RelationshipProperty {
   Relationship _relationship;
 };
 
-#ifndef TINYUSDZ_INSIDE_PRIM_TYPES
 }  // namespace tinyusdz
-#endif
 

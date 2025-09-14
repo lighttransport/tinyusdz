@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2023 - Present, Light Transport Entertainment, Inc.
 
+#include "primspec.hh"
 #include "composition.hh"
 
 #include <set>
@@ -555,7 +556,7 @@ bool CompositeSublayersRec(AssetResolutionResolver &resolver,
                                         resolver.search_paths_str()));
     }
 
-    tinyusdz::Layer sublayer;
+    Layer sublayer;
     if (!LoadAsset(resolver, in_layer.get_current_working_path(),
                    in_layer.get_asset_search_paths(), options.fileformats,
                    layer.assetPath, /* not_used */ Path::make_root_path(),

@@ -21,7 +21,7 @@ namespace tydra {
 
 template<typename T>
 bool EvaluateTypedAttributeImpl(
-    const tinyusdz::Stage &stage, const TypedAttributeWithFallback<Animatable<T>> &attr,
+    const Stage &stage, const TypedAttributeWithFallback<Animatable<T>> &attr,
     const std::string &attr_name,
     T *value,
     std::string *err,
@@ -126,7 +126,7 @@ Attribute ToAttributeConnection(
 
 template<typename T>
 bool EvaluateTypedAnimatableAttribute(
-    const tinyusdz::Stage &stage, const TypedAttributeWithFallback<Animatable<T>> &tattr,
+    const Stage &stage, const TypedAttributeWithFallback<Animatable<T>> &tattr,
     const std::string &attr_name,
     T *value_out,
     std::string *err,
@@ -192,7 +192,7 @@ bool EvaluateTypedAnimatableAttribute(
 
 template<>
 bool EvaluateTypedAnimatableAttribute(
-    const tinyusdz::Stage &stage, const TypedAttributeWithFallback<Animatable<std::string>> &tattr,
+    const Stage &stage, const TypedAttributeWithFallback<Animatable<std::string>> &tattr,
     const std::string &attr_name,
     std::string *value_out,
     std::string *err,
@@ -266,7 +266,7 @@ bool EvaluateTypedAnimatableAttribute(
 
 // template instanciations
 #define EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE(__ty) \
-template bool EvaluateTypedAnimatableAttribute(const tinyusdz::Stage &stage, const TypedAttributeWithFallback<Animatable<__ty>> &attr, const std::string &attr_name, __ty *value, std::string *err, const double t, const value::TimeSampleInterpolationType tinterp);
+template bool EvaluateTypedAnimatableAttribute(const Stage &stage, const TypedAttributeWithFallback<Animatable<__ty>> &attr, const std::string &attr_name, __ty *value, std::string *err, const double t, const value::TimeSampleInterpolationType tinterp);
 
 APPLY_FUNC_TO_VALUE_TYPES_NO_STRING(EVALUATE_TYPED_ATTRIBUTE_INSTANCIATE)
 

@@ -17,6 +17,7 @@
 #include <limits>
 #include "value-types.hh"
 #include "enum-types.hh"
+#include "extent.hh"
 
 namespace tinyusdz {
 

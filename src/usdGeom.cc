@@ -451,8 +451,8 @@ bool GeomPrimvar::flatten_with_indices(value::Value *dest, std::string *err) con
 
 template <typename T>
 bool GeomPrimvar::get_value(T *dest, std::string *err) const {
-  static_assert(tinyusdz::value::TypeTraits<T>::type_id() != value::TypeTraits<value::token>::type_id(), "`token` type is not supported as a GeomPrimvar");
-  static_assert(tinyusdz::value::TypeTraits<T>::type_id() != value::TypeTraits<std::vector<value::token>>::type_id(), "`token[]` type is not supported as a GeomPrimvar");
+  static_assert(value::TypeTraits<T>::type_id() != value::TypeTraits<value::token>::type_id(), "`token` type is not supported as a GeomPrimvar");
+  static_assert(value::TypeTraits<T>::type_id() != value::TypeTraits<std::vector<value::token>>::type_id(), "`token[]` type is not supported as a GeomPrimvar");
 
   if (!dest) {
     if (err) {
@@ -512,8 +512,8 @@ bool GeomPrimvar::get_value(T *dest, std::string *err) const {
 
 template <typename T>
 bool GeomPrimvar::get_value(double timecode, T *dest, value::TimeSampleInterpolationType interp, std::string *err) const {
-  static_assert(tinyusdz::value::TypeTraits<T>::type_id() != value::TypeTraits<value::token>::type_id(), "`token` type is not supported as a GeomPrimvar");
-  static_assert(tinyusdz::value::TypeTraits<T>::type_id() != value::TypeTraits<std::vector<value::token>>::type_id(), "`token[]` type is not supported as a GeomPrimvar");
+  static_assert(value::TypeTraits<T>::type_id() != value::TypeTraits<value::token>::type_id(), "`token` type is not supported as a GeomPrimvar");
+  static_assert(value::TypeTraits<T>::type_id() != value::TypeTraits<std::vector<value::token>>::type_id(), "`token[]` type is not supported as a GeomPrimvar");
 
   if (!dest) {
     if (err) {

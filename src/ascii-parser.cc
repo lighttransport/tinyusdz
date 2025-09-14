@@ -1178,7 +1178,7 @@ bool AsciiParser::MaybeNone() {
   return false;
 }
 
-bool AsciiParser::MaybeListEditQual(tinyusdz::ListEditQual *qual) {
+bool AsciiParser::MaybeListEditQual(ListEditQual *qual) {
   if (!SkipWhitespace()) {
     return false;
   }
@@ -1193,25 +1193,25 @@ bool AsciiParser::MaybeListEditQual(tinyusdz::ListEditQual *qual) {
 
   if (tok == "prepend") {
     DCOUT("`prepend` list edit qualifier.");
-    (*qual) = tinyusdz::ListEditQual::Prepend;
+    (*qual) = ListEditQual::Prepend;
   } else if (tok == "append") {
     DCOUT("`append` list edit qualifier.");
-    (*qual) = tinyusdz::ListEditQual::Append;
+    (*qual) = ListEditQual::Append;
   } else if (tok == "add") {
     DCOUT("`add` list edit qualifier.");
-    (*qual) = tinyusdz::ListEditQual::Add;
+    (*qual) = ListEditQual::Add;
   } else if (tok == "delete") {
     DCOUT("`delete` list edit qualifier.");
-    (*qual) = tinyusdz::ListEditQual::Delete;
+    (*qual) = ListEditQual::Delete;
   } else if (tok == "order") {
     DCOUT("`order` list edit qualifier.");
-    (*qual) = tinyusdz::ListEditQual::Order;
+    (*qual) = ListEditQual::Order;
   } else {
     DCOUT("No ListEdit qualifier.");
     // unqualified
     // rewind
     SeekTo(loc);
-    (*qual) = tinyusdz::ListEditQual::ResetToExplicit;
+    (*qual) = ListEditQual::ResetToExplicit;
   }
 
   if (!SkipWhitespace()) {
@@ -1221,7 +1221,7 @@ bool AsciiParser::MaybeListEditQual(tinyusdz::ListEditQual *qual) {
   return true;
 }
 
-bool AsciiParser::MaybeVariability(tinyusdz::Variability *variability,
+bool AsciiParser::MaybeVariability(Variability *variability,
                                    bool *varying_authored) {
   if (!SkipWhitespace()) {
     return false;
@@ -1236,10 +1236,10 @@ bool AsciiParser::MaybeVariability(tinyusdz::Variability *variability,
   }
 
   if (tok == "uniform") {
-    (*variability) = tinyusdz::Variability::Uniform;
+    (*variability) = Variability::Uniform;
     (*varying_authored) = false;
   } else if (tok == "varying") {
-    (*variability) = tinyusdz::Variability::Varying;
+    (*variability) = Variability::Varying;
     (*varying_authored) = true;
   } else {
     (*varying_authored) = false;
@@ -3091,12 +3091,12 @@ bool AsciiParser::ParseStageMeta(std::pair<ListEditQual, MetaVariable> *out) {
     return false;
   }
 
-  tinyusdz::ListEditQual qual{ListEditQual::ResetToExplicit};
+  ListEditQual qual{ListEditQual::ResetToExplicit};
   if (!MaybeListEditQual(&qual)) {
     return false;
   }
 
-  DCOUT("list-edit qual: " << tinyusdz::to_string(qual));
+  DCOUT("list-edit qual: " << to_string(qual));
 
   if (!SkipWhitespaceAndNewline()) {
     return false;
@@ -3153,7 +3153,7 @@ AsciiParser::ParsePrimMeta() {
     return nonstd::nullopt;
   }
 
-  tinyusdz::ListEditQual qual{ListEditQual::ResetToExplicit};
+  ListEditQual qual{ListEditQual::ResetToExplicit};
 
   // May be string only(varname is "comment")
   // For some reason, string-only data is just stored in `MetaVariable` and
@@ -3180,7 +3180,7 @@ AsciiParser::ParsePrimMeta() {
     return nonstd::nullopt;
   }
 
-  DCOUT("list-edit qual: " << tinyusdz::to_string(qual));
+  DCOUT("list-edit qual: " << to_string(qual));
 
   if (!SkipWhitespaceAndNewline()) {
     return nonstd::nullopt;
@@ -3272,7 +3272,7 @@ bool AsciiParser::ParsePrimMetas(PrimMetaMap *args) {
     // ty = std::pair<ListEditQual, MetaVariable>;
     if (auto m = ParsePrimMeta()) {
       DCOUT("PrimMeta: list-edit qual = "
-            << tinyusdz::to_string(std::get<0>(m.value()))
+            << to_string(std::get<0>(m.value()))
             << ", name = " << std::get<1>(m.value()).get_name());
 
       if (std::get<1>(m.value()).get_name().empty()) {
@@ -3549,8 +3549,8 @@ bool IsUSDA(const std::string &filename, size_t max_filesize) {
     return false;
   }
 
-  tinyusdz::StreamReader sr(data.data(), data.size(), /* swap endian */ false);
-  tinyusdz::ascii::AsciiParser parser(&sr);
+  StreamReader sr(data.data(), data.size(), /* swap endian */ false);
+  ascii::AsciiParser parser(&sr);
 
   return parser.CheckHeader();
 }
@@ -3796,7 +3796,7 @@ bool AsciiParser::ParsePrimProps(std::map<std::string, Property> *props,
   }
 
   bool varying_authored{false};
-  tinyusdz::Variability variability{tinyusdz::Variability::Varying};
+  Variability variability{Variability::Varying};
 
   if (!MaybeVariability(&variability, &varying_authored)) {
     return false;
@@ -5368,9 +5368,9 @@ bool ParseUnregistredValue(const std::string &_typeName, const std::string &str,
     return false;
   }
 
-  tinyusdz::StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()),
+  StreamReader sr(reinterpret_cast<const uint8_t *>(str.data()),
                             str.size(), /* swap endian */ false);
-  tinyusdz::ascii::AsciiParser parser(&sr);
+  ascii::AsciiParser parser(&sr);
 
 #define PARSE_BASE_TYPE(__ty)                                            \
   case value::TypeTraits<__ty>::type_id(): {                             \

@@ -235,7 +235,7 @@ class AsciiParser {
       std::map<std::string, std::map<std::string, VariantContent>>;
 
   AsciiParser();
-  AsciiParser(tinyusdz::StreamReader *sr);
+  AsciiParser(StreamReader *sr);
 
   AsciiParser(const AsciiParser &rhs) = delete;
   AsciiParser(AsciiParser &&rhs) = delete;
@@ -334,7 +334,7 @@ class AsciiParser {
   ///
   /// Set ASCII data stream
   ///
-  void SetStream(tinyusdz::StreamReader *sr);
+  void SetStream(StreamReader *sr);
 
   ///
   /// Set memory limit in MB
@@ -675,8 +675,8 @@ class AsciiParser {
   bool ParseVariantsElement(std::string *out_key, std::string *out_var);
   bool ParseVariants(VariantSelectionMap *out_map);
 
-  bool MaybeListEditQual(tinyusdz::ListEditQual *qual);
-  bool MaybeVariability(tinyusdz::Variability *variability,
+  bool MaybeListEditQual(ListEditQual *qual);
+  bool MaybeVariability(Variability *variability,
                         bool *varying_authored);
 
   ///
@@ -880,7 +880,7 @@ class AsciiParser {
     }
   }
 
-  const tinyusdz::StreamReader *_sr = nullptr;
+  const StreamReader *_sr = nullptr;
 
   // "class" defs
   // std::map<std::string, Klass> _klasses;

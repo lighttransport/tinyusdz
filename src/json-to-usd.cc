@@ -1,3 +1,4 @@
+#include "primspec.hh"
 #include "json-to-usd.hh"
 
 #ifdef __clang__
@@ -10,7 +11,6 @@
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif
-
 #include "layer.hh"
 #include "str-util.hh"
 #include "common-macros.inc"
@@ -1004,11 +1004,11 @@ bool JSONToLayer(const std::string &j_str, Layer *dst_layer, std::string *warn, 
     if (metas.contains("upAxis") && metas["upAxis"].is_string()) {
       std::string s = metas["upAxis"].get<std::string>();
       if (s == "X") {
-        layer.metas().upAxis = tinyusdz::Axis::X;
+        layer.metas().upAxis = Axis::X;
       } else if (s == "Y") {
-        layer.metas().upAxis = tinyusdz::Axis::Y;
+        layer.metas().upAxis = Axis::Y;
       } else if (s == "Z") {
-        layer.metas().upAxis = tinyusdz::Axis::Z;
+        layer.metas().upAxis = Axis::Z;
       } else {
         if (err) {
           (*err) = "Unknown upAxis value: " + s;

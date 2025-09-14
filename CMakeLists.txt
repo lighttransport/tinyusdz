@@ -421,6 +421,9 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/prim-reconstruct.cc
     ${PROJECT_SOURCE_DIR}/src/prim-composition.cc
     ${PROJECT_SOURCE_DIR}/src/prim-types.cc
+    ${PROJECT_SOURCE_DIR}/src/path.cc
+    ${PROJECT_SOURCE_DIR}/src/dictionary.cc
+    ${PROJECT_SOURCE_DIR}/src/metadata.cc
     ${PROJECT_SOURCE_DIR}/src/attribute.cc
     ${PROJECT_SOURCE_DIR}/src/property.cc
     ${PROJECT_SOURCE_DIR}/src/relationship.cc

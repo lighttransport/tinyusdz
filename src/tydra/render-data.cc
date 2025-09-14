@@ -1073,14 +1073,14 @@ static bool TriangulateVertexAttribute(
   return true;
 }
 
-std::vector<const tinyusdz::GeomSubset *> GetMaterialBindGeomSubsets(
-    const tinyusdz::Prim &prim) {
-  std::vector<const tinyusdz::GeomSubset *> dst;
+std::vector<const GeomSubset *> GetMaterialBindGeomSubsets(
+    const Prim &prim) {
+  std::vector<const GeomSubset *> dst;
 
   // GeomSubet Prim must be a child Prim of GeomMesh.
   for (const auto &child : prim.children()) {
-    if (const tinyusdz::GeomSubset *psubset =
-            child.as<tinyusdz::GeomSubset>()) {
+    if (const GeomSubset *psubset =
+            child.as<GeomSubset>()) {
       value::token tok;
       if (!psubset->familyName.get_value(&tok)) {
         continue;
@@ -1325,7 +1325,7 @@ bool ToVertexAttribute(const GeomPrimvar &primvar, const std::string &name,
 
   VertexAttribute vattr;
 
-  const tinyusdz::Attribute &attr = primvar.get_attribute();
+  const Attribute &attr = primvar.get_attribute();
 
   value::Value value;
   if (!primvar.flatten_with_indices(t, &value, tinterp)) {
@@ -2883,8 +2883,8 @@ bool RenderSceneConverter::ConvertMesh(
     const std::map<std::string, MaterialPath> &subset_material_path_map,
     // const std::map<std::string, int64_t> &rmaterial_idMap,
     const StringAndIdMap &rmaterial_map,
-    const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
-    const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+    const std::vector<const GeomSubset *> &material_subsets,
+    const std::vector<std::pair<std::string, const BlendShape *>>
         &blendshapes,
     RenderMesh *dstMesh) {
   //
@@ -2914,7 +2914,7 @@ bool RenderSceneConverter::ConvertMesh(
   RenderMesh dst;
 
   dst.is_rightHanded =
-      (mesh.orientation.get_value() == tinyusdz::Orientation::RightHanded);
+      (mesh.orientation.get_value() == Orientation::RightHanded);
   dst.doubleSided = mesh.doubleSided.get_value();
 
   //
@@ -4738,7 +4738,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
          << " : buffer_id " + std::to_string(texImage.buffer_id) << "\n";
       ss << "  width x height x components " << texImage.width << " x "
          << texImage.height << " x " << texImage.channels << "\n";
-      ss << "  colorSpace " << tinyusdz::tydra::to_string(texImage.colorSpace)
+      ss << "  colorSpace " << tydra::to_string(texImage.colorSpace)
          << "\n";
       PushInfo(ss.str());
     } else {
@@ -4752,7 +4752,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
          << " : buffer_id " + std::to_string(texImage.buffer_id) << "\n";
       ss << "  width x height x components " << texImage.width << " x "
          << texImage.height << " x " << texImage.channels << "\n";
-      ss << "  colorSpace " << tinyusdz::tydra::to_string(texImage.colorSpace)
+      ss << "  colorSpace " << tydra::to_string(texImage.colorSpace)
          << "\n";
       PushInfo(ss.str());
 
@@ -4898,7 +4898,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
   }
 
   if (texture.wrapS.authored()) {
-    tinyusdz::UsdUVTexture::Wrap wrap;
+    UsdUVTexture::Wrap wrap;
 
     if (!texture.wrapS.get_value().get(env.timecode, &wrap)) {
       PUSH_ERROR_AND_RETURN("Invalid UsdUVTexture inputs:wrapS value.");
@@ -4918,7 +4918,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
   }
 
   if (texture.wrapT.authored()) {
-    tinyusdz::UsdUVTexture::Wrap wrap;
+    UsdUVTexture::Wrap wrap;
 
     if (!texture.wrapT.get_value().get(env.timecode, &wrap)) {
       PUSH_ERROR_AND_RETURN("Invalid UsdUVTexture inputs:wrapT value.");
@@ -5131,7 +5131,7 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShader(
 
 bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
                                            const Path &mat_abs_path,
-                                           const tinyusdz::Material &material,
+                                           const Material &material,
                                            RenderMaterial *rmat_out) {
   if (!rmat_out) {
     PUSH_ERROR_AND_RETURN("rmat_out argument is nullptr.");
@@ -5236,7 +5236,7 @@ struct MeshVisitorEnv {
   const RenderSceneConverterEnv *env{nullptr};
 };
 
-bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
+bool MeshVisitor(const Path &abs_path, const Prim &prim,
                  const int32_t level, void *userdata, std::string *err) {
   if (!userdata) {
     if (err) {
@@ -5255,9 +5255,9 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     return false;
   }
 
-  if (const tinyusdz::GeomMesh *pmesh = prim.as<tinyusdz::GeomMesh>()) {
+  if (const GeomMesh *pmesh = prim.as<GeomMesh>()) {
     // Collect GeomSubsets
-    // std::vector<const tinyusdz::GeomSubset *> subsets = GetGeomSubsets(;
+    // std::vector<const GeomSubset *> subsets = GetGeomSubsets(;
 
     DCOUT("Mesh: " << abs_path);
 
@@ -5276,7 +5276,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     //
 
     auto ConvertBoundMaterial = [&](const Path &bound_material_path,
-                                    const tinyusdz::Material *bound_material,
+                                    const Material *bound_material,
                                     int64_t &rmaterial_id) -> bool {
       std::vector<RenderMaterial> &rmaterials =
           visitorEnv->converter->materials;
@@ -5355,9 +5355,9 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
         // front and back
         {
-          tinyusdz::Path bound_material_path;
-          const tinyusdz::Material *bound_material{nullptr};
-          bool ret = tinyusdz::tydra::GetBoundMaterial(
+          Path bound_material_path;
+          const Material *bound_material{nullptr};
+          bool ret = tydra::GetBoundMaterial(
               visitorEnv->env->stage,
               /* GeomSubset prim path */ subset_abs_path,
               /* purpose */ "", &bound_material_path, &bound_material, err);
@@ -5388,9 +5388,9 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
           DCOUT("backface_material_purpose "
                 << visitorEnv->env->material_config
                        .default_backface_material_purpose_name);
-          tinyusdz::Path bound_material_path;
-          const tinyusdz::Material *bound_material{nullptr};
-          bool ret = tinyusdz::tydra::GetBoundMaterial(
+          Path bound_material_path;
+          const Material *bound_material{nullptr};
+          bool ret = tydra::GetBoundMaterial(
               visitorEnv->env->stage,
               /* GeomSubset prim path */ subset_abs_path,
               /* purpose */
@@ -5431,9 +5431,9 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
       // Front and back material.
       {
-        tinyusdz::Path bound_material_path;
-        const tinyusdz::Material *bound_material{nullptr};
-        bool ret = tinyusdz::tydra::GetBoundMaterial(
+        Path bound_material_path;
+        const Material *bound_material{nullptr};
+        bool ret = tydra::GetBoundMaterial(
             visitorEnv->env->stage, /* GeomMesh prim path */ abs_path,
             /* purpose */ "", &bound_material_path, &bound_material, err);
 
@@ -5460,9 +5460,9 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
       if (!backface_purpose.empty() &&
           pmesh->has_materialBinding(value::token(backface_purpose))) {
-        tinyusdz::Path bound_material_path;
-        const tinyusdz::Material *bound_material{nullptr};
-        bool ret = tinyusdz::tydra::GetBoundMaterial(
+        Path bound_material_path;
+        const Material *bound_material{nullptr};
+        bool ret = tydra::GetBoundMaterial(
             visitorEnv->env->stage, /* GeomMesh prim path */ abs_path,
             /* purpose */
             visitorEnv->env->material_config
@@ -5915,7 +5915,7 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
     primPath = parentPrimPath + "/" + node.element_name;
   }
 
-  const tinyusdz::Prim *prim = node.prim;
+  const Prim *prim = node.prim;
   if (prim) {
     rnode.prim_name = prim->element_name();
     rnode.abs_path = primPath;
@@ -6141,7 +6141,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
   return true;
 }
 
-bool RenderSceneConverter::ConvertSkeletonImpl(const RenderSceneConverterEnv &env, const tinyusdz::GeomMesh &mesh,
+bool RenderSceneConverter::ConvertSkeletonImpl(const RenderSceneConverterEnv &env, const GeomMesh &mesh,
                        SkelHierarchy *out_skel, nonstd::optional<Animation> *out_anim) {
 
   if (!out_skel) {
@@ -6283,7 +6283,7 @@ bool DefaultTextureImageLoaderFunction(
   DCOUT("Resolved asset path = " << resolvedPath);
 
   // TODO: user-defined image loader handler.
-  auto result = tinyusdz::image::LoadImageFromMemory(asset.data(), asset.size(),
+  auto result = image::LoadImageFromMemory(asset.data(), asset.size(),
                                                      resolvedPath);
   if (!result) {
     if (err) {
@@ -6311,7 +6311,7 @@ bool DefaultTextureImageLoaderFunction(
       texImage.assetTexelComponentType = ComponentType::Half;
     } else {
       if (err) {
-        (*err) += "Invalid image.pixelformat: " + tinyusdz::to_string(imgret.image.format) + "\n";
+        (*err) += "Invalid image.pixelformat: " + to_string(imgret.image.format) + "\n";
       }
       return false;
     }
@@ -6325,7 +6325,7 @@ bool DefaultTextureImageLoaderFunction(
       texImage.assetTexelComponentType = ComponentType::Float;
     } else {
       if (err) {
-        (*err) += "Invalid image.pixelformat: " + tinyusdz::to_string(imgret.image.format) + "\n";
+        (*err) += "Invalid image.pixelformat: " + to_string(imgret.image.format) + "\n";
       }
       return false;
     }
@@ -6875,9 +6875,9 @@ std::string DumpNode(const Node &node, uint32_t indent) {
   ss << pprint::Indent(indent + 1) << "display_name "
      << quote(node.display_name) << "\n";
   ss << pprint::Indent(indent + 1) << "local_matrix "
-     << quote(tinyusdz::to_string(node.local_matrix)) << "\n";
+     << quote(::tinyusdz::to_string(node.local_matrix)) << "\n";
   ss << pprint::Indent(indent + 1) << "global_matrix "
-     << quote(tinyusdz::to_string(node.global_matrix)) << "\n";
+     << quote(::tinyusdz::to_string(node.global_matrix)) << "\n";
 
   if (node.children.size()) {
     ss << pprint::Indent(indent + 1) << "children {\n";
@@ -6954,7 +6954,7 @@ std::string DumpMesh(const RenderMesh &mesh, uint32_t indent) {
   if (mesh.joint_and_weights.jointIndices.size()) {
     ss << pprint::Indent(indent + 1) << "skin {\n";
     ss << pprint::Indent(indent + 2) << "geomBindTransform "
-       << quote(tinyusdz::to_string(mesh.joint_and_weights.geomBindTransform))
+       << quote(::tinyusdz::to_string(mesh.joint_and_weights.geomBindTransform))
        << "\n";
     ss << pprint::Indent(indent + 2) << "elementSize "
        << mesh.joint_and_weights.elementSize << "\n";
@@ -7008,8 +7008,8 @@ void DumpSkelNode(std::stringstream &ss, const SkelNode &node, uint32_t indent) 
 
   ss << pprint::Indent(indent + 1) << "joint_path " << quote(node.joint_path) << "\n";
   ss << pprint::Indent(indent + 1) << "joint_id " << node.joint_id << "\n";
-  ss << pprint::Indent(indent + 1) << "bind_transform " << quote(tinyusdz::to_string(node.bind_transform)) << "\n";
-  ss << pprint::Indent(indent + 1) << "rest_transform " << quote(tinyusdz::to_string(node.rest_transform)) << "\n";
+  ss << pprint::Indent(indent + 1) << "bind_transform " << quote(::tinyusdz::to_string(node.bind_transform)) << "\n";
+  ss << pprint::Indent(indent + 1) << "rest_transform " << quote(::tinyusdz::to_string(node.rest_transform)) << "\n";
 
   if (node.children.size()) {
     ss << pprint::Indent(indent + 1) << "children {\n";

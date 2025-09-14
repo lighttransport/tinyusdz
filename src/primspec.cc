@@ -5,8 +5,8 @@
 /// @brief USD PrimSpec class implementation
 ///
 
-#include "prim-types.hh"  // Must be included first for type definitions
 #include "primspec.hh"
+#include "prim-types.hh"
 
 namespace tinyusdz {
 

@@ -749,10 +749,10 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length,
     return false;
   }
 
-  tinyusdz::StreamReader sr(addr, length, /* swap endian */ false);
-  tinyusdz::usda::USDAReader reader(&sr);
+  StreamReader sr(addr, length, /* swap endian */ false);
+  usda::USDAReader reader(&sr);
 
-  tinyusdz::usda::USDAReaderConfig config;
+  usda::USDAReaderConfig config;
   config.strict_allowedToken_check = options.strict_allowedToken_check;
   config.allow_unknown_apiSchema = !options.strict_apiSchema_check;
   config.max_memory_limit_in_mb = size_t(options.max_memory_limit_in_mb);
@@ -1245,14 +1245,14 @@ bool LoadUSDALayerFromMemory(const uint8_t *addr, const size_t length,
     return false;
   }
 
-  tinyusdz::StreamReader sr(addr, length, /* swap endian */ false);
-  tinyusdz::usda::USDAReader reader(&sr);
+  StreamReader sr(addr, length, /* swap endian */ false);
+  usda::USDAReader reader(&sr);
 
-  tinyusdz::usda::USDAReaderConfig config;
+  usda::USDAReaderConfig config;
   config.strict_allowedToken_check = options.strict_allowedToken_check;
   reader.set_reader_config(config);
 
-  uint32_t load_states = static_cast<uint32_t>(tinyusdz::LoadState::Toplevel);
+  uint32_t load_states = static_cast<uint32_t>(LoadState::Toplevel);
 
   bool as_primspec = true;
 
@@ -1268,7 +1268,7 @@ bool LoadUSDALayerFromMemory(const uint8_t *addr, const size_t length,
     }
   }
 
-  tinyusdz::Layer layer;
+  Layer layer;
   bool ret = reader.get_as_layer(&layer);
   if (!ret) {
     if (err) {
@@ -1443,6 +1443,8 @@ bool LoadUSDZLayerFromMemory(const uint8_t *addr, const size_t length,
 
 
 // Copy assetresolver state to all PrimSpec in the tree.
+// TODO: Fix circular dependency issue with PrimSpec  
+/*
 static bool PropagateAssetResolverState(uint32_t depth, PrimSpec &ps,
                                  const std::string &cwp,
                                  const std::vector<std::string> &search_paths) {
@@ -1465,6 +1467,7 @@ static bool PropagateAssetResolverState(uint32_t depth, PrimSpec &ps,
 
     return true;
 }
+*/
 
 bool LoadLayerFromMemory(const uint8_t *addr, const size_t length,
                        const std::string &asset_name, Layer *layer,
@@ -1516,9 +1519,10 @@ bool LoadLayerFromMemory(const uint8_t *addr, const size_t length,
     std::string basedir = io::GetBaseDir(asset_name);
     // Save current working path to each PrimSpec in the layer
     // for the subsequent composition operation.
-    for (auto &root_ps : layer->primspecs()) {
-      PropagateAssetResolverState(0, root_ps.second, basedir, search_paths);
-    }
+    // TODO: Fix circular dependency issue with PrimSpec
+    // for (auto &root_ps : layer->primspecs()) {
+    //   PropagateAssetResolverState(0, root_ps.second, basedir, search_paths);
+    // }
   }
 
   return ret;
@@ -1594,8 +1598,8 @@ int USDZResolveAsset(const char *asset_name, const std::vector<std::string> &sea
   std::string asset_path = asset_name;
 
   // Remove relative path prefix './'
-  if (tinyusdz::startsWith(asset_path, "./")) {
-    asset_path = tinyusdz::removePrefix(asset_path, "./");
+  if (startsWith(asset_path, "./")) {
+    asset_path = removePrefix(asset_path, "./");
   }
 
   // Not used

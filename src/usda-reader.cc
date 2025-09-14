@@ -18,6 +18,7 @@
 #include <sstream>
 #include <stack>
 
+#include "primspec.hh"
 #include "ascii-parser.hh"
 //#include "asset-resolution.hh"
 #include "usdGeom.hh"
@@ -261,7 +262,7 @@ static nonstd::expected<bool, std::string> CheckAllowedTokens(
     toks.push_back(std::get<1>(allowedTokens[i]));
   }
 
-  std::string s = join(", ", tinyusdz::quote(toks));
+  std::string s = join(", ", quote(toks));
 
   return nonstd::make_unexpected("Allowed tokens are [" + s + "] but got " +
                                  quote(tok) + ".");
@@ -1087,7 +1088,7 @@ class USDAReader::Impl {
             << var.type_name() << "`");
           }
 
-          out->apiSchemas = std::move(apiSchemas);
+          out->apiSchemas = new APISchemas(std::move(apiSchemas));
         } else {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "(Internal error?) `apiSchemas` metadataum is not type "
           "`token[]`. got type `"
@@ -1250,7 +1251,7 @@ class USDAReader::Impl {
   //AssetResolutionResolver _arr;
 
 #if 0 // TODO: Remove since not used.
-  nonstd::optional<tinyusdz::Stage> _imported_scene;  // Imported scene.
+  nonstd::optional<Stage> _imported_scene;  // Imported scene.
 #endif
 
   // "class" defs
@@ -1721,7 +1722,7 @@ bool IsUSDA(const std::string &filename, size_t max_filesize) {
     return false;
   }
 
-  tinyusdz::StreamReader sr(data.data(), data.size(), /* swap endian */ false);
+  StreamReader sr(data.data(), data.size(), /* swap endian */ false);
   tinyusdz::ascii::AsciiParser parser(&sr);
 
   return parser.CheckHeader();
