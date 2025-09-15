@@ -1,3 +1,5 @@
+#pragma once
+
 // SPDX-License-Identifier: MIT
 // Copyright 2024-Present Syoyo Fujita.
 

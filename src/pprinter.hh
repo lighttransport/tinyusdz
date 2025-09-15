@@ -18,6 +18,11 @@
 #include "usdSkel.hh"
 #include "value-pprint.hh"
 
+#ifdef TINYUSDZ_CHUNKED_SW
+#include "stream-writer.hh"
+#include "tiny-string.hh"
+#endif
+
 namespace tinyusdz {
 
 namespace pprint {
@@ -275,6 +280,145 @@ std::string print_layer(const Layer &layer, const uint32_t indent);
 std::string print_material_binding(const MaterialBinding *mb, const uint32_t indent);
 std::string print_collection(const Collection *coll, const uint32_t indent);
 
+#ifdef TINYUSDZ_CHUNKED_SW
+
+//
+// ChunkedStreamWriter versions of pprint methods - avoids std::string/stringstream overhead
+//
+
+namespace pprint {
+
+// Chunked stream writer utilities
+void WriteIndent(ChunkedStreamWriter &sw, uint32_t level);
+
+} // namespace pprint
+
+// Raw const char* versions for efficiency
+const char *to_cstring(Visibility v);
+const char *to_cstring(Orientation o);
+const char *to_cstring(Extent e);
+const char *to_cstring(Interpolation interp);
+const char *to_cstring(Axis axis);
+const char *to_cstring(ListEditQual qual);
+const char *to_cstring(Specifier specifier);
+const char *to_cstring(Purpose purpose);
+const char *to_cstring(Permission permission);
+const char *to_cstring(Variability variability);
+const char *to_cstring(SpecType spec_type);
+const char *to_cstring(Kind kind);
+
+const char *to_cstring(const XformOp::OpType &ty);
+
+const char *to_cstring(GeomMesh::InterpolateBoundary interp_boundary);
+const char *to_cstring(GeomMesh::SubdivisionScheme subd_scheme);
+const char *to_cstring(GeomMesh::FaceVaryingLinearInterpolation fv);
+
+const char *to_cstring(const GeomSubset::ElementType ty);
+const char *to_cstring(const GeomSubset::FamilyType ty);
+
+const char *to_cstring(const GeomBasisCurves::Wrap &v);
+const char *to_cstring(const GeomBasisCurves::Type &v);
+const char *to_cstring(const GeomBasisCurves::Basis &v);
+
+const char *to_cstring(const DomeLight::TextureFormat &texformat);
+
+const char *to_cstring(const UsdPreviewSurface::OpacityMode v);
+
+const char *to_cstring(const UsdUVTexture::SourceColorSpace v);
+const char *to_cstring(const UsdUVTexture::Wrap v);
+
+const char *to_cstring(const GeomCamera::Projection &proj);
+const char *to_cstring(const GeomCamera::StereoRole &role);
+
+const char *to_cstring(const APISchemas::APIName &name);
+
+const char *to_cstring(const CollectionInstance::ExpansionRule rule);
+
+// ChunkedStreamWriter print functions - optimized for performance
+void print_to_chunked_stream(const Model &model, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const Scope &scope, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const GPrim &gprim, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const Xform &xform, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const GeomSphere &sphere, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const GeomMesh &mesh, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const GeomPoints &pts, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const GeomBasisCurves &curves, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const GeomNurbsCurves &curves, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const GeomCapsule &geom, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const GeomCone &geom, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const GeomCylinder &geom, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const GeomCube &geom, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const GeomCamera &camera, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const GeomSubset &subset, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+
+void print_to_chunked_stream(const GeomPointInstancer &instancer, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+
+void print_to_chunked_stream(const SkelRoot &root, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const Skeleton &skel, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const SkelAnimation &anim, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const BlendShape &bs, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+
+void print_to_chunked_stream(const SphereLight &light, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const DomeLight &light, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const DiskLight &light, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const DistantLight &light, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const CylinderLight &light, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const RectLight &light, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const GeometryLight &light, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const PortalLight &light, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const PluginLight &light, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+
+void print_to_chunked_stream(const Material &material, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+
+void print_to_chunked_stream(const Shader &shader, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+
+void print_to_chunked_stream(const UsdPreviewSurface &shader, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const UsdUVTexture &shader, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const UsdPrimvarReader_float &shader, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const UsdPrimvarReader_float2 &shader, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const UsdPrimvarReader_float3 &shader, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const UsdPrimvarReader_float4 &shader, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const UsdPrimvarReader_int &shader, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+
+void print_to_chunked_stream(const tinyusdz::Animatable<Visibility> &v, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+
+void print_to_chunked_stream(const Layer &layer, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+void print_to_chunked_stream(const PrimSpec &primspec, ChunkedStreamWriter &sw, const uint32_t indent = 0, bool closing_brace = true);
+
+// Utility print functions - optimized versions
+void print_xformOpOrder_chunked(const std::vector<XformOp> &xformOps, ChunkedStreamWriter &sw, const uint32_t indent);
+void print_xformOps_chunked(const std::vector<XformOp> &xformOps, ChunkedStreamWriter &sw, const uint32_t indent);
+void print_attr_metas_chunked(const AttrMeta &meta, ChunkedStreamWriter &sw, const uint32_t indent);
+
+void print_meta_chunked(const MetaVariable &meta, ChunkedStreamWriter &sw, const uint32_t indent, bool emit_type_name, const tstring_view &varname = tstring_view());
+void print_prim_metas_chunked(const PrimMeta &meta, ChunkedStreamWriter &sw, const uint32_t indent);
+void print_customData_chunked(const CustomDataType &customData, const tstring_view &name, ChunkedStreamWriter &sw, const uint32_t indent);
+void print_variantSelectionMap_chunked(const VariantSelectionMap &m, ChunkedStreamWriter &sw, const uint32_t indent);
+void print_variantSetStmt_chunked(const std::map<std::string, VariantSet> &vslist, ChunkedStreamWriter &sw, const uint32_t indent);
+void print_variantSetSpecStmt_chunked(const std::map<std::string, VariantSetSpec> &vslist, ChunkedStreamWriter &sw, const uint32_t indent);
+void print_payload_chunked(const prim::PayloadList &payload, ChunkedStreamWriter &sw, const uint32_t indent);
+void print_timesamples_chunked(const value::TimeSamples &v, ChunkedStreamWriter &sw, const uint32_t indent);
+void print_rel_prop_chunked(const Property &prop, const tstring_view &name, ChunkedStreamWriter &sw, uint32_t indent);
+
+void print_prop_chunked(const Property &prop, const tstring_view &prop_name, ChunkedStreamWriter &sw, uint32_t indent);
+
+// Print properties - optimized versions
+void print_props_chunked(const std::map<std::string, Property> &props, ChunkedStreamWriter &sw, uint32_t indent);
+
+void print_props_chunked(const std::map<std::string, Property> &props,
+                        /* input */ std::set<std::string> &tok_table,
+                        const std::vector<value::token> &propNames,
+                        ChunkedStreamWriter &sw,
+                        uint32_t indent);
+
+void print_layer_metas_chunked(const LayerMetas &metas, ChunkedStreamWriter &sw, const uint32_t indent);
+void print_layer_chunked(const Layer &layer, ChunkedStreamWriter &sw, const uint32_t indent);
+
+void print_material_binding_chunked(const MaterialBinding *mb, ChunkedStreamWriter &sw, const uint32_t indent);
+void print_collection_chunked(const Collection *coll, ChunkedStreamWriter &sw, const uint32_t indent);
+
+#endif // TINYUSDZ_CHUNKED_SW
+
 }  // namespace tinyusdz
 
 namespace std {
@@ -285,3 +429,66 @@ std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Interpolation v);
 std::ostream &operator<<(std::ostream &ofs, const tinyusdz::Layer &layer);
 
 }  // namespace std
+
+#ifdef TINYUSDZ_CHUNKED_SW
+
+namespace tinyusdz {
+
+// Template functions for arrays and vectors - optimized for ChunkedStreamWriter
+template <typename T>
+void print_vector_chunked(const std::vector<T> &v, ChunkedStreamWriter &sw, const uint32_t level = 0) {
+  pprint::WriteIndent(sw, level);
+  sw << "[";
+
+  // TODO: indent for large array
+  for (size_t i = 0; i < v.size(); i++) {
+    const char *cstr = to_cstring(v[i]);
+    if (cstr) {
+      sw << cstr;
+    } else {
+      sw << v[i];  // fallback to operator<<
+    }
+    if (i != (v.size() - 1)) {
+      sw << ", ";
+    }
+  }
+  sw << "]";
+}
+
+template <typename T>
+void print_listop_chunked(const ListOp<T> &op, ChunkedStreamWriter &sw, const uint32_t indent_level = 0) {
+  pprint::WriteIndent(sw, indent_level);
+  sw << "ListOp(isExplicit " << (op.IsExplicit() ? "true" : "false") << ") {\n";
+
+  pprint::WriteIndent(sw, indent_level);
+  sw << "  explicit_items = ";
+  print_vector_chunked(op.GetExplicitItems(), sw);
+  sw << "\n";
+
+  pprint::WriteIndent(sw, indent_level);
+  sw << "  added_items = ";
+  print_vector_chunked(op.GetAddedItems(), sw);
+  sw << "\n";
+
+  pprint::WriteIndent(sw, indent_level);
+  sw << "  prepended_items = ";
+  print_vector_chunked(op.GetPrependedItems(), sw);
+  sw << "\n";
+
+  pprint::WriteIndent(sw, indent_level);
+  sw << "  deleted_items = ";
+  print_vector_chunked(op.GetDeletedItems(), sw);
+  sw << "\n";
+
+  pprint::WriteIndent(sw, indent_level);
+  sw << "  ordered_items = ";
+  print_vector_chunked(op.GetOrderedItems(), sw);
+  sw << "\n";
+
+  pprint::WriteIndent(sw, indent_level);
+  sw << "}";
+}
+
+}  // namespace tinyusdz
+
+#endif // TINYUSDZ_CHUNKED_SW

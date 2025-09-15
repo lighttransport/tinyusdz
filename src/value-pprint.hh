@@ -10,6 +10,11 @@
 
 #include "value-types.hh"
 
+#ifdef TINYUSDZ_CHUNKED_SW
+#include "stream-writer.hh"
+#include "tiny-string.hh"
+#endif
+
 // forward decl
 namespace tinyusdz {
 
@@ -160,7 +165,6 @@ std::ostream &operator<<(std::ostream &os, const std::vector<int64_t> &v);
 template <>
 std::ostream &operator<<(std::ostream &os, const std::vector<uint64_t> &v);
 
-}  // namespace std
 
 namespace tinyusdz {
 
@@ -225,6 +229,122 @@ std::string to_string(const value::color3d &v);
 std::string to_string(const value::color4h &v);
 std::string to_string(const value::color4f &v);
 std::string to_string(const value::color4d &v);
+
+#ifdef TINYUSDZ_CHUNKED_SW
+// ChunkedStreamWriter operator<< overloads
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, bool v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, int32_t v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, uint32_t v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, int64_t v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, uint64_t v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, float v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, double v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const char* str);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const std::string& str);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const tstring& str);
+
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const value::char2& v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const value::char3& v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const value::char4& v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const value::short2& v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const value::short3& v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const value::short4& v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const value::int2& v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const value::int3& v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const value::int4& v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const value::uint2& v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const value::uint3& v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const value::uint4& v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const value::float2& v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const value::float3& v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const value::float4& v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const value::double2& v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const value::double3& v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const value::double4& v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const value::half& v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const value::half2& v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const value::half3& v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const value::half4& v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const value::matrix2f& v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const value::matrix3f& v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const value::matrix4f& v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const value::matrix2d& v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const value::matrix3d& v);
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const value::matrix4d& v);
+
+// Array overloads
+template<typename T>
+ChunkedStreamWriter& operator<<(ChunkedStreamWriter& sw, const std::vector<T>& v);
+
+// tstring versions for efficient string handling - avoid std::string allocations
+tstring to_tstring(bool v);
+tstring to_tstring(int32_t v);
+tstring to_tstring(uint32_t v);
+tstring to_tstring(int64_t v);
+tstring to_tstring(uint64_t v);
+tstring to_tstring(float v);
+tstring to_tstring(double v);
+
+tstring to_tstring(const value::char2 &v);
+tstring to_tstring(const value::char3 &v);
+tstring to_tstring(const value::char4 &v);
+tstring to_tstring(const value::short2 &v);
+tstring to_tstring(const value::short3 &v);
+tstring to_tstring(const value::short4 &v);
+tstring to_tstring(const value::int2 &v);
+tstring to_tstring(const value::int3 &v);
+tstring to_tstring(const value::int4 &v);
+tstring to_tstring(const value::uint2 &v);
+tstring to_tstring(const value::uint3 &v);
+tstring to_tstring(const value::uint4 &v);
+tstring to_tstring(const value::float2 &v);
+tstring to_tstring(const value::float3 &v);
+tstring to_tstring(const value::float4 &v);
+tstring to_tstring(const value::double2 &v);
+tstring to_tstring(const value::double3 &v);
+tstring to_tstring(const value::double4 &v);
+tstring to_tstring(const value::texcoord2h &v);
+tstring to_tstring(const value::texcoord2f &v);
+tstring to_tstring(const value::texcoord2d &v);
+tstring to_tstring(const value::texcoord3h &v);
+tstring to_tstring(const value::texcoord3f &v);
+tstring to_tstring(const value::texcoord3d &v);
+tstring to_tstring(const value::StringData &s);
+tstring to_tstring(const value::token &s);
+tstring to_tstring(const std::string &s); // do USD specific escaping
+tstring to_tstring(const value::quath &v);
+tstring to_tstring(const value::quatf &v);
+tstring to_tstring(const value::quatd &v);
+tstring to_tstring(const value::matrix2f &v);
+tstring to_tstring(const value::matrix3f &v);
+tstring to_tstring(const value::matrix4f &v);
+tstring to_tstring(const value::matrix2d &v);
+tstring to_tstring(const value::matrix3d &v);
+tstring to_tstring(const value::matrix4d &v);
+tstring to_tstring(const value::frame4d &v);
+tstring to_tstring(const value::half &v);
+tstring to_tstring(const value::half2 &v);
+tstring to_tstring(const value::half3 &v);
+tstring to_tstring(const value::half4 &v);
+tstring to_tstring(const value::normal3h &v);
+tstring to_tstring(const value::normal3f &v);
+tstring to_tstring(const value::normal3d &v);
+tstring to_tstring(const value::vector3h &v);
+tstring to_tstring(const value::vector3f &v);
+tstring to_tstring(const value::vector3d &v);
+tstring to_tstring(const value::point3h &v);
+tstring to_tstring(const value::point3f &v);
+tstring to_tstring(const value::point3d &v);
+tstring to_tstring(const value::color3f &v);
+tstring to_tstring(const value::color3d &v);
+tstring to_tstring(const value::color4h &v);
+tstring to_tstring(const value::color4f &v);
+tstring to_tstring(const value::color4d &v);
+
+// tstring versions for arrays
+template <typename T>
+tstring to_tstring_array(const std::vector<T> &v, size_t N = 16);
+#endif // TINYUSDZ_CHUNKED_SW
 
 namespace value {
 

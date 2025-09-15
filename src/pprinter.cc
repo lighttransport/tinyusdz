@@ -4847,4 +4847,197 @@ std::string to_string(const PrimSpec &primspec, const uint32_t indent,
   return prim::print_primspec(primspec, indent);
 }
 
+#ifdef TINYUSDZ_CHUNKED_SW
+
+//
+// ChunkedStreamWriter implementations - optimized versions
+//
+
+namespace pprint {
+
+void WriteIndent(ChunkedStreamWriter &sw, uint32_t level) {
+  // Use the same indent logic as the string version
+  std::string indent_str = Indent(level);
+  sw << indent_str;
+}
+
+} // namespace pprint
+
+// Raw const char* versions for efficiency - avoid string allocations
+const char *to_cstring(Visibility v) {
+  switch (v) {
+    case Visibility::Inherited: return "inherited";
+    case Visibility::Invisible: return "invisible";
+  }
+  return "inherited"; // default
+}
+
+const char *to_cstring(Orientation o) {
+  switch (o) {
+    case Orientation::RightHanded: return "rightHanded";
+    case Orientation::LeftHanded: return "leftHanded";
+  }
+  return "rightHanded"; // default
+}
+
+const char *to_cstring(Extent e) {
+  switch (e) {
+    case Extent::Infinite: return "infinite";
+    case Extent::Finite: return "finite";
+  }
+  return "finite"; // default
+}
+
+const char *to_cstring(Interpolation interp) {
+  switch (interp) {
+    case Interpolation::Constant: return "constant";
+    case Interpolation::Uniform: return "uniform";
+    case Interpolation::Varying: return "varying";
+    case Interpolation::Vertex: return "vertex";
+    case Interpolation::FaceVarying: return "faceVarying";
+  }
+  return "constant"; // default
+}
+
+const char *to_cstring(Axis axis) {
+  switch (axis) {
+    case Axis::X: return "X";
+    case Axis::Y: return "Y";
+    case Axis::Z: return "Z";
+  }
+  return "Z"; // default
+}
+
+const char *to_cstring(ListEditQual qual) {
+  switch (qual) {
+    case ListEditQual::ResetToExplicit: return "resetToExplicit";
+    case ListEditQual::Append: return "append";
+    case ListEditQual::Add: return "add";
+    case ListEditQual::Prepend: return "prepend";
+    case ListEditQual::Delete: return "delete";
+  }
+  return "append"; // default
+}
+
+const char *to_cstring(Specifier specifier) {
+  switch (specifier) {
+    case Specifier::Def: return "def";
+    case Specifier::Over: return "over";
+    case Specifier::Class: return "class";
+  }
+  return "def"; // default
+}
+
+const char *to_cstring(Purpose purpose) {
+  switch (purpose) {
+    case Purpose::Default: return "default";
+    case Purpose::Render: return "render";
+    case Purpose::Proxy: return "proxy";
+    case Purpose::Guide: return "guide";
+  }
+  return "default"; // default
+}
+
+const char *to_cstring(Permission permission) {
+  switch (permission) {
+    case Permission::Public: return "public";
+    case Permission::Private: return "private";
+  }
+  return "public"; // default
+}
+
+const char *to_cstring(Variability variability) {
+  switch (variability) {
+    case Variability::Varying: return "varying";
+    case Variability::Uniform: return "uniform";
+    case Variability::Config: return "config";
+  }
+  return "varying"; // default
+}
+
+const char *to_cstring(SpecType spec_type) {
+  switch (spec_type) {
+    case SpecType::Attribute: return "attribute";
+    case SpecType::Connection: return "connection";
+    case SpecType::Expression: return "expression";
+    case SpecType::Mapper: return "mapper";
+    case SpecType::MapperArg: return "mapperArg";
+    case SpecType::Prim: return "prim";
+    case SpecType::PseudoRoot: return "pseudoRoot";
+    case SpecType::Relationship: return "relationship";
+    case SpecType::RelationshipTarget: return "relationshipTarget";
+    case SpecType::Variant: return "variant";
+    case SpecType::VariantSet: return "variantSet";
+    case SpecType::Unknown: return "unknown";
+  }
+  return "unknown"; // default
+}
+
+const char *to_cstring(Kind kind) {
+  switch (kind) {
+    case Kind::Model: return "model";
+    case Kind::Component: return "component";
+    case Kind::Group: return "group";
+    case Kind::Assembly: return "assembly";
+    case Kind::Subcomponent: return "subcomponent";
+  }
+  return "model"; // default
+}
+
+// Basic implementation examples for a few key types
+void print_to_chunked_stream(const Model &model, ChunkedStreamWriter &sw, const uint32_t indent, bool closing_brace) {
+  // For now, delegate to the string version and write the result
+  // TODO: Optimize to avoid string allocation
+  std::string s = to_string(model, indent, closing_brace);
+  sw << s;
+}
+
+void print_to_chunked_stream(const Scope &scope, ChunkedStreamWriter &sw, const uint32_t indent, bool closing_brace) {
+  // For now, delegate to the string version and write the result
+  // TODO: Optimize to avoid string allocation
+  std::string s = to_string(scope, indent, closing_brace);
+  sw << s;
+}
+
+void print_to_chunked_stream(const Xform &xform, ChunkedStreamWriter &sw, const uint32_t indent, bool closing_brace) {
+  // For now, delegate to the string version and write the result
+  // TODO: Optimize to avoid string allocation
+  std::string s = to_string(xform, indent, closing_brace);
+  sw << s;
+}
+
+// Example of an optimized implementation for a simple geometry type
+void print_to_chunked_stream(const GeomSphere &sphere, ChunkedStreamWriter &sw, const uint32_t indent, bool closing_brace) {
+  pprint::WriteIndent(sw, indent);
+  sw << "def Sphere \"" << sphere.name << "\" {\n";
+
+  // Write properties directly without intermediate strings
+  if (sphere.radius.authored()) {
+    pprint::WriteIndent(sw, indent + 1);
+    sw << "double radius = " << sphere.radius.get_value() << "\n";
+  }
+
+  // TODO: Add more properties as needed
+
+  if (closing_brace) {
+    pprint::WriteIndent(sw, indent);
+    sw << "}\n";
+  }
+}
+
+// Utility functions
+void print_xformOpOrder_chunked(const std::vector<XformOp> &xformOps, ChunkedStreamWriter &sw, const uint32_t indent) {
+  // For now, delegate to string version
+  std::string s = print_xformOpOrder(xformOps, indent);
+  sw << s;
+}
+
+void print_xformOps_chunked(const std::vector<XformOp> &xformOps, ChunkedStreamWriter &sw, const uint32_t indent) {
+  // For now, delegate to string version
+  std::string s = print_xformOps(xformOps, indent);
+  sw << s;
+}
+
+#endif // TINYUSDZ_CHUNKED_SW
+
 }  // namespace tinyusdz

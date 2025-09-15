@@ -13,6 +13,13 @@
 #include "usdLux.hh"
 #include "value-types.hh"
 
+#ifdef TINYUSDZ_CHUNKED_SW
+#include "stream-writer.hh"
+#include "tiny-string.hh"
+#include <cstring>
+#include <cstdio>
+#endif
+
 //
 #include "common-macros.inc"
 
@@ -1807,5 +1814,980 @@ std::string to_string(const value::color4d &v) {
   ss << v;
   return ss.str();
 }
+
+#ifdef TINYUSDZ_CHUNKED_SW
+#include <cstring> // for strlen
+#include <cstdio>  // for snprintf
+#include <cinttypes> // for PRId64, PRIu64
+
+//
+// ChunkedStreamWriter operator<< implementations
+//
+
+// Basic types - optimized to avoid std::string allocations
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const char* str) {
+  if (str) {
+    sw.writeN(reinterpret_cast<const uint8_t*>(str), strlen(str));
+  }
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const std::string &str) {
+  sw.writeN(reinterpret_cast<const uint8_t*>(str.c_str()), str.size());
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::tstring &str) {
+  sw.writeN(reinterpret_cast<const uint8_t*>(str.c_str()), str.size());
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::tstring_view &str) {
+  sw.writeN(reinterpret_cast<const uint8_t*>(str.c_str()), str.size());
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, char c) {
+  sw.write1(static_cast<uint8_t>(c));
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, bool b) {
+  sw << (b ? "true" : "false");
+  return sw;
+}
+
+// Optimized integer to string conversion - avoid std::string allocation
+namespace {
+  // Forward declarations for template specializations
+  inline void write_int32_to_chunked_stream(tinyusdz::ChunkedStreamWriter &sw, int32_t i);
+  inline void write_uint32_to_chunked_stream(tinyusdz::ChunkedStreamWriter &sw, uint32_t i);
+  inline void write_int64_to_chunked_stream(tinyusdz::ChunkedStreamWriter &sw, int64_t i);
+  inline void write_uint64_to_chunked_stream(tinyusdz::ChunkedStreamWriter &sw, uint64_t i);
+  inline void write_float_to_chunked_stream(tinyusdz::ChunkedStreamWriter &sw, float f);
+  inline void write_double_to_chunked_stream(tinyusdz::ChunkedStreamWriter &sw, double d);
+
+  inline void write_int32_to_chunked_stream(tinyusdz::ChunkedStreamWriter &sw, int32_t i) {
+    char buf[16]; // enough for int32
+    int len = snprintf(buf, sizeof(buf), "%d", i);
+    if (len > 0 && len < sizeof(buf)) {
+      sw.writeN(reinterpret_cast<const uint8_t*>(buf), static_cast<size_t>(len));
+    }
+  }
+
+  inline void write_uint32_to_chunked_stream(tinyusdz::ChunkedStreamWriter &sw, uint32_t i) {
+    char buf[16]; // enough for uint32
+    int len = snprintf(buf, sizeof(buf), "%u", i);
+    if (len > 0 && len < sizeof(buf)) {
+      sw.writeN(reinterpret_cast<const uint8_t*>(buf), static_cast<size_t>(len));
+    }
+  }
+
+  inline void write_int64_to_chunked_stream(tinyusdz::ChunkedStreamWriter &sw, int64_t i) {
+    char buf[24]; // enough for int64
+    int len = snprintf(buf, sizeof(buf), "%" PRId64, i);
+    if (len > 0 && len < sizeof(buf)) {
+      sw.writeN(reinterpret_cast<const uint8_t*>(buf), static_cast<size_t>(len));
+    }
+  }
+
+  inline void write_uint64_to_chunked_stream(tinyusdz::ChunkedStreamWriter &sw, uint64_t i) {
+    char buf[24]; // enough for uint64
+    int len = snprintf(buf, sizeof(buf), "%" PRIu64, i);
+    if (len > 0 && len < sizeof(buf)) {
+      sw.writeN(reinterpret_cast<const uint8_t*>(buf), static_cast<size_t>(len));
+    }
+  }
+
+  inline void write_float_to_chunked_stream(tinyusdz::ChunkedStreamWriter &sw, float f) {
+    char buf[32]; // enough for float
+    int len = snprintf(buf, sizeof(buf), "%g", f);
+    if (len > 0 && len < sizeof(buf)) {
+      sw.writeN(reinterpret_cast<const uint8_t*>(buf), static_cast<size_t>(len));
+    }
+  }
+
+  inline void write_double_to_chunked_stream(tinyusdz::ChunkedStreamWriter &sw, double d) {
+    char buf[32]; // enough for double
+    int len = snprintf(buf, sizeof(buf), "%g", d);
+    if (len > 0 && len < sizeof(buf)) {
+      sw.writeN(reinterpret_cast<const uint8_t*>(buf), static_cast<size_t>(len));
+    }
+  }
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, int32_t i) {
+  write_int32_to_chunked_stream(sw, i);
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, uint32_t i) {
+  write_uint32_to_chunked_stream(sw, i);
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, int64_t i) {
+  write_int64_to_chunked_stream(sw, i);
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, uint64_t i) {
+  write_uint64_to_chunked_stream(sw, i);
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, float f) {
+  write_float_to_chunked_stream(sw, f);
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, double d) {
+  write_double_to_chunked_stream(sw, d);
+  return sw;
+}
+
+// Vector types
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::char2 &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::char3 &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::char4 &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::uchar2 &v) {
+  sw << "(" << static_cast<uint32_t>(v.x) << ", " << static_cast<uint32_t>(v.y) << ")";
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::uchar3 &v) {
+  sw << "(" << static_cast<uint32_t>(v.x) << ", " << static_cast<uint32_t>(v.y) << ", " << static_cast<uint32_t>(v.z) << ")";
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::uchar4 &v) {
+  sw << "(" << static_cast<uint32_t>(v.x) << ", " << static_cast<uint32_t>(v.y) << ", " << static_cast<uint32_t>(v.z) << ", " << static_cast<uint32_t>(v.w) << ")";
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::short2 &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::short3 &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::short4 &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::ushort2 &v) {
+  sw << "(" << v.x << ", " << v.y << ")";
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::ushort3 &v) {
+  sw << "(" << v.x << ", " << v.y << ", " << v.z << ")";
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::ushort4 &v) {
+  sw << "(" << v.x << ", " << v.y << ", " << v.z << ", " << v.w << ")";
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::int2 &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::int3 &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::int4 &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::uint2 &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::uint3 &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::uint4 &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::half &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::half2 &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::half3 &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::half4 &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::float2 &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::float3 &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::float4 &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::double2 &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::double3 &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::double4 &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+// Point types
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::point3h &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::point3f &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::point3d &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+// Normal types
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::normal3h &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::normal3f &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::normal3d &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+// Vector types
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::vector3h &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::vector3f &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::vector3d &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+// Color types
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::color3h &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::color3f &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::color3d &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::color4h &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::color4f &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::color4d &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+// TexCoord types
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::texcoord2h &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::texcoord2f &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::texcoord2d &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::texcoord3h &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::texcoord3f &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::texcoord3d &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+// Quaternion types
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::quath &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::quatf &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::quatd &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+// Matrix types
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::matrix2f &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::matrix3f &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::matrix4f &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::matrix2d &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::matrix3d &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::matrix4d &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::frame4d &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+// Token and string types
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::token &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::StringData &v) {
+  std::string s = tinyusdz::to_string(v);
+  sw << s;
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::AssetPath &v) {
+  std::stringstream ss;
+  ss << v;
+  sw << ss.str();
+  return sw;
+}
+
+// For complex types that don't have to_string implementations, fall back to stringstream
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::dict &v) {
+  std::stringstream ss;
+  ss << v;
+  sw << ss.str();
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::value::TimeSamples &ts) {
+  std::stringstream ss;
+  ss << ts;
+  sw << ss.str();
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::Path &v) {
+  std::stringstream ss;
+  ss << v;
+  sw << ss.str();
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::Reference &v) {
+  std::stringstream ss;
+  ss << v;
+  sw << ss.str();
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::Payload &v) {
+  std::stringstream ss;
+  ss << v;
+  sw << ss.str();
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::LayerOffset &v) {
+  std::stringstream ss;
+  ss << v;
+  sw << ss.str();
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::SubLayer &v) {
+  std::stringstream ss;
+  ss << v;
+  sw << ss.str();
+  return sw;
+}
+
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const tinyusdz::Collection &v) {
+  std::stringstream ss;
+  ss << v;
+  sw << ss.str();
+  return sw;
+}
+
+// Specialized array implementations - optimized for performance
+template <>
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const std::vector<double> &v) {
+  sw << "[";
+  for (size_t i = 0; i < v.size(); i++) {
+    if (i > 0) {
+      sw << ", ";
+    }
+    write_double_to_chunked_stream(sw, v[i]);
+  }
+  sw << "]";
+  return sw;
+}
+
+template <>
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const std::vector<float> &v) {
+  sw << "[";
+  for (size_t i = 0; i < v.size(); i++) {
+    if (i > 0) {
+      sw << ", ";
+    }
+    write_float_to_chunked_stream(sw, v[i]);
+  }
+  sw << "]";
+  return sw;
+}
+
+template <>
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const std::vector<int32_t> &v) {
+  sw << "[";
+  for (size_t i = 0; i < v.size(); i++) {
+    if (i > 0) {
+      sw << ", ";
+    }
+    write_int32_to_chunked_stream(sw, v[i]);
+  }
+  sw << "]";
+  return sw;
+}
+
+template <>
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const std::vector<uint32_t> &v) {
+  sw << "[";
+  for (size_t i = 0; i < v.size(); i++) {
+    if (i > 0) {
+      sw << ", ";
+    }
+    write_uint32_to_chunked_stream(sw, v[i]);
+  }
+  sw << "]";
+  return sw;
+}
+
+template <>
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const std::vector<int64_t> &v) {
+  sw << "[";
+  for (size_t i = 0; i < v.size(); i++) {
+    if (i > 0) {
+      sw << ", ";
+    }
+    write_int64_to_chunked_stream(sw, v[i]);
+  }
+  sw << "]";
+  return sw;
+}
+
+template <>
+tinyusdz::ChunkedStreamWriter &operator<<(tinyusdz::ChunkedStreamWriter &sw, const std::vector<uint64_t> &v) {
+  sw << "[";
+  for (size_t i = 0; i < v.size(); i++) {
+    if (i > 0) {
+      sw << ", ";
+    }
+    write_uint64_to_chunked_stream(sw, v[i]);
+  }
+  sw << "]";
+  return sw;
+}
+
+// tstring versions of to_string functions - efficient string handling
+tinyusdz::tstring to_tstring(bool v) {
+  return tinyusdz::tstring(v ? "true" : "false");
+}
+
+tinyusdz::tstring to_tstring(int32_t v) {
+  char buf[16];
+  int len = snprintf(buf, sizeof(buf), "%d", v);
+  if (len > 0 && len < sizeof(buf)) {
+    return tinyusdz::tstring(buf);
+  }
+  return tinyusdz::tstring();
+}
+
+tinyusdz::tstring to_tstring(uint32_t v) {
+  char buf[16];
+  int len = snprintf(buf, sizeof(buf), "%u", v);
+  if (len > 0 && len < sizeof(buf)) {
+    return tinyusdz::tstring(buf);
+  }
+  return tinyusdz::tstring();
+}
+
+tinyusdz::tstring to_tstring(int64_t v) {
+  char buf[24];
+  int len = snprintf(buf, sizeof(buf), "%" PRId64, v);
+  if (len > 0 && len < sizeof(buf)) {
+    return tinyusdz::tstring(buf);
+  }
+  return tinyusdz::tstring();
+}
+
+tinyusdz::tstring to_tstring(uint64_t v) {
+  char buf[24];
+  int len = snprintf(buf, sizeof(buf), "%" PRIu64, v);
+  if (len > 0 && len < sizeof(buf)) {
+    return tinyusdz::tstring(buf);
+  }
+  return tinyusdz::tstring();
+}
+
+tinyusdz::tstring to_tstring(float v) {
+  char buf[32];
+  int len = snprintf(buf, sizeof(buf), "%g", v);
+  if (len > 0 && len < sizeof(buf)) {
+    return tinyusdz::tstring(buf);
+  }
+  return tinyusdz::tstring();
+}
+
+tinyusdz::tstring to_tstring(double v) {
+  char buf[32];
+  int len = snprintf(buf, sizeof(buf), "%g", v);
+  if (len > 0 && len < sizeof(buf)) {
+    return tinyusdz::tstring(buf);
+  }
+  return tinyusdz::tstring();
+}
+
+// Vector type tstring conversions - delegate to std::string version for now
+tinyusdz::tstring to_tstring(const value::char2 &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::char3 &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::char4 &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::short2 &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::short3 &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::short4 &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::int2 &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::int3 &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::int4 &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::uint2 &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::uint3 &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::uint4 &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::float2 &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::float3 &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::float4 &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::double2 &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::double3 &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::double4 &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::texcoord2h &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::texcoord2f &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::texcoord2d &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::texcoord3h &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::texcoord3f &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::texcoord3d &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::StringData &s) {
+  return tinyusdz::tstring(to_string(s));
+}
+
+tinyusdz::tstring to_tstring(const value::token &s) {
+  return tinyusdz::tstring(to_string(s));
+}
+
+tinyusdz::tstring to_tstring(const std::string &s) {
+  return tinyusdz::tstring(to_string(s));
+}
+
+tinyusdz::tstring to_tstring(const value::quath &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::quatf &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::quatd &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::matrix2f &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::matrix3f &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::matrix4f &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::matrix2d &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::matrix3d &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::matrix4d &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::frame4d &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::half &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::half2 &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::half3 &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::half4 &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::normal3h &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::normal3f &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::normal3d &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::vector3h &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::vector3f &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::vector3d &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::point3h &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::point3f &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::point3d &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::color3f &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::color3d &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::color4h &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::color4f &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+tinyusdz::tstring to_tstring(const value::color4d &v) {
+  return tinyusdz::tstring(to_string(v));
+}
+
+// Template array function implementation
+template <typename T>
+tinyusdz::tstring to_tstring_array(const std::vector<T> &v, size_t N) {
+  // Use ChunkedStreamWriter for efficient array formatting
+  ChunkedStreamWriter sw;
+  sw << "[";
+
+  if ((N == 0) || ((N * 2) >= v.size())) {
+    for (size_t i = 0; i < v.size(); i++) {
+      if (i > 0) {
+        sw << ", ";
+      }
+      sw << v[i];
+    }
+  } else {
+    size_t head_end = (std::min)(N, v.size());
+    size_t tail_start = (std::max)(v.size() - N, head_end);
+
+    for (size_t i = 0; i < head_end; i++) {
+      if (i > 0) {
+        sw << ", ";
+      }
+      sw << v[i];
+    }
+
+    sw << ", ..., ";
+
+    for (size_t i = tail_start; i < v.size(); i++) {
+      if (i > tail_start) {
+        sw << ", ";
+      }
+      sw << v[i];
+    }
+  }
+  sw << "]";
+
+  // Convert to tstring - ensure null termination
+  std::vector<uint8_t> data = sw.flatten();
+  data.push_back('\0'); // Ensure null termination
+  return tinyusdz::tstring(reinterpret_cast<const char*>(data.data()));
+}
+
+// Explicit template instantiations for common types
+template tinyusdz::tstring to_tstring_array<float>(const std::vector<float> &v, size_t N);
+template tinyusdz::tstring to_tstring_array<double>(const std::vector<double> &v, size_t N);
+template tinyusdz::tstring to_tstring_array<int32_t>(const std::vector<int32_t> &v, size_t N);
+template tinyusdz::tstring to_tstring_array<uint32_t>(const std::vector<uint32_t> &v, size_t N);
+template tinyusdz::tstring to_tstring_array<int64_t>(const std::vector<int64_t> &v, size_t N);
+template tinyusdz::tstring to_tstring_array<uint64_t>(const std::vector<uint64_t> &v, size_t N);
+
+#endif // TINYUSDZ_CHUNKED_SW
 
 }  // namespace tinyusdz
