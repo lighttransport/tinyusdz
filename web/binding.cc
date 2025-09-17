@@ -598,6 +598,12 @@ class TinyUSDZLoaderNative {
 
     env.material_config.preserve_texel_bitdepth = true;
 
+    // Free GeomMesh data in stage after using it to save memory.
+    env.mesh_config.lowmem = true;
+
+    // Do not try to build indices(avoid temp memory consumption of vertex similarity search)
+    //env.mesh_config.prefer_non_indexed = true;
+
     if (is_usdz) {
       // TODO: Support USDZ + Composition
       // Setup AssetResolutionResolver to read a asset(file) from memory.
