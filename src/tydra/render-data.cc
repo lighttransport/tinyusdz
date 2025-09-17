@@ -44,6 +44,7 @@
 #include "usdGeom.hh"
 #include "usdShade.hh"
 #include "value-pprint.hh"
+#include "logger.hh"
 
 //#include <iostream>
 
@@ -2702,6 +2703,8 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
   // - Reorder vertex attributes to 'vertex' variability.
   //
 
+  TUSDZ_LOG_I("BuildVertexIndicesImpl");
+
   const std::vector<uint32_t> &fvIndices =
       mesh.triangulatedFaceVertexIndices.size()
           ? mesh.triangulatedFaceVertexIndices
@@ -4178,6 +4181,7 @@ bool RenderSceneConverter::ConvertMesh(
        (dst.binormals.empty() == 0 && dst.tangents.empty() == 0));
 
   if (compute_normals || (compute_tangents && dst.normals.empty())) {
+    TUSDZ_LOG_I("Build normals");
     DCOUT("Compute normals");
     std::vector<vec3> normals;
     if (!ComputeNormals(dst.points, dst.faceVertexCounts(),
@@ -4214,13 +4218,16 @@ bool RenderSceneConverter::ConvertMesh(
   // 8. Build indices
   //
   if (env.mesh_config.build_vertex_indices && (!is_single_indexable)) {
-    DCOUT("Build vertex indices");
+    if (!env.mesh_config.prefer_non_indexed) {
+      DCOUT("Build vertex indices");
+      TUSDZ_LOG_I("Build vertex indices");
 
-    if (!BuildVertexIndicesImpl(dst)) {
-      return false;
+      if (!BuildVertexIndicesImpl(dst)) {
+        return false;
+      }
+
+      is_single_indexable = true;
     }
-
-    is_single_indexable = true;
   }
 
   //
@@ -4228,6 +4235,8 @@ bool RenderSceneConverter::ConvertMesh(
   //
   if (compute_tangents) {
     DCOUT("Compute tangents.");
+    TUSDZ_LOG_I("Build tangents");
+    
     std::vector<vec2> texcoords;
     std::vector<vec3> normals;
 
@@ -4311,6 +4320,8 @@ bool RenderSceneConverter::ConvertMesh(
   dst.display_name = mesh.metas().displayName.value_or("");
 
 #if defined(TINYUSDZ_WITH_MESHOPT)
+  TUSDZ_LOG_I("Optimize indices");
+
   // Optimize mesh indices for better rendering performance
   OptimizeRenderMeshIndices(dst);
 #endif
