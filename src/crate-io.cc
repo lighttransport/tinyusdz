@@ -117,10 +117,12 @@ bool CrateIOHelper::ReadValueRep(crate::ValueRep* rep) {
     return false;
   }
 
-  if (!_sr->read8(&rep->payload)) {
+  uint64_t payload;
+  if (!_sr->read8(&payload)) {
     PushError("Failed to read ValueRep payload");
     return false;
   }
+  rep->SetPayload(payload);
 
   if (rep->IsInlined()) {
     // No additional data for inlined values
@@ -128,10 +130,12 @@ bool CrateIOHelper::ReadValueRep(crate::ValueRep* rep) {
   }
 
   // For non-inlined values, read the offset
-  if (!_sr->read8(&rep->data)) {
+  uint64_t data;
+  if (!_sr->read8(&data)) {
     PushError("Failed to read ValueRep data offset");
     return false;
   }
+  rep->SetData(data);
 
   return true;
 }
@@ -214,7 +218,7 @@ bool CrateIOHelper::ReadPayload(Payload* d) {
   if (primPathIndex.value != 0) {
     d->prim_path = Path("/" + std::to_string(primPathIndex.value), "");
   }
-  d->layer_offset = offset;
+  d->layerOffset = offset;
 
   return true;
 }

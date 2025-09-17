@@ -25,7 +25,7 @@ using ProgressCallback = std::function<bool(float progress, void* userptr)>;
 class CrateSectionReader {
  public:
   CrateSectionReader(CrateReader* reader, StreamReader* sr, 
-                     MemoryBudget& memory_manager)
+                     MemoryBudgetManager& memory_manager)
       : _reader(reader), _sr(sr), memory_manager_(memory_manager) {}
 
   // Main section reading functions
@@ -56,12 +56,10 @@ class CrateSectionReader {
   const std::vector<Index>& GetStringIndices() const { return _string_indices; }
   const std::vector<std::string>& GetStrings() const { return _strings; }
   const std::vector<Field>& GetFields() const { return _fields; }
-  const std::vector<FieldSet>& GetFieldSets() const { return _fieldsets; }
+  // TODO: FieldSet and other types need proper definitions
   const std::vector<Spec>& GetSpecs() const { return _specs; }
   
-  // TOC access
-  const crate::TOC& GetTOC() const { return _toc; }
-  const crate::BootStrap& GetBootstrap() const { return _bootstrap; }
+  // TODO: TOC and BootStrap types need proper definitions
   
   // Section indices
   int64_t GetTokensIndex() const { return _tokens_index; }
@@ -80,20 +78,19 @@ class CrateSectionReader {
  private:
   CrateReader* _reader;
   StreamReader* _sr;
-  MemoryBudget& memory_manager_;
+  MemoryBudgetManager& memory_manager_;
   
   // Progress tracking
   ProgressCallback _progress_callback;
   void* _progress_userptr = nullptr;
   
   // Section data
-  crate::BootStrap _bootstrap;
-  crate::TOC _toc;
+  // TODO: BootStrap and TOC types need proper definitions
   std::vector<value::token> _tokens;
   std::vector<Index> _string_indices;
   std::vector<std::string> _strings;
   std::vector<Field> _fields;
-  std::vector<FieldSet> _fieldsets;
+  // TODO: FieldSet type needs proper definition
   std::vector<Spec> _specs;
   
   // Section indices

@@ -51,6 +51,13 @@ class ListOp {
 
     is_explicit = true;
   }
+  
+  ///
+  /// Set the explicit flag (for refactored modules)
+  ///
+  void SetExplicit(bool value) {
+    is_explicit = value;
+  }
 
   ///
   /// Check if this is an explicit list operation

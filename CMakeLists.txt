@@ -148,6 +148,10 @@ option(
 # Use embedded version of OpenSubdiv code by default
 set(osd_DIR ${PROJECT_SOURCE_DIR}/src/osd)
 
+option(TINYUSDZ_USE_REFACTORED_CRATE_READER
+  "Use refactored modular crate reader implementation (experimental)"
+  ON)
+
 option(TINYUSDZ_WITH_AUDIO "Build with Audio support(MP3 and WAV)" ON)
 option(TINYUSDZ_WITH_ALAC_AUDIO "Build with ALAC(as M4A) Audio support" OFF)
 
@@ -402,6 +406,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/xform.cc
     ${PROJECT_SOURCE_DIR}/src/performance.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser.cc
+    ${PROJECT_SOURCE_DIR}/src/ascii-lexer.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-basetype.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-timesamples.cc
     ${PROJECT_SOURCE_DIR}/src/ascii-parser-timesamples-array.cc
@@ -414,6 +419,12 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/composition.cc
     ${PROJECT_SOURCE_DIR}/src/chunk-reader.cc
     ${PROJECT_SOURCE_DIR}/src/crate-reader.cc
+    # ${PROJECT_SOURCE_DIR}/src/crate-io.cc
+    ${PROJECT_SOURCE_DIR}/src/crate-array-reader.cc
+    ${PROJECT_SOURCE_DIR}/src/crate-value-unpacker.cc
+    ${PROJECT_SOURCE_DIR}/src/crate-path-decoder.cc
+    ${PROJECT_SOURCE_DIR}/src/crate-section-reader.cc
+    ${PROJECT_SOURCE_DIR}/src/crate-reader-refactored.cc
     ${PROJECT_SOURCE_DIR}/src/crate-format.cc
     ${PROJECT_SOURCE_DIR}/src/crate-writer.cc
     ${PROJECT_SOURCE_DIR}/src/crate-pprint.cc
@@ -1327,6 +1338,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_WITH_OPENSUBDIV")
   endif(TINYUSDZ_WITH_OPENSUBDIV)
+
+  if(TINYUSDZ_USE_REFACTORED_CRATE_READER)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_USE_REFACTORED_CRATE_READER")
+  endif(TINYUSDZ_USE_REFACTORED_CRATE_READER)
 
   if(TINYUSDZ_WITH_TYDRA)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}

@@ -21,7 +21,7 @@ class CrateReader;
 
 class CrateValueUnpacker {
  public:
-  CrateValueUnpacker(CrateReader* reader, StreamReader* sr, MemoryBudget& memory_manager)
+  CrateValueUnpacker(CrateReader* reader, StreamReader* sr, MemoryBudgetManager& memory_manager)
       : _reader(reader), _sr(sr), memory_manager_(memory_manager) {}
 
   // Main unpacking functions
@@ -45,7 +45,7 @@ class CrateValueUnpacker {
  private:
   CrateReader* _reader;
   StreamReader* _sr;
-  MemoryBudget& memory_manager_;
+  MemoryBudgetManager& memory_manager_;
   std::string _err;
   
   // Helper methods for specific value types

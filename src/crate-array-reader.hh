@@ -10,14 +10,14 @@
 #include "typed-array.hh"
 #include "value-types.hh"
 #include "memory-budget.hh"
-#include "half.hh"
+#include "list-op.hh"
 
 namespace tinyusdz {
 namespace crate {
 
 class CrateArrayReader {
  public:
-  CrateArrayReader(StreamReader* sr, MemoryBudget& memory_manager)
+  CrateArrayReader(StreamReader* sr, MemoryBudgetManager& memory_manager)
       : _sr(sr), memory_manager_(memory_manager) {}
 
   // Integer array reading
@@ -65,7 +65,7 @@ class CrateArrayReader {
 
  private:
   StreamReader* _sr;
-  MemoryBudget& memory_manager_;
+  MemoryBudgetManager& memory_manager_;
   std::string _err;
   std::string _warn;
 };

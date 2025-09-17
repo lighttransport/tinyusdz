@@ -64,7 +64,7 @@ class Node {
 
 class CratePathDecoder {
  public:
-  CratePathDecoder(CrateReader* reader, MemoryBudget& memory_manager)
+  CratePathDecoder(CrateReader* reader, MemoryBudgetManager& memory_manager)
       : _reader(reader), memory_manager_(memory_manager) {}
 
   // Path decompression
@@ -109,7 +109,7 @@ class CratePathDecoder {
 
  private:
   CrateReader* _reader;
-  MemoryBudget& memory_manager_;
+  MemoryBudgetManager& memory_manager_;
   std::vector<Path> _paths;
   std::vector<Node> _nodes;
   std::string _err;

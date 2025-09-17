@@ -58,6 +58,10 @@ struct AssetInfo {
 struct LayerOffset {
   double _offset{0.0};
   double _scale{1.0};
+  
+  // Constructors for refactored modules
+  LayerOffset() = default;
+  LayerOffset(double offset, double scale) : _offset(offset), _scale(scale) {}
 };
 
 // SdfReference

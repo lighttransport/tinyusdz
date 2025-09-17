@@ -239,6 +239,11 @@ struct ValueRep {
     return ss.str();
   }
 
+  // Setter for refactored modules  
+  void SetData(uint64_t d) {
+    data = d;
+  }
+
  private:
   static constexpr uint64_t Combine(int32_t t, bool isInlined, bool isArray,
                                      uint64_t payload) {

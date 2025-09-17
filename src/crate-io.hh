@@ -18,7 +18,7 @@ namespace crate {
 
 class CrateIOHelper {
  public:
-  CrateIOHelper(StreamReader* sr, MemoryBudget& memory_manager)
+  CrateIOHelper(StreamReader* sr, MemoryBudgetManager& memory_manager)
       : _sr(sr), memory_manager_(memory_manager) {}
 
   // Basic reading operations
@@ -57,7 +57,7 @@ class CrateIOHelper {
 
  private:
   StreamReader* _sr;
-  MemoryBudget& memory_manager_;
+  MemoryBudgetManager& memory_manager_;
   std::string _err;
   std::string _warn;
 };

@@ -8,6 +8,7 @@
 #include <cctype>
 #include <cstring>
 #include <sstream>
+#include <unordered_set>
 #include "tiny-format.hh"
 #include "str-util.hh"
 
