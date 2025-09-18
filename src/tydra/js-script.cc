@@ -15,7 +15,7 @@
 #pragma GCC diagnostic ignored "-Wunused-variable"
 #pragma GCC diagnostic ignored "-Wunused-function"
 #pragma GCC diagnostic ignored "-Wunused-parameter"
-#pragma GCC diagnostic ignored "-Wdisabled-macro-expansion"
+// -Wdisabled-macro-expansion is clang-specific, not GCC
 #endif
 
 #include "external/quickjs-ng/quickjs.h"
@@ -52,7 +52,7 @@ namespace tydra {
 #pragma GCC diagnostic ignored "-Wunused-variable"
 #pragma GCC diagnostic ignored "-Wunused-function"
 #pragma GCC diagnostic ignored "-Wunused-parameter"
-#pragma GCC diagnostic ignored "-Wdisabled-macro-expansion"
+// -Wdisabled-macro-expansion is clang-specific, not GCC
 #endif
 
 static std::string LayerMetasToJSON(const LayerMetas* metas) {
@@ -1329,7 +1329,7 @@ static JSValue js_findAttribute(JSContext *ctx, JSValueConst this_val, int argc,
     return JS_EXCEPTION;
   }
 
-  tinyusdz::Path path(path_str);
+  tinyusdz::Path path(path_str, "");
   if (!path.is_valid()) {
     JS_FreeCString(ctx, path_str);
     JS_FreeCString(ctx, attr_name);
@@ -1396,7 +1396,7 @@ static JSValue js_modifyAttributeValue(JSContext *ctx, JSValueConst this_val, in
     return JS_EXCEPTION;
   }
 
-  tinyusdz::Path path(path_str);
+  tinyusdz::Path path(path_str, "");
   if (!path.is_valid()) {
     JS_FreeCString(ctx, path_str);
     JS_FreeCString(ctx, attr_name);
@@ -1437,7 +1437,7 @@ static JSValue js_modifyAttributeValue(JSContext *ctx, JSValueConst this_val, in
       success = ps->ModifyAttributeValue(attr_name, std::string(str_val));
       JS_FreeCString(ctx, str_val);
     }
-  } else if (JS_IsArray(ctx, argv[2])) {
+  } else if (JS_IsArray(argv[2])) {
     // Handle array values (e.g., vec3)
     JSValue length_val = JS_GetPropertyStr(ctx, argv[2], "length");
     uint32_t length;

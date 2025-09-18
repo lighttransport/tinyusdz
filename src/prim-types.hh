@@ -4147,7 +4147,7 @@ class PrimSpec {
       Attribute attr;
       attr.set_name(attrName);
       attr.set_value(value);
-      Property prop(attr, attrName);
+      Property prop(attr);
       _props[attrName] = prop;
       // Add to property names list if not already there
       if (std::find(_properties.begin(), _properties.end(), value::token(attrName)) == _properties.end()) {
