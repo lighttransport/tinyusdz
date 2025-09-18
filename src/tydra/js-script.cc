@@ -1309,6 +1309,180 @@ bool RunJSScriptWithAttribute(const std::string &js_code, const Attribute* attri
   return success;
 }
 
+static JSValue js_findAttribute(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv, int magic, JSValueConst *func_data) {
+  if (!g_current_layer) {
+    return JS_NULL;
+  }
+
+  if (argc < 2) {
+    return JS_ThrowTypeError(ctx, "findAttribute requires 2 arguments (path string, attribute name)");
+  }
+
+  const char *path_str = JS_ToCString(ctx, argv[0]);
+  if (!path_str) {
+    return JS_EXCEPTION;
+  }
+
+  const char *attr_name = JS_ToCString(ctx, argv[1]);
+  if (!attr_name) {
+    JS_FreeCString(ctx, path_str);
+    return JS_EXCEPTION;
+  }
+
+  tinyusdz::Path path(path_str);
+  if (!path.is_valid()) {
+    JS_FreeCString(ctx, path_str);
+    JS_FreeCString(ctx, attr_name);
+    return JS_NULL;
+  }
+
+  // Find the PrimSpec
+  PrimSpec *ps = nullptr;
+  std::string err;
+  bool found = const_cast<Layer*>(g_current_layer)->find_primspec_at(path, const_cast<const PrimSpec**>(&ps), &err);
+
+  if (!found || !ps) {
+    JS_FreeCString(ctx, path_str);
+    JS_FreeCString(ctx, attr_name);
+    return JS_NULL;
+  }
+
+  // Find the attribute
+  const Attribute* attr = ps->FindAttribute(attr_name);
+
+  JS_FreeCString(ctx, path_str);
+  JS_FreeCString(ctx, attr_name);
+
+  if (!attr) {
+    return JS_NULL;
+  }
+
+  // Convert attribute to JSON
+  std::ostringstream oss;
+  oss << "{";
+  oss << "\"name\":\"" << attr->name() << "\",";
+  oss << "\"typeName\":\"" << attr->type_name() << "\",";
+  oss << "\"hasValue\":" << (attr->has_value() ? "true" : "false") << ",";
+  oss << "\"hasTimeSamples\":" << (attr->has_timesamples() ? "true" : "false") << ",";
+  oss << "\"isConnection\":" << (attr->is_connection() ? "true" : "false") << ",";
+  oss << "\"isBlocked\":" << (attr->is_blocked() ? "true" : "false");
+  oss << "}";
+
+  std::string json = oss.str();
+  JSValue result = JS_ParseJSON(ctx, json.c_str(), json.length(), "<attribute>");
+  if (JS_IsException(result)) {
+    return JS_EXCEPTION;
+  }
+  return result;
+}
+
+static JSValue js_modifyAttributeValue(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv, int magic, JSValueConst *func_data) {
+  if (!g_current_layer) {
+    return JS_FALSE;
+  }
+
+  if (argc < 3) {
+    return JS_ThrowTypeError(ctx, "modifyAttributeValue requires 3 arguments (path string, attribute name, value)");
+  }
+
+  const char *path_str = JS_ToCString(ctx, argv[0]);
+  if (!path_str) {
+    return JS_EXCEPTION;
+  }
+
+  const char *attr_name = JS_ToCString(ctx, argv[1]);
+  if (!attr_name) {
+    JS_FreeCString(ctx, path_str);
+    return JS_EXCEPTION;
+  }
+
+  tinyusdz::Path path(path_str);
+  if (!path.is_valid()) {
+    JS_FreeCString(ctx, path_str);
+    JS_FreeCString(ctx, attr_name);
+    return JS_FALSE;
+  }
+
+  // Find the PrimSpec (need non-const for modification)
+  PrimSpec *ps = nullptr;
+  std::string err;
+  bool found = const_cast<Layer*>(g_current_layer)->find_primspec_at(path, const_cast<const PrimSpec**>(&ps), &err);
+
+  if (!found || !ps) {
+    JS_FreeCString(ctx, path_str);
+    JS_FreeCString(ctx, attr_name);
+    return JS_FALSE;
+  }
+
+  bool success = false;
+
+  // Determine the value type and modify accordingly
+  if (JS_IsBool(argv[2])) {
+    bool val = JS_ToBool(ctx, argv[2]);
+    success = ps->ModifyAttributeValue(attr_name, val);
+  } else if (JS_IsNumber(argv[2])) {
+    double val;
+    if (JS_ToFloat64(ctx, &val, argv[2]) == 0) {
+      // Check if it's an integer
+      int32_t ival;
+      if (JS_ToInt32(ctx, &ival, argv[2]) == 0 && (double)ival == val) {
+        success = ps->ModifyAttributeValue(attr_name, ival);
+      } else {
+        success = ps->ModifyAttributeValue(attr_name, (float)val);
+      }
+    }
+  } else if (JS_IsString(argv[2])) {
+    const char *str_val = JS_ToCString(ctx, argv[2]);
+    if (str_val) {
+      success = ps->ModifyAttributeValue(attr_name, std::string(str_val));
+      JS_FreeCString(ctx, str_val);
+    }
+  } else if (JS_IsArray(ctx, argv[2])) {
+    // Handle array values (e.g., vec3)
+    JSValue length_val = JS_GetPropertyStr(ctx, argv[2], "length");
+    uint32_t length;
+    JS_ToUint32(ctx, &length, length_val);
+    JS_FreeValue(ctx, length_val);
+
+    if (length == 3) {
+      value::float3 vec;
+      for (uint32_t i = 0; i < 3; i++) {
+        JSValue elem = JS_GetPropertyUint32(ctx, argv[2], i);
+        double val;
+        JS_ToFloat64(ctx, &val, elem);
+        vec[i] = (float)val;
+        JS_FreeValue(ctx, elem);
+      }
+      success = ps->ModifyAttributeValue(attr_name, vec);
+    } else if (length == 2) {
+      value::float2 vec;
+      for (uint32_t i = 0; i < 2; i++) {
+        JSValue elem = JS_GetPropertyUint32(ctx, argv[2], i);
+        double val;
+        JS_ToFloat64(ctx, &val, elem);
+        vec[i] = (float)val;
+        JS_FreeValue(ctx, elem);
+      }
+      success = ps->ModifyAttributeValue(attr_name, vec);
+    } else if (length == 4) {
+      value::float4 vec;
+      for (uint32_t i = 0; i < 4; i++) {
+        JSValue elem = JS_GetPropertyUint32(ctx, argv[2], i);
+        double val;
+        JS_ToFloat64(ctx, &val, elem);
+        vec[i] = (float)val;
+        JS_FreeValue(ctx, elem);
+      }
+      success = ps->ModifyAttributeValue(attr_name, vec);
+    }
+  }
+
+  JS_FreeCString(ctx, path_str);
+  JS_FreeCString(ctx, attr_name);
+
+  return JS_NewBool(ctx, success);
+}
+
 bool RunJSScriptWithLayer(const std::string &js_code, const class Layer* layer, std::string &err) {
   JSRuntime *rt = JS_NewRuntime();
   if (!rt) {
@@ -1332,7 +1506,13 @@ bool RunJSScriptWithLayer(const std::string &js_code, const class Layer* layer, 
   
   JSValue metaFunc = JS_NewCFunctionData(ctx, js_getPrimSpecMetadata, 1, 0, 0, nullptr);
   JS_SetPropertyStr(ctx, global_obj, "getPrimSpecMetadata", metaFunc);
-  
+
+  JSValue findAttrFunc = JS_NewCFunctionData(ctx, js_findAttribute, 2, 0, 0, nullptr);
+  JS_SetPropertyStr(ctx, global_obj, "findAttribute", findAttrFunc);
+
+  JSValue modifyAttrFunc = JS_NewCFunctionData(ctx, js_modifyAttributeValue, 3, 0, 0, nullptr);
+  JS_SetPropertyStr(ctx, global_obj, "modifyAttributeValue", modifyAttrFunc);
+
   JS_FreeValue(ctx, global_obj);
 
   JSValue result = JS_Eval(ctx, js_code.c_str(), js_code.length(),

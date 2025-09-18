@@ -4102,6 +4102,61 @@ class PrimSpec {
   const PropertyMap &props() const { return _props; }
   PropertyMap &props() { return _props; }
 
+  ///
+  /// Find attribute by name in the properties
+  /// Returns nullptr if not found or if the property is not an attribute
+  ///
+  const Attribute* FindAttribute(const std::string& attrName) const {
+    auto it = _props.find(attrName);
+    if (it != _props.end() && it->second.is_attribute()) {
+      return &(it->second.get_attribute());
+    }
+    return nullptr;
+  }
+
+  ///
+  /// Find attribute by name in the properties (non-const version)
+  /// Returns nullptr if not found or if the property is not an attribute
+  ///
+  Attribute* FindAttribute(const std::string& attrName) {
+    auto it = _props.find(attrName);
+    if (it != _props.end() && it->second.is_attribute()) {
+      return &(it->second.attribute());
+    }
+    return nullptr;
+  }
+
+  ///
+  /// Modify attribute value by name
+  /// Creates the attribute if it doesn't exist
+  /// Returns true on success, false on failure
+  ///
+  template<typename T>
+  bool ModifyAttributeValue(const std::string& attrName, const T& value) {
+    auto it = _props.find(attrName);
+    if (it != _props.end()) {
+      if (it->second.is_attribute()) {
+        // Existing attribute - modify its value
+        it->second.attribute().set_value(value);
+        return true;
+      }
+      // Property exists but is not an attribute
+      return false;
+    } else {
+      // Create new attribute
+      Attribute attr;
+      attr.set_name(attrName);
+      attr.set_value(value);
+      Property prop(attr, attrName);
+      _props[attrName] = prop;
+      // Add to property names list if not already there
+      if (std::find(_properties.begin(), _properties.end(), value::token(attrName)) == _properties.end()) {
+        _properties.push_back(value::token(attrName));
+      }
+      return true;
+    }
+  }
+
   const std::vector<Reference> &get_references();
   const ListEditQual &get_references_listedit_qualifier();
 
