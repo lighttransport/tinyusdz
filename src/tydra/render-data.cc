@@ -3124,6 +3124,7 @@ bool RenderSceneConverter::BuildVertexIndicesFastImpl(RenderMesh &mesh) {
     }
   }
 
+#if 0
   const value::float2 *texcoord0_ptr = nullptr;
   const value::float2 *texcoord1_ptr = nullptr;
 
@@ -3225,6 +3226,7 @@ bool RenderSceneConverter::BuildVertexIndicesFastImpl(RenderMesh &mesh) {
           ? reinterpret_cast<const float *>(
                 mesh.vertex_opacities.get_data().data())
           : nullptr;
+#endif
 
   std::vector<uint32_t> out_point_indices;  // to reorder position data
   out_point_indices.resize(num_fvs);
