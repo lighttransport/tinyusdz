@@ -3093,6 +3093,348 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
   return true;
 }
 
+bool RenderSceneConverter::BuildVertexIndicesFastImpl(RenderMesh &mesh) {
+  //
+  // - If mesh is triangulated, use triangulatedFaceVertexIndices, otherwise use
+  // faceVertxIndices.
+  // - Make vertex attributes 'facevarying' variability
+  // - No similarity search.
+  // - Reorder vertex attributes to 'vertex' variability.
+  //
+
+  TUSDZ_LOG_I("BuildVertexIndicesFastImpl");
+
+  const std::vector<uint32_t> &fvIndices =
+      mesh.triangulatedFaceVertexIndices.size()
+          ? mesh.triangulatedFaceVertexIndices
+          : mesh.usdFaceVertexIndices;
+
+  size_t num_verts = mesh.points.size();
+  size_t num_fvs = fvIndices.size();
+
+  if (mesh.normals.vertex_count()) {
+    if (!mesh.normals.is_facevarying()) {
+      PUSH_ERROR_AND_RETURN(
+          "Internal error. normals must be 'facevarying' variability.");
+    }
+    if (mesh.normals.vertex_count() != num_fvs) {
+      PUSH_ERROR_AND_RETURN(
+          "Internal error. The number of normal items does not match with "
+          "the number of facevarying items.");
+    }
+  }
+
+  const value::float2 *texcoord0_ptr = nullptr;
+  const value::float2 *texcoord1_ptr = nullptr;
+
+  for (const auto &it : mesh.texcoords) {
+    if (it.second.vertex_count() > 0) {
+      if (!it.second.is_facevarying()) {
+        PUSH_ERROR_AND_RETURN(
+            "Internal error. texcoords must be 'facevarying' variability.");
+      }
+      if (it.second.vertex_count() != num_fvs) {
+        PUSH_ERROR_AND_RETURN(
+            "Internal error. The number of texcoord items does not match "
+            "with the number of facevarying items.");
+      }
+
+      if (it.first == 0) {
+        texcoord0_ptr = reinterpret_cast<const value::float2 *>(
+            it.second.get_data().data());
+      } else if (it.first == 1) {
+        texcoord1_ptr = reinterpret_cast<const value::float2 *>(
+            it.second.get_data().data());
+      } else {
+        // ignore.
+      }
+    }
+  }
+
+  const value::float3 *tangents_ptr = nullptr;
+  const value::float3 *binormals_ptr = nullptr;
+
+  if (texcoord0_ptr) {
+    if (mesh.tangents.vertex_count()) {
+      if (!mesh.tangents.is_facevarying()) {
+        PUSH_ERROR_AND_RETURN(
+            "Internal error. tangents must be 'facevarying' variability.");
+      }
+      if (mesh.tangents.vertex_count() != num_fvs) {
+        PUSH_ERROR_AND_RETURN(
+            "Internal error. The number of tangents items does not match "
+            "with the number of facevarying items.");
+      }
+
+      tangents_ptr = reinterpret_cast<const value::float3 *>(
+          mesh.tangents.get_data().data());
+    }
+
+    if (mesh.binormals.vertex_count()) {
+      if (!mesh.binormals.is_facevarying()) {
+        PUSH_ERROR_AND_RETURN(
+            "Internal error. binormals must be 'facevarying' variability.");
+      }
+      if (mesh.binormals.vertex_count() != num_fvs) {
+        PUSH_ERROR_AND_RETURN(
+            "Internal error. The number of binormals items does not match "
+            "with the number of facevarying items.");
+      }
+      binormals_ptr = reinterpret_cast<const value::float3 *>(
+          mesh.binormals.get_data().data());
+    }
+  }
+
+  if (mesh.vertex_colors.vertex_count()) {
+    if (!mesh.vertex_colors.is_facevarying()) {
+      PUSH_ERROR_AND_RETURN(
+          "Internal error. vertex_colors must be 'facevarying' variability.");
+    }
+    if (mesh.vertex_colors.vertex_count() != num_fvs) {
+      PUSH_ERROR_AND_RETURN(
+          "Internal error. The number of vertex_color items does not match "
+          "with the number of facevarying items.");
+    }
+  }
+
+  if (mesh.vertex_opacities.vertex_count()) {
+    if (!mesh.vertex_opacities.is_facevarying()) {
+      PUSH_ERROR_AND_RETURN(
+          "Internal error. vertex_opacities must be 'facevarying' "
+          "variability.");
+    }
+    if (mesh.vertex_colors.vertex_count() != num_fvs) {
+      PUSH_ERROR_AND_RETURN(
+          "Internal error. The number of vertex_opacity items does not match "
+          "with the number of facevarying items.");
+    }
+  }
+
+  const value::float3 *normals_ptr =
+      (mesh.normals.vertex_count() > 0)
+          ? reinterpret_cast<const value::float3 *>(
+                mesh.normals.get_data().data())
+          : nullptr;
+  const value::float3 *colors_ptr =
+      (mesh.vertex_colors.vertex_count() > 0)
+          ? reinterpret_cast<const value::float3 *>(
+                mesh.vertex_colors.get_data().data())
+          : nullptr;
+  const float *opacities_ptr =
+      (mesh.vertex_opacities.vertex_count() > 0)
+          ? reinterpret_cast<const float *>(
+                mesh.vertex_opacities.get_data().data())
+          : nullptr;
+
+  std::vector<uint32_t> out_point_indices;  // to reorder position data
+  out_point_indices.resize(num_fvs);
+  
+  
+  for (size_t i = 0; i < num_fvs; i++) {
+    size_t fvi = fvIndices[i];
+    if (fvi >= num_verts) {
+      PUSH_ERROR("usdFaceVertexIndices.min_value: " << *std::min_element(mesh.usdFaceVertexIndices.begin(), mesh.usdFaceVertexIndices.end()) << "\n");
+      PUSH_ERROR("usdFaceVertexIndices.max_value: " << *std::max_element(mesh.usdFaceVertexIndices.begin(), mesh.usdFaceVertexIndices.end()) << "\n");
+      PUSH_ERROR("triangulatedFaceVertexIndices.min_value: " << *std::min_element(mesh.triangulatedFaceVertexIndices.begin(), mesh.triangulatedFaceVertexIndices.end()) << "\n");
+      PUSH_ERROR("triangulatedFaceVertexIndices.max_value: " << *std::max_element(mesh.triangulatedFaceVertexIndices.begin(), mesh.triangulatedFaceVertexIndices.end()) << "\n");
+      PUSH_ERROR_AND_RETURN(fmt::format(
+          "Invalid faceVertexIndex {}. Must be less than {}(triangulated = {})", fvi, num_fvs, mesh.triangulatedFaceVertexIndices.size() ? "true" : "faise"));
+    }
+
+    out_point_indices[i] = uint32_t(fvi);
+
+  }
+
+  const std::vector<uint32_t> &out_indices = fvIndices;
+
+  if (out_indices.size() != out_point_indices.size()) {
+    PUSH_ERROR_AND_RETURN(
+        "Internal error. out_indices.size != out_point_indices.");
+  }
+
+  //
+  // Reorder 'vertex' varying attributes(points, jointIndices/jointWeights,
+  // BlendShape points, ...)
+  // TODO: Preserve input order as much as possible.
+  //
+  {
+    uint32_t numPoints =
+        *std::max_element(out_indices.begin(), out_indices.end()) + 1;
+    {
+      std::vector<value::float3> tmp_points(numPoints);
+      // TODO: Use vertex_output[i].point_index?
+      for (size_t i = 0; i < out_point_indices.size(); i++) {
+        if (out_point_indices[i] >= mesh.points.size()) {
+          PUSH_ERROR_AND_RETURN("Internal error. point index out-of-range.");
+        }
+        tmp_points[out_indices[i]] = mesh.points[out_point_indices[i]];
+      }
+      mesh.points.swap(tmp_points);
+    }
+
+    if (mesh.joint_and_weights.jointIndices.size()) {
+      if (mesh.joint_and_weights.elementSize < 1) {
+        PUSH_ERROR_AND_RETURN(
+            "Internal error. Invalid elementSize in mesh.joint_and_weights.");
+      }
+      uint32_t elementSize = uint32_t(mesh.joint_and_weights.elementSize);
+      std::vector<int> tmp_indices(size_t(numPoints) * size_t(elementSize));
+      std::vector<float> tmp_weights(size_t(numPoints) * size_t(elementSize));
+      for (size_t i = 0; i < out_point_indices.size(); i++) {
+        if ((elementSize * out_point_indices[i]) >=
+            mesh.joint_and_weights.jointIndices.size()) {
+          PUSH_ERROR_AND_RETURN(
+              "Internal error. point index exceeds jointIndices.size.");
+        }
+        for (size_t k = 0; k < elementSize; k++) {
+          tmp_indices[size_t(elementSize) * size_t(out_indices[i]) + k] =
+              mesh.joint_and_weights
+                  .jointIndices[size_t(elementSize) * size_t(out_point_indices[i]) + k];
+        }
+
+        if ((elementSize * out_point_indices[i]) >=
+            mesh.joint_and_weights.jointWeights.size()) {
+          PUSH_ERROR_AND_RETURN(
+              "Internal error. point index exceeds jointWeights.size.");
+        }
+
+        for (size_t k = 0; k < elementSize; k++) {
+          tmp_weights[size_t(elementSize) * size_t(out_indices[i]) + k] =
+              mesh.joint_and_weights
+                  .jointWeights[size_t(elementSize) * size_t(out_point_indices[i]) + k];
+        }
+      }
+      mesh.joint_and_weights.jointIndices.swap(tmp_indices);
+      mesh.joint_and_weights.jointWeights.swap(tmp_weights);
+    }
+
+#if 0 // TODO
+    if (mesh.targets.size()) {
+      // For BlendShape, reordering pointIndices, pointOffsets and normalOffsets is not enough.
+      // Some points could be duplicated, so we need to find a mapping of org pointIdx -> pointIdx list in reordered points,
+      // Then splat point attributes accordingly.
+
+      // org pointIdx -> List of pointIdx in reordered points.
+      std::unordered_map<uint32_t, std::vector<uint32_t>> pointIdxRemap;
+
+      for (size_t i = 0; i < vertex_output.size(); i++) {
+        pointIdxRemap[vertex_output.point_indices[i]].push_back(uint32_t(i));
+      }
+
+      for (auto &target : mesh.targets) {
+
+        std::vector<value::float3> tmpPointOffsets;
+        std::vector<value::float3> tmpNormalOffsets;
+        std::vector<uint32_t> tmpPointIndices;
+
+        for (size_t i = 0; i < target.second.pointIndices.size(); i++) {
+
+          uint32_t orgPointIdx = target.second.pointIndices[i];
+          if (!pointIdxRemap.count(orgPointIdx)) {
+            PUSH_ERROR_AND_RETURN("Invalid pointIndices value.");
+          }
+          const std::vector<uint32_t> &dstPointIndices = pointIdxRemap.at(orgPointIdx);
+
+          for (size_t k = 0; k < dstPointIndices.size(); k++) {
+            if (target.second.pointOffsets.size()) {
+              if (i >= target.second.pointOffsets.size()) {
+                PUSH_ERROR_AND_RETURN("Invalid pointOffsets.size.");
+              }
+              tmpPointOffsets.push_back(target.second.pointOffsets[i]);
+            }
+            if (target.second.normalOffsets.size()) {
+              if (i >= target.second.normalOffsets.size()) {
+                PUSH_ERROR_AND_RETURN("Invalid normalOffsets.size.");
+              }
+              tmpNormalOffsets.push_back(target.second.normalOffsets[i]);
+            }
+
+            tmpPointIndices.push_back(dstPointIndices[k]);
+          }
+        }
+
+        target.second.pointIndices.swap(tmpPointIndices);
+        target.second.pointOffsets.swap(tmpPointOffsets);
+        target.second.normalOffsets.swap(tmpNormalOffsets);
+
+      }
+
+      // TODO: Inbetween BlendShapes
+
+    }
+#endif
+
+    if (mesh.normals.vertex_count() > 0) {
+        const value::float3 *p = reinterpret_cast<const value::float3 *>(mesh.normals.buffer());
+
+        std::vector<value::float3> tmp_buf(numPoints);
+        for (size_t i = 0; i < out_point_indices.size(); i++) {
+          if (out_point_indices[i] >= mesh.normals.vertex_count()) {
+            PUSH_ERROR_AND_RETURN("Internal error. point index out-of-range.");
+          }
+          tmp_buf[out_indices[i]] = p[out_point_indices[i]];
+        }
+        mesh.normals.set_buffer(reinterpret_cast<const uint8_t *>(tmp_buf.data()),
+        tmp_buf.size() * sizeof(value::float3));
+        mesh.normals.variability = VertexVariability::Vertex;
+    }
+  }
+
+
+#if 0
+  if (texcoord0_ptr) {
+    mesh.texcoords[0].set_buffer(
+        reinterpret_cast<const uint8_t *>(vertex_output.uv0s.data()),
+        vertex_output.uv0s.size() * sizeof(value::float2));
+    mesh.texcoords[0].variability = VertexVariability::Vertex;
+  }
+
+  if (texcoord1_ptr) {
+    mesh.texcoords[1].set_buffer(
+        reinterpret_cast<const uint8_t *>(vertex_output.uv1s.data()),
+        vertex_output.uv1s.size() * sizeof(value::float2));
+    mesh.texcoords[1].variability = VertexVariability::Vertex;
+  }
+
+  if (tangents_ptr) {
+    mesh.tangents.set_buffer(
+        reinterpret_cast<const uint8_t *>(vertex_output.tangents.data()),
+        vertex_output.tangents.size() * sizeof(value::float3));
+    mesh.tangents.variability = VertexVariability::Vertex;
+  }
+
+  if (binormals_ptr) {
+    mesh.binormals.set_buffer(
+        reinterpret_cast<const uint8_t *>(vertex_output.binormals.data()),
+        vertex_output.binormals.size() * sizeof(value::float3));
+    mesh.binormals.variability = VertexVariability::Vertex;
+  }
+
+  if (colors_ptr) {
+    mesh.vertex_colors.set_buffer(
+        reinterpret_cast<const uint8_t *>(vertex_output.colors.data()),
+        vertex_output.colors.size() * sizeof(value::float3));
+    mesh.vertex_colors.variability = VertexVariability::Vertex;
+  }
+
+  if (opacities_ptr) {
+    mesh.vertex_opacities.set_buffer(
+        reinterpret_cast<const uint8_t *>(vertex_output.opacities.data()),
+        vertex_output.opacities.size() * sizeof(float));
+    mesh.vertex_opacities.variability = VertexVariability::Vertex;
+  }
+#endif
+
+  if (mesh.is_triangulated()) {
+    mesh.triangulatedFaceVertexIndices = std::move(out_indices);
+  } else {
+    mesh.usdFaceVertexIndices = std::move(out_indices);
+  }
+
+
+  return true;
+}
+
 bool RenderSceneConverter::ConvertMesh(
     const RenderSceneConverterEnv &env, const Path &abs_prim_path,
     const GeomMesh &mesh, const MaterialPath &material_path,
@@ -4222,7 +4564,7 @@ bool RenderSceneConverter::ConvertMesh(
       DCOUT("Build vertex indices");
       TUSDZ_LOG_I("Build vertex indices");
 
-      if (!BuildVertexIndicesImpl(dst)) {
+      if (!BuildVertexIndicesFastImpl(dst)) {
         return false;
       }
 

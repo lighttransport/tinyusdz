@@ -2486,6 +2486,18 @@ class RenderSceneConverter {
   ///
   bool BuildVertexIndicesImpl(RenderMesh &mesh);
 
+  ///
+  /// Build (single) vertex indices for RenderMesh.
+  /// Skip similarity search for faster processing.
+  /// existing `RenderMesh::faceVertexIndices` will be replaced with built indices.
+  /// All vertex attributes are converted to 'vertex' variability.
+  ///
+  /// Limitation: Currently we only supports texcoords up to two(primary(0) and secondary(1)).
+  ///
+  /// @param[inout] mesh
+  ///
+  bool BuildVertexIndicesFastImpl(RenderMesh &mesh);
+
   //
   // Get Skeleton assigned to the GeomMesh Prim and convert it to SkelHierarchy.
   // Also get SkelAnimation attached to Skeleton(if exists)
