@@ -73,6 +73,7 @@
 #include "common-types.hh"
 #include "scene-access.hh"
 #include "spatial-hashes.hh"
+#include "vertex-data.hh"
 
 namespace tinyusdz {
 
@@ -1288,12 +1289,12 @@ struct RenderCamera {
   float horizontalAperture{20.965f}; // [mm]
 
   // vertical FOV in radian
-  inline float yfov() {
+  inline float yfov() const {
     return 2.0f * std::atan(0.5f * verticalAperture / focalLength);
   }
 
   // horizontal FOV in radian
-  float xfov() {
+  float xfov() const {
     return 2.0f * std::atan(0.5f * horizontalAperture / focalLength);
   }
 
@@ -1567,16 +1568,10 @@ struct RenderSceneConverterConfig {
 // that tangent and binormal is supplied through user-defined primvar.
 //
 // TODO: Use spatial hash for robust dedup(consider floating-point eps)
-// TODO: Polish interface to support arbitrary vertex configuration.
-//
-// When TYDRA_USE_INDEX is defined, use array indices instead of values
-// to save memory. Index value of -1 (or ~0u for uint32_t) means no attribute.
-//
+// Vertex data structures have been moved to vertex-data.hh
+// Already included at the top of this file
 
-// Forward declaration for attribute arrays
-template <class PackedVert>
-struct DefaultVertexInput;
-
+#if 0 // Moved to vertex-data.hh
 // Epsilon values for floating point comparison
 constexpr float kPositionEps = 1e-6f;
 constexpr float kAttributeEps = 1e-3f;
@@ -2231,6 +2226,7 @@ void BuildIndicesWithSpatialHash(
     // Log statistics...
   }
 }
+#endif // Moved to vertex-data.hh
 
 class RenderSceneConverterEnv {
  public:
@@ -2384,13 +2380,13 @@ class RenderSceneConverter {
   ///
   ///
   bool ConvertMesh(
-      const RenderSceneConverterEnv &env, const tinyusdz::Path &mesh_abs_path,
-      const tinyusdz::GeomMesh &mesh, const MaterialPath &material_path,
+      const RenderSceneConverterEnv &env, const Path &mesh_abs_path,
+      const GeomMesh &mesh, const MaterialPath &material_path,
       const std::map<std::string, MaterialPath> &subset_material_path_map,
       //const std::map<std::string, int64_t> &rmaterial_map,
       const StringAndIdMap &rmaterial_map,
-      const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
-      const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+      const std::vector<const GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const BlendShape *>>
           &blendshapes,
       RenderMesh *dst);
 
@@ -2400,8 +2396,8 @@ class RenderSceneConverter {
   /// @return true when success.
   ///
   bool ConvertMaterial(const RenderSceneConverterEnv &env,
-                       const tinyusdz::Path &abs_mat_path,
-                       const tinyusdz::Material &material,
+                       const Path &abs_mat_path,
+                       const Material &material,
                        RenderMaterial *rmat_out);
 
   ///
@@ -2415,8 +2411,8 @@ class RenderSceneConverter {
   /// @return true when success.
   ///
   bool ConvertPreviewSurfaceShader(const RenderSceneConverterEnv &env,
-                                   const tinyusdz::Path &shader_abs_path,
-                                   const tinyusdz::UsdPreviewSurface &shader,
+                                   const Path &shader_abs_path,
+                                   const UsdPreviewSurface &shader,
                                    PreviewSurfaceShader *pss_out);
 
   ///
@@ -2502,7 +2498,7 @@ class RenderSceneConverter {
   // Get Skeleton assigned to the GeomMesh Prim and convert it to SkelHierarchy.
   // Also get SkelAnimation attached to Skeleton(if exists)
   //
-  bool ConvertSkeletonImpl(const RenderSceneConverterEnv &env, const tinyusdz::GeomMesh &mesh,
+  bool ConvertSkeletonImpl(const RenderSceneConverterEnv &env, const GeomMesh &mesh,
                        SkelHierarchy *out_skel, nonstd::optional<Animation> *out_anim);
 
   bool BuildNodeHierarchyImpl(
