@@ -29,6 +29,7 @@
 #include "usd-to-json.hh"
 #include "json-to-usd.hh"
 #include "sha256.hh"
+#include "logger.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -603,6 +604,8 @@ class TinyUSDZLoaderNative {
 
     // Do not try to build indices(avoid temp memory consumption of vertex similarity search)
     //env.mesh_config.prefer_non_indexed = true;
+
+    //env.mesh_config.build_index_method = 0; // simple
 
     if (is_usdz) {
       // TODO: Support USDZ + Composition
@@ -1409,18 +1412,30 @@ class TinyUSDZLoaderNative {
     const tinyusdz::tydra::RenderMesh &rmesh =
         render_scene_.meshes[size_t(mesh_id)];
 
+    //if (rmesh.has_indices()) {
+      const uint32_t *indices_ptr = rmesh.faceVertexIndices().data();
+      mesh.set("faceVertexIndices",
+               emscripten::typed_memory_view(rmesh.faceVertexIndices().size(),
+                                             indices_ptr));
+      const uint32_t *counts_ptr = rmesh.faceVertexCounts().data();
+      mesh.set("faceVertexCounts",
+               emscripten::typed_memory_view(rmesh.faceVertexCounts().size(),
+                                             counts_ptr));
+    //} else {
+    //  // Assume all triangles and facevarying attributes.
+    //  if (!rmesh.is_triangulated()) {
+    //    TUSDZ_LOG_E("Mesh must be triangulated when the mesh doesn't have indices\n");
+    //    return mesh;
+    //  }
+    //}
+
     // TODO: Use three.js scene description format?
     mesh.set("primName", rmesh.prim_name);
     mesh.set("displayName", rmesh.display_name);
     mesh.set("absPath", rmesh.abs_path);
-    const uint32_t *indices_ptr = rmesh.faceVertexIndices().data();
-    mesh.set("faceVertexIndices",
-             emscripten::typed_memory_view(rmesh.faceVertexIndices().size(),
-                                           indices_ptr));
-    const uint32_t *counts_ptr = rmesh.faceVertexCounts().data();
-    mesh.set("faceVertexCounts",
-             emscripten::typed_memory_view(rmesh.faceVertexCounts().size(),
-                                           counts_ptr));
+    //mesh.set("hasIndices", rmesh.has_indices());
+
+
     const float *points_ptr =
         reinterpret_cast<const float *>(rmesh.points.data());
     // vec3
@@ -1447,6 +1462,14 @@ class TinyUSDZLoaderNative {
                  emscripten::typed_memory_view(
                      rmesh.texcoords.at(uvSlotId).vertex_count() * 2, uvs_ptr));
       }
+    }
+
+    if (!rmesh.tangents.empty()) {
+      const float *tangents_ptr =
+          reinterpret_cast<const float *>(rmesh.tangents.data.data());
+
+      mesh.set("tangents", emscripten::typed_memory_view(
+                              rmesh.tangents.vertex_count() * 3, tangents_ptr));
     }
 
     mesh.set("materialId", rmesh.material_id);
