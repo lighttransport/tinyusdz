@@ -1,0 +1,11 @@
+build/
+*.o
+*.a
+*.so
+*.obj
+simple_test
+loop_simple_test
+tinysubdiv_test
+tinysubdiv_example
+tinysubdiv_loop_test
+tinysubdiv_usd_test
