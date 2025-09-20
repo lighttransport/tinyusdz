@@ -365,9 +365,16 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         const geometry = new THREE.BufferGeometry();
         geometry.setAttribute('position', new THREE.BufferAttribute(mesh.points, 3));
 
-        // Assume mesh is triangulated.
-        // itemsize = 1 since Index expects IntArray for VertexIndices in Three.js?
-        geometry.setIndex(new THREE.BufferAttribute(mesh.faceVertexIndices, 1));
+        if (Object.prototype.hasOwnProperty.call(mesh, 'faceVertexIndices')) {
+          if (mesh.faceVertexIndices.length >0 ) {
+            //console.log("setIndex", mesh.faceVertexIndices.length);
+            // Assume mesh is triangulated.
+            // itemsize = 1 since Index expects IntArray for VertexIndices in Three.js?
+            geometry.setIndex(new THREE.BufferAttribute(mesh.faceVertexIndices, 1));
+          } else {
+            //console.log("noindex");
+          }
+        }
 
         if (Object.prototype.hasOwnProperty.call(mesh, 'texcoords')) {
             geometry.setAttribute('uv', new THREE.BufferAttribute(mesh.texcoords, 2));
