@@ -2513,6 +2513,26 @@ class Attribute {
     return value::TYPE_ID_INVALID;
   }
 
+  // Get the attribute type as a string
+  std::string get_attribute_type() const {
+    return type_name();
+  }
+
+  // Set/modify the attribute type by type name
+  bool set_attribute_type(const std::string &type_name) {
+    // Validate that the type name is valid
+    uint32_t type_id = value::GetTypeId(type_name);
+    if (type_id == value::TYPE_ID_INVALID) {
+      return false;
+    }
+
+    _type_name = type_name;
+    // Clear the current value since type has changed
+    // The value needs to be set again with the correct type
+    _var = primvar::PrimVar();
+    return true;
+  }
+
   template <typename T>
   void set_value(const T &v) {
     if (_type_name.empty()) {
@@ -4014,6 +4034,9 @@ class PrimSpec {
 
   const std::string &name() const { return _name; }
   std::string &name() { return _name; }
+
+  // Set the name of this PrimSpec
+  void set_name(const std::string &new_name) { _name = new_name; }
 
   const std::string &typeName() const { return _typeName; }
   // Can change type name
