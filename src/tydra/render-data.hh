@@ -73,6 +73,7 @@
 #include "common-types.hh"
 #include "scene-access.hh"
 #include "spatial-hashes.hh"
+#include "render-data-pprint.hh"
 
 namespace tinyusdz {
 
@@ -209,7 +210,7 @@ enum class VertexVariability {
   Indexed,      // Dedicated index buffer provided(unflattened Indexed Primvar).
 };
 
-std::string to_string(VertexVariability variability);
+//std::string to_string(VertexVariability variability);
 
 enum class NodeType {
   Xform,
@@ -222,7 +223,6 @@ enum class NodeType {
   // TODO(more lights)...
 };
 
-std::string to_string(NodeType ntype);
 
 enum class ComponentType {
   UInt8,
@@ -236,7 +236,6 @@ enum class ComponentType {
   Double,
 };
 
-std::string to_string(ComponentType ty);
 
 // glTF-like BufferData
 struct BufferData {
@@ -479,7 +478,6 @@ static size_t VertexAttributeFormatSize(VertexAttributeFormat f) {
   return elemsize;
 }
 
-std::string to_string(VertexAttributeFormat f);
 
 ///
 /// Vertex attribute array. Stores raw vertex attribute data.
@@ -660,7 +658,6 @@ enum class ColorSpace {
   Unknown,         // Unknown color space. 
 };
 
-std::string to_string(ColorSpace cs);
 
 // Infer colorspace from token value.
 bool InferColorSpace(const value::token &tok, ColorSpace *result);
@@ -1090,7 +1087,6 @@ enum class UVReaderFloatComponentType {
   COMPONENT_FLOAT4,
 };
 
-std::string to_string(UVReaderFloatComponentType ty);
 
 // TODO: Deprecate UVReaderFloat.
 // float, float2, float3 or float4 only
@@ -1172,7 +1168,9 @@ struct UVTexture {
   uint64_t handle{0};            // Handle ID for Graphics API. 0 = invalid
 };
 
+// to_string functions for UVTexture nested types
 std::string to_string(UVTexture::WrapMode ty);
+std::string to_string(const UVTexture::Channel channel);
 
 struct UDIMTexture {
   enum class Channel { R, G, B, RGB, RGBA };
