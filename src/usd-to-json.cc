@@ -1656,7 +1656,8 @@ json ToJSON(const tinyusdz::Stage& stage, USDToJSONContext* context) {
   json cj;
   for (const auto& item : stage.root_prims()) {
     if (!PrimToJSONRec(cj, item, 0)) {
-      return json::object(); // Return empty on error
+      j = json::object(); // Reset to empty on error
+      return j;
     }
   }
 

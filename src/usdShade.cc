@@ -51,30 +51,28 @@ bool UsdShadePrim::has_sdr_metadata(const std::string &key) {
 }
 
 const std::string UsdShadePrim::get_sdr_metadata(const std::string &key) {
-  if (!metas().sdrMetadata.has_value()) {
-    return std::string();
-  }
-
-  const Dictionary &dict = metas().sdrMetadata.value();
-
-  if (!HasCustomDataKey(dict, key)) {
-    return std::string();
-  }
-
-  // check the type of value.
-  MetaVariable var;
-  if (!GetCustomDataByKey(dict, key, &var)) {
-    return std::string();
-  }
-
-  if (var.type_id() != value::TypeTraits<std::string>::type_id()) {
-    return std::string();
-  }
-
   std::string svalue;
-  if (!var.get_value(&svalue)) {
-    return std::string();
+
+  if (metas().sdrMetadata.has_value()) {
+
+    const Dictionary &dict = metas().sdrMetadata.value();
+
+    if (HasCustomDataKey(dict, key)) {
+
+      // check the type of value.
+      MetaVariable var;
+      if (GetCustomDataByKey(dict, key, &var)) {
+
+        if (var.type_id() == value::TypeTraits<std::string>::type_id()) {
+          if (!var.get_value(&svalue)) {
+            svalue = std::string();
+          }
+        }
+
+      }
+    }
   }
+
 
   return svalue;
 }

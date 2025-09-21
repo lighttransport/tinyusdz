@@ -311,7 +311,7 @@ std::vector<int32_t> GeomPrimvar::get_indices(const double t) const {
       return get_default_indices();
     }
   }
-  
+
   if (has_timesampled_indices()) {
     std::vector<int32_t> indices;
     if (get_timesampled_indices().get(&indices, t)) {
@@ -500,7 +500,7 @@ bool GeomPrimvar::get_value(T *dest, std::string *err) const {
       }
       return false;
     }
-    
+
     if (auto pv =ts.get_samples().at(0).value.as<T>()) {
       (*dest) = (*pv);
       return true;
@@ -886,6 +886,8 @@ const std::vector<int32_t> GeomMesh::get_faceVertexIndices(double time) const {
 
 std::vector<value::token> GeomMesh::get_joints() const {
   constexpr auto kSkelJoints = "skel:joints";
+  std::vector<value::token> dst;
+  
 #if 0
   if (has_primvar(kSkelJoints)) {
     // 'primvars:skel:joints'
@@ -893,22 +895,21 @@ std::vector<value::token> GeomMesh::get_joints() const {
     GeomPrimvar primvar;
     if (!get_primvar(kSkelJoints, &primvar, &err)) {
       DCOUT("Invalid `skel:joints` primvar. err = " << err);
-      return {};
+      return dst;
     }
 
     if (primvar.has_indices()) {
-      // indexed primvar for skel:joint is not supported 
+      // indexed primvar for skel:joint is not supported
       DCOUT("Indexed primvar is not supported for `skel:joints`");
-      return {};
+      return dst;
     }
 
     const Attribute &attr = primvar.get_attribute();
     if (!attr.is_uniform()) {
       DCOUT("`skel:joints` must be uniform attribute");
-      return {};
+      return dst;
     }
 
-    std::vector<value::token> dst;
     if (!primvar.get_value(&dst)) {
       DCOUT("`skel:joints` must be token[] type, but got " << primvar.type_name());
     }
@@ -917,23 +918,22 @@ std::vector<value::token> GeomMesh::get_joints() const {
   {
     // lookup `skel:joints` prop
     if (!props.count(kSkelJoints)) {
-      return {};
+      return dst;
     }
 
     const auto &prop = props.at(kSkelJoints);
     if (prop.get_attribute().is_uniform() && prop.get_attribute().type_name() == "token[]") {
-      
-      std::vector<value::token> dst;
+
       if (!prop.get_attribute().get_value(&dst)) {
-        return {};
+        return dst;
       }
 
       return dst;
-      
-    } 
+
+    }
     DCOUT("`skel:joints` must be uniform token[] attribute, but got " << prop.value_type_name() << " (or Relationship))");
   }
-  return {};
+  return dst;
 }
 
 // static
