@@ -885,7 +885,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
       Shader uv_xformShader;
       uv_xformShader.name = "place2d_" + param_name;
-      uv_xformShader.info_id = tinyusdz::kUsdTransform2d;
+      uv_xformShader.info_id = kUsdTransform2d;
       uv_xformShader.value = uv_xform;
       shader_nodes.emplace_back(std::move(uv_xformShader));
     }
@@ -910,14 +910,14 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
 
     Shader preaderShader;
     preaderShader.name = "uvmap_" + param_name;
-    preaderShader.info_id = tinyusdz::kUsdPrimvarReader_float2;
+    preaderShader.info_id = kUsdPrimvarReader_float2;
     preaderShader.value = preader;
 
     shader_nodes.emplace_back(std::move(preaderShader));
 
     Shader imageTexShader;
     imageTexShader.name = "Image_Texture_" + param_name;
-    imageTexShader.info_id = tinyusdz::kUsdUVTexture;
+    imageTexShader.info_id = kUsdUVTexture;
     imageTexShader.value = image_tex;
 
     shader_nodes.emplace_back(std::move(imageTexShader));
@@ -954,7 +954,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
     // Asssign actual shader object to Shader::value.
     // Also do not forget set its shader node type name through Shader::info_id
     //
-    shader.info_id = tinyusdz::kUsdPreviewSurface;  // "UsdPreviewSurface" token
+    shader.info_id = kUsdPreviewSurface;  // "UsdPreviewSurface" token
 
     //
     // Currently no shader network/connection API.
@@ -1207,7 +1207,7 @@ static bool ToMaterialPrim(const RenderScene &scene, const std::string &abs_path
     // Connect to UsdPreviewSurface's outputs:surface by setting targetPath.
     //
     // token outputs:surface = </path/to/mat/defaultPBR.outputs:surface>
-    mat.surface.set(tinyusdz::Path(/* prim path */ abs_shader_path,
+    mat.surface.set(Path(/* prim path */ abs_shader_path,
                                    /* prop path */ "outputs:surface"));
 
     //
