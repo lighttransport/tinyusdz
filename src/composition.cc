@@ -589,7 +589,7 @@ std::vector<std::string> ExtractSublayerAssetPaths(const Layer &layer) {
 
   for (const auto &sublayer : layer.metas().subLayers) {
     std::string sublayer_asset_path = sublayer.assetPath.GetAssetPath();
-    
+
     paths.push_back(sublayer_asset_path);
   }
 
@@ -1390,13 +1390,12 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpecRec(
     const PrimSpec &primspec, std::string *warn, std::string *err) {
 
   auto pprim = ReconstructPrimFromPrimSpec(primspec, warn, err);
-  if (!pprim) {
-    return nonstd::nullopt;
-  }
-  
-  for (size_t i = 0; i < primspec.children().size(); i++) {
-    if (auto pv = ReconstructPrimFromPrimSpecRec(primspec.children()[i], warn, err)) {
-      pprim.value().children().emplace_back(std::move(pv.value()));
+
+  if (pprim) {
+    for (size_t i = 0; i < primspec.children().size(); i++) {
+      if (auto pv = ReconstructPrimFromPrimSpecRec(primspec.children()[i], warn, err)) {
+        pprim.value().children().emplace_back(std::move(pv.value()));
+      }
     }
   }
 
@@ -1541,53 +1540,55 @@ namespace detail {
 // In-place conversion helper: Move PrimSpec data to Prim and free source memory
 static nonstd::optional<Prim> ReconstructPrimFromPrimSpecInPlace(
     std::unique_ptr<PrimSpec> primspec, std::string *warn, std::string *err) {
-  
+
+  nonstd::optional<Prim> prim_opt;
+
   if (!primspec) {
     if (err) {
       (*err) += "PrimSpec is null";
     }
-    return nonstd::nullopt;
-  }
+  } else {
 
-  // First reconstruct the prim normally
-  auto prim_opt = ReconstructPrimFromPrimSpec(*primspec, warn, err);
-  if (!prim_opt) {
-    return nonstd::nullopt;
-  }
+    // First reconstruct the prim normally
+    prim_opt = ReconstructPrimFromPrimSpec(*primspec, warn, err);
 
-  // Now we can clear the primspec data to free memory
-  // The data has been copied to the Prim, so we can safely clear it
-  
-  // Clear properties (these can be large)
-  primspec->props().clear();
-  
-  // Clear metadata
-  primspec->metas() = PrimMeta();
-  
-  // Clear relationships (if they exist)
-  // primspec->relationships().clear();
-  
-  // Clear variant sets
-  primspec->variantSets().clear();
-  
-  // Process children recursively
-  for (auto& child : primspec->children()) {
-    auto child_ptr = std::make_unique<PrimSpec>(std::move(child));
-    if (auto child_prim = ReconstructPrimFromPrimSpecInPlace(std::move(child_ptr), warn, err)) {
-      prim_opt.value().children().emplace_back(std::move(child_prim.value()));
+    if (prim_opt) {
+
+      // Now we can clear the primspec data to free memory
+      // The data has been copied to the Prim, so we can safely clear it
+
+      // Clear properties (these can be large)
+      primspec->props().clear();
+
+      // Clear metadata
+      primspec->metas() = PrimMeta();
+
+      // Clear relationships (if they exist)
+      // primspec->relationships().clear();
+
+      // Clear variant sets
+      primspec->variantSets().clear();
+
+      // Process children recursively
+      for (auto& child : primspec->children()) {
+        auto child_ptr = std::make_unique<PrimSpec>(std::move(child));
+        if (auto child_prim = ReconstructPrimFromPrimSpecInPlace(std::move(child_ptr), warn, err)) {
+          prim_opt.value().children().emplace_back(std::move(child_prim.value()));
+        }
+      }
+
+      // Clear children vector
+      primspec->children().clear();
+      primspec->children().shrink_to_fit();
     }
   }
-  
-  // Clear children vector
-  primspec->children().clear();
-  primspec->children().shrink_to_fit();
-  
+
   return prim_opt;
 }
 
 } // namespace detail
 
-bool LayerToStageInPlace(std::unique_ptr<Layer> layer, Stage *stage_out, 
+bool LayerToStageInPlace(std::unique_ptr<Layer> layer, Stage *stage_out,
                          std::string *warn, std::string *err) {
   if (!stage_out) {
     if (err) {
@@ -1604,41 +1605,41 @@ bool LayerToStageInPlace(std::unique_ptr<Layer> layer, Stage *stage_out,
   }
 
   Stage stage;
-  
+
   // Move metadata (cheap operation)
   stage.metas() = std::move(layer->metas());
-  
+
   // Convert primspecs in-place
   // We need to iterate carefully since we're modifying the map
   auto& primspecs = layer->primspecs();
   std::vector<std::string> paths_to_process;
-  
+
   for (const auto& item : primspecs) {
     paths_to_process.push_back(item.first);
   }
-  
+
   for (const auto& path : paths_to_process) {
     auto it = primspecs.find(path);
     if (it != primspecs.end()) {
       // Extract the PrimSpec from the map
       auto primspec_ptr = std::make_unique<PrimSpec>(std::move(it->second));
-      
+
       // Remove from map immediately to free memory
       primspecs.erase(it);
-      
+
       // Convert to Prim in-place
       if (auto pv = detail::ReconstructPrimFromPrimSpecInPlace(std::move(primspec_ptr), warn, err)) {
         stage.add_root_prim(std::move(pv.value()));
       }
     }
   }
-  
+
   // Clear the layer completely
   layer->primspecs().clear();
   layer.reset();  // Release the Layer object itself
-  
+
   (*stage_out) = std::move(stage);
-  
+
   return true;
 }
 
@@ -1659,13 +1660,13 @@ bool PrimSpecToPrimInPlace(std::unique_ptr<PrimSpec> primspec, Prim *prim_out,
   }
 
   auto prim_opt = detail::ReconstructPrimFromPrimSpecInPlace(std::move(primspec), warn, err);
-  
+
   if (!prim_opt) {
     return false;
   }
-  
+
   (*prim_out) = std::move(prim_opt.value());
-  
+
   return true;
 }
 
