@@ -89,6 +89,9 @@ class Token {
     str_ = sid::string_id(str.c_str(), TokenStorage::GetInstance());
   }
 
+  Token(Token &&str) = default;
+  
+
   explicit Token(const char *str) {
     str_ = sid::string_id(str, TokenStorage::GetInstance());
   }

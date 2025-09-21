@@ -116,43 +116,44 @@ std::string unescapeControlSequence(const std::string &str) {
   std::string s;
 
   if (str.size() < 2) {
-    return str;
-  }
+    s = str;
+  } else {
 
-  for (size_t i = 0; i < str.size(); i++) {
-    if (str[i] == '\\') {
-      if (i + 1 < str.size()) {
-        if (str[i + 1] == 'a') {
-          s += '\a';
-          i++;
-        } else if (str[i + 1] == 'b') {
-          s += '\b';
-          i++;
-        } else if (str[i + 1] == 't') {
-          s += '\t';
-          i++;
-        } else if (str[i + 1] == 'v') {
-          s += '\v';
-          i++;
-        } else if (str[i + 1] == 'f') {
-          s += '\f';
-          i++;
-        } else if (str[i + 1] == 'n') {
-          s += '\n';
-          i++;
-        } else if (str[i + 1] == 'r') {
-          s += '\r';
-          i++;
-        } else if (str[i + 1] == '\\') {
-          s += "\\";
+    for (size_t i = 0; i < str.size(); i++) {
+      if (str[i] == '\\') {
+        if (i + 1 < str.size()) {
+          if (str[i + 1] == 'a') {
+            s += '\a';
+            i++;
+          } else if (str[i + 1] == 'b') {
+            s += '\b';
+            i++;
+          } else if (str[i + 1] == 't') {
+            s += '\t';
+            i++;
+          } else if (str[i + 1] == 'v') {
+            s += '\v';
+            i++;
+          } else if (str[i + 1] == 'f') {
+            s += '\f';
+            i++;
+          } else if (str[i + 1] == 'n') {
+            s += '\n';
+            i++;
+          } else if (str[i + 1] == 'r') {
+            s += '\r';
+            i++;
+          } else if (str[i + 1] == '\\') {
+            s += "\\";
+          } else {
+            // ignore backslash
+          }
         } else {
           // ignore backslash
         }
       } else {
-        // ignore backslash
+        s += str[i];
       }
-    } else {
-      s += str[i];
     }
   }
 
@@ -548,7 +549,9 @@ std::vector<std::string> to_utf8_chars(const std::string &str) {
     std::string s = detail::extract_utf8_char(str, uint32_t(i), len);
     if (len == 0) {
       // invalid char
-      return std::vector<std::string>();
+      //return std::vector<std::string>();
+      utf8_chars = std::vector<std::string>();
+      break;
     }
 
     i += uint64_t(len);
@@ -645,7 +648,9 @@ std::vector<uint32_t> to_codepoints(const std::string &str) {
     uint32_t cp = detail::to_codepoint(str.c_str() + i, char_len);
 
     if ((cp > kMaxUTF8Codepoint) || (char_len == 0)) {
-      return std::vector<uint32_t>();
+      cps = std::vector<uint32_t>();
+      break;
+      //return std::vector<uint32_t>();
     }
 
     cps.push_back(cp);
@@ -665,7 +670,7 @@ bool is_valid_utf8_identifier(const std::string &str) {
   }
 
   // (XID_Start|_) (XID_Continue|_)+
-  
+
   if ((codepoints[0] != '_') && !unicode_xid::is_xid_start(codepoints[0])) {
     return false;
   }
@@ -676,7 +681,7 @@ bool is_valid_utf8_identifier(const std::string &str) {
     }
   }
 
-  return true; 
+  return true;
 }
 
 std::string makeIdentifierValid(const std::string &str, bool is_utf8) {
@@ -687,24 +692,25 @@ std::string makeIdentifierValid(const std::string &str, bool is_utf8) {
 
   if (str.empty()) {
     // return '_'
-    return "_";
-  }
-
-  // first char
-  // [a-ZA-Z_]
-  if ((('a' <= str[0]) && (str[0] <= 'z')) || (('A' <= str[0]) && (str[0] <= 'Z')) || (str[0] == '_')) {
-    s.push_back(str[0]);
+    s =  "_";
   } else {
-    s.push_back('_');
-  }
 
-  // remain chars
-  // [a-ZA-Z0-9_]
-  for (size_t i = 1; i < str.length(); i++) {
-    if ((('a' <= str[i]) && (str[i] <= 'z')) || (('A' <= str[i]) && (str[i] <= 'Z')) || (('0' <= str[i]) && (str[i] <= '9')) || (str[i] == '_')) {
-      s.push_back(str[i]);
+    // first char
+    // [a-ZA-Z_]
+    if ((('a' <= str[0]) && (str[0] <= 'z')) || (('A' <= str[0]) && (str[0] <= 'Z')) || (str[0] == '_')) {
+      s.push_back(str[0]);
     } else {
       s.push_back('_');
+    }
+
+    // remain chars
+    // [a-ZA-Z0-9_]
+    for (size_t i = 1; i < str.length(); i++) {
+      if ((('a' <= str[i]) && (str[i] <= 'z')) || (('A' <= str[i]) && (str[i] <= 'Z')) || (('0' <= str[i]) && (str[i] <= '9')) || (str[i] == '_')) {
+        s.push_back(str[i]);
+      } else {
+        s.push_back('_');
+      }
     }
   }
 
@@ -762,7 +768,7 @@ static inline bool is_base64(unsigned char c) {
 
 #ifdef __SSE2__
 #else
-// Fallback implementation (original) 
+// Fallback implementation (original)
 static std::string base64_encode_scalar(unsigned char const *bytes_to_encode,
                                        unsigned int in_len) {
   std::string ret;
@@ -813,7 +819,7 @@ static std::string base64_encode_scalar(unsigned char const *bytes_to_encode,
 #ifdef __SSE2__
 static std::string base64_encode_sse(unsigned char const *bytes_to_encode, unsigned int in_len) {
   if (in_len == 0) return std::string();
-  
+
   const char base64_chars[64] = {
     'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
     'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
@@ -826,70 +832,70 @@ static std::string base64_encode_sse(unsigned char const *bytes_to_encode, unsig
   const size_t output_len = ((in_len + 2) / 3) * 4;
   std::string result;
   result.reserve(output_len);
-  
+
   size_t input_pos = 0;
-  
+
   // Process 12 bytes at a time using SSE2 (produces 16 base64 characters)
   while (input_pos + 12 <= in_len) {
     // Load 12 input bytes (will process as 4 groups of 3 bytes each)
     alignas(16) uint8_t input_block[16] = {0};
-    
+
     // Copy 12 bytes, leaving last 4 bytes as zero padding
     for (int i = 0; i < 12; i++) {
       input_block[i] = bytes_to_encode[input_pos + i];
     }
-    
+
     // Load input data into SSE register (currently unused but reserved for future vectorization)
     (void)_mm_load_si128(reinterpret_cast<const __m128i*>(input_block));
-    
+
     // Process 4 groups of 3 bytes each
     alignas(16) uint8_t output_indices[16];
-    
+
     for (int group = 0; group < 4; group++) {
       int base_idx = group * 3;
-      
+
       // Extract 3 bytes for this group
       uint8_t b0 = input_block[base_idx];
       uint8_t b1 = input_block[base_idx + 1];
       uint8_t b2 = input_block[base_idx + 2];
-      
+
       // Convert 3 bytes to 4 base64 indices
       output_indices[group * 4] = (b0 >> 2) & 0x3F;
       output_indices[group * 4 + 1] = ((b0 & 0x03) << 4) | ((b1 >> 4) & 0x0F);
       output_indices[group * 4 + 2] = ((b1 & 0x0F) << 2) | ((b2 >> 6) & 0x03);
       output_indices[group * 4 + 3] = b2 & 0x3F;
     }
-    
+
     // Convert indices to base64 characters using table lookup
     for (int i = 0; i < 16; i++) {
       result.push_back(base64_chars[output_indices[i]]);
     }
-    
+
     input_pos += 12;
   }
-  
+
   // Handle remaining bytes with scalar code
   while (input_pos + 3 <= in_len) {
     uint8_t b0 = bytes_to_encode[input_pos];
     uint8_t b1 = bytes_to_encode[input_pos + 1];
     uint8_t b2 = bytes_to_encode[input_pos + 2];
-    
+
     result.push_back(base64_chars[(b0 >> 2) & 0x3F]);
     result.push_back(base64_chars[((b0 & 0x03) << 4) | ((b1 >> 4) & 0x0F)]);
     result.push_back(base64_chars[((b1 & 0x0F) << 2) | ((b2 >> 6) & 0x03)]);
     result.push_back(base64_chars[b2 & 0x3F]);
-    
+
     input_pos += 3;
   }
-  
+
   // Handle final 1-2 bytes if present
   if (input_pos < in_len) {
     uint8_t b0 = bytes_to_encode[input_pos];
     uint8_t b1 = (input_pos + 1 < in_len) ? bytes_to_encode[input_pos + 1] : 0;
-    
+
     result.push_back(base64_chars[(b0 >> 2) & 0x3F]);
     result.push_back(base64_chars[((b0 & 0x03) << 4) | ((b1 >> 4) & 0x0F)]);
-    
+
     if (input_pos + 1 < in_len) {
       result.push_back(base64_chars[((b1 & 0x0F) << 2)]);
     } else {
@@ -897,7 +903,7 @@ static std::string base64_encode_sse(unsigned char const *bytes_to_encode, unsig
     }
     result.push_back('=');
   }
-  
+
   return result;
 }
 #endif // __SSE2__
@@ -918,7 +924,7 @@ std::string base64_encode(unsigned char const *bytes_to_encode,
 static std::string base64_decode_sse(std::string const &encoded_string) {
   const size_t input_len = encoded_string.size();
   if (input_len == 0) return std::string();
-  
+
   // Lookup table for base64 decoding (256 entries, -1 for invalid chars)
   static const int8_t decode_table[256] = {
     -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1,
@@ -938,31 +944,31 @@ static std::string base64_decode_sse(std::string const &encoded_string) {
     -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1,
     -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1, -1,-1,-1,-1
   };
-  
+
   // Calculate output size (remove padding)
   size_t padding = 0;
   if (input_len >= 1 && encoded_string[input_len - 1] == '=') padding++;
   if (input_len >= 2 && encoded_string[input_len - 2] == '=') padding++;
-  
+
   const size_t output_len = (input_len * 3) / 4 - padding;
   std::string result;
   result.reserve(output_len);
-  
+
   const uint8_t* input = reinterpret_cast<const uint8_t*>(encoded_string.data());
   size_t input_pos = 0;
-  
+
   // Process 16 bytes at a time using SSE2
   while (input_pos + 16 <= input_len) {
     // Load 16 input bytes
     __m128i input_chunk = _mm_loadu_si128(reinterpret_cast<const __m128i*>(input + input_pos));
-    
+
     // Decode using lookup table (split into two 8-byte chunks for table lookup)
     alignas(16) uint8_t input_bytes[16];
     _mm_store_si128(reinterpret_cast<__m128i*>(input_bytes), input_chunk);
-    
+
     alignas(16) int8_t decoded[16];
     bool valid = true;
-    
+
     for (int i = 0; i < 16; i++) {
       decoded[i] = decode_table[input_bytes[i]];
       if (decoded[i] < 0 && input_bytes[i] != '=') {
@@ -970,65 +976,65 @@ static std::string base64_decode_sse(std::string const &encoded_string) {
         break;
       }
     }
-    
+
     if (!valid) break; // Fall back to scalar processing for invalid chars
-    
+
     // Pack groups of 4 decoded bytes into 3 output bytes
     for (int group = 0; group < 4; group++) {
       if (input_pos + group * 4 + 3 >= input_len) break;
-      
+
       int base_idx = group * 4;
-      if (decoded[base_idx] >= 0 && decoded[base_idx + 1] >= 0 && 
+      if (decoded[base_idx] >= 0 && decoded[base_idx + 1] >= 0 &&
           decoded[base_idx + 2] >= 0 && decoded[base_idx + 3] >= 0) {
-        
+
         uint32_t combined = (static_cast<uint32_t>(decoded[base_idx]) << 18) |
                            (static_cast<uint32_t>(decoded[base_idx + 1]) << 12) |
                            (static_cast<uint32_t>(decoded[base_idx + 2]) << 6) |
                            static_cast<uint32_t>(decoded[base_idx + 3]);
-        
+
         result.push_back(static_cast<char>((combined >> 16) & 0xFF));
         result.push_back(static_cast<char>((combined >> 8) & 0xFF));
         result.push_back(static_cast<char>(combined & 0xFF));
       }
     }
-    
+
     input_pos += 16;
   }
-  
+
   // Process remaining bytes with scalar code
   while (input_pos + 4 <= input_len) {
     uint8_t a = input[input_pos];
     uint8_t b = input[input_pos + 1];
     uint8_t c = input[input_pos + 2];
     uint8_t d = input[input_pos + 3];
-    
+
     if (a == '=' || b == '=') break;
-    
+
     int8_t da = decode_table[a];
     int8_t db = decode_table[b];
     int8_t dc = decode_table[c];
     int8_t dd = decode_table[d];
-    
+
     if (da < 0 || db < 0) break;
-    
+
     uint32_t combined = (static_cast<uint32_t>(da) << 18) |
                        (static_cast<uint32_t>(db) << 12);
-    
+
     result.push_back(static_cast<char>((combined >> 16) & 0xFF));
-    
+
     if (c != '=' && dc >= 0) {
       combined |= static_cast<uint32_t>(dc) << 6;
       result.push_back(static_cast<char>((combined >> 8) & 0xFF));
-      
+
       if (d != '=' && dd >= 0) {
         combined |= static_cast<uint32_t>(dd);
         result.push_back(static_cast<char>(combined & 0xFF));
       }
     }
-    
+
     input_pos += 4;
   }
-  
+
   return result;
 }
 #endif // __SSE2__

@@ -44,7 +44,7 @@ bool lexicographical_compare(InputIt1 first1, InputIt1 last1,
         if (*first2 < *first1)
             return false;
     }
- 
+
     return (first1 == last1) && (first2 != last2);
 }
 
@@ -89,9 +89,9 @@ bool operator==(const Path &lhs, const Path &rhs) {
 bool ConvertTokenAttributeToStringAttribute(
     const TypedAttribute<Animatable<value::token>> &inp,
     TypedAttribute<Animatable<std::string>> &out) {
-  
+
     out.metas() = inp.metas();
-  
+
     if (inp.is_blocked()) {
       out.set_blocked(true);
     } else if (inp.is_value_empty()) {
@@ -108,7 +108,7 @@ bool ConvertTokenAttributeToStringAttribute(
           strs.set(tok.str());
         } else if (toks.is_timesamples()) {
           auto tok_ts = toks.get_timesamples();
-  
+
           for (auto &item : tok_ts.get_samples()) {
             strs.add_sample(item.t, item.value.str());
           }
@@ -119,10 +119,10 @@ bool ConvertTokenAttributeToStringAttribute(
       }
       out.set_value(strs);
     }
-  
+
     return true;
   }
-  
+
 
 
 //
@@ -304,7 +304,7 @@ void Path::_update(const std::string &p, const std::string &prop) {
 }
 
 Path::Path(const std::string &p, const std::string &prop) {
-  _update(p, prop); 
+  _update(p, prop);
 }
 
 Path Path::append_property(const std::string &elem) {
@@ -1953,7 +1953,7 @@ void PrimMetas::update_from(const PrimMetas &rhs, const bool override_authored) 
       if (unregisteredMetas.count(item.first)) {
         if (override_authored) {
           unregisteredMetas[item.first] = item.second;
-        } 
+        }
       } else {
         unregisteredMetas[item.first] = item.second;
       }
@@ -1968,17 +1968,16 @@ bool AttrMetas::has_colorSpace() const {
 }
 
 value::token AttrMetas::get_colorSpace() const {
-  if (!has_colorSpace()) {
-    return value::token();
-  }
-
-  const MetaVariable &mv = meta.at("colorSpace");
   value::token tok;
-  if (mv.get_value<value::token>(&tok)) {
-    return tok;
+
+  if (has_colorSpace()) {
+    const MetaVariable &mv = meta.at("colorSpace");
+    if (!mv.get_value<value::token>(&tok)) {
+      tok = value::token();
+    }
   }
 
-  return value::token();
+  return tok;
 }
 
 bool AttrMetas::has_unauthoredValuesIndex() const {
@@ -2037,28 +2036,28 @@ size_t Relationship::estimate_memory_usage() const {
 // Memory usage estimation implementation for Attribute
 size_t Attribute::estimate_memory_usage() const {
   size_t total = sizeof(Attribute);
-  
+
   // String storage
   total += _name.capacity();
   total += _type_name.capacity();
-  
+
   // PrimVar memory - basic estimate
   // TODO: For more accurate estimation, PrimVar should have its own estimate_memory_usage method
   total += sizeof(primvar::PrimVar);
   // The PrimVar contains value::Value and value::TimeSamples which can be large
   // This is a basic estimate - actual size depends on the stored data type and time samples
-  
+
   // Connection paths
   total += _paths.capacity() * sizeof(Path);
   for (const auto& path : _paths) {
     // Path internally contains strings, estimate their capacity
     total += path.full_path_name().capacity();
   }
-  
+
   // Attribute metadata
   total += sizeof(AttrMeta); // Basic size of metadata structure
   // TODO: Add detailed AttrMeta internal memory estimation if needed
-  
+
   return total;
 }
 
