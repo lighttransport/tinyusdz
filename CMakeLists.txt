@@ -255,6 +255,9 @@ option(TINYUSDZ_WITH_COLORIO
 
 option(TINYUSDZ_WITH_MESHOPT
        "Build with meshoptimizer support for mesh optimization" ${TINYUSDZ_DEFAULT_WITH_MESHOPT})
+
+option(TINYUSDZ_WITH_REMOTERY
+       "Build with Remotery profiling support" OFF)
 # ---------
 
 # -- optional tool --
@@ -902,6 +905,30 @@ if(TINYUSDZ_WITH_MESHOPT)
 
   list(APPEND TINYUSDZ_DEP_SOURCES ${MESHOPTIMIZER_SOURCES})
 endif(TINYUSDZ_WITH_MESHOPT)
+
+if(TINYUSDZ_WITH_REMOTERY)
+  # Remotery source files
+  set(REMOTERY_SOURCES
+    ${PROJECT_SOURCE_DIR}/src/external/Remotery/Remotery.c
+  )
+  
+  list(APPEND TINYUSDZ_DEP_SOURCES ${REMOTERY_SOURCES})
+  
+  # Add Remotery include directory
+  list(APPEND TINYUSDZ_DEP_INCLUDE_DIRS ${PROJECT_SOURCE_DIR}/src/external/Remotery)
+  
+  # Define RMT_ENABLED to enable Remotery
+  add_definitions(-DRMT_ENABLED=1)
+  
+  # Platform-specific definitions for Remotery
+  if(WIN32)
+    add_definitions(-DRMT_USE_D3D11=0)
+  elseif(APPLE)
+    add_definitions(-DRMT_USE_METAL=0)
+  elseif(UNIX)
+    add_definitions(-DRMT_USE_OPENGL=0)
+  endif()
+endif(TINYUSDZ_WITH_REMOTERY)
 
 if(TINYUSDZ_WITH_TIFF OR TINYUSDZ_WITH_EXR)
   if(TINYUSDZ_USE_SYSTEM_ZLIB)
