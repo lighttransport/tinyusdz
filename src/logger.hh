@@ -12,6 +12,11 @@
 #include <algorithm>
 #include <ctime>
 
+// Include Remotery if enabled
+#ifdef RMT_ENABLED
+#include "external/Remotery/Remotery.h"
+#endif
+
 // Simple logging management class
 namespace tinyusdz {
 namespace logging {
@@ -101,7 +106,8 @@ enum class TraceReportFormat {
 enum class TraceEventLogging {
   None,       // No event logging
   PlainText,  // Log events as plain text
-  JSON        // Log events as JSON
+  JSON,       // Log events as JSON
+  Remotery    // Log events to Remotery profiler
 };
 
 // Trace manager for collecting and organizing trace records
@@ -114,8 +120,29 @@ class TraceManager {
   TraceReportFormat report_format_ = TraceReportFormat::PlainText;  // Default to plain text
   TraceEventLogging event_logging_ = TraceEventLogging::None;  // Default to no event logging
   LogLevel event_log_level_ = LogLevel::Debug;  // Log level for trace events
+#ifdef RMT_ENABLED
+  Remotery* rmt_instance_ = nullptr;  // Remotery instance for profiling
+  bool use_remotery_backend_ = false; // Use Remotery as backend for all traces
+#endif
   
-  TraceManager() = default;
+  TraceManager() {
+#ifdef RMT_ENABLED
+    // Initialize Remotery with default settings
+    rmtError error = rmt_CreateGlobalInstance(&rmt_instance_);
+    if (error != RMT_ERROR_NONE) {
+      rmt_instance_ = nullptr;
+    }
+#endif
+  }
+  
+  ~TraceManager() {
+#ifdef RMT_ENABLED
+    if (rmt_instance_) {
+      rmt_DestroyGlobalInstance(rmt_instance_);
+      rmt_instance_ = nullptr;
+    }
+#endif
+  }
   
  public:
   static TraceManager& getInstance() {
@@ -183,6 +210,31 @@ class TraceManager {
     return tag_enabled_map_;
   }
   
+#ifdef RMT_ENABLED
+  // Enable/disable Remotery backend for tracing
+  void setUseRemotery(bool use_remotery) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    use_remotery_backend_ = use_remotery;
+    if (use_remotery && rmt_instance_) {
+      event_logging_ = TraceEventLogging::Remotery;
+    }
+  }
+  
+  bool isUsingRemotery() const {
+    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(mutex_));
+    return use_remotery_backend_;
+  }
+  
+  bool isRemoteryAvailable() const {
+    return rmt_instance_ != nullptr;
+  }
+  
+  // Get Remotery instance (for advanced usage)
+  Remotery* getRemoteryInstance() const {
+    return rmt_instance_;
+  }
+#endif
+  
   // Set report format
   void setReportFormat(TraceReportFormat format) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -222,6 +274,12 @@ class TraceManager {
   // Log trace begin event
   void logTraceBegin(const std::string& tag, const std::string& subtag, 
                      const std::string& function, const std::string& file, int line) {
+#ifdef RMT_ENABLED
+    if (event_logging_ == TraceEventLogging::Remotery && rmt_instance_) {
+      // Let Remotery handle the begin event internally
+      return;
+    }
+#endif
     if (event_logging_ == TraceEventLogging::None) return;
     if (!Logger::getInstance().shouldLog(event_log_level_)) return;
     
@@ -250,6 +308,12 @@ class TraceManager {
   // Log trace end event
   void logTraceEnd(const std::string& tag, const std::string& subtag,
                    const std::string& function, double duration_ms) {
+#ifdef RMT_ENABLED
+    if (event_logging_ == TraceEventLogging::Remotery && rmt_instance_) {
+      // Let Remotery handle the end event internally
+      return;
+    }
+#endif
     if (event_logging_ == TraceEventLogging::None) return;
     if (!Logger::getInstance().shouldLog(event_log_level_)) return;
     
@@ -465,6 +529,10 @@ class Trace {
  private:
   TraceRecord record_;
   bool enabled_;
+#ifdef RMT_ENABLED
+  bool using_remotery_ = false;
+  std::string rmt_name_;
+#endif
   
  public:
   Trace(const std::string& tag, 
@@ -475,19 +543,53 @@ class Trace {
       : enabled_(TraceManager::getInstance().isTagEnabled(tag, subtag)) {
     if (!enabled_) return;
     
-    record_.tag = tag;
-    record_.subtag = subtag;
-    record_.function_name = function;
-    record_.file_name = file;
-    record_.line_number = line;
-    record_.start_time = std::chrono::high_resolution_clock::now();
+#ifdef RMT_ENABLED
+    // Check if we should use Remotery for this trace
+    if (TraceManager::getInstance().isUsingRemotery() && 
+        TraceManager::getInstance().isRemoteryAvailable()) {
+      using_remotery_ = true;
+      
+      // Create a combined name for Remotery
+      rmt_name_ = tag;
+      if (!subtag.empty()) {
+        rmt_name_ += "::" + subtag;
+      }
+      
+      // Begin CPU sample with Remotery using runtime string
+      _rmt_BeginCPUSample(rmt_name_.c_str(), RMTSF_None, nullptr);
+    } else {
+      using_remotery_ = false;
+    }
+#endif
     
-    // Log trace begin event
-    TraceManager::getInstance().logTraceBegin(tag, subtag, function, file, line);
+    // Still record for our own tracing system unless using Remotery exclusively
+#ifdef RMT_ENABLED
+    if (!using_remotery_) {
+#endif
+      record_.tag = tag;
+      record_.subtag = subtag;
+      record_.function_name = function;
+      record_.file_name = file;
+      record_.line_number = line;
+      record_.start_time = std::chrono::high_resolution_clock::now();
+      
+      // Log trace begin event
+      TraceManager::getInstance().logTraceBegin(tag, subtag, function, file, line);
+#ifdef RMT_ENABLED
+    }
+#endif
   }
   
   ~Trace() {
     if (!enabled_) return;
+    
+#ifdef RMT_ENABLED
+    if (using_remotery_) {
+      // End CPU sample with Remotery
+      rmt_EndCPUSample();
+      return; // Skip our own recording
+    }
+#endif
     
     record_.end_time = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -657,3 +759,85 @@ class Trace {
 
 #define TUSDZ_TRACE_SET_EVENT_LOG_LEVEL(level) \
   tinyusdz::logging::TraceManager::getInstance().setEventLogLevel(tinyusdz::logging::LogLevel::level)
+
+// Remotery-specific macros (only available when RMT_ENABLED is defined)
+#ifdef RMT_ENABLED
+
+// Enable Remotery backend for all traces
+#define TUSDZ_TRACE_USE_REMOTERY() \
+  do { \
+    if (tinyusdz::logging::TraceManager::getInstance().isRemoteryAvailable()) { \
+      tinyusdz::logging::TraceManager::getInstance().setUseRemotery(true); \
+    } \
+  } while(false)
+
+// Disable Remotery backend (switch back to internal tracing)
+#define TUSDZ_TRACE_USE_INTERNAL() \
+  tinyusdz::logging::TraceManager::getInstance().setUseRemotery(false)
+
+// Check if Remotery is available
+#define TUSDZ_TRACE_IS_REMOTERY_AVAILABLE() \
+  tinyusdz::logging::TraceManager::getInstance().isRemoteryAvailable()
+
+// Check if using Remotery backend
+#define TUSDZ_TRACE_IS_USING_REMOTERY() \
+  tinyusdz::logging::TraceManager::getInstance().isUsingRemotery()
+
+// Set event logging to Remotery
+#define TUSDZ_TRACE_SET_EVENT_LOGGING_REMOTERY() \
+  do { \
+    if (tinyusdz::logging::TraceManager::getInstance().isRemoteryAvailable()) { \
+      tinyusdz::logging::TraceManager::getInstance().setEventLogging(tinyusdz::logging::TraceEventLogging::Remotery); \
+      tinyusdz::logging::TraceManager::getInstance().setUseRemotery(true); \
+    } \
+  } while(false)
+
+// Direct Remotery macros for advanced usage (bypass our trace system)
+// Note: 'name' must be a valid C identifier, not a string literal
+#define TUSDZ_REMOTERY_BEGIN(name) rmt_BeginCPUSample(name, 0)
+#define TUSDZ_REMOTERY_END() rmt_EndCPUSample()
+#define TUSDZ_REMOTERY_SCOPE(name) rmt_ScopedCPUSample(name, 0)
+
+// String-based variants that work with string literals
+#define TUSDZ_REMOTERY_BEGIN_STR(str) _rmt_BeginCPUSample(str, 0, NULL)
+#define TUSDZ_REMOTERY_END_STR() rmt_EndCPUSample()
+
+#else // !RMT_ENABLED
+
+// When Remotery is not available, these macros do nothing
+#define TUSDZ_TRACE_USE_REMOTERY()
+#define TUSDZ_TRACE_USE_INTERNAL()
+#define TUSDZ_TRACE_IS_REMOTERY_AVAILABLE() (false)
+#define TUSDZ_TRACE_IS_USING_REMOTERY() (false)
+#define TUSDZ_TRACE_SET_EVENT_LOGGING_REMOTERY()
+#define TUSDZ_REMOTERY_BEGIN(name)
+#define TUSDZ_REMOTERY_END()
+#define TUSDZ_REMOTERY_SCOPE(name)
+#define TUSDZ_REMOTERY_BEGIN_STR(str)
+#define TUSDZ_REMOTERY_END_STR()
+
+#endif // RMT_ENABLED
+
+// Convenience macro to choose between trace systems based on availability
+#define TUSDZ_TRACE_AUTO() \
+  do { \
+    if (TUSDZ_TRACE_IS_REMOTERY_AVAILABLE()) { \
+      TUSDZ_TRACE_USE_REMOTERY(); \
+    } \
+  } while(false)
+
+// Flexible trace macros that adapt based on backend selection
+// These work with both internal tracing and Remotery
+#define TUSDZ_TRACE_FUNCTION() TUSDZ_TRACE(__func__)
+#define TUSDZ_TRACE_SCOPE(name) TUSDZ_TRACE(name)
+#define TUSDZ_TRACE_SCOPE_TAG(name, tag) TUSDZ_TRACE_TAG(name, tag)
+
+// Conditional compilation helpers for different trace levels
+#ifdef TINYUSDZ_PRODUCTION_BUILD
+  // In production, disable debug traces
+  #define TUSDZ_TRACE_DEBUG(tag)
+  #define TUSDZ_TRACE_DEBUG_TAG(tag, subtag)
+#else
+  #define TUSDZ_TRACE_DEBUG(tag) TUSDZ_TRACE(tag)
+  #define TUSDZ_TRACE_DEBUG_TAG(tag, subtag) TUSDZ_TRACE_TAG(tag, subtag)
+#endif
