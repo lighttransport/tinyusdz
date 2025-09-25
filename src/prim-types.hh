@@ -1891,9 +1891,13 @@ class TypedAttributeWithFallback {
   void set_connection(const Path &path) {
     _paths.clear();
     _paths.push_back(path);
+    // NOTE: For proper connection serialization, also call set_value_empty()
   }
 
-  void set_connections(const std::vector<Path> &paths) { _paths = paths; }
+  void set_connections(const std::vector<Path> &paths) { 
+    _paths = paths; 
+    // NOTE: For proper connection serialization, also call set_value_empty()
+  }
 
   const std::vector<Path> &get_connections() const { return _paths; }
   const std::vector<Path> &connections() const { return _paths; }
