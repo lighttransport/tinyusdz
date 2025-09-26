@@ -6880,12 +6880,28 @@ bool InferColorSpace(const value::token &tok, ColorSpace *cty) {
     (*cty) = ColorSpace::sRGB;
   } else if (tok.str() == "sRGB") {
     (*cty) = ColorSpace::sRGB;
+  } else if (tok.str() == "srgb_texture") {  // MaterialX texture colorspace
+    (*cty) = ColorSpace::sRGB_Texture;
   } else if (tok.str() == "linear") { // guess linear_srgb
     (*cty) = ColorSpace::Lin_sRGB;
   } else if (tok.str() == "lin_srgb") {
     (*cty) = ColorSpace::Lin_sRGB;
   } else if (tok.str() == "rec709") {
     (*cty) = ColorSpace::Rec709;
+  } else if (tok.str() == "lin_rec709") {  // MaterialX linear Rec.709
+    (*cty) = ColorSpace::Lin_Rec709;
+  } else if (tok.str() == "g22_rec709") {  // MaterialX gamma 2.2 Rec.709
+    (*cty) = ColorSpace::g22_Rec709;
+  } else if (tok.str() == "g18_rec709") {  // MaterialX gamma 1.8 Rec.709
+    (*cty) = ColorSpace::g18_Rec709;
+  } else if (tok.str() == "lin_rec2020") {  // Linear Rec.2020
+    (*cty) = ColorSpace::Lin_Rec2020;
+  } else if (tok.str() == "acescg") {  // Alternative ACES CG naming
+    (*cty) = ColorSpace::Lin_ACEScg;
+  } else if (tok.str() == "lin_ap1") {  // Linear AP1 (same as ACEScg)
+    (*cty) = ColorSpace::Lin_ACEScg;
+  } else if (tok.str() == "aces2065-1") {  // ACES 2065-1
+    (*cty) = ColorSpace::ACES2065_1;
   } else if (tok.str() == "ocio") {
     (*cty) = ColorSpace::OCIO;
   } else if (tok.str() == "lin_displayp3") {
