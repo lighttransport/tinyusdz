@@ -649,8 +649,14 @@ enum class ColorSpace {
   sRGB,
   Lin_sRGB,     // Linear sRGB(D65)
   Rec709,
-  Raw,        // Raw(physical quantity) value(e.g. normal maps, ao maps)
-  Lin_ACEScg, // ACES CG colorspace(AP1. D50)
+  Lin_Rec709,   // Linear Rec.709 - same primaries as sRGB but linear (MaterialX: lin_rec709)
+  g22_Rec709,   // Gamma 2.2 Rec.709 (MaterialX: g22_rec709)
+  g18_Rec709,   // Gamma 1.8 Rec.709 (MaterialX: g18_rec709)
+  sRGB_Texture, // sRGB for textures (MaterialX: srgb_texture)
+  Raw,          // Raw(physical quantity) value(e.g. normal maps, ao maps)
+  Lin_ACEScg,   // ACES CG colorspace(AP1. D50)
+  ACES2065_1,   // ACES 2065-1 (AP0. D60)
+  Lin_Rec2020,  // Linear Rec.2020/Rec.2100
   OCIO,
   Lin_DisplayP3,   // colorSpace 'lin_displayp3'
   sRGB_DisplayP3,  // colorSpace 'srgb_displayp3'
