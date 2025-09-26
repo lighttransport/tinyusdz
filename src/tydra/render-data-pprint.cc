@@ -44,12 +44,36 @@ std::string to_string(ColorSpace cty) {
       s = "rec709";
       break;
     }
+    case ColorSpace::Lin_Rec709: {
+      s = "lin_rec709";
+      break;
+    }
+    case ColorSpace::g22_Rec709: {
+      s = "g22_rec709";
+      break;
+    }
+    case ColorSpace::g18_Rec709: {
+      s = "g18_rec709";
+      break;
+    }
+    case ColorSpace::sRGB_Texture: {
+      s = "srgb_texture";
+      break;
+    }
     case ColorSpace::OCIO: {
       s = "ocio";
       break;
     }
     case ColorSpace::Lin_ACEScg: {
       s = "lin_acescg";
+      break;
+    }
+    case ColorSpace::ACES2065_1: {
+      s = "aces2065-1";
+      break;
+    }
+    case ColorSpace::Lin_Rec2020: {
+      s = "lin_rec2020";
       break;
     }
     case ColorSpace::Lin_DisplayP3: {
