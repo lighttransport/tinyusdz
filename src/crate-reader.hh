@@ -71,6 +71,62 @@ struct CrateReaderConfig {
 };
 
 ///
+/// Typed TimeSamples storage for efficient Crate reading.
+///
+/// Stores time-sampled animation data in a compact, type-specific format
+/// with minimal overhead. The data is organized as:
+/// - Type information (CrateDataTypeId)
+/// - None/blocked value mask (dynamic bitset via std::vector<bool>)
+/// - Number of time samples
+/// - Opaque storage buffer (sizeof(type) * N elements)
+///
+/// This allows for efficient deserialization and memory layout of animated
+/// properties without boxing each value individually.
+///
+struct CrateTypedTimeSamples {
+  CrateDataTypeId type_id{CrateDataTypeId::CRATE_DATA_TYPE_INVALID};
+  bool is_array{false};
+  size_t num_elements{0};
+  std::vector<bool> none_mask;
+  std::vector<uint8_t> storage;
+
+  CrateTypedTimeSamples() = default;
+
+  bool is_blocked(size_t index) const {
+    if (index >= none_mask.size()) return false;
+    return none_mask[index];
+  }
+
+  void reserve(size_t num_samples, size_t element_size_bytes) {
+    num_elements = num_samples;
+    none_mask.resize(num_samples, false);
+    storage.resize(num_samples * element_size_bytes);
+  }
+
+  const uint8_t* get_element_ptr(size_t index, size_t element_size_bytes) const {
+    if (index >= num_elements) return nullptr;
+    return storage.data() + (index * element_size_bytes);
+  }
+
+  uint8_t* get_element_ptr(size_t index, size_t element_size_bytes) {
+    if (index >= num_elements) return nullptr;
+    return storage.data() + (index * element_size_bytes);
+  }
+
+  void set_blocked(size_t index, bool blocked = true) {
+    if (index < none_mask.size()) {
+      none_mask[index] = blocked;
+    }
+  }
+
+  size_t estimate_memory_usage() const {
+    return sizeof(CrateTypedTimeSamples) +
+           (none_mask.size() + 7) / 8 +
+           storage.size();
+  }
+};
+
+///
 /// Secure USDC (Crate binary format) reader.
 /// 
 /// This reader provides memory-safe parsing of USD binary files with extensive
@@ -346,6 +402,8 @@ class CrateReader {
   bool UnpackValueRep(const crate::ValueRep &rep, crate::CrateValue *value);
   bool UnpackInlinedValueRep(const crate::ValueRep &rep,
                              crate::CrateValue *value);
+
+  bool UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint64_t offset, crate::CrateValue *value);
 
   //
   // Construct node hierarchy.
