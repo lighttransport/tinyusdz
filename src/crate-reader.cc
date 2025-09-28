@@ -1235,28 +1235,77 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
     PUSH_ERROR_AND_RETURN_TAG(kTag, "# of `times` elements and # of values in Crate differs.");
   }
 
-  for (size_t i = 0; i < num_values; i++) {
+  if (num_values == 0) {
+    return true;
+  }
 
+  // Read all ValueReps first to check if we can use optimized typed path
+  auto vrep_start_offset = _sr->tell();
+  std::vector<crate::ValueRep> value_reps(num_values);
+  for (size_t i = 0; i < num_values; i++) {
+    if (!ReadValueRep(&value_reps[i])) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read ValueRep for TimeSample' value element.");
+    }
+  }
+
+  // Check if all samples have the same type (homogeneous)
+  bool is_homogeneous = true;
+  auto first_type = value_reps[0].GetType();
+  bool first_is_array = value_reps[0].IsArray();
+  for (size_t i = 1; i < num_values; i++) {
+    if (value_reps[i].GetType() != first_type || value_reps[i].IsArray() != first_is_array) {
+      is_homogeneous = false;
+      break;
+    }
+  }
+
+  // Check if it's a common type that benefits from typed storage
+  bool use_typed_path = false;
+  if (is_homogeneous) {
+    auto type_id = static_cast<crate::CrateDataTypeId>(first_type);
+    switch (type_id) {
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX2D:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX3D:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX4D:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING:
+        use_typed_path = first_is_array;
+        break;
+      default:
+        break;
+    }
+  }
+
+  if (use_typed_path) {
+    DCOUT("Using typed TimeSamples path for type: " << first_type);
+    // Use optimized typed path - we'll implement CreateTypedTimeSamples next
+    // For now, fall back to standard path
+    use_typed_path = false;
+  }
+
+  // Standard path: unpack each value individually
+  _sr->seek_set(vrep_start_offset);
+  for (size_t i = 0; i < num_values; i++) {
     crate::ValueRep rep;
     if (!ReadValueRep(&rep)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read ValueRep for TimeSample' value element.");
     }
 
-    auto next_vrep_loc = _sr->tell();
-
     ///
     /// Type check of the content of `value` will be done at ReconstructPrim() in usdc-reader.cc.
     ///
     crate::CrateValue value;
-    if (!UnpackValueRep(rep, &value)) {
+    uint64_t value_offset = rep.GetPayload();
+    if (!UnpackValueRepForTimeSamples(rep, value_offset, &value)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to unpack value of TimeSample's value element.");
     }
 
     d->add_sample(times[i], value.get_raw());
-
-    // UnpackValueRep() will change StreamReader's read position.
-    // Revert to next ValueRep location here.
-    _sr->seek_set(next_vrep_loc);
   }
 
   // Move to next location.
@@ -2676,6 +2725,337 @@ CrateReader::UnpackArrayValue(CrateDataTypeId dty, crate::CrateValue *value_out)
   return true;
 }
 #endif
+
+bool CrateReader::UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint64_t offset, crate::CrateValue *value) {
+  if (rep.IsInlined()) {
+    return UnpackInlinedValueRep(rep, value);
+  }
+
+  auto tyRet = crate::GetCrateDataType(rep.GetType());
+  if (!tyRet) {
+    PUSH_ERROR(tyRet.error());
+    return false;
+  }
+
+  const auto dty = tyRet.value();
+
+  if (!_sr->seek_set(offset)) {
+    PUSH_ERROR("Invalid offset for TimeSamples value.");
+    return false;
+  }
+
+  switch (dty.dtype_id) {
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT: {
+      if (rep.IsArray()) {
+        std::vector<int32_t> v;
+        if (rep.GetPayload() == 0) {
+          value->Set(v);
+          return true;
+        }
+        if (!ReadIntArray(rep.IsCompressed(), &v)) {
+          PUSH_ERROR("Failed to read Int array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT: {
+      if (rep.IsArray()) {
+        std::vector<uint32_t> v;
+        if (rep.GetPayload() == 0) {
+          value->Set(v);
+          return true;
+        }
+        if (!ReadIntArray(rep.IsCompressed(), &v)) {
+          PUSH_ERROR("Failed to read UInt array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64: {
+      if (rep.IsArray()) {
+        std::vector<int64_t> v;
+        if (rep.GetPayload() == 0) {
+          value->Set(v);
+          return true;
+        }
+        if (!ReadIntArray(rep.IsCompressed(), &v)) {
+          PUSH_ERROR("Failed to read Int64 array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      } else {
+        if (rep.IsCompressed()) {
+          PUSH_ERROR("Compressed int64 not supported.");
+          return false;
+        }
+        int64_t v;
+        if (!_sr->read(sizeof(int64_t), sizeof(int64_t), reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read int64 data.");
+          return false;
+        }
+        value->Set(v);
+        return true;
+      }
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT: {
+      if (rep.IsArray()) {
+        if (rep.GetPayload() == 0) {
+          std::vector<float> v;
+          value->Set(std::move(v));
+          return true;
+        }
+        std::vector<float> v;
+        if (!ReadFloatArray(rep.IsCompressed(), &v)) {
+          PUSH_ERROR("Failed to read float array value.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE: {
+      if (rep.IsArray()) {
+        if (rep.GetPayload() == 0) {
+          std::vector<double> v;
+          value->Set(std::move(v));
+          return true;
+        }
+        std::vector<double> v;
+        if (!ReadDoubleArray(rep.IsCompressed(), &v)) {
+          PUSH_ERROR("Failed to read double array value.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      } else {
+        if (rep.IsCompressed()) {
+          PUSH_ERROR("Compressed double not supported.");
+          return false;
+        }
+        double v;
+        if (!_sr->read(sizeof(double), sizeof(double), reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read double data.");
+          return false;
+        }
+        value->Set(v);
+        return true;
+      }
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed string not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        uint64_t n;
+        if (!_sr->read8(&n)) {
+          PUSH_ERROR("Failed to read the number of array elements.");
+          return false;
+        }
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("String array too large. TinyUSDZ limites it up to {}", _config.maxArrayElements));
+        }
+        CHECK_MEMORY_USAGE(n * sizeof(crate::Index));
+        std::vector<crate::Index> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(crate::Index), size_t(n) * sizeof(crate::Index), reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read StringIndex array.");
+          return false;
+        }
+        std::vector<std::string> stringArray(static_cast<size_t>(n));
+        for (size_t i = 0; i < n; i++) {
+          if (auto stok = GetStringToken(v[i])) {
+            stringArray[i] = stok.value().str();
+          } else {
+            return false;
+          }
+        }
+        value->Set(std::move(stringArray));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX2D: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed matrix2d not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::matrix2d> v;
+        if (rep.GetPayload() == 0) {
+          value->Set(v);
+          return true;
+        }
+        uint64_t n{0};
+        if (VERSION_LESS_THAN_0_8_0(_version)) {
+          uint32_t shapesize;
+          if (!_sr->read4(&shapesize)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          uint32_t _n;
+          if (!_sr->read4(&_n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          n = _n;
+        } else {
+          if (!_sr->read8(&n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+        }
+        if (n == 0) {
+          value->Set(v);
+          return true;
+        }
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large.", n));
+        }
+        CHECK_MEMORY_USAGE(n * sizeof(value::matrix2d));
+        v.resize(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::matrix2d), size_t(n) * sizeof(value::matrix2d), reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read Matrix2d array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      } else {
+        CHECK_MEMORY_USAGE(sizeof(value::matrix2d));
+        value::matrix2d v;
+        if (!_sr->read(sizeof(value::matrix2d), sizeof(value::matrix2d), reinterpret_cast<uint8_t *>(v.m))) {
+          PUSH_ERROR("Failed to read value of `matrix2d` type");
+          return false;
+        }
+        value->Set(v);
+        return true;
+      }
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX3D: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed matrix3d not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::matrix3d> v;
+        if (rep.GetPayload() == 0) {
+          value->Set(v);
+          return true;
+        }
+        uint64_t n{0};
+        if (VERSION_LESS_THAN_0_8_0(_version)) {
+          uint32_t shapesize;
+          if (!_sr->read4(&shapesize)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          uint32_t _n;
+          if (!_sr->read4(&_n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          n = _n;
+        } else {
+          if (!_sr->read8(&n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+        }
+        if (n == 0) {
+          value->Set(v);
+          return true;
+        }
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large.", n));
+        }
+        CHECK_MEMORY_USAGE(n * sizeof(value::matrix3d));
+        v.resize(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::matrix3d), size_t(n) * sizeof(value::matrix3d), reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read Matrix3d array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      } else {
+        CHECK_MEMORY_USAGE(sizeof(value::matrix3d));
+        value::matrix3d v;
+        if (!_sr->read(sizeof(value::matrix3d), sizeof(value::matrix3d), reinterpret_cast<uint8_t *>(v.m))) {
+          PUSH_ERROR("Failed to read value of `matrix3d` type");
+          return false;
+        }
+        value->Set(v);
+        return true;
+      }
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX4D: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed matrix4d not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::matrix4d> v;
+        if (rep.GetPayload() == 0) {
+          value->Set(v);
+          return true;
+        }
+        uint64_t n{0};
+        if (VERSION_LESS_THAN_0_8_0(_version)) {
+          uint32_t shapesize;
+          if (!_sr->read4(&shapesize)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          uint32_t _n;
+          if (!_sr->read4(&_n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+          n = _n;
+        } else {
+          if (!_sr->read8(&n)) {
+            PUSH_ERROR("Failed to read the number of array elements.");
+            return false;
+          }
+        }
+        if (n == 0) {
+          value->Set(v);
+          return true;
+        }
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Array size {} too large.", n));
+        }
+        CHECK_MEMORY_USAGE(n * sizeof(value::matrix4d));
+        v.resize(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(value::matrix4d), size_t(n) * sizeof(value::matrix4d), reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read Matrix4d array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      } else {
+        CHECK_MEMORY_USAGE(sizeof(value::matrix4d));
+        value::matrix4d v;
+        if (!_sr->read(sizeof(value::matrix4d), sizeof(value::matrix4d), reinterpret_cast<uint8_t *>(v.m))) {
+          PUSH_ERROR("Failed to read value of `matrix4d` type");
+          return false;
+        }
+        value->Set(v);
+        return true;
+      }
+    }
+    default: {
+      PUSH_ERROR(fmt::format("Unsupported type for TimeSamples optimization: {}", crate::GetCrateDataTypeName(dty.dtype_id)));
+      return false;
+    }
+  }
+}
 
 bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
                                  crate::CrateValue *value) {
