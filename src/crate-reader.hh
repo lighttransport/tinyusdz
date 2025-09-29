@@ -493,6 +493,12 @@ class CrateReader {
 
   bool ReadTimeSamples(value::TimeSamples *d);
 
+  template<typename T>
+  bool CreateTypedTimeSamples(const std::vector<double> &times,
+                              const std::vector<crate::ValueRep> &value_reps,
+                              uint64_t vrep_start_offset,
+                              value::TimeSamples *d);
+
   // integral array
   template <typename T>
   bool ReadIntArray(bool is_compressed, std::vector<T> *d);
