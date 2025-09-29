@@ -3050,6 +3050,248 @@ bool CrateReader::UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint6
         return true;
       }
     }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed token not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        uint64_t n;
+        if (!_sr->read8(&n)) {
+          PUSH_ERROR("Failed to read the number of array elements.");
+          return false;
+        }
+        if (n > _config.maxArrayElements) {
+          PUSH_ERROR_AND_RETURN_TAG(kTag, fmt::format("Token array too large. TinyUSDZ limites it up to {}", _config.maxArrayElements));
+        }
+        CHECK_MEMORY_USAGE(n * sizeof(crate::Index));
+        std::vector<crate::Index> v(static_cast<size_t>(n));
+        if (!_sr->read(size_t(n) * sizeof(crate::Index), size_t(n) * sizeof(crate::Index), reinterpret_cast<uint8_t *>(v.data()))) {
+          PUSH_ERROR("Failed to read TokenIndex array.");
+          return false;
+        }
+        std::vector<value::token> tokenArray(static_cast<size_t>(n));
+        for (size_t i = 0; i < n; i++) {
+          if (auto tok = GetToken(v[i])) {
+            tokenArray[i] = tok.value();
+          } else {
+            return false;
+          }
+        }
+        value->Set(std::move(tokenArray));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_HALF: {
+      if (rep.IsArray()) {
+        if (rep.GetPayload() == 0) {
+          std::vector<value::half> v;
+          value->Set(std::move(v));
+          return true;
+        }
+        std::vector<value::half> v;
+        if (!ReadHalfArray(rep.IsCompressed(), &v)) {
+          PUSH_ERROR("Failed to read half array value.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2H: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed half2 not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::half2> v;
+        if (!ReadArray(&v)) {
+          PUSH_ERROR("Failed to read half2 array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3H: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed half3 not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::half3> v;
+        if (!ReadArray(&v)) {
+          PUSH_ERROR("Failed to read half3 array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4H: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed half4 not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::half4> v;
+        if (!ReadArray(&v)) {
+          PUSH_ERROR("Failed to read half4 array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2F: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed float2 not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::float2> v;
+        if (!ReadArray(&v)) {
+          PUSH_ERROR("Failed to read float2 array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3F: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed float3 not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::float3> v;
+        if (!ReadArray(&v)) {
+          PUSH_ERROR("Failed to read float3 array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4F: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed float4 not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::float4> v;
+        if (!ReadArray(&v)) {
+          PUSH_ERROR("Failed to read float4 array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2D: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed double2 not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::double2> v;
+        if (!ReadArray(&v)) {
+          PUSH_ERROR("Failed to read double2 array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3D: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed double3 not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::double3> v;
+        if (!ReadArray(&v)) {
+          PUSH_ERROR("Failed to read double3 array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4D: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed double4 not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::double4> v;
+        if (!ReadArray(&v)) {
+          PUSH_ERROR("Failed to read double4 array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATH: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed quath not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::quath> v;
+        if (!ReadArray(&v)) {
+          PUSH_ERROR("Failed to read quath array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATF: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed quatf not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::quatf> v;
+        if (!ReadArray(&v)) {
+          PUSH_ERROR("Failed to read quatf array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      }
+      return false;
+    }
+    case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATD: {
+      if (rep.IsCompressed()) {
+        PUSH_ERROR("Compressed quatd not supported for TimeSamples.");
+        return false;
+      }
+      if (rep.IsArray()) {
+        std::vector<value::quatd> v;
+        if (!ReadArray(&v)) {
+          PUSH_ERROR("Failed to read quatd array.");
+          return false;
+        }
+        value->Set(std::move(v));
+        return true;
+      }
+      return false;
+    }
     default: {
       PUSH_ERROR(fmt::format("Unsupported type for TimeSamples optimization: {}", crate::GetCrateDataTypeName(dty.dtype_id)));
       return false;
