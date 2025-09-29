@@ -11,6 +11,7 @@
 #include "nonstd/optional.hpp"
 //
 #include "crate-format.hh"
+#include "dynamic-bitset.hh"
 #include "memory-budget.hh"
 #include "prim-types.hh"
 #include "stream-reader.hh"
@@ -70,36 +71,63 @@ struct CrateReaderConfig {
   size_t maxMemoryBudget = std::numeric_limits<int32_t>::max();
 };
 
+// Enable SoA (Struct of Arrays) layout for TypedTimeSamples
+// Default is AoS (Array of Structs) layout
+// #define TINYUSDZ_CRATE_TIMESAMPLES_USE_SOA
+
 ///
 /// Typed TimeSamples storage for efficient Crate reading.
 ///
 /// Stores time-sampled animation data in a compact, type-specific format
-/// with minimal overhead. The data is organized as:
+/// with minimal overhead.
+///
+/// Two layout options controlled by TINYUSDZ_CRATE_TIMESAMPLES_USE_SOA:
+///
+/// AoS (Array of Structs) - Default:
 /// - Type information (CrateDataTypeId)
-/// - None/blocked value mask (dynamic bitset via std::vector<bool>)
+/// - None/blocked value mask (std::vector<bool>)
 /// - Number of time samples
 /// - Opaque storage buffer (sizeof(type) * N elements)
 ///
-/// This allows for efficient deserialization and memory layout of animated
-/// properties without boxing each value individually.
+/// SoA (Struct of Arrays) - When TINYUSDZ_CRATE_TIMESAMPLES_USE_SOA defined:
+/// - Type information (CrateDataTypeId)
+/// - None/blocked value mask (DynamicBitset)
+/// - Number of time samples
+/// - Typed storage buffer (TypedArray<uint8_t>)
+///
+/// Both layouts provide identical API for transparent switching.
 ///
 struct CrateTypedTimeSamples {
   CrateDataTypeId type_id{CrateDataTypeId::CRATE_DATA_TYPE_INVALID};
   bool is_array{false};
   size_t num_elements{0};
+
+#ifdef TINYUSDZ_CRATE_TIMESAMPLES_USE_SOA
+  DynamicBitset none_mask;
+#else
   std::vector<bool> none_mask;
-  std::vector<uint8_t> storage;
+#endif
+  TypedArray<uint8_t> storage;
 
   CrateTypedTimeSamples() = default;
 
   bool is_blocked(size_t index) const {
+#ifdef TINYUSDZ_CRATE_TIMESAMPLES_USE_SOA
+    if (index >= none_mask.size()) return false;
+    return none_mask.get(index);
+#else
     if (index >= none_mask.size()) return false;
     return none_mask[index];
+#endif
   }
 
   void reserve(size_t num_samples, size_t element_size_bytes) {
     num_elements = num_samples;
+#ifdef TINYUSDZ_CRATE_TIMESAMPLES_USE_SOA
     none_mask.resize(num_samples, false);
+#else
+    none_mask.resize(num_samples, false);
+#endif
     storage.resize(num_samples * element_size_bytes);
   }
 
@@ -114,15 +142,41 @@ struct CrateTypedTimeSamples {
   }
 
   void set_blocked(size_t index, bool blocked = true) {
+#ifdef TINYUSDZ_CRATE_TIMESAMPLES_USE_SOA
+    if (index < none_mask.size()) {
+      none_mask.set(index, blocked);
+    }
+#else
     if (index < none_mask.size()) {
       none_mask[index] = blocked;
     }
+#endif
+  }
+
+  template<typename T>
+  const T* get(size_t index) const {
+    if (index >= num_elements) return nullptr;
+    if (is_blocked(index)) return nullptr;
+    return reinterpret_cast<const T*>(storage.data() + (index * sizeof(T)));
+  }
+
+  template<typename T>
+  T* get(size_t index) {
+    if (index >= num_elements) return nullptr;
+    if (is_blocked(index)) return nullptr;
+    return reinterpret_cast<T*>(storage.data() + (index * sizeof(T)));
   }
 
   size_t estimate_memory_usage() const {
+#ifdef TINYUSDZ_CRATE_TIMESAMPLES_USE_SOA
+    return sizeof(CrateTypedTimeSamples) +
+           none_mask.memory_usage() +
+           storage.size();
+#else
     return sizeof(CrateTypedTimeSamples) +
            (none_mask.size() + 7) / 8 +
            storage.size();
+#endif
   }
 };
 
