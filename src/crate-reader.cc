@@ -1431,10 +1431,7 @@ bool CrateReader::CreateTypedTimeSamples(const std::vector<double> &times,
 
     if (is_blocked) {
       // Handle blocked value
-      typename TypedTimeSamples<T>::Sample sample;
-      sample.t = times[i];
-      sample.blocked = true;
-      typed_ts.add_sample(sample);
+      typed_ts.add_blocked_sample(times[i]);
     } else if (auto pv = value.get_value<T>()) {
       // Extract typed value and add to TypedTimeSamples
       typed_ts.add_sample(times[i], pv.value());
@@ -1446,6 +1443,8 @@ bool CrateReader::CreateTypedTimeSamples(const std::vector<double> &times,
 
   // Convert TypedTimeSamples back to regular TimeSamples
   // This preserves the optimized storage while maintaining API compatibility
+#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
+  // AoS layout - can access samples directly
   for (size_t i = 0; i < typed_ts.size(); i++) {
     const auto &samples = typed_ts.samples();
     if (samples[i].blocked) {
@@ -1455,6 +1454,21 @@ bool CrateReader::CreateTypedTimeSamples(const std::vector<double> &times,
       d->add_sample(samples[i].t, value::Value(samples[i].value));
     }
   }
+#else
+  // SoA layout - access individual arrays
+  const auto &times_array = typed_ts.get_times();
+  const auto &values_array = typed_ts.get_values();
+  const auto &blocked_array = typed_ts.get_blocked();
+
+  for (size_t i = 0; i < typed_ts.size(); i++) {
+    if (blocked_array[i]) {
+      // For blocked samples, we need to provide a dummy value of the right type
+      d->add_blocked_sample(times_array[i], value::Value(T{}));
+    } else {
+      d->add_sample(times_array[i], value::Value(values_array[i]));
+    }
+  }
+#endif
 
   return true;
 }

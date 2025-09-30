@@ -48,6 +48,41 @@
 
 //#include <iostream>
 
+// Helper macros for iterating over TypedTimeSamples in both AoS and SoA modes
+#ifdef TINYUSDZ_USE_TIMESAMPLES_SOA
+#define FOREACH_TIMESAMPLES_BEGIN(ts, var_t, var_value, var_blocked) \
+  { \
+    const auto &_times = (ts).get_times(); \
+    const auto &_values = (ts).get_values(); \
+    const auto &_blocked = (ts).get_blocked(); \
+    for (size_t _idx = 0; _idx < _times.size(); _idx++) { \
+      const double var_t = _times[_idx]; \
+      const auto &var_value = _values[_idx]; \
+      const bool var_blocked = _blocked[_idx]; \
+      if (!var_blocked) {
+
+#define FOREACH_TIMESAMPLES_END() \
+      } \
+    } \
+  }
+
+#define TIMESAMPLES_EMPTY(ts) ((ts).size() == 0)
+
+#else
+#define FOREACH_TIMESAMPLES_BEGIN(ts, var_t, var_value, var_blocked) \
+  for (const auto &_sample : (ts).get_samples()) { \
+    const double var_t = _sample.t; \
+    const auto &var_value = _sample.value; \
+    const bool var_blocked = _sample.blocked; \
+    if (!var_blocked) {
+
+#define FOREACH_TIMESAMPLES_END() \
+    } \
+  }
+
+#define TIMESAMPLES_EMPTY(ts) ((ts).get_samples().empty())
+#endif
+
 #if defined(TINYUSDZ_WITH_COLORIO)
 #include "external/tiny-color-io.h"
 #endif
@@ -6139,21 +6174,20 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
       DCOUT("Convert ttranslations");
       const TypedTimeSamples<std::vector<value::float3>> &ts_txs = translations.get_timesamples();
 
-      if (ts_txs.get_samples().empty()) {
+      if (TIMESAMPLES_EMPTY(ts_txs)) {
         PUSH_ERROR_AND_RETURN(fmt::format("`translations` timeSamples in SkelAnimation is empty : {}", abs_path));
       }
 
-      for (const auto &sample : ts_txs.get_samples()) {
-        if (!sample.blocked) {
-          // length check
-          if (sample.value.size() != joints.size()) {
-            PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. timeCode {} translations.size {} must be equal to joints.size {} : {}", sample.t, sample.value.size(), joints.size(), abs_path));
-          }
+      FOREACH_TIMESAMPLES_BEGIN(ts_txs, sample_t, sample_value, sample_blocked)
+        // length check
+        if (sample_value.size() != joints.size()) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. timeCode {} translations.size {} must be equal to joints.size {} : {}", sample_t, sample_value.size(), joints.size(), abs_path));
+        }
 
-          for (size_t j = 0; j < sample.value.size(); j++) {
-            AnimationSample<value::float3> s;
-            s.t = float(sample.t);
-            s.value = sample.value[j];
+        for (size_t j = 0; j < sample_value.size(); j++) {
+          AnimationSample<value::float3> s;
+          s.t = float(sample_t);
+          s.value = sample_value[j];
 
             std::string jointName = jointIdMap.at(j);
             auto &it = channelMap[jointName][AnimationChannel::ChannelType::Translation];
@@ -6161,27 +6195,24 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
               it.type = AnimationChannel::ChannelType::Translation;
             }
             it.translations.samples.push_back(s);
-          }
-
         }
-      }
+      FOREACH_TIMESAMPLES_END()
     }
 
     if (rotations.has_timesamples()) {
       const TypedTimeSamples<std::vector<value::quatf>> &ts_rots = rotations.get_timesamples();
       DCOUT("Convert rotations");
-      for (const auto &sample : ts_rots.get_samples()) {
-        if (!sample.blocked) {
-          if (sample.value.size() != joints.size()) {
-            PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. timeCode {} rotations.size {} must be equal to joints.size {} : {}", sample.t, sample.value.size(), joints.size(), abs_path));
-          }
-          for (size_t j = 0; j < sample.value.size(); j++) {
-            AnimationSample<value::float4> s;
-            s.t = float(sample.t);
-            s.value[0] = sample.value[j][0];
-            s.value[1] = sample.value[j][1];
-            s.value[2] = sample.value[j][2];
-            s.value[3] = sample.value[j][3];
+      FOREACH_TIMESAMPLES_BEGIN(ts_rots, sample_t, sample_value, sample_blocked)
+        if (sample_value.size() != joints.size()) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. timeCode {} rotations.size {} must be equal to joints.size {} : {}", sample_t, sample_value.size(), joints.size(), abs_path));
+        }
+        for (size_t j = 0; j < sample_value.size(); j++) {
+          AnimationSample<value::float4> s;
+          s.t = float(sample_t);
+          s.value[0] = sample_value[j][0];
+          s.value[1] = sample_value[j][1];
+          s.value[2] = sample_value[j][2];
+          s.value[3] = sample_value[j][3];
 
             std::string jointName = jointIdMap.at(j);
             auto &it = channelMap[jointName][AnimationChannel::ChannelType::Rotation];
@@ -6189,27 +6220,24 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
               it.type = AnimationChannel::ChannelType::Rotation;
             }
             it.rotations.samples.push_back(s);
-          }
-
         }
-      }
+      FOREACH_TIMESAMPLES_END()
     }
 
     if (scales.has_timesamples()) {
       const TypedTimeSamples<std::vector<value::half3>> &ts_scales = scales.get_timesamples();
       DCOUT("Convert scales");
-      for (const auto &sample : ts_scales.get_samples()) {
-        if (!sample.blocked) {
-          if (sample.value.size() != joints.size()) {
-            PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. timeCode {} scales.size {} must be equal to joints.size {} : {}", sample.t, sample.value.size(), joints.size(), abs_path));
-          }
+      FOREACH_TIMESAMPLES_BEGIN(ts_scales, sample_t, sample_value, sample_blocked)
+        if (sample_value.size() != joints.size()) {
+          PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. timeCode {} scales.size {} must be equal to joints.size {} : {}", sample_t, sample_value.size(), joints.size(), abs_path));
+        }
 
-          for (size_t j = 0; j < sample.value.size(); j++) {
-            AnimationSample<value::float3> s;
-            s.t = float(sample.t);
-            s.value[0] = value::half_to_float(sample.value[j][0]);
-            s.value[1] = value::half_to_float(sample.value[j][1]);
-            s.value[2] = value::half_to_float(sample.value[j][2]);
+        for (size_t j = 0; j < sample_value.size(); j++) {
+          AnimationSample<value::float3> s;
+          s.t = float(sample_t);
+          s.value[0] = value::half_to_float(sample_value[j][0]);
+          s.value[1] = value::half_to_float(sample_value[j][1]);
+          s.value[2] = value::half_to_float(sample_value[j][2]);
 
             std::string jointName = jointIdMap.at(j);
             auto &it = channelMap[jointName][AnimationChannel::ChannelType::Scale];
@@ -6217,10 +6245,8 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
               it.type = AnimationChannel::ChannelType::Scale;
             }
             it.scales.samples.push_back(s);
-          }
-
         }
-      }
+      FOREACH_TIMESAMPLES_END()
     }
 
     //
@@ -6369,23 +6395,20 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
 
         const TypedTimeSamples<std::vector<float>> &ts_weights = weights.get_timesamples();
         DCOUT("Convert timeSampledd weights");
-        for (const auto &sample : ts_weights.get_samples()) {
-          if (!sample.blocked) {
-            if (sample.value.size() != blendShapes.size()) {
-              PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. timeCode {} blendShapeWeights.size {} must be equal to blendShapes.size {} : {}", sample.t, sample.value.size(), blendShapes.size(), abs_path));
-            }
+        FOREACH_TIMESAMPLES_BEGIN(ts_weights, sample_t, sample_value, sample_blocked)
+          if (sample_value.size() != blendShapes.size()) {
+            PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. timeCode {} blendShapeWeights.size {} must be equal to blendShapes.size {} : {}", sample_t, sample_value.size(), blendShapes.size(), abs_path));
+          }
 
-            for (size_t j = 0; j < sample.value.size(); j++) {
-              AnimationSample<float> s;
-              s.t = float(sample.t);
-              s.value = sample.value[j];
+          for (size_t j = 0; j < sample_value.size(); j++) {
+            AnimationSample<float> s;
+            s.t = float(sample_t);
+            s.value = sample_value[j];
 
               const std::string &targetName = blendShapes[j].str();
               weightsMap[targetName].samples.push_back(s);
-            }
-
           }
-        }
+        FOREACH_TIMESAMPLES_END()
       }
 
       if (weights.has_default()) {
