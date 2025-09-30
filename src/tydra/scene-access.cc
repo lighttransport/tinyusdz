@@ -36,14 +36,34 @@ namespace {
 // Typed TimeSamples to typeless TimeSamples
 template <typename T>
 value::TimeSamples ToTypelessTimeSamples(const TypedTimeSamples<T> &ts) {
+  value::TimeSamples dst;
+
+#ifdef TINYUSDZ_USE_TIMESAMPLES_SOA
+  const auto &times = ts.get_times();
+  const auto &values = ts.get_values();
+  const auto &blocked = ts.get_blocked();
+
+  for (size_t i = 0; i < times.size(); i++) {
+    if (blocked[i]) {
+      // For untyped TimeSamples, blocked samples need a dummy value
+      dst.add_blocked_sample(times[i], value::Value());
+    } else {
+      dst.add_sample(times[i], values[i]);
+    }
+  }
+#else
   const std::vector<typename TypedTimeSamples<T>::Sample> &samples =
       ts.get_samples();
 
-  value::TimeSamples dst;
-
   for (size_t i = 0; i < samples.size(); i++) {
-    dst.add_sample(samples[i].t, samples[i].value);
+    if (samples[i].blocked) {
+      // For untyped TimeSamples, blocked samples need a dummy value
+      dst.add_blocked_sample(samples[i].t, value::Value());
+    } else {
+      dst.add_sample(samples[i].t, samples[i].value);
+    }
   }
+#endif
 
   return dst;
 }
@@ -52,16 +72,38 @@ value::TimeSamples ToTypelessTimeSamples(const TypedTimeSamples<T> &ts) {
 template <typename T>
 value::TimeSamples EnumTimeSamplesToTypelessTimeSamples(
     const TypedTimeSamples<T> &ts) {
+  value::TimeSamples dst;
+
+#ifdef TINYUSDZ_USE_TIMESAMPLES_SOA
+  const auto &times = ts.get_times();
+  const auto &values = ts.get_values();
+  const auto &blocked = ts.get_blocked();
+
+  for (size_t i = 0; i < times.size(); i++) {
+    if (blocked[i]) {
+      // For untyped TimeSamples, blocked samples need a dummy value
+      dst.add_blocked_sample(times[i], value::Value());
+    } else {
+      // to token
+      value::token tok(to_string(values[i]));
+      dst.add_sample(times[i], tok);
+    }
+  }
+#else
   const std::vector<typename TypedTimeSamples<T>::Sample> &samples =
       ts.get_samples();
 
-  value::TimeSamples dst;
-
   for (size_t i = 0; i < samples.size(); i++) {
-    // to token
-    value::token tok(to_string(samples[i].value));
-    dst.add_sample(samples[i].t, tok);
+    if (samples[i].blocked) {
+      // For untyped TimeSamples, blocked samples need a dummy value
+      dst.add_blocked_sample(samples[i].t, value::Value());
+    } else {
+      // to token
+      value::token tok(to_string(samples[i].value));
+      dst.add_sample(samples[i].t, tok);
+    }
   }
+#endif
 
   return dst;
 }
