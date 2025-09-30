@@ -330,6 +330,16 @@ void GeomPrimvar::set_indices(const std::vector<int32_t> &indices, const double 
   if (value::TimeCode(t).is_default()) {
     _indices = indices;
   } else {
+#ifdef TINYUSDZ_USE_TIMESAMPLES_SOA
+    // In SoA mode, check if the sample exists and update/add
+    std::vector<int32_t> existing_value;
+    if (_ts_indices.get_value_at(t, &existing_value)) {
+      // Sample exists, overwrite it
+      _ts_indices.set_value_at(t, indices);
+    } else {
+      _ts_indices.add_sample(t, indices);
+    }
+#else
     TypedTimeSamples<std::vector<int32_t>>::Sample *psample{nullptr};
     if (_ts_indices.get_sample_at(t, &psample)) {
       // overwrite content
@@ -337,6 +347,7 @@ void GeomPrimvar::set_indices(const std::vector<int32_t> &indices, const double 
     } else {
       _ts_indices.add_sample(t, indices);
     }
+#endif
   }
 }
 
@@ -501,6 +512,7 @@ bool GeomPrimvar::get_value(T *dest, std::string *err) const {
       return false;
     }
 
+    // Note: value::TimeSamples (untyped) doesn't have SoA layout support
     if (auto pv =ts.get_samples().at(0).value.as<T>()) {
       (*dest) = (*pv);
       return true;
@@ -664,9 +676,18 @@ bool GPrim::set_primvar(const GeomPrimvar &primvar,
     }
 
     if (primvar.has_timesampled_indices()) {
+#ifdef TINYUSDZ_USE_TIMESAMPLES_SOA
+      const auto &ts_indices = primvar.get_timesampled_indices();
+      const auto &times = ts_indices.get_times();
+      const auto &values = ts_indices.get_values();
+      for (size_t i = 0; i < times.size(); i++) {
+        var.set_timesample(times[i], values[i]);
+      }
+#else
       for (const auto &sample : primvar.get_timesampled_indices().get_samples()) {
         var.set_timesample(sample.t, sample.value);
       }
+#endif
     }
 
     if (primvar.has_default_indices() || primvar.has_timesampled_indices()) {
