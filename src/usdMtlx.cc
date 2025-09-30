@@ -19,6 +19,7 @@
 #include <sstream>
 
 #include "usdMtlx.hh"
+#include "usdShade.hh"
 
 #if defined(TINYUSDZ_USE_USDMTLX)
 
@@ -838,6 +839,87 @@ bool ReadMaterialXFromString(const std::string &str,
     }
 
     mtlx->shaders[surface_name] = surface;
+    if (mtlx->shader_name.empty()) {
+      mtlx->shader_name = kUsdPreviewSurface;
+    }
+  }
+
+  // OpenPBR Surface
+  for (auto openpbr_surface : root.children("OpenPBRSurface")) {
+    std::string surface_name;
+    {
+      std::string typeName;
+      GET_ATTR_VALUE(openpbr_surface, "name", std::string, surface_name);
+      GET_ATTR_VALUE(openpbr_surface, "type", std::string, typeName);
+      if (typeName != "surfaceshader") {
+        PUSH_ERROR_AND_RETURN(
+            fmt::format("`surfaceshader` expected for type of "
+                        "OpenPBRSurface, but got `{}`",
+                        typeName));
+      }
+    }
+    
+    OpenPBRSurface surface;
+    for (auto inp : openpbr_surface.children("input")) {
+      std::string name;
+      std::string typeName;
+      std::string valueStr;
+      GET_ATTR_VALUE(inp, "name", std::string, name);
+      GET_ATTR_VALUE(inp, "type", std::string, typeName);
+      
+      pugi::xml_attribute value_attr = inp.attribute("value");
+      if (value_attr) {
+        valueStr = value_attr.as_string();
+      }
+      
+      // Parse OpenPBR parameters
+      GET_SHADER_PARAM(name, typeName, "base_weight", "float", float, valueStr, surface.base_weight)
+      GET_SHADER_PARAM(name, typeName, "base_color", "color3", value::color3f, valueStr, surface.base_color)
+      GET_SHADER_PARAM(name, typeName, "base_roughness", "float", float, valueStr, surface.base_roughness)
+      GET_SHADER_PARAM(name, typeName, "base_metalness", "float", float, valueStr, surface.base_metalness)
+      GET_SHADER_PARAM(name, typeName, "specular_weight", "float", float, valueStr, surface.specular_weight)
+      GET_SHADER_PARAM(name, typeName, "specular_color", "color3", value::color3f, valueStr, surface.specular_color)
+      GET_SHADER_PARAM(name, typeName, "specular_roughness", "float", float, valueStr, surface.specular_roughness)
+      GET_SHADER_PARAM(name, typeName, "specular_ior", "float", float, valueStr, surface.specular_ior)
+      GET_SHADER_PARAM(name, typeName, "specular_ior_level", "float", float, valueStr, surface.specular_ior_level)
+      GET_SHADER_PARAM(name, typeName, "specular_anisotropy", "float", float, valueStr, surface.specular_anisotropy)
+      GET_SHADER_PARAM(name, typeName, "specular_rotation", "float", float, valueStr, surface.specular_rotation)
+      GET_SHADER_PARAM(name, typeName, "transmission_weight", "float", float, valueStr, surface.transmission_weight)
+      GET_SHADER_PARAM(name, typeName, "transmission_color", "color3", value::color3f, valueStr, surface.transmission_color)
+      GET_SHADER_PARAM(name, typeName, "transmission_depth", "float", float, valueStr, surface.transmission_depth)
+      GET_SHADER_PARAM(name, typeName, "transmission_scatter", "color3", value::color3f, valueStr, surface.transmission_scatter)
+      GET_SHADER_PARAM(name, typeName, "transmission_scatter_anisotropy", "float", float, valueStr, surface.transmission_scatter_anisotropy)
+      GET_SHADER_PARAM(name, typeName, "transmission_dispersion", "float", float, valueStr, surface.transmission_dispersion)
+      GET_SHADER_PARAM(name, typeName, "subsurface_weight", "float", float, valueStr, surface.subsurface_weight)
+      GET_SHADER_PARAM(name, typeName, "subsurface_color", "color3", value::color3f, valueStr, surface.subsurface_color)
+      GET_SHADER_PARAM(name, typeName, "subsurface_radius", "color3", value::color3f, valueStr, surface.subsurface_radius)
+      GET_SHADER_PARAM(name, typeName, "subsurface_scale", "float", float, valueStr, surface.subsurface_scale)
+      GET_SHADER_PARAM(name, typeName, "subsurface_anisotropy", "float", float, valueStr, surface.subsurface_anisotropy)
+      GET_SHADER_PARAM(name, typeName, "sheen_weight", "float", float, valueStr, surface.sheen_weight)
+      GET_SHADER_PARAM(name, typeName, "sheen_color", "color3", value::color3f, valueStr, surface.sheen_color)
+      GET_SHADER_PARAM(name, typeName, "sheen_roughness", "float", float, valueStr, surface.sheen_roughness)
+      GET_SHADER_PARAM(name, typeName, "coat_weight", "float", float, valueStr, surface.coat_weight)
+      GET_SHADER_PARAM(name, typeName, "coat_color", "color3", value::color3f, valueStr, surface.coat_color)
+      GET_SHADER_PARAM(name, typeName, "coat_roughness", "float", float, valueStr, surface.coat_roughness)
+      GET_SHADER_PARAM(name, typeName, "coat_anisotropy", "float", float, valueStr, surface.coat_anisotropy)
+      GET_SHADER_PARAM(name, typeName, "coat_rotation", "float", float, valueStr, surface.coat_rotation)
+      GET_SHADER_PARAM(name, typeName, "coat_ior", "float", float, valueStr, surface.coat_ior)
+      GET_SHADER_PARAM(name, typeName, "coat_affect_color", "color3", value::color3f, valueStr, surface.coat_affect_color)
+      GET_SHADER_PARAM(name, typeName, "coat_affect_roughness", "float", float, valueStr, surface.coat_affect_roughness)
+      GET_SHADER_PARAM(name, typeName, "emission_luminance", "float", float, valueStr, surface.emission_luminance)
+      GET_SHADER_PARAM(name, typeName, "emission_color", "color3", value::color3f, valueStr, surface.emission_color)
+      GET_SHADER_PARAM(name, typeName, "opacity", "float", float, valueStr, surface.opacity)
+      GET_SHADER_PARAM(name, typeName, "normal", "vector3", value::normal3f, valueStr, surface.normal)
+      GET_SHADER_PARAM(name, typeName, "tangent", "vector3", value::vector3f, valueStr, surface.tangent)
+      {
+        PUSH_WARN(fmt::format("TODO: OpenPBR input `{}`", name));
+      }
+    }
+    
+    mtlx->shaders[surface_name] = surface;
+    if (mtlx->shader_name.empty()) {
+      mtlx->shader_name = kOpenPBRSurface;
+    }
   }
 
   // surfacematerial
@@ -926,6 +1008,10 @@ bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
     (void)adskss;
     // TODO
     PUSH_ERROR_AND_RETURN("TODO: AutodeskStandardSurface");
+  } else if (auto openpbr = mtlx.shader.as<OpenPBRSurface>()) {
+    (void)openpbr;
+    // TODO: Implement OpenPBR MaterialX writing
+    PUSH_ERROR_AND_RETURN("TODO: OpenPBRSurface");
   } else {
     // TODO
     PUSH_ERROR_AND_RETURN("Unknown/unsupported shader: " << mtlx.shader_name);
@@ -952,6 +1038,9 @@ bool ToPrimSpec(const MtlxModel &model, PrimSpec &ps, std::string *err) {
   } else if (model.shader_name == kAutodeskStandardSurface) {
     ps.props()["info:id"] =
         detail::MakeProperty(value::token(kAutodeskStandardSurface));
+  } else if (model.shader_name == kOpenPBRSurface) {
+    ps.props()["info:id"] =
+        detail::MakeProperty(value::token(kOpenPBRSurface));
   } else {
     PUSH_ERROR_AND_RETURN("Unsupported shader_name: " << model.shader_name);
   }
@@ -964,8 +1053,13 @@ bool ToPrimSpec(const MtlxModel &model, PrimSpec &ps, std::string *err) {
     PrimSpec material;
     material.specifier() = Specifier::Def;
     material.typeName() = "Material";
-
     material.name() = item.second.name;
+
+    // Add MaterialXConfigAPI with version from MaterialX
+    if (!model.version.empty()) {
+      material.props()["config:mtlx:version"] = 
+          detail::MakeProperty(model.version);
+    }
   }
 
   PrimSpec shaders;
