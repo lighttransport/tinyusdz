@@ -156,16 +156,11 @@ class DynamicBitset {
 
  private:
   static size_t popcount(uint64_t x) {
-#if defined(__GNUC__) || defined(__clang__)
-    return __builtin_popcountll(x);
-#elif defined(_MSC_VER) && defined(_M_X64)
-    return __popcnt64(x);
-#else
+    // Use portable implementation to avoid signedness conversion issues
     x = x - ((x >> 1) & 0x5555555555555555ULL);
     x = (x & 0x3333333333333333ULL) + ((x >> 2) & 0x3333333333333333ULL);
     x = (x + (x >> 4)) & 0x0F0F0F0F0F0F0F0FULL;
     return (x * 0x0101010101010101ULL) >> 56;
-#endif
   }
 
   std::vector<uint64_t> _blocks;
