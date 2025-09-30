@@ -27,6 +27,7 @@ namespace tinyusdz {
 
 constexpr auto kMtlxUsdPreviewSurface = "MtlxUsdPreviewSurface";
 constexpr auto kMtlxAutodeskStandardSurface = "MtlxAutodeskStandaradSurface";
+constexpr auto kMtlxOpenPBRSurface = "MtlxOpenPBRSurface";
 
 
 namespace mtlx {
@@ -64,7 +65,7 @@ struct MtlxModel {
   value::Value shader; 
 
   std::map<std::string, MtlxMaterial> surface_materials;
-  std::map<std::string, value::Value> shaders; // MtlxUsdPreviewSurface or MtlxAutodeskStandaradSurface
+  std::map<std::string, value::Value> shaders; // MtlxUsdPreviewSurface, MtlxAutodeskStandaradSurface, or OpenPBRSurface
 };
 
 struct MtlxUsdPreviewSurface : UsdPreviewSurface {
