@@ -146,7 +146,14 @@ class TraceManager {
   
  public:
   static TraceManager& getInstance() {
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wexit-time-destructors"
+#endif
     static TraceManager instance;
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
     return instance;
   }
   
@@ -381,7 +388,7 @@ class TraceManager {
         max_ms = std::max(max_ms, record.duration_ms);
       }
       
-      double avg_ms = records.empty() ? 0.0 : total_ms / records.size();
+      double avg_ms = records.empty() ? 0.0 : total_ms / static_cast<double>(records.size());
       
       out << std::fixed << std::setprecision(3);
       out << "Tag: " << key << "\n";
@@ -415,7 +422,7 @@ class TraceManager {
         max_ms = std::max(max_ms, record.duration_ms);
       }
       
-      double avg_ms = records.empty() ? 0.0 : total_ms / records.size();
+      double avg_ms = records.empty() ? 0.0 : total_ms / static_cast<double>(records.size());
       
       if (!first_tag) {
         out << ",\n";
@@ -483,7 +490,8 @@ class TraceManager {
   // Helper function to escape special characters in JSON strings
   static std::string escapeJSON(const std::string& str) {
     std::stringstream ss;
-    for (unsigned char c : str) {
+    for (char ch : str) {
+      unsigned char c = static_cast<unsigned char>(ch);
       switch (c) {
         case '"': ss << "\\\""; break;
         case '\\': ss << "\\\\"; break;
@@ -594,7 +602,7 @@ class Trace {
     record_.end_time = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
         record_.end_time - record_.start_time);
-    record_.duration_ms = duration.count() / 1000.0;
+    record_.duration_ms = static_cast<double>(duration.count()) / 1000.0;
     
     // Log trace end event
     TraceManager::getInstance().logTraceEnd(record_.tag, record_.subtag, 
