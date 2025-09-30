@@ -1263,6 +1263,10 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   bool use_typed_path = false;
   if (is_homogeneous) {
     auto type_id = static_cast<crate::CrateDataTypeId>(first_type);
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wswitch-enum"
+#endif
     switch (type_id) {
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT:
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT:
@@ -1277,8 +1281,13 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
         use_typed_path = first_is_array;
         break;
       default:
+        // All other types don't use typed storage
+        use_typed_path = false;
         break;
     }
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
   }
 
   if (use_typed_path) {
@@ -1286,6 +1295,10 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
     auto type_id = static_cast<crate::CrateDataTypeId>(first_type);
     bool success = false;
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wswitch-enum"
+#endif
     switch (type_id) {
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT:
         if (first_is_array) {
@@ -1338,8 +1351,13 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
         }
         break;
       default:
+        // Other types not handled by typed storage
+        success = false;
         break;
     }
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
     if (success) {
       // Move to next location.
@@ -1388,7 +1406,7 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
 
 template<typename T>
 bool CrateReader::CreateTypedTimeSamples(const std::vector<double> &times,
-                                         const std::vector<crate::ValueRep> &value_reps,
+                                         const std::vector<crate::ValueRep> &,  // value_reps unused
                                          uint64_t vrep_start_offset,
                                          value::TimeSamples *d) {
   // Create typed timesamples for efficient storage
@@ -2878,6 +2896,10 @@ bool CrateReader::UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint6
     return false;
   }
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wswitch-enum"
+#endif
   switch (dty.dtype_id) {
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT: {
       if (rep.IsArray()) {
@@ -3431,6 +3453,9 @@ bool CrateReader::UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint6
       return false;
     }
   }
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 }
 
 bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
