@@ -5571,6 +5571,32 @@ bool ReconstructPrim<Material>(
   return true;
 }
 
+template <>
+bool ReconstructPrim<NodeGraph>(
+    const Specifier &spec,
+    const PropertyMap &properties,
+    const ReferenceList &references,
+    NodeGraph *nodegraph,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options)
+{
+  (void)spec;
+  (void)references;
+  (void)warn;
+  std::set<std::string> table;
+
+  // NodeGraph can have arbitrary outputs (e.g., outputs:result, outputs:normal, etc.)
+  // They are stored in the props map, so we just add all properties
+  for (auto &prop : properties) {
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, NodeGraph,
+                       nodegraph->purpose, options.strict_allowedToken_check)
+    ADD_PROPERTY(table, prop, NodeGraph, nodegraph->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+  return true;
+}
+
 ///
 /// -- PrimSpec
 ///
@@ -5614,6 +5640,7 @@ RECONSTRUCT_PRIM_PRIMSPEC_IMPL(SkelAnimation)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(BlendShape)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Shader)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Material)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(NodeGraph)
 
 
 } // namespace prim
