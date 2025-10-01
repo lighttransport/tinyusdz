@@ -127,9 +127,21 @@ struct Material : UsdShadePrim {
 
 };
 
-// TODO
+///
+/// NodeGraph
+///
+/// A NodeGraph is a container for shading nodes that can expose arbitrary outputs.
+/// Unlike Material which has fixed outputs (surface, displacement, volume),
+/// NodeGraph outputs are stored in the props map with the "outputs:" prefix.
+///
+/// Example:
+///   def NodeGraph "MyNodeGraph" {
+///     float3 outputs:result.connect = </path/to/shader.outputs:out>
+///   }
+///
 struct NodeGraph : UsdShadePrim {
-
+  // NodeGraph can have arbitrary outputs (e.g., outputs:result, outputs:normal, etc.)
+  // These are stored in the inherited props map from UsdShadePrim
 };
 
 //
