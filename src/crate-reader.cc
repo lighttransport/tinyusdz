@@ -1302,52 +1302,52 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
     switch (type_id) {
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT:
         if (first_is_array) {
-          success = CreateTypedTimeSamples<std::vector<int32_t>>(times, value_reps, vrep_start_offset, d);
+          success = CrateTypedTimeSamples<std::vector<int32_t>>(times, value_reps, vrep_start_offset, d);
         }
         break;
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT:
         if (first_is_array) {
-          success = CreateTypedTimeSamples<std::vector<uint32_t>>(times, value_reps, vrep_start_offset, d);
+          success = CrateTypedTimeSamples<std::vector<uint32_t>>(times, value_reps, vrep_start_offset, d);
         }
         break;
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64:
         if (first_is_array) {
-          success = CreateTypedTimeSamples<std::vector<int64_t>>(times, value_reps, vrep_start_offset, d);
+          success = CrateTypedTimeSamples<std::vector<int64_t>>(times, value_reps, vrep_start_offset, d);
         }
         break;
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64:
         if (first_is_array) {
-          success = CreateTypedTimeSamples<std::vector<uint64_t>>(times, value_reps, vrep_start_offset, d);
+          success = CrateTypedTimeSamples<std::vector<uint64_t>>(times, value_reps, vrep_start_offset, d);
         }
         break;
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT:
         if (first_is_array) {
-          success = CreateTypedTimeSamples<std::vector<float>>(times, value_reps, vrep_start_offset, d);
+          success = CrateTypedTimeSamples<std::vector<float>>(times, value_reps, vrep_start_offset, d);
         }
         break;
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE:
         if (first_is_array) {
-          success = CreateTypedTimeSamples<std::vector<double>>(times, value_reps, vrep_start_offset, d);
+          success = CrateTypedTimeSamples<std::vector<double>>(times, value_reps, vrep_start_offset, d);
         }
         break;
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING:
         if (first_is_array) {
-          success = CreateTypedTimeSamples<std::vector<std::string>>(times, value_reps, vrep_start_offset, d);
+          success = CrateTypedTimeSamples<std::vector<std::string>>(times, value_reps, vrep_start_offset, d);
         }
         break;
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX2D:
         if (first_is_array) {
-          success = CreateTypedTimeSamples<std::vector<value::matrix2d>>(times, value_reps, vrep_start_offset, d);
+          success = CrateTypedTimeSamples<std::vector<value::matrix2d>>(times, value_reps, vrep_start_offset, d);
         }
         break;
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX3D:
         if (first_is_array) {
-          success = CreateTypedTimeSamples<std::vector<value::matrix3d>>(times, value_reps, vrep_start_offset, d);
+          success = CrateTypedTimeSamples<std::vector<value::matrix3d>>(times, value_reps, vrep_start_offset, d);
         }
         break;
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX4D:
         if (first_is_array) {
-          success = CreateTypedTimeSamples<std::vector<value::matrix4d>>(times, value_reps, vrep_start_offset, d);
+          success = CrateTypedTimeSamples<std::vector<value::matrix4d>>(times, value_reps, vrep_start_offset, d);
         }
         break;
       default:
@@ -1405,7 +1405,7 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
 }
 
 template<typename T>
-bool CrateReader::CreateTypedTimeSamples(const std::vector<double> &times,
+bool CrateReader::CrateTypedTimeSamples(const std::vector<double> &times,
                                          const std::vector<crate::ValueRep> &,  // value_reps unused
                                          uint64_t vrep_start_offset,
                                          value::TimeSamples *d) {
@@ -1474,16 +1474,16 @@ bool CrateReader::CreateTypedTimeSamples(const std::vector<double> &times,
 }
 
 // Explicit instantiations for all supported types
-template bool CrateReader::CreateTypedTimeSamples<std::vector<int32_t>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
-template bool CrateReader::CreateTypedTimeSamples<std::vector<uint32_t>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
-template bool CrateReader::CreateTypedTimeSamples<std::vector<int64_t>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
-template bool CrateReader::CreateTypedTimeSamples<std::vector<uint64_t>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
-template bool CrateReader::CreateTypedTimeSamples<std::vector<float>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
-template bool CrateReader::CreateTypedTimeSamples<std::vector<double>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
-template bool CrateReader::CreateTypedTimeSamples<std::vector<std::string>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
-template bool CrateReader::CreateTypedTimeSamples<std::vector<value::matrix2d>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
-template bool CrateReader::CreateTypedTimeSamples<std::vector<value::matrix3d>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
-template bool CrateReader::CreateTypedTimeSamples<std::vector<value::matrix4d>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
+template bool CrateReader::CrateTypedTimeSamples<std::vector<int32_t>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
+template bool CrateReader::CrateTypedTimeSamples<std::vector<uint32_t>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
+template bool CrateReader::CrateTypedTimeSamples<std::vector<int64_t>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
+template bool CrateReader::CrateTypedTimeSamples<std::vector<uint64_t>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
+template bool CrateReader::CrateTypedTimeSamples<std::vector<float>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
+template bool CrateReader::CrateTypedTimeSamples<std::vector<double>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
+template bool CrateReader::CrateTypedTimeSamples<std::vector<std::string>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
+template bool CrateReader::CrateTypedTimeSamples<std::vector<value::matrix2d>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
+template bool CrateReader::CrateTypedTimeSamples<std::vector<value::matrix3d>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
+template bool CrateReader::CrateTypedTimeSamples<std::vector<value::matrix4d>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
 
 bool CrateReader::ReadStringArray(std::vector<std::string> *d) {
   // array data is not compressed
