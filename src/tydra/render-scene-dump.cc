@@ -536,7 +536,11 @@ std::string DumpMaterial(const RenderMaterial &material, uint32_t indent) {
      << quote(material.display_name) << "\n";
 
   ss << pprint::Indent(indent + 1) << "surfaceShader = ";
-  ss << DumpPreviewSurface(material.surfaceShader, indent + 1);
+  if (material.surfaceShader.has_value()) {
+    ss << DumpPreviewSurface(*material.surfaceShader, indent + 1);
+  } else {
+    ss << "null";
+  }
   ss << "\n";
 
   ss << pprint::Indent(indent) << "}\n";
