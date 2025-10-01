@@ -20,8 +20,10 @@
 #include <cmath>
 #include <limits>
 #include <vector>
+#include <type_traits>
 
 #include "nonstd/optional.hpp"
+#include "typed-array.hh"
 
 // Enable SoA (Structure of Arrays) layout for TypedTimeSamples
 // Default is AoS (Array of Structs) layout
@@ -43,6 +45,284 @@ class TimeCode;
 enum class TimeSampleInterpolationType;
 bool Lerp(const Value &p0, const Value &p1, double dt, Value *result);
 
+// Helper function to check if a type_id represents a POD type
+// POD types are numeric types that are trivial and standard layout
+inline bool is_pod_type_id(uint32_t type_id) {
+  // POD types: bool, numeric types (char, int, uint, float, double, half),
+  // and their vector variants (float2, float3, etc.)
+  // Excludes: string, token, path, array types, complex types
+  return (type_id >= 8 && type_id <= 75) || // Basic numeric types and vectors
+         (type_id == 5); // bool
+}
+
+} // namespace value
+
+///
+/// POD (Plain Old Data) time samples container with SoA layout
+///
+/// Stores time-sampled values for POD types in a Structure of Arrays layout
+/// for optimal memory access patterns. The value data is stored as a raw byte
+/// array (TypedArray<uint8_t>) with size sizeof(T) * N elements.
+///
+/// Only works with types that satisfy std::is_trivial and std::is_standard_layout.
+/// This is defined before TimeSamples so it can be used as a member.
+///
+struct PODTimeSamples {
+  uint32_t _type_id{0}; // TypeId from value-types.hh
+  mutable std::vector<double> _times;
+  mutable std::vector<bool> _blocked; // ValueBlock flags
+  mutable TypedArray<uint8_t> _values; // Raw byte storage: sizeof(type_id) * N elements
+  mutable bool _dirty{false};
+
+  bool empty() const { return _times.empty(); }
+
+  size_t size() const {
+    if (_dirty) {
+      update();
+    }
+    return _times.size();
+  }
+
+  void clear() {
+    _times.clear();
+    _blocked.clear();
+    _values.clear();
+    _type_id = 0;
+    _dirty = true;
+  }
+
+  uint32_t type_id() const { return _type_id; }
+
+  void update() const {
+    if (_times.empty()) {
+      _dirty = false;
+      return;
+    }
+
+    // Create index array for sorting
+    std::vector<size_t> indices(_times.size());
+    for (size_t i = 0; i < indices.size(); ++i) {
+      indices[i] = i;
+    }
+
+    // Sort indices based on times
+    std::sort(indices.begin(), indices.end(),
+              [this](size_t a, size_t b) { return _times[a] < _times[b]; });
+
+    // Reorder arrays based on sorted indices
+    std::vector<double> sorted_times(_times.size());
+    std::vector<bool> sorted_blocked(_blocked.size());
+
+    // Need to know element size to reorder values
+    if (_type_id == 0 || _values.empty()) {
+      _dirty = false;
+      return;
+    }
+
+    // Calculate element size from total size and number of elements
+    size_t element_size = _values.size() / _times.size();
+    TypedArray<uint8_t> sorted_values;
+    sorted_values.resize(_values.size());
+
+    for (size_t i = 0; i < indices.size(); ++i) {
+      sorted_times[i] = _times[indices[i]];
+      sorted_blocked[i] = _blocked[indices[i]];
+
+      // Copy element bytes
+      const uint8_t* src = _values.data() + (indices[i] * element_size);
+      uint8_t* dst = sorted_values.data() + (i * element_size);
+      std::copy(src, src + element_size, dst);
+    }
+
+    _times = std::move(sorted_times);
+    _blocked = std::move(sorted_blocked);
+    _values = std::move(sorted_values);
+
+    _dirty = false;
+  }
+
+  /// Add a time/value sample with POD type checking
+  /// T must satisfy std::is_trivial and std::is_standard_layout
+  template<typename T>
+  bool add_sample(double t, const T& value, std::string *err = nullptr) {
+    static_assert(std::is_trivial<T>::value,
+                  "PODTimeSamples requires trivial types");
+    static_assert(std::is_standard_layout<T>::value,
+                  "PODTimeSamples requires standard layout types");
+
+    // Set type_id on first sample
+    if (_times.empty()) {
+      _type_id = value::TypeTraits<T>::type_id();
+    } else {
+      // Verify type consistency
+      if (_type_id != value::TypeTraits<T>::type_id()) {
+        if (err) {
+          (*err) += "Type mismatch in PODTimeSamples: expected type_id " +
+                    std::to_string(_type_id) + " but got " +
+                    std::to_string(value::TypeTraits<T>::type_id()) +
+                    " (expected type: " + std::string(value::TypeTraits<T>::type_name()) + ").\n";
+        }
+        return false; // Type mismatch
+      }
+    }
+
+    _times.push_back(t);
+    _blocked.push_back(false);
+
+    // Append raw bytes to values
+    size_t old_size = _values.size();
+    _values.resize(old_size + sizeof(T));
+    std::memcpy(_values.data() + old_size, &value, sizeof(T));
+
+    _dirty = true;
+    return true;
+  }
+
+  /// Add a blocked sample (ValueBlock)
+  template<typename T>
+  bool add_blocked_sample(double t, std::string *err = nullptr) {
+    static_assert(std::is_trivial<T>::value,
+                  "PODTimeSamples requires trivial types");
+    static_assert(std::is_standard_layout<T>::value,
+                  "PODTimeSamples requires standard layout types");
+
+    // Set type_id on first sample
+    if (_times.empty()) {
+      _type_id = value::TypeTraits<T>::type_id();
+    } else {
+      // Verify type consistency
+      if (_type_id != value::TypeTraits<T>::type_id()) {
+        if (err) {
+          (*err) += "Type mismatch in PODTimeSamples (blocked sample): expected type_id " +
+                    std::to_string(_type_id) + " but got " +
+                    std::to_string(value::TypeTraits<T>::type_id()) +
+                    " (expected type: " + std::string(value::TypeTraits<T>::type_name()) + ").\n";
+        }
+        return false;
+      }
+    }
+
+    _times.push_back(t);
+    _blocked.push_back(true);
+
+    // Still need to allocate space for blocked values
+    size_t old_size = _values.size();
+    _values.resize(old_size + sizeof(T));
+    std::memset(_values.data() + old_size, 0, sizeof(T)); // Zero initialize
+
+    _dirty = true;
+    return true;
+  }
+
+  /// Get value at specific index with type checking
+  template<typename T>
+  bool get_value_at(size_t idx, T* value, bool* blocked = nullptr) const {
+    static_assert(std::is_trivial<T>::value,
+                  "PODTimeSamples requires trivial types");
+    static_assert(std::is_standard_layout<T>::value,
+                  "PODTimeSamples requires standard layout types");
+
+    if (!value) {
+      return false;
+    }
+
+    if (_dirty) {
+      update();
+    }
+
+    if (idx >= _times.size()) {
+      return false;
+    }
+
+    // Verify type
+    if (_type_id != value::TypeTraits<T>::type_id()) {
+      return false;
+    }
+
+    // Copy bytes from values array
+    const uint8_t* src = _values.data() + (idx * sizeof(T));
+    std::memcpy(value, src, sizeof(T));
+
+    if (blocked) {
+      *blocked = _blocked[idx];
+    }
+
+    return true;
+  }
+
+  /// Check if sample exists at specific time
+  bool has_sample_at(double t) const {
+    if (_dirty) {
+      update();
+    }
+
+    const auto it = std::find_if(_times.begin(), _times.end(), [&t](double sample_t) {
+      return std::fabs(t - sample_t) < std::numeric_limits<double>::epsilon();
+    });
+
+    return (it != _times.end());
+  }
+
+  /// Get value at specific time with type checking
+  template<typename T>
+  bool get_value_at_time(double t, T* value, bool* blocked = nullptr) const {
+    static_assert(std::is_trivial<T>::value,
+                  "PODTimeSamples requires trivial types");
+    static_assert(std::is_standard_layout<T>::value,
+                  "PODTimeSamples requires standard layout types");
+
+    if (!value) {
+      return false;
+    }
+
+    if (_dirty) {
+      update();
+    }
+
+    const auto it = std::find_if(_times.begin(), _times.end(), [&t](double sample_t) {
+      return std::fabs(t - sample_t) < std::numeric_limits<double>::epsilon();
+    });
+
+    if (it != _times.end()) {
+      size_t idx = static_cast<size_t>(std::distance(_times.begin(), it));
+      return get_value_at<T>(idx, value, blocked);
+    }
+
+    return false;
+  }
+
+  const std::vector<double>& get_times() const {
+    if (_dirty) {
+      update();
+    }
+    return _times;
+  }
+
+  const std::vector<bool>& get_blocked() const {
+    if (_dirty) {
+      update();
+    }
+    return _blocked;
+  }
+
+  const TypedArray<uint8_t>& get_values() const {
+    if (_dirty) {
+      update();
+    }
+    return _values;
+  }
+
+  size_t estimate_memory_usage() const {
+    size_t total = sizeof(PODTimeSamples);
+    total += _times.capacity() * sizeof(double);
+    total += _blocked.capacity() * sizeof(bool);
+    total += _values.capacity() * sizeof(uint8_t);
+    return total;
+  }
+};
+
+namespace value {
+
 ///
 /// Type-erased time samples container
 /// Each sample contains a time value and associated Value object.
@@ -55,19 +335,45 @@ struct TimeSamples {
     bool blocked{false};
   };
 
-  bool empty() const { return _samples.empty(); }
+  bool empty() const {
+    return _use_pod ? _pod_samples.empty() : _samples.empty();
+  }
 
-  size_t size() const { return _samples.size(); }
+  size_t size() const {
+    return _use_pod ? _pod_samples.size() : _samples.size();
+  }
 
   void clear() {
     _samples.clear();
+    _pod_samples.clear();
+    _type_id = 0;
+    _use_pod = false;
     _dirty = true;
   }
 
-  void update() const {
-    std::sort(_samples.begin(), _samples.end(),
-              [](const Sample &a, const Sample &b) { return a.t < b.t; });
+  /// Initialize TimeSamples with a specific type_id
+  /// This determines whether to use POD optimization or regular storage
+  bool init(uint32_t type_id) {
+    if (!empty()) {
+      return false; // Already initialized
+    }
+    _type_id = type_id;
+    _use_pod = value::is_pod_type_id(type_id);
+    if (_use_pod) {
+      _pod_samples._type_id = type_id;
+    }
+    return true;
+  }
 
+  bool is_using_pod() const { return _use_pod; }
+
+  void update() const {
+    if (_use_pod) {
+      _pod_samples.update();
+    } else {
+      std::sort(_samples.begin(), _samples.end(),
+                [](const Sample &a, const Sample &b) { return a.t < b.t; });
+    }
     _dirty = false;
   }
 
@@ -75,18 +381,32 @@ struct TimeSamples {
   bool get_sample_at(const double t, Sample **s);
 
   nonstd::optional<double> get_time(size_t idx) const {
-    if (idx >= _samples.size()) {
-      return nonstd::nullopt;
+    if (_use_pod) {
+      if (idx >= _pod_samples.size()) {
+        return nonstd::nullopt;
+      }
+      if (_dirty) {
+        update();
+      }
+      return _pod_samples.get_times()[idx];
+    } else {
+      if (idx >= _samples.size()) {
+        return nonstd::nullopt;
+      }
+      if (_dirty) {
+        update();
+      }
+      return _samples[idx].t;
     }
-
-    if (_dirty) {
-      update();
-    }
-
-    return _samples[idx].t;
   }
 
   nonstd::optional<value::Value> get_value(size_t idx) const {
+    if (_use_pod) {
+      // Cannot return Value from POD storage without type info
+      // User should use typed access methods instead
+      return nonstd::nullopt;
+    }
+
     if (idx >= _samples.size()) {
       return nonstd::nullopt;
     }
@@ -99,13 +419,16 @@ struct TimeSamples {
   }
 
   uint32_t type_id() const {
+    if (_use_pod) {
+      return _pod_samples.type_id();
+    }
     if (_samples.size()) {
       if (_dirty) {
         update();
       }
       return _samples[0].value.type_id();
     } else {
-      return 0; // TYPE_ID_INVALID equivalent
+      return _type_id; // Return stored type_id if initialized
     }
   }
 
@@ -120,23 +443,90 @@ struct TimeSamples {
     }
   }
 
-  void add_sample(const Sample &s) {
+  bool add_sample(const Sample &s, std::string *err = nullptr) {
+    // Auto-initialize on first sample
+    if (empty() && !s.value.is_none()) {
+      init(s.value.type_id());
+    } else if (!empty() && !s.value.is_none() && _type_id != 0) {
+      // Validate type_id matches on subsequent samples
+      if (s.value.type_id() != _type_id) {
+        if (err) {
+          (*err) += "Type mismatch in TimeSamples: expected type_id " +
+                    std::to_string(_type_id) + " but got " +
+                    std::to_string(s.value.type_id()) + " (expected type: " +
+                    type_name() + ", got: " + s.value.type_name() + ").\n";
+        }
+        return false;
+      }
+    }
+
+    if (_use_pod) {
+      // Cannot easily redirect Sample to POD - just use regular storage
+      _use_pod = false; // Fallback to regular storage
+    }
+
     _samples.push_back(s);
     _dirty = true;
+    return true;
   }
 
   // Value may be None(ValueBlock)
-  void add_sample(double t, const value::Value &v) {
+  bool add_sample(double t, const value::Value &v, std::string *err = nullptr) {
+    // Auto-initialize on first sample
+    if (empty() && !v.is_none()) {
+      init(v.type_id());
+    } else if (!empty() && !v.is_none() && _type_id != 0) {
+      // Validate type_id matches on subsequent samples
+      if (v.type_id() != _type_id) {
+        if (err) {
+          (*err) += "Type mismatch in TimeSamples: expected type_id " +
+                    std::to_string(_type_id) + " but got " +
+                    std::to_string(v.type_id()) + " (expected type: " +
+                    type_name() + ", got: " + v.type_name() + ").\n";
+        }
+        return false;
+      }
+    }
+
+    if (_use_pod) {
+      // Try to add to POD storage - requires template specialization
+      // For now, fallback to regular storage
+      // TODO: Add typed add_sample_pod<T>() method for POD optimization
+      _use_pod = false;
+    }
+
     Sample s;
     s.t = t;
     s.value = v;
     s.blocked = v.is_none();
     _samples.push_back(s);
     _dirty = true;
+    return true;
   }
 
   // We still need "dummy" value for type_name() and type_id()
-  void add_blocked_sample(double t, const value::Value &v) {
+  bool add_blocked_sample(double t, const value::Value &v, std::string *err = nullptr) {
+    // Auto-initialize on first sample
+    if (empty() && !v.is_none()) {
+      init(v.type_id());
+    } else if (!empty() && !v.is_none() && _type_id != 0) {
+      // Validate type_id matches on subsequent samples
+      if (v.type_id() != _type_id) {
+        if (err) {
+          (*err) += "Type mismatch in TimeSamples (blocked sample): expected type_id " +
+                    std::to_string(_type_id) + " but got " +
+                    std::to_string(v.type_id()) + " (expected type: " +
+                    type_name() + ", got: " + v.type_name() + ").\n";
+        }
+        return false;
+      }
+    }
+
+    if (_use_pod) {
+      // Fallback to regular storage for blocked samples with Value
+      _use_pod = false;
+    }
+
     Sample s;
     s.t = t;
     s.value = v;
@@ -144,9 +534,63 @@ struct TimeSamples {
 
     _samples.emplace_back(s);
     _dirty = true;
+    return true;
+  }
+
+  /// Typed add sample for POD types (optimization path)
+  template<typename T>
+  bool add_sample_pod(double t, const T& value, std::string *err = nullptr) {
+    static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
+                  "add_sample_pod requires POD types");
+
+    // Auto-initialize on first sample
+    if (empty()) {
+      init(value::TypeTraits<T>::type_id());
+    }
+
+    if (_use_pod) {
+      bool result = _pod_samples.add_sample<T>(t, value, err);
+      _dirty = true;
+      return result;
+    }
+
+    if (err) {
+      (*err) += "Not using POD storage for type " + std::string(value::TypeTraits<T>::type_name()) + ".\n";
+    }
+    return false; // Not using POD storage
+  }
+
+  /// Typed add blocked sample for POD types (optimization path)
+  template<typename T>
+  bool add_blocked_sample_pod(double t, std::string *err = nullptr) {
+    static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
+                  "add_blocked_sample_pod requires POD types");
+
+    // Auto-initialize on first sample
+    if (empty()) {
+      init(value::TypeTraits<T>::type_id());
+    }
+
+    if (_use_pod) {
+      bool result = _pod_samples.add_blocked_sample<T>(t, err);
+      _dirty = true;
+      return result;
+    }
+
+    if (err) {
+      (*err) += "Not using POD storage for type " + std::string(value::TypeTraits<T>::type_name()) + ".\n";
+    }
+    return false; // Not using POD storage
   }
 
   const std::vector<Sample> &get_samples() const {
+    if (_use_pod) {
+      // Cannot return samples from POD storage
+      // Return empty vector or throw error
+      static const std::vector<Sample> empty;
+      return empty;
+    }
+
     if (_dirty) {
       update();
     }
@@ -154,10 +598,25 @@ struct TimeSamples {
   }
 
   std::vector<Sample> &samples() {
+    if (_use_pod) {
+      // Cannot return samples from POD storage
+      static std::vector<Sample> empty;
+      return empty;
+    }
+
     if (_dirty) {
       update();
     }
     return _samples;
+  }
+
+  // Access POD samples directly
+  const tinyusdz::PODTimeSamples& get_pod_samples() const {
+    return _pod_samples;
+  }
+
+  tinyusdz::PODTimeSamples& pod_samples() {
+    return _pod_samples;
   }
 
 #if 1  // TODO: Write implementation in .cc
@@ -326,9 +785,14 @@ struct TimeSamples {
 
   size_t estimate_memory_usage() const {
     size_t total = sizeof(TimeSamples);
-    for (const auto &sample : _samples) {
-      total += sizeof(Sample);
-      total += sample.value.estimate_memory_usage();
+
+    if (_use_pod) {
+      total += _pod_samples.estimate_memory_usage();
+    } else {
+      for (const auto &sample : _samples) {
+        total += sizeof(Sample);
+        total += sample.value.estimate_memory_usage();
+      }
     }
 
     return total;
@@ -336,6 +800,9 @@ struct TimeSamples {
 
  private:
   mutable std::vector<Sample> _samples;
+  mutable tinyusdz::PODTimeSamples _pod_samples;
+  uint32_t _type_id{0};
+  bool _use_pod{false};
   mutable bool _dirty{false};
 };
 
