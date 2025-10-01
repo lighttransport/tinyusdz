@@ -33,6 +33,7 @@
 #endif
 
 #include "value-types.hh"
+#include "timesamples.hh"
 #include "common-macros.inc"
 
 namespace tinyusdz {
@@ -291,6 +292,73 @@ struct PrimVar {
 
   void set_timesamples(value::TimeSamples &&v) {
     _ts = std::move(v);
+  }
+
+  /// Set TypedTimeSamples for frequently used types (int, float, double, etc.)
+  /// Converts to generic TimeSamples internally but allows move semantics
+  template <typename T>
+  void set_typed_timesamples(TypedTimeSamples<T> &&typed_ts) {
+    // Convert TypedTimeSamples to TimeSamples
+    value::TimeSamples ts;
+    
+    #ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
+    // AoS layout
+    for (const auto& sample : typed_ts.get_samples()) {
+      if (sample.blocked) {
+        ts.add_blocked_sample(sample.t);
+      } else {
+        ts.add_sample(sample.t, value::Value(sample.value));
+      }
+    }
+    #else
+    // SoA layout
+    const auto& times = typed_ts.get_times();
+    const auto& values = typed_ts.get_values();
+    const auto& blocked = typed_ts.get_blocked();
+    
+    for (size_t i = 0; i < times.size(); ++i) {
+      if (blocked[i]) {
+        ts.add_blocked_sample(times[i]);
+      } else {
+        ts.add_sample(times[i], value::Value(values[i]));
+      }
+    }
+    #endif
+    
+    _ts = std::move(ts);
+  }
+
+  /// Set TypedTimeSamples for frequently used types (const ref version)
+  template <typename T>
+  void set_typed_timesamples(const TypedTimeSamples<T> &typed_ts) {
+    // Convert TypedTimeSamples to TimeSamples
+    value::TimeSamples ts;
+    
+    #ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
+    // AoS layout
+    for (const auto& sample : typed_ts.get_samples()) {
+      if (sample.blocked) {
+        ts.add_blocked_sample(sample.t);
+      } else {
+        ts.add_sample(sample.t, value::Value(sample.value));
+      }
+    }
+    #else
+    // SoA layout
+    const auto& times = typed_ts.get_times();
+    const auto& values = typed_ts.get_values();
+    const auto& blocked = typed_ts.get_blocked();
+    
+    for (size_t i = 0; i < times.size(); ++i) {
+      if (blocked[i]) {
+        ts.add_blocked_sample(times[i]);
+      } else {
+        ts.add_sample(times[i], value::Value(values[i]));
+      }
+    }
+    #endif
+    
+    _ts = ts;
   }
 
   void clear_timesamples() {
