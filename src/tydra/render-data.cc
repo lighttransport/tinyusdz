@@ -2531,6 +2531,11 @@ namespace {
 bool ListUVNames(const RenderMaterial &material,
                  const std::vector<UVTexture> &textures,
                  StringAndIdMap &si_map) {
+  // Check if material has surface shader
+  if (!material.surfaceShader.has_value()) {
+    return true;  // No surface shader, return success but empty map
+  }
+  
   // TODO: Use auto
   auto fun_vec3 = [&](const ShaderParam<vec3> &param) {
     int32_t texId = param.texture_id;
@@ -2560,17 +2565,17 @@ bool ListUVNames(const RenderMaterial &material,
     }
   };
 
-  fun_vec3(material.surfaceShader.diffuseColor);
-  fun_vec3(material.surfaceShader.normal);
-  fun_float(material.surfaceShader.metallic);
-  fun_float(material.surfaceShader.roughness);
-  fun_float(material.surfaceShader.clearcoat);
-  fun_float(material.surfaceShader.clearcoatRoughness);
-  fun_float(material.surfaceShader.opacity);
-  fun_float(material.surfaceShader.opacityThreshold);
-  fun_float(material.surfaceShader.ior);
-  fun_float(material.surfaceShader.displacement);
-  fun_float(material.surfaceShader.occlusion);
+  fun_vec3(material.surfaceShader->diffuseColor);
+  fun_vec3(material.surfaceShader->normal);
+  fun_float(material.surfaceShader->metallic);
+  fun_float(material.surfaceShader->roughness);
+  fun_float(material.surfaceShader->clearcoat);
+  fun_float(material.surfaceShader->clearcoatRoughness);
+  fun_float(material.surfaceShader->opacity);
+  fun_float(material.surfaceShader->opacityThreshold);
+  fun_float(material.surfaceShader->ior);
+  fun_float(material.surfaceShader->displacement);
+  fun_float(material.surfaceShader->occlusion);
 
   return true;
 }
@@ -5646,6 +5651,225 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShader(
   return true;
 }
 
+bool RenderSceneConverter::ConvertOpenPBRSurfaceShader(
+    const RenderSceneConverterEnv &env, const Path &shader_abs_path,
+    const OpenPBRSurface &shader, OpenPBRSurfaceShader *rshader_out) {
+  if (!rshader_out) {
+    PUSH_ERROR_AND_RETURN("rshader_out argument is nullptr.");
+  }
+
+  OpenPBRSurfaceShader rshader;
+
+  // Convert base layer parameters
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.base_weight, "base_weight",
+          rshader.base_weight)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.base_color, "base_color",
+          rshader.base_color)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.base_roughness, "base_roughness",
+          rshader.base_roughness)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.base_metalness, "base_metalness",
+          rshader.base_metalness)) {
+    return false;
+  }
+
+  // Convert specular layer parameters
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.specular_weight, "specular_weight",
+          rshader.specular_weight)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.specular_color, "specular_color",
+          rshader.specular_color)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.specular_roughness, "specular_roughness",
+          rshader.specular_roughness)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.specular_ior, "specular_ior",
+          rshader.specular_ior)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.specular_ior_level, "specular_ior_level",
+          rshader.specular_ior_level)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.specular_anisotropy, "specular_anisotropy",
+          rshader.specular_anisotropy)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.specular_rotation, "specular_rotation",
+          rshader.specular_rotation)) {
+    return false;
+  }
+
+  // Convert transmission parameters
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.transmission_weight, "transmission_weight",
+          rshader.transmission_weight)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.transmission_color, "transmission_color",
+          rshader.transmission_color)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.transmission_depth, "transmission_depth",
+          rshader.transmission_depth)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.transmission_scatter, "transmission_scatter",
+          rshader.transmission_scatter)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.transmission_scatter_anisotropy,
+          "transmission_scatter_anisotropy", rshader.transmission_scatter_anisotropy)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.transmission_dispersion,
+          "transmission_dispersion", rshader.transmission_dispersion)) {
+    return false;
+  }
+
+  // Convert subsurface parameters
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.subsurface_weight, "subsurface_weight",
+          rshader.subsurface_weight)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.subsurface_color, "subsurface_color",
+          rshader.subsurface_color)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.subsurface_radius, "subsurface_radius",
+          rshader.subsurface_radius)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.subsurface_scale, "subsurface_scale",
+          rshader.subsurface_scale)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.subsurface_anisotropy,
+          "subsurface_anisotropy", rshader.subsurface_anisotropy)) {
+    return false;
+  }
+
+  // Convert sheen parameters
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.sheen_weight, "sheen_weight",
+          rshader.sheen_weight)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.sheen_color, "sheen_color",
+          rshader.sheen_color)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.sheen_roughness, "sheen_roughness",
+          rshader.sheen_roughness)) {
+    return false;
+  }
+
+  // Convert coat layer parameters
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.coat_weight, "coat_weight",
+          rshader.coat_weight)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.coat_color, "coat_color",
+          rshader.coat_color)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.coat_roughness, "coat_roughness",
+          rshader.coat_roughness)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.coat_anisotropy, "coat_anisotropy",
+          rshader.coat_anisotropy)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.coat_rotation, "coat_rotation",
+          rshader.coat_rotation)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.coat_ior, "coat_ior",
+          rshader.coat_ior)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.coat_affect_color, "coat_affect_color",
+          rshader.coat_affect_color)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.coat_affect_roughness, "coat_affect_roughness",
+          rshader.coat_affect_roughness)) {
+    return false;
+  }
+
+  // Convert emission parameters
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.emission_luminance, "emission_luminance",
+          rshader.emission_luminance)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.emission_color, "emission_color",
+          rshader.emission_color)) {
+    return false;
+  }
+
+  // Convert geometry parameters
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.opacity, "opacity",
+          rshader.opacity)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.normal, "normal",
+          rshader.normal)) {
+    return false;
+  }
+  if (!ConvertPreviewSurfaceShaderParam(
+          env, shader_abs_path, shader.tangent, "tangent",
+          rshader.tangent)) {
+    return false;
+  }
+
+  (*rshader_out) = rshader;
+  return true;
+}
+
 bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
                                            const Path &mat_abs_path,
                                            const tinyusdz::Material &material,
@@ -5715,14 +5939,10 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
                       shaderPrim->prim_type_name()));
     }
 
-    // Currently must be UsdPreviewSurface
+    // Check for UsdPreviewSurface or OpenPBRSurface
     const UsdPreviewSurface *psurface = shader->value.as<UsdPreviewSurface>();
-    if (!psurface) {
-      PUSH_ERROR_AND_RETURN(
-          fmt::format("Shader's info:id must be UsdPreviewSurface, but got {}",
-                      shader->info_id));
-    }
-
+    const OpenPBRSurface *openpbr = shader->value.as<OpenPBRSurface>();
+    
     // prop part must be `outputs:surface` for now.
     if (surfacePath.prop_part() != "outputs:surface") {
       PUSH_ERROR_AND_RETURN(
@@ -5730,14 +5950,32 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
                       "`outputs:surface`, but got `{}`",
                       mat_abs_path.full_path_name(), surfacePath.prop_part()));
     }
-
-    PreviewSurfaceShader pss;
-    if (!ConvertPreviewSurfaceShader(env, surfacePath, *psurface, &pss)) {
-      PUSH_ERROR_AND_RETURN(fmt::format(
-          "Failed to convert UsdPreviewSurface : {}", surfacePath.prim_part()));
+    
+    if (psurface) {
+      // Convert UsdPreviewSurface
+      PreviewSurfaceShader pss;
+      if (!ConvertPreviewSurfaceShader(env, surfacePath, *psurface, &pss)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Failed to convert UsdPreviewSurface : {}", surfacePath.prim_part()));
+      }
+      rmat.surfaceShader = pss;
     }
-
-    rmat.surfaceShader = pss;
+    
+    if (openpbr) {
+      // Convert OpenPBRSurface
+      OpenPBRSurfaceShader openpbr_shader;
+      if (!ConvertOpenPBRSurfaceShader(env, surfacePath, *openpbr, &openpbr_shader)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Failed to convert OpenPBRSurface : {}", surfacePath.prim_part()));
+      }
+      rmat.openPBRShader = openpbr_shader;
+    }
+    
+    if (!psurface && !openpbr) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Shader's info:id must be UsdPreviewSurface or OpenPBRSurface, but got {}",
+                      shader->info_id));
+    }
   }
 
   DCOUT("Converted Material: " << mat_abs_path);
@@ -7430,7 +7668,11 @@ std::string DumpMaterial(const RenderMaterial &material, uint32_t indent) {
      << quote(material.display_name) << "\n";
 
   ss << pprint::Indent(indent + 1) << "surfaceShader = ";
-  ss << DumpPreviewSurface(material.surfaceShader, indent + 1);
+  if (material.surfaceShader.has_value()) {
+    ss << DumpPreviewSurface(*material.surfaceShader, indent + 1);
+  } else {
+    ss << "null";
+  }
   ss << "\n";
 
   ss << pprint::Indent(indent) << "}\n";
