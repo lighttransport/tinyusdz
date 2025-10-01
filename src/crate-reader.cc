@@ -1274,10 +1274,18 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64:
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT:
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE:
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_HALF:
+        // POD scalar and array types - use typed/POD path
+        use_typed_path = true;
+        break;
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX2D:
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX3D:
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX4D:
+        // POD matrix types
+        use_typed_path = true;
+        break;
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING:
+        // Non-POD but use typed path for arrays
         use_typed_path = first_is_array;
         break;
       default:
@@ -1303,31 +1311,50 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT:
         if (first_is_array) {
           success = CreateTypedTimeSamples<std::vector<int32_t>>(times, value_reps, vrep_start_offset, d);
+        } else {
+          success = CreateTypedTimeSamples<int32_t>(times, value_reps, vrep_start_offset, d);
         }
         break;
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT:
         if (first_is_array) {
           success = CreateTypedTimeSamples<std::vector<uint32_t>>(times, value_reps, vrep_start_offset, d);
+        } else {
+          success = CreateTypedTimeSamples<uint32_t>(times, value_reps, vrep_start_offset, d);
         }
         break;
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64:
         if (first_is_array) {
           success = CreateTypedTimeSamples<std::vector<int64_t>>(times, value_reps, vrep_start_offset, d);
+        } else {
+          success = CreateTypedTimeSamples<int64_t>(times, value_reps, vrep_start_offset, d);
         }
         break;
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64:
         if (first_is_array) {
           success = CreateTypedTimeSamples<std::vector<uint64_t>>(times, value_reps, vrep_start_offset, d);
+        } else {
+          success = CreateTypedTimeSamples<uint64_t>(times, value_reps, vrep_start_offset, d);
         }
         break;
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT:
         if (first_is_array) {
           success = CreateTypedTimeSamples<std::vector<float>>(times, value_reps, vrep_start_offset, d);
+        } else {
+          success = CreateTypedTimeSamples<float>(times, value_reps, vrep_start_offset, d);
         }
         break;
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE:
         if (first_is_array) {
           success = CreateTypedTimeSamples<std::vector<double>>(times, value_reps, vrep_start_offset, d);
+        } else {
+          success = CreateTypedTimeSamples<double>(times, value_reps, vrep_start_offset, d);
+        }
+        break;
+      case crate::CrateDataTypeId::CRATE_DATA_TYPE_HALF:
+        if (first_is_array) {
+          success = CreateTypedTimeSamples<std::vector<value::half>>(times, value_reps, vrep_start_offset, d);
+        } else {
+          success = CreateTypedTimeSamples<value::half>(times, value_reps, vrep_start_offset, d);
         }
         break;
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING:
@@ -1338,16 +1365,22 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX2D:
         if (first_is_array) {
           success = CreateTypedTimeSamples<std::vector<value::matrix2d>>(times, value_reps, vrep_start_offset, d);
+        } else {
+          success = CreateTypedTimeSamples<value::matrix2d>(times, value_reps, vrep_start_offset, d);
         }
         break;
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX3D:
         if (first_is_array) {
           success = CreateTypedTimeSamples<std::vector<value::matrix3d>>(times, value_reps, vrep_start_offset, d);
+        } else {
+          success = CreateTypedTimeSamples<value::matrix3d>(times, value_reps, vrep_start_offset, d);
         }
         break;
       case crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX4D:
         if (first_is_array) {
           success = CreateTypedTimeSamples<std::vector<value::matrix4d>>(times, value_reps, vrep_start_offset, d);
+        } else {
+          success = CreateTypedTimeSamples<value::matrix4d>(times, value_reps, vrep_start_offset, d);
         }
         break;
       default:
@@ -1404,13 +1437,58 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   return true;
 }
 
+// Helper template to check if a type is POD (trivial and standard layout)
+template<typename T>
+struct is_pod_type : std::integral_constant<bool,
+    std::is_trivial<T>::value && std::is_standard_layout<T>::value> {};
+
+// Helper to add sample - POD version
+template<typename T>
+typename std::enable_if<is_pod_type<T>::value, bool>::type
+add_sample_to_timesamples(value::TimeSamples *d, double time, const T& val, std::string *err) {
+  if (d->is_using_pod()) {
+    return d->add_sample_pod<T>(time, val, err);
+  } else {
+    return d->add_sample(time, value::Value(val), err);
+  }
+}
+
+// Helper to add sample - non-POD version
+template<typename T>
+typename std::enable_if<!is_pod_type<T>::value, bool>::type
+add_sample_to_timesamples(value::TimeSamples *d, double time, const T& val, std::string *err) {
+  return d->add_sample(time, value::Value(val), err);
+}
+
+// Helper to add blocked sample - POD version
+template<typename T>
+typename std::enable_if<is_pod_type<T>::value, bool>::type
+add_blocked_sample_to_timesamples(value::TimeSamples *d, double time, std::string *err) {
+  if (d->is_using_pod()) {
+    return d->add_blocked_sample_pod<T>(time, err);
+  } else {
+    return d->add_blocked_sample(time, value::Value(T{}), err);
+  }
+}
+
+// Helper to add blocked sample - non-POD version
+template<typename T>
+typename std::enable_if<!is_pod_type<T>::value, bool>::type
+add_blocked_sample_to_timesamples(value::TimeSamples *d, double time, std::string *err) {
+  return d->add_blocked_sample(time, value::Value(T{}), err);
+}
+
 template<typename T>
 bool CrateReader::CreateTypedTimeSamples(const std::vector<double> &times,
                                          const std::vector<crate::ValueRep> &,  // value_reps unused
                                          uint64_t vrep_start_offset,
                                          value::TimeSamples *d) {
-  // Create typed timesamples for efficient storage
-  TypedTimeSamples<T> typed_ts;
+  // Use POD-aware TimeSamples directly for POD types
+  // Initialize TimeSamples with the type_id for this type
+  if (!d->init(value::TypeTraits<T>::type_id())) {
+    // Already initialized with different type - fall back to standard path
+    return false;
+  }
 
   // Process each sample
   _sr->seek_set(vrep_start_offset);
@@ -1430,60 +1508,57 @@ bool CrateReader::CreateTypedTimeSamples(const std::vector<double> &times,
     bool is_blocked = value.get_raw().is_none();
 
     if (is_blocked) {
-      // Handle blocked value
-      typed_ts.add_blocked_sample(times[i]);
+      // Handle blocked value using SFINAE helper
+      std::string err;
+      if (!add_blocked_sample_to_timesamples<T>(d, times[i], &err)) {
+        if (!err.empty()) {
+          _err += err;
+        }
+        return false;
+      }
     } else if (auto pv = value.get_value<T>()) {
-      // Extract typed value and add to TypedTimeSamples
-      typed_ts.add_sample(times[i], pv.value());
+      // Extract typed value and add to TimeSamples using SFINAE helper
+      std::string err;
+      if (!add_sample_to_timesamples<T>(d, times[i], pv.value(), &err)) {
+        if (!err.empty()) {
+          _err += err;
+        }
+        return false;
+      }
     } else {
       // Type mismatch - return false to fall back to standard path
       return false;
     }
   }
 
-  // Convert TypedTimeSamples back to regular TimeSamples
-  // This preserves the optimized storage while maintaining API compatibility
-#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
-  // AoS layout - can access samples directly
-  for (size_t i = 0; i < typed_ts.size(); i++) {
-    const auto &samples = typed_ts.samples();
-    if (samples[i].blocked) {
-      // For blocked samples, we need to provide a dummy value of the right type
-      d->add_blocked_sample(samples[i].t, value::Value(T{}));
-    } else {
-      d->add_sample(samples[i].t, value::Value(samples[i].value));
-    }
-  }
-#else
-  // SoA layout - access individual arrays
-  const auto &times_array = typed_ts.get_times();
-  const auto &values_array = typed_ts.get_values();
-  const auto &blocked_array = typed_ts.get_blocked();
-
-  for (size_t i = 0; i < typed_ts.size(); i++) {
-    if (blocked_array[i]) {
-      // For blocked samples, we need to provide a dummy value of the right type
-      d->add_blocked_sample(times_array[i], value::Value(T{}));
-    } else {
-      d->add_sample(times_array[i], value::Value(values_array[i]));
-    }
-  }
-#endif
-
   return true;
 }
 
 // Explicit instantiations for all supported types
+// Array types
 template bool CrateReader::CreateTypedTimeSamples<std::vector<int32_t>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
 template bool CrateReader::CreateTypedTimeSamples<std::vector<uint32_t>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
 template bool CrateReader::CreateTypedTimeSamples<std::vector<int64_t>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
 template bool CrateReader::CreateTypedTimeSamples<std::vector<uint64_t>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
 template bool CrateReader::CreateTypedTimeSamples<std::vector<float>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
 template bool CrateReader::CreateTypedTimeSamples<std::vector<double>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
+template bool CrateReader::CreateTypedTimeSamples<std::vector<value::half>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
 template bool CrateReader::CreateTypedTimeSamples<std::vector<std::string>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
 template bool CrateReader::CreateTypedTimeSamples<std::vector<value::matrix2d>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
 template bool CrateReader::CreateTypedTimeSamples<std::vector<value::matrix3d>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
 template bool CrateReader::CreateTypedTimeSamples<std::vector<value::matrix4d>>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
+
+// Scalar POD types (use PODTimeSamples optimization)
+template bool CrateReader::CreateTypedTimeSamples<int32_t>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
+template bool CrateReader::CreateTypedTimeSamples<uint32_t>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
+template bool CrateReader::CreateTypedTimeSamples<int64_t>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
+template bool CrateReader::CreateTypedTimeSamples<uint64_t>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
+template bool CrateReader::CreateTypedTimeSamples<float>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
+template bool CrateReader::CreateTypedTimeSamples<double>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
+template bool CrateReader::CreateTypedTimeSamples<value::half>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
+template bool CrateReader::CreateTypedTimeSamples<value::matrix2d>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
+template bool CrateReader::CreateTypedTimeSamples<value::matrix3d>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
+template bool CrateReader::CreateTypedTimeSamples<value::matrix4d>(const std::vector<double>&, const std::vector<crate::ValueRep>&, uint64_t, value::TimeSamples*);
 
 bool CrateReader::ReadStringArray(std::vector<std::string> *d) {
   // array data is not compressed
