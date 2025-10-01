@@ -1247,21 +1247,91 @@ class PreviewSurfaceShader {
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
 };
 
+// MaterialX OpenPBR Surface shader optimized for WebGL/Vulkan rendering
+class OpenPBRSurfaceShader {
+ public:
+  // Base layer - fundamental surface properties
+  ShaderParam<float> base_weight{1.0f};
+  ShaderParam<vec3> base_color{{0.8f, 0.8f, 0.8f}};
+  ShaderParam<float> base_roughness{0.0f};
+  ShaderParam<float> base_metalness{0.0f};
+  
+  // Specular layer - dielectric reflection
+  ShaderParam<float> specular_weight{1.0f};
+  ShaderParam<vec3> specular_color{{1.0f, 1.0f, 1.0f}};
+  ShaderParam<float> specular_roughness{0.3f};
+  ShaderParam<float> specular_ior{1.5f};
+  ShaderParam<float> specular_ior_level{0.5f};
+  ShaderParam<float> specular_anisotropy{0.0f};
+  ShaderParam<float> specular_rotation{0.0f};
+  
+  // Transmission - transparency and refraction
+  ShaderParam<float> transmission_weight{0.0f};
+  ShaderParam<vec3> transmission_color{{1.0f, 1.0f, 1.0f}};
+  ShaderParam<float> transmission_depth{0.0f};
+  ShaderParam<vec3> transmission_scatter{{0.0f, 0.0f, 0.0f}};
+  ShaderParam<float> transmission_scatter_anisotropy{0.0f};
+  ShaderParam<float> transmission_dispersion{0.0f};
+  
+  // Subsurface scattering
+  ShaderParam<float> subsurface_weight{0.0f};
+  ShaderParam<vec3> subsurface_color{{0.8f, 0.8f, 0.8f}};
+  ShaderParam<vec3> subsurface_radius{{1.0f, 1.0f, 1.0f}};
+  ShaderParam<float> subsurface_scale{1.0f};
+  ShaderParam<float> subsurface_anisotropy{0.0f};
+  
+  // Sheen - fabric-like reflection
+  ShaderParam<float> sheen_weight{0.0f};
+  ShaderParam<vec3> sheen_color{{1.0f, 1.0f, 1.0f}};
+  ShaderParam<float> sheen_roughness{0.3f};
+  
+  // Coat layer - clear coat over surface
+  ShaderParam<float> coat_weight{0.0f};
+  ShaderParam<vec3> coat_color{{1.0f, 1.0f, 1.0f}};
+  ShaderParam<float> coat_roughness{0.0f};
+  ShaderParam<float> coat_anisotropy{0.0f};
+  ShaderParam<float> coat_rotation{0.0f};
+  ShaderParam<float> coat_ior{1.5f};
+  ShaderParam<vec3> coat_affect_color{{1.0f, 1.0f, 1.0f}};
+  ShaderParam<float> coat_affect_roughness{0.0f};
+  
+  // Emission - light emission
+  ShaderParam<float> emission_luminance{0.0f};
+  ShaderParam<vec3> emission_color{{1.0f, 1.0f, 1.0f}};
+  
+  // Geometry modifiers
+  ShaderParam<float> opacity{1.0f};
+  ShaderParam<vec3> normal{{0.0f, 0.0f, 1.0f}};
+  ShaderParam<vec3> tangent{{1.0f, 0.0f, 0.0f}};
+  
+  uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
+};
+
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
 
 // Material + Shader
+// Supports dual material representation: UsdPreviewSurface and/or MaterialX OpenPBR
 struct RenderMaterial {
   std::string name;  // elementName in USD (e.g. "pbrMat")
   std::string
       abs_path;  // abosolute Prim path in USD (e.g. "/_material/scope/pbrMat")
   std::string display_name;
 
-  PreviewSurfaceShader surfaceShader;
+  // Material can have UsdPreviewSurface, OpenPBR, or both
+  // Use nonstd::optional to allow either/both/none
+  nonstd::optional<PreviewSurfaceShader> surfaceShader;  // UsdPreviewSurface
+  nonstd::optional<OpenPBRSurfaceShader> openPBRShader;  // MaterialX OpenPBR
+  
   // TODO: displacement, volume.
 
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
+  
+  // Helper methods to check which materials are available
+  bool hasUsdPreviewSurface() const { return surfaceShader.has_value(); }
+  bool hasOpenPBR() const { return openPBRShader.has_value(); }
+  bool hasBothMaterials() const { return hasUsdPreviewSurface() && hasOpenPBR(); }
 };
 
 // Simple Camera
@@ -2422,6 +2492,21 @@ class RenderSceneConverter {
                                    const tinyusdz::Path &shader_abs_path,
                                    const tinyusdz::UsdPreviewSurface &shader,
                                    PreviewSurfaceShader *pss_out);
+  
+  ///
+  /// Convert MaterialX OpenPBR Surface Shader to renderer-friendly OpenPBRSurfaceShader
+  ///
+  /// @param[in] env Conversion environment
+  /// @param[in] shader_abs_path USD Path to Shader Prim with OpenPBRSurface info:id
+  /// @param[in] shader OpenPBRSurface
+  /// @param[out] openpbr_out OpenPBRSurfaceShader
+  ///
+  /// @return true when success.
+  ///
+  bool ConvertOpenPBRSurfaceShader(const RenderSceneConverterEnv &env,
+                                    const tinyusdz::Path &shader_abs_path,
+                                    const tinyusdz::OpenPBRSurface &shader,
+                                    OpenPBRSurfaceShader *openpbr_out);
 
   ///
   /// Convert UsdUvTexture to renderer-friendly UVTexture
