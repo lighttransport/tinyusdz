@@ -1078,7 +1078,7 @@ bool displayp3_f16_to_linear_f32(const std::vector<value::half> &in_img, size_t 
 namespace detail {
 
 // Rec.2020 uses the same transfer function as Rec.709
-float Rec2020ToLinear(float v) {
+static float Rec2020ToLinear(float v) {
   float L;
   if (v <= 0.0f) {
     L = 0.0f;
@@ -1091,7 +1091,7 @@ float Rec2020ToLinear(float v) {
   return L;
 }
 
-float linearToRec2020(float L) {
+static float linearToRec2020(float L) {
   float V;
   if (L <= 0.0f) {
     V = 0.0f;
@@ -1104,12 +1104,12 @@ float linearToRec2020(float L) {
   return V;
 }
 
-uint8_t linearToRec2020_8bit(float L) {
+static uint8_t linearToRec2020_8bit(float L) {
   float V = linearToRec2020(L);
   return static_cast<uint8_t>((std::max)(0, (std::min)(255, int(V * 255.0f))));
 }
 
-float Rec2020_8bit_ToLinear(uint8_t v) {
+static float Rec2020_8bit_ToLinear(uint8_t v) {
   float V = v / 255.0f;
   return Rec2020ToLinear(V);
 }
