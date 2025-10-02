@@ -28,13 +28,15 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #pragma once
 
 //
-// Simple byte stream writer. Consider endianness when writing 2, 4, 8 bytes data.
+// Simple stream writer for pretty printing. Can be used instead of std::stringstream for better control.
 //
 
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <cstdio>
 #include <memory>
+#include <string>
 
 namespace tinyusdz {
 
@@ -103,233 +105,117 @@ static inline void swap8(int64_t *val) {
 
 } // namespace
 
-#if 0 // TODO
-
 ///
-/// Simple stream writeer
+/// Simple stream writer for pretty printing
 ///
 class StreamWriter {
  public:
-  // max_length: Max byte lengths.
-  explicit StreamWriter(const size_t max_length,
-                        const bool swap_endian)
-      : max_length_(max_length), swap_endian_(swap_endian), idx_(0) {
-    (void)pad_;
+  explicit StreamWriter(const size_t max_length = 1024 * 1024 * 10)  // 10MB default
+      : max_length_(max_length) {
+    buffer_.reserve(1024);  // Initial reserve for performance
   }
 
-  bool seek_set(const uint64_t offset) const {
-    if (offset >= max_length_) {
-      return false;
+  // Write string
+  void write(const std::string& str) {
+    if (buffer_.size() + str.size() > max_length_) {
+      return;  // Silently ignore if exceeds max
     }
-
-    idx_ = offset;
-    return true;
+    buffer_ += str;
   }
 
-  bool seek_from_current(const int64_t offset) const {
-    if ((int64_t(idx_) + offset) < 0) {
-      return false;
+  // Write C-string
+  void write(const char* str) {
+    if (!str) return;
+    size_t len = std::strlen(str);
+    if (buffer_.size() + len > max_length_) {
+      return;
     }
-
-    if (size_t((int64_t(idx_) + offset)) > length_) {
-      return false;
-    }
-
-    idx_ = size_t(int64_t(idx_) + offset);
-    return true;
+    buffer_ += str;
   }
 
-  size_t writeN(const size_t n, const uint64_t dst_len, uint8_t *dst) const {
-    size_t len = n;
-    if ((idx_ + len) > length_) {
-      len = length_ - size_t(idx_);
+  // Write single char
+  void write(char c) {
+    if (buffer_.size() + 1 > max_length_) {
+      return;
     }
-
-    if (len > 0) {
-      if (dst_len < len) {
-        // dst does not have enough space. return 0 for a while.
-        return 0;
-      }
-
-      memcpy(dst, &binary_[idx_], len);
-      idx_ += len;
-      return len;
-
-    } else {
-      return 0;
-    }
+    buffer_ += c;
   }
 
-  bool write1(uint8_t *ret) const {
-    if ((idx_ + 1) > length_) {
-      return false;
-    }
-
-    const uint8_t val = binary_[idx_];
-
-    (*ret) = val;
-    idx_ += 1;
-
-    return true;
+  // Write integer types
+  void write(int value) {
+    write(std::to_string(value));
   }
 
-  bool write_bool(bool *ret) const {
-    if ((idx_ + 1) > length_) {
-      return false;
-    }
-
-    const char val = static_cast<const char>(binary_[idx_]);
-
-    (*ret) = bool(val);
-    idx_ += 1;
-
-    return true;
+  void write(unsigned int value) {
+    write(std::to_string(value));
   }
 
-  bool write1(char *ret) const {
-    if ((idx_ + 1) > length_) {
-      return false;
-    }
-
-    const char val = static_cast<const char>(binary_[idx_]);
-
-    (*ret) = val;
-    idx_ += 1;
-
-    return true;
+  void write(long value) {
+    write(std::to_string(value));
   }
 
-  bool write2(unsigned short *ret) const {
-    if ((idx_ + 2) > length_) {
-      return false;
-    }
-
-    unsigned short val =
-        *(reinterpret_cast<const unsigned short *>(&binary_[idx_]));
-
-    if (swap_endian_) {
-      swap2(&val);
-    }
-
-    (*ret) = val;
-    idx_ += 2;
-
-    return true;
+  void write(unsigned long value) {
+    write(std::to_string(value));
   }
 
-  bool write4(uint32_t *ret) const {
-    if ((idx_ + 4) > length_) {
-      return false;
-    }
-
-    uint32_t val = *(reinterpret_cast<const uint32_t *>(&binary_[idx_]));
-
-    if (swap_endian_) {
-      swap4(&val);
-    }
-
-    (*ret) = val;
-    idx_ += 4;
-
-    return true;
+  void write(long long value) {
+    write(std::to_string(value));
   }
 
-  bool write4(int *ret) const {
-    if ((idx_ + 4) > length_) {
-      return false;
-    }
-
-    int val = *(reinterpret_cast<const int *>(&binary_[idx_]));
-
-    if (swap_endian_) {
-      swap4(&val);
-    }
-
-    (*ret) = val;
-    idx_ += 4;
-
-    return true;
+  void write(unsigned long long value) {
+    write(std::to_string(value));
   }
 
-  bool write8(uint64_t *ret) const {
-    if ((idx_ + 8) > length_) {
-      return false;
-    }
-
-    uint64_t val = *(reinterpret_cast<const uint64_t *>(&binary_[idx_]));
-
-    if (swap_endian_) {
-      swap8(&val);
-    }
-
-    (*ret) = val;
-    idx_ += 8;
-
-    return true;
+  // Write floating point
+  void write(float value) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%g", static_cast<double>(value));
+    write(buf);
   }
 
-  bool write8(int64_t *ret) const {
-    if ((idx_ + 8) > length_) {
-      return false;
-    }
-
-    int64_t val = *(reinterpret_cast<const int64_t *>(&binary_[idx_]));
-
-    if (swap_endian_) {
-      swap8(&val);
-    }
-
-    (*ret) = val;
-    idx_ += 8;
-
-    return true;
+  void write(double value) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%g", value);
+    write(buf);
   }
 
-  bool write_float(const float value) const {
-    if (!write4(reinterpret_cast<const int *>(&value))) {
-      return false;
-    }
-
-    return true;
+  // Write boolean
+  void write(bool value) {
+    write(value ? "true" : "false");
   }
 
-  bool write_double(const double value) const {
-    if (!write8(reinterpret_cast<const uint64_t *>(&value))) {
-      return false;
-    }
-
-    return true;
+  // Convenience operator<<
+  template<typename T>
+  StreamWriter& operator<<(const T& value) {
+    write(value);
+    return *this;
   }
 
-  size_t tell() const { return size_t(idx_); }
-  //bool eof() const { return idx_ >= length_; }
+  // Get the accumulated string
+  const std::string& str() const { return buffer_; }
 
-  bool swap_endian() const { return swap_endian_; }
+  // Get C-string
+  const char* c_str() const { return buffer_.c_str(); }
 
-  size_t size() const { return length_; }
+  // Clear buffer
+  void clear() { buffer_.clear(); }
+
+  // Get current size
+  size_t size() const { return buffer_.size(); }
+
+  // Check if empty
+  bool empty() const { return buffer_.empty(); }
+
+  // Reserve capacity
+  void reserve(size_t capacity) {
+    if (capacity <= max_length_) {
+      buffer_.reserve(capacity);
+    }
+  }
 
  private:
-
-  bool Reserve_(size_t additional_bytes) {
-    size_t req_bytes = binary_.size() + additional_bytes;
-
-    if (req_bytes > max_length_) {
-      return false;
-    }
-
-    // grow +20%
-
-    //
-    binary_.resize
-
-  }
-
-  const std::vector<uint8_t> binary_;
+  std::string buffer_;
   const size_t max_length_;
-  bool swap_endian_;
-  char pad_[7];
-  mutable uint64_t idx_;
 };
-#endif
 
 } // namespace tinyusdz
