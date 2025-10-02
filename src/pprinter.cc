@@ -1337,51 +1337,16 @@ std::string print_typed_token_attr(const TypedAttributeWithFallback<T> &attr,
 
 std::string print_timesamples(const value::TimeSamples &v,
                               const uint32_t indent) {
-  std::stringstream ss;
+  // Use the new pprint_timesamples function from timesamples-pprint
+  // which handles both POD and non-POD cases efficiently
+  std::string result = pprint_timesamples(v, indent);
 
-  ss << "{\n";
-
-  // Note: value::TimeSamples (untyped) doesn't have SoA layout support
-  for (size_t i = 0; i < v.size(); i++) {
-    ss << pprint::Indent(indent + 1);
-    if (v.is_using_pod()) {
-      const PODTimeSamples &samples = v.get_pod_samples();
-      if (samples.size() != v.size()) {
-        ss << "[InternalError]";
-      } else {
-        // For POD time samples, we need to handle indentation manually
-        // since we're already inside the time sample loop
-        const std::vector<double>& times = samples.get_times();
-        const std::vector<bool>& blocked = samples.get_blocked();
-        size_t element_size = get_pod_type_size(samples.type_id());
-
-        if (element_size > 0 && i < times.size()) {
-          ss << times[i] << ": ";
-          if (blocked[i]) {
-            ss << "None";
-          } else {
-            const uint8_t* value_data = samples.get_values().data() + (i * element_size);
-            ss << pprint_pod_value_by_type(value_data, samples.type_id());
-          }
-        } else {
-          ss << "[InternalError: POD type size or index issue]";
-        }
-      }
-
-    } else {
-      const std::vector<value::TimeSamples::Sample> &samples = v.get_samples();
-      if (samples.size() != v.size()) {
-        ss << "[InternalError]";
-      } else {
-        ss << samples[i].t << ": "
-           << value::pprint_value(samples[i].value);
-      }
-    }
-    ss << ",\n";  // USDA allow ',' for the last item
+  // Add a trailing newline if not present (for consistency with other pprinter functions)
+  if (!result.empty() && result.back() != '\n') {
+    result += '\n';
   }
-  ss << pprint::Indent(indent) << "}\n";
 
-  return ss.str();
+  return result;
 }
 
 std::string print_rel_prop(const Property &prop, const std::string &name,
