@@ -250,6 +250,10 @@ struct ValueRep {
   uint64_t data;
 };
 
+inline std::string to_string(const ValueRep &rep) {
+  return rep.GetStringRepr();
+}
+
 struct TokenIndex : Index { using Index::Index; };
 struct StringIndex : Index { using Index::Index; };
 struct FieldIndex : Index { using Index::Index; };

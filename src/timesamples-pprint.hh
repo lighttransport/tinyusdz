@@ -1,0 +1,51 @@
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2025 - Present, Light Transport Entertainment Inc.
+
+///
+/// @file timesamples-pprint.hh
+/// @brief Pretty printing functions for PODTimeSamples
+///
+
+#pragma once
+
+#include <string>
+#include <cstdint>
+
+namespace tinyusdz {
+
+// Forward declaration
+struct PODTimeSamples;
+
+namespace value {
+// Forward declaration
+class Value;
+} // namespace value
+
+///
+/// Pretty print PODTimeSamples with indentation support
+///
+/// @param samples PODTimeSamples to print
+/// @param indent Indentation level (number of spaces)
+/// @return String representation of the time samples
+///
+std::string pprint_pod_timesamples(const PODTimeSamples& samples,
+                                    uint32_t indent = 0);
+
+///
+/// Pretty print a single POD value based on type_id
+///
+/// @param data Pointer to the raw data
+/// @param type_id Type ID of the data
+/// @return String representation of the value
+///
+std::string pprint_pod_value_by_type(const uint8_t* data, uint32_t type_id);
+
+///
+/// Get the element size in bytes for a given type_id
+///
+/// @param type_id Type ID
+/// @return Size in bytes, or 0 if unknown type
+///
+size_t get_pod_type_size(uint32_t type_id);
+
+} // namespace tinyusdz

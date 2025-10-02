@@ -353,7 +353,15 @@ class CrateReader {
   bool UnpackInlinedValueRep(const crate::ValueRep &rep,
                              crate::CrateValue *value);
 
+  // TODO: deprecate
   bool UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint64_t offset, crate::CrateValue *value);
+
+  bool UnpackValueRepsToTimeSamples(const std::vector<double> &times,
+    const std::vector<crate::ValueRep> &vreps,
+    value::TimeSamples *d);
+
+  bool UnpackTimeSampleValue_INT32(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
+  bool UnpackTimeSampleValue_FLOAT(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
 
   //
   // Construct node hierarchy.
@@ -389,11 +397,13 @@ class CrateReader {
 
   bool ReadTimeSamples(value::TimeSamples *d);
 
+#if 0
   template<typename T>
   bool CrateTypedTimeSamples(const std::vector<double> &times,
                               const std::vector<crate::ValueRep> &value_reps,
                               uint64_t vrep_start_offset,
                               value::TimeSamples *d);
+#endif
 
   // integral array
   template <typename T>
@@ -481,8 +491,8 @@ class CrateReader {
 
   const StreamReader *_sr{};
 
-  void PushError(const std::string &s) const { _err += s; }
-  void PushWarn(const std::string &s) const { _warn += s; }
+  void PushError(const std::string &s) const { _err += s + "\n"; }
+  void PushWarn(const std::string &s) const { _warn += s + "\n"; }
   mutable std::string _err;
   mutable std::string _warn;
 
