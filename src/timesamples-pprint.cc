@@ -1061,31 +1061,58 @@ void pprint_pod_timesamples(StreamWriter& writer, const PODTimeSamples& samples,
     const std::vector<bool>& blocked = samples.get_blocked();
     const TypedArray<uint8_t>& values = samples.get_values();
 
-    // Verify data consistency
-    if (times.size() * element_size != values.size()) {
-        writer.write(pprint::Indent(indent + 1));
-        writer.write("[Error: Data size mismatch]\n");
-        writer.write(pprint::Indent(indent));
-        writer.write("}");
-        return;
-    }
-
-    // Write all time samples at once
-    for (size_t i = 0; i < times.size(); ++i) {
-        writer.write(pprint::Indent(indent + 1));
-        writer.write(times[i]);
-        writer.write(": ");
-
-        if (blocked[i]) {
-            writer.write("None");
-        } else {
-            // Get pointer to value data for this sample
-            const uint8_t* value_data = values.data() + (i * element_size);
-            pprint_pod_value_by_type(writer, value_data, samples.type_id());
+    // Check if using offset table (new optimized storage)
+    if (!samples._offsets.empty()) {
+        // Verify offset table is correct size
+        if (samples._offsets.size() != times.size()) {
+            writer.write(pprint::Indent(indent + 1));
+            writer.write("[Error: Offset table size mismatch: offsets=");
+            writer.write(static_cast<int>(samples._offsets.size()));
+            writer.write(" times=");
+            writer.write(static_cast<int>(times.size()));
+            writer.write("]\n");
+            writer.write(pprint::Indent(indent));
+            writer.write("}");
+            return;
         }
 
-        writer.write(",");  // USDA allows trailing comma
-        writer.write("\n");
+        // Using offset table - blocked values don't consume space
+        for (size_t i = 0; i < times.size(); ++i) {
+            writer.write(pprint::Indent(indent + 1));
+            writer.write(times[i]);
+            writer.write(": ");
+
+            if (blocked[i] || samples._offsets[i] == SIZE_MAX) {
+                writer.write("None");
+            } else {
+                // Get pointer to value data using offset
+                const uint8_t* value_data = values.data() + samples._offsets[i];
+                pprint_pod_value_by_type(writer, value_data, samples.type_id());
+            }
+
+            writer.write(",");  // USDA allows trailing comma
+            writer.write("\n");
+        }
+    } else {
+        // Legacy storage - blocked values still consume space but are skipped
+        size_t value_offset = 0;
+        for (size_t i = 0; i < times.size(); ++i) {
+            writer.write(pprint::Indent(indent + 1));
+            writer.write(times[i]);
+            writer.write(": ");
+
+            if (blocked[i]) {
+                writer.write("None");
+            } else {
+                // Get pointer to value data for this sample
+                const uint8_t* value_data = values.data() + value_offset;
+                pprint_pod_value_by_type(writer, value_data, samples.type_id());
+                value_offset += element_size;
+            }
+
+            writer.write(",");  // USDA allows trailing comma
+            writer.write("\n");
+        }
     }
 
     writer.write(pprint::Indent(indent));
@@ -1133,24 +1160,49 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
         const auto& blocked = pod_samples.get_blocked();
         const auto& values = pod_samples.get_values();
 
-        // Write samples
-        for (size_t i = 0; i < times.size(); ++i) {
-            writer.write(pprint::Indent(indent + 1));
-            writer.write(times[i]);
-            writer.write(": ");
+        // Write samples - handle offset table if present
+        if (!pod_samples._offsets.empty()) {
+            // Using offset table - blocked values don't consume space
+            for (size_t i = 0; i < times.size(); ++i) {
+                writer.write(pprint::Indent(indent + 1));
+                writer.write(times[i]);
+                writer.write(": ");
 
-            if (blocked[i]) {
-                writer.write("None");
-            } else {
-                // Get pointer to value data
-                const uint8_t* value_ptr = values.data() + (i * element_size);
-                pprint_pod_value_by_type(writer, value_ptr, type_id);
-            }
+                if (blocked[i] || pod_samples._offsets[i] == SIZE_MAX) {
+                    writer.write("None");
+                } else {
+                    // Get pointer to value data using offset
+                    const uint8_t* value_ptr = values.data() + pod_samples._offsets[i];
+                    pprint_pod_value_by_type(writer, value_ptr, type_id);
+                }
 
-            if (i < times.size() - 1) {
-                writer.write(",");
+                if (i < times.size() - 1) {
+                    writer.write(",");
+                }
+                writer.write("\n");
             }
-            writer.write("\n");
+        } else {
+            // Legacy: blocked values still counted in offset calculation
+            size_t value_offset = 0;
+            for (size_t i = 0; i < times.size(); ++i) {
+                writer.write(pprint::Indent(indent + 1));
+                writer.write(times[i]);
+                writer.write(": ");
+
+                if (blocked[i]) {
+                    writer.write("None");
+                } else {
+                    // Get pointer to value data
+                    const uint8_t* value_ptr = values.data() + value_offset;
+                    pprint_pod_value_by_type(writer, value_ptr, type_id);
+                    value_offset += element_size;
+                }
+
+                if (i < times.size() - 1) {
+                    writer.write(",");
+                }
+                writer.write("\n");
+            }
         }
     } else {
         // Non-POD path: use regular samples
