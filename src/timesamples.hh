@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>  // for SIZE_MAX
 #include <limits>
 #include <vector>
 #include <type_traits>
@@ -46,6 +47,9 @@ class TimeCode;
 enum class TimeSampleInterpolationType;
 bool Lerp(const Value &p0, const Value &p1, double dt, Value *result);
 
+// Forward declaration for PODTimeSamples::get_samples()
+struct TimeSamples;
+
 // Helper function to check if a type_id represents a POD type
 // POD types are numeric types that are trivial and standard layout
 inline bool is_pod_type_id(uint32_t type_id) {
@@ -70,9 +74,12 @@ inline bool is_pod_type_id(uint32_t type_id) {
 ///
 struct PODTimeSamples {
   uint32_t _type_id{0}; // TypeId from value-types.hh
+  bool _is_array{false}; // Whether the stored type is an array
+  size_t _array_size{0}; // Number of elements per array (fixed for all samples)
   mutable std::vector<double> _times;
   mutable std::vector<bool> _blocked; // ValueBlock flags
-  mutable TypedArray<uint8_t> _values; // Raw byte storage: sizeof(type_id) * N elements
+  mutable TypedArray<uint8_t> _values; // Raw byte storage: compact storage without blocked values
+  mutable std::vector<size_t> _offsets; // Offset table for array values (or scalar values with blocks)
   mutable bool _dirty{false};
 
   bool empty() const { return _times.empty(); }
@@ -88,7 +95,10 @@ struct PODTimeSamples {
     _times.clear();
     _blocked.clear();
     _values.clear();
+    _offsets.clear();
     _type_id = 0;
+    _is_array = false;
+    _array_size = 0;
     _dirty = true;
   }
 
@@ -114,30 +124,64 @@ struct PODTimeSamples {
     std::vector<double> sorted_times(_times.size());
     std::vector<bool> sorted_blocked(_blocked.size());
 
-    // Need to know element size to reorder values
-    if (_type_id == 0 || _values.empty()) {
-      _dirty = false;
-      return;
+    // If using offsets, sort them too
+    if (!_offsets.empty()) {
+      std::vector<size_t> sorted_offsets(_offsets.size());
+      for (size_t i = 0; i < indices.size(); ++i) {
+        sorted_times[i] = _times[indices[i]];
+        sorted_blocked[i] = _blocked[indices[i]];
+        sorted_offsets[i] = _offsets[indices[i]];
+      }
+      _times = std::move(sorted_times);
+      _blocked = std::move(sorted_blocked);
+      _offsets = std::move(sorted_offsets);
+      // Note: _values array doesn't need reordering as offsets handle the mapping
+    } else if (!_values.empty() && _type_id != 0) {
+      // For non-array scalar types without offsets (legacy path)
+      // Calculate element size from stored element size or type
+      size_t element_size = get_element_size();
+      if (element_size > 0) {
+        TypedArray<uint8_t> sorted_values;
+        sorted_values.resize(_values.size());
+
+        size_t dst_offset = 0;
+        for (size_t i = 0; i < indices.size(); ++i) {
+          sorted_times[i] = _times[indices[i]];
+          sorted_blocked[i] = _blocked[indices[i]];
+
+          // Only copy value if not blocked
+          if (!_blocked[indices[i]]) {
+            // Find source offset by counting non-blocked entries before indices[i]
+            size_t src_offset = 0;
+            for (size_t j = 0; j < indices[i]; ++j) {
+              if (!_blocked[j]) {
+                src_offset += element_size;
+              }
+            }
+
+            const uint8_t* src = _values.data() + src_offset;
+            uint8_t* dst = sorted_values.data() + dst_offset;
+            std::copy(src, src + element_size, dst);
+            dst_offset += element_size;
+          }
+        }
+
+        _times = std::move(sorted_times);
+        _blocked = std::move(sorted_blocked);
+        _values = std::move(sorted_values);
+      } else {
+        _times = std::move(sorted_times);
+        _blocked = std::move(sorted_blocked);
+      }
+    } else {
+      // Just sort times and blocked flags
+      for (size_t i = 0; i < indices.size(); ++i) {
+        sorted_times[i] = _times[indices[i]];
+        sorted_blocked[i] = _blocked[indices[i]];
+      }
+      _times = std::move(sorted_times);
+      _blocked = std::move(sorted_blocked);
     }
-
-    // Calculate element size from total size and number of elements
-    size_t element_size = _values.size() / _times.size();
-    TypedArray<uint8_t> sorted_values;
-    sorted_values.resize(_values.size());
-
-    for (size_t i = 0; i < indices.size(); ++i) {
-      sorted_times[i] = _times[indices[i]];
-      sorted_blocked[i] = _blocked[indices[i]];
-
-      // Copy element bytes
-      const uint8_t* src = _values.data() + (indices[i] * element_size);
-      uint8_t* dst = sorted_values.data() + (i * element_size);
-      std::copy(src, src + element_size, dst);
-    }
-
-    _times = std::move(sorted_times);
-    _blocked = std::move(sorted_blocked);
-    _values = std::move(sorted_values);
 
     _dirty = false;
   }
@@ -154,6 +198,7 @@ struct PODTimeSamples {
     // Set type_id on first sample
     if (_times.empty()) {
       _type_id = value::TypeTraits<T>::underlying_type_id();
+      _is_array = false;  // Single values are not arrays
     } else {
       // Verify type consistency
       if (_type_id != value::TypeTraits<T>::underlying_type_id()) {
@@ -170,16 +215,86 @@ struct PODTimeSamples {
     _times.push_back(t);
     _blocked.push_back(false);
 
-    // Append raw bytes to values
-    size_t old_size = _values.size();
-    _values.resize(old_size + sizeof(T));
-    std::memcpy(_values.data() + old_size, &value, sizeof(T));
+    // For non-blocked values, append to values array
+    // If we're using offsets (arrays or when we have any blocked values), update offset table
+    if (_is_array || !_offsets.empty()) {
+      // Using offset table - need to maintain consistency
+      // If offsets table exists but is smaller than times, we need to populate missing offsets
+      if (_offsets.size() < _times.size() - 1) {
+        // This shouldn't happen in normal flow, but handle it
+        _offsets.resize(_times.size() - 1, SIZE_MAX);
+      }
+
+      _offsets.push_back(_values.size());
+      _values.resize(_values.size() + sizeof(T));
+      std::memcpy(_values.data() + _offsets.back(), &value, sizeof(T));
+    } else {
+      // Legacy path: simple append without offsets (no blocked values yet)
+      size_t old_size = _values.size();
+      _values.resize(old_size + sizeof(T));
+      std::memcpy(_values.data() + old_size, &value, sizeof(T));
+    }
 
     _dirty = true;
     return true;
   }
 
-  /// Add a blocked sample (ValueBlock)
+  /// Add an array sample with POD element type checking
+  template<typename T>
+  bool add_array_sample(double t, const T* values, size_t count, std::string *err = nullptr) {
+    static_assert(std::is_trivial<T>::value,
+                  "PODTimeSamples requires trivial types");
+    static_assert(std::is_standard_layout<T>::value,
+                  "PODTimeSamples requires standard layout types");
+
+    // Set type_id and array info on first sample
+    if (_times.empty()) {
+      _type_id = value::TypeTraits<T>::underlying_type_id();
+      _is_array = true;
+      _array_size = count;
+    } else {
+      // Verify type consistency
+      if (_type_id != value::TypeTraits<T>::underlying_type_id()) {
+        if (err) {
+          (*err) += "Type mismatch in PODTimeSamples array: expected type_id " +
+                    std::to_string(_type_id) + " but got " +
+                    std::to_string(value::TypeTraits<T>::type_id()) + ".\n";
+        }
+        return false;
+      }
+      // Verify array size consistency
+      if (_array_size != count) {
+        if (err) {
+          (*err) += "Array size mismatch in PODTimeSamples: expected " +
+                    std::to_string(_array_size) + " but got " +
+                    std::to_string(count) + ".\n";
+        }
+        return false;
+      }
+    }
+
+    _times.push_back(t);
+    _blocked.push_back(false);
+
+    // Store offset and append array data
+    _offsets.push_back(_values.size());
+    size_t byte_size = sizeof(T) * count;
+    _values.resize(_values.size() + byte_size);
+    std::memcpy(_values.data() + _offsets.back(), values, byte_size);
+
+    _dirty = true;
+    return true;
+  }
+
+  /// Get samples as vector of TimeSamples::Sample for backward compatibility
+  /// This converts the POD storage back to value::Value representation
+  /// Implementation is in timesamples.cc to avoid circular dependency
+  std::vector<std::pair<double, std::pair<value::Value, bool>>> get_samples_converted() const;
+
+  /// Helper function to get element size for the stored type
+  size_t get_element_size() const;
+
+  /// Add a blocked sample (ValueBlock) - no memory allocated for value
   template<typename T>
   bool add_blocked_sample(double t, std::string *err = nullptr) {
     static_assert(std::is_trivial<T>::value,
@@ -190,9 +305,10 @@ struct PODTimeSamples {
     // Set type_id on first sample
     if (_times.empty()) {
       _type_id = value::TypeTraits<T>::underlying_type_id();
+      _is_array = false;  // Will be set properly if array samples are added
     } else {
       // Verify type consistency
-      if (_type_id != value::TypeTraits<T>::type_id()) {
+      if (_type_id != value::TypeTraits<T>::underlying_type_id()) {
         if (err) {
           (*err) += "Type mismatch in PODTimeSamples (blocked sample): expected type_id " +
                     std::to_string(_type_id) + " but got " +
@@ -206,10 +322,59 @@ struct PODTimeSamples {
     _times.push_back(t);
     _blocked.push_back(true);
 
-    // Still need to allocate space for blocked values
-    size_t old_size = _values.size();
-    _values.resize(old_size + sizeof(T));
-    std::memset(_values.data() + old_size, 0, sizeof(T)); // Zero initialize
+    // For blocked values, we DON'T allocate any space in _values
+    // If this is the first blocked sample and we don't have offsets yet,
+    // we need to create the offset table and populate it with existing samples
+    if (_offsets.empty() && !_is_array && !_times.empty()) {
+      // Transition to offset-based storage
+      // Build offset table for existing samples
+      size_t offset = 0;
+      size_t element_size = get_element_size();
+      for (size_t i = 0; i < _times.size() - 1; ++i) {  // -1 because we just added this time
+        if (!_blocked[i]) {
+          _offsets.push_back(offset);
+          offset += element_size;
+        } else {
+          _offsets.push_back(SIZE_MAX);
+        }
+      }
+    }
+
+    // Add offset marker for this blocked sample
+    if (_is_array || !_offsets.empty()) {
+      // Use SIZE_MAX as a marker for blocked values in offset table
+      _offsets.push_back(SIZE_MAX);
+    }
+    // No allocation in _values array for blocked samples!
+
+    _dirty = true;
+    return true;
+  }
+
+  /// Add a blocked array sample - no memory allocated
+  bool add_blocked_array_sample(double t, size_t count, std::string *err = nullptr) {
+    // Initialize array info on first sample
+    if (_times.empty()) {
+      _is_array = true;
+      _array_size = count;
+      // type_id will be set when first non-blocked sample is added
+    } else if (_is_array) {
+      // Verify array size consistency
+      if (_array_size != count) {
+        if (err) {
+          (*err) += "Array size mismatch in PODTimeSamples: expected " +
+                    std::to_string(_array_size) + " but got " +
+                    std::to_string(count) + ".\n";
+        }
+        return false;
+      }
+    }
+
+    _times.push_back(t);
+    _blocked.push_back(true);
+
+    // Mark as blocked in offset table
+    _offsets.push_back(SIZE_MAX);
 
     _dirty = true;
     return true;
@@ -370,6 +535,15 @@ struct TimeSamples {
   }
 
   bool is_using_pod() const { return _use_pod; }
+
+  /// Get POD storage for direct manipulation (only valid when using POD storage)
+  PODTimeSamples* get_pod_storage() {
+    return _use_pod ? &_pod_samples : nullptr;
+  }
+
+  const PODTimeSamples* get_pod_storage() const {
+    return _use_pod ? &_pod_samples : nullptr;
+  }
 
   void update() const {
     if (_use_pod) {
@@ -600,10 +774,22 @@ struct TimeSamples {
 #endif
 
     if (_use_pod) {
-      // Cannot return samples from POD storage
-      // Return empty vector or throw error
-
-      return empty;
+      // For POD storage, we need to return a converted vector
+      // This is not ideal for performance, but maintains backward compatibility
+      // Users should prefer typed access methods when possible
+      // We store the converted samples in a mutable cache
+      static thread_local std::vector<Sample> pod_samples_cache;
+      pod_samples_cache.clear();
+      auto converted = _pod_samples.get_samples_converted();
+      pod_samples_cache.reserve(converted.size());
+      for (const auto& item : converted) {
+        Sample s;
+        s.t = item.first;
+        s.value = item.second.first;
+        s.blocked = item.second.second;
+        pod_samples_cache.push_back(s);
+      }
+      return pod_samples_cache;
     }
 
     if (_dirty) {
