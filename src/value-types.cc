@@ -1305,7 +1305,8 @@ bool TimeSamples::get_sample_at(const double t, Sample **dst) {
   });
 
   if (it != _samples.end()) {
-    (*dst) = &(*it); 
+    (*dst) = const_cast<Sample*>(&(*it));
+    return true;  // Found the sample!
   }
   return false;
 }
