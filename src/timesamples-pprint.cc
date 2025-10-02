@@ -1099,4 +1099,103 @@ std::string pprint_pod_timesamples(const PODTimeSamples& samples, uint32_t inden
     return writer.str();
 }
 
+void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples, uint32_t indent) {
+    // Write opening brace
+    writer.write("{\n");
+
+    if (samples.empty()) {
+        writer.write(pprint::Indent(indent));
+        writer.write("}");
+        return;
+    }
+
+    // Check if using POD storage
+    if (samples.is_using_pod()) {
+        // Delegate to POD implementation
+        const auto& pod_samples = samples.get_pod_samples();
+
+        // Get type information
+        uint32_t type_id = pod_samples.type_id();
+        size_t element_size = get_pod_type_size(type_id);
+
+        if (element_size == 0) {
+            writer.write(pprint::Indent(indent + 1));
+            writer.write("/* Unknown type_id: ");
+            writer.write(type_id);
+            writer.write(" */\n");
+            writer.write(pprint::Indent(indent));
+            writer.write("}");
+            return;
+        }
+
+        // Get arrays
+        const auto& times = pod_samples.get_times();
+        const auto& blocked = pod_samples.get_blocked();
+        const auto& values = pod_samples.get_values();
+
+        // Write samples
+        for (size_t i = 0; i < times.size(); ++i) {
+            writer.write(pprint::Indent(indent + 1));
+            writer.write(times[i]);
+            writer.write(": ");
+
+            if (blocked[i]) {
+                writer.write("None");
+            } else {
+                // Get pointer to value data
+                const uint8_t* value_ptr = values.data() + (i * element_size);
+                pprint_pod_value_by_type(writer, value_ptr, type_id);
+            }
+
+            if (i < times.size() - 1) {
+                writer.write(",");
+            }
+            writer.write("\n");
+        }
+    } else {
+        // Non-POD path: use regular samples
+        const auto& samples_vec = samples.get_samples();
+
+        for (size_t i = 0; i < samples_vec.size(); ++i) {
+            const auto& sample = samples_vec[i];
+
+            writer.write(pprint::Indent(indent + 1));
+            writer.write(sample.t);
+            writer.write(": ");
+
+            if (sample.blocked || sample.value.is_none()) {
+                writer.write("None");
+            } else {
+                // Pretty print the value using its pprint method
+                std::string value_str = pprint_value(sample.value, indent + 1);
+
+                // Remove leading/trailing whitespace for inline display
+                size_t start = value_str.find_first_not_of(" \t\n\r");
+                size_t end = value_str.find_last_not_of(" \t\n\r");
+
+                if (start != std::string::npos && end != std::string::npos) {
+                    writer.write(value_str.substr(start, end - start + 1));
+                } else {
+                    writer.write(value_str);
+                }
+            }
+
+            if (i < samples_vec.size() - 1) {
+                writer.write(",");
+            }
+            writer.write("\n");
+        }
+    }
+
+    writer.write(pprint::Indent(indent));
+    writer.write("}");
+}
+
+std::string pprint_timesamples(const value::TimeSamples& samples, uint32_t indent) {
+    // Use StreamWriter internally for efficiency
+    StreamWriter writer;
+    pprint_timesamples(writer, samples, indent);
+    return writer.str();
+}
+
 } // namespace tinyusdz
