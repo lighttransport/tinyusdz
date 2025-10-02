@@ -13,8 +13,9 @@
 
 namespace tinyusdz {
 
-// Forward declaration
+// Forward declarations
 struct PODTimeSamples;
+class StreamWriter;
 
 namespace value {
 // Forward declaration
@@ -32,6 +33,17 @@ std::string pprint_pod_timesamples(const PODTimeSamples& samples,
                                     uint32_t indent = 0);
 
 ///
+/// Pretty print PODTimeSamples to a StreamWriter
+///
+/// @param writer StreamWriter to write to
+/// @param samples PODTimeSamples to print
+/// @param indent Indentation level (number of spaces)
+///
+void pprint_pod_timesamples(StreamWriter& writer,
+                            const PODTimeSamples& samples,
+                            uint32_t indent = 0);
+
+///
 /// Pretty print a single POD value based on type_id
 ///
 /// @param data Pointer to the raw data
@@ -39,6 +51,17 @@ std::string pprint_pod_timesamples(const PODTimeSamples& samples,
 /// @return String representation of the value
 ///
 std::string pprint_pod_value_by_type(const uint8_t* data, uint32_t type_id);
+
+///
+/// Pretty print a single POD value to a StreamWriter
+///
+/// @param writer StreamWriter to write to
+/// @param data Pointer to the raw data
+/// @param type_id Type ID of the data
+///
+void pprint_pod_value_by_type(StreamWriter& writer,
+                              const uint8_t* data,
+                              uint32_t type_id);
 
 ///
 /// Get the element size in bytes for a given type_id
