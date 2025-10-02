@@ -10,6 +10,7 @@
 #include "value-pprint.hh"
 #include "pprinter.hh"
 #include "timesamples.hh"
+#include "stream-writer.hh"
 
 namespace tinyusdz {
 
@@ -457,6 +458,58 @@ std::string print_frame4d(const uint8_t* data) {
     return ss.str();
 }
 
+// StreamWriter versions of print functions
+template<typename T>
+void print_pod_value(StreamWriter& writer, const uint8_t* data) {
+    T value;
+    std::memcpy(&value, data, sizeof(T));
+    writer << value;
+}
+
+void print_float(StreamWriter& writer, const uint8_t* data) {
+    float value;
+    std::memcpy(&value, data, sizeof(float));
+    writer.write(value);
+}
+
+void print_double(StreamWriter& writer, const uint8_t* data) {
+    double value;
+    std::memcpy(&value, data, sizeof(double));
+    writer.write(value);
+}
+
+template<typename T>
+void print_vector2(StreamWriter& writer, const uint8_t* data) {
+    T value[2];
+    std::memcpy(&value, data, sizeof(T) * 2);
+    writer << "(" << value[0] << ", " << value[1] << ")";
+}
+
+template<typename T>
+void print_vector3(StreamWriter& writer, const uint8_t* data) {
+    T value[3];
+    std::memcpy(&value, data, sizeof(T) * 3);
+    writer << "(" << value[0] << ", " << value[1] << ", " << value[2] << ")";
+}
+
+template<typename T>
+void print_vector4(StreamWriter& writer, const uint8_t* data) {
+    T value[4];
+    std::memcpy(&value, data, sizeof(T) * 4);
+    writer << "(" << value[0] << ", " << value[1] << ", " << value[2] << ", " << value[3] << ")";
+}
+
+// Write value types directly using their operator<<
+template<typename ValueType>
+void print_value_type(StreamWriter& writer, const uint8_t* data) {
+    ValueType value;
+    std::memcpy(&value, data, sizeof(ValueType));
+    // Use a temporary stringstream since value types have operator<< for ostream
+    std::stringstream ss;
+    ss << value;
+    writer.write(ss.str());
+}
+
 } // namespace
 
 std::string pprint_pod_value_by_type(const uint8_t* data, uint32_t type_id) {
@@ -605,6 +658,226 @@ std::string pprint_pod_value_by_type(const uint8_t* data, uint32_t type_id) {
             return print_texcoord3d(data);
         default:
             return "[Unknown POD type: " + std::to_string(type_id) + "]";
+    }
+}
+
+void pprint_pod_value_by_type(StreamWriter& writer, const uint8_t* data, uint32_t type_id) {
+    using namespace value;
+
+    switch (type_id) {
+        case TYPE_ID_BOOL:
+            print_pod_value<bool>(writer, data);
+            break;
+        case TYPE_ID_CHAR:
+            print_pod_value<char>(writer, data);
+            break;
+        case TYPE_ID_CHAR2:
+            writer << "(" << int(data[0]) << ", " << int(data[1]) << ")";
+            break;
+        case TYPE_ID_CHAR3:
+            writer << "(" << int(data[0]) << ", " << int(data[1]) << ", " << int(data[2]) << ")";
+            break;
+        case TYPE_ID_CHAR4:
+            writer << "(" << int(data[0]) << ", " << int(data[1]) << ", " << int(data[2]) << ", " << int(data[3]) << ")";
+            break;
+        case TYPE_ID_UCHAR:
+            print_pod_value<uint8_t>(writer, data);
+            break;
+        case TYPE_ID_UCHAR2:
+            writer << "(" << int(data[0]) << ", " << int(data[1]) << ")";
+            break;
+        case TYPE_ID_UCHAR3:
+            writer << "(" << int(data[0]) << ", " << int(data[1]) << ", " << int(data[2]) << ")";
+            break;
+        case TYPE_ID_UCHAR4:
+            writer << "(" << int(data[0]) << ", " << int(data[1]) << ", " << int(data[2]) << ", " << int(data[3]) << ")";
+            break;
+        case TYPE_ID_SHORT:
+            print_pod_value<int16_t>(writer, data);
+            break;
+        case TYPE_ID_SHORT2:
+            print_vector2<int16_t>(writer, data);
+            break;
+        case TYPE_ID_SHORT3:
+            print_vector3<int16_t>(writer, data);
+            break;
+        case TYPE_ID_SHORT4:
+            print_vector4<int16_t>(writer, data);
+            break;
+        case TYPE_ID_USHORT:
+            print_pod_value<uint16_t>(writer, data);
+            break;
+        case TYPE_ID_USHORT2:
+            print_vector2<uint16_t>(writer, data);
+            break;
+        case TYPE_ID_USHORT3:
+            print_vector3<uint16_t>(writer, data);
+            break;
+        case TYPE_ID_USHORT4:
+            print_vector4<uint16_t>(writer, data);
+            break;
+        case TYPE_ID_INT32:
+            print_pod_value<int32_t>(writer, data);
+            break;
+        case TYPE_ID_INT2:
+            print_vector2<int32_t>(writer, data);
+            break;
+        case TYPE_ID_INT3:
+            print_vector3<int32_t>(writer, data);
+            break;
+        case TYPE_ID_INT4:
+            print_vector4<int32_t>(writer, data);
+            break;
+        case TYPE_ID_UINT32:
+            print_pod_value<uint32_t>(writer, data);
+            break;
+        case TYPE_ID_UINT2:
+            print_vector2<uint32_t>(writer, data);
+            break;
+        case TYPE_ID_UINT3:
+            print_vector3<uint32_t>(writer, data);
+            break;
+        case TYPE_ID_UINT4:
+            print_vector4<uint32_t>(writer, data);
+            break;
+        case TYPE_ID_INT64:
+            print_pod_value<int64_t>(writer, data);
+            break;
+        case TYPE_ID_UINT64:
+            print_pod_value<uint64_t>(writer, data);
+            break;
+        case TYPE_ID_HALF:
+            print_value_type<value::half>(writer, data);
+            break;
+        case TYPE_ID_HALF2:
+            print_value_type<value::half2>(writer, data);
+            break;
+        case TYPE_ID_HALF3:
+            print_value_type<value::half3>(writer, data);
+            break;
+        case TYPE_ID_HALF4:
+            print_value_type<value::half4>(writer, data);
+            break;
+        case TYPE_ID_FLOAT:
+            print_float(writer, data);
+            break;
+        case TYPE_ID_FLOAT2:
+            print_value_type<value::float2>(writer, data);
+            break;
+        case TYPE_ID_FLOAT3:
+            print_value_type<value::float3>(writer, data);
+            break;
+        case TYPE_ID_FLOAT4:
+            print_value_type<value::float4>(writer, data);
+            break;
+        case TYPE_ID_DOUBLE:
+            print_double(writer, data);
+            break;
+        case TYPE_ID_DOUBLE2:
+            print_value_type<value::double2>(writer, data);
+            break;
+        case TYPE_ID_DOUBLE3:
+            print_value_type<value::double3>(writer, data);
+            break;
+        case TYPE_ID_DOUBLE4:
+            print_value_type<value::double4>(writer, data);
+            break;
+        case TYPE_ID_QUATH:
+            print_value_type<value::quath>(writer, data);
+            break;
+        case TYPE_ID_QUATF:
+            print_value_type<value::quatf>(writer, data);
+            break;
+        case TYPE_ID_QUATD:
+            print_value_type<value::quatd>(writer, data);
+            break;
+        case TYPE_ID_MATRIX2F:
+            print_value_type<value::matrix2f>(writer, data);
+            break;
+        case TYPE_ID_MATRIX3F:
+            print_value_type<value::matrix3f>(writer, data);
+            break;
+        case TYPE_ID_MATRIX4F:
+            print_value_type<value::matrix4f>(writer, data);
+            break;
+        case TYPE_ID_MATRIX2D:
+            print_value_type<value::matrix2d>(writer, data);
+            break;
+        case TYPE_ID_MATRIX3D:
+            print_value_type<value::matrix3d>(writer, data);
+            break;
+        case TYPE_ID_MATRIX4D:
+            print_value_type<value::matrix4d>(writer, data);
+            break;
+        case TYPE_ID_COLOR3H:
+            print_value_type<value::color3h>(writer, data);
+            break;
+        case TYPE_ID_COLOR3F:
+            print_value_type<value::color3f>(writer, data);
+            break;
+        case TYPE_ID_COLOR3D:
+            print_value_type<value::color3d>(writer, data);
+            break;
+        case TYPE_ID_COLOR4H:
+            print_value_type<value::color4h>(writer, data);
+            break;
+        case TYPE_ID_COLOR4F:
+            print_value_type<value::color4f>(writer, data);
+            break;
+        case TYPE_ID_COLOR4D:
+            print_value_type<value::color4d>(writer, data);
+            break;
+        case TYPE_ID_POINT3H:
+            print_value_type<value::point3h>(writer, data);
+            break;
+        case TYPE_ID_POINT3F:
+            print_value_type<value::point3f>(writer, data);
+            break;
+        case TYPE_ID_POINT3D:
+            print_value_type<value::point3d>(writer, data);
+            break;
+        case TYPE_ID_NORMAL3H:
+            print_value_type<value::normal3h>(writer, data);
+            break;
+        case TYPE_ID_NORMAL3F:
+            print_value_type<value::normal3f>(writer, data);
+            break;
+        case TYPE_ID_NORMAL3D:
+            print_value_type<value::normal3d>(writer, data);
+            break;
+        case TYPE_ID_VECTOR3H:
+            print_value_type<value::vector3h>(writer, data);
+            break;
+        case TYPE_ID_VECTOR3F:
+            print_value_type<value::vector3f>(writer, data);
+            break;
+        case TYPE_ID_VECTOR3D:
+            print_value_type<value::vector3d>(writer, data);
+            break;
+        case TYPE_ID_FRAME4D:
+            print_value_type<value::frame4d>(writer, data);
+            break;
+        case TYPE_ID_TEXCOORD2H:
+            print_value_type<value::texcoord2h>(writer, data);
+            break;
+        case TYPE_ID_TEXCOORD2F:
+            print_value_type<value::texcoord2f>(writer, data);
+            break;
+        case TYPE_ID_TEXCOORD2D:
+            print_value_type<value::texcoord2d>(writer, data);
+            break;
+        case TYPE_ID_TEXCOORD3H:
+            print_value_type<value::texcoord3h>(writer, data);
+            break;
+        case TYPE_ID_TEXCOORD3F:
+            print_value_type<value::texcoord3f>(writer, data);
+            break;
+        case TYPE_ID_TEXCOORD3D:
+            print_value_type<value::texcoord3d>(writer, data);
+            break;
+        default:
+            writer << "[Unknown POD type: " << type_id << "]";
+            break;
     }
 }
 
@@ -757,23 +1030,26 @@ size_t get_pod_type_size(uint32_t type_id) {
     }
 }
 
-std::string pprint_pod_timesamples(const PODTimeSamples& samples, uint32_t indent) {
-    std::stringstream ss;
-
-    // Start with opening brace
-    ss << "{\n";
+void pprint_pod_timesamples(StreamWriter& writer, const PODTimeSamples& samples, uint32_t indent) {
+    // Write opening brace
+    writer.write("{\n");
 
     if (samples.empty()) {
-        ss << pprint::Indent(indent) << "}";
-        return ss.str();
+        writer.write(pprint::Indent(indent));
+        writer.write("}");
+        return;
     }
 
     // Get element size for this type
     size_t element_size = get_pod_type_size(samples.type_id());
     if (element_size == 0) {
-        ss << pprint::Indent(indent + 1) << "[Error: Unknown type_id " << samples.type_id() << "]\n";
-        ss << pprint::Indent(indent) << "}";
-        return ss.str();
+        writer.write(pprint::Indent(indent + 1));
+        writer.write("[Error: Unknown type_id ");
+        writer.write(samples.type_id());
+        writer.write("]\n");
+        writer.write(pprint::Indent(indent));
+        writer.write("}");
+        return;
     }
 
     // Make sure samples are updated (sorted)
@@ -787,31 +1063,40 @@ std::string pprint_pod_timesamples(const PODTimeSamples& samples, uint32_t inden
 
     // Verify data consistency
     if (times.size() * element_size != values.size()) {
-        ss << pprint::Indent(indent + 1) << "[Error: Data size mismatch]\n";
-        ss << pprint::Indent(indent) << "}";
-        return ss.str();
+        writer.write(pprint::Indent(indent + 1));
+        writer.write("[Error: Data size mismatch]\n");
+        writer.write(pprint::Indent(indent));
+        writer.write("}");
+        return;
     }
 
-    // Print each time sample
+    // Write all time samples at once
     for (size_t i = 0; i < times.size(); ++i) {
-        ss << pprint::Indent(indent + 1);
-        ss << times[i] << ": ";
+        writer.write(pprint::Indent(indent + 1));
+        writer.write(times[i]);
+        writer.write(": ");
 
         if (blocked[i]) {
-            ss << "None";
+            writer.write("None");
         } else {
             // Get pointer to value data for this sample
             const uint8_t* value_data = values.data() + (i * element_size);
-            ss << pprint_pod_value_by_type(value_data, samples.type_id());
+            pprint_pod_value_by_type(writer, value_data, samples.type_id());
         }
 
-        ss << ",";  // USDA allows trailing comma
-        ss << "\n";
+        writer.write(",");  // USDA allows trailing comma
+        writer.write("\n");
     }
 
-    ss << pprint::Indent(indent) << "}";
+    writer.write(pprint::Indent(indent));
+    writer.write("}");
+}
 
-    return ss.str();
+std::string pprint_pod_timesamples(const PODTimeSamples& samples, uint32_t indent) {
+    // Use StreamWriter internally for efficiency
+    StreamWriter writer;
+    pprint_pod_timesamples(writer, samples, indent);
+    return writer.str();
 }
 
 } // namespace tinyusdz
