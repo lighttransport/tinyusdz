@@ -24,6 +24,7 @@
 
 #include "nonstd/optional.hpp"
 #include "typed-array.hh"
+#include "logger.hh"
 
 // Enable SoA (Structure of Arrays) layout for TypedTimeSamples
 // Default is AoS (Array of Structs) layout
@@ -152,10 +153,10 @@ struct PODTimeSamples {
 
     // Set type_id on first sample
     if (_times.empty()) {
-      _type_id = value::TypeTraits<T>::type_id();
+      _type_id = value::TypeTraits<T>::underlying_type_id();
     } else {
       // Verify type consistency
-      if (_type_id != value::TypeTraits<T>::type_id()) {
+      if (_type_id != value::TypeTraits<T>::underlying_type_id()) {
         if (err) {
           (*err) += "Type mismatch in PODTimeSamples: expected type_id " +
                     std::to_string(_type_id) + " but got " +
@@ -188,7 +189,7 @@ struct PODTimeSamples {
 
     // Set type_id on first sample
     if (_times.empty()) {
-      _type_id = value::TypeTraits<T>::type_id();
+      _type_id = value::TypeTraits<T>::underlying_type_id();
     } else {
       // Verify type consistency
       if (_type_id != value::TypeTraits<T>::type_id()) {
@@ -235,7 +236,7 @@ struct PODTimeSamples {
     }
 
     // Verify type
-    if (_type_id != value::TypeTraits<T>::type_id()) {
+    if (_type_id != value::TypeTraits<T>::underlying_type_id()) {
       return false;
     }
 
@@ -354,6 +355,9 @@ struct TimeSamples {
   /// Initialize TimeSamples with a specific type_id
   /// This determines whether to use POD optimization or regular storage
   bool init(uint32_t type_id) {
+    TUSDZ_LOG_D("init" << type_id);
+    DCOUT("init" << type_id);
+
     if (!empty()) {
       return false; // Already initialized
     }
@@ -584,10 +588,21 @@ struct TimeSamples {
   }
 
   const std::vector<Sample> &get_samples() const {
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wexit-time-destructors"
+#endif
+
+    static const std::vector<Sample> empty;
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+
     if (_use_pod) {
       // Cannot return samples from POD storage
       // Return empty vector or throw error
-      static const std::vector<Sample> empty;
+
       return empty;
     }
 
@@ -598,9 +613,19 @@ struct TimeSamples {
   }
 
   std::vector<Sample> &samples() {
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wexit-time-destructors"
+#endif
+
+    static std::vector<Sample> empty;
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+
     if (_use_pod) {
       // Cannot return samples from POD storage
-      static std::vector<Sample> empty;
       return empty;
     }
 
