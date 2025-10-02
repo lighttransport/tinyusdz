@@ -18,8 +18,9 @@ struct PODTimeSamples;
 class StreamWriter;
 
 namespace value {
-// Forward declaration
+// Forward declarations
 class Value;
+class TimeSamples;
 } // namespace value
 
 ///
@@ -70,5 +71,26 @@ void pprint_pod_value_by_type(StreamWriter& writer,
 /// @return Size in bytes, or 0 if unknown type
 ///
 size_t get_pod_type_size(uint32_t type_id);
+
+///
+/// Pretty print non-POD TimeSamples with indentation support
+///
+/// @param samples value::TimeSamples to print
+/// @param indent Indentation level (number of spaces)
+/// @return String representation of the time samples
+///
+std::string pprint_timesamples(const value::TimeSamples& samples,
+                               uint32_t indent = 0);
+
+///
+/// Pretty print non-POD TimeSamples to a StreamWriter
+///
+/// @param writer StreamWriter to write to
+/// @param samples value::TimeSamples to print
+/// @param indent Indentation level (number of spaces)
+///
+void pprint_timesamples(StreamWriter& writer,
+                       const value::TimeSamples& samples,
+                       uint32_t indent = 0);
 
 } // namespace tinyusdz
