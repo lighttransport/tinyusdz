@@ -110,6 +110,15 @@ struct MaterialXConfigAPI {
   // MaterialX library version that the data has been authored against.
   // Defaults to 1.38 to allow correct versioning of old files.
   TypedAttributeWithFallback<std::string> mtlx_version{"1.38"}; // "string config:mtlx:version"
+
+  // MaterialX namespace for node definitions
+  TypedAttributeWithFallback<std::string> mtlx_namespace{""}; // "string config:mtlx:namespace"
+
+  // Default colorspace for MaterialX documents
+  TypedAttributeWithFallback<std::string> mtlx_colorspace{"lin_rec709"}; // "string config:mtlx:colorspace"
+
+  // Source URI for MaterialX document references
+  TypedAttributeWithFallback<std::string> mtlx_sourceUri{""}; // "string config:mtlx:sourceUri"
 };
 
 struct Material : UsdShadePrim {
@@ -139,9 +148,15 @@ struct Material : UsdShadePrim {
 ///     float3 outputs:result.connect = </path/to/shader.outputs:out>
 ///   }
 ///
+// NodeGraph Prim - A container for shading nodes that defines a shading graph
 struct NodeGraph : UsdShadePrim {
-  // NodeGraph can have arbitrary outputs (e.g., outputs:result, outputs:normal, etc.)
+  // NodeGraph can have arbitrary inputs and outputs (e.g., outputs:result, outputs:normal, etc.)
   // These are stored in the inherited props map from UsdShadePrim
+  // Child nodes are stored as children in the USD hierarchy, not directly here
+
+  // Optional MaterialX-specific attributes
+  TypedAttribute<std::string> nodedef;  // Reference to a nodedef
+  TypedAttribute<std::string> nodegraph_type;  // Type of the nodegraph
 };
 
 //
