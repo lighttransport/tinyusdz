@@ -16,6 +16,7 @@
 #include "unit-strutil.h"
 #include "unit-timesamples.h"
 #include "unit-pprint.h"
+#include "unit-materialx.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
@@ -40,6 +41,13 @@ TEST_LIST = {
   { "tinystring_test", tinystring_test },
   { "parse_int_test", parse_int_test },
   { "timesamples_test", timesamples_test },
+  { "materialx_config_api_struct_test", materialx_config_api_struct_test },
+  { "materialx_config_api_parsing_test", materialx_config_api_parsing_test },
+  { "openpbr_surface_reconstruction_test", openpbr_surface_reconstruction_test },
+  { "mtlx_standard_surface_reconstruction_test", mtlx_standard_surface_reconstruction_test },
+  { "nodegraph_support_test", nodegraph_support_test },
+  { "materialx_shader_constants_test", materialx_shader_constants_test },
+  { "materialx_shader_fallback_values_test", materialx_shader_fallback_values_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif
