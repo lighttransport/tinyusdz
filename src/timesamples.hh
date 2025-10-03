@@ -195,18 +195,19 @@ struct PODTimeSamples {
     static_assert(std::is_standard_layout<T>::value,
                   "PODTimeSamples requires standard layout types");
 
-    // Set type_id on first sample
+    // Set type_id on first sample - use underlying_type_id for consistency
+    // This allows storing role types (normal3f) as their underlying type (float3)
     if (_times.empty()) {
       _type_id = value::TypeTraits<T>::underlying_type_id();
       _is_array = false;  // Single values are not arrays
     } else {
-      // Verify type consistency
+      // Verify type consistency - check underlying type
       if (_type_id != value::TypeTraits<T>::underlying_type_id()) {
         if (err) {
-          (*err) += "Type mismatch in PODTimeSamples: expected type_id " +
+          (*err) += "Type mismatch in PODTimeSamples: expected underlying_type_id " +
                     std::to_string(_type_id) + " but got " +
-                    std::to_string(value::TypeTraits<T>::type_id()) +
-                    " (expected type: " + std::string(value::TypeTraits<T>::type_name()) + ").\n";
+                    std::to_string(value::TypeTraits<T>::underlying_type_id()) +
+                    " (type: " + std::string(value::TypeTraits<T>::type_name()) + ").\n";
         }
         return false; // Type mismatch
       }
@@ -247,18 +248,18 @@ struct PODTimeSamples {
     static_assert(std::is_standard_layout<T>::value,
                   "PODTimeSamples requires standard layout types");
 
-    // Set type_id and array info on first sample
+    // Set type_id and array info on first sample - use underlying_type_id
     if (_times.empty()) {
       _type_id = value::TypeTraits<T>::underlying_type_id();
       _is_array = true;
       _array_size = count;
     } else {
-      // Verify type consistency
+      // Verify type consistency - check underlying type
       if (_type_id != value::TypeTraits<T>::underlying_type_id()) {
         if (err) {
-          (*err) += "Type mismatch in PODTimeSamples array: expected type_id " +
+          (*err) += "Type mismatch in PODTimeSamples array: expected underlying_type_id " +
                     std::to_string(_type_id) + " but got " +
-                    std::to_string(value::TypeTraits<T>::type_id()) + ".\n";
+                    std::to_string(value::TypeTraits<T>::underlying_type_id()) + ".\n";
         }
         return false;
       }
@@ -302,18 +303,18 @@ struct PODTimeSamples {
     static_assert(std::is_standard_layout<T>::value,
                   "PODTimeSamples requires standard layout types");
 
-    // Set type_id on first sample
+    // Set type_id on first sample - use underlying_type_id
     if (_times.empty()) {
       _type_id = value::TypeTraits<T>::underlying_type_id();
       _is_array = false;  // Will be set properly if array samples are added
     } else {
-      // Verify type consistency
+      // Verify type consistency - check underlying type
       if (_type_id != value::TypeTraits<T>::underlying_type_id()) {
         if (err) {
-          (*err) += "Type mismatch in PODTimeSamples (blocked sample): expected type_id " +
+          (*err) += "Type mismatch in PODTimeSamples (blocked sample): expected underlying_type_id " +
                     std::to_string(_type_id) + " but got " +
-                    std::to_string(value::TypeTraits<T>::type_id()) +
-                    " (expected type: " + std::string(value::TypeTraits<T>::type_name()) + ").\n";
+                    std::to_string(value::TypeTraits<T>::underlying_type_id()) +
+                    " (type: " + std::string(value::TypeTraits<T>::type_name()) + ").\n";
         }
         return false;
       }
@@ -400,17 +401,52 @@ struct PODTimeSamples {
       return false;
     }
 
-    // Verify type
-    if (_type_id != value::TypeTraits<T>::underlying_type_id()) {
+    // Check if blocked
+    if (_blocked[idx]) {
+      if (blocked) {
+        *blocked = true;
+      }
+      // For blocked values, we don't have data to copy
+      // Initialize the value with default constructor
+      *value = T{};
+      return true;
+    }
+
+    // Verify type - check both exact match and underlying type match
+    // This allows getting value as normal3f even if stored as float3, etc.
+    bool type_match = (_type_id == value::TypeTraits<T>::type_id()) ||
+                      (_type_id == value::TypeTraits<T>::underlying_type_id());
+    if (!type_match) {
       return false;
     }
 
-    // Copy bytes from values array
-    const uint8_t* src = _values.data() + (idx * sizeof(T));
-    std::memcpy(value, src, sizeof(T));
+    // Find the actual data offset
+    if (!_offsets.empty()) {
+      // Using offset table
+      if (_offsets[idx] == SIZE_MAX) {
+        // This is a blocked value (shouldn't happen as we checked above, but be safe)
+        if (blocked) {
+          *blocked = true;
+        }
+        *value = T{};
+        return true;
+      }
+      const uint8_t* src = _values.data() + _offsets[idx];
+      std::memcpy(value, src, sizeof(T));
+    } else {
+      // Legacy path: calculate offset by counting non-blocked entries
+      size_t data_offset = 0;
+      for (size_t i = 0; i < idx; ++i) {
+        if (!_blocked[i]) {
+          data_offset += sizeof(T);
+        }
+      }
+      const uint8_t* src = _values.data() + data_offset;
+      std::memcpy(value, src, sizeof(T));
+    }
 
     if (blocked) {
-      *blocked = _blocked[idx];
+      *blocked = false;
     }
 
     return true;
