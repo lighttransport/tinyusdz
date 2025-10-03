@@ -26,7 +26,7 @@
 namespace tinyusdz {
 
 constexpr auto kMtlxUsdPreviewSurface = "MtlxUsdPreviewSurface";
-constexpr auto kMtlxAutodeskStandardSurface = "MtlxAutodeskStandaradSurface";
+constexpr auto kMtlxAutodeskStandardSurface = "MtlxAutodeskStandardSurface";
 constexpr auto kMtlxOpenPBRSurface = "MtlxOpenPBRSurface";
 
 
@@ -61,11 +61,11 @@ struct MtlxModel {
   std::string shader_name;
 
   // Content of shader.
-  // MtlxUsdPreviewSurface or MtlxAutodeskStandaradSurface
+  // MtlxUsdPreviewSurface or MtlxAutodeskStandardSurface
   value::Value shader; 
 
   std::map<std::string, MtlxMaterial> surface_materials;
-  std::map<std::string, value::Value> shaders; // MtlxUsdPreviewSurface, MtlxAutodeskStandaradSurface, or OpenPBRSurface
+  std::map<std::string, value::Value> shaders; // MtlxUsdPreviewSurface, MtlxAutodeskStandardSurface, or OpenPBRSurface
 };
 
 struct MtlxUsdPreviewSurface : UsdPreviewSurface {
@@ -75,27 +75,78 @@ struct MtlxUsdPreviewSurface : UsdPreviewSurface {
 // https://github.com/Autodesk/standard-surface/blob/master/reference/standard_surface.mtlx
 // We only support v1.0.1
 struct MtlxAutodeskStandardSurface : ShaderNode {
+  // Base properties
   TypedAttributeWithFallback<Animatable<float>> base{1.0f};
-  TypedAttributeWithFallback<Animatable<value::color3f>> baseColor{
+  TypedAttributeWithFallback<Animatable<value::color3f>> base_color{
       value::color3f{0.8f, 0.8f, 0.8f}};  // color3
+  TypedAttributeWithFallback<Animatable<float>> diffuse_roughness{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> metalness{0.0f};
 
-  // TODO
-  // ...
+  // Specular properties
+  TypedAttributeWithFallback<Animatable<float>> specular{1.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> specular_color{
+      value::color3f{1.0f, 1.0f, 1.0f}};
+  TypedAttributeWithFallback<Animatable<float>> specular_roughness{0.2f};
+  TypedAttributeWithFallback<Animatable<float>> specular_IOR{1.5f};
+  TypedAttributeWithFallback<Animatable<float>> specular_anisotropy{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> specular_rotation{0.0f};
 
-  // (coat_affect_roughness * coat) * coat_roughness
-  TypedAttribute<Animatable<float>> coat_affect_roughness;
-  TypedAttribute<Animatable<float>> coat;
-  TypedAttribute<Animatable<float>> coat_roughness;
+  // Transmission properties
+  TypedAttributeWithFallback<Animatable<float>> transmission{0.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> transmission_color{
+      value::color3f{1.0f, 1.0f, 1.0f}};
+  TypedAttributeWithFallback<Animatable<float>> transmission_depth{0.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> transmission_scatter{
+      value::color3f{0.0f, 0.0f, 0.0f}};
+  TypedAttributeWithFallback<Animatable<float>> transmission_scatter_anisotropy{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> transmission_dispersion{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> transmission_extra_roughness{0.0f};
 
-  // (specular_roughness + transmission_extra_roughness)
-  TypedAttribute<Animatable<float>> specular_roughness;
-  TypedAttribute<Animatable<float>> transmission_extra_roughness;
-  TypedAttribute<Animatable<float>> transmission_roughness_add;
+  // Subsurface properties
+  TypedAttributeWithFallback<Animatable<float>> subsurface{0.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> subsurface_color{
+      value::color3f{1.0f, 1.0f, 1.0f}};
+  TypedAttributeWithFallback<Animatable<value::color3f>> subsurface_radius{
+      value::color3f{1.0f, 1.0f, 1.0f}};
+  TypedAttributeWithFallback<Animatable<float>> subsurface_scale{1.0f};
+  TypedAttributeWithFallback<Animatable<float>> subsurface_anisotropy{0.0f};
 
-  // tangent_rotate_normalize
-  // normalize(rotate3d(/* in */tangent, /*amount*/(specular_rotation * 360), /*
-  // axis */normal))
-  TypedAttribute<Animatable<float>> specular_rotation;
+  // Sheen properties
+  TypedAttributeWithFallback<Animatable<float>> sheen{0.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> sheen_color{
+      value::color3f{1.0f, 1.0f, 1.0f}};
+  TypedAttributeWithFallback<Animatable<float>> sheen_roughness{0.3f};
+
+  // Coat properties
+  TypedAttributeWithFallback<Animatable<float>> coat{0.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> coat_color{
+      value::color3f{1.0f, 1.0f, 1.0f}};
+  TypedAttributeWithFallback<Animatable<float>> coat_roughness{0.1f};
+  TypedAttributeWithFallback<Animatable<float>> coat_anisotropy{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> coat_rotation{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> coat_IOR{1.5f};
+  TypedAttributeWithFallback<Animatable<float>> coat_affect_color{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> coat_affect_roughness{0.0f};
+
+  // Thin film properties
+  TypedAttributeWithFallback<Animatable<float>> thin_film_thickness{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> thin_film_IOR{1.5f};
+
+  // Emission properties
+  TypedAttributeWithFallback<Animatable<float>> emission{0.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> emission_color{
+      value::color3f{1.0f, 1.0f, 1.0f}};
+
+  // Opacity
+  TypedAttributeWithFallback<Animatable<value::color3f>> opacity{
+      value::color3f{1.0f, 1.0f, 1.0f}};
+
+  // Thin walled
+  TypedAttributeWithFallback<Animatable<bool>> thin_walled{false};
+
+  // Normal and tangent
+  TypedAttribute<Animatable<value::normal3f>> normal;
+  TypedAttribute<Animatable<value::vector3f>> tangent;
 
   // Output
   TypedTerminalAttribute<value::token> out;  // 'out'
