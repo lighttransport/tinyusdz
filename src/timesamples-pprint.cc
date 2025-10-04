@@ -1058,7 +1058,7 @@ void pprint_pod_timesamples(StreamWriter& writer, const PODTimeSamples& samples,
     }
 
     const std::vector<double>& times = samples.get_times();
-    const std::vector<bool>& blocked = samples.get_blocked();
+    const std::vector<uint8_t>& blocked = samples.get_blocked();
     const TypedArray<uint8_t>& values = samples.get_values();
 
     // Check if using offset table (new optimized storage)
