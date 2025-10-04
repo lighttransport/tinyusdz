@@ -73,14 +73,23 @@ inline bool is_pod_type_id(uint32_t type_id) {
 /// This is defined before TimeSamples so it can be used as a member.
 ///
 struct PODTimeSamples {
+  // Hot data (frequently accessed, cache-friendly layout)
   uint32_t _type_id{0}; // TypeId from value-types.hh
   bool _is_array{false}; // Whether the stored type is an array
+  uint16_t _element_size{0}; // Cached element size (0 = not cached)
   size_t _array_size{0}; // Number of elements per array (fixed for all samples)
+  mutable bool _dirty{false};
+
+  // Dirty range tracking for lazy sorting optimization
+  mutable size_t _dirty_start{SIZE_MAX};
+  mutable size_t _dirty_end{0};
+
+  // Cold data (less frequently accessed)
   mutable std::vector<double> _times;
-  mutable std::vector<bool> _blocked; // ValueBlock flags
+  mutable std::vector<uint8_t> _blocked; // ValueBlock flags (changed from vector<bool> for performance)
   mutable TypedArray<uint8_t> _values; // Raw byte storage: compact storage without blocked values
   mutable std::vector<size_t> _offsets; // Offset table for array values (or scalar values with blocks)
-  mutable bool _dirty{false};
+  mutable size_t _blocked_count{0}; // Count of blocked samples for O(1) queries
 
   bool empty() const { return _times.empty(); }
 
@@ -99,13 +108,35 @@ struct PODTimeSamples {
     _type_id = 0;
     _is_array = false;
     _array_size = 0;
+    _element_size = 0;
+    _blocked_count = 0;
     _dirty = true;
+    _dirty_start = SIZE_MAX;
+    _dirty_end = 0;
+  }
+
+  /// Pre-allocate capacity for known number of samples
+  void reserve(size_t n) {
+    _times.reserve(n);
+    _blocked.reserve(n);
+    if (_element_size > 0) {
+      _values.reserve(n * _element_size);
+    }
+    if (_is_array || !_offsets.empty()) {
+      _offsets.reserve(n);
+    }
   }
 
   uint32_t type_id() const { return _type_id; }
 
   void update() const {
     if (_times.empty()) {
+      _dirty = false;
+      return;
+    }
+
+    // Lazy sorting optimization: only sort if there's a dirty range
+    if (_dirty_start >= _times.size()) {
       _dirty = false;
       return;
     }
@@ -122,7 +153,7 @@ struct PODTimeSamples {
 
     // Reorder arrays based on sorted indices
     std::vector<double> sorted_times(_times.size());
-    std::vector<bool> sorted_blocked(_blocked.size());
+    std::vector<uint8_t> sorted_blocked(_blocked.size());
 
     // If using offsets, sort them too
     if (!_offsets.empty()) {
@@ -184,7 +215,18 @@ struct PODTimeSamples {
     }
 
     _dirty = false;
+    _dirty_start = SIZE_MAX;
+    _dirty_end = 0;
   }
+
+private:
+  /// Mark a range as dirty for lazy sorting
+  void mark_dirty_range(size_t idx) const {
+    _dirty_start = std::min(_dirty_start, idx);
+    _dirty_end = std::max(_dirty_end, idx + 1);
+  }
+
+public:
 
   /// Add a time/value sample with POD type checking
   /// T must satisfy std::is_trivial and std::is_standard_layout
@@ -200,6 +242,7 @@ struct PODTimeSamples {
     if (_times.empty()) {
       _type_id = value::TypeTraits<T>::underlying_type_id();
       _is_array = false;  // Single values are not arrays
+      _element_size = sizeof(T);  // Cache element size
     } else {
       // Verify type consistency - check underlying type
       if (_type_id != value::TypeTraits<T>::underlying_type_id()) {
@@ -213,8 +256,9 @@ struct PODTimeSamples {
       }
     }
 
+    size_t new_idx = _times.size();
     _times.push_back(t);
-    _blocked.push_back(false);
+    _blocked.push_back(0);  // false = 0
 
     // For non-blocked values, append to values array
     // If we're using offsets (arrays or when we have any blocked values), update offset table
@@ -237,6 +281,7 @@ struct PODTimeSamples {
     }
 
     _dirty = true;
+    mark_dirty_range(new_idx);
     return true;
   }
 
@@ -253,6 +298,7 @@ struct PODTimeSamples {
       _type_id = value::TypeTraits<T>::underlying_type_id();
       _is_array = true;
       _array_size = count;
+      _element_size = sizeof(T);  // Cache element size
     } else {
       // Verify type consistency - check underlying type
       if (_type_id != value::TypeTraits<T>::underlying_type_id()) {
@@ -274,8 +320,9 @@ struct PODTimeSamples {
       }
     }
 
+    size_t new_idx = _times.size();
     _times.push_back(t);
-    _blocked.push_back(false);
+    _blocked.push_back(0);  // false = 0
 
     // Store offset and append array data
     _offsets.push_back(_values.size());
@@ -284,6 +331,7 @@ struct PODTimeSamples {
     std::memcpy(_values.data() + _offsets.back(), values, byte_size);
 
     _dirty = true;
+    mark_dirty_range(new_idx);
     return true;
   }
 
@@ -307,6 +355,7 @@ struct PODTimeSamples {
     if (_times.empty()) {
       _type_id = value::TypeTraits<T>::underlying_type_id();
       _is_array = false;  // Will be set properly if array samples are added
+      _element_size = sizeof(T);  // Cache element size
     } else {
       // Verify type consistency - check underlying type
       if (_type_id != value::TypeTraits<T>::underlying_type_id()) {
@@ -320,8 +369,10 @@ struct PODTimeSamples {
       }
     }
 
+    size_t new_idx = _times.size();
     _times.push_back(t);
-    _blocked.push_back(true);
+    _blocked.push_back(1);  // true = 1
+    _blocked_count++;
 
     // For blocked values, we DON'T allocate any space in _values
     // If this is the first blocked sample and we don't have offsets yet,
@@ -349,6 +400,7 @@ struct PODTimeSamples {
     // No allocation in _values array for blocked samples!
 
     _dirty = true;
+    mark_dirty_range(new_idx);
     return true;
   }
 
@@ -371,13 +423,16 @@ struct PODTimeSamples {
       }
     }
 
+    size_t new_idx = _times.size();
     _times.push_back(t);
-    _blocked.push_back(true);
+    _blocked.push_back(1);  // true = 1
+    _blocked_count++;
 
     // Mark as blocked in offset table
     _offsets.push_back(SIZE_MAX);
 
     _dirty = true;
+    mark_dirty_range(new_idx);
     return true;
   }
 
@@ -500,7 +555,7 @@ struct PODTimeSamples {
     return _times;
   }
 
-  const std::vector<bool>& get_blocked() const {
+  const std::vector<uint8_t>& get_blocked() const {
     if (_dirty) {
       update();
     }
@@ -517,9 +572,15 @@ struct PODTimeSamples {
   size_t estimate_memory_usage() const {
     size_t total = sizeof(PODTimeSamples);
     total += _times.capacity() * sizeof(double);
-    total += _blocked.capacity() * sizeof(bool);
+    total += _blocked.capacity() * sizeof(uint8_t);  // Now using uint8_t instead of bool
     total += _values.capacity() * sizeof(uint8_t);
+    total += _offsets.capacity() * sizeof(size_t);  // Include offset table
     return total;
+  }
+
+  /// Get blocked sample count
+  size_t get_blocked_count() const {
+    return _blocked_count;
   }
 };
 
@@ -1107,7 +1168,7 @@ struct TypedTimeSamples {
     // Reorder arrays based on sorted indices
     std::vector<double> sorted_times(_times.size());
     std::vector<T> sorted_values(_values.size());
-    std::vector<bool> sorted_blocked(_blocked.size());
+    std::vector<uint8_t> sorted_blocked(_blocked.size());
 
     for (size_t i = 0; i < indices.size(); ++i) {
       sorted_times[i] = _times[indices[i]];
@@ -1363,7 +1424,7 @@ struct TypedTimeSamples {
 #else
     _times.push_back(t);
     _values.push_back(v);
-    _blocked.push_back(false);
+    _blocked.push_back(0);  // false = 0
 #endif
     _dirty = true;
   }
@@ -1377,7 +1438,7 @@ struct TypedTimeSamples {
 #else
     _times.push_back(t);
     _values.emplace_back(); // Default construct value
-    _blocked.push_back(true);
+    _blocked.push_back(1);  // true = 1
 #endif
     _dirty = true;
   }
@@ -1396,7 +1457,7 @@ struct TypedTimeSamples {
     if (it != _times.end()) {
       size_t idx = static_cast<size_t>(std::distance(_times.begin(), it));
       _values[idx] = v;
-      _blocked[idx] = false;
+      _blocked[idx] = 0;  // false = 0
       return true;
     }
     return false;
@@ -1573,7 +1634,7 @@ struct TypedTimeSamples {
   // SoA layout - separate arrays for better cache locality
   mutable std::vector<double> _times;
   mutable std::vector<T> _values;
-  mutable std::vector<bool> _blocked;
+  mutable std::vector<uint8_t> _blocked;
 #endif
   mutable bool _dirty{false};
 };

@@ -583,4 +583,47 @@ void timesamples_test(void) {
     }
   }
 
+
+  // Test duplicate time entries (std::stable_sort preserves order)
+  {
+    value::TimeSamples ts;
+    ts.add_sample(1.0, value::Value(10.0f));
+    ts.add_sample(2.0, value::Value(20.0f));
+    ts.add_sample(1.0, value::Value(15.0f)); // Duplicate time
+
+    const auto& samples = ts.get_samples();
+    TEST_CHECK(samples.size() == 3);
+    TEST_CHECK(math::is_close(samples[0].t, 1.0));
+    TEST_CHECK(math::is_close(samples[1].t, 1.0));
+    TEST_CHECK(math::is_close(samples[2].t, 2.0));
+    const float* v0 = samples[0].value.as<float>();
+    const float* v1 = samples[1].value.as<float>();
+    TEST_CHECK(v0 != nullptr);
+    TEST_CHECK(v1 != nullptr);
+    if (v0) TEST_CHECK(math::is_close(*v0, 10.0f));
+    if (v1) TEST_CHECK(math::is_close(*v1, 15.0f));
+  }
+
+  // Test interpolation of arrays with different sizes
+  {
+    primvar::PrimVar pvar;
+    value::TimeSamples ts;
+    std::vector<float> v1 = {1.0f, 2.0f};
+    std::vector<float> v2 = {3.0f, 4.0f, 5.0f};
+    ts.add_sample(0.0, value::Value(v1));
+    ts.add_sample(1.0, value::Value(v2));
+    pvar.set_timesamples(ts);
+
+    value::Value result_val;
+    // Linear interpolation should fail because array sizes are different,
+    // and it should return the value of the lower sample (held interpolation).
+    TEST_CHECK(pvar.get_interpolated_value(0.5, value::TimeSampleInterpolationType::Linear, &result_val) == true);
+    const std::vector<float> *result = result_val.as<std::vector<float>>();
+    TEST_CHECK(result != nullptr);
+    if (result) {
+        TEST_CHECK(result->size() == 2);
+        TEST_CHECK(math::is_close((*result)[0], 1.0f));
+        TEST_CHECK(math::is_close((*result)[1], 2.0f));
+    }
+  }
 }
