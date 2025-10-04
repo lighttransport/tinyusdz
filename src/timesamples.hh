@@ -810,22 +810,22 @@ struct TimeSamples {
 #endif
 
     if (_use_pod) {
-      // For POD storage, we need to return a converted vector
+#if 0
+      // For POD storage, return a converted vector
       // This is not ideal for performance, but maintains backward compatibility
       // Users should prefer typed access methods when possible
-      // We store the converted samples in a mutable cache
-      static thread_local std::vector<Sample> pod_samples_cache;
-      pod_samples_cache.clear();
       auto converted = _pod_samples.get_samples_converted();
-      pod_samples_cache.reserve(converted.size());
+      _samples.reserve(converted.size());
       for (const auto& item : converted) {
         Sample s;
         s.t = item.first;
         s.value = item.second.first;
         s.blocked = item.second.second;
-        pod_samples_cache.push_back(s);
+        _samples.push_back(s);
       }
-      return pod_samples_cache;
+#else
+      return empty;
+#endif
     }
 
     if (_dirty) {
