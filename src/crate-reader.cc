@@ -1958,7 +1958,22 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE2(double t, const crate::ValueRep 
   }
 
   if (rep.IsInlined()) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Inlined double2 is not allowed.");
+    if (rep.IsCompressed() || rep.IsArray()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid inlined ValueRep in TimeSamples.");
+    }
+    // Value is represented in int8
+    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+    int8_t vdata[2];
+    memcpy(&vdata, &data, 2);
+
+    value::double2 val;
+    val[0] = double(vdata[0]);
+    val[1] = double(vdata[1]);
+
+    if (!add_sample_to_timesamples<value::double2>(&dst, t, val, &_err)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+    }
+    return true;
   }
 
   if (rep.IsArray()) {
@@ -2004,7 +2019,23 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE3(double t, const crate::ValueRep 
   }
 
   if (rep.IsInlined()) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Inlined double3 is not allowed.");
+    if (rep.IsCompressed() || rep.IsArray()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid inlined ValueRep in TimeSamples.");
+    }
+    // Value is represented in int8
+    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+    int8_t vdata[3];
+    memcpy(&vdata, &data, 3);
+
+    value::double3 val;
+    val[0] = double(vdata[0]);
+    val[1] = double(vdata[1]);
+    val[2] = double(vdata[2]);
+
+    if (!add_sample_to_timesamples<value::double3>(&dst, t, val, &_err)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+    }
+    return true;
   }
 
   if (rep.IsArray()) {
@@ -2050,7 +2081,24 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE4(double t, const crate::ValueRep 
   }
 
   if (rep.IsInlined()) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Inlined double4 is not allowed.");
+    if (rep.IsCompressed() || rep.IsArray()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid inlined ValueRep in TimeSamples.");
+    }
+    // Value is represented in int8
+    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+    int8_t vdata[4];
+    memcpy(&vdata, &data, 4);
+
+    value::double4 val;
+    val[0] = static_cast<double>(vdata[0]);
+    val[1] = static_cast<double>(vdata[1]);
+    val[2] = static_cast<double>(vdata[2]);
+    val[3] = static_cast<double>(vdata[3]);
+
+    if (!add_sample_to_timesamples<value::double4>(&dst, t, val, &_err)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+    }
+    return true;
   }
 
   if (rep.IsArray()) {
@@ -2188,7 +2236,23 @@ bool CrateReader::UnpackTimeSampleValue_MATRIX2D(double t, const crate::ValueRep
   }
 
   if (rep.IsInlined()) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Inlined matrix2d is not allowed.");
+    if (rep.IsCompressed() || rep.IsArray()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid inlined ValueRep in TimeSamples.");
+    }
+    // Matrix contains diagonal components only, values are represented in int8
+    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+    int8_t vdata[2];
+    memcpy(&vdata, &data, 2);
+
+    value::matrix2d val;
+    memset(val.m, 0, sizeof(value::matrix2d));
+    val.m[0][0] = static_cast<double>(vdata[0]);
+    val.m[1][1] = static_cast<double>(vdata[1]);
+
+    if (!add_sample_to_timesamples<value::matrix2d>(&dst, t, val, &_err)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+    }
+    return true;
   }
 
   if (rep.IsArray()) {
@@ -2234,7 +2298,24 @@ bool CrateReader::UnpackTimeSampleValue_MATRIX3D(double t, const crate::ValueRep
   }
 
   if (rep.IsInlined()) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Inlined matrix3d is not allowed.");
+    if (rep.IsCompressed() || rep.IsArray()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid inlined ValueRep in TimeSamples.");
+    }
+    // Matrix contains diagonal components only, values are represented in int8
+    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+    int8_t vdata[3];
+    memcpy(&vdata, &data, 3);
+
+    value::matrix3d val;
+    memset(val.m, 0, sizeof(value::matrix3d));
+    val.m[0][0] = static_cast<double>(vdata[0]);
+    val.m[1][1] = static_cast<double>(vdata[1]);
+    val.m[2][2] = static_cast<double>(vdata[2]);
+
+    if (!add_sample_to_timesamples<value::matrix3d>(&dst, t, val, &_err)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+    }
+    return true;
   }
 
   if (rep.IsArray()) {
@@ -2280,7 +2361,25 @@ bool CrateReader::UnpackTimeSampleValue_MATRIX4D(double t, const crate::ValueRep
   }
 
   if (rep.IsInlined()) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Inlined matrix4d is not allowed.");
+    if (rep.IsCompressed() || rep.IsArray()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid inlined ValueRep in TimeSamples.");
+    }
+    // Matrix contains diagonal components only, values are represented in int8
+    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+    int8_t vdata[4];
+    memcpy(&vdata, &data, 4);
+
+    value::matrix4d val;
+    memset(val.m, 0, sizeof(value::matrix4d));
+    val.m[0][0] = static_cast<double>(vdata[0]);
+    val.m[1][1] = static_cast<double>(vdata[1]);
+    val.m[2][2] = static_cast<double>(vdata[2]);
+    val.m[3][3] = static_cast<double>(vdata[3]);
+
+    if (!add_sample_to_timesamples<value::matrix4d>(&dst, t, val, &_err)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+    }
+    return true;
   }
 
   if (rep.IsArray()) {
@@ -2460,7 +2559,19 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE(double t, const crate::ValueRep &
   }
 
   if (rep.IsInlined()) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Inlined double is not allowed.");
+    if (rep.IsCompressed() || rep.IsArray()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid inlined ValueRep in TimeSamples.");
+    }
+    // stored as float
+    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+    float _f;
+    memcpy(&_f, &data, sizeof(float));
+    double val = static_cast<double>(_f);
+
+    if (!add_sample_to_timesamples<double>(&dst, t, val, &_err)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+    }
+    return true;
   }
 
   if (rep.IsArray()) {
