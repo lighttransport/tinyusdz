@@ -1839,6 +1839,65 @@ bool CrateReader::UnpackTimeSampleValue_QUATF(double t, const crate::ValueRep &r
   return true;
 }
 
+bool CrateReader::UnpackTimeSampleValue_ASSET_PATH(double t, const crate::ValueRep &rep, value::TimeSamples &dst) {
+
+  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) == crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
+    // Blocked value - just add a blocked sample
+    if (!add_blocked_sample_to_timesamples<value::AssetPath>(&dst, t, &_err)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add blocked sample to TimeSamples.");
+    }
+    return true;
+  }
+
+  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) != crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid ValueRep type in TimeSamples.");
+  }
+
+  if (rep.IsInlined()) {
+    if (rep.IsCompressed() || rep.IsArray()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid inlined ValueRep in TimeSamples.");
+    }
+    // AssetPath is stored as TokenIndex for inlined value
+    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+    if (auto v = GetToken(crate::Index(data))) {
+      std::string str = v.value().str();
+      value::AssetPath asset_path(str);
+
+      if (!add_sample_to_timesamples<value::AssetPath>(&dst, t, asset_path, &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+      }
+      return true;
+    } else {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Index for AssetPath.");
+    }
+  }
+
+  if (rep.IsArray()) {
+    if (rep.IsCompressed()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Compressed AssetPath not supported for TimeSamples.");
+    }
+
+    std::vector<value::AssetPath> v;
+    if (rep.GetPayload() == 0) {
+      if (!add_sample_to_timesamples<std::vector<value::AssetPath>>(&dst, t, v, &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+      }
+      return true;
+    }
+    if (!ReadArray(&v)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read AssetPath array.");
+    }
+
+    if (!add_sample_to_timesamples<std::vector<value::AssetPath>>(&dst, t, v, &_err)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+    }
+  } else {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-array value for AssetPath is invalid.");
+  }
+
+  return true;
+}
+
 bool CrateReader::UnpackTimeSampleValue_FLOAT3(double t, const crate::ValueRep &rep, value::TimeSamples &dst) {
 
   if (static_cast<crate::CrateDataTypeId>(rep.GetType()) == crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
@@ -2604,6 +2663,7 @@ bool CrateReader::UnpackValueRepsToTimeSamples(const std::vector<double> &times,
   crate::CrateDataTypeId crate_type_id = static_cast<crate::CrateDataTypeId>(vreps[0].GetType());
   bool crate_is_array = vreps[0].IsArray();
 
+  bool all_value_blocks = true;
   if (crate_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
     // First element is VALUE_BLOCK, find the first non-VALUE_BLOCK element
     for (size_t i = 1; i < vreps.size(); i++) {
@@ -2611,9 +2671,23 @@ bool CrateReader::UnpackValueRepsToTimeSamples(const std::vector<double> &times,
       if (curr_type != crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
         crate_type_id = curr_type;
         crate_is_array = vreps[i].IsArray();
+        all_value_blocks = false;
         break;
       }
     }
+  } else {
+    all_value_blocks = false;
+  }
+
+  // Special case: all elements are VALUE_BLOCK - use generic Value type
+  if (all_value_blocks) {
+    // Just add blocked samples without initializing a specific type
+    for (size_t i = 0; i < vreps.size(); i++) {
+      if (!d->add_blocked_sample(times[i], value::Value(), &_err)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add blocked sample to TimeSamples.");
+      }
+    }
+    return true;
   }
 
   DCOUT("UnpackValueRepsToTimeSamples");
@@ -2815,8 +2889,12 @@ bool CrateReader::UnpackValueRepsToTimeSamples(const std::vector<double> &times,
       if (!UnpackTimeSampleValue_MATRIX4D(curr_time, rep, *d)) {
         return false;
       }
+    } else if (crate_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH) {
+      if (!UnpackTimeSampleValue_ASSET_PATH(curr_time, rep, *d)) {
+        return false;
+      }
     } else {
-      // TODO
+      // TODO: Use generic value::Value as fallback for unimplemented types
       PUSH_ERROR_AND_RETURN(fmt::format("Unimplemented type in TimeSamples: {}", GetCrateDataTypeName(crate_type_id)));
     }
 
