@@ -702,11 +702,13 @@ struct TimeSamples {
       if (_dirty) {
         update();
       }
-      // Don't return type_id from uninitialized Value (type_name == "null")
-      if (_samples[0].value.type_name() == "null") {
-        return _type_id; // Return stored type_id instead
+      // If first sample has valid type (not type_id 1), use it
+      uint32_t sample_type_id = _samples[0].value.type_id();
+      if (sample_type_id != 1) {
+        return sample_type_id;
       }
-      return _samples[0].value.type_id();
+      // Otherwise use stored type_id (for all-VALUE_BLOCK case)
+      return _type_id;
     } else {
       return _type_id; // Return stored type_id if initialized
     }
@@ -786,18 +788,18 @@ struct TimeSamples {
 
   // We still need "dummy" value for type_name() and type_id()
   bool add_blocked_sample(double t, const value::Value &v, std::string *err = nullptr) {
-    // Auto-initialize on first sample, but NOT if the value is uninitialized (type_name == "null")
+    // Auto-initialize on first sample, but NOT if the value is uninitialized (type_id == 1)
     // This allows deferred initialization for all-blocked TimeSamples
-    if (empty() && !v.is_none() && v.type_name() != "null") {
+    // Type ID 1 indicates an uninitialized/invalid Value
+    if (empty() && !v.is_none() && v.type_id() != 1) {
       init(v.type_id());
-    } else if (!empty() && !v.is_none() && _type_id != 0 && v.type_name() != "null") {
+    } else if (!empty() && !v.is_none() && _type_id != 0 && v.type_id() != 1) {
       // Validate type_id matches on subsequent samples
       if (v.type_id() != _type_id) {
         if (err) {
           (*err) += "Type mismatch in TimeSamples (blocked sample): expected type_id " +
                     std::to_string(_type_id) + " but got " +
-                    std::to_string(v.type_id()) + " (expected type: " +
-                    type_name() + ", got: " + v.type_name() + ").\n";
+                    std::to_string(v.type_id()) + ".\n";
         }
         return false;
       }
