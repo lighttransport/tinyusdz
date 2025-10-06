@@ -620,8 +620,9 @@ struct TimeSamples {
     TUSDZ_LOG_D("init" << type_id);
     DCOUT("init" << type_id);
 
-    if (!empty()) {
-      return false; // Already initialized
+    // Allow initialization if empty OR if it contains only uninitialized blocked samples
+    if (!empty() && _type_id != 0) {
+      return false; // Already initialized with a different type
     }
     _type_id = type_id;
     _use_pod = value::is_pod_type_id(type_id);
@@ -700,6 +701,10 @@ struct TimeSamples {
     if (_samples.size()) {
       if (_dirty) {
         update();
+      }
+      // Don't return type_id from uninitialized Value (type_name == "null")
+      if (_samples[0].value.type_name() == "null") {
+        return _type_id; // Return stored type_id instead
       }
       return _samples[0].value.type_id();
     } else {
@@ -781,10 +786,11 @@ struct TimeSamples {
 
   // We still need "dummy" value for type_name() and type_id()
   bool add_blocked_sample(double t, const value::Value &v, std::string *err = nullptr) {
-    // Auto-initialize on first sample
-    if (empty() && !v.is_none()) {
+    // Auto-initialize on first sample, but NOT if the value is uninitialized (type_name == "null")
+    // This allows deferred initialization for all-blocked TimeSamples
+    if (empty() && !v.is_none() && v.type_name() != "null") {
       init(v.type_id());
-    } else if (!empty() && !v.is_none() && _type_id != 0) {
+    } else if (!empty() && !v.is_none() && _type_id != 0 && v.type_name() != "null") {
       // Validate type_id matches on subsequent samples
       if (v.type_id() != _type_id) {
         if (err) {
