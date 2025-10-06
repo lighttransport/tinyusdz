@@ -20,7 +20,7 @@ class StreamWriter;
 namespace value {
 // Forward declarations
 class Value;
-class TimeSamples;
+struct TimeSamples;
 } // namespace value
 
 ///
