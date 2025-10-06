@@ -376,6 +376,7 @@ class CrateReader {
   bool UnpackTimeSampleValue_QUATH(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
   bool UnpackTimeSampleValue_QUATF(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
   bool UnpackTimeSampleValue_QUATD(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
+  bool UnpackTimeSampleValue_ASSET_PATH(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
   bool UnpackTimeSampleValue_MATRIX2D(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
   bool UnpackTimeSampleValue_MATRIX3D(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
   bool UnpackTimeSampleValue_MATRIX4D(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
