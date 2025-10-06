@@ -1038,12 +1038,28 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
 
     } else if (fv.first == "timeSamples") {
       //propType = Property::Type::Attrib;
-      
+
 
       hasTimeSamples = true;
 
       if (auto pv = fv.second.get_value<value::TimeSamples>()) {
-        var.set_timesamples(std::move(pv.value()));
+        value::TimeSamples ts = pv.value();
+
+        // If TimeSamples is uninitialized (all samples were VALUE_BLOCK),
+        // initialize it with the type from the attribute's typeName
+        if (ts.type_id() == 0 && typeName) {
+          uint32_t type_id = value::GetTypeId(typeName.value().str());
+
+          if (type_id == value::TYPE_ID_INVALID) {
+            PUSH_ERROR_AND_RETURN(fmt::format("Invalid typeName `{}` for TimeSamples", typeName.value().str()));
+          }
+
+          if (!ts.init(type_id)) {
+            PUSH_ERROR_AND_RETURN(fmt::format("Failed to initialize TimeSamples with type_id {} for typeName `{}`", type_id, typeName.value().str()));
+          }
+        }
+
+        var.set_timesamples(std::move(ts));
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "`timeSamples` is not TimeSamples data.");
