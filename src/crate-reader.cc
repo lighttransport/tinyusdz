@@ -1249,13 +1249,24 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   }
 
   // Check if all samples have the same type (homogeneous)
+  // Allow VALUE_BLOCK (None) to be mixed with other types
   //bool is_homogeneous = true;
   auto first_type = value_reps[0].GetType();
   bool first_is_array = value_reps[0].IsArray();
   for (size_t i = 1; i < num_values; i++) {
-    if (value_reps[i].GetType() != first_type || value_reps[i].IsArray() != first_is_array) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Types in TimeSamples' ValueRep isn't the same.");
-      //is_homogeneous = false;
+    auto curr_type = value_reps[i].GetType();
+    bool curr_is_array = value_reps[i].IsArray();
+
+    // Allow VALUE_BLOCK to mix with any type
+    bool is_value_block_first = (static_cast<crate::CrateDataTypeId>(first_type) == crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK);
+    bool is_value_block_curr = (static_cast<crate::CrateDataTypeId>(curr_type) == crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK);
+
+    if (!is_value_block_first && !is_value_block_curr) {
+      // Neither is VALUE_BLOCK, so they must match
+      if (curr_type != first_type || curr_is_array != first_is_array) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Types in TimeSamples' ValueRep isn't the same.");
+        //is_homogeneous = false;
+      }
     }
   }
 
@@ -1508,10 +1519,7 @@ bool CrateReader::UnpackTimeSampleValue_BOOL(double t, const crate::ValueRep &re
 
   if (static_cast<crate::CrateDataTypeId>(rep.GetType()) == crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
     // Blocked value
-    if (rep.IsInlined() || rep.IsCompressed() || rep.IsArray()) {
-      // Compressed, inlined or array types are not blocked values
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid blocked ValueRep in TimeSamples.");
-    }
+    // VALUE_BLOCK can have any flags, just skip the flag check
     // Just add a blocked sample
     if (!add_blocked_sample_to_timesamples<int32_t>(&dst, t, &_err)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add blocked sample to TimeSamples.");
@@ -1577,10 +1585,7 @@ bool CrateReader::UnpackTimeSampleValue_INT32(double t, const crate::ValueRep &r
 
   if (static_cast<crate::CrateDataTypeId>(rep.GetType()) == crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
     // Blocked value
-    if (rep.IsInlined() || rep.IsCompressed() || rep.IsArray()) {
-      // Compressed, inlined or array types are not blocked values
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid blocked ValueRep in TimeSamples.");
-    }
+    // VALUE_BLOCK can have any flags, just skip the flag check
     // Just add a blocked sample
     if (!add_blocked_sample_to_timesamples<int32_t>(&dst, t, &_err)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add blocked sample to TimeSamples.");
@@ -1642,12 +1647,7 @@ bool CrateReader::UnpackTimeSampleValue_INT32(double t, const crate::ValueRep &r
 bool CrateReader::UnpackTimeSampleValue_FLOAT(double t, const crate::ValueRep &rep, value::TimeSamples &dst) {
 
   if (static_cast<crate::CrateDataTypeId>(rep.GetType()) == crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
-    // Blocked value
-    if (rep.IsInlined() || rep.IsCompressed() || rep.IsArray()) {
-      // Compressed, inlined or array types are not blocked values
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid blocked ValueRep in TimeSamples.");
-    }
-    // Just add a blocked sample
+    // Blocked value - just add a blocked sample
     if (!add_blocked_sample_to_timesamples<float>(&dst, t, &_err)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add blocked sample to TimeSamples.");
     }
@@ -1714,12 +1714,7 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT(double t, const crate::ValueRep &r
 bool CrateReader::UnpackTimeSampleValue_FLOAT2(double t, const crate::ValueRep &rep, value::TimeSamples &dst) {
 
   if (static_cast<crate::CrateDataTypeId>(rep.GetType()) == crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
-    // Blocked value
-    if (rep.IsInlined() || rep.IsCompressed() || rep.IsArray()) {
-      // Compressed, inlined or array types are not blocked values
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid blocked ValueRep in TimeSamples.");
-    }
-    // Just add a blocked sample
+    // Blocked value - just add a blocked sample
     if (!add_blocked_sample_to_timesamples<float>(&dst, t, &_err)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add blocked sample to TimeSamples.");
     }
@@ -1793,12 +1788,7 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT2(double t, const crate::ValueRep &
 bool CrateReader::UnpackTimeSampleValue_QUATF(double t, const crate::ValueRep &rep, value::TimeSamples &dst) {
 
   if (static_cast<crate::CrateDataTypeId>(rep.GetType()) == crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
-    // Blocked value
-    if (rep.IsInlined() || rep.IsCompressed() || rep.IsArray()) {
-      // Compressed, inlined or array types are not blocked values
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid blocked ValueRep in TimeSamples.");
-    }
-    // Just add a blocked sample
+    // Blocked value - just add a blocked sample
     if (!add_blocked_sample_to_timesamples<float>(&dst, t, &_err)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add blocked sample to TimeSamples.");
     }
@@ -2610,8 +2600,21 @@ bool CrateReader::UnpackValueRepsToTimeSamples(const std::vector<double> &times,
     return false;
   }
 
+  // Find the first non-VALUE_BLOCK element to determine the actual type
   crate::CrateDataTypeId crate_type_id = static_cast<crate::CrateDataTypeId>(vreps[0].GetType());
   bool crate_is_array = vreps[0].IsArray();
+
+  if (crate_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
+    // First element is VALUE_BLOCK, find the first non-VALUE_BLOCK element
+    for (size_t i = 1; i < vreps.size(); i++) {
+      crate::CrateDataTypeId curr_type = static_cast<crate::CrateDataTypeId>(vreps[i].GetType());
+      if (curr_type != crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
+        crate_type_id = curr_type;
+        crate_is_array = vreps[i].IsArray();
+        break;
+      }
+    }
+  }
 
   DCOUT("UnpackValueRepsToTimeSamples");
 
@@ -2721,11 +2724,21 @@ bool CrateReader::UnpackValueRepsToTimeSamples(const std::vector<double> &times,
 
     const double curr_time = times[i];
 
-    if (static_cast<crate::CrateDataTypeId>(rep.GetType()) != crate_type_id || rep.IsArray() != crate_is_array) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Inconsistent ValueRep type in TimeSamples.");
+    // Allow VALUE_BLOCK to mix with the actual type
+    crate::CrateDataTypeId curr_type_id = static_cast<crate::CrateDataTypeId>(rep.GetType());
+    if (curr_type_id != crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
+      if (curr_type_id != crate_type_id || rep.IsArray() != crate_is_array) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Inconsistent ValueRep type in TimeSamples.");
+      }
     }
 
     // Dispatch to type-specific unpacker
+    // Skip VALUE_BLOCK - it will be handled by the type-specific unpacker for the actual type
+    if (curr_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
+      // Call the appropriate unpacker for the base type to handle VALUE_BLOCK
+      // The UnpackTimeSampleValue_* functions handle VALUE_BLOCK internally
+    }
+
     if (crate_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_BOOL) {
       if (!UnpackTimeSampleValue_BOOL(curr_time, rep, *d)) {
         return false;
