@@ -879,10 +879,15 @@ struct TimeSamples {
 #endif
 
     if (_use_pod) {
-#if 0
-      // For POD storage, return a converted vector
+      // For POD storage, convert samples on demand
       // This is not ideal for performance, but maintains backward compatibility
       // Users should prefer typed access methods when possible
+      if (_dirty) {
+        update();
+      }
+
+      // Convert POD samples to regular samples
+      _samples.clear();
       auto converted = _pod_samples.get_samples_converted();
       _samples.reserve(converted.size());
       for (const auto& item : converted) {
@@ -892,9 +897,7 @@ struct TimeSamples {
         s.blocked = item.second.second;
         _samples.push_back(s);
       }
-#else
-      return empty;
-#endif
+      return _samples;
     }
 
     if (_dirty) {
