@@ -316,3 +316,4 @@ size_t PODTimeSamples::get_element_size() const {
 }
 
 } // namespace tinyusdz
+
