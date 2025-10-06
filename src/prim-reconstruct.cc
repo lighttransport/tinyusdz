@@ -137,8 +137,10 @@ static nonstd::optional<Animatable<T>> ConvertToAnimatable(const primvar::PrimVa
   }
 
   if (var.has_timesamples()) {
-    for (size_t i = 0; i < var.ts_raw().size(); i++) {
-      const value::TimeSamples::Sample &s = var.ts_raw().get_samples()[i];
+    const auto &samples = var.ts_raw().get_samples();
+
+    for (size_t i = 0; i < samples.size(); i++) {
+      const value::TimeSamples::Sample &s = samples[i];
 
       // Attribute Block?
       if (s.blocked || s.value.is_none()) {
