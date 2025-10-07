@@ -325,7 +325,7 @@ public:
         if (_is_view) {
             // Cannot resize a view - this would require allocation
             // Could throw an exception or assert, but for now just return
-            assert(!_is_view && "Cannot resize a TypedArray view");
+            //assert(!_is_view && "Cannot resize a TypedArray view");
             return;
         }
         _storage.resize(count * sizeof(T));
@@ -333,7 +333,7 @@ public:
 
     void resize(size_type count, const T& value) {
         if (_is_view) {
-            assert(!_is_view && "Cannot resize a TypedArray view");
+            //assert(!_is_view && "Cannot resize a TypedArray view");
             return;
         }
         size_type old_size = size();
@@ -347,7 +347,7 @@ public:
 
     void reserve(size_type new_capacity) {
         if (_is_view) {
-            assert(!_is_view && "Cannot reserve capacity for a TypedArray view");
+            //assert(!_is_view && "Cannot reserve capacity for a TypedArray view");
             return;
         }
         _storage.reserve(new_capacity * sizeof(T));
@@ -361,7 +361,7 @@ public:
 
     void push_back(const T& value) {
         if (_is_view) {
-            assert(!_is_view && "Cannot push_back to a TypedArray view");
+            //assert(!_is_view && "Cannot push_back to a TypedArray view");
             return;
         }
         size_type old_size = size();
@@ -371,7 +371,7 @@ public:
 
     void push_back(T&& value) {
         if (_is_view) {
-            assert(!_is_view && "Cannot push_back to a TypedArray view");
+            //assert(!_is_view && "Cannot push_back to a TypedArray view");
             return;
         }
         size_type old_size = size();

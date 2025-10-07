@@ -180,15 +180,89 @@ struct PODTimeSamples {
   // Default constructor
   PODTimeSamples() = default;
 
+  /// Initialize PODTimeSamples with type information and optional pre-allocation
+  /// @param type_id The TypeId from value-types.hh
+  /// @param is_array Whether storing array data
+  /// @param element_size Size of each element in bytes
+  /// @param array_size Number of elements per array (for array data)
+  /// @param expected_samples Optional: expected number of samples to pre-allocate
+  bool init(uint32_t tid, bool is_array_type = false, size_t elem_size = 0,
+            size_t arr_size = 0, size_t expected_samples = 0) {
+    // Check if already initialized with a different type
+    if (_type_id != 0 && _type_id != tid) {
+      return false;
+    }
+
+    _type_id = tid;
+    _is_array = is_array_type;
+    _array_size = arr_size;
+
+    // Calculate element size if not provided
+    if (elem_size > 0) {
+      _element_size = static_cast<uint16_t>(elem_size);
+    } else {
+      _element_size = static_cast<uint16_t>(get_element_size());
+    }
+
+    // Pre-allocate if expected_samples is provided
+    if (expected_samples > 0 && _element_size > 0) {
+      reserve_with_type(expected_samples);
+    }
+
+    return true;
+  }
+
   /// Pre-allocate capacity for known number of samples
   void reserve(size_t n) {
     _times.reserve(n);
     _blocked.reserve(n);
     if (_element_size > 0) {
-      _values.reserve(n * _element_size);
+      // Calculate total size based on whether it's array data or not
+      size_t value_reserve_size = 0;
+      if (_is_array && _array_size > 0) {
+        // For array data: sizeof(element) * n_samples * array_size
+        value_reserve_size = n * _element_size * _array_size;
+      } else {
+        // For scalar data: sizeof(element) * n_samples
+        // Note: This is an upper bound - blocked samples won't use space
+        value_reserve_size = n * _element_size;
+      }
+      _values.reserve(value_reserve_size);
     }
     if (_is_array || !_offsets.empty()) {
       _offsets.reserve(n);
+    }
+  }
+
+  /// Type-aware reserve that properly accounts for element and array sizes
+  /// Should be called after type_id is set (after init or first sample addition)
+  void reserve_with_type(size_t expected_samples) {
+    if (expected_samples == 0) return;
+
+    _times.reserve(expected_samples);
+    _blocked.reserve(expected_samples);
+
+    // Calculate element size if not cached
+    if (_element_size == 0 && _type_id != 0) {
+      _element_size = static_cast<uint16_t>(get_element_size());
+    }
+
+    if (_element_size > 0) {
+      size_t value_bytes = 0;
+      if (_is_array && _array_size > 0) {
+        // Array data: sizeof(T) * expected_samples * array_size
+        value_bytes = expected_samples * _element_size * _array_size;
+      } else {
+        // Scalar data: sizeof(T) * expected_samples (upper bound)
+        value_bytes = expected_samples * _element_size;
+      }
+
+      _values.reserve(value_bytes);
+    }
+
+    // Always reserve offsets for array data
+    if (_is_array || !_offsets.empty()) {
+      _offsets.reserve(expected_samples);
     }
   }
 
@@ -295,8 +369,13 @@ public:
 
   /// Add a time/value sample with POD type checking
   /// T must satisfy std::is_trivial and std::is_standard_layout
+  /// @param t Time value
+  /// @param value The value to add
+  /// @param err Optional error string
+  /// @param expected_total_samples Optional: if this is the first sample, pre-allocate for this many samples
   template<typename T>
-  bool add_sample(double t, const T& value, std::string *err = nullptr) {
+  bool add_sample(double t, const T& value, std::string *err = nullptr,
+                  size_t expected_total_samples = 0) {
     static_assert(std::is_trivial<T>::value,
                   "PODTimeSamples requires trivial types");
     static_assert(std::is_standard_layout<T>::value,
@@ -308,6 +387,11 @@ public:
       _type_id = value::TypeTraits<T>::underlying_type_id();
       _is_array = false;  // Single values are not arrays
       _element_size = sizeof(T);  // Cache element size
+
+      // Pre-allocate if requested
+      if (expected_total_samples > 0) {
+        reserve_with_type(expected_total_samples);
+      }
     } else {
       // Verify type consistency - check underlying type
       if (_type_id != value::TypeTraits<T>::underlying_type_id()) {
@@ -351,8 +435,14 @@ public:
   }
 
   /// Add an array sample with POD element type checking
+  /// @param t Time value
+  /// @param values Pointer to array data
+  /// @param count Number of elements in the array
+  /// @param err Optional error string
+  /// @param expected_total_samples Optional: if this is the first sample, pre-allocate for this many samples
   template<typename T>
-  bool add_array_sample(double t, const T* values, size_t count, std::string *err = nullptr) {
+  bool add_array_sample(double t, const T* values, size_t count, std::string *err = nullptr,
+                        size_t expected_total_samples = 0) {
     static_assert(std::is_trivial<T>::value,
                   "PODTimeSamples requires trivial types");
     static_assert(std::is_standard_layout<T>::value,
@@ -364,6 +454,11 @@ public:
       _is_array = true;
       _array_size = count;
       _element_size = sizeof(T);  // Cache element size
+
+      // Pre-allocate if requested
+      if (expected_total_samples > 0) {
+        reserve_with_type(expected_total_samples);
+      }
     } else {
       // Verify type consistency - check underlying type
       if (_type_id != value::TypeTraits<T>::underlying_type_id()) {
@@ -401,8 +496,14 @@ public:
   }
 
   /// Add an matrix array sample with POD element type checking
+  /// @param t Time value
+  /// @param values Pointer to array data
+  /// @param count Number of matrices in the array
+  /// @param err Optional error string
+  /// @param expected_total_samples Optional: if this is the first sample, pre-allocate for this many samples
   template<typename T>
-  bool add_matrix_array_sample(double t, const T* values, size_t count, std::string *err = nullptr) {
+  bool add_matrix_array_sample(double t, const T* values, size_t count, std::string *err = nullptr,
+                               size_t expected_total_samples = 0) {
     static_assert((value::TypeTraits<T>::type_id() == value::TYPE_ID_MATRIX2D) ||
                   (value::TypeTraits<T>::type_id() == value::TYPE_ID_MATRIX3D) ||
                   (value::TypeTraits<T>::type_id() == value::TYPE_ID_MATRIX4D),
@@ -414,6 +515,11 @@ public:
       _is_array = true;
       _array_size = count;
       _element_size = sizeof(T);  // Cache element size
+
+      // Pre-allocate if requested
+      if (expected_total_samples > 0) {
+        reserve_with_type(expected_total_samples);
+      }
     } else {
       // Verify type consistency - check underlying type
       if (_type_id != value::TypeTraits<T>::underlying_type_id()) {
@@ -459,8 +565,12 @@ public:
   size_t get_element_size() const;
 
   /// Add a blocked sample (ValueBlock) - no memory allocated for value
+  /// @param t Time value
+  /// @param err Optional error string
+  /// @param expected_total_samples Optional: if this is the first sample, pre-allocate for this many samples
   template<typename T>
-  bool add_blocked_sample(double t, std::string *err = nullptr) {
+  bool add_blocked_sample(double t, std::string *err = nullptr,
+                          size_t expected_total_samples = 0) {
     static_assert(std::is_trivial<T>::value,
                   "PODTimeSamples requires trivial types");
     static_assert(std::is_standard_layout<T>::value,
@@ -471,6 +581,11 @@ public:
       _type_id = value::TypeTraits<T>::underlying_type_id();
       _is_array = false;  // Will be set properly if array samples are added
       _element_size = sizeof(T);  // Cache element size
+
+      // Pre-allocate if requested (note: blocked samples don't use value storage)
+      if (expected_total_samples > 0) {
+        reserve_with_type(expected_total_samples);
+      }
     } else {
       // Verify type consistency - check underlying type
       if (_type_id != value::TypeTraits<T>::underlying_type_id()) {
@@ -520,12 +635,25 @@ public:
   }
 
   /// Add a blocked array sample - no memory allocated
-  bool add_blocked_array_sample(double t, size_t count, std::string *err = nullptr) {
+  /// @param t Time value
+  /// @param count Number of elements in the array
+  /// @param err Optional error string
+  /// @param expected_total_samples Optional: if this is the first sample, pre-allocate for this many samples
+  bool add_blocked_array_sample(double t, size_t count, std::string *err = nullptr,
+                                size_t expected_total_samples = 0) {
     // Initialize array info on first sample
     if (_times.empty()) {
       _is_array = true;
       _array_size = count;
       // type_id will be set when first non-blocked sample is added
+
+      // Pre-allocate if requested (note: blocked samples don't use value storage)
+      if (expected_total_samples > 0) {
+        // We can at least reserve times and blocked arrays
+        _times.reserve(expected_total_samples);
+        _blocked.reserve(expected_total_samples);
+        _offsets.reserve(expected_total_samples);
+      }
     } else if (_is_array) {
       // Verify array size consistency
       if (_array_size != count) {
@@ -977,7 +1105,7 @@ struct TimeSamples {
 
   /// Typed add sample for POD types (optimization path)
   template<typename T>
-  bool add_sample_pod(double t, const T& value, std::string *err = nullptr) {
+  bool add_sample_pod(double t, const T& value, std::string *err = nullptr, size_t expected_total_samples = 0) {
     static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
                   "add_sample_pod requires POD types");
 
@@ -987,7 +1115,7 @@ struct TimeSamples {
     }
 
     if (_use_pod) {
-      bool result = _pod_samples.add_sample<T>(t, value, err);
+      bool result = _pod_samples.add_sample<T>(t, value, err, expected_total_samples);
       _dirty = true;
       return result;
     }
@@ -999,7 +1127,7 @@ struct TimeSamples {
   }
 
   template<typename T>
-  bool add_array_sample_pod(double t, const std::vector<T>& value, std::string *err = nullptr) {
+  bool add_array_sample_pod(double t, const std::vector<T>& value, std::string *err = nullptr, size_t expected_total_samples = 0) {
     static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
                   "add_sample_pod requires POD types");
 
@@ -1009,7 +1137,7 @@ struct TimeSamples {
     }
 
     if (_use_pod) {
-      bool result = _pod_samples.add_array_sample<T>(t, value.data(), value.size(), err);
+      bool result = _pod_samples.add_array_sample<T>(t, value.data(), value.size(), err, expected_total_samples);
       _dirty = true;
       return result;
     }
@@ -1021,7 +1149,7 @@ struct TimeSamples {
   }
 
   template<typename T>
-  bool add_matrix_array_sample_pod(double t, const std::vector<T>& value, std::string *err = nullptr) {
+  bool add_matrix_array_sample_pod(double t, const std::vector<T>& value, std::string *err = nullptr, size_t expected_total_samples = 0) {
 
     // Auto-initialize on first sample
     if (empty()) {
@@ -1029,7 +1157,7 @@ struct TimeSamples {
     }
 
     if (_use_pod) {
-      bool result = _pod_samples.add_matrix_array_sample<T>(t, value.data(), value.size(), err);
+      bool result = _pod_samples.add_matrix_array_sample<T>(t, value.data(), value.size(), err, expected_total_samples);
       _dirty = true;
       return result;
     }
@@ -1042,7 +1170,7 @@ struct TimeSamples {
 
   /// Typed add blocked sample for POD types (optimization path)
   template<typename T>
-  bool add_blocked_sample_pod(double t, std::string *err = nullptr) {
+  bool add_blocked_sample_pod(double t, std::string *err = nullptr, size_t expected_total_samples = 0) {
     static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
                   "add_blocked_sample_pod requires POD types");
 
@@ -1052,7 +1180,7 @@ struct TimeSamples {
     }
 
     if (_use_pod) {
-      bool result = _pod_samples.add_blocked_sample<T>(t, err);
+      bool result = _pod_samples.add_blocked_sample<T>(t, err, expected_total_samples);
       _dirty = true;
       return result;
     }
