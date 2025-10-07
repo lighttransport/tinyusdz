@@ -29,7 +29,7 @@ struct PrimReconstructOptions
 bool ReconstructXformOpsFromProperties(
       const Specifier &spec,
       std::set<std::string> &table, /* inout */
-      const PropertyMap &properties,
+      PropertyMap &properties,
       std::vector<XformOp> *xformOps,
       std::string *err);
 
@@ -39,7 +39,7 @@ bool ReconstructXformOpsFromProperties(
 template <typename T>
 bool ReconstructPrim(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties, // modified
     const ReferenceList &references,
     T *out,
     std::string *warn,
@@ -51,7 +51,7 @@ bool ReconstructPrim(
 ///
 template <typename T>
 bool ReconstructPrim(
-    const PrimSpec &primspec,
+    PrimSpec &primspec,
     T *out,
     std::string *warn,
     std::string *err,
