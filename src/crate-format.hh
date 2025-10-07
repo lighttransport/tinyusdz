@@ -391,7 +391,9 @@ class CrateValue {
   //std::string GetTypeName() const;
   //uint32_t GetTypeId() const;
 
-#define SET_TYPE_SCALAR(__ty) void Set(const __ty& v) { value_ = v; }
+#define SET_TYPE_SCALAR(__ty) void Set(const __ty& v) { TUSDZ_LOG_I("copy set"); value_ = v; } void Set(__ty&& v) { TUSDZ_LOG_I("move set"); value::Value src(std::move(v)); value_ = std::move(src); }
+//#define MOVE_SET_TYPE_SCALAR(__ty) void MoveSet(__ty&& v) { TUSDZ_LOG_I("move set"); value::Value src(std::move(v)); value_ = std::move(src); }
+
 #define SET_TYPE_1D(__ty) void Set(const std::vector<__ty> &v) { value_ = v; }
 
 // TODO: Use TypedArray
@@ -463,10 +465,10 @@ class CrateValue {
   SET_TYPE_SCALAR(CustomDataType) // for (type-restricted) dist
 
   SET_TYPE_LIST(SET_TYPE_SCALAR)
+  //SET_TYPE_LIST(MOVE_SET_TYPE_SCALAR)
 
 
   SET_TYPE_LIST(SET_TYPE_1D)
-  // FIXME
   //SET_TYPE_LIST(MOVE_SET_TYPE_1D)
 
   // TypedArray Set methods for efficient array handling with mmap support
@@ -497,7 +499,9 @@ class CrateValue {
   // Type-safe way to get concrete value.
   template <class T>
   nonstd::optional<T> get_value() const {
-    return value_.get_value<T>();
+    // HACK
+    //return value_.get_value<T>();
+    return std::move(value_.get_value<T>());
   }
 
   // Return null when type-mismatch
