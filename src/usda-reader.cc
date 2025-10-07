@@ -83,7 +83,7 @@ namespace prim {
 
 // template specialization forward decls.
 // implimentations will be located in prim-reconstruct.cc
-#define RECONSTRUCT_PRIM_DECL(__ty) template<> bool ReconstructPrim<__ty>(const Specifier &spec, const PropertyMap &, const ReferenceList &, __ty *, std::string *, std::string *, const PrimReconstructOptions &)
+#define RECONSTRUCT_PRIM_DECL(__ty) template<> bool ReconstructPrim<__ty>(const Specifier &spec, PropertyMap &, const ReferenceList &, __ty *, std::string *, std::string *, const PrimReconstructOptions &)
 
 RECONSTRUCT_PRIM_DECL(Xform);
 RECONSTRUCT_PRIM_DECL(Model);
@@ -357,7 +357,7 @@ class USDAReader::Impl {
   template <typename T>
   bool ReconstructPrim(
       const Specifier &spec,
-      const prim::PropertyMap &properties,
+      prim::PropertyMap &properties,
       const prim::ReferenceList &references,
       T *out);
 
@@ -368,7 +368,7 @@ class USDAReader::Impl {
         PrimTypeTraits<T>::prim_type_name,
         [&](const Path &full_path, const Specifier spec, const std::string &_primTypeName, const Path &prim_name, const int64_t primIdx,
             const int64_t parentPrimIdx,
-            const prim::PropertyMap &properties,
+            prim::PropertyMap &properties,
             const ascii::AsciiParser::PrimMetaMap &in_meta,
             const ascii::AsciiParser::VariantSetList &in_variants)
             -> nonstd::expected<bool, std::string> {
@@ -1560,7 +1560,7 @@ bool USDAReader::Impl::ReconstructStage() {
 template <>
 bool USDAReader::Impl::ReconstructPrim(
     const Specifier &spec,
-    const prim::PropertyMap &properties,
+    prim::PropertyMap &properties,
     const prim::ReferenceList &references,
     Xform *xform) {
 
@@ -1613,7 +1613,7 @@ bool USDAReader::Impl::ReconstructPrim<NodeGraph>(
 template <typename T>
 bool USDAReader::Impl::ReconstructPrim(
     const Specifier &spec,
-    const prim::PropertyMap &properties,
+    prim::PropertyMap &properties,
     const prim::ReferenceList &references,
     T *prim) {
 
