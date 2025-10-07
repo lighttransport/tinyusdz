@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <sstream>
 
@@ -75,6 +76,13 @@ void print_help() {
 }
 
 int main(int argc, char **argv) {
+  // Enable DCOUT output if TINYUSDZ_ENABLE_DCOUT environment variable is set
+  const char* enable_dcout_env = std::getenv("TINYUSDZ_ENABLE_DCOUT");
+  if (enable_dcout_env != nullptr && std::strlen(enable_dcout_env) > 0) {
+    // Any non-empty value enables DCOUT
+    tinyusdz::g_enable_dcout_output = true;
+  }
+
   if (argc < 2) {
     print_help();
     return EXIT_FAILURE;
