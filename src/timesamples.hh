@@ -27,6 +27,7 @@
 #include "typed-array.hh"
 #include "value-types.hh"
 #include "logger.hh"
+#include "buffer-util.hh"
 
 // Enable SoA (Structure of Arrays) layout for TypedTimeSamples
 // Default is AoS (Array of Structs) layout
@@ -89,8 +90,8 @@ struct PODTimeSamples {
 
   // Cold data (less frequently accessed)
   mutable std::vector<double> _times;
-  mutable std::vector<uint8_t> _blocked; // ValueBlock flags (changed from vector<bool> for performance)
-  mutable TypedArray<uint8_t> _values; // Raw byte storage: compact storage without blocked values
+  mutable Buffer<16> _blocked; // ValueBlock flags with 16-byte alignment
+  mutable Buffer<16> _values; // Raw byte storage: compact storage without blocked values
   mutable std::vector<size_t> _offsets; // Offset table for array values (or scalar values with blocks)
   mutable size_t _blocked_count{0}; // Count of blocked samples for O(1) queries
 
@@ -292,7 +293,8 @@ struct PODTimeSamples {
 
     // Reorder arrays based on sorted indices
     std::vector<double> sorted_times(_times.size());
-    std::vector<uint8_t> sorted_blocked(_blocked.size());
+    Buffer<16> sorted_blocked;
+    sorted_blocked.resize(_blocked.size());
 
     // If using offsets, sort them too
     if (!_offsets.empty()) {
@@ -311,7 +313,7 @@ struct PODTimeSamples {
       // Calculate element size from stored element size or type
       size_t element_size = get_element_size();
       if (element_size > 0) {
-        TypedArray<uint8_t> sorted_values;
+        Buffer<16> sorted_values;
         sorted_values.resize(_values.size());
 
         size_t dst_offset = 0;
@@ -798,14 +800,14 @@ public:
     return _times;
   }
 
-  const std::vector<uint8_t>& get_blocked() const {
+  const Buffer<16>& get_blocked() const {
     if (_dirty) {
       update();
     }
     return _blocked;
   }
 
-  const TypedArray<uint8_t>& get_values() const {
+  const Buffer<16>& get_values() const {
     if (_dirty) {
       update();
     }
@@ -815,8 +817,8 @@ public:
   size_t estimate_memory_usage() const {
     size_t total = sizeof(PODTimeSamples);
     total += _times.capacity() * sizeof(double);
-    total += _blocked.capacity() * sizeof(uint8_t);  // Now using uint8_t instead of bool
-    total += _values.capacity() * sizeof(uint8_t);
+    total += _blocked.capacity();  // Buffer already stores bytes
+    total += _values.capacity();   // Buffer already stores bytes
     total += _offsets.capacity() * sizeof(size_t);  // Include offset table
     return total;
   }
