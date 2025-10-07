@@ -499,9 +499,7 @@ class CrateValue {
   // Type-safe way to get concrete value.
   template <class T>
   nonstd::optional<T> get_value() const {
-    // HACK
-    //return value_.get_value<T>();
-    return std::move(value_.get_value<T>());
+    return value_.get_value<T>();
   }
 
   // Return null when type-mismatch
