@@ -25,6 +25,7 @@
 
 #include "nonstd/optional.hpp"
 #include "typed-array.hh"
+#include "value-types.hh"
 #include "logger.hh"
 
 // Enable SoA (Structure of Arrays) layout for TypedTimeSamples
@@ -55,9 +56,11 @@ struct TimeSamples;
 inline bool is_pod_type_id(uint32_t type_id) {
   // POD types: bool, numeric types (char, int, uint, float, double, half),
   // and their vector variants (float2, float3, etc.)
-  // Excludes: string, token, path, array types, complex types
-  return (type_id >= 8 && type_id <= 75) || // Basic numeric types and vectors
-         (type_id == 5); // bool
+  
+  // turn off 1D array flag
+  uint32_t tid = type_id & (~TYPE_ID_1D_ARRAY_BIT);
+  
+  return (tid >= uint32_t(TYPE_ID_BOOL) && tid <= uint32_t(TYPE_ID_TIMECODE));
 }
 
 } // namespace value
@@ -114,6 +117,68 @@ struct PODTimeSamples {
     _dirty_start = SIZE_MAX;
     _dirty_end = 0;
   }
+
+  /// Move constructor
+  PODTimeSamples(PODTimeSamples&& other) noexcept
+      : _type_id(other._type_id),
+        _is_array(other._is_array),
+        _element_size(other._element_size),
+        _array_size(other._array_size),
+        _dirty(other._dirty),
+        _dirty_start(other._dirty_start),
+        _dirty_end(other._dirty_end),
+        _times(std::move(other._times)),
+        _blocked(std::move(other._blocked)),
+        _values(std::move(other._values)),
+        _offsets(std::move(other._offsets)),
+        _blocked_count(other._blocked_count) {
+    // Reset moved-from object to valid empty state
+    other._type_id = 0;
+    other._is_array = false;
+    other._element_size = 0;
+    other._array_size = 0;
+    other._dirty = false;
+    other._dirty_start = SIZE_MAX;
+    other._dirty_end = 0;
+    other._blocked_count = 0;
+  }
+
+  /// Move assignment operator
+  PODTimeSamples& operator=(PODTimeSamples&& other) noexcept {
+    if (this != &other) {
+      // Move data from other
+      _type_id = other._type_id;
+      _is_array = other._is_array;
+      _element_size = other._element_size;
+      _array_size = other._array_size;
+      _dirty = other._dirty;
+      _dirty_start = other._dirty_start;
+      _dirty_end = other._dirty_end;
+      _times = std::move(other._times);
+      _blocked = std::move(other._blocked);
+      _values = std::move(other._values);
+      _offsets = std::move(other._offsets);
+      _blocked_count = other._blocked_count;
+
+      // Reset moved-from object to valid empty state
+      other._type_id = 0;
+      other._is_array = false;
+      other._element_size = 0;
+      other._array_size = 0;
+      other._dirty = false;
+      other._dirty_start = SIZE_MAX;
+      other._dirty_end = 0;
+      other._blocked_count = 0;
+    }
+    return *this;
+  }
+
+  // Default copy operations
+  PODTimeSamples(const PODTimeSamples&) = default;
+  PODTimeSamples& operator=(const PODTimeSamples&) = default;
+
+  // Default constructor
+  PODTimeSamples() = default;
 
   /// Pre-allocate capacity for known number of samples
   void reserve(size_t n) {
@@ -292,6 +357,56 @@ public:
                   "PODTimeSamples requires trivial types");
     static_assert(std::is_standard_layout<T>::value,
                   "PODTimeSamples requires standard layout types");
+
+    // Set type_id and array info on first sample - use underlying_type_id
+    if (_times.empty()) {
+      _type_id = value::TypeTraits<T>::underlying_type_id();
+      _is_array = true;
+      _array_size = count;
+      _element_size = sizeof(T);  // Cache element size
+    } else {
+      // Verify type consistency - check underlying type
+      if (_type_id != value::TypeTraits<T>::underlying_type_id()) {
+        if (err) {
+          (*err) += "Type mismatch in PODTimeSamples array: expected underlying_type_id " +
+                    std::to_string(_type_id) + " but got " +
+                    std::to_string(value::TypeTraits<T>::underlying_type_id()) + ".\n";
+        }
+        return false;
+      }
+      // Verify array size consistency
+      if (_array_size != count) {
+        if (err) {
+          (*err) += "Array size mismatch in PODTimeSamples: expected " +
+                    std::to_string(_array_size) + " but got " +
+                    std::to_string(count) + ".\n";
+        }
+        return false;
+      }
+    }
+
+    size_t new_idx = _times.size();
+    _times.push_back(t);
+    _blocked.push_back(0);  // false = 0
+
+    // Store offset and append array data
+    _offsets.push_back(_values.size());
+    size_t byte_size = sizeof(T) * count;
+    _values.resize(_values.size() + byte_size);
+    std::memcpy(_values.data() + _offsets.back(), values, byte_size);
+
+    _dirty = true;
+    mark_dirty_range(new_idx);
+    return true;
+  }
+
+  /// Add an matrix array sample with POD element type checking
+  template<typename T>
+  bool add_matrix_array_sample(double t, const T* values, size_t count, std::string *err = nullptr) {
+    static_assert((value::TypeTraits<T>::type_id() == value::TYPE_ID_MATRIX2D) ||
+                  (value::TypeTraits<T>::type_id() == value::TYPE_ID_MATRIX3D) ||
+                  (value::TypeTraits<T>::type_id() == value::TYPE_ID_MATRIX4D),
+                  "requires matrix type");
 
     // Set type_id and array info on first sample - use underlying_type_id
     if (_times.empty()) {
@@ -614,10 +729,49 @@ struct TimeSamples {
     _dirty = true;
   }
 
+  /// Move constructor
+  TimeSamples(TimeSamples&& other) noexcept
+      : _samples(std::move(other._samples)),
+        _pod_samples(std::move(other._pod_samples)),
+        _type_id(other._type_id),
+        _use_pod(other._use_pod),
+        _dirty(other._dirty) {
+    // Reset moved-from object to valid empty state
+    other._type_id = 0;
+    other._use_pod = false;
+    other._dirty = false;
+  }
+
+  /// Move assignment operator
+  TimeSamples& operator=(TimeSamples&& other) noexcept {
+    if (this != &other) {
+      // Move data from other
+      _samples = std::move(other._samples);
+      _pod_samples = std::move(other._pod_samples);
+      _type_id = other._type_id;
+      _use_pod = other._use_pod;
+      _dirty = other._dirty;
+
+      // Reset moved-from object to valid empty state
+      other._type_id = 0;
+      other._use_pod = false;
+      other._dirty = false;
+    }
+    return *this;
+  }
+
+  // Default copy operations
+  TimeSamples(const TimeSamples&) = default;
+  TimeSamples& operator=(const TimeSamples&) = default;
+
+  // Default constructor
+  TimeSamples() = default;
+
+  /// type_id = TypeId
   /// Initialize TimeSamples with a specific type_id
   /// This determines whether to use POD optimization or regular storage
   bool init(uint32_t type_id) {
-    TUSDZ_LOG_D("init" << type_id);
+    TUSDZ_LOG_I("init" << type_id);
     DCOUT("init" << type_id);
 
     // Allow initialization if empty OR if it contains only uninitialized blocked samples
@@ -627,6 +781,7 @@ struct TimeSamples {
     _type_id = type_id;
     _use_pod = value::is_pod_type_id(type_id);
     if (_use_pod) {
+      TUSDZ_LOG_I("  use_pod: " << type_id);
       _pod_samples._type_id = type_id;
     }
     return true;
@@ -839,6 +994,48 @@ struct TimeSamples {
 
     if (err) {
       (*err) += "Not using POD storage for type " + std::string(value::TypeTraits<T>::type_name()) + ".\n";
+    }
+    return false; // Not using POD storage
+  }
+
+  template<typename T>
+  bool add_array_sample_pod(double t, const std::vector<T>& value, std::string *err = nullptr) {
+    static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
+                  "add_sample_pod requires POD types");
+
+    // Auto-initialize on first sample
+    if (empty()) {
+      init(value::TypeTraits<T>::type_id());
+    }
+
+    if (_use_pod) {
+      bool result = _pod_samples.add_array_sample<T>(t, value.data(), value.size(), err);
+      _dirty = true;
+      return result;
+    }
+
+    if (err) {
+      (*err) += "Not using POD storage for type " + std::string(value::TypeTraits<T>::type_name()) + "[].\n";
+    }
+    return false; // Not using POD storage
+  }
+
+  template<typename T>
+  bool add_matrix_array_sample_pod(double t, const std::vector<T>& value, std::string *err = nullptr) {
+
+    // Auto-initialize on first sample
+    if (empty()) {
+      init(value::TypeTraits<T>::type_id());
+    }
+
+    if (_use_pod) {
+      bool result = _pod_samples.add_matrix_array_sample<T>(t, value.data(), value.size(), err);
+      _dirty = true;
+      return result;
+    }
+
+    if (err) {
+      (*err) += "Not using POD storage for type " + std::string(value::TypeTraits<T>::type_name()) + "[].\n";
     }
     return false; // Not using POD storage
   }
@@ -1574,7 +1771,7 @@ struct TypedTimeSamples {
     return _values;
   }
 
-  const std::vector<bool> &get_blocked() const {
+  const std::vector<uint8_t> &get_blocked() const {
     if (_dirty) {
       update();
     }
