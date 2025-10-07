@@ -1039,11 +1039,13 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
     } else if (fv.first == "timeSamples") {
       //propType = Property::Type::Attrib;
 
-
       hasTimeSamples = true;
 
-      if (auto pv = fv.second.get_value<value::TimeSamples>()) {
-        value::TimeSamples &ts = pv.value();
+      //if (auto pv = fv.second.get_value<value::TimeSamples>()) {
+      if (const value::TimeSamples *vptr = fv.second.as<value::TimeSamples>()) {
+        // DANGER:
+        // TODO: remove const from func arg
+        value::TimeSamples &ts = *(const_cast<value::TimeSamples *>(vptr));
 
         // If TimeSamples is uninitialized (all samples were VALUE_BLOCK),
         // initialize it with the type from the attribute's typeName
@@ -1824,8 +1826,8 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
     typed_prim.spec = __spec;                                      \
     typed_prim.propertyNames() = properties; \
     typed_prim.primChildrenNames() = primChildren; \
-    value::Value primdata = typed_prim;                            \
-    Prim prim(__prim_name, primdata);                            \
+    value::Value primdata(std::move(typed_prim));                            \
+    Prim prim(__prim_name, std::move(primdata));                            \
     prim.prim_type_name() = primTypeName; \
     /* also add primChildren to Prim */ \
     prim.metas().primChildren = primChildren; \
@@ -1850,8 +1852,9 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
     typed_prim.spec = spec;
     typed_prim.propertyNames() = properties;
     typed_prim.primChildrenNames() = primChildren;
-    value::Value primdata = typed_prim;
-    Prim prim(prim_name, primdata);
+    //value::Value primdata = typed_prim;
+    value::Value primdata(std::move(typed_prim));
+    Prim prim(prim_name, std::move(primdata));
     prim.prim_type_name() = primTypeName;
     /* also add primChildren to Prim */
     prim.metas().primChildren = primChildren; \
