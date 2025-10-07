@@ -68,6 +68,10 @@
 
 namespace tinyusdz {
 
+// Global flag to control DCOUT output. Defaults to false to suppress flood of output.
+// Set to true via TINYUSDZ_ENABLE_DCOUT environment variable.
+bool g_enable_dcout_output = false;
+
 // constexpr auto kTagUSDA = "[USDA]";
 // constexpr auto kTagUSDC = "[USDC]";
 // constexpr auto kTagUSDZ = "[USDZ]";
