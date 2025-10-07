@@ -391,7 +391,7 @@ class CrateValue {
   //std::string GetTypeName() const;
   //uint32_t GetTypeId() const;
 
-#define SET_TYPE_SCALAR(__ty) void Set(const __ty& v) { TUSDZ_LOG_I("copy set"); value_ = v; } void Set(__ty&& v) { TUSDZ_LOG_I("move set"); value::Value src(std::move(v)); value_ = std::move(src); }
+#define SET_TYPE_SCALAR(__ty) void Set(const __ty& v) { value_ = v; } void Set(__ty&& v) { value::Value src(std::move(v)); value_ = std::move(src); }
 //#define MOVE_SET_TYPE_SCALAR(__ty) void MoveSet(__ty&& v) { TUSDZ_LOG_I("move set"); value::Value src(std::move(v)); value_ = std::move(src); }
 
 #define SET_TYPE_1D(__ty) void Set(const std::vector<__ty> &v) { value_ = v; }
@@ -469,7 +469,7 @@ class CrateValue {
 
 
   SET_TYPE_LIST(SET_TYPE_1D)
-  //SET_TYPE_LIST(MOVE_SET_TYPE_1D)
+  SET_TYPE_LIST(MOVE_SET_TYPE_1D)
 
   // TypedArray Set methods for efficient array handling with mmap support
 #define SET_TYPE_TYPED_ARRAY(__ty) void Set(const TypedArray<__ty> &v) { value_ = v; }

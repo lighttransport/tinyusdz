@@ -5121,7 +5121,7 @@ bool CrateReader::UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint6
           }
         }
         if (n == 0) {
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
         if (n > _config.maxArrayElements) {
@@ -5177,7 +5177,7 @@ bool CrateReader::UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint6
           }
         }
         if (n == 0) {
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
         if (n > _config.maxArrayElements) {
@@ -5233,7 +5233,7 @@ bool CrateReader::UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint6
           }
         }
         if (n == 0) {
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
         if (n > _config.maxArrayElements) {
@@ -5513,7 +5513,7 @@ bool CrateReader::UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint6
 bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
                                  crate::CrateValue *value) {
 
-  TUSDZ_LOG_I("unpack . ty " << GetCrateDataTypeName(rep.GetType()) << ", inlined " << rep.IsInlined());
+  //TUSDZ_LOG_I("unpack . ty " << GetCrateDataTypeName(rep.GetType()) << ", inlined " << rep.IsInlined());
 
   if (rep.IsInlined()) {
     return UnpackInlinedValueRep(rep, value);
@@ -5577,7 +5577,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         std::vector<bool> v;
 
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
 
@@ -5811,7 +5811,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       if (rep.IsArray()) {
         std::vector<int32_t> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
         if (!ReadIntArray(rep.IsCompressed(), &v)) {
@@ -5838,7 +5838,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       if (rep.IsArray()) {
         std::vector<uint32_t> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
         if (!ReadIntArray(rep.IsCompressed(), &v)) {
@@ -5863,7 +5863,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       if (rep.IsArray()) {
         std::vector<int64_t> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
         if (!ReadIntArray(rep.IsCompressed(), &v)) {
@@ -5902,7 +5902,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       if (rep.IsArray()) {
         std::vector<uint64_t> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
 
@@ -5942,7 +5942,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       if (rep.IsArray()) {
         std::vector<value::half> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
         if (!ReadHalfArray(rep.IsCompressed(), &v)) {
@@ -6026,7 +6026,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       if (rep.IsArray()) {
         std::vector<value::matrix2d> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
 
@@ -6051,7 +6051,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n == 0) {
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
 
@@ -6097,7 +6097,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       if (rep.IsArray()) {
         std::vector<value::matrix3d> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
 
@@ -6122,7 +6122,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n == 0) {
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
 
@@ -6168,7 +6168,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       if (rep.IsArray()) {
         std::vector<value::matrix4d> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
 
@@ -6193,7 +6193,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n == 0) {
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
 
@@ -6236,7 +6236,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       if (rep.IsArray()) {
         std::vector<value::quatd> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
         uint64_t n{0};
@@ -6260,7 +6260,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n == 0) {
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
 
@@ -6304,7 +6304,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       if (rep.IsArray()) {
         std::vector<value::quatf> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
         uint64_t n{0};
@@ -6328,7 +6328,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n == 0) {
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
 
@@ -6372,7 +6372,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       if (rep.IsArray()) {
         std::vector<value::quath> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
 
@@ -6397,7 +6397,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         }
 
         if (n == 0) {
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
 
@@ -6697,7 +6697,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       if (rep.IsArray()) {
         std::vector<value::int2> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
 
@@ -7343,7 +7343,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
       if (rep.IsArray()) {
         std::vector<value::int4> v;
         if (rep.GetPayload() == 0) { // empty array
-          value->Set(v);
+          value->Set(std::move(v));
           return true;
         }
         uint64_t n{0};
