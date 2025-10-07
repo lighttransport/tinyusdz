@@ -1876,7 +1876,7 @@ inline std::vector<T> lerp(const std::vector<T> &a, const std::vector<T> &b,
   if (a.size() != b.size()) {
     // TODO: report error
     //std::cout << "vector size mismatch, returning v0" << std::endl;
-    return a;
+    return dst;
   }
 
   dst.resize(n);
