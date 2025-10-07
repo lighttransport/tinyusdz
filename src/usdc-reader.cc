@@ -74,7 +74,7 @@ namespace prim {
 // implimentations will be located in prim-reconstruct.cc
 #define RECONSTRUCT_PRIM_DECL(__ty)                                      \
   template <>                                                            \
-  bool ReconstructPrim<__ty>(const Specifier &spec, const PropertyMap &, const ReferenceList &, \
+  bool ReconstructPrim<__ty>(const Specifier &spec, PropertyMap &, const ReferenceList &, \
                              __ty *, std::string *, std::string *, const PrimReconstructOptions &)
 
 RECONSTRUCT_PRIM_DECL(Xform);
@@ -895,7 +895,7 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
                 prop_name));
       }
 
-      (*props)[prop_name] = prop;
+      (*props)[prop_name] = std::move(prop);
       DCOUT("Add property : " << prop_name);
     }
   }
@@ -1043,7 +1043,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
       hasTimeSamples = true;
 
       if (auto pv = fv.second.get_value<value::TimeSamples>()) {
-        value::TimeSamples ts = pv.value();
+        value::TimeSamples &ts = pv.value();
 
         // If TimeSamples is uninitialized (all samples were VALUE_BLOCK),
         // initialize it with the type from the attribute's typeName
@@ -1392,7 +1392,8 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
     }
   }
 
-  attr.set_var(var);
+  // HACK
+  attr.set_var(std::move(var));
 
   if (isValueBlock) {
     // attr's type is replaced with ValueBlock type  by `set_var`, so overwrite type with typeName

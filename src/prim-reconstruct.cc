@@ -66,7 +66,7 @@ constexpr auto kInputsVarname = "inputs:varname";
 template <typename T>
 bool ReconstructShader(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     T *out,
     std::string *warn,
@@ -1926,7 +1926,7 @@ bool ParseTimeSampledEnumProperty(
   /* Check if the property name is a predefined property */  \
   if (!__table.count(__prop.first)) {                        \
     DCOUT("custom property added: name = " << __prop.first); \
-    __dst[__prop.first] = __prop.second;                     \
+    __dst[__prop.first] = std::move(__prop.second);          \
     __table.insert(__prop.first);                            \
   } \
  }
@@ -1949,7 +1949,7 @@ bool ParseTimeSampledEnumProperty(
 static bool ReconstructXformOpFromToken(
 
   const std::string &token, int i,
-  const std::map<std::string, Property> &properties,
+  std::map<std::string, Property> &properties,
   std::set<std::string> &table, /* inout */
   std::vector<XformOp> *xformOps, std::string *err) {
   if (!xformOps) {
@@ -2517,7 +2517,7 @@ static bool ReconstructXformOpFromToken(
 bool ReconstructXformOpsFromProperties(
   const Specifier &spec,
   std::set<std::string> &table, /* inout */
-  const std::map<std::string, Property> &properties,
+  std::map<std::string, Property> &properties,
   std::vector<XformOp> *xformOps,
   std::string *err)
 {
@@ -3145,7 +3145,7 @@ namespace {
 
 bool ReconstructMaterialBindingProperties(
   std::set<std::string> &table, /* inout */
-  const std::map<std::string, Property> &properties,
+  std::map<std::string, Property> &properties,
   MaterialBinding *mb, /* inout */
   std::string *err)
 {
@@ -3245,7 +3245,7 @@ bool ReconstructMaterialBindingProperties(
 
 bool ReconstructCollectionProperties(
   std::set<std::string> &table, /* inout */
-  const std::map<std::string, Property> &properties,
+  std::map<std::string, Property> &properties,
   Collection *coll, /* inout */
   std::string *warn,
   std::string *err,
@@ -3338,7 +3338,7 @@ bool ReconstructCollectionProperties(
 bool ReconstructGPrimProperties(
   const Specifier &spec,
   std::set<std::string> &table, /* inout */
-  const std::map<std::string, Property> &properties,
+  std::map<std::string, Property> &properties,
   GPrim *gprim, /* inout */
   std::string *warn,
   std::string *err,
@@ -3380,7 +3380,7 @@ bool ReconstructGPrimProperties(
 template <>
 bool ReconstructPrim<Xform>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     Xform *xform,
     std::string *warn,
@@ -3406,7 +3406,7 @@ bool ReconstructPrim<Xform>(
 template <>
 bool ReconstructPrim<Model>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     Model *model,
     std::string *warn,
@@ -3431,7 +3431,7 @@ bool ReconstructPrim<Model>(
 template <>
 bool ReconstructPrim<Scope>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     Scope *scope,
     std::string *warn,
@@ -3460,7 +3460,7 @@ bool ReconstructPrim<Scope>(
 template <>
 bool ReconstructPrim<SkelRoot>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     SkelRoot *root,
     std::string *warn,
@@ -3496,7 +3496,7 @@ bool ReconstructPrim<SkelRoot>(
 template <>
 bool ReconstructPrim<Skeleton>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     Skeleton *skel,
     std::string *warn,
@@ -3589,7 +3589,7 @@ bool ReconstructPrim<Skeleton>(
 template <>
 bool ReconstructPrim<SkelAnimation>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     SkelAnimation *skelanim,
     std::string *warn,
@@ -3618,7 +3618,7 @@ bool ReconstructPrim<SkelAnimation>(
 template <>
 bool ReconstructPrim<BlendShape>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     BlendShape *bs,
     std::string *warn,
@@ -3660,7 +3660,7 @@ bool ReconstructPrim<BlendShape>(
 template <>
 bool ReconstructPrim(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     GPrim *gprim,
     std::string *warn,
@@ -3683,7 +3683,7 @@ bool ReconstructPrim(
 template <>
 bool ReconstructPrim(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     GeomBasisCurves *curves,
     std::string *warn,
@@ -3763,7 +3763,7 @@ bool ReconstructPrim(
 template <>
 bool ReconstructPrim(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     GeomNurbsCurves *curves,
     std::string *warn,
@@ -3806,7 +3806,7 @@ bool ReconstructPrim(
 template <>
 bool ReconstructPrim<SphereLight>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     SphereLight *light,
     std::string *warn,
@@ -3853,7 +3853,7 @@ bool ReconstructPrim<SphereLight>(
 template <>
 bool ReconstructPrim<RectLight>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     RectLight *light,
     std::string *warn,
@@ -3902,7 +3902,7 @@ bool ReconstructPrim<RectLight>(
 template <>
 bool ReconstructPrim<DiskLight>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     DiskLight *light,
     std::string *warn,
@@ -3950,7 +3950,7 @@ bool ReconstructPrim<DiskLight>(
 template <>
 bool ReconstructPrim<CylinderLight>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     CylinderLight *light,
     std::string *warn,
@@ -3994,7 +3994,7 @@ bool ReconstructPrim<CylinderLight>(
 template <>
 bool ReconstructPrim<DistantLight>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     DistantLight *light,
     std::string *warn,
@@ -4038,7 +4038,7 @@ bool ReconstructPrim<DistantLight>(
 template <>
 bool ReconstructPrim<DomeLight>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     DomeLight *light,
     std::string *warn,
@@ -4088,7 +4088,7 @@ bool ReconstructPrim<DomeLight>(
 template <>
 bool ReconstructPrim<GeomSphere>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     GeomSphere *sphere,
     std::string *warn,
@@ -4118,7 +4118,7 @@ bool ReconstructPrim<GeomSphere>(
 template <>
 bool ReconstructPrim<GeomPoints>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     GeomPoints *points,
     std::string *warn,
@@ -4154,7 +4154,7 @@ bool ReconstructPrim<GeomPoints>(
 template <>
 bool ReconstructPrim<GeomCone>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     GeomCone *cone,
     std::string *warn,
@@ -4185,7 +4185,7 @@ bool ReconstructPrim<GeomCone>(
 template <>
 bool ReconstructPrim<GeomCylinder>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     GeomCylinder *cylinder,
     std::string *warn,
@@ -4218,7 +4218,7 @@ bool ReconstructPrim<GeomCylinder>(
 template <>
 bool ReconstructPrim<GeomCapsule>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     GeomCapsule *capsule,
     std::string *warn,
@@ -4248,7 +4248,7 @@ bool ReconstructPrim<GeomCapsule>(
 template <>
 bool ReconstructPrim<GeomCube>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     GeomCube *cube,
     std::string *warn,
@@ -4280,7 +4280,7 @@ bool ReconstructPrim<GeomCube>(
 template <>
 bool ReconstructPrim<GeomMesh>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     GeomMesh *mesh,
     std::string *warn,
@@ -4357,7 +4357,7 @@ bool ReconstructPrim<GeomMesh>(
     return false;
   }
 
-  for (const auto &prop : properties) {
+  for (auto &prop : properties) {
     DCOUT("GeomMesh prop: " << prop.first);
     PARSE_SINGLE_TARGET_PATH_RELATION(table, prop, kSkelSkeleton, mesh->skeleton)
     PARSE_TARGET_PATHS_RELATION(table, prop, kSkelBlendShapeTargets, mesh->blendShapeTargets)
@@ -4416,6 +4416,7 @@ bool ReconstructPrim<GeomMesh>(
       }
     }
 
+    TUSDZ_LOG_I("add prop: " << prop.first);
     // generic
     ADD_PROPERTY(table, prop, GeomMesh, mesh->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
@@ -4429,7 +4430,7 @@ bool ReconstructPrim<GeomMesh>(
 template <>
 bool ReconstructPrim<GeomCamera>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     GeomCamera *camera,
     std::string *warn,
@@ -4530,7 +4531,7 @@ bool ReconstructPrim<GeomCamera>(
 template <>
 bool ReconstructPrim<GeomSubset>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     GeomSubset *subset,
     std::string *warn,
@@ -4579,7 +4580,7 @@ bool ReconstructPrim<GeomSubset>(
 template <>
 bool ReconstructPrim<GeomPointInstancer>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     GeomPointInstancer *instancer,
     std::string *warn,
@@ -4620,7 +4621,7 @@ bool ReconstructPrim<GeomPointInstancer>(
 template <>
 bool ReconstructShader<ShaderNode>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     ShaderNode *node,
     std::string *warn,
@@ -4653,7 +4654,7 @@ bool ReconstructShader<ShaderNode>(
 template <>
 bool ReconstructShader<UsdPreviewSurface>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     UsdPreviewSurface *surface,
     std::string *warn,
@@ -4725,7 +4726,7 @@ bool ReconstructShader<UsdPreviewSurface>(
 template <>
 bool ReconstructShader<UsdUVTexture>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     UsdUVTexture *texture,
     std::string *warn,
@@ -4802,7 +4803,7 @@ bool ReconstructShader<UsdUVTexture>(
 template <>
 bool ReconstructShader<UsdPrimvarReader_int>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_int *preader,
     std::string *warn,
@@ -4847,7 +4848,7 @@ bool ReconstructShader<UsdPrimvarReader_int>(
 template <>
 bool ReconstructShader<UsdPrimvarReader_float>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_float *preader,
     std::string *warn,
@@ -4902,7 +4903,7 @@ bool ReconstructShader<UsdPrimvarReader_float>(
 template <>
 bool ReconstructShader<UsdPrimvarReader_float2>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_float2 *preader,
     std::string *warn,
@@ -4959,7 +4960,7 @@ bool ReconstructShader<UsdPrimvarReader_float2>(
 template <>
 bool ReconstructShader<UsdPrimvarReader_float3>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_float3 *preader,
     std::string *warn,
@@ -5015,7 +5016,7 @@ bool ReconstructShader<UsdPrimvarReader_float3>(
 template <>
 bool ReconstructShader<UsdPrimvarReader_float4>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_float4 *preader,
     std::string *warn,
@@ -5071,7 +5072,7 @@ bool ReconstructShader<UsdPrimvarReader_float4>(
 template <>
 bool ReconstructShader<UsdPrimvarReader_string>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_string *preader,
     std::string *warn,
@@ -5127,7 +5128,7 @@ bool ReconstructShader<UsdPrimvarReader_string>(
 template <>
 bool ReconstructShader<UsdPrimvarReader_vector>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_vector *preader,
     std::string *warn,
@@ -5183,7 +5184,7 @@ bool ReconstructShader<UsdPrimvarReader_vector>(
 template <>
 bool ReconstructShader<UsdPrimvarReader_normal>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_normal *preader,
     std::string *warn,
@@ -5239,7 +5240,7 @@ bool ReconstructShader<UsdPrimvarReader_normal>(
 template <>
 bool ReconstructShader<UsdPrimvarReader_point>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_point *preader,
     std::string *warn,
@@ -5295,7 +5296,7 @@ bool ReconstructShader<UsdPrimvarReader_point>(
 template <>
 bool ReconstructShader<UsdPrimvarReader_matrix>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     UsdPrimvarReader_matrix *preader,
     std::string *warn,
@@ -5351,7 +5352,7 @@ bool ReconstructShader<UsdPrimvarReader_matrix>(
 template <>
 bool ReconstructShader<UsdTransform2d>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     UsdTransform2d *transform,
     std::string *warn,
@@ -5385,7 +5386,7 @@ bool ReconstructShader<UsdTransform2d>(
 template <>
 bool ReconstructPrim<Shader>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     Shader *shader,
     std::string *warn,
@@ -5559,7 +5560,7 @@ bool ReconstructPrim<Shader>(
 template <>
 bool ReconstructPrim<Material>(
     const Specifier &spec,
-    const PropertyMap &properties,
+    PropertyMap &properties,
     const ReferenceList &references,
     Material *material,
     std::string *warn,
@@ -5596,7 +5597,7 @@ bool ReconstructPrim<Material>(
 #define RECONSTRUCT_PRIM_PRIMSPEC_IMPL(__prim_ty) \
 template <> \
 bool ReconstructPrim<__prim_ty>( \
-    const PrimSpec &primspec, \
+    PrimSpec &primspec, \
     __prim_ty *prim, \
     std::string *warn, \
     std::string *err, \
