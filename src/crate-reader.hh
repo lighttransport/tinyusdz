@@ -360,30 +360,30 @@ class CrateReader {
     const std::vector<crate::ValueRep> &vreps,
     value::TimeSamples *d);
 
-  bool UnpackTimeSampleValue_BOOL(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
-  bool UnpackTimeSampleValue_INT32(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
-  bool UnpackTimeSampleValue_UINT32(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
-  bool UnpackTimeSampleValue_INT64(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
-  bool UnpackTimeSampleValue_UINT64(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
-  bool UnpackTimeSampleValue_HALF(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
-  bool UnpackTimeSampleValue_FLOAT(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
-  bool UnpackTimeSampleValue_DOUBLE(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
-  bool UnpackTimeSampleValue_HALF2(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
-  bool UnpackTimeSampleValue_HALF3(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
-  bool UnpackTimeSampleValue_HALF4(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
-  bool UnpackTimeSampleValue_FLOAT2(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
-  bool UnpackTimeSampleValue_FLOAT3(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
-  bool UnpackTimeSampleValue_FLOAT4(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
-  bool UnpackTimeSampleValue_DOUBLE2(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
-  bool UnpackTimeSampleValue_DOUBLE3(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
-  bool UnpackTimeSampleValue_DOUBLE4(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
-  bool UnpackTimeSampleValue_QUATH(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
-  bool UnpackTimeSampleValue_QUATF(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
-  bool UnpackTimeSampleValue_QUATD(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
-  bool UnpackTimeSampleValue_ASSET_PATH(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
-  bool UnpackTimeSampleValue_MATRIX2D(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
-  bool UnpackTimeSampleValue_MATRIX3D(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
-  bool UnpackTimeSampleValue_MATRIX4D(double t, const crate::ValueRep &rep, value::TimeSamples &dst);
+  bool UnpackTimeSampleValue_BOOL(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_INT32(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_UINT32(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_INT64(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_UINT64(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_HALF(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_FLOAT(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_DOUBLE(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_HALF2(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_HALF3(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_HALF4(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_FLOAT2(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_FLOAT3(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_FLOAT4(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_DOUBLE2(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_DOUBLE3(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_DOUBLE4(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_QUATH(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_QUATF(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_QUATD(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_ASSET_PATH(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_MATRIX2D(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_MATRIX3D(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_MATRIX4D(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
 
   // times(double[])
   bool UnpackTimeSampleTimes(const crate::ValueRep &rep, std::vector<double> &dst);
