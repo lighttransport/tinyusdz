@@ -227,9 +227,12 @@ struct ValueRep {
   bool operator==(ValueRep other) const { return data == other.data; }
   bool operator!=(ValueRep other) const { return !(*this == other); }
 
-  // friend inline size_t hash_value(ValueRep v) {
-  //  return static_cast<size_t>(v.data);
-  //}
+  // Hash function for use with unordered_map
+  struct Hash {
+    size_t operator()(const ValueRep& v) const {
+      return std::hash<uint64_t>{}(v.data);
+    }
+  };
 
   std::string GetStringRepr() const {
     std::stringstream ss;
