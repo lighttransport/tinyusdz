@@ -640,6 +640,224 @@ private:
 };
 
 ///
+/// PackedTypedArrayPtr: Optimized 64-bit storage for TypedArray<T> pointers
+///
+/// Memory layout:
+///   Bit 63 (MSB):    dedup/mmap flag (1 = shared/mmap, don't delete; 0 = owned, delete on destruction)
+///   Bits 0-47:       48-bit pointer to TypedArray<T> object (sufficient for x86-64 canonical addresses)
+///   Bits 48-62:      Reserved/unused (15 bits available for future use)
+///
+/// The 48-bit pointer is sufficient because:
+/// - x86-64 CPUs use canonical addresses with only 48 bits of virtual address space
+/// - ARM64 typically uses 48-52 bits (VA_BITS), with 48 being most common
+///
+/// Usage:
+///   - When dedup flag is set (1): The pointer is shared/memory-mapped and will NOT be deleted
+///   - When dedup flag is clear (0): The pointer is owned and WILL be deleted on destruction
+///
+template<typename T>
+class PackedTypedArrayPtr {
+public:
+    // Default constructor - creates null pointer
+    PackedTypedArrayPtr() noexcept : _packed_data(0) {}
+
+    // Constructor from pointer with optional dedup flag
+    // ptr: pointer to TypedArray<T> to manage
+    // dedup_flag: if true, marks as shared/mmap (won't delete); if false, takes ownership (will delete)
+    explicit PackedTypedArrayPtr(TypedArray<T>* ptr, bool dedup_flag = false) noexcept : _packed_data(0) {
+        reset(ptr, dedup_flag);
+    }
+
+    // Destructor - conditionally deletes based on dedup flag
+    ~PackedTypedArrayPtr() {
+        if (!is_dedup() && get() != nullptr) {
+            delete get();
+        }
+    }
+
+    // Copy constructor - performs shallow copy (copies pointer and flag)
+    // WARNING: Both instances will point to the same TypedArray!
+    // If source is owned (not dedup), the copy will be marked as dedup to prevent double-free
+    PackedTypedArrayPtr(const PackedTypedArrayPtr& other) noexcept : _packed_data(0) {
+        if (other.is_dedup()) {
+            // Source is shared/mmap - safe to copy as-is
+            _packed_data = other._packed_data;
+        } else {
+            // Source is owned - mark copy as dedup to prevent double deletion
+            TypedArray<T>* ptr = other.get();
+            reset(ptr, true);  // Mark as dedup
+        }
+    }
+
+    // Move constructor - transfers ownership
+    PackedTypedArrayPtr(PackedTypedArrayPtr&& other) noexcept
+        : _packed_data(other._packed_data) {
+        other._packed_data = 0;  // Reset source to null
+    }
+
+    // Copy assignment - performs shallow copy
+    PackedTypedArrayPtr& operator=(const PackedTypedArrayPtr& other) noexcept {
+        if (this != &other) {
+            // Delete current resource if owned
+            if (!is_dedup() && get() != nullptr) {
+                delete get();
+            }
+
+            // Copy from other
+            if (other.is_dedup()) {
+                _packed_data = other._packed_data;
+            } else {
+                // Source is owned - mark copy as dedup
+                reset(other.get(), true);
+            }
+        }
+        return *this;
+    }
+
+    // Move assignment - transfers ownership
+    PackedTypedArrayPtr& operator=(PackedTypedArrayPtr&& other) noexcept {
+        if (this != &other) {
+            // Delete current resource if owned
+            if (!is_dedup() && get() != nullptr) {
+                delete get();
+            }
+
+            // Move from other
+            _packed_data = other._packed_data;
+            other._packed_data = 0;
+        }
+        return *this;
+    }
+
+    // Check if this is a dedup/mmap pointer (won't be deleted)
+    bool is_dedup() const noexcept {
+        return (_packed_data & DEDUP_FLAG_BIT) != 0;
+    }
+
+    // Set the dedup flag
+    void set_dedup(bool dedup) noexcept {
+        if (dedup) {
+            _packed_data |= DEDUP_FLAG_BIT;
+        } else {
+            _packed_data &= ~DEDUP_FLAG_BIT;
+        }
+    }
+
+    // Get the raw pointer
+    TypedArray<T>* get() const noexcept {
+        uint64_t ptr_bits = _packed_data & PTR_MASK;
+
+        // Sign-extend from 48 bits to 64 bits for canonical address
+        // If bit 47 is set, we need to set bits 48-63 to maintain canonical form
+        if (ptr_bits & (1ULL << 47)) {
+            ptr_bits |= 0xFFFF000000000000ULL;
+        }
+
+        return reinterpret_cast<TypedArray<T>*>(ptr_bits);
+    }
+
+    // Pointer dereference operators
+    TypedArray<T>* operator->() const noexcept {
+        return get();
+    }
+
+    TypedArray<T>& operator*() const noexcept {
+        return *get();
+    }
+
+    // Check if pointer is null
+    bool is_null() const noexcept {
+        return ((_packed_data & PTR_MASK) == 0);
+    }
+
+    // Explicit bool conversion
+    explicit operator bool() const noexcept {
+        return !is_null();
+    }
+
+    // Reset to new pointer with optional dedup flag
+    // Deletes current pointer if owned
+    void reset(TypedArray<T>* ptr = nullptr, bool dedup_flag = false) noexcept {
+        // Delete current resource if owned
+        if (!is_dedup() && get() != nullptr) {
+            delete get();
+        }
+
+        // Pack new pointer and flag
+        if (ptr == nullptr) {
+            _packed_data = 0;
+        } else {
+            uint64_t ptr_value = reinterpret_cast<uint64_t>(ptr);
+
+            // Ensure pointer fits in 48 bits (canonical address check)
+            // Valid x86-64 canonical addresses have either:
+            // - Bits 63-47 all 0 (user space: 0x0000'0000'0000'0000 - 0x0000'7FFF'FFFF'FFFF)
+            // - Bits 63-47 all 1 (kernel space: 0xFFFF'8000'0000'0000 - 0xFFFF'FFFF'FFFF'FFFF)
+            assert((ptr_value & PTR_MASK) == ptr_value ||
+                   (ptr_value & 0xFFFF800000000000ULL) == 0xFFFF800000000000ULL);
+
+            // Store only the lower 48 bits
+            _packed_data = ptr_value & PTR_MASK;
+
+            // Set dedup flag if requested
+            if (dedup_flag) {
+                _packed_data |= DEDUP_FLAG_BIT;
+            }
+        }
+    }
+
+    // Release ownership without deleting
+    // Returns the pointer and clears this instance
+    TypedArray<T>* release() noexcept {
+        TypedArray<T>* ptr = get();
+        _packed_data = 0;
+        return ptr;
+    }
+
+    // Get the raw packed 64-bit value (for debugging/serialization)
+    uint64_t get_packed_value() const noexcept {
+        return _packed_data;
+    }
+
+    // Comparison operators
+    bool operator==(const PackedTypedArrayPtr& other) const noexcept {
+        return get() == other.get();
+    }
+
+    bool operator!=(const PackedTypedArrayPtr& other) const noexcept {
+        return get() != other.get();
+    }
+
+    bool operator==(std::nullptr_t) const noexcept {
+        return is_null();
+    }
+
+    bool operator!=(std::nullptr_t) const noexcept {
+        return !is_null();
+    }
+
+private:
+    uint64_t _packed_data;  // Packed pointer (48 bits) + dedup flag (1 bit) + reserved (15 bits)
+
+    // Bit layout constants
+    static constexpr uint64_t DEDUP_FLAG_BIT = 1ULL << 63;        // MSB: dedup/mmap flag
+    static constexpr uint64_t PTR_MASK = 0x0000FFFFFFFFFFFFULL;   // Lower 48 bits: pointer
+    static constexpr uint64_t RESERVED_MASK = 0x7FFF000000000000ULL;  // Bits 48-62: reserved
+};
+
+// Helper function to create owned PackedTypedArrayPtr
+template<typename T>
+PackedTypedArrayPtr<T> make_packed_array_ptr(TypedArray<T>* ptr) {
+    return PackedTypedArrayPtr<T>(ptr, false);
+}
+
+// Helper function to create dedup/mmap PackedTypedArrayPtr
+template<typename T>
+PackedTypedArrayPtr<T> make_packed_array_ptr_dedup(TypedArray<T>* ptr) {
+    return PackedTypedArrayPtr<T>(ptr, true);
+}
+
+///
 /// TypedArrayView: A lightweight view over typed data using nonstd::span
 /// Provides zero-copy access to data stored in various containers
 ///
