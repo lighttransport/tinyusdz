@@ -637,9 +637,20 @@ bool CrateReader::UnpackTimeSampleValue_BOOL(double t,
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
-    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
 
-    bool val = data ? true : false;
+    // Check deduplication cache first
+    auto it = _dedup_bool.find(rep);
+    bool val;
+    if (it != _dedup_bool.end()) {
+      // Reuse cached value
+      val = it->second;
+      DCOUT("Reusing cached BOOL value for ValueRep");
+    } else {
+      // Decode and cache
+      uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+      val = data ? true : false;
+      _dedup_bool[rep] = val;
+    }
 
     if (!add_sample_to_timesamples<bool>(&dst, t, val, &_err,
                                          expected_total_samples)) {
@@ -703,10 +714,20 @@ bool CrateReader::UnpackTimeSampleValue_INT32(double t,
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
-    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
 
+    // Check deduplication cache first
+    auto it = _dedup_int32.find(rep);
     int32_t val;
-    memcpy(&val, &data, sizeof(int32_t));
+    if (it != _dedup_int32.end()) {
+      // Reuse cached value
+      val = it->second;
+      DCOUT("Reusing cached INT32 value for ValueRep");
+    } else {
+      // Decode and cache
+      uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+      memcpy(&val, &data, sizeof(int32_t));
+      _dedup_int32[rep] = val;
+    }
 
     if (!add_sample_to_timesamples<int32_t>(&dst, t, val, &_err,
                                             expected_total_samples)) {
@@ -721,13 +742,25 @@ bool CrateReader::UnpackTimeSampleValue_INT32(double t,
       }
       return true;
     }
-    if (!ReadIntArray(rep.IsCompressed(), &v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Int array.");
-    }
 
-    if (v.empty()) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Empty int array.");
-      return false;
+    // Check deduplication cache for array
+    auto it = _dedup_int32_array.find(rep);
+    if (it != _dedup_int32_array.end()) {
+      // Reuse cached array
+      v = it->second;
+      DCOUT("Reusing cached INT32 array for ValueRep, size=" << v.size());
+    } else {
+      // Read and cache array
+      if (!ReadIntArray(rep.IsCompressed(), &v)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Int array.");
+      }
+
+      if (v.empty()) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Empty int array.");
+        return false;
+      }
+
+      _dedup_int32_array[rep] = v;
     }
 
     if (!add_array_sample_to_timesamples<int32_t>(&dst, t, v, &_err,
@@ -773,10 +806,20 @@ bool CrateReader::UnpackTimeSampleValue_HALF(double t,
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
-    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
 
+    // Check deduplication cache first
+    auto it = _dedup_half.find(rep);
     value::half f;
-    memcpy(&f, &data, sizeof(value::half));
+    if (it != _dedup_half.end()) {
+      // Reuse cached value
+      f = it->second;
+      DCOUT("Reusing cached HALF value for ValueRep");
+    } else {
+      // Decode and cache
+      uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+      memcpy(&f, &data, sizeof(value::half));
+      _dedup_half[rep] = f;
+    }
 
     if (!add_sample_to_timesamples<value::half>(&dst, t, f, &_err,
                                                 expected_total_samples)) {
@@ -792,15 +835,27 @@ bool CrateReader::UnpackTimeSampleValue_HALF(double t,
       }
       return true;
     }
-    if (!ReadHalfArray(rep.IsCompressed(), &v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Int array.");
-    }
 
-    DCOUT("timeSamples.HALF " << value::print_array_snipped(v));
+    // Check deduplication cache for array
+    auto it = _dedup_half_array.find(rep);
+    if (it != _dedup_half_array.end()) {
+      // Reuse cached array
+      v = it->second;
+      DCOUT("Reusing cached HALF array for ValueRep, size=" << v.size());
+    } else {
+      // Read and cache array
+      if (!ReadHalfArray(rep.IsCompressed(), &v)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Int array.");
+      }
 
-    if (v.empty()) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Empty half array.");
-      return false;
+      DCOUT("timeSamples.HALF " << value::print_array_snipped(v));
+
+      if (v.empty()) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Empty half array.");
+        return false;
+      }
+
+      _dedup_half_array[rep] = v;
     }
 
     if (!add_array_sample_to_timesamples<value::half>(&dst, t, v, &_err,
@@ -846,16 +901,25 @@ bool CrateReader::UnpackTimeSampleValue_HALF2(double t,
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
-    uint32_t vdata =
-        (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
 
-    // Value is represented in int8
-    int8_t data[2];
-    memcpy(&data, &vdata, 2);
-
+    // Check deduplication cache first
+    auto it = _dedup_half2.find(rep);
     value::half2 v;
-    v[0] = value::float_to_half_full(float(data[0]));
-    v[1] = value::float_to_half_full(float(data[1]));
+    if (it != _dedup_half2.end()) {
+      // Reuse cached value
+      v = it->second;
+      DCOUT("Reusing cached HALF2 value for ValueRep");
+    } else {
+      // Decode and cache
+      uint32_t vdata =
+          (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+      // Value is represented in int8
+      int8_t data[2];
+      memcpy(&data, &vdata, 2);
+      v[0] = value::float_to_half_full(float(data[0]));
+      v[1] = value::float_to_half_full(float(data[1]));
+      _dedup_half2[rep] = v;
+    }
 
     DCOUT("value.half2 = " << v);
 
@@ -878,11 +942,21 @@ bool CrateReader::UnpackTimeSampleValue_HALF2(double t,
       }
       return true;
     }
-    if (!ReadArray(&v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read vec2 array.");
-    }
 
-    DCOUT("timeSamples.VEC2H " << value::print_array_snipped(v));
+    // Check deduplication cache for array
+    auto it = _dedup_half2_array.find(rep);
+    if (it != _dedup_half2_array.end()) {
+      // Reuse cached array
+      v = it->second;
+      DCOUT("Reusing cached HALF2 array for ValueRep, size=" << v.size());
+    } else {
+      // Read and cache array
+      if (!ReadArray(&v)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read vec2 array.");
+      }
+      DCOUT("timeSamples.VEC2H " << value::print_array_snipped(v));
+      _dedup_half2_array[rep] = v;
+    }
 
     if (!add_array_sample_to_timesamples<value::half2>(
             &dst, t, v, &_err, expected_total_samples)) {
@@ -927,17 +1001,26 @@ bool CrateReader::UnpackTimeSampleValue_HALF3(double t,
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
-    uint32_t vdata =
-        (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
 
-    // Value is represented in int8
-    int8_t data[3];
-    memcpy(&data, &vdata, 3);
-
+    // Check deduplication cache first
+    auto it = _dedup_half3.find(rep);
     value::half3 v;
-    v[0] = value::float_to_half_full(float(data[0]));
-    v[1] = value::float_to_half_full(float(data[1]));
-    v[2] = value::float_to_half_full(float(data[2]));
+    if (it != _dedup_half3.end()) {
+      // Reuse cached value
+      v = it->second;
+      DCOUT("Reusing cached HALF3 value for ValueRep");
+    } else {
+      // Decode and cache
+      uint32_t vdata =
+          (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+      // Value is represented in int8
+      int8_t data[3];
+      memcpy(&data, &vdata, 3);
+      v[0] = value::float_to_half_full(float(data[0]));
+      v[1] = value::float_to_half_full(float(data[1]));
+      v[2] = value::float_to_half_full(float(data[2]));
+      _dedup_half3[rep] = v;
+    }
 
     DCOUT("value.half3 = " << v);
 
@@ -960,11 +1043,21 @@ bool CrateReader::UnpackTimeSampleValue_HALF3(double t,
       }
       return true;
     }
-    if (!ReadArray(&v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read vec3 array.");
-    }
 
-    DCOUT("timeSamples.VEC3H " << value::print_array_snipped(v));
+    // Check deduplication cache for array
+    auto it = _dedup_half3_array.find(rep);
+    if (it != _dedup_half3_array.end()) {
+      // Reuse cached array
+      v = it->second;
+      DCOUT("Reusing cached HALF3 array for ValueRep, size=" << v.size());
+    } else {
+      // Read and cache array
+      if (!ReadArray(&v)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read vec3 array.");
+      }
+      DCOUT("timeSamples.VEC3H " << value::print_array_snipped(v));
+      _dedup_half3_array[rep] = v;
+    }
 
     if (!add_array_sample_to_timesamples<value::half3>(
             &dst, t, v, &_err, expected_total_samples)) {
@@ -1009,18 +1102,27 @@ bool CrateReader::UnpackTimeSampleValue_HALF4(double t,
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
-    uint32_t vdata =
-        (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
 
-    // Value is represented in int8
-    int8_t data[4];
-    memcpy(&data, &vdata, 4);
-
+    // Check deduplication cache first
+    auto it = _dedup_half4.find(rep);
     value::half4 v;
-    v[0] = value::float_to_half_full(float(data[0]));
-    v[1] = value::float_to_half_full(float(data[1]));
-    v[2] = value::float_to_half_full(float(data[2]));
-    v[3] = value::float_to_half_full(float(data[3]));
+    if (it != _dedup_half4.end()) {
+      // Reuse cached value
+      v = it->second;
+      DCOUT("Reusing cached HALF4 value for ValueRep");
+    } else {
+      // Decode and cache
+      uint32_t vdata =
+          (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+      // Value is represented in int8
+      int8_t data[4];
+      memcpy(&data, &vdata, 4);
+      v[0] = value::float_to_half_full(float(data[0]));
+      v[1] = value::float_to_half_full(float(data[1]));
+      v[2] = value::float_to_half_full(float(data[2]));
+      v[3] = value::float_to_half_full(float(data[3]));
+      _dedup_half4[rep] = v;
+    }
 
     DCOUT("value.half4 = " << v);
 
@@ -1043,11 +1145,21 @@ bool CrateReader::UnpackTimeSampleValue_HALF4(double t,
       }
       return true;
     }
-    if (!ReadArray(&v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read vec4 array.");
-    }
 
-    DCOUT("timeSamples.VEC3H " << value::print_array_snipped(v));
+    // Check deduplication cache for array
+    auto it = _dedup_half4_array.find(rep);
+    if (it != _dedup_half4_array.end()) {
+      // Reuse cached array
+      v = it->second;
+      DCOUT("Reusing cached HALF4 array for ValueRep, size=" << v.size());
+    } else {
+      // Read and cache array
+      if (!ReadArray(&v)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read vec4 array.");
+      }
+      DCOUT("timeSamples.VEC3H " << value::print_array_snipped(v));
+      _dedup_half4_array[rep] = v;
+    }
 
     if (!add_array_sample_to_timesamples<value::half4>(
             &dst, t, v, &_err, expected_total_samples)) {
@@ -1092,10 +1204,20 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT(double t,
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
-    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
 
+    // Check deduplication cache first
+    auto it = _dedup_float.find(rep);
     float val;
-    memcpy(&val, &data, sizeof(float));
+    if (it != _dedup_float.end()) {
+      // Reuse cached value
+      val = it->second;
+      DCOUT("Reusing cached FLOAT value for ValueRep");
+    } else {
+      // Decode and cache
+      uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+      memcpy(&val, &data, sizeof(float));
+      _dedup_float[rep] = val;
+    }
 
     if (!add_sample_to_timesamples<float>(&dst, t, val, &_err,
                                           expected_total_samples)) {
@@ -1111,15 +1233,27 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT(double t,
       }
       return true;
     }
-    if (!ReadFloatArray(rep.IsCompressed(), &v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Int array.");
-    }
 
-    DCOUT("timeSamples.FLOAT " << value::print_array_snipped(v));
+    // Check deduplication cache for array
+    auto it = _dedup_float_array.find(rep);
+    if (it != _dedup_float_array.end()) {
+      // Reuse cached array
+      v = it->second;
+      DCOUT("Reusing cached FLOAT array for ValueRep, size=" << v.size());
+    } else {
+      // Read and cache array
+      if (!ReadFloatArray(rep.IsCompressed(), &v)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Float array.");
+      }
 
-    if (v.empty()) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Empty int array.");
-      return false;
+      DCOUT("timeSamples.FLOAT " << value::print_array_snipped(v));
+
+      if (v.empty()) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Empty float array.");
+        return false;
+      }
+
+      _dedup_float_array[rep] = v;
     }
 
     if (!add_array_sample_to_timesamples<float>(&dst, t, v, &_err,
@@ -1165,15 +1299,27 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT2(double t,
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
-    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
 
-    // Value is represented in int8
-    int8_t vdata[2];
-    memcpy(&vdata, &data, 2);
-
+    // Check deduplication cache first
+    auto it = _dedup_float2.find(rep);
     value::float2 v;
-    v[0] = float(vdata[0]);
-    v[1] = float(vdata[1]);
+    if (it != _dedup_float2.end()) {
+      // Reuse cached value
+      v = it->second;
+      DCOUT("Reusing cached FLOAT2 value for ValueRep");
+    } else {
+      // Decode and cache
+      uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+
+      // Value is represented in int8
+      int8_t vdata[2];
+      memcpy(&vdata, &data, 2);
+
+      v[0] = float(vdata[0]);
+      v[1] = float(vdata[1]);
+
+      _dedup_float2[rep] = v;
+    }
 
     DCOUT("value.float2 = " << v);
 
@@ -1196,11 +1342,23 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT2(double t,
       }
       return true;
     }
-    if (!ReadArray(&v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read vec2 array.");
-    }
 
-    DCOUT("timeSamples.FLOAT " << value::print_array_snipped(v));
+    // Check deduplication cache for array
+    auto it = _dedup_float2_array.find(rep);
+    if (it != _dedup_float2_array.end()) {
+      // Reuse cached array
+      v = it->second;
+      DCOUT("Reusing cached FLOAT2 array for ValueRep, size=" << v.size());
+    } else {
+      // Read and cache array
+      if (!ReadArray(&v)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read vec2 array.");
+      }
+
+      DCOUT("timeSamples.FLOAT2 " << value::print_array_snipped(v));
+
+      _dedup_float2_array[rep] = v;
+    }
 
     if (!add_array_sample_to_timesamples<value::float2>(
             &dst, t, v, &_err, expected_total_samples)) {
@@ -1210,7 +1368,7 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT2(double t,
   } else {
     // Non-array value is not supported
 
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-array value for float is invalid.");
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-array value for float2 is invalid.");
   }
 
   return true;
@@ -1255,11 +1413,21 @@ bool CrateReader::UnpackTimeSampleValue_QUATF(double t,
       }
       return true;
     }
-    if (!ReadArray(&v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read quatf array.");
-    }
 
-    DCOUT("timeSamples.QUATF " << value::print_array_snipped(v));
+    // Check deduplication cache for array
+    auto it = _dedup_quatf_array.find(rep);
+    if (it != _dedup_quatf_array.end()) {
+      // Reuse cached array
+      v = it->second;
+      DCOUT("Reusing cached QUATF array for ValueRep, size=" << v.size());
+    } else {
+      // Read and cache array
+      if (!ReadArray(&v)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read quatf array.");
+      }
+      DCOUT("timeSamples.QUATF " << value::print_array_snipped(v));
+      _dedup_quatf_array[rep] = v;
+    }
 
     if (!add_array_sample_to_timesamples<value::quatf>(
             &dst, t, v, &_err, expected_total_samples)) {
@@ -1371,15 +1539,25 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT3(double t,
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
-    // Value is represented in int8
-    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-    int8_t vdata[3];
-    memcpy(&vdata, &data, 3);
 
+    // Check deduplication cache first
+    auto it = _dedup_float3.find(rep);
     value::float3 val;
-    val[0] = float(vdata[0]);
-    val[1] = float(vdata[1]);
-    val[2] = float(vdata[2]);
+    if (it != _dedup_float3.end()) {
+      // Reuse cached value
+      val = it->second;
+      DCOUT("Reusing cached FLOAT3 value for ValueRep");
+    } else {
+      // Decode and cache
+      // Value is represented in int8
+      uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+      int8_t vdata[3];
+      memcpy(&vdata, &data, 3);
+      val[0] = float(vdata[0]);
+      val[1] = float(vdata[1]);
+      val[2] = float(vdata[2]);
+      _dedup_float3[rep] = val;
+    }
 
     if (!add_sample_to_timesamples<value::float3>(&dst, t, val, &_err,
                                                   expected_total_samples)) {
@@ -1399,8 +1577,19 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT3(double t,
       }
       return true;
     }
-    if (!ReadArray(&v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read float3 array.");
+
+    // Check deduplication cache for array
+    auto it = _dedup_float3_array.find(rep);
+    if (it != _dedup_float3_array.end()) {
+      // Reuse cached array
+      v = it->second;
+      DCOUT("Reusing cached FLOAT3 array for ValueRep, size=" << v.size());
+    } else {
+      // Read and cache array
+      if (!ReadArray(&v)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read float3 array.");
+      }
+      _dedup_float3_array[rep] = v;
     }
 
     if (!add_array_sample_to_timesamples<value::float3>(
@@ -1413,14 +1602,23 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT3(double t,
           kTag, "Compressed float3 not supported for TimeSamples.");
     }
 
-    CHECK_MEMORY_USAGE(sizeof(value::float3));
+    // Check deduplication cache for scalar value read from stream
+    auto it = _dedup_float3.find(rep);
     value::float3 v;
-    if (!_sr->read(sizeof(value::float3), sizeof(value::float3),
-                   reinterpret_cast<uint8_t *>(&v))) {
-      PUSH_ERROR_AND_RETURN("Failed to read float3");
+    if (it != _dedup_float3.end()) {
+      // Reuse cached value
+      v = it->second;
+      DCOUT("Reusing cached FLOAT3 scalar value for ValueRep");
+    } else {
+      // Read and cache scalar value
+      CHECK_MEMORY_USAGE(sizeof(value::float3));
+      if (!_sr->read(sizeof(value::float3), sizeof(value::float3),
+                     reinterpret_cast<uint8_t *>(&v))) {
+        PUSH_ERROR_AND_RETURN("Failed to read float3");
+      }
+      DCOUT("float3 = " << v);
+      _dedup_float3[rep] = v;
     }
-
-    DCOUT("float3 = " << v);
 
     if (!add_sample_to_timesamples<value::float3>(&dst, t, v, &_err,
                                                   expected_total_samples)) {
@@ -1459,16 +1657,26 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT4(double t,
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
-    // Value is represented in int8
-    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-    int8_t vdata[4];
-    memcpy(&vdata, &data, 4);
 
+    // Check deduplication cache first
+    auto it = _dedup_float4.find(rep);
     value::float4 val;
-    val[0] = float(vdata[0]);
-    val[1] = float(vdata[1]);
-    val[2] = float(vdata[2]);
-    val[3] = float(vdata[3]);
+    if (it != _dedup_float4.end()) {
+      // Reuse cached value
+      val = it->second;
+      DCOUT("Reusing cached FLOAT4 value for ValueRep");
+    } else {
+      // Decode and cache
+      // Value is represented in int8
+      uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+      int8_t vdata[4];
+      memcpy(&vdata, &data, 4);
+      val[0] = float(vdata[0]);
+      val[1] = float(vdata[1]);
+      val[2] = float(vdata[2]);
+      val[3] = float(vdata[3]);
+      _dedup_float4[rep] = val;
+    }
 
     if (!add_sample_to_timesamples<value::float4>(&dst, t, val, &_err,
                                                   expected_total_samples)) {
@@ -1488,8 +1696,19 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT4(double t,
       }
       return true;
     }
-    if (!ReadArray(&v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read float4 array.");
+
+    // Check deduplication cache for array
+    auto it = _dedup_float4_array.find(rep);
+    if (it != _dedup_float4_array.end()) {
+      // Reuse cached array
+      v = it->second;
+      DCOUT("Reusing cached FLOAT4 array for ValueRep, size=" << v.size());
+    } else {
+      // Read and cache array
+      if (!ReadArray(&v)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read float4 array.");
+      }
+      _dedup_float4_array[rep] = v;
     }
 
     if (!add_array_sample_to_timesamples<value::float4>(
@@ -1502,14 +1721,23 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT4(double t,
           kTag, "Compressed float4 not supported for TimeSamples.");
     }
 
-    CHECK_MEMORY_USAGE(sizeof(value::float4));
+    // Check deduplication cache for scalar value read from stream
+    auto it = _dedup_float4.find(rep);
     value::float4 v;
-    if (!_sr->read(sizeof(value::float4), sizeof(value::float4),
-                   reinterpret_cast<uint8_t *>(&v))) {
-      PUSH_ERROR_AND_RETURN("Failed to read float4");
+    if (it != _dedup_float4.end()) {
+      // Reuse cached value
+      v = it->second;
+      DCOUT("Reusing cached FLOAT4 scalar value for ValueRep");
+    } else {
+      // Read and cache scalar value
+      CHECK_MEMORY_USAGE(sizeof(value::float4));
+      if (!_sr->read(sizeof(value::float4), sizeof(value::float4),
+                     reinterpret_cast<uint8_t *>(&v))) {
+        PUSH_ERROR_AND_RETURN("Failed to read float4");
+      }
+      DCOUT("float4 = " << v);
+      _dedup_float4[rep] = v;
     }
-
-    DCOUT("float4 = " << v);
 
     if (!add_sample_to_timesamples<value::float4>(&dst, t, v, &_err,
                                                   expected_total_samples)) {
@@ -1548,14 +1776,24 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE2(double t,
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
-    // Value is represented in int8
-    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-    int8_t vdata[2];
-    memcpy(&vdata, &data, 2);
 
+    // Check deduplication cache first
+    auto it = _dedup_double2.find(rep);
     value::double2 val;
-    val[0] = double(vdata[0]);
-    val[1] = double(vdata[1]);
+    if (it != _dedup_double2.end()) {
+      // Reuse cached value
+      val = it->second;
+      DCOUT("Reusing cached DOUBLE2 value for ValueRep");
+    } else {
+      // Decode and cache
+      // Value is represented in int8
+      uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+      int8_t vdata[2];
+      memcpy(&vdata, &data, 2);
+      val[0] = double(vdata[0]);
+      val[1] = double(vdata[1]);
+      _dedup_double2[rep] = val;
+    }
 
     if (!add_sample_to_timesamples<value::double2>(&dst, t, val, &_err,
                                                    expected_total_samples)) {
@@ -1575,8 +1813,19 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE2(double t,
       }
       return true;
     }
-    if (!ReadArray(&v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read double2 array.");
+
+    // Check deduplication cache for array
+    auto it = _dedup_double2_array.find(rep);
+    if (it != _dedup_double2_array.end()) {
+      // Reuse cached array
+      v = it->second;
+      DCOUT("Reusing cached DOUBLE2 array for ValueRep, size=" << v.size());
+    } else {
+      // Read and cache array
+      if (!ReadArray(&v)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read double2 array.");
+      }
+      _dedup_double2_array[rep] = v;
     }
 
     if (!add_array_sample_to_timesamples<value::double2>(
@@ -1589,14 +1838,23 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE2(double t,
           kTag, "Compressed double2 not supported for TimeSamples.");
     }
 
-    CHECK_MEMORY_USAGE(sizeof(value::double2));
+    // Check deduplication cache for scalar value read from stream
+    auto it = _dedup_double2.find(rep);
     value::double2 v;
-    if (!_sr->read(sizeof(value::double2), sizeof(value::double2),
-                   reinterpret_cast<uint8_t *>(&v))) {
-      PUSH_ERROR_AND_RETURN("Failed to read double2");
+    if (it != _dedup_double2.end()) {
+      // Reuse cached value
+      v = it->second;
+      DCOUT("Reusing cached DOUBLE2 scalar value for ValueRep");
+    } else {
+      // Read and cache scalar value
+      CHECK_MEMORY_USAGE(sizeof(value::double2));
+      if (!_sr->read(sizeof(value::double2), sizeof(value::double2),
+                     reinterpret_cast<uint8_t *>(&v))) {
+        PUSH_ERROR_AND_RETURN("Failed to read double2");
+      }
+      DCOUT("double2 = " << v);
+      _dedup_double2[rep] = v;
     }
-
-    DCOUT("double2 = " << v);
 
     if (!add_sample_to_timesamples<value::double2>(&dst, t, v, &_err,
                                                    expected_total_samples)) {
@@ -1635,15 +1893,25 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE3(double t,
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
-    // Value is represented in int8
-    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-    int8_t vdata[3];
-    memcpy(&vdata, &data, 3);
 
+    // Check deduplication cache first
+    auto it = _dedup_double3.find(rep);
     value::double3 val;
-    val[0] = double(vdata[0]);
-    val[1] = double(vdata[1]);
-    val[2] = double(vdata[2]);
+    if (it != _dedup_double3.end()) {
+      // Reuse cached value
+      val = it->second;
+      DCOUT("Reusing cached DOUBLE3 value for ValueRep");
+    } else {
+      // Decode and cache
+      // Value is represented in int8
+      uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+      int8_t vdata[3];
+      memcpy(&vdata, &data, 3);
+      val[0] = double(vdata[0]);
+      val[1] = double(vdata[1]);
+      val[2] = double(vdata[2]);
+      _dedup_double3[rep] = val;
+    }
 
     if (!add_sample_to_timesamples<value::double3>(&dst, t, val, &_err,
                                                    expected_total_samples)) {
@@ -1663,8 +1931,19 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE3(double t,
       }
       return true;
     }
-    if (!ReadArray(&v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read double3 array.");
+
+    // Check deduplication cache for array
+    auto it = _dedup_double3_array.find(rep);
+    if (it != _dedup_double3_array.end()) {
+      // Reuse cached array
+      v = it->second;
+      DCOUT("Reusing cached DOUBLE3 array for ValueRep, size=" << v.size());
+    } else {
+      // Read and cache array
+      if (!ReadArray(&v)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read double3 array.");
+      }
+      _dedup_double3_array[rep] = v;
     }
 
     if (!add_array_sample_to_timesamples<value::double3>(
@@ -1677,14 +1956,23 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE3(double t,
           kTag, "Compressed double3 not supported for TimeSamples.");
     }
 
-    CHECK_MEMORY_USAGE(sizeof(value::double3));
+    // Check deduplication cache for scalar value read from stream
+    auto it = _dedup_double3.find(rep);
     value::double3 v;
-    if (!_sr->read(sizeof(value::double3), sizeof(value::double3),
-                   reinterpret_cast<uint8_t *>(&v))) {
-      PUSH_ERROR_AND_RETURN("Failed to read double3");
+    if (it != _dedup_double3.end()) {
+      // Reuse cached value
+      v = it->second;
+      DCOUT("Reusing cached DOUBLE3 scalar value for ValueRep");
+    } else {
+      // Read and cache scalar value
+      CHECK_MEMORY_USAGE(sizeof(value::double3));
+      if (!_sr->read(sizeof(value::double3), sizeof(value::double3),
+                     reinterpret_cast<uint8_t *>(&v))) {
+        PUSH_ERROR_AND_RETURN("Failed to read double3");
+      }
+      DCOUT("double3 = " << v);
+      _dedup_double3[rep] = v;
     }
-
-    DCOUT("double3 = " << v);
 
     if (!add_sample_to_timesamples<value::double3>(&dst, t, v, &_err,
                                                    expected_total_samples)) {
@@ -1723,16 +2011,26 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE4(double t,
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
-    // Value is represented in int8
-    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-    int8_t vdata[4];
-    memcpy(&vdata, &data, 4);
 
+    // Check deduplication cache first
+    auto it = _dedup_double4.find(rep);
     value::double4 val;
-    val[0] = static_cast<double>(vdata[0]);
-    val[1] = static_cast<double>(vdata[1]);
-    val[2] = static_cast<double>(vdata[2]);
-    val[3] = static_cast<double>(vdata[3]);
+    if (it != _dedup_double4.end()) {
+      // Reuse cached value
+      val = it->second;
+      DCOUT("Reusing cached DOUBLE4 value for ValueRep");
+    } else {
+      // Decode and cache
+      // Value is represented in int8
+      uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+      int8_t vdata[4];
+      memcpy(&vdata, &data, 4);
+      val[0] = static_cast<double>(vdata[0]);
+      val[1] = static_cast<double>(vdata[1]);
+      val[2] = static_cast<double>(vdata[2]);
+      val[3] = static_cast<double>(vdata[3]);
+      _dedup_double4[rep] = val;
+    }
 
     if (!add_sample_to_timesamples<value::double4>(&dst, t, val, &_err,
                                                    expected_total_samples)) {
@@ -1752,8 +2050,19 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE4(double t,
       }
       return true;
     }
-    if (!ReadArray(&v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read double4 array.");
+
+    // Check deduplication cache for array
+    auto it = _dedup_double4_array.find(rep);
+    if (it != _dedup_double4_array.end()) {
+      // Reuse cached array
+      v = it->second;
+      DCOUT("Reusing cached DOUBLE4 array for ValueRep, size=" << v.size());
+    } else {
+      // Read and cache array
+      if (!ReadArray(&v)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read double4 array.");
+      }
+      _dedup_double4_array[rep] = v;
     }
 
     if (!add_array_sample_to_timesamples<value::double4>(
@@ -1766,14 +2075,23 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE4(double t,
           kTag, "Compressed double4 not supported for TimeSamples.");
     }
 
-    CHECK_MEMORY_USAGE(sizeof(value::double4));
+    // Check deduplication cache for scalar value read from stream
+    auto it = _dedup_double4.find(rep);
     value::double4 v;
-    if (!_sr->read(sizeof(value::double4), sizeof(value::double4),
-                   reinterpret_cast<uint8_t *>(&v))) {
-      PUSH_ERROR_AND_RETURN("Failed to read double4");
+    if (it != _dedup_double4.end()) {
+      // Reuse cached value
+      v = it->second;
+      DCOUT("Reusing cached DOUBLE4 scalar value for ValueRep");
+    } else {
+      // Read and cache scalar value
+      CHECK_MEMORY_USAGE(sizeof(value::double4));
+      if (!_sr->read(sizeof(value::double4), sizeof(value::double4),
+                     reinterpret_cast<uint8_t *>(&v))) {
+        PUSH_ERROR_AND_RETURN("Failed to read double4");
+      }
+      DCOUT("double4 = " << v);
+      _dedup_double4[rep] = v;
     }
-
-    DCOUT("double4 = " << v);
 
     if (!add_sample_to_timesamples<value::double4>(&dst, t, v, &_err,
                                                    expected_total_samples)) {
@@ -1823,8 +2141,19 @@ bool CrateReader::UnpackTimeSampleValue_QUATH(double t,
       }
       return true;
     }
-    if (!ReadArray(&v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read quath array.");
+
+    // Check deduplication cache for array
+    auto it = _dedup_quath_array.find(rep);
+    if (it != _dedup_quath_array.end()) {
+      // Reuse cached array
+      v = it->second;
+      DCOUT("Reusing cached QUATH array for ValueRep, size=" << v.size());
+    } else {
+      // Read and cache array
+      if (!ReadArray(&v)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read quath array.");
+      }
+      _dedup_quath_array[rep] = v;
     }
 
     if (!add_array_sample_to_timesamples<value::quath>(
@@ -1877,8 +2206,19 @@ bool CrateReader::UnpackTimeSampleValue_QUATD(double t,
       }
       return true;
     }
-    if (!ReadArray(&v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read quatd array.");
+
+    // Check deduplication cache for array
+    auto it = _dedup_quatd_array.find(rep);
+    if (it != _dedup_quatd_array.end()) {
+      // Reuse cached array
+      v = it->second;
+      DCOUT("Reusing cached QUATD array for ValueRep, size=" << v.size());
+    } else {
+      // Read and cache array
+      if (!ReadArray(&v)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read quatd array.");
+      }
+      _dedup_quatd_array[rep] = v;
     }
 
     if (!add_array_sample_to_timesamples<value::quatd>(
@@ -1919,15 +2259,25 @@ bool CrateReader::UnpackTimeSampleValue_MATRIX2D(
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
-    // Matrix contains diagonal components only, values are represented in int8
-    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-    int8_t vdata[2];
-    memcpy(&vdata, &data, 2);
 
+    // Check deduplication cache first
+    auto it = _dedup_matrix2d.find(rep);
     value::matrix2d val;
-    memset(val.m, 0, sizeof(value::matrix2d));
-    val.m[0][0] = static_cast<double>(vdata[0]);
-    val.m[1][1] = static_cast<double>(vdata[1]);
+    if (it != _dedup_matrix2d.end()) {
+      // Reuse cached value
+      val = it->second;
+      DCOUT("Reusing cached MATRIX2D value for ValueRep");
+    } else {
+      // Decode and cache
+      // Matrix contains diagonal components only, values are represented in int8
+      uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+      int8_t vdata[2];
+      memcpy(&vdata, &data, 2);
+      memset(val.m, 0, sizeof(value::matrix2d));
+      val.m[0][0] = static_cast<double>(vdata[0]);
+      val.m[1][1] = static_cast<double>(vdata[1]);
+      _dedup_matrix2d[rep] = val;
+    }
 
     if (!add_sample_to_timesamples<value::matrix2d>(&dst, t, val, &_err,
                                                     expected_total_samples)) {
@@ -1947,8 +2297,19 @@ bool CrateReader::UnpackTimeSampleValue_MATRIX2D(
       }
       return true;
     }
-    if (!ReadArray(&v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read matrix2d array.");
+
+    // Check deduplication cache for array
+    auto it = _dedup_matrix2d_array.find(rep);
+    if (it != _dedup_matrix2d_array.end()) {
+      // Reuse cached array
+      v = it->second;
+      DCOUT("Reusing cached MATRIX2D array for ValueRep, size=" << v.size());
+    } else {
+      // Read and cache array
+      if (!ReadArray(&v)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read matrix2d array.");
+      }
+      _dedup_matrix2d_array[rep] = v;
     }
 
     if (!add_matrix2d_array_sample_to_timesamples(&dst, t, v, &_err,
@@ -1989,16 +2350,26 @@ bool CrateReader::UnpackTimeSampleValue_MATRIX3D(
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
-    // Matrix contains diagonal components only, values are represented in int8
-    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-    int8_t vdata[3];
-    memcpy(&vdata, &data, 3);
 
+    // Check deduplication cache first
+    auto it = _dedup_matrix3d.find(rep);
     value::matrix3d val;
-    memset(val.m, 0, sizeof(value::matrix3d));
-    val.m[0][0] = static_cast<double>(vdata[0]);
-    val.m[1][1] = static_cast<double>(vdata[1]);
-    val.m[2][2] = static_cast<double>(vdata[2]);
+    if (it != _dedup_matrix3d.end()) {
+      // Reuse cached value
+      val = it->second;
+      DCOUT("Reusing cached MATRIX3D value for ValueRep");
+    } else {
+      // Decode and cache
+      // Matrix contains diagonal components only, values are represented in int8
+      uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+      int8_t vdata[3];
+      memcpy(&vdata, &data, 3);
+      memset(val.m, 0, sizeof(value::matrix3d));
+      val.m[0][0] = static_cast<double>(vdata[0]);
+      val.m[1][1] = static_cast<double>(vdata[1]);
+      val.m[2][2] = static_cast<double>(vdata[2]);
+      _dedup_matrix3d[rep] = val;
+    }
 
     if (!add_sample_to_timesamples<value::matrix3d>(&dst, t, val, &_err,
                                                     expected_total_samples)) {
@@ -2018,8 +2389,19 @@ bool CrateReader::UnpackTimeSampleValue_MATRIX3D(
       }
       return true;
     }
-    if (!ReadArray(&v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read matrix3d array.");
+
+    // Check deduplication cache for array
+    auto it = _dedup_matrix3d_array.find(rep);
+    if (it != _dedup_matrix3d_array.end()) {
+      // Reuse cached array
+      v = it->second;
+      DCOUT("Reusing cached MATRIX3D array for ValueRep, size=" << v.size());
+    } else {
+      // Read and cache array
+      if (!ReadArray(&v)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read matrix3d array.");
+      }
+      _dedup_matrix3d_array[rep] = v;
     }
 
     if (!add_matrix3d_array_sample_to_timesamples(&dst, t, v, &_err,
@@ -2060,17 +2442,27 @@ bool CrateReader::UnpackTimeSampleValue_MATRIX4D(
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
-    // Matrix contains diagonal components only, values are represented in int8
-    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-    int8_t vdata[4];
-    memcpy(&vdata, &data, 4);
 
+    // Check deduplication cache first
+    auto it = _dedup_matrix4d.find(rep);
     value::matrix4d val;
-    memset(val.m, 0, sizeof(value::matrix4d));
-    val.m[0][0] = static_cast<double>(vdata[0]);
-    val.m[1][1] = static_cast<double>(vdata[1]);
-    val.m[2][2] = static_cast<double>(vdata[2]);
-    val.m[3][3] = static_cast<double>(vdata[3]);
+    if (it != _dedup_matrix4d.end()) {
+      // Reuse cached value
+      val = it->second;
+      DCOUT("Reusing cached MATRIX4D value for ValueRep");
+    } else {
+      // Decode and cache
+      // Matrix contains diagonal components only, values are represented in int8
+      uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+      int8_t vdata[4];
+      memcpy(&vdata, &data, 4);
+      memset(val.m, 0, sizeof(value::matrix4d));
+      val.m[0][0] = static_cast<double>(vdata[0]);
+      val.m[1][1] = static_cast<double>(vdata[1]);
+      val.m[2][2] = static_cast<double>(vdata[2]);
+      val.m[3][3] = static_cast<double>(vdata[3]);
+      _dedup_matrix4d[rep] = val;
+    }
 
     if (!add_sample_to_timesamples<value::matrix4d>(&dst, t, val, &_err,
                                                     expected_total_samples)) {
@@ -2090,8 +2482,19 @@ bool CrateReader::UnpackTimeSampleValue_MATRIX4D(
       }
       return true;
     }
-    if (!ReadArray(&v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read matrix4d array.");
+
+    // Check deduplication cache for array
+    auto it = _dedup_matrix4d_array.find(rep);
+    if (it != _dedup_matrix4d_array.end()) {
+      // Reuse cached array
+      v = it->second;
+      DCOUT("Reusing cached MATRIX4D array for ValueRep, size=" << v.size());
+    } else {
+      // Read and cache array
+      if (!ReadArray(&v)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read matrix4d array.");
+      }
+      _dedup_matrix4d_array[rep] = v;
     }
 
     if (!add_matrix4d_array_sample_to_timesamples(&dst, t, v, &_err,
@@ -2133,7 +2536,19 @@ bool CrateReader::UnpackTimeSampleValue_UINT32(double t,
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
-    uint32_t val = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+
+    // Check deduplication cache first
+    auto it = _dedup_uint32.find(rep);
+    uint32_t val;
+    if (it != _dedup_uint32.end()) {
+      // Reuse cached value
+      val = it->second;
+      DCOUT("Reusing cached UINT32 value for ValueRep");
+    } else {
+      // Decode and cache
+      val = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+      _dedup_uint32[rep] = val;
+    }
 
     if (!add_sample_to_timesamples<uint32_t>(&dst, t, val, &_err,
                                              expected_total_samples)) {
@@ -2148,8 +2563,19 @@ bool CrateReader::UnpackTimeSampleValue_UINT32(double t,
       }
       return true;
     }
-    if (!ReadIntArray(rep.IsCompressed(), &v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read uint32 array.");
+
+    // Check deduplication cache for array
+    auto it = _dedup_uint32_array.find(rep);
+    if (it != _dedup_uint32_array.end()) {
+      // Reuse cached array
+      v = it->second;
+      DCOUT("Reusing cached UINT32 array for ValueRep, size=" << v.size());
+    } else {
+      // Read and cache array
+      if (!ReadIntArray(rep.IsCompressed(), &v)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read uint32 array.");
+      }
+      _dedup_uint32_array[rep] = v;
     }
 
     if (!add_array_sample_to_timesamples<uint32_t>(&dst, t, v, &_err,
@@ -2191,12 +2617,23 @@ bool CrateReader::UnpackTimeSampleValue_INT64(double t,
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
-    // Value is represented as int
-    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-    int _val;
-    memcpy(&_val, &data, sizeof(int));
 
-    int64_t val = static_cast<int64_t>(_val);
+    // Check deduplication cache first
+    auto it = _dedup_int64.find(rep);
+    int64_t val;
+    if (it != _dedup_int64.end()) {
+      // Reuse cached value
+      val = it->second;
+      DCOUT("Reusing cached INT64 value for ValueRep");
+    } else {
+      // Decode and cache
+      // Value is represented as int
+      uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+      int _val;
+      memcpy(&_val, &data, sizeof(int));
+      val = static_cast<int64_t>(_val);
+      _dedup_int64[rep] = val;
+    }
 
     if (!add_sample_to_timesamples<int64_t>(&dst, t, val, &_err,
                                             expected_total_samples)) {
@@ -2211,8 +2648,19 @@ bool CrateReader::UnpackTimeSampleValue_INT64(double t,
       }
       return true;
     }
-    if (!ReadIntArray(rep.IsCompressed(), &v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read int64 array.");
+
+    // Check deduplication cache for array
+    auto it = _dedup_int64_array.find(rep);
+    if (it != _dedup_int64_array.end()) {
+      // Reuse cached array
+      v = it->second;
+      DCOUT("Reusing cached INT64 array for ValueRep, size=" << v.size());
+    } else {
+      // Read and cache array
+      if (!ReadIntArray(rep.IsCompressed(), &v)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read int64 array.");
+      }
+      _dedup_int64_array[rep] = v;
     }
 
     if (!add_array_sample_to_timesamples<int64_t>(&dst, t, v, &_err,
@@ -2254,12 +2702,23 @@ bool CrateReader::UnpackTimeSampleValue_UINT64(double t,
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
-    // Value is represented as uint
-    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-    uint32_t _val;
-    memcpy(&_val, &data, sizeof(uint32_t));
 
-    uint64_t val = static_cast<uint64_t>(_val);
+    // Check deduplication cache first
+    auto it = _dedup_uint64.find(rep);
+    uint64_t val;
+    if (it != _dedup_uint64.end()) {
+      // Reuse cached value
+      val = it->second;
+      DCOUT("Reusing cached UINT64 value for ValueRep");
+    } else {
+      // Decode and cache
+      // Value is represented as uint
+      uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+      uint32_t _val;
+      memcpy(&_val, &data, sizeof(uint32_t));
+      val = static_cast<uint64_t>(_val);
+      _dedup_uint64[rep] = val;
+    }
 
     if (!add_sample_to_timesamples<uint64_t>(&dst, t, val, &_err,
                                              expected_total_samples)) {
@@ -2274,8 +2733,19 @@ bool CrateReader::UnpackTimeSampleValue_UINT64(double t,
       }
       return true;
     }
-    if (!ReadIntArray(rep.IsCompressed(), &v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read uint64 array.");
+
+    // Check deduplication cache for array
+    auto it = _dedup_uint64_array.find(rep);
+    if (it != _dedup_uint64_array.end()) {
+      // Reuse cached array
+      v = it->second;
+      DCOUT("Reusing cached UINT64 array for ValueRep, size=" << v.size());
+    } else {
+      // Read and cache array
+      if (!ReadIntArray(rep.IsCompressed(), &v)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read uint64 array.");
+      }
+      _dedup_uint64_array[rep] = v;
     }
 
     if (!add_array_sample_to_timesamples<uint64_t>(&dst, t, v, &_err,
@@ -2317,11 +2787,23 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE(double t,
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
-    // stored as float
-    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-    float _f;
-    memcpy(&_f, &data, sizeof(float));
-    double val = static_cast<double>(_f);
+
+    // Check deduplication cache first
+    auto it = _dedup_double.find(rep);
+    double val;
+    if (it != _dedup_double.end()) {
+      // Reuse cached value
+      val = it->second;
+      DCOUT("Reusing cached DOUBLE value for ValueRep");
+    } else {
+      // Decode and cache
+      // stored as float
+      uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+      float _f;
+      memcpy(&_f, &data, sizeof(float));
+      val = static_cast<double>(_f);
+      _dedup_double[rep] = val;
+    }
 
     if (!add_sample_to_timesamples<double>(&dst, t, val, &_err,
                                            expected_total_samples)) {
@@ -2336,8 +2818,19 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE(double t,
       }
       return true;
     }
-    if (!ReadDoubleArray(rep.IsCompressed(), &v)) {
-      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read double array.");
+
+    // Check deduplication cache for array
+    auto it = _dedup_double_array.find(rep);
+    if (it != _dedup_double_array.end()) {
+      // Reuse cached array
+      v = it->second;
+      DCOUT("Reusing cached DOUBLE array for ValueRep, size=" << v.size());
+    } else {
+      // Read and cache array
+      if (!ReadDoubleArray(rep.IsCompressed(), &v)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read double array.");
+      }
+      _dedup_double_array[rep] = v;
     }
 
     if (!add_array_sample_to_timesamples<double>(&dst, t, v, &_err,
