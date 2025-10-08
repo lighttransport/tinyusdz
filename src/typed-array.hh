@@ -572,6 +572,35 @@ public:
         return !(*this == other);
     }
 
+    // Hash function for use with unordered_map
+    // Hashes ALL elements for correctness
+    struct Hash {
+        size_t operator()(const TypedArray<T>& arr) const {
+            size_t hash = std::hash<size_t>{}(arr.size());
+
+            // Hash all elements for complete hash coverage
+            for (size_t i = 0; i < arr.size(); ++i) {
+                // Combine hashes using boost hash_combine technique
+                // with golden ratio constant for good mixing
+                hash ^= std::hash<T>{}(arr[i]) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+            }
+            return hash;
+        }
+    };
+
+    // Quick hash - samples only first 32 elements for performance
+    // Useful for approximate hashing or when full precision isn't needed
+    size_t quick_hash() const {
+        size_t hash = std::hash<size_t>{}(size());
+        const size_t max_sample = 32;
+        const size_t num_to_hash = std::min(size(), max_sample);
+
+        for (size_t i = 0; i < num_to_hash; ++i) {
+            hash ^= std::hash<T>{}((*this)[i]) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+        }
+        return hash;
+    }
+
 private:
     std::vector<uint8_t> _storage;
     T* _view_ptr = nullptr;        // Pointer to external data when in view mode
