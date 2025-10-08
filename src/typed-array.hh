@@ -8,7 +8,6 @@
 
 #pragma once
 
-#include <cassert>
 #include <cstdint>
 #include <cstring>
 #include <type_traits>
@@ -22,7 +21,7 @@
 namespace tinyusdz {
 
 template<typename T>
-class TypedArray {
+class TypedArrayImpl {
 public:
     using value_type = T;
     using size_type = std::size_t;
@@ -35,22 +34,22 @@ public:
     using const_iterator = const T*;
 
     // Default constructor
-    TypedArray() = default;
+    TypedArrayImpl() = default;
 
     // Constructor with size
-    explicit TypedArray(size_type count) {
+    explicit TypedArrayImpl(size_type count) {
         _is_view = false;
         resize(count);
     }
 
     // Constructor with size and default value
-    TypedArray(size_type count, const T& value) {
+    TypedArrayImpl(size_type count, const T& value) {
         _is_view = false;
         resize(count, value);
     }
 
     // Constructor from initializer list
-    TypedArray(std::initializer_list<T> init) {
+    TypedArrayImpl(std::initializer_list<T> init) {
         reserve(init.size());
         for (const auto& item : init) {
             push_back(item);
@@ -58,7 +57,7 @@ public:
     }
 
     // Constructor from existing data (copies data)
-    TypedArray(const T* data, size_type count) {
+    TypedArrayImpl(const T* data, size_type count) {
         if (data && count > 0) {
             _storage.resize(count * sizeof(T));
             std::memcpy(_storage.data(), data, count * sizeof(T));
@@ -67,7 +66,7 @@ public:
 
     // View constructor - creates a non-owning view over external data
     // When is_view=true, no allocation occurs, just stores pointer and size
-    TypedArray(T* data, size_type count, bool is_view) {
+    TypedArrayImpl(T* data, size_type count, bool is_view) {
         if (is_view && data && count > 0) {
             _view_ptr = data;
             _view_size = count;
@@ -80,7 +79,7 @@ public:
     }
 
     // Copy constructor
-    TypedArray(const TypedArray& other) {
+    TypedArrayImpl(const TypedArrayImpl& other) {
         if (other._is_view) {
             // Copy view properties
             _view_ptr = other._view_ptr;
@@ -94,7 +93,7 @@ public:
     }
 
     // Move constructor
-    TypedArray(TypedArray&& other) noexcept {
+    TypedArrayImpl(TypedArrayImpl&& other) noexcept {
         if (other._is_view) {
             _view_ptr = other._view_ptr;
             _view_size = other._view_size;
@@ -108,7 +107,7 @@ public:
     }
 
     // Copy assignment
-    TypedArray& operator=(const TypedArray& other) {
+    TypedArrayImpl& operator=(const TypedArrayImpl& other) {
         if (this != &other) {
             if (other._is_view) {
                 _storage.clear();
@@ -126,7 +125,7 @@ public:
     }
 
     // Move assignment
-    TypedArray& operator=(TypedArray&& other) noexcept {
+    TypedArrayImpl& operator=(TypedArrayImpl&& other) noexcept {
         if (this != &other) {
             if (other._is_view) {
                 _storage.clear();
@@ -146,7 +145,7 @@ public:
     }
 
     // Destructor
-    ~TypedArray() = default;
+    ~TypedArrayImpl() = default;
 
     // Check if this is a view (non-owning)
     bool is_view() const noexcept {
@@ -154,13 +153,13 @@ public:
     }
 
     // Create a view from this array
-    TypedArray create_view() const {
-        return TypedArray(const_cast<T*>(data()), size(), true);
+    TypedArrayImpl create_view() const {
+        return TypedArrayImpl(const_cast<T*>(data()), size(), true);
     }
 
     // Static helper to create a view
-    static TypedArray make_view(T* data, size_type count) {
-        return TypedArray(data, count, true);
+    static TypedArrayImpl make_view(T* data, size_type count) {
+        return TypedArrayImpl(data, count, true);
     }
 
     // Size operations
@@ -200,8 +199,7 @@ public:
 
     reference at(size_type index) {
 #if !defined(TINYUSDZ_CXX_EXCEPTIONS) || (TINYUSDZ_CXX_EXCEPTIONS == 0)
-        // Exceptions disabled - just return element (bounds checking in debug mode only)
-        assert(index < size() && "TypedArray::at: index out of range");
+        // Exceptions disabled - just return element
 #else
         if (index >= size()) {
             throw std::out_of_range("TypedArray::at: index out of range");
@@ -212,8 +210,7 @@ public:
 
     const_reference at(size_type index) const {
 #if !defined(TINYUSDZ_CXX_EXCEPTIONS) || (TINYUSDZ_CXX_EXCEPTIONS == 0)
-        // Exceptions disabled - just return element (bounds checking in debug mode only)
-        assert(index < size() && "TypedArray::at: index out of range");
+        // Exceptions disabled - just return element
 #else
         if (index >= size()) {
             throw std::out_of_range("TypedArray::at: index out of range");
@@ -274,7 +271,7 @@ public:
 
     nonstd::span<T> subspan(size_type offset, size_type count = static_cast<size_type>(-1)) {
 #if !defined(TINYUSDZ_CXX_EXCEPTIONS) || (TINYUSDZ_CXX_EXCEPTIONS == 0)
-        assert(offset <= size() && "TypedArray::subspan: offset out of range");
+        // Exceptions disabled - no bounds checking
 #else
         if (offset > size()) {
             throw std::out_of_range("TypedArray::subspan: offset out of range");
@@ -282,7 +279,7 @@ public:
 #endif
         size_type actual_count = (count == static_cast<size_type>(-1)) ? (size() - offset) : count;
 #if !defined(TINYUSDZ_CXX_EXCEPTIONS) || (TINYUSDZ_CXX_EXCEPTIONS == 0)
-        assert(offset + actual_count <= size() && "TypedArray::subspan: count exceeds array bounds");
+        // Exceptions disabled - no bounds checking
 #else
         if (offset + actual_count > size()) {
             throw std::out_of_range("TypedArray::subspan: count exceeds array bounds");
@@ -293,7 +290,7 @@ public:
 
     nonstd::span<const T> subspan(size_type offset, size_type count = static_cast<size_type>(-1)) const {
 #if !defined(TINYUSDZ_CXX_EXCEPTIONS) || (TINYUSDZ_CXX_EXCEPTIONS == 0)
-        assert(offset <= size() && "TypedArray::subspan: offset out of range");
+        // Exceptions disabled - no bounds checking
 #else
         if (offset > size()) {
             throw std::out_of_range("TypedArray::subspan: offset out of range");
@@ -301,7 +298,7 @@ public:
 #endif
         size_type actual_count = (count == static_cast<size_type>(-1)) ? (size() - offset) : count;
 #if !defined(TINYUSDZ_CXX_EXCEPTIONS) || (TINYUSDZ_CXX_EXCEPTIONS == 0)
-        assert(offset + actual_count <= size() && "TypedArray::subspan: count exceeds array bounds");
+        // Exceptions disabled - no bounds checking
 #else
         if (offset + actual_count > size()) {
             throw std::out_of_range("TypedArray::subspan: count exceeds array bounds");
@@ -381,7 +378,6 @@ public:
 
     void pop_back() {
         if (_is_view) {
-            assert(!_is_view && "Cannot pop_back from a TypedArray view");
             return;
         }
         if (!empty()) {
@@ -393,13 +389,13 @@ public:
     // Transforms from current type T to new type N
     // Requirement: sizeof(T) >= sizeof(N) for in-place operation
     template<typename N, typename Func>
-    TypedArray<N> transform(Func func) const {
+    TypedArrayImpl<N> transform(Func func) const {
         static_assert(sizeof(T) >= sizeof(N), 
                      "transform: source type size must be >= destination type size for in-place operation");
-        static_assert(std::is_trivially_copyable<N>::value, 
+        static_assert(std::is_trivially_copyable<N>::value,
                      "transform: destination type must be trivially copyable");
 
-        TypedArray<N> result;
+        TypedArrayImpl<N> result;
         if (empty()) {
             return result;
         }
@@ -425,13 +421,13 @@ public:
 
     // Specialized transform for 1:1 type conversion (e.g., int to float)
     template<typename N, typename Func>
-    TypedArray<N> transform_1to1(Func func) const {
+    TypedArrayImpl<N> transform_1to1(Func func) const {
         static_assert(sizeof(T) >= sizeof(N), 
                      "transform_1to1: source type size must be >= destination type size");
-        static_assert(std::is_trivially_copyable<N>::value, 
+        static_assert(std::is_trivially_copyable<N>::value,
                      "transform_1to1: destination type must be trivially copyable");
 
-        TypedArray<N> result;
+        TypedArrayImpl<N> result;
         if (empty()) {
             return result;
         }
@@ -447,11 +443,11 @@ public:
 
     // Enhanced transform supporting sizeof(srcTy) <= sizeof(dstTy) with controlled buffer growth
     template<typename N, typename Func>
-    TypedArray<N> transform_expand(Func func) const {
-        static_assert(std::is_trivially_copyable<N>::value, 
+    TypedArrayImpl<N> transform_expand(Func func) const {
+        static_assert(std::is_trivially_copyable<N>::value,
                      "transform_expand: destination type must be trivially copyable");
 
-        TypedArray<N> result;
+        TypedArrayImpl<N> result;
         if (empty()) {
             return result;
         }
@@ -466,12 +462,12 @@ public:
     // In-place transform with expansion (modifies current array)
     // Only works when sizeof(T) <= sizeof(N) and we have sufficient capacity
     template<typename N, typename Func>
-    TypedArray<N> transform_inplace_expand(Func func) {
-        static_assert(std::is_trivially_copyable<N>::value, 
+    TypedArrayImpl<N> transform_inplace_expand(Func func) {
+        static_assert(std::is_trivially_copyable<N>::value,
                      "transform_inplace_expand: destination type must be trivially copyable");
 
         if (empty()) {
-            TypedArray<N> result;
+            TypedArrayImpl<N> result;
             return result;
         }
 
@@ -494,9 +490,9 @@ public:
                 size_type dst_idx = src_idx;
                 func(src_data[src_idx], dst_data[dst_idx]);
             }
-            
-            // Return TypedArray<N> that shares the same storage
-            TypedArray<N> result;
+
+            // Return TypedArrayImpl<N> that shares the same storage
+            TypedArrayImpl<N> result;
             result._storage = std::move(_storage);
             _storage.clear(); // Current array is now empty
             return result;
@@ -508,11 +504,11 @@ public:
 
     // Transform with controlled growth - specify maximum buffer growth factor
     template<typename N, typename Func>
-    TypedArray<N> transform_with_limit(Func func, double max_growth_factor = 2.0) const {
-        static_assert(std::is_trivially_copyable<N>::value, 
+    TypedArrayImpl<N> transform_with_limit(Func func, double max_growth_factor = 2.0) const {
+        static_assert(std::is_trivially_copyable<N>::value,
                      "transform_with_limit: destination type must be trivially copyable");
 
-        TypedArray<N> result;
+        TypedArrayImpl<N> result;
         if (empty()) {
             return result;
         }
@@ -539,17 +535,15 @@ public:
 
     // Get raw storage access (advanced usage)
     std::vector<uint8_t>& storage() noexcept {
-        assert(!_is_view && "Cannot get storage from a TypedArray view");
         return _storage;
     }
 
     const std::vector<uint8_t>& storage() const noexcept {
-        assert(!_is_view && "Cannot get storage from a TypedArray view");
         return _storage;
     }
 
     // Swap
-    void swap(TypedArray& other) noexcept {
+    void swap(TypedArrayImpl& other) noexcept {
         if (_is_view || other._is_view) {
             // Swap all members including view state
             std::swap(_storage, other._storage);
@@ -562,20 +556,20 @@ public:
     }
 
     // Comparison operators
-    bool operator==(const TypedArray& other) const {
+    bool operator==(const TypedArrayImpl& other) const {
         if (size() != other.size()) return false;
         if (size() == 0) return true;
         return std::memcmp(data(), other.data(), size() * sizeof(T)) == 0;
     }
 
-    bool operator!=(const TypedArray& other) const {
+    bool operator!=(const TypedArrayImpl& other) const {
         return !(*this == other);
     }
 
     // Hash function for use with unordered_map
     // Hashes ALL elements for correctness
     struct Hash {
-        size_t operator()(const TypedArray<T>& arr) const {
+        size_t operator()(const TypedArrayImpl<T>& arr) const {
             size_t hash = std::hash<size_t>{}(arr.size());
 
             // Hash all elements for complete hash coverage
@@ -609,7 +603,7 @@ private:
     
     // Helper method implementations for C++14 compatibility (instead of if constexpr)
     template<typename N, typename Func>
-    TypedArray<N> transform_expand_impl(Func func, size_type src_count, TypedArray<N>& result, 
+    TypedArrayImpl<N> transform_expand_impl(Func func, size_type src_count, TypedArrayImpl<N>& result, 
                                        std::true_type /* sizeof(T) >= sizeof(N) */) const {
         // Shrinking case - can use in-place approach
         size_type dst_count = (src_count * sizeof(T)) / sizeof(N);
@@ -624,9 +618,9 @@ private:
         }
         return result;
     }
-    
+
     template<typename N, typename Func>
-    TypedArray<N> transform_expand_impl(Func func, size_type src_count, TypedArray<N>& result,
+    TypedArrayImpl<N> transform_expand_impl(Func func, size_type src_count, TypedArrayImpl<N>& result,
                                        std::false_type /* sizeof(T) < sizeof(N) */) const {
         // Expanding case - requires buffer growth
         // Buffer grows exactly to needed size: num_items * sizeof(dstTy)
@@ -640,11 +634,11 @@ private:
 };
 
 ///
-/// PackedTypedArrayPtr: Optimized 64-bit storage for TypedArray<T> pointers
+/// TypedArray: Optimized 64-bit storage for TypedArrayImpl<T> pointers
 ///
 /// Memory layout:
 ///   Bit 63 (MSB):    dedup/mmap flag (1 = shared/mmap, don't delete; 0 = owned, delete on destruction)
-///   Bits 0-47:       48-bit pointer to TypedArray<T> object (sufficient for x86-64 canonical addresses)
+///   Bits 0-47:       48-bit pointer to TypedArrayImpl<T> object (sufficient for x86-64 canonical addresses)
 ///   Bits 48-62:      Reserved/unused (15 bits available for future use)
 ///
 /// The 48-bit pointer is sufficient because:
@@ -656,47 +650,47 @@ private:
 ///   - When dedup flag is clear (0): The pointer is owned and WILL be deleted on destruction
 ///
 template<typename T>
-class PackedTypedArrayPtr {
+class TypedArray {
 public:
     // Default constructor - creates null pointer
-    PackedTypedArrayPtr() noexcept : _packed_data(0) {}
+    TypedArray() noexcept : _packed_data(0) {}
 
     // Constructor from pointer with optional dedup flag
-    // ptr: pointer to TypedArray<T> to manage
+    // ptr: pointer to TypedArrayImpl<T> to manage
     // dedup_flag: if true, marks as shared/mmap (won't delete); if false, takes ownership (will delete)
-    explicit PackedTypedArrayPtr(TypedArray<T>* ptr, bool dedup_flag = false) noexcept : _packed_data(0) {
+    explicit TypedArray(TypedArrayImpl<T>* ptr, bool dedup_flag = false) noexcept : _packed_data(0) {
         reset(ptr, dedup_flag);
     }
 
     // Destructor - conditionally deletes based on dedup flag
-    ~PackedTypedArrayPtr() {
+    ~TypedArray() {
         if (!is_dedup() && get() != nullptr) {
             delete get();
         }
     }
 
     // Copy constructor - performs shallow copy (copies pointer and flag)
-    // WARNING: Both instances will point to the same TypedArray!
+    // WARNING: Both instances will point to the same TypedArrayImpl!
     // If source is owned (not dedup), the copy will be marked as dedup to prevent double-free
-    PackedTypedArrayPtr(const PackedTypedArrayPtr& other) noexcept : _packed_data(0) {
+    TypedArray(const TypedArray& other) noexcept : _packed_data(0) {
         if (other.is_dedup()) {
             // Source is shared/mmap - safe to copy as-is
             _packed_data = other._packed_data;
         } else {
             // Source is owned - mark copy as dedup to prevent double deletion
-            TypedArray<T>* ptr = other.get();
+            TypedArrayImpl<T>* ptr = other.get();
             reset(ptr, true);  // Mark as dedup
         }
     }
 
     // Move constructor - transfers ownership
-    PackedTypedArrayPtr(PackedTypedArrayPtr&& other) noexcept
+    TypedArray(TypedArray&& other) noexcept
         : _packed_data(other._packed_data) {
         other._packed_data = 0;  // Reset source to null
     }
 
     // Copy assignment - performs shallow copy
-    PackedTypedArrayPtr& operator=(const PackedTypedArrayPtr& other) noexcept {
+    TypedArray& operator=(const TypedArray& other) noexcept {
         if (this != &other) {
             // Delete current resource if owned
             if (!is_dedup() && get() != nullptr) {
@@ -715,7 +709,7 @@ public:
     }
 
     // Move assignment - transfers ownership
-    PackedTypedArrayPtr& operator=(PackedTypedArrayPtr&& other) noexcept {
+    TypedArray& operator=(TypedArray&& other) noexcept {
         if (this != &other) {
             // Delete current resource if owned
             if (!is_dedup() && get() != nullptr) {
@@ -744,7 +738,7 @@ public:
     }
 
     // Get the raw pointer
-    TypedArray<T>* get() const noexcept {
+    TypedArrayImpl<T>* get() const noexcept {
         uint64_t ptr_bits = _packed_data & PTR_MASK;
 
         // Sign-extend from 48 bits to 64 bits for canonical address
@@ -753,16 +747,49 @@ public:
             ptr_bits |= 0xFFFF000000000000ULL;
         }
 
-        return reinterpret_cast<TypedArray<T>*>(ptr_bits);
+        return reinterpret_cast<TypedArrayImpl<T>*>(ptr_bits);
     }
 
     // Pointer dereference operators
-    TypedArray<T>* operator->() const noexcept {
+    TypedArrayImpl<T>* operator->() const noexcept {
         return get();
     }
 
-    TypedArray<T>& operator*() const noexcept {
+    TypedArrayImpl<T>& operator*() const noexcept {
         return *get();
+    }
+
+    // Convenience methods that forward to TypedArrayImpl
+    using size_type = typename TypedArrayImpl<T>::size_type;
+    using reference = typename TypedArrayImpl<T>::reference;
+    using const_reference = typename TypedArrayImpl<T>::const_reference;
+
+    size_type size() const noexcept {
+        return get() ? get()->size() : 0;
+    }
+
+    bool empty() const noexcept {
+        return get() ? get()->empty() : true;
+    }
+
+    reference operator[](size_type index) const {
+        return (*get())[index];
+    }
+
+    reference at(size_type index) const {
+        return get()->at(index);
+    }
+
+    typename TypedArrayImpl<T>::pointer data() const noexcept {
+        return get() ? get()->data() : nullptr;
+    }
+
+    void resize(size_type count) {
+        if (get()) get()->resize(count);
+    }
+
+    void clear() noexcept {
+        if (get()) get()->clear();
     }
 
     // Check if pointer is null
@@ -777,7 +804,7 @@ public:
 
     // Reset to new pointer with optional dedup flag
     // Deletes current pointer if owned
-    void reset(TypedArray<T>* ptr = nullptr, bool dedup_flag = false) noexcept {
+    void reset(TypedArrayImpl<T>* ptr = nullptr, bool dedup_flag = false) noexcept {
         // Delete current resource if owned
         if (!is_dedup() && get() != nullptr) {
             delete get();
@@ -793,8 +820,6 @@ public:
             // Valid x86-64 canonical addresses have either:
             // - Bits 63-47 all 0 (user space: 0x0000'0000'0000'0000 - 0x0000'7FFF'FFFF'FFFF)
             // - Bits 63-47 all 1 (kernel space: 0xFFFF'8000'0000'0000 - 0xFFFF'FFFF'FFFF'FFFF)
-            assert((ptr_value & PTR_MASK) == ptr_value ||
-                   (ptr_value & 0xFFFF800000000000ULL) == 0xFFFF800000000000ULL);
 
             // Store only the lower 48 bits
             _packed_data = ptr_value & PTR_MASK;
@@ -808,8 +833,8 @@ public:
 
     // Release ownership without deleting
     // Returns the pointer and clears this instance
-    TypedArray<T>* release() noexcept {
-        TypedArray<T>* ptr = get();
+    TypedArrayImpl<T>* release() noexcept {
+        TypedArrayImpl<T>* ptr = get();
         _packed_data = 0;
         return ptr;
     }
@@ -820,11 +845,11 @@ public:
     }
 
     // Comparison operators
-    bool operator==(const PackedTypedArrayPtr& other) const noexcept {
+    bool operator==(const TypedArray& other) const noexcept {
         return get() == other.get();
     }
 
-    bool operator!=(const PackedTypedArrayPtr& other) const noexcept {
+    bool operator!=(const TypedArray& other) const noexcept {
         return get() != other.get();
     }
 
@@ -845,16 +870,16 @@ private:
     static constexpr uint64_t RESERVED_MASK = 0x7FFF000000000000ULL;  // Bits 48-62: reserved
 };
 
-// Helper function to create owned PackedTypedArrayPtr
+// Helper function to create owned TypedArray
 template<typename T>
-PackedTypedArrayPtr<T> make_packed_array_ptr(TypedArray<T>* ptr) {
-    return PackedTypedArrayPtr<T>(ptr, false);
+TypedArray<T> make_typed_array_ptr(TypedArrayImpl<T>* ptr) {
+    return TypedArray<T>(ptr, false);
 }
 
-// Helper function to create dedup/mmap PackedTypedArrayPtr
+// Helper function to create dedup/mmap TypedArray
 template<typename T>
-PackedTypedArrayPtr<T> make_packed_array_ptr_dedup(TypedArray<T>* ptr) {
-    return PackedTypedArrayPtr<T>(ptr, true);
+TypedArray<T> make_typed_array_ptr_dedup(TypedArrayImpl<T>* ptr) {
+    return TypedArray<T>(ptr, true);
 }
 
 ///
@@ -926,9 +951,9 @@ public:
         }
     }
 
-    // Constructor from TypedArray with type size validation
+    // Constructor from TypedArrayImpl with type size validation
     template<typename U>
-    TypedArrayView(const TypedArray<U>& typed_array) noexcept {
+    TypedArrayView(const TypedArrayImpl<U>& typed_array) noexcept {
         static_assert(std::is_trivially_copyable<T>::value, 
                      "TypedArrayView: T must be trivially copyable");
         static_assert(std::is_trivially_copyable<U>::value, 
@@ -944,9 +969,9 @@ public:
         }
     }
 
-    // Constructor from mutable TypedArray with type size validation
+    // Constructor from mutable TypedArrayImpl with type size validation
     template<typename U>
-    TypedArrayView(TypedArray<U>& typed_array) noexcept {
+    TypedArrayView(TypedArrayImpl<U>& typed_array) noexcept {
         static_assert(std::is_trivially_copyable<T>::value, 
                      "TypedArrayView: T must be trivially copyable");
         static_assert(std::is_trivially_copyable<U>::value, 
@@ -1000,7 +1025,7 @@ public:
 
     reference at(size_type index) const {
 #if !defined(TINYUSDZ_CXX_EXCEPTIONS) || (TINYUSDZ_CXX_EXCEPTIONS == 0)
-        assert(index < size() && "TypedArrayView::at: index out of range");
+        // Exceptions disabled - just return element
 #else
         if (index >= size()) {
             throw std::out_of_range("TypedArrayView::at: index out of range");
@@ -1110,7 +1135,7 @@ private:
 
 // Non-member swap
 template<typename T>
-void swap(TypedArray<T>& lhs, TypedArray<T>& rhs) noexcept {
+void swap(TypedArrayImpl<T>& lhs, TypedArrayImpl<T>& rhs) noexcept {
     lhs.swap(rhs);
 }
 
@@ -1142,12 +1167,12 @@ TypedArrayView<const T> make_typed_array_view(const std::vector<T>& vec) {
 }
 
 template<typename T>
-TypedArrayView<T> make_typed_array_view(TypedArray<T>& arr) {
+TypedArrayView<T> make_typed_array_view(TypedArrayImpl<T>& arr) {
     return TypedArrayView<T>(arr);
 }
 
 template<typename T>
-TypedArrayView<const T> make_typed_array_view(const TypedArray<T>& arr) {
+TypedArrayView<const T> make_typed_array_view(const TypedArrayImpl<T>& arr) {
     return TypedArrayView<const T>(arr);
 }
 
@@ -1167,10 +1192,10 @@ TypedArrayView<T> reinterpret_typed_array_view_mutable(const TypedArrayView<U>& 
     return view.template reinterpret_as_mutable<T>();
 }
 
-// Convenience function to create TypedArray from span
+// Convenience function to create TypedArrayImpl from span
 template<typename T>
-TypedArray<T> make_typed_array(nonstd::span<const T> sp) {
-    return TypedArray<T>(sp.data(), sp.size());
+TypedArrayImpl<T> make_typed_array(nonstd::span<const T> sp) {
+    return TypedArrayImpl<T>(sp.data(), sp.size());
 }
 
 ///
@@ -1765,7 +1790,6 @@ public:
                 current_offset += span.size;
             }
             // Should not reach here if index is valid
-            assert(false && "ChunkedTypedArray::at: index out of bounds in mmap mode");
             return _mmap_spans[0].data[0]; // Fallback to avoid undefined behavior
         } else {
             // Convert logical index to physical index
@@ -1788,7 +1812,6 @@ public:
                 current_offset += span.size;
             }
             // Should not reach here if index is valid
-            assert(false && "ChunkedTypedArray::at: index out of bounds in mmap mode");
             return _mmap_spans[0].data[0]; // Fallback to avoid undefined behavior
         } else {
             // Convert logical index to physical index
@@ -1909,10 +1932,9 @@ public:
     void resize(size_type count) {
         if (_is_mmap_mode) {
             // Cannot resize in mmap mode - would need to allocate new memory
-            assert(false && "ChunkedTypedArray::resize: cannot resize in mmap mode");
             return;
         }
-        
+
         if (count == _total_size) {
             return;
         }
@@ -1948,7 +1970,6 @@ public:
 
     void resize(size_type count, const T& value) {
         if (_is_mmap_mode) {
-            assert(false && "ChunkedTypedArray::resize: cannot resize in mmap mode");
             return;
         }
         
@@ -1963,7 +1984,6 @@ public:
 
     void push_back(const T& value) {
         if (_is_mmap_mode) {
-            assert(false && "ChunkedTypedArray::push_back: cannot modify size in mmap mode");
             return;
         }
         resize(_total_size + 1);
@@ -1972,7 +1992,6 @@ public:
 
     void push_back(T&& value) {
         if (_is_mmap_mode) {
-            assert(false && "ChunkedTypedArray::push_back: cannot modify size in mmap mode");
             return;
         }
         resize(_total_size + 1);
@@ -1981,7 +2000,6 @@ public:
 
     bool pop_back() {
         if (_is_mmap_mode) {
-            assert(false && "ChunkedTypedArray::pop_back: cannot modify size in mmap mode");
             return false;
         }
         if (empty()) {
@@ -2097,12 +2115,12 @@ public:
 
     // Get chunk at specific index (for advanced usage)
     // Returns nullptr if chunk_index is out of range or in mmap mode
-    const TypedArray<uint8_t>* get_chunk(size_type chunk_index) const {
+    const TypedArrayImpl<uint8_t>* get_chunk(size_type chunk_index) const {
         if (_is_mmap_mode || chunk_index >= _chunks.size()) return nullptr;
         return &_chunks[chunk_index];
     }
 
-    TypedArray<uint8_t>* get_chunk(size_type chunk_index) {
+    TypedArrayImpl<uint8_t>* get_chunk(size_type chunk_index) {
         if (_is_mmap_mode || chunk_index >= _chunks.size()) return nullptr;
         return &_chunks[chunk_index];
     }
@@ -2327,7 +2345,7 @@ private:
     }
 
 private:
-    std::vector<TypedArray<uint8_t>> _chunks;   // Storage chunks using TypedArray (for copy mode)
+    std::vector<TypedArrayImpl<uint8_t>> _chunks;   // Storage chunks using TypedArrayImpl (for copy mode)
     std::vector<ChunkSpan> _mmap_spans;         // Spans to external memory (for mmap mode)
     size_type _chunk_size_bytes = 64 * 1024; // Size of each chunk in bytes (default to 64KB)
     size_type _elements_per_chunk = 0;          // Number of T elements per chunk
