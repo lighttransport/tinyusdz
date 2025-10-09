@@ -541,17 +541,17 @@ class CrateReader {
   std::unordered_map<crate::ValueRep, uint32_t, crate::ValueRep::Hash> _dedup_uint32;
   std::unordered_map<crate::ValueRep, int64_t, crate::ValueRep::Hash> _dedup_int64;
   std::unordered_map<crate::ValueRep, uint64_t, crate::ValueRep::Hash> _dedup_uint64;
-  std::unordered_map<crate::ValueRep, std::vector<int32_t>, crate::ValueRep::Hash> _dedup_int32_array;
-  std::unordered_map<crate::ValueRep, std::vector<uint32_t>, crate::ValueRep::Hash> _dedup_uint32_array;
-  std::unordered_map<crate::ValueRep, std::vector<int64_t>, crate::ValueRep::Hash> _dedup_int64_array;
-  std::unordered_map<crate::ValueRep, std::vector<uint64_t>, crate::ValueRep::Hash> _dedup_uint64_array;
+  std::unordered_map<crate::ValueRep, TypedArray<int32_t>, crate::ValueRep::Hash> _dedup_int32_array;
+  std::unordered_map<crate::ValueRep, TypedArray<uint32_t>, crate::ValueRep::Hash> _dedup_uint32_array;
+  std::unordered_map<crate::ValueRep, TypedArray<int64_t>, crate::ValueRep::Hash> _dedup_int64_array;
+  std::unordered_map<crate::ValueRep, TypedArray<uint64_t>, crate::ValueRep::Hash> _dedup_uint64_array;
 
   // Half types (scalar and array)
   std::unordered_map<crate::ValueRep, value::half, crate::ValueRep::Hash> _dedup_half;
   std::unordered_map<crate::ValueRep, value::half2, crate::ValueRep::Hash> _dedup_half2;
   std::unordered_map<crate::ValueRep, value::half3, crate::ValueRep::Hash> _dedup_half3;
   std::unordered_map<crate::ValueRep, value::half4, crate::ValueRep::Hash> _dedup_half4;
-  std::unordered_map<crate::ValueRep, std::vector<value::half>, crate::ValueRep::Hash> _dedup_half_array;
+  std::unordered_map<crate::ValueRep, TypedArray<value::half>, crate::ValueRep::Hash> _dedup_half_array;
   std::unordered_map<crate::ValueRep, std::vector<value::half2>, crate::ValueRep::Hash> _dedup_half2_array;
   std::unordered_map<crate::ValueRep, std::vector<value::half3>, crate::ValueRep::Hash> _dedup_half3_array;
   std::unordered_map<crate::ValueRep, std::vector<value::half4>, crate::ValueRep::Hash> _dedup_half4_array;
@@ -561,7 +561,7 @@ class CrateReader {
   std::unordered_map<crate::ValueRep, value::float2, crate::ValueRep::Hash> _dedup_float2;
   std::unordered_map<crate::ValueRep, value::float3, crate::ValueRep::Hash> _dedup_float3;
   std::unordered_map<crate::ValueRep, value::float4, crate::ValueRep::Hash> _dedup_float4;
-  std::unordered_map<crate::ValueRep, std::vector<float>, crate::ValueRep::Hash> _dedup_float_array;
+  std::unordered_map<crate::ValueRep, TypedArray<float>, crate::ValueRep::Hash> _dedup_float_array;
   std::unordered_map<crate::ValueRep, std::vector<value::float2>, crate::ValueRep::Hash> _dedup_float2_array;
   std::unordered_map<crate::ValueRep, std::vector<value::float3>, crate::ValueRep::Hash> _dedup_float3_array;
   std::unordered_map<crate::ValueRep, std::vector<value::float4>, crate::ValueRep::Hash> _dedup_float4_array;
@@ -571,7 +571,7 @@ class CrateReader {
   std::unordered_map<crate::ValueRep, value::double2, crate::ValueRep::Hash> _dedup_double2;
   std::unordered_map<crate::ValueRep, value::double3, crate::ValueRep::Hash> _dedup_double3;
   std::unordered_map<crate::ValueRep, value::double4, crate::ValueRep::Hash> _dedup_double4;
-  std::unordered_map<crate::ValueRep, std::vector<double>, crate::ValueRep::Hash> _dedup_double_array;
+  std::unordered_map<crate::ValueRep, TypedArray<double>, crate::ValueRep::Hash> _dedup_double_array;
   std::unordered_map<crate::ValueRep, std::vector<value::double2>, crate::ValueRep::Hash> _dedup_double2_array;
   std::unordered_map<crate::ValueRep, std::vector<value::double3>, crate::ValueRep::Hash> _dedup_double3_array;
   std::unordered_map<crate::ValueRep, std::vector<value::double4>, crate::ValueRep::Hash> _dedup_double4_array;
