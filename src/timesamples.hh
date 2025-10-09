@@ -1150,8 +1150,52 @@ struct TimeSamples {
     return false; // Not using POD storage
   }
 
+  // TypedArray overload for add_array_sample_pod
+  template<typename T>
+  bool add_array_sample_pod(double t, const TypedArray<T>& value, std::string *err = nullptr, size_t expected_total_samples = 0) {
+    static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
+                  "add_sample_pod requires POD types");
+
+    // Auto-initialize on first sample
+    if (empty()) {
+      init(value::TypeTraits<T>::type_id());
+    }
+
+    if (_use_pod) {
+      bool result = _pod_samples.add_array_sample<T>(t, value.data(), value.size(), err, expected_total_samples);
+      _dirty = true;
+      return result;
+    }
+
+    if (err) {
+      (*err) += "Not using POD storage for type " + std::string(value::TypeTraits<T>::type_name()) + "[].\n";
+    }
+    return false; // Not using POD storage
+  }
+
   template<typename T>
   bool add_matrix_array_sample_pod(double t, const std::vector<T>& value, std::string *err = nullptr, size_t expected_total_samples = 0) {
+
+    // Auto-initialize on first sample
+    if (empty()) {
+      init(value::TypeTraits<T>::type_id());
+    }
+
+    if (_use_pod) {
+      bool result = _pod_samples.add_matrix_array_sample<T>(t, value.data(), value.size(), err, expected_total_samples);
+      _dirty = true;
+      return result;
+    }
+
+    if (err) {
+      (*err) += "Not using POD storage for type " + std::string(value::TypeTraits<T>::type_name()) + "[].\n";
+    }
+    return false; // Not using POD storage
+  }
+
+  // TypedArray overload for add_matrix_array_sample_pod
+  template<typename T>
+  bool add_matrix_array_sample_pod(double t, const TypedArray<T>& value, std::string *err = nullptr, size_t expected_total_samples = 0) {
 
     // Auto-initialize on first sample
     if (empty()) {

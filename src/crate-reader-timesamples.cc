@@ -546,6 +546,22 @@ add_array_sample_to_timesamples(value::TimeSamples *d, double time,
   }
 }
 
+// TypedArray overload for POD types
+template <typename T>
+typename std::enable_if<is_pod_type<T>::value, bool>::type
+add_array_sample_to_timesamples(value::TimeSamples *d, double time,
+                                const TypedArray<T> &arrval, std::string *err,
+                                size_t expected_total_samples = 0) {
+  if (d->is_using_pod()) {
+    return d->add_array_sample_pod<T>(time, arrval, err,
+                                      expected_total_samples);
+  } else {
+    // Convert TypedArray to std::vector for non-POD path
+    std::vector<T> vec(arrval.data(), arrval.data() + arrval.size());
+    return d->add_sample(time, value::Value(vec), err);
+  }
+}
+
 // Specialization for matrix(treat it as pod)
 inline bool add_matrix2d_array_sample_to_timesamples(
     value::TimeSamples *d, double time,
@@ -580,6 +596,46 @@ inline bool add_matrix4d_array_sample_to_timesamples(
         time, arrval, err, expected_total_samples);
   } else {
     return d->add_sample(time, value::Value(arrval), err);
+  }
+}
+
+// TypedArray overloads for matrix types
+inline bool add_matrix2d_array_sample_to_timesamples(
+    value::TimeSamples *d, double time,
+    const TypedArray<value::matrix2d> &arrval, std::string *err,
+    size_t expected_total_samples = 0) {
+  if (d->is_using_pod()) {
+    return d->add_matrix_array_sample_pod<value::matrix2d>(
+        time, arrval, err, expected_total_samples);
+  } else {
+    std::vector<value::matrix2d> vec(arrval.data(), arrval.data() + arrval.size());
+    return d->add_sample(time, value::Value(vec), err);
+  }
+}
+
+inline bool add_matrix3d_array_sample_to_timesamples(
+    value::TimeSamples *d, double time,
+    const TypedArray<value::matrix3d> &arrval, std::string *err,
+    size_t expected_total_samples = 0) {
+  if (d->is_using_pod()) {
+    return d->add_matrix_array_sample_pod<value::matrix3d>(
+        time, arrval, err, expected_total_samples);
+  } else {
+    std::vector<value::matrix3d> vec(arrval.data(), arrval.data() + arrval.size());
+    return d->add_sample(time, value::Value(vec), err);
+  }
+}
+
+inline bool add_matrix4d_array_sample_to_timesamples(
+    value::TimeSamples *d, double time,
+    const TypedArray<value::matrix4d> &arrval, std::string *err,
+    size_t expected_total_samples = 0) {
+  if (d->is_using_pod()) {
+    return d->add_matrix_array_sample_pod<value::matrix4d>(
+        time, arrval, err, expected_total_samples);
+  } else {
+    std::vector<value::matrix4d> vec(arrval.data(), arrval.data() + arrval.size());
+    return d->add_sample(time, value::Value(vec), err);
   }
 }
 
@@ -734,7 +790,7 @@ bool CrateReader::UnpackTimeSampleValue_INT32(double t,
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
   } else if (rep.IsArray()) {
-    std::vector<int32_t> v;
+    TypedArray<int32_t> v;
     if (rep.GetPayload() == 0) {  // empty array
       if (!add_array_sample_to_timesamples<int32_t>(&dst, t, v, &_err,
                                                     expected_total_samples)) {
@@ -750,8 +806,8 @@ bool CrateReader::UnpackTimeSampleValue_INT32(double t,
       v = it->second;
       DCOUT("Reusing cached INT32 array for ValueRep, size=" << v.size());
     } else {
-      // Read and cache array
-      if (!ReadIntArray(rep.IsCompressed(), &v)) {
+      // Read and cache array using TypedArray
+      if (!ReadIntArrayTyped(rep.IsCompressed(), &v)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Int array.");
       }
 
@@ -827,7 +883,7 @@ bool CrateReader::UnpackTimeSampleValue_HALF(double t,
     }
 
   } else if (rep.IsArray()) {
-    std::vector<value::half> v;
+    TypedArray<value::half> v;
     if (rep.GetPayload() == 0) {  // empty array
       if (!add_array_sample_to_timesamples<value::half>(
               &dst, t, v, &_err, expected_total_samples)) {
@@ -843,18 +899,22 @@ bool CrateReader::UnpackTimeSampleValue_HALF(double t,
       v = it->second;
       DCOUT("Reusing cached HALF array for ValueRep, size=" << v.size());
     } else {
-      // Read and cache array
-      if (!ReadHalfArray(rep.IsCompressed(), &v)) {
+      // Read and cache array - fallback to std::vector for now
+      // TODO: Implement ReadHalfArrayTyped
+      std::vector<value::half> temp_v;
+      if (!ReadHalfArray(rep.IsCompressed(), &temp_v)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Int array.");
       }
 
-      DCOUT("timeSamples.HALF " << value::print_array_snipped(v));
+      DCOUT("timeSamples.HALF " << value::print_array_snipped(temp_v));
 
-      if (v.empty()) {
+      if (temp_v.empty()) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Empty half array.");
         return false;
       }
 
+      // Convert std::vector to TypedArray
+      v = TypedArray<value::half>(new TypedArrayImpl<value::half>(temp_v.data(), temp_v.size()));
       _dedup_half_array[rep] = v;
     }
 
@@ -1225,7 +1285,7 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT(double t,
     }
 
   } else if (rep.IsArray()) {
-    std::vector<float> v;
+    TypedArray<float> v;
     if (rep.GetPayload() == 0) {  // empty array
       if (!add_array_sample_to_timesamples<float>(&dst, t, v, &_err,
                                                   expected_total_samples)) {
@@ -1241,12 +1301,12 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT(double t,
       v = it->second;
       DCOUT("Reusing cached FLOAT array for ValueRep, size=" << v.size());
     } else {
-      // Read and cache array
-      if (!ReadFloatArray(rep.IsCompressed(), &v)) {
+      // Read and cache array using TypedArray
+      if (!ReadFloatArrayTyped(rep.IsCompressed(), &v)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Float array.");
       }
 
-      DCOUT("timeSamples.FLOAT " << value::print_array_snipped(v));
+      DCOUT("timeSamples.FLOAT " << v.size() << " elements");
 
       if (v.empty()) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Empty float array.");
@@ -2555,7 +2615,7 @@ bool CrateReader::UnpackTimeSampleValue_UINT32(double t,
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
   } else if (rep.IsArray()) {
-    std::vector<uint32_t> v;
+    TypedArray<uint32_t> v;
     if (rep.GetPayload() == 0) {
       if (!add_array_sample_to_timesamples<uint32_t>(&dst, t, v, &_err,
                                                      expected_total_samples)) {
@@ -2571,8 +2631,8 @@ bool CrateReader::UnpackTimeSampleValue_UINT32(double t,
       v = it->second;
       DCOUT("Reusing cached UINT32 array for ValueRep, size=" << v.size());
     } else {
-      // Read and cache array
-      if (!ReadIntArray(rep.IsCompressed(), &v)) {
+      // Read and cache array using TypedArray
+      if (!ReadIntArrayTyped(rep.IsCompressed(), &v)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read uint32 array.");
       }
       _dedup_uint32_array[rep] = v;
@@ -2640,7 +2700,7 @@ bool CrateReader::UnpackTimeSampleValue_INT64(double t,
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
   } else if (rep.IsArray()) {
-    std::vector<int64_t> v;
+    TypedArray<int64_t> v;
     if (rep.GetPayload() == 0) {
       if (!add_array_sample_to_timesamples<int64_t>(&dst, t, v, &_err,
                                                     expected_total_samples)) {
@@ -2656,8 +2716,8 @@ bool CrateReader::UnpackTimeSampleValue_INT64(double t,
       v = it->second;
       DCOUT("Reusing cached INT64 array for ValueRep, size=" << v.size());
     } else {
-      // Read and cache array
-      if (!ReadIntArray(rep.IsCompressed(), &v)) {
+      // Read and cache array using TypedArray
+      if (!ReadIntArrayTyped(rep.IsCompressed(), &v)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read int64 array.");
       }
       _dedup_int64_array[rep] = v;
@@ -2725,7 +2785,7 @@ bool CrateReader::UnpackTimeSampleValue_UINT64(double t,
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
   } else if (rep.IsArray()) {
-    std::vector<uint64_t> v;
+    TypedArray<uint64_t> v;
     if (rep.GetPayload() == 0) {
       if (!add_array_sample_to_timesamples<uint64_t>(&dst, t, v, &_err,
                                                      expected_total_samples)) {
@@ -2741,8 +2801,8 @@ bool CrateReader::UnpackTimeSampleValue_UINT64(double t,
       v = it->second;
       DCOUT("Reusing cached UINT64 array for ValueRep, size=" << v.size());
     } else {
-      // Read and cache array
-      if (!ReadIntArray(rep.IsCompressed(), &v)) {
+      // Read and cache array using TypedArray
+      if (!ReadIntArrayTyped(rep.IsCompressed(), &v)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read uint64 array.");
       }
       _dedup_uint64_array[rep] = v;
@@ -2810,7 +2870,7 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE(double t,
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
   } else if (rep.IsArray()) {
-    std::vector<double> v;
+    TypedArray<double> v;
     if (rep.GetPayload() == 0) {
       if (!add_array_sample_to_timesamples<double>(&dst, t, v, &_err,
                                                    expected_total_samples)) {
@@ -2826,8 +2886,8 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE(double t,
       v = it->second;
       DCOUT("Reusing cached DOUBLE array for ValueRep, size=" << v.size());
     } else {
-      // Read and cache array
-      if (!ReadDoubleArray(rep.IsCompressed(), &v)) {
+      // Read and cache array using TypedArray
+      if (!ReadDoubleArrayTyped(rep.IsCompressed(), &v)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read double array.");
       }
       _dedup_double_array[rep] = v;
