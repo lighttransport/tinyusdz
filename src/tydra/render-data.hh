@@ -756,48 +756,111 @@ struct AnimationSampler {
   Interpolation interpolation{Interpolation::Linear};
 };
 
-// We store animation data in AoS(array of structure) approach(glTF-like), i.e. animation channel is provided per joint, instead of
-// SoA(structure of array) approach(USD SkelAnimation)
-// TODO: Use VertexAttribute-like data structure
-struct AnimationChannel {
-  enum class ChannelType { Transform, Translation, Rotation, Scale, Weight };
-
-  AnimationChannel() = default;
-
-  AnimationChannel(ChannelType ty) : type(ty) {
-  }
-
-  ChannelType type;
-  // The following AnimationSampler is filled depending on ChannelType.
-  // Example: Rotation => Only `rotations` are filled.
-
-  // Matrix precision is reduced to float-precision
-  // NOTE: transform is not supported in glTF(you need to decompose transform
-  // matrix into TRS)
-  AnimationSampler<mat4> transforms;
-
-  AnimationSampler<vec3> translations;
-  AnimationSampler<quat> rotations;  // Rotation is represented as quaternions
-  AnimationSampler<vec3> scales; // half-types are upcasted to float precision
-  AnimationSampler<float> weights;
-
-  //std::string joint_name; // joint name(UsdSkel::joints)
-  //int64_t joint_id{-1};  // joint index in SkelHierarchy
+///
+/// Animation interpolation mode (matches glTF specification)
+///
+enum class AnimationInterpolation {
+  Linear,      ///< LINEAR - linear interpolation (slerp for quaternions)
+  Step,        ///< STEP - discrete/stepped interpolation (no interpolation)
+  CubicSpline  ///< CUBICSPLINE - cubic spline with in/out tangents
 };
 
-// USD SkelAnimation
-struct Animation {
-  std::string prim_name; // Prim name(element name)
-  std::string abs_path;  // Target USD Prim path
-  std::string display_name;  // `displayName` prim meta
+///
+/// Animation target property path (matches glTF animation paths)
+///
+enum class AnimationPath {
+  Translation,  ///< Animates position (vec3) - maps to .position in Three.js
+  Rotation,     ///< Animates rotation (quat) - maps to .quaternion in Three.js
+  Scale,        ///< Animates scale (vec3) - maps to .scale in Three.js
+  Weights       ///< Animates morph target weights (float array)
+};
 
-  // key = joint, value = (key: channel_type, value: channel_value)
-  std::map<std::string, std::map<AnimationChannel::ChannelType, AnimationChannel>> channels_map;
+///
+/// Keyframe sampler - stores keyframe times and values in flat arrays
+///
+/// Matches glTF Animation Sampler structure and Three.js KeyframeTrack format.
+/// Values are stored as flat float arrays:
+/// - Translation/Scale: [x0,y0,z0, x1,y1,z1, ...] (3 floats per keyframe)
+/// - Rotation: [x0,y0,z0,w0, x1,y1,z1,w1, ...] (4 floats per keyframe)
+/// - Weights: [w0, w1, w2, ...] (1 float per keyframe per target)
+///
+/// For CubicSpline interpolation, each keyframe requires 3 values:
+/// [in_tangent, value, out_tangent], so array size is times.size() * components * 3
+///
+struct KeyframeSampler {
+  std::vector<float> times;   ///< Keyframe times in seconds (flat array)
+  std::vector<float> values;  ///< Keyframe values (flat array)
+  AnimationInterpolation interpolation{AnimationInterpolation::Linear};
 
-  // For blendshapes
-  // key = blendshape name, value = timesamped weights
-  // TODO: in-between weight
-  std::map<std::string, AnimationSampler<float>> blendshape_weights_map;
+  /// Check if sampler is empty
+  bool empty() const { return times.empty(); }
+
+  /// Get number of keyframes
+  size_t num_keyframes() const { return times.size(); }
+};
+
+///
+/// Animation channel - binds sampler data to a specific node property
+///
+/// Matches glTF Animation Channel structure. Each channel targets one property
+/// of one node, and references a sampler that provides the keyframe data.
+///
+struct AnimationChannel {
+  AnimationPath path;         ///< Which property to animate (translation/rotation/scale/weights)
+  int32_t target_node{-1};    ///< Index into RenderScene::nodes (-1 = invalid)
+  int32_t sampler{-1};        ///< Index into AnimationClip::samplers (-1 = invalid)
+
+  /// Check if channel is valid
+  bool is_valid() const { return target_node >= 0 && sampler >= 0; }
+};
+
+///
+/// Animation clip - collection of animation channels and samplers
+///
+/// Matches glTF Animation structure and Three.js AnimationClip.
+/// An animation clip contains:
+/// - samplers: Keyframe data (times and values)
+/// - channels: Bindings from samplers to node properties
+///
+/// This design separates animation data from the scene hierarchy,
+/// making it compatible with Three.js/glTF animation systems.
+///
+/// Example usage:
+/// ```
+/// AnimationClip clip;
+/// clip.name = "Walk";
+/// clip.duration = 2.0f;
+///
+/// // Create sampler for translation
+/// KeyframeSampler trans_sampler;
+/// trans_sampler.times = {0.0f, 1.0f, 2.0f};
+/// trans_sampler.values = {0,0,0,  1,0,0,  0,0,0};  // Flat array: x,y,z for each keyframe
+/// clip.samplers.push_back(trans_sampler);
+///
+/// // Create channel targeting node 5's translation
+/// AnimationChannel channel;
+/// channel.path = AnimationPath::Translation;
+/// channel.target_node = 5;
+/// channel.sampler = 0;  // Index into clip.samplers
+/// clip.channels.push_back(channel);
+/// ```
+///
+struct AnimationClip {
+  std::string name;               ///< Animation name
+  std::string prim_name;          ///< Original USD prim name (element name)
+  std::string abs_path;           ///< Original USD absolute prim path
+  std::string display_name;       ///< USD `displayName` prim meta
+
+  float duration{0.0f};           ///< Animation duration in seconds
+
+  std::vector<KeyframeSampler> samplers;  ///< Keyframe data
+  std::vector<AnimationChannel> channels;  ///< Property bindings
+
+  /// Check if animation is empty
+  bool empty() const { return channels.empty(); }
+
+  /// Get number of channels
+  size_t num_channels() const { return channels.size(); }
 };
 
 struct Node {
@@ -826,13 +889,10 @@ struct Node {
 
   bool is_identity_matrix() { return is_identity(local_matrix); }
 
-#ifdef TYDRA_USE_CHUNKED_ARRAY
-  ChunkedVectorArray<AnimationChannel>
-      node_animations;  // xform animations(timesamples)
-#else
-  std::vector<AnimationChannel>
-      node_animations;  // xform animations(timesamples)
-#endif
+  // NOTE: Animation data has been moved to RenderScene::animations (AnimationClip).
+  // Animations reference nodes by index (AnimationChannel::target_node) rather than
+  // being embedded in the Node structure. This matches glTF/Three.js design and
+  // allows animations to be managed independently of the scene hierarchy.
 
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
 };
@@ -1348,7 +1408,7 @@ class RenderScene {
   ChunkedVectorArray<RenderLight> lights;
   ChunkedVectorArray<UVTexture> textures;
   ChunkedVectorArray<RenderMesh> meshes;
-  ChunkedVectorArray<Animation> animations;
+  ChunkedVectorArray<AnimationClip> animations;  ///< Animation clips (glTF/Three.js compatible)
   ChunkedVectorArray<SkelHierarchy> skeletons;
   ChunkedVectorArray<BufferData>
       buffers;  // Various data storage(e.g. texel/image data).
@@ -1360,7 +1420,7 @@ class RenderScene {
   std::vector<RenderLight> lights;
   std::vector<UVTexture> textures;
   std::vector<RenderMesh> meshes;
-  std::vector<Animation> animations;
+  std::vector<AnimationClip> animations;  ///< Animation clips (glTF/Three.js compatible)
   std::vector<SkelHierarchy> skeletons;
   std::vector<BufferData>
       buffers;  // Various data storage(e.g. texel/image data).
@@ -2310,7 +2370,7 @@ class RenderSceneConverter {
   ChunkedVectorArray<TextureImage> images;
   ChunkedVectorArray<BufferData> buffers;
   ChunkedVectorArray<SkelHierarchy> skeletons;
-  ChunkedVectorArray<Animation> animations;
+  ChunkedVectorArray<AnimationClip> animations;
 #else
   std::vector<Node> root_nodes;
   std::vector<RenderMesh> meshes;
@@ -2321,7 +2381,7 @@ class RenderSceneConverter {
   std::vector<TextureImage> images;
   std::vector<BufferData> buffers;
   std::vector<SkelHierarchy> skeletons;
-  std::vector<Animation> animations;
+  std::vector<AnimationClip> animations;
 #endif
 
   ///
@@ -2437,12 +2497,12 @@ class RenderSceneConverter {
   /// Convert SkelAnimation to Tydra Animation.
   ///
   /// @param[in] abs_path USD Path to SkelAnimation Prim
-  /// @param[in] skelAnim SkelAnimatio
-  /// @param[in] anim_out Animation
+  /// @param[in] skelAnim SkelAnimation
+  /// @param[in] anim_out AnimationClip
   ///
   bool ConvertSkelAnimation(const RenderSceneConverterEnv &env,
                         const Path &abs_path, const SkelAnimation &skelAnim,
-                        Animation *anim_out);
+                        AnimationClip *anim_out);
 
   ///
   /// @param[in] env
@@ -2501,7 +2561,7 @@ class RenderSceneConverter {
   // Also get SkelAnimation attached to Skeleton(if exists)
   //
   bool ConvertSkeletonImpl(const RenderSceneConverterEnv &env, const tinyusdz::GeomMesh &mesh,
-                       SkelHierarchy *out_skel, nonstd::optional<Animation> *out_anim);
+                       SkelHierarchy *out_skel, nonstd::optional<AnimationClip> *out_anim);
 
   bool BuildNodeHierarchyImpl(
     const RenderSceneConverterEnv &env,
