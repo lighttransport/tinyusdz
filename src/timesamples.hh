@@ -436,6 +436,65 @@ public:
     return true;
   }
 
+  /// Specialized add_sample for TypedArray<T> - stores only the packed 64-bit pointer
+  /// This reduces storage to 8 bytes per sample instead of full Value object
+  /// @param t Time value
+  /// @param typed_array The TypedArray to add (stores its packed pointer value)
+  /// @param err Optional error string
+  /// @param expected_total_samples Optional: if this is the first sample, pre-allocate for this many samples
+  template<typename T>
+  bool add_typed_array_sample(double t, const TypedArray<T>& typed_array, std::string *err = nullptr,
+                              size_t expected_total_samples = 0) {
+    // TypedArray internally stores a uint64_t packed pointer, so we can treat it as POD
+    uint64_t packed_value = typed_array.get_packed_value();
+
+    // Set type_id on first sample - use TYPE_ID_UINT64 for TypedArray storage
+    // We store the packed pointer as a uint64_t
+    if (_times.empty()) {
+      _type_id = value::TYPE_ID_UINT64; // TypedArray stored as uint64_t packed pointer
+      _is_array = false;
+      _element_size = sizeof(uint64_t);  // Always 8 bytes for packed pointer
+
+      // Pre-allocate if requested
+      if (expected_total_samples > 0) {
+        reserve_with_type(expected_total_samples);
+      }
+    } else {
+      // Verify we're storing TypedArray data
+      if (_type_id != value::TYPE_ID_UINT64 || _element_size != sizeof(uint64_t)) {
+        if (err) {
+          (*err) += "Type mismatch: PODTimeSamples is not configured for TypedArray storage.\n";
+        }
+        return false;
+      }
+    }
+
+    size_t new_idx = _times.size();
+    _times.push_back(t);
+    _blocked.push_back(0);  // false = 0
+
+    // Store the packed pointer value
+    if (_is_array || !_offsets.empty()) {
+      // Using offset table
+      if (_offsets.size() < _times.size() - 1) {
+        _offsets.resize(_times.size() - 1, SIZE_MAX);
+      }
+
+      _offsets.push_back(_values.size());
+      _values.resize(_values.size() + sizeof(uint64_t));
+      std::memcpy(_values.data() + _offsets.back(), &packed_value, sizeof(uint64_t));
+    } else {
+      // Simple append without offsets
+      size_t old_size = _values.size();
+      _values.resize(old_size + sizeof(uint64_t));
+      std::memcpy(_values.data() + old_size, &packed_value, sizeof(uint64_t));
+    }
+
+    _dirty = true;
+    mark_dirty_range(new_idx);
+    return true;
+  }
+
   /// Add an array sample with POD element type checking
   /// @param t Time value
   /// @param values Pointer to array data
@@ -793,6 +852,114 @@ public:
     return false;
   }
 
+  /// Get TypedArray value at specific index
+  /// Reconstructs TypedArray from stored packed pointer value
+  template<typename T>
+  bool get_typed_array_at(size_t idx, TypedArray<T>* typed_array, bool* blocked = nullptr) const {
+    if (!typed_array) {
+      return false;
+    }
+
+    if (_dirty) {
+      update();
+    }
+
+    if (idx >= _times.size()) {
+      return false;
+    }
+
+    // Check if this PODTimeSamples is storing TypedArray data
+    if (_type_id != value::TYPE_ID_UINT64 || _element_size != sizeof(uint64_t)) {
+      return false;  // Not TypedArray storage
+    }
+
+    // Check if blocked
+    if (_blocked[idx]) {
+      if (blocked) {
+        *blocked = true;
+      }
+      // For blocked values, set to null TypedArray
+      *typed_array = TypedArray<T>();
+      return true;
+    }
+
+    // Retrieve the packed pointer value
+    uint64_t packed_value = 0;
+
+    // Find the actual data offset
+    if (!_offsets.empty()) {
+      // Using offset table
+      if (_offsets[idx] == SIZE_MAX) {
+        // This is a blocked value
+        if (blocked) {
+          *blocked = true;
+        }
+        *typed_array = TypedArray<T>();
+        return true;
+      }
+      const uint8_t* src = _values.data() + _offsets[idx];
+      std::memcpy(&packed_value, src, sizeof(uint64_t));
+    } else {
+      // Legacy path: calculate offset by counting non-blocked entries
+      size_t data_offset = 0;
+      for (size_t i = 0; i < idx; ++i) {
+        if (!_blocked[i]) {
+          data_offset += sizeof(uint64_t);
+        }
+      }
+      const uint8_t* src = _values.data() + data_offset;
+      std::memcpy(&packed_value, src, sizeof(uint64_t));
+    }
+
+    // Reconstruct TypedArray from packed value
+    // Note: This creates a shallow copy - the underlying TypedArrayImpl is shared
+    // and marked as dedup to prevent deletion
+    TypedArrayImpl<T>* ptr = nullptr;
+
+    // Extract pointer from packed value
+    uint64_t ptr_bits = packed_value & 0x0000FFFFFFFFFFFFULL;  // Lower 48 bits
+    // Note: dedup flag is in bit 63 but we always mark as dedup when retrieving
+
+    // Sign-extend from 48 bits to 64 bits for canonical address
+    if (ptr_bits & (1ULL << 47)) {
+      ptr_bits |= 0xFFFF000000000000ULL;
+    }
+
+    ptr = reinterpret_cast<TypedArrayImpl<T>*>(ptr_bits);
+
+    // Create TypedArray with dedup flag set (to prevent deletion)
+    *typed_array = TypedArray<T>(ptr, true);  // Always mark as dedup when retrieving
+
+    if (blocked) {
+      *blocked = false;
+    }
+
+    return true;
+  }
+
+  /// Get TypedArray value at specific time
+  template<typename T>
+  bool get_typed_array_at_time(double t, TypedArray<T>* typed_array, bool* blocked = nullptr) const {
+    if (!typed_array) {
+      return false;
+    }
+
+    if (_dirty) {
+      update();
+    }
+
+    const auto it = std::find_if(_times.begin(), _times.end(), [&t](double sample_t) {
+      return std::fabs(t - sample_t) < std::numeric_limits<double>::epsilon();
+    });
+
+    if (it != _times.end()) {
+      size_t idx = static_cast<size_t>(std::distance(_times.begin(), it));
+      return get_typed_array_at<T>(idx, typed_array, blocked);
+    }
+
+    return false;
+  }
+
   const std::vector<double>& get_times() const {
     if (_dirty) {
       update();
@@ -901,7 +1068,7 @@ struct TimeSamples {
   /// Initialize TimeSamples with a specific type_id
   /// This determines whether to use POD optimization or regular storage
   bool init(uint32_t type_id) {
-    TUSDZ_LOG_I("init" << type_id);
+    //TUSDZ_LOG_I("init" << type_id);
     DCOUT("init" << type_id);
 
     // Allow initialization if empty OR if it contains only uninitialized blocked samples
@@ -1235,6 +1402,76 @@ struct TimeSamples {
       (*err) += "Not using POD storage for type " + std::string(value::TypeTraits<T>::type_name()) + ".\n";
     }
     return false; // Not using POD storage
+  }
+
+  /// Add TypedArray sample using PODTimeSamples optimization
+  /// Stores only the packed 64-bit pointer, reducing storage to 8 bytes per sample
+  template<typename T>
+  bool add_typed_array_sample(double t, const TypedArray<T>& typed_array, std::string *err = nullptr,
+                              size_t expected_total_samples = 0) {
+    // Initialize for TypedArray storage
+    if (empty()) {
+      _type_id = value::TYPE_ID_UINT64; // TypedArray stored as uint64_t
+      _use_pod = true; // Always use POD storage for TypedArray
+      _pod_samples._type_id = value::TYPE_ID_UINT64;
+    } else if (_type_id != value::TYPE_ID_UINT64) {
+      if (err) {
+        (*err) += "Type mismatch: TimeSamples already initialized with different type.\n";
+      }
+      return false;
+    }
+
+    if (_use_pod) {
+      bool result = _pod_samples.add_typed_array_sample<T>(t, typed_array, err, expected_total_samples);
+      _dirty = true;
+      return result;
+    }
+
+    // Fallback: shouldn't reach here for TypedArray
+    if (err) {
+      (*err) += "TypedArray must use POD storage.\n";
+    }
+    return false;
+  }
+
+  /// Get TypedArray sample at specific time
+  template<typename T>
+  bool get_typed_array_at_time(double t, TypedArray<T>* typed_array, bool* blocked = nullptr) const {
+    if (!typed_array) {
+      return false;
+    }
+
+    // Check if storing TypedArray data
+    if (_type_id != value::TYPE_ID_UINT64) {
+      return false;
+    }
+
+    if (_use_pod) {
+      return _pod_samples.get_typed_array_at_time<T>(t, typed_array, blocked);
+    }
+
+    // TypedArray should always use POD storage
+    return false;
+  }
+
+  /// Get TypedArray sample at specific index
+  template<typename T>
+  bool get_typed_array_at(size_t idx, TypedArray<T>* typed_array, bool* blocked = nullptr) const {
+    if (!typed_array) {
+      return false;
+    }
+
+    // Check if storing TypedArray data
+    if (_type_id != value::TYPE_ID_UINT64) {
+      return false;
+    }
+
+    if (_use_pod) {
+      return _pod_samples.get_typed_array_at<T>(idx, typed_array, blocked);
+    }
+
+    // TypedArray should always use POD storage
+    return false;
   }
 
   const std::vector<Sample> &get_samples() const {
