@@ -4272,7 +4272,7 @@ bool RenderSceneConverter::ConvertMesh(
 
       if (skelPath.is_valid()) {
         SkelHierarchy skel;
-        nonstd::optional<Animation> anim;
+        nonstd::optional<AnimationClip> anim;
         // TODO: cache skeleton conversion
         if (!ConvertSkeletonImpl(env, mesh, &skel, &anim)) {
           return false;
@@ -4287,7 +4287,7 @@ bool RenderSceneConverter::ConvertMesh(
         if (anim) {
 
           const auto &animAbsPath = anim.value().abs_path;
-          auto anim_it = std::find_if(animations.begin(), animations.end(), [&animAbsPath](const Animation &a) {
+          auto anim_it = std::find_if(animations.begin(), animations.end(), [&animAbsPath](const AnimationClip &a) {
             DCOUT("a.abs_path " << a.abs_path << ", anim_path " << animAbsPath);
             return a.abs_path == animAbsPath;
           });
@@ -6088,15 +6088,13 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &env,
                                             const Path &abs_path,
                                             const SkelAnimation &skelAnim,
-                                            Animation *anim_out) {
-  // The spec says
-  // """
-  // An animation source is only valid if its translation, rotation, and scale components are all authored, storing arrays size to the same size as the authored joints array.
-  // """
+                                            AnimationClip *anim_out) {
+  // The spec says:
+  // "An animation source is only valid if its translation, rotation, and scale components  
+  //  are all authored, storing arrays sized to the same size as the authored joints array."
   //
-  // SkelAnimation contains
-  // - Joint animations(translation, rotation, scale)
-  // - BlendShape animations(weights)
+  // Convert USD SkelAnimation to glTF/Three.js compatible AnimationClip structure
+  // with flat sampler arrays and channel bindings
 
   std::vector<value::token> joints;
 
@@ -6125,323 +6123,212 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
     if (!skelAnim.blendShapeWeights.authored()) {
       PUSH_ERROR_AND_RETURN(fmt::format("`blendShapeWeights` must be authored for SkelAnimation Prim {}", abs_path));
     }
-
   }
 
+  // Setup basic metadata
+  anim_out->abs_path = abs_path.full_path_name();
+  anim_out->prim_name = skelAnim.name;
+  anim_out->name = skelAnim.name;
+  anim_out->display_name = skelAnim.metas().displayName.value_or("");
+  anim_out->duration = 0.0f;  // Will be computed below
 
-  //
-  // Reorder values[channels][timeCode][jointId] into values[jointId][channels][timeCode]
-  //
-
-  std::map<std::string, std::map<AnimationChannel::ChannelType, AnimationChannel>> channelMap;
-
-  // Joint animations
+  // Joint animations - convert to glTF-style flat arrays
   if (joints.size()) {
-    StringAndIdMap jointIdMap;
-
-    for (const auto &joint : joints) {
-      uint64_t id = jointIdMap.size();
-      jointIdMap.add(joint.str(), id);
-    }
-
     Animatable<std::vector<value::float3>> translations;
     if (!skelAnim.translations.get_value(&translations)) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `translations` attribute of SkelAnimation. Maybe ValueBlock or connection? : {}", abs_path));
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `translations` attribute of SkelAnimation: {}", abs_path));
     }
 
     Animatable<std::vector<value::quatf>> rotations;
     if (!skelAnim.rotations.get_value(&rotations)) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `rotations` attribute of SkelAnimation. Maybe ValueBlock or connection? : {}", abs_path));
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `rotations` attribute of SkelAnimation: {}", abs_path));
     }
 
     Animatable<std::vector<value::half3>> scales;
     if (!skelAnim.scales.get_value(&scales)) {
-      PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `scales` attribute of SkelAnimation. Maybe ValueBlock or connection? : {}", abs_path));
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `scales` attribute of SkelAnimation: {}", abs_path));
     }
 
-    DCOUT("translations: has_timesamples " << translations.has_timesamples());
-    DCOUT("translations: has_default " << translations.has_default());
-    DCOUT("rotations: has_timesamples " << rotations.has_timesamples());
-    DCOUT("rotations: has_default " << rotations.has_default());
-    DCOUT("scales: has_timesamples " << scales.has_timesamples());
-    DCOUT("scales: has_default " << scales.has_default());
-
-    //
-    // timesamples value
-    //
+    // Extract timesamples for each animation type
+    std::vector<double> translation_times, rotation_times, scale_times;
+    std::vector<std::vector<value::float3>> translation_samples;
+    std::vector<std::vector<value::quatf>> rotation_samples;
+    std::vector<std::vector<value::half3>> scale_samples;
 
     if (translations.has_timesamples()) {
-      DCOUT("Convert ttranslations");
       const TypedTimeSamples<std::vector<value::float3>> &ts_txs = translations.get_timesamples();
-
-      if (TIMESAMPLES_EMPTY(ts_txs)) {
-        PUSH_ERROR_AND_RETURN(fmt::format("`translations` timeSamples in SkelAnimation is empty : {}", abs_path));
-      }
-
       FOREACH_TIMESAMPLES_BEGIN(ts_txs, sample_t, sample_value, sample_blocked)
-        // length check
         if (sample_value.size() != joints.size()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. timeCode {} translations.size {} must be equal to joints.size {} : {}", sample_t, sample_value.size(), joints.size(), abs_path));
+          PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: translations[{}].size {} != joints.size {} at time {}", 
+            translation_times.size(), sample_value.size(), joints.size(), sample_t));
         }
-
-        for (size_t j = 0; j < sample_value.size(); j++) {
-          AnimationSample<value::float3> s;
-          s.t = float(sample_t);
-          s.value = sample_value[j];
-
-            std::string jointName = jointIdMap.at(j);
-            auto &it = channelMap[jointName][AnimationChannel::ChannelType::Translation];
-            if (it.translations.samples.empty()) {
-              it.type = AnimationChannel::ChannelType::Translation;
-            }
-            it.translations.samples.push_back(s);
-        }
+        translation_times.push_back(sample_t);
+        translation_samples.push_back(sample_value);
+        if (float(sample_t) > anim_out->duration) anim_out->duration = float(sample_t);
       FOREACH_TIMESAMPLES_END()
     }
 
     if (rotations.has_timesamples()) {
       const TypedTimeSamples<std::vector<value::quatf>> &ts_rots = rotations.get_timesamples();
-      DCOUT("Convert rotations");
       FOREACH_TIMESAMPLES_BEGIN(ts_rots, sample_t, sample_value, sample_blocked)
         if (sample_value.size() != joints.size()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. timeCode {} rotations.size {} must be equal to joints.size {} : {}", sample_t, sample_value.size(), joints.size(), abs_path));
+          PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: rotations[{}].size {} != joints.size {} at time {}", 
+            rotation_times.size(), sample_value.size(), joints.size(), sample_t));
         }
-        for (size_t j = 0; j < sample_value.size(); j++) {
-          AnimationSample<value::float4> s;
-          s.t = float(sample_t);
-          s.value[0] = sample_value[j][0];
-          s.value[1] = sample_value[j][1];
-          s.value[2] = sample_value[j][2];
-          s.value[3] = sample_value[j][3];
-
-            std::string jointName = jointIdMap.at(j);
-            auto &it = channelMap[jointName][AnimationChannel::ChannelType::Rotation];
-            if (it.rotations.samples.empty()) {
-              it.type = AnimationChannel::ChannelType::Rotation;
-            }
-            it.rotations.samples.push_back(s);
-        }
+        rotation_times.push_back(sample_t);
+        rotation_samples.push_back(sample_value);
+        if (float(sample_t) > anim_out->duration) anim_out->duration = float(sample_t);
       FOREACH_TIMESAMPLES_END()
     }
 
     if (scales.has_timesamples()) {
       const TypedTimeSamples<std::vector<value::half3>> &ts_scales = scales.get_timesamples();
-      DCOUT("Convert scales");
       FOREACH_TIMESAMPLES_BEGIN(ts_scales, sample_t, sample_value, sample_blocked)
         if (sample_value.size() != joints.size()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. timeCode {} scales.size {} must be equal to joints.size {} : {}", sample_t, sample_value.size(), joints.size(), abs_path));
+          PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: scales[{}].size {} != joints.size {} at time {}", 
+            scale_times.size(), sample_value.size(), joints.size(), sample_t));
         }
-
-        for (size_t j = 0; j < sample_value.size(); j++) {
-          AnimationSample<value::float3> s;
-          s.t = float(sample_t);
-          s.value[0] = value::half_to_float(sample_value[j][0]);
-          s.value[1] = value::half_to_float(sample_value[j][1]);
-          s.value[2] = value::half_to_float(sample_value[j][2]);
-
-            std::string jointName = jointIdMap.at(j);
-            auto &it = channelMap[jointName][AnimationChannel::ChannelType::Scale];
-            if (it.scales.samples.empty()) {
-              it.type = AnimationChannel::ChannelType::Scale;
-            }
-            it.scales.samples.push_back(s);
-        }
+        scale_times.push_back(sample_t);
+        scale_samples.push_back(sample_value);
+        if (float(sample_t) > anim_out->duration) anim_out->duration = float(sample_t);
       FOREACH_TIMESAMPLES_END()
     }
 
-    //
-    // value at 'default' time.
-    //
+    // Create glTF-style samplers and channels for each joint
+    // Note: This creates one sampler per joint per property (not optimal but simple)
+    // TODO: Optimize to share samplers when possible
+    
+    for (size_t joint_idx = 0; joint_idx < joints.size(); joint_idx++) {
+      // Translation sampler and channel
+      if (!translation_times.empty()) {
+        KeyframeSampler trans_sampler;
+        trans_sampler.times.reserve(translation_times.size());
+        trans_sampler.values.reserve(translation_times.size() * 3);
+        trans_sampler.interpolation = AnimationInterpolation::Linear;
 
-    // Get value and also do length check for scalar(non timeSampled) animation value.
-    if (translations.has_default()) {
-      DCOUT("translation at default time");
-      std::vector<value::float3> translation;
-      if (!translations.get_scalar(&translation)) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `translations` attribute in SkelAnimation: {}", abs_path));
-      }
-      if (translation.size() != joints.size()) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. translations.default.size {} must be equal to joints.size {} : {}", translation.size(), joints.size(), abs_path));
+        for (size_t t = 0; t < translation_times.size(); t++) {
+          trans_sampler.times.push_back(float(translation_times[t]));
+          const auto &v = translation_samples[t][joint_idx];
+          trans_sampler.values.push_back(v[0]);
+          trans_sampler.values.push_back(v[1]);
+          trans_sampler.values.push_back(v[2]);
+        }
+
+        int32_t sampler_idx = int32_t(anim_out->samplers.size());
+        anim_out->samplers.push_back(trans_sampler);
+
+        AnimationChannel channel;
+        channel.path = AnimationPath::Translation;
+        channel.target_node = int32_t(joint_idx);  // Will be remapped later
+        channel.sampler = sampler_idx;
+        anim_out->channels.push_back(channel);
       }
 
-      for (size_t j = 0; j < joints.size(); j++) {
-        std::string jointName = jointIdMap.at(j);
-        auto &it = channelMap[jointName][AnimationChannel::ChannelType::Translation];
-        it.translations.static_value = translation[j];
-      }
-    }
+      // Rotation sampler and channel
+      if (!rotation_times.empty()) {
+        KeyframeSampler rot_sampler;
+        rot_sampler.times.reserve(rotation_times.size());
+        rot_sampler.values.reserve(rotation_times.size() * 4);
+        rot_sampler.interpolation = AnimationInterpolation::Linear;
 
-    if (rotations.has_default()) {
-      DCOUT("rotations at default time");
-      std::vector<value::float4> rotation;
-      std::vector<value::quatf> _rotation;
-      if (!rotations.get_scalar(&_rotation)) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `rotations` attribute in SkelAnimation: {}", abs_path));
-      }
-      if (_rotation.size() != joints.size()) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. rotations.default.size {} must be equal to joints.size {} : {}", _rotation.size(), joints.size(), abs_path));
-      }
-      std::transform(_rotation.begin(), _rotation.end(), std::back_inserter(rotation), [](const value::quatf &v) {
-        value::float4 ret;
-        // pxrUSD's TfQuat also uses xyzw memory order.
-        ret[0] = v[0];
-        ret[1] = v[1];
-        ret[2] = v[2];
-        ret[3] = v[3];
-        return ret;
-      });
+        for (size_t t = 0; t < rotation_times.size(); t++) {
+          rot_sampler.times.push_back(float(rotation_times[t]));
+          const auto &q = rotation_samples[t][joint_idx];
+          rot_sampler.values.push_back(q[0]);
+          rot_sampler.values.push_back(q[1]);
+          rot_sampler.values.push_back(q[2]);
+          rot_sampler.values.push_back(q[3]);
+        }
 
-      for (size_t j = 0; j < joints.size(); j++) {
-        std::string jointName = jointIdMap.at(j);
-        auto &it = channelMap[jointName][AnimationChannel::ChannelType::Rotation];
-        it.rotations.static_value = rotation[j];
-      }
-    }
+        int32_t sampler_idx = int32_t(anim_out->samplers.size());
+        anim_out->samplers.push_back(rot_sampler);
 
-    if (scales.has_default()) {
-      DCOUT("scales at default time");
-      std::vector<value::float3> scale;
-      std::vector<value::half3> _scale;
-      if (!scales.get_scalar(&_scale)) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `scales` attribute in SkelAnimation: {}", abs_path));
+        AnimationChannel channel;
+        channel.path = AnimationPath::Rotation;
+        channel.target_node = int32_t(joint_idx);
+        channel.sampler = sampler_idx;
+        anim_out->channels.push_back(channel);
       }
-      if (_scale.size() != joints.size()) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. scale.default.size {} must be equal to joints.size {} : {}", _scale.size(), joints.size(), abs_path));
-      }
-      // half -> float
-      std::transform(_scale.begin(), _scale.end(), std::back_inserter(scale), [](const value::half3 &v) {
-        value::float3 ret;
-        ret[0] = value::half_to_float(v[0]);
-        ret[1] = value::half_to_float(v[1]);
-        ret[2] = value::half_to_float(v[2]);
-        return ret;
-      });
-      for (size_t j = 0; j < joints.size(); j++) {
-        std::string jointName = jointIdMap.at(j);
-        auto &it = channelMap[jointName][AnimationChannel::ChannelType::Scale];
-        it.scales.static_value = scale[j];
-      }
-    }
 
+      // Scale sampler and channel
+      if (!scale_times.empty()) {
+        KeyframeSampler scale_sampler;
+        scale_sampler.times.reserve(scale_times.size());
+        scale_sampler.values.reserve(scale_times.size() * 3);
+        scale_sampler.interpolation = AnimationInterpolation::Linear;
 
-#if 0 // TODO: remove
-    if (!is_translations_timesamples) {
-      DCOUT("Reorder translation samples");
-      // Create a channel value with single-entry
-      // Use USD TimeCode::Default for static sample.
-      for (const auto &joint : joints) {
-        channelMap[joint.str()][AnimationChannel::ChannelType::Translation].type = AnimationChannel::ChannelType::Translation;
+        for (size_t t = 0; t < scale_times.size(); t++) {
+          scale_sampler.times.push_back(float(scale_times[t]));
+          const auto &v = scale_samples[t][joint_idx];
+          scale_sampler.values.push_back(value::half_to_float(v[0]));
+          scale_sampler.values.push_back(value::half_to_float(v[1]));
+          scale_sampler.values.push_back(value::half_to_float(v[2]));
+        }
 
-        AnimationSample<value::float3> s;
-        s.t = std::numeric_limits<float>::quiet_NaN();
-        uint64_t joint_id = jointIdMap.at(joint.str());
-        s.value = translation[joint_id];
-        channelMap[joint.str()][AnimationChannel::ChannelType::Translation].translations.samples.clear();
-        channelMap[joint.str()][AnimationChannel::ChannelType::Translation].translations.samples.push_back(s);
+        int32_t sampler_idx = int32_t(anim_out->samplers.size());
+        anim_out->samplers.push_back(scale_sampler);
+
+        AnimationChannel channel;
+        channel.path = AnimationPath::Scale;
+        channel.target_node = int32_t(joint_idx);
+        channel.sampler = sampler_idx;
+        anim_out->channels.push_back(channel);
       }
     }
-
-    if (!is_rotations_timesamples) {
-      DCOUT("Reorder rotation samples");
-      for (const auto &joint : joints) {
-        channelMap[joint.str()][AnimationChannel::ChannelType::Rotation].type = AnimationChannel::ChannelType::Rotation;
-
-        AnimationSample<value::float4> s;
-        s.t = std::numeric_limits<float>::quiet_NaN();
-        uint64_t joint_id = jointIdMap.at(joint.str());
-        DCOUT("rot joint_id " << joint_id);
-        s.value = rotation[joint_id];
-        channelMap[joint.str()][AnimationChannel::ChannelType::Rotation].rotations.samples.clear();
-        channelMap[joint.str()][AnimationChannel::ChannelType::Rotation].rotations.samples.push_back(s);
-      }
-    }
-
-    if (!is_scales_timesamples) {
-      DCOUT("Reorder scale samples");
-      for (const auto &joint : joints) {
-        channelMap[joint.str()][AnimationChannel::ChannelType::Scale].type = AnimationChannel::ChannelType::Scale;
-
-        AnimationSample<value::float3> s;
-        s.t = std::numeric_limits<float>::quiet_NaN();
-        uint64_t joint_id = jointIdMap.at(joint.str());
-        s.value = scale[joint_id];
-        channelMap[joint.str()][AnimationChannel::ChannelType::Scale].scales.samples.clear();
-        channelMap[joint.str()][AnimationChannel::ChannelType::Scale].scales.samples.push_back(s);
-      }
-    }
-#endif
   }
 
   // BlendShape animations
   if (blendShapes.size()) {
-
-    std::map<std::string, AnimationSampler<float>> weightsMap;
-
-    // Blender 4.1 may export empty bendShapeWeights. We'll accept it.
-    //
-    // float[] blendShapeWeights
-    if (skelAnim.blendShapeWeights.is_value_empty()) {
-      for (const auto &bs : blendShapes) {
-        weightsMap[bs.str()].static_value = 1.0f;
-      }
-    } else {
-
-      Animatable<std::vector<float>> weights;
-      if (!skelAnim.blendShapeWeights.get_value(&weights)) {
-        PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `blendShapeWeights` attribute of SkelAnimation. Maybe ValueBlock or connection? : {}", abs_path));
-      }
-
-      if (weights.has_timesamples()) {
-
-        const TypedTimeSamples<std::vector<float>> &ts_weights = weights.get_timesamples();
-        DCOUT("Convert timeSampledd weights");
-        FOREACH_TIMESAMPLES_BEGIN(ts_weights, sample_t, sample_value, sample_blocked)
-          if (sample_value.size() != blendShapes.size()) {
-            PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch in SkelAnimation. timeCode {} blendShapeWeights.size {} must be equal to blendShapes.size {} : {}", sample_t, sample_value.size(), blendShapes.size(), abs_path));
-          }
-
-          for (size_t j = 0; j < sample_value.size(); j++) {
-            AnimationSample<float> s;
-            s.t = float(sample_t);
-            s.value = sample_value[j];
-
-              const std::string &targetName = blendShapes[j].str();
-              weightsMap[targetName].samples.push_back(s);
-          }
-        FOREACH_TIMESAMPLES_END()
-      }
-
-      if (weights.has_default()) {
-        std::vector<float> ws;
-        if (!weights.get_scalar(&ws)) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Failed to get default value of `blendShapeWeights` attribute of SkelAnimation is invalid : {}", abs_path));
-        }
-
-        if (ws.size() != blendShapes.size()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("blendShapeWeights.size {} must be equal to blendShapes.size {} : {}", ws.size(), blendShapes.size(), abs_path));
-        }
-
-        for (size_t i = 0; i < blendShapes.size(); i++) {
-          weightsMap[blendShapes[i].str()].static_value = ws[i];
-        }
-
-      } else {
-        PUSH_ERROR_AND_RETURN(fmt::format("Internal error. `blendShapeWeights` attribute of SkelAnimation is invalid : {}", abs_path));
-      }
-
+    Animatable<std::vector<float>> weights;
+    if (!skelAnim.blendShapeWeights.get_value(&weights)) {
+      PUSH_ERROR_AND_RETURN(fmt::format("Failed to get `blendShapeWeights` attribute: {}", abs_path));
     }
 
-    anim_out->blendshape_weights_map = std::move(weightsMap);
+    if (weights.has_timesamples()) {
+      const TypedTimeSamples<std::vector<float>> &ts_weights = weights.get_timesamples();
+      
+      std::vector<double> weight_times;
+      std::vector<std::vector<float>> weight_samples;
+
+      FOREACH_TIMESAMPLES_BEGIN(ts_weights, sample_t, sample_value, sample_blocked)
+        if (sample_value.size() != blendShapes.size()) {
+          PUSH_ERROR_AND_RETURN(fmt::format("blendShapeWeights size mismatch at time {}: {} != {}", 
+            sample_t, sample_value.size(), blendShapes.size()));
+        }
+        weight_times.push_back(sample_t);
+        weight_samples.push_back(sample_value);
+        if (float(sample_t) > anim_out->duration) anim_out->duration = float(sample_t);
+      FOREACH_TIMESAMPLES_END()
+
+      // Create one sampler with all weights (glTF morph targets style)
+      if (!weight_times.empty()) {
+        KeyframeSampler weight_sampler;
+        weight_sampler.times.reserve(weight_times.size());
+        weight_sampler.values.reserve(weight_times.size() * blendShapes.size());
+        weight_sampler.interpolation = AnimationInterpolation::Linear;
+
+        for (size_t t = 0; t < weight_times.size(); t++) {
+          weight_sampler.times.push_back(float(weight_times[t]));
+          for (size_t w = 0; w < blendShapes.size(); w++) {
+            weight_sampler.values.push_back(weight_samples[t][w]);
+          }
+        }
+
+        int32_t sampler_idx = int32_t(anim_out->samplers.size());
+        anim_out->samplers.push_back(weight_sampler);
+
+        AnimationChannel channel;
+        channel.path = AnimationPath::Weights;
+        channel.target_node = -1;  // Weights target the mesh, not a specific node
+        channel.sampler = sampler_idx;
+        anim_out->channels.push_back(channel);
+      }
+    }
   }
-
-  anim_out->abs_path = abs_path.full_path_name();
-  anim_out->prim_name = skelAnim.name;
-  anim_out->display_name = skelAnim.metas().displayName.value_or("");
-
-  anim_out->channels_map = std::move(channelMap);
 
   return true;
 }
+
 
 bool RenderSceneConverter::BuildNodeHierarchyImpl(
     const RenderSceneConverterEnv &env, const std::string &parentPrimPath,
@@ -6682,7 +6569,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
 }
 
 bool RenderSceneConverter::ConvertSkeletonImpl(const RenderSceneConverterEnv &env, const tinyusdz::GeomMesh &mesh,
-                       SkelHierarchy *out_skel, nonstd::optional<Animation> *out_anim) {
+                       SkelHierarchy *out_skel, nonstd::optional<AnimationClip> *out_anim) {
 
   if (!out_skel) {
     return false;
@@ -6751,7 +6638,7 @@ bool RenderSceneConverter::ConvertSkeletonImpl(const RenderSceneConverterEnv &en
 
         if (const auto panim = animSourcePrim->as<SkelAnimation>()) {
           DCOUT("Convert SkelAnimation");
-          Animation anim;
+          AnimationClip anim;
           if (!ConvertSkelAnimation(env, animSourcePath, *panim, &anim)) {
             return false;
           }
@@ -7258,47 +7145,61 @@ std::string PrintAnimationSamples(const std::vector<AnimationSample<T>> &samples
   return ss.str();
 }
 
-void DumpAnimChannel(std::stringstream &ss, const std::string &name, const std::map<AnimationChannel::ChannelType, AnimationChannel> &channels, uint32_t indent) {
-
-  ss << pprint::Indent(indent) << name << " {\n";
-
-  for (const auto &channel : channels) {
-    if (channel.first == AnimationChannel::ChannelType::Translation) {
-      ss << pprint::Indent(indent + 1) << "translations " << quote(detail::PrintAnimationSamples(channel.second.translations.samples)) << "\n";
-    } else if (channel.first == AnimationChannel::ChannelType::Rotation) {
-      ss << pprint::Indent(indent + 1) << "rotations " << quote(detail::PrintAnimationSamples(channel.second.rotations.samples)) << "\n";
-    } else if (channel.first == AnimationChannel::ChannelType::Scale) {
-      ss << pprint::Indent(indent + 1) << "scales " << quote(detail::PrintAnimationSamples(channel.second.scales.samples)) << "\n";
-    }
-  }
-
-  ss << pprint::Indent(indent) << "}\n";
-}
+// void DumpAnimChannel(std::stringstream &ss, const std::string &name, const std::map<AnimationChannel::ChannelType, AnimationChannel> &channels, uint32_t indent) {
+// 
+//   ss << pprint::Indent(indent) << name << " {\n";
+// 
+//   for (const auto &channel : channels) {
+//     if (channel.first == AnimationChannel::ChannelType::Translation) {
+//       ss << pprint::Indent(indent + 1) << "translations " << quote(detail::PrintAnimationSamples(channel.second.translations.samples)) << "\n";
+//     } else if (channel.first == AnimationChannel::ChannelType::Rotation) {
+//       ss << pprint::Indent(indent + 1) << "rotations " << quote(detail::PrintAnimationSamples(channel.second.rotations.samples)) << "\n";
+//     } else if (channel.first == AnimationChannel::ChannelType::Scale) {
+//       ss << pprint::Indent(indent + 1) << "scales " << quote(detail::PrintAnimationSamples(channel.second.scales.samples)) << "\n";
+//     }
+//   }
+// 
+//   ss << pprint::Indent(indent) << "}\n";
+// }
 
 
 } // namespace detail
 
-std::string DumpAnimation(const Animation &anim, uint32_t indent) {
+std::string DumpAnimation(const AnimationClip &anim, uint32_t indent) {
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << "animation {\n";
 
-  ss << pprint::Indent(indent + 1) << "name " << quote(anim.prim_name) << "\n";
-  ss << pprint::Indent(indent + 1) << "abs_path " << quote(anim.abs_path)
-     << "\n";
-  ss << pprint::Indent(indent + 1) << "display_name "
-     << quote(anim.display_name) << "\n";
+  ss << pprint::Indent(indent + 1) << "name " << quote(anim.name) << "\n";
+  ss << pprint::Indent(indent + 1) << "prim_name " << quote(anim.prim_name) << "\n";
+  ss << pprint::Indent(indent + 1) << "abs_path " << quote(anim.abs_path) << "\n";
+  ss << pprint::Indent(indent + 1) << "display_name " << quote(anim.display_name) << "\n";
+  ss << pprint::Indent(indent + 1) << "duration " << anim.duration << "\n";
+  ss << pprint::Indent(indent + 1) << "num_samplers " << anim.samplers.size() << "\n";
+  ss << pprint::Indent(indent + 1) << "num_channels " << anim.channels.size() << "\n";
 
-  for (const auto &channel : anim.channels_map) {
-    detail::DumpAnimChannel(ss, channel.first, channel.second, indent + 1);
+  // Dump channels
+  for (size_t i = 0; i < anim.channels.size(); i++) {
+    const auto &ch = anim.channels[i];
+    ss << pprint::Indent(indent + 1) << "channel[" << i << "] {\n";
+    ss << pprint::Indent(indent + 2) << "target_node: " << ch.target_node << "\n";
+    ss << pprint::Indent(indent + 2) << "sampler: " << ch.sampler << "\n";
+    ss << pprint::Indent(indent + 2) << "path: ";
+    switch (ch.path) {
+      case AnimationPath::Translation: ss << "Translation"; break;
+      case AnimationPath::Rotation: ss << "Rotation"; break;
+      case AnimationPath::Scale: ss << "Scale"; break;
+      case AnimationPath::Weights: ss << "Weights"; break;
+    }
+    ss << "\n";
+    ss << pprint::Indent(indent + 1) << "}\n";
   }
-
-  ss << "\n";
 
   ss << pprint::Indent(indent) << "}\n";
 
   return ss.str();
 }
+
 
 std::string DumpCamera(const RenderCamera &camera, uint32_t indent) {
   std::stringstream ss;
@@ -7725,7 +7626,7 @@ size_t RenderScene::estimate_memory_usage() const {
     total += mesh.estimate_memory_usage() - sizeof(RenderMesh); // Avoid double-counting base size
   }
   
-  total += animations.capacity() * sizeof(Animation);
+  total += animations.capacity() * sizeof(AnimationClip);
   (void)animations; // Suppress unused variable warning
   
   total += skeletons.capacity() * sizeof(SkelHierarchy);
