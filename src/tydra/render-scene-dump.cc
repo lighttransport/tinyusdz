@@ -340,6 +340,7 @@ std::string DumpSkeleton(const SkelHierarchy &skel, uint32_t indent) {
 
 namespace detail {
 
+#if 0 // unused
 template<typename T>
 std::string PrintAnimationSamples(const std::vector<AnimationSample<T>> &samples) {
   std::stringstream ss;
@@ -356,6 +357,7 @@ std::string PrintAnimationSamples(const std::vector<AnimationSample<T>> &samples
 
   return ss.str();
 }
+#endif
 
 // void DumpAnimChannel(std::stringstream &ss, const std::string &name, const std::map<AnimationChannel::ChannelType, AnimationChannel> &channels, uint32_t indent) {
 // 
