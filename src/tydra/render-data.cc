@@ -80,7 +80,7 @@
     } \
   }
 
-#define TIMESAMPLES_EMPTY(ts) ((ts).get_samples().empty())
+//#define TIMESAMPLES_EMPTY(ts) ((ts).get_samples().empty())
 #endif
 
 #if defined(TINYUSDZ_WITH_COLORIO)
@@ -1358,19 +1358,19 @@ void OptimizeRenderMeshIndices(RenderMesh& mesh) {
   }
 
   // Step 1: Optimize vertex cache
-  meshopt_optimizeVertexCache(optimized_indices.data(), indices.data(), 
+  meshopt_optimizeVertexCache(optimized_indices.data(), indices.data(),
                               index_count, vertex_count);
 
   // Step 2: Optimize overdraw (requires vertex positions)
   if (!mesh.points.empty()) {
     std::vector<unsigned int> overdraw_optimized(index_count);
     meshopt_optimizeOverdraw(overdraw_optimized.data(), optimized_indices.data(),
-                             index_count, 
+                             index_count,
                              reinterpret_cast<const float*>(mesh.points.data()),
-                             vertex_count, 
+                             vertex_count,
                              sizeof(vec3), // stride
                              1.05f); // threshold (allow up to 5% vertex cache degradation)
-    
+
     optimized_indices = std::move(overdraw_optimized);
   }
 
@@ -1391,9 +1391,9 @@ void OptimizeRenderMeshIndices(RenderMesh& mesh) {
     std::vector<vec3> optimized_points(unique_vertices);
     meshopt_remapVertexBuffer(optimized_points.data(), mesh.points.data(),
                               vertex_count, sizeof(vec3), fetch_remap.data());
-    
+
     mesh.points = std::move(optimized_points);
-    
+
     // TODO: Remap other vertex attributes (normals, texcoords, etc.) as needed
     // This would require more complex logic to handle all vertex attributes
   }
@@ -1802,7 +1802,7 @@ bool TriangulatePolygon(
 
       size_t ntris = indices.size() / 3;
       //std::cout << "ntris " << ntris << "\n";
-      
+
 
       // Up to 2GB tris.
       if (ntris > size_t((std::numeric_limits<int32_t>::max)())) {
@@ -1997,7 +1997,7 @@ static bool ComputeTangentsAndBinormalsRobust(
     bool is_facevarying_input,  // false: 'vertex' varying
     std::vector<vec3> *tangents, std::vector<vec3> *binormals,
     std::vector<uint32_t> *out_vertex_indices, std::string *err) {
-  
+
   if (!tangents || !binormals || !out_vertex_indices) {
     PUSH_ERROR_AND_RETURN("Output arguments are nullptr.");
   }
@@ -2012,19 +2012,19 @@ static bool ComputeTangentsAndBinormalsRobust(
 
   // Convert tydra data structures to robust tangent computation format
   MeshData mesh;
-  
+
   // Copy vertices
   for (const auto& v : vertices) {
     mesh.positions.emplace_back(v[0], v[1], v[2]);
   }
-  
+
   // Copy normals (if available)
   if (!normals.empty()) {
     for (const auto& n : normals) {
       mesh.normals.emplace_back(n[0], n[1], n[2]);
     }
   }
-  
+
   // Copy texcoords (if available)
   if (!texcoords.empty()) {
     for (const auto& uv : texcoords) {
@@ -2036,12 +2036,12 @@ static bool ComputeTangentsAndBinormalsRobust(
   // Handle both triangle and polygon cases
   size_t faceVertexIndexOffset = 0;
   bool hasFaceVertexCounts = !faceVertexCounts.empty();
-  
+
   if (hasFaceVertexCounts) {
     for (size_t i = 0; i < faceVertexCounts.size(); i++) {
       size_t nv = faceVertexCounts[i];
       if (nv < 3) continue;
-      
+
       // Triangulate polygon faces (simple fan triangulation)
       for (size_t f = 0; f < nv - 2; f++) {
         uint32_t i0 = faceVertexIndices[faceVertexIndexOffset];
@@ -2056,7 +2056,7 @@ static bool ComputeTangentsAndBinormalsRobust(
     for (size_t i = 0; i < faceVertexIndices.size(); i += 3) {
       mesh.triangles.emplace_back(
         faceVertexIndices[i],
-        faceVertexIndices[i + 1], 
+        faceVertexIndices[i + 1],
         faceVertexIndices[i + 2]
       );
     }
@@ -2072,7 +2072,7 @@ static bool ComputeTangentsAndBinormalsRobust(
 
   // Compute tangent spaces
   auto tangentSpaces = TangentComputer::ComputeTangentSpaces(mesh, options);
-  
+
   if (tangentSpaces.empty()) {
     PUSH_ERROR_AND_RETURN("Failed to compute tangent spaces.");
   }
@@ -2082,7 +2082,7 @@ static bool ComputeTangentsAndBinormalsRobust(
   binormals->clear();
   tangents->resize(tangentSpaces.size());
   binormals->resize(tangentSpaces.size());
-  
+
   for (size_t i = 0; i < tangentSpaces.size(); i++) {
     const auto& ts = tangentSpaces[i];
     (*tangents)[i] = vec3{ts.tangent.x, ts.tangent.y, ts.tangent.z};
@@ -2734,7 +2734,7 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
 
   //std::cout << "usdFaceVertexIndices.min_value: " << *std::min_element(mesh.usdFaceVertexIndices.begin(), mesh.usdFaceVertexIndices.end() << "\n");
   //std::cout << "usdFaceVertexIndices.max_value: " << *std::max_element(mesh.usdFaceVertexIndices.begin(), mesh.usdFaceVertexIndices.end() << "\n");
-  
+
   DefaultVertexInput<DefaultPackedVertexData> vertex_input;
 
   size_t num_verts = mesh.points.size();
@@ -2855,7 +2855,7 @@ bool RenderSceneConverter::BuildVertexIndicesImpl(RenderMesh &mesh) {
                 mesh.vertex_opacities.get_data().data())
           : nullptr;
 
-  
+
   if (texcoord0_ptr) {
     vertex_input.uv0s.assign(num_fvs, {0.0f, 0.0f});
   }
@@ -3458,7 +3458,7 @@ bool RenderSceneConverter::ConvertMesh(
       memcpy(dst.points.data(), points.data(),
              sizeof(value::float3) * points.size());
 
-      std::vector<value::point3f>().swap(points); 
+      std::vector<value::point3f>().swap(points);
     }
 
   }
@@ -4329,7 +4329,7 @@ bool RenderSceneConverter::ConvertMesh(
 
         for (size_t i = 0; i < joints.size(); i++) {
           std::string joint_name = joints[i].str();
-          
+
           if (!name_to_index_map.count(joint_name)) {
             PUSH_ERROR_AND_RETURN(fmt::format("joint_name {} not found in Skeleton", joint_name));
           }
@@ -4525,7 +4525,7 @@ bool RenderSceneConverter::ConvertMesh(
   if (compute_tangents) {
     DCOUT("Compute tangents.");
     TUSDZ_LOG_I("Build tangents");
-    
+
     std::vector<vec2> texcoords;
     std::vector<vec3> normals;
 
@@ -4999,10 +4999,10 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
       Asset asset;
       std::string resolvedPath;
       if (RawAssetRead(assetPath, assetInfo, env.asset_resolver, &asset, resolvedPath, /* userdata */nullptr, /* warn */nullptr, &err )) {
-        
+
         // store resolved asset path.
         texImage.asset_identifier = resolvedPath;
-        
+
 
         BufferData imageBuffer;
         imageBuffer.componentType = tydra::ComponentType::UInt8;
@@ -5017,10 +5017,10 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
         // e.g. Texture A and B uses same image file, but texturing parameter is
         // different.
         buffers.emplace_back(imageBuffer);
-        
+
         texImage.decoded = false;
         DCOUT("texture image is read, but not decoded.");
-      
+
       } else {
         // store resolved asset path.
         texImage.asset_identifier = env.asset_resolver.resolve(assetPath.GetAssetPath());
@@ -6090,7 +6090,7 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
                                             const SkelAnimation &skelAnim,
                                             AnimationClip *anim_out) {
   // The spec says:
-  // "An animation source is only valid if its translation, rotation, and scale components  
+  // "An animation source is only valid if its translation, rotation, and scale components
   //  are all authored, storing arrays sized to the same size as the authored joints array."
   //
   // Convert USD SkelAnimation to glTF/Three.js compatible AnimationClip structure
@@ -6159,7 +6159,7 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
       const TypedTimeSamples<std::vector<value::float3>> &ts_txs = translations.get_timesamples();
       FOREACH_TIMESAMPLES_BEGIN(ts_txs, sample_t, sample_value, sample_blocked)
         if (sample_value.size() != joints.size()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: translations[{}].size {} != joints.size {} at time {}", 
+          PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: translations[{}].size {} != joints.size {} at time {}",
             translation_times.size(), sample_value.size(), joints.size(), sample_t));
         }
         translation_times.push_back(sample_t);
@@ -6172,7 +6172,7 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
       const TypedTimeSamples<std::vector<value::quatf>> &ts_rots = rotations.get_timesamples();
       FOREACH_TIMESAMPLES_BEGIN(ts_rots, sample_t, sample_value, sample_blocked)
         if (sample_value.size() != joints.size()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: rotations[{}].size {} != joints.size {} at time {}", 
+          PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: rotations[{}].size {} != joints.size {} at time {}",
             rotation_times.size(), sample_value.size(), joints.size(), sample_t));
         }
         rotation_times.push_back(sample_t);
@@ -6185,7 +6185,7 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
       const TypedTimeSamples<std::vector<value::half3>> &ts_scales = scales.get_timesamples();
       FOREACH_TIMESAMPLES_BEGIN(ts_scales, sample_t, sample_value, sample_blocked)
         if (sample_value.size() != joints.size()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: scales[{}].size {} != joints.size {} at time {}", 
+          PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: scales[{}].size {} != joints.size {} at time {}",
             scale_times.size(), sample_value.size(), joints.size(), sample_t));
         }
         scale_times.push_back(sample_t);
@@ -6197,7 +6197,7 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
     // Create glTF-style samplers and channels for each joint
     // Note: This creates one sampler per joint per property (not optimal but simple)
     // TODO: Optimize to share samplers when possible
-    
+
     for (size_t joint_idx = 0; joint_idx < joints.size(); joint_idx++) {
       // Translation sampler and channel
       if (!translation_times.empty()) {
@@ -6286,13 +6286,13 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
 
     if (weights.has_timesamples()) {
       const TypedTimeSamples<std::vector<float>> &ts_weights = weights.get_timesamples();
-      
+
       std::vector<double> weight_times;
       std::vector<std::vector<float>> weight_samples;
 
       FOREACH_TIMESAMPLES_BEGIN(ts_weights, sample_t, sample_value, sample_blocked)
         if (sample_value.size() != blendShapes.size()) {
-          PUSH_ERROR_AND_RETURN(fmt::format("blendShapeWeights size mismatch at time {}: {} != {}", 
+          PUSH_ERROR_AND_RETURN(fmt::format("blendShapeWeights size mismatch at time {}: {} != {}",
             sample_t, sample_value.size(), blendShapes.size()));
         }
         weight_times.push_back(sample_t);
@@ -6466,7 +6466,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
   if (!scene) {
     PUSH_ERROR_AND_RETURN("nullptr for RenderScene argument.");
   }
-  
+
   // Report initial progress
   if (!CallProgressCallback(0.0f)) {
     PushError("Conversion cancelled by user.\n");
@@ -6488,7 +6488,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
   if (!BuildXformNodeFromStage(env.stage, &xform_node, env.timecode)) {
     PUSH_ERROR_AND_RETURN("Failed to build Xform node hierarchy.\n");
   }
-  
+
   // Report progress after xform building (20%)
   if (!CallProgressCallback(0.2f)) {
     PushError("Conversion cancelled by user.\n");
@@ -6513,7 +6513,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
   if (!ret) {
     PUSH_ERROR_AND_RETURN(err);
   }
-  
+
   // Report progress after mesh/material conversion (70%)
   if (!CallProgressCallback(0.7f)) {
     PushError("Conversion cancelled by user.\n");
@@ -6527,7 +6527,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
   if (!BuildNodeHierarchy(env, xform_node)) {
     return false;
   }
-  
+
   // Report progress after node hierarchy building (90%)
   if (!CallProgressCallback(0.9f)) {
     PushError("Conversion cancelled by user.\n");
@@ -6561,10 +6561,10 @@ bool RenderSceneConverter::ConvertToRenderScene(
   render_scene.animations = std::move(animations);
 
   (*scene) = std::move(render_scene);
-  
+
   // Report completion (100%)
   CallProgressCallback(1.0f);
-  
+
   return true;
 }
 
@@ -7128,6 +7128,7 @@ std::string DumpSkeleton(const SkelHierarchy &skel, uint32_t indent) {
 
 namespace detail {
 
+#if 0 // unused
 template<typename T>
 std::string PrintAnimationSamples(const std::vector<AnimationSample<T>> &samples) {
   std::stringstream ss;
@@ -7144,11 +7145,12 @@ std::string PrintAnimationSamples(const std::vector<AnimationSample<T>> &samples
 
   return ss.str();
 }
+#endif
 
 // void DumpAnimChannel(std::stringstream &ss, const std::string &name, const std::map<AnimationChannel::ChannelType, AnimationChannel> &channels, uint32_t indent) {
-// 
+//
 //   ss << pprint::Indent(indent) << name << " {\n";
-// 
+//
 //   for (const auto &channel : channels) {
 //     if (channel.first == AnimationChannel::ChannelType::Translation) {
 //       ss << pprint::Indent(indent + 1) << "translations " << quote(detail::PrintAnimationSamples(channel.second.translations.samples)) << "\n";
@@ -7158,7 +7160,7 @@ std::string PrintAnimationSamples(const std::vector<AnimationSample<T>> &samples
 //       ss << pprint::Indent(indent + 1) << "scales " << quote(detail::PrintAnimationSamples(channel.second.scales.samples)) << "\n";
 //     }
 //   }
-// 
+//
 //   ss << pprint::Indent(indent) << "}\n";
 // }
 
@@ -7530,15 +7532,15 @@ std::string DumpRenderScene(const RenderScene &scene,
 
 size_t RenderMesh::estimate_memory_usage() const {
   size_t total = sizeof(RenderMesh);
-  
+
   // String storage
   total += prim_name.capacity();
-  total += abs_path.capacity(); 
+  total += abs_path.capacity();
   total += display_name.capacity();
-  
+
   // Vertex data
   total += points.capacity() * sizeof(vec3);
-  
+
   // Index data
   total += usdFaceVertexIndices.capacity() * sizeof(uint32_t);
   total += usdFaceVertexCounts.capacity() * sizeof(uint32_t);
@@ -7546,7 +7548,7 @@ size_t RenderMesh::estimate_memory_usage() const {
   total += triangulatedFaceVertexCounts.capacity() * sizeof(uint32_t);
   total += triangulatedToOrigFaceVertexIndexMap.capacity() * sizeof(size_t);
   total += triangulatedFaceCounts.capacity() * sizeof(uint32_t);
-  
+
   // Vertex attributes helper
   auto estimate_vertex_attr = [](const VertexAttribute& attr) -> size_t {
     size_t size = sizeof(VertexAttribute);
@@ -7555,88 +7557,88 @@ size_t RenderMesh::estimate_memory_usage() const {
     size += attr.indices.capacity() * sizeof(uint32_t);
     return size;
   };
-  
+
   total += estimate_vertex_attr(normals);
   total += estimate_vertex_attr(tangents);
   total += estimate_vertex_attr(binormals);
   total += estimate_vertex_attr(vertex_colors);
   total += estimate_vertex_attr(vertex_opacities);
-  
+
   // Texcoords map
   for (const auto& texcoord_pair : texcoords) {
     total += sizeof(uint32_t) + estimate_vertex_attr(texcoord_pair.second);
   }
-  
+
   // StringAndIdMap for texcoords
   total += texcoordSlotIdMap.size() * (sizeof(uint64_t) + sizeof(std::string));
   for (auto it = texcoordSlotIdMap.s_begin(); it != texcoordSlotIdMap.s_end(); ++it) {
     total += it->first.capacity();
   }
-  
+
   // Joint and weights (basic estimate)
   total += sizeof(JointAndWeight);
   // TODO: Add detailed JointAndWeight internal memory estimation
-  
+
   // Blend shapes
   for (const auto& blend_shape_pair : targets) {
     total += blend_shape_pair.first.capacity() + sizeof(ShapeTarget);
     // TODO: Add detailed ShapeTarget internal memory estimation
   }
-  
+
   // Material subset map
   for (const auto& subset_pair : material_subsetMap) {
     total += subset_pair.first.capacity() + sizeof(MaterialSubset);
     // TODO: Add detailed MaterialSubset internal memory estimation
   }
-  
+
   return total;
 }
 
 size_t RenderScene::estimate_memory_usage() const {
   size_t total = sizeof(RenderScene);
-  
+
   // Scene metadata and filename
   total += usd_filename.capacity();
   // Note: SceneMetadata memory would need detailed estimation
   total += sizeof(SceneMetadata);
-  
+
   // Estimate containers
   total += nodes.capacity() * sizeof(Node);
   (void)nodes; // Suppress unused variable warning
-  
+
   total += images.capacity() * sizeof(TextureImage);
   (void)images; // Suppress unused variable warning
-  
+
   total += materials.capacity() * sizeof(RenderMaterial);
   (void)materials; // Suppress unused variable warning
-  
+
   total += cameras.capacity() * sizeof(RenderCamera);
   total += lights.capacity() * sizeof(RenderLight);
-  
+
   total += textures.capacity() * sizeof(UVTexture);
   for (const auto& texture : textures) {
     total += texture.prim_name.capacity();
     total += texture.abs_path.capacity();
     total += texture.display_name.capacity();
   }
-  
+
   // Meshes - use the detailed estimation
   total += meshes.capacity() * sizeof(RenderMesh);
   for (const auto& mesh : meshes) {
     total += mesh.estimate_memory_usage() - sizeof(RenderMesh); // Avoid double-counting base size
   }
-  
+
   total += animations.capacity() * sizeof(AnimationClip);
   (void)animations; // Suppress unused variable warning
-  
+
   total += skeletons.capacity() * sizeof(SkelHierarchy);
   (void)skeletons; // Suppress unused variable warning
-  
+
   total += buffers.capacity() * sizeof(BufferData);
   for (const auto& buffer : buffers) {
     total += buffer.data.capacity();
   }
-  
+
   return total;
 }
 
