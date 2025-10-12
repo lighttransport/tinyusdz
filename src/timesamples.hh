@@ -960,6 +960,73 @@ public:
     return false;
   }
 
+  /// Get TypedArrayView at specific index
+  /// Returns a view for TypedArray or array data
+  /// Returns an empty view for blocked values or non-array data
+  template<typename T>
+  TypedArrayView<const T> get_typed_array_view_at(size_t idx) const {
+    if (_dirty) {
+      update();
+    }
+
+    if (idx >= _times.size()) {
+      return TypedArrayView<const T>();  // Empty view
+    }
+
+    // Check if blocked
+    if (_blocked[idx]) {
+      return TypedArrayView<const T>();  // Empty view for blocked values
+    }
+
+    // For TypedArray storage
+    if (_type_id == value::TYPE_ID_UINT64 && _element_size == sizeof(uint64_t)) {
+      // Retrieve the TypedArray and create a view from it
+      TypedArray<T> typed_array;
+      bool blocked_value = false;
+      if (get_typed_array_at<T>(idx, &typed_array, &blocked_value)) {
+        if (!blocked_value && typed_array.data() && typed_array.size() > 0) {
+          return TypedArrayView<const T>(typed_array);
+        }
+      }
+      return TypedArrayView<const T>();  // Empty view if retrieval failed
+    }
+
+    // For array data stored directly
+    if (_is_array && _array_size > 0) {
+      // Find the actual data offset
+      if (!_offsets.empty()) {
+        if (_offsets[idx] == SIZE_MAX) {
+          // Blocked value
+          return TypedArrayView<const T>();
+        }
+        const T* src = reinterpret_cast<const T*>(_values.data() + _offsets[idx]);
+        return TypedArrayView<const T>(src, _array_size);
+      }
+    }
+
+    // Not array data or unsupported type
+    return TypedArrayView<const T>();  // Empty view
+  }
+
+  /// Get TypedArrayView at specific time
+  template<typename T>
+  TypedArrayView<const T> get_typed_array_view_at_time(double t) const {
+    if (_dirty) {
+      update();
+    }
+
+    const auto it = std::find_if(_times.begin(), _times.end(), [&t](double sample_t) {
+      return std::fabs(t - sample_t) < std::numeric_limits<double>::epsilon();
+    });
+
+    if (it != _times.end()) {
+      size_t idx = static_cast<size_t>(std::distance(_times.begin(), it));
+      return get_typed_array_view_at<T>(idx);
+    }
+
+    return TypedArrayView<const T>();  // Empty view
+  }
+
   const std::vector<double>& get_times() const {
     if (_dirty) {
       update();
@@ -1472,6 +1539,75 @@ struct TimeSamples {
 
     // TypedArray should always use POD storage
     return false;
+  }
+
+  /// Get TypedArrayView at specific index
+  /// Returns a view for TypedArray or array data (std::vector)
+  /// Returns an empty view for blocked values or non-array data
+  template<typename T>
+  TypedArrayView<const T> get_typed_array_view_at(size_t idx) const {
+    if (_dirty) {
+      update();
+    }
+
+    if (_use_pod) {
+      // Use PODTimeSamples implementation
+      return _pod_samples.get_typed_array_view_at<T>(idx);
+    }
+
+    // For regular Value storage
+    if (idx >= _samples.size()) {
+      return TypedArrayView<const T>();  // Empty view
+    }
+
+    const Sample& sample = _samples[idx];
+
+    // Check if blocked
+    if (sample.blocked) {
+      return TypedArrayView<const T>();  // Empty view for blocked values
+    }
+
+    // Try to get as TypedArray first
+    if (const TypedArray<T>* typed_array = sample.value.as<TypedArray<T>>()) {
+      if (typed_array->data() && typed_array->size() > 0) {
+        return TypedArrayView<const T>(*typed_array);
+      }
+    }
+
+    // Try to get as std::vector
+    if (const std::vector<T>* vec = sample.value.as<std::vector<T>>()) {
+      if (!vec->empty()) {
+        return TypedArrayView<const T>(*vec);
+      }
+    }
+
+    // Not array data or unsupported type
+    return TypedArrayView<const T>();  // Empty view
+  }
+
+  /// Get TypedArrayView at specific time
+  template<typename T>
+  TypedArrayView<const T> get_typed_array_view_at_time(double t) const {
+    if (_dirty) {
+      update();
+    }
+
+    if (_use_pod) {
+      // Use PODTimeSamples implementation
+      return _pod_samples.get_typed_array_view_at_time<T>(t);
+    }
+
+    // For regular Value storage
+    const auto it = std::find_if(_samples.begin(), _samples.end(), [&t](const Sample& s) {
+      return std::fabs(t - s.t) < std::numeric_limits<double>::epsilon();
+    });
+
+    if (it != _samples.end()) {
+      size_t idx = static_cast<size_t>(std::distance(_samples.begin(), it));
+      return get_typed_array_view_at<T>(idx);
+    }
+
+    return TypedArrayView<const T>();  // Empty view
   }
 
   const std::vector<Sample> &get_samples() const {
