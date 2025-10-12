@@ -526,6 +526,9 @@ enum TypeId {
   TYPE_ID_ALL = (TYPE_ID_TERMINATOR_BIT - 1)  // terminator.
 };
 
+static_assert(TYPE_ID_API_END <= 65535, "Non user-defined TYPE_ID must be less than 16bit");
+
+
 struct timecode {
   double value;
 };
