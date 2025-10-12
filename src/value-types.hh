@@ -2691,7 +2691,7 @@ class ValueView {
 
   // Get TypedArrayView to the underlying data
   template <class T>
-  TypedArrayView<const T> as_view(bool strict_cast = false) const {
+  TypedArrayView<const T> as_view(bool /*strict_cast*/ = false) const {
     if (!ptr_) return TypedArrayView<const T>();
 
     // Check if this is an array type
@@ -2762,7 +2762,7 @@ class ValueView {
   uint8_t padding_[3];     // 3 bytes: Padding to reach 16 bytes
 
   // Placeholder for Value compatibility
-  static inline Value value_placeholder_;
+  static Value value_placeholder_;
 };
 
 // TimeSample interpolation type.
