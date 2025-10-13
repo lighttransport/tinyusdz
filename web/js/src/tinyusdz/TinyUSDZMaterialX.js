@@ -2,35 +2,55 @@ import * as THREE from 'three';
 import * as MaterialXModule from 'three/examples/jsm/loaders/MaterialXLoader.js';
 
 /*
- TODO / Tasks for TinyUSDZMaterialX.js
+ TODO / Tasks for TinyUSDZMaterialX.js (status)
 
- 1) Add example JSON fixture (not-started)
-        - Provide a small MaterialX JSON example that demonstrates node inputs,
-            input-level `connect` entries and a top-level `connections` array.
-        - Location: inline comment or tests/fixtures.
+ 1) Add example JSON fixture (done)
+        - Created `materialx_example.json` demonstrating image nodes, input-level
+            `connect` entries and a top-level `connections` array.
 
  2) Unit tests / smoke tests (not-started)
-        - Add small JS tests that exercise extendMaterialXWithJSONSupport and
-            convertOpenPBRToMaterialXShader using the example fixture.
+        - Add JS tests that exercise extendMaterialXWithJSONSupport, parseJSON and
+            convertOpenPBRToMaterialXShader with the fixture. (Next recommended step)
 
- 3) Improve JSON -> MaterialX fidelity (low->high)
-        - Support nodegraphs, interface sockets, typed sockets, and nested graphs.
-        - Map MaterialX types to runtime representations and, where possible,
-            call native MaterialX/MaterialXNode wiring APIs instead of attaching
-            plain object `connection` metadata.
+ 3) Improve JSON -> MaterialX fidelity (in-progress)
+        - Parser now supports node creation and connection resolution (input-level
+            connects and top-level connections array). It attempts to call real
+            MaterialXNode wiring APIs when available; otherwise it attaches connection
+            metadata to node inputs.
+        - Remaining: full nodegraph nesting, interface sockets, typed sockets.
 
- 4) Texture / channel mapping (not-started)
-        - Add options to describe packed textures (e.g., metallic in B, roughness in G)
-            and ensure convertOpenPBRToMaterialXShader applies correct swizzling and encodings.
+ 4) Texture / channel mapping (in-progress)
+        - materialXToOpenPBR extracts image node `file` paths and places them in
+            the OpenPBR object as placeholders. Next: implement channel swizzling and
+            automatic texture loading/encoding handling.
 
  5) Demo page (not-started)
         - Create a small web demo that loads a JSON material, parses to MaterialX,
             converts to ShaderMaterial and renders with Three.js.
 
- Notes:
- - Current implementation includes basic JSON parsing and connection resolution
-     (input-level connect + top-level connections array) and provides fallbacks
-     when real MaterialX classes/APIs are not available.
+ Limitations & Notes
+ - The parser is conservative and aims for compatibility across different
+     runtime implementations. It provides fallbacks when `MaterialX`/`MaterialXNode`
+     classes or specific wiring APIs are not present.
+ - Connection wiring: when possible the code calls node APIs like
+     `connectInput`, `setInputConnection`, `setConnection`, `connect`. If those
+     aren't available the connection is stored as metadata at
+     `node.inputs[name].connection = { node, output }`.
+ - Texture handling: the converter will return file path strings for textures
+     if actual `THREE.Texture` instances are not provided. To get a working
+     ShaderMaterial you must load those files (e.g., with `THREE.TextureLoader`)
+     and assign textures to the `TinyUSDZOpenPBR` instance before conversion, or
+     use an async helper that loads textures for you.
+ - MaterialX node/type names vary between tools. The surface node detection
+     currently looks for type names containing `standard`, `surface`, or `pbr`.
+     If your shading network uses different names, update `materialXToOpenPBR`
+     accordingly.
+
+ Recommended next steps
+ - Add a small unit test that parses `materialx_example.json` and asserts that
+     the pbrShader inputs were resolved and that texture file paths are present.
+ - Add an async conversion helper that loads textures automatically and returns
+     a ShaderMaterial Promise.
 */
 
 
@@ -88,7 +108,13 @@ class TinyUSDZOpenPBR {
 //   strings below.
 function convertOpenPBRToMaterialXShader(openPBR, opts = {}) {
     if (!(openPBR instanceof TinyUSDZOpenPBR)) {
-        console.warn('convertOpenPBRToMaterialXShader: expected TinyUSDZOpenPBR, got', openPBR);
+        // If a MaterialX graph/result was passed, try to convert it to an OpenPBR
+        // instance first. Otherwise warn.
+        if (openPBR && (openPBR.nodes || openPBR.nodes instanceof Array)) {
+            openPBR = materialXToOpenPBR(openPBR);
+        } else {
+            console.warn('convertOpenPBRToMaterialXShader: expected TinyUSDZOpenPBR, got', openPBR);
+        }
     }
 
     // Use the built-in standard shader as a foundation
@@ -179,6 +205,106 @@ function convertOpenPBRToMaterialXShader(openPBR, opts = {}) {
     };
 
     return material;
+}
+
+// Convert a parsed MaterialX-like object (as produced by MaterialX.fromJSON or
+// MaterialXLoader.parseJSON) into a TinyUSDZOpenPBR instance. This function
+// does best-effort extraction of common PBR inputs (baseColor, metallic,
+// roughness, normal) and resolves image nodes into file path placeholders.
+function materialXToOpenPBR(mx) {
+    if (!mx) return new TinyUSDZOpenPBR();
+
+    const nodes = mx.nodes || [];
+    const nodeMap = Object.create(null);
+    nodes.forEach((n) => { if (n && n.name) nodeMap[n.name] = n; });
+
+    // Helpers
+    const resolveInput = (node, inputName) => {
+        if (!node) return undefined;
+        const inputs = node.inputs || {};
+        const v = inputs[inputName];
+        if (v === undefined) return undefined;
+
+        // If value is an object with 'connection' metadata as added by parser
+        if (v && typeof v === 'object' && v.connection) {
+            const srcName = v.connection.node;
+            const srcOutput = v.connection.output; // may be 'out' or channel
+            const src = nodeMap[srcName];
+            if (src && src.type === 'image') {
+                // image nodes typically have inputs.file
+                return { type: 'texture', path: (src.inputs && src.inputs.file) ? src.inputs.file : null, channel: srcOutput };
+            }
+            // if src has a direct value
+            if (src && src.inputs && src.inputs[srcOutput]) return src.inputs[srcOutput];
+            return v.connection;
+        }
+
+        // If input is a direct connect string like 'Other.out'
+        if (typeof v === 'string') {
+            const dot = v.indexOf('.');
+            if (dot >= 0) {
+                const srcName = v.substring(0, dot);
+                const srcOutput = v.substring(dot + 1);
+                const src = nodeMap[srcName];
+                if (src && src.type === 'image') return { type: 'texture', path: (src.inputs && src.inputs.file) ? src.inputs.file : null, channel: srcOutput };
+            }
+            return v;
+        }
+
+        // Otherwise, return the value as-is (number, array, color etc.)
+        return v;
+    };
+
+    // Find a surface node: common type names: 'standard_surface', 'pbr', 'surface', etc.
+    let surf = null;
+    for (const n of nodes) {
+        if (!n) continue;
+        const t = (n.type || '').toLowerCase();
+        if (t.indexOf('standard') >= 0 || t.indexOf('surface') >= 0 || t.indexOf('pbr') >= 0) {
+            surf = n; break;
+        }
+    }
+
+    // If none, try to find by name 'pbrShader' as in fixture
+    if (!surf) surf = nodeMap['pbrShader'] || null;
+
+    const out = new TinyUSDZOpenPBR();
+    if (!surf) return out;
+
+    // baseColor may be color array or connected to an image
+    const baseColorVal = resolveInput(surf, 'baseColor');
+    if (baseColorVal) {
+        if (baseColorVal.type === 'texture') out.baseColorMap = baseColorVal.path;
+        else if (Array.isArray(baseColorVal)) out.baseColor = new THREE.Color(baseColorVal[0], baseColorVal[1], baseColorVal[2]);
+        else if (typeof baseColorVal === 'number' || typeof baseColorVal === 'string') out.baseColor = new THREE.Color(baseColorVal);
+    }
+
+    const metallicVal = resolveInput(surf, 'metallic');
+    if (metallicVal) {
+        if (metallicVal.type === 'texture') out.metallicRoughnessMap = metallicVal.path;
+        else out.metallic = Number(metallicVal);
+    }
+
+    const roughnessVal = resolveInput(surf, 'roughness');
+    if (roughnessVal) {
+        if (roughnessVal.type === 'texture') out.metallicRoughnessMap = roughnessVal.path;
+        else out.roughness = Number(roughnessVal);
+    }
+
+    const normalVal = resolveInput(surf, 'normal');
+    if (normalVal && normalVal.type === 'texture') out.normalMap = normalVal.path;
+
+    // emissive
+    const emissiveVal = resolveInput(surf, 'emissive');
+    if (emissiveVal) {
+        if (Array.isArray(emissiveVal)) out.emissive = new THREE.Color(emissiveVal[0], emissiveVal[1], emissiveVal[2]);
+        else if (typeof emissiveVal === 'number' || typeof emissiveVal === 'string') out.emissive = new THREE.Color(emissiveVal);
+    }
+
+    // name
+    out.name = surf.name || mx.name || out.name;
+
+    return out;
 }
 
 // Export both the data model and the conversion function

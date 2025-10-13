@@ -70,7 +70,8 @@ static json vec3ToJson(const vec3& v) {
 }
 
 // Helper function to convert vec2 to JSON array
-static json vec2ToJson(const vec2& v) {
+// Static function with [[maybe_unused]] to suppress unused warning
+[[maybe_unused]] static json vec2ToJson(const vec2& v) {
   return json::array({v[0], v[1]});
 }
 
@@ -549,35 +550,218 @@ bool ThreeJSMaterialExporter::ExportMaterialX(const RenderMaterial& material,
   if (material.hasOpenPBR()) {
     const auto& shader = material.openPBRShader.value();
 
-    ss << "  <OpenPBRSurface name=\"" << material.name << "_surface\" type=\"surfaceshader\">\n";
+    ss << "  <open_pbr_surface name=\"" << material.name << "_surface\" type=\"surfaceshader\">\n";
 
-    // Export all parameters
-    auto export_param = [&ss](const std::string& name, const auto& param, const std::string& type) {
+    // Helper lambda to export float parameters
+    auto export_float = [&ss](const std::string& name, const ShaderParam<float>& param) {
       if (!param.is_texture()) {
-        ss << "    <input name=\"" << name << "\" type=\"" << type << "\" ";
-        // Value writing depends on type
-        ss << "/>\n";
+        ss << "    <input name=\"" << name << "\" type=\"float\" value=\""
+           << param.value << "\" />\n";
+      } else {
+        ss << "    <input name=\"" << name << "\" type=\"float\" nodename=\""
+           << name << "_texture\" />\n";
       }
     };
 
-    // Base layer
-    export_param("base_weight", shader.base_weight, "float");
-    ss << "    <input name=\"base_color\" type=\"color3\" value=\""
-       << shader.base_color.value[0] << ", "
-       << shader.base_color.value[1] << ", "
-       << shader.base_color.value[2] << "\"/>\n";
-    export_param("base_roughness", shader.base_roughness, "float");
-    export_param("base_metalness", shader.base_metalness, "float");
+    // Helper lambda to export color3 parameters
+    auto export_color3 = [&ss](const std::string& name, const ShaderParam<vec3>& param) {
+      if (!param.is_texture()) {
+        ss << "    <input name=\"" << name << "\" type=\"color3\" value=\""
+           << param.value[0] << ", "
+           << param.value[1] << ", "
+           << param.value[2] << "\" />\n";
+      } else {
+        ss << "    <input name=\"" << name << "\" type=\"color3\" nodename=\""
+           << name << "_texture\" />\n";
+      }
+    };
 
-    // ... (export other parameters similarly)
+    // Helper lambda to export vector3 parameters
+    auto export_vector3 = [&ss](const std::string& name, const ShaderParam<vec3>& param) {
+      if (!param.is_texture()) {
+        ss << "    <input name=\"" << name << "\" type=\"vector3\" value=\""
+           << param.value[0] << ", "
+           << param.value[1] << ", "
+           << param.value[2] << "\" />\n";
+      } else {
+        ss << "    <input name=\"" << name << "\" type=\"vector3\" nodename=\""
+           << name << "_texture\" />\n";
+      }
+    };
 
-    ss << "  </OpenPBRSurface>\n";
+    // Base layer parameters
+    export_float("base_weight", shader.base_weight);
+    export_color3("base_color", shader.base_color);
+    export_float("base_roughness", shader.base_roughness);
+    export_float("base_metalness", shader.base_metalness);
+
+    // Specular layer parameters
+    export_float("specular_weight", shader.specular_weight);
+    export_color3("specular_color", shader.specular_color);
+    export_float("specular_roughness", shader.specular_roughness);
+    export_float("specular_ior", shader.specular_ior);
+    export_float("specular_ior_level", shader.specular_ior_level);
+    export_float("specular_anisotropy", shader.specular_anisotropy);
+    export_float("specular_rotation", shader.specular_rotation);
+
+    // Transmission parameters
+    export_float("transmission_weight", shader.transmission_weight);
+    export_color3("transmission_color", shader.transmission_color);
+    export_float("transmission_depth", shader.transmission_depth);
+    export_color3("transmission_scatter", shader.transmission_scatter);
+    export_float("transmission_scatter_anisotropy", shader.transmission_scatter_anisotropy);
+    export_float("transmission_dispersion", shader.transmission_dispersion);
+
+    // Subsurface parameters
+    export_float("subsurface_weight", shader.subsurface_weight);
+    export_color3("subsurface_color", shader.subsurface_color);
+    export_color3("subsurface_radius", shader.subsurface_radius);
+    export_float("subsurface_scale", shader.subsurface_scale);
+    export_float("subsurface_anisotropy", shader.subsurface_anisotropy);
+
+    // Sheen parameters
+    export_float("sheen_weight", shader.sheen_weight);
+    export_color3("sheen_color", shader.sheen_color);
+    export_float("sheen_roughness", shader.sheen_roughness);
+
+    // Coat layer parameters
+    export_float("coat_weight", shader.coat_weight);
+    export_color3("coat_color", shader.coat_color);
+    export_float("coat_roughness", shader.coat_roughness);
+    export_float("coat_anisotropy", shader.coat_anisotropy);
+    export_float("coat_rotation", shader.coat_rotation);
+    export_float("coat_ior", shader.coat_ior);
+    export_color3("coat_affect_color", shader.coat_affect_color);
+    export_float("coat_affect_roughness", shader.coat_affect_roughness);
+
+    // Emission parameters
+    export_float("emission_luminance", shader.emission_luminance);
+    export_color3("emission_color", shader.emission_color);
+
+    // Geometry modifiers
+    export_float("opacity", shader.opacity);
+    export_vector3("geometry_normal", shader.normal);
+    export_vector3("geometry_tangent", shader.tangent);
+
+    ss << "  </open_pbr_surface>\n\n";
+
+    // Export texture nodes if any parameters use textures
+    auto export_texture_node = [&ss](const std::string& name, const ShaderParam<float>& param, const std::string& type) {
+      if (param.is_texture()) {
+        ss << "  <image name=\"" << name << "_texture\" type=\"" << type << "\">\n";
+        ss << "    <input name=\"file\" type=\"filename\" value=\"texture_"
+           << param.texture_id << "\" />\n";
+        ss << "  </image>\n\n";
+      }
+    };
+
+    auto export_texture_node_vec3 = [&ss](const std::string& name, const ShaderParam<vec3>& param, const std::string& type) {
+      if (param.is_texture()) {
+        ss << "  <image name=\"" << name << "_texture\" type=\"" << type << "\">\n";
+        ss << "    <input name=\"file\" type=\"filename\" value=\"texture_"
+           << param.texture_id << "\" />\n";
+        ss << "  </image>\n\n";
+      }
+    };
+
+    // Export all texture nodes
+    export_texture_node("base_weight", shader.base_weight, "float");
+    export_texture_node_vec3("base_color", shader.base_color, "color3");
+    export_texture_node("base_roughness", shader.base_roughness, "float");
+    export_texture_node("base_metalness", shader.base_metalness, "float");
+
+    export_texture_node("specular_weight", shader.specular_weight, "float");
+    export_texture_node_vec3("specular_color", shader.specular_color, "color3");
+    export_texture_node("specular_roughness", shader.specular_roughness, "float");
+    export_texture_node("specular_ior", shader.specular_ior, "float");
+    export_texture_node("specular_ior_level", shader.specular_ior_level, "float");
+    export_texture_node("specular_anisotropy", shader.specular_anisotropy, "float");
+    export_texture_node("specular_rotation", shader.specular_rotation, "float");
+
+    export_texture_node("transmission_weight", shader.transmission_weight, "float");
+    export_texture_node_vec3("transmission_color", shader.transmission_color, "color3");
+    export_texture_node("transmission_depth", shader.transmission_depth, "float");
+    export_texture_node_vec3("transmission_scatter", shader.transmission_scatter, "color3");
+    export_texture_node("transmission_scatter_anisotropy", shader.transmission_scatter_anisotropy, "float");
+    export_texture_node("transmission_dispersion", shader.transmission_dispersion, "float");
+
+    export_texture_node("subsurface_weight", shader.subsurface_weight, "float");
+    export_texture_node_vec3("subsurface_color", shader.subsurface_color, "color3");
+    export_texture_node_vec3("subsurface_radius", shader.subsurface_radius, "color3");
+    export_texture_node("subsurface_scale", shader.subsurface_scale, "float");
+    export_texture_node("subsurface_anisotropy", shader.subsurface_anisotropy, "float");
+
+    export_texture_node("sheen_weight", shader.sheen_weight, "float");
+    export_texture_node_vec3("sheen_color", shader.sheen_color, "color3");
+    export_texture_node("sheen_roughness", shader.sheen_roughness, "float");
+
+    export_texture_node("coat_weight", shader.coat_weight, "float");
+    export_texture_node_vec3("coat_color", shader.coat_color, "color3");
+    export_texture_node("coat_roughness", shader.coat_roughness, "float");
+    export_texture_node("coat_anisotropy", shader.coat_anisotropy, "float");
+    export_texture_node("coat_rotation", shader.coat_rotation, "float");
+    export_texture_node("coat_ior", shader.coat_ior, "float");
+    export_texture_node_vec3("coat_affect_color", shader.coat_affect_color, "color3");
+    export_texture_node("coat_affect_roughness", shader.coat_affect_roughness, "float");
+
+    export_texture_node("emission_luminance", shader.emission_luminance, "float");
+    export_texture_node_vec3("emission_color", shader.emission_color, "color3");
+
+    export_texture_node("opacity", shader.opacity, "float");
+    export_texture_node_vec3("geometry_normal", shader.normal, "vector3");
+    export_texture_node_vec3("geometry_tangent", shader.tangent, "vector3");
 
     // Create surface material
     ss << "  <surfacematerial name=\"" << material.name << "\" type=\"material\">\n";
     ss << "    <input name=\"surfaceshader\" type=\"surfaceshader\" nodename=\""
-       << material.name << "_surface\"/>\n";
+       << material.name << "_surface\" />\n";
     ss << "  </surfacematerial>\n";
+  } else if (material.hasUsdPreviewSurface()) {
+    // Export UsdPreviewSurface as standard_surface for MaterialX compatibility
+    const auto& shader = material.surfaceShader.value();
+
+    ss << "  <standard_surface name=\"" << material.name << "_surface\" type=\"surfaceshader\">\n";
+
+    // Map UsdPreviewSurface to standard_surface parameters
+    ss << "    <input name=\"base_color\" type=\"color3\" value=\""
+       << shader.diffuseColor.value[0] << ", "
+       << shader.diffuseColor.value[1] << ", "
+       << shader.diffuseColor.value[2] << "\" />\n";
+
+    ss << "    <input name=\"metalness\" type=\"float\" value=\""
+       << shader.metallic.value << "\" />\n";
+
+    ss << "    <input name=\"specular_roughness\" type=\"float\" value=\""
+       << shader.roughness.value << "\" />\n";
+
+    ss << "    <input name=\"emission_color\" type=\"color3\" value=\""
+       << shader.emissiveColor.value[0] << ", "
+       << shader.emissiveColor.value[1] << ", "
+       << shader.emissiveColor.value[2] << "\" />\n";
+
+    ss << "    <input name=\"opacity\" type=\"float\" value=\""
+       << shader.opacity.value << "\" />\n";
+
+    if (shader.clearcoat.value > 0.0f) {
+      ss << "    <input name=\"coat\" type=\"float\" value=\""
+         << shader.clearcoat.value << "\" />\n";
+      ss << "    <input name=\"coat_roughness\" type=\"float\" value=\""
+         << shader.clearcoatRoughness.value << "\" />\n";
+    }
+
+    ss << "    <input name=\"specular_IOR\" type=\"float\" value=\""
+       << shader.ior.value << "\" />\n";
+
+    ss << "  </standard_surface>\n\n";
+
+    // Create surface material
+    ss << "  <surfacematerial name=\"" << material.name << "\" type=\"material\">\n";
+    ss << "    <input name=\"surfaceshader\" type=\"surfaceshader\" nodename=\""
+       << material.name << "_surface\" />\n";
+    ss << "  </surfacematerial>\n";
+  } else {
+    _err = "Material has neither OpenPBR nor UsdPreviewSurface shader";
+    return false;
   }
 
   ss << "</materialx>\n";
@@ -631,11 +815,9 @@ bool ThreeJSSceneExporter::ExportScene(const RenderScene& scene,
   object3d["type"] = "Scene";
   object3d["children"] = json::array();
 
-  // Convert nodes
+  // Convert nodes - add all root level nodes
   for (const auto& node : scene.nodes) {
-    if (node.parent_id == -1) { // Root nodes
-      object3d["children"].push_back(ConvertNode(node, scene));
-    }
+    object3d["children"].push_back(ConvertNode(node, scene));
   }
 
   // Add cameras if requested
@@ -688,7 +870,7 @@ json ThreeJSSceneExporter::ConvertNode(const Node& node, const RenderScene& scen
       for (const auto& mesh : scene.meshes) {
         if (mesh.prim_name == node.prim_name) {
           obj["geometry"] = std::to_string(mesh.handle);
-          if (mesh.material_id != -1 && mesh.material_id < scene.materials.size()) {
+          if (mesh.material_id != -1 && static_cast<size_t>(mesh.material_id) < scene.materials.size()) {
             obj["material"] = std::to_string(scene.materials[mesh.material_id].handle);
           }
           break;
@@ -706,7 +888,7 @@ json ThreeJSSceneExporter::ConvertNode(const Node& node, const RenderScene& scen
   }
 
   // Transform matrix
-  if (!node.is_identity_matrix()) {
+  if (!is_identity(node.local_matrix)) {
     json matrix = json::array();
     for (int i = 0; i < 16; ++i) {
       matrix.push_back(node.local_matrix.m[i]);
@@ -716,10 +898,9 @@ json ThreeJSSceneExporter::ConvertNode(const Node& node, const RenderScene& scen
 
   // Add children
   json children = json::array();
-  for (int child_id : node.children) {
-    if (child_id >= 0 && child_id < scene.nodes.size()) {
-      children.push_back(ConvertNode(scene.nodes[child_id], scene));
-    }
+  for (size_t i = 0; i < node.children.size(); ++i) {
+    const Node& child_node = node.children[i];
+    children.push_back(ConvertNode(child_node, scene));
   }
   if (!children.empty()) {
     obj["children"] = children;
@@ -729,10 +910,11 @@ json ThreeJSSceneExporter::ConvertNode(const Node& node, const RenderScene& scen
 }
 
 json ThreeJSSceneExporter::ConvertCamera(const RenderCamera& camera) {
+  float fov = 2.0f * std::atan(0.5f * camera.verticalAperture / camera.focalLength);
   json cam = {
     {"type", "PerspectiveCamera"},
     {"name", camera.name},
-    {"fov", camera.yfov()},
+    {"fov", fov},
     {"aspect", 1.0 / camera.verticalAspectRatio},
     {"near", camera.znear},
     {"far", camera.zfar}
@@ -757,26 +939,32 @@ json ThreeJSSceneExporter::ConvertAnimation(const Animation& anim) {
   };
 
   // Convert animation channels to Three.js tracks
-  for (const auto& [target, channel] : anim.channels_map) {
-    json track = {
-      {"name", target + ".position"}, // or .rotation, .scale
-      {"type", "vector3"},
-      {"times", json::array()},
-      {"values", json::array()}
-    };
+  for (auto it = anim.channels_map.begin(); it != anim.channels_map.end(); ++it) {
+    const std::string& target = it->first;
+    const auto& channel_map = it->second;
 
-    // Add keyframes
-    if (channel.type == AnimationChannel::ChannelType::Translation) {
+    // Process translation channel
+    auto trans_it = channel_map.find(AnimationChannel::ChannelType::Translation);
+    if (trans_it != channel_map.end()) {
+      const auto& channel = trans_it->second;
+      json track = {
+        {"name", target + ".position"},
+        {"type", "vector3"},
+        {"times", json::array()},
+        {"values", json::array()}
+      };
+
+      // Add keyframes
       for (const auto& sample : channel.translations.samples) {
         track["times"].push_back(sample.t);
-        auto& val = std::get<value::float3>(sample.value);
+        const vec3& val = sample.value;
         track["values"].push_back(val[0]);
         track["values"].push_back(val[1]);
         track["values"].push_back(val[2]);
       }
-    }
 
-    anim_json["tracks"].push_back(track);
+      anim_json["tracks"].push_back(track);
+    }
   }
 
   return anim_json;
