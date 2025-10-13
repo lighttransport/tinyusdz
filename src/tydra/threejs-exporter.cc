@@ -138,11 +138,11 @@ bool ThreeJSMaterialExporter::ExportScene(const RenderScene& scene,
       json normals = json::array();
       // Convert normals based on variability
       if (mesh.normals.is_vertex()) {
+        const vec3* normal_data = reinterpret_cast<const vec3*>(mesh.normals.get_data().data());
         for (size_t i = 0; i < mesh.normals.vertex_count(); ++i) {
-          auto n = mesh.normals.get_data<vec3>()[i];
-          normals.push_back(n[0]);
-          normals.push_back(n[1]);
-          normals.push_back(n[2]);
+          normals.push_back(normal_data[i][0]);
+          normals.push_back(normal_data[i][1]);
+          normals.push_back(normal_data[i][2]);
         }
       }
       attributes["normal"] = {
@@ -153,21 +153,24 @@ bool ThreeJSMaterialExporter::ExportScene(const RenderScene& scene,
     }
 
     // UVs
-    if (!mesh.texcoords.empty() && !mesh.texcoords[0].data.empty()) {
-      json uvs = json::array();
-      const auto& texcoord = mesh.texcoords[0];
-      if (texcoord.is_vertex()) {
-        for (size_t i = 0; i < texcoord.vertex_count(); ++i) {
-          auto uv = texcoord.get_data<vec2>()[i];
-          uvs.push_back(uv[0]);
-          uvs.push_back(uv[1]);
+    if (!mesh.texcoords.empty()) {
+      auto it = mesh.texcoords.find(0);
+      if (it != mesh.texcoords.end() && !it->second.data.empty()) {
+        json uvs = json::array();
+        const auto& texcoord = it->second;
+        if (texcoord.is_vertex()) {
+          const vec2* uv_data = reinterpret_cast<const vec2*>(texcoord.get_data().data());
+          for (size_t i = 0; i < texcoord.vertex_count(); ++i) {
+            uvs.push_back(uv_data[i][0]);
+            uvs.push_back(uv_data[i][1]);
+          }
         }
+        attributes["uv"] = {
+          {"array", uvs},
+          {"itemSize", 2},
+          {"type", "Float32Array"}
+        };
       }
-      attributes["uv"] = {
-        {"array", uvs},
-        {"itemSize", 2},
-        {"type", "Float32Array"}
-      };
     }
 
     geom["attributes"] = attributes;
@@ -213,8 +216,8 @@ bool ThreeJSMaterialExporter::ExportMaterial(const RenderMaterial& material,
     // Export as WebGL MeshPhysicalMaterial
     output["type"] = "MeshPhysicalMaterial";
     json params = ConvertOpenPBRToPhysicalMaterial(material.openPBRShader.value());
-    for (auto& [key, value] : params.items()) {
-      output[key] = value;
+    for (auto it = params.items().begin(); it != params.items().end(); ++it) {
+      output[it.key()] = it.value();
     }
   } else if (has_preview) {
     // Export UsdPreviewSurface as standard material
@@ -224,8 +227,8 @@ bool ThreeJSMaterialExporter::ExportMaterial(const RenderMaterial& material,
     } else {
       output["type"] = "MeshStandardMaterial";
       json params = ConvertPreviewSurfaceToStandardMaterial(material.surfaceShader.value());
-      for (auto& [key, value] : params.items()) {
-        output[key] = value;
+      for (auto it = params.items().begin(); it != params.items().end(); ++it) {
+        output[it.key()] = it.value();
       }
     }
   }
@@ -448,7 +451,7 @@ json ThreeJSMaterialExporter::ConvertPreviewSurfaceToStandardMaterial(const Prev
   }
 
   // Workflow detection
-  if (shader.useSpecularWorkflow.value) {
+  if (shader.useSpecularWorkflow) {
     // Specular workflow - use MeshPhongMaterial properties
     params["specular"] = vec3ToJson(shader.specularColor.value);
   } else {
@@ -487,11 +490,13 @@ json ThreeJSMaterialExporter::ConvertPreviewSurfaceToStandardMaterial(const Prev
 
   // Displacement (store in userData as Three.js handles it differently)
   if (shader.displacement.value != 0.0f || shader.displacement.is_texture()) {
-    params["userData"] = {
-      {"displacement", shader.displacement.value},
-      {"displacementMap", shader.displacement.is_texture() ?
-        std::to_string(shader.displacement.texture_id) : json()}
-    };
+    json displacement_map = json();
+    if (shader.displacement.is_texture()) {
+      displacement_map = std::to_string(shader.displacement.texture_id);
+    }
+    params["userData"] = json::object();
+    params["userData"]["displacement"] = shader.displacement.value;
+    params["userData"]["displacementMap"] = displacement_map;
   }
 
   return params;
@@ -510,7 +515,7 @@ json ThreeJSMaterialExporter::ConvertPreviewSurfaceToNodeMaterial(const PreviewS
   // Map parameters
   surface_node["inputs"]["diffuseColor"] = vec3ToJson(shader.diffuseColor.value);
   surface_node["inputs"]["emissiveColor"] = vec3ToJson(shader.emissiveColor.value);
-  surface_node["inputs"]["useSpecularWorkflow"] = shader.useSpecularWorkflow.value;
+  surface_node["inputs"]["useSpecularWorkflow"] = shader.useSpecularWorkflow;
   surface_node["inputs"]["specularColor"] = vec3ToJson(shader.specularColor.value);
   surface_node["inputs"]["metallic"] = shader.metallic.value;
   surface_node["inputs"]["clearcoat"] = shader.clearcoat.value;
