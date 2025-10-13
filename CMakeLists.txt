@@ -503,6 +503,8 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/diff-and-compare.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/js-script.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/js-script.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/threejs-exporter.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/threejs-exporter.cc
         )
     
     if(TINYUSDZ_WITH_WAMR)
