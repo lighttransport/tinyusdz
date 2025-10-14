@@ -1145,7 +1145,7 @@ struct TimeSamples {
     _type_id = type_id;
     _use_pod = value::is_pod_type_id(type_id);
     if (_use_pod) {
-      TUSDZ_LOG_I("  use_pod: " << type_id);
+      //TUSDZ_LOG_I("  use_pod: " << type_id);
       _pod_samples._type_id = type_id;
     }
     return true;
