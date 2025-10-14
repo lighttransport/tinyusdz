@@ -896,6 +896,65 @@ bool CrateReader::ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d) 
   }
 }
 
+// TypedArray version with mmap support for float arrays
+bool CrateReader::ReadFloat2ArrayTyped(TypedArray<value::float2> *d) {
+  size_t length;
+  // < ver 0.7.0  use 32bit
+  if (VERSION_LESS_THAN_0_8_0(_version)) {
+      uint32_t shapesize; // not used
+      if (!_sr->read4(&shapesize)) {
+        PUSH_ERROR("Failed to read the number of array elements.");
+        return false;
+      }
+    uint32_t n;
+    if (!_sr->read4(&n)) {
+      _err += "Failed to read the number of array elements.\n";
+      return false;
+    }
+    length = size_t(n);
+  } else {
+    uint64_t n;
+    if (!_sr->read8(&n)) {
+      _err += "Failed to read the number of array elements.\n";
+      return false;
+    }
+    length = size_t(n);
+  }
+
+  if (length > _config.maxArrayElements) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Too many array elements.");
+  }
+
+  CHECK_MEMORY_USAGE(length * sizeof(value::float2));
+
+  if (_config.use_mmap) {
+    // Use TypedArray view mode - no allocation, just point to mmap'd data
+    uint64_t current_pos = _sr->tell();
+    const uint8_t* data_ptr = _sr->data() + current_pos;
+
+    // Create a view over the mmap'd data
+    *d = TypedArray<value::float2>(new TypedArrayImpl<value::float2>(const_cast<value::float2*>(reinterpret_cast<const value::float2*>(data_ptr)), length, true), true);
+
+    // Advance the stream position
+    if (!_sr->seek_from_current(int64_t(sizeof(value::float2) * length))) {
+      _err += "Failed to advance stream position.\n";
+      return false;
+    }
+
+    return true;
+  } else {
+    // Fall back to regular allocation for compressed data or when mmap is disabled
+    (*d)->resize(length);
+
+      if (!_sr->read(sizeof(value::float2) * length, sizeof(value::float2) * length,
+                     reinterpret_cast<uint8_t *>((*d)->data()))) {
+        _err += "Failed to read float2 array data.\n";
+        return false;
+      }
+      return true;
+  }
+}
+
 // TypedArray version with mmap support for double arrays
 bool CrateReader::ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d) {
   size_t length;
@@ -4199,7 +4258,9 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           }
         } else {
           // Regular allocation for compressed data or when mmap is disabled
-          v.resize(static_cast<size_t>(n));
+          if (!v.resize(static_cast<size_t>(n))) {
+            PUSH_ERROR_AND_RETURN_TAG(kTag, "Internal error. failed to resize TypedArray.");
+          }
           if (!_sr->read(size_t(n) * sizeof(value::float2),
                          size_t(n) * sizeof(value::float2),
                          reinterpret_cast<uint8_t *>(v.data()))) {
@@ -5135,9 +5196,9 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read TimeSamples data");
       }
 
-      TUSDZ_LOG_I("Set TimeSamples begin\n");
+      //TUSDZ_LOG_I("Set TimeSamples begin\n");
       value->Set(std::move(ts));
-      TUSDZ_LOG_I("Set TimeSamples end\n");
+      //TUSDZ_LOG_I("Set TimeSamples end\n");
 
       return true;
     }
