@@ -444,6 +444,7 @@ class CrateReader {
   
   // TypedArray versions for mmap support
   bool ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d);
+  bool ReadFloat2ArrayTyped(TypedArray<value::float2> *d);
   bool ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d);
 
   bool ReadDoubleVector(std::vector<double> *d);
@@ -562,7 +563,7 @@ class CrateReader {
   std::unordered_map<crate::ValueRep, value::float3, crate::ValueRep::Hash> _dedup_float3;
   std::unordered_map<crate::ValueRep, value::float4, crate::ValueRep::Hash> _dedup_float4;
   std::unordered_map<crate::ValueRep, TypedArray<float>, crate::ValueRep::Hash> _dedup_float_array;
-  std::unordered_map<crate::ValueRep, std::vector<value::float2>, crate::ValueRep::Hash> _dedup_float2_array;
+  std::unordered_map<crate::ValueRep, TypedArray<value::float2>, crate::ValueRep::Hash> _dedup_float2_array;
   std::unordered_map<crate::ValueRep, std::vector<value::float3>, crate::ValueRep::Hash> _dedup_float3_array;
   std::unordered_map<crate::ValueRep, std::vector<value::float4>, crate::ValueRep::Hash> _dedup_float4_array;
 
