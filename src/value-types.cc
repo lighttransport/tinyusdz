@@ -21,11 +21,14 @@ namespace value {
 
 // Static member definition for ValueView
 // This is a placeholder value used for type checking - the warnings are acceptable here
+#ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wexit-time-destructors"
 #pragma clang diagnostic ignored "-Wglobal-constructors"
+
 Value ValueView::value_placeholder_;
 #pragma clang diagnostic pop
+#endif // __clang__
 
 //
 // Supported type for `Linear` interpolation

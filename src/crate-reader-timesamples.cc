@@ -1360,14 +1360,8 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT2(double t,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
 
-    // Check deduplication cache first
-    auto it = _dedup_float2.find(rep);
     value::float2 v;
-    if (it != _dedup_float2.end()) {
-      // Reuse cached value
-      v = it->second;
-      DCOUT("Reusing cached FLOAT2 value for ValueRep");
-    } else {
+    {
       // Decode and cache
       uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
 
@@ -1378,7 +1372,6 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT2(double t,
       v[0] = float(vdata[0]);
       v[1] = float(vdata[1]);
 
-      _dedup_float2[rep] = v;
     }
 
     DCOUT("value.float2 = " << v);
@@ -1394,7 +1387,7 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT2(double t,
           kTag, "Compressed float2 not supported for TimeSamples.");
     }
 
-    std::vector<value::float2> v;
+    TypedArray<value::float2> v;
     if (rep.GetPayload() == 0) {  // empty array
       if (!add_array_sample_to_timesamples<value::float2>(
               &dst, t, v, &_err, expected_total_samples)) {
@@ -1406,23 +1399,27 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT2(double t,
     // Check deduplication cache for array
     auto it = _dedup_float2_array.find(rep);
     if (it != _dedup_float2_array.end()) {
+      TUSDZ_LOG_I("dedup float2 array\n");
       // Reuse cached array
-      v = it->second;
+      v = MakeDedupTypedArray(it->second.get());
       DCOUT("Reusing cached FLOAT2 array for ValueRep, size=" << v.size());
     } else {
+      TUSDZ_LOG_I("read float2 array\n");
       // Read and cache array
-      if (!ReadArray(&v)) {
+      if (!ReadFloat2ArrayTyped(&v)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read vec2 array.");
       }
 
       DCOUT("timeSamples.FLOAT2 " << value::print_array_snipped(v));
-
-      _dedup_float2_array[rep] = v;
     }
 
     if (!add_array_sample_to_timesamples<value::float2>(
             &dst, t, v, &_err, expected_total_samples)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+    }
+
+    if (it == _dedup_float2_array.end()) {
+      _dedup_float2_array[rep] = std::move(v);
     }
 
   } else {
