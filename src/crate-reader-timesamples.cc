@@ -816,6 +816,8 @@ bool CrateReader::UnpackTimeSampleValue_INT32(double t,
         return false;
       }
 
+      // Mark as dedup before caching so the original won't delete when it goes out of scope
+      v.set_dedup(true);
       _dedup_int32_array[rep] = v;
     }
 
@@ -915,6 +917,8 @@ bool CrateReader::UnpackTimeSampleValue_HALF(double t,
 
       // Convert std::vector to TypedArray
       v = TypedArray<value::half>(new TypedArrayImpl<value::half>(temp_v.data(), temp_v.size()));
+      // Mark as dedup before caching so the original won't delete when it goes out of scope
+      v.set_dedup(true);
       _dedup_half_array[rep] = v;
     }
 
@@ -1313,6 +1317,8 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT(double t,
         return false;
       }
 
+      // Mark as dedup before caching so the original won't delete when it goes out of scope
+      v.set_dedup(true);
       _dedup_float_array[rep] = v;
     }
 
@@ -1400,8 +1406,8 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT2(double t,
     auto it = _dedup_float2_array.find(rep);
     if (it != _dedup_float2_array.end()) {
       TUSDZ_LOG_I("dedup float2 array\n");
-      // Reuse cached array
-      v = MakeDedupTypedArray(it->second.get());
+      // Reuse cached array - shallow copy shares the underlying data
+      v = it->second;
       DCOUT("Reusing cached FLOAT2 array for ValueRep, size=" << v.size());
     } else {
       TUSDZ_LOG_I("read float2 array\n");
@@ -1419,7 +1425,9 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT2(double t,
     }
 
     if (it == _dedup_float2_array.end()) {
-      _dedup_float2_array[rep] = std::move(v);
+      // Mark as dedup before caching so the original won't delete when it goes out of scope
+      v.set_dedup(true);
+      _dedup_float2_array[rep] = v;
     }
 
   } else {
@@ -2632,6 +2640,8 @@ bool CrateReader::UnpackTimeSampleValue_UINT32(double t,
       if (!ReadIntArrayTyped(rep.IsCompressed(), &v)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read uint32 array.");
       }
+      // Mark as dedup before caching so the original won't delete when it goes out of scope
+      v.set_dedup(true);
       _dedup_uint32_array[rep] = v;
     }
 
@@ -2717,6 +2727,8 @@ bool CrateReader::UnpackTimeSampleValue_INT64(double t,
       if (!ReadIntArrayTyped(rep.IsCompressed(), &v)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read int64 array.");
       }
+      // Mark as dedup before caching so the original won't delete when it goes out of scope
+      v.set_dedup(true);
       _dedup_int64_array[rep] = v;
     }
 
@@ -2802,6 +2814,8 @@ bool CrateReader::UnpackTimeSampleValue_UINT64(double t,
       if (!ReadIntArrayTyped(rep.IsCompressed(), &v)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read uint64 array.");
       }
+      // Mark as dedup before caching so the original won't delete when it goes out of scope
+      v.set_dedup(true);
       _dedup_uint64_array[rep] = v;
     }
 
@@ -2887,6 +2901,8 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE(double t,
       if (!ReadDoubleArrayTyped(rep.IsCompressed(), &v)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read double array.");
       }
+      // Mark as dedup before caching so the original won't delete when it goes out of scope
+      v.set_dedup(true);
       _dedup_double_array[rep] = v;
     }
 
