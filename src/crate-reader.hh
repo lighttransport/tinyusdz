@@ -4,6 +4,7 @@
 #pragma once
 
 #include <functional>
+#include <memory>
 #include <string>
 #include <unordered_set>
 
@@ -563,6 +564,8 @@ class CrateReader {
   std::unordered_map<crate::ValueRep, value::float3, crate::ValueRep::Hash> _dedup_float3;
   std::unordered_map<crate::ValueRep, value::float4, crate::ValueRep::Hash> _dedup_float4;
   std::unordered_map<crate::ValueRep, TypedArray<float>, crate::ValueRep::Hash> _dedup_float_array;
+  // NOTE: Not used for TimeSamples to avoid lifetime issues
+  // TimeSamples read arrays fresh to ensure ownership is correct
   std::unordered_map<crate::ValueRep, TypedArray<value::float2>, crate::ValueRep::Hash> _dedup_float2_array;
   std::unordered_map<crate::ValueRep, std::vector<value::float3>, crate::ValueRep::Hash> _dedup_float3_array;
   std::unordered_map<crate::ValueRep, std::vector<value::float4>, crate::ValueRep::Hash> _dedup_float4_array;

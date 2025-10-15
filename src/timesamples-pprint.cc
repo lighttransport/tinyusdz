@@ -434,10 +434,14 @@ std::string try_print_typed_array(const uint8_t* packed_ptr_data) {
     return ss.str();
 }
 
+// Disabled - use print_typed_array_value_by_type_id instead which takes type_id parameter
+#if 0
 template<typename T>
 std::string print_typed_array(const uint8_t* packed_ptr_data) {
     uint64_t packed_value;
     std::memcpy(&packed_value, packed_ptr_data, sizeof(uint64_t));
+
+    TUSDZ_LOG_I("packed_value : " << packed_value);
 
     // Extract pointer from packed value (lower 48 bits)
     uint64_t ptr_bits = packed_value & 0x0000FFFFFFFFFFFFULL;
@@ -454,8 +458,17 @@ std::string print_typed_array(const uint8_t* packed_ptr_data) {
     // Cast to TypedArrayImpl<T>*
     auto* impl = reinterpret_cast<TypedArrayImpl<T>*>(ptr_bits);
 
+    
+    if (!impl) {
+        return "[InternalError. nullptr]";
+    }
+
+    TUSDZ_LOG_I("impl->size : " << impl->size());
+
     // Create TypedArray with dedup flag to prevent deletion
     TypedArray<T> typed_array(impl, true);
+
+    TUSDZ_LOG_I("typed_array.size = " << typed_array.size());
 
     // Create a view to access the data
     TypedArrayView<const T> view(typed_array);
@@ -485,6 +498,7 @@ std::string print_typed_array(const uint8_t* packed_ptr_data) {
     ss << "]";
     return ss.str();
 }
+#endif  // #if 0 - template print_typed_array
 
 // Geometry types
 std::string print_point3h(const uint8_t* data) {
@@ -627,12 +641,17 @@ bool try_print_typed_array_value(StreamWriter& writer, const uint8_t* packed_ptr
     uint64_t packed_value;
     std::memcpy(&packed_value, packed_ptr_data, sizeof(uint64_t));
 
+    TUSDZ_LOG_I("try_print_typed_array_value: packed_value=0x" << std::hex << packed_value << std::dec);
+
     // Extract pointer from packed value (lower 48 bits)
     uint64_t ptr_bits = packed_value & 0x0000FFFFFFFFFFFFULL;
+
+    TUSDZ_LOG_I("try_print_typed_array_value: after mask ptr_bits=0x" << std::hex << ptr_bits << std::dec);
 
     // Sign-extend from 48 bits to 64 bits for canonical address
     if (ptr_bits & (1ULL << 47)) {
         ptr_bits |= 0xFFFF000000000000ULL;
+        TUSDZ_LOG_I("try_print_typed_array_value: sign-extended ptr_bits=0x" << std::hex << ptr_bits << std::dec);
     }
 
     if (ptr_bits == 0) {
@@ -648,13 +667,32 @@ bool try_print_typed_array_value(StreamWriter& writer, const uint8_t* packed_ptr
         return false;
     }
 
-    // Examine the raw memory to understand the structure
-    const uint8_t* raw_mem = reinterpret_cast<const uint8_t*>(impl);
-    uint64_t first_8bytes, second_8bytes;
-    std::memcpy(&first_8bytes, raw_mem, 8);
-    std::memcpy(&second_8bytes, raw_mem + 8, 8);
+    // Try to inspect the impl structure to understand what we're dealing with
+    TUSDZ_LOG_I("Inspecting TypedArrayImpl<" << typeid(T).name() << ">* at 0x" << std::hex << ptr_bits << std::dec);
 
-    TUSDZ_LOG_I("Raw memory at impl: [0-7]=" << std::hex << first_8bytes << " [8-15]=" << second_8bytes << std::dec);
+    // Check if impl is valid by trying to access it
+    TUSDZ_LOG_I("impl->is_view() = " << impl->is_view());
+    TUSDZ_LOG_I("impl->size() = " << impl->size());
+    TUSDZ_LOG_I("impl->empty() = " << impl->empty());
+    TUSDZ_LOG_I("impl->data() = 0x" << std::hex << reinterpret_cast<uintptr_t>(impl->data()) << std::dec);
+
+    // Also check the storage vector size
+    TUSDZ_LOG_I("impl->storage().size() = " << impl->storage().size());
+
+    // DEBUG: Try to access the data pointer directly to see if it contains valid data
+    const T* data_ptr = impl->data();
+    if (data_ptr != nullptr) {
+        TUSDZ_LOG_I("Trying to read first element from data_ptr...");
+        // Try to read first few bytes to see if they look reasonable
+        const uint8_t* byte_ptr = reinterpret_cast<const uint8_t*>(data_ptr);
+        TUSDZ_LOG_I("First 16 bytes at data_ptr: "
+                    << std::hex
+                    << static_cast<int>(byte_ptr[0]) << " " << static_cast<int>(byte_ptr[1]) << " " << static_cast<int>(byte_ptr[2]) << " " << static_cast<int>(byte_ptr[3]) << " "
+                    << static_cast<int>(byte_ptr[4]) << " " << static_cast<int>(byte_ptr[5]) << " " << static_cast<int>(byte_ptr[6]) << " " << static_cast<int>(byte_ptr[7]) << " "
+                    << static_cast<int>(byte_ptr[8]) << " " << static_cast<int>(byte_ptr[9]) << " " << static_cast<int>(byte_ptr[10]) << " " << static_cast<int>(byte_ptr[11]) << " "
+                    << static_cast<int>(byte_ptr[12]) << " " << static_cast<int>(byte_ptr[13]) << " " << static_cast<int>(byte_ptr[14]) << " " << static_cast<int>(byte_ptr[15])
+                    << std::dec);
+    }
 
     // Create TypedArray with dedup flag to prevent deletion
     TypedArray<T> typed_array(impl, true);
@@ -662,7 +700,7 @@ bool try_print_typed_array_value(StreamWriter& writer, const uint8_t* packed_ptr
     // Create a view to access the data
     TypedArrayView<const T> view(typed_array);
 
-    TUSDZ_LOG_I("Type: " << typeid(T).name() << " size: " << view.size());
+    TUSDZ_LOG_I("TypedArrayView size: " << view.size());
 
     // If size is 0, this might not be the right type - return false to try next type
     if (view.size() == 0) {
@@ -693,6 +731,167 @@ bool try_print_typed_array_value(StreamWriter& writer, const uint8_t* packed_ptr
     return true;
 }
 
+// Print TypedArray when the element type_id is known
+void print_typed_array_value_by_type_id(StreamWriter& writer, const uint8_t* data, uint32_t type_id) {
+    using namespace value;
+
+    bool success = false;
+
+    // Dispatch to the correct template instantiation based on type_id
+    switch (type_id) {
+        case TYPE_ID_FLOAT:
+            success = try_print_typed_array_value<float>(writer, data);
+            break;
+        case TYPE_ID_DOUBLE:
+            success = try_print_typed_array_value<double>(writer, data);
+            break;
+        case TYPE_ID_INT32:
+            success = try_print_typed_array_value<int32_t>(writer, data);
+            break;
+        case TYPE_ID_FLOAT2:
+            success = try_print_typed_array_value<value::float2>(writer, data);
+            break;
+        case TYPE_ID_FLOAT3:
+            success = try_print_typed_array_value<value::float3>(writer, data);
+            break;
+        case TYPE_ID_FLOAT4:
+            success = try_print_typed_array_value<value::float4>(writer, data);
+            break;
+        case TYPE_ID_DOUBLE2:
+            success = try_print_typed_array_value<value::double2>(writer, data);
+            break;
+        case TYPE_ID_DOUBLE3:
+            success = try_print_typed_array_value<value::double3>(writer, data);
+            break;
+        case TYPE_ID_DOUBLE4:
+            success = try_print_typed_array_value<value::double4>(writer, data);
+            break;
+        case TYPE_ID_TEXCOORD2F:
+            success = try_print_typed_array_value<value::texcoord2f>(writer, data);
+            break;
+        case TYPE_ID_TEXCOORD2D:
+            success = try_print_typed_array_value<value::texcoord2d>(writer, data);
+            break;
+        case TYPE_ID_TEXCOORD2H:
+            success = try_print_typed_array_value<value::texcoord2h>(writer, data);
+            break;
+        case TYPE_ID_TEXCOORD3F:
+            success = try_print_typed_array_value<value::texcoord3f>(writer, data);
+            break;
+        case TYPE_ID_TEXCOORD3D:
+            success = try_print_typed_array_value<value::texcoord3d>(writer, data);
+            break;
+        case TYPE_ID_TEXCOORD3H:
+            success = try_print_typed_array_value<value::texcoord3h>(writer, data);
+            break;
+        case TYPE_ID_NORMAL3F:
+            success = try_print_typed_array_value<value::normal3f>(writer, data);
+            break;
+        case TYPE_ID_NORMAL3D:
+            success = try_print_typed_array_value<value::normal3d>(writer, data);
+            break;
+        case TYPE_ID_NORMAL3H:
+            success = try_print_typed_array_value<value::normal3h>(writer, data);
+            break;
+        case TYPE_ID_POINT3F:
+            success = try_print_typed_array_value<value::point3f>(writer, data);
+            break;
+        case TYPE_ID_POINT3D:
+            success = try_print_typed_array_value<value::point3d>(writer, data);
+            break;
+        case TYPE_ID_POINT3H:
+            success = try_print_typed_array_value<value::point3h>(writer, data);
+            break;
+        case TYPE_ID_COLOR3F:
+            success = try_print_typed_array_value<value::color3f>(writer, data);
+            break;
+        case TYPE_ID_COLOR3D:
+            success = try_print_typed_array_value<value::color3d>(writer, data);
+            break;
+        case TYPE_ID_COLOR3H:
+            success = try_print_typed_array_value<value::color3h>(writer, data);
+            break;
+        case TYPE_ID_COLOR4F:
+            success = try_print_typed_array_value<value::color4f>(writer, data);
+            break;
+        case TYPE_ID_COLOR4D:
+            success = try_print_typed_array_value<value::color4d>(writer, data);
+            break;
+        case TYPE_ID_COLOR4H:
+            success = try_print_typed_array_value<value::color4h>(writer, data);
+            break;
+        case TYPE_ID_VECTOR3F:
+            success = try_print_typed_array_value<value::vector3f>(writer, data);
+            break;
+        case TYPE_ID_VECTOR3D:
+            success = try_print_typed_array_value<value::vector3d>(writer, data);
+            break;
+        case TYPE_ID_VECTOR3H:
+            success = try_print_typed_array_value<value::vector3h>(writer, data);
+            break;
+        case TYPE_ID_QUATH:
+            success = try_print_typed_array_value<value::quath>(writer, data);
+            break;
+        case TYPE_ID_QUATF:
+            success = try_print_typed_array_value<value::quatf>(writer, data);
+            break;
+        case TYPE_ID_QUATD:
+            success = try_print_typed_array_value<value::quatd>(writer, data);
+            break;
+        case TYPE_ID_MATRIX2F:
+            success = try_print_typed_array_value<value::matrix2f>(writer, data);
+            break;
+        case TYPE_ID_MATRIX3F:
+            success = try_print_typed_array_value<value::matrix3f>(writer, data);
+            break;
+        case TYPE_ID_MATRIX4F:
+            success = try_print_typed_array_value<value::matrix4f>(writer, data);
+            break;
+        case TYPE_ID_MATRIX2D:
+            success = try_print_typed_array_value<value::matrix2d>(writer, data);
+            break;
+        case TYPE_ID_MATRIX3D:
+            success = try_print_typed_array_value<value::matrix3d>(writer, data);
+            break;
+        case TYPE_ID_MATRIX4D:
+            success = try_print_typed_array_value<value::matrix4d>(writer, data);
+            break;
+        default:
+            // Unknown type_id
+            success = false;
+            break;
+    }
+
+    // If not successful or unknown type, print generic representation
+    if (!success) {
+        uint64_t packed_value;
+        std::memcpy(&packed_value, data, sizeof(uint64_t));
+
+        uint64_t ptr_bits = packed_value & 0x0000FFFFFFFFFFFFULL;
+        if (ptr_bits & (1ULL << 47)) {
+            ptr_bits |= 0xFFFF000000000000ULL;
+        }
+
+        bool is_dedup = (packed_value & (1ULL << 63)) != 0;
+
+        if (ptr_bits == 0) {
+            writer.write("[]");
+        } else {
+            writer.write("[TypedArray@0x");
+            std::stringstream ss;
+            ss << std::hex << ptr_bits;
+            writer.write(ss.str());
+            if (is_dedup) {
+                writer.write(" (dedup)");
+            }
+            writer.write("]");
+        }
+    }
+}
+
+// Old version - commented out since we now use print_typed_array_value_by_type_id
+// which knows the type_id and doesn't need to guess
+#if 0
 void print_typed_array_value(StreamWriter& writer, const uint8_t* data) {
     // Try common types in order of likelihood
     bool success = false;
@@ -769,6 +968,7 @@ void print_typed_array_value(StreamWriter& writer, const uint8_t* data) {
         writer.write("]");
     }
 }
+#endif
 
 } // namespace
 
@@ -1381,6 +1581,7 @@ size_t get_pod_type_size(uint32_t type_id) {
     }
 }
 
+#if 0  // Currently unused - disabled to use generic path
 static void pprint_typed_array_timesamples_FLOAT2(StreamWriter& writer, const PODTimeSamples& samples, uint32_t indent) {
 
     const std::vector<double>& times = samples.get_times();
@@ -1390,8 +1591,10 @@ static void pprint_typed_array_timesamples_FLOAT2(StreamWriter& writer, const PO
     size_t element_size = sizeof(uint64_t);
 
     if (!samples._offsets.empty()) {
-      writer.write("FIXME: internal error. offsets table exists");
-    } else {
+      // TODO: Check samples._offsets.size() == times.size();
+    }
+
+    {
       size_t value_offset = 0;
       for (size_t i = 0; i < times.size(); ++i) {
           writer.write(pprint::Indent(indent + 1));
@@ -1401,13 +1604,26 @@ static void pprint_typed_array_timesamples_FLOAT2(StreamWriter& writer, const PO
           if (blocked[i]) {
               writer.write("None");
           } else {
+
+              if (!samples._offsets.empty()) {
+                value_offset = samples._offsets[i];
+              }
+
               // Get pointer to value data for this sample
               const uint8_t* value_data = values.data() + value_offset;
-              //const TypedArray<value::float2> *ptr = reinterpret_cast<const TypedArray<value::float2> *>(value_data);
-              // TODO: Optimize.
-              std::string s = print_typed_array<value::float2>(value_data);
+
+              // Use correct type based on type_id
+              std::string s;
+              if (samples.type_id() == value::TYPE_ID_TEXCOORD2F) {
+                  s = print_typed_array<value::texcoord2f>(value_data);
+              } else {
+                  // TYPE_ID_FLOAT2
+                  s = print_typed_array<value::float2>(value_data);
+              }
               writer.write(s);
-              value_offset += element_size;
+              if (samples._offsets.empty()) {
+                value_offset += element_size;
+              }
           }
 
           writer.write(",");  // USDA allows trailing comma
@@ -1415,6 +1631,7 @@ static void pprint_typed_array_timesamples_FLOAT2(StreamWriter& writer, const PO
       }
     }
 }
+#endif  // #if 0 - pprint_typed_array_timesamples_FLOAT2
 
 void pprint_pod_timesamples(StreamWriter& writer, const PODTimeSamples& samples, uint32_t indent) {
     // Write opening brace
@@ -1446,11 +1663,15 @@ void pprint_pod_timesamples(StreamWriter& writer, const PODTimeSamples& samples,
     bool printed_array = false;
     if (samples._is_typed_array) {
       // route to optimzied path
+      // DISABLED: This optimized path has issues with wrong template types
+      // Let it fall back to the generic path which uses print_typed_array_value_by_type_id
+      #if 0
       if ((samples.type_id() == value::TYPE_ID_FLOAT2) ||
           (samples.type_id() == value::TYPE_ID_TEXCOORD2F)) {
         pprint_typed_array_timesamples_FLOAT2(writer, samples, indent);
         printed_array = true;
       }
+      #endif
 
       // TODO: Support more types.
 
@@ -1494,9 +1715,12 @@ void pprint_pod_timesamples(StreamWriter& writer, const PODTimeSamples& samples,
                       // Get pointer to value data using offset
                       const uint8_t* value_data = values.data() + samples._offsets[i];
 
+                      TUSDZ_LOG_I("pprint_pod_timesamples: i=" << i << " offset=" << samples._offsets[i] << " value_data=0x" << std::hex << reinterpret_cast<uintptr_t>(value_data) << std::dec);
+
                       // Extract pointer value from packed data
                       uint64_t packed_value;
                       std::memcpy(&packed_value, value_data, sizeof(uint64_t));
+                      TUSDZ_LOG_I("pprint_pod_timesamples: packed_value=0x" << std::hex << packed_value << std::dec);
                       uint64_t ptr_bits = packed_value & 0x0000FFFFFFFFFFFFULL;
 
                       // Sign-extend from 48 bits to 64 bits
@@ -1513,8 +1737,8 @@ void pprint_pod_timesamples(StreamWriter& writer, const PODTimeSamples& samples,
                           // First occurrence - dereference TypedArray pointer and print
                           size_t pos_before = writer.str().size();
 
-                          // Dereference and print the actual TypedArray contents
-                          print_typed_array_value(writer, value_data);
+                          // Dereference and print the actual TypedArray contents using known type_id
+                          print_typed_array_value_by_type_id(writer, value_data, samples.type_id());
 
                           size_t pos_after = writer.str().size();
 
@@ -1592,8 +1816,15 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
 
     // Check if using POD storage
     if (samples.is_using_pod()) {
+
         // Delegate to POD implementation
         const auto& pod_samples = samples.get_pod_samples();
+
+        if (pod_samples._is_typed_array) {
+          pprint_pod_timesamples(writer, pod_samples, indent);
+          return;
+        }
+
 
         // Get type information
         uint32_t type_id = pod_samples.type_id();
@@ -1656,8 +1887,8 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
                             // First occurrence - dereference TypedArray pointer and print
                             size_t pos_before = writer.str().size();
 
-                            // Dereference and print the actual TypedArray contents
-                            print_typed_array_value(writer, value_ptr);
+                            // Dereference and print the actual TypedArray contents using known type_id
+                            print_typed_array_value_by_type_id(writer, value_ptr, pod_samples.type_id());
 
                             size_t pos_after = writer.str().size();
 

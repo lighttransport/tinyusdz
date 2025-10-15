@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <stack>
 #include <unordered_set>
+#include <unordered_map>
 
 #include "crate-format.hh"
 #include "crate-pprint.hh"
@@ -531,16 +532,56 @@ bool add_sample_to_timesamples(value::TimeSamples *d, double time, const std::ve
   return d->add_sample(time, value::Value(val), err);
 }
 #else
+
+// Per-TimeSamples deduplication map for array offsets
+// Maps (TimeSamples pointer, ValueRep payload) → first_sample_index
+// Use ValueRep payload (uint64_t) as key since it uniquely identifies the array data
+// Using function-static to avoid global constructor issues
+// Suppress exit-time-destructor warning as this is the correct way to handle it
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wexit-time-destructors"
+#endif
+static std::map<std::pair<void*, uint64_t>, size_t>& get_timesamples_dedup_map() {
+  static std::map<std::pair<void*, uint64_t>, size_t> map;
+  return map;
+}
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+
 template <typename T>
 typename std::enable_if<is_pod_type<T>::value, bool>::type
 add_array_sample_to_timesamples(value::TimeSamples *d, double time,
                                 const std::vector<T> &arrval, std::string *err,
-                                size_t expected_total_samples = 0) {
+                                size_t expected_total_samples = 0,
+                                const crate::ValueRep *vrep = nullptr) {
   // TUSDZ_LOG_I("arr pod_ty: " << value::TypeTraits<T>::type_name() << ",
   // is_use_pod " << d->is_using_pod());
   if (d->is_using_pod()) {
-    return d->add_array_sample_pod<T>(time, arrval, err,
-                                      expected_total_samples);
+    // Check if this array valueRep has been seen before
+    if (vrep) {
+      auto key = std::make_pair(static_cast<void*>(d), vrep->GetPayload());
+      auto& dedup_map = get_timesamples_dedup_map();
+      auto it = dedup_map.find(key);
+      if (it != dedup_map.end()) {
+        // Deduplicated array - reuse offset from first occurrence
+        size_t ref_index = it->second;
+        DCOUT("Array dedup: reusing sample index " << ref_index);
+        return d->add_dedup_array_sample_pod<T>(time, ref_index, err);
+      } else {
+        // First occurrence - store normally and remember the index
+        size_t current_index = d->size();
+        dedup_map[key] = current_index;
+        DCOUT("Array dedup: storing new sample at index " << current_index);
+        return d->add_array_sample_pod<T>(time, arrval, err,
+                                          expected_total_samples);
+      }
+    } else {
+      // No dedup tracking - use normal path
+      return d->add_array_sample_pod<T>(time, arrval, err,
+                                        expected_total_samples);
+    }
   } else {
     return d->add_sample(time, value::Value(arrval), err);
   }
@@ -551,40 +592,70 @@ template <typename T>
 bool
 add_array_sample_to_timesamples(value::TimeSamples *d, double time,
                                 const TypedArray<T> &arrval, std::string *err,
-                                size_t expected_total_samples = 0) {
-#if 0
+                                size_t expected_total_samples = 0,
+                                const crate::ValueRep *vrep = nullptr) {
+  // Store actual array data inline in PODTimeSamples, not packed pointers.
+  // The packed-pointer approach (add_typed_array_sample) has lifetime issues:
+  // The TypedArrayImpl object may be destroyed before PODTimeSamples is printed,
+  // leaving dangling pointers. Storing the data inline ensures it outlives PODTimeSamples.
   if (d->is_using_pod()) {
-    TUSDZ_LOG_I("TypedArray: use pod");
-    return d->add_array_sample_pod<T>(time, arrval, err,
-                                      expected_total_samples);
+    // Check if this array valueRep has been seen before
+    if (vrep) {
+      auto key = std::make_pair(static_cast<void*>(d), vrep->GetPayload());
+      auto& dedup_map = get_timesamples_dedup_map();
+      auto it = dedup_map.find(key);
+      if (it != dedup_map.end()) {
+        // Deduplicated array - reuse offset from first occurrence
+        size_t ref_index = it->second;
+        DCOUT("Array dedup: reusing sample index " << ref_index);
+        return d->add_dedup_array_sample_pod<T>(time, ref_index, err);
+      } else {
+        // First occurrence - store normally and remember the index
+        size_t current_index = d->size();
+        dedup_map[key] = current_index;
+        DCOUT("Array dedup: storing new sample at index " << current_index);
+        return d->add_array_sample_pod<T>(time, arrval, err,
+                                          expected_total_samples);
+      }
+    } else {
+      // No dedup tracking - use normal path
+      return d->add_array_sample_pod<T>(time, arrval, err,
+                                        expected_total_samples);
+    }
   } else {
-    TUSDZ_LOG_I("TypedArray: non-pod");
     // Convert TypedArray to std::vector for non-POD path
     std::vector<T> vec(arrval.data(), arrval.data() + arrval.size());
     return d->add_sample(time, value::Value(vec), err);
   }
-#else
-    (void)expected_total_samples;
-    //TUSDZ_LOG_I("TypedArray: non-pod");
-    // TypedArray manages its own memory internally using a 64-bit packed pointer,
-    // which means memory is handled within the TypedArray implementation and users
-    // should not manually manage or free the underlying array.
-    // This is important here because passing the TypedArray directly avoids unnecessary
-    // copies and ensures that memory ownership and lifetime are correctly handled,
-    // preventing double-free or memory leaks. Maintainers should avoid adding manual
-    // memory management for TypedArray instances at this call site.
-    return d->add_typed_array_sample(time, arrval, err);
-#endif
 }
 
 // Specialization for matrix(treat it as pod)
 inline bool add_matrix2d_array_sample_to_timesamples(
     value::TimeSamples *d, double time,
     const std::vector<value::matrix2d> &arrval, std::string *err,
-    size_t expected_total_samples = 0) {
+    size_t expected_total_samples = 0,
+    const crate::ValueRep *vrep = nullptr) {
   if (d->is_using_pod()) {
-    return d->add_matrix_array_sample_pod<value::matrix2d>(
-        time, arrval, err, expected_total_samples);
+    // Check if this array valueRep has been seen before
+    if (vrep) {
+      auto key = std::make_pair(static_cast<void*>(d), vrep->GetPayload());
+      auto& dedup_map = get_timesamples_dedup_map();
+      auto it = dedup_map.find(key);
+      if (it != dedup_map.end()) {
+        size_t ref_index = it->second;
+        DCOUT("Matrix2d array dedup: reusing sample index " << ref_index);
+        return d->add_dedup_matrix_array_sample_pod<value::matrix2d>(time, ref_index, err);
+      } else {
+        size_t current_index = d->size();
+        dedup_map[key] = current_index;
+        DCOUT("Matrix2d array dedup: storing new sample at index " << current_index);
+        return d->add_matrix_array_sample_pod<value::matrix2d>(
+            time, arrval, err, expected_total_samples);
+      }
+    } else {
+      return d->add_matrix_array_sample_pod<value::matrix2d>(
+          time, arrval, err, expected_total_samples);
+    }
   } else {
     return d->add_sample(time, value::Value(arrval), err);
   }
@@ -593,10 +664,29 @@ inline bool add_matrix2d_array_sample_to_timesamples(
 inline bool add_matrix3d_array_sample_to_timesamples(
     value::TimeSamples *d, double time,
     const std::vector<value::matrix3d> &arrval, std::string *err,
-    size_t expected_total_samples = 0) {
+    size_t expected_total_samples = 0,
+    const crate::ValueRep *vrep = nullptr) {
   if (d->is_using_pod()) {
-    return d->add_matrix_array_sample_pod<value::matrix3d>(
-        time, arrval, err, expected_total_samples);
+    // Check if this array valueRep has been seen before
+    if (vrep) {
+      auto key = std::make_pair(static_cast<void*>(d), vrep->GetPayload());
+      auto& dedup_map = get_timesamples_dedup_map();
+      auto it = dedup_map.find(key);
+      if (it != dedup_map.end()) {
+        size_t ref_index = it->second;
+        DCOUT("Matrix3d array dedup: reusing sample index " << ref_index);
+        return d->add_dedup_matrix_array_sample_pod<value::matrix3d>(time, ref_index, err);
+      } else {
+        size_t current_index = d->size();
+        dedup_map[key] = current_index;
+        DCOUT("Matrix3d array dedup: storing new sample at index " << current_index);
+        return d->add_matrix_array_sample_pod<value::matrix3d>(
+            time, arrval, err, expected_total_samples);
+      }
+    } else {
+      return d->add_matrix_array_sample_pod<value::matrix3d>(
+          time, arrval, err, expected_total_samples);
+    }
   } else {
     return d->add_sample(time, value::Value(arrval), err);
   }
@@ -605,10 +695,29 @@ inline bool add_matrix3d_array_sample_to_timesamples(
 inline bool add_matrix4d_array_sample_to_timesamples(
     value::TimeSamples *d, double time,
     const std::vector<value::matrix4d> &arrval, std::string *err,
-    size_t expected_total_samples = 0) {
+    size_t expected_total_samples = 0,
+    const crate::ValueRep *vrep = nullptr) {
   if (d->is_using_pod()) {
-    return d->add_matrix_array_sample_pod<value::matrix4d>(
-        time, arrval, err, expected_total_samples);
+    // Check if this array valueRep has been seen before
+    if (vrep) {
+      auto key = std::make_pair(static_cast<void*>(d), vrep->GetPayload());
+      auto& dedup_map = get_timesamples_dedup_map();
+      auto it = dedup_map.find(key);
+      if (it != dedup_map.end()) {
+        size_t ref_index = it->second;
+        DCOUT("Matrix4d array dedup: reusing sample index " << ref_index);
+        return d->add_dedup_matrix_array_sample_pod<value::matrix4d>(time, ref_index, err);
+      } else {
+        size_t current_index = d->size();
+        dedup_map[key] = current_index;
+        DCOUT("Matrix4d array dedup: storing new sample at index " << current_index);
+        return d->add_matrix_array_sample_pod<value::matrix4d>(
+            time, arrval, err, expected_total_samples);
+      }
+    } else {
+      return d->add_matrix_array_sample_pod<value::matrix4d>(
+          time, arrval, err, expected_total_samples);
+    }
   } else {
     return d->add_sample(time, value::Value(arrval), err);
   }
@@ -1338,7 +1447,7 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT(double t,
     }
 
     if (!add_array_sample_to_timesamples<float>(&dst, t, v, &_err,
-                                                expected_total_samples)) {
+                                                expected_total_samples, &rep)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
 
@@ -1417,36 +1526,19 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT2(double t,
       return true;
     }
 
-    // Check deduplication cache for array
-    auto it = _dedup_float2_array.find(rep);
-    if (it != _dedup_float2_array.end()) {
-      //TUSDZ_LOG_I("dedup float2 array\n");
-      // Reuse cached array - shallow copy shares the underlying data
-      v = MakeDedupTypedArray(it->second.get());
-      v.set_dedup(true);
-      // HACK
-      DCOUT("Reusing cached FLOAT2 array for ValueRep, size=" << v.size());
-    } else {
-      //TUSDZ_LOG_I("read float2 array\n");
-      // Read and cache array
-      if (!ReadFloat2ArrayTyped(&v)) {
-        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read vec2 array.");
-      }
-
-      DCOUT("timeSamples.FLOAT2 " << value::print_array_snipped(v));
+    // For TimeSamples, don't use CrateReader's cache - read fresh each time
+    // The PODTimeSamples will handle deduplication internally and owns the data
+    // NOTE: Caching in CrateReader doesn't work because CrateReader is destroyed
+    // before the Stage/TimeSamples, so cached pointers become invalid
+    if (!ReadFloat2ArrayTyped(&v)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read vec2 array.");
     }
+
+    DCOUT("timeSamples.FLOAT2 " << value::print_array_snipped(v));
 
     if (!add_array_sample_to_timesamples<value::float2>(
             &dst, t, v, &_err, expected_total_samples)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
-    }
-
-    if (it == _dedup_float2_array.end()) {
-      // content of 'v' is stored as the first timesample value.
-      // We store v with duplicated flag on to prevent double-free.
-      // Also use move assignment to avoid calling copy assignemnt operator.
-      v.set_dedup(true);
-      _dedup_float2_array.emplace(rep, std::move(v));
     }
 
   } else {
