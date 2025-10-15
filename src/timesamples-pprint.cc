@@ -5,6 +5,7 @@
 
 #include <sstream>
 #include <cstring>
+#include <map>
 
 #include "value-types.hh"
 #include "value-pprint.hh"
@@ -433,6 +434,58 @@ std::string try_print_typed_array(const uint8_t* packed_ptr_data) {
     return ss.str();
 }
 
+template<typename T>
+std::string print_typed_array(const uint8_t* packed_ptr_data) {
+    uint64_t packed_value;
+    std::memcpy(&packed_value, packed_ptr_data, sizeof(uint64_t));
+
+    // Extract pointer from packed value (lower 48 bits)
+    uint64_t ptr_bits = packed_value & 0x0000FFFFFFFFFFFFULL;
+
+    // Sign-extend from 48 bits to 64 bits for canonical address
+    if (ptr_bits & (1ULL << 47)) {
+        ptr_bits |= 0xFFFF000000000000ULL;
+    }
+
+    if (ptr_bits == 0) {
+        return "";  // Return empty to indicate failure
+    }
+
+    // Cast to TypedArrayImpl<T>*
+    auto* impl = reinterpret_cast<TypedArrayImpl<T>*>(ptr_bits);
+
+    // Create TypedArray with dedup flag to prevent deletion
+    TypedArray<T> typed_array(impl, true);
+
+    // Create a view to access the data
+    TypedArrayView<const T> view(typed_array);
+
+    if (view.size() == 0) {
+        return "[]";
+    }
+
+    std::stringstream ss;
+    ss << "[";
+
+    // Limit output to first 10 elements for readability
+    size_t max_elements = std::min(view.size(), size_t(10));
+
+    for (size_t i = 0; i < max_elements; ++i) {
+        if (i > 0) ss << ", ";
+
+        // In C++14, we can't use if constexpr, so just output directly
+        // The operator<< should work for all types we're likely to encounter
+        ss << view[i];
+    }
+
+    if (view.size() > max_elements) {
+        ss << ", ... (" << view.size() << " total)";
+    }
+
+    ss << "]";
+    return ss.str();
+}
+
 // Geometry types
 std::string print_point3h(const uint8_t* data) {
     value::point3h p;
@@ -589,15 +642,31 @@ bool try_print_typed_array_value(StreamWriter& writer, const uint8_t* packed_ptr
     // Cast to TypedArrayImpl<T>*
     auto* impl = reinterpret_cast<TypedArrayImpl<T>*>(ptr_bits);
 
+    // Check if impl looks valid by examining first few bytes
+    // TypedArrayImpl should have a vtable pointer and size field
+    if (impl == nullptr) {
+        return false;
+    }
+
+    // Examine the raw memory to understand the structure
+    const uint8_t* raw_mem = reinterpret_cast<const uint8_t*>(impl);
+    uint64_t first_8bytes, second_8bytes;
+    std::memcpy(&first_8bytes, raw_mem, 8);
+    std::memcpy(&second_8bytes, raw_mem + 8, 8);
+
+    TUSDZ_LOG_I("Raw memory at impl: [0-7]=" << std::hex << first_8bytes << " [8-15]=" << second_8bytes << std::dec);
+
     // Create TypedArray with dedup flag to prevent deletion
     TypedArray<T> typed_array(impl, true);
 
     // Create a view to access the data
     TypedArrayView<const T> view(typed_array);
 
+    TUSDZ_LOG_I("Type: " << typeid(T).name() << " size: " << view.size());
+
+    // If size is 0, this might not be the right type - return false to try next type
     if (view.size() == 0) {
-        writer.write("[]");
-        return true;
+        return false;  // Try next type
     }
 
     writer.write("[");
@@ -648,6 +717,30 @@ void print_typed_array_value(StreamWriter& writer, const uint8_t* data) {
     success = try_print_typed_array_value<value::float2>(writer, data);
     if (success) return;
 
+    // Try texcoord2f array (common in primvars)
+    success = try_print_typed_array_value<value::texcoord2f>(writer, data);
+    if (success) return;
+
+    // Try texcoord2d array
+    success = try_print_typed_array_value<value::texcoord2d>(writer, data);
+    if (success) return;
+
+    // Try texcoord2h array
+    success = try_print_typed_array_value<value::texcoord2h>(writer, data);
+    if (success) return;
+
+    // Try normal3f array
+    success = try_print_typed_array_value<value::normal3f>(writer, data);
+    if (success) return;
+
+    // Try point3f array
+    success = try_print_typed_array_value<value::point3f>(writer, data);
+    if (success) return;
+
+    // Try color3f array
+    success = try_print_typed_array_value<value::color3f>(writer, data);
+    if (success) return;
+
     // Try double3 array
     success = try_print_typed_array_value<value::double3>(writer, data);
     if (success) return;
@@ -682,31 +775,54 @@ void print_typed_array_value(StreamWriter& writer, const uint8_t* data) {
 // TypedArray printing function - moved outside anonymous namespace to be accessible
 std::string print_typed_array(const uint8_t* data) {
     // Try common types in order of likelihood
-    std::string result;
 
     // Try float array
-    result = try_print_typed_array<float>(data);
-    if (!result.empty()) return result;
+    {
+        std::string result = try_print_typed_array<float>(data);
+        if (!result.empty()) {
+            return result;
+        }
+    }
 
     // Try double array
-    result = try_print_typed_array<double>(data);
-    if (!result.empty()) return result;
+    {
+        std::string result = try_print_typed_array<double>(data);
+        if (!result.empty()) {
+            return result;
+        }
+    }
 
     // Try int array
-    result = try_print_typed_array<int>(data);
-    if (!result.empty()) return result;
+    {
+        std::string result = try_print_typed_array<int>(data);
+        if (!result.empty()) {
+            return result;
+        }
+    }
 
     // Try float3 array
-    result = try_print_typed_array<value::float3>(data);
-    if (!result.empty()) return result;
+    {
+        std::string result = try_print_typed_array<value::float3>(data);
+        if (!result.empty()) {
+            return result;
+        }
+    }
 
     // Try float2 array
-    result = try_print_typed_array<value::float2>(data);
-    if (!result.empty()) return result;
+    {
+        std::string result = try_print_typed_array<value::float2>(data);
+        if (!result.empty()) {
+            return result;
+        }
+    }
 
     // Try double3 array
-    result = try_print_typed_array<value::double3>(data);
-    if (!result.empty()) return result;
+    {
+        std::string result = try_print_typed_array<value::double3>(data);
+        if (!result.empty()) {
+            return result;
+        }
+    }
 
     // If we can't determine the type, print a generic representation
     uint64_t packed_value;
@@ -876,8 +992,10 @@ std::string pprint_pod_value_by_type(const uint8_t* data, uint32_t type_id) {
             return print_texcoord3f(data);
         case TYPE_ID_TEXCOORD3D:
             return print_texcoord3d(data);
+#if 0
         case TYPE_ID_TYPED_ARRAY_TIMESAMPLE_VALUE:
             return print_typed_array(data);
+#endif
         default:
             return "[Unknown POD type: " + std::to_string(type_id) + "]";
     }
@@ -1097,9 +1215,11 @@ void pprint_pod_value_by_type(StreamWriter& writer, const uint8_t* data, uint32_
         case TYPE_ID_TEXCOORD3D:
             print_value_type<value::texcoord3d>(writer, data);
             break;
+#if 0
         case TYPE_ID_TYPED_ARRAY_TIMESAMPLE_VALUE:
             print_typed_array_value(writer, data);
             break;
+#endif
         default:
             writer << "[Unknown POD type: " << type_id << "]";
             break;
@@ -1250,12 +1370,49 @@ size_t get_pod_type_size(uint32_t type_id) {
             return sizeof(value::texcoord3f);
         case TYPE_ID_TEXCOORD3D:
             return sizeof(value::texcoord3d);
+#if 0
         case TYPE_ID_TYPED_TIMESAMPLE_VALUE:
             return sizeof(uint64_t);
         case TYPE_ID_TYPED_ARRAY_TIMESAMPLE_VALUE:
             return sizeof(uint64_t);
+#endif
         default:
             return 0;  // Unknown type
+    }
+}
+
+static void pprint_typed_array_timesamples_FLOAT2(StreamWriter& writer, const PODTimeSamples& samples, uint32_t indent) {
+
+    const std::vector<double>& times = samples.get_times();
+    const Buffer<16>& blocked = samples.get_blocked();
+    const Buffer<16>& values = samples.get_values();
+
+    size_t element_size = sizeof(uint64_t);
+
+    if (!samples._offsets.empty()) {
+      writer.write("FIXME: internal error. offsets table exists");
+    } else {
+      size_t value_offset = 0;
+      for (size_t i = 0; i < times.size(); ++i) {
+          writer.write(pprint::Indent(indent + 1));
+          writer.write(times[i]);
+          writer.write(": ");
+
+          if (blocked[i]) {
+              writer.write("None");
+          } else {
+              // Get pointer to value data for this sample
+              const uint8_t* value_data = values.data() + value_offset;
+              //const TypedArray<value::float2> *ptr = reinterpret_cast<const TypedArray<value::float2> *>(value_data);
+              // TODO: Optimize.
+              std::string s = print_typed_array<value::float2>(value_data);
+              writer.write(s);
+              value_offset += element_size;
+          }
+
+          writer.write(",");  // USDA allows trailing comma
+          writer.write("\n");
+      }
     }
 }
 
@@ -1270,7 +1427,7 @@ void pprint_pod_timesamples(StreamWriter& writer, const PODTimeSamples& samples,
     }
 
     // Get element size for this type
-    size_t element_size = get_pod_type_size(samples.type_id());
+    size_t element_size = samples._is_typed_array ? sizeof(uint64_t) : get_pod_type_size(samples.type_id());
     if (element_size == 0) {
         writer.write(pprint::Indent(indent + 1));
         writer.write("[Error: Unknown type_id ");
@@ -1286,62 +1443,130 @@ void pprint_pod_timesamples(StreamWriter& writer, const PODTimeSamples& samples,
         samples.update();
     }
 
-    const std::vector<double>& times = samples.get_times();
-    const Buffer<16>& blocked = samples.get_blocked();
-    const Buffer<16>& values = samples.get_values();
+    bool printed_array = false;
+    if (samples._is_typed_array) {
+      // route to optimzied path
+      if ((samples.type_id() == value::TYPE_ID_FLOAT2) ||
+          (samples.type_id() == value::TYPE_ID_TEXCOORD2F)) {
+        pprint_typed_array_timesamples_FLOAT2(writer, samples, indent);
+        printed_array = true;
+      }
 
-    // Check if using offset table (new optimized storage)
-    if (!samples._offsets.empty()) {
-        // Verify offset table is correct size
-        if (samples._offsets.size() != times.size()) {
-            writer.write(pprint::Indent(indent + 1));
-            writer.write("[Error: Offset table size mismatch: offsets=");
-            writer.write(static_cast<int>(samples._offsets.size()));
-            writer.write(" times=");
-            writer.write(static_cast<int>(times.size()));
-            writer.write("]\n");
-            writer.write(pprint::Indent(indent));
-            writer.write("}");
-            return;
-        }
+      // TODO: Support more types.
 
-        // Using offset table - blocked values don't consume space
-        for (size_t i = 0; i < times.size(); ++i) {
-            writer.write(pprint::Indent(indent + 1));
-            writer.write(times[i]);
-            writer.write(": ");
+    }
 
-            if (blocked[i] || samples._offsets[i] == SIZE_MAX) {
-                writer.write("None");
-            } else {
-                // Get pointer to value data using offset
-                const uint8_t* value_data = values.data() + samples._offsets[i];
-                pprint_pod_value_by_type(writer, value_data, samples.type_id());
-            }
+    if (!printed_array) {
+      // Fallback
+      const std::vector<double>& times = samples.get_times();
+      const Buffer<16>& blocked = samples.get_blocked();
+      const Buffer<16>& values = samples.get_values();
 
-            writer.write(",");  // USDA allows trailing comma
-            writer.write("\n");
-        }
-    } else {
-        // Legacy storage - blocked values still consume space but are skipped
-        size_t value_offset = 0;
-        for (size_t i = 0; i < times.size(); ++i) {
-            writer.write(pprint::Indent(indent + 1));
-            writer.write(times[i]);
-            writer.write(": ");
+      // Check if using offset table (new optimized storage)
+      if (!samples._offsets.empty()) {
+          // Verify offset table is correct size
+          if (samples._offsets.size() != times.size()) {
+              writer.write(pprint::Indent(indent + 1));
+              writer.write("[Error: Offset table size mismatch: offsets=");
+              writer.write(static_cast<int>(samples._offsets.size()));
+              writer.write(" times=");
+              writer.write(static_cast<int>(times.size()));
+              writer.write("]\n");
+              writer.write(pprint::Indent(indent));
+              writer.write("}");
+              return;
+          }
 
-            if (blocked[i]) {
-                writer.write("None");
-            } else {
-                // Get pointer to value data for this sample
-                const uint8_t* value_data = values.data() + value_offset;
-                pprint_pod_value_by_type(writer, value_data, samples.type_id());
-                value_offset += element_size;
-            }
+          // Optimization for TypedArray: cache printed strings by pointer value
+          if (samples._is_typed_array) {
+              // Map to cache printed strings: pointer -> string
+              std::map<uint64_t, std::string> cached_strings;
 
-            writer.write(",");  // USDA allows trailing comma
-            writer.write("\n");
-        }
+              // Using offset table - blocked values don't consume space
+              for (size_t i = 0; i < times.size(); ++i) {
+                  writer.write(pprint::Indent(indent + 1));
+                  writer.write(times[i]);
+                  writer.write(": ");
+
+                  if (blocked[i] || samples._offsets[i] == SIZE_MAX) {
+                      writer.write("None");
+                  } else {
+                      // Get pointer to value data using offset
+                      const uint8_t* value_data = values.data() + samples._offsets[i];
+
+                      // Extract pointer value from packed data
+                      uint64_t packed_value;
+                      std::memcpy(&packed_value, value_data, sizeof(uint64_t));
+                      uint64_t ptr_bits = packed_value & 0x0000FFFFFFFFFFFFULL;
+
+                      // Sign-extend from 48 bits to 64 bits
+                      if (ptr_bits & (1ULL << 47)) {
+                          ptr_bits |= 0xFFFF000000000000ULL;
+                      }
+
+                      // Check cache first
+                      auto it = cached_strings.find(ptr_bits);
+                      if (it != cached_strings.end()) {
+                          // Reuse cached string
+                          writer.write(it->second);
+                      } else {
+                          // First occurrence - dereference TypedArray pointer and print
+                          size_t pos_before = writer.str().size();
+
+                          // Dereference and print the actual TypedArray contents
+                          print_typed_array_value(writer, value_data);
+
+                          size_t pos_after = writer.str().size();
+
+                          // Cache the printed string
+                          std::string printed = writer.str().substr(pos_before, pos_after - pos_before);
+                          cached_strings[ptr_bits] = printed;
+                      }
+                  }
+
+                  writer.write(",");  // USDA allows trailing comma
+                  writer.write("\n");
+              }
+          } else {
+              // Non-TypedArray path: use regular printing
+              for (size_t i = 0; i < times.size(); ++i) {
+                  writer.write(pprint::Indent(indent + 1));
+                  writer.write(times[i]);
+                  writer.write(": ");
+
+                  if (blocked[i] || samples._offsets[i] == SIZE_MAX) {
+                      writer.write("None");
+                  } else {
+                      // Get pointer to value data using offset
+                      const uint8_t* value_data = values.data() + samples._offsets[i];
+                      pprint_pod_value_by_type(writer, value_data, samples.type_id());
+                  }
+
+                  writer.write(",");  // USDA allows trailing comma
+                  writer.write("\n");
+              }
+          }
+      } else {
+          // Legacy storage - blocked values still consume space but are skipped
+          size_t value_offset = 0;
+          for (size_t i = 0; i < times.size(); ++i) {
+              writer.write(pprint::Indent(indent + 1));
+              writer.write(times[i]);
+              writer.write(": ");
+
+              if (blocked[i]) {
+                  writer.write("None");
+              } else {
+                  // Get pointer to value data for this sample
+                  const uint8_t* value_data = values.data() + value_offset;
+                  pprint_pod_value_by_type(writer, value_data, samples.type_id());
+                  value_offset += element_size;
+              }
+
+              writer.write(",");  // USDA allows trailing comma
+              writer.write("\n");
+          }
+      }
     }
 
     writer.write(pprint::Indent(indent));
@@ -1395,24 +1620,78 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
 
         // Write samples - handle offset table if present
         if (!pod_samples._offsets.empty()) {
-            // Using offset table - blocked values don't consume space
-            for (size_t i = 0; i < times.size(); ++i) {
-                writer.write(pprint::Indent(indent + 1));
-                writer.write(times[i]);
-                writer.write(": ");
+            // Optimization for TypedArray: cache printed strings by pointer value
+            if (pod_samples._is_typed_array) {
+                // Map to cache printed strings: pointer -> string
+                std::map<uint64_t, std::string> cached_strings;
 
-                if (blocked[i] || pod_samples._offsets[i] == SIZE_MAX) {
-                    writer.write("None");
-                } else {
-                    // Get pointer to value data using offset
-                    const uint8_t* value_ptr = values.data() + pod_samples._offsets[i];
-                    pprint_pod_value_by_type(writer, value_ptr, type_id);
-                }
+                // Using offset table - blocked values don't consume space
+                for (size_t i = 0; i < times.size(); ++i) {
+                    writer.write(pprint::Indent(indent + 1));
+                    writer.write(times[i]);
+                    writer.write(": ");
 
-                if (i < times.size() - 1) {
-                    writer.write(",");
+                    if (blocked[i] || pod_samples._offsets[i] == SIZE_MAX) {
+                        writer.write("None");
+                    } else {
+                        // Get pointer to value data using offset
+                        const uint8_t* value_ptr = values.data() + pod_samples._offsets[i];
+
+                        // Extract pointer value from packed data
+                        uint64_t packed_value;
+                        std::memcpy(&packed_value, value_ptr, sizeof(uint64_t));
+                        uint64_t ptr_bits = packed_value & 0x0000FFFFFFFFFFFFULL;
+
+                        // Sign-extend from 48 bits to 64 bits
+                        if (ptr_bits & (1ULL << 47)) {
+                            ptr_bits |= 0xFFFF000000000000ULL;
+                        }
+
+                        // Check cache first
+                        auto it = cached_strings.find(ptr_bits);
+                        if (it != cached_strings.end()) {
+                            // Reuse cached string
+                            writer.write(it->second);
+                        } else {
+                            // First occurrence - dereference TypedArray pointer and print
+                            size_t pos_before = writer.str().size();
+
+                            // Dereference and print the actual TypedArray contents
+                            print_typed_array_value(writer, value_ptr);
+
+                            size_t pos_after = writer.str().size();
+
+                            // Cache the printed string
+                            std::string printed = writer.str().substr(pos_before, pos_after - pos_before);
+                            cached_strings[ptr_bits] = printed;
+                        }
+                    }
+
+                    if (i < times.size() - 1) {
+                        writer.write(",");
+                    }
+                    writer.write("\n");
                 }
-                writer.write("\n");
+            } else {
+                // Non-TypedArray path: use regular printing
+                for (size_t i = 0; i < times.size(); ++i) {
+                    writer.write(pprint::Indent(indent + 1));
+                    writer.write(times[i]);
+                    writer.write(": ");
+
+                    if (blocked[i] || pod_samples._offsets[i] == SIZE_MAX) {
+                        writer.write("None");
+                    } else {
+                        // Get pointer to value data using offset
+                        const uint8_t* value_ptr = values.data() + pod_samples._offsets[i];
+                        pprint_pod_value_by_type(writer, value_ptr, type_id);
+                    }
+
+                    if (i < times.size() - 1) {
+                        writer.write(",");
+                    }
+                    writer.write("\n");
+                }
             }
         } else {
             // Legacy: blocked values still counted in offset calculation
