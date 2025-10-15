@@ -6,9 +6,180 @@
 #include "value-types.hh"
 // value-types.hh must be included before timesamples.hh
 // to have full definitions of types
+#include "timesamples.hh"
+#include <algorithm>
 #include <cstring>
 
 namespace tinyusdz {
+
+// PODTimeSamples::update() implementation
+void PODTimeSamples::update() const {
+  if (_times.empty()) {
+    _dirty = false;
+    return;
+  }
+
+  // Lazy sorting optimization: only sort if there's a dirty range
+  if (_dirty_start >= _times.size()) {
+    _dirty = false;
+    return;
+  }
+
+  // Create index array for sorting
+  std::vector<size_t> indices(_times.size());
+  for (size_t i = 0; i < indices.size(); ++i) {
+    indices[i] = i;
+  }
+
+  // Sort indices based on times
+  std::sort(indices.begin(), indices.end(),
+            [this](size_t a, size_t b) { return _times[a] < _times[b]; });
+
+  // HACK
+  for (size_t i = 0; i < indices.size(); ++i) {
+    TUSDZ_LOG_I("indices[" << i << "] = " << indices[i]);
+    TUSDZ_LOG_I("times[" << i << "] = " << _times[i]);
+  }
+
+  // Reorder arrays based on sorted indices
+  std::vector<double> sorted_times(_times.size());
+  Buffer<16> sorted_blocked;
+  sorted_blocked.resize(_blocked.size());
+
+  // If using offsets, sort them too
+  if (!_offsets.empty()) {
+    std::vector<size_t> sorted_offsets(_offsets.size());
+    for (size_t i = 0; i < indices.size(); ++i) {
+      sorted_times[i] = _times[indices[i]];
+      sorted_blocked[i] = _blocked[indices[i]];
+      sorted_offsets[i] = _offsets[indices[i]];
+
+    }
+    _times = std::move(sorted_times);
+    _blocked = std::move(sorted_blocked);
+    _offsets = std::move(sorted_offsets);
+    // Note: _values array doesn't need reordering as offsets handle the mapping
+  } else if (!_values.empty() && _type_id != 0) {
+    // For non-array scalar types without offsets (legacy path)
+    // Calculate element size from stored element size or type
+    size_t element_size = get_element_size();
+    if (element_size > 0) {
+      Buffer<16> sorted_values;
+      sorted_values.resize(_values.size());
+
+      size_t dst_offset = 0;
+      for (size_t i = 0; i < indices.size(); ++i) {
+        sorted_times[i] = _times[indices[i]];
+        sorted_blocked[i] = _blocked[indices[i]];
+        TUSDZ_LOG_I("sorted.times[" << i << "] = " << sorted_times[i]);
+        TUSDZ_LOG_I("sorted.blocked[" << i << "] = " << sorted_blocked[i]);
+
+        // Only copy value if not blocked
+        if (!_blocked[indices[i]]) {
+          // Find source offset by counting non-blocked entries before indices[i]
+          size_t src_offset = 0;
+          for (size_t j = 0; j < indices[i]; ++j) {
+            if (!_blocked[j]) {
+              src_offset += element_size;
+            }
+          }
+
+          const uint8_t* src = _values.data() + src_offset;
+          uint8_t* dst = sorted_values.data() + dst_offset;
+          std::copy(src, src + element_size, dst);
+          dst_offset += element_size;
+        }
+      }
+
+      _times = std::move(sorted_times);
+      _blocked = std::move(sorted_blocked);
+      _values = std::move(sorted_values);
+    } else {
+      _times = std::move(sorted_times);
+      _blocked = std::move(sorted_blocked);
+    }
+  } else {
+    // Just sort times and blocked flags
+    for (size_t i = 0; i < indices.size(); ++i) {
+      sorted_times[i] = _times[indices[i]];
+      sorted_blocked[i] = _blocked[indices[i]];
+    }
+    _times = std::move(sorted_times);
+    _blocked = std::move(sorted_blocked);
+  }
+
+  _dirty = false;
+  _dirty_start = SIZE_MAX;
+  _dirty_end = 0;
+}
+
+// PODTimeSamples::reserve() implementation
+void PODTimeSamples::reserve(size_t n) {
+  _times.reserve(n);
+  _blocked.reserve(n);
+  if (_element_size > 0) {
+    // Calculate total size based on whether it's array data or not
+    size_t value_reserve_size = 0;
+    if ((_is_stl_array || _is_typed_array) && _array_size > 0) {
+      // For array data: sizeof(element) * n_samples * array_size
+      value_reserve_size = n * _element_size * _array_size;
+    } else {
+      // For scalar data: sizeof(element) * n_samples
+      // Note: This is an upper bound - blocked samples won't use space
+      value_reserve_size = n * _element_size;
+    }
+    _values.reserve(value_reserve_size);
+  }
+  if (_is_stl_array || _is_typed_array || !_offsets.empty()) {
+    _offsets.reserve(n);
+  }
+}
+
+// PODTimeSamples::reserve_with_type() implementation
+void PODTimeSamples::reserve_with_type(size_t expected_samples) {
+  if (expected_samples == 0) return;
+
+  _times.reserve(expected_samples);
+  _blocked.reserve(expected_samples);
+
+  // Calculate element size if not cached
+  if (_element_size == 0 && _type_id != 0) {
+    _element_size = static_cast<uint16_t>(get_element_size());
+  }
+
+  if (_element_size > 0) {
+    size_t value_bytes = 0;
+    if ((_is_stl_array || _is_typed_array) && _array_size > 0) {
+      // Array data: sizeof(T) * expected_samples * array_size
+      value_bytes = expected_samples * _element_size * _array_size;
+    } else {
+      // Scalar data: sizeof(T) * expected_samples (upper bound)
+      value_bytes = expected_samples * _element_size;
+    }
+
+    _values.reserve(value_bytes);
+  }
+
+  // Always reserve offsets for array data
+  if (_is_stl_array || _is_typed_array || !_offsets.empty()) {
+    _offsets.reserve(expected_samples);
+  }
+}
+
+namespace value {
+
+// TimeSamples::update() implementation
+void TimeSamples::update() const {
+  if (_use_pod) {
+    _pod_samples.update();
+  } else {
+    std::sort(_samples.begin(), _samples.end(),
+              [](const Sample &a, const Sample &b) { return a.t < b.t; });
+  }
+  _dirty = false;
+}
+
+} // namespace value
 
 // Convert PODTimeSamples to vector of pairs for backward compatibility
 std::vector<std::pair<double, std::pair<value::Value, bool>>> PODTimeSamples::get_samples_converted() const {
@@ -312,6 +483,7 @@ size_t PODTimeSamples::get_element_size() const {
 
 #undef TYPE_SIZE_CASE
 
+#if 0
   if (_type_id == value::TYPE_ID_TYPED_TIMESAMPLE_VALUE) {
     return sizeof(uint64_t);
   }
@@ -319,6 +491,7 @@ size_t PODTimeSamples::get_element_size() const {
   if (_type_id == value::TYPE_ID_TYPED_ARRAY_TIMESAMPLE_VALUE) {
     return sizeof(uint64_t);
   }
+#endif
 
   return 0; // Unknown type
 }
