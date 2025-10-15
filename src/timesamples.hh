@@ -355,7 +355,15 @@ public:
 
       _offsets.push_back(_values.size());
       _values.resize(_values.size() + sizeof(uint64_t));
+      TUSDZ_LOG_I("offset = " << _offsets.back());
+      TUSDZ_LOG_I("packed_value = 0x" << std::hex << packed_value << std::dec);
+      TUSDZ_LOG_I("Writing to address: 0x" << std::hex << reinterpret_cast<uintptr_t>(_values.data() + _offsets.back()) << std::dec);
       std::memcpy(_values.data() + _offsets.back(), &packed_value, sizeof(uint64_t));
+
+      // Verify what was written
+      uint64_t verify_read;
+      std::memcpy(&verify_read, _values.data() + _offsets.back(), sizeof(uint64_t));
+      TUSDZ_LOG_I("Verified written value: 0x" << std::hex << verify_read << std::dec);
     } else {
       // Simple append without offsets
       size_t old_size = _values.size();
@@ -486,6 +494,113 @@ public:
     size_t byte_size = sizeof(T) * count;
     _values.resize(_values.size() + byte_size);
     std::memcpy(_values.data() + _offsets.back(), values, byte_size);
+
+    _dirty = true;
+    mark_dirty_range(new_idx);
+    return true;
+  }
+
+  /// Add a deduplicated matrix array sample - reuses data from an existing sample
+  /// Same as add_dedup_array_sample but without POD type requirements
+  /// @param t Time value for this sample
+  /// @param ref_index Index of the existing sample whose data/offset to reuse
+  /// @param err Optional error string
+  template<typename T>
+  bool add_dedup_matrix_array_sample(double t, size_t ref_index, std::string *err = nullptr) {
+    static_assert((value::TypeTraits<T>::type_id() == value::TYPE_ID_MATRIX2D) ||
+                  (value::TypeTraits<T>::type_id() == value::TYPE_ID_MATRIX3D) ||
+                  (value::TypeTraits<T>::type_id() == value::TYPE_ID_MATRIX4D),
+                  "requires matrix type");
+
+    // Verify ref_index is valid
+    if (ref_index >= _times.size()) {
+      if (err) {
+        (*err) += "Invalid ref_index in add_dedup_matrix_array_sample: " +
+                  std::to_string(ref_index) + " >= " +
+                  std::to_string(_times.size()) + ".\n";
+      }
+      return false;
+    }
+
+    // Verify we're in array mode with correct type
+    if (!_is_stl_array || _type_id != value::TypeTraits<T>::underlying_type_id()) {
+      if (err) {
+        (*err) += "Type mismatch in add_dedup_matrix_array_sample: not in array mode or wrong type.\n";
+      }
+      return false;
+    }
+
+    // Verify that ref_index has an offset (not blocked)
+    if (_offsets[ref_index] == SIZE_MAX) {
+      if (err) {
+        (*err) += "Cannot deduplicate from blocked sample at index " +
+                  std::to_string(ref_index) + ".\n";
+      }
+      return false;
+    }
+
+    size_t new_idx = _times.size();
+    _times.push_back(t);
+    _blocked.push_back(0);  // false = 0
+
+    // Reuse the offset from the reference sample (deduplication!)
+    // This makes offset[new_idx] == offset[ref_index], both pointing to the same data
+    _offsets.push_back(_offsets[ref_index]);
+    // NOTE: No data appended to _values - we reuse existing data
+
+    _dirty = true;
+    mark_dirty_range(new_idx);
+    return true;
+  }
+
+  /// Add a deduplicated array sample - reuses data from an existing sample
+  /// This is a memory-efficient way to handle deduplicated arrays: store the array data once
+  /// and have multiple time samples point to the same offset in the _values buffer.
+  /// @param t Time value for this sample
+  /// @param ref_index Index of the existing sample whose data/offset to reuse
+  /// @param err Optional error string
+  template<typename T>
+  bool add_dedup_array_sample(double t, size_t ref_index, std::string *err = nullptr) {
+    static_assert(std::is_trivial<T>::value,
+                  "PODTimeSamples requires trivial types");
+    static_assert(std::is_standard_layout<T>::value,
+                  "PODTimeSamples requires standard layout types");
+
+    // Verify ref_index is valid
+    if (ref_index >= _times.size()) {
+      if (err) {
+        (*err) += "Invalid ref_index in add_dedup_array_sample: " +
+                  std::to_string(ref_index) + " >= " +
+                  std::to_string(_times.size()) + ".\n";
+      }
+      return false;
+    }
+
+    // Verify we're in array mode with correct type
+    if (!_is_stl_array || _type_id != value::TypeTraits<T>::underlying_type_id()) {
+      if (err) {
+        (*err) += "Type mismatch in add_dedup_array_sample: not in array mode or wrong type.\n";
+      }
+      return false;
+    }
+
+    // Verify that ref_index has an offset (not blocked)
+    if (_offsets[ref_index] == SIZE_MAX) {
+      if (err) {
+        (*err) += "Cannot deduplicate from blocked sample at index " +
+                  std::to_string(ref_index) + ".\n";
+      }
+      return false;
+    }
+
+    size_t new_idx = _times.size();
+    _times.push_back(t);
+    _blocked.push_back(0);  // false = 0
+
+    // Reuse the offset from the reference sample (deduplication!)
+    // This makes offset[new_idx] == offset[ref_index], both pointing to the same data
+    _offsets.push_back(_offsets[ref_index]);
+    // NOTE: No data appended to _values - we reuse existing data
 
     _dirty = true;
     mark_dirty_range(new_idx);
@@ -788,6 +903,8 @@ public:
       std::memcpy(&packed_value, src, sizeof(uint64_t));
     }
 
+    TUSDZ_LOG_I("PODTimeSamples::get_typed_array_at idx=" << idx << " packed_value=0x" << std::hex << packed_value << std::dec);
+
     // Reconstruct TypedArray from packed value
     // Note: This creates a shallow copy - the underlying TypedArrayImpl is shared
     // and marked as dedup to prevent deletion
@@ -797,12 +914,16 @@ public:
     uint64_t ptr_bits = packed_value & 0x0000FFFFFFFFFFFFULL;  // Lower 48 bits
     // Note: dedup flag is in bit 63 but we always mark as dedup when retrieving
 
+    TUSDZ_LOG_I("PODTimeSamples::get_typed_array_at after mask: ptr_bits=0x" << std::hex << ptr_bits << std::dec);
+
     // Sign-extend from 48 bits to 64 bits for canonical address
     if (ptr_bits & (1ULL << 47)) {
       ptr_bits |= 0xFFFF000000000000ULL;
+      TUSDZ_LOG_I("PODTimeSamples::get_typed_array_at sign-extended: ptr_bits=0x" << std::hex << ptr_bits << std::dec);
     }
 
     ptr = reinterpret_cast<TypedArrayImpl<T>*>(ptr_bits);
+    TUSDZ_LOG_I("PODTimeSamples::get_typed_array_at ptr=" << std::hex << ptr << " size=" << std::dec << (ptr ? ptr->size() : 0));
 
     // Create TypedArray with dedup flag set (to prevent deletion)
     *typed_array = TypedArray<T>(ptr, true);  // Always mark as dedup when retrieving
@@ -1328,6 +1449,53 @@ struct TimeSamples {
 
     if (err) {
       (*err) += "Not using POD storage for type " + std::string(value::TypeTraits<T>::type_name()) + "[].\n";
+    }
+    return false; // Not using POD storage
+  }
+
+  /// Add a deduplicated array sample - reuses data from an existing sample
+  /// This is a memory-efficient way to handle deduplicated arrays: store the array data once
+  /// and have multiple time samples point to the same offset in the _values buffer.
+  /// @param t Time value for this sample
+  /// @param ref_index Index of the existing sample whose data/offset to reuse
+  /// @param err Optional error string
+  template<typename T>
+  bool add_dedup_array_sample_pod(double t, size_t ref_index, std::string *err = nullptr) {
+    static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
+                  "add_dedup_array_sample_pod requires POD types");
+
+    if (_use_pod) {
+      bool result = _pod_samples.add_dedup_array_sample<T>(t, ref_index, err);
+      _dirty = true;
+      return result;
+    }
+
+    if (err) {
+      (*err) += "Not using POD storage for dedup array.\n";
+    }
+    return false; // Not using POD storage
+  }
+
+  /// Add a deduplicated matrix array sample - reuses data from an existing sample
+  /// For matrix types that don't satisfy POD requirements
+  /// @param t Time value for this sample
+  /// @param ref_index Index of the existing sample whose data/offset to reuse
+  /// @param err Optional error string
+  template<typename T>
+  bool add_dedup_matrix_array_sample_pod(double t, size_t ref_index, std::string *err = nullptr) {
+    static_assert((value::TypeTraits<T>::type_id() == value::TYPE_ID_MATRIX2D) ||
+                  (value::TypeTraits<T>::type_id() == value::TYPE_ID_MATRIX3D) ||
+                  (value::TypeTraits<T>::type_id() == value::TYPE_ID_MATRIX4D),
+                  "requires matrix type");
+
+    if (_use_pod) {
+      bool result = _pod_samples.add_dedup_matrix_array_sample<T>(t, ref_index, err);
+      _dirty = true;
+      return result;
+    }
+
+    if (err) {
+      (*err) += "Not using POD storage for dedup matrix array.\n";
     }
     return false; // Not using POD storage
   }
