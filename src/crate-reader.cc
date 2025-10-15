@@ -152,13 +152,8 @@ CrateReader::~CrateReader() {
   }
 
   // Clean up float2_array cache
-  for (auto& pair : _dedup_float2_array) {
-    // HACK
-    pair.second.clear();
-    //if (pair.second.get() != nullptr) {
-    //  delete pair.second.get();
-    //}
-  }
+  // Arrays are not cached for TimeSamples, but clear anyway for completeness
+  _dedup_float2_array.clear();
 
   // Clean up double_array cache
   for (auto& pair : _dedup_double_array) {

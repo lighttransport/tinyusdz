@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "nonstd/span.hpp"
+#include "logger.hh"
 
 namespace tinyusdz {
 
@@ -95,6 +96,8 @@ class TypedArrayImpl {
 
   // Move constructor
   TypedArrayImpl(TypedArrayImpl&& other) noexcept {
+    TUSDZ_LOG_I("TypedArrayImpl move ctor: this=" << std::hex << this << " from other=" << &other
+                << " other._is_view=" << other._is_view << " other.size()=" << std::dec << other.size());
     if (other._is_view) {
       _view_ptr = other._view_ptr;
       _view_size = other._view_size;
@@ -105,6 +108,7 @@ class TypedArrayImpl {
       _storage = std::move(other._storage);
       _is_view = false;
     }
+    TUSDZ_LOG_I("TypedArrayImpl move ctor done: this.size()=" << size() << " other.size()=" << other.size());
   }
 
   // Copy assignment
@@ -127,6 +131,8 @@ class TypedArrayImpl {
 
   // Move assignment
   TypedArrayImpl& operator=(TypedArrayImpl&& other) noexcept {
+    TUSDZ_LOG_I("TypedArrayImpl move assign: this=" << std::hex << this << " from other=" << &other
+                << " this.size()=" << std::dec << size() << " other.size()=" << other.size());
     if (this != &other) {
       if (other._is_view) {
         _storage.clear();
@@ -142,15 +148,17 @@ class TypedArrayImpl {
         _is_view = false;
       }
     }
+    TUSDZ_LOG_I("TypedArrayImpl move assign done: this.size()=" << size() << " other.size()=" << other.size());
     return *this;
   }
 
   // Destructor
   ~TypedArrayImpl() {
+    TUSDZ_LOG_I("TypedArrayImpl dtor: this=" << std::hex << this << " _is_view=" << _is_view << " size()=" << std::dec << size());
     if (_is_view) {
       // no free
     } else {
-       _storage.clear();    
+       _storage.clear();
     }
   }
 
@@ -762,6 +770,12 @@ class TypedArray {
     }
   }
 
+  // Transfer ownership: set dedup flag to prevent deletion
+  // Use this when transferring ownership of the impl to another owner (e.g. shared_ptr)
+  void reset_ownership() noexcept {
+    set_dedup(true);
+  }
+
   // Get the raw pointer
   TypedArrayImpl<T>* get() const noexcept {
     uint64_t ptr_bits = _packed_data & PTR_MASK;
@@ -818,9 +832,16 @@ class TypedArray {
   // Deletes current pointer if owned
   void reset(TypedArrayImpl<T>* ptr = nullptr,
              bool dedup_flag = false) noexcept {
+    TypedArrayImpl<T>* old_ptr = get();
+    bool old_is_dedup = is_dedup();
+
+    TUSDZ_LOG_I("TypedArray::reset: old_ptr=" << std::hex << old_ptr << " old_is_dedup=" << old_is_dedup
+                << " new_ptr=" << ptr << " new_dedup=" << dedup_flag << std::dec);
+
     // Delete current resource if owned
-    if (!is_dedup() && get() != nullptr) {
-      delete get();
+    if (!old_is_dedup && old_ptr != nullptr) {
+      TUSDZ_LOG_I("TypedArray::reset: deleting old_ptr=" << std::hex << old_ptr << std::dec);
+      delete old_ptr;
     }
 
     // Pack new pointer and flag
@@ -843,6 +864,10 @@ class TypedArray {
       if (dedup_flag) {
         _packed_data |= DEDUP_FLAG_BIT;
       }
+    }
+
+    if (ptr != nullptr) {
+      TUSDZ_LOG_I("TypedArray::reset done: new size=" << ptr->size());
     }
   }
 
