@@ -682,6 +682,11 @@ class TypedArray {
     reset(ptr, dedup_flag);
   }
 
+  // Reconstruct TypedArray from packed_data.
+  // No validity check of pointer address, so be careful to use this constructor.
+  TypedArray(const uint64_t packed_data) : _packed_data(packed_data) {
+  }
+
   // Destructor - conditionally deletes based on dedup flag
   ~TypedArray() {
     if (!is_dedup() && get() != nullptr) {
