@@ -568,10 +568,6 @@ bool USDCReader::Impl::ReconstructGeomSubset(
             return false;
           }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cout << "add [" << prop_name << "] to generic attrs\n";
-#endif
-
           geom_subset->attribs[prop_name] = std::move(attr);
         }
       }
@@ -2367,17 +2363,17 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
   DCOUT(fmt::format("parent = {}, curent = {}, is_parent_variant = {}", parent, current, is_parent_variant));
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << pprint::Indent(uint32_t(level)) << "lv[" << level
-            << "] node_index[" << current << "] " << node.GetLocalPath()
-            << " ==\n";
-  std::cout << pprint::Indent(uint32_t(level)) << " childs = [";
-  for (size_t i = 0; i < node.GetChildren().size(); i++) {
-    std::cout << node.GetChildren()[i];
-    if (i != (node.GetChildren().size() - 1)) {
-      std::cout << ", ";
-    }
-  }
-  std::cout << "] (is_parent_variant = " << is_parent_variant << ")\n";
+  //std::cout << pprint::Indent(uint32_t(level)) << "lv[" << level
+  //          << "] node_index[" << current << "] " << node.GetLocalPath()
+  //          << " ==\n";
+  //std::cout << pprint::Indent(uint32_t(level)) << " childs = [";
+  //for (size_t i = 0; i < node.GetChildren().size(); i++) {
+  //  std::cout << node.GetChildren()[i];
+  //  if (i != (node.GetChildren().size() - 1)) {
+  //    std::cout << ", ";
+  //  }
+  //}
+  //std::cout << "] (is_parent_variant = " << is_parent_variant << ")\n";
 #endif
 
   if (!psmap.count(uint32_t(current))) {
@@ -2828,17 +2824,17 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
   const crate::CrateReader::Node &node = (*_nodes)[size_t(current)];
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << pprint::Indent(uint32_t(level)) << "lv[" << level
-            << "] node_index[" << current << "] " << node.GetLocalPath()
-            << " ==\n";
-  std::cout << pprint::Indent(uint32_t(level)) << " childs = [";
-  for (size_t i = 0; i < node.GetChildren().size(); i++) {
-    std::cout << node.GetChildren()[i];
-    if (i != (node.GetChildren().size() - 1)) {
-      std::cout << ", ";
-    }
-  }
-  std::cout << "] (is_parent_variant = " << is_parent_variant << ")\n";
+  //std::cout << pprint::Indent(uint32_t(level)) << "lv[" << level
+  //          << "] node_index[" << current << "] " << node.GetLocalPath()
+  //          << " ==\n";
+  //std::cout << pprint::Indent(uint32_t(level)) << " childs = [";
+  //for (size_t i = 0; i < node.GetChildren().size(); i++) {
+  //  std::cout << node.GetChildren()[i];
+  //  if (i != (node.GetChildren().size() - 1)) {
+  //    std::cout << ", ";
+  //  }
+  //}
+  //std::cout << "] (is_parent_variant = " << is_parent_variant << ")\n";
 #endif
 
   if (!psmap.count(uint32_t(current))) {

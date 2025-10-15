@@ -79,7 +79,8 @@ inline bool is_pod_type_id(uint32_t type_id) {
 struct PODTimeSamples {
   // Hot data (frequently accessed, cache-friendly layout)
   uint32_t _type_id{0}; // TypeId from value-types.hh
-  bool _is_array{false}; // Whether the stored type is an array
+  bool _is_stl_array{false}; // Whether the stored type is a std::vector<T> array
+  bool _is_typed_array{false}; // Whether the stored type is TypedArray<T>
   uint16_t _element_size{0}; // Cached element size (0 = not cached)
   size_t _array_size{0}; // Number of elements per array (fixed for all samples)
   mutable bool _dirty{false};
@@ -110,7 +111,8 @@ struct PODTimeSamples {
     _values.clear();
     _offsets.clear();
     _type_id = 0;
-    _is_array = false;
+    _is_stl_array = false;
+    _is_typed_array = false;
     _array_size = 0;
     _element_size = 0;
     _blocked_count = 0;
@@ -122,7 +124,8 @@ struct PODTimeSamples {
   /// Move constructor
   PODTimeSamples(PODTimeSamples&& other) noexcept
       : _type_id(other._type_id),
-        _is_array(other._is_array),
+        _is_stl_array(other._is_stl_array),
+        _is_typed_array(other._is_typed_array),
         _element_size(other._element_size),
         _array_size(other._array_size),
         _dirty(other._dirty),
@@ -135,7 +138,8 @@ struct PODTimeSamples {
         _blocked_count(other._blocked_count) {
     // Reset moved-from object to valid empty state
     other._type_id = 0;
-    other._is_array = false;
+    other._is_stl_array = false;
+    other._is_typed_array = false;
     other._element_size = 0;
     other._array_size = 0;
     other._dirty = false;
@@ -149,7 +153,8 @@ struct PODTimeSamples {
     if (this != &other) {
       // Move data from other
       _type_id = other._type_id;
-      _is_array = other._is_array;
+      _is_stl_array = other._is_stl_array;
+      _is_typed_array = other._is_typed_array;
       _element_size = other._element_size;
       _array_size = other._array_size;
       _dirty = other._dirty;
@@ -163,7 +168,8 @@ struct PODTimeSamples {
 
       // Reset moved-from object to valid empty state
       other._type_id = 0;
-      other._is_array = false;
+      other._is_stl_array = false;
+      other._is_typed_array = false;
       other._element_size = 0;
       other._array_size = 0;
       other._dirty = false;
@@ -183,7 +189,7 @@ struct PODTimeSamples {
 
   /// Initialize PODTimeSamples with type information and optional pre-allocation
   /// @param type_id The TypeId from value-types.hh
-  /// @param is_array Whether storing array data
+  /// @param is_array Whether storing array data (std::vector-based)
   /// @param element_size Size of each element in bytes
   /// @param array_size Number of elements per array (for array data)
   /// @param expected_samples Optional: expected number of samples to pre-allocate
@@ -195,7 +201,8 @@ struct PODTimeSamples {
     }
 
     _type_id = tid;
-    _is_array = is_array_type;
+    _is_stl_array = is_array_type;
+    _is_typed_array = false; // STL array init doesn't use TypedArray
     _array_size = arr_size;
 
     // Calculate element size if not provided
@@ -220,7 +227,7 @@ struct PODTimeSamples {
     if (_element_size > 0) {
       // Calculate total size based on whether it's array data or not
       size_t value_reserve_size = 0;
-      if (_is_array && _array_size > 0) {
+      if ((_is_stl_array || _is_typed_array) && _array_size > 0) {
         // For array data: sizeof(element) * n_samples * array_size
         value_reserve_size = n * _element_size * _array_size;
       } else {
@@ -230,7 +237,7 @@ struct PODTimeSamples {
       }
       _values.reserve(value_reserve_size);
     }
-    if (_is_array || !_offsets.empty()) {
+    if (_is_stl_array || _is_typed_array || !_offsets.empty()) {
       _offsets.reserve(n);
     }
   }
@@ -250,7 +257,7 @@ struct PODTimeSamples {
 
     if (_element_size > 0) {
       size_t value_bytes = 0;
-      if (_is_array && _array_size > 0) {
+      if ((_is_stl_array || _is_typed_array) && _array_size > 0) {
         // Array data: sizeof(T) * expected_samples * array_size
         value_bytes = expected_samples * _element_size * _array_size;
       } else {
@@ -262,7 +269,7 @@ struct PODTimeSamples {
     }
 
     // Always reserve offsets for array data
-    if (_is_array || !_offsets.empty()) {
+    if (_is_stl_array || _is_typed_array || !_offsets.empty()) {
       _offsets.reserve(expected_samples);
     }
   }
@@ -291,6 +298,12 @@ struct PODTimeSamples {
     std::sort(indices.begin(), indices.end(),
               [this](size_t a, size_t b) { return _times[a] < _times[b]; });
 
+    // HACK
+    for (size_t i = 0; i < indices.size(); ++i) {
+      TUSDZ_LOG_I("indices[" << i << "] = " << indices[i]);
+      TUSDZ_LOG_I("times[" << i << "] = " << _times[i]);
+    }
+
     // Reorder arrays based on sorted indices
     std::vector<double> sorted_times(_times.size());
     Buffer<16> sorted_blocked;
@@ -303,6 +316,7 @@ struct PODTimeSamples {
         sorted_times[i] = _times[indices[i]];
         sorted_blocked[i] = _blocked[indices[i]];
         sorted_offsets[i] = _offsets[indices[i]];
+
       }
       _times = std::move(sorted_times);
       _blocked = std::move(sorted_blocked);
@@ -320,6 +334,8 @@ struct PODTimeSamples {
         for (size_t i = 0; i < indices.size(); ++i) {
           sorted_times[i] = _times[indices[i]];
           sorted_blocked[i] = _blocked[indices[i]];
+          TUSDZ_LOG_I("sorted.times[" << i << "] = " << sorted_times[i]);
+          TUSDZ_LOG_I("sorted.blocked[" << i << "] = " << sorted_blocked[i]);
 
           // Only copy value if not blocked
           if (!_blocked[indices[i]]) {
@@ -387,7 +403,8 @@ public:
     // This allows storing role types (normal3f) as their underlying type (float3)
     if (_times.empty()) {
       _type_id = value::TypeTraits<T>::underlying_type_id();
-      _is_array = false;  // Single values are not arrays
+      _is_stl_array = false;  // Single values are not arrays
+      _is_typed_array = false;
       _element_size = sizeof(T);  // Cache element size
 
       // Pre-allocate if requested
@@ -413,7 +430,7 @@ public:
 
     // For non-blocked values, append to values array
     // If we're using offsets (arrays or when we have any blocked values), update offset table
-    if (_is_array || !_offsets.empty()) {
+    if (_is_stl_array || _is_typed_array || !_offsets.empty()) {
       // Using offset table - need to maintain consistency
       // If offsets table exists but is smaller than times, we need to populate missing offsets
       if (_offsets.size() < _times.size() - 1) {
@@ -448,11 +465,12 @@ public:
     // TypedArray internally stores a uint64_t packed pointer, so we can treat it as POD
     uint64_t packed_value = typed_array.get_packed_value();
 
-    // Set type_id on first sample - use TYPE_ID_UINT64 for TypedArray storage
+    // Set type_id on first sample
     // We store the packed pointer as a uint64_t
     if (_times.empty()) {
-      _type_id = value::TYPE_ID_UINT64; // TypedArray stored as uint64_t packed pointer
-      _is_array = false;
+      _type_id = value::TypeTraits<T>::type_id();
+      _is_stl_array = false;  // Not using std::vector
+      _is_typed_array = true;  // Using TypedArray
       _element_size = sizeof(uint64_t);  // Always 8 bytes for packed pointer
 
       // Pre-allocate if requested
@@ -461,7 +479,7 @@ public:
       }
     } else {
       // Verify we're storing TypedArray data
-      if (_type_id != value::TYPE_ID_UINT64 || _element_size != sizeof(uint64_t)) {
+      if (_type_id != value::TypeTraits<T>::type_id() || _element_size != sizeof(uint64_t)) {
         if (err) {
           (*err) += "Type mismatch: PODTimeSamples is not configured for TypedArray storage.\n";
         }
@@ -474,7 +492,7 @@ public:
     _blocked.push_back(0);  // false = 0
 
     // Store the packed pointer value
-    if (_is_array || !_offsets.empty()) {
+    if (_is_stl_array || _is_typed_array || !_offsets.empty()) {
       // Using offset table
       if (_offsets.size() < _times.size() - 1) {
         _offsets.resize(_times.size() - 1, SIZE_MAX);
@@ -512,7 +530,8 @@ public:
     // Set type_id and array info on first sample - use underlying_type_id
     if (_times.empty()) {
       _type_id = value::TypeTraits<T>::underlying_type_id();
-      _is_array = true;
+      _is_stl_array = true;  // Using std::vector-based array
+      _is_typed_array = false;  // Not using TypedArray
       _array_size = count;
       _element_size = sizeof(T);  // Cache element size
 
@@ -573,7 +592,8 @@ public:
     // Set type_id and array info on first sample - use underlying_type_id
     if (_times.empty()) {
       _type_id = value::TypeTraits<T>::underlying_type_id();
-      _is_array = true;
+      _is_stl_array = true;  // Using std::vector-based array
+      _is_typed_array = false;  // Not using TypedArray
       _array_size = count;
       _element_size = sizeof(T);  // Cache element size
 
@@ -640,7 +660,8 @@ public:
     // Set type_id on first sample - use underlying_type_id
     if (_times.empty()) {
       _type_id = value::TypeTraits<T>::underlying_type_id();
-      _is_array = false;  // Will be set properly if array samples are added
+      _is_stl_array = false;  // Will be set properly if array samples are added
+      _is_typed_array = false;
       _element_size = sizeof(T);  // Cache element size
 
       // Pre-allocate if requested (note: blocked samples don't use value storage)
@@ -668,7 +689,7 @@ public:
     // For blocked values, we DON'T allocate any space in _values
     // If this is the first blocked sample and we don't have offsets yet,
     // we need to create the offset table and populate it with existing samples
-    if (_offsets.empty() && !_is_array && !_times.empty()) {
+    if (_offsets.empty() && !_is_stl_array && !_is_typed_array && !_times.empty()) {
       // Transition to offset-based storage
       // Build offset table for existing samples
       size_t offset = 0;
@@ -684,7 +705,7 @@ public:
     }
 
     // Add offset marker for this blocked sample
-    if (_is_array || !_offsets.empty()) {
+    if (_is_stl_array || _is_typed_array || !_offsets.empty()) {
       // Use SIZE_MAX as a marker for blocked values in offset table
       _offsets.push_back(SIZE_MAX);
     }
@@ -704,7 +725,8 @@ public:
                                 size_t expected_total_samples = 0) {
     // Initialize array info on first sample
     if (_times.empty()) {
-      _is_array = true;
+      _is_stl_array = true;  // Assume STL array for blocked array samples
+      _is_typed_array = false;
       _array_size = count;
       // type_id will be set when first non-blocked sample is added
 
@@ -715,7 +737,7 @@ public:
         _blocked.reserve(expected_total_samples);
         _offsets.reserve(expected_total_samples);
       }
-    } else if (_is_array) {
+    } else if (_is_stl_array || _is_typed_array) {
       // Verify array size consistency
       if (_array_size != count) {
         if (err) {
@@ -869,7 +891,7 @@ public:
     }
 
     // Check if this PODTimeSamples is storing TypedArray data
-    if (_type_id != value::TYPE_ID_UINT64 || _element_size != sizeof(uint64_t)) {
+    if (_type_id != value::TypeTraits<T>::type_id() || _element_size != sizeof(uint64_t)) {
       return false;  // Not TypedArray storage
     }
 
@@ -979,7 +1001,7 @@ public:
     }
 
     // For TypedArray storage
-    if (_type_id == value::TYPE_ID_UINT64 && _element_size == sizeof(uint64_t)) {
+    if (_type_id == value::TypeTraits<T>::type_id() && _element_size == sizeof(uint64_t)) {
       // Retrieve the TypedArray and create a view from it
       TypedArray<T> typed_array;
       bool blocked_value = false;
@@ -992,7 +1014,7 @@ public:
     }
 
     // For array data stored directly
-    if (_is_array && _array_size > 0) {
+    if ((_is_stl_array || _is_typed_array) && _array_size > 0) {
       // Find the actual data offset
       if (!_offsets.empty()) {
         if (_offsets[idx] == SIZE_MAX) {
@@ -1152,6 +1174,18 @@ struct TimeSamples {
   }
 
   bool is_using_pod() const { return _use_pod; }
+
+  /// Check if storing std::vector-based array data
+  /// @return true if using POD storage with STL arrays, false otherwise
+  bool is_stl_array() const {
+    return _use_pod ? _pod_samples._is_stl_array : false;
+  }
+
+  /// Check if storing TypedArray data
+  /// @return true if using POD storage with TypedArray, false otherwise
+  bool is_typed_array() const {
+    return _use_pod ? _pod_samples._is_typed_array : false;
+  }
 
   /// Get POD storage for direct manipulation (only valid when using POD storage)
   PODTimeSamples* get_pod_storage() {
@@ -1395,6 +1429,9 @@ struct TimeSamples {
       init(value::TypeTraits<T>::type_id());
     }
 
+    TUSDZ_LOG_I("is dedup? " << value.is_dedup());
+    TUSDZ_LOG_I("_use_pod? " << _use_pod);
+
     if (_use_pod) {
       bool result = _pod_samples.add_array_sample<T>(t, value.data(), value.size(), err, expected_total_samples);
       _dirty = true;
@@ -1478,10 +1515,10 @@ struct TimeSamples {
                               size_t expected_total_samples = 0) {
     // Initialize for TypedArray storage
     if (empty()) {
-      _type_id = value::TYPE_ID_UINT64; // TypedArray stored as uint64_t
+      _type_id = value::TypeTraits<T>::type_id();
       _use_pod = true; // Always use POD storage for TypedArray
-      _pod_samples._type_id = value::TYPE_ID_UINT64;
-    } else if (_type_id != value::TYPE_ID_UINT64) {
+      _pod_samples._type_id = value::TypeTraits<T>::type_id();
+    } else if (_type_id != value::TypeTraits<T>::type_id()) {
       if (err) {
         (*err) += "Type mismatch: TimeSamples already initialized with different type.\n";
       }
@@ -1509,7 +1546,7 @@ struct TimeSamples {
     }
 
     // Check if storing TypedArray data
-    if (_type_id != value::TYPE_ID_UINT64) {
+    if (_type_id != value::TypeTraits<T>::type_id()) {
       return false;
     }
 
@@ -1529,7 +1566,7 @@ struct TimeSamples {
     }
 
     // Check if storing TypedArray data
-    if (_type_id != value::TYPE_ID_UINT64) {
+    if (_type_id != value::TypeTraits<T>::type_id()) {
       return false;
     }
 

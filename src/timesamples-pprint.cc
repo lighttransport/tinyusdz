@@ -9,8 +9,10 @@
 #include "value-types.hh"
 #include "value-pprint.hh"
 #include "pprinter.hh"
+#include "logger.hh"
 #include "timesamples.hh"
 #include "stream-writer.hh"
+#include "typed-array.hh"
 
 namespace tinyusdz {
 
@@ -377,6 +379,60 @@ std::string print_texcoord3d(const uint8_t* data) {
     return ss.str();
 }
 
+// TypedArray - stored as packed pointer (uint64_t)
+// Attempt to reconstruct TypedArray and print its contents
+template<typename T>
+std::string try_print_typed_array(const uint8_t* packed_ptr_data) {
+    uint64_t packed_value;
+    std::memcpy(&packed_value, packed_ptr_data, sizeof(uint64_t));
+
+    // Extract pointer from packed value (lower 48 bits)
+    uint64_t ptr_bits = packed_value & 0x0000FFFFFFFFFFFFULL;
+
+    // Sign-extend from 48 bits to 64 bits for canonical address
+    if (ptr_bits & (1ULL << 47)) {
+        ptr_bits |= 0xFFFF000000000000ULL;
+    }
+
+    if (ptr_bits == 0) {
+        return "";  // Return empty to indicate failure
+    }
+
+    // Cast to TypedArrayImpl<T>*
+    auto* impl = reinterpret_cast<TypedArrayImpl<T>*>(ptr_bits);
+
+    // Create TypedArray with dedup flag to prevent deletion
+    TypedArray<T> typed_array(impl, true);
+
+    // Create a view to access the data
+    TypedArrayView<const T> view(typed_array);
+
+    if (view.size() == 0) {
+        return "[]";
+    }
+
+    std::stringstream ss;
+    ss << "[";
+
+    // Limit output to first 10 elements for readability
+    size_t max_elements = std::min(view.size(), size_t(10));
+
+    for (size_t i = 0; i < max_elements; ++i) {
+        if (i > 0) ss << ", ";
+
+        // In C++14, we can't use if constexpr, so just output directly
+        // The operator<< should work for all types we're likely to encounter
+        ss << view[i];
+    }
+
+    if (view.size() > max_elements) {
+        ss << ", ... (" << view.size() << " total)";
+    }
+
+    ss << "]";
+    return ss.str();
+}
+
 // Geometry types
 std::string print_point3h(const uint8_t* data) {
     value::point3h p;
@@ -461,6 +517,7 @@ std::string print_frame4d(const uint8_t* data) {
 // StreamWriter versions of print functions
 template<typename T>
 void print_pod_value(StreamWriter& writer, const uint8_t* data) {
+    TUSDZ_LOG_I("pod_value\n");
     T value;
     std::memcpy(&value, data, sizeof(T));
     writer << value;
@@ -510,7 +567,170 @@ void print_value_type(StreamWriter& writer, const uint8_t* data) {
     writer.write(ss.str());
 }
 
+// TypedArray - stored as packed pointer (uint64_t)
+// Attempt to reconstruct TypedArray and print its contents to StreamWriter
+template<typename T>
+bool try_print_typed_array_value(StreamWriter& writer, const uint8_t* packed_ptr_data) {
+    uint64_t packed_value;
+    std::memcpy(&packed_value, packed_ptr_data, sizeof(uint64_t));
+
+    // Extract pointer from packed value (lower 48 bits)
+    uint64_t ptr_bits = packed_value & 0x0000FFFFFFFFFFFFULL;
+
+    // Sign-extend from 48 bits to 64 bits for canonical address
+    if (ptr_bits & (1ULL << 47)) {
+        ptr_bits |= 0xFFFF000000000000ULL;
+    }
+
+    if (ptr_bits == 0) {
+        return false;  // Return false to indicate failure
+    }
+
+    // Cast to TypedArrayImpl<T>*
+    auto* impl = reinterpret_cast<TypedArrayImpl<T>*>(ptr_bits);
+
+    // Create TypedArray with dedup flag to prevent deletion
+    TypedArray<T> typed_array(impl, true);
+
+    // Create a view to access the data
+    TypedArrayView<const T> view(typed_array);
+
+    if (view.size() == 0) {
+        writer.write("[]");
+        return true;
+    }
+
+    writer.write("[");
+
+    // Limit output to first 10 elements for readability
+    size_t max_elements = std::min(view.size(), size_t(10));
+
+    for (size_t i = 0; i < max_elements; ++i) {
+        if (i > 0) writer.write(", ");
+
+        // Write the value using operator<< via stringstream
+        std::stringstream ss;
+        ss << view[i];
+        writer.write(ss.str());
+    }
+
+    if (view.size() > max_elements) {
+        writer.write(", ... (");
+        writer.write(static_cast<int>(view.size()));
+        writer.write(" total)");
+    }
+
+    writer.write("]");
+    return true;
+}
+
+void print_typed_array_value(StreamWriter& writer, const uint8_t* data) {
+    // Try common types in order of likelihood
+    bool success = false;
+
+    // Try float array
+    success = try_print_typed_array_value<float>(writer, data);
+    if (success) return;
+
+    // Try double array
+    success = try_print_typed_array_value<double>(writer, data);
+    if (success) return;
+
+    // Try int array
+    success = try_print_typed_array_value<int>(writer, data);
+    if (success) return;
+
+    // Try float3 array
+    success = try_print_typed_array_value<value::float3>(writer, data);
+    if (success) return;
+
+    // Try float2 array
+    success = try_print_typed_array_value<value::float2>(writer, data);
+    if (success) return;
+
+    // Try double3 array
+    success = try_print_typed_array_value<value::double3>(writer, data);
+    if (success) return;
+
+    // If we can't determine the type, print a generic representation
+    uint64_t packed_value;
+    std::memcpy(&packed_value, data, sizeof(uint64_t));
+
+    uint64_t ptr_bits = packed_value & 0x0000FFFFFFFFFFFFULL;
+    if (ptr_bits & (1ULL << 47)) {
+        ptr_bits |= 0xFFFF000000000000ULL;
+    }
+
+    bool is_dedup = (packed_value & (1ULL << 63)) != 0;
+
+    if (ptr_bits == 0) {
+        writer.write("[]");
+    } else {
+        writer.write("[TypedArray@0x");
+        std::stringstream ss;
+        ss << std::hex << ptr_bits;
+        writer.write(ss.str());
+        if (is_dedup) {
+            writer.write(" (dedup)");
+        }
+        writer.write("]");
+    }
+}
+
 } // namespace
+
+// TypedArray printing function - moved outside anonymous namespace to be accessible
+std::string print_typed_array(const uint8_t* data) {
+    // Try common types in order of likelihood
+    std::string result;
+
+    // Try float array
+    result = try_print_typed_array<float>(data);
+    if (!result.empty()) return result;
+
+    // Try double array
+    result = try_print_typed_array<double>(data);
+    if (!result.empty()) return result;
+
+    // Try int array
+    result = try_print_typed_array<int>(data);
+    if (!result.empty()) return result;
+
+    // Try float3 array
+    result = try_print_typed_array<value::float3>(data);
+    if (!result.empty()) return result;
+
+    // Try float2 array
+    result = try_print_typed_array<value::float2>(data);
+    if (!result.empty()) return result;
+
+    // Try double3 array
+    result = try_print_typed_array<value::double3>(data);
+    if (!result.empty()) return result;
+
+    // If we can't determine the type, print a generic representation
+    uint64_t packed_value;
+    std::memcpy(&packed_value, data, sizeof(uint64_t));
+
+    uint64_t ptr_bits = packed_value & 0x0000FFFFFFFFFFFFULL;
+    if (ptr_bits & (1ULL << 47)) {
+        ptr_bits |= 0xFFFF000000000000ULL;
+    }
+
+    bool is_dedup = (packed_value & (1ULL << 63)) != 0;
+
+    std::stringstream ss;
+    if (ptr_bits == 0) {
+        ss << "[]";
+    } else {
+        ss << "[TypedArray@0x" << std::hex << ptr_bits;
+        if (is_dedup) {
+            ss << " (dedup)";
+        }
+        ss << "]";
+    }
+    return ss.str();
+}
 
 std::string pprint_pod_value_by_type(const uint8_t* data, uint32_t type_id) {
     using namespace value;
@@ -656,6 +876,8 @@ std::string pprint_pod_value_by_type(const uint8_t* data, uint32_t type_id) {
             return print_texcoord3f(data);
         case TYPE_ID_TEXCOORD3D:
             return print_texcoord3d(data);
+        case TYPE_ID_TYPED_ARRAY_TIMESAMPLE_VALUE:
+            return print_typed_array(data);
         default:
             return "[Unknown POD type: " + std::to_string(type_id) + "]";
     }
@@ -875,6 +1097,9 @@ void pprint_pod_value_by_type(StreamWriter& writer, const uint8_t* data, uint32_
         case TYPE_ID_TEXCOORD3D:
             print_value_type<value::texcoord3d>(writer, data);
             break;
+        case TYPE_ID_TYPED_ARRAY_TIMESAMPLE_VALUE:
+            print_typed_array_value(writer, data);
+            break;
         default:
             writer << "[Unknown POD type: " << type_id << "]";
             break;
@@ -1025,6 +1250,10 @@ size_t get_pod_type_size(uint32_t type_id) {
             return sizeof(value::texcoord3f);
         case TYPE_ID_TEXCOORD3D:
             return sizeof(value::texcoord3d);
+        case TYPE_ID_TYPED_TIMESAMPLE_VALUE:
+            return sizeof(uint64_t);
+        case TYPE_ID_TYPED_ARRAY_TIMESAMPLE_VALUE:
+            return sizeof(uint64_t);
         default:
             return 0;  // Unknown type
     }
@@ -1160,6 +1389,10 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
         const auto& blocked = pod_samples.get_blocked();
         const auto& values = pod_samples.get_values();
 
+        TUSDZ_LOG_I("times.size " << times.size());
+        TUSDZ_LOG_I("blocked.size " << blocked.size());
+        TUSDZ_LOG_I("values.size " << values.size());
+
         // Write samples - handle offset table if present
         if (!pod_samples._offsets.empty()) {
             // Using offset table - blocked values don't consume space
@@ -1185,6 +1418,7 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
             // Legacy: blocked values still counted in offset calculation
             size_t value_offset = 0;
             for (size_t i = 0; i < times.size(); ++i) {
+                TUSDZ_LOG_I("times[" << i << "] = " << times[i]);
                 writer.write(pprint::Indent(indent + 1));
                 writer.write(times[i]);
                 writer.write(": ");
