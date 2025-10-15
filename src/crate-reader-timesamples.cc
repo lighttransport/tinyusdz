@@ -546,20 +546,35 @@ add_array_sample_to_timesamples(value::TimeSamples *d, double time,
   }
 }
 
-// TypedArray overload for POD types
 template <typename T>
-typename std::enable_if<is_pod_type<T>::value, bool>::type
+//typename std::enable_if<is_pod_type<T>::value, bool>::type
+bool
 add_array_sample_to_timesamples(value::TimeSamples *d, double time,
                                 const TypedArray<T> &arrval, std::string *err,
                                 size_t expected_total_samples = 0) {
+#if 0
   if (d->is_using_pod()) {
+    TUSDZ_LOG_I("TypedArray: use pod");
     return d->add_array_sample_pod<T>(time, arrval, err,
                                       expected_total_samples);
   } else {
+    TUSDZ_LOG_I("TypedArray: non-pod");
     // Convert TypedArray to std::vector for non-POD path
     std::vector<T> vec(arrval.data(), arrval.data() + arrval.size());
     return d->add_sample(time, value::Value(vec), err);
   }
+#else
+    (void)expected_total_samples;
+    //TUSDZ_LOG_I("TypedArray: non-pod");
+    // TypedArray manages its own memory internally using a 64-bit packed pointer,
+    // which means memory is handled within the TypedArray implementation and users
+    // should not manually manage or free the underlying array.
+    // This is important here because passing the TypedArray directly avoids unnecessary
+    // copies and ensures that memory ownership and lifetime are correctly handled,
+    // preventing double-free or memory leaks. Maintainers should avoid adding manual
+    // memory management for TypedArray instances at this call site.
+    return d->add_typed_array_sample(time, arrval, err);
+#endif
 }
 
 // Specialization for matrix(treat it as pod)
@@ -1405,12 +1420,14 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT2(double t,
     // Check deduplication cache for array
     auto it = _dedup_float2_array.find(rep);
     if (it != _dedup_float2_array.end()) {
-      TUSDZ_LOG_I("dedup float2 array\n");
+      //TUSDZ_LOG_I("dedup float2 array\n");
       // Reuse cached array - shallow copy shares the underlying data
-      v = it->second;
+      v = MakeDedupTypedArray(it->second.get());
+      v.set_dedup(true);
+      // HACK
       DCOUT("Reusing cached FLOAT2 array for ValueRep, size=" << v.size());
     } else {
-      TUSDZ_LOG_I("read float2 array\n");
+      //TUSDZ_LOG_I("read float2 array\n");
       // Read and cache array
       if (!ReadFloat2ArrayTyped(&v)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read vec2 array.");
@@ -1425,9 +1442,11 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT2(double t,
     }
 
     if (it == _dedup_float2_array.end()) {
-      // Mark as dedup before caching so the original won't delete when it goes out of scope
+      // content of 'v' is stored as the first timesample value.
+      // We store v with duplicated flag on to prevent double-free.
+      // Also use move assignment to avoid calling copy assignemnt operator.
       v.set_dedup(true);
-      _dedup_float2_array[rep] = v;
+      _dedup_float2_array.emplace(rep, std::move(v));
     }
 
   } else {

@@ -73,6 +73,14 @@ void pprint_pod_value_by_type(StreamWriter& writer,
 size_t get_pod_type_size(uint32_t type_id);
 
 ///
+/// Pretty print a TypedArray stored as a packed pointer
+///
+/// @param data Pointer to the packed TypedArray pointer (uint64_t)
+/// @return String representation of the TypedArray
+///
+std::string print_typed_array(const uint8_t* data);
+
+///
 /// Pretty print non-POD TimeSamples with indentation support
 ///
 /// @param samples value::TimeSamples to print

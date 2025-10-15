@@ -183,9 +183,9 @@ class Buffer {
     capacity_ = new_capacity;
   }
 
-  uint8_t* data_;
-  size_t size_;
-  size_t capacity_;
+  uint8_t* data_{nullptr};
+  size_t size_{0};
+  size_t capacity_{0};
 };
 
 }  // namespace tinyusdz
