@@ -153,9 +153,11 @@ CrateReader::~CrateReader() {
 
   // Clean up float2_array cache
   for (auto& pair : _dedup_float2_array) {
-    if (pair.second.get() != nullptr) {
-      delete pair.second.get();
-    }
+    // HACK
+    pair.second.clear();
+    //if (pair.second.get() != nullptr) {
+    //  delete pair.second.get();
+    //}
   }
 
   // Clean up double_array cache

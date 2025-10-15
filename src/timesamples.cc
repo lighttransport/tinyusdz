@@ -27,14 +27,14 @@ std::vector<std::pair<double, std::pair<value::Value, bool>>> PODTimeSamples::ge
 
   // Get element size for the type
   size_t element_size = 0;
-  if (!_is_array) {
+  if (!_is_stl_array && !_is_typed_array) {
     element_size = get_element_size();
   }
 
   // Macro to handle each POD type
 #define HANDLE_POD_TYPE(__type_id, __type)                                    \
   if (_type_id == __type_id) {                                                \
-    if (_is_array) {                                                          \
+    if (_is_stl_array || _is_typed_array) {                                   \
       /* Array handling with offset table */                                  \
       element_size = sizeof(__type) * _array_size;                            \
       if (!_offsets.empty()) {                                                \
@@ -120,7 +120,7 @@ std::vector<std::pair<double, std::pair<value::Value, bool>>> PODTimeSamples::ge
 
   // Handle bool separately due to std::vector<bool> specialization
   if (_type_id == value::TypeTraits<bool>::type_id()) {
-    if (_is_array) {
+    if (_is_stl_array || _is_typed_array) {
       /* Bool array handling - special case due to vector<bool> */
       element_size = _array_size;  // 1 byte per bool
       if (!_offsets.empty()) {
@@ -311,6 +311,14 @@ size_t PODTimeSamples::get_element_size() const {
   TYPE_SIZE_CASE(value::frame4d)
 
 #undef TYPE_SIZE_CASE
+
+  if (_type_id == value::TYPE_ID_TYPED_TIMESAMPLE_VALUE) {
+    return sizeof(uint64_t);
+  }
+
+  if (_type_id == value::TYPE_ID_TYPED_ARRAY_TIMESAMPLE_VALUE) {
+    return sizeof(uint64_t);
+  }
 
   return 0; // Unknown type
 }
