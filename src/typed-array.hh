@@ -146,7 +146,13 @@ class TypedArrayImpl {
   }
 
   // Destructor
-  ~TypedArrayImpl() = default;
+  ~TypedArrayImpl() {
+    if (_is_view) {
+      // no free
+    } else {
+       _storage.clear();    
+    }
+  }
 
   // Check if this is a view (non-owning)
   bool is_view() const noexcept { return _is_view; }

@@ -428,6 +428,10 @@ enum TypeId {
   TYPE_ID_TIMESAMPLES,
   TYPE_ID_VARIANT_SELECION_MAP,
 
+  // tinyusdz specific.
+  TYPE_ID_TYPED_TIMESAMPLE_VALUE,
+  TYPE_ID_TYPED_ARRAY_TIMESAMPLE_VALUE,
+
   // Types in crate-format.hh
   TYPE_ID_CRATE_BEGIN = 256,
   TYPE_ID_CRATE_VALUE,
@@ -527,6 +531,7 @@ enum TypeId {
   TYPE_ID_ALL = (TYPE_ID_TERMINATOR_BIT - 1)  // terminator.
 };
 
+static_assert(TYPE_ID_TYPED_ARRAY_TIMESAMPLE_VALUE < 256, "internal error.");
 static_assert(TYPE_ID_API_END <= 65535, "Non user-defined TYPE_ID must be less than 16bit");
 
 

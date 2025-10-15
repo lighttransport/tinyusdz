@@ -4416,7 +4416,7 @@ bool ReconstructPrim<GeomMesh>(
       }
     }
 
-    TUSDZ_LOG_I("add prop: " << prop.first);
+    //TUSDZ_LOG_I("add prop: " << prop.first);
     // generic
     ADD_PROPERTY(table, prop, GeomMesh, mesh->props)
     PARSE_PROPERTY_END_MAKE_WARN(table, prop)
