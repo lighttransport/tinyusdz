@@ -989,6 +989,101 @@ std::string AsciiParser::GetWarningWithHints(bool show_hints) {
   return ss.str();
 }
 
+std::string AsciiParser::GetErrorWithSourceContext(const std::string& filename, int context_lines) {
+  (void)context_lines;  // Parameter reserved for future use
+  if (err_stack.empty()) {
+    return std::string();
+  }
+
+  std::stringstream ss;
+  std::ifstream infile(filename);
+  if (!infile.is_open()) {
+    // Fallback to basic error display if file can't be opened
+    return GetError();
+  }
+
+  // Read all lines from file
+  std::vector<std::string> file_lines;
+  std::string line;
+  while (std::getline(infile, line)) {
+    file_lines.push_back(line);
+  }
+  infile.close();
+
+  std::set<std::string> seen_errors;
+  std::vector<ErrorDiagnostic> errors;
+
+  // Collect all errors
+  while (!err_stack.empty()) {
+    errors.push_back(err_stack.top());
+    err_stack.pop();
+  }
+
+  // Process errors in reverse order (oldest first)
+  for (auto it = errors.rbegin(); it != errors.rend(); ++it) {
+    const ErrorDiagnostic& diag = *it;
+
+    // Create unique key and skip duplicates
+    std::stringstream error_key;
+    error_key << diag.cursor.row << ":" << diag.cursor.col << ":" << diag.err;
+
+    if (seen_errors.count(error_key.str()) > 0) {
+      continue;
+    }
+    seen_errors.insert(error_key.str());
+
+    // Display error header
+    ss << "\n" << std::string(70, '~') << "\n";
+    ss << diag.TypeName() << " at line " << (diag.cursor.row + 1)
+       << ", column " << (diag.cursor.col + 1) << "\n";
+    ss << std::string(70, '~') << "\n";
+
+    // Clean and display error message
+    std::string clean_err = diag.err;
+    if (!clean_err.empty() && clean_err.back() == '\n') {
+      clean_err.pop_back();
+    }
+    ss << "  Message: " << clean_err << "\n\n";
+
+    // Display source context if file lines are available
+    if (static_cast<size_t>(diag.cursor.row) < file_lines.size()) {
+      int start_line = std::max(0, diag.cursor.row - 1);
+      int end_line = std::min(static_cast<int>(file_lines.size()) - 1, diag.cursor.row + 1);
+
+      // Show context lines
+      for (int i = start_line; i <= end_line; ++i) {
+        int display_line = i + 1;
+        bool is_error_line = (i == diag.cursor.row);
+
+        // Line number with indicator
+        ss << (is_error_line ? "> " : "  ") << display_line << " | ";
+        ss << file_lines[static_cast<size_t>(i)] << "\n";
+
+        // Show caret and tildes on error line
+        if (is_error_line) {
+          ss << "    | ";
+          // Add spaces up to the error column
+          for (int col = 0; col < diag.cursor.col; col++) {
+            ss << " ";
+          }
+          // Add visual indicator (caret and tildes)
+          ss << "^";
+          for (int col = 0; col < 3; col++) {
+            ss << "~";
+          }
+          ss << "\n";
+        }
+      }
+    }
+  }
+
+  if (!seen_errors.empty()) {
+    ss << "\n" << std::string(70, '~') << "\n";
+  }
+
+  return ss.str();
+}
+
 // -- end basic
 
 // types: Allowd in dict.
