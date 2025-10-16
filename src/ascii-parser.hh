@@ -142,16 +142,45 @@ class AsciiParser {
     int col{0};
   };
 
+  /// Error type enumeration for categorizing parser errors
+  enum class ErrorType {
+    SyntaxError,      ///< Parse/syntax error
+    SemanticError,    ///< Type or value error
+    ValidationError,  ///< Constraint violation
+    IOError,          ///< File access error
+    UnknownError      ///< Uncategorized error
+  };
+
   struct ErrorDiagnostic {
     std::string err;
     Cursor cursor;
+    ErrorType type{ErrorType::UnknownError};  ///< Error category
+
+    /// Get a human-readable error type name
+    const char* TypeName() const {
+      switch (type) {
+        case ErrorType::SyntaxError:
+          return "Syntax Error";
+        case ErrorType::SemanticError:
+          return "Semantic Error";
+        case ErrorType::ValidationError:
+          return "Validation Error";
+        case ErrorType::IOError:
+          return "IO Error";
+        case ErrorType::UnknownError:
+        default:
+          return "Error";
+      }
+    }
   };
 
-  void PushError(const std::string &msg) {
+  void PushError(const std::string &msg,
+                 ErrorType type = ErrorType::UnknownError) {
     ErrorDiagnostic diag;
     diag.cursor.row = _curr_cursor.row;
     diag.cursor.col = _curr_cursor.col;
     diag.err = msg;
+    diag.type = type;
     err_stack.push(diag);
   }
 
@@ -162,11 +191,13 @@ class AsciiParser {
     }
   }
 
-  void PushWarn(const std::string &msg) {
+  void PushWarn(const std::string &msg,
+                ErrorType type = ErrorType::UnknownError) {
     ErrorDiagnostic diag;
     diag.cursor.row = _curr_cursor.row;
     diag.cursor.col = _curr_cursor.col;
     diag.err = msg;
+    diag.type = type;
     warn_stack.push(diag);
   }
 
@@ -731,6 +762,23 @@ class AsciiParser {
   /// Get warning message(warnings in `Parse`)
   ///
   std::string GetWarning();
+
+  ///
+  /// Get error message with context showing surrounding source lines.
+  /// @param[in] context_lines Number of lines of context to show around error
+  /// (default 2)
+  /// @return Formatted error message with source code context and caret indicator
+  ///
+  std::string GetErrorWithContext(int context_lines = 2);
+
+  ///
+  /// Get warning message with context showing surrounding source lines.
+  /// @param[in] context_lines Number of lines of context to show around warning
+  /// (default 2)
+  /// @return Formatted warning message with source code context and caret
+  /// indicator
+  ///
+  std::string GetWarningWithContext(int context_lines = 2);
 
 #if 0
   // Return the flag if the .usda is read from `references`
