@@ -151,10 +151,22 @@ class AsciiParser {
     UnknownError      ///< Uncategorized error
   };
 
+  /// Error recovery suggestion enumeration (Priority 4c)
+  enum class ErrorRecoveryHint {
+    NoHint,                     ///< No suggestion available
+    CheckBracketMatching,      ///< Check if brackets/parens are balanced
+    CheckQuotes,               ///< Check if strings are properly quoted
+    CheckTypeName,             ///< Verify type name is correct
+    CheckAttributeName,        ///< Verify attribute name syntax
+    CheckIndentation,          ///< Check file indentation
+    CheckLineEndings           ///< Check for mixed line endings
+  };
+
   struct ErrorDiagnostic {
     std::string err;
     Cursor cursor;
     ErrorType type{ErrorType::UnknownError};  ///< Error category
+    ErrorRecoveryHint hint{ErrorRecoveryHint::NoHint};  ///< Recovery suggestion (Priority 4c)
 
     /// Get a human-readable error type name
     const char* TypeName() const {
@@ -172,15 +184,38 @@ class AsciiParser {
       }
       return "Error";  // Unreachable but satisfies compilers
     }
+
+    /// Get human-readable recovery hint (Priority 4c)
+    const char* GetHint() const {
+      switch (hint) {
+        case ErrorRecoveryHint::NoHint:
+          return "";
+        case ErrorRecoveryHint::CheckBracketMatching:
+          return "Check bracket/parenthesis matching";
+        case ErrorRecoveryHint::CheckQuotes:
+          return "Check string quote matching";
+        case ErrorRecoveryHint::CheckTypeName:
+          return "Verify type name is valid USD type";
+        case ErrorRecoveryHint::CheckAttributeName:
+          return "Verify attribute name follows USD naming conventions";
+        case ErrorRecoveryHint::CheckIndentation:
+          return "Check file indentation for consistency";
+        case ErrorRecoveryHint::CheckLineEndings:
+          return "Check for mixed line endings (LF vs CRLF)";
+      }
+      return "";
+    }
   };
 
   void PushError(const std::string &msg,
-                 ErrorType type = ErrorType::UnknownError) {
+                 ErrorType type = ErrorType::UnknownError,
+                 ErrorRecoveryHint hint = ErrorRecoveryHint::NoHint) {
     ErrorDiagnostic diag;
     diag.cursor.row = _curr_cursor.row;
     diag.cursor.col = _curr_cursor.col;
     diag.err = msg;
     diag.type = type;
+    diag.hint = hint;
     err_stack.push(diag);
   }
 
@@ -192,12 +227,14 @@ class AsciiParser {
   }
 
   void PushWarn(const std::string &msg,
-                ErrorType type = ErrorType::UnknownError) {
+                ErrorType type = ErrorType::UnknownError,
+                ErrorRecoveryHint hint = ErrorRecoveryHint::NoHint) {
     ErrorDiagnostic diag;
     diag.cursor.row = _curr_cursor.row;
     diag.cursor.col = _curr_cursor.col;
     diag.err = msg;
     diag.type = type;
+    diag.hint = hint;
     warn_stack.push(diag);
   }
 
@@ -779,6 +816,21 @@ class AsciiParser {
   /// indicator
   ///
   std::string GetWarningWithContext(int context_lines = 2);
+
+  ///
+  /// Get error message with aggressive deduplication and recovery hints (Priority 4b & 4c).
+  /// Groups similar errors and provides recovery suggestions based on error type.
+  /// @param[in] show_hints If true, include recovery hints for each error type
+  /// @return Formatted error messages with deduplication and optional hints
+  ///
+  std::string GetErrorWithHints(bool show_hints = true);
+
+  ///
+  /// Get warning message with aggressive deduplication and recovery hints (Priority 4b & 4c).
+  /// @param[in] show_hints If true, include recovery hints for each warning type
+  /// @return Formatted warning messages with deduplication and optional hints
+  ///
+  std::string GetWarningWithHints(bool show_hints = true);
 
 #if 0
   // Return the flag if the .usda is read from `references`
