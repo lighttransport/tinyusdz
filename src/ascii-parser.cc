@@ -754,6 +754,7 @@ std::string AsciiParser::GetWarning() {
 }
 
 std::string AsciiParser::GetErrorWithContext(int context_lines) {
+  (void)context_lines;  // Not yet implemented - parameter reserved for future use
   if (err_stack.empty()) {
     return std::string();
   }
@@ -809,6 +810,7 @@ std::string AsciiParser::GetErrorWithContext(int context_lines) {
 }
 
 std::string AsciiParser::GetWarningWithContext(int context_lines) {
+  (void)context_lines;  // Not yet implemented - parameter reserved for future use
   if (warn_stack.empty()) {
     return std::string();
   }
