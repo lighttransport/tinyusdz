@@ -865,6 +865,130 @@ std::string AsciiParser::GetWarningWithContext(int context_lines) {
   return ss.str();
 }
 
+std::string AsciiParser::GetErrorWithHints(bool show_hints) {
+  (void)show_hints;  // Not yet implemented - parameter reserved for future use
+  if (err_stack.empty()) {
+    return std::string();
+  }
+
+  std::stringstream ss;
+  std::set<std::string> seen_errors;
+  std::vector<ErrorDiagnostic> errors;
+
+  // Collect all errors
+  while (!err_stack.empty()) {
+    errors.push_back(err_stack.top());
+    err_stack.pop();
+  }
+
+  // Process errors in reverse order (oldest first) with aggressive deduplication
+  std::map<std::string, int> error_counts;  // Group similar errors by message
+  for (auto it = errors.rbegin(); it != errors.rend(); ++it) {
+    const ErrorDiagnostic& diag = *it;
+    error_counts[diag.err]++;
+  }
+
+  // Now output with counts for grouped errors
+  std::set<std::string> seen_messages;
+  for (auto it = errors.rbegin(); it != errors.rend(); ++it) {
+    const ErrorDiagnostic& diag = *it;
+
+    if (seen_messages.count(diag.err) > 0) {
+      continue;
+    }
+    seen_messages.insert(diag.err);
+
+    ss << diag.TypeName() << " at line " << (diag.cursor.row + 1)
+       << ", column " << (diag.cursor.col + 1) << ": ";
+
+    std::string clean_err = diag.err;
+    if (!clean_err.empty() && clean_err.back() == '\n') {
+      clean_err.pop_back();
+    }
+    ss << clean_err;
+
+    // Add occurrence count if this error appears multiple times
+    int count = error_counts[diag.err];
+    if (count > 1) {
+      ss << " [" << count << " occurrence" << (count > 1 ? "s" : "") << "]";
+    }
+
+    ss << "\n";
+
+    // Add recovery hint if requested
+    if (show_hints && diag.hint != ErrorRecoveryHint::NoHint) {
+      const char* hint = diag.GetHint();
+      if (hint && std::strlen(hint) > 0) {
+        ss << "  Hint: " << hint << "\n";
+      }
+    }
+  }
+
+  return ss.str();
+}
+
+std::string AsciiParser::GetWarningWithHints(bool show_hints) {
+  (void)show_hints;  // Not yet implemented - parameter reserved for future use
+  if (warn_stack.empty()) {
+    return std::string();
+  }
+
+  std::stringstream ss;
+  std::set<std::string> seen_warnings;
+  std::vector<ErrorDiagnostic> warnings;
+
+  // Collect all warnings
+  while (!warn_stack.empty()) {
+    warnings.push_back(warn_stack.top());
+    warn_stack.pop();
+  }
+
+  // Process warnings in reverse order (oldest first) with aggressive deduplication
+  std::map<std::string, int> warning_counts;  // Group similar warnings by message
+  for (auto it = warnings.rbegin(); it != warnings.rend(); ++it) {
+    const ErrorDiagnostic& diag = *it;
+    warning_counts[diag.err]++;
+  }
+
+  // Now output with counts for grouped warnings
+  std::set<std::string> seen_messages;
+  for (auto it = warnings.rbegin(); it != warnings.rend(); ++it) {
+    const ErrorDiagnostic& diag = *it;
+
+    if (seen_messages.count(diag.err) > 0) {
+      continue;
+    }
+    seen_messages.insert(diag.err);
+
+    ss << diag.TypeName() << " at line " << (diag.cursor.row + 1)
+       << ", column " << (diag.cursor.col + 1) << ": ";
+
+    std::string clean_warn = diag.err;
+    if (!clean_warn.empty() && clean_warn.back() == '\n') {
+      clean_warn.pop_back();
+    }
+    ss << clean_warn;
+
+    // Add occurrence count if this warning appears multiple times
+    int count = warning_counts[diag.err];
+    if (count > 1) {
+      ss << " [" << count << " occurrence" << (count > 1 ? "s" : "") << "]";
+    }
+
+    ss << "\n";
+
+    // Add recovery hint if requested
+    if (show_hints && diag.hint != ErrorRecoveryHint::NoHint) {
+      const char* hint = diag.GetHint();
+      if (hint && std::strlen(hint) > 0) {
+        ss << "  Hint: " << hint << "\n";
+      }
+    }
+  }
+
+  return ss.str();
+}
+
 // -- end basic
 
 // types: Allowd in dict.
