@@ -168,9 +168,9 @@ class AsciiParser {
         case ErrorType::IOError:
           return "IO Error";
         case ErrorType::UnknownError:
-        default:
           return "Error";
       }
+      return "Error";  // Unreachable but satisfies compilers
     }
   };
 
