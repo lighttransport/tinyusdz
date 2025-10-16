@@ -692,10 +692,10 @@ std::string AsciiParser::GetError() {
     }
     seen_errors.insert(error_key.str());
     
-    // Format error with precise location
-    ss << "USDA error at line " << (diag.cursor.row + 1) 
+    // Format error with error type and precise location
+    ss << diag.TypeName() << " at line " << (diag.cursor.row + 1)
        << ", column " << (diag.cursor.col + 1) << ": ";
-    
+
     // Remove redundant newlines from error message
     std::string clean_err = diag.err;
     if (!clean_err.empty() && clean_err.back() == '\n') {
@@ -738,16 +738,126 @@ std::string AsciiParser::GetWarning() {
     }
     seen_warnings.insert(warning_key.str());
     
-    // Format warning with precise location
-    ss << "USDA warning at line " << (diag.cursor.row + 1) 
+    // Format warning with error type and precise location
+    ss << diag.TypeName() << " at line " << (diag.cursor.row + 1)
        << ", column " << (diag.cursor.col + 1) << ": ";
-    
+
     // Remove redundant newlines from warning message
     std::string clean_warn = diag.err;
     if (!clean_warn.empty() && clean_warn.back() == '\n') {
       clean_warn.pop_back();
     }
     ss << clean_warn << "\n";
+  }
+
+  return ss.str();
+}
+
+std::string AsciiParser::GetErrorWithContext(int context_lines) {
+  if (err_stack.empty()) {
+    return std::string();
+  }
+
+  std::stringstream ss;
+
+  // Track unique error messages to avoid duplicates
+  std::set<std::string> seen_errors;
+  std::vector<ErrorDiagnostic> errors;
+
+  // Collect all errors
+  while (!err_stack.empty()) {
+    errors.push_back(err_stack.top());
+    err_stack.pop();
+  }
+
+  // Process errors in reverse order (oldest first)
+  for (auto it = errors.rbegin(); it != errors.rend(); ++it) {
+    const ErrorDiagnostic& diag = *it;
+
+    // Create a unique key for this error location and message
+    std::stringstream error_key;
+    error_key << diag.cursor.row << ":" << diag.cursor.col << ":" << diag.err;
+
+    // Skip duplicate errors
+    if (seen_errors.count(error_key.str()) > 0) {
+      continue;
+    }
+    seen_errors.insert(error_key.str());
+
+    // Format error with error type and precise location
+    ss << diag.TypeName() << " at line " << (diag.cursor.row + 1)
+       << ", column " << (diag.cursor.col + 1) << ":\n";
+
+    // Remove redundant newlines from error message
+    std::string clean_err = diag.err;
+    if (!clean_err.empty() && clean_err.back() == '\n') {
+      clean_err.pop_back();
+    }
+    ss << "  " << clean_err << "\n";
+
+    // Add visual caret indicator for error location
+    if (diag.cursor.col > 0) {
+      ss << "  ";
+      for (int i = 0; i < diag.cursor.col; i++) {
+        ss << " ";
+      }
+      ss << "^\n";
+    }
+  }
+
+  return ss.str();
+}
+
+std::string AsciiParser::GetWarningWithContext(int context_lines) {
+  if (warn_stack.empty()) {
+    return std::string();
+  }
+
+  std::stringstream ss;
+
+  // Track unique warning messages to avoid duplicates
+  std::set<std::string> seen_warnings;
+  std::vector<ErrorDiagnostic> warnings;
+
+  // Collect all warnings
+  while (!warn_stack.empty()) {
+    warnings.push_back(warn_stack.top());
+    warn_stack.pop();
+  }
+
+  // Process warnings in reverse order (oldest first)
+  for (auto it = warnings.rbegin(); it != warnings.rend(); ++it) {
+    const ErrorDiagnostic& diag = *it;
+
+    // Create a unique key for this warning location and message
+    std::stringstream warning_key;
+    warning_key << diag.cursor.row << ":" << diag.cursor.col << ":" << diag.err;
+
+    // Skip duplicate warnings
+    if (seen_warnings.count(warning_key.str()) > 0) {
+      continue;
+    }
+    seen_warnings.insert(warning_key.str());
+
+    // Format warning with error type and precise location
+    ss << diag.TypeName() << " at line " << (diag.cursor.row + 1)
+       << ", column " << (diag.cursor.col + 1) << ":\n";
+
+    // Remove redundant newlines from warning message
+    std::string clean_warn = diag.err;
+    if (!clean_warn.empty() && clean_warn.back() == '\n') {
+      clean_warn.pop_back();
+    }
+    ss << "  " << clean_warn << "\n";
+
+    // Add visual caret indicator for warning location
+    if (diag.cursor.col > 0) {
+      ss << "  ";
+      for (int i = 0; i < diag.cursor.col; i++) {
+        ss << " ";
+      }
+      ss << "^\n";
+    }
   }
 
   return ss.str();
