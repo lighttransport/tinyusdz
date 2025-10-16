@@ -94,6 +94,67 @@ constexpr auto kConnectSuffix = ".connect";
 
 constexpr auto kAscii = "[ASCII]";
 
+// Keyword database for fix suggestions (Priority 5)
+// Contains common USD specifiers, types, and keywords
+// Using C-style array to avoid static initialization requirements
+static constexpr const char* g_usd_keywords[] = {
+  // Specifiers
+  "def", "over", "class",
+  // Variability
+  "uniform", "varying", "token",
+  // Metadata indicators
+  "custom", "documentation", "doc", "comment",
+  // List edit qualifiers
+  "add", "delete", "reorder", "append", "prepend",
+  // Relationship indicators
+  "rel", "relationship",
+  // Attribute modifiers
+  "timeVarying",
+  // Common scalar types
+  "bool", "byte", "ubyte", "int", "uint", "long", "ulong",
+  "half", "float", "double", "string", "asset",
+  // Vector types
+  "int2", "int3", "int4",
+  "uint2", "uint3", "uint4",
+  "float2", "float3", "float4",
+  "double2", "double3", "double4",
+  "half2", "half3", "half4",
+  // Color types
+  "color3h", "color3f", "color3d",
+  "color4h", "color4f", "color4d",
+  // Matrix types
+  "matrix2f", "matrix3f", "matrix4f",
+  "matrix2d", "matrix3d", "matrix4d",
+  // Geometric types
+  "point3h", "point3f", "point3d",
+  "vector3h", "vector3f", "vector3d",
+  "normal3h", "normal3f", "normal3d",
+  "texcoord2h", "texcoord2f", "texcoord2d",
+  "texcoord3h", "texcoord3f", "texcoord3d",
+  "quath", "quatf", "quatd",
+  // Special types
+  "path", "reference", "payload",
+  // Prim types (common)
+  "Mesh", "Sphere", "Cube", "Cylinder", "Cone",
+  "Xform", "Scope", "Group", "Assembly",
+  "Light", "SphereLight", "RectLight", "DomeLight",
+  "Material", "Shader", "Texture",
+  "BasisCurves", "PointInstancer", "Points",
+  // Attributes (common)
+  "points", "normals", "primvars", "indices",
+  "extent", "visibility", "purpose", "kind",
+  "interpolation", "faceVertexCounts", "faceVertexIndices",
+  // Metadata field names
+  "timeSamples", "connect", "customData",
+  "subLayers", "defaultPrim", "upAxis",
+  // Time/frame related
+  "timeCodesPerSecond", "startTimeCode", "endTimeCode",
+  "framesPerSecond", "metersPerUnit", "kilogramsPerUnit"
+};
+
+static constexpr size_t g_usd_keywords_count =
+    sizeof(g_usd_keywords) / sizeof(g_usd_keywords[0]);
+
 extern template bool AsciiParser::ParseBasicTypeArray(
     std::vector<nonstd::optional<bool>> *result);
 extern template bool AsciiParser::ParseBasicTypeArray(
@@ -701,7 +762,14 @@ std::string AsciiParser::GetError() {
     if (!clean_err.empty() && clean_err.back() == '\n') {
       clean_err.pop_back();
     }
-    ss << clean_err << "\n";
+    ss << clean_err;
+
+    // Add suggestion if available (Priority 5)
+    if (!diag.suggestion.empty()) {
+      ss << "\n  Suggestion: " << diag.suggestion;
+    }
+
+    ss << "\n";
   }
 
   return ss.str();
@@ -747,7 +815,14 @@ std::string AsciiParser::GetWarning() {
     if (!clean_warn.empty() && clean_warn.back() == '\n') {
       clean_warn.pop_back();
     }
-    ss << clean_warn << "\n";
+    ss << clean_warn;
+
+    // Add suggestion if available (Priority 5)
+    if (!diag.suggestion.empty()) {
+      ss << "\n  Suggestion: " << diag.suggestion;
+    }
+
+    ss << "\n";
   }
 
   return ss.str();
@@ -5007,6 +5082,27 @@ std::string AsciiParser::GetCurrentPrimPath() {
 AsciiParser::AsciiParser() { Setup(); }
 
 AsciiParser::AsciiParser(StreamReader *sr) : _sr(sr) { Setup(); }
+
+std::string AsciiParser::GenerateSuggestion(const std::string& invalid_token) {
+  // Only generate suggestions if feature is enabled and token is not empty
+  if (!TINYUSDZ_ENABLE_SUGGEST_FIX || invalid_token.empty()) {
+    return "";
+  }
+
+  // Convert C-style keyword array to vector for string similarity matching
+  std::vector<std::string> keywords(g_usd_keywords,
+                                     g_usd_keywords + g_usd_keywords_count);
+
+  // Find closest matching keyword
+  std::string best_match = string_similarity::FindClosestMatch(
+      invalid_token, keywords, 0.6);  // 0.6 = 60% similarity threshold
+
+  if (!best_match.empty()) {
+    return fmt::format("Did you mean '{}'?", best_match);
+  }
+
+  return "";
+}
 
 void AsciiParser::Setup() {
   RegisterStageMetas(_supported_stage_metas);
