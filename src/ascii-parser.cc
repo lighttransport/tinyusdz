@@ -5753,7 +5753,11 @@ bool AsciiParser::Parse(const uint32_t load_states,
       } else if (tok == "class") {
         spec = Specifier::Class;
       } else {
-        PUSH_ERROR_AND_RETURN("Invalid specifier token '" + tok + "'");
+        // Generate suggestion for invalid specifier using string similarity (Priority 5)
+        std::string suggestion = GenerateSuggestion(tok);
+        std::string error_msg = "Invalid specifier token '" + tok + "'";
+        PushError(error_msg, ErrorType::SyntaxError, ErrorRecoveryHint::NoHint, suggestion);
+        return false;
       }
 
       int64_t primIdx = _prim_idx_assign_fun(-1);
