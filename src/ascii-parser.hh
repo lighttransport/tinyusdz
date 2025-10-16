@@ -15,8 +15,15 @@
 #include "composition.hh"
 #include "prim-types.hh"
 #include "stream-reader.hh"
+#include "string-similarity.hh"
 #include "tinyusdz.hh"
 #include "typed-array.hh"
+
+// Configuration flag for enabling fix suggestions in parse errors
+// When enabled, parser will suggest similar keywords/identifiers for unrecognized tokens
+#ifndef TINYUSDZ_ENABLE_SUGGEST_FIX
+#define TINYUSDZ_ENABLE_SUGGEST_FIX 1
+#endif
 
 //
 #ifdef __clang__
@@ -167,6 +174,7 @@ class AsciiParser {
     Cursor cursor;
     ErrorType type{ErrorType::UnknownError};  ///< Error category
     ErrorRecoveryHint hint{ErrorRecoveryHint::NoHint};  ///< Recovery suggestion (Priority 4c)
+    std::string suggestion;  ///< Suggested fix for the error (Priority 5)
 
     /// Get a human-readable error type name
     const char* TypeName() const {
@@ -971,6 +979,14 @@ class AsciiParser {
   // --------------------------------------------
 
  private:
+  ///
+  /// Generate a fix suggestion for an invalid token (Priority 5).
+  /// Uses string similarity matching to suggest corrections.
+  /// @param[in] invalid_token The unrecognized token
+  /// @return Suggestion string (e.g. "Did you mean 'def'?"), or empty if no match
+  ///
+  std::string GenerateSuggestion(const std::string& invalid_token);
+
   ///
   /// Do common setups. Assume called in ctor.
   ///
