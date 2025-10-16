@@ -217,13 +217,15 @@ class AsciiParser {
 
   void PushError(const std::string &msg,
                  ErrorType type = ErrorType::UnknownError,
-                 ErrorRecoveryHint hint = ErrorRecoveryHint::NoHint) {
+                 ErrorRecoveryHint hint = ErrorRecoveryHint::NoHint,
+                 const std::string &suggestion = "") {
     ErrorDiagnostic diag;
     diag.cursor.row = _curr_cursor.row;
     diag.cursor.col = _curr_cursor.col;
     diag.err = msg;
     diag.type = type;
     diag.hint = hint;
+    diag.suggestion = suggestion;
     err_stack.push(diag);
   }
 
@@ -236,13 +238,15 @@ class AsciiParser {
 
   void PushWarn(const std::string &msg,
                 ErrorType type = ErrorType::UnknownError,
-                ErrorRecoveryHint hint = ErrorRecoveryHint::NoHint) {
+                ErrorRecoveryHint hint = ErrorRecoveryHint::NoHint,
+                const std::string &suggestion = "") {
     ErrorDiagnostic diag;
     diag.cursor.row = _curr_cursor.row;
     diag.cursor.col = _curr_cursor.col;
     diag.err = msg;
     diag.type = type;
     diag.hint = hint;
+    diag.suggestion = suggestion;
     warn_stack.push(diag);
   }
 
