@@ -832,6 +832,15 @@ class AsciiParser {
   ///
   std::string GetWarningWithHints(bool show_hints = true);
 
+  ///
+  /// Get error message with source code context including surrounding lines.
+  /// Shows actual file content with caret (^) and visual indicators (~~~~).
+  /// @param[in] filename Path to the source USDA file (for context retrieval)
+  /// @param[in] context_lines Number of lines of context to show around error
+  /// @return Formatted error messages with source code context and visual indicators
+  ///
+  std::string GetErrorWithSourceContext(const std::string& filename, int context_lines = 2);
+
 #if 0
   // Return the flag if the .usda is read from `references`
   bool IsReferenced() { return _referenced; }
