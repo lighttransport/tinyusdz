@@ -1412,7 +1412,8 @@ bool ToVertexAttribute(const GeomPrimvar &primvar, const std::string &name,
                        const uint32_t num_face_counts,
                        const uint32_t num_face_vertex_indices,
                        VertexAttribute &dst, std::string *err, const double t,
-                       const value::TimeSampleInterpolationType tinterp) {
+                       const value::TimeSampleInterpolationType tinterp,
+                       std::string *warn = nullptr) {
   uint32_t elementSize = uint32_t(primvar.get_elementSize());
   if (elementSize == 0) {
     PUSH_ERROR_AND_RETURN(
@@ -1422,6 +1423,23 @@ bool ToVertexAttribute(const GeomPrimvar &primvar, const std::string &name,
   VertexAttribute vattr;
 
   const tinyusdz::Attribute &attr = primvar.get_attribute();
+
+  // Check if primvar has timesamples and report detailed warning
+  if (attr.has_timesamples()) {
+    std::string msg = fmt::format(
+        "Geometry primvar '{}' has timesamples (animated values). "
+        "RenderMesh conversion uses value at specified time (timecode={}). "
+        "To capture animation, you need to convert at multiple timesamples. "
+        "Consider using ConvertMesh() at each timeframe or implementing "
+        "per-frame conversion. This is particularly important for vertex "
+        "attributes like normals, tangents, texture coordinates, colors, "
+        "and opacities that may change over time.",
+        name, t);
+    if (warn) {
+      (*warn) += msg + "\n";
+    }
+    DCOUT("WARN: " << msg);
+  }
 
   value::Value value;
   if (!primvar.flatten_with_indices(t, &value, tinterp)) {
@@ -3691,10 +3709,15 @@ bool RenderSceneConverter::ConvertMesh(
       return false;
     }
 
+    std::string warn_msg;
     if (!ToVertexAttribute(pvar, env.mesh_config.default_tangents_primvar_name,
                            num_vertices, num_faces, num_face_vertex_indices,
-                           dst.tangents, &_err, env.timecode, env.tinterp)) {
+                           dst.tangents, &_err, env.timecode, env.tinterp,
+                           &warn_msg)) {
       return false;
+    }
+    if (!warn_msg.empty()) {
+      _warn += warn_msg;
     }
   }
 
@@ -3707,10 +3730,15 @@ bool RenderSceneConverter::ConvertMesh(
       return false;
     }
 
+    std::string warn_msg;
     if (!ToVertexAttribute(pvar, env.mesh_config.default_binormals_primvar_name,
                            num_vertices, num_faces, num_face_vertex_indices,
-                           dst.binormals, &_err, env.timecode, env.tinterp)) {
+                           dst.binormals, &_err, env.timecode, env.tinterp,
+                           &warn_msg)) {
       return false;
+    }
+    if (!warn_msg.empty()) {
+      _warn += warn_msg;
     }
   }
 
@@ -3723,10 +3751,14 @@ bool RenderSceneConverter::ConvertMesh(
     }
 
     VertexAttribute vcolor;
+    std::string warn_msg;
     if (!ToVertexAttribute(pvar, kDisplayColor, num_vertices, num_faces,
                            num_face_vertex_indices, vcolor, &_err, env.timecode,
-                           env.tinterp)) {
+                           env.tinterp, &warn_msg)) {
       return false;
+    }
+    if (!warn_msg.empty()) {
+      _warn += warn_msg;
     }
 
     if ((vcolor.elementSize == 1) && (vcolor.vertex_count() == 1) &&
@@ -3745,10 +3777,14 @@ bool RenderSceneConverter::ConvertMesh(
     }
 
     VertexAttribute vopacity;
+    std::string warn_msg;
     if (!ToVertexAttribute(pvar, kDisplayOpacity, num_vertices, num_faces,
                            num_face_vertex_indices, vopacity, &_err,
-                           env.timecode, env.tinterp)) {
+                           env.timecode, env.tinterp, &warn_msg)) {
       return false;
+    }
+    if (!warn_msg.empty()) {
+      _warn += warn_msg;
     }
 
     if ((vopacity.elementSize == 1) && (vopacity.vertex_count() == 1) &&
@@ -3788,6 +3824,21 @@ bool RenderSceneConverter::ConvertMesh(
       GeomPrimvar pvar;
       if (!GetGeomPrimvar(env.stage, &mesh, "normals", &pvar, &_err)) {
         return false;
+      }
+
+      // Check if normals primvar has timesamples
+      const tinyusdz::Attribute &normals_attr = pvar.get_attribute();
+      if (normals_attr.has_timesamples()) {
+        std::string msg = fmt::format(
+            "Geometry primvar 'normals' has timesamples (animated values). "
+            "RenderMesh conversion uses value at specified time (timecode={}). "
+            "To capture animation, you need to convert at multiple timesamples. "
+            "Consider using ConvertMesh() at each timeframe or implementing "
+            "per-frame conversion. Animated normals are particularly important "
+            "for correct shading and normal mapping.",
+            env.timecode);
+        _warn += msg + "\n";
+        DCOUT("WARN: " << msg);
       }
 
       if (!pvar.flatten_with_indices(env.timecode, &normals, env.tinterp,
