@@ -311,6 +311,8 @@ class USDAReader::Impl {
 
   void SetBaseDir(const std::string &str) { _base_dir = str; }
 
+  void SetFilename(const std::string &str) { _filename = str; }
+
 #if 0
   ///
   /// True: create PrimSpec instead of typed Prim.
@@ -1247,6 +1249,7 @@ class USDAReader::Impl {
   std::stack<ParseState> parse_stack;
 
   std::string _base_dir;  // Used for importing another USD file
+  std::string _filename;  // Used for displaying error context from source file
   //AssetResolutionResolver _arr;
 
 #if 0 // TODO: Remove since not used.
@@ -1701,7 +1704,14 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
   }
 
   if (!ret) {
-    PUSH_ERROR_AND_RETURN("Parse failed:\n" + _parser.GetError());
+    std::string error_msg;
+    if (!_filename.empty()) {
+      error_msg = _parser.GetErrorWithSourceContext(_filename);
+    }
+    if (error_msg.empty()) {
+      error_msg = _parser.GetError();
+    }
+    PUSH_ERROR_AND_RETURN("Parse failed:\n" + error_msg);
   }
 
 
@@ -1740,6 +1750,10 @@ bool USDAReader::read(const uint32_t state_flags, bool as_primspec) {
 
 void USDAReader::set_base_dir(const std::string &dir) {
   return _impl->SetBaseDir(dir);
+}
+
+void USDAReader::set_filename(const std::string &filename) {
+  return _impl->SetFilename(filename);
 }
 
 // std::vector<GPrim> USDAReader::GetGPrims() { return _impl->GetGPrims(); }
