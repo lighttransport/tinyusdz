@@ -665,3 +665,34 @@ class Trace {
 
 #define TUSDZ_TRACE_SET_EVENT_LOG_LEVEL(level) \
   tinyusdz::logging::TraceManager::getInstance().setEventLogLevel(tinyusdz::logging::LogLevel::level)
+
+// Global flag to control DCOUT output. Set via TINYUSDZ_ENABLE_DCOUT environment variable.
+namespace tinyusdz {
+extern bool g_enable_dcout_output;
+}
+
+// DCOUT macro for debug output (requires TINYUSDZ_DEBUG_PRINT to be defined during compilation)
+#if !defined(TINYUSDZ_PRODUCTION_BUILD) && !defined(TINYUSDZ_FUZZER_BUILD)
+#if defined(TINYUSDZ_DEBUG_PRINT)
+#define TINYUSDZ_LOCAL_DEBUG_PRINT
+#endif
+#endif
+
+#if defined(TINYUSDZ_LOCAL_DEBUG_PRINT)
+// DCOUT macro - accepts iostream expressions with << operator
+// Example usage: DCOUT("ptr = " << std::hex << ptr)
+#define DCOUT(x)                                               \
+  do {                                                         \
+    if (tinyusdz::g_enable_dcout_output) {                     \
+      std::ostringstream dcout_ss;                             \
+      dcout_ss << x;                                           \
+      std::cout << __FILE__ << ":" << __func__ << ":"          \
+                << std::to_string(__LINE__) << " "             \
+                << dcout_ss.str() << "\n";                     \
+    }                                                          \
+  } while (false)
+#else
+#define DCOUT(x)
+#endif
+
+#undef TINYUSDZ_LOCAL_DEBUG_PRINT
