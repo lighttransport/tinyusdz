@@ -2,6 +2,77 @@
 
 This document outlines potential areas for refactoring in the TinyUSDZ codebase to improve maintainability, readability, and extensibility.
 
+## Timesamples Module (`src/timesamples.*` and `src/timesamples-pprint.*`)
+
+### Summary of Refactoring Opportunities
+
+The timesamples module contains several areas where code duplication and complexity could be reduced through refactoring:
+
+#### 1. Consolidate POD Type Metadata and Handling
+
+*   **Files:** `src/timesamples.cc:203-429` (get_samples_converted), `src/timesamples.cc:432-498` (get_element_size)
+*   **Opportunity:** Both functions expand the same exhaustive POD type list using macros. This could be refactored to use a centralized type traits table or constexpr map that associates type IDs with their properties (size, converter functions).
+*   **Impact:** Would eliminate ~100+ lines of duplicate macro expansions and make adding new types easier.
+
+#### 2. Simplify PODTimeSamples::update() Sorting Logic
+
+*   **File:** `src/timesamples.cc:17-115`
+*   **Opportunity:** The function interleaves three distinct sorting strategies (offset-backed, legacy AoS, minimal) with deeply nested conditionals. Extract each strategy into separate helper methods or adopt a strategy pattern.
+*   **Current Issues:**
+    - Complex branching makes it hard to reason about the flow
+    - Difficult to test individual sorting paths
+    - The offset calculation loop for legacy path is particularly convoluted
+
+#### 3. Refactor Repetitive add_* Methods
+
+*   **Files:** `src/timesamples.hh:198-300`
+*   **Opportunity:** The `add_sample`, `add_array_sample`, and `add_typed_array_sample` methods repeat the same underlying type checks, offset initialization, and error handling. A common template or base implementation could reduce duplication.
+*   **Pattern Found:** Each method performs:
+    - Type ID validation
+    - Offset table initialization on first non-blocked sample
+    - Buffer resizing
+    - Similar error message construction
+
+#### 4. Reduce Template Specialization Redundancy
+
+*   **File:** `src/timesamples.cc` (48 PODTimeSamples::add_sample specializations, 21 add_typed_array_sample specializations, 100+ TypedTimeSamples::get specializations)
+*   **Opportunity:** These explicit template specializations could potentially be generated through template metaprogramming or replaced with a single variadic template implementation that handles all POD types uniformly.
+
+#### 5. Consolidate Pretty Print Functions
+
+*   **File:** `src/timesamples-pprint.cc`
+*   **Opportunity:** Contains numerous repetitive print functions (print_float, print_double, print_float2, print_float3, etc.). These could be:
+    - Unified using templates with proper SFINAE/concepts
+    - Replaced with a visitor pattern
+    - Generated from a type traits table
+*   **Current Pattern:** Each type has its own print function with nearly identical implementation
+
+#### 6. Unify Type Dispatch Mechanisms
+
+*   **Files:** `src/timesamples.cc`, `src/timesamples-pprint.cc`
+*   **Opportunity:** Multiple locations use large if-else chains or switch statements to dispatch based on type_id. This could be centralized using:
+    - A type registry with function pointers
+    - std::variant with std::visit (C++17)
+    - A compile-time map of type_id to handler functions
+
+#### 7. Extract Common Buffer Management Logic
+
+*   **Files:** `src/timesamples.hh`, `src/timesamples.cc`
+*   **Opportunity:** The PODTimeSamples class manages several parallel buffers (_times, _values, _blocked, _offsets) with complex synchronization requirements. Extract a BufferManager class to handle:
+    - Coordinated resizing
+    - Offset management
+    - Dirty tracking
+    - Memory estimation
+
+#### 8. Simplify TimeSamples/PODTimeSamples Interaction
+
+*   **Files:** `src/timesamples.hh`
+*   **Opportunity:** The TimeSamples class wraps PODTimeSamples for POD types but maintains its own storage for non-POD types. This dual-storage approach leads to:
+    - Complex conditional logic throughout the API
+    - Duplication of methods between the two classes
+    - Potential for inconsistencies
+*   **Solution:** Consider a unified storage approach or clearer separation of responsibilities
+
 ## C++ Core (`src` directory)
 
 ### 1. Consolidate File Type Detection
@@ -26,20 +97,17 @@ This document outlines potential areas for refactoring in the TinyUSDZ codebase 
 *   **File:** `src/tydra/scene-access.cc`
 *   **Opportunity:** The `GetPrimProperty` and `ToProperty` template specializations contain a lot of repeated code. A more generic, template-based approach could reduce this duplication.
 
-### 5. Centralize POD Type Metadata
+### 5. [Moved to Timesamples Module Section]
 
-*   **Files:** `src/timesamples.cc:203`, `src/timesamples.cc:260`
-*   **Opportunity:** The same exhaustive POD type list is expanded in both `get_samples_converted()` and `get_element_size()`. Moving the type id → traits metadata into a shared table (e.g., `constexpr std::array` or traits map) would eliminate duplicate macros and make it harder to miss new role types.
+*   See "Timesamples Module" section above for comprehensive refactoring opportunities for POD type metadata centralization.
 
-### 6. Split PODTimeSamples Sorting Paths
+### 6. [Moved to Timesamples Module Section]
 
-*   **File:** `src/timesamples.hh:120`
-*   **Opportunity:** `PODTimeSamples::update()` interleaves three sorting strategies (offset-backed, legacy AoS, and minimal) in a single function with nested loops. Extracting helpers for each path or adopting a strategy object would clarify the branching and make it easier to reason about blocked-value handling.
+*   See "Timesamples Module" section above for comprehensive refactoring opportunities for PODTimeSamples sorting paths.
 
-### 7. Factor Type/Offset Guards for POD Samples
+### 7. [Moved to Timesamples Module Section]
 
-*   **File:** `src/timesamples.hh:198`, `src/timesamples.hh:244`, `src/timesamples.hh:300`
-*   **Opportunity:** The three `add_*` methods repeat the same underlying type checks, offset bootstrap, and error string construction. Introducing a small guard utility (e.g., `ensure_type_initialized<T>()`) and a reusable offset-initializer would reduce code size and ensure blocked/array transitions stay consistent.
+*   See "Timesamples Module" section above for comprehensive refactoring opportunities for type/offset guards in POD samples.
 
 ### 8. Generic Index Accessors
 
