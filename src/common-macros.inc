@@ -96,11 +96,16 @@ extern bool g_enable_dcout_output;
 #endif  // TINYUSDZ_PRODUCTION_BUILD
 
 #if defined(TINYUSDZ_LOCAL_DEBUG_PRINT)
+// DCOUT macro - accepts iostream expressions with << operator
+// Example usage: DCOUT("ptr = " << std::hex << ptr)
 #define DCOUT(x)                                               \
   do {                                                         \
     if (tinyusdz::g_enable_dcout_output) {                     \
+      std::ostringstream dcout_ss;                             \
+      dcout_ss << x;                                           \
       std::cout << __FILE__ << ":" << __func__ << ":"          \
-                << std::to_string(__LINE__) << " " << x << "\n"; \
+                << std::to_string(__LINE__) << " "             \
+                << dcout_ss.str() << "\n";                     \
     }                                                          \
   } while (false)
 #else
