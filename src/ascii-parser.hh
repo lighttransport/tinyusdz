@@ -169,12 +169,19 @@ class AsciiParser {
     CheckLineEndings           ///< Check for mixed line endings
   };
 
+  /// Error position mode - whether cursor position is exact or approximate
+  enum class ErrorPositionMode {
+    Exact,  ///< Exact cursor position is known
+    Near    ///< Approximate position (error happened near this location)
+  };
+
   struct ErrorDiagnostic {
     std::string err;
     Cursor cursor;
     ErrorType type{ErrorType::UnknownError};  ///< Error category
     ErrorRecoveryHint hint{ErrorRecoveryHint::NoHint};  ///< Recovery suggestion (Priority 4c)
     std::string suggestion;  ///< Suggested fix for the error (Priority 5)
+    ErrorPositionMode position_mode{ErrorPositionMode::Exact};  ///< Whether position is exact or approximate
 
     /// Get a human-readable error type name
     const char* TypeName() const {
@@ -218,7 +225,8 @@ class AsciiParser {
   void PushError(const std::string &msg,
                  ErrorType type = ErrorType::UnknownError,
                  ErrorRecoveryHint hint = ErrorRecoveryHint::NoHint,
-                 const std::string &suggestion = "") {
+                 const std::string &suggestion = "",
+                 ErrorPositionMode position_mode = ErrorPositionMode::Exact) {
     ErrorDiagnostic diag;
     diag.cursor.row = _curr_cursor.row;
     diag.cursor.col = _curr_cursor.col;
@@ -226,6 +234,7 @@ class AsciiParser {
     diag.type = type;
     diag.hint = hint;
     diag.suggestion = suggestion;
+    diag.position_mode = position_mode;
     err_stack.push(diag);
   }
 
@@ -239,7 +248,8 @@ class AsciiParser {
   void PushWarn(const std::string &msg,
                 ErrorType type = ErrorType::UnknownError,
                 ErrorRecoveryHint hint = ErrorRecoveryHint::NoHint,
-                const std::string &suggestion = "") {
+                const std::string &suggestion = "",
+                ErrorPositionMode position_mode = ErrorPositionMode::Exact) {
     ErrorDiagnostic diag;
     diag.cursor.row = _curr_cursor.row;
     diag.cursor.col = _curr_cursor.col;
@@ -247,6 +257,7 @@ class AsciiParser {
     diag.type = type;
     diag.hint = hint;
     diag.suggestion = suggestion;
+    diag.position_mode = position_mode;
     warn_stack.push(diag);
   }
 
@@ -851,7 +862,7 @@ class AsciiParser {
   /// @param[in] context_lines Number of lines of context to show around error
   /// @return Formatted error messages with source code context and visual indicators
   ///
-  std::string GetErrorWithSourceContext(const std::string& filename, int context_lines = 2);
+  std::string GetErrorWithSourceContext(const std::string& filename, int context_lines = 2, int column_width = 40);
 
 #if 0
   // Return the flag if the .usda is read from `references`
