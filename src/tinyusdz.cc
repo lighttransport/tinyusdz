@@ -763,6 +763,7 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length,
   reader.set_reader_config(config);
 
   reader.SetBaseDir(base_dir);
+  reader.set_filename(base_dir);  // Pass filename for error context display
 
   {
     bool ret = reader.Read();
@@ -848,7 +849,7 @@ bool LoadUSDAFromFile(const std::string &_filename, Stage *stage,
       }
     }
 
-    return LoadUSDAFromMemory(data.data(), data.size(), base_dir, stage, warn,
+    return LoadUSDAFromMemory(data.data(), data.size(), filepath, stage, warn,
                               err, options);
   }
 }
