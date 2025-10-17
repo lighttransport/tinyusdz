@@ -787,7 +787,7 @@ public:
       std::memcpy(&packed_value, src, sizeof(uint64_t));
     }
 
-    TUSDZ_LOG_I("PODTimeSamples::get_typed_array_at idx=" << idx << " packed_value=0x" << std::hex << packed_value << std::dec);
+    DCOUT("PODTimeSamples::get_typed_array_at idx=" << idx << " packed_value=0x" << std::hex << packed_value << std::dec);
 
     // Reconstruct TypedArray from packed value
     // Note: This creates a shallow copy - the underlying TypedArrayImpl is shared
@@ -798,16 +798,16 @@ public:
     uint64_t ptr_bits = packed_value & 0x0000FFFFFFFFFFFFULL;  // Lower 48 bits
     // Note: dedup flag is in bit 63 but we always mark as dedup when retrieving
 
-    TUSDZ_LOG_I("PODTimeSamples::get_typed_array_at after mask: ptr_bits=0x" << std::hex << ptr_bits << std::dec);
+    DCOUT("PODTimeSamples::get_typed_array_at after mask: ptr_bits=0x" << std::hex << ptr_bits << std::dec);
 
     // Sign-extend from 48 bits to 64 bits for canonical address
     if (ptr_bits & (1ULL << 47)) {
       ptr_bits |= 0xFFFF000000000000ULL;
-      TUSDZ_LOG_I("PODTimeSamples::get_typed_array_at sign-extended: ptr_bits=0x" << std::hex << ptr_bits << std::dec);
+      DCOUT("PODTimeSamples::get_typed_array_at sign-extended: ptr_bits=0x" << std::hex << ptr_bits << std::dec);
     }
 
     ptr = reinterpret_cast<TypedArrayImpl<T>*>(ptr_bits);
-    TUSDZ_LOG_I("PODTimeSamples::get_typed_array_at ptr=" << std::hex << ptr << " size=" << std::dec << (ptr ? ptr->size() : 0));
+    DCOUT("PODTimeSamples::get_typed_array_at ptr=" << std::hex << ptr << " size=" << std::dec << (ptr ? ptr->size() : 0));
 
     // Create TypedArray with dedup flag set (to prevent deletion)
     *typed_array = TypedArray<T>(ptr, true);  // Always mark as dedup when retrieving
@@ -1017,7 +1017,7 @@ struct TimeSamples {
   /// Initialize TimeSamples with a specific type_id
   /// This determines whether to use POD optimization or regular storage
   bool init(uint32_t type_id) {
-    //TUSDZ_LOG_I("init" << type_id);
+    //DCOUT("init" << type_id);
     DCOUT("init" << type_id);
 
     // Allow initialization if empty OR if it contains only uninitialized blocked samples
@@ -1027,7 +1027,7 @@ struct TimeSamples {
     _type_id = type_id;
     _use_pod = value::is_pod_type_id(type_id);
     if (_use_pod) {
-      //TUSDZ_LOG_I("  use_pod: " << type_id);
+      //DCOUT("  use_pod: " << type_id);
       _pod_samples._type_id = type_id;
     }
     return true;
@@ -1281,8 +1281,8 @@ struct TimeSamples {
       init(value::TypeTraits<T>::type_id());
     }
 
-    TUSDZ_LOG_I("is dedup? " << value.is_dedup());
-    TUSDZ_LOG_I("_use_pod? " << _use_pod);
+    DCOUT("is dedup? " << value.is_dedup());
+    DCOUT("_use_pod? " << _use_pod);
 
     if (_use_pod) {
       bool result = _pod_samples.add_array_sample<T>(t, value.data(), value.size(), err, expected_total_samples);
