@@ -39,8 +39,8 @@ void PODTimeSamples::update() const {
 
   // HACK
   for (size_t i = 0; i < indices.size(); ++i) {
-    TUSDZ_LOG_I("indices[" << i << "] = " << indices[i]);
-    TUSDZ_LOG_I("times[" << i << "] = " << _times[i]);
+    DCOUT("indices[" << i << "] = " << indices[i]);
+    DCOUT("times[" << i << "] = " << _times[i]);
   }
 
   // Reorder arrays based on sorted indices
@@ -73,8 +73,8 @@ void PODTimeSamples::update() const {
       for (size_t i = 0; i < indices.size(); ++i) {
         sorted_times[i] = _times[indices[i]];
         sorted_blocked[i] = _blocked[indices[i]];
-        TUSDZ_LOG_I("sorted.times[" << i << "] = " << sorted_times[i]);
-        TUSDZ_LOG_I("sorted.blocked[" << i << "] = " << sorted_blocked[i]);
+        DCOUT("sorted.times[" << i << "] = " << sorted_times[i]);
+        DCOUT("sorted.blocked[" << i << "] = " << sorted_blocked[i]);
 
         // Only copy value if not blocked
         if (!_blocked[indices[i]]) {
@@ -817,15 +817,15 @@ bool PODTimeSamples::add_typed_array_sample(double t, const TypedArray<T>& typed
 
     _offsets.push_back(_values.size());
     _values.resize(_values.size() + sizeof(uint64_t));
-    TUSDZ_LOG_I("offset = " << _offsets.back());
-    TUSDZ_LOG_I("packed_value = 0x" << std::hex << packed_value << std::dec);
-    TUSDZ_LOG_I("Writing to address: 0x" << std::hex << reinterpret_cast<uintptr_t>(_values.data() + _offsets.back()) << std::dec);
+    DCOUT("offset = " << _offsets.back());
+    DCOUT("packed_value = 0x" << std::hex << packed_value << std::dec);
+    DCOUT("Writing to address: 0x" << std::hex << reinterpret_cast<uintptr_t>(_values.data() + _offsets.back()) << std::dec);
     std::memcpy(_values.data() + _offsets.back(), &packed_value, sizeof(uint64_t));
 
     // Verify what was written
     uint64_t verify_read;
     std::memcpy(&verify_read, _values.data() + _offsets.back(), sizeof(uint64_t));
-    TUSDZ_LOG_I("Verified written value: 0x" << std::hex << verify_read << std::dec);
+    DCOUT("Verified written value: 0x" << std::hex << verify_read << std::dec);
   } else {
     // Simple append without offsets
     size_t old_size = _values.size();
