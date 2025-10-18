@@ -406,9 +406,11 @@ class TraceManager {
         out << "      \"line\": " << record.line_number << ",\n";
         
         // Format timestamp as ISO 8601 string
+        // Need to cast to system_clock duration to avoid precision mismatch
         auto start_time_t = std::chrono::system_clock::to_time_t(
-          std::chrono::system_clock::now() + 
-          (record.start_time - std::chrono::high_resolution_clock::now()));
+          std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+            std::chrono::system_clock::now() +
+            (record.start_time - std::chrono::high_resolution_clock::now())));
         
         std::stringstream timestamp_ss;
         timestamp_ss << std::put_time(std::gmtime(&start_time_t), "%Y-%m-%dT%H:%M:%S");

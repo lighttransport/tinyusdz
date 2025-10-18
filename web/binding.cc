@@ -1742,7 +1742,10 @@ class TinyUSDZLoaderNative {
 
     const tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
 
-    if (!tinyusdz::LayerToStage(curr, &stage, &warn_, &error_)) {
+    // LayerToStage expects an rvalue reference, so make a copy
+    tinyusdz::Layer layer_copy = curr;
+
+    if (!tinyusdz::LayerToStage(std::move(layer_copy), &stage, &warn_, &error_)) {
       std::cerr << "Failed to LayerToStage \n";
       return false;
     }
