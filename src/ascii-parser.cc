@@ -2056,13 +2056,13 @@ bool AsciiParser::ReadPrimAttrIdentifier(std::string *token) {
   bool first_char = true;
 
   // Save stream position and row before reading any characters
-  size_t start_stream_pos = _sr->tell();
+  uint64_t start_stream_pos = _sr->tell();
   int start_row = _curr_cursor.row;
 
   // Helper lambda to calculate correct column from stream position
   auto calculate_cursor_from_stream_pos = [&]() {
-    size_t line_start_pos = start_stream_pos;
-    size_t saved_pos = _sr->tell();
+    uint64_t line_start_pos = start_stream_pos;
+    uint64_t saved_pos = _sr->tell();
     _sr->seek_set(start_stream_pos);
 
     int col_offset = 0;

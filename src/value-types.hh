@@ -2500,17 +2500,18 @@ class Value {
 };
 
 ///
-/// ValueView - A compact 16-byte view to typed data
+/// ValueView - A compact view to typed data
 ///
 /// ValueView provides a lightweight, non-owning view over typed data with
 /// inline type information. The view stores a pointer, type_id, and flags
-/// in a compact 16-byte representation for efficient memory usage.
+/// in a compact representation for efficient memory usage.
 ///
-/// Memory layout (16 bytes total):
-/// - pointer: 8 bytes (64-bit)
+/// Memory layout:
+/// - pointer: sizeof(void*) bytes (4 on 32-bit, 8 on 64-bit)
 /// - type_id: 4 bytes (32-bit)
 /// - flags: 1 byte (bit 0: is_vector, bit 1: is_typed_array)
 /// - padding: 3 bytes
+/// Total: 12 bytes on 32-bit, 16 bytes on 64-bit
 ///
 class ValueView {
  public:
@@ -2759,14 +2760,16 @@ class ValueView {
     *this = ValueView(ptr);
   }
 
-  // Size check - ensure we're exactly 16 bytes
-  static_assert(sizeof(void*) == 8, "Expecting 64-bit pointer");
+  // Size check - ensure we have the expected compact size for the platform
+  // 12 bytes on 32-bit (4+4+1+3), 16 bytes on 64-bit (8+4+1+3)
+  static_assert(sizeof(void*) == 4 || sizeof(void*) == 8,
+                "Expecting 32-bit or 64-bit pointer");
 
  private:
-  const void* ptr_;        // 8 bytes: Pointer to data
+  const void* ptr_;        // sizeof(void*) bytes: Pointer to data
   uint32_t type_id_;       // 4 bytes: Type identifier
   uint8_t flags_;          // 1 byte: Storage flags
-  uint8_t padding_[3];     // 3 bytes: Padding to reach 16 bytes
+  uint8_t padding_[3];     // 3 bytes: Padding
 
   // Placeholder for Value compatibility
   static Value value_placeholder_;
