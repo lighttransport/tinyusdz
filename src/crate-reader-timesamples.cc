@@ -209,9 +209,16 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
     return true;
   }
 
+  // Check if num_values fits in size_t (for 32-bit builds)
+  if (num_values > std::numeric_limits<size_t>::max()) {
+    PUSH_ERROR_AND_RETURN_TAG(
+        kTag, "Number of values exceeds maximum size_t limit.");
+    return false;
+  }
+
   // Read all ValueReps first
   auto vrep_start_offset = _sr->tell();
-  std::vector<crate::ValueRep> value_reps(num_values);
+  std::vector<crate::ValueRep> value_reps(static_cast<size_t>(num_values));
   for (size_t i = 0; i < num_values; i++) {
     if (!ReadValueRep(&value_reps[i])) {
       PUSH_ERROR_AND_RETURN_TAG(
