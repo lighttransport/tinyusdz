@@ -14,102 +14,212 @@
 
 namespace tinyusdz {
 
+// ============================================================================
+// Centralized POD Type Registry
+// ============================================================================
+// This macro lists all POD types supported by PODTimeSamples.
+// By centralizing the type list, we avoid duplicating it across multiple
+// functions (get_element_size, get_samples_converted, etc.)
+//
+// Usage: TINYUSDZ_POD_TYPE_LIST(MACRO_NAME)
+// where MACRO_NAME is a macro that takes a single type argument.
+//
+#define TINYUSDZ_POD_TYPE_LIST(__MACRO) \
+  __MACRO(int32_t) \
+  __MACRO(uint32_t) \
+  __MACRO(int64_t) \
+  __MACRO(uint64_t) \
+  __MACRO(value::half) \
+  __MACRO(value::half2) \
+  __MACRO(value::half3) \
+  __MACRO(value::half4) \
+  __MACRO(float) \
+  __MACRO(value::float2) \
+  __MACRO(value::float3) \
+  __MACRO(value::float4) \
+  __MACRO(double) \
+  __MACRO(value::double2) \
+  __MACRO(value::double3) \
+  __MACRO(value::double4) \
+  __MACRO(value::int2) \
+  __MACRO(value::int3) \
+  __MACRO(value::int4) \
+  __MACRO(value::quath) \
+  __MACRO(value::quatf) \
+  __MACRO(value::quatd) \
+  __MACRO(value::color3f) \
+  __MACRO(value::color3h) \
+  __MACRO(value::color3d) \
+  __MACRO(value::color4f) \
+  __MACRO(value::color4h) \
+  __MACRO(value::color4d) \
+  __MACRO(value::vector3f) \
+  __MACRO(value::vector3h) \
+  __MACRO(value::vector3d) \
+  __MACRO(value::normal3f) \
+  __MACRO(value::normal3h) \
+  __MACRO(value::normal3d) \
+  __MACRO(value::point3f) \
+  __MACRO(value::point3h) \
+  __MACRO(value::point3d) \
+  __MACRO(value::texcoord2f) \
+  __MACRO(value::texcoord2h) \
+  __MACRO(value::texcoord2d) \
+  __MACRO(value::texcoord3f) \
+  __MACRO(value::texcoord3h) \
+  __MACRO(value::texcoord3d) \
+  __MACRO(value::frame4d)
+
+// ============================================================================
+// PODTimeSamples Sorting Strategy Helper Methods
+// ============================================================================
+
+namespace {
+
+// Helper: Create sorted index array based on time values
+inline std::vector<size_t> create_sort_indices(const std::vector<double>& times) {
+  std::vector<size_t> indices(times.size());
+  for (size_t i = 0; i < indices.size(); ++i) {
+    indices[i] = i;
+  }
+  std::sort(indices.begin(), indices.end(),
+            [&times](size_t a, size_t b) { return times[a] < times[b]; });
+  return indices;
+}
+
+// Strategy 1: Offset-backed sorting
+// Used when offset table exists - values don't need reordering
+inline void sort_with_offsets(
+    const std::vector<size_t>& indices,
+    std::vector<double>& times,
+    Buffer<16>& blocked,
+    std::vector<size_t>& offsets) {
+
+  std::vector<double> sorted_times(times.size());
+  Buffer<16> sorted_blocked;
+  sorted_blocked.resize(blocked.size());
+  std::vector<size_t> sorted_offsets(offsets.size());
+
+  for (size_t i = 0; i < indices.size(); ++i) {
+    sorted_times[i] = times[indices[i]];
+    sorted_blocked[i] = blocked[indices[i]];
+    sorted_offsets[i] = offsets[indices[i]];
+  }
+
+  times = std::move(sorted_times);
+  blocked = std::move(sorted_blocked);
+  offsets = std::move(sorted_offsets);
+  // Note: values array doesn't need reordering as offsets handle the mapping
+}
+
+// Strategy 2: Legacy path with compact value storage
+// Used for scalar types without offset table - values need reordering
+inline void sort_with_compact_values(
+    const std::vector<size_t>& indices,
+    std::vector<double>& times,
+    Buffer<16>& blocked,
+    Buffer<16>& values,
+    size_t element_size) {
+
+  std::vector<double> sorted_times(times.size());
+  Buffer<16> sorted_blocked;
+  sorted_blocked.resize(blocked.size());
+  Buffer<16> sorted_values;
+  sorted_values.resize(values.size());
+
+  size_t dst_offset = 0;
+  for (size_t i = 0; i < indices.size(); ++i) {
+    sorted_times[i] = times[indices[i]];
+    sorted_blocked[i] = blocked[indices[i]];
+
+    DCOUT("sorted.times[" << i << "] = " << sorted_times[i]);
+    DCOUT("sorted.blocked[" << i << "] = " << sorted_blocked[i]);
+
+    // Only copy value if not blocked
+    if (!blocked[indices[i]]) {
+      // Find source offset by counting non-blocked entries before indices[i]
+      size_t src_offset = 0;
+      for (size_t j = 0; j < indices[i]; ++j) {
+        if (!blocked[j]) {
+          src_offset += element_size;
+        }
+      }
+
+      const uint8_t* src = values.data() + src_offset;
+      uint8_t* dst = sorted_values.data() + dst_offset;
+      std::copy(src, src + element_size, dst);
+      dst_offset += element_size;
+    }
+  }
+
+  times = std::move(sorted_times);
+  blocked = std::move(sorted_blocked);
+  values = std::move(sorted_values);
+}
+
+// Strategy 3: Minimal sorting
+// Used when no values need reordering - just times and blocked flags
+inline void sort_minimal(
+    const std::vector<size_t>& indices,
+    std::vector<double>& times,
+    Buffer<16>& blocked) {
+
+  std::vector<double> sorted_times(times.size());
+  Buffer<16> sorted_blocked;
+  sorted_blocked.resize(blocked.size());
+
+  for (size_t i = 0; i < indices.size(); ++i) {
+    sorted_times[i] = times[indices[i]];
+    sorted_blocked[i] = blocked[indices[i]];
+  }
+
+  times = std::move(sorted_times);
+  blocked = std::move(sorted_blocked);
+}
+
+} // anonymous namespace
+
 // PODTimeSamples::update() implementation
 void PODTimeSamples::update() const {
+  // Early exit for empty or already sorted data
   if (_times.empty()) {
     _dirty = false;
     return;
   }
 
-  // Lazy sorting optimization: only sort if there's a dirty range
   if (_dirty_start >= _times.size()) {
     _dirty = false;
     return;
   }
 
-  // Create index array for sorting
-  std::vector<size_t> indices(_times.size());
-  for (size_t i = 0; i < indices.size(); ++i) {
-    indices[i] = i;
-  }
+  // Create sorted index array
+  std::vector<size_t> indices = create_sort_indices(_times);
 
-  // Sort indices based on times
-  std::sort(indices.begin(), indices.end(),
-            [this](size_t a, size_t b) { return _times[a] < _times[b]; });
-
-  // HACK
+  // Debug output
   for (size_t i = 0; i < indices.size(); ++i) {
     DCOUT("indices[" << i << "] = " << indices[i]);
     DCOUT("times[" << i << "] = " << _times[i]);
   }
 
-  // Reorder arrays based on sorted indices
-  std::vector<double> sorted_times(_times.size());
-  Buffer<16> sorted_blocked;
-  sorted_blocked.resize(_blocked.size());
-
-  // If using offsets, sort them too
+  // Dispatch to appropriate sorting strategy
   if (!_offsets.empty()) {
-    std::vector<size_t> sorted_offsets(_offsets.size());
-    for (size_t i = 0; i < indices.size(); ++i) {
-      sorted_times[i] = _times[indices[i]];
-      sorted_blocked[i] = _blocked[indices[i]];
-      sorted_offsets[i] = _offsets[indices[i]];
-
-    }
-    _times = std::move(sorted_times);
-    _blocked = std::move(sorted_blocked);
-    _offsets = std::move(sorted_offsets);
-    // Note: _values array doesn't need reordering as offsets handle the mapping
+    // Strategy 1: Offset-backed storage
+    sort_with_offsets(indices, _times, _blocked, _offsets);
   } else if (!_values.empty() && _type_id != 0) {
-    // For non-array scalar types without offsets (legacy path)
-    // Calculate element size from stored element size or type
+    // Strategy 2: Legacy compact storage
     size_t element_size = get_element_size();
     if (element_size > 0) {
-      Buffer<16> sorted_values;
-      sorted_values.resize(_values.size());
-
-      size_t dst_offset = 0;
-      for (size_t i = 0; i < indices.size(); ++i) {
-        sorted_times[i] = _times[indices[i]];
-        sorted_blocked[i] = _blocked[indices[i]];
-        DCOUT("sorted.times[" << i << "] = " << sorted_times[i]);
-        DCOUT("sorted.blocked[" << i << "] = " << sorted_blocked[i]);
-
-        // Only copy value if not blocked
-        if (!_blocked[indices[i]]) {
-          // Find source offset by counting non-blocked entries before indices[i]
-          size_t src_offset = 0;
-          for (size_t j = 0; j < indices[i]; ++j) {
-            if (!_blocked[j]) {
-              src_offset += element_size;
-            }
-          }
-
-          const uint8_t* src = _values.data() + src_offset;
-          uint8_t* dst = sorted_values.data() + dst_offset;
-          std::copy(src, src + element_size, dst);
-          dst_offset += element_size;
-        }
-      }
-
-      _times = std::move(sorted_times);
-      _blocked = std::move(sorted_blocked);
-      _values = std::move(sorted_values);
+      sort_with_compact_values(indices, _times, _blocked, _values, element_size);
     } else {
-      _times = std::move(sorted_times);
-      _blocked = std::move(sorted_blocked);
+      // Unknown element size - fall back to minimal sorting
+      sort_minimal(indices, _times, _blocked);
     }
   } else {
-    // Just sort times and blocked flags
-    for (size_t i = 0; i < indices.size(); ++i) {
-      sorted_times[i] = _times[indices[i]];
-      sorted_blocked[i] = _blocked[indices[i]];
-    }
-    _times = std::move(sorted_times);
-    _blocked = std::move(sorted_blocked);
+    // Strategy 3: Minimal sorting (no values to reorder)
+    sort_minimal(indices, _times, _blocked);
   }
 
+  // Mark as clean
   _dirty = false;
   _dirty_start = SIZE_MAX;
   _dirty_end = 0;
@@ -373,52 +483,13 @@ std::vector<std::pair<double, std::pair<value::Value, bool>>> PODTimeSamples::ge
       }
     }
   } else
-  // Handle all other POD types
-  HANDLE_POD_TYPE(value::TypeTraits<int32_t>::type_id(), int32_t)
-  HANDLE_POD_TYPE(value::TypeTraits<uint32_t>::type_id(), uint32_t)
-  HANDLE_POD_TYPE(value::TypeTraits<int64_t>::type_id(), int64_t)
-  HANDLE_POD_TYPE(value::TypeTraits<uint64_t>::type_id(), uint64_t)
-  HANDLE_POD_TYPE(value::TypeTraits<value::half>::type_id(), value::half)
-  HANDLE_POD_TYPE(value::TypeTraits<value::half2>::type_id(), value::half2)
-  HANDLE_POD_TYPE(value::TypeTraits<value::half3>::type_id(), value::half3)
-  HANDLE_POD_TYPE(value::TypeTraits<value::half4>::type_id(), value::half4)
-  HANDLE_POD_TYPE(value::TypeTraits<float>::type_id(), float)
-  HANDLE_POD_TYPE(value::TypeTraits<value::float2>::type_id(), value::float2)
-  HANDLE_POD_TYPE(value::TypeTraits<value::float3>::type_id(), value::float3)
-  HANDLE_POD_TYPE(value::TypeTraits<value::float4>::type_id(), value::float4)
-  HANDLE_POD_TYPE(value::TypeTraits<double>::type_id(), double)
-  HANDLE_POD_TYPE(value::TypeTraits<value::double2>::type_id(), value::double2)
-  HANDLE_POD_TYPE(value::TypeTraits<value::double3>::type_id(), value::double3)
-  HANDLE_POD_TYPE(value::TypeTraits<value::double4>::type_id(), value::double4)
-  HANDLE_POD_TYPE(value::TypeTraits<value::int2>::type_id(), value::int2)
-  HANDLE_POD_TYPE(value::TypeTraits<value::int3>::type_id(), value::int3)
-  HANDLE_POD_TYPE(value::TypeTraits<value::int4>::type_id(), value::int4)
-  HANDLE_POD_TYPE(value::TypeTraits<value::quath>::type_id(), value::quath)
-  HANDLE_POD_TYPE(value::TypeTraits<value::quatf>::type_id(), value::quatf)
-  HANDLE_POD_TYPE(value::TypeTraits<value::quatd>::type_id(), value::quatd)
-  HANDLE_POD_TYPE(value::TypeTraits<value::color3f>::type_id(), value::color3f)
-  HANDLE_POD_TYPE(value::TypeTraits<value::color3h>::type_id(), value::color3h)
-  HANDLE_POD_TYPE(value::TypeTraits<value::color3d>::type_id(), value::color3d)
-  HANDLE_POD_TYPE(value::TypeTraits<value::color4f>::type_id(), value::color4f)
-  HANDLE_POD_TYPE(value::TypeTraits<value::color4h>::type_id(), value::color4h)
-  HANDLE_POD_TYPE(value::TypeTraits<value::color4d>::type_id(), value::color4d)
-  HANDLE_POD_TYPE(value::TypeTraits<value::vector3f>::type_id(), value::vector3f)
-  HANDLE_POD_TYPE(value::TypeTraits<value::vector3h>::type_id(), value::vector3h)
-  HANDLE_POD_TYPE(value::TypeTraits<value::vector3d>::type_id(), value::vector3d)
-  HANDLE_POD_TYPE(value::TypeTraits<value::normal3f>::type_id(), value::normal3f)
-  HANDLE_POD_TYPE(value::TypeTraits<value::normal3h>::type_id(), value::normal3h)
-  HANDLE_POD_TYPE(value::TypeTraits<value::normal3d>::type_id(), value::normal3d)
-  HANDLE_POD_TYPE(value::TypeTraits<value::point3f>::type_id(), value::point3f)
-  HANDLE_POD_TYPE(value::TypeTraits<value::point3h>::type_id(), value::point3h)
-  HANDLE_POD_TYPE(value::TypeTraits<value::point3d>::type_id(), value::point3d)
-  HANDLE_POD_TYPE(value::TypeTraits<value::texcoord2f>::type_id(), value::texcoord2f)
-  HANDLE_POD_TYPE(value::TypeTraits<value::texcoord2h>::type_id(), value::texcoord2h)
-  HANDLE_POD_TYPE(value::TypeTraits<value::texcoord2d>::type_id(), value::texcoord2d)
-  HANDLE_POD_TYPE(value::TypeTraits<value::texcoord3f>::type_id(), value::texcoord3f)
-  HANDLE_POD_TYPE(value::TypeTraits<value::texcoord3h>::type_id(), value::texcoord3h)
-  HANDLE_POD_TYPE(value::TypeTraits<value::texcoord3d>::type_id(), value::texcoord3d)
-  // frame4d is also POD
-  HANDLE_POD_TYPE(value::TypeTraits<value::frame4d>::type_id(), value::frame4d)
+  // Use centralized type registry for all other POD types
+#define HANDLE_POD_TYPE_WRAPPER(__type) \
+  HANDLE_POD_TYPE(value::TypeTraits<__type>::type_id(), __type)
+
+  TINYUSDZ_POD_TYPE_LIST(HANDLE_POD_TYPE_WRAPPER)
+
+#undef HANDLE_POD_TYPE_WRAPPER
   {
     // Unknown type_id - this shouldn't happen for PODTimeSamples
     // Return empty vector
@@ -431,69 +502,20 @@ std::vector<std::pair<double, std::pair<value::Value, bool>>> PODTimeSamples::ge
 
 // Helper function to get element size for a given type_id
 size_t PODTimeSamples::get_element_size() const {
-  // Calculate element size based on type_id
+  // Handle bool separately (special case due to std::vector<bool> specialization)
+  if (_type_id == value::TypeTraits<bool>::type_id()) {
+    return sizeof(bool);
+  }
+
+  // Use centralized type registry for all other POD types
 #define TYPE_SIZE_CASE(__type)                                                \
   if (_type_id == value::TypeTraits<__type>::type_id()) {                    \
     return sizeof(__type);                                                    \
   }
 
-  TYPE_SIZE_CASE(bool)
-  TYPE_SIZE_CASE(int32_t)
-  TYPE_SIZE_CASE(uint32_t)
-  TYPE_SIZE_CASE(int64_t)
-  TYPE_SIZE_CASE(uint64_t)
-  TYPE_SIZE_CASE(value::half)
-  TYPE_SIZE_CASE(value::half2)
-  TYPE_SIZE_CASE(value::half3)
-  TYPE_SIZE_CASE(value::half4)
-  TYPE_SIZE_CASE(float)
-  TYPE_SIZE_CASE(value::float2)
-  TYPE_SIZE_CASE(value::float3)
-  TYPE_SIZE_CASE(value::float4)
-  TYPE_SIZE_CASE(double)
-  TYPE_SIZE_CASE(value::double2)
-  TYPE_SIZE_CASE(value::double3)
-  TYPE_SIZE_CASE(value::double4)
-  TYPE_SIZE_CASE(value::int2)
-  TYPE_SIZE_CASE(value::int3)
-  TYPE_SIZE_CASE(value::int4)
-  TYPE_SIZE_CASE(value::quath)
-  TYPE_SIZE_CASE(value::quatf)
-  TYPE_SIZE_CASE(value::quatd)
-  TYPE_SIZE_CASE(value::color3f)
-  TYPE_SIZE_CASE(value::color3h)
-  TYPE_SIZE_CASE(value::color3d)
-  TYPE_SIZE_CASE(value::color4f)
-  TYPE_SIZE_CASE(value::color4h)
-  TYPE_SIZE_CASE(value::color4d)
-  TYPE_SIZE_CASE(value::vector3f)
-  TYPE_SIZE_CASE(value::vector3h)
-  TYPE_SIZE_CASE(value::vector3d)
-  TYPE_SIZE_CASE(value::normal3f)
-  TYPE_SIZE_CASE(value::normal3h)
-  TYPE_SIZE_CASE(value::normal3d)
-  TYPE_SIZE_CASE(value::point3f)
-  TYPE_SIZE_CASE(value::point3h)
-  TYPE_SIZE_CASE(value::point3d)
-  TYPE_SIZE_CASE(value::texcoord2f)
-  TYPE_SIZE_CASE(value::texcoord2h)
-  TYPE_SIZE_CASE(value::texcoord2d)
-  TYPE_SIZE_CASE(value::texcoord3f)
-  TYPE_SIZE_CASE(value::texcoord3h)
-  TYPE_SIZE_CASE(value::texcoord3d)
-  TYPE_SIZE_CASE(value::frame4d)
+  TINYUSDZ_POD_TYPE_LIST(TYPE_SIZE_CASE)
 
 #undef TYPE_SIZE_CASE
-
-#if 0
-  if (_type_id == value::TYPE_ID_TYPED_TIMESAMPLE_VALUE) {
-    return sizeof(uint64_t);
-  }
-
-  if (_type_id == value::TYPE_ID_TYPED_ARRAY_TIMESAMPLE_VALUE) {
-    return sizeof(uint64_t);
-  }
-#endif
 
   return 0; // Unknown type
 }
@@ -707,73 +729,69 @@ bool PODTimeSamples::add_sample(double t, const T& value, std::string *err,
   return true;
 }
 
-// Explicit instantiations for PODTimeSamples::add_sample
-// Integer types
+// ============================================================================
+// Explicit Template Instantiations for PODTimeSamples::add_sample
+// ============================================================================
+// Note: add_sample requires trivial types, so frame4d is excluded
+
+// bool handled separately (special case)
 template bool PODTimeSamples::add_sample<bool>(double, const bool&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<int32_t>(double, const int32_t&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<uint32_t>(double, const uint32_t&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<int64_t>(double, const int64_t&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<uint64_t>(double, const uint64_t&, std::string*, size_t);
 
-// Float types
-template bool PODTimeSamples::add_sample<value::half>(double, const value::half&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<float>(double, const float&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<double>(double, const double&, std::string*, size_t);
+// Generate instantiations for POD types using centralized registry
+// Note: frame4d is excluded as it's not trivial (doesn't satisfy std::is_trivial)
+#define INSTANTIATE_ADD_SAMPLE(__type) \
+  template bool PODTimeSamples::add_sample<__type>(double, const __type&, std::string*, size_t);
 
-// Vector types - removed typedef versions, kept in std::array section below
+// Manually list types to exclude frame4d
+INSTANTIATE_ADD_SAMPLE(int32_t)
+INSTANTIATE_ADD_SAMPLE(uint32_t)
+INSTANTIATE_ADD_SAMPLE(int64_t)
+INSTANTIATE_ADD_SAMPLE(uint64_t)
+INSTANTIATE_ADD_SAMPLE(value::half)
+INSTANTIATE_ADD_SAMPLE(value::half2)
+INSTANTIATE_ADD_SAMPLE(value::half3)
+INSTANTIATE_ADD_SAMPLE(value::half4)
+INSTANTIATE_ADD_SAMPLE(float)
+INSTANTIATE_ADD_SAMPLE(value::float2)
+INSTANTIATE_ADD_SAMPLE(value::float3)
+INSTANTIATE_ADD_SAMPLE(value::float4)
+INSTANTIATE_ADD_SAMPLE(double)
+INSTANTIATE_ADD_SAMPLE(value::double2)
+INSTANTIATE_ADD_SAMPLE(value::double3)
+INSTANTIATE_ADD_SAMPLE(value::double4)
+INSTANTIATE_ADD_SAMPLE(value::int2)
+INSTANTIATE_ADD_SAMPLE(value::int3)
+INSTANTIATE_ADD_SAMPLE(value::int4)
+INSTANTIATE_ADD_SAMPLE(value::quath)
+INSTANTIATE_ADD_SAMPLE(value::quatf)
+INSTANTIATE_ADD_SAMPLE(value::quatd)
+INSTANTIATE_ADD_SAMPLE(value::color3f)
+INSTANTIATE_ADD_SAMPLE(value::color3h)
+INSTANTIATE_ADD_SAMPLE(value::color3d)
+INSTANTIATE_ADD_SAMPLE(value::color4f)
+INSTANTIATE_ADD_SAMPLE(value::color4h)
+INSTANTIATE_ADD_SAMPLE(value::color4d)
+INSTANTIATE_ADD_SAMPLE(value::vector3f)
+INSTANTIATE_ADD_SAMPLE(value::vector3h)
+INSTANTIATE_ADD_SAMPLE(value::vector3d)
+INSTANTIATE_ADD_SAMPLE(value::normal3f)
+INSTANTIATE_ADD_SAMPLE(value::normal3h)
+INSTANTIATE_ADD_SAMPLE(value::normal3d)
+INSTANTIATE_ADD_SAMPLE(value::point3f)
+INSTANTIATE_ADD_SAMPLE(value::point3h)
+INSTANTIATE_ADD_SAMPLE(value::point3d)
+INSTANTIATE_ADD_SAMPLE(value::texcoord2f)
+INSTANTIATE_ADD_SAMPLE(value::texcoord2h)
+INSTANTIATE_ADD_SAMPLE(value::texcoord2d)
+INSTANTIATE_ADD_SAMPLE(value::texcoord3f)
+INSTANTIATE_ADD_SAMPLE(value::texcoord3h)
+INSTANTIATE_ADD_SAMPLE(value::texcoord3d)
+// frame4d excluded - not trivial
 
-// Quaternion types
-template bool PODTimeSamples::add_sample<value::quath>(double, const value::quath&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<value::quatf>(double, const value::quatf&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<value::quatd>(double, const value::quatd&, std::string*, size_t);
+#undef INSTANTIATE_ADD_SAMPLE
 
-// Note: Matrix types are not trivial (don't satisfy std::is_trivial) so they cannot use PODTimeSamples::add_sample
-
-// Role types
-template bool PODTimeSamples::add_sample<value::vector3h>(double, const value::vector3h&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<value::vector3f>(double, const value::vector3f&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<value::vector3d>(double, const value::vector3d&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<value::normal3h>(double, const value::normal3h&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<value::normal3f>(double, const value::normal3f&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<value::normal3d>(double, const value::normal3d&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<value::point3h>(double, const value::point3h&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<value::point3f>(double, const value::point3f&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<value::point3d>(double, const value::point3d&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<value::color3h>(double, const value::color3h&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<value::color3f>(double, const value::color3f&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<value::color3d>(double, const value::color3d&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<value::color4h>(double, const value::color4h&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<value::color4f>(double, const value::color4f&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<value::color4d>(double, const value::color4d&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<value::texcoord2h>(double, const value::texcoord2h&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<value::texcoord2f>(double, const value::texcoord2f&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<value::texcoord2d>(double, const value::texcoord2d&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<value::texcoord3h>(double, const value::texcoord3h&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<value::texcoord3f>(double, const value::texcoord3f&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<value::texcoord3d>(double, const value::texcoord3d&, std::string*, size_t);
-
-// Other types
+// Additional types not in the POD list (timecode is a special case)
 template bool PODTimeSamples::add_sample<value::timecode>(double, const value::timecode&, std::string*, size_t);
-// Note: frame4d is not trivial (doesn't satisfy std::is_trivial) so it cannot use PODTimeSamples::add_sample
-
-// std::array versions - needed when code uses std::array directly instead of typedefs
-// These are the same types as the typedef versions above, but we need both to handle
-// cases where the code explicitly uses std::array
-template bool PODTimeSamples::add_sample<std::array<value::half, 2>>(double, const std::array<value::half, 2>&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<std::array<value::half, 3>>(double, const std::array<value::half, 3>&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<std::array<value::half, 4>>(double, const std::array<value::half, 4>&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<std::array<float, 2>>(double, const std::array<float, 2>&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<std::array<float, 3>>(double, const std::array<float, 3>&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<std::array<float, 4>>(double, const std::array<float, 4>&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<std::array<double, 2>>(double, const std::array<double, 2>&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<std::array<double, 3>>(double, const std::array<double, 3>&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<std::array<double, 4>>(double, const std::array<double, 4>&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<std::array<int, 2>>(double, const std::array<int, 2>&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<std::array<int, 3>>(double, const std::array<int, 3>&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<std::array<int, 4>>(double, const std::array<int, 4>&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<std::array<uint32_t, 2>>(double, const std::array<uint32_t, 2>&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<std::array<uint32_t, 3>>(double, const std::array<uint32_t, 3>&, std::string*, size_t);
-template bool PODTimeSamples::add_sample<std::array<uint32_t, 4>>(double, const std::array<uint32_t, 4>&, std::string*, size_t);
 
 // PODTimeSamples::add_typed_array_sample implementation
 template<typename T>
@@ -838,23 +856,20 @@ bool PODTimeSamples::add_typed_array_sample(double t, const TypedArray<T>& typed
   return true;
 }
 
-// Explicit instantiations for PODTimeSamples::add_typed_array_sample
-// Common types that use TypedArray
-template bool PODTimeSamples::add_typed_array_sample<float>(double, const TypedArray<float>&, std::string*, size_t);
-template bool PODTimeSamples::add_typed_array_sample<double>(double, const TypedArray<double>&, std::string*, size_t);
-template bool PODTimeSamples::add_typed_array_sample<int32_t>(double, const TypedArray<int32_t>&, std::string*, size_t);
-template bool PODTimeSamples::add_typed_array_sample<uint32_t>(double, const TypedArray<uint32_t>&, std::string*, size_t);
-template bool PODTimeSamples::add_typed_array_sample<int64_t>(double, const TypedArray<int64_t>&, std::string*, size_t);
-template bool PODTimeSamples::add_typed_array_sample<uint64_t>(double, const TypedArray<uint64_t>&, std::string*, size_t);
-template bool PODTimeSamples::add_typed_array_sample<value::float2>(double, const TypedArray<value::float2>&, std::string*, size_t);
-template bool PODTimeSamples::add_typed_array_sample<value::float3>(double, const TypedArray<value::float3>&, std::string*, size_t);
-template bool PODTimeSamples::add_typed_array_sample<value::float4>(double, const TypedArray<value::float4>&, std::string*, size_t);
-template bool PODTimeSamples::add_typed_array_sample<value::double2>(double, const TypedArray<value::double2>&, std::string*, size_t);
-template bool PODTimeSamples::add_typed_array_sample<value::double3>(double, const TypedArray<value::double3>&, std::string*, size_t);
-template bool PODTimeSamples::add_typed_array_sample<value::double4>(double, const TypedArray<value::double4>&, std::string*, size_t);
-template bool PODTimeSamples::add_typed_array_sample<value::int2>(double, const TypedArray<value::int2>&, std::string*, size_t);
-template bool PODTimeSamples::add_typed_array_sample<value::int3>(double, const TypedArray<value::int3>&, std::string*, size_t);
-template bool PODTimeSamples::add_typed_array_sample<value::int4>(double, const TypedArray<value::int4>&, std::string*, size_t);
+// ============================================================================
+// Explicit Template Instantiations for PODTimeSamples::add_typed_array_sample
+// ============================================================================
+// TypedArray can be used with types from the POD list plus matrix types
+
+// Generate instantiations for POD types
+#define INSTANTIATE_ADD_TYPED_ARRAY(__type) \
+  template bool PODTimeSamples::add_typed_array_sample<__type>(double, const TypedArray<__type>&, std::string*, size_t);
+
+TINYUSDZ_POD_TYPE_LIST(INSTANTIATE_ADD_TYPED_ARRAY)
+
+#undef INSTANTIATE_ADD_TYPED_ARRAY
+
+// Matrix types (not in POD list as they're not trivial, but used with TypedArray)
 template bool PODTimeSamples::add_typed_array_sample<value::matrix2f>(double, const TypedArray<value::matrix2f>&, std::string*, size_t);
 template bool PODTimeSamples::add_typed_array_sample<value::matrix3f>(double, const TypedArray<value::matrix3f>&, std::string*, size_t);
 template bool PODTimeSamples::add_typed_array_sample<value::matrix4f>(double, const TypedArray<value::matrix4f>&, std::string*, size_t);
