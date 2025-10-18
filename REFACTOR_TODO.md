@@ -8,20 +8,38 @@ This document outlines potential areas for refactoring in the TinyUSDZ codebase 
 
 The timesamples module contains several areas where code duplication and complexity could be reduced through refactoring:
 
-#### 1. Consolidate POD Type Metadata and Handling
+#### 1. ✅ COMPLETED: Consolidate POD Type Metadata and Handling
 
 *   **Files:** `src/timesamples.cc:203-429` (get_samples_converted), `src/timesamples.cc:432-498` (get_element_size)
-*   **Opportunity:** Both functions expand the same exhaustive POD type list using macros. This could be refactored to use a centralized type traits table or constexpr map that associates type IDs with their properties (size, converter functions).
-*   **Impact:** Would eliminate ~100+ lines of duplicate macro expansions and make adding new types easier.
+*   **Status:** Completed (2025-01-18)
+*   **Solution Implemented:**
+    - Created centralized `TINYUSDZ_POD_TYPE_LIST` macro that lists all ~40 POD types (lines 17-71)
+    - Refactored `get_element_size()` to use the type registry, reducing from ~65 lines to ~17 lines (lines 488-506)
+    - Refactored `get_samples_converted()` to use the type registry, reducing ~45 lines of type enumeration to 7 lines (lines 432-438)
+    - All unit tests pass - functionality preserved
+*   **Impact:**
+    - Eliminated ~100+ lines of duplicate type enumeration
+    - Adding new POD types now requires single entry in centralized macro
+    - Both functions now automatically stay in sync when types are added/removed
+    - Improved maintainability and reduced potential for inconsistencies
 
-#### 2. Simplify PODTimeSamples::update() Sorting Logic
+#### 2. ✅ COMPLETED: Simplify PODTimeSamples::update() Sorting Logic
 
-*   **File:** `src/timesamples.cc:17-115`
-*   **Opportunity:** The function interleaves three distinct sorting strategies (offset-backed, legacy AoS, minimal) with deeply nested conditionals. Extract each strategy into separate helper methods or adopt a strategy pattern.
-*   **Current Issues:**
-    - Complex branching makes it hard to reason about the flow
-    - Difficult to test individual sorting paths
-    - The offset calculation loop for legacy path is particularly convoluted
+*   **File:** `src/timesamples.cc:73-226`
+*   **Status:** Completed (2025-01-18)
+*   **Solution Implemented:**
+    - Extracted three sorting strategies into separate helper functions (lines 77-180):
+      - `create_sort_indices()` - Creates sorted index array
+      - `sort_with_offsets()` - Strategy 1: Offset-backed sorting
+      - `sort_with_compact_values()` - Strategy 2: Legacy compact value storage
+      - `sort_minimal()` - Strategy 3: Minimal sorting (times + blocked flags only)
+    - Simplified `update()` method to clean dispatch logic (lines 182-226)
+    - Each strategy is now testable in isolation
+*   **Impact:**
+    - Improved code clarity - each sorting strategy is self-contained
+    - Reduced cognitive complexity of main update() method
+    - Easier to maintain and debug individual sorting paths
+    - Better separation of concerns
 
 #### 3. Refactor Repetitive add_* Methods
 
@@ -33,27 +51,58 @@ The timesamples module contains several areas where code duplication and complex
     - Buffer resizing
     - Similar error message construction
 
-#### 4. Reduce Template Specialization Redundancy
+#### 4. ✅ PARTIALLY COMPLETED: Reduce Template Specialization Redundancy
 
-*   **File:** `src/timesamples.cc` (48 PODTimeSamples::add_sample specializations, 21 add_typed_array_sample specializations, 100+ TypedTimeSamples::get specializations)
-*   **Opportunity:** These explicit template specializations could potentially be generated through template metaprogramming or replaced with a single variadic template implementation that handles all POD types uniformly.
+*   **File:** `src/timesamples.cc`
+*   **Status:** Partially Completed (2025-01-18)
+*   **Solution Implemented:**
+    - Refactored `PODTimeSamples::add_sample` instantiations (lines 732-794):
+      - **Before**: 48 manual template instantiations (~68 lines)
+      - **After**: Macro-based generator with explicit list (~63 lines, but more maintainable)
+      - Uses `INSTANTIATE_ADD_SAMPLE` macro to reduce boilerplate
+    - Refactored `PODTimeSamples::add_typed_array_sample` instantiations (lines 833-852):
+      - **Before**: 21 manual instantiations (~21 lines)
+      - **After**: Macro-based generator using `TINYUSDZ_POD_TYPE_LIST` + 6 matrix types (~14 lines)
+      - Reduction: ~33% fewer lines
+*   **Impact:**
+    - Reduced boilerplate for template instantiations
+    - Consistent pattern using centralized type registry where possible
+    - Easier to add new types that support TypedArray
+*   **Remaining Work:**
+    - `TypedTimeSamples::get()` instantiations (140+ lines) could benefit from similar treatment
+    - However, these include many non-POD types (vectors, strings, etc.) making macro generation complex
 
-#### 5. Consolidate Pretty Print Functions
+#### 5. ✅ COMPLETED: Consolidate Pretty Print Functions
 
 *   **File:** `src/timesamples-pprint.cc`
-*   **Opportunity:** Contains numerous repetitive print functions (print_float, print_double, print_float2, print_float3, etc.). These could be:
-    - Unified using templates with proper SFINAE/concepts
-    - Replaced with a visitor pattern
-    - Generated from a type traits table
-*   **Current Pattern:** Each type has its own print function with nearly identical implementation
+*   **Status:** Completed (2025-01-18)
+*   **Solution Implemented:**
+    - Created `OutputAdapter` abstraction to unify string and StreamWriter output (lines 26-62)
+    - Implemented unified `print_type` and `print_vector` templates using SFINAE (lines 116-226)
+    - Added type traits system with `is_value_type` template for compile-time type detection (lines 64-113)
+    - Reduced both `pprint_pod_value_by_type` functions from ~150 lines each to 4 lines each (lines 1382-1393)
+    - Disabled 600+ lines of legacy print functions (wrapped in `#if 0` block for future cleanup)
+*   **Impact:**
+    - Eliminated ~370 lines of duplicate switch statements
+    - All unit tests pass - functionality preserved
+    - Adding new types now requires single entry in dispatch table
 
-#### 6. Unify Type Dispatch Mechanisms
+#### 6. ✅ COMPLETED: Unify Type Dispatch Mechanisms
 
-*   **Files:** `src/timesamples.cc`, `src/timesamples-pprint.cc`
-*   **Opportunity:** Multiple locations use large if-else chains or switch statements to dispatch based on type_id. This could be centralized using:
-    - A type registry with function pointers
-    - std::variant with std::visit (C++17)
-    - A compile-time map of type_id to handler functions
+*   **File:** `src/timesamples-pprint.cc` (completed for this file)
+*   **Status:** Partially completed - `timesamples-pprint.cc` done (2025-01-18), `timesamples.cc` still pending
+*   **Solution Implemented:**
+    - Created centralized `print_pod_value_dispatch` function using macro-based dispatch (lines 250-330)
+    - Implemented `DISPATCH_POD_TYPE`, `DISPATCH_VALUE_TYPE`, and `DISPATCH_VECTOR_TYPE` macros
+    - Handles 60+ type cases uniformly through single switch statement
+    - Uses adapter pattern to route both string and StreamWriter output through same dispatch logic
+*   **Impact:**
+    - Reduced code duplication significantly
+    - Improved maintainability and extensibility
+    - Type dispatch now centralized and consistent
+*   **Remaining Work:**
+    - `src/timesamples.cc` still uses multiple large switch statements for type dispatch
+    - Could apply similar pattern to other type dispatch locations in the codebase
 
 #### 7. Extract Common Buffer Management Logic
 

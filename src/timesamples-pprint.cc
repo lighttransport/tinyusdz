@@ -19,6 +19,385 @@ namespace tinyusdz {
 
 namespace {
 
+// ============================================================================
+// Type Traits and Unified Print System
+// ============================================================================
+
+// Output abstraction - allows same code to work with StreamWriter or string
+class OutputAdapter {
+public:
+  virtual ~OutputAdapter() = default;
+  virtual void write(const std::string& s) = 0;
+  virtual void write(double d) = 0;
+  virtual void write(float f) = 0;
+  virtual void write(int i) = 0;
+
+  template<typename T>
+  OutputAdapter& operator<<(const T& value) {
+    std::stringstream ss;
+    ss << value;
+    write(ss.str());
+    return *this;
+  }
+};
+
+class StringOutputAdapter : public OutputAdapter {
+  std::stringstream ss_;
+public:
+  void write(const std::string& s) override { ss_ << s; }
+  void write(double d) override { ss_ << d; }
+  void write(float f) override { ss_ << f; }
+  void write(int i) override { ss_ << i; }
+  std::string str() const { return ss_.str(); }
+};
+
+class StreamWriterAdapter : public OutputAdapter {
+  StreamWriter& writer_;
+public:
+  explicit StreamWriterAdapter(StreamWriter& w) : writer_(w) {}
+  void write(const std::string& s) override { writer_.write(s); }
+  void write(double d) override { writer_.write(d); }
+  void write(float f) override { writer_.write(f); }
+  void write(int i) override { writer_ << i; }
+};
+
+// Type traits for value types (those with operator<<)
+template<typename T>
+struct is_value_type : std::false_type {};
+
+// Specialize for all value types that have operator<<
+#define DECLARE_VALUE_TYPE(TYPE) \
+  template<> struct is_value_type<TYPE> : std::true_type {}
+
+DECLARE_VALUE_TYPE(value::half);
+DECLARE_VALUE_TYPE(value::half2);
+DECLARE_VALUE_TYPE(value::half3);
+DECLARE_VALUE_TYPE(value::half4);
+DECLARE_VALUE_TYPE(value::float2);
+DECLARE_VALUE_TYPE(value::float3);
+DECLARE_VALUE_TYPE(value::float4);
+DECLARE_VALUE_TYPE(value::double2);
+DECLARE_VALUE_TYPE(value::double3);
+DECLARE_VALUE_TYPE(value::double4);
+DECLARE_VALUE_TYPE(value::quath);
+DECLARE_VALUE_TYPE(value::quatf);
+DECLARE_VALUE_TYPE(value::quatd);
+DECLARE_VALUE_TYPE(value::matrix2f);
+DECLARE_VALUE_TYPE(value::matrix3f);
+DECLARE_VALUE_TYPE(value::matrix4f);
+DECLARE_VALUE_TYPE(value::matrix2d);
+DECLARE_VALUE_TYPE(value::matrix3d);
+DECLARE_VALUE_TYPE(value::matrix4d);
+DECLARE_VALUE_TYPE(value::color3h);
+DECLARE_VALUE_TYPE(value::color3f);
+DECLARE_VALUE_TYPE(value::color3d);
+DECLARE_VALUE_TYPE(value::color4h);
+DECLARE_VALUE_TYPE(value::color4f);
+DECLARE_VALUE_TYPE(value::color4d);
+DECLARE_VALUE_TYPE(value::point3h);
+DECLARE_VALUE_TYPE(value::point3f);
+DECLARE_VALUE_TYPE(value::point3d);
+DECLARE_VALUE_TYPE(value::normal3h);
+DECLARE_VALUE_TYPE(value::normal3f);
+DECLARE_VALUE_TYPE(value::normal3d);
+DECLARE_VALUE_TYPE(value::vector3h);
+DECLARE_VALUE_TYPE(value::vector3f);
+DECLARE_VALUE_TYPE(value::vector3d);
+DECLARE_VALUE_TYPE(value::texcoord2h);
+DECLARE_VALUE_TYPE(value::texcoord2f);
+DECLARE_VALUE_TYPE(value::texcoord2d);
+DECLARE_VALUE_TYPE(value::texcoord3h);
+DECLARE_VALUE_TYPE(value::texcoord3f);
+DECLARE_VALUE_TYPE(value::texcoord3d);
+DECLARE_VALUE_TYPE(value::frame4d);
+
+#undef DECLARE_VALUE_TYPE
+
+// Unified print function for value types (those with operator<<)
+template<typename T>
+typename std::enable_if<is_value_type<T>::value, void>::type
+print_type(OutputAdapter& out, const uint8_t* data) {
+  T value;
+  std::memcpy(&value, data, sizeof(T));
+  std::stringstream ss;
+  ss << value;
+  out.write(ss.str());
+}
+
+// Unified print function for simple POD types
+template<typename T>
+typename std::enable_if<std::is_arithmetic<T>::value && !is_value_type<T>::value, void>::type
+print_type(OutputAdapter& out, const uint8_t* data) {
+  T value;
+  std::memcpy(&value, data, sizeof(T));
+  out << value;
+}
+
+// Unified print function for vector types
+template<typename T, size_t N>
+void print_vector(OutputAdapter& out, const uint8_t* data) {
+  T values[N];
+  std::memcpy(&values, data, sizeof(T) * N);
+  out.write("(");
+  for (size_t i = 0; i < N; ++i) {
+    if (i > 0) out.write(", ");
+    out << values[i];
+  }
+  out.write(")");
+}
+
+// Specializations for char types (print as int)
+template<>
+void print_vector<char, 2>(OutputAdapter& out, const uint8_t* data) {
+  char values[2];
+  std::memcpy(&values, data, sizeof(char) * 2);
+  out.write("(");
+  out.write(int(values[0]));
+  out.write(", ");
+  out.write(int(values[1]));
+  out.write(")");
+}
+
+template<>
+void print_vector<char, 3>(OutputAdapter& out, const uint8_t* data) {
+  char values[3];
+  std::memcpy(&values, data, sizeof(char) * 3);
+  out.write("(");
+  out.write(int(values[0]));
+  out.write(", ");
+  out.write(int(values[1]));
+  out.write(", ");
+  out.write(int(values[2]));
+  out.write(")");
+}
+
+template<>
+void print_vector<char, 4>(OutputAdapter& out, const uint8_t* data) {
+  char values[4];
+  std::memcpy(&values, data, sizeof(char) * 4);
+  out.write("(");
+  out.write(int(values[0]));
+  out.write(", ");
+  out.write(int(values[1]));
+  out.write(", ");
+  out.write(int(values[2]));
+  out.write(", ");
+  out.write(int(values[3]));
+  out.write(")");
+}
+
+template<>
+void print_vector<uint8_t, 2>(OutputAdapter& out, const uint8_t* data) {
+  uint8_t values[2];
+  std::memcpy(&values, data, sizeof(uint8_t) * 2);
+  out.write("(");
+  out.write(int(values[0]));
+  out.write(", ");
+  out.write(int(values[1]));
+  out.write(")");
+}
+
+template<>
+void print_vector<uint8_t, 3>(OutputAdapter& out, const uint8_t* data) {
+  uint8_t values[3];
+  std::memcpy(&values, data, sizeof(uint8_t) * 3);
+  out.write("(");
+  out.write(int(values[0]));
+  out.write(", ");
+  out.write(int(values[1]));
+  out.write(", ");
+  out.write(int(values[2]));
+  out.write(")");
+}
+
+template<>
+void print_vector<uint8_t, 4>(OutputAdapter& out, const uint8_t* data) {
+  uint8_t values[4];
+  std::memcpy(&values, data, sizeof(uint8_t) * 4);
+  out.write("(");
+  out.write(int(values[0]));
+  out.write(", ");
+  out.write(int(values[1]));
+  out.write(", ");
+  out.write(int(values[2]));
+  out.write(", ");
+  out.write(int(values[3]));
+  out.write(")");
+}
+
+// ============================================================================
+// Centralized Type Dispatch System
+// ============================================================================
+
+// Macro to reduce repetition in switch statements
+// Handles both POD types and value types uniformly
+#define DISPATCH_POD_TYPE(TYPE_ID_NAME, CPP_TYPE, PRINT_FUNC) \
+  case value::TYPE_ID_NAME: \
+    PRINT_FUNC<CPP_TYPE>(out, data); \
+    break;
+
+#define DISPATCH_VALUE_TYPE(TYPE_ID_NAME, VALUE_TYPE) \
+  case value::TYPE_ID_NAME: \
+    print_type<value::VALUE_TYPE>(out, data); \
+    break;
+
+#define DISPATCH_VECTOR_TYPE(TYPE_ID_NAME, CPP_TYPE, DIM) \
+  case value::TYPE_ID_NAME: \
+    print_vector<CPP_TYPE, DIM>(out, data); \
+    break;
+
+// Centralized print dispatch using OutputAdapter
+void print_pod_value_dispatch(OutputAdapter& out, const uint8_t* data, uint32_t type_id) {
+  using namespace value;
+
+  switch (type_id) {
+    DISPATCH_POD_TYPE(TYPE_ID_BOOL, bool, print_type)
+    DISPATCH_POD_TYPE(TYPE_ID_CHAR, char, print_type)
+    DISPATCH_VECTOR_TYPE(TYPE_ID_CHAR2, char, 2)
+    DISPATCH_VECTOR_TYPE(TYPE_ID_CHAR3, char, 3)
+    DISPATCH_VECTOR_TYPE(TYPE_ID_CHAR4, char, 4)
+    DISPATCH_POD_TYPE(TYPE_ID_UCHAR, uint8_t, print_type)
+    DISPATCH_VECTOR_TYPE(TYPE_ID_UCHAR2, uint8_t, 2)
+    DISPATCH_VECTOR_TYPE(TYPE_ID_UCHAR3, uint8_t, 3)
+    DISPATCH_VECTOR_TYPE(TYPE_ID_UCHAR4, uint8_t, 4)
+    DISPATCH_POD_TYPE(TYPE_ID_SHORT, int16_t, print_type)
+    DISPATCH_VECTOR_TYPE(TYPE_ID_SHORT2, int16_t, 2)
+    DISPATCH_VECTOR_TYPE(TYPE_ID_SHORT3, int16_t, 3)
+    DISPATCH_VECTOR_TYPE(TYPE_ID_SHORT4, int16_t, 4)
+    DISPATCH_POD_TYPE(TYPE_ID_USHORT, uint16_t, print_type)
+    DISPATCH_VECTOR_TYPE(TYPE_ID_USHORT2, uint16_t, 2)
+    DISPATCH_VECTOR_TYPE(TYPE_ID_USHORT3, uint16_t, 3)
+    DISPATCH_VECTOR_TYPE(TYPE_ID_USHORT4, uint16_t, 4)
+    DISPATCH_POD_TYPE(TYPE_ID_INT32, int32_t, print_type)
+    DISPATCH_VECTOR_TYPE(TYPE_ID_INT2, int32_t, 2)
+    DISPATCH_VECTOR_TYPE(TYPE_ID_INT3, int32_t, 3)
+    DISPATCH_VECTOR_TYPE(TYPE_ID_INT4, int32_t, 4)
+    DISPATCH_POD_TYPE(TYPE_ID_UINT32, uint32_t, print_type)
+    DISPATCH_VECTOR_TYPE(TYPE_ID_UINT2, uint32_t, 2)
+    DISPATCH_VECTOR_TYPE(TYPE_ID_UINT3, uint32_t, 3)
+    DISPATCH_VECTOR_TYPE(TYPE_ID_UINT4, uint32_t, 4)
+    DISPATCH_POD_TYPE(TYPE_ID_INT64, int64_t, print_type)
+    DISPATCH_POD_TYPE(TYPE_ID_UINT64, uint64_t, print_type)
+    DISPATCH_VALUE_TYPE(TYPE_ID_HALF, half)
+    DISPATCH_VALUE_TYPE(TYPE_ID_HALF2, half2)
+    DISPATCH_VALUE_TYPE(TYPE_ID_HALF3, half3)
+    DISPATCH_VALUE_TYPE(TYPE_ID_HALF4, half4)
+    DISPATCH_POD_TYPE(TYPE_ID_FLOAT, float, print_type)
+    DISPATCH_VALUE_TYPE(TYPE_ID_FLOAT2, float2)
+    DISPATCH_VALUE_TYPE(TYPE_ID_FLOAT3, float3)
+    DISPATCH_VALUE_TYPE(TYPE_ID_FLOAT4, float4)
+    DISPATCH_POD_TYPE(TYPE_ID_DOUBLE, double, print_type)
+    DISPATCH_VALUE_TYPE(TYPE_ID_DOUBLE2, double2)
+    DISPATCH_VALUE_TYPE(TYPE_ID_DOUBLE3, double3)
+    DISPATCH_VALUE_TYPE(TYPE_ID_DOUBLE4, double4)
+    DISPATCH_VALUE_TYPE(TYPE_ID_QUATH, quath)
+    DISPATCH_VALUE_TYPE(TYPE_ID_QUATF, quatf)
+    DISPATCH_VALUE_TYPE(TYPE_ID_QUATD, quatd)
+    DISPATCH_VALUE_TYPE(TYPE_ID_MATRIX2F, matrix2f)
+    DISPATCH_VALUE_TYPE(TYPE_ID_MATRIX3F, matrix3f)
+    DISPATCH_VALUE_TYPE(TYPE_ID_MATRIX4F, matrix4f)
+    DISPATCH_VALUE_TYPE(TYPE_ID_MATRIX2D, matrix2d)
+    DISPATCH_VALUE_TYPE(TYPE_ID_MATRIX3D, matrix3d)
+    DISPATCH_VALUE_TYPE(TYPE_ID_MATRIX4D, matrix4d)
+    DISPATCH_VALUE_TYPE(TYPE_ID_COLOR3H, color3h)
+    DISPATCH_VALUE_TYPE(TYPE_ID_COLOR3F, color3f)
+    DISPATCH_VALUE_TYPE(TYPE_ID_COLOR3D, color3d)
+    DISPATCH_VALUE_TYPE(TYPE_ID_COLOR4H, color4h)
+    DISPATCH_VALUE_TYPE(TYPE_ID_COLOR4F, color4f)
+    DISPATCH_VALUE_TYPE(TYPE_ID_COLOR4D, color4d)
+    DISPATCH_VALUE_TYPE(TYPE_ID_POINT3H, point3h)
+    DISPATCH_VALUE_TYPE(TYPE_ID_POINT3F, point3f)
+    DISPATCH_VALUE_TYPE(TYPE_ID_POINT3D, point3d)
+    DISPATCH_VALUE_TYPE(TYPE_ID_NORMAL3H, normal3h)
+    DISPATCH_VALUE_TYPE(TYPE_ID_NORMAL3F, normal3f)
+    DISPATCH_VALUE_TYPE(TYPE_ID_NORMAL3D, normal3d)
+    DISPATCH_VALUE_TYPE(TYPE_ID_VECTOR3H, vector3h)
+    DISPATCH_VALUE_TYPE(TYPE_ID_VECTOR3F, vector3f)
+    DISPATCH_VALUE_TYPE(TYPE_ID_VECTOR3D, vector3d)
+    DISPATCH_VALUE_TYPE(TYPE_ID_FRAME4D, frame4d)
+    DISPATCH_VALUE_TYPE(TYPE_ID_TEXCOORD2H, texcoord2h)
+    DISPATCH_VALUE_TYPE(TYPE_ID_TEXCOORD2F, texcoord2f)
+    DISPATCH_VALUE_TYPE(TYPE_ID_TEXCOORD2D, texcoord2d)
+    DISPATCH_VALUE_TYPE(TYPE_ID_TEXCOORD3H, texcoord3h)
+    DISPATCH_VALUE_TYPE(TYPE_ID_TEXCOORD3F, texcoord3f)
+    DISPATCH_VALUE_TYPE(TYPE_ID_TEXCOORD3D, texcoord3d)
+    default:
+      out.write("[Unknown POD type: ");
+      out.write(static_cast<int>(type_id));
+      out.write("]");
+      break;
+  }
+}
+
+#undef DISPATCH_POD_TYPE
+#undef DISPATCH_VALUE_TYPE
+#undef DISPATCH_VECTOR_TYPE
+
+// ============================================================================
+// Active Helper Functions (used by the codebase)
+// ============================================================================
+
+// TypedArray helper - used by print_typed_array() function
+template<typename T>
+std::string try_print_typed_array(const uint8_t* packed_ptr_data) {
+    uint64_t packed_value;
+    std::memcpy(&packed_value, packed_ptr_data, sizeof(uint64_t));
+
+    // Extract pointer from packed value (lower 48 bits)
+    uint64_t ptr_bits = packed_value & 0x0000FFFFFFFFFFFFULL;
+
+    // Sign-extend from 48 bits to 64 bits for canonical address
+    if (ptr_bits & (1ULL << 47)) {
+        ptr_bits |= 0xFFFF000000000000ULL;
+    }
+
+    if (ptr_bits == 0) {
+        return "";  // Return empty to indicate failure
+    }
+
+    // Cast to TypedArrayImpl<T>*
+    auto* impl = reinterpret_cast<TypedArrayImpl<T>*>(ptr_bits);
+
+    // Create TypedArray with dedup flag to prevent deletion
+    TypedArray<T> typed_array(impl, true);
+
+    // Create a view to access the data
+    TypedArrayView<const T> view(typed_array);
+
+    if (view.size() == 0) {
+        return "[]";
+    }
+
+    std::stringstream ss;
+    ss << "[";
+
+    // Limit output to first 10 elements for readability
+    size_t max_elements = std::min(view.size(), size_t(10));
+
+    for (size_t i = 0; i < max_elements; ++i) {
+        if (i > 0) ss << ", ";
+
+        // In C++14, we can't use if constexpr, so just output directly
+        // The operator<< should work for all types we're likely to encounter
+        ss << view[i];
+    }
+
+    if (view.size() > max_elements) {
+        ss << ", ... (" << view.size() << " total)";
+    }
+
+    ss << "]";
+    return ss.str();
+}
+
+// ============================================================================
+// Legacy Print Functions (for backward compatibility)
+// Now DISABLED - replaced by unified dispatch system above
+// Can be removed in future cleanup
+// ============================================================================
+
+#if 0  // Disabled - replaced by unified dispatch system
+
 // Helper function to convert raw bytes to typed value and print
 template<typename T>
 std::string print_pod_value(const uint8_t* data) {
@@ -380,59 +759,8 @@ std::string print_texcoord3d(const uint8_t* data) {
     return ss.str();
 }
 
-// TypedArray - stored as packed pointer (uint64_t)
-// Attempt to reconstruct TypedArray and print its contents
-template<typename T>
-std::string try_print_typed_array(const uint8_t* packed_ptr_data) {
-    uint64_t packed_value;
-    std::memcpy(&packed_value, packed_ptr_data, sizeof(uint64_t));
-
-    // Extract pointer from packed value (lower 48 bits)
-    uint64_t ptr_bits = packed_value & 0x0000FFFFFFFFFFFFULL;
-
-    // Sign-extend from 48 bits to 64 bits for canonical address
-    if (ptr_bits & (1ULL << 47)) {
-        ptr_bits |= 0xFFFF000000000000ULL;
-    }
-
-    if (ptr_bits == 0) {
-        return "";  // Return empty to indicate failure
-    }
-
-    // Cast to TypedArrayImpl<T>*
-    auto* impl = reinterpret_cast<TypedArrayImpl<T>*>(ptr_bits);
-
-    // Create TypedArray with dedup flag to prevent deletion
-    TypedArray<T> typed_array(impl, true);
-
-    // Create a view to access the data
-    TypedArrayView<const T> view(typed_array);
-
-    if (view.size() == 0) {
-        return "[]";
-    }
-
-    std::stringstream ss;
-    ss << "[";
-
-    // Limit output to first 10 elements for readability
-    size_t max_elements = std::min(view.size(), size_t(10));
-
-    for (size_t i = 0; i < max_elements; ++i) {
-        if (i > 0) ss << ", ";
-
-        // In C++14, we can't use if constexpr, so just output directly
-        // The operator<< should work for all types we're likely to encounter
-        ss << view[i];
-    }
-
-    if (view.size() > max_elements) {
-        ss << ", ... (" << view.size() << " total)";
-    }
-
-    ss << "]";
-    return ss.str();
-}
+// Note: try_print_typed_array template has been moved to active section above (lines 340-391)
+// and is still used by print_typed_array function outside the anonymous namespace
 
 // Disabled - use print_typed_array_value_by_type_id instead which takes type_id parameter
 #if 0
@@ -634,6 +962,12 @@ void print_value_type(StreamWriter& writer, const uint8_t* data) {
     writer.write(ss.str());
 }
 
+#endif  // #if 0 - Disabled legacy print functions
+
+// ============================================================================
+// Active Functions (used by the codebase)
+// ============================================================================
+
 // TypedArray - stored as packed pointer (uint64_t)
 // Attempt to reconstruct TypedArray and print its contents to StreamWriter
 template<typename T>
@@ -681,6 +1015,8 @@ bool try_print_typed_array_value(StreamWriter& writer, const uint8_t* packed_ptr
 
     // DEBUG: Try to access the data pointer directly to see if it contains valid data
     const T* data_ptr = impl->data();
+    (void)data_ptr;  // Suppress unused warning when debug logging is disabled
+    #if 0  // Disabled debug code
     if (data_ptr != nullptr) {
         //TUSDZ_LOG_I("Trying to read first element from data_ptr...");
         // Try to read first few bytes to see if they look reasonable
@@ -693,6 +1029,7 @@ bool try_print_typed_array_value(StreamWriter& writer, const uint8_t* packed_ptr
         //            << static_cast<int>(byte_ptr[12]) << " " << static_cast<int>(byte_ptr[13]) << " " << static_cast<int>(byte_ptr[14]) << " " << static_cast<int>(byte_ptr[15])
         //            << std::dec);
     }
+    #endif
 
     // Create TypedArray with dedup flag to prevent deletion
     TypedArray<T> typed_array(impl, true);
@@ -1049,381 +1386,16 @@ std::string print_typed_array(const uint8_t* data) {
 }
 
 std::string pprint_pod_value_by_type(const uint8_t* data, uint32_t type_id) {
-    using namespace value;
-
-    switch (type_id) {
-        case TYPE_ID_BOOL:
-            return print_pod_value<bool>(data);
-        case TYPE_ID_CHAR:
-            return print_pod_value<char>(data);
-        case TYPE_ID_CHAR2:
-            return print_char2(data);
-        case TYPE_ID_CHAR3:
-            return print_char3(data);
-        case TYPE_ID_CHAR4:
-            return print_char4(data);
-        case TYPE_ID_UCHAR:
-            return print_pod_value<uint8_t>(data);
-        case TYPE_ID_UCHAR2:
-            return print_uchar2(data);
-        case TYPE_ID_UCHAR3:
-            return print_uchar3(data);
-        case TYPE_ID_UCHAR4:
-            return print_uchar4(data);
-        case TYPE_ID_SHORT:
-            return print_pod_value<int16_t>(data);
-        case TYPE_ID_SHORT2:
-            return print_vector2<int16_t>(data);
-        case TYPE_ID_SHORT3:
-            return print_vector3<int16_t>(data);
-        case TYPE_ID_SHORT4:
-            return print_vector4<int16_t>(data);
-        case TYPE_ID_USHORT:
-            return print_pod_value<uint16_t>(data);
-        case TYPE_ID_USHORT2:
-            return print_vector2<uint16_t>(data);
-        case TYPE_ID_USHORT3:
-            return print_vector3<uint16_t>(data);
-        case TYPE_ID_USHORT4:
-            return print_vector4<uint16_t>(data);
-        case TYPE_ID_INT32:
-            return print_pod_value<int32_t>(data);
-        case TYPE_ID_INT2:
-            return print_vector2<int32_t>(data);
-        case TYPE_ID_INT3:
-            return print_vector3<int32_t>(data);
-        case TYPE_ID_INT4:
-            return print_vector4<int32_t>(data);
-        case TYPE_ID_UINT32:
-            return print_pod_value<uint32_t>(data);
-        case TYPE_ID_UINT2:
-            return print_vector2<uint32_t>(data);
-        case TYPE_ID_UINT3:
-            return print_vector3<uint32_t>(data);
-        case TYPE_ID_UINT4:
-            return print_vector4<uint32_t>(data);
-        case TYPE_ID_INT64:
-            return print_pod_value<int64_t>(data);
-        case TYPE_ID_UINT64:
-            return print_pod_value<uint64_t>(data);
-        case TYPE_ID_HALF:
-            return print_half(data);
-        case TYPE_ID_HALF2:
-            return print_half2(data);
-        case TYPE_ID_HALF3:
-            return print_half3(data);
-        case TYPE_ID_HALF4:
-            return print_half4(data);
-        case TYPE_ID_FLOAT:
-            return print_float(data);
-        case TYPE_ID_FLOAT2:
-            return print_float2(data);
-        case TYPE_ID_FLOAT3:
-            return print_float3(data);
-        case TYPE_ID_FLOAT4:
-            return print_float4(data);
-        case TYPE_ID_DOUBLE:
-            return print_double(data);
-        case TYPE_ID_DOUBLE2:
-            return print_double2(data);
-        case TYPE_ID_DOUBLE3:
-            return print_double3(data);
-        case TYPE_ID_DOUBLE4:
-            return print_double4(data);
-        case TYPE_ID_QUATH:
-            return print_quath(data);
-        case TYPE_ID_QUATF:
-            return print_quatf(data);
-        case TYPE_ID_QUATD:
-            return print_quatd(data);
-        case TYPE_ID_MATRIX2F:
-            return print_matrix2f(data);
-        case TYPE_ID_MATRIX3F:
-            return print_matrix3f(data);
-        case TYPE_ID_MATRIX4F:
-            return print_matrix4f(data);
-        case TYPE_ID_MATRIX2D:
-            return print_matrix2d(data);
-        case TYPE_ID_MATRIX3D:
-            return print_matrix3d(data);
-        case TYPE_ID_MATRIX4D:
-            return print_matrix4d(data);
-        case TYPE_ID_COLOR3H:
-            return print_color3h(data);
-        case TYPE_ID_COLOR3F:
-            return print_color3f(data);
-        case TYPE_ID_COLOR3D:
-            return print_color3d(data);
-        case TYPE_ID_COLOR4H:
-            return print_color4h(data);
-        case TYPE_ID_COLOR4F:
-            return print_color4f(data);
-        case TYPE_ID_COLOR4D:
-            return print_color4d(data);
-        case TYPE_ID_POINT3H:
-            return print_point3h(data);
-        case TYPE_ID_POINT3F:
-            return print_point3f(data);
-        case TYPE_ID_POINT3D:
-            return print_point3d(data);
-        case TYPE_ID_NORMAL3H:
-            return print_normal3h(data);
-        case TYPE_ID_NORMAL3F:
-            return print_normal3f(data);
-        case TYPE_ID_NORMAL3D:
-            return print_normal3d(data);
-        case TYPE_ID_VECTOR3H:
-            return print_vector3h(data);
-        case TYPE_ID_VECTOR3F:
-            return print_vector3f(data);
-        case TYPE_ID_VECTOR3D:
-            return print_vector3d(data);
-        case TYPE_ID_FRAME4D:
-            return print_frame4d(data);
-        case TYPE_ID_TEXCOORD2H:
-            return print_texcoord2h(data);
-        case TYPE_ID_TEXCOORD2F:
-            return print_texcoord2f(data);
-        case TYPE_ID_TEXCOORD2D:
-            return print_texcoord2d(data);
-        case TYPE_ID_TEXCOORD3H:
-            return print_texcoord3h(data);
-        case TYPE_ID_TEXCOORD3F:
-            return print_texcoord3f(data);
-        case TYPE_ID_TEXCOORD3D:
-            return print_texcoord3d(data);
-#if 0
-        case TYPE_ID_TYPED_ARRAY_TIMESAMPLE_VALUE:
-            return print_typed_array(data);
-#endif
-        default:
-            return "[Unknown POD type: " + std::to_string(type_id) + "]";
-    }
+    // Use unified dispatch system with string output adapter
+    StringOutputAdapter adapter;
+    print_pod_value_dispatch(adapter, data, type_id);
+    return adapter.str();
 }
 
 void pprint_pod_value_by_type(StreamWriter& writer, const uint8_t* data, uint32_t type_id) {
-    using namespace value;
-
-    switch (type_id) {
-        case TYPE_ID_BOOL:
-            print_pod_value<bool>(writer, data);
-            break;
-        case TYPE_ID_CHAR:
-            print_pod_value<char>(writer, data);
-            break;
-        case TYPE_ID_CHAR2:
-            writer << "(" << int(data[0]) << ", " << int(data[1]) << ")";
-            break;
-        case TYPE_ID_CHAR3:
-            writer << "(" << int(data[0]) << ", " << int(data[1]) << ", " << int(data[2]) << ")";
-            break;
-        case TYPE_ID_CHAR4:
-            writer << "(" << int(data[0]) << ", " << int(data[1]) << ", " << int(data[2]) << ", " << int(data[3]) << ")";
-            break;
-        case TYPE_ID_UCHAR:
-            print_pod_value<uint8_t>(writer, data);
-            break;
-        case TYPE_ID_UCHAR2:
-            writer << "(" << int(data[0]) << ", " << int(data[1]) << ")";
-            break;
-        case TYPE_ID_UCHAR3:
-            writer << "(" << int(data[0]) << ", " << int(data[1]) << ", " << int(data[2]) << ")";
-            break;
-        case TYPE_ID_UCHAR4:
-            writer << "(" << int(data[0]) << ", " << int(data[1]) << ", " << int(data[2]) << ", " << int(data[3]) << ")";
-            break;
-        case TYPE_ID_SHORT:
-            print_pod_value<int16_t>(writer, data);
-            break;
-        case TYPE_ID_SHORT2:
-            print_vector2<int16_t>(writer, data);
-            break;
-        case TYPE_ID_SHORT3:
-            print_vector3<int16_t>(writer, data);
-            break;
-        case TYPE_ID_SHORT4:
-            print_vector4<int16_t>(writer, data);
-            break;
-        case TYPE_ID_USHORT:
-            print_pod_value<uint16_t>(writer, data);
-            break;
-        case TYPE_ID_USHORT2:
-            print_vector2<uint16_t>(writer, data);
-            break;
-        case TYPE_ID_USHORT3:
-            print_vector3<uint16_t>(writer, data);
-            break;
-        case TYPE_ID_USHORT4:
-            print_vector4<uint16_t>(writer, data);
-            break;
-        case TYPE_ID_INT32:
-            print_pod_value<int32_t>(writer, data);
-            break;
-        case TYPE_ID_INT2:
-            print_vector2<int32_t>(writer, data);
-            break;
-        case TYPE_ID_INT3:
-            print_vector3<int32_t>(writer, data);
-            break;
-        case TYPE_ID_INT4:
-            print_vector4<int32_t>(writer, data);
-            break;
-        case TYPE_ID_UINT32:
-            print_pod_value<uint32_t>(writer, data);
-            break;
-        case TYPE_ID_UINT2:
-            print_vector2<uint32_t>(writer, data);
-            break;
-        case TYPE_ID_UINT3:
-            print_vector3<uint32_t>(writer, data);
-            break;
-        case TYPE_ID_UINT4:
-            print_vector4<uint32_t>(writer, data);
-            break;
-        case TYPE_ID_INT64:
-            print_pod_value<int64_t>(writer, data);
-            break;
-        case TYPE_ID_UINT64:
-            print_pod_value<uint64_t>(writer, data);
-            break;
-        case TYPE_ID_HALF:
-            print_value_type<value::half>(writer, data);
-            break;
-        case TYPE_ID_HALF2:
-            print_value_type<value::half2>(writer, data);
-            break;
-        case TYPE_ID_HALF3:
-            print_value_type<value::half3>(writer, data);
-            break;
-        case TYPE_ID_HALF4:
-            print_value_type<value::half4>(writer, data);
-            break;
-        case TYPE_ID_FLOAT:
-            print_float(writer, data);
-            break;
-        case TYPE_ID_FLOAT2:
-            print_value_type<value::float2>(writer, data);
-            break;
-        case TYPE_ID_FLOAT3:
-            print_value_type<value::float3>(writer, data);
-            break;
-        case TYPE_ID_FLOAT4:
-            print_value_type<value::float4>(writer, data);
-            break;
-        case TYPE_ID_DOUBLE:
-            print_double(writer, data);
-            break;
-        case TYPE_ID_DOUBLE2:
-            print_value_type<value::double2>(writer, data);
-            break;
-        case TYPE_ID_DOUBLE3:
-            print_value_type<value::double3>(writer, data);
-            break;
-        case TYPE_ID_DOUBLE4:
-            print_value_type<value::double4>(writer, data);
-            break;
-        case TYPE_ID_QUATH:
-            print_value_type<value::quath>(writer, data);
-            break;
-        case TYPE_ID_QUATF:
-            print_value_type<value::quatf>(writer, data);
-            break;
-        case TYPE_ID_QUATD:
-            print_value_type<value::quatd>(writer, data);
-            break;
-        case TYPE_ID_MATRIX2F:
-            print_value_type<value::matrix2f>(writer, data);
-            break;
-        case TYPE_ID_MATRIX3F:
-            print_value_type<value::matrix3f>(writer, data);
-            break;
-        case TYPE_ID_MATRIX4F:
-            print_value_type<value::matrix4f>(writer, data);
-            break;
-        case TYPE_ID_MATRIX2D:
-            print_value_type<value::matrix2d>(writer, data);
-            break;
-        case TYPE_ID_MATRIX3D:
-            print_value_type<value::matrix3d>(writer, data);
-            break;
-        case TYPE_ID_MATRIX4D:
-            print_value_type<value::matrix4d>(writer, data);
-            break;
-        case TYPE_ID_COLOR3H:
-            print_value_type<value::color3h>(writer, data);
-            break;
-        case TYPE_ID_COLOR3F:
-            print_value_type<value::color3f>(writer, data);
-            break;
-        case TYPE_ID_COLOR3D:
-            print_value_type<value::color3d>(writer, data);
-            break;
-        case TYPE_ID_COLOR4H:
-            print_value_type<value::color4h>(writer, data);
-            break;
-        case TYPE_ID_COLOR4F:
-            print_value_type<value::color4f>(writer, data);
-            break;
-        case TYPE_ID_COLOR4D:
-            print_value_type<value::color4d>(writer, data);
-            break;
-        case TYPE_ID_POINT3H:
-            print_value_type<value::point3h>(writer, data);
-            break;
-        case TYPE_ID_POINT3F:
-            print_value_type<value::point3f>(writer, data);
-            break;
-        case TYPE_ID_POINT3D:
-            print_value_type<value::point3d>(writer, data);
-            break;
-        case TYPE_ID_NORMAL3H:
-            print_value_type<value::normal3h>(writer, data);
-            break;
-        case TYPE_ID_NORMAL3F:
-            print_value_type<value::normal3f>(writer, data);
-            break;
-        case TYPE_ID_NORMAL3D:
-            print_value_type<value::normal3d>(writer, data);
-            break;
-        case TYPE_ID_VECTOR3H:
-            print_value_type<value::vector3h>(writer, data);
-            break;
-        case TYPE_ID_VECTOR3F:
-            print_value_type<value::vector3f>(writer, data);
-            break;
-        case TYPE_ID_VECTOR3D:
-            print_value_type<value::vector3d>(writer, data);
-            break;
-        case TYPE_ID_FRAME4D:
-            print_value_type<value::frame4d>(writer, data);
-            break;
-        case TYPE_ID_TEXCOORD2H:
-            print_value_type<value::texcoord2h>(writer, data);
-            break;
-        case TYPE_ID_TEXCOORD2F:
-            print_value_type<value::texcoord2f>(writer, data);
-            break;
-        case TYPE_ID_TEXCOORD2D:
-            print_value_type<value::texcoord2d>(writer, data);
-            break;
-        case TYPE_ID_TEXCOORD3H:
-            print_value_type<value::texcoord3h>(writer, data);
-            break;
-        case TYPE_ID_TEXCOORD3F:
-            print_value_type<value::texcoord3f>(writer, data);
-            break;
-        case TYPE_ID_TEXCOORD3D:
-            print_value_type<value::texcoord3d>(writer, data);
-            break;
-#if 0
-        case TYPE_ID_TYPED_ARRAY_TIMESAMPLE_VALUE:
-            print_typed_array_value(writer, data);
-            break;
-#endif
-        default:
-            writer << "[Unknown POD type: " << type_id << "]";
-            break;
-    }
+    // Use unified dispatch system with StreamWriter adapter
+    StreamWriterAdapter adapter(writer);
+    print_pod_value_dispatch(adapter, data, type_id);
 }
 
 size_t get_pod_type_size(uint32_t type_id) {
