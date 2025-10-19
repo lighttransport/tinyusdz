@@ -1691,8 +1691,6 @@ static void pprint_typed_array_timesamples_range(
                 chunk_writer.write(it->second);
             } else {
                 // First occurrence - dereference TypedArray pointer and print
-                size_t pos_before = chunk_writer.size();
-
                 // Dereference and print the actual TypedArray contents
                 StreamWriter temp_writer;
                 bool success = try_print_typed_array_value<T>(temp_writer, value_data);

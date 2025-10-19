@@ -121,6 +121,10 @@ Somewhat working Tydra framwork for rendering USD model with OpenGL/Vulkan-like 
 
 v0.9.0 has better JS/WASM support and some USD composition features(including composition in JS/WASM).
 
+### Thread Safety
+
+**Important:** The TinyUSDZ API is **not thread-safe**. Core classes (`Stage`, `Prim`, `Layer`, `PrimSpec`) do not provide internal synchronization. Applications must implement their own synchronization mechanisms (e.g., mutexes, locks) when accessing these objects from multiple threads concurrently.
+
 * [x] USDZ/USDC(Crate) parser
   * USDC Crate version v0.8.0(most commonly used version as of 2022 Nov) or higher is supported.
 * [ ] USDZ/USDC(Crate) writer (Work-in-progress)

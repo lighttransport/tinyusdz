@@ -1197,7 +1197,6 @@ class USDAReader::Impl {
   ///
   const Stage &GetStage() const { return _stage; }
 
-
  private:
   //bool stage_reconstructed_{false};
 
