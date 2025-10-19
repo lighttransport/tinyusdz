@@ -7,6 +7,11 @@
 #include <cstring>
 #include <map>
 
+#ifdef TINYUSDZ_ENABLE_THREAD
+#include <thread>
+#include <vector>
+#endif
+
 #include "value-types.hh"
 #include "value-pprint.hh"
 #include "pprinter.hh"
@@ -16,6 +21,35 @@
 #include "typed-array.hh"
 
 namespace tinyusdz {
+
+///
+/// Configuration for threaded printing
+///
+struct ThreadedPrintConfig {
+  /// Minimum number of samples to use threading (default: 1024)
+  size_t thread_threshold = 1024;
+
+  /// Number of threads to use (0 = auto-detect from hardware)
+  unsigned int num_threads = 0;
+
+  /// Get the actual number of threads to use
+  unsigned int get_num_threads() const {
+#ifdef TINYUSDZ_ENABLE_THREAD
+    if (num_threads > 0) {
+      return num_threads;
+    }
+    // Use hardware_concurrency() - let the hardware dictate thread count
+    // More threads = less data per thread = better performance in our implementation
+    unsigned int hw_threads = std::thread::hardware_concurrency();
+    return (hw_threads > 0) ? hw_threads : 4;  // Fallback to 4 if can't detect
+#else
+    return 1;
+#endif
+  }
+};;;;;
+
+// Global configuration (can be customized)
+static ThreadedPrintConfig g_threaded_print_config;
 
 namespace {
 
@@ -1605,6 +1639,80 @@ static void pprint_typed_array_timesamples_FLOAT2(StreamWriter& writer, const PO
 }
 #endif  // #if 0 - pprint_typed_array_timesamples_FLOAT2
 
+// Helper function to print a range of samples to a ChunkedStreamWriter
+template<typename T>
+static void pprint_typed_array_timesamples_range(
+    ChunkedStreamWriter<4096>& chunk_writer,
+    const PODTimeSamples& samples,
+    uint32_t indent,
+    size_t start_idx,
+    size_t end_idx,
+    std::map<uint64_t, std::string>& cached_strings) {
+
+    const std::vector<double>& times = samples.get_times();
+    const Buffer<16>& blocked = samples.get_blocked();
+    const Buffer<16>& values = samples.get_values();
+
+    size_t element_size = sizeof(uint64_t);
+    size_t value_offset = 0;
+
+    for (size_t i = start_idx; i < end_idx; ++i) {
+        chunk_writer.write(pprint::Indent(indent + 1));
+        chunk_writer.write(times[i]);
+        chunk_writer.write(": ");
+
+        if (blocked[i]) {
+            chunk_writer.write("None");
+        } else {
+            if (!samples._offsets.empty()) {
+                value_offset = samples._offsets[i];
+            } else {
+                // For non-offset tables, calculate based on global index
+                value_offset = i * element_size;
+            }
+
+            // Get pointer to value data for this sample
+            const uint8_t* value_data = values.data() + value_offset;
+
+            // Extract pointer value from packed data
+            uint64_t packed_value;
+            std::memcpy(&packed_value, value_data, sizeof(uint64_t));
+            uint64_t ptr_bits = packed_value & 0x0000FFFFFFFFFFFFULL;
+
+            // Sign-extend from 48 bits to 64 bits
+            if (ptr_bits & (1ULL << 47)) {
+                ptr_bits |= 0xFFFF000000000000ULL;
+            }
+
+            // Check cache first
+            auto it = cached_strings.find(ptr_bits);
+            if (it != cached_strings.end()) {
+                // Reuse cached string
+                chunk_writer.write(it->second);
+            } else {
+                // First occurrence - dereference TypedArray pointer and print
+                size_t pos_before = chunk_writer.size();
+
+                // Dereference and print the actual TypedArray contents
+                StreamWriter temp_writer;
+                bool success = try_print_typed_array_value<T>(temp_writer, value_data);
+                if (!success) {
+                    temp_writer.write("[TypedArray print failed]");
+                }
+
+                std::string printed = temp_writer.str();
+                chunk_writer.write(printed);
+
+                // Cache the printed string
+                cached_strings[ptr_bits] = printed;
+            }
+        }
+
+        chunk_writer.write(",");  // USDA allows trailing comma
+        chunk_writer.write("\n");
+    }
+}
+
 // Templated efficient printing for typed array timesamples
 // General template for most types
 template<typename T>
@@ -1613,6 +1721,58 @@ static void pprint_typed_array_timesamples(StreamWriter& writer, const PODTimeSa
     const Buffer<16>& blocked = samples.get_blocked();
     const Buffer<16>& values = samples.get_values();
 
+    size_t num_samples = times.size();
+
+#ifdef TINYUSDZ_ENABLE_THREAD
+    // Use threaded path for large arrays
+    if (num_samples >= g_threaded_print_config.thread_threshold) {
+        unsigned int num_threads = g_threaded_print_config.get_num_threads();
+        size_t samples_per_thread = (num_samples + num_threads - 1) / num_threads;
+
+        // Vector to hold ChunkedStreamWriters for each thread
+        std::vector<ChunkedStreamWriter<4096>> thread_writers(num_threads);
+        std::vector<std::thread> threads;
+        std::vector<std::map<uint64_t, std::string>> thread_caches(num_threads);
+
+        // Launch threads
+        for (unsigned int t = 0; t < num_threads; ++t) {
+            size_t start_idx = t * samples_per_thread;
+            size_t end_idx = std::min(start_idx + samples_per_thread, num_samples);
+
+            if (start_idx >= num_samples) break;
+
+            threads.emplace_back([&, t, start_idx, end_idx]() {
+                pprint_typed_array_timesamples_range<T>(
+                    thread_writers[t],
+                    samples,
+                    indent,
+                    start_idx,
+                    end_idx,
+                    thread_caches[t]
+                );
+            });
+        }
+
+        // Wait for all threads to complete
+        for (auto& thread : threads) {
+            thread.join();
+        }
+
+        // Concat all thread results into a single ChunkedStreamWriter
+        ChunkedStreamWriter<4096> final_chunked_writer;
+        for (size_t t = 0; t < thread_writers.size(); ++t) {
+            if (!thread_writers[t].empty()) {
+                final_chunked_writer.concat(std::move(thread_writers[t]));
+            }
+        }
+
+        // Convert to string and write to output writer
+        writer.write(final_chunked_writer.str());
+        return;
+    }
+#endif
+
+    // Single-threaded path
     size_t element_size = sizeof(uint64_t);
 
     // Map to cache printed strings: pointer -> string
@@ -2226,6 +2386,14 @@ std::string pprint_timesamples(const value::TimeSamples& samples, uint32_t inden
     StreamWriter writer;
     pprint_timesamples(writer, samples, indent);
     return writer.str();
+}
+
+void set_threaded_print_threshold(size_t threshold) {
+    g_threaded_print_config.thread_threshold = threshold;
+}
+
+void set_threaded_print_num_threads(unsigned int num_threads) {
+    g_threaded_print_config.num_threads = num_threads;
 }
 
 } // namespace tinyusdz

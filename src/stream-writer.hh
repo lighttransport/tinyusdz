@@ -38,6 +38,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <memory>
 #include <string>
 
+#include "buffer-util.hh"
+
 namespace tinyusdz {
 
 namespace {
@@ -215,6 +217,226 @@ class StreamWriter {
 
  private:
   std::string buffer_;
+  const size_t max_length_;
+};
+
+///
+/// Chunked stream writer for pretty printing using ChunkedBuffer
+/// More memory-efficient for very large outputs due to reduced fragmentation
+///
+template <size_t ChunkSize = 4096, size_t Alignment = 16>
+class ChunkedStreamWriter {
+ public:
+  explicit ChunkedStreamWriter(const size_t max_length = 1024 * 1024 * 100)  // 100MB default
+      : max_length_(max_length) {
+    // ChunkedBuffer doesn't need initial reserve since it allocates on demand
+  }
+
+  // Write string
+  void write(const std::string& str) {
+    if (current_size_ + str.size() > max_length_) {
+      return;  // Silently ignore if exceeds max
+    }
+    append_bytes(reinterpret_cast<const uint8_t*>(str.data()), str.size());
+  }
+
+  // Write C-string
+  void write(const char* str) {
+    if (!str) return;
+    size_t len = std::strlen(str);
+    if (current_size_ + len > max_length_) {
+      return;
+    }
+    append_bytes(reinterpret_cast<const uint8_t*>(str), len);
+  }
+
+  // Write single char
+  void write(char c) {
+    if (current_size_ + 1 > max_length_) {
+      return;
+    }
+    buffer_.push_back(static_cast<uint8_t>(c));
+    current_size_++;
+  }
+
+  // Write integer types
+  void write(int value) {
+    write(std::to_string(value));
+  }
+
+  void write(unsigned int value) {
+    write(std::to_string(value));
+  }
+
+  void write(long value) {
+    write(std::to_string(value));
+  }
+
+  void write(unsigned long value) {
+    write(std::to_string(value));
+  }
+
+  void write(long long value) {
+    write(std::to_string(value));
+  }
+
+  void write(unsigned long long value) {
+    write(std::to_string(value));
+  }
+
+  // Write floating point
+  void write(float value) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%g", static_cast<double>(value));
+    write(buf);
+  }
+
+  void write(double value) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%g", value);
+    write(buf);
+  }
+
+  // Write boolean
+  void write(bool value) {
+    write(value ? "true" : "false");
+  }
+
+  // Convenience operator<<
+  template<typename T>
+  ChunkedStreamWriter& operator<<(const T& value) {
+    write(value);
+    return *this;
+  }
+
+  // Get the accumulated data as a string (copies data)
+  std::string str() const {
+    std::string result;
+    result.reserve(current_size_);
+
+    for (size_t i = 0; i < buffer_.num_chunks(); ++i) {
+      const uint8_t* chunk_data = buffer_.get_chunk(i);
+      size_t chunk_size = buffer_.get_chunk_size(i);
+      if (chunk_data && chunk_size > 0) {
+        result.append(reinterpret_cast<const char*>(chunk_data), chunk_size);
+      }
+    }
+
+    return result;
+  }
+
+  // Get as BufferView (zero-copy access per chunk)
+  BufferView get_view() const {
+    // Note: BufferView can only view contiguous memory, so this returns
+    // view of first chunk. For full access, use get_chunk_view() or str()
+    if (buffer_.num_chunks() > 0) {
+      return BufferView(buffer_.get_chunk(0), buffer_.get_chunk_size(0));
+    }
+    return BufferView();
+  }
+
+  // Get view of specific chunk
+  BufferView get_chunk_view(size_t chunk_idx) const {
+    if (chunk_idx < buffer_.num_chunks()) {
+      return BufferView(buffer_.get_chunk(chunk_idx),
+                       buffer_.get_chunk_size(chunk_idx));
+    }
+    return BufferView();
+  }
+
+  // Get reference to underlying ChunkedBuffer
+  const ChunkedBuffer<ChunkSize, Alignment>& buffer() const {
+    return buffer_;
+  }
+
+  // Convert to contiguous buffer
+  Buffer<Alignment> to_contiguous() const {
+    return buffer_.template to_contiguous<Alignment>();
+  }
+
+  ///
+  /// Concatenate another ChunkedStreamWriter to this one by moving chunks
+  /// This is very efficient as it just moves chunk pointers without any
+  /// data copying or reallocation.
+  ///
+  /// @param other The writer to concatenate (will be moved from and cleared)
+  ///
+  void concat(ChunkedStreamWriter&& other) {
+    if (other.empty()) {
+      return;
+    }
+
+    if (current_size_ + other.current_size_ > max_length_) {
+      // Would exceed max length, don't concat
+      return;
+    }
+
+    // Move chunks from other buffer to this buffer
+    buffer_.concat(std::move(other.buffer_));
+
+    // Update size
+    current_size_ += other.current_size_;
+
+    // Other is now empty (buffer was moved)
+    other.current_size_ = 0;
+  }
+
+  ///
+  /// Concatenate another ChunkedStreamWriter to this one (const version)
+  /// This version copies chunks since we can't move from a const reference.
+  ///
+  /// @param other The writer to concatenate
+  ///
+  void concat(const ChunkedStreamWriter& other) {
+    if (other.empty()) {
+      return;
+    }
+
+    if (current_size_ + other.current_size_ > max_length_) {
+      // Would exceed max length, don't concat
+      return;
+    }
+
+    // Copy chunks from other buffer to this buffer
+    buffer_.concat(other.buffer_);
+
+    // Update size
+    current_size_ += other.current_size_;
+  }
+
+  // Clear buffer
+  void clear() {
+    buffer_.clear();
+    current_size_ = 0;
+  }
+
+  // Get current size
+  size_t size() const { return current_size_; }
+
+  // Check if empty
+  bool empty() const { return current_size_ == 0; }
+
+  // Get number of chunks
+  size_t num_chunks() const { return buffer_.num_chunks(); }
+
+  // Get chunk size
+  size_t chunk_size() const { return ChunkSize; }
+
+ private:
+  void append_bytes(const uint8_t* data, size_t len) {
+    size_t old_size = current_size_;
+    buffer_.resize(current_size_ + len);
+
+    // Copy bytes
+    for (size_t i = 0; i < len; ++i) {
+      buffer_[old_size + i] = data[i];
+    }
+
+    current_size_ += len;
+  }
+
+  ChunkedBuffer<ChunkSize, Alignment> buffer_;
+  size_t current_size_{0};
   const size_t max_length_;
 };
 
