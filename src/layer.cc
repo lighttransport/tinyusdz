@@ -224,10 +224,6 @@ struct LayerImpl {
   std::unordered_map<std::string, PrimSpec> _prim_specs;
   LayerMetas _metas;
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  mutable std::mutex _mutex;
-#endif
-
   // Cached primspec path.
   // key : prim_part string (e.g. "/path/bora")
   mutable std::map<std::string, const PrimSpec *> _primspec_path_cache;
@@ -455,11 +451,6 @@ bool Layer::find_primspec_at(const Path &path, const PrimSpec **ps,
   if (!path.is_absolute_path()) {
     PUSH_ERROR_AND_RETURN(fmt::format("Path is not absolute path: {}", path.full_path_name()));
   }
-
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  // TODO: Only take a lock when dirty.
-  std::lock_guard<std::mutex> lock(_impl->_mutex);
-#endif
 
   if (_impl->_dirty) {
     DCOUT("clear cache.");

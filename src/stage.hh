@@ -7,10 +7,6 @@
 #include "composition.hh"
 #include "prim-types.hh"
 
-#if defined(TINYUSDZ_ENABLE_THREAD)
-#include <mutex>
-#endif
-
 namespace tinyusdz {
 
 // TODO: Use LayerMetas?
@@ -23,6 +19,14 @@ class Stage {
  public:
   // pxrUSD compat API ----------------------------------------
   static Stage CreateInMemory() { return Stage(); }
+
+  // Special member functions
+  Stage() = default;
+  Stage(const Stage&) = default;
+  Stage& operator=(const Stage&) = default;
+  Stage(Stage&&) = default;
+  Stage& operator=(Stage&&) = default;
+  ~Stage() = default;
 
   ///
   /// Traverse by depth-first order.
@@ -250,10 +254,6 @@ class Stage {
   size_t estimate_memory_usage() const;
 
  private:
-
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  mutable std::mutex _mutex;
-#endif
 
 #if 0 // Deprecated. remove.
   ///

@@ -210,11 +210,14 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
   }
 
   // Check if num_values fits in size_t (for 32-bit builds)
+  // On 64-bit systems uint64_t and size_t are the same size, so skip check
+#if SIZE_MAX < UINT64_MAX
   if (num_values > std::numeric_limits<size_t>::max()) {
     PUSH_ERROR_AND_RETURN_TAG(
         kTag, "Number of values exceeds maximum size_t limit.");
     return false;
   }
+#endif
 
   // Read all ValueReps first
   auto vrep_start_offset = _sr->tell();
