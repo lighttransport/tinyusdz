@@ -1085,11 +1085,6 @@ Prim::Prim(const std::string &elementPath, value::Value &&rhs) {
 
 bool Prim::add_child(Prim &&rhs, const bool rename_prim_name,
                      std::string *err) {
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  // TODO: Only take a lock when dirty.
-  std::lock_guard<std::mutex> lock(_mutex);
-#endif
-
   std::string elementName = rhs.element_name();
 
   if (elementName.empty()) {
@@ -1196,11 +1191,6 @@ bool Prim::add_child(Prim &&rhs, const bool rename_prim_name,
 
 bool Prim::replace_child(const std::string &child_prim_name, Prim &&rhs,
                          std::string *err) {
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  // TODO: Only take a lock when dirty.
-  std::lock_guard<std::mutex> lock(_mutex);
-#endif
-
   if (child_prim_name.empty()) {
     if (err) {
       (*err) += "child_prim_name is empty.\n";
@@ -1280,11 +1270,6 @@ bool Prim::replace_child(const std::string &child_prim_name, Prim &&rhs,
 
 const std::vector<int64_t> &Prim::get_child_indices_from_primChildren(
     bool force_update, bool *indices_is_valid) const {
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  // TODO: Only take a lock when dirty.
-  std::lock_guard<std::mutex> lock(_mutex);
-#endif
-
   if (!force_update && (_primChildrenIndices.size() == _children.size()) &&
       !_child_dirty) {
     // got cache.

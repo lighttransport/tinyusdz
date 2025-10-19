@@ -3589,6 +3589,12 @@ class Prim {
     set_primdata(elementName, prim);
   }
 
+  // Special member functions (copy and move)
+  Prim(const Prim&) = default;
+  Prim& operator=(const Prim&) = default;
+  Prim(Prim&&) = default;
+  Prim& operator=(Prim&&) = default;
+
   // Replace exting prim
   template <typename T>
   void set_primdata(const T &prim) {
@@ -3818,10 +3824,6 @@ class Prim {
             // NumPrimsInStage)
 
   std::map<std::string, VariantSet> _variantSets;
-
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  mutable std::mutex _mutex;
-#endif
 };
 
 bool IsXformablePrim(const Prim &prim);
@@ -3971,6 +3973,13 @@ class PrimSpec {
     }
 
     return *this;
+  }
+
+  PrimSpec(PrimSpec &&rhs) noexcept {
+    //TUSDZ_LOG_I("PrimSpec move constructor called");
+    if (this != &rhs) {
+      MoveFrom(rhs);
+    }
   }
 
   PrimSpec &operator=(PrimSpec &&rhs) noexcept {

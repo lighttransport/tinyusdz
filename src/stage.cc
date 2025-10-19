@@ -618,13 +618,6 @@ bool Stage::compute_absolute_prim_path() {
 }
 
 bool Stage::add_root_prim(Prim &&prim, bool rename_prim_name) {
-
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  // TODO: Only take a lock when dirty.
-  std::lock_guard<std::mutex> lock(_mutex);
-#endif
-
-
   std::string elementName = prim.element_name();
 
   if (elementName.empty()) {
@@ -689,11 +682,6 @@ bool Stage::add_root_prim(Prim &&prim, bool rename_prim_name) {
 }
 
 bool Stage::replace_root_prim(const std::string &prim_name, Prim &&prim) {
-
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  // TODO: Only take a lock when dirty.
-  std::lock_guard<std::mutex> lock(_mutex);
-#endif
 
   if (prim_name.empty()) {
     PUSH_ERROR_AND_RETURN(fmt::format("prim_name is empty."));
