@@ -405,8 +405,7 @@ std::string try_print_typed_array(const uint8_t* packed_ptr_data) {
     std::stringstream ss;
     ss << "[";
 
-    // Limit output to first 10 elements for readability
-    size_t max_elements = std::min(view.size(), size_t(10));
+    size_t max_elements = view.size();
 
     for (size_t i = 0; i < max_elements; ++i) {
         if (i > 0) ss << ", ";
@@ -416,9 +415,9 @@ std::string try_print_typed_array(const uint8_t* packed_ptr_data) {
         ss << view[i];
     }
 
-    if (view.size() > max_elements) {
-        ss << ", ... (" << view.size() << " total)";
-    }
+    //if (view.size() > max_elements) {
+    //    ss << ", ... (" << view.size() << " total)";
+    //}
 
     ss << "]";
     return ss.str();
@@ -1078,27 +1077,35 @@ bool try_print_typed_array_value(StreamWriter& writer, const uint8_t* packed_ptr
         return false;  // Try next type
     }
 
-    writer.write("[");
-
-    // Limit output to first 10 elements for readability
-    size_t max_elements = std::min(view.size(), size_t(10));
-
-    for (size_t i = 0; i < max_elements; ++i) {
-        if (i > 0) writer.write(", ");
-
-        // Write the value using operator<< via stringstream
+    // For single-element arrays (common for double3/float3/etc), print without brackets
+    if (view.size() == 1) {
+        // Write the single value directly without brackets
         std::stringstream ss;
-        ss << view[i];
+        ss << view[0];
         writer.write(ss.str());
-    }
+    } else {
+        // Multiple elements - use brackets
+        writer.write("[");
 
-    if (view.size() > max_elements) {
-        writer.write(", ... (");
-        writer.write(static_cast<int>(view.size()));
-        writer.write(" total)");
-    }
+        size_t max_elements = view.size();
 
-    writer.write("]");
+        for (size_t i = 0; i < max_elements; ++i) {
+            if (i > 0) writer.write(", ");
+
+            // Write the value using operator<< via stringstream
+            std::stringstream ss;
+            ss << view[i];
+            writer.write(ss.str());
+        }
+
+        //if (view.size() > max_elements) {
+        //    writer.write(", ... (");
+        //    writer.write(static_cast<int>(view.size()));
+        //    writer.write(" total)");
+        //}
+
+        writer.write("]");
+    }
     return true;
 }
 
