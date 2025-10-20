@@ -1719,10 +1719,9 @@ static void pprint_typed_array_timesamples(StreamWriter& writer, const PODTimeSa
     const Buffer<16>& blocked = samples.get_blocked();
     const Buffer<16>& values = samples.get_values();
 
-    size_t num_samples = times.size();
-
 #ifdef TINYUSDZ_ENABLE_THREAD
     // Use threaded path for large arrays
+    size_t num_samples = times.size();
     if (num_samples >= g_threaded_print_config.thread_threshold) {
         unsigned int num_threads = g_threaded_print_config.get_num_threads();
         size_t samples_per_thread = (num_samples + num_threads - 1) / num_threads;
