@@ -702,18 +702,22 @@ class TypedArray {
     }
   }
 
-  // Copy constructor - performs shallow copy (copies pointer and flag)
-  // WARNING: Both instances will point to the same TypedArrayImpl!
-  // If source is owned (not dedup), the copy will be marked as dedup to prevent
-  // double-free
-  TypedArray(const TypedArray& other) noexcept : _packed_data(0) {
-    if (other.is_dedup()) {
-      // Source is shared/mmap - safe to copy as-is
+  // Copy constructor - performs deep copy to avoid ownership issues
+  TypedArray(const TypedArray& other) : _packed_data(0) {
+    if (other.is_null()) {
+      // Source is null - nothing to copy
+      _packed_data = 0;
+    } else if (other.is_dedup()) {
+      // Source is shared/mmap - can safely share the pointer
       _packed_data = other._packed_data;
     } else {
-      // Source is owned - mark copy as dedup to prevent double deletion
-      TypedArrayImpl<T>* ptr = other.get();
-      reset(ptr, true);  // Mark as dedup
+      // Source is owned - perform deep copy to avoid ownership conflicts
+      TypedArrayImpl<T>* src_ptr = other.get();
+      if (src_ptr) {
+        // Create new TypedArrayImpl with deep copy of data
+        TypedArrayImpl<T>* new_ptr = new TypedArrayImpl<T>(*src_ptr);
+        reset(new_ptr, false);  // This copy owns the new data
+      }
     }
   }
 
@@ -722,8 +726,8 @@ class TypedArray {
     other._packed_data = 0;  // Reset source to null
   }
 
-  // Copy assignment - performs shallow copy
-  TypedArray& operator=(const TypedArray& other) noexcept {
+  // Copy assignment - performs deep copy to avoid ownership issues
+  TypedArray& operator=(const TypedArray& other) {
     if (this != &other) {
       // Delete current resource if owned
       if (!is_dedup() && get() != nullptr) {
@@ -731,11 +735,21 @@ class TypedArray {
       }
 
       // Copy from other
-      if (other.is_dedup()) {
+      if (other.is_null()) {
+        // Source is null
+        _packed_data = 0;
+      } else if (other.is_dedup()) {
+        // Source is shared/mmap - can safely share the pointer
         _packed_data = other._packed_data;
       } else {
-        // Source is owned - mark copy as dedup
-        reset(other.get(), true);
+        // Source is owned - perform deep copy
+        TypedArrayImpl<T>* src_ptr = other.get();
+        if (src_ptr) {
+          TypedArrayImpl<T>* new_ptr = new TypedArrayImpl<T>(*src_ptr);
+          reset(new_ptr, false);  // This copy owns the new data
+        } else {
+          _packed_data = 0;
+        }
       }
     }
     return *this;
