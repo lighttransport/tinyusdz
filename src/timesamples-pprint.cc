@@ -1639,6 +1639,7 @@ static void pprint_typed_array_timesamples_FLOAT2(StreamWriter& writer, const PO
 }
 #endif  // #if 0 - pprint_typed_array_timesamples_FLOAT2
 
+#if defined(TINYUSDZ_ENABLE_THREAD)
 // Helper function to print a range of samples to a ChunkedStreamWriter
 template<typename T>
 static void pprint_typed_array_timesamples_range(
@@ -1710,6 +1711,7 @@ static void pprint_typed_array_timesamples_range(
         chunk_writer.write("\n");
     }
 }
+#endif
 
 // Templated efficient printing for typed array timesamples
 // General template for most types
