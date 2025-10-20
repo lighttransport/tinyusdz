@@ -495,7 +495,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
 
       } else {
         DCOUT("Invalid Property.type");
-        ret.err = "Invalid Property type(internal error)";
+        ret.err = "ParseTypedAttribute: Invalid Property type(internal error)";
         ret.code = ParseResult::ResultCode::InternalError;
         return ret;
       }
@@ -618,7 +618,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
         return ret;
       } else {
         DCOUT("Invalid Property.type");
-        ret.err = "Invalid Property type(internal error)";
+        ret.err = "ParseTypedAttribute(Uniform): Invalid Property type(internal error)";
         ret.code = ParseResult::ResultCode::InternalError;
         return ret;
       }
@@ -742,7 +742,7 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
         }
       } else {
         DCOUT("Invalid Property.type");
-        ret.err = "Invalid Property type(internal error)";
+        ret.err = "ParseTypedAttribute(Animatable) Invalid Property type(internal error)";
         ret.code = ParseResult::ResultCode::InternalError;
         return ret;
       }
@@ -1070,7 +1070,7 @@ static ParseResult ParseExtentAttribute(std::set<std::string> &table, /* inout *
 
     } else {
       DCOUT("Invalid Property.type");
-      ret.err = "Invalid Property type(internal error)";
+      ret.err = "[extent] Invalid Property type(internal error)";
       ret.code = ParseResult::ResultCode::InternalError;
       return ret;
     }
