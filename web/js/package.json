@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:anim": "vite --open /animation.html",
     "build": "vite build",
     "preview": "vite preview",
     "cli": "vite-node load-test-node.js",
