@@ -346,16 +346,16 @@ class TinyUSDZLoader extends Loader {
             .then(() => {
                 return this.fetcher.fetch(url);
             })
-            .then((response) => {
-                // File
-                return response;
+            .then(async (response) => {
+                // Convert File to ArrayBuffer
+                return await response.arrayBuffer();
             })
-            .then((usd_file) => {
-                //const usd_binary = new Uint8Array(usd_data);
+            .then((usd_data) => {
+                const usd_binary = new Uint8Array(usd_data);
 
                 //console.log('Loaded USD binary data:', usd_binary.length, 'bytes');
 
-                scope.parse(usd_file, url, function (usd) {
+                scope.parse(usd_binary, url, function (usd) {
                     onLoad(usd);
                 }, onError, options);
 
