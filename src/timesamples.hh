@@ -1120,6 +1120,17 @@ struct TimeSamples {
   }
 
   std::string type_name() const {
+    // Check if using POD storage
+    if (_use_pod) {
+      // Get type name from type_id when using POD storage
+      if (_type_id != 0) {
+        return value::GetTypeName(_type_id);
+      } else {
+        return std::string();
+      }
+    }
+
+    // Original path for non-POD storage
     if (_samples.size()) {
       if (_dirty) {
         update();
