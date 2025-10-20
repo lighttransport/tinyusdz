@@ -22,6 +22,7 @@
 #include <map>
 #include <set>
 #include <sstream>
+#include <iomanip>
 #include <stack>
 #if defined(__wasi__)
 #else
@@ -31,6 +32,7 @@
 #include <vector>
 
 #include "ascii-parser.hh"
+#include "logger.hh"
 #include "parser-timing.hh"
 #include "path-util.hh"
 #include "str-util.hh"
@@ -58,15 +60,48 @@
 //
 
 #include "common-macros.inc"
+#include "logger.hh"
 
 #define CHECK_MEMORY_USAGE(__nbytes) do { \
   _memory_usage += (__nbytes); \
+  if (_enable_memory_logging && logging::Logger::getInstance().shouldLog(logging::LogLevel::Info)) { \
+    std::stringstream ss; \
+    ss << "[MEM_USE] Requested: " << FormatBytesSimple(__nbytes) \
+       << " | Total: " << FormatBytesSimple(_memory_usage) \
+       << " | Limit: " << FormatBytesSimple(_max_memory_limit_bytes) \
+       << " | Available: " << FormatBytesSimple(_max_memory_limit_bytes - _memory_usage); \
+    TUSDZ_LOG_I(ss.str()); \
+  } \
   if (_memory_usage > _max_memory_limit_bytes) { \
+    if (_enable_memory_logging && logging::Logger::getInstance().shouldLog(logging::LogLevel::Info)) { \
+      std::stringstream ss; \
+      ss << "[MEM_REJECT] Would exceed limit by " \
+         << FormatBytesSimple(_memory_usage - _max_memory_limit_bytes); \
+      TUSDZ_LOG_I(ss.str()); \
+    } \
     PushError(fmt::format("Memory limit exceeded. Limit: {} MB, Current usage: {} MB", \
       _max_memory_limit_bytes / (1024*1024), _memory_usage / (1024*1024))); \
     return false; \
   }  \
   } while(0)
+
+// Helper function for formatting bytes
+static std::string FormatBytesSimple(uint64_t bytes) {
+  std::stringstream ss;
+  if (bytes >= 1024ull * 1024ull * 1024ull) {
+    ss << std::fixed << std::setprecision(2) 
+       << (double(bytes) / (1024.0 * 1024.0 * 1024.0)) << " GB";
+  } else if (bytes >= 1024ull * 1024ull) {
+    ss << std::fixed << std::setprecision(2) 
+       << (double(bytes) / (1024.0 * 1024.0)) << " MB";
+  } else if (bytes >= 1024ull) {
+    ss << std::fixed << std::setprecision(2) 
+       << (double(bytes) / 1024.0) << " KB";
+  } else {
+    ss << bytes << " B";
+  }
+  return ss.str();
+}
 
 #if 0
 #define REDUCE_MEMORY_USAGE(__nbytes) do { \
@@ -1007,6 +1042,7 @@ bool AsciiParser::MaybeCustom() {
 }
 
 bool AsciiParser::ParseDict(std::map<std::string, MetaVariable> *out_dict) {
+  TUSDZ_TRACE_TAG("usda-parse", "ParseDict");
   // '{' comment | (type name '=' value)+ '}'
   if (!Expect('{')) {
     return false;
@@ -2059,6 +2095,7 @@ bool AsciiParser::ParseStageMetaOpt() {
 // meta = '(' (comment | metadata_opt)+ ')'
 //      ;
 bool AsciiParser::ParseStageMetas() {
+  TUSDZ_TRACE_TAG("usda-parse", "ParseStageMetas");
   if (!Expect('(')) {
     return false;
   }
@@ -3239,6 +3276,7 @@ AsciiParser::ParsePrimMeta() {
 }
 
 bool AsciiParser::ParsePrimMetas(PrimMetaMap *args) {
+  TUSDZ_TRACE_TAG("usda-parse", "ParsePrimMetas");
   // '(' args ')'
   // args = list of argument, separated by newline.
 

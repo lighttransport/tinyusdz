@@ -19,6 +19,7 @@
 #endif
 
 #include "usdc-reader.hh"
+#include "logger.hh"
 #include "parser-timing.hh"
 
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDC_READER)
@@ -3826,6 +3827,7 @@ bool USDCReader::Impl::ToLayer(Layer *layer) {
 }
 
 bool USDCReader::Impl::ReadUSDC() {
+  TUSDZ_TRACE("usdc-parse");
   TINYUSDZ_PROFILE_FUNCTION("usdc-reader");
   if (crate_reader) {
     delete crate_reader;

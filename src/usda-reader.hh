@@ -19,6 +19,7 @@ struct USDAReaderConfig {
   bool allow_unknown_apiSchema{true};
   bool strict_allowedToken_check{false};
   size_t max_memory_limit_in_mb{1024ull*128ull}; // Default 128GB
+  bool enable_memory_trace_logging{false}; // Enable detailed memory allocation trace logging
 };
 
 ///

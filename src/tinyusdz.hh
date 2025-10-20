@@ -119,6 +119,12 @@ struct USDLoadOptions {
   std::map<std::string, FileFormatHandler> fileformats;
 
   Axis upAxis{Axis::Y};
+
+  ///
+  /// Enable detailed memory allocation trace logging during loading.
+  /// When enabled, logs memory allocations to the Logger output stream.
+  ///
+  bool enable_memory_trace_logging{false};
 };
 
 

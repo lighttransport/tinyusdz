@@ -15,6 +15,7 @@
 #endif
 
 #include "crate-reader.hh"
+#include "logger.hh"
 
 #ifdef __wasi__
 #else
@@ -5981,6 +5982,7 @@ bool CrateReader::ReadSection(crate::Section *s) {
 }
 
 bool CrateReader::ReadTokens() {
+  TUSDZ_TRACE_TAG("usdc-parse", "crate-read");
   TINYUSDZ_PROFILE_SCOPE("crate-reader", "ReadTokens");
   
   // Report progress (20%)
@@ -6343,6 +6345,7 @@ bool CrateReader::ReadFields() {
 }
 
 bool CrateReader::ReadFieldSets() {
+  TUSDZ_TRACE_TAG("usdc-parse", "crate-read");
   // Report progress (50%)
   if (!ReportProgress(0.5f)) {
     PUSH_ERROR("Parsing cancelled by progress callback.");
@@ -6707,6 +6710,7 @@ bool CrateReader::ReadSpecs() {
 }
 
 bool CrateReader::ReadPaths() {
+  TUSDZ_TRACE_TAG("usdc-parse", "crate-read");
   TINYUSDZ_PROFILE_SCOPE("crate-reader", "ReadPaths");
   
   // Report progress (70%)
@@ -6773,6 +6777,7 @@ bool CrateReader::ReadPaths() {
 }
 
 bool CrateReader::ReadBootStrap() {
+  TUSDZ_TRACE_TAG("usdc-parse", "crate-read");
   TINYUSDZ_PROFILE_FUNCTION("crate-reader");
   
   // Report initial progress

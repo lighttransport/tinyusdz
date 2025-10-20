@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "io-util.hh"
+#include "logger.hh"
 #include "pprinter.hh"
 #include "prim-pprint.hh"
 #include "str-util.hh"
@@ -461,6 +462,7 @@ void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
 }  // namespace
 
 std::string Stage::ExportToString(bool relative_path) const {
+  TUSDZ_TRACE("ascii-write");
   (void)relative_path; // TODO
 
   std::stringstream ss;

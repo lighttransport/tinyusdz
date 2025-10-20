@@ -10,6 +10,7 @@
 #include "str-util.hh"
 #include "io-util.hh"
 #include "usd-to-json.hh"
+#include "logger.hh"
 
 #include "tydra/scene-access.hh"
 
@@ -56,7 +57,7 @@ static std::string format_memory_size(size_t bytes) {
 }
 
 void print_help() {
-    std::cout << "Usage tusdcat [--flatten] [--loadOnly] [--composition=STRLIST] [--relative] [--extract-variants] [--memstat] [-j|--json] input.usda/usdc/usdz\n";
+    std::cout << "Usage tusdcat [--flatten] [--loadOnly] [--composition=STRLIST] [--relative] [--extract-variants] [--memstat] [--memory-trace] [--trace] [--trace-format=FORMAT] [--trace-tags=TAGS] [-j|--json] input.usda/usdc/usdz\n";
     std::cout << "\n --flatten (not fully implemented yet) Do composition(load sublayers, refences, payload, evaluate `over`, inherit, variants..)";
     std::cout << "  --composition: Specify which composition feature to be "
                  "enabled(valid when `--flatten` is supplied). Comma separated "
@@ -69,6 +70,10 @@ void print_help() {
     std::cout << "\n -l, --loadOnly Load(Parse) USD file only(Check if input USD is valid or not)\n";
     std::cout << "\n -j, --json Output parsed USD as JSON string\n";
     std::cout << "\n --memstat Print memory usage statistics for loaded Layer and Stage\n";
+    std::cout << "\n --memory-trace Enable detailed memory allocation trace logging (outputs to stderr)\n";
+    std::cout << "\n --trace Enable performance tracing and print summary at the end\n";
+    std::cout << "\n --trace-format=FORMAT Set trace output format: text (default) or json\n";
+    std::cout << "\n --trace-tags=TAGS Comma-separated list of trace tags to enable (e.g., parser,composition,io)\n";
 
 }
 
@@ -84,6 +89,10 @@ int main(int argc, char **argv) {
   bool load_only{false};
   bool json_output{false};
   bool memstat{false};
+  bool memory_trace{false};
+  bool enable_trace{false};
+  std::string trace_format{"text"};
+  std::vector<std::string> trace_tags;
 
   constexpr int kMaxIteration = 128;
 
@@ -109,6 +118,19 @@ int main(int argc, char **argv) {
       has_extract_variants = true;
     } else if (arg.compare("--memstat") == 0) {
       memstat = true;
+    } else if (arg.compare("--memory-trace") == 0) {
+      memory_trace = true;
+    } else if (arg.compare("--trace") == 0) {
+      enable_trace = true;
+    } else if (tinyusdz::startsWith(arg, "--trace-format=")) {
+      trace_format = tinyusdz::removePrefix(arg, "--trace-format=");
+      if (trace_format != "text" && trace_format != "json") {
+        std::cerr << "Invalid trace format. Must be 'text' or 'json'\n";
+        return EXIT_FAILURE;
+      }
+    } else if (tinyusdz::startsWith(arg, "--trace-tags=")) {
+      std::string tags_str = tinyusdz::removePrefix(arg, "--trace-tags=");
+      trace_tags = tinyusdz::split(tags_str, ",");
     } else if (tinyusdz::startsWith(arg, "--composition=")) {
       std::string value_str = tinyusdz::removePrefix(arg, "--composition=");
       if (value_str.empty()) {
@@ -156,6 +178,44 @@ int main(int argc, char **argv) {
 
   std::string warn;
   std::string err;
+
+  // Enable memory trace logging if requested
+  if (memory_trace) {
+    // Set log level to INFO to enable memory logging
+    tinyusdz::logging::Logger::getInstance().setLogLevel(tinyusdz::logging::LogLevel::Info);
+    // Redirect logging to stderr so it doesn't interfere with USD output
+    tinyusdz::logging::Logger::getInstance().setStream(&std::cerr);
+    std::cerr << "# Memory trace logging enabled\n";
+  }
+
+  // Enable performance tracing if requested
+  if (enable_trace) {
+    // Enable the trace manager
+    tinyusdz::logging::TraceManager::getInstance().setEnabled(true);
+    
+    // Set output format
+    if (trace_format == "json") {
+      tinyusdz::logging::TraceManager::getInstance().setReportFormat(
+          tinyusdz::logging::TraceReportFormat::JSON);
+    } else {
+      tinyusdz::logging::TraceManager::getInstance().setReportFormat(
+          tinyusdz::logging::TraceReportFormat::PlainText);
+    }
+    
+    // Enable specific tags if provided
+    if (!trace_tags.empty()) {
+      // First disable all tags
+      tinyusdz::logging::TraceManager::getInstance().clearTagSettings();
+      // Then enable only the specified ones
+      for (const auto& tag : trace_tags) {
+        tinyusdz::logging::TraceManager::getInstance().setTagEnabled(tag, true);
+        std::cerr << "# Trace enabled for tag: " << tag << "\n";
+      }
+    }
+    // If no tags specified, all tags are enabled by default
+    
+    std::cerr << "# Performance tracing enabled (format: " << trace_format << ")\n";
+  }
 
   std::string ext = str_tolower(GetFileExtension(filepath));
   std::string base_dir;
@@ -444,6 +504,9 @@ int main(int argc, char **argv) {
     tinyusdz::Stage stage;
 
     tinyusdz::USDLoadOptions options;
+    if (memory_trace) {
+      options.enable_memory_trace_logging = true;
+    }
 
     // auto detect format.
     bool ret = tinyusdz::LoadUSDFromFile(filepath, &stage, &warn, &err, options);
@@ -503,6 +566,12 @@ int main(int argc, char **argv) {
       }
 
     }
+  }
+
+  // Print trace summary if tracing was enabled
+  if (enable_trace) {
+    std::cerr << "\n";
+    tinyusdz::logging::TraceManager::getInstance().printSummary(std::cerr);
   }
 
   return EXIT_SUCCESS;

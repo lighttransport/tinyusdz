@@ -756,6 +756,7 @@ bool LoadUSDAFromMemory(const uint8_t *addr, const size_t length,
   config.strict_allowedToken_check = options.strict_allowedToken_check;
   config.allow_unknown_apiSchema = !options.strict_apiSchema_check;
   config.max_memory_limit_in_mb = size_t(options.max_memory_limit_in_mb);
+  config.enable_memory_trace_logging = options.enable_memory_trace_logging;
   reader.set_reader_config(config);
 
   reader.SetBaseDir(base_dir);
@@ -1250,6 +1251,7 @@ bool LoadUSDALayerFromMemory(const uint8_t *addr, const size_t length,
 
   tinyusdz::usda::USDAReaderConfig config;
   config.strict_allowedToken_check = options.strict_allowedToken_check;
+  config.enable_memory_trace_logging = options.enable_memory_trace_logging;
   reader.set_reader_config(config);
 
   uint32_t load_states = static_cast<uint32_t>(tinyusdz::LoadState::Toplevel);

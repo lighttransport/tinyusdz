@@ -31,6 +31,7 @@
 
 #include "usda-reader.hh"
 #include "layer.hh"
+#include "logger.hh"
 #include "parser-timing.hh"
 
 //
@@ -322,6 +323,7 @@ class USDAReader::Impl {
   void set_reader_config(const USDAReaderConfig &config) {
     _config = config;
     _parser.SetMaxMemoryLimit(config.max_memory_limit_in_mb);
+    _parser.SetMemoryLoggingEnabled(config.enable_memory_trace_logging);
   }
 
   const USDAReaderConfig get_reader_config() const {
@@ -1637,6 +1639,7 @@ bool USDAReader::Impl::ReconstructPrim(
 ///
 
 bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
+  TUSDZ_TRACE("usda-parse");
   TINYUSDZ_PROFILE_FUNCTION("usda-reader");
 
   ///

@@ -6,6 +6,7 @@
 
 #include <sstream>
 
+#include "logger.hh"
 #include "pprinter.hh"
 #include "prim-types.hh"
 #include "str-util.hh"
@@ -868,6 +869,7 @@ std::string pprint_any(const linb::any &v, const uint32_t indent,
 
 std::string pprint_value(const value::Value &v, const uint32_t indent,
                          bool closing_brace) {
+  TUSDZ_TRACE_TAG("ascii-write", "pprint");
 #define BASETYPE_CASE_EXPR(__ty)                           \
   case TypeTraits<__ty>::type_id(): {                      \
     auto p = v.as<__ty>();                                 \

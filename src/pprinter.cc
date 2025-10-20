@@ -7,6 +7,7 @@
 //
 #include "pprinter.hh"
 
+#include "logger.hh"
 #include "prim-pprint.hh"
 #include "prim-types.hh"
 #include "layer.hh"
@@ -4659,6 +4660,7 @@ std::string print_layer(const Layer &layer, const uint32_t indent) {
 namespace prim {
 
 std::string print_prim(const Prim &prim, const uint32_t indent) {
+  TUSDZ_TRACE_TAG("ascii-write", "pprint");
   std::stringstream ss;
 
   // Currently, Prim's elementName is read from name variable in concrete Prim
@@ -4797,6 +4799,7 @@ std::string print_prim(const Prim &prim, const uint32_t indent) {
 }
 
 std::string print_primspec(const PrimSpec &primspec, const uint32_t indent) {
+  TUSDZ_TRACE_TAG("ascii-write", "pprint");
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << to_string(primspec.specifier()) << " ";

@@ -344,6 +344,13 @@ class AsciiParser {
   }
 
   ///
+  /// Enable/disable memory operation logging
+  ///
+  void SetMemoryLoggingEnabled(bool enabled) {
+    _enable_memory_logging = enabled;
+  }
+
+  ///
   /// Set progress callback function
   /// @param[in] callback Progress callback function
   /// @param[in] userptr User-provided pointer for custom data
@@ -927,6 +934,7 @@ class AsciiParser {
   // Memory tracking
   uint64_t _max_memory_limit_bytes{128ull * 1024ull * 1024ull * 1024ull}; // Default 128GB
   uint64_t _memory_usage{0};
+  bool _enable_memory_logging{false};
 
   //
   // Callbacks
