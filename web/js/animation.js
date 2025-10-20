@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
+import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
+import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 
 // Scene setup
 const scene = new THREE.Scene();
@@ -61,19 +63,58 @@ scene.add(gridHelper);
 const parentGroup = new THREE.Group();
 scene.add(parentGroup);
 
-// Parent cube (will be animated with KeyframeTracks)
-const cubeGeometry = new THREE.BoxGeometry(1, 1, 1);
-const cubeMaterial = new THREE.MeshStandardMaterial({
-	color: 0xff6b6b,
-	roughness: 0.5,
-	metalness: 0.3
-});
-const parentCube = new THREE.Mesh(cubeGeometry, cubeMaterial);
-parentCube.name = 'parentCube';
-parentCube.castShadow = true;
-parentCube.receiveShadow = true;
-parentCube.position.y = 0.5;
-parentGroup.add(parentCube);
+// Parent object (will be loaded from USD and animated with KeyframeTracks)
+let parentCube = null;
+
+// Load USD model asynchronously
+async function loadUSDModel() {
+	const loader = new TinyUSDZLoader();
+
+	// Initialize the loader (wait for WASM module to load)
+	// Use memory64: false for browser compatibility
+	// Use useZstdCompressedWasm: false since compressed WASM is not available
+	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
+
+	const suzanne_filename = "./assets/suzanne.usdc";
+
+	// Load USD scene
+	const usd_scene = await loader.loadAsync(suzanne_filename);
+
+	// Get the default root node from USD
+	const usdRootNode = usd_scene.getDefaultRootNode();
+
+	// Create default material
+	const defaultMtl = TinyUSDZLoaderUtils.createDefaultMaterial();
+
+	const options = {
+		overrideMaterial: false,
+		envMap: null,
+		envMapIntensity: 1.0,
+	};
+
+	// Build Three.js node from USD
+	const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+
+	// Setup the loaded model
+	threeNode.name = 'parentCube'; // Keep the same name for animation tracking
+	threeNode.castShadow = true;
+	threeNode.receiveShadow = true;
+	threeNode.position.y = 0.5;
+
+	// Traverse and enable shadows for all meshes
+	threeNode.traverse((child) => {
+		if (child.isMesh) {
+			child.castShadow = true;
+			child.receiveShadow = true;
+		}
+	});
+
+	parentCube = threeNode;
+	parentGroup.add(parentCube);
+
+	// Initialize animation after USD model is loaded
+	updateAnimationClip();
+}
 
 // Create synthetic KeyframeTracks for the cube
 function createKeyframeTracks(duration, numKeyframes = 20) {
@@ -130,7 +171,7 @@ function createKeyframeTracks(duration, numKeyframes = 20) {
 }
 
 // Create animation mixer for the cube
-const mixer = new THREE.AnimationMixer(parentCube);
+let mixer = null;
 let animationAction = null;
 let currentTracks = createKeyframeTracks(10);
 let enabledTracks = {
@@ -140,6 +181,16 @@ let enabledTracks = {
 };
 
 function updateAnimationClip() {
+	// Only create animation if parentCube is loaded
+	if (!parentCube) {
+		return;
+	}
+
+	// Create mixer if not already created
+	if (!mixer) {
+		mixer = new THREE.AnimationMixer(parentCube);
+	}
+
 	// Stop and remove current action
 	if (animationAction) {
 		animationAction.stop();
@@ -340,8 +391,24 @@ function onWindowResize() {
 	renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
-// Initialize animation after animationParams is defined
-updateAnimationClip();
+// Load USD model and initialize animation
+loadUSDModel().catch((error) => {
+	console.error('Failed to load USD model:', error);
+	// Fallback: create a simple cube if USD loading fails
+	const cubeGeometry = new THREE.BoxGeometry(1, 1, 1);
+	const cubeMaterial = new THREE.MeshStandardMaterial({
+		color: 0xff6b6b,
+		roughness: 0.5,
+		metalness: 0.3
+	});
+	parentCube = new THREE.Mesh(cubeGeometry, cubeMaterial);
+	parentCube.name = 'parentCube';
+	parentCube.castShadow = true;
+	parentCube.receiveShadow = true;
+	parentCube.position.y = 0.5;
+	parentGroup.add(parentCube);
+	updateAnimationClip();
+});
 
 // FPS calculation
 let lastTime = performance.now();
