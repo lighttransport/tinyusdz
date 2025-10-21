@@ -196,36 +196,44 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::value::uint4 &v) {
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::float2 &v) {
-  os << "(" << tinyusdz::dtos(v[0]) << ", " << tinyusdz::dtos(v[1]) << ")";
+  char buffer[tinyusdz::PRINT_FLOAT2_MAX_CHARS];
+  size_t len = tinyusdz::print_float2(v, buffer);
+  os.write(buffer, len);
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::float3 &v) {
-  os << "(" << tinyusdz::dtos(v[0]) << ", " << tinyusdz::dtos(v[1]) << ", "
-     << tinyusdz::dtos(v[2]) << ")";
+  char buffer[tinyusdz::PRINT_FLOAT3_MAX_CHARS];
+  size_t len = tinyusdz::print_float3(v, buffer);
+  os.write(buffer, len);
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::float4 &v) {
-  os << "(" << tinyusdz::dtos(v[0]) << ", " << tinyusdz::dtos(v[1]) << ", "
-     << tinyusdz::dtos(v[2]) << ", " << tinyusdz::dtos(v[3]) << ")";
+  char buffer[tinyusdz::PRINT_FLOAT4_MAX_CHARS];
+  size_t len = tinyusdz::print_float4(v, buffer);
+  os.write(buffer, len);
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::double2 &v) {
-  os << "(" << tinyusdz::dtos(v[0]) << ", " << tinyusdz::dtos(v[1]) << ")";
+  char buffer[tinyusdz::PRINT_DOUBLE2_MAX_CHARS];
+  size_t len = tinyusdz::print_double2(v, buffer);
+  os.write(buffer, len);
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::double3 &v) {
-  os << "(" << tinyusdz::dtos(v[0]) << ", " << tinyusdz::dtos(v[1]) << ", "
-     << tinyusdz::dtos(v[2]) << ")";
+  char buffer[tinyusdz::PRINT_DOUBLE3_MAX_CHARS];
+  size_t len = tinyusdz::print_double3(v, buffer);
+  os.write(buffer, len);
   return os;
 }
 
 std::ostream &operator<<(std::ostream &os, const tinyusdz::value::double4 &v) {
-  os << "(" << tinyusdz::dtos(v[0]) << ", " << tinyusdz::dtos(v[1]) << ", "
-     << tinyusdz::dtos(v[2]) << ", " << tinyusdz::dtos(v[3]) << ")";
+  char buffer[tinyusdz::PRINT_DOUBLE4_MAX_CHARS];
+  size_t len = tinyusdz::print_double4(v, buffer);
+  os.write(buffer, len);
   return os;
 }
 
@@ -433,53 +441,25 @@ std::ostream &operator<<(std::ostream &ofs,
 
 std::ostream &operator<<(std::ostream &ofs,
                          const tinyusdz::value::matrix2d &m) {
-  ofs << "( ";
-
-  ofs << "(" << tinyusdz::dtos(m.m[0][0]) << ", " << tinyusdz::dtos(m.m[0][1])
-      << "), ";
-  ofs << "(" << tinyusdz::dtos(m.m[1][0]) << ", " << tinyusdz::dtos(m.m[1][1])
-      << ")";
-
-  ofs << " )";
-
+  char buffer[tinyusdz::PRINT_MATRIX2D_MAX_CHARS];
+  size_t len = tinyusdz::print_matrix2d(m, buffer);
+  ofs.write(buffer, len);
   return ofs;
 }
 
 std::ostream &operator<<(std::ostream &ofs,
                          const tinyusdz::value::matrix3d &m) {
-  ofs << "( ";
-
-  ofs << "(" << tinyusdz::dtos(m.m[0][0]) << ", " << tinyusdz::dtos(m.m[0][1])
-      << ", " << tinyusdz::dtos(m.m[0][2]) << "), ";
-  ofs << "(" << tinyusdz::dtos(m.m[1][0]) << ", " << tinyusdz::dtos(m.m[1][1])
-      << ", " << tinyusdz::dtos(m.m[1][2]) << "), ";
-  ofs << "(" << tinyusdz::dtos(m.m[2][0]) << ", " << tinyusdz::dtos(m.m[2][1])
-      << ", " << tinyusdz::dtos(m.m[2][2]) << ")";
-
-  ofs << " )";
-
+  char buffer[tinyusdz::PRINT_MATRIX3D_MAX_CHARS];
+  size_t len = tinyusdz::print_matrix3d(m, buffer);
+  ofs.write(buffer, len);
   return ofs;
 }
 
 std::ostream &operator<<(std::ostream &ofs,
                          const tinyusdz::value::matrix4d &m) {
-  ofs << "( ";
-
-  ofs << "(" << tinyusdz::dtos(m.m[0][0]) << ", " << tinyusdz::dtos(m.m[0][1])
-      << ", " << tinyusdz::dtos(m.m[0][2]) << ", " << tinyusdz::dtos(m.m[0][3])
-      << "), ";
-  ofs << "(" << tinyusdz::dtos(m.m[1][0]) << ", " << tinyusdz::dtos(m.m[1][1])
-      << ", " << tinyusdz::dtos(m.m[1][2]) << ", " << tinyusdz::dtos(m.m[1][3])
-      << "), ";
-  ofs << "(" << tinyusdz::dtos(m.m[2][0]) << ", " << tinyusdz::dtos(m.m[2][1])
-      << ", " << tinyusdz::dtos(m.m[2][2]) << ", " << tinyusdz::dtos(m.m[2][3])
-      << "), ";
-  ofs << "(" << tinyusdz::dtos(m.m[3][0]) << ", " << tinyusdz::dtos(m.m[3][1])
-      << ", " << tinyusdz::dtos(m.m[3][2]) << ", " << tinyusdz::dtos(m.m[3][3])
-      << ")";
-
-  ofs << " )";
-
+  char buffer[tinyusdz::PRINT_MATRIX4D_MAX_CHARS];
+  size_t len = tinyusdz::print_matrix4d(m, buffer);
+  ofs.write(buffer, len);
   return ofs;
 }
 

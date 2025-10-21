@@ -1,4 +1,4 @@
-all: print_fp test_exhaustive example_usage test_decimal test_shortest_and_ranges test_fastpath_perf
+all: print_fp test_exhaustive example_usage test_decimal test_shortest_and_ranges test_fastpath_perf test_dtos_integration test_print_vectors
 
 print_fp:
 	g++ -O2 -g -std=c++14 print_fp.cc -I ../../src/external/dragonbox/ ../../src/external/dragonbox/dragonbox_to_chars.cpp -I../../src/external -o print_fp
@@ -20,8 +20,14 @@ test_shortest_and_ranges:
 test_fastpath_perf:
 	g++ -O2 -g -std=c++14 test_fastpath_perf.cc -I ../../src/external/dragonbox/ ../../src/external/dragonbox/dragonbox_to_chars.cpp -I../../src/external -o test_fastpath_perf
 
+test_dtos_integration:
+	g++ -O2 -g -std=c++14 ../../test_dtos_integration.cc ../../src/str-util.cc -I../../src -I ../../src/external/dragonbox/ ../../src/external/dragonbox/dragonbox_to_chars.cpp -I../../src/external -o test_dtos_integration
+
+test_print_vectors:
+	g++ -O2 -g -std=c++14 ../../test_print_vectors.cc ../../src/str-util.cc -I../../src -I ../../src/external/dragonbox/ ../../src/external/dragonbox/dragonbox_to_chars.cpp -I../../src/external -o test_print_vectors
+
 clean:
-	rm -f print_fp test_exhaustive example_usage test_decimal test_shortest_and_ranges test_fastpath_perf
+	rm -f print_fp test_exhaustive example_usage test_decimal test_shortest_and_ranges test_fastpath_perf test_dtos_integration test_print_vectors
 
 # Run quick sanity test
 test_sanity: test_exhaustive
@@ -68,4 +74,12 @@ test_run_shortest: test_shortest_and_ranges
 test_run_fastpath: test_fastpath_perf
 	./test_fastpath_perf
 
-.PHONY: all clean test_sanity test_float_quick test_float_exhaustive test_float_exhaustive_threads test_double_quick test_double_medium test_double_large test_run_decimal test_run_shortest test_run_fastpath
+# Run dtos integration test
+test_run_dtos: test_dtos_integration
+	./test_dtos_integration
+
+# Run vector/matrix printing test
+test_run_vectors: test_print_vectors
+	./test_print_vectors
+
+.PHONY: all clean test_sanity test_float_quick test_float_exhaustive test_float_exhaustive_threads test_double_quick test_double_medium test_double_large test_run_decimal test_run_shortest test_run_fastpath test_run_dtos test_run_vectors
