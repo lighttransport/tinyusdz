@@ -219,6 +219,7 @@ struct TestStats {
   std::atomic<uint64_t> failed{0};
   std::atomic<uint64_t> special_cases{0}; // NaN, Inf, etc.
   std::mutex print_mutex; // For thread-safe printing of errors
+  bool fail_fast{false}; // Exit immediately on first failure
 
   void print() const {
     uint64_t total = total_tests.load();
@@ -278,11 +279,17 @@ bool test_float_value(uint32_t bit_pattern, TestStats& stats, bool verbose = fal
     roundtrip_float = static_cast<float>(roundtrip_val);
   } catch (const std::exception& e) {
     stats.failed.fetch_add(1, std::memory_order_relaxed);
-    std::lock_guard<std::mutex> lock(stats.print_mutex);
-    std::cout << "EXCEPTION at bit pattern 0x" << std::hex << bit_pattern << std::dec << std::endl;
-    std::cout << "  Original:     " << std::scientific << std::setprecision(17) << f << std::endl;
-    std::cout << "  Dragonbox:    " << dragonbox_buf << std::endl;
-    std::cout << "  Exception:    " << e.what() << std::endl;
+    {
+      std::lock_guard<std::mutex> lock(stats.print_mutex);
+      std::cout << "EXCEPTION at bit pattern 0x" << std::hex << bit_pattern << std::dec << std::endl;
+      std::cout << "  Original:     " << std::scientific << std::setprecision(17) << f << std::endl;
+      std::cout << "  Dragonbox:    " << dragonbox_buf << std::endl;
+      std::cout << "  Exception:    " << e.what() << std::endl;
+    }
+    if (stats.fail_fast) {
+      std::cout << "\nFail-fast mode: Exiting on first error" << std::endl;
+      std::exit(1);
+    }
     return false;
   }
 
@@ -298,19 +305,26 @@ bool test_float_value(uint32_t bit_pattern, TestStats& stats, bool verbose = fal
     // For comparison, also use std::to_string
     std::string std_str = std::to_string(f);
 
-    std::lock_guard<std::mutex> lock(stats.print_mutex);
-    std::cout << "FAIL at bit pattern 0x" << std::hex << bit_pattern << std::dec << std::endl;
-    std::cout << "  Original:     " << std::scientific << std::setprecision(17) << f << std::endl;
-    std::cout << "  Dragonbox:    " << dragonbox_buf << std::endl;
-    std::cout << "  Roundtrip:    " << roundtrip_float << std::endl;
-    std::cout << "  std::to_string: " << std_str << std::endl;
+    {
+      std::lock_guard<std::mutex> lock(stats.print_mutex);
+      std::cout << "FAIL at bit pattern 0x" << std::hex << bit_pattern << std::dec << std::endl;
+      std::cout << "  Original:     " << std::scientific << std::setprecision(17) << f << std::endl;
+      std::cout << "  Dragonbox:    " << dragonbox_buf << std::endl;
+      std::cout << "  Roundtrip:    " << roundtrip_float << std::endl;
+      std::cout << "  std::to_string: " << std_str << std::endl;
 
-    // Show bit patterns
-    uint32_t orig_bits, roundtrip_bits;
-    std::memcpy(&orig_bits, &f, sizeof(float));
-    std::memcpy(&roundtrip_bits, &roundtrip_float, sizeof(float));
-    std::cout << "  Original bits:  0x" << std::hex << orig_bits << std::dec << std::endl;
-    std::cout << "  Roundtrip bits: 0x" << std::hex << roundtrip_bits << std::dec << std::endl;
+      // Show bit patterns
+      uint32_t orig_bits, roundtrip_bits;
+      std::memcpy(&orig_bits, &f, sizeof(float));
+      std::memcpy(&roundtrip_bits, &roundtrip_float, sizeof(float));
+      std::cout << "  Original bits:  0x" << std::hex << orig_bits << std::dec << std::endl;
+      std::cout << "  Roundtrip bits: 0x" << std::hex << roundtrip_bits << std::dec << std::endl;
+    }
+
+    if (stats.fail_fast) {
+      std::cout << "\nFail-fast mode: Exiting on first error" << std::endl;
+      std::exit(1);
+    }
 
     return false;
   }
@@ -356,11 +370,17 @@ bool test_double_value(uint64_t bit_pattern, TestStats& stats, bool verbose = fa
     roundtrip_val = std::stod(dragonbox_buf);
   } catch (const std::exception& e) {
     stats.failed.fetch_add(1, std::memory_order_relaxed);
-    std::lock_guard<std::mutex> lock(stats.print_mutex);
-    std::cout << "EXCEPTION at bit pattern 0x" << std::hex << bit_pattern << std::dec << std::endl;
-    std::cout << "  Original:     " << std::scientific << std::setprecision(17) << d << std::endl;
-    std::cout << "  Dragonbox:    " << dragonbox_buf << std::endl;
-    std::cout << "  Exception:    " << e.what() << std::endl;
+    {
+      std::lock_guard<std::mutex> lock(stats.print_mutex);
+      std::cout << "EXCEPTION at bit pattern 0x" << std::hex << bit_pattern << std::dec << std::endl;
+      std::cout << "  Original:     " << std::scientific << std::setprecision(17) << d << std::endl;
+      std::cout << "  Dragonbox:    " << dragonbox_buf << std::endl;
+      std::cout << "  Exception:    " << e.what() << std::endl;
+    }
+    if (stats.fail_fast) {
+      std::cout << "\nFail-fast mode: Exiting on first error" << std::endl;
+      std::exit(1);
+    }
     return false;
   }
 
@@ -373,25 +393,32 @@ bool test_double_value(uint64_t bit_pattern, TestStats& stats, bool verbose = fa
   } else {
     stats.failed.fetch_add(1, std::memory_order_relaxed);
 
-    std::lock_guard<std::mutex> lock(stats.print_mutex);
-    std::cout << "FAIL at bit pattern 0x" << std::hex << bit_pattern << std::dec << std::endl;
-    std::cout << "  Original:     " << std::scientific << std::setprecision(17) << d << std::endl;
-    std::cout << "  Dragonbox:    " << dragonbox_buf << std::endl;
-    std::cout << "  Roundtrip:    " << roundtrip_val << std::endl;
+    {
+      std::lock_guard<std::mutex> lock(stats.print_mutex);
+      std::cout << "FAIL at bit pattern 0x" << std::hex << bit_pattern << std::dec << std::endl;
+      std::cout << "  Original:     " << std::scientific << std::setprecision(17) << d << std::endl;
+      std::cout << "  Dragonbox:    " << dragonbox_buf << std::endl;
+      std::cout << "  Roundtrip:    " << roundtrip_val << std::endl;
 
-    // Show bit patterns
-    uint64_t orig_bits, roundtrip_bits;
-    std::memcpy(&orig_bits, &d, sizeof(double));
-    std::memcpy(&roundtrip_bits, &roundtrip_val, sizeof(double));
-    std::cout << "  Original bits:  0x" << std::hex << orig_bits << std::dec << std::endl;
-    std::cout << "  Roundtrip bits: 0x" << std::hex << roundtrip_bits << std::dec << std::endl;
+      // Show bit patterns
+      uint64_t orig_bits, roundtrip_bits;
+      std::memcpy(&orig_bits, &d, sizeof(double));
+      std::memcpy(&roundtrip_bits, &roundtrip_val, sizeof(double));
+      std::cout << "  Original bits:  0x" << std::hex << orig_bits << std::dec << std::endl;
+      std::cout << "  Roundtrip bits: 0x" << std::hex << roundtrip_bits << std::dec << std::endl;
+    }
+
+    if (stats.fail_fast) {
+      std::cout << "\nFail-fast mode: Exiting on first error" << std::endl;
+      std::exit(1);
+    }
 
     return false;
   }
 }
 
 // Run exhaustive float tests (all 2^32 bit patterns) - Parallel version
-void run_exhaustive_float_test_parallel(unsigned int num_threads = 0, bool verbose = true) {
+void run_exhaustive_float_test_parallel(unsigned int num_threads = 0, bool verbose = true, bool fail_fast = false) {
   if (num_threads == 0) {
     num_threads = std::thread::hardware_concurrency();
     if (num_threads == 0) num_threads = 1; // Fallback if hardware_concurrency fails
@@ -401,8 +428,12 @@ void run_exhaustive_float_test_parallel(unsigned int num_threads = 0, bool verbo
   std::cout << "Using " << num_threads << " threads" << std::endl;
   std::cout << "This will test all possible 32-bit float values..." << std::endl;
   std::cout << "Estimated time: several hours (depends on CPU)" << std::endl;
+  if (fail_fast) {
+    std::cout << "Fail-fast mode: ENABLED (will exit on first error)" << std::endl;
+  }
 
   TestStats stats;
+  stats.fail_fast = fail_fast;
   auto start = std::chrono::steady_clock::now();
   std::atomic<uint64_t> next_progress_milestone{100000000};
 
@@ -421,12 +452,12 @@ void run_exhaustive_float_test_parallel(unsigned int num_threads = 0, bool verbo
           if (next_progress_milestone.compare_exchange_strong(milestone, milestone + 100000000)) {
             auto current = std::chrono::steady_clock::now();
             auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(current - start).count();
-            double progress = (100.0 * total) / (1ULL << 32);
+            double progress_pct = (100.0 * total) / (1ULL << 32);
 
             std::lock_guard<std::mutex> lock(stats.print_mutex);
-            std::cout << "\nProgress: " << std::fixed << std::setprecision(2) << progress << "% "
-                      << "(" << total << " / " << (1ULL << 32) << ") "
-                      << "Elapsed: " << elapsed << "s" << std::endl;
+            std::cout << "\n[" << std::fixed << std::setprecision(2) << std::setw(6) << progress_pct << "%] "
+                      << "Progress: " << total << " / " << (1ULL << 32) << " tests"
+                      << " | Elapsed: " << elapsed << "s" << std::endl;
             stats.print();
           }
         }
@@ -461,13 +492,17 @@ void run_exhaustive_float_test_parallel(unsigned int num_threads = 0, bool verbo
 }
 
 // Run exhaustive float tests (all 2^32 bit patterns) - Single-threaded version
-void run_exhaustive_float_test(bool verbose = true) {
+void run_exhaustive_float_test(bool verbose = true, bool fail_fast = false) {
   std::cout << "\n=== Exhaustive Float Test (2^32 patterns) - Single-threaded ===" << std::endl;
   std::cout << "This will test all possible 32-bit float values..." << std::endl;
   std::cout << "Estimated time: several hours" << std::endl;
   std::cout << "NOTE: Use parallel version for faster testing" << std::endl;
+  if (fail_fast) {
+    std::cout << "Fail-fast mode: ENABLED (will exit on first error)" << std::endl;
+  }
 
   TestStats stats;
+  stats.fail_fast = fail_fast;
   auto start = std::chrono::steady_clock::now();
 
   // Test all 2^32 bit patterns
@@ -479,10 +514,10 @@ void run_exhaustive_float_test(bool verbose = true) {
     if (verbose && (i > 0) && (i % 100000000 == 0)) {
       auto current = std::chrono::steady_clock::now();
       auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(current - start).count();
-      double progress = (100.0 * i) / (1ULL << 32);
-      std::cout << "\nProgress: " << std::fixed << std::setprecision(2) << progress << "% "
-                << "(" << i << " / " << (1ULL << 32) << ") "
-                << "Elapsed: " << elapsed << "s" << std::endl;
+      double progress_pct = (100.0 * i) / (1ULL << 32);
+      std::cout << "\n[" << std::fixed << std::setprecision(2) << std::setw(6) << progress_pct << "%] "
+                << "Progress: " << i << " / " << (1ULL << 32) << " tests"
+                << " | Elapsed: " << elapsed << "s" << std::endl;
       stats.print();
     }
   }
@@ -495,11 +530,15 @@ void run_exhaustive_float_test(bool verbose = true) {
 }
 
 // Run sampled double tests
-void run_sampled_double_test(uint64_t num_samples, bool verbose = true) {
+void run_sampled_double_test(uint64_t num_samples, bool verbose = true, bool fail_fast = false) {
   std::cout << "\n=== Sampled Double Test (" << num_samples << " samples) ===" << std::endl;
   std::cout << "Note: Full exhaustive test would require 2^64 patterns (~10^19 tests)" << std::endl;
+  if (fail_fast) {
+    std::cout << "Fail-fast mode: ENABLED (will exit on first error)" << std::endl;
+  }
 
   TestStats stats;
+  stats.fail_fast = fail_fast;
   auto start = std::chrono::steady_clock::now();
 
   // Strategy: Sample key ranges
@@ -606,7 +645,7 @@ int main(int argc, char** argv) {
   if (argc < 2) {
     unsigned int hw_threads = std::thread::hardware_concurrency();
     std::cout << "\nUsage:" << std::endl;
-    std::cout << "  " << argv[0] << " <mode> [threads]" << std::endl;
+    std::cout << "  " << argv[0] << " <mode> [threads] [--fail-fast]" << std::endl;
     std::cout << "\nModes:" << std::endl;
     std::cout << "  sanity           - Quick sanity check" << std::endl;
     std::cout << "  float_quick      - Quick float test (1M samples)" << std::endl;
@@ -614,22 +653,36 @@ int main(int argc, char** argv) {
     std::cout << "  double_quick     - Quick double test (10M samples)" << std::endl;
     std::cout << "  double_medium    - Medium double test (100M samples)" << std::endl;
     std::cout << "  double_large     - Large double test (1B samples)" << std::endl;
-    std::cout << "\nThread control:" << std::endl;
+    std::cout << "\nOptions:" << std::endl;
     std::cout << "  threads          - Number of threads (default: " << hw_threads << " = hardware_concurrency)" << std::endl;
     std::cout << "                     Use 0 for auto-detect, 1 for single-threaded" << std::endl;
+    std::cout << "  --fail-fast      - Exit immediately on first error (for debugging)" << std::endl;
     std::cout << "\nExamples:" << std::endl;
-    std::cout << "  " << argv[0] << " float_exhaustive     # Use all available cores" << std::endl;
-    std::cout << "  " << argv[0] << " float_exhaustive 8   # Use 8 threads" << std::endl;
-    std::cout << "  " << argv[0] << " float_exhaustive 1   # Single-threaded" << std::endl;
+    std::cout << "  " << argv[0] << " float_exhaustive              # Use all cores" << std::endl;
+    std::cout << "  " << argv[0] << " float_exhaustive 8            # Use 8 threads" << std::endl;
+    std::cout << "  " << argv[0] << " float_exhaustive 1            # Single-threaded" << std::endl;
+    std::cout << "  " << argv[0] << " float_exhaustive 0 --fail-fast  # Exit on first error" << std::endl;
     return 1;
   }
 
   std::string mode = argv[1];
   unsigned int num_threads = 0; // 0 = auto-detect
+  bool fail_fast = false;
 
-  // Parse optional thread count
-  if (argc >= 3) {
-    num_threads = static_cast<unsigned int>(std::stoi(argv[2]));
+  // Parse optional arguments
+  for (int i = 2; i < argc; i++) {
+    std::string arg = argv[i];
+    if (arg == "--fail-fast") {
+      fail_fast = true;
+      std::cout << "Fail-fast mode enabled: Will exit on first error" << std::endl;
+    } else {
+      // Try to parse as thread count
+      try {
+        num_threads = static_cast<unsigned int>(std::stoi(arg));
+      } catch (...) {
+        std::cerr << "Warning: Unknown argument: " << arg << std::endl;
+      }
+    }
   }
 
   if (mode == "sanity") {
@@ -637,6 +690,7 @@ int main(int argc, char** argv) {
   } else if (mode == "float_quick") {
     std::cout << "\n=== Quick Float Test (1M samples) ===" << std::endl;
     TestStats stats;
+    stats.fail_fast = fail_fast;
     std::mt19937 rng(12345);
     for (uint32_t i = 0; i < 1000000; i++) {
       uint32_t bit_pattern = rng();
@@ -644,17 +698,18 @@ int main(int argc, char** argv) {
     }
     stats.print();
   } else if (mode == "float_exhaustive") {
+    // Note: fail_fast is passed through TestStats in the function
     if (num_threads == 1) {
-      run_exhaustive_float_test(true);
+      run_exhaustive_float_test(true, fail_fast);
     } else {
-      run_exhaustive_float_test_parallel(num_threads, true);
+      run_exhaustive_float_test_parallel(num_threads, true, fail_fast);
     }
   } else if (mode == "double_quick") {
-    run_sampled_double_test(10000000, true);  // 10M
+    run_sampled_double_test(10000000, true, fail_fast);  // 10M
   } else if (mode == "double_medium") {
-    run_sampled_double_test(100000000, true);  // 100M
+    run_sampled_double_test(100000000, true, fail_fast);  // 100M
   } else if (mode == "double_large") {
-    run_sampled_double_test(1000000000, true);  // 1B
+    run_sampled_double_test(1000000000, true, fail_fast);  // 1B
   } else {
     std::cerr << "Unknown mode: " << mode << std::endl;
     return 1;
