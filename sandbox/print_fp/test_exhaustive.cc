@@ -8,6 +8,10 @@
 #include <string>
 #include <chrono>
 #include <random>
+#include <thread>
+#include <atomic>
+#include <vector>
+#include <mutex>
 
 #include "dragonbox_to_chars.h"
 
@@ -208,27 +212,33 @@ char* dtoa_dragonbox(const float f, char* buf) {
 
 } // namespace internal
 
-// Test statistics
+// Test statistics (thread-safe)
 struct TestStats {
-  uint64_t total_tests = 0;
-  uint64_t passed = 0;
-  uint64_t failed = 0;
-  uint64_t special_cases = 0; // NaN, Inf, etc.
+  std::atomic<uint64_t> total_tests{0};
+  std::atomic<uint64_t> passed{0};
+  std::atomic<uint64_t> failed{0};
+  std::atomic<uint64_t> special_cases{0}; // NaN, Inf, etc.
+  std::mutex print_mutex; // For thread-safe printing of errors
 
   void print() const {
+    uint64_t total = total_tests.load();
+    uint64_t pass = passed.load();
+    uint64_t fail = failed.load();
+    uint64_t special = special_cases.load();
+
     std::cout << "\n=== Test Results ===" << std::endl;
-    std::cout << "Total tests:    " << total_tests << std::endl;
-    std::cout << "Passed:         " << passed << std::endl;
-    std::cout << "Failed:         " << failed << std::endl;
-    std::cout << "Special cases:  " << special_cases << std::endl;
+    std::cout << "Total tests:    " << total << std::endl;
+    std::cout << "Passed:         " << pass << std::endl;
+    std::cout << "Failed:         " << fail << std::endl;
+    std::cout << "Special cases:  " << special << std::endl;
     std::cout << "Pass rate:      " << std::fixed << std::setprecision(6)
-              << (100.0 * passed / total_tests) << "%" << std::endl;
+              << (100.0 * pass / total) << "%" << std::endl;
   }
 };
 
 // Test float value
 bool test_float_value(uint32_t bit_pattern, TestStats& stats, bool verbose = false) {
-  stats.total_tests++;
+  stats.total_tests.fetch_add(1, std::memory_order_relaxed);
 
   // Reinterpret bits as float
   float f;
@@ -236,26 +246,22 @@ bool test_float_value(uint32_t bit_pattern, TestStats& stats, bool verbose = fal
 
   // Handle special cases
   if (!std::isfinite(f)) {
-    stats.special_cases++;
-    if (verbose && (stats.total_tests % 10000000 == 0)) {
-      std::cout << "Special case at bit pattern 0x" << std::hex << bit_pattern
-                << std::dec << ": " << f << std::endl;
-    }
-    stats.passed++;
+    stats.special_cases.fetch_add(1, std::memory_order_relaxed);
+    stats.passed.fetch_add(1, std::memory_order_relaxed);
     return true;
   }
 
   // Handle zero specially
   if (f == 0.0f) {
-    stats.special_cases++;
-    stats.passed++;
+    stats.special_cases.fetch_add(1, std::memory_order_relaxed);
+    stats.passed.fetch_add(1, std::memory_order_relaxed);
     return true;
   }
 
   // Handle denormal numbers - they may not roundtrip reliably through stod
   if (std::fpclassify(f) == FP_SUBNORMAL) {
-    stats.special_cases++;
-    stats.passed++;
+    stats.special_cases.fetch_add(1, std::memory_order_relaxed);
+    stats.passed.fetch_add(1, std::memory_order_relaxed);
     return true;
   }
 
@@ -271,7 +277,8 @@ bool test_float_value(uint32_t bit_pattern, TestStats& stats, bool verbose = fal
     roundtrip_val = std::stod(dragonbox_buf);
     roundtrip_float = static_cast<float>(roundtrip_val);
   } catch (const std::exception& e) {
-    stats.failed++;
+    stats.failed.fetch_add(1, std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lock(stats.print_mutex);
     std::cout << "EXCEPTION at bit pattern 0x" << std::hex << bit_pattern << std::dec << std::endl;
     std::cout << "  Original:     " << std::scientific << std::setprecision(17) << f << std::endl;
     std::cout << "  Dragonbox:    " << dragonbox_buf << std::endl;
@@ -282,23 +289,16 @@ bool test_float_value(uint32_t bit_pattern, TestStats& stats, bool verbose = fal
   // Check if roundtrip matches
   bool roundtrip_ok = (f == roundtrip_float);
 
-  // For comparison, also use std::to_string
-  std::string std_str = std::to_string(f);
-
   if (roundtrip_ok) {
-    stats.passed++;
-
-    if (verbose && (stats.total_tests % 100000000 == 0)) {
-      std::cout << "Progress: " << stats.total_tests << " tests, "
-                << "Pass rate: " << std::fixed << std::setprecision(4)
-                << (100.0 * stats.passed / stats.total_tests) << "%"
-                << std::endl;
-    }
-
+    stats.passed.fetch_add(1, std::memory_order_relaxed);
     return true;
   } else {
-    stats.failed++;
+    stats.failed.fetch_add(1, std::memory_order_relaxed);
 
+    // For comparison, also use std::to_string
+    std::string std_str = std::to_string(f);
+
+    std::lock_guard<std::mutex> lock(stats.print_mutex);
     std::cout << "FAIL at bit pattern 0x" << std::hex << bit_pattern << std::dec << std::endl;
     std::cout << "  Original:     " << std::scientific << std::setprecision(17) << f << std::endl;
     std::cout << "  Dragonbox:    " << dragonbox_buf << std::endl;
@@ -318,7 +318,7 @@ bool test_float_value(uint32_t bit_pattern, TestStats& stats, bool verbose = fal
 
 // Test double value
 bool test_double_value(uint64_t bit_pattern, TestStats& stats, bool verbose = false) {
-  stats.total_tests++;
+  stats.total_tests.fetch_add(1, std::memory_order_relaxed);
 
   // Reinterpret bits as double
   double d;
@@ -326,30 +326,22 @@ bool test_double_value(uint64_t bit_pattern, TestStats& stats, bool verbose = fa
 
   // Handle special cases
   if (!std::isfinite(d)) {
-    stats.special_cases++;
-    if (verbose && (stats.total_tests % 10000000 == 0)) {
-      std::cout << "Special case at bit pattern 0x" << std::hex << bit_pattern
-                << std::dec << ": " << d << std::endl;
-    }
-    stats.passed++;
+    stats.special_cases.fetch_add(1, std::memory_order_relaxed);
+    stats.passed.fetch_add(1, std::memory_order_relaxed);
     return true;
   }
 
   // Handle zero specially
   if (d == 0.0) {
-    stats.special_cases++;
-    stats.passed++;
+    stats.special_cases.fetch_add(1, std::memory_order_relaxed);
+    stats.passed.fetch_add(1, std::memory_order_relaxed);
     return true;
   }
 
   // Handle denormal numbers - they may not roundtrip reliably through stod
   if (std::fpclassify(d) == FP_SUBNORMAL) {
-    stats.special_cases++;
-    if (verbose && (stats.total_tests % 10000000 == 0)) {
-      std::cout << "Denormal at bit pattern 0x" << std::hex << bit_pattern
-                << std::dec << ": " << d << std::endl;
-    }
-    stats.passed++;
+    stats.special_cases.fetch_add(1, std::memory_order_relaxed);
+    stats.passed.fetch_add(1, std::memory_order_relaxed);
     return true;
   }
 
@@ -363,7 +355,8 @@ bool test_double_value(uint64_t bit_pattern, TestStats& stats, bool verbose = fa
   try {
     roundtrip_val = std::stod(dragonbox_buf);
   } catch (const std::exception& e) {
-    stats.failed++;
+    stats.failed.fetch_add(1, std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lock(stats.print_mutex);
     std::cout << "EXCEPTION at bit pattern 0x" << std::hex << bit_pattern << std::dec << std::endl;
     std::cout << "  Original:     " << std::scientific << std::setprecision(17) << d << std::endl;
     std::cout << "  Dragonbox:    " << dragonbox_buf << std::endl;
@@ -375,19 +368,12 @@ bool test_double_value(uint64_t bit_pattern, TestStats& stats, bool verbose = fa
   bool roundtrip_ok = (d == roundtrip_val);
 
   if (roundtrip_ok) {
-    stats.passed++;
-
-    if (verbose && (stats.total_tests % 100000000 == 0)) {
-      std::cout << "Progress: " << stats.total_tests << " tests, "
-                << "Pass rate: " << std::fixed << std::setprecision(4)
-                << (100.0 * stats.passed / stats.total_tests) << "%"
-                << std::endl;
-    }
-
+    stats.passed.fetch_add(1, std::memory_order_relaxed);
     return true;
   } else {
-    stats.failed++;
+    stats.failed.fetch_add(1, std::memory_order_relaxed);
 
+    std::lock_guard<std::mutex> lock(stats.print_mutex);
     std::cout << "FAIL at bit pattern 0x" << std::hex << bit_pattern << std::dec << std::endl;
     std::cout << "  Original:     " << std::scientific << std::setprecision(17) << d << std::endl;
     std::cout << "  Dragonbox:    " << dragonbox_buf << std::endl;
@@ -404,11 +390,82 @@ bool test_double_value(uint64_t bit_pattern, TestStats& stats, bool verbose = fa
   }
 }
 
-// Run exhaustive float tests (all 2^32 bit patterns)
+// Run exhaustive float tests (all 2^32 bit patterns) - Parallel version
+void run_exhaustive_float_test_parallel(unsigned int num_threads = 0, bool verbose = true) {
+  if (num_threads == 0) {
+    num_threads = std::thread::hardware_concurrency();
+    if (num_threads == 0) num_threads = 1; // Fallback if hardware_concurrency fails
+  }
+
+  std::cout << "\n=== Exhaustive Float Test (2^32 patterns) - Parallel ===" << std::endl;
+  std::cout << "Using " << num_threads << " threads" << std::endl;
+  std::cout << "This will test all possible 32-bit float values..." << std::endl;
+  std::cout << "Estimated time: several hours (depends on CPU)" << std::endl;
+
+  TestStats stats;
+  auto start = std::chrono::steady_clock::now();
+  std::atomic<uint64_t> next_progress_milestone{100000000};
+
+  // Worker function for each thread
+  auto worker = [&](uint32_t thread_id, uint64_t start_pattern, uint64_t end_pattern) {
+    for (uint64_t i = start_pattern; i < end_pattern; i++) {
+      uint32_t bit_pattern = static_cast<uint32_t>(i);
+      test_float_value(bit_pattern, stats, false); // verbose=false for threads
+
+      // Progress update every 100M tests (thread-safe)
+      if (verbose) {
+        uint64_t total = stats.total_tests.load(std::memory_order_relaxed);
+        uint64_t milestone = next_progress_milestone.load(std::memory_order_relaxed);
+        if (total >= milestone) {
+          // Try to claim this milestone
+          if (next_progress_milestone.compare_exchange_strong(milestone, milestone + 100000000)) {
+            auto current = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(current - start).count();
+            double progress = (100.0 * total) / (1ULL << 32);
+
+            std::lock_guard<std::mutex> lock(stats.print_mutex);
+            std::cout << "\nProgress: " << std::fixed << std::setprecision(2) << progress << "% "
+                      << "(" << total << " / " << (1ULL << 32) << ") "
+                      << "Elapsed: " << elapsed << "s" << std::endl;
+            stats.print();
+          }
+        }
+      }
+    }
+  };
+
+  // Divide work among threads
+  uint64_t total_patterns = 1ULL << 32;
+  uint64_t patterns_per_thread = total_patterns / num_threads;
+
+  std::vector<std::thread> threads;
+  threads.reserve(num_threads);
+
+  for (unsigned int t = 0; t < num_threads; t++) {
+    uint64_t start_pattern = t * patterns_per_thread;
+    uint64_t end_pattern = (t == num_threads - 1) ? total_patterns : (t + 1) * patterns_per_thread;
+    threads.emplace_back(worker, t, start_pattern, end_pattern);
+  }
+
+  // Wait for all threads to complete
+  for (auto& thread : threads) {
+    thread.join();
+  }
+
+  auto end = std::chrono::steady_clock::now();
+  auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(end - start).count();
+
+  std::cout << "\nCompleted in " << elapsed << " seconds" << std::endl;
+  std::cout << "Threads used: " << num_threads << std::endl;
+  stats.print();
+}
+
+// Run exhaustive float tests (all 2^32 bit patterns) - Single-threaded version
 void run_exhaustive_float_test(bool verbose = true) {
-  std::cout << "\n=== Exhaustive Float Test (2^32 patterns) ===" << std::endl;
+  std::cout << "\n=== Exhaustive Float Test (2^32 patterns) - Single-threaded ===" << std::endl;
   std::cout << "This will test all possible 32-bit float values..." << std::endl;
   std::cout << "Estimated time: several hours" << std::endl;
+  std::cout << "NOTE: Use parallel version for faster testing" << std::endl;
 
   TestStats stats;
   auto start = std::chrono::steady_clock::now();
@@ -416,7 +473,7 @@ void run_exhaustive_float_test(bool verbose = true) {
   // Test all 2^32 bit patterns
   for (uint64_t i = 0; i < (1ULL << 32); i++) {
     uint32_t bit_pattern = static_cast<uint32_t>(i);
-    test_float_value(bit_pattern, stats, verbose);
+    test_float_value(bit_pattern, stats, false);
 
     // Progress update every 100M tests
     if (verbose && (i > 0) && (i % 100000000 == 0)) {
@@ -532,12 +589,12 @@ void run_sanity_test() {
 
     if (tc.value == roundtrip_float) {
       std::cout << "  ✓ Roundtrip OK" << std::endl;
-      stats.passed++;
+      stats.passed.fetch_add(1, std::memory_order_relaxed);
     } else {
       std::cout << "  ✗ Roundtrip FAILED: got " << roundtrip_float << std::endl;
-      stats.failed++;
+      stats.failed.fetch_add(1, std::memory_order_relaxed);
     }
-    stats.total_tests++;
+    stats.total_tests.fetch_add(1, std::memory_order_relaxed);
   }
 
   stats.print();
@@ -547,17 +604,33 @@ int main(int argc, char** argv) {
   std::cout << "=== Dragonbox dtoa Exhaustive Test Suite ===" << std::endl;
 
   if (argc < 2) {
+    unsigned int hw_threads = std::thread::hardware_concurrency();
     std::cout << "\nUsage:" << std::endl;
-    std::cout << "  " << argv[0] << " sanity           - Quick sanity check" << std::endl;
-    std::cout << "  " << argv[0] << " float_quick      - Quick float test (1M samples)" << std::endl;
-    std::cout << "  " << argv[0] << " float_exhaustive - Full 2^32 float test (SLOW!)" << std::endl;
-    std::cout << "  " << argv[0] << " double_quick     - Quick double test (10M samples)" << std::endl;
-    std::cout << "  " << argv[0] << " double_medium    - Medium double test (100M samples)" << std::endl;
-    std::cout << "  " << argv[0] << " double_large     - Large double test (1B samples)" << std::endl;
+    std::cout << "  " << argv[0] << " <mode> [threads]" << std::endl;
+    std::cout << "\nModes:" << std::endl;
+    std::cout << "  sanity           - Quick sanity check" << std::endl;
+    std::cout << "  float_quick      - Quick float test (1M samples)" << std::endl;
+    std::cout << "  float_exhaustive - Full 2^32 float test (parallel, SLOW!)" << std::endl;
+    std::cout << "  double_quick     - Quick double test (10M samples)" << std::endl;
+    std::cout << "  double_medium    - Medium double test (100M samples)" << std::endl;
+    std::cout << "  double_large     - Large double test (1B samples)" << std::endl;
+    std::cout << "\nThread control:" << std::endl;
+    std::cout << "  threads          - Number of threads (default: " << hw_threads << " = hardware_concurrency)" << std::endl;
+    std::cout << "                     Use 0 for auto-detect, 1 for single-threaded" << std::endl;
+    std::cout << "\nExamples:" << std::endl;
+    std::cout << "  " << argv[0] << " float_exhaustive     # Use all available cores" << std::endl;
+    std::cout << "  " << argv[0] << " float_exhaustive 8   # Use 8 threads" << std::endl;
+    std::cout << "  " << argv[0] << " float_exhaustive 1   # Single-threaded" << std::endl;
     return 1;
   }
 
   std::string mode = argv[1];
+  unsigned int num_threads = 0; // 0 = auto-detect
+
+  // Parse optional thread count
+  if (argc >= 3) {
+    num_threads = static_cast<unsigned int>(std::stoi(argv[2]));
+  }
 
   if (mode == "sanity") {
     run_sanity_test();
@@ -567,11 +640,15 @@ int main(int argc, char** argv) {
     std::mt19937 rng(12345);
     for (uint32_t i = 0; i < 1000000; i++) {
       uint32_t bit_pattern = rng();
-      test_float_value(bit_pattern, stats, true);
+      test_float_value(bit_pattern, stats, false);
     }
     stats.print();
   } else if (mode == "float_exhaustive") {
-    run_exhaustive_float_test(true);
+    if (num_threads == 1) {
+      run_exhaustive_float_test(true);
+    } else {
+      run_exhaustive_float_test_parallel(num_threads, true);
+    }
   } else if (mode == "double_quick") {
     run_sampled_double_test(10000000, true);  // 10M
   } else if (mode == "double_medium") {

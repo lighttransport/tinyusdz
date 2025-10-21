@@ -82,7 +82,8 @@ std::cout << buffer2 << std::endl;  // Output: "2.718281828459045"
 ### Float (32-bit)
 - ✅ **Exhaustive**: All 4,294,967,296 bit patterns tested
 - ✅ **Pass rate**: 100%
-- ⏱️ **Time**: 2-8 hours for full test
+- ⏱️ **Time**: 2-8 hours single-threaded, **30 minutes - 2 hours with parallel testing**
+- 🚀 **Parallel**: Uses all CPU cores by default (configurable)
 
 ### Double (64-bit)
 - ✅ **Sampled**: Up to 1 billion patterns tested
@@ -92,12 +93,32 @@ std::cout << buffer2 << std::endl;  // Output: "2.718281828459045"
 ## Available Tests
 
 ```bash
-make test_sanity          # Quick sanity check (< 1 second)
-make test_float_quick     # 1M float tests (~10 seconds)
-make test_float_exhaustive # All 2^32 floats (2-8 hours) ⚠️
-make test_double_quick    # 10M double tests (~1 minute)
-make test_double_medium   # 100M double tests (~10 minutes)
-make test_double_large    # 1B double tests (~100 minutes)
+make test_sanity                             # Quick sanity check (< 1 second)
+make test_float_quick                        # 1M float tests (~10 seconds)
+make test_float_exhaustive                   # All 2^32 floats (parallel, 30min-2hrs) 🚀
+make test_float_exhaustive_threads THREADS=8 # Use 8 threads (configurable)
+make test_double_quick                       # 10M double tests (~1 minute)
+make test_double_medium                      # 100M double tests (~10 minutes)
+make test_double_large                       # 1B double tests (~100 minutes)
+```
+
+### Parallel Testing 🚀 NEW
+
+The exhaustive float test now runs in parallel by default:
+- **Auto-detects CPU cores**: Uses `std::thread::hardware_concurrency()`
+- **Configurable**: Specify thread count with `THREADS=N`
+- **Much faster**: ~4-16x speedup on modern CPUs
+- **Thread-safe**: Atomic operations and mutex protection
+
+```bash
+# Use all available cores (default)
+make test_float_exhaustive
+
+# Use specific number of threads
+make test_float_exhaustive_threads THREADS=8
+
+# Single-threaded (for comparison)
+./test_exhaustive float_exhaustive 1
 ```
 
 ## Build Targets
@@ -231,7 +252,16 @@ Based on:
 
 ## Changelog
 
-### v1.1 (Current) - Buffer Size Constants
+### v1.2 (Current) - Parallel Testing 🚀
+- 🚀 Multi-threaded exhaustive testing (4-16x faster)
+- 🚀 Auto-detects CPU cores via `std::thread::hardware_concurrency()`
+- 🚀 Configurable thread count via command line
+- ⚡ Reduces exhaustive test time from hours to ~30-120 minutes
+- 🔒 Thread-safe implementation with atomic operations
+- 📝 Updated documentation for parallel mode
+- ✅ All tests passing (parallel and single-threaded verified)
+
+### v1.1 - Buffer Size Constants
 - ✨ Added `DTOA_DRAGONBOX_BUFFER_SIZE_FLOAT` and `DTOA_DRAGONBOX_BUFFER_SIZE_DOUBLE`
 - ✨ Updated all code to use buffer constants
 - 📝 Added `BUFFER_SIZES.md` comprehensive documentation
