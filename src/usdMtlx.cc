@@ -31,8 +31,8 @@
 #include "value-pprint.hh"
 
 inline std::string dtos(const double v) {
-  char buf[128];
-  dtoa_milo(v, buf);
+  char buf[384];
+  *dtoa_milo(v, buf) = '\0';
 
   return std::string(buf);
 }

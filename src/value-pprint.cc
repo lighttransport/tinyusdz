@@ -60,10 +60,20 @@ inline std::string dtos(const float v) {
 }
 
 inline std::string dtos(const double v) {
-  char buf[128];
-  dtoa_milo(v, buf);
+#if 0
+  char buf[floaxie::max_buffer_size<double>()];
+  size_t n = floaxie::ftoa(v, buf);
+
+  return std::string(buf, buf + n);
+#else
+  char buf[384];
+
+  // dtoa_milo returns strlen + 1 position
+  char *e = dtoa_milo(v, buf);
+  (*e) = '\0';
 
   return std::string(buf);
+#endif
 }
 
 }  // namespace
