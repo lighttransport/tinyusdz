@@ -4,10 +4,12 @@
 
 #include "unicode-xid.hh"
 #include "common-macros.inc"
+#include "value-types.hh"
 
 #include <cstring>
 #include <cstdint>
 #include <cmath>
+#include <array>
 #include "external/dragonbox/dragonbox_to_chars.h"
 
 #ifdef __SSE2__
@@ -1344,7 +1346,7 @@ char* dtoa_dragonbox_impl(const float f, char* buf) {
 
 } // anonymous namespace
 
-// Public API for dtos
+// Public API for dtos - std::string version
 std::string dtos(float v) {
   constexpr size_t kBufferSize = 24; // DTOA_DRAGONBOX_BUFFER_SIZE_FLOAT
   char buffer[kBufferSize];
@@ -1357,6 +1359,197 @@ std::string dtos(double v) {
   char buffer[kBufferSize];
   char* end = dtoa_dragonbox_impl(v, buffer);
   return std::string(buffer, end);
+}
+
+// Public API for dtos - buffer version (efficient, no std::string construction)
+size_t dtos(float v, char* buffer) {
+  char* end = dtoa_dragonbox_impl(v, buffer);
+  return static_cast<size_t>(end - buffer);
+}
+
+size_t dtos(double v, char* buffer) {
+  char* end = dtoa_dragonbox_impl(v, buffer);
+  return static_cast<size_t>(end - buffer);
+}
+
+// ============================================================================
+// Vector and Matrix Printing Functions
+// ============================================================================
+
+// Helper template for printing vector types
+template<typename T, size_t N>
+size_t print_vector_impl(const std::array<T, N>& v, char* buffer) {
+  char* p = buffer;
+  *p++ = '(';
+
+  for (size_t i = 0; i < N; i++) {
+    if (i > 0) {
+      *p++ = ',';
+      *p++ = ' ';
+    }
+    size_t len = dtos(static_cast<T>(v[i]), p);
+    p += len;
+  }
+
+  *p++ = ')';
+  return static_cast<size_t>(p - buffer);
+}
+
+// Float vectors
+size_t print_float2(const value::float2& v, char* buffer) {
+  return print_vector_impl(v, buffer);
+}
+
+size_t print_float3(const value::float3& v, char* buffer) {
+  return print_vector_impl(v, buffer);
+}
+
+size_t print_float4(const value::float4& v, char* buffer) {
+  return print_vector_impl(v, buffer);
+}
+
+// Double vectors
+size_t print_double2(const value::double2& v, char* buffer) {
+  return print_vector_impl(v, buffer);
+}
+
+size_t print_double3(const value::double3& v, char* buffer) {
+  return print_vector_impl(v, buffer);
+}
+
+size_t print_double4(const value::double4& v, char* buffer) {
+  return print_vector_impl(v, buffer);
+}
+
+// Half vectors (convert to float for printing)
+// Note: These functions are only available when linking with value-types
+#if 0
+size_t print_half2(const value::half2& v, char* buffer) {
+  char* p = buffer;
+  *p++ = '(';
+
+  for (size_t i = 0; i < 2; i++) {
+    if (i > 0) {
+      *p++ = ',';
+      *p++ = ' ';
+    }
+    size_t len = dtos(value::half_to_float(v[i]), p);
+    p += len;
+  }
+
+  *p++ = ')';
+  return static_cast<size_t>(p - buffer);
+}
+
+size_t print_half3(const value::half3& v, char* buffer) {
+  char* p = buffer;
+  *p++ = '(';
+
+  for (size_t i = 0; i < 3; i++) {
+    if (i > 0) {
+      *p++ = ',';
+      *p++ = ' ';
+    }
+    size_t len = dtos(value::half_to_float(v[i]), p);
+    p += len;
+  }
+
+  *p++ = ')';
+  return static_cast<size_t>(p - buffer);
+}
+
+size_t print_half4(const value::half4& v, char* buffer) {
+  char* p = buffer;
+  *p++ = '(';
+
+  for (size_t i = 0; i < 4; i++) {
+    if (i > 0) {
+      *p++ = ',';
+      *p++ = ' ';
+    }
+    size_t len = dtos(value::half_to_float(v[i]), p);
+    p += len;
+  }
+
+  *p++ = ')';
+  return static_cast<size_t>(p - buffer);
+}
+#endif
+
+// Matrix printing: ((row0), (row1), ...)
+size_t print_matrix2d(const value::matrix2d& m, char* buffer) {
+  char* p = buffer;
+  *p++ = '(';
+
+  for (size_t row = 0; row < 2; row++) {
+    if (row > 0) {
+      *p++ = ',';
+      *p++ = ' ';
+    }
+    *p++ = '(';
+    for (size_t col = 0; col < 2; col++) {
+      if (col > 0) {
+        *p++ = ',';
+        *p++ = ' ';
+      }
+      size_t len = dtos(m.m[row][col], p);
+      p += len;
+    }
+    *p++ = ')';
+  }
+
+  *p++ = ')';
+  return static_cast<size_t>(p - buffer);
+}
+
+size_t print_matrix3d(const value::matrix3d& m, char* buffer) {
+  char* p = buffer;
+  *p++ = '(';
+
+  for (size_t row = 0; row < 3; row++) {
+    if (row > 0) {
+      *p++ = ',';
+      *p++ = ' ';
+    }
+    *p++ = '(';
+    for (size_t col = 0; col < 3; col++) {
+      if (col > 0) {
+        *p++ = ',';
+        *p++ = ' ';
+      }
+      size_t len = dtos(m.m[row][col], p);
+      p += len;
+    }
+    *p++ = ')';
+  }
+
+  *p++ = ')';
+  return static_cast<size_t>(p - buffer);
+}
+
+size_t print_matrix4d(const value::matrix4d& m, char* buffer) {
+  char* p = buffer;
+  *p++ = '(';
+
+  for (size_t row = 0; row < 4; row++) {
+    if (row > 0) {
+      *p++ = ',';
+      *p++ = ' ';
+    }
+    *p++ = '(';
+    for (size_t col = 0; col < 4; col++) {
+      if (col > 0) {
+        *p++ = ',';
+        *p++ = ' ';
+      }
+      size_t len = dtos(m.m[row][col], p);
+      p += len;
+    }
+    *p++ = ')';
+  }
+
+  *p++ = ')';
+  return static_cast<size_t>(p - buffer);
 }
 
 }  // namespace tinyusdz
