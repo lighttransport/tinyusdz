@@ -46,7 +46,7 @@
 // TODO:
 // - [ ] Print properties based on lexcographically(USDA)
 // - [ ] Refactor variantSet stmt print.
-// - [ ] wrap float/double print with `dtos` for accurate float/double value
+// - [ ] Implement our own dtos
 // stringify.
 
 namespace tinyusdz {
@@ -71,8 +71,8 @@ inline std::string dtos(const float v) {
 #endif
 
 inline std::string dtos(const double v) {
-  char buf[128];
-  dtoa_milo(v, buf);
+  char buf[384];
+  *dtoa_milo(v, buf) = '\0';
 
   return std::string(buf);
 }
