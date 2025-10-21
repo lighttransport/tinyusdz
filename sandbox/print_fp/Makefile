@@ -22,9 +22,18 @@ test_sanity: test_exhaustive
 test_float_quick: test_exhaustive
 	./test_exhaustive float_quick
 
-# Run full exhaustive float test (all 2^32 patterns - VERY SLOW, takes hours)
+# Run full exhaustive float test (all 2^32 patterns - SLOW, uses all CPU cores)
 test_float_exhaustive: test_exhaustive
 	./test_exhaustive float_exhaustive
+
+# Run exhaustive float test with specific thread count
+test_float_exhaustive_threads: test_exhaustive
+	@if [ -z "$(THREADS)" ]; then \
+		echo "Usage: make test_float_exhaustive_threads THREADS=N"; \
+		echo "Example: make test_float_exhaustive_threads THREADS=8"; \
+		exit 1; \
+	fi
+	./test_exhaustive float_exhaustive $(THREADS)
 
 # Run quick double test with 10M samples
 test_double_quick: test_exhaustive
@@ -38,4 +47,4 @@ test_double_medium: test_exhaustive
 test_double_large: test_exhaustive
 	./test_exhaustive double_large
 
-.PHONY: all clean test_sanity test_float_quick test_float_exhaustive test_double_quick test_double_medium test_double_large
+.PHONY: all clean test_sanity test_float_quick test_float_exhaustive test_float_exhaustive_threads test_double_quick test_double_medium test_double_large
