@@ -41,6 +41,34 @@ std::vector<float> gen_floats(size_t n) {
 
 namespace internal {
 
+// Maximum buffer sizes required for dtoa_dragonbox
+// These are conservative upper bounds to ensure no buffer overflow
+//
+// Float worst case:
+//   - Sign: 1 byte
+//   - Significand: 9 digits (worst case for single precision)
+//   - Decimal point: 1 byte
+//   - Exponent 'e': 1 byte
+//   - Exponent sign: 1 byte
+//   - Exponent digits: 3 bytes (e.g., "-38" to "+38")
+//   - Null terminator: 1 byte
+//   Total: 17 bytes, rounded up to 24 for safety
+constexpr size_t DTOA_DRAGONBOX_BUFFER_SIZE_FLOAT = 24;
+
+// Double worst case:
+//   - Sign: 1 byte
+//   - Significand: 17 digits (worst case for double precision)
+//   - Decimal point: 1 byte
+//   - Exponent 'e': 1 byte
+//   - Exponent sign: 1 byte
+//   - Exponent digits: 4 bytes (e.g., "-308" to "+308")
+//   - Null terminator: 1 byte
+//   Total: 26 bytes, rounded up to 32 for safety
+constexpr size_t DTOA_DRAGONBOX_BUFFER_SIZE_DOUBLE = 32;
+
+// Conservative maximum for both types
+constexpr size_t DTOA_DRAGONBOX_BUFFER_SIZE = DTOA_DRAGONBOX_BUFFER_SIZE_DOUBLE;
+
 // TOOD: Use builtin_clz insturction?
 // T = uint32 or uint64
 template <typename T>
@@ -309,8 +337,8 @@ char* dtoa_dragonbox(const float f, char* buf) {
 // -------------------------------------------------------------
 
 std::string print_floats(const std::vector<float> &v) {
-  
-  char buffer[40]; // 25 should be enough
+
+  char buffer[internal::DTOA_DRAGONBOX_BUFFER_SIZE_FLOAT];
 
   size_t n = v.size();
   std::vector<char> dst;
@@ -358,7 +386,7 @@ std::string print_float_array(const std::vector<std::array<float, N>> &v) {
         oss << ", ";
       }
       
-      char buffer[40];
+      char buffer[internal::DTOA_DRAGONBOX_BUFFER_SIZE_FLOAT];
       // Handle special cases to avoid dragonbox assertion
       if (!std::isfinite(v[i][j]) || v[i][j] == 0.0f) {
         if (v[i][j] == 0.0f) {
@@ -398,7 +426,7 @@ std::string print_double_array(const std::vector<std::array<double, N>> &v) {
         oss << ", ";
       }
       
-      char buffer[40];
+      char buffer[internal::DTOA_DRAGONBOX_BUFFER_SIZE_DOUBLE];
       // Handle special cases to avoid dragonbox assertion
       if (!std::isfinite(v[i][j]) || v[i][j] == 0.0) {
         if (v[i][j] == 0.0) {
