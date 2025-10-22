@@ -2129,6 +2129,82 @@ struct TimeSamples {
   }
 
   //
+  // Phase 3: POD scalar sample methods
+  //
+
+  /// Add POD scalar sample using unified storage (Phase 3 path)
+  /// This is for single POD values (not arrays)
+  template<typename T>
+  bool add_pod_sample(double t, const T& value, std::string* err = nullptr) {
+    static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
+                  "add_pod_sample requires POD types");
+
+    // Auto-initialize on first sample
+    if (empty()) {
+      if (!init(value::TypeTraits<T>::type_id())) {
+        if (err) *err = "Failed to initialize TimeSamples";
+        return false;
+      }
+    }
+
+    // If already using _pod_samples (backward compat), delegate to it
+    if (!_pod_samples.empty()) {
+      return _pod_samples.add_sample<T>(t, value, err);
+    }
+
+    // Use unified storage for scalar POD
+    _times.push_back(t);
+    _blocked.push_back(0);  // Not blocked
+
+    // Store scalar data in _values buffer
+    size_t byte_offset = _values.size();
+    _values.resize(byte_offset + sizeof(T));
+    std::memcpy(_values.data() + byte_offset, &value, sizeof(T));
+
+    // Create encoded offset (not array)
+    uint64_t encoded_offset = PODTimeSamples::make_offset(byte_offset, false);
+    _offsets.push_back(encoded_offset);
+
+    // Update metadata (scalar, not array)
+    _is_array = false;
+    _array_size = 1;
+    _element_size = sizeof(T);
+
+    _dirty = true;
+    return true;
+  }
+
+  /// Add blocked POD sample (Phase 3 path)
+  template<typename T>
+  bool add_pod_blocked_sample(double t, std::string* err = nullptr) {
+    static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
+                  "add_pod_blocked_sample requires POD types");
+
+    // Auto-initialize on first sample
+    if (empty()) {
+      if (!init(value::TypeTraits<T>::type_id())) {
+        if (err) *err = "Failed to initialize TimeSamples";
+        return false;
+      }
+    }
+
+    // If already using _pod_samples (backward compat), delegate to it
+    if (!_pod_samples.empty()) {
+      return _pod_samples.add_blocked_sample<T>(t, err);
+    }
+
+    // Add blocked sample to unified storage
+    _times.push_back(t);
+    _blocked.push_back(1);  // Blocked
+
+    // No data needed for blocked sample, just add a dummy offset
+    _offsets.push_back(SIZE_MAX);  // Special marker for blocked
+
+    _dirty = true;
+    return true;
+  }
+
+  //
   // std::vector<T> support (Phase 2 Step 3)
   //
   // NOTE: We do NOT override add_sample(double t, const std::vector<T>&) because
