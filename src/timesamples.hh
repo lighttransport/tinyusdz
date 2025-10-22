@@ -1087,32 +1087,69 @@ struct TimeSamples {
   };
 
   bool empty() const {
-    return _use_pod ? _pod_samples.empty() : _samples.empty();
+    if (_use_pod) {
+      // Check both _pod_samples (old path) and _times (new unified path)
+      return _pod_samples.empty() && _times.empty();
+    }
+    return _samples.empty();
   }
 
   size_t size() const {
-    return _use_pod ? _pod_samples.size() : _samples.size();
+    if (_use_pod) {
+      // Prefer new unified path if it has data, otherwise use _pod_samples
+      if (!_times.empty()) {
+        return _times.size();
+      }
+      return _pod_samples.size();
+    }
+    return _samples.size();
   }
 
   void clear() {
     _samples.clear();
+    _times.clear();
+    _blocked.clear();
+    _values.clear();
+    _offsets.clear();
     _pod_samples.clear();
     _type_id = 0;
     _use_pod = false;
+    _is_array = false;
+    _array_size = 0;
+    _element_size = 0;
+    _blocked_count = 0;
     _dirty = true;
+    _dirty_start = 0;
+    _dirty_end = 0;
   }
 
   /// Move constructor
   TimeSamples(TimeSamples&& other) noexcept
       : _samples(std::move(other._samples)),
-        _pod_samples(std::move(other._pod_samples)),
+        _times(std::move(other._times)),
+        _blocked(std::move(other._blocked)),
+        _values(std::move(other._values)),
+        _offsets(std::move(other._offsets)),
         _type_id(other._type_id),
         _use_pod(other._use_pod),
-        _dirty(other._dirty) {
+        _is_array(other._is_array),
+        _array_size(other._array_size),
+        _element_size(other._element_size),
+        _blocked_count(other._blocked_count),
+        _dirty(other._dirty),
+        _dirty_start(other._dirty_start),
+        _dirty_end(other._dirty_end),
+        _pod_samples(std::move(other._pod_samples)) {
     // Reset moved-from object to valid empty state
     other._type_id = 0;
     other._use_pod = false;
+    other._is_array = false;
+    other._array_size = 0;
+    other._element_size = 0;
+    other._blocked_count = 0;
     other._dirty = false;
+    other._dirty_start = 0;
+    other._dirty_end = 0;
   }
 
   /// Move assignment operator
@@ -1120,15 +1157,31 @@ struct TimeSamples {
     if (this != &other) {
       // Move data from other
       _samples = std::move(other._samples);
+      _times = std::move(other._times);
+      _blocked = std::move(other._blocked);
+      _values = std::move(other._values);
+      _offsets = std::move(other._offsets);
       _pod_samples = std::move(other._pod_samples);
       _type_id = other._type_id;
       _use_pod = other._use_pod;
+      _is_array = other._is_array;
+      _array_size = other._array_size;
+      _element_size = other._element_size;
+      _blocked_count = other._blocked_count;
       _dirty = other._dirty;
+      _dirty_start = other._dirty_start;
+      _dirty_end = other._dirty_end;
 
       // Reset moved-from object to valid empty state
       other._type_id = 0;
       other._use_pod = false;
+      other._is_array = false;
+      other._array_size = 0;
+      other._element_size = 0;
+      other._blocked_count = 0;
       other._dirty = false;
+      other._dirty_start = 0;
+      other._dirty_end = 0;
     }
     return *this;
   }
@@ -1936,11 +1989,31 @@ struct TimeSamples {
   }
 
  private:
+  // Generic path storage (for non-POD types: string, token, dict, etc.)
   mutable std::vector<Sample> _samples;
-  mutable tinyusdz::PODTimeSamples _pod_samples;
+
+  // POD path storage (moved from PODTimeSamples for Phase 2 unification)
+  mutable std::vector<double> _times;
+  mutable Buffer<16> _blocked;
+  mutable Buffer<16> _values;               // Raw byte storage for POD types
+  mutable std::vector<uint64_t> _offsets;   // Offset table with dedup/array flags
+
+  // Type information
   uint32_t _type_id{0};
-  bool _use_pod{false};
+  bool _use_pod{false};  // True = use POD path, False = use generic path
+
+  // Array type information (for POD arrays)
+  bool _is_array{false};
+  size_t _array_size{0};
+  size_t _element_size{0};
+  mutable size_t _blocked_count{0};
+
   mutable bool _dirty{false};
+  mutable size_t _dirty_start{0};
+  mutable size_t _dirty_end{0};
+
+  // Keep _pod_samples for now (will be removed in final step)
+  mutable tinyusdz::PODTimeSamples _pod_samples;
 };
 
 } // namespace value
