@@ -2139,6 +2139,174 @@ struct TimeSamples {
     return add_dedup_array_sample<T>(t, ref_index, err);
   }
 
+  //
+  // std::vector<T> support (Phase 2 Step 3)
+  //
+
+  /// Add sample from std::vector<T> - convenient wrapper
+  /// Automatically detects if T is POD and uses appropriate storage
+  template<typename T>
+  bool add_sample(double t, const std::vector<T>& array, std::string* err = nullptr) {
+    // Check if this is a POD type that can use unified storage
+    if (std::is_trivial<T>::value && std::is_standard_layout<T>::value) {
+      // Use POD array storage
+      return add_array_sample<T>(t, array.data(), array.size(), err);
+    } else {
+      // Use generic Value storage (existing code path)
+      // For non-POD types like std::string, std::vector<std::string>, etc.
+      if (_samples.empty()) {
+        // Initialize with appropriate type_id
+        _type_id = value::TypeTraits<std::vector<T>>::type_id();
+      }
+      _samples.push_back(Sample{t, value::Value(array), false});
+      _dirty = true;
+      return true;
+    }
+  }
+
+  /// Get sample as std::vector<T> - retrieves array data into a vector
+  /// Works with both unified POD storage and generic Value storage
+  /// @param idx Sample index
+  /// @param out_vec Output vector to fill with data
+  /// @param out_blocked Optional: set to true if sample is blocked
+  /// @return true if successful, false if index out of range or wrong type
+  template<typename T>
+  bool get_vector_at(size_t idx, std::vector<T>* out_vec, bool* out_blocked = nullptr) const {
+    if (!out_vec) {
+      return false;
+    }
+
+    if (_dirty) {
+      update();
+    }
+
+    // Check if using _pod_samples (backward compat)
+    if (!_pod_samples.empty()) {
+      // Delegate to PODTimeSamples
+      auto view = _pod_samples.get_typed_array_view_at<T>(idx);
+      if (view.size() == 0) {
+        if (out_blocked) {
+          // Check if it's actually blocked or just empty
+          *out_blocked = (idx < _pod_samples.get_times().size() &&
+                         _pod_samples.get_blocked()[idx]);
+        }
+        return false;
+      }
+      out_vec->assign(view.data(), view.data() + view.size());
+      if (out_blocked) *out_blocked = false;
+      return true;
+    }
+
+    // Check unified POD storage
+    if (!_times.empty() && _is_array) {
+      if (idx >= _times.size()) {
+        return false;
+      }
+
+      // Check if blocked
+      if (_blocked[idx]) {
+        if (out_blocked) *out_blocked = true;
+        return false;
+      }
+
+      // Resolve offset
+      size_t byte_offset = 0;
+      if (!PODTimeSamples::resolve_offset_static(_offsets, idx, &byte_offset)) {
+        return false;
+      }
+
+      const T* data = reinterpret_cast<const T*>(_values.data() + byte_offset);
+      out_vec->assign(data, data + _array_size);
+      if (out_blocked) *out_blocked = false;
+      return true;
+    }
+
+    // Check generic Value storage
+    if (idx >= _samples.size()) {
+      return false;
+    }
+
+    const Sample& sample = _samples[idx];
+
+    // Check if blocked
+    if (sample.blocked) {
+      if (out_blocked) *out_blocked = true;
+      return false;
+    }
+
+    // Try to get as std::vector<T>
+    if (const std::vector<T>* vec = sample.value.as<std::vector<T>>()) {
+      *out_vec = *vec;
+      if (out_blocked) *out_blocked = false;
+      return true;
+    }
+
+    // Try to get as TypedArray<T>
+    if (const TypedArray<T>* typed_array = sample.value.as<TypedArray<T>>()) {
+      if (typed_array->data() && typed_array->size() > 0) {
+        out_vec->assign(typed_array->data(), typed_array->data() + typed_array->size());
+        if (out_blocked) *out_blocked = false;
+        return true;
+      }
+    }
+
+    // Type mismatch or unsupported
+    return false;
+  }
+
+  /// Get sample as std::vector<T> at specific time
+  /// @param t Time value
+  /// @param out_vec Output vector to fill with data
+  /// @param out_blocked Optional: set to true if sample is blocked
+  /// @return true if successful, false if no sample at time or wrong type
+  template<typename T>
+  bool get_vector_at_time(double t, std::vector<T>* out_vec, bool* out_blocked = nullptr) const {
+    if (!out_vec) {
+      return false;
+    }
+
+    if (_dirty) {
+      update();
+    }
+
+    // Check if using _pod_samples (backward compat)
+    if (!_pod_samples.empty()) {
+      auto view = _pod_samples.get_typed_array_view_at_time<T>(t);
+      if (view.size() == 0) {
+        return false;
+      }
+      out_vec->assign(view.data(), view.data() + view.size());
+      if (out_blocked) *out_blocked = false;
+      return true;
+    }
+
+    // Check unified POD storage
+    if (!_times.empty()) {
+      // Find index for time
+      auto it = std::find_if(_times.begin(), _times.end(), [&t](double sample_t) {
+        return std::fabs(t - sample_t) < std::numeric_limits<double>::epsilon();
+      });
+
+      if (it != _times.end()) {
+        size_t idx = static_cast<size_t>(std::distance(_times.begin(), it));
+        return get_vector_at<T>(idx, out_vec, out_blocked);
+      }
+      return false;  // Time not found
+    }
+
+    // Check generic Value storage
+    auto it = std::find_if(_samples.begin(), _samples.end(), [&t](const Sample& s) {
+      return std::fabs(t - s.t) < std::numeric_limits<double>::epsilon();
+    });
+
+    if (it != _samples.end()) {
+      size_t idx = static_cast<size_t>(std::distance(_samples.begin(), it));
+      return get_vector_at<T>(idx, out_vec, out_blocked);
+    }
+
+    return false;  // Time not found
+  }
+
  private:
   // Generic path storage (for non-POD types: string, token, dict, etc.)
   mutable std::vector<Sample> _samples;
