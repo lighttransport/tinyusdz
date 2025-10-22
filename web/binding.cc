@@ -14,6 +14,7 @@
 #include <random>
 #include <sstream>
 #include <iomanip>
+#include <set>
 
 //#include "external/fast_float/include/fast_float/bigint.h"
 #include "tinyusdz.hh"
@@ -1497,6 +1498,179 @@ class TinyUSDZLoaderNative {
 
   int numRootNodes() { return render_scene_.nodes.size(); }
 
+  // Animation data access methods
+  int numAnimations() const { return render_scene_.animations.size(); }
+
+  // Get a single animation clip as Three.js friendly JSON
+  emscripten::val getAnimation(int anim_id) const {
+    emscripten::val anim = emscripten::val::object();
+
+    if (!loaded_) {
+      return anim;
+    }
+
+    if (anim_id >= render_scene_.animations.size()) {
+      return anim;
+    }
+
+    const auto &clip = render_scene_.animations[anim_id];
+
+    // Basic animation metadata
+    anim.set("name", clip.name.empty() ? "Animation" + std::to_string(anim_id) : clip.name);
+    anim.set("primName", clip.prim_name);
+    anim.set("absPath", clip.abs_path);
+    anim.set("displayName", clip.display_name);
+    anim.set("duration", clip.duration);
+
+    // Convert samplers to Three.js KeyframeTrack format
+    emscripten::val tracks = emscripten::val::array();
+
+    for (const auto &channel : clip.channels) {
+      if (!channel.valid() || channel.sampler >= clip.samplers.size()) {
+        continue;
+      }
+
+      const auto &sampler = clip.samplers[channel.sampler];
+      if (sampler.empty()) {
+        continue;
+      }
+
+      emscripten::val track = emscripten::val::object();
+
+      // Set track name based on target node and property
+      if (channel.target_node >= 0 && channel.target_node < render_scene_.nodes.size()) {
+        const auto &node = render_scene_.nodes[channel.target_node];
+        std::string trackName = node.abs_path.empty() ? node.prim_name : node.abs_path;
+
+        // Add property suffix for Three.js compatibility
+        switch (channel.path) {
+          case tinyusdz::tydra::AnimationPath::Translation:
+            trackName += ".position";
+            track.set("type", "vector3");
+            break;
+          case tinyusdz::tydra::AnimationPath::Rotation:
+            trackName += ".quaternion";
+            track.set("type", "quaternion");
+            break;
+          case tinyusdz::tydra::AnimationPath::Scale:
+            trackName += ".scale";
+            track.set("type", "vector3");
+            break;
+          case tinyusdz::tydra::AnimationPath::Weights:
+            trackName += ".morphTargetInfluences";
+            track.set("type", "number");
+            break;
+        }
+
+        track.set("name", trackName);
+        track.set("nodeName", node.prim_name);
+        track.set("nodeIndex", channel.target_node);
+      }
+
+      // Set interpolation mode
+      std::string interpolation;
+      switch (sampler.interpolation) {
+        case tinyusdz::tydra::AnimationInterpolation::Step:
+          interpolation = "STEP";
+          break;
+        case tinyusdz::tydra::AnimationInterpolation::CubicSpline:
+          interpolation = "CUBICSPLINE";
+          break;
+        case tinyusdz::tydra::AnimationInterpolation::Linear:
+        default:
+          interpolation = "LINEAR";
+          break;
+      }
+      track.set("interpolation", interpolation);
+
+      // Convert times and values to typed arrays for efficiency
+      track.set("times", emscripten::typed_memory_view(sampler.times.size(), sampler.times.data()));
+      track.set("values", emscripten::typed_memory_view(sampler.values.size(), sampler.values.data()));
+
+      // Add property path for reference
+      std::string pathStr;
+      switch (channel.path) {
+        case tinyusdz::tydra::AnimationPath::Translation:
+          pathStr = "translation";
+          break;
+        case tinyusdz::tydra::AnimationPath::Rotation:
+          pathStr = "rotation";
+          break;
+        case tinyusdz::tydra::AnimationPath::Scale:
+          pathStr = "scale";
+          break;
+        case tinyusdz::tydra::AnimationPath::Weights:
+          pathStr = "weights";
+          break;
+      }
+      track.set("path", pathStr);
+
+      tracks.call<void>("push", track);
+    }
+
+    anim.set("tracks", tracks);
+
+    return anim;
+  }
+
+  // Get all animations as an array
+  emscripten::val getAllAnimations() const {
+    emscripten::val animations = emscripten::val::array();
+
+    if (!loaded_) {
+      return animations;
+    }
+
+    for (int i = 0; i < render_scene_.animations.size(); ++i) {
+      animations.call<void>("push", getAnimation(i));
+    }
+
+    return animations;
+  }
+
+  // Get animation summary info without full data (useful for listing)
+  emscripten::val getAnimationInfo(int anim_id) const {
+    emscripten::val info = emscripten::val::object();
+
+    if (!loaded_ || anim_id >= render_scene_.animations.size()) {
+      return info;
+    }
+
+    const auto &clip = render_scene_.animations[anim_id];
+
+    info.set("id", anim_id);
+    info.set("name", clip.name.empty() ? "Animation" + std::to_string(anim_id) : clip.name);
+    info.set("duration", clip.duration);
+    info.set("numTracks", int(clip.channels.size()));
+    info.set("numSamplers", int(clip.samplers.size()));
+
+    // Count unique target nodes
+    std::set<int32_t> targetNodes;
+    for (const auto &channel : clip.channels) {
+      if (channel.target_node >= 0) {
+        targetNodes.insert(channel.target_node);
+      }
+    }
+    info.set("numTargetNodes", int(targetNodes.size()));
+
+    return info;
+  }
+
+  // Get all animation summaries
+  emscripten::val getAllAnimationInfos() const {
+    emscripten::val infos = emscripten::val::array();
+
+    if (!loaded_) {
+      return infos;
+    }
+
+    for (int i = 0; i < render_scene_.animations.size(); ++i) {
+      infos.call<void>("push", getAnimationInfo(i));
+    }
+
+    return infos;
+  }
+
   void setEnableComposition(bool enabled) { enableComposition_ = enabled; }
   void setLoadTextureInNative(bool onoff) {
     loadTextureInNative_ = onoff;
@@ -2407,6 +2581,14 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("getRootNode", &TinyUSDZLoaderNative::getRootNode)
       .function("getDefaultRootNode", &TinyUSDZLoaderNative::getDefaultRootNode)
       .function("numRootNodes", &TinyUSDZLoaderNative::numRootNodes)
+
+      // Animation methods
+      .function("numAnimations", &TinyUSDZLoaderNative::numAnimations)
+      .function("getAnimation", &TinyUSDZLoaderNative::getAnimation)
+      .function("getAllAnimations", &TinyUSDZLoaderNative::getAllAnimations)
+      .function("getAnimationInfo", &TinyUSDZLoaderNative::getAnimationInfo)
+      .function("getAllAnimationInfos", &TinyUSDZLoaderNative::getAllAnimationInfos)
+
       .function("setLoadTextureInNative",
                 &TinyUSDZLoaderNative::setLoadTextureInNative)
 
