@@ -2,7 +2,7 @@
 <html lang="en">
 	<head>
 		<meta charset="utf-8">
-		<title>Three.js Node Animation Demo</title>
+		<title>TinyUSDZ Three.js Animation Demo</title>
 		<style>
 			body {
 				margin: 0;
@@ -21,13 +21,123 @@
 				padding: 10px;
 				border-radius: 5px;
 				font-size: 14px;
+				max-width: 400px;
+			}
+			#info h3 {
+				margin-top: 0;
+				margin-bottom: 10px;
+				color: #6bb6ff;
+			}
+			#info p {
+				margin: 5px 0;
+				font-size: 12px;
+			}
+			#file-controls {
+				margin-top: 10px;
+				padding-top: 10px;
+				border-top: 1px solid rgba(255, 255, 255, 0.2);
+			}
+			#fileInput {
+				display: none;
+			}
+			.button {
+				display: inline-block;
+				padding: 6px 12px;
+				background: #4CAF50;
+				color: white;
+				border: none;
+				border-radius: 4px;
+				cursor: pointer;
+				font-size: 12px;
+				margin-right: 5px;
+			}
+			.button:hover {
+				background: #45a049;
+			}
+			#animation-info {
+				margin-top: 10px;
+				padding-top: 10px;
+				border-top: 1px solid rgba(255, 255, 255, 0.2);
+				font-size: 11px;
+				color: #95e06c;
+			}
+			.animation-list {
+				margin-top: 5px;
+				max-height: 150px;
+				overflow-y: auto;
+			}
+			.animation-item {
+				padding: 3px 5px;
+				margin: 2px 0;
+				background: rgba(255, 255, 255, 0.1);
+				border-radius: 3px;
 			}
 		</style>
 	</head>
 	<body>
 		<div id="info">
-			Three.js Animation Demo - Use dat.GUI controls to play/pause and adjust timeline
+			<h3>TinyUSDZ Three.js Animation Demo</h3>
+			<p>
+				This demo shows USD animation extraction and playback using Three.js.<br>
+				The scene loads a USD model and can play both synthetic and USD-embedded animations.
+			</p>
+			<p>
+				<strong>Current file:</strong> <span id="currentFile">suzanne.usdc</span>
+			</p>
+			<div id="file-controls">
+				<input type="file" id="fileInput" accept=".usd,.usda,.usdc,.usdz">
+				<button class="button" onclick="document.getElementById('fileInput').click()">Load USD File</button>
+				<button class="button" onclick="window.reloadDefaultModel()">Reset to Default</button>
+			</div>
+			<div id="animation-info" style="display:none;">
+				<strong>USD Animations Found:</strong>
+				<div class="animation-list" id="animationList"></div>
+			</div>
 		</div>
+
+		<script type="module">
+			// Handle file upload
+			document.getElementById('fileInput').addEventListener('change', async (event) => {
+				const file = event.target.files[0];
+				if (!file) return;
+
+				document.getElementById('currentFile').textContent = file.name;
+
+				// Trigger custom event that animation.js can listen to
+				const customEvent = new CustomEvent('loadUSDFile', {
+					detail: { file }
+				});
+				window.dispatchEvent(customEvent);
+			});
+
+			// Function to update animation list display
+			window.updateAnimationList = function(animations) {
+				const animInfo = document.getElementById('animation-info');
+				const animList = document.getElementById('animationList');
+
+				if (animations && animations.length > 0) {
+					animInfo.style.display = 'block';
+					animList.innerHTML = '';
+
+					animations.forEach((anim, index) => {
+						const item = document.createElement('div');
+						item.className = 'animation-item';
+						item.innerHTML = `<strong>${index}:</strong> ${anim.name || 'Unnamed'} - ${anim.duration.toFixed(2)}s, ${anim.tracks.length} tracks`;
+						animList.appendChild(item);
+					});
+				} else {
+					animInfo.style.display = 'none';
+				}
+			};
+
+			// Reset to default model
+			window.reloadDefaultModel = function() {
+				document.getElementById('currentFile').textContent = 'suzanne.usdc';
+				const customEvent = new CustomEvent('loadDefaultModel');
+				window.dispatchEvent(customEvent);
+			};
+		</script>
+
 		<script type="module" src="./animation.js"></script>
 	</body>
 </html>
