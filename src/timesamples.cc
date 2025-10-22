@@ -310,7 +310,31 @@ namespace value {
 // TimeSamples::update() implementation
 void TimeSamples::update() const {
   if (_use_pod) {
-    _pod_samples.update();
+    // Phase 3: Sort unified POD storage
+    if (_times.empty()) {
+      _dirty = false;
+      return;
+    }
+
+    // Create sorted index array
+    std::vector<size_t> indices = create_sort_indices(_times);
+
+    // Sort using offset table strategy
+    if (!_offsets.empty()) {
+      sort_with_offsets(indices, _times, _blocked, _offsets);
+    } else {
+      // Shouldn't happen in Phase 3, but handle for safety
+      std::vector<std::pair<size_t, double>> temp;
+      temp.reserve(_times.size());
+      for (size_t i = 0; i < _times.size(); ++i) {
+        temp.emplace_back(i, _times[i]);
+      }
+      std::stable_sort(temp.begin(), temp.end(),
+                      [](const auto& a, const auto& b) { return a.second < b.second; });
+      for (size_t i = 0; i < temp.size(); ++i) {
+        _times[i] = temp[i].second;
+      }
+    }
   } else {
     std::sort(_samples.begin(), _samples.end(),
               [](const Sample &a, const Sample &b) { return a.t < b.t; });
