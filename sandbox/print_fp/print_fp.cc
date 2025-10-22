@@ -280,11 +280,28 @@ inline char* write_significand(char* out, uint64_t significand,
 }
 
 // Use dragonbox algorithm to print floating point value.
-// Use to_deciamal and do human-readable pretty printing for some value range(e.g. print 1e-3 as 0.001) 
-// 
+// Use to_deciamal and do human-readable pretty printing for some value range(e.g. print 1e-3 as 0.001)
+//
 // exp_upper: (15 + 1) for double, (6+1) for float
 char* dtoa_dragonbox(const double f, char* buf, int exp_upper = 16) {
   const int spec_precision = -1;  // unlimited
+
+  // Fast path for common values 1.0 and -1.0 (bitwise comparison)
+  // IEEE 754 double precision: 1.0 = 0x3FF0000000000000, -1.0 = 0xBFF0000000000000
+  uint64_t bits;
+  std::memcpy(&bits, &f, sizeof(double));
+
+  if (bits == 0x3FF0000000000000ULL) {
+    // Exactly 1.0
+    *buf++ = '1';
+    return buf;
+  }
+  if (bits == 0xBFF0000000000000ULL) {
+    // Exactly -1.0
+    *buf++ = '-';
+    *buf++ = '1';
+    return buf;
+  }
 
   bool is_negative = std::signbit(f);
 
@@ -411,6 +428,23 @@ char* dtoa_dragonbox(const double f, char* buf, int exp_upper = 16) {
 }
 
 char* dtoa_dragonbox(const float f, char* buf) {
+  // Fast path for common values 1.0f and -1.0f (bitwise comparison)
+  // IEEE 754 single precision: 1.0f = 0x3F800000, -1.0f = 0xBF800000
+  uint32_t bits;
+  std::memcpy(&bits, &f, sizeof(float));
+
+  if (bits == 0x3F800000U) {
+    // Exactly 1.0f
+    *buf++ = '1';
+    return buf;
+  }
+  if (bits == 0xBF800000U) {
+    // Exactly -1.0f
+    *buf++ = '-';
+    *buf++ = '1';
+    return buf;
+  }
+
   return dtoa_dragonbox(double(f), buf, 7);
 }
 
