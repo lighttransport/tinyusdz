@@ -657,12 +657,14 @@ public:
     if (_offsets.empty() && !_is_stl_array && !_is_typed_array && !_times.empty()) {
       // Transition to offset-based storage
       // Build offset table for existing samples
-      size_t offset = 0;
+      size_t byte_offset = 0;
       size_t element_size = get_element_size();
       for (size_t i = 0; i < _times.size() - 1; ++i) {  // -1 because we just added this time
         if (!_blocked[i]) {
-          _offsets.push_back(offset);
-          offset += element_size;
+          // Encode offset with flags (scalar = is_array false)
+          uint64_t encoded_offset = make_offset(byte_offset, false);
+          _offsets.push_back(encoded_offset);
+          byte_offset += element_size;
         } else {
           _offsets.push_back(SIZE_MAX);
         }
