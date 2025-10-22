@@ -170,12 +170,13 @@ async function loadScenes() {
   // it is recommended to call init() before loadAsync()
   // (wait loading/compiling wasm module in the early stage))
   //await loader.init({useZstdCompressedWasm: true});
-  await loader.init({useZstdCompressedWasm: true});
+  await loader.init({useZstdCompressedWasm: false});
 
   const suzanne_filename = "./assets/suzanne-pbr.usda";
   const texcat_filename = "./assets/texture-cat-plane.usda";
   const cookie_filename = "./assets/UsdCookie.usdz";
   const textest_filename = "./assets/brown-rock.usdz";
+  const usd_filename = "./assets/suzanne-subd-lv6.usdc";
 
   var threeScenes = []
 
@@ -183,7 +184,7 @@ async function loadScenes() {
     //loader.loadAsync(texcat_filename),
     //loader.loadAsync(cookie_filename),
     //loader.loadAsync(suzanne_filename),
-    loader.loadAsync(textest_filename),
+    loader.loadAsync(usd_filename),
   ]);
 
   const defaultMtl = ui_state['mtl'];
