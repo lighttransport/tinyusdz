@@ -1,4 +1,4 @@
-all: print_fp test_exhaustive example_usage
+all: print_fp test_exhaustive example_usage test_decimal test_shortest_and_ranges test_fastpath_perf test_dtos_integration test_print_vectors
 
 print_fp:
 	g++ -O2 -g -std=c++14 print_fp.cc -I ../../src/external/dragonbox/ ../../src/external/dragonbox/dragonbox_to_chars.cpp -I../../src/external -o print_fp
@@ -11,8 +11,23 @@ test_exhaustive:
 example_usage:
 	g++ -O2 -g -std=c++14 example_usage.cc -I ../../src/external/dragonbox/ ../../src/external/dragonbox/dragonbox_to_chars.cpp -I../../src/external -o example_usage
 
+test_decimal:
+	g++ -O2 -g -std=c++14 test_decimal.cc -I ../../src/external/dragonbox/ ../../src/external/dragonbox/dragonbox_to_chars.cpp -I../../src/external -o test_decimal
+
+test_shortest_and_ranges:
+	g++ -O2 -g -std=c++14 test_shortest_and_ranges.cc -I ../../src/external/dragonbox/ ../../src/external/dragonbox/dragonbox_to_chars.cpp -I../../src/external -o test_shortest_and_ranges
+
+test_fastpath_perf:
+	g++ -O2 -g -std=c++14 test_fastpath_perf.cc -I ../../src/external/dragonbox/ ../../src/external/dragonbox/dragonbox_to_chars.cpp -I../../src/external -o test_fastpath_perf
+
+test_dtos_integration:
+	g++ -O2 -g -std=c++14 ../../test_dtos_integration.cc ../../src/str-util.cc -I../../src -I ../../src/external/dragonbox/ ../../src/external/dragonbox/dragonbox_to_chars.cpp -I../../src/external -o test_dtos_integration
+
+test_print_vectors:
+	g++ -O2 -g -std=c++14 ../../test_print_vectors.cc ../../src/str-util.cc -I../../src -I ../../src/external/dragonbox/ ../../src/external/dragonbox/dragonbox_to_chars.cpp -I../../src/external -o test_print_vectors
+
 clean:
-	rm -f print_fp test_exhaustive example_usage
+	rm -f print_fp test_exhaustive example_usage test_decimal test_shortest_and_ranges test_fastpath_perf test_dtos_integration test_print_vectors
 
 # Run quick sanity test
 test_sanity: test_exhaustive
@@ -47,4 +62,24 @@ test_double_medium: test_exhaustive
 test_double_large: test_exhaustive
 	./test_exhaustive double_large
 
-.PHONY: all clean test_sanity test_float_quick test_float_exhaustive test_float_exhaustive_threads test_double_quick test_double_medium test_double_large
+# Run decimal number printing tests
+test_run_decimal: test_decimal
+	./test_decimal
+
+# Run shortest representation and range tests
+test_run_shortest: test_shortest_and_ranges
+	./test_shortest_and_ranges
+
+# Run fast path performance test
+test_run_fastpath: test_fastpath_perf
+	./test_fastpath_perf
+
+# Run dtos integration test
+test_run_dtos: test_dtos_integration
+	./test_dtos_integration
+
+# Run vector/matrix printing test
+test_run_vectors: test_print_vectors
+	./test_print_vectors
+
+.PHONY: all clean test_sanity test_float_quick test_float_exhaustive test_float_exhaustive_threads test_double_quick test_double_medium test_double_large test_run_decimal test_run_shortest test_run_fastpath test_run_dtos test_run_vectors

@@ -4,6 +4,13 @@
 
 #include "unicode-xid.hh"
 #include "common-macros.inc"
+#include "value-types.hh"
+
+#include <cstring>
+#include <cstdint>
+#include <cmath>
+#include <array>
+#include "external/dragonbox/dragonbox_to_chars.h"
 
 #ifdef __SSE2__
 #include <emmintrin.h>
@@ -1104,5 +1111,446 @@ std::string base64_decode(std::string const &encoded_string) {
    -- end base64.cpp and base64.h
 */
 
+// ============================================================================
+// dtoa_dragonbox - Fast floating-point to string conversion
+// Based on Dragonbox algorithm by Junekey Jeon
+// ============================================================================
+
+namespace {
+
+// Helper functions for dragonbox formatting
+template <typename T>
+inline int count_digits(T n) {
+  int count = 1;
+  for (;;) {
+    if (n < 10) return count;
+    if (n < 100) return count + 1;
+    if (n < 1000) return count + 2;
+    if (n < 10000) return count + 3;
+    n /= 10000u;
+    count += 4;
+  }
+}
+
+inline auto digits2(size_t value) -> const char* {
+  alignas(2) static const char data[] =
+      "0001020304050607080910111213141516171819"
+      "2021222324252627282930313233343536373839"
+      "4041424344454647484950515253545556575859"
+      "6061626364656667686970717273747576777879"
+      "8081828384858687888990919293949596979899";
+  return &data[value * 2];
+}
+
+inline void write2digits(char* out, size_t value) {
+  *out++ = static_cast<char>('0' + value / 10);
+  *out = static_cast<char>('0' + value % 10);
+}
+
+char* write_exponent(int exp, char* out) {
+  if (exp < 0) {
+    *out++ = '-';
+    exp = -exp;
+  } else {
+    *out++ = '+';
+  }
+  auto uexp = static_cast<uint32_t>(exp);
+  if (uexp >= 100u) {
+    const char* top = digits2(uexp / 100);
+    if (uexp >= 1000u) *out++ = top[0];
+    *out++ = static_cast<char>(top[1]);
+    uexp %= 100;
+  }
+  const char* d = digits2(uexp);
+  *out++ = static_cast<char>(d[0]);
+  *out++ = static_cast<char>(d[1]);
+  return out;
+}
+
+inline char* fill_n(char* p, int n, char c) {
+  for (int i = 0; i < n; i++, p++) {
+    *p = c;
+  }
+  return p;
+}
+
+inline void format_decimal_impl(char* out, uint64_t value, uint32_t size) {
+  unsigned n = size;
+  while (value >= 100) {
+    n -= 2;
+    write2digits(out + n, static_cast<unsigned>(value % 100));
+    value /= 100;
+  }
+  if (value >= 10) {
+    n -= 2;
+    write2digits(out + n, static_cast<unsigned>(value));
+  } else {
+    out[--n] = static_cast<char>('0' + value);
+  }
+}
+
+inline char* format_decimal(char* out, uint64_t value, uint32_t num_digits) {
+  format_decimal_impl(out, value, num_digits);
+  return out + num_digits;
+}
+
+inline char* write_significand_e(char* out, uint64_t significand,
+                                 int significand_size, int exponent) {
+  out = format_decimal(out, significand, static_cast<uint32_t>(significand_size));
+  return fill_n(out, exponent, '0');
+}
+
+inline char* write_significand(char* out, uint64_t significand,
+                               int significand_size, int integral_size,
+                               char decimal_point) {
+  if (!decimal_point) return format_decimal(out, significand, static_cast<uint32_t>(significand_size));
+  out += significand_size + 1;
+  char* end = out;
+  int floating_size = significand_size - integral_size;
+  for (int i = floating_size / 2; i > 0; --i) {
+    out -= 2;
+    write2digits(out, static_cast<std::size_t>(significand % 100));
+    significand /= 100;
+  }
+  if (floating_size % 2 != 0) {
+    *--out = static_cast<char>('0' + significand % 10);
+    significand /= 10;
+  }
+  *--out = decimal_point;
+  format_decimal(out - integral_size, significand, static_cast<uint32_t>(integral_size));
+  return end;
+}
+
+char* dtoa_dragonbox_impl(const double f, char* buf, int exp_upper = 16) {
+  // Fast path for common values 1.0 and -1.0 (bitwise comparison)
+  // IEEE 754 double precision: 1.0 = 0x3FF0000000000000, -1.0 = 0xBFF0000000000000
+  uint64_t bits;
+  std::memcpy(&bits, &f, sizeof(double));
+
+  if (bits == 0x3FF0000000000000ULL) {
+    // Exactly 1.0
+    *buf++ = '1';
+    return buf;
+  }
+  if (bits == 0xBFF0000000000000ULL) {
+    // Exactly -1.0
+    *buf++ = '-';
+    *buf++ = '1';
+    return buf;
+  }
+
+  bool is_negative = std::signbit(f);
+
+  // Handle zero specially
+  if (f == 0.0) {
+    *buf++ = '0';
+    return buf;
+  }
+
+  auto ret = jkj::dragonbox::to_decimal(f);
+
+  // print human-readable float for the value in range [1e-exp_lower, 1e+exp_upper]
+  const int exp_lower = -4;
+  char exp_char = 'e';
+  char zero_char = '0';
+
+  auto significand = ret.significand;
+  int significand_size = count_digits(significand);
+
+  size_t size = size_t(significand_size) + (is_negative ? 1u : 0u);
+  (void)size;  // Used for tracking output size, may be used in future optimizations
+
+  int output_exp = ret.exponent + significand_size - 1;
+  bool use_exp_format = (output_exp < exp_lower) || (output_exp >= exp_upper);
+
+  char decimal_point = '.';
+  if (use_exp_format) {
+    int num_zeros = 0;
+    if (significand_size == 1) {
+      decimal_point = '\0';
+    }
+    auto abs_output_exp = output_exp >= 0 ? output_exp : -output_exp;
+    int exp_digits = 2;
+    if (abs_output_exp >= 100) exp_digits = abs_output_exp >= 1000 ? 4 : 3;
+
+    size += (decimal_point ? 1u : 0u) + 2u + size_t(exp_digits);
+
+    if (is_negative) {
+      *buf++ = '-';
+    }
+
+    buf = write_significand(buf, significand, significand_size, 1, decimal_point);
+
+    if (num_zeros > 0) buf = fill_n(buf, num_zeros, zero_char);
+    *buf++ = exp_char;
+    return write_exponent(output_exp, buf);
+  }
+
+  int exp = ret.exponent + significand_size;
+  if (ret.exponent >= 0) {
+    size += static_cast<size_t>(ret.exponent);
+
+    if (is_negative) {
+      *buf++ = '-';
+    }
+
+    return write_significand_e(buf, significand, significand_size,
+                               ret.exponent);
+
+  } else if (exp > 0) {
+    size += 1;
+    if (is_negative) {
+      *buf++ = '-';
+    }
+
+    return write_significand(buf, significand, significand_size, exp,
+                             decimal_point);
+  }
+
+  int num_zeros = -exp;
+  bool pointy = num_zeros != 0 || significand_size != 0;
+  size += 1u + (pointy ? 1u : 0u) + size_t(num_zeros);
+
+  if (is_negative) {
+    *buf++ = '-';
+  }
+
+  *buf++ = zero_char;
+
+  if (!pointy) return buf;
+  *buf++ = decimal_point;
+  buf = fill_n(buf, num_zeros, zero_char);
+
+  return format_decimal(buf, significand, static_cast<uint32_t>(significand_size));
+}
+
+char* dtoa_dragonbox_impl(const float f, char* buf) {
+  // Fast path for common values 1.0f and -1.0f (bitwise comparison)
+  // IEEE 754 single precision: 1.0f = 0x3F800000, -1.0f = 0xBF800000
+  uint32_t bits;
+  std::memcpy(&bits, &f, sizeof(float));
+
+  if (bits == 0x3F800000U) {
+    // Exactly 1.0f
+    *buf++ = '1';
+    return buf;
+  }
+  if (bits == 0xBF800000U) {
+    // Exactly -1.0f
+    *buf++ = '-';
+    *buf++ = '1';
+    return buf;
+  }
+
+  return dtoa_dragonbox_impl(double(f), buf, 7);
+}
+
+} // anonymous namespace
+
+// Public API for dtos - std::string version
+std::string dtos(float v) {
+  constexpr size_t kBufferSize = 24; // DTOA_DRAGONBOX_BUFFER_SIZE_FLOAT
+  char buffer[kBufferSize];
+  char* end = dtoa_dragonbox_impl(v, buffer);
+  return std::string(buffer, end);
+}
+
+std::string dtos(double v) {
+  constexpr size_t kBufferSize = 32; // DTOA_DRAGONBOX_BUFFER_SIZE_DOUBLE
+  char buffer[kBufferSize];
+  char* end = dtoa_dragonbox_impl(v, buffer);
+  return std::string(buffer, end);
+}
+
+// Public API for dtos - buffer version (efficient, no std::string construction)
+size_t dtos(float v, char* buffer) {
+  char* end = dtoa_dragonbox_impl(v, buffer);
+  return static_cast<size_t>(end - buffer);
+}
+
+size_t dtos(double v, char* buffer) {
+  char* end = dtoa_dragonbox_impl(v, buffer);
+  return static_cast<size_t>(end - buffer);
+}
+
+// ============================================================================
+// Vector and Matrix Printing Functions
+// ============================================================================
+
+// Helper template for printing vector types
+template<typename T, size_t N>
+size_t print_vector_impl(const std::array<T, N>& v, char* buffer) {
+  char* p = buffer;
+  *p++ = '(';
+
+  for (size_t i = 0; i < N; i++) {
+    if (i > 0) {
+      *p++ = ',';
+      *p++ = ' ';
+    }
+    size_t len = dtos(static_cast<T>(v[i]), p);
+    p += len;
+  }
+
+  *p++ = ')';
+  return static_cast<size_t>(p - buffer);
+}
+
+// Float vectors
+size_t print_float2(const value::float2& v, char* buffer) {
+  return print_vector_impl(v, buffer);
+}
+
+size_t print_float3(const value::float3& v, char* buffer) {
+  return print_vector_impl(v, buffer);
+}
+
+size_t print_float4(const value::float4& v, char* buffer) {
+  return print_vector_impl(v, buffer);
+}
+
+// Double vectors
+size_t print_double2(const value::double2& v, char* buffer) {
+  return print_vector_impl(v, buffer);
+}
+
+size_t print_double3(const value::double3& v, char* buffer) {
+  return print_vector_impl(v, buffer);
+}
+
+size_t print_double4(const value::double4& v, char* buffer) {
+  return print_vector_impl(v, buffer);
+}
+
+// Half vectors (convert to float for printing)
+// Note: These functions are only available when linking with value-types
+#if 0
+size_t print_half2(const value::half2& v, char* buffer) {
+  char* p = buffer;
+  *p++ = '(';
+
+  for (size_t i = 0; i < 2; i++) {
+    if (i > 0) {
+      *p++ = ',';
+      *p++ = ' ';
+    }
+    size_t len = dtos(value::half_to_float(v[i]), p);
+    p += len;
+  }
+
+  *p++ = ')';
+  return static_cast<size_t>(p - buffer);
+}
+
+size_t print_half3(const value::half3& v, char* buffer) {
+  char* p = buffer;
+  *p++ = '(';
+
+  for (size_t i = 0; i < 3; i++) {
+    if (i > 0) {
+      *p++ = ',';
+      *p++ = ' ';
+    }
+    size_t len = dtos(value::half_to_float(v[i]), p);
+    p += len;
+  }
+
+  *p++ = ')';
+  return static_cast<size_t>(p - buffer);
+}
+
+size_t print_half4(const value::half4& v, char* buffer) {
+  char* p = buffer;
+  *p++ = '(';
+
+  for (size_t i = 0; i < 4; i++) {
+    if (i > 0) {
+      *p++ = ',';
+      *p++ = ' ';
+    }
+    size_t len = dtos(value::half_to_float(v[i]), p);
+    p += len;
+  }
+
+  *p++ = ')';
+  return static_cast<size_t>(p - buffer);
+}
+#endif
+
+// Matrix printing: ((row0), (row1), ...)
+size_t print_matrix2d(const value::matrix2d& m, char* buffer) {
+  char* p = buffer;
+  *p++ = '(';
+
+  for (size_t row = 0; row < 2; row++) {
+    if (row > 0) {
+      *p++ = ',';
+      *p++ = ' ';
+    }
+    *p++ = '(';
+    for (size_t col = 0; col < 2; col++) {
+      if (col > 0) {
+        *p++ = ',';
+        *p++ = ' ';
+      }
+      size_t len = dtos(m.m[row][col], p);
+      p += len;
+    }
+    *p++ = ')';
+  }
+
+  *p++ = ')';
+  return static_cast<size_t>(p - buffer);
+}
+
+size_t print_matrix3d(const value::matrix3d& m, char* buffer) {
+  char* p = buffer;
+  *p++ = '(';
+
+  for (size_t row = 0; row < 3; row++) {
+    if (row > 0) {
+      *p++ = ',';
+      *p++ = ' ';
+    }
+    *p++ = '(';
+    for (size_t col = 0; col < 3; col++) {
+      if (col > 0) {
+        *p++ = ',';
+        *p++ = ' ';
+      }
+      size_t len = dtos(m.m[row][col], p);
+      p += len;
+    }
+    *p++ = ')';
+  }
+
+  *p++ = ')';
+  return static_cast<size_t>(p - buffer);
+}
+
+size_t print_matrix4d(const value::matrix4d& m, char* buffer) {
+  char* p = buffer;
+  *p++ = '(';
+
+  for (size_t row = 0; row < 4; row++) {
+    if (row > 0) {
+      *p++ = ',';
+      *p++ = ' ';
+    }
+    *p++ = '(';
+    for (size_t col = 0; col < 4; col++) {
+      if (col > 0) {
+        *p++ = ',';
+        *p++ = ' ';
+      }
+      size_t len = dtos(m.m[row][col], p);
+      p += len;
+    }
+    *p++ = ')';
+  }
+
+  *p++ = ')';
+  return static_cast<size_t>(p - buffer);
+}
 
 }  // namespace tinyusdz
