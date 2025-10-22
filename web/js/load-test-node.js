@@ -123,7 +123,7 @@ function checkMemory64Support() {
 
 console.log("memory64:", checkMemory64Support());
 
-const usd_filename = "../../models/suzanne-subd-lv5.usdc";
+const usd_filename = "../../models/suzanne-subd-lv4.usdc";
 
 async function initScene() {
 
@@ -134,12 +134,14 @@ async function initScene() {
 
   // Option 1: Use traditional file loading (existing method)
   console.log("\n=== Traditional file loading ===");
-  //const f = loadFile(usd_filename);
-  //const url = URL.createObjectURL(f);
+  const f = loadFile(usd_filename);
+  const url = URL.createObjectURL(f);
   //const usd = await loader.loadTestAsync(url);
+  const usd = await loader.loadAsync(url);
   //console.log("Traditional loading completed");
-  //reportMemUsage();
+  reportMemUsage();
 
+  /*
   // Option 2: Use streaming API to load asset
   console.log("\n=== Streaming file loading ===");
   try {
@@ -167,6 +169,7 @@ async function initScene() {
   } catch (err) {
     console.error("Streaming failed:", err);
   }
+  */
 
 }
 
