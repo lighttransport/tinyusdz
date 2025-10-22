@@ -1102,22 +1102,11 @@ struct TimeSamples {
   };
 
   bool empty() const {
-    if (_use_pod) {
-      // Check both _pod_samples (old path) and _times (new unified path)
-      return _pod_samples.empty() && _times.empty();
-    }
-    return _samples.empty();
+    return _use_pod ? _pod_samples.empty() : _samples.empty();
   }
 
   size_t size() const {
-    if (_use_pod) {
-      // Prefer new unified path if it has data, otherwise use _pod_samples
-      if (!_times.empty()) {
-        return _times.size();
-      }
-      return _pod_samples.size();
-    }
-    return _samples.size();
+    return _use_pod ? _pod_samples.size() : _samples.size();
   }
 
   void clear() {
