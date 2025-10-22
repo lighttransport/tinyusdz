@@ -1252,13 +1252,14 @@ struct TimeSamples {
 
   nonstd::optional<double> get_time(size_t idx) const {
     if (_use_pod) {
-      if (idx >= _pod_samples.size()) {
+      // Phase 3: Use unified storage
+      if (idx >= _times.size()) {
         return nonstd::nullopt;
       }
       if (_dirty) {
         update();
       }
-      return _pod_samples.get_times()[idx];
+      return _times[idx];
     } else {
       if (idx >= _samples.size()) {
         return nonstd::nullopt;
@@ -1289,8 +1290,9 @@ struct TimeSamples {
   }
 
   uint32_t type_id() const {
+    // Phase 3: Use unified storage
     if (_use_pod) {
-      return _pod_samples.type_id();
+      return _type_id;
     }
     if (_samples.size()) {
       if (_dirty) {
@@ -1436,10 +1438,10 @@ struct TimeSamples {
       init(value::TypeTraits<T>::type_id());
     }
 
+    // Phase 3: Delegate to unified storage method
     if (_use_pod) {
-      bool result = _pod_samples.add_sample<T>(t, value, err, expected_total_samples);
-      _dirty = true;
-      return result;
+      (void)expected_total_samples;  // Not used in Phase 3 unified storage
+      return add_pod_sample<T>(t, value, err);
     }
 
     if (err) {
@@ -1458,10 +1460,10 @@ struct TimeSamples {
       init(value::TypeTraits<T>::type_id());
     }
 
+    // Phase 3: Delegate to unified storage method
     if (_use_pod) {
-      bool result = _pod_samples.add_array_sample<T>(t, value.data(), value.size(), err, expected_total_samples);
-      _dirty = true;
-      return result;
+      (void)expected_total_samples;  // Not used in Phase 3 unified storage
+      return add_array_sample<T>(t, value.data(), value.size(), err);
     }
 
     if (err) {
@@ -1484,10 +1486,10 @@ struct TimeSamples {
     DCOUT("is dedup? " << value.is_dedup());
     DCOUT("_use_pod? " << _use_pod);
 
+    // Phase 3: Delegate to unified storage method
     if (_use_pod) {
-      bool result = _pod_samples.add_array_sample<T>(t, value.data(), value.size(), err, expected_total_samples);
-      _dirty = true;
-      return result;
+      (void)expected_total_samples;  // Not used in Phase 3 unified storage
+      return add_array_sample<T>(t, value.data(), value.size(), err);
     }
 
     if (err) {
@@ -1504,10 +1506,10 @@ struct TimeSamples {
       init(value::TypeTraits<T>::type_id());
     }
 
+    // Phase 3: Delegate to unified storage method
     if (_use_pod) {
-      bool result = _pod_samples.add_matrix_array_sample<T>(t, value.data(), value.size(), err, expected_total_samples);
-      _dirty = true;
-      return result;
+      (void)expected_total_samples;  // Not used in Phase 3 unified storage
+      return add_matrix_array_sample<T>(t, value.data(), value.size(), err);
     }
 
     if (err) {
@@ -1525,10 +1527,10 @@ struct TimeSamples {
       init(value::TypeTraits<T>::type_id());
     }
 
+    // Phase 3: Delegate to unified storage method
     if (_use_pod) {
-      bool result = _pod_samples.add_matrix_array_sample<T>(t, value.data(), value.size(), err, expected_total_samples);
-      _dirty = true;
-      return result;
+      (void)expected_total_samples;  // Not used in Phase 3 unified storage
+      return add_matrix_array_sample<T>(t, value.data(), value.size(), err);
     }
 
     if (err) {
@@ -1548,10 +1550,9 @@ struct TimeSamples {
     static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
                   "add_dedup_array_sample_pod requires POD types");
 
+    // Phase 3: Delegate to unified storage method
     if (_use_pod) {
-      bool result = _pod_samples.add_dedup_array_sample<T>(t, ref_index, err);
-      _dirty = true;
-      return result;
+      return add_dedup_array_sample<T>(t, ref_index, err);
     }
 
     if (err) {
@@ -1572,10 +1573,9 @@ struct TimeSamples {
                   (value::TypeTraits<T>::type_id() == value::TYPE_ID_MATRIX4D),
                   "requires matrix type");
 
+    // Phase 3: Delegate to unified storage method
     if (_use_pod) {
-      bool result = _pod_samples.add_dedup_matrix_array_sample<T>(t, ref_index, err);
-      _dirty = true;
-      return result;
+      return add_dedup_matrix_array_sample<T>(t, ref_index, err);
     }
 
     if (err) {
@@ -1595,10 +1595,10 @@ struct TimeSamples {
       init(value::TypeTraits<T>::type_id());
     }
 
+    // Phase 3: Delegate to unified storage method
     if (_use_pod) {
-      bool result = _pod_samples.add_blocked_sample<T>(t, err, expected_total_samples);
-      _dirty = true;
-      return result;
+      (void)expected_total_samples;  // Not used in Phase 3 unified storage
+      return add_pod_blocked_sample<T>(t, err);
     }
 
     if (err) {
@@ -1686,19 +1686,8 @@ struct TimeSamples {
       update();
     }
 
-    if (_use_pod) {
-      // Use PODTimeSamples implementation
-      return _pod_samples.get_typed_array_view_at<T>(idx);
-    }
-
-    // Phase 2: Check if using unified storage (non-POD samples but has POD data)
-    if (!_pod_samples.empty()) {
-      // Delegate to PODTimeSamples (backward compat during transition)
-      return _pod_samples.get_typed_array_view_at<T>(idx);
-    }
-
-    // Phase 2: Use unified storage directly
-    if (!_times.empty() && _is_array) {
+    // Phase 3: Use unified storage for POD types
+    if (_use_pod && !_times.empty()) {
       if (idx >= _times.size()) {
         return TypedArrayView<const T>(nullptr, 0);
       }
@@ -1710,12 +1699,14 @@ struct TimeSamples {
 
       // Resolve offset
       size_t byte_offset = 0;
-      if (!PODTimeSamples::resolve_offset_static(_offsets, idx, &byte_offset)) {
+      bool is_array = false;
+      if (!PODTimeSamples::resolve_offset_static(_offsets, idx, &byte_offset, &is_array)) {
         return TypedArrayView<const T>(nullptr, 0);
       }
 
       const T* data = reinterpret_cast<const T*>(_values.data() + byte_offset);
-      return TypedArrayView<const T>(data, _array_size);
+      size_t count = is_array ? _array_size : 1;
+      return TypedArrayView<const T>(data, count);
     }
 
     // For regular Value storage (generic path)
@@ -1755,9 +1746,19 @@ struct TimeSamples {
       update();
     }
 
-    if (_use_pod) {
-      // Use PODTimeSamples implementation
-      return _pod_samples.get_typed_array_view_at_time<T>(t);
+    // Phase 3: Use unified storage for POD types
+    if (_use_pod && !_times.empty()) {
+      // Find time index
+      const auto it = std::find_if(_times.begin(), _times.end(), [&t](double time_val) {
+        return std::fabs(t - time_val) < std::numeric_limits<double>::epsilon();
+      });
+
+      if (it != _times.end()) {
+        size_t idx = static_cast<size_t>(std::distance(_times.begin(), it));
+        return get_typed_array_view_at<T>(idx);
+      }
+
+      return TypedArrayView<const T>();  // Empty view
     }
 
     // For regular Value storage
@@ -2033,12 +2034,12 @@ struct TimeSamples {
   // Phase 2: Unified array methods (work directly with TimeSamples storage)
   //
 
-  /// Add array sample using unified storage (Phase 2 path)
-  /// This bypasses _pod_samples and uses TimeSamples members directly
+  /// Add array sample using unified storage (Phase 3: primary path)
   template<typename T>
   bool add_array_sample(double t, const T* values, size_t count, std::string* err = nullptr) {
-    static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
-                  "add_array_sample requires POD types");
+    // Phase 3: Relaxed to standard_layout for matrix types (which have constructors but are otherwise POD-like)
+    static_assert(std::is_standard_layout<T>::value,
+                  "add_array_sample requires standard layout types");
 
     // Auto-initialize on first sample
     if (empty()) {
@@ -2048,12 +2049,7 @@ struct TimeSamples {
       }
     }
 
-    // If already using _pod_samples (backward compat), delegate to it
-    if (!_pod_samples.empty()) {
-      return _pod_samples.add_array_sample<T>(t, values, count, err);
-    }
-
-    // Use unified storage
+    // Phase 3: Always use unified storage
     _times.push_back(t);
     _blocked.push_back(0);  // Not blocked
 
@@ -2076,17 +2072,14 @@ struct TimeSamples {
     return true;
   }
 
-  /// Add deduplicated array sample (Phase 2 path)
+  /// Add deduplicated array sample (Phase 3: primary path)
   template<typename T>
   bool add_dedup_array_sample(double t, size_t ref_index, std::string* err = nullptr) {
-    static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
-                  "add_dedup_array_sample requires POD types");
+    // Phase 3: Relaxed to standard_layout for matrix types (which have constructors but are otherwise POD-like)
+    static_assert(std::is_standard_layout<T>::value,
+                  "add_dedup_array_sample requires standard layout types");
 
-    // If using _pod_samples, delegate
-    if (!_pod_samples.empty()) {
-      return _pod_samples.add_dedup_array_sample<T>(t, ref_index, err);
-    }
-
+    // Phase 3: Always use unified storage
     // Validate reference
     if (ref_index >= _times.size()) {
       if (err) *err = "Invalid ref_index: " + std::to_string(ref_index) + " >= " + std::to_string(_times.size());
@@ -2152,12 +2145,7 @@ struct TimeSamples {
       }
     }
 
-    // If already using _pod_samples (backward compat), delegate to it
-    if (!_pod_samples.empty()) {
-      return _pod_samples.add_sample<T>(t, value, err);
-    }
-
-    // Use unified storage for scalar POD
+    // Phase 3: Always use unified storage for scalar POD
     _times.push_back(t);
     _blocked.push_back(0);  // Not blocked
 
@@ -2179,7 +2167,7 @@ struct TimeSamples {
     return true;
   }
 
-  /// Add blocked POD sample (Phase 3 path)
+  /// Add blocked POD sample (Phase 3: primary path)
   template<typename T>
   bool add_pod_blocked_sample(double t, std::string* err = nullptr) {
     static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
@@ -2193,12 +2181,7 @@ struct TimeSamples {
       }
     }
 
-    // If already using _pod_samples (backward compat), delegate to it
-    if (!_pod_samples.empty()) {
-      return _pod_samples.add_blocked_sample<T>(t, err);
-    }
-
-    // Add blocked sample to unified storage
+    // Phase 3: Always use unified storage
     _times.push_back(t);
     _blocked.push_back(1);  // Blocked
 
@@ -2233,25 +2216,8 @@ struct TimeSamples {
       update();
     }
 
-    // Check if using _pod_samples (backward compat)
-    if (!_pod_samples.empty()) {
-      // Delegate to PODTimeSamples
-      auto view = _pod_samples.get_typed_array_view_at<T>(idx);
-      if (view.size() == 0) {
-        if (out_blocked) {
-          // Check if it's actually blocked or just empty
-          *out_blocked = (idx < _pod_samples.get_times().size() &&
-                         _pod_samples.get_blocked()[idx]);
-        }
-        return false;
-      }
-      out_vec->assign(view.data(), view.data() + view.size());
-      if (out_blocked) *out_blocked = false;
-      return true;
-    }
-
-    // Check unified POD storage
-    if (!_times.empty() && _is_array) {
+    // Phase 3: Check unified POD storage first
+    if (_use_pod && !_times.empty()) {
       if (idx >= _times.size()) {
         return false;
       }
