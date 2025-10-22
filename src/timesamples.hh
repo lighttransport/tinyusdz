@@ -1102,11 +1102,16 @@ struct TimeSamples {
   };
 
   bool empty() const {
-    return _use_pod ? _pod_samples.empty() : _samples.empty();
+    // Phase 3: Use unified storage for POD types
+    return _use_pod ? _times.empty() : _samples.empty();
   }
 
   size_t size() const {
-    return _use_pod ? _pod_samples.size() : _samples.size();
+    if (_dirty) {
+      update();
+    }
+    // Phase 3: Use unified storage for POD types
+    return _use_pod ? _times.size() : _samples.size();
   }
 
   void clear() {
