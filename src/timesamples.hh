@@ -2131,27 +2131,10 @@ struct TimeSamples {
   //
   // std::vector<T> support (Phase 2 Step 3)
   //
-
-  /// Add sample from std::vector<T> - convenient wrapper
-  /// Automatically detects if T is POD and uses appropriate storage
-  template<typename T>
-  bool add_sample(double t, const std::vector<T>& array, std::string* err = nullptr) {
-    // Check if this is a POD type that can use unified storage
-    if (std::is_trivial<T>::value && std::is_standard_layout<T>::value) {
-      // Use POD array storage
-      return add_array_sample<T>(t, array.data(), array.size(), err);
-    } else {
-      // Use generic Value storage (existing code path)
-      // For non-POD types like std::string, std::vector<std::string>, etc.
-      if (_samples.empty()) {
-        // Initialize with appropriate type_id
-        _type_id = value::TypeTraits<std::vector<T>>::type_id();
-      }
-      _samples.push_back(Sample{t, value::Value(array), false});
-      _dirty = true;
-      return true;
-    }
-  }
+  // NOTE: We do NOT override add_sample(double t, const std::vector<T>&) because
+  // that would break interpolation support for std::vector<T> types.
+  // The existing Value-based add_sample works correctly with interpolation.
+  // We only provide convenience getters below.
 
   /// Get sample as std::vector<T> - retrieves array data into a vector
   /// Works with both unified POD storage and generic Value storage
