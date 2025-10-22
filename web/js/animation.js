@@ -65,6 +65,146 @@ scene.add(parentGroup);
 
 // Parent object (will be loaded from USD and animated with KeyframeTracks)
 let parentCube = null;
+let usdAnimations = []; // Store USD animations from the file
+
+// ===========================================
+// USD Animation Extraction Functions
+// ===========================================
+
+/**
+ * Convert USD animation data to Three.js AnimationClip
+ * @param {Object} usdLoader - TinyUSDZ loader instance
+ * @param {THREE.Object3D} sceneRoot - Three.js scene containing the loaded geometry
+ * @returns {Array<THREE.AnimationClip>} Array of Three.js AnimationClips
+ */
+function convertUSDAnimationsToThreeJS(usdLoader, sceneRoot) {
+	const animationClips = [];
+
+	// Get number of animations
+	const numAnimations = usdLoader.numAnimations();
+	console.log(`Found ${numAnimations} animations in USD file`);
+
+	// Get summary of all animations
+	const animationInfos = usdLoader.getAllAnimationInfos();
+	console.log('Animation summaries:', animationInfos);
+
+	// Convert each animation to Three.js format
+	for (let i = 0; i < numAnimations; i++) {
+		const usdAnimation = usdLoader.getAnimation(i);
+		console.log(`Processing animation ${i}: ${usdAnimation.name}`);
+
+		// Create Three.js KeyframeTracks from USD animation tracks
+		const keyframeTracks = [];
+
+		for (const track of usdAnimation.tracks) {
+			// Find the Three.js object for this track
+			const targetObject = findObjectByName(sceneRoot, track.nodeName);
+
+			if (!targetObject) {
+				console.warn(`Could not find object with name: ${track.nodeName}`);
+				continue;
+			}
+
+			// Convert times from Float32Array to array
+			const times = Array.from(track.times);
+			const values = Array.from(track.values);
+
+			// Create appropriate Three.js KeyframeTrack based on type
+			let keyframeTrack;
+
+			switch (track.type) {
+				case 'vector3':
+					// For position and scale
+					keyframeTrack = new THREE.VectorKeyframeTrack(
+						track.name,
+						times,
+						values,
+						getUSDInterpolationMode(track.interpolation)
+					);
+					break;
+
+				case 'quaternion':
+					// For rotation
+					keyframeTrack = new THREE.QuaternionKeyframeTrack(
+						track.name,
+						times,
+						values,
+						getUSDInterpolationMode(track.interpolation)
+					);
+					break;
+
+				case 'number':
+					// For morph targets/weights
+					keyframeTrack = new THREE.NumberKeyframeTrack(
+						track.name,
+						times,
+						values,
+						getUSDInterpolationMode(track.interpolation)
+					);
+					break;
+
+				default:
+					console.warn(`Unknown track type: ${track.type}`);
+					continue;
+			}
+
+			if (keyframeTrack) {
+				keyframeTracks.push(keyframeTrack);
+			}
+		}
+
+		// Create Three.js AnimationClip
+		if (keyframeTracks.length > 0) {
+			const clip = new THREE.AnimationClip(
+				usdAnimation.name || `Animation_${i}`,
+				usdAnimation.duration,
+				keyframeTracks
+			);
+
+			animationClips.push(clip);
+		}
+	}
+
+	return animationClips;
+}
+
+/**
+ * Convert USD interpolation mode to Three.js InterpolateMode
+ * @param {string} interpolation - USD interpolation mode (LINEAR, STEP, CUBICSPLINE)
+ * @returns {number} Three.js InterpolateMode constant
+ */
+function getUSDInterpolationMode(interpolation) {
+	switch (interpolation) {
+		case 'STEP':
+			return THREE.InterpolateDiscrete;
+		case 'CUBICSPLINE':
+			return THREE.InterpolateSmooth;
+		case 'LINEAR':
+		default:
+			return THREE.InterpolateLinear;
+	}
+}
+
+/**
+ * Helper function to find object in Three.js scene by name
+ * @param {THREE.Object3D} root - Root object to search from
+ * @param {string} name - Name to search for
+ * @returns {THREE.Object3D|null} Found object or null
+ */
+function findObjectByName(root, name) {
+	if (root.name === name) {
+		return root;
+	}
+
+	for (const child of root.children) {
+		const found = findObjectByName(child, name);
+		if (found) {
+			return found;
+		}
+	}
+
+	return null;
+}
 
 // Load USD model asynchronously
 async function loadUSDModel() {
@@ -112,8 +252,51 @@ async function loadUSDModel() {
 	parentCube = threeNode;
 	parentGroup.add(parentCube);
 
+	// Extract USD animations if available
+	try {
+		usdAnimations = convertUSDAnimationsToThreeJS(usd_scene, parentGroup);
+		if (usdAnimations.length > 0) {
+			console.log(`Extracted ${usdAnimations.length} animations from USD file`);
+
+			// Update animation parameters
+			animationParams.hasUSDAnimations = true;
+			animationParams.usdAnimationCount = usdAnimations.length;
+
+			// Show the USD animation folder in GUI
+			if (window.usdAnimationFolder) {
+				window.usdAnimationFolder.show();
+			}
+
+			// Log animation details
+			usdAnimations.forEach((clip, index) => {
+				console.log(`Animation ${index}: ${clip.name}, duration: ${clip.duration}s, tracks: ${clip.tracks.length}`);
+			});
+		}
+	} catch (error) {
+		console.log('No animations found in USD file or animation extraction not supported:', error);
+	}
+
 	// Initialize animation after USD model is loaded
 	updateAnimationClip();
+}
+
+// Play USD animation by index
+function playUSDAnimation(index) {
+	if (index >= 0 && index < usdAnimations.length) {
+		// Stop current animation
+		if (animationAction) {
+			animationAction.stop();
+		}
+
+		// Play USD animation
+		const clip = usdAnimations[index];
+		if (mixer && clip) {
+			animationAction = mixer.clipAction(clip);
+			animationAction.loop = THREE.LoopRepeat;
+			animationAction.play();
+			console.log(`Playing USD animation: ${clip.name}`);
+		}
+	}
 }
 
 // Create synthetic KeyframeTracks for the cube
@@ -295,6 +478,27 @@ const animationParams = {
 	cubeRotation: true,
 	cubeScale: true,
 
+	// USD Animation properties
+	hasUSDAnimations: false,
+	usdAnimationCount: 0,
+	currentUSDAnimation: 0,
+	useUSDAnimation: false,
+	playUSDAnimation: function() {
+		if (usdAnimations.length > 0) {
+			this.useUSDAnimation = true;
+			playUSDAnimation(this.currentUSDAnimation);
+		}
+	},
+	playSyntheticAnimation: function() {
+		this.useUSDAnimation = false;
+		updateAnimationClip();
+	},
+	selectUSDAnimation: function() {
+		if (this.useUSDAnimation && usdAnimations.length > this.currentUSDAnimation) {
+			playUSDAnimation(this.currentUSDAnimation);
+		}
+	},
+
 	// Update functions
 	updateDuration: function() {
 		this.duration = this.endTime - this.beginTime;
@@ -326,6 +530,19 @@ playbackFolder.add(animationParams, 'speed', 0, 3, 0.1).name('Speed');
 playbackFolder.add(animationParams, 'time', 0, 30, 0.01)
 	.name('Timeline').listen();
 playbackFolder.open();
+
+// USD Animation controls (will be populated when USD file is loaded)
+const usdAnimationFolder = gui.addFolder('USD Animations');
+window.usdAnimationFolder = usdAnimationFolder; // Make it accessible globally
+usdAnimationFolder.add(animationParams, 'hasUSDAnimations').name('Has USD Animations').listen().disable();
+usdAnimationFolder.add(animationParams, 'usdAnimationCount').name('Animation Count').listen().disable();
+usdAnimationFolder.add(animationParams, 'currentUSDAnimation', 0, 10, 1)
+	.name('Select Animation')
+	.onChange(() => animationParams.selectUSDAnimation());
+usdAnimationFolder.add(animationParams, 'playUSDAnimation').name('Play USD Animation');
+usdAnimationFolder.add(animationParams, 'playSyntheticAnimation').name('Play Synthetic Animation');
+// Hide the folder initially, will show when USD animations are loaded
+usdAnimationFolder.hide();
 
 // Time range controls
 const timeRangeFolder = gui.addFolder('Time Range');
@@ -390,6 +607,132 @@ function onWindowResize() {
 	camera.updateProjectionMatrix();
 	renderer.setSize(window.innerWidth, window.innerHeight);
 }
+
+// Function to load a USD file from ArrayBuffer
+async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
+	// Clear existing model
+	if (parentCube) {
+		parentGroup.remove(parentCube);
+		parentCube = null;
+	}
+
+	// Reset animations
+	usdAnimations = [];
+	animationParams.hasUSDAnimations = false;
+	animationParams.usdAnimationCount = 0;
+
+	const loader = new TinyUSDZLoader();
+	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
+
+	// Convert ArrayBuffer to Uint8Array
+	const uint8Array = new Uint8Array(arrayBuffer);
+
+	// Load USD scene from binary data
+	const usd_scene = await loader.loadFromBinary(uint8Array, filename);
+
+	// Get the default root node from USD
+	const usdRootNode = usd_scene.getDefaultRootNode();
+
+	// Create default material
+	const defaultMtl = TinyUSDZLoaderUtils.createDefaultMaterial();
+
+	const options = {
+		overrideMaterial: false,
+		envMap: null,
+		envMapIntensity: 1.0,
+	};
+
+	// Build Three.js node from USD
+	const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+
+	// Setup the loaded model
+	threeNode.name = 'parentCube';
+	threeNode.castShadow = true;
+	threeNode.receiveShadow = true;
+	threeNode.position.y = 0.5;
+
+	// Traverse and enable shadows for all meshes
+	threeNode.traverse((child) => {
+		if (child.isMesh) {
+			child.castShadow = true;
+			child.receiveShadow = true;
+		}
+	});
+
+	parentCube = threeNode;
+	parentGroup.add(parentCube);
+
+	// Extract USD animations if available
+	try {
+		usdAnimations = convertUSDAnimationsToThreeJS(usd_scene, parentGroup);
+		if (usdAnimations.length > 0) {
+			console.log(`Extracted ${usdAnimations.length} animations from USD file`);
+
+			// Update animation parameters
+			animationParams.hasUSDAnimations = true;
+			animationParams.usdAnimationCount = usdAnimations.length;
+
+			// Show the USD animation folder in GUI
+			if (window.usdAnimationFolder) {
+				window.usdAnimationFolder.show();
+			}
+
+			// Update animation list in UI
+			if (window.updateAnimationList) {
+				window.updateAnimationList(usdAnimations);
+			}
+
+			// Log animation details
+			usdAnimations.forEach((clip, index) => {
+				console.log(`Animation ${index}: ${clip.name}, duration: ${clip.duration}s, tracks: ${clip.tracks.length}`);
+			});
+		} else {
+			// Hide USD animations if none found
+			if (window.usdAnimationFolder) {
+				window.usdAnimationFolder.hide();
+			}
+			if (window.updateAnimationList) {
+				window.updateAnimationList([]);
+			}
+		}
+	} catch (error) {
+		console.log('No animations found in USD file or animation extraction not supported:', error);
+		if (window.usdAnimationFolder) {
+			window.usdAnimationFolder.hide();
+		}
+		if (window.updateAnimationList) {
+			window.updateAnimationList([]);
+		}
+	}
+
+	// Initialize synthetic animation
+	updateAnimationClip();
+}
+
+// Listen for file upload events
+window.addEventListener('loadUSDFile', async (event) => {
+	const file = event.detail.file;
+	if (!file) return;
+
+	try {
+		const arrayBuffer = await file.arrayBuffer();
+		await loadUSDFromArrayBuffer(arrayBuffer, file.name);
+		console.log('USD file loaded successfully:', file.name);
+	} catch (error) {
+		console.error('Failed to load USD file:', error);
+		alert('Failed to load USD file: ' + error.message);
+	}
+});
+
+// Listen for default model reload
+window.addEventListener('loadDefaultModel', async () => {
+	try {
+		await loadUSDModel();
+		console.log('Default model reloaded');
+	} catch (error) {
+		console.error('Failed to reload default model:', error);
+	}
+});
 
 // Load USD model and initialize animation
 loadUSDModel().catch((error) => {
