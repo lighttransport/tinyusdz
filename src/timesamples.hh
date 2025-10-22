@@ -124,17 +124,21 @@ struct PODTimeSamples {
   }
 
   /// Resolve offset value to actual byte offset, following dedup chain if necessary
+  /// Static version that works with any offsets vector (for TimeSamples Phase 2)
+  /// @param offsets The offset vector to resolve from
   /// @param sample_idx The sample index to resolve
   /// @param out_byte_offset Output: the resolved byte offset in _values buffer
   /// @param out_is_array Output: whether this is array data
   /// @param max_depth Maximum dedup chain depth to prevent infinite loops (default 100)
   /// @return true on success, false if circular reference detected or max depth exceeded
-  bool resolve_offset(size_t sample_idx, size_t* out_byte_offset, bool* out_is_array = nullptr, size_t max_depth = 100) const {
-    if (sample_idx >= _offsets.size()) {
+  static bool resolve_offset_static(const std::vector<uint64_t>& offsets, size_t sample_idx,
+                                     size_t* out_byte_offset, bool* out_is_array = nullptr,
+                                     size_t max_depth = 100) {
+    if (sample_idx >= offsets.size()) {
       return false;
     }
 
-    uint64_t offset_value = _offsets[sample_idx];
+    uint64_t offset_value = offsets[sample_idx];
     size_t depth = 0;
 
     // Follow dedup chain
@@ -144,11 +148,11 @@ struct PODTimeSamples {
       }
 
       size_t ref_idx = get_raw_value(offset_value);
-      if (ref_idx >= _offsets.size() || ref_idx == sample_idx) {
+      if (ref_idx >= offsets.size() || ref_idx == sample_idx) {
         return false; // Invalid or self-referencing index
       }
 
-      offset_value = _offsets[ref_idx];
+      offset_value = offsets[ref_idx];
     }
 
     // Now we have a non-dedup offset
@@ -160,6 +164,17 @@ struct PODTimeSamples {
     }
 
     return true;
+  }
+
+  /// Resolve offset value to actual byte offset, following dedup chain if necessary
+  /// Instance method - delegates to static version
+  /// @param sample_idx The sample index to resolve
+  /// @param out_byte_offset Output: the resolved byte offset in _values buffer
+  /// @param out_is_array Output: whether this is array data
+  /// @param max_depth Maximum dedup chain depth to prevent infinite loops (default 100)
+  /// @return true on success, false if circular reference detected or max depth exceeded
+  bool resolve_offset(size_t sample_idx, size_t* out_byte_offset, bool* out_is_array = nullptr, size_t max_depth = 100) const {
+    return resolve_offset_static(_offsets, sample_idx, out_byte_offset, out_is_array, max_depth);
   }
 
   /// Validate that a dedup reference is valid (no circular refs, references non-dedup data)
@@ -1682,7 +1697,34 @@ struct TimeSamples {
       return _pod_samples.get_typed_array_view_at<T>(idx);
     }
 
-    // For regular Value storage
+    // Phase 2: Check if using unified storage (non-POD samples but has POD data)
+    if (!_pod_samples.empty()) {
+      // Delegate to PODTimeSamples (backward compat during transition)
+      return _pod_samples.get_typed_array_view_at<T>(idx);
+    }
+
+    // Phase 2: Use unified storage directly
+    if (!_times.empty() && _is_array) {
+      if (idx >= _times.size()) {
+        return TypedArrayView<const T>(nullptr, 0);
+      }
+
+      // Check if blocked
+      if (_blocked[idx]) {
+        return TypedArrayView<const T>(nullptr, 0);
+      }
+
+      // Resolve offset
+      size_t byte_offset = 0;
+      if (!PODTimeSamples::resolve_offset_static(_offsets, idx, &byte_offset)) {
+        return TypedArrayView<const T>(nullptr, 0);
+      }
+
+      const T* data = reinterpret_cast<const T*>(_values.data() + byte_offset);
+      return TypedArrayView<const T>(data, _array_size);
+    }
+
+    // For regular Value storage (generic path)
     if (idx >= _samples.size()) {
       return TypedArrayView<const T>();  // Empty view
     }
@@ -1978,6 +2020,11 @@ struct TimeSamples {
 
     if (_use_pod) {
       total += _pod_samples.estimate_memory_usage();
+      // Also account for unified storage if in use
+      total += _times.capacity() * sizeof(double);
+      total += _blocked.capacity();
+      total += _values.capacity();
+      total += _offsets.capacity() * sizeof(uint64_t);
     } else {
       for (const auto &sample : _samples) {
         total += sizeof(Sample);
@@ -1986,6 +2033,110 @@ struct TimeSamples {
     }
 
     return total;
+  }
+
+  //
+  // Phase 2: Unified array methods (work directly with TimeSamples storage)
+  //
+
+  /// Add array sample using unified storage (Phase 2 path)
+  /// This bypasses _pod_samples and uses TimeSamples members directly
+  template<typename T>
+  bool add_array_sample(double t, const T* values, size_t count, std::string* err = nullptr) {
+    static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
+                  "add_array_sample requires POD types");
+
+    // Auto-initialize on first sample
+    if (empty()) {
+      if (!init(value::TypeTraits<T>::type_id())) {
+        if (err) *err = "Failed to initialize TimeSamples";
+        return false;
+      }
+    }
+
+    // If already using _pod_samples (backward compat), delegate to it
+    if (!_pod_samples.empty()) {
+      return _pod_samples.add_array_sample<T>(t, values, count, err);
+    }
+
+    // Use unified storage
+    _times.push_back(t);
+    _blocked.push_back(0);  // Not blocked
+
+    // Store array data in _values buffer
+    size_t byte_offset = _values.size();
+    size_t data_size = sizeof(T) * count;
+    _values.resize(byte_offset + data_size);
+    std::memcpy(_values.data() + byte_offset, values, data_size);
+
+    // Create encoded offset with array flag
+    uint64_t encoded_offset = PODTimeSamples::make_offset(byte_offset, true);
+    _offsets.push_back(encoded_offset);
+
+    // Update array metadata
+    _is_array = true;
+    _array_size = count;
+    _element_size = sizeof(T);
+
+    _dirty = true;
+    return true;
+  }
+
+  /// Add deduplicated array sample (Phase 2 path)
+  template<typename T>
+  bool add_dedup_array_sample(double t, size_t ref_index, std::string* err = nullptr) {
+    static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
+                  "add_dedup_array_sample requires POD types");
+
+    // If using _pod_samples, delegate
+    if (!_pod_samples.empty()) {
+      return _pod_samples.add_dedup_array_sample<T>(t, ref_index, err);
+    }
+
+    // Validate reference
+    if (ref_index >= _times.size()) {
+      if (err) *err = "Invalid ref_index: " + std::to_string(ref_index) + " >= " + std::to_string(_times.size());
+      return false;
+    }
+
+    if (ref_index == _times.size()) {
+      if (err) *err = "Self-reference detected";
+      return false;
+    }
+
+    if (_offsets[ref_index] == SIZE_MAX) {
+      if (err) *err = "Cannot deduplicate from blocked sample";
+      return false;
+    }
+
+    if (PODTimeSamples::is_dedup(_offsets[ref_index])) {
+      if (err) *err = "Cannot deduplicate from deduplicated sample";
+      return false;
+    }
+
+    // Add dedup sample
+    _times.push_back(t);
+    _blocked.push_back(0);
+
+    uint64_t dedup_offset = PODTimeSamples::make_dedup_offset(ref_index, true);
+    _offsets.push_back(dedup_offset);
+
+    _dirty = true;
+    return true;
+  }
+
+
+  /// Add matrix array sample (Phase 2 path)
+  template<typename T>
+  bool add_matrix_array_sample(double t, const T* matrices, size_t count, std::string* err = nullptr) {
+    // Matrices are stored the same way as arrays
+    return add_array_sample<T>(t, matrices, count, err);
+  }
+
+  /// Add deduplicated matrix array sample (Phase 2 path)
+  template<typename T>
+  bool add_dedup_matrix_array_sample(double t, size_t ref_index, std::string* err = nullptr) {
+    return add_dedup_array_sample<T>(t, ref_index, err);
   }
 
  private:
