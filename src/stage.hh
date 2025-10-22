@@ -54,8 +54,9 @@ class Stage {
   ///
   /// Dump Stage as ASCII(USDA) representation.
   /// @param[in] relative_path (optional) Print Path as relative Path.
+  /// @param[in] parallel (optional) Use parallel printing for Prims.
   ///
-  std::string ExportToString(bool relative_path = false) const;
+  std::string ExportToString(bool relative_path = false, bool parallel = false) const;
 
   // pxrUSD compat API end -------------------------------------
 
