@@ -93,8 +93,103 @@ struct PODTimeSamples {
   mutable std::vector<double> _times;
   mutable Buffer<16> _blocked; // ValueBlock flags with 16-byte alignment
   mutable Buffer<16> _values; // Raw byte storage: compact storage without blocked values
-  mutable std::vector<size_t> _offsets; // Offset table for array values (or scalar values with blocks)
+  mutable std::vector<uint64_t> _offsets; // Offset table with dedup/array flags (bit 63=dedup, bit 62=array, bits 61-0=index/offset)
   mutable size_t _blocked_count{0}; // Count of blocked samples for O(1) queries
+
+  // Offset encoding constants
+  static constexpr uint64_t OFFSET_DEDUP_FLAG = 0x8000000000000000ULL;  // Bit 63: dedup flag
+  static constexpr uint64_t OFFSET_ARRAY_FLAG = 0x4000000000000000ULL;  // Bit 62: array flag
+  static constexpr uint64_t OFFSET_VALUE_MASK = 0x3FFFFFFFFFFFFFFFULL;  // Bits 61-0: index/offset value
+  static constexpr uint64_t OFFSET_FLAGS_MASK = 0xC000000000000000ULL;  // Bits 63-62: flags
+
+  // Offset manipulation helpers
+  static constexpr uint64_t make_offset(size_t byte_offset, bool is_array) {
+    return (is_array ? OFFSET_ARRAY_FLAG : 0ULL) | (byte_offset & OFFSET_VALUE_MASK);
+  }
+
+  static constexpr uint64_t make_dedup_offset(size_t sample_index, bool is_array) {
+    return OFFSET_DEDUP_FLAG | (is_array ? OFFSET_ARRAY_FLAG : 0ULL) | (sample_index & OFFSET_VALUE_MASK);
+  }
+
+  static constexpr bool is_dedup(uint64_t offset_value) {
+    return (offset_value & OFFSET_DEDUP_FLAG) != 0;
+  }
+
+  static constexpr bool is_array_offset(uint64_t offset_value) {
+    return (offset_value & OFFSET_ARRAY_FLAG) != 0;
+  }
+
+  static constexpr size_t get_raw_value(uint64_t offset_value) {
+    return static_cast<size_t>(offset_value & OFFSET_VALUE_MASK);
+  }
+
+  /// Resolve offset value to actual byte offset, following dedup chain if necessary
+  /// @param sample_idx The sample index to resolve
+  /// @param out_byte_offset Output: the resolved byte offset in _values buffer
+  /// @param out_is_array Output: whether this is array data
+  /// @param max_depth Maximum dedup chain depth to prevent infinite loops (default 100)
+  /// @return true on success, false if circular reference detected or max depth exceeded
+  bool resolve_offset(size_t sample_idx, size_t* out_byte_offset, bool* out_is_array = nullptr, size_t max_depth = 100) const {
+    if (sample_idx >= _offsets.size()) {
+      return false;
+    }
+
+    uint64_t offset_value = _offsets[sample_idx];
+    size_t depth = 0;
+
+    // Follow dedup chain
+    while (is_dedup(offset_value)) {
+      if (++depth > max_depth) {
+        return false; // Dedup chain too deep, likely circular
+      }
+
+      size_t ref_idx = get_raw_value(offset_value);
+      if (ref_idx >= _offsets.size() || ref_idx == sample_idx) {
+        return false; // Invalid or self-referencing index
+      }
+
+      offset_value = _offsets[ref_idx];
+    }
+
+    // Now we have a non-dedup offset
+    if (out_byte_offset) {
+      *out_byte_offset = get_raw_value(offset_value);
+    }
+    if (out_is_array) {
+      *out_is_array = is_array_offset(offset_value);
+    }
+
+    return true;
+  }
+
+  /// Validate that a dedup reference is valid (no circular refs, references non-dedup data)
+  /// @param ref_index The index being referenced
+  /// @param new_sample_idx The new sample index that will reference ref_index
+  /// @return true if valid, false if would create circular reference
+  bool validate_dedup_reference(size_t ref_index, size_t new_sample_idx) const {
+    // Check bounds
+    if (ref_index >= _times.size()) {
+      return false;
+    }
+
+    // Self-reference check
+    if (ref_index == new_sample_idx) {
+      return false;
+    }
+
+    // Check that ref_index is not blocked
+    if (_offsets[ref_index] == SIZE_MAX) {
+      return false;
+    }
+
+    // Verify ref_index doesn't point to dedup data (must be original)
+    uint64_t ref_offset = _offsets[ref_index];
+    if (is_dedup(ref_offset)) {
+      return false; // Cannot dedup from dedup - must reference original data only
+    }
+
+    return true;
+  }
 
   bool empty() const { return _times.empty(); }
 
@@ -311,11 +406,14 @@ public:
     _times.push_back(t);
     _blocked.push_back(0);  // false = 0
 
-    // Store offset and append array data
-    _offsets.push_back(_values.size());
+    // Store offset with array flag and append array data
+    size_t byte_offset = _values.size();
+    uint64_t encoded_offset = make_offset(byte_offset, true);  // is_array=true
+    _offsets.push_back(encoded_offset);
+
     size_t byte_size = sizeof(T) * count;
     _values.resize(_values.size() + byte_size);
-    std::memcpy(_values.data() + _offsets.back(), values, byte_size);
+    std::memcpy(_values.data() + byte_offset, values, byte_size);
 
     _dirty = true;
     mark_dirty_range(new_idx);
@@ -373,11 +471,14 @@ public:
     _times.push_back(t);
     _blocked.push_back(0);  // false = 0
 
-    // Store offset and append array data
-    _offsets.push_back(_values.size());
+    // Store offset with array flag and append array data
+    size_t byte_offset = _values.size();
+    uint64_t encoded_offset = make_offset(byte_offset, true);  // is_array=true
+    _offsets.push_back(encoded_offset);
+
     size_t byte_size = sizeof(T) * count;
     _values.resize(_values.size() + byte_size);
-    std::memcpy(_values.data() + _offsets.back(), values, byte_size);
+    std::memcpy(_values.data() + byte_offset, values, byte_size);
 
     _dirty = true;
     mark_dirty_range(new_idx);
@@ -396,12 +497,27 @@ public:
                   (value::TypeTraits<T>::type_id() == value::TYPE_ID_MATRIX4D),
                   "requires matrix type");
 
-    // Verify ref_index is valid
-    if (ref_index >= _times.size()) {
+    size_t new_idx = _times.size();
+
+    // Validate dedup reference (checks bounds, self-reference, circular refs, non-dedup source)
+    if (!validate_dedup_reference(ref_index, new_idx)) {
       if (err) {
-        (*err) += "Invalid ref_index in add_dedup_matrix_array_sample: " +
-                  std::to_string(ref_index) + " >= " +
-                  std::to_string(_times.size()) + ".\n";
+        if (ref_index >= _times.size()) {
+          (*err) += "Invalid ref_index in add_dedup_matrix_array_sample: " +
+                    std::to_string(ref_index) + " >= " +
+                    std::to_string(_times.size()) + ".\n";
+        } else if (ref_index == new_idx) {
+          (*err) += "Self-reference detected in add_dedup_matrix_array_sample: " +
+                    std::to_string(ref_index) + ".\n";
+        } else if (is_dedup(_offsets[ref_index])) {
+          (*err) += "Cannot deduplicate from deduplicated sample at index " +
+                    std::to_string(ref_index) + ". Must reference original data only.\n";
+        } else if (_offsets[ref_index] == SIZE_MAX) {
+          (*err) += "Cannot deduplicate from blocked sample at index " +
+                    std::to_string(ref_index) + ".\n";
+        } else {
+          (*err) += "Invalid dedup reference in add_dedup_matrix_array_sample.\n";
+        }
       }
       return false;
     }
@@ -414,23 +530,13 @@ public:
       return false;
     }
 
-    // Verify that ref_index has an offset (not blocked)
-    if (_offsets[ref_index] == SIZE_MAX) {
-      if (err) {
-        (*err) += "Cannot deduplicate from blocked sample at index " +
-                  std::to_string(ref_index) + ".\n";
-      }
-      return false;
-    }
-
-    size_t new_idx = _times.size();
     _times.push_back(t);
     _blocked.push_back(0);  // false = 0
 
-    // Reuse the offset from the reference sample (deduplication!)
-    // This makes offset[new_idx] == offset[ref_index], both pointing to the same data
-    _offsets.push_back(_offsets[ref_index]);
-    // NOTE: No data appended to _values - we reuse existing data
+    // Create dedup offset: bit 63=1 (dedup), bit 62=1 (array), bits 61-0=ref_index
+    uint64_t dedup_offset = make_dedup_offset(ref_index, true);
+    _offsets.push_back(dedup_offset);
+    // NOTE: No data appended to _values - we reference existing data via index
 
     _dirty = true;
     mark_dirty_range(new_idx);
@@ -450,12 +556,27 @@ public:
     static_assert(std::is_standard_layout<T>::value,
                   "PODTimeSamples requires standard layout types");
 
-    // Verify ref_index is valid
-    if (ref_index >= _times.size()) {
+    size_t new_idx = _times.size();
+
+    // Validate dedup reference (checks bounds, self-reference, circular refs, non-dedup source)
+    if (!validate_dedup_reference(ref_index, new_idx)) {
       if (err) {
-        (*err) += "Invalid ref_index in add_dedup_array_sample: " +
-                  std::to_string(ref_index) + " >= " +
-                  std::to_string(_times.size()) + ".\n";
+        if (ref_index >= _times.size()) {
+          (*err) += "Invalid ref_index in add_dedup_array_sample: " +
+                    std::to_string(ref_index) + " >= " +
+                    std::to_string(_times.size()) + ".\n";
+        } else if (ref_index == new_idx) {
+          (*err) += "Self-reference detected in add_dedup_array_sample: " +
+                    std::to_string(ref_index) + ".\n";
+        } else if (is_dedup(_offsets[ref_index])) {
+          (*err) += "Cannot deduplicate from deduplicated sample at index " +
+                    std::to_string(ref_index) + ". Must reference original data only.\n";
+        } else if (_offsets[ref_index] == SIZE_MAX) {
+          (*err) += "Cannot deduplicate from blocked sample at index " +
+                    std::to_string(ref_index) + ".\n";
+        } else {
+          (*err) += "Invalid dedup reference in add_dedup_array_sample.\n";
+        }
       }
       return false;
     }
@@ -468,23 +589,13 @@ public:
       return false;
     }
 
-    // Verify that ref_index has an offset (not blocked)
-    if (_offsets[ref_index] == SIZE_MAX) {
-      if (err) {
-        (*err) += "Cannot deduplicate from blocked sample at index " +
-                  std::to_string(ref_index) + ".\n";
-      }
-      return false;
-    }
-
-    size_t new_idx = _times.size();
     _times.push_back(t);
     _blocked.push_back(0);  // false = 0
 
-    // Reuse the offset from the reference sample (deduplication!)
-    // This makes offset[new_idx] == offset[ref_index], both pointing to the same data
-    _offsets.push_back(_offsets[ref_index]);
-    // NOTE: No data appended to _values - we reuse existing data
+    // Create dedup offset: bit 63=1 (dedup), bit 62=1 (array), bits 61-0=ref_index
+    uint64_t dedup_offset = make_dedup_offset(ref_index, true);
+    _offsets.push_back(dedup_offset);
+    // NOTE: No data appended to _values - we reference existing data via index
 
     _dirty = true;
     mark_dirty_range(new_idx);
@@ -655,9 +766,9 @@ public:
       return false;
     }
 
-    // Find the actual data offset
+    // Resolve offset following dedup chain if necessary
     if (!_offsets.empty()) {
-      // Using offset table
+      // Using offset table with dedup support
       if (_offsets[idx] == SIZE_MAX) {
         // This is a blocked value (shouldn't happen as we checked above, but be safe)
         if (blocked) {
@@ -666,7 +777,14 @@ public:
         *value = T{};
         return true;
       }
-      const uint8_t* src = _values.data() + _offsets[idx];
+
+      size_t byte_offset = 0;
+      if (!resolve_offset(idx, &byte_offset)) {
+        // Failed to resolve offset (circular reference or invalid dedup chain)
+        return false;
+      }
+
+      const uint8_t* src = _values.data() + byte_offset;
       std::memcpy(value, src, sizeof(T));
     } else {
       // Legacy path: calculate offset by counting non-blocked entries
@@ -875,13 +993,20 @@ public:
 
     // For array data stored directly
     if ((_is_stl_array || _is_typed_array) && _array_size > 0) {
-      // Find the actual data offset
+      // Resolve offset following dedup chain if necessary
       if (!_offsets.empty()) {
         if (_offsets[idx] == SIZE_MAX) {
           // Blocked value
           return TypedArrayView<const T>();
         }
-        const T* src = reinterpret_cast<const T*>(_values.data() + _offsets[idx]);
+
+        size_t byte_offset = 0;
+        if (!resolve_offset(idx, &byte_offset)) {
+          // Failed to resolve offset (circular reference or invalid dedup chain)
+          return TypedArrayView<const T>();
+        }
+
+        const T* src = reinterpret_cast<const T*>(_values.data() + byte_offset);
         return TypedArrayView<const T>(src, _array_size);
       }
     }
