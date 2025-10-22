@@ -60,22 +60,7 @@ void itoa(uint64_t n, char *b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
 void itoa(int64_t n, char *b) { *jeaiii::to_text_from_integer(b, n) = '\0'; }
 #endif
 
-#if 0
-inline std::string dtos(const float v) {
-
-  char buf[floaxie::max_buffer_size<float>()];
-  size_t n = floaxie::ftoa(v, buf);
-
-  return std::string(buf, buf + n);
-}
-#endif
-
-inline std::string dtos(const double v) {
-  char buf[384];
-  *dtoa_milo(v, buf) = '\0';
-
-  return std::string(buf);
-}
+// NOTE: dtos() is now provided by str-util.hh using dragonbox algorithm
 
 // Path quote
 std::string pquote(const Path &p) {
