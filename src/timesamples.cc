@@ -87,23 +87,46 @@ inline std::vector<size_t> create_sort_indices(const std::vector<double>& times)
   return indices;
 }
 
-// Strategy 1: Offset-backed sorting
+// Strategy 1: Offset-backed sorting with dedup index remapping
 // Used when offset table exists - values don't need reordering
+// But dedup indices need to be remapped to new sorted positions
 inline void sort_with_offsets(
     const std::vector<size_t>& indices,
     std::vector<double>& times,
     Buffer<16>& blocked,
-    std::vector<size_t>& offsets) {
+    std::vector<uint64_t>& offsets) {
 
   std::vector<double> sorted_times(times.size());
   Buffer<16> sorted_blocked;
   sorted_blocked.resize(blocked.size());
-  std::vector<size_t> sorted_offsets(offsets.size());
+  std::vector<uint64_t> sorted_offsets(offsets.size());
 
+  // Create index mapping: old_idx -> new_idx
+  std::vector<size_t> index_map(times.size());
+  for (size_t new_idx = 0; new_idx < indices.size(); ++new_idx) {
+    index_map[indices[new_idx]] = new_idx;
+  }
+
+  // Copy and reorder data
   for (size_t i = 0; i < indices.size(); ++i) {
     sorted_times[i] = times[indices[i]];
     sorted_blocked[i] = blocked[indices[i]];
-    sorted_offsets[i] = offsets[indices[i]];
+
+    uint64_t offset_val = offsets[indices[i]];
+
+    // If this is a dedup offset, remap the index to new position
+    if (offset_val & PODTimeSamples::OFFSET_DEDUP_FLAG) {
+      // Extract old reference index
+      size_t old_ref_idx = static_cast<size_t>(offset_val & PODTimeSamples::OFFSET_VALUE_MASK);
+
+      // Map to new index
+      size_t new_ref_idx = index_map[old_ref_idx];
+
+      // Reconstruct offset with new index, preserving flags
+      offset_val = (offset_val & PODTimeSamples::OFFSET_FLAGS_MASK) | new_ref_idx;
+    }
+
+    sorted_offsets[i] = offset_val;
   }
 
   times = std::move(sorted_times);
