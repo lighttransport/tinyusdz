@@ -1196,14 +1196,14 @@ inline char* format_decimal(char* out, uint64_t value, uint32_t num_digits) {
 
 inline char* write_significand_e(char* out, uint64_t significand,
                                  int significand_size, int exponent) {
-  out = format_decimal(out, significand, significand_size);
+  out = format_decimal(out, significand, static_cast<uint32_t>(significand_size));
   return fill_n(out, exponent, '0');
 }
 
 inline char* write_significand(char* out, uint64_t significand,
                                int significand_size, int integral_size,
                                char decimal_point) {
-  if (!decimal_point) return format_decimal(out, significand, significand_size);
+  if (!decimal_point) return format_decimal(out, significand, static_cast<uint32_t>(significand_size));
   out += significand_size + 1;
   char* end = out;
   int floating_size = significand_size - integral_size;
@@ -1217,7 +1217,7 @@ inline char* write_significand(char* out, uint64_t significand,
     significand /= 10;
   }
   *--out = decimal_point;
-  format_decimal(out - integral_size, significand, integral_size);
+  format_decimal(out - integral_size, significand, static_cast<uint32_t>(integral_size));
   return end;
 }
 
@@ -1258,6 +1258,7 @@ char* dtoa_dragonbox_impl(const double f, char* buf, int exp_upper = 16) {
   int significand_size = count_digits(significand);
 
   size_t size = size_t(significand_size) + (is_negative ? 1u : 0u);
+  (void)size;  // Used for tracking output size, may be used in future optimizations
 
   int output_exp = ret.exponent + significand_size - 1;
   bool use_exp_format = (output_exp < exp_lower) || (output_exp >= exp_upper);
@@ -1320,7 +1321,7 @@ char* dtoa_dragonbox_impl(const double f, char* buf, int exp_upper = 16) {
   *buf++ = decimal_point;
   buf = fill_n(buf, num_zeros, zero_char);
 
-  return format_decimal(buf, significand, significand_size);
+  return format_decimal(buf, significand, static_cast<uint32_t>(significand_size));
 }
 
 char* dtoa_dragonbox_impl(const float f, char* buf) {
