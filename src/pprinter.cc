@@ -8,6 +8,7 @@
 #include "pprinter.hh"
 
 #include "prim-pprint.hh"
+#include "prim-pprint-parallel.hh"
 #include "prim-types.hh"
 #include "layer.hh"
 #include "str-util.hh"
@@ -4636,7 +4637,11 @@ std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
   return meta_ss.str();
 }
 
-std::string print_layer(const Layer &layer, const uint32_t indent) {
+std::string print_layer(const Layer &layer, const uint32_t indent, bool parallel) {
+#if !defined(TINYUSDZ_ENABLE_THREAD)
+  (void)parallel; // Threading disabled
+#endif
+
   std::stringstream ss;
 
   // FIXME: print magic-header outside of this function?
@@ -4659,26 +4664,64 @@ std::string print_layer(const Layer &layer, const uint32_t indent) {
       primNameTable.emplace(item.first, &item.second);
     }
 
-    for (size_t i = 0; i < layer.metas().primChildren.size(); i++) {
-      value::token nameTok = layer.metas().primChildren[i];
-      // DCOUT(fmt::format("primChildren  {}/{} = {}", i,
-      //                   layer.metas().primChildren.size(), nameTok.str()));
-      const auto it = primNameTable.find(nameTok.str());
-      if (it != primNameTable.end()) {
-        ss << prim::print_primspec((*it->second), indent);
-        if (i != (layer.metas().primChildren.size() - 1)) {
-          ss << "\n";
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    if (parallel) {
+      // Parallel printing path
+      std::vector<const PrimSpec*> ordered_primspecs;
+      ordered_primspecs.reserve(layer.metas().primChildren.size());
+
+      for (size_t i = 0; i < layer.metas().primChildren.size(); i++) {
+        value::token nameTok = layer.metas().primChildren[i];
+        const auto it = primNameTable.find(nameTok.str());
+        if (it != primNameTable.end()) {
+          ordered_primspecs.push_back(it->second);
         }
-      } else {
-        // TODO: Report warning?
+      }
+
+      prim::ParallelPrintConfig config;
+      ss << prim::print_primspecs_parallel(ordered_primspecs, indent, config);
+    } else
+#endif  // TINYUSDZ_ENABLE_THREAD
+    {
+      // Sequential printing path (original)
+      for (size_t i = 0; i < layer.metas().primChildren.size(); i++) {
+        value::token nameTok = layer.metas().primChildren[i];
+        // DCOUT(fmt::format("primChildren  {}/{} = {}", i,
+        //                   layer.metas().primChildren.size(), nameTok.str()));
+        const auto it = primNameTable.find(nameTok.str());
+        if (it != primNameTable.end()) {
+          ss << prim::print_primspec((*it->second), indent);
+          if (i != (layer.metas().primChildren.size() - 1)) {
+            ss << "\n";
+          }
+        } else {
+          // TODO: Report warning?
+        }
       }
     }
   } else {
-    size_t i = 0;
-    for (const auto &item : layer.primspecs()) {
-      ss << prim::print_primspec(item.second, indent);
-      if (i != (layer.primspecs().size() - 1)) {
-        ss << "\n";
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    if (parallel) {
+      // Parallel printing path
+      std::vector<const PrimSpec*> primspecs;
+      primspecs.reserve(layer.primspecs().size());
+      for (const auto &item : layer.primspecs()) {
+        primspecs.push_back(&item.second);
+      }
+
+      prim::ParallelPrintConfig config;
+      ss << prim::print_primspecs_parallel(primspecs, indent, config);
+    } else
+#endif  // TINYUSDZ_ENABLE_THREAD
+    {
+      // Sequential printing path (original)
+      size_t i = 0;
+      for (const auto &item : layer.primspecs()) {
+        ss << prim::print_primspec(item.second, indent);
+        if (i != (layer.primspecs().size() - 1)) {
+          ss << "\n";
+        }
+        i++;
       }
     }
   }

@@ -16,6 +16,7 @@
 #include "unit-strutil.h"
 #include "unit-timesamples.h"
 #include "unit-pprint.h"
+#include "unit-task-queue.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
@@ -40,6 +41,11 @@ TEST_LIST = {
   { "tinystring_test", tinystring_test },
   { "parse_int_test", parse_int_test },
   { "timesamples_test", timesamples_test },
+  { "task_queue_basic_test", task_queue_basic_test },
+  { "task_queue_func_test", task_queue_func_test },
+  { "task_queue_full_test", task_queue_full_test },
+  { "task_queue_multithreaded_test", task_queue_multithreaded_test },
+  { "task_queue_clear_test", task_queue_clear_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif

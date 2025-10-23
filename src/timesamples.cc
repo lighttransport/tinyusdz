@@ -87,23 +87,50 @@ inline std::vector<size_t> create_sort_indices(const std::vector<double>& times)
   return indices;
 }
 
-// Strategy 1: Offset-backed sorting
+// Strategy 1: Offset-backed sorting with dedup index remapping
 // Used when offset table exists - values don't need reordering
+// But dedup indices need to be remapped to new sorted positions
 inline void sort_with_offsets(
     const std::vector<size_t>& indices,
     std::vector<double>& times,
     Buffer<16>& blocked,
-    std::vector<size_t>& offsets) {
+    std::vector<uint64_t>& offsets) {
 
   std::vector<double> sorted_times(times.size());
   Buffer<16> sorted_blocked;
   sorted_blocked.resize(blocked.size());
-  std::vector<size_t> sorted_offsets(offsets.size());
+  std::vector<uint64_t> sorted_offsets(offsets.size());
 
+  // Create index mapping: old_idx -> new_idx
+  std::vector<size_t> index_map(times.size());
+  for (size_t new_idx = 0; new_idx < indices.size(); ++new_idx) {
+    index_map[indices[new_idx]] = new_idx;
+  }
+
+  // Copy and reorder data
   for (size_t i = 0; i < indices.size(); ++i) {
     sorted_times[i] = times[indices[i]];
     sorted_blocked[i] = blocked[indices[i]];
-    sorted_offsets[i] = offsets[indices[i]];
+
+    uint64_t offset_val = offsets[indices[i]];
+
+    // If this is a dedup offset, remap the index to new position
+    if (offset_val & PODTimeSamples::OFFSET_DEDUP_FLAG) {
+      // Extract old reference index
+      size_t old_ref_idx = static_cast<size_t>(offset_val & PODTimeSamples::OFFSET_VALUE_MASK);
+
+      // Bounds check before accessing index_map
+      if (old_ref_idx < index_map.size()) {
+        // Map to new index
+        size_t new_ref_idx = index_map[old_ref_idx];
+
+        // Reconstruct offset with new index, preserving flags
+        offset_val = (offset_val & PODTimeSamples::OFFSET_FLAGS_MASK) | new_ref_idx;
+      }
+      // If out of bounds, keep the offset as-is (invalid but won't crash)
+    }
+
+    sorted_offsets[i] = offset_val;
   }
 
   times = std::move(sorted_times);
@@ -283,7 +310,31 @@ namespace value {
 // TimeSamples::update() implementation
 void TimeSamples::update() const {
   if (_use_pod) {
-    _pod_samples.update();
+    // Phase 3: Sort unified POD storage
+    if (_times.empty()) {
+      _dirty = false;
+      return;
+    }
+
+    // Create sorted index array
+    std::vector<size_t> indices = create_sort_indices(_times);
+
+    // Sort using offset table strategy
+    if (!_offsets.empty()) {
+      sort_with_offsets(indices, _times, _blocked, _offsets);
+    } else {
+      // Shouldn't happen in Phase 3, but handle for safety
+      std::vector<std::pair<size_t, double>> temp;
+      temp.reserve(_times.size());
+      for (size_t i = 0; i < _times.size(); ++i) {
+        temp.emplace_back(i, _times[i]);
+      }
+      std::stable_sort(temp.begin(), temp.end(),
+                      [](const auto& a, const auto& b) { return a.second < b.second; });
+      for (size_t i = 0; i < temp.size(); ++i) {
+        _times[i] = temp[i].second;
+      }
+    }
   } else {
     std::sort(_samples.begin(), _samples.end(),
               [](const Sample &a, const Sample &b) { return a.t < b.t; });
@@ -327,12 +378,19 @@ std::vector<std::pair<double, std::pair<value::Value, bool>>> PODTimeSamples::ge
           bool blocked = _blocked[i];                                         \
           value::Value val;                                                    \
           if (!blocked && _offsets[i] != SIZE_MAX) {                          \
-            std::vector<__type> array_values;                                 \
-            array_values.resize(_array_size);                                 \
-            /* Direct memcpy for non-bool arrays (bool handled separately) */ \
-            std::memcpy(&array_values[0], _values.data() + _offsets[i],       \
-                        sizeof(__type) * _array_size);                                                                  \
-            val = value::Value(array_values);                                 \
+            /* Resolve offset (follows dedup chain if needed) */              \
+            size_t byte_offset = 0;                                           \
+            if (resolve_offset(i, &byte_offset)) {                            \
+              std::vector<__type> array_values;                               \
+              array_values.resize(_array_size);                               \
+              /* Direct memcpy for non-bool arrays (bool handled separately) */ \
+              std::memcpy(&array_values[0], _values.data() + byte_offset,     \
+                          sizeof(__type) * _array_size);                       \
+              val = value::Value(array_values);                               \
+            } else {                                                          \
+              /* Failed to resolve offset - treat as blocked */               \
+              val = value::Value(value::ValueBlock());                        \
+            }                                                                  \
           } else {                                                            \
             val = value::Value(value::ValueBlock());                          \
           }                                                                    \
@@ -370,10 +428,17 @@ std::vector<std::pair<double, std::pair<value::Value, bool>>> PODTimeSamples::ge
           bool blocked = _blocked[i];                                         \
           value::Value val;                                                    \
           if (!blocked && _offsets[i] != SIZE_MAX) {                          \
-            __type typed_value;                                               \
-            std::memcpy(&typed_value, _values.data() + _offsets[i],           \
-                        sizeof(__type));                                       \
-            val = value::Value(typed_value);                                  \
+            /* Resolve offset (follows dedup chain if needed) */              \
+            size_t byte_offset = 0;                                           \
+            if (resolve_offset(i, &byte_offset)) {                            \
+              __type typed_value;                                             \
+              std::memcpy(&typed_value, _values.data() + byte_offset,         \
+                          sizeof(__type));                                     \
+              val = value::Value(typed_value);                                \
+            } else {                                                          \
+              /* Failed to resolve offset - treat as blocked */               \
+              val = value::Value(value::ValueBlock());                        \
+            }                                                                  \
           } else {                                                            \
             val = value::Value(value::ValueBlock());                          \
           }                                                                    \
@@ -412,13 +477,20 @@ std::vector<std::pair<double, std::pair<value::Value, bool>>> PODTimeSamples::ge
           bool blocked = _blocked[i];
           value::Value val;
           if (!blocked && _offsets[i] != SIZE_MAX) {
-            std::vector<bool> bool_values;
-            bool_values.reserve(_array_size);
-            const uint8_t* src = _values.data() + _offsets[i];
-            for (size_t j = 0; j < _array_size; ++j) {
-              bool_values.push_back(static_cast<bool>(src[j]));
+            /* Resolve offset (follows dedup chain if needed) */
+            size_t byte_offset = 0;
+            if (resolve_offset(i, &byte_offset)) {
+              std::vector<bool> bool_values;
+              bool_values.reserve(_array_size);
+              const uint8_t* src = _values.data() + byte_offset;
+              for (size_t j = 0; j < _array_size; ++j) {
+                bool_values.push_back(static_cast<bool>(src[j]));
+              }
+              val = value::Value(bool_values);
+            } else {
+              /* Failed to resolve offset - treat as blocked */
+              val = value::Value(value::ValueBlock());
             }
-            val = value::Value(bool_values);
           } else {
             val = value::Value(value::ValueBlock());
           }
@@ -455,9 +527,16 @@ std::vector<std::pair<double, std::pair<value::Value, bool>>> PODTimeSamples::ge
           bool blocked = _blocked[i];
           value::Value val;
           if (!blocked && _offsets[i] != SIZE_MAX) {
-            bool typed_value;
-            std::memcpy(&typed_value, _values.data() + _offsets[i], sizeof(bool));
-            val = value::Value(typed_value);
+            /* Resolve offset (follows dedup chain if needed) */
+            size_t byte_offset = 0;
+            if (resolve_offset(i, &byte_offset)) {
+              bool typed_value;
+              std::memcpy(&typed_value, _values.data() + byte_offset, sizeof(bool));
+              val = value::Value(typed_value);
+            } else {
+              /* Failed to resolve offset - treat as blocked */
+              val = value::Value(value::ValueBlock());
+            }
           } else {
             val = value::Value(value::ValueBlock());
           }
