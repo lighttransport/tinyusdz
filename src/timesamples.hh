@@ -2348,12 +2348,20 @@ struct TimeSamples {
     if (_dirty) {
       update();
     }
+    // Delegate to _pod_samples based on _use_pod flag
+    if (_use_pod) {
+      return _pod_samples._times;
+    }
     return _times;
   }
 
   const Buffer<16>& get_blocked() const {
     if (_dirty) {
       update();
+    }
+    // Delegate to _pod_samples based on _use_pod flag
+    if (_use_pod) {
+      return _pod_samples._blocked;
     }
     return _blocked;
   }
@@ -2362,12 +2370,20 @@ struct TimeSamples {
     if (_dirty) {
       update();
     }
+    // Delegate to _pod_samples based on _use_pod flag
+    if (_use_pod) {
+      return _pod_samples._values;
+    }
     return _values;
   }
 
   const std::vector<uint64_t>& get_offsets() const {
     if (_dirty) {
       update();
+    }
+    // Delegate to _pod_samples based on _use_pod flag
+    if (_use_pod) {
+      return _pod_samples._offsets;
     }
     return _offsets;
   }
