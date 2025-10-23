@@ -983,6 +983,13 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
     DCOUT(" fv name " << fv.first << "(type = " << fv.second.type_name()
                       << ")");
 
+    // Debug: Check timeSamples field specifically
+    if (fv.first.find("time") != std::string::npos) {
+      DCOUT(">>> DEBUG: Found field with 'time' in name: '" << fv.first << "', length = " << fv.first.size());
+      //bool matches = (fv.first == "timeSamples");
+      //DCOUT(">>> Comparing with 'timeSamples': matches = " << matches);
+    }
+
     if (fv.first == "custom") {
       if (auto pv = fv.second.get_value<bool>()) {
         custom = pv.value();
@@ -1034,6 +1041,7 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
 
     } else if (fv.first == "timeSamples") {
       //propType = Property::Type::Attrib;
+      DCOUT(">>> Entering timeSamples block");
 
       hasTimeSamples = true;
 
@@ -1042,6 +1050,8 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
         // DANGER:
         // TODO: remove const from func arg
         value::TimeSamples &ts = *(const_cast<value::TimeSamples *>(vptr));
+
+        DCOUT("ts.type_id " << ts.type_id());
 
         // If TimeSamples is uninitialized (all samples were VALUE_BLOCK),
         // initialize it with the type from the attribute's typeName
@@ -1056,6 +1066,8 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
             PUSH_ERROR_AND_RETURN(fmt::format("Failed to initialize TimeSamples with type_id {} for typeName `{}`", type_id, typeName.value().str()));
           }
         }
+
+        DCOUT("set_timesamples");
 
         var.set_timesamples(std::move(ts));
       } else {
