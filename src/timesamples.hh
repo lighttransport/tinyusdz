@@ -1081,16 +1081,14 @@ struct TimeSamples {
   };
 
   bool empty() const {
-    // Phase 3: Use unified storage for POD types
-    return _use_pod ? _times.empty() : _samples.empty();
+    return _use_pod ? _pod_samples.empty() : _samples.empty();
   }
 
   size_t size() const {
     if (_dirty) {
       update();
     }
-    // Phase 3: Use unified storage for POD types
-    return _use_pod ? _times.size() : _samples.size();
+    return _use_pod ? _pod_samples.size() : _samples.size();
   }
 
   void clear() {
@@ -1186,16 +1184,17 @@ struct TimeSamples {
   /// This determines whether to use POD optimization or regular storage
   bool init(uint32_t type_id) {
     //DCOUT("init" << type_id);
-    DCOUT("init" << type_id);
 
     // Allow initialization if empty OR if it contains only uninitialized blocked samples
     if (!empty() && _type_id != 0) {
+      DCOUT("initialized" << type_id);
       return false; // Already initialized with a different type
     }
+    DCOUT("init" << type_id);
     _type_id = type_id;
     _use_pod = value::is_pod_type_id(type_id);
     if (_use_pod) {
-      //DCOUT("  use_pod: " << type_id);
+      DCOUT("  use_pod: " << type_id);
       _pod_samples._type_id = type_id;
     }
     return true;
