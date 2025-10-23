@@ -98,6 +98,10 @@ bool ListPayloads(Context &ctx, const nlohmann::json &args,
                   nlohmann::json &result, std::string &err);
 bool AddPrim(Context &ctx, const nlohmann::json &args,
              nlohmann::json &result, std::string &err);
+bool DelPrim(Context &ctx, const nlohmann::json &args,
+             nlohmann::json &result, std::string &err);
+bool GetPrim(Context &ctx, const nlohmann::json &args,
+             nlohmann::json &result, std::string &err);
 
 bool GetVersion(nlohmann::json &result) {
   std::string ver_str = std::to_string(tinyusdz::version_major) + "." +
@@ -820,6 +824,240 @@ bool AddPrim(Context &ctx, const nlohmann::json &args,
   result["content"].push_back(response);
 
   return true;
+}
+
+bool DelPrim(Context &ctx, const nlohmann::json &args,
+             nlohmann::json &result, std::string &err) {
+  DCOUT("args " << args);
+
+  std::string uuid = args["uuid"];
+  std::string name = args["name"];
+  std::string prim_path_str = args["primPath"];
+
+  if (uuid.empty() && name.empty()) {
+    err = "Either `name` or `uuid` arg required\n";
+    return false;
+  }
+
+  if (prim_path_str.empty()) {
+    err = "`primPath` argument required\n";
+    return false;
+  }
+
+  if (uuid.empty()) {
+    uuid = FindUUID(name, ctx.layers);
+  }
+
+  if (!ctx.layers.count(uuid)) {
+    DCOUT("Layer not found: " << uuid);
+    err = "Layer not found: " + uuid;
+    return false;
+  }
+
+  USDLayer &usd_layer = ctx.layers.at(uuid);
+  Path prim_path(prim_path_str, "");
+
+  if (!prim_path.is_valid()) {
+    err = "Invalid primPath: " + prim_path_str;
+    return false;
+  }
+
+  std::string prim_part = prim_path.prim_part();
+  if (prim_part.empty() || prim_part == "/") {
+    err = "Cannot delete root prim";
+    return false;
+  }
+
+  // Parse path to get prim name(s)
+  if (prim_part[0] == '/') {
+    prim_part = prim_part.substr(1);
+  }
+
+  // For root level prims, delete directly
+  size_t slash_pos = prim_part.find('/');
+  if (slash_pos == std::string::npos) {
+    // Root level prim
+    auto &primspecs = usd_layer.layer.primspecs();
+    if (primspecs.count(prim_part)) {
+      primspecs.erase(prim_part);
+      result["content"] = nlohmann::json::array();
+      nlohmann::json response;
+      response["type"] = "text";
+      response["text"] = "Successfully deleted prim at path: " + prim_path_str;
+      result["content"].push_back(response);
+      return true;
+    } else {
+      err = "Prim not found at path: " + prim_path_str;
+      return false;
+    }
+  } else {
+    // Nested prim - would need to traverse hierarchy
+    // For now, only support root-level deletion
+    err = "Nested prim deletion not yet supported. Only root-level prims can be deleted.";
+    return false;
+  }
+}
+
+bool GetPrim(Context &ctx, const nlohmann::json &args,
+             nlohmann::json &result, std::string &err) {
+  DCOUT("args " << args);
+
+  std::string uuid = args["uuid"];
+  std::string name = args["name"];
+  std::string prim_path_str = args["primPath"];
+
+  if (uuid.empty() && name.empty()) {
+    err = "Either `name` or `uuid` arg required\n";
+    return false;
+  }
+
+  if (prim_path_str.empty()) {
+    err = "`primPath` argument required\n";
+    return false;
+  }
+
+  if (uuid.empty()) {
+    uuid = FindUUID(name, ctx.layers);
+  }
+
+  if (!ctx.layers.count(uuid)) {
+    DCOUT("Layer not found: " << uuid);
+    err = "Layer not found: " + uuid;
+    return false;
+  }
+
+  const USDLayer &usd_layer = ctx.layers.at(uuid);
+  Path prim_path(prim_path_str, "");
+
+  if (!prim_path.is_valid()) {
+    err = "Invalid primPath: " + prim_path_str;
+    return false;
+  }
+
+  std::string prim_part = prim_path.prim_part();
+  if (prim_part.empty() || prim_part == "/") {
+    err = "Invalid primPath";
+    return false;
+  }
+
+  // Parse path to get prim name(s)
+  if (prim_part[0] == '/') {
+    prim_part = prim_part.substr(1);
+  }
+
+  // For root level prims, get directly
+  size_t slash_pos = prim_part.find('/');
+  if (slash_pos == std::string::npos) {
+    // Root level prim
+    const auto &primspecs = usd_layer.layer.primspecs();
+    auto it = primspecs.find(prim_part);
+    if (it != primspecs.end()) {
+      const PrimSpec &prim_spec = it->second;
+
+      // Convert PrimSpec to JSON
+      nlohmann::json prim_json = nlohmann::json::object();
+
+      prim_json["name"] = prim_spec.name();
+      prim_json["typeName"] = prim_spec.typeName();
+      prim_json["specifier"] = (prim_spec.specifier() == Specifier::Def) ? "def" :
+                               (prim_spec.specifier() == Specifier::Over) ? "over" : "class";
+
+      // Add properties
+      nlohmann::json props_json = nlohmann::json::object();
+      for (const auto &prop_pair : prim_spec.props()) {
+        const std::string &prop_name = prop_pair.first;
+        const Property &prop = prop_pair.second;
+
+        if (prop.is_attribute()) {
+          const Attribute &attr = prop.get_attribute();
+          nlohmann::json attr_json = nlohmann::json::object();
+          attr_json["type"] = attr.type_name();
+          attr_json["variability"] = attr.is_uniform() ? "uniform" : "varying";
+          props_json[prop_name] = attr_json;
+        }
+      }
+      if (!props_json.empty()) {
+        prim_json["properties"] = props_json;
+      }
+
+      // Add metadata
+      const auto &metas = prim_spec.metas();
+      nlohmann::json metas_json = nlohmann::json::object();
+
+      if (metas.doc.has_value()) {
+        metas_json["doc"] = metas.doc.value().value;
+      }
+      if (metas.comment.has_value()) {
+        metas_json["comment"] = metas.comment.value().value;
+      }
+      if (metas.hidden.has_value()) {
+        metas_json["hidden"] = metas.hidden.value();
+      }
+      if (metas.active.has_value()) {
+        metas_json["active"] = metas.active.value();
+      }
+      if (metas.kind.has_value()) {
+        // Kind is an enum, convert to string
+        Kind k = metas.kind.value();
+        std::string kind_str;
+        switch (k) {
+          case Kind::Model: kind_str = "model"; break;
+          case Kind::Group: kind_str = "group"; break;
+          case Kind::Assembly: kind_str = "assembly"; break;
+          case Kind::Component: kind_str = "component"; break;
+          case Kind::Subcomponent: kind_str = "subcomponent"; break;
+          case Kind::SceneLibrary: kind_str = "sceneLibrary"; break;
+          case Kind::UserDef: kind_str = "userDef"; break;
+          default: kind_str = "invalid"; break;
+        }
+        metas_json["kind"] = kind_str;
+      }
+
+      if (!metas_json.empty()) {
+        prim_json["metadata"] = metas_json;
+      }
+
+      // Add composition arcs
+      if (metas.references.has_value()) {
+        nlohmann::json refs_json = nlohmann::json::array();
+        const auto &refs_pair = metas.references.value();
+        for (const auto &ref : refs_pair.second) {
+          nlohmann::json ref_json = nlohmann::json::object();
+          ref_json["assetPath"] = ref.asset_path.GetAssetPath();
+          ref_json["primPath"] = ref.prim_path.prim_part();
+          refs_json.push_back(ref_json);
+        }
+        prim_json["references"] = refs_json;
+      }
+
+      if (metas.payload.has_value()) {
+        nlohmann::json payloads_json = nlohmann::json::array();
+        const auto &payload_pair = metas.payload.value();
+        for (const auto &payload : payload_pair.second) {
+          nlohmann::json payload_json = nlohmann::json::object();
+          payload_json["assetPath"] = payload.asset_path.GetAssetPath();
+          payload_json["primPath"] = payload.prim_path.prim_part();
+          payloads_json.push_back(payload_json);
+        }
+        prim_json["payloads"] = payloads_json;
+      }
+
+      result["content"] = nlohmann::json::array();
+      nlohmann::json content;
+      content["type"] = "text";
+      content["text"] = prim_json.dump(2);  // Pretty print with 2 space indent
+      result["content"].push_back(content);
+
+      return true;
+    } else {
+      err = "Prim not found at path: " + prim_path_str;
+      return false;
+    }
+  } else {
+    // Nested prim - would need to traverse hierarchy
+    err = "Nested prim retrieval not yet supported. Only root-level prims can be retrieved.";
+    return false;
+  }
 }
 
 bool ListScreenshots(Context &ctx, const nlohmann::json &args,
@@ -1587,6 +1825,44 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
 
   {
     nlohmann::json j;
+    j["name"] = "del_prim";
+    j["description"] = "Delete a PrimSpec from specified Layer at specified primPath";
+
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    schema["properties"]["uuid"] = {{"type", "string"}, {"description", "Layer UUID (optional if name provided)"}};
+    schema["properties"]["name"] = {{"type", "string"}, {"description", "Layer name (optional if uuid provided)"}};
+    schema["properties"]["primPath"] = {{"type", "string"}, {"description", "USD prim path of the prim to delete (e.g., /MyPrim)"}};
+
+    schema["required"] = nlohmann::json::array({"primPath"});
+
+    j["inputSchema"] = schema;
+
+    result["tools"].push_back(j);
+  }
+
+  {
+    nlohmann::json j;
+    j["name"] = "get_prim";
+    j["description"] = "Get PrimSpec information as JSON (USDJ) from specified Layer at specified primPath";
+
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    schema["properties"]["uuid"] = {{"type", "string"}, {"description", "Layer UUID (optional if name provided)"}};
+    schema["properties"]["name"] = {{"type", "string"}, {"description", "Layer name (optional if uuid provided)"}};
+    schema["properties"]["primPath"] = {{"type", "string"}, {"description", "USD prim path to retrieve (e.g., /MyPrim)"}};
+
+    schema["required"] = nlohmann::json::array({"primPath"});
+
+    j["inputSchema"] = schema;
+
+    result["tools"].push_back(j);
+  }
+
+  {
+    nlohmann::json j;
     j["name"] = "to_usda";
     j["description"] = "Convert USD Layer to USDA text";
 
@@ -1783,6 +2059,12 @@ bool CallTool(Context &ctx, const std::string &tool_name,
   } else if (tool_name == "add_prim") {
     DCOUT("add_prim");
     return AddPrim(ctx, args, result, err);
+  } else if (tool_name == "del_prim") {
+    DCOUT("del_prim");
+    return DelPrim(ctx, args, result, err);
+  } else if (tool_name == "get_prim") {
+    DCOUT("get_prim");
+    return GetPrim(ctx, args, result, err);
   } else if (tool_name == "list_screenshots") {
     return ListScreenshots(ctx, args, result, err);
   } else if (tool_name == "save_screenshot") {
