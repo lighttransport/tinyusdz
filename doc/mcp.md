@@ -307,6 +307,52 @@ If you are using TinyUSDZ on JS/WASM, MCP server in JS is provided in `<tinyusdz
     * Success message indicating the metadata was deleted
     * Error message if the operation failed
 
+## Attribute Metadata Management commands
+
+* get_attr_meta
+  * Get metadata from an Attribute (comment, hidden, displayName, displayGroup, interpolation)
+  * arg
+    * uuid(str) : Layer UUID (optional if name is provided)
+    * name(str) : Layer name (optional if uuid is provided)
+    * primPath(str) : USD prim path (e.g., `/MyPrim`) - required
+    * attrName(str) : Attribute name - required
+  * response
+    * JSON object containing:
+      * `comment`: Comment string (optional)
+      * `hidden`: Boolean indicating if attribute is hidden (optional)
+      * `displayName`: Display name for the attribute (optional)
+      * `displayGroup`: Display group name (optional)
+      * `interpolation`: Interpolation type (optional)
+        * Valid values: `constant`, `uniform`, `varying`, `vertex`, `faceVarying`
+
+* add_attr_meta
+  * Add or update a single metadata field in an Attribute
+  * arg
+    * uuid(str) : Layer UUID (optional if name is provided)
+    * name(str) : Layer name (optional if uuid is provided)
+    * primPath(str) : USD prim path (e.g., `/MyPrim`) - required
+    * attrName(str) : Attribute name - required
+    * key(str) : Metadata key - required
+      * Valid values: `comment`, `hidden`, `displayName`, `displayGroup`, `interpolation`
+    * value : Metadata value - required
+      * For string fields (comment, displayName, displayGroup, interpolation): string value
+      * For boolean fields (hidden): boolean value
+  * response
+    * Success message indicating the metadata was added/updated
+    * Error message if the operation failed
+
+* del_attr_meta
+  * Delete or clear a metadata field in an Attribute
+  * arg
+    * uuid(str) : Layer UUID (optional if name is provided)
+    * name(str) : Layer name (optional if uuid is provided)
+    * primPath(str) : USD prim path (e.g., `/MyPrim`) - required
+    * attrName(str) : Attribute name - required
+    * key(str) : Metadata key to delete - required
+  * response
+    * Success message indicating the metadata was deleted
+    * Error message if the operation failed
+
 ## JS/Three.js specific commands
 
 

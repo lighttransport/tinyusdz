@@ -123,6 +123,12 @@ bool AddPrimMeta(Context &ctx, const nlohmann::json &args,
                  nlohmann::json &result, std::string &err);
 bool DelPrimMeta(Context &ctx, const nlohmann::json &args,
                  nlohmann::json &result, std::string &err);
+bool GetAttrMeta(Context &ctx, const nlohmann::json &args,
+                 nlohmann::json &result, std::string &err);
+bool AddAttrMeta(Context &ctx, const nlohmann::json &args,
+                 nlohmann::json &result, std::string &err);
+bool DelAttrMeta(Context &ctx, const nlohmann::json &args,
+                 nlohmann::json &result, std::string &err);
 
 bool NewLayer(Context &ctx, const nlohmann::json &args,
               nlohmann::json &result, std::string &err) {
@@ -2043,6 +2049,363 @@ bool DelPrimMeta(Context &ctx, const nlohmann::json &args,
   return true;
 }
 
+// Attribute Metadata Tools
+
+bool GetAttrMeta(Context &ctx, const nlohmann::json &args,
+                 nlohmann::json &result, std::string &err) {
+  DCOUT("args " << args);
+
+  std::string uuid = args["uuid"];
+  std::string name = args["name"];
+  std::string prim_path_str = args["primPath"];
+  std::string attr_name = args["attrName"];
+
+  if (uuid.empty() && name.empty()) {
+    err = "Either `name` or `uuid` arg required\n";
+    return false;
+  }
+
+  if (prim_path_str.empty()) {
+    err = "`primPath` argument required\n";
+    return false;
+  }
+
+  if (attr_name.empty()) {
+    err = "`attrName` argument required\n";
+    return false;
+  }
+
+  if (uuid.empty()) {
+    uuid = FindUUID(name, ctx.layers);
+  }
+
+  if (!ctx.layers.count(uuid)) {
+    err = "Layer not found: " + uuid;
+    return false;
+  }
+
+  const USDLayer &usd_layer = ctx.layers.at(uuid);
+  Path prim_path(prim_path_str, "");
+
+  if (!prim_path.is_valid()) {
+    err = "Invalid primPath: " + prim_path_str;
+    return false;
+  }
+
+  std::string prim_part = prim_path.prim_part();
+  if (prim_part.empty() || prim_part == "/") {
+    err = "Invalid primPath";
+    return false;
+  }
+
+  if (prim_part[0] == '/') {
+    prim_part = prim_part.substr(1);
+  }
+
+  size_t slash_pos = prim_part.find('/');
+  if (slash_pos != std::string::npos) {
+    err = "Nested attribute metadata retrieval not yet supported. Only root-level prims supported.";
+    return false;
+  }
+
+  const auto &primspecs = usd_layer.layer.primspecs();
+  auto it = primspecs.find(prim_part);
+  if (it == primspecs.end()) {
+    err = "PrimSpec not found: " + prim_part;
+    return false;
+  }
+
+  const auto &prim_spec = it->second;
+  const auto &props = prim_spec.props();
+  if (!props.count(attr_name)) {
+    err = "Attribute not found: " + attr_name;
+    return false;
+  }
+
+  const auto &prop = props.at(attr_name);
+  if (!prop.is_attribute()) {
+    err = "Property is not an attribute: " + attr_name;
+    return false;
+  }
+
+  const auto &attr = prop.get_attribute();
+  const auto &attr_metas = attr.metas();
+
+  nlohmann::json meta_json = nlohmann::json::object();
+
+  // Get all available metadata
+  if (attr_metas.comment) {
+    meta_json["comment"] = attr_metas.comment.value().value;
+  }
+  if (attr_metas.hidden) {
+    meta_json["hidden"] = attr_metas.hidden.value();
+  }
+  if (attr_metas.displayName) {
+    meta_json["displayName"] = attr_metas.displayName.value();
+  }
+  if (attr_metas.displayGroup) {
+    meta_json["displayGroup"] = attr_metas.displayGroup.value();
+  }
+  if (attr_metas.interpolation) {
+    // Convert interpolation enum to string
+    std::string interp_str;
+    switch (attr_metas.interpolation.value()) {
+      case Interpolation::Constant:
+        interp_str = "constant";
+        break;
+      case Interpolation::Uniform:
+        interp_str = "uniform";
+        break;
+      case Interpolation::Varying:
+        interp_str = "varying";
+        break;
+      case Interpolation::Vertex:
+        interp_str = "vertex";
+        break;
+      case Interpolation::FaceVarying:
+        interp_str = "faceVarying";
+        break;
+      default:
+        interp_str = "unknown";
+    }
+    meta_json["interpolation"] = interp_str;
+  }
+
+  result["content"] = nlohmann::json::array();
+  nlohmann::json content;
+  content["type"] = "text";
+  content["text"] = meta_json.dump(2);
+  result["content"].push_back(content);
+
+  return true;
+}
+
+bool AddAttrMeta(Context &ctx, const nlohmann::json &args,
+                 nlohmann::json &result, std::string &err) {
+  DCOUT("args " << args);
+
+  std::string uuid = args["uuid"];
+  std::string name = args["name"];
+  std::string prim_path_str = args["primPath"];
+  std::string attr_name = args["attrName"];
+  std::string meta_key = args["key"];
+
+  if (uuid.empty() && name.empty()) {
+    err = "Either `name` or `uuid` arg required\n";
+    return false;
+  }
+
+  if (prim_path_str.empty() || attr_name.empty() || meta_key.empty()) {
+    err = "`primPath`, `attrName`, and `key` arguments required\n";
+    return false;
+  }
+
+  if (uuid.empty()) {
+    uuid = FindUUID(name, ctx.layers);
+  }
+
+  if (!ctx.layers.count(uuid)) {
+    err = "Layer not found: " + uuid;
+    return false;
+  }
+
+  USDLayer &usd_layer = ctx.layers.at(uuid);
+  Path prim_path(prim_path_str, "");
+
+  if (!prim_path.is_valid()) {
+    err = "Invalid primPath: " + prim_path_str;
+    return false;
+  }
+
+  std::string prim_part = prim_path.prim_part();
+  if (prim_part.empty() || prim_part == "/") {
+    err = "Invalid primPath";
+    return false;
+  }
+
+  if (prim_part[0] == '/') {
+    prim_part = prim_part.substr(1);
+  }
+
+  size_t slash_pos = prim_part.find('/');
+  if (slash_pos != std::string::npos) {
+    err = "Nested attribute modification not yet supported. Only root-level prims supported.";
+    return false;
+  }
+
+  auto &primspecs = usd_layer.layer.primspecs();
+  auto it = primspecs.find(prim_part);
+  if (it == primspecs.end()) {
+    err = "PrimSpec not found: " + prim_part;
+    return false;
+  }
+
+  auto &prim_spec = it->second;
+  auto &props = prim_spec.props();
+  if (!props.count(attr_name)) {
+    err = "Attribute not found: " + attr_name;
+    return false;
+  }
+
+  auto &prop = props.at(attr_name);
+  if (!prop.is_attribute()) {
+    err = "Property is not an attribute: " + attr_name;
+    return false;
+  }
+
+  auto &attr = prop.attribute();
+  auto &attr_metas = attr.metas();
+
+  // Update metadata by key
+  if (meta_key == "comment") {
+    std::string comment_str = args["value"];
+    tinyusdz::value::StringData comment_data(comment_str);
+    attr_metas.comment = comment_data;
+  } else if (meta_key == "hidden") {
+    bool hidden_val = false;
+    if (args["value"].is_boolean()) {
+      hidden_val = args["value"].get<bool>();
+    } else if (args["value"].is_string()) {
+      std::string val_str = args["value"].get<std::string>();
+      hidden_val = (val_str == "true" || val_str == "1");
+    }
+    attr_metas.hidden = hidden_val;
+  } else if (meta_key == "displayName") {
+    std::string display_name = args["value"];
+    attr_metas.displayName = display_name;
+  } else if (meta_key == "displayGroup") {
+    std::string display_group = args["value"];
+    attr_metas.displayGroup = display_group;
+  } else if (meta_key == "interpolation") {
+    std::string interp_str = args["value"];
+    Interpolation interp_val = Interpolation::Varying; // default
+    if (interp_str == "constant") {
+      interp_val = Interpolation::Constant;
+    } else if (interp_str == "uniform") {
+      interp_val = Interpolation::Uniform;
+    } else if (interp_str == "varying") {
+      interp_val = Interpolation::Varying;
+    } else if (interp_str == "vertex") {
+      interp_val = Interpolation::Vertex;
+    } else if (interp_str == "faceVarying") {
+      interp_val = Interpolation::FaceVarying;
+    }
+    attr_metas.interpolation = interp_val;
+  } else {
+    err = "Unknown or read-only attribute metadata key: " + meta_key;
+    return false;
+  }
+
+  result["content"] = nlohmann::json::array();
+  nlohmann::json response;
+  response["type"] = "text";
+  response["text"] = "Successfully added/updated attribute metadata: " + meta_key;
+  result["content"].push_back(response);
+
+  return true;
+}
+
+bool DelAttrMeta(Context &ctx, const nlohmann::json &args,
+                 nlohmann::json &result, std::string &err) {
+  DCOUT("args " << args);
+
+  std::string uuid = args["uuid"];
+  std::string name = args["name"];
+  std::string prim_path_str = args["primPath"];
+  std::string attr_name = args["attrName"];
+  std::string meta_key = args["key"];
+
+  if (uuid.empty() && name.empty()) {
+    err = "Either `name` or `uuid` arg required\n";
+    return false;
+  }
+
+  if (prim_path_str.empty() || attr_name.empty() || meta_key.empty()) {
+    err = "`primPath`, `attrName`, and `key` arguments required\n";
+    return false;
+  }
+
+  if (uuid.empty()) {
+    uuid = FindUUID(name, ctx.layers);
+  }
+
+  if (!ctx.layers.count(uuid)) {
+    err = "Layer not found: " + uuid;
+    return false;
+  }
+
+  USDLayer &usd_layer = ctx.layers.at(uuid);
+  Path prim_path(prim_path_str, "");
+
+  if (!prim_path.is_valid()) {
+    err = "Invalid primPath: " + prim_path_str;
+    return false;
+  }
+
+  std::string prim_part = prim_path.prim_part();
+  if (prim_part.empty() || prim_part == "/") {
+    err = "Invalid primPath";
+    return false;
+  }
+
+  if (prim_part[0] == '/') {
+    prim_part = prim_part.substr(1);
+  }
+
+  size_t slash_pos = prim_part.find('/');
+  if (slash_pos != std::string::npos) {
+    err = "Nested attribute modification not yet supported. Only root-level prims supported.";
+    return false;
+  }
+
+  auto &primspecs = usd_layer.layer.primspecs();
+  auto it = primspecs.find(prim_part);
+  if (it == primspecs.end()) {
+    err = "PrimSpec not found: " + prim_part;
+    return false;
+  }
+
+  auto &prim_spec = it->second;
+  auto &props = prim_spec.props();
+  if (!props.count(attr_name)) {
+    err = "Attribute not found: " + attr_name;
+    return false;
+  }
+
+  auto &prop = props.at(attr_name);
+  if (!prop.is_attribute()) {
+    err = "Property is not an attribute: " + attr_name;
+    return false;
+  }
+
+  auto &attr = prop.attribute();
+  auto &attr_metas = attr.metas();
+
+  // Clear metadata for given key
+  if (meta_key == "comment") {
+    attr_metas.comment = nonstd::nullopt;
+  } else if (meta_key == "hidden") {
+    attr_metas.hidden = nonstd::nullopt;
+  } else if (meta_key == "displayName") {
+    attr_metas.displayName = nonstd::nullopt;
+  } else if (meta_key == "displayGroup") {
+    attr_metas.displayGroup = nonstd::nullopt;
+  } else if (meta_key == "interpolation") {
+    attr_metas.interpolation = nonstd::nullopt;
+  } else {
+    err = "Cannot delete unknown attribute metadata key: " + meta_key;
+    return false;
+  }
+
+  result["content"] = nlohmann::json::array();
+  nlohmann::json response;
+  response["type"] = "text";
+  response["text"] = "Successfully deleted attribute metadata: " + meta_key;
+  result["content"].push_back(response);
+
+  return true;
+}
+
 bool ListScreenshots(Context &ctx, const nlohmann::json &args,
                      nlohmann::json &result, std::string &err) {
   (void)args;
@@ -3193,6 +3556,67 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
     result["tools"].push_back(j);
   }
 
+  // Attribute metadata tools
+  {
+    nlohmann::json j;
+    j["name"] = "get_attr_meta";
+    j["description"] = "Get metadata from an Attribute (comment, hidden, displayName, displayGroup, interpolation)";
+
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    schema["properties"]["uuid"] = {{"type", "string"}, {"description", "Layer UUID (optional if name is provided)"}};
+    schema["properties"]["name"] = {{"type", "string"}, {"description", "Layer name (optional if uuid is provided)"}};
+    schema["properties"]["primPath"] = {{"type", "string"}, {"description", "USD prim path (e.g., /MyPrim)"}};
+    schema["properties"]["attrName"] = {{"type", "string"}, {"description", "Attribute name"}};
+
+    schema["required"] = nlohmann::json::array({"primPath", "attrName"});
+
+    j["inputSchema"] = schema;
+    result["tools"].push_back(j);
+  }
+
+  {
+    nlohmann::json j;
+    j["name"] = "add_attr_meta";
+    j["description"] = "Add or update metadata field in an Attribute";
+
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    schema["properties"]["uuid"] = {{"type", "string"}, {"description", "Layer UUID (optional if name is provided)"}};
+    schema["properties"]["name"] = {{"type", "string"}, {"description", "Layer name (optional if uuid is provided)"}};
+    schema["properties"]["primPath"] = {{"type", "string"}, {"description", "USD prim path (e.g., /MyPrim)"}};
+    schema["properties"]["attrName"] = {{"type", "string"}, {"description", "Attribute name"}};
+    schema["properties"]["key"] = {{"type", "string"}, {"description", "Metadata key (comment, hidden, displayName, displayGroup, interpolation)"}};
+    schema["properties"]["value"] = {{"description", "Metadata value (string for comment/displayName/displayGroup/interpolation, boolean for hidden)"}};
+
+    schema["required"] = nlohmann::json::array({"primPath", "attrName", "key", "value"});
+
+    j["inputSchema"] = schema;
+    result["tools"].push_back(j);
+  }
+
+  {
+    nlohmann::json j;
+    j["name"] = "del_attr_meta";
+    j["description"] = "Delete or clear metadata field in an Attribute";
+
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    schema["properties"]["uuid"] = {{"type", "string"}, {"description", "Layer UUID (optional if name is provided)"}};
+    schema["properties"]["name"] = {{"type", "string"}, {"description", "Layer name (optional if uuid is provided)"}};
+    schema["properties"]["primPath"] = {{"type", "string"}, {"description", "USD prim path (e.g., /MyPrim)"}};
+    schema["properties"]["attrName"] = {{"type", "string"}, {"description", "Attribute name"}};
+    schema["properties"]["key"] = {{"type", "string"}, {"description", "Metadata key to delete"}};
+
+    schema["required"] = nlohmann::json::array({"primPath", "attrName", "key"});
+
+    j["inputSchema"] = schema;
+    result["tools"].push_back(j);
+  }
+
   std::cout << result << "\n";
 
   return true;
@@ -3271,6 +3695,15 @@ bool CallTool(Context &ctx, const std::string &tool_name,
   } else if (tool_name == "del_prim_meta") {
     DCOUT("del_prim_meta");
     return DelPrimMeta(ctx, args, result, err);
+  } else if (tool_name == "get_attr_meta") {
+    DCOUT("get_attr_meta");
+    return GetAttrMeta(ctx, args, result, err);
+  } else if (tool_name == "add_attr_meta") {
+    DCOUT("add_attr_meta");
+    return AddAttrMeta(ctx, args, result, err);
+  } else if (tool_name == "del_attr_meta") {
+    DCOUT("del_attr_meta");
+    return DelAttrMeta(ctx, args, result, err);
   } else if (tool_name == "list_screenshots") {
     return ListScreenshots(ctx, args, result, err);
   } else if (tool_name == "save_screenshot") {
