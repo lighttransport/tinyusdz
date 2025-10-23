@@ -2217,17 +2217,11 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
     // Check if using POD storage
     if (samples.is_using_pod()) {
 
-        // Delegate to POD implementation
-        const auto& pod_samples = samples.get_pod_samples();
-
-        if (pod_samples._is_typed_array) {
-          pprint_pod_timesamples(writer, pod_samples, indent);
-          return;
-        }
-
+        // Phase 3: Access unified storage directly from TimeSamples
+        // Note: TypedArray is no longer supported in Phase 3, so we skip that path
 
         // Get type information
-        uint32_t type_id = pod_samples.type_id();
+        uint32_t type_id = samples.type_id();
         size_t element_size = get_pod_type_size(type_id);
 
         if (element_size == 0) {
@@ -2240,89 +2234,37 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
             return;
         }
 
-        // Get arrays
-        const auto& times = pod_samples.get_times();
-        const auto& blocked = pod_samples.get_blocked();
-        const auto& values = pod_samples.get_values();
+        // Get arrays from unified storage
+        const auto& times = samples.get_times();
+        const auto& blocked = samples.get_blocked();
+        const auto& values = samples.get_values();
+        const auto& offsets = samples.get_offsets();
 
         //TUSDZ_LOG_I("times.size " << times.size());
         //TUSDZ_LOG_I("blocked.size " << blocked.size());
         //TUSDZ_LOG_I("values.size " << values.size());
 
         // Write samples - handle offset table if present
-        if (!pod_samples._offsets.empty()) {
-            // Optimization for TypedArray: cache printed strings by pointer value
-            if (pod_samples._is_typed_array) {
-                // Map to cache printed strings: pointer -> string
-                std::map<uint64_t, std::string> cached_strings;
+        if (!offsets.empty()) {
+            // Phase 3: TypedArray path removed (not supported in unified storage)
+            // Use regular printing for all POD types
+            for (size_t i = 0; i < times.size(); ++i) {
+                writer.write(pprint::Indent(indent + 1));
+                writer.write(times[i]);
+                writer.write(": ");
 
-                // Using offset table - blocked values don't consume space
-                for (size_t i = 0; i < times.size(); ++i) {
-                    writer.write(pprint::Indent(indent + 1));
-                    writer.write(times[i]);
-                    writer.write(": ");
-
-                    if (blocked[i] || pod_samples._offsets[i] == SIZE_MAX) {
-                        writer.write("None");
-                    } else {
-                        // Get pointer to value data using offset
-                        const uint8_t* value_ptr = values.data() + pod_samples._offsets[i];
-
-                        // Extract pointer value from packed data
-                        uint64_t packed_value;
-                        std::memcpy(&packed_value, value_ptr, sizeof(uint64_t));
-                        uint64_t ptr_bits = packed_value & 0x0000FFFFFFFFFFFFULL;
-
-                        // Sign-extend from 48 bits to 64 bits
-                        if (ptr_bits & (1ULL << 47)) {
-                            ptr_bits |= 0xFFFF000000000000ULL;
-                        }
-
-                        // Check cache first
-                        auto it = cached_strings.find(ptr_bits);
-                        if (it != cached_strings.end()) {
-                            // Reuse cached string
-                            writer.write(it->second);
-                        } else {
-                            // First occurrence - dereference TypedArray pointer and print
-                            size_t pos_before = writer.str().size();
-
-                            // Dereference and print the actual TypedArray contents using known type_id
-                            print_typed_array_value_by_type_id(writer, value_ptr, pod_samples.type_id());
-
-                            size_t pos_after = writer.str().size();
-
-                            // Cache the printed string
-                            std::string printed = writer.str().substr(pos_before, pos_after - pos_before);
-                            cached_strings[ptr_bits] = printed;
-                        }
-                    }
-
-                    if (i < times.size() - 1) {
-                        writer.write(",");
-                    }
-                    writer.write("\n");
+                if (blocked[i] || offsets[i] == SIZE_MAX) {
+                    writer.write("None");
+                } else {
+                    // Get pointer to value data using offset
+                    const uint8_t* value_ptr = values.data() + offsets[i];
+                    pprint_pod_value_by_type(writer, value_ptr, type_id);
                 }
-            } else {
-                // Non-TypedArray path: use regular printing
-                for (size_t i = 0; i < times.size(); ++i) {
-                    writer.write(pprint::Indent(indent + 1));
-                    writer.write(times[i]);
-                    writer.write(": ");
 
-                    if (blocked[i] || pod_samples._offsets[i] == SIZE_MAX) {
-                        writer.write("None");
-                    } else {
-                        // Get pointer to value data using offset
-                        const uint8_t* value_ptr = values.data() + pod_samples._offsets[i];
-                        pprint_pod_value_by_type(writer, value_ptr, type_id);
-                    }
-
-                    if (i < times.size() - 1) {
-                        writer.write(",");
-                    }
-                    writer.write("\n");
+                if (i < times.size() - 1) {
+                    writer.write(",");
                 }
+                writer.write("\n");
             }
         } else {
             // Legacy: blocked values still counted in offset calculation
