@@ -109,6 +109,23 @@ If you are using TinyUSDZ on JS/WASM, MCP server in JS is provided in `<tinyusdz
       * `listOp`: List edit operation qualifier (resetToExplicit, append, add, delete, prepend, order)
       * `layerOffset`: Object with `offset` and `scale` for animation time mapping
 
+* add_prim
+  * Add PrimSpec to specified Layer as child PrimSpec at specified primPath
+  * Input prim data can be in USDA (ASCII), USDC (binary), or USDJ (JSON) format
+  * arg
+    * uuid(str) : Layer UUID (optional if name is provided)
+    * name(str) : Layer name (optional if uuid is provided)
+    * primPath(str) : USD prim path where to add the prim (e.g., `/MyPrim` or `/Parent/Child`) - required
+    * data(str) : Prim data in specified format - required
+      * For USDA: escaped string representation of prim specification
+      * For USDC: base64-encoded binary Crate format data
+      * For USDJ: JSON string representation (not yet supported)
+    * format(str) : Format of input data - required
+      * Valid values: `usda`, `usdc`, `usdj`
+  * response
+    * Success message indicating the prim was added at the specified path
+    * Error message if the operation failed (invalid path, parse error, etc.)
+
 ## JS/Three.js specific commands
 
 
