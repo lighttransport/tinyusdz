@@ -986,8 +986,8 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
     // Debug: Check timeSamples field specifically
     if (fv.first.find("time") != std::string::npos) {
       DCOUT(">>> DEBUG: Found field with 'time' in name: '" << fv.first << "', length = " << fv.first.size());
-      bool matches = (fv.first == "timeSamples");
-      DCOUT(">>> Comparing with 'timeSamples': matches = " << matches);
+      //bool matches = (fv.first == "timeSamples");
+      //DCOUT(">>> Comparing with 'timeSamples': matches = " << matches);
     }
 
     if (fv.first == "custom") {
