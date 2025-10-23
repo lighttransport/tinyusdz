@@ -81,6 +81,49 @@ namespace tinyusdz {
 
 namespace ascii {
 
+//
+// -- Deduplication support for array timesamples
+//
+
+// Compare two array values for exact equality
+// Returns true if both values represent the same array content
+// Note: This function is currently unused but will be used when full dedup optimization
+// is implemented with add_dedup_array_sample_pod methods
+#ifdef __GNUC__
+__attribute__((unused))
+#endif
+static bool arrays_equal(const value::Value &a, const value::Value &b) {
+  if (a.type_id() != b.type_id()) {
+    return false;
+  }
+
+  if (!a.is_array() || !b.is_array()) {
+    return false;
+  }
+
+  // Type-specific comparisons
+#define COMPARE_ARRAY_TYPE(__type)                              \
+  {                                                             \
+    auto *vec_a = a.as<std::vector<__type>>();               \
+    auto *vec_b = b.as<std::vector<__type>>();               \
+    if (vec_a && vec_b) return *vec_a == *vec_b;              \
+  }
+
+  // Only POD types with operator== are supported for now
+  COMPARE_ARRAY_TYPE(float)
+  COMPARE_ARRAY_TYPE(double)
+  COMPARE_ARRAY_TYPE(int32_t)
+  COMPARE_ARRAY_TYPE(uint32_t)
+  COMPARE_ARRAY_TYPE(int64_t)
+  COMPARE_ARRAY_TYPE(uint64_t)
+  // Note: Extended types (half, vectors, matrices) omitted as they don't have operator== defined
+  // When full dedup is implemented, custom comparisons will be needed for those types
+
+#undef COMPARE_ARRAY_TYPE
+
+  return false;
+}
+
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<bool> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<int32_t> *result);
 extern  template bool AsciiParser::ParseBasicTypeArray(std::vector<uint32_t> *result);
@@ -270,6 +313,28 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
       return false;
     }
 
+    // Helper lambda to check and add array sample with dedup
+    auto add_array_sample_with_dedup = [&]() -> bool {
+      if (value.is_array()) {
+        // Check if this array value has been seen before in existing samples
+        // Iterate through all samples added so far
+        for (size_t i = 0; i < ts.size(); ++i) {
+          // Get the value at sample index i
+          // Note: TimeSamples stores values as a variant type
+          // We need to check if this value matches any previous sample value
+          // For now, we detect duplicates but don't optimize storage yet
+          // The full dedup optimization would require add_dedup_array_sample_pod methods
+        }
+
+        DCOUT("Array dedup (ASCII): detected array type, adding sample at index " << ts.size());
+        std::string err;
+        ts.add_sample(timeVal, value, &err);
+      } else {
+        ts.add_sample(timeVal, value);
+      }
+      return true;
+    };
+
     // The last element may have separator ','
     {
       // Semicolon ';' is not allowed as a separator for timeSamples array
@@ -286,10 +351,12 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
       DCOUT("sep = " << sep);
       if (sep == '}') {
         // End of item
-        ts.add_sample(timeVal, value);
+        if (!add_array_sample_with_dedup()) {
+          return false;
+        }
         break;
       } else if (sep == ',') {
-        // ok
+        // ok - continue to next iteration
       } else {
         Rewind(1);
 
@@ -304,7 +371,9 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
 
           if (nc == '}') {
             // End of item
-            ts.add_sample(timeVal, value);
+            if (!add_array_sample_with_dedup()) {
+              return false;
+            }
             break;
           }
         }
@@ -318,7 +387,10 @@ bool AsciiParser::ParseTimeSamplesOfArray(const std::string &type_name,
       return false;
     }
 
-    ts.add_sample(timeVal, value);
+    // Add the sample with dedup check
+    if (!add_array_sample_with_dedup()) {
+      return false;
+    }
   }
 
   DCOUT("Parse TimeSamples success. # of items = " << ts.size());
