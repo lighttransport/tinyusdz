@@ -1657,9 +1657,9 @@ static void pprint_typed_array_timesamples_range(
     size_t end_idx,
     std::map<uint64_t, std::string>& cached_strings) {
 
-    const std::vector<double>& times = samples.get_times();
-    const Buffer<16>& blocked = samples.get_blocked();
-    const Buffer<16>& values = samples.get_values();
+    const std::vector<double>& times = samples._times;
+    const Buffer<16>& blocked = samples._blocked;
+    const Buffer<16>& values = samples._values;
 
     size_t element_size = sizeof(uint64_t);
     size_t value_offset = 0;
@@ -1724,9 +1724,9 @@ static void pprint_typed_array_timesamples_range(
 // General template for most types
 template<typename T>
 static void pprint_typed_array_timesamples(StreamWriter& writer, const PODTimeSamples& samples, uint32_t indent) {
-    const std::vector<double>& times = samples.get_times();
-    const Buffer<16>& blocked = samples.get_blocked();
-    const Buffer<16>& values = samples.get_values();
+    const std::vector<double>& times = samples._times;
+    const Buffer<16>& blocked = samples._blocked;
+    const Buffer<16>& values = samples._values;
 
 #ifdef TINYUSDZ_ENABLE_THREAD
     // Use threaded path for large arrays
@@ -1845,9 +1845,9 @@ static void pprint_typed_array_timesamples(StreamWriter& writer, const PODTimeSa
 // Specialization for bool type - stored as uint8_t
 template<>
 void pprint_typed_array_timesamples<bool>(StreamWriter& writer, const PODTimeSamples& samples, uint32_t indent) {
-    const std::vector<double>& times = samples.get_times();
-    const Buffer<16>& blocked = samples.get_blocked();
-    const Buffer<16>& values = samples.get_values();
+    const std::vector<double>& times = samples._times;
+    const Buffer<16>& blocked = samples._blocked;
+    const Buffer<16>& values = samples._values;
 
     size_t element_size = sizeof(uint64_t);
 
@@ -2079,9 +2079,9 @@ void pprint_pod_timesamples(StreamWriter& writer, const PODTimeSamples& samples,
 
     if (!printed_array) {
       // Fallback
-      const std::vector<double>& times = samples.get_times();
-      const Buffer<16>& blocked = samples.get_blocked();
-      const Buffer<16>& values = samples.get_values();
+      const std::vector<double>& times = samples._times;
+      const Buffer<16>& blocked = samples._blocked;
+      const Buffer<16>& values = samples._values;
 
       // Check if using offset table (new optimized storage)
       if (!samples._offsets.empty()) {
