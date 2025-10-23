@@ -1051,27 +1051,6 @@ public:
     return TypedArrayView<const T>();  // Empty view
   }
 
-  const std::vector<double>& get_times() const {
-    if (_dirty) {
-      update();
-    }
-    return _times;
-  }
-
-  const Buffer<16>& get_blocked() const {
-    if (_dirty) {
-      update();
-    }
-    return _blocked;
-  }
-
-  const Buffer<16>& get_values() const {
-    if (_dirty) {
-      update();
-    }
-    return _values;
-  }
-
   size_t estimate_memory_usage() const {
     size_t total = sizeof(PODTimeSamples);
     total += _times.capacity() * sizeof(double);
@@ -1252,13 +1231,14 @@ struct TimeSamples {
 
   nonstd::optional<double> get_time(size_t idx) const {
     if (_use_pod) {
-      if (idx >= _pod_samples.size()) {
+      // Phase 3: Use unified storage directly
+      if (idx >= _times.size()) {
         return nonstd::nullopt;
       }
       if (_dirty) {
         update();
       }
-      return _pod_samples.get_times()[idx];
+      return _times[idx];
     } else {
       if (idx >= _samples.size()) {
         return nonstd::nullopt;
@@ -2240,8 +2220,8 @@ struct TimeSamples {
       if (view.size() == 0) {
         if (out_blocked) {
           // Check if it's actually blocked or just empty
-          *out_blocked = (idx < _pod_samples.get_times().size() &&
-                         _pod_samples.get_blocked()[idx]);
+          *out_blocked = (idx < _pod_samples._times.size() &&
+                         _pod_samples._blocked[idx]);
         }
         return false;
       }
@@ -2358,6 +2338,47 @@ struct TimeSamples {
     }
 
     return false;  // Time not found
+  }
+
+  //
+  // Phase 3: Accessor methods for unified storage
+  // These provide read-only access to internal POD storage for utilities like pprint
+  //
+
+  const std::vector<double>& get_times() const {
+    if (_dirty) {
+      update();
+    }
+    return _times;
+  }
+
+  const Buffer<16>& get_blocked() const {
+    if (_dirty) {
+      update();
+    }
+    return _blocked;
+  }
+
+  const Buffer<16>& get_values() const {
+    if (_dirty) {
+      update();
+    }
+    return _values;
+  }
+
+  const std::vector<uint64_t>& get_offsets() const {
+    if (_dirty) {
+      update();
+    }
+    return _offsets;
+  }
+
+  bool is_array() const {
+    return _is_array;
+  }
+
+  size_t get_array_size() const {
+    return _array_size;
   }
 
  private:
