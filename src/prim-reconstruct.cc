@@ -764,7 +764,16 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       ret.code = ParseResult::ResultCode::Success;
       return ret;
     } else {
-      DCOUT("???.");
+      // Handle attributes that have no value, default, timeSamples, or connections
+      // This can happen for empty attributes or attributes that are just placeholders
+      DCOUT("Attribute has no value, using default-constructed value.");
+
+      // Set an empty/default value so the attribute is valid but empty
+      target.set_value(Animatable<T>());
+      target.metas() = attr.metas();
+      table.insert(prop_name);
+      ret.code = ParseResult::ResultCode::Success;
+      return ret;
     }
     return ret;
   }
