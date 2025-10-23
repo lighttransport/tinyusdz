@@ -1,6 +1,7 @@
 #include "mcp-tools.hh"
 
 #include <string>
+#include <sstream>
 
 #include "mcp-context.hh"
 #include "mcp-server.hh"
@@ -8,6 +9,9 @@
 #include "str-util.hh"
 #include "tinyusdz.hh"
 #include "uuid-gen.hh"
+#include "stream-reader.hh"
+#include "usda-reader.hh"
+#include "usdc-reader.hh"
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -92,6 +96,8 @@ bool ListReferences(Context &ctx, const nlohmann::json &args,
                     nlohmann::json &result, std::string &err);
 bool ListPayloads(Context &ctx, const nlohmann::json &args,
                   nlohmann::json &result, std::string &err);
+bool AddPrim(Context &ctx, const nlohmann::json &args,
+             nlohmann::json &result, std::string &err);
 
 bool GetVersion(nlohmann::json &result) {
   std::string ver_str = std::to_string(tinyusdz::version_major) + "." +
@@ -615,6 +621,203 @@ bool ListPayloads(Context &ctx, const nlohmann::json &args,
   content["type"] = "text";
   content["text"] = payloads_array.dump();
   result["content"].push_back(content);
+
+  return true;
+}
+
+bool AddPrim(Context &ctx, const nlohmann::json &args,
+             nlohmann::json &result, std::string &err) {
+  DCOUT("args " << args);
+
+  std::string uuid = args["uuid"];
+  std::string name = args["name"];
+  std::string prim_path_str = args["primPath"];
+  std::string data = args["data"];
+  std::string format = args["format"];
+
+  if (uuid.empty() && name.empty()) {
+    err = "Either `name` or `uuid` arg required\n";
+    return false;
+  }
+
+  if (prim_path_str.empty()) {
+    err = "`primPath` argument required\n";
+    return false;
+  }
+
+  if (data.empty()) {
+    err = "`data` argument required\n";
+    return false;
+  }
+
+  if (format.empty() || (format != "usda" && format != "usdc" && format != "usdj")) {
+    err = "`format` must be one of: usda, usdc, usdj\n";
+    return false;
+  }
+
+  if (uuid.empty()) {
+    uuid = FindUUID(name, ctx.layers);
+  }
+
+  if (!ctx.layers.count(uuid)) {
+    DCOUT("Layer not found: " << uuid);
+    err = "Layer not found: " + uuid;
+    return false;
+  }
+
+  USDLayer &usd_layer = ctx.layers.at(uuid);
+  Path prim_path(prim_path_str, "");
+
+  if (!prim_path.is_valid()) {
+    err = "Invalid primPath: " + prim_path_str;
+    return false;
+  }
+
+  // Parse prim data based on format
+  Layer temp_layer;
+  bool parse_success = false;
+
+  if (format == "usda") {
+    // Parse USDA (ASCII) format - data is escaped string
+    tinyusdz::StreamReader sr(reinterpret_cast<const uint8_t *>(data.data()),
+                              static_cast<uint64_t>(data.size()), false);
+    tinyusdz::usda::USDAReader usda_reader(&sr);
+
+    tinyusdz::usda::USDAReaderConfig config;
+    usda_reader.set_reader_config(config);
+
+    if (usda_reader.Read()) {
+      parse_success = usda_reader.get_as_layer(&temp_layer);
+      if (!parse_success) {
+        err = "Failed to extract layer from USDA data";
+      }
+    } else {
+      err = usda_reader.GetError();
+      if (err.empty()) {
+        err = "USDA parse error";
+      }
+    }
+  } else if (format == "usdc") {
+    // Parse USDC (binary Crate) format - data is base64 encoded
+    std::string decoded_data = decode_data(data);
+    tinyusdz::StreamReader sr(reinterpret_cast<const uint8_t *>(decoded_data.data()),
+                              static_cast<uint64_t>(decoded_data.size()), false);
+
+    tinyusdz::usdc::USDCReaderConfig config;
+    config.kMaxAllowedMemoryInMB = 512;  // 512MB limit
+    tinyusdz::usdc::USDCReader usdc_reader(&sr, config);
+
+    if (usdc_reader.ReadUSDC()) {
+      parse_success = usdc_reader.get_as_layer(&temp_layer);
+      if (!parse_success) {
+        err = "Failed to extract layer from USDC data";
+      }
+    } else {
+      err = usdc_reader.GetError();
+      if (err.empty()) {
+        err = "USDC parse error";
+      }
+    }
+  } else if (format == "usdj") {
+    // Parse USDJ (JSON) format - data is JSON string
+    // For now, return an error as JSON prim parsing is not yet implemented
+    err = "USDJ format is not yet supported in this tool";
+    return false;
+  }
+
+  if (!parse_success) {
+    if (err.empty()) {
+      err = "Failed to parse prim data in " + format + " format";
+    }
+    return false;
+  }
+
+  // Get the root prim(s) from temp_layer
+  if (temp_layer.primspecs().empty()) {
+    err = "No prims found in input data";
+    return false;
+  }
+
+  // Extract first (or only) prim from temp layer
+  auto &temp_primspecs = temp_layer.primspecs();
+  PrimSpec prim_to_add = temp_primspecs.begin()->second;
+
+  // Determine if prim_path is a root prim or nested
+  std::string element_name = prim_path.element_name();
+  if (element_name.empty()) {
+    err = "Invalid primPath - cannot extract element name";
+    return false;
+  }
+
+  // For now, only support adding at root level
+  if (!prim_path.is_root_prim()) {
+    // Check if it's a root level path (starts with /)
+    std::string prim_part = prim_path.prim_part();
+    if (prim_part.empty() || prim_part == "/") {
+      err = "Invalid primPath format";
+      return false;
+    }
+
+    // For nested paths, split and add hierarchy
+    // This is a simplified implementation - only handles one level of nesting for now
+    std::vector<std::string> path_parts;
+    std::string current = prim_part;
+    if (current[0] == '/') {
+      current = current.substr(1);
+    }
+
+    size_t pos = 0;
+    while ((pos = current.find('/')) != std::string::npos) {
+      std::string part = current.substr(0, pos);
+      if (!part.empty()) {
+        path_parts.push_back(part);
+      }
+      current = current.substr(pos + 1);
+    }
+    if (!current.empty()) {
+      path_parts.push_back(current);
+    }
+
+    if (path_parts.empty()) {
+      err = "Invalid primPath";
+      return false;
+    }
+
+    // Get or create parent prim
+    std::string root_name = path_parts[0];
+    auto &layer_primspecs = usd_layer.layer.primspecs();
+
+    PrimSpec *parent = nullptr;
+    if (layer_primspecs.count(root_name)) {
+      parent = &layer_primspecs[root_name];
+    } else {
+      // Create root prim
+      PrimSpec root_prim(Specifier::Def, "Scope", root_name);
+      layer_primspecs[root_name] = root_prim;
+      parent = &layer_primspecs[root_name];
+    }
+
+    // Add to parent's children (simplified - only one level deep for now)
+    if (path_parts.size() > 1) {
+      std::string child_name = path_parts[path_parts.size() - 1];
+      prim_to_add.set_name(child_name);
+      parent->children().push_back(std::move(prim_to_add));
+    } else {
+      // Add at root level
+      prim_to_add.set_name(root_name);
+      usd_layer.layer.add_primspec(root_name, std::move(prim_to_add));
+    }
+  } else {
+    // Add at root level
+    prim_to_add.set_name(element_name);
+    usd_layer.layer.add_primspec(element_name, std::move(prim_to_add));
+  }
+
+  result["content"] = nlohmann::json::array();
+  nlohmann::json response;
+  response["type"] = "text";
+  response["text"] = "Successfully added prim at path: " + prim_path_str;
+  result["content"].push_back(response);
 
   return true;
 }
@@ -1363,6 +1566,27 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
 
   {
     nlohmann::json j;
+    j["name"] = "add_prim";
+    j["description"] = "Add PrimSpec to specified Layer as child PrimSpec at specified primPath. Input prim data can be USDA (escaped string), USDC (base64 binary), or USDJ (JSON)";
+
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    schema["properties"]["uuid"] = {{"type", "string"}, {"description", "Layer UUID (optional if name provided)"}};
+    schema["properties"]["name"] = {{"type", "string"}, {"description", "Layer name (optional if uuid provided)"}};
+    schema["properties"]["primPath"] = {{"type", "string"}, {"description", "USD prim path where to add the prim (e.g., /MyPrim or /Parent/Child)"}};
+    schema["properties"]["data"] = {{"type", "string"}, {"description", "Prim data: USDA as escaped string, USDC as base64, USDJ as JSON string"}};
+    schema["properties"]["format"] = {{"type", "string"}, {"description", "Format of input data: usda, usdc, or usdj"}};
+
+    schema["required"] = nlohmann::json::array({"primPath", "data", "format"});
+
+    j["inputSchema"] = schema;
+
+    result["tools"].push_back(j);
+  }
+
+  {
+    nlohmann::json j;
     j["name"] = "to_usda";
     j["description"] = "Convert USD Layer to USDA text";
 
@@ -1556,6 +1780,9 @@ bool CallTool(Context &ctx, const std::string &tool_name,
   } else if (tool_name == "list_payloads") {
     DCOUT("list_payloads");
     return ListPayloads(ctx, args, result, err);
+  } else if (tool_name == "add_prim") {
+    DCOUT("add_prim");
+    return AddPrim(ctx, args, result, err);
   } else if (tool_name == "list_screenshots") {
     return ListScreenshots(ctx, args, result, err);
   } else if (tool_name == "save_screenshot") {
