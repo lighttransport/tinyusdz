@@ -61,6 +61,54 @@ If you are using TinyUSDZ on JS/WASM, MCP server in JS is provided in `<tinyusdz
   * arg
     * object_path(str) : Absolute Object(USD PrimSpec) Path of currently selected Layer. Example: `/root`, `/root/xform/mesh0`
 
+## Layer Composition and Structure commands
+
+* list_primspecs
+  * List root PrimSpecs in loaded USD Layer
+  * arg
+    * uuid(str) : Layer UUID (optional if name is provided)
+    * name(str) : Layer name (optional if uuid is provided)
+  * response
+    * Array of PrimSpec names in the root of the layer
+
+* list_sublayers
+  * List SubLayer USD paths in a loaded USD Layer
+  * arg
+    * uuid(str) : Layer UUID (optional if name is provided)
+    * name(str) : Layer name (optional if uuid is provided)
+  * response
+    * JSON array where each item contains:
+      * `assetPath`: Path to the sublayer USD file
+      * `layerOffset`: Object with `offset` and `scale` for animation time mapping
+
+* list_references
+  * List References in a loaded USD Layer (composition arcs to other USD files)
+  * arg
+    * uuid(str) : Layer UUID (optional if name is provided)
+    * name(str) : Layer name (optional if uuid is provided)
+    * primName(str) : Optional filter to get references from a specific prim
+  * response
+    * JSON array where each item contains:
+      * `primName`: Name of the prim containing the reference
+      * `assetPath`: Path to the referenced asset
+      * `primPath`: Target prim path in the referenced asset
+      * `listOp`: List edit operation qualifier (resetToExplicit, append, add, delete, prepend, order)
+      * `layerOffset`: Object with `offset` and `scale` for animation time mapping
+
+* list_payloads
+  * List Payloads in a loaded USD Layer (deferred composition arcs)
+  * arg
+    * uuid(str) : Layer UUID (optional if name is provided)
+    * name(str) : Layer name (optional if uuid is provided)
+    * primName(str) : Optional filter to get payloads from a specific prim
+  * response
+    * JSON array where each item contains:
+      * `primName`: Name of the prim containing the payload
+      * `assetPath`: Path to the payload asset
+      * `primPath`: Target prim path in the payload asset
+      * `listOp`: List edit operation qualifier (resetToExplicit, append, add, delete, prepend, order)
+      * `layerOffset`: Object with `offset` and `scale` for animation time mapping
+
 ## JS/Three.js specific commands
 
 
