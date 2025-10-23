@@ -86,6 +86,12 @@ bool GetAssetDescription(Context &ctx, const nlohmann::json &args,
                          nlohmann::json &result, std::string &err);
 bool GetAllAssetDescriptions(Context &ctx, const nlohmann::json &args,
                              nlohmann::json &result, std::string &err);
+bool ListSublayers(Context &ctx, const nlohmann::json &args,
+                   nlohmann::json &result, std::string &err);
+bool ListReferences(Context &ctx, const nlohmann::json &args,
+                    nlohmann::json &result, std::string &err);
+bool ListPayloads(Context &ctx, const nlohmann::json &args,
+                  nlohmann::json &result, std::string &err);
 
 bool GetVersion(nlohmann::json &result) {
   std::string ver_str = std::to_string(tinyusdz::version_major) + "." +
@@ -404,6 +410,211 @@ bool ListPrimSpecs(Context &ctx, const nlohmann::json &args,
     content["text"] = ps.first;
     result["content"].push_back(content);
   }
+
+  return true;
+}
+
+bool ListSublayers(Context &ctx, const nlohmann::json &args,
+                   nlohmann::json &result, std::string &err) {
+  DCOUT("args " << args);
+
+  std::string uuid = args["uuid"];
+  std::string name = args["name"];
+
+  if (uuid.empty() && name.empty()) {
+    err = "Either `name` or `uuid` arg required\n";
+    return false;
+  }
+
+  if (uuid.empty()) {
+    uuid = FindUUID(name, ctx.layers);
+  }
+
+  if (!ctx.layers.count(uuid)) {
+    DCOUT("Layer not found: " << uuid);
+    err = "Layer not found: " + uuid;
+    return false;
+  }
+
+  const USDLayer &usd_layer = ctx.layers.at(uuid);
+  const auto &sublayers = usd_layer.layer.metas().subLayers;
+
+  result["content"] = nlohmann::json::array();
+
+  // Create JSON array of sublayers
+  nlohmann::json sublayer_array;
+  sublayer_array = nlohmann::json::array();
+
+  for (const auto &sublayer : sublayers) {
+    nlohmann::json item;
+    item["assetPath"] = sublayer.assetPath.GetAssetPath();
+    item["layerOffset"] = nlohmann::json::object();
+    item["layerOffset"]["offset"] = sublayer.layerOffset._offset;
+    item["layerOffset"]["scale"] = sublayer.layerOffset._scale;
+    sublayer_array.push_back(item);
+  }
+
+  nlohmann::json content;
+  content["type"] = "text";
+  content["text"] = sublayer_array.dump();
+  result["content"].push_back(content);
+
+  return true;
+}
+
+static std::string ListEditQualToString(ListEditQual qual) {
+  switch (qual) {
+    case ListEditQual::ResetToExplicit:
+      return "resetToExplicit";
+    case ListEditQual::Append:
+      return "append";
+    case ListEditQual::Add:
+      return "add";
+    case ListEditQual::Delete:
+      return "delete";
+    case ListEditQual::Prepend:
+      return "prepend";
+    case ListEditQual::Order:
+      return "order";
+    default:
+      return "invalid";
+  }
+}
+
+bool ListReferences(Context &ctx, const nlohmann::json &args,
+                    nlohmann::json &result, std::string &err) {
+  DCOUT("args " << args);
+
+  std::string uuid = args["uuid"];
+  std::string name = args["name"];
+  std::string prim_name = args["primName"];
+
+  if (uuid.empty() && name.empty()) {
+    err = "Either `name` or `uuid` arg required\n";
+    return false;
+  }
+
+  if (uuid.empty()) {
+    uuid = FindUUID(name, ctx.layers);
+  }
+
+  if (!ctx.layers.count(uuid)) {
+    DCOUT("Layer not found: " << uuid);
+    err = "Layer not found: " + uuid;
+    return false;
+  }
+
+  const USDLayer &usd_layer = ctx.layers.at(uuid);
+  result["content"] = nlohmann::json::array();
+
+  // Get primspecs to find references
+  const auto &primspecs = usd_layer.layer.primspecs();
+
+  nlohmann::json references_array = nlohmann::json::array();
+
+  for (const auto &ps_pair : primspecs) {
+    const auto &prim_name_iter = ps_pair.first;
+    const auto &prim_spec = ps_pair.second;
+
+    // If primName filter is specified, only process matching prims
+    if (!prim_name.empty() && prim_name_iter != prim_name) {
+      continue;
+    }
+
+    // Access references from PrimMeta
+    const auto &metas = prim_spec.metas();
+    if (metas.references.has_value()) {
+      const auto &refs_pair = metas.references.value();
+      const auto &listop = refs_pair.first;
+      const auto &refs = refs_pair.second;
+
+      for (const auto &ref : refs) {
+        nlohmann::json item;
+        item["primName"] = prim_name_iter;
+        item["assetPath"] = ref.asset_path.GetAssetPath();
+        item["primPath"] = ref.prim_path.prim_part();
+        item["listOp"] = ListEditQualToString(listop);
+        item["layerOffset"] = nlohmann::json::object();
+        item["layerOffset"]["offset"] = ref.layerOffset._offset;
+        item["layerOffset"]["scale"] = ref.layerOffset._scale;
+        references_array.push_back(item);
+      }
+    }
+  }
+
+  nlohmann::json content;
+  content["type"] = "text";
+  content["text"] = references_array.dump();
+  result["content"].push_back(content);
+
+  return true;
+}
+
+bool ListPayloads(Context &ctx, const nlohmann::json &args,
+                  nlohmann::json &result, std::string &err) {
+  DCOUT("args " << args);
+
+  std::string uuid = args["uuid"];
+  std::string name = args["name"];
+  std::string prim_name = args["primName"];
+
+  if (uuid.empty() && name.empty()) {
+    err = "Either `name` or `uuid` arg required\n";
+    return false;
+  }
+
+  if (uuid.empty()) {
+    uuid = FindUUID(name, ctx.layers);
+  }
+
+  if (!ctx.layers.count(uuid)) {
+    DCOUT("Layer not found: " << uuid);
+    err = "Layer not found: " + uuid;
+    return false;
+  }
+
+  const USDLayer &usd_layer = ctx.layers.at(uuid);
+  result["content"] = nlohmann::json::array();
+
+  // Get primspecs to find payloads
+  const auto &primspecs = usd_layer.layer.primspecs();
+
+  nlohmann::json payloads_array = nlohmann::json::array();
+
+  for (const auto &ps_pair : primspecs) {
+    const auto &prim_name_iter = ps_pair.first;
+    const auto &prim_spec = ps_pair.second;
+
+    // If primName filter is specified, only process matching prims
+    if (!prim_name.empty() && prim_name_iter != prim_name) {
+      continue;
+    }
+
+    // Access payloads from PrimMeta
+    const auto &metas = prim_spec.metas();
+    if (metas.payload.has_value()) {
+      const auto &payload_pair = metas.payload.value();
+      const auto &listop = payload_pair.first;
+      const auto &payloads = payload_pair.second;
+
+      for (const auto &payload : payloads) {
+        nlohmann::json item;
+        item["primName"] = prim_name_iter;
+        item["assetPath"] = payload.asset_path.GetAssetPath();
+        item["primPath"] = payload.prim_path.prim_part();
+        item["listOp"] = ListEditQualToString(listop);
+        item["layerOffset"] = nlohmann::json::object();
+        item["layerOffset"]["offset"] = payload.layerOffset._offset;
+        item["layerOffset"]["scale"] = payload.layerOffset._scale;
+        payloads_array.push_back(item);
+      }
+    }
+  }
+
+  nlohmann::json content;
+  content["type"] = "text";
+  content["text"] = payloads_array.dump();
+  result["content"].push_back(content);
 
   return true;
 }
@@ -1102,6 +1313,56 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
 
   {
     nlohmann::json j;
+    j["name"] = "list_sublayers";
+    j["description"] = "List SubLayer USD paths in loaded USD Layer. Each item contains assetPath and layerOffsets (offset and scale)";
+
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    schema["properties"]["uuid"] = {{"type", "string"}};
+    schema["properties"]["name"] = {{"type", "string"}};
+
+    j["inputSchema"] = schema;
+
+    result["tools"].push_back(j);
+  }
+
+  {
+    nlohmann::json j;
+    j["name"] = "list_references";
+    j["description"] = "List References in loaded USD Layer. Each item contains assetPath, primPath, listOp, layerOffset, and the prim that contains the reference (primName)";
+
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    schema["properties"]["uuid"] = {{"type", "string"}};
+    schema["properties"]["name"] = {{"type", "string"}};
+    schema["properties"]["primName"] = {{"type", "string"}, {"description", "Optional: filter references by prim name"}};
+
+    j["inputSchema"] = schema;
+
+    result["tools"].push_back(j);
+  }
+
+  {
+    nlohmann::json j;
+    j["name"] = "list_payloads";
+    j["description"] = "List Payloads in loaded USD Layer. Each item contains assetPath, primPath, listOp, layerOffset, and the prim that contains the payload (primName)";
+
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    schema["properties"]["uuid"] = {{"type", "string"}};
+    schema["properties"]["name"] = {{"type", "string"}};
+    schema["properties"]["primName"] = {{"type", "string"}, {"description", "Optional: filter payloads by prim name"}};
+
+    j["inputSchema"] = schema;
+
+    result["tools"].push_back(j);
+  }
+
+  {
+    nlohmann::json j;
     j["name"] = "to_usda";
     j["description"] = "Convert USD Layer to USDA text";
 
@@ -1286,6 +1547,15 @@ bool CallTool(Context &ctx, const std::string &tool_name,
   } else if (tool_name == "list_primspecs") {
     DCOUT("list_primspecs");
     return ListPrimSpecs(ctx, args, result, err);
+  } else if (tool_name == "list_sublayers") {
+    DCOUT("list_sublayers");
+    return ListSublayers(ctx, args, result, err);
+  } else if (tool_name == "list_references") {
+    DCOUT("list_references");
+    return ListReferences(ctx, args, result, err);
+  } else if (tool_name == "list_payloads") {
+    DCOUT("list_payloads");
+    return ListPayloads(ctx, args, result, err);
   } else if (tool_name == "list_screenshots") {
     return ListScreenshots(ctx, args, result, err);
   } else if (tool_name == "save_screenshot") {
