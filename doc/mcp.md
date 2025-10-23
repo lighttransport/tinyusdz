@@ -126,6 +126,36 @@ If you are using TinyUSDZ on JS/WASM, MCP server in JS is provided in `<tinyusdz
     * Success message indicating the prim was added at the specified path
     * Error message if the operation failed (invalid path, parse error, etc.)
 
+* del_prim
+  * Delete a PrimSpec from specified Layer at specified primPath
+  * Currently only supports deleting root-level prims (nested prim deletion not yet supported)
+  * arg
+    * uuid(str) : Layer UUID (optional if name is provided)
+    * name(str) : Layer name (optional if uuid is provided)
+    * primPath(str) : USD prim path of the prim to delete (e.g., `/MyPrim`) - required
+  * response
+    * Success message indicating the prim was deleted
+    * Error message if the operation failed (prim not found, invalid path, etc.)
+
+* get_prim
+  * Get PrimSpec information as JSON (USDJ) from specified Layer at specified primPath
+  * Returns comprehensive prim information including properties, metadata, and composition arcs
+  * Currently only supports retrieving root-level prims (nested prim retrieval not yet supported)
+  * arg
+    * uuid(str) : Layer UUID (optional if name is provided)
+    * name(str) : Layer name (optional if uuid is provided)
+    * primPath(str) : USD prim path to retrieve (e.g., `/MyPrim`) - required
+  * response
+    * JSON object containing:
+      * `name`: Prim name
+      * `typeName`: Type name of the prim
+      * `specifier`: Specifier type (def, over, or class)
+      * `properties`: Object with property names and their type/variability info
+      * `metadata`: Object with prim metadata (doc, comment, active, hidden, kind, etc.)
+      * `references`: Array of reference composition arcs with assetPath and primPath
+      * `payloads`: Array of payload composition arcs with assetPath and primPath
+    * Error message if the prim was not found or path is invalid
+
 ## JS/Three.js specific commands
 
 
