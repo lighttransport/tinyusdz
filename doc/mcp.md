@@ -221,6 +221,92 @@ If you are using TinyUSDZ on JS/WASM, MCP server in JS is provided in `<tinyusdz
         * `targets`: Array of target prim paths
     * Error message if the property was not found or path is invalid
 
+## Layer Metadata Management commands
+
+* get_layer_meta
+  * Get metadata from a USD Layer (doc, comment, metersPerUnit, timeCodesPerSecond, framesPerSecond, startTimeCode, endTimeCode, defaultPrim)
+  * arg
+    * uuid(str) : Layer UUID (optional if name is provided)
+    * name(str) : Layer name (optional if uuid is provided)
+  * response
+    * JSON object containing:
+      * `doc`: Documentation string
+      * `comment`: Comment string
+      * `metersPerUnit`: Meters per unit scale (default: 1.0)
+      * `timeCodesPerSecond`: Time codes per second (default: 24.0)
+      * `framesPerSecond`: Frames per second (default: 24.0)
+      * `startTimeCode`: Start time code (default: 0.0)
+      * `endTimeCode`: End time code (default: infinity)
+      * `defaultPrim`: Default prim name (optional)
+
+* add_layer_meta
+  * Add or update a single metadata field in a USD Layer
+  * arg
+    * uuid(str) : Layer UUID (optional if name is provided)
+    * name(str) : Layer name (optional if uuid is provided)
+    * key(str) : Metadata key - required
+      * Valid values: `doc`, `comment`, `metersPerUnit`, `timeCodesPerSecond`, `framesPerSecond`, `startTimeCode`, `endTimeCode`, `defaultPrim`
+    * value : Metadata value - required
+      * For string fields (doc, comment, defaultPrim): string value
+      * For numeric fields (metersPerUnit, etc.): number value
+  * response
+    * Success message indicating the metadata was added/updated
+    * Error message if the operation failed
+
+* del_layer_meta
+  * Delete or clear a metadata field in a USD Layer
+  * arg
+    * uuid(str) : Layer UUID (optional if name is provided)
+    * name(str) : Layer name (optional if uuid is provided)
+    * key(str) : Metadata key to delete - required
+  * response
+    * Success message indicating the metadata was deleted
+    * Error message if the operation failed or key is read-only
+
+## Prim Metadata Management commands
+
+* get_prim_meta
+  * Get metadata from a PrimSpec (doc, comment, active, hidden, displayName, kind)
+  * arg
+    * uuid(str) : Layer UUID (optional if name is provided)
+    * name(str) : Layer name (optional if uuid is provided)
+    * primPath(str) : USD prim path (e.g., `/MyPrim`) - required
+  * response
+    * JSON object containing:
+      * `doc`: Documentation string (optional)
+      * `comment`: Comment string (optional)
+      * `active`: Boolean indicating if prim is active (default: true)
+      * `hidden`: Boolean indicating if prim is hidden (default: false)
+      * `displayName`: Display name for the prim (optional)
+      * `kind`: Kind classification of prim (optional)
+        * Valid values: `model`, `group`, `assembly`, `component`, `subcomponent`, `sceneLibrary`, `userDef`
+
+* add_prim_meta
+  * Add or update a single metadata field in a PrimSpec
+  * arg
+    * uuid(str) : Layer UUID (optional if name is provided)
+    * name(str) : Layer name (optional if uuid is provided)
+    * primPath(str) : USD prim path (e.g., `/MyPrim`) - required
+    * key(str) : Metadata key - required
+      * Valid values: `doc`, `comment`, `active`, `hidden`, `displayName`, `kind`
+    * value : Metadata value - required
+      * For string fields (doc, comment, displayName, kind): string value
+      * For boolean fields (active, hidden): boolean value
+  * response
+    * Success message indicating the metadata was added/updated
+    * Error message if the operation failed
+
+* del_prim_meta
+  * Delete or clear a metadata field in a PrimSpec
+  * arg
+    * uuid(str) : Layer UUID (optional if name is provided)
+    * name(str) : Layer name (optional if uuid is provided)
+    * primPath(str) : USD prim path (e.g., `/MyPrim`) - required
+    * key(str) : Metadata key to delete - required
+  * response
+    * Success message indicating the metadata was deleted
+    * Error message if the operation failed
+
 ## JS/Three.js specific commands
 
 
