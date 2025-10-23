@@ -2149,11 +2149,15 @@ struct ChunkedTimeSamplesDispatcher<4096, 16> {
     }
 };
 
-// ChunkedStreamWriter dispatch function
+// ChunkedStreamWriter dispatch function (COMMENTED OUT)
+// Note: This template is not instantiated to avoid unused template warnings.
+// The StreamWriter version below provides sufficient functionality.
+/*
 template <size_t ChunkSize, size_t Alignment>
 static bool pprint_typed_array_timesamples_dispatch(ChunkedStreamWriter<ChunkSize, Alignment>& writer, const PODTimeSamples& samples, uint32_t indent) {
     return ChunkedTimeSamplesDispatcher<ChunkSize, Alignment>::dispatch(writer, samples, indent);
 }
+*/
 
 // Dispatch function to call the correct template based on type_id
 static bool pprint_typed_array_timesamples_dispatch(StreamWriter& writer, const PODTimeSamples& samples, uint32_t indent) {
@@ -2593,9 +2597,16 @@ void set_threaded_print_num_threads(unsigned int num_threads) {
 }
 
 // ============================================================================
-// ChunkedStreamWriter Template Implementations
+// ChunkedStreamWriter Template Implementations (COMMENTED OUT)
 // ============================================================================
+// Note: These implementations are commented out because they are not being
+// instantiated (to avoid unused template warnings). The StreamWriter versions
+// provide sufficient performance for the array pre-allocation optimization.
+//
+// Future enhancement: If ChunkedStreamWriter support is needed, uncomment
+// these implementations and their template instantiations below.
 
+/*
 // Template implementation for pprint_pod_timesamples with ChunkedStreamWriter
 template <size_t ChunkSize, size_t Alignment>
 void pprint_pod_timesamples(ChunkedStreamWriter<ChunkSize, Alignment>& writer, const PODTimeSamples& samples, uint32_t indent) {
@@ -2697,10 +2708,13 @@ void pprint_timesamples(ChunkedStreamWriter<ChunkSize, Alignment>& writer, const
     pprint_timesamples(sw, samples, indent);
     writer.write(sw.str());
 }
+*/
 
 // Explicit template instantiations for common parameters
-template void pprint_pod_timesamples<4096, 16>(ChunkedStreamWriter<4096, 16>& writer, const PODTimeSamples& samples, uint32_t indent);
-template void pprint_timesamples<4096, 16>(ChunkedStreamWriter<4096, 16>& writer, const value::TimeSamples& samples, uint32_t indent);
-template void pprint_pod_value_by_type<4096, 16>(ChunkedStreamWriter<4096, 16>& writer, const uint8_t* data, uint32_t type_id);
+// Note: ChunkedStreamWriter versions are commented out to avoid unused template warnings
+// The StreamWriter versions provide sufficient performance for array pre-allocation optimization
+// template void pprint_pod_timesamples<4096, 16>(ChunkedStreamWriter<4096, 16>& writer, const PODTimeSamples& samples, uint32_t indent);
+// template void pprint_timesamples<4096, 16>(ChunkedStreamWriter<4096, 16>& writer, const value::TimeSamples& samples, uint32_t indent);
+// template void pprint_pod_value_by_type<4096, 16>(ChunkedStreamWriter<4096, 16>& writer, const uint8_t* data, uint32_t type_id);
 
 } // namespace tinyusdz
