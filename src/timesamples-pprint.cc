@@ -2256,9 +2256,15 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
                 if (blocked[i] || offsets[i] == SIZE_MAX) {
                     writer.write("None");
                 } else {
-                    // Get pointer to value data using offset
-                    const uint8_t* value_ptr = values.data() + offsets[i];
-                    pprint_pod_value_by_type(writer, value_ptr, type_id);
+                    // Resolve offset (may be encoded with dedup/array flags)
+                    size_t byte_offset;
+                    if (!PODTimeSamples::resolve_offset_static(offsets, i, &byte_offset)) {
+                        writer.write("/* ERROR: failed to resolve offset */");
+                    } else {
+                        // Get pointer to value data using resolved byte offset
+                        const uint8_t* value_ptr = values.data() + byte_offset;
+                        pprint_pod_value_by_type(writer, value_ptr, type_id);
+                    }
                 }
 
                 if (i < times.size() - 1) {
