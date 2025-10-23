@@ -18,11 +18,23 @@ If you are using TinyUSDZ on JS/WASM, MCP server in JS is provided in `<tinyusdz
 ## Core commands
 
 * new_layer
-  * Create new empty USD Layer
+  * Create new USD Layer with optional LayerMeta and PrimSpecs
+  * If only layer name is supplied, creates an empty Layer
   * arg
-    * layer_name(str) : Layer name(file name)
+    * name(str) : Layer name (must be unique) - required
+    * layerMeta(str) : Optional LayerMeta as JSON string with fields:
+      * `doc`: Documentation string
+      * `comment`: Comment string
+    * primSpecs(str) : Optional PrimSpecs as JSON array or single object with fields (for each prim):
+      * `name`: Prim name - required
+      * `typeName`: Optional USD type name (e.g., "Xform", "Mesh")
+      * `specifier`: Optional specifier type (`def`, `over`, or `class`), default is `def`
+      * `metadata`: Optional prim metadata object with fields:
+        * `doc`: Documentation string
+        * `comment`: Comment string
   * response
-    * `result`: `true` upon success, `false` when failed(e.g. duplicated Layer name).
+    * Success message with generated UUID for the new layer
+    * Error message if the operation failed (layer already exists, invalid JSON, etc.)
 
 * load_layer
   * Load USD as Layer

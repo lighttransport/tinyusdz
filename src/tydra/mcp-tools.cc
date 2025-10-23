@@ -109,6 +109,137 @@ bool DelProp(Context &ctx, const nlohmann::json &args,
              nlohmann::json &result, std::string &err);
 bool GetProp(Context &ctx, const nlohmann::json &args,
              nlohmann::json &result, std::string &err);
+bool NewLayer(Context &ctx, const nlohmann::json &args,
+              nlohmann::json &result, std::string &err);
+
+bool NewLayer(Context &ctx, const nlohmann::json &args,
+              nlohmann::json &result, std::string &err) {
+  DCOUT("args " << args);
+
+  std::string layer_name = args["name"];
+  std::string layer_meta_json = args["layerMeta"];
+  std::string prim_specs_json = args["primSpecs"];
+
+  if (layer_name.empty()) {
+    err = "`name` argument required\n";
+    return false;
+  }
+
+  // Check if layer already exists
+  for (const auto &it : ctx.layers) {
+    if (it.second.name == layer_name) {
+      err = "Layer with name '" + layer_name + "' already exists\n";
+      return false;
+    }
+  }
+
+  // Create new layer
+  Layer new_layer;
+  std::string uuid = generateUUID();
+
+  // Parse and apply layer metadata if provided (exception-free)
+  if (!layer_meta_json.empty()) {
+    // Assume layerMeta is already a valid JSON object string
+    // Direct JSON parsing without exception handling
+    nlohmann::json meta_obj = nlohmann::json::parse(layer_meta_json, nullptr, false);
+
+    if (!meta_obj.is_discarded()) {
+      // Set doc if provided
+      if (meta_obj.contains("doc") && meta_obj["doc"].is_string()) {
+        new_layer.metas().doc = tinyusdz::value::StringData(meta_obj["doc"].get<std::string>());
+      }
+
+      // Set comment if provided
+      if (meta_obj.contains("comment") && meta_obj["comment"].is_string()) {
+        new_layer.metas().comment = tinyusdz::value::StringData(meta_obj["comment"].get<std::string>());
+      }
+    }
+  }
+
+  // Parse and add primspecs if provided (exception-free)
+  if (!prim_specs_json.empty()) {
+    // Parse JSON without exception handling
+    nlohmann::json prim_specs_obj = nlohmann::json::parse(prim_specs_json, nullptr, false);
+
+    if (!prim_specs_obj.is_discarded()) {
+      // Handle both object (single prim) and array (multiple prims)
+      nlohmann::json prims_array;
+      if (prim_specs_obj.is_object() && !prim_specs_obj.is_array()) {
+        // Single prim object - wrap in array for uniform handling
+        prims_array = nlohmann::json::array();
+        prims_array.push_back(prim_specs_obj);
+      } else if (prim_specs_obj.is_array()) {
+        prims_array = prim_specs_obj;
+      } else {
+        err = "primSpecs must be a JSON object or array\n";
+        return false;
+      }
+
+      // Process each prim specification
+      for (const auto &prim_json : prims_array) {
+        if (!prim_json.contains("name") || !prim_json["name"].is_string()) {
+          err = "Each prim must have a 'name' field\n";
+          return false;
+        }
+
+        std::string prim_name = prim_json["name"].get<std::string>();
+
+        // Create PrimSpec
+        PrimSpec prim_spec;
+        prim_spec.set_name(prim_name);
+
+        // Set type name if provided
+        if (prim_json.contains("typeName") && prim_json["typeName"].is_string()) {
+          prim_spec.typeName() = prim_json["typeName"].get<std::string>();
+        }
+
+        // Set specifier if provided (def, over, class)
+        if (prim_json.contains("specifier") && prim_json["specifier"].is_string()) {
+          std::string specifier_str = prim_json["specifier"].get<std::string>();
+          if (specifier_str == "def") {
+            prim_spec.specifier() = Specifier::Def;
+          } else if (specifier_str == "over") {
+            prim_spec.specifier() = Specifier::Over;
+          } else if (specifier_str == "class") {
+            prim_spec.specifier() = Specifier::Class;
+          }
+        }
+
+        // Add prim metadata if provided
+        if (prim_json.contains("metadata") && prim_json["metadata"].is_object()) {
+          auto meta_obj = prim_json["metadata"];
+
+          if (meta_obj.contains("doc") && meta_obj["doc"].is_string()) {
+            prim_spec.metas().doc = tinyusdz::value::StringData(meta_obj["doc"].get<std::string>());
+          }
+          if (meta_obj.contains("comment") && meta_obj["comment"].is_string()) {
+            prim_spec.metas().comment = tinyusdz::value::StringData(meta_obj["comment"].get<std::string>());
+          }
+        }
+
+        // Add prim to layer (only root-level prims)
+        new_layer.primspecs()[prim_name] = prim_spec;
+      }
+    }
+  }
+
+  // Store the layer
+  USDLayer usd_layer;
+  usd_layer.name = layer_name;
+  usd_layer.uri = layer_name;
+  usd_layer.layer = new_layer;
+
+  ctx.layers[uuid] = usd_layer;
+
+  // Return success response with UUID
+  result["content"] = nlohmann::json::array();
+  nlohmann::json response;
+  response["type"] = "text";
+  response["text"] = "Successfully created new layer '" + layer_name + "' with UUID: " + uuid;
+  result["content"].push_back(response);
+
+  return true;
+}
 
 bool GetVersion(nlohmann::json &result) {
   std::string ver_str = std::to_string(tinyusdz::version_major) + "." +
@@ -2096,6 +2227,25 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
 
   {
     nlohmann::json j;
+    j["name"] = "new_layer";
+    j["description"] = "Create new empty or populated USD Layer with optional LayerMeta and PrimSpecs";
+
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    schema["properties"]["name"] = {{"type", "string"}, {"description", "Layer name (must be unique)"}};
+    schema["properties"]["layerMeta"] = {{"type", "string"}, {"description", "Optional LayerMeta as JSON string (e.g., {\"doc\": \"...\", \"comment\": \"...\"})"}};
+    schema["properties"]["primSpecs"] = {{"type", "string"}, {"description", "Optional PrimSpecs as JSON array or object with fields: name (required), typeName, specifier (def/over/class), metadata"}};
+
+    schema["required"] = nlohmann::json::array({"name"});
+
+    j["inputSchema"] = schema;
+
+    result["tools"].push_back(j);
+  }
+
+  {
+    nlohmann::json j;
     j["name"] = "list_primspecs";
     j["description"] = "List root PrimSpecs in loaded USD Layer(uuid or name)";
 
@@ -2467,6 +2617,9 @@ bool CallTool(Context &ctx, const std::string &tool_name,
   } else if (tool_name == "load_usd_layer_from_data") {
     DCOUT("load_usd_layer_data");
     return LoadUSDLayerFromData(ctx, args, result, err);
+  } else if (tool_name == "new_layer") {
+    DCOUT("new_layer");
+    return NewLayer(ctx, args, result, err);
   } else if (tool_name == "list_primspecs") {
     DCOUT("list_primspecs");
     return ListPrimSpecs(ctx, args, result, err);
