@@ -23,6 +23,21 @@
 namespace tinyusdz {
 
 ///
+/// Component count trait for determining vector size
+/// Used for pre-allocation calculations
+///
+template <typename T>
+struct ComponentCount {
+  static constexpr size_t value = 1; // Default: scalar types
+};
+
+// Specializations for vector types (std::array<T, N>)
+template <typename T, size_t N>
+struct ComponentCount<std::array<T, N>> {
+  static constexpr size_t value = N;
+};
+
+///
 /// Configuration for threaded printing
 ///
 struct ThreadedPrintConfig {
@@ -1114,6 +1129,18 @@ bool try_print_typed_array_value(StreamWriter& writer, const uint8_t* packed_ptr
     if (view.size() == 0) {
         return false;  // Try next type
     }
+
+    // Pre-allocate buffer space for better performance
+    // Formula: (array_len / 2) * 4 * vec_len
+    // - array_len: number of elements
+    // - 4: estimated average characters per numeric value
+    // - vec_len: vector component count (1 for scalar, 3 for float3, etc.)
+    const size_t array_len = view.size();
+    const size_t vec_len = ComponentCount<T>::value;
+    const size_t estimated_size = (array_len / 2) * 4 * vec_len;
+
+    // Reserve space in the writer's buffer
+    writer.reserve(writer.size() + estimated_size);
 
     // For single-element arrays (common for double3/float3/etc), print without brackets
     if (view.size() == 1) {
