@@ -206,7 +206,6 @@ bool AsciiParser::ParseTypedTimeSamples(value::TimeSamples *ts_out) {
     }
   }
 
-  DCOUT("Parse POD TimeSamples success. # of items = " << pod_storage->size());
   return true;
 }
 
