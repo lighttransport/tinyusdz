@@ -1158,10 +1158,9 @@ bool AddProp(Context &ctx, const nlohmann::json &args,
         attr.set_value(value == "true");
         attr.set_type_name("bool");
       } else if (value.find('.') != std::string::npos && !value.empty()) {
-        // Likely a float - try direct assignment
-        // This may have issues with non-numeric values, but ok for now
+        // Likely a float - parse using strtod (exception-free)
         double d = 0.0;
-        // Simple numeric check without exceptions
+        // Validate numeric format without exceptions
         bool is_numeric = true;
         for (size_t i = 0; i < value.size(); ++i) {
           if (i == 0 && (value[i] == '-' || value[i] == '+')) continue;
