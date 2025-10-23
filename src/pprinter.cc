@@ -16,6 +16,7 @@
 #include "usdShade.hh"
 #include "value-pprint.hh"
 #include "timesamples-pprint.hh"
+#include "stream-writer.hh"
 //
 #include "common-macros.inc"
 
@@ -4906,6 +4907,44 @@ std::string print_primspec(const PrimSpec &primspec, const uint32_t indent) {
 
   return ss.str();
 }
+
+// ============================================================================
+// StreamWriter overloads for efficient printing
+// ============================================================================
+
+void print_prim(StreamWriter& writer, const Prim &prim, const uint32_t indent) {
+  // For now, delegate to string version
+  // TODO: In future, refactor to write directly to StreamWriter
+  writer.write(print_prim(prim, indent));
+}
+
+void print_primspec(StreamWriter& writer, const PrimSpec &primspec, const uint32_t indent) {
+  // For now, delegate to string version
+  // TODO: In future, refactor to write directly to StreamWriter
+  writer.write(print_primspec(primspec, indent));
+}
+
+// ============================================================================
+// ChunkedStreamWriter template implementations
+// ============================================================================
+
+template <size_t ChunkSize, size_t Alignment>
+void print_prim(ChunkedStreamWriter<ChunkSize, Alignment>& writer, const Prim &prim, const uint32_t indent) {
+  // For now, delegate to string version
+  // TODO: In future, refactor to write directly to ChunkedStreamWriter for zero-copy
+  writer.write(print_prim(prim, indent));
+}
+
+template <size_t ChunkSize, size_t Alignment>
+void print_primspec(ChunkedStreamWriter<ChunkSize, Alignment>& writer, const PrimSpec &primspec, const uint32_t indent) {
+  // For now, delegate to string version
+  // TODO: In future, refactor to write directly to ChunkedStreamWriter for zero-copy
+  writer.write(print_primspec(primspec, indent));
+}
+
+// Explicit template instantiations for common parameters
+template void print_prim<4096, 16>(ChunkedStreamWriter<4096, 16>& writer, const Prim &prim, const uint32_t indent);
+template void print_primspec<4096, 16>(ChunkedStreamWriter<4096, 16>& writer, const PrimSpec &primspec, const uint32_t indent);
 
 }  // namespace prim
 
