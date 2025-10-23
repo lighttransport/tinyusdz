@@ -1,5 +1,6 @@
 #include "mcp-tools.hh"
 
+#include <algorithm>
 #include <string>
 #include <sstream>
 
@@ -101,6 +102,12 @@ bool AddPrim(Context &ctx, const nlohmann::json &args,
 bool DelPrim(Context &ctx, const nlohmann::json &args,
              nlohmann::json &result, std::string &err);
 bool GetPrim(Context &ctx, const nlohmann::json &args,
+             nlohmann::json &result, std::string &err);
+bool AddProp(Context &ctx, const nlohmann::json &args,
+             nlohmann::json &result, std::string &err);
+bool DelProp(Context &ctx, const nlohmann::json &args,
+             nlohmann::json &result, std::string &err);
+bool GetProp(Context &ctx, const nlohmann::json &args,
              nlohmann::json &result, std::string &err);
 
 bool GetVersion(nlohmann::json &result) {
@@ -1060,6 +1067,360 @@ bool GetPrim(Context &ctx, const nlohmann::json &args,
   }
 }
 
+bool AddProp(Context &ctx, const nlohmann::json &args,
+             nlohmann::json &result, std::string &err) {
+  DCOUT("args " << args);
+
+  std::string uuid = args["uuid"];
+  std::string name = args["name"];
+  std::string prim_path_str = args["primPath"];
+  std::string prop_name = args["propertyName"];
+  std::string prop_type = args["propertyType"];  // "attribute" or "relationship"
+  std::string value = args["value"];
+  std::string value_format = args["valueFormat"];  // "json" or "ascii"
+
+  if (uuid.empty() && name.empty()) {
+    err = "Either `name` or `uuid` arg required\n";
+    return false;
+  }
+
+  if (prim_path_str.empty()) {
+    err = "`primPath` argument required\n";
+    return false;
+  }
+
+  if (prop_name.empty()) {
+    err = "`propertyName` argument required\n";
+    return false;
+  }
+
+  if (prop_type.empty() || (prop_type != "attribute" && prop_type != "relationship")) {
+    err = "`propertyType` must be either 'attribute' or 'relationship'\n";
+    return false;
+  }
+
+  if (uuid.empty()) {
+    uuid = FindUUID(name, ctx.layers);
+  }
+
+  if (!ctx.layers.count(uuid)) {
+    DCOUT("Layer not found: " << uuid);
+    err = "Layer not found: " + uuid;
+    return false;
+  }
+
+  USDLayer &usd_layer = ctx.layers.at(uuid);
+  Path prim_path(prim_path_str, "");
+
+  if (!prim_path.is_valid()) {
+    err = "Invalid primPath: " + prim_path_str;
+    return false;
+  }
+
+  // Get prim name(s) from path
+  std::string prim_part = prim_path.prim_part();
+  if (prim_part.empty() || prim_part == "/") {
+    err = "Invalid primPath";
+    return false;
+  }
+
+  if (prim_part[0] == '/') {
+    prim_part = prim_part.substr(1);
+  }
+
+  // Only support root-level prims for now
+  size_t slash_pos = prim_part.find('/');
+  if (slash_pos != std::string::npos) {
+    err = "Nested prim property modification not yet supported. Only root-level prims can be modified.";
+    return false;
+  }
+
+  // Get or create prim
+  auto &primspecs = usd_layer.layer.primspecs();
+  if (!primspecs.count(prim_part)) {
+    err = "Prim not found at path: " + prim_path_str;
+    return false;
+  }
+
+  PrimSpec &prim_spec = primspecs[prim_part];
+
+  if (prop_type == "attribute") {
+    // Create attribute
+    Attribute attr;
+    attr.set_name(prop_name);
+
+    // For now, store value as string and infer type
+    if (value_format == "json" || value_format.empty()) {
+      // Parse JSON value
+      // NOTE: Project is built with -fno-exceptions, so avoid exceptions
+      // Infer type from value format
+      if (value == "true" || value == "false") {
+        attr.set_value(value == "true");
+        attr.set_type_name("bool");
+      } else if (value.find('.') != std::string::npos && !value.empty()) {
+        // Likely a float - try direct assignment
+        // This may have issues with non-numeric values, but ok for now
+        double d = 0.0;
+        // Simple numeric check without exceptions
+        bool is_numeric = true;
+        for (size_t i = 0; i < value.size(); ++i) {
+          if (i == 0 && (value[i] == '-' || value[i] == '+')) continue;
+          if (value[i] == '.') continue;
+          if (value[i] == 'e' || value[i] == 'E') continue;
+          if (!std::isdigit(value[i])) {
+            is_numeric = false;
+            break;
+          }
+        }
+        if (is_numeric) {
+          // Use strtod for safer parsing without exceptions
+          d = std::strtod(value.c_str(), nullptr);
+          attr.set_value(d);
+          attr.set_type_name("double");
+        } else {
+          attr.set_value(tinyusdz::value::token(value));
+          attr.set_type_name("token");
+        }
+      } else if (!value.empty() && std::all_of(value.begin(), value.end(), ::isdigit)) {
+        // Likely an integer - use strtoll without exceptions
+        int64_t i = std::strtoll(value.c_str(), nullptr, 10);
+        attr.set_value(i);
+        attr.set_type_name("int64");
+      } else {
+        // Default to token
+        attr.set_value(tinyusdz::value::token(value));
+        attr.set_type_name("token");
+      }
+    } else if (value_format == "ascii") {
+      // For ASCII format, treat as string
+      attr.set_value(tinyusdz::value::token(value));
+      attr.set_type_name("token");
+    }
+
+    // Add attribute to prim
+    Property prop(attr);
+    prim_spec.props()[prop_name] = prop;
+  } else if (prop_type == "relationship") {
+    // Create relationship
+    Relationship rel;
+
+    // Parse value as path
+    Path rel_path(value, "");
+    if (rel_path.is_valid()) {
+      rel.set(rel_path);
+    } else {
+      err = "Invalid relationship target path: " + value;
+      return false;
+    }
+
+    // Add relationship to prim
+    Property prop(rel);
+    prim_spec.props()[prop_name] = prop;
+  }
+
+  result["content"] = nlohmann::json::array();
+  nlohmann::json response;
+  response["type"] = "text";
+  response["text"] = "Successfully added " + prop_type + " property '" + prop_name + "' to prim at path: " + prim_path_str;
+  result["content"].push_back(response);
+
+  return true;
+}
+
+bool DelProp(Context &ctx, const nlohmann::json &args,
+             nlohmann::json &result, std::string &err) {
+  DCOUT("args " << args);
+
+  std::string uuid = args["uuid"];
+  std::string name = args["name"];
+  std::string prim_path_str = args["primPath"];
+  std::string prop_name = args["propertyName"];
+
+  if (uuid.empty() && name.empty()) {
+    err = "Either `name` or `uuid` arg required\n";
+    return false;
+  }
+
+  if (prim_path_str.empty()) {
+    err = "`primPath` argument required\n";
+    return false;
+  }
+
+  if (prop_name.empty()) {
+    err = "`propertyName` argument required\n";
+    return false;
+  }
+
+  if (uuid.empty()) {
+    uuid = FindUUID(name, ctx.layers);
+  }
+
+  if (!ctx.layers.count(uuid)) {
+    DCOUT("Layer not found: " << uuid);
+    err = "Layer not found: " + uuid;
+    return false;
+  }
+
+  USDLayer &usd_layer = ctx.layers.at(uuid);
+  Path prim_path(prim_path_str, "");
+
+  if (!prim_path.is_valid()) {
+    err = "Invalid primPath: " + prim_path_str;
+    return false;
+  }
+
+  std::string prim_part = prim_path.prim_part();
+  if (prim_part.empty() || prim_part == "/") {
+    err = "Invalid primPath";
+    return false;
+  }
+
+  if (prim_part[0] == '/') {
+    prim_part = prim_part.substr(1);
+  }
+
+  // Only support root-level prims for now
+  size_t slash_pos = prim_part.find('/');
+  if (slash_pos != std::string::npos) {
+    err = "Nested prim property modification not yet supported. Only root-level prims can be modified.";
+    return false;
+  }
+
+  auto &primspecs = usd_layer.layer.primspecs();
+  if (!primspecs.count(prim_part)) {
+    err = "Prim not found at path: " + prim_path_str;
+    return false;
+  }
+
+  PrimSpec &prim_spec = primspecs[prim_part];
+  auto &props = prim_spec.props();
+
+  if (!props.count(prop_name)) {
+    err = "Property not found: " + prop_name;
+    return false;
+  }
+
+  props.erase(prop_name);
+
+  result["content"] = nlohmann::json::array();
+  nlohmann::json response;
+  response["type"] = "text";
+  response["text"] = "Successfully deleted property '" + prop_name + "' from prim at path: " + prim_path_str;
+  result["content"].push_back(response);
+
+  return true;
+}
+
+bool GetProp(Context &ctx, const nlohmann::json &args,
+             nlohmann::json &result, std::string &err) {
+  DCOUT("args " << args);
+
+  std::string uuid = args["uuid"];
+  std::string name = args["name"];
+  std::string prim_path_str = args["primPath"];
+  std::string prop_name = args["propertyName"];
+
+  if (uuid.empty() && name.empty()) {
+    err = "Either `name` or `uuid` arg required\n";
+    return false;
+  }
+
+  if (prim_path_str.empty()) {
+    err = "`primPath` argument required\n";
+    return false;
+  }
+
+  if (prop_name.empty()) {
+    err = "`propertyName` argument required\n";
+    return false;
+  }
+
+  if (uuid.empty()) {
+    uuid = FindUUID(name, ctx.layers);
+  }
+
+  if (!ctx.layers.count(uuid)) {
+    DCOUT("Layer not found: " << uuid);
+    err = "Layer not found: " + uuid;
+    return false;
+  }
+
+  const USDLayer &usd_layer = ctx.layers.at(uuid);
+  Path prim_path(prim_path_str, "");
+
+  if (!prim_path.is_valid()) {
+    err = "Invalid primPath: " + prim_path_str;
+    return false;
+  }
+
+  std::string prim_part = prim_path.prim_part();
+  if (prim_part.empty() || prim_part == "/") {
+    err = "Invalid primPath";
+    return false;
+  }
+
+  if (prim_part[0] == '/') {
+    prim_part = prim_part.substr(1);
+  }
+
+  // Only support root-level prims for now
+  size_t slash_pos = prim_part.find('/');
+  if (slash_pos != std::string::npos) {
+    err = "Nested prim property retrieval not yet supported. Only root-level prims can be retrieved.";
+    return false;
+  }
+
+  const auto &primspecs = usd_layer.layer.primspecs();
+  auto it = primspecs.find(prim_part);
+  if (it == primspecs.end()) {
+    err = "Prim not found at path: " + prim_path_str;
+    return false;
+  }
+
+  const PrimSpec &prim_spec = it->second;
+  const auto &props = prim_spec.props();
+
+  if (!props.count(prop_name)) {
+    err = "Property not found: " + prop_name;
+    return false;
+  }
+
+  const Property &prop = props.at(prop_name);
+
+  nlohmann::json prop_json = nlohmann::json::object();
+  prop_json["name"] = prop_name;
+
+  if (prop.is_attribute()) {
+    prop_json["type"] = "attribute";
+    const Attribute &attr = prop.get_attribute();
+    prop_json["dataType"] = attr.type_name();
+    prop_json["variability"] = attr.is_uniform() ? "uniform" : "varying";
+
+    // Try to represent the value
+    prop_json["value"] = ""; // Placeholder - actual value representation depends on type
+  } else if (prop.is_relationship()) {
+    prop_json["type"] = "relationship";
+    const Relationship &rel = prop.get_relationship();
+    nlohmann::json targets_json = nlohmann::json::array();
+    if (rel.is_path()) {
+      targets_json.push_back(rel.targetPath.full_path_name());
+    } else if (rel.is_pathvector()) {
+      for (const auto &target : rel.targetPathVector) {
+        targets_json.push_back(target.full_path_name());
+      }
+    }
+    prop_json["targets"] = targets_json;
+  }
+
+  result["content"] = nlohmann::json::array();
+  nlohmann::json content;
+  content["type"] = "text";
+  content["text"] = prop_json.dump(2);
+  result["content"].push_back(content);
+
+  return true;
+}
+
 bool ListScreenshots(Context &ctx, const nlohmann::json &args,
                      nlohmann::json &result, std::string &err) {
   (void)args;
@@ -1863,6 +2224,69 @@ bool GetToolsList(Context &ctx, nlohmann::json &result) {
 
   {
     nlohmann::json j;
+    j["name"] = "add_prop";
+    j["description"] = "Add property (attribute or relationship) to a PrimSpec at specified primPath";
+
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    schema["properties"]["uuid"] = {{"type", "string"}, {"description", "Layer UUID (optional if name provided)"}};
+    schema["properties"]["name"] = {{"type", "string"}, {"description", "Layer name (optional if uuid provided)"}};
+    schema["properties"]["primPath"] = {{"type", "string"}, {"description", "USD prim path (e.g., /MyPrim)"}};
+    schema["properties"]["propertyName"] = {{"type", "string"}, {"description", "Name of the property to add"}};
+    schema["properties"]["propertyType"] = {{"type", "string"}, {"enum", {"attribute", "relationship"}}, {"description", "Type of property"}};
+    schema["properties"]["value"] = {{"type", "string"}, {"description", "Property value (JSON for attributes, path string for relationships)"}};
+    schema["properties"]["valueFormat"] = {{"type", "string"}, {"enum", {"json", "ascii"}}, {"description", "Format of value for attributes"}};
+
+    schema["required"] = nlohmann::json::array({"primPath", "propertyName", "propertyType", "value"});
+
+    j["inputSchema"] = schema;
+
+    result["tools"].push_back(j);
+  }
+
+  {
+    nlohmann::json j;
+    j["name"] = "del_prop";
+    j["description"] = "Delete property (attribute or relationship) from a PrimSpec at specified primPath";
+
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    schema["properties"]["uuid"] = {{"type", "string"}, {"description", "Layer UUID (optional if name provided)"}};
+    schema["properties"]["name"] = {{"type", "string"}, {"description", "Layer name (optional if uuid provided)"}};
+    schema["properties"]["primPath"] = {{"type", "string"}, {"description", "USD prim path (e.g., /MyPrim)"}};
+    schema["properties"]["propertyName"] = {{"type", "string"}, {"description", "Name of the property to delete"}};
+
+    schema["required"] = nlohmann::json::array({"primPath", "propertyName"});
+
+    j["inputSchema"] = schema;
+
+    result["tools"].push_back(j);
+  }
+
+  {
+    nlohmann::json j;
+    j["name"] = "get_prop";
+    j["description"] = "Get property (attribute or relationship) from a PrimSpec as JSON";
+
+    nlohmann::json schema;
+    schema["type"] = "object";
+    schema["properties"] = nlohmann::json::object();
+    schema["properties"]["uuid"] = {{"type", "string"}, {"description", "Layer UUID (optional if name provided)"}};
+    schema["properties"]["name"] = {{"type", "string"}, {"description", "Layer name (optional if uuid provided)"}};
+    schema["properties"]["primPath"] = {{"type", "string"}, {"description", "USD prim path (e.g., /MyPrim)"}};
+    schema["properties"]["propertyName"] = {{"type", "string"}, {"description", "Name of the property to get"}};
+
+    schema["required"] = nlohmann::json::array({"primPath", "propertyName"});
+
+    j["inputSchema"] = schema;
+
+    result["tools"].push_back(j);
+  }
+
+  {
+    nlohmann::json j;
     j["name"] = "to_usda";
     j["description"] = "Convert USD Layer to USDA text";
 
@@ -2065,6 +2489,15 @@ bool CallTool(Context &ctx, const std::string &tool_name,
   } else if (tool_name == "get_prim") {
     DCOUT("get_prim");
     return GetPrim(ctx, args, result, err);
+  } else if (tool_name == "add_prop") {
+    DCOUT("add_prop");
+    return AddProp(ctx, args, result, err);
+  } else if (tool_name == "del_prop") {
+    DCOUT("del_prop");
+    return DelProp(ctx, args, result, err);
+  } else if (tool_name == "get_prop") {
+    DCOUT("get_prop");
+    return GetProp(ctx, args, result, err);
   } else if (tool_name == "list_screenshots") {
     return ListScreenshots(ctx, args, result, err);
   } else if (tool_name == "save_screenshot") {

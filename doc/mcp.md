@@ -156,6 +156,59 @@ If you are using TinyUSDZ on JS/WASM, MCP server in JS is provided in `<tinyusdz
       * `payloads`: Array of payload composition arcs with assetPath and primPath
     * Error message if the prim was not found or path is invalid
 
+## Property Management commands
+
+* add_prop
+  * Add property (attribute or relationship) to a PrimSpec at specified primPath
+  * Currently only supports root-level prims (nested property modification not yet supported)
+  * arg
+    * uuid(str) : Layer UUID (optional if name is provided)
+    * name(str) : Layer name (optional if uuid is provided)
+    * primPath(str) : USD prim path (e.g., `/MyPrim`) - required
+    * propertyName(str) : Name of the property to add - required
+    * propertyType(str) : Type of property - required
+      * Valid values: `attribute`, `relationship`
+    * value(str) : Property value - required
+      * For attributes: JSON representation of value (string, number, boolean)
+      * For relationships: USD path string (e.g., `/other/prim`)
+    * valueFormat(str) : Format of attribute value - optional, default "json"
+      * Valid values: `json`, `ascii`
+  * response
+    * Success message indicating the property was added
+    * Error message if the operation failed (invalid path, type error, etc.)
+
+* del_prop
+  * Delete property (attribute or relationship) from a PrimSpec at specified primPath
+  * Currently only supports root-level prims
+  * arg
+    * uuid(str) : Layer UUID (optional if name is provided)
+    * name(str) : Layer name (optional if uuid is provided)
+    * primPath(str) : USD prim path (e.g., `/MyPrim`) - required
+    * propertyName(str) : Name of the property to delete - required
+  * response
+    * Success message indicating the property was deleted
+    * Error message if the operation failed (property not found, prim not found, etc.)
+
+* get_prop
+  * Get property (attribute or relationship) from a PrimSpec as JSON
+  * Currently only supports root-level prims
+  * arg
+    * uuid(str) : Layer UUID (optional if name is provided)
+    * name(str) : Layer name (optional if uuid is provided)
+    * primPath(str) : USD prim path (e.g., `/MyPrim`) - required
+    * propertyName(str) : Name of the property to get - required
+  * response
+    * JSON object containing:
+      * `name`: Property name
+      * `type`: Property type (`attribute` or `relationship`)
+      * For attributes:
+        * `dataType`: USD type name (e.g., `double`, `int64`, `token`)
+        * `variability`: Variability qualifier (`uniform` or `varying`)
+        * `value`: Property value (placeholder in current implementation)
+      * For relationships:
+        * `targets`: Array of target prim paths
+    * Error message if the property was not found or path is invalid
+
 ## JS/Three.js specific commands
 
 
