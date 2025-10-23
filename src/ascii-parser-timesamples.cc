@@ -109,12 +109,7 @@ bool AsciiParser::ParseTypedTimeSamples(value::TimeSamples *ts_out) {
     return false;
   }
 
-  // Get POD storage for direct writing
-  PODTimeSamples* pod_storage = ts_out->get_pod_storage();
-  if (!pod_storage) {
-    // Shouldn't happen if init() succeeded
-    return false;
-  }
+  // Phase 3: Use TimeSamples methods directly (no more get_pod_storage())
 
   while (!Eof()) {
     char c;
@@ -149,7 +144,7 @@ bool AsciiParser::ParseTypedTimeSamples(value::TimeSamples *ts_out) {
     // Check for None/ValueBlock
     if (MaybeNone()) {
       std::string err;
-      if (!pod_storage->add_blocked_sample<T>(timeVal, &err)) {
+      if (!ts_out->add_pod_blocked_sample<T>(timeVal, &err)) {
         if (!err.empty()) {
           PushError(err);
         }
@@ -164,7 +159,7 @@ bool AsciiParser::ParseTypedTimeSamples(value::TimeSamples *ts_out) {
       }
 
       std::string err;
-      if (!pod_storage->add_sample(timeVal, typed_val, &err)) {
+      if (!ts_out->add_pod_sample(timeVal, typed_val, &err)) {
         if (!err.empty()) {
           PushError(err);
         }
