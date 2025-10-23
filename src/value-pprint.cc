@@ -563,8 +563,8 @@ template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<double> &v) {
   // Not sure what is the HARD-LIMT buffer length for dtoa_milo,
   // but according to std::numeric_limits<double>::digits10(=15),
-  // 32 should be sufficient, but allocate 128 just in case
-  char buf[128];
+  // 32 should be sufficient, but allocate 384 just in case
+  char buf[384];
 
   // TODO: multi-threading for further performance gain?
 
@@ -573,7 +573,8 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<double> &v) {
     if (i > 0) {
       ofs << ", ";
     }
-    dtoa_milo(v[i], buf);
+    char *e = dtoa_milo(v[i], buf);
+    (*e) = '\0';
     ofs << std::string(buf);
   }
   ofs << "]";
