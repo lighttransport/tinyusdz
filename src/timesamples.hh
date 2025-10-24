@@ -1081,12 +1081,22 @@ struct TimeSamples {
   };
 
   bool empty() const {
+    // Check if we're using unified storage (Phase 3) or legacy storage
+    if (!_times.empty()) {
+      // Using unified storage
+      return false;
+    }
     return _use_pod ? _pod_samples.empty() : _samples.empty();
   }
 
   size_t size() const {
     if (_dirty) {
       update();
+    }
+    // Check if we're using unified storage (Phase 3) or legacy storage
+    if (!_times.empty()) {
+      // Using unified storage - return _times.size()
+      return _times.size();
     }
     return _use_pod ? _pod_samples.size() : _samples.size();
   }
@@ -2348,7 +2358,12 @@ struct TimeSamples {
     if (_dirty) {
       update();
     }
-    // Delegate to _pod_samples based on _use_pod flag
+    // Check if using unified storage (Phase 3) or _pod_samples storage
+    if (!_times.empty()) {
+      // Using unified storage directly on TimeSamples
+      return _times;
+    }
+    // Delegate to _pod_samples if not using unified storage
     if (_use_pod) {
       return _pod_samples._times;
     }
@@ -2359,7 +2374,10 @@ struct TimeSamples {
     if (_dirty) {
       update();
     }
-    // Delegate to _pod_samples based on _use_pod flag
+    // Check if using unified storage
+    if (!_times.empty()) {
+      return _blocked;
+    }
     if (_use_pod) {
       return _pod_samples._blocked;
     }
@@ -2370,7 +2388,10 @@ struct TimeSamples {
     if (_dirty) {
       update();
     }
-    // Delegate to _pod_samples based on _use_pod flag
+    // Check if using unified storage
+    if (!_times.empty()) {
+      return _values;
+    }
     if (_use_pod) {
       return _pod_samples._values;
     }
@@ -2381,7 +2402,10 @@ struct TimeSamples {
     if (_dirty) {
       update();
     }
-    // Delegate to _pod_samples based on _use_pod flag
+    // Check if using unified storage
+    if (!_times.empty()) {
+      return _offsets;
+    }
     if (_use_pod) {
       return _pod_samples._offsets;
     }

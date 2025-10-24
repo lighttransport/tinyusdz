@@ -1444,7 +1444,11 @@ std::string print_prop(const Property &prop, const std::string &prop_name,
       ss << "\n";
     }
 
-    if (attr.has_timesamples() && (attr.variability() != Variability::Uniform)) {
+    // Check if timeSamples were authored (even if empty)
+    // An authored but empty timeSamples will have a valid type_id but size=0
+    bool has_timesamples_authored = (attr.has_timesamples() || attr.get_var().ts_raw().type_id() != 0);
+
+    if (has_timesamples_authored && (attr.variability() != Variability::Uniform)) {
 
       ss << pprint::Indent(indent);
 
@@ -1624,7 +1628,10 @@ std::string print_xformOps(const std::vector<XformOp> &xformOps,
         ss << "\n";
       }
 
-      if (xformOp.has_timesamples()) {
+      // Check if timeSamples were authored (even if empty)
+      bool has_timesamples_authored = (xformOp.has_timesamples() || xformOp.get_var().ts_raw().type_id() != 0);
+
+      if (has_timesamples_authored) {
 
         if (printed_vars.count(varname + ".timeSamples")) {
           continue;
@@ -1638,11 +1645,8 @@ std::string print_xformOps(const std::vector<XformOp> &xformOps,
         ss << ".timeSamples";
         ss << " = ";
 
-        if (auto pv = xformOp.get_timesamples()) {
-          ss << print_timesamples(pv.value(), indent);
-        } else {
-          ss << "[InternalError]";
-        }
+        // Always use ts_raw() to get timeSamples even if empty
+        ss << print_timesamples(xformOp.get_var().ts_raw(), indent);
         ss << "\n";
       }
 
