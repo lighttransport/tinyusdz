@@ -205,6 +205,7 @@ bool AsciiParser::ParseTimeSampleValueOfArrayType(const uint32_t type_id, value:
   } else
 
   // NOTE: `string` does not support multi-line string.
+  PARSE_TYPE(type_id, bool)
   PARSE_TYPE(type_id, value::AssetPath)
   PARSE_TYPE(type_id, value::token)
   PARSE_TYPE(type_id, std::string)
