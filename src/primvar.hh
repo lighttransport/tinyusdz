@@ -50,15 +50,15 @@ struct PrimVar {
   }
 
   // Copy constructor
-  PrimVar(const PrimVar& rhs) 
+  PrimVar(const PrimVar& rhs)
     : _value(rhs._value), _blocked(rhs._blocked), _ts(rhs._ts) {
     //TUSDZ_LOG_I("PrimVar copy ctor");
   }
 
   // Move constructor
   PrimVar(PrimVar&& rhs) noexcept
-    : _value(std::move(rhs._value)), 
-      _blocked(rhs._blocked), 
+    : _value(std::move(rhs._value)),
+      _blocked(rhs._blocked),
       _ts(std::move(rhs._ts)) {
     //TUSDZ_LOG_I("PrimVar move ctor");
     rhs._blocked = false;
@@ -150,8 +150,9 @@ struct PrimVar {
     if (has_default()) {
       return _value.type_name();
     }
-      
-    if (has_timesamples()) {
+
+    // Check if timeSamples were authored (even if empty)
+    if (has_timesamples() || _ts.type_id() != 0) {
       return _ts.type_name();
     }
 
@@ -167,7 +168,8 @@ struct PrimVar {
       return _value.type_id();
     }
 
-    if (has_timesamples()) {
+    // Check if timeSamples were authored (even if empty)
+    if (has_timesamples() || _ts.type_id() != 0) {
       return _ts.type_id();
     }
 
