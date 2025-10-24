@@ -1077,35 +1077,27 @@ bool try_print_typed_array_value(StreamWriter& writer, const uint8_t* packed_ptr
         return false;  // Try next type
     }
 
-    // For single-element arrays (common for double3/float3/etc), print without brackets
-    if (view.size() == 1) {
-        // Write the single value directly without brackets
+    // Always use brackets for arrays (USD spec requires brackets for all arrays)
+    writer.write("[");
+
+    size_t max_elements = view.size();
+
+    for (size_t i = 0; i < max_elements; ++i) {
+        if (i > 0) writer.write(", ");
+
+        // Write the value using operator<< via stringstream
         std::stringstream ss;
-        ss << view[0];
+        ss << view[i];
         writer.write(ss.str());
-    } else {
-        // Multiple elements - use brackets
-        writer.write("[");
-
-        size_t max_elements = view.size();
-
-        for (size_t i = 0; i < max_elements; ++i) {
-            if (i > 0) writer.write(", ");
-
-            // Write the value using operator<< via stringstream
-            std::stringstream ss;
-            ss << view[i];
-            writer.write(ss.str());
-        }
-
-        //if (view.size() > max_elements) {
-        //    writer.write(", ... (");
-        //    writer.write(static_cast<int>(view.size()));
-        //    writer.write(" total)");
-        //}
-
-        writer.write("]");
     }
+
+    //if (view.size() > max_elements) {
+    //    writer.write(", ... (");
+    //    writer.write(static_cast<int>(view.size()));
+    //    writer.write(" total)");
+    //}
+
+    writer.write("]");
     return true;
 }
 
@@ -1424,6 +1416,35 @@ std::string print_typed_array(const uint8_t* data) {
         ss << "]";
     }
     return ss.str();
+}
+
+// Forward declarations
+void pprint_pod_value_by_type(StreamWriter& writer, const uint8_t* data, uint32_t type_id);
+size_t get_pod_type_size(uint32_t type_id);
+
+/// Helper function to print an array of POD values
+/// @param writer Output writer
+/// @param data Pointer to the first array element
+/// @param type_id Type ID of the array elements
+/// @param array_size Number of elements in the array
+static void pprint_pod_array_by_type(StreamWriter& writer, const uint8_t* data, uint32_t type_id, size_t array_size) {
+    size_t element_size = get_pod_type_size(type_id);
+    if (element_size == 0) {
+        writer.write("/* Unknown type_id: ");
+        writer.write(type_id);
+        writer.write(" */");
+        return;
+    }
+
+    writer.write("[");
+    for (size_t i = 0; i < array_size; ++i) {
+        if (i > 0) {
+            writer.write(", ");
+        }
+        const uint8_t* element_ptr = data + (i * element_size);
+        pprint_pod_value_by_type(writer, element_ptr, type_id);
+    }
+    writer.write("]");
 }
 
 std::string pprint_pod_value_by_type(const uint8_t* data, uint32_t type_id) {
@@ -2162,8 +2183,18 @@ void pprint_pod_timesamples(StreamWriter& writer, const PODTimeSamples& samples,
                       writer.write("None");
                   } else {
                       // Get pointer to value data using offset
-                      const uint8_t* value_data = values.data() + samples._offsets[i];
-                      pprint_pod_value_by_type(writer, value_data, samples.type_id());
+                      const uint8_t* value_data = values.data() + (samples._offsets[i] & PODTimeSamples::OFFSET_VALUE_MASK);
+
+                      // Check if this sample is an array (either global flag or per-sample flag)
+                      bool is_array = samples._is_stl_array || (samples._offsets[i] & PODTimeSamples::OFFSET_ARRAY_FLAG);
+
+                      if (is_array) {
+                          // Print all elements in the array
+                          pprint_pod_array_by_type(writer, value_data, samples.type_id(), samples._array_size);
+                      } else {
+                          // Print single value
+                          pprint_pod_value_by_type(writer, value_data, samples.type_id());
+                      }
                   }
 
                   writer.write(",");  // USDA allows trailing comma
@@ -2183,7 +2214,17 @@ void pprint_pod_timesamples(StreamWriter& writer, const PODTimeSamples& samples,
               } else {
                   // Get pointer to value data for this sample
                   const uint8_t* value_data = values.data() + value_offset;
-                  pprint_pod_value_by_type(writer, value_data, samples.type_id());
+
+                  // Check if this is an array type
+                  bool is_array = samples._is_stl_array;
+
+                  if (is_array) {
+                      // Print all elements in the array
+                      pprint_pod_array_by_type(writer, value_data, samples.type_id(), samples._array_size);
+                  } else {
+                      // Print single value
+                      pprint_pod_value_by_type(writer, value_data, samples.type_id());
+                  }
                   value_offset += element_size;
               }
 
@@ -2234,6 +2275,9 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
             return;
         }
 
+        // Get array size from TimeSamples directly (works for both POD storage and unified storage)
+        size_t array_size = samples.get_array_size();
+
         // Get arrays from unified storage
         const auto& times = samples.get_times();
         const auto& blocked = samples.get_blocked();
@@ -2246,6 +2290,7 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
 
         // Write samples - handle offset table if present
         if (!offsets.empty()) {
+
             // Phase 3: TypedArray path removed (not supported in unified storage)
             // Use regular printing for all POD types
             for (size_t i = 0; i < times.size(); ++i) {
@@ -2263,7 +2308,17 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
                     } else {
                         // Get pointer to value data using resolved byte offset
                         const uint8_t* value_ptr = values.data() + byte_offset;
-                        pprint_pod_value_by_type(writer, value_ptr, type_id);
+
+                        // Check if this sample is an array (check array flag in offset)
+                        bool is_array = samples.is_stl_array() || (offsets[i] & PODTimeSamples::OFFSET_ARRAY_FLAG);
+
+                        if (is_array) {
+                            // Print all elements in the array
+                            pprint_pod_array_by_type(writer, value_ptr, type_id, array_size);
+                        } else {
+                            // Print single value
+                            pprint_pod_value_by_type(writer, value_ptr, type_id);
+                        }
                     }
                 }
 
@@ -2286,7 +2341,17 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
                 } else {
                     // Get pointer to value data
                     const uint8_t* value_ptr = values.data() + value_offset;
-                    pprint_pod_value_by_type(writer, value_ptr, type_id);
+
+                    // Check if this is an array type
+                    bool is_array = samples.is_stl_array();
+
+                    if (is_array) {
+                        // Print all elements in the array
+                        pprint_pod_array_by_type(writer, value_ptr, type_id, array_size);
+                    } else {
+                        // Print single value
+                        pprint_pod_value_by_type(writer, value_ptr, type_id);
+                    }
                     value_offset += element_size;
                 }
 
