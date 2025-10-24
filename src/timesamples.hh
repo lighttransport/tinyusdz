@@ -79,6 +79,7 @@ inline bool is_pod_type_id(uint32_t type_id) {
 /// Only works with types that satisfy std::is_trivial and std::is_standard_layout.
 /// This is defined before TimeSamples so it can be used as a member.
 ///
+#if 0  // DEPRECATED: PODTimeSamples
 struct PODTimeSamples {
   // Hot data (frequently accessed, cache-friendly layout)
   uint32_t _type_id{0}; // TypeId from value-types.hh
@@ -1088,11 +1089,37 @@ public:
     return _blocked_count;
   }
 };
+#endif  // DEPRECATED: PODTimeSamples
 
 namespace value {
 
 ///
 /// Type-erased time samples container
+
+// Inline offset encoding helpers (replaces PODTimeSamples static methods)
+namespace {
+  constexpr uint64_t OFFSET_DEDUP_FLAG = 0x8000000000000000ULL;
+  constexpr uint64_t OFFSET_ARRAY_FLAG = 0x4000000000000000ULL;
+  constexpr uint64_t OFFSET_ARRAY_BUFFER_FLAG = 0x2000000000000000ULL;
+  constexpr uint64_t OFFSET_VALUE_MASK = 0x1FFFFFFFFFFFFFFFULL;
+
+  inline uint64_t make_array_buffer_offset(size_t array_index) {
+    return OFFSET_ARRAY_FLAG | OFFSET_ARRAY_BUFFER_FLAG | (array_index & OFFSET_VALUE_MASK);
+  }
+
+  inline uint64_t make_offset(size_t byte_offset, bool is_array) {
+    return (is_array ? OFFSET_ARRAY_FLAG : 0ULL) | (byte_offset & OFFSET_VALUE_MASK);
+  }
+
+  inline uint64_t make_dedup_offset(size_t sample_index, bool is_array) {
+    return OFFSET_DEDUP_FLAG | (is_array ? OFFSET_ARRAY_FLAG : 0ULL) | (sample_index & OFFSET_VALUE_MASK);
+  }
+
+  inline bool is_dedup(uint64_t offset_value) {
+    return (offset_value & OFFSET_DEDUP_FLAG) != 0;
+  }
+}
+
 /// Each sample contains a time value and associated Value object.
 /// `None`(ValueBlock) is represented by setting `Sample::blocked` true.
 ///
@@ -1109,7 +1136,11 @@ struct TimeSamples {
       // Using unified storage
       return false;
     }
+    #if 0  // POD path
     return _use_pod ? _pod_samples.empty() : _samples.empty();
+    #else
+    return _samples.empty();
+    #endif
   }
 
   size_t size() const {
@@ -1121,7 +1152,11 @@ struct TimeSamples {
       // Using unified storage - return _times.size()
       return _times.size();
     }
+    #if 0  // POD path
     return _use_pod ? _pod_samples.size() : _samples.size();
+    #else
+    return _samples.size();
+    #endif
   }
 
   void clear() {
@@ -1130,7 +1165,9 @@ struct TimeSamples {
     _blocked.clear();
     _values.clear();
     _offsets.clear();
+    #if 0  // POD path
     _pod_samples.clear();
+    #endif
     _type_id = 0;
     _use_pod = false;
     _is_array = false;
@@ -1158,7 +1195,11 @@ struct TimeSamples {
         _dirty(other._dirty),
         _dirty_start(other._dirty_start),
         _dirty_end(other._dirty_end),
-        _pod_samples(std::move(other._pod_samples)) {
+        #if 0
+
+        _pod_samples(std::move(other._pod_samples))
+
+        #endif {
     // Reset moved-from object to valid empty state
     other._type_id = 0;
     other._use_pod = false;
@@ -1181,7 +1222,11 @@ struct TimeSamples {
       _values = std::move(other._values);
       _array_values = std::move(other._array_values);  // Move unique_ptr vector
       _offsets = std::move(other._offsets);
+      #if 0
+
       _pod_samples = std::move(other._pod_samples);
+
+      #endif
       _type_id = other._type_id;
       _use_pod = other._use_pod;
       _is_array = other._is_array;
@@ -1222,7 +1267,11 @@ struct TimeSamples {
         _dirty(other._dirty),
         _dirty_start(other._dirty_start),
         _dirty_end(other._dirty_end),
-        _pod_samples(other._pod_samples) {
+        #if 0
+
+        _pod_samples(other._pod_samples)
+
+        #endif {
     // Deep copy _array_values (vector of unique_ptr)
     _array_values.clear();
     _array_values.reserve(other._array_values.size());
@@ -1254,7 +1303,11 @@ struct TimeSamples {
       _dirty = other._dirty;
       _dirty_start = other._dirty_start;
       _dirty_end = other._dirty_end;
+      #if 0
+
       _pod_samples = other._pod_samples;
+
+      #endif
 
       // Deep copy _array_values (vector of unique_ptr)
       _array_values.clear();
@@ -1291,7 +1344,11 @@ struct TimeSamples {
     _use_pod = value::is_pod_type_id(type_id);
     if (_use_pod) {
       DCOUT("  use_pod: " << type_id);
+      #if 0  // POD path
+
       _pod_samples._type_id = type_id;
+
+      #endif
     }
     return true;
   }
@@ -1301,22 +1358,38 @@ struct TimeSamples {
   /// Check if storing std::vector-based array data
   /// @return true if using POD storage with STL arrays, false otherwise
   bool is_stl_array() const {
+    #if 0  // POD path
     return _use_pod ? _pod_samples._is_stl_array : false;
+    #else
+    return false;
+    #endif
   }
 
   /// Check if storing TypedArray data
   /// @return true if using POD storage with TypedArray, false otherwise
   bool is_typed_array() const {
+    #if 0  // POD path
     return _use_pod ? _pod_samples._is_typed_array : false;
+    #else
+    return false;
+    #endif
   }
 
   /// Get POD storage for direct manipulation (only valid when using POD storage)
-  PODTimeSamples* get_pod_storage() {
+  void* get_pod_storage() {
+#if 0
     return _use_pod ? &_pod_samples : nullptr;
+#else
+    return nullptr;  // POD storage deprecated
+#endif
   }
 
-  const PODTimeSamples* get_pod_storage() const {
+  const void* get_pod_storage() const {
+#if 0
     return _use_pod ? &_pod_samples : nullptr;
+#else
+    return nullptr;  // POD storage deprecated
+#endif
   }
 
   void update() const;
@@ -1512,7 +1585,9 @@ struct TimeSamples {
     }
 
     if (_use_pod) {
-      bool result = _pod_samples.add_sample<T>(t, value, err, expected_total_samples);
+      bool result = #if 0  // POD path
+ _pod_samples.add_sample<T>(t, value, err, expected_total_samples);
+ #endif
       _dirty = true;
       return result;
     }
@@ -1691,7 +1766,11 @@ struct TimeSamples {
     if (empty()) {
       _type_id = value::TypeTraits<T>::type_id();
       _use_pod = true; // Always use POD storage for TypedArray
+      #if 0  // POD path
+
       _pod_samples._type_id = value::TypeTraits<T>::type_id();
+
+      #endif
     } else if (_type_id != value::TypeTraits<T>::type_id()) {
       if (err) {
         (*err) += "Type mismatch: TimeSamples already initialized with different type.\n";
@@ -1700,8 +1779,12 @@ struct TimeSamples {
     }
 
     // If already using _pod_samples (backward compat), delegate to it
+    #if 0  // POD path
+
     if (!_pod_samples.empty()) {
-      bool result = _pod_samples.add_typed_array_sample<T>(t, typed_array, err, expected_total_samples);
+      bool result = #if 0  // POD path
+ _pod_samples.add_typed_array_sample<T>(t, typed_array, err, expected_total_samples);
+ #endif
       _dirty = true;
       return result;
     }
@@ -1723,7 +1806,7 @@ struct TimeSamples {
     _array_values.push_back(std::move(array_buffer));
 
     // Create encoded offset with array buffer flag and index
-    uint64_t encoded_offset = PODTimeSamples::make_array_buffer_offset(array_index);
+    uint64_t encoded_offset = make_array_buffer_offset(array_index);
     _offsets.push_back(encoded_offset);
 
     // Update array metadata
@@ -1790,10 +1873,13 @@ struct TimeSamples {
     }
 
     // Phase 2: Check if using unified storage (non-POD samples but has POD data)
+    #if 0  // POD path
+
     if (!_pod_samples.empty()) {
       // Delegate to PODTimeSamples (backward compat during transition)
       return _pod_samples.get_typed_array_view_at<T>(idx);
     }
+    #endif  // POD path
 
     // Phase 2: Use unified storage directly
     if (!_times.empty() && _is_array) {
@@ -1946,13 +2032,17 @@ struct TimeSamples {
   }
 
   // Access POD samples directly
+#if 0  // DEPRECATED: Direct POD samples access
   const tinyusdz::PODTimeSamples& get_pod_samples() const {
     return _pod_samples;
   }
+#endif
 
+#if 0  // DEPRECATED: Direct POD samples access
   tinyusdz::PODTimeSamples& pod_samples() {
     return _pod_samples;
   }
+#endif
 
 #if 1  // TODO: Write implementation in .cc
 
@@ -2159,8 +2249,12 @@ struct TimeSamples {
     }
 
     // If already using _pod_samples (backward compat), delegate to it
+    #if 0  // POD path
+
     if (!_pod_samples.empty()) {
-      return _pod_samples.add_array_sample<T>(t, values, count, err);
+      return #if 0  // POD path
+ _pod_samples.add_array_sample<T>(t, values, count, err);
+ #endif
     }
 
     // Use unified storage
@@ -2178,7 +2272,7 @@ struct TimeSamples {
     _array_values.push_back(std::move(array_buffer));
 
     // Create encoded offset with array buffer flag and index
-    uint64_t encoded_offset = PODTimeSamples::make_array_buffer_offset(array_index);
+    uint64_t encoded_offset = make_array_buffer_offset(array_index);
     _offsets.push_back(encoded_offset);
 
     // Update array metadata
@@ -2197,6 +2291,8 @@ struct TimeSamples {
                   "add_dedup_array_sample requires POD types");
 
     // If using _pod_samples, delegate
+    #if 0  // POD path
+
     if (!_pod_samples.empty()) {
       return _pod_samples.add_dedup_array_sample<T>(t, ref_index, err);
     }
@@ -2217,7 +2313,7 @@ struct TimeSamples {
       return false;
     }
 
-    if (PODTimeSamples::is_dedup(_offsets[ref_index])) {
+    if (is_dedup(_offsets[ref_index])) {
       if (err) *err = "Cannot deduplicate from deduplicated sample";
       return false;
     }
@@ -2226,7 +2322,7 @@ struct TimeSamples {
     _times.push_back(t);
     _blocked.push_back(0);
 
-    uint64_t dedup_offset = PODTimeSamples::make_dedup_offset(ref_index, true);
+    uint64_t dedup_offset = make_dedup_offset(ref_index, true);
     _offsets.push_back(dedup_offset);
 
     _dirty = true;
@@ -2267,8 +2363,12 @@ struct TimeSamples {
     }
 
     // If already using _pod_samples (backward compat), delegate to it
+    #if 0  // POD path
+
     if (!_pod_samples.empty()) {
-      return _pod_samples.add_sample<T>(t, value, err);
+      return #if 0  // POD path
+ _pod_samples.add_sample<T>(t, value, err);
+ #endif
     }
 
     // Use unified storage for scalar POD
@@ -2289,7 +2389,7 @@ struct TimeSamples {
       std::memcpy(_values.data() + byte_offset, &value, sizeof(T));
 
       // Create encoded offset (not array)
-      uint64_t encoded_offset = PODTimeSamples::make_offset(byte_offset, false);
+      uint64_t encoded_offset = make_offset(byte_offset, false);
       _offsets.push_back(encoded_offset);
     }
 
@@ -2317,6 +2417,8 @@ struct TimeSamples {
     }
 
     // If already using _pod_samples (backward compat), delegate to it
+    #if 0  // POD path
+
     if (!_pod_samples.empty()) {
       return _pod_samples.add_blocked_sample<T>(t, err);
     }
@@ -2357,6 +2459,8 @@ struct TimeSamples {
     }
 
     // Check if using _pod_samples (backward compat)
+    #if 0  // POD path
+
     if (!_pod_samples.empty()) {
       // Delegate to PODTimeSamples
       auto view = _pod_samples.get_typed_array_view_at<T>(idx);
@@ -2457,6 +2561,8 @@ struct TimeSamples {
     }
 
     // Check if using _pod_samples (backward compat)
+    #if 0  // POD path
+
     if (!_pod_samples.empty()) {
       auto view = _pod_samples.get_typed_array_view_at_time<T>(t);
       if (view.size() == 0) {
@@ -2592,7 +2698,9 @@ struct TimeSamples {
   mutable size_t _dirty_end{0};
 
   // Keep _pod_samples for now (will be removed in final step)
+#if 0  // DEPRECATED: POD samples member
   mutable tinyusdz::PODTimeSamples _pod_samples;
+#endif
 };
 
 } // namespace value
