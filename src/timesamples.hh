@@ -106,6 +106,8 @@ struct PODTimeSamples {
   static constexpr uint64_t OFFSET_VALUE_MASK = 0x1FFFFFFFFFFFFFFFULL;        // Bits 60-0: index/offset value
   static constexpr uint64_t OFFSET_FLAGS_MASK = 0xE000000000000000ULL;        // Bits 63-61: flags
 
+  // Storage optimization: no offset entry needed for small scalars (stored directly in _small_values)
+
   // Offset manipulation helpers
   /// Create offset for scalar or array data in _values buffer
   static constexpr uint64_t make_offset(size_t byte_offset, bool is_array) {
@@ -2273,14 +2275,23 @@ struct TimeSamples {
     _times.push_back(t);
     _blocked.push_back(0);  // Not blocked
 
-    // Store scalar data in _values buffer
-    size_t byte_offset = _values.size();
-    _values.resize(byte_offset + sizeof(T));
-    std::memcpy(_values.data() + byte_offset, &value, sizeof(T));
+    // Storage optimization: small scalars (sizeof(T) <= 8) stored directly in _small_values
+    // Large scalars (sizeof(T) > 8) stored in _values with offset table
+    if (sizeof(T) <= 8) {
+      // Direct storage for small scalars - no offset entry needed
+      uint64_t small_value = 0;
+      std::memcpy(&small_value, &value, sizeof(T));
+      _small_values.push_back(small_value);
+    } else {
+      // Offset-based storage for large scalars
+      size_t byte_offset = _values.size();
+      _values.resize(byte_offset + sizeof(T));
+      std::memcpy(_values.data() + byte_offset, &value, sizeof(T));
 
-    // Create encoded offset (not array)
-    uint64_t encoded_offset = PODTimeSamples::make_offset(byte_offset, false);
-    _offsets.push_back(encoded_offset);
+      // Create encoded offset (not array)
+      uint64_t encoded_offset = PODTimeSamples::make_offset(byte_offset, false);
+      _offsets.push_back(encoded_offset);
+    }
 
     // Update metadata (scalar, not array)
     _is_array = false;
@@ -2561,9 +2572,10 @@ struct TimeSamples {
   // POD path storage (moved from PODTimeSamples for Phase 2 unification)
   mutable std::vector<double> _times;
   mutable Buffer<16> _blocked;
-  mutable Buffer<16> _values;                                        // Raw byte storage for scalar POD types
+  mutable std::vector<uint64_t> _small_values;                       // Direct storage for small scalar POD types (sizeof(T) <= 8 bytes), stored as uint64
+  mutable Buffer<16> _values;                                        // Raw byte storage for large scalar POD types and arrays
   mutable std::vector<std::unique_ptr<Buffer<16>>> _array_values;    // Array data storage: each entry is a separate allocated buffer for one array sample
-  mutable std::vector<uint64_t> _offsets;                            // Offset table with dedup/array/buffer flags (bit 61=array_values_flag, bit 62=array_flag, bit 63=dedup_flag)
+  mutable std::vector<uint64_t> _offsets;                            // Offset table for large types and arrays with dedup/array/buffer flags
 
   // Type information
   uint32_t _type_id{0};
