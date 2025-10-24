@@ -105,62 +105,8 @@ CrateReader::CrateReader(StreamReader *sr, const CrateReaderConfig &config)
 }
 
 CrateReader::~CrateReader() {
-  // Manual cleanup of TypedArray dedup cache entries
-  // These arrays were marked as dedup=true to prevent crashes,
-  // but this means nobody owns them - we must manually delete here
-
-  // Clean up int32_array cache
-  for (auto& pair : _dedup_int32_array) {
-    if (pair.second.get() != nullptr) {
-      delete pair.second.get();
-    }
-  }
-
-  // Clean up uint32_array cache
-  for (auto& pair : _dedup_uint32_array) {
-    if (pair.second.get() != nullptr) {
-      delete pair.second.get();
-    }
-  }
-
-  // Clean up int64_array cache
-  for (auto& pair : _dedup_int64_array) {
-    if (pair.second.get() != nullptr) {
-      delete pair.second.get();
-    }
-  }
-
-  // Clean up uint64_array cache
-  for (auto& pair : _dedup_uint64_array) {
-    if (pair.second.get() != nullptr) {
-      delete pair.second.get();
-    }
-  }
-
-  // Clean up half_array cache
-  for (auto& pair : _dedup_half_array) {
-    if (pair.second.get() != nullptr) {
-      delete pair.second.get();
-    }
-  }
-
-  // Clean up float_array cache
-  for (auto& pair : _dedup_float_array) {
-    if (pair.second.get() != nullptr) {
-      delete pair.second.get();
-    }
-  }
-
-  // Clean up float2_array cache
-  // Arrays are not cached for TimeSamples, but clear anyway for completeness
-  _dedup_float2_array.clear();
-
-  // Clean up double_array cache
-  for (auto& pair : _dedup_double_array) {
-    if (pair.second.get() != nullptr) {
-      delete pair.second.get();
-    }
-  }
+  // All dedup array caches now store indices (size_t) instead of TypedArray objects
+  // No manual cleanup needed - the actual array data is owned by TimeSamples
 
   //delete _impl;
   //_impl = nullptr;

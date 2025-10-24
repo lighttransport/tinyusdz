@@ -543,58 +543,62 @@ class CrateReader {
   std::unordered_map<crate::ValueRep, uint32_t, crate::ValueRep::Hash> _dedup_uint32;
   std::unordered_map<crate::ValueRep, int64_t, crate::ValueRep::Hash> _dedup_int64;
   std::unordered_map<crate::ValueRep, uint64_t, crate::ValueRep::Hash> _dedup_uint64;
-  std::unordered_map<crate::ValueRep, TypedArray<int32_t>, crate::ValueRep::Hash> _dedup_int32_array;
-  std::unordered_map<crate::ValueRep, TypedArray<uint32_t>, crate::ValueRep::Hash> _dedup_uint32_array;
-  std::unordered_map<crate::ValueRep, TypedArray<int64_t>, crate::ValueRep::Hash> _dedup_int64_array;
-  std::unordered_map<crate::ValueRep, TypedArray<uint64_t>, crate::ValueRep::Hash> _dedup_uint64_array;
+  // Stores ref_index (sample index) for deduplication
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_int32_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_uint32_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_int64_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_uint64_array;
 
   // Half types (scalar and array)
   std::unordered_map<crate::ValueRep, value::half, crate::ValueRep::Hash> _dedup_half;
   std::unordered_map<crate::ValueRep, value::half2, crate::ValueRep::Hash> _dedup_half2;
   std::unordered_map<crate::ValueRep, value::half3, crate::ValueRep::Hash> _dedup_half3;
   std::unordered_map<crate::ValueRep, value::half4, crate::ValueRep::Hash> _dedup_half4;
-  std::unordered_map<crate::ValueRep, TypedArray<value::half>, crate::ValueRep::Hash> _dedup_half_array;
-  std::unordered_map<crate::ValueRep, std::vector<value::half2>, crate::ValueRep::Hash> _dedup_half2_array;
-  std::unordered_map<crate::ValueRep, std::vector<value::half3>, crate::ValueRep::Hash> _dedup_half3_array;
-  std::unordered_map<crate::ValueRep, std::vector<value::half4>, crate::ValueRep::Hash> _dedup_half4_array;
+  // Stores ref_index (sample index) for deduplication
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_half_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_half2_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_half3_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_half4_array;
 
   // Float types (scalar and array)
   std::unordered_map<crate::ValueRep, float, crate::ValueRep::Hash> _dedup_float;
   std::unordered_map<crate::ValueRep, value::float2, crate::ValueRep::Hash> _dedup_float2;
   std::unordered_map<crate::ValueRep, value::float3, crate::ValueRep::Hash> _dedup_float3;
   std::unordered_map<crate::ValueRep, value::float4, crate::ValueRep::Hash> _dedup_float4;
-  std::unordered_map<crate::ValueRep, TypedArray<float>, crate::ValueRep::Hash> _dedup_float_array;
-  // NOTE: Not used for TimeSamples to avoid lifetime issues
-  // TimeSamples read arrays fresh to ensure ownership is correct
-  std::unordered_map<crate::ValueRep, TypedArray<value::float2>, crate::ValueRep::Hash> _dedup_float2_array;
-  std::unordered_map<crate::ValueRep, std::vector<value::float3>, crate::ValueRep::Hash> _dedup_float3_array;
-  std::unordered_map<crate::ValueRep, std::vector<value::float4>, crate::ValueRep::Hash> _dedup_float4_array;
+  // Stores ref_index (sample index) for deduplication
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_float_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_float2_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_float3_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_float4_array;
 
   // Double types (scalar and array)
   std::unordered_map<crate::ValueRep, double, crate::ValueRep::Hash> _dedup_double;
   std::unordered_map<crate::ValueRep, value::double2, crate::ValueRep::Hash> _dedup_double2;
   std::unordered_map<crate::ValueRep, value::double3, crate::ValueRep::Hash> _dedup_double3;
   std::unordered_map<crate::ValueRep, value::double4, crate::ValueRep::Hash> _dedup_double4;
-  std::unordered_map<crate::ValueRep, TypedArray<double>, crate::ValueRep::Hash> _dedup_double_array;
-  std::unordered_map<crate::ValueRep, std::vector<value::double2>, crate::ValueRep::Hash> _dedup_double2_array;
-  std::unordered_map<crate::ValueRep, std::vector<value::double3>, crate::ValueRep::Hash> _dedup_double3_array;
-  std::unordered_map<crate::ValueRep, std::vector<value::double4>, crate::ValueRep::Hash> _dedup_double4_array;
+  // Stores ref_index (sample index) for deduplication
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_double_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_double2_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_double3_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_double4_array;
 
   // Quaternion types (scalar and array)
   std::unordered_map<crate::ValueRep, value::quath, crate::ValueRep::Hash> _dedup_quath;
   std::unordered_map<crate::ValueRep, value::quatf, crate::ValueRep::Hash> _dedup_quatf;
   std::unordered_map<crate::ValueRep, value::quatd, crate::ValueRep::Hash> _dedup_quatd;
-  std::unordered_map<crate::ValueRep, std::vector<value::quath>, crate::ValueRep::Hash> _dedup_quath_array;
-  std::unordered_map<crate::ValueRep, std::vector<value::quatf>, crate::ValueRep::Hash> _dedup_quatf_array;
-  std::unordered_map<crate::ValueRep, std::vector<value::quatd>, crate::ValueRep::Hash> _dedup_quatd_array;
+  // Stores ref_index (sample index) for deduplication
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_quath_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_quatf_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_quatd_array;
 
   // Matrix types (scalar and array)
   std::unordered_map<crate::ValueRep, value::matrix2d, crate::ValueRep::Hash> _dedup_matrix2d;
   std::unordered_map<crate::ValueRep, value::matrix3d, crate::ValueRep::Hash> _dedup_matrix3d;
   std::unordered_map<crate::ValueRep, value::matrix4d, crate::ValueRep::Hash> _dedup_matrix4d;
-  std::unordered_map<crate::ValueRep, std::vector<value::matrix2d>, crate::ValueRep::Hash> _dedup_matrix2d_array;
-  std::unordered_map<crate::ValueRep, std::vector<value::matrix3d>, crate::ValueRep::Hash> _dedup_matrix3d_array;
-  std::unordered_map<crate::ValueRep, std::vector<value::matrix4d>, crate::ValueRep::Hash> _dedup_matrix4d_array;
+  // Stores ref_index (sample index) for deduplication
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_matrix2d_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_matrix3d_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_matrix4d_array;
 
   class Impl;
   Impl *_impl;
