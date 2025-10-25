@@ -1,0 +1,29 @@
+#usda 1.0
+
+# USDC will dedup value.timeSamples
+def Xform "muda" 
+{
+  float xformOp:rotateZ:tilt = 12
+
+  float xformOp:rotateZ:spin.timeSamples = {
+      0: 0,
+      192: 1440,
+  }
+
+  texCoord2f[] primvars:uv.timeSamples = {
+    0: [(1.0, 2.0), (0.5, 4.0)],
+    1: [(1.0, 2.0), (0.5, 4.0)],
+    2: [(1.0, 2.0), (0.5, 4.0)],
+    3: [(1.0, 2.0), (0.5, 4.0)],
+    4: [(1.0, 2.0), (0.5, 4.0)],
+    5: [(1.0, 2.0), (0.5, 4.0)],
+    6: [(1.0, 2.0), (0.5, 4.0)],
+    7: [(1.0, 2.0), (0.5, 4.0)],
+    8: [(1.0, 2.0), (0.5, 4.0)],
+    9: [(1.0, 2.0), (0.5, 4.0)],
+    10: [(1.0, 2.0), (0.5, 4.0)],
+  }
+
+  uniform token[] xformOpOrder = ["xformOp:rotateZ:tilt", "xformOp:rotateZ:spin"]
+
+}
