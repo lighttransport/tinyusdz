@@ -105,62 +105,8 @@ CrateReader::CrateReader(StreamReader *sr, const CrateReaderConfig &config)
 }
 
 CrateReader::~CrateReader() {
-  // Manual cleanup of TypedArray dedup cache entries
-  // These arrays were marked as dedup=true to prevent crashes,
-  // but this means nobody owns them - we must manually delete here
-
-  // Clean up int32_array cache
-  for (auto& pair : _dedup_int32_array) {
-    if (pair.second.get() != nullptr) {
-      delete pair.second.get();
-    }
-  }
-
-  // Clean up uint32_array cache
-  for (auto& pair : _dedup_uint32_array) {
-    if (pair.second.get() != nullptr) {
-      delete pair.second.get();
-    }
-  }
-
-  // Clean up int64_array cache
-  for (auto& pair : _dedup_int64_array) {
-    if (pair.second.get() != nullptr) {
-      delete pair.second.get();
-    }
-  }
-
-  // Clean up uint64_array cache
-  for (auto& pair : _dedup_uint64_array) {
-    if (pair.second.get() != nullptr) {
-      delete pair.second.get();
-    }
-  }
-
-  // Clean up half_array cache
-  for (auto& pair : _dedup_half_array) {
-    if (pair.second.get() != nullptr) {
-      delete pair.second.get();
-    }
-  }
-
-  // Clean up float_array cache
-  for (auto& pair : _dedup_float_array) {
-    if (pair.second.get() != nullptr) {
-      delete pair.second.get();
-    }
-  }
-
-  // Clean up float2_array cache
-  // Arrays are not cached for TimeSamples, but clear anyway for completeness
-  _dedup_float2_array.clear();
-
-  // Clean up double_array cache
-  for (auto& pair : _dedup_double_array) {
-    if (pair.second.get() != nullptr) {
-      delete pair.second.get();
-    }
-  }
+  // All dedup array caches now store indices (size_t) instead of TypedArray objects
+  // No manual cleanup needed - the actual array data is owned by TimeSamples
 
   //delete _impl;
   //_impl = nullptr;
@@ -1942,6 +1888,21 @@ template bool CrateReader::ReadArray<value::AssetPath>(std::vector<value::AssetP
 template bool CrateReader::ReadArray<value::matrix2d>(std::vector<value::matrix2d>*);
 template bool CrateReader::ReadArray<value::matrix3d>(std::vector<value::matrix3d>*);
 template bool CrateReader::ReadArray<value::matrix4d>(std::vector<value::matrix4d>*);
+// Vector type instantiations needed by crate-reader-timesamples.cc
+template bool CrateReader::ReadArray<value::half2>(std::vector<value::half2>*);
+template bool CrateReader::ReadArray<value::half3>(std::vector<value::half3>*);
+template bool CrateReader::ReadArray<value::half4>(std::vector<value::half4>*);
+template bool CrateReader::ReadArray<value::float2>(std::vector<value::float2>*);
+template bool CrateReader::ReadArray<value::float3>(std::vector<value::float3>*);
+template bool CrateReader::ReadArray<value::float4>(std::vector<value::float4>*);
+template bool CrateReader::ReadArray<value::double2>(std::vector<value::double2>*);
+template bool CrateReader::ReadArray<value::double3>(std::vector<value::double3>*);
+template bool CrateReader::ReadArray<value::double4>(std::vector<value::double4>*);
+template bool CrateReader::ReadArray<value::quatf>(std::vector<value::quatf>*);
+template bool CrateReader::ReadArray<value::quath>(std::vector<value::quath>*);
+template bool CrateReader::ReadArray<value::quatd>(std::vector<value::quatd>*);
+// String type instantiation needed by crate-reader-timesamples.cc
+template bool CrateReader::ReadArray<std::string>(std::vector<std::string>*);
 
 template<typename T>
 bool CrateReader::ReadListOp(ListOp<T> *d) {
@@ -3198,8 +3159,17 @@ bool CrateReader::UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint6
         }
         value->Set(std::move(v));
         return true;
+      } else {
+        // Support scalar quath
+        value::quath v;
+        if (!_sr->read(sizeof(value::quath), sizeof(value::quath),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read quath value.");
+          return false;
+        }
+        value->Set(v);
+        return true;
       }
-      return false;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATF: {
       if (rep.IsCompressed()) {
@@ -3214,8 +3184,17 @@ bool CrateReader::UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint6
         }
         value->Set(std::move(v));
         return true;
+      } else {
+        // Support scalar quatf
+        value::quatf v;
+        if (!_sr->read(sizeof(value::quatf), sizeof(value::quatf),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read quatf value.");
+          return false;
+        }
+        value->Set(v);
+        return true;
       }
-      return false;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATD: {
       if (rep.IsCompressed()) {
@@ -3230,8 +3209,17 @@ bool CrateReader::UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint6
         }
         value->Set(std::move(v));
         return true;
+      } else {
+        // Support scalar quatd
+        value::quatd v;
+        if (!_sr->read(sizeof(value::quatd), sizeof(value::quatd),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read quatd value.");
+          return false;
+        }
+        value->Set(v);
+        return true;
       }
-      return false;
     }
     default: {
       PUSH_ERROR(fmt::format("Unsupported type for TimeSamples optimization: {}", crate::GetCrateDataTypeName(dty.dtype_id)));
