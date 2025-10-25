@@ -2061,7 +2061,8 @@ static bool ReconstructXformOpFromToken(
           op.op_type = XformOp::OpType::Transform;
           op.suffix = xfm.value();  // may contain nested namespaces
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2091,7 +2092,8 @@ static bool ReconstructXformOpFromToken(
           op.op_type = XformOp::OpType::Translate;
           op.suffix = tx.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2126,7 +2128,8 @@ static bool ReconstructXformOpFromToken(
           op.op_type = XformOp::OpType::Scale;
           op.suffix = scale.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2161,7 +2164,8 @@ static bool ReconstructXformOpFromToken(
           op.op_type = XformOp::OpType::RotateX;
           op.suffix = rotX.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2196,7 +2200,8 @@ static bool ReconstructXformOpFromToken(
           op.op_type = XformOp::OpType::RotateY;
           op.suffix = rotY.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2231,7 +2236,8 @@ static bool ReconstructXformOpFromToken(
           op.op_type = XformOp::OpType::RotateZ;
           op.suffix = rotZ.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2266,7 +2272,8 @@ static bool ReconstructXformOpFromToken(
           op.op_type = XformOp::OpType::RotateXYZ;
           op.suffix = rotateXYZ.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2301,7 +2308,8 @@ static bool ReconstructXformOpFromToken(
           op.op_type = XformOp::OpType::RotateXZY;
           op.suffix = rotateXZY.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2336,7 +2344,8 @@ static bool ReconstructXformOpFromToken(
           op.op_type = XformOp::OpType::RotateYXZ;
           op.suffix = rotateYXZ.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2371,7 +2380,8 @@ static bool ReconstructXformOpFromToken(
           op.op_type = XformOp::OpType::RotateYZX;
           op.suffix = rotateYZX.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2406,7 +2416,8 @@ static bool ReconstructXformOpFromToken(
           op.op_type = XformOp::OpType::RotateZXY;
           op.suffix = rotateZXY.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2441,7 +2452,8 @@ static bool ReconstructXformOpFromToken(
           op.op_type = XformOp::OpType::RotateZYX;
           op.suffix = rotateZYX.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2476,7 +2488,8 @@ static bool ReconstructXformOpFromToken(
           op.op_type = XformOp::OpType::Orient;
           op.suffix = orient.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2679,7 +2692,8 @@ bool ReconstructXformOpsFromProperties(
           op.op_type = XformOp::OpType::Transform;
           op.suffix = xfm.value();  // may contain nested namespaces
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2709,7 +2723,8 @@ bool ReconstructXformOpsFromProperties(
           op.op_type = XformOp::OpType::Translate;
           op.suffix = tx.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2744,7 +2759,8 @@ bool ReconstructXformOpsFromProperties(
           op.op_type = XformOp::OpType::Scale;
           op.suffix = scale.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2779,7 +2795,8 @@ bool ReconstructXformOpsFromProperties(
           op.op_type = XformOp::OpType::RotateX;
           op.suffix = rotX.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2814,7 +2831,8 @@ bool ReconstructXformOpsFromProperties(
           op.op_type = XformOp::OpType::RotateY;
           op.suffix = rotY.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2849,7 +2867,8 @@ bool ReconstructXformOpsFromProperties(
           op.op_type = XformOp::OpType::RotateZ;
           op.suffix = rotZ.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2884,7 +2903,8 @@ bool ReconstructXformOpsFromProperties(
           op.op_type = XformOp::OpType::RotateXYZ;
           op.suffix = rotateXYZ.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2919,7 +2939,8 @@ bool ReconstructXformOpsFromProperties(
           op.op_type = XformOp::OpType::RotateXZY;
           op.suffix = rotateXZY.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2954,7 +2975,8 @@ bool ReconstructXformOpsFromProperties(
           op.op_type = XformOp::OpType::RotateYXZ;
           op.suffix = rotateYXZ.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -2989,7 +3011,8 @@ bool ReconstructXformOpsFromProperties(
           op.op_type = XformOp::OpType::RotateYZX;
           op.suffix = rotateYZX.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -3024,7 +3047,8 @@ bool ReconstructXformOpsFromProperties(
           op.op_type = XformOp::OpType::RotateZXY;
           op.suffix = rotateZXY.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -3059,7 +3083,8 @@ bool ReconstructXformOpsFromProperties(
           op.op_type = XformOp::OpType::RotateZYX;
           op.suffix = rotateZYX.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
@@ -3094,7 +3119,8 @@ bool ReconstructXformOpsFromProperties(
           op.op_type = XformOp::OpType::Orient;
           op.suffix = orient.value();
 
-          if (attr.get_var().has_timesamples()) {
+          // Check if timeSamples were authored (even if empty)
+          if (attr.get_var().has_timesamples() || attr.get_var().ts_raw().type_id() != 0) {
             op.set_timesamples(attr.get_var().ts_raw());
           }
 
