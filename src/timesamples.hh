@@ -69,6 +69,9 @@ inline bool is_pod_type_id(uint32_t type_id) {
 ///
 /// POD (Plain Old Data) time samples container with SoA layout
 ///
+/// @deprecated Use TimeSamples with new unified storage (_array_values) instead.
+/// This class is kept for backward compatibility but will be removed in a future version.
+///
 /// Stores time-sampled values for POD types in a Structure of Arrays layout
 /// for optimal memory access patterns. The value data is stored as a raw byte
 /// array (TypedArray<uint8_t>) with size sizeof(T) * N elements.
@@ -97,14 +100,24 @@ struct PODTimeSamples {
   mutable size_t _blocked_count{0}; // Count of blocked samples for O(1) queries
 
   // Offset encoding constants
-  static constexpr uint64_t OFFSET_DEDUP_FLAG = 0x8000000000000000ULL;  // Bit 63: dedup flag
-  static constexpr uint64_t OFFSET_ARRAY_FLAG = 0x4000000000000000ULL;  // Bit 62: array flag
-  static constexpr uint64_t OFFSET_VALUE_MASK = 0x3FFFFFFFFFFFFFFFULL;  // Bits 61-0: index/offset value
-  static constexpr uint64_t OFFSET_FLAGS_MASK = 0xC000000000000000ULL;  // Bits 63-62: flags
+  static constexpr uint64_t OFFSET_DEDUP_FLAG = 0x8000000000000000ULL;        // Bit 63: dedup flag
+  static constexpr uint64_t OFFSET_ARRAY_FLAG = 0x4000000000000000ULL;        // Bit 62: array data flag
+  static constexpr uint64_t OFFSET_ARRAY_BUFFER_FLAG = 0x2000000000000000ULL; // Bit 61: array data in _array_values buffer (vs _values)
+  static constexpr uint64_t OFFSET_VALUE_MASK = 0x1FFFFFFFFFFFFFFFULL;        // Bits 60-0: index/offset value
+  static constexpr uint64_t OFFSET_FLAGS_MASK = 0xE000000000000000ULL;        // Bits 63-61: flags
+
+  // Storage optimization: no offset entry needed for small scalars (stored directly in _small_values)
 
   // Offset manipulation helpers
+  /// Create offset for scalar or array data in _values buffer
   static constexpr uint64_t make_offset(size_t byte_offset, bool is_array) {
     return (is_array ? OFFSET_ARRAY_FLAG : 0ULL) | (byte_offset & OFFSET_VALUE_MASK);
+  }
+
+  /// Create offset for array data in _array_values (unique_ptr array)
+  /// @param array_index Index into _array_values vector
+  static constexpr uint64_t make_array_buffer_offset(size_t array_index) {
+    return OFFSET_ARRAY_FLAG | OFFSET_ARRAY_BUFFER_FLAG | (array_index & OFFSET_VALUE_MASK);
   }
 
   static constexpr uint64_t make_dedup_offset(size_t sample_index, bool is_array) {
@@ -119,6 +132,10 @@ struct PODTimeSamples {
     return (offset_value & OFFSET_ARRAY_FLAG) != 0;
   }
 
+  static constexpr bool is_array_buffer_offset(uint64_t offset_value) {
+    return (offset_value & OFFSET_ARRAY_BUFFER_FLAG) != 0;
+  }
+
   static constexpr size_t get_raw_value(uint64_t offset_value) {
     return static_cast<size_t>(offset_value & OFFSET_VALUE_MASK);
   }
@@ -127,13 +144,14 @@ struct PODTimeSamples {
   /// Static version that works with any offsets vector (for TimeSamples Phase 2)
   /// @param offsets The offset vector to resolve from
   /// @param sample_idx The sample index to resolve
-  /// @param out_byte_offset Output: the resolved byte offset in _values buffer
+  /// @param out_byte_offset Output: the resolved byte offset in the appropriate buffer
   /// @param out_is_array Output: whether this is array data
+  /// @param out_use_array_buffer Output: whether data is in _array_values (vs _values)
   /// @param max_depth Maximum dedup chain depth to prevent infinite loops (default 100)
   /// @return true on success, false if circular reference detected or max depth exceeded
   static bool resolve_offset_static(const std::vector<uint64_t>& offsets, size_t sample_idx,
                                      size_t* out_byte_offset, bool* out_is_array = nullptr,
-                                     size_t max_depth = 100) {
+                                     bool* out_use_array_buffer = nullptr, size_t max_depth = 100) {
     if (sample_idx >= offsets.size()) {
       return false;
     }
@@ -162,6 +180,9 @@ struct PODTimeSamples {
     if (out_is_array) {
       *out_is_array = is_array_offset(offset_value);
     }
+    if (out_use_array_buffer) {
+      *out_use_array_buffer = is_array_buffer_offset(offset_value);
+    }
 
     return true;
   }
@@ -169,12 +190,14 @@ struct PODTimeSamples {
   /// Resolve offset value to actual byte offset, following dedup chain if necessary
   /// Instance method - delegates to static version
   /// @param sample_idx The sample index to resolve
-  /// @param out_byte_offset Output: the resolved byte offset in _values buffer
+  /// @param out_byte_offset Output: the resolved byte offset in the appropriate buffer
   /// @param out_is_array Output: whether this is array data
+  /// @param out_use_array_buffer Output: whether data is in _array_values (vs _values)
   /// @param max_depth Maximum dedup chain depth to prevent infinite loops (default 100)
   /// @return true on success, false if circular reference detected or max depth exceeded
-  bool resolve_offset(size_t sample_idx, size_t* out_byte_offset, bool* out_is_array = nullptr, size_t max_depth = 100) const {
-    return resolve_offset_static(_offsets, sample_idx, out_byte_offset, out_is_array, max_depth);
+  bool resolve_offset(size_t sample_idx, size_t* out_byte_offset, bool* out_is_array = nullptr,
+                      bool* out_use_array_buffer = nullptr, size_t max_depth = 100) const {
+    return resolve_offset_static(_offsets, sample_idx, out_byte_offset, out_is_array, out_use_array_buffer, max_depth);
   }
 
   /// Validate that a dedup reference is valid (no circular refs, references non-dedup data)
@@ -1081,12 +1104,22 @@ struct TimeSamples {
   };
 
   bool empty() const {
+    // Check if we're using unified storage (Phase 3) or legacy storage
+    if (!_times.empty()) {
+      // Using unified storage
+      return false;
+    }
     return _use_pod ? _pod_samples.empty() : _samples.empty();
   }
 
   size_t size() const {
     if (_dirty) {
       update();
+    }
+    // Check if we're using unified storage (Phase 3) or legacy storage
+    if (!_times.empty()) {
+      // Using unified storage - return _times.size()
+      return _times.size();
     }
     return _use_pod ? _pod_samples.size() : _samples.size();
   }
@@ -1146,6 +1179,7 @@ struct TimeSamples {
       _times = std::move(other._times);
       _blocked = std::move(other._blocked);
       _values = std::move(other._values);
+      _array_values = std::move(other._array_values);  // Move unique_ptr vector
       _offsets = std::move(other._offsets);
       _pod_samples = std::move(other._pod_samples);
       _type_id = other._type_id;
@@ -1172,9 +1206,71 @@ struct TimeSamples {
     return *this;
   }
 
-  // Default copy operations
-  TimeSamples(const TimeSamples&) = default;
-  TimeSamples& operator=(const TimeSamples&) = default;
+  /// Copy constructor - implements deep copy for _array_values
+  TimeSamples(const TimeSamples& other)
+      : _samples(other._samples),
+        _times(other._times),
+        _blocked(other._blocked),
+        _values(other._values),
+        _offsets(other._offsets),
+        _type_id(other._type_id),
+        _use_pod(other._use_pod),
+        _is_array(other._is_array),
+        _array_size(other._array_size),
+        _element_size(other._element_size),
+        _blocked_count(other._blocked_count),
+        _dirty(other._dirty),
+        _dirty_start(other._dirty_start),
+        _dirty_end(other._dirty_end),
+        _pod_samples(other._pod_samples) {
+    // Deep copy _array_values (vector of unique_ptr)
+    _array_values.clear();
+    _array_values.reserve(other._array_values.size());
+    for (const auto& array_buffer : other._array_values) {
+      if (array_buffer) {
+        // Create a new Buffer<16> and copy data
+        auto new_buffer = std::make_unique<Buffer<16>>(*array_buffer);
+        _array_values.push_back(std::move(new_buffer));
+      } else {
+        _array_values.push_back(nullptr);
+      }
+    }
+  }
+
+  /// Copy assignment operator - implements deep copy for _array_values
+  TimeSamples& operator=(const TimeSamples& other) {
+    if (this != &other) {
+      _samples = other._samples;
+      _times = other._times;
+      _blocked = other._blocked;
+      _values = other._values;
+      _offsets = other._offsets;
+      _type_id = other._type_id;
+      _use_pod = other._use_pod;
+      _is_array = other._is_array;
+      _array_size = other._array_size;
+      _element_size = other._element_size;
+      _blocked_count = other._blocked_count;
+      _dirty = other._dirty;
+      _dirty_start = other._dirty_start;
+      _dirty_end = other._dirty_end;
+      _pod_samples = other._pod_samples;
+
+      // Deep copy _array_values (vector of unique_ptr)
+      _array_values.clear();
+      _array_values.reserve(other._array_values.size());
+      for (const auto& array_buffer : other._array_values) {
+        if (array_buffer) {
+          // Create a new Buffer<16> and copy data
+          auto new_buffer = std::make_unique<Buffer<16>>(*array_buffer);
+          _array_values.push_back(std::move(new_buffer));
+        } else {
+          _array_values.push_back(nullptr);
+        }
+      }
+    }
+    return *this;
+  }
 
   // Default constructor
   TimeSamples() = default;
@@ -1192,7 +1288,7 @@ struct TimeSamples {
     }
     DCOUT("init" << type_id);
     _type_id = type_id;
-    _use_pod = value::is_pod_type_id(type_id);
+    _use_pod = false;  // DEPRECATED: PODTimeSamples always disabled
     if (_use_pod) {
       DCOUT("  use_pod: " << type_id);
       _pod_samples._type_id = type_id;
@@ -1603,17 +1699,40 @@ struct TimeSamples {
       return false;
     }
 
-    if (_use_pod) {
+    // If already using _pod_samples (backward compat), delegate to it
+    if (!_pod_samples.empty()) {
       bool result = _pod_samples.add_typed_array_sample<T>(t, typed_array, err, expected_total_samples);
       _dirty = true;
       return result;
     }
 
-    // Fallback: shouldn't reach here for TypedArray
-    if (err) {
-      (*err) += "TypedArray must use POD storage.\n";
+    // Use new unified storage with _array_values
+    _times.push_back(t);
+    _blocked.push_back(0);  // Not blocked
+
+    // Allocate new buffer for this array sample
+    auto array_buffer = std::make_unique<Buffer<16>>();
+    size_t data_size = sizeof(T) * typed_array.size();
+    array_buffer->resize(data_size);
+    if (typed_array.data() && typed_array.size() > 0) {
+      std::memcpy(array_buffer->data(), typed_array.data(), data_size);
     }
-    return false;
+
+    // Store the index of the newly allocated buffer
+    size_t array_index = _array_values.size();
+    _array_values.push_back(std::move(array_buffer));
+
+    // Create encoded offset with array buffer flag and index
+    uint64_t encoded_offset = PODTimeSamples::make_array_buffer_offset(array_index);
+    _offsets.push_back(encoded_offset);
+
+    // Update array metadata
+    _is_array = true;
+    _array_size = typed_array.size();
+    _element_size = sizeof(T);
+
+    _dirty = true;
+    return true;
   }
 
   /// Get TypedArray sample at specific time
@@ -1687,13 +1806,24 @@ struct TimeSamples {
         return TypedArrayView<const T>(nullptr, 0);
       }
 
-      // Resolve offset
+      // Resolve offset - now checks both _values and _array_values buffers
       size_t byte_offset = 0;
-      if (!PODTimeSamples::resolve_offset_static(_offsets, idx, &byte_offset)) {
+      bool use_array_buffer = false;
+      if (!PODTimeSamples::resolve_offset_static(_offsets, idx, &byte_offset, nullptr, &use_array_buffer)) {
         return TypedArrayView<const T>(nullptr, 0);
       }
 
-      const T* data = reinterpret_cast<const T*>(_values.data() + byte_offset);
+      const T* data;
+      if (use_array_buffer) {
+        // Array data is in _array_values (unique_ptr vector)
+        if (byte_offset >= _array_values.size() || !_array_values[byte_offset]) {
+          return TypedArrayView<const T>(nullptr, 0);
+        }
+        data = reinterpret_cast<const T*>(_array_values[byte_offset]->data());
+      } else {
+        // Scalar array data is in _values buffer
+        data = reinterpret_cast<const T*>(_values.data() + byte_offset);
+      }
       return TypedArrayView<const T>(data, _array_size);
     }
 
@@ -2014,6 +2144,7 @@ struct TimeSamples {
 
   /// Add array sample using unified storage (Phase 2 path)
   /// This bypasses _pod_samples and uses TimeSamples members directly
+  /// Array data is stored in _array_values using unique_ptr for proper ownership semantics
   template<typename T>
   bool add_array_sample(double t, const T* values, size_t count, std::string* err = nullptr) {
     static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
@@ -2036,14 +2167,18 @@ struct TimeSamples {
     _times.push_back(t);
     _blocked.push_back(0);  // Not blocked
 
-    // Store array data in _values buffer
-    size_t byte_offset = _values.size();
+    // Allocate new buffer for this array sample in _array_values
+    auto array_buffer = std::make_unique<Buffer<16>>();
     size_t data_size = sizeof(T) * count;
-    _values.resize(byte_offset + data_size);
-    std::memcpy(_values.data() + byte_offset, values, data_size);
+    array_buffer->resize(data_size);
+    std::memcpy(array_buffer->data(), values, data_size);
 
-    // Create encoded offset with array flag
-    uint64_t encoded_offset = PODTimeSamples::make_offset(byte_offset, true);
+    // Store the index of the newly allocated buffer
+    size_t array_index = _array_values.size();
+    _array_values.push_back(std::move(array_buffer));
+
+    // Create encoded offset with array buffer flag and index
+    uint64_t encoded_offset = PODTimeSamples::make_array_buffer_offset(array_index);
     _offsets.push_back(encoded_offset);
 
     // Update array metadata
@@ -2140,14 +2275,23 @@ struct TimeSamples {
     _times.push_back(t);
     _blocked.push_back(0);  // Not blocked
 
-    // Store scalar data in _values buffer
-    size_t byte_offset = _values.size();
-    _values.resize(byte_offset + sizeof(T));
-    std::memcpy(_values.data() + byte_offset, &value, sizeof(T));
+    // Storage optimization: small scalars (sizeof(T) <= 8) stored directly in _small_values
+    // Large scalars (sizeof(T) > 8) stored in _values with offset table
+    if (sizeof(T) <= 8) {
+      // Direct storage for small scalars - no offset entry needed
+      uint64_t small_value = 0;
+      std::memcpy(&small_value, &value, sizeof(T));
+      _small_values.push_back(small_value);
+    } else {
+      // Offset-based storage for large scalars
+      size_t byte_offset = _values.size();
+      _values.resize(byte_offset + sizeof(T));
+      std::memcpy(_values.data() + byte_offset, &value, sizeof(T));
 
-    // Create encoded offset (not array)
-    uint64_t encoded_offset = PODTimeSamples::make_offset(byte_offset, false);
-    _offsets.push_back(encoded_offset);
+      // Create encoded offset (not array)
+      uint64_t encoded_offset = PODTimeSamples::make_offset(byte_offset, false);
+      _offsets.push_back(encoded_offset);
+    }
 
     // Update metadata (scalar, not array)
     _is_array = false;
@@ -2241,13 +2385,24 @@ struct TimeSamples {
         return false;
       }
 
-      // Resolve offset
+      // Resolve offset - now checks both _values and _array_values buffers
       size_t byte_offset = 0;
-      if (!PODTimeSamples::resolve_offset_static(_offsets, idx, &byte_offset)) {
+      bool use_array_buffer = false;
+      if (!PODTimeSamples::resolve_offset_static(_offsets, idx, &byte_offset, nullptr, &use_array_buffer)) {
         return false;
       }
 
-      const T* data = reinterpret_cast<const T*>(_values.data() + byte_offset);
+      const T* data;
+      if (use_array_buffer) {
+        // Array data is in _array_values (unique_ptr vector)
+        if (byte_offset >= _array_values.size() || !_array_values[byte_offset]) {
+          return false;
+        }
+        data = reinterpret_cast<const T*>(_array_values[byte_offset]->data());
+      } else {
+        // Scalar array data is in _values buffer
+        data = reinterpret_cast<const T*>(_values.data() + byte_offset);
+      }
       out_vec->assign(data, data + _array_size);
       if (out_blocked) *out_blocked = false;
       return true;
@@ -2348,7 +2503,12 @@ struct TimeSamples {
     if (_dirty) {
       update();
     }
-    // Delegate to _pod_samples based on _use_pod flag
+    // Check if using unified storage (Phase 3) or _pod_samples storage
+    if (!_times.empty()) {
+      // Using unified storage directly on TimeSamples
+      return _times;
+    }
+    // Delegate to _pod_samples if not using unified storage
     if (_use_pod) {
       return _pod_samples._times;
     }
@@ -2359,7 +2519,10 @@ struct TimeSamples {
     if (_dirty) {
       update();
     }
-    // Delegate to _pod_samples based on _use_pod flag
+    // Check if using unified storage
+    if (!_times.empty()) {
+      return _blocked;
+    }
     if (_use_pod) {
       return _pod_samples._blocked;
     }
@@ -2370,7 +2533,10 @@ struct TimeSamples {
     if (_dirty) {
       update();
     }
-    // Delegate to _pod_samples based on _use_pod flag
+    // Check if using unified storage
+    if (!_times.empty()) {
+      return _values;
+    }
     if (_use_pod) {
       return _pod_samples._values;
     }
@@ -2381,7 +2547,10 @@ struct TimeSamples {
     if (_dirty) {
       update();
     }
-    // Delegate to _pod_samples based on _use_pod flag
+    // Check if using unified storage
+    if (!_times.empty()) {
+      return _offsets;
+    }
     if (_use_pod) {
       return _pod_samples._offsets;
     }
@@ -2403,8 +2572,10 @@ struct TimeSamples {
   // POD path storage (moved from PODTimeSamples for Phase 2 unification)
   mutable std::vector<double> _times;
   mutable Buffer<16> _blocked;
-  mutable Buffer<16> _values;               // Raw byte storage for POD types
-  mutable std::vector<uint64_t> _offsets;   // Offset table with dedup/array flags
+  mutable std::vector<uint64_t> _small_values;                       // Direct storage for small scalar POD types (sizeof(T) <= 8 bytes), stored as uint64
+  mutable Buffer<16> _values;                                        // Raw byte storage for large scalar POD types and arrays
+  mutable std::vector<std::unique_ptr<Buffer<16>>> _array_values;    // Array data storage: each entry is a separate allocated buffer for one array sample
+  mutable std::vector<uint64_t> _offsets;                            // Offset table for large types and arrays with dedup/array/buffer flags
 
   // Type information
   uint32_t _type_id{0};
