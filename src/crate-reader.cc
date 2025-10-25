@@ -1901,6 +1901,8 @@ template bool CrateReader::ReadArray<value::double4>(std::vector<value::double4>
 template bool CrateReader::ReadArray<value::quatf>(std::vector<value::quatf>*);
 template bool CrateReader::ReadArray<value::quath>(std::vector<value::quath>*);
 template bool CrateReader::ReadArray<value::quatd>(std::vector<value::quatd>*);
+// String type instantiation needed by crate-reader-timesamples.cc
+template bool CrateReader::ReadArray<std::string>(std::vector<std::string>*);
 
 template<typename T>
 bool CrateReader::ReadListOp(ListOp<T> *d) {

@@ -1964,6 +1964,105 @@ bool CrateReader::UnpackTimeSampleValue_ASSET_PATH(
   return true;
 }
 
+bool CrateReader::UnpackTimeSampleValue_STRING(
+    double t, const crate::ValueRep &rep, value::TimeSamples &dst,
+    size_t expected_total_samples) {
+  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) ==
+      crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
+    // Blocked value - just add a blocked sample
+    if (!add_blocked_sample_to_timesamples<std::string>(
+            &dst, t, &_err, expected_total_samples)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                "Failed to add blocked sample to TimeSamples.");
+    }
+    return true;
+  }
+
+  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) !=
+      crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid ValueRep type in TimeSamples.");
+  }
+
+  if (rep.IsInlined()) {
+    if (rep.IsCompressed() || rep.IsArray()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                "Invalid inlined ValueRep in TimeSamples.");
+    }
+    // String is stored as StringIndex (token) for inlined value
+    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+    if (auto v = GetStringToken(crate::Index(data))) {
+      std::string str = v.value().str();
+
+      if (!add_sample_to_timesamples<std::string>(
+              &dst, t, str, &_err, expected_total_samples)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+      }
+      return true;
+    } else {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Index for String.");
+    }
+  } else if (rep.IsArray()) {
+    if (rep.IsCompressed()) {
+      PUSH_ERROR_AND_RETURN_TAG(
+          kTag, "Compressed String not supported for TimeSamples.");
+    }
+
+    std::vector<std::string> v;
+    if (rep.GetPayload() == 0) {
+      if (!add_sample_to_timesamples<std::vector<std::string>>(
+              &dst, t, v, &_err, expected_total_samples)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+      }
+      return true;
+    }
+    if (!ReadArray(&v)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read String array.");
+    }
+
+    if (!add_sample_to_timesamples<std::vector<std::string>>(
+            &dst, t, v, &_err, expected_total_samples)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+    }
+  } else {
+    // Scalar (non-inlined, non-array) string value
+    if (rep.IsCompressed()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                "Compressed string not supported for TimeSamples.");
+    }
+
+    // Check deduplication cache for scalar value read from stream
+    auto it = _dedup_string.find(rep);
+    std::string v;
+    if (it != _dedup_string.end()) {
+      // Reuse cached value
+      v = it->second;
+      DCOUT("Reusing cached STRING scalar value for ValueRep");
+    } else {
+      // Read and cache scalar value
+      // String is stored as StringIndex in the stream
+      uint32_t index_data;
+      CHECK_MEMORY_USAGE(sizeof(uint32_t));
+      if (!_sr->read(sizeof(uint32_t), sizeof(uint32_t),
+                     reinterpret_cast<uint8_t *>(&index_data))) {
+        PUSH_ERROR_AND_RETURN("Failed to read string index");
+      }
+      if (auto str_val = GetStringToken(crate::Index(index_data))) {
+        v = str_val.value().str();
+        DCOUT("string = " << v);
+        _dedup_string[rep] = v;
+      } else {
+        PUSH_ERROR_AND_RETURN("Invalid string index in TimeSamples.");
+      }
+    }
+    if (!add_sample_to_timesamples<std::string>(&dst, t, v, &_err,
+                                                 expected_total_samples)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+    }
+  }
+
+  return true;
+}
+
 bool CrateReader::UnpackTimeSampleValue_FLOAT3(double t,
                                                const crate::ValueRep &rep,
                                                value::TimeSamples &dst,
@@ -3903,6 +4002,10 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
                crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH) {
       if (!UnpackTimeSampleValue_ASSET_PATH(curr_time, rep, *d,
                                             prealloc_hint)) {
+        return false;
+      }
+    } else if (crate_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING) {
+      if (!UnpackTimeSampleValue_STRING(curr_time, rep, *d, prealloc_hint)) {
         return false;
       }
     } else {

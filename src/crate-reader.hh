@@ -382,6 +382,7 @@ class CrateReader {
   bool UnpackTimeSampleValue_QUATF(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
   bool UnpackTimeSampleValue_QUATD(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
   bool UnpackTimeSampleValue_ASSET_PATH(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_STRING(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
   bool UnpackTimeSampleValue_MATRIX2D(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
   bool UnpackTimeSampleValue_MATRIX3D(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
   bool UnpackTimeSampleValue_MATRIX4D(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
@@ -599,6 +600,11 @@ class CrateReader {
   std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_matrix2d_array;
   std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_matrix3d_array;
   std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_matrix4d_array;
+
+  // String type (scalar and array)
+  std::unordered_map<crate::ValueRep, std::string, crate::ValueRep::Hash> _dedup_string;
+  // Stores ref_index (sample index) for deduplication
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_string_array;
 
   class Impl;
   Impl *_impl;
