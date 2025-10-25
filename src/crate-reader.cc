@@ -1888,6 +1888,19 @@ template bool CrateReader::ReadArray<value::AssetPath>(std::vector<value::AssetP
 template bool CrateReader::ReadArray<value::matrix2d>(std::vector<value::matrix2d>*);
 template bool CrateReader::ReadArray<value::matrix3d>(std::vector<value::matrix3d>*);
 template bool CrateReader::ReadArray<value::matrix4d>(std::vector<value::matrix4d>*);
+// Vector type instantiations needed by crate-reader-timesamples.cc
+template bool CrateReader::ReadArray<value::half2>(std::vector<value::half2>*);
+template bool CrateReader::ReadArray<value::half3>(std::vector<value::half3>*);
+template bool CrateReader::ReadArray<value::half4>(std::vector<value::half4>*);
+template bool CrateReader::ReadArray<value::float2>(std::vector<value::float2>*);
+template bool CrateReader::ReadArray<value::float3>(std::vector<value::float3>*);
+template bool CrateReader::ReadArray<value::float4>(std::vector<value::float4>*);
+template bool CrateReader::ReadArray<value::double2>(std::vector<value::double2>*);
+template bool CrateReader::ReadArray<value::double3>(std::vector<value::double3>*);
+template bool CrateReader::ReadArray<value::double4>(std::vector<value::double4>*);
+template bool CrateReader::ReadArray<value::quatf>(std::vector<value::quatf>*);
+template bool CrateReader::ReadArray<value::quath>(std::vector<value::quath>*);
+template bool CrateReader::ReadArray<value::quatd>(std::vector<value::quatd>*);
 
 template<typename T>
 bool CrateReader::ReadListOp(ListOp<T> *d) {

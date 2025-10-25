@@ -1217,9 +1217,33 @@ bool CrateReader::UnpackTimeSampleValue_HALF2(double t,
     }
 
   } else {
-    // Non-array value is not supported
+    if (rep.IsCompressed()) {
+      PUSH_ERROR_AND_RETURN_TAG(
+          kTag, "Compressed half2 not supported for TimeSamples.");
+    }
 
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-array value for half2 is invalid.");
+    // Check deduplication cache for scalar value read from stream
+    auto it = _dedup_half2.find(rep);
+    value::half2 v;
+    if (it != _dedup_half2.end()) {
+      // Reuse cached value
+      v = it->second;
+      DCOUT("Reusing cached HALF2 scalar value for ValueRep");
+    } else {
+      // Read and cache scalar value
+      CHECK_MEMORY_USAGE(sizeof(value::half2));
+      if (!_sr->read(sizeof(value::half2), sizeof(value::half2),
+                     reinterpret_cast<uint8_t *>(&v))) {
+        PUSH_ERROR_AND_RETURN("Failed to read half2");
+      }
+      DCOUT("half2 = " << v);
+      _dedup_half2[rep] = v;
+    }
+
+    if (!add_sample_to_timesamples<value::half2>(&dst, t, v, &_err,
+                                                 expected_total_samples)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+    }
   }
 
   return true;
@@ -1336,9 +1360,33 @@ bool CrateReader::UnpackTimeSampleValue_HALF3(double t,
     }
 
   } else {
-    // Non-array value is not supported
+    if (rep.IsCompressed()) {
+      PUSH_ERROR_AND_RETURN_TAG(
+          kTag, "Compressed half3 not supported for TimeSamples.");
+    }
 
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-array value for half3 is invalid.");
+    // Check deduplication cache for scalar value read from stream
+    auto it = _dedup_half3.find(rep);
+    value::half3 v;
+    if (it != _dedup_half3.end()) {
+      // Reuse cached value
+      v = it->second;
+      DCOUT("Reusing cached HALF3 scalar value for ValueRep");
+    } else {
+      // Read and cache scalar value
+      CHECK_MEMORY_USAGE(sizeof(value::half3));
+      if (!_sr->read(sizeof(value::half3), sizeof(value::half3),
+                     reinterpret_cast<uint8_t *>(&v))) {
+        PUSH_ERROR_AND_RETURN("Failed to read half3");
+      }
+      DCOUT("half3 = " << v);
+      _dedup_half3[rep] = v;
+    }
+
+    if (!add_sample_to_timesamples<value::half3>(&dst, t, v, &_err,
+                                                 expected_total_samples)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+    }
   }
 
   return true;
@@ -1456,9 +1504,33 @@ bool CrateReader::UnpackTimeSampleValue_HALF4(double t,
     }
 
   } else {
-    // Non-array value is not supported
+    if (rep.IsCompressed()) {
+      PUSH_ERROR_AND_RETURN_TAG(
+          kTag, "Compressed half4 not supported for TimeSamples.");
+    }
 
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-array value for half4 is invalid.");
+    // Check deduplication cache for scalar value read from stream
+    auto it = _dedup_half4.find(rep);
+    value::half4 v;
+    if (it != _dedup_half4.end()) {
+      // Reuse cached value
+      v = it->second;
+      DCOUT("Reusing cached HALF4 scalar value for ValueRep");
+    } else {
+      // Read and cache scalar value
+      CHECK_MEMORY_USAGE(sizeof(value::half4));
+      if (!_sr->read(sizeof(value::half4), sizeof(value::half4),
+                     reinterpret_cast<uint8_t *>(&v))) {
+        PUSH_ERROR_AND_RETURN("Failed to read half4");
+      }
+      DCOUT("half4 = " << v);
+      _dedup_half4[rep] = v;
+    }
+
+    if (!add_sample_to_timesamples<value::half4>(&dst, t, v, &_err,
+                                                 expected_total_samples)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+    }
   }
 
   return true;
@@ -1564,9 +1636,33 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT(double t,
     }
 
   } else {
-    // Non-array value is not supported
+    if (rep.IsCompressed()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                "Compressed float not supported for TimeSamples.");
+    }
 
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-array value for float is invalid.");
+    // Check deduplication cache for scalar value read from stream
+    auto it = _dedup_float.find(rep);
+    float v;
+    if (it != _dedup_float.end()) {
+      // Reuse cached value
+      v = it->second;
+      DCOUT("Reusing cached FLOAT scalar value for ValueRep");
+    } else {
+      // Read and cache scalar value
+      CHECK_MEMORY_USAGE(sizeof(float));
+      if (!_sr->read(sizeof(float), sizeof(float),
+                     reinterpret_cast<uint8_t *>(&v))) {
+        PUSH_ERROR_AND_RETURN("Failed to read float");
+      }
+      DCOUT("float = " << v);
+      _dedup_float[rep] = v;
+    }
+
+    if (!add_sample_to_timesamples<float>(&dst, t, v, &_err,
+                                          expected_total_samples)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+    }
   }
 
   return true;
@@ -1679,9 +1775,33 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT2(double t,
     }
 
   } else {
-    // Non-array value is not supported
+    if (rep.IsCompressed()) {
+      PUSH_ERROR_AND_RETURN_TAG(
+          kTag, "Compressed float2 not supported for TimeSamples.");
+    }
 
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-array value for float2 is invalid.");
+    // Check deduplication cache for scalar value read from stream
+    auto it = _dedup_float2.find(rep);
+    value::float2 v;
+    if (it != _dedup_float2.end()) {
+      // Reuse cached value
+      v = it->second;
+      DCOUT("Reusing cached FLOAT2 scalar value for ValueRep");
+    } else {
+      // Read and cache scalar value
+      CHECK_MEMORY_USAGE(sizeof(value::float2));
+      if (!_sr->read(sizeof(value::float2), sizeof(value::float2),
+                     reinterpret_cast<uint8_t *>(&v))) {
+        PUSH_ERROR_AND_RETURN("Failed to read float2");
+      }
+      DCOUT("float2 = " << v);
+      _dedup_float2[rep] = v;
+    }
+
+    if (!add_sample_to_timesamples<value::float2>(&dst, t, v, &_err,
+                                                  expected_total_samples)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+    }
   }
 
   return true;
@@ -3449,7 +3569,33 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE(double t,
       }
     }
   } else {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-array value for double is invalid.");
+    if (rep.IsCompressed()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                "Compressed double not supported for TimeSamples.");
+    }
+
+    // Check deduplication cache for scalar value read from stream
+    auto it = _dedup_double.find(rep);
+    double v;
+    if (it != _dedup_double.end()) {
+      // Reuse cached value
+      v = it->second;
+      DCOUT("Reusing cached DOUBLE scalar value for ValueRep");
+    } else {
+      // Read and cache scalar value
+      CHECK_MEMORY_USAGE(sizeof(double));
+      if (!_sr->read(sizeof(double), sizeof(double),
+                     reinterpret_cast<uint8_t *>(&v))) {
+        PUSH_ERROR_AND_RETURN("Failed to read double");
+      }
+      DCOUT("double = " << v);
+      _dedup_double[rep] = v;
+    }
+
+    if (!add_sample_to_timesamples<double>(&dst, t, v, &_err,
+                                           expected_total_samples)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+    }
   }
 
   return true;
