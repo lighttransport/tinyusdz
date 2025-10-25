@@ -3144,8 +3144,17 @@ bool CrateReader::UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint6
         }
         value->Set(std::move(v));
         return true;
+      } else {
+        // Support scalar quath
+        value::quath v;
+        if (!_sr->read(sizeof(value::quath), sizeof(value::quath),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read quath value.");
+          return false;
+        }
+        value->Set(v);
+        return true;
       }
-      return false;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATF: {
       if (rep.IsCompressed()) {
@@ -3160,8 +3169,17 @@ bool CrateReader::UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint6
         }
         value->Set(std::move(v));
         return true;
+      } else {
+        // Support scalar quatf
+        value::quatf v;
+        if (!_sr->read(sizeof(value::quatf), sizeof(value::quatf),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read quatf value.");
+          return false;
+        }
+        value->Set(v);
+        return true;
       }
-      return false;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATD: {
       if (rep.IsCompressed()) {
@@ -3176,8 +3194,17 @@ bool CrateReader::UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint6
         }
         value->Set(std::move(v));
         return true;
+      } else {
+        // Support scalar quatd
+        value::quatd v;
+        if (!_sr->read(sizeof(value::quatd), sizeof(value::quatd),
+                       reinterpret_cast<uint8_t *>(&v))) {
+          PUSH_ERROR("Failed to read quatd value.");
+          return false;
+        }
+        value->Set(v);
+        return true;
       }
-      return false;
     }
     default: {
       PUSH_ERROR(fmt::format("Unsupported type for TimeSamples optimization: {}", crate::GetCrateDataTypeName(dty.dtype_id)));
