@@ -1615,6 +1615,7 @@ bool CrateReader::UnpackTimeSampleValue_QUATF(double t,
       _dedup_quatf_array[rep] = v;
     }
 
+    DCOUT("Add array quatf value sample");
     if (!add_array_sample_to_timesamples<value::quatf>(
             &dst, t, v, &_err, expected_total_samples)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");

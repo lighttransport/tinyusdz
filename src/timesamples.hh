@@ -93,8 +93,118 @@ struct PODTimeSamples {
   mutable std::vector<double> _times;
   mutable Buffer<16> _blocked; // ValueBlock flags with 16-byte alignment
   mutable Buffer<16> _values; // Raw byte storage: compact storage without blocked values
-  mutable std::vector<size_t> _offsets; // Offset table for array values (or scalar values with blocks)
+  mutable std::vector<uint64_t> _offsets; // Offset table with dedup/array flags (bit 63=dedup, bit 62=array, bits 61-0=index/offset)
   mutable size_t _blocked_count{0}; // Count of blocked samples for O(1) queries
+
+  // Offset encoding constants
+  static constexpr uint64_t OFFSET_DEDUP_FLAG = 0x8000000000000000ULL;  // Bit 63: dedup flag
+  static constexpr uint64_t OFFSET_ARRAY_FLAG = 0x4000000000000000ULL;  // Bit 62: array flag
+  static constexpr uint64_t OFFSET_VALUE_MASK = 0x3FFFFFFFFFFFFFFFULL;  // Bits 61-0: index/offset value
+  static constexpr uint64_t OFFSET_FLAGS_MASK = 0xC000000000000000ULL;  // Bits 63-62: flags
+
+  // Offset manipulation helpers
+  static constexpr uint64_t make_offset(size_t byte_offset, bool is_array) {
+    return (is_array ? OFFSET_ARRAY_FLAG : 0ULL) | (byte_offset & OFFSET_VALUE_MASK);
+  }
+
+  static constexpr uint64_t make_dedup_offset(size_t sample_index, bool is_array) {
+    return OFFSET_DEDUP_FLAG | (is_array ? OFFSET_ARRAY_FLAG : 0ULL) | (sample_index & OFFSET_VALUE_MASK);
+  }
+
+  static constexpr bool is_dedup(uint64_t offset_value) {
+    return (offset_value & OFFSET_DEDUP_FLAG) != 0;
+  }
+
+  static constexpr bool is_array_offset(uint64_t offset_value) {
+    return (offset_value & OFFSET_ARRAY_FLAG) != 0;
+  }
+
+  static constexpr size_t get_raw_value(uint64_t offset_value) {
+    return static_cast<size_t>(offset_value & OFFSET_VALUE_MASK);
+  }
+
+  /// Resolve offset value to actual byte offset, following dedup chain if necessary
+  /// Static version that works with any offsets vector (for TimeSamples Phase 2)
+  /// @param offsets The offset vector to resolve from
+  /// @param sample_idx The sample index to resolve
+  /// @param out_byte_offset Output: the resolved byte offset in _values buffer
+  /// @param out_is_array Output: whether this is array data
+  /// @param max_depth Maximum dedup chain depth to prevent infinite loops (default 100)
+  /// @return true on success, false if circular reference detected or max depth exceeded
+  static bool resolve_offset_static(const std::vector<uint64_t>& offsets, size_t sample_idx,
+                                     size_t* out_byte_offset, bool* out_is_array = nullptr,
+                                     size_t max_depth = 100) {
+    if (sample_idx >= offsets.size()) {
+      return false;
+    }
+
+    uint64_t offset_value = offsets[sample_idx];
+    size_t depth = 0;
+
+    // Follow dedup chain
+    while (is_dedup(offset_value)) {
+      if (++depth > max_depth) {
+        return false; // Dedup chain too deep, likely circular
+      }
+
+      size_t ref_idx = get_raw_value(offset_value);
+      if (ref_idx >= offsets.size() || ref_idx == sample_idx) {
+        return false; // Invalid or self-referencing index
+      }
+
+      offset_value = offsets[ref_idx];
+    }
+
+    // Now we have a non-dedup offset
+    if (out_byte_offset) {
+      *out_byte_offset = get_raw_value(offset_value);
+    }
+    if (out_is_array) {
+      *out_is_array = is_array_offset(offset_value);
+    }
+
+    return true;
+  }
+
+  /// Resolve offset value to actual byte offset, following dedup chain if necessary
+  /// Instance method - delegates to static version
+  /// @param sample_idx The sample index to resolve
+  /// @param out_byte_offset Output: the resolved byte offset in _values buffer
+  /// @param out_is_array Output: whether this is array data
+  /// @param max_depth Maximum dedup chain depth to prevent infinite loops (default 100)
+  /// @return true on success, false if circular reference detected or max depth exceeded
+  bool resolve_offset(size_t sample_idx, size_t* out_byte_offset, bool* out_is_array = nullptr, size_t max_depth = 100) const {
+    return resolve_offset_static(_offsets, sample_idx, out_byte_offset, out_is_array, max_depth);
+  }
+
+  /// Validate that a dedup reference is valid (no circular refs, references non-dedup data)
+  /// @param ref_index The index being referenced
+  /// @param new_sample_idx The new sample index that will reference ref_index
+  /// @return true if valid, false if would create circular reference
+  bool validate_dedup_reference(size_t ref_index, size_t new_sample_idx) const {
+    // Check bounds
+    if (ref_index >= _times.size()) {
+      return false;
+    }
+
+    // Self-reference check
+    if (ref_index == new_sample_idx) {
+      return false;
+    }
+
+    // Check that ref_index is not blocked
+    if (_offsets[ref_index] == SIZE_MAX) {
+      return false;
+    }
+
+    // Verify ref_index doesn't point to dedup data (must be original)
+    uint64_t ref_offset = _offsets[ref_index];
+    if (is_dedup(ref_offset)) {
+      return false; // Cannot dedup from dedup - must reference original data only
+    }
+
+    return true;
+  }
 
   bool empty() const { return _times.empty(); }
 
@@ -311,11 +421,14 @@ public:
     _times.push_back(t);
     _blocked.push_back(0);  // false = 0
 
-    // Store offset and append array data
-    _offsets.push_back(_values.size());
+    // Store offset with array flag and append array data
+    size_t byte_offset = _values.size();
+    uint64_t encoded_offset = make_offset(byte_offset, true);  // is_array=true
+    _offsets.push_back(encoded_offset);
+
     size_t byte_size = sizeof(T) * count;
     _values.resize(_values.size() + byte_size);
-    std::memcpy(_values.data() + _offsets.back(), values, byte_size);
+    std::memcpy(_values.data() + byte_offset, values, byte_size);
 
     _dirty = true;
     mark_dirty_range(new_idx);
@@ -373,11 +486,14 @@ public:
     _times.push_back(t);
     _blocked.push_back(0);  // false = 0
 
-    // Store offset and append array data
-    _offsets.push_back(_values.size());
+    // Store offset with array flag and append array data
+    size_t byte_offset = _values.size();
+    uint64_t encoded_offset = make_offset(byte_offset, true);  // is_array=true
+    _offsets.push_back(encoded_offset);
+
     size_t byte_size = sizeof(T) * count;
     _values.resize(_values.size() + byte_size);
-    std::memcpy(_values.data() + _offsets.back(), values, byte_size);
+    std::memcpy(_values.data() + byte_offset, values, byte_size);
 
     _dirty = true;
     mark_dirty_range(new_idx);
@@ -396,12 +512,27 @@ public:
                   (value::TypeTraits<T>::type_id() == value::TYPE_ID_MATRIX4D),
                   "requires matrix type");
 
-    // Verify ref_index is valid
-    if (ref_index >= _times.size()) {
+    size_t new_idx = _times.size();
+
+    // Validate dedup reference (checks bounds, self-reference, circular refs, non-dedup source)
+    if (!validate_dedup_reference(ref_index, new_idx)) {
       if (err) {
-        (*err) += "Invalid ref_index in add_dedup_matrix_array_sample: " +
-                  std::to_string(ref_index) + " >= " +
-                  std::to_string(_times.size()) + ".\n";
+        if (ref_index >= _times.size()) {
+          (*err) += "Invalid ref_index in add_dedup_matrix_array_sample: " +
+                    std::to_string(ref_index) + " >= " +
+                    std::to_string(_times.size()) + ".\n";
+        } else if (ref_index == new_idx) {
+          (*err) += "Self-reference detected in add_dedup_matrix_array_sample: " +
+                    std::to_string(ref_index) + ".\n";
+        } else if (is_dedup(_offsets[ref_index])) {
+          (*err) += "Cannot deduplicate from deduplicated sample at index " +
+                    std::to_string(ref_index) + ". Must reference original data only.\n";
+        } else if (_offsets[ref_index] == SIZE_MAX) {
+          (*err) += "Cannot deduplicate from blocked sample at index " +
+                    std::to_string(ref_index) + ".\n";
+        } else {
+          (*err) += "Invalid dedup reference in add_dedup_matrix_array_sample.\n";
+        }
       }
       return false;
     }
@@ -414,23 +545,13 @@ public:
       return false;
     }
 
-    // Verify that ref_index has an offset (not blocked)
-    if (_offsets[ref_index] == SIZE_MAX) {
-      if (err) {
-        (*err) += "Cannot deduplicate from blocked sample at index " +
-                  std::to_string(ref_index) + ".\n";
-      }
-      return false;
-    }
-
-    size_t new_idx = _times.size();
     _times.push_back(t);
     _blocked.push_back(0);  // false = 0
 
-    // Reuse the offset from the reference sample (deduplication!)
-    // This makes offset[new_idx] == offset[ref_index], both pointing to the same data
-    _offsets.push_back(_offsets[ref_index]);
-    // NOTE: No data appended to _values - we reuse existing data
+    // Create dedup offset: bit 63=1 (dedup), bit 62=1 (array), bits 61-0=ref_index
+    uint64_t dedup_offset = make_dedup_offset(ref_index, true);
+    _offsets.push_back(dedup_offset);
+    // NOTE: No data appended to _values - we reference existing data via index
 
     _dirty = true;
     mark_dirty_range(new_idx);
@@ -450,12 +571,27 @@ public:
     static_assert(std::is_standard_layout<T>::value,
                   "PODTimeSamples requires standard layout types");
 
-    // Verify ref_index is valid
-    if (ref_index >= _times.size()) {
+    size_t new_idx = _times.size();
+
+    // Validate dedup reference (checks bounds, self-reference, circular refs, non-dedup source)
+    if (!validate_dedup_reference(ref_index, new_idx)) {
       if (err) {
-        (*err) += "Invalid ref_index in add_dedup_array_sample: " +
-                  std::to_string(ref_index) + " >= " +
-                  std::to_string(_times.size()) + ".\n";
+        if (ref_index >= _times.size()) {
+          (*err) += "Invalid ref_index in add_dedup_array_sample: " +
+                    std::to_string(ref_index) + " >= " +
+                    std::to_string(_times.size()) + ".\n";
+        } else if (ref_index == new_idx) {
+          (*err) += "Self-reference detected in add_dedup_array_sample: " +
+                    std::to_string(ref_index) + ".\n";
+        } else if (is_dedup(_offsets[ref_index])) {
+          (*err) += "Cannot deduplicate from deduplicated sample at index " +
+                    std::to_string(ref_index) + ". Must reference original data only.\n";
+        } else if (_offsets[ref_index] == SIZE_MAX) {
+          (*err) += "Cannot deduplicate from blocked sample at index " +
+                    std::to_string(ref_index) + ".\n";
+        } else {
+          (*err) += "Invalid dedup reference in add_dedup_array_sample.\n";
+        }
       }
       return false;
     }
@@ -468,23 +604,13 @@ public:
       return false;
     }
 
-    // Verify that ref_index has an offset (not blocked)
-    if (_offsets[ref_index] == SIZE_MAX) {
-      if (err) {
-        (*err) += "Cannot deduplicate from blocked sample at index " +
-                  std::to_string(ref_index) + ".\n";
-      }
-      return false;
-    }
-
-    size_t new_idx = _times.size();
     _times.push_back(t);
     _blocked.push_back(0);  // false = 0
 
-    // Reuse the offset from the reference sample (deduplication!)
-    // This makes offset[new_idx] == offset[ref_index], both pointing to the same data
-    _offsets.push_back(_offsets[ref_index]);
-    // NOTE: No data appended to _values - we reuse existing data
+    // Create dedup offset: bit 63=1 (dedup), bit 62=1 (array), bits 61-0=ref_index
+    uint64_t dedup_offset = make_dedup_offset(ref_index, true);
+    _offsets.push_back(dedup_offset);
+    // NOTE: No data appended to _values - we reference existing data via index
 
     _dirty = true;
     mark_dirty_range(new_idx);
@@ -546,12 +672,14 @@ public:
     if (_offsets.empty() && !_is_stl_array && !_is_typed_array && !_times.empty()) {
       // Transition to offset-based storage
       // Build offset table for existing samples
-      size_t offset = 0;
+      size_t byte_offset = 0;
       size_t element_size = get_element_size();
       for (size_t i = 0; i < _times.size() - 1; ++i) {  // -1 because we just added this time
         if (!_blocked[i]) {
-          _offsets.push_back(offset);
-          offset += element_size;
+          // Encode offset with flags (scalar = is_array false)
+          uint64_t encoded_offset = make_offset(byte_offset, false);
+          _offsets.push_back(encoded_offset);
+          byte_offset += element_size;
         } else {
           _offsets.push_back(SIZE_MAX);
         }
@@ -655,9 +783,9 @@ public:
       return false;
     }
 
-    // Find the actual data offset
+    // Resolve offset following dedup chain if necessary
     if (!_offsets.empty()) {
-      // Using offset table
+      // Using offset table with dedup support
       if (_offsets[idx] == SIZE_MAX) {
         // This is a blocked value (shouldn't happen as we checked above, but be safe)
         if (blocked) {
@@ -666,7 +794,14 @@ public:
         *value = T{};
         return true;
       }
-      const uint8_t* src = _values.data() + _offsets[idx];
+
+      size_t byte_offset = 0;
+      if (!resolve_offset(idx, &byte_offset)) {
+        // Failed to resolve offset (circular reference or invalid dedup chain)
+        return false;
+      }
+
+      const uint8_t* src = _values.data() + byte_offset;
       std::memcpy(value, src, sizeof(T));
     } else {
       // Legacy path: calculate offset by counting non-blocked entries
@@ -875,13 +1010,20 @@ public:
 
     // For array data stored directly
     if ((_is_stl_array || _is_typed_array) && _array_size > 0) {
-      // Find the actual data offset
+      // Resolve offset following dedup chain if necessary
       if (!_offsets.empty()) {
         if (_offsets[idx] == SIZE_MAX) {
           // Blocked value
           return TypedArrayView<const T>();
         }
-        const T* src = reinterpret_cast<const T*>(_values.data() + _offsets[idx]);
+
+        size_t byte_offset = 0;
+        if (!resolve_offset(idx, &byte_offset)) {
+          // Failed to resolve offset (circular reference or invalid dedup chain)
+          return TypedArrayView<const T>();
+        }
+
+        const T* src = reinterpret_cast<const T*>(_values.data() + byte_offset);
         return TypedArrayView<const T>(src, _array_size);
       }
     }
@@ -907,27 +1049,6 @@ public:
     }
 
     return TypedArrayView<const T>();  // Empty view
-  }
-
-  const std::vector<double>& get_times() const {
-    if (_dirty) {
-      update();
-    }
-    return _times;
-  }
-
-  const Buffer<16>& get_blocked() const {
-    if (_dirty) {
-      update();
-    }
-    return _blocked;
-  }
-
-  const Buffer<16>& get_values() const {
-    if (_dirty) {
-      update();
-    }
-    return _values;
   }
 
   size_t estimate_memory_usage() const {
@@ -964,28 +1085,57 @@ struct TimeSamples {
   }
 
   size_t size() const {
+    if (_dirty) {
+      update();
+    }
     return _use_pod ? _pod_samples.size() : _samples.size();
   }
 
   void clear() {
     _samples.clear();
+    _times.clear();
+    _blocked.clear();
+    _values.clear();
+    _offsets.clear();
     _pod_samples.clear();
     _type_id = 0;
     _use_pod = false;
+    _is_array = false;
+    _array_size = 0;
+    _element_size = 0;
+    _blocked_count = 0;
     _dirty = true;
+    _dirty_start = 0;
+    _dirty_end = 0;
   }
 
   /// Move constructor
   TimeSamples(TimeSamples&& other) noexcept
       : _samples(std::move(other._samples)),
-        _pod_samples(std::move(other._pod_samples)),
+        _times(std::move(other._times)),
+        _blocked(std::move(other._blocked)),
+        _values(std::move(other._values)),
+        _offsets(std::move(other._offsets)),
         _type_id(other._type_id),
         _use_pod(other._use_pod),
-        _dirty(other._dirty) {
+        _is_array(other._is_array),
+        _array_size(other._array_size),
+        _element_size(other._element_size),
+        _blocked_count(other._blocked_count),
+        _dirty(other._dirty),
+        _dirty_start(other._dirty_start),
+        _dirty_end(other._dirty_end),
+        _pod_samples(std::move(other._pod_samples)) {
     // Reset moved-from object to valid empty state
     other._type_id = 0;
     other._use_pod = false;
+    other._is_array = false;
+    other._array_size = 0;
+    other._element_size = 0;
+    other._blocked_count = 0;
     other._dirty = false;
+    other._dirty_start = 0;
+    other._dirty_end = 0;
   }
 
   /// Move assignment operator
@@ -993,15 +1143,31 @@ struct TimeSamples {
     if (this != &other) {
       // Move data from other
       _samples = std::move(other._samples);
+      _times = std::move(other._times);
+      _blocked = std::move(other._blocked);
+      _values = std::move(other._values);
+      _offsets = std::move(other._offsets);
       _pod_samples = std::move(other._pod_samples);
       _type_id = other._type_id;
       _use_pod = other._use_pod;
+      _is_array = other._is_array;
+      _array_size = other._array_size;
+      _element_size = other._element_size;
+      _blocked_count = other._blocked_count;
       _dirty = other._dirty;
+      _dirty_start = other._dirty_start;
+      _dirty_end = other._dirty_end;
 
       // Reset moved-from object to valid empty state
       other._type_id = 0;
       other._use_pod = false;
+      other._is_array = false;
+      other._array_size = 0;
+      other._element_size = 0;
+      other._blocked_count = 0;
       other._dirty = false;
+      other._dirty_start = 0;
+      other._dirty_end = 0;
     }
     return *this;
   }
@@ -1018,16 +1184,17 @@ struct TimeSamples {
   /// This determines whether to use POD optimization or regular storage
   bool init(uint32_t type_id) {
     //DCOUT("init" << type_id);
-    DCOUT("init" << type_id);
 
     // Allow initialization if empty OR if it contains only uninitialized blocked samples
     if (!empty() && _type_id != 0) {
+      DCOUT("initialized" << type_id);
       return false; // Already initialized with a different type
     }
+    DCOUT("init" << type_id);
     _type_id = type_id;
     _use_pod = value::is_pod_type_id(type_id);
     if (_use_pod) {
-      //DCOUT("  use_pod: " << type_id);
+      DCOUT("  use_pod: " << type_id);
       _pod_samples._type_id = type_id;
     }
     return true;
@@ -1063,13 +1230,14 @@ struct TimeSamples {
 
   nonstd::optional<double> get_time(size_t idx) const {
     if (_use_pod) {
-      if (idx >= _pod_samples.size()) {
+      // Phase 3: Use unified storage directly
+      if (idx >= _times.size()) {
         return nonstd::nullopt;
       }
       if (_dirty) {
         update();
       }
-      return _pod_samples.get_times()[idx];
+      return _times[idx];
     } else {
       if (idx >= _samples.size()) {
         return nonstd::nullopt;
@@ -1502,7 +1670,34 @@ struct TimeSamples {
       return _pod_samples.get_typed_array_view_at<T>(idx);
     }
 
-    // For regular Value storage
+    // Phase 2: Check if using unified storage (non-POD samples but has POD data)
+    if (!_pod_samples.empty()) {
+      // Delegate to PODTimeSamples (backward compat during transition)
+      return _pod_samples.get_typed_array_view_at<T>(idx);
+    }
+
+    // Phase 2: Use unified storage directly
+    if (!_times.empty() && _is_array) {
+      if (idx >= _times.size()) {
+        return TypedArrayView<const T>(nullptr, 0);
+      }
+
+      // Check if blocked
+      if (_blocked[idx]) {
+        return TypedArrayView<const T>(nullptr, 0);
+      }
+
+      // Resolve offset
+      size_t byte_offset = 0;
+      if (!PODTimeSamples::resolve_offset_static(_offsets, idx, &byte_offset)) {
+        return TypedArrayView<const T>(nullptr, 0);
+      }
+
+      const T* data = reinterpret_cast<const T*>(_values.data() + byte_offset);
+      return TypedArrayView<const T>(data, _array_size);
+    }
+
+    // For regular Value storage (generic path)
     if (idx >= _samples.size()) {
       return TypedArrayView<const T>();  // Empty view
     }
@@ -1798,6 +1993,11 @@ struct TimeSamples {
 
     if (_use_pod) {
       total += _pod_samples.estimate_memory_usage();
+      // Also account for unified storage if in use
+      total += _times.capacity() * sizeof(double);
+      total += _blocked.capacity();
+      total += _values.capacity();
+      total += _offsets.capacity() * sizeof(uint64_t);
     } else {
       for (const auto &sample : _samples) {
         total += sizeof(Sample);
@@ -1808,12 +2008,420 @@ struct TimeSamples {
     return total;
   }
 
+  //
+  // Phase 2: Unified array methods (work directly with TimeSamples storage)
+  //
+
+  /// Add array sample using unified storage (Phase 2 path)
+  /// This bypasses _pod_samples and uses TimeSamples members directly
+  template<typename T>
+  bool add_array_sample(double t, const T* values, size_t count, std::string* err = nullptr) {
+    static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
+                  "add_array_sample requires POD types");
+
+    // Auto-initialize on first sample
+    if (empty()) {
+      if (!init(value::TypeTraits<T>::type_id())) {
+        if (err) *err = "Failed to initialize TimeSamples";
+        return false;
+      }
+    }
+
+    // If already using _pod_samples (backward compat), delegate to it
+    if (!_pod_samples.empty()) {
+      return _pod_samples.add_array_sample<T>(t, values, count, err);
+    }
+
+    // Use unified storage
+    _times.push_back(t);
+    _blocked.push_back(0);  // Not blocked
+
+    // Store array data in _values buffer
+    size_t byte_offset = _values.size();
+    size_t data_size = sizeof(T) * count;
+    _values.resize(byte_offset + data_size);
+    std::memcpy(_values.data() + byte_offset, values, data_size);
+
+    // Create encoded offset with array flag
+    uint64_t encoded_offset = PODTimeSamples::make_offset(byte_offset, true);
+    _offsets.push_back(encoded_offset);
+
+    // Update array metadata
+    _is_array = true;
+    _array_size = count;
+    _element_size = sizeof(T);
+
+    _dirty = true;
+    return true;
+  }
+
+  /// Add deduplicated array sample (Phase 2 path)
+  template<typename T>
+  bool add_dedup_array_sample(double t, size_t ref_index, std::string* err = nullptr) {
+    static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
+                  "add_dedup_array_sample requires POD types");
+
+    // If using _pod_samples, delegate
+    if (!_pod_samples.empty()) {
+      return _pod_samples.add_dedup_array_sample<T>(t, ref_index, err);
+    }
+
+    // Validate reference
+    if (ref_index >= _times.size()) {
+      if (err) *err = "Invalid ref_index: " + std::to_string(ref_index) + " >= " + std::to_string(_times.size());
+      return false;
+    }
+
+    if (ref_index == _times.size()) {
+      if (err) *err = "Self-reference detected";
+      return false;
+    }
+
+    if (_offsets[ref_index] == SIZE_MAX) {
+      if (err) *err = "Cannot deduplicate from blocked sample";
+      return false;
+    }
+
+    if (PODTimeSamples::is_dedup(_offsets[ref_index])) {
+      if (err) *err = "Cannot deduplicate from deduplicated sample";
+      return false;
+    }
+
+    // Add dedup sample
+    _times.push_back(t);
+    _blocked.push_back(0);
+
+    uint64_t dedup_offset = PODTimeSamples::make_dedup_offset(ref_index, true);
+    _offsets.push_back(dedup_offset);
+
+    _dirty = true;
+    return true;
+  }
+
+
+  /// Add matrix array sample (Phase 2 path)
+  template<typename T>
+  bool add_matrix_array_sample(double t, const T* matrices, size_t count, std::string* err = nullptr) {
+    // Matrices are stored the same way as arrays
+    return add_array_sample<T>(t, matrices, count, err);
+  }
+
+  /// Add deduplicated matrix array sample (Phase 2 path)
+  template<typename T>
+  bool add_dedup_matrix_array_sample(double t, size_t ref_index, std::string* err = nullptr) {
+    return add_dedup_array_sample<T>(t, ref_index, err);
+  }
+
+  //
+  // Phase 3: POD scalar sample methods
+  //
+
+  /// Add POD scalar sample using unified storage (Phase 3 path)
+  /// This is for single POD values (not arrays)
+  template<typename T>
+  bool add_pod_sample(double t, const T& value, std::string* err = nullptr) {
+    static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
+                  "add_pod_sample requires POD types");
+
+    // Auto-initialize on first sample
+    if (empty()) {
+      if (!init(value::TypeTraits<T>::type_id())) {
+        if (err) *err = "Failed to initialize TimeSamples";
+        return false;
+      }
+    }
+
+    // If already using _pod_samples (backward compat), delegate to it
+    if (!_pod_samples.empty()) {
+      return _pod_samples.add_sample<T>(t, value, err);
+    }
+
+    // Use unified storage for scalar POD
+    _times.push_back(t);
+    _blocked.push_back(0);  // Not blocked
+
+    // Store scalar data in _values buffer
+    size_t byte_offset = _values.size();
+    _values.resize(byte_offset + sizeof(T));
+    std::memcpy(_values.data() + byte_offset, &value, sizeof(T));
+
+    // Create encoded offset (not array)
+    uint64_t encoded_offset = PODTimeSamples::make_offset(byte_offset, false);
+    _offsets.push_back(encoded_offset);
+
+    // Update metadata (scalar, not array)
+    _is_array = false;
+    _array_size = 1;
+    _element_size = sizeof(T);
+
+    _dirty = true;
+    return true;
+  }
+
+  /// Add blocked POD sample (Phase 3 path)
+  template<typename T>
+  bool add_pod_blocked_sample(double t, std::string* err = nullptr) {
+    static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
+                  "add_pod_blocked_sample requires POD types");
+
+    // Auto-initialize on first sample
+    if (empty()) {
+      if (!init(value::TypeTraits<T>::type_id())) {
+        if (err) *err = "Failed to initialize TimeSamples";
+        return false;
+      }
+    }
+
+    // If already using _pod_samples (backward compat), delegate to it
+    if (!_pod_samples.empty()) {
+      return _pod_samples.add_blocked_sample<T>(t, err);
+    }
+
+    // Add blocked sample to unified storage
+    _times.push_back(t);
+    _blocked.push_back(1);  // Blocked
+
+    // No data needed for blocked sample, just add a dummy offset
+    _offsets.push_back(SIZE_MAX);  // Special marker for blocked
+
+    _dirty = true;
+    return true;
+  }
+
+  //
+  // std::vector<T> support (Phase 2 Step 3)
+  //
+  // NOTE: We do NOT override add_sample(double t, const std::vector<T>&) because
+  // that would break interpolation support for std::vector<T> types.
+  // The existing Value-based add_sample works correctly with interpolation.
+  // We only provide convenience getters below.
+
+  /// Get sample as std::vector<T> - retrieves array data into a vector
+  /// Works with both unified POD storage and generic Value storage
+  /// @param idx Sample index
+  /// @param out_vec Output vector to fill with data
+  /// @param out_blocked Optional: set to true if sample is blocked
+  /// @return true if successful, false if index out of range or wrong type
+  template<typename T>
+  bool get_vector_at(size_t idx, std::vector<T>* out_vec, bool* out_blocked = nullptr) const {
+    if (!out_vec) {
+      return false;
+    }
+
+    if (_dirty) {
+      update();
+    }
+
+    // Check if using _pod_samples (backward compat)
+    if (!_pod_samples.empty()) {
+      // Delegate to PODTimeSamples
+      auto view = _pod_samples.get_typed_array_view_at<T>(idx);
+      if (view.size() == 0) {
+        if (out_blocked) {
+          // Check if it's actually blocked or just empty
+          *out_blocked = (idx < _pod_samples._times.size() &&
+                         _pod_samples._blocked[idx]);
+        }
+        return false;
+      }
+      out_vec->assign(view.data(), view.data() + view.size());
+      if (out_blocked) *out_blocked = false;
+      return true;
+    }
+
+    // Check unified POD storage
+    if (!_times.empty() && _is_array) {
+      if (idx >= _times.size()) {
+        return false;
+      }
+
+      // Check if blocked
+      if (_blocked[idx]) {
+        if (out_blocked) *out_blocked = true;
+        return false;
+      }
+
+      // Resolve offset
+      size_t byte_offset = 0;
+      if (!PODTimeSamples::resolve_offset_static(_offsets, idx, &byte_offset)) {
+        return false;
+      }
+
+      const T* data = reinterpret_cast<const T*>(_values.data() + byte_offset);
+      out_vec->assign(data, data + _array_size);
+      if (out_blocked) *out_blocked = false;
+      return true;
+    }
+
+    // Check generic Value storage
+    if (idx >= _samples.size()) {
+      return false;
+    }
+
+    const Sample& sample = _samples[idx];
+
+    // Check if blocked
+    if (sample.blocked) {
+      if (out_blocked) *out_blocked = true;
+      return false;
+    }
+
+    // Try to get as std::vector<T>
+    if (const std::vector<T>* vec = sample.value.as<std::vector<T>>()) {
+      *out_vec = *vec;
+      if (out_blocked) *out_blocked = false;
+      return true;
+    }
+
+    // Try to get as TypedArray<T>
+    if (const TypedArray<T>* typed_array = sample.value.as<TypedArray<T>>()) {
+      if (typed_array->data() && typed_array->size() > 0) {
+        out_vec->assign(typed_array->data(), typed_array->data() + typed_array->size());
+        if (out_blocked) *out_blocked = false;
+        return true;
+      }
+    }
+
+    // Type mismatch or unsupported
+    return false;
+  }
+
+  /// Get sample as std::vector<T> at specific time
+  /// @param t Time value
+  /// @param out_vec Output vector to fill with data
+  /// @param out_blocked Optional: set to true if sample is blocked
+  /// @return true if successful, false if no sample at time or wrong type
+  template<typename T>
+  bool get_vector_at_time(double t, std::vector<T>* out_vec, bool* out_blocked = nullptr) const {
+    if (!out_vec) {
+      return false;
+    }
+
+    if (_dirty) {
+      update();
+    }
+
+    // Check if using _pod_samples (backward compat)
+    if (!_pod_samples.empty()) {
+      auto view = _pod_samples.get_typed_array_view_at_time<T>(t);
+      if (view.size() == 0) {
+        return false;
+      }
+      out_vec->assign(view.data(), view.data() + view.size());
+      if (out_blocked) *out_blocked = false;
+      return true;
+    }
+
+    // Check unified POD storage
+    if (!_times.empty()) {
+      // Find index for time
+      auto it = std::find_if(_times.begin(), _times.end(), [&t](double sample_t) {
+        return std::fabs(t - sample_t) < std::numeric_limits<double>::epsilon();
+      });
+
+      if (it != _times.end()) {
+        size_t idx = static_cast<size_t>(std::distance(_times.begin(), it));
+        return get_vector_at<T>(idx, out_vec, out_blocked);
+      }
+      return false;  // Time not found
+    }
+
+    // Check generic Value storage
+    auto it = std::find_if(_samples.begin(), _samples.end(), [&t](const Sample& s) {
+      return std::fabs(t - s.t) < std::numeric_limits<double>::epsilon();
+    });
+
+    if (it != _samples.end()) {
+      size_t idx = static_cast<size_t>(std::distance(_samples.begin(), it));
+      return get_vector_at<T>(idx, out_vec, out_blocked);
+    }
+
+    return false;  // Time not found
+  }
+
+  //
+  // Phase 3: Accessor methods for unified storage
+  // These provide read-only access to internal POD storage for utilities like pprint
+  //
+
+  const std::vector<double>& get_times() const {
+    if (_dirty) {
+      update();
+    }
+    // Delegate to _pod_samples based on _use_pod flag
+    if (_use_pod) {
+      return _pod_samples._times;
+    }
+    return _times;
+  }
+
+  const Buffer<16>& get_blocked() const {
+    if (_dirty) {
+      update();
+    }
+    // Delegate to _pod_samples based on _use_pod flag
+    if (_use_pod) {
+      return _pod_samples._blocked;
+    }
+    return _blocked;
+  }
+
+  const Buffer<16>& get_values() const {
+    if (_dirty) {
+      update();
+    }
+    // Delegate to _pod_samples based on _use_pod flag
+    if (_use_pod) {
+      return _pod_samples._values;
+    }
+    return _values;
+  }
+
+  const std::vector<uint64_t>& get_offsets() const {
+    if (_dirty) {
+      update();
+    }
+    // Delegate to _pod_samples based on _use_pod flag
+    if (_use_pod) {
+      return _pod_samples._offsets;
+    }
+    return _offsets;
+  }
+
+  bool is_array() const {
+    return _is_array;
+  }
+
+  size_t get_array_size() const {
+    return _array_size;
+  }
+
  private:
+  // Generic path storage (for non-POD types: string, token, dict, etc.)
   mutable std::vector<Sample> _samples;
-  mutable tinyusdz::PODTimeSamples _pod_samples;
+
+  // POD path storage (moved from PODTimeSamples for Phase 2 unification)
+  mutable std::vector<double> _times;
+  mutable Buffer<16> _blocked;
+  mutable Buffer<16> _values;               // Raw byte storage for POD types
+  mutable std::vector<uint64_t> _offsets;   // Offset table with dedup/array flags
+
+  // Type information
   uint32_t _type_id{0};
-  bool _use_pod{false};
+  bool _use_pod{false};  // True = use POD path, False = use generic path
+
+  // Array type information (for POD arrays)
+  bool _is_array{false};
+  size_t _array_size{0};
+  size_t _element_size{0};
+  mutable size_t _blocked_count{0};
+
   mutable bool _dirty{false};
+  mutable size_t _dirty_start{0};
+  mutable size_t _dirty_end{0};
+
+  // Keep _pod_samples for now (will be removed in final step)
+  mutable tinyusdz::PODTimeSamples _pod_samples;
 };
 
 } // namespace value
