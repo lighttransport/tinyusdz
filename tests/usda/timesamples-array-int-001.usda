@@ -1,0 +1,10 @@
+#usda 1.0
+
+def Xform "test_int_array"
+{
+  int[] indices.timeSamples = {
+      0: [0, 1, 2, 3],
+      10: [10, 20, 30],
+      20: [-5, -10, -15, -20],
+  }
+}
