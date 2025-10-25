@@ -1,0 +1,10 @@
+#usda 1.0
+
+def Xform "test_int"
+{
+  int count.timeSamples = {
+      0: 0,
+      10: 42,
+      20: -100,
+  }
+}
