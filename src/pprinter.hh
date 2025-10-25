@@ -270,7 +270,7 @@ std::string print_props(const std::map<std::string, Property> &props,
                         uint32_t indent);
 
 std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent);
-std::string print_layer(const Layer &layer, const uint32_t indent);
+std::string print_layer(const Layer &layer, const uint32_t indent, bool parallel = false);
 
 std::string print_material_binding(const MaterialBinding *mb, const uint32_t indent);
 std::string print_collection(const Collection *coll, const uint32_t indent);
