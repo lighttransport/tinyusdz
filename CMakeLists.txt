@@ -461,6 +461,10 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/parser-timing.cc
     ${PROJECT_SOURCE_DIR}/src/sha256.cc
     ${PROJECT_SOURCE_DIR}/src/typed-array.cc
+    ${PROJECT_SOURCE_DIR}/src/task-queue.cc
+    ${PROJECT_SOURCE_DIR}/src/task-queue.hh
+    ${PROJECT_SOURCE_DIR}/src/prim-pprint-parallel.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-pprint-parallel.hh
 
     )
 
@@ -1650,6 +1654,11 @@ if(TINYUSDZ_BUILD_TESTS)
   # Compression tester
   #
   add_subdirectory(${PROJECT_SOURCE_DIR}/tests/decompress-int)
+
+  #
+  # Pretty-print benchmark
+  #
+  add_subdirectory(${PROJECT_SOURCE_DIR}/tests/pprint)
 
 
   #

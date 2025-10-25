@@ -8,6 +8,7 @@
 #include "pprinter.hh"
 
 #include "prim-pprint.hh"
+#include "prim-pprint-parallel.hh"
 #include "prim-types.hh"
 #include "layer.hh"
 #include "str-util.hh"
@@ -15,6 +16,7 @@
 #include "usdShade.hh"
 #include "value-pprint.hh"
 #include "timesamples-pprint.hh"
+#include "stream-writer.hh"
 //
 #include "common-macros.inc"
 
@@ -4636,7 +4638,11 @@ std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
   return meta_ss.str();
 }
 
-std::string print_layer(const Layer &layer, const uint32_t indent) {
+std::string print_layer(const Layer &layer, const uint32_t indent, bool parallel) {
+#if !defined(TINYUSDZ_ENABLE_THREAD)
+  (void)parallel; // Threading disabled
+#endif
+
   std::stringstream ss;
 
   // FIXME: print magic-header outside of this function?
@@ -4659,26 +4665,64 @@ std::string print_layer(const Layer &layer, const uint32_t indent) {
       primNameTable.emplace(item.first, &item.second);
     }
 
-    for (size_t i = 0; i < layer.metas().primChildren.size(); i++) {
-      value::token nameTok = layer.metas().primChildren[i];
-      // DCOUT(fmt::format("primChildren  {}/{} = {}", i,
-      //                   layer.metas().primChildren.size(), nameTok.str()));
-      const auto it = primNameTable.find(nameTok.str());
-      if (it != primNameTable.end()) {
-        ss << prim::print_primspec((*it->second), indent);
-        if (i != (layer.metas().primChildren.size() - 1)) {
-          ss << "\n";
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    if (parallel) {
+      // Parallel printing path
+      std::vector<const PrimSpec*> ordered_primspecs;
+      ordered_primspecs.reserve(layer.metas().primChildren.size());
+
+      for (size_t i = 0; i < layer.metas().primChildren.size(); i++) {
+        value::token nameTok = layer.metas().primChildren[i];
+        const auto it = primNameTable.find(nameTok.str());
+        if (it != primNameTable.end()) {
+          ordered_primspecs.push_back(it->second);
         }
-      } else {
-        // TODO: Report warning?
+      }
+
+      prim::ParallelPrintConfig config;
+      ss << prim::print_primspecs_parallel(ordered_primspecs, indent, config);
+    } else
+#endif  // TINYUSDZ_ENABLE_THREAD
+    {
+      // Sequential printing path (original)
+      for (size_t i = 0; i < layer.metas().primChildren.size(); i++) {
+        value::token nameTok = layer.metas().primChildren[i];
+        // DCOUT(fmt::format("primChildren  {}/{} = {}", i,
+        //                   layer.metas().primChildren.size(), nameTok.str()));
+        const auto it = primNameTable.find(nameTok.str());
+        if (it != primNameTable.end()) {
+          ss << prim::print_primspec((*it->second), indent);
+          if (i != (layer.metas().primChildren.size() - 1)) {
+            ss << "\n";
+          }
+        } else {
+          // TODO: Report warning?
+        }
       }
     }
   } else {
-    size_t i = 0;
-    for (const auto &item : layer.primspecs()) {
-      ss << prim::print_primspec(item.second, indent);
-      if (i != (layer.primspecs().size() - 1)) {
-        ss << "\n";
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    if (parallel) {
+      // Parallel printing path
+      std::vector<const PrimSpec*> primspecs;
+      primspecs.reserve(layer.primspecs().size());
+      for (const auto &item : layer.primspecs()) {
+        primspecs.push_back(&item.second);
+      }
+
+      prim::ParallelPrintConfig config;
+      ss << prim::print_primspecs_parallel(primspecs, indent, config);
+    } else
+#endif  // TINYUSDZ_ENABLE_THREAD
+    {
+      // Sequential printing path (original)
+      size_t i = 0;
+      for (const auto &item : layer.primspecs()) {
+        ss << prim::print_primspec(item.second, indent);
+        if (i != (layer.primspecs().size() - 1)) {
+          ss << "\n";
+        }
+        i++;
       }
     }
   }
@@ -4863,6 +4907,221 @@ std::string print_primspec(const PrimSpec &primspec, const uint32_t indent) {
 
   return ss.str();
 }
+
+// ============================================================================
+// StreamWriter overloads for efficient printing
+// ============================================================================
+
+void print_prim(StreamWriter& writer, const Prim &prim, const uint32_t indent) {
+  // For now, delegate to string version
+  // TODO: In future, refactor to write directly to StreamWriter
+  writer.write(print_prim(prim, indent));
+}
+
+void print_primspec(StreamWriter& writer, const PrimSpec &primspec, const uint32_t indent) {
+  // For now, delegate to string version
+  // TODO: In future, refactor to write directly to StreamWriter
+  writer.write(print_primspec(primspec, indent));
+}
+
+// ============================================================================
+// ChunkedStreamWriter template implementations
+// ============================================================================
+
+template <size_t ChunkSize, size_t Alignment>
+void print_prim(ChunkedStreamWriter<ChunkSize, Alignment>& writer, const Prim &prim, const uint32_t indent) {
+  // Write directly to ChunkedStreamWriter for better performance
+  // This avoids creating one giant string in memory
+
+  // Currently, Prim's elementName is read from name variable in concrete Prim
+  // class(e.g. Xform::name).
+  // TODO: use prim.elementPath for elementName.
+  std::string s = pprint_value(prim.data(), indent, /* closing_brace */ false);
+
+  bool require_newline = true;
+
+  // Check last 2 chars.
+  // if it ends with '{\n', no properties are authored so do not emit blank line
+  // before printing VariantSet or child Prims.
+  if (s.size() > 2) {
+    if ((s[s.size() - 2] == '{') && (s[s.size() - 1] == '\n')) {
+      require_newline = false;
+    }
+  }
+
+  writer.write(s);
+
+  //
+  // print variant
+  //
+  if (prim.variantSets().size()) {
+    if (require_newline) {
+      writer.write("\n");
+    }
+
+    // need to add blank line after VariantSet stmt and before child Prims,
+    // so set require_newline true
+    require_newline = true;
+
+    for (const auto &variantSet : prim.variantSets()) {
+      writer.write(pprint::Indent(indent + 1));
+      writer.write("variantSet ");
+      writer.write(quote(variantSet.first));
+      writer.write(" = {\n");
+
+      for (const auto &variantItem : variantSet.second.variantSet) {
+        writer.write(pprint::Indent(indent + 2));
+        writer.write(quote(variantItem.first));
+
+        const Variant &variant = variantItem.second;
+
+        if (variant.metas().authored()) {
+          writer.write(" (\n");
+          writer.write(print_prim_metas(variant.metas(), indent + 3));
+          writer.write(pprint::Indent(indent + 2));
+          writer.write(")");
+        }
+
+        writer.write(" {\n");
+
+        writer.write(print_props(variant.properties(), indent + 3));
+
+        if (variant.metas().variantChildren.has_value() &&
+            (variant.metas().variantChildren.value().size() ==
+             variant.primChildren().size())) {
+          std::map<std::string, const Prim *> primNameTable;
+          for (size_t i = 0; i < variant.primChildren().size(); i++) {
+            primNameTable.emplace(variant.primChildren()[i].element_name(),
+                                  &variant.primChildren()[i]);
+          }
+
+          for (size_t i = 0; i < variant.metas().variantChildren.value().size();
+               i++) {
+            value::token nameTok = variant.metas().variantChildren.value()[i];
+            const auto it = primNameTable.find(nameTok.str());
+            if (it != primNameTable.end()) {
+              print_prim(writer, *(it->second), indent + 3);
+              if (i != (variant.primChildren().size() - 1)) {
+                writer.write("\n");
+              }
+            } else {
+              // TODO: Report warning?
+            }
+          }
+
+        } else {
+          for (size_t i = 0; i < variant.primChildren().size(); i++) {
+            print_prim(writer, variant.primChildren()[i], indent + 3);
+            if (i != (variant.primChildren().size() - 1)) {
+              writer.write("\n");
+            }
+          }
+        }
+
+        writer.write(pprint::Indent(indent + 2));
+        writer.write("}\n");
+      }
+
+      writer.write(pprint::Indent(indent + 1));
+      writer.write("}\n");
+    }
+  }
+
+  //
+  // primChildren
+  //
+  if (prim.children().size()) {
+    if (require_newline) {
+      writer.write("\n");
+      require_newline = false;
+    }
+    if (prim.metas().primChildren.size() == prim.children().size()) {
+      // Use primChildren info to determine the order of the traversal.
+
+      std::map<std::string, const Prim *> primNameTable;
+      for (size_t i = 0; i < prim.children().size(); i++) {
+        primNameTable.emplace(prim.children()[i].element_name(),
+                              &prim.children()[i]);
+      }
+
+      for (size_t i = 0; i < prim.metas().primChildren.size(); i++) {
+        if (i > 0) {
+          writer.write("\n");
+        }
+        value::token nameTok = prim.metas().primChildren[i];
+        DCOUT(fmt::format("primChildren  {}/{} = {}", i,
+                          prim.metas().primChildren.size(), nameTok.str()));
+        const auto it = primNameTable.find(nameTok.str());
+        if (it != primNameTable.end()) {
+          print_prim(writer, *(it->second), indent + 1);
+        } else {
+          // TODO: Report warning?
+        }
+      }
+
+    } else {
+      for (size_t i = 0; i < prim.children().size(); i++) {
+        if (i > 0) {
+          writer.write("\n");
+        }
+        print_prim(writer, prim.children()[i], indent + 1);
+      }
+    }
+  }
+
+  writer.write(pprint::Indent(indent));
+  writer.write("}\n");
+}
+
+template <size_t ChunkSize, size_t Alignment>
+void print_primspec(ChunkedStreamWriter<ChunkSize, Alignment>& writer, const PrimSpec &primspec, const uint32_t indent) {
+  // Write directly to ChunkedStreamWriter for better performance
+  writer.write(pprint::Indent(indent));
+  writer.write(to_string(primspec.specifier()));
+  writer.write(" ");
+
+  if (primspec.typeName().empty() || primspec.typeName() == "Model") {
+    // do not emit typeName
+  } else {
+    writer.write(primspec.typeName());
+    writer.write(" ");
+  }
+
+  writer.write("\"");
+  writer.write(primspec.name());
+  writer.write("\"\n");
+
+  if (primspec.metas().authored()) {
+    writer.write(pprint::Indent(indent));
+    writer.write("(\n");
+    writer.write(print_prim_metas(primspec.metas(), indent + 1));
+    writer.write(pprint::Indent(indent));
+    writer.write(")\n");
+  }
+  writer.write(pprint::Indent(indent));
+  writer.write("{\n");
+
+  writer.write(print_props(primspec.props(), indent + 1));
+
+  // TODO: print according to primChildren metadatum
+  for (size_t i = 0; i < primspec.children().size(); i++) {
+    if (i > 0) {
+      writer.write(pprint::Indent(indent));
+      writer.write("\n");
+    }
+    print_primspec(writer, primspec.children()[i], indent + 1);
+  }
+
+  // writer.write("# variant \n");
+  writer.write(print_variantSetSpecStmt(primspec.variantSets(), indent + 1));
+
+  writer.write(pprint::Indent(indent));
+  writer.write("}\n");
+}
+
+// Explicit template instantiations for common parameters
+template void print_prim<4096, 16>(ChunkedStreamWriter<4096, 16>& writer, const Prim &prim, const uint32_t indent);
+template void print_primspec<4096, 16>(ChunkedStreamWriter<4096, 16>& writer, const PrimSpec &primspec, const uint32_t indent);
 
 }  // namespace prim
 

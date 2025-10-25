@@ -424,12 +424,34 @@ class ChunkedStreamWriter {
 
  private:
   void append_bytes(const uint8_t* data, size_t len) {
+    if (len == 0) return;
+
     size_t old_size = current_size_;
     buffer_.resize(current_size_ + len);
 
-    // Copy bytes
-    for (size_t i = 0; i < len; ++i) {
-      buffer_[old_size + i] = data[i];
+    // Copy bytes efficiently chunk-by-chunk
+    // ChunkedBuffer stores data in non-contiguous chunks, so we need to
+    // handle chunk boundaries properly for efficient copying
+    size_t bytes_copied = 0;
+    size_t current_index = old_size;
+
+    while (bytes_copied < len) {
+      // Find which chunk current_index is in
+      size_t chunk_idx = current_index / ChunkSize;
+      size_t offset_in_chunk = current_index % ChunkSize;
+
+      // How many bytes can we copy to this chunk?
+      size_t bytes_available_in_chunk = ChunkSize - offset_in_chunk;
+      size_t bytes_to_copy = (std::min)(bytes_available_in_chunk, len - bytes_copied);
+
+      // Get pointer to chunk data and copy
+      uint8_t* chunk_ptr = buffer_.get_chunk(chunk_idx);
+      if (chunk_ptr) {
+        std::memcpy(chunk_ptr + offset_in_chunk, data + bytes_copied, bytes_to_copy);
+      }
+
+      bytes_copied += bytes_to_copy;
+      current_index += bytes_to_copy;
     }
 
     current_size_ += len;

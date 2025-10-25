@@ -23,6 +23,21 @@
 namespace tinyusdz {
 
 ///
+/// Component count trait for determining vector size
+/// Used for pre-allocation calculations
+///
+template <typename T>
+struct ComponentCount {
+  static constexpr size_t value = 1; // Default: scalar types
+};
+
+// Specializations for vector types (std::array<T, N>)
+template <typename T, size_t N>
+struct ComponentCount<std::array<T, N>> {
+  static constexpr size_t value = N;
+};
+
+///
 /// Configuration for threaded printing
 ///
 struct ThreadedPrintConfig {
@@ -57,20 +72,26 @@ namespace {
 // Type Traits and Unified Print System
 // ============================================================================
 
-// Output abstraction - allows same code to work with StreamWriter or string
+// Output abstraction - allows same code to work with StreamWriter, ChunkedStreamWriter, or string
 class OutputAdapter {
 public:
   virtual ~OutputAdapter() = default;
   virtual void write(const std::string& s) = 0;
+  virtual void write(const char* s) = 0;
+  virtual void write(char c) = 0;
   virtual void write(double d) = 0;
   virtual void write(float f) = 0;
   virtual void write(int i) = 0;
+  virtual void write(unsigned int i) = 0;
+  virtual void write(long i) = 0;
+  virtual void write(unsigned long i) = 0;
+  virtual void write(long long i) = 0;
+  virtual void write(unsigned long long i) = 0;
 
+  // Generic write for any type - uses type-specific write methods
   template<typename T>
   OutputAdapter& operator<<(const T& value) {
-    std::stringstream ss;
-    ss << value;
-    write(ss.str());
+    write(value);
     return *this;
   }
 };
@@ -79,9 +100,16 @@ class StringOutputAdapter : public OutputAdapter {
   std::stringstream ss_;
 public:
   void write(const std::string& s) override { ss_ << s; }
+  void write(const char* s) override { if (s) ss_ << s; }
+  void write(char c) override { ss_ << c; }
   void write(double d) override { ss_ << d; }
   void write(float f) override { ss_ << f; }
   void write(int i) override { ss_ << i; }
+  void write(unsigned int i) override { ss_ << i; }
+  void write(long i) override { ss_ << i; }
+  void write(unsigned long i) override { ss_ << i; }
+  void write(long long i) override { ss_ << i; }
+  void write(unsigned long long i) override { ss_ << i; }
   std::string str() const { return ss_.str(); }
 };
 
@@ -90,9 +118,34 @@ class StreamWriterAdapter : public OutputAdapter {
 public:
   explicit StreamWriterAdapter(StreamWriter& w) : writer_(w) {}
   void write(const std::string& s) override { writer_.write(s); }
+  void write(const char* s) override { writer_.write(s); }
+  void write(char c) override { writer_.write(c); }
   void write(double d) override { writer_.write(d); }
   void write(float f) override { writer_.write(f); }
-  void write(int i) override { writer_ << i; }
+  void write(int i) override { writer_.write(i); }
+  void write(unsigned int i) override { writer_.write(i); }
+  void write(long i) override { writer_.write(i); }
+  void write(unsigned long i) override { writer_.write(i); }
+  void write(long long i) override { writer_.write(i); }
+  void write(unsigned long long i) override { writer_.write(i); }
+};
+
+template <size_t ChunkSize = 4096, size_t Alignment = 16>
+class ChunkedStreamWriterAdapter : public OutputAdapter {
+  ChunkedStreamWriter<ChunkSize, Alignment>& writer_;
+public:
+  explicit ChunkedStreamWriterAdapter(ChunkedStreamWriter<ChunkSize, Alignment>& w) : writer_(w) {}
+  void write(const std::string& s) override { writer_.write(s); }
+  void write(const char* s) override { writer_.write(s); }
+  void write(char c) override { writer_.write(c); }
+  void write(double d) override { writer_.write(d); }
+  void write(float f) override { writer_.write(f); }
+  void write(int i) override { writer_.write(i); }
+  void write(unsigned int i) override { writer_.write(i); }
+  void write(long i) override { writer_.write(i); }
+  void write(unsigned long i) override { writer_.write(i); }
+  void write(long long i) override { writer_.write(i); }
+  void write(unsigned long long i) override { writer_.write(i); }
 };
 
 // Type traits for value types (those with operator<<)
@@ -1077,6 +1130,18 @@ bool try_print_typed_array_value(StreamWriter& writer, const uint8_t* packed_ptr
         return false;  // Try next type
     }
 
+    // Pre-allocate buffer space for better performance
+    // Formula: (array_len / 2) * 4 * vec_len
+    // - array_len: number of elements
+    // - 4: estimated average characters per numeric value
+    // - vec_len: vector component count (1 for scalar, 3 for float3, etc.)
+    const size_t array_len = view.size();
+    const size_t vec_len = ComponentCount<T>::value;
+    const size_t estimated_size = (array_len / 2) * 4 * vec_len;
+
+    // Reserve space in the writer's buffer
+    writer.reserve(writer.size() + estimated_size);
+
     // For single-element arrays (common for double3/float3/etc), print without brackets
     if (view.size() == 1) {
         // Write the single value directly without brackets
@@ -1439,6 +1504,13 @@ void pprint_pod_value_by_type(StreamWriter& writer, const uint8_t* data, uint32_
     print_pod_value_dispatch(adapter, data, type_id);
 }
 
+template <size_t ChunkSize, size_t Alignment>
+void pprint_pod_value_by_type(ChunkedStreamWriter<ChunkSize, Alignment>& writer, const uint8_t* data, uint32_t type_id) {
+    // Use unified dispatch system with ChunkedStreamWriter adapter
+    ChunkedStreamWriterAdapter<ChunkSize, Alignment> adapter(writer);
+    print_pod_value_dispatch(adapter, data, type_id);
+}
+
 size_t get_pod_type_size(uint32_t type_id) {
     using namespace value;
 
@@ -1657,9 +1729,9 @@ static void pprint_typed_array_timesamples_range(
     size_t end_idx,
     std::map<uint64_t, std::string>& cached_strings) {
 
-    const std::vector<double>& times = samples.get_times();
-    const Buffer<16>& blocked = samples.get_blocked();
-    const Buffer<16>& values = samples.get_values();
+    const std::vector<double>& times = samples._times;
+    const Buffer<16>& blocked = samples._blocked;
+    const Buffer<16>& values = samples._values;
 
     size_t element_size = sizeof(uint64_t);
     size_t value_offset = 0;
@@ -1724,9 +1796,9 @@ static void pprint_typed_array_timesamples_range(
 // General template for most types
 template<typename T>
 static void pprint_typed_array_timesamples(StreamWriter& writer, const PODTimeSamples& samples, uint32_t indent) {
-    const std::vector<double>& times = samples.get_times();
-    const Buffer<16>& blocked = samples.get_blocked();
-    const Buffer<16>& values = samples.get_values();
+    const std::vector<double>& times = samples._times;
+    const Buffer<16>& blocked = samples._blocked;
+    const Buffer<16>& values = samples._values;
 
 #ifdef TINYUSDZ_ENABLE_THREAD
     // Use threaded path for large arrays
@@ -1845,9 +1917,9 @@ static void pprint_typed_array_timesamples(StreamWriter& writer, const PODTimeSa
 // Specialization for bool type - stored as uint8_t
 template<>
 void pprint_typed_array_timesamples<bool>(StreamWriter& writer, const PODTimeSamples& samples, uint32_t indent) {
-    const std::vector<double>& times = samples.get_times();
-    const Buffer<16>& blocked = samples.get_blocked();
-    const Buffer<16>& values = samples.get_values();
+    const std::vector<double>& times = samples._times;
+    const Buffer<16>& blocked = samples._blocked;
+    const Buffer<16>& values = samples._values;
 
     size_t element_size = sizeof(uint64_t);
 
@@ -1912,6 +1984,180 @@ void pprint_typed_array_timesamples<bool>(StreamWriter& writer, const PODTimeSam
         writer.write("\n");
     }
 }
+
+// ============================================================================
+// Optimized ChunkedStreamWriter versions (zero-copy concatenation)
+// ============================================================================
+
+// ChunkedStreamWriter version - uses zero-copy concat for efficiency
+template<typename T>
+static void pprint_typed_array_timesamples(ChunkedStreamWriter<4096>& writer, const PODTimeSamples& samples, uint32_t indent) {
+    const std::vector<double>& times = samples._times;
+    const Buffer<16>& blocked = samples._blocked;
+    const Buffer<16>& values = samples._values;
+
+#ifdef TINYUSDZ_ENABLE_THREAD
+    // Use threaded path for large arrays
+    size_t num_samples = times.size();
+    if (num_samples >= g_threaded_print_config.thread_threshold) {
+        unsigned int num_threads = g_threaded_print_config.get_num_threads();
+        size_t samples_per_thread = (num_samples + num_threads - 1) / num_threads;
+
+        // Vector to hold ChunkedStreamWriters for each thread
+        std::vector<ChunkedStreamWriter<4096>> thread_writers(num_threads);
+        std::vector<std::thread> threads;
+        std::vector<std::map<uint64_t, std::string>> thread_caches(num_threads);
+
+        // Launch threads
+        for (unsigned int t = 0; t < num_threads; ++t) {
+            size_t start_idx = t * samples_per_thread;
+            size_t end_idx = std::min(start_idx + samples_per_thread, num_samples);
+
+            if (start_idx >= num_samples) break;
+
+            threads.emplace_back([&, t, start_idx, end_idx]() {
+                pprint_typed_array_timesamples_range<T>(
+                    thread_writers[t],
+                    samples,
+                    indent,
+                    start_idx,
+                    end_idx,
+                    thread_caches[t]
+                );
+            });
+        }
+
+        // Wait for all threads to complete
+        for (auto& thread : threads) {
+            thread.join();
+        }
+
+        // OPTIMIZATION: Use zero-copy concat directly instead of string conversion!
+        for (size_t t = 0; t < thread_writers.size(); ++t) {
+            if (!thread_writers[t].empty()) {
+                writer.concat(std::move(thread_writers[t]));
+            }
+        }
+        return;
+    }
+#endif
+
+    // Single-threaded path (same as StreamWriter version)
+    size_t element_size = sizeof(uint64_t);
+    std::map<uint64_t, std::string> cached_strings;
+
+    size_t value_offset = 0;
+    for (size_t i = 0; i < times.size(); ++i) {
+        writer.write(pprint::Indent(indent + 1));
+        writer.write(times[i]);
+        writer.write(": ");
+
+        if (blocked[i]) {
+            writer.write("None");
+        } else {
+            if (!samples._offsets.empty()) {
+                value_offset = samples._offsets[i];
+            }
+
+            const uint8_t* value_data = values.data() + value_offset;
+            uint64_t packed_value;
+            std::memcpy(&packed_value, value_data, sizeof(uint64_t));
+            uint64_t ptr_bits = packed_value & 0x0000FFFFFFFFFFFFULL;
+
+            if (ptr_bits & (1ULL << 47)) {
+                ptr_bits |= 0xFFFF000000000000ULL;
+            }
+
+            auto it = cached_strings.find(ptr_bits);
+            if (it != cached_strings.end()) {
+                writer.write(it->second);
+            } else {
+                // Need to capture output to cache it
+                StreamWriter temp_writer;
+                bool success = try_print_typed_array_value<T>(temp_writer, value_data);
+                if (!success) {
+                    temp_writer.write("[TypedArray print failed]");
+                }
+                std::string printed = temp_writer.str();
+                cached_strings[ptr_bits] = printed;
+                writer.write(printed);
+            }
+
+            if (samples._offsets.empty()) {
+                value_offset += element_size;
+            }
+        }
+
+        writer.write(",");
+        writer.write("\n");
+    }
+}
+
+// Helper for ChunkedStreamWriter dispatch - template specialization for standard case
+template <size_t ChunkSize, size_t Alignment>
+struct ChunkedTimeSamplesDispatcher {
+    static bool dispatch(ChunkedStreamWriter<ChunkSize, Alignment>& /*writer*/, const PODTimeSamples& /*samples*/, uint32_t /*indent*/) {
+        // For non-standard chunk sizes, return false to use fallback
+        return false;
+    }
+};
+
+// Specialization for ChunkedStreamWriter<4096, 16>
+template <>
+struct ChunkedTimeSamplesDispatcher<4096, 16> {
+    static bool dispatch(ChunkedStreamWriter<4096, 16>& writer, const PODTimeSamples& samples, uint32_t indent) {
+        using namespace value;
+
+        switch (samples.type_id()) {
+            case TYPE_ID_FLOAT:
+                pprint_typed_array_timesamples<float>(writer, samples, indent);
+                return true;
+            case TYPE_ID_DOUBLE:
+                pprint_typed_array_timesamples<double>(writer, samples, indent);
+                return true;
+            case TYPE_ID_INT32:
+                pprint_typed_array_timesamples<int32_t>(writer, samples, indent);
+                return true;
+            case TYPE_ID_FLOAT2:
+                pprint_typed_array_timesamples<value::float2>(writer, samples, indent);
+                return true;
+            case TYPE_ID_FLOAT3:
+                pprint_typed_array_timesamples<value::float3>(writer, samples, indent);
+                return true;
+            case TYPE_ID_FLOAT4:
+                pprint_typed_array_timesamples<value::float4>(writer, samples, indent);
+                return true;
+            case TYPE_ID_DOUBLE2:
+                pprint_typed_array_timesamples<value::double2>(writer, samples, indent);
+                return true;
+            case TYPE_ID_DOUBLE3:
+                pprint_typed_array_timesamples<value::double3>(writer, samples, indent);
+                return true;
+            case TYPE_ID_DOUBLE4:
+                pprint_typed_array_timesamples<value::double4>(writer, samples, indent);
+                return true;
+            case TYPE_ID_VECTOR3F:
+                pprint_typed_array_timesamples<value::vector3f>(writer, samples, indent);
+                return true;
+            case TYPE_ID_VECTOR3D:
+                pprint_typed_array_timesamples<value::vector3d>(writer, samples, indent);
+                return true;
+            default:
+                // Type not supported by optimized path
+                return false;
+        }
+    }
+};
+
+// ChunkedStreamWriter dispatch function (COMMENTED OUT)
+// Note: This template is not instantiated to avoid unused template warnings.
+// The StreamWriter version below provides sufficient functionality.
+/*
+template <size_t ChunkSize, size_t Alignment>
+static bool pprint_typed_array_timesamples_dispatch(ChunkedStreamWriter<ChunkSize, Alignment>& writer, const PODTimeSamples& samples, uint32_t indent) {
+    return ChunkedTimeSamplesDispatcher<ChunkSize, Alignment>::dispatch(writer, samples, indent);
+}
+*/
 
 // Dispatch function to call the correct template based on type_id
 static bool pprint_typed_array_timesamples_dispatch(StreamWriter& writer, const PODTimeSamples& samples, uint32_t indent) {
@@ -2079,9 +2325,9 @@ void pprint_pod_timesamples(StreamWriter& writer, const PODTimeSamples& samples,
 
     if (!printed_array) {
       // Fallback
-      const std::vector<double>& times = samples.get_times();
-      const Buffer<16>& blocked = samples.get_blocked();
-      const Buffer<16>& values = samples.get_values();
+      const std::vector<double>& times = samples._times;
+      const Buffer<16>& blocked = samples._blocked;
+      const Buffer<16>& values = samples._values;
 
       // Check if using offset table (new optimized storage)
       if (!samples._offsets.empty()) {
@@ -2217,17 +2463,11 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
     // Check if using POD storage
     if (samples.is_using_pod()) {
 
-        // Delegate to POD implementation
-        const auto& pod_samples = samples.get_pod_samples();
-
-        if (pod_samples._is_typed_array) {
-          pprint_pod_timesamples(writer, pod_samples, indent);
-          return;
-        }
-
+        // Phase 3: Access unified storage directly from TimeSamples
+        // Note: TypedArray is no longer supported in Phase 3, so we skip that path
 
         // Get type information
-        uint32_t type_id = pod_samples.type_id();
+        uint32_t type_id = samples.type_id();
         size_t element_size = get_pod_type_size(type_id);
 
         if (element_size == 0) {
@@ -2240,89 +2480,43 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
             return;
         }
 
-        // Get arrays
-        const auto& times = pod_samples.get_times();
-        const auto& blocked = pod_samples.get_blocked();
-        const auto& values = pod_samples.get_values();
+        // Get arrays from unified storage
+        const auto& times = samples.get_times();
+        const auto& blocked = samples.get_blocked();
+        const auto& values = samples.get_values();
+        const auto& offsets = samples.get_offsets();
 
         //TUSDZ_LOG_I("times.size " << times.size());
         //TUSDZ_LOG_I("blocked.size " << blocked.size());
         //TUSDZ_LOG_I("values.size " << values.size());
 
         // Write samples - handle offset table if present
-        if (!pod_samples._offsets.empty()) {
-            // Optimization for TypedArray: cache printed strings by pointer value
-            if (pod_samples._is_typed_array) {
-                // Map to cache printed strings: pointer -> string
-                std::map<uint64_t, std::string> cached_strings;
+        if (!offsets.empty()) {
+            // Phase 3: TypedArray path removed (not supported in unified storage)
+            // Use regular printing for all POD types
+            for (size_t i = 0; i < times.size(); ++i) {
+                writer.write(pprint::Indent(indent + 1));
+                writer.write(times[i]);
+                writer.write(": ");
 
-                // Using offset table - blocked values don't consume space
-                for (size_t i = 0; i < times.size(); ++i) {
-                    writer.write(pprint::Indent(indent + 1));
-                    writer.write(times[i]);
-                    writer.write(": ");
-
-                    if (blocked[i] || pod_samples._offsets[i] == SIZE_MAX) {
-                        writer.write("None");
+                if (blocked[i] || offsets[i] == SIZE_MAX) {
+                    writer.write("None");
+                } else {
+                    // Resolve offset (may be encoded with dedup/array flags)
+                    size_t byte_offset;
+                    if (!PODTimeSamples::resolve_offset_static(offsets, i, &byte_offset)) {
+                        writer.write("/* ERROR: failed to resolve offset */");
                     } else {
-                        // Get pointer to value data using offset
-                        const uint8_t* value_ptr = values.data() + pod_samples._offsets[i];
-
-                        // Extract pointer value from packed data
-                        uint64_t packed_value;
-                        std::memcpy(&packed_value, value_ptr, sizeof(uint64_t));
-                        uint64_t ptr_bits = packed_value & 0x0000FFFFFFFFFFFFULL;
-
-                        // Sign-extend from 48 bits to 64 bits
-                        if (ptr_bits & (1ULL << 47)) {
-                            ptr_bits |= 0xFFFF000000000000ULL;
-                        }
-
-                        // Check cache first
-                        auto it = cached_strings.find(ptr_bits);
-                        if (it != cached_strings.end()) {
-                            // Reuse cached string
-                            writer.write(it->second);
-                        } else {
-                            // First occurrence - dereference TypedArray pointer and print
-                            size_t pos_before = writer.str().size();
-
-                            // Dereference and print the actual TypedArray contents using known type_id
-                            print_typed_array_value_by_type_id(writer, value_ptr, pod_samples.type_id());
-
-                            size_t pos_after = writer.str().size();
-
-                            // Cache the printed string
-                            std::string printed = writer.str().substr(pos_before, pos_after - pos_before);
-                            cached_strings[ptr_bits] = printed;
-                        }
-                    }
-
-                    if (i < times.size() - 1) {
-                        writer.write(",");
-                    }
-                    writer.write("\n");
-                }
-            } else {
-                // Non-TypedArray path: use regular printing
-                for (size_t i = 0; i < times.size(); ++i) {
-                    writer.write(pprint::Indent(indent + 1));
-                    writer.write(times[i]);
-                    writer.write(": ");
-
-                    if (blocked[i] || pod_samples._offsets[i] == SIZE_MAX) {
-                        writer.write("None");
-                    } else {
-                        // Get pointer to value data using offset
-                        const uint8_t* value_ptr = values.data() + pod_samples._offsets[i];
+                        // Get pointer to value data using resolved byte offset
+                        const uint8_t* value_ptr = values.data() + byte_offset;
                         pprint_pod_value_by_type(writer, value_ptr, type_id);
                     }
-
-                    if (i < times.size() - 1) {
-                        writer.write(",");
-                    }
-                    writer.write("\n");
                 }
+
+                if (i < times.size() - 1) {
+                    writer.write(",");
+                }
+                writer.write("\n");
             }
         } else {
             // Legacy: blocked values still counted in offset calculation
@@ -2401,5 +2595,126 @@ void set_threaded_print_threshold(size_t threshold) {
 void set_threaded_print_num_threads(unsigned int num_threads) {
     g_threaded_print_config.num_threads = num_threads;
 }
+
+// ============================================================================
+// ChunkedStreamWriter Template Implementations (COMMENTED OUT)
+// ============================================================================
+// Note: These implementations are commented out because they are not being
+// instantiated (to avoid unused template warnings). The StreamWriter versions
+// provide sufficient performance for the array pre-allocation optimization.
+//
+// Future enhancement: If ChunkedStreamWriter support is needed, uncomment
+// these implementations and their template instantiations below.
+
+/*
+// Template implementation for pprint_pod_timesamples with ChunkedStreamWriter
+template <size_t ChunkSize, size_t Alignment>
+void pprint_pod_timesamples(ChunkedStreamWriter<ChunkSize, Alignment>& writer, const PODTimeSamples& samples, uint32_t indent) {
+    // Write opening brace
+    writer.write("{\n");
+
+    if (samples.empty()) {
+        writer.write(pprint::Indent(indent));
+        writer.write("}");
+        return;
+    }
+
+    // Get element size for this type
+    size_t element_size = samples._is_typed_array ? sizeof(uint64_t) : get_pod_type_size(samples.type_id());
+    if (element_size == 0) {
+        writer.write(pprint::Indent(indent + 1));
+        writer.write("[Error: Unknown type_id ");
+        writer.write(static_cast<int>(samples.type_id()));
+        writer.write("]\n");
+        writer.write(pprint::Indent(indent));
+        writer.write("}");
+        return;
+    }
+
+    // Make sure samples are updated (sorted)
+    if (samples._dirty) {
+        samples.update();
+    }
+
+    bool printed_array = false;
+    if (samples._is_typed_array) {
+      // Try optimized ChunkedStreamWriter dispatch path
+      printed_array = pprint_typed_array_timesamples_dispatch(writer, samples, indent);
+
+      // If not handled by optimized path, fall back to StreamWriter version
+      if (!printed_array) {
+          StreamWriter sw;
+          pprint_pod_timesamples(sw, samples, indent);
+          writer.write(sw.str());
+          return;
+      }
+    }
+
+    if (!printed_array) {
+      // Fallback path for non-typed-array POD samples
+      const std::vector<double>& times = samples._times;
+      const Buffer<16>& blocked = samples._blocked;
+      const Buffer<16>& values = samples._values;
+
+      if (!samples._offsets.empty()) {
+          // Using offset table
+          for (size_t i = 0; i < times.size(); ++i) {
+              writer.write(pprint::Indent(indent + 1));
+              writer.write(times[i]);
+              writer.write(": ");
+
+              if (blocked[i] || samples._offsets[i] == SIZE_MAX) {
+                  writer.write("None");
+              } else {
+                  const uint8_t* value_data = values.data() + samples._offsets[i];
+                  pprint_pod_value_by_type(writer, value_data, samples.type_id());
+              }
+
+              writer.write(",");
+              writer.write("\n");
+          }
+      } else {
+          // Legacy storage
+          size_t value_offset = 0;
+          for (size_t i = 0; i < times.size(); ++i) {
+              writer.write(pprint::Indent(indent + 1));
+              writer.write(times[i]);
+              writer.write(": ");
+
+              if (blocked[i]) {
+                  writer.write("None");
+              } else {
+                  const uint8_t* value_data = values.data() + value_offset;
+                  pprint_pod_value_by_type(writer, value_data, samples.type_id());
+                  value_offset += element_size;
+              }
+
+              writer.write(",");
+              writer.write("\n");
+          }
+      }
+    }
+
+    writer.write(pprint::Indent(indent));
+    writer.write("}");
+}
+
+// Template implementation for pprint_timesamples with ChunkedStreamWriter
+template <size_t ChunkSize, size_t Alignment>
+void pprint_timesamples(ChunkedStreamWriter<ChunkSize, Alignment>& writer, const value::TimeSamples& samples, uint32_t indent) {
+    // For now, delegate to StreamWriter version and copy result
+    // TODO: In future, refactor internal implementation to work generically with any writer type
+    StreamWriter sw;
+    pprint_timesamples(sw, samples, indent);
+    writer.write(sw.str());
+}
+*/
+
+// Explicit template instantiations for common parameters
+// Note: ChunkedStreamWriter versions are commented out to avoid unused template warnings
+// The StreamWriter versions provide sufficient performance for array pre-allocation optimization
+// template void pprint_pod_timesamples<4096, 16>(ChunkedStreamWriter<4096, 16>& writer, const PODTimeSamples& samples, uint32_t indent);
+// template void pprint_timesamples<4096, 16>(ChunkedStreamWriter<4096, 16>& writer, const value::TimeSamples& samples, uint32_t indent);
+// template void pprint_pod_value_by_type<4096, 16>(ChunkedStreamWriter<4096, 16>& writer, const uint8_t* data, uint32_t type_id);
 
 } // namespace tinyusdz
