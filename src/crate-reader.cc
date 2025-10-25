@@ -2624,6 +2624,7 @@ CrateReader::UnpackArrayValue(CrateDataTypeId dty, crate::CrateValue *value_out)
 }
 #endif
 
+#if 0
 bool CrateReader::UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint64_t offset, crate::CrateValue *value) {
   if (rep.IsInlined()) {
     return UnpackInlinedValueRep(rep, value);
@@ -2660,8 +2661,9 @@ bool CrateReader::UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint6
         }
         value->Set(std::move(v));
         return true;
+      } else {
+        PUSH_ERROR_AND_RETURN("int value must be inlined");
       }
-      return false;
     }
     case crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT: {
       if (rep.IsArray()) {
@@ -2676,6 +2678,8 @@ bool CrateReader::UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint6
         }
         value->Set(std::move(v));
         return true;
+      } else {
+        PUSH_ERROR_AND_RETURN("uint value must be inlined");
       }
       return false;
     }
@@ -3230,6 +3234,7 @@ bool CrateReader::UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint6
 #pragma clang diagnostic pop
 #endif
 }
+#endif
 
 bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
                                  crate::CrateValue *value) {
@@ -3512,6 +3517,7 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
 
         return true;
       } else {
+        // TODO: support non-array string?
         return false;
       }
     }

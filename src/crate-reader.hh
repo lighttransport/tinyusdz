@@ -354,13 +354,14 @@ class CrateReader {
   bool UnpackInlinedValueRep(const crate::ValueRep &rep,
                              crate::CrateValue *value);
 
-  // TODO: deprecate
-  bool UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint64_t offset, crate::CrateValue *value);
+  // TODO: deprecated
+  //bool UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint64_t offset, crate::CrateValue *value);
 
   bool UnpackValueRepsToTimeSamples(const std::vector<double> &times,
     const std::vector<crate::ValueRep> &vreps,
     value::TimeSamples *d);
 
+  // implementation in crate-reader-timesamples.cc
   bool UnpackTimeSampleValue_BOOL(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
   bool UnpackTimeSampleValue_INT32(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
   bool UnpackTimeSampleValue_UINT32(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
