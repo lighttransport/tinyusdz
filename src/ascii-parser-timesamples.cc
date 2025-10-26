@@ -304,12 +304,25 @@ bool AsciiParser::ParseTimeSamples(const std::string &type_name,
     PUSH_ERROR_AND_RETURN("Unknown type for timeSamples: " + type_name);
   }
 
+  // Clear ts_out to ensure clean state before parsing
+  // This prevents issues where init() fails if ts_out was partially initialized
+  if (ts_out) {
+    ts_out->clear();
+  }
+
   // Try optimized path for POD types first
+  // IMPORTANT: Save cursor position BEFORE attempting POD path
+  // The POD path will consume the '{' if it tries to parse,
+  // but we need to restore position for the generic fallback path
+  uint64_t saved_cursor = CurrLoc();
 #define TRY_POD_TYPE(__type)                                        \
   if (type_id.value() == value::TypeTraits<__type>::type_id()) {   \
     if (ParseTypedTimeSamples<__type>(ts_out)) {                    \
       return true;                                                  \
     }                                                                \
+    /* POD path failed - restore cursor to original position */ \
+    /* so the generic fallback can parse from the beginning */ \
+    SeekTo(saved_cursor);                                           \
   }
 
   // Try POD types with optimized parsing
