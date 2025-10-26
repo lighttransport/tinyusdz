@@ -1124,158 +1124,19 @@ struct TimeSamples {
     return _use_pod ? _pod_samples.size() : _samples.size();
   }
 
-  void clear() {
-    _samples.clear();
-    _times.clear();
-    _blocked.clear();
-    _values.clear();
-    _offsets.clear();
-    _small_values.clear();
-    _pod_samples.clear();
-    _type_id = 0;
-    _use_pod = false;
-    _is_array = false;
-    _array_size = 0;
-    _element_size = 0;
-    _blocked_count = 0;
-    _dirty = true;
-    _dirty_start = 0;
-    _dirty_end = 0;
-  }
+  void clear();
 
   /// Move constructor
-  TimeSamples(TimeSamples&& other) noexcept
-      : _samples(std::move(other._samples)),
-        _times(std::move(other._times)),
-        _blocked(std::move(other._blocked)),
-        _small_values(std::move(other._small_values)),
-        _values(std::move(other._values)),
-        _offsets(std::move(other._offsets)),
-        _type_id(other._type_id),
-        _use_pod(other._use_pod),
-        _is_array(other._is_array),
-        _array_size(other._array_size),
-        _element_size(other._element_size),
-        _blocked_count(other._blocked_count),
-        _dirty(other._dirty),
-        _dirty_start(other._dirty_start),
-        _dirty_end(other._dirty_end),
-        _pod_samples(std::move(other._pod_samples)) {
-    // Reset moved-from object to valid empty state
-    other._type_id = 0;
-    other._use_pod = false;
-    other._is_array = false;
-    other._array_size = 0;
-    other._element_size = 0;
-    other._blocked_count = 0;
-    other._dirty = false;
-    other._dirty_start = 0;
-    other._dirty_end = 0;
-  }
+  TimeSamples(TimeSamples&& other) noexcept;
 
   /// Move assignment operator
-  TimeSamples& operator=(TimeSamples&& other) noexcept {
-    if (this != &other) {
-      // Move data from other
-      _samples = std::move(other._samples);
-      _times = std::move(other._times);
-      _blocked = std::move(other._blocked);
-      _values = std::move(other._values);
-      _array_values = std::move(other._array_values);  // Move unique_ptr vector
-      _offsets = std::move(other._offsets);
-      _pod_samples = std::move(other._pod_samples);
-      _small_values = std::move(other._small_values);
-      _type_id = other._type_id;
-      _use_pod = other._use_pod;
-      _is_array = other._is_array;
-      _array_size = other._array_size;
-      _element_size = other._element_size;
-      _blocked_count = other._blocked_count;
-      _dirty = other._dirty;
-      _dirty_start = other._dirty_start;
-      _dirty_end = other._dirty_end;
-
-      // Reset moved-from object to valid empty state
-      other._type_id = 0;
-      other._use_pod = false;
-      other._is_array = false;
-      other._array_size = 0;
-      other._element_size = 0;
-      other._blocked_count = 0;
-      other._dirty = false;
-      other._dirty_start = 0;
-      other._dirty_end = 0;
-    }
-    return *this;
-  }
+  TimeSamples& operator=(TimeSamples&& other) noexcept;
 
   /// Copy constructor - implements deep copy for _array_values
-  TimeSamples(const TimeSamples& other)
-      : _samples(other._samples),
-        _times(other._times),
-        _blocked(other._blocked),
-        _small_values(other._small_values),
-        _values(other._values),
-        _offsets(other._offsets),
-        _type_id(other._type_id),
-        _use_pod(other._use_pod),
-        _is_array(other._is_array),
-        _array_size(other._array_size),
-        _element_size(other._element_size),
-        _blocked_count(other._blocked_count),
-        _dirty(other._dirty),
-        _dirty_start(other._dirty_start),
-        _dirty_end(other._dirty_end),
-        _pod_samples(other._pod_samples) {
-    // Deep copy _array_values (vector of unique_ptr)
-    _array_values.clear();
-    _array_values.reserve(other._array_values.size());
-    for (const auto& array_buffer : other._array_values) {
-      if (array_buffer) {
-        // Create a new Buffer<16> and copy data
-        auto new_buffer = std::make_unique<Buffer<16>>(*array_buffer);
-        _array_values.push_back(std::move(new_buffer));
-      } else {
-        _array_values.push_back(nullptr);
-      }
-    }
-  }
+  TimeSamples(const TimeSamples& other);
 
   /// Copy assignment operator - implements deep copy for _array_values
-  TimeSamples& operator=(const TimeSamples& other) {
-    if (this != &other) {
-      _samples = other._samples;
-      _times = other._times;
-      _blocked = other._blocked;
-      _values = other._values;
-      _offsets = other._offsets;
-      _type_id = other._type_id;
-      _use_pod = other._use_pod;
-      _is_array = other._is_array;
-      _array_size = other._array_size;
-      _element_size = other._element_size;
-      _blocked_count = other._blocked_count;
-      _dirty = other._dirty;
-      _dirty_start = other._dirty_start;
-      _dirty_end = other._dirty_end;
-      _pod_samples = other._pod_samples;
-      _small_values = other._small_values;
-
-      // Deep copy _array_values (vector of unique_ptr)
-      _array_values.clear();
-      _array_values.reserve(other._array_values.size());
-      for (const auto& array_buffer : other._array_values) {
-        if (array_buffer) {
-          // Create a new Buffer<16> and copy data
-          auto new_buffer = std::make_unique<Buffer<16>>(*array_buffer);
-          _array_values.push_back(std::move(new_buffer));
-        } else {
-          _array_values.push_back(nullptr);
-        }
-      }
-    }
-    return *this;
-  }
+  TimeSamples& operator=(const TimeSamples& other);
 
   // Default constructor
   TimeSamples() = default;
@@ -1283,23 +1144,7 @@ struct TimeSamples {
   /// type_id = TypeId
   /// Initialize TimeSamples with a specific type_id
   /// This determines whether to use POD optimization or regular storage
-  bool init(uint32_t type_id) {
-    //DCOUT("init" << type_id);
-
-    // Allow initialization if empty OR if it contains only uninitialized blocked samples
-    if (!empty() && _type_id != 0) {
-      DCOUT("initialized" << type_id);
-      return false; // Already initialized with a different type
-    }
-    DCOUT("init" << type_id);
-    _type_id = type_id;
-    _use_pod = false;  // DEPRECATED: PODTimeSamples always disabled
-    if (_use_pod) {
-      DCOUT("  use_pod: " << type_id);
-      _pod_samples._type_id = type_id;
-    }
-    return true;
-  }
+  bool init(uint32_t type_id);
 
   bool is_using_pod() const { return _use_pod; }
 
