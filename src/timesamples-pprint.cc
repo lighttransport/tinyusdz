@@ -1815,7 +1815,7 @@ static void pprint_typed_array_timesamples(StreamWriter& writer, const PODTimeSa
             writer.write("None");
         } else {
             if (!samples._offsets.empty()) {
-                value_offset = samples._offsets[i];
+                value_offset = static_cast<size_t>(samples._offsets[i]);
             }
 
             // Get pointer to value data for this sample
@@ -1885,7 +1885,7 @@ void pprint_typed_array_timesamples<bool>(StreamWriter& writer, const PODTimeSam
             writer.write("None");
         } else {
             if (!samples._offsets.empty()) {
-                value_offset = samples._offsets[i];
+                value_offset = static_cast<size_t>(samples._offsets[i]);
             }
 
             // Get pointer to value data for this sample
