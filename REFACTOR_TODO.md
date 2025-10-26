@@ -234,7 +234,103 @@ The timesamples module contains several areas where code duplication and complex
        - ✅ float[], double[]: Working with correct array values
        - ✅ Official test file `timesamples-array-001.usda`: All timeSamples working correctly
 
-### 9. Generic Index Accessors
+### 9. ✅ COMPLETED: Reduce Header File Complexity via Implementation Separation
+
+*   **Files:** `src/timesamples.hh` (3,388 → 3,233 lines), `src/timesamples.cc` (1,325 → 1,503 lines)
+*   **Status:** Completed (2025-10-27)
+*   **Problem Statement:**
+    - The `timesamples.hh` header file was becoming increasingly large (3,388 lines) with multiple non-template method implementations inlined
+    - This increased compilation time and made the header harder to navigate
+    - Non-template methods (`TimeSamples` constructors, assignment operators, `clear()`, `init()`) were candidates for moving to the implementation file
+*   **Solution Implemented:**
+    1. **Moved Constructor/Assignment Operator Implementations (6 methods)**:
+       - Move constructor (`TimeSamples(TimeSamples&&) noexcept`) - 28 lines
+       - Move assignment operator (`operator=(TimeSamples&&) noexcept`) - 33 lines
+       - Copy constructor (`TimeSamples(const TimeSamples&)`) - 23 lines
+       - Copy assignment operator (`operator=(const TimeSamples&)`) - 28 lines
+       - `clear()` method - 18 lines
+       - `init(uint32_t)` method - 17 lines
+       - **Total lines moved: ~147 lines**
+
+    2. **Namespace Organization (Critical Fix)**:
+       - Initial build failed with: `error: '_type_id' was not declared in this scope`
+       - Root cause: Implementations were outside the `value` namespace, unable to access private members
+       - Solution: Wrapped all moved implementations in `namespace value { }` block
+       - All implementations now properly scoped within the class's namespace
+
+    3. **File Organization**:
+       - Added clear section header in timesamples.cc:
+         ```cpp
+         // ============================================================================
+         // TimeSamples Implementation
+         // ============================================================================
+
+         namespace value {
+         // Implementation code...
+         } // namespace value
+         } // namespace tinyusdz
+         ```
+*   **Code Changes Detail:**
+    - **In timesamples.hh**: Replaced inline implementations with declarations only
+      ```cpp
+      // Before (inline implementation ~147 lines total):
+      TimeSamples(TimeSamples&& other) noexcept {
+        // implementation...
+      }
+
+      // After (declaration only):
+      TimeSamples(TimeSamples&& other) noexcept;
+      ```
+
+    - **In timesamples.cc**: Added corresponding implementations wrapped in namespace
+      ```cpp
+      namespace value {
+
+      TimeSamples::TimeSamples(TimeSamples&& other) noexcept
+          : _samples(std::move(other._samples)),
+            _times(std::move(other._times)),
+            // ... full initialization list ...
+      {
+        // Reset moved-from object to valid state
+        other._dirty = false;
+        other._dirty_start = 0;
+        other._dirty_end = 0;
+      }
+
+      // ... other implementations ...
+
+      } // namespace value
+      } // namespace tinyusdz
+      ```
+*   **Metrics:**
+    - **Header reduction**: 3,388 → 3,233 lines (155 lines, 4.6% reduction)
+    - **Implementation growth**: 1,325 → 1,503 lines (178 lines added for implementations + comments)
+    - **Compilation impact**: Reduces header bloat without significant binary size impact
+*   **Build & Test Results:**
+    - ✅ Full build completed successfully: `[100%] Built target unit-test-tinyusdz`
+    - ✅ All unit tests passing (20 tests, including timesamples_test)
+    - ✅ No regressions in functionality
+    - ✅ tusdcat binary builds and executes correctly
+    - ✅ Complex timeSamples (bool, vector, array types) still working correctly
+*   **Impact:**
+    - Cleaner header file - easier to navigate class interface
+    - Faster header parsing during compilation
+    - Non-template code properly belongs in .cc file per C++ best practices
+    - Establishes pattern for future refactoring (additional ~600 lines of template methods could follow similar pattern with explicit instantiation)
+*   **Known Limitations & Future Work:**
+    - Additional refactoring candidates identified (Phase 2):
+      - `get_typed_array_at_time()` (95 lines) - could move with explicit template instantiation
+      - `get_typed_array_at()` (89 lines) - could move with explicit template instantiation
+      - Additional PODTimeSamples methods (~200+ lines) - candidates for similar treatment
+    - These would require explicit template instantiation pattern similar to `INSTANTIATE_ADD_SAMPLE` macro already in use
+    - Phase 2 could achieve additional 30% header reduction (~600+ more lines)
+*   **Pattern for Continuing Refactoring:**
+    - For template methods: Use explicit template instantiation in .cc file
+    - For non-template methods: Simply move implementation as demonstrated
+    - Always maintain proper namespace scoping around implementations
+    - Update .hh to contain only declarations, .cc contains implementations
+
+### 10. Generic Index Accessors
 
 *   **File:** `src/crate-reader.cc:141`
 *   **Opportunity:** `GetField`, `GetToken`, `GetPath`, `GetElementPath`, and `GetPathString` all share the same bounds-check pattern. A templated `lookup_optional(vector, Index)` (with optional logging hook) would remove boilerplate and centralize future diagnostics.
