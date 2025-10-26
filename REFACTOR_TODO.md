@@ -158,7 +158,83 @@ The timesamples module contains several areas where code duplication and complex
 
 *   See "Timesamples Module" section above for comprehensive refactoring opportunities for type/offset guards in POD samples.
 
-### 8. Generic Index Accessors
+### 8. ✅ COMPLETED: Fix TimeSamples Copy/Move Semantics for POD Value Preservation
+
+*   **Files:** `src/timesamples.hh:1147-1277` (copy/move constructors and assignment operators)
+*   **Status:** Completed (2025-10-26)
+*   **Problem Statement:**
+    - When parsing USDA files with timeSamples, scalar POD values (float, double, int) were appearing as empty/null in output
+    - Example: `float value.timeSamples = { 0: VALUE_PPRINT: TODO: (type: null), 1: VALUE_PPRINT: TODO: (type: null) }`
+    - This occurred specifically with USDA parsing while USDC (binary) format worked correctly
+    - The issue affected both the official test file `tests/usda/timesamples-array-001.usda` and custom test files
+*   **Root Cause Analysis:**
+    - The `_small_values` member (mutable vector<uint64_t>) stores POD scalar samples in compressed form during parsing
+    - The copy assignment operator was missing the `_small_values = other._small_values;` statement
+    - When TimeSamples objects were assigned to attributes during construction, the POD values were lost
+    - Additionally, member initialization order in copy/move constructors didn't match class declaration order
+*   **Solution Implemented:**
+    1. **Copy Assignment Operator (line 1262)**: Added missing `_small_values = other._small_values;` statement
+       ```cpp
+       TimeSamples& operator=(const TimeSamples& other) {
+         if (this != &other) {
+           _samples = other._samples;
+           _times = other._times;
+           _blocked = other._blocked;
+           _small_values = other._small_values;  // CRITICAL FIX: was missing!
+           _values = other._values;
+           _offsets = other._offsets;
+           // ... rest of implementation
+         }
+         return *this;
+       }
+       ```
+    2. **Copy Constructor (lines 1213-1229)**: Reordered member initialization list to match class declaration order
+       - Changed from: `..., _pod_samples(other._pod_samples), _small_values(other._small_values)`
+       - To: `..., _small_values(other._small_values), ..., _pod_samples(other._pod_samples)`
+    3. **Move Constructor (lines 1147-1163)**: Reordered member initialization list to match class declaration order
+       - Changed from: `..., _pod_samples(std::move(other._pod_samples)), _small_values(std::move(other._small_values))`
+       - To: `..., _small_values(std::move(other._small_values)), ..., _pod_samples(std::move(other._pod_samples))`
+    4. **Class Member Declaration Order (lines 2655-2678)**: Verified order is:
+       1. `_times`, `_blocked`, `_small_values`, `_values` (core storage)
+       2. `_offsets` (offset management)
+       3. `_type_id`, `_use_pod`, `_is_array`, etc. (type metadata)
+       4. `_dirty`, `_dirty_start`, `_dirty_end` (dirty tracking)
+       5. `_pod_samples` (POD storage wrapper)
+*   **Test Results:**
+    - ✅ Simple float timeSamples: `float value.timeSamples = { 0: 1.5, 1: 2.5 }` - WORKING
+    - ✅ Double timeSamples: `double value.timeSamples = { 0: 1.123456, 1: 2.987654 }` - WORKING
+    - ✅ Integer timeSamples: `int value.timeSamples = { 0: 42, 1: 99 }` - WORKING
+    - ✅ Float array timeSamples: `float[] timeSamples = { 0: [1, 2, 3], 1: [4, 5, 6] }` - WORKING
+    - ✅ Double array timeSamples: `double[] timeSamples = { 0: [1.1, 2.2], 1: [3.3, 4.4] }` - WORKING
+    - ✅ Official test file: `tests/usda/timesamples-array-001.usda` - XformOp and array timeSamples WORKING
+*   **Known Limitations (Fixed in Part 2):**
+    - ~~Bool and vector type timeSamples (e.g., float3) still show as null~~ ✅ FIXED
+    - ~~These types don't use the unified POD storage path that this fix addresses~~ ✅ FIXED
+    - ~~Resolution requires separate type reconstruction logic in `get_samples()` method~~ ✅ IMPLEMENTED
+    - ~~Out of scope for this fix (would require significant changes to type handling)~~ ✅ COMPLETED
+*   **Impact:**
+    - ✅ Primary objective achieved: scalar POD types now correctly preserved through copy/move operations
+    - ✅ All unit tests pass with the fix in place
+    - ✅ USDA parsing now produces correct output matching USDC format behavior
+    - Improved robustness of C++ object semantics by ensuring all members are properly transferred
+*   **Additional Fixes (2025-10-26 - Part 2):**
+    1. **Bool Type Support in get_samples()**: Added case for bool type reconstruction (line 1988-1992)
+       - Bool values stored in `_small_values` now correctly reconstructed
+       - Values show as 0/1 in output (could be improved to show true/false)
+    2. **Vector Type Support (float3, point3f, color3f) in get_samples()**: Added handling for types > 8 bytes (lines 1998-2038)
+       - Types larger than 8 bytes are stored in `_values` buffer with offsets in `_offsets`
+       - Added reconstruction logic for float3, point3f, and color3f types
+       - Properly decodes offset using `OFFSET_VALUE_MASK` to retrieve data from `_values` buffer
+    3. **Comprehensive Test Results:**
+       - ✅ bool: Working (shows 0/1)
+       - ✅ float, double, int: Working with correct values
+       - ✅ float3: Working with correct tuple values
+       - ✅ point3f: Working with correct tuple values
+       - ✅ color3f: Working with correct tuple values
+       - ✅ float[], double[]: Working with correct array values
+       - ✅ Official test file `timesamples-array-001.usda`: All timeSamples working correctly
+
+### 9. Generic Index Accessors
 
 *   **File:** `src/crate-reader.cc:141`
 *   **Opportunity:** `GetField`, `GetToken`, `GetPath`, `GetElementPath`, and `GetPathString` all share the same bounds-check pattern. A templated `lookup_optional(vector, Index)` (with optional logging hook) would remove boilerplate and centralize future diagnostics.

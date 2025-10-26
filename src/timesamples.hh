@@ -1130,6 +1130,7 @@ struct TimeSamples {
     _blocked.clear();
     _values.clear();
     _offsets.clear();
+    _small_values.clear();
     _pod_samples.clear();
     _type_id = 0;
     _use_pod = false;
@@ -1147,6 +1148,7 @@ struct TimeSamples {
       : _samples(std::move(other._samples)),
         _times(std::move(other._times)),
         _blocked(std::move(other._blocked)),
+        _small_values(std::move(other._small_values)),
         _values(std::move(other._values)),
         _offsets(std::move(other._offsets)),
         _type_id(other._type_id),
@@ -1182,6 +1184,7 @@ struct TimeSamples {
       _array_values = std::move(other._array_values);  // Move unique_ptr vector
       _offsets = std::move(other._offsets);
       _pod_samples = std::move(other._pod_samples);
+      _small_values = std::move(other._small_values);
       _type_id = other._type_id;
       _use_pod = other._use_pod;
       _is_array = other._is_array;
@@ -1211,6 +1214,7 @@ struct TimeSamples {
       : _samples(other._samples),
         _times(other._times),
         _blocked(other._blocked),
+        _small_values(other._small_values),
         _values(other._values),
         _offsets(other._offsets),
         _type_id(other._type_id),
@@ -1255,6 +1259,7 @@ struct TimeSamples {
       _dirty_start = other._dirty_start;
       _dirty_end = other._dirty_end;
       _pod_samples = other._pod_samples;
+      _small_values = other._small_values;
 
       // Deep copy _array_values (vector of unique_ptr)
       _array_values.clear();
@@ -1911,6 +1916,131 @@ struct TimeSamples {
         s.t = item.first;
         s.value = item.second.first;
         s.blocked = item.second.second;
+        _samples.push_back(s);
+      }
+      return _samples;
+    }
+
+    // If _use_pod = false but unified storage has data, convert to generic samples
+    if (!_times.empty() && _samples.empty()) {
+      if (_dirty) {
+        update();
+      }
+
+      // Convert unified POD storage to generic samples
+      // This handles the case where ParseTypedTimeSamples stored data in unified storage
+      // but _use_pod is disabled (for deprecation)
+      _samples.clear();
+      _samples.reserve(_times.size());
+
+      uint32_t type_id = _type_id;
+      for (size_t i = 0; i < _times.size(); ++i) {
+        Sample s;
+        s.t = _times[i];
+        s.blocked = (_blocked[i] != 0);
+
+        if (s.blocked) {
+          // Blocked sample
+          s.value = value::Value();  // None value
+        } else {
+          // Reconstruct value from storage based on type_id
+          // For POD types, values are stored in _small_values (up to 8 bytes) or _values (larger)
+          // First check if this is a small value (<= 8 bytes) stored in _small_values
+          if (i < _small_values.size()) {
+            uint64_t stored = _small_values[i];
+            // Reconstruct typed value based on type_id
+            switch (type_id) {
+              case value::TypeTraits<float>::type_id(): {
+                float fval = 0.0f;
+                std::memcpy(&fval, &stored, sizeof(float));
+                s.value = value::Value(fval);
+                break;
+              }
+              case value::TypeTraits<double>::type_id(): {
+                double dval = 0.0;
+                std::memcpy(&dval, &stored, sizeof(double));
+                s.value = value::Value(dval);
+                break;
+              }
+              case value::TypeTraits<int32_t>::type_id(): {
+                int32_t ival = 0;
+                std::memcpy(&ival, &stored, sizeof(int32_t));
+                s.value = value::Value(ival);
+                break;
+              }
+              case value::TypeTraits<uint32_t>::type_id(): {
+                uint32_t uval = 0;
+                std::memcpy(&uval, &stored, sizeof(uint32_t));
+                s.value = value::Value(uval);
+                break;
+              }
+              case value::TypeTraits<int64_t>::type_id(): {
+                int64_t lval = 0;
+                std::memcpy(&lval, &stored, sizeof(int64_t));
+                s.value = value::Value(lval);
+                break;
+              }
+              case value::TypeTraits<uint64_t>::type_id(): {
+                uint64_t ulval = 0;
+                std::memcpy(&ulval, &stored, sizeof(uint64_t));
+                s.value = value::Value(ulval);
+                break;
+              }
+              case value::TypeTraits<bool>::type_id(): {
+                bool bval = (stored != 0);
+                s.value = value::Value(bval);
+                break;
+              }
+              default:
+                s.value = value::Value();  // Fallback for types not yet supported
+                break;
+            }
+          } else if (i < _offsets.size()) {
+            // Larger types (> 8 bytes) are stored in _values with offsets
+            uint64_t encoded_offset = _offsets[i];
+            size_t byte_offset = encoded_offset & PODTimeSamples::OFFSET_VALUE_MASK;
+
+            // Reconstruct value based on type_id
+            switch (type_id) {
+              case value::TypeTraits<value::float3>::type_id(): {
+                if (byte_offset + sizeof(value::float3) <= _values.size()) {
+                  value::float3 f3val;
+                  std::memcpy(&f3val, _values.data() + byte_offset, sizeof(value::float3));
+                  s.value = value::Value(f3val);
+                } else {
+                  s.value = value::Value();  // Invalid offset
+                }
+                break;
+              }
+              case value::TypeTraits<value::point3f>::type_id(): {
+                if (byte_offset + sizeof(value::point3f) <= _values.size()) {
+                  value::point3f p3val;
+                  std::memcpy(&p3val, _values.data() + byte_offset, sizeof(value::point3f));
+                  s.value = value::Value(p3val);
+                } else {
+                  s.value = value::Value();  // Invalid offset
+                }
+                break;
+              }
+              case value::TypeTraits<value::color3f>::type_id(): {
+                if (byte_offset + sizeof(value::color3f) <= _values.size()) {
+                  value::color3f c3val;
+                  std::memcpy(&c3val, _values.data() + byte_offset, sizeof(value::color3f));
+                  s.value = value::Value(c3val);
+                } else {
+                  s.value = value::Value();  // Invalid offset
+                }
+                break;
+              }
+              default:
+                s.value = value::Value();  // Fallback for types not yet supported
+                break;
+            }
+          } else {
+            s.value = value::Value();  // Fallback
+          }
+        }
+
         _samples.push_back(s);
       }
       return _samples;
