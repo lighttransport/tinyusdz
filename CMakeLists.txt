@@ -1332,6 +1332,10 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
     target_link_libraries(${TINYUSDZ_LIB_TARGET} Threads::Threads)
   endif()
 
+  # On 32-bit systems, 64-bit atomic operations require libatomic
+  if (CMAKE_SIZEOF_VOID_P EQUAL 4)
+    target_link_libraries(${TINYUSDZ_LIB_TARGET} atomic)
+  endif()
 
   if(IOS)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
