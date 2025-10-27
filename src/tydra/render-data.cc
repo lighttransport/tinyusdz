@@ -4322,18 +4322,27 @@ bool RenderSceneConverter::ConvertMesh(
       }
 
       if (skelPath.is_valid()) {
-        SkelHierarchy skel;
-        nonstd::optional<AnimationClip> anim;
-        // TODO: cache skeleton conversion
-        if (!ConvertSkeletonImpl(env, mesh, &skel, &anim)) {
-          return false;
-        }
-        DCOUT("Converted skeleton attached to : " << abs_prim_path);
-
+        // Check if skeleton already exists
         auto skel_it = std::find_if(skeletons.begin(), skeletons.end(), [&skelPath](const SkelHierarchy &sk) {
           DCOUT("sk.abs_path " << sk.abs_path << ", skel_path " << skelPath.full_path_name());
           return sk.abs_path == skelPath.full_path_name();
         });
+
+        // Determine skeleton_id before conversion
+        int32_t skel_id{0};
+        if (skel_it != skeletons.end()) {
+          skel_id = int32_t(std::distance(skeletons.begin(), skel_it));
+        } else {
+          skel_id = int32_t(skeletons.size());
+        }
+
+        SkelHierarchy skel;
+        nonstd::optional<AnimationClip> anim;
+        // TODO: cache skeleton conversion
+        if (!ConvertSkeletonImpl(env, mesh, skel_id, &skel, &anim)) {
+          return false;
+        }
+        DCOUT("Converted skeleton attached to : " << abs_prim_path);
 
         if (anim) {
 
@@ -4351,11 +4360,8 @@ bool RenderSceneConverter::ConvertMesh(
           }
         }
 
-        int skel_id{0};
-        if (skel_it != skeletons.end()) {
-          skel_id = int(std::distance(skeletons.begin(), skel_it));
-        } else {
-          skel_id = int(skeletons.size());
+        // Add skeleton if it's new (skel_it was end())
+        if (skel_it == skeletons.end()) {
           skeletons.emplace_back(std::move(skel));
           DCOUT("add skeleton\n");
         }
@@ -6139,6 +6145,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &env,
                                             const Path &abs_path,
                                             const SkelAnimation &skelAnim,
+                                            int32_t skeleton_id,
                                             AnimationClip *anim_out) {
   // The spec says:
   // "An animation source is only valid if its translation, rotation, and scale components
@@ -6269,8 +6276,10 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         anim_out->samplers.push_back(trans_sampler);
 
         AnimationChannel channel;
+        channel.target_type = ChannelTargetType::SkeletonJoint;
         channel.path = AnimationPath::Translation;
-        channel.target_node = int32_t(joint_idx);  // Will be remapped later
+        channel.skeleton_id = skeleton_id;
+        channel.joint_id = int32_t(joint_idx);
         channel.sampler = sampler_idx;
         anim_out->channels.push_back(channel);
       }
@@ -6295,8 +6304,10 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         anim_out->samplers.push_back(rot_sampler);
 
         AnimationChannel channel;
+        channel.target_type = ChannelTargetType::SkeletonJoint;
         channel.path = AnimationPath::Rotation;
-        channel.target_node = int32_t(joint_idx);
+        channel.skeleton_id = skeleton_id;
+        channel.joint_id = int32_t(joint_idx);
         channel.sampler = sampler_idx;
         anim_out->channels.push_back(channel);
       }
@@ -6320,8 +6331,10 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         anim_out->samplers.push_back(scale_sampler);
 
         AnimationChannel channel;
+        channel.target_type = ChannelTargetType::SkeletonJoint;
         channel.path = AnimationPath::Scale;
-        channel.target_node = int32_t(joint_idx);
+        channel.skeleton_id = skeleton_id;
+        channel.joint_id = int32_t(joint_idx);
         channel.sampler = sampler_idx;
         anim_out->channels.push_back(channel);
       }
@@ -6378,6 +6391,483 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
   }
 
   return true;
+}
+
+// Helper function: Quaternion multiplication
+// q1 * q2
+static value::quatf quat_mul(const value::quatf &q1, const value::quatf &q2) {
+  value::quatf result;
+  result[0] = q1[3] * q2[0] + q1[0] * q2[3] + q1[1] * q2[2] - q1[2] * q2[1];  // x
+  result[1] = q1[3] * q2[1] - q1[0] * q2[2] + q1[1] * q2[3] + q1[2] * q2[0];  // y
+  result[2] = q1[3] * q2[2] + q1[0] * q2[1] - q1[1] * q2[0] + q1[2] * q2[3];  // z
+  result[3] = q1[3] * q2[3] - q1[0] * q2[0] - q1[1] * q2[1] - q1[2] * q2[2];  // w
+  return result;
+}
+
+bool RenderSceneConverter::ExtractXformOpAnimation(
+    const RenderSceneConverterEnv &env,
+    const Path &abs_path,
+    const std::string &prim_name,
+    const Xformable &xformable,
+    int32_t target_node_index,
+    AnimationClip *anim_out) {
+
+  if (!anim_out) {
+    PUSH_ERROR_AND_RETURN("anim_out is nullptr");
+  }
+
+  // Check if xformable has any animated xformOps
+  if (!xformable.has_timesamples()) {
+    return false;  // No animation data
+  }
+
+  // Setup basic metadata
+  anim_out->abs_path = abs_path.full_path_name();
+  anim_out->prim_name = prim_name;
+  anim_out->name = prim_name + "_xform";
+  anim_out->duration = 0.0f;  // Will be computed below
+
+  // Process each xformOp that has time samples
+  for (size_t xform_idx = 0; xform_idx < xformable.xformOps.size(); xform_idx++) {
+    const XformOp &xformOp = xformable.xformOps[xform_idx];
+
+    if (xformOp.op_type == XformOp::OpType::ResetXformStack) {
+      continue;  // Skip reset operations
+    }
+
+    if (!xformOp.has_timesamples()) {
+      continue;  // Skip non-animated ops
+    }
+
+    // Get the time samples
+    auto ts_opt = xformOp.get_timesamples();
+    if (!ts_opt) {
+      continue;
+    }
+
+    const value::TimeSamples &ts = ts_opt.value();
+    if (ts.size() == 0) {
+      continue;
+    }
+
+    // Determine the animation path based on xformOp type
+    AnimationPath anim_path;
+    bool is_supported = false;
+
+    switch (xformOp.op_type) {
+      case XformOp::OpType::Translate:
+        anim_path = AnimationPath::Translation;
+        is_supported = true;
+        break;
+
+      case XformOp::OpType::Scale:
+        anim_path = AnimationPath::Scale;
+        is_supported = true;
+        break;
+
+      case XformOp::OpType::Orient:
+        anim_path = AnimationPath::Rotation;
+        is_supported = true;
+        break;
+
+      case XformOp::OpType::RotateX:
+      case XformOp::OpType::RotateY:
+      case XformOp::OpType::RotateZ:
+      case XformOp::OpType::RotateXYZ:
+      case XformOp::OpType::RotateXZY:
+      case XformOp::OpType::RotateYXZ:
+      case XformOp::OpType::RotateYZX:
+      case XformOp::OpType::RotateZXY:
+      case XformOp::OpType::RotateZYX:
+        anim_path = AnimationPath::Rotation;
+        is_supported = true;
+        break;
+
+      case XformOp::OpType::Transform:
+        // Full matrix transform - decompose into TRS
+        // We'll handle this specially below since it produces multiple animation channels
+        is_supported = true;
+        break;
+
+      default:
+        is_supported = false;
+        break;
+    }
+
+    if (!is_supported) {
+      continue;
+    }
+
+    // Special handling for Transform (matrix) - decompose into TRS
+    if (xformOp.op_type == XformOp::OpType::Transform) {
+      std::vector<double> times;
+      std::vector<value::double3> translations;
+      std::vector<value::quatd> rotations;
+      std::vector<value::double3> scales;
+
+      // Extract and decompose matrix time samples
+      FOREACH_TIMESAMPLES_BEGIN(ts, sample_t, sample_value, sample_blocked)
+        if (sample_blocked) {
+          continue;
+        }
+
+        value::matrix4d mat;
+        bool got_value = false;
+
+        if (auto v = sample_value.as<value::matrix4d>()) {
+          mat = *v;
+          got_value = true;
+        } else if (auto v = sample_value.as<value::matrix4f>()) {
+          // Convert float matrix to double
+          const auto &m = *v;
+          for (int i = 0; i < 4; i++) {
+            for (int j = 0; j < 4; j++) {
+              mat.m[i][j] = double(m.m[i][j]);
+            }
+          }
+          got_value = true;
+        }
+
+        if (got_value) {
+          value::double3 translation, scale;
+          value::quatd rotation;
+
+          // Decompose the matrix
+          if (decompose(mat, &translation, &rotation, &scale)) {
+            times.push_back(sample_t);
+            translations.push_back(translation);
+            rotations.push_back(rotation);
+            scales.push_back(scale);
+
+            if (float(sample_t) > anim_out->duration) {
+              anim_out->duration = float(sample_t);
+            }
+          } else {
+            PUSH_WARN(fmt::format("Failed to decompose matrix at time {} for xformOp:transform at {}",
+                                 sample_t, abs_path.full_path_name()));
+          }
+        }
+      FOREACH_TIMESAMPLES_END()
+
+      // Create three separate animation channels for T, R, S
+      if (!times.empty()) {
+        // Translation channel
+        {
+          KeyframeSampler sampler;
+          sampler.interpolation = AnimationInterpolation::Linear;
+          sampler.times.reserve(times.size());
+          sampler.values.reserve(times.size() * 3);
+
+          for (size_t i = 0; i < times.size(); i++) {
+            sampler.times.push_back(float(times[i]));
+            sampler.values.push_back(float(translations[i][0]));
+            sampler.values.push_back(float(translations[i][1]));
+            sampler.values.push_back(float(translations[i][2]));
+          }
+
+          int32_t sampler_idx = int32_t(anim_out->samplers.size());
+          anim_out->samplers.push_back(sampler);
+
+          AnimationChannel channel;
+          channel.target_type = ChannelTargetType::SceneNode;
+          channel.path = AnimationPath::Translation;
+          channel.target_node = target_node_index;
+          channel.sampler = sampler_idx;
+          anim_out->channels.push_back(channel);
+        }
+
+        // Rotation channel
+        {
+          KeyframeSampler sampler;
+          sampler.interpolation = AnimationInterpolation::Linear;
+          sampler.times.reserve(times.size());
+          sampler.values.reserve(times.size() * 4);
+
+          for (size_t i = 0; i < times.size(); i++) {
+            sampler.times.push_back(float(times[i]));
+            sampler.values.push_back(float(rotations[i][0]));
+            sampler.values.push_back(float(rotations[i][1]));
+            sampler.values.push_back(float(rotations[i][2]));
+            sampler.values.push_back(float(rotations[i][3]));
+          }
+
+          int32_t sampler_idx = int32_t(anim_out->samplers.size());
+          anim_out->samplers.push_back(sampler);
+
+          AnimationChannel channel;
+          channel.target_type = ChannelTargetType::SceneNode;
+          channel.path = AnimationPath::Rotation;
+          channel.target_node = target_node_index;
+          channel.sampler = sampler_idx;
+          anim_out->channels.push_back(channel);
+        }
+
+        // Scale channel
+        {
+          KeyframeSampler sampler;
+          sampler.interpolation = AnimationInterpolation::Linear;
+          sampler.times.reserve(times.size());
+          sampler.values.reserve(times.size() * 3);
+
+          for (size_t i = 0; i < times.size(); i++) {
+            sampler.times.push_back(float(times[i]));
+            sampler.values.push_back(float(scales[i][0]));
+            sampler.values.push_back(float(scales[i][1]));
+            sampler.values.push_back(float(scales[i][2]));
+          }
+
+          int32_t sampler_idx = int32_t(anim_out->samplers.size());
+          anim_out->samplers.push_back(sampler);
+
+          AnimationChannel channel;
+          channel.target_type = ChannelTargetType::SceneNode;
+          channel.path = AnimationPath::Scale;
+          channel.target_node = target_node_index;
+          channel.sampler = sampler_idx;
+          anim_out->channels.push_back(channel);
+        }
+      }
+
+      // Skip the regular processing below
+      continue;
+    }
+
+    // Create a keyframe sampler
+    KeyframeSampler sampler;
+    sampler.interpolation = AnimationInterpolation::Linear;
+
+    // Extract time samples based on the operation type
+    if (anim_path == AnimationPath::Translation || anim_path == AnimationPath::Scale) {
+      // Handle vec3 types (translation, scale)
+      std::vector<double> times;
+      std::vector<value::float3> values;
+
+      FOREACH_TIMESAMPLES_BEGIN(ts, sample_t, sample_value, sample_blocked)
+        if (sample_blocked) {
+          continue;
+        }
+
+        // Try to get value as various vec3 types
+        value::float3 vec;
+        bool got_value = false;
+
+        if (auto v = sample_value.as<value::float3>()) {
+          vec = *v;
+          got_value = true;
+        } else if (auto v = sample_value.as<value::double3>()) {
+          vec[0] = float((*v)[0]);
+          vec[1] = float((*v)[1]);
+          vec[2] = float((*v)[2]);
+          got_value = true;
+        } else if (auto v = sample_value.as<value::half3>()) {
+          vec[0] = value::half_to_float((*v)[0]);
+          vec[1] = value::half_to_float((*v)[1]);
+          vec[2] = value::half_to_float((*v)[2]);
+          got_value = true;
+        }
+
+        if (got_value) {
+          times.push_back(sample_t);
+          values.push_back(vec);
+          if (float(sample_t) > anim_out->duration) {
+            anim_out->duration = float(sample_t);
+          }
+        }
+      FOREACH_TIMESAMPLES_END()
+
+      // Build sampler data
+      if (!times.empty()) {
+        sampler.times.reserve(times.size());
+        sampler.values.reserve(times.size() * 3);
+
+        for (size_t i = 0; i < times.size(); i++) {
+          sampler.times.push_back(float(times[i]));
+          sampler.values.push_back(values[i][0]);
+          sampler.values.push_back(values[i][1]);
+          sampler.values.push_back(values[i][2]);
+        }
+      }
+
+    } else if (anim_path == AnimationPath::Rotation) {
+      // Handle rotation types
+      std::vector<double> times;
+      std::vector<value::quatf> values;
+
+      // For Orient operations, we have quaternions
+      if (xformOp.op_type == XformOp::OpType::Orient) {
+        FOREACH_TIMESAMPLES_BEGIN(ts, sample_t, sample_value, sample_blocked)
+          if (sample_blocked) {
+            continue;
+          }
+
+          value::quatf quat;
+          bool got_value = false;
+
+          if (auto v = sample_value.as<value::quatf>()) {
+            quat = *v;
+            got_value = true;
+          } else if (auto v = sample_value.as<value::quatd>()) {
+            quat[0] = float((*v)[0]);
+            quat[1] = float((*v)[1]);
+            quat[2] = float((*v)[2]);
+            quat[3] = float((*v)[3]);
+            got_value = true;
+          } else if (auto v = sample_value.as<value::quath>()) {
+            quat[0] = value::half_to_float((*v)[0]);
+            quat[1] = value::half_to_float((*v)[1]);
+            quat[2] = value::half_to_float((*v)[2]);
+            quat[3] = value::half_to_float((*v)[3]);
+            got_value = true;
+          }
+
+          if (got_value) {
+            times.push_back(sample_t);
+            values.push_back(quat);
+            if (float(sample_t) > anim_out->duration) {
+              anim_out->duration = float(sample_t);
+            }
+          }
+        FOREACH_TIMESAMPLES_END()
+
+      } else {
+        // For Rotate operations, we have angles that need to be converted to quaternions
+        // We'll extract the angle values and convert them to quaternions
+        std::vector<double> angle_times;
+        std::vector<double> angle_values;
+
+        if (xformOp.op_type == XformOp::OpType::RotateX ||
+            xformOp.op_type == XformOp::OpType::RotateY ||
+            xformOp.op_type == XformOp::OpType::RotateZ) {
+          // Single-axis rotation (scalar angle)
+          FOREACH_TIMESAMPLES_BEGIN(ts, sample_t, sample_value, sample_blocked)
+            if (sample_blocked) {
+              continue;
+            }
+
+            double angle = 0.0;
+            bool got_value = false;
+
+            if (auto v = sample_value.as<double>()) {
+              angle = *v;
+              got_value = true;
+            } else if (auto v = sample_value.as<float>()) {
+              angle = double(*v);
+              got_value = true;
+            }
+
+            if (got_value) {
+              angle_times.push_back(sample_t);
+              angle_values.push_back(angle);
+              if (float(sample_t) > anim_out->duration) {
+                anim_out->duration = float(sample_t);
+              }
+            }
+          FOREACH_TIMESAMPLES_END()
+
+          // Convert angles to quaternions
+          value::double3 axis;
+          if (xformOp.op_type == XformOp::OpType::RotateX) {
+            axis = {1.0, 0.0, 0.0};
+          } else if (xformOp.op_type == XformOp::OpType::RotateY) {
+            axis = {0.0, 1.0, 0.0};
+          } else {  // RotateZ
+            axis = {0.0, 0.0, 1.0};
+          }
+
+          for (size_t i = 0; i < angle_times.size(); i++) {
+            times.push_back(angle_times[i]);
+            values.push_back(to_quaternion(value::float3{float(axis[0]), float(axis[1]), float(axis[2])},
+                                          float(angle_values[i])));
+          }
+
+        } else {
+          // Multi-axis rotation (vec3 of angles)
+          // For RotateXYZ and similar, we need to compute the combined quaternion
+          std::vector<value::double3> euler_angles;
+
+          FOREACH_TIMESAMPLES_BEGIN(ts, sample_t, sample_value, sample_blocked)
+            if (sample_blocked) {
+              continue;
+            }
+
+            value::double3 angles;
+            bool got_value = false;
+
+            if (auto v = sample_value.as<value::float3>()) {
+              angles[0] = double((*v)[0]);
+              angles[1] = double((*v)[1]);
+              angles[2] = double((*v)[2]);
+              got_value = true;
+            } else if (auto v = sample_value.as<value::double3>()) {
+              angles = *v;
+              got_value = true;
+            } else if (auto v = sample_value.as<value::half3>()) {
+              angles[0] = double(value::half_to_float((*v)[0]));
+              angles[1] = double(value::half_to_float((*v)[1]));
+              angles[2] = double(value::half_to_float((*v)[2]));
+              got_value = true;
+            }
+
+            if (got_value) {
+              angle_times.push_back(sample_t);
+              euler_angles.push_back(angles);
+              if (float(sample_t) > anim_out->duration) {
+                anim_out->duration = float(sample_t);
+              }
+            }
+          FOREACH_TIMESAMPLES_END()
+
+          // Convert Euler angles to quaternions based on rotation order
+          // Note: This is a simplified conversion; proper implementation would use matrix composition
+          for (size_t i = 0; i < angle_times.size(); i++) {
+            times.push_back(angle_times[i]);
+
+            // For now, convert XYZ order (most common)
+            // TODO: Support other rotation orders properly
+            const auto &angles = euler_angles[i];
+            value::quatf qx = to_quaternion(value::float3{1.0f, 0.0f, 0.0f}, float(angles[0]));
+            value::quatf qy = to_quaternion(value::float3{0.0f, 1.0f, 0.0f}, float(angles[1]));
+            value::quatf qz = to_quaternion(value::float3{0.0f, 0.0f, 1.0f}, float(angles[2]));
+
+            // Combine quaternions based on rotation order
+            // For XYZ: qz * qy * qx
+            value::quatf combined = quat_mul(quat_mul(qz, qy), qx);
+            values.push_back(combined);
+          }
+        }
+      }
+
+      // Build sampler data for rotations (quaternions)
+      if (!times.empty()) {
+        sampler.times.reserve(times.size());
+        sampler.values.reserve(times.size() * 4);
+
+        for (size_t i = 0; i < times.size(); i++) {
+          sampler.times.push_back(float(times[i]));
+          sampler.values.push_back(values[i][0]);
+          sampler.values.push_back(values[i][1]);
+          sampler.values.push_back(values[i][2]);
+          sampler.values.push_back(values[i][3]);
+        }
+      }
+    }
+
+    // Only add if we have valid sampler data
+    if (!sampler.times.empty()) {
+      int32_t sampler_idx = int32_t(anim_out->samplers.size());
+      anim_out->samplers.push_back(sampler);
+
+      AnimationChannel channel;
+      channel.target_type = ChannelTargetType::SceneNode;
+      channel.path = anim_path;
+      channel.target_node = target_node_index;
+      channel.sampler = sampler_idx;
+      anim_out->channels.push_back(channel);
+    }
+  }
+
+  // Return true if we extracted any animation data
+  return !anim_out->channels.empty();
 }
 
 
@@ -6579,7 +7069,79 @@ bool RenderSceneConverter::ConvertToRenderScene(
     return false;
   }
 
-  // Report progress after node hierarchy building (90%)
+  // Report progress after node hierarchy building (85%)
+  if (!CallProgressCallback(0.85f)) {
+    PushError("Conversion cancelled by user.\n");
+    return false;
+  }
+
+  //
+  // 6. Extract xformOp animations from nodes with time-sampled transforms
+  //
+  {
+    // Helper to count nodes in subtree (defined first so it can be used in extractAnimationsFromNode)
+    std::function<size_t(const XformNode&)> CountNodesInSubtree;
+    CountNodesInSubtree = [&](const XformNode& node) -> size_t {
+      size_t count = 1;  // Count this node
+      for (const auto& child : node.children) {
+        count += CountNodesInSubtree(child);
+      }
+      return count;
+    };
+
+    // Helper lambda to recursively extract xformOp animations from node hierarchy
+    std::function<void(const XformNode&, int32_t)> extractAnimationsFromNode;
+    extractAnimationsFromNode = [&](const XformNode& xform_node, int32_t node_index) {
+      // Check if this node has a prim with xformOps
+      if (xform_node.prim && IsXformablePrim(*xform_node.prim)) {
+        const Xformable *xformable = nullptr;
+        if (CastToXformable(*xform_node.prim, &xformable) && xformable) {
+          // Check if xformable has time-sampled transforms
+          if (xformable->has_timesamples()) {
+            AnimationClip anim;
+            // xform_node.absolute_path is already a Path object
+            const Path &prim_path = xform_node.absolute_path;
+
+            // Extract xformOp animation
+            if (ExtractXformOpAnimation(env, prim_path, xform_node.element_name,
+                                       *xformable, node_index, &anim)) {
+              // Check if animation with this path already exists
+              const auto &anim_abs_path = anim.abs_path;
+              auto anim_it = std::find_if(animations.begin(), animations.end(),
+                                         [&anim_abs_path](const AnimationClip &a) {
+                return a.abs_path == anim_abs_path;
+              });
+
+              // Add animation if it doesn't already exist
+              if (anim_it == animations.end()) {
+                DCOUT("Extracted xformOp animation from: " << anim_abs_path);
+                animations.emplace_back(std::move(anim));
+              }
+            }
+          }
+        }
+      }
+
+      // Recursively process children
+      // Note: we increment node_index as we traverse depth-first
+      int32_t child_start_index = node_index + 1;
+      for (size_t i = 0; i < xform_node.children.size(); i++) {
+        extractAnimationsFromNode(xform_node.children[i], child_start_index);
+        // Approximate: each child subtree takes some nodes
+        // This is a simplified approach; proper implementation would track exact indices
+        child_start_index += int32_t(CountNodesInSubtree(xform_node.children[i]));
+      }
+    };
+
+    // Process each root node
+    int32_t current_node_index = 0;
+    for (const auto& root : xform_node.children) {
+      extractAnimationsFromNode(root, current_node_index);
+      current_node_index += int32_t(CountNodesInSubtree(root));
+    }
+  }
+
+  // Report progress after animation extraction (90%)
   if (!CallProgressCallback(0.9f)) {
     PushError("Conversion cancelled by user.\n");
     return false;
@@ -6620,6 +7182,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
 }
 
 bool RenderSceneConverter::ConvertSkeletonImpl(const RenderSceneConverterEnv &env, const tinyusdz::GeomMesh &mesh,
+                       int32_t skeleton_id,
                        SkelHierarchy *out_skel, nonstd::optional<AnimationClip> *out_anim) {
 
   if (!out_skel) {
@@ -6690,7 +7253,7 @@ bool RenderSceneConverter::ConvertSkeletonImpl(const RenderSceneConverterEnv &en
         if (const auto panim = animSourcePrim->as<SkelAnimation>()) {
           DCOUT("Convert SkelAnimation");
           AnimationClip anim;
-          if (!ConvertSkelAnimation(env, animSourcePath, *panim, &anim)) {
+          if (!ConvertSkelAnimation(env, animSourcePath, *panim, skeleton_id, &anim)) {
             return false;
           }
 

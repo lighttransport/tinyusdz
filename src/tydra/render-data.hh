@@ -766,6 +766,20 @@ enum class AnimationInterpolation {
 };
 
 ///
+/// Animation channel target type - distinguishes what the channel animates
+///
+/// USD has two distinct animation systems:
+/// - Node animations: xformOp time samples animate scene node transforms
+/// - Skeletal animations: SkelAnimation arrays animate skeleton joint transforms
+///
+/// This enum enables type-safe handling of both animation types in a unified structure.
+///
+enum class ChannelTargetType {
+  SceneNode,      ///< Targets a scene node's transform (from USD xformOp animations)
+  SkeletonJoint   ///< Targets a skeleton joint (from USD SkelAnimation)
+};
+
+///
 /// Animation target property path (matches glTF animation paths)
 ///
 enum class AnimationPath {
@@ -800,18 +814,61 @@ struct KeyframeSampler {
 };
 
 ///
-/// Animation channel - binds sampler data to a specific node property
+/// Animation channel - binds sampler data to a specific target property
+///
+/// Supports both node transform animations (from USD xformOps) and
+/// skeletal joint animations (from USD SkelAnimation). The target_type field
+/// determines how to interpret the target identification fields.
 ///
 /// Matches glTF Animation Channel structure. Each channel targets one property
-/// of one node, and references a sampler that provides the keyframe data.
+/// of one target, and references a sampler that provides the keyframe data.
+///
+/// Example usage:
+/// ```
+/// // Node animation (xformOp)
+/// AnimationChannel node_channel;
+/// node_channel.target_type = ChannelTargetType::SceneNode;
+/// node_channel.path = AnimationPath::Translation;
+/// node_channel.target_node = 5;  // Index into RenderScene::nodes
+/// node_channel.sampler = 0;
+///
+/// // Skeletal animation (SkelAnimation)
+/// AnimationChannel joint_channel;
+/// joint_channel.target_type = ChannelTargetType::SkeletonJoint;
+/// joint_channel.path = AnimationPath::Rotation;
+/// joint_channel.skeleton_id = 0;  // Index into RenderScene::skeletons
+/// joint_channel.joint_id = 12;     // Joint index within skeleton
+/// joint_channel.sampler = 1;
+/// ```
 ///
 struct AnimationChannel {
   AnimationPath path;         ///< Which property to animate (translation/rotation/scale/weights)
-  int32_t target_node{-1};    ///< Index into RenderScene::nodes (-1 = invalid)
+  ChannelTargetType target_type{ChannelTargetType::SceneNode};  ///< Target type (node or joint)
+
+  // Target identification (interpretation depends on target_type)
+  int32_t target_node{-1};    ///< SceneNode: index into RenderScene::nodes (-1 = invalid)
+                               ///< SkeletonJoint: unused (use skeleton_id + joint_id instead)
+
+  // Skeletal animation fields (only used when target_type == SkeletonJoint)
+  int32_t skeleton_id{-1};    ///< Index into RenderScene::skeletons (-1 = invalid)
+  int32_t joint_id{-1};       ///< Index within skeleton's joint array (-1 = invalid)
+
   int32_t sampler{-1};        ///< Index into AnimationClip::samplers (-1 = invalid)
 
-  /// Check if channel is valid
-  bool is_valid() const { return target_node >= 0 && sampler >= 0; }
+  /// Check if channel is valid based on its target type
+  bool is_valid() const {
+    if (sampler < 0) return false;
+    if (target_type == ChannelTargetType::SceneNode) {
+      return target_node >= 0;
+    } else {  // SkeletonJoint
+      return skeleton_id >= 0 && joint_id >= 0;
+    }
+  }
+
+  /// Check if this is a skeletal animation channel
+  bool is_skeletal() const {
+    return target_type == ChannelTargetType::SkeletonJoint;
+  }
 };
 
 ///
@@ -861,6 +918,22 @@ struct AnimationClip {
 
   /// Get number of channels
   size_t num_channels() const { return channels.size(); }
+
+  /// Check if animation contains skeletal animation channels
+  bool has_skeletal_animation() const {
+    for (const auto& ch : channels) {
+      if (ch.is_skeletal()) return true;
+    }
+    return false;
+  }
+
+  /// Check if animation contains scene node animation channels
+  bool has_node_animation() const {
+    for (const auto& ch : channels) {
+      if (!ch.is_skeletal()) return true;
+    }
+    return false;
+  }
 };
 
 struct Node {
@@ -2502,6 +2575,25 @@ class RenderSceneConverter {
   ///
   bool ConvertSkelAnimation(const RenderSceneConverterEnv &env,
                         const Path &abs_path, const SkelAnimation &skelAnim,
+                        int32_t skeleton_id,
+                        AnimationClip *anim_out);
+
+  ///
+  /// Extract animation data from xformOps time samples and convert to AnimationClip
+  ///
+  /// @param[in] env Converter environment
+  /// @param[in] abs_path Absolute path to the prim
+  /// @param[in] prim_name Prim name
+  /// @param[in] xformable Xformable object containing xformOps
+  /// @param[in] target_node_index Index of the target node in RenderScene
+  /// @param[out] anim_out Output AnimationClip
+  /// @return true if animation was extracted, false otherwise
+  ///
+  bool ExtractXformOpAnimation(const RenderSceneConverterEnv &env,
+                        const Path &abs_path,
+                        const std::string &prim_name,
+                        const Xformable &xformable,
+                        int32_t target_node_index,
                         AnimationClip *anim_out);
 
   ///
@@ -2561,6 +2653,7 @@ class RenderSceneConverter {
   // Also get SkelAnimation attached to Skeleton(if exists)
   //
   bool ConvertSkeletonImpl(const RenderSceneConverterEnv &env, const tinyusdz::GeomMesh &mesh,
+                       int32_t skeleton_id,
                        SkelHierarchy *out_skel, nonstd::optional<AnimationClip> *out_anim);
 
   bool BuildNodeHierarchyImpl(
