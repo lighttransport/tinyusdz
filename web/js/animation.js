@@ -73,6 +73,7 @@ let usdAnimations = []; // Store USD animations from the file
 
 /**
  * Convert USD animation data to Three.js AnimationClip
+ * Supports the new animation structure with channels and samplers
  * @param {Object} usdLoader - TinyUSDZ loader instance
  * @param {THREE.Object3D} sceneRoot - Three.js scene containing the loaded geometry
  * @returns {Array<THREE.AnimationClip>} Array of Three.js AnimationClips
@@ -88,63 +89,104 @@ function convertUSDAnimationsToThreeJS(usdLoader, sceneRoot) {
 	const animationInfos = usdLoader.getAllAnimationInfos();
 	console.log('Animation summaries:', animationInfos);
 
+	// Build node index map for faster lookup
+	const nodeIndexMap = new Map();
+	let nodeIndex = 0;
+	sceneRoot.traverse((obj) => {
+		nodeIndexMap.set(nodeIndex++, obj);
+	});
+
 	// Convert each animation to Three.js format
 	for (let i = 0; i < numAnimations; i++) {
 		const usdAnimation = usdLoader.getAnimation(i);
 		console.log(`Processing animation ${i}: ${usdAnimation.name}`);
 
-		// Create Three.js KeyframeTracks from USD animation tracks
+		if (!usdAnimation.channels || !usdAnimation.samplers) {
+			console.warn(`Animation ${i} missing channels or samplers`);
+			continue;
+		}
+
+		// Filter for node animations only (skip skeletal animations)
+		const nodeChannels = usdAnimation.channels.filter(channel => {
+			const targetType = channel.target_type || 'SceneNode'; // Default to SceneNode for backward compat
+			return targetType === 'SceneNode';
+		});
+
+		if (nodeChannels.length === 0) {
+			console.log(`Animation ${i} has no SceneNode channels (skipping skeletal-only animation)`);
+			continue;
+		}
+
+		console.log(`Animation ${i}: ${nodeChannels.length} node channels (${usdAnimation.channels.length - nodeChannels.length} skeletal channels skipped)`);
+
+		// Create Three.js KeyframeTracks from USD animation channels
 		const keyframeTracks = [];
 
-		for (const track of usdAnimation.tracks) {
-			// Find the Three.js object for this track
-			const targetObject = findObjectByName(sceneRoot, track.nodeName);
-
-			if (!targetObject) {
-				console.warn(`Could not find object with name: ${track.nodeName}`);
+		for (const channel of nodeChannels) {
+			// Get sampler data
+			const sampler = usdAnimation.samplers[channel.sampler];
+			if (!sampler || !sampler.times || !sampler.values) {
+				console.warn(`Invalid sampler for channel`);
 				continue;
 			}
 
-			// Convert times from Float32Array to array
-			const times = Array.from(track.times);
-			const values = Array.from(track.values);
+			// Find the Three.js object for this channel
+			const targetObject = nodeIndexMap.get(channel.target_node);
+			if (!targetObject) {
+				console.warn(`Could not find object at node index: ${channel.target_node}`);
+				continue;
+			}
 
-			// Create appropriate Three.js KeyframeTrack based on type
+			// Convert times and values to arrays
+			const times = Array.isArray(sampler.times) ? sampler.times : Array.from(sampler.times);
+			const values = Array.isArray(sampler.values) ? sampler.values : Array.from(sampler.values);
+
+			// Create appropriate Three.js KeyframeTrack based on path
 			let keyframeTrack;
+			const targetName = targetObject.name || `node_${channel.target_node}`;
+			const interpolation = getUSDInterpolationMode(sampler.interpolation);
 
-			switch (track.type) {
-				case 'vector3':
-					// For position and scale
+			switch (channel.path) {
+				case 'Translation':
 					keyframeTrack = new THREE.VectorKeyframeTrack(
-						track.name,
+						`${targetName}.position`,
 						times,
 						values,
-						getUSDInterpolationMode(track.interpolation)
+						interpolation
 					);
 					break;
 
-				case 'quaternion':
-					// For rotation
+				case 'Rotation':
+					// Rotation is stored as quaternions (x, y, z, w)
 					keyframeTrack = new THREE.QuaternionKeyframeTrack(
-						track.name,
+						`${targetName}.quaternion`,
 						times,
 						values,
-						getUSDInterpolationMode(track.interpolation)
+						interpolation
 					);
 					break;
 
-				case 'number':
-					// For morph targets/weights
-					keyframeTrack = new THREE.NumberKeyframeTrack(
-						track.name,
+				case 'Scale':
+					keyframeTrack = new THREE.VectorKeyframeTrack(
+						`${targetName}.scale`,
 						times,
 						values,
-						getUSDInterpolationMode(track.interpolation)
+						interpolation
+					);
+					break;
+
+				case 'Weights':
+					// For morph targets
+					keyframeTrack = new THREE.NumberKeyframeTrack(
+						`${targetName}.morphTargetInfluences`,
+						times,
+						values,
+						interpolation
 					);
 					break;
 
 				default:
-					console.warn(`Unknown track type: ${track.type}`);
+					console.warn(`Unknown animation path: ${channel.path}`);
 					continue;
 			}
 
@@ -157,11 +199,12 @@ function convertUSDAnimationsToThreeJS(usdLoader, sceneRoot) {
 		if (keyframeTracks.length > 0) {
 			const clip = new THREE.AnimationClip(
 				usdAnimation.name || `Animation_${i}`,
-				usdAnimation.duration,
+				usdAnimation.duration || -1, // -1 will auto-calculate from tracks
 				keyframeTracks
 			);
 
 			animationClips.push(clip);
+			console.log(`Created clip: ${clip.name}, duration: ${clip.duration}s, tracks: ${clip.tracks.length}`);
 		}
 	}
 
@@ -170,40 +213,22 @@ function convertUSDAnimationsToThreeJS(usdLoader, sceneRoot) {
 
 /**
  * Convert USD interpolation mode to Three.js InterpolateMode
- * @param {string} interpolation - USD interpolation mode (LINEAR, STEP, CUBICSPLINE)
+ * @param {string} interpolation - USD interpolation mode (Linear, Step, CubicSpline)
  * @returns {number} Three.js InterpolateMode constant
  */
 function getUSDInterpolationMode(interpolation) {
 	switch (interpolation) {
+		case 'Step':
 		case 'STEP':
 			return THREE.InterpolateDiscrete;
+		case 'CubicSpline':
 		case 'CUBICSPLINE':
 			return THREE.InterpolateSmooth;
+		case 'Linear':
 		case 'LINEAR':
 		default:
 			return THREE.InterpolateLinear;
 	}
-}
-
-/**
- * Helper function to find object in Three.js scene by name
- * @param {THREE.Object3D} root - Root object to search from
- * @param {string} name - Name to search for
- * @returns {THREE.Object3D|null} Found object or null
- */
-function findObjectByName(root, name) {
-	if (root.name === name) {
-		return root;
-	}
-
-	for (const child of root.children) {
-		const found = findObjectByName(child, name);
-		if (found) {
-			return found;
-		}
-	}
-
-	return null;
 }
 
 // Load USD model asynchronously
@@ -254,7 +279,9 @@ async function loadUSDModel() {
 
 	// Extract USD animations if available
 	try {
+		const animationInfos = usd_scene.getAllAnimationInfos();
 		usdAnimations = convertUSDAnimationsToThreeJS(usd_scene, parentGroup);
+
 		if (usdAnimations.length > 0) {
 			console.log(`Extracted ${usdAnimations.length} animations from USD file`);
 
@@ -267,9 +294,22 @@ async function loadUSDModel() {
 				window.usdAnimationFolder.show();
 			}
 
+			// Update animation list in UI with type information
+			if (window.updateAnimationList) {
+				window.updateAnimationList(usdAnimations, animationInfos);
+			}
+
 			// Log animation details
 			usdAnimations.forEach((clip, index) => {
-				console.log(`Animation ${index}: ${clip.name}, duration: ${clip.duration}s, tracks: ${clip.tracks.length}`);
+				const info = animationInfos[index];
+				let typeStr = '';
+				if (info) {
+					const types = [];
+					if (info.has_skeletal_animation) types.push('skeletal');
+					if (info.has_node_animation) types.push('node');
+					if (types.length > 0) typeStr = ` [${types.join('+')}]`;
+				}
+				console.log(`Animation ${index}: ${clip.name}, duration: ${clip.duration}s, tracks: ${clip.tracks.length}${typeStr}`);
 			});
 		}
 	} catch (error) {
@@ -664,7 +704,9 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 
 	// Extract USD animations if available
 	try {
+		const animationInfos = usd_scene.getAllAnimationInfos();
 		usdAnimations = convertUSDAnimationsToThreeJS(usd_scene, parentGroup);
+
 		if (usdAnimations.length > 0) {
 			console.log(`Extracted ${usdAnimations.length} animations from USD file`);
 
@@ -677,14 +719,22 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 				window.usdAnimationFolder.show();
 			}
 
-			// Update animation list in UI
+			// Update animation list in UI with type information
 			if (window.updateAnimationList) {
-				window.updateAnimationList(usdAnimations);
+				window.updateAnimationList(usdAnimations, animationInfos);
 			}
 
 			// Log animation details
 			usdAnimations.forEach((clip, index) => {
-				console.log(`Animation ${index}: ${clip.name}, duration: ${clip.duration}s, tracks: ${clip.tracks.length}`);
+				const info = animationInfos[index];
+				let typeStr = '';
+				if (info) {
+					const types = [];
+					if (info.has_skeletal_animation) types.push('skeletal');
+					if (info.has_node_animation) types.push('node');
+					if (types.length > 0) typeStr = ` [${types.join('+')}]`;
+				}
+				console.log(`Animation ${index}: ${clip.name}, duration: ${clip.duration}s, tracks: ${clip.tracks.length}${typeStr}`);
 			});
 		} else {
 			// Hide USD animations if none found
@@ -692,7 +742,7 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 				window.usdAnimationFolder.hide();
 			}
 			if (window.updateAnimationList) {
-				window.updateAnimationList([]);
+				window.updateAnimationList([], []);
 			}
 		}
 	} catch (error) {
@@ -701,7 +751,7 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 			window.usdAnimationFolder.hide();
 		}
 		if (window.updateAnimationList) {
-			window.updateAnimationList([]);
+			window.updateAnimationList([], []);
 		}
 	}
 
