@@ -1927,9 +1927,33 @@ bool CrateReader::UnpackTimeSampleValue_QUATF(double t,
     }
 
   } else {
-    // Non-array value is not supported
+    // Scalar (non-inlined, non-array) quatf value
+    if (rep.IsCompressed()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                "Compressed quatf not supported for TimeSamples.");
+    }
 
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-array value for quatf is invalid.");
+    // Check deduplication cache for scalar value read from stream
+    auto it = _dedup_quatf.find(rep);
+    value::quatf val;
+    if (it != _dedup_quatf.end()) {
+      // Reuse cached value
+      val = it->second;
+      DCOUT("Reusing cached QUATF scalar value for ValueRep");
+    } else {
+      // Read and cache scalar value
+      CHECK_MEMORY_USAGE(sizeof(float) * 4);  // quatf has 4 floats
+      if (!_sr->read(sizeof(float) * 4, sizeof(float) * 4,
+                     reinterpret_cast<uint8_t *>(&val))) {
+        PUSH_ERROR_AND_RETURN("Failed to read quatf value");
+      }
+      DCOUT("quatf = [" << val[0] << ", " << val[1] << ", " << val[2] << ", " << val[3] << "]");
+      _dedup_quatf[rep] = val;
+    }
+    if (!add_sample_to_timesamples<value::quatf>(&dst, t, val, &_err,
+                                                 expected_total_samples)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+    }
   }
 
   return true;
@@ -2054,7 +2078,7 @@ bool CrateReader::UnpackTimeSampleValue_STRING(
       }
       return true;
     }
-    if (!ReadArray(&v)) {
+    if (!ReadStringArray(&v)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read String array.");
     }
 
@@ -2094,6 +2118,114 @@ bool CrateReader::UnpackTimeSampleValue_STRING(
       }
     }
     if (!add_sample_to_timesamples<std::string>(&dst, t, v, &_err,
+                                                 expected_total_samples)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+    }
+  }
+
+  return true;
+}
+
+bool CrateReader::UnpackTimeSampleValue_TOKEN(
+    double t, const crate::ValueRep &rep, value::TimeSamples &dst,
+    size_t expected_total_samples) {
+  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) ==
+      crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
+    // Blocked value - just add a blocked sample
+    if (!add_blocked_sample_to_timesamples<value::token>(
+            &dst, t, &_err, expected_total_samples)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                "Failed to add blocked sample to TimeSamples.");
+    }
+    return true;
+  }
+
+  if (static_cast<crate::CrateDataTypeId>(rep.GetType()) !=
+      crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN) {
+    PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid ValueRep type in TimeSamples.");
+  }
+
+  if (rep.IsInlined()) {
+    if (rep.IsCompressed() || rep.IsArray()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                "Invalid inlined ValueRep in TimeSamples.");
+    }
+    // Token is stored as StringIndex for inlined value
+    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+    if (auto v = GetStringToken(crate::Index(data))) {
+      value::token tok(v.value().str());
+
+      if (!add_sample_to_timesamples<value::token>(
+              &dst, t, tok, &_err, expected_total_samples)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+      }
+      return true;
+    } else {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Invalid Index for Token.");
+    }
+  } else if (rep.IsArray()) {
+    if (rep.IsCompressed()) {
+      PUSH_ERROR_AND_RETURN_TAG(
+          kTag, "Compressed Token not supported for TimeSamples.");
+    }
+
+    std::vector<value::token> v;
+    if (rep.GetPayload() == 0) {
+      if (!add_sample_to_timesamples<std::vector<value::token>>(
+              &dst, t, v, &_err, expected_total_samples)) {
+        PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+      }
+      return true;
+    }
+
+    // Read token array (stored as string indices)
+    std::vector<std::string> str_v;
+    if (!ReadStringArray(&str_v)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Token array.");
+    }
+
+    // Convert strings to tokens
+    v.reserve(str_v.size());
+    for (const auto& s : str_v) {
+      v.emplace_back(s);
+    }
+
+    if (!add_sample_to_timesamples<std::vector<value::token>>(
+            &dst, t, v, &_err, expected_total_samples)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+    }
+  } else {
+    // Scalar (non-inlined, non-array) token value
+    if (rep.IsCompressed()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                "Compressed token not supported for TimeSamples.");
+    }
+
+    // Check deduplication cache for scalar value read from stream
+    auto it = _dedup_token.find(rep);
+    value::token v;
+    if (it != _dedup_token.end()) {
+      // Reuse cached value
+      v = it->second;
+      DCOUT("Reusing cached TOKEN scalar value for ValueRep");
+    } else {
+      // Read and cache scalar value
+      // Token is stored as StringIndex in the stream
+      uint32_t index_data;
+      CHECK_MEMORY_USAGE(sizeof(uint32_t));
+      if (!_sr->read(sizeof(uint32_t), sizeof(uint32_t),
+                     reinterpret_cast<uint8_t *>(&index_data))) {
+        PUSH_ERROR_AND_RETURN("Failed to read token index");
+      }
+      if (auto tok_val = GetStringToken(crate::Index(index_data))) {
+        v = value::token(tok_val.value().str());
+        DCOUT("token = " << v.str());
+        _dedup_token[rep] = v;
+      } else {
+        PUSH_ERROR_AND_RETURN("Invalid token index in TimeSamples.");
+      }
+    }
+    if (!add_sample_to_timesamples<value::token>(&dst, t, v, &_err,
                                                  expected_total_samples)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
@@ -2869,7 +3001,34 @@ bool CrateReader::UnpackTimeSampleValue_QUATH(double t,
       }
     }
   } else {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-array value for quath is invalid.");
+    // Scalar (non-inlined, non-array) quath value
+    if (rep.IsCompressed()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                "Compressed quath not supported for TimeSamples.");
+    }
+
+    // Check deduplication cache for scalar value read from stream
+    auto it = _dedup_quath.find(rep);
+    value::quath val;
+    if (it != _dedup_quath.end()) {
+      // Reuse cached value
+      val = it->second;
+      DCOUT("Reusing cached QUATH scalar value for ValueRep");
+    } else {
+      // Read and cache scalar value
+      // quath has 4 halfs (half is 2 bytes)
+      CHECK_MEMORY_USAGE(sizeof(uint16_t) * 4);
+      if (!_sr->read(sizeof(uint16_t) * 4, sizeof(uint16_t) * 4,
+                     reinterpret_cast<uint8_t *>(&val))) {
+        PUSH_ERROR_AND_RETURN("Failed to read quath value");
+      }
+      DCOUT("quath = [" << val[0] << ", " << val[1] << ", " << val[2] << ", " << val[3] << "]");
+      _dedup_quath[rep] = val;
+    }
+    if (!add_sample_to_timesamples<value::quath>(&dst, t, val, &_err,
+                                                 expected_total_samples)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+    }
   }
 
   return true;
@@ -2955,7 +3114,34 @@ bool CrateReader::UnpackTimeSampleValue_QUATD(double t,
       }
     }
   } else {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-array value for quatd is invalid.");
+    // Scalar (non-inlined, non-array) quatd value
+    if (rep.IsCompressed()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                "Compressed quatd not supported for TimeSamples.");
+    }
+
+    // Check deduplication cache for scalar value read from stream
+    auto it = _dedup_quatd.find(rep);
+    value::quatd val;
+    if (it != _dedup_quatd.end()) {
+      // Reuse cached value
+      val = it->second;
+      DCOUT("Reusing cached QUATD scalar value for ValueRep");
+    } else {
+      // Read and cache scalar value
+      // quatd has 4 doubles
+      CHECK_MEMORY_USAGE(sizeof(double) * 4);
+      if (!_sr->read(sizeof(double) * 4, sizeof(double) * 4,
+                     reinterpret_cast<uint8_t *>(&val))) {
+        PUSH_ERROR_AND_RETURN("Failed to read quatd value");
+      }
+      DCOUT("quatd = [" << val[0] << ", " << val[1] << ", " << val[2] << ", " << val[3] << "]");
+      _dedup_quatd[rep] = val;
+    }
+    if (!add_sample_to_timesamples<value::quatd>(&dst, t, val, &_err,
+                                                 expected_total_samples)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+    }
   }
 
   return true;
@@ -3490,7 +3676,33 @@ bool CrateReader::UnpackTimeSampleValue_INT64(double t,
       }
     }
   } else {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-array value for int64 is invalid.");
+    // Scalar (non-inlined, non-array) int64 value
+    if (rep.IsCompressed()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                "Compressed int64 not supported for TimeSamples.");
+    }
+
+    // Check deduplication cache for scalar value read from stream
+    auto it = _dedup_int64.find(rep);
+    int64_t val;
+    if (it != _dedup_int64.end()) {
+      // Reuse cached value
+      val = it->second;
+      DCOUT("Reusing cached INT64 scalar value for ValueRep");
+    } else {
+      // Read and cache scalar value
+      CHECK_MEMORY_USAGE(sizeof(int64_t));
+      if (!_sr->read(sizeof(int64_t), sizeof(int64_t),
+                     reinterpret_cast<uint8_t *>(&val))) {
+        PUSH_ERROR_AND_RETURN("Failed to read int64 value");
+      }
+      DCOUT("int64 = " << val);
+      _dedup_int64[rep] = val;
+    }
+    if (!add_sample_to_timesamples<int64_t>(&dst, t, val, &_err,
+                                            expected_total_samples)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+    }
   }
 
   return true;
@@ -3596,7 +3808,33 @@ bool CrateReader::UnpackTimeSampleValue_UINT64(double t,
       }
     }
   } else {
-    PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-array value for uint64 is invalid.");
+    // Scalar (non-inlined, non-array) uint64 value
+    if (rep.IsCompressed()) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag,
+                                "Compressed uint64 not supported for TimeSamples.");
+    }
+
+    // Check deduplication cache for scalar value read from stream
+    auto it = _dedup_uint64.find(rep);
+    uint64_t val;
+    if (it != _dedup_uint64.end()) {
+      // Reuse cached value
+      val = it->second;
+      DCOUT("Reusing cached UINT64 scalar value for ValueRep");
+    } else {
+      // Read and cache scalar value
+      CHECK_MEMORY_USAGE(sizeof(uint64_t));
+      if (!_sr->read(sizeof(uint64_t), sizeof(uint64_t),
+                     reinterpret_cast<uint8_t *>(&val))) {
+        PUSH_ERROR_AND_RETURN("Failed to read uint64 value");
+      }
+      DCOUT("uint64 = " << val);
+      _dedup_uint64[rep] = val;
+    }
+    if (!add_sample_to_timesamples<uint64_t>(&dst, t, val, &_err,
+                                             expected_total_samples)) {
+      PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
+    }
   }
 
   return true;
@@ -4045,6 +4283,10 @@ bool CrateReader::UnpackValueRepsToTimeSamples(
       }
     } else if (crate_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING) {
       if (!UnpackTimeSampleValue_STRING(curr_time, rep, *d, prealloc_hint)) {
+        return false;
+      }
+    } else if (crate_type_id == crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN) {
+      if (!UnpackTimeSampleValue_TOKEN(curr_time, rep, *d, prealloc_hint)) {
         return false;
       }
     } else {
