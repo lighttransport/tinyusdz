@@ -6,11 +6,14 @@
   "scripts": {
     "dev": "vite",
     "dev:anim": "vite --open /animation.html",
+    "dev:skel": "vite --open /skining-anim.html",
     "build": "vite build",
     "preview": "vite preview",
     "cli": "vite-node load-test-node.js",
     "test:memory": "vite-node memory-usage-test.js",
-    "test:streaming": "vite-node load-test-node.js"
+    "test:streaming": "vite-node load-test-node.js",
+    "anim-info": "vite-node animation-info.js",
+    "anim-info:detailed": "vite-node animation-info.js --detailed"
   },
   "devDependencies": {
     "@types/bun": "latest",
