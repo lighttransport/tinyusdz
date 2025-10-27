@@ -2,7 +2,7 @@
 <html lang="en">
 	<head>
 		<meta charset="utf-8">
-		<title>TinyUSDZ Three.js Animation Demo</title>
+		<title>TinyUSDZ Three.js Skeletal Animation Demo</title>
 		<style>
 			body {
 				margin: 0;
@@ -72,25 +72,35 @@
 				background: rgba(255, 255, 255, 0.1);
 				border-radius: 3px;
 			}
+			#skeleton-info {
+				margin-top: 10px;
+				padding-top: 10px;
+				border-top: 1px solid rgba(255, 255, 255, 0.2);
+				font-size: 11px;
+				color: #ff9966;
+			}
 		</style>
 	</head>
 	<body>
 		<div id="info">
-			<h3>TinyUSDZ Three.js Animation Demo</h3>
+			<h3>TinyUSDZ Skeletal Animation Demo</h3>
 			<p>
-				This demo shows USD animation extraction and playback using Three.js.<br>
-				The scene loads a USD model and can play both synthetic and USD-embedded animations.
+				This demo shows USD skeletal animation (SkelAnimation) extraction and playback using Three.js SkinnedMesh.<br>
+				Load a USD file with skeletal animations to see character rigs in action.
 			</p>
 			<p>
-				<strong>Current file:</strong> <span id="currentFile">suzanne.usdc</span>
+				<strong>Current file:</strong> <span id="currentFile">No file loaded</span>
 			</p>
 			<div id="file-controls">
 				<input type="file" id="fileInput" accept=".usd,.usda,.usdc,.usdz">
 				<button class="button" onclick="document.getElementById('fileInput').click()">Load USD File</button>
-				<button class="button" onclick="window.reloadDefaultModel()">Reset to Default</button>
+			</div>
+			<div id="skeleton-info" style="display:none;">
+				<strong>Skeleton Information:</strong>
+				<div id="skeletonDetails"></div>
 			</div>
 			<div id="animation-info" style="display:none;">
-				<strong>USD Animations Found:</strong>
+				<strong>Skeletal Animations Found:</strong>
 				<div class="animation-list" id="animationList"></div>
 			</div>
 		</div>
@@ -103,12 +113,25 @@
 
 				document.getElementById('currentFile').textContent = file.name;
 
-				// Trigger custom event that animation.js can listen to
+				// Trigger custom event that skining-anim.js can listen to
 				const customEvent = new CustomEvent('loadUSDFile', {
 					detail: { file }
 				});
 				window.dispatchEvent(customEvent);
 			});
+
+			// Function to update skeleton information display
+			window.updateSkeletonInfo = function(skeletonCount, totalJoints) {
+				const skelInfo = document.getElementById('skeleton-info');
+				const skelDetails = document.getElementById('skeletonDetails');
+
+				if (skeletonCount > 0) {
+					skelInfo.style.display = 'block';
+					skelDetails.innerHTML = `Skeletons: ${skeletonCount}<br>Total Joints: ${totalJoints}`;
+				} else {
+					skelInfo.style.display = 'none';
+				}
+			};
 
 			// Function to update animation list display
 			window.updateAnimationList = function(animations, animationInfos) {
@@ -124,33 +147,24 @@
 						item.className = 'animation-item';
 
 						// Get animation type information if available
-						let typeInfo = '';
+						let jointInfo = '';
 						if (animationInfos && animationInfos[index]) {
 							const info = animationInfos[index];
-							const types = [];
-							if (info.has_skeletal_animation) types.push('Skeletal');
-							if (info.has_node_animation) types.push('Node');
-							if (types.length > 0) {
-								typeInfo = ` <span style="color: #95e06c;">[${types.join('+')}]</span>`;
+							if (info.has_skeletal_animation) {
+								jointInfo = ` <span style="color: #ff9966;">[Skeletal]</span>`;
 							}
 						}
 
-						item.innerHTML = `<strong>${index}:</strong> ${anim.name || 'Unnamed'} - ${anim.duration.toFixed(2)}s, ${anim.tracks.length} tracks${typeInfo}`;
+						const trackCount = anim.tracks ? anim.tracks.length : 0;
+						item.innerHTML = `<strong>${index}:</strong> ${anim.name || 'Unnamed'} - ${anim.duration.toFixed(2)}s, ${trackCount} tracks${jointInfo}`;
 						animList.appendChild(item);
 					});
 				} else {
 					animInfo.style.display = 'none';
 				}
 			};
-
-			// Reset to default model
-			window.reloadDefaultModel = function() {
-				document.getElementById('currentFile').textContent = 'suzanne.usdc';
-				const customEvent = new CustomEvent('loadDefaultModel');
-				window.dispatchEvent(customEvent);
-			};
 		</script>
 
-		<script type="module" src="./animation.js"></script>
+		<script type="module" src="./skining-anim.js"></script>
 	</body>
 </html>
