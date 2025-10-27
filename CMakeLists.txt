@@ -1333,7 +1333,8 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   endif()
 
   # On 32-bit systems, 64-bit atomic operations require libatomic
-  if (CMAKE_SIZEOF_VOID_P EQUAL 4)
+  # (Skip for emscripten as libatomic doesn't exist in wasm environment)
+  if (CMAKE_SIZEOF_VOID_P EQUAL 4 AND NOT EMSCRIPTEN)
     target_link_libraries(${TINYUSDZ_LIB_TARGET} atomic)
   endif()
 
