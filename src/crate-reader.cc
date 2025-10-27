@@ -7341,13 +7341,18 @@ bool CrateReader::ReadPaths() {
 
 bool CrateReader::ReadBootStrap() {
   TINYUSDZ_PROFILE_FUNCTION("crate-reader");
-  
+
+  // Clear dedup map to prevent stale entries from previous file loads
+  // This ensures each file starts with a clean dedup state
+  // NOTE: This is NOT thread-safe - concurrent parsing requires external synchronization
+  clear_all_timesamples_dedup_entries();
+
   // Report initial progress
   if (!ReportProgress(0.0f)) {
     PUSH_ERROR("Parsing cancelled by progress callback.");
     return false;
   }
-  
+
   // parse header.
   uint8_t magic[8];
   if (8 != _sr->read(/* req */ 8, /* dst len */ 8, magic)) {

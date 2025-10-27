@@ -102,6 +102,13 @@ struct CrateReaderConfig {
 /// }
 /// ```
 ///
+
+/// Clear all dedup entries for TimeSamples arrays (called at start of each file load)
+void clear_all_timesamples_dedup_entries();
+
+/// Clear dedup entries for a specific TimeSamples pointer
+void clear_timesamples_dedup_entries(void* timesamples_ptr);
+
 class CrateReader {
  public:
   ///
@@ -384,6 +391,7 @@ class CrateReader {
   bool UnpackTimeSampleValue_QUATD(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
   bool UnpackTimeSampleValue_ASSET_PATH(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
   bool UnpackTimeSampleValue_STRING(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_TOKEN(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
   bool UnpackTimeSampleValue_MATRIX2D(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
   bool UnpackTimeSampleValue_MATRIX3D(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
   bool UnpackTimeSampleValue_MATRIX4D(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
@@ -606,6 +614,11 @@ class CrateReader {
   std::unordered_map<crate::ValueRep, std::string, crate::ValueRep::Hash> _dedup_string;
   // Stores ref_index (sample index) for deduplication
   std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_string_array;
+
+  // Token type (scalar and array)
+  std::unordered_map<crate::ValueRep, value::token, crate::ValueRep::Hash> _dedup_token;
+  // Stores ref_index (sample index) for deduplication
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_token_array;
 
   class Impl;
   Impl *_impl;

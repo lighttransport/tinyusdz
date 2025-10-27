@@ -1808,7 +1808,6 @@ value::matrix4d GetLocalTransform(const Prim &prim, bool *resetXformStack,
       return value::matrix4d::identity();
     }
 
-    value::matrix4d m;
     bool rxs{false};
     nonstd::expected<value::matrix4d, std::string> ret =
         xformable->GetLocalMatrix(t, tinterp, &rxs);
