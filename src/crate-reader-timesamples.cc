@@ -545,7 +545,9 @@ bool add_sample_to_timesamples(value::TimeSamples *d, double time, const std::ve
 
 // Per-TimeSamples deduplication map for array offsets
 // Maps (TimeSamples pointer, ValueRep payload) → first_sample_index
-// Use ValueRep payload (uint64_t) as key since it uniquely identifies the array data
+// Use ValueRep payload (uint64_t) as key since it uniquely identifies the array data in USDC
+// When the same ValueRep payload appears multiple times in the same TimeSamples,
+// the first occurrence is stored as original and subsequent ones are deduplicated
 // Using function-static to avoid global constructor issues
 // Suppress exit-time-destructor warning as this is the correct way to handle it
 #ifdef __clang__
@@ -569,7 +571,7 @@ add_array_sample_to_timesamples(value::TimeSamples *d, double time,
   // TUSDZ_LOG_I("arr pod_ty: " << value::TypeTraits<T>::type_name() << ",
   // is_use_pod " << d->is_using_pod());
   if (d->is_using_pod()) {
-    // Check if this array valueRep has been seen before
+    // Check if this array valueRep has been seen before in this TimeSamples
     if (vrep) {
       auto key = std::make_pair(static_cast<void*>(d), vrep->GetPayload());
       auto& dedup_map = get_timesamples_dedup_map();
@@ -588,7 +590,7 @@ add_array_sample_to_timesamples(value::TimeSamples *d, double time,
                                           expected_total_samples);
       }
     } else {
-      // No dedup tracking - use normal path
+      // No ValueRep provided - store normally without dedup tracking
       return d->add_array_sample_pod<T>(time, arrval, err,
                                         expected_total_samples);
     }
@@ -609,7 +611,7 @@ add_array_sample_to_timesamples(value::TimeSamples *d, double time,
   // The TypedArrayImpl object may be destroyed before PODTimeSamples is printed,
   // leaving dangling pointers. Storing the data inline ensures it outlives PODTimeSamples.
   if (d->is_using_pod()) {
-    // Check if this array valueRep has been seen before
+    // Check if this array valueRep has been seen before in this TimeSamples
     if (vrep) {
       auto key = std::make_pair(static_cast<void*>(d), vrep->GetPayload());
       auto& dedup_map = get_timesamples_dedup_map();
@@ -628,7 +630,7 @@ add_array_sample_to_timesamples(value::TimeSamples *d, double time,
                                           expected_total_samples);
       }
     } else {
-      // No dedup tracking - use normal path
+      // No ValueRep provided - store normally without dedup tracking
       return d->add_array_sample_pod<T>(time, arrval, err,
                                         expected_total_samples);
     }
@@ -933,12 +935,15 @@ bool CrateReader::UnpackTimeSampleValue_INT32(double t,
       return true;
     }
 
-    // Check deduplication cache for array
-    auto it = _dedup_int32_array.find(rep);
-    if (it != _dedup_int32_array.end()) {
-      // Reuse cached array via ref_index
+    // Check if this array ValueRep has been seen before in this TimeSamples
+    auto key = std::make_pair(static_cast<void*>(&dst), rep.GetPayload());
+    auto& dedup_map = get_timesamples_dedup_map();
+    auto it = dedup_map.find(key);
+
+    if (it != dedup_map.end()) {
+      // Deduplicated array - reuse offset from first occurrence
       size_t ref_index = it->second;
-      DCOUT("Reusing cached INT32 array at sample index " << ref_index);
+      DCOUT("INT32 array dedup: reusing sample index " << ref_index << " for ValueRep payload " << rep.GetPayload());
 
       if (dst.is_using_pod()) {
         if (!dst.add_dedup_array_sample_pod<int32_t>(t, ref_index, &_err)) {
@@ -948,7 +953,7 @@ bool CrateReader::UnpackTimeSampleValue_INT32(double t,
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-POD path not supported for int32 dedup.");
       }
     } else {
-      // Read and cache array
+      // First occurrence - read data, store as original and remember the index
       if (!ReadIntArrayTyped(rep.IsCompressed(), &v)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Int array.");
       }
@@ -961,10 +966,9 @@ bool CrateReader::UnpackTimeSampleValue_INT32(double t,
       DCOUT("timeSamples.INT32 " << value::print_array_snipped(v));
 
       if (dst.is_using_pod()) {
-        // Store current index before adding
         size_t current_index = dst.size();
-        _dedup_int32_array[rep] = current_index;
-        DCOUT("Caching INT32 array at sample index " << current_index);
+        dedup_map[key] = current_index;
+        DCOUT("INT32 array: storing new sample at index " << current_index << " for ValueRep payload " << rep.GetPayload());
 
         if (!dst.add_array_sample_pod<int32_t>(t, v, &_err, expected_total_samples)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
@@ -1595,12 +1599,15 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT(double t,
       return true;
     }
 
-    // Check deduplication cache for array
-    auto it = _dedup_float_array.find(rep);
-    if (it != _dedup_float_array.end()) {
-      // Reuse cached array via ref_index
+    // Check if this array ValueRep has been seen before in this TimeSamples
+    auto key = std::make_pair(static_cast<void*>(&dst), rep.GetPayload());
+    auto& dedup_map = get_timesamples_dedup_map();
+    auto it = dedup_map.find(key);
+
+    if (it != dedup_map.end()) {
+      // Deduplicated array - reuse offset from first occurrence
       size_t ref_index = it->second;
-      DCOUT("Reusing cached FLOAT array at sample index " << ref_index);
+      DCOUT("FLOAT array dedup: reusing sample index " << ref_index << " for ValueRep payload " << rep.GetPayload());
 
       if (dst.is_using_pod()) {
         if (!dst.add_dedup_array_sample_pod<float>(t, ref_index, &_err)) {
@@ -1610,7 +1617,7 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT(double t,
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-POD path not supported for float dedup.");
       }
     } else {
-      // Read and cache array
+      // First occurrence - read data, store as original and remember the index
       if (!ReadFloatArrayTyped(rep.IsCompressed(), &v)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read Float array.");
       }
@@ -1618,10 +1625,9 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT(double t,
       DCOUT("timeSamples.FLOAT " << value::print_array_snipped(v));
 
       if (dst.is_using_pod()) {
-        // Store current index before adding
         size_t current_index = dst.size();
-        _dedup_float_array[rep] = current_index;
-        DCOUT("Caching FLOAT array at sample index " << current_index);
+        dedup_map[key] = current_index;
+        DCOUT("FLOAT array: storing new sample at index " << current_index << " for ValueRep payload " << rep.GetPayload());
 
         if (!dst.add_array_sample_pod<float>(t, v, &_err, expected_total_samples)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
@@ -1734,12 +1740,15 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT2(double t,
       return true;
     }
 
-    // Check deduplication cache for array
-    auto it = _dedup_float2_array.find(rep);
-    if (it != _dedup_float2_array.end()) {
-      // Reuse cached array via ref_index
+    // Check if this array ValueRep has been seen before in this TimeSamples
+    auto key = std::make_pair(static_cast<void*>(&dst), rep.GetPayload());
+    auto& dedup_map = get_timesamples_dedup_map();
+    auto it = dedup_map.find(key);
+
+    if (it != dedup_map.end()) {
+      // Deduplicated array - reuse offset from first occurrence
       size_t ref_index = it->second;
-      DCOUT("Reusing cached FLOAT2 array at sample index " << ref_index);
+      DCOUT("FLOAT2 array dedup: reusing sample index " << ref_index << " for ValueRep payload " << rep.GetPayload());
 
       if (dst.is_using_pod()) {
         if (!dst.add_dedup_array_sample_pod<value::float2>(t, ref_index, &_err)) {
@@ -1749,7 +1758,7 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT2(double t,
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Non-POD path not supported for float2 dedup.");
       }
     } else {
-      // Read and cache array
+      // First occurrence - read data, store as original and remember the index
       if (!ReadFloat2ArrayTyped(&v)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read vec2 array.");
       }
@@ -1757,10 +1766,9 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT2(double t,
       DCOUT("timeSamples.FLOAT2 " << value::print_array_snipped(v));
 
       if (dst.is_using_pod()) {
-        // Store current index before adding
         size_t current_index = dst.size();
-        _dedup_float2_array[rep] = current_index;
-        DCOUT("Caching FLOAT2 array at sample index " << current_index);
+        dedup_map[key] = current_index;
+        DCOUT("FLOAT2 array: storing new sample at index " << current_index << " for ValueRep payload " << rep.GetPayload());
 
         if (!dst.add_array_sample_pod<value::float2>(t, v, &_err, expected_total_samples)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
