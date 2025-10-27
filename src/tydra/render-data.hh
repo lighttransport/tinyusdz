@@ -2505,6 +2505,24 @@ class RenderSceneConverter {
                         AnimationClip *anim_out);
 
   ///
+  /// Extract animation data from xformOps time samples and convert to AnimationClip
+  ///
+  /// @param[in] env Converter environment
+  /// @param[in] abs_path Absolute path to the prim
+  /// @param[in] prim_name Prim name
+  /// @param[in] xformable Xformable object containing xformOps
+  /// @param[in] target_node_index Index of the target node in RenderScene
+  /// @param[out] anim_out Output AnimationClip
+  /// @return true if animation was extracted, false otherwise
+  ///
+  bool ExtractXformOpAnimation(const RenderSceneConverterEnv &env,
+                        const Path &abs_path,
+                        const std::string &prim_name,
+                        const Xformable &xformable,
+                        int32_t target_node_index,
+                        AnimationClip *anim_out);
+
+  ///
   /// @param[in] env
   /// @param[in] root XformNode
   ///
