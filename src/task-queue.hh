@@ -179,7 +179,7 @@ class TaskQueue {
     uint64_t w = _write_pos.load(std::memory_order_acquire);
     uint64_t r = _read_pos.load(std::memory_order_acquire);
 #endif
-    return (w >= r) ? (w - r) : 0;
+    return (w >= r) ? static_cast<size_t>(w - r) : 0;
   }
 
   ///
@@ -358,7 +358,7 @@ class TaskQueueFunc {
     uint64_t w = _write_pos.load(std::memory_order_acquire);
     uint64_t r = _read_pos.load(std::memory_order_acquire);
 #endif
-    return (w >= r) ? (w - r) : 0;
+    return (w >= r) ? static_cast<size_t>(w - r) : 0;
   }
 
   ///
