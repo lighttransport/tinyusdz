@@ -31,30 +31,26 @@ class FileFetcher {
     this.initialized = true;
   }
 
-  // Return: File object.
+  // Return: Object with arrayBuffer() method that returns Promise<ArrayBuffer>
   async fetch(url) {
     await this.init();
-    
+
     if (this.is_node) {
       // Node.js environment - use fs.readFileSync
       try {
         if (url.startsWith('file://')) {
           url = url.substring(7); // Remove file:// prefix
         }
-        
+
         const data = this.fs.readFileSync(url);
-        const fileName = this.path.basename(url);
-        
-        // Create Blob from the buffer data
-        const blob = new Blob([data], { type: 'application/octet-stream' });
-        
-        // Create File object from Blob
-        const file = new File([blob], fileName, { 
-          type: 'application/octet-stream',
-          lastModified: Date.now()
-        });
-        
-        return file;
+
+        // Return an object with arrayBuffer() method for consistency with browser File API
+        // Convert Node.js Buffer to ArrayBuffer
+        const arrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+
+        return {
+          arrayBuffer: async () => arrayBuffer
+        };
       } catch (error) {
         throw new Error(`Failed to read file: ${url} - ${error.message}`);
       }
@@ -64,14 +60,14 @@ class FileFetcher {
       if (!response.ok) {
         throw new Error(`Failed to fetch: ${response.statusText}`);
       }
-      
+
       const blob = await response.blob();
       const fileName = url.split('/').pop() || 'unknown';
-      const file = new File([blob], fileName, { 
+      const file = new File([blob], fileName, {
         type: blob.type || 'application/octet-stream',
         lastModified: Date.now()
       });
-      
+
       return file;
     }
   }
