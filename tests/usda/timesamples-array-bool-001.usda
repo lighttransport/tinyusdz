@@ -1,0 +1,10 @@
+#usda 1.0
+
+def Xform "test_bool_array"
+{
+  bool[] flags.timeSamples = {
+      0: [false, true, false],
+      10: [true, false, true],
+      20: [false, false, true],
+  }
+}
