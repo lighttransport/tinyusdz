@@ -1526,7 +1526,7 @@ class TinyUSDZLoaderNative {
     emscripten::val tracks = emscripten::val::array();
 
     for (const auto &channel : clip.channels) {
-      if (!channel.valid() || channel.sampler >= clip.samplers.size()) {
+      if (!channel.is_valid() || channel.sampler >= clip.samplers.size()) {
         continue;
       }
 
