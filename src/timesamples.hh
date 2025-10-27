@@ -1843,7 +1843,7 @@ struct TimeSamples {
           } else if (i < _offsets.size()) {
             // Larger types (> 8 bytes) are stored in _values with offsets
             uint64_t encoded_offset = _offsets[i];
-            size_t byte_offset = encoded_offset & PODTimeSamples::OFFSET_VALUE_MASK;
+            size_t byte_offset = static_cast<size_t>(encoded_offset & PODTimeSamples::OFFSET_VALUE_MASK);
 
             // Reconstruct value based on type_id
             switch (type_id) {
