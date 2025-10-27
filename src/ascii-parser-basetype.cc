@@ -1132,7 +1132,6 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
 
   // head character
   bool has_sign = false;
-  bool negative = false;
   {
     char sc;
     if (!Char1(&sc)) {
@@ -1142,10 +1141,8 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
 
     // sign or [0-9]
     if (sc == '+') {
-      negative = false;
       has_sign = true;
     } else if (sc == '-') {
-      negative = true;
       has_sign = true;
     } else if ((sc >= '0') && (sc <= '9')) {
       // ok
@@ -1158,10 +1155,7 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
     ss << sc;
   }
 
-  if (negative) {
-    PushError("Unsigned value expected but got '-' sign.");
-    return false;
-  }
+  // Allow negative values for signed int64 type
 
   while (!Eof()) {
     char c;
@@ -1193,14 +1187,14 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
   // TODO(syoyo): Use ryu parse.
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
   try {
-    (*value) = std::stoull(ss.str());
+    (*value) = std::stoll(ss.str());  // Use stoll for signed int64
   } catch (const std::invalid_argument &e) {
     (void)e;
-    PushError("Not an 64bit unsigned integer literal.\n");
+    PushError("Not an 64bit signed integer literal.\n");
     return false;
   } catch (const std::out_of_range &e) {
     (void)e;
-    PushError("64bit unsigned integer value out of range.\n");
+    PushError("64bit signed integer value out of range.\n");
     return false;
   }
 
