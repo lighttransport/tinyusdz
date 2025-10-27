@@ -167,6 +167,33 @@ print_type(OutputAdapter& out, const uint8_t* data) {
   out << value;
 }
 
+// Specialization for bool - normalize to 0 or 1 for safety
+template<>
+void print_type<bool>(OutputAdapter& out, const uint8_t* data) {
+  uint8_t value;
+  std::memcpy(&value, data, sizeof(uint8_t));
+  // Normalize: any non-zero value becomes 1 (true)
+  out.write(value != 0 ? 1 : 0);
+}
+
+// Specialization for uint8_t - print as integer, not char
+// Note: USD stores bool arrays as uint8_t (TYPE_ID_UCHAR), so we print the actual value.
+// Well-formed USD files should only have 0/1 for bool arrays anyway.
+template<>
+void print_type<uint8_t>(OutputAdapter& out, const uint8_t* data) {
+  uint8_t value;
+  std::memcpy(&value, data, sizeof(uint8_t));
+  out.write(static_cast<int>(value));
+}
+
+// Specialization for char - print as integer, not char
+template<>
+void print_type<char>(OutputAdapter& out, const uint8_t* data) {
+  char value;
+  std::memcpy(&value, data, sizeof(char));
+  out.write(static_cast<int>(value));
+}
+
 // Unified print function for vector types
 template<typename T, size_t N>
 void print_vector(OutputAdapter& out, const uint8_t* data) {
@@ -2182,18 +2209,29 @@ void pprint_pod_timesamples(StreamWriter& writer, const PODTimeSamples& samples,
                   if (blocked[i] || samples._offsets[i] == SIZE_MAX) {
                       writer.write("None");
                   } else {
-                      // Get pointer to value data using offset
-                      const uint8_t* value_data = values.data() + (samples._offsets[i] & PODTimeSamples::OFFSET_VALUE_MASK);
-
-                      // Check if this sample is an array (either global flag or per-sample flag)
-                      bool is_array = samples._is_stl_array || (samples._offsets[i] & PODTimeSamples::OFFSET_ARRAY_FLAG);
-
-                      if (is_array) {
-                          // Print all elements in the array
-                          pprint_pod_array_by_type(writer, value_data, samples.type_id(), samples._array_size);
+                      // Resolve offset to handle dedup and get resolved sample index
+                      size_t byte_offset = 0;
+                      size_t resolved_idx = i;
+                      bool is_array = false;
+                      if (!samples.resolve_offset(i, &byte_offset, &is_array, nullptr, 100, &resolved_idx)) {
+                          writer.write("[Error: Failed to resolve offset]");
                       } else {
-                          // Print single value
-                          pprint_pod_value_by_type(writer, value_data, samples.type_id());
+                          // Get pointer to value data using resolved offset
+                          const uint8_t* value_data = values.data() + byte_offset;
+
+                          // Check if this sample is an array
+                          is_array = is_array || samples._is_stl_array;
+
+                          if (is_array) {
+                              // Get per-sample array count (with fallback to global _array_size)
+                              size_t array_count = (resolved_idx < samples._array_counts.size()) ?
+                                                    samples._array_counts[resolved_idx] : samples._array_size;
+                              // Print all elements in the array
+                              pprint_pod_array_by_type(writer, value_data, samples.type_id(), array_count);
+                          } else {
+                              // Print single value
+                              pprint_pod_value_by_type(writer, value_data, samples.type_id());
+                          }
                       }
                   }
 
@@ -2219,8 +2257,11 @@ void pprint_pod_timesamples(StreamWriter& writer, const PODTimeSamples& samples,
                   bool is_array = samples._is_stl_array;
 
                   if (is_array) {
+                      // Get per-sample array count (with fallback to global _array_size)
+                      size_t array_count = (i < samples._array_counts.size()) ?
+                                            samples._array_counts[i] : samples._array_size;
                       // Print all elements in the array
-                      pprint_pod_array_by_type(writer, value_data, samples.type_id(), samples._array_size);
+                      pprint_pod_array_by_type(writer, value_data, samples.type_id(), array_count);
                   } else {
                       // Print single value
                       pprint_pod_value_by_type(writer, value_data, samples.type_id());
@@ -2283,6 +2324,7 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
         const auto& blocked = samples.get_blocked();
         const auto& values = samples.get_values();
         const auto& offsets = samples.get_offsets();
+        const auto& array_counts = samples.get_array_counts();
 
         //TUSDZ_LOG_I("times.size " << times.size());
         //TUSDZ_LOG_I("blocked.size " << blocked.size());
@@ -2301,9 +2343,10 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
                 if (blocked[i] || offsets[i] == SIZE_MAX) {
                     writer.write("None");
                 } else {
-                    // Resolve offset (may be encoded with dedup/array flags)
+                    // Resolve offset (may be encoded with dedup/array flags) and get resolved index
                     size_t byte_offset;
-                    if (!PODTimeSamples::resolve_offset_static(offsets, i, &byte_offset)) {
+                    size_t resolved_idx = i;
+                    if (!PODTimeSamples::resolve_offset_static(offsets, i, &byte_offset, nullptr, nullptr, 100, &resolved_idx)) {
                         writer.write("/* ERROR: failed to resolve offset */");
                     } else {
                         // Get pointer to value data using resolved byte offset
@@ -2313,8 +2356,10 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
                         bool is_array = samples.is_stl_array() || (offsets[i] & PODTimeSamples::OFFSET_ARRAY_FLAG);
 
                         if (is_array) {
+                            // Get per-sample array count (with fallback to global array_size)
+                            size_t per_sample_count = (resolved_idx < array_counts.size()) ? array_counts[resolved_idx] : array_size;
                             // Print all elements in the array
-                            pprint_pod_array_by_type(writer, value_ptr, type_id, array_size);
+                            pprint_pod_array_by_type(writer, value_ptr, type_id, per_sample_count);
                         } else {
                             // Print single value
                             pprint_pod_value_by_type(writer, value_ptr, type_id);
@@ -2346,8 +2391,10 @@ void pprint_timesamples(StreamWriter& writer, const value::TimeSamples& samples,
                     bool is_array = samples.is_stl_array();
 
                     if (is_array) {
+                        // Get per-sample array count (with fallback to global array_size)
+                        size_t per_sample_count = (i < array_counts.size()) ? array_counts[i] : array_size;
                         // Print all elements in the array
-                        pprint_pod_array_by_type(writer, value_ptr, type_id, array_size);
+                        pprint_pod_array_by_type(writer, value_ptr, type_id, per_sample_count);
                     } else {
                         // Print single value
                         pprint_pod_value_by_type(writer, value_ptr, type_id);
