@@ -666,20 +666,14 @@ struct matrix3d;
 struct matrix4d;
 
 struct matrix2f {
-  matrix2f() {
-    m[0][0] = 1.0f;
-    m[0][1] = 0.0f;
+  // Default constructor - makes struct trivial
+  matrix2f() = default;
 
-    m[1][0] = 0.0f;
-    m[1][1] = 1.0f;
-  }
-
-  matrix2f(const std::array<float, 4> &arr) {
-    m[0][0] = arr[0];
-    m[0][1] = arr[1];
-    m[1][0] = arr[2];
-    m[1][1] = arr[3];
-  }
+  // Copy/move constructors and assignment operators
+  matrix2f(const matrix2f&) = default;
+  matrix2f(matrix2f&&) = default;
+  matrix2f& operator=(const matrix2f&) = default;
+  matrix2f& operator=(matrix2f&&) = default;
 
   inline void set_row(uint32_t row, float x, float y) {
     if (row < 2) {
@@ -697,49 +691,29 @@ struct matrix2f {
   }
 
   static matrix2f identity() {
-    matrix2f m;
-
-    m.m[0][0] = 1.0f;
-    m.m[0][1] = 0.0f;
-
-    m.m[1][0] = 0.0f;
-    m.m[1][1] = 1.0f;
-
-    return m;
+    matrix2f mat{};
+    mat.m[0][0] = 1.0f;
+    mat.m[0][1] = 0.0f;
+    mat.m[1][0] = 0.0f;
+    mat.m[1][1] = 1.0f;
+    return mat;
   }
 
   matrix2f(const matrix2d &rhs);
   matrix2f &operator=(const matrix2d &rhs);
-  
+
   float m[2][2];
 };
 
 struct matrix3f {
-  matrix3f() {
-    m[0][0] = 1.0f;
-    m[0][1] = 0.0f;
-    m[0][2] = 0.0f;
+  // Default constructor - makes struct trivial
+  matrix3f() = default;
 
-    m[1][0] = 0.0f;
-    m[1][1] = 1.0f;
-    m[1][2] = 0.0f;
-
-    m[2][0] = 0.0f;
-    m[2][1] = 0.0f;
-    m[2][2] = 1.0f;
-  }
-
-  matrix3f(const std::array<float, 9> &arr) {
-    m[0][0] = arr[0];
-    m[0][1] = arr[1];
-    m[0][2] = arr[2];
-    m[1][0] = arr[3];
-    m[1][1] = arr[4];
-    m[1][2] = arr[5];
-    m[2][0] = arr[6];
-    m[2][1] = arr[7];
-    m[2][2] = arr[8];
-  }
+  // Copy/move constructors and assignment operators
+  matrix3f(const matrix3f&) = default;
+  matrix3f(matrix3f&&) = default;
+  matrix3f& operator=(const matrix3f&) = default;
+  matrix3f& operator=(matrix3f&&) = default;
 
   inline void set_row(uint32_t row, float x, float y, float z) {
     if (row < 3) {
@@ -761,7 +735,6 @@ struct matrix3f {
     m[2][0] = 0.0f;
     m[2][1] = 0.0f;
     m[2][2] = sz;
-
   }
 
   inline void set_translation(float tx, float ty, float tz) {
@@ -771,21 +744,17 @@ struct matrix3f {
   }
 
   static matrix3f identity() {
-    matrix3f m;
-
-    m.m[0][0] = 1.0f;
-    m.m[0][1] = 0.0f;
-    m.m[0][2] = 0.0f;
-
-    m.m[1][0] = 0.0f;
-    m.m[1][1] = 1.0f;
-    m.m[1][2] = 0.0f;
-
-    m.m[2][0] = 0.0f;
-    m.m[2][1] = 0.0f;
-    m.m[2][2] = 1.0f;
-
-    return m;
+    matrix3f mat{};
+    mat.m[0][0] = 1.0f;
+    mat.m[0][1] = 0.0f;
+    mat.m[0][2] = 0.0f;
+    mat.m[1][0] = 0.0f;
+    mat.m[1][1] = 1.0f;
+    mat.m[1][2] = 0.0f;
+    mat.m[2][0] = 0.0f;
+    mat.m[2][1] = 0.0f;
+    mat.m[2][2] = 1.0f;
+    return mat;
   }
 
   matrix3f(const matrix3d &rhs);
@@ -795,46 +764,11 @@ struct matrix3f {
 };
 
 struct matrix4f {
-  matrix4f() {
-    m[0][0] = 1.0f;
-    m[0][1] = 0.0f;
-    m[0][2] = 0.0f;
-    m[0][3] = 0.0f;
-
-    m[1][0] = 0.0f;
-    m[1][1] = 1.0f;
-    m[1][2] = 0.0f;
-    m[1][3] = 0.0f;
-
-    m[2][0] = 0.0f;
-    m[2][1] = 0.0f;
-    m[2][2] = 1.0f;
-    m[2][3] = 0.0f;
-
-    m[3][0] = 0.0f;
-    m[3][1] = 0.0f;
-    m[3][2] = 0.0f;
-    m[3][3] = 1.0f;
-  }
-
-  matrix4f(const std::array<float, 16> &arr) {
-    m[0][0] = arr[0];
-    m[0][1] = arr[1];
-    m[0][2] = arr[2];
-    m[0][3] = arr[3];
-    m[1][0] = arr[4];
-    m[1][1] = arr[5];
-    m[1][2] = arr[6];
-    m[1][3] = arr[7];
-    m[2][0] = arr[8];
-    m[2][1] = arr[9];
-    m[2][2] = arr[10];
-    m[2][3] = arr[11];
-    m[3][0] = arr[12];
-    m[3][1] = arr[13];
-    m[3][2] = arr[14];
-    m[3][3] = arr[15];
-  }
+  matrix4f() = default;
+  matrix4f(const matrix4f&) = default;
+  matrix4f(matrix4f&&) = default;
+  matrix4f& operator=(const matrix4f&) = default;
+  matrix4f& operator=(matrix4f&&) = default;
 
   inline void set_row(uint32_t row, float x, float y, float z, float w) {
     if (row < 4) {
@@ -874,29 +808,12 @@ struct matrix4f {
   }
 
   static matrix4f identity() {
-    matrix4f m;
-
-    m.m[0][0] = 1.0f;
-    m.m[0][1] = 0.0f;
-    m.m[0][2] = 0.0f;
-    m.m[0][3] = 0.0f;
-
-    m.m[1][0] = 0.0f;
-    m.m[1][1] = 1.0f;
-    m.m[1][2] = 0.0f;
-    m.m[1][3] = 0.0f;
-
-    m.m[2][0] = 0.0f;
-    m.m[2][1] = 0.0f;
-    m.m[2][2] = 1.0f;
-    m.m[2][3] = 0.0f;
-
-    m.m[3][0] = 0.0f;
-    m.m[3][1] = 0.0f;
-    m.m[3][2] = 0.0f;
-    m.m[3][3] = 1.0f;
-
-    return m;
+    matrix4f mat{};
+    mat.m[0][0] = 1.0f;
+    mat.m[1][1] = 1.0f;
+    mat.m[2][2] = 1.0f;
+    mat.m[3][3] = 1.0f;
+    return mat;
   }
 
   matrix4f(const matrix4d &rhs);
@@ -907,20 +824,11 @@ struct matrix4f {
 };
 
 struct matrix2d {
-  matrix2d() {
-    m[0][0] = 1.0;
-    m[0][1] = 0.0;
-
-    m[1][0] = 0.0;
-    m[1][1] = 1.0;
-  }
-
-  matrix2d(const std::array<double, 4> &arr) {
-    m[0][0] = arr[0];
-    m[0][1] = arr[1];
-    m[1][0] = arr[2];
-    m[1][1] = arr[3];
-  }
+  matrix2d() = default;
+  matrix2d(const matrix2d&) = default;
+  matrix2d(matrix2d&&) = default;
+  matrix2d& operator=(const matrix2d&) = default;
+  matrix2d& operator=(matrix2d&&) = default;
 
   inline void set_row(uint32_t row, double x, double y) {
     if (row < 2) {
@@ -938,15 +846,10 @@ struct matrix2d {
   }
 
   static matrix2d identity() {
-    matrix2d m;
-
-    m.m[0][0] = 1.0;
-    m.m[0][1] = 0.0;
-
-    m.m[1][0] = 0.0;
-    m.m[1][1] = 1.0;
-
-    return m;
+    matrix2d mat{};
+    mat.m[0][0] = 1.0;
+    mat.m[1][1] = 1.0;
+    return mat;
   }
 
   matrix2d &operator=(const matrix2f &rhs);
@@ -955,31 +858,11 @@ struct matrix2d {
 };
 
 struct matrix3d {
-  matrix3d() {
-    m[0][0] = 1.0;
-    m[0][1] = 0.0;
-    m[0][2] = 0.0;
-
-    m[1][0] = 0.0;
-    m[1][1] = 1.0;
-    m[1][2] = 0.0;
-
-    m[2][0] = 0.0;
-    m[2][1] = 0.0;
-    m[2][2] = 1.0;
-  }
-
-  matrix3d(const std::array<double, 9> &arr) {
-    m[0][0] = arr[0];
-    m[0][1] = arr[1];
-    m[0][2] = arr[2];
-    m[1][0] = arr[3];
-    m[1][1] = arr[4];
-    m[1][2] = arr[5];
-    m[2][0] = arr[6];
-    m[2][1] = arr[7];
-    m[2][2] = arr[8];
-  }
+  matrix3d() = default;
+  matrix3d(const matrix3d&) = default;
+  matrix3d(matrix3d&&) = default;
+  matrix3d& operator=(const matrix3d&) = default;
+  matrix3d& operator=(matrix3d&&) = default;
 
   inline void set_row(uint32_t row, double x, double y, double z) {
     if (row < 3) {
@@ -1004,21 +887,11 @@ struct matrix3d {
   }
 
   static matrix3d identity() {
-    matrix3d m;
-
-    m.m[0][0] = 1.0;
-    m.m[0][1] = 0.0;
-    m.m[0][2] = 0.0;
-
-    m.m[1][0] = 0.0;
-    m.m[1][1] = 1.0;
-    m.m[1][2] = 0.0;
-
-    m.m[2][0] = 0.0;
-    m.m[2][1] = 0.0;
-    m.m[2][2] = 1.0;
-
-    return m;
+    matrix3d mat{};
+    mat.m[0][0] = 1.0;
+    mat.m[1][1] = 1.0;
+    mat.m[2][2] = 1.0;
+    return mat;
   }
 
   matrix3d &operator=(const matrix3f &rhs);
@@ -1027,46 +900,11 @@ struct matrix3d {
 };
 
 struct matrix4d {
-  matrix4d() {
-    m[0][0] = 1.0;
-    m[0][1] = 0.0;
-    m[0][2] = 0.0;
-    m[0][3] = 0.0;
-
-    m[1][0] = 0.0;
-    m[1][1] = 1.0;
-    m[1][2] = 0.0;
-    m[1][3] = 0.0;
-
-    m[2][0] = 0.0;
-    m[2][1] = 0.0;
-    m[2][2] = 1.0;
-    m[2][3] = 0.0;
-
-    m[3][0] = 0.0;
-    m[3][1] = 0.0;
-    m[3][2] = 0.0;
-    m[3][3] = 1.0;
-  }
-
-  matrix4d(const std::array<double, 16> &arr) {
-    m[0][0] = arr[0];
-    m[0][1] = arr[1];
-    m[0][2] = arr[2];
-    m[0][3] = arr[3];
-    m[1][0] = arr[4];
-    m[1][1] = arr[5];
-    m[1][2] = arr[6];
-    m[1][3] = arr[7];
-    m[2][0] = arr[8];
-    m[2][1] = arr[9];
-    m[2][2] = arr[10];
-    m[2][3] = arr[11];
-    m[3][0] = arr[12];
-    m[3][1] = arr[13];
-    m[3][2] = arr[14];
-    m[3][3] = arr[15];
-  }
+  matrix4d() = default;
+  matrix4d(const matrix4d&) = default;
+  matrix4d(matrix4d&&) = default;
+  matrix4d& operator=(const matrix4d&) = default;
+  matrix4d& operator=(matrix4d&&) = default;
 
   inline void set_row(uint32_t row, double x, double y, double z, double w) {
     if (row < 4) {
@@ -1100,29 +938,12 @@ struct matrix4d {
   }
 
   static matrix4d identity() {
-    matrix4d m;
-
-    m.m[0][0] = 1.0;
-    m.m[0][1] = 0.0;
-    m.m[0][2] = 0.0;
-    m.m[0][3] = 0.0;
-
-    m.m[1][0] = 0.0;
-    m.m[1][1] = 1.0;
-    m.m[1][2] = 0.0;
-    m.m[1][3] = 0.0;
-
-    m.m[2][0] = 0.0;
-    m.m[2][1] = 0.0;
-    m.m[2][2] = 1.0;
-    m.m[2][3] = 0.0;
-
-    m.m[3][0] = 0.0;
-    m.m[3][1] = 0.0;
-    m.m[3][2] = 0.0;
-    m.m[3][3] = 1.0;
-
-    return m;
+    matrix4d mat{};
+    mat.m[0][0] = 1.0;
+    mat.m[1][1] = 1.0;
+    mat.m[2][2] = 1.0;
+    mat.m[3][3] = 1.0;
+    return mat;
   }
 
   matrix4d &operator=(const matrix4f &rhs);
@@ -1349,6 +1170,33 @@ inline matrix4d operator-(const matrix4d &a, const matrix4d &b) {
 inline matrix4d operator*(const matrix4d &a, const matrix4d &b) {
   matrix4d ret = Mult<matrix4d, double, 4>(a, b);
   return ret;
+}
+
+// Equality operators for matrix types
+// Use memcmp for exact byte-wise comparison for now.
+// TODO: Use floating point compare(suitable for dedup)
+inline bool operator==(const matrix2f &a, const matrix2f &b) {
+  return std::memcmp(&a.m, &b.m, sizeof(a.m)) == 0;
+}
+
+inline bool operator==(const matrix3f &a, const matrix3f &b) {
+  return std::memcmp(&a.m, &b.m, sizeof(a.m)) == 0;
+}
+
+inline bool operator==(const matrix4f &a, const matrix4f &b) {
+  return std::memcmp(&a.m, &b.m, sizeof(a.m)) == 0;
+}
+
+inline bool operator==(const matrix2d &a, const matrix2d &b) {
+  return std::memcmp(&a.m, &b.m, sizeof(a.m)) == 0;
+}
+
+inline bool operator==(const matrix3d &a, const matrix3d &b) {
+  return std::memcmp(&a.m, &b.m, sizeof(a.m)) == 0;
+}
+
+inline bool operator==(const matrix4d &a, const matrix4d &b) {
+  return std::memcmp(&a.m, &b.m, sizeof(a.m)) == 0;
 }
 
 // Quaternion has memory layout of [x, y, z, w] in Crate(Binary)

@@ -21,6 +21,8 @@ namespace tinyusdz {
 // By centralizing the type list, we avoid duplicating it across multiple
 // functions (get_element_size, get_samples_converted, etc.)
 //
+// 'bool' need special treatment. so not in here.
+//
 // Usage: TINYUSDZ_POD_TYPE_LIST(MACRO_NAME)
 // where MACRO_NAME is a macro that takes a single type argument.
 //
@@ -68,7 +70,13 @@ namespace tinyusdz {
   __MACRO(value::texcoord3f) \
   __MACRO(value::texcoord3h) \
   __MACRO(value::texcoord3d) \
-  __MACRO(value::frame4d)
+  __MACRO(value::frame4d) \
+  __MACRO(value::matrix2f) \
+  __MACRO(value::matrix3f) \
+  __MACRO(value::matrix4f) \
+  __MACRO(value::matrix2d) \
+  __MACRO(value::matrix3d) \
+  __MACRO(value::matrix4d) \
 
 // ============================================================================
 // PODTimeSamples Sorting Strategy Helper Methods
@@ -95,6 +103,20 @@ inline void sort_with_offsets(
     std::vector<double>& times,
     Buffer<16>& blocked,
     std::vector<uint64_t>& offsets) {
+
+  // Verify all arrays have consistent sizes
+  if (times.size() != offsets.size() || times.size() != blocked.size()) {
+    // Sizes don't match - this shouldn't happen, but handle gracefully
+    return;
+  }
+
+  // Verify all indices are within bounds
+  for (size_t i = 0; i < indices.size(); ++i) {
+    if (indices[i] >= times.size()) {
+      // Invalid index - abort sorting
+      return;
+    }
+  }
 
   std::vector<double> sorted_times(times.size());
   Buffer<16> sorted_blocked;
@@ -380,12 +402,18 @@ std::vector<std::pair<double, std::pair<value::Value, bool>>> PODTimeSamples::ge
           if (!blocked && _offsets[i] != SIZE_MAX) {                          \
             /* Resolve offset (follows dedup chain if needed) */              \
             size_t byte_offset = 0;                                           \
-            if (resolve_offset(i, &byte_offset)) {                            \
+            bool is_array_flag = false;                                       \
+            if (resolve_offset(i, &byte_offset, &is_array_flag)) {            \
+              DCOUT("PODTimeSamples::get_samples_converted: sample " << i << ", resolved offset=" << byte_offset << ", is_array=" << is_array_flag << ", _array_size=" << _array_size); \
               std::vector<__type> array_values;                               \
               array_values.resize(_array_size);                               \
               /* Direct memcpy for non-bool arrays (bool handled separately) */ \
-              std::memcpy(&array_values[0], _values.data() + byte_offset,     \
-                          sizeof(__type) * _array_size);                       \
+              if (_array_size > 0 && byte_offset + sizeof(__type) * _array_size <= _values.size()) { \
+                std::memcpy(&array_values[0], _values.data() + byte_offset,   \
+                            sizeof(__type) * _array_size);                     \
+              } else {                                                         \
+                DCOUT("PODTimeSamples: ERROR - invalid offset or size, byte_offset=" << byte_offset << ", _array_size=" << _array_size << ", _values.size=" << _values.size()); \
+              }                                                                \
               val = value::Value(array_values);                               \
             } else {                                                          \
               /* Failed to resolve offset - treat as blocked */               \
@@ -467,7 +495,7 @@ std::vector<std::pair<double, std::pair<value::Value, bool>>> PODTimeSamples::ge
   } else
 
   // Handle bool separately due to std::vector<bool> specialization
-  if (_type_id == value::TypeTraits<bool>::type_id()) {
+  if (_type_id == value::TypeTraits<bool>::underlying_type_id()) {
     if (_is_stl_array || _is_typed_array) {
       /* Bool array handling - special case due to vector<bool> */
       element_size = _array_size;  // 1 byte per bool
@@ -582,8 +610,8 @@ std::vector<std::pair<double, std::pair<value::Value, bool>>> PODTimeSamples::ge
 // Helper function to get element size for a given type_id
 size_t PODTimeSamples::get_element_size() const {
   // Handle bool separately (special case due to std::vector<bool> specialization)
-  if (_type_id == value::TypeTraits<bool>::type_id()) {
-    return sizeof(bool);
+  if (_type_id == value::TypeTraits<bool>::underlying_type_id()) {
+    return 1; // char
   }
 
   // Use centralized type registry for all other POD types
@@ -865,6 +893,13 @@ INSTANTIATE_ADD_SAMPLE(value::texcoord2d)
 INSTANTIATE_ADD_SAMPLE(value::texcoord3f)
 INSTANTIATE_ADD_SAMPLE(value::texcoord3h)
 INSTANTIATE_ADD_SAMPLE(value::texcoord3d)
+// Matrix types - now trivial with default constructors
+INSTANTIATE_ADD_SAMPLE(value::matrix2f)
+INSTANTIATE_ADD_SAMPLE(value::matrix3f)
+INSTANTIATE_ADD_SAMPLE(value::matrix4f)
+INSTANTIATE_ADD_SAMPLE(value::matrix2d)
+INSTANTIATE_ADD_SAMPLE(value::matrix3d)
+INSTANTIATE_ADD_SAMPLE(value::matrix4d)
 // frame4d excluded - not trivial
 
 #undef INSTANTIATE_ADD_SAMPLE
@@ -948,6 +983,7 @@ TINYUSDZ_POD_TYPE_LIST(INSTANTIATE_ADD_TYPED_ARRAY)
 
 #undef INSTANTIATE_ADD_TYPED_ARRAY
 
+#if 0 // now in POD_LIST
 // Matrix types (not in POD list as they're not trivial, but used with TypedArray)
 template bool PODTimeSamples::add_typed_array_sample<value::matrix2f>(double, const TypedArray<value::matrix2f>&, std::string*, size_t);
 template bool PODTimeSamples::add_typed_array_sample<value::matrix3f>(double, const TypedArray<value::matrix3f>&, std::string*, size_t);
@@ -955,6 +991,7 @@ template bool PODTimeSamples::add_typed_array_sample<value::matrix4f>(double, co
 template bool PODTimeSamples::add_typed_array_sample<value::matrix2d>(double, const TypedArray<value::matrix2d>&, std::string*, size_t);
 template bool PODTimeSamples::add_typed_array_sample<value::matrix3d>(double, const TypedArray<value::matrix3d>&, std::string*, size_t);
 template bool PODTimeSamples::add_typed_array_sample<value::matrix4d>(double, const TypedArray<value::matrix4d>&, std::string*, size_t);
+#endif
 
 //
 // TypedTimeSamples::get() implementations
@@ -1481,6 +1518,100 @@ void TimeSamples::clear() {
   _dirty_end = 0;
 }
 
+static bool IsPODType(uint32_t type_id) {
+  // Check if type_id corresponds to a POD type or array of POD type
+  // Arrays have the TYPE_ID_1D_ARRAY_BIT set (bit 20)
+  // We need to check both the scalar type and array type
+  
+  // Extract the base type by masking off the array bit
+  // TYPE_ID_1D_ARRAY_BIT is already defined in value-types.hh
+  uint32_t base_type_id = type_id & (~TYPE_ID_1D_ARRAY_BIT);
+  
+  // Check if the base type is a POD type
+  switch (base_type_id) {
+    // Basic types
+    case TYPE_ID_BOOL:
+    case TYPE_ID_INT32:
+    case TYPE_ID_UINT32:
+    case TYPE_ID_INT64:
+    case TYPE_ID_UINT64:
+    
+    // Half precision types
+    case TYPE_ID_HALF:
+    case TYPE_ID_HALF2:
+    case TYPE_ID_HALF3:
+    case TYPE_ID_HALF4:
+    
+    // Float types
+    case TYPE_ID_FLOAT:
+    case TYPE_ID_FLOAT2:
+    case TYPE_ID_FLOAT3:
+    case TYPE_ID_FLOAT4:
+    
+    // Double types
+    case TYPE_ID_DOUBLE:
+    case TYPE_ID_DOUBLE2:
+    case TYPE_ID_DOUBLE3:
+    case TYPE_ID_DOUBLE4:
+    
+    // Integer vector types
+    case TYPE_ID_INT2:
+    case TYPE_ID_INT3:
+    case TYPE_ID_INT4:
+    
+    // Quaternion types
+    case TYPE_ID_QUATH:
+    case TYPE_ID_QUATF:
+    case TYPE_ID_QUATD:
+    
+    // Color types
+    case TYPE_ID_COLOR3H:
+    case TYPE_ID_COLOR3F:
+    case TYPE_ID_COLOR3D:
+    case TYPE_ID_COLOR4H:
+    case TYPE_ID_COLOR4F:
+    case TYPE_ID_COLOR4D:
+    
+    // Vector types
+    case TYPE_ID_VECTOR3H:
+    case TYPE_ID_VECTOR3F:
+    case TYPE_ID_VECTOR3D:
+    
+    // Normal types
+    case TYPE_ID_NORMAL3H:
+    case TYPE_ID_NORMAL3F:
+    case TYPE_ID_NORMAL3D:
+    
+    // Point types
+    case TYPE_ID_POINT3H:
+    case TYPE_ID_POINT3F:
+    case TYPE_ID_POINT3D:
+    
+    // Texture coordinate types
+    case TYPE_ID_TEXCOORD2H:
+    case TYPE_ID_TEXCOORD2F:
+    case TYPE_ID_TEXCOORD2D:
+    case TYPE_ID_TEXCOORD3H:
+    case TYPE_ID_TEXCOORD3F:
+    case TYPE_ID_TEXCOORD3D:
+    
+    // Frame type
+    case TYPE_ID_FRAME4D:
+
+    // Matrix types - now trivial with default constructors
+    case TYPE_ID_MATRIX2F:
+    case TYPE_ID_MATRIX3F:
+    case TYPE_ID_MATRIX4F:
+    case TYPE_ID_MATRIX2D:
+    case TYPE_ID_MATRIX3D:
+    case TYPE_ID_MATRIX4D:
+      return true;
+
+    default:
+      return false;
+  }
+}
+
 // init() method
 bool TimeSamples::init(uint32_t type_id) {
   //DCOUT("init" << type_id);
@@ -1492,7 +1623,11 @@ bool TimeSamples::init(uint32_t type_id) {
   }
   DCOUT("init" << type_id);
   _type_id = type_id;
-  _use_pod = false;  // DEPRECATED: PODTimeSamples always disabled
+
+  // Determine if we should use PODTimeSamples based on type
+  _use_pod = IsPODType(type_id);
+  //_use_pod = false;  // DEPRECATED: PODTimeSamples always disabled
+  
   if (_use_pod) {
     DCOUT("  use_pod: " << type_id);
     _pod_samples._type_id = type_id;

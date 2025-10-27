@@ -109,7 +109,8 @@ bool AsciiParser::ParseTypedTimeSamples(value::TimeSamples *ts_out) {
     return false;
   }
 
-  // Phase 3: Use TimeSamples methods directly (no more get_pod_storage())
+  // Phase 3: Use TimeSamples methods directly
+  // Note: Scalar dedup not yet implemented in TimeSamples - only arrays support dedup
 
   while (!Eof()) {
     char c;
@@ -359,13 +360,13 @@ bool AsciiParser::ParseTimeSamples(const std::string &type_name,
   TRY_POD_TYPE(value::point3f)
   TRY_POD_TYPE(value::texcoord2f)
   TRY_POD_TYPE(value::texcoord3f)
-  // Matrix types are not POD - they will fall back to generic path
-  // TRY_POD_TYPE(value::matrix2f)
-  // TRY_POD_TYPE(value::matrix3f)
-  // TRY_POD_TYPE(value::matrix4f)
-  // TRY_POD_TYPE(value::matrix2d)
-  // TRY_POD_TYPE(value::matrix3d)
-  // TRY_POD_TYPE(value::matrix4d)
+  // Matrix types - now trivial with default constructors
+  TRY_POD_TYPE(value::matrix2f)
+  TRY_POD_TYPE(value::matrix3f)
+  TRY_POD_TYPE(value::matrix4f)
+  TRY_POD_TYPE(value::matrix2d)
+  TRY_POD_TYPE(value::matrix3d)
+  TRY_POD_TYPE(value::matrix4d)
 
 #undef TRY_POD_TYPE
 
@@ -510,13 +511,13 @@ template bool AsciiParser::ParseTypedTimeSamples<value::normal3f>(value::TimeSam
 template bool AsciiParser::ParseTypedTimeSamples<value::point3f>(value::TimeSamples*);
 template bool AsciiParser::ParseTypedTimeSamples<value::texcoord2f>(value::TimeSamples*);
 template bool AsciiParser::ParseTypedTimeSamples<value::texcoord3f>(value::TimeSamples*);
-// Matrix types are not POD (not trivial) - they use the generic path
-// template bool AsciiParser::ParseTypedTimeSamples<value::matrix2f>(value::TimeSamples*);
-// template bool AsciiParser::ParseTypedTimeSamples<value::matrix3f>(value::TimeSamples*);
-// template bool AsciiParser::ParseTypedTimeSamples<value::matrix4f>(value::TimeSamples*);
-// template bool AsciiParser::ParseTypedTimeSamples<value::matrix2d>(value::TimeSamples*);
-// template bool AsciiParser::ParseTypedTimeSamples<value::matrix3d>(value::TimeSamples*);
-// template bool AsciiParser::ParseTypedTimeSamples<value::matrix4d>(value::TimeSamples*);
+// Matrix types - now trivial with default constructors
+template bool AsciiParser::ParseTypedTimeSamples<value::matrix2f>(value::TimeSamples*);
+template bool AsciiParser::ParseTypedTimeSamples<value::matrix3f>(value::TimeSamples*);
+template bool AsciiParser::ParseTypedTimeSamples<value::matrix4f>(value::TimeSamples*);
+template bool AsciiParser::ParseTypedTimeSamples<value::matrix2d>(value::TimeSamples*);
+template bool AsciiParser::ParseTypedTimeSamples<value::matrix3d>(value::TimeSamples*);
+template bool AsciiParser::ParseTypedTimeSamples<value::matrix4d>(value::TimeSamples*);
 
 }  // namespace ascii
 }  // namespace tinyusdz
