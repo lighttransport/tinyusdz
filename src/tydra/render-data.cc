@@ -6412,6 +6412,8 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
     int32_t target_node_index,
     AnimationClip *anim_out) {
 
+  (void)env;  // Unused parameter
+
   if (!anim_out) {
     PUSH_ERROR_AND_RETURN("anim_out is nullptr");
   }
@@ -6451,7 +6453,7 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
     }
 
     // Determine the animation path based on xformOp type
-    AnimationPath anim_path;
+    AnimationPath anim_path = AnimationPath::Translation;  // Default initialization
     bool is_supported = false;
 
     switch (xformOp.op_type) {
@@ -6489,7 +6491,8 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
         is_supported = true;
         break;
 
-      default:
+      case XformOp::OpType::ResetXformStack:
+        // Not animatable - skip
         is_supported = false;
         break;
     }
@@ -6517,9 +6520,9 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
         if (auto v = sample_value.as<value::matrix4d>()) {
           mat = *v;
           got_value = true;
-        } else if (auto v = sample_value.as<value::matrix4f>()) {
+        } else if (auto vf = sample_value.as<value::matrix4f>()) {
           // Convert float matrix to double
-          const auto &m = *v;
+          const auto &m = *vf;
           for (int i = 0; i < 4; i++) {
             for (int j = 0; j < 4; j++) {
               mat.m[i][j] = double(m.m[i][j]);
@@ -6654,15 +6657,15 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
         if (auto v = sample_value.as<value::float3>()) {
           vec = *v;
           got_value = true;
-        } else if (auto v = sample_value.as<value::double3>()) {
-          vec[0] = float((*v)[0]);
-          vec[1] = float((*v)[1]);
-          vec[2] = float((*v)[2]);
+        } else if (auto vd = sample_value.as<value::double3>()) {
+          vec[0] = float((*vd)[0]);
+          vec[1] = float((*vd)[1]);
+          vec[2] = float((*vd)[2]);
           got_value = true;
-        } else if (auto v = sample_value.as<value::half3>()) {
-          vec[0] = value::half_to_float((*v)[0]);
-          vec[1] = value::half_to_float((*v)[1]);
-          vec[2] = value::half_to_float((*v)[2]);
+        } else if (auto vh = sample_value.as<value::half3>()) {
+          vec[0] = value::half_to_float((*vh)[0]);
+          vec[1] = value::half_to_float((*vh)[1]);
+          vec[2] = value::half_to_float((*vh)[2]);
           got_value = true;
         }
 
@@ -6706,17 +6709,17 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
           if (auto v = sample_value.as<value::quatf>()) {
             quat = *v;
             got_value = true;
-          } else if (auto v = sample_value.as<value::quatd>()) {
-            quat[0] = float((*v)[0]);
-            quat[1] = float((*v)[1]);
-            quat[2] = float((*v)[2]);
-            quat[3] = float((*v)[3]);
+          } else if (auto vd = sample_value.as<value::quatd>()) {
+            quat[0] = float((*vd)[0]);
+            quat[1] = float((*vd)[1]);
+            quat[2] = float((*vd)[2]);
+            quat[3] = float((*vd)[3]);
             got_value = true;
-          } else if (auto v = sample_value.as<value::quath>()) {
-            quat[0] = value::half_to_float((*v)[0]);
-            quat[1] = value::half_to_float((*v)[1]);
-            quat[2] = value::half_to_float((*v)[2]);
-            quat[3] = value::half_to_float((*v)[3]);
+          } else if (auto vh = sample_value.as<value::quath>()) {
+            quat[0] = value::half_to_float((*vh)[0]);
+            quat[1] = value::half_to_float((*vh)[1]);
+            quat[2] = value::half_to_float((*vh)[2]);
+            quat[3] = value::half_to_float((*vh)[3]);
             got_value = true;
           }
 
@@ -6750,8 +6753,8 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
             if (auto v = sample_value.as<double>()) {
               angle = *v;
               got_value = true;
-            } else if (auto v = sample_value.as<float>()) {
-              angle = double(*v);
+            } else if (auto vf = sample_value.as<float>()) {
+              angle = double(*vf);
               got_value = true;
             }
 
@@ -6798,13 +6801,13 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
               angles[1] = double((*v)[1]);
               angles[2] = double((*v)[2]);
               got_value = true;
-            } else if (auto v = sample_value.as<value::double3>()) {
-              angles = *v;
+            } else if (auto vd = sample_value.as<value::double3>()) {
+              angles = *vd;
               got_value = true;
-            } else if (auto v = sample_value.as<value::half3>()) {
-              angles[0] = double(value::half_to_float((*v)[0]));
-              angles[1] = double(value::half_to_float((*v)[1]));
-              angles[2] = double(value::half_to_float((*v)[2]));
+            } else if (auto vh = sample_value.as<value::half3>()) {
+              angles[0] = double(value::half_to_float((*vh)[0]));
+              angles[1] = double(value::half_to_float((*vh)[1]));
+              angles[2] = double(value::half_to_float((*vh)[2]));
               got_value = true;
             }
 
@@ -7091,19 +7094,19 @@ bool RenderSceneConverter::ConvertToRenderScene(
 
     // Helper lambda to recursively extract xformOp animations from node hierarchy
     std::function<void(const XformNode&, int32_t)> extractAnimationsFromNode;
-    extractAnimationsFromNode = [&](const XformNode& xform_node, int32_t node_index) {
+    extractAnimationsFromNode = [&](const XformNode& node, int32_t node_index) {
       // Check if this node has a prim with xformOps
-      if (xform_node.prim && IsXformablePrim(*xform_node.prim)) {
+      if (node.prim && IsXformablePrim(*node.prim)) {
         const Xformable *xformable = nullptr;
-        if (CastToXformable(*xform_node.prim, &xformable) && xformable) {
+        if (CastToXformable(*node.prim, &xformable) && xformable) {
           // Check if xformable has time-sampled transforms
           if (xformable->has_timesamples()) {
             AnimationClip anim;
-            // xform_node.absolute_path is already a Path object
-            const Path &prim_path = xform_node.absolute_path;
+            // node.absolute_path is already a Path object
+            const Path &prim_path = node.absolute_path;
 
             // Extract xformOp animation
-            if (ExtractXformOpAnimation(env, prim_path, xform_node.element_name,
+            if (ExtractXformOpAnimation(env, prim_path, node.element_name,
                                        *xformable, node_index, &anim)) {
               // Check if animation with this path already exists
               const auto &anim_abs_path = anim.abs_path;
@@ -7125,11 +7128,11 @@ bool RenderSceneConverter::ConvertToRenderScene(
       // Recursively process children
       // Note: we increment node_index as we traverse depth-first
       int32_t child_start_index = node_index + 1;
-      for (size_t i = 0; i < xform_node.children.size(); i++) {
-        extractAnimationsFromNode(xform_node.children[i], child_start_index);
+      for (size_t i = 0; i < node.children.size(); i++) {
+        extractAnimationsFromNode(node.children[i], child_start_index);
         // Approximate: each child subtree takes some nodes
         // This is a simplified approach; proper implementation would track exact indices
-        child_start_index += int32_t(CountNodesInSubtree(xform_node.children[i]));
+        child_start_index += int32_t(CountNodesInSubtree(node.children[i]));
       }
     };
 
