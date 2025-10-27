@@ -442,13 +442,9 @@ bool CrateReader::ReadTimeSamples(value::TimeSamples *d) {
                               "Failed to seek over TimeSamples's values.");
   }
 
-  // Move to next location.
-  // sizeof(uint64) = sizeof(ValueRep)
-  _sr->seek_set(values_offset);
-  if (!_sr->seek_from_current(int64_t(sizeof(uint64_t) * num_values))) {
-    PUSH_ERROR_AND_RETURN_TAG(kTag,
-                              "Failed to seek over TimeSamples's values.");
-  }
+  // Clean up dedup entries for this specific TimeSamples now that loading is complete
+  // This prevents accumulation of stale entries during long parsing sessions
+  clear_timesamples_dedup_entries(static_cast<void*>(d));
 
   return true;
 }
@@ -558,6 +554,29 @@ static std::map<std::pair<void*, uint64_t>, size_t>& get_timesamples_dedup_map()
   static std::map<std::pair<void*, uint64_t>, size_t> map;
   return map;
 }
+
+/// Clear all dedup entries for a specific TimeSamples pointer
+/// Called when a TimeSamples finishes loading to prevent stale entries after object reallocation
+void clear_timesamples_dedup_entries(void* timesamples_ptr) {
+  auto& dedup_map = get_timesamples_dedup_map();
+
+  // Find and erase all entries with this TimeSamples pointer
+  auto it = dedup_map.begin();
+  while (it != dedup_map.end()) {
+    if (it->first.first == timesamples_ptr) {
+      it = dedup_map.erase(it);
+    } else {
+      ++it;
+    }
+  }
+}
+
+/// Clear all dedup entries (called at start of each file load)
+void clear_all_timesamples_dedup_entries() {
+  auto& dedup_map = get_timesamples_dedup_map();
+  dedup_map.clear();
+}
+
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif
@@ -808,8 +827,8 @@ bool CrateReader::UnpackTimeSampleValue_BOOL(double t,
       crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK) {
     // Blocked value
     // VALUE_BLOCK can have any flags, just skip the flag check
-    // Just add a blocked sample
-    if (!add_blocked_sample_to_timesamples<int32_t>(&dst, t, &_err,
+    // Just add a blocked sample - use bool type for bool timesamples
+    if (!add_blocked_sample_to_timesamples<bool>(&dst, t, &_err,
                                                     expected_total_samples)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Failed to add blocked sample to TimeSamples.");
@@ -849,21 +868,29 @@ bool CrateReader::UnpackTimeSampleValue_BOOL(double t,
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
   } else if (rep.IsArray()) {
-    // bool array is encoded as uint8 array.
-    std::vector<uint8_t> v;
+    // bool array is encoded as uint8 array in the file format.
+    std::vector<uint8_t> v_uint8;
     if (rep.GetPayload() == 0) {  // empty array
-      if (!add_array_sample_to_timesamples<uint8_t>(&dst, t, v, &_err,
+      std::vector<bool> v_bool;  // empty bool array
+      if (!add_array_sample_to_timesamples<bool>(&dst, t, v_bool, &_err,
                                                     expected_total_samples)) {
         PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
       }
       return true;
     }
 
-    if (!ReadArray(&v)) {
+    if (!ReadArray(&v_uint8)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to read bool array.");
     }
 
-    if (!add_array_sample_to_timesamples<uint8_t>(&dst, t, v, &_err,
+    // Convert uint8_t array to bool array
+    std::vector<bool> v_bool;
+    v_bool.reserve(v_uint8.size());
+    for (uint8_t val : v_uint8) {
+      v_bool.push_back(val != 0);
+    }
+
+    if (!add_array_sample_to_timesamples<bool>(&dst, t, v_bool, &_err,
                                                   expected_total_samples)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
     }
@@ -1765,9 +1792,13 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT2(double t,
 
       DCOUT("timeSamples.FLOAT2 " << value::print_array_snipped(v));
 
+      size_t current_index = dst.size();
+      dedup_map[key] = current_index;
+
+      //TUSDZ_LOG_I("add dedup: " << std::get<1>(key)  << ", index " << current_index);
+      //TUSDZ_LOG_I("is_using_pod: " << dst.is_using_pod());
+
       if (dst.is_using_pod()) {
-        size_t current_index = dst.size();
-        dedup_map[key] = current_index;
         DCOUT("FLOAT2 array: storing new sample at index " << current_index << " for ValueRep payload " << rep.GetPayload());
 
         if (!dst.add_array_sample_pod<value::float2>(t, v, &_err, expected_total_samples)) {
@@ -2581,7 +2612,7 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE3(double t,
         }
       } else {
         // Non-POD path - already in std::vector
-        
+
         if (!dst.add_sample(t, value::Value(v), &_err)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
         }
@@ -2719,7 +2750,7 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE4(double t,
         }
       } else {
         // Non-POD path - already in std::vector
-        
+
         if (!dst.add_sample(t, value::Value(v), &_err)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
         }
@@ -2831,7 +2862,7 @@ bool CrateReader::UnpackTimeSampleValue_QUATH(double t,
         }
       } else {
         // Non-POD path - already in std::vector
-        
+
         if (!dst.add_sample(t, value::Value(v), &_err)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
         }
@@ -2917,7 +2948,7 @@ bool CrateReader::UnpackTimeSampleValue_QUATD(double t,
         }
       } else {
         // Non-POD path - already in std::vector
-        
+
         if (!dst.add_sample(t, value::Value(v), &_err)) {
           PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
         }

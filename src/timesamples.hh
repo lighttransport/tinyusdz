@@ -52,6 +52,8 @@ bool Lerp(const Value &p0, const Value &p1, double dt, Value *result);
 // Forward declaration for PODTimeSamples::get_samples()
 struct TimeSamples;
 
+#if 0 // not used anymore
+
 // Helper function to check if a type_id represents a POD type
 // POD types are numeric types that are trivial and standard layout
 inline bool is_pod_type_id(uint32_t type_id) {
@@ -63,6 +65,8 @@ inline bool is_pod_type_id(uint32_t type_id) {
   
   return (tid >= uint32_t(TYPE_ID_BOOL) && tid <= uint32_t(TYPE_ID_TIMECODE));
 }
+
+#endif
 
 } // namespace value
 
@@ -85,7 +89,7 @@ struct PODTimeSamples {
   bool _is_stl_array{false}; // Whether the stored type is a std::vector<T> array
   bool _is_typed_array{false}; // Whether the stored type is TypedArray<T>
   uint16_t _element_size{0}; // Cached element size (0 = not cached)
-  size_t _array_size{0}; // Number of elements per array (fixed for all samples)
+  size_t _array_size{0}; // Number of elements per array (DEPRECATED: use _array_counts for variable-sized arrays)
   mutable bool _dirty{false};
 
   // Dirty range tracking for lazy sorting optimization
@@ -97,6 +101,7 @@ struct PODTimeSamples {
   mutable Buffer<16> _blocked; // ValueBlock flags with 16-byte alignment
   mutable Buffer<16> _values; // Raw byte storage: compact storage without blocked values
   mutable std::vector<uint64_t> _offsets; // Offset table with dedup/array flags (bit 63=dedup, bit 62=array, bits 61-0=index/offset)
+  mutable std::vector<size_t> _array_counts; // Per-sample array element counts (for variable-sized arrays)
   mutable size_t _blocked_count{0}; // Count of blocked samples for O(1) queries
 
   // Offset encoding constants
@@ -151,12 +156,14 @@ struct PODTimeSamples {
   /// @return true on success, false if circular reference detected or max depth exceeded
   static bool resolve_offset_static(const std::vector<uint64_t>& offsets, size_t sample_idx,
                                      size_t* out_byte_offset, bool* out_is_array = nullptr,
-                                     bool* out_use_array_buffer = nullptr, size_t max_depth = 100) {
+                                     bool* out_use_array_buffer = nullptr, size_t max_depth = 100,
+                                     size_t* out_resolved_idx = nullptr) {
     if (sample_idx >= offsets.size()) {
       return false;
     }
 
     uint64_t offset_value = offsets[sample_idx];
+    size_t current_idx = sample_idx;
     size_t depth = 0;
 
     // Follow dedup chain
@@ -170,6 +177,7 @@ struct PODTimeSamples {
         return false; // Invalid or self-referencing index
       }
 
+      current_idx = ref_idx;
       offset_value = offsets[ref_idx];
     }
 
@@ -183,6 +191,9 @@ struct PODTimeSamples {
     if (out_use_array_buffer) {
       *out_use_array_buffer = is_array_buffer_offset(offset_value);
     }
+    if (out_resolved_idx) {
+      *out_resolved_idx = current_idx;
+    }
 
     return true;
   }
@@ -194,10 +205,12 @@ struct PODTimeSamples {
   /// @param out_is_array Output: whether this is array data
   /// @param out_use_array_buffer Output: whether data is in _array_values (vs _values)
   /// @param max_depth Maximum dedup chain depth to prevent infinite loops (default 100)
+  /// @param out_resolved_idx Output: the sample index that contains the actual data (after following dedup chain)
   /// @return true on success, false if circular reference detected or max depth exceeded
   bool resolve_offset(size_t sample_idx, size_t* out_byte_offset, bool* out_is_array = nullptr,
-                      bool* out_use_array_buffer = nullptr, size_t max_depth = 100) const {
-    return resolve_offset_static(_offsets, sample_idx, out_byte_offset, out_is_array, out_use_array_buffer, max_depth);
+                      bool* out_use_array_buffer = nullptr, size_t max_depth = 100,
+                      size_t* out_resolved_idx = nullptr) const {
+    return resolve_offset_static(_offsets, sample_idx, out_byte_offset, out_is_array, out_use_array_buffer, max_depth, out_resolved_idx);
   }
 
   /// Validate that a dedup reference is valid (no circular refs, references non-dedup data)
@@ -243,6 +256,7 @@ struct PODTimeSamples {
     _blocked.clear();
     _values.clear();
     _offsets.clear();
+    _array_counts.clear();
     _type_id = 0;
     _is_stl_array = false;
     _is_typed_array = false;
@@ -268,6 +282,7 @@ struct PODTimeSamples {
         _blocked(std::move(other._blocked)),
         _values(std::move(other._values)),
         _offsets(std::move(other._offsets)),
+        _array_counts(std::move(other._array_counts)),
         _blocked_count(other._blocked_count) {
     // Reset moved-from object to valid empty state
     other._type_id = 0;
@@ -297,6 +312,7 @@ struct PODTimeSamples {
       _blocked = std::move(other._blocked);
       _values = std::move(other._values);
       _offsets = std::move(other._offsets);
+      _array_counts = std::move(other._array_counts);
       _blocked_count = other._blocked_count;
 
       // Reset moved-from object to valid empty state
@@ -412,7 +428,7 @@ public:
       _type_id = value::TypeTraits<T>::underlying_type_id();
       _is_stl_array = true;  // Using std::vector-based array
       _is_typed_array = false;  // Not using TypedArray
-      _array_size = count;
+      _array_size = count;  // Store first sample size for backward compatibility
       _element_size = sizeof(T);  // Cache element size
 
       // Pre-allocate if requested
@@ -429,20 +445,13 @@ public:
         }
         return false;
       }
-      // Verify array size consistency
-      if (_array_size != count) {
-        if (err) {
-          (*err) += "Array size mismatch in PODTimeSamples: expected " +
-                    std::to_string(_array_size) + " but got " +
-                    std::to_string(count) + ".\n";
-        }
-        return false;
-      }
+      // Note: USD allows variable-sized arrays, so we don't enforce size consistency
     }
 
     size_t new_idx = _times.size();
     _times.push_back(t);
     _blocked.push_back(0);  // false = 0
+    _array_counts.push_back(count);  // Store per-sample array size
 
     // Store offset with array flag and append array data
     size_t byte_offset = _values.size();
@@ -477,7 +486,7 @@ public:
       _type_id = value::TypeTraits<T>::underlying_type_id();
       _is_stl_array = true;  // Using std::vector-based array
       _is_typed_array = false;  // Not using TypedArray
-      _array_size = count;
+      _array_size = count;  // Store first sample size for backward compatibility
       _element_size = sizeof(T);  // Cache element size
 
       // Pre-allocate if requested
@@ -494,20 +503,13 @@ public:
         }
         return false;
       }
-      // Verify array size consistency
-      if (_array_size != count) {
-        if (err) {
-          (*err) += "Array size mismatch in PODTimeSamples: expected " +
-                    std::to_string(_array_size) + " but got " +
-                    std::to_string(count) + ".\n";
-        }
-        return false;
-      }
+      // Note: USD allows variable-sized arrays, so we don't enforce size consistency
     }
 
     size_t new_idx = _times.size();
     _times.push_back(t);
     _blocked.push_back(0);  // false = 0
+    _array_counts.push_back(count);  // Store per-sample array size
 
     // Store offset with array flag and append array data
     size_t byte_offset = _values.size();
@@ -571,6 +573,10 @@ public:
     _times.push_back(t);
     _blocked.push_back(0);  // false = 0
 
+    // Copy array count from the referenced sample
+    size_t ref_array_count = (ref_index < _array_counts.size()) ? _array_counts[ref_index] : _array_size;
+    _array_counts.push_back(ref_array_count);
+
     // Create dedup offset: bit 63=1 (dedup), bit 62=1 (array), bits 61-0=ref_index
     uint64_t dedup_offset = make_dedup_offset(ref_index, true);
     _offsets.push_back(dedup_offset);
@@ -619,6 +625,35 @@ public:
       return false;
     }
 
+    // Debug logging
+    DCOUT("PODTimeSamples::add_dedup_array_sample called, ref_index=" << ref_index << ", _array_size=" << _array_size);
+
+    // If _array_size not yet set, determine it from the referenced sample
+    if (_array_size == 0) {
+      DCOUT("PODTimeSamples: _array_size is 0, trying to determine from ref_index " << ref_index);
+      // Resolve the reference to get the actual data offset
+      size_t byte_offset = 0;
+      bool is_array = false;
+      if (resolve_offset(ref_index, &byte_offset, &is_array)) {
+        DCOUT("PODTimeSamples: resolved offset, is_array=" << is_array << ", byte_offset=" << byte_offset);
+        if (is_array) {
+          // Read the array size from the referenced data
+          // The first size_t in the buffer contains the array count
+          size_t* count_ptr = reinterpret_cast<size_t*>(_values.data() + byte_offset);
+          _array_size = *count_ptr;
+          DCOUT("PODTimeSamples: read _array_size=" << _array_size << " from buffer");
+
+          // Also set type info if not yet initialized
+          _type_id = value::TypeTraits<T>::underlying_type_id();
+          _is_stl_array = true;  // Using std::vector-based array
+          _is_typed_array = false;  // Not using TypedArray
+          _element_size = sizeof(T);  // Cache element size
+        }
+      } else {
+        DCOUT("PODTimeSamples: failed to resolve offset for ref_index " << ref_index);
+      }
+    }
+
     // Verify we're in array mode with correct type
     if (!_is_stl_array || _type_id != value::TypeTraits<T>::underlying_type_id()) {
       if (err) {
@@ -629,6 +664,10 @@ public:
 
     _times.push_back(t);
     _blocked.push_back(0);  // false = 0
+
+    // Copy array count from the referenced sample
+    size_t ref_array_count = (ref_index < _array_counts.size()) ? _array_counts[ref_index] : _array_size;
+    _array_counts.push_back(ref_array_count);
 
     // Create dedup offset: bit 63=1 (dedup), bit 62=1 (array), bits 61-0=ref_index
     uint64_t dedup_offset = make_dedup_offset(ref_index, true);
@@ -728,11 +767,12 @@ public:
   /// @param expected_total_samples Optional: if this is the first sample, pre-allocate for this many samples
   bool add_blocked_array_sample(double t, size_t count, std::string *err = nullptr,
                                 size_t expected_total_samples = 0) {
+    (void)err;  // Unused since we removed size validation
     // Initialize array info on first sample
     if (_times.empty()) {
       _is_stl_array = true;  // Assume STL array for blocked array samples
       _is_typed_array = false;
-      _array_size = count;
+      _array_size = count;  // Store first sample size for backward compatibility
       // type_id will be set when first non-blocked sample is added
 
       // Pre-allocate if requested (note: blocked samples don't use value storage)
@@ -742,22 +782,14 @@ public:
         _blocked.reserve(expected_total_samples);
         _offsets.reserve(expected_total_samples);
       }
-    } else if (_is_stl_array || _is_typed_array) {
-      // Verify array size consistency
-      if (_array_size != count) {
-        if (err) {
-          (*err) += "Array size mismatch in PODTimeSamples: expected " +
-                    std::to_string(_array_size) + " but got " +
-                    std::to_string(count) + ".\n";
-        }
-        return false;
-      }
     }
+    // Note: USD allows variable-sized arrays, so we don't enforce size consistency
 
     size_t new_idx = _times.size();
     _times.push_back(t);
     _blocked.push_back(1);  // true = 1
     _blocked_count++;
+    _array_counts.push_back(count);  // Store per-sample array size
 
     // Mark as blocked in offset table
     _offsets.push_back(SIZE_MAX);
@@ -1032,7 +1064,7 @@ public:
     }
 
     // For array data stored directly
-    if ((_is_stl_array || _is_typed_array) && _array_size > 0) {
+    if ((_is_stl_array || _is_typed_array) && (!_array_counts.empty() || _array_size > 0)) {
       // Resolve offset following dedup chain if necessary
       if (!_offsets.empty()) {
         if (_offsets[idx] == SIZE_MAX) {
@@ -1041,13 +1073,16 @@ public:
         }
 
         size_t byte_offset = 0;
-        if (!resolve_offset(idx, &byte_offset)) {
+        size_t resolved_idx = idx;  // Track which sample index we resolved to
+        if (!resolve_offset(idx, &byte_offset, nullptr, nullptr, 100, &resolved_idx)) {
           // Failed to resolve offset (circular reference or invalid dedup chain)
           return TypedArrayView<const T>();
         }
 
+        // Use per-sample array size from the resolved index (with fallback to global _array_size)
+        size_t array_count = (resolved_idx < _array_counts.size()) ? _array_counts[resolved_idx] : _array_size;
         const T* src = reinterpret_cast<const T*>(_values.data() + byte_offset);
-        return TypedArrayView<const T>(src, _array_size);
+        return TypedArrayView<const T>(src, array_count);
       }
     }
 
@@ -1079,7 +1114,8 @@ public:
     total += _times.capacity() * sizeof(double);
     total += _blocked.capacity();  // Buffer already stores bytes
     total += _values.capacity();   // Buffer already stores bytes
-    total += _offsets.capacity() * sizeof(size_t);  // Include offset table
+    total += _offsets.capacity() * sizeof(uint64_t);  // Include offset table
+    total += _array_counts.capacity() * sizeof(size_t);  // Per-sample array counts
     return total;
   }
 
@@ -1374,7 +1410,8 @@ struct TimeSamples {
   }
 
   template<typename T>
-  bool add_array_sample_pod(double t, const std::vector<T>& value, std::string *err = nullptr, size_t expected_total_samples = 0) {
+  typename std::enable_if<!std::is_same<T, bool>::value, bool>::type
+  add_array_sample_pod(double t, const std::vector<T>& value, std::string *err = nullptr, size_t expected_total_samples = 0) {
     static_assert(std::is_trivial<T>::value && std::is_standard_layout<T>::value,
                   "add_sample_pod requires POD types");
 
@@ -1391,6 +1428,64 @@ struct TimeSamples {
 
     if (err) {
       (*err) += "Not using POD storage for type " + std::string(value::TypeTraits<T>::type_name()) + "[].\n";
+    }
+    return false; // Not using POD storage
+  }
+
+  // Specialization for std::vector<bool> since it doesn't have data() member
+  template<typename T>
+  typename std::enable_if<std::is_same<T, bool>::value, bool>::type
+  add_array_sample_pod(double t, const std::vector<T>& value, std::string *err = nullptr, size_t expected_total_samples = 0) {
+    // Auto-initialize on first sample
+    if (empty()) {
+      init(value::TypeTraits<std::vector<T>>::type_id());
+    }
+
+    if (_use_pod) {
+      // Convert std::vector<bool> to std::vector<uint8_t> for storage
+      std::vector<uint8_t> byte_array;
+      byte_array.reserve(value.size());
+      for (bool b : value) {
+        byte_array.push_back(b ? 1 : 0);
+      }
+
+      // Manually initialize PODTimeSamples with bool type_id if this is the first sample
+      if (_pod_samples.empty()) {
+        // Initialize with bool type_id, not uint8_t
+        _pod_samples.init(value::TypeTraits<bool>::underlying_type_id(), true, sizeof(uint8_t), value.size(), expected_total_samples);
+      }
+
+      // Store as uint8_t array internally, but type remains bool[]
+      // Note: We need to bypass the type_id setting in add_array_sample
+      // by checking if already initialized
+      bool result;
+      if (_pod_samples.type_id() == value::TypeTraits<bool>::underlying_type_id()) {
+        // PODTimeSamples already initialized with bool type, just add the data
+        _pod_samples._times.push_back(t);
+        _pod_samples._blocked.push_back(0);  // false = 0
+        _pod_samples._array_counts.push_back(value.size());  // Store per-sample array size
+
+        // Store offset with array flag and append array data
+        size_t byte_offset = _pod_samples._values.size();
+        uint64_t encoded_offset = PODTimeSamples::make_offset(byte_offset, true);  // is_array=true
+        _pod_samples._offsets.push_back(encoded_offset);
+
+        size_t byte_size = sizeof(uint8_t) * byte_array.size();
+        _pod_samples._values.resize(_pod_samples._values.size() + byte_size);
+        std::memcpy(_pod_samples._values.data() + byte_offset, byte_array.data(), byte_size);
+
+        _pod_samples._dirty = true;
+        result = true;
+      } else {
+        // Fallback to normal add_array_sample (shouldn't happen)
+        result = _pod_samples.add_array_sample<uint8_t>(t, byte_array.data(), byte_array.size(), err, expected_total_samples);
+      }
+      _dirty = true;
+      return result;
+    }
+
+    if (err) {
+      (*err) += "Not using POD storage for type bool[].\n";
     }
     return false; // Not using POD storage
   }
@@ -2540,6 +2635,17 @@ struct TimeSamples {
     return _array_size;
   }
 
+  const std::vector<size_t>& get_array_counts() const {
+    // Check if using unified storage
+    if (!_times.empty()) {
+      return _array_counts;
+    }
+    if (_use_pod) {
+      return _pod_samples._array_counts;
+    }
+    return _array_counts;
+  }
+
  private:
   // Generic path storage (for non-POD types: string, token, dict, etc.)
   mutable std::vector<Sample> _samples;
@@ -2561,6 +2667,7 @@ struct TimeSamples {
   size_t _array_size{0};
   size_t _element_size{0};
   mutable size_t _blocked_count{0};
+  mutable std::vector<size_t> _array_counts; // Per-sample array element counts (for variable-sized arrays)
 
   mutable bool _dirty{false};
   mutable size_t _dirty_start{0};
@@ -3038,7 +3145,14 @@ extern template bool PODTimeSamples::add_sample<std::array<uint32_t, 4>>(double,
 extern template bool PODTimeSamples::add_sample<value::quath>(double, const value::quath&, std::string*, size_t);
 extern template bool PODTimeSamples::add_sample<value::quatf>(double, const value::quatf&, std::string*, size_t);
 extern template bool PODTimeSamples::add_sample<value::quatd>(double, const value::quatd&, std::string*, size_t);
-// Note: Matrix types are not trivial (don't satisfy std::is_trivial) so they cannot use PODTimeSamples::add_sample
+// Matrix types - now trivial with default constructors
+extern template bool PODTimeSamples::add_sample<value::matrix2f>(double, const value::matrix2f&, std::string*, size_t);
+extern template bool PODTimeSamples::add_sample<value::matrix3f>(double, const value::matrix3f&, std::string*, size_t);
+extern template bool PODTimeSamples::add_sample<value::matrix4f>(double, const value::matrix4f&, std::string*, size_t);
+extern template bool PODTimeSamples::add_sample<value::matrix2d>(double, const value::matrix2d&, std::string*, size_t);
+extern template bool PODTimeSamples::add_sample<value::matrix3d>(double, const value::matrix3d&, std::string*, size_t);
+extern template bool PODTimeSamples::add_sample<value::matrix4d>(double, const value::matrix4d&, std::string*, size_t);
+// Note: frame4d is not trivial (doesn't satisfy std::is_trivial) so it cannot use PODTimeSamples::add_sample
 extern template bool PODTimeSamples::add_sample<value::vector3h>(double, const value::vector3h&, std::string*, size_t);
 extern template bool PODTimeSamples::add_sample<value::vector3f>(double, const value::vector3f&, std::string*, size_t);
 extern template bool PODTimeSamples::add_sample<value::vector3d>(double, const value::vector3d&, std::string*, size_t);
