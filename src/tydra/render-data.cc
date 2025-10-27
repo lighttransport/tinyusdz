@@ -4322,18 +4322,27 @@ bool RenderSceneConverter::ConvertMesh(
       }
 
       if (skelPath.is_valid()) {
-        SkelHierarchy skel;
-        nonstd::optional<AnimationClip> anim;
-        // TODO: cache skeleton conversion
-        if (!ConvertSkeletonImpl(env, mesh, &skel, &anim)) {
-          return false;
-        }
-        DCOUT("Converted skeleton attached to : " << abs_prim_path);
-
+        // Check if skeleton already exists
         auto skel_it = std::find_if(skeletons.begin(), skeletons.end(), [&skelPath](const SkelHierarchy &sk) {
           DCOUT("sk.abs_path " << sk.abs_path << ", skel_path " << skelPath.full_path_name());
           return sk.abs_path == skelPath.full_path_name();
         });
+
+        // Determine skeleton_id before conversion
+        int32_t skel_id{0};
+        if (skel_it != skeletons.end()) {
+          skel_id = int32_t(std::distance(skeletons.begin(), skel_it));
+        } else {
+          skel_id = int32_t(skeletons.size());
+        }
+
+        SkelHierarchy skel;
+        nonstd::optional<AnimationClip> anim;
+        // TODO: cache skeleton conversion
+        if (!ConvertSkeletonImpl(env, mesh, skel_id, &skel, &anim)) {
+          return false;
+        }
+        DCOUT("Converted skeleton attached to : " << abs_prim_path);
 
         if (anim) {
 
@@ -4351,11 +4360,8 @@ bool RenderSceneConverter::ConvertMesh(
           }
         }
 
-        int skel_id{0};
-        if (skel_it != skeletons.end()) {
-          skel_id = int(std::distance(skeletons.begin(), skel_it));
-        } else {
-          skel_id = int(skeletons.size());
+        // Add skeleton if it's new (skel_it was end())
+        if (skel_it == skeletons.end()) {
           skeletons.emplace_back(std::move(skel));
           DCOUT("add skeleton\n");
         }
@@ -6139,6 +6145,7 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &env,
                                             const Path &abs_path,
                                             const SkelAnimation &skelAnim,
+                                            int32_t skeleton_id,
                                             AnimationClip *anim_out) {
   // The spec says:
   // "An animation source is only valid if its translation, rotation, and scale components
@@ -6269,8 +6276,10 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         anim_out->samplers.push_back(trans_sampler);
 
         AnimationChannel channel;
+        channel.target_type = ChannelTargetType::SkeletonJoint;
         channel.path = AnimationPath::Translation;
-        channel.target_node = int32_t(joint_idx);  // Will be remapped later
+        channel.skeleton_id = skeleton_id;
+        channel.joint_id = int32_t(joint_idx);
         channel.sampler = sampler_idx;
         anim_out->channels.push_back(channel);
       }
@@ -6295,8 +6304,10 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         anim_out->samplers.push_back(rot_sampler);
 
         AnimationChannel channel;
+        channel.target_type = ChannelTargetType::SkeletonJoint;
         channel.path = AnimationPath::Rotation;
-        channel.target_node = int32_t(joint_idx);
+        channel.skeleton_id = skeleton_id;
+        channel.joint_id = int32_t(joint_idx);
         channel.sampler = sampler_idx;
         anim_out->channels.push_back(channel);
       }
@@ -6320,8 +6331,10 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         anim_out->samplers.push_back(scale_sampler);
 
         AnimationChannel channel;
+        channel.target_type = ChannelTargetType::SkeletonJoint;
         channel.path = AnimationPath::Scale;
-        channel.target_node = int32_t(joint_idx);
+        channel.skeleton_id = skeleton_id;
+        channel.joint_id = int32_t(joint_idx);
         channel.sampler = sampler_idx;
         anim_out->channels.push_back(channel);
       }
@@ -6556,6 +6569,7 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
           anim_out->samplers.push_back(sampler);
 
           AnimationChannel channel;
+          channel.target_type = ChannelTargetType::SceneNode;
           channel.path = AnimationPath::Translation;
           channel.target_node = target_node_index;
           channel.sampler = sampler_idx;
@@ -6581,6 +6595,7 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
           anim_out->samplers.push_back(sampler);
 
           AnimationChannel channel;
+          channel.target_type = ChannelTargetType::SceneNode;
           channel.path = AnimationPath::Rotation;
           channel.target_node = target_node_index;
           channel.sampler = sampler_idx;
@@ -6605,6 +6620,7 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
           anim_out->samplers.push_back(sampler);
 
           AnimationChannel channel;
+          channel.target_type = ChannelTargetType::SceneNode;
           channel.path = AnimationPath::Scale;
           channel.target_node = target_node_index;
           channel.sampler = sampler_idx;
@@ -6842,6 +6858,7 @@ bool RenderSceneConverter::ExtractXformOpAnimation(
       anim_out->samplers.push_back(sampler);
 
       AnimationChannel channel;
+      channel.target_type = ChannelTargetType::SceneNode;
       channel.path = anim_path;
       channel.target_node = target_node_index;
       channel.sampler = sampler_idx;
@@ -7165,6 +7182,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
 }
 
 bool RenderSceneConverter::ConvertSkeletonImpl(const RenderSceneConverterEnv &env, const tinyusdz::GeomMesh &mesh,
+                       int32_t skeleton_id,
                        SkelHierarchy *out_skel, nonstd::optional<AnimationClip> *out_anim) {
 
   if (!out_skel) {
@@ -7235,7 +7253,7 @@ bool RenderSceneConverter::ConvertSkeletonImpl(const RenderSceneConverterEnv &en
         if (const auto panim = animSourcePrim->as<SkelAnimation>()) {
           DCOUT("Convert SkelAnimation");
           AnimationClip anim;
-          if (!ConvertSkelAnimation(env, animSourcePath, *panim, &anim)) {
+          if (!ConvertSkelAnimation(env, animSourcePath, *panim, skeleton_id, &anim)) {
             return false;
           }
 
