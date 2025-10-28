@@ -73,7 +73,7 @@ let usdAnimations = []; // Store USD animations from the file
 
 /**
  * Convert USD animation data to Three.js AnimationClip
- * Supports the new animation structure with channels and samplers
+ * Supports both channel/sampler and track-based animation structures
  * @param {Object} usdLoader - TinyUSDZ loader instance
  * @param {THREE.Object3D} sceneRoot - Three.js scene containing the loaded geometry
  * @returns {Array<THREE.AnimationClip>} Array of Three.js AnimationClips
@@ -101,8 +101,115 @@ function convertUSDAnimationsToThreeJS(usdLoader, sceneRoot) {
 		const usdAnimation = usdLoader.getAnimation(i);
 		console.log(`Processing animation ${i}: ${usdAnimation.name}`);
 
+		// Check if this is a track-based animation (legacy format)
+		if (usdAnimation.tracks && usdAnimation.tracks.length > 0) {
+			console.log(`Animation ${i} uses track-based format with ${usdAnimation.tracks.length} tracks`);
+
+			// Process track-based animation
+			const keyframeTracks = [];
+
+			// Find the target object - for track animations, usually the first child after scene root
+			let targetObject = sceneRoot;
+			// Try to find the animated object by name from the animation
+			if (usdAnimation.name && usdAnimation.name.includes('_')) {
+				const targetName = usdAnimation.name.split('_')[0]; // e.g., "AnimatedCube" from "AnimatedCube_xform"
+				sceneRoot.traverse((obj) => {
+					if (obj.name && obj.name.includes(targetName)) {
+						targetObject = obj;
+					}
+				});
+			}
+
+			// If we can't find it by name, use the first mesh or group
+			if (targetObject === sceneRoot) {
+				sceneRoot.traverse((obj) => {
+					if ((obj.isMesh || obj.isGroup) && obj !== sceneRoot) {
+						targetObject = obj;
+						return; // Stop traversal once we find the first mesh/group
+					}
+				});
+			}
+
+			const targetName = targetObject.name || 'AnimatedObject';
+			console.log(`Target object for animation: ${targetName}`);
+
+			// Process each track
+			for (const track of usdAnimation.tracks) {
+				if (!track.times || !track.values) {
+					console.warn('Track missing times or values');
+					continue;
+				}
+
+				// Convert times and values to arrays
+				const times = Array.isArray(track.times) ? track.times : Array.from(track.times);
+				const values = Array.isArray(track.values) ? track.values : Array.from(track.values);
+				const interpolation = getUSDInterpolationMode(track.interpolation);
+
+				console.log(`Processing track: ${track.path}, ${times.length} keyframes`);
+
+				// Create appropriate Three.js KeyframeTrack based on path
+				let keyframeTrack;
+
+				switch (track.path) {
+					case 'translation':
+					case 'Translation':
+						keyframeTrack = new THREE.VectorKeyframeTrack(
+							`${targetName}.position`,
+							times,
+							values,
+							interpolation
+						);
+						break;
+
+					case 'rotation':
+					case 'Rotation':
+						// Rotation is stored as quaternions (x, y, z, w)
+						keyframeTrack = new THREE.QuaternionKeyframeTrack(
+							`${targetName}.quaternion`,
+							times,
+							values,
+							interpolation
+						);
+						break;
+
+					case 'scale':
+					case 'Scale':
+						keyframeTrack = new THREE.VectorKeyframeTrack(
+							`${targetName}.scale`,
+							times,
+							values,
+							interpolation
+						);
+						break;
+
+					default:
+						console.warn(`Unknown track path: ${track.path}`);
+						continue;
+				}
+
+				if (keyframeTrack) {
+					keyframeTracks.push(keyframeTrack);
+				}
+			}
+
+			// Create Three.js AnimationClip from tracks
+			if (keyframeTracks.length > 0) {
+				const clip = new THREE.AnimationClip(
+					usdAnimation.name || `Animation_${i}`,
+					usdAnimation.duration || -1, // -1 will auto-calculate from tracks
+					keyframeTracks
+				);
+
+				animationClips.push(clip);
+				console.log(`Created clip: ${clip.name}, duration: ${clip.duration}s, tracks: ${clip.tracks.length}`);
+			}
+
+			continue; // Skip to next animation
+		}
+
+		// Handle channel-based animation (newer format)
 		if (!usdAnimation.channels || !usdAnimation.samplers) {
-			console.warn(`Animation ${i} missing channels or samplers`);
+			console.warn(`Animation ${i} missing channels/samplers and tracks`);
 			continue;
 		}
 
@@ -240,10 +347,12 @@ async function loadUSDModel() {
 	// Use useZstdCompressedWasm: false since compressed WASM is not available
 	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
 
-	const suzanne_filename = "./assets/suzanne.usdc";
+	//const usd_filename = "./assets/cube-animation.usda";
+	//const usd_filename = "./assets/suzanne-xform.usdc";
+	const usd_filename = "./assets/wings-3.usdc";
 
 	// Load USD scene
-	const usd_scene = await loader.loadAsync(suzanne_filename);
+	const usd_scene = await loader.loadAsync(usd_filename);
 
 	// Get the default root node from USD
 	const usdRootNode = usd_scene.getDefaultRootNode();
@@ -288,6 +397,7 @@ async function loadUSDModel() {
 			// Update animation parameters
 			animationParams.hasUSDAnimations = true;
 			animationParams.usdAnimationCount = usdAnimations.length;
+			animationParams.useUSDAnimation = true; // Auto-enable USD animations
 
 			// Show the USD animation folder in GUI
 			if (window.usdAnimationFolder) {
@@ -311,18 +421,44 @@ async function loadUSDModel() {
 				}
 				console.log(`Animation ${index}: ${clip.name}, duration: ${clip.duration}s, tracks: ${clip.tracks.length}${typeStr}`);
 			});
+
+			// Set time range from first USD animation
+			const firstClip = usdAnimations[0];
+			if (firstClip && firstClip.duration > 0) {
+				animationParams.beginTime = 0;
+				animationParams.endTime = firstClip.duration;
+				animationParams.duration = firstClip.duration;
+				animationParams.time = 0; // Reset time to beginning
+				console.log(`Set time range from USD animation: 0s - ${firstClip.duration}s`);
+
+				// Update GUI controllers if they exist
+				updateTimeRangeGUIControllers(firstClip.duration);
+			}
+
+			// Play the first USD animation automatically
+			playUSDAnimation(0);
+		} else {
+			// No USD animations found - use synthetic animations
+			console.log('No USD animations found, using synthetic animations');
+			animationParams.useUSDAnimation = false;
+			updateAnimationClip();
 		}
 	} catch (error) {
 		console.log('No animations found in USD file or animation extraction not supported:', error);
+		// Fallback to synthetic animations
+		animationParams.useUSDAnimation = false;
+		updateAnimationClip();
 	}
-
-	// Initialize animation after USD model is loaded
-	updateAnimationClip();
 }
 
 // Play USD animation by index
 function playUSDAnimation(index) {
 	if (index >= 0 && index < usdAnimations.length) {
+		// Ensure mixer exists
+		if (!mixer && parentCube) {
+			mixer = new THREE.AnimationMixer(parentCube);
+		}
+
 		// Stop current animation
 		if (animationAction) {
 			animationAction.stop();
@@ -562,13 +698,25 @@ const animationParams = {
 const gui = new GUI();
 gui.title('Animation Controls');
 
+// Store references to GUI controllers for dynamic updates
+let timelineController = null;
+let beginTimeController = null;
+let endTimeController = null;
+
 // Playback controls
 const playbackFolder = gui.addFolder('Playback');
 playbackFolder.add(animationParams, 'playPause').name('Play / Pause');
 playbackFolder.add(animationParams, 'reset').name('Reset');
 playbackFolder.add(animationParams, 'speed', 0, 3, 0.1).name('Speed');
-playbackFolder.add(animationParams, 'time', 0, 30, 0.01)
-	.name('Timeline').listen();
+timelineController = playbackFolder.add(animationParams, 'time', 0, 30, 0.01)
+	.name('Timeline')
+	.listen()
+	.onChange((value) => {
+		// When user manually scrubs the timeline, update animation action
+		if (animationAction) {
+			animationAction.time = value;
+		}
+	});
 playbackFolder.open();
 
 // USD Animation controls (will be populated when USD file is loaded)
@@ -586,7 +734,7 @@ usdAnimationFolder.hide();
 
 // Time range controls
 const timeRangeFolder = gui.addFolder('Time Range');
-timeRangeFolder.add(animationParams, 'beginTime', 0, 29, 0.1)
+beginTimeController = timeRangeFolder.add(animationParams, 'beginTime', 0, 29, 0.1)
 	.name('Begin Time (s)')
 	.onChange(() => {
 		if (animationParams.beginTime >= animationParams.endTime) {
@@ -594,7 +742,7 @@ timeRangeFolder.add(animationParams, 'beginTime', 0, 29, 0.1)
 		}
 		animationParams.updateDuration();
 	});
-timeRangeFolder.add(animationParams, 'endTime', 0.1, 30, 0.1)
+endTimeController = timeRangeFolder.add(animationParams, 'endTime', 0.1, 30, 0.1)
 	.name('End Time (s)')
 	.onChange(() => {
 		if (animationParams.endTime <= animationParams.beginTime) {
@@ -607,6 +755,31 @@ timeRangeFolder.add(animationParams, 'duration', 0.1, 30, 0.1)
 	.listen()
 	.disable();
 timeRangeFolder.open();
+
+// Function to update time range GUI controllers when animation is loaded
+function updateTimeRangeGUIControllers(maxDuration) {
+	const newMax = Math.max(maxDuration, 30); // Ensure minimum of 30s for usability
+
+	// Update timeline controller
+	if (timelineController) {
+		timelineController.max(newMax);
+		timelineController.updateDisplay();
+	}
+
+	// Update begin time controller
+	if (beginTimeController) {
+		beginTimeController.max(newMax - 0.1);
+		beginTimeController.updateDisplay();
+	}
+
+	// Update end time controller
+	if (endTimeController) {
+		endTimeController.max(newMax);
+		endTimeController.updateDisplay();
+	}
+
+	console.log(`Updated GUI time range to 0-${newMax}s`);
+}
 
 // Cube KeyframeTrack controls
 const cubeTracksFolder = gui.addFolder('Cube KeyframeTracks');
@@ -664,11 +837,18 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 	const loader = new TinyUSDZLoader();
 	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
 
-	// Convert ArrayBuffer to Uint8Array
-	const uint8Array = new Uint8Array(arrayBuffer);
+	// Create a Blob URL from the ArrayBuffer
+	// This allows the loader to load the file as if it were a normal URL
+	const blob = new Blob([arrayBuffer]);
+	const blobUrl = URL.createObjectURL(blob);
 
-	// Load USD scene from binary data
-	const usd_scene = await loader.loadFromBinary(uint8Array, filename);
+	console.log(`Loading USD from file: ${filename} (${(arrayBuffer.byteLength / 1024).toFixed(2)} KB)`);
+
+	// Load USD scene from Blob URL
+	const usd_scene = await loader.loadAsync(blobUrl);
+
+	// Clean up the Blob URL after loading
+	URL.revokeObjectURL(blobUrl);
 
 	// Get the default root node from USD
 	const usdRootNode = usd_scene.getDefaultRootNode();
@@ -713,6 +893,7 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 			// Update animation parameters
 			animationParams.hasUSDAnimations = true;
 			animationParams.usdAnimationCount = usdAnimations.length;
+			animationParams.useUSDAnimation = true; // Auto-enable USD animations
 
 			// Show the USD animation folder in GUI
 			if (window.usdAnimationFolder) {
@@ -736,27 +917,54 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 				}
 				console.log(`Animation ${index}: ${clip.name}, duration: ${clip.duration}s, tracks: ${clip.tracks.length}${typeStr}`);
 			});
+
+			// Set time range from first USD animation
+			const firstClip = usdAnimations[0];
+			if (firstClip && firstClip.duration > 0) {
+				animationParams.beginTime = 0;
+				animationParams.endTime = firstClip.duration;
+				animationParams.duration = firstClip.duration;
+				animationParams.time = 0; // Reset time to beginning
+				console.log(`Set time range from USD animation: 0s - ${firstClip.duration}s`);
+
+				// Update GUI controllers if they exist
+				updateTimeRangeGUIControllers(firstClip.duration);
+			}
+
+			// Play the first USD animation automatically
+			playUSDAnimation(0);
 		} else {
-			// Hide USD animations if none found
+			// No USD animations found - use synthetic animations
+			console.log('No USD animations found, using synthetic animations');
+			animationParams.useUSDAnimation = false;
+
+			// Hide USD animations folder
 			if (window.usdAnimationFolder) {
 				window.usdAnimationFolder.hide();
 			}
 			if (window.updateAnimationList) {
 				window.updateAnimationList([], []);
 			}
+
+			// Initialize synthetic animation
+			updateAnimationClip();
 		}
 	} catch (error) {
 		console.log('No animations found in USD file or animation extraction not supported:', error);
+
+		// Fallback to synthetic animations
+		animationParams.useUSDAnimation = false;
+
 		if (window.usdAnimationFolder) {
 			window.usdAnimationFolder.hide();
 		}
 		if (window.updateAnimationList) {
 			window.updateAnimationList([], []);
 		}
-	}
 
-	// Initialize synthetic animation
-	updateAnimationClip();
+		// Initialize synthetic animation
+		updateAnimationClip();
+	}
 }
 
 // Listen for file upload events

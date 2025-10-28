@@ -23,7 +23,17 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-if (CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+
+  if (TINYUSDZ_WASM64)
+    set(CMAKE_CXX_FLAGS_DEBUG "-g4 -sMEMORY64")
+    set(CMAKE_C_FLAGS_DEBUG "-g4 -sMEMORY64")
+  else()
+    set(CMAKE_CXX_FLAGS_DEBUG "-g4") # -sMEMORY64"
+    set(CMAKE_C_FLAGS_DEBUG "-g4") # -sMEMORY64"
+  endif()
+
+elseif (CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
 
   # Use Oz to reduce size further than Os
   if (TINYUSDZ_WASM64)
@@ -97,16 +107,32 @@ endif()
 # --source-map-base http://localhost:8021/ 
 
 # flags = try to lower heap memory use
-set(TINYUSDZ_EMCC_LINK_FLAGS "-Oz -sENVIRONMENT='web,worker,node' \
- -sMALLOC=emmalloc \
- -sSTACK_SIZE=512000 \
- -sALLOW_MEMORY_GROWTH=1 \
- -sFILESYSTEM=0 \
- -sSAFE_HEAP=0 \
- -sWASM_BIGINT=1 \
- -sMODULARIZE=1 -sEXPORT_ES6 \
- -sINVOKE_RUN=0 --bind ")
 
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+  set(TINYUSDZ_EMCC_LINK_FLAGS "-g4 -sENVIRONMENT='web,worker,node' \
+   -sMALLOC=emmalloc \
+   -sSTACK_SIZE=1024000 \
+   -sALLOW_MEMORY_GROWTH=1 \
+   -sFILESYSTEM=0 \
+   -sSAFE_HEAP=1 \
+   -sWASM_BIGINT=1 \
+   -sMODULARIZE=1 -sEXPORT_ES6 \
+   -sINVOKE_RUN=0 --bind \
+   -sDISABLE_EXCEPTION_CATCHING=0 \
+   -sNO_DISABLE_EXCEPTION_CATCHING \
+   --source-map-base http://localhost:5173/ ")
+else()
+  set(TINYUSDZ_EMCC_LINK_FLAGS "-Oz -sENVIRONMENT='web,worker,node' \
+   -sMALLOC=emmalloc \
+   -sSTACK_SIZE=512000 \
+   -sALLOW_MEMORY_GROWTH=1 \
+   -sFILESYSTEM=0 \
+   -sSAFE_HEAP=10 \
+   -sWASM_BIGINT=1 \
+   -sMODULARIZE=1 -sEXPORT_ES6 \
+   -sINVOKE_RUN=0 --bind ")
+endif()
+  
 if (TINYUSDZ_WASM64)
   # assertion=1 cause runtime error(Cannot mix BigInt and ... in assert()), so use 2
   string(APPEND TINYUSDZ_EMCC_LINK_FLAGS " -sASSERTIONS=2 -sMEMORY64 -sMAXIMUM_MEMORY=8GB")
