@@ -35,8 +35,11 @@ class FileFetcher {
   async fetch(url) {
     await this.init();
 
-    if (this.is_node) {
-      // Node.js environment - use fs.readFileSync
+    // Check if this is a blob URL - always use fetch for blob URLs
+    const isBlobUrl = url.startsWith('blob:');
+
+    if (this.is_node && !isBlobUrl) {
+      // Node.js environment - use fs.readFileSync for file paths
       try {
         if (url.startsWith('file://')) {
           url = url.substring(7); // Remove file:// prefix
@@ -55,7 +58,7 @@ class FileFetcher {
         throw new Error(`Failed to read file: ${url} - ${error.message}`);
       }
     } else {
-      // Browser environment - use fetch API and convert to File
+      // Browser environment or blob URL - use fetch API and convert to File
       const response = await fetch(url);
       if (!response.ok) {
         throw new Error(`Failed to fetch: ${response.statusText}`);
@@ -454,10 +457,11 @@ class TinyUSDZLoader extends Loader {
                 return fetch(url);
             })
             .then((response) => {
-                //console.log('fetch USDZ file done:', url);
+                console.log('fetch USDZ file done:', url);
                 return response.arrayBuffer();
             })
             .then((usd_data) => {
+                console.log('usd_data done:', url);
                 const usd_binary = new Uint8Array(usd_data);
 
                 //console.log('Loaded USD binary data:', usd_binary.length, 'bytes');
