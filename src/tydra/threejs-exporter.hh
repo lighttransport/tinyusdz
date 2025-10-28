@@ -15,7 +15,19 @@
 #include <vector>
 #include <map>
 #include "render-data.hh"
+
+// Suppress warnings from nlohmann/json.hpp
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wcovered-switch-default"
+#pragma clang diagnostic ignored "-Wdeprecated-literal-operator"
+#endif
+
 #include "../external/jsonhpp/nlohmann/json.hpp"
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 namespace tinyusdz {
 namespace tydra {
@@ -151,16 +163,16 @@ private:
 ///
 struct MaterialParameterMapping {
   // OpenPBR to Three.js MeshPhysicalMaterial
-  static const std::map<std::string, std::string> openpbr_to_physical;
+  static const std::map<std::string, std::string>& openpbr_to_physical();
 
   // OpenPBR to Three.js node names
-  static const std::map<std::string, std::string> openpbr_to_nodes;
+  static const std::map<std::string, std::string>& openpbr_to_nodes();
 
   // UsdPreviewSurface to Three.js
-  static const std::map<std::string, std::string> preview_to_physical;
+  static const std::map<std::string, std::string>& preview_to_physical();
 
   // Color space conversions
-  static const std::map<std::string, std::string> colorspace_map;
+  static const std::map<std::string, std::string>& colorspace_map();
 };
 
 } // namespace tydra
