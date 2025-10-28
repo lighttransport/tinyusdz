@@ -1173,31 +1173,14 @@ inline matrix4d operator*(const matrix4d &a, const matrix4d &b) {
 }
 
 // Equality operators for matrix types
-// Use memcmp for exact byte-wise comparison for now.
-// TODO: Use floating point compare(suitable for dedup)
-inline bool operator==(const matrix2f &a, const matrix2f &b) {
-  return std::memcmp(&a.m, &b.m, sizeof(a.m)) == 0;
-}
-
-inline bool operator==(const matrix3f &a, const matrix3f &b) {
-  return std::memcmp(&a.m, &b.m, sizeof(a.m)) == 0;
-}
-
-inline bool operator==(const matrix4f &a, const matrix4f &b) {
-  return std::memcmp(&a.m, &b.m, sizeof(a.m)) == 0;
-}
-
-inline bool operator==(const matrix2d &a, const matrix2d &b) {
-  return std::memcmp(&a.m, &b.m, sizeof(a.m)) == 0;
-}
-
-inline bool operator==(const matrix3d &a, const matrix3d &b) {
-  return std::memcmp(&a.m, &b.m, sizeof(a.m)) == 0;
-}
-
-inline bool operator==(const matrix4d &a, const matrix4d &b) {
-  return std::memcmp(&a.m, &b.m, sizeof(a.m)) == 0;
-}
+// Use floating-point aware comparison (suitable for dedup)
+// Implementations in value-types.cc
+bool operator==(const matrix2f &a, const matrix2f &b);
+bool operator==(const matrix3f &a, const matrix3f &b);
+bool operator==(const matrix4f &a, const matrix4f &b);
+bool operator==(const matrix2d &a, const matrix2d &b);
+bool operator==(const matrix3d &a, const matrix3d &b);
+bool operator==(const matrix4d &a, const matrix4d &b);
 
 // Quaternion has memory layout of [x, y, z, w] in Crate(Binary)
 // and QfQuat class in pxrUSD.
