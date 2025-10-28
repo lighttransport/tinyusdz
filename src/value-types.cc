@@ -1322,5 +1322,83 @@ bool TimeSamples::get_sample_at(const double t, Sample **dst) {
   return false;
 }
 
+// Floating-point aware equality operators for matrix types
+// Use epsilon-based comparison suitable for deduplication
+bool operator==(const matrix2f &a, const matrix2f &b) {
+  return math::is_close(a.m[0][0], b.m[0][0]) &&
+         math::is_close(a.m[0][1], b.m[0][1]) &&
+         math::is_close(a.m[1][0], b.m[1][0]) &&
+         math::is_close(a.m[1][1], b.m[1][1]);
+}
+
+bool operator==(const matrix3f &a, const matrix3f &b) {
+  return math::is_close(a.m[0][0], b.m[0][0]) &&
+         math::is_close(a.m[0][1], b.m[0][1]) &&
+         math::is_close(a.m[0][2], b.m[0][2]) &&
+         math::is_close(a.m[1][0], b.m[1][0]) &&
+         math::is_close(a.m[1][1], b.m[1][1]) &&
+         math::is_close(a.m[1][2], b.m[1][2]) &&
+         math::is_close(a.m[2][0], b.m[2][0]) &&
+         math::is_close(a.m[2][1], b.m[2][1]) &&
+         math::is_close(a.m[2][2], b.m[2][2]);
+}
+
+bool operator==(const matrix4f &a, const matrix4f &b) {
+  return math::is_close(a.m[0][0], b.m[0][0]) &&
+         math::is_close(a.m[0][1], b.m[0][1]) &&
+         math::is_close(a.m[0][2], b.m[0][2]) &&
+         math::is_close(a.m[0][3], b.m[0][3]) &&
+         math::is_close(a.m[1][0], b.m[1][0]) &&
+         math::is_close(a.m[1][1], b.m[1][1]) &&
+         math::is_close(a.m[1][2], b.m[1][2]) &&
+         math::is_close(a.m[1][3], b.m[1][3]) &&
+         math::is_close(a.m[2][0], b.m[2][0]) &&
+         math::is_close(a.m[2][1], b.m[2][1]) &&
+         math::is_close(a.m[2][2], b.m[2][2]) &&
+         math::is_close(a.m[2][3], b.m[2][3]) &&
+         math::is_close(a.m[3][0], b.m[3][0]) &&
+         math::is_close(a.m[3][1], b.m[3][1]) &&
+         math::is_close(a.m[3][2], b.m[3][2]) &&
+         math::is_close(a.m[3][3], b.m[3][3]);
+}
+
+bool operator==(const matrix2d &a, const matrix2d &b) {
+  return math::is_close(a.m[0][0], b.m[0][0]) &&
+         math::is_close(a.m[0][1], b.m[0][1]) &&
+         math::is_close(a.m[1][0], b.m[1][0]) &&
+         math::is_close(a.m[1][1], b.m[1][1]);
+}
+
+bool operator==(const matrix3d &a, const matrix3d &b) {
+  return math::is_close(a.m[0][0], b.m[0][0]) &&
+         math::is_close(a.m[0][1], b.m[0][1]) &&
+         math::is_close(a.m[0][2], b.m[0][2]) &&
+         math::is_close(a.m[1][0], b.m[1][0]) &&
+         math::is_close(a.m[1][1], b.m[1][1]) &&
+         math::is_close(a.m[1][2], b.m[1][2]) &&
+         math::is_close(a.m[2][0], b.m[2][0]) &&
+         math::is_close(a.m[2][1], b.m[2][1]) &&
+         math::is_close(a.m[2][2], b.m[2][2]);
+}
+
+bool operator==(const matrix4d &a, const matrix4d &b) {
+  return math::is_close(a.m[0][0], b.m[0][0]) &&
+         math::is_close(a.m[0][1], b.m[0][1]) &&
+         math::is_close(a.m[0][2], b.m[0][2]) &&
+         math::is_close(a.m[0][3], b.m[0][3]) &&
+         math::is_close(a.m[1][0], b.m[1][0]) &&
+         math::is_close(a.m[1][1], b.m[1][1]) &&
+         math::is_close(a.m[1][2], b.m[1][2]) &&
+         math::is_close(a.m[1][3], b.m[1][3]) &&
+         math::is_close(a.m[2][0], b.m[2][0]) &&
+         math::is_close(a.m[2][1], b.m[2][1]) &&
+         math::is_close(a.m[2][2], b.m[2][2]) &&
+         math::is_close(a.m[2][3], b.m[2][3]) &&
+         math::is_close(a.m[3][0], b.m[3][0]) &&
+         math::is_close(a.m[3][1], b.m[3][1]) &&
+         math::is_close(a.m[3][2], b.m[3][2]) &&
+         math::is_close(a.m[3][3], b.m[3][3]);
+}
+
 }  // namespace value
 }  // namespace tinyusdz
