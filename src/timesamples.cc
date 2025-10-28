@@ -404,15 +404,17 @@ std::vector<std::pair<double, std::pair<value::Value, bool>>> PODTimeSamples::ge
             size_t byte_offset = 0;                                           \
             bool is_array_flag = false;                                       \
             if (resolve_offset(i, &byte_offset, &is_array_flag)) {            \
-              DCOUT("PODTimeSamples::get_samples_converted: sample " << i << ", resolved offset=" << byte_offset << ", is_array=" << is_array_flag << ", _array_size=" << _array_size); \
+              /* Get the actual array count for THIS sample (not _array_size which is just a cache) */ \
+              size_t array_count = (i < _array_counts.size()) ? _array_counts[i] : _array_size; \
+              DCOUT("PODTimeSamples::get_samples_converted: sample " << i << ", resolved offset=" << byte_offset << ", is_array=" << is_array_flag << ", array_count=" << array_count); \
               std::vector<__type> array_values;                               \
-              array_values.resize(_array_size);                               \
+              array_values.resize(array_count);                               \
               /* Direct memcpy for non-bool arrays (bool handled separately) */ \
-              if (_array_size > 0 && byte_offset + sizeof(__type) * _array_size <= _values.size()) { \
+              if (array_count > 0 && byte_offset + sizeof(__type) * array_count <= _values.size()) { \
                 std::memcpy(&array_values[0], _values.data() + byte_offset,   \
-                            sizeof(__type) * _array_size);                     \
+                            sizeof(__type) * array_count);                     \
               } else {                                                         \
-                DCOUT("PODTimeSamples: ERROR - invalid offset or size, byte_offset=" << byte_offset << ", _array_size=" << _array_size << ", _values.size=" << _values.size()); \
+                DCOUT("PODTimeSamples: ERROR - invalid offset or size, byte_offset=" << byte_offset << ", array_count=" << array_count << ", _values.size=" << _values.size()); \
               }                                                                \
               val = value::Value(array_values);                               \
             } else {                                                          \
@@ -433,13 +435,15 @@ std::vector<std::pair<double, std::pair<value::Value, bool>>> PODTimeSamples::ge
           bool blocked = _blocked[i];                                         \
           value::Value val;                                                    \
           if (!blocked) {                                                      \
+            /* Get the actual array count for THIS sample */ \
+            size_t array_count = (i < _array_counts.size()) ? _array_counts[i] : _array_size; \
             std::vector<__type> array_values;                                 \
-            array_values.resize(_array_size);                                 \
+            array_values.resize(array_count);                                 \
             /* Direct memcpy for non-bool arrays (bool handled separately) */ \
             std::memcpy(&array_values[0], _values.data() + value_offset,      \
-                        sizeof(__type) * _array_size);                                                                  \
+                        sizeof(__type) * array_count);                                                                  \
             val = value::Value(array_values);                                 \
-            value_offset += element_size;                                     \
+            value_offset += sizeof(__type) * array_count;                     \
           } else {                                                            \
             val = value::Value(value::ValueBlock());                          \
           }                                                                    \

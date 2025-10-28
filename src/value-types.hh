@@ -2063,6 +2063,34 @@ class Value {
   }
 #endif
 
+  // Helper to log vector size
+  template <typename T>
+  static void log_vector_size(const std::vector<T>& vec) {
+    TUSDZ_LOG_I("  vector size: " << vec.size());
+  }
+
+  template <typename T>
+  static void log_vector_size(const T&) {
+    // Non-vector type, do nothing
+  }
+
+  // Helper to check vector size bounds
+  template <typename T>
+  static bool check_vector_size(const std::vector<T>& vec) {
+    constexpr size_t MAX_REASONABLE_SIZE = 100000000;
+    if (vec.size() > MAX_REASONABLE_SIZE) {
+      TUSDZ_LOG_E("ERROR: Vector size " << vec.size() << " exceeds reasonable limit (" << MAX_REASONABLE_SIZE << "). Data is likely corrupted!");
+      return false;
+    }
+    return true;
+  }
+
+  template <typename T>
+  static bool check_vector_size(const T&) {
+    // Non-vector type, always OK
+    return true;
+  }
+
   // Type-safe way to get concrete value.
   template <class T>
   nonstd::optional<T> get_value(bool strict_cast = false) const {
@@ -2073,12 +2101,23 @@ class Value {
         return nonstd::nullopt;
       }
 
+      TUSDZ_LOG_I("get_value: about to move/copy value of type " << TypeTraits<T>::type_name());
+      log_vector_size(*pv);
       return std::move(*pv);
     } else if (!strict_cast) {
 
       if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
         if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
-          return std::move(*linb::cast<const T>(&v_));
+          TUSDZ_LOG_I("get_value: strict_cast=false, both are array types, about to cast for type " << TypeTraits<T>::type_name());
+          const T* pv = linb::cast<const T>(&v_);
+          TUSDZ_LOG_I("get_value: cast successful, pv=" << (pv ? "valid" : "null"));
+          if (pv) {
+            log_vector_size(*pv);
+            if (!check_vector_size(*pv)) {
+              return nonstd::nullopt;
+            }
+          }
+          return std::move(*pv);
         }
       } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
         if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
