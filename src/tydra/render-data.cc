@@ -1130,7 +1130,7 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
   (void)stage;
 
   // HACK
-  return nonstd::make_unexpected("Disabled");
+  //return nonstd::make_unexpected("Disabled");
 
   std::string err;
   GeomPrimvar primvar;
