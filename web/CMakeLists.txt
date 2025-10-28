@@ -117,7 +117,10 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
    -sSAFE_HEAP=1 \
    -sWASM_BIGINT=1 \
    -sMODULARIZE=1 -sEXPORT_ES6 \
-   -sINVOKE_RUN=0 --bind ")
+   -sINVOKE_RUN=0 --bind \
+   -sDISABLE_EXCEPTION_CATCHING=0 \
+   -sNO_DISABLE_EXCEPTION_CATCHING \
+   --source-map-base http://localhost:5173/ ")
 else()
   set(TINYUSDZ_EMCC_LINK_FLAGS "-Oz -sENVIRONMENT='web,worker,node' \
    -sMALLOC=emmalloc \
