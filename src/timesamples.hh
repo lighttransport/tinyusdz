@@ -631,26 +631,19 @@ public:
     // If _array_size not yet set, determine it from the referenced sample
     if (_array_size == 0) {
       DCOUT("PODTimeSamples: _array_size is 0, trying to determine from ref_index " << ref_index);
-      // Resolve the reference to get the actual data offset
-      size_t byte_offset = 0;
-      bool is_array = false;
-      if (resolve_offset(ref_index, &byte_offset, &is_array)) {
-        DCOUT("PODTimeSamples: resolved offset, is_array=" << is_array << ", byte_offset=" << byte_offset);
-        if (is_array) {
-          // Read the array size from the referenced data
-          // The first size_t in the buffer contains the array count
-          size_t* count_ptr = reinterpret_cast<size_t*>(_values.data() + byte_offset);
-          _array_size = *count_ptr;
-          DCOUT("PODTimeSamples: read _array_size=" << _array_size << " from buffer");
+      // The array count is stored in _array_counts, NOT in the buffer!
+      // The _values buffer contains only raw element data (no count prefix)
+      if (ref_index < _array_counts.size()) {
+        _array_size = _array_counts[ref_index];
+        DCOUT("PODTimeSamples: read _array_size=" << _array_size << " from _array_counts[" << ref_index << "]");
 
-          // Also set type info if not yet initialized
-          _type_id = value::TypeTraits<T>::underlying_type_id();
-          _is_stl_array = true;  // Using std::vector-based array
-          _is_typed_array = false;  // Not using TypedArray
-          _element_size = sizeof(T);  // Cache element size
-        }
+        // Also set type info if not yet initialized
+        _type_id = value::TypeTraits<T>::underlying_type_id();
+        _is_stl_array = true;  // Using std::vector-based array
+        _is_typed_array = false;  // Not using TypedArray
+        _element_size = sizeof(T);  // Cache element size
       } else {
-        DCOUT("PODTimeSamples: failed to resolve offset for ref_index " << ref_index);
+        DCOUT("PODTimeSamples: ref_index " << ref_index << " out of bounds for _array_counts (size=" << _array_counts.size() << ")");
       }
     }
 
