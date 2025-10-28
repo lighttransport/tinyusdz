@@ -25,7 +25,7 @@ function reportMemUsage() {
 }
 
 // Print animation clip info
-function printAnimationClips(usd, detailed = false) {
+function printAnimationClips(usd, detailed = false, dumpKeyframes = false) {
   const numAnims = usd.numAnimations();
 
   if (numAnims === 0) {
@@ -110,6 +110,60 @@ function printAnimationClips(usd, detailed = false) {
                     if (sampler.times && sampler.times.length > 0) {
                       console.log(`      Keyframes: ${sampler.times.length}`);
                       console.log(`      Time Range: ${sampler.times[0].toFixed(3)}s - ${sampler.times[sampler.times.length - 1].toFixed(3)}s`);
+
+                      // Dump keyframe data if --keyframes flag is set
+                      if (dumpKeyframes) {
+                        console.log(`      Keyframe Data:`);
+                        for (let k = 0; k < sampler.times.length; k++) {
+                          const time = sampler.times[k].toFixed(3);
+                          let valueStr = '';
+
+                          if (sampler.values) {
+                            // Handle different value types
+                            if (channel.path && channel.path.includes('translation')) {
+                              // Translation: 3 floats per keyframe
+                              const idx = k * 3;
+                              if (sampler.values[idx] !== undefined) {
+                                valueStr = `[${sampler.values[idx].toFixed(3)}, ${sampler.values[idx+1].toFixed(3)}, ${sampler.values[idx+2].toFixed(3)}]`;
+                              }
+                            } else if (channel.path && channel.path.includes('rotation')) {
+                              // Rotation: could be 3 (euler) or 4 (quaternion) floats
+                              const componentsPerKey = sampler.values.length / sampler.times.length;
+                              const idx = k * componentsPerKey;
+                              if (componentsPerKey === 4) {
+                                valueStr = `[${sampler.values[idx].toFixed(3)}, ${sampler.values[idx+1].toFixed(3)}, ${sampler.values[idx+2].toFixed(3)}, ${sampler.values[idx+3].toFixed(3)}]`;
+                              } else if (componentsPerKey === 3) {
+                                valueStr = `[${sampler.values[idx].toFixed(3)}, ${sampler.values[idx+1].toFixed(3)}, ${sampler.values[idx+2].toFixed(3)}]`;
+                              }
+                            } else if (channel.path && channel.path.includes('scale')) {
+                              // Scale: 3 floats per keyframe
+                              const idx = k * 3;
+                              if (sampler.values[idx] !== undefined) {
+                                valueStr = `[${sampler.values[idx].toFixed(3)}, ${sampler.values[idx+1].toFixed(3)}, ${sampler.values[idx+2].toFixed(3)}]`;
+                              }
+                            } else {
+                              // Generic handling: try to determine component count
+                              const componentsPerKey = sampler.values.length / sampler.times.length;
+                              const idx = k * componentsPerKey;
+                              const components = [];
+                              for (let c = 0; c < componentsPerKey; c++) {
+                                if (sampler.values[idx + c] !== undefined) {
+                                  components.push(sampler.values[idx + c].toFixed(3));
+                                }
+                              }
+                              if (components.length > 0) {
+                                valueStr = componentsPerKey === 1 ? components[0] : `[${components.join(', ')}]`;
+                              }
+                            }
+                          }
+
+                          if (valueStr) {
+                            console.log(`        Frame ${k}: t=${time}s, value=${valueStr}`);
+                          } else {
+                            console.log(`        Frame ${k}: t=${time}s`);
+                          }
+                        }
+                      }
                     }
                     if (sampler.interpolation) {
                       console.log(`      Interpolation: ${sampler.interpolation}`);
@@ -123,18 +177,73 @@ function printAnimationClips(usd, detailed = false) {
               console.log(`    Skeletal Joint Channels: ${skeletalChannels}`);
             }
 
-            // Legacy track information (if present)
+            // Track information (main animation data in TinyUSDZ)
             if (anim.tracks && anim.tracks.length) {
-              console.log(`\n  Legacy Track Information:`);
-              console.log(`    Tracks: ${anim.tracks.length}`);
+              console.log(`\n  Track Information:`);
+              console.log(`    Total Tracks: ${anim.tracks.length}`);
               anim.tracks.forEach((track, idx) => {
-                console.log(`      Track ${idx}: ${track.name || 'unnamed'}`);
-                if (track.type) console.log(`        Type: ${track.type}`);
-                if (track.keyframes && track.keyframes.length) {
-                  console.log(`        Keyframes: ${track.keyframes.length}`);
-                  const times = track.times || [];
-                  if (times.length > 0) {
-                    console.log(`        Time range: ${times[0].toFixed(3)}s - ${times[times.length - 1].toFixed(3)}s`);
+                console.log(`\n    Track ${idx}: ${track.name || 'unnamed'}`);
+                if (track.type) console.log(`      Type: ${track.type}`);
+                if (track.path) console.log(`      Path: ${track.path}`);
+                if (track.target) console.log(`      Target: ${track.target}`);
+                if (track.interpolation) console.log(`      Interpolation: ${track.interpolation}`);
+
+                // Show keyframe count and time range
+                if (track.times && track.times.length > 0) {
+                  console.log(`      Keyframes: ${track.times.length}`);
+                  console.log(`      Time range: ${track.times[0].toFixed(3)}s - ${track.times[track.times.length - 1].toFixed(3)}s`);
+                } else if (track.keyframes && track.keyframes.length) {
+                  console.log(`      Keyframes: ${track.keyframes.length}`);
+                }
+
+                // Dump keyframe data if requested
+                if (dumpKeyframes) {
+                  if (track.times && track.values) {
+                    console.log(`      Keyframe Data:`);
+                    for (let k = 0; k < track.times.length; k++) {
+                      const time = track.times[k].toFixed(3);
+                      let valueStr = '';
+
+                      // Determine the number of components per keyframe
+                      const numValues = track.values.length;
+                      const numKeys = track.times.length;
+                      const componentsPerKey = numValues / numKeys;
+
+                      // Extract value based on component count
+                      const idx = k * componentsPerKey;
+                      if (componentsPerKey === 1) {
+                        valueStr = track.values[idx].toFixed(3);
+                      } else if (componentsPerKey === 3) {
+                        valueStr = `[${track.values[idx].toFixed(3)}, ${track.values[idx+1].toFixed(3)}, ${track.values[idx+2].toFixed(3)}]`;
+                      } else if (componentsPerKey === 4) {
+                        valueStr = `[${track.values[idx].toFixed(3)}, ${track.values[idx+1].toFixed(3)}, ${track.values[idx+2].toFixed(3)}, ${track.values[idx+3].toFixed(3)}]`;
+                      } else {
+                        // Generic handling for any number of components
+                        const components = [];
+                        for (let c = 0; c < componentsPerKey; c++) {
+                          components.push(track.values[idx + c].toFixed(3));
+                        }
+                        valueStr = `[${components.join(', ')}]`;
+                      }
+
+                      console.log(`        Frame ${k}: t=${time}s, value=${valueStr}`);
+                    }
+                  } else if (track.keyframes) {
+                    console.log(`      Keyframe Data:`);
+                    track.keyframes.forEach((keyframe, k) => {
+                      let timeStr = keyframe.time !== undefined ? keyframe.time.toFixed(3) : 'unknown';
+                      let valueStr = '';
+
+                      if (keyframe.value !== undefined) {
+                        if (Array.isArray(keyframe.value)) {
+                          valueStr = `[${keyframe.value.map(v => v.toFixed(3)).join(', ')}]`;
+                        } else {
+                          valueStr = keyframe.value.toFixed(3);
+                        }
+                      }
+
+                      console.log(`        Frame ${k}: t=${timeStr}s, value=${valueStr}`);
+                    });
                   }
                 }
               });
@@ -180,11 +289,13 @@ async function main() {
     console.log('Arguments:');
     console.log('  <path-to-usd-file>   Path to USD file (.usd, .usda, .usdc, .usdz)');
     console.log('  --detailed            Print detailed animation track information');
+    console.log('  --keyframes           Dump all keyframe data (times and values)');
     console.log('  --memory              Print memory usage statistics');
     console.log('  --help                Show this help message\n');
     console.log('Examples:');
     console.log('  node animation-info.js ../../models/suzanne-subd-lv4.usdc');
     console.log('  node animation-info.js animation.usd --detailed');
+    console.log('  node animation-info.js cube-animation.usda --detailed --keyframes');
     console.log('  node animation-info.js model.usdz --detailed --memory');
     return;
   }
@@ -194,6 +305,7 @@ async function main() {
   const detailed = args.includes('--detailed');
   const showMemory = args.includes('--memory');
   const showHelp = args.includes('--help');
+  const dumpKeyframes = args.includes('--keyframes');
 
   if (showHelp) {
     console.log('node animation-info.js - USD Animation Information Viewer\n');
@@ -201,6 +313,7 @@ async function main() {
     console.log('Arguments:');
     console.log('  <path-to-usd-file>   Path to USD file (.usd, .usda, .usdc, .usdz)');
     console.log('  --detailed            Print detailed animation track information');
+    console.log('  --keyframes           Dump all keyframe data (times and values)');
     console.log('  --memory              Print memory usage statistics');
     console.log('  --help                Show this help message');
     return;
@@ -247,7 +360,7 @@ async function main() {
 
     // Print information
     printSceneInfo(usd);
-    printAnimationClips(usd, detailed);
+    printAnimationClips(usd, detailed, dumpKeyframes);
 
     // Print memory usage if requested
     if (showMemory) {
