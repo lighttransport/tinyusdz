@@ -1129,6 +1129,9 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
 
   (void)stage;
 
+  // HACK
+  //return nonstd::make_unexpected("Disabled");
+
   std::string err;
   GeomPrimvar primvar;
   if (!GetGeomPrimvar(stage, &mesh, name, &primvar, &err)) {
@@ -1140,6 +1143,7 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
                                    "\n");
   }
 
+  TUSDZ_LOG_I("get tex\n");
   // TODO: allow float2?
   if (primvar.get_type_id() !=
       value::TypeTraits<std::vector<value::texcoord2f>>::type_id()) {
@@ -1148,8 +1152,10 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
         primvar.get_type_name() + "\n");
   }
 
+  TUSDZ_LOG_I("flatten_with_indices\n");
   std::vector<value::texcoord2f> uvs;
   if (!primvar.flatten_with_indices(t, &uvs, tinterp)) {
+    TUSDZ_LOG_I("flatten_with_indices failed\n");
     return nonstd::make_unexpected(
         "Failed to retrieve texture coordinate primvar with concrete type.\n");
   }
@@ -1167,6 +1173,7 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
   }
 
 
+  TUSDZ_LOG_I("texcoord. " << name << ", " << uvs.size());
   DCOUT("texcoord " << name << " : " << uvs);
 
   vattr.format = VertexAttributeFormat::Vec2;
@@ -1175,6 +1182,7 @@ nonstd::expected<VertexAttribute, std::string> GetTextureCoordinate(
   vattr.indices.clear();  // just in case.
 
   vattr.name = name;  // TODO: add "primvars:" namespace?
+  TUSDZ_LOG_I("end");
 
   return std::move(vattr);
 }
@@ -3634,6 +3642,8 @@ bool RenderSceneConverter::ConvertMesh(
       if (ret) {
         const VertexAttribute &vattr = ret.value();
 
+        TUSDZ_LOG_I("uv attr");
+
         // Use slotId 0
         uvAttrs[0] = vattr;
       } else {
@@ -3699,6 +3709,7 @@ bool RenderSceneConverter::ConvertMesh(
     }
   }
 
+  TUSDZ_LOG_I("done uvAttr");
 
   if (mesh.has_primvar(env.mesh_config.default_tangents_primvar_name)) {
     GeomPrimvar pvar;
@@ -5494,6 +5505,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
       }
 
     } else {
+      TUSDZ_LOG_I("get_value");
       Animatable<value::texcoord2f> fallbacks = texture.st.get_value();
       value::texcoord2f uv;
       if (fallbacks.get(env.timecode, &uv)) {
@@ -5503,6 +5515,7 @@ bool RenderSceneConverter::ConvertUVTexture(const RenderSceneConverterEnv &env,
         // TODO: report warning.
         PUSH_WARN("Failed to get fallback `st` texcoord attribute.");
       }
+      TUSDZ_LOG_I("uv done");
     }
   }
 
