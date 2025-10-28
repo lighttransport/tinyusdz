@@ -82,11 +82,11 @@
 				The scene loads a USD model and can play both synthetic and USD-embedded animations.
 			</p>
 			<p>
-				<strong>Current file:</strong> <span id="currentFile">suzanne.usdc</span>
+				<strong>Current file:</strong> <span id="currentFile"></span>
 			</p>
 			<div id="file-controls">
 				<input type="file" id="fileInput" accept=".usd,.usda,.usdc,.usdz">
-				<button class="button" onclick="document.getElementById('fileInput').click()">Load USD File</button>
+				<button class="button" onclick="document.getElementById('fileInput').click()">Load USD File(Not working)</button>
 				<button class="button" onclick="window.reloadDefaultModel()">Reset to Default</button>
 			</div>
 			<div id="animation-info" style="display:none;">
@@ -123,6 +123,34 @@
 						const item = document.createElement('div');
 						item.className = 'animation-item';
 
+						// Analyze tracks to determine what's included
+						let trackLabels = [];
+						let hasTranslation = false;
+						let hasRotation = false;
+						let hasScale = false;
+
+						if (anim.tracks && anim.tracks.length > 0) {
+							anim.tracks.forEach(track => {
+								const trackName = track.name.toLowerCase();
+								if (trackName.includes('position') || trackName.includes('translation')) {
+									hasTranslation = true;
+								} else if (trackName.includes('quaternion') || trackName.includes('rotation')) {
+									hasRotation = true;
+								} else if (trackName.includes('scale')) {
+									hasScale = true;
+								}
+							});
+
+							// Build track label string
+							if (hasTranslation) trackLabels.push('t');
+							if (hasRotation) trackLabels.push('r');
+							if (hasScale) trackLabels.push('s');
+						}
+
+						const trackInfo = trackLabels.length > 0
+							? ` <span style="color: #6bb6ff; font-weight: bold;">[${trackLabels.join(',')}]</span>`
+							: '';
+
 						// Get animation type information if available
 						let typeInfo = '';
 						if (animationInfos && animationInfos[index]) {
@@ -135,7 +163,7 @@
 							}
 						}
 
-						item.innerHTML = `<strong>${index}:</strong> ${anim.name || 'Unnamed'} - ${anim.duration.toFixed(2)}s, ${anim.tracks.length} tracks${typeInfo}`;
+						item.innerHTML = `<strong>${index}:</strong> ${anim.name || 'Unnamed'} - ${anim.duration.toFixed(2)}s, ${anim.tracks.length} tracks${trackInfo}${typeInfo}`;
 						animList.appendChild(item);
 					});
 				} else {
@@ -145,7 +173,7 @@
 
 			// Reset to default model
 			window.reloadDefaultModel = function() {
-				document.getElementById('currentFile').textContent = 'suzanne.usdc';
+				document.getElementById('currentFile').textContent = 'cube-animation.usda';
 				const customEvent = new CustomEvent('loadDefaultModel');
 				window.dispatchEvent(customEvent);
 			};
