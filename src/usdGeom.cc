@@ -21,6 +21,7 @@
 #include "math-util.inc"
 #include "str-util.hh"
 #include "value-pprint.hh"
+#include "logger.hh"
 
 #define SET_ERROR_AND_RETURN(msg) \
   if (err) {                      \
@@ -257,10 +258,12 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
       return false;
     }
 
+    TUSDZ_LOG_I("get_value");
     std::vector<T> value;
     if (_attr.get_value<std::vector<T>>(t, &value, tinterp)) {
 
       uint32_t elementSize = _attr.metas().elementSize.value_or(1);
+      TUSDZ_LOG_I("elementSize" << elementSize);
 
       // Get indices at specified time
       std::vector<int32_t> indices;
@@ -273,9 +276,11 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
       } else {
         _ts_indices.get(&indices, t, tinterp);
       }
+      TUSDZ_LOG_I("indices.size " << indices.size());
 
       std::vector<T> expanded_val;
       auto ret = ExpandWithIndices(value, elementSize, indices, &expanded_val);
+      TUSDZ_LOG_I("ExpandWithIndices done");
       if (ret) {
         (*dest) = expanded_val;
         // Currently we ignore ret.value()
