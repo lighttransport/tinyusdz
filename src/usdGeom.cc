@@ -325,12 +325,14 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
     // Try to use TypedArrayView for zero-copy access when possible (default values only)
     // Only for trivially copyable types (excluding bool due to std::vector<bool> specialization)
     // Using SFINAE helper function for C++14 compatibility (avoids 'if constexpr' requirement)
-    std::vector<int32_t> indices;
-    if (has_default_indices()) {
-      indices = _indices;
-    }
-    if (try_zero_copy_flatten(_attr, t, indices, dest, err)) {
-      return true;  // Zero-copy path succeeded
+    {
+      std::vector<int32_t> indices;
+      if (has_default_indices()) {
+        indices = _indices;
+      }
+      if (try_zero_copy_flatten(_attr, t, indices, dest, err)) {
+        return true;  // Zero-copy path succeeded
+      }
     }
 
     // Fallback to std::vector for timesamples or if view failed
