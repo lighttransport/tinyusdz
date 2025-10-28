@@ -1,6 +1,17 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2024 - Present, Light Transport Entertainment Inc.
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wexit-time-destructors"
+#pragma clang diagnostic ignored "-Wc++17-extensions"
+#pragma clang diagnostic ignored "-Wsign-conversion"
+#pragma clang diagnostic ignored "-Wswitch-enum"
+#pragma clang diagnostic ignored "-Wdouble-promotion"
+#pragma clang diagnostic ignored "-Wunused-parameter"
+#pragma clang diagnostic ignored "-Wweak-vtables"
+#endif
+
 #include "threejs-exporter.hh"
 #include <sstream>
 #include <iomanip>
@@ -10,59 +21,71 @@ namespace tinyusdz {
 namespace tydra {
 
 // Parameter mapping tables
-const std::map<std::string, std::string> MaterialParameterMapping::openpbr_to_physical = {
-  {"base_color", "color"},
-  {"base_metalness", "metalness"},
-  {"base_roughness", "roughness"},
-  {"emission_color", "emissive"},
-  {"emission_luminance", "emissiveIntensity"},
-  {"opacity", "opacity"},
-  {"coat_weight", "clearcoat"},
-  {"coat_roughness", "clearcoatRoughness"},
-  {"sheen_weight", "sheen"},
-  {"sheen_color", "sheenColor"},
-  {"sheen_roughness", "sheenRoughness"},
-  {"specular_ior", "ior"},
-  {"transmission_weight", "transmission"},
-  {"base_weight", "opacity"}  // base_weight affects overall opacity
-};
+const std::map<std::string, std::string>& MaterialParameterMapping::openpbr_to_physical() {
+  static const std::map<std::string, std::string> mapping = {
+    {"base_color", "color"},
+    {"base_metalness", "metalness"},
+    {"base_roughness", "roughness"},
+    {"emission_color", "emissive"},
+    {"emission_luminance", "emissiveIntensity"},
+    {"opacity", "opacity"},
+    {"coat_weight", "clearcoat"},
+    {"coat_roughness", "clearcoatRoughness"},
+    {"sheen_weight", "sheen"},
+    {"sheen_color", "sheenColor"},
+    {"sheen_roughness", "sheenRoughness"},
+    {"specular_ior", "ior"},
+    {"transmission_weight", "transmission"},
+    {"base_weight", "opacity"}  // base_weight affects overall opacity
+  };
+  return mapping;
+}
 
-const std::map<std::string, std::string> MaterialParameterMapping::openpbr_to_nodes = {
-  {"base_color", "base_color"},
-  {"base_metalness", "metallic"},
-  {"base_roughness", "roughness"},
-  {"specular_weight", "specular"},
-  {"specular_color", "specular_color"},
-  {"specular_roughness", "specular_roughness"},
-  {"specular_ior", "ior"},
-  {"coat_weight", "coat"},
-  {"coat_color", "coat_color"},
-  {"coat_roughness", "coat_roughness"},
-  {"emission_luminance", "emission"},
-  {"emission_color", "emission_color"},
-  {"normal", "normalMap"},
-  {"tangent", "tangentMap"}
-};
+const std::map<std::string, std::string>& MaterialParameterMapping::openpbr_to_nodes() {
+  static const std::map<std::string, std::string> mapping = {
+    {"base_color", "base_color"},
+    {"base_metalness", "metallic"},
+    {"base_roughness", "roughness"},
+    {"specular_weight", "specular"},
+    {"specular_color", "specular_color"},
+    {"specular_roughness", "specular_roughness"},
+    {"specular_ior", "ior"},
+    {"coat_weight", "coat"},
+    {"coat_color", "coat_color"},
+    {"coat_roughness", "coat_roughness"},
+    {"emission_luminance", "emission"},
+    {"emission_color", "emission_color"},
+    {"normal", "normalMap"},
+    {"tangent", "tangentMap"}
+  };
+  return mapping;
+}
 
-const std::map<std::string, std::string> MaterialParameterMapping::preview_to_physical = {
-  {"diffuseColor", "color"},
-  {"metallic", "metalness"},
-  {"roughness", "roughness"},
-  {"emissiveColor", "emissive"},
-  {"opacity", "opacity"},
-  {"clearcoat", "clearcoat"},
-  {"clearcoatRoughness", "clearcoatRoughness"},
-  {"ior", "ior"},
-  {"specularColor", "specular"}
-};
+const std::map<std::string, std::string>& MaterialParameterMapping::preview_to_physical() {
+  static const std::map<std::string, std::string> mapping = {
+    {"diffuseColor", "color"},
+    {"metallic", "metalness"},
+    {"roughness", "roughness"},
+    {"emissiveColor", "emissive"},
+    {"opacity", "opacity"},
+    {"clearcoat", "clearcoat"},
+    {"clearcoatRoughness", "clearcoatRoughness"},
+    {"ior", "ior"},
+    {"specularColor", "specular"}
+  };
+  return mapping;
+}
 
-const std::map<std::string, std::string> MaterialParameterMapping::colorspace_map = {
-  {"sRGB", "srgb"},
-  {"lin_rec709", "linear-rec709"},
-  {"lin_sRGB", "linear-srgb"},
-  {"ACEScg", "acescg"},
-  {"raw", "raw"}
-};
+const std::map<std::string, std::string>& MaterialParameterMapping::colorspace_map() {
+  static const std::map<std::string, std::string> mapping = {
+    {"sRGB", "srgb"},
+    {"lin_rec709", "linear-rec709"},
+    {"lin_sRGB", "linear-srgb"},
+    {"ACEScg", "acescg"},
+    {"raw", "raw"}
+  };
+  return mapping;
+}
 
 // Helper function to convert vec3 to JSON array
 static json vec3ToJson(const vec3& v) {
@@ -70,8 +93,8 @@ static json vec3ToJson(const vec3& v) {
 }
 
 // Helper function to convert vec2 to JSON array
-// Static function with [[maybe_unused]] to suppress unused warning
-[[maybe_unused]] static json vec2ToJson(const vec2& v) {
+// Static function marked unused to suppress warning
+__attribute__((unused)) static json vec2ToJson(const vec2& v) {
   return json::array({v[0], v[1]});
 }
 
@@ -138,8 +161,9 @@ bool ThreeJSMaterialExporter::ExportScene(const RenderScene& scene,
       json normals = json::array();
       // Convert normals based on variability
       if (mesh.normals.is_vertex()) {
+        const vec3* normal_data = reinterpret_cast<const vec3*>(mesh.normals.get_data().data());
         for (size_t i = 0; i < mesh.normals.vertex_count(); ++i) {
-          auto n = mesh.normals.get_data<vec3>()[i];
+          const vec3& n = normal_data[i];
           normals.push_back(n[0]);
           normals.push_back(n[1]);
           normals.push_back(n[2]);
@@ -153,21 +177,25 @@ bool ThreeJSMaterialExporter::ExportScene(const RenderScene& scene,
     }
 
     // UVs
-    if (!mesh.texcoords.empty() && !mesh.texcoords[0].data.empty()) {
-      json uvs = json::array();
-      const auto& texcoord = mesh.texcoords[0];
-      if (texcoord.is_vertex()) {
-        for (size_t i = 0; i < texcoord.vertex_count(); ++i) {
-          auto uv = texcoord.get_data<vec2>()[i];
-          uvs.push_back(uv[0]);
-          uvs.push_back(uv[1]);
+    if (!mesh.texcoords.empty()) {
+      auto it = mesh.texcoords.find(0);
+      if (it != mesh.texcoords.end() && !it->second.data.empty()) {
+        json uvs = json::array();
+        const auto& texcoord = it->second;
+        if (texcoord.is_vertex()) {
+          const vec2* uv_data = reinterpret_cast<const vec2*>(texcoord.get_data().data());
+          for (size_t i = 0; i < texcoord.vertex_count(); ++i) {
+            const vec2& uv = uv_data[i];
+            uvs.push_back(uv[0]);
+            uvs.push_back(uv[1]);
+          }
         }
+        attributes["uv"] = {
+          {"array", uvs},
+          {"itemSize", 2},
+          {"type", "Float32Array"}
+        };
       }
-      attributes["uv"] = {
-        {"array", uvs},
-        {"itemSize", 2},
-        {"type", "Float32Array"}
-      };
     }
 
     geom["attributes"] = attributes;
@@ -213,8 +241,8 @@ bool ThreeJSMaterialExporter::ExportMaterial(const RenderMaterial& material,
     // Export as WebGL MeshPhysicalMaterial
     output["type"] = "MeshPhysicalMaterial";
     json params = ConvertOpenPBRToPhysicalMaterial(material.openPBRShader.value());
-    for (auto& [key, value] : params.items()) {
-      output[key] = value;
+    for (auto it = params.begin(); it != params.end(); ++it) {
+      output[it.key()] = it.value();
     }
   } else if (has_preview) {
     // Export UsdPreviewSurface as standard material
@@ -224,8 +252,8 @@ bool ThreeJSMaterialExporter::ExportMaterial(const RenderMaterial& material,
     } else {
       output["type"] = "MeshStandardMaterial";
       json params = ConvertPreviewSurfaceToStandardMaterial(material.surfaceShader.value());
-      for (auto& [key, value] : params.items()) {
-        output[key] = value;
+      for (auto it = params.begin(); it != params.end(); ++it) {
+        output[it.key()] = it.value();
       }
     }
   }
@@ -448,7 +476,7 @@ json ThreeJSMaterialExporter::ConvertPreviewSurfaceToStandardMaterial(const Prev
   }
 
   // Workflow detection
-  if (shader.useSpecularWorkflow.value) {
+  if (shader.useSpecularWorkflow) {
     // Specular workflow - use MeshPhongMaterial properties
     params["specular"] = vec3ToJson(shader.specularColor.value);
   } else {
@@ -487,11 +515,13 @@ json ThreeJSMaterialExporter::ConvertPreviewSurfaceToStandardMaterial(const Prev
 
   // Displacement (store in userData as Three.js handles it differently)
   if (shader.displacement.value != 0.0f || shader.displacement.is_texture()) {
-    params["userData"] = {
-      {"displacement", shader.displacement.value},
-      {"displacementMap", shader.displacement.is_texture() ?
-        std::to_string(shader.displacement.texture_id) : json()}
-    };
+    params["userData"] = json::object();
+    params["userData"]["displacement"] = shader.displacement.value;
+    if (shader.displacement.is_texture()) {
+      params["userData"]["displacementMap"] = std::to_string(shader.displacement.texture_id);
+    } else {
+      params["userData"]["displacementMap"] = json();
+    }
   }
 
   return params;
@@ -510,7 +540,7 @@ json ThreeJSMaterialExporter::ConvertPreviewSurfaceToNodeMaterial(const PreviewS
   // Map parameters
   surface_node["inputs"]["diffuseColor"] = vec3ToJson(shader.diffuseColor.value);
   surface_node["inputs"]["emissiveColor"] = vec3ToJson(shader.emissiveColor.value);
-  surface_node["inputs"]["useSpecularWorkflow"] = shader.useSpecularWorkflow.value;
+  surface_node["inputs"]["useSpecularWorkflow"] = shader.useSpecularWorkflow;
   surface_node["inputs"]["specularColor"] = vec3ToJson(shader.specularColor.value);
   surface_node["inputs"]["metallic"] = shader.metallic.value;
   surface_node["inputs"]["clearcoat"] = shader.clearcoat.value;
@@ -980,3 +1010,7 @@ bool ThreeJSSceneExporter::ExportGLTF(const RenderScene& scene,
 
 } // namespace tydra
 } // namespace tinyusdz
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
