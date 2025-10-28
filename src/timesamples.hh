@@ -2105,9 +2105,11 @@ struct TimeSamples {
     if (value::TimeCode(t).is_default()) {
       // FIXME: Use the first item for now.
       // TODO: Handle bloked
-      if (const auto pv = _samples[0].value.as<T>()) {
-        (*dst) = *pv;
-        return true;
+      if (!_samples.empty()) {
+        if (const auto pv = _samples[0].value.as<T>()) {
+          (*dst) = *pv;
+          return true;
+        }
       }
       return false;
     } else {
