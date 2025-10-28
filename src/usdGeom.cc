@@ -238,6 +238,67 @@ bool GPrim::get_primvar(const std::string &varname, GeomPrimvar *out_primvar,
   return true;
 }
 
+// Helper function to try zero-copy path using TypedArrayView (enabled only for trivially copyable types)
+template <typename T>
+typename std::enable_if<std::is_trivially_copyable<T>::value && !std::is_same<T, bool>::value, bool>::type
+try_zero_copy_flatten(const Attribute &attr, const double t, const std::vector<int32_t> &default_indices,
+                      std::vector<T> *dest, std::string *err) {
+  if (!value::TimeCode(t).is_default() || attr.has_timesamples()) {
+    return false;  // Can't use zero-copy for timesampled values
+  }
+
+  TUSDZ_LOG_I("Using TypedArrayView (zero-copy)");
+  TypedArrayView<const T> value_view = attr.get_value_view<T>();
+
+  if (value_view.empty()) {
+    TUSDZ_LOG_I("TypedArrayView is empty, falling back to get_value");
+    return false;
+  }
+
+  uint32_t elementSize = attr.metas().elementSize.value_or(1);
+  TUSDZ_LOG_I("elementSize " << elementSize << ", view size " << value_view.size());
+
+  // Sanity check: if view size is unreasonably large, data is corrupted
+  constexpr size_t MAX_REASONABLE_SIZE = 100000000;
+  if (value_view.size() > MAX_REASONABLE_SIZE) {
+    TUSDZ_LOG_E("ERROR: TypedArrayView size " << value_view.size() << " exceeds reasonable limit (" << MAX_REASONABLE_SIZE << "). Data is likely corrupted!");
+    if (err) {
+      (*err) += fmt::format("TypedArrayView size {} exceeds reasonable limit. Data is corrupted.", value_view.size());
+    }
+    return false;
+  }
+
+  TUSDZ_LOG_I("indices.size " << default_indices.size());
+
+  // Convert view to vector for ExpandWithIndices
+  std::vector<T> value(value_view.begin(), value_view.end());
+  std::vector<T> expanded_val;
+  auto ret = ExpandWithIndices(value, elementSize, default_indices, &expanded_val);
+  TUSDZ_LOG_I("ExpandWithIndices done");
+  if (ret) {
+    (*dest) = expanded_val;
+    return true;
+  } else {
+    const std::string &err_msg = ret.error();
+    if (err) {
+      (*err) += fmt::format(
+          "[Internal Error] Failed to expand for GeomPrimvar type = `{}`",
+          attr.type_name());
+      if (err_msg.size()) {
+        (*err) += "\n" + err_msg;
+      }
+    }
+    return false;
+  }
+}
+
+// Fallback for non-trivially-copyable types (always returns false to skip zero-copy path)
+template <typename T>
+typename std::enable_if<!(std::is_trivially_copyable<T>::value && !std::is_same<T, bool>::value), bool>::type
+try_zero_copy_flatten(const Attribute &, const double, const std::vector<int32_t> &,
+                      std::vector<T> *, std::string *) {
+  return false;  // Zero-copy not supported for this type
+}
 
 template <typename T>
 bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, const value::TimeSampleInterpolationType tinterp, std::string *err) const {
@@ -263,55 +324,13 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
 
     // Try to use TypedArrayView for zero-copy access when possible (default values only)
     // Only for trivially copyable types (excluding bool due to std::vector<bool> specialization)
-    if constexpr (std::is_trivially_copyable<T>::value && !std::is_same<T, bool>::value) {
-      if (value::TimeCode(t).is_default() && !_attr.has_timesamples()) {
-        TUSDZ_LOG_I("Using TypedArrayView (zero-copy)");
-        TypedArrayView<const T> value_view = _attr.get_value_view<T>();
-
-        if (!value_view.empty()) {
-          uint32_t elementSize = _attr.metas().elementSize.value_or(1);
-          TUSDZ_LOG_I("elementSize " << elementSize << ", view size " << value_view.size());
-
-          // Sanity check: if view size is unreasonably large, data is corrupted
-          constexpr size_t MAX_REASONABLE_SIZE = 100000000;
-          if (value_view.size() > MAX_REASONABLE_SIZE) {
-            TUSDZ_LOG_E("ERROR: TypedArrayView size " << value_view.size() << " exceeds reasonable limit (" << MAX_REASONABLE_SIZE << "). Data is likely corrupted!");
-            if (err) {
-              (*err) += fmt::format("TypedArrayView size {} exceeds reasonable limit. Data is corrupted.", value_view.size());
-            }
-            return false;
-          }
-
-          // Get indices at specified time
-          std::vector<int32_t> indices;
-          if (has_default_indices()) {
-            indices = _indices;
-          }
-          TUSDZ_LOG_I("indices.size " << indices.size());
-
-          // Convert view to vector for ExpandWithIndices
-          std::vector<T> value(value_view.begin(), value_view.end());
-          std::vector<T> expanded_val;
-          auto ret = ExpandWithIndices(value, elementSize, indices, &expanded_val);
-          TUSDZ_LOG_I("ExpandWithIndices done");
-          if (ret) {
-            (*dest) = expanded_val;
-            return true;
-          } else {
-            const std::string &err_msg = ret.error();
-            if (err) {
-              (*err) += fmt::format(
-                  "[Internal Error] Failed to expand for GeomPrimvar type = `{}`",
-                  _attr.type_name());
-              if (err_msg.size()) {
-                (*err) += "\n" + err_msg;
-              }
-            }
-          }
-        } else {
-          TUSDZ_LOG_I("TypedArrayView is empty, falling back to get_value");
-        }
-      }
+    // Using SFINAE helper function for C++14 compatibility (avoids 'if constexpr' requirement)
+    std::vector<int32_t> indices;
+    if (has_default_indices()) {
+      indices = _indices;
+    }
+    if (try_zero_copy_flatten(_attr, t, indices, dest, err)) {
+      return true;  // Zero-copy path succeeded
     }
 
     // Fallback to std::vector for timesamples or if view failed
