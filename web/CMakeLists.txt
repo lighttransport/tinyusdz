@@ -127,7 +127,7 @@ else()
    -sSTACK_SIZE=512000 \
    -sALLOW_MEMORY_GROWTH=1 \
    -sFILESYSTEM=0 \
-   -sSAFE_HEAP=10 \
+   -sSAFE_HEAP=0 \
    -sWASM_BIGINT=1 \
    -sMODULARIZE=1 -sEXPORT_ES6 \
    -sINVOKE_RUN=0 --bind ")
