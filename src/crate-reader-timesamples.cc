@@ -848,20 +848,10 @@ bool CrateReader::UnpackTimeSampleValue_BOOL(double t,
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
-
-    // Check deduplication cache first
-    auto it = _dedup_bool.find(rep);
-    bool val;
-    if (it != _dedup_bool.end()) {
-      // Reuse cached value
-      val = it->second;
-      DCOUT("Reusing cached BOOL value for ValueRep");
-    } else {
+    // Scalar deduplication was removed - see FLOAT3 fix
       // Decode and cache
       uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-      val = data ? true : false;
-      _dedup_bool[rep] = val;
-    }
+      bool val = data ? true : false;
 
     if (!add_sample_to_timesamples<bool>(&dst, t, val, &_err,
                                          expected_total_samples)) {
@@ -933,20 +923,11 @@ bool CrateReader::UnpackTimeSampleValue_INT32(double t,
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
-
-    // Check deduplication cache first
-    auto it = _dedup_int32.find(rep);
-    int32_t val;
-    if (it != _dedup_int32.end()) {
-      // Reuse cached value
-      val = it->second;
-      DCOUT("Reusing cached INT32 value for ValueRep");
-    } else {
+    // Scalar deduplication was removed - see FLOAT3 fix
       // Decode and cache
       uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+      int32_t val;
       memcpy(&val, &data, sizeof(int32_t));
-      _dedup_int32[rep] = val;
-    }
 
     if (!add_sample_to_timesamples<int32_t>(&dst, t, val, &_err,
                                             expected_total_samples)) {
@@ -1048,19 +1029,11 @@ bool CrateReader::UnpackTimeSampleValue_HALF(double t,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
 
-    // Check deduplication cache first
-    auto it = _dedup_half.find(rep);
+    // Decode value directly without caching
+    // Scalar deduplication was removed - see FLOAT3 fix
     value::half f;
-    if (it != _dedup_half.end()) {
-      // Reuse cached value
-      f = it->second;
-      DCOUT("Reusing cached HALF value for ValueRep");
-    } else {
-      // Decode and cache
-      uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-      memcpy(&f, &data, sizeof(value::half));
-      _dedup_half[rep] = f;
-    }
+    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+    memcpy(&f, &data, sizeof(value::half));
 
     if (!add_sample_to_timesamples<value::half>(&dst, t, f, &_err,
                                                 expected_total_samples)) {
@@ -1166,24 +1139,16 @@ bool CrateReader::UnpackTimeSampleValue_HALF2(double t,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
 
-    // Check deduplication cache first
-    auto it = _dedup_half2.find(rep);
+    // Decode value directly without caching
+    // Scalar deduplication was removed - see FLOAT3 fix
     value::half2 v;
-    if (it != _dedup_half2.end()) {
-      // Reuse cached value
-      v = it->second;
-      DCOUT("Reusing cached HALF2 value for ValueRep");
-    } else {
-      // Decode and cache
-      uint32_t vdata =
-          (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-      // Value is represented in int8
-      int8_t data[2];
-      memcpy(&data, &vdata, 2);
-      v[0] = value::float_to_half_full(float(data[0]));
-      v[1] = value::float_to_half_full(float(data[1]));
-      _dedup_half2[rep] = v;
-    }
+    uint32_t vdata =
+        (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+    // Value is represented in int8
+    int8_t data[2];
+    memcpy(&data, &vdata, 2);
+    v[0] = value::float_to_half_full(float(data[0]));
+    v[1] = value::float_to_half_full(float(data[1]));
 
     DCOUT("value.half2 = " << v);
 
@@ -1253,23 +1218,15 @@ bool CrateReader::UnpackTimeSampleValue_HALF2(double t,
           kTag, "Compressed half2 not supported for TimeSamples.");
     }
 
-    // Check deduplication cache for scalar value read from stream
-    auto it = _dedup_half2.find(rep);
+    // Read scalar value directly without caching
+    // Scalar deduplication was removed - see FLOAT3 fix
     value::half2 v;
-    if (it != _dedup_half2.end()) {
-      // Reuse cached value
-      v = it->second;
-      DCOUT("Reusing cached HALF2 scalar value for ValueRep");
-    } else {
-      // Read and cache scalar value
-      CHECK_MEMORY_USAGE(sizeof(value::half2));
-      if (!_sr->read(sizeof(value::half2), sizeof(value::half2),
-                     reinterpret_cast<uint8_t *>(&v))) {
-        PUSH_ERROR_AND_RETURN("Failed to read half2");
-      }
-      DCOUT("half2 = " << v);
-      _dedup_half2[rep] = v;
+    CHECK_MEMORY_USAGE(sizeof(value::half2));
+    if (!_sr->read(sizeof(value::half2), sizeof(value::half2),
+                   reinterpret_cast<uint8_t *>(&v))) {
+      PUSH_ERROR_AND_RETURN("Failed to read half2");
     }
+    DCOUT("half2 = " << v);
 
     if (!add_sample_to_timesamples<value::half2>(&dst, t, v, &_err,
                                                  expected_total_samples)) {
@@ -1309,26 +1266,17 @@ bool CrateReader::UnpackTimeSampleValue_HALF3(double t,
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
-
-    // Check deduplication cache first
-    auto it = _dedup_half3.find(rep);
-    value::half3 v;
-    if (it != _dedup_half3.end()) {
-      // Reuse cached value
-      v = it->second;
-      DCOUT("Reusing cached HALF3 value for ValueRep");
-    } else {
+    // Scalar deduplication was removed - see FLOAT3 fix
       // Decode and cache
       uint32_t vdata =
           (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
       // Value is represented in int8
       int8_t data[3];
       memcpy(&data, &vdata, 3);
+      value::half3 v;
       v[0] = value::float_to_half_full(float(data[0]));
       v[1] = value::float_to_half_full(float(data[1]));
       v[2] = value::float_to_half_full(float(data[2]));
-      _dedup_half3[rep] = v;
-    }
 
     DCOUT("value.half3 = " << v);
 
@@ -1396,23 +1344,16 @@ bool CrateReader::UnpackTimeSampleValue_HALF3(double t,
           kTag, "Compressed half3 not supported for TimeSamples.");
     }
 
-    // Check deduplication cache for scalar value read from stream
-    auto it = _dedup_half3.find(rep);
+    // Scalar deduplication was removed - see FLOAT3 fix
+    // Read scalar value directly without caching
+    // Scalar deduplication was removed - see FLOAT3 fix
     value::half3 v;
-    if (it != _dedup_half3.end()) {
-      // Reuse cached value
-      v = it->second;
-      DCOUT("Reusing cached HALF3 scalar value for ValueRep");
-    } else {
-      // Read and cache scalar value
-      CHECK_MEMORY_USAGE(sizeof(value::half3));
-      if (!_sr->read(sizeof(value::half3), sizeof(value::half3),
-                     reinterpret_cast<uint8_t *>(&v))) {
+    CHECK_MEMORY_USAGE(sizeof(value::half3));
+    if (!_sr->read(sizeof(value::half3), sizeof(value::half3),
+                   reinterpret_cast<uint8_t *>(&v))) {
         PUSH_ERROR_AND_RETURN("Failed to read half3");
       }
       DCOUT("half3 = " << v);
-      _dedup_half3[rep] = v;
-    }
 
     if (!add_sample_to_timesamples<value::half3>(&dst, t, v, &_err,
                                                  expected_total_samples)) {
@@ -1453,26 +1394,18 @@ bool CrateReader::UnpackTimeSampleValue_HALF4(double t,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
 
-    // Check deduplication cache first
-    auto it = _dedup_half4.find(rep);
-    value::half4 v;
-    if (it != _dedup_half4.end()) {
-      // Reuse cached value
-      v = it->second;
-      DCOUT("Reusing cached HALF4 value for ValueRep");
-    } else {
+    // Scalar deduplication was removed - see FLOAT3 fix
       // Decode and cache
       uint32_t vdata =
           (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
       // Value is represented in int8
       int8_t data[4];
       memcpy(&data, &vdata, 4);
+      value::half4 v;
       v[0] = value::float_to_half_full(float(data[0]));
       v[1] = value::float_to_half_full(float(data[1]));
       v[2] = value::float_to_half_full(float(data[2]));
       v[3] = value::float_to_half_full(float(data[3]));
-      _dedup_half4[rep] = v;
-    }
 
     DCOUT("value.half4 = " << v);
 
@@ -1540,23 +1473,16 @@ bool CrateReader::UnpackTimeSampleValue_HALF4(double t,
           kTag, "Compressed half4 not supported for TimeSamples.");
     }
 
-    // Check deduplication cache for scalar value read from stream
-    auto it = _dedup_half4.find(rep);
+    // Scalar deduplication was removed - see FLOAT3 fix
+    // Read scalar value directly without caching
+    // Scalar deduplication was removed - see FLOAT3 fix
     value::half4 v;
-    if (it != _dedup_half4.end()) {
-      // Reuse cached value
-      v = it->second;
-      DCOUT("Reusing cached HALF4 scalar value for ValueRep");
-    } else {
-      // Read and cache scalar value
-      CHECK_MEMORY_USAGE(sizeof(value::half4));
-      if (!_sr->read(sizeof(value::half4), sizeof(value::half4),
-                     reinterpret_cast<uint8_t *>(&v))) {
+    CHECK_MEMORY_USAGE(sizeof(value::half4));
+    if (!_sr->read(sizeof(value::half4), sizeof(value::half4),
+                   reinterpret_cast<uint8_t *>(&v))) {
         PUSH_ERROR_AND_RETURN("Failed to read half4");
       }
       DCOUT("half4 = " << v);
-      _dedup_half4[rep] = v;
-    }
 
     if (!add_sample_to_timesamples<value::half4>(&dst, t, v, &_err,
                                                  expected_total_samples)) {
@@ -1597,19 +1523,11 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT(double t,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
 
-    // Check deduplication cache first
-    auto it = _dedup_float.find(rep);
+    // Decode value directly without caching
+    // Scalar deduplication was removed - see float3 fix
     float val;
-    if (it != _dedup_float.end()) {
-      // Reuse cached value
-      val = it->second;
-      DCOUT("Reusing cached FLOAT value for ValueRep");
-    } else {
-      // Decode and cache
-      uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-      memcpy(&val, &data, sizeof(float));
-      _dedup_float[rep] = val;
-    }
+    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+    memcpy(&val, &data, sizeof(float));
 
     if (!add_sample_to_timesamples<float>(&dst, t, val, &_err,
                                           expected_total_samples)) {
@@ -1674,23 +1592,15 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT(double t,
                                 "Compressed float not supported for TimeSamples.");
     }
 
-    // Check deduplication cache for scalar value read from stream
-    auto it = _dedup_float.find(rep);
+    // Read scalar value directly without caching
+    // Scalar deduplication was removed - see float3 fix
     float v;
-    if (it != _dedup_float.end()) {
-      // Reuse cached value
-      v = it->second;
-      DCOUT("Reusing cached FLOAT scalar value for ValueRep");
-    } else {
-      // Read and cache scalar value
-      CHECK_MEMORY_USAGE(sizeof(float));
-      if (!_sr->read(sizeof(float), sizeof(float),
-                     reinterpret_cast<uint8_t *>(&v))) {
-        PUSH_ERROR_AND_RETURN("Failed to read float");
-      }
-      DCOUT("float = " << v);
-      _dedup_float[rep] = v;
+    CHECK_MEMORY_USAGE(sizeof(float));
+    if (!_sr->read(sizeof(float), sizeof(float),
+                   reinterpret_cast<uint8_t *>(&v))) {
+      PUSH_ERROR_AND_RETURN("Failed to read float");
     }
+    DCOUT("float = " << v);
 
     if (!add_sample_to_timesamples<float>(&dst, t, v, &_err,
                                           expected_total_samples)) {
@@ -1819,23 +1729,15 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT2(double t,
           kTag, "Compressed float2 not supported for TimeSamples.");
     }
 
-    // Check deduplication cache for scalar value read from stream
-    auto it = _dedup_float2.find(rep);
+    // Read scalar value directly without caching
+    // Scalar deduplication was removed - see FLOAT3 fix
     value::float2 v;
-    if (it != _dedup_float2.end()) {
-      // Reuse cached value
-      v = it->second;
-      DCOUT("Reusing cached FLOAT2 scalar value for ValueRep");
-    } else {
-      // Read and cache scalar value
-      CHECK_MEMORY_USAGE(sizeof(value::float2));
-      if (!_sr->read(sizeof(value::float2), sizeof(value::float2),
-                     reinterpret_cast<uint8_t *>(&v))) {
-        PUSH_ERROR_AND_RETURN("Failed to read float2");
-      }
-      DCOUT("float2 = " << v);
-      _dedup_float2[rep] = v;
+    CHECK_MEMORY_USAGE(sizeof(value::float2));
+    if (!_sr->read(sizeof(value::float2), sizeof(value::float2),
+                   reinterpret_cast<uint8_t *>(&v))) {
+      PUSH_ERROR_AND_RETURN("Failed to read float2");
     }
+    DCOUT("float2 = " << v);
 
     if (!add_sample_to_timesamples<value::float2>(&dst, t, v, &_err,
                                                   expected_total_samples)) {
@@ -1933,23 +1835,15 @@ bool CrateReader::UnpackTimeSampleValue_QUATF(double t,
                                 "Compressed quatf not supported for TimeSamples.");
     }
 
-    // Check deduplication cache for scalar value read from stream
-    auto it = _dedup_quatf.find(rep);
+    // Read scalar value directly without caching
+    // Scalar deduplication was removed - see FLOAT3 fix
     value::quatf val;
-    if (it != _dedup_quatf.end()) {
-      // Reuse cached value
-      val = it->second;
-      DCOUT("Reusing cached QUATF scalar value for ValueRep");
-    } else {
-      // Read and cache scalar value
-      CHECK_MEMORY_USAGE(sizeof(float) * 4);  // quatf has 4 floats
-      if (!_sr->read(sizeof(float) * 4, sizeof(float) * 4,
-                     reinterpret_cast<uint8_t *>(&val))) {
-        PUSH_ERROR_AND_RETURN("Failed to read quatf value");
-      }
-      DCOUT("quatf = [" << val[0] << ", " << val[1] << ", " << val[2] << ", " << val[3] << "]");
-      _dedup_quatf[rep] = val;
+    CHECK_MEMORY_USAGE(sizeof(float) * 4);  // quatf has 4 floats
+    if (!_sr->read(sizeof(float) * 4, sizeof(float) * 4,
+                   reinterpret_cast<uint8_t *>(&val))) {
+      PUSH_ERROR_AND_RETURN("Failed to read quatf value");
     }
+    DCOUT("quatf = [" << val[0] << ", " << val[1] << ", " << val[2] << ", " << val[3] << "]");
     if (!add_sample_to_timesamples<value::quatf>(&dst, t, val, &_err,
                                                  expected_total_samples)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
@@ -2093,14 +1987,7 @@ bool CrateReader::UnpackTimeSampleValue_STRING(
                                 "Compressed string not supported for TimeSamples.");
     }
 
-    // Check deduplication cache for scalar value read from stream
-    auto it = _dedup_string.find(rep);
-    std::string v;
-    if (it != _dedup_string.end()) {
-      // Reuse cached value
-      v = it->second;
-      DCOUT("Reusing cached STRING scalar value for ValueRep");
-    } else {
+    // Scalar deduplication was removed - see FLOAT3 fix
       // Read and cache scalar value
       // String is stored as StringIndex in the stream
       uint32_t index_data;
@@ -2109,14 +1996,13 @@ bool CrateReader::UnpackTimeSampleValue_STRING(
                      reinterpret_cast<uint8_t *>(&index_data))) {
         PUSH_ERROR_AND_RETURN("Failed to read string index");
       }
+      std::string v;
       if (auto str_val = GetStringToken(crate::Index(index_data))) {
         v = str_val.value().str();
         DCOUT("string = " << v);
-        _dedup_string[rep] = v;
       } else {
         PUSH_ERROR_AND_RETURN("Invalid string index in TimeSamples.");
       }
-    }
     if (!add_sample_to_timesamples<std::string>(&dst, t, v, &_err,
                                                  expected_total_samples)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
@@ -2201,14 +2087,7 @@ bool CrateReader::UnpackTimeSampleValue_TOKEN(
                                 "Compressed token not supported for TimeSamples.");
     }
 
-    // Check deduplication cache for scalar value read from stream
-    auto it = _dedup_token.find(rep);
-    value::token v;
-    if (it != _dedup_token.end()) {
-      // Reuse cached value
-      v = it->second;
-      DCOUT("Reusing cached TOKEN scalar value for ValueRep");
-    } else {
+    // Scalar deduplication was removed - see FLOAT3 fix
       // Read and cache scalar value
       // Token is stored as StringIndex in the stream
       uint32_t index_data;
@@ -2217,14 +2096,13 @@ bool CrateReader::UnpackTimeSampleValue_TOKEN(
                      reinterpret_cast<uint8_t *>(&index_data))) {
         PUSH_ERROR_AND_RETURN("Failed to read token index");
       }
+      value::token v;
       if (auto tok_val = GetStringToken(crate::Index(index_data))) {
         v = value::token(tok_val.value().str());
         DCOUT("token = " << v.str());
-        _dedup_token[rep] = v;
       } else {
         PUSH_ERROR_AND_RETURN("Invalid token index in TimeSamples.");
       }
-    }
     if (!add_sample_to_timesamples<value::token>(&dst, t, v, &_err,
                                                  expected_total_samples)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
@@ -2263,24 +2141,18 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT3(double t,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
 
-    // Check deduplication cache first
-    auto it = _dedup_float3.find(rep);
+    // Decode value directly without caching
+    // Scalar deduplication was removed as it was causing incorrect global
+    // deduplication across different attributes. Each attribute's TimeSamples
+    // must independently store its values.
+    // Value is represented in int8
     value::float3 val;
-    if (it != _dedup_float3.end()) {
-      // Reuse cached value
-      val = it->second;
-      DCOUT("Reusing cached FLOAT3 value for ValueRep");
-    } else {
-      // Decode and cache
-      // Value is represented in int8
-      uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-      int8_t vdata[3];
-      memcpy(&vdata, &data, 3);
-      val[0] = float(vdata[0]);
-      val[1] = float(vdata[1]);
-      val[2] = float(vdata[2]);
-      _dedup_float3[rep] = val;
-    }
+    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+    int8_t vdata[3];
+    memcpy(&vdata, &data, 3);
+    val[0] = float(vdata[0]);
+    val[1] = float(vdata[1]);
+    val[2] = float(vdata[2]);
 
     if (!add_sample_to_timesamples<value::float3>(&dst, t, val, &_err,
                                                   expected_total_samples)) {
@@ -2345,23 +2217,17 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT3(double t,
           kTag, "Compressed float3 not supported for TimeSamples.");
     }
 
-    // Check deduplication cache for scalar value read from stream
-    auto it = _dedup_float3.find(rep);
+    // Read scalar value directly without caching
+    // Scalar deduplication was removed as it was causing incorrect global
+    // deduplication across different attributes. Each attribute's TimeSamples
+    // must independently store its values.
     value::float3 v;
-    if (it != _dedup_float3.end()) {
-      // Reuse cached value
-      v = it->second;
-      DCOUT("Reusing cached FLOAT3 scalar value for ValueRep");
-    } else {
-      // Read and cache scalar value
-      CHECK_MEMORY_USAGE(sizeof(value::float3));
-      if (!_sr->read(sizeof(value::float3), sizeof(value::float3),
-                     reinterpret_cast<uint8_t *>(&v))) {
-        PUSH_ERROR_AND_RETURN("Failed to read float3");
-      }
-      DCOUT("float3 = " << v);
-      _dedup_float3[rep] = v;
+    CHECK_MEMORY_USAGE(sizeof(value::float3));
+    if (!_sr->read(sizeof(value::float3), sizeof(value::float3),
+                   reinterpret_cast<uint8_t *>(&v))) {
+      PUSH_ERROR_AND_RETURN("Failed to read float3");
     }
+    DCOUT("float3 = " << v);
 
     if (!add_sample_to_timesamples<value::float3>(&dst, t, v, &_err,
                                                   expected_total_samples)) {
@@ -2401,25 +2267,17 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT4(double t,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
 
-    // Check deduplication cache first
-    auto it = _dedup_float4.find(rep);
+    // Decode value directly without caching
+    // Scalar deduplication was removed - see FLOAT3 fix
+    // Value is represented in int8
     value::float4 val;
-    if (it != _dedup_float4.end()) {
-      // Reuse cached value
-      val = it->second;
-      DCOUT("Reusing cached FLOAT4 value for ValueRep");
-    } else {
-      // Decode and cache
-      // Value is represented in int8
-      uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-      int8_t vdata[4];
-      memcpy(&vdata, &data, 4);
-      val[0] = float(vdata[0]);
-      val[1] = float(vdata[1]);
-      val[2] = float(vdata[2]);
-      val[3] = float(vdata[3]);
-      _dedup_float4[rep] = val;
-    }
+    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+    int8_t vdata[4];
+    memcpy(&vdata, &data, 4);
+    val[0] = float(vdata[0]);
+    val[1] = float(vdata[1]);
+    val[2] = float(vdata[2]);
+    val[3] = float(vdata[3]);
 
     if (!add_sample_to_timesamples<value::float4>(&dst, t, val, &_err,
                                                   expected_total_samples)) {
@@ -2484,23 +2342,15 @@ bool CrateReader::UnpackTimeSampleValue_FLOAT4(double t,
           kTag, "Compressed float4 not supported for TimeSamples.");
     }
 
-    // Check deduplication cache for scalar value read from stream
-    auto it = _dedup_float4.find(rep);
+    // Read scalar value directly without caching
+    // Scalar deduplication was removed - see FLOAT3 fix
     value::float4 v;
-    if (it != _dedup_float4.end()) {
-      // Reuse cached value
-      v = it->second;
-      DCOUT("Reusing cached FLOAT4 scalar value for ValueRep");
-    } else {
-      // Read and cache scalar value
-      CHECK_MEMORY_USAGE(sizeof(value::float4));
-      if (!_sr->read(sizeof(value::float4), sizeof(value::float4),
-                     reinterpret_cast<uint8_t *>(&v))) {
-        PUSH_ERROR_AND_RETURN("Failed to read float4");
-      }
-      DCOUT("float4 = " << v);
-      _dedup_float4[rep] = v;
+    CHECK_MEMORY_USAGE(sizeof(value::float4));
+    if (!_sr->read(sizeof(value::float4), sizeof(value::float4),
+                   reinterpret_cast<uint8_t *>(&v))) {
+      PUSH_ERROR_AND_RETURN("Failed to read float4");
     }
+    DCOUT("float4 = " << v);
 
     if (!add_sample_to_timesamples<value::float4>(&dst, t, v, &_err,
                                                   expected_total_samples)) {
@@ -2540,23 +2390,15 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE2(double t,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
 
-    // Check deduplication cache first
-    auto it = _dedup_double2.find(rep);
+    // Decode value directly without caching
+    // Scalar deduplication was removed - see FLOAT3 fix
+    // Value is represented in int8
     value::double2 val;
-    if (it != _dedup_double2.end()) {
-      // Reuse cached value
-      val = it->second;
-      DCOUT("Reusing cached DOUBLE2 value for ValueRep");
-    } else {
-      // Decode and cache
-      // Value is represented in int8
-      uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-      int8_t vdata[2];
-      memcpy(&vdata, &data, 2);
-      val[0] = double(vdata[0]);
-      val[1] = double(vdata[1]);
-      _dedup_double2[rep] = val;
-    }
+    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+    int8_t vdata[2];
+    memcpy(&vdata, &data, 2);
+    val[0] = double(vdata[0]);
+    val[1] = double(vdata[1]);
 
     if (!add_sample_to_timesamples<value::double2>(&dst, t, val, &_err,
                                                    expected_total_samples)) {
@@ -2619,23 +2461,15 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE2(double t,
           kTag, "Compressed double2 not supported for TimeSamples.");
     }
 
-    // Check deduplication cache for scalar value read from stream
-    auto it = _dedup_double2.find(rep);
+    // Read scalar value directly without caching
+    // Scalar deduplication was removed - see FLOAT3 fix
     value::double2 v;
-    if (it != _dedup_double2.end()) {
-      // Reuse cached value
-      v = it->second;
-      DCOUT("Reusing cached DOUBLE2 scalar value for ValueRep");
-    } else {
-      // Read and cache scalar value
-      CHECK_MEMORY_USAGE(sizeof(value::double2));
-      if (!_sr->read(sizeof(value::double2), sizeof(value::double2),
-                     reinterpret_cast<uint8_t *>(&v))) {
-        PUSH_ERROR_AND_RETURN("Failed to read double2");
-      }
-      DCOUT("double2 = " << v);
-      _dedup_double2[rep] = v;
+    CHECK_MEMORY_USAGE(sizeof(value::double2));
+    if (!_sr->read(sizeof(value::double2), sizeof(value::double2),
+                   reinterpret_cast<uint8_t *>(&v))) {
+      PUSH_ERROR_AND_RETURN("Failed to read double2");
     }
+    DCOUT("double2 = " << v);
 
     if (!add_sample_to_timesamples<value::double2>(&dst, t, v, &_err,
                                                    expected_total_samples)) {
@@ -2675,24 +2509,16 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE3(double t,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
 
-    // Check deduplication cache first
-    auto it = _dedup_double3.find(rep);
+    // Decode value directly without caching
+    // Scalar deduplication was removed - see FLOAT3 fix
+    // Value is represented in int8
     value::double3 val;
-    if (it != _dedup_double3.end()) {
-      // Reuse cached value
-      val = it->second;
-      DCOUT("Reusing cached DOUBLE3 value for ValueRep");
-    } else {
-      // Decode and cache
-      // Value is represented in int8
-      uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-      int8_t vdata[3];
-      memcpy(&vdata, &data, 3);
-      val[0] = double(vdata[0]);
-      val[1] = double(vdata[1]);
-      val[2] = double(vdata[2]);
-      _dedup_double3[rep] = val;
-    }
+    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+    int8_t vdata[3];
+    memcpy(&vdata, &data, 3);
+    val[0] = double(vdata[0]);
+    val[1] = double(vdata[1]);
+    val[2] = double(vdata[2]);
 
     if (!add_sample_to_timesamples<value::double3>(&dst, t, val, &_err,
                                                    expected_total_samples)) {
@@ -2756,23 +2582,15 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE3(double t,
           kTag, "Compressed double3 not supported for TimeSamples.");
     }
 
-    // Check deduplication cache for scalar value read from stream
-    auto it = _dedup_double3.find(rep);
+    // Read scalar value directly without caching
+    // Scalar deduplication was removed - see FLOAT3 fix
     value::double3 v;
-    if (it != _dedup_double3.end()) {
-      // Reuse cached value
-      v = it->second;
-      DCOUT("Reusing cached DOUBLE3 scalar value for ValueRep");
-    } else {
-      // Read and cache scalar value
-      CHECK_MEMORY_USAGE(sizeof(value::double3));
-      if (!_sr->read(sizeof(value::double3), sizeof(value::double3),
-                     reinterpret_cast<uint8_t *>(&v))) {
-        PUSH_ERROR_AND_RETURN("Failed to read double3");
-      }
-      DCOUT("double3 = " << v);
-      _dedup_double3[rep] = v;
+    CHECK_MEMORY_USAGE(sizeof(value::double3));
+    if (!_sr->read(sizeof(value::double3), sizeof(value::double3),
+                   reinterpret_cast<uint8_t *>(&v))) {
+      PUSH_ERROR_AND_RETURN("Failed to read double3");
     }
+    DCOUT("double3 = " << v);
 
     if (!add_sample_to_timesamples<value::double3>(&dst, t, v, &_err,
                                                    expected_total_samples)) {
@@ -2812,25 +2630,17 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE4(double t,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
 
-    // Check deduplication cache first
-    auto it = _dedup_double4.find(rep);
+    // Decode value directly without caching
+    // Scalar deduplication was removed - see FLOAT3 fix
+    // Value is represented in int8
     value::double4 val;
-    if (it != _dedup_double4.end()) {
-      // Reuse cached value
-      val = it->second;
-      DCOUT("Reusing cached DOUBLE4 value for ValueRep");
-    } else {
-      // Decode and cache
-      // Value is represented in int8
-      uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-      int8_t vdata[4];
-      memcpy(&vdata, &data, 4);
-      val[0] = static_cast<double>(vdata[0]);
-      val[1] = static_cast<double>(vdata[1]);
-      val[2] = static_cast<double>(vdata[2]);
-      val[3] = static_cast<double>(vdata[3]);
-      _dedup_double4[rep] = val;
-    }
+    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+    int8_t vdata[4];
+    memcpy(&vdata, &data, 4);
+    val[0] = static_cast<double>(vdata[0]);
+    val[1] = static_cast<double>(vdata[1]);
+    val[2] = static_cast<double>(vdata[2]);
+    val[3] = static_cast<double>(vdata[3]);
 
     if (!add_sample_to_timesamples<value::double4>(&dst, t, val, &_err,
                                                    expected_total_samples)) {
@@ -2894,23 +2704,15 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE4(double t,
           kTag, "Compressed double4 not supported for TimeSamples.");
     }
 
-    // Check deduplication cache for scalar value read from stream
-    auto it = _dedup_double4.find(rep);
+    // Read scalar value directly without caching
+    // Scalar deduplication was removed - see FLOAT3 fix
     value::double4 v;
-    if (it != _dedup_double4.end()) {
-      // Reuse cached value
-      v = it->second;
-      DCOUT("Reusing cached DOUBLE4 scalar value for ValueRep");
-    } else {
-      // Read and cache scalar value
-      CHECK_MEMORY_USAGE(sizeof(value::double4));
-      if (!_sr->read(sizeof(value::double4), sizeof(value::double4),
-                     reinterpret_cast<uint8_t *>(&v))) {
-        PUSH_ERROR_AND_RETURN("Failed to read double4");
-      }
-      DCOUT("double4 = " << v);
-      _dedup_double4[rep] = v;
+    CHECK_MEMORY_USAGE(sizeof(value::double4));
+    if (!_sr->read(sizeof(value::double4), sizeof(value::double4),
+                   reinterpret_cast<uint8_t *>(&v))) {
+      PUSH_ERROR_AND_RETURN("Failed to read double4");
     }
+    DCOUT("double4 = " << v);
 
     if (!add_sample_to_timesamples<value::double4>(&dst, t, v, &_err,
                                                    expected_total_samples)) {
@@ -3006,25 +2808,16 @@ bool CrateReader::UnpackTimeSampleValue_QUATH(double t,
       PUSH_ERROR_AND_RETURN_TAG(kTag,
                                 "Compressed quath not supported for TimeSamples.");
     }
-
-    // Check deduplication cache for scalar value read from stream
-    auto it = _dedup_quath.find(rep);
+    // Read scalar value directly without caching
+    // Scalar deduplication was removed - see FLOAT3 fix
     value::quath val;
-    if (it != _dedup_quath.end()) {
-      // Reuse cached value
-      val = it->second;
-      DCOUT("Reusing cached QUATH scalar value for ValueRep");
-    } else {
-      // Read and cache scalar value
-      // quath has 4 halfs (half is 2 bytes)
-      CHECK_MEMORY_USAGE(sizeof(uint16_t) * 4);
-      if (!_sr->read(sizeof(uint16_t) * 4, sizeof(uint16_t) * 4,
-                     reinterpret_cast<uint8_t *>(&val))) {
-        PUSH_ERROR_AND_RETURN("Failed to read quath value");
-      }
-      DCOUT("quath = [" << val[0] << ", " << val[1] << ", " << val[2] << ", " << val[3] << "]");
-      _dedup_quath[rep] = val;
+    // quath has 4 halfs (half is 2 bytes)
+    CHECK_MEMORY_USAGE(sizeof(uint16_t) * 4);
+    if (!_sr->read(sizeof(uint16_t) * 4, sizeof(uint16_t) * 4,
+                   reinterpret_cast<uint8_t *>(&val))) {
+      PUSH_ERROR_AND_RETURN("Failed to read quath value");
     }
+    DCOUT("quath = [" << val[0] << ", " << val[1] << ", " << val[2] << ", " << val[3] << "]");
     if (!add_sample_to_timesamples<value::quath>(&dst, t, val, &_err,
                                                  expected_total_samples)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
@@ -3120,24 +2913,17 @@ bool CrateReader::UnpackTimeSampleValue_QUATD(double t,
                                 "Compressed quatd not supported for TimeSamples.");
     }
 
-    // Check deduplication cache for scalar value read from stream
-    auto it = _dedup_quatd.find(rep);
+    // Scalar deduplication was removed - see FLOAT3 fix
+    // Read scalar value directly without caching
+    // Scalar deduplication was removed - see FLOAT3 fix
     value::quatd val;
-    if (it != _dedup_quatd.end()) {
-      // Reuse cached value
-      val = it->second;
-      DCOUT("Reusing cached QUATD scalar value for ValueRep");
-    } else {
-      // Read and cache scalar value
-      // quatd has 4 doubles
-      CHECK_MEMORY_USAGE(sizeof(double) * 4);
-      if (!_sr->read(sizeof(double) * 4, sizeof(double) * 4,
-                     reinterpret_cast<uint8_t *>(&val))) {
-        PUSH_ERROR_AND_RETURN("Failed to read quatd value");
-      }
-      DCOUT("quatd = [" << val[0] << ", " << val[1] << ", " << val[2] << ", " << val[3] << "]");
-      _dedup_quatd[rep] = val;
+    // quatd has 4 doubles
+    CHECK_MEMORY_USAGE(sizeof(double) * 4);
+    if (!_sr->read(sizeof(double) * 4, sizeof(double) * 4,
+                   reinterpret_cast<uint8_t *>(&val))) {
+      PUSH_ERROR_AND_RETURN("Failed to read quatd value");
     }
+    DCOUT("quatd = [" << val[0] << ", " << val[1] << ", " << val[2] << ", " << val[3] << "]");
     if (!add_sample_to_timesamples<value::quatd>(&dst, t, val, &_err,
                                                  expected_total_samples)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
@@ -3175,24 +2961,16 @@ bool CrateReader::UnpackTimeSampleValue_MATRIX2D(
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
 
-    // Check deduplication cache first
-    auto it = _dedup_matrix2d.find(rep);
-    value::matrix2d val;
-    if (it != _dedup_matrix2d.end()) {
-      // Reuse cached value
-      val = it->second;
-      DCOUT("Reusing cached MATRIX2D value for ValueRep");
-    } else {
+    // Scalar deduplication was removed - see FLOAT3 fix
       // Decode and cache
       // Matrix contains diagonal components only, values are represented in int8
       uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
       int8_t vdata[2];
       memcpy(&vdata, &data, 2);
+      value::matrix2d val;
       memset(val.m, 0, sizeof(value::matrix2d));
       val.m[0][0] = static_cast<double>(vdata[0]);
       val.m[1][1] = static_cast<double>(vdata[1]);
-      _dedup_matrix2d[rep] = val;
-    }
 
     if (!add_sample_to_timesamples<value::matrix2d>(&dst, t, val, &_err,
                                                     expected_total_samples)) {
@@ -3283,25 +3061,17 @@ bool CrateReader::UnpackTimeSampleValue_MATRIX3D(
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
 
-    // Check deduplication cache first
-    auto it = _dedup_matrix3d.find(rep);
-    value::matrix3d val;
-    if (it != _dedup_matrix3d.end()) {
-      // Reuse cached value
-      val = it->second;
-      DCOUT("Reusing cached MATRIX3D value for ValueRep");
-    } else {
+    // Scalar deduplication was removed - see FLOAT3 fix
       // Decode and cache
       // Matrix contains diagonal components only, values are represented in int8
       uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
       int8_t vdata[3];
       memcpy(&vdata, &data, 3);
+      value::matrix3d val;
       memset(val.m, 0, sizeof(value::matrix3d));
       val.m[0][0] = static_cast<double>(vdata[0]);
       val.m[1][1] = static_cast<double>(vdata[1]);
       val.m[2][2] = static_cast<double>(vdata[2]);
-      _dedup_matrix3d[rep] = val;
-    }
 
     if (!add_sample_to_timesamples<value::matrix3d>(&dst, t, val, &_err,
                                                     expected_total_samples)) {
@@ -3392,26 +3162,18 @@ bool CrateReader::UnpackTimeSampleValue_MATRIX4D(
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
 
-    // Check deduplication cache first
-    auto it = _dedup_matrix4d.find(rep);
-    value::matrix4d val;
-    if (it != _dedup_matrix4d.end()) {
-      // Reuse cached value
-      val = it->second;
-      DCOUT("Reusing cached MATRIX4D value for ValueRep");
-    } else {
+    // Scalar deduplication was removed - see FLOAT3 fix
       // Decode and cache
       // Matrix contains diagonal components only, values are represented in int8
       uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
       int8_t vdata[4];
       memcpy(&vdata, &data, 4);
+      value::matrix4d val;
       memset(val.m, 0, sizeof(value::matrix4d));
       val.m[0][0] = static_cast<double>(vdata[0]);
       val.m[1][1] = static_cast<double>(vdata[1]);
       val.m[2][2] = static_cast<double>(vdata[2]);
       val.m[3][3] = static_cast<double>(vdata[3]);
-      _dedup_matrix4d[rep] = val;
-    }
 
     if (!add_sample_to_timesamples<value::matrix4d>(&dst, t, val, &_err,
                                                     expected_total_samples)) {
@@ -3503,18 +3265,9 @@ bool CrateReader::UnpackTimeSampleValue_UINT32(double t,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
 
-    // Check deduplication cache first
-    auto it = _dedup_uint32.find(rep);
-    uint32_t val;
-    if (it != _dedup_uint32.end()) {
-      // Reuse cached value
-      val = it->second;
-      DCOUT("Reusing cached UINT32 value for ValueRep");
-    } else {
+    // Scalar deduplication was removed - see FLOAT3 fix
       // Decode and cache
-      val = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-      _dedup_uint32[rep] = val;
-    }
+      uint32_t val = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
 
     if (!add_sample_to_timesamples<uint32_t>(&dst, t, val, &_err,
                                              expected_total_samples)) {
@@ -3605,22 +3358,13 @@ bool CrateReader::UnpackTimeSampleValue_INT64(double t,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
 
-    // Check deduplication cache first
-    auto it = _dedup_int64.find(rep);
-    int64_t val;
-    if (it != _dedup_int64.end()) {
-      // Reuse cached value
-      val = it->second;
-      DCOUT("Reusing cached INT64 value for ValueRep");
-    } else {
+    // Scalar deduplication was removed - see FLOAT3 fix
       // Decode and cache
       // Value is represented as int
       uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
       int _val;
       memcpy(&_val, &data, sizeof(int));
-      val = static_cast<int64_t>(_val);
-      _dedup_int64[rep] = val;
-    }
+      int64_t val = static_cast<int64_t>(_val);
 
     if (!add_sample_to_timesamples<int64_t>(&dst, t, val, &_err,
                                             expected_total_samples)) {
@@ -3682,23 +3426,15 @@ bool CrateReader::UnpackTimeSampleValue_INT64(double t,
                                 "Compressed int64 not supported for TimeSamples.");
     }
 
-    // Check deduplication cache for scalar value read from stream
-    auto it = _dedup_int64.find(rep);
+    // Read scalar value directly without caching
+    // Scalar deduplication was removed - see FLOAT3 fix
     int64_t val;
-    if (it != _dedup_int64.end()) {
-      // Reuse cached value
-      val = it->second;
-      DCOUT("Reusing cached INT64 scalar value for ValueRep");
-    } else {
-      // Read and cache scalar value
-      CHECK_MEMORY_USAGE(sizeof(int64_t));
-      if (!_sr->read(sizeof(int64_t), sizeof(int64_t),
-                     reinterpret_cast<uint8_t *>(&val))) {
-        PUSH_ERROR_AND_RETURN("Failed to read int64 value");
-      }
-      DCOUT("int64 = " << val);
-      _dedup_int64[rep] = val;
+    CHECK_MEMORY_USAGE(sizeof(int64_t));
+    if (!_sr->read(sizeof(int64_t), sizeof(int64_t),
+                   reinterpret_cast<uint8_t *>(&val))) {
+      PUSH_ERROR_AND_RETURN("Failed to read int64 value");
     }
+    DCOUT("int64 = " << val);
     if (!add_sample_to_timesamples<int64_t>(&dst, t, val, &_err,
                                             expected_total_samples)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
@@ -3737,22 +3473,13 @@ bool CrateReader::UnpackTimeSampleValue_UINT64(double t,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
 
-    // Check deduplication cache first
-    auto it = _dedup_uint64.find(rep);
-    uint64_t val;
-    if (it != _dedup_uint64.end()) {
-      // Reuse cached value
-      val = it->second;
-      DCOUT("Reusing cached UINT64 value for ValueRep");
-    } else {
+    // Scalar deduplication was removed - see FLOAT3 fix
       // Decode and cache
       // Value is represented as uint
       uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
       uint32_t _val;
       memcpy(&_val, &data, sizeof(uint32_t));
-      val = static_cast<uint64_t>(_val);
-      _dedup_uint64[rep] = val;
-    }
+      uint64_t val = static_cast<uint64_t>(_val);
 
     if (!add_sample_to_timesamples<uint64_t>(&dst, t, val, &_err,
                                              expected_total_samples)) {
@@ -3814,23 +3541,16 @@ bool CrateReader::UnpackTimeSampleValue_UINT64(double t,
                                 "Compressed uint64 not supported for TimeSamples.");
     }
 
-    // Check deduplication cache for scalar value read from stream
-    auto it = _dedup_uint64.find(rep);
+    // Scalar deduplication was removed - see FLOAT3 fix
+    // Read scalar value directly without caching
+    // Scalar deduplication was removed - see FLOAT3 fix
     uint64_t val;
-    if (it != _dedup_uint64.end()) {
-      // Reuse cached value
-      val = it->second;
-      DCOUT("Reusing cached UINT64 scalar value for ValueRep");
-    } else {
-      // Read and cache scalar value
-      CHECK_MEMORY_USAGE(sizeof(uint64_t));
-      if (!_sr->read(sizeof(uint64_t), sizeof(uint64_t),
-                     reinterpret_cast<uint8_t *>(&val))) {
-        PUSH_ERROR_AND_RETURN("Failed to read uint64 value");
-      }
-      DCOUT("uint64 = " << val);
-      _dedup_uint64[rep] = val;
+    CHECK_MEMORY_USAGE(sizeof(uint64_t));
+    if (!_sr->read(sizeof(uint64_t), sizeof(uint64_t),
+                   reinterpret_cast<uint8_t *>(&val))) {
+      PUSH_ERROR_AND_RETURN("Failed to read uint64 value");
     }
+    DCOUT("uint64 = " << val);
     if (!add_sample_to_timesamples<uint64_t>(&dst, t, val, &_err,
                                              expected_total_samples)) {
       PUSH_ERROR_AND_RETURN_TAG(kTag, "Failed to add sample to TimeSamples.");
@@ -3869,22 +3589,14 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE(double t,
                                 "Invalid inlined ValueRep in TimeSamples.");
     }
 
-    // Check deduplication cache first
-    auto it = _dedup_double.find(rep);
+    // Decode value directly without caching
+    // Scalar deduplication was removed - see FLOAT3 fix
+    // Value is stored as float
     double val;
-    if (it != _dedup_double.end()) {
-      // Reuse cached value
-      val = it->second;
-      DCOUT("Reusing cached DOUBLE value for ValueRep");
-    } else {
-      // Decode and cache
-      // stored as float
-      uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
-      float _f;
-      memcpy(&_f, &data, sizeof(float));
-      val = static_cast<double>(_f);
-      _dedup_double[rep] = val;
-    }
+    uint32_t data = (rep.GetPayload() & ((1ull << (sizeof(uint32_t) * 8)) - 1));
+    float _f;
+    memcpy(&_f, &data, sizeof(float));
+    val = static_cast<double>(_f);
 
     if (!add_sample_to_timesamples<double>(&dst, t, val, &_err,
                                            expected_total_samples)) {
@@ -3950,23 +3662,15 @@ bool CrateReader::UnpackTimeSampleValue_DOUBLE(double t,
                                 "Compressed double not supported for TimeSamples.");
     }
 
-    // Check deduplication cache for scalar value read from stream
-    auto it = _dedup_double.find(rep);
+    // Read scalar value directly without caching
+    // Scalar deduplication was removed - see FLOAT3 fix
     double v;
-    if (it != _dedup_double.end()) {
-      // Reuse cached value
-      v = it->second;
-      DCOUT("Reusing cached DOUBLE scalar value for ValueRep");
-    } else {
-      // Read and cache scalar value
-      CHECK_MEMORY_USAGE(sizeof(double));
-      if (!_sr->read(sizeof(double), sizeof(double),
-                     reinterpret_cast<uint8_t *>(&v))) {
-        PUSH_ERROR_AND_RETURN("Failed to read double");
-      }
-      DCOUT("double = " << v);
-      _dedup_double[rep] = v;
+    CHECK_MEMORY_USAGE(sizeof(double));
+    if (!_sr->read(sizeof(double), sizeof(double),
+                   reinterpret_cast<uint8_t *>(&v))) {
+      PUSH_ERROR_AND_RETURN("Failed to read double");
     }
+    DCOUT("double = " << v);
 
     if (!add_sample_to_timesamples<double>(&dst, t, v, &_err,
                                            expected_total_samples)) {
