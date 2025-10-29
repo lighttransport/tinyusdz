@@ -347,9 +347,8 @@ async function loadUSDModel() {
 	// Use useZstdCompressedWasm: false since compressed WASM is not available
 	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
 
-	//const usd_filename = "./assets/cube-animation.usda";
+	const usd_filename = "./assets/cube-animation.usda";
 	//const usd_filename = "./assets/suzanne-xform.usdc";
-	const usd_filename = "./assets/wings-3.usdc";
 
 	// Load USD scene
 	const usd_scene = await loader.loadAsync(usd_filename);
@@ -374,6 +373,14 @@ async function loadUSDModel() {
 	threeNode.castShadow = true;
 	threeNode.receiveShadow = true;
 	threeNode.position.y = 0.5;
+
+	// Apply Z-up to Y-up conversion if enabled
+	if (animationParams.applyUpAxisConversion) {
+		threeNode.rotation.x = -Math.PI / 2;
+	}
+
+	// Apply scene scale
+	threeNode.scale.set(animationParams.sceneScale, animationParams.sceneScale, animationParams.sceneScale);
 
 	// Traverse and enable shadows for all meshes
 	threeNode.traverse((child) => {
@@ -642,6 +649,184 @@ const animationParams = {
 	duration: 10, // seconds
 	speed: 1.0,
 
+	// Rendering options
+	shadowsEnabled: true,
+	toggleShadows: function() {
+		renderer.shadowMap.enabled = this.shadowsEnabled;
+		directionalLight.castShadow = this.shadowsEnabled;
+		ground.receiveShadow = this.shadowsEnabled;
+
+		// Update all loaded objects
+		if (parentCube) {
+			parentCube.traverse((child) => {
+				if (child.isMesh) {
+					child.castShadow = this.shadowsEnabled;
+					child.receiveShadow = this.shadowsEnabled;
+				}
+			});
+		}
+		childSphere.castShadow = this.shadowsEnabled;
+		childSphere.receiveShadow = this.shadowsEnabled;
+		grandchildCone.castShadow = this.shadowsEnabled;
+		grandchildCone.receiveShadow = this.shadowsEnabled;
+	},
+
+	// Up axis conversion (Z-up to Y-up)
+	applyUpAxisConversion: true,
+	toggleUpAxisConversion: function() {
+		if (parentCube) {
+			if (this.applyUpAxisConversion) {
+				// Apply Z-up to Y-up conversion (-90 degrees around X axis)
+				parentCube.rotation.x = -Math.PI / 2;
+			} else {
+				// Reset rotation
+				parentCube.rotation.x = 0;
+			}
+		}
+	},
+
+	// Double-sided rendering
+	doubleSided: false,
+	toggleDoubleSided: function() {
+		// Update all loaded objects
+		if (parentCube) {
+			parentCube.traverse((child) => {
+				if (child.isMesh && child.material) {
+					if (Array.isArray(child.material)) {
+						child.material.forEach(mat => {
+							mat.side = this.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+							mat.needsUpdate = true;
+						});
+					} else {
+						child.material.side = this.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+						child.material.needsUpdate = true;
+					}
+					// Also update original material if stored
+					if (child.userData.originalMaterial) {
+						if (Array.isArray(child.userData.originalMaterial)) {
+							child.userData.originalMaterial.forEach(mat => {
+								mat.side = this.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+							});
+						} else {
+							child.userData.originalMaterial.side = this.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+						}
+					}
+				}
+			});
+		}
+
+		// Update child sphere and grandchild cone
+		if (childSphere.material) {
+			childSphere.material.side = this.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+			childSphere.material.needsUpdate = true;
+			if (childSphere.userData.originalMaterial) {
+				childSphere.userData.originalMaterial.side = this.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+			}
+		}
+		if (grandchildCone.material) {
+			grandchildCone.material.side = this.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+			grandchildCone.material.needsUpdate = true;
+			if (grandchildCone.userData.originalMaterial) {
+				grandchildCone.userData.originalMaterial.side = this.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+			}
+		}
+
+		// Update ground plane
+		if (ground.material) {
+			ground.material.side = this.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+			ground.material.needsUpdate = true;
+			if (ground.userData.originalMaterial) {
+				ground.userData.originalMaterial.side = this.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+			}
+		}
+	},
+
+	// Normal visualization
+	showNormals: false,
+	toggleNormalVisualization: function() {
+		// Update all loaded objects
+		if (parentCube) {
+			parentCube.traverse((child) => {
+				if (child.isMesh && child.material) {
+					// Store original materials if switching to normal view
+					if (this.showNormals && !child.userData.originalMaterial) {
+						child.userData.originalMaterial = child.material;
+						// Create normal material
+						const normalMat = new THREE.MeshNormalMaterial({
+							side: this.doubleSided ? THREE.DoubleSide : THREE.FrontSide,
+							flatShading: false
+						});
+						child.material = normalMat;
+					}
+					// Restore original materials if switching back
+					else if (!this.showNormals && child.userData.originalMaterial) {
+						child.material = child.userData.originalMaterial;
+						child.userData.originalMaterial = null;
+					}
+				}
+			});
+		}
+
+		// Update child sphere
+		if (childSphere.material) {
+			if (this.showNormals && !childSphere.userData.originalMaterial) {
+				childSphere.userData.originalMaterial = childSphere.material;
+				childSphere.material = new THREE.MeshNormalMaterial({
+					side: this.doubleSided ? THREE.DoubleSide : THREE.FrontSide
+				});
+			} else if (!this.showNormals && childSphere.userData.originalMaterial) {
+				childSphere.material = childSphere.userData.originalMaterial;
+				childSphere.userData.originalMaterial = null;
+			}
+		}
+
+		// Update grandchild cone
+		if (grandchildCone.material) {
+			if (this.showNormals && !grandchildCone.userData.originalMaterial) {
+				grandchildCone.userData.originalMaterial = grandchildCone.material;
+				grandchildCone.material = new THREE.MeshNormalMaterial({
+					side: this.doubleSided ? THREE.DoubleSide : THREE.FrontSide
+				});
+			} else if (!this.showNormals && grandchildCone.userData.originalMaterial) {
+				grandchildCone.material = grandchildCone.userData.originalMaterial;
+				grandchildCone.userData.originalMaterial = null;
+			}
+		}
+
+		// Update ground plane
+		if (ground.material) {
+			if (this.showNormals && !ground.userData.originalMaterial) {
+				ground.userData.originalMaterial = ground.material;
+				ground.material = new THREE.MeshNormalMaterial({
+					side: this.doubleSided ? THREE.DoubleSide : THREE.FrontSide
+				});
+			} else if (!this.showNormals && ground.userData.originalMaterial) {
+				ground.material = ground.userData.originalMaterial;
+				ground.userData.originalMaterial = null;
+			}
+		}
+	},
+
+	// Scene scaling
+	sceneScale: 1.0,
+	applySceneScale: function() {
+		if (parentCube) {
+			parentCube.scale.set(this.sceneScale, this.sceneScale, this.sceneScale);
+		}
+	},
+	setScalePreset_0_1: function() {
+		this.sceneScale = 0.1;
+		this.applySceneScale();
+	},
+	setScalePreset_1_0: function() {
+		this.sceneScale = 1.0;
+		this.applySceneScale();
+	},
+	setScalePreset_10_0: function() {
+		this.sceneScale = 10.0;
+		this.applySceneScale();
+	},
+
 	// Animation toggles
 	parentRotation: true,
 	childRotation: true,
@@ -707,7 +892,7 @@ let endTimeController = null;
 const playbackFolder = gui.addFolder('Playback');
 playbackFolder.add(animationParams, 'playPause').name('Play / Pause');
 playbackFolder.add(animationParams, 'reset').name('Reset');
-playbackFolder.add(animationParams, 'speed', 0, 3, 0.1).name('Speed');
+playbackFolder.add(animationParams, 'speed', 0.1, 100, 0.1).name('Speed');
 timelineController = playbackFolder.add(animationParams, 'time', 0, 30, 0.01)
 	.name('Timeline')
 	.listen()
@@ -718,6 +903,34 @@ timelineController = playbackFolder.add(animationParams, 'time', 0, 30, 0.01)
 		}
 	});
 playbackFolder.open();
+
+// Rendering controls
+const renderingFolder = gui.addFolder('Rendering');
+renderingFolder.add(animationParams, 'shadowsEnabled')
+	.name('Shadows')
+	.onChange(() => animationParams.toggleShadows());
+renderingFolder.add(animationParams, 'applyUpAxisConversion')
+	.name('Z-up to Y-up')
+	.onChange(() => animationParams.toggleUpAxisConversion());
+renderingFolder.add(animationParams, 'doubleSided')
+	.name('Double-Sided')
+	.onChange(() => animationParams.toggleDoubleSided());
+renderingFolder.add(animationParams, 'showNormals')
+	.name('Show Normals')
+	.onChange(() => animationParams.toggleNormalVisualization());
+
+// Scene scaling controls
+const scaleFolder = renderingFolder.addFolder('Scene Scale');
+scaleFolder.add(animationParams, 'sceneScale', 0.01, 100, 0.01)
+	.name('Scale')
+	.onChange(() => animationParams.applySceneScale())
+	.listen();
+scaleFolder.add(animationParams, 'setScalePreset_0_1').name('Scale: 1/10 (0.1x)');
+scaleFolder.add(animationParams, 'setScalePreset_1_0').name('Scale: 1/1 (1.0x)');
+scaleFolder.add(animationParams, 'setScalePreset_10_0').name('Scale: 10/1 (10x)');
+scaleFolder.open();
+
+renderingFolder.open();
 
 // USD Animation controls (will be populated when USD file is loaded)
 const usdAnimationFolder = gui.addFolder('USD Animations');
@@ -870,6 +1083,14 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 	threeNode.castShadow = true;
 	threeNode.receiveShadow = true;
 	threeNode.position.y = 0.5;
+
+	// Apply Z-up to Y-up conversion if enabled
+	if (animationParams.applyUpAxisConversion) {
+		threeNode.rotation.x = -Math.PI / 2;
+	}
+
+	// Apply scene scale
+	threeNode.scale.set(animationParams.sceneScale, animationParams.sceneScale, animationParams.sceneScale);
 
 	// Traverse and enable shadows for all meshes
 	threeNode.traverse((child) => {
