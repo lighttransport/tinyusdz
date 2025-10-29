@@ -1069,7 +1069,11 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
 
         DCOUT("set_timesamples");
 
-        var.set_timesamples(std::move(ts));
+        // Don't use std::move here! Multiple attributes might reference the
+        // same TimeSamples from the fieldset. Using std::move would leave the
+        // CrateValue empty after the first use, causing subsequent attributes
+        // to get an empty TimeSamples.
+        var.set_timesamples(ts);
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "`timeSamples` is not TimeSamples data.");
