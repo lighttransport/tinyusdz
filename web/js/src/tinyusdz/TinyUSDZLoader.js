@@ -314,6 +314,41 @@ class TinyUSDZLoader extends Loader {
         return tempUsd.getMaxMemoryLimitMB();
     }
 
+    /**
+     * Enable or disable bone reduction for skeletal meshes
+     * @param {boolean} enabled - Enable bone reduction
+     */
+    setEnableBoneReduction(enabled) {
+        this.enableBoneReduction_ = !!enabled;
+    }
+
+    /**
+     * Get bone reduction enabled status
+     * @returns {boolean} True if bone reduction is enabled
+     */
+    getEnableBoneReduction() {
+        return this.enableBoneReduction_ || false;
+    }
+
+    /**
+     * Set target bone count for bone reduction
+     * @param {number} count - Target number of bone influences per vertex (1-64)
+     */
+    setTargetBoneCount(count) {
+        if (typeof count !== 'number' || count < 1 || count > 64) {
+            throw new Error('Target bone count must be between 1 and 64');
+        }
+        this.targetBoneCount_ = count;
+    }
+
+    /**
+     * Get target bone count for bone reduction
+     * @returns {number} Target bone count (default: 4)
+     */
+    getTargetBoneCount() {
+        return this.targetBoneCount_ || 4;
+    }
+
 
     // TODO: remove
     // Set AssetResolver callback.
@@ -408,6 +443,12 @@ class TinyUSDZLoader extends Loader {
             usd.setMaxMemoryLimitMB(memoryLimit);
         }
 
+        // Set bone reduction configuration
+        if (this.enableBoneReduction_) {
+            usd.setEnableBoneReduction(true);
+            usd.setTargetBoneCount(this.targetBoneCount_ || 4);
+        }
+
         const ok = usd.loadFromBinary(binary, filePath);
         if (!ok) {
             _onError(new Error('TinyUSDZLoader: Failed to load USD from binary data.', {cause: usd.error()}));
@@ -473,6 +514,12 @@ class TinyUSDZLoader extends Loader {
                 const memoryLimit = options.maxMemoryLimitMB || this.maxMemoryLimitMB_;
                 if (memoryLimit !== undefined) {
                     usd.setMaxMemoryLimitMB(memoryLimit);
+                }
+
+                // Set bone reduction configuration
+                if (scope.enableBoneReduction_) {
+                    usd.setEnableBoneReduction(true);
+                    usd.setTargetBoneCount(scope.targetBoneCount_ || 4);
                 }
 
                 const ok = usd.loadAsLayerFromBinary(usd_binary, url);
@@ -541,6 +588,12 @@ class TinyUSDZLoader extends Loader {
                 const memoryLimit = options.maxMemoryLimitMB || this.maxMemoryLimitMB_;
                 if (memoryLimit !== undefined) {
                     usd.setMaxMemoryLimitMB(memoryLimit);
+                }
+
+                // Set bone reduction configuration
+                if (this.enableBoneReduction_) {
+                    usd.setEnableBoneReduction(true);
+                    usd.setTargetBoneCount(this.targetBoneCount_ || 4);
                 }
 
                 const u8data = new Uint8Array(usd_data);

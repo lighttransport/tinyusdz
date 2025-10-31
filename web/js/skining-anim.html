@@ -79,6 +79,52 @@
 				font-size: 11px;
 				color: #ff9966;
 			}
+			#joint-hierarchy {
+				position: absolute;
+				top: 10px;
+				right: 10px;
+				color: white;
+				background: rgba(0, 0, 0, 0.8);
+				padding: 15px;
+				border-radius: 5px;
+				font-size: 12px;
+				max-width: 300px;
+				max-height: 80vh;
+				overflow-y: auto;
+				display: none;
+			}
+			#joint-hierarchy h3 {
+				margin-top: 0;
+				margin-bottom: 5px;
+				color: #ff9966;
+				font-size: 14px;
+			}
+			#selected-joint-indicator {
+				margin-bottom: 10px;
+				padding: 5px 8px;
+				background: rgba(255, 255, 255, 0.1);
+				border-radius: 3px;
+				font-size: 11px;
+				color: #ffd700;
+				display: none;
+			}
+			#selected-joint-indicator strong {
+				color: #fff;
+			}
+			#joint-hierarchy::-webkit-scrollbar {
+				width: 8px;
+			}
+			#joint-hierarchy::-webkit-scrollbar-track {
+				background: rgba(255, 255, 255, 0.1);
+				border-radius: 4px;
+			}
+			#joint-hierarchy::-webkit-scrollbar-thumb {
+				background: rgba(255, 255, 255, 0.3);
+				border-radius: 4px;
+			}
+			#joint-hierarchy::-webkit-scrollbar-thumb:hover {
+				background: rgba(255, 255, 255, 0.5);
+			}
 		</style>
 	</head>
 	<body>
@@ -87,6 +133,9 @@
 			<p>
 				This demo shows USD skeletal animation (SkelAnimation) extraction and playback using Three.js SkinnedMesh.<br>
 				Load a USD file with skeletal animations to see character rigs in action.
+			</p>
+			<p style="font-size: 11px; color: #999; margin-top: 5px;">
+				<strong>Shortcuts:</strong> G=Translate, R=Rotate, S=Scale, X=Toggle Space, ESC=Deselect
 			</p>
 			<p>
 				<strong>Current file:</strong> <span id="currentFile">No file loaded</span>
@@ -102,6 +151,16 @@
 			<div id="animation-info" style="display:none;">
 				<strong>Skeletal Animations Found:</strong>
 				<div class="animation-list" id="animationList"></div>
+			</div>
+		</div>
+
+		<div id="joint-hierarchy">
+			<h3>Joint Hierarchy</h3>
+			<div id="selected-joint-indicator">
+				<strong>Selected:</strong> <span id="selected-joint-name">None</span>
+			</div>
+			<div id="joint-hierarchy-content">
+				<p style="color: #888;">No skeleton loaded</p>
 			</div>
 		</div>
 
@@ -161,6 +220,45 @@
 					});
 				} else {
 					animInfo.style.display = 'none';
+				}
+			};
+
+			// Function to update joint hierarchy display
+			window.updateJointHierarchy = function(hierarchyHTML) {
+				const hierarchyPanel = document.getElementById('joint-hierarchy');
+				const hierarchyContent = document.getElementById('joint-hierarchy-content');
+
+				if (hierarchyHTML && hierarchyHTML.trim() !== '' && hierarchyHTML !== '<p>No skeleton loaded</p>') {
+					hierarchyPanel.style.display = 'block';
+					hierarchyContent.innerHTML = hierarchyHTML;
+
+					// Hook up click events for joint items
+					const jointItems = hierarchyContent.querySelectorAll('.joint-item');
+					jointItems.forEach(item => {
+						item.addEventListener('click', function() {
+							const boneName = this.getAttribute('data-bone-name');
+							if (window.selectJointByName) {
+								window.selectJointByName(boneName);
+							}
+						});
+					});
+				} else {
+					hierarchyPanel.style.display = 'none';
+					hierarchyContent.innerHTML = '<p style="color: #888;">No skeleton loaded</p>';
+				}
+			};
+
+			// Function to update selected joint indicator
+			window.updateSelectedJoint = function(jointName) {
+				const indicator = document.getElementById('selected-joint-indicator');
+				const nameSpan = document.getElementById('selected-joint-name');
+
+				if (jointName) {
+					indicator.style.display = 'block';
+					nameSpan.textContent = jointName;
+				} else {
+					indicator.style.display = 'none';
+					nameSpan.textContent = 'None';
 				}
 			};
 		</script>
