@@ -629,6 +629,13 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 	const loader = new TinyUSDZLoader();
 	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
 
+	// Configure bone reduction (if enabled in UI)
+	if (animationParams.enableBoneReduction) {
+		loader.setEnableBoneReduction(true);
+		loader.setTargetBoneCount(animationParams.targetBoneCount);
+		console.log(`Bone reduction enabled: ${animationParams.targetBoneCount} bones per vertex`);
+	}
+
 	// Convert ArrayBuffer to Uint8Array
 	const uint8Array = new Uint8Array(arrayBuffer);
 
@@ -977,7 +984,11 @@ const animationParams = {
 	},
 	deselectJoint: function() {
 		deselectJoint();
-	}
+	},
+
+	// Bone reduction settings (applied on next file load)
+	enableBoneReduction: false,
+	targetBoneCount: 4
 };
 
 // GUI setup
@@ -1056,6 +1067,20 @@ gizmoFolder.add(animationParams, 'transformSpace', {
 gizmoFolder.add(animationParams, 'deselectJoint')
 	.name('Deselect Joint');
 gizmoFolder.open();
+
+// Bone reduction settings
+const boneReductionFolder = gui.addFolder('Bone Reduction (Next Load)');
+boneReductionFolder.add(animationParams, 'enableBoneReduction')
+	.name('Enable Reduction')
+	.onChange(() => {
+		console.log(`Bone reduction ${animationParams.enableBoneReduction ? 'enabled' : 'disabled'} (applies on next file load)`);
+	});
+boneReductionFolder.add(animationParams, 'targetBoneCount', 1, 8, 1)
+	.name('Target Bone Count')
+	.onChange(() => {
+		console.log(`Target bone count set to ${animationParams.targetBoneCount} (applies on next file load)`);
+	});
+boneReductionFolder.close(); // Closed by default as advanced feature
 
 // Info folder
 const infoFolder = gui.addFolder('Info');
