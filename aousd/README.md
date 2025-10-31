@@ -58,43 +58,116 @@ For applications that benefit from a single monolithic USD library:
 - **Monolithic**: Single `libusd_ms.so` library, faster linking, smaller total size
 - **Standard**: Multiple libraries (45+ .so files), more modular, standard OpenUSD configuration
 
+### No-Python Build (C++-Only)
+
+For C++-only applications without Python dependencies:
+
+#### Standard No-Python Build (Multiple Libraries)
+
+1. **Initial Setup** (one-time only):
+   ```bash
+   cd aousd
+   ./setup_openusd_nopython.sh
+   ```
+
+   Or with specific compilers:
+   ```bash
+   CC=clang CXX=clang++ ./setup_openusd_nopython.sh
+   ```
+
+   This will:
+   - Build OpenUSD without Python bindings (`--no-python`)
+   - Install to `aousd/dist_nopython`
+   - 43 USD libraries (modular linking)
+   - No Python virtual environment required
+
+2. **Activate Environment** (every new terminal session):
+   ```bash
+   source aousd/setup_env_nopython.sh
+   ```
+
+#### Monolithic No-Python Build (Single Library)
+
+1. **Initial Setup** (one-time only):
+   ```bash
+   cd aousd
+   ./setup_openusd_nopython_monolithic.sh
+   ```
+
+   Or with specific compilers:
+   ```bash
+   CC=clang CXX=clang++ ./setup_openusd_nopython_monolithic.sh
+   ```
+
+   This will:
+   - Build OpenUSD as single monolithic library without Python
+   - Install to `aousd/dist_nopython_monolithic`
+   - Single `libusd_ms.so` library (fastest linking)
+   - No Python virtual environment required
+
+2. **Activate Environment** (every new terminal session):
+   ```bash
+   source aousd/setup_env_nopython_monolithic.sh
+   ```
+
+**Benefits of No-Python Builds:**
+- Smaller binary size (no Python interpreter embedded)
+- Faster build time (no Python bindings to compile)
+- Minimal runtime dependencies (C++ stdlib + TBB only)
+- Ideal for embedded systems or server deployments
+- Perfect for C++ applications that don't need Python API
+- **Monolithic variant**: Single library for even faster linking
+
 ## Directory Structure
 
 ```
 aousd/
-├── OpenUSD/                      # Cloned OpenUSD repository
-├── dist/                         # OpenUSD standard build installation
-│   ├── bin/                      # USD command-line tools
-│   ├── lib/                      # USD libraries (45+ .so files) and Python modules
-│   └── include/                  # USD headers
-├── dist_monolithic/              # OpenUSD monolithic build installation
-│   ├── bin/                      # USD command-line tools
-│   ├── lib/                      # Single monolithic USD library and Python modules
-│   └── include/                  # USD headers
-├── venv/                         # Python 3.11 virtual environment (shared)
-├── setup_openusd.sh              # Standard build script
-├── setup_openusd_monolithic.sh   # Monolithic build script
-├── setup_env.sh                  # Environment setup for standard build
-├── setup_env_monolithic.sh       # Environment setup for monolithic build
-└── README.md                     # This file
+├── OpenUSD/                            # Cloned OpenUSD repository
+├── dist/                               # OpenUSD standard build (with Python)
+│   ├── bin/                            # USD command-line tools
+│   ├── lib/                            # USD libraries (45+ .so files) and Python modules
+│   └── include/                        # USD headers
+├── dist_monolithic/                    # OpenUSD monolithic build (with Python)
+│   ├── bin/                            # USD command-line tools
+│   ├── lib/                            # Single monolithic USD library and Python modules
+│   └── include/                        # USD headers
+├── dist_nopython/                      # OpenUSD no-python build (C++-only)
+│   ├── lib/                            # 43 USD C++ libraries (no Python modules)
+│   └── include/                        # USD headers
+├── dist_nopython_monolithic/           # OpenUSD no-python monolithic (C++-only)
+│   ├── lib/                            # Single libusd_ms.so (no Python modules)
+│   └── include/                        # USD headers
+├── venv/                               # Python 3.11 virtual environment (shared by Python builds)
+├── setup_openusd.sh                    # Standard build script
+├── setup_openusd_monolithic.sh         # Monolithic build script
+├── setup_openusd_nopython.sh           # No-Python standard build script
+├── setup_openusd_nopython_monolithic.sh # No-Python monolithic build script
+├── setup_env.sh                        # Environment setup for standard build
+├── setup_env_monolithic.sh             # Environment setup for monolithic build
+├── setup_env_nopython.sh               # Environment setup for no-python build
+├── setup_env_nopython_monolithic.sh    # Environment setup for no-python monolithic build
+└── README.md                           # This file
 ```
 
 ## Compiler Configuration
 
-Both build scripts automatically detect available compilers, but you can override them:
+All build scripts automatically detect available compilers, but you can override them:
 
 ```bash
-# Use GCC (standard build)
+# Use GCC
 CC=gcc CXX=g++ ./setup_openusd.sh
+CC=gcc CXX=g++ ./setup_openusd_monolithic.sh
+CC=gcc CXX=g++ ./setup_openusd_nopython.sh
+CC=gcc CXX=g++ ./setup_openusd_nopython_monolithic.sh
 
-# Use Clang (standard build)
+# Use Clang
 CC=clang CXX=clang++ ./setup_openusd.sh
-
-# Use specific versions (standard build)
-CC=gcc-11 CXX=g++-11 ./setup_openusd.sh
-
-# Same for monolithic build
 CC=clang CXX=clang++ ./setup_openusd_monolithic.sh
+CC=clang CXX=clang++ ./setup_openusd_nopython.sh
+CC=clang CXX=clang++ ./setup_openusd_nopython_monolithic.sh
+
+# Use specific versions
+CC=gcc-11 CXX=g++-11 ./setup_openusd.sh
 ```
 
 ## Available Tools After Setup
@@ -215,6 +288,7 @@ usdzip output.usdz -r models/suzanne.usda
 - Multiple shared libraries (libusd_arch.so, libusd_sdf.so, libusd_usd.so, etc.)
 - Standard OpenUSD configuration used by most applications
 - Modular library structure allows selective linking
+- Python bindings included
 - Installed to `dist/`
 
 **Monolithic Build (`setup_openusd_monolithic.sh`):**
@@ -222,14 +296,34 @@ usdzip output.usdz -r models/suzanne.usda
 - Faster link times for applications
 - Smaller total disk footprint
 - Easier deployment (fewer .so files)
+- Python bindings included
 - Installed to `dist_monolithic/`
+
+**No-Python Standard Build (`setup_openusd_nopython.sh`):**
+- 43 USD shared libraries (C++ only)
+- No Python interpreter or bindings
+- Minimal runtime dependencies (C++ stdlib + TBB)
+- Faster build time (~15-18 min)
+- Smallest binary size (~320 MB)
+- Ideal for C++-only applications with modular linking
+- Installed to `dist_nopython/`
+
+**No-Python Monolithic Build (`setup_openusd_nopython_monolithic.sh`):**
+- Single `libusd_ms.so` shared library (C++ only)
+- No Python interpreter or bindings
+- Minimal runtime dependencies (C++ stdlib + TBB)
+- Faster build time (~15-18 min)
+- Small binary size (~417 MB)
+- Fastest linking for C++-only applications
+- Ideal for production deployments with minimal footprint
+- Installed to `dist_nopython_monolithic/`
 
 ### Feature Configuration
 
-Both builds use minimal dependencies by default. To enable additional features, modify the respective script:
+All builds use minimal dependencies by default. To enable additional features, modify the respective script:
 
 ```bash
-# In setup_openusd.sh or setup_openusd_monolithic.sh
+# In setup_openusd.sh, setup_openusd_monolithic.sh, or setup_openusd_nopython.sh
 # Remove these flags for full features:
 # --no-imaging     # Enable imaging support
 # --no-usdview     # Enable USD viewer
@@ -238,9 +332,11 @@ Both builds use minimal dependencies by default. To enable additional features, 
 
 ### Which Build to Use?
 
-- **Use Standard Build** if you need maximum compatibility with other USD tools
-- **Use Monolithic Build** if you want faster compilation/linking or easier deployment
-- Both builds provide identical functionality and Python API
+- **Use Standard Build** if you need maximum compatibility with other USD tools and Python API
+- **Use Monolithic Build** if you want faster compilation/linking or easier deployment with Python
+- **Use No-Python Standard Build** if you only need C++ libraries with modular linking
+- **Use No-Python Monolithic Build** if you want C++-only with fastest linking and minimal deployment
+- All builds provide identical C++ API functionality
 
 ## Troubleshooting
 
@@ -299,13 +395,24 @@ echo "Outputs saved in comparisons/"
 echo "Use 'diff' or 'vimdiff' to compare files"
 ```
 
+## Additional Documentation
+
+- **[Build Comparison Guide](README_BUILD_COMPARISON.md)** - Detailed comparison of all three build variants with use cases, performance characteristics, and recommendations
+
 ## Notes
 
-- Two build variants available: Standard (modular) and Monolithic (single library)
+- **Four build variants available:**
+  1. **Standard** (dist/): 45+ libraries with Python bindings + command-line tools
+  2. **Monolithic** (dist_monolithic/): Single library with Python bindings + command-line tools
+  3. **No-Python Standard** (dist_nopython/): 43 C++ libraries without Python
+  4. **No-Python Monolithic** (dist_nopython_monolithic/): Single C++ library without Python
 - The OpenUSD builds are configured for minimal dependencies to reduce build time
-- Python bindings are enabled for comprehensive API comparison
-- The setup uses Python 3.11 via `uv` for consistent environment
-- Build artifacts are isolated in separate directories (`dist/` and `dist_monolithic/`)
-- Both builds share the same Python virtual environment
+- Python builds use Python 3.11 via `uv` for consistent environment
+- Build artifacts are isolated in separate directories
+- Python builds (1 & 2) share the same Python virtual environment
+- No-Python builds (3 & 4) have no Python dependencies - only C++ stdlib + TBB
 - Compiler selection: The scripts auto-detect gcc/g++ or clang/clang++, or use CC/CXX environment variables
-- You can have both builds installed simultaneously
+- You can have all four builds installed simultaneously
+- Command-line tools (usdcat, etc.) are only available in Python builds (1 & 2)
+- No-Python builds are library-only for C++ development
+- See [README_BUILD_COMPARISON.md](README_BUILD_COMPARISON.md) for help choosing the right build for your needs
