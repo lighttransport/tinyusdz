@@ -608,6 +608,10 @@ class TinyUSDZLoaderNative {
 
     //env.mesh_config.build_index_method = 0; // simple
 
+    // Bone reduction configuration
+    env.mesh_config.enable_bone_reduction = enable_bone_reduction_;
+    env.mesh_config.target_bone_count = target_bone_count_;
+
     if (is_usdz) {
       // TODO: Support USDZ + Composition
       // Setup AssetResolutionResolver to read a asset(file) from memory.
@@ -1684,6 +1688,25 @@ class TinyUSDZLoaderNative {
     return max_memory_limit_mb_;
   }
 
+  // Bone reduction configuration
+  void setEnableBoneReduction(bool enabled) {
+    enable_bone_reduction_ = enabled;
+  }
+
+  bool getEnableBoneReduction() const {
+    return enable_bone_reduction_;
+  }
+
+  void setTargetBoneCount(uint32_t count) {
+    if (count > 0 && count <= 64) {  // Sanity check: 1-64 bones
+      target_bone_count_ = count;
+    }
+  }
+
+  uint32_t getTargetBoneCount() const {
+    return target_bone_count_;
+  }
+
   emscripten::val getAssetSearchPaths() const {
     emscripten::val arr = emscripten::val::array();
     for (size_t i = 0; i < search_paths_.size(); i++) {
@@ -2336,13 +2359,17 @@ class TinyUSDZLoaderNative {
   bool loaded_as_layer_{false};
   bool enableComposition_{false};
   bool loadTextureInNative_{false}; // true: Let JavaScript to decode texture image.
-  
+
   // Set appropriate default memory limits based on WASM architecture
 #ifdef TINYUSDZ_WASM_MEMORY64
   int32_t max_memory_limit_mb_{8192}; // 8GB for MEMORY64
 #else
   int32_t max_memory_limit_mb_{2048}; // 2GB for 32-bit WASM
 #endif
+
+  // Bone reduction configuration (disabled by default for backward compatibility)
+  bool enable_bone_reduction_{false};
+  uint32_t target_bone_count_{4};  // Default to 4 bones (standard for WebGL/Three.js)
 
   std::string filename_;
   std::string warn_;
@@ -2596,6 +2623,16 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::setMaxMemoryLimitMB)
       .function("getMaxMemoryLimitMB",
                 &TinyUSDZLoaderNative::getMaxMemoryLimitMB)
+
+      // Bone reduction configuration
+      .function("setEnableBoneReduction",
+                &TinyUSDZLoaderNative::setEnableBoneReduction)
+      .function("getEnableBoneReduction",
+                &TinyUSDZLoaderNative::getEnableBoneReduction)
+      .function("setTargetBoneCount",
+                &TinyUSDZLoaderNative::setTargetBoneCount)
+      .function("getTargetBoneCount",
+                &TinyUSDZLoaderNative::getTargetBoneCount)
 
       .function("setEnableComposition",
                 &TinyUSDZLoaderNative::setEnableComposition)
