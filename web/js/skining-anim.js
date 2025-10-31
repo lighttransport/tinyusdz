@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
@@ -29,6 +30,19 @@ document.body.appendChild(renderer.domElement);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.05;
+
+// Transform controls for joint manipulation
+const transformControls = new TransformControls(camera, renderer.domElement);
+transformControls.setMode('translate');
+transformControls.setSpace('local');
+transformControls.addEventListener('dragging-changed', (event) => {
+	controls.enabled = !event.value; // Disable orbit controls while dragging
+});
+scene.add(transformControls);
+
+// Raycaster for joint selection
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
 
 // Lighting
 const ambientLight = new THREE.AmbientLight(0x404040, 1);
@@ -73,6 +87,15 @@ let mixer = null;
 let animationAction = null;
 let usdAnimations = [];
 let boneMap = new Map(); // Map from joint_id to THREE.Bone
+
+// Debug visualization
+let jointSpheres = [];
+let weightVisualizationMaterial = null;
+let originalMaterial = null;
+
+// Joint selection state
+let selectedJoint = null;
+let selectedSphere = null;
 
 // ===========================================
 // USD Skeletal Animation Extraction Functions
@@ -311,6 +334,266 @@ function buildSkeletonFromUSD(usdSkeleton, skeletonId) {
 }
 
 /**
+ * Create weight visualization material with pseudo-color shader
+ * @returns {THREE.ShaderMaterial} Weight visualization shader material
+ */
+function createWeightVisualizationMaterial() {
+	const vertexShader = `
+		attribute vec4 skinIndex;
+		attribute vec4 skinWeight;
+
+		varying vec3 vColor;
+		varying vec4 vSkinWeight;
+		varying vec4 vSkinIndex;
+
+		// Pseudo-color palette for weight visualization
+		vec3 getWeightColor(float weight, float index) {
+			// Use HSV color wheel based on bone index
+			float hue = mod(index * 0.618033988749895, 1.0); // Golden ratio for good distribution
+			float sat = 0.8;
+			float val = weight;
+
+			// HSV to RGB conversion
+			float h = hue * 6.0;
+			float c = val * sat;
+			float x = c * (1.0 - abs(mod(h, 2.0) - 1.0));
+			float m = val - c;
+
+			vec3 rgb;
+			if (h < 1.0) rgb = vec3(c, x, 0.0);
+			else if (h < 2.0) rgb = vec3(x, c, 0.0);
+			else if (h < 3.0) rgb = vec3(0.0, c, x);
+			else if (h < 4.0) rgb = vec3(0.0, x, c);
+			else if (h < 5.0) rgb = vec3(x, 0.0, c);
+			else rgb = vec3(c, 0.0, x);
+
+			return rgb + m;
+		}
+
+		void main() {
+			vSkinWeight = skinWeight;
+			vSkinIndex = skinIndex;
+
+			// Blend colors based on weights
+			vColor = vec3(0.0);
+			vColor += getWeightColor(skinWeight.x, skinIndex.x) * skinWeight.x;
+			vColor += getWeightColor(skinWeight.y, skinIndex.y) * skinWeight.y;
+			vColor += getWeightColor(skinWeight.z, skinIndex.z) * skinWeight.z;
+			vColor += getWeightColor(skinWeight.w, skinIndex.w) * skinWeight.w;
+
+			vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+			gl_Position = projectionMatrix * mvPosition;
+		}
+	`;
+
+	const fragmentShader = `
+		varying vec3 vColor;
+		varying vec4 vSkinWeight;
+		varying vec4 vSkinIndex;
+
+		uniform int visualizationMode;
+
+		void main() {
+			if (visualizationMode == 0) {
+				// Blended weight colors
+				gl_FragColor = vec4(vColor, 1.0);
+			} else if (visualizationMode == 1) {
+				// Primary influence only
+				float maxWeight = max(max(vSkinWeight.x, vSkinWeight.y), max(vSkinWeight.z, vSkinWeight.w));
+				if (vSkinWeight.x == maxWeight) {
+					gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
+				} else if (vSkinWeight.y == maxWeight) {
+					gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0);
+				} else if (vSkinWeight.z == maxWeight) {
+					gl_FragColor = vec4(0.0, 0.0, 1.0, 1.0);
+				} else {
+					gl_FragColor = vec4(1.0, 1.0, 0.0, 1.0);
+				}
+			} else {
+				// Weight intensity (grayscale based on total weight)
+				float totalWeight = vSkinWeight.x + vSkinWeight.y + vSkinWeight.z + vSkinWeight.w;
+				gl_FragColor = vec4(vec3(totalWeight), 1.0);
+			}
+		}
+	`;
+
+	return new THREE.ShaderMaterial({
+		vertexShader: vertexShader,
+		fragmentShader: fragmentShader,
+		uniforms: {
+			visualizationMode: { value: 0 }
+		},
+		side: THREE.DoubleSide
+	});
+}
+
+/**
+ * Create joint visualization spheres
+ * @param {Array<THREE.Bone>} bones - Array of bones
+ * @returns {Array<THREE.Mesh>} Array of sphere meshes
+ */
+function createJointSpheres(bones) {
+	const spheres = [];
+	const geometry = new THREE.SphereGeometry(0.05, 16, 16);
+
+	bones.forEach((bone, index) => {
+		const material = new THREE.MeshStandardMaterial({
+			color: 0xff0000,
+			emissive: 0x000000,
+			metalness: 0.3,
+			roughness: 0.7
+		});
+
+		const sphere = new THREE.Mesh(geometry, material);
+		sphere.material.color.setHSL(index / bones.length, 1.0, 0.5);
+		sphere.userData.bone = bone;
+		sphere.userData.boneName = bone.name;
+		spheres.push(sphere);
+		scene.add(sphere);
+	});
+
+	return spheres;
+}
+
+/**
+ * Update joint sphere positions
+ */
+function updateJointSpheres() {
+	jointSpheres.forEach(sphere => {
+		const bone = sphere.userData.bone;
+		const worldPos = new THREE.Vector3();
+		bone.getWorldPosition(worldPos);
+		sphere.position.copy(worldPos);
+	});
+}
+
+/**
+ * Select a joint and attach transform controls
+ * @param {THREE.Bone} bone - The bone to select
+ * @param {THREE.Mesh} sphere - The corresponding sphere mesh
+ */
+function selectJoint(bone, sphere) {
+	// Deselect previous joint
+	if (selectedSphere && selectedSphere !== sphere) {
+		selectedSphere.material.emissive.setHex(0x000000);
+		selectedSphere.scale.set(1, 1, 1);
+	}
+
+	selectedJoint = bone;
+	selectedSphere = sphere;
+
+	if (sphere) {
+		// Highlight selected sphere
+		sphere.material.emissive.setHex(0xffffff);
+		sphere.scale.set(1.5, 1.5, 1.5);
+	}
+
+	// Attach transform controls to bone
+	transformControls.attach(bone);
+	transformControls.visible = animationParams.showGizmo;
+
+	// Update UI to show selected joint name
+	if (window.updateSelectedJoint) {
+		window.updateSelectedJoint(bone.name);
+	}
+
+	console.log(`Selected joint: ${bone.name}`);
+}
+
+/**
+ * Deselect current joint
+ */
+function deselectJoint() {
+	if (selectedSphere) {
+		selectedSphere.material.emissive.setHex(0x000000);
+		selectedSphere.scale.set(1, 1, 1);
+	}
+
+	selectedJoint = null;
+	selectedSphere = null;
+	transformControls.detach();
+
+	if (window.updateSelectedJoint) {
+		window.updateSelectedJoint(null);
+	}
+}
+
+/**
+ * Handle mouse click for joint selection via raycasting
+ * @param {MouseEvent} event - Mouse event
+ */
+function onMouseClick(event) {
+	// Calculate mouse position in normalized device coordinates
+	mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+	mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+	// Update raycaster
+	raycaster.setFromCamera(mouse, camera);
+
+	// Check for intersections with joint spheres
+	const intersects = raycaster.intersectObjects(jointSpheres);
+
+	if (intersects.length > 0) {
+		const sphere = intersects[0].object;
+		const bone = sphere.userData.bone;
+		selectJoint(bone, sphere);
+	}
+}
+
+/**
+ * Generate joint hierarchy text with clickable elements
+ * @param {Array<THREE.Bone>} bones - Array of bones
+ * @returns {string} HTML formatted hierarchy
+ */
+function generateJointHierarchy(bones) {
+	if (bones.length === 0) return '<p>No skeleton loaded</p>';
+
+	let html = '<div style="font-family: monospace; font-size: 12px; line-height: 1.4;">';
+
+	function traverseBone(bone, depth = 0) {
+		const indent = '&nbsp;&nbsp;'.repeat(depth);
+		const bullet = depth > 0 ? '└─ ' : '● ';
+		const color = depth === 0 ? '#ff6b6b' : '#4ecdc4';
+
+		// Make bone name clickable
+		html += `<div style="color: ${color}; cursor: pointer; padding: 2px; border-radius: 3px;"
+		              class="joint-item"
+		              data-bone-name="${bone.name}"
+		              onmouseover="this.style.backgroundColor='rgba(255,255,255,0.1)'"
+		              onmouseout="this.style.backgroundColor='transparent'">${indent}${bullet}${bone.name}</div>`;
+
+		bone.children.forEach(child => {
+			if (child.isBone) {
+				traverseBone(child, depth + 1);
+			}
+		});
+	}
+
+	// Find root bones
+	bones.forEach(bone => {
+		if (!bone.parent || !bone.parent.isBone) {
+			traverseBone(bone);
+		}
+	});
+
+	html += '</div>';
+	return html;
+}
+
+/**
+ * Handle joint selection from hierarchy UI
+ * @param {string} boneName - Name of the bone to select
+ */
+function selectJointByName(boneName) {
+	// Find the bone and sphere with matching name
+	const sphere = jointSpheres.find(s => s.userData.boneName === boneName);
+	if (sphere) {
+		const bone = sphere.userData.bone;
+		selectJoint(bone, sphere);
+	}
+}
+
+/**
  * Load USD file and extract skeletal mesh and animations
  * @param {ArrayBuffer} arrayBuffer - USD file data
  * @param {string} filename - File name
@@ -325,6 +608,17 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 		scene.remove(skeletonHelper);
 		skeletonHelper = null;
 	}
+
+	// Clear joint spheres
+	jointSpheres.forEach(sphere => scene.remove(sphere));
+	jointSpheres = [];
+
+	// Deselect any selected joint
+	deselectJoint();
+
+	// Reset materials
+	originalMaterial = null;
+	weightVisualizationMaterial = null;
 
 	// Reset animations
 	usdAnimations = [];
@@ -411,10 +705,22 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 			characterGroup.add(skinnedMesh);
 			foundSkinnedMesh = true;
 
+			// Save original material
+			originalMaterial = skinnedMesh.material;
+
 			// Create skeleton helper for visualization
 			skeletonHelper = new THREE.SkeletonHelper(skinnedMesh);
 			skeletonHelper.visible = animationParams.showSkeleton;
 			scene.add(skeletonHelper);
+
+			// Create joint spheres
+			jointSpheres = createJointSpheres(bones);
+			jointSpheres.forEach(sphere => sphere.visible = animationParams.showJoints);
+
+			// Update joint hierarchy display
+			if (window.updateJointHierarchy) {
+				window.updateJointHierarchy(generateJointHierarchy(bones));
+			}
 		}
 	});
 
@@ -441,9 +747,21 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 			skinnedMesh = newSkinnedMesh;
 			characterGroup.add(skinnedMesh);
 
+			// Save original material
+			originalMaterial = skinnedMesh.material;
+
 			skeletonHelper = new THREE.SkeletonHelper(skinnedMesh);
 			skeletonHelper.visible = animationParams.showSkeleton;
 			scene.add(skeletonHelper);
+
+			// Create joint spheres
+			jointSpheres = createJointSpheres(bones);
+			jointSpheres.forEach(sphere => sphere.visible = animationParams.showJoints);
+
+			// Update joint hierarchy display
+			if (window.updateJointHierarchy) {
+				window.updateJointHierarchy(generateJointHierarchy(bones));
+			}
 		} else {
 			// Fallback: just add the geometry
 			characterGroup.add(threeNode);
@@ -537,6 +855,49 @@ window.addEventListener('loadUSDFile', async (event) => {
 	}
 });
 
+// Listen for mouse clicks for joint selection
+window.addEventListener('click', onMouseClick);
+
+// Keyboard shortcuts for transform modes
+window.addEventListener('keydown', (event) => {
+	// Don't trigger if user is typing in an input field
+	if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') {
+		return;
+	}
+
+	switch(event.key.toLowerCase()) {
+		case 'g': // Translate/Grab
+			animationParams.transformMode = 'translate';
+			animationParams.setTransformMode();
+			console.log('Transform mode: Translate');
+			break;
+		case 'r': // Rotate
+			animationParams.transformMode = 'rotate';
+			animationParams.setTransformMode();
+			console.log('Transform mode: Rotate');
+			break;
+		case 's': // Scale
+			if (!event.ctrlKey && !event.metaKey) { // Avoid conflicts with Save
+				animationParams.transformMode = 'scale';
+				animationParams.setTransformMode();
+				console.log('Transform mode: Scale');
+			}
+			break;
+		case 'escape': // Deselect
+			deselectJoint();
+			console.log('Joint deselected');
+			break;
+		case 'x': // Toggle local/world space
+			animationParams.transformSpace = animationParams.transformSpace === 'local' ? 'world' : 'local';
+			animationParams.setTransformSpace();
+			console.log(`Transform space: ${animationParams.transformSpace}`);
+			break;
+	}
+});
+
+// Expose selectJointByName for UI hierarchy clicks
+window.selectJointByName = selectJointByName;
+
 // Animation parameters
 const animationParams = {
 	isPlaying: true,
@@ -571,6 +932,51 @@ const animationParams = {
 		if (skeletonHelper) {
 			skeletonHelper.visible = this.showSkeleton;
 		}
+	},
+
+	// Debug visualization
+	showJoints: false,
+	toggleJoints: function() {
+		jointSpheres.forEach(sphere => sphere.visible = this.showJoints);
+	},
+
+	showWeights: false,
+	weightVisualizationMode: 0, // 0: blended, 1: primary only, 2: intensity
+	toggleWeights: function() {
+		if (!skinnedMesh || !originalMaterial) return;
+
+		if (this.showWeights) {
+			if (!weightVisualizationMaterial) {
+				weightVisualizationMaterial = createWeightVisualizationMaterial();
+			}
+			weightVisualizationMaterial.uniforms.visualizationMode.value = this.weightVisualizationMode;
+			skinnedMesh.material = weightVisualizationMaterial;
+		} else {
+			skinnedMesh.material = originalMaterial;
+		}
+	},
+
+	updateWeightMode: function() {
+		if (this.showWeights && weightVisualizationMaterial) {
+			weightVisualizationMaterial.uniforms.visualizationMode.value = this.weightVisualizationMode;
+		}
+	},
+
+	// Gizmo controls
+	showGizmo: true,
+	transformMode: 'translate',
+	transformSpace: 'local',
+	toggleGizmo: function() {
+		transformControls.visible = this.showGizmo && selectedJoint !== null;
+	},
+	setTransformMode: function() {
+		transformControls.setMode(this.transformMode);
+	},
+	setTransformSpace: function() {
+		transformControls.setSpace(this.transformSpace);
+	},
+	deselectJoint: function() {
+		deselectJoint();
 	}
 };
 
@@ -611,6 +1017,45 @@ visualFolder.add(animationParams, 'showSkeleton')
 	.name('Show Skeleton')
 	.onChange(() => animationParams.toggleSkeleton());
 visualFolder.open();
+
+// Debug visualization controls
+const debugFolder = gui.addFolder('Debug Visualization');
+debugFolder.add(animationParams, 'showJoints')
+	.name('Show Joints')
+	.onChange(() => animationParams.toggleJoints());
+debugFolder.add(animationParams, 'showWeights')
+	.name('Show Weights')
+	.onChange(() => animationParams.toggleWeights());
+debugFolder.add(animationParams, 'weightVisualizationMode', {
+	'Blended Colors': 0,
+	'Primary Influence': 1,
+	'Weight Intensity': 2
+})
+	.name('Weight Mode')
+	.onChange(() => animationParams.updateWeightMode());
+debugFolder.open();
+
+// Gizmo controls
+const gizmoFolder = gui.addFolder('Joint Manipulation');
+gizmoFolder.add(animationParams, 'showGizmo')
+	.name('Show Gizmo')
+	.onChange(() => animationParams.toggleGizmo());
+gizmoFolder.add(animationParams, 'transformMode', {
+	'Translate': 'translate',
+	'Rotate': 'rotate',
+	'Scale': 'scale'
+})
+	.name('Transform Mode')
+	.onChange(() => animationParams.setTransformMode());
+gizmoFolder.add(animationParams, 'transformSpace', {
+	'Local': 'local',
+	'World': 'world'
+})
+	.name('Space')
+	.onChange(() => animationParams.setTransformSpace());
+gizmoFolder.add(animationParams, 'deselectJoint')
+	.name('Deselect Joint');
+gizmoFolder.open();
 
 // Info folder
 const infoFolder = gui.addFolder('Info');
@@ -666,6 +1111,16 @@ function animate() {
 	// Update skeleton helper
 	if (skeletonHelper) {
 		skeletonHelper.update();
+	}
+
+	// Update joint spheres
+	if (animationParams.showJoints && jointSpheres.length > 0) {
+		updateJointSpheres();
+	}
+
+	// Update transform controls position if a joint is selected
+	if (selectedJoint && transformControls.visible) {
+		transformControls.updateMatrixWorld();
 	}
 
 	// Update controls
