@@ -45,6 +45,7 @@
 #include "usdShade.hh"
 #include "value-pprint.hh"
 #include "logger.hh"
+#include "bone-util.hh"
 
 //#include <iostream>
 
@@ -4314,6 +4315,47 @@ bool RenderSceneConverter::ConvertMesh(
     dst.joint_and_weights.jointIndices = jointIndicesArray;
     dst.joint_and_weights.jointWeights = jointWeightsArray;
     dst.joint_and_weights.elementSize = int(jointIndicesElementSize);
+
+    // Apply bone reduction if enabled
+    if (env.mesh_config.enable_bone_reduction &&
+        (env.mesh_config.target_bone_count < jointIndicesElementSize)) {
+      uint32_t numVertices = uint32_t(jointIndicesArray.size() / jointIndicesElementSize);
+
+      DCOUT("Reducing bone influences from " << jointIndicesElementSize
+            << " to " << env.mesh_config.target_bone_count
+            << " per vertex (" << numVertices << " vertices)");
+
+      // Configure bone reduction with advanced settings
+      BoneReductionConfig bone_config;
+      bone_config.target_bone_count = env.mesh_config.target_bone_count;
+      bone_config.strategy = BoneReductionStrategy::ErrorMetric; // Use error-aware reduction
+      bone_config.min_weight_threshold = 0.001f; // Ignore very small weights
+      bone_config.error_tolerance = 0.5f;
+      bone_config.normalize_weights = true;
+
+      // TODO: Pass skeleton hierarchy info if available for better reduction quality
+      // For now, use nullptr (hierarchy-agnostic reduction)
+      BoneHierarchyInfo *hierarchy_info = nullptr;
+      BoneReductionStats reduction_stats;
+
+      if (!ReduceBoneInfluences(
+              dst.joint_and_weights.jointIndices,
+              dst.joint_and_weights.jointWeights,
+              jointIndicesElementSize,
+              numVertices,
+              bone_config,
+              hierarchy_info,
+              &reduction_stats)) {
+        PUSH_WARN("Bone reduction failed, using original bone influences.");
+      } else {
+        // Update elementSize to reflect reduced bone count
+        dst.joint_and_weights.elementSize = int(env.mesh_config.target_bone_count);
+        DCOUT("Bone reduction complete. New elementSize: " << dst.joint_and_weights.elementSize);
+        DCOUT("  Modified vertices: " << reduction_stats.num_vertices_modified << " / " << numVertices);
+        DCOUT("  Avg weight error: " << reduction_stats.avg_weight_error);
+        DCOUT("  Max weight error: " << reduction_stats.max_weight_error);
+      }
+    }
 
     if (mesh.skeleton.has_value()) {
       DCOUT("Convert Skeleton");

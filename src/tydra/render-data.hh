@@ -1576,6 +1576,19 @@ struct MeshConverterConfig {
   uint32_t max_skin_elementSize = 1024ull * 256ull;
 
   //
+  // Bone reduction: limit the number of bone influences per vertex for GPU skinning.
+  // When enabled, only the strongest N bone influences are kept and weights are renormalized.
+  //
+  bool enable_bone_reduction{false};
+
+  //
+  // Target number of bone influences per vertex after reduction.
+  // Default is 4, which is standard for real-time GPU skinning (e.g., Three.js, Unity, Unreal).
+  // Common values: 2, 4, 8
+  //
+  uint32_t target_bone_count{4};
+
+  //
   // Build vertex indices when vertex attributes are converted to `faceverying`?
   // Similar vertices are merged into single vertex index.
   // (convert vertex attributes from 'facevarying' to 'vertex' variability)
