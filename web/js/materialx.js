@@ -18,6 +18,7 @@ let displayP3Supported = false;
 let textureCache = new Map(); // Cache for loaded textures
 let textureEnabled = {}; // Track which textures are enabled per material
 let textureColorSpace = {}; // Track color space per texture per material
+let textureUVSet = {}; // Track UV set selection per texture per material
 
 // Available texture color spaces
 const TEXTURE_COLOR_SPACES = {
@@ -307,11 +308,13 @@ function exportMaterialToJSON(material) {
         Object.entries(mat.userData.textures).forEach(([mapName, texInfo]) => {
             const enabled = textureEnabled[material.index]?.[mapName] !== false;
             const colorSpace = mat.userData.colorSpaceSettings?.[mapName] || 'srgb';
+            const uvSet = textureUVSet[material.index]?.[mapName] || 0;
 
             exportData.textures[mapName] = {
                 textureId: texInfo.textureId,
                 enabled: enabled,
                 colorSpace: colorSpace,
+                uvSet: uvSet,
                 mapType: formatTextureName(mapName)
             };
         });
@@ -426,6 +429,15 @@ function exportMaterialToMaterialX(material) {
             xml += `  <image name="${nodeName}" type="${outputType}">\n`;
             xml += `    <input name="file" type="filename" value="texture_${texInfo.textureId}.png" />\n`;
             xml += `    <input name="colorspace" type="string" value="${colorSpace}" />\n`;
+
+            // Add UV set selection if specified
+            const uvSet = textureUVSet[material.index]?.[mapName];
+            if (uvSet !== undefined && uvSet > 0) {
+                // Reference to UV coordinate node (would need to be defined separately)
+                xml += `    <!-- Using UV set ${uvSet} for this texture -->\n`;
+                xml += `    <input name="texcoord" type="vector2" value="0.0, 0.0" uiname="UV${uvSet}" />\n`;
+            }
+
             if (outputType === 'float') {
                 xml += `    <input name="channel" type="string" value="${channels}" />\n`;
             }
@@ -1588,9 +1600,30 @@ function loadMeshes() {
                 geometry.computeVertexNormals();
             }
 
-            // Add UVs
-            if (meshData.uvs && meshData.uvs.length > 0) {
+            // Add UV sets
+            // Support new uvSets structure (multiple UV channels)
+            if (meshData.uvSets) {
+                // Load all available UV sets (uv0, uv1, uv2, etc.)
+                for (const uvSetKey in meshData.uvSets) {
+                    const uvSet = meshData.uvSets[uvSetKey];
+                    if (uvSet && uvSet.data && uvSet.data.length > 0) {
+                        const uvs = new Float32Array(uvSet.data);
+                        const slotId = uvSet.slotId || 0;
+
+                        // Three.js uses 'uv' for first set, 'uv1', 'uv2', etc. for additional sets
+                        const attributeName = slotId === 0 ? 'uv' : `uv${slotId}`;
+                        geometry.setAttribute(attributeName, new THREE.BufferAttribute(uvs, 2));
+
+                        console.log(`Mesh ${i}: Added UV set ${slotId} as attribute '${attributeName}'`);
+                    }
+                }
+            }
+            // Fallback to legacy 'uvs' or 'texcoords' field for backward compatibility
+            else if (meshData.uvs && meshData.uvs.length > 0) {
                 const uvs = new Float32Array(meshData.uvs);
+                geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+            } else if (meshData.texcoords && meshData.texcoords.length > 0) {
+                const uvs = new Float32Array(meshData.texcoords);
                 geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
             }
 
@@ -1767,6 +1800,12 @@ function updateTexturePanel(material) {
         colorSpaceDiv.appendChild(colorSpaceSelect);
         item.appendChild(colorSpaceDiv);
 
+        // UV Set selector
+        const uvSetDiv = createUVSetSelector(material, mapName);
+        if (uvSetDiv) {
+            item.appendChild(uvSetDiv);
+        }
+
         // Add texture transform controls
         if (isEnabled && texture) {
             const transformDiv = createTextureTransformUI(material, mapName, texture);
@@ -1777,6 +1816,105 @@ function updateTexturePanel(material) {
 
         list.appendChild(item);
     });
+}
+
+// Create UV set selector for a texture
+function createUVSetSelector(material, mapName) {
+    // Get the associated mesh to determine available UV sets
+    const meshWithMaterial = meshes.find(m => m.userData.materialIndex === material.index);
+    if (!meshWithMaterial) {
+        return null; // No mesh found with this material
+    }
+
+    const geometry = meshWithMaterial.geometry;
+    const availableUVSets = [];
+
+    // Detect available UV sets in the geometry
+    for (let i = 0; i < 8; i++) { // Check up to 8 UV sets (common limit)
+        const attrName = i === 0 ? 'uv' : `uv${i}`;
+        if (geometry.attributes[attrName]) {
+            availableUVSets.push({ index: i, name: attrName });
+        }
+    }
+
+    // Only show selector if there are multiple UV sets
+    if (availableUVSets.length <= 1) {
+        return null;
+    }
+
+    // Initialize UV set tracking for this material
+    if (!textureUVSet[material.index]) {
+        textureUVSet[material.index] = {};
+    }
+
+    // Get current UV set for this texture (default to 0)
+    const currentUVSet = textureUVSet[material.index][mapName] !== undefined
+        ? textureUVSet[material.index][mapName]
+        : 0;
+
+    const uvSetDiv = document.createElement('div');
+    uvSetDiv.className = 'texture-uvset';
+    uvSetDiv.style.marginTop = '8px';
+
+    const uvSetLabel = document.createElement('label');
+    uvSetLabel.textContent = 'UV Set: ';
+    uvSetLabel.style.fontSize = '10px';
+    uvSetLabel.style.color = '#aaa';
+    uvSetDiv.appendChild(uvSetLabel);
+
+    const uvSetSelect = document.createElement('select');
+    uvSetSelect.style.fontSize = '10px';
+    uvSetSelect.style.padding = '2px 5px';
+    uvSetSelect.style.background = '#333';
+    uvSetSelect.style.color = 'white';
+    uvSetSelect.style.border = '1px solid #555';
+    uvSetSelect.style.borderRadius = '3px';
+    uvSetSelect.style.cursor = 'pointer';
+
+    // Populate UV set options
+    availableUVSets.forEach(uvSet => {
+        const option = document.createElement('option');
+        option.value = uvSet.index;
+        option.textContent = `UV${uvSet.index} (${uvSet.name})`;
+        option.selected = (uvSet.index === currentUVSet);
+        uvSetSelect.appendChild(option);
+    });
+
+    // Handle UV set change
+    uvSetSelect.onchange = (e) => {
+        const newUVSet = parseInt(e.target.value);
+        changeTextureUVSet(material, mapName, newUVSet);
+    };
+
+    uvSetDiv.appendChild(uvSetSelect);
+    return uvSetDiv;
+}
+
+// Change UV set for a texture
+function changeTextureUVSet(material, mapName, uvSetIndex) {
+    // Store the UV set selection
+    if (!textureUVSet[material.index]) {
+        textureUVSet[material.index] = {};
+    }
+    textureUVSet[material.index][mapName] = uvSetIndex;
+
+    // Update the material's shader to use the selected UV set
+    // This requires updating the shader's UV attribute mapping
+    const threeMaterial = material.threeMaterial;
+
+    if (!threeMaterial.userData.uvSetMappings) {
+        threeMaterial.userData.uvSetMappings = {};
+    }
+    threeMaterial.userData.uvSetMappings[mapName] = uvSetIndex;
+
+    console.log(`Changed UV set for ${mapName} to UV${uvSetIndex}`);
+
+    // For Three.js MeshPhysicalMaterial, we need to use a custom shader
+    // to support per-texture UV set selection. For now, we'll store the
+    // preference and apply it when we implement custom material shaders.
+
+    // Mark material as needing update
+    threeMaterial.needsUpdate = true;
 }
 
 // Create texture transform UI controls
