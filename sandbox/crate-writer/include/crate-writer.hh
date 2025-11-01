@@ -89,7 +89,7 @@ public:
     uint8_t version_minor = 8;  // Default to 0.8.0 (stable)
     uint8_t version_patch = 0;
 
-    bool enable_compression = false;  // Future: enable LZ4 compression
+    bool enable_compression = true;   // Phase 4: LZ4 compression enabled by default
     bool enable_deduplication = true; // Deduplicate tokens/strings/paths/values
   };
 
@@ -176,6 +176,16 @@ private:
 
   /// Get or create fieldset index for a fieldset
   crate::FieldSetIndex GetOrCreateFieldSet(const std::vector<crate::FieldIndex>& fieldset);
+
+  // ======================================================================
+  // Compression (Phase 4)
+  // ======================================================================
+
+  /// Compress data using LZ4
+  /// Returns true if compression succeeded, false otherwise
+  /// If compression fails or expands data, original data is kept
+  bool CompressData(const char* input, size_t inputSize,
+                    std::vector<char>* compressed, std::string* err);
 
   // ======================================================================
   // I/O utilities
