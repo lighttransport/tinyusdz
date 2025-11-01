@@ -1,18 +1,84 @@
 # TinyUSDZ MaterialX/OpenPBR Three.js Demo
 
-A standalone web application that demonstrates loading USD files with OpenPBR materials and rendering them using Three.js with interactive parameter editing.
+A comprehensive web application for loading, editing, importing, and exporting MaterialX/OpenPBR materials using TinyUSDZ WebAssembly and Three.js.
+
+## Current MaterialX Support Status
+
+### ✅ Fully Supported Features
+
+#### Material I/O:
+- ✅ **Import MaterialX XML** - Parse and load MaterialX 1.38 files with OpenPBR materials
+- ✅ **Export MaterialX XML** - Save materials to MaterialX 1.38 .mtlx format
+- ✅ **Export JSON** - Complete material data with all parameters and settings
+- ✅ **USD Material Loading** - Load materials from USD/USDA/USDC/USDZ files
+
+#### OpenPBR Material Parameters:
+- ✅ **Base Layer** - Color, metalness, weight, diffuse roughness
+- ✅ **Specular Layer** - Roughness, IOR, color, anisotropy, rotation
+- ✅ **Transmission** - Weight, color, depth, scatter, dispersion
+- ✅ **Coat (Clearcoat)** - Weight, roughness, color, IOR, anisotropy
+- ✅ **Emission** - Color, luminance/intensity
+- ✅ **Geometry** - Opacity, thin-walled, normal maps
+- ✅ **Subsurface** - Weight, color, radius, scale (approximated)
+- ✅ **Thin Film** - Thickness, IOR
+
+#### Texture Support:
+- ✅ **USD Texture Loading** - Automatic loading from embedded/referenced textures
+- ✅ **External Texture Import** - HDR (.hdr), EXR (.exr), PNG, JPG, JPEG
+- ✅ **Texture Mapping** - All standard maps (base, normal, roughness, metalness, emission, AO, bump, displacement, alpha)
+- ✅ **Texture Transforms** - Real-time offset, scale/repeat, rotation controls
+- ✅ **Texture Color Spaces** - sRGB, Linear, Rec.709, ACES2065-1 (AP0), ACEScg (AP1)
+- ✅ **Texture Toggle** - Enable/disable individual texture maps
+- ✅ **Texture Preview** - Thumbnail view with full-size preview on click
+
+#### Interactive Editing:
+- ✅ **Real-time Parameter Editing** - Sliders and color pickers with immediate preview
+- ✅ **Material Selection** - Click objects or use material panel
+- ✅ **GUI Controls** - dat.GUI for all OpenPBR parameters
+- ✅ **Object Selection** - Raycasting-based 3D object picking
+
+#### Rendering & Display:
+- ✅ **Three.js MeshPhysicalMaterial** - PBR rendering with all features
+- ✅ **Synthetic HDR Environments** - Studio lighting and all-white IBL
+- ✅ **Display-P3 Color Space** - Wide color gamut support (when browser supports)
+- ✅ **Exposure Controls** - Adjustable tone mapping and brightness
+
+#### Error Handling & Validation:
+- ✅ **Comprehensive Validation** - Texture IDs, material indices, image dimensions, channels
+- ✅ **User-Friendly Errors** - Simplified messages in UI with detailed console logs
+- ✅ **Fallback Materials** - Automatic creation when loading fails
+- ✅ **Graceful Degradation** - Demo remains functional despite errors
+
+### ⚠️ Partial Support / Limitations
+
+- ⚠️ **Automatic Texture Loading from MaterialX** - Texture references are parsed but files must be loaded manually
+- ⚠️ **Subsurface Scattering** - Approximated via transmission (Three.js limitation)
+- ⚠️ **Thin Film** - Stored but not fully visualized (Three.js limitation)
+- ⚠️ **Sheen** - Limited support in Three.js MeshPhysicalMaterial
+
+### ❌ Not Yet Supported
+
+- ❌ **Animation/Timeline** - No time-based material properties
+- ❌ **Procedural Textures** - Only image-based textures supported
+- ❌ **Node Graph Editing** - No visual node editor
+- ❌ **USD Material Export** - Can't save back to USD format (only MaterialX/JSON)
+- ❌ **Multiple UV Sets** - No UV channel selection
+- ❌ **Texture Compression** - No built-in compression options
 
 ## Features
 
 - **USD File Loading**: Load USD/USDA/USDC/USDZ files via TinyUSDZ WebAssembly
-- **OpenPBR Material Support**: Full support for OpenPBR material parameters
-- **Interactive Parameter Editing**: Real-time material parameter adjustment with sliders and color pickers
-- **Material Export**: Export edited materials to JSON and MaterialX XML (.mtlx) formats
-- **Texture Preview & Control**: View, toggle, and manage texture maps for all material parameters
-- **Display-P3 Color Space Support**: Automatic detection and optional use of Display-P3 wide color gamut
-- **Synthetic HDR Environments**: Two built-in HDR environments (studio lighting and all-white)
-- **Object Selection**: Click on objects to select and edit their materials
-- **Material Panel**: View and select all materials in the loaded USD file
+- **MaterialX Import/Export**: Full MaterialX 1.38 XML support for OpenPBR materials
+- **OpenPBR Material Support**: Complete OpenPBR specification with all parameter groups
+- **Interactive Parameter Editing**: Real-time material editing with sliders and color pickers
+- **Texture Management**: Load, preview, transform, and control all texture maps
+- **HDR/EXR Support**: Load high dynamic range textures with proper color space handling
+- **Color Space Conversion**: Per-texture color space selection (sRGB, Linear, Rec.709, ACES)
+- **Display-P3 Support**: Wide color gamut rendering when browser supports
+- **Synthetic HDR Environments**: Built-in studio lighting and all-white IBL
+- **Object Selection**: Click objects to select and edit their materials
+- **Material Panel**: View and select all materials in the loaded file
+- **Enhanced Error Handling**: Comprehensive validation and user-friendly error messages
 
 ## Setup
 
