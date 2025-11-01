@@ -8,6 +8,10 @@
 #include <cstring>
 #include <sstream>
 
+// Phase 4: Compression support
+#include "../../../src/lz4-compression.hh"
+#include "../../../src/integerCoding.h"
+
 // Namespace alias to avoid collision between tinyusdz::crate and ::crate (path library)
 namespace pathlib = ::crate;
 
@@ -124,6 +128,34 @@ bool CrateWriter::Finalize(std::string* err) {
   // Step 1: Process all specs and build internal tables
   // ========================================================================
 
+  // Phase 5: Sort specs for better compression
+  // Sorting strategy:
+  // 1. Prims before properties
+  // 2. Within prims: alphabetically by path
+  // 3. Within properties: group by parent prim, then alphabetically by property name
+  std::sort(spec_data_.begin(), spec_data_.end(),
+    [](const SpecData& a, const SpecData& b) {
+      bool a_is_prim = a.path.is_prim_path();
+      bool b_is_prim = b.path.is_prim_path();
+
+      // Prims before properties
+      if (a_is_prim != b_is_prim) {
+        return a_is_prim;  // true (prim) sorts before false (property)
+      }
+
+      // Both are prims or both are properties
+      if (a_is_prim) {
+        // Both prims - sort alphabetically by full path
+        return a.path.prim_part() < b.path.prim_part();
+      } else {
+        // Both properties - first by parent prim, then by property name
+        if (a.path.prim_part() != b.path.prim_part()) {
+          return a.path.prim_part() < b.path.prim_part();
+        }
+        return a.path.prop_part() < b.path.prop_part();
+      }
+    });
+
   // Build field and fieldset tables
   for (auto& spec_data : spec_data_) {
     std::vector<crate::FieldIndex> field_indices;
@@ -194,6 +226,58 @@ void CrateWriter::Close() {
 }
 
 // ============================================================================
+// Compression (Phase 4)
+// ============================================================================
+
+bool CrateWriter::CompressData(const char* input, size_t inputSize,
+                                std::vector<char>* compressed, std::string* err) {
+  if (!compressed) {
+    if (err) *err = "CompressData: compressed output buffer is null";
+    return false;
+  }
+
+  // Check if compression is enabled
+  if (!options_.enable_compression) {
+    // No compression - just copy data
+    compressed->assign(input, input + inputSize);
+    return true;
+  }
+
+  // Get required buffer size for compression
+  size_t maxCompressedSize = LZ4Compression::GetCompressedBufferSize(inputSize);
+  if (maxCompressedSize == 0) {
+    if (err) *err = "Input size too large for compression: " + std::to_string(inputSize);
+    return false;
+  }
+
+  // Allocate compression buffer
+  compressed->resize(maxCompressedSize);
+
+  // Compress
+  std::string compress_err;
+  size_t compressedSize = LZ4Compression::CompressToBuffer(
+      input, compressed->data(), inputSize, &compress_err);
+
+  if (compressedSize == static_cast<size_t>(~0)) {
+    // Compression failed
+    if (err) *err = "LZ4 compression failed: " + compress_err;
+    return false;
+  }
+
+  // Check if compression actually reduced size
+  // If not, use uncompressed data (common for small or incompressible data)
+  if (compressedSize >= inputSize) {
+    // No benefit from compression - use original
+    compressed->assign(input, input + inputSize);
+    return true;
+  }
+
+  // Resize to actual compressed size
+  compressed->resize(compressedSize);
+  return true;
+}
+
+// ============================================================================
 // Section Writing
 // ============================================================================
 
@@ -216,17 +300,32 @@ bool CrateWriter::WriteTokensSection(std::string* err) {
 
   std::string token_blob = blob.str();
 
-  // TODO: Compress the blob if compression is enabled
-
-  // Write blob size and data
-  uint64_t blob_size = static_cast<uint64_t>(token_blob.size());
-  if (!Write(blob_size)) {
-    if (err) *err = "Failed to write token blob size";
+  // Phase 4: Compress the blob if compression is enabled
+  std::vector<char> compressed_blob;
+  if (!CompressData(token_blob.data(), token_blob.size(), &compressed_blob, err)) {
+    if (err) *err = "Failed to compress token blob: " + *err;
     return false;
   }
 
-  if (!WriteBytes(token_blob.data(), token_blob.size())) {
-    if (err) *err = "Failed to write token blob";
+  // Write in compressed format (version 0.4.0+):
+  // - uncompressedSize (uint64_t)
+  // - compressedSize (uint64_t)
+  // - compressed data
+  uint64_t uncompressed_size = static_cast<uint64_t>(token_blob.size());
+  uint64_t compressed_size = static_cast<uint64_t>(compressed_blob.size());
+
+  if (!Write(uncompressed_size)) {
+    if (err) *err = "Failed to write token blob uncompressed size";
+    return false;
+  }
+
+  if (!Write(compressed_size)) {
+    if (err) *err = "Failed to write token blob compressed size";
+    return false;
+  }
+
+  if (!WriteBytes(compressed_blob.data(), compressed_blob.size())) {
+    if (err) *err = "Failed to write compressed token blob";
     return false;
   }
 
@@ -283,17 +382,45 @@ bool CrateWriter::WriteFieldsSection(std::string* err) {
     return false;
   }
 
-  // Write fields
-  // TODO: Compress if enabled
+  // Build fields data buffer
+  std::vector<char> fields_data;
+  size_t fields_size = fields_.size() * (sizeof(crate::TokenIndex) + sizeof(crate::ValueRep));
+  fields_data.reserve(fields_size);
+
   for (const auto& field : fields_) {
-    if (!Write(field.token_index)) {
-      if (err) *err = "Failed to write field token index";
-      return false;
-    }
-    if (!Write(field.value_rep)) {
-      if (err) *err = "Failed to write field value rep";
-      return false;
-    }
+    // Append token index
+    const char* ti_bytes = reinterpret_cast<const char*>(&field.token_index);
+    fields_data.insert(fields_data.end(), ti_bytes, ti_bytes + sizeof(crate::TokenIndex));
+
+    // Append value rep
+    const char* vr_bytes = reinterpret_cast<const char*>(&field.value_rep);
+    fields_data.insert(fields_data.end(), vr_bytes, vr_bytes + sizeof(crate::ValueRep));
+  }
+
+  // Phase 4: Compress fields data
+  std::vector<char> compressed_fields;
+  if (!CompressData(fields_data.data(), fields_data.size(), &compressed_fields, err)) {
+    if (err) *err = "Failed to compress fields data: " + *err;
+    return false;
+  }
+
+  // Write compressed format
+  uint64_t uncompressed_size = static_cast<uint64_t>(fields_data.size());
+  uint64_t compressed_size = static_cast<uint64_t>(compressed_fields.size());
+
+  if (!Write(uncompressed_size)) {
+    if (err) *err = "Failed to write fields uncompressed size";
+    return false;
+  }
+
+  if (!Write(compressed_size)) {
+    if (err) *err = "Failed to write fields compressed size";
+    return false;
+  }
+
+  if (!WriteBytes(compressed_fields.data(), compressed_fields.size())) {
+    if (err) *err = "Failed to write compressed fields data";
+    return false;
   }
 
   int64_t section_end = Tell();
@@ -314,21 +441,43 @@ bool CrateWriter::WriteFieldSetsSection(std::string* err) {
     return false;
   }
 
-  // Write fieldsets as null-terminated lists of FieldIndex
-  // TODO: Compress if enabled
+  // Build fieldsets data buffer (null-terminated lists)
+  std::vector<char> fieldsets_data;
   for (const auto& fieldset : fieldsets_) {
     for (const auto& field_idx : fieldset) {
-      if (!Write(field_idx)) {
-        if (err) *err = "Failed to write field index";
-        return false;
-      }
+      const char* bytes = reinterpret_cast<const char*>(&field_idx);
+      fieldsets_data.insert(fieldsets_data.end(), bytes, bytes + sizeof(crate::FieldIndex));
     }
     // Write terminator (index with value ~0u)
     crate::FieldIndex terminator;
-    if (!Write(terminator)) {
-      if (err) *err = "Failed to write fieldset terminator";
-      return false;
-    }
+    const char* term_bytes = reinterpret_cast<const char*>(&terminator);
+    fieldsets_data.insert(fieldsets_data.end(), term_bytes, term_bytes + sizeof(crate::FieldIndex));
+  }
+
+  // Phase 4: Compress fieldsets data
+  std::vector<char> compressed_fieldsets;
+  if (!CompressData(fieldsets_data.data(), fieldsets_data.size(), &compressed_fieldsets, err)) {
+    if (err) *err = "Failed to compress fieldsets data: " + *err;
+    return false;
+  }
+
+  // Write compressed format
+  uint64_t uncompressed_size = static_cast<uint64_t>(fieldsets_data.size());
+  uint64_t compressed_size = static_cast<uint64_t>(compressed_fieldsets.size());
+
+  if (!Write(uncompressed_size)) {
+    if (err) *err = "Failed to write fieldsets uncompressed size";
+    return false;
+  }
+
+  if (!Write(compressed_size)) {
+    if (err) *err = "Failed to write fieldsets compressed size";
+    return false;
+  }
+
+  if (!WriteBytes(compressed_fieldsets.data(), compressed_fieldsets.size())) {
+    if (err) *err = "Failed to write compressed fieldsets data";
+    return false;
   }
 
   int64_t section_end = Tell();
@@ -364,31 +513,53 @@ bool CrateWriter::WritePathsSection(std::string* err) {
     return false;
   }
 
-  // Write path_indexes array
-  // TODO: Compress if enabled
+  // Build paths data buffer (three arrays concatenated)
+  std::vector<char> paths_data;
+  size_t array_sizes = tree.size() * (sizeof(pathlib::PathIndex) + sizeof(pathlib::TokenIndex) + sizeof(int32_t));
+  paths_data.reserve(array_sizes);
+
+  // Append path_indexes array
   for (size_t i = 0; i < tree.size(); ++i) {
-    if (!Write(tree.path_indexes[i])) {
-      if (err) *err = "Failed to write path index";
-      return false;
-    }
+    const char* bytes = reinterpret_cast<const char*>(&tree.path_indexes[i]);
+    paths_data.insert(paths_data.end(), bytes, bytes + sizeof(pathlib::PathIndex));
   }
 
-  // Write element_token_indexes array
-  // TODO: Compress if enabled
+  // Append element_token_indexes array
   for (size_t i = 0; i < tree.size(); ++i) {
-    if (!Write(tree.element_token_indexes[i])) {
-      if (err) *err = "Failed to write element token index";
-      return false;
-    }
+    const char* bytes = reinterpret_cast<const char*>(&tree.element_token_indexes[i]);
+    paths_data.insert(paths_data.end(), bytes, bytes + sizeof(pathlib::TokenIndex));
   }
 
-  // Write jumps array
-  // TODO: Compress if enabled
+  // Append jumps array
   for (size_t i = 0; i < tree.size(); ++i) {
-    if (!Write(tree.jumps[i])) {
-      if (err) *err = "Failed to write jump value";
-      return false;
-    }
+    const char* bytes = reinterpret_cast<const char*>(&tree.jumps[i]);
+    paths_data.insert(paths_data.end(), bytes, bytes + sizeof(int32_t));
+  }
+
+  // Phase 4: Compress paths data
+  std::vector<char> compressed_paths;
+  if (!CompressData(paths_data.data(), paths_data.size(), &compressed_paths, err)) {
+    if (err) *err = "Failed to compress paths data: " + *err;
+    return false;
+  }
+
+  // Write compressed format
+  uint64_t uncompressed_size = static_cast<uint64_t>(paths_data.size());
+  uint64_t compressed_size = static_cast<uint64_t>(compressed_paths.size());
+
+  if (!Write(uncompressed_size)) {
+    if (err) *err = "Failed to write paths uncompressed size";
+    return false;
+  }
+
+  if (!Write(compressed_size)) {
+    if (err) *err = "Failed to write paths compressed size";
+    return false;
+  }
+
+  if (!WriteBytes(compressed_paths.data(), compressed_paths.size())) {
+    if (err) *err = "Failed to write compressed paths data";
+    return false;
   }
 
   int64_t section_end = Tell();
@@ -409,14 +580,41 @@ bool CrateWriter::WriteSpecsSection(std::string* err) {
     return false;
   }
 
-  // Write specs
-  // TODO: Sort specs by path for better compression
-  // TODO: Compress if enabled
+  // Build specs data buffer
+  std::vector<char> specs_data;
+  size_t specs_size = spec_data_.size() * sizeof(crate::Spec);
+  specs_data.reserve(specs_size);
+
+  // TODO: Sort specs by path for better compression (Phase 4 optimization)
   for (const auto& spec_data : spec_data_) {
-    if (!Write(spec_data.spec)) {
-      if (err) *err = "Failed to write spec";
-      return false;
-    }
+    const char* bytes = reinterpret_cast<const char*>(&spec_data.spec);
+    specs_data.insert(specs_data.end(), bytes, bytes + sizeof(crate::Spec));
+  }
+
+  // Phase 4: Compress specs data
+  std::vector<char> compressed_specs;
+  if (!CompressData(specs_data.data(), specs_data.size(), &compressed_specs, err)) {
+    if (err) *err = "Failed to compress specs data: " + *err;
+    return false;
+  }
+
+  // Write compressed format
+  uint64_t uncompressed_size = static_cast<uint64_t>(specs_data.size());
+  uint64_t compressed_size = static_cast<uint64_t>(compressed_specs.size());
+
+  if (!Write(uncompressed_size)) {
+    if (err) *err = "Failed to write specs uncompressed size";
+    return false;
+  }
+
+  if (!Write(compressed_size)) {
+    if (err) *err = "Failed to write specs compressed size";
+    return false;
+  }
+
+  if (!WriteBytes(compressed_specs.data(), compressed_specs.size())) {
+    if (err) *err = "Failed to write compressed specs data";
+    return false;
   }
 
   int64_t section_end = Tell();
@@ -609,7 +807,13 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   // Phase 2: VariantSelectionMap
   else if (value.as<VariantSelectionMap>()) {
     rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VARIANT_SELECTION_MAP));
-  } else {
+  }
+  // Phase 3: TimeSamples
+  else if (value.as<value::TimeSamples>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_TIME_SAMPLES));
+  }
+  // Unknown/unsupported type
+  else {
     rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_INVALID));
   }
 
@@ -840,10 +1044,45 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       if (err) *err = "Failed to write int array count";
       return -1;
     }
-    for (int32_t val : *int_array) {
-      if (!Write(val)) {
-        if (err) *err = "Failed to write int array element";
-        return -1;
+
+    // Phase 5: Integer array compression (if >= 16 elements)
+    if (count >= 16 && options_.enable_compression) {
+      // Compress using Usd_IntegerCompression
+      size_t compressedBufferSize = Usd_IntegerCompression::GetCompressedBufferSize(count);
+      std::vector<char> compressed(compressedBufferSize);
+
+      std::string compress_err;
+      size_t compressedSize = Usd_IntegerCompression::CompressToBuffer(
+          int_array->data(), count, compressed.data(), &compress_err);
+
+      if (compressedSize == 0 || compressedSize == static_cast<size_t>(~0)) {
+        // Compression failed - write uncompressed
+        for (int32_t val : *int_array) {
+          if (!Write(val)) {
+            if (err) *err = "Failed to write int array element";
+            return -1;
+          }
+        }
+      } else {
+        // Write compressed data
+        // Format: compressed size + compressed data
+        uint64_t comp_size = static_cast<uint64_t>(compressedSize);
+        if (!Write(comp_size)) {
+          if (err) *err = "Failed to write compressed int array size";
+          return -1;
+        }
+        if (!WriteBytes(compressed.data(), compressedSize)) {
+          if (err) *err = "Failed to write compressed int array data";
+          return -1;
+        }
+      }
+    } else {
+      // Small array or compression disabled - write uncompressed
+      for (int32_t val : *int_array) {
+        if (!Write(val)) {
+          if (err) *err = "Failed to write int array element";
+          return -1;
+        }
       }
     }
   }
@@ -854,10 +1093,40 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       if (err) *err = "Failed to write uint array count";
       return -1;
     }
-    for (uint32_t val : *uint_array) {
-      if (!Write(val)) {
-        if (err) *err = "Failed to write uint array element";
-        return -1;
+
+    // Phase 5: Integer array compression (if >= 16 elements)
+    if (count >= 16 && options_.enable_compression) {
+      size_t compressedBufferSize = Usd_IntegerCompression::GetCompressedBufferSize(count);
+      std::vector<char> compressed(compressedBufferSize);
+
+      std::string compress_err;
+      size_t compressedSize = Usd_IntegerCompression::CompressToBuffer(
+          uint_array->data(), count, compressed.data(), &compress_err);
+
+      if (compressedSize == 0 || compressedSize == static_cast<size_t>(~0)) {
+        for (uint32_t val : *uint_array) {
+          if (!Write(val)) {
+            if (err) *err = "Failed to write uint array element";
+            return -1;
+          }
+        }
+      } else {
+        uint64_t comp_size = static_cast<uint64_t>(compressedSize);
+        if (!Write(comp_size)) {
+          if (err) *err = "Failed to write compressed uint array size";
+          return -1;
+        }
+        if (!WriteBytes(compressed.data(), compressedSize)) {
+          if (err) *err = "Failed to write compressed uint array data";
+          return -1;
+        }
+      }
+    } else {
+      for (uint32_t val : *uint_array) {
+        if (!Write(val)) {
+          if (err) *err = "Failed to write uint array element";
+          return -1;
+        }
       }
     }
   }
@@ -868,10 +1137,40 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       if (err) *err = "Failed to write int64 array count";
       return -1;
     }
-    for (int64_t val : *int64_array) {
-      if (!Write(val)) {
-        if (err) *err = "Failed to write int64 array element";
-        return -1;
+
+    // Phase 5: Integer array compression (if >= 16 elements)
+    if (count >= 16 && options_.enable_compression) {
+      size_t compressedBufferSize = Usd_IntegerCompression64::GetCompressedBufferSize(count);
+      std::vector<char> compressed(compressedBufferSize);
+
+      std::string compress_err;
+      size_t compressedSize = Usd_IntegerCompression64::CompressToBuffer(
+          int64_array->data(), count, compressed.data(), &compress_err);
+
+      if (compressedSize == 0 || compressedSize == static_cast<size_t>(~0)) {
+        for (int64_t val : *int64_array) {
+          if (!Write(val)) {
+            if (err) *err = "Failed to write int64 array element";
+            return -1;
+          }
+        }
+      } else {
+        uint64_t comp_size = static_cast<uint64_t>(compressedSize);
+        if (!Write(comp_size)) {
+          if (err) *err = "Failed to write compressed int64 array size";
+          return -1;
+        }
+        if (!WriteBytes(compressed.data(), compressedSize)) {
+          if (err) *err = "Failed to write compressed int64 array data";
+          return -1;
+        }
+      }
+    } else {
+      for (int64_t val : *int64_array) {
+        if (!Write(val)) {
+          if (err) *err = "Failed to write int64 array element";
+          return -1;
+        }
       }
     }
   }
@@ -882,10 +1181,40 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       if (err) *err = "Failed to write uint64 array count";
       return -1;
     }
-    for (uint64_t val : *uint64_array) {
-      if (!Write(val)) {
-        if (err) *err = "Failed to write uint64 array element";
-        return -1;
+
+    // Phase 5: Integer array compression (if >= 16 elements)
+    if (count >= 16 && options_.enable_compression) {
+      size_t compressedBufferSize = Usd_IntegerCompression64::GetCompressedBufferSize(count);
+      std::vector<char> compressed(compressedBufferSize);
+
+      std::string compress_err;
+      size_t compressedSize = Usd_IntegerCompression64::CompressToBuffer(
+          uint64_array->data(), count, compressed.data(), &compress_err);
+
+      if (compressedSize == 0 || compressedSize == static_cast<size_t>(~0)) {
+        for (uint64_t val : *uint64_array) {
+          if (!Write(val)) {
+            if (err) *err = "Failed to write uint64 array element";
+            return -1;
+          }
+        }
+      } else {
+        uint64_t comp_size = static_cast<uint64_t>(compressedSize);
+        if (!Write(comp_size)) {
+          if (err) *err = "Failed to write compressed uint64 array size";
+          return -1;
+        }
+        if (!WriteBytes(compressed.data(), compressedSize)) {
+          if (err) *err = "Failed to write compressed uint64 array data";
+          return -1;
+        }
+      }
+    } else {
+      for (uint64_t val : *uint64_array) {
+        if (!Write(val)) {
+          if (err) *err = "Failed to write uint64 array element";
+          return -1;
+        }
       }
     }
   }
@@ -896,10 +1225,51 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       if (err) *err = "Failed to write half array count";
       return -1;
     }
-    for (const auto& val : *half_array) {
-      if (!Write(val.value)) {
-        if (err) *err = "Failed to write half array element";
-        return -1;
+
+    // Phase 5: Integer array compression for half (16-bit float treated as uint16_t)
+    if (count >= 16 && options_.enable_compression) {
+      // Convert half values to uint16_t for compression
+      std::vector<uint32_t> uint_values;
+      uint_values.reserve(count);
+      for (const auto& val : *half_array) {
+        uint_values.push_back(static_cast<uint32_t>(val.value));
+      }
+
+      // Compress using Usd_IntegerCompression
+      size_t compressedBufferSize = Usd_IntegerCompression::GetCompressedBufferSize(count);
+      std::vector<char> compressed(compressedBufferSize);
+
+      std::string compress_err;
+      size_t compressedSize = Usd_IntegerCompression::CompressToBuffer(
+          uint_values.data(), count, compressed.data(), &compress_err);
+
+      if (compressedSize == 0 || compressedSize == static_cast<size_t>(~0)) {
+        // Compression failed - write uncompressed
+        for (const auto& val : *half_array) {
+          if (!Write(val.value)) {
+            if (err) *err = "Failed to write half array element";
+            return -1;
+          }
+        }
+      } else {
+        // Write compressed data
+        uint64_t comp_size = static_cast<uint64_t>(compressedSize);
+        if (!Write(comp_size)) {
+          if (err) *err = "Failed to write compressed half array size";
+          return -1;
+        }
+        if (!WriteBytes(compressed.data(), compressedSize)) {
+          if (err) *err = "Failed to write compressed half array data";
+          return -1;
+        }
+      }
+    } else {
+      // Small array or compression disabled - write uncompressed
+      for (const auto& val : *half_array) {
+        if (!Write(val.value)) {
+          if (err) *err = "Failed to write half array element";
+          return -1;
+        }
       }
     }
   }
@@ -910,10 +1280,53 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       if (err) *err = "Failed to write float array count";
       return -1;
     }
-    for (float val : *float_array) {
-      if (!Write(val)) {
-        if (err) *err = "Failed to write float array element";
-        return -1;
+
+    // Phase 5: Integer array compression for float (reinterpret as uint32_t)
+    if (count >= 16 && options_.enable_compression) {
+      // Reinterpret float values as uint32_t for compression
+      std::vector<uint32_t> uint_values;
+      uint_values.reserve(count);
+      for (float val : *float_array) {
+        uint32_t uint_val;
+        std::memcpy(&uint_val, &val, sizeof(uint32_t));
+        uint_values.push_back(uint_val);
+      }
+
+      // Compress using Usd_IntegerCompression
+      size_t compressedBufferSize = Usd_IntegerCompression::GetCompressedBufferSize(count);
+      std::vector<char> compressed(compressedBufferSize);
+
+      std::string compress_err;
+      size_t compressedSize = Usd_IntegerCompression::CompressToBuffer(
+          uint_values.data(), count, compressed.data(), &compress_err);
+
+      if (compressedSize == 0 || compressedSize == static_cast<size_t>(~0)) {
+        // Compression failed - write uncompressed
+        for (float val : *float_array) {
+          if (!Write(val)) {
+            if (err) *err = "Failed to write float array element";
+            return -1;
+          }
+        }
+      } else {
+        // Write compressed data
+        uint64_t comp_size = static_cast<uint64_t>(compressedSize);
+        if (!Write(comp_size)) {
+          if (err) *err = "Failed to write compressed float array size";
+          return -1;
+        }
+        if (!WriteBytes(compressed.data(), compressedSize)) {
+          if (err) *err = "Failed to write compressed float array data";
+          return -1;
+        }
+      }
+    } else {
+      // Small array or compression disabled - write uncompressed
+      for (float val : *float_array) {
+        if (!Write(val)) {
+          if (err) *err = "Failed to write float array element";
+          return -1;
+        }
       }
     }
   }
@@ -924,10 +1337,53 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       if (err) *err = "Failed to write double array count";
       return -1;
     }
-    for (double val : *double_array) {
-      if (!Write(val)) {
-        if (err) *err = "Failed to write double array element";
-        return -1;
+
+    // Phase 5: Integer array compression for double (reinterpret as uint64_t)
+    if (count >= 16 && options_.enable_compression) {
+      // Reinterpret double values as uint64_t for compression
+      std::vector<uint64_t> uint_values;
+      uint_values.reserve(count);
+      for (double val : *double_array) {
+        uint64_t uint_val;
+        std::memcpy(&uint_val, &val, sizeof(uint64_t));
+        uint_values.push_back(uint_val);
+      }
+
+      // Compress using Usd_IntegerCompression64
+      size_t compressedBufferSize = Usd_IntegerCompression64::GetCompressedBufferSize(count);
+      std::vector<char> compressed(compressedBufferSize);
+
+      std::string compress_err;
+      size_t compressedSize = Usd_IntegerCompression64::CompressToBuffer(
+          uint_values.data(), count, compressed.data(), &compress_err);
+
+      if (compressedSize == 0 || compressedSize == static_cast<size_t>(~0)) {
+        // Compression failed - write uncompressed
+        for (double val : *double_array) {
+          if (!Write(val)) {
+            if (err) *err = "Failed to write double array element";
+            return -1;
+          }
+        }
+      } else {
+        // Write compressed data
+        uint64_t comp_size = static_cast<uint64_t>(compressedSize);
+        if (!Write(comp_size)) {
+          if (err) *err = "Failed to write compressed double array size";
+          return -1;
+        }
+        if (!WriteBytes(compressed.data(), compressedSize)) {
+          if (err) *err = "Failed to write compressed double array data";
+          return -1;
+        }
+      }
+    } else {
+      // Small array or compression disabled - write uncompressed
+      for (double val : *double_array) {
+        if (!Write(val)) {
+          if (err) *err = "Failed to write double array element";
+          return -1;
+        }
       }
     }
   }
@@ -1580,6 +2036,53 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
         return -1;
       }
     }
+  }
+  // Phase 3: TimeSamples (simple version without deduplication)
+  else if (auto* timesamples_val = value.as<value::TimeSamples>()) {
+    // TimeSamples format:
+    // 1. Time array: uint64_t count + double times[count]
+    // 2. Value array: serialized based on the value type
+
+    // Write time array
+    uint64_t num_samples = static_cast<uint64_t>(timesamples_val->size());
+    if (!Write(num_samples)) {
+      if (err) *err = "Failed to write TimeSamples count";
+      return -1;
+    }
+
+    // Write times
+    for (size_t i = 0; i < num_samples; ++i) {
+      auto time_opt = timesamples_val->get_time(i);
+      if (!time_opt) {
+        if (err) *err = "Failed to get time from TimeSamples at index " + std::to_string(i);
+        return -1;
+      }
+      if (!Write(time_opt.value())) {
+        if (err) *err = "Failed to write time value at index " + std::to_string(i);
+        return -1;
+      }
+    }
+
+    // Write value type ID
+    uint32_t value_type_id = timesamples_val->type_id();
+    if (!Write(value_type_id)) {
+      if (err) *err = "Failed to write TimeSamples value type ID";
+      return -1;
+    }
+
+    // Phase 3/5: Simplified TimeSamples implementation
+    // We write the structural data (times + type ID) but not the actual values.
+    // This creates a minimal TimeSamples structure that preserves:
+    // - Number of samples
+    // - Time array (when each sample occurs)
+    // - Value type ID (what type of values are stored)
+    //
+    // Full value serialization would require complex value::Value to CrateValue
+    // conversion for every possible USD type, which is deferred for now.
+    // The current implementation is sufficient for:
+    // - Understanding animation timing
+    // - Preserving type information
+    // - Basic file structure validation
   }
   // TODO: Add IntListOp, UIntListOp, Int64ListOp, UInt64ListOp, etc.
   else {
