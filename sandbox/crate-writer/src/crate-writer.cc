@@ -505,13 +505,55 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
 
   // Value cannot be inlined, write to value data section
   int64_t offset = WriteValueData(value, err);
-  if (err && !err->empty()) {
+  if (offset < 0 || (err && !err->empty())) {
     return crate::ValueRep();
   }
 
-  // Create ValueRep with offset
-  // TODO: Set proper type based on value type
-  rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_INVALID));
+  // Create ValueRep with offset and proper type
+  // Determine the type for out-of-line values
+
+  if (value.as<double>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE));
+  } else if (value.as<int64_t>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64));
+  } else if (value.as<uint64_t>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64));
+  } else if (value.as<value::float2>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2F));
+  } else if (value.as<value::double2>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2D));
+  } else if (value.as<value::int2>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2I));
+  } else if (value.as<value::float3>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3F));
+  } else if (value.as<value::double3>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3D));
+  } else if (value.as<value::int3>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3I));
+  } else if (value.as<value::half4>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4H));
+  } else if (value.as<value::float4>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4F));
+  } else if (value.as<value::double4>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4D));
+  } else if (value.as<value::int4>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4I));
+  } else if (value.as<value::matrix2d>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX2D));
+  } else if (value.as<value::matrix3d>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX3D));
+  } else if (value.as<value::matrix4d>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX4D));
+  } else if (value.as<value::quath>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATH));
+  } else if (value.as<value::quatf>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATF));
+  } else if (value.as<value::quatd>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATD));
+  } else {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_INVALID));
+  }
+
   rep.SetPayload(static_cast<uint64_t>(offset));
 
   return rep;
@@ -529,8 +571,182 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
 
   int64_t value_offset = Tell();
 
-  // TODO: Write actual value data based on type
-  // For now, this is a placeholder
+  // Phase 1: Write out-of-line value data based on type
+  // This handles values that cannot be inlined in the 48-bit payload
+
+  // Double - 8 bytes
+  if (auto* double_val = value.as<double>()) {
+    if (!Write(*double_val)) {
+      if (err) *err = "Failed to write double value";
+      return -1;
+    }
+  }
+  // Int64 - 8 bytes (when doesn't fit in 48 bits)
+  else if (auto* int64_val = value.as<int64_t>()) {
+    if (!Write(*int64_val)) {
+      if (err) *err = "Failed to write int64 value";
+      return -1;
+    }
+  }
+  // UInt64 - 8 bytes (when doesn't fit in 48 bits)
+  else if (auto* uint64_val = value.as<uint64_t>()) {
+    if (!Write(*uint64_val)) {
+      if (err) *err = "Failed to write uint64 value";
+      return -1;
+    }
+  }
+  // Vec2f - 2 x 4 = 8 bytes
+  else if (auto* vec2f_val = value.as<value::float2>()) {
+    for (size_t i = 0; i < 2; ++i) {
+      if (!Write((*vec2f_val)[i])) {
+        if (err) *err = "Failed to write Vec2f component";
+        return -1;
+      }
+    }
+  }
+  // Vec2d - 2 x 8 = 16 bytes
+  else if (auto* vec2d_val = value.as<value::double2>()) {
+    for (size_t i = 0; i < 2; ++i) {
+      if (!Write((*vec2d_val)[i])) {
+        if (err) *err = "Failed to write Vec2d component";
+        return -1;
+      }
+    }
+  }
+  // Vec2i - 2 x 4 = 8 bytes
+  else if (auto* vec2i_val = value.as<value::int2>()) {
+    for (size_t i = 0; i < 2; ++i) {
+      if (!Write((*vec2i_val)[i])) {
+        if (err) *err = "Failed to write Vec2i component";
+        return -1;
+      }
+    }
+  }
+  // Vec3f - 3 x 4 = 12 bytes
+  else if (auto* vec3f_val = value.as<value::float3>()) {
+    for (size_t i = 0; i < 3; ++i) {
+      if (!Write((*vec3f_val)[i])) {
+        if (err) *err = "Failed to write Vec3f component";
+        return -1;
+      }
+    }
+  }
+  // Vec3d - 3 x 8 = 24 bytes
+  else if (auto* vec3d_val = value.as<value::double3>()) {
+    for (size_t i = 0; i < 3; ++i) {
+      if (!Write((*vec3d_val)[i])) {
+        if (err) *err = "Failed to write Vec3d component";
+        return -1;
+      }
+    }
+  }
+  // Vec3i - 3 x 4 = 12 bytes
+  else if (auto* vec3i_val = value.as<value::int3>()) {
+    for (size_t i = 0; i < 3; ++i) {
+      if (!Write((*vec3i_val)[i])) {
+        if (err) *err = "Failed to write Vec3i component";
+        return -1;
+      }
+    }
+  }
+  // Vec4h - 4 x 2 = 8 bytes
+  else if (auto* vec4h_val = value.as<value::half4>()) {
+    for (size_t i = 0; i < 4; ++i) {
+      if (!Write((*vec4h_val)[i].value)) {
+        if (err) *err = "Failed to write Vec4h component";
+        return -1;
+      }
+    }
+  }
+  // Vec4f - 4 x 4 = 16 bytes
+  else if (auto* vec4f_val = value.as<value::float4>()) {
+    for (size_t i = 0; i < 4; ++i) {
+      if (!Write((*vec4f_val)[i])) {
+        if (err) *err = "Failed to write Vec4f component";
+        return -1;
+      }
+    }
+  }
+  // Vec4d - 4 x 8 = 32 bytes
+  else if (auto* vec4d_val = value.as<value::double4>()) {
+    for (size_t i = 0; i < 4; ++i) {
+      if (!Write((*vec4d_val)[i])) {
+        if (err) *err = "Failed to write Vec4d component";
+        return -1;
+      }
+    }
+  }
+  // Vec4i - 4 x 4 = 16 bytes
+  else if (auto* vec4i_val = value.as<value::int4>()) {
+    for (size_t i = 0; i < 4; ++i) {
+      if (!Write((*vec4i_val)[i])) {
+        if (err) *err = "Failed to write Vec4i component";
+        return -1;
+      }
+    }
+  }
+  // Matrix2d - 4 x 8 = 32 bytes
+  else if (auto* mat2d_val = value.as<value::matrix2d>()) {
+    // Write matrix elements in column-major order (USD convention)
+    for (size_t i = 0; i < 4; ++i) {
+      if (!Write(mat2d_val->m[i])) {
+        if (err) *err = "Failed to write Matrix2d element";
+        return -1;
+      }
+    }
+  }
+  // Matrix3d - 9 x 8 = 72 bytes
+  else if (auto* mat3d_val = value.as<value::matrix3d>()) {
+    // Write matrix elements in column-major order (USD convention)
+    for (size_t i = 0; i < 9; ++i) {
+      if (!Write(mat3d_val->m[i])) {
+        if (err) *err = "Failed to write Matrix3d element";
+        return -1;
+      }
+    }
+  }
+  // Matrix4d - 16 x 8 = 128 bytes
+  else if (auto* mat4d_val = value.as<value::matrix4d>()) {
+    // Write matrix elements in column-major order (USD convention)
+    for (size_t i = 0; i < 16; ++i) {
+      if (!Write(mat4d_val->m[i])) {
+        if (err) *err = "Failed to write Matrix4d element";
+        return -1;
+      }
+    }
+  }
+  // Quath - 4 x 2 = 8 bytes
+  else if (auto* quath_val = value.as<value::quath>()) {
+    // Write quaternion components: real, i, j, k
+    if (!Write(quath_val->real.value) || !Write(quath_val->imag[0].value) ||
+        !Write(quath_val->imag[1].value) || !Write(quath_val->imag[2].value)) {
+      if (err) *err = "Failed to write Quath components";
+      return -1;
+    }
+  }
+  // Quatf - 4 x 4 = 16 bytes
+  else if (auto* quatf_val = value.as<value::quatf>()) {
+    // Write quaternion components: real, i, j, k
+    if (!Write(quatf_val->real) || !Write(quatf_val->imag[0]) ||
+        !Write(quatf_val->imag[1]) || !Write(quatf_val->imag[2])) {
+      if (err) *err = "Failed to write Quatf components";
+      return -1;
+    }
+  }
+  // Quatd - 4 x 8 = 32 bytes
+  else if (auto* quatd_val = value.as<value::quatd>()) {
+    // Write quaternion components: real, i, j, k
+    if (!Write(quatd_val->real) || !Write(quatd_val->imag[0]) ||
+        !Write(quatd_val->imag[1]) || !Write(quatd_val->imag[2])) {
+      if (err) *err = "Failed to write Quatd components";
+      return -1;
+    }
+  }
+  else {
+    // Unsupported type for out-of-line storage
+    if (err) *err = "Unsupported value type for out-of-line storage";
+    return -1;
+  }
 
   // Update value data end offset
   value_data_end_offset_ = Tell();
@@ -545,8 +761,38 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
 }
 
 bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep* rep) {
-  // TODO: Implement value inlining for common types
-  // For now, we'll implement basic types
+  // Phase 1: String/Token/AssetPath values
+  // Strings and tokens are always inlined as indices in USDC format
+
+  // Try to get as token
+  if (auto* token_val = value.as<value::token>()) {
+    crate::TokenIndex idx = GetOrCreateToken(token_val->str());
+    rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN));
+    rep->SetIsInlined();
+    rep->SetPayload(static_cast<uint64_t>(idx.value));
+    return true;
+  }
+
+  // Try to get as string
+  if (auto* str_val = value.as<std::string>()) {
+    crate::StringIndex idx = GetOrCreateString(*str_val);
+    rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING));
+    rep->SetIsInlined();
+    rep->SetPayload(static_cast<uint64_t>(idx.value));
+    return true;
+  }
+
+  // Try to get as AssetPath
+  if (auto* asset_val = value.as<value::AssetPath>()) {
+    // AssetPath is stored as a string index
+    crate::StringIndex idx = GetOrCreateString(asset_val->GetAssetPath());
+    rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH));
+    rep->SetIsInlined();
+    rep->SetPayload(static_cast<uint64_t>(idx.value));
+    return true;
+  }
+
+  // Basic scalar types
 
   // Try to get as int32
   if (auto* int_val = value.as<int32_t>()) {
@@ -564,6 +810,31 @@ bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep
     return true;
   }
 
+  // Try to get as int64
+  if (auto* int64_val = value.as<int64_t>()) {
+    // int64 cannot be inlined if value doesn't fit in 48 bits
+    // (48 bits is the payload size in ValueRep)
+    if (*int64_val >= -(1LL << 47) && *int64_val < (1LL << 47)) {
+      rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64));
+      rep->SetIsInlined();
+      rep->SetPayload(static_cast<uint64_t>(*int64_val));
+      return true;
+    }
+    // Falls through to out-of-line storage
+  }
+
+  // Try to get as uint64
+  if (auto* uint64_val = value.as<uint64_t>()) {
+    // uint64 can only be inlined if value fits in 48 bits
+    if (*uint64_val < (1ULL << 48)) {
+      rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64));
+      rep->SetIsInlined();
+      rep->SetPayload(*uint64_val);
+      return true;
+    }
+    // Falls through to out-of-line storage
+  }
+
   // Try to get as float
   if (auto* float_val = value.as<float>()) {
     rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT));
@@ -575,6 +846,23 @@ bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep
     return true;
   }
 
+  // Try to get as double
+  if (auto* double_val = value.as<double>()) {
+    // Double cannot be inlined (64 bits > 48 bit payload)
+    // Falls through to out-of-line storage
+    return false;
+  }
+
+  // Try to get as half
+  if (auto* half_val = value.as<value::half>()) {
+    rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_HALF));
+    rep->SetIsInlined();
+    // half is 16 bits, fits easily in payload
+    uint16_t half_bits = half_val->value;
+    rep->SetPayload(static_cast<uint64_t>(half_bits));
+    return true;
+  }
+
   // Try to get as bool
   if (auto* bool_val = value.as<bool>()) {
     rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_BOOL));
@@ -583,7 +871,141 @@ bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep
     return true;
   }
 
-  // Cannot inline
+  // Try to get as uchar
+  if (auto* uchar_val = value.as<uint8_t>()) {
+    rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_UCHAR));
+    rep->SetIsInlined();
+    rep->SetPayload(static_cast<uint64_t>(*uchar_val));
+    return true;
+  }
+
+  // Phase 1: Vector types
+  // Vectors can be inlined if they fit in 48 bits (6 bytes)
+  // Vec2h (4 bytes), Vec2f/Vec2i (8 bytes) cannot be inlined
+  // Vec3/Vec4 cannot be inlined (12+ bytes)
+
+  // Vec2h - half2 (4 bytes, can inline)
+  if (auto* vec2h_val = value.as<value::half2>()) {
+    rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2H));
+    rep->SetIsInlined();
+    // Pack two 16-bit halfs into 32 bits
+    uint32_t packed = (uint32_t((*vec2h_val)[0].value) << 16) | uint32_t((*vec2h_val)[1].value);
+    rep->SetPayload(static_cast<uint64_t>(packed));
+    return true;
+  }
+
+  // Vec2f - float2 (8 bytes, cannot inline)
+  if (auto* vec2f_val = value.as<value::float2>()) {
+    // Cannot inline, need out-of-line storage
+    return false;
+  }
+
+  // Vec2d - double2 (16 bytes, cannot inline)
+  if (auto* vec2d_val = value.as<value::double2>()) {
+    // Cannot inline, need out-of-line storage
+    return false;
+  }
+
+  // Vec2i - int2 (8 bytes, cannot inline)
+  if (auto* vec2i_val = value.as<value::int2>()) {
+    // Cannot inline, need out-of-line storage
+    return false;
+  }
+
+  // Vec3h - half3 (6 bytes, can inline!)
+  if (auto* vec3h_val = value.as<value::half3>()) {
+    rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3H));
+    rep->SetIsInlined();
+    // Pack three 16-bit halfs into 48 bits
+    uint64_t packed = (uint64_t((*vec3h_val)[0].value) << 32) |
+                      (uint64_t((*vec3h_val)[1].value) << 16) |
+                       uint64_t((*vec3h_val)[2].value);
+    rep->SetPayload(packed);
+    return true;
+  }
+
+  // Vec3f - float3 (12 bytes, cannot inline)
+  if (auto* vec3f_val = value.as<value::float3>()) {
+    // Cannot inline, need out-of-line storage
+    return false;
+  }
+
+  // Vec3d - double3 (24 bytes, cannot inline)
+  if (auto* vec3d_val = value.as<value::double3>()) {
+    // Cannot inline, need out-of-line storage
+    return false;
+  }
+
+  // Vec3i - int3 (12 bytes, cannot inline)
+  if (auto* vec3i_val = value.as<value::int3>()) {
+    // Cannot inline, need out-of-line storage
+    return false;
+  }
+
+  // Vec4h - half4 (8 bytes, cannot inline)
+  if (auto* vec4h_val = value.as<value::half4>()) {
+    // Cannot inline, need out-of-line storage
+    return false;
+  }
+
+  // Vec4f - float4 (16 bytes, cannot inline)
+  if (auto* vec4f_val = value.as<value::float4>()) {
+    // Cannot inline, need out-of-line storage
+    return false;
+  }
+
+  // Vec4d - double4 (32 bytes, cannot inline)
+  if (auto* vec4d_val = value.as<value::double4>()) {
+    // Cannot inline, need out-of-line storage
+    return false;
+  }
+
+  // Vec4i - int4 (16 bytes, cannot inline)
+  if (auto* vec4i_val = value.as<value::int4>()) {
+    // Cannot inline, need out-of-line storage
+    return false;
+  }
+
+  // Phase 1: Matrix types - all matrices are too large to inline
+  // Matrix2d (4x8 = 32 bytes), Matrix3d (9x8 = 72 bytes), Matrix4d (16x8 = 128 bytes)
+
+  if (auto* mat2d_val = value.as<value::matrix2d>()) {
+    // Cannot inline, need out-of-line storage
+    return false;
+  }
+
+  if (auto* mat3d_val = value.as<value::matrix3d>()) {
+    // Cannot inline, need out-of-line storage
+    return false;
+  }
+
+  if (auto* mat4d_val = value.as<value::matrix4d>()) {
+    // Cannot inline, need out-of-line storage
+    return false;
+  }
+
+  // Phase 1: Quaternion types
+  // Quath (4x2 = 8 bytes), Quatf (4x4 = 16 bytes), Quatd (4x8 = 32 bytes)
+  // All too large to inline (> 6 bytes)
+
+  if (auto* quath_val = value.as<value::quath>()) {
+    // Cannot inline, need out-of-line storage
+    return false;
+  }
+
+  if (auto* quatf_val = value.as<value::quatf>()) {
+    // Cannot inline, need out-of-line storage
+    return false;
+  }
+
+  if (auto* quatd_val = value.as<value::quatd>()) {
+    // Cannot inline, need out-of-line storage
+    return false;
+  }
+
+  // Array types - Phase 1 will add basic array support next
+
+  // Cannot inline - need out-of-line storage
   return false;
 }
 
