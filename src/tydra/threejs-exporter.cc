@@ -10,59 +10,71 @@ namespace tinyusdz {
 namespace tydra {
 
 // Parameter mapping tables
-const std::map<std::string, std::string> MaterialParameterMapping::openpbr_to_physical = {
-  {"base_color", "color"},
-  {"base_metalness", "metalness"},
-  {"base_roughness", "roughness"},
-  {"emission_color", "emissive"},
-  {"emission_luminance", "emissiveIntensity"},
-  {"opacity", "opacity"},
-  {"coat_weight", "clearcoat"},
-  {"coat_roughness", "clearcoatRoughness"},
-  {"sheen_weight", "sheen"},
-  {"sheen_color", "sheenColor"},
-  {"sheen_roughness", "sheenRoughness"},
-  {"specular_ior", "ior"},
-  {"transmission_weight", "transmission"},
-  {"base_weight", "opacity"}  // base_weight affects overall opacity
-};
+const std::map<std::string, std::string>& MaterialParameterMapping::openpbr_to_physical() {
+  static const std::map<std::string, std::string> mapping = {
+    {"base_color", "color"},
+    {"base_metalness", "metalness"},
+    {"base_roughness", "roughness"},
+    {"emission_color", "emissive"},
+    {"emission_luminance", "emissiveIntensity"},
+    {"opacity", "opacity"},
+    {"coat_weight", "clearcoat"},
+    {"coat_roughness", "clearcoatRoughness"},
+    {"sheen_weight", "sheen"},
+    {"sheen_color", "sheenColor"},
+    {"sheen_roughness", "sheenRoughness"},
+    {"specular_ior", "ior"},
+    {"transmission_weight", "transmission"},
+    {"base_weight", "opacity"}  // base_weight affects overall opacity
+  };
+  return mapping;
+}
 
-const std::map<std::string, std::string> MaterialParameterMapping::openpbr_to_nodes = {
-  {"base_color", "base_color"},
-  {"base_metalness", "metallic"},
-  {"base_roughness", "roughness"},
-  {"specular_weight", "specular"},
-  {"specular_color", "specular_color"},
-  {"specular_roughness", "specular_roughness"},
-  {"specular_ior", "ior"},
-  {"coat_weight", "coat"},
-  {"coat_color", "coat_color"},
-  {"coat_roughness", "coat_roughness"},
-  {"emission_luminance", "emission"},
-  {"emission_color", "emission_color"},
-  {"normal", "normalMap"},
-  {"tangent", "tangentMap"}
-};
+const std::map<std::string, std::string>& MaterialParameterMapping::openpbr_to_nodes() {
+  static const std::map<std::string, std::string> mapping = {
+    {"base_color", "base_color"},
+    {"base_metalness", "metallic"},
+    {"base_roughness", "roughness"},
+    {"specular_weight", "specular"},
+    {"specular_color", "specular_color"},
+    {"specular_roughness", "specular_roughness"},
+    {"specular_ior", "ior"},
+    {"coat_weight", "coat"},
+    {"coat_color", "coat_color"},
+    {"coat_roughness", "coat_roughness"},
+    {"emission_luminance", "emission"},
+    {"emission_color", "emission_color"},
+    {"normal", "normalMap"},
+    {"tangent", "tangentMap"}
+  };
+  return mapping;
+}
 
-const std::map<std::string, std::string> MaterialParameterMapping::preview_to_physical = {
-  {"diffuseColor", "color"},
-  {"metallic", "metalness"},
-  {"roughness", "roughness"},
-  {"emissiveColor", "emissive"},
-  {"opacity", "opacity"},
-  {"clearcoat", "clearcoat"},
-  {"clearcoatRoughness", "clearcoatRoughness"},
-  {"ior", "ior"},
-  {"specularColor", "specular"}
-};
+const std::map<std::string, std::string>& MaterialParameterMapping::preview_to_physical() {
+  static const std::map<std::string, std::string> mapping = {
+    {"diffuseColor", "color"},
+    {"metallic", "metalness"},
+    {"roughness", "roughness"},
+    {"emissiveColor", "emissive"},
+    {"opacity", "opacity"},
+    {"clearcoat", "clearcoat"},
+    {"clearcoatRoughness", "clearcoatRoughness"},
+    {"ior", "ior"},
+    {"specularColor", "specular"}
+  };
+  return mapping;
+}
 
-const std::map<std::string, std::string> MaterialParameterMapping::colorspace_map = {
-  {"sRGB", "srgb"},
-  {"lin_rec709", "linear-rec709"},
-  {"lin_sRGB", "linear-srgb"},
-  {"ACEScg", "acescg"},
-  {"raw", "raw"}
-};
+const std::map<std::string, std::string>& MaterialParameterMapping::colorspace_map() {
+  static const std::map<std::string, std::string> mapping = {
+    {"sRGB", "srgb"},
+    {"lin_rec709", "linear-rec709"},
+    {"lin_sRGB", "linear-srgb"},
+    {"ACEScg", "acescg"},
+    {"raw", "raw"}
+  };
+  return mapping;
+}
 
 // Helper function to convert vec3 to JSON array
 static json vec3ToJson(const vec3& v) {

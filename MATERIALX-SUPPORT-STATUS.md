@@ -13,14 +13,27 @@ TinyUSDZ provides comprehensive MaterialX/OpenPBR support through:
 
 **Location**: `src/tydra/` and `src/`
 
-### ✅ Implemented (Export)
+### ✅ Implemented (Import & Export)
+
+#### Export:
 - **MaterialX 1.38 Export** - `ExportMaterialX()` in `threejs-exporter.cc`
 - **OpenPBR Surface Shader** - All parameter groups supported
 - **Texture Nodes** - Image nodes with color space and channel extraction
 - **XML Generation** - Compliant MaterialX 1.38 document structure
 - **Color Space Support** - sRGB, Linear, Rec.709, ACES variants
 
+#### Import (NEW - January 2025):
+- **MaterialX 1.38 Import** - `ReadMaterialXFromString()`, `ReadMaterialXFromFile()`
+- **Built-in XML Parser** - Secure, dependency-free parser (no pugixml required)
+- **OpenPBR Surface Shader** - Complete parameter support in `MtlxOpenPBRSurface`
+- **Autodesk Standard Surface** - Full support in `MtlxAutodeskStandardSurface`
+- **USD Preview Surface** - Support in `MtlxUsdPreviewSurface`
+- **PrimSpec Conversion** - `ToPrimSpec()` converts MaterialX to USD
+- **Asset Loading** - `LoadMaterialXFromAsset()` for USD references
+
 ### Key Functions
+
+**Export:**
 ```cpp
 bool ExportMaterialX(
     const tinyusdz::Stage& stage,
@@ -29,20 +42,66 @@ bool ExportMaterialX(
     std::string* err);
 ```
 
-**Parameters Exported**:
+**Import:**
+```cpp
+// Load from string
+bool ReadMaterialXFromString(
+    const std::string& str,
+    const std::string& asset_name,
+    MtlxModel* mtlx,
+    std::string* warn,
+    std::string* err);
+
+// Load from file
+bool ReadMaterialXFromFile(
+    const AssetResolutionResolver& resolver,
+    const std::string& asset_path,
+    MtlxModel* mtlx,
+    std::string* warn,
+    std::string* err);
+
+// Convert to USD
+bool ToPrimSpec(
+    const MtlxModel& model,
+    PrimSpec& ps,
+    std::string* err);
+```
+
+**OpenPBR Parameters Supported**:
 - Base: color, metalness, weight, diffuse_roughness
 - Specular: roughness, IOR, color, anisotropy, rotation
 - Transmission: weight, color, depth, scatter, dispersion
-- Coat: weight, roughness, color, IOR, anisotropy
+- Coat: weight, roughness, color, IOR, anisotropy, affect_color, affect_roughness
 - Emission: color, luminance
-- Geometry: opacity, thin_walled, normal
+- Geometry: opacity, thin_walled, normal, tangent
 - Subsurface: weight, color, radius, scale, anisotropy
 - Thin Film: thickness, IOR
 
-### ❌ Not Yet Implemented
-- MaterialX Import (parsing .mtlx files to USD)
-- Node graph support beyond open_pbr_surface
+### Built-in Parser Features
+
+The new built-in MaterialX parser (`src/mtlx-*.hh/cc`) provides:
+- ✅ **No External Dependencies** - Replaces pugixml completely
+- ✅ **Security Focused** - Memory limits, bounds checking, XXE protection
+- ✅ **pugixml Compatible** - Drop-in replacement via adapter
+- ✅ **MaterialX Optimized** - Designed specifically for MaterialX documents
+- ✅ **Fast & Lightweight** - Minimal memory footprint
+
+**Security Limits:**
+- Max name length: 256 characters
+- Max string length: 64KB
+- Max text content: 1MB
+- Max nesting depth: 1000 levels
+- Safe entity handling (HTML entities only)
+- No external file access (XXE protection)
+
+### ⚠️ Partial Support
+- Node graphs (only surface shaders currently)
 - MaterialX standard library includes
+
+### ❌ Not Yet Implemented
+- Write support for modified MaterialX documents
+- XPath queries
+- Full MaterialX validation against schema
 
 ---
 
@@ -132,30 +191,36 @@ applyImportedMaterial(object, materialData);
 | Feature | C++ Core | WASM Binding | Three.js Demo |
 |---------|----------|--------------|---------------|
 | **MaterialX Export** | ✅ | ✅ | ✅ |
-| **MaterialX Import** | ❌ | ⚠️ (JS layer) | ✅ |
+| **MaterialX Import** | ✅ (NEW) | ✅ (via C++) | ✅ |
+| **Built-in Parser** | ✅ (NEW) | ✅ (NEW) | N/A |
 | **OpenPBR All Params** | ✅ | ✅ | ✅ |
+| **Standard Surface** | ✅ | ✅ | ✅ |
+| **USD Preview Surface** | ✅ | ✅ | ✅ |
 | **Texture Export** | ✅ | ✅ | ✅ |
 | **Texture Import** | ✅ | ✅ | ✅ |
-| **Texture Transforms** | ❌ | ❌ | ✅ |
+| **Texture Transforms** | ⚠️ (parse only) | ⚠️ (parse only) | ✅ |
 | **Color Spaces (5+)** | ✅ | ✅ | ✅ |
 | **HDR/EXR Support** | ⚠️ (TinyEXR) | ❌ | ✅ (Three.js) |
 | **Interactive Editing** | N/A | N/A | ✅ |
 | **Real-time Preview** | N/A | N/A | ✅ |
+| **Security Features** | ✅ (NEW) | ✅ (NEW) | ⚠️ |
 
 Legend:
 - ✅ Fully supported
 - ⚠️ Partial support
 - ❌ Not supported
 - N/A Not applicable
+- (NEW) Added in January 2025
 
 ---
 
 ## What's Missing / Future Work
 
 ### High Priority:
-1. **C++ MaterialX Import** - Parse .mtlx files to USD Stage
+1. ~~**C++ MaterialX Import** - Parse .mtlx files to USD Stage~~ ✅ **DONE!**
 2. **USD Material Export** - Save edited materials back to USD (C++ and WASM)
 3. **Automatic Texture Loading** - Load referenced textures from MaterialX imports
+4. **MaterialX Node Graphs** - Support beyond surface shaders
 
 ### Medium Priority:
 4. **Node Graph Support** - MaterialX node graphs beyond open_pbr_surface

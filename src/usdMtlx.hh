@@ -72,6 +72,77 @@ struct MtlxUsdPreviewSurface : UsdPreviewSurface {
   //  TODO: add mtlx specific attribute.
 };
 
+// OpenPBR Surface Shader
+// https://github.com/AcademySoftwareFoundation/OpenPBR
+// MaterialX implementation of OpenPBR specification
+struct MtlxOpenPBRSurface : ShaderNode {
+  // Base properties
+  TypedAttributeWithFallback<Animatable<float>> base_weight{1.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> base_color{
+      value::color3f{0.8f, 0.8f, 0.8f}};
+  TypedAttributeWithFallback<Animatable<float>> base_metalness{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> base_diffuse_roughness{0.0f};
+
+  // Specular properties
+  TypedAttributeWithFallback<Animatable<float>> specular_weight{1.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> specular_color{
+      value::color3f{1.0f, 1.0f, 1.0f}};
+  TypedAttributeWithFallback<Animatable<float>> specular_roughness{0.3f};
+  TypedAttributeWithFallback<Animatable<float>> specular_ior{1.5f};
+  TypedAttributeWithFallback<Animatable<float>> specular_anisotropy{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> specular_rotation{0.0f};
+
+  // Transmission properties
+  TypedAttributeWithFallback<Animatable<float>> transmission_weight{0.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> transmission_color{
+      value::color3f{1.0f, 1.0f, 1.0f}};
+  TypedAttributeWithFallback<Animatable<float>> transmission_depth{0.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> transmission_scatter{
+      value::color3f{0.0f, 0.0f, 0.0f}};
+  TypedAttributeWithFallback<Animatable<float>> transmission_scatter_anisotropy{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> transmission_dispersion{0.0f};
+
+  // Subsurface properties
+  TypedAttributeWithFallback<Animatable<float>> subsurface_weight{0.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> subsurface_color{
+      value::color3f{0.8f, 0.8f, 0.8f}};
+  TypedAttributeWithFallback<Animatable<value::color3f>> subsurface_radius{
+      value::color3f{1.0f, 1.0f, 1.0f}};
+  TypedAttributeWithFallback<Animatable<float>> subsurface_scale{1.0f};
+  TypedAttributeWithFallback<Animatable<float>> subsurface_anisotropy{0.0f};
+
+  // Coat properties
+  TypedAttributeWithFallback<Animatable<float>> coat_weight{0.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> coat_color{
+      value::color3f{1.0f, 1.0f, 1.0f}};
+  TypedAttributeWithFallback<Animatable<float>> coat_roughness{0.1f};
+  TypedAttributeWithFallback<Animatable<float>> coat_anisotropy{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> coat_rotation{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> coat_ior{1.6f};
+  TypedAttributeWithFallback<Animatable<float>> coat_affect_color{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> coat_affect_roughness{0.0f};
+
+  // Thin film properties
+  TypedAttributeWithFallback<Animatable<float>> thin_film_thickness{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> thin_film_ior{1.5f};
+
+  // Emission properties
+  TypedAttributeWithFallback<Animatable<float>> emission_luminance{0.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> emission_color{
+      value::color3f{1.0f, 1.0f, 1.0f}};
+
+  // Geometry properties
+  TypedAttributeWithFallback<Animatable<float>> geometry_opacity{1.0f};
+  TypedAttributeWithFallback<Animatable<bool>> geometry_thin_walled{false};
+
+  // Normal and tangent
+  TypedAttribute<Animatable<value::normal3f>> geometry_normal;
+  TypedAttribute<Animatable<value::vector3f>> geometry_tangent;
+
+  // Output
+  TypedTerminalAttribute<value::token> out;  // 'out'
+};
+
 // https://github.com/Autodesk/standard-surface/blob/master/reference/standard_surface.mtlx
 // We only support v1.0.1
 struct MtlxAutodeskStandardSurface : ShaderNode {
@@ -207,6 +278,8 @@ DEFINE_TYPE_TRAIT(MtlxUsdPreviewSurface, kMtlxUsdPreviewSurface,
                   TYPE_ID_IMAGING_MTLX_PREVIEWSURFACE, 1);
 DEFINE_TYPE_TRAIT(MtlxAutodeskStandardSurface, kMtlxAutodeskStandardSurface,
                   TYPE_ID_IMAGING_MTLX_STANDARDSURFACE, 1);
+DEFINE_TYPE_TRAIT(MtlxOpenPBRSurface, kMtlxOpenPBRSurface,
+                  TYPE_ID_IMAGING_MTLX_OPENPBRSURFACE, 1);
 
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT
