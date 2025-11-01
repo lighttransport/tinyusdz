@@ -1474,16 +1474,36 @@ class TinyUSDZLoaderNative {
     }
 
     {
-      // slot 0 hardcoded.
-      uint32_t uvSlotId = 0;
-      if (rmesh.texcoords.count(uvSlotId)) {
-        const float *uvs_ptr = reinterpret_cast<const float *>(
-            rmesh.texcoords.at(uvSlotId).data.data());
+      // Export all UV sets
+      emscripten::val uvSets = emscripten::val::object();
 
-        // assume vec2
+      for (const auto& uv_pair : rmesh.texcoords) {
+        uint32_t uvSlotId = uv_pair.first;
+        const auto& uv_data = uv_pair.second;
+
+        const float *uvs_ptr = reinterpret_cast<const float *>(uv_data.data.data());
+
+        // Create UV set object with metadata
+        emscripten::val uvSet = emscripten::val::object();
+        uvSet.set("data", emscripten::typed_memory_view(
+                     uv_data.vertex_count() * 2, uvs_ptr));
+        uvSet.set("vertexCount", uv_data.vertex_count());
+        uvSet.set("slotId", int(uvSlotId));
+
+        // Add to UV sets collection
+        std::string slotKey = "uv" + std::to_string(uvSlotId);
+        uvSets.set(slotKey.c_str(), uvSet);
+      }
+
+      mesh.set("uvSets", uvSets);
+
+      // Keep backward compatibility - slot 0 as "texcoords"
+      if (rmesh.texcoords.count(0)) {
+        const float *uvs_ptr = reinterpret_cast<const float *>(
+            rmesh.texcoords.at(0).data.data());
         mesh.set("texcoords",
                  emscripten::typed_memory_view(
-                     rmesh.texcoords.at(uvSlotId).vertex_count() * 2, uvs_ptr));
+                     rmesh.texcoords.at(0).vertex_count() * 2, uvs_ptr));
       }
     }
 

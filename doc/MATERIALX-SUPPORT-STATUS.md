@@ -160,6 +160,10 @@ applyImportedMaterial(object, materialData);
 - ✅ USD texture loading (embedded/referenced)
 - ✅ External texture loading (HDR, EXR, PNG, JPG)
 - ✅ 9 texture map types (base color, normal, roughness, metalness, emission, AO, bump, displacement, alpha)
+- ✅ Multiple UV sets (NEW - January 2025)
+  - Per-texture UV channel selection (UV0, UV1, UV2, etc.)
+  - Automatic detection of available UV sets
+  - Export to MaterialX XML with UV set metadata
 - ✅ Per-texture color space selection (5 color spaces)
 - ✅ Texture transforms (offset, scale, rotation)
 - ✅ Toggle individual textures on/off
@@ -199,6 +203,7 @@ applyImportedMaterial(object, materialData);
 | **Texture Export** | ✅ | ✅ | ✅ |
 | **Texture Import** | ✅ | ✅ | ✅ |
 | **Texture Transforms** | ⚠️ (parse only) | ⚠️ (parse only) | ✅ |
+| **Multiple UV Sets** | ✅ (NEW) | ✅ (NEW) | ✅ (NEW) |
 | **Color Spaces (5+)** | ✅ | ✅ | ✅ |
 | **HDR/EXR Support** | ⚠️ (TinyEXR) | ❌ | ✅ (Three.js) |
 | **Interactive Editing** | N/A | N/A | ✅ |
@@ -226,7 +231,7 @@ Legend:
 4. **Node Graph Support** - MaterialX node graphs beyond open_pbr_surface
 5. **MaterialX Standard Library** - Include system for standard nodes
 6. **Animation Support** - Time-varying material parameters
-7. **Multiple UV Sets** - UV channel selection for textures
+7. ~~**Multiple UV Sets** - UV channel selection for textures~~ ✅ **DONE!**
 
 ### Low Priority:
 8. **Visual Node Editor** - GUI for MaterialX node graphs
@@ -304,6 +309,72 @@ const file = await selectFile('.mtlx');
 const xmlText = await file.text();
 const materialData = parseMaterialXXML(xmlText);
 applyImportedMaterial(selectedObject, materialData);
+```
+
+### Multiple UV Sets Example:
+
+**C++ Core - UsdUVTexture:**
+```cpp
+#include "usdShade.hh"
+
+UsdUVTexture texture;
+texture.uv_set.Set(1);  // Use UV set 1 instead of default UV set 0
+texture.uv_set_name.Set(value::token("st1"));  // Optional name
+```
+
+**WASM Binding - getMesh():**
+```javascript
+const meshData = loader.getMesh(0);
+
+// Access multiple UV sets
+if (meshData.uvSets) {
+  const uv0 = meshData.uvSets.uv0;  // First UV set
+  const uv1 = meshData.uvSets.uv1;  // Second UV set
+
+  console.log(`UV0: ${uv0.vertexCount} vertices, slot ${uv0.slotId}`);
+  console.log(`UV1: ${uv1.vertexCount} vertices, slot ${uv1.slotId}`);
+}
+
+// Backward compatibility
+const uvs = meshData.texcoords;  // Always returns UV set 0
+```
+
+**Three.js Demo - UV Set Selection:**
+```javascript
+// In the texture panel, user can select UV set per texture
+// The UI automatically detects available UV sets (uv, uv1, uv2, etc.)
+// Selection is stored in textureUVSet[materialIndex][mapName]
+
+// Example: Set base color map to use UV set 1
+textureUVSet[0].map = 1;  // material 0, "map" texture uses UV1
+
+// Export includes UV set information
+const json = exportMaterialToJSON(material);
+console.log(json.textures.map.uvSet);  // 1
+
+const mtlx = exportMaterialToMaterialX(material);
+// Generates: <input name="texcoord" type="vector2" uiname="UV1" />
+```
+
+**MaterialX XML with UV Sets:**
+```xml
+<materialx version="1.38">
+  <surfacematerial name="MyMaterial" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="MyMaterial_shader" />
+  </surfacematerial>
+
+  <open_pbr_surface name="MyMaterial_shader" type="surfaceshader">
+    <input name="base_color" type="color3" nodename="MyMaterial_base_color_texture" />
+  </open_pbr_surface>
+
+  <!-- Texture using UV set 1 -->
+  <image name="MyMaterial_base_color_texture" type="color3">
+    <input name="file" type="filename" value="texture_0.png" />
+    <input name="colorspace" type="string" value="srgb" />
+    <!-- UV set 1 specified -->
+    <input name="texcoord" type="vector2" value="0.0, 0.0" uiname="UV1" />
+  </image>
+</materialx>
 ```
 
 ---
