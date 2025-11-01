@@ -581,6 +581,34 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
     rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING) | (1 << 6));
   } else if (value.as<std::vector<value::token>>()) {
     rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN) | (1 << 6));
+  }
+  // Phase 2: Dictionary type
+  else if (value.as<value::dict>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_DICTIONARY));
+  }
+  // Phase 2: ListOp types
+  else if (value.as<ListOp<value::token>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN_LIST_OP));
+  } else if (value.as<ListOp<std::string>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING_LIST_OP));
+  } else if (value.as<ListOp<Path>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_LIST_OP));
+  }
+  // Phase 2: Reference and Payload types
+  else if (value.as<Reference>()) {
+    // Note: There's no single Reference type ID in crate format - References are typically in ReferenceListOp
+    // But we'll handle it anyway for completeness
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_INVALID));  // Or use a custom type
+  } else if (value.as<Payload>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD));
+  } else if (value.as<ListOp<Reference>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_REFERENCE_LIST_OP));
+  } else if (value.as<ListOp<Payload>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_PAYLOAD_LIST_OP));
+  }
+  // Phase 2: VariantSelectionMap
+  else if (value.as<VariantSelectionMap>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VARIANT_SELECTION_MAP));
   } else {
     rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_INVALID));
   }
@@ -981,7 +1009,579 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       }
     }
   }
-  // TODO: Add more array types as needed (Vec2d, Vec3d, Vec4d, Matrix arrays, etc.)
+  // Phase 2: Dictionary serialization
+  // Dictionary format: uint64_t count + (key as StringIndex, value as ValueRep) pairs
+  else if (auto* dict_val = value.as<value::dict>()) {
+    uint64_t count = dict_val->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write dictionary count";
+      return -1;
+    }
+
+    // Write each key-value pair
+    for (const auto& kv : *dict_val) {
+      // Key is stored as StringIndex
+      crate::StringIndex key_idx = GetOrCreateString(kv.first);
+      if (!Write(key_idx.value)) {
+        if (err) *err = "Failed to write dictionary key index";
+        return -1;
+      }
+
+      // Value is stored as ValueRep - need to pack it
+      // Use pointer form of linb::any_cast to check type
+      crate::ValueRep value_rep;
+      bool value_written = false;
+
+      // Try int32
+      if (auto* int_val = linb::any_cast<int32_t>(&kv.second)) {
+        crate::CrateValue cv;
+        cv.Set(*int_val);
+        value_rep = PackValue(cv, err);
+        value_written = true;
+      }
+      // Try int (convert to int32)
+      else if (auto* int_val = linb::any_cast<int>(&kv.second)) {
+        crate::CrateValue cv;
+        cv.Set(static_cast<int32_t>(*int_val));
+        value_rep = PackValue(cv, err);
+        value_written = true;
+      }
+      // Try uint32
+      else if (auto* uint_val = linb::any_cast<uint32_t>(&kv.second)) {
+        crate::CrateValue cv;
+        cv.Set(*uint_val);
+        value_rep = PackValue(cv, err);
+        value_written = true;
+      }
+      // Try float
+      else if (auto* float_val = linb::any_cast<float>(&kv.second)) {
+        crate::CrateValue cv;
+        cv.Set(*float_val);
+        value_rep = PackValue(cv, err);
+        value_written = true;
+      }
+      // Try double
+      else if (auto* double_val = linb::any_cast<double>(&kv.second)) {
+        crate::CrateValue cv;
+        cv.Set(*double_val);
+        value_rep = PackValue(cv, err);
+        value_written = true;
+      }
+      // Try bool
+      else if (auto* bool_val = linb::any_cast<bool>(&kv.second)) {
+        crate::CrateValue cv;
+        cv.Set(*bool_val);
+        value_rep = PackValue(cv, err);
+        value_written = true;
+      }
+      // Try string
+      else if (auto* str_val = linb::any_cast<std::string>(&kv.second)) {
+        crate::CrateValue cv;
+        cv.Set(*str_val);
+        value_rep = PackValue(cv, err);
+        value_written = true;
+      }
+      // Try token
+      else if (auto* tok_val = linb::any_cast<value::token>(&kv.second)) {
+        crate::CrateValue cv;
+        cv.Set(*tok_val);
+        value_rep = PackValue(cv, err);
+        value_written = true;
+      }
+      else {
+        if (err) *err = "Unsupported dictionary value type";
+        return -1;
+      }
+
+      if (value_written) {
+        if (!Write(value_rep.GetData())) {
+          if (err) *err = "Failed to write dictionary value";
+          return -1;
+        }
+      }
+    }
+  }
+  // Phase 2: TokenListOp serialization
+  // ListOp format: ListOpHeader(uint8) + lists (each with uint64 count + elements)
+  else if (auto* token_listop = value.as<ListOp<value::token>>()) {
+    // Write ListOpHeader
+    ListOpHeader header;
+    header.bits = 0;
+    if (token_listop->IsExplicit()) header.bits |= ListOpHeader::IsExplicitBit;
+    if (token_listop->HasExplicitItems()) header.bits |= ListOpHeader::HasExplicitItemsBit;
+    if (token_listop->HasAddedItems()) header.bits |= ListOpHeader::HasAddedItemsBit;
+    if (token_listop->HasDeletedItems()) header.bits |= ListOpHeader::HasDeletedItemsBit;
+    if (token_listop->HasOrderedItems()) header.bits |= ListOpHeader::HasOrderedItemsBit;
+    if (token_listop->HasPrependedItems()) header.bits |= ListOpHeader::HasPrependedItemsBit;
+    if (token_listop->HasAppendedItems()) header.bits |= ListOpHeader::HasAppendedItemsBit;
+
+    if (!Write(header.bits)) {
+      if (err) *err = "Failed to write TokenListOp header";
+      return -1;
+    }
+
+    // Write explicit items if present
+    if (token_listop->HasExplicitItems()) {
+      uint64_t count = token_listop->GetExplicitItems().size();
+      if (!Write(count)) {
+        if (err) *err = "Failed to write TokenListOp explicit count";
+        return -1;
+      }
+      for (const auto& tok : token_listop->GetExplicitItems()) {
+        crate::TokenIndex idx = GetOrCreateToken(tok.str());
+        if (!Write(idx.value)) {
+          if (err) *err = "Failed to write TokenListOp explicit item";
+          return -1;
+        }
+      }
+    }
+
+    // Write added items if present
+    if (token_listop->HasAddedItems()) {
+      uint64_t count = token_listop->GetAddedItems().size();
+      if (!Write(count)) {
+        if (err) *err = "Failed to write TokenListOp added count";
+        return -1;
+      }
+      for (const auto& tok : token_listop->GetAddedItems()) {
+        crate::TokenIndex idx = GetOrCreateToken(tok.str());
+        if (!Write(idx.value)) {
+          if (err) *err = "Failed to write TokenListOp added item";
+          return -1;
+        }
+      }
+    }
+
+    // Write prepended items if present
+    if (token_listop->HasPrependedItems()) {
+      uint64_t count = token_listop->GetPrependedItems().size();
+      if (!Write(count)) {
+        if (err) *err = "Failed to write TokenListOp prepended count";
+        return -1;
+      }
+      for (const auto& tok : token_listop->GetPrependedItems()) {
+        crate::TokenIndex idx = GetOrCreateToken(tok.str());
+        if (!Write(idx.value)) {
+          if (err) *err = "Failed to write TokenListOp prepended item";
+          return -1;
+        }
+      }
+    }
+
+    // Write appended items if present
+    if (token_listop->HasAppendedItems()) {
+      uint64_t count = token_listop->GetAppendedItems().size();
+      if (!Write(count)) {
+        if (err) *err = "Failed to write TokenListOp appended count";
+        return -1;
+      }
+      for (const auto& tok : token_listop->GetAppendedItems()) {
+        crate::TokenIndex idx = GetOrCreateToken(tok.str());
+        if (!Write(idx.value)) {
+          if (err) *err = "Failed to write TokenListOp appended item";
+          return -1;
+        }
+      }
+    }
+
+    // Write deleted items if present
+    if (token_listop->HasDeletedItems()) {
+      uint64_t count = token_listop->GetDeletedItems().size();
+      if (!Write(count)) {
+        if (err) *err = "Failed to write TokenListOp deleted count";
+        return -1;
+      }
+      for (const auto& tok : token_listop->GetDeletedItems()) {
+        crate::TokenIndex idx = GetOrCreateToken(tok.str());
+        if (!Write(idx.value)) {
+          if (err) *err = "Failed to write TokenListOp deleted item";
+          return -1;
+        }
+      }
+    }
+
+    // Write ordered items if present
+    if (token_listop->HasOrderedItems()) {
+      uint64_t count = token_listop->GetOrderedItems().size();
+      if (!Write(count)) {
+        if (err) *err = "Failed to write TokenListOp ordered count";
+        return -1;
+      }
+      for (const auto& tok : token_listop->GetOrderedItems()) {
+        crate::TokenIndex idx = GetOrCreateToken(tok.str());
+        if (!Write(idx.value)) {
+          if (err) *err = "Failed to write TokenListOp ordered item";
+          return -1;
+        }
+      }
+    }
+  }
+  // StringListOp serialization
+  else if (auto* string_listop = value.as<ListOp<std::string>>()) {
+    // Similar to TokenListOp but with StringIndex
+    ListOpHeader header;
+    header.bits = 0;
+    if (string_listop->IsExplicit()) header.bits |= ListOpHeader::IsExplicitBit;
+    if (string_listop->HasExplicitItems()) header.bits |= ListOpHeader::HasExplicitItemsBit;
+    if (string_listop->HasAddedItems()) header.bits |= ListOpHeader::HasAddedItemsBit;
+    if (string_listop->HasDeletedItems()) header.bits |= ListOpHeader::HasDeletedItemsBit;
+    if (string_listop->HasOrderedItems()) header.bits |= ListOpHeader::HasOrderedItemsBit;
+    if (string_listop->HasPrependedItems()) header.bits |= ListOpHeader::HasPrependedItemsBit;
+    if (string_listop->HasAppendedItems()) header.bits |= ListOpHeader::HasAppendedItemsBit;
+
+    if (!Write(header.bits)) {
+      if (err) *err = "Failed to write StringListOp header";
+      return -1;
+    }
+
+    // Helper lambda to write a string list
+    auto writeStringList = [&](const std::vector<std::string>& list) -> bool {
+      uint64_t count = list.size();
+      if (!Write(count)) return false;
+      for (const auto& str : list) {
+        crate::StringIndex idx = GetOrCreateString(str);
+        if (!Write(idx.value)) return false;
+      }
+      return true;
+    };
+
+    if (string_listop->HasExplicitItems() && !writeStringList(string_listop->GetExplicitItems())) {
+      if (err) *err = "Failed to write StringListOp explicit items";
+      return -1;
+    }
+    if (string_listop->HasAddedItems() && !writeStringList(string_listop->GetAddedItems())) {
+      if (err) *err = "Failed to write StringListOp added items";
+      return -1;
+    }
+    if (string_listop->HasPrependedItems() && !writeStringList(string_listop->GetPrependedItems())) {
+      if (err) *err = "Failed to write StringListOp prepended items";
+      return -1;
+    }
+    if (string_listop->HasAppendedItems() && !writeStringList(string_listop->GetAppendedItems())) {
+      if (err) *err = "Failed to write StringListOp appended items";
+      return -1;
+    }
+    if (string_listop->HasDeletedItems() && !writeStringList(string_listop->GetDeletedItems())) {
+      if (err) *err = "Failed to write StringListOp deleted items";
+      return -1;
+    }
+    if (string_listop->HasOrderedItems() && !writeStringList(string_listop->GetOrderedItems())) {
+      if (err) *err = "Failed to write StringListOp ordered items";
+      return -1;
+    }
+  }
+  // PathListOp serialization
+  else if (auto* path_listop = value.as<ListOp<Path>>()) {
+    // Similar to StringListOp but with PathIndex
+    ListOpHeader header;
+    header.bits = 0;
+    if (path_listop->IsExplicit()) header.bits |= ListOpHeader::IsExplicitBit;
+    if (path_listop->HasExplicitItems()) header.bits |= ListOpHeader::HasExplicitItemsBit;
+    if (path_listop->HasAddedItems()) header.bits |= ListOpHeader::HasAddedItemsBit;
+    if (path_listop->HasDeletedItems()) header.bits |= ListOpHeader::HasDeletedItemsBit;
+    if (path_listop->HasOrderedItems()) header.bits |= ListOpHeader::HasOrderedItemsBit;
+    if (path_listop->HasPrependedItems()) header.bits |= ListOpHeader::HasPrependedItemsBit;
+    if (path_listop->HasAppendedItems()) header.bits |= ListOpHeader::HasAppendedItemsBit;
+
+    if (!Write(header.bits)) {
+      if (err) *err = "Failed to write PathListOp header";
+      return -1;
+    }
+
+    // Helper lambda to write a path list
+    auto writePathList = [&](const std::vector<Path>& list) -> bool {
+      uint64_t count = list.size();
+      if (!Write(count)) return false;
+      for (const auto& path : list) {
+        crate::PathIndex idx = GetOrCreatePath(path);
+        if (!Write(idx.value)) return false;
+      }
+      return true;
+    };
+
+    if (path_listop->HasExplicitItems() && !writePathList(path_listop->GetExplicitItems())) {
+      if (err) *err = "Failed to write PathListOp explicit items";
+      return -1;
+    }
+    if (path_listop->HasAddedItems() && !writePathList(path_listop->GetAddedItems())) {
+      if (err) *err = "Failed to write PathListOp added items";
+      return -1;
+    }
+    if (path_listop->HasPrependedItems() && !writePathList(path_listop->GetPrependedItems())) {
+      if (err) *err = "Failed to write PathListOp prepended items";
+      return -1;
+    }
+    if (path_listop->HasAppendedItems() && !writePathList(path_listop->GetAppendedItems())) {
+      if (err) *err = "Failed to write PathListOp appended items";
+      return -1;
+    }
+    if (path_listop->HasDeletedItems() && !writePathList(path_listop->GetDeletedItems())) {
+      if (err) *err = "Failed to write PathListOp deleted items";
+      return -1;
+    }
+    if (path_listop->HasOrderedItems() && !writePathList(path_listop->GetOrderedItems())) {
+      if (err) *err = "Failed to write PathListOp ordered items";
+      return -1;
+    }
+  }
+  // Reference serialization
+  else if (auto* ref_val = value.as<Reference>()) {
+    // Reference format: StringIndex (asset_path) + PathIndex (prim_path) + LayerOffset (2 doubles) + Dictionary (customData)
+
+    // Write asset path as StringIndex
+    crate::StringIndex asset_idx = GetOrCreateString(ref_val->asset_path.GetAssetPath());
+    if (!Write(asset_idx.value)) {
+      if (err) *err = "Failed to write Reference asset_path";
+      return -1;
+    }
+
+    // Write prim path as PathIndex
+    crate::PathIndex prim_idx = GetOrCreatePath(ref_val->prim_path);
+    if (!Write(prim_idx.value)) {
+      if (err) *err = "Failed to write Reference prim_path";
+      return -1;
+    }
+
+    // Write LayerOffset (2 doubles)
+    if (!Write(ref_val->layerOffset._offset)) {
+      if (err) *err = "Failed to write Reference LayerOffset offset";
+      return -1;
+    }
+    if (!Write(ref_val->layerOffset._scale)) {
+      if (err) *err = "Failed to write Reference LayerOffset scale";
+      return -1;
+    }
+
+    // Write customData dictionary
+    // Dictionary format: uint64_t count + (StringIndex key, ValueRep value) pairs
+    uint64_t dict_count = ref_val->customData.size();
+    if (!Write(dict_count)) {
+      if (err) *err = "Failed to write Reference customData count";
+      return -1;
+    }
+
+    for (const auto& kv : ref_val->customData) {
+      // Write key as StringIndex
+      crate::StringIndex key_idx = GetOrCreateString(kv.first);
+      if (!Write(key_idx.value)) {
+        if (err) *err = "Failed to write Reference customData key";
+        return -1;
+      }
+
+      // Write value as ValueRep
+      // kv.second is MetaVariable, need to get value from it
+      crate::ValueRep value_rep;
+      bool value_written = false;
+
+      // Try common types using MetaVariable::get_value<T>()
+      if (auto int_val = kv.second.get_value<int32_t>()) {
+        crate::CrateValue cv;
+        cv.Set(*int_val);
+        value_rep = PackValue(cv, err);
+        value_written = true;
+      } else if (auto float_val = kv.second.get_value<float>()) {
+        crate::CrateValue cv;
+        cv.Set(*float_val);
+        value_rep = PackValue(cv, err);
+        value_written = true;
+      } else if (auto str_val = kv.second.get_value<std::string>()) {
+        crate::CrateValue cv;
+        cv.Set(*str_val);
+        value_rep = PackValue(cv, err);
+        value_written = true;
+      } else {
+        if (err) *err = "Unsupported Reference customData value type";
+        return -1;
+      }
+
+      if (value_written) {
+        if (!Write(value_rep.GetData())) {
+          if (err) *err = "Failed to write Reference customData value";
+          return -1;
+        }
+      }
+    }
+  }
+  // Payload serialization
+  else if (auto* payload_val = value.as<Payload>()) {
+    // Payload format: StringIndex (asset_path) + PathIndex (prim_path) + LayerOffset (2 doubles)
+
+    // Write asset path as StringIndex
+    crate::StringIndex asset_idx = GetOrCreateString(payload_val->asset_path.GetAssetPath());
+    if (!Write(asset_idx.value)) {
+      if (err) *err = "Failed to write Payload asset_path";
+      return -1;
+    }
+
+    // Write prim path as PathIndex
+    crate::PathIndex prim_idx = GetOrCreatePath(payload_val->prim_path);
+    if (!Write(prim_idx.value)) {
+      if (err) *err = "Failed to write Payload prim_path";
+      return -1;
+    }
+
+    // Write LayerOffset (2 doubles)
+    if (!Write(payload_val->layerOffset._offset)) {
+      if (err) *err = "Failed to write Payload LayerOffset offset";
+      return -1;
+    }
+    if (!Write(payload_val->layerOffset._scale)) {
+      if (err) *err = "Failed to write Payload LayerOffset scale";
+      return -1;
+    }
+  }
+  // ReferenceListOp serialization
+  else if (auto* ref_listop = value.as<ListOp<Reference>>()) {
+    // Write ListOpHeader
+    ListOpHeader header;
+    header.bits = 0;
+    if (ref_listop->IsExplicit()) header.bits |= ListOpHeader::IsExplicitBit;
+    if (ref_listop->HasExplicitItems()) header.bits |= ListOpHeader::HasExplicitItemsBit;
+    if (ref_listop->HasAddedItems()) header.bits |= ListOpHeader::HasAddedItemsBit;
+    if (ref_listop->HasDeletedItems()) header.bits |= ListOpHeader::HasDeletedItemsBit;
+    if (ref_listop->HasOrderedItems()) header.bits |= ListOpHeader::HasOrderedItemsBit;
+    if (ref_listop->HasPrependedItems()) header.bits |= ListOpHeader::HasPrependedItemsBit;
+    if (ref_listop->HasAppendedItems()) header.bits |= ListOpHeader::HasAppendedItemsBit;
+
+    if (!Write(header.bits)) {
+      if (err) *err = "Failed to write ReferenceListOp header";
+      return -1;
+    }
+
+    // Helper lambda to write a Reference list (inline implementation for now)
+    auto writeRefList = [&](const std::vector<Reference>& list) -> bool {
+      uint64_t count = list.size();
+      if (!Write(count)) return false;
+      for (const auto& ref : list) {
+        // Write each Reference inline (same format as single Reference above)
+        crate::StringIndex asset_idx = GetOrCreateString(ref.asset_path.GetAssetPath());
+        if (!Write(asset_idx.value)) return false;
+
+        crate::PathIndex prim_idx = GetOrCreatePath(ref.prim_path);
+        if (!Write(prim_idx.value)) return false;
+
+        if (!Write(ref.layerOffset._offset)) return false;
+        if (!Write(ref.layerOffset._scale)) return false;
+
+        // customData dictionary (simplified - just write count 0 for now)
+        uint64_t dict_count = 0;  // TODO: Handle customData properly
+        if (!Write(dict_count)) return false;
+      }
+      return true;
+    };
+
+    if (ref_listop->HasExplicitItems() && !writeRefList(ref_listop->GetExplicitItems())) {
+      if (err) *err = "Failed to write ReferenceListOp explicit items";
+      return -1;
+    }
+    if (ref_listop->HasAddedItems() && !writeRefList(ref_listop->GetAddedItems())) {
+      if (err) *err = "Failed to write ReferenceListOp added items";
+      return -1;
+    }
+    if (ref_listop->HasPrependedItems() && !writeRefList(ref_listop->GetPrependedItems())) {
+      if (err) *err = "Failed to write ReferenceListOp prepended items";
+      return -1;
+    }
+    if (ref_listop->HasAppendedItems() && !writeRefList(ref_listop->GetAppendedItems())) {
+      if (err) *err = "Failed to write ReferenceListOp appended items";
+      return -1;
+    }
+    if (ref_listop->HasDeletedItems() && !writeRefList(ref_listop->GetDeletedItems())) {
+      if (err) *err = "Failed to write ReferenceListOp deleted items";
+      return -1;
+    }
+    if (ref_listop->HasOrderedItems() && !writeRefList(ref_listop->GetOrderedItems())) {
+      if (err) *err = "Failed to write ReferenceListOp ordered items";
+      return -1;
+    }
+  }
+  // PayloadListOp serialization
+  else if (auto* payload_listop = value.as<ListOp<Payload>>()) {
+    // Write ListOpHeader
+    ListOpHeader header;
+    header.bits = 0;
+    if (payload_listop->IsExplicit()) header.bits |= ListOpHeader::IsExplicitBit;
+    if (payload_listop->HasExplicitItems()) header.bits |= ListOpHeader::HasExplicitItemsBit;
+    if (payload_listop->HasAddedItems()) header.bits |= ListOpHeader::HasAddedItemsBit;
+    if (payload_listop->HasDeletedItems()) header.bits |= ListOpHeader::HasDeletedItemsBit;
+    if (payload_listop->HasOrderedItems()) header.bits |= ListOpHeader::HasOrderedItemsBit;
+    if (payload_listop->HasPrependedItems()) header.bits |= ListOpHeader::HasPrependedItemsBit;
+    if (payload_listop->HasAppendedItems()) header.bits |= ListOpHeader::HasAppendedItemsBit;
+
+    if (!Write(header.bits)) {
+      if (err) *err = "Failed to write PayloadListOp header";
+      return -1;
+    }
+
+    // Helper lambda to write a Payload list
+    auto writePayloadList = [&](const std::vector<Payload>& list) -> bool {
+      uint64_t count = list.size();
+      if (!Write(count)) return false;
+      for (const auto& payload : list) {
+        crate::StringIndex asset_idx = GetOrCreateString(payload.asset_path.GetAssetPath());
+        if (!Write(asset_idx.value)) return false;
+
+        crate::PathIndex prim_idx = GetOrCreatePath(payload.prim_path);
+        if (!Write(prim_idx.value)) return false;
+
+        if (!Write(payload.layerOffset._offset)) return false;
+        if (!Write(payload.layerOffset._scale)) return false;
+      }
+      return true;
+    };
+
+    if (payload_listop->HasExplicitItems() && !writePayloadList(payload_listop->GetExplicitItems())) {
+      if (err) *err = "Failed to write PayloadListOp explicit items";
+      return -1;
+    }
+    if (payload_listop->HasAddedItems() && !writePayloadList(payload_listop->GetAddedItems())) {
+      if (err) *err = "Failed to write PayloadListOp added items";
+      return -1;
+    }
+    if (payload_listop->HasPrependedItems() && !writePayloadList(payload_listop->GetPrependedItems())) {
+      if (err) *err = "Failed to write PayloadListOp prepended items";
+      return -1;
+    }
+    if (payload_listop->HasAppendedItems() && !writePayloadList(payload_listop->GetAppendedItems())) {
+      if (err) *err = "Failed to write PayloadListOp appended items";
+      return -1;
+    }
+    if (payload_listop->HasDeletedItems() && !writePayloadList(payload_listop->GetDeletedItems())) {
+      if (err) *err = "Failed to write PayloadListOp deleted items";
+      return -1;
+    }
+    if (payload_listop->HasOrderedItems() && !writePayloadList(payload_listop->GetOrderedItems())) {
+      if (err) *err = "Failed to write PayloadListOp ordered items";
+      return -1;
+    }
+  }
+  // VariantSelectionMap serialization
+  else if (auto* variant_map = value.as<VariantSelectionMap>()) {
+    // VariantSelectionMap format: uint64_t count + (StringIndex key, StringIndex value) pairs
+
+    uint64_t count = variant_map->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write VariantSelectionMap count";
+      return -1;
+    }
+
+    for (const auto& kv : *variant_map) {
+      // Write key as StringIndex
+      crate::StringIndex key_idx = GetOrCreateString(kv.first);
+      if (!Write(key_idx.value)) {
+        if (err) *err = "Failed to write VariantSelectionMap key";
+        return -1;
+      }
+
+      // Write value as StringIndex
+      crate::StringIndex val_idx = GetOrCreateString(kv.second);
+      if (!Write(val_idx.value)) {
+        if (err) *err = "Failed to write VariantSelectionMap value";
+        return -1;
+      }
+    }
+  }
+  // TODO: Add IntListOp, UIntListOp, Int64ListOp, UInt64ListOp, etc.
   else {
     // Unsupported type for out-of-line storage
     if (err) *err = "Unsupported value type for out-of-line storage";
@@ -1240,6 +1840,23 @@ bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep
 
   if (auto* quatd_val = value.as<value::quatd>()) {
     // Cannot inline, need out-of-line storage
+    return false;
+  }
+
+  // Phase 2: Dictionary, ListOps, Reference, and Payload are NEVER inlined - always out-of-line storage
+  if (value.as<value::dict>()) {
+    return false;
+  }
+
+  if (value.as<ListOp<value::token>>() ||
+      value.as<ListOp<std::string>>() ||
+      value.as<ListOp<Path>>() ||
+      value.as<ListOp<Reference>>() ||
+      value.as<ListOp<Payload>>()) {
+    return false;
+  }
+
+  if (value.as<Reference>() || value.as<Payload>() || value.as<VariantSelectionMap>()) {
     return false;
   }
 
