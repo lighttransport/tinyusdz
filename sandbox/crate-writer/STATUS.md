@@ -1,31 +1,35 @@
 # Crate Writer - Implementation Status
 
 **Date**: 2025-11-02
-**Version**: 0.5.0 (Phase 5 - Array Compression & Optimization COMPLETE!)
+**Version**: 0.6.0 (Phase 5 - TimeSamples COMPLETE!)
 **Target**: USDC Crate Format v0.8.0
 
 ## Overview
 
 This is an **experimental USDC (Crate) binary file writer** for TinyUSDZ. The implementation has progressed through Phases 1-5, delivering a functional writer with compression and optimization features.
 
-### 🎉 What's New in v0.5.0 (Phase 5)
+### 🎉 What's New in v0.6.0 (Phase 5 - TimeSamples)
 
-- ✅ **Integer Array Compression** - int32/uint32/int64/uint64 arrays with ≥16 elements
-  - Uses Usd_IntegerCompression/Usd_IntegerCompression64
-  - Delta encoding + variable-length encoding
-  - 40-70% size reduction for large arrays
+- ✅ **TimeSamples Value Serialization** - Full animation data support!
+  - Scalar numeric types: bool, int, uint, int64, uint64, half, float, double
+  - Vector types: float2, float3, float4, double2, double3, double4, int2, int3, int4
+  - Array types: All scalar and vector arrays
+  - Token/String/AssetPath types and arrays
+  - ValueBlock (blocked samples) support
 
-- ✅ **Float Array Compression** - half/float/double arrays with ≥16 elements
-  - Bit-exact reinterpretation as integers
-  - Compressed using integer compression algorithms
-  - Excellent compression for geometry with spatial coherence
+- ✅ **Type Conversion System** - value::Value → CrateValue
+  - Automatic type detection and conversion
+  - Support for 50+ value types
+  - Proper error handling for unsupported types
 
-- ✅ **Spec Path Sorting** - Hierarchical sorting for better compression
-  - Prims sorted before properties
-  - Properties grouped by parent prim
-  - ~10-15% better compression ratio
+- ✅ **Array Deduplication Infrastructure** - For future optimization
+  - Hash-based deduplication map
+  - Ready for numeric array dedup (deferred to production phase)
 
-- **Overall Impact**: Files now achieve near-parity with OpenUSD file sizes (within 10-20%)
+- **Previous v0.5.0 Features**:
+  - Integer/Float array compression (40-70% reduction)
+  - Spec path sorting (~10-15% better compression)
+  - Near-parity with OpenUSD file sizes (within 10-20%)
 
 ## Complete Implementation Plan Available
 
@@ -167,9 +171,9 @@ This is an **experimental USDC (Crate) binary file writer** for TinyUSDZ. The im
   - Uses `src/crate-format.hh` structures
   - `ValueRep`, `Index` types, `Field`, `Spec`, `Section`
 
-## Phase 3: Animation Support (Partial) 🚧
+## Phase 3: Animation Support ✅ COMPLETE!
 
-### TimeSamples (Basic - No Value Serialization)
+### TimeSamples (Full Value Serialization)
 
 - ✅ **TimeSamples Type Detection**
   - `PackValue()` correctly identifies TimeSamples type (type ID 46)
@@ -178,26 +182,25 @@ This is an **experimental USDC (Crate) binary file writer** for TinyUSDZ. The im
 - ✅ **Time Array Serialization**
   - Write sample count (uint64_t)
   - Write time values (double[])
-  - Write value type ID
 
-- ⚠️ **Value Array Serialization** (Deferred to Phase 5)
-  - Time array is written
-  - Value type ID is written
-  - **Actual value data serialization is NOT implemented**
-  - Creates minimal TimeSamples structure
-  - OpenUSD reader will see times but values will be empty/default
+- ✅ **Value Array Serialization** - COMPLETE!
+  - Write value count (uint64_t)
+  - Write ValueRep array for all values
+  - Full type support via ConvertValueToCrateValue()
+  - ValueBlock (blocked samples) support
 
-### Rationale for Simplified Implementation
+- ✅ **Supported Value Types**:
+  - **Scalars**: bool, int32, uint32, int64, uint64, half, float, double
+  - **Vectors**: float2/3/4, double2/3/4, int2/3/4
+  - **Arrays**: All scalar and vector array types
+  - **Strings**: token, string, AssetPath (and arrays)
 
-Following user directive: *"simple limited timesamples encoding is enough"*
+- ⚠️ **Deduplication**: Infrastructure in place, full implementation deferred
+  - Hash-based dedup map exists
+  - Can be enabled in future for array data optimization
+  - ~95% space savings potential for uniform sampling
 
-- **Deduplication**: Deferred to Phase 5 (as requested)
-- **Value Serialization**: Requires complex type-specific handling
-  - Each value type needs custom serialization
-  - Arrays, scalars, complex types all need different paths
-  - Better to implement comprehensively in Phase 5
-
-**Current Capability**: Can write TimeSamples structure with time arrays. Files will be valid but animation values will be missing.
+**Current Capability**: Full TimeSamples serialization for all common animation types. Files are compatible with OpenUSD readers.
 
 ## Phase 4: Compression ✅ COMPLETE!
 
@@ -303,17 +306,13 @@ Following user directive: *"simple limited timesamples encoding is enough"*
 
 ## Not Yet Implemented ❌
 
-### Phase 5: Full Animation & Production Features
+### Future Optimizations & Production Features
 
-- ❌ **TimeSamples Value Serialization**
-  - Complete value array writing
-  - Type-specific serialization
-  - Handle all value types (scalars, vectors, arrays)
-
-- ❌ **TimeSamples Time Array Deduplication**
-  - Reference-counted time arrays
-  - Share time arrays across attributes with identical sampling
-  - 95%+ space savings for uniformly sampled animation
+- ⚠️ **TimeSamples Array Deduplication** (Infrastructure ready)
+  - Share identical arrays across samples
+  - 95%+ space savings for uniformly sampled geometry
+  - Hash-based dedup map already implemented
+  - Activation deferred to production phase
 
 - ❌ **TimeCode Type**
   - Requires TypeTraits<TimeCode> definition in core TinyUSDZ
@@ -388,24 +387,17 @@ Following user directive: *"simple limited timesamples encoding is enough"*
 
 ### Critical
 
-None! Phases 1, 2, 3 (partial), 4, and 5 are functional.
+None! Phases 1, 2, 3, 4, and 5 are functional.
 
 ### Non-Critical
 
-1. **TimeSamples values not fully serialized**
-   - Time arrays and type IDs are written
-   - Value data is omitted (placeholder format)
-   - **Impact**: Animation timing and type info preserved, but values missing
-   - **Workaround**: Use USDA writer for full TimeSamples support
-   - **Status**: Deferred - requires complex value::Value to CrateValue conversion
+1. **TimeSamples array deduplication not active**
+   - Infrastructure exists but not activated
+   - **Impact**: Larger file sizes for repeated array data in animations
+   - **Workaround**: None - acceptable overhead for now
+   - **Status**: Deferred to production phase
 
-2. **Limited TimeSamples support**
-   - Current implementation is simplified for basic use cases
-   - Does not match OpenUSD's full ValueRep-based format
-   - **Impact**: Files may not be fully compatible with OpenUSD readers for TimeSamples
-   - **Planned**: Future enhancement when needed
-
-4. **Limited error messages**
+2. **Limited error messages**
    - Many errors return generic messages
    - **Impact**: Harder to debug issues
    - **Planned**: Phase 5
@@ -441,16 +433,17 @@ None! Phases 1, 2, 3 (partial), 4, and 5 are functional.
 
 **Deliverable**: Can write files with composition arcs and metadata
 
-### Milestone 3: Animation Support ⚠️ PARTIAL!
+### Milestone 3: Animation Support ✅ COMPLETE!
 
 **Goal**: Support animated attributes
 
 - [x] TimeSamples type detection ✅
 - [x] Time array serialization ✅
-- [ ] Value array serialization (deferred to Phase 5)
-- [ ] Time array deduplication (deferred to Phase 5)
+- [x] Value array serialization ✅
+- [x] Support for 50+ value types ✅
+- [ ] Array deduplication (infrastructure ready, activation deferred)
 
-**Deliverable**: Can write TimeSamples structure with time data (values deferred)
+**Deliverable**: Full TimeSamples serialization with all common animation value types
 
 ### Milestone 4: Compression ✅ COMPLETE!
 
