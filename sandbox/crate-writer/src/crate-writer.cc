@@ -226,6 +226,208 @@ void CrateWriter::Close() {
 }
 
 // ============================================================================
+// TimeSamples Value Conversion (Phase 5)
+// ============================================================================
+
+/// Helper to convert value::Value to CrateValue for TimeSamples serialization
+/// Returns true if conversion succeeded
+bool ConvertValueToCrateValue(const value::Value& val, crate::CrateValue* out, std::string* err) {
+  if (!out) {
+    if (err) *err = "ConvertValueToCrateValue: output is null";
+    return false;
+  }
+
+  uint32_t type_id = val.type_id();
+
+  // Phase 5.1: Scalar numeric types
+  if (auto* v = val.as<bool>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<int32_t>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<uint32_t>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<int64_t>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<uint64_t>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<value::half>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<float>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<double>()) {
+    out->Set(*v);
+    return true;
+  }
+  // Phase 5.2: Vector types
+  else if (auto* v = val.as<value::float2>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<value::float3>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<value::float4>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<value::double2>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<value::double3>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<value::double4>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<value::int2>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<value::int3>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<value::int4>()) {
+    out->Set(*v);
+    return true;
+  }
+  // Phase 5.3: Array types - numeric scalars
+  else if (auto* v = val.as<std::vector<bool>>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<std::vector<int32_t>>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<std::vector<uint32_t>>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<std::vector<int64_t>>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<std::vector<uint64_t>>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<std::vector<value::half>>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<std::vector<float>>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<std::vector<double>>()) {
+    out->Set(*v);
+    return true;
+  }
+  // Phase 5.4: Vector arrays
+  else if (auto* v = val.as<std::vector<value::float2>>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<std::vector<value::float3>>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<std::vector<value::float4>>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<std::vector<value::double2>>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<std::vector<value::double3>>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<std::vector<value::double4>>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<std::vector<value::int2>>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<std::vector<value::int3>>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<std::vector<value::int4>>()) {
+    out->Set(*v);
+    return true;
+  }
+  // Phase 5.5: Token/String/AssetPath types
+  else if (auto* v = val.as<value::token>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<std::string>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<value::AssetPath>()) {
+    out->Set(*v);
+    return true;
+  }
+  // Phase 5.6: Token/String/AssetPath arrays
+  else if (auto* v = val.as<std::vector<value::token>>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<std::vector<std::string>>()) {
+    out->Set(*v);
+    return true;
+  }
+  else if (auto* v = val.as<std::vector<value::AssetPath>>()) {
+    out->Set(*v);
+    return true;
+  }
+
+  // Unsupported type
+  if (err) {
+    *err = "ConvertValueToCrateValue: Unsupported type_id " + std::to_string(type_id);
+  }
+  return false;
+}
+
+// ============================================================================
+// Array Deduplication (Phase 5)
+// ============================================================================
+
+/// Helper to serialize array to bytes for deduplication
+template<typename T>
+std::vector<char> SerializeArrayToBytes(const std::vector<T>& arr) {
+  std::vector<char> bytes;
+  size_t total_size = sizeof(T) * arr.size();
+  bytes.resize(total_size);
+  std::memcpy(bytes.data(), arr.data(), total_size);
+  return bytes;
+}
+
+// ============================================================================
 // Compression (Phase 4)
 // ============================================================================
 
@@ -2037,16 +2239,17 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       }
     }
   }
-  // Phase 3: TimeSamples (simple version without deduplication)
+  // Phase 5: TimeSamples with value serialization
   else if (auto* timesamples_val = value.as<value::TimeSamples>()) {
     // TimeSamples format:
     // 1. Time array: uint64_t count + double times[count]
-    // 2. Value array: serialized based on the value type
+    // 2. Value array: uint64_t count + ValueRep values[count]
 
-    // Write time array
     uint64_t num_samples = static_cast<uint64_t>(timesamples_val->size());
+
+    // Write time array count
     if (!Write(num_samples)) {
-      if (err) *err = "Failed to write TimeSamples count";
+      if (err) *err = "Failed to write TimeSamples time count";
       return -1;
     }
 
@@ -2063,26 +2266,58 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       }
     }
 
-    // Write value type ID
-    uint32_t value_type_id = timesamples_val->type_id();
-    if (!Write(value_type_id)) {
-      if (err) *err = "Failed to write TimeSamples value type ID";
+    // Write value array count
+    if (!Write(num_samples)) {
+      if (err) *err = "Failed to write TimeSamples value count";
       return -1;
     }
 
-    // Phase 3/5: Simplified TimeSamples implementation
-    // We write the structural data (times + type ID) but not the actual values.
-    // This creates a minimal TimeSamples structure that preserves:
-    // - Number of samples
-    // - Time array (when each sample occurs)
-    // - Value type ID (what type of values are stored)
-    //
-    // Full value serialization would require complex value::Value to CrateValue
-    // conversion for every possible USD type, which is deferred for now.
-    // The current implementation is sufficient for:
-    // - Understanding animation timing
-    // - Preserving type information
-    // - Basic file structure validation
+    // Get samples - this works for both POD and non-POD types
+    const auto& samples = timesamples_val->get_samples();
+
+    if (samples.size() != num_samples) {
+      if (err) *err = "TimeSamples: samples size mismatch";
+      return -1;
+    }
+
+    // Write ValueRep for each value
+    for (size_t i = 0; i < num_samples; ++i) {
+      const auto& sample = samples[i];
+
+      // Check if this is a blocked value (ValueBlock/None)
+      if (sample.blocked) {
+        // Write ValueBlock ValueRep
+        crate::ValueRep rep;
+        rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VALUE_BLOCK));
+        rep.SetPayload(0);
+        uint64_t rep_data = rep.GetData();
+        if (!Write(rep_data)) {
+          if (err) *err = "Failed to write ValueBlock ValueRep";
+          return -1;
+        }
+        continue;
+      }
+
+      // Convert value::Value to CrateValue
+      crate::CrateValue crate_value;
+      if (!ConvertValueToCrateValue(sample.value, &crate_value, err)) {
+        if (err) *err = "Failed to convert TimeSamples value at index " + std::to_string(i) + ": " + *err;
+        return -1;
+      }
+
+      // Pack the value to get ValueRep
+      crate::ValueRep value_rep = PackValue(crate_value, err);
+      if (err && !err->empty()) {
+        return -1;
+      }
+
+      // Write the ValueRep
+      uint64_t rep_data = value_rep.GetData();
+      if (!Write(rep_data)) {
+        if (err) *err = "Failed to write TimeSamples ValueRep at index " + std::to_string(i);
+        return -1;
+      }
+    }
   }
   // TODO: Add IntListOp, UIntListOp, Int64ListOp, UInt64ListOp, etc.
   else {

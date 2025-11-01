@@ -242,6 +242,20 @@ private:
   // Value data offset tracking
   int64_t value_data_start_offset_ = 0;
   int64_t value_data_end_offset_ = 0;
+
+  // Phase 5: TimeSamples array deduplication
+  // Maps array content hash to file offset where it was written
+  // Only used for numeric arrays in TimeSamples
+  struct ArrayHash {
+    std::size_t operator()(const std::vector<char>& v) const {
+      std::size_t hash = 0;
+      for (char c : v) {
+        hash = hash * 31 + static_cast<std::size_t>(c);
+      }
+      return hash;
+    }
+  };
+  std::unordered_map<std::vector<char>, int64_t, ArrayHash> array_dedup_map_;
 };
 
 } // namespace experimental
