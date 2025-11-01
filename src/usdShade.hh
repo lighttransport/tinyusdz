@@ -203,6 +203,15 @@ using UsdPrimvarReader_matrix  = UsdPrimvarReader<value::matrix4d>;
 //                      UsdPrimvarReader_int>;
 
 
+// UV Set specification for multiple UV coordinate support
+struct UVSetInfo {
+  std::string name;  // UV set name (e.g., "st", "st0", "st1", "uv0", "uv1")
+  int index{0};      // UV set index (0, 1, 2, etc.)
+
+  UVSetInfo() = default;
+  UVSetInfo(const std::string& n, int idx = 0) : name(n), index(idx) {}
+};
+
 struct UsdUVTexture : ShaderNode {
 
   // NOTE: transparent black(0, 0, 0, 0) for "black"
@@ -224,6 +233,12 @@ struct UsdUVTexture : ShaderNode {
   TypedAttribute<Animatable<value::AssetPath>> file; // "asset inputs:file" interfaceOnly
 
   TypedAttributeWithFallback<Animatable<value::texcoord2f>> st{value::texcoord2f{0.0f, 0.0f}}; // "inputs:st"
+
+  // UV set selection - which UV coordinate set to use
+  // Default is 0 (primary UV set)
+  // MaterialX uses "texcoord" input, USD typically uses "st", "st0", "st1", etc.
+  TypedAttributeWithFallback<int> uv_set{0}; // "int inputs:uv_set" - UV set index
+  TypedAttribute<value::token> uv_set_name; // "token inputs:uv_set_name" - UV set name (e.g., "st0", "st1")
 
   TypedAttributeWithFallback<Animatable<Wrap>> wrapS{Wrap::UseMetadata}; // "token inputs:wrapS" interfaceOnly
   TypedAttributeWithFallback<Animatable<Wrap>> wrapT{Wrap::UseMetadata}; // "token inputs:wrapT" interfaceOnly
