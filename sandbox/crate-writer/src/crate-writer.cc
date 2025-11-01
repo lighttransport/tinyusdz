@@ -550,6 +550,37 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
     rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATF));
   } else if (value.as<value::quatd>()) {
     rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATD));
+  }
+  // Phase 1: Array types - detect and set proper type
+  // Note: Arrays have specific data type IDs that indicate they are arrays
+  else if (value.as<std::vector<bool>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_BOOL) | (1 << 6)); // Array flag
+  } else if (value.as<std::vector<uint8_t>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_UCHAR) | (1 << 6));
+  } else if (value.as<std::vector<int32_t>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_INT) | (1 << 6));
+  } else if (value.as<std::vector<uint32_t>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT) | (1 << 6));
+  } else if (value.as<std::vector<int64_t>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64) | (1 << 6));
+  } else if (value.as<std::vector<uint64_t>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64) | (1 << 6));
+  } else if (value.as<std::vector<value::half>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_HALF) | (1 << 6));
+  } else if (value.as<std::vector<float>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT) | (1 << 6));
+  } else if (value.as<std::vector<double>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE) | (1 << 6));
+  } else if (value.as<std::vector<value::float2>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2F) | (1 << 6));
+  } else if (value.as<std::vector<value::float3>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3F) | (1 << 6));
+  } else if (value.as<std::vector<value::float4>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4F) | (1 << 6));
+  } else if (value.as<std::vector<std::string>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING) | (1 << 6));
+  } else if (value.as<std::vector<value::token>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN) | (1 << 6));
   } else {
     rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_INVALID));
   }
@@ -742,6 +773,215 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       return -1;
     }
   }
+  // Phase 1: Array serialization
+  // Arrays are written as: uint64_t count + elements
+  // For bool arrays, each bool is written as 1 byte
+
+  // Bool array - special handling (each bool = 1 byte)
+  else if (auto* bool_array = value.as<std::vector<bool>>()) {
+    uint64_t count = bool_array->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write bool array count";
+      return -1;
+    }
+    // Write each bool as a byte
+    for (bool b : *bool_array) {
+      uint8_t byte = b ? 1 : 0;
+      if (!Write(byte)) {
+        if (err) *err = "Failed to write bool array element";
+        return -1;
+      }
+    }
+  }
+  // Byte array
+  else if (auto* byte_array = value.as<std::vector<uint8_t>>()) {
+    uint64_t count = byte_array->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write byte array count";
+      return -1;
+    }
+    if (count > 0 && !WriteBytes(byte_array->data(), count * sizeof(uint8_t))) {
+      if (err) *err = "Failed to write byte array data";
+      return -1;
+    }
+  }
+  // Int array
+  else if (auto* int_array = value.as<std::vector<int32_t>>()) {
+    uint64_t count = int_array->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write int array count";
+      return -1;
+    }
+    for (int32_t val : *int_array) {
+      if (!Write(val)) {
+        if (err) *err = "Failed to write int array element";
+        return -1;
+      }
+    }
+  }
+  // UInt array
+  else if (auto* uint_array = value.as<std::vector<uint32_t>>()) {
+    uint64_t count = uint_array->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write uint array count";
+      return -1;
+    }
+    for (uint32_t val : *uint_array) {
+      if (!Write(val)) {
+        if (err) *err = "Failed to write uint array element";
+        return -1;
+      }
+    }
+  }
+  // Int64 array
+  else if (auto* int64_array = value.as<std::vector<int64_t>>()) {
+    uint64_t count = int64_array->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write int64 array count";
+      return -1;
+    }
+    for (int64_t val : *int64_array) {
+      if (!Write(val)) {
+        if (err) *err = "Failed to write int64 array element";
+        return -1;
+      }
+    }
+  }
+  // UInt64 array
+  else if (auto* uint64_array = value.as<std::vector<uint64_t>>()) {
+    uint64_t count = uint64_array->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write uint64 array count";
+      return -1;
+    }
+    for (uint64_t val : *uint64_array) {
+      if (!Write(val)) {
+        if (err) *err = "Failed to write uint64 array element";
+        return -1;
+      }
+    }
+  }
+  // Half array
+  else if (auto* half_array = value.as<std::vector<value::half>>()) {
+    uint64_t count = half_array->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write half array count";
+      return -1;
+    }
+    for (const auto& val : *half_array) {
+      if (!Write(val.value)) {
+        if (err) *err = "Failed to write half array element";
+        return -1;
+      }
+    }
+  }
+  // Float array
+  else if (auto* float_array = value.as<std::vector<float>>()) {
+    uint64_t count = float_array->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write float array count";
+      return -1;
+    }
+    for (float val : *float_array) {
+      if (!Write(val)) {
+        if (err) *err = "Failed to write float array element";
+        return -1;
+      }
+    }
+  }
+  // Double array
+  else if (auto* double_array = value.as<std::vector<double>>()) {
+    uint64_t count = double_array->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write double array count";
+      return -1;
+    }
+    for (double val : *double_array) {
+      if (!Write(val)) {
+        if (err) *err = "Failed to write double array element";
+        return -1;
+      }
+    }
+  }
+  // Vec2f array
+  else if (auto* vec2f_array = value.as<std::vector<value::float2>>()) {
+    uint64_t count = vec2f_array->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write Vec2f array count";
+      return -1;
+    }
+    for (const auto& vec : *vec2f_array) {
+      for (size_t i = 0; i < 2; ++i) {
+        if (!Write(vec[i])) {
+          if (err) *err = "Failed to write Vec2f array element";
+          return -1;
+        }
+      }
+    }
+  }
+  // Vec3f array
+  else if (auto* vec3f_array = value.as<std::vector<value::float3>>()) {
+    uint64_t count = vec3f_array->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write Vec3f array count";
+      return -1;
+    }
+    for (const auto& vec : *vec3f_array) {
+      for (size_t i = 0; i < 3; ++i) {
+        if (!Write(vec[i])) {
+          if (err) *err = "Failed to write Vec3f array element";
+          return -1;
+        }
+      }
+    }
+  }
+  // Vec4f array
+  else if (auto* vec4f_array = value.as<std::vector<value::float4>>()) {
+    uint64_t count = vec4f_array->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write Vec4f array count";
+      return -1;
+    }
+    for (const auto& vec : *vec4f_array) {
+      for (size_t i = 0; i < 4; ++i) {
+        if (!Write(vec[i])) {
+          if (err) *err = "Failed to write Vec4f array element";
+          return -1;
+        }
+      }
+    }
+  }
+  // String array - special handling (strings are stored as indices)
+  else if (auto* string_array = value.as<std::vector<std::string>>()) {
+    uint64_t count = string_array->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write string array count";
+      return -1;
+    }
+    for (const auto& str : *string_array) {
+      crate::StringIndex idx = GetOrCreateString(str);
+      if (!Write(idx.value)) {
+        if (err) *err = "Failed to write string array element index";
+        return -1;
+      }
+    }
+  }
+  // Token array - special handling (tokens are stored as indices)
+  else if (auto* token_array = value.as<std::vector<value::token>>()) {
+    uint64_t count = token_array->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write token array count";
+      return -1;
+    }
+    for (const auto& tok : *token_array) {
+      crate::TokenIndex idx = GetOrCreateToken(tok.str());
+      if (!Write(idx.value)) {
+        if (err) *err = "Failed to write token array element index";
+        return -1;
+      }
+    }
+  }
+  // TODO: Add more array types as needed (Vec2d, Vec3d, Vec4d, Matrix arrays, etc.)
   else {
     // Unsupported type for out-of-line storage
     if (err) *err = "Unsupported value type for out-of-line storage";
@@ -1003,7 +1243,44 @@ bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep
     return false;
   }
 
-  // Array types - Phase 1 will add basic array support next
+  // Phase 1: Arrays are NEVER inlined - always out-of-line storage
+  // Arrays require size prefix + data
+
+  // Check for all array types (std::vector<T>)
+  // We detect arrays by trying all known array types
+  if (value.as<std::vector<bool>>() ||
+      value.as<std::vector<uint8_t>>() ||
+      value.as<std::vector<int32_t>>() ||
+      value.as<std::vector<uint32_t>>() ||
+      value.as<std::vector<int64_t>>() ||
+      value.as<std::vector<uint64_t>>() ||
+      value.as<std::vector<value::half>>() ||
+      value.as<std::vector<float>>() ||
+      value.as<std::vector<double>>() ||
+      value.as<std::vector<value::half2>>() ||
+      value.as<std::vector<value::half3>>() ||
+      value.as<std::vector<value::half4>>() ||
+      value.as<std::vector<value::float2>>() ||
+      value.as<std::vector<value::float3>>() ||
+      value.as<std::vector<value::float4>>() ||
+      value.as<std::vector<value::double2>>() ||
+      value.as<std::vector<value::double3>>() ||
+      value.as<std::vector<value::double4>>() ||
+      value.as<std::vector<value::int2>>() ||
+      value.as<std::vector<value::int3>>() ||
+      value.as<std::vector<value::int4>>() ||
+      value.as<std::vector<value::matrix2d>>() ||
+      value.as<std::vector<value::matrix3d>>() ||
+      value.as<std::vector<value::matrix4d>>() ||
+      value.as<std::vector<value::quath>>() ||
+      value.as<std::vector<value::quatf>>() ||
+      value.as<std::vector<value::quatd>>() ||
+      value.as<std::vector<std::string>>() ||
+      value.as<std::vector<value::token>>() ||
+      value.as<std::vector<value::AssetPath>>()) {
+    // Arrays cannot be inlined - need out-of-line storage
+    return false;
+  }
 
   // Cannot inline - need out-of-line storage
   return false;
