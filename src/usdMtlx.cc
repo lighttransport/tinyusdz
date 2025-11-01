@@ -1,25 +1,13 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2023 - Present, Light Transport Entertainment, Inc.
 
-#if defined(TINYUSDZ_USE_USDMTLX)
-
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Weverything"
-#endif
-
-#include "external/pugixml.hpp"
-// #include "external/jsonhpp/nlohmann/json.hpp"
-
-#ifdef __clang__
-#pragma clang diagnostic pop
-#endif
-#endif  // TINYUSDZ_USE_USDMTLX
-
 #include <sstream>
 
 #include "usdMtlx.hh"
 #include "usdShade.hh"
+
+// Use built-in MaterialX parser instead of pugixml
+#include "mtlx-usd-adapter.hh"
 
 #if defined(TINYUSDZ_USE_USDMTLX)
 
@@ -511,25 +499,25 @@ static bool WriteMaterialXToString(const MtlxUsdPreviewSurface &shader,
   return true;
 }
 
-static bool ConvertPlace2d(const pugi::xml_node &node, PrimSpec &ps,
+static bool ConvertPlace2d(const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps,
                            std::string *warn, std::string *err) {
   // texcoord(vector2). default index=0 uv coordinate
   // pivot(vector2). default (0, 0)
   // scale(vector2). default (1, 1)
   // rotate(float). in degrees, Conter-clockwise
   // offset(vector2)
-  if (pugi::xml_attribute texcoord_attr = node.attribute("texcoord")) {
+  if (tinyusdz::mtlx::pugi::xml_attribute texcoord_attr = node.attribute("texcoord")) {
     PUSH_WARN("TODO: `texcoord` attribute.\n");
   }
 
-  if (pugi::xml_attribute pivot_attr = node.attribute("pivot")) {
+  if (tinyusdz::mtlx::pugi::xml_attribute pivot_attr = node.attribute("pivot")) {
     value::float2 value{};
     if (!ParseMaterialXValue(pivot_attr.as_string(), &value, err)) {
       ps.props()["inputs:pivot"] = Property(Attribute::Uniform(value));
     }
   }
 
-  if (pugi::xml_attribute scale_attr = node.attribute("scale")) {
+  if (tinyusdz::mtlx::pugi::xml_attribute scale_attr = node.attribute("scale")) {
     value::float2 value{};
     if (!ParseMaterialXValue(scale_attr.as_string(), &value, err)) {
       PUSH_ERROR_AND_RETURN(
@@ -538,7 +526,7 @@ static bool ConvertPlace2d(const pugi::xml_node &node, PrimSpec &ps,
     ps.props()["inputs:scale"] = Property(Attribute::Uniform(value));
   }
 
-  if (pugi::xml_attribute rotate_attr = node.attribute("rotate")) {
+  if (tinyusdz::mtlx::pugi::xml_attribute rotate_attr = node.attribute("rotate")) {
     float value{};
     if (!ParseMaterialXValue(rotate_attr.as_string(), &value, err)) {
       PUSH_ERROR_AND_RETURN(
@@ -547,7 +535,7 @@ static bool ConvertPlace2d(const pugi::xml_node &node, PrimSpec &ps,
     ps.props()["inputs:rotate"] = Property(Attribute::Uniform(value));
   }
 
-  pugi::xml_attribute offset_attr = node.attribute("offset");
+  tinyusdz::mtlx::pugi::xml_attribute offset_attr = node.attribute("offset");
   if (offset_attr) {
     value::float2 value{};
     if (!ParseMaterialXValue(offset_attr.as_string(), &value, err)) {
@@ -566,7 +554,7 @@ static bool ConvertPlace2d(const pugi::xml_node &node, PrimSpec &ps,
 }
 
 static bool ConvertNodeGraphRec(const uint32_t depth,
-                                const pugi::xml_node &node, PrimSpec &ps_out,
+                                const tinyusdz::mtlx::pugi::xml_node &node, PrimSpec &ps_out,
                                 std::string *warn, std::string *err) {
   if (depth > (1024 * 1024)) {
     PUSH_ERROR_AND_RETURN("Network too deep.\n");
@@ -599,21 +587,21 @@ static bool ConvertNodeGraphRec(const uint32_t depth,
 }
 
 #if 0  // TODO
-static bool ConvertPlace2d(const pugi::xml_node &node, UsdTransform2d &tx, std::string *warn, std::string *err) {
+static bool ConvertPlace2d(const tinyusdz::mtlx::pugi::xml_node &node, UsdTransform2d &tx, std::string *warn, std::string *err) {
   // texcoord(vector2). default index=0 uv coordinate
   // pivot(vector2). default (0, 0)
   // scale(vector2). default (1, 1)
   // rotate(float). in degrees, Conter-clockwise
   // offset(vector2)
-  if (pugi::xml_attribute texcoord_attr = node.attribute("texcoord")) {
+  if (tinyusdz::mtlx::pugi::xml_attribute texcoord_attr = node.attribute("texcoord")) {
     PUSH_WARN("TODO: `texcoord` attribute.\n");
   }
 
-  if (pugi::xml_attribute pivot_attr = node.attribute("pivot")) {
+  if (tinyusdz::mtlx::pugi::xml_attribute pivot_attr = node.attribute("pivot")) {
     PUSH_WARN("TODO: `pivot` attribute.\n");
   }
 
-  if (pugi::xml_attribute scale_attr = node.attribute("scale")) {
+  if (tinyusdz::mtlx::pugi::xml_attribute scale_attr = node.attribute("scale")) {
     value::float2 value;
     if (!ParseMaterialXValue(scale_attr.as_string(), &value, err)) {
       PUSH_ERROR_AND_RETURN("Failed to parse `rotate` attribute of `place2d`.\n");
@@ -621,7 +609,7 @@ static bool ConvertPlace2d(const pugi::xml_node &node, UsdTransform2d &tx, std::
     tx.scale = value;
   }
 
-  if (pugi::xml_attribute rotate_attr = node.attribute("rotate")) {
+  if (tinyusdz::mtlx::pugi::xml_attribute rotate_attr = node.attribute("rotate")) {
     float value;
     if (!ParseMaterialXValue(rotate_attr.as_string(), &value, err)) {
       PUSH_ERROR_AND_RETURN("Failed to parse `rotate` attribute of `place2d`.\n");
@@ -629,7 +617,7 @@ static bool ConvertPlace2d(const pugi::xml_node &node, UsdTransform2d &tx, std::
     tx.rotation = value;
   }
 
-  pugi::xml_attribute offset_attr = node.attribute("offset");
+  tinyusdz::mtlx::pugi::xml_attribute offset_attr = node.attribute("offset");
   if (offset_attr) {
     PUSH_WARN("TODO: `offset` attribute.\n");
   }
@@ -637,7 +625,7 @@ static bool ConvertPlace2d(const pugi::xml_node &node, UsdTransform2d &tx, std::
   return true;
 }
 
-static bool ConvertTiledImage(const pugi::xml_node &node, UsdUVTexture &tex, std::string *err) {
+static bool ConvertTiledImage(const tinyusdz::mtlx::pugi::xml_node &node, UsdUVTexture &tex, std::string *err) {
   (void)tex;
   // file: uniform filename
   // default: float or colorN or vectorN
@@ -647,7 +635,7 @@ static bool ConvertTiledImage(const pugi::xml_node &node, UsdUVTexture &tex, std
   // realworldimagesize: vector2
   // realworldtilesize: vector2
   // filtertype: string: "closest", "linear" or "cubic"
-  if (pugi::xml_attribute file_attr = node.attribute("file")) {
+  if (tinyusdz::mtlx::pugi::xml_attribute file_attr = node.attribute("file")) {
     std::string filename;
     if (!ParseMaterialXValue(file_attr.as_string(), &filename, err)) {
       PUSH_ERROR_AND_RETURN("Failed to parse `file` attribute in `tiledimage`.\n");
@@ -670,7 +658,7 @@ bool ReadMaterialXFromString(const std::string &str,
                              std::string *warn, std::string *err) {
 #define GET_ATTR_VALUE(__xml, __name, __ty, __var)                        \
   do {                                                                    \
-    pugi::xml_attribute attr = __xml.attribute(__name);                   \
+    tinyusdz::mtlx::pugi::xml_attribute attr = __xml.attribute(__name);                   \
     if (!attr) {                                                          \
       PUSH_ERROR_AND_RETURN(                                              \
           fmt::format("Required XML Attribute `{}` not found.", __name)); \
@@ -697,14 +685,14 @@ bool ReadMaterialXFromString(const std::string &str,
     __attr.set_value(v);                                                 \
   } else
 
-  pugi::xml_document doc;
-  pugi::xml_parse_result result = doc.load_string(str.c_str());
+  tinyusdz::mtlx::pugi::xml_document doc;
+  tinyusdz::mtlx::pugi::xml_parse_result result = doc.load_string(str.c_str());
   if (!result) {
     std::string msg(result.description());
     PUSH_ERROR_AND_RETURN("Failed to parse XML: " + msg);
   }
 
-  pugi::xml_node root = doc.child("materialx");
+  tinyusdz::mtlx::pugi::xml_node root = doc.child("materialx");
   if (!root) {
     PUSH_ERROR_AND_RETURN("<materialx> tag not found: " + asset_path);
   }
@@ -718,7 +706,7 @@ bool ReadMaterialXFromString(const std::string &str,
   // - [x] colorspace(string, optional)
   // - [x] namespace(string, optional)
 
-  pugi::xml_attribute ver_attr = root.attribute("version");
+  tinyusdz::mtlx::pugi::xml_attribute ver_attr = root.attribute("version");
   if (!ver_attr) {
     PUSH_ERROR_AND_RETURN("version attribute not found in <materialx>:" +
                           asset_path);
@@ -741,21 +729,21 @@ bool ReadMaterialXFromString(const std::string &str,
     mtlx->version = ver_attr.as_string();
   }
 
-  pugi::xml_attribute cms_attr = root.attribute("cms");
+  tinyusdz::mtlx::pugi::xml_attribute cms_attr = root.attribute("cms");
   if (cms_attr) {
     mtlx->cms = cms_attr.as_string();
   }
 
-  pugi::xml_attribute cmsconfig_attr = root.attribute("cms");
+  tinyusdz::mtlx::pugi::xml_attribute cmsconfig_attr = root.attribute("cms");
   if (cmsconfig_attr) {
     mtlx->cmsconfig = cmsconfig_attr.as_string();
   }
-  pugi::xml_attribute colorspace_attr = root.attribute("colorspace");
+  tinyusdz::mtlx::pugi::xml_attribute colorspace_attr = root.attribute("colorspace");
   if (colorspace_attr) {
     mtlx->color_space = colorspace_attr.as_string();
   }
 
-  pugi::xml_attribute namespace_attr = root.attribute("namespace");
+  tinyusdz::mtlx::pugi::xml_attribute namespace_attr = root.attribute("namespace");
   if (namespace_attr) {
     mtlx->name_space = namespace_attr.as_string();
   }
@@ -867,7 +855,7 @@ bool ReadMaterialXFromString(const std::string &str,
       GET_ATTR_VALUE(inp, "name", std::string, name);
       GET_ATTR_VALUE(inp, "type", std::string, typeName);
       
-      pugi::xml_attribute value_attr = inp.attribute("value");
+      tinyusdz::mtlx::pugi::xml_attribute value_attr = inp.attribute("value");
       if (value_attr) {
         valueStr = value_attr.as_string();
       }

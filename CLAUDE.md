@@ -150,3 +150,4 @@ bool ret = converter.ConvertToRenderScene(stage, &renderScene);
 - `web/` - WebAssembly/JavaScript bindings and demos
 - `python/` - Python binding code (experimental)
 - native build folder is @build use -j8 for make. wasm build folder is @web/build
+- build folder @build make with -j16

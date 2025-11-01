@@ -33,24 +33,37 @@ ifeq ($(UNAME_S),Darwin)
     # macOS specific libraries if needed
 endif
 
-# Target
-TARGET = test_materialx_export
-SOURCE = threejs_mtlx_export_example.cc
+# Targets
+TARGET_EXPORT = test_materialx_export
+SOURCE_EXPORT = threejs_mtlx_export_example.cc
+
+TARGET_IMPORT = test_mtlx_import
+SOURCE_IMPORT = test_mtlx_import.cc
+
+TARGETS = $(TARGET_EXPORT) $(TARGET_IMPORT)
 
 # Build rules
-.PHONY: all clean run check-library
+.PHONY: all clean run run-import run-export check-library
 
-all: check-library $(TARGET)
+all: check-library $(TARGETS)
 
-$(TARGET): $(SOURCE)
+$(TARGET_EXPORT): $(SOURCE_EXPORT)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $< $(LDFLAGS) $(LIBS)
-	@echo ""
-	@echo "Build successful! Run with: ./$(TARGET)"
-	@echo ""
+	@echo "Built $(TARGET_EXPORT)"
 
-run: $(TARGET)
+$(TARGET_IMPORT): $(SOURCE_IMPORT)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -DTINYUSDZ_USE_USDMTLX -o $@ $< $(LDFLAGS) $(LIBS)
+	@echo "Built $(TARGET_IMPORT)"
+
+run-export: $(TARGET_EXPORT)
 	@echo "Running MaterialX export test..."
-	@./$(TARGET)
+	@./$(TARGET_EXPORT)
+
+run-import: $(TARGET_IMPORT)
+	@echo "Running MaterialX import test..."
+	@./$(TARGET_IMPORT)
+
+run: run-export run-import
 
 check-library:
 	@if [ ! -f "$(BUILD_DIR)/libtinyusdz_static.a" ]; then \
@@ -61,7 +74,7 @@ check-library:
 	fi
 
 clean:
-	rm -f $(TARGET) *.o *.mtlx
+	rm -f $(TARGETS) *.o *.mtlx
 
 help:
 	@echo "MaterialX Export Test Makefile"
