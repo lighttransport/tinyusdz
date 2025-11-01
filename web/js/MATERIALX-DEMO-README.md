@@ -55,7 +55,16 @@ A standalone web application that demonstrates loading USD files with OpenPBR ma
    - Emission (self-illumination)
    - Geometry properties (opacity, thin-walled)
 
-### Material Export
+### Material Import & Export
+
+**Import MaterialX Files:**
+- Click "📥 Import MTLX" button to load a MaterialX XML file
+- Select an object in the scene first
+- The imported material will be applied to the selected object
+- Supports MaterialX 1.38 format with OpenPBR surface shader
+- All OpenPBR parameters are parsed and applied automatically
+
+**Export Materials:**
 
 Export your edited materials in industry-standard formats:
 
@@ -124,9 +133,22 @@ The demo provides comprehensive texture management for materials:
   - Rec.709 (broadcast standard)
   - ACES2065-1 (ACES AP0 working space)
   - ACEScg (ACES AP1 CG working space)
+- **Texture Transform Controls**: Adjust texture mapping in real-time
+  - Offset X/Y: Move texture position (-2 to +2)
+  - Scale X/Y: Tile or stretch texture (0.1 to 10x)
+  - Rotation: Rotate texture (0° to 360°)
+  - Reset button to restore default transform
 - Textures are cached for performance
 - Proper wrap mode handling (Repeat/Clamp/Mirror)
 - Automatic mipmap generation for better quality
+
+**External Texture Loading:**
+- Click "🖼️ Load Texture" to load external texture files
+- Supports HDR (.hdr) and EXR (.exr) high dynamic range textures
+- Also supports standard formats (PNG, JPG, JPEG)
+- HDR/EXR textures are loaded using Three.js loaders
+- Automatically applied to selected object's base color map
+- Proper color space handling for HDR content
 
 ### Color Space Controls
 
@@ -206,6 +228,43 @@ The demo supports the full OpenPBR specification with the following parameter gr
 - `thin_walled`: Whether geometry is thin-walled
 - `normal`: Normal map (when textures are supported)
 - `tangent`: Tangent map for anisotropy
+
+## Recent Enhancements (2025-01)
+
+### MaterialX Import System
+The demo now supports importing MaterialX XML files:
+- **XML Parsing**: Uses browser DOMParser to parse MaterialX 1.38 XML
+- **Parameter Extraction**: Automatically extracts all OpenPBR parameters from `<open_pbr_surface>` node
+- **Texture References**: Parses `<image>` nodes with color space and channel information
+- **Material Application**: Applies imported materials to selected objects in the scene
+- **Error Handling**: Comprehensive validation and user-friendly error messages
+
+### Texture Transform System
+Real-time texture mapping controls for all texture maps:
+- **Offset Controls**: X/Y translation with range -2 to +2
+- **Scale Controls**: X/Y tiling from 0.1x to 10x
+- **Rotation Control**: 0° to 360° rotation
+- **Live Preview**: Changes update in real-time on the 3D model
+- **Reset Function**: One-click restore to default transform
+- **UI Integration**: Embedded in texture panel for easy access
+
+### HDR/EXR Texture Loading
+Support for high dynamic range textures via Three.js loaders:
+- **Format Support**: HDR (RGBE), EXR (OpenEXR), plus PNG/JPG
+- **Three.js Integration**: Uses RGBELoader and EXRLoader
+- **Color Space Handling**: Proper linear color space for HDR content
+- **Environment Mapping**: Automatic equirectangular reflection mapping
+- **File Browser**: Simple file selection dialog
+
+### Enhanced Error Handling
+Robust validation and error reporting throughout:
+- **Texture ID Validation**: Checks for valid, non-negative integer IDs
+- **Material Index Validation**: Validates indices against bounds
+- **Dimension Validation**: Ensures textures have valid dimensions
+- **Channel Validation**: Verifies 1-4 channel images
+- **User-Friendly Messages**: Simplified error messages for common issues
+- **Fallback Materials**: Creates default materials when loading fails
+- **Context-Aware Logging**: Detailed console logs with context information
 
 ## Technical Details
 
@@ -391,12 +450,14 @@ The demo can handle materials in multiple formats:
 ## Limitations
 
 - ~~Texture maps are not yet supported~~ ✓ **Now supported!**
-- Texture transforms (scale, rotation, translation) not yet implemented
-- HDR/EXR textures require additional processing
+- ~~Texture transforms (scale, rotation, translation) not yet implemented~~ ✓ **Now supported!**
+- ~~HDR/EXR textures require additional processing~~ ✓ **Now supported via Three.js loaders!**
+- ~~Import MaterialX XML files (currently export-only)~~ ✓ **Now supported!**
 - Some advanced OpenPBR features may not have direct Three.js equivalents
 - Large USD files with many textures may take time to load
 - Animation and time-based properties are not supported in this demo
 - Procedural textures are not supported (only image-based textures)
+- MaterialX import doesn't automatically load referenced texture files (texture references are parsed but not loaded)
 
 ## Future Enhancements
 
@@ -404,9 +465,10 @@ The demo can handle materials in multiple formats:
 - [x] Texture preview and toggle controls ✓ **Done!**
 - [x] Texture color space conversion (sRGB, Rec.709, ACES) ✓ **Done!**
 - [x] Export MaterialX XML and JSON ✓ **Done!**
-- [ ] Import MaterialX XML files (currently export-only)
-- [ ] Texture transform controls (scale, offset, rotation)
-- [ ] HDR/EXR texture loading and display
+- [x] Import MaterialX XML files ✓ **Done!**
+- [x] Texture transform controls (scale, offset, rotation) ✓ **Done!**
+- [x] HDR/EXR texture loading and display ✓ **Done!**
+- [ ] Automatic texture file loading from MaterialX imports
 - [ ] Additional color spaces (DCI-P3, Adobe RGB)
 - [ ] Animation timeline support
 - [ ] Multiple viewport layouts

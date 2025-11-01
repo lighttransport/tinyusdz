@@ -599,7 +599,15 @@ function createColorWithSpace(r, g, b) {
 
 // Load texture from USD data
 function loadTextureFromUSD(textureId) {
-    if (!currentLoader) return null;
+    // Validate texture ID
+    if (!validateTextureId(textureId, 'loadTextureFromUSD')) {
+        return null;
+    }
+
+    if (!currentLoader) {
+        console.error('loadTextureFromUSD: No USD loader available');
+        return null;
+    }
 
     // Check cache first
     if (textureCache.has(textureId)) {
@@ -614,10 +622,28 @@ function loadTextureFromUSD(textureId) {
             return null;
         }
 
+        // Validate image ID
+        if (texData.textureImageId < 0) {
+            console.warn(`Texture ${textureId} has invalid image ID: ${texData.textureImageId}`);
+            return null;
+        }
+
         // Get image data
         const imgData = currentLoader.getImage(texData.textureImageId);
         if (!imgData || !imgData.data) {
             console.warn(`Image ${texData.textureImageId} has no pixel data`);
+            return null;
+        }
+
+        // Validate image dimensions
+        if (imgData.width <= 0 || imgData.height <= 0) {
+            console.error(`Invalid texture dimensions: ${imgData.width}x${imgData.height}`);
+            return null;
+        }
+
+        // Validate channel count
+        if (imgData.channels < 1 || imgData.channels > 4) {
+            console.error(`Invalid channel count: ${imgData.channels}`);
             return null;
         }
 
@@ -632,7 +658,7 @@ function loadTextureFromUSD(textureId) {
         return texture;
 
     } catch (error) {
-        console.error(`Error loading texture ${textureId}:`, error);
+        reportError('loadTextureFromUSD', error);
         return null;
     }
 }
@@ -1237,18 +1263,38 @@ async function loadUSDFile(arrayBuffer, filename) {
 
 // Load materials from USD
 function loadMaterials() {
-    if (!currentLoader) return;
+    if (!currentLoader) {
+        console.error('loadMaterials: No USD loader available');
+        return;
+    }
 
     materials = [];
     const numMaterials = currentLoader.numMaterials();
 
+    if (numMaterials === 0) {
+        console.warn('No materials found in USD file');
+        return;
+    }
+
+    console.log(`Loading ${numMaterials} materials...`);
+
     for (let i = 0; i < numMaterials; i++) {
+        // Validate material index
+        if (!validateMaterialIndex(i, numMaterials, `loadMaterials[${i}]`)) {
+            continue;
+        }
+
         try {
             // Get material in JSON format for OpenPBR data
             const result = currentLoader.getMaterialWithFormat(i, 'json');
 
             if (result.error) {
-                console.error(`Error loading material ${i}:`, result.error);
+                reportError(`Material ${i}`, new Error(result.error));
+                continue;
+            }
+
+            if (!result.data) {
+                console.error(`Material ${i} has no data`);
                 continue;
             }
 
@@ -1257,6 +1303,10 @@ function loadMaterials() {
 
             // Create Three.js material from OpenPBR data
             const threeMaterial = createOpenPBRMaterial(materialData);
+            if (!threeMaterial) {
+                throw new Error('Failed to create Three.js material');
+            }
+
             materials.push({
                 index: i,
                 name: materialData.name || `Material_${i}`,
@@ -1266,11 +1316,11 @@ function loadMaterials() {
             });
 
         } catch (error) {
-            console.error(`Failed to load material ${i}:`, error);
-            // Create a default material
+            reportError(`Material ${i}`, error);
+            // Create a default fallback material
             materials.push({
                 index: i,
-                name: `Material_${i}`,
+                name: `Material_${i}_Fallback`,
                 data: null,
                 threeMaterial: new THREE.MeshPhysicalMaterial({
                     color: 0x808080,
@@ -1281,6 +1331,8 @@ function loadMaterials() {
             });
         }
     }
+
+    console.log(`Successfully loaded ${materials.length} materials`);
 }
 
 // Create Three.js material from OpenPBR data
@@ -1715,8 +1767,129 @@ function updateTexturePanel(material) {
         colorSpaceDiv.appendChild(colorSpaceSelect);
         item.appendChild(colorSpaceDiv);
 
+        // Add texture transform controls
+        if (isEnabled && texture) {
+            const transformDiv = createTextureTransformUI(material, mapName, texture);
+            if (transformDiv) {
+                item.appendChild(transformDiv);
+            }
+        }
+
         list.appendChild(item);
     });
+}
+
+// Create texture transform UI controls
+function createTextureTransformUI(material, mapName, texture) {
+    // Initialize texture transforms
+    if (!texture.offset) texture.offset = new THREE.Vector2(0, 0);
+    if (!texture.repeat) texture.repeat = new THREE.Vector2(1, 1);
+    if (texture.rotation === undefined) texture.rotation = 0;
+
+    const transformDiv = document.createElement('div');
+    transformDiv.className = 'texture-transform';
+    transformDiv.style.marginTop = '10px';
+    transformDiv.style.paddingTop = '10px';
+    transformDiv.style.borderTop = '1px solid rgba(255, 255, 255, 0.1)';
+    transformDiv.style.fontSize = '10px';
+
+    // Header
+    const header = document.createElement('div');
+    header.textContent = 'Transform:';
+    header.style.color = '#aaa';
+    header.style.marginBottom = '5px';
+    header.style.fontWeight = 'bold';
+    transformDiv.appendChild(header);
+
+    // Helper function to create slider
+    const createSlider = (label, value, min, max, step, onChange) => {
+        const row = document.createElement('div');
+        row.style.marginBottom = '5px';
+        row.style.display = 'flex';
+        row.style.alignItems = 'center';
+        row.style.gap = '5px';
+
+        const labelSpan = document.createElement('span');
+        labelSpan.textContent = label;
+        labelSpan.style.minWidth = '60px';
+        labelSpan.style.color = '#999';
+        row.appendChild(labelSpan);
+
+        const slider = document.createElement('input');
+        slider.type = 'range';
+        slider.min = min;
+        slider.max = max;
+        slider.step = step;
+        slider.value = value;
+        slider.style.flex = '1';
+        slider.style.cursor = 'pointer';
+        row.appendChild(slider);
+
+        const valueSpan = document.createElement('span');
+        valueSpan.textContent = value.toFixed(2);
+        valueSpan.style.minWidth = '40px';
+        valueSpan.style.textAlign = 'right';
+        valueSpan.style.color = '#fff';
+        row.appendChild(valueSpan);
+
+        slider.oninput = (e) => {
+            const val = parseFloat(e.target.value);
+            valueSpan.textContent = val.toFixed(2);
+            onChange(val);
+        };
+
+        transformDiv.appendChild(row);
+        return slider;
+    };
+
+    // Offset X
+    createSlider('Offset X', texture.offset.x, -2, 2, 0.01, (value) => {
+        texture.offset.x = value;
+        texture.needsUpdate = true;
+    });
+
+    // Offset Y
+    createSlider('Offset Y', texture.offset.y, -2, 2, 0.01, (value) => {
+        texture.offset.y = value;
+        texture.needsUpdate = true;
+    });
+
+    // Scale X
+    createSlider('Scale X', texture.repeat.x, 0.1, 10, 0.1, (value) => {
+        texture.repeat.x = value;
+        texture.needsUpdate = true;
+    });
+
+    // Scale Y
+    createSlider('Scale Y', texture.repeat.y, 0.1, 10, 0.1, (value) => {
+        texture.repeat.y = value;
+        texture.needsUpdate = true;
+    });
+
+    // Rotation
+    createSlider('Rotation', texture.rotation * (180 / Math.PI), 0, 360, 1, (value) => {
+        texture.rotation = value * (Math.PI / 180);
+        texture.needsUpdate = true;
+    });
+
+    // Reset button
+    const resetBtn = document.createElement('button');
+    resetBtn.textContent = 'Reset Transform';
+    resetBtn.className = 'texture-toggle';
+    resetBtn.style.width = '100%';
+    resetBtn.style.marginTop = '5px';
+    resetBtn.style.fontSize = '10px';
+    resetBtn.onclick = () => {
+        texture.offset.set(0, 0);
+        texture.repeat.set(1, 1);
+        texture.rotation = 0;
+        texture.needsUpdate = true;
+        // Refresh panel to update sliders
+        updateTexturePanel(material);
+    };
+    transformDiv.appendChild(resetBtn);
+
+    return transformDiv;
 }
 
 // Change texture color space
@@ -2218,9 +2391,463 @@ function animate() {
 // Initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', init);
 
+// Import MaterialX XML file and apply to selected object
+async function importMaterialXFile() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.mtlx,.xml';
+
+    input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        try {
+            showLoading(true);
+            updateStatus('Importing MaterialX file...');
+
+            const text = await file.text();
+            const materialData = parseMaterialXXML(text);
+
+            if (!materialData) {
+                throw new Error('Failed to parse MaterialX XML');
+            }
+
+            // Apply to selected object or create new material
+            if (selectedObject) {
+                applyImportedMaterial(selectedObject, materialData);
+                updateStatus(`Applied MaterialX to ${selectedObject.name}`, 'success');
+            } else {
+                updateStatus('No object selected. Select an object first.', 'error');
+            }
+
+        } catch (error) {
+            console.error('Error importing MaterialX:', error);
+            updateStatus(`Import failed: ${error.message}`, 'error');
+        } finally {
+            showLoading(false);
+        }
+    };
+
+    input.click();
+}
+
+// Parse MaterialX XML to extract OpenPBR parameters
+function parseMaterialXXML(xmlText) {
+    try {
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
+
+        // Check for parsing errors
+        const parserError = xmlDoc.getElementsByTagName('parsererror');
+        if (parserError.length > 0) {
+            throw new Error('XML parsing error: ' + parserError[0].textContent);
+        }
+
+        // Find open_pbr_surface node
+        const pbrNode = xmlDoc.querySelector('open_pbr_surface');
+        if (!pbrNode) {
+            throw new Error('No open_pbr_surface node found in MaterialX file');
+        }
+
+        const materialName = pbrNode.getAttribute('name') || 'Imported_Material';
+
+        // Extract parameters
+        const material = {
+            name: materialName,
+            base: {},
+            specular: {},
+            transmission: {},
+            coat: {},
+            emission: {},
+            geometry: {},
+            textures: {}
+        };
+
+        // Parse all input nodes
+        const inputs = pbrNode.getElementsByTagName('input');
+        for (let input of inputs) {
+            const name = input.getAttribute('name');
+            const type = input.getAttribute('type');
+            const value = input.getAttribute('value');
+            const nodename = input.getAttribute('nodename');
+
+            // Handle texture references
+            if (nodename) {
+                material.textures[name] = {
+                    nodename: nodename,
+                    nodeRef: nodename
+                };
+                continue;
+            }
+
+            // Parse values based on parameter name
+            if (name === 'base_color' && value) {
+                material.base.color = parseColor3(value);
+            } else if (name === 'base_weight' && value) {
+                material.base.weight = parseFloat(value);
+            } else if (name === 'base_metalness' && value) {
+                material.base.metalness = parseFloat(value);
+            } else if (name === 'base_diffuse_roughness' && value) {
+                material.base.roughness = parseFloat(value);
+            } else if (name === 'specular_weight' && value) {
+                material.specular.weight = parseFloat(value);
+            } else if (name === 'specular_color' && value) {
+                material.specular.color = parseColor3(value);
+            } else if (name === 'specular_roughness' && value) {
+                material.specular.roughness = parseFloat(value);
+            } else if (name === 'specular_ior' && value) {
+                material.specular.ior = parseFloat(value);
+            } else if (name === 'specular_anisotropy' && value) {
+                material.specular.anisotropy = parseFloat(value);
+            } else if (name === 'transmission_weight' && value) {
+                material.transmission.weight = parseFloat(value);
+            } else if (name === 'transmission_color' && value) {
+                material.transmission.color = parseColor3(value);
+            } else if (name === 'coat_weight' && value) {
+                material.coat.weight = parseFloat(value);
+            } else if (name === 'coat_roughness' && value) {
+                material.coat.roughness = parseFloat(value);
+            } else if (name === 'emission_color' && value) {
+                material.emission.color = parseColor3(value);
+            } else if (name === 'emission_luminance' && value) {
+                material.emission.luminance = parseFloat(value);
+            } else if (name === 'geometry_opacity' && value) {
+                material.geometry.opacity = parseFloat(value);
+            }
+        }
+
+        // Parse texture nodes
+        const imageNodes = xmlDoc.getElementsByTagName('image');
+        for (let imageNode of imageNodes) {
+            const nodeName = imageNode.getAttribute('name');
+            const fileInput = imageNode.querySelector('input[name="file"]');
+            const colorspaceInput = imageNode.querySelector('input[name="colorspace"]');
+            const channelInput = imageNode.querySelector('input[name="channel"]');
+
+            if (fileInput && nodeName) {
+                const filename = fileInput.getAttribute('value');
+                const colorspace = colorspaceInput ? colorspaceInput.getAttribute('value') : 'srgb';
+                const channel = channelInput ? channelInput.getAttribute('value') : 'rgb';
+
+                material.textures[nodeName] = {
+                    file: filename,
+                    colorspace: colorspace,
+                    channel: channel
+                };
+            }
+        }
+
+        return material;
+
+    } catch (error) {
+        console.error('Error parsing MaterialX XML:', error);
+        throw error;
+    }
+}
+
+// Parse color3 string "r, g, b" to array [r, g, b]
+function parseColor3(colorStr) {
+    const parts = colorStr.split(',').map(s => parseFloat(s.trim()));
+    if (parts.length === 3 && parts.every(n => !isNaN(n))) {
+        return parts;
+    }
+    return [0.8, 0.8, 0.8]; // Default gray
+}
+
+// Apply imported MaterialX material to object
+function applyImportedMaterial(object, materialData) {
+    // Create new Three.js material
+    const material = new THREE.MeshPhysicalMaterial({
+        name: materialData.name,
+        side: THREE.DoubleSide
+    });
+
+    // Apply base parameters
+    if (materialData.base.color) {
+        material.color = createColorWithSpace(...materialData.base.color);
+    }
+    if (materialData.base.metalness !== undefined) {
+        material.metalness = materialData.base.metalness;
+    }
+    if (materialData.base.roughness !== undefined) {
+        material.roughness = materialData.base.roughness;
+    }
+
+    // Apply specular parameters
+    if (materialData.specular.roughness !== undefined) {
+        material.roughness = materialData.specular.roughness;
+    }
+    if (materialData.specular.ior !== undefined) {
+        material.ior = materialData.specular.ior;
+    }
+
+    // Apply transmission
+    if (materialData.transmission.weight !== undefined) {
+        material.transmission = materialData.transmission.weight;
+        material.thickness = 1.0;
+    }
+
+    // Apply coat (clearcoat)
+    if (materialData.coat.weight !== undefined) {
+        material.clearcoat = materialData.coat.weight;
+    }
+    if (materialData.coat.roughness !== undefined) {
+        material.clearcoatRoughness = materialData.coat.roughness;
+    }
+
+    // Apply emission
+    if (materialData.emission.color) {
+        material.emissive = createColorWithSpace(...materialData.emission.color);
+    }
+    if (materialData.emission.luminance !== undefined) {
+        material.emissiveIntensity = materialData.emission.luminance;
+    }
+
+    // Apply geometry
+    if (materialData.geometry.opacity !== undefined) {
+        material.opacity = materialData.geometry.opacity;
+        material.transparent = material.opacity < 1.0;
+    }
+
+    // Apply material to object
+    object.material = material;
+    material.needsUpdate = true;
+
+    // Update GUI if this is the selected object
+    if (object === selectedObject) {
+        updateGUIForMaterial(material);
+    }
+
+    console.log('Applied imported MaterialX material:', materialData.name);
+}
+
+// Load external texture file (for HDR/EXR support)
+function loadExternalTexture(file, onLoad, onError) {
+    const filename = file.name.toLowerCase();
+
+    // Check file extension
+    if (filename.endsWith('.exr')) {
+        // Use Three.js EXRLoader
+        const loader = new THREE.EXRLoader();
+        const reader = new FileReader();
+
+        reader.onload = (e) => {
+            loader.load(
+                URL.createObjectURL(new Blob([e.target.result])),
+                (texture) => {
+                    texture.mapping = THREE.EquirectangularReflectionMapping;
+                    texture.colorSpace = THREE.LinearSRGBColorSpace;
+                    if (onLoad) onLoad(texture);
+                },
+                undefined,
+                (error) => {
+                    console.error('Error loading EXR:', error);
+                    if (onError) onError(error);
+                }
+            );
+        };
+
+        reader.readAsArrayBuffer(file);
+
+    } else if (filename.endsWith('.hdr')) {
+        // Use Three.js RGBELoader
+        const loader = new THREE.RGBELoader();
+        const reader = new FileReader();
+
+        reader.onload = (e) => {
+            loader.load(
+                URL.createObjectURL(new Blob([e.target.result])),
+                (texture) => {
+                    texture.mapping = THREE.EquirectangularReflectionMapping;
+                    texture.colorSpace = THREE.LinearSRGBColorSpace;
+                    if (onLoad) onLoad(texture);
+                },
+                undefined,
+                (error) => {
+                    console.error('Error loading HDR:', error);
+                    if (onError) onError(error);
+                }
+            );
+        };
+
+        reader.readAsArrayBuffer(file);
+
+    } else {
+        // Regular image texture
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const loader = new THREE.TextureLoader();
+            loader.load(
+                e.target.result,
+                (texture) => {
+                    texture.colorSpace = THREE.SRGBColorSpace;
+                    if (onLoad) onLoad(texture);
+                },
+                undefined,
+                (error) => {
+                    console.error('Error loading texture:', error);
+                    if (onError) onError(error);
+                }
+            );
+        };
+        reader.readAsDataURL(file);
+    }
+}
+
+// Load HDR/EXR texture for material parameter
+function loadHDRTextureForMaterial() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.hdr,.exr,.png,.jpg,.jpeg';
+
+    input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        if (!selectedObject) {
+            updateStatus('Select an object first', 'error');
+            return;
+        }
+
+        showLoading(true);
+        updateStatus('Loading texture...');
+
+        loadExternalTexture(
+            file,
+            (texture) => {
+                // Apply to selected material's base color map
+                if (selectedObject.material) {
+                    selectedObject.material.map = texture;
+                    selectedObject.material.needsUpdate = true;
+                    updateStatus(`Loaded ${file.name}`, 'success');
+                }
+                showLoading(false);
+            },
+            (error) => {
+                updateStatus(`Failed to load texture: ${error.message}`, 'error');
+                showLoading(false);
+            }
+        );
+    };
+
+    input.click();
+}
+
+// Add texture transform controls to GUI
+function addTextureTransformControls(folder, material, textureName) {
+    const texture = material[textureName];
+    if (!texture) return;
+
+    // Initialize transform if not present
+    if (!texture.offset) texture.offset = new THREE.Vector2(0, 0);
+    if (!texture.repeat) texture.repeat = new THREE.Vector2(1, 1);
+    if (texture.rotation === undefined) texture.rotation = 0;
+
+    const transformFolder = folder.addFolder(`${textureName} Transform`);
+
+    // Offset controls
+    const offsetParams = {
+        offsetX: texture.offset.x,
+        offsetY: texture.offset.y
+    };
+
+    transformFolder.add(offsetParams, 'offsetX', -2, 2, 0.01).name('Offset X').onChange((value) => {
+        texture.offset.x = value;
+        texture.needsUpdate = true;
+    });
+
+    transformFolder.add(offsetParams, 'offsetY', -2, 2, 0.01).name('Offset Y').onChange((value) => {
+        texture.offset.y = value;
+        texture.needsUpdate = true;
+    });
+
+    // Scale/Repeat controls
+    const scaleParams = {
+        scaleX: texture.repeat.x,
+        scaleY: texture.repeat.y
+    };
+
+    transformFolder.add(scaleParams, 'scaleX', 0.1, 10, 0.1).name('Scale X').onChange((value) => {
+        texture.repeat.x = value;
+        texture.needsUpdate = true;
+    });
+
+    transformFolder.add(scaleParams, 'scaleY', 0.1, 10, 0.1).name('Scale Y').onChange((value) => {
+        texture.repeat.y = value;
+        texture.needsUpdate = true;
+    });
+
+    // Rotation control
+    const rotationParam = { rotation: texture.rotation };
+    transformFolder.add(rotationParam, 'rotation', 0, Math.PI * 2, 0.01).name('Rotation').onChange((value) => {
+        texture.rotation = value;
+        texture.needsUpdate = true;
+    });
+
+    return transformFolder;
+}
+
+// Validate texture ID
+function validateTextureId(textureId, context = '') {
+    if (textureId === undefined || textureId === null) {
+        console.warn(`${context}: Texture ID is undefined or null`);
+        return false;
+    }
+
+    if (textureId < 0) {
+        console.warn(`${context}: Invalid texture ID ${textureId} (negative)`);
+        return false;
+    }
+
+    if (!Number.isInteger(textureId)) {
+        console.warn(`${context}: Texture ID ${textureId} is not an integer`);
+        return false;
+    }
+
+    return true;
+}
+
+// Validate material index
+function validateMaterialIndex(index, maxIndex, context = '') {
+    if (index === undefined || index === null) {
+        console.error(`${context}: Material index is undefined or null`);
+        return false;
+    }
+
+    if (index < 0 || index >= maxIndex) {
+        console.error(`${context}: Material index ${index} out of range [0, ${maxIndex})`);
+        return false;
+    }
+
+    return true;
+}
+
+// Enhanced error reporting
+function reportError(context, error, severity = 'error') {
+    const message = `[${context}] ${error.message || error}`;
+    console.error(message, error);
+
+    // Show user-friendly error
+    let userMessage = message;
+    if (error.message) {
+        // Simplify common errors
+        if (error.message.includes('texture')) {
+            userMessage = `Texture loading failed. Check console for details.`;
+        } else if (error.message.includes('material')) {
+            userMessage = `Material processing failed. Check console for details.`;
+        } else if (error.message.includes('parse')) {
+            userMessage = `File parsing failed. Check file format.`;
+        }
+    }
+
+    updateStatus(userMessage, severity);
+}
+
 // Export functions for HTML onclick handlers
 window.toggleEnvironment = toggleEnvironment;
 window.loadSampleModel = loadSampleModel;
 window.toggleColorSpace = toggleColorSpace;
 window.exportSelectedMaterialJSON = exportSelectedMaterialJSON;
 window.exportSelectedMaterialMTLX = exportSelectedMaterialMTLX;
+window.importMaterialXFile = importMaterialXFile;
+window.loadHDRTextureForMaterial = loadHDRTextureForMaterial;
