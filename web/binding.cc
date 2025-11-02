@@ -1502,6 +1502,45 @@ class TinyUSDZLoaderNative {
 
   int numRootNodes() { return render_scene_.nodes.size(); }
 
+  // Get the upAxis from the RenderScene metadata
+  std::string getUpAxis() const {
+    if (!loaded_) {
+      return "Y"; // Default
+    }
+    return render_scene_.meta.upAxis;
+  }
+
+  // Get the complete scene metadata as a JavaScript object
+  emscripten::val getSceneMetadata() const {
+    emscripten::val metadata = emscripten::val::object();
+
+    if (!loaded_) {
+      return metadata;
+    }
+
+    metadata.set("copyright", render_scene_.meta.copyright);
+    metadata.set("comment", render_scene_.meta.comment);
+    metadata.set("upAxis", render_scene_.meta.upAxis);
+    metadata.set("metersPerUnit", render_scene_.meta.metersPerUnit);
+    metadata.set("framesPerSecond", render_scene_.meta.framesPerSecond);
+    metadata.set("timeCodesPerSecond", render_scene_.meta.timeCodesPerSecond);
+    metadata.set("autoPlay", render_scene_.meta.autoPlay);
+
+    if (render_scene_.meta.startTimeCode) {
+      metadata.set("startTimeCode", render_scene_.meta.startTimeCode.value());
+    } else {
+      metadata.set("startTimeCode", emscripten::val::null());
+    }
+
+    if (render_scene_.meta.endTimeCode) {
+      metadata.set("endTimeCode", render_scene_.meta.endTimeCode.value());
+    } else {
+      metadata.set("endTimeCode", emscripten::val::null());
+    }
+
+    return metadata;
+  }
+
   // Animation data access methods
   int numAnimations() const { return render_scene_.animations.size(); }
 
@@ -2608,6 +2647,10 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("getRootNode", &TinyUSDZLoaderNative::getRootNode)
       .function("getDefaultRootNode", &TinyUSDZLoaderNative::getDefaultRootNode)
       .function("numRootNodes", &TinyUSDZLoaderNative::numRootNodes)
+
+      // Metadata access
+      .function("getUpAxis", &TinyUSDZLoaderNative::getUpAxis)
+      .function("getSceneMetadata", &TinyUSDZLoaderNative::getSceneMetadata)
 
       // Animation methods
       .function("numAnimations", &TinyUSDZLoaderNative::numAnimations)
