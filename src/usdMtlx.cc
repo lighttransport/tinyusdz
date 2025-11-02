@@ -407,6 +407,10 @@ bool ParseMaterialXValue<std::string>(const std::string &str, std::string *value
 template <typename T>
 std::string to_xml_string(const T &val);
 
+// Forward declaration
+static bool SerializeNodeGraphs(const std::map<std::string, PrimSpec> &nodegraphs,
+                                std::stringstream &ss, std::string *warn, std::string *err);
+
 template <>
 std::string to_xml_string(const float &val) {
   return float_to_xml_string(val);
@@ -415,6 +419,11 @@ std::string to_xml_string(const float &val) {
 template <>
 std::string to_xml_string(const int &val) {
   return std::to_string(val);
+}
+
+template <>
+std::string to_xml_string(const bool &val) {
+  return val ? "true" : "false";
 }
 
 template <>
@@ -466,6 +475,7 @@ bool SerializeAttribute(const std::string &attr_name,
 static bool WriteMaterialXToString(const MtlxUsdPreviewSurface &shader,
                                    const std::string &shader_name,
                                    const std::vector<MtlxShaderConnection> &connections,
+                                   const std::map<std::string, PrimSpec> &nodegraphs,
                                    std::string &xml_str, std::string *warn,
                                    std::string *err) {
   (void)warn;
@@ -476,6 +486,12 @@ static bool WriteMaterialXToString(const MtlxUsdPreviewSurface &shader,
 
   ss << "<?xml version=\"1.0\"?>\n";
   ss << "<materialx version=\"1.38\" colorspace=\"lin_rec709\">\n";
+
+  // Serialize nodegraphs first
+  if (!nodegraphs.empty()) {
+    SerializeNodeGraphs(nodegraphs, ss, warn, err);
+  }
+
   ss << pprint::Indent(1) << "<UsdPreviewSurface name=\"" << node_name
      << "\" type=\"surfaceshader\">\n";
 
@@ -552,6 +568,7 @@ static bool WriteMaterialXToString(const MtlxUsdPreviewSurface &shader,
 static bool WriteMaterialXToString(const MtlxAutodeskStandardSurface &shader,
                                    const std::string &shader_name,
                                    const std::vector<MtlxShaderConnection> &connections,
+                                   const std::map<std::string, PrimSpec> &nodegraphs,
                                    std::string &xml_str, std::string *warn,
                                    std::string *err) {
   (void)warn;
@@ -562,6 +579,12 @@ static bool WriteMaterialXToString(const MtlxAutodeskStandardSurface &shader,
 
   ss << "<?xml version=\"1.0\"?>\n";
   ss << "<materialx version=\"1.38\" colorspace=\"lin_rec709\">\n";
+
+  // Serialize nodegraphs first
+  if (!nodegraphs.empty()) {
+    SerializeNodeGraphs(nodegraphs, ss, warn, err);
+  }
+
   ss << pprint::Indent(1) << "<standard_surface name=\"" << node_name
      << "\" type=\"surfaceshader\">\n";
 
@@ -688,6 +711,7 @@ static bool WriteMaterialXToString(const MtlxAutodeskStandardSurface &shader,
 static bool WriteMaterialXToString(const MtlxOpenPBRSurface &shader,
                                    const std::string &shader_name,
                                    const std::vector<MtlxShaderConnection> &connections,
+                                   const std::map<std::string, PrimSpec> &nodegraphs,
                                    std::string &xml_str, std::string *warn,
                                    std::string *err) {
   (void)warn;
@@ -698,6 +722,12 @@ static bool WriteMaterialXToString(const MtlxOpenPBRSurface &shader,
 
   ss << "<?xml version=\"1.0\"?>\n";
   ss << "<materialx version=\"1.38\" colorspace=\"lin_rec709\">\n";
+
+  // Serialize nodegraphs first
+  if (!nodegraphs.empty()) {
+    SerializeNodeGraphs(nodegraphs, ss, warn, err);
+  }
+
   ss << pprint::Indent(1) << "<open_pbr_surface name=\"" << node_name
      << "\" type=\"surfaceshader\">\n";
 
@@ -809,6 +839,63 @@ static bool WriteMaterialXToString(const MtlxOpenPBRSurface &shader,
   ss << "</materialx>\n";
 
   xml_str = ss.str();
+
+  return true;
+}
+
+// Helper function to serialize nodegraphs to MaterialX XML
+static bool SerializeNodeGraphs(const std::map<std::string, PrimSpec> &nodegraphs,
+                                std::stringstream &ss, std::string *warn, std::string *err) {
+  (void)warn;
+  (void)err;
+
+  for (const auto &ng_item : nodegraphs) {
+    const std::string &ng_name = ng_item.first;
+    const PrimSpec &ng_ps = ng_item.second;
+
+    ss << pprint::Indent(1) << "<nodegraph name=\"" << ng_name << "\">\n";
+
+    // Serialize child nodes
+    for (const auto &child_ps : ng_ps.children()) {
+      std::string node_type = child_ps.typeName();
+      std::string node_name = child_ps.name();
+
+      // TODO: Add more complete node serialization
+      // For now, just add a placeholder comment
+      ss << pprint::Indent(2) << "<!-- Node: " << node_name
+         << " (type: " << node_type << ") -->\n";
+    }
+
+    // Serialize outputs
+    for (const auto &prop_item : ng_ps.props()) {
+      const std::string &prop_name = prop_item.first;
+
+      // Check if this is an output property
+      if (prop_name.find("outputs:") == 0) {
+        std::string output_name = prop_name.substr(8); // Remove "outputs:" prefix
+
+        // Try to extract the nodename reference from the connection
+        if (prop_item.second.is_attribute()) {
+          const Attribute &attr = prop_item.second.get_attribute();
+          if (attr.is_connection()) {
+            // TODO: Extract connection info
+            ss << pprint::Indent(2) << "<output name=\"" << output_name
+               << "\" type=\"color3\" />\n";
+          } else if (auto conn_str = attr.get_var().as<std::string>()) {
+            // Connection stored as string like "nodename.outputs:out"
+            size_t dot_pos = conn_str->find('.');
+            if (dot_pos != std::string::npos) {
+              std::string nodename_ref = conn_str->substr(0, dot_pos);
+              ss << pprint::Indent(2) << "<output name=\"" << output_name
+                 << "\" type=\"color3\" nodename=\"" << nodename_ref << "\" />\n";
+            }
+          }
+        }
+      }
+    }
+
+    ss << pprint::Indent(1) << "</nodegraph>\n";
+  }
 
   return true;
 }
@@ -1926,9 +2013,12 @@ bool ReadMaterialXFromFile(const AssetResolutionResolver &resolver,
 bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
                             std::string *warn, std::string *err) {
   // Find shader name - use the first shader in the shaders map if available
-  std::string shader_name = mtlx.shader_name;
-  if (shader_name.empty() && !mtlx.shaders.empty()) {
+  // Priority: shader key from shaders map > mtlx.shader_name
+  std::string shader_name;
+  if (!mtlx.shaders.empty()) {
     shader_name = mtlx.shaders.begin()->first;
+  } else {
+    shader_name = mtlx.shader_name;
   }
 
   // Get connections for this shader
@@ -1939,11 +2029,11 @@ bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
   }
 
   if (auto usdps = mtlx.shader.as<MtlxUsdPreviewSurface>()) {
-    return detail::WriteMaterialXToString(*usdps, shader_name, connections, xml_str, warn, err);
+    return detail::WriteMaterialXToString(*usdps, shader_name, connections, mtlx.nodegraphs, xml_str, warn, err);
   } else if (auto adskss = mtlx.shader.as<MtlxAutodeskStandardSurface>()) {
-    return detail::WriteMaterialXToString(*adskss, shader_name, connections, xml_str, warn, err);
+    return detail::WriteMaterialXToString(*adskss, shader_name, connections, mtlx.nodegraphs, xml_str, warn, err);
   } else if (auto openpbr = mtlx.shader.as<MtlxOpenPBRSurface>()) {
-    return detail::WriteMaterialXToString(*openpbr, shader_name, connections, xml_str, warn, err);
+    return detail::WriteMaterialXToString(*openpbr, shader_name, connections, mtlx.nodegraphs, xml_str, warn, err);
   } else {
     // TODO
     PUSH_ERROR_AND_RETURN("Unknown/unsupported shader: " << mtlx.shader_name);
