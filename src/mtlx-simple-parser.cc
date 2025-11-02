@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache 2.0
 
-#include "../include/mtlx-simple-parser.hh"
+#include "mtlx-simple-parser.hh"
 #include <cstring>
 
 namespace tinyusdz {
@@ -101,17 +101,19 @@ bool SimpleXMLParser::Parse(const std::string& xml) {
       case TokenType::Error:
         error_ = "Tokenizer error: " + tokenizer.GetError();
         return false;
-        
-      default:
+
+      case TokenType::SelfClosingTag:
+      case TokenType::Attribute:
+        // These are handled within StartTag processing
         break;
     }
   }
-  
+
   if (!node_stack.empty()) {
     error_ = "Unclosed tags at end of document";
     return false;
   }
-  
+
   return root_ != nullptr;
 }
 

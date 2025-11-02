@@ -572,7 +572,7 @@ static bool ConvertNodeGraphRec(const uint32_t depth,
     PUSH_ERROR_AND_RETURN("Unknown/unsupported Shader Node: " << node.name());
   }
 
-  for (const auto &child : node.children()) {
+  for (const auto &child : node) {
     PrimSpec child_ps;
     if (!ConvertNodeGraphRec(depth + 1, child, child_ps, warn, err)) {
       return false;
