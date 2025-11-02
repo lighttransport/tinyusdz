@@ -11,6 +11,8 @@
 // Phase 4: Compression support
 #include "../../../src/lz4-compression.hh"
 #include "../../../src/integerCoding.h"
+// Direct LZ4 API for OpenUSD compatibility
+#include "../../../src/lz4/lz4.h"
 
 // Namespace alias to avoid collision between tinyusdz::crate and ::crate (path library)
 namespace pathlib = ::crate;
@@ -55,7 +57,7 @@ bool CrateWriter::Open(std::string* err) {
     return false;
   }
 
-  // Open file for binary writing
+  // Open file for binary write
   file_.open(filepath_, std::ios::binary | std::ios::out | std::ios::trunc);
   if (!file_.is_open()) {
     if (err) *err = "Failed to open file: " + filepath_;
@@ -220,6 +222,7 @@ bool CrateWriter::Finalize(std::string* err) {
 
 void CrateWriter::Close() {
   if (file_.is_open()) {
+    file_.flush();  // Ensure all writes are flushed before closing
     file_.close();
   }
   is_open_ = false;
@@ -438,44 +441,41 @@ bool CrateWriter::CompressData(const char* input, size_t inputSize,
     return false;
   }
 
-  // Check if compression is enabled
-  if (!options_.enable_compression) {
-    // No compression - just copy data
-    compressed->assign(input, input + inputSize);
-    return true;
-  }
+  // IMPORTANT: USD crate format uses OpenUSD's TfFastCompression format:
+  // - 1 byte: chunk count (0 for single chunk, N for multiple chunks)
+  // - If chunk count == 0: raw LZ4 compressed data
+  // - If chunk count > 0: for each chunk: int32_t size + LZ4 compressed data
+  //
+  // For simplicity, we always use single-chunk mode (chunk count = 0)
+  // See: pxr/base/tf/fastCompression.cpp in OpenUSD
 
-  // Get required buffer size for compression
-  size_t maxCompressedSize = LZ4Compression::GetCompressedBufferSize(inputSize);
-  if (maxCompressedSize == 0) {
-    if (err) *err = "Input size too large for compression: " + std::to_string(inputSize);
+  // Get maximum compressed size
+  int maxCompressedSize = LZ4_compressBound(static_cast<int>(inputSize));
+  if (maxCompressedSize <= 0) {
+    if (err) *err = "Input size too large for LZ4 compression: " + std::to_string(inputSize);
     return false;
   }
 
-  // Allocate compression buffer
-  compressed->resize(maxCompressedSize);
+  // Allocate buffer: 1 byte for chunk count + compressed data
+  compressed->resize(1 + static_cast<size_t>(maxCompressedSize));
 
-  // Compress
-  std::string compress_err;
-  size_t compressedSize = LZ4Compression::CompressToBuffer(
-      input, compressed->data(), inputSize, &compress_err);
+  // Write chunk count byte (0 = single chunk)
+  (*compressed)[0] = 0;
 
-  if (compressedSize == static_cast<size_t>(~0)) {
-    // Compression failed
-    if (err) *err = "LZ4 compression failed: " + compress_err;
+  // Compress with LZ4 (compatible with OpenUSD TfFastCompression)
+  int compressedSize = LZ4_compress_default(
+      input,
+      compressed->data() + 1,  // Skip the chunk count byte
+      static_cast<int>(inputSize),
+      maxCompressedSize);
+
+  if (compressedSize <= 0) {
+    if (err) *err = "LZ4 compression failed with error code: " + std::to_string(compressedSize);
     return false;
   }
 
-  // Check if compression actually reduced size
-  // If not, use uncompressed data (common for small or incompressible data)
-  if (compressedSize >= inputSize) {
-    // No benefit from compression - use original
-    compressed->assign(input, input + inputSize);
-    return true;
-  }
-
-  // Resize to actual compressed size
-  compressed->resize(compressedSize);
+  // Resize to actual size: 1 byte chunk count + compressed data
+  compressed->resize(1 + static_cast<size_t>(compressedSize));
   return true;
 }
 
@@ -486,12 +486,32 @@ bool CrateWriter::CompressData(const char* input, size_t inputSize,
 bool CrateWriter::WriteTokensSection(std::string* err) {
   int64_t section_start = Tell();
 
+  // Debug: print token count
+  std::cerr << "DEBUG: WriteTokensSection called with " << tokens_.size() << " tokens" << std::endl;
+  for (size_t i = 0; i < std::min(tokens_.size(), size_t(10)); ++i) {
+    std::cerr << "  Token[" << i << "]: " << tokens_[i] << std::endl;
+  }
+
   // Write token count
   uint64_t token_count = static_cast<uint64_t>(tokens_.size());
+  int64_t token_count_offset = Tell();
+  std::cerr << "DEBUG: Writing token_count = " << token_count << " at offset " << token_count_offset << std::endl;
+
+  // DEBUG: Print bytes being written
+  const unsigned char* bytes = reinterpret_cast<const unsigned char*>(&token_count);
+  std::cerr << "DEBUG: Bytes to write: ";
+  for (size_t i = 0; i < sizeof(token_count); ++i) {
+    char buf[4];
+    snprintf(buf, sizeof(buf), "%02x ", bytes[i]);
+    std::cerr << buf;
+  }
+  std::cerr << std::endl;
+
   if (!Write(token_count)) {
     if (err) *err = "Failed to write token count";
     return false;
   }
+  std::cerr << "DEBUG: After write, offset = " << Tell() << ", file.good() = " << file_.good() << std::endl;
 
   // Build token blob (null-terminated strings)
   std::ostringstream blob;
@@ -829,12 +849,19 @@ bool CrateWriter::WriteSpecsSection(std::string* err) {
 
 bool CrateWriter::WriteTableOfContents(std::string* err) {
   int64_t toc_offset = Tell();
+  std::cerr << "DEBUG: WriteTableOfContents() at offset " << toc_offset << std::endl;
 
   // Write section count
   uint64_t section_count = static_cast<uint64_t>(toc_.sections.size());
   if (!Write(section_count)) {
     if (err) *err = "Failed to write section count";
     return false;
+  }
+
+  // Debug: print first few sections
+  for (size_t i = 0; i < std::min(toc_.sections.size(), size_t(3)); ++i) {
+    const auto& sec = toc_.sections[i];
+    std::cerr << "  Section[" << i << "]: " << sec.name << " start=" << sec.start << " size=" << sec.size << std::endl;
   }
 
   // Write sections
@@ -862,7 +889,21 @@ bool CrateWriter::WriteTableOfContents(std::string* err) {
   // We need to save this before writing bootstrap
   int64_t saved_toc_offset = toc_offset;
 
-  // Seek back to write bootstrap
+  std::cerr << "DEBUG: Before bootstrap write, TOC offset = " << saved_toc_offset << std::endl;
+
+  // IMPORTANT: Close and reopen file to write bootstrap header
+  // C++ fstream seeking backwards has issues, so we close and reopen in r+b mode
+  file_.flush();
+  file_.close();
+
+  // Reopen in read+write binary mode (without truncate!)
+  file_.open(filepath_, std::ios::binary | std::ios::in | std::ios::out);
+  if (!file_.is_open()) {
+    if (err) *err = "Failed to reopen file for bootstrap write";
+    return false;
+  }
+
+  // Seek to beginning to write bootstrap
   BootStrap boot;
   memset(&boot, 0, sizeof(boot));
 
@@ -872,7 +913,8 @@ bool CrateWriter::WriteTableOfContents(std::string* err) {
   boot.version[2] = options_.version_patch;
   boot.toc_offset = saved_toc_offset;
 
-  if (!Seek(0)) {
+  file_.seekp(0, std::ios::beg);
+  if (!file_.good()) {
     if (err) *err = "Failed to seek to bootstrap";
     return false;
   }
@@ -881,6 +923,9 @@ bool CrateWriter::WriteTableOfContents(std::string* err) {
     if (err) *err = "Failed to write bootstrap";
     return false;
   }
+
+  file_.flush();
+  std::cerr << "DEBUG: Bootstrap written successfully" << std::endl;
 
   return true;
 }
