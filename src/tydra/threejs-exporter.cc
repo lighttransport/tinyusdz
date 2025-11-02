@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2024 - Present, Light Transport Entertainment Inc.
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wweak-vtables"
+#endif
 #include "threejs-exporter.hh"
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 #include <sstream>
 #include <iomanip>
 #include <cmath>
@@ -10,6 +17,10 @@ namespace tinyusdz {
 namespace tydra {
 
 // Parameter mapping tables
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wexit-time-destructors"
+#endif
 const std::map<std::string, std::string>& MaterialParameterMapping::openpbr_to_physical() {
   static const std::map<std::string, std::string> mapping = {
     {"base_color", "color"},
@@ -75,6 +86,9 @@ const std::map<std::string, std::string>& MaterialParameterMapping::colorspace_m
   };
   return mapping;
 }
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 // Helper function to convert vec3 to JSON array
 static json vec3ToJson(const vec3& v) {
@@ -82,10 +96,17 @@ static json vec3ToJson(const vec3& v) {
 }
 
 // Helper function to convert vec2 to JSON array
-// Static function with [[maybe_unused]] to suppress unused warning
-[[maybe_unused]] static json vec2ToJson(const vec2& v) {
+// Static function that may not be used currently
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-function"
+#endif
+static json vec2ToJson(const vec2& v) {
   return json::array({v[0], v[1]});
 }
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 // ThreeJSMaterialExporter implementation
 
@@ -429,6 +450,7 @@ json ThreeJSMaterialExporter::ConvertOpenPBRToPhysicalMaterial(const OpenPBRSurf
 
   // Handle texture references
   auto handle_texture = [&](const std::string& param_name, const auto& shader_param, const std::string& three_name) {
+    (void)param_name; // Unused for now, may be used for debugging
     if (shader_param.is_texture()) {
       params[three_name + "Map"] = {
         {"type", "Texture"},
@@ -484,6 +506,7 @@ json ThreeJSMaterialExporter::ConvertPreviewSurfaceToStandardMaterial(const Prev
 
   // Handle texture connections
   auto handle_texture = [&](const std::string& param_name, const auto& shader_param, const std::string& three_name) {
+    (void)param_name; // Unused for now, may be used for debugging
     if (shader_param.is_texture()) {
       params[three_name] = {
         {"type", "Texture"},
@@ -888,7 +911,7 @@ json ThreeJSSceneExporter::ConvertNode(const Node& node, const RenderScene& scen
         if (mesh.prim_name == node.prim_name) {
           obj["geometry"] = std::to_string(mesh.handle);
           if (mesh.material_id != -1 && static_cast<size_t>(mesh.material_id) < scene.materials.size()) {
-            obj["material"] = std::to_string(scene.materials[mesh.material_id].handle);
+            obj["material"] = std::to_string(scene.materials[static_cast<size_t>(mesh.material_id)].handle);
           }
           break;
         }
@@ -900,8 +923,18 @@ json ThreeJSSceneExporter::ConvertNode(const Node& node, const RenderScene& scen
     case NodeType::Camera:
       obj["type"] = "Camera";
       break;
-    default:
-      obj["type"] = "Object3D";
+    case NodeType::Skeleton:
+      obj["type"] = "Skeleton";
+      break;
+    case NodeType::PointLight:
+      obj["type"] = "PointLight";
+      break;
+    case NodeType::DirectionalLight:
+      obj["type"] = "DirectionalLight";
+      break;
+    case NodeType::EnvmapLight:
+      obj["type"] = "EnvironmentLight";
+      break;
   }
 
   // Transform matrix
@@ -932,7 +965,7 @@ json ThreeJSSceneExporter::ConvertCamera(const RenderCamera& camera) {
     {"type", "PerspectiveCamera"},
     {"name", camera.name},
     {"fov", fov},
-    {"aspect", 1.0 / camera.verticalAspectRatio},
+    {"aspect", 1.0f / camera.verticalAspectRatio},
     {"near", camera.znear},
     {"far", camera.zfar}
   };
@@ -990,6 +1023,9 @@ json ThreeJSSceneExporter::ConvertAnimation(const Animation& anim) {
 bool ThreeJSSceneExporter::ExportGLTF(const RenderScene& scene,
                                       const SceneExportOptions& options,
                                       json& gltf_output) {
+  (void)scene;
+  (void)options;
+  (void)gltf_output;
   // TODO: Implement full glTF 2.0 export with MaterialX extensions
   _err = "glTF export not yet implemented";
   return false;
