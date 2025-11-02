@@ -57,10 +57,10 @@ bool IsLerpSupportedType(uint32_t tyid) {
     return true; \
   } else if (__tyid == value::TypeTraits<__ty>::underlying_type_id()) { \
     return true; \
-  } else if (__tyid & value::TYPE_ID_1D_ARRAY_BIT) { \
-    if ((__tyid & (~value::TYPE_ID_1D_ARRAY_BIT)) == (value::TypeTraits<__ty>::type_id())) { \
+  } else if (__tyid & value::TYPE_ID_STL_ARRAY_BIT) { \
+    if ((__tyid & (~value::TYPE_ID_STL_ARRAY_BIT)) == (value::TypeTraits<__ty>::type_id())) { \
       return true; \
-    } else if ((__tyid & (~value::TYPE_ID_1D_ARRAY_BIT)) == (value::TypeTraits<__ty>::underlying_type_id())) { \
+    } else if ((__tyid & (~value::TYPE_ID_STL_ARRAY_BIT)) == (value::TypeTraits<__ty>::underlying_type_id())) { \
       return true; \
     } \
   }
@@ -69,8 +69,8 @@ bool IsLerpSupportedType(uint32_t tyid) {
 #define IS_SUPPORTED_UNDERLYING_TYPE(__utyid, __uty) \
   if (__utyid == value::TypeTraits<__uty>::type_id()) { \
     return true; \
-  } else if (__utyid & value::TYPE_ID_1D_ARRAY_BIT) { \
-    if ((__utyid & (~value::TYPE_ID_1D_ARRAY_BIT)) == (value::TypeTraits<__uty>::type_id())) { \
+  } else if (__utyid & value::TYPE_ID_STL_ARRAY_BIT) { \
+    if ((__utyid & (~value::TYPE_ID_STL_ARRAY_BIT)) == (value::TypeTraits<__uty>::type_id())) { \
       return true; \
     } \
   }
@@ -272,8 +272,8 @@ nonstd::optional<std::string> TryGetTypeName(uint32_t tyid) {
           {TYPE_ID_RELATIONSHIP, kRelationship},
       });
 
-  bool array_bit = (TYPE_ID_1D_ARRAY_BIT & tyid);
-  uint32_t scalar_tid = tyid & (~TYPE_ID_1D_ARRAY_BIT);
+  bool array_bit = (TYPE_ID_STL_ARRAY_BIT & tyid);
+  uint32_t scalar_tid = tyid & (~TYPE_ID_STL_ARRAY_BIT);
 
   auto ret = tynamemap.find(scalar_tid);
   if (ret != tynamemap.end()) {
@@ -364,7 +364,7 @@ nonstd::optional<uint32_t> TryGetTypeId(const std::string &tyname) {
   uint32_t array_bit = 0;
   if (endsWith(tyname, "[]")) {
     s = removeSuffix(s, "[]");
-    array_bit |= TYPE_ID_1D_ARRAY_BIT;
+    array_bit |= TYPE_ID_STL_ARRAY_BIT;
   }
 
   // It looks USD does not support 2D array type, so no further `[]` check
@@ -419,7 +419,7 @@ nonstd::optional<uint32_t> TryGetUnderlyingTypeId(const std::string &tyname) {
     uint32_t array_bit = 0;
     if (endsWith(tyname, "[]")) {
       s = removeSuffix(s, "[]");
-      array_bit |= TYPE_ID_1D_ARRAY_BIT;
+      array_bit |= TYPE_ID_STL_ARRAY_BIT;
     }
 
     auto ret = utyidmap.find(s.c_str());
@@ -470,8 +470,8 @@ nonstd::optional<std::string> TryGetUnderlyingTypeName(const uint32_t tyid) {
   });
 
   {
-  bool array_bit = (TYPE_ID_1D_ARRAY_BIT & tyid);
-  uint32_t scalar_tid = tyid & (~TYPE_ID_1D_ARRAY_BIT);
+  bool array_bit = (TYPE_ID_STL_ARRAY_BIT & tyid);
+  uint32_t scalar_tid = tyid & (~TYPE_ID_STL_ARRAY_BIT);
 
   auto ret = utynamemap.find(scalar_tid);
   if (ret != utynamemap.end()) {
@@ -872,7 +872,7 @@ size_t Value::array_size() const {
   __FUNC(matrix4d) \
   __FUNC(frame4d)
 
-#define ARRAY_SIZE_GET(__ty) case value::TypeTraits<__ty>::type_id() | value::TYPE_ID_1D_ARRAY_BIT: { \
+#define ARRAY_SIZE_GET(__ty) case value::TypeTraits<__ty>::type_id() | value::TYPE_ID_STL_ARRAY_BIT: { \
     if (auto pv = v_.cast<std::vector<__ty>>()) { \
       return pv->size(); \
     } \
@@ -914,7 +914,7 @@ bool RoleTypeCast(const uint32_t roleTyId, value::Value &inout) {
       }                                                                        \
     } else if (srcUnderlyingTyId ==                                            \
                (value::TypeTraits<__srcBaseTy>::type_id() |                    \
-                value::TYPE_ID_1D_ARRAY_BIT)) {                                \
+                value::TYPE_ID_STL_ARRAY_BIT)) {                                \
       if (roleTyId == value::TypeTraits<std::vector<__roleTy>>::type_id()) {   \
         if (auto pv = inout.get_value<std::vector<__srcBaseTy>>()) {           \
           std::vector<__srcBaseTy> val = pv.value();                           \
@@ -1090,7 +1090,7 @@ bool FlexibleTypeCast(const value::Value &src, value::Value &dst) {
 // Get byte size for a given type_id
 static size_t GetTypeSize(uint32_t type_id) {
   // Remove array bit if present
-  uint32_t base_type_id = type_id & (~TYPE_ID_1D_ARRAY_BIT);
+  uint32_t base_type_id = type_id & (~TYPE_ID_STL_ARRAY_BIT);
   
   // Create a compile-time lookup table using switch
   switch (base_type_id) {
@@ -1227,7 +1227,7 @@ size_t Value::estimate_memory_usage() const {
   uint32_t tid = type_id();
   
   // Check if it's an array type
-  if (tid & TYPE_ID_1D_ARRAY_BIT) {
+  if (tid & TYPE_ID_STL_ARRAY_BIT) {
     // For arrays, compute element size * array count
     size_t element_size = GetTypeSize(tid);
     size_t element_count = array_size();
@@ -1239,7 +1239,7 @@ size_t Value::estimate_memory_usage() const {
     total_size += element_size * element_count;
     
     // Handle special cases for string arrays
-    uint32_t base_type = tid & (~TYPE_ID_1D_ARRAY_BIT);
+    uint32_t base_type = tid & (~TYPE_ID_STL_ARRAY_BIT);
     if (base_type == TYPE_ID_STRING || base_type == TYPE_ID_TOKEN || 
         base_type == TYPE_ID_STRING_DATA || base_type == TYPE_ID_ASSET_PATH) {
       // For string arrays, add estimated string sizes

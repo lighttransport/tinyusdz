@@ -394,7 +394,7 @@ bool Reconstructor::reconstruct(AttribMap &amap) {
   }
 
 #define CONVERT_TYPE_1D(__ty, __value)                                     \
-  case (TypeTrait<__ty>::type_id | TYPE_ID_1D_ARRAY_BIT): {                \
+  case (TypeTrait<__ty>::type_id | TYPE_ID_STL_ARRAY_BIT): {                \
     std::vector<__ty> *p = reinterpret_cast<std::vector<__ty> *>(__value); \
     staticstruct::Handler<std::vector<__ty>> _h(p);                        \
     return _h.write(&handler);                                             \
@@ -524,29 +524,29 @@ std::string GetTypeName(uint32_t tyid) {
     m[TYPE_ID_POINT3D] = TypeTrait<point3d>::type_name();
     // TODO: ...
 
-    m[TYPE_ID_INT32 | TYPE_ID_1D_ARRAY_BIT] =
+    m[TYPE_ID_INT32 | TYPE_ID_STL_ARRAY_BIT] =
         TypeTrait<std::vector<int>>::type_name();
-    m[TYPE_ID_FLOAT | TYPE_ID_1D_ARRAY_BIT] =
+    m[TYPE_ID_FLOAT | TYPE_ID_STL_ARRAY_BIT] =
         TypeTrait<std::vector<float>>::type_name();
-    m[TYPE_ID_FLOAT2 | TYPE_ID_1D_ARRAY_BIT] =
+    m[TYPE_ID_FLOAT2 | TYPE_ID_STL_ARRAY_BIT] =
         TypeTrait<std::vector<float2>>::type_name();
-    m[TYPE_ID_FLOAT3 | TYPE_ID_1D_ARRAY_BIT] =
+    m[TYPE_ID_FLOAT3 | TYPE_ID_STL_ARRAY_BIT] =
         TypeTrait<std::vector<float3>>::type_name();
-    m[TYPE_ID_FLOAT4 | TYPE_ID_1D_ARRAY_BIT] =
+    m[TYPE_ID_FLOAT4 | TYPE_ID_STL_ARRAY_BIT] =
         TypeTrait<std::vector<float4>>::type_name();
 
-    m[TYPE_ID_POINT3H | TYPE_ID_1D_ARRAY_BIT] =
+    m[TYPE_ID_POINT3H | TYPE_ID_STL_ARRAY_BIT] =
         TypeTrait<std::vector<point3h>>::type_name();
-    m[TYPE_ID_POINT3F | TYPE_ID_1D_ARRAY_BIT] =
+    m[TYPE_ID_POINT3F | TYPE_ID_STL_ARRAY_BIT] =
         TypeTrait<std::vector<point3f>>::type_name();
-    m[TYPE_ID_POINT3D | TYPE_ID_1D_ARRAY_BIT] =
+    m[TYPE_ID_POINT3D | TYPE_ID_STL_ARRAY_BIT] =
         TypeTrait<std::vector<point3d>>::type_name();
 
-    m[TYPE_ID_VECTOR3H | TYPE_ID_1D_ARRAY_BIT] =
+    m[TYPE_ID_VECTOR3H | TYPE_ID_STL_ARRAY_BIT] =
         TypeTrait<std::vector<vector3h>>::type_name();
-    m[TYPE_ID_VECTOR3F | TYPE_ID_1D_ARRAY_BIT] =
+    m[TYPE_ID_VECTOR3F | TYPE_ID_STL_ARRAY_BIT] =
         TypeTrait<std::vector<vector3f>>::type_name();
-    m[TYPE_ID_VECTOR3D | TYPE_ID_1D_ARRAY_BIT] =
+    m[TYPE_ID_VECTOR3D | TYPE_ID_STL_ARRAY_BIT] =
         TypeTrait<std::vector<vector3d>>::type_name();
   }
 

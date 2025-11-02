@@ -24,10 +24,10 @@ CTinyUSDValueType c_tinyusd_value_type(const CTinyUSDValue *value) {
   uint32_t tyid = pv->type_id();
 
   bool is_array = false;
-  if (tyid & tinyusdz::value::TYPE_ID_1D_ARRAY_BIT) {
+  if (tyid & tinyusdz::value::TYPE_ID_STL_ARRAY_BIT) {
     is_array = true;
     // turn of array bit
-    tyid = tyid & (~tinyusdz::value::TYPE_ID_1D_ARRAY_BIT);
+    tyid = tyid & (~tinyusdz::value::TYPE_ID_STL_ARRAY_BIT);
   }
 
   using namespace tinyusdz::value;
