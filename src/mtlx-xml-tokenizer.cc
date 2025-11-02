@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache 2.0
 
-#include "../include/mtlx-xml-tokenizer.hh"
+#include "mtlx-xml-tokenizer.hh"
 #include <algorithm>
 #include <cctype>
 
@@ -170,7 +170,8 @@ bool XMLTokenizer::ParseQuotedString(std::string& str, char quote) {
 bool XMLTokenizer::ParseUntil(std::string& str, const char* delimiter) {
   str.clear();
   size_t delim_len = std::strlen(delimiter);
-  
+  (void)delim_len; // Currently unused, may be used for validation in the future
+
   while (position_ < size_ && str.length() < MAX_TEXT_LENGTH) {
     if (Match(delimiter)) {
       return true;
