@@ -15,7 +15,17 @@
 #include <vector>
 #include <map>
 #include "render-data.hh"
-#include "../external/jsonhpp/nlohmann/json.hpp"
+
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
+#include "external/jsonhpp/nlohmann/json_fwd.hpp"
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 namespace tinyusdz {
 namespace tydra {

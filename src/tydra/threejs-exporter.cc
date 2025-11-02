@@ -6,8 +6,24 @@
 #include <iomanip>
 #include <cmath>
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
+
+#include "external/jsonhpp/nlohmann/json.hpp"
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+
 namespace tinyusdz {
 namespace tydra {
+
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#endif
 
 // Parameter mapping tables
 const std::map<std::string, std::string> MaterialParameterMapping::openpbr_to_physical = {
@@ -64,16 +80,26 @@ const std::map<std::string, std::string> MaterialParameterMapping::colorspace_ma
   {"raw", "raw"}
 };
 
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+
 // Helper function to convert vec3 to JSON array
 static json vec3ToJson(const vec3& v) {
   return json::array({v[0], v[1], v[2]});
 }
 
 // Helper function to convert vec2 to JSON array
-// Static function with [[maybe_unused]] to suppress unused warning
-[[maybe_unused]] static json vec2ToJson(const vec2& v) {
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-function"
+#endif
+static json vec2ToJson(const vec2& v) {
   return json::array({v[0], v[1]});
 }
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 // ThreeJSMaterialExporter implementation
 
@@ -138,8 +164,9 @@ bool ThreeJSMaterialExporter::ExportScene(const RenderScene& scene,
       json normals = json::array();
       // Convert normals based on variability
       if (mesh.normals.is_vertex()) {
+        const vec3* normal_data = reinterpret_cast<const vec3*>(mesh.normals.get_data().data());
         for (size_t i = 0; i < mesh.normals.vertex_count(); ++i) {
-          auto n = mesh.normals.get_data<vec3>()[i];
+          auto n = normal_data[i];
           normals.push_back(n[0]);
           normals.push_back(n[1]);
           normals.push_back(n[2]);
@@ -153,12 +180,14 @@ bool ThreeJSMaterialExporter::ExportScene(const RenderScene& scene,
     }
 
     // UVs
-    if (!mesh.texcoords.empty() && !mesh.texcoords[0].data.empty()) {
+    auto texcoord_it = mesh.texcoords.find(0);
+    if (texcoord_it != mesh.texcoords.end() && !texcoord_it->second.data.empty()) {
       json uvs = json::array();
-      const auto& texcoord = mesh.texcoords[0];
+      const auto& texcoord = texcoord_it->second;
       if (texcoord.is_vertex()) {
+        const vec2* uv_data = reinterpret_cast<const vec2*>(texcoord.get_data().data());
         for (size_t i = 0; i < texcoord.vertex_count(); ++i) {
-          auto uv = texcoord.get_data<vec2>()[i];
+          auto uv = uv_data[i];
           uvs.push_back(uv[0]);
           uvs.push_back(uv[1]);
         }
@@ -213,8 +242,8 @@ bool ThreeJSMaterialExporter::ExportMaterial(const RenderMaterial& material,
     // Export as WebGL MeshPhysicalMaterial
     output["type"] = "MeshPhysicalMaterial";
     json params = ConvertOpenPBRToPhysicalMaterial(material.openPBRShader.value());
-    for (auto& [key, value] : params.items()) {
-      output[key] = value;
+    for (auto it = params.begin(); it != params.end(); ++it) {
+      output[it.key()] = it.value();
     }
   } else if (has_preview) {
     // Export UsdPreviewSurface as standard material
@@ -224,8 +253,8 @@ bool ThreeJSMaterialExporter::ExportMaterial(const RenderMaterial& material,
     } else {
       output["type"] = "MeshStandardMaterial";
       json params = ConvertPreviewSurfaceToStandardMaterial(material.surfaceShader.value());
-      for (auto& [key, value] : params.items()) {
-        output[key] = value;
+      for (auto it = params.begin(); it != params.end(); ++it) {
+        output[it.key()] = it.value();
       }
     }
   }
@@ -413,7 +442,7 @@ json ThreeJSMaterialExporter::ConvertOpenPBRToPhysicalMaterial(const OpenPBRSurf
   };
 
   // Handle texture references
-  auto handle_texture = [&](const std::string& param_name, const auto& shader_param, const std::string& three_name) {
+  auto handle_texture = [&](const std::string& /* param_name */, const auto& shader_param, const std::string& three_name) {
     if (shader_param.is_texture()) {
       params[three_name + "Map"] = {
         {"type", "Texture"},
@@ -448,7 +477,7 @@ json ThreeJSMaterialExporter::ConvertPreviewSurfaceToStandardMaterial(const Prev
   }
 
   // Workflow detection
-  if (shader.useSpecularWorkflow.value) {
+  if (shader.useSpecularWorkflow) {
     // Specular workflow - use MeshPhongMaterial properties
     params["specular"] = vec3ToJson(shader.specularColor.value);
   } else {
@@ -468,7 +497,7 @@ json ThreeJSMaterialExporter::ConvertPreviewSurfaceToStandardMaterial(const Prev
   params["ior"] = shader.ior.value;
 
   // Handle texture connections
-  auto handle_texture = [&](const std::string& param_name, const auto& shader_param, const std::string& three_name) {
+  auto handle_texture = [&](const std::string& /* param_name */, const auto& shader_param, const std::string& three_name) {
     if (shader_param.is_texture()) {
       params[three_name] = {
         {"type", "Texture"},
@@ -487,10 +516,13 @@ json ThreeJSMaterialExporter::ConvertPreviewSurfaceToStandardMaterial(const Prev
 
   // Displacement (store in userData as Three.js handles it differently)
   if (shader.displacement.value != 0.0f || shader.displacement.is_texture()) {
+    json displacement_map;
+    if (shader.displacement.is_texture()) {
+      displacement_map = std::to_string(shader.displacement.texture_id);
+    }
     params["userData"] = {
       {"displacement", shader.displacement.value},
-      {"displacementMap", shader.displacement.is_texture() ?
-        std::to_string(shader.displacement.texture_id) : json()}
+      {"displacementMap", displacement_map}
     };
   }
 
@@ -510,7 +542,7 @@ json ThreeJSMaterialExporter::ConvertPreviewSurfaceToNodeMaterial(const PreviewS
   // Map parameters
   surface_node["inputs"]["diffuseColor"] = vec3ToJson(shader.diffuseColor.value);
   surface_node["inputs"]["emissiveColor"] = vec3ToJson(shader.emissiveColor.value);
-  surface_node["inputs"]["useSpecularWorkflow"] = shader.useSpecularWorkflow.value;
+  surface_node["inputs"]["useSpecularWorkflow"] = shader.useSpecularWorkflow;
   surface_node["inputs"]["specularColor"] = vec3ToJson(shader.specularColor.value);
   surface_node["inputs"]["metallic"] = shader.metallic.value;
   surface_node["inputs"]["clearcoat"] = shader.clearcoat.value;
@@ -871,7 +903,7 @@ json ThreeJSSceneExporter::ConvertNode(const Node& node, const RenderScene& scen
         if (mesh.prim_name == node.prim_name) {
           obj["geometry"] = std::to_string(mesh.handle);
           if (mesh.material_id != -1 && static_cast<size_t>(mesh.material_id) < scene.materials.size()) {
-            obj["material"] = std::to_string(scene.materials[mesh.material_id].handle);
+            obj["material"] = std::to_string(scene.materials[static_cast<size_t>(mesh.material_id)].handle);
           }
           break;
         }
@@ -883,8 +915,18 @@ json ThreeJSSceneExporter::ConvertNode(const Node& node, const RenderScene& scen
     case NodeType::Camera:
       obj["type"] = "Camera";
       break;
-    default:
-      obj["type"] = "Object3D";
+    case NodeType::Skeleton:
+      obj["type"] = "Bone";
+      break;
+    case NodeType::PointLight:
+      obj["type"] = "PointLight";
+      break;
+    case NodeType::DirectionalLight:
+      obj["type"] = "DirectionalLight";
+      break;
+    case NodeType::EnvmapLight:
+      obj["type"] = "AmbientLight";
+      break;
   }
 
   // Transform matrix
@@ -911,11 +953,12 @@ json ThreeJSSceneExporter::ConvertNode(const Node& node, const RenderScene& scen
 
 json ThreeJSSceneExporter::ConvertCamera(const RenderCamera& camera) {
   float fov = 2.0f * std::atan(0.5f * camera.verticalAperture / camera.focalLength);
+  float aspect = 1.0f / camera.verticalAspectRatio;
   json cam = {
     {"type", "PerspectiveCamera"},
     {"name", camera.name},
     {"fov", fov},
-    {"aspect", 1.0 / camera.verticalAspectRatio},
+    {"aspect", aspect},
     {"near", camera.znear},
     {"far", camera.zfar}
   };
@@ -970,9 +1013,9 @@ json ThreeJSSceneExporter::ConvertAnimation(const Animation& anim) {
   return anim_json;
 }
 
-bool ThreeJSSceneExporter::ExportGLTF(const RenderScene& scene,
-                                      const SceneExportOptions& options,
-                                      json& gltf_output) {
+bool ThreeJSSceneExporter::ExportGLTF(const RenderScene& /* scene */,
+                                      const SceneExportOptions& /* options */,
+                                      json& /* gltf_output */) {
   // TODO: Implement full glTF 2.0 export with MaterialX extensions
   _err = "glTF export not yet implemented";
   return false;
