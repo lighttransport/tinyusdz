@@ -24,6 +24,15 @@
 
 More on the status: https://github.com/lighttransport/tinyusdz/blob/release/doc/status.md
 
+## Next release(Early 2026 planned)
+
+* We plan to use C++17 by default: https://github.com/lighttransport/tinyusdz/issues/220
+* JS/WASM binding
+* Various optimization
+* Better animation(TimeSamples) support
+* MaterialX support
+* USDC writer(experimental)
+  
 ## Branches
 
 * `release` Release branch
