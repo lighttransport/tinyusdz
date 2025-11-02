@@ -7231,6 +7231,61 @@ bool RenderSceneConverter::ConvertToRenderScene(
   render_scene.skeletons = std::move(skeletons);
   render_scene.animations = std::move(animations);
 
+  // Populate scene metadata from Stage
+  {
+    const auto &stage_metas = env.stage.metas();
+
+    // upAxis
+    if (stage_metas.upAxis.authored()) {
+      render_scene.meta.upAxis = to_string(stage_metas.upAxis.get_value());
+    }
+
+    // metersPerUnit
+    if (stage_metas.metersPerUnit.authored()) {
+      render_scene.meta.metersPerUnit = stage_metas.metersPerUnit.get_value();
+    }
+
+    // framesPerSecond
+    if (stage_metas.framesPerSecond.authored()) {
+      render_scene.meta.framesPerSecond = stage_metas.framesPerSecond.get_value();
+    }
+
+    // timeCodesPerSecond
+    if (stage_metas.timeCodesPerSecond.authored()) {
+      render_scene.meta.timeCodesPerSecond = stage_metas.timeCodesPerSecond.get_value();
+    }
+
+    // startTimeCode
+    if (stage_metas.startTimeCode.authored()) {
+      render_scene.meta.startTimeCode = stage_metas.startTimeCode.get_value();
+    }
+
+    // endTimeCode
+    if (stage_metas.endTimeCode.authored()) {
+      render_scene.meta.endTimeCode = stage_metas.endTimeCode.get_value();
+    }
+
+    // autoPlay
+    if (stage_metas.autoPlay.authored()) {
+      render_scene.meta.autoPlay = stage_metas.autoPlay.get_value();
+    }
+
+    // comment
+    if (!stage_metas.comment.value.empty()) {
+      render_scene.meta.comment = stage_metas.comment.value;
+    }
+
+    // copyright - Check if customLayerData contains copyright info
+    auto it = stage_metas.customLayerData.find("copyright");
+    if (it != stage_metas.customLayerData.end()) {
+      // Try to extract string value from MetaVariable
+      auto copyright_val = it->second.get_value<std::string>();
+      if (copyright_val) {
+        render_scene.meta.copyright = copyright_val.value();
+      }
+    }
+  }
+
   (*scene) = std::move(render_scene);
 
   // Report completion (100%)

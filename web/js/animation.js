@@ -13,9 +13,9 @@ const camera = new THREE.PerspectiveCamera(
 	75,
 	window.innerWidth / window.innerHeight,
 	0.1,
-	1000
+	10000
 );
-camera.position.set(5, 5, 5);
+camera.position.set(50, 50, 50);
 camera.lookAt(0, 0, 0);
 
 // Renderer
@@ -35,21 +35,21 @@ const ambientLight = new THREE.AmbientLight(0x404040, 1);
 scene.add(ambientLight);
 
 const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
-directionalLight.position.set(5, 10, 5);
+directionalLight.position.set(50, 100, 50);
 directionalLight.castShadow = true;
 directionalLight.shadow.mapSize.width = 2048;
 directionalLight.shadow.mapSize.height = 2048;
-directionalLight.shadow.camera.left = -10;
-directionalLight.shadow.camera.right = 10;
-directionalLight.shadow.camera.top = 10;
-directionalLight.shadow.camera.bottom = -10;
+directionalLight.shadow.camera.left = -100;
+directionalLight.shadow.camera.right = 100;
+directionalLight.shadow.camera.top = 100;
+directionalLight.shadow.camera.bottom = -100;
 directionalLight.shadow.camera.near = 0.5;
-directionalLight.shadow.camera.far = 50;
+directionalLight.shadow.camera.far = 500;
 directionalLight.shadow.bias = -0.0001; // Reduce shadow acne
 scene.add(directionalLight);
 
 // Ground plane
-const groundGeometry = new THREE.PlaneGeometry(20, 20);
+const groundGeometry = new THREE.PlaneGeometry(200, 200);
 const groundMaterial = new THREE.MeshStandardMaterial({
 	color: 0x333333,
 	roughness: 0.8,
@@ -61,7 +61,7 @@ ground.receiveShadow = true;
 scene.add(ground);
 
 // Grid helper
-const gridHelper = new THREE.GridHelper(20, 20, 0x666666, 0x444444);
+let gridHelper = new THREE.GridHelper(200, 20, 0x666666, 0x444444);
 scene.add(gridHelper);
 
 // Virtual root object for USD scene (name = "/")
@@ -75,6 +75,22 @@ let usdContentNode = null;
 
 // Store USD animations from the file
 let usdAnimations = [];
+
+// Store the current file's upAxis (Y or Z)
+let currentFileUpAxis = "Y";
+
+// Store the current scene metadata
+let currentSceneMetadata = {
+	upAxis: "Y",
+	metersPerUnit: 1.0,
+	framesPerSecond: 24.0,
+	timeCodesPerSecond: 24.0,
+	startTimeCode: null,
+	endTimeCode: null,
+	autoPlay: true,
+	comment: "",
+	copyright: ""
+};
 
 // Store bounding box helpers for each object
 const objectBBoxHelpers = new Map(); // uuid -> BoxHelper
@@ -439,7 +455,7 @@ async function loadUSDModel() {
 
 	//const usd_filename = "./assets/cube-animation.usda";
 	//const usd_filename = "./assets/hierarchical-node-animation.usdc";
-	const usd_filename = "./assets/test-001.usdc";
+	const usd_filename = "./assets/test-004.usdc";
 	//const usd_filename = "./assets/suzanne-xform.usdc";
 
 	// Load USD scene
@@ -447,6 +463,47 @@ async function loadUSDModel() {
 
 	// Get the default root node from USD
 	const usdRootNode = usd_scene.getDefaultRootNode();
+
+	// Get scene metadata from the USD file
+	const sceneMetadata = usd_scene.getSceneMetadata ? usd_scene.getSceneMetadata() : {};
+	const fileUpAxis = sceneMetadata.upAxis || "Y";
+	currentFileUpAxis = fileUpAxis; // Store globally for toggle function
+
+	// Store metadata globally
+	currentSceneMetadata = {
+		upAxis: fileUpAxis,
+		metersPerUnit: sceneMetadata.metersPerUnit || 1.0,
+		framesPerSecond: sceneMetadata.framesPerSecond || 24.0,
+		timeCodesPerSecond: sceneMetadata.timeCodesPerSecond || 24.0,
+		startTimeCode: sceneMetadata.startTimeCode,
+		endTimeCode: sceneMetadata.endTimeCode,
+		autoPlay: sceneMetadata.autoPlay !== undefined ? sceneMetadata.autoPlay : true,
+		comment: sceneMetadata.comment || "",
+		copyright: sceneMetadata.copyright || ""
+	};
+
+	console.log('=== USD Scene Metadata ===');
+	console.log(`upAxis: "${currentSceneMetadata.upAxis}"`);
+	console.log(`metersPerUnit: ${currentSceneMetadata.metersPerUnit}`);
+	console.log(`framesPerSecond: ${currentSceneMetadata.framesPerSecond}`);
+	console.log(`timeCodesPerSecond: ${currentSceneMetadata.timeCodesPerSecond}`);
+	if (currentSceneMetadata.startTimeCode !== null && currentSceneMetadata.startTimeCode !== undefined) {
+		console.log(`startTimeCode: ${currentSceneMetadata.startTimeCode}`);
+	}
+	if (currentSceneMetadata.endTimeCode !== null && currentSceneMetadata.endTimeCode !== undefined) {
+		console.log(`endTimeCode: ${currentSceneMetadata.endTimeCode}`);
+	}
+	console.log(`autoPlay: ${currentSceneMetadata.autoPlay}`);
+	if (currentSceneMetadata.comment) {
+		console.log(`comment: "${currentSceneMetadata.comment}"`);
+	}
+	if (currentSceneMetadata.copyright) {
+		console.log(`copyright: "${currentSceneMetadata.copyright}"`);
+	}
+	console.log('========================');
+
+	// Update metadata UI
+	updateMetadataUI();
 
 	// Create default material
 	const defaultMtl = TinyUSDZLoaderUtils.createDefaultMaterial();
@@ -471,13 +528,34 @@ async function loadUSDModel() {
 	// Add loaded USD scene to usdSceneRoot
 	usdSceneRoot.add(threeNode);
 
-	// Apply Z-up to Y-up conversion if enabled
-	if (animationParams.applyUpAxisConversion) {
+	// Apply Z-up to Y-up conversion if enabled AND the file is actually Z-up
+	if (animationParams.applyUpAxisConversion && fileUpAxis === "Z") {
 		usdSceneRoot.rotation.x = -Math.PI / 2;
+		console.log(`[loadUSDModel] Applied Z-up to Y-up conversion (file upAxis="${fileUpAxis}"): rotation.x =`, usdSceneRoot.rotation.x);
+	} else if (animationParams.applyUpAxisConversion && fileUpAxis !== "Y") {
+		console.warn(`[loadUSDModel] File upAxis is "${fileUpAxis}" (not Y or Z), no rotation applied`);
+	} else {
+		console.log(`[loadUSDModel] No upAxis conversion needed (file upAxis="${fileUpAxis}", conversion ${animationParams.applyUpAxisConversion ? 'enabled' : 'disabled'})`);
 	}
 
-	// Apply scene scale
-	usdSceneRoot.scale.set(animationParams.sceneScale, animationParams.sceneScale, animationParams.sceneScale);
+	// Debug: Log scene hierarchy transforms
+	console.log('=== Scene Hierarchy After UpAxis Conversion ===');
+	console.log('usdSceneRoot:', {
+		rotation: { x: usdSceneRoot.rotation.x, y: usdSceneRoot.rotation.y, z: usdSceneRoot.rotation.z },
+		position: { x: usdSceneRoot.position.x, y: usdSceneRoot.position.y, z: usdSceneRoot.position.z },
+		scale: { x: usdSceneRoot.scale.x, y: usdSceneRoot.scale.y, z: usdSceneRoot.scale.z }
+	});
+	if (threeNode) {
+		console.log('threeNode (usdContentNode):', {
+			rotation: { x: threeNode.rotation.x, y: threeNode.rotation.y, z: threeNode.rotation.z },
+			position: { x: threeNode.position.x, y: threeNode.position.y, z: threeNode.position.z },
+			scale: { x: threeNode.scale.x, y: threeNode.scale.y, z: threeNode.scale.z }
+		});
+	}
+	console.log('==============================================');
+
+	// Apply scene scale and update shadow frustum based on model bounds
+	animationParams.applySceneScale();
 
 	// Traverse and enable shadows for all meshes
 	usdSceneRoot.traverse((child) => {
@@ -512,19 +590,42 @@ async function loadUSDModel() {
 				console.log(`Animation ${index}: ${clip.name}, duration: ${clip.duration}s, tracks: ${clip.tracks.length}${typeStr}`);
 			});
 
-			// Set time range from first USD animation
-			const firstClip = usdAnimations[0];
-			if (firstClip && firstClip.duration > 0) {
-				animationParams.beginTime = 0;
-				animationParams.endTime = firstClip.duration;
-				animationParams.duration = firstClip.duration;
-				animationParams.time = 0; // Reset time to beginning
-				console.log(`Set time range from USD animation: 0s - ${firstClip.duration}s`);
+			// Set time range from metadata or first USD animation
+			let timeRangeSource = "animation";
+			let beginTime = 0;
+			let endTime = 0;
 
-				// Update GUI controllers if they exist
-				updateTimeRangeGUIControllers(firstClip.duration);
+			// Prefer metadata startTimeCode/endTimeCode if available
+			if (currentSceneMetadata.startTimeCode !== null && currentSceneMetadata.startTimeCode !== undefined &&
+			    currentSceneMetadata.endTimeCode !== null && currentSceneMetadata.endTimeCode !== undefined) {
+				beginTime = currentSceneMetadata.startTimeCode;
+				endTime = currentSceneMetadata.endTimeCode;
+				timeRangeSource = "metadata";
+			} else {
+				// Fallback to first animation clip duration
+				const firstClip = usdAnimations[0];
+				if (firstClip && firstClip.duration > 0) {
+					beginTime = 0;
+					endTime = firstClip.duration;
+				}
 			}
 
+			if (endTime > beginTime) {
+				animationParams.beginTime = beginTime;
+				animationParams.endTime = endTime;
+				animationParams.duration = endTime - beginTime;
+				animationParams.time = beginTime; // Reset time to beginning
+				console.log(`Set time range from ${timeRangeSource}: ${beginTime}s - ${endTime}s`);
+
+				// Update GUI controllers if they exist
+				updateTimeRangeGUIControllers(endTime);
+			}
+
+
+		// Set playback speed (FPS) from framesPerSecond metadata
+		const fps = currentSceneMetadata.framesPerSecond || 24.0;
+		animationParams.speed = fps;
+		console.log(`Set animation speed (FPS) from metadata: ${fps}`);
 			// Play all USD animations automatically
 			playAllUSDAnimations();
 		} else {
@@ -900,7 +1001,7 @@ const animationParams = {
 	},
 	reset: function() {
 		animationParams.time = animationParams.beginTime;
-		animationParams.speed = 1.0;
+		animationParams.speed = 24.0;
 
 		// Reset all animation actions
 		if (mixer) {
@@ -926,8 +1027,8 @@ const animationParams = {
 	time: 0,
 	beginTime: 0,
 	endTime: 10,
-	duration: 10, // seconds
-	speed: 1.0,
+	duration: 10, // timecodes
+	speed: 24.0, // FPS (frames per second)
 
 	// Rendering options
 	shadowsEnabled: true,
@@ -948,12 +1049,18 @@ const animationParams = {
 	// Up axis conversion (Z-up to Y-up)
 	applyUpAxisConversion: true,
 	toggleUpAxisConversion: function() {
-		if (this.applyUpAxisConversion) {
+		if (this.applyUpAxisConversion && currentFileUpAxis === "Z") {
 			// Apply Z-up to Y-up conversion (-90 degrees around X axis)
 			usdSceneRoot.rotation.x = -Math.PI / 2;
+			console.log(`[toggleUpAxisConversion] Applied Z-up to Y-up rotation (file upAxis="${currentFileUpAxis}"): usdSceneRoot.rotation.x =`, usdSceneRoot.rotation.x);
 		} else {
-			// Reset rotation
+			// Reset rotation (either disabled or file is already Y-up)
 			usdSceneRoot.rotation.x = 0;
+			if (this.applyUpAxisConversion && currentFileUpAxis !== "Z") {
+				console.log(`[toggleUpAxisConversion] No rotation needed (file upAxis="${currentFileUpAxis}"): usdSceneRoot.rotation.x =`, usdSceneRoot.rotation.x);
+			} else {
+				console.log(`[toggleUpAxisConversion] Reset rotation (conversion disabled): usdSceneRoot.rotation.x =`, usdSceneRoot.rotation.x);
+			}
 		}
 	},
 
@@ -1035,26 +1142,64 @@ const animationParams = {
 
 	// Scene scaling
 	sceneScale: 1.0,
+	applyMetersPerUnit: true, // Apply metersPerUnit scaling from USD metadata
 	applySceneScale: function() {
-		usdSceneRoot.scale.set(this.sceneScale, this.sceneScale, this.sceneScale);
+		// Calculate effective scale: user scale * metersPerUnit (if enabled)
+		let effectiveScale = this.sceneScale;
+		if (this.applyMetersPerUnit && currentSceneMetadata.metersPerUnit) {
+			effectiveScale *= currentSceneMetadata.metersPerUnit;
+			console.log(`Applying metersPerUnit: ${currentSceneMetadata.metersPerUnit} (effective scale: ${effectiveScale})`);
+		}
 
-		// Adjust shadow camera frustum based on scene scale
-		// The base frustum is [-10, 10] for scale 1.0
-		// Scale it proportionally to cover the scaled scene
-		const baseFrustumSize = 10;
-		const frustumSize = baseFrustumSize * this.sceneScale;
+		usdSceneRoot.scale.set(effectiveScale, effectiveScale, effectiveScale);
 
-		directionalLight.shadow.camera.left = -frustumSize;
-		directionalLight.shadow.camera.right = frustumSize;
-		directionalLight.shadow.camera.top = frustumSize;
-		directionalLight.shadow.camera.bottom = -frustumSize;
-		directionalLight.shadow.camera.near = 0.5;
-		directionalLight.shadow.camera.far = 50 * this.sceneScale;
+		// Calculate shadow camera frustum based on actual scene bounds
+		// This ensures shadows work correctly regardless of model size
+		if (usdContentNode) {
+			// Compute bounding box of the USD content
+			const bbox = new THREE.Box3().setFromObject(usdContentNode);
 
-		// Update the shadow camera projection matrix
-		directionalLight.shadow.camera.updateProjectionMatrix();
+			// Apply current scale to the bounding box
+			const scaledMin = bbox.min.clone().multiplyScalar(effectiveScale);
+			const scaledMax = bbox.max.clone().multiplyScalar(effectiveScale);
 
-		console.log(`Shadow camera frustum updated for scale ${this.sceneScale}: [-${frustumSize}, ${frustumSize}]`);
+			// Add padding (20% extra) to ensure shadows aren't clipped
+			const padding = 1.2;
+			const size = scaledMax.clone().sub(scaledMin).multiplyScalar(padding / 2);
+
+			// Set frustum to cover the entire scaled scene
+			const maxSize = Math.max(size.x, size.y, size.z);
+			directionalLight.shadow.camera.left = -maxSize;
+			directionalLight.shadow.camera.right = maxSize;
+			directionalLight.shadow.camera.top = maxSize;
+			directionalLight.shadow.camera.bottom = -maxSize;
+			directionalLight.shadow.camera.near = 0.5;
+			directionalLight.shadow.camera.far = maxSize * 4; // Far enough to cover tall objects
+
+			// Update the shadow camera projection matrix
+			directionalLight.shadow.camera.updateProjectionMatrix();
+
+			console.log(`Shadow camera frustum updated for scale ${effectiveScale}:`, {
+				bbox: { min: scaledMin, max: scaledMax },
+				frustumSize: maxSize,
+				far: maxSize * 4
+			});
+		} else {
+			// Fallback if usdContentNode not yet loaded
+			const baseFrustumSize = 100;
+			const frustumSize = baseFrustumSize * effectiveScale;
+
+			directionalLight.shadow.camera.left = -frustumSize;
+			directionalLight.shadow.camera.right = frustumSize;
+			directionalLight.shadow.camera.top = frustumSize;
+			directionalLight.shadow.camera.bottom = -frustumSize;
+			directionalLight.shadow.camera.near = 0.5;
+			directionalLight.shadow.camera.far = 500 * effectiveScale;
+
+			directionalLight.shadow.camera.updateProjectionMatrix();
+
+			console.log(`Shadow camera frustum updated (fallback) for scale ${effectiveScale}: [-${frustumSize}, ${frustumSize}]`);
+		}
 	},
 	setScalePreset_0_1: function() {
 		this.sceneScale = 0.1;
@@ -1081,6 +1226,10 @@ const animationParams = {
 		}
 	},
 
+	// Fit to scene
+	fitToScene: function() {
+		fitToScene();
+	},
 
 	// Update functions
 	updateDuration: function() {
@@ -1101,7 +1250,7 @@ let endTimeController = null;
 const playbackFolder = gui.addFolder('Playback');
 playbackFolder.add(animationParams, 'playPause').name('Play / Pause');
 playbackFolder.add(animationParams, 'reset').name('Reset');
-playbackFolder.add(animationParams, 'speed', 0.1, 100, 0.1).name('Speed');
+playbackFolder.add(animationParams, 'speed', 0.1, 100, 0.1).name('Speed (FPS)').listen();
 timelineController = playbackFolder.add(animationParams, 'time', 0, 30, 0.01)
 	.name('Timeline')
 	.listen()
@@ -1193,7 +1342,7 @@ timelineController = playbackFolder.add(animationParams, 'time', 0, 30, 0.01)
 
 // Time range controls (nested inside Playback folder)
 beginTimeController = playbackFolder.add(animationParams, 'beginTime', 0, 29, 0.1)
-	.name('Begin Time (s)')
+	.name('Begin TimeCode')
 	.onChange(() => {
 		if (animationParams.beginTime >= animationParams.endTime) {
 			animationParams.beginTime = animationParams.endTime - 0.1;
@@ -1201,7 +1350,7 @@ beginTimeController = playbackFolder.add(animationParams, 'beginTime', 0, 29, 0.
 		animationParams.updateDuration();
 	});
 endTimeController = playbackFolder.add(animationParams, 'endTime', 0.1, 30, 0.1)
-	.name('End Time (s)')
+	.name('End TimeCode')
 	.onChange(() => {
 		if (animationParams.endTime <= animationParams.beginTime) {
 			animationParams.endTime = animationParams.beginTime + 0.1;
@@ -1209,7 +1358,7 @@ endTimeController = playbackFolder.add(animationParams, 'endTime', 0.1, 30, 0.1)
 		animationParams.updateDuration();
 	});
 playbackFolder.add(animationParams, 'duration', 0.1, 30, 0.1)
-	.name('Duration (s)')
+	.name('Duration')
 	.listen()
 	.disable();
 
@@ -1229,6 +1378,8 @@ renderingFolder.add(animationParams, 'doubleSided')
 renderingFolder.add(animationParams, 'showNormals')
 	.name('Show Normals')
 	.onChange(() => animationParams.toggleNormalVisualization());
+renderingFolder.add(animationParams, 'fitToScene')
+	.name('Fit to Scene');
 
 // Scene scaling controls
 const scaleFolder = renderingFolder.addFolder('Scene Scale');
@@ -1236,12 +1387,20 @@ scaleFolder.add(animationParams, 'sceneScale', 0.01, 100, 0.01)
 	.name('Scale')
 	.onChange(() => animationParams.applySceneScale())
 	.listen();
+scaleFolder.add(animationParams, 'applyMetersPerUnit')
+	.name('Apply metersPerUnit')
+	.onChange(() => animationParams.applySceneScale());
 scaleFolder.add(animationParams, 'setScalePreset_0_1').name('Scale: 1/10 (0.1x)');
 scaleFolder.add(animationParams, 'setScalePreset_1_0').name('Scale: 1/1 (1.0x)');
 scaleFolder.add(animationParams, 'setScalePreset_10_0').name('Scale: 10/1 (10x)');
 scaleFolder.open();
 
 renderingFolder.open();
+
+// Scene Metadata - will be populated dynamically
+const metadataFolder = gui.addFolder('Scene Metadata');
+window.metadataFolder = metadataFolder;
+metadataFolder.hide(); // Hide until scene is loaded
 
 // Scene Graph Tree - will be populated dynamically
 const sceneGraphFolder = gui.addFolder('Scene Graph');
@@ -1271,6 +1430,155 @@ function updateTimeRangeGUIControllers(maxDuration) {
 	}
 
 	console.log(`Updated GUI time range to 0-${newMax}s`);
+}
+
+// Function to update scene metadata UI
+function updateMetadataUI() {
+	if (!window.metadataFolder) return;
+
+	// Clear existing controls
+	window.metadataFolder.controllers.forEach(c => c.destroy());
+
+	// Create read-only display object
+	const metadataDisplay = {
+		upAxis: currentSceneMetadata.upAxis,
+		metersPerUnit: currentSceneMetadata.metersPerUnit,
+		framesPerSecond: currentSceneMetadata.framesPerSecond,
+		timeCodesPerSecond: currentSceneMetadata.timeCodesPerSecond,
+		startTimeCode: currentSceneMetadata.startTimeCode !== null ? currentSceneMetadata.startTimeCode.toFixed(2) : "N/A",
+		endTimeCode: currentSceneMetadata.endTimeCode !== null ? currentSceneMetadata.endTimeCode.toFixed(2) : "N/A",
+		autoPlay: currentSceneMetadata.autoPlay,
+		comment: currentSceneMetadata.comment || "N/A",
+		copyright: currentSceneMetadata.copyright || "N/A"
+	};
+
+	// Add read-only controllers
+	window.metadataFolder.add(metadataDisplay, 'upAxis').name('Up Axis').disable().listen();
+	window.metadataFolder.add(metadataDisplay, 'metersPerUnit').name('Meters Per Unit').disable().listen();
+	window.metadataFolder.add(metadataDisplay, 'framesPerSecond').name('FPS').disable().listen();
+	window.metadataFolder.add(metadataDisplay, 'timeCodesPerSecond').name('Timecodes/sec').disable().listen();
+	window.metadataFolder.add(metadataDisplay, 'startTimeCode').name('Start TimeCode').disable().listen();
+	window.metadataFolder.add(metadataDisplay, 'endTimeCode').name('End TimeCode').disable().listen();
+	window.metadataFolder.add(metadataDisplay, 'autoPlay').name('Auto Play').disable().listen();
+
+	if (currentSceneMetadata.comment) {
+		window.metadataFolder.add(metadataDisplay, 'comment').name('Comment').disable().listen();
+	}
+	if (currentSceneMetadata.copyright) {
+		window.metadataFolder.add(metadataDisplay, 'copyright').name('Copyright').disable().listen();
+	}
+
+	window.metadataFolder.show();
+	console.log('Scene metadata UI updated');
+}
+
+// Fit camera, grid, and shadows to scene bounds
+function fitToScene() {
+	// Compute bounding box of USD scene content
+	const bbox = new THREE.Box3();
+
+	if (usdContentNode && usdContentNode.children.length > 0) {
+		bbox.setFromObject(usdContentNode);
+	} else if (usdSceneRoot && usdSceneRoot.children.length > 0) {
+		bbox.setFromObject(usdSceneRoot);
+	} else {
+		console.warn('No scene content to fit to');
+		return;
+	}
+
+	// Check if bounding box is valid
+	if (bbox.isEmpty()) {
+		console.warn('Scene bounding box is empty');
+		return;
+	}
+
+	// Get bounding box dimensions
+	const size = new THREE.Vector3();
+	const center = new THREE.Vector3();
+	bbox.getSize(size);
+	bbox.getCenter(center);
+
+	console.log('Scene bounds:', {
+		min: bbox.min,
+		max: bbox.max,
+		size: size,
+		center: center
+	});
+
+	// Calculate the maximum dimension
+	const maxDim = Math.max(size.x, size.y, size.z);
+
+	// Calculate camera distance to fit the scene
+	// Use field of view to determine appropriate distance
+	const fov = camera.fov * (Math.PI / 180); // Convert to radians
+	const cameraDistance = Math.abs(maxDim / Math.sin(fov / 2)) * 0.7; // 0.7 for some padding
+
+	// Position camera at a nice viewing angle (similar to current position ratio)
+	const cameraOffset = new THREE.Vector3(1, 1, 1).normalize().multiplyScalar(cameraDistance);
+	const newCameraPos = center.clone().add(cameraOffset);
+
+	// Update camera position
+	camera.position.copy(newCameraPos);
+
+	// Update OrbitControls target to look at scene center
+	controls.target.copy(center);
+	controls.update();
+
+	console.log('Camera fitted:', {
+		position: newCameraPos,
+		target: center,
+		distance: cameraDistance
+	});
+
+	// Update grid size to match scene bounds (with some padding)
+	const gridSize = Math.ceil(maxDim * 2.5); // 2.5x padding for context
+	const gridDivisions = 20;
+
+	// Remove old grid
+	scene.remove(gridHelper);
+
+	// Create new grid at scene center height (Y position)
+	gridHelper = new THREE.GridHelper(gridSize, gridDivisions, 0x666666, 0x444444);
+	gridHelper.position.y = center.y;
+	scene.add(gridHelper);
+
+	console.log('Grid updated:', {
+		size: gridSize,
+		divisions: gridDivisions,
+		divisionSize: gridSize / gridDivisions,
+		centerY: center.y
+	});
+
+	// Update ground plane to match grid
+	ground.geometry.dispose();
+	ground.geometry = new THREE.PlaneGeometry(gridSize, gridSize);
+	ground.position.y = center.y;
+
+	// Update shadow frustum to cover the scene (with padding)
+	const shadowSize = maxDim * 1.5; // 1.5x padding for shadows
+	directionalLight.shadow.camera.left = -shadowSize;
+	directionalLight.shadow.camera.right = shadowSize;
+	directionalLight.shadow.camera.top = shadowSize;
+	directionalLight.shadow.camera.bottom = -shadowSize;
+	directionalLight.shadow.camera.near = 0.5;
+	directionalLight.shadow.camera.far = cameraDistance * 3;
+	directionalLight.shadow.camera.updateProjectionMatrix();
+
+	// Position directional light relative to scene
+	const lightDistance = cameraDistance * 0.8;
+	directionalLight.position.set(
+		center.x + lightDistance * 0.5,
+		center.y + lightDistance,
+		center.z + lightDistance * 0.5
+	);
+
+	console.log('Shadows updated:', {
+		frustumSize: shadowSize,
+		lightPosition: directionalLight.position,
+		far: cameraDistance * 3
+	});
+
+	console.log('✓ Fit to scene complete');
 }
 
 // Info folder
@@ -1334,6 +1642,47 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 	// Get the default root node from USD
 	const usdRootNode = usd_scene.getDefaultRootNode();
 
+	// Get scene metadata from the USD file
+	const sceneMetadata = usd_scene.getSceneMetadata ? usd_scene.getSceneMetadata() : {};
+	const fileUpAxis = sceneMetadata.upAxis || "Y";
+	currentFileUpAxis = fileUpAxis; // Store globally for toggle function
+
+	// Store metadata globally
+	currentSceneMetadata = {
+		upAxis: fileUpAxis,
+		metersPerUnit: sceneMetadata.metersPerUnit || 1.0,
+		framesPerSecond: sceneMetadata.framesPerSecond || 24.0,
+		timeCodesPerSecond: sceneMetadata.timeCodesPerSecond || 24.0,
+		startTimeCode: sceneMetadata.startTimeCode,
+		endTimeCode: sceneMetadata.endTimeCode,
+		autoPlay: sceneMetadata.autoPlay !== undefined ? sceneMetadata.autoPlay : true,
+		comment: sceneMetadata.comment || "",
+		copyright: sceneMetadata.copyright || ""
+	};
+
+	console.log('=== USD Scene Metadata ===');
+	console.log(`upAxis: "${currentSceneMetadata.upAxis}"`);
+	console.log(`metersPerUnit: ${currentSceneMetadata.metersPerUnit}`);
+	console.log(`framesPerSecond: ${currentSceneMetadata.framesPerSecond}`);
+	console.log(`timeCodesPerSecond: ${currentSceneMetadata.timeCodesPerSecond}`);
+	if (currentSceneMetadata.startTimeCode !== null && currentSceneMetadata.startTimeCode !== undefined) {
+		console.log(`startTimeCode: ${currentSceneMetadata.startTimeCode}`);
+	}
+	if (currentSceneMetadata.endTimeCode !== null && currentSceneMetadata.endTimeCode !== undefined) {
+		console.log(`endTimeCode: ${currentSceneMetadata.endTimeCode}`);
+	}
+	console.log(`autoPlay: ${currentSceneMetadata.autoPlay}`);
+	if (currentSceneMetadata.comment) {
+		console.log(`comment: "${currentSceneMetadata.comment}"`);
+	}
+	if (currentSceneMetadata.copyright) {
+		console.log(`copyright: "${currentSceneMetadata.copyright}"`);
+	}
+	console.log('========================');
+
+	// Update metadata UI
+	updateMetadataUI();
+
 	// Create default material
 	const defaultMtl = TinyUSDZLoaderUtils.createDefaultMaterial();
 
@@ -1361,13 +1710,18 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 	});
 	console.log('=================================');
 
-	// Apply Z-up to Y-up conversion if enabled
-	if (animationParams.applyUpAxisConversion) {
+	// Apply Z-up to Y-up conversion if enabled AND the file is actually Z-up
+	if (animationParams.applyUpAxisConversion && fileUpAxis === "Z") {
 		usdSceneRoot.rotation.x = -Math.PI / 2;
+		console.log(`[loadUSDFromArrayBuffer] Applied Z-up to Y-up conversion (file upAxis="${fileUpAxis}"): rotation.x =`, usdSceneRoot.rotation.x);
+	} else if (animationParams.applyUpAxisConversion && fileUpAxis !== "Y") {
+		console.warn(`[loadUSDFromArrayBuffer] File upAxis is "${fileUpAxis}" (not Y or Z), no rotation applied`);
+	} else {
+		console.log(`[loadUSDFromArrayBuffer] No upAxis conversion needed (file upAxis="${fileUpAxis}", conversion ${animationParams.applyUpAxisConversion ? 'enabled' : 'disabled'})`);
 	}
 
-	// Apply scene scale
-	usdSceneRoot.scale.set(animationParams.sceneScale, animationParams.sceneScale, animationParams.sceneScale);
+	// Apply scene scale and update shadow frustum based on model bounds
+	animationParams.applySceneScale();
 
 	// Traverse and enable shadows for all meshes
 	usdSceneRoot.traverse((child) => {
@@ -1402,19 +1756,42 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 				console.log(`Animation ${index}: ${clip.name}, duration: ${clip.duration}s, tracks: ${clip.tracks.length}${typeStr}`);
 			});
 
-			// Set time range from first USD animation
-			const firstClip = usdAnimations[0];
-			if (firstClip && firstClip.duration > 0) {
-				animationParams.beginTime = 0;
-				animationParams.endTime = firstClip.duration;
-				animationParams.duration = firstClip.duration;
-				animationParams.time = 0; // Reset time to beginning
-				console.log(`Set time range from USD animation: 0s - ${firstClip.duration}s`);
+			// Set time range from metadata or first USD animation
+			let timeRangeSource = "animation";
+			let beginTime = 0;
+			let endTime = 0;
 
-				// Update GUI controllers if they exist
-				updateTimeRangeGUIControllers(firstClip.duration);
+			// Prefer metadata startTimeCode/endTimeCode if available
+			if (currentSceneMetadata.startTimeCode !== null && currentSceneMetadata.startTimeCode !== undefined &&
+			    currentSceneMetadata.endTimeCode !== null && currentSceneMetadata.endTimeCode !== undefined) {
+				beginTime = currentSceneMetadata.startTimeCode;
+				endTime = currentSceneMetadata.endTimeCode;
+				timeRangeSource = "metadata";
+			} else {
+				// Fallback to first animation clip duration
+				const firstClip = usdAnimations[0];
+				if (firstClip && firstClip.duration > 0) {
+					beginTime = 0;
+					endTime = firstClip.duration;
+				}
 			}
 
+			if (endTime > beginTime) {
+				animationParams.beginTime = beginTime;
+				animationParams.endTime = endTime;
+				animationParams.duration = endTime - beginTime;
+				animationParams.time = beginTime; // Reset time to beginning
+				console.log(`Set time range from ${timeRangeSource}: ${beginTime}s - ${endTime}s`);
+
+				// Update GUI controllers if they exist
+				updateTimeRangeGUIControllers(endTime);
+			}
+
+
+		// Set playback speed (FPS) from framesPerSecond metadata
+		const fps = currentSceneMetadata.framesPerSecond || 24.0;
+		animationParams.speed = fps;
+		console.log(`Set animation speed (FPS) from metadata: ${fps}`);
 			// Play all USD animations automatically
 			playAllUSDAnimations();
 		} else {
