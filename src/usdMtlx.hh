@@ -39,6 +39,14 @@ enum class ColorSpace {
 
 } // namespace mtlx
 
+// MaterialX shader input connection information
+struct MtlxShaderConnection {
+  std::string input_name;      // e.g., "base_color"
+  std::string nodegraph;        // Reference to nodegraph name (if using nodegraph output)
+  std::string output;           // Output name from nodegraph (e.g., "out_color")
+  std::string nodename;         // Direct node reference (alternative to nodegraph)
+};
+
 // <surfacematerial>
 struct MtlxMaterial {
   std::string name;
@@ -62,10 +70,12 @@ struct MtlxModel {
 
   // Content of shader.
   // MtlxUsdPreviewSurface or MtlxAutodeskStandardSurface
-  value::Value shader; 
+  value::Value shader;
 
   std::map<std::string, MtlxMaterial> surface_materials;
   std::map<std::string, value::Value> shaders; // MtlxUsdPreviewSurface, MtlxAutodeskStandardSurface, or OpenPBRSurface
+  std::map<std::string, PrimSpec> nodegraphs; // NodeGraph PrimSpecs
+  std::map<std::string, std::vector<MtlxShaderConnection>> shader_connections; // Shader name -> list of connections
 };
 
 struct MtlxUsdPreviewSurface : UsdPreviewSurface {
