@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache 2.0
 
-#include "../include/mtlx-xml-parser.hh"
+#include "mtlx-xml-parser.hh"
 #include <fstream>
 #include <sstream>
 #include <algorithm>
@@ -334,13 +334,20 @@ bool XMLDocument::ParseNode(XMLTokenizer& tokenizer, XMLNodePtr parent) {
         // Unexpected end of document
         error_ = "Unexpected end of document while parsing <" + parent->GetName() + ">";
         return false;
-      
-      default:
-        error_ = "Unexpected token type";
+
+      case TokenType::Error:
+        error_ = "Tokenizer error";
+        return false;
+
+      case TokenType::SelfClosingTag:
+      case TokenType::Attribute:
+      case TokenType::ProcessingInstruction:
+        // These are handled within other token processing
+        error_ = "Unexpected token type at this position";
         return false;
     }
   }
-  
+
   return true;
 }
 
@@ -436,13 +443,18 @@ std::string MaterialXParser::GetNamespace() const {
   return "";
 }
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wexit-time-destructors"
+#endif
+
 bool MaterialXParser::ValidateVersion(const std::string& version) {
   // MaterialX versions we support
   static const std::vector<std::string> supported_versions = {
     "1.38", "1.37", "1.36"
   };
-  
-  return std::find(supported_versions.begin(), supported_versions.end(), version) != 
+
+  return std::find(supported_versions.begin(), supported_versions.end(), version) !=
          supported_versions.end();
 }
 
@@ -495,10 +507,15 @@ bool MaterialXParser::ValidateType(const std::string& type_name) {
     "surfaceshader", "displacementshader", "volumeshader",
     "lightshader", "geomname", "geomnamearray"
   };
-  
-  return std::find(valid_types.begin(), valid_types.end(), type_name) != 
+
+  return std::find(valid_types.begin(), valid_types.end(), type_name) !=
          valid_types.end();
 }
 
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+
 } // namespace mtlx
 } // namespace tinyusdz
+

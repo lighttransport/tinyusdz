@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache 2.0
 
-#include "../include/mtlx-dom.hh"
+#include "mtlx-dom.hh"
 #include <fstream>
 #include <sstream>
 #include <algorithm>
