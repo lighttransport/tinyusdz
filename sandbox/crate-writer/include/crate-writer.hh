@@ -211,7 +211,7 @@ private:
   // ======================================================================
 
   std::string filepath_;
-  std::ofstream file_;
+  std::fstream file_;  // Changed from ofstream to support read+write for bootstrap
   Options options_;
 
   bool is_open_ = false;
