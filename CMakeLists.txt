@@ -447,6 +447,10 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/usdShade.cc
     ${PROJECT_SOURCE_DIR}/src/usdLux.cc
     # usdMtlX has less dependency(pugixml), so add it to core component
+    ${PROJECT_SOURCE_DIR}/src/mtlx-xml-tokenizer.cc
+    ${PROJECT_SOURCE_DIR}/src/mtlx-xml-parser.cc
+    ${PROJECT_SOURCE_DIR}/src/mtlx-dom.cc
+    ${PROJECT_SOURCE_DIR}/src/mtlx-simple-parser.cc
     ${PROJECT_SOURCE_DIR}/src/usdMtlx.cc
     ${PROJECT_SOURCE_DIR}/src/usdObj.cc
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
