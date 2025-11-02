@@ -632,51 +632,86 @@ bool CrateWriter::WriteStringsSection(std::string* err) {
 bool CrateWriter::WriteFieldsSection(std::string* err) {
   int64_t section_start = Tell();
 
+  // IMPORTANT: Format for v0.4.0+ (we target v0.7.0+):
+  // 1. uint64_t numFields
+  // 2. uint64_t tokenIndicesCompressedSize
+  // 3. Compressed token indices (using Usd_IntegerCompression)
+  // 4. uint64_t repsSize
+  // 5. Compressed value reps (using TfFastCompression)
+  //
+  // This differs from older versions which mixed token indices and value reps.
+  // See: pxr/usd/sdf/crateFile.cpp _ReadFields() and _WriteFields()
+
+  size_t num_fields = fields_.size();
+
   // Write field count
-  uint64_t field_count = static_cast<uint64_t>(fields_.size());
+  uint64_t field_count = static_cast<uint64_t>(num_fields);
   if (!Write(field_count)) {
     if (err) *err = "Failed to write field count";
     return false;
   }
 
-  // Build fields data buffer
-  std::vector<char> fields_data;
-  size_t fields_size = fields_.size() * (sizeof(crate::TokenIndex) + sizeof(crate::ValueRep));
-  fields_data.reserve(fields_size);
+  // Separate token indices from value reps
+  std::vector<uint32_t> token_indices;
+  std::vector<uint64_t> value_reps;
+  token_indices.reserve(num_fields);
+  value_reps.reserve(num_fields);
 
   for (const auto& field : fields_) {
-    // Append token index
-    const char* ti_bytes = reinterpret_cast<const char*>(&field.token_index);
-    fields_data.insert(fields_data.end(), ti_bytes, ti_bytes + sizeof(crate::TokenIndex));
-
-    // Append value rep
-    const char* vr_bytes = reinterpret_cast<const char*>(&field.value_rep);
-    fields_data.insert(fields_data.end(), vr_bytes, vr_bytes + sizeof(crate::ValueRep));
+    token_indices.push_back(field.token_index.value);
+    value_reps.push_back(field.value_rep.GetData());
   }
 
-  // Phase 4: Compress fields data
-  std::vector<char> compressed_fields;
-  if (!CompressData(fields_data.data(), fields_data.size(), &compressed_fields, err)) {
-    if (err) *err = "Failed to compress fields data: " + *err;
+  // Compress token indices using Usd_IntegerCompression
+  size_t token_indices_compressed_buffer_size =
+      Usd_IntegerCompression::GetCompressedBufferSize(num_fields);
+  std::vector<char> compressed_token_indices(token_indices_compressed_buffer_size);
+
+  std::string compress_err;
+  size_t token_indices_compressed_size = Usd_IntegerCompression::CompressToBuffer(
+      token_indices.data(), num_fields,
+      compressed_token_indices.data(), &compress_err);
+
+  if (token_indices_compressed_size == 0) {
+    if (err) *err = "Failed to compress token indices: " + compress_err;
     return false;
   }
 
-  // Write compressed format
-  uint64_t uncompressed_size = static_cast<uint64_t>(fields_data.size());
-  uint64_t compressed_size = static_cast<uint64_t>(compressed_fields.size());
+  compressed_token_indices.resize(token_indices_compressed_size);
 
-  if (!Write(uncompressed_size)) {
-    if (err) *err = "Failed to write fields uncompressed size";
+  // Write tokenIndicesCompressedSize
+  uint64_t token_indices_size = static_cast<uint64_t>(token_indices_compressed_size);
+  if (!Write(token_indices_size)) {
+    if (err) *err = "Failed to write token indices compressed size";
     return false;
   }
 
-  if (!Write(compressed_size)) {
-    if (err) *err = "Failed to write fields compressed size";
+  // Write compressed token indices
+  if (!WriteBytes(compressed_token_indices.data(), token_indices_compressed_size)) {
+    if (err) *err = "Failed to write compressed token indices";
     return false;
   }
 
-  if (!WriteBytes(compressed_fields.data(), compressed_fields.size())) {
-    if (err) *err = "Failed to write compressed fields data";
+  // Compress value reps using TfFastCompression (our CompressData)
+  const char* reps_data = reinterpret_cast<const char*>(value_reps.data());
+  size_t reps_data_size = value_reps.size() * sizeof(uint64_t);
+
+  std::vector<char> compressed_reps;
+  if (!CompressData(reps_data, reps_data_size, &compressed_reps, err)) {
+    if (err) *err = "Failed to compress value reps: " + *err;
+    return false;
+  }
+
+  // Write repsSize
+  uint64_t reps_size = static_cast<uint64_t>(compressed_reps.size());
+  if (!Write(reps_size)) {
+    if (err) *err = "Failed to write value reps size";
+    return false;
+  }
+
+  // Write compressed value reps
+  if (!WriteBytes(compressed_reps.data(), compressed_reps.size())) {
+    if (err) *err = "Failed to write compressed value reps";
     return false;
   }
 
@@ -691,49 +726,66 @@ bool CrateWriter::WriteFieldsSection(std::string* err) {
 bool CrateWriter::WriteFieldSetsSection(std::string* err) {
   int64_t section_start = Tell();
 
-  // Write fieldset count
-  uint64_t fieldset_count = static_cast<uint64_t>(fieldsets_.size());
-  if (!Write(fieldset_count)) {
-    if (err) *err = "Failed to write fieldset count";
-    return false;
-  }
+  // IMPORTANT: Format for v0.4.0+ (we target v0.7.0+):
+  // 1. uint64_t numFieldSetVals (total number of FieldIndex values)
+  // 2. uint64_t compressedSize (size of compressed data)
+  // 3. Compressed field index array (using Usd_IntegerCompression)
+  //
+  // Fieldsets are stored as a flat array of FieldIndex values.
+  // Each fieldset is terminated by a default-constructed FieldIndex.
+  //
+  // See: pxr/usd/sdf/crateFile.cpp _WriteFieldSets()
 
-  // Build fieldsets data buffer (null-terminated lists)
-  std::vector<char> fieldsets_data;
-  for (const auto& fieldset : fieldsets_) {
+  std::cerr << "DEBUG: WriteFieldSetsSection with " << fieldsets_.size() << " fieldsets" << std::endl;
+
+  // Flatten all fieldsets into a single array with terminators
+  std::vector<uint32_t> fieldset_vals;
+  for (size_t i = 0; i < fieldsets_.size(); ++i) {
+    const auto& fieldset = fieldsets_[i];
+    std::cerr << "  Fieldset[" << i << "]: size=" << fieldset.size() << " values: [";
     for (const auto& field_idx : fieldset) {
-      const char* bytes = reinterpret_cast<const char*>(&field_idx);
-      fieldsets_data.insert(fieldsets_data.end(), bytes, bytes + sizeof(crate::FieldIndex));
+      std::cerr << field_idx.value << " ";
+      fieldset_vals.push_back(field_idx.value);
     }
-    // Write terminator (index with value ~0u)
-    crate::FieldIndex terminator;
-    const char* term_bytes = reinterpret_cast<const char*>(&terminator);
-    fieldsets_data.insert(fieldsets_data.end(), term_bytes, term_bytes + sizeof(crate::FieldIndex));
+    // Write terminator (default FieldIndex() has value ~0u)
+    fieldset_vals.push_back(~0u);
+    std::cerr << "~0u]" << std::endl;
   }
 
-  // Phase 4: Compress fieldsets data
-  std::vector<char> compressed_fieldsets;
-  if (!CompressData(fieldsets_data.data(), fieldsets_data.size(), &compressed_fieldsets, err)) {
-    if (err) *err = "Failed to compress fieldsets data: " + *err;
+  std::cerr << "DEBUG: Total fieldset_vals = " << fieldset_vals.size() << std::endl;
+
+  size_t num_vals = fieldset_vals.size();
+
+  // Write total number of field index values
+  uint64_t val_count = static_cast<uint64_t>(num_vals);
+  if (!Write(val_count)) {
+    if (err) *err = "Failed to write fieldset value count";
     return false;
   }
 
-  // Write compressed format
-  uint64_t uncompressed_size = static_cast<uint64_t>(fieldsets_data.size());
-  uint64_t compressed_size = static_cast<uint64_t>(compressed_fieldsets.size());
+  // Compress fieldset values using Usd_IntegerCompression
+  size_t buffer_size = Usd_IntegerCompression::GetCompressedBufferSize(num_vals);
+  std::vector<char> compressed(buffer_size);
 
-  if (!Write(uncompressed_size)) {
-    if (err) *err = "Failed to write fieldsets uncompressed size";
+  std::string compress_err;
+  size_t compressed_size = Usd_IntegerCompression::CompressToBuffer(
+      fieldset_vals.data(), num_vals, compressed.data(), &compress_err);
+
+  if (compressed_size == 0) {
+    if (err) *err = "Failed to compress fieldset values: " + compress_err;
     return false;
   }
 
-  if (!Write(compressed_size)) {
-    if (err) *err = "Failed to write fieldsets compressed size";
+  // Write compressed size
+  uint64_t size = static_cast<uint64_t>(compressed_size);
+  if (!Write(size)) {
+    if (err) *err = "Failed to write compressed size";
     return false;
   }
 
-  if (!WriteBytes(compressed_fieldsets.data(), compressed_fieldsets.size())) {
-    if (err) *err = "Failed to write compressed fieldsets data";
+  // Write compressed data
+  if (!WriteBytes(compressed.data(), compressed_size)) {
+    if (err) *err = "Failed to write compressed fieldset data";
     return false;
   }
 
@@ -748,6 +800,14 @@ bool CrateWriter::WriteFieldSetsSection(std::string* err) {
 bool CrateWriter::WritePathsSection(std::string* err) {
   int64_t section_start = Tell();
 
+  // IMPORTANT: Format for v0.4.0+ (we target v0.7.0+):
+  // 1. uint64_t numPaths
+  // 2. For each of three arrays (pathIndexes, elementTokenIndexes, jumps):
+  //    - uint64_t arrayCompressedSize
+  //    - Compressed array data (using Usd_IntegerCompression)
+  //
+  // See: pxr/usd/sdf/crateFile.cpp _WriteCompressedPathData()
+
   // Use the path sorting and encoding library
   // Convert TinyUSDZ Path to SimplePath for encoding
   std::vector<pathlib::SimplePath> simple_paths;
@@ -761,62 +821,82 @@ bool CrateWriter::WritePathsSection(std::string* err) {
   // Encode to compressed tree
   pathlib::CompressedPathTree tree = pathlib::EncodePaths(simple_paths);
 
-  // Write the compressed tree
-  // Format: count + three arrays
-
+  // Write path count
   uint64_t path_count = static_cast<uint64_t>(tree.size());
   if (!Write(path_count)) {
     if (err) *err = "Failed to write path count";
     return false;
   }
 
-  // Build paths data buffer (three arrays concatenated)
-  std::vector<char> paths_data;
-  size_t array_sizes = tree.size() * (sizeof(pathlib::PathIndex) + sizeof(pathlib::TokenIndex) + sizeof(int32_t));
-  paths_data.reserve(array_sizes);
-
-  // Append path_indexes array
-  for (size_t i = 0; i < tree.size(); ++i) {
-    const char* bytes = reinterpret_cast<const char*>(&tree.path_indexes[i]);
-    paths_data.insert(paths_data.end(), bytes, bytes + sizeof(pathlib::PathIndex));
+  // Convert path_indexes from uint64_t to uint32_t
+  // (USD paths typically won't exceed 2^32 entries)
+  std::vector<uint32_t> path_indexes_32(tree.path_indexes.size());
+  for (size_t i = 0; i < tree.path_indexes.size(); ++i) {
+    path_indexes_32[i] = static_cast<uint32_t>(tree.path_indexes[i]);
   }
 
-  // Append element_token_indexes array
-  for (size_t i = 0; i < tree.size(); ++i) {
-    const char* bytes = reinterpret_cast<const char*>(&tree.element_token_indexes[i]);
-    paths_data.insert(paths_data.end(), bytes, bytes + sizeof(pathlib::TokenIndex));
+  // Compress and write pathIndexes array (uint32_t)
+  {
+    size_t buffer_size = Usd_IntegerCompression::GetCompressedBufferSize(path_indexes_32.size());
+    std::vector<char> compressed(buffer_size);
+
+    std::string compress_err;
+    size_t compressed_size = Usd_IntegerCompression::CompressToBuffer(
+        path_indexes_32.data(), path_indexes_32.size(), compressed.data(), &compress_err);
+
+    if (compressed_size == 0) {
+      if (err) *err = std::string("Failed to compress pathIndexes: ") + compress_err;
+      return false;
+    }
+
+    uint64_t size = static_cast<uint64_t>(compressed_size);
+    if (!Write(size) || !WriteBytes(compressed.data(), compressed_size)) {
+      if (err) *err = "Failed to write pathIndexes";
+      return false;
+    }
   }
 
-  // Append jumps array
-  for (size_t i = 0; i < tree.size(); ++i) {
-    const char* bytes = reinterpret_cast<const char*>(&tree.jumps[i]);
-    paths_data.insert(paths_data.end(), bytes, bytes + sizeof(int32_t));
+  // Compress and write elementTokenIndexes array (int32_t - can be negative)
+  {
+    size_t buffer_size = Usd_IntegerCompression::GetCompressedBufferSize(tree.element_token_indexes.size());
+    std::vector<char> compressed(buffer_size);
+
+    std::string compress_err;
+    size_t compressed_size = Usd_IntegerCompression::CompressToBuffer(
+        tree.element_token_indexes.data(), tree.element_token_indexes.size(),
+        compressed.data(), &compress_err);
+
+    if (compressed_size == 0) {
+      if (err) *err = std::string("Failed to compress elementTokenIndexes: ") + compress_err;
+      return false;
+    }
+
+    uint64_t size = static_cast<uint64_t>(compressed_size);
+    if (!Write(size) || !WriteBytes(compressed.data(), compressed_size)) {
+      if (err) *err = "Failed to write elementTokenIndexes";
+      return false;
+    }
   }
 
-  // Phase 4: Compress paths data
-  std::vector<char> compressed_paths;
-  if (!CompressData(paths_data.data(), paths_data.size(), &compressed_paths, err)) {
-    if (err) *err = "Failed to compress paths data: " + *err;
-    return false;
-  }
+  // Compress and write jumps array (int32_t)
+  {
+    size_t buffer_size = Usd_IntegerCompression::GetCompressedBufferSize(tree.jumps.size());
+    std::vector<char> compressed(buffer_size);
 
-  // Write compressed format
-  uint64_t uncompressed_size = static_cast<uint64_t>(paths_data.size());
-  uint64_t compressed_size = static_cast<uint64_t>(compressed_paths.size());
+    std::string compress_err;
+    size_t compressed_size = Usd_IntegerCompression::CompressToBuffer(
+        tree.jumps.data(), tree.jumps.size(), compressed.data(), &compress_err);
 
-  if (!Write(uncompressed_size)) {
-    if (err) *err = "Failed to write paths uncompressed size";
-    return false;
-  }
+    if (compressed_size == 0) {
+      if (err) *err = std::string("Failed to compress jumps: ") + compress_err;
+      return false;
+    }
 
-  if (!Write(compressed_size)) {
-    if (err) *err = "Failed to write paths compressed size";
-    return false;
-  }
-
-  if (!WriteBytes(compressed_paths.data(), compressed_paths.size())) {
-    if (err) *err = "Failed to write compressed paths data";
-    return false;
+    uint64_t size = static_cast<uint64_t>(compressed_size);
+    if (!Write(size) || !WriteBytes(compressed.data(), compressed_size)) {
+      if (err) *err = "Failed to write jumps";
+      return false;
+    }
   }
 
   int64_t section_end = Tell();
@@ -830,47 +910,87 @@ bool CrateWriter::WritePathsSection(std::string* err) {
 bool CrateWriter::WriteSpecsSection(std::string* err) {
   int64_t section_start = Tell();
 
+  // IMPORTANT: Format for v0.4.0+ (we target v0.7.0+):
+  // 1. uint64_t numSpecs
+  // 2. pathIndexes (compressed with Usd_IntegerCompression):
+  //    - uint64_t pathIndexesSize
+  //    - Compressed pathIndexes array
+  // 3. fieldSetIndexes (compressed with Usd_IntegerCompression):
+  //    - uint64_t fieldSetIndexesSize
+  //    - Compressed fieldSetIndexes array
+  // 4. specTypes (compressed with Usd_IntegerCompression):
+  //    - uint64_t specTypesSize
+  //    - Compressed specTypes array
+  //
+  // See: pxr/usd/sdf/crateFile.cpp _WriteSpecs()
+
+  size_t num_specs = spec_data_.size();
+
   // Write spec count
-  uint64_t spec_count = static_cast<uint64_t>(spec_data_.size());
+  uint64_t spec_count = static_cast<uint64_t>(num_specs);
   if (!Write(spec_count)) {
     if (err) *err = "Failed to write spec count";
     return false;
   }
 
-  // Build specs data buffer
-  std::vector<char> specs_data;
-  size_t specs_size = spec_data_.size() * sizeof(crate::Spec);
-  specs_data.reserve(specs_size);
+  // Separate pathIndexes, fieldSetIndexes, specTypes
+  std::vector<uint32_t> path_indexes;
+  std::vector<uint32_t> fieldset_indexes;
+  std::vector<uint32_t> spec_types;
 
-  // TODO: Sort specs by path for better compression (Phase 4 optimization)
+  path_indexes.reserve(num_specs);
+  fieldset_indexes.reserve(num_specs);
+  spec_types.reserve(num_specs);
+
   for (const auto& spec_data : spec_data_) {
-    const char* bytes = reinterpret_cast<const char*>(&spec_data.spec);
-    specs_data.insert(specs_data.end(), bytes, bytes + sizeof(crate::Spec));
+    path_indexes.push_back(spec_data.spec.path_index.value);
+    fieldset_indexes.push_back(spec_data.spec.fieldset_index.value);
+    spec_types.push_back(static_cast<uint32_t>(spec_data.spec.spec_type));
   }
 
-  // Phase 4: Compress specs data
-  std::vector<char> compressed_specs;
-  if (!CompressData(specs_data.data(), specs_data.size(), &compressed_specs, err)) {
-    if (err) *err = "Failed to compress specs data: " + *err;
+  // Helper to compress and write an integer array
+  auto writeCompressedIntArray = [this, err](const std::vector<uint32_t>& data,
+                                              const char* array_name) -> bool {
+    size_t buffer_size = Usd_IntegerCompression::GetCompressedBufferSize(data.size());
+    std::vector<char> compressed(buffer_size);
+
+    std::string compress_err;
+    size_t compressed_size = Usd_IntegerCompression::CompressToBuffer(
+        data.data(), data.size(), compressed.data(), &compress_err);
+
+    if (compressed_size == 0) {
+      if (err) *err = std::string("Failed to compress ") + array_name + ": " + compress_err;
+      return false;
+    }
+
+    // Write compressed size
+    uint64_t size = static_cast<uint64_t>(compressed_size);
+    if (!Write(size)) {
+      if (err) *err = std::string("Failed to write ") + array_name + " size";
+      return false;
+    }
+
+    // Write compressed data
+    if (!WriteBytes(compressed.data(), compressed_size)) {
+      if (err) *err = std::string("Failed to write compressed ") + array_name;
+      return false;
+    }
+
+    return true;
+  };
+
+  // Compress and write pathIndexes
+  if (!writeCompressedIntArray(path_indexes, "pathIndexes")) {
     return false;
   }
 
-  // Write compressed format
-  uint64_t uncompressed_size = static_cast<uint64_t>(specs_data.size());
-  uint64_t compressed_size = static_cast<uint64_t>(compressed_specs.size());
-
-  if (!Write(uncompressed_size)) {
-    if (err) *err = "Failed to write specs uncompressed size";
+  // Compress and write fieldSetIndexes
+  if (!writeCompressedIntArray(fieldset_indexes, "fieldSetIndexes")) {
     return false;
   }
 
-  if (!Write(compressed_size)) {
-    if (err) *err = "Failed to write specs compressed size";
-    return false;
-  }
-
-  if (!WriteBytes(compressed_specs.data(), compressed_specs.size())) {
-    if (err) *err = "Failed to write compressed specs data";
+  // Compress and write specTypes
+  if (!writeCompressedIntArray(spec_types, "specTypes")) {
     return false;
   }
 
