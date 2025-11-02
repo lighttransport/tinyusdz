@@ -192,6 +192,10 @@ option(
   "Build for production release(e.g. disables debug print, do not include full filepath in error messages)"
   OFF)
 
+option(
+  TUSDZ_NEW_VALUE_TYPE
+  "Use new optimized 16-byte Value implementation (experimental)"
+  OFF)
 
 option(
   TINYUSDZ_DEBUG_PRINT
@@ -1263,6 +1267,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
   if(TINYUSDZ_PRODUCTION_BUILD)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
                                PRIVATE "TINYUSDZ_PRODUCTION_BUILD")
+  endif()
+
+  if(TUSDZ_NEW_VALUE_TYPE)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TUSDZ_NEW_VALUE_TYPE")
   endif()
 
   # default = enable module, so invert definition

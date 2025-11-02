@@ -42,7 +42,12 @@ T lerp(const T& a, const T& b, double t);
 namespace value {
 
 // Forward declarations from value-types.hh
+#ifndef TUSDZ_NEW_VALUE_TYPE
 class Value;
+#else
+class NewValue;
+using Value = NewValue;
+#endif
 template<typename T> struct TypeTraits;
 template<typename T> struct LerpTraits;
 class TimeCode;

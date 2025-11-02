@@ -355,3 +355,10 @@ compile_commands.json
 
 # Cmake
 CMakeUserPresets.json
+
+# Artifacts and temporary files
+# Prevent accidental commits of test binaries and source files
+*.d
+*.o
+*.out
+*.tmp
