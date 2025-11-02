@@ -40,7 +40,10 @@ SOURCE_EXPORT = threejs_mtlx_export_example.cc
 TARGET_IMPORT = test_mtlx_import
 SOURCE_IMPORT = test_mtlx_import.cc
 
-TARGETS = $(TARGET_EXPORT) $(TARGET_IMPORT)
+TARGET_EXPORT_NEW = test_mtlx_export
+SOURCE_EXPORT_NEW = test_mtlx_export.cc
+
+TARGETS = $(TARGET_EXPORT) $(TARGET_IMPORT) $(TARGET_EXPORT_NEW)
 
 # Build rules
 .PHONY: all clean run run-import run-export check-library
@@ -55,6 +58,10 @@ $(TARGET_IMPORT): $(SOURCE_IMPORT)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -DTINYUSDZ_USE_USDMTLX -o $@ $< $(LDFLAGS) $(LIBS)
 	@echo "Built $(TARGET_IMPORT)"
 
+$(TARGET_EXPORT_NEW): $(SOURCE_EXPORT_NEW)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -DTINYUSDZ_USE_USDMTLX -o $@ $< $(LDFLAGS) $(LIBS)
+	@echo "Built $(TARGET_EXPORT_NEW)"
+
 run-export: $(TARGET_EXPORT)
 	@echo "Running MaterialX export test..."
 	@./$(TARGET_EXPORT)
@@ -63,7 +70,11 @@ run-import: $(TARGET_IMPORT)
 	@echo "Running MaterialX import test..."
 	@./$(TARGET_IMPORT)
 
-run: run-export run-import
+run-export-new: $(TARGET_EXPORT_NEW)
+	@echo "Running MaterialX export test (with connections)..."
+	@./$(TARGET_EXPORT_NEW)
+
+run: run-export run-import run-export-new
 
 check-library:
 	@if [ ! -f "$(BUILD_DIR)/libtinyusdz_static.a" ]; then \
