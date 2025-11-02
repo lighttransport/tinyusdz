@@ -8,55 +8,61 @@ namespace mtlx {
 
 bool SimpleXMLParser::Parse(const std::string& xml) {
   XMLTokenizer tokenizer;
-  
+
   if (!tokenizer.Initialize(xml.c_str(), xml.size())) {
     error_ = "Failed to initialize tokenizer: " + tokenizer.GetError();
     return false;
   }
-  
+
   std::stack<SimpleXMLNodePtr> node_stack;
   SimpleXMLNodePtr current_node;
   Token token;
-  
-  while (tokenizer.NextToken(token)) {
+  bool have_pending_token = false;
+  Token pending_token;
+
+  while (have_pending_token || tokenizer.NextToken(token)) {
+    // Use pending token if we have one
+    if (have_pending_token) {
+      token = pending_token;
+      have_pending_token = false;
+    }
+
     switch (token.type) {
       case TokenType::ProcessingInstruction:
         // Skip XML declaration
         continue;
-        
+
       case TokenType::StartTag: {
         auto new_node = std::make_shared<SimpleXMLNode>(token.name);
-        
+
         // Collect attributes
         Token attr_token;
+        bool is_self_closing = false;
+
         while (tokenizer.NextToken(attr_token)) {
           if (attr_token.type == TokenType::Attribute) {
             new_node->attributes[attr_token.name] = attr_token.value;
           } else if (attr_token.type == TokenType::SelfClosingTag) {
-            // Self-closing tag, add to parent and continue
-            if (!node_stack.empty()) {
-              node_stack.top()->children.push_back(new_node);
-            } else if (!root_) {
-              root_ = new_node;
-            }
+            // Self-closing tag
+            is_self_closing = true;
             break;
           } else {
-            // End of attributes, rewind this token
-            // Since we can't rewind, we'll handle it in the next iteration
-            // by checking if we have a pending token
-            
-            // For now, assume end of attributes
+            // We got a non-attribute token, save it for next iteration
+            pending_token = attr_token;
+            have_pending_token = true;
             break;
           }
         }
-        
-        // If not self-closing, push to stack
-        if (attr_token.type != TokenType::SelfClosingTag) {
-          if (!node_stack.empty()) {
-            node_stack.top()->children.push_back(new_node);
-          } else if (!root_) {
-            root_ = new_node;
-          }
+
+        // Add node to tree
+        if (!node_stack.empty()) {
+          node_stack.top()->children.push_back(new_node);
+        } else if (!root_) {
+          root_ = new_node;
+        }
+
+        // If not self-closing, push to stack for processing children
+        if (!is_self_closing) {
           node_stack.push(new_node);
         }
         break;
