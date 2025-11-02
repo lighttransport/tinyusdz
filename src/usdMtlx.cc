@@ -26,6 +26,26 @@ inline std::string dtos(const double v) {
   return std::string(buf);
 }
 
+// Helper function to format float values cleanly for MaterialX XML
+inline std::string float_to_xml_string(float val) {
+  std::ostringstream oss;
+  oss.precision(6);  // 6 significant digits
+  oss << val;
+  std::string result = oss.str();
+
+  // Remove trailing zeros after decimal point
+  if (result.find('.') != std::string::npos) {
+    size_t end = result.find_last_not_of('0');
+    if (end != std::string::npos && result[end] != '.') {
+      result = result.substr(0, end + 1);
+    } else if (end != std::string::npos && result[end] == '.') {
+      result = result.substr(0, end);
+    }
+  }
+
+  return result;
+}
+
 #define PushWarn(msg) \
   do {                \
     if (warn) {       \
@@ -389,7 +409,7 @@ std::string to_xml_string(const T &val);
 
 template <>
 std::string to_xml_string(const float &val) {
-  return dtos(double(val));
+  return float_to_xml_string(val);
 }
 
 template <>
@@ -399,14 +419,14 @@ std::string to_xml_string(const int &val) {
 
 template <>
 std::string to_xml_string(const value::color3f &val) {
-  return dtos(double(val.r)) + ", " + dtos(double(val.g)) + ", " +
-         dtos(double(val.b));
+  return float_to_xml_string(val.r) + ", " + float_to_xml_string(val.g) + ", " +
+         float_to_xml_string(val.b);
 }
 
 template <>
 std::string to_xml_string(const value::normal3f &val) {
-  return dtos(double(val.x)) + ", " + dtos(double(val.y)) + ", " +
-         dtos(double(val.z));
+  return float_to_xml_string(val.x) + ", " + float_to_xml_string(val.y) + ", " +
+         float_to_xml_string(val.z);
 }
 
 template <typename T>
@@ -517,6 +537,270 @@ static bool WriteMaterialXToString(const MtlxUsdPreviewSurface &shader,
 
   ss << pprint::Indent(1)
      << "<surfacematerial name=\"USD_Default\" type=\"material\">\n";
+  ss << pprint::Indent(2)
+     << "<input name=\"surfaceshader\" type=\"surfaceshader\" nodename=\""
+     << node_name << "\" />\n";
+  ss << pprint::Indent(1) << "</surfacematerial>\n";
+
+  ss << "</materialx>\n";
+
+  xml_str = ss.str();
+
+  return true;
+}
+
+static bool WriteMaterialXToString(const MtlxAutodeskStandardSurface &shader,
+                                   const std::string &shader_name,
+                                   const std::vector<MtlxShaderConnection> &connections,
+                                   std::string &xml_str, std::string *warn,
+                                   std::string *err) {
+  (void)warn;
+
+  std::stringstream ss;
+
+  std::string node_name = shader_name.empty() ? "SR_default" : shader_name;
+
+  ss << "<?xml version=\"1.0\"?>\n";
+  ss << "<materialx version=\"1.38\" colorspace=\"lin_rec709\">\n";
+  ss << pprint::Indent(1) << "<standard_surface name=\"" << node_name
+     << "\" type=\"surfaceshader\">\n";
+
+  // Helper to check if an input has a connection
+  auto has_connection = [&connections](const std::string &input_name) -> const MtlxShaderConnection* {
+    for (const auto &conn : connections) {
+      if (conn.input_name == input_name) {
+        return &conn;
+      }
+    }
+    return nullptr;
+  };
+
+#define EMIT_ATTRIBUTE(__name, __tyname, __attr)                            \
+  {                                                                         \
+    const MtlxShaderConnection *conn = has_connection(__name);              \
+    if (conn) {                                                             \
+      /* Emit connection */                                                 \
+      ss << pprint::Indent(2) << "<input name=\"" << __name << "\" type=\"" \
+         << __tyname << "\"";                                               \
+      if (!conn->nodegraph.empty()) {                                       \
+        ss << " nodegraph=\"" << conn->nodegraph << "\"";                   \
+        if (!conn->output.empty()) {                                        \
+          ss << " output=\"" << conn->output << "\"";                       \
+        }                                                                   \
+      } else if (!conn->nodename.empty()) {                                 \
+        ss << " nodename=\"" << conn->nodename << "\"";                     \
+      }                                                                     \
+      ss << " />\n";                                                        \
+    } else {                                                                \
+      /* Emit value */                                                      \
+      std::string value_str;                                                \
+      if (!SerializeAttribute(__name, __attr, value_str, err)) {            \
+        return false;                                                       \
+      }                                                                     \
+      if (value_str.size()) {                                               \
+        ss << pprint::Indent(2) << "<input name=\"" << __name << "\" type=\"" \
+           << __tyname << "\" value=" << value_str << " />\n";              \
+      }                                                                     \
+    }                                                                       \
+  }
+
+  // Base properties
+  EMIT_ATTRIBUTE("base", "float", shader.base)
+  EMIT_ATTRIBUTE("base_color", "color3", shader.base_color)
+  EMIT_ATTRIBUTE("diffuse_roughness", "float", shader.diffuse_roughness)
+  EMIT_ATTRIBUTE("metalness", "float", shader.metalness)
+
+  // Specular properties
+  EMIT_ATTRIBUTE("specular", "float", shader.specular)
+  EMIT_ATTRIBUTE("specular_color", "color3", shader.specular_color)
+  EMIT_ATTRIBUTE("specular_roughness", "float", shader.specular_roughness)
+  EMIT_ATTRIBUTE("specular_IOR", "float", shader.specular_IOR)
+  EMIT_ATTRIBUTE("specular_anisotropy", "float", shader.specular_anisotropy)
+  EMIT_ATTRIBUTE("specular_rotation", "float", shader.specular_rotation)
+
+  // Transmission properties
+  EMIT_ATTRIBUTE("transmission", "float", shader.transmission)
+  EMIT_ATTRIBUTE("transmission_color", "color3", shader.transmission_color)
+  EMIT_ATTRIBUTE("transmission_depth", "float", shader.transmission_depth)
+  EMIT_ATTRIBUTE("transmission_scatter", "color3", shader.transmission_scatter)
+  EMIT_ATTRIBUTE("transmission_scatter_anisotropy", "float", shader.transmission_scatter_anisotropy)
+  EMIT_ATTRIBUTE("transmission_dispersion", "float", shader.transmission_dispersion)
+  EMIT_ATTRIBUTE("transmission_extra_roughness", "float", shader.transmission_extra_roughness)
+
+  // Subsurface properties
+  EMIT_ATTRIBUTE("subsurface", "float", shader.subsurface)
+  EMIT_ATTRIBUTE("subsurface_color", "color3", shader.subsurface_color)
+  EMIT_ATTRIBUTE("subsurface_radius", "color3", shader.subsurface_radius)
+  EMIT_ATTRIBUTE("subsurface_scale", "float", shader.subsurface_scale)
+  EMIT_ATTRIBUTE("subsurface_anisotropy", "float", shader.subsurface_anisotropy)
+
+  // Sheen properties
+  EMIT_ATTRIBUTE("sheen", "float", shader.sheen)
+  EMIT_ATTRIBUTE("sheen_color", "color3", shader.sheen_color)
+  EMIT_ATTRIBUTE("sheen_roughness", "float", shader.sheen_roughness)
+
+  // Coat properties
+  EMIT_ATTRIBUTE("coat", "float", shader.coat)
+  EMIT_ATTRIBUTE("coat_color", "color3", shader.coat_color)
+  EMIT_ATTRIBUTE("coat_roughness", "float", shader.coat_roughness)
+  EMIT_ATTRIBUTE("coat_anisotropy", "float", shader.coat_anisotropy)
+  EMIT_ATTRIBUTE("coat_rotation", "float", shader.coat_rotation)
+  EMIT_ATTRIBUTE("coat_IOR", "float", shader.coat_IOR)
+  EMIT_ATTRIBUTE("coat_affect_color", "float", shader.coat_affect_color)
+  EMIT_ATTRIBUTE("coat_affect_roughness", "float", shader.coat_affect_roughness)
+
+  // Thin film properties
+  EMIT_ATTRIBUTE("thin_film_thickness", "float", shader.thin_film_thickness)
+  EMIT_ATTRIBUTE("thin_film_IOR", "float", shader.thin_film_IOR)
+
+  // Emission properties
+  EMIT_ATTRIBUTE("emission", "float", shader.emission)
+  EMIT_ATTRIBUTE("emission_color", "color3", shader.emission_color)
+
+  // Opacity
+  EMIT_ATTRIBUTE("opacity", "color3", shader.opacity)
+
+  // Thin walled
+  EMIT_ATTRIBUTE("thin_walled", "boolean", shader.thin_walled)
+
+  // Normal and tangent - these are TypedAttribute (not TypedAttributeWithFallback)
+  // Skip for now as they require different serialization
+  // TODO: Add serialization support for TypedAttribute
+
+#undef EMIT_ATTRIBUTE
+
+  ss << pprint::Indent(1) << "</standard_surface>\n";
+
+  ss << pprint::Indent(1)
+     << "<surfacematerial name=\"StandardSurface_Material\" type=\"material\">\n";
+  ss << pprint::Indent(2)
+     << "<input name=\"surfaceshader\" type=\"surfaceshader\" nodename=\""
+     << node_name << "\" />\n";
+  ss << pprint::Indent(1) << "</surfacematerial>\n";
+
+  ss << "</materialx>\n";
+
+  xml_str = ss.str();
+
+  return true;
+}
+
+static bool WriteMaterialXToString(const MtlxOpenPBRSurface &shader,
+                                   const std::string &shader_name,
+                                   const std::vector<MtlxShaderConnection> &connections,
+                                   std::string &xml_str, std::string *warn,
+                                   std::string *err) {
+  (void)warn;
+
+  std::stringstream ss;
+
+  std::string node_name = shader_name.empty() ? "SR_default" : shader_name;
+
+  ss << "<?xml version=\"1.0\"?>\n";
+  ss << "<materialx version=\"1.38\" colorspace=\"lin_rec709\">\n";
+  ss << pprint::Indent(1) << "<open_pbr_surface name=\"" << node_name
+     << "\" type=\"surfaceshader\">\n";
+
+  // Helper to check if an input has a connection
+  auto has_connection = [&connections](const std::string &input_name) -> const MtlxShaderConnection* {
+    for (const auto &conn : connections) {
+      if (conn.input_name == input_name) {
+        return &conn;
+      }
+    }
+    return nullptr;
+  };
+
+#define EMIT_ATTRIBUTE(__name, __tyname, __attr)                            \
+  {                                                                         \
+    const MtlxShaderConnection *conn = has_connection(__name);              \
+    if (conn) {                                                             \
+      /* Emit connection */                                                 \
+      ss << pprint::Indent(2) << "<input name=\"" << __name << "\" type=\"" \
+         << __tyname << "\"";                                               \
+      if (!conn->nodegraph.empty()) {                                       \
+        ss << " nodegraph=\"" << conn->nodegraph << "\"";                   \
+        if (!conn->output.empty()) {                                        \
+          ss << " output=\"" << conn->output << "\"";                       \
+        }                                                                   \
+      } else if (!conn->nodename.empty()) {                                 \
+        ss << " nodename=\"" << conn->nodename << "\"";                     \
+      }                                                                     \
+      ss << " />\n";                                                        \
+    } else {                                                                \
+      /* Emit value */                                                      \
+      std::string value_str;                                                \
+      if (!SerializeAttribute(__name, __attr, value_str, err)) {            \
+        return false;                                                       \
+      }                                                                     \
+      if (value_str.size()) {                                               \
+        ss << pprint::Indent(2) << "<input name=\"" << __name << "\" type=\"" \
+           << __tyname << "\" value=" << value_str << " />\n";              \
+      }                                                                     \
+    }                                                                       \
+  }
+
+  // Base properties
+  EMIT_ATTRIBUTE("base_weight", "float", shader.base_weight)
+  EMIT_ATTRIBUTE("base_color", "color3", shader.base_color)
+  EMIT_ATTRIBUTE("base_metalness", "float", shader.base_metalness)
+  EMIT_ATTRIBUTE("base_diffuse_roughness", "float", shader.base_diffuse_roughness)
+
+  // Specular properties
+  EMIT_ATTRIBUTE("specular_weight", "float", shader.specular_weight)
+  EMIT_ATTRIBUTE("specular_color", "color3", shader.specular_color)
+  EMIT_ATTRIBUTE("specular_roughness", "float", shader.specular_roughness)
+  EMIT_ATTRIBUTE("specular_ior", "float", shader.specular_ior)
+  EMIT_ATTRIBUTE("specular_anisotropy", "float", shader.specular_anisotropy)
+  EMIT_ATTRIBUTE("specular_rotation", "float", shader.specular_rotation)
+
+  // Transmission properties
+  EMIT_ATTRIBUTE("transmission_weight", "float", shader.transmission_weight)
+  EMIT_ATTRIBUTE("transmission_color", "color3", shader.transmission_color)
+  EMIT_ATTRIBUTE("transmission_depth", "float", shader.transmission_depth)
+  EMIT_ATTRIBUTE("transmission_scatter", "color3", shader.transmission_scatter)
+  EMIT_ATTRIBUTE("transmission_scatter_anisotropy", "float", shader.transmission_scatter_anisotropy)
+  EMIT_ATTRIBUTE("transmission_dispersion", "float", shader.transmission_dispersion)
+
+  // Subsurface properties
+  EMIT_ATTRIBUTE("subsurface_weight", "float", shader.subsurface_weight)
+  EMIT_ATTRIBUTE("subsurface_color", "color3", shader.subsurface_color)
+  EMIT_ATTRIBUTE("subsurface_radius", "color3", shader.subsurface_radius)
+  EMIT_ATTRIBUTE("subsurface_scale", "float", shader.subsurface_scale)
+  EMIT_ATTRIBUTE("subsurface_anisotropy", "float", shader.subsurface_anisotropy)
+
+  // Coat properties
+  EMIT_ATTRIBUTE("coat_weight", "float", shader.coat_weight)
+  EMIT_ATTRIBUTE("coat_color", "color3", shader.coat_color)
+  EMIT_ATTRIBUTE("coat_roughness", "float", shader.coat_roughness)
+  EMIT_ATTRIBUTE("coat_anisotropy", "float", shader.coat_anisotropy)
+  EMIT_ATTRIBUTE("coat_rotation", "float", shader.coat_rotation)
+  EMIT_ATTRIBUTE("coat_ior", "float", shader.coat_ior)
+  EMIT_ATTRIBUTE("coat_affect_color", "float", shader.coat_affect_color)
+  EMIT_ATTRIBUTE("coat_affect_roughness", "float", shader.coat_affect_roughness)
+
+  // Thin film properties
+  EMIT_ATTRIBUTE("thin_film_thickness", "float", shader.thin_film_thickness)
+  EMIT_ATTRIBUTE("thin_film_ior", "float", shader.thin_film_ior)
+
+  // Emission properties
+  EMIT_ATTRIBUTE("emission_luminance", "float", shader.emission_luminance)
+  EMIT_ATTRIBUTE("emission_color", "color3", shader.emission_color)
+
+  // Geometry properties
+  EMIT_ATTRIBUTE("geometry_opacity", "float", shader.geometry_opacity)
+  EMIT_ATTRIBUTE("geometry_thin_walled", "boolean", shader.geometry_thin_walled)
+
+  // Normal and tangent - these are TypedAttribute (not TypedAttributeWithFallback)
+  // Skip for now as they require different serialization
+  // TODO: Add serialization support for TypedAttribute
+
+#undef EMIT_ATTRIBUTE
+
+  ss << pprint::Indent(1) << "</open_pbr_surface>\n";
+
+  ss << pprint::Indent(1)
+     << "<surfacematerial name=\"OpenPBR_Material\" type=\"material\">\n";
   ss << pprint::Indent(2)
      << "<input name=\"surfaceshader\" type=\"surfaceshader\" nodename=\""
      << node_name << "\" />\n";
@@ -1657,13 +1941,9 @@ bool WriteMaterialXToString(const MtlxModel &mtlx, std::string &xml_str,
   if (auto usdps = mtlx.shader.as<MtlxUsdPreviewSurface>()) {
     return detail::WriteMaterialXToString(*usdps, shader_name, connections, xml_str, warn, err);
   } else if (auto adskss = mtlx.shader.as<MtlxAutodeskStandardSurface>()) {
-    (void)adskss;
-    // TODO
-    PUSH_ERROR_AND_RETURN("TODO: AutodeskStandardSurface");
-  } else if (auto openpbr = mtlx.shader.as<OpenPBRSurface>()) {
-    (void)openpbr;
-    // TODO: Implement OpenPBR MaterialX writing
-    PUSH_ERROR_AND_RETURN("TODO: OpenPBRSurface");
+    return detail::WriteMaterialXToString(*adskss, shader_name, connections, xml_str, warn, err);
+  } else if (auto openpbr = mtlx.shader.as<MtlxOpenPBRSurface>()) {
+    return detail::WriteMaterialXToString(*openpbr, shader_name, connections, xml_str, warn, err);
   } else {
     // TODO
     PUSH_ERROR_AND_RETURN("Unknown/unsupported shader: " << mtlx.shader_name);
