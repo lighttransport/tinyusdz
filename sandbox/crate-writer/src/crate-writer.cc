@@ -67,9 +67,9 @@ bool CrateWriter::Open(std::string* err) {
   is_open_ = true;
 
   // Reserve space for bootstrap header (we'll write it at the end)
-  // Bootstrap is always 64 bytes at offset 0
-  char zeros[64] = {0};
-  if (!WriteBytes(zeros, 64)) {
+  // Bootstrap is 72 bytes: 8 (ident) + 8 (version) + 8 (toc_offset) + 48 (reserved)
+  char zeros[72] = {0};
+  if (!WriteBytes(zeros, sizeof(zeros))) {
     if (err) *err = "Failed to write bootstrap placeholder";
     Close();
     return false;
@@ -469,6 +469,10 @@ bool CrateWriter::CompressData(const char* input, size_t inputSize,
       static_cast<int>(inputSize),
       maxCompressedSize);
 
+  std::cerr << "DEBUG CompressData: inputSize=" << inputSize
+            << ", compressedSize=" << compressedSize
+            << ", maxCompressedSize=" << maxCompressedSize << std::endl;
+
   if (compressedSize <= 0) {
     if (err) *err = "LZ4 compression failed with error code: " + std::to_string(compressedSize);
     return false;
@@ -476,6 +480,16 @@ bool CrateWriter::CompressData(const char* input, size_t inputSize,
 
   // Resize to actual size: 1 byte chunk count + compressed data
   compressed->resize(1 + static_cast<size_t>(compressedSize));
+
+  // DEBUG: Print first few bytes of compressed data
+  std::cerr << "DEBUG CompressData: First 16 bytes after chunk byte: ";
+  for (int i = 1; i < std::min(17, (int)compressed->size()); ++i) {
+    char buf[4];
+    snprintf(buf, sizeof(buf), "%02x ", (unsigned char)(*compressed)[i]);
+    std::cerr << buf;
+  }
+  std::cerr << std::endl;
+
   return true;
 }
 
@@ -507,8 +521,12 @@ bool CrateWriter::WriteTokensSection(std::string* err) {
   }
   std::cerr << std::endl;
 
-  if (!Write(token_count)) {
-    if (err) *err = "Failed to write token count";
+  // Write directly as bytes instead of using Write() template
+  file_.write(reinterpret_cast<const char*>(&token_count), sizeof(token_count));
+  file_.flush();
+
+  if (!file_.good()) {
+    if (err) *err = "Failed to write token count bytes";
     return false;
   }
   std::cerr << "DEBUG: After write, offset = " << Tell() << ", file.good() = " << file_.good() << std::endl;
@@ -522,12 +540,29 @@ bool CrateWriter::WriteTokensSection(std::string* err) {
 
   std::string token_blob = blob.str();
 
+  std::cerr << "DEBUG: Token blob size = " << token_blob.size() << " bytes" << std::endl;
+  std::cerr << "DEBUG: First 60 bytes: ";
+  for (size_t i = 0; i < std::min(token_blob.size(), size_t(60)); ++i) {
+    if (token_blob[i] == '\0') {
+      std::cerr << "\\0";
+    } else if (isprint(token_blob[i])) {
+      std::cerr << token_blob[i];
+    } else {
+      char buf[5];
+      snprintf(buf, sizeof(buf), "\\x%02x", (unsigned char)token_blob[i]);
+      std::cerr << buf;
+    }
+  }
+  std::cerr << std::endl;
+
   // Phase 4: Compress the blob if compression is enabled
   std::vector<char> compressed_blob;
   if (!CompressData(token_blob.data(), token_blob.size(), &compressed_blob, err)) {
     if (err) *err = "Failed to compress token blob: " + *err;
     return false;
   }
+
+  std::cerr << "DEBUG: Compressed blob size (with chunk byte) = " << compressed_blob.size() << " bytes" << std::endl;
 
   // Write in compressed format (version 0.4.0+):
   // - uncompressedSize (uint64_t)
