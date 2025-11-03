@@ -1480,6 +1480,38 @@ class TinyUSDZLoaderNative {
     mesh.set("materialId", rmesh.material_id);
     mesh.set("doubleSided", rmesh.doubleSided);
 
+    // Export skinning data (joint indices, joint weights)
+    if (!rmesh.joint_and_weights.jointIndices.empty()) {
+      const int *joint_indices_ptr = rmesh.joint_and_weights.jointIndices.data();
+      mesh.set("jointIndices",
+               emscripten::typed_memory_view(
+                   rmesh.joint_and_weights.jointIndices.size(),
+                   joint_indices_ptr));
+    }
+
+    if (!rmesh.joint_and_weights.jointWeights.empty()) {
+      const float *joint_weights_ptr = rmesh.joint_and_weights.jointWeights.data();
+      mesh.set("jointWeights",
+               emscripten::typed_memory_view(
+                   rmesh.joint_and_weights.jointWeights.size(),
+                   joint_weights_ptr));
+    }
+
+    // Export element size (influences per vertex)
+    mesh.set("elementSize", rmesh.joint_and_weights.elementSize);
+
+    // Export skeleton ID
+    if (rmesh.skel_id >= 0) {
+      mesh.set("skel_id", rmesh.skel_id);
+    }
+
+    // Export geomBindTransform matrix (4x4 matrix as 16 doubles)
+    const double *geom_bind_ptr =
+        reinterpret_cast<const double *>(
+            rmesh.joint_and_weights.geomBindTransform.m);
+    mesh.set("geomBindTransform",
+             emscripten::typed_memory_view(16, geom_bind_ptr));
+
     return mesh;
   }
 
