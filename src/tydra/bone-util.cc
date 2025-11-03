@@ -428,6 +428,7 @@ bool ReduceBoneInfluences(std::vector<int> &joint_indices,
       stats->max_weight_error = 0.0f;
       stats->num_vertices_modified = 0;
     }
+    // This shouldn't happen if called correctly
     return true;  // No reduction needed
   }
 
@@ -568,6 +569,7 @@ bool ReduceBoneInfluences(std::vector<int> &joint_indices,
   // Swap output
   joint_indices.swap(reduced_indices);
   joint_weights.swap(reduced_weights);
+
 
   // Fill statistics
   if (stats) {
