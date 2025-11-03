@@ -454,24 +454,27 @@ Please see [tydra_api](examples/tydra_api/)
 
 ### Higher priority
 
-* [ ] Built-in usdObj(wavefront .obj mesh) support.
-  * via tinyobjloader.
 * [x] Support Crate(binary) version 0.8.0(USD v20.11 default)
-* [ ] usdSkel utilities
-  * [ ] Joint hierachy reconstruction and compute skinning matrix(usdSkel)
-  * [ ] Blend shapes
-    * [x] Basic Blendshapes support
-    * [ ] In-between blend shapes
-* [ ] Read USD data with bounded memory size. This feature is especially useful for mobile platform(e.g. in terms of security, memory consumption, etc)
+* [x] Read USD data with bounded memory size. This feature is especially useful for mobile platform(e.g. in terms of security, memory consumption, etc)
+  * Mostly done
 * [ ] USDC writer
-* [ ] Support Nested USDZ
-* [ ] UDIM texture support
 * [ ] MaterialX support
   * [ ] Parse XML file using tinyxml2
 
 ### Middle priority
 
+* [ ] Support Nested USDZ
+* [ ] UDIM texture support
+* [ ] usdSkel utilities
+  * [ ] Joint hierachy reconstruction and compute skinning matrix(usdSkel)
+  * [ ] Blend shapes
+    * [x] Basic Blendshapes support
+    * [ ] In-between blend shapes
+* [ ] Built-in usdObj(wavefront .obj mesh) support.
+  * via tinyobjloader.
 * [ ] Composition arcs
+  * [x] Basic composition
+  * [ ] Advanced composition 
 * [ ] Code refactoring, code optimization
 
 ### Lower priority
