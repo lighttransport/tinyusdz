@@ -76,9 +76,14 @@ scene.add(gridHelper);
 // Skeleton visualization helper
 let skeletonHelper = null;
 
-// Character root group
+// Character root group (virtual USD scene root)
+const usdSceneRoot = new THREE.Group();
+usdSceneRoot.name = "/";
+scene.add(usdSceneRoot);
+
+// Character content group (holds the actual mesh)
 const characterGroup = new THREE.Group();
-scene.add(characterGroup);
+usdSceneRoot.add(characterGroup);
 
 // Animation state
 let skinnedMesh = null;
@@ -87,6 +92,9 @@ let mixer = null;
 let animationAction = null;
 let usdAnimations = [];
 let boneMap = new Map(); // Map from joint_id to THREE.Bone
+
+// Store the current file's upAxis (Y or Z)
+let currentFileUpAxis = "Y";
 
 // Debug visualization
 let jointSpheres = [];
@@ -594,11 +602,63 @@ function selectJointByName(boneName) {
 }
 
 /**
+ * Load USD model from a URL path
+ */
+async function loadUSDModel() {
+	const loader = new TinyUSDZLoader();
+
+	// Initialize the loader (wait for WASM module to load)
+	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
+
+	// Default USD file to load
+	const usd_filename = "./assets/skintest-blender-4.1.usda";
+
+	console.log(`Loading USD file: ${usd_filename}`);
+
+	// Load USD scene
+	const usd_scene = await loader.loadAsync(usd_filename);
+
+	console.log('USD scene loaded:', usd_scene);
+
+	// Process the loaded scene
+	await processUSDScene(usd_scene, loader, usd_filename);
+}
+
+/**
  * Load USD file and extract skeletal mesh and animations
  * @param {ArrayBuffer} arrayBuffer - USD file data
  * @param {string} filename - File name
  */
 async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
+	const loader = new TinyUSDZLoader();
+	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
+
+	// Create a Blob URL from the ArrayBuffer
+	// This allows the loader to load the file as if it were a normal URL
+	const blob = new Blob([arrayBuffer]);
+	const blobUrl = URL.createObjectURL(blob);
+
+	console.log(`Loading USD from file: ${filename} (${(arrayBuffer.byteLength / 1024).toFixed(2)} KB)`);
+
+	// Load USD scene from Blob URL
+	const usd_scene = await loader.loadAsync(blobUrl);
+
+	// Clean up the Blob URL after loading
+	URL.revokeObjectURL(blobUrl);
+
+	console.log('USD scene loaded:', usd_scene);
+
+	// Process the loaded scene
+	await processUSDScene(usd_scene, loader, filename);
+}
+
+/**
+ * Process loaded USD scene and extract skeletal mesh and animations
+ * @param {Object} usd_scene - Loaded USD scene
+ * @param {Object} loader - TinyUSDZ loader instance
+ * @param {string} filename - File name
+ */
+async function processUSDScene(usd_scene, loader, filename) {
 	// Clear existing model
 	if (skinnedMesh) {
 		characterGroup.remove(skinnedMesh);
@@ -626,8 +686,15 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 	animationParams.hasUSDAnimations = false;
 	animationParams.usdAnimationCount = 0;
 
-	const loader = new TinyUSDZLoader();
-	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
+	// Get scene metadata from the USD file
+	const sceneMetadata = usd_scene.getSceneMetadata ? usd_scene.getSceneMetadata() : {};
+	const fileUpAxis = sceneMetadata.upAxis || "Y";
+	currentFileUpAxis = fileUpAxis; // Store globally for toggle function
+
+	console.log('=== USD Scene Metadata ===');
+	console.log(`upAxis: "${fileUpAxis}"`);
+	console.log(`metersPerUnit: ${sceneMetadata.metersPerUnit || 1.0}`);
+	console.log('========================');
 
 	// Configure bone reduction (if enabled in UI)
 	if (animationParams.enableBoneReduction) {
@@ -636,37 +703,36 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 		console.log(`Bone reduction enabled: ${animationParams.targetBoneCount} bones per vertex`);
 	}
 
-	// Convert ArrayBuffer to Uint8Array
-	const uint8Array = new Uint8Array(arrayBuffer);
-
-	// Load USD scene from binary data
-	const usd_scene = await loader.loadFromBinary(uint8Array, filename);
-
-	console.log('USD scene loaded:', usd_scene);
-
 	// Get skeletons
 	const numSkeletons = usd_scene.numSkeletons ? usd_scene.numSkeletons() : 0;
 	console.log(`Found ${numSkeletons} skeletons in USD file`);
 
-	if (numSkeletons === 0) {
-		console.warn('No skeletons found in USD file');
-		alert('No skeletons found in this USD file. Please load a file with skeletal animation (SkelAnimation).');
-		return;
-	}
+	let bones = [];
+	let rootBone = null;
 
-	// Get first skeleton (for simplicity, only support one skeleton for now)
-	const usdSkeleton = usd_scene.getSkeleton(0);
-	console.log('USD Skeleton:', usdSkeleton);
+	if (numSkeletons > 0) {
+		// Get first skeleton (for simplicity, only support one skeleton for now)
+		const usdSkeleton = usd_scene.getSkeleton(0);
+		console.log('USD Skeleton:', usdSkeleton);
 
-	// Build Three.js skeleton
-	const { bones, boneMap: newBoneMap, rootBone } = buildSkeletonFromUSD(usdSkeleton, 0);
-	boneMap = newBoneMap;
+		// Build Three.js skeleton
+		const skeletonData = buildSkeletonFromUSD(usdSkeleton, 0);
+		bones = skeletonData.bones;
+		boneMap = skeletonData.boneMap;
+		rootBone = skeletonData.rootBone;
 
-	console.log(`Built skeleton with ${bones.length} bones`);
+		console.log(`Built skeleton with ${bones.length} bones`);
 
-	// Update skeleton info display
-	if (window.updateSkeletonInfo) {
-		window.updateSkeletonInfo(numSkeletons, bones.length);
+		// Update skeleton info display
+		if (window.updateSkeletonInfo) {
+			window.updateSkeletonInfo(numSkeletons, bones.length);
+		}
+	} else {
+		console.warn('No skeletons found in USD file - loading as static mesh');
+		// Update skeleton info display
+		if (window.updateSkeletonInfo) {
+			window.updateSkeletonInfo(0, 0);
+		}
 	}
 
 	// Get the default root node from USD
@@ -690,50 +756,64 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 		if (child.isMesh && child.geometry.attributes.skinIndex && child.geometry.attributes.skinWeight) {
 			console.log('Found skinned mesh:', child.name);
 
-			// Create Three.js skeleton
-			skeleton = new THREE.Skeleton(bones);
+			// Only create skeleton if we have bones
+			if (bones.length > 0 && rootBone) {
+				// Create Three.js skeleton
+				skeleton = new THREE.Skeleton(bones);
 
-			// Convert to SkinnedMesh if not already
-			if (!child.isSkinnedMesh) {
-				const skinnedMeshChild = new THREE.SkinnedMesh(child.geometry, child.material);
-				skinnedMeshChild.name = child.name;
-				skinnedMeshChild.position.copy(child.position);
-				skinnedMeshChild.quaternion.copy(child.quaternion);
-				skinnedMeshChild.scale.copy(child.scale);
-				child = skinnedMeshChild;
-			}
+				// Convert to SkinnedMesh if not already
+				if (!child.isSkinnedMesh) {
+					const skinnedMeshChild = new THREE.SkinnedMesh(child.geometry, child.material);
+					skinnedMeshChild.name = child.name;
+					skinnedMeshChild.position.copy(child.position);
+					skinnedMeshChild.quaternion.copy(child.quaternion);
+					skinnedMeshChild.scale.copy(child.scale);
+					child = skinnedMeshChild;
+				}
 
-			child.add(rootBone); // Add skeleton root to the mesh
-			child.bind(skeleton);
-			child.castShadow = true;
-			child.receiveShadow = true;
+				child.add(rootBone); // Add skeleton root to the mesh
+				child.bind(skeleton);
+				child.castShadow = true;
+				child.receiveShadow = true;
 
-			skinnedMesh = child;
-			characterGroup.add(skinnedMesh);
-			foundSkinnedMesh = true;
+				skinnedMesh = child;
+				characterGroup.add(skinnedMesh);
+				foundSkinnedMesh = true;
 
-			// Save original material
-			originalMaterial = skinnedMesh.material;
+				// Save original material
+				originalMaterial = skinnedMesh.material;
 
-			// Create skeleton helper for visualization
-			skeletonHelper = new THREE.SkeletonHelper(skinnedMesh);
-			skeletonHelper.visible = animationParams.showSkeleton;
-			scene.add(skeletonHelper);
+				// Create skeleton helper for visualization
+				skeletonHelper = new THREE.SkeletonHelper(skinnedMesh);
+				skeletonHelper.visible = animationParams.showSkeleton;
+				scene.add(skeletonHelper);
 
-			// Create joint spheres
-			jointSpheres = createJointSpheres(bones);
-			jointSpheres.forEach(sphere => sphere.visible = animationParams.showJoints);
+				// Create joint spheres
+				jointSpheres = createJointSpheres(bones);
+				jointSpheres.forEach(sphere => sphere.visible = animationParams.showJoints);
 
-			// Update joint hierarchy display
-			if (window.updateJointHierarchy) {
-				window.updateJointHierarchy(generateJointHierarchy(bones));
+				// Update joint hierarchy display
+				if (window.updateJointHierarchy) {
+					window.updateJointHierarchy(generateJointHierarchy(bones));
+				}
+			} else {
+				// No skeleton data - just add as regular mesh
+				console.log('No skeleton data available, adding mesh without skeleton');
+				child.castShadow = true;
+				child.receiveShadow = true;
+				characterGroup.add(child);
+
+				// Save as skinnedMesh reference even though it's not actually skinned
+				skinnedMesh = child;
+				originalMaterial = child.material;
+				foundSkinnedMesh = true;
 			}
 		}
 	});
 
 	if (!foundSkinnedMesh) {
-		// If no skinned mesh found, just add the geometry and attach skeleton
-		console.log('No skinned mesh found, creating basic SkinnedMesh');
+		// If no skinned mesh found, try to find any mesh and add it
+		console.log('No skinned mesh found');
 
 		// Find first mesh
 		let firstMesh = null;
@@ -743,7 +823,9 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 			}
 		});
 
-		if (firstMesh) {
+		if (firstMesh && bones.length > 0 && rootBone) {
+			// Have skeleton but mesh wasn't detected as skinned - create SkinnedMesh
+			console.log('Creating SkinnedMesh from regular mesh with skeleton');
 			skeleton = new THREE.Skeleton(bones);
 			const newSkinnedMesh = new THREE.SkinnedMesh(firstMesh.geometry, firstMesh.material);
 			newSkinnedMesh.add(rootBone);
@@ -770,15 +852,36 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 				window.updateJointHierarchy(generateJointHierarchy(bones));
 			}
 		} else {
-			// Fallback: just add the geometry
-			characterGroup.add(threeNode);
+			// No skeleton or no mesh - just add the scene as-is
+			console.log('Adding scene without skeleton');
+			if (firstMesh) {
+				firstMesh.castShadow = true;
+				firstMesh.receiveShadow = true;
+				characterGroup.add(firstMesh);
+				skinnedMesh = firstMesh;
+				originalMaterial = firstMesh.material;
+			} else {
+				characterGroup.add(threeNode);
+			}
+
+			// Update joint hierarchy display (empty)
+			if (window.updateJointHierarchy) {
+				window.updateJointHierarchy(generateJointHierarchy([]));
+			}
 		}
 	}
 
 	// Extract skeletal animations if available
 	try {
-		const animationInfos = usd_scene.getAllAnimationInfos();
-		usdAnimations = convertUSDSkeletalAnimationsToThreeJS(usd_scene, boneMap);
+		const animationInfos = usd_scene.getAllAnimationInfos ? usd_scene.getAllAnimationInfos() : [];
+
+		// Only try to extract animations if we have bones
+		if (bones.length > 0 && boneMap.size > 0) {
+			usdAnimations = convertUSDSkeletalAnimationsToThreeJS(usd_scene, boneMap);
+		} else {
+			console.log('No skeleton data available - skipping animation extraction');
+			usdAnimations = [];
+		}
 
 		if (usdAnimations.length > 0) {
 			console.log(`Extracted ${usdAnimations.length} skeletal animations from USD file`);
@@ -804,7 +907,7 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 			});
 
 			// Create mixer and play first animation
-			if (skinnedMesh && usdAnimations.length > 0) {
+			if (skinnedMesh && usdAnimations.length > 0 && skeleton) {
 				mixer = new THREE.AnimationMixer(skinnedMesh);
 				playAnimation(0);
 			}
@@ -812,13 +915,26 @@ async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
 			if (window.updateAnimationList) {
 				window.updateAnimationList([], []);
 			}
-			console.log('No skeletal animations found in USD file');
+			console.log('No skeletal animations found in USD file (loading as static mesh)');
 		}
 	} catch (error) {
 		console.error('Error extracting skeletal animations:', error);
+		console.log('Continuing without animations...');
 		if (window.updateAnimationList) {
 			window.updateAnimationList([], []);
 		}
+	}
+
+	// Apply Z-up to Y-up conversion if enabled AND the file is actually Z-up
+	if (animationParams.applyUpAxisConversion && fileUpAxis === "Z") {
+		usdSceneRoot.rotation.x = -Math.PI / 2;
+		console.log(`[processUSDScene] Applied Z-up to Y-up conversion (file upAxis="${fileUpAxis}"): rotation.x =`, usdSceneRoot.rotation.x);
+	} else if (animationParams.applyUpAxisConversion && fileUpAxis !== "Y") {
+		console.warn(`[processUSDScene] File upAxis is "${fileUpAxis}" (not Y or Z), no rotation applied`);
+	} else {
+		// Reset rotation (either disabled or file is already Y-up)
+		usdSceneRoot.rotation.x = 0;
+		console.log(`[processUSDScene] No upAxis conversion needed (file upAxis="${fileUpAxis}", conversion ${animationParams.applyUpAxisConversion ? 'enabled' : 'disabled'})`);
 	}
 }
 
@@ -860,6 +976,22 @@ window.addEventListener('loadUSDFile', async (event) => {
 		console.error('Failed to load USD file:', error);
 		alert('Failed to load USD file: ' + error.message);
 	}
+});
+
+// Listen for default model reload
+window.addEventListener('loadDefaultModel', async () => {
+	try {
+		await loadUSDModel();
+		console.log('Default model reloaded');
+	} catch (error) {
+		console.error('Failed to reload default model:', error);
+	}
+});
+
+// Load USD model on startup
+loadUSDModel().catch((error) => {
+	console.error('Failed to load USD model:', error);
+	alert('Failed to load default USD file: ' + error.message + '\n\nPlease upload a USD file (with or without skeletal animation).');
 });
 
 // Listen for mouse clicks for joint selection
@@ -988,7 +1120,25 @@ const animationParams = {
 
 	// Bone reduction settings (applied on next file load)
 	enableBoneReduction: false,
-	targetBoneCount: 4
+	targetBoneCount: 4,
+
+	// Up axis conversion (Z-up to Y-up)
+	applyUpAxisConversion: true,
+	toggleUpAxisConversion: function() {
+		if (this.applyUpAxisConversion && currentFileUpAxis === "Z") {
+			// Apply Z-up to Y-up conversion (-90 degrees around X axis)
+			usdSceneRoot.rotation.x = -Math.PI / 2;
+			console.log(`[toggleUpAxisConversion] Applied Z-up to Y-up rotation (file upAxis="${currentFileUpAxis}"): usdSceneRoot.rotation.x =`, usdSceneRoot.rotation.x);
+		} else {
+			// Reset rotation (either disabled or file is already Y-up)
+			usdSceneRoot.rotation.x = 0;
+			if (this.applyUpAxisConversion && currentFileUpAxis !== "Z") {
+				console.log(`[toggleUpAxisConversion] No rotation needed (file upAxis="${currentFileUpAxis}"): usdSceneRoot.rotation.x =`, usdSceneRoot.rotation.x);
+			} else {
+				console.log(`[toggleUpAxisConversion] Reset rotation (conversion disabled): usdSceneRoot.rotation.x =`, usdSceneRoot.rotation.x);
+			}
+		}
+	}
 };
 
 // GUI setup
@@ -1027,6 +1177,9 @@ const visualFolder = gui.addFolder('Visualization');
 visualFolder.add(animationParams, 'showSkeleton')
 	.name('Show Skeleton')
 	.onChange(() => animationParams.toggleSkeleton());
+visualFolder.add(animationParams, 'applyUpAxisConversion')
+	.name('Z-up to Y-up')
+	.onChange(() => animationParams.toggleUpAxisConversion());
 visualFolder.open();
 
 // Debug visualization controls
@@ -1160,5 +1313,3 @@ function animate() {
 
 // Start animation loop
 animate();
-
-console.log('Skeletal animation demo initialized. Load a USD file with skeletal animations to begin.');
