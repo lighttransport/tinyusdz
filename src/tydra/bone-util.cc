@@ -77,6 +77,9 @@ inline int FindRootBone(int bone_idx, const std::vector<int> &parent_indices) {
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-function"
+#elif defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
 #endif
 static void AssignChainGroups(const std::vector<int> &bone_indices,
                        const std::vector<int> &parent_indices,
@@ -105,6 +108,8 @@ static void AssignChainGroups(const std::vector<int> &bone_indices,
 }
 #if defined(__clang__)
 #pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#pragma GCC diagnostic pop
 #endif
 
 }  // namespace
