@@ -2063,6 +2063,7 @@ class Value {
   }
 #endif
 
+#if 0
   // Helper to log vector size
   template <typename T>
   static void log_vector_size(const std::vector<T>& vec) {
@@ -2073,6 +2074,7 @@ class Value {
   static void log_vector_size(const T&) {
     // Non-vector type, do nothing
   }
+#endif
 
   // Helper to check vector size bounds
   template <typename T>
@@ -2102,7 +2104,7 @@ class Value {
       }
 
       //TUSDZ_LOG_I("get_value: about to move/copy value of type " << TypeTraits<T>::type_name());
-      log_vector_size(*pv);
+      //log_vector_size(*pv);
       return std::move(*pv);
     } else if (!strict_cast) {
 
@@ -2112,7 +2114,7 @@ class Value {
           const T* pv = linb::cast<const T>(&v_);
           //TUSDZ_LOG_I("get_value: cast successful, pv=" << (pv ? "valid" : "null"));
           if (pv) {
-            log_vector_size(*pv);
+            //log_vector_size(*pv);
             if (!check_vector_size(*pv)) {
               return nonstd::nullopt;
             }
