@@ -4,6 +4,7 @@
 
 #include "acutest.h"
 
+#include "unit-ascii-parse.h"
 #include "unit-prim-types.h"
 #include "unit-primvar.h"
 #include "unit-pathutil.h"
@@ -25,6 +26,10 @@
 
 
 TEST_LIST = {
+  { "ascii_parse_int64_valid_test", ascii_parse_int64_valid_test },
+  { "ascii_parse_int64_excessive_digits_test", ascii_parse_int64_excessive_digits_test },
+  { "ascii_parse_uint64_valid_test", ascii_parse_uint64_valid_test },
+  { "ascii_parse_uint64_excessive_digits_test", ascii_parse_uint64_excessive_digits_test },
   { "prim_type_test", prim_type_test },
   { "prim_add_test", prim_add_test },
   { "primvar_test", primvar_test },
