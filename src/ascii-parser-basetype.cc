@@ -1008,6 +1008,7 @@ bool AsciiParser::ReadBasicType(nonstd::optional<value::uint4> *value) {
 
 bool AsciiParser::ReadBasicType(uint32_t *value) {
   std::stringstream ss;
+  constexpr uint32_t kMaxDigits = 100;
 
   // head character
   bool has_sign = false;
@@ -1042,7 +1043,13 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
     return false;
   }
 
+  uint32_t digits=0;
   while (!Eof()) {
+
+    if (digits > kMaxDigits) {
+      return false;
+    }
+
     char c;
     if (!Char1(&c)) {
       return false;
@@ -1050,19 +1057,22 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
 
     if ((c >= '0') && (c <= '9')) {
       ss << c;
+      digits++;
     } else {
       _sr->seek_from_current(-1);
       break;
     }
   }
 
-  if (has_sign && (ss.str().size() == 1)) {
+  std::string str = ss.str();
+
+  if (has_sign && (str.size() == 1)) {
     // sign only
     PushError("Integer value expected but got sign character only.\n");
     return false;
   }
 
-  if ((ss.str().size() > 1) && (ss.str()[0] == '0')) {
+  if ((str.size() > 1) && (str[0] == '0')) {
     PushError("Zero padded integer value is not allowed.\n");
     return false;
   }
@@ -1071,7 +1081,7 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
 
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
   try {
-    (*value) = uint32_t(std::stoull(ss.str()));
+    (*value) = uint32_t(std::stoull(str));
   } catch (const std::invalid_argument &e) {
     (void)e;
     PushError("Not an 64bit unsigned integer literal.\n");
@@ -1085,10 +1095,12 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
 #else
   // use jsteemann/atoi
   int retcode = 0;
+  const char* start = str.c_str();
+  const char* end = str.c_str() + str.size();
   auto result = jsteemann::atoi<uint32_t>(
-      ss.str().c_str(), ss.str().c_str() + ss.str().size(), retcode);
-  DCOUT("sz = " << ss.str().size());
-  DCOUT("ss = " << ss.str() << ", retcode = " << retcode
+      start, end, retcode);
+  DCOUT("sz = " << str.size());
+  DCOUT("ss = " << str << ", retcode = " << retcode
                 << ", result = " << result);
   if (retcode == jsteemann::SUCCESS) {
     (*value) = result;
@@ -1159,13 +1171,15 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
     }
   }
 
-  if (has_sign && (ss.str().size() == 1)) {
+  std::string str = ss.str();
+
+  if (has_sign && (str.size() == 1)) {
     // sign only
     PushError("Integer value expected but got sign character only.\n");
     return false;
   }
 
-  if ((ss.str().size() > 1) && (ss.str()[0] == '0')) {
+  if ((str.size() > 1) && (str[0] == '0')) {
     PushError("Zero padded integer value is not allowed.\n");
     return false;
   }
@@ -1175,7 +1189,7 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
   // TODO(syoyo): Use ryu parse.
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
   try {
-    (*value) = std::stoull(ss.str());
+    (*value) = std::stoull(str);
   } catch (const std::invalid_argument &e) {
     (void)e;
     PushError("Not an 64bit unsigned integer literal.\n");
@@ -1190,8 +1204,10 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
 #else
   // use jsteemann/atoi
   int retcode;
+  const char* start = str.c_str();
+  const char* end = str.c_str() + str.size();
   auto result = jsteemann::atoi<int64_t>(
-      ss.str().c_str(), ss.str().c_str() + ss.str().size(), retcode);
+      start, end, retcode);
   if (retcode == jsteemann::SUCCESS) {
     (*value) = result;
     return true;
@@ -1263,13 +1279,15 @@ bool AsciiParser::ReadBasicType(uint64_t *value) {
     }
   }
 
-  if (has_sign && (ss.str().size() == 1)) {
+  std::string str = ss.str();
+
+  if (has_sign && (str.size() == 1)) {
     // sign only
     PushError("Integer value expected but got sign character only.\n");
     return false;
   }
 
-  if ((ss.str().size() > 1) && (ss.str()[0] == '0')) {
+  if ((str.size() > 1) && (str[0] == '0')) {
     PushError("Zero padded integer value is not allowed.\n");
     return false;
   }
@@ -1279,7 +1297,7 @@ bool AsciiParser::ReadBasicType(uint64_t *value) {
   // TODO(syoyo): Use ryu parse.
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
   try {
-    (*value) = std::stoull(ss.str());
+    (*value) = std::stoull(str);
   } catch (const std::invalid_argument &e) {
     (void)e;
     PushError("Not an 64bit unsigned integer literal.\n");
@@ -1294,8 +1312,10 @@ bool AsciiParser::ReadBasicType(uint64_t *value) {
 #else
   // use jsteemann/atoi
   int retcode;
+  const char* start = str.c_str();
+  const char* end = str.c_str() + str.size();
   auto result = jsteemann::atoi<uint64_t>(
-      ss.str().c_str(), ss.str().c_str() + ss.str().size(), retcode);
+      start, end, retcode);
   if (retcode == jsteemann::SUCCESS) {
     (*value) = result;
     return true;
