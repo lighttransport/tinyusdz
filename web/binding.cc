@@ -1239,6 +1239,8 @@ class TinyUSDZLoaderNative {
 
   int numMeshes() const { return render_scene_.meshes.size(); }
 
+  int numMaterials() const { return render_scene_.materials.size(); }
+
   // Legacy method for backward compatibility
   emscripten::val getMaterial(int mat_id) const {
     // Default to JSON format for backward compatibility
@@ -2716,6 +2718,7 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("numMeshes", &TinyUSDZLoaderNative::numMeshes)
       .function("getMaterial", select_overload<emscripten::val(int) const>(&TinyUSDZLoaderNative::getMaterial))
       .function("getMaterialWithFormat", select_overload<emscripten::val(int, const std::string&) const>(&TinyUSDZLoaderNative::getMaterial))
+      .function("numMaterials", &TinyUSDZLoaderNative::numMaterials)
       .function("getTexture", &TinyUSDZLoaderNative::getTexture)
       .function("getImage", &TinyUSDZLoaderNative::getImage)
       .function("getDefaultRootNodeId",
