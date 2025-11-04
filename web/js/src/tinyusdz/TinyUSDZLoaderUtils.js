@@ -408,6 +408,9 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
         // Store doubleSided param to customData
         if (Object.prototype.hasOwnProperty.call(mesh, 'doubleSided')) {
           geometry.userData['doubleSided'] = mesh.doubleSided;
+          console.log(`USD Mesh doubleSided attribute: ${mesh.doubleSided}`);
+        } else {
+          console.log('USD Mesh has no doubleSided attribute (will default to FrontSide)');
         }
 
         return geometry;
@@ -440,14 +443,21 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
             //console.log("envmap:", options.envMap);
 
-            // Sideness is determined by the mesh
+            // Sideness is determined by the mesh's USD doubleSided attribute
             if (Object.prototype.hasOwnProperty.call(geometry.userData, 'doubleSided')) {
               if (geometry.userData.doubleSided) {
-                 
+                console.log(`  Setting material to DoubleSide (from USD doubleSided=true)`);
                 usdMaterial.side = THREE.DoubleSide;
                 pbrMaterial.side = THREE.DoubleSide;
+              } else {
+                console.log(`  Setting material to FrontSide (from USD doubleSided=false)`);
+                pbrMaterial.side = THREE.FrontSide;
               }
-            } 
+            } else {
+              // No doubleSided attribute in USD - default to FrontSide
+              console.log(`  Setting material to FrontSide (no USD doubleSided attribute)`);
+              pbrMaterial.side = THREE.FrontSide;
+            }
 
             mtl = pbrMaterial || defaultMtl || normalMtl;
         }
@@ -462,10 +472,14 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
     static toMatrix4(a) {
         const m = new THREE.Matrix4();
 
-        m.set(a[0], a[1], a[2], a[3],
-            a[4], a[5], a[6], a[7],
-            a[8], a[9], a[10], a[11],
-            a[12], a[13], a[14], a[15]);
+        //m.set(a[0], a[1], a[2], a[3],
+        //    a[4], a[5], a[6], a[7],
+        //    a[8], a[9], a[10], a[11],
+        //    a[12], a[13], a[14], a[15]);
+        m.set(a[0], a[4], a[8], a[12],
+            a[1], a[5], a[9], a[13],
+            a[2], a[6], a[10], a[14],
+            a[3], a[7], a[11], a[15]);
 
         return m;
     }
@@ -478,12 +492,25 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
 
         var node = new THREE.Group();
 
-        //console.log("usdNode.nodeType:", usdNode.nodeType, "primName:", usdNode.primName, "absPath:", usdNode.absPath);
+        console.log("usdNode.nodeType:", usdNode.nodeType, "primName:", usdNode.primName, "absPath:", usdNode.absPath);
         if (usdNode.nodeType == 'xform') {
 
             // intermediate xform node
-            // TODO: create THREE.Group and apply transform.
-            node.matrix = this.toMatrix4(usdNode.localMatrix);
+            // Apply the USD local transform matrix to the Three.js node
+            const matrix = this.toMatrix4(usdNode.localMatrix);
+            console.log("  Applied localMatrix:", {
+                matrix: matrix});
+
+            // Decompose the matrix into position, rotation, and scale
+            // This is necessary for Three.js to properly handle the transform
+            node.applyMatrix4(matrix);
+
+            // Log transform for debugging
+            console.log("  Applied xform matrix:", {
+                position: [node.position.x, node.position.y, node.position.z],
+                rotation: [node.rotation.x, node.rotation.y, node.rotation.z],
+                scale: [node.scale.x, node.scale.y, node.scale.z]
+            });
 
         } else if (usdNode.nodeType == 'mesh') {
 
@@ -493,9 +520,25 @@ class TinyUSDZLoaderUtils extends LoaderUtils {
             const threeMesh = this.setupMesh(mesh, defaultMtl, usdScene, options);
             node = threeMesh;
 
-        } else {
-            // ???
+            // Apply transform to mesh nodes as well
+            // Mesh nodes can also have transforms in USD
+            if (usdNode.localMatrix) {
+                const matrix = this.toMatrix4(usdNode.localMatrix);
+                node.applyMatrix4(matrix);
 
+                console.log("  Applied mesh matrix:", {
+                    position: [node.position.x, node.position.y, node.position.z],
+                    rotation: [node.rotation.x, node.rotation.y, node.rotation.z],
+                    scale: [node.scale.x, node.scale.y, node.scale.z]
+                });
+            }
+
+        } else {
+            // Unknown node type - still try to apply transform if available
+            if (usdNode.localMatrix) {
+                const matrix = this.toMatrix4(usdNode.localMatrix);
+                node.applyMatrix4(matrix);
+            }
         }
 
         node.name = usdNode.primName;

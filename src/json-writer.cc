@@ -31,8 +31,8 @@ namespace detail {
 
 #if 0
 inline std::string dtos(const double v) {
-  char buf[64];
-  dtoa_milo(v, buf);
+  char buf[384];
+  *dtoa_milo(v, buf) = '\0';
 
   return std::string(buf);
 }

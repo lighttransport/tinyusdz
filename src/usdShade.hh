@@ -477,9 +477,147 @@ DEFINE_TYPE_TRAIT(MaterialBinding, "MaterialBindingAPI",
 DEFINE_TYPE_TRAIT(MaterialXConfigAPI, kMaterialXConfigAPI,
                   TYPE_ID_MATERIALX_CONFIG_API, 1);
 
+// FIXME: assign unique id
+// Add TypeTraits for SourceColorSpace enum
+template <>
+struct TypeTraits<UsdUVTexture::SourceColorSpace> {
+  static constexpr uint32_t type_id() {
+    return TYPE_ID_SHADER + 100; // Use an arbitrary offset from shader type ID
+  }
+  static constexpr bool is_a_pod_type() { return true; }
+  static constexpr bool is_a_container() { return false; }
+  static constexpr size_t ndim() { return 0; }
+  static constexpr const char* type_name() { return "UsdUVTexture::SourceColorSpace"; }
+  // Use the same underlying type ID as int since enum is basically an int
+  static constexpr uint32_t underlying_type_id() { return type_id(); }
+};
+
 #undef DEFINE_TYPE_TRAIT
 #undef DEFINE_ROLE_TYPE_TRAIT
 
 }  // namespace value
+
+// Provide inline implementations for UsdUVTexture enum types
+// These enum types require special handling and cannot use extern templates
+
+// Implementation for UsdUVTexture::SourceColorSpace
+template<>
+template<>
+inline bool TypedTimeSamples<UsdUVTexture::SourceColorSpace>::get<UsdUVTexture::SourceColorSpace>(
+    UsdUVTexture::SourceColorSpace *dst, double t,
+    value::TimeSampleInterpolationType interp) const {
+
+  (void)interp;  // Enums are not interpolatable
+
+  if (!dst) {
+    return false;
+  }
+
+  if (empty()) {
+    return false;
+  }
+
+  if (_dirty) {
+    update();
+  }
+
+#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
+  // AoS layout
+  if (value::TimeCode(t).is_default()) {
+    (*dst) = _samples[0].value;
+    return true;
+  } else {
+    if (_samples.size() == 1) {
+      (*dst) = _samples[0].value;
+      return true;
+    }
+
+    // Held = nearest preceding value for a given time
+    auto it = std::upper_bound(
+      _samples.begin(), _samples.end(), t,
+      [](double tval, const Sample &a) { return tval < a.t; });
+
+    const auto it_minus_1 = (it == _samples.begin()) ? _samples.begin() : (it - 1);
+    (*dst) = it_minus_1->value;
+    return true;
+  }
+#else
+  // SoA layout
+  if (value::TimeCode(t).is_default()) {
+    (*dst) = _values[0];
+    return true;
+  } else {
+    if (_times.size() == 1) {
+      (*dst) = _values[0];
+      return true;
+    }
+
+    auto it = std::upper_bound(_times.begin(), _times.end(), t);
+    size_t idx = (it == _times.begin()) ? 0 : static_cast<size_t>(std::distance(_times.begin(), it) - 1);
+    (*dst) = _values[idx];
+    return true;
+  }
+#endif
+}
+
+// Implementation for UsdUVTexture::Wrap
+template<>
+template<>
+inline bool TypedTimeSamples<UsdUVTexture::Wrap>::get<UsdUVTexture::Wrap>(
+    UsdUVTexture::Wrap *dst, double t,
+    value::TimeSampleInterpolationType interp) const {
+
+  (void)interp;  // Enums are not interpolatable
+
+  if (!dst) {
+    return false;
+  }
+
+  if (empty()) {
+    return false;
+  }
+
+  if (_dirty) {
+    update();
+  }
+
+#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
+  // AoS layout
+  if (value::TimeCode(t).is_default()) {
+    (*dst) = _samples[0].value;
+    return true;
+  } else {
+    if (_samples.size() == 1) {
+      (*dst) = _samples[0].value;
+      return true;
+    }
+
+    // Held = nearest preceding value for a given time
+    auto it = std::upper_bound(
+      _samples.begin(), _samples.end(), t,
+      [](double tval, const Sample &a) { return tval < a.t; });
+
+    const auto it_minus_1 = (it == _samples.begin()) ? _samples.begin() : (it - 1);
+    (*dst) = it_minus_1->value;
+    return true;
+  }
+#else
+  // SoA layout
+  if (value::TimeCode(t).is_default()) {
+    (*dst) = _values[0];
+    return true;
+  } else {
+    if (_times.size() == 1) {
+      (*dst) = _values[0];
+      return true;
+    }
+
+    auto it = std::upper_bound(_times.begin(), _times.end(), t);
+    size_t idx = (it == _times.begin()) ? 0 : static_cast<size_t>(std::distance(_times.begin(), it) - 1);
+    (*dst) = _values[idx];
+    return true;
+  }
+#endif
+}
 
 }  // namespace tinyusdz

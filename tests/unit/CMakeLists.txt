@@ -3,6 +3,7 @@ set(TEST_TARGET_NAME unit-test-tinyusdz)
 set(TEST_SOURCES
 	unit-main.cc
 
+	unit-ascii-parse.cc
 	unit-customdata.cc
 	unit-handle-allocator.cc
 	unit-prim-types.cc
@@ -16,6 +17,7 @@ set(TEST_SOURCES
 	unit-ioutil.cc
 	unit-timesamples.cc
 	unit-materialx.cc
+	unit-task-queue.cc
    )
 
 if (TINYUSDZ_WITH_PXR_COMPAT_API)

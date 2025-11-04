@@ -15,8 +15,15 @@
 #include "composition.hh"
 #include "prim-types.hh"
 #include "stream-reader.hh"
+#include "string-similarity.hh"
 #include "tinyusdz.hh"
 #include "typed-array.hh"
+
+// Configuration flag for enabling fix suggestions in parse errors
+// When enabled, parser will suggest similar keywords/identifiers for unrecognized tokens
+#ifndef TINYUSDZ_ENABLE_SUGGEST_FIX
+#define TINYUSDZ_ENABLE_SUGGEST_FIX 1
+#endif
 
 //
 #ifdef __clang__
@@ -142,16 +149,92 @@ class AsciiParser {
     int col{0};
   };
 
+  /// Error type enumeration for categorizing parser errors
+  enum class ErrorType {
+    SyntaxError,      ///< Parse/syntax error
+    SemanticError,    ///< Type or value error
+    ValidationError,  ///< Constraint violation
+    IOError,          ///< File access error
+    UnknownError      ///< Uncategorized error
+  };
+
+  /// Error recovery suggestion enumeration (Priority 4c)
+  enum class ErrorRecoveryHint {
+    NoHint,                     ///< No suggestion available
+    CheckBracketMatching,      ///< Check if brackets/parens are balanced
+    CheckQuotes,               ///< Check if strings are properly quoted
+    CheckTypeName,             ///< Verify type name is correct
+    CheckAttributeName,        ///< Verify attribute name syntax
+    CheckIndentation,          ///< Check file indentation
+    CheckLineEndings           ///< Check for mixed line endings
+  };
+
+  /// Error position mode - whether cursor position is exact or approximate
+  enum class ErrorPositionMode {
+    Exact,  ///< Exact cursor position is known
+    Near    ///< Approximate position (error happened near this location)
+  };
+
   struct ErrorDiagnostic {
     std::string err;
     Cursor cursor;
+    ErrorType type{ErrorType::UnknownError};  ///< Error category
+    ErrorRecoveryHint hint{ErrorRecoveryHint::NoHint};  ///< Recovery suggestion (Priority 4c)
+    std::string suggestion;  ///< Suggested fix for the error (Priority 5)
+    ErrorPositionMode position_mode{ErrorPositionMode::Exact};  ///< Whether position is exact or approximate
+
+    /// Get a human-readable error type name
+    const char* TypeName() const {
+      switch (type) {
+        case ErrorType::SyntaxError:
+          return "Syntax Error";
+        case ErrorType::SemanticError:
+          return "Semantic Error";
+        case ErrorType::ValidationError:
+          return "Validation Error";
+        case ErrorType::IOError:
+          return "IO Error";
+        case ErrorType::UnknownError:
+          return "Error";
+      }
+      return "Error";  // Unreachable but satisfies compilers
+    }
+
+    /// Get human-readable recovery hint (Priority 4c)
+    const char* GetHint() const {
+      switch (hint) {
+        case ErrorRecoveryHint::NoHint:
+          return "";
+        case ErrorRecoveryHint::CheckBracketMatching:
+          return "Check bracket/parenthesis matching";
+        case ErrorRecoveryHint::CheckQuotes:
+          return "Check string quote matching";
+        case ErrorRecoveryHint::CheckTypeName:
+          return "Verify type name is valid USD type";
+        case ErrorRecoveryHint::CheckAttributeName:
+          return "Verify attribute name follows USD naming conventions";
+        case ErrorRecoveryHint::CheckIndentation:
+          return "Check file indentation for consistency";
+        case ErrorRecoveryHint::CheckLineEndings:
+          return "Check for mixed line endings (LF vs CRLF)";
+      }
+      return "";
+    }
   };
 
-  void PushError(const std::string &msg) {
+  void PushError(const std::string &msg,
+                 ErrorType type = ErrorType::UnknownError,
+                 ErrorRecoveryHint hint = ErrorRecoveryHint::NoHint,
+                 const std::string &suggestion = "",
+                 ErrorPositionMode position_mode = ErrorPositionMode::Exact) {
     ErrorDiagnostic diag;
     diag.cursor.row = _curr_cursor.row;
     diag.cursor.col = _curr_cursor.col;
     diag.err = msg;
+    diag.type = type;
+    diag.hint = hint;
+    diag.suggestion = suggestion;
+    diag.position_mode = position_mode;
     err_stack.push(diag);
   }
 
@@ -162,11 +245,19 @@ class AsciiParser {
     }
   }
 
-  void PushWarn(const std::string &msg) {
+  void PushWarn(const std::string &msg,
+                ErrorType type = ErrorType::UnknownError,
+                ErrorRecoveryHint hint = ErrorRecoveryHint::NoHint,
+                const std::string &suggestion = "",
+                ErrorPositionMode position_mode = ErrorPositionMode::Exact) {
     ErrorDiagnostic diag;
     diag.cursor.row = _curr_cursor.row;
     diag.cursor.col = _curr_cursor.col;
     diag.err = msg;
+    diag.type = type;
+    diag.hint = hint;
+    diag.suggestion = suggestion;
+    diag.position_mode = position_mode;
     warn_stack.push(diag);
   }
 
@@ -289,7 +380,7 @@ class AsciiParser {
           const Path &full_path, const Specifier spec,
           const std::string &primTypeName, const Path &prim_name,
           const int64_t primIdx, const int64_t parentPrimIdx,
-          const std::map<std::string, Property> &properties,
+          std::map<std::string, Property> &properties,
           const PrimMetaMap &in_meta, const VariantSetList &in_variantSetList)>;
 
   ///
@@ -651,6 +742,18 @@ class AsciiParser {
   bool ParseDict(std::map<std::string, MetaVariable> *out_dict);
 
   ///
+  /// Parse TimeSample data with concrete type for optimized POD storage.
+  /// This template function is optimized for POD types and uses direct
+  /// storage without value::Value wrapping for better performance.
+  ///
+  /// @tparam T The concrete type for time sample values
+  /// @param ts Output TimeSamples container
+  /// @return true if parsing succeeded with optimized path, false otherwise
+  ///
+  template<typename T>
+  bool ParseTypedTimeSamples(value::TimeSamples *ts);
+
+  ///
   /// Parse TimeSample data(scalar type) and store it to type-erased data
   /// structure value::TimeSamples.
   ///
@@ -719,6 +822,47 @@ class AsciiParser {
   /// Get warning message(warnings in `Parse`)
   ///
   std::string GetWarning();
+
+  ///
+  /// Get error message with context showing surrounding source lines.
+  /// @param[in] context_lines Number of lines of context to show around error
+  /// (default 2)
+  /// @return Formatted error message with source code context and caret indicator
+  ///
+  std::string GetErrorWithContext(int context_lines = 2);
+
+  ///
+  /// Get warning message with context showing surrounding source lines.
+  /// @param[in] context_lines Number of lines of context to show around warning
+  /// (default 2)
+  /// @return Formatted warning message with source code context and caret
+  /// indicator
+  ///
+  std::string GetWarningWithContext(int context_lines = 2);
+
+  ///
+  /// Get error message with aggressive deduplication and recovery hints (Priority 4b & 4c).
+  /// Groups similar errors and provides recovery suggestions based on error type.
+  /// @param[in] show_hints If true, include recovery hints for each error type
+  /// @return Formatted error messages with deduplication and optional hints
+  ///
+  std::string GetErrorWithHints(bool show_hints = true);
+
+  ///
+  /// Get warning message with aggressive deduplication and recovery hints (Priority 4b & 4c).
+  /// @param[in] show_hints If true, include recovery hints for each warning type
+  /// @return Formatted warning messages with deduplication and optional hints
+  ///
+  std::string GetWarningWithHints(bool show_hints = true);
+
+  ///
+  /// Get error message with source code context including surrounding lines.
+  /// Shows actual file content with caret (^) and visual indicators (~~~~).
+  /// @param[in] filename Path to the source USDA file (for context retrieval)
+  /// @param[in] context_lines Number of lines of context to show around error
+  /// @return Formatted error messages with source code context and visual indicators
+  ///
+  std::string GetErrorWithSourceContext(const std::string& filename, int context_lines = 2, int column_width = 40);
 
 #if 0
   // Return the flag if the .usda is read from `references`
@@ -850,6 +994,14 @@ class AsciiParser {
   // --------------------------------------------
 
  private:
+  ///
+  /// Generate a fix suggestion for an invalid token (Priority 5).
+  /// Uses string similarity matching to suggest corrections.
+  /// @param[in] invalid_token The unrecognized token
+  /// @return Suggestion string (e.g. "Did you mean 'def'?"), or empty if no match
+  ///
+  std::string GenerateSuggestion(const std::string& invalid_token);
+
   ///
   /// Do common setups. Assume called in ctor.
   ///

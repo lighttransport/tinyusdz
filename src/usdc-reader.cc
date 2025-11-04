@@ -74,7 +74,7 @@ namespace prim {
 // implimentations will be located in prim-reconstruct.cc
 #define RECONSTRUCT_PRIM_DECL(__ty)                                      \
   template <>                                                            \
-  bool ReconstructPrim<__ty>(const Specifier &spec, const PropertyMap &, const ReferenceList &, \
+  bool ReconstructPrim<__ty>(const Specifier &spec, PropertyMap &, const ReferenceList &, \
                              __ty *, std::string *, std::string *, const PrimReconstructOptions &)
 
 RECONSTRUCT_PRIM_DECL(Xform);
@@ -568,10 +568,6 @@ bool USDCReader::Impl::ReconstructGeomSubset(
             return false;
           }
 
-#ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-          std::cout << "add [" << prop_name << "] to generic attrs\n";
-#endif
-
           geom_subset->attribs[prop_name] = std::move(attr);
         }
       }
@@ -895,7 +891,7 @@ bool USDCReader::Impl::BuildPropertyMap(const std::vector<size_t> &pathIndices,
                 prop_name));
       }
 
-      (*props)[prop_name] = prop;
+      (*props)[prop_name] = std::move(prop);
       DCOUT("Add property : " << prop_name);
     }
   }
@@ -987,6 +983,13 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
     DCOUT(" fv name " << fv.first << "(type = " << fv.second.type_name()
                       << ")");
 
+    // Debug: Check timeSamples field specifically
+    if (fv.first.find("time") != std::string::npos) {
+      DCOUT(">>> DEBUG: Found field with 'time' in name: '" << fv.first << "', length = " << fv.first.size());
+      //bool matches = (fv.first == "timeSamples");
+      //DCOUT(">>> Comparing with 'timeSamples': matches = " << matches);
+    }
+
     if (fv.first == "custom") {
       if (auto pv = fv.second.get_value<bool>()) {
         custom = pv.value();
@@ -1038,12 +1041,39 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
 
     } else if (fv.first == "timeSamples") {
       //propType = Property::Type::Attrib;
-      
+      DCOUT(">>> Entering timeSamples block");
 
       hasTimeSamples = true;
 
-      if (auto pv = fv.second.get_value<value::TimeSamples>()) {
-        var.set_timesamples(std::move(pv.value()));
+      //if (auto pv = fv.second.get_value<value::TimeSamples>()) {
+      if (const value::TimeSamples *vptr = fv.second.as<value::TimeSamples>()) {
+        // DANGER:
+        // TODO: remove const from func arg
+        value::TimeSamples &ts = *(const_cast<value::TimeSamples *>(vptr));
+
+        DCOUT("ts.type_id " << ts.type_id());
+
+        // If TimeSamples is uninitialized (all samples were VALUE_BLOCK),
+        // initialize it with the type from the attribute's typeName
+        if (ts.type_id() == 0 && typeName) {
+          uint32_t type_id = value::GetTypeId(typeName.value().str());
+
+          if (type_id == value::TYPE_ID_INVALID) {
+            PUSH_ERROR_AND_RETURN(fmt::format("Invalid typeName `{}` for TimeSamples", typeName.value().str()));
+          }
+
+          if (!ts.init(type_id)) {
+            PUSH_ERROR_AND_RETURN(fmt::format("Failed to initialize TimeSamples with type_id {} for typeName `{}`", type_id, typeName.value().str()));
+          }
+        }
+
+        DCOUT("set_timesamples");
+
+        // Don't use std::move here! Multiple attributes might reference the
+        // same TimeSamples from the fieldset. Using std::move would leave the
+        // CrateValue empty after the first use, causing subsequent attributes
+        // to get an empty TimeSamples.
+        var.set_timesamples(ts);
       } else {
         PUSH_ERROR_AND_RETURN_TAG(kTag,
                                   "`timeSamples` is not TimeSamples data.");
@@ -1376,7 +1406,8 @@ bool USDCReader::Impl::ParseProperty(const SpecType spec_type,
     }
   }
 
-  attr.set_var(var);
+  // HACK
+  attr.set_var(std::move(var));
 
   if (isValueBlock) {
     // attr's type is replaced with ValueBlock type  by `set_var`, so overwrite type with typeName
@@ -1807,8 +1838,8 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
     typed_prim.spec = __spec;                                      \
     typed_prim.propertyNames() = properties; \
     typed_prim.primChildrenNames() = primChildren; \
-    value::Value primdata = typed_prim;                            \
-    Prim prim(__prim_name, primdata);                            \
+    value::Value primdata(std::move(typed_prim));                            \
+    Prim prim(__prim_name, std::move(primdata));                            \
     prim.prim_type_name() = primTypeName; \
     /* also add primChildren to Prim */ \
     prim.metas().primChildren = primChildren; \
@@ -1833,8 +1864,9 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
     typed_prim.spec = spec;
     typed_prim.propertyNames() = properties;
     typed_prim.primChildrenNames() = primChildren;
-    value::Value primdata = typed_prim;
-    Prim prim(prim_name, primdata);
+    //value::Value primdata = typed_prim;
+    value::Value primdata(std::move(typed_prim));
+    Prim prim(prim_name, std::move(primdata));
     prim.prim_type_name() = primTypeName;
     /* also add primChildren to Prim */
     prim.metas().primChildren = primChildren; \
@@ -2347,17 +2379,17 @@ bool USDCReader::Impl::ReconstructPrimNode(int parent, int current, int level,
   DCOUT(fmt::format("parent = {}, curent = {}, is_parent_variant = {}", parent, current, is_parent_variant));
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << pprint::Indent(uint32_t(level)) << "lv[" << level
-            << "] node_index[" << current << "] " << node.GetLocalPath()
-            << " ==\n";
-  std::cout << pprint::Indent(uint32_t(level)) << " childs = [";
-  for (size_t i = 0; i < node.GetChildren().size(); i++) {
-    std::cout << node.GetChildren()[i];
-    if (i != (node.GetChildren().size() - 1)) {
-      std::cout << ", ";
-    }
-  }
-  std::cout << "] (is_parent_variant = " << is_parent_variant << ")\n";
+  //std::cout << pprint::Indent(uint32_t(level)) << "lv[" << level
+  //          << "] node_index[" << current << "] " << node.GetLocalPath()
+  //          << " ==\n";
+  //std::cout << pprint::Indent(uint32_t(level)) << " childs = [";
+  //for (size_t i = 0; i < node.GetChildren().size(); i++) {
+  //  std::cout << node.GetChildren()[i];
+  //  if (i != (node.GetChildren().size() - 1)) {
+  //    std::cout << ", ";
+  //  }
+  //}
+  //std::cout << "] (is_parent_variant = " << is_parent_variant << ")\n";
 #endif
 
   if (!psmap.count(uint32_t(current))) {
@@ -2808,17 +2840,17 @@ bool USDCReader::Impl::ReconstructPrimSpecNode(int parent, int current, int leve
   const crate::CrateReader::Node &node = (*_nodes)[size_t(current)];
 
 #ifdef TINYUSDZ_LOCAL_DEBUG_PRINT
-  std::cout << pprint::Indent(uint32_t(level)) << "lv[" << level
-            << "] node_index[" << current << "] " << node.GetLocalPath()
-            << " ==\n";
-  std::cout << pprint::Indent(uint32_t(level)) << " childs = [";
-  for (size_t i = 0; i < node.GetChildren().size(); i++) {
-    std::cout << node.GetChildren()[i];
-    if (i != (node.GetChildren().size() - 1)) {
-      std::cout << ", ";
-    }
-  }
-  std::cout << "] (is_parent_variant = " << is_parent_variant << ")\n";
+  //std::cout << pprint::Indent(uint32_t(level)) << "lv[" << level
+  //          << "] node_index[" << current << "] " << node.GetLocalPath()
+  //          << " ==\n";
+  //std::cout << pprint::Indent(uint32_t(level)) << " childs = [";
+  //for (size_t i = 0; i < node.GetChildren().size(); i++) {
+  //  std::cout << node.GetChildren()[i];
+  //  if (i != (node.GetChildren().size() - 1)) {
+  //    std::cout << ", ";
+  //  }
+  //}
+  //std::cout << "] (is_parent_variant = " << is_parent_variant << ")\n";
 #endif
 
   if (!psmap.count(uint32_t(current))) {
