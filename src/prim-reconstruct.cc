@@ -94,6 +94,7 @@ struct ParseResult
 
   ResultCode code;
   std::string err;
+  std::string warn;
 };
 
 #if 0
@@ -598,6 +599,11 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
           ret.code = ParseResult::ResultCode::VariabilityMismatch;
           ret.err = fmt::format("Attribute `{}` must be `uniform` variability.", name);
           return ret;
+        }
+
+        // Warn if config attribute is missing explicit uniform variability
+        if (is_config_attr && prop.get_attribute().variability() != Variability::Uniform) {
+          ret.warn = fmt::format("Config attribute `{}` should have explicit `uniform` variability.", name);
         }
 
         if (attr.is_blocked()) {
@@ -1544,6 +1550,9 @@ nonstd::expected<T, std::string> EnumHandler(
 #define PARSE_TYPED_ATTRIBUTE(__table, __prop, __name, __klass, __target) { \
   ParseResult ret = ParseTypedAttribute(__table, __prop.first, __prop.second, __name, __target); \
   if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
+    if (!ret.warn.empty()) { \
+      PUSH_WARN(ret.warn); \
+    } \
     continue; /* got it */\
   } else if (ret.code == ParseResult::ResultCode::Unmatched) { \
     /* go next */ \
@@ -1555,6 +1564,9 @@ nonstd::expected<T, std::string> EnumHandler(
 #define PARSE_TYPED_ATTRIBUTE_NOCONTINUE(__table, __prop, __name, __klass, __target) { \
   ParseResult ret = ParseTypedAttribute(__table, __prop.first, __prop.second, __name, __target); \
   if (ret.code == ParseResult::ResultCode::Success || ret.code == ParseResult::ResultCode::AlreadyProcessed) { \
+    if (!ret.warn.empty()) { \
+      PUSH_WARN(ret.warn); \
+    } \
     /* do nothing */ \
   } else if (ret.code == ParseResult::ResultCode::Unmatched) { \
     /* go next */ \
