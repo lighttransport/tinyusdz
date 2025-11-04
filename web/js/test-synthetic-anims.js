@@ -9,7 +9,7 @@ async function testFile(filename) {
   await loader.init({ useMemory64: false });
 
   const usd = await new Promise((resolve, reject) => {
-    loader.load(`../../models/${filename}`, resolve, null, reject);
+    loader.load(`../../tests/feat/skinning/${filename}`, resolve, null, reject);
   });
 
   const numAnims = usd.numAnimations();
