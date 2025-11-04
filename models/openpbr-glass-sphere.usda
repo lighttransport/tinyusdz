@@ -1,0 +1,38 @@
+#usda 1.0
+(
+    doc = "OpenPBR glass material with transmission"
+    metersPerUnit = 1
+    upAxis = "Y"
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Sphere "GlassSphere"
+    {
+        double radius = 1.5
+        rel material:binding = </World/_materials/GlassMaterial>
+    }
+
+    def Scope "_materials"
+    {
+        def Material "GlassMaterial"
+        {
+            token outputs:surface.connect = </World/_materials/GlassMaterial/OpenPBRSurface.outputs:surface>
+
+            def Shader "OpenPBRSurface"
+            {
+                uniform token info:id = "OpenPBRSurface"
+                color3f inputs:base_color = (1.0, 1.0, 1.0)
+                float inputs:base_weight = 0.0
+                float inputs:specular_roughness = 0.0
+                float inputs:specular_weight = 1.0
+                float inputs:specular_ior = 1.5
+                color3f inputs:transmission_color = (0.95, 0.98, 1.0)
+                float inputs:transmission_weight = 1.0
+                bool inputs:geometry_thin_walled = 0
+                token outputs:surface
+            }
+        }
+    }
+}
