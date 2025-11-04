@@ -5,6 +5,16 @@ project(crate-writer CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Link TinyUSDZ library from parent build
+set(TINYUSDZ_BUILD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../build")
+set(TINYUSDZ_STATIC_LIB "${TINYUSDZ_BUILD_DIR}/libtinyusdz_static.a")
+
+if(NOT EXISTS "${TINYUSDZ_STATIC_LIB}")
+  message(FATAL_ERROR "TinyUSDZ static library not found at: ${TINYUSDZ_STATIC_LIB}\nPlease build TinyUSDZ first: cd ../../build && make tinyusdz_static")
+endif()
+
+message(STATUS "Using TinyUSDZ library: ${TINYUSDZ_STATIC_LIB}")
+
 # ============================================================================
 # Experimental USDC Crate Writer Library
 # ============================================================================
@@ -26,6 +36,7 @@ add_subdirectory(../path-sort-and-encode-crate ${CMAKE_CURRENT_BINARY_DIR}/path-
 
 target_link_libraries(crate-writer
   crate-encoding
+  ${TINYUSDZ_STATIC_LIB}
 )
 
 # ============================================================================
@@ -43,6 +54,7 @@ if(BUILD_CRATE_WRITER_EXAMPLES)
   target_link_libraries(example_write
     crate-writer
     crate-encoding
+    ${TINYUSDZ_STATIC_LIB}
   )
 
   target_include_directories(example_write PRIVATE
@@ -50,6 +62,86 @@ if(BUILD_CRATE_WRITER_EXAMPLES)
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../
   )
+
+  # Example: Minimal simple usage (inline values only)
+  add_executable(simple_write
+    examples/simple_write.cc
+  )
+
+  target_link_libraries(simple_write
+    crate-writer
+    crate-encoding
+    ${TINYUSDZ_STATIC_LIB}
+  )
+
+  target_include_directories(simple_write PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../
+  )
+endif()
+
+# ============================================================================
+# Tests
+# ============================================================================
+
+option(BUILD_CRATE_WRITER_TESTS "Build crate-writer tests" ON)
+
+if(BUILD_CRATE_WRITER_TESTS)
+  # Test: TinyUSDZ integer compression
+  add_executable(test_integer_compression
+    tests/test_integer_compression.cc
+  )
+
+  target_link_libraries(test_integer_compression
+    ${TINYUSDZ_STATIC_LIB}
+  )
+
+  target_include_directories(test_integer_compression PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../
+  )
+
+  # Test: OpenUSD integer compression (optional, requires OpenUSD)
+  find_path(OPENUSD_INCLUDE_DIR pxr/usd/sdf/integerCoding.h
+    PATHS
+      ${CMAKE_CURRENT_SOURCE_DIR}/../../aousd/dist/include
+      ${CMAKE_CURRENT_SOURCE_DIR}/../../aousd/dist_monolithic/include
+      /usr/local/include
+  )
+
+  find_library(OPENUSD_SDF_LIB NAMES usd_sdf sdf
+    PATHS
+      ${CMAKE_CURRENT_SOURCE_DIR}/../../aousd/dist/lib
+      ${CMAKE_CURRENT_SOURCE_DIR}/../../aousd/dist_monolithic/lib
+      /usr/local/lib
+  )
+
+  find_library(OPENUSD_TF_LIB NAMES usd_tf tf
+    PATHS
+      ${CMAKE_CURRENT_SOURCE_DIR}/../../aousd/dist/lib
+      ${CMAKE_CURRENT_SOURCE_DIR}/../../aousd/dist_monolithic/lib
+      /usr/local/lib
+  )
+
+  if(OPENUSD_INCLUDE_DIR AND OPENUSD_SDF_LIB AND OPENUSD_TF_LIB)
+    message(STATUS "Found OpenUSD, building OpenUSD integer compression test")
+
+    add_executable(test_openusd_integer_compression
+      tests/test_openusd_integer_compression.cc
+    )
+
+    target_link_libraries(test_openusd_integer_compression
+      ${OPENUSD_SDF_LIB}
+      ${OPENUSD_TF_LIB}
+    )
+
+    target_include_directories(test_openusd_integer_compression PRIVATE
+      ${OPENUSD_INCLUDE_DIR}
+    )
+  else()
+    message(STATUS "OpenUSD not found, skipping OpenUSD integer compression test")
+  endif()
 endif()
 
 # ============================================================================
