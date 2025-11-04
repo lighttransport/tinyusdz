@@ -6279,6 +6279,18 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         translation_samples.push_back(sample_value);
         if (float(sample_t) > anim_out->duration) anim_out->duration = float(sample_t);
       FOREACH_TIMESAMPLES_END()
+    } else if (translations.has_value()) {
+      // Handle static (non-time-sampled) values as a single keyframe at time 0.0
+      std::vector<value::float3> default_value;
+      if (!translations.get_scalar(&default_value)) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Failed to get default value for translations in SkelAnimation: {}", abs_path));
+      }
+      if (default_value.size() != joints.size()) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: translations.size {} != joints.size {}",
+          default_value.size(), joints.size()));
+      }
+      translation_times.push_back(0.0);
+      translation_samples.push_back(default_value);
     }
 
     if (rotations.has_timesamples()) {
@@ -6292,6 +6304,18 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         rotation_samples.push_back(sample_value);
         if (float(sample_t) > anim_out->duration) anim_out->duration = float(sample_t);
       FOREACH_TIMESAMPLES_END()
+    } else if (rotations.has_value()) {
+      // Handle static (non-time-sampled) values as a single keyframe at time 0.0
+      std::vector<value::quatf> default_value;
+      if (!rotations.get_scalar(&default_value)) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Failed to get default value for rotations in SkelAnimation: {}", abs_path));
+      }
+      if (default_value.size() != joints.size()) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: rotations.size {} != joints.size {}",
+          default_value.size(), joints.size()));
+      }
+      rotation_times.push_back(0.0);
+      rotation_samples.push_back(default_value);
     }
 
     if (scales.has_timesamples()) {
@@ -6305,6 +6329,18 @@ bool RenderSceneConverter::ConvertSkelAnimation(const RenderSceneConverterEnv &e
         scale_samples.push_back(sample_value);
         if (float(sample_t) > anim_out->duration) anim_out->duration = float(sample_t);
       FOREACH_TIMESAMPLES_END()
+    } else if (scales.has_value()) {
+      // Handle static (non-time-sampled) values as a single keyframe at time 0.0
+      std::vector<value::half3> default_value;
+      if (!scales.get_scalar(&default_value)) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Failed to get default value for scales in SkelAnimation: {}", abs_path));
+      }
+      if (default_value.size() != joints.size()) {
+        PUSH_ERROR_AND_RETURN(fmt::format("Array length mismatch: scales.size {} != joints.size {}",
+          default_value.size(), joints.size()));
+      }
+      scale_times.push_back(0.0);
+      scale_samples.push_back(default_value);
     }
 
     // Create glTF-style samplers and channels for each joint
