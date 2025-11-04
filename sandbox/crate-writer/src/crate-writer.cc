@@ -811,6 +811,21 @@ bool CrateWriter::WritePathsSection(std::string* err) {
   // Use the path sorting and encoding library
   // Convert TinyUSDZ Path to SimplePath for encoding
   std::vector<pathlib::SimplePath> simple_paths;
+
+  // CRITICAL: Always include the root "/" path first
+  // OpenUSD requires root to be in the paths list
+  bool has_root = false;
+  for (const auto& path : paths_) {
+    if (path.prim_part() == "/" && path.prop_part().empty()) {
+      has_root = true;
+      break;
+    }
+  }
+
+  if (!has_root) {
+    simple_paths.emplace_back("/", "");  // Add root path
+  }
+
   for (const auto& path : paths_) {
     simple_paths.emplace_back(path.prim_part(), path.prop_part());
   }
@@ -821,18 +836,29 @@ bool CrateWriter::WritePathsSection(std::string* err) {
   // Encode to compressed tree
   pathlib::CompressedPathTree tree = pathlib::EncodePaths(simple_paths);
 
-  // Write path count
+  // CRITICAL: OpenUSD expects TWO uint64_t values:
+  // 1. Total number of paths (for resizing _paths vector)
+  // 2. Number of encoded paths in the tree
+  // For the tree encoding, these values are identical.
   uint64_t path_count = static_cast<uint64_t>(tree.size());
   if (!Write(path_count)) {
-    if (err) *err = "Failed to write path count";
+    if (err) *err = "Failed to write total path count";
+    return false;
+  }
+
+  // Write the same value again for numEncodedPaths
+  if (!Write(path_count)) {
+    if (err) *err = "Failed to write encoded path count";
     return false;
   }
 
   // Convert path_indexes from uint64_t to uint32_t
   // (USD paths typically won't exceed 2^32 entries)
   std::vector<uint32_t> path_indexes_32(tree.path_indexes.size());
+  std::cerr << "DEBUG: Path tree has " << tree.path_indexes.size() << " path indices:\n";
   for (size_t i = 0; i < tree.path_indexes.size(); ++i) {
     path_indexes_32[i] = static_cast<uint32_t>(tree.path_indexes[i]);
+    std::cerr << "  pathIndex[" << i << "] = " << path_indexes_32[i] << "\n";
   }
 
   // Compress and write pathIndexes array (uint32_t)
