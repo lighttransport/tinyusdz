@@ -1,0 +1,10 @@
+#usda 1.0
+
+def Xform "test_vec3f"
+{
+  float3 position.timeSamples = {
+      0: (0.0, 0.0, 0.0),
+      10: (1.0, 2.0, 3.0),
+      20: (-1.0, -2.0, -3.0),
+  }
+}

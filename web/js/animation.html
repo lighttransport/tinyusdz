@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<title>TinyUSDZ Three.js Animation Demo</title>
+		<style>
+			body {
+				margin: 0;
+				overflow: hidden;
+				font-family: Arial, sans-serif;
+			}
+			canvas {
+				display: block;
+			}
+			#info {
+				position: absolute;
+				top: 10px;
+				left: 10px;
+				color: white;
+				background: rgba(0, 0, 0, 0.7);
+				padding: 10px;
+				border-radius: 5px;
+				font-size: 14px;
+				max-width: 400px;
+			}
+			#info h3 {
+				margin-top: 0;
+				margin-bottom: 10px;
+				color: #6bb6ff;
+			}
+			#info p {
+				margin: 5px 0;
+				font-size: 12px;
+			}
+			#file-controls {
+				margin-top: 10px;
+				padding-top: 10px;
+				border-top: 1px solid rgba(255, 255, 255, 0.2);
+			}
+			#fileInput {
+				display: none;
+			}
+			.button {
+				display: inline-block;
+				padding: 6px 12px;
+				background: #4CAF50;
+				color: white;
+				border: none;
+				border-radius: 4px;
+				cursor: pointer;
+				font-size: 12px;
+				margin-right: 5px;
+			}
+			.button:hover {
+				background: #45a049;
+			}
+			#animation-info {
+				margin-top: 10px;
+				padding-top: 10px;
+				border-top: 1px solid rgba(255, 255, 255, 0.2);
+				font-size: 11px;
+				color: #95e06c;
+			}
+			.animation-list {
+				margin-top: 5px;
+				max-height: 150px;
+				overflow-y: auto;
+			}
+			.animation-item {
+				padding: 3px 5px;
+				margin: 2px 0;
+				background: rgba(255, 255, 255, 0.1);
+				border-radius: 3px;
+			}
+			#loadingIndicator {
+				display: none;
+				color: #ffd700;
+				font-weight: bold;
+				margin-top: 5px;
+			}
+			#loadingIndicator.active {
+				display: block;
+			}
+		</style>
+	</head>
+	<body>
+		<div id="info">
+			<h3>TinyUSDZ Three.js Animation Demo</h3>
+			<p>
+				This demo shows USD animation extraction and playback using Three.js.<br>
+				The scene loads a USD model and can play both synthetic and USD-embedded animations.
+			</p>
+			<p>
+				<strong>Current file:</strong> <span id="currentFile"></span>
+				<span id="loadingIndicator">⏳ Loading...</span>
+			</p>
+			<div id="file-controls">
+				<input type="file" id="fileInput" accept=".usd,.usda,.usdc,.usdz">
+				<button class="button" onclick="document.getElementById('fileInput').click()">Load USD File(w.i.p)</button>
+				<!-- <button class="button" onclick="window.reloadDefaultModel()">Reset to Default</button> -->
+			</div>
+			<div id="animation-info" style="display:none;">
+				<strong>USD Animations Found:</strong>
+				<div class="animation-list" id="animationList"></div>
+			</div>
+		</div>
+
+		<script type="module">
+			// Handle file upload
+			document.getElementById('fileInput').addEventListener('change', async (event) => {
+				const file = event.target.files[0];
+				if (!file) return;
+
+				// Show loading indicator
+				const loadingIndicator = document.getElementById('loadingIndicator');
+				loadingIndicator.classList.add('active');
+				document.getElementById('currentFile').textContent = file.name;
+
+				// Trigger custom event that animation.js can listen to
+				const customEvent = new CustomEvent('loadUSDFile', {
+					detail: { file }
+				});
+				window.dispatchEvent(customEvent);
+
+				// Clear the input value to allow reloading the same file
+				// This ensures the 'change' event fires even if the same file is selected again
+				event.target.value = '';
+			});
+
+			// Function to hide loading indicator (called from animation.js after load completes)
+			window.hideLoadingIndicator = function() {
+				const loadingIndicator = document.getElementById('loadingIndicator');
+				loadingIndicator.classList.remove('active');
+			};
+
+			// Function to update animation list display
+			window.updateAnimationList = function(animations, animationInfos) {
+				const animInfo = document.getElementById('animation-info');
+				const animList = document.getElementById('animationList');
+
+				if (animations && animations.length > 0) {
+					animInfo.style.display = 'block';
+					animList.innerHTML = '';
+
+					animations.forEach((anim, index) => {
+						const item = document.createElement('div');
+						item.className = 'animation-item';
+
+						// Analyze tracks to determine what's included
+						let trackLabels = [];
+						let hasTranslation = false;
+						let hasRotation = false;
+						let hasScale = false;
+
+						if (anim.tracks && anim.tracks.length > 0) {
+							anim.tracks.forEach(track => {
+								const trackName = track.name.toLowerCase();
+								if (trackName.includes('position') || trackName.includes('translation')) {
+									hasTranslation = true;
+								} else if (trackName.includes('quaternion') || trackName.includes('rotation')) {
+									hasRotation = true;
+								} else if (trackName.includes('scale')) {
+									hasScale = true;
+								}
+							});
+
+							// Build track label string
+							if (hasTranslation) trackLabels.push('t');
+							if (hasRotation) trackLabels.push('r');
+							if (hasScale) trackLabels.push('s');
+						}
+
+						const trackInfo = trackLabels.length > 0
+							? ` <span style="color: #6bb6ff; font-weight: bold;">[${trackLabels.join(',')}]</span>`
+							: '';
+
+						// Get animation type information if available
+						let typeInfo = '';
+						if (animationInfos && animationInfos[index]) {
+							const info = animationInfos[index];
+							const types = [];
+							if (info.has_skeletal_animation) types.push('Skeletal');
+							if (info.has_node_animation) types.push('Node');
+							if (types.length > 0) {
+								typeInfo = ` <span style="color: #95e06c;">[${types.join('+')}]</span>`;
+							}
+						}
+
+						item.innerHTML = `<strong>${index}:</strong> ${anim.name || 'Unnamed'} - ${anim.duration.toFixed(2)}s, ${anim.tracks.length} tracks${trackInfo}${typeInfo}`;
+						animList.appendChild(item);
+					});
+				} else {
+					animInfo.style.display = 'none';
+				}
+			};
+
+			// Reset to default model
+			window.reloadDefaultModel = function() {
+				document.getElementById('currentFile').textContent = 'cube-animation.usda';
+				const customEvent = new CustomEvent('loadDefaultModel');
+				window.dispatchEvent(customEvent);
+			};
+		</script>
+
+		<script type="module" src="./animation.js"></script>
+	</body>
+</html>

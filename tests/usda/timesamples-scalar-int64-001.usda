@@ -1,0 +1,10 @@
+#usda 1.0
+
+def Xform "test_int64"
+{
+  int64 bigcount.timeSamples = {
+      0: 0,
+      10: 9223372036854775807,
+      20: -9223372036854775808,
+  }
+}

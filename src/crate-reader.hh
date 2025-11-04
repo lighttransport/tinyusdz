@@ -4,6 +4,7 @@
 #pragma once
 
 #include <functional>
+#include <memory>
 #include <string>
 #include <unordered_set>
 
@@ -11,6 +12,7 @@
 #include "nonstd/optional.hpp"
 //
 #include "crate-format.hh"
+#include "dynamic-bitset.hh"
 #include "memory-budget.hh"
 #include "prim-types.hh"
 #include "stream-reader.hh"
@@ -70,6 +72,11 @@ struct CrateReaderConfig {
   size_t maxMemoryBudget = std::numeric_limits<int32_t>::max();
 };
 
+// Enable SoA (Struct of Arrays) layout for TypedTimeSamples
+// Default is AoS (Array of Structs) layout
+// #define TINYUSDZ_CRATE_TIMESAMPLES_USE_SOA
+
+
 ///
 /// Secure USDC (Crate binary format) reader.
 /// 
@@ -95,6 +102,13 @@ struct CrateReaderConfig {
 /// }
 /// ```
 ///
+
+/// Clear all dedup entries for TimeSamples arrays (called at start of each file load)
+void clear_all_timesamples_dedup_entries();
+
+/// Clear dedup entries for a specific TimeSamples pointer
+void clear_timesamples_dedup_entries(void* timesamples_ptr);
+
 class CrateReader {
  public:
   ///
@@ -347,6 +361,44 @@ class CrateReader {
   bool UnpackInlinedValueRep(const crate::ValueRep &rep,
                              crate::CrateValue *value);
 
+  // TODO: deprecated
+  //bool UnpackValueRepForTimeSamples(const crate::ValueRep &rep, uint64_t offset, crate::CrateValue *value);
+
+  bool UnpackValueRepsToTimeSamples(const std::vector<double> &times,
+    const std::vector<crate::ValueRep> &vreps,
+    value::TimeSamples *d);
+
+  // implementation in crate-reader-timesamples.cc
+  bool UnpackTimeSampleValue_BOOL(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_INT32(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_UINT32(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_INT64(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_UINT64(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_HALF(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_FLOAT(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_DOUBLE(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_HALF2(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_HALF3(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_HALF4(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_FLOAT2(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_FLOAT3(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_FLOAT4(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_DOUBLE2(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_DOUBLE3(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_DOUBLE4(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_QUATH(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_QUATF(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_QUATD(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_ASSET_PATH(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_STRING(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_TOKEN(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_MATRIX2D(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_MATRIX3D(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+  bool UnpackTimeSampleValue_MATRIX4D(double t, const crate::ValueRep &rep, value::TimeSamples &dst, size_t expected_total_samples = 0);
+
+  // times(double[])
+  bool UnpackTimeSampleTimes(const crate::ValueRep &rep, std::vector<double> &dst);
+
   //
   // Construct node hierarchy.
   //
@@ -381,6 +433,14 @@ class CrateReader {
 
   bool ReadTimeSamples(value::TimeSamples *d);
 
+#if 0
+  template<typename T>
+  bool CrateTypedTimeSamples(const std::vector<double> &times,
+                              const std::vector<crate::ValueRep> &value_reps,
+                              uint64_t vrep_start_offset,
+                              value::TimeSamples *d);
+#endif
+
   // integral array
   template <typename T>
   bool ReadIntArray(bool is_compressed, std::vector<T> *d);
@@ -395,6 +455,7 @@ class CrateReader {
   
   // TypedArray versions for mmap support
   bool ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d);
+  bool ReadFloat2ArrayTyped(TypedArray<value::float2> *d);
   bool ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d);
 
   bool ReadDoubleVector(std::vector<double> *d);
@@ -467,8 +528,8 @@ class CrateReader {
 
   const StreamReader *_sr{};
 
-  void PushError(const std::string &s) const { _err += s; }
-  void PushWarn(const std::string &s) const { _warn += s; }
+  void PushError(const std::string &s) const { _err += s + "\n"; }
+  void PushWarn(const std::string &s) const { _warn += s + "\n"; }
   mutable std::string _err;
   mutable std::string _warn;
 
@@ -482,6 +543,82 @@ class CrateReader {
 
   // RAII Memory budget manager
   mutable MemoryBudgetManager memory_manager_;
+
+  // TimeSamples deduplication caches: ValueRep -> decoded value
+  // Caches decoded values to avoid redundant file reads when same ValueRep appears
+
+  // Integer types (scalar and array)
+  std::unordered_map<crate::ValueRep, bool, crate::ValueRep::Hash> _dedup_bool;
+  std::unordered_map<crate::ValueRep, int32_t, crate::ValueRep::Hash> _dedup_int32;
+  std::unordered_map<crate::ValueRep, uint32_t, crate::ValueRep::Hash> _dedup_uint32;
+  std::unordered_map<crate::ValueRep, int64_t, crate::ValueRep::Hash> _dedup_int64;
+  std::unordered_map<crate::ValueRep, uint64_t, crate::ValueRep::Hash> _dedup_uint64;
+  // Stores ref_index (sample index) for deduplication
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_int32_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_uint32_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_int64_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_uint64_array;
+
+  // Half types (scalar and array)
+  std::unordered_map<crate::ValueRep, value::half, crate::ValueRep::Hash> _dedup_half;
+  std::unordered_map<crate::ValueRep, value::half2, crate::ValueRep::Hash> _dedup_half2;
+  std::unordered_map<crate::ValueRep, value::half3, crate::ValueRep::Hash> _dedup_half3;
+  std::unordered_map<crate::ValueRep, value::half4, crate::ValueRep::Hash> _dedup_half4;
+  // Stores ref_index (sample index) for deduplication
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_half_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_half2_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_half3_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_half4_array;
+
+  // Float types (scalar and array)
+  std::unordered_map<crate::ValueRep, float, crate::ValueRep::Hash> _dedup_float;
+  std::unordered_map<crate::ValueRep, value::float2, crate::ValueRep::Hash> _dedup_float2;
+  std::unordered_map<crate::ValueRep, value::float3, crate::ValueRep::Hash> _dedup_float3;
+  std::unordered_map<crate::ValueRep, value::float4, crate::ValueRep::Hash> _dedup_float4;
+  // Stores ref_index (sample index) for deduplication
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_float_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_float2_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_float3_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_float4_array;
+
+  // Double types (scalar and array)
+  std::unordered_map<crate::ValueRep, double, crate::ValueRep::Hash> _dedup_double;
+  std::unordered_map<crate::ValueRep, value::double2, crate::ValueRep::Hash> _dedup_double2;
+  std::unordered_map<crate::ValueRep, value::double3, crate::ValueRep::Hash> _dedup_double3;
+  std::unordered_map<crate::ValueRep, value::double4, crate::ValueRep::Hash> _dedup_double4;
+  // Stores ref_index (sample index) for deduplication
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_double_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_double2_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_double3_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_double4_array;
+
+  // Quaternion types (scalar and array)
+  std::unordered_map<crate::ValueRep, value::quath, crate::ValueRep::Hash> _dedup_quath;
+  std::unordered_map<crate::ValueRep, value::quatf, crate::ValueRep::Hash> _dedup_quatf;
+  std::unordered_map<crate::ValueRep, value::quatd, crate::ValueRep::Hash> _dedup_quatd;
+  // Stores ref_index (sample index) for deduplication
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_quath_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_quatf_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_quatd_array;
+
+  // Matrix types (scalar and array)
+  std::unordered_map<crate::ValueRep, value::matrix2d, crate::ValueRep::Hash> _dedup_matrix2d;
+  std::unordered_map<crate::ValueRep, value::matrix3d, crate::ValueRep::Hash> _dedup_matrix3d;
+  std::unordered_map<crate::ValueRep, value::matrix4d, crate::ValueRep::Hash> _dedup_matrix4d;
+  // Stores ref_index (sample index) for deduplication
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_matrix2d_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_matrix3d_array;
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_matrix4d_array;
+
+  // String type (scalar and array)
+  std::unordered_map<crate::ValueRep, std::string, crate::ValueRep::Hash> _dedup_string;
+  // Stores ref_index (sample index) for deduplication
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_string_array;
+
+  // Token type (scalar and array)
+  std::unordered_map<crate::ValueRep, value::token, crate::ValueRep::Hash> _dedup_token;
+  // Stores ref_index (sample index) for deduplication
+  std::unordered_map<crate::ValueRep, size_t, crate::ValueRep::Hash> _dedup_token_array;
 
   class Impl;
   Impl *_impl;

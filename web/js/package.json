@@ -5,12 +5,16 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:anim": "vite --open /animation.html",
+    "dev:skel": "vite --open /skining-anim.html",
     "build": "vite build",
     "preview": "vite preview",
     "cli": "vite-node load-test-node.js",
     "test:memory": "vite-node memory-usage-test.js",
     "test:streaming": "vite-node load-test-node.js",
-    "dump-materialx": "vite-node dump-materialx-cli.js"
+    "dump-materialx": "vite-node dump-materialx-cli.js",
+    "anim-info": "vite-node animation-info.js",
+    "anim-info:detailed": "vite-node animation-info.js --detailed"
   },
   "devDependencies": {
     "@types/bun": "latest",
@@ -21,6 +25,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.16.0",
     "fzstd": "^0.1.1",
+    "puppeteer": "^24.25.0",
     "three": ">=0.177.0",
     "vite-node": "^3.2.4",
     "yaml": "^2.6.1"

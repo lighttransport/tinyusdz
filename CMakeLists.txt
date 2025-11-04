@@ -423,6 +423,7 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/composition.cc
     ${PROJECT_SOURCE_DIR}/src/chunk-reader.cc
     ${PROJECT_SOURCE_DIR}/src/crate-reader.cc
+    ${PROJECT_SOURCE_DIR}/src/crate-reader-timesamples.cc
     ${PROJECT_SOURCE_DIR}/src/crate-format.cc
     ${PROJECT_SOURCE_DIR}/src/crate-writer.cc
     ${PROJECT_SOURCE_DIR}/src/crate-pprint.cc
@@ -455,6 +456,8 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/usdObj.cc
     ${PROJECT_SOURCE_DIR}/src/image-loader.cc
     ${PROJECT_SOURCE_DIR}/src/pprinter.cc
+    ${PROJECT_SOURCE_DIR}/src/timesamples-pprint.cc
+    ${PROJECT_SOURCE_DIR}/src/timesamples.cc
     ${PROJECT_SOURCE_DIR}/src/stage.cc
     ${PROJECT_SOURCE_DIR}/src/stage.hh
     ${PROJECT_SOURCE_DIR}/src/uuid-gen.cc
@@ -462,6 +465,10 @@ set(TINYUSDZ_SOURCES
     ${PROJECT_SOURCE_DIR}/src/parser-timing.cc
     ${PROJECT_SOURCE_DIR}/src/sha256.cc
     ${PROJECT_SOURCE_DIR}/src/typed-array.cc
+    ${PROJECT_SOURCE_DIR}/src/task-queue.cc
+    ${PROJECT_SOURCE_DIR}/src/task-queue.hh
+    ${PROJECT_SOURCE_DIR}/src/prim-pprint-parallel.cc
+    ${PROJECT_SOURCE_DIR}/src/prim-pprint-parallel.hh
 
     )
 
@@ -492,6 +499,8 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-pprint.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/render-scene-dump.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-scene-dump.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/bone-util.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/bone-util.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/layer-to-renderscene.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/layer-to-renderscene.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.cc
@@ -1331,6 +1340,11 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
     target_link_libraries(${TINYUSDZ_LIB_TARGET} Threads::Threads)
   endif()
 
+  # On 32-bit systems, 64-bit atomic operations require libatomic
+  # (Skip for emscripten as libatomic doesn't exist in wasm environment)
+  if (CMAKE_SIZEOF_VOID_P EQUAL 4 AND NOT EMSCRIPTEN)
+    target_link_libraries(${TINYUSDZ_LIB_TARGET} atomic)
+  endif()
 
   if(IOS)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}

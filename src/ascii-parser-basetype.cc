@@ -814,6 +814,10 @@ bool AsciiParser::ReadBasicType(nonstd::optional<bool> *value) {
 bool AsciiParser::ReadBasicType(int *value) {
   std::stringstream ss;
 
+  // Maximum digits for int32_t is 10 (2147483647)
+  // Add small buffer for safety but prevent huge strings
+  constexpr size_t kMaxDigits = 12;
+
   // pxrUSD allow floating-point value to `int` type.
   // so first try fp parsing.
   auto loc = CurrLoc();
@@ -859,6 +863,7 @@ bool AsciiParser::ReadBasicType(int *value) {
     ss << sc;
   }
 
+  size_t digit_count = has_sign ? 0 : 1;  // Count digits excluding sign
   while (!Eof()) {
     char c;
     if (!Char1(&c)) {
@@ -866,6 +871,12 @@ bool AsciiParser::ReadBasicType(int *value) {
     }
 
     if ((c >= '0') && (c <= '9')) {
+      digit_count++;
+      if (digit_count > kMaxDigits) {
+        PushError("Integer literal exceeds maximum allowed digits (" +
+                  std::to_string(kMaxDigits) + ").\n");
+        return false;
+      }
       ss << c;
     } else {
       _sr->seek_from_current(-1);
@@ -1027,6 +1038,10 @@ bool AsciiParser::ReadBasicType(nonstd::optional<value::uint4> *value) {
 bool AsciiParser::ReadBasicType(uint32_t *value) {
   std::stringstream ss;
 
+  // Maximum digits for uint32_t is 10 (4294967295)
+  // Add small buffer for safety but prevent huge strings
+  constexpr size_t kMaxDigits = 12;
+
   // head character
   bool has_sign = false;
   bool negative = false;
@@ -1060,6 +1075,7 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
     return false;
   }
 
+  size_t digit_count = has_sign ? 0 : 1;  // Count digits excluding sign
   while (!Eof()) {
     char c;
     if (!Char1(&c)) {
@@ -1067,6 +1083,12 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
     }
 
     if ((c >= '0') && (c <= '9')) {
+      digit_count++;
+      if (digit_count > kMaxDigits) {
+        PushError("Integer literal exceeds maximum allowed digits (" +
+                  std::to_string(kMaxDigits) + ").\n");
+        return false;
+      }
       ss << c;
     } else {
       _sr->seek_from_current(-1);
@@ -1102,12 +1124,18 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
   return true;
 #else
   // use jsteemann/atoi
+  // IMPORTANT: Store the string first to avoid temporary object issues
+  std::string str = ss.str();
+  const char* start = str.c_str();
+  const char* end = str.c_str() + str.size();
+
   int retcode = 0;
-  auto result = jsteemann::atoi<uint32_t>(
-      ss.str().c_str(), ss.str().c_str() + ss.str().size(), retcode);
-  DCOUT("sz = " << ss.str().size());
-  DCOUT("ss = " << ss.str() << ", retcode = " << retcode
+  auto result = jsteemann::atoi<uint32_t>(start, end, retcode);
+
+  DCOUT("sz = " << str.size());
+  DCOUT("ss = " << str << ", retcode = " << retcode
                 << ", result = " << result);
+
   if (retcode == jsteemann::SUCCESS) {
     (*value) = result;
     return true;
@@ -1130,9 +1158,12 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
 bool AsciiParser::ReadBasicType(int64_t *value) {
   std::stringstream ss;
 
+  // Maximum digits for int64_t is 19 (9223372036854775807)
+  // Add small buffer for safety but prevent huge strings
+  constexpr size_t kMaxDigits = 21;
+
   // head character
   bool has_sign = false;
-  bool negative = false;
   {
     char sc;
     if (!Char1(&sc)) {
@@ -1142,10 +1173,8 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
 
     // sign or [0-9]
     if (sc == '+') {
-      negative = false;
       has_sign = true;
     } else if (sc == '-') {
-      negative = true;
       has_sign = true;
     } else if ((sc >= '0') && (sc <= '9')) {
       // ok
@@ -1158,11 +1187,9 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
     ss << sc;
   }
 
-  if (negative) {
-    PushError("Unsigned value expected but got '-' sign.");
-    return false;
-  }
+  // Allow negative values for signed int64 type
 
+  size_t digit_count = has_sign ? 0 : 1;  // Count digits excluding sign
   while (!Eof()) {
     char c;
     if (!Char1(&c)) {
@@ -1170,6 +1197,12 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
     }
 
     if ((c >= '0') && (c <= '9')) {
+      digit_count++;
+      if (digit_count > kMaxDigits) {
+        PushError("Integer literal exceeds maximum allowed digits (" +
+                  std::to_string(kMaxDigits) + ").\n");
+        return false;
+      }
       ss << c;
     } else {
       _sr->seek_from_current(-1);
@@ -1193,23 +1226,27 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
   // TODO(syoyo): Use ryu parse.
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
   try {
-    (*value) = std::stoull(ss.str());
+    (*value) = std::stoll(ss.str());  // Use stoll for signed int64
   } catch (const std::invalid_argument &e) {
     (void)e;
-    PushError("Not an 64bit unsigned integer literal.\n");
+    PushError("Not an 64bit signed integer literal.\n");
     return false;
   } catch (const std::out_of_range &e) {
     (void)e;
-    PushError("64bit unsigned integer value out of range.\n");
+    PushError("64bit signed integer value out of range.\n");
     return false;
   }
 
   return true;
 #else
   // use jsteemann/atoi
+  // IMPORTANT: Store the string first to avoid temporary object issues
+  std::string str = ss.str();
+  const char* start = str.c_str();
+  const char* end = str.c_str() + str.size();
+
   int retcode;
-  auto result = jsteemann::atoi<int64_t>(
-      ss.str().c_str(), ss.str().c_str() + ss.str().size(), retcode);
+  auto result = jsteemann::atoi<int64_t>(start, end, retcode);
   if (retcode == jsteemann::SUCCESS) {
     (*value) = result;
     return true;
@@ -1234,6 +1271,10 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
 bool AsciiParser::ReadBasicType(uint64_t *value) {
   std::stringstream ss;
 
+  // Maximum digits for uint64_t is 20 (18446744073709551615)
+  // Add small buffer for safety but prevent huge strings
+  constexpr size_t kMaxDigits = 22;
+
   // head character
   bool has_sign = false;
   bool negative = false;
@@ -1267,6 +1308,7 @@ bool AsciiParser::ReadBasicType(uint64_t *value) {
     return false;
   }
 
+  size_t digit_count = has_sign ? 0 : 1;  // Count digits excluding sign
   while (!Eof()) {
     char c;
     if (!Char1(&c)) {
@@ -1274,6 +1316,12 @@ bool AsciiParser::ReadBasicType(uint64_t *value) {
     }
 
     if ((c >= '0') && (c <= '9')) {
+      digit_count++;
+      if (digit_count > kMaxDigits) {
+        PushError("Integer literal exceeds maximum allowed digits (" +
+                  std::to_string(kMaxDigits) + ").\n");
+        return false;
+      }
       ss << c;
     } else {
       _sr->seek_from_current(-1);
@@ -1311,9 +1359,13 @@ bool AsciiParser::ReadBasicType(uint64_t *value) {
   return true;
 #else
   // use jsteemann/atoi
+  // IMPORTANT: Store the string first to avoid temporary object issues
+  std::string str = ss.str();
+  const char* start = str.c_str();
+  const char* end = str.c_str() + str.size();
+
   int retcode;
-  auto result = jsteemann::atoi<uint64_t>(
-      ss.str().c_str(), ss.str().c_str() + ss.str().size(), retcode);
+  auto result = jsteemann::atoi<uint64_t>(start, end, retcode);
   if (retcode == jsteemann::SUCCESS) {
     (*value) = result;
     return true;
@@ -1985,7 +2037,7 @@ bool AsciiParser::ParseBasicTypeArray(TypedArray<T> *result) {
     }
 
     if (c == ']') {
-      result->clear();
+      (*result)->clear();
       return true;
     }
 
@@ -2007,10 +2059,10 @@ bool AsciiParser::ParseBasicTypeArray(TypedArray<T> *result) {
   }
 
   // Transfer to TypedArray for memory optimization
-  result->clear();
-  result->reserve(temp_result.size());
+  (*result)->clear();
+  (*result)->reserve(temp_result.size());
   for (const auto& item : temp_result) {
-    result->push_back(item);
+    (*result)->push_back(item);
   }
   
   return true;

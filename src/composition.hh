@@ -290,11 +290,13 @@ bool OverridePrimSpec(PrimSpec &dst, const PrimSpec &src, std::string *warn,
 bool InheritPrimSpec(PrimSpec &dst, const PrimSpec &src, std::string *warn,
                      std::string *err);
 
+#if 0
 ///
 /// Build USD Stage from Layer
 ///
-bool LayerToStage(const Layer &layer, Stage *stage, std::string *warn,
+bool LayerToStage(Layer &layer, Stage *stage, std::string *warn,
                   std::string *err);
+#endif
 
 ///
 /// Build USD Stage from Layer

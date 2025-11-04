@@ -988,40 +988,68 @@ json ThreeJSSceneExporter::ConvertLight(const RenderLight& light) {
   return light_json;
 }
 
-json ThreeJSSceneExporter::ConvertAnimation(const Animation& anim) {
+json ThreeJSSceneExporter::ConvertAnimation(const AnimationClip& anim) {
   json anim_json = {
     {"name", anim.prim_name},
-    {"duration", 0.0}, // Calculate from samples
+    {"duration", anim.duration},
     {"tracks", json::array()}
   };
 
   // Convert animation channels to Three.js tracks
-  for (auto it = anim.channels_map.begin(); it != anim.channels_map.end(); ++it) {
-    const std::string& target = it->first;
-    const auto& channel_map = it->second;
-
-    // Process translation channel
-    auto trans_it = channel_map.find(AnimationChannel::ChannelType::Translation);
-    if (trans_it != channel_map.end()) {
-      const auto& channel = trans_it->second;
-      json track = {
-        {"name", target + ".position"},
-        {"type", "vector3"},
-        {"times", json::array()},
-        {"values", json::array()}
-      };
-
-      // Add keyframes
-      for (const auto& sample : channel.translations.samples) {
-        track["times"].push_back(sample.t);
-        const vec3& val = sample.value;
-        track["values"].push_back(val[0]);
-        track["values"].push_back(val[1]);
-        track["values"].push_back(val[2]);
-      }
-
-      anim_json["tracks"].push_back(track);
+  for (const auto& channel : anim.channels) {
+    // Get the sampler for this channel
+    if (channel.sampler < 0 || channel.sampler >= static_cast<int32_t>(anim.samplers.size())) {
+      continue; // Invalid sampler index
     }
+
+    const auto& sampler = anim.samplers[static_cast<size_t>(channel.sampler)];
+    if (sampler.empty()) {
+      continue;
+    }
+
+    // Build target name based on target type
+    std::string target_name;
+    if (channel.target_type == ChannelTargetType::SceneNode) {
+      target_name = "node_" + std::to_string(channel.target_node);
+    } else {
+      target_name = "joint_" + std::to_string(channel.joint_id);
+    }
+
+    // Create track based on animation path
+    json track;
+    if (channel.path == AnimationPath::Translation) {
+      track = {
+        {"name", target_name + ".position"},
+        {"type", "vector3"},
+        {"times", sampler.times},
+        {"values", sampler.values}
+      };
+    } else if (channel.path == AnimationPath::Rotation) {
+      track = {
+        {"name", target_name + ".quaternion"},
+        {"type", "quaternion"},
+        {"times", sampler.times},
+        {"values", sampler.values}
+      };
+    } else if (channel.path == AnimationPath::Scale) {
+      track = {
+        {"name", target_name + ".scale"},
+        {"type", "vector3"},
+        {"times", sampler.times},
+        {"values", sampler.values}
+      };
+    } else if (channel.path == AnimationPath::Weights) {
+      track = {
+        {"name", target_name + ".morphTargetInfluences"},
+        {"type", "number"},
+        {"times", sampler.times},
+        {"values", sampler.values}
+      };
+    } else {
+      continue; // Unknown path type
+    }
+
+    anim_json["tracks"].push_back(track);
   }
 
   return anim_json;

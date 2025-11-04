@@ -144,7 +144,7 @@ private:
   json ConvertMesh(const RenderMesh& mesh, bool optimize);
 
   /// Convert animation data
-  json ConvertAnimation(const Animation& anim);
+  json ConvertAnimation(const AnimationClip& anim);
 
   /// Convert camera
   json ConvertCamera(const RenderCamera& camera);

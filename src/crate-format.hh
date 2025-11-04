@@ -227,9 +227,12 @@ struct ValueRep {
   bool operator==(ValueRep other) const { return data == other.data; }
   bool operator!=(ValueRep other) const { return !(*this == other); }
 
-  // friend inline size_t hash_value(ValueRep v) {
-  //  return static_cast<size_t>(v.data);
-  //}
+  // Hash function for use with unordered_map
+  struct Hash {
+    size_t operator()(const ValueRep& v) const {
+      return std::hash<uint64_t>{}(v.data);
+    }
+  };
 
   std::string GetStringRepr() const {
     std::stringstream ss;
@@ -249,6 +252,10 @@ struct ValueRep {
 
   uint64_t data;
 };
+
+inline std::string to_string(const ValueRep &rep) {
+  return rep.GetStringRepr();
+}
 
 struct TokenIndex : Index { using Index::Index; };
 struct StringIndex : Index { using Index::Index; };
@@ -387,7 +394,9 @@ class CrateValue {
   //std::string GetTypeName() const;
   //uint32_t GetTypeId() const;
 
-#define SET_TYPE_SCALAR(__ty) void Set(const __ty& v) { value_ = v; }
+#define SET_TYPE_SCALAR(__ty) void Set(const __ty& v) { value_ = v; } void Set(__ty&& v) { value::Value src(std::move(v)); value_ = std::move(src); }
+//#define MOVE_SET_TYPE_SCALAR(__ty) void MoveSet(__ty&& v) { TUSDZ_LOG_I("move set"); value::Value src(std::move(v)); value_ = std::move(src); }
+
 #define SET_TYPE_1D(__ty) void Set(const std::vector<__ty> &v) { value_ = v; }
 
 // TODO: Use TypedArray
@@ -459,11 +468,11 @@ class CrateValue {
   SET_TYPE_SCALAR(CustomDataType) // for (type-restricted) dist
 
   SET_TYPE_LIST(SET_TYPE_SCALAR)
+  //SET_TYPE_LIST(MOVE_SET_TYPE_SCALAR)
 
 
   SET_TYPE_LIST(SET_TYPE_1D)
-  // FIXME
-  //SET_TYPE_LIST(MOVE_SET_TYPE_1D)
+  SET_TYPE_LIST(MOVE_SET_TYPE_1D)
 
   // TypedArray Set methods for efficient array handling with mmap support
 #define SET_TYPE_TYPED_ARRAY(__ty) void Set(const TypedArray<__ty> &v) { value_ = v; }
