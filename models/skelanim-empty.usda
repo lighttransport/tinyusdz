@@ -1,0 +1,25 @@
+#usda 1.0
+(
+    defaultPrim = "Root"
+    upAxis = "Z"
+)
+
+def Xform "Root"
+{
+    def Skeleton "Skel"
+    {
+        uniform token[] joints = ["joint0"]
+        uniform matrix4d[] bindTransforms = [
+            ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+        ]
+        uniform matrix4d[] restTransforms = [
+            ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+        ]
+
+        def SkelAnimation "EmptyAnim"
+        {
+            uniform token[] joints = ["joint0"]
+            # No animation data - edge case test
+        }
+    }
+}
