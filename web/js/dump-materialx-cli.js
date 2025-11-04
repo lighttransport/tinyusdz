@@ -136,8 +136,14 @@ async function dumpMaterials(options) {
     process.exit(1);
   }
 
-  const url = URL.createObjectURL(file);
-  const usd = await loader.loadTestAsync(url);
+  // Read file as ArrayBuffer
+  const data = fs.readFileSync(options.inputFile);
+  const arrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+
+  // Parse USD file with proper conversion to RenderScene
+  const usd = await new Promise((resolve, reject) => {
+    loader.parse(arrayBuffer, options.inputFile, resolve, reject);
+  });
 
   if (!usd) {
     console.error('Error: Failed to load USD file');

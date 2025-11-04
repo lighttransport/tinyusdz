@@ -591,7 +591,10 @@ static ParseResult ParseTypedAttribute(std::set<std::string> &table, /* inout */
       } else if (prop.get_property_type() == Property::Type::Attrib) {
         DCOUT("Adding prop: " << name);
 
-        if (prop.get_attribute().variability() != Variability::Uniform) {
+        // Config attributes (config:*) are implicitly uniform even if not explicitly marked
+        bool is_config_attr = (name.find("config:") == 0);
+
+        if (!is_config_attr && prop.get_attribute().variability() != Variability::Uniform) {
           ret.code = ParseResult::ResultCode::VariabilityMismatch;
           ret.err = fmt::format("Attribute `{}` must be `uniform` variability.", name);
           return ret;
