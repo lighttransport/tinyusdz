@@ -1,0 +1,159 @@
+#usda 1.0
+(
+    doc = "Multiple objects with different OpenPBR materials and textures"
+    metersPerUnit = 1
+    upAxis = "Y"
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Sphere "BrickSphere" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        double radius = 0.8
+        double3 xformOp:translate = (-3, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        rel material:binding = </World/_materials/BrickMaterial>
+    }
+
+    def Cube "MetalCube" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        double size = 1.5
+        double3 xformOp:translate = (0, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        rel material:binding = </World/_materials/MetalMaterial>
+
+        texCoord2f[] primvars:st = [
+            (0, 0), (1, 0), (1, 1), (0, 1),
+            (0, 0), (1, 0), (1, 1), (0, 1),
+            (0, 0), (1, 0), (1, 1), (0, 1),
+            (0, 0), (1, 0), (1, 1), (0, 1),
+            (0, 0), (1, 0), (1, 1), (0, 1),
+            (0, 0), (1, 0), (1, 1), (0, 1)
+        ] (
+            interpolation = "faceVarying"
+        )
+    }
+
+    def Sphere "GlassSphere" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        double radius = 0.9
+        double3 xformOp:translate = (3, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+        rel material:binding = </World/_materials/GlassMaterial>
+    }
+
+    def Mesh "GroundPlane" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-10, -2, -10), (10, -2, -10), (10, -2, 10), (-10, -2, 10)]
+        texCoord2f[] primvars:st = [(0, 0), (5, 0), (5, 5), (0, 5)] (
+            interpolation = "vertex"
+        )
+        rel material:binding = </World/_materials/CheckerMaterial>
+    }
+
+    def Scope "_materials"
+    {
+        def Material "BrickMaterial"
+        {
+            token outputs:surface.connect = </World/_materials/BrickMaterial/OpenPBRSurface.outputs:surface>
+
+            def Shader "OpenPBRSurface"
+            {
+                uniform token info:id = "OpenPBRSurface"
+                color3f inputs:base_color.connect = </World/_materials/BrickMaterial/BrickTexture.outputs:rgb>
+                float inputs:base_metalness = 0.0
+                float inputs:base_weight = 1.0
+                float inputs:specular_roughness = 0.8
+                token outputs:surface
+            }
+
+            def Shader "BrickTexture"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @./textures/brick.bmp@
+                float2 inputs:texcoord.connect = </World/_materials/BrickMaterial/Primvar.outputs:result>
+                color3f outputs:rgb
+            }
+
+            def Shader "Primvar"
+            {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                int inputs:index = 0
+                float2 outputs:result
+            }
+        }
+
+        def Material "MetalMaterial"
+        {
+            token outputs:surface.connect = </World/_materials/MetalMaterial/OpenPBRSurface.outputs:surface>
+
+            def Shader "OpenPBRSurface"
+            {
+                uniform token info:id = "OpenPBRSurface"
+                color3f inputs:base_color = (0.9, 0.85, 0.7)
+                float inputs:base_metalness = 0.95
+                float inputs:base_weight = 1.0
+                float inputs:specular_roughness = 0.15
+                token outputs:surface
+            }
+        }
+
+        def Material "GlassMaterial"
+        {
+            token outputs:surface.connect = </World/_materials/GlassMaterial/OpenPBRSurface.outputs:surface>
+
+            def Shader "OpenPBRSurface"
+            {
+                uniform token info:id = "OpenPBRSurface"
+                color3f inputs:base_color = (1.0, 1.0, 1.0)
+                float inputs:base_weight = 0.0
+                float inputs:specular_roughness = 0.0
+                float inputs:specular_weight = 1.0
+                color3f inputs:transmission_color = (0.95, 0.98, 1.0)
+                float inputs:transmission_weight = 0.95
+                token outputs:surface
+            }
+        }
+
+        def Material "CheckerMaterial"
+        {
+            token outputs:surface.connect = </World/_materials/CheckerMaterial/OpenPBRSurface.outputs:surface>
+
+            def Shader "OpenPBRSurface"
+            {
+                uniform token info:id = "OpenPBRSurface"
+                color3f inputs:base_color.connect = </World/_materials/CheckerMaterial/CheckerTexture.outputs:rgb>
+                float inputs:base_metalness = 0.0
+                float inputs:base_weight = 1.0
+                float inputs:specular_roughness = 0.6
+                token outputs:surface
+            }
+
+            def Shader "CheckerTexture"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @./textures/checkerboard.png@
+                float2 inputs:texcoord.connect = </World/_materials/CheckerMaterial/Primvar.outputs:result>
+                color3f outputs:rgb
+            }
+
+            def Shader "Primvar"
+            {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                int inputs:index = 0
+                float2 outputs:result
+            }
+        }
+    }
+}
