@@ -2603,6 +2603,57 @@ class RenderSceneConverter {
   /// @return true when success.
   ///
   ///
+
+  ///
+  /// Convert GeomCube to RenderMesh by generating tessellated geometry
+  ///
+  /// @param[in] env Converter environment
+  /// @param[in] cube_abs_path Absolute path to the cube primitive
+  /// @param[in] cube GeomCube primitive
+  /// @param[in] material_path Material path for the cube
+  /// @param[in] subset_material_path_map Material subset map
+  /// @param[in] rmaterial_map Material ID map
+  /// @param[in] material_subsets GeomSubset array
+  /// @param[in] blendshapes BlendShape array
+  /// @param[out] dst RenderMesh output
+  ///
+  /// @return true when success.
+  ///
+  bool ConvertCube(
+      const RenderSceneConverterEnv &env, const tinyusdz::Path &cube_abs_path,
+      const tinyusdz::GeomCube &cube, const MaterialPath &material_path,
+      const std::map<std::string, MaterialPath> &subset_material_path_map,
+      const StringAndIdMap &rmaterial_map,
+      const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+          &blendshapes,
+      RenderMesh *dst);
+
+  ///
+  /// Convert GeomSphere to RenderMesh by generating tessellated geometry
+  ///
+  /// @param[in] env Converter environment
+  /// @param[in] sphere_abs_path Absolute path to the sphere primitive
+  /// @param[in] sphere GeomSphere primitive
+  /// @param[in] material_path Material path for the sphere
+  /// @param[in] subset_material_path_map Material subset map
+  /// @param[in] rmaterial_map Material ID map
+  /// @param[in] material_subsets GeomSubset array
+  /// @param[in] blendshapes BlendShape array
+  /// @param[out] dst RenderMesh output
+  ///
+  /// @return true when success.
+  ///
+  bool ConvertSphere(
+      const RenderSceneConverterEnv &env, const tinyusdz::Path &sphere_abs_path,
+      const tinyusdz::GeomSphere &sphere, const MaterialPath &material_path,
+      const std::map<std::string, MaterialPath> &subset_material_path_map,
+      const StringAndIdMap &rmaterial_map,
+      const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+      const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
+          &blendshapes,
+      RenderMesh *dst);
+
   bool ConvertMesh(
       const RenderSceneConverterEnv &env, const tinyusdz::Path &mesh_abs_path,
       const tinyusdz::GeomMesh &mesh, const MaterialPath &material_path,

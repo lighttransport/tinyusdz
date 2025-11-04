@@ -46,6 +46,7 @@
 #include "value-pprint.hh"
 #include "logger.hh"
 #include "bone-util.hh"
+#include "shape-to-mesh.hh"
 
 //#include <iostream>
 
@@ -3414,6 +3415,152 @@ bool RenderSceneConverter::BuildVertexIndicesFastImpl(RenderMesh &mesh) {
   return true;
 }
 
+//
+// Convert GeomCube to RenderMesh by generating tessellated geometry
+//
+bool RenderSceneConverter::ConvertCube(
+    const RenderSceneConverterEnv &env, const Path &abs_prim_path,
+    const GeomCube &cube, const MaterialPath &material_path,
+    const std::map<std::string, MaterialPath> &subset_material_path_map,
+    const StringAndIdMap &rmaterial_map,
+    const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+    const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> &blendshapes,
+    RenderMesh *dstMesh) {
+
+  // Extract cube size
+  double size;
+  if (!cube.size.get_value().get_scalar(&size)) {
+    size = 2.0;  // Use default value if not available
+  }
+
+  // Generate cube mesh geometry
+  std::vector<value::float3> points_f3;
+  std::vector<int> faceVertexCounts;
+  std::vector<int> faceVertexIndices;
+  std::vector<value::float3> normals_f3;
+  std::vector<value::float2> uvs_f2;
+
+  GenerateCubeMesh(size, points_f3, faceVertexCounts, faceVertexIndices, normals_f3, uvs_f2);
+
+  // Create temporary GeomMesh with generated data
+  GeomMesh temp_mesh;
+
+  // Convert points from float3 to point3f
+  std::vector<value::point3f> points;
+  for (const auto &p : points_f3) {
+    points.push_back(value::point3f{p[0], p[1], p[2]});
+  }
+  temp_mesh.points.set_value(points);
+  temp_mesh.faceVertexCounts.set_value(faceVertexCounts);
+  temp_mesh.faceVertexIndices.set_value(faceVertexIndices);
+
+  // Copy properties from cube
+  temp_mesh.orientation = cube.orientation;
+  temp_mesh.doubleSided = cube.doubleSided;
+
+  // Set normals as face-varying primvar
+  {
+    std::vector<value::normal3f> normal3f_data;
+    for (const auto &n : normals_f3) {
+      normal3f_data.push_back(value::normal3f{n[0], n[1], n[2]});
+    }
+    temp_mesh.normals.set_value(normal3f_data);
+  }
+
+  // Set UVs as st primvar (face-varying)
+  {
+    GeomPrimvar primvar;
+    primvar.set_name("st");
+    primvar.set_interpolation(Interpolation::FaceVarying);
+    std::vector<value::texcoord2f> uv_data;
+    for (const auto &uv : uvs_f2) {
+      uv_data.push_back(value::texcoord2f{uv[0], uv[1]});
+    }
+    primvar.set_value(uv_data);
+    temp_mesh.set_primvar(primvar);
+  }
+
+  // Forward to ConvertMesh
+  return ConvertMesh(env, abs_prim_path, temp_mesh, material_path,
+                     subset_material_path_map, rmaterial_map,
+                     material_subsets, blendshapes, dstMesh);
+}
+
+//
+// Convert GeomSphere to RenderMesh by generating tessellated geometry
+//
+bool RenderSceneConverter::ConvertSphere(
+    const RenderSceneConverterEnv &env, const Path &abs_prim_path,
+    const GeomSphere &sphere, const MaterialPath &material_path,
+    const std::map<std::string, MaterialPath> &subset_material_path_map,
+    const StringAndIdMap &rmaterial_map,
+    const std::vector<const tinyusdz::GeomSubset *> &material_subsets,
+    const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> &blendshapes,
+    RenderMesh *dstMesh) {
+
+  // Extract sphere radius
+  double radius;
+  if (!sphere.radius.get_value().get_scalar(&radius)) {
+    radius = 2.0;  // Use default value if not available
+  }
+
+  // Generate sphere mesh geometry
+  // Default to icosphere with 2 subdivisions (4 divisions as per user request seems to mean subdivisions)
+  std::vector<value::float3> points_f3;
+  std::vector<int> faceVertexCounts;
+  std::vector<int> faceVertexIndices;
+  std::vector<value::float3> normals_f3;
+  std::vector<value::float2> uvs_f2;
+
+  // TODO: Make tessellation mode and subdivisions configurable via RenderSceneConverterEnv
+  // For now, use icosphere with 2 subdivisions as default
+  int subdivisions = 2;
+  GenerateIcosphereMesh(radius, subdivisions, points_f3, faceVertexCounts, faceVertexIndices, normals_f3, uvs_f2);
+
+  // Create temporary GeomMesh with generated data
+  GeomMesh temp_mesh;
+
+  // Convert points from float3 to point3f
+  std::vector<value::point3f> points;
+  for (const auto &p : points_f3) {
+    points.push_back(value::point3f{p[0], p[1], p[2]});
+  }
+  temp_mesh.points.set_value(points);
+  temp_mesh.faceVertexCounts.set_value(faceVertexCounts);
+  temp_mesh.faceVertexIndices.set_value(faceVertexIndices);
+
+  // Copy properties from sphere
+  temp_mesh.orientation = sphere.orientation;
+  temp_mesh.doubleSided = sphere.doubleSided;
+
+  // Set normals as face-varying primvar
+  {
+    std::vector<value::normal3f> normal3f_data;
+    for (const auto &n : normals_f3) {
+      normal3f_data.push_back(value::normal3f{n[0], n[1], n[2]});
+    }
+    temp_mesh.normals.set_value(normal3f_data);
+  }
+
+  // Set UVs as st primvar (face-varying)
+  {
+    GeomPrimvar primvar;
+    primvar.set_name("st");
+    primvar.set_interpolation(Interpolation::FaceVarying);
+    std::vector<value::texcoord2f> uv_data;
+    for (const auto &uv : uvs_f2) {
+      uv_data.push_back(value::texcoord2f{uv[0], uv[1]});
+    }
+    primvar.set_value(uv_data);
+    temp_mesh.set_primvar(primvar);
+  }
+
+  // Forward to ConvertMesh
+  return ConvertMesh(env, abs_prim_path, temp_mesh, material_path,
+                     subset_material_path_map, rmaterial_map,
+                     material_subsets, blendshapes, dstMesh);
+}
+
 bool RenderSceneConverter::ConvertMesh(
     const RenderSceneConverterEnv &env, const Path &abs_prim_path,
     const GeomMesh &mesh, const MaterialPath &material_path,
@@ -6157,6 +6304,70 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     return false;
   }
 
+  // Lambda to convert and cache bound materials - shared by all geometry types
+  auto ConvertBoundMaterial = [&](const Path &bound_material_path,
+                                  const tinyusdz::Material *bound_material,
+                                  int64_t &rmaterial_id) -> bool {
+    std::vector<RenderMaterial> &rmaterials =
+        visitorEnv->converter->materials;
+
+    const auto matIt = visitorEnv->converter->materialMap.find(
+        bound_material_path.full_path_name());
+
+    if (matIt != visitorEnv->converter->materialMap.s_end()) {
+      // Got material in the cache.
+      uint64_t mat_id = matIt->second;
+      if (mat_id >= visitorEnv->converter->materials
+                        .size()) {  // this should not happen though
+        if (err) {
+          (*err) += "Material index out-of-range.\n";
+        }
+        return false;
+      }
+
+      if (mat_id >= size_t((std::numeric_limits<int32_t>::max)())) {
+        if (err) {
+          (*err) += "Material index too large.\n";
+        }
+        return false;
+      }
+
+      rmaterial_id = int64_t(mat_id);
+
+    } else {
+      RenderMaterial rmat;
+      if (!visitorEnv->converter->ConvertMaterial(*visitorEnv->env,
+                                                  bound_material_path,
+                                                  *bound_material, &rmat)) {
+        if (err) {
+          (*err) += fmt::format("Material conversion failed: {}",
+                                bound_material_path);
+        }
+        return false;
+      }
+
+      // Assign new material ID
+      uint64_t mat_id = rmaterials.size();
+
+      if (mat_id >= uint64_t((std::numeric_limits<int32_t>::max)())) {
+        if (err) {
+          (*err) += "Material index too large.\n";
+        }
+        return false;
+      }
+      rmaterial_id = int64_t(mat_id);
+
+      visitorEnv->converter->materialMap.add(
+          bound_material_path.full_path_name(), uint64_t(rmaterial_id));
+      DCOUT("Added renderMaterial: " << mat_id << " " << rmat.abs_path
+                                     << " ( " << rmat.name << " ) ");
+
+      rmaterials.push_back(rmat);
+    }
+
+    return true;
+  };
+
   if (const tinyusdz::GeomMesh *pmesh = prim.as<tinyusdz::GeomMesh>()) {
     // Collect GeomSubsets
     // std::vector<const tinyusdz::GeomSubset *> subsets = GetGeomSubsets(;
@@ -6176,69 +6387,6 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     // material.
     // - If prim has materialBind, convert it to RenderMesh's material.
     //
-
-    auto ConvertBoundMaterial = [&](const Path &bound_material_path,
-                                    const tinyusdz::Material *bound_material,
-                                    int64_t &rmaterial_id) -> bool {
-      std::vector<RenderMaterial> &rmaterials =
-          visitorEnv->converter->materials;
-
-      const auto matIt = visitorEnv->converter->materialMap.find(
-          bound_material_path.full_path_name());
-
-      if (matIt != visitorEnv->converter->materialMap.s_end()) {
-        // Got material in the cache.
-        uint64_t mat_id = matIt->second;
-        if (mat_id >= visitorEnv->converter->materials
-                          .size()) {  // this should not happen though
-          if (err) {
-            (*err) += "Material index out-of-range.\n";
-          }
-          return false;
-        }
-
-        if (mat_id >= size_t((std::numeric_limits<int32_t>::max)())) {
-          if (err) {
-            (*err) += "Material index too large.\n";
-          }
-          return false;
-        }
-
-        rmaterial_id = int64_t(mat_id);
-
-      } else {
-        RenderMaterial rmat;
-        if (!visitorEnv->converter->ConvertMaterial(*visitorEnv->env,
-                                                    bound_material_path,
-                                                    *bound_material, &rmat)) {
-          if (err) {
-            (*err) += fmt::format("Material conversion failed: {}",
-                                  bound_material_path);
-          }
-          return false;
-        }
-
-        // Assign new material ID
-        uint64_t mat_id = rmaterials.size();
-
-        if (mat_id >= uint64_t((std::numeric_limits<int32_t>::max)())) {
-          if (err) {
-            (*err) += "Material index too large.\n";
-          }
-          return false;
-        }
-        rmaterial_id = int64_t(mat_id);
-
-        visitorEnv->converter->materialMap.add(
-            bound_material_path.full_path_name(), uint64_t(rmaterial_id));
-        DCOUT("Added renderMaterial: " << mat_id << " " << rmat.abs_path
-                                       << " ( " << rmat.name << " ) ");
-
-        rmaterials.push_back(rmat);
-      }
-
-      return true;
-    };
 
     // Convert bound materials in GeomSubsets
     //
@@ -6428,6 +6576,128 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
 
       visitorEnv->converter->meshes.emplace_back(std::move(rmesh));
     }
+  }
+
+  // Handle GeomCube primitives by converting to mesh
+  if (const tinyusdz::GeomCube *pcube = prim.as<tinyusdz::GeomCube>()) {
+    DCOUT("Cube: " << abs_path);
+
+    // Get material binding (same logic as GeomMesh)
+    MaterialPath material_path;
+    std::map<std::string, MaterialPath> subset_material_path_map;
+
+    {
+      const Material *bound_material{nullptr};
+      Path bound_material_path;
+
+      bool ret = GetBoundMaterial(
+          visitorEnv->env->stage, abs_path,
+          /* purpose */ "",
+          &bound_material_path, &bound_material, err);
+
+      if (ret && bound_material) {
+        int64_t rmaterial_id = -1;
+
+        if (!ConvertBoundMaterial(
+                bound_material_path, bound_material, rmaterial_id)) {
+          if (err) {
+            (*err) += "Convert boundMaterial failed: " +
+                      bound_material_path.full_path_name();
+          }
+          return false;
+        }
+
+        material_path.material_path = bound_material_path.full_path_name();
+        DCOUT("Bound material path: " << material_path.material_path);
+      }
+    }
+
+    RenderMesh rmesh;
+    std::vector<const tinyusdz::GeomSubset *> material_subsets;  // Cubes don't have subsets
+    std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> blendshapes;  // Cubes don't have blendshapes
+
+    if (!visitorEnv->converter->ConvertCube(
+            *visitorEnv->env, abs_path, *pcube, material_path,
+            subset_material_path_map, visitorEnv->converter->materialMap,
+            material_subsets, blendshapes, &rmesh)) {
+      if (err) {
+        (*err) += fmt::format("Cube conversion failed: {}",
+                              abs_path.full_path_name());
+        (*err) += "\n" + visitorEnv->converter->GetError() + "\n";
+      }
+      return false;
+    }
+
+    uint64_t mesh_id = uint64_t(visitorEnv->converter->meshes.size());
+    if (mesh_id >= size_t((std::numeric_limits<int32_t>::max)())) {
+      if (err) {
+        (*err) += "Mesh index too large.\n";
+      }
+      return false;
+    }
+    visitorEnv->converter->meshMap.add(abs_path.full_path_name(), mesh_id);
+    visitorEnv->converter->meshes.emplace_back(std::move(rmesh));
+  }
+
+  // Handle GeomSphere primitives by converting to mesh
+  if (const tinyusdz::GeomSphere *psphere = prim.as<tinyusdz::GeomSphere>()) {
+    DCOUT("Sphere: " << abs_path);
+
+    // Get material binding (same logic as GeomMesh)
+    MaterialPath material_path;
+    std::map<std::string, MaterialPath> subset_material_path_map;
+
+    {
+      const Material *bound_material{nullptr};
+      Path bound_material_path;
+
+      bool ret = GetBoundMaterial(
+          visitorEnv->env->stage, abs_path,
+          /* purpose */ "",
+          &bound_material_path, &bound_material, err);
+
+      if (ret && bound_material) {
+        int64_t rmaterial_id = -1;
+
+        if (!ConvertBoundMaterial(
+                bound_material_path, bound_material, rmaterial_id)) {
+          if (err) {
+            (*err) += "Convert boundMaterial failed: " +
+                      bound_material_path.full_path_name();
+          }
+          return false;
+        }
+
+        material_path.material_path = bound_material_path.full_path_name();
+        DCOUT("Bound material path: " << material_path.material_path);
+      }
+    }
+
+    RenderMesh rmesh;
+    std::vector<const tinyusdz::GeomSubset *> material_subsets;  // Spheres don't have subsets
+    std::vector<std::pair<std::string, const tinyusdz::BlendShape *>> blendshapes;  // Spheres don't have blendshapes
+
+    if (!visitorEnv->converter->ConvertSphere(
+            *visitorEnv->env, abs_path, *psphere, material_path,
+            subset_material_path_map, visitorEnv->converter->materialMap,
+            material_subsets, blendshapes, &rmesh)) {
+      if (err) {
+        (*err) += fmt::format("Sphere conversion failed: {}",
+                              abs_path.full_path_name());
+        (*err) += "\n" + visitorEnv->converter->GetError() + "\n";
+      }
+      return false;
+    }
+
+    uint64_t mesh_id = uint64_t(visitorEnv->converter->meshes.size());
+    if (mesh_id >= size_t((std::numeric_limits<int32_t>::max)())) {
+      if (err) {
+        (*err) += "Mesh index too large.\n";
+      }
+      return false;
+    }
+    visitorEnv->converter->meshMap.add(abs_path.full_path_name(), mesh_id);
+    visitorEnv->converter->meshes.emplace_back(std::move(rmesh));
   }
 
   return true;  // continue traversal
@@ -7229,8 +7499,20 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
       rnode.global_matrix = node.get_world_matrix();
       rnode.has_resetXform = node.has_resetXformStack();
       rnode.nodeType = NodeType::Xform;
+    } else if (prim->type_id() == value::TYPE_ID_GEOM_CUBE || prim->type_id() == value::TYPE_ID_GEOM_SPHERE) {
+      // GeomCube and GeomSphere are converted to meshes
+      rnode.local_matrix = node.get_local_matrix();
+      rnode.global_matrix = node.get_world_matrix();
+      rnode.nodeType = NodeType::Mesh;
+      rnode.has_resetXform = node.has_resetXformStack();
+
+      if (meshMap.count(primPath)) {
+        rnode.id = int32_t(meshMap.at(primPath));
+      } else {
+        rnode.id = -1;
+      }
     } else if ((prim->type_id() > value::TYPE_ID_MODEL_BEGIN) && (prim->type_id() < value::TYPE_ID_GEOM_END)) {
-      // Other Geom prims(e.g. GeomCube)
+      // Other Geom prims (e.g. GeomCone, GeomCylinder) - not yet converted to meshes
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
       rnode.has_resetXform = node.has_resetXformStack();
