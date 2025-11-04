@@ -14,6 +14,7 @@
 #include <random>
 #include <sstream>
 #include <iomanip>
+#include <set>
 
 //#include "external/fast_float/include/fast_float/bigint.h"
 #include "tinyusdz.hh"
@@ -607,6 +608,10 @@ class TinyUSDZLoaderNative {
     //env.mesh_config.prefer_non_indexed = true;
 
     //env.mesh_config.build_index_method = 0; // simple
+
+    // Bone reduction configuration
+    env.mesh_config.enable_bone_reduction = enable_bone_reduction_;
+    env.mesh_config.target_bone_count = target_bone_count_;
 
     if (is_usdz) {
       // TODO: Support USDZ + Composition
@@ -1518,6 +1523,38 @@ class TinyUSDZLoaderNative {
     mesh.set("materialId", rmesh.material_id);
     mesh.set("doubleSided", rmesh.doubleSided);
 
+    // Export skinning data (joint indices, joint weights)
+    if (!rmesh.joint_and_weights.jointIndices.empty()) {
+      const int *joint_indices_ptr = rmesh.joint_and_weights.jointIndices.data();
+      mesh.set("jointIndices",
+               emscripten::typed_memory_view(
+                   rmesh.joint_and_weights.jointIndices.size(),
+                   joint_indices_ptr));
+    }
+
+    if (!rmesh.joint_and_weights.jointWeights.empty()) {
+      const float *joint_weights_ptr = rmesh.joint_and_weights.jointWeights.data();
+      mesh.set("jointWeights",
+               emscripten::typed_memory_view(
+                   rmesh.joint_and_weights.jointWeights.size(),
+                   joint_weights_ptr));
+    }
+
+    // Export element size (influences per vertex)
+    mesh.set("elementSize", rmesh.joint_and_weights.elementSize);
+
+    // Export skeleton ID
+    if (rmesh.skel_id >= 0) {
+      mesh.set("skel_id", rmesh.skel_id);
+    }
+
+    // Export geomBindTransform matrix (4x4 matrix as 16 doubles)
+    const double *geom_bind_ptr =
+        reinterpret_cast<const double *>(
+            rmesh.joint_and_weights.geomBindTransform.m);
+    mesh.set("geomBindTransform",
+             emscripten::typed_memory_view(16, geom_bind_ptr));
+
     return mesh;
   }
 
@@ -1540,6 +1577,218 @@ class TinyUSDZLoaderNative {
 
   int numRootNodes() { return render_scene_.nodes.size(); }
 
+  // Get the upAxis from the RenderScene metadata
+  std::string getUpAxis() const {
+    if (!loaded_) {
+      return "Y"; // Default
+    }
+    return render_scene_.meta.upAxis;
+  }
+
+  // Get the complete scene metadata as a JavaScript object
+  emscripten::val getSceneMetadata() const {
+    emscripten::val metadata = emscripten::val::object();
+
+    if (!loaded_) {
+      return metadata;
+    }
+
+    metadata.set("copyright", render_scene_.meta.copyright);
+    metadata.set("comment", render_scene_.meta.comment);
+    metadata.set("upAxis", render_scene_.meta.upAxis);
+    metadata.set("metersPerUnit", render_scene_.meta.metersPerUnit);
+    metadata.set("framesPerSecond", render_scene_.meta.framesPerSecond);
+    metadata.set("timeCodesPerSecond", render_scene_.meta.timeCodesPerSecond);
+    metadata.set("autoPlay", render_scene_.meta.autoPlay);
+
+    if (render_scene_.meta.startTimeCode) {
+      metadata.set("startTimeCode", render_scene_.meta.startTimeCode.value());
+    } else {
+      metadata.set("startTimeCode", emscripten::val::null());
+    }
+
+    if (render_scene_.meta.endTimeCode) {
+      metadata.set("endTimeCode", render_scene_.meta.endTimeCode.value());
+    } else {
+      metadata.set("endTimeCode", emscripten::val::null());
+    }
+
+    return metadata;
+  }
+
+  // Animation data access methods
+  int numAnimations() const { return render_scene_.animations.size(); }
+
+  // Get a single animation clip as Three.js friendly JSON
+  emscripten::val getAnimation(int anim_id) const {
+    emscripten::val anim = emscripten::val::object();
+
+    if (!loaded_) {
+      return anim;
+    }
+
+    if (anim_id >= render_scene_.animations.size()) {
+      return anim;
+    }
+
+    const auto &clip = render_scene_.animations[anim_id];
+
+    // Basic animation metadata
+    anim.set("name", clip.name.empty() ? "Animation" + std::to_string(anim_id) : clip.name);
+    anim.set("primName", clip.prim_name);
+    anim.set("absPath", clip.abs_path);
+    anim.set("displayName", clip.display_name);
+    anim.set("duration", clip.duration);
+
+    // Convert samplers to Three.js KeyframeTrack format
+    emscripten::val tracks = emscripten::val::array();
+
+    for (const auto &channel : clip.channels) {
+      if (!channel.is_valid() || channel.sampler >= clip.samplers.size()) {
+        continue;
+      }
+
+      const auto &sampler = clip.samplers[channel.sampler];
+      if (sampler.empty()) {
+        continue;
+      }
+
+      emscripten::val track = emscripten::val::object();
+
+      // Set track name based on target node and property
+      if (channel.target_node >= 0 && channel.target_node < render_scene_.nodes.size()) {
+        const auto &node = render_scene_.nodes[channel.target_node];
+        std::string trackName = node.abs_path.empty() ? node.prim_name : node.abs_path;
+
+        // Add property suffix for Three.js compatibility
+        switch (channel.path) {
+          case tinyusdz::tydra::AnimationPath::Translation:
+            trackName += ".position";
+            track.set("type", "vector3");
+            break;
+          case tinyusdz::tydra::AnimationPath::Rotation:
+            trackName += ".quaternion";
+            track.set("type", "quaternion");
+            break;
+          case tinyusdz::tydra::AnimationPath::Scale:
+            trackName += ".scale";
+            track.set("type", "vector3");
+            break;
+          case tinyusdz::tydra::AnimationPath::Weights:
+            trackName += ".morphTargetInfluences";
+            track.set("type", "number");
+            break;
+        }
+
+        track.set("name", trackName);
+        track.set("nodeName", node.prim_name);
+        track.set("nodeIndex", channel.target_node);
+      }
+
+      // Set interpolation mode
+      std::string interpolation;
+      switch (sampler.interpolation) {
+        case tinyusdz::tydra::AnimationInterpolation::Step:
+          interpolation = "STEP";
+          break;
+        case tinyusdz::tydra::AnimationInterpolation::CubicSpline:
+          interpolation = "CUBICSPLINE";
+          break;
+        case tinyusdz::tydra::AnimationInterpolation::Linear:
+        default:
+          interpolation = "LINEAR";
+          break;
+      }
+      track.set("interpolation", interpolation);
+
+      // Convert times and values to typed arrays for efficiency
+      track.set("times", emscripten::typed_memory_view(sampler.times.size(), sampler.times.data()));
+      track.set("values", emscripten::typed_memory_view(sampler.values.size(), sampler.values.data()));
+
+      // Add property path for reference
+      std::string pathStr;
+      switch (channel.path) {
+        case tinyusdz::tydra::AnimationPath::Translation:
+          pathStr = "translation";
+          break;
+        case tinyusdz::tydra::AnimationPath::Rotation:
+          pathStr = "rotation";
+          break;
+        case tinyusdz::tydra::AnimationPath::Scale:
+          pathStr = "scale";
+          break;
+        case tinyusdz::tydra::AnimationPath::Weights:
+          pathStr = "weights";
+          break;
+      }
+      track.set("path", pathStr);
+
+      tracks.call<void>("push", track);
+    }
+
+    anim.set("tracks", tracks);
+
+    return anim;
+  }
+
+  // Get all animations as an array
+  emscripten::val getAllAnimations() const {
+    emscripten::val animations = emscripten::val::array();
+
+    if (!loaded_) {
+      return animations;
+    }
+
+    for (int i = 0; i < render_scene_.animations.size(); ++i) {
+      animations.call<void>("push", getAnimation(i));
+    }
+
+    return animations;
+  }
+
+  // Get animation summary info without full data (useful for listing)
+  emscripten::val getAnimationInfo(int anim_id) const {
+    emscripten::val info = emscripten::val::object();
+
+    if (!loaded_ || anim_id >= render_scene_.animations.size()) {
+      return info;
+    }
+
+    const auto &clip = render_scene_.animations[anim_id];
+
+    info.set("id", anim_id);
+    info.set("name", clip.name.empty() ? "Animation" + std::to_string(anim_id) : clip.name);
+    info.set("duration", clip.duration);
+    info.set("numTracks", int(clip.channels.size()));
+    info.set("numSamplers", int(clip.samplers.size()));
+
+    // Count unique target nodes
+    std::set<int32_t> targetNodes;
+    for (const auto &channel : clip.channels) {
+      if (channel.target_node >= 0) {
+        targetNodes.insert(channel.target_node);
+      }
+    }
+    info.set("numTargetNodes", int(targetNodes.size()));
+
+    return info;
+  }
+
+  // Get all animation summaries
+  emscripten::val getAllAnimationInfos() const {
+    emscripten::val infos = emscripten::val::array();
+
+    if (!loaded_) {
+      return infos;
+    }
+
+    for (int i = 0; i < render_scene_.animations.size(); ++i) {
+      infos.call<void>("push", getAnimationInfo(i));
+    }
+
+    return infos;
+  }
+
   void setEnableComposition(bool enabled) { enableComposition_ = enabled; }
   void setLoadTextureInNative(bool onoff) {
     loadTextureInNative_ = onoff;
@@ -1551,6 +1800,25 @@ class TinyUSDZLoaderNative {
 
   int32_t getMaxMemoryLimitMB() const {
     return max_memory_limit_mb_;
+  }
+
+  // Bone reduction configuration
+  void setEnableBoneReduction(bool enabled) {
+    enable_bone_reduction_ = enabled;
+  }
+
+  bool getEnableBoneReduction() const {
+    return enable_bone_reduction_;
+  }
+
+  void setTargetBoneCount(uint32_t count) {
+    if (count > 0 && count <= 64) {  // Sanity check: 1-64 bones
+      target_bone_count_ = count;
+    }
+  }
+
+  uint32_t getTargetBoneCount() const {
+    return target_bone_count_;
   }
 
   emscripten::val getAssetSearchPaths() const {
@@ -1785,7 +2053,10 @@ class TinyUSDZLoaderNative {
 
     const tinyusdz::Layer &curr = composited_ ? composed_layer_ : layer_;
 
-    if (!tinyusdz::LayerToStage(curr, &stage, &warn_, &error_)) {
+    // LayerToStage expects an rvalue reference, so make a copy
+    tinyusdz::Layer layer_copy = curr;
+
+    if (!tinyusdz::LayerToStage(std::move(layer_copy), &stage, &warn_, &error_)) {
       std::cerr << "Failed to LayerToStage \n";
       return false;
     }
@@ -2202,13 +2473,17 @@ class TinyUSDZLoaderNative {
   bool loaded_as_layer_{false};
   bool enableComposition_{false};
   bool loadTextureInNative_{false}; // true: Let JavaScript to decode texture image.
-  
+
   // Set appropriate default memory limits based on WASM architecture
 #ifdef TINYUSDZ_WASM_MEMORY64
   int32_t max_memory_limit_mb_{8192}; // 8GB for MEMORY64
 #else
   int32_t max_memory_limit_mb_{2048}; // 2GB for 32-bit WASM
 #endif
+
+  // Bone reduction configuration (disabled by default for backward compatibility)
+  bool enable_bone_reduction_{false};
+  uint32_t target_bone_count_{4};  // Default to 4 bones (standard for WebGL/Three.js)
 
   std::string filename_;
   std::string warn_;
@@ -2448,6 +2723,18 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("getRootNode", &TinyUSDZLoaderNative::getRootNode)
       .function("getDefaultRootNode", &TinyUSDZLoaderNative::getDefaultRootNode)
       .function("numRootNodes", &TinyUSDZLoaderNative::numRootNodes)
+
+      // Metadata access
+      .function("getUpAxis", &TinyUSDZLoaderNative::getUpAxis)
+      .function("getSceneMetadata", &TinyUSDZLoaderNative::getSceneMetadata)
+
+      // Animation methods
+      .function("numAnimations", &TinyUSDZLoaderNative::numAnimations)
+      .function("getAnimation", &TinyUSDZLoaderNative::getAnimation)
+      .function("getAllAnimations", &TinyUSDZLoaderNative::getAllAnimations)
+      .function("getAnimationInfo", &TinyUSDZLoaderNative::getAnimationInfo)
+      .function("getAllAnimationInfos", &TinyUSDZLoaderNative::getAllAnimationInfos)
+
       .function("setLoadTextureInNative",
                 &TinyUSDZLoaderNative::setLoadTextureInNative)
 
@@ -2455,6 +2742,16 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
                 &TinyUSDZLoaderNative::setMaxMemoryLimitMB)
       .function("getMaxMemoryLimitMB",
                 &TinyUSDZLoaderNative::getMaxMemoryLimitMB)
+
+      // Bone reduction configuration
+      .function("setEnableBoneReduction",
+                &TinyUSDZLoaderNative::setEnableBoneReduction)
+      .function("getEnableBoneReduction",
+                &TinyUSDZLoaderNative::getEnableBoneReduction)
+      .function("setTargetBoneCount",
+                &TinyUSDZLoaderNative::setTargetBoneCount)
+      .function("getTargetBoneCount",
+                &TinyUSDZLoaderNative::getTargetBoneCount)
 
       .function("setEnableComposition",
                 &TinyUSDZLoaderNative::setEnableComposition)

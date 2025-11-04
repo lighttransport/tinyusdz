@@ -60,10 +60,20 @@ inline std::string dtos(const float v) {
 }
 
 inline std::string dtos(const double v) {
-  char buf[128];
-  dtoa_milo(v, buf);
+#if 0
+  char buf[floaxie::max_buffer_size<double>()];
+  size_t n = floaxie::ftoa(v, buf);
+
+  return std::string(buf, buf + n);
+#else
+  char buf[384];
+
+  // dtoa_milo returns strlen + 1 position
+  char *e = dtoa_milo(v, buf);
+  (*e) = '\0';
 
   return std::string(buf);
+#endif
 }
 
 }  // namespace
@@ -553,8 +563,8 @@ template <>
 std::ostream &operator<<(std::ostream &ofs, const std::vector<double> &v) {
   // Not sure what is the HARD-LIMT buffer length for dtoa_milo,
   // but according to std::numeric_limits<double>::digits10(=15),
-  // 32 should be sufficient, but allocate 128 just in case
-  char buf[128];
+  // 32 should be sufficient, but allocate 384 just in case
+  char buf[384];
 
   // TODO: multi-threading for further performance gain?
 
@@ -563,7 +573,8 @@ std::ostream &operator<<(std::ostream &ofs, const std::vector<double> &v) {
     if (i > 0) {
       ofs << ", ";
     }
-    dtoa_milo(v[i], buf);
+    char *e = dtoa_milo(v[i], buf);
+    (*e) = '\0';
     ofs << std::string(buf);
   }
   ofs << "]";

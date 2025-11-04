@@ -20,8 +20,8 @@
 #include "value-pprint.hh"
 
 inline std::string dtos(const double v) {
-  char buf[128];
-  dtoa_milo(v, buf);
+  char buf[384];
+  *dtoa_milo(v, buf) = '\0';
 
   return std::string(buf);
 }
@@ -978,9 +978,9 @@ static bool ConvertTiledImage(const tinyusdz::mtlx::pugi::xml_node &node, PrimSp
     std::string input_type;
     std::string input_value;
 
-    tinyusdz::mtlx::pugi::xml_attribute name_attr = inp.attribute("name");
-    if (name_attr) {
-      input_name = name_attr.as_string();
+    tinyusdz::mtlx::pugi::xml_attribute inp_name_attr = inp.attribute("name");
+    if (inp_name_attr) {
+      input_name = inp_name_attr.as_string();
     }
 
     tinyusdz::mtlx::pugi::xml_attribute type_attr = inp.attribute("type");

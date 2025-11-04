@@ -1,0 +1,1315 @@
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
+import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
+import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
+import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+
+// Scene setup
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1a1a);
+
+// Camera
+const camera = new THREE.PerspectiveCamera(
+	75,
+	window.innerWidth / window.innerHeight,
+	0.1,
+	1000
+);
+camera.position.set(5, 5, 5);
+camera.lookAt(0, 0, 0);
+
+// Renderer
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+// Orbit controls
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+
+// Transform controls for joint manipulation
+const transformControls = new TransformControls(camera, renderer.domElement);
+transformControls.setMode('translate');
+transformControls.setSpace('local');
+transformControls.addEventListener('dragging-changed', (event) => {
+	controls.enabled = !event.value; // Disable orbit controls while dragging
+});
+scene.add(transformControls);
+
+// Raycaster for joint selection
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+
+// Lighting
+const ambientLight = new THREE.AmbientLight(0x404040, 1);
+scene.add(ambientLight);
+
+const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+directionalLight.position.set(5, 10, 5);
+directionalLight.castShadow = true;
+directionalLight.shadow.camera.left = -10;
+directionalLight.shadow.camera.right = 10;
+directionalLight.shadow.camera.top = 10;
+directionalLight.shadow.camera.bottom = -10;
+scene.add(directionalLight);
+
+// Ground plane
+const groundGeometry = new THREE.PlaneGeometry(20, 20);
+const groundMaterial = new THREE.MeshStandardMaterial({
+	color: 0x333333,
+	roughness: 0.8,
+	metalness: 0.2
+});
+const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// Grid helper
+const gridHelper = new THREE.GridHelper(20, 20, 0x666666, 0x444444);
+scene.add(gridHelper);
+
+// Skeleton visualization helper
+let skeletonHelper = null;
+
+// Character root group (virtual USD scene root)
+const usdSceneRoot = new THREE.Group();
+usdSceneRoot.name = "/";
+scene.add(usdSceneRoot);
+
+// Character content group (holds the actual mesh)
+const characterGroup = new THREE.Group();
+usdSceneRoot.add(characterGroup);
+
+// Animation state
+let skinnedMesh = null;
+let skeleton = null;
+let mixer = null;
+let animationAction = null;
+let usdAnimations = [];
+let boneMap = new Map(); // Map from joint_id to THREE.Bone
+
+// Store the current file's upAxis (Y or Z)
+let currentFileUpAxis = "Y";
+
+// Debug visualization
+let jointSpheres = [];
+let weightVisualizationMaterial = null;
+let originalMaterial = null;
+
+// Joint selection state
+let selectedJoint = null;
+let selectedSphere = null;
+
+// ===========================================
+// USD Skeletal Animation Extraction Functions
+// ===========================================
+
+/**
+ * Convert USD skeletal animation data to Three.js AnimationClip
+ * Extracts only SkeletonJoint animations from USD SkelAnimation
+ * @param {Object} usdLoader - TinyUSDZ loader instance
+ * @param {Map} boneMap - Map from joint_id to THREE.Bone
+ * @returns {Array<THREE.AnimationClip>} Array of Three.js AnimationClips
+ */
+function convertUSDSkeletalAnimationsToThreeJS(usdLoader, boneMap) {
+	const animationClips = [];
+
+	// Get number of animations
+	const numAnimations = usdLoader.numAnimations();
+	console.log(`Found ${numAnimations} animations in USD file`);
+
+	// Get summary of all animations
+	const animationInfos = usdLoader.getAllAnimationInfos();
+	console.log('Animation summaries:', animationInfos);
+
+	// Convert each animation to Three.js format
+	for (let i = 0; i < numAnimations; i++) {
+		const usdAnimation = usdLoader.getAnimation(i);
+		console.log(`Processing animation ${i}: ${usdAnimation.name}`);
+
+		if (!usdAnimation.channels || !usdAnimation.samplers) {
+			console.warn(`Animation ${i} missing channels or samplers`);
+			continue;
+		}
+
+		// Filter for skeletal animations only (skip node animations)
+		const skeletalChannels = usdAnimation.channels.filter(channel => {
+			const targetType = channel.target_type || 'SceneNode';
+			return targetType === 'SkeletonJoint';
+		});
+
+		if (skeletalChannels.length === 0) {
+			console.log(`Animation ${i} has no SkeletonJoint channels (skipping node-only animation)`);
+			continue;
+		}
+
+		console.log(`Animation ${i}: ${skeletalChannels.length} skeletal channels (${usdAnimation.channels.length - skeletalChannels.length} node channels skipped)`);
+
+		// Create Three.js KeyframeTracks from USD skeletal animation channels
+		const keyframeTracks = [];
+
+		// Group channels by joint_id to combine TRS into hierarchical bone animation
+		const jointChannels = new Map();
+		for (const channel of skeletalChannels) {
+			const jointId = channel.joint_id;
+			if (!jointChannels.has(jointId)) {
+				jointChannels.set(jointId, {});
+			}
+			const joint = jointChannels.get(jointId);
+			joint[channel.path] = channel;
+		}
+
+		// Process each joint's animation
+		for (const [jointId, channels] of jointChannels) {
+			const bone = boneMap.get(jointId);
+			if (!bone) {
+				console.warn(`Could not find bone for joint_id: ${jointId}`);
+				continue;
+			}
+
+			const boneName = bone.name || `bone_${jointId}`;
+
+			// Process Translation channel
+			if (channels.Translation) {
+				const channel = channels.Translation;
+				const sampler = usdAnimation.samplers[channel.sampler];
+				if (sampler && sampler.times && sampler.values) {
+					const times = Array.isArray(sampler.times) ? sampler.times : Array.from(sampler.times);
+					const values = Array.isArray(sampler.values) ? sampler.values : Array.from(sampler.values);
+
+					const track = new THREE.VectorKeyframeTrack(
+						`${boneName}.position`,
+						times,
+						values,
+						getUSDInterpolationMode(sampler.interpolation)
+					);
+					keyframeTracks.push(track);
+				}
+			}
+
+			// Process Rotation channel
+			if (channels.Rotation) {
+				const channel = channels.Rotation;
+				const sampler = usdAnimation.samplers[channel.sampler];
+				if (sampler && sampler.times && sampler.values) {
+					const times = Array.isArray(sampler.times) ? sampler.times : Array.from(sampler.times);
+					const values = Array.isArray(sampler.values) ? sampler.values : Array.from(sampler.values);
+
+					const track = new THREE.QuaternionKeyframeTrack(
+						`${boneName}.quaternion`,
+						times,
+						values,
+						getUSDInterpolationMode(sampler.interpolation)
+					);
+					keyframeTracks.push(track);
+				}
+			}
+
+			// Process Scale channel
+			if (channels.Scale) {
+				const channel = channels.Scale;
+				const sampler = usdAnimation.samplers[channel.sampler];
+				if (sampler && sampler.times && sampler.values) {
+					const times = Array.isArray(sampler.times) ? sampler.times : Array.from(sampler.times);
+					const values = Array.isArray(sampler.values) ? sampler.values : Array.from(sampler.values);
+
+					const track = new THREE.VectorKeyframeTrack(
+						`${boneName}.scale`,
+						times,
+						values,
+						getUSDInterpolationMode(sampler.interpolation)
+					);
+					keyframeTracks.push(track);
+				}
+			}
+		}
+
+		// Create Three.js AnimationClip
+		if (keyframeTracks.length > 0) {
+			const clip = new THREE.AnimationClip(
+				usdAnimation.name || `SkeletalAnimation_${i}`,
+				usdAnimation.duration || -1, // -1 will auto-calculate from tracks
+				keyframeTracks
+			);
+
+			animationClips.push(clip);
+			console.log(`Created skeletal clip: ${clip.name}, duration: ${clip.duration}s, tracks: ${clip.tracks.length}`);
+		}
+	}
+
+	return animationClips;
+}
+
+/**
+ * Convert USD interpolation mode to Three.js InterpolateMode
+ * @param {string} interpolation - USD interpolation mode (Linear, Step, CubicSpline)
+ * @returns {number} Three.js InterpolateMode constant
+ */
+function getUSDInterpolationMode(interpolation) {
+	switch (interpolation) {
+		case 'Step':
+		case 'STEP':
+			return THREE.InterpolateDiscrete;
+		case 'CubicSpline':
+		case 'CUBICSPLINE':
+			return THREE.InterpolateSmooth;
+		case 'Linear':
+		case 'LINEAR':
+		default:
+			return THREE.InterpolateLinear;
+	}
+}
+
+/**
+ * Build Three.js Skeleton from USD skeleton hierarchy
+ * @param {Object} usdSkeleton - USD skeleton data
+ * @param {number} skeletonId - Index of the skeleton
+ * @returns {Object} { bones: Array<THREE.Bone>, boneMap: Map }
+ */
+function buildSkeletonFromUSD(usdSkeleton, skeletonId) {
+	console.log('Building skeleton:', usdSkeleton);
+
+	const bones = [];
+	const boneMap = new Map();
+	let jointId = 0;
+
+	/**
+	 * Recursively build bone hierarchy
+	 * @param {Object} skelNode - USD SkelNode
+	 * @param {THREE.Bone} parentBone - Parent bone (null for root)
+	 */
+	function buildBoneHierarchy(skelNode, parentBone) {
+		const bone = new THREE.Bone();
+		bone.name = skelNode.joint_name || skelNode.joint_path || `joint_${jointId}`;
+
+		// Store mapping from joint_id to bone
+		const currentJointId = skelNode.joint_id !== undefined ? skelNode.joint_id : jointId;
+		boneMap.set(currentJointId, bone);
+		jointId++;
+
+		// Apply rest transform if available
+		if (skelNode.rest_transform) {
+			const matrix = new THREE.Matrix4();
+			const m = skelNode.rest_transform;
+			// USD uses row-major, Three.js uses column-major
+			matrix.set(
+				m[0][0], m[1][0], m[2][0], m[3][0],
+				m[0][1], m[1][1], m[2][1], m[3][1],
+				m[0][2], m[1][2], m[2][2], m[3][2],
+				m[0][3], m[1][3], m[2][3], m[3][3]
+			);
+			matrix.decompose(bone.position, bone.quaternion, bone.scale);
+		}
+
+		if (parentBone) {
+			parentBone.add(bone);
+		} else {
+			bones.push(bone); // Root bone
+		}
+
+		// Process children
+		if (skelNode.children && skelNode.children.length > 0) {
+			for (const childNode of skelNode.children) {
+				buildBoneHierarchy(childNode, bone);
+			}
+		}
+
+		return bone;
+	}
+
+	// Build from root node
+	if (usdSkeleton.root_node) {
+		const rootBone = buildBoneHierarchy(usdSkeleton.root_node, null);
+
+		// Collect all bones in depth-first order
+		const allBones = [];
+		rootBone.traverse((bone) => {
+			if (bone.isBone) {
+				allBones.push(bone);
+			}
+		});
+
+		return { bones: allBones, boneMap, rootBone };
+	}
+
+	console.warn('No root_node found in skeleton');
+	return { bones: [], boneMap: new Map(), rootBone: null };
+}
+
+/**
+ * Create weight visualization material with pseudo-color shader
+ * @returns {THREE.ShaderMaterial} Weight visualization shader material
+ */
+function createWeightVisualizationMaterial() {
+	const vertexShader = `
+		attribute vec4 skinIndex;
+		attribute vec4 skinWeight;
+
+		varying vec3 vColor;
+		varying vec4 vSkinWeight;
+		varying vec4 vSkinIndex;
+
+		// Pseudo-color palette for weight visualization
+		vec3 getWeightColor(float weight, float index) {
+			// Use HSV color wheel based on bone index
+			float hue = mod(index * 0.618033988749895, 1.0); // Golden ratio for good distribution
+			float sat = 0.8;
+			float val = weight;
+
+			// HSV to RGB conversion
+			float h = hue * 6.0;
+			float c = val * sat;
+			float x = c * (1.0 - abs(mod(h, 2.0) - 1.0));
+			float m = val - c;
+
+			vec3 rgb;
+			if (h < 1.0) rgb = vec3(c, x, 0.0);
+			else if (h < 2.0) rgb = vec3(x, c, 0.0);
+			else if (h < 3.0) rgb = vec3(0.0, c, x);
+			else if (h < 4.0) rgb = vec3(0.0, x, c);
+			else if (h < 5.0) rgb = vec3(x, 0.0, c);
+			else rgb = vec3(c, 0.0, x);
+
+			return rgb + m;
+		}
+
+		void main() {
+			vSkinWeight = skinWeight;
+			vSkinIndex = skinIndex;
+
+			// Blend colors based on weights
+			vColor = vec3(0.0);
+			vColor += getWeightColor(skinWeight.x, skinIndex.x) * skinWeight.x;
+			vColor += getWeightColor(skinWeight.y, skinIndex.y) * skinWeight.y;
+			vColor += getWeightColor(skinWeight.z, skinIndex.z) * skinWeight.z;
+			vColor += getWeightColor(skinWeight.w, skinIndex.w) * skinWeight.w;
+
+			vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+			gl_Position = projectionMatrix * mvPosition;
+		}
+	`;
+
+	const fragmentShader = `
+		varying vec3 vColor;
+		varying vec4 vSkinWeight;
+		varying vec4 vSkinIndex;
+
+		uniform int visualizationMode;
+
+		void main() {
+			if (visualizationMode == 0) {
+				// Blended weight colors
+				gl_FragColor = vec4(vColor, 1.0);
+			} else if (visualizationMode == 1) {
+				// Primary influence only
+				float maxWeight = max(max(vSkinWeight.x, vSkinWeight.y), max(vSkinWeight.z, vSkinWeight.w));
+				if (vSkinWeight.x == maxWeight) {
+					gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
+				} else if (vSkinWeight.y == maxWeight) {
+					gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0);
+				} else if (vSkinWeight.z == maxWeight) {
+					gl_FragColor = vec4(0.0, 0.0, 1.0, 1.0);
+				} else {
+					gl_FragColor = vec4(1.0, 1.0, 0.0, 1.0);
+				}
+			} else {
+				// Weight intensity (grayscale based on total weight)
+				float totalWeight = vSkinWeight.x + vSkinWeight.y + vSkinWeight.z + vSkinWeight.w;
+				gl_FragColor = vec4(vec3(totalWeight), 1.0);
+			}
+		}
+	`;
+
+	return new THREE.ShaderMaterial({
+		vertexShader: vertexShader,
+		fragmentShader: fragmentShader,
+		uniforms: {
+			visualizationMode: { value: 0 }
+		},
+		side: THREE.DoubleSide
+	});
+}
+
+/**
+ * Create joint visualization spheres
+ * @param {Array<THREE.Bone>} bones - Array of bones
+ * @returns {Array<THREE.Mesh>} Array of sphere meshes
+ */
+function createJointSpheres(bones) {
+	const spheres = [];
+	const geometry = new THREE.SphereGeometry(0.05, 16, 16);
+
+	bones.forEach((bone, index) => {
+		const material = new THREE.MeshStandardMaterial({
+			color: 0xff0000,
+			emissive: 0x000000,
+			metalness: 0.3,
+			roughness: 0.7
+		});
+
+		const sphere = new THREE.Mesh(geometry, material);
+		sphere.material.color.setHSL(index / bones.length, 1.0, 0.5);
+		sphere.userData.bone = bone;
+		sphere.userData.boneName = bone.name;
+		spheres.push(sphere);
+		scene.add(sphere);
+	});
+
+	return spheres;
+}
+
+/**
+ * Update joint sphere positions
+ */
+function updateJointSpheres() {
+	jointSpheres.forEach(sphere => {
+		const bone = sphere.userData.bone;
+		const worldPos = new THREE.Vector3();
+		bone.getWorldPosition(worldPos);
+		sphere.position.copy(worldPos);
+	});
+}
+
+/**
+ * Select a joint and attach transform controls
+ * @param {THREE.Bone} bone - The bone to select
+ * @param {THREE.Mesh} sphere - The corresponding sphere mesh
+ */
+function selectJoint(bone, sphere) {
+	// Deselect previous joint
+	if (selectedSphere && selectedSphere !== sphere) {
+		selectedSphere.material.emissive.setHex(0x000000);
+		selectedSphere.scale.set(1, 1, 1);
+	}
+
+	selectedJoint = bone;
+	selectedSphere = sphere;
+
+	if (sphere) {
+		// Highlight selected sphere
+		sphere.material.emissive.setHex(0xffffff);
+		sphere.scale.set(1.5, 1.5, 1.5);
+	}
+
+	// Attach transform controls to bone
+	transformControls.attach(bone);
+	transformControls.visible = animationParams.showGizmo;
+
+	// Update UI to show selected joint name
+	if (window.updateSelectedJoint) {
+		window.updateSelectedJoint(bone.name);
+	}
+
+	console.log(`Selected joint: ${bone.name}`);
+}
+
+/**
+ * Deselect current joint
+ */
+function deselectJoint() {
+	if (selectedSphere) {
+		selectedSphere.material.emissive.setHex(0x000000);
+		selectedSphere.scale.set(1, 1, 1);
+	}
+
+	selectedJoint = null;
+	selectedSphere = null;
+	transformControls.detach();
+
+	if (window.updateSelectedJoint) {
+		window.updateSelectedJoint(null);
+	}
+}
+
+/**
+ * Handle mouse click for joint selection via raycasting
+ * @param {MouseEvent} event - Mouse event
+ */
+function onMouseClick(event) {
+	// Calculate mouse position in normalized device coordinates
+	mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+	mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+	// Update raycaster
+	raycaster.setFromCamera(mouse, camera);
+
+	// Check for intersections with joint spheres
+	const intersects = raycaster.intersectObjects(jointSpheres);
+
+	if (intersects.length > 0) {
+		const sphere = intersects[0].object;
+		const bone = sphere.userData.bone;
+		selectJoint(bone, sphere);
+	}
+}
+
+/**
+ * Generate joint hierarchy text with clickable elements
+ * @param {Array<THREE.Bone>} bones - Array of bones
+ * @returns {string} HTML formatted hierarchy
+ */
+function generateJointHierarchy(bones) {
+	if (bones.length === 0) return '<p>No skeleton loaded</p>';
+
+	let html = '<div style="font-family: monospace; font-size: 12px; line-height: 1.4;">';
+
+	function traverseBone(bone, depth = 0) {
+		const indent = '&nbsp;&nbsp;'.repeat(depth);
+		const bullet = depth > 0 ? '└─ ' : '● ';
+		const color = depth === 0 ? '#ff6b6b' : '#4ecdc4';
+
+		// Make bone name clickable
+		html += `<div style="color: ${color}; cursor: pointer; padding: 2px; border-radius: 3px;"
+		              class="joint-item"
+		              data-bone-name="${bone.name}"
+		              onmouseover="this.style.backgroundColor='rgba(255,255,255,0.1)'"
+		              onmouseout="this.style.backgroundColor='transparent'">${indent}${bullet}${bone.name}</div>`;
+
+		bone.children.forEach(child => {
+			if (child.isBone) {
+				traverseBone(child, depth + 1);
+			}
+		});
+	}
+
+	// Find root bones
+	bones.forEach(bone => {
+		if (!bone.parent || !bone.parent.isBone) {
+			traverseBone(bone);
+		}
+	});
+
+	html += '</div>';
+	return html;
+}
+
+/**
+ * Handle joint selection from hierarchy UI
+ * @param {string} boneName - Name of the bone to select
+ */
+function selectJointByName(boneName) {
+	// Find the bone and sphere with matching name
+	const sphere = jointSpheres.find(s => s.userData.boneName === boneName);
+	if (sphere) {
+		const bone = sphere.userData.bone;
+		selectJoint(bone, sphere);
+	}
+}
+
+/**
+ * Load USD model from a URL path
+ */
+async function loadUSDModel() {
+	const loader = new TinyUSDZLoader();
+
+	// Initialize the loader (wait for WASM module to load)
+	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
+
+	// Default USD file to load
+	const usd_filename = "./assets/skintest-blender-4.1.usda";
+
+	console.log(`Loading USD file: ${usd_filename}`);
+
+	// Load USD scene
+	const usd_scene = await loader.loadAsync(usd_filename);
+
+	console.log('USD scene loaded:', usd_scene);
+
+	// Process the loaded scene
+	await processUSDScene(usd_scene, loader, usd_filename);
+}
+
+/**
+ * Load USD file and extract skeletal mesh and animations
+ * @param {ArrayBuffer} arrayBuffer - USD file data
+ * @param {string} filename - File name
+ */
+async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
+	const loader = new TinyUSDZLoader();
+	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
+
+	// Create a Blob URL from the ArrayBuffer
+	// This allows the loader to load the file as if it were a normal URL
+	const blob = new Blob([arrayBuffer]);
+	const blobUrl = URL.createObjectURL(blob);
+
+	console.log(`Loading USD from file: ${filename} (${(arrayBuffer.byteLength / 1024).toFixed(2)} KB)`);
+
+	// Load USD scene from Blob URL
+	const usd_scene = await loader.loadAsync(blobUrl);
+
+	// Clean up the Blob URL after loading
+	URL.revokeObjectURL(blobUrl);
+
+	console.log('USD scene loaded:', usd_scene);
+
+	// Process the loaded scene
+	await processUSDScene(usd_scene, loader, filename);
+}
+
+/**
+ * Process loaded USD scene and extract skeletal mesh and animations
+ * @param {Object} usd_scene - Loaded USD scene
+ * @param {Object} loader - TinyUSDZ loader instance
+ * @param {string} filename - File name
+ */
+async function processUSDScene(usd_scene, loader, filename) {
+	// Clear existing model
+	if (skinnedMesh) {
+		characterGroup.remove(skinnedMesh);
+		skinnedMesh = null;
+	}
+	if (skeletonHelper) {
+		scene.remove(skeletonHelper);
+		skeletonHelper = null;
+	}
+
+	// Clear joint spheres
+	jointSpheres.forEach(sphere => scene.remove(sphere));
+	jointSpheres = [];
+
+	// Deselect any selected joint
+	deselectJoint();
+
+	// Reset materials
+	originalMaterial = null;
+	weightVisualizationMaterial = null;
+
+	// Reset animations
+	usdAnimations = [];
+	boneMap.clear();
+	animationParams.hasUSDAnimations = false;
+	animationParams.usdAnimationCount = 0;
+
+	// Get scene metadata from the USD file
+	const sceneMetadata = usd_scene.getSceneMetadata ? usd_scene.getSceneMetadata() : {};
+	const fileUpAxis = sceneMetadata.upAxis || "Y";
+	currentFileUpAxis = fileUpAxis; // Store globally for toggle function
+
+	console.log('=== USD Scene Metadata ===');
+	console.log(`upAxis: "${fileUpAxis}"`);
+	console.log(`metersPerUnit: ${sceneMetadata.metersPerUnit || 1.0}`);
+	console.log('========================');
+
+	// Configure bone reduction (if enabled in UI)
+	if (animationParams.enableBoneReduction) {
+		loader.setEnableBoneReduction(true);
+		loader.setTargetBoneCount(animationParams.targetBoneCount);
+		console.log(`Bone reduction enabled: ${animationParams.targetBoneCount} bones per vertex`);
+	}
+
+	// Get skeletons
+	const numSkeletons = usd_scene.numSkeletons ? usd_scene.numSkeletons() : 0;
+	console.log(`Found ${numSkeletons} skeletons in USD file`);
+
+	let bones = [];
+	let rootBone = null;
+
+	if (numSkeletons > 0) {
+		// Get first skeleton (for simplicity, only support one skeleton for now)
+		const usdSkeleton = usd_scene.getSkeleton(0);
+		console.log('USD Skeleton:', usdSkeleton);
+
+		// Build Three.js skeleton
+		const skeletonData = buildSkeletonFromUSD(usdSkeleton, 0);
+		bones = skeletonData.bones;
+		boneMap = skeletonData.boneMap;
+		rootBone = skeletonData.rootBone;
+
+		console.log(`Built skeleton with ${bones.length} bones`);
+
+		// Update skeleton info display
+		if (window.updateSkeletonInfo) {
+			window.updateSkeletonInfo(numSkeletons, bones.length);
+		}
+	} else {
+		console.warn('No skeletons found in USD file - loading as static mesh');
+		// Update skeleton info display
+		if (window.updateSkeletonInfo) {
+			window.updateSkeletonInfo(0, 0);
+		}
+	}
+
+	// Get the default root node from USD
+	const usdRootNode = usd_scene.getDefaultRootNode();
+
+	// Create default material
+	const defaultMtl = TinyUSDZLoaderUtils.createDefaultMaterial();
+
+	const options = {
+		overrideMaterial: false,
+		envMap: null,
+		envMapIntensity: 1.0,
+	};
+
+	// Build Three.js node from USD
+	const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+
+	// Find skinned meshes in the loaded geometry
+	let foundSkinnedMesh = false;
+	threeNode.traverse((child) => {
+		if (child.isMesh && child.geometry.attributes.skinIndex && child.geometry.attributes.skinWeight) {
+			console.log('Found skinned mesh:', child.name);
+
+			// Only create skeleton if we have bones
+			if (bones.length > 0 && rootBone) {
+				// Create Three.js skeleton
+				skeleton = new THREE.Skeleton(bones);
+
+				// Convert to SkinnedMesh if not already
+				if (!child.isSkinnedMesh) {
+					const skinnedMeshChild = new THREE.SkinnedMesh(child.geometry, child.material);
+					skinnedMeshChild.name = child.name;
+					skinnedMeshChild.position.copy(child.position);
+					skinnedMeshChild.quaternion.copy(child.quaternion);
+					skinnedMeshChild.scale.copy(child.scale);
+					child = skinnedMeshChild;
+				}
+
+				child.add(rootBone); // Add skeleton root to the mesh
+				child.bind(skeleton);
+				child.castShadow = true;
+				child.receiveShadow = true;
+
+				skinnedMesh = child;
+				characterGroup.add(skinnedMesh);
+				foundSkinnedMesh = true;
+
+				// Save original material
+				originalMaterial = skinnedMesh.material;
+
+				// Create skeleton helper for visualization
+				skeletonHelper = new THREE.SkeletonHelper(skinnedMesh);
+				skeletonHelper.visible = animationParams.showSkeleton;
+				scene.add(skeletonHelper);
+
+				// Create joint spheres
+				jointSpheres = createJointSpheres(bones);
+				jointSpheres.forEach(sphere => sphere.visible = animationParams.showJoints);
+
+				// Update joint hierarchy display
+				if (window.updateJointHierarchy) {
+					window.updateJointHierarchy(generateJointHierarchy(bones));
+				}
+			} else {
+				// No skeleton data - just add as regular mesh
+				console.log('No skeleton data available, adding mesh without skeleton');
+				child.castShadow = true;
+				child.receiveShadow = true;
+				characterGroup.add(child);
+
+				// Save as skinnedMesh reference even though it's not actually skinned
+				skinnedMesh = child;
+				originalMaterial = child.material;
+				foundSkinnedMesh = true;
+			}
+		}
+	});
+
+	if (!foundSkinnedMesh) {
+		// If no skinned mesh found, try to find any mesh and add it
+		console.log('No skinned mesh found');
+
+		// Find first mesh
+		let firstMesh = null;
+		threeNode.traverse((child) => {
+			if (child.isMesh && !firstMesh) {
+				firstMesh = child;
+			}
+		});
+
+		if (firstMesh && bones.length > 0 && rootBone) {
+			// Have skeleton but mesh wasn't detected as skinned - create SkinnedMesh
+			console.log('Creating SkinnedMesh from regular mesh with skeleton');
+			skeleton = new THREE.Skeleton(bones);
+			const newSkinnedMesh = new THREE.SkinnedMesh(firstMesh.geometry, firstMesh.material);
+			newSkinnedMesh.add(rootBone);
+			newSkinnedMesh.bind(skeleton);
+			newSkinnedMesh.castShadow = true;
+			newSkinnedMesh.receiveShadow = true;
+
+			skinnedMesh = newSkinnedMesh;
+			characterGroup.add(skinnedMesh);
+
+			// Save original material
+			originalMaterial = skinnedMesh.material;
+
+			skeletonHelper = new THREE.SkeletonHelper(skinnedMesh);
+			skeletonHelper.visible = animationParams.showSkeleton;
+			scene.add(skeletonHelper);
+
+			// Create joint spheres
+			jointSpheres = createJointSpheres(bones);
+			jointSpheres.forEach(sphere => sphere.visible = animationParams.showJoints);
+
+			// Update joint hierarchy display
+			if (window.updateJointHierarchy) {
+				window.updateJointHierarchy(generateJointHierarchy(bones));
+			}
+		} else {
+			// No skeleton or no mesh - just add the scene as-is
+			console.log('Adding scene without skeleton');
+			if (firstMesh) {
+				firstMesh.castShadow = true;
+				firstMesh.receiveShadow = true;
+				characterGroup.add(firstMesh);
+				skinnedMesh = firstMesh;
+				originalMaterial = firstMesh.material;
+			} else {
+				characterGroup.add(threeNode);
+			}
+
+			// Update joint hierarchy display (empty)
+			if (window.updateJointHierarchy) {
+				window.updateJointHierarchy(generateJointHierarchy([]));
+			}
+		}
+	}
+
+	// Extract skeletal animations if available
+	try {
+		const animationInfos = usd_scene.getAllAnimationInfos ? usd_scene.getAllAnimationInfos() : [];
+
+		// Only try to extract animations if we have bones
+		if (bones.length > 0 && boneMap.size > 0) {
+			usdAnimations = convertUSDSkeletalAnimationsToThreeJS(usd_scene, boneMap);
+		} else {
+			console.log('No skeleton data available - skipping animation extraction');
+			usdAnimations = [];
+		}
+
+		if (usdAnimations.length > 0) {
+			console.log(`Extracted ${usdAnimations.length} skeletal animations from USD file`);
+
+			// Update animation parameters
+			animationParams.hasUSDAnimations = true;
+			animationParams.usdAnimationCount = usdAnimations.length;
+			animationParams.currentAnimation = Math.min(0, usdAnimations.length - 1);
+
+			// Update animation list in UI with type information
+			if (window.updateAnimationList) {
+				window.updateAnimationList(usdAnimations, animationInfos);
+			}
+
+			// Log animation details
+			usdAnimations.forEach((clip, index) => {
+				const info = animationInfos[index];
+				let typeStr = '';
+				if (info && info.has_skeletal_animation) {
+					typeStr = ' [skeletal]';
+				}
+				console.log(`Animation ${index}: ${clip.name}, duration: ${clip.duration}s, tracks: ${clip.tracks.length}${typeStr}`);
+			});
+
+			// Create mixer and play first animation
+			if (skinnedMesh && usdAnimations.length > 0 && skeleton) {
+				mixer = new THREE.AnimationMixer(skinnedMesh);
+				playAnimation(0);
+			}
+		} else {
+			if (window.updateAnimationList) {
+				window.updateAnimationList([], []);
+			}
+			console.log('No skeletal animations found in USD file (loading as static mesh)');
+		}
+	} catch (error) {
+		console.error('Error extracting skeletal animations:', error);
+		console.log('Continuing without animations...');
+		if (window.updateAnimationList) {
+			window.updateAnimationList([], []);
+		}
+	}
+
+	// Apply Z-up to Y-up conversion if enabled AND the file is actually Z-up
+	if (animationParams.applyUpAxisConversion && fileUpAxis === "Z") {
+		usdSceneRoot.rotation.x = -Math.PI / 2;
+		console.log(`[processUSDScene] Applied Z-up to Y-up conversion (file upAxis="${fileUpAxis}"): rotation.x =`, usdSceneRoot.rotation.x);
+	} else if (animationParams.applyUpAxisConversion && fileUpAxis !== "Y") {
+		console.warn(`[processUSDScene] File upAxis is "${fileUpAxis}" (not Y or Z), no rotation applied`);
+	} else {
+		// Reset rotation (either disabled or file is already Y-up)
+		usdSceneRoot.rotation.x = 0;
+		console.log(`[processUSDScene] No upAxis conversion needed (file upAxis="${fileUpAxis}", conversion ${animationParams.applyUpAxisConversion ? 'enabled' : 'disabled'})`);
+	}
+}
+
+/**
+ * Play animation by index
+ * @param {number} index - Animation index
+ */
+function playAnimation(index) {
+	if (!mixer || index < 0 || index >= usdAnimations.length) {
+		return;
+	}
+
+	// Stop current animation
+	if (animationAction) {
+		animationAction.stop();
+	}
+
+	// Play new animation
+	const clip = usdAnimations[index];
+	animationAction = mixer.clipAction(clip);
+	animationAction.loop = THREE.LoopRepeat;
+	animationAction.clampWhenFinished = false;
+	animationAction.play();
+
+	animationParams.currentAnimation = index;
+	console.log(`Playing animation: ${clip.name}`);
+}
+
+// Listen for file upload events
+window.addEventListener('loadUSDFile', async (event) => {
+	const file = event.detail.file;
+	if (!file) return;
+
+	try {
+		const arrayBuffer = await file.arrayBuffer();
+		await loadUSDFromArrayBuffer(arrayBuffer, file.name);
+		console.log('USD file loaded successfully:', file.name);
+	} catch (error) {
+		console.error('Failed to load USD file:', error);
+		alert('Failed to load USD file: ' + error.message);
+	}
+});
+
+// Listen for default model reload
+window.addEventListener('loadDefaultModel', async () => {
+	try {
+		await loadUSDModel();
+		console.log('Default model reloaded');
+	} catch (error) {
+		console.error('Failed to reload default model:', error);
+	}
+});
+
+// Load USD model on startup
+loadUSDModel().catch((error) => {
+	console.error('Failed to load USD model:', error);
+	alert('Failed to load default USD file: ' + error.message + '\n\nPlease upload a USD file (with or without skeletal animation).');
+});
+
+// Listen for mouse clicks for joint selection
+window.addEventListener('click', onMouseClick);
+
+// Keyboard shortcuts for transform modes
+window.addEventListener('keydown', (event) => {
+	// Don't trigger if user is typing in an input field
+	if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') {
+		return;
+	}
+
+	switch(event.key.toLowerCase()) {
+		case 'g': // Translate/Grab
+			animationParams.transformMode = 'translate';
+			animationParams.setTransformMode();
+			console.log('Transform mode: Translate');
+			break;
+		case 'r': // Rotate
+			animationParams.transformMode = 'rotate';
+			animationParams.setTransformMode();
+			console.log('Transform mode: Rotate');
+			break;
+		case 's': // Scale
+			if (!event.ctrlKey && !event.metaKey) { // Avoid conflicts with Save
+				animationParams.transformMode = 'scale';
+				animationParams.setTransformMode();
+				console.log('Transform mode: Scale');
+			}
+			break;
+		case 'escape': // Deselect
+			deselectJoint();
+			console.log('Joint deselected');
+			break;
+		case 'x': // Toggle local/world space
+			animationParams.transformSpace = animationParams.transformSpace === 'local' ? 'world' : 'local';
+			animationParams.setTransformSpace();
+			console.log(`Transform space: ${animationParams.transformSpace}`);
+			break;
+	}
+});
+
+// Expose selectJointByName for UI hierarchy clicks
+window.selectJointByName = selectJointByName;
+
+// Animation parameters
+const animationParams = {
+	isPlaying: true,
+	playPause: function() {
+		this.isPlaying = !this.isPlaying;
+		if (animationAction) {
+			animationAction.paused = !this.isPlaying;
+		}
+	},
+	reset: function() {
+		if (animationAction) {
+			animationAction.reset();
+			animationAction.play();
+		}
+	},
+	speed: 1.0,
+	time: 0,
+
+	// Skeletal animation properties
+	hasUSDAnimations: false,
+	usdAnimationCount: 0,
+	currentAnimation: 0,
+	selectAnimation: function() {
+		if (this.hasUSDAnimations && this.currentAnimation < usdAnimations.length) {
+			playAnimation(this.currentAnimation);
+		}
+	},
+
+	// Visualization
+	showSkeleton: true,
+	toggleSkeleton: function() {
+		if (skeletonHelper) {
+			skeletonHelper.visible = this.showSkeleton;
+		}
+	},
+
+	// Debug visualization
+	showJoints: false,
+	toggleJoints: function() {
+		jointSpheres.forEach(sphere => sphere.visible = this.showJoints);
+	},
+
+	showWeights: false,
+	weightVisualizationMode: 0, // 0: blended, 1: primary only, 2: intensity
+	toggleWeights: function() {
+		if (!skinnedMesh || !originalMaterial) return;
+
+		if (this.showWeights) {
+			if (!weightVisualizationMaterial) {
+				weightVisualizationMaterial = createWeightVisualizationMaterial();
+			}
+			weightVisualizationMaterial.uniforms.visualizationMode.value = this.weightVisualizationMode;
+			skinnedMesh.material = weightVisualizationMaterial;
+		} else {
+			skinnedMesh.material = originalMaterial;
+		}
+	},
+
+	updateWeightMode: function() {
+		if (this.showWeights && weightVisualizationMaterial) {
+			weightVisualizationMaterial.uniforms.visualizationMode.value = this.weightVisualizationMode;
+		}
+	},
+
+	// Gizmo controls
+	showGizmo: true,
+	transformMode: 'translate',
+	transformSpace: 'local',
+	toggleGizmo: function() {
+		transformControls.visible = this.showGizmo && selectedJoint !== null;
+	},
+	setTransformMode: function() {
+		transformControls.setMode(this.transformMode);
+	},
+	setTransformSpace: function() {
+		transformControls.setSpace(this.transformSpace);
+	},
+	deselectJoint: function() {
+		deselectJoint();
+	},
+
+	// Bone reduction settings (applied on next file load)
+	enableBoneReduction: false,
+	targetBoneCount: 4,
+
+	// Up axis conversion (Z-up to Y-up)
+	applyUpAxisConversion: true,
+	toggleUpAxisConversion: function() {
+		if (this.applyUpAxisConversion && currentFileUpAxis === "Z") {
+			// Apply Z-up to Y-up conversion (-90 degrees around X axis)
+			usdSceneRoot.rotation.x = -Math.PI / 2;
+			console.log(`[toggleUpAxisConversion] Applied Z-up to Y-up rotation (file upAxis="${currentFileUpAxis}"): usdSceneRoot.rotation.x =`, usdSceneRoot.rotation.x);
+		} else {
+			// Reset rotation (either disabled or file is already Y-up)
+			usdSceneRoot.rotation.x = 0;
+			if (this.applyUpAxisConversion && currentFileUpAxis !== "Z") {
+				console.log(`[toggleUpAxisConversion] No rotation needed (file upAxis="${currentFileUpAxis}"): usdSceneRoot.rotation.x =`, usdSceneRoot.rotation.x);
+			} else {
+				console.log(`[toggleUpAxisConversion] Reset rotation (conversion disabled): usdSceneRoot.rotation.x =`, usdSceneRoot.rotation.x);
+			}
+		}
+	}
+};
+
+// GUI setup
+const gui = new GUI();
+gui.title('Skeletal Animation Controls');
+
+// Playback controls
+const playbackFolder = gui.addFolder('Playback');
+playbackFolder.add(animationParams, 'playPause').name('Play / Pause');
+playbackFolder.add(animationParams, 'reset').name('Reset');
+playbackFolder.add(animationParams, 'speed', 0, 3, 0.1).name('Speed').onChange(() => {
+	if (animationAction) {
+		animationAction.setEffectiveTimeScale(animationParams.speed);
+	}
+});
+playbackFolder.add(animationParams, 'time', 0, 30, 0.01)
+	.name('Timeline').listen().onChange(() => {
+		if (animationAction) {
+			animationAction.time = animationParams.time;
+		}
+	});
+playbackFolder.open();
+
+// Animation controls
+const animationFolder = gui.addFolder('Skeletal Animations');
+animationFolder.add(animationParams, 'hasUSDAnimations').name('Has Animations').listen().disable();
+animationFolder.add(animationParams, 'usdAnimationCount').name('Animation Count').listen().disable();
+animationFolder.add(animationParams, 'currentAnimation', 0, 10, 1)
+	.name('Select Animation')
+	.listen()
+	.onChange(() => animationParams.selectAnimation());
+animationFolder.open();
+
+// Visualization controls
+const visualFolder = gui.addFolder('Visualization');
+visualFolder.add(animationParams, 'showSkeleton')
+	.name('Show Skeleton')
+	.onChange(() => animationParams.toggleSkeleton());
+visualFolder.add(animationParams, 'applyUpAxisConversion')
+	.name('Z-up to Y-up')
+	.onChange(() => animationParams.toggleUpAxisConversion());
+visualFolder.open();
+
+// Debug visualization controls
+const debugFolder = gui.addFolder('Debug Visualization');
+debugFolder.add(animationParams, 'showJoints')
+	.name('Show Joints')
+	.onChange(() => animationParams.toggleJoints());
+debugFolder.add(animationParams, 'showWeights')
+	.name('Show Weights')
+	.onChange(() => animationParams.toggleWeights());
+debugFolder.add(animationParams, 'weightVisualizationMode', {
+	'Blended Colors': 0,
+	'Primary Influence': 1,
+	'Weight Intensity': 2
+})
+	.name('Weight Mode')
+	.onChange(() => animationParams.updateWeightMode());
+debugFolder.open();
+
+// Gizmo controls
+const gizmoFolder = gui.addFolder('Joint Manipulation');
+gizmoFolder.add(animationParams, 'showGizmo')
+	.name('Show Gizmo')
+	.onChange(() => animationParams.toggleGizmo());
+gizmoFolder.add(animationParams, 'transformMode', {
+	'Translate': 'translate',
+	'Rotate': 'rotate',
+	'Scale': 'scale'
+})
+	.name('Transform Mode')
+	.onChange(() => animationParams.setTransformMode());
+gizmoFolder.add(animationParams, 'transformSpace', {
+	'Local': 'local',
+	'World': 'world'
+})
+	.name('Space')
+	.onChange(() => animationParams.setTransformSpace());
+gizmoFolder.add(animationParams, 'deselectJoint')
+	.name('Deselect Joint');
+gizmoFolder.open();
+
+// Bone reduction settings
+const boneReductionFolder = gui.addFolder('Bone Reduction (Next Load)');
+boneReductionFolder.add(animationParams, 'enableBoneReduction')
+	.name('Enable Reduction')
+	.onChange(() => {
+		console.log(`Bone reduction ${animationParams.enableBoneReduction ? 'enabled' : 'disabled'} (applies on next file load)`);
+	});
+boneReductionFolder.add(animationParams, 'targetBoneCount', 1, 8, 1)
+	.name('Target Bone Count')
+	.onChange(() => {
+		console.log(`Target bone count set to ${animationParams.targetBoneCount} (applies on next file load)`);
+	});
+boneReductionFolder.close(); // Closed by default as advanced feature
+
+// Info folder
+const infoFolder = gui.addFolder('Info');
+const info = {
+	fps: 0,
+	objects: scene.children.length
+};
+infoFolder.add(info, 'fps').name('FPS').listen().disable();
+infoFolder.add(info, 'objects').name('Objects').listen().disable();
+infoFolder.open();
+
+// Window resize handler
+window.addEventListener('resize', onWindowResize, false);
+
+function onWindowResize() {
+	camera.aspect = window.innerWidth / window.innerHeight;
+	camera.updateProjectionMatrix();
+	renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+// FPS calculation
+let lastTime = performance.now();
+let frames = 0;
+let fpsUpdateTime = 0;
+
+// Animation loop
+function animate() {
+	requestAnimationFrame(animate);
+
+	const currentTime = performance.now();
+	const deltaTime = (currentTime - lastTime) / 1000; // Convert to seconds
+	lastTime = currentTime;
+
+	// Update FPS
+	frames++;
+	fpsUpdateTime += deltaTime;
+	if (fpsUpdateTime >= 0.5) {
+		info.fps = Math.round(frames / fpsUpdateTime);
+		frames = 0;
+		fpsUpdateTime = 0;
+	}
+
+	// Update animation mixer
+	if (mixer && animationParams.isPlaying) {
+		mixer.update(deltaTime * animationParams.speed);
+
+		// Update time display
+		if (animationAction) {
+			animationParams.time = animationAction.time;
+		}
+	}
+
+	// Update skeleton helper
+	if (skeletonHelper) {
+		skeletonHelper.update();
+	}
+
+	// Update joint spheres
+	if (animationParams.showJoints && jointSpheres.length > 0) {
+		updateJointSpheres();
+	}
+
+	// Update transform controls position if a joint is selected
+	if (selectedJoint && transformControls.visible) {
+		transformControls.updateMatrixWorld();
+	}
+
+	// Update controls
+	controls.update();
+
+	// Update object count
+	info.objects = scene.children.length;
+
+	// Render
+	renderer.render(scene, camera);
+}
+
+// Start animation loop
+animate();

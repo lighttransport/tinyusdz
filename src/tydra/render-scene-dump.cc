@@ -340,6 +340,7 @@ std::string DumpSkeleton(const SkelHierarchy &skel, uint32_t indent) {
 
 namespace detail {
 
+#if 0 // unused
 template<typename T>
 std::string PrintAnimationSamples(const std::vector<AnimationSample<T>> &samples) {
   std::stringstream ss;
@@ -356,48 +357,63 @@ std::string PrintAnimationSamples(const std::vector<AnimationSample<T>> &samples
 
   return ss.str();
 }
+#endif
 
-void DumpAnimChannel(std::stringstream &ss, const std::string &name, const std::map<AnimationChannel::ChannelType, AnimationChannel> &channels, uint32_t indent) {
-
-  ss << pprint::Indent(indent) << name << " {\n";
-
-  for (const auto &channel : channels) {
-    if (channel.first == AnimationChannel::ChannelType::Translation) {
-      ss << pprint::Indent(indent + 1) << "translations " << quote(detail::PrintAnimationSamples(channel.second.translations.samples)) << "\n";
-    } else if (channel.first == AnimationChannel::ChannelType::Rotation) {
-      ss << pprint::Indent(indent + 1) << "rotations " << quote(detail::PrintAnimationSamples(channel.second.rotations.samples)) << "\n";
-    } else if (channel.first == AnimationChannel::ChannelType::Scale) {
-      ss << pprint::Indent(indent + 1) << "scales " << quote(detail::PrintAnimationSamples(channel.second.scales.samples)) << "\n";
-    }
-  }
-
-  ss << pprint::Indent(indent) << "}\n";
-}
+// void DumpAnimChannel(std::stringstream &ss, const std::string &name, const std::map<AnimationChannel::ChannelType, AnimationChannel> &channels, uint32_t indent) {
+// 
+//   ss << pprint::Indent(indent) << name << " {\n";
+// 
+//   for (const auto &channel : channels) {
+//     if (channel.first == AnimationChannel::ChannelType::Translation) {
+//       ss << pprint::Indent(indent + 1) << "translations " << quote(detail::PrintAnimationSamples(channel.second.translations.samples)) << "\n";
+//     } else if (channel.first == AnimationChannel::ChannelType::Rotation) {
+//       ss << pprint::Indent(indent + 1) << "rotations " << quote(detail::PrintAnimationSamples(channel.second.rotations.samples)) << "\n";
+//     } else if (channel.first == AnimationChannel::ChannelType::Scale) {
+//       ss << pprint::Indent(indent + 1) << "scales " << quote(detail::PrintAnimationSamples(channel.second.scales.samples)) << "\n";
+//     }
+//   }
+// 
+//   ss << pprint::Indent(indent) << "}\n";
+// }
 
 
 } // namespace detail
 
-std::string DumpAnimation(const Animation &anim, uint32_t indent) {
+std::string DumpAnimation(const AnimationClip &anim, uint32_t indent) {
   std::stringstream ss;
 
   ss << pprint::Indent(indent) << "animation {\n";
 
-  ss << pprint::Indent(indent + 1) << "name " << quote(anim.prim_name) << "\n";
-  ss << pprint::Indent(indent + 1) << "abs_path " << quote(anim.abs_path)
-     << "\n";
-  ss << pprint::Indent(indent + 1) << "display_name "
-     << quote(anim.display_name) << "\n";
+  ss << pprint::Indent(indent + 1) << "name " << quote(anim.name) << "\n";
+  ss << pprint::Indent(indent + 1) << "prim_name " << quote(anim.prim_name) << "\n";
+  ss << pprint::Indent(indent + 1) << "abs_path " << quote(anim.abs_path) << "\n";
+  ss << pprint::Indent(indent + 1) << "display_name " << quote(anim.display_name) << "\n";
+  ss << pprint::Indent(indent + 1) << "duration " << anim.duration << "\n";
+  ss << pprint::Indent(indent + 1) << "num_samplers " << anim.samplers.size() << "\n";
+  ss << pprint::Indent(indent + 1) << "num_channels " << anim.channels.size() << "\n";
 
-  for (const auto &channel : anim.channels_map) {
-    detail::DumpAnimChannel(ss, channel.first, channel.second, indent + 1);
+  // Dump channels
+  for (size_t i = 0; i < anim.channels.size(); i++) {
+    const auto &ch = anim.channels[i];
+    ss << pprint::Indent(indent + 1) << "channel[" << i << "] {\n";
+    ss << pprint::Indent(indent + 2) << "target_node: " << ch.target_node << "\n";
+    ss << pprint::Indent(indent + 2) << "sampler: " << ch.sampler << "\n";
+    ss << pprint::Indent(indent + 2) << "path: ";
+    switch (ch.path) {
+      case AnimationPath::Translation: ss << "Translation"; break;
+      case AnimationPath::Rotation: ss << "Rotation"; break;
+      case AnimationPath::Scale: ss << "Scale"; break;
+      case AnimationPath::Weights: ss << "Weights"; break;
+    }
+    ss << "\n";
+    ss << pprint::Indent(indent + 1) << "}\n";
   }
-
-  ss << "\n";
 
   ss << pprint::Indent(indent) << "}\n";
 
   return ss.str();
 }
+
 
 std::string DumpCamera(const RenderCamera &camera, uint32_t indent) {
   std::stringstream ss;

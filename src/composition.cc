@@ -45,7 +45,7 @@ namespace prim {
 // implimentations will be located in prim-reconstruct.cc
 #define RECONSTRUCT_PRIM_DECL(__ty)                                   \
   template <>                                                         \
-  bool ReconstructPrim<__ty>(const PrimSpec &, __ty *, std::string *, \
+  bool ReconstructPrim<__ty>(PrimSpec &, __ty *, std::string *, \
                              std::string *, const PrimReconstructOptions &)
 
 RECONSTRUCT_PRIM_DECL(Xform);
@@ -1302,7 +1302,7 @@ bool CompositeInherits(const Layer &in_layer, Layer *composited_layer,
 namespace detail {
 
 static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
-    const PrimSpec &primspec, std::string *warn, std::string *err) {
+    PrimSpec &primspec, std::string *warn, std::string *err) {
   (void)warn;
 
   // TODO:
@@ -1387,7 +1387,7 @@ static nonstd::optional<Prim> ReconstructPrimFromPrimSpec(
 }
 
 static nonstd::optional<Prim> ReconstructPrimFromPrimSpecRec(
-    const PrimSpec &primspec, std::string *warn, std::string *err) {
+    PrimSpec &primspec, std::string *warn, std::string *err) {
 
   auto pprim = ReconstructPrimFromPrimSpec(primspec, warn, err);
 
@@ -1509,7 +1509,7 @@ static bool InheritPrimSpecImpl(PrimSpec &dst, const PrimSpec &src,
 
 }  // namespace detail
 
-bool LayerToStage(const Layer &layer, Stage *stage_out, std::string *warn,
+bool LayerToStage(Layer &&layer, Stage *stage_out, std::string *warn,
                   std::string *err) {
   if (!stage_out) {
     if (err) {
@@ -1523,7 +1523,7 @@ bool LayerToStage(const Layer &layer, Stage *stage_out, std::string *warn,
   stage.metas() = layer.metas();
 
   // TODO: primChildren metadatum
-  for (const auto &primspec : layer.primspecs()) {
+  for (auto &primspec : layer.primspecs()) {
     if (auto pv =
             detail::ReconstructPrimFromPrimSpecRec(primspec.second, warn, err)) {
       stage.add_root_prim(std::move(pv.value()));

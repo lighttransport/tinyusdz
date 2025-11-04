@@ -762,48 +762,184 @@ struct AnimationSampler {
   Interpolation interpolation{Interpolation::Linear};
 };
 
-// We store animation data in AoS(array of structure) approach(glTF-like), i.e. animation channel is provided per joint, instead of
-// SoA(structure of array) approach(USD SkelAnimation)
-// TODO: Use VertexAttribute-like data structure
-struct AnimationChannel {
-  enum class ChannelType { Transform, Translation, Rotation, Scale, Weight };
-
-  AnimationChannel() = default;
-
-  AnimationChannel(ChannelType ty) : type(ty) {
-  }
-
-  ChannelType type;
-  // The following AnimationSampler is filled depending on ChannelType.
-  // Example: Rotation => Only `rotations` are filled.
-
-  // Matrix precision is reduced to float-precision
-  // NOTE: transform is not supported in glTF(you need to decompose transform
-  // matrix into TRS)
-  AnimationSampler<mat4> transforms;
-
-  AnimationSampler<vec3> translations;
-  AnimationSampler<quat> rotations;  // Rotation is represented as quaternions
-  AnimationSampler<vec3> scales; // half-types are upcasted to float precision
-  AnimationSampler<float> weights;
-
-  //std::string joint_name; // joint name(UsdSkel::joints)
-  //int64_t joint_id{-1};  // joint index in SkelHierarchy
+///
+/// Animation interpolation mode (matches glTF specification)
+///
+enum class AnimationInterpolation {
+  Linear,      ///< LINEAR - linear interpolation (slerp for quaternions)
+  Step,        ///< STEP - discrete/stepped interpolation (no interpolation)
+  CubicSpline  ///< CUBICSPLINE - cubic spline with in/out tangents
 };
 
-// USD SkelAnimation
-struct Animation {
-  std::string prim_name; // Prim name(element name)
-  std::string abs_path;  // Target USD Prim path
-  std::string display_name;  // `displayName` prim meta
+///
+/// Animation channel target type - distinguishes what the channel animates
+///
+/// USD has two distinct animation systems:
+/// - Node animations: xformOp time samples animate scene node transforms
+/// - Skeletal animations: SkelAnimation arrays animate skeleton joint transforms
+///
+/// This enum enables type-safe handling of both animation types in a unified structure.
+///
+enum class ChannelTargetType {
+  SceneNode,      ///< Targets a scene node's transform (from USD xformOp animations)
+  SkeletonJoint   ///< Targets a skeleton joint (from USD SkelAnimation)
+};
 
-  // key = joint, value = (key: channel_type, value: channel_value)
-  std::map<std::string, std::map<AnimationChannel::ChannelType, AnimationChannel>> channels_map;
+///
+/// Animation target property path (matches glTF animation paths)
+///
+enum class AnimationPath {
+  Translation,  ///< Animates position (vec3) - maps to .position in Three.js
+  Rotation,     ///< Animates rotation (quat) - maps to .quaternion in Three.js
+  Scale,        ///< Animates scale (vec3) - maps to .scale in Three.js
+  Weights       ///< Animates morph target weights (float array)
+};
 
-  // For blendshapes
-  // key = blendshape name, value = timesamped weights
-  // TODO: in-between weight
-  std::map<std::string, AnimationSampler<float>> blendshape_weights_map;
+///
+/// Keyframe sampler - stores keyframe times and values in flat arrays
+///
+/// Matches glTF Animation Sampler structure and Three.js KeyframeTrack format.
+/// Values are stored as flat float arrays:
+/// - Translation/Scale: [x0,y0,z0, x1,y1,z1, ...] (3 floats per keyframe)
+/// - Rotation: [x0,y0,z0,w0, x1,y1,z1,w1, ...] (4 floats per keyframe)
+/// - Weights: [w0, w1, w2, ...] (1 float per keyframe per target)
+///
+/// For CubicSpline interpolation, each keyframe requires 3 values:
+/// [in_tangent, value, out_tangent], so array size is times.size() * components * 3
+///
+struct KeyframeSampler {
+  std::vector<float> times;   ///< Keyframe times in seconds (flat array)
+  std::vector<float> values;  ///< Keyframe values (flat array)
+  AnimationInterpolation interpolation{AnimationInterpolation::Linear};
+
+  /// Check if sampler is empty
+  bool empty() const { return times.empty(); }
+
+  /// Get number of keyframes
+  size_t num_keyframes() const { return times.size(); }
+};
+
+///
+/// Animation channel - binds sampler data to a specific target property
+///
+/// Supports both node transform animations (from USD xformOps) and
+/// skeletal joint animations (from USD SkelAnimation). The target_type field
+/// determines how to interpret the target identification fields.
+///
+/// Matches glTF Animation Channel structure. Each channel targets one property
+/// of one target, and references a sampler that provides the keyframe data.
+///
+/// Example usage:
+/// ```
+/// // Node animation (xformOp)
+/// AnimationChannel node_channel;
+/// node_channel.target_type = ChannelTargetType::SceneNode;
+/// node_channel.path = AnimationPath::Translation;
+/// node_channel.target_node = 5;  // Index into RenderScene::nodes
+/// node_channel.sampler = 0;
+///
+/// // Skeletal animation (SkelAnimation)
+/// AnimationChannel joint_channel;
+/// joint_channel.target_type = ChannelTargetType::SkeletonJoint;
+/// joint_channel.path = AnimationPath::Rotation;
+/// joint_channel.skeleton_id = 0;  // Index into RenderScene::skeletons
+/// joint_channel.joint_id = 12;     // Joint index within skeleton
+/// joint_channel.sampler = 1;
+/// ```
+///
+struct AnimationChannel {
+  AnimationPath path;         ///< Which property to animate (translation/rotation/scale/weights)
+  ChannelTargetType target_type{ChannelTargetType::SceneNode};  ///< Target type (node or joint)
+
+  // Target identification (interpretation depends on target_type)
+  int32_t target_node{-1};    ///< SceneNode: index into RenderScene::nodes (-1 = invalid)
+                               ///< SkeletonJoint: unused (use skeleton_id + joint_id instead)
+
+  // Skeletal animation fields (only used when target_type == SkeletonJoint)
+  int32_t skeleton_id{-1};    ///< Index into RenderScene::skeletons (-1 = invalid)
+  int32_t joint_id{-1};       ///< Index within skeleton's joint array (-1 = invalid)
+
+  int32_t sampler{-1};        ///< Index into AnimationClip::samplers (-1 = invalid)
+
+  /// Check if channel is valid based on its target type
+  bool is_valid() const {
+    if (sampler < 0) return false;
+    if (target_type == ChannelTargetType::SceneNode) {
+      return target_node >= 0;
+    } else {  // SkeletonJoint
+      return skeleton_id >= 0 && joint_id >= 0;
+    }
+  }
+
+  /// Check if this is a skeletal animation channel
+  bool is_skeletal() const {
+    return target_type == ChannelTargetType::SkeletonJoint;
+  }
+};
+
+///
+/// Animation clip - collection of animation channels and samplers
+///
+/// Matches glTF Animation structure and Three.js AnimationClip.
+/// An animation clip contains:
+/// - samplers: Keyframe data (times and values)
+/// - channels: Bindings from samplers to node properties
+///
+/// This design separates animation data from the scene hierarchy,
+/// making it compatible with Three.js/glTF animation systems.
+///
+/// Example usage:
+/// ```
+/// AnimationClip clip;
+/// clip.name = "Walk";
+/// clip.duration = 2.0f;
+///
+/// // Create sampler for translation
+/// KeyframeSampler trans_sampler;
+/// trans_sampler.times = {0.0f, 1.0f, 2.0f};
+/// trans_sampler.values = {0,0,0,  1,0,0,  0,0,0};  // Flat array: x,y,z for each keyframe
+/// clip.samplers.push_back(trans_sampler);
+///
+/// // Create channel targeting node 5's translation
+/// AnimationChannel channel;
+/// channel.path = AnimationPath::Translation;
+/// channel.target_node = 5;
+/// channel.sampler = 0;  // Index into clip.samplers
+/// clip.channels.push_back(channel);
+/// ```
+///
+struct AnimationClip {
+  std::string name;               ///< Animation name
+  std::string prim_name;          ///< Original USD prim name (element name)
+  std::string abs_path;           ///< Original USD absolute prim path
+  std::string display_name;       ///< USD `displayName` prim meta
+
+  float duration{0.0f};           ///< Animation duration in seconds
+
+  std::vector<KeyframeSampler> samplers;  ///< Keyframe data
+  std::vector<AnimationChannel> channels;  ///< Property bindings
+
+  /// Check if animation is empty
+  bool empty() const { return channels.empty(); }
+
+  /// Get number of channels
+  size_t num_channels() const { return channels.size(); }
+
+  /// Check if animation contains skeletal animation channels
+  bool has_skeletal_animation() const {
+    for (const auto& ch : channels) {
+      if (ch.is_skeletal()) return true;
+    }
+    return false;
+  }
+
+  /// Check if animation contains scene node animation channels
+  bool has_node_animation() const {
+    for (const auto& ch : channels) {
+      if (!ch.is_skeletal()) return true;
+    }
+    return false;
+  }
 };
 
 struct Node {
@@ -832,13 +968,10 @@ struct Node {
 
   bool is_identity_matrix() { return is_identity(local_matrix); }
 
-#ifdef TYDRA_USE_CHUNKED_ARRAY
-  ChunkedVectorArray<AnimationChannel>
-      node_animations;  // xform animations(timesamples)
-#else
-  std::vector<AnimationChannel>
-      node_animations;  // xform animations(timesamples)
-#endif
+  // NOTE: Animation data has been moved to RenderScene::animations (AnimationClip).
+  // Animations reference nodes by index (AnimationChannel::target_node) rather than
+  // being embedded in the Node structure. This matches glTF/Three.js design and
+  // allows animations to be managed independently of the scene hierarchy.
 
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
 };
@@ -1424,7 +1557,7 @@ class RenderScene {
   ChunkedVectorArray<RenderLight> lights;
   ChunkedVectorArray<UVTexture> textures;
   ChunkedVectorArray<RenderMesh> meshes;
-  ChunkedVectorArray<Animation> animations;
+  ChunkedVectorArray<AnimationClip> animations;  ///< Animation clips (glTF/Three.js compatible)
   ChunkedVectorArray<SkelHierarchy> skeletons;
   ChunkedVectorArray<BufferData>
       buffers;  // Various data storage(e.g. texel/image data).
@@ -1436,7 +1569,7 @@ class RenderScene {
   std::vector<RenderLight> lights;
   std::vector<UVTexture> textures;
   std::vector<RenderMesh> meshes;
-  std::vector<Animation> animations;
+  std::vector<AnimationClip> animations;  ///< Animation clips (glTF/Three.js compatible)
   std::vector<SkelHierarchy> skeletons;
   std::vector<BufferData>
       buffers;  // Various data storage(e.g. texel/image data).
@@ -1517,6 +1650,19 @@ struct MeshConverterConfig {
   // Upperlimit of the number of skin weights per vertex.
   // For realtime app, usually up to 64
   uint32_t max_skin_elementSize = 1024ull * 256ull;
+
+  //
+  // Bone reduction: limit the number of bone influences per vertex for GPU skinning.
+  // When enabled, only the strongest N bone influences are kept and weights are renormalized.
+  //
+  bool enable_bone_reduction{false};
+
+  //
+  // Target number of bone influences per vertex after reduction.
+  // Default is 4, which is standard for real-time GPU skinning (e.g., Three.js, Unity, Unreal).
+  // Common values: 2, 4, 8
+  //
+  uint32_t target_bone_count{4};
 
   //
   // Build vertex indices when vertex attributes are converted to `faceverying`?
@@ -2386,7 +2532,7 @@ class RenderSceneConverter {
   ChunkedVectorArray<TextureImage> images;
   ChunkedVectorArray<BufferData> buffers;
   ChunkedVectorArray<SkelHierarchy> skeletons;
-  ChunkedVectorArray<Animation> animations;
+  ChunkedVectorArray<AnimationClip> animations;
 #else
   std::vector<Node> root_nodes;
   std::vector<RenderMesh> meshes;
@@ -2397,7 +2543,7 @@ class RenderSceneConverter {
   std::vector<TextureImage> images;
   std::vector<BufferData> buffers;
   std::vector<SkelHierarchy> skeletons;
-  std::vector<Animation> animations;
+  std::vector<AnimationClip> animations;
 #endif
 
   ///
@@ -2528,12 +2674,31 @@ class RenderSceneConverter {
   /// Convert SkelAnimation to Tydra Animation.
   ///
   /// @param[in] abs_path USD Path to SkelAnimation Prim
-  /// @param[in] skelAnim SkelAnimatio
-  /// @param[in] anim_out Animation
+  /// @param[in] skelAnim SkelAnimation
+  /// @param[in] anim_out AnimationClip
   ///
   bool ConvertSkelAnimation(const RenderSceneConverterEnv &env,
                         const Path &abs_path, const SkelAnimation &skelAnim,
-                        Animation *anim_out);
+                        int32_t skeleton_id,
+                        AnimationClip *anim_out);
+
+  ///
+  /// Extract animation data from xformOps time samples and convert to AnimationClip
+  ///
+  /// @param[in] env Converter environment
+  /// @param[in] abs_path Absolute path to the prim
+  /// @param[in] prim_name Prim name
+  /// @param[in] xformable Xformable object containing xformOps
+  /// @param[in] target_node_index Index of the target node in RenderScene
+  /// @param[out] anim_out Output AnimationClip
+  /// @return true if animation was extracted, false otherwise
+  ///
+  bool ExtractXformOpAnimation(const RenderSceneConverterEnv &env,
+                        const Path &abs_path,
+                        const std::string &prim_name,
+                        const Xformable &xformable,
+                        int32_t target_node_index,
+                        AnimationClip *anim_out);
 
   ///
   /// @param[in] env
@@ -2592,7 +2757,8 @@ class RenderSceneConverter {
   // Also get SkelAnimation attached to Skeleton(if exists)
   //
   bool ConvertSkeletonImpl(const RenderSceneConverterEnv &env, const tinyusdz::GeomMesh &mesh,
-                       SkelHierarchy *out_skel, nonstd::optional<Animation> *out_anim);
+                       int32_t skeleton_id,
+                       SkelHierarchy *out_skel, nonstd::optional<AnimationClip> *out_anim);
 
   bool BuildNodeHierarchyImpl(
     const RenderSceneConverterEnv &env,
