@@ -25,6 +25,7 @@
 #include "io-util.hh"
 #include "pprinter.hh"
 #include "prim-pprint.hh"
+#include "prim-pprint-parallel.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
 #include "tinyusdz.hh"
@@ -460,8 +461,11 @@ void PrimPrintRec(std::stringstream &ss, const Prim &prim, uint32_t indent) {
 
 }  // namespace
 
-std::string Stage::ExportToString(bool relative_path) const {
+std::string Stage::ExportToString(bool relative_path, bool parallel) const {
   (void)relative_path; // TODO
+#if !defined(TINYUSDZ_ENABLE_THREAD)
+  (void)parallel; // Threading disabled
+#endif
 
   std::stringstream ss;
 
@@ -483,28 +487,65 @@ std::string Stage::ExportToString(bool relative_path) const {
       primNameTable.emplace(_root_nodes[i].element_name(), &_root_nodes[i]);
     }
 
-    for (size_t i = 0; i < stage_metas.primChildren.size(); i++) {
-      value::token nameTok = stage_metas.primChildren[i];
-      DCOUT(fmt::format("primChildren  {}/{} = {}", i,
-                        stage_metas.primChildren.size(), nameTok.str()));
-      const auto it = primNameTable.find(nameTok.str());
-      if (it != primNameTable.end()) {
-        //PrimPrintRec(ss, *(it->second), 0);
-        ss << prim::print_prim(*(it->second), 0);
-        if (i != (stage_metas.primChildren.size() - 1)) {
-          ss << "\n";
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    if (parallel) {
+      // Parallel printing path
+      std::vector<const Prim*> ordered_prims;
+      ordered_prims.reserve(stage_metas.primChildren.size());
+
+      for (size_t i = 0; i < stage_metas.primChildren.size(); i++) {
+        value::token nameTok = stage_metas.primChildren[i];
+        const auto it = primNameTable.find(nameTok.str());
+        if (it != primNameTable.end()) {
+          ordered_prims.push_back(it->second);
         }
-      } else {
-        // TODO: Report warning?
+      }
+
+      prim::ParallelPrintConfig config;
+      ss << prim::print_prims_parallel(ordered_prims, 0, config);
+    } else
+#endif  // TINYUSDZ_ENABLE_THREAD
+    {
+      // Sequential printing path (original)
+      for (size_t i = 0; i < stage_metas.primChildren.size(); i++) {
+        value::token nameTok = stage_metas.primChildren[i];
+        DCOUT(fmt::format("primChildren  {}/{} = {}", i,
+                          stage_metas.primChildren.size(), nameTok.str()));
+        const auto it = primNameTable.find(nameTok.str());
+        if (it != primNameTable.end()) {
+          //PrimPrintRec(ss, *(it->second), 0);
+          ss << prim::print_prim(*(it->second), 0);
+          if (i != (stage_metas.primChildren.size() - 1)) {
+            ss << "\n";
+          }
+        } else {
+          // TODO: Report warning?
+        }
       }
     }
   } else {
-    for (size_t i = 0; i < _root_nodes.size(); i++) {
-      //PrimPrintRec(ss, _root_nodes[i], 0);
-      ss << prim::print_prim(_root_nodes[i], 0);
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    if (parallel) {
+      // Parallel printing path
+      std::vector<const Prim*> prims;
+      prims.reserve(_root_nodes.size());
+      for (size_t i = 0; i < _root_nodes.size(); i++) {
+        prims.push_back(&_root_nodes[i]);
+      }
 
-      if (i != (_root_nodes.size() - 1)) {
-        ss << "\n";
+      prim::ParallelPrintConfig config;
+      ss << prim::print_prims_parallel(prims, 0, config);
+    } else
+#endif  // TINYUSDZ_ENABLE_THREAD
+    {
+      // Sequential printing path (original)
+      for (size_t i = 0; i < _root_nodes.size(); i++) {
+        //PrimPrintRec(ss, _root_nodes[i], 0);
+        ss << prim::print_prim(_root_nodes[i], 0);
+
+        if (i != (_root_nodes.size() - 1)) {
+          ss << "\n";
+        }
       }
     }
   }
@@ -618,13 +659,6 @@ bool Stage::compute_absolute_prim_path() {
 }
 
 bool Stage::add_root_prim(Prim &&prim, bool rename_prim_name) {
-
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  // TODO: Only take a lock when dirty.
-  std::lock_guard<std::mutex> lock(_mutex);
-#endif
-
-
   std::string elementName = prim.element_name();
 
   if (elementName.empty()) {
@@ -689,11 +723,6 @@ bool Stage::add_root_prim(Prim &&prim, bool rename_prim_name) {
 }
 
 bool Stage::replace_root_prim(const std::string &prim_name, Prim &&prim) {
-
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  // TODO: Only take a lock when dirty.
-  std::lock_guard<std::mutex> lock(_mutex);
-#endif
 
   if (prim_name.empty()) {
     PUSH_ERROR_AND_RETURN(fmt::format("prim_name is empty."));

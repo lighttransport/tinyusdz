@@ -1,0 +1,10 @@
+#usda 1.0
+
+def Xform "test_float_array"
+{
+  float[] values.timeSamples = {
+      0: [0.0, 1.0, 2.0],
+      10: [3.14, 2.71, 1.41],
+      20: [-1.5, -2.5, -3.5],
+  }
+}

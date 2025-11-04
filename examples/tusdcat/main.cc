@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <sstream>
 
@@ -10,6 +11,7 @@
 #include "str-util.hh"
 #include "io-util.hh"
 #include "usd-to-json.hh"
+#include "logger.hh"
 
 #include "tydra/scene-access.hh"
 
@@ -56,7 +58,7 @@ static std::string format_memory_size(size_t bytes) {
 }
 
 void print_help() {
-    std::cout << "Usage tusdcat [--flatten] [--loadOnly] [--composition=STRLIST] [--relative] [--extract-variants] [--memstat] [-j|--json] input.usda/usdc/usdz\n";
+    std::cout << "Usage tusdcat [--flatten] [--loadOnly] [--composition=STRLIST] [--relative] [--extract-variants] [--memstat] [--loglevel INT] [-j|--json] input.usda/usdc/usdz\n";
     std::cout << "\n --flatten (not fully implemented yet) Do composition(load sublayers, refences, payload, evaluate `over`, inherit, variants..)";
     std::cout << "  --composition: Specify which composition feature to be "
                  "enabled(valid when `--flatten` is supplied). Comma separated "
@@ -69,10 +71,18 @@ void print_help() {
     std::cout << "\n -l, --loadOnly Load(Parse) USD file only(Check if input USD is valid or not)\n";
     std::cout << "\n -j, --json Output parsed USD as JSON string\n";
     std::cout << "\n --memstat Print memory usage statistics for loaded Layer and Stage\n";
+    std::cout << "\n --loglevel INT Set logging level (0=Debug, 1=Warn, 2=Info, 3=Error, 4=Critical, 5=Off)\n";
 
 }
 
 int main(int argc, char **argv) {
+  // Enable DCOUT output if TINYUSDZ_ENABLE_DCOUT environment variable is set
+  const char* enable_dcout_env = std::getenv("TINYUSDZ_ENABLE_DCOUT");
+  if (enable_dcout_env != nullptr && std::strlen(enable_dcout_env) > 0) {
+    // Any non-empty value enables DCOUT
+    tinyusdz::g_enable_dcout_output = true;
+  }
+
   if (argc < 2) {
     print_help();
     return EXIT_FAILURE;
@@ -109,6 +119,27 @@ int main(int argc, char **argv) {
       has_extract_variants = true;
     } else if (arg.compare("--memstat") == 0) {
       memstat = true;
+    } else if (arg.compare("--loglevel") == 0) {
+      if (i + 1 >= argc) {
+        std::cerr << "--loglevel requires an integer argument\n";
+        return EXIT_FAILURE;
+      }
+      i++; // Move to next argument
+      try {
+        int log_level = std::stoi(argv[i]);
+        if (log_level < 0 || log_level > 5) {
+          std::cerr << "Invalid log level: " << log_level << ". Must be between 0 and 5.\n";
+          return EXIT_FAILURE;
+        }
+        tinyusdz::logging::Logger::getInstance().setLogLevel(
+            static_cast<tinyusdz::logging::LogLevel>(log_level));
+      } catch (const std::invalid_argument& e) {
+        std::cerr << "Invalid log level argument: " << argv[i] << ". Must be an integer.\n";
+        return EXIT_FAILURE;
+      } catch (const std::out_of_range& e) {
+        std::cerr << "Log level value out of range: " << argv[i] << "\n";
+        return EXIT_FAILURE;
+      }
     } else if (tinyusdz::startsWith(arg, "--composition=")) {
       std::string value_str = tinyusdz::removePrefix(arg, "--composition=");
       if (value_str.empty()) {
@@ -397,7 +428,7 @@ int main(int argc, char **argv) {
     }
 
     tinyusdz::Stage comp_stage;
-    ret = LayerToStage(src_layer, &comp_stage, &warn, &err);
+    ret = LayerToStage(std::move(src_layer), &comp_stage, &warn, &err);
     if (warn.size()) {
       std::cout << warn<< "\n";
     }

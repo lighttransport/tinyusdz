@@ -31,47 +31,46 @@ class FileFetcher {
     this.initialized = true;
   }
 
-  // Return: File object.
+  // Return: Object with arrayBuffer() method that returns Promise<ArrayBuffer>
   async fetch(url) {
     await this.init();
-    
-    if (this.is_node) {
-      // Node.js environment - use fs.readFileSync
+
+    // Check if this is a blob URL - always use fetch for blob URLs
+    const isBlobUrl = url.startsWith('blob:');
+
+    if (this.is_node && !isBlobUrl) {
+      // Node.js environment - use fs.readFileSync for file paths
       try {
         if (url.startsWith('file://')) {
           url = url.substring(7); // Remove file:// prefix
         }
-        
+
         const data = this.fs.readFileSync(url);
-        const fileName = this.path.basename(url);
-        
-        // Create Blob from the buffer data
-        const blob = new Blob([data], { type: 'application/octet-stream' });
-        
-        // Create File object from Blob
-        const file = new File([blob], fileName, { 
-          type: 'application/octet-stream',
-          lastModified: Date.now()
-        });
-        
-        return file;
+
+        // Return an object with arrayBuffer() method for consistency with browser File API
+        // Convert Node.js Buffer to ArrayBuffer
+        const arrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+
+        return {
+          arrayBuffer: async () => arrayBuffer
+        };
       } catch (error) {
         throw new Error(`Failed to read file: ${url} - ${error.message}`);
       }
     } else {
-      // Browser environment - use fetch API and convert to File
+      // Browser environment or blob URL - use fetch API and convert to File
       const response = await fetch(url);
       if (!response.ok) {
         throw new Error(`Failed to fetch: ${response.statusText}`);
       }
-      
+
       const blob = await response.blob();
       const fileName = url.split('/').pop() || 'unknown';
-      const file = new File([blob], fileName, { 
+      const file = new File([blob], fileName, {
         type: blob.type || 'application/octet-stream',
         lastModified: Date.now()
       });
-      
+
       return file;
     }
   }
@@ -315,6 +314,41 @@ class TinyUSDZLoader extends Loader {
         return tempUsd.getMaxMemoryLimitMB();
     }
 
+    /**
+     * Enable or disable bone reduction for skeletal meshes
+     * @param {boolean} enabled - Enable bone reduction
+     */
+    setEnableBoneReduction(enabled) {
+        this.enableBoneReduction_ = !!enabled;
+    }
+
+    /**
+     * Get bone reduction enabled status
+     * @returns {boolean} True if bone reduction is enabled
+     */
+    getEnableBoneReduction() {
+        return this.enableBoneReduction_ || false;
+    }
+
+    /**
+     * Set target bone count for bone reduction
+     * @param {number} count - Target number of bone influences per vertex (1-64)
+     */
+    setTargetBoneCount(count) {
+        if (typeof count !== 'number' || count < 1 || count > 64) {
+            throw new Error('Target bone count must be between 1 and 64');
+        }
+        this.targetBoneCount_ = count;
+    }
+
+    /**
+     * Get target bone count for bone reduction
+     * @returns {number} Target bone count (default: 4)
+     */
+    getTargetBoneCount() {
+        return this.targetBoneCount_ || 4;
+    }
+
 
     // TODO: remove
     // Set AssetResolver callback.
@@ -346,16 +380,16 @@ class TinyUSDZLoader extends Loader {
             .then(() => {
                 return this.fetcher.fetch(url);
             })
-            .then((response) => {
-                // File
-                return response;
+            .then(async (response) => {
+                // Convert File to ArrayBuffer
+                return await response.arrayBuffer();
             })
-            .then((usd_file) => {
-                //const usd_binary = new Uint8Array(usd_data);
+            .then((usd_data) => {
+                const usd_binary = new Uint8Array(usd_data);
 
                 //console.log('Loaded USD binary data:', usd_binary.length, 'bytes');
 
-                scope.parse(usd_file, url, function (usd) {
+                scope.parse(usd_binary, url, function (usd) {
                     onLoad(usd);
                 }, onError, options);
 
@@ -409,6 +443,12 @@ class TinyUSDZLoader extends Loader {
             usd.setMaxMemoryLimitMB(memoryLimit);
         }
 
+        // Set bone reduction configuration
+        if (this.enableBoneReduction_) {
+            usd.setEnableBoneReduction(true);
+            usd.setTargetBoneCount(this.targetBoneCount_ || 4);
+        }
+
         const ok = usd.loadFromBinary(binary, filePath);
         if (!ok) {
             _onError(new Error('TinyUSDZLoader: Failed to load USD from binary data.', {cause: usd.error()}));
@@ -458,10 +498,11 @@ class TinyUSDZLoader extends Loader {
                 return fetch(url);
             })
             .then((response) => {
-                //console.log('fetch USDZ file done:', url);
+                console.log('fetch USDZ file done:', url);
                 return response.arrayBuffer();
             })
             .then((usd_data) => {
+                console.log('usd_data done:', url);
                 const usd_binary = new Uint8Array(usd_data);
 
                 //console.log('Loaded USD binary data:', usd_binary.length, 'bytes');
@@ -473,6 +514,12 @@ class TinyUSDZLoader extends Loader {
                 const memoryLimit = options.maxMemoryLimitMB || this.maxMemoryLimitMB_;
                 if (memoryLimit !== undefined) {
                     usd.setMaxMemoryLimitMB(memoryLimit);
+                }
+
+                // Set bone reduction configuration
+                if (scope.enableBoneReduction_) {
+                    usd.setEnableBoneReduction(true);
+                    usd.setTargetBoneCount(scope.targetBoneCount_ || 4);
                 }
 
                 const ok = usd.loadAsLayerFromBinary(usd_binary, url);
@@ -541,6 +588,12 @@ class TinyUSDZLoader extends Loader {
                 const memoryLimit = options.maxMemoryLimitMB || this.maxMemoryLimitMB_;
                 if (memoryLimit !== undefined) {
                     usd.setMaxMemoryLimitMB(memoryLimit);
+                }
+
+                // Set bone reduction configuration
+                if (this.enableBoneReduction_) {
+                    usd.setEnableBoneReduction(true);
+                    usd.setTargetBoneCount(this.targetBoneCount_ || 4);
                 }
 
                 const u8data = new Uint8Array(usd_data);

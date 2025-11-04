@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cmath>
 #include <cstring>
 #include <functional>
@@ -284,7 +285,7 @@ enum TypeId {
 
   // -- begin value type
   TYPE_ID_VALUE_BEGIN,
-  
+
   TYPE_ID_TOKEN,
   TYPE_ID_STRING,
   TYPE_ID_STRING_DATA,  // String for primvar and metadata. Includes multi-line
@@ -394,11 +395,11 @@ enum TypeId {
   TYPE_ID_DICT,        // Generic dict type. TODO: remove?
   TYPE_ID_CUSTOMDATA,  // similar to `dictionary`, but limited types are allowed
                        // to use. for metadatum(e.g. `customData` in Prim Meta)
-                       
+
   TYPE_ID_VALUE_END,
 
   // -- end value type
-  
+
   TYPE_ID_LAYER_OFFSET,
   TYPE_ID_PAYLOAD,
 
@@ -426,6 +427,12 @@ enum TypeId {
 
   TYPE_ID_TIMESAMPLES,
   TYPE_ID_VARIANT_SELECION_MAP,
+
+#if 0
+  // tinyusdz specific.
+  TYPE_ID_TYPED_TIMESAMPLE_VALUE,
+  TYPE_ID_TYPED_ARRAY_TIMESAMPLE_VALUE,
+#endif
 
   // Types in crate-format.hh
   TYPE_ID_CRATE_BEGIN = 256,
@@ -514,7 +521,7 @@ enum TypeId {
 
   TYPE_ID_MODEL_END,
 
-  
+
   // Types for API
   TYPE_ID_API_BEGIN = 1 << 14,
   TYPE_ID_COLLECTION,
@@ -528,6 +535,10 @@ enum TypeId {
 
   TYPE_ID_ALL = (TYPE_ID_TERMINATOR_BIT - 1)  // terminator.
 };
+
+//static_assert(TYPE_ID_TYPED_ARRAY_TIMESAMPLE_VALUE < 256, "internal error.");
+static_assert(TYPE_ID_API_END <= 65535, "Non user-defined TYPE_ID must be less than 16bit");
+
 
 struct timecode {
   double value;
@@ -658,20 +669,14 @@ struct matrix3d;
 struct matrix4d;
 
 struct matrix2f {
-  matrix2f() {
-    m[0][0] = 1.0f;
-    m[0][1] = 0.0f;
+  // Default constructor - makes struct trivial
+  matrix2f() = default;
 
-    m[1][0] = 0.0f;
-    m[1][1] = 1.0f;
-  }
-
-  matrix2f(const std::array<float, 4> &arr) {
-    m[0][0] = arr[0];
-    m[0][1] = arr[1];
-    m[1][0] = arr[2];
-    m[1][1] = arr[3];
-  }
+  // Copy/move constructors and assignment operators
+  matrix2f(const matrix2f&) = default;
+  matrix2f(matrix2f&&) = default;
+  matrix2f& operator=(const matrix2f&) = default;
+  matrix2f& operator=(matrix2f&&) = default;
 
   inline void set_row(uint32_t row, float x, float y) {
     if (row < 2) {
@@ -689,49 +694,29 @@ struct matrix2f {
   }
 
   static matrix2f identity() {
-    matrix2f m;
-
-    m.m[0][0] = 1.0f;
-    m.m[0][1] = 0.0f;
-
-    m.m[1][0] = 0.0f;
-    m.m[1][1] = 1.0f;
-
-    return m;
+    matrix2f mat{};
+    mat.m[0][0] = 1.0f;
+    mat.m[0][1] = 0.0f;
+    mat.m[1][0] = 0.0f;
+    mat.m[1][1] = 1.0f;
+    return mat;
   }
 
   matrix2f(const matrix2d &rhs);
   matrix2f &operator=(const matrix2d &rhs);
-  
+
   float m[2][2];
 };
 
 struct matrix3f {
-  matrix3f() {
-    m[0][0] = 1.0f;
-    m[0][1] = 0.0f;
-    m[0][2] = 0.0f;
+  // Default constructor - makes struct trivial
+  matrix3f() = default;
 
-    m[1][0] = 0.0f;
-    m[1][1] = 1.0f;
-    m[1][2] = 0.0f;
-
-    m[2][0] = 0.0f;
-    m[2][1] = 0.0f;
-    m[2][2] = 1.0f;
-  }
-
-  matrix3f(const std::array<float, 9> &arr) {
-    m[0][0] = arr[0];
-    m[0][1] = arr[1];
-    m[0][2] = arr[2];
-    m[1][0] = arr[3];
-    m[1][1] = arr[4];
-    m[1][2] = arr[5];
-    m[2][0] = arr[6];
-    m[2][1] = arr[7];
-    m[2][2] = arr[8];
-  }
+  // Copy/move constructors and assignment operators
+  matrix3f(const matrix3f&) = default;
+  matrix3f(matrix3f&&) = default;
+  matrix3f& operator=(const matrix3f&) = default;
+  matrix3f& operator=(matrix3f&&) = default;
 
   inline void set_row(uint32_t row, float x, float y, float z) {
     if (row < 3) {
@@ -753,7 +738,6 @@ struct matrix3f {
     m[2][0] = 0.0f;
     m[2][1] = 0.0f;
     m[2][2] = sz;
-
   }
 
   inline void set_translation(float tx, float ty, float tz) {
@@ -763,21 +747,17 @@ struct matrix3f {
   }
 
   static matrix3f identity() {
-    matrix3f m;
-
-    m.m[0][0] = 1.0f;
-    m.m[0][1] = 0.0f;
-    m.m[0][2] = 0.0f;
-
-    m.m[1][0] = 0.0f;
-    m.m[1][1] = 1.0f;
-    m.m[1][2] = 0.0f;
-
-    m.m[2][0] = 0.0f;
-    m.m[2][1] = 0.0f;
-    m.m[2][2] = 1.0f;
-
-    return m;
+    matrix3f mat{};
+    mat.m[0][0] = 1.0f;
+    mat.m[0][1] = 0.0f;
+    mat.m[0][2] = 0.0f;
+    mat.m[1][0] = 0.0f;
+    mat.m[1][1] = 1.0f;
+    mat.m[1][2] = 0.0f;
+    mat.m[2][0] = 0.0f;
+    mat.m[2][1] = 0.0f;
+    mat.m[2][2] = 1.0f;
+    return mat;
   }
 
   matrix3f(const matrix3d &rhs);
@@ -787,46 +767,11 @@ struct matrix3f {
 };
 
 struct matrix4f {
-  matrix4f() {
-    m[0][0] = 1.0f;
-    m[0][1] = 0.0f;
-    m[0][2] = 0.0f;
-    m[0][3] = 0.0f;
-
-    m[1][0] = 0.0f;
-    m[1][1] = 1.0f;
-    m[1][2] = 0.0f;
-    m[1][3] = 0.0f;
-
-    m[2][0] = 0.0f;
-    m[2][1] = 0.0f;
-    m[2][2] = 1.0f;
-    m[2][3] = 0.0f;
-
-    m[3][0] = 0.0f;
-    m[3][1] = 0.0f;
-    m[3][2] = 0.0f;
-    m[3][3] = 1.0f;
-  }
-
-  matrix4f(const std::array<float, 16> &arr) {
-    m[0][0] = arr[0];
-    m[0][1] = arr[1];
-    m[0][2] = arr[2];
-    m[0][3] = arr[3];
-    m[1][0] = arr[4];
-    m[1][1] = arr[5];
-    m[1][2] = arr[6];
-    m[1][3] = arr[7];
-    m[2][0] = arr[8];
-    m[2][1] = arr[9];
-    m[2][2] = arr[10];
-    m[2][3] = arr[11];
-    m[3][0] = arr[12];
-    m[3][1] = arr[13];
-    m[3][2] = arr[14];
-    m[3][3] = arr[15];
-  }
+  matrix4f() = default;
+  matrix4f(const matrix4f&) = default;
+  matrix4f(matrix4f&&) = default;
+  matrix4f& operator=(const matrix4f&) = default;
+  matrix4f& operator=(matrix4f&&) = default;
 
   inline void set_row(uint32_t row, float x, float y, float z, float w) {
     if (row < 4) {
@@ -851,7 +796,7 @@ struct matrix4f {
     m[2][0] = 0.0f;
     m[2][1] = 0.0f;
     m[2][2] = sz;
-    m[2][3] = 0.0f; 
+    m[2][3] = 0.0f;
 
     m[3][0] = 0.0f;
     m[3][1] = 0.0f;
@@ -866,29 +811,12 @@ struct matrix4f {
   }
 
   static matrix4f identity() {
-    matrix4f m;
-
-    m.m[0][0] = 1.0f;
-    m.m[0][1] = 0.0f;
-    m.m[0][2] = 0.0f;
-    m.m[0][3] = 0.0f;
-
-    m.m[1][0] = 0.0f;
-    m.m[1][1] = 1.0f;
-    m.m[1][2] = 0.0f;
-    m.m[1][3] = 0.0f;
-
-    m.m[2][0] = 0.0f;
-    m.m[2][1] = 0.0f;
-    m.m[2][2] = 1.0f;
-    m.m[2][3] = 0.0f;
-
-    m.m[3][0] = 0.0f;
-    m.m[3][1] = 0.0f;
-    m.m[3][2] = 0.0f;
-    m.m[3][3] = 1.0f;
-
-    return m;
+    matrix4f mat{};
+    mat.m[0][0] = 1.0f;
+    mat.m[1][1] = 1.0f;
+    mat.m[2][2] = 1.0f;
+    mat.m[3][3] = 1.0f;
+    return mat;
   }
 
   matrix4f(const matrix4d &rhs);
@@ -899,20 +827,11 @@ struct matrix4f {
 };
 
 struct matrix2d {
-  matrix2d() {
-    m[0][0] = 1.0;
-    m[0][1] = 0.0;
-
-    m[1][0] = 0.0;
-    m[1][1] = 1.0;
-  }
-
-  matrix2d(const std::array<double, 4> &arr) {
-    m[0][0] = arr[0];
-    m[0][1] = arr[1];
-    m[1][0] = arr[2];
-    m[1][1] = arr[3];
-  }
+  matrix2d() = default;
+  matrix2d(const matrix2d&) = default;
+  matrix2d(matrix2d&&) = default;
+  matrix2d& operator=(const matrix2d&) = default;
+  matrix2d& operator=(matrix2d&&) = default;
 
   inline void set_row(uint32_t row, double x, double y) {
     if (row < 2) {
@@ -930,15 +849,10 @@ struct matrix2d {
   }
 
   static matrix2d identity() {
-    matrix2d m;
-
-    m.m[0][0] = 1.0;
-    m.m[0][1] = 0.0;
-
-    m.m[1][0] = 0.0;
-    m.m[1][1] = 1.0;
-
-    return m;
+    matrix2d mat{};
+    mat.m[0][0] = 1.0;
+    mat.m[1][1] = 1.0;
+    return mat;
   }
 
   matrix2d &operator=(const matrix2f &rhs);
@@ -947,31 +861,11 @@ struct matrix2d {
 };
 
 struct matrix3d {
-  matrix3d() {
-    m[0][0] = 1.0;
-    m[0][1] = 0.0;
-    m[0][2] = 0.0;
-
-    m[1][0] = 0.0;
-    m[1][1] = 1.0;
-    m[1][2] = 0.0;
-
-    m[2][0] = 0.0;
-    m[2][1] = 0.0;
-    m[2][2] = 1.0;
-  }
-
-  matrix3d(const std::array<double, 9> &arr) {
-    m[0][0] = arr[0];
-    m[0][1] = arr[1];
-    m[0][2] = arr[2];
-    m[1][0] = arr[3];
-    m[1][1] = arr[4];
-    m[1][2] = arr[5];
-    m[2][0] = arr[6];
-    m[2][1] = arr[7];
-    m[2][2] = arr[8];
-  }
+  matrix3d() = default;
+  matrix3d(const matrix3d&) = default;
+  matrix3d(matrix3d&&) = default;
+  matrix3d& operator=(const matrix3d&) = default;
+  matrix3d& operator=(matrix3d&&) = default;
 
   inline void set_row(uint32_t row, double x, double y, double z) {
     if (row < 3) {
@@ -996,21 +890,11 @@ struct matrix3d {
   }
 
   static matrix3d identity() {
-    matrix3d m;
-
-    m.m[0][0] = 1.0;
-    m.m[0][1] = 0.0;
-    m.m[0][2] = 0.0;
-
-    m.m[1][0] = 0.0;
-    m.m[1][1] = 1.0;
-    m.m[1][2] = 0.0;
-
-    m.m[2][0] = 0.0;
-    m.m[2][1] = 0.0;
-    m.m[2][2] = 1.0;
-
-    return m;
+    matrix3d mat{};
+    mat.m[0][0] = 1.0;
+    mat.m[1][1] = 1.0;
+    mat.m[2][2] = 1.0;
+    return mat;
   }
 
   matrix3d &operator=(const matrix3f &rhs);
@@ -1019,46 +903,11 @@ struct matrix3d {
 };
 
 struct matrix4d {
-  matrix4d() {
-    m[0][0] = 1.0;
-    m[0][1] = 0.0;
-    m[0][2] = 0.0;
-    m[0][3] = 0.0;
-
-    m[1][0] = 0.0;
-    m[1][1] = 1.0;
-    m[1][2] = 0.0;
-    m[1][3] = 0.0;
-
-    m[2][0] = 0.0;
-    m[2][1] = 0.0;
-    m[2][2] = 1.0;
-    m[2][3] = 0.0;
-
-    m[3][0] = 0.0;
-    m[3][1] = 0.0;
-    m[3][2] = 0.0;
-    m[3][3] = 1.0;
-  }
-
-  matrix4d(const std::array<double, 16> &arr) {
-    m[0][0] = arr[0];
-    m[0][1] = arr[1];
-    m[0][2] = arr[2];
-    m[0][3] = arr[3];
-    m[1][0] = arr[4];
-    m[1][1] = arr[5];
-    m[1][2] = arr[6];
-    m[1][3] = arr[7];
-    m[2][0] = arr[8];
-    m[2][1] = arr[9];
-    m[2][2] = arr[10];
-    m[2][3] = arr[11];
-    m[3][0] = arr[12];
-    m[3][1] = arr[13];
-    m[3][2] = arr[14];
-    m[3][3] = arr[15];
-  }
+  matrix4d() = default;
+  matrix4d(const matrix4d&) = default;
+  matrix4d(matrix4d&&) = default;
+  matrix4d& operator=(const matrix4d&) = default;
+  matrix4d& operator=(matrix4d&&) = default;
 
   inline void set_row(uint32_t row, double x, double y, double z, double w) {
     if (row < 4) {
@@ -1083,7 +932,7 @@ struct matrix4d {
     m[2][0] = 0.0;
     m[2][1] = 0.0;
     m[2][2] = sz;
-    m[2][3] = 0.0; 
+    m[2][3] = 0.0;
 
     m[3][0] = 0.0;
     m[3][1] = 0.0;
@@ -1092,29 +941,12 @@ struct matrix4d {
   }
 
   static matrix4d identity() {
-    matrix4d m;
-
-    m.m[0][0] = 1.0;
-    m.m[0][1] = 0.0;
-    m.m[0][2] = 0.0;
-    m.m[0][3] = 0.0;
-
-    m.m[1][0] = 0.0;
-    m.m[1][1] = 1.0;
-    m.m[1][2] = 0.0;
-    m.m[1][3] = 0.0;
-
-    m.m[2][0] = 0.0;
-    m.m[2][1] = 0.0;
-    m.m[2][2] = 1.0;
-    m.m[2][3] = 0.0;
-
-    m.m[3][0] = 0.0;
-    m.m[3][1] = 0.0;
-    m.m[3][2] = 0.0;
-    m.m[3][3] = 1.0;
-
-    return m;
+    matrix4d mat{};
+    mat.m[0][0] = 1.0;
+    mat.m[1][1] = 1.0;
+    mat.m[2][2] = 1.0;
+    mat.m[3][3] = 1.0;
+    return mat;
   }
 
   matrix4d &operator=(const matrix4f &rhs);
@@ -1153,7 +985,7 @@ struct frame4d {
 //
 // p * S * R * T = p'
 // p' = Mult(Mult(S, R), T)
-// 
+//
 // you can express world matrix as
 //
 // node.world = parent.world * node.local
@@ -1161,7 +993,7 @@ struct frame4d {
 template <typename MTy, typename STy, size_t N>
 MTy Mult(const MTy &m, const MTy &n) {
   MTy ret;
-  //memset(ret.m, 0, sizeof(MTy)); 
+  //memset(ret.m, 0, sizeof(MTy));
 
   for (size_t j = 0; j < N; j++) {
     for (size_t i = 0; i < N; i++) {
@@ -1342,6 +1174,16 @@ inline matrix4d operator*(const matrix4d &a, const matrix4d &b) {
   matrix4d ret = Mult<matrix4d, double, 4>(a, b);
   return ret;
 }
+
+// Equality operators for matrix types
+// Use floating-point aware comparison (suitable for dedup)
+// Implementations in value-types.cc
+bool operator==(const matrix2f &a, const matrix2f &b);
+bool operator==(const matrix3f &a, const matrix3f &b);
+bool operator==(const matrix4f &a, const matrix4f &b);
+bool operator==(const matrix2d &a, const matrix2d &b);
+bool operator==(const matrix3d &a, const matrix3d &b);
+bool operator==(const matrix4d &a, const matrix4d &b);
 
 // Quaternion has memory layout of [x, y, z, w] in Crate(Binary)
 // and QfQuat class in pxrUSD.
@@ -2145,7 +1987,7 @@ class Value {
   //
   // Returns a view over array data if the value contains an array type that's compatible
   // with the requested element type T. For non-array types, returns an empty view.
-  // 
+  //
   // The view provides zero-copy access to the underlying data with type safety validation.
   //
   // Template parameter T: the desired element type for the view
@@ -2202,7 +2044,7 @@ class Value {
         return TypedArrayView<T>();
       }
     } else {
-      // Non-strict cast - allow compatible types (same underlying type)  
+      // Non-strict cast - allow compatible types (same underlying type)
       if (underlying_type_id != target_type_id) {
         return TypedArrayView<T>();
       }
@@ -2224,6 +2066,36 @@ class Value {
   }
 #endif
 
+#if 0
+  // Helper to log vector size
+  template <typename T>
+  static void log_vector_size(const std::vector<T>& vec) {
+    TUSDZ_LOG_I("  vector size: " << vec.size());
+  }
+
+  template <typename T>
+  static void log_vector_size(const T&) {
+    // Non-vector type, do nothing
+  }
+#endif
+
+  // Helper to check vector size bounds
+  template <typename T>
+  static bool check_vector_size(const std::vector<T>& vec) {
+    constexpr size_t MAX_REASONABLE_SIZE = 100000000; // 100M
+    if (vec.size() > MAX_REASONABLE_SIZE) {
+      TUSDZ_LOG_E("ERROR: Vector size " << vec.size() << " exceeds reasonable limit (" << MAX_REASONABLE_SIZE << "). Data is likely corrupted!");
+      return false;
+    }
+    return true;
+  }
+
+  template <typename T>
+  static bool check_vector_size(const T&) {
+    // Non-vector type, always OK
+    return true;
+  }
+
   // Type-safe way to get concrete value.
   template <class T>
   nonstd::optional<T> get_value(bool strict_cast = false) const {
@@ -2234,12 +2106,23 @@ class Value {
         return nonstd::nullopt;
       }
 
+      //TUSDZ_LOG_I("get_value: about to move/copy value of type " << TypeTraits<T>::type_name());
+      //log_vector_size(*pv);
       return std::move(*pv);
     } else if (!strict_cast) {
 
       if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
         if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
-          return std::move(*linb::cast<const T>(&v_));
+          //TUSDZ_LOG_I("get_value: strict_cast=false, both are array types, about to cast for type " << TypeTraits<T>::type_name());
+          const T* pv = linb::cast<const T>(&v_);
+          //TUSDZ_LOG_I("get_value: cast successful, pv=" << (pv ? "valid" : "null"));
+          if (pv) {
+            //log_vector_size(*pv);
+            if (!check_vector_size(*pv)) {
+              return nonstd::nullopt;
+            }
+          }
+          return std::move(*pv);
         }
       } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
         if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
@@ -2318,17 +2201,17 @@ class Value {
   template <class T>
   TypedArrayView<const T> create_array_view_helper(bool strict_cast) const {
     // Try common array types that could contain T elements
-    
+
     // Direct type match - try std::vector<T>
     if (auto* vec = as<std::vector<T>>(strict_cast)) {
       return TypedArrayView<const T>(*vec);
     }
-    
+
     // Try related types based on underlying type compatibility
     if (!strict_cast) {
       // Handle role type conversions (e.g., float3 <-> vector3f <-> normal3f)
       uint32_t target_underlying_id = TypeTraits<T>::underlying_type_id();
-      
+
       switch (target_underlying_id) {
         case TYPE_ID_FLOAT: {
           if (auto* vec = as<std::vector<float>>(false)) {
@@ -2397,7 +2280,7 @@ class Value {
           break;
       }
     }
-    
+
     // No compatible type found
     return TypedArrayView<const T>();
   }
@@ -2405,17 +2288,17 @@ class Value {
   template <class T>
   TypedArrayView<T> create_array_view_helper_mutable(bool strict_cast) {
     // Try common array types that could contain T elements
-    
+
     // Direct type match - try std::vector<T>
     if (auto* vec = as<std::vector<T>>(strict_cast)) {
       return TypedArrayView<T>(*vec);
     }
-    
+
     // Try related types based on underlying type compatibility
     if (!strict_cast) {
       // Handle role type conversions (e.g., float3 <-> vector3f <-> normal3f)
       uint32_t target_underlying_id = TypeTraits<T>::underlying_type_id();
-      
+
       switch (target_underlying_id) {
         case TYPE_ID_FLOAT: {
           if (auto* vec = as<std::vector<float>>(false)) {
@@ -2484,11 +2367,287 @@ class Value {
           break;
       }
     }
-    
+
     // No compatible type found
     return TypedArrayView<T>();
   }
 
+};
+
+///
+/// ValueView - A compact view to typed data
+///
+/// ValueView provides a lightweight, non-owning view over typed data with
+/// inline type information. The view stores a pointer, type_id, and flags
+/// in a compact representation for efficient memory usage.
+///
+/// Memory layout:
+/// - pointer: sizeof(void*) bytes (4 on 32-bit, 8 on 64-bit)
+/// - type_id: 4 bytes (32-bit)
+/// - flags: 1 byte (bit 0: is_vector, bit 1: is_typed_array)
+/// - padding: 3 bytes
+/// Total: 12 bytes on 32-bit, 16 bytes on 64-bit
+///
+class ValueView {
+ public:
+  // Flags for storage type
+  enum StorageFlags : uint8_t {
+    FLAG_NONE = 0x00,
+    FLAG_IS_VECTOR = 0x01,        // std::vector storage
+    FLAG_IS_TYPED_ARRAY = 0x02,   // TypedArray storage
+  };
+
+  // Default constructor - creates an invalid view
+  ValueView() noexcept : ptr_(nullptr), type_id_(TYPE_ID_INVALID), flags_(FLAG_NONE) {
+    std::memset(padding_, 0, sizeof(padding_));
+  }
+
+  // Constructor from const Value reference
+  explicit ValueView(const Value& value) noexcept
+    : ptr_(&value), type_id_(value.type_id()), flags_(FLAG_NONE) {
+    std::memset(padding_, 0, sizeof(padding_));
+    // Detect storage type based on type_id
+    if (type_id_ & TYPE_ID_1D_ARRAY_BIT) {
+      // For now, we'll mark as vector by default
+      // In practice, you'd check the actual storage type
+      flags_ = FLAG_IS_VECTOR;
+    }
+  }
+
+  // Constructor from const Value pointer
+  explicit ValueView(const Value* value) noexcept
+    : ptr_(value),
+      type_id_(value ? value->type_id() : TYPE_ID_INVALID),
+      flags_(FLAG_NONE) {
+    std::memset(padding_, 0, sizeof(padding_));
+    if (value && (type_id_ & TYPE_ID_1D_ARRAY_BIT)) {
+      flags_ = FLAG_IS_VECTOR;
+    }
+  }
+
+  // Direct construction from concrete type pointer
+  template <typename T>
+  explicit ValueView(const T* ptr) noexcept
+    : ptr_(static_cast<const void*>(ptr)),
+      type_id_(TypeTraits<T>::type_id()),
+      flags_(FLAG_NONE) {
+    std::memset(padding_, 0, sizeof(padding_));
+    // No need to detect storage type for non-container types
+  }
+
+  // Specialization for std::vector
+  template <typename ElementType>
+  explicit ValueView(const std::vector<ElementType>* ptr) noexcept
+    : ptr_(static_cast<const void*>(ptr)),
+      type_id_(TypeTraits<std::vector<ElementType>>::type_id()),
+      flags_(FLAG_IS_VECTOR) {
+    std::memset(padding_, 0, sizeof(padding_));
+  }
+
+  // Specialization for TypedArray
+  template <typename ElementType>
+  explicit ValueView(const TypedArray<ElementType>* ptr) noexcept
+    : ptr_(static_cast<const void*>(ptr)),
+      type_id_(TypeTraits<TypedArray<ElementType>>::type_id()),
+      flags_(FLAG_IS_TYPED_ARRAY) {
+    std::memset(padding_, 0, sizeof(padding_));
+  }
+
+  // Copy constructor
+  ValueView(const ValueView& other) noexcept = default;
+
+  // Assignment operator
+  ValueView& operator=(const ValueView& other) noexcept = default;
+
+  // Check if the view is valid (points to data)
+  bool valid() const noexcept { return ptr_ != nullptr; }
+
+  // Explicit bool conversion for validity check
+  explicit operator bool() const noexcept { return valid(); }
+
+  // Get the type name of the underlying value
+  const std::string type_name() const {
+    // In production, use GetTypeName(type_id_)
+    // For testing, return a simple placeholder
+    return "type_" + std::to_string(type_id_);
+  }
+
+  const std::string underlying_type_name() const {
+    // In production, use GetUnderlyingTypeName(type_id_)
+    // For testing, return a simple placeholder
+    return "underlying_type_" + std::to_string(underlying_type_id());
+  }
+
+  // Get type IDs
+  uint32_t type_id() const noexcept {
+    return type_id_;
+  }
+
+  uint32_t underlying_type_id() const noexcept {
+    if (type_id_ & TYPE_ID_1D_ARRAY_BIT) {
+      return type_id_ & (~TYPE_ID_1D_ARRAY_BIT);
+    }
+    // Map role types to their underlying types
+    switch (type_id_) {
+      // Point types -> underlying types
+      case TYPE_ID_POINT3H: return TYPE_ID_HALF3;
+      case TYPE_ID_POINT3F: return TYPE_ID_FLOAT3;
+      case TYPE_ID_POINT3D: return TYPE_ID_DOUBLE3;
+      // Vector types -> underlying types
+      case TYPE_ID_VECTOR3H: return TYPE_ID_HALF3;
+      case TYPE_ID_VECTOR3F: return TYPE_ID_FLOAT3;
+      case TYPE_ID_VECTOR3D: return TYPE_ID_DOUBLE3;
+      // Normal types -> underlying types
+      case TYPE_ID_NORMAL3H: return TYPE_ID_HALF3;
+      case TYPE_ID_NORMAL3F: return TYPE_ID_FLOAT3;
+      case TYPE_ID_NORMAL3D: return TYPE_ID_DOUBLE3;
+      // Color types -> underlying types
+      case TYPE_ID_COLOR3H: return TYPE_ID_HALF3;
+      case TYPE_ID_COLOR3F: return TYPE_ID_FLOAT3;
+      case TYPE_ID_COLOR3D: return TYPE_ID_DOUBLE3;
+      case TYPE_ID_COLOR4H: return TYPE_ID_HALF4;
+      case TYPE_ID_COLOR4F: return TYPE_ID_FLOAT4;
+      case TYPE_ID_COLOR4D: return TYPE_ID_DOUBLE4;
+      // Texcoord types -> underlying types
+      case TYPE_ID_TEXCOORD2H: return TYPE_ID_HALF2;
+      case TYPE_ID_TEXCOORD2F: return TYPE_ID_FLOAT2;
+      case TYPE_ID_TEXCOORD2D: return TYPE_ID_DOUBLE2;
+      case TYPE_ID_TEXCOORD3H: return TYPE_ID_HALF3;
+      case TYPE_ID_TEXCOORD3F: return TYPE_ID_FLOAT3;
+      case TYPE_ID_TEXCOORD3D: return TYPE_ID_DOUBLE3;
+      // Frame type
+      case TYPE_ID_FRAME4D: return TYPE_ID_MATRIX4D;
+      // Non-role types return themselves
+      default: return type_id_;
+    }
+  }
+
+  // Direct view method - get typed pointer to data
+  template <typename T>
+  const T* view() const noexcept {
+    if (!ptr_) return nullptr;
+
+    // Check if type IDs match exactly
+    if (TypeTraits<T>::type_id() == type_id_) {
+      return static_cast<const T*>(ptr_);
+    }
+
+    // Check for compatible underlying types (for role types)
+    // If the requested type's ID matches our underlying type ID
+    if (TypeTraits<T>::type_id() == underlying_type_id()) {
+      return static_cast<const T*>(ptr_);
+    }
+
+    // Also check the reverse: if our type ID matches the requested type's underlying ID
+    if (TypeTraits<T>::underlying_type_id() == type_id_) {
+      return static_cast<const T*>(ptr_);
+    }
+
+    // Check if both have same underlying type (e.g., point3f and normal3f both -> float3)
+    if (TypeTraits<T>::underlying_type_id() == underlying_type_id()) {
+      return static_cast<const T*>(ptr_);
+    }
+
+    return nullptr;
+  }
+
+  // Legacy as() method for backward compatibility with Value interface
+  template <class T>
+  const T* as(bool strict_cast = false) const {
+    if (!ptr_) return nullptr;
+
+    if (ptr_ == &value_placeholder_) {
+      // If we're pointing to a Value object, delegate to it
+      return static_cast<const Value*>(ptr_)->as<T>(strict_cast);
+    }
+
+    // Otherwise use direct view
+    if (strict_cast) {
+      if (TypeTraits<T>::type_id() == type_id_) {
+        return static_cast<const T*>(ptr_);
+      }
+      return nullptr;
+    } else {
+      return view<T>();
+    }
+  }
+
+  // Get TypedArrayView to the underlying data
+  template <class T>
+  TypedArrayView<const T> as_view(bool /*strict_cast*/ = false) const {
+    if (!ptr_) return TypedArrayView<const T>();
+
+    // Check if this is an array type
+    if (!(type_id_ & TYPE_ID_1D_ARRAY_BIT)) {
+      return TypedArrayView<const T>();
+    }
+
+    // For std::vector
+    if (flags_ & FLAG_IS_VECTOR) {
+      auto vec_ptr = view<std::vector<T>>();
+      if (vec_ptr) {
+        return TypedArrayView<const T>(vec_ptr->data(), vec_ptr->size());
+      }
+    }
+
+    // For TypedArray
+    if (flags_ & FLAG_IS_TYPED_ARRAY) {
+      auto arr_ptr = view<TypedArray<T>>();
+      if (arr_ptr) {
+        return TypedArrayView<const T>(arr_ptr->data(), arr_ptr->size());
+      }
+    }
+
+    return TypedArrayView<const T>();
+  }
+
+  // Check if the value is None (ValueBlock)
+  bool is_none() const noexcept {
+    return type_id_ == TYPE_ID_VALUEBLOCK;
+  }
+
+  // Check storage flags
+  bool is_vector() const noexcept { return flags_ & FLAG_IS_VECTOR; }
+  bool is_typed_array() const noexcept { return flags_ & FLAG_IS_TYPED_ARRAY; }
+
+  // Get the underlying pointer (const access only)
+  const void* get() const noexcept { return ptr_; }
+
+  // Equality comparison - views are equal if they point to the same data with same type
+  bool operator==(const ValueView& other) const noexcept {
+    return ptr_ == other.ptr_ && type_id_ == other.type_id_;
+  }
+
+  bool operator!=(const ValueView& other) const noexcept {
+    return !(*this == other);
+  }
+
+  // Reset the view
+  void reset() noexcept {
+    ptr_ = nullptr;
+    type_id_ = TYPE_ID_INVALID;
+    flags_ = FLAG_NONE;
+  }
+
+  // Reset with new data
+  template <typename T>
+  void reset(const T* ptr) noexcept {
+    *this = ValueView(ptr);
+  }
+
+  // Size check - ensure we have the expected compact size for the platform
+  // 12 bytes on 32-bit (4+4+1+3), 16 bytes on 64-bit (8+4+1+3)
+  static_assert(sizeof(void*) == 4 || sizeof(void*) == 8,
+                "Expecting 32-bit or 64-bit pointer");
+
+ private:
+  const void* ptr_;        // sizeof(void*) bytes: Pointer to data
+  uint32_t type_id_;       // 4 bytes: Type identifier
+  uint8_t flags_;          // 1 byte: Storage flags
+  uint8_t padding_[3];     // 3 bytes: Padding
+
+  // Placeholder for Value compatibility
+  static Value value_placeholder_;
 };
 
 // TimeSample interpolation type.
@@ -2552,7 +2711,7 @@ struct LerpTraits<std::vector<ty>> { \
   static constexpr bool supported() { \
     return true; \
   } \
-}; 
+};
 
 DEFINE_LERP_TRAIT(value::half)
 DEFINE_LERP_TRAIT(value::half2)
@@ -2620,298 +2779,7 @@ bool Lerp(const value::Value &a, const value::Value &b, double dt,
 // We assume having large time samples is rare situlation, and above benchmark
 // speed is acceptable in general  usecases.
 //
-// `None`(ValueBlock) is represented by setting `Sample::blocked` true.
-//
-struct TimeSamples {
-  struct Sample {
-    double t;
-    value::Value value;
-    bool blocked{false};
-  };
-
-  bool empty() const { return _samples.empty(); }
-
-  size_t size() const { return _samples.size(); }
-
-  void clear() {
-    _samples.clear();
-    _dirty = true;
-  }
-
-  void update() const {
-    std::sort(_samples.begin(), _samples.end(),
-              [](const Sample &a, const Sample &b) { return a.t < b.t; });
-
-    _dirty = false;
-  }
-
-  bool has_sample_at(const double t) const;
-  bool get_sample_at(const double t, Sample **s);
-
-  nonstd::optional<double> get_time(size_t idx) const {
-    if (idx >= _samples.size()) {
-      return nonstd::nullopt;
-    }
-
-    if (_dirty) {
-      update();
-    }
-
-    return _samples[idx].t;
-  }
-
-  nonstd::optional<value::Value> get_value(size_t idx) const {
-    if (idx >= _samples.size()) {
-      return nonstd::nullopt;
-    }
-
-    if (_dirty) {
-      update();
-    }
-
-    return _samples[idx].value;
-  }
-
-  uint32_t type_id() const {
-    if (_samples.size()) {
-      if (_dirty) {
-        update();
-      }
-      return _samples[0].value.type_id();
-    } else {
-      return value::TypeId::TYPE_ID_INVALID;
-    }
-  }
-
-  std::string type_name() const {
-    if (_samples.size()) {
-      if (_dirty) {
-        update();
-      }
-      return _samples[0].value.type_name();
-    } else {
-      return std::string();
-    }
-  }
-
-  void add_sample(const Sample &s) {
-    _samples.push_back(s);
-    _dirty = true;
-  }
-
-  // Value may be None(ValueBlock)
-  void add_sample(double t, const value::Value &v) {
-    Sample s;
-    s.t = t;
-    s.value = v;
-    s.blocked = v.is_none();
-    _samples.push_back(s);
-    _dirty = true;
-  }
-
-  // We still need "dummy" value for type_name() and type_id()
-  void add_blocked_sample(double t, const value::Value &v) {
-    Sample s;
-    s.t = t;
-    s.value = v;
-    s.blocked = true;
-
-    _samples.emplace_back(s);
-    _dirty = true;
-  }
-
-  const std::vector<Sample> &get_samples() const {
-    if (_dirty) {
-      update();
-    }
-    return _samples;
-  }
-
-  std::vector<Sample> &samples() {
-    if (_dirty) {
-      update();
-    }
-    return _samples;
-  }
-
-#if 1  // TODO: Write implementation in .cc
-
-    // Get value at specified time.
-    // For non-interpolatable types(includes enums and unknown types)
-    //
-    // Return `Held` value even when TimeSampleInterpolationType is
-    // Linear. Returns nullopt when specified time is out-of-range.
-    template<typename T, std::enable_if_t<!value::LerpTraits<T>::supported(), std::nullptr_t> = nullptr>
-    bool get(T *dst, double t = value::TimeCode::Default(),
-             value::TimeSampleInterpolationType interp =
-                 value::TimeSampleInterpolationType::Linear) const {
-
-      (void)interp;
-
-      if (!dst) {
-        return false;
-      }
-
-      if (empty()) {
-        return false;
-      }
-
-      if (_dirty) {
-        update();
-      }
-
-      if (value::TimeCode(t).is_default()) {
-        // TODO: Handle bloked
-        if (const auto pv = _samples[0].value.as<T>()) {
-          (*dst) = *pv;
-          return true;
-        }
-        return false;
-      } else {
-
-        if (_samples.size() == 1) {
-          if (const auto pv = _samples[0].value.as<T>()) {
-            (*dst) = *pv;
-            return true;
-          }
-          return false;
-        }
-
-        auto it = std::upper_bound(
-          _samples.begin(), _samples.end(), t,
-          [](double tval, const Sample &a) { return tval < a.t; });
-
-        const auto it_minus_1 = (it == _samples.begin()) ? _samples.begin() : (it - 1);
-
-        const value::Value &v = it_minus_1->value;
-
-        if (const T *pv = v.as<T>()) {
-          (*dst) = *pv;
-          return true;
-        }
-        return false;
-      }
-  }
-
-  // Get value at specified time.
-  // Return linearly interpolated value when TimeSampleInterpolationType is
-  // Linear. Returns false when samples is empty or some internal error.
-  template<typename T, std::enable_if_t<value::LerpTraits<T>::supported(), std::nullptr_t> = nullptr>
-  bool get(T *dst, double t = value::TimeCode::Default(),
-           TimeSampleInterpolationType interp =
-               TimeSampleInterpolationType::Linear) const {
-    if (!dst) {
-      return false;
-    }
-
-    if (empty()) {
-      return false;
-    }
-
-    if (_dirty) {
-      update();
-    }
-
-    if (value::TimeCode(t).is_default()) {
-      // FIXME: Use the first item for now.
-      // TODO: Handle bloked
-      if (const auto pv = _samples[0].value.as<T>()) {
-        (*dst) = *pv;
-        return true;
-      }
-      return false;
-    } else {
-
-      if (_samples.size() == 1) {
-        if (const auto pv = _samples[0].value.as<T>()) {
-          (*dst) = *pv;
-          return true;
-        }
-        return true;
-      }
-
-      if (interp == TimeSampleInterpolationType::Linear) {
-        auto it = std::lower_bound(
-            _samples.begin(), _samples.end(), t,
-            [](const Sample &a, double tval) { return a.t < tval; });
-
-
-        // MS STL does not allow seek vector iterator before begin
-        // Issue #110
-        const auto it_minus_1 = (it == _samples.begin()) ? _samples.begin() : (it - 1);
-
-        size_t idx0 = size_t(std::max(
-            int64_t(0),
-            std::min(int64_t(_samples.size() - 1),
-                     int64_t(std::distance(_samples.begin(), it_minus_1)))));
-        size_t idx1 =
-            size_t(std::max(int64_t(0), std::min(int64_t(_samples.size() - 1),
-                                                 int64_t(idx0) + 1)));
-
-        double tl = _samples[idx0].t;
-        double tu = _samples[idx1].t;
-
-        double dt = (t - tl);
-        if (std::fabs(tu - tl) < std::numeric_limits<double>::epsilon()) {
-          // slope is zero.
-          dt = 0.0;
-        } else {
-          dt /= (tu - tl);
-        }
-
-        // Just in case.
-        dt = std::max(0.0, std::min(1.0, dt));
-
-        const value::Value &p0 = _samples[idx0].value;
-        const value::Value &p1 = _samples[idx1].value;
-
-        value::Value p;
-        if (!Lerp(p0, p1, dt, &p)) {
-          return false;
-        }
-
-        if (const auto pv = p.as<T>()) {
-          (*dst) = *pv;
-          return true;
-        }
-        return false;
-      } else {
-        // Held
-        auto it = std::upper_bound(
-          _samples.begin(), _samples.end(), t,
-          [](double tval, const Sample &a) { return tval < a.t; });
-
-        const auto it_minus_1 = (it == _samples.begin()) ? _samples.begin() : (it - 1);
-
-        const value::Value &v = it_minus_1->value;
-
-        if (const T *pv = v.as<T>()) {
-          (*dst) = *pv;
-          return true;
-        }
-        
-        return false;
-      }
-    }
-
-    return false;
-  }
-#endif
-
-  size_t estimate_memory_usage() const {
-    size_t total = sizeof(TimeSamples);
-    for (const auto &sample : _samples) {
-      total += sizeof(Sample);
-      total += sample.value.estimate_memory_usage();
-    }
-
-    return total;
-  }
-
- private:
-  mutable std::vector<Sample> _samples;
-  mutable bool _dirty{false};
-};
+// TimeSamples struct has been moved to timesamples.hh
 
 
 
@@ -3068,6 +2936,8 @@ struct AttribMap {
 }  // namespace value
 
 }  // namespace tinyusdz
+
+#include "timesamples.hh"
 
 namespace tinyusdz {
 namespace value {

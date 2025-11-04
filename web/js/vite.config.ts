@@ -11,7 +11,7 @@ export default defineConfig({
   },
   resolve: {
     alias: [
-      { find: 'tinyusdz', replacement: path.resolve(__dirname, '/src/tinyusdz') },
+      { find: 'tinyusdz', replacement: path.resolve(__dirname, './src/tinyusdz') },
     ],
   },
   optimizeDeps: {

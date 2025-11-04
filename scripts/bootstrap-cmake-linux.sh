@@ -8,7 +8,7 @@ mkdir ${builddir}
 # with lld linker
 #  -DCMAKE_TOOLCHAIN_FILE=cmake/lld-linux.toolchain.cmake 
 
-cd ${builddir} && cmake \
+cd ${builddir} && CXX=clang++ CC=clang cmake \
   -DCMAKE_VERBOSE_MAKEFILE=1 \
   ..
 
