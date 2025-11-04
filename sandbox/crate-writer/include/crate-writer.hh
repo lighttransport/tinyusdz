@@ -14,6 +14,11 @@
 
 // TinyUSDZ crate format definitions
 #include "../../../src/crate-format.hh"
+#include "../../../src/stage.hh"
+#include "../../../src/usdGeom.hh"
+#include "../../../src/usdShade.hh"
+#include "../../../src/usdSkel.hh"
+#include "../../../src/usdLux.hh"
 
 // Path sorting and encoding library
 #include "../../../sandbox/path-sort-and-encode-crate/include/crate/path_interface.hh"
@@ -83,6 +88,18 @@ public:
   ///
   void Close();
 
+  ///
+  /// Convert a TinyUSDZ Stage to Crate specs and add them to the file
+  ///
+  /// This traverses the stage hierarchy and converts all prims and
+  /// their properties to Crate format specs.
+  ///
+  /// @param stage The TinyUSDZ Stage to convert
+  /// @param err Optional error message output
+  /// @return true on success, false on failure
+  ///
+  bool ConvertStageToSpecs(const Stage& stage, std::string* err = nullptr);
+
   // Configuration options
   struct Options {
     uint8_t version_major = 0;
@@ -142,6 +159,44 @@ private:
 
   /// Write the Bootstrap header
   bool WriteBootStrap(std::string* err);
+
+  // ======================================================================
+  // Stage conversion helpers
+  // ======================================================================
+
+  /// Convert a Prim and its children recursively
+  bool ConvertPrimRecursive(const Prim& prim, const Path& parent_path, std::string* err);
+
+  /// Extract properties from a Prim and add as fields
+  bool ExtractPrimProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract type-specific properties based on prim type
+  bool ExtractTypeSpecificProperties(const Prim& prim, const std::string& type_name,
+                                     crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract Xform-specific properties (xformOps)
+  bool ExtractXformProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract Mesh-specific properties (points, normals, etc.)
+  bool ExtractMeshProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract Cube-specific properties (size, extent)
+  bool ExtractCubeProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract Sphere-specific properties (radius)
+  bool ExtractSphereProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract Cylinder-specific properties (radius, height)
+  bool ExtractCylinderProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract common GPrim properties (visibility, purpose, etc.)
+  bool ExtractGPrimProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract xformOps from Xformable (GPrim or Xform)
+  bool ExtractXformOpsFromXformable(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Convert TinyUSDZ value to CrateValue
+  bool ConvertValue(const value::Value& val, crate::CrateValue& out, std::string* err);
 
   // ======================================================================
   // Value encoding
