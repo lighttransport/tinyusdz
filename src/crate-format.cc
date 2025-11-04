@@ -15,6 +15,15 @@
 namespace tinyusdz {
 namespace crate {
 
+// Section constructor implementation
+Section::Section(char const *name, int64_t start, int64_t size)
+  : start(start), size(size) {
+  memset(this->name, 0, sizeof(this->name));
+  if (name) {
+    strncpy(this->name, name, kSectionNameMaxLength);
+  }
+}
+
 #if 0
 
 #ifdef __clang__
