@@ -1,6 +1,48 @@
 // TinyUSDZ MaterialX/OpenPBR Demo with Three.js
 // This demo showcases OpenPBR material loading and editing with synthetic HDR environments
 
+// Embedded default OpenPBR scene (simple sphere with material)
+const EMBEDDED_USDA_SCENE = `#usda 1.0
+(
+    defaultPrim = "World"
+    upAxis = "Y"
+)
+
+def Xform "World"
+{
+    def Sphere "MetallicSphere"
+    {
+        double radius = 1.0
+        rel material:binding = </World/_materials/MetallicMaterial>
+    }
+
+    def Scope "_materials"
+    {
+        def Material "MetallicMaterial"
+        {
+            token outputs:surface.connect = </World/_materials/MetallicMaterial/OpenPBRSurface.outputs:surface>
+
+            def Shader "OpenPBRSurface"
+            {
+                uniform token info:id = "OpenPBRSurface"
+
+                # Base layer - metallic gold color
+                color3f inputs:base_color = (0.9, 0.7, 0.3)
+                float inputs:base_metalness = 0.85
+                float inputs:base_weight = 1.0
+
+                # Specular layer
+                float inputs:specular_roughness = 0.25
+                float inputs:specular_ior = 1.5
+                float inputs:specular_weight = 1.0
+
+                token outputs:surface
+            }
+        }
+    }
+}
+`;
+
 // Global variables
 let scene, camera, renderer, controls;
 let raycaster, mouse;
@@ -851,6 +893,9 @@ async function init() {
     // Setup file input
     setupFileInput();
 
+    // Load embedded default scene
+    await loadEmbeddedScene();
+
     updateStatus('Ready. Load a USD file or click "Load Sample"', 'success');
 }
 
@@ -955,7 +1000,7 @@ async function loadTinyUSDZ() {
 
     return new Promise((resolve, reject) => {
         const script = document.createElement('script');
-        script.src = '../dist/tinyusdz.js';
+        script.src = './src/tinyusdz/tinyusdz.js';
         script.onload = async () => {
             try {
                 // Initialize the module
@@ -1271,6 +1316,19 @@ async function loadUSDFile(arrayBuffer, filename) {
     } finally {
         showLoading(false);
     }
+}
+
+// Load embedded default scene
+async function loadEmbeddedScene() {
+    console.log('Loading embedded default scene...');
+
+    // Convert USDA string to ArrayBuffer
+    const encoder = new TextEncoder();
+    const usdaBytes = encoder.encode(EMBEDDED_USDA_SCENE);
+    const arrayBuffer = usdaBytes.buffer;
+
+    // Load using existing loadUSDFile function
+    await loadUSDFile(arrayBuffer, 'embedded_scene.usda');
 }
 
 // Load materials from USD
@@ -2421,26 +2479,33 @@ async function loadSampleModel() {
         updateStatus('Loading sample model...');
         showLoading(true);
 
-        // Try to load a sample USD file from the models directory
-        const response = await fetch('../../models/mesh.usda');
+        // Try to load OpenPBR MaterialX sample first (emissive plane with cat texture)
+        const response = await fetch('../../models/openpbr-emissive-plane.usda');
 
         if (!response.ok) {
             throw new Error(`Failed to fetch sample model: ${response.statusText}`);
         }
 
         const arrayBuffer = await response.arrayBuffer();
-        await loadUSDFile(arrayBuffer, 'sample.usda');
+        await loadUSDFile(arrayBuffer, 'openpbr-emissive-plane.usda');
 
     } catch (error) {
         console.error('Error loading sample model:', error);
         updateStatus(`Failed to load sample: ${error.message}`, 'error');
 
-        // Try alternative sample
+        // Try alternative sample - multi-object scene
         try {
-            const response = await fetch('../../models/simple-plane.usda');
+            const response = await fetch('../../models/openpbr-multi-object.usda');
             if (response.ok) {
                 const arrayBuffer = await response.arrayBuffer();
-                await loadUSDFile(arrayBuffer, 'simple-plane.usda');
+                await loadUSDFile(arrayBuffer, 'openpbr-multi-object.usda');
+            } else {
+                // Final fallback to simple plane
+                const response2 = await fetch('../../models/simple-plane.usda');
+                if (response2.ok) {
+                    const arrayBuffer2 = await response2.arrayBuffer();
+                    await loadUSDFile(arrayBuffer2, 'simple-plane.usda');
+                }
             }
         } catch (err) {
             console.error('Alternative sample also failed:', err);
