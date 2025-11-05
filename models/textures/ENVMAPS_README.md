@@ -201,6 +201,33 @@ loader.load('models/textures/env_sunsky_afternoon.hdr', (texture) => {
 
 ---
 
+## Reproducing Environment Maps
+
+All environment maps in this directory can be regenerated using the provided shell script:
+
+```bash
+# From project root
+bash models/textures/generate_envmaps.sh
+
+# Or from this directory
+cd models/textures
+bash generate_envmaps.sh
+```
+
+**What the script does:**
+- Checks for Node.js 16+ and HDRGen tool availability
+- Generates all 7 environment map presets with exact parameters
+- Outputs 512×256 HDR files (~513 KB each)
+- Optionally generates PNG previews with tone mapping
+
+**Requirements:**
+- Node.js 16.0.0 or higher
+- HDRGen tool installed at `tools/hdrgen/`
+
+**Script location:** `models/textures/generate_envmaps.sh`
+
+---
+
 ## Generating Custom Environments
 
 These environments were generated using the HDRGen tool. To create custom variations:
