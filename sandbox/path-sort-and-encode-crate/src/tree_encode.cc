@@ -5,6 +5,7 @@
 #include "crate/tree_encode.hh"
 #include <algorithm>
 #include <functional>
+#include <iostream>
 #include <sstream>
 #include <stdexcept>
 
@@ -81,7 +82,9 @@ std::unique_ptr<PathTreeNode> BuildPathTree(
 
   // Create root node (represents the root "/" path)
   // Note: In Crate format, root is implicit and starts with empty element
-  auto root = std::make_unique<PathTreeNode>("", 0, 0, false);
+  // CRITICAL: Root element must have a token in the token table
+  TokenIndex root_token_idx = token_table.GetOrCreateToken("", false);
+  auto root = std::make_unique<PathTreeNode>("", root_token_idx, 0, false);
   root->path_index = 0;  // Root path is always at index 0 if it exists
 
   // Map from path string to node (for quick lookup)
@@ -95,6 +98,9 @@ std::unique_ptr<PathTreeNode> BuildPathTree(
     std::string prim_part = path.prim_part();
     std::string prop_part = path.prop_part();
 
+    std::cerr << "DEBUG BuildPathTree: Processing path[" << path_idx << "]: prim='"
+              << prim_part << "', prop='" << prop_part << "'\n";
+
     // Skip root path - it's already represented by root node
     if (prim_part == "/" && prop_part.empty()) {
       continue;
@@ -102,8 +108,10 @@ std::unique_ptr<PathTreeNode> BuildPathTree(
 
     // Handle root with property (e.g., "/.prop")
     if (prim_part == "/" && !prop_part.empty()) {
+      std::cerr << "DEBUG BuildPathTree: Creating root property node with path_idx=" << path_idx << "\n";
       TokenIndex token_idx = token_table.GetOrCreateToken(prop_part, true);
       auto prop_node = new PathTreeNode(prop_part, token_idx, path_idx, true);
+      std::cerr << "DEBUG BuildPathTree: Created prop_node with path_index=" << prop_node->path_index << "\n";
       prop_node->parent = root.get();
 
       if (root->first_child == nullptr) {
@@ -248,6 +256,8 @@ void WalkTreeDepthFirst(
     current_pos = path_indexes.size();
 
     // Add this node
+    std::cerr << "DEBUG tree_encode: Adding node '" << node->element_name
+              << "' with path_index=" << node->path_index << "\n";
     path_indexes.push_back(node->path_index);
     element_token_indexes.push_back(node->element_token_index);
 
@@ -302,6 +312,7 @@ CompressedPathTree EncodePaths(const std::vector<SimplePath>& sorted_paths) {
 
   // Start from root's children (root itself is implicit in the structure)
   // But we need to add root as the first node
+  std::cerr << "DEBUG tree_encode: Adding root node with path_index=" << root->path_index << "\n";
   result.path_indexes.push_back(root->path_index);
   result.element_token_indexes.push_back(root->element_token_index);
   result.jumps.push_back(-1);  // Root always has children (or is a leaf if no children)
