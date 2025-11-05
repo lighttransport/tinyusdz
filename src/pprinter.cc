@@ -14,6 +14,7 @@
 #include "str-util.hh"
 #include "tiny-format.hh"
 #include "usdShade.hh"
+#include "usdMtlx.hh"
 #include "value-pprint.hh"
 #include "timesamples-pprint.hh"
 //
@@ -4108,6 +4109,9 @@ std::string to_string(const Shader &shader, const uint32_t indent,
     ss << print_shader_params(pvtx2d.value(), indent + 1);
   } else if (auto pvs = shader.value.get_value<UsdPreviewSurface>()) {
     ss << print_shader_params(pvs.value(), indent + 1);
+  } else if (auto mtlx_opbr = shader.value.get_value<MtlxOpenPBRSurface>()) {
+    // Blender v4.5 MaterialX OpenPBR Surface
+    ss << print_common_shader_params(mtlx_opbr.value(), indent + 1);
   } else if (auto pvsn = shader.value.get_value<ShaderNode>()) {
     // Generic ShaderNode
     ss << print_common_shader_params(pvsn.value(), indent + 1);
