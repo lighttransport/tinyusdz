@@ -278,16 +278,16 @@
             Load Sample
         </button>
         <button class="btn" onclick="toggleEnvironment()">
-            Toggle HDR
+            Toggle HDR(TODO)
         </button>
         <button class="btn" id="color-space-btn" onclick="toggleColorSpace()" style="display: none;">
-            Toggle P3
+            Toggle P3(TODO)
         </button>
         <button class="btn" onclick="importMaterialXFile()" title="Import MaterialX XML file">
-            📥 Import MTLX
+            📥 Import MTLX(TODO)
         </button>
         <button class="btn" onclick="loadHDRTextureForMaterial()" title="Load HDR/EXR texture">
-            🖼️ Load Texture
+            🖼️ Load Texture(TODO)
         </button>
         <input type="file" id="file-input" accept=".usd,.usda,.usdc,.usdz">
     </div>
@@ -315,21 +315,18 @@
         <div class="loading-spinner"></div>
     </div>
 
-    <!-- Three.js -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.161.0/three.min.js"></script>
+    <!-- Import maps for Three.js ES modules -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+                "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/",
+                "tinyusdz/": "./src/tinyusdz/"
+            }
+        }
+    </script>
 
-    <!-- Three.js Controls -->
-    <script src="https://cdn.jsdelivr.net/npm/three@0.161.0/examples/js/controls/OrbitControls.js"></script>
-
-    <!-- Three.js Loaders and Utils -->
-    <script src="https://cdn.jsdelivr.net/npm/three@0.161.0/examples/js/loaders/RGBELoader.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.161.0/examples/js/loaders/EXRLoader.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.161.0/examples/js/utils/BufferGeometryUtils.js"></script>
-
-    <!-- dat.GUI for parameter controls -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/dat-gui/0.7.9/dat.gui.min.js"></script>
-
-    <!-- Main application script -->
-    <script src="materialx.js"></script>
+    <!-- Main application script as module -->
+    <script type="module" src="materialx.js"></script>
 </body>
 </html>

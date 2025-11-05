@@ -134,18 +134,22 @@ inline void GenerateUVSphereMesh(
   const int rings = divisions;
   const int sectors = divisions * 2;
 
-  const float R = 1.0f / (float)(rings - 1);
-  const float S = 1.0f / (float)(sectors - 1);
+  const float R = 1.0f / static_cast<float>(rings - 1);
+  const float S = 1.0f / static_cast<float>(sectors - 1);
 
   points.clear();
-  points.reserve((rings) * (sectors));
+  points.reserve(static_cast<size_t>(rings) * static_cast<size_t>(sectors));
 
   // Generate vertices
   for (int ring = 0; ring < rings; ring++) {
     for (int sector = 0; sector < sectors; sector++) {
-      float const y = std::sin(-M_PI_2 + M_PI * ring * R);
-      float const x = std::cos(2.0f * M_PI * sector * S) * std::sin(M_PI * ring * R);
-      float const z = std::sin(2.0f * M_PI * sector * S) * std::sin(M_PI * ring * R);
+      float const ringF = static_cast<float>(ring);
+      float const sectorF = static_cast<float>(sector);
+      float const pi_f = static_cast<float>(M_PI);
+      float const pi_2_f = static_cast<float>(M_PI_2);
+      float const y = std::sin(-pi_2_f + pi_f * ringF * R);
+      float const x = std::cos(2.0f * pi_f * sectorF * S) * std::sin(pi_f * ringF * R);
+      float const z = std::sin(2.0f * pi_f * sectorF * S) * std::sin(pi_f * ringF * R);
 
       points.push_back({x * r, y * r, z * r});
     }
@@ -172,8 +176,8 @@ inline void GenerateUVSphereMesh(
 
       // Normals (pointing outward from sphere center)
       for (int i = 0; i < 4; i++) {
-        int idx = faceVertexIndices[faceVertexIndices.size() - 4 + i];
-        value::float3 n = points[idx];
+        int idx = faceVertexIndices[faceVertexIndices.size() - 4 + static_cast<size_t>(i)];
+        value::float3 n = points[static_cast<size_t>(idx)];
         float len = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
         if (len > 0.0f) {
           n[0] /= len;
@@ -184,10 +188,10 @@ inline void GenerateUVSphereMesh(
       }
 
       // UV coordinates
-      float u0 = sector * S;
-      float u1 = (sector + 1) * S;
-      float v0 = ring * R;
-      float v1 = (ring + 1) * R;
+      float u0 = static_cast<float>(sector) * S;
+      float u1 = static_cast<float>(sector + 1) * S;
+      float v0 = static_cast<float>(ring) * R;
+      float v1 = static_cast<float>(ring + 1) * R;
 
       uvs.push_back({u0, v0});
       uvs.push_back({u0, v1});
@@ -259,9 +263,9 @@ inline void GenerateIcosphereMesh(
 
       // Create new midpoint vertex
       value::float3 mid = {
-        (vertices[v1][0] + vertices[v2][0]) * 0.5f,
-        (vertices[v1][1] + vertices[v2][1]) * 0.5f,
-        (vertices[v1][2] + vertices[v2][2]) * 0.5f
+        (vertices[static_cast<size_t>(v1)][0] + vertices[static_cast<size_t>(v2)][0]) * 0.5f,
+        (vertices[static_cast<size_t>(v1)][1] + vertices[static_cast<size_t>(v2)][1]) * 0.5f,
+        (vertices[static_cast<size_t>(v1)][2] + vertices[static_cast<size_t>(v2)][2]) * 0.5f
       };
 
       // Normalize to unit sphere
@@ -312,14 +316,15 @@ inline void GenerateIcosphereMesh(
 
     // Normals (unit vectors from center)
     for (int i = 0; i < 3; i++) {
-      normals.push_back(vertices[face[i]]);
+      normals.push_back(vertices[static_cast<size_t>(face[static_cast<size_t>(i)])]);
     }
 
     // UV coordinates (spherical projection)
     for (int i = 0; i < 3; i++) {
-      const value::float3 &v = vertices[face[i]];
-      float u = 0.5f + std::atan2(v[2], v[0]) / (2.0f * M_PI);
-      float v_coord = 0.5f - std::asin(v[1]) / M_PI;
+      const value::float3 &v = vertices[static_cast<size_t>(face[static_cast<size_t>(i)])];
+      float const pi_f = static_cast<float>(M_PI);
+      float u = 0.5f + std::atan2(v[2], v[0]) / (2.0f * pi_f);
+      float v_coord = 0.5f - std::asin(v[1]) / pi_f;
       uvs.push_back({u, v_coord});
     }
   }

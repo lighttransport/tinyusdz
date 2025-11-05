@@ -1,6 +1,14 @@
 // TinyUSDZ MaterialX/OpenPBR Demo with Three.js
 // This demo showcases OpenPBR material loading and editing with synthetic HDR environments
 
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
+import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
+import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
+import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
+import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+
 // Embedded default OpenPBR scene (simple sphere with material)
 const EMBEDDED_USDA_SCENE = `#usda 1.0
 (
@@ -47,8 +55,9 @@ def Xform "World"
 let scene, camera, renderer, controls;
 let raycaster, mouse;
 let selectedObject = null;
-let tinyUSDZModule = null;
-let currentLoader = null;
+let boundingBoxHelper = null; // Bounding box helper for selected object
+let currentLoader = null; // TinyUSDZLoader instance
+let currentNativeLoader = null; // Native TinyUSDZLoaderNative instance for low-level API
 let materials = [];
 let meshes = [];
 let gui = null;
@@ -61,6 +70,11 @@ let textureCache = new Map(); // Cache for loaded textures
 let textureEnabled = {}; // Track which textures are enabled per material
 let textureColorSpace = {}; // Track color space per texture per material
 let textureUVSet = {}; // Track UV set selection per texture per material
+let showingNormals = false; // Track if normal material is being shown
+let originalMaterials = new Map(); // Store original materials when showing normals
+let currentFileUpAxis = 'Y'; // Store the current file's upAxis (Y or Z)
+let applyUpAxisConversion = true; // Apply Z-up to Y-up conversion by default
+let sceneRoot = null; // Root object for the USD scene (for upAxis conversion)
 
 // Available texture color spaces
 const TEXTURE_COLOR_SPACES = {
@@ -658,7 +672,7 @@ function loadTextureFromUSD(textureId) {
         return null;
     }
 
-    if (!currentLoader) {
+    if (!currentNativeLoader) {
         console.error('loadTextureFromUSD: No USD loader available');
         return null;
     }
@@ -670,7 +684,7 @@ function loadTextureFromUSD(textureId) {
 
     try {
         // Get texture metadata
-        const texData = currentLoader.getTexture(textureId);
+        const texData = currentNativeLoader.getTexture(textureId);
         if (!texData || texData.textureImageId === undefined) {
             console.warn(`Texture ${textureId} has no image data`);
             return null;
@@ -683,7 +697,7 @@ function loadTextureFromUSD(textureId) {
         }
 
         // Get image data
-        const imgData = currentLoader.getImage(texData.textureImageId);
+        const imgData = currentNativeLoader.getImage(texData.textureImageId);
         if (!imgData || !imgData.data) {
             console.warn(`Image ${texData.textureImageId} has no pixel data`);
             return null;
@@ -950,7 +964,7 @@ function setupScene() {
     pmremGenerator.compileEquirectangularShader();
 
     // Controls
-    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
     controls.screenSpacePanning = false;
@@ -978,6 +992,11 @@ function setupScene() {
     const gridHelper = new THREE.GridHelper(10, 10, 0x444444, 0x222222);
     scene.add(gridHelper);
 
+    // Create scene root for USD content (for upAxis conversion)
+    sceneRoot = new THREE.Group();
+    sceneRoot.name = 'USD_Scene_Root';
+    scene.add(sceneRoot);
+
     // Handle window resize
     window.addEventListener('resize', onWindowResize, false);
 
@@ -998,41 +1017,22 @@ function setupInteraction() {
 async function loadTinyUSDZ() {
     updateStatus('Loading TinyUSDZ WASM module...');
 
-    return new Promise((resolve, reject) => {
-        const script = document.createElement('script');
-        script.src = './src/tinyusdz/tinyusdz.js';
-        script.onload = async () => {
-            try {
-                // Initialize the module
-                const Module = {
-                    onRuntimeInitialized: function() {
-                        tinyUSDZModule = this;
-                        console.log('TinyUSDZ module loaded successfully');
-                        updateStatus('TinyUSDZ module loaded', 'success');
-                        resolve();
-                    }
-                };
+    try {
+        // Create a TinyUSDZLoader instance
+        currentLoader = new TinyUSDZLoader();
 
-                // The tinyusdz.js script will use the global Module object
-                window.Module = Module;
+        // Initialize the loader (wait for WASM module to load)
+        // Use memory64: false for browser compatibility
+        // Use useZstdCompressedWasm: false since compressed WASM is not available
+        await currentLoader.init({ useZstdCompressedWasm: false, useMemory64: false });
 
-                // Load the WASM file
-                const wasmScript = document.createElement('script');
-                wasmScript.src = '../dist/tinyusdz.wasm.js';
-                document.head.appendChild(wasmScript);
-            } catch (error) {
-                console.error('Failed to initialize TinyUSDZ:', error);
-                updateStatus('Failed to load TinyUSDZ: ' + error.message, 'error');
-                reject(error);
-            }
-        };
-        script.onerror = (error) => {
-            console.error('Failed to load TinyUSDZ script:', error);
-            updateStatus('Failed to load TinyUSDZ script', 'error');
-            reject(error);
-        };
-        document.head.appendChild(script);
-    });
+        console.log('TinyUSDZ module loaded successfully');
+        updateStatus('TinyUSDZ module loaded', 'success');
+    } catch (error) {
+        console.error('Failed to initialize TinyUSDZ:', error);
+        updateStatus('Failed to load TinyUSDZ: ' + error.message, 'error');
+        throw error;
+    }
 }
 
 // Create synthetic HDR environment map
@@ -1179,13 +1179,64 @@ function switchColorSpace(colorSpace) {
     return true;
 }
 
+// Toggle normal material for debugging
+function toggleNormalMaterial(show) {
+    showingNormals = show;
+
+    meshes.forEach(mesh => {
+        if (show) {
+            // Store original material if not already stored
+            if (!originalMaterials.has(mesh.uuid)) {
+                originalMaterials.set(mesh.uuid, mesh.material);
+            }
+            // Apply normal material
+            mesh.material = new THREE.MeshNormalMaterial({
+                flatShading: false,
+                side: THREE.DoubleSide
+            });
+        } else {
+            // Restore original material
+            if (originalMaterials.has(mesh.uuid)) {
+                mesh.material = originalMaterials.get(mesh.uuid);
+            }
+        }
+    });
+
+    console.log(`Normal material ${show ? 'enabled' : 'disabled'}`);
+}
+
+// Apply upAxis conversion to scene
+function applyUpAxisConversionToScene() {
+    if (!sceneRoot) return;
+
+    if (applyUpAxisConversion && currentFileUpAxis === 'Z') {
+        // Apply Z-up to Y-up conversion (-90 degrees around X axis)
+        sceneRoot.rotation.x = -Math.PI / 2;
+        console.log(`Applied Z-up to Y-up conversion (file upAxis="${currentFileUpAxis}"): rotation.x =`, sceneRoot.rotation.x);
+    } else {
+        // Reset rotation (either disabled or file is already Y-up)
+        sceneRoot.rotation.x = 0;
+        if (currentFileUpAxis !== 'Z') {
+            console.log(`No rotation needed (file upAxis="${currentFileUpAxis}")`);
+        } else {
+            console.log(`Reset rotation (conversion disabled)`);
+        }
+    }
+}
+
+// Toggle upAxis conversion
+function toggleUpAxisConversion() {
+    applyUpAxisConversion = !applyUpAxisConversion;
+    applyUpAxisConversionToScene();
+}
+
 // Setup GUI for OpenPBR parameters
 function setupGUI() {
     if (gui) {
         gui.destroy();
     }
 
-    gui = new dat.GUI({ width: 350 });
+    gui = new GUI({ width: 350 });
     gui.domElement.style.position = 'absolute';
     gui.domElement.style.top = '150px';
     gui.domElement.style.right = '10px';
@@ -1250,11 +1301,39 @@ function setupGUI() {
     });
 
     envFolder.open();
+
+    // Debug/Visualization controls
+    const debugFolder = gui.addFolder('Debug');
+    const debugParams = {
+        showNormals: false,
+        applyUpAxisConversion: applyUpAxisConversion,
+        fitToScene: function() {
+            fitCameraToScene();
+        }
+    };
+
+    debugFolder.add(debugParams, 'showNormals')
+        .name('Show Normals')
+        .onChange(value => {
+            toggleNormalMaterial(value);
+        });
+
+    debugFolder.add(debugParams, 'applyUpAxisConversion')
+        .name('Z-up to Y-up')
+        .onChange(value => {
+            applyUpAxisConversion = value;
+            toggleUpAxisConversion();
+        });
+
+    debugFolder.add(debugParams, 'fitToScene')
+        .name('Fit to Scene');
+
+    debugFolder.close();
 }
 
 // Load USD file
 async function loadUSDFile(arrayBuffer, filename) {
-    if (!tinyUSDZModule) {
+    if (!currentLoader) {
         updateStatus('TinyUSDZ module not loaded', 'error');
         return;
     }
@@ -1263,31 +1342,38 @@ async function loadUSDFile(arrayBuffer, filename) {
     updateStatus(`Loading ${filename}...`);
 
     try {
-        // Clean up previous loader
-        if (currentLoader) {
-            currentLoader.delete();
-            currentLoader = null;
+        // Clean up previous native loader
+        if (currentNativeLoader) {
+            currentNativeLoader.delete();
+            currentNativeLoader = null;
         }
 
         // Clear the scene
         clearScene();
 
-        // Create new loader
-        currentLoader = new tinyUSDZModule.TinyUSDZLoaderNative();
+        // Create new native loader from the TinyUSDZLoader instance
+        currentNativeLoader = new currentLoader.native_.TinyUSDZLoaderNative();
 
         // Convert ArrayBuffer to Uint8Array
         const uint8Array = new Uint8Array(arrayBuffer);
 
         // Load the USD file
-        const success = currentLoader.loadFromBinary(uint8Array, filename);
+        const success = currentNativeLoader.loadFromBinary(uint8Array, filename);
 
         if (!success) {
             throw new Error('Failed to parse USD file');
         }
 
+        // Get scene metadata (including upAxis)
+        const sceneMetadata = currentNativeLoader.getSceneMetadata ? currentNativeLoader.getSceneMetadata() : {};
+        currentFileUpAxis = sceneMetadata.upAxis || 'Y';
+
+        console.log(`=== USD Scene Metadata ===`);
+        console.log(`upAxis: "${currentFileUpAxis}"`);
+
         // Get scene information
-        const numMeshes = currentLoader.numMeshes();
-        const numMaterials = currentLoader.numMaterials();
+        const numMeshes = currentNativeLoader.numMeshes();
+        const numMaterials = currentNativeLoader.numMaterials();
 
         console.log(`Loaded: ${numMeshes} meshes, ${numMaterials} materials`);
 
@@ -1301,6 +1387,9 @@ async function loadUSDFile(arrayBuffer, filename) {
 
         // Load meshes
         loadMeshes();
+
+        // Apply Z-up to Y-up conversion if enabled AND the file is actually Z-up
+        applyUpAxisConversionToScene();
 
         // Update material panel
         updateMaterialPanel();
@@ -1320,26 +1409,40 @@ async function loadUSDFile(arrayBuffer, filename) {
 
 // Load embedded default scene
 async function loadEmbeddedScene() {
-    console.log('Loading embedded default scene...');
+    console.log('Loading default scene from suzanne-materialx.usda...');
 
-    // Convert USDA string to ArrayBuffer
-    const encoder = new TextEncoder();
-    const usdaBytes = encoder.encode(EMBEDDED_USDA_SCENE);
-    const arrayBuffer = usdaBytes.buffer;
+    try {
+        // Fetch the suzanne-materialx.usda file
+        const response = await fetch('./assets/suzanne-materialx.usda');
+        if (!response.ok) {
+            throw new Error(`Failed to fetch: ${response.statusText}`);
+        }
 
-    // Load using existing loadUSDFile function
-    await loadUSDFile(arrayBuffer, 'embedded_scene.usda');
+        const arrayBuffer = await response.arrayBuffer();
+        await loadUSDFile(arrayBuffer, 'suzanne-materialx.usda');
+
+        console.log('Successfully loaded suzanne-materialx.usda');
+    } catch (error) {
+        console.error('Error loading suzanne-materialx.usda:', error);
+        updateStatus('Failed to load default scene, using fallback', 'error');
+
+        // Fallback to embedded scene
+        const encoder = new TextEncoder();
+        const usdaBytes = encoder.encode(EMBEDDED_USDA_SCENE);
+        const arrayBuffer = usdaBytes.buffer;
+        await loadUSDFile(arrayBuffer, 'embedded_scene.usda');
+    }
 }
 
 // Load materials from USD
 function loadMaterials() {
-    if (!currentLoader) {
+    if (!currentNativeLoader) {
         console.error('loadMaterials: No USD loader available');
         return;
     }
 
     materials = [];
-    const numMaterials = currentLoader.numMaterials();
+    const numMaterials = currentNativeLoader.numMaterials();
 
     if (numMaterials === 0) {
         console.warn('No materials found in USD file');
@@ -1356,7 +1459,7 @@ function loadMaterials() {
 
         try {
             // Get material in JSON format for OpenPBR data
-            const result = currentLoader.getMaterialWithFormat(i, 'json');
+            const result = currentNativeLoader.getMaterialWithFormat(i, 'json');
 
             if (result.error) {
                 reportError(`Material ${i}`, new Error(result.error));
@@ -1412,8 +1515,73 @@ function createOpenPBRMaterial(materialData) {
     // Store texture references for later management
     material.userData.textures = {};
 
-    if (materialData.hasOpenPBR && materialData.openPBR) {
-        const pbr = materialData.openPBR;
+    if (materialData.hasOpenPBR) {
+        // Try openPBRShader first (new flat format), then openPBR (old grouped format)
+        const pbrFlat = materialData.openPBRShader;
+        const pbrGrouped = materialData.openPBR;
+
+        // Use flat format if available
+        if (pbrFlat) {
+            // New flat format: base_color, base_metalness, specular_roughness, etc.
+
+            // Base color
+            if (pbrFlat.base_color) {
+                material.color = createColorWithSpace(...pbrFlat.base_color);
+            }
+
+            // Metalness
+            if (pbrFlat.base_metalness !== undefined) {
+                material.metalness = pbrFlat.base_metalness;
+            }
+
+            // Roughness
+            if (pbrFlat.specular_roughness !== undefined) {
+                material.roughness = pbrFlat.specular_roughness;
+            }
+
+            // IOR
+            if (pbrFlat.specular_ior !== undefined) {
+                material.ior = pbrFlat.specular_ior;
+            }
+
+            // Specular color
+            if (pbrFlat.specular_color) {
+                material.specularColor = createColorWithSpace(...pbrFlat.specular_color);
+            }
+
+            // Transmission
+            if (pbrFlat.transmission_weight !== undefined) {
+                material.transmission = pbrFlat.transmission_weight;
+            }
+            if (pbrFlat.transmission_color) {
+                material.attenuationColor = createColorWithSpace(...pbrFlat.transmission_color);
+            }
+
+            // Coat (clearcoat)
+            if (pbrFlat.coat_weight !== undefined) {
+                material.clearcoat = pbrFlat.coat_weight;
+            }
+            if (pbrFlat.coat_roughness !== undefined) {
+                material.clearcoatRoughness = pbrFlat.coat_roughness;
+            }
+
+            // Emission
+            if (pbrFlat.emission_color) {
+                material.emissive = createColorWithSpace(...pbrFlat.emission_color);
+            }
+            if (pbrFlat.emission_luminance !== undefined) {
+                material.emissiveIntensity = pbrFlat.emission_luminance;
+            }
+
+            // Opacity
+            if (pbrFlat.opacity !== undefined) {
+                material.opacity = pbrFlat.opacity;
+                material.transparent = pbrFlat.opacity < 1.0;
+            }
+
+        } else if (pbrGrouped) {
+            // Old grouped format - keep for backward compatibility
+            const pbr = pbrGrouped;
 
         // Base parameters
         if (pbr.base) {
@@ -1489,7 +1657,9 @@ function createOpenPBRMaterial(materialData) {
                 material.transmission = pbr.transmission.weight;
             }
             if (pbr.transmission.color) {
-                material.attenuationColor = createColorWithSpace(...pbr.transmission.color);
+                const colorValue = Array.isArray(pbr.transmission.color) ? pbr.transmission.color :
+                                  (pbr.transmission.color.value || [1, 1, 1]);
+                material.attenuationColor = createColorWithSpace(...colorValue);
             }
         }
 
@@ -1562,13 +1732,16 @@ function createOpenPBRMaterial(materialData) {
             // Three.js doesn't have direct subsurface support, but we can approximate
             material.transmission = Math.max(material.transmission, pbr.subsurface.weight * 0.5);
         }
+        } // end of else if (pbrGrouped)
 
     } else if (materialData.hasUsdPreviewSurface && materialData.usdPreviewSurface) {
         // Fallback to UsdPreviewSurface
         const preview = materialData.usdPreviewSurface;
 
         if (preview.diffuseColor) {
-            material.color = createColorWithSpace(...preview.diffuseColor);
+            const colorValue = Array.isArray(preview.diffuseColor) ? preview.diffuseColor :
+                              (preview.diffuseColor.value || [1, 1, 1]);
+            material.color = createColorWithSpace(...colorValue);
         }
         if (preview.metallic !== undefined) {
             material.metalness = preview.metallic;
@@ -1618,23 +1791,73 @@ function createOpenPBRMaterial(materialData) {
 
 // Extract OpenPBR parameters for GUI
 function extractOpenPBRParams(materialData) {
-    if (!materialData.hasOpenPBR || !materialData.openPBR) {
+    if (!materialData.hasOpenPBR) {
         return {};
     }
 
-    return materialData.openPBR;
+    // Try openPBRShader first (from native loader), then openPBR (legacy)
+    const pbr = materialData.openPBRShader || materialData.openPBR;
+    if (!pbr) {
+        return {};
+    }
+
+    // The native loader returns flat parameters like base_weight, base_color, etc.
+    // We need to group them for the GUI: {base: {weight, color}, specular: {...}}
+    const params = {
+        base: {},
+        specular: {},
+        transmission: {},
+        subsurface: {},
+        coat: {},
+        emission: {},
+        geometry: {}
+    };
+
+    // Map flat parameters to grouped structure
+    Object.entries(pbr).forEach(([key, value]) => {
+        // Skip type field
+        if (key === 'type') return;
+
+        // Split parameter name (e.g., "base_weight" -> ["base", "weight"])
+        const parts = key.split('_');
+        if (parts.length >= 2) {
+            const group = parts[0]; // base, specular, transmission, etc.
+            const param = parts.slice(1).join('_'); // weight, color, roughness, etc.
+
+            // Map group names
+            const groupMap = {
+                'base': 'base',
+                'specular': 'specular',
+                'transmission': 'transmission',
+                'subsurface': 'subsurface',
+                'coat': 'coat',
+                'emission': 'emission'
+            };
+
+            if (groupMap[group]) {
+                params[groupMap[group]][param] = value;
+            } else if (key === 'opacity' || key === 'normal' || key === 'tangent') {
+                // Geometry parameters
+                params.geometry[key] = value;
+            }
+        }
+    });
+
+    return params;
 }
 
 // Load meshes from USD
 function loadMeshes() {
-    if (!currentLoader) return;
+    if (!currentNativeLoader) return;
 
     meshes = [];
-    const numMeshes = currentLoader.numMeshes();
+    const numMeshes = currentNativeLoader.numMeshes();
+    console.log(`Loading ${numMeshes} meshes...`);
 
     for (let i = 0; i < numMeshes; i++) {
         try {
-            const meshData = currentLoader.getMesh(i);
+            const meshData = currentNativeLoader.getMesh(i);
+            console.log(`Mesh ${i} data:`, meshData);
 
             if (!meshData) {
                 console.warn(`Failed to load mesh ${i}`);
@@ -1644,9 +1867,10 @@ function loadMeshes() {
             // Create Three.js geometry
             const geometry = new THREE.BufferGeometry();
 
-            // Add vertices
-            if (meshData.vertices && meshData.vertices.length > 0) {
-                const vertices = new Float32Array(meshData.vertices);
+            // Add vertices (try both 'points' and 'vertices' for compatibility)
+            const vertexData = meshData.points || meshData.vertices;
+            if (vertexData && vertexData.length > 0) {
+                const vertices = new Float32Array(vertexData);
                 geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
             }
 
@@ -1685,9 +1909,10 @@ function loadMeshes() {
                 geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
             }
 
-            // Add faces (indices)
-            if (meshData.indices && meshData.indices.length > 0) {
-                const indices = new Uint32Array(meshData.indices);
+            // Add faces (indices) - try both 'faceVertexIndices' and 'indices'
+            const indexData = meshData.faceVertexIndices || meshData.indices;
+            if (indexData && indexData.length > 0) {
+                const indices = new Uint32Array(indexData);
                 geometry.setIndex(new THREE.BufferAttribute(indices, 1));
             }
 
@@ -1713,13 +1938,15 @@ function loadMeshes() {
                 mesh.applyMatrix4(matrix);
             }
 
-            scene.add(mesh);
+            sceneRoot.add(mesh);
             meshes.push(mesh);
+            console.log(`Added mesh ${i} to sceneRoot:`, mesh.name, `vertices: ${geometry.attributes.position?.count || 0}`);
 
         } catch (error) {
             console.error(`Error loading mesh ${i}:`, error);
         }
     }
+    console.log(`Total meshes added to scene: ${meshes.length}`);
 }
 
 // Update material panel
@@ -2259,13 +2486,19 @@ function createParameterControls(material) {
             const groupFolder = paramFolder.addFolder(groupName);
 
             Object.entries(groupParams).forEach(([paramName, paramDef]) => {
-                const value = params[groupName][paramName];
-                if (value === undefined) return;
+                let rawValue = params[groupName][paramName];
+                if (rawValue === undefined) return;
+
+                // Extract actual value if it's wrapped in an object with {name, type, value} structure
+                const value = (rawValue && typeof rawValue === 'object' && rawValue.value !== undefined)
+                    ? rawValue.value
+                    : rawValue;
 
                 if (paramDef.type === 'color') {
                     // Color picker
+                    const colorValue = Array.isArray(value) ? value : [1, 1, 1];
                     const colorObj = {
-                        color: [value[0] * 255, value[1] * 255, value[2] * 255]
+                        color: [colorValue[0] * 255, colorValue[1] * 255, colorValue[2] * 255]
                     };
                     groupFolder.addColor(colorObj, 'color').name(paramName).onChange(val => {
                         const r = val[0] / 255;
@@ -2276,14 +2509,15 @@ function createParameterControls(material) {
                     });
                 } else if (paramDef.type === 'boolean') {
                     // Checkbox
-                    const boolObj = { [paramName]: value };
+                    const boolObj = { [paramName]: !!value };
                     groupFolder.add(boolObj, paramName).onChange(val => {
                         params[groupName][paramName] = val;
                         updateMaterialFromParams(threeMat, params);
                     });
                 } else {
                     // Slider
-                    const sliderObj = { [paramName]: value };
+                    const numValue = typeof value === 'number' ? value : parseFloat(value) || 0;
+                    const sliderObj = { [paramName]: numValue };
                     groupFolder.add(sliderObj, paramName, paramDef.min, paramDef.max, paramDef.step)
                         .onChange(val => {
                             params[groupName][paramName] = val;
@@ -2336,7 +2570,9 @@ function updateMaterialFromParams(material, params) {
             material.ior = params.specular.ior;
         }
         if (params.specular.color) {
-            material.specularColor = createColorWithSpace(...params.specular.color);
+            const colorValue = Array.isArray(params.specular.color) ? params.specular.color :
+                              (params.specular.color.value || [1, 1, 1]);
+            material.specularColor = createColorWithSpace(...colorValue);
         }
     }
 
@@ -2346,7 +2582,9 @@ function updateMaterialFromParams(material, params) {
             material.transmission = params.transmission.weight;
         }
         if (params.transmission.color) {
-            material.attenuationColor = createColorWithSpace(...params.transmission.color);
+            const colorValue = Array.isArray(params.transmission.color) ? params.transmission.color :
+                              (params.transmission.color.value || [1, 1, 1]);
+            material.attenuationColor = createColorWithSpace(...colorValue);
         }
     }
 
@@ -2399,6 +2637,9 @@ function highlightMeshesWithMaterial(materialIndex) {
 
 // Clear scene
 function clearScene() {
+    // Deselect object and remove bounding box
+    deselectObject();
+
     // Remove meshes
     meshes.forEach(mesh => {
         mesh.geometry.dispose();
@@ -2428,6 +2669,10 @@ function clearScene() {
     });
     textureCache.clear();
     textureEnabled = {};
+
+    // Clear original materials map
+    originalMaterials.clear();
+    showingNormals = false;
 
     // Clear UI panels
     document.getElementById('material-panel').style.display = 'none';
@@ -2547,11 +2792,24 @@ function selectObject(object) {
         selectedObject.scale.set(1, 1, 1);
     }
 
+    // Remove previous bounding box
+    if (boundingBoxHelper) {
+        scene.remove(boundingBoxHelper);
+        boundingBoxHelper.dispose();
+        boundingBoxHelper = null;
+    }
+
     selectedObject = object;
     selectedObject.scale.set(1.1, 1.1, 1.1);
 
+    // Create bounding box helper
+    boundingBoxHelper = new THREE.BoxHelper(object, 0x00ff00);
+    scene.add(boundingBoxHelper);
+
     // Update UI
     document.getElementById('selected-object').textContent = object.name;
+
+    console.log(`Selected: ${object.name}, BBox added`);
 
     // Select corresponding material
     const materialIndex = object.userData.materialIndex;
@@ -2565,6 +2823,14 @@ function deselectObject() {
         selectedObject.scale.set(1, 1, 1);
         selectedObject = null;
     }
+
+    // Remove bounding box
+    if (boundingBoxHelper) {
+        scene.remove(boundingBoxHelper);
+        boundingBoxHelper.dispose();
+        boundingBoxHelper = null;
+    }
+
     document.getElementById('selected-object').textContent = 'None';
 }
 
@@ -2588,11 +2854,26 @@ function onWindowResize() {
 function animate() {
     requestAnimationFrame(animate);
     controls.update();
+
+    // Update bounding box if an object is selected
+    if (boundingBoxHelper && selectedObject) {
+        boundingBoxHelper.update();
+    }
+
     renderer.render(scene, camera);
 }
 
 // Initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', init);
+
+// Expose functions to global scope for HTML onclick handlers
+window.loadSampleModel = loadSampleModel;
+window.toggleEnvironment = toggleEnvironment;
+window.toggleColorSpace = toggleColorSpace;
+window.importMaterialXFile = importMaterialXFile;
+window.loadHDRTextureForMaterial = loadHDRTextureForMaterial;
+window.exportSelectedMaterialJSON = exportSelectedMaterialJSON;
+window.exportSelectedMaterialMTLX = exportSelectedMaterialMTLX;
 
 // Import MaterialX XML file and apply to selected object
 async function importMaterialXFile() {
@@ -2767,7 +3048,9 @@ function applyImportedMaterial(object, materialData) {
 
     // Apply base parameters
     if (materialData.base.color) {
-        material.color = createColorWithSpace(...materialData.base.color);
+        const colorValue = Array.isArray(materialData.base.color) ? materialData.base.color :
+                          (materialData.base.color.value || [1, 1, 1]);
+        material.color = createColorWithSpace(...colorValue);
     }
     if (materialData.base.metalness !== undefined) {
         material.metalness = materialData.base.metalness;
@@ -2800,7 +3083,9 @@ function applyImportedMaterial(object, materialData) {
 
     // Apply emission
     if (materialData.emission.color) {
-        material.emissive = createColorWithSpace(...materialData.emission.color);
+        const colorValue = Array.isArray(materialData.emission.color) ? materialData.emission.color :
+                          (materialData.emission.color.value || [0, 0, 0]);
+        material.emissive = createColorWithSpace(...colorValue);
     }
     if (materialData.emission.luminance !== undefined) {
         material.emissiveIntensity = materialData.emission.luminance;
@@ -2831,7 +3116,7 @@ function loadExternalTexture(file, onLoad, onError) {
     // Check file extension
     if (filename.endsWith('.exr')) {
         // Use Three.js EXRLoader
-        const loader = new THREE.EXRLoader();
+        const loader = new EXRLoader();
         const reader = new FileReader();
 
         reader.onload = (e) => {
@@ -2854,7 +3139,7 @@ function loadExternalTexture(file, onLoad, onError) {
 
     } else if (filename.endsWith('.hdr')) {
         // Use Three.js RGBELoader
-        const loader = new THREE.RGBELoader();
+        const loader = new RGBELoader();
         const reader = new FileReader();
 
         reader.onload = (e) => {

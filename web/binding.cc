@@ -23,7 +23,7 @@
 #include "value-types.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
-#include "openpbr-serializer.hh"
+#include "tydra/material-serializer.hh"
 
 #include "tydra/mcp-context.hh"
 #include "tydra/mcp-resources.hh"
