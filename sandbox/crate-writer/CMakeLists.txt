@@ -22,6 +22,7 @@ message(STATUS "Using TinyUSDZ library: ${TINYUSDZ_STATIC_LIB}")
 # Core writer library
 add_library(crate-writer STATIC
   src/crate-writer.cc
+  src/stage-converter.cc
 )
 
 target_include_directories(crate-writer PUBLIC
@@ -76,6 +77,37 @@ if(BUILD_CRATE_WRITER_EXAMPLES)
 
   target_include_directories(simple_write PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../
+  )
+
+  # Example: Batch USDA to USDC conversion
+  add_executable(batch_convert_usda
+    examples/batch_convert_usda.cc
+  )
+
+  target_link_libraries(batch_convert_usda
+    crate-writer
+    crate-encoding
+    ${TINYUSDZ_STATIC_LIB}
+  )
+
+  target_include_directories(batch_convert_usda PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../
+  )
+
+  # Example: Validate USDC files
+  add_executable(validate_usdc
+    examples/validate_usdc.cc
+  )
+
+  target_link_libraries(validate_usdc
+    ${TINYUSDZ_STATIC_LIB}
+  )
+
+  target_include_directories(validate_usdc PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../
   )

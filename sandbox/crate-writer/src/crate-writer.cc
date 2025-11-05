@@ -98,6 +98,7 @@ bool CrateWriter::AddSpec(const Path& path,
   // Create spec data
   SpecData spec_data;
   spec_data.path = path;
+  spec_data.spec_type = spec_type;  // Store the spec type
   spec_data.fields = fields;
 
   // We'll fill in the actual crate::Spec later during Finalize
@@ -185,7 +186,7 @@ bool CrateWriter::Finalize(std::string* err) {
     crate::PathIndex path_idx = GetOrCreatePath(spec_data.path);
     spec_data.spec.path_index = path_idx;
     spec_data.spec.fieldset_index = fieldset_idx;
-    spec_data.spec.spec_type = SpecType::Prim; // TODO: detect proper type from context
+    spec_data.spec.spec_type = spec_data.spec_type;  // Use the stored spec type
   }
 
   // ========================================================================
@@ -194,6 +195,64 @@ bool CrateWriter::Finalize(std::string* err) {
 
   // Mark end of value data section
   value_data_end_offset_ = Tell();
+
+  // ========================================================================
+  // Prepare path tree and extract tokens (must happen before TOKENS section)
+  // ========================================================================
+
+  // Build the path tree now so we can extract tokens
+  std::vector<pathlib::SimplePath> simple_paths_prep;
+
+  // Check if root exists
+  bool has_root_prep = false;
+  for (const auto& path : paths_) {
+    if (path.prim_part() == "/" && path.prop_part().empty()) {
+      has_root_prep = true;
+      break;
+    }
+  }
+
+  if (!has_root_prep) {
+    simple_paths_prep.emplace_back("/", "");
+  }
+
+  for (const auto& path : paths_) {
+    simple_paths_prep.emplace_back(path.prim_part(), path.prop_part());
+  }
+
+  // Sort and encode
+  pathlib::SortSimplePaths(simple_paths_prep);
+  pathlib::CompressedPathTree tree_prep = pathlib::EncodePaths(simple_paths_prep);
+
+  // Extract tokens from path tree into our token list
+  const auto& reverse_tokens_prep = tree_prep.token_table.GetReverseTokens();
+
+  // Find max token index
+  int32_t max_token_idx_prep = -1;
+  for (const auto& pair : reverse_tokens_prep) {
+    int32_t idx = pair.first;
+    if (idx >= 0 && idx > max_token_idx_prep) {
+      max_token_idx_prep = idx;
+    }
+  }
+
+  // Resize tokens_ and populate
+  if (max_token_idx_prep >= 0) {
+    size_t required_size_prep = static_cast<size_t>(max_token_idx_prep + 1);
+    if (tokens_.size() < required_size_prep) {
+      tokens_.resize(required_size_prep);
+    }
+
+    for (const auto& pair : reverse_tokens_prep) {
+      int32_t idx = pair.first;
+      const std::string& token_str = pair.second;
+
+      if (idx >= 0) {
+        tokens_[idx] = token_str;
+        token_to_index_[token_str] = crate::TokenIndex(static_cast<uint32_t>(idx));
+      }
+    }
+  }
 
   // Write sections in order
   if (!WriteTokensSection(err)) return false;
@@ -836,6 +895,43 @@ bool CrateWriter::WritePathsSection(std::string* err) {
   // Encode to compressed tree
   pathlib::CompressedPathTree tree = pathlib::EncodePaths(simple_paths);
 
+  // CRITICAL: Extract tokens from the path tree and add to our token list
+  // The path tree has its own token table for path elements
+  // We need to build tokens_ vector such that tokens are at the correct indices
+  const auto& reverse_tokens = tree.token_table.GetReverseTokens();
+
+  // Find the maximum non-negative token index to size the vector
+  int32_t max_token_idx = -1;
+  for (const auto& pair : reverse_tokens) {
+    int32_t idx = pair.first;
+    if (idx >= 0 && idx > max_token_idx) {
+      max_token_idx = idx;
+    }
+  }
+
+  // Resize tokens_ to accommodate all path element tokens
+  if (max_token_idx >= 0) {
+    size_t required_size = static_cast<size_t>(max_token_idx + 1);
+    if (tokens_.size() < required_size) {
+      tokens_.resize(required_size);
+    }
+
+    // Add tokens at their correct indices
+    for (const auto& pair : reverse_tokens) {
+      int32_t idx = pair.first;
+      const std::string& token_str = pair.second;
+
+      if (idx >= 0) {
+        // Regular prim token - place at index
+        tokens_[idx] = token_str;
+        token_to_index_[token_str] = crate::TokenIndex(static_cast<uint32_t>(idx));
+      }
+      // Negative indices (properties) are handled separately by OpenUSD
+      // They reference tokens by absolute value
+      // e.g., -1 means token at index 1
+    }
+  }
+
   // CRITICAL: OpenUSD expects TWO uint64_t values:
   // 1. Total number of paths (for resizing _paths vector)
   // 2. Number of encoded paths in the tree
@@ -968,10 +1064,24 @@ bool CrateWriter::WriteSpecsSection(std::string* err) {
   fieldset_indexes.reserve(num_specs);
   spec_types.reserve(num_specs);
 
-  for (const auto& spec_data : spec_data_) {
+  std::cerr << "DEBUG WriteSpecsSection: Processing " << num_specs << " specs:\n";
+  for (size_t i = 0; i < spec_data_.size(); ++i) {
+    const auto& spec_data = spec_data_[i];
     path_indexes.push_back(spec_data.spec.path_index.value);
     fieldset_indexes.push_back(spec_data.spec.fieldset_index.value);
     spec_types.push_back(static_cast<uint32_t>(spec_data.spec.spec_type));
+
+    std::cerr << "  Spec[" << i << "]: path_index=" << spec_data.spec.path_index.value
+              << " fieldset_index=" << spec_data.spec.fieldset_index.value
+              << " spec_type=" << static_cast<uint32_t>(spec_data.spec.spec_type)
+              << " (";
+    switch(spec_data.spec.spec_type) {
+      case SpecType::PseudoRoot: std::cerr << "PseudoRoot"; break;
+      case SpecType::Prim: std::cerr << "Prim"; break;
+      case SpecType::Attribute: std::cerr << "Attribute"; break;
+      default: std::cerr << "Other"; break;
+    }
+    std::cerr << ")\n";
   }
 
   // Helper to compress and write an integer array
@@ -2611,6 +2721,30 @@ bool CrateWriter::TryInlineValue(const crate::CrateValue& value, crate::ValueRep
     rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT));
     rep->SetIsInlined();
     rep->SetPayload(static_cast<uint64_t>(*uint_val));
+    return true;
+  }
+
+  // Try to get as Specifier enum
+  if (auto* spec_val = value.as<Specifier>()) {
+    rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_SPECIFIER));
+    rep->SetIsInlined();
+    rep->SetPayload(static_cast<uint64_t>(*spec_val));
+    return true;
+  }
+
+  // Try to get as Permission enum
+  if (auto* perm_val = value.as<Permission>()) {
+    rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_PERMISSION));
+    rep->SetIsInlined();
+    rep->SetPayload(static_cast<uint64_t>(*perm_val));
+    return true;
+  }
+
+  // Try to get as Variability enum
+  if (auto* var_val = value.as<Variability>()) {
+    rep->SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VARIABILITY));
+    rep->SetIsInlined();
+    rep->SetPayload(static_cast<uint64_t>(*var_val));
     return true;
   }
 
