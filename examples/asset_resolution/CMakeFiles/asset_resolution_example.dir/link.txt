@@ -1,0 +1,1 @@
+/usr/bin/c++ "CMakeFiles/asset_resolution_example.dir/asset-resolution-example.cc.o" -o ../../asset_resolution_example  ../../libtinyusdz_static.a -ldl 

@@ -1,0 +1,1 @@
+/usr/bin/c++ "CMakeFiles/api_tutorial.dir/api-tutorial-main.cc.o" -o ../../api_tutorial  ../../libtinyusdz_static.a -ldl 
