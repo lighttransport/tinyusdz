@@ -557,6 +557,14 @@ make
 - [ ] Memory usage is bounded
 - [ ] Security: no buffer overflows or memory leaks
 
+## Related Documentation
+
+- **[OpenPBR Parameters Reference](./openpbr-parameters-reference.md)** - Comprehensive parameter mapping guide
+  - Complete list of all 38 OpenPBR parameters
+  - Blender MaterialX export parameter names
+  - Three.js MeshPhysicalMaterial support status
+  - Conversion recommendations and limitations
+
 ## References
 
 - [MaterialX Specification v1.38](https://www.materialx.org/docs/api/MaterialX_v1_38_Spec.pdf)
