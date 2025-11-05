@@ -109,30 +109,14 @@ bool CrateWriter::ExtractPrimProperties(
   // Get prim type name
   std::string type_name = prim.prim_type_name();
 
-  std::cerr << "DEBUG: ExtractPrimProperties for type: " << type_name << "\n";
-
-  // Add specifier field
+  // Add specifier field (as Specifier enum, not as token)
   Specifier spec = prim.specifier();
-  std::string spec_str;
-
-  switch (spec) {
-    case Specifier::Def:
-      spec_str = "def";
-      break;
-    case Specifier::Over:
-      spec_str = "over";
-      break;
-    case Specifier::Class:
-      spec_str = "class";
-      break;
-    default:
-      spec_str = "def";
+  // USD files don't allow Invalid specifier - default to Def if we get Invalid
+  if (spec == Specifier::Invalid) {
+    spec = Specifier::Def;
   }
-
-  // Add specifier as token
-  crate::TokenIndex spec_tok = GetOrCreateToken(spec_str);
   crate::CrateValue spec_value;
-  spec_value.Set(spec_tok.value);
+  spec_value.Set(spec);  // CrateValue supports Specifier directly
   fields.push_back({"specifier", spec_value});
 
   // Add typeName if present
@@ -227,11 +211,28 @@ bool CrateWriter::ExtractMeshProperties(
         value::Value points_value(points_val);
         if (ConvertValue(points_value, crate_val, err)) {
           fields.push_back({"points", crate_val});
-          std::cerr << "DEBUG: Extracted " << points_val.size() << " points\n";
         }
       }
     }
     // TODO: Handle time samples
+  } else {
+    // Try extracting from props map as fallback
+    for (const auto& prop_pair : mesh->props) {
+      if (prop_pair.first == "points") {
+        const Property& prop = prop_pair.second;
+        if (prop.is_attribute()) {
+          const Attribute& attr = prop.get_attribute();
+          if (attr.is_value()) {
+            const primvar::PrimVar& pvar = attr.get_var();
+            const value::Value& val = pvar.value_raw();
+            crate::CrateValue crate_val;
+            if (ConvertValue(val, crate_val, err)) {
+              fields.push_back({"points", crate_val});
+            }
+          }
+        }
+      }
+    }
   }
 
   // Extract normals
@@ -244,7 +245,6 @@ bool CrateWriter::ExtractMeshProperties(
         value::Value normals_value(normals_val);
         if (ConvertValue(normals_value, crate_val, err)) {
           fields.push_back({"normals", crate_val});
-          std::cerr << "DEBUG: Extracted " << normals_val.size() << " normals\n";
         }
       }
     }
@@ -260,7 +260,6 @@ bool CrateWriter::ExtractMeshProperties(
         value::Value counts_value(counts_val);
         if (ConvertValue(counts_value, crate_val, err)) {
           fields.push_back({"faceVertexCounts", crate_val});
-          std::cerr << "DEBUG: Extracted " << counts_val.size() << " faceVertexCounts\n";
         }
       }
     }
