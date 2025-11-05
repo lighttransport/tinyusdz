@@ -1,0 +1,31 @@
+{
+  "name": "hdrgen",
+  "version": "1.1.0",
+  "description": "Synthetic HDR/EXR/LDR environment map generator with rotation, scaling, and tone mapping",
+  "main": "src/hdrgen.js",
+  "type": "module",
+  "bin": {
+    "hdrgen": "./src/cli.js"
+  },
+  "scripts": {
+    "generate": "node src/cli.js",
+    "example": "node examples/generate-all.js",
+    "test": "node examples/test-presets.js"
+  },
+  "keywords": [
+    "hdr",
+    "exr",
+    "environment-map",
+    "cubemap",
+    "latlong",
+    "ibl",
+    "pbr"
+  ],
+  "author": "TinyUSDZ Project",
+  "license": "Apache-2.0",
+  "dependencies": {},
+  "devDependencies": {},
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
