@@ -1,0 +1,1 @@
+/usr/bin/c++ "CMakeFiles/file_format_example.dir/file-format-example.cc.o" -o ../../file_format_example  ../../libtinyusdz_static.a -ldl 

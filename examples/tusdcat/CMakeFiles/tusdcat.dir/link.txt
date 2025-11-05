@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/tusdcat.dir/main.cc.o -o ../../tusdcat  ../../libtinyusdz_static.a -ldl 
