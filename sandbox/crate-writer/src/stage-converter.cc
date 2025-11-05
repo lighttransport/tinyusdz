@@ -912,16 +912,73 @@ bool CrateWriter::ConvertValue(
 // ============================================================================
 
 bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
-  std::cout << "[ConvertLayerToSpecs] TODO: Layer→Crate conversion not yet fully implemented\n";
+  std::cout << "[ConvertLayerToSpecs] Starting Layer→Crate conversion\n";
 
-  // TODO: Full implementation requires fixing multiple API mismatches:
-  // - PrimVar::value_raw() vs get_default()
-  // - AttrMetas::customData vs custom field
-  // - CrateValue::Set() with Path objects
-  // - Relationship API differences
+  // 1. Add PseudoRoot spec
+  // The PseudoRoot is a special prim at "/" that serves as the root of the scene
+  {
+    Path root_path("/");
+    crate::FieldValuePairVector root_fields;
 
-  if (err) *err = "Layer→Crate conversion not yet fully implemented";
-  return false;
+    // PseudoRoot has a special specifier
+    crate::CrateValue spec_value;
+    crate::TokenIndex spec_tok = GetOrCreateToken("def");  // PseudoRoot uses def
+    spec_value.Set(spec_tok.value);
+    root_fields.push_back({"specifier", spec_value});
+
+    // Add PseudoRoot spec
+    if (!AddSpec(root_path, SpecType::PseudoRoot, root_fields, err)) {
+      if (err) *err = "Failed to add PseudoRoot spec";
+      return false;
+    }
+  }
+
+  // 2. Convert layer metadata to fields
+  const LayerMetas& layer_metas = layer.metas();
+
+  // Add layer metadata to the PseudoRoot
+  if (!layer_metas.doc.empty() || !layer_metas.comment.empty()) {
+    Path root_path("/");
+    crate::FieldValuePairVector meta_fields;
+
+    if (!layer_metas.doc.empty()) {
+      crate::CrateValue doc_value;
+      doc_value.Set(layer_metas.doc);
+      meta_fields.push_back({"documentation", doc_value});
+    }
+
+    if (!layer_metas.comment.empty()) {
+      crate::CrateValue comment_value;
+      comment_value.Set(layer_metas.comment);
+      meta_fields.push_back({"comment", comment_value});
+    }
+
+    // TODO: Add these metadata fields to the PseudoRoot spec
+    // For now, we'll skip layer metadata
+  }
+
+  // 3. Convert all primspecs in the layer
+  size_t prim_count = 0;
+  for (const auto& [prim_name, primspec] : layer.primspecs()) {
+    std::cout << "[ConvertLayerToSpecs] Converting primspec: " << prim_name << "\n";
+
+    // Each top-level primspec is a direct child of root
+    Path root_path("/");
+
+    if (!ConvertPrimSpecRecursive(primspec, root_path, err)) {
+      if (err) *err = "Failed to convert primspec: " + prim_name + ". Error: " + (*err);
+      return false;
+    }
+
+    prim_count++;
+  }
+
+  std::cout << "[ConvertLayerToSpecs] Successfully converted " << prim_count << " primspecs\n";
+
+  // 4. TODO: Handle sublayers if present
+  // if (layer.HasSublayers()) { ... }
+
+  return true;
 }
 
 bool CrateWriter::ConvertPrimSpecRecursive(
@@ -929,17 +986,117 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     const Path& parent_path,
     std::string* err) {
 
-  // TODO: Implementation requires fixing API mismatches with TinyUSDZ
-  // - PrimVar API for value extraction
-  // - AttrMeta structure for custom flag
-  // - CrateValue::Set() with Path/vector<Path>
-  // - Property type checking and dispatch
+  // 1. Build path for this prim
+  Path prim_path;
+  if (parent_path.is_root_path()) {
+    // Parent is root, append as direct child
+    prim_path = Path("/" + primspec.name());
+  } else {
+    // Append to parent path
+    prim_path = parent_path.AppendPrim(primspec.name());
+  }
 
-  (void)primspec;  // Suppress unused variable warning
-  (void)parent_path;
+  std::cout << "[ConvertPrimSpecRecursive] Processing prim: " << prim_path.full_path_name() << "\n";
 
-  if (err) *err = "ConvertPrimSpecRecursive not yet implemented";
-  return false;
+  // 2. Create fields for this prim spec
+  crate::FieldValuePairVector fields;
+
+  // Add specifier (def, over, class)
+  crate::CrateValue spec_value;
+  // Convert Specifier enum to token
+  std::string spec_str;
+  switch (primspec.specifier()) {
+    case Specifier::Def:
+      spec_str = "def";
+      break;
+    case Specifier::Over:
+      spec_str = "over";
+      break;
+    case Specifier::Class:
+      spec_str = "class";
+      break;
+    default:
+      spec_str = "def";  // Default to def
+      break;
+  }
+  crate::TokenIndex spec_tok = GetOrCreateToken(spec_str);
+  spec_value.Set(spec_tok.value);
+  fields.push_back({"specifier", spec_value});
+
+  // Add typeName if present
+  if (!primspec.typeName().empty()) {
+    crate::CrateValue type_value;
+    crate::TokenIndex type_tok = GetOrCreateToken(primspec.typeName());
+    type_value.Set(type_tok.value);
+    fields.push_back({"typeName", type_value});
+  }
+
+  // 3. Convert properties (attributes, relationships, connections)
+  for (const auto& [prop_name, prop] : primspec.props()) {
+    if (!ConvertPropertyToFields(prop_name, prop, fields, err)) {
+      if (err) *err = "Failed to convert property: " + prop_name + " on prim: " + prim_path.full_path_name();
+      return false;
+    }
+  }
+
+  // 4. Convert metadata from PrimMeta
+  const PrimMeta& metas = primspec.metas();
+
+  // Add common metadata
+  if (metas.active) {
+    crate::CrateValue active_value;
+    active_value.Set(metas.active.value());
+    fields.push_back({"active", active_value});
+  }
+
+  if (metas.hidden) {
+    crate::CrateValue hidden_value;
+    hidden_value.Set(metas.hidden.value());
+    fields.push_back({"hidden", hidden_value});
+  }
+
+  if (metas.kind) {
+    crate::CrateValue kind_value;
+    crate::TokenIndex kind_tok = GetOrCreateToken(metas.kind.value());
+    kind_value.Set(kind_tok.value);
+    fields.push_back({"kind", kind_value});
+  }
+
+  if (!metas.displayName.empty()) {
+    crate::CrateValue display_value;
+    display_value.Set(metas.displayName);
+    fields.push_back({"displayName", display_value});
+  }
+
+  if (!metas.doc.empty()) {
+    crate::CrateValue doc_value;
+    doc_value.Set(metas.doc);
+    fields.push_back({"documentation", doc_value});
+  }
+
+  // TODO: Convert other metadata:
+  // - customData (Dictionary)
+  // - apiSchemas
+  // - references
+  // - payloads
+  // - inherits
+  // - variantSets
+  // - assetInfo
+
+  // 5. Add spec to file
+  if (!AddSpec(prim_path, SpecType::Prim, fields, err)) {
+    if (err) *err = "Failed to add spec for prim: " + prim_path.full_path_name();
+    return false;
+  }
+
+  // 6. Recursively process children
+  for (const PrimSpec& child : primspec.children()) {
+    if (!ConvertPrimSpecRecursive(child, prim_path, err)) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 bool CrateWriter::ConvertPropertyToFields(
@@ -1074,13 +1231,82 @@ bool CrateWriter::ConvertRelationshipToFields(
     crate::FieldValuePairVector& fields,
     std::string* err) {
 
-  // TODO: Implementation requires fixing TinyUSDZ API mismatches
-  (void)rel_name;
-  (void)rel;
-  (void)fields;
+  // IMPORTANT: In proper USD Crate format, relationships should create
+  // separate specs with SpecType::Relationship. For now, we add fields
+  // to the parent prim spec.
 
-  if (err) *err = "ConvertRelationshipToFields not yet implemented";
-  return false;
+  // TODO: Create separate relationship spec:
+  // Path rel_path = parent_path.AppendProperty(rel_name);
+  // AddSpec(rel_path, SpecType::Relationship, rel_fields, err);
+
+  // 1. Check relationship type and add targetPaths
+  if (rel.is_blocked()) {
+    // Add ValueBlock for the relationship
+    crate::CrateValue blocked_value;
+    blocked_value.Set(value::ValueBlock());
+    fields.push_back({rel_name, blocked_value});
+    return true;
+  } else if (rel.is_path()) {
+    // Single target path
+    crate::CrateValue path_value;
+    // Need to make a copy of the Path for CrateValue::Set
+    Path target = rel.targetPath;
+    path_value.Set(target);
+    fields.push_back({rel_name + ".targetPaths", path_value});
+  } else if (rel.is_pathvector()) {
+    // Multiple target paths
+    crate::CrateValue paths_value;
+    // Make a copy of the path vector
+    std::vector<Path> targets = rel.targetPathVector;
+    paths_value.Set(targets);
+    fields.push_back({rel_name + ".targetPaths", paths_value});
+  }
+  // DefineOnly relationships don't add targetPaths field
+
+  // 2. Add list edit qualifier if not default
+  if (rel.get_listedit_qual() != ListEditQual::ResetToExplicit) {
+    crate::CrateValue qual_value;
+    // Convert ListEditQual to token
+    std::string qual_str;
+    switch (rel.get_listedit_qual()) {
+      case ListEditQual::Append:
+        qual_str = "append";
+        break;
+      case ListEditQual::Prepend:
+        qual_str = "prepend";
+        break;
+      case ListEditQual::Add:
+        qual_str = "add";
+        break;
+      case ListEditQual::Delete:
+        qual_str = "delete";
+        break;
+      case ListEditQual::Order:
+        qual_str = "order";
+        break;
+      case ListEditQual::ResetToExplicit:
+      default:
+        qual_str = "explicit";
+        break;
+    }
+    crate::TokenIndex qual_tok = GetOrCreateToken(qual_str);
+    qual_value.Set(qual_tok.value);
+    fields.push_back({rel_name + ".listOpQual", qual_value});
+  }
+
+  // 3. Relationships have implicit uniform variability
+  // Add it explicitly in the Crate format
+  crate::CrateValue var_value;
+  crate::TokenIndex var_tok = GetOrCreateToken("uniform");
+  var_value.Set(var_tok.value);
+  fields.push_back({rel_name + ".variability", var_value});
+
+  // 4. TODO: Add other relationship metadata if present
+  // - documentation
+  // - hidden
+  // - customData
+
+  return true;
 }
 
 bool CrateWriter::ConvertConnectionToFields(
@@ -1089,13 +1315,51 @@ bool CrateWriter::ConvertConnectionToFields(
     crate::FieldValuePairVector& fields,
     std::string* err) {
 
-  // TODO: Implementation requires fixing TinyUSDZ API mismatches
-  (void)conn_name;
-  (void)attr;
-  (void)fields;
+  // IMPORTANT: In proper USD Crate format, attribute connections should create
+  // separate specs with SpecType::Connection. For now, we add fields
+  // to the parent prim spec.
 
-  if (err) *err = "ConvertConnectionToFields not yet implemented";
-  return false;
+  // TODO: Create separate connection spec:
+  // Path conn_path = parent_path.AppendProperty(conn_name).AppendProperty("connect");
+  // AddSpec(conn_path, SpecType::Connection, conn_fields, err);
+
+  // Attribute connections represent ".connect" relationships
+  if (!attr.has_connections()) {
+    // No connections to process
+    return true;
+  }
+
+  // 1. Add connection paths
+  const std::vector<Path>& conn_paths = attr.connections();
+
+  if (conn_paths.size() == 1) {
+    // Single connection path
+    crate::CrateValue conn_value;
+    // Make a copy of the Path for CrateValue::Set
+    Path conn_path = conn_paths[0];
+    conn_value.Set(conn_path);
+    fields.push_back({conn_name + ".connect", conn_value});
+  } else if (conn_paths.size() > 1) {
+    // Multiple connection paths
+    crate::CrateValue conns_value;
+    // Make a copy of the paths vector
+    std::vector<Path> paths_copy = conn_paths;
+    conns_value.Set(paths_copy);
+    fields.push_back({conn_name + ".connect", conns_value});
+  }
+
+  // 2. Add type name for the connection (same as attribute type)
+  if (!attr.type_name().empty()) {
+    crate::CrateValue type_value;
+    crate::TokenIndex type_tok = GetOrCreateToken(attr.type_name());
+    type_value.Set(type_tok.value);
+    fields.push_back({conn_name + ".connect.typeName", type_value});
+  }
+
+  // 3. Connections don't have variability or other metadata typically
+  // They inherit from the attribute they're connected to
+
+  return true;
 }
 
 } // namespace experimental
