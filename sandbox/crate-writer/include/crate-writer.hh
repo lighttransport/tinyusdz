@@ -128,6 +128,7 @@ private:
   /// Internal spec representation before writing
   struct SpecData {
     Path path;
+    SpecType spec_type;  // Store the spec type for later use
     crate::Spec spec;
     crate::FieldValuePairVector fields;
   };
