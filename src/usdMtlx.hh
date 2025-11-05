@@ -29,6 +29,9 @@ constexpr auto kMtlxUsdPreviewSurface = "MtlxUsdPreviewSurface";
 constexpr auto kMtlxAutodeskStandardSurface = "MtlxAutodeskStandardSurface";
 constexpr auto kMtlxOpenPBRSurface = "MtlxOpenPBRSurface";
 
+// MaterialX node definition IDs (as used in info:id attribute)
+constexpr auto kNdOpenPbrSurfaceSurfaceshader = "ND_open_pbr_surface_surfaceshader";
+
 
 namespace mtlx {
 
@@ -101,6 +104,7 @@ struct MtlxOpenPBRSurface : ShaderNode {
   TypedAttributeWithFallback<Animatable<float>> specular_ior{1.5f};
   TypedAttributeWithFallback<Animatable<float>> specular_anisotropy{0.0f};
   TypedAttributeWithFallback<Animatable<float>> specular_rotation{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> specular_roughness_anisotropy{0.0f};
 
   // Transmission properties
   TypedAttributeWithFallback<Animatable<float>> transmission_weight{0.0f};
@@ -111,15 +115,19 @@ struct MtlxOpenPBRSurface : ShaderNode {
       value::color3f{0.0f, 0.0f, 0.0f}};
   TypedAttributeWithFallback<Animatable<float>> transmission_scatter_anisotropy{0.0f};
   TypedAttributeWithFallback<Animatable<float>> transmission_dispersion{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> transmission_dispersion_abbe_number{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> transmission_dispersion_scale{0.0f};
 
   // Subsurface properties
   TypedAttributeWithFallback<Animatable<float>> subsurface_weight{0.0f};
   TypedAttributeWithFallback<Animatable<value::color3f>> subsurface_color{
       value::color3f{0.8f, 0.8f, 0.8f}};
-  TypedAttributeWithFallback<Animatable<value::color3f>> subsurface_radius{
-      value::color3f{1.0f, 1.0f, 1.0f}};
+  TypedAttributeWithFallback<Animatable<float>> subsurface_radius{0.05f};  // Blender uses float, not color3f
+  TypedAttributeWithFallback<Animatable<value::color3f>> subsurface_radius_scale{
+      value::color3f{1.0f, 0.2f, 0.1f}};
   TypedAttributeWithFallback<Animatable<float>> subsurface_scale{1.0f};
   TypedAttributeWithFallback<Animatable<float>> subsurface_anisotropy{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> subsurface_scatter_anisotropy{0.0f};
 
   // Coat properties
   TypedAttributeWithFallback<Animatable<float>> coat_weight{0.0f};
@@ -128,13 +136,22 @@ struct MtlxOpenPBRSurface : ShaderNode {
   TypedAttributeWithFallback<Animatable<float>> coat_roughness{0.1f};
   TypedAttributeWithFallback<Animatable<float>> coat_anisotropy{0.0f};
   TypedAttributeWithFallback<Animatable<float>> coat_rotation{0.0f};
+  TypedAttributeWithFallback<Animatable<float>> coat_roughness_anisotropy{0.0f};
   TypedAttributeWithFallback<Animatable<float>> coat_ior{1.6f};
+  TypedAttributeWithFallback<Animatable<float>> coat_darkening{0.0f};
   TypedAttributeWithFallback<Animatable<float>> coat_affect_color{0.0f};
   TypedAttributeWithFallback<Animatable<float>> coat_affect_roughness{0.0f};
+
+  // Fuzz properties (fabric/cloth layer)
+  TypedAttributeWithFallback<Animatable<float>> fuzz_weight{0.0f};
+  TypedAttributeWithFallback<Animatable<value::color3f>> fuzz_color{
+      value::color3f{1.0f, 1.0f, 1.0f}};
+  TypedAttributeWithFallback<Animatable<float>> fuzz_roughness{0.5f};
 
   // Thin film properties
   TypedAttributeWithFallback<Animatable<float>> thin_film_thickness{0.0f};
   TypedAttributeWithFallback<Animatable<float>> thin_film_ior{1.5f};
+  TypedAttributeWithFallback<Animatable<float>> thin_film_weight{0.0f};
 
   // Emission properties
   TypedAttributeWithFallback<Animatable<float>> emission_luminance{0.0f};
@@ -148,9 +165,11 @@ struct MtlxOpenPBRSurface : ShaderNode {
   // Normal and tangent
   TypedAttribute<Animatable<value::normal3f>> geometry_normal;
   TypedAttribute<Animatable<value::vector3f>> geometry_tangent;
+  TypedAttribute<Animatable<value::normal3f>> geometry_coat_normal;
+  TypedAttribute<Animatable<value::vector3f>> geometry_coat_tangent;
 
   // Output
-  TypedTerminalAttribute<value::token> out;  // 'out'
+  TypedTerminalAttribute<value::token> surface;  // 'outputs:surface'
 };
 
 // https://github.com/Autodesk/standard-surface/blob/master/reference/standard_surface.mtlx
