@@ -948,13 +948,32 @@ bool CrateWriter::ConvertPropertyToFields(
     crate::FieldValuePairVector& fields,
     std::string* err) {
 
-  // TODO: Implementation requires fixing TinyUSDZ API mismatches
-  (void)prop_name;
-  (void)prop;
-  (void)fields;
+  // Dispatch based on property type
+  if (prop.is_empty()) {
+    // Empty property - skip
+    return true;
+  } else if (prop.is_attribute()) {
+    // Convert attribute
+    bool success = ConvertAttributeToFields(prop_name, prop.get_attribute(), fields, err);
 
-  if (err) *err = "ConvertPropertyToFields not yet implemented";
-  return false;
+    // Add custom flag if set (Property level, not Attribute level)
+    if (success && prop.has_custom()) {
+      crate::CrateValue custom_value;
+      custom_value.Set(true);
+      fields.push_back({prop_name + ".custom", custom_value});
+    }
+
+    return success;
+  } else if (prop.is_relationship()) {
+    // Convert relationship
+    return ConvertRelationshipToFields(prop_name, prop.get_relationship(), fields, err);
+  } else if (prop.is_attribute_connection()) {
+    // Convert connection
+    return ConvertConnectionToFields(prop_name, prop.get_attribute(), fields, err);
+  } else {
+    if (err) *err = "Unknown property type for: " + prop_name;
+    return false;
+  }
 }
 
 bool CrateWriter::ConvertAttributeToFields(
@@ -963,13 +982,90 @@ bool CrateWriter::ConvertAttributeToFields(
     crate::FieldValuePairVector& fields,
     std::string* err) {
 
-  // TODO: Implementation requires fixing TinyUSDZ API mismatches
-  (void)attr_name;
-  (void)attr;
-  (void)fields;
+  // NOTE: This function adds fields to the parent prim spec
+  // In a proper implementation, attributes should create separate specs
+  // with SpecType::Attribute, but for now we add fields to the parent
 
-  if (err) *err = "ConvertAttributeToFields not yet implemented";
-  return false;
+  // 1. Add type name
+  if (!attr.type_name().empty()) {
+    crate::CrateValue type_value;
+    // GetOrCreateToken returns TokenIndex, extract the uint32_t value
+    crate::TokenIndex tok_idx = GetOrCreateToken(attr.type_name());
+    type_value.Set(tok_idx.value);
+    fields.push_back({attr_name + ".typeName", type_value});
+  }
+
+  // 2. Extract value from PrimVar
+  const primvar::PrimVar& pvar = attr.get_var();
+
+  // 2a. Check for blocked value
+  if (pvar.is_blocked()) {
+    // Add a ValueBlock indicator
+    // CrateValue doesn't have SetValueBlock(), need to use value::ValueBlock
+    crate::CrateValue blocked_value;
+    blocked_value.Set(value::ValueBlock());
+    fields.push_back({attr_name, blocked_value});
+    return true;
+  }
+
+  // 2b. Extract default value
+  if (pvar.has_value()) {
+    const value::Value& val = pvar.value_raw();
+    crate::CrateValue crate_val;
+
+    // Use existing ConvertValue helper
+    if (!ConvertValue(val, crate_val, err)) {
+      if (err) *err = "Failed to convert attribute value: " + attr_name;
+      return false;
+    }
+
+    fields.push_back({attr_name, crate_val});
+  }
+
+  // 2c. Extract time samples
+  if (pvar.has_timesamples()) {
+    // TODO: Convert TimeSamples to Crate format
+    // This requires creating a TimeSamples CrateValue
+    std::cerr << "[ConvertAttributeToFields] TimeSamples not yet implemented for " << attr_name << "\n";
+  }
+
+  // 3. Add variability if not default
+  if (attr.variability() != Variability::Varying) {
+    crate::CrateValue var_value;
+    crate::TokenIndex var_tok = GetOrCreateToken(to_string(attr.variability()));
+    var_value.Set(var_tok.value);
+    fields.push_back({attr_name + ".variability", var_value});
+  }
+
+  // 4. Add custom flag if set (Property level, not AttrMeta)
+  // Note: The custom flag is typically set at the Property level
+  // We'll need to handle this when calling from ConvertPropertyToFields
+
+  // 5. Add metadata from AttrMetas
+  const AttrMetas& metas = attr.metas();
+
+  // Add interpolation if specified
+  if (metas.interpolation) {
+    crate::CrateValue interp_value;
+    crate::TokenIndex interp_tok = GetOrCreateToken(to_string(metas.interpolation.value()));
+    interp_value.Set(interp_tok.value);
+    fields.push_back({attr_name + ".interpolation", interp_value});
+  }
+
+  // Add hidden if specified
+  if (metas.hidden) {
+    crate::CrateValue hidden_value;
+    hidden_value.Set(metas.hidden.value());
+    fields.push_back({attr_name + ".hidden", hidden_value});
+  }
+
+  // Add customData if present
+  if (metas.customData) {
+    // TODO: Convert Dictionary to CrateValue
+    std::cerr << "[ConvertAttributeToFields] customData conversion not yet implemented for " << attr_name << "\n";
+  }
+
+  return true;
 }
 
 bool CrateWriter::ConvertRelationshipToFields(
