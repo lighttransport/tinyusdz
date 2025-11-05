@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/save_usda.dir/main.cc.o -o ../../save_usda  ../../libtinyusdz_static.a -ldl 

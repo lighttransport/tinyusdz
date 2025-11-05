@@ -1,0 +1,1 @@
+/usr/bin/c++ "CMakeFiles/tusddiff.dir/usddiff-main.cc.o" -o ../../tusddiff  ../../libtinyusdz_static.a -ldl 
