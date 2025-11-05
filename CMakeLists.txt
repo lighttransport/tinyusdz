@@ -497,6 +497,8 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-pprint.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data-pprint.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/material-serializer.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/material-serializer.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/render-scene-dump.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/render-scene-dump.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/bone-util.cc
