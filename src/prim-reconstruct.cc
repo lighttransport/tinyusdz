@@ -5530,6 +5530,153 @@ bool ReconstructShader<MtlxAutodeskStandardSurface>(
 }
 
 template <>
+bool ReconstructShader<MtlxOpenPBRSurface>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    MtlxOpenPBRSurface *surface,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+  (void)spec;
+  (void)references;
+  (void)options;
+  (void)warn;
+
+  std::set<std::string> table;
+  table.insert("info:id"); // `info:id` is already parsed in ReconstructPrim<Shader>
+
+  for (auto &prop : properties) {
+    // Base properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:base_weight", MtlxOpenPBRSurface,
+                         surface->base_weight)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:base_color", MtlxOpenPBRSurface,
+                         surface->base_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:base_metalness", MtlxOpenPBRSurface,
+                         surface->base_metalness)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:base_diffuse_roughness", MtlxOpenPBRSurface,
+                         surface->base_diffuse_roughness)
+
+    // Specular properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_weight", MtlxOpenPBRSurface,
+                         surface->specular_weight)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_color", MtlxOpenPBRSurface,
+                         surface->specular_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_roughness", MtlxOpenPBRSurface,
+                         surface->specular_roughness)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_ior", MtlxOpenPBRSurface,
+                         surface->specular_ior)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_anisotropy", MtlxOpenPBRSurface,
+                         surface->specular_anisotropy)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_rotation", MtlxOpenPBRSurface,
+                         surface->specular_rotation)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular_roughness_anisotropy", MtlxOpenPBRSurface,
+                         surface->specular_roughness_anisotropy)
+
+    // Transmission properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_weight", MtlxOpenPBRSurface,
+                         surface->transmission_weight)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_color", MtlxOpenPBRSurface,
+                         surface->transmission_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_depth", MtlxOpenPBRSurface,
+                         surface->transmission_depth)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_scatter", MtlxOpenPBRSurface,
+                         surface->transmission_scatter)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_scatter_anisotropy", MtlxOpenPBRSurface,
+                         surface->transmission_scatter_anisotropy)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_dispersion", MtlxOpenPBRSurface,
+                         surface->transmission_dispersion)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_dispersion_abbe_number", MtlxOpenPBRSurface,
+                         surface->transmission_dispersion_abbe_number)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:transmission_dispersion_scale", MtlxOpenPBRSurface,
+                         surface->transmission_dispersion_scale)
+
+    // Subsurface properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_weight", MtlxOpenPBRSurface,
+                         surface->subsurface_weight)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_color", MtlxOpenPBRSurface,
+                         surface->subsurface_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_radius", MtlxOpenPBRSurface,
+                         surface->subsurface_radius)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_radius_scale", MtlxOpenPBRSurface,
+                         surface->subsurface_radius_scale)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_scale", MtlxOpenPBRSurface,
+                         surface->subsurface_scale)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_anisotropy", MtlxOpenPBRSurface,
+                         surface->subsurface_anisotropy)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:subsurface_scatter_anisotropy", MtlxOpenPBRSurface,
+                         surface->subsurface_scatter_anisotropy)
+
+    // Coat properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_weight", MtlxOpenPBRSurface,
+                         surface->coat_weight)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_color", MtlxOpenPBRSurface,
+                         surface->coat_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_roughness", MtlxOpenPBRSurface,
+                         surface->coat_roughness)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_anisotropy", MtlxOpenPBRSurface,
+                         surface->coat_anisotropy)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_rotation", MtlxOpenPBRSurface,
+                         surface->coat_rotation)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_roughness_anisotropy", MtlxOpenPBRSurface,
+                         surface->coat_roughness_anisotropy)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_ior", MtlxOpenPBRSurface,
+                         surface->coat_ior)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_darkening", MtlxOpenPBRSurface,
+                         surface->coat_darkening)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_affect_color", MtlxOpenPBRSurface,
+                         surface->coat_affect_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:coat_affect_roughness", MtlxOpenPBRSurface,
+                         surface->coat_affect_roughness)
+
+    // Fuzz properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fuzz_weight", MtlxOpenPBRSurface,
+                         surface->fuzz_weight)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fuzz_color", MtlxOpenPBRSurface,
+                         surface->fuzz_color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:fuzz_roughness", MtlxOpenPBRSurface,
+                         surface->fuzz_roughness)
+
+    // Thin film properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:thin_film_thickness", MtlxOpenPBRSurface,
+                         surface->thin_film_thickness)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:thin_film_ior", MtlxOpenPBRSurface,
+                         surface->thin_film_ior)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:thin_film_weight", MtlxOpenPBRSurface,
+                         surface->thin_film_weight)
+
+    // Emission properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:emission_luminance", MtlxOpenPBRSurface,
+                         surface->emission_luminance)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:emission_color", MtlxOpenPBRSurface,
+                         surface->emission_color)
+
+    // Geometry properties
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:geometry_opacity", MtlxOpenPBRSurface,
+                         surface->geometry_opacity)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:geometry_thin_walled", MtlxOpenPBRSurface,
+                         surface->geometry_thin_walled)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:geometry_normal", MtlxOpenPBRSurface,
+                         surface->geometry_normal)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:geometry_tangent", MtlxOpenPBRSurface,
+                         surface->geometry_tangent)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:geometry_coat_normal", MtlxOpenPBRSurface,
+                         surface->geometry_coat_normal)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:geometry_coat_tangent", MtlxOpenPBRSurface,
+                         surface->geometry_coat_tangent)
+
+    // Output
+    PARSE_SHADER_TERMINAL_ATTRIBUTE(table, prop, "outputs:surface", MtlxOpenPBRSurface,
+                   surface->surface)
+
+    ADD_PROPERTY(table, prop, MtlxOpenPBRSurface, surface->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+
+  return true;
+}
+
+template <>
 bool ReconstructShader<OpenPBRSurface>(
     const Specifier &spec,
     PropertyMap &properties,
@@ -5847,6 +5994,15 @@ bool ReconstructPrim<Shader>(
       PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kMtlxAutodeskStandardSurface);
     }
     shader->info_id = kMtlxAutodeskStandardSurface;
+    shader->value = surface;
+  } else if (shader_type.compare(kNdOpenPbrSurfaceSurfaceshader) == 0) {
+    // Blender v4.5 MaterialX OpenPBR Surface export
+    MtlxOpenPBRSurface surface;
+    if (!ReconstructShader<MtlxOpenPBRSurface>(spec, properties, references,
+                                                &surface, warn, err, options)) {
+      PUSH_ERROR_AND_RETURN("Failed to Reconstruct " << kNdOpenPbrSurfaceSurfaceshader);
+    }
+    shader->info_id = kNdOpenPbrSurfaceSurfaceshader;
     shader->value = surface;
   } else {
     // Reconstruct as generic ShaderNode
