@@ -43,6 +43,7 @@
 #include "tinyusdz.hh"
 #include "usdGeom.hh"
 #include "usdShade.hh"
+#include "usdMtlx.hh"
 #include "value-pprint.hh"
 #include "logger.hh"
 #include "bone-util.hh"
@@ -6182,6 +6183,7 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
 
   //
   // surface shader
+  // First try outputs:surface (standard USD), then outputs:mtlx:surface (MaterialX)
   {
     if (material.surface.authored()) {
       auto paths = material.surface.get_connections();
@@ -6233,10 +6235,11 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
                       shaderPrim->prim_type_name()));
     }
 
-    // Check for UsdPreviewSurface or OpenPBRSurface
+    // Check for UsdPreviewSurface, OpenPBRSurface, or MtlxOpenPBRSurface (Blender v4.5+ export)
     const UsdPreviewSurface *psurface = shader->value.as<UsdPreviewSurface>();
     const OpenPBRSurface *openpbr = shader->value.as<OpenPBRSurface>();
-    
+    const MtlxOpenPBRSurface *mtlx_openpbr = shader->value.as<MtlxOpenPBRSurface>();
+
     // prop part must be `outputs:surface` for now.
     if (surfacePath.prop_part() != "outputs:surface") {
       PUSH_ERROR_AND_RETURN(
@@ -6244,7 +6247,7 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
                       "`outputs:surface`, but got `{}`",
                       mat_abs_path.full_path_name(), surfacePath.prop_part()));
     }
-    
+
     if (psurface) {
       // Convert UsdPreviewSurface
       PreviewSurfaceShader pss;
@@ -6254,7 +6257,7 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
       }
       rmat.surfaceShader = pss;
     }
-    
+
     if (openpbr) {
       // Convert OpenPBRSurface
       OpenPBRSurfaceShader openpbr_shader;
@@ -6264,11 +6267,275 @@ bool RenderSceneConverter::ConvertMaterial(const RenderSceneConverterEnv &env,
       }
       rmat.openPBRShader = openpbr_shader;
     }
-    
-    if (!psurface && !openpbr) {
+
+    if (mtlx_openpbr) {
+      // Convert MtlxOpenPBRSurface (Blender v4.5+ MaterialX export with ND_open_pbr_surface_surfaceshader)
+      // For now, convert it to OpenPBRSurface format by copying compatible parameters
+      OpenPBRSurface converted_openpbr;
+
+      // Copy base layer properties
+      converted_openpbr.base_weight = mtlx_openpbr->base_weight;
+      converted_openpbr.base_color = mtlx_openpbr->base_color;
+      converted_openpbr.base_roughness = mtlx_openpbr->base_diffuse_roughness;
+      converted_openpbr.base_metalness = mtlx_openpbr->base_metalness;
+
+      // Copy specular properties
+      converted_openpbr.specular_weight = mtlx_openpbr->specular_weight;
+      converted_openpbr.specular_color = mtlx_openpbr->specular_color;
+      converted_openpbr.specular_roughness = mtlx_openpbr->specular_roughness;
+      converted_openpbr.specular_ior = mtlx_openpbr->specular_ior;
+      converted_openpbr.specular_anisotropy = mtlx_openpbr->specular_anisotropy;
+      converted_openpbr.specular_rotation = mtlx_openpbr->specular_rotation;
+
+      // Copy transmission properties
+      converted_openpbr.transmission_weight = mtlx_openpbr->transmission_weight;
+      converted_openpbr.transmission_color = mtlx_openpbr->transmission_color;
+      converted_openpbr.transmission_depth = mtlx_openpbr->transmission_depth;
+      converted_openpbr.transmission_scatter = mtlx_openpbr->transmission_scatter;
+      converted_openpbr.transmission_scatter_anisotropy = mtlx_openpbr->transmission_scatter_anisotropy;
+      converted_openpbr.transmission_dispersion = mtlx_openpbr->transmission_dispersion;
+
+      // Copy subsurface properties
+      converted_openpbr.subsurface_weight = mtlx_openpbr->subsurface_weight;
+      converted_openpbr.subsurface_color = mtlx_openpbr->subsurface_color;
+      converted_openpbr.subsurface_scale = mtlx_openpbr->subsurface_scale;
+      converted_openpbr.subsurface_anisotropy = mtlx_openpbr->subsurface_anisotropy;
+
+      // Copy coat properties
+      converted_openpbr.coat_weight = mtlx_openpbr->coat_weight;
+      converted_openpbr.coat_color = mtlx_openpbr->coat_color;
+      converted_openpbr.coat_roughness = mtlx_openpbr->coat_roughness;
+      converted_openpbr.coat_anisotropy = mtlx_openpbr->coat_anisotropy;
+      converted_openpbr.coat_rotation = mtlx_openpbr->coat_rotation;
+      converted_openpbr.coat_ior = mtlx_openpbr->coat_ior;
+      // Note: MtlxOpenPBRSurface has float coat_affect_color, OpenPBRSurface has color3f
+      // Just skip coat_affect_color conversion for now since types don't match easily
+      // TODO: Proper type conversion if needed
+      converted_openpbr.coat_affect_roughness = mtlx_openpbr->coat_affect_roughness;
+
+      // Copy emission properties
+      converted_openpbr.emission_luminance = mtlx_openpbr->emission_luminance;
+      converted_openpbr.emission_color = mtlx_openpbr->emission_color;
+
+      // Copy geometry properties
+      converted_openpbr.opacity = mtlx_openpbr->geometry_opacity;
+      // Copy normal and tangent if they have values (TypedAttribute -> TypedAttributeWithFallback)
+      if (mtlx_openpbr->geometry_normal.has_value()) {
+        auto normal_val = mtlx_openpbr->geometry_normal.get_value();
+        if (normal_val) {
+          converted_openpbr.normal = normal_val.value();
+        }
+      }
+      if (mtlx_openpbr->geometry_tangent.has_value()) {
+        auto tangent_val = mtlx_openpbr->geometry_tangent.get_value();
+        if (tangent_val) {
+          converted_openpbr.tangent = tangent_val.value();
+        }
+      }
+
+      // Convert to OpenPBRSurfaceShader
+      OpenPBRSurfaceShader openpbr_shader;
+      if (!ConvertOpenPBRSurfaceShader(env, surfacePath, converted_openpbr, &openpbr_shader)) {
+        PUSH_ERROR_AND_RETURN(fmt::format(
+            "Failed to convert MtlxOpenPBRSurface : {}", surfacePath.prim_part()));
+      }
+      rmat.openPBRShader = openpbr_shader;
+    }
+
+    if (!psurface && !openpbr && !mtlx_openpbr) {
       PUSH_ERROR_AND_RETURN(
-          fmt::format("Shader's info:id must be UsdPreviewSurface or OpenPBRSurface, but got {}",
+          fmt::format("Shader's info:id must be UsdPreviewSurface, OpenPBRSurface, or ND_open_pbr_surface_surfaceshader, but got {}",
                       shader->info_id));
+    }
+  }
+
+  //
+  // Process MaterialX-specific surface shader when MaterialXConfigAPI is present
+  // When MaterialXConfigAPI is authored, we look for MaterialX shaders
+  {
+    // Check if MaterialXConfigAPI is applied (via materialXConfig field)
+    // For now, we only check the materialXConfig field as apiSchemas checking would need
+    // proper MaterialXConfigAPI enum support in APISchemas::APIName
+    bool has_materialx_api = material.materialXConfig.has_value();
+
+    PUSH_WARN(fmt::format("Material {}: materialXConfig.has_value = {}",
+                          mat_abs_path.full_path_name(), has_materialx_api));
+
+    if (has_materialx_api) {
+      DCOUT("Material has MaterialXConfigAPI, looking for MaterialX shaders");
+      PUSH_WARN("Material has MaterialXConfigAPI, looking for MaterialX shaders");
+
+      // First try to parse outputs:mtlx:surface connection
+      Path mtlxSurfacePath;
+      bool has_mtlx_surface = false;
+
+      // Try to find the connection in various forms
+      for (const auto& prop_name : {"outputs:mtlx:surface.connect", "outputs:mtlx:surface"}) {
+        auto it = material.props.find(prop_name);
+        if (it != material.props.end()) {
+          if (it->second.is_relationship()) {
+            auto targets = it->second.get_relationTargets();
+            if (!targets.empty()) {
+              mtlxSurfacePath = targets[0];
+              has_mtlx_surface = true;
+              DCOUT("Found MaterialX surface connection via relationship: " << mtlxSurfacePath);
+              break;
+            }
+          } else if (it->second.is_attribute()) {
+            // Try to extract path from attribute
+            auto attr = it->second.get_attribute();
+            if (auto token_val = attr.get_value<value::token>()) {
+              std::string path_str = token_val.value().str();
+              if (!path_str.empty()) {
+                // Remove brackets if present
+                if (path_str.front() == '<' && path_str.back() == '>') {
+                  path_str = path_str.substr(1, path_str.size() - 2);
+                }
+                // Parse the path
+                size_t pos = path_str.find(".outputs:");
+                if (pos != std::string::npos) {
+                  std::string prim_path = path_str.substr(0, pos);
+                  mtlxSurfacePath = Path(prim_path, "");
+                  has_mtlx_surface = true;
+                  DCOUT("Found MaterialX surface connection via token: " << mtlxSurfacePath);
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // If direct connection parsing failed, look for child Shader prims with OpenPBR info:id
+      if (!has_mtlx_surface) {
+        DCOUT("Direct connection not found, searching for child shaders with OpenPBR info:id");
+        PUSH_WARN("Direct connection not found, searching for child shaders with OpenPBR info:id");
+
+        // Get the material prim from the stage to access its children
+        const Prim* mat_prim = nullptr;
+        if (env.stage.find_prim_at_path(mat_abs_path, mat_prim, &err)) {
+          if (mat_prim) {
+            // Iterate through children to find OpenPBR shader
+            for (const auto& child : mat_prim->children()) {
+              const Shader* shader = child.as<Shader>();
+              if (shader) {
+                // Check if this is an OpenPBR shader by its info:id
+                if (shader->info_id == kNdOpenPbrSurfaceSurfaceshader ||
+                    shader->info_id == "ND_open_pbr_surface_surfaceshader") {
+                  Path child_path = mat_abs_path;
+                  child_path = child_path.append_element(child.element_name());
+                  mtlxSurfacePath = child_path;
+                  has_mtlx_surface = true;
+                  DCOUT("Found OpenPBR shader child: " << child_path);
+                  PUSH_WARN(fmt::format("Found OpenPBR shader child: {}", child_path.full_path_name()));
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Process the found MaterialX shader
+      if (has_mtlx_surface) {
+        const Prim *mtlxShaderPrim{nullptr};
+        if (!env.stage.find_prim_at_path(
+                Path(mtlxSurfacePath.prim_part(), /* prop part */ ""), mtlxShaderPrim,
+                &err)) {
+          PUSH_WARN(fmt::format(
+              "MaterialX shader path {} not found in stage",
+              mtlxSurfacePath.full_path_name()));
+        } else if (mtlxShaderPrim) {
+          const Shader *mtlxShader = mtlxShaderPrim->as<Shader>();
+
+          if (mtlxShader) {
+            // Check if it's an OpenPBR shader
+            const MtlxOpenPBRSurface *mtlx_openpbr = mtlxShader->value.as<MtlxOpenPBRSurface>();
+
+            if (mtlx_openpbr) {
+              DCOUT("Converting MtlxOpenPBRSurface to RenderMaterial");
+
+              // Convert MtlxOpenPBRSurface to OpenPBRSurface
+              OpenPBRSurface converted_openpbr;
+
+              // Copy base layer properties
+              converted_openpbr.base_weight = mtlx_openpbr->base_weight;
+              converted_openpbr.base_color = mtlx_openpbr->base_color;
+              converted_openpbr.base_roughness = mtlx_openpbr->base_diffuse_roughness;
+              converted_openpbr.base_metalness = mtlx_openpbr->base_metalness;
+
+              // Copy specular properties
+              converted_openpbr.specular_weight = mtlx_openpbr->specular_weight;
+              converted_openpbr.specular_color = mtlx_openpbr->specular_color;
+              converted_openpbr.specular_roughness = mtlx_openpbr->specular_roughness;
+              converted_openpbr.specular_ior = mtlx_openpbr->specular_ior;
+              converted_openpbr.specular_anisotropy = mtlx_openpbr->specular_anisotropy;
+              converted_openpbr.specular_rotation = mtlx_openpbr->specular_rotation;
+
+              // Copy transmission properties
+              converted_openpbr.transmission_weight = mtlx_openpbr->transmission_weight;
+              converted_openpbr.transmission_color = mtlx_openpbr->transmission_color;
+              converted_openpbr.transmission_depth = mtlx_openpbr->transmission_depth;
+              converted_openpbr.transmission_scatter = mtlx_openpbr->transmission_scatter;
+              converted_openpbr.transmission_scatter_anisotropy = mtlx_openpbr->transmission_scatter_anisotropy;
+              converted_openpbr.transmission_dispersion = mtlx_openpbr->transmission_dispersion;
+
+              // Copy subsurface properties
+              converted_openpbr.subsurface_weight = mtlx_openpbr->subsurface_weight;
+              converted_openpbr.subsurface_color = mtlx_openpbr->subsurface_color;
+              converted_openpbr.subsurface_scale = mtlx_openpbr->subsurface_scale;
+              converted_openpbr.subsurface_anisotropy = mtlx_openpbr->subsurface_anisotropy;
+
+              // Copy coat properties
+              converted_openpbr.coat_weight = mtlx_openpbr->coat_weight;
+              converted_openpbr.coat_color = mtlx_openpbr->coat_color;
+              converted_openpbr.coat_roughness = mtlx_openpbr->coat_roughness;
+              converted_openpbr.coat_anisotropy = mtlx_openpbr->coat_anisotropy;
+              converted_openpbr.coat_rotation = mtlx_openpbr->coat_rotation;
+              converted_openpbr.coat_ior = mtlx_openpbr->coat_ior;
+              converted_openpbr.coat_affect_roughness = mtlx_openpbr->coat_affect_roughness;
+
+              // Copy emission properties
+              converted_openpbr.emission_luminance = mtlx_openpbr->emission_luminance;
+              converted_openpbr.emission_color = mtlx_openpbr->emission_color;
+
+              // Copy geometry properties
+              converted_openpbr.opacity = mtlx_openpbr->geometry_opacity;
+              // Copy normal and tangent if they have values
+              if (mtlx_openpbr->geometry_normal.has_value()) {
+                auto normal_val = mtlx_openpbr->geometry_normal.get_value();
+                if (normal_val) {
+                  converted_openpbr.normal = normal_val.value();
+                }
+              }
+              if (mtlx_openpbr->geometry_tangent.has_value()) {
+                auto tangent_val = mtlx_openpbr->geometry_tangent.get_value();
+                if (tangent_val) {
+                  converted_openpbr.tangent = tangent_val.value();
+                }
+              }
+
+              // Convert to OpenPBRSurfaceShader
+              OpenPBRSurfaceShader openpbr_shader;
+              if (!ConvertOpenPBRSurfaceShader(env, mtlxSurfacePath, converted_openpbr, &openpbr_shader)) {
+                PUSH_WARN(fmt::format(
+                    "Failed to convert MtlxOpenPBRSurface : {}", mtlxSurfacePath.prim_part()));
+              } else {
+                rmat.openPBRShader = openpbr_shader;
+                DCOUT("Successfully attached MaterialX OpenPBR shader to RenderMaterial");
+                PUSH_WARN(fmt::format("Successfully attached MaterialX OpenPBR shader to RenderMaterial: {}",
+                                      mtlxSurfacePath.full_path_name()));
+              }
+            } else {
+              PUSH_WARN(fmt::format(
+                  "Found shader {} but it's not ND_open_pbr_surface_surfaceshader (got {})",
+                  mtlxSurfacePath.prim_part(), mtlxShader->info_id));
+            }
+          }
+        }
+      } else {
+        DCOUT("No MaterialX OpenPBR shader found for material with MaterialXConfigAPI");
+      }
     }
   }
 
