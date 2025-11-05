@@ -1,0 +1,15 @@
+#usda 1.0
+(
+    endTimeCode = 10
+    framesPerSecond = 24
+    startTimeCode = -10
+)
+
+def Xform "TestXform"
+{
+    float3 xformOp:scale.timeSamples = {
+        0: (0.1, 0.2, 0.3),
+    }
+    uniform token[] xformOpOrder = ["xformOp:scale"]
+}
+
