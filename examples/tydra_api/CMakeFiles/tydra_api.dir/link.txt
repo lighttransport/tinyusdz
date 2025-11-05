@@ -1,0 +1,1 @@
+/usr/bin/c++ "CMakeFiles/tydra_api.dir/tydra-api-main.cc.o" -o ../../tydra_api  ../../libtinyusdz_static.a -ldl 

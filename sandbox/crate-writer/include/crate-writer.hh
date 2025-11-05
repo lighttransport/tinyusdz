@@ -100,6 +100,18 @@ public:
   ///
   bool ConvertStageToSpecs(const Stage& stage, std::string* err = nullptr);
 
+  ///
+  /// Convert a TinyUSDZ Layer to Crate specs and add them to the file
+  ///
+  /// This traverses the Layer's PrimSpecs and converts them along with
+  /// their properties, relationships, and connections to Crate format.
+  ///
+  /// @param layer The TinyUSDZ Layer to convert
+  /// @param err Optional error message output
+  /// @return true on success, false on failure
+  ///
+  bool ConvertLayerToSpecs(const Layer& layer, std::string* err = nullptr);
+
   // Configuration options
   struct Options {
     uint8_t version_major = 0;
@@ -198,6 +210,29 @@ private:
 
   /// Convert TinyUSDZ value to CrateValue
   bool ConvertValue(const value::Value& val, crate::CrateValue& out, std::string* err);
+
+  // ======================================================================
+  // Layer/PrimSpec conversion helpers
+  // ======================================================================
+
+  /// Convert a PrimSpec and its children recursively
+  bool ConvertPrimSpecRecursive(const PrimSpec& primspec, const Path& parent_path, std::string* err);
+
+  /// Convert a Property to Fields (handles Attribute, Relationship, Connection)
+  bool ConvertPropertyToFields(const std::string& prop_name, const Property& prop,
+                               crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Convert an Attribute to Fields
+  bool ConvertAttributeToFields(const std::string& attr_name, const Attribute& attr,
+                                crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Convert a Relationship to Fields
+  bool ConvertRelationshipToFields(const std::string& rel_name, const Relationship& rel,
+                                   crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Convert an Attribute Connection to Fields
+  bool ConvertConnectionToFields(const std::string& conn_name, const Attribute& attr,
+                                 crate::FieldValuePairVector& fields, std::string* err);
 
   // ======================================================================
   // Value encoding

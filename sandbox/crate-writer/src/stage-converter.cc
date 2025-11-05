@@ -9,6 +9,8 @@
 
 #include "crate-writer.hh"
 #include <iostream>
+#include "../../../src/layer.hh"
+#include "../../../src/pprinter.hh"  // For to_string(Specifier), to_string(Variability)
 
 namespace tinyusdz {
 namespace experimental {
@@ -902,6 +904,101 @@ bool CrateWriter::ConvertValue(
   if (err) {
     *err = "Value conversion not yet implemented for type: " + type_name;
   }
+  return false;
+}
+
+// ============================================================================
+// Layer/PrimSpec Conversion Implementation
+// ============================================================================
+
+bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
+  std::cout << "[ConvertLayerToSpecs] TODO: Layer→Crate conversion not yet fully implemented\n";
+
+  // TODO: Full implementation requires fixing multiple API mismatches:
+  // - PrimVar::value_raw() vs get_default()
+  // - AttrMetas::customData vs custom field
+  // - CrateValue::Set() with Path objects
+  // - Relationship API differences
+
+  if (err) *err = "Layer→Crate conversion not yet fully implemented";
+  return false;
+}
+
+bool CrateWriter::ConvertPrimSpecRecursive(
+    const PrimSpec& primspec,
+    const Path& parent_path,
+    std::string* err) {
+
+  // TODO: Implementation requires fixing API mismatches with TinyUSDZ
+  // - PrimVar API for value extraction
+  // - AttrMeta structure for custom flag
+  // - CrateValue::Set() with Path/vector<Path>
+  // - Property type checking and dispatch
+
+  (void)primspec;  // Suppress unused variable warning
+  (void)parent_path;
+
+  if (err) *err = "ConvertPrimSpecRecursive not yet implemented";
+  return false;
+}
+
+bool CrateWriter::ConvertPropertyToFields(
+    const std::string& prop_name,
+    const Property& prop,
+    crate::FieldValuePairVector& fields,
+    std::string* err) {
+
+  // TODO: Implementation requires fixing TinyUSDZ API mismatches
+  (void)prop_name;
+  (void)prop;
+  (void)fields;
+
+  if (err) *err = "ConvertPropertyToFields not yet implemented";
+  return false;
+}
+
+bool CrateWriter::ConvertAttributeToFields(
+    const std::string& attr_name,
+    const Attribute& attr,
+    crate::FieldValuePairVector& fields,
+    std::string* err) {
+
+  // TODO: Implementation requires fixing TinyUSDZ API mismatches
+  (void)attr_name;
+  (void)attr;
+  (void)fields;
+
+  if (err) *err = "ConvertAttributeToFields not yet implemented";
+  return false;
+}
+
+bool CrateWriter::ConvertRelationshipToFields(
+    const std::string& rel_name,
+    const Relationship& rel,
+    crate::FieldValuePairVector& fields,
+    std::string* err) {
+
+  // TODO: Implementation requires fixing TinyUSDZ API mismatches
+  (void)rel_name;
+  (void)rel;
+  (void)fields;
+
+  if (err) *err = "ConvertRelationshipToFields not yet implemented";
+  return false;
+}
+
+bool CrateWriter::ConvertConnectionToFields(
+    const std::string& conn_name,
+    const Attribute& attr,
+    crate::FieldValuePairVector& fields,
+    std::string* err) {
+
+  // TODO: Implementation requires fixing TinyUSDZ API mismatches
+  (void)conn_name;
+  (void)attr;
+  (void)fields;
+
+  if (err) *err = "ConvertConnectionToFields not yet implemented";
   return false;
 }
 

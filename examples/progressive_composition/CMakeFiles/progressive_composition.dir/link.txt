@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/progressive_composition.dir/main.cc.o -o ../../progressive_composition  ../../libtinyusdz_static.a -ldl 

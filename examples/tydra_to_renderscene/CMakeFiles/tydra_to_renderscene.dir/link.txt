@@ -1,0 +1,1 @@
+/usr/bin/c++ "CMakeFiles/tydra_to_renderscene.dir/to-renderscene-main.cc.o" -o ../../tydra_to_renderscene  ../../libtinyusdz_static.a -ldl 
