@@ -193,8 +193,8 @@ bool CrateWriter::Finalize(std::string* err) {
   // Step 2: Write all structural sections
   // ========================================================================
 
-  // Mark end of value data section
-  value_data_end_offset_ = Tell();
+  // Note: value_data_end_offset_ is already updated by WriteValueData()
+  // during PackValue() calls above. Do NOT reset it here.
 
   // ========================================================================
   // Prepare path tree and extract tokens (must happen before TOKENS section)
@@ -224,34 +224,49 @@ bool CrateWriter::Finalize(std::string* err) {
   pathlib::SortSimplePaths(simple_paths_prep);
   pathlib::CompressedPathTree tree_prep = pathlib::EncodePaths(simple_paths_prep);
 
-  // Extract tokens from path tree into our token list
+  // Extract tokens from path tree and merge with existing tokens
+  // The path tree has its own token table, but we need to merge it with
+  // field name tokens that were already registered in AddSpec()
   const auto& reverse_tokens_prep = tree_prep.token_table.GetReverseTokens();
 
-  // Find max token index
-  int32_t max_token_idx_prep = -1;
+  // Build a map of path tree tokens (original index -> token string)
+  std::map<int32_t, std::string> path_tree_tokens;
   for (const auto& pair : reverse_tokens_prep) {
-    int32_t idx = pair.first;
-    if (idx >= 0 && idx > max_token_idx_prep) {
-      max_token_idx_prep = idx;
+    if (pair.first >= 0) {
+      path_tree_tokens[pair.first] = pair.second;
     }
   }
 
-  // Resize tokens_ and populate
-  if (max_token_idx_prep >= 0) {
-    size_t required_size_prep = static_cast<size_t>(max_token_idx_prep + 1);
-    if (tokens_.size() < required_size_prep) {
-      tokens_.resize(required_size_prep);
-    }
+  // For each path tree token, check if it already exists in our token table
+  // If it exists, we can reuse it. If not, append it.
+  std::map<int32_t, uint32_t> path_tree_to_our_index;  // Maps path tree index -> our token index
 
-    for (const auto& pair : reverse_tokens_prep) {
-      int32_t idx = pair.first;
-      const std::string& token_str = pair.second;
+  for (const auto& pair : path_tree_tokens) {
+    int32_t path_tree_idx = pair.first;
+    const std::string& token_str = pair.second;
 
-      if (idx >= 0) {
-        tokens_[idx] = token_str;
-        token_to_index_[token_str] = crate::TokenIndex(static_cast<uint32_t>(idx));
-      }
+    // Check if this token already exists in our token table
+    auto it = token_to_index_.find(token_str);
+    if (it != token_to_index_.end()) {
+      // Token already exists, reuse it
+      path_tree_to_our_index[path_tree_idx] = it->second.value;
+    } else {
+      // New token, append it
+      uint32_t new_idx = static_cast<uint32_t>(tokens_.size());
+      tokens_.push_back(token_str);
+      token_to_index_[token_str] = crate::TokenIndex(new_idx);
+      path_tree_to_our_index[path_tree_idx] = new_idx;
     }
+  }
+
+  // Store the mapping for later use when writing the path tree
+  path_tree_token_remap_ = path_tree_to_our_index;
+
+  // Seek to the end of value data section before writing structural sections
+  // (WriteValueData() seeks back after writing, so file position is not at the end)
+  if (!Seek(value_data_end_offset_)) {
+    if (err) *err = "Failed to seek to end of value data section";
+    return false;
   }
 
   // Write sections in order
@@ -895,42 +910,37 @@ bool CrateWriter::WritePathsSection(std::string* err) {
   // Encode to compressed tree
   pathlib::CompressedPathTree tree = pathlib::EncodePaths(simple_paths);
 
-  // CRITICAL: Extract tokens from the path tree and add to our token list
-  // The path tree has its own token table for path elements
-  // We need to build tokens_ vector such that tokens are at the correct indices
-  const auto& reverse_tokens = tree.token_table.GetReverseTokens();
+  // Remap the path tree token indices to our token indices
+  // The path tree has its own token indices, but we need to use our global token indices
+  // that were computed in Finalize() to preserve field name tokens
+  std::vector<int32_t> remapped_element_token_indexes;
+  remapped_element_token_indexes.reserve(tree.element_token_indexes.size());
 
-  // Find the maximum non-negative token index to size the vector
-  int32_t max_token_idx = -1;
-  for (const auto& pair : reverse_tokens) {
-    int32_t idx = pair.first;
-    if (idx >= 0 && idx > max_token_idx) {
-      max_token_idx = idx;
-    }
-  }
-
-  // Resize tokens_ to accommodate all path element tokens
-  if (max_token_idx >= 0) {
-    size_t required_size = static_cast<size_t>(max_token_idx + 1);
-    if (tokens_.size() < required_size) {
-      tokens_.resize(required_size);
-    }
-
-    // Add tokens at their correct indices
-    for (const auto& pair : reverse_tokens) {
-      int32_t idx = pair.first;
-      const std::string& token_str = pair.second;
-
-      if (idx >= 0) {
-        // Regular prim token - place at index
-        tokens_[idx] = token_str;
-        token_to_index_[token_str] = crate::TokenIndex(static_cast<uint32_t>(idx));
+  for (int32_t path_tree_idx : tree.element_token_indexes) {
+    if (path_tree_idx < 0) {
+      // Negative indices for properties: negate, remap, then negate again
+      int32_t abs_idx = -path_tree_idx;
+      auto it = path_tree_token_remap_.find(abs_idx);
+      if (it != path_tree_token_remap_.end()) {
+        remapped_element_token_indexes.push_back(-static_cast<int32_t>(it->second));
+      } else {
+        // Shouldn't happen, but preserve original if not found
+        remapped_element_token_indexes.push_back(path_tree_idx);
       }
-      // Negative indices (properties) are handled separately by OpenUSD
-      // They reference tokens by absolute value
-      // e.g., -1 means token at index 1
+    } else {
+      // Positive indices for prim parts
+      auto it = path_tree_token_remap_.find(path_tree_idx);
+      if (it != path_tree_token_remap_.end()) {
+        remapped_element_token_indexes.push_back(static_cast<int32_t>(it->second));
+      } else {
+        // Shouldn't happen, but preserve original if not found
+        remapped_element_token_indexes.push_back(path_tree_idx);
+      }
     }
   }
+
+  // Replace the tree's token indices with our remapped ones
+  tree.element_token_indexes = remapped_element_token_indexes;
 
   // CRITICAL: OpenUSD expects TWO uint64_t values:
   // 1. Total number of paths (for resizing _paths vector)
@@ -1349,8 +1359,8 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
     rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN));
     rep.SetIsArray();
   } else if (value.as<std::vector<Path>>()) {
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH));
-    rep.SetIsArray();
+    // PathVector is a special type (type code 40) that doesn't use the array flag
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_PATH_VECTOR));
   }
   // Phase 2: Dictionary type
   else if (value.as<value::dict>()) {

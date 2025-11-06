@@ -311,6 +311,7 @@ private:
   // Deduplication tables
   std::unordered_map<std::string, crate::TokenIndex> token_to_index_;
   std::vector<std::string> tokens_;  // Index -> token string
+  std::map<int32_t, uint32_t> path_tree_token_remap_;  // Maps path tree token index -> our token index
 
   std::unordered_map<std::string, crate::StringIndex> string_to_index_;
   std::vector<std::string> strings_;  // Index -> string
