@@ -917,14 +917,9 @@ bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
   // 1. Add PseudoRoot spec
   // The PseudoRoot is a special prim at "/" that serves as the root of the scene
   {
-    Path root_path("/");
+    Path root_path("/", "");  // Root path - use standard constructor
     crate::FieldValuePairVector root_fields;
-
-    // PseudoRoot has a special specifier
-    crate::CrateValue spec_value;
-    crate::TokenIndex spec_tok = GetOrCreateToken("def");  // PseudoRoot uses def
-    spec_value.Set(spec_tok.value);
-    root_fields.push_back({"specifier", spec_value});
+    // PseudoRoot has empty fields - no specifier or other metadata
 
     // Add PseudoRoot spec
     if (!AddSpec(root_path, SpecType::PseudoRoot, root_fields, err)) {
@@ -933,37 +928,13 @@ bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
     }
   }
 
-  // 2. Convert layer metadata to fields
-  const LayerMetas& layer_metas = layer.metas();
-
-  // Add layer metadata to the PseudoRoot
-  if (!layer_metas.doc.empty() || !layer_metas.comment.empty()) {
-    Path root_path("/");
-    crate::FieldValuePairVector meta_fields;
-
-    if (!layer_metas.doc.empty()) {
-      crate::CrateValue doc_value;
-      doc_value.Set(layer_metas.doc);
-      meta_fields.push_back({"documentation", doc_value});
-    }
-
-    if (!layer_metas.comment.empty()) {
-      crate::CrateValue comment_value;
-      comment_value.Set(layer_metas.comment);
-      meta_fields.push_back({"comment", comment_value});
-    }
-
-    // TODO: Add these metadata fields to the PseudoRoot spec
-    // For now, we'll skip layer metadata
-  }
-
-  // 3. Convert all primspecs in the layer
+  // 2. Convert all primspecs in the layer
   size_t prim_count = 0;
   for (const auto& [prim_name, primspec] : layer.primspecs()) {
     std::cout << "[ConvertLayerToSpecs] Converting primspec: " << prim_name << "\n";
 
     // Each top-level primspec is a direct child of root
-    Path root_path("/");
+    Path root_path = Path();  // Root path
 
     if (!ConvertPrimSpecRecursive(primspec, root_path, err)) {
       if (err) *err = "Failed to convert primspec: " + prim_name + ". Error: " + (*err);
@@ -975,7 +946,7 @@ bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
 
   std::cout << "[ConvertLayerToSpecs] Successfully converted " << prim_count << " primspecs\n";
 
-  // 4. TODO: Handle sublayers if present
+  // 3. TODO: Handle sublayers if present
   // if (layer.HasSublayers()) { ... }
 
   return true;
@@ -987,47 +958,28 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     std::string* err) {
 
   // 1. Build path for this prim
-  Path prim_path;
-  if (parent_path.is_root_path()) {
-    // Parent is root, append as direct child
-    prim_path = Path("/" + primspec.name());
-  } else {
-    // Append to parent path
-    prim_path = parent_path.AppendPrim(primspec.name());
-  }
+  Path prim_path = parent_path.AppendPrim(primspec.name());
 
   std::cout << "[ConvertPrimSpecRecursive] Processing prim: " << prim_path.full_path_name() << "\n";
 
   // 2. Create fields for this prim spec
   crate::FieldValuePairVector fields;
 
-  // Add specifier (def, over, class)
-  crate::CrateValue spec_value;
-  // Convert Specifier enum to token
-  std::string spec_str;
-  switch (primspec.specifier()) {
-    case Specifier::Def:
-      spec_str = "def";
-      break;
-    case Specifier::Over:
-      spec_str = "over";
-      break;
-    case Specifier::Class:
-      spec_str = "class";
-      break;
-    default:
-      spec_str = "def";  // Default to def
-      break;
+  // Add specifier (def, over, class) - use Specifier enum directly, not token
+  Specifier spec = primspec.specifier();
+  // USD files don't allow Invalid specifier - default to Def if we get Invalid
+  if (spec == Specifier::Invalid) {
+    spec = Specifier::Def;
   }
-  crate::TokenIndex spec_tok = GetOrCreateToken(spec_str);
-  spec_value.Set(spec_tok.value);
+  crate::CrateValue spec_value;
+  spec_value.Set(spec);  // CrateValue supports Specifier directly
   fields.push_back({"specifier", spec_value});
 
-  // Add typeName if present
+  // Add typeName if present - use value::token type, not token index
   if (!primspec.typeName().empty()) {
     crate::CrateValue type_value;
-    crate::TokenIndex type_tok = GetOrCreateToken(primspec.typeName());
-    type_value.Set(type_tok.value);
+    value::token tok(primspec.typeName());
+    type_value.Set(tok);
     fields.push_back({"typeName", type_value});
   }
 
@@ -1057,20 +1009,23 @@ bool CrateWriter::ConvertPrimSpecRecursive(
 
   if (metas.kind) {
     crate::CrateValue kind_value;
-    crate::TokenIndex kind_tok = GetOrCreateToken(metas.kind.value());
+    // Convert Kind enum to string first using to_string()
+    std::string kind_str = to_string(metas.kind.value());
+    crate::TokenIndex kind_tok = GetOrCreateToken(kind_str);
     kind_value.Set(kind_tok.value);
     fields.push_back({"kind", kind_value});
   }
 
-  if (!metas.displayName.empty()) {
+  if (metas.displayName) {
     crate::CrateValue display_value;
-    display_value.Set(metas.displayName);
+    display_value.Set(metas.displayName.value());
     fields.push_back({"displayName", display_value});
   }
 
-  if (!metas.doc.empty()) {
+  if (metas.doc) {
     crate::CrateValue doc_value;
-    doc_value.Set(metas.doc);
+    // StringData.value is the std::string, not .str()
+    doc_value.Set(metas.doc.value().value);
     fields.push_back({"documentation", doc_value});
   }
 
@@ -1247,11 +1202,11 @@ bool CrateWriter::ConvertRelationshipToFields(
     fields.push_back({rel_name, blocked_value});
     return true;
   } else if (rel.is_path()) {
-    // Single target path
+    // Single target path - wrap in a vector since CrateValue doesn't have Set(Path)
     crate::CrateValue path_value;
-    // Need to make a copy of the Path for CrateValue::Set
-    Path target = rel.targetPath;
-    path_value.Set(target);
+    std::vector<Path> targets;
+    targets.push_back(rel.targetPath);
+    path_value.Set(targets);
     fields.push_back({rel_name + ".targetPaths", path_value});
   } else if (rel.is_pathvector()) {
     // Multiple target paths
@@ -1333,11 +1288,11 @@ bool CrateWriter::ConvertConnectionToFields(
   const std::vector<Path>& conn_paths = attr.connections();
 
   if (conn_paths.size() == 1) {
-    // Single connection path
+    // Single connection path - wrap in a vector since CrateValue doesn't have Set(Path)
     crate::CrateValue conn_value;
-    // Make a copy of the Path for CrateValue::Set
-    Path conn_path = conn_paths[0];
-    conn_value.Set(conn_path);
+    std::vector<Path> wrapped_path;
+    wrapped_path.push_back(conn_paths[0]);
+    conn_value.Set(wrapped_path);
     fields.push_back({conn_name + ".connect", conn_value});
   } else if (conn_paths.size() > 1) {
     // Multiple connection paths
