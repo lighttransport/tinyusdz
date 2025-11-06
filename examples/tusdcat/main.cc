@@ -328,11 +328,13 @@ int main(int argc, char **argv) {
     }
 
     if (has_extract_variants) {
+      std::cout << "\n=== VARIANT EXTRACTION ===\n";
+
       tinyusdz::Dictionary dict;
       if (!tinyusdz::ExtractVariants(src_layer, &dict, &err)) {
         std::cerr << "Failed to extract variants info: " << err;
       } else {
-        std::cout << "== Variants info ==\n" << tinyusdz::to_string(dict) << "\n";
+        std::cout << "== Standard Variant Info ==\n" << tinyusdz::to_string(dict) << "\n";
       }
 
     }
@@ -388,11 +390,13 @@ int main(int argc, char **argv) {
     std::cout << s << "\n";
 
     if (has_extract_variants) {
+      std::cout << "\n=== VARIANT EXTRACTION ===\n";
+
       tinyusdz::Dictionary dict;
       if (!tinyusdz::ExtractVariants(stage, &dict, &err)) {
         std::cerr << "Failed to extract variants info: " << err;
       } else {
-        std::cout << "== Variants info ==\n" << tinyusdz::to_string(dict) << "\n";
+        std::cout << "== Variants Info ==\n" << tinyusdz::to_string(dict) << "\n";
       }
 
     }
