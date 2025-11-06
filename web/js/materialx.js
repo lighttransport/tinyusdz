@@ -64,7 +64,7 @@ let gui = null;
 let paramFolder = null;
 let environmentType = 'goegap_1k'; // 'studio', 'white', 'goegap_1k', or 'env_sunsky_sunset'
 let showBackgroundEnvmap = true; // Toggle for showing environment map as background
-let toneMappingEnabled = false; // Toggle for tonemapping
+let toneMappingType = 'none'; // 'none', 'aces', 'agx', 'neutral'
 let exposureValue = 1.0; // Exposure value (works independently of tone mapping)
 let pmremGenerator = null;
 let currentColorSpace = 'srgb'; // 'srgb' or 'display-p3'
@@ -945,7 +945,7 @@ function setupScene() {
     renderer = new THREE.WebGLRenderer(rendererConfig);
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.toneMapping = toneMappingEnabled ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
+    renderer.toneMapping = getToneMappingConstant(toneMappingType);
     renderer.toneMappingExposure = 1;
 
     // Set output color space based on current setting
@@ -1036,6 +1036,30 @@ async function loadTinyUSDZ() {
         console.error('Failed to initialize TinyUSDZ:', error);
         updateStatus('Failed to load TinyUSDZ: ' + error.message, 'error');
         throw error;
+    }
+}
+
+// Get Three.js tone mapping constant from string
+function getToneMappingConstant(type) {
+    switch (type) {
+        case 'none':
+            return THREE.NoToneMapping;
+        case 'aces':
+            return THREE.ACESFilmicToneMapping;
+        case 'agx':
+            // AgX was added in Three.js r152
+            return THREE.AgXToneMapping || THREE.ACESFilmicToneMapping;
+        case 'neutral':
+            // Neutral was added in Three.js r155
+            return THREE.NeutralToneMapping || THREE.LinearToneMapping;
+        case 'linear':
+            return THREE.LinearToneMapping;
+        case 'reinhard':
+            return THREE.ReinhardToneMapping;
+        case 'cineon':
+            return THREE.CineonToneMapping;
+        default:
+            return THREE.NoToneMapping;
     }
 }
 
@@ -1337,16 +1361,24 @@ function setupGUI() {
         exposure: 1,
         background: '#1a1a1a',
         showEnvmapBg: showBackgroundEnvmap,
-        toneMapping: toneMappingEnabled
+        toneMapping: toneMappingType
     };
 
     envFolder.add(envParams, 'type', ['studio', 'white', 'goegap_1k', 'env_sunsky_sunset']).onChange(value => {
         createSyntheticHDR(value);
     });
 
-    envFolder.add(envParams, 'toneMapping').name('Enable Tone Mapping').onChange(value => {
-        toneMappingEnabled = value;
-        renderer.toneMapping = value ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
+    envFolder.add(envParams, 'toneMapping', {
+        'None': 'none',
+        'AgX (Blender)': 'agx',
+        'ACES Filmic': 'aces',
+        'Neutral': 'neutral',
+        'Linear': 'linear',
+        'Reinhard': 'reinhard',
+        'Cineon': 'cineon'
+    }).name('Tone Mapping').onChange(value => {
+        toneMappingType = value;
+        renderer.toneMapping = getToneMappingConstant(value);
     });
 
     envFolder.add(envParams, 'exposure', 0, 3, 0.01).name('Exposure').onChange(value => {
