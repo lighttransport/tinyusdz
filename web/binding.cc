@@ -1360,8 +1360,8 @@ class TinyUSDZLoaderNative {
       return result;
     }
 
-    // Use the new serialization function
-    auto serialized = tinyusdz::tydra::serializeMaterial(material, serFormat);
+    // Use the new serialization function with RenderScene for texture info
+    auto serialized = tinyusdz::tydra::serializeMaterial(material, serFormat, &render_scene_);
 
     if (serialized.has_value()) {
       result.set("data", serialized.value());
