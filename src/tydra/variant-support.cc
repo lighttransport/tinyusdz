@@ -7,7 +7,9 @@
 #include "variant-support.hh"
 
 #include <algorithm>
+#include <functional>
 #include <sstream>
+#include "nonstd/expected.hpp"
 
 namespace tinyusdz {
 namespace tydra {
@@ -147,9 +149,7 @@ VariantStatistics DefaultVariantManager::GetStatistics() const {
     };
 
     for (const auto& vs : group.variant_sets) {
-      for (const auto& opt : vs.options) {
-        stats.num_variant_options++;
-      }
+      stats.num_variant_options += static_cast<uint32_t>(vs.options.size());
       max_depth = std::max(max_depth, calc_depth(vs));
     }
   }
