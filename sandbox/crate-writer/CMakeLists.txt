@@ -128,20 +128,6 @@ if(BUILD_CRATE_WRITER_EXAMPLES)
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../
   )
-
-  # Tool: Structured Crate Dump (YAML/JSON)
-  add_executable(tusddumpcrate
-    examples/tusddumpcrate.cc
-  )
-
-  target_link_libraries(tusddumpcrate
-    ${TINYUSDZ_STATIC_LIB}
-  )
-
-  target_include_directories(tusddumpcrate PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../
-  )
 endif()
 
 # ============================================================================
