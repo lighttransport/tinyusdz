@@ -435,8 +435,12 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/render-data.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/variant-support.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/variant-support.cc
         )
 endif (TINYUSDZ_WITH_TYDRA)
+
+# Variant extraction utilities handled via variant-support.hh/cc in Tydra section
 
 if(TINYUSDZ_WITH_PXR_COMPAT_API)
   list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/pxr-compat.cc)

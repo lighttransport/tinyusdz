@@ -12,6 +12,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "nonstd/optional.hpp"
 
 namespace tinyusdz {
 namespace tydra {
