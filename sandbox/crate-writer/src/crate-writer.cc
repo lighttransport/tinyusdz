@@ -1348,6 +1348,9 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
   } else if (value.as<std::vector<value::token>>()) {
     rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN));
     rep.SetIsArray();
+  } else if (value.as<std::vector<Path>>()) {
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_ASSET_PATH));
+    rep.SetIsArray();
   }
   // Phase 2: Dictionary type
   else if (value.as<value::dict>()) {
@@ -2030,6 +2033,21 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       crate::TokenIndex idx = GetOrCreateToken(tok.str());
       if (!Write(idx.value)) {
         if (err) *err = "Failed to write token array element index";
+        return -1;
+      }
+    }
+  }
+  // Path array - special handling (paths are stored as indices)
+  else if (auto* path_array = value.as<std::vector<Path>>()) {
+    uint64_t count = path_array->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write path array count";
+      return -1;
+    }
+    for (const auto& path : *path_array) {
+      crate::PathIndex idx = GetOrCreatePath(path);
+      if (!Write(idx.value)) {
+        if (err) *err = "Failed to write path array element index";
         return -1;
       }
     }
