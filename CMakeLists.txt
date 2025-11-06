@@ -1592,6 +1592,9 @@ if(TINYUSDZ_BUILD_EXAMPLES)
   endif()
 endif(TINYUSDZ_BUILD_EXAMPLES)
 
+# Tools
+add_subdirectory(tools/tusddumpcrate)
+
 if(TINYUSDZ_BUILD_BENCHMARKS)
 
   #
