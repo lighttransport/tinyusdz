@@ -1,0 +1,106 @@
+#usda 1.0
+(
+    doc = "Nested variantSet with metadata"
+)
+
+def Xform "Character" (
+    variantSets = ["species"]
+    variants = {
+        string species = "human"
+    }
+)
+{
+    variantSet "species" = {
+        "human" (
+            doc = "Human character variant"
+        ) {
+            variantSet "gender" = {
+                "male" (
+                    doc = "Male human"
+                ) {
+                    def Xform "HumanMale"
+                    {
+                        string characterType = "human_male"
+                        float height = 1.8
+
+                        def Capsule "Body"
+                        {
+                            double height = 1.7
+                            double radius = 0.3
+                        }
+
+                        def Sphere "Head"
+                        {
+                            double radius = 0.15
+                        }
+                    }
+                }
+                "female" (
+                    doc = "Female human"
+                ) {
+                    def Xform "HumanFemale"
+                    {
+                        string characterType = "human_female"
+                        float height = 1.7
+
+                        def Capsule "Body"
+                        {
+                            double height = 1.6
+                            double radius = 0.28
+                        }
+
+                        def Sphere "Head"
+                        {
+                            double radius = 0.14
+                        }
+                    }
+                }
+            }
+        }
+        "robot" (
+            doc = "Robot character variant"
+        ) {
+            variantSet "model" = {
+                "industrial" (
+                    doc = "Industrial robot model"
+                ) {
+                    def Xform "RobotIndustrial"
+                    {
+                        string characterType = "robot_industrial"
+                        float height = 2.5
+
+                        def Cube "Body"
+                        {
+                            double size = 1.0
+                        }
+
+                        def Cylinder "Arm"
+                        {
+                            double radius = 0.1
+                            double height = 1.5
+                        }
+                    }
+                }
+                "companion" (
+                    doc = "Companion robot model"
+                ) {
+                    def Xform "RobotCompanion"
+                    {
+                        string characterType = "robot_companion"
+                        float height = 1.2
+
+                        def Sphere "Body"
+                        {
+                            double radius = 0.4
+                        }
+
+                        def Sphere "Head"
+                        {
+                            double radius = 0.2
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

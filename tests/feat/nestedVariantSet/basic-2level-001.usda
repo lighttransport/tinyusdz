@@ -1,0 +1,44 @@
+#usda 1.0
+(
+    doc = "Basic 2-level nested variantSet test"
+)
+
+def Xform "Root" (
+    variantSets = ["shape"]
+)
+{
+    variantSet "shape" = {
+        "sphere" {
+            variantSet "size" = {
+                "small" {
+                    def Sphere "SmallSphere"
+                    {
+                        double radius = 1.0
+                    }
+                }
+                "large" {
+                    def Sphere "LargeSphere"
+                    {
+                        double radius = 5.0
+                    }
+                }
+            }
+        }
+        "cube" {
+            variantSet "size" = {
+                "small" {
+                    def Cube "SmallCube"
+                    {
+                        double size = 1.0
+                    }
+                }
+                "large" {
+                    def Cube "LargeCube"
+                    {
+                        double size = 5.0
+                    }
+                }
+            }
+        }
+    }
+}
