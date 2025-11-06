@@ -62,7 +62,10 @@ let materials = [];
 let meshes = [];
 let gui = null;
 let paramFolder = null;
-let environmentType = 'studio'; // 'studio' or 'white'
+let environmentType = 'goegap_1k'; // 'studio', 'white', 'goegap_1k', or 'env_sunsky_sunset'
+let showBackgroundEnvmap = true; // Toggle for showing environment map as background
+let toneMappingEnabled = false; // Toggle for tonemapping
+let exposureValue = 1.0; // Exposure value (works independently of tone mapping)
 let pmremGenerator = null;
 let currentColorSpace = 'srgb'; // 'srgb' or 'display-p3'
 let displayP3Supported = false;
@@ -661,7 +664,8 @@ function createColorWithSpace(r, g, b) {
         color.colorSpace = THREE.DisplayP3ColorSpace || THREE.SRGBColorSpace;
         return color;
     } else {
-        return new THREE.Color(r, g, b);
+        const color = new THREE.Color(r, g, b);
+        return color;
     }
 }
 
@@ -941,7 +945,7 @@ function setupScene() {
     renderer = new THREE.WebGLRenderer(rendererConfig);
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMapping = toneMappingEnabled ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
     renderer.toneMappingExposure = 1;
 
     // Set output color space based on current setting
@@ -1035,9 +1039,42 @@ async function loadTinyUSDZ() {
     }
 }
 
+// Load HDR environment map from file
+function loadHDREnvironment(filepath) {
+    const loader = new RGBELoader();
+
+    loader.load(filepath, (texture) => {
+        texture.mapping = THREE.EquirectangularReflectionMapping;
+
+        // Generate environment map
+        const renderTarget = pmremGenerator.fromEquirectangular(texture);
+        scene.environment = renderTarget.texture;
+
+        // Conditionally set as background based on toggle state
+        if (showBackgroundEnvmap) {
+            scene.background = renderTarget.texture;
+        } else {
+            scene.background = new THREE.Color(0x1a1a1a);
+        }
+
+        texture.dispose();
+        console.log(`Loaded HDR environment: ${filepath}`);
+    }, undefined, (error) => {
+        console.error('Error loading HDR environment:', error);
+        updateStatus('Failed to load HDR environment: ' + filepath, 'error');
+    });
+}
+
 // Create synthetic HDR environment map
 function createSyntheticHDR(type) {
     environmentType = type;
+
+    // Check if this is a file-based HDR environment
+    if (type === 'goegap_1k' || type === 'env_sunsky_sunset') {
+        const filepath = `./assets/textures/${type}.hdr`;
+        loadHDREnvironment(filepath);
+        return;
+    }
 
     // Create a canvas to generate the HDR texture
     const size = 512;
@@ -1088,19 +1125,30 @@ function createSyntheticHDR(type) {
     const renderTarget = pmremGenerator.fromEquirectangular(texture);
     scene.environment = renderTarget.texture;
 
-    // Optionally set as background
-    // scene.background = renderTarget.texture;
+    // Conditionally set as background based on toggle state
+    if (showBackgroundEnvmap) {
+        scene.background = renderTarget.texture;
+    } else {
+        scene.background = new THREE.Color(0x1a1a1a);
+    }
 
     texture.dispose();
 }
 
 // Toggle between HDR environments
 function toggleEnvironment() {
-    if (environmentType === 'studio') {
-        createSyntheticHDR('white');
-    } else {
-        createSyntheticHDR('studio');
-    }
+    const envTypes = ['studio', 'white', 'goegap_1k', 'env_sunsky_sunset'];
+    const currentIndex = envTypes.indexOf(environmentType);
+    const nextIndex = (currentIndex + 1) % envTypes.length;
+    createSyntheticHDR(envTypes[nextIndex]);
+}
+
+// Toggle environment map as background
+function toggleBackgroundEnvmap() {
+    showBackgroundEnvmap = !showBackgroundEnvmap;
+    // Reapply the current environment to update the background
+    createSyntheticHDR(environmentType);
+    console.log(`Background envmap: ${showBackgroundEnvmap ? 'ON' : 'OFF'}`);
 }
 
 // Toggle color space (for quick switching via button)
@@ -1240,6 +1288,8 @@ function setupGUI() {
     gui.domElement.style.position = 'absolute';
     gui.domElement.style.top = '150px';
     gui.domElement.style.right = '10px';
+    gui.domElement.style.maxHeight = 'calc(100vh - 160px)';
+    gui.domElement.style.overflowY = 'auto';
 
     // Color Space controls
     const colorFolder = gui.addFolder('Color Space');
@@ -1285,19 +1335,43 @@ function setupGUI() {
     const envParams = {
         type: environmentType,
         exposure: 1,
-        background: '#1a1a1a'
+        background: '#1a1a1a',
+        showEnvmapBg: showBackgroundEnvmap,
+        toneMapping: toneMappingEnabled
     };
 
-    envFolder.add(envParams, 'type', ['studio', 'white']).onChange(value => {
+    envFolder.add(envParams, 'type', ['studio', 'white', 'goegap_1k', 'env_sunsky_sunset']).onChange(value => {
         createSyntheticHDR(value);
     });
 
-    envFolder.add(envParams, 'exposure', 0, 3, 0.01).onChange(value => {
-        renderer.toneMappingExposure = value;
+    envFolder.add(envParams, 'toneMapping').name('Enable Tone Mapping').onChange(value => {
+        toneMappingEnabled = value;
+        renderer.toneMapping = value ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
     });
 
-    envFolder.addColor(envParams, 'background').onChange(value => {
-        scene.background = new THREE.Color(value);
+    envFolder.add(envParams, 'exposure', 0, 3, 0.01).name('Exposure').onChange(value => {
+        exposureValue = value;
+        renderer.toneMappingExposure = value;
+        // Apply exposure to all materials by adjusting environment intensity
+        scene.traverse((object) => {
+            if (object.isMesh && object.material) {
+                const material = object.material;
+                if (material.envMapIntensity !== undefined) {
+                    material.envMapIntensity = value;
+                }
+            }
+        });
+    });
+
+    envFolder.add(envParams, 'showEnvmapBg').name('Show Envmap as BG').onChange(value => {
+        showBackgroundEnvmap = value;
+        createSyntheticHDR(environmentType);
+    });
+
+    envFolder.addColor(envParams, 'background').name('Solid BG Color').onChange(value => {
+        if (!showBackgroundEnvmap) {
+            scene.background = new THREE.Color(value);
+        }
     });
 
     envFolder.open();
@@ -1498,7 +1572,8 @@ function loadMaterials() {
                 threeMaterial: new THREE.MeshPhysicalMaterial({
                     color: 0x808080,
                     metalness: 0.5,
-                    roughness: 0.5
+                    roughness: 0.5,
+                    envMapIntensity: exposureValue
                 }),
                 parameters: {}
             });
@@ -1511,6 +1586,9 @@ function loadMaterials() {
 // Create Three.js material from OpenPBR data
 function createOpenPBRMaterial(materialData) {
     const material = new THREE.MeshPhysicalMaterial();
+
+    // Set initial environment map intensity based on current exposure
+    material.envMapIntensity = exposureValue;
 
     // Store texture references for later management
     material.userData.textures = {};
@@ -1918,7 +1996,7 @@ function loadMeshes() {
 
             // Get material index
             const materialIndex = meshData.materialIndex || 0;
-            const material = materials[materialIndex]?.threeMaterial || new THREE.MeshPhysicalMaterial();
+            const material = materials[materialIndex]?.threeMaterial || new THREE.MeshPhysicalMaterial({ envMapIntensity: exposureValue });
 
             // Create mesh
             const mesh = new THREE.Mesh(geometry, material);
@@ -2483,7 +2561,19 @@ function createParameterControls(material) {
     // Create controls for each parameter group
     Object.entries(OPENPBR_PARAMS).forEach(([groupName, groupParams]) => {
         if (params[groupName]) {
-            const groupFolder = paramFolder.addFolder(groupName);
+            // Add support status labels to certain groups
+            let folderLabel = groupName;
+            if (groupName === 'specular') {
+                folderLabel = 'specular [limited]';
+            } else if (groupName === 'subsurface') {
+                folderLabel = 'subsurface [not supported]';
+            } else if (groupName === 'transmission') {
+                folderLabel = 'transmission [not supported]';
+            } else if (groupName === 'emission') {
+                folderLabel = 'emission [TODO]';
+            }
+
+            const groupFolder = paramFolder.addFolder(folderLabel);
 
             Object.entries(groupParams).forEach(([paramName, paramDef]) => {
                 let rawValue = params[groupName][paramName];
@@ -2498,12 +2588,14 @@ function createParameterControls(material) {
                     // Color picker
                     const colorValue = Array.isArray(value) ? value : [1, 1, 1];
                     const colorObj = {
-                        color: [colorValue[0] * 255, colorValue[1] * 255, colorValue[2] * 255]
+                        //color: [colorValue[0] * 255, colorValue[1] * 255, colorValue[2] * 255]
+                        color: [colorValue[0], colorValue[1], colorValue[2]]
                     };
                     groupFolder.addColor(colorObj, 'color').name(paramName).onChange(val => {
-                        const r = val[0] / 255;
-                        const g = val[1] / 255;
-                        const b = val[2] / 255;
+                        const r = val[0]; // / 255;
+                        const g = val[1]; // / 255;
+                        const b = val[2]; // / 255;
+                        console.log("[param color] ", paramName, r, g, b);
                         params[groupName][paramName] = [r, g, b];
                         updateMaterialFromParams(threeMat, params);
                     });
@@ -2553,6 +2645,7 @@ function updateMaterialFromParams(material, params) {
     // Base parameters
     if (params.base) {
         if (params.base.color) {
+            console.log("[base_color] ", params.base.color);
             const [r, g, b] = srgbToDisplayP3(...params.base.color);
             material.color.setRGB(r, g, b);
         }
@@ -2869,6 +2962,7 @@ document.addEventListener('DOMContentLoaded', init);
 // Expose functions to global scope for HTML onclick handlers
 window.loadSampleModel = loadSampleModel;
 window.toggleEnvironment = toggleEnvironment;
+window.toggleBackgroundEnvmap = toggleBackgroundEnvmap;
 window.toggleColorSpace = toggleColorSpace;
 window.importMaterialXFile = importMaterialXFile;
 window.loadHDRTextureForMaterial = loadHDRTextureForMaterial;
@@ -3043,7 +3137,8 @@ function applyImportedMaterial(object, materialData) {
     // Create new Three.js material
     const material = new THREE.MeshPhysicalMaterial({
         name: materialData.name,
-        side: THREE.DoubleSide
+        side: THREE.DoubleSide,
+        envMapIntensity: exposureValue
     });
 
     // Apply base parameters
@@ -3333,6 +3428,7 @@ function reportError(context, error, severity = 'error') {
 
 // Export functions for HTML onclick handlers
 window.toggleEnvironment = toggleEnvironment;
+window.toggleBackgroundEnvmap = toggleBackgroundEnvmap;
 window.loadSampleModel = loadSampleModel;
 window.toggleColorSpace = toggleColorSpace;
 window.exportSelectedMaterialJSON = exportSelectedMaterialJSON;
