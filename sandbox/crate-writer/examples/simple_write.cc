@@ -45,24 +45,40 @@ int main(int argc, char** argv) {
 
   std::cout << "File opened successfully" << std::endl;
 
-  // Add a single attribute spec with only inline values
-  // Attributes don't require specifier fields
-  // NOTE: Attributes at root use prim="/" and the attribute name in prop part
+  // Add root spec
   {
-    Path attr_path("/", "testAttr");
+    Path root_path("/", "");
     tcrate::FieldValuePairVector fields;
-
-    // Add a simple default value (inline int32)
-    tcrate::CrateValue default_value;
-    default_value.Set(static_cast<int32_t>(42));
-    fields.push_back({"default", default_value});
-
-    if (!writer.AddSpec(attr_path, SpecType::Attribute, fields, &err)) {
-      std::cerr << "ERROR: Failed to add attribute: " << err << std::endl;
+    if (!writer.AddSpec(root_path, SpecType::PseudoRoot, fields, &err)) {
+      std::cerr << "ERROR: Failed to add root: " << err << std::endl;
       return 1;
     }
+    std::cout << "Added root spec" << std::endl;
+  }
 
-    std::cout << "Added attribute: /testAttr = 42" << std::endl;
+  // Add a prim with a relationship (Path array)
+  {
+    Path prim_path("/TestPrim", "");
+    tcrate::FieldValuePairVector fields;
+
+    // Add specifier
+    tcrate::CrateValue spec_value;
+    spec_value.Set(static_cast<uint32_t>(Specifier::Def));
+    fields.push_back({"specifier", spec_value});
+
+    // Add a relationship field with path array
+    tcrate::CrateValue path_array_value;
+    std::vector<Path> targets;
+    targets.push_back(Path("/Target1", ""));
+    targets.push_back(Path("/Target2", ""));
+    path_array_value.Set(targets);
+    fields.push_back({"testRel.targetPaths", path_array_value});
+
+    if (!writer.AddSpec(prim_path, SpecType::Prim, fields, &err)) {
+      std::cerr << "ERROR: Failed to add prim: " << err << std::endl;
+      return 1;
+    }
+    std::cout << "Added prim /TestPrim with relationship" << std::endl;
   }
 
   // Finalize and write
