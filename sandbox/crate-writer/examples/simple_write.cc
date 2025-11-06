@@ -63,7 +63,7 @@ int main(int argc, char** argv) {
 
     // Add specifier
     tcrate::CrateValue spec_value;
-    spec_value.Set(static_cast<uint32_t>(Specifier::Def));
+    spec_value.Set(Specifier::Def);
     fields.push_back({"specifier", spec_value});
 
     // Add a relationship field with path array

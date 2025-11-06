@@ -95,7 +95,7 @@ bool Test_SimplePrim(CrateWriter& writer, std::string* err) {
   tcrate::FieldValuePairVector fields;
 
   tcrate::CrateValue spec_value;
-  spec_value.Set(static_cast<uint32_t>(Specifier::Def));
+  spec_value.Set(Specifier::Def);
   fields.push_back({"specifier", spec_value});
 
   return writer.AddSpec(prim_path, SpecType::Prim, fields, err);
@@ -113,7 +113,7 @@ bool Test_Relationship(CrateWriter& writer, std::string* err) {
   tcrate::FieldValuePairVector fields;
 
   tcrate::CrateValue spec_value;
-  spec_value.Set(static_cast<uint32_t>(Specifier::Def));
+  spec_value.Set(Specifier::Def);
   fields.push_back({"specifier", spec_value});
 
   // Add relationship with path array
@@ -139,7 +139,7 @@ bool Test_Arrays(CrateWriter& writer, std::string* err) {
   tcrate::FieldValuePairVector fields;
 
   tcrate::CrateValue spec_value;
-  spec_value.Set(static_cast<uint32_t>(Specifier::Def));
+  spec_value.Set(Specifier::Def);
   fields.push_back({"specifier", spec_value});
 
   // Add int array
