@@ -919,7 +919,12 @@ bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
   {
     Path root_path("/", "");  // Root path - use standard constructor
     crate::FieldValuePairVector root_fields;
-    // PseudoRoot has empty fields - no specifier or other metadata
+
+    // PseudoRoot needs at least one field to create a valid fieldset
+    // Add specifier field (PseudoRoot always uses Def)
+    crate::CrateValue spec_value;
+    spec_value.Set(Specifier::Def);
+    root_fields.push_back({"specifier", spec_value});
 
     // Add PseudoRoot spec
     if (!AddSpec(root_path, SpecType::PseudoRoot, root_fields, err)) {
