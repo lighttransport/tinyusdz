@@ -23,57 +23,137 @@ std::string vec3ToJson(const T& vec) {
 
 
 // Serialize OpenPBRSurfaceShader to JSON
-std::string serializeOpenPBRToJson(const OpenPBRSurfaceShader& shader) {
+std::string serializeOpenPBRToJson(const OpenPBRSurfaceShader& shader, const RenderScene* renderScene = nullptr) {
   std::stringstream json;
   json << "{";
   json << "\"type\": \"OpenPBRSurfaceShader\",";
 
+  // Helper function to convert ColorSpace enum to string
+  auto colorSpaceToString = [](tydra::ColorSpace cs) -> const char* {
+    switch (cs) {
+      case tydra::ColorSpace::sRGB: return "sRGB";
+      case tydra::ColorSpace::Lin_sRGB: return "lin_sRGB";
+      case tydra::ColorSpace::Rec709: return "rec709";
+      case tydra::ColorSpace::Lin_Rec709: return "lin_rec709";
+      case tydra::ColorSpace::g22_Rec709: return "g22_rec709";
+      case tydra::ColorSpace::g18_Rec709: return "g18_rec709";
+      case tydra::ColorSpace::sRGB_Texture: return "srgb_texture";
+      case tydra::ColorSpace::Raw: return "raw";
+      case tydra::ColorSpace::Lin_ACEScg: return "lin_acescg";
+      case tydra::ColorSpace::ACES2065_1: return "aces2065_1";
+      case tydra::ColorSpace::Lin_Rec2020: return "lin_rec2020";
+      case tydra::ColorSpace::OCIO: return "ocio";
+      case tydra::ColorSpace::Lin_DisplayP3: return "lin_displayp3";
+      case tydra::ColorSpace::sRGB_DisplayP3: return "srgb_displayp3";
+      case tydra::ColorSpace::Custom: return "custom";
+      case tydra::ColorSpace::Unknown: return "unknown";
+      default: return "unknown";
+    }
+  };
+
+  // Macro to serialize shader parameter with optional texture info
+  auto serializeParam = [&](const std::string& paramName, auto param) {
+    json << "\"" << paramName << "\": {";
+    json << "\"name\": \"" << paramName << "\",";
+
+    if (param.is_texture() && renderScene) {
+      // Texture parameter
+      int texId = param.texture_id;
+      json << "\"type\": \"texture\",";
+      json << "\"textureId\": " << texId;
+
+      // Look up texture image information
+      if (texId >= 0 && texId < renderScene->textures.size()) {
+        const auto& uvTexture = renderScene->textures[texId];
+        if (uvTexture.texture_image_id >= 0 && uvTexture.texture_image_id < renderScene->images.size()) {
+          const auto& image = renderScene->images[uvTexture.texture_image_id];
+          json << ", \"assetIdentifier\": \"" << image.asset_identifier << "\"";
+
+          // Include texture metadata
+          json << ", \"texture\": {";
+          json << "\"width\": " << image.width << ",";
+          json << "\"height\": " << image.height << ",";
+          json << "\"channels\": " << image.channels << ",";
+          json << "\"colorSpace\": \"" << colorSpaceToString(image.colorSpace) << "\",";
+          json << "\"usdColorSpace\": \"" << colorSpaceToString(image.usdColorSpace) << "\",";
+          json << "\"decoded\": " << (image.decoded ? "true" : "false");
+          json << "}";
+        }
+      }
+    } else {
+      // Scalar parameter
+      json << "\"type\": \"value\", \"value\": ";
+      if constexpr(std::is_same_v<decltype(param.value), float>) {
+        json << param.value;
+      } else if constexpr(std::is_same_v<decltype(param.value), std::array<float, 3>>) {
+        json << vec3ToJson(param.value);
+      } else {
+        json << param.value;
+      }
+    }
+    json << "}";
+  };
+
   // Base layer
-  json << "\"base_weight\": " << shader.base_weight.value << ",";
-  json << "\"base_color\": " << vec3ToJson(shader.base_color.value) << ",";
-  json << "\"base_roughness\": " << shader.base_roughness.value << ",";
-  json << "\"base_metalness\": " << shader.base_metalness.value << ",";
+  json << "\"base\": {";
+  serializeParam("base_weight", shader.base_weight); json << ",";
+  serializeParam("base_color", shader.base_color); json << ",";
+  serializeParam("base_roughness", shader.base_roughness); json << ",";
+  serializeParam("base_metalness", shader.base_metalness);
+  json << "},";
 
   // Specular layer
-  json << "\"specular_weight\": " << shader.specular_weight.value << ",";
-  json << "\"specular_color\": " << vec3ToJson(shader.specular_color.value) << ",";
-  json << "\"specular_roughness\": " << shader.specular_roughness.value << ",";
-  json << "\"specular_ior\": " << shader.specular_ior.value << ",";
-  json << "\"specular_anisotropy\": " << shader.specular_anisotropy.value << ",";
-  json << "\"specular_rotation\": " << shader.specular_rotation.value << ",";
+  json << "\"specular\": {";
+  serializeParam("specular_weight", shader.specular_weight); json << ",";
+  serializeParam("specular_color", shader.specular_color); json << ",";
+  serializeParam("specular_roughness", shader.specular_roughness); json << ",";
+  serializeParam("specular_ior", shader.specular_ior); json << ",";
+  serializeParam("specular_anisotropy", shader.specular_anisotropy); json << ",";
+  serializeParam("specular_rotation", shader.specular_rotation);
+  json << "},";
 
   // Transmission layer
-  json << "\"transmission_weight\": " << shader.transmission_weight.value << ",";
-  json << "\"transmission_color\": " << vec3ToJson(shader.transmission_color.value) << ",";
-  json << "\"transmission_depth\": " << shader.transmission_depth.value << ",";
-  json << "\"transmission_scatter\": " << vec3ToJson(shader.transmission_scatter.value) << ",";
-  json << "\"transmission_scatter_anisotropy\": " << shader.transmission_scatter_anisotropy.value << ",";
-  json << "\"transmission_dispersion\": " << shader.transmission_dispersion.value << ",";
+  json << "\"transmission\": {";
+  serializeParam("transmission_weight", shader.transmission_weight); json << ",";
+  serializeParam("transmission_color", shader.transmission_color); json << ",";
+  serializeParam("transmission_depth", shader.transmission_depth); json << ",";
+  serializeParam("transmission_scatter", shader.transmission_scatter); json << ",";
+  serializeParam("transmission_scatter_anisotropy", shader.transmission_scatter_anisotropy); json << ",";
+  serializeParam("transmission_dispersion", shader.transmission_dispersion);
+  json << "},";
 
   // Subsurface layer
-  json << "\"subsurface_weight\": " << shader.subsurface_weight.value << ",";
-  json << "\"subsurface_color\": " << vec3ToJson(shader.subsurface_color.value) << ",";
-  json << "\"subsurface_scale\": " << shader.subsurface_scale.value << ",";
-  json << "\"subsurface_anisotropy\": " << shader.subsurface_anisotropy.value << ",";
+  json << "\"subsurface\": {";
+  serializeParam("subsurface_weight", shader.subsurface_weight); json << ",";
+  serializeParam("subsurface_color", shader.subsurface_color); json << ",";
+  serializeParam("subsurface_scale", shader.subsurface_scale); json << ",";
+  serializeParam("subsurface_anisotropy", shader.subsurface_anisotropy);
+  json << "},";
 
   // Coat layer
-  json << "\"coat_weight\": " << shader.coat_weight.value << ",";
-  json << "\"coat_color\": " << vec3ToJson(shader.coat_color.value) << ",";
-  json << "\"coat_roughness\": " << shader.coat_roughness.value << ",";
-  json << "\"coat_anisotropy\": " << shader.coat_anisotropy.value << ",";
-  json << "\"coat_rotation\": " << shader.coat_rotation.value << ",";
-  json << "\"coat_ior\": " << shader.coat_ior.value << ",";
-  json << "\"coat_affect_color\": " << vec3ToJson(shader.coat_affect_color.value) << ",";
-  json << "\"coat_affect_roughness\": " << shader.coat_affect_roughness.value << ",";
+  json << "\"coat\": {";
+  serializeParam("coat_weight", shader.coat_weight); json << ",";
+  serializeParam("coat_color", shader.coat_color); json << ",";
+  serializeParam("coat_roughness", shader.coat_roughness); json << ",";
+  serializeParam("coat_anisotropy", shader.coat_anisotropy); json << ",";
+  serializeParam("coat_rotation", shader.coat_rotation); json << ",";
+  serializeParam("coat_ior", shader.coat_ior); json << ",";
+  serializeParam("coat_affect_color", shader.coat_affect_color); json << ",";
+  serializeParam("coat_affect_roughness", shader.coat_affect_roughness);
+  json << "},";
 
   // Emission
-  json << "\"emission_luminance\": " << shader.emission_luminance.value << ",";
-  json << "\"emission_color\": " << vec3ToJson(shader.emission_color.value) << ",";
+  json << "\"emission\": {";
+  serializeParam("emission_luminance", shader.emission_luminance); json << ",";
+  serializeParam("emission_color", shader.emission_color);
+  json << "},";
 
   // Geometry
-  json << "\"opacity\": " << shader.opacity.value << ",";
-  json << "\"normal\": " << vec3ToJson(shader.normal.value) << ",";
-  json << "\"tangent\": " << vec3ToJson(shader.tangent.value);
+  json << "\"geometry\": {";
+  serializeParam("opacity", shader.opacity); json << ",";
+  serializeParam("normal", shader.normal); json << ",";
+  serializeParam("tangent", shader.tangent);
+  json << "}";
 
   json << "}";
   return json.str();
@@ -161,7 +241,8 @@ std::string serializeOpenPBRToXml(const OpenPBRSurfaceShader& shader) {
 
 nonstd::expected<std::string, std::string> serializeMaterial(
     const RenderMaterial& material,
-    SerializationFormat format) {
+    SerializationFormat format,
+    const RenderScene* renderScene) {
 
   if (format == SerializationFormat::JSON) {
     std::stringstream json;
@@ -180,7 +261,7 @@ nonstd::expected<std::string, std::string> serializeMaterial(
     }
 
     if (material.openPBRShader.has_value()) {
-      json << ",\"openPBRShader\": " << serializeOpenPBRToJson(*material.openPBRShader);
+      json << ",\"openPBR\": " << serializeOpenPBRToJson(*material.openPBRShader, renderScene);
     }
 
     json << "}";
