@@ -111,6 +111,23 @@ if(BUILD_CRATE_WRITER_EXAMPLES)
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../
   )
+
+  # Example: Test Layer/PrimSpec Conversion
+  add_executable(test_layer_conversion
+    examples/test_layer_conversion.cc
+  )
+
+  target_link_libraries(test_layer_conversion
+    crate-writer
+    crate-encoding
+    ${TINYUSDZ_STATIC_LIB}
+  )
+
+  target_include_directories(test_layer_conversion PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../
+  )
 endif()
 
 # ============================================================================
