@@ -1305,35 +1305,49 @@ crate::ValueRep CrateWriter::PackValue(const crate::CrateValue& value, std::stri
     rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATD));
   }
   // Phase 1: Array types - detect and set proper type
-  // Note: Arrays have specific data type IDs that indicate they are arrays
+  // Note: Arrays use the element type ID + IsArray flag (bit 63), NOT a modified type code
   else if (value.as<std::vector<bool>>()) {
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_BOOL) | (1 << 6)); // Array flag
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_BOOL));
+    rep.SetIsArray();
   } else if (value.as<std::vector<uint8_t>>()) {
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_UCHAR) | (1 << 6));
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_UCHAR));
+    rep.SetIsArray();
   } else if (value.as<std::vector<int32_t>>()) {
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_INT) | (1 << 6));
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_INT));
+    rep.SetIsArray();
   } else if (value.as<std::vector<uint32_t>>()) {
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT) | (1 << 6));
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT));
+    rep.SetIsArray();
   } else if (value.as<std::vector<int64_t>>()) {
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64) | (1 << 6));
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64));
+    rep.SetIsArray();
   } else if (value.as<std::vector<uint64_t>>()) {
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64) | (1 << 6));
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64));
+    rep.SetIsArray();
   } else if (value.as<std::vector<value::half>>()) {
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_HALF) | (1 << 6));
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_HALF));
+    rep.SetIsArray();
   } else if (value.as<std::vector<float>>()) {
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT) | (1 << 6));
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT));
+    rep.SetIsArray();
   } else if (value.as<std::vector<double>>()) {
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE) | (1 << 6));
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE));
+    rep.SetIsArray();
   } else if (value.as<std::vector<value::float2>>()) {
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2F) | (1 << 6));
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2F));
+    rep.SetIsArray();
   } else if (value.as<std::vector<value::float3>>()) {
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3F) | (1 << 6));
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3F));
+    rep.SetIsArray();
   } else if (value.as<std::vector<value::float4>>()) {
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4F) | (1 << 6));
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4F));
+    rep.SetIsArray();
   } else if (value.as<std::vector<std::string>>()) {
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING) | (1 << 6));
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING));
+    rep.SetIsArray();
   } else if (value.as<std::vector<value::token>>()) {
-    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN) | (1 << 6));
+    rep.SetType(static_cast<int32_t>(crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN));
+    rep.SetIsArray();
   }
   // Phase 2: Dictionary type
   else if (value.as<value::dict>()) {
