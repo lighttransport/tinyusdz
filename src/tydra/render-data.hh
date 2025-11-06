@@ -19,6 +19,7 @@
 
 // tydra
 #include "scene-access.hh"
+#include "variant-support.hh"
 
 namespace tinyusdz {
 
@@ -1226,6 +1227,19 @@ class RenderScene {
   std::vector<SkelHierarchy> skeletons;
   std::vector<BufferData>
       buffers;  // Various data storage(e.g. texel/image data).
+
+  // Variant support (inspired by glTF KHR_materials_variants)
+  // Allows runtime switching between different material/geometry/property options
+  // See variant-support.hh for detailed API
+  std::vector<VariantGroup> variant_groups;  // Variant definitions and metadata
+  std::vector<VariantSelection>
+      active_selections;  // Current active variant selections
+  std::map<std::string, int32_t>
+      variant_group_map;  // prim_path -> variant_groups index for fast lookup
+
+  // Get variant manager for querying and modifying variants
+  // Note: This should be populated by RenderSceneConverter
+  // (Currently stored as variant_groups/active_selections/variant_group_map above)
 
 };
 
