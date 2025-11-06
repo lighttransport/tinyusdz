@@ -57,6 +57,24 @@ int main(int argc, char** argv) {
   // Step 3: Add specs (prims, attributes, etc.)
   // ========================================================================
 
+  // IMPORTANT: Always add PseudoRoot first for valid USD files
+  {
+    Path pseudoroot_path("/", "");
+    tcrate::FieldValuePairVector pseudoroot_fields;
+
+    // PseudoRoot needs at least specifier field
+    tcrate::CrateValue specifier_value;
+    specifier_value.Set(Specifier::Def);
+    pseudoroot_fields.push_back({"specifier", specifier_value});
+
+    if (!writer.AddSpec(pseudoroot_path, SpecType::PseudoRoot, pseudoroot_fields, &err)) {
+      std::cerr << "ERROR: Failed to add PseudoRoot: " << err << std::endl;
+      return 1;
+    }
+
+    std::cout << "Added PseudoRoot" << std::endl;
+  }
+
   // Add root prim: /World
   {
     Path root_path("/World", "");

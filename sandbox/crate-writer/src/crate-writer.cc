@@ -1055,6 +1055,24 @@ bool CrateWriter::WriteSpecsSection(std::string* err) {
     return false;
   }
 
+  // IMPORTANT: Build mapping from fieldset number to offset in flat array
+  // The reader expects fieldset_index to be the OFFSET in the flat fieldset array,
+  // not the fieldset number. We need to convert from fieldset_number -> offset.
+  std::vector<uint32_t> fieldset_number_to_offset;
+  fieldset_number_to_offset.resize(fieldsets_.size());
+
+  uint32_t current_offset = 0;
+  for (size_t i = 0; i < fieldsets_.size(); ++i) {
+    fieldset_number_to_offset[i] = current_offset;
+    // Each fieldset takes (num_fields + 1) slots (fields + sentinel)
+    current_offset += static_cast<uint32_t>(fieldsets_[i].size() + 1);
+  }
+
+  std::cerr << "DEBUG: Fieldset number to offset mapping:\n";
+  for (size_t i = 0; i < fieldset_number_to_offset.size(); ++i) {
+    std::cerr << "  Fieldset[" << i << "] -> offset " << fieldset_number_to_offset[i] << "\n";
+  }
+
   // Separate pathIndexes, fieldSetIndexes, specTypes
   std::vector<uint32_t> path_indexes;
   std::vector<uint32_t> fieldset_indexes;
@@ -1068,11 +1086,17 @@ bool CrateWriter::WriteSpecsSection(std::string* err) {
   for (size_t i = 0; i < spec_data_.size(); ++i) {
     const auto& spec_data = spec_data_[i];
     path_indexes.push_back(spec_data.spec.path_index.value);
-    fieldset_indexes.push_back(spec_data.spec.fieldset_index.value);
+
+    // Convert fieldset number to offset in flat array
+    uint32_t fieldset_number = spec_data.spec.fieldset_index.value;
+    uint32_t fieldset_offset = fieldset_number_to_offset[fieldset_number];
+    fieldset_indexes.push_back(fieldset_offset);
+
     spec_types.push_back(static_cast<uint32_t>(spec_data.spec.spec_type));
 
     std::cerr << "  Spec[" << i << "]: path_index=" << spec_data.spec.path_index.value
-              << " fieldset_index=" << spec_data.spec.fieldset_index.value
+              << " fieldset_number=" << fieldset_number
+              << " fieldset_offset=" << fieldset_offset
               << " spec_type=" << static_cast<uint32_t>(spec_data.spec.spec_type)
               << " (";
     switch(spec_data.spec.spec_type) {
@@ -1182,19 +1206,17 @@ bool CrateWriter::WriteTableOfContents(std::string* err) {
 
   std::cerr << "DEBUG: Before bootstrap write, TOC offset = " << saved_toc_offset << std::endl;
 
-  // IMPORTANT: Close and reopen file to write bootstrap header
-  // C++ fstream seeking backwards has issues, so we close and reopen in r+b mode
+  // IMPORTANT: Flush before seeking to beginning
+  // We need to flush all buffered writes before seeking backwards
   file_.flush();
-  file_.close();
 
-  // Reopen in read+write binary mode (without truncate!)
-  file_.open(filepath_, std::ios::binary | std::ios::in | std::ios::out);
-  if (!file_.is_open()) {
-    if (err) *err = "Failed to reopen file for bootstrap write";
+  // Seek to beginning to write bootstrap (no need to close/reopen)
+  if (!Seek(0)) {
+    if (err) *err = "Failed to seek to beginning for bootstrap write";
     return false;
   }
 
-  // Seek to beginning to write bootstrap
+  // Build bootstrap header
   BootStrap boot;
   memset(&boot, 0, sizeof(boot));
 
@@ -1204,12 +1226,7 @@ bool CrateWriter::WriteTableOfContents(std::string* err) {
   boot.version[2] = options_.version_patch;
   boot.toc_offset = saved_toc_offset;
 
-  file_.seekp(0, std::ios::beg);
-  if (!file_.good()) {
-    if (err) *err = "Failed to seek to bootstrap";
-    return false;
-  }
-
+  // Write bootstrap header
   if (!WriteBytes(&boot, sizeof(boot))) {
     if (err) *err = "Failed to write bootstrap";
     return false;
