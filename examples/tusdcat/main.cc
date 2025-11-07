@@ -10,6 +10,7 @@
 #include "io-util.hh"
 
 #include "tydra/scene-access.hh"
+#include "variant-format.hh"
 
 struct CompositionFeatures {
   bool subLayers{true};
@@ -34,7 +35,7 @@ static std::string str_tolower(std::string s) {
 }
 
 void print_help() {
-    std::cout << "Usage tusdcat [--flatten] [--loadOnly] [--composition=STRLIST] [--relative] [--extract-variants] input.usda/usdc/usdz\n";
+    std::cout << "Usage tusdcat [--flatten] [--loadOnly] [--composition=STRLIST] [--relative] [--extract-variants] [--variant-format=FORMAT] input.usda/usdc/usdz\n";
     std::cout << "\n --flatten (not fully implemented yet) Do composition(load sublayers, refences, payload, evaluate `over`, inherit, variants..)";
     std::cout << "  --composition: Specify which composition feature to be "
                  "enabled(valid when `--flatten` is supplied). Comma separated "
@@ -42,7 +43,8 @@ void print_help() {
                  "`subLayers`, i `inherits`, v `variantSets`, r `references`, "
                  "p `payload`, s `specializes`. \n    Example: "
                  "--composition=r,p --composition=references,subLayers\n";
-    std::cout << "\n --extract-variants (w.i.p) Dump variants information to .json\n";
+    std::cout << "\n --extract-variants Extract and dump variants information\n";
+    std::cout << "  --variant-format=FORMAT: Output format for variant extraction (yaml or json). Default: yaml\n";
     std::cout << "\n --relative (not implemented yet) Print Path as relative Path\n";
     std::cout << "\n -l, --loadOnly Load(Parse) USD file only(Check if input USD is valid or not)\n";
 
@@ -58,6 +60,7 @@ int main(int argc, char **argv) {
   bool has_relative{false};
   bool has_extract_variants{false};
   bool load_only{false};
+  std::string variant_format = "yaml";  // Default format: yaml
 
   constexpr int kMaxIteration = 128;
 
@@ -79,6 +82,19 @@ int main(int argc, char **argv) {
       load_only = true;
     } else if (arg.compare("--extract-variants") == 0) {
       has_extract_variants = true;
+    } else if (tinyusdz::startsWith(arg, "--variant-format=")) {
+      std::string fmt = tinyusdz::removePrefix(arg, "--variant-format=");
+      if (fmt.empty()) {
+        std::cerr << "No format specified to --variant-format.\n";
+        exit(-1);
+      }
+      std::string fmt_lower = str_tolower(fmt);
+      if (fmt_lower == "yaml" || fmt_lower == "json") {
+        variant_format = fmt_lower;
+      } else {
+        std::cerr << "Invalid variant format: " << fmt << ". Must be 'yaml' or 'json'.\n";
+        exit(-1);
+      }
     } else if (tinyusdz::startsWith(arg, "--composition=")) {
       std::string value_str = tinyusdz::removePrefix(arg, "--composition=");
       if (value_str.empty()) {
@@ -328,13 +344,17 @@ int main(int argc, char **argv) {
     }
 
     if (has_extract_variants) {
-      std::cout << "\n=== VARIANT EXTRACTION ===\n";
+      std::cout << "\n=== VARIANT EXTRACTION (" << variant_format << ") ===\n";
 
       tinyusdz::Dictionary dict;
       if (!tinyusdz::ExtractVariants(src_layer, &dict, &err)) {
         std::cerr << "Failed to extract variants info: " << err;
       } else {
-        std::cout << "== Standard Variant Info ==\n" << tinyusdz::to_string(dict) << "\n";
+        if (variant_format == "json") {
+          std::cout << variant_format::dictionary_to_json(dict) << "\n";
+        } else {
+          std::cout << variant_format::dictionary_to_yaml(dict) << "\n";
+        }
       }
 
     }
@@ -390,13 +410,17 @@ int main(int argc, char **argv) {
     std::cout << s << "\n";
 
     if (has_extract_variants) {
-      std::cout << "\n=== VARIANT EXTRACTION ===\n";
+      std::cout << "\n=== VARIANT EXTRACTION (" << variant_format << ") ===\n";
 
       tinyusdz::Dictionary dict;
       if (!tinyusdz::ExtractVariants(stage, &dict, &err)) {
         std::cerr << "Failed to extract variants info: " << err;
       } else {
-        std::cout << "== Variants Info ==\n" << tinyusdz::to_string(dict) << "\n";
+        if (variant_format == "json") {
+          std::cout << variant_format::dictionary_to_json(dict) << "\n";
+        } else {
+          std::cout << variant_format::dictionary_to_yaml(dict) << "\n";
+        }
       }
 
     }
