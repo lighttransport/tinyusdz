@@ -439,6 +439,8 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/variant-support.cc
         ${PROJECT_SOURCE_DIR}/src/tydra/variant-converter.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/variant-converter.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/variant-applier.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/variant-applier.cc
         )
 endif (TINYUSDZ_WITH_TYDRA)
 
