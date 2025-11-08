@@ -437,6 +437,8 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/texture-util.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/variant-support.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/variant-support.cc
+        ${PROJECT_SOURCE_DIR}/src/tydra/variant-converter.hh
+        ${PROJECT_SOURCE_DIR}/src/tydra/variant-converter.cc
         )
 endif (TINYUSDZ_WITH_TYDRA)
 
