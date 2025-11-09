@@ -8,6 +8,9 @@ import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
 import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 
 // Embedded default OpenPBR scene (simple sphere with material)
 const EMBEDDED_USDA_SCENE = `#usda 1.0
@@ -78,6 +81,9 @@ let originalMaterials = new Map(); // Store original materials when showing norm
 let currentFileUpAxis = 'Y'; // Store the current file's upAxis (Y or Z)
 let applyUpAxisConversion = true; // Apply Z-up to Y-up conversion by default
 let sceneRoot = null; // Root object for the USD scene (for upAxis conversion)
+let composer = null; // Effect composer for post-processing
+let falseColorPass = null; // False color shader pass
+let showingFalseColor = false; // Track if false color is being shown
 
 // Available texture color spaces
 const TEXTURE_COLOR_SPACES = {
@@ -152,6 +158,118 @@ vec3 convertColorSpace(vec3 color, int colorSpace) {
     return color;
 }
 `;
+
+// False Color View Transform Shader (Blender-style)
+// Maps scene-linear luminance to a heat map for exposure visualization
+const FalseColorShader = {
+    uniforms: {
+        'tDiffuse': { value: null },
+        'middleGrey': { value: 0.18 } // Standard middle grey in scene-linear
+    },
+
+    vertexShader: `
+        varying vec2 vUv;
+        void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    `,
+
+    fragmentShader: `
+        uniform sampler2D tDiffuse;
+        uniform float middleGrey;
+        varying vec2 vUv;
+
+        // Convert RGB to relative luminance (Rec. 709 weights)
+        float getLuminance(vec3 color) {
+            return dot(color, vec3(0.2126, 0.7152, 0.0722));
+        }
+
+        // Convert linear luminance to EV (exposure value) relative to middle grey
+        float luminanceToEV(float luminance) {
+            // EV = log2(luminance / middleGrey)
+            return log2(max(luminance, 0.0001) / middleGrey);
+        }
+
+        // Map EV to false color (Blender-style heat map)
+        vec3 evToFalseColor(float ev) {
+            // Color stops based on Blender's false color:
+            // < -7.5 EV: Black (underexposed)
+            // -7.5 to -5.0: Purple/Blue (deep shadows)
+            // -5.0 to -2.5: Blue to Cyan (shadows)
+            // -2.5 to -0.5: Cyan to Green (low mids)
+            // -0.5 to 0.5: Green to Grey (middle grey zone)
+            // 0.5 to 2.5: Yellow to Orange (highlights)
+            // 2.5 to 4.5: Orange to Red (bright highlights)
+            // > 4.5: Red to White (overexposed)
+
+            vec3 color;
+
+            if (ev < -7.5) {
+                // Deep underexposure - black to dark purple
+                float t = smoothstep(-10.0, -7.5, ev);
+                color = mix(vec3(0.0, 0.0, 0.0), vec3(0.2, 0.0, 0.4), t);
+            }
+            else if (ev < -5.0) {
+                // Deep shadows - purple to blue
+                float t = smoothstep(-7.5, -5.0, ev);
+                color = mix(vec3(0.2, 0.0, 0.4), vec3(0.0, 0.0, 0.8), t);
+            }
+            else if (ev < -2.5) {
+                // Shadows - blue to cyan
+                float t = smoothstep(-5.0, -2.5, ev);
+                color = mix(vec3(0.0, 0.0, 0.8), vec3(0.0, 0.6, 0.8), t);
+            }
+            else if (ev < -0.5) {
+                // Low midtones - cyan to green
+                float t = smoothstep(-2.5, -0.5, ev);
+                color = mix(vec3(0.0, 0.6, 0.8), vec3(0.0, 0.7, 0.3), t);
+            }
+            else if (ev < 0.5) {
+                // Middle grey zone - green to grey
+                float t = smoothstep(-0.5, 0.5, ev);
+                color = mix(vec3(0.0, 0.7, 0.3), vec3(0.5, 0.5, 0.5), t);
+            }
+            else if (ev < 2.5) {
+                // Highlights - grey/yellow to orange
+                float t = smoothstep(0.5, 2.5, ev);
+                color = mix(vec3(0.5, 0.5, 0.5), vec3(1.0, 0.7, 0.0), t);
+            }
+            else if (ev < 4.5) {
+                // Bright highlights - orange to red
+                float t = smoothstep(2.5, 4.5, ev);
+                color = mix(vec3(1.0, 0.7, 0.0), vec3(1.0, 0.0, 0.0), t);
+            }
+            else if (ev < 6.5) {
+                // Very bright - red to pink/white
+                float t = smoothstep(4.5, 6.5, ev);
+                color = mix(vec3(1.0, 0.0, 0.0), vec3(1.0, 0.8, 0.8), t);
+            }
+            else {
+                // Overexposed - white
+                float t = smoothstep(6.5, 10.0, ev);
+                color = mix(vec3(1.0, 0.8, 0.8), vec3(1.0, 1.0, 1.0), t);
+            }
+
+            return color;
+        }
+
+        void main() {
+            vec4 texel = texture2D(tDiffuse, vUv);
+
+            // Calculate luminance from scene-linear RGB
+            float luminance = getLuminance(texel.rgb);
+
+            // Convert to EV
+            float ev = luminanceToEV(luminance);
+
+            // Map to false color
+            vec3 falseColor = evToFalseColor(ev);
+
+            gl_FragColor = vec4(falseColor, 1.0);
+        }
+    `
+};
 
 // Get color space index for shader uniform
 function getColorSpaceIndex(colorSpaceName) {
@@ -899,6 +1017,9 @@ async function init() {
     // Setup interaction
     setupInteraction();
 
+    // Setup post-processing composer
+    setupComposer();
+
     // Load TinyUSDZ WASM module
     await loadTinyUSDZ();
 
@@ -1015,6 +1136,46 @@ function setupInteraction() {
 
     renderer.domElement.addEventListener('click', onMouseClick, false);
     renderer.domElement.addEventListener('mousemove', onMouseMove, false);
+}
+
+// Setup post-processing composer with false color effect
+function setupComposer() {
+    // Create effect composer
+    composer = new EffectComposer(renderer);
+
+    // Add render pass (main scene render)
+    const renderPass = new RenderPass(scene, camera);
+    composer.addPass(renderPass);
+
+    // Add false color pass (initially disabled via renderToScreen)
+    falseColorPass = new ShaderPass(FalseColorShader);
+    falseColorPass.enabled = false; // Will be enabled when false color is toggled
+    composer.addPass(falseColorPass);
+
+    console.log('Effect composer initialized with false color pass');
+}
+
+// Toggle false color view transform
+function toggleFalseColor() {
+    showingFalseColor = !showingFalseColor;
+
+    if (!composer) {
+        setupComposer();
+    }
+
+    if (falseColorPass) {
+        falseColorPass.enabled = showingFalseColor;
+        // When false color is enabled, make it render to screen
+        // When disabled, the renderPass will render to screen
+        falseColorPass.renderToScreen = showingFalseColor;
+
+        // Also update the render pass
+        if (composer.passes[0]) {
+            composer.passes[0].renderToScreen = !showingFalseColor;
+        }
+    }
+
+    console.log('False color:', showingFalseColor ? 'enabled' : 'disabled');
 }
 
 // Load TinyUSDZ WASM module
@@ -2974,6 +3135,11 @@ function onWindowResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+
+    // Update composer size if it exists
+    if (composer) {
+        composer.setSize(window.innerWidth, window.innerHeight);
+    }
 }
 
 function animate() {
@@ -2985,7 +3151,12 @@ function animate() {
         boundingBoxHelper.update();
     }
 
-    renderer.render(scene, camera);
+    // Use composer if false color is enabled, otherwise use regular renderer
+    if (showingFalseColor && composer) {
+        composer.render();
+    } else {
+        renderer.render(scene, camera);
+    }
 }
 
 // Initialize when DOM is loaded
@@ -2996,6 +3167,7 @@ window.loadSampleModel = loadSampleModel;
 window.toggleEnvironment = toggleEnvironment;
 window.toggleBackgroundEnvmap = toggleBackgroundEnvmap;
 window.toggleColorSpace = toggleColorSpace;
+window.toggleFalseColor = toggleFalseColor;
 window.importMaterialXFile = importMaterialXFile;
 window.loadHDRTextureForMaterial = loadHDRTextureForMaterial;
 window.exportSelectedMaterialJSON = exportSelectedMaterialJSON;
