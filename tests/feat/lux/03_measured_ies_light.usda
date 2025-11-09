@@ -1,0 +1,112 @@
+#usda 1.0
+(
+    doc = """MaterialX IES Profile Light Example
+
+    This example demonstrates a light using MaterialX's measured_edf node with
+    an IES light profile. IES profiles provide realistic light distribution
+    patterns from real-world light fixtures.
+
+    The measured_edf maps to USD's SphereLight with ShapingAPI's IES support.
+    """
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "World"
+{
+    def Mesh "Floor" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </World/Materials/FloorMaterial>
+
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-5, 0, -5), (5, 0, -5), (5, 0, 5), (-5, 0, 5)]
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+    }
+
+    def Sphere "Sphere" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </World/Materials/MetallicMaterial>
+        double radius = 0.8
+        double3 xformOp:translate = (0, 0.8, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Scope "Materials"
+    {
+        def Material "FloorMaterial"
+        {
+            token outputs:surface.connect = </World/Materials/FloorMaterial/PreviewSurface.outputs:surface>
+
+            def Shader "PreviewSurface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.6, 0.6, 0.6)
+                float inputs:roughness = 0.8
+                token outputs:surface
+            }
+        }
+
+        def Material "MetallicMaterial"
+        {
+            token outputs:surface.connect = </World/Materials/MetallicMaterial/PreviewSurface.outputs:surface>
+
+            def Shader "PreviewSurface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.95, 0.8, 0.3)  # Gold color
+                float inputs:metallic = 1.0
+                float inputs:roughness = 0.15
+                token outputs:surface
+            }
+        }
+    }
+
+    def Scope "Lights"
+    {
+        # MaterialX measured_edf with IES profile
+        def Shader "MeasuredEDF" (
+            doc = "IES profile-based emission distribution"
+        )
+        {
+            uniform token info:id = "measured_edf"
+            color3f inputs:color = (1.0, 0.95, 0.85)  # Warm light
+            asset inputs:file = @./ies_profiles/fixture_001.ies@  # Path to IES file
+            token outputs:out
+        }
+
+        def Shader "IESLightShader"
+        {
+            uniform token info:id = "light"
+            token inputs:edf.connect = </World/Lights/MeasuredEDF.outputs:out>
+            color3f inputs:intensity = (8.0, 8.0, 8.0)
+            float inputs:exposure = 0.5  # +0.5 EV
+            token outputs:out
+        }
+
+        # USD SphereLight with ShapingAPI IES (equivalent to measured_edf)
+        def SphereLight "IESLight" (
+            prepend apiSchemas = ["ShapingAPI"]
+        )
+        {
+            color3f inputs:color = (1.0, 0.95, 0.85)
+            float inputs:intensity = 8.0
+            float inputs:exposure = 0.5
+            float inputs:radius = 0.3
+
+            # ShapingAPI with IES profile
+            asset inputs:shaping:ies:file = @./ies_profiles/fixture_001.ies@
+            bool inputs:shaping:ies:normalize = true
+            float inputs:shaping:ies:angleScale = 0.0
+
+            double3 xformOp:translate = (0, 4, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+    }
+}
