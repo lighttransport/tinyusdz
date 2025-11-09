@@ -1,0 +1,75 @@
+#usda 1.0
+(
+    doc = """MaterialX Basic Uniform Light Example
+
+    This example demonstrates a basic omnidirectional point light using MaterialX's
+    uniform_edf (Emission Distribution Function) node connected to a light shader.
+
+    The uniform_edf emits light uniformly in all directions, making it ideal for
+    representing point lights or area lights with omnidirectional emission.
+    """
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "World"
+{
+    def Sphere "Sphere" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </World/Materials/SimpleMaterial>
+        double radius = 1
+    }
+
+    def Scope "Materials"
+    {
+        def Material "SimpleMaterial"
+        {
+            token outputs:surface.connect = </World/Materials/SimpleMaterial/PreviewSurface.outputs:surface>
+
+            def Shader "PreviewSurface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.8, 0.8, 0.8)
+                float inputs:roughness = 0.4
+                token outputs:surface
+            }
+        }
+    }
+
+    def Scope "Lights"
+    {
+        # MaterialX-style light definition
+        # uniform_edf creates an omnidirectional emission profile
+        def Shader "UniformEDF" (
+            doc = "Omnidirectional emission distribution function"
+        )
+        {
+            uniform token info:id = "uniform_edf"
+            color3f inputs:color = (1.0, 0.95, 0.8)  # Warm white light
+            token outputs:out
+        }
+
+        # Light shader combines EDF with intensity control
+        def Shader "MainLightShader"
+        {
+            uniform token info:id = "light"
+            token inputs:edf.connect = </World/Lights/UniformEDF.outputs:out>
+            color3f inputs:intensity = (5.0, 5.0, 5.0)  # Bright intensity
+            float inputs:exposure = 0.0  # EV exposure adjustment
+            token outputs:out
+        }
+
+        # USD SphereLight representation (equivalent to uniform_edf)
+        def SphereLight "KeyLight"
+        {
+            color3f inputs:color = (1.0, 0.95, 0.8)
+            float inputs:intensity = 5.0
+            float inputs:exposure = 0.0
+            float inputs:radius = 0.5
+            double3 xformOp:translate = (3, 5, 4)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+    }
+}
