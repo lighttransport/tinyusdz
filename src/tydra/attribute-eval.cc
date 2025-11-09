@@ -5,6 +5,7 @@
 #include "scene-access.hh"
 
 #include "common-macros.inc"
+#include "layer.hh"
 #include "pprinter.hh"
 #include "tiny-format.hh"
 #include "value-pprint.hh"
@@ -239,6 +240,88 @@ bool EvaluateAttribute(
 
   return EvaluateAttributeImpl(stage, attr, attr_name, value, err,
                                visited_paths, t, tinterp);
+}
+
+// Layer/PrimSpec version
+bool EvaluateAttribute(
+    const tinyusdz::Layer &layer, const tinyusdz::PrimSpec &ps,
+    const std::string &attr_name, TerminalAttributeValue *value,
+    std::string *err, const double t,
+    const tinyusdz::value::TimeSampleInterpolationType tinterp) {
+  (void)layer;
+  
+  if (!value) {
+    PUSH_ERROR_AND_RETURN("[InternalError] nullptr value is not allowed.");
+  }
+
+  DCOUT("PrimSpec : " << ps.name() << "(" << ps.typeName() << ") attr_name " << attr_name);
+
+  // Look up the property in PrimSpec's properties
+  const auto &props = ps.props();
+  auto it = props.find(attr_name);
+  if (it == props.end()) {
+    PUSH_ERROR_AND_RETURN(fmt::format("Attribute `{}` not found in PrimSpec `{}`", attr_name, ps.name()));
+  }
+
+  const Property &prop = it->second;
+
+  // Handle different property types
+  if (prop.is_attribute_connection()) {
+    // For Layer/PrimSpec version, we cannot follow connections 
+    // since we don't have the full Stage context for path resolution
+    PUSH_ERROR_AND_RETURN(fmt::format("Attribute `{}` is a connection. Connection following is not supported in Layer/PrimSpec version of EvaluateAttribute. Use Stage version instead.", attr_name));
+    
+  } else if (prop.is_attribute()) {
+    DCOUT("IsAttrib");
+
+    const Attribute &attr = prop.get_attribute();
+
+    if (attr.is_blocked()) {
+      PUSH_ERROR_AND_RETURN(
+          fmt::format("Attribute `{}` is ValueBlocked(None).", attr_name));
+    }
+
+    // Check if this is an empty attribute (type info only)
+    if (prop.is_empty()) {
+      // For empty attributes, set as empty with type info
+      std::string type_name = attr.type_name();
+      if (type_name.empty()) {
+        type_name = "unknown";
+      }
+      value->set_empty_attribute(type_name);
+      DCOUT("Empty attribute with type: " << type_name);
+    } else {
+      if (!ToTerminalAttributeValue(attr, value, err, t, tinterp)) {
+        return false;
+      }
+    }
+
+  } else if (prop.is_relationship()) {
+    PUSH_ERROR_AND_RETURN(
+        fmt::format("Property `{}` is a Relation.", attr_name));
+  } else if (prop.is_empty()) {
+    // "empty" attribute - set as empty with type info
+    std::string type_name = "unknown"; // Default fallback
+    
+    // Try to get type information from the attribute if available
+    if (prop.is_attribute()) {
+      const Attribute &attr = prop.get_attribute();
+      const primvar::PrimVar &var = attr.get_var();
+      if (var.is_valid()) {
+        type_name = var.type_name();
+      }
+    }
+    
+    value->set_empty_attribute(type_name);
+    DCOUT("Empty attribute with type: " << type_name);
+    
+  } else {
+    // ???
+    PUSH_ERROR_AND_RETURN(
+        fmt::format("[InternalError] Invalid Property type for `{}`.", attr_name));
+  }
+
+  return true;
 }
 
 }  // namespace tydra

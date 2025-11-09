@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<materialx version="1.38">
+  <surfacematerial name="BlueGlass" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="BlueGlass_shader" />
+  </surfacematerial>
+
+  <open_pbr_surface name="BlueGlass_shader" type="surfaceshader">
+    <input name="base_weight" type="float" value="0.0" />
+    <input name="transmission_weight" type="float" value="1.0" />
+    <input name="transmission_color" type="color3" value="0.2, 0.5, 0.9" />
+    <input name="specular_roughness" type="float" value="0.0" />
+    <input name="specular_ior" type="float" value="1.52" />
+    <input name="geometry_thin_walled" type="boolean" value="false" />
+  </open_pbr_surface>
+</materialx>

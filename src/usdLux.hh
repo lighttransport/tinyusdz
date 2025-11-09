@@ -1,8 +1,25 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2022 - 2023, Syoyo Fujita.
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
-//
-// UsdLux LightSource
+
+///
+/// @file usdLux.hh
+/// @brief USD Lighting schema definitions
+///
+/// Implements light source primitives following USD's UsdLux schema.
+/// Supports various light types commonly used in rendering applications.
+///
+/// Supported light types:
+/// - SphereLight: Point light with sphere shape
+/// - CylinderLight: Cylindrical area light  
+/// - DomeLight: Environment/HDR lighting
+/// - DiskLight: Disk-shaped area light
+/// - RectLight: Rectangular area light
+/// - DistantLight: Directional light (sun/moon)
+/// - GeometryLight: Light emitted from geometry
+/// - PortalLight: Portal for environment lighting
+/// - PluginLight: Custom light implementations
+///
 #pragma once
 
 #include "prim-types.hh"
@@ -85,12 +102,18 @@ class BoundableLight : public Xformable, public Collection {
   TypedAttributeWithFallback<Animatable<bool>> normalize{false}; // inputs:normalize normalize power by the surface area of the light.
   TypedAttributeWithFallback<Animatable<float>> specular{1.0f}; // inputs:specular specular multiplier
 
-  // Relationships
-  RelationshipProperty filters; // rel light:filters - light filters affecting this light
+  // Shadow API
+  TypedAttributeWithFallback<Animatable<bool>> shadowEnable{true}; // bool inputs:shadow:enable = 1
+  TypedAttributeWithFallback<Animatable<value::color3f>> shadowColor{value::color3f({0.0f, 0.0f, 0.0f})}; // color3f inputs:shadow:color = (0, 0, 0)
+  TypedAttributeWithFallback<Animatable<float>> shadowDistance{-1.0f}; // float inputs:shadow:distance = -1
+  TypedAttributeWithFallback<Animatable<float>> shadowFalloff{-1.0f}; // float inputs:shadow:falloff = -1
+  TypedAttributeWithFallback<Animatable<float>> shadowFalloffGamma{1.0f}; // float inputs:shadow:falloffGamma = 1
 
-  // Optional API schemas (can be applied)
-  nonstd::optional<ShapingAPI> shaping;
-  nonstd::optional<ShadowAPI> shadow;
+  // Shaping API
+  TypedAttributeWithFallback<Animatable<float>> shapingFocus{0.0f}; // float inputs:shaping:focus = 0
+  TypedAttributeWithFallback<Animatable<value::color3f>> shapingFocusTint{value::color3f({0.0f, 0.0f, 0.0f})}; // color3f inputs:shaping:focusTint = (0, 0, 0)
+  TypedAttributeWithFallback<Animatable<float>> shapingConeAngle{90.0f}; // float inputs:shaping:cone:angle = 90
+  TypedAttributeWithFallback<Animatable<float>> shapingConeSoftness{0.0f}; // float inputs:shaping:cone:softness = 0
 
   std::pair<ListEditQual, std::vector<Reference>> references;
   std::pair<ListEditQual, std::vector<Payload>> payload;
@@ -134,12 +157,13 @@ class NonboundableLight : public Xformable, public Collection {
   TypedAttributeWithFallback<Animatable<bool>> normalize{false}; // inputs:normalize normalize power by the surface area of the light.
   TypedAttributeWithFallback<Animatable<float>> specular{1.0f}; // inputs:specular specular multiplier
 
-  // Relationships
-  RelationshipProperty filters; // rel light:filters - light filters affecting this light
+  // Shadow API
+  TypedAttributeWithFallback<Animatable<bool>> shadowEnable{true}; // bool inputs:shadow:enable = 1
+  TypedAttributeWithFallback<Animatable<value::color3f>> shadowColor{value::color3f({0.0f, 0.0f, 0.0f})}; // color3f inputs:shadow:color = (0, 0, 0)
+  TypedAttributeWithFallback<Animatable<float>> shadowDistance{-1.0f}; // float inputs:shadow:distance = -1
+  TypedAttributeWithFallback<Animatable<float>> shadowFalloff{-1.0f}; // float inputs:shadow:falloff = -1
+  TypedAttributeWithFallback<Animatable<float>> shadowFalloffGamma{1.0f}; // float inputs:shadow:falloffGamma = 1
 
-  // Optional API schemas (can be applied)
-  nonstd::optional<ShapingAPI> shaping;
-  nonstd::optional<ShadowAPI> shadow;
 
   std::pair<ListEditQual, std::vector<Reference>> references;
   std::pair<ListEditQual, std::vector<Payload>> payload;

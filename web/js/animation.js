@@ -1,0 +1,2230 @@
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import GUI from 'three/examples/jsm/libs/lil-gui.module.min.js';
+import { TinyUSDZLoader } from 'tinyusdz/TinyUSDZLoader.js';
+import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
+
+// Scene setup
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1a1a);
+
+// Camera
+const camera = new THREE.PerspectiveCamera(
+	75,
+	window.innerWidth / window.innerHeight,
+	0.1,
+	10000
+);
+camera.position.set(50, 50, 50);
+camera.lookAt(0, 0, 0);
+
+// Renderer
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+// Orbit controls
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+
+// Lighting
+const ambientLight = new THREE.AmbientLight(0x404040, 1);
+scene.add(ambientLight);
+
+const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+directionalLight.position.set(50, 100, 50);
+directionalLight.castShadow = true;
+directionalLight.shadow.mapSize.width = 2048;
+directionalLight.shadow.mapSize.height = 2048;
+directionalLight.shadow.camera.left = -100;
+directionalLight.shadow.camera.right = 100;
+directionalLight.shadow.camera.top = 100;
+directionalLight.shadow.camera.bottom = -100;
+directionalLight.shadow.camera.near = 0.5;
+directionalLight.shadow.camera.far = 500;
+directionalLight.shadow.bias = -0.0001; // Reduce shadow acne
+scene.add(directionalLight);
+
+// Ground plane
+const groundGeometry = new THREE.PlaneGeometry(200, 200);
+const groundMaterial = new THREE.MeshStandardMaterial({
+	color: 0x333333,
+	roughness: 0.8,
+	metalness: 0.2
+});
+const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// Grid helper
+let gridHelper = new THREE.GridHelper(200, 20, 0x666666, 0x444444);
+scene.add(gridHelper);
+
+// Axis helper at center
+const axisHelper = new THREE.AxesHelper(50); // Size 50
+axisHelper.name = 'AxisHelper';
+scene.add(axisHelper);
+
+// Virtual root object for USD scene (name = "/")
+const usdSceneRoot = new THREE.Group();
+usdSceneRoot.name = "/";
+scene.add(usdSceneRoot);
+
+// Store reference to the actual USD content node (child of usdSceneRoot)
+// This is needed for creating the animation mixer on the correct root
+let usdContentNode = null;
+
+// Store USD animations from the file
+let usdAnimations = [];
+
+// Store the current file's upAxis (Y or Z)
+let currentFileUpAxis = "Y";
+
+// Store the current scene metadata
+let currentSceneMetadata = {
+	upAxis: "Y",
+	metersPerUnit: 1.0,
+	framesPerSecond: 24.0,
+	timeCodesPerSecond: 24.0,
+	startTimeCode: null,
+	endTimeCode: null,
+	autoPlay: true,
+	comment: "",
+	copyright: ""
+};
+
+// Store currently selected object for transform display
+let selectedObject = null;
+
+// Store bounding box helpers for each object
+const objectBBoxHelpers = new Map(); // uuid -> BoxHelper
+
+// Raycaster for object selection
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+
+// Highlight selected object
+let selectionHelper = null;
+
+// ===========================================
+// USD Animation Extraction Functions
+// ===========================================
+
+/**
+ * Convert USD animation data to Three.js AnimationClip
+ * Supports both channel/sampler and track-based animation structures
+ * @param {Object} usdLoader - TinyUSDZ loader instance
+ * @param {THREE.Object3D} sceneRoot - Three.js scene containing the loaded geometry
+ * @returns {Array<THREE.AnimationClip>} Array of Three.js AnimationClips
+ */
+function convertUSDAnimationsToThreeJS(usdLoader, sceneRoot) {
+	const animationClips = [];
+
+	// Get number of animations
+	const numAnimations = usdLoader.numAnimations();
+	console.log(`Found ${numAnimations} animations in USD file`);
+
+	// Get summary of all animations
+	const animationInfos = usdLoader.getAllAnimationInfos();
+	console.log('Animation summaries:', animationInfos);
+
+	// Build node index map for faster lookup
+	const nodeIndexMap = new Map();
+	let nodeIndex = 0;
+	sceneRoot.traverse((obj) => {
+		nodeIndexMap.set(nodeIndex, obj);
+		//console.log(`Node index ${nodeIndex}: name="${obj.name}", type=${obj.type}, uuid=${obj.uuid}`);
+		nodeIndex++;
+	});
+	console.log(`Built node index map with ${nodeIndexMap.size} nodes`);
+
+	// Convert each animation to Three.js format
+	for (let i = 0; i < numAnimations; i++) {
+		const usdAnimation = usdLoader.getAnimation(i);
+		console.log(`Processing animation ${i}: ${usdAnimation.name}`);
+
+		// Check if this is a track-based animation (legacy format)
+		if (usdAnimation.tracks && usdAnimation.tracks.length > 0) {
+			console.log(`Animation ${i} uses track-based format with ${usdAnimation.tracks.length} tracks`);
+
+			// Process track-based animation
+			const keyframeTracks = [];
+
+			// Find the target object - for track animations, usually the first child after scene root
+			let targetObject = sceneRoot;
+			// Try to find the animated object by name from the animation
+			// Animation name format: "object_name_xform" or "object_name"
+			// Remove "_xform" suffix if present, then try exact match
+			if (usdAnimation.name) {
+				let searchName = usdAnimation.name;
+				// Remove common suffixes
+				searchName = searchName.replace(/_xform$/, '');
+				searchName = searchName.replace(/_anim$/, '');
+
+				console.log(`Searching for target object with name: "${searchName}" (from animation "${usdAnimation.name}")`);
+
+				// First try exact match
+				let found = false;
+				sceneRoot.traverse((obj) => {
+					if (obj.name === searchName) {
+						targetObject = obj;
+						found = true;
+						console.log(`  Found exact match: "${obj.name}"`);
+					}
+				});
+
+				// If no exact match, try matching without the mesh suffix
+				if (!found) {
+					sceneRoot.traverse((obj) => {
+						if (obj.name && obj.name.startsWith(searchName)) {
+							targetObject = obj;
+							found = true;
+							console.log(`  Found prefix match: "${obj.name}"`);
+						}
+					});
+				}
+			}
+
+			// If we can't find it by name, use the first mesh or group
+			if (targetObject === sceneRoot) {
+				console.warn(`Could not find target object for animation "${usdAnimation.name}", using first mesh/group`);
+				sceneRoot.traverse((obj) => {
+					if ((obj.isMesh || obj.isGroup) && obj !== sceneRoot) {
+						targetObject = obj;
+						return; // Stop traversal once we find the first mesh/group
+					}
+				});
+			}
+
+			const targetName = targetObject.name || 'AnimatedObject';
+			const targetUUID = targetObject.uuid;
+			console.log(`Target object for track-based animation: "${targetName}" (UUID: ${targetUUID})`);
+
+			// Process each track
+			for (const track of usdAnimation.tracks) {
+				if (!track.times || !track.values) {
+					console.warn('Track missing times or values');
+					continue;
+				}
+
+				// Convert times and values to arrays
+				const times = Array.isArray(track.times) ? track.times : Array.from(track.times);
+				const values = Array.isArray(track.values) ? track.values : Array.from(track.values);
+				const interpolation = getUSDInterpolationMode(track.interpolation);
+
+				console.log(`Processing track: ${track.path}, ${times.length} keyframes`);
+
+				// Create appropriate Three.js KeyframeTrack based on path
+				let keyframeTrack;
+
+				// Use UUID-based targeting for reliability (same as channel-based animations)
+				// Format: "<uuid>.<property>" (PropertyBinding checks uuid === nodeName)
+				switch (track.path) {
+					case 'translation':
+					case 'Translation':
+						keyframeTrack = new THREE.VectorKeyframeTrack(
+							`${targetUUID}.position`,
+							times,
+							values,
+							interpolation
+						);
+						console.log(`  Created translation track: ${targetUUID}.position (${targetName})`);
+						break;
+
+					case 'rotation':
+					case 'Rotation':
+						// Rotation is stored as quaternions (x, y, z, w)
+						keyframeTrack = new THREE.QuaternionKeyframeTrack(
+							`${targetUUID}.quaternion`,
+							times,
+							values,
+							interpolation
+						);
+						console.log(`  Created rotation track: ${targetUUID}.quaternion (${targetName})`);
+						break;
+
+					case 'scale':
+					case 'Scale':
+						keyframeTrack = new THREE.VectorKeyframeTrack(
+							`${targetUUID}.scale`,
+							times,
+							values,
+							interpolation
+						);
+						console.log(`  Created scale track: ${targetUUID}.scale (${targetName})`);
+						break;
+
+					default:
+						console.warn(`Unknown track path: ${track.path}`);
+						continue;
+				}
+
+				if (keyframeTrack) {
+					keyframeTracks.push(keyframeTrack);
+				}
+			}
+
+			// Create Three.js AnimationClip from tracks
+			if (keyframeTracks.length > 0) {
+				const clip = new THREE.AnimationClip(
+					usdAnimation.name || `Animation_${i}`,
+					usdAnimation.duration || -1, // -1 will auto-calculate from tracks
+					keyframeTracks
+				);
+
+				animationClips.push(clip);
+				console.log(`Created clip: ${clip.name}, duration: ${clip.duration}s, tracks: ${clip.tracks.length}`);
+			}
+
+			continue; // Skip to next animation
+		}
+
+		// Handle channel-based animation (newer format)
+		if (!usdAnimation.channels || !usdAnimation.samplers) {
+			console.warn(`Animation ${i} missing channels/samplers and tracks`);
+			continue;
+		}
+
+		// Filter for node animations only (skip skeletal animations)
+		const nodeChannels = usdAnimation.channels.filter(channel => {
+			const targetType = channel.target_type || 'SceneNode'; // Default to SceneNode for backward compat
+			return targetType === 'SceneNode';
+		});
+
+		if (nodeChannels.length === 0) {
+			console.log(`Animation ${i} has no SceneNode channels (skipping skeletal-only animation)`);
+			continue;
+		}
+
+		console.log(`Animation ${i}: ${nodeChannels.length} node channels (${usdAnimation.channels.length - nodeChannels.length} skeletal channels skipped)`);
+
+		// Create Three.js KeyframeTracks from USD animation channels
+		const keyframeTracks = [];
+
+		for (const channel of nodeChannels) {
+			// Get sampler data
+			const sampler = usdAnimation.samplers[channel.sampler];
+			if (!sampler || !sampler.times || !sampler.values) {
+				console.warn(`Invalid sampler for channel`);
+				continue;
+			}
+
+			// Find the Three.js object for this channel
+			const targetObject = nodeIndexMap.get(channel.target_node);
+			if (!targetObject) {
+				console.warn(`Could not find object at node index: ${channel.target_node}`);
+				console.warn(`Available node indices: ${Array.from(nodeIndexMap.keys()).join(', ')}`);
+				continue;
+			}
+
+			// Convert times and values to arrays
+			const times = Array.isArray(sampler.times) ? sampler.times : Array.from(sampler.times);
+			const values = Array.isArray(sampler.values) ? sampler.values : Array.from(sampler.values);
+
+			// Create appropriate Three.js KeyframeTrack based on path
+			let keyframeTrack;
+			// Use UUID for reliable hierarchical animation targeting
+			// Three.js AnimationMixer supports both name-based and UUID-based targeting
+			const targetUUID = targetObject.uuid;
+			const targetName = targetObject.name || `node_${channel.target_node}`;
+			const interpolation = getUSDInterpolationMode(sampler.interpolation);
+
+			console.log(`Channel: target_node=${channel.target_node}, path=${channel.path}, target_name="${targetName}", uuid=${targetUUID}, keyframes=${times.length}`);
+
+			// Three.js AnimationMixer can target objects by UUID or by name
+			// Using UUID is more reliable for hierarchical animations
+			// Format: "<uuid>.<property>" (PropertyBinding checks uuid === nodeName)
+			switch (channel.path) {
+				case 'Translation':
+					keyframeTrack = new THREE.VectorKeyframeTrack(
+						`${targetUUID}.position`,
+						times,
+						values,
+						interpolation
+					);
+					break;
+
+				case 'Rotation':
+					// Rotation is stored as quaternions (x, y, z, w)
+					keyframeTrack = new THREE.QuaternionKeyframeTrack(
+						`${targetUUID}.quaternion`,
+						times,
+						values,
+						interpolation
+					);
+					break;
+
+				case 'Scale':
+					keyframeTrack = new THREE.VectorKeyframeTrack(
+						`${targetUUID}.scale`,
+						times,
+						values,
+						interpolation
+					);
+					break;
+
+				case 'Weights':
+					// For morph targets
+					keyframeTrack = new THREE.NumberKeyframeTrack(
+						`.uuid[${targetUUID}].morphTargetInfluences`,
+						times,
+						values,
+						interpolation
+					);
+					break;
+
+				default:
+					console.warn(`Unknown animation path: ${channel.path}`);
+					continue;
+			}
+
+			if (keyframeTrack) {
+				keyframeTracks.push(keyframeTrack);
+				// Debug: Log first few keyframe values
+				console.log(`  Track "${keyframeTrack.name}": ${keyframeTrack.times.length} keyframes`);
+				if (keyframeTrack.times.length > 0 && channel.path === 'Scale') {
+					// Log scale values in detail for debugging
+					const numSamples = Math.min(3, keyframeTrack.times.length);
+					const currentScale = [targetObject.scale.x, targetObject.scale.y, targetObject.scale.z];
+					console.log(`  Scale animation for "${targetName}" (current scale=[${currentScale[0].toFixed(4)}, ${currentScale[1].toFixed(4)}, ${currentScale[2].toFixed(4)}]):`);
+					for (let s = 0; s < numSamples; s++) {
+						const t = keyframeTrack.times[s];
+						const vIdx = s * 3;
+						const scale = [
+							keyframeTrack.values[vIdx],
+							keyframeTrack.values[vIdx + 1],
+							keyframeTrack.values[vIdx + 2]
+						];
+						console.log(`    t=${t.toFixed(3)}s: scale=[${scale[0].toFixed(4)}, ${scale[1].toFixed(4)}, ${scale[2].toFixed(4)}]`);
+					}
+
+					// Check if animation scale differs significantly from current scale
+					const firstScale = [keyframeTrack.values[0], keyframeTrack.values[1], keyframeTrack.values[2]];
+					const scaleDiff = Math.abs(firstScale[0] - currentScale[0]) + Math.abs(firstScale[1] - currentScale[1]) + Math.abs(firstScale[2] - currentScale[2]);
+					if (scaleDiff > 0.01) {
+						console.warn(`  ⚠️  Animation scale mismatch! Object's current scale differs from animation's first keyframe by ${scaleDiff.toFixed(4)}`);
+						console.warn(`  This may indicate the animation doesn't include the base transform from USD.`);
+					}
+				}
+				if (keyframeTrack.times.length > 0) {
+					console.log(`    First keyframe: time=${keyframeTrack.times[0]}, values=[${keyframeTrack.values.slice(0, 4).join(', ')}...]`);
+					if (keyframeTrack.times.length > 1) {
+						const lastIdx = keyframeTrack.times.length - 1;
+						const valuesPerKey = keyframeTrack.values.length / keyframeTrack.times.length;
+						const lastValueStart = lastIdx * valuesPerKey;
+						console.log(`    Last keyframe: time=${keyframeTrack.times[lastIdx]}, values=[${keyframeTrack.values.slice(lastValueStart, lastValueStart + 4).join(', ')}...]`);
+					}
+				}
+			}
+		}
+
+		// Create Three.js AnimationClip
+		if (keyframeTracks.length > 0) {
+			const clip = new THREE.AnimationClip(
+				usdAnimation.name || `Animation_${i}`,
+				usdAnimation.duration || -1, // -1 will auto-calculate from tracks
+				keyframeTracks
+			);
+
+			animationClips.push(clip);
+			console.log(`Created clip: ${clip.name}, duration: ${clip.duration}s, tracks: ${clip.tracks.length}`);
+			console.log(`Track names in clip:`, clip.tracks.map(t => t.name));
+		}
+	}
+
+	return animationClips;
+}
+
+/**
+ * Convert USD interpolation mode to Three.js InterpolateMode
+ * @param {string} interpolation - USD interpolation mode (Linear, Step, CubicSpline)
+ * @returns {number} Three.js InterpolateMode constant
+ */
+function getUSDInterpolationMode(interpolation) {
+	switch (interpolation) {
+		case 'Step':
+		case 'STEP':
+			return THREE.InterpolateDiscrete;
+		case 'CubicSpline':
+		case 'CUBICSPLINE':
+			return THREE.InterpolateSmooth;
+		case 'Linear':
+		case 'LINEAR':
+		default:
+			return THREE.InterpolateLinear;
+	}
+}
+
+// Load USD model asynchronously
+async function loadUSDModel() {
+	const loader = new TinyUSDZLoader();
+
+	// Initialize the loader (wait for WASM module to load)
+	// Use memory64: false for browser compatibility
+	// Use useZstdCompressedWasm: false since compressed WASM is not available
+	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
+
+	// USD FILES
+	//const usd_filename = "./assets/cube-animation.usda";
+	//const usd_filename = "./assets/hierarchical-node-animation.usdc";
+	//const usd_filename = "./assets/test-001.usdc";
+	const usd_filename = "./assets/suzanne-xform.usdc";
+
+	// Load USD scene
+	const usd_scene = await loader.loadAsync(usd_filename);
+
+	// Get the default root node from USD
+	const usdRootNode = usd_scene.getDefaultRootNode();
+
+	// Get scene metadata from the USD file
+	const sceneMetadata = usd_scene.getSceneMetadata ? usd_scene.getSceneMetadata() : {};
+	const fileUpAxis = sceneMetadata.upAxis || "Y";
+	currentFileUpAxis = fileUpAxis; // Store globally for toggle function
+
+	// Store metadata globally
+	currentSceneMetadata = {
+		upAxis: fileUpAxis,
+		metersPerUnit: sceneMetadata.metersPerUnit || 1.0,
+		framesPerSecond: sceneMetadata.framesPerSecond || 24.0,
+		timeCodesPerSecond: sceneMetadata.timeCodesPerSecond || 24.0,
+		startTimeCode: sceneMetadata.startTimeCode,
+		endTimeCode: sceneMetadata.endTimeCode,
+		autoPlay: sceneMetadata.autoPlay !== undefined ? sceneMetadata.autoPlay : true,
+		comment: sceneMetadata.comment || "",
+		copyright: sceneMetadata.copyright || ""
+	};
+
+	console.log('=== USD Scene Metadata ===');
+	console.log(`upAxis: "${currentSceneMetadata.upAxis}"`);
+	console.log(`metersPerUnit: ${currentSceneMetadata.metersPerUnit}`);
+	console.log(`framesPerSecond: ${currentSceneMetadata.framesPerSecond}`);
+	console.log(`timeCodesPerSecond: ${currentSceneMetadata.timeCodesPerSecond}`);
+	if (currentSceneMetadata.startTimeCode !== null && currentSceneMetadata.startTimeCode !== undefined) {
+		console.log(`startTimeCode: ${currentSceneMetadata.startTimeCode}`);
+	}
+	if (currentSceneMetadata.endTimeCode !== null && currentSceneMetadata.endTimeCode !== undefined) {
+		console.log(`endTimeCode: ${currentSceneMetadata.endTimeCode}`);
+	}
+	console.log(`autoPlay: ${currentSceneMetadata.autoPlay}`);
+	if (currentSceneMetadata.comment) {
+		console.log(`comment: "${currentSceneMetadata.comment}"`);
+	}
+	if (currentSceneMetadata.copyright) {
+		console.log(`copyright: "${currentSceneMetadata.copyright}"`);
+	}
+	console.log('========================');
+
+	// Update metadata UI
+	updateMetadataUI();
+
+	// Create default material
+	const defaultMtl = TinyUSDZLoaderUtils.createDefaultMaterial();
+
+	const options = {
+		overrideMaterial: false,
+		envMap: null,
+		envMapIntensity: 1.0,
+	};
+
+	// Build Three.js node from USD
+	const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+
+	// Store reference to USD content node for mixer creation
+	usdContentNode = threeNode;
+
+	// Clear existing USD scene
+	while (usdSceneRoot.children.length > 0) {
+		usdSceneRoot.remove(usdSceneRoot.children[0]);
+	}
+
+	// Add loaded USD scene to usdSceneRoot
+	usdSceneRoot.add(threeNode);
+
+	// Apply Z-up to Y-up conversion if enabled AND the file is actually Z-up
+	if (animationParams.applyUpAxisConversion && fileUpAxis === "Z") {
+		usdSceneRoot.rotation.x = -Math.PI / 2;
+		console.log(`[loadUSDModel] Applied Z-up to Y-up conversion (file upAxis="${fileUpAxis}"): rotation.x =`, usdSceneRoot.rotation.x);
+	} else if (animationParams.applyUpAxisConversion && fileUpAxis !== "Y") {
+		console.warn(`[loadUSDModel] File upAxis is "${fileUpAxis}" (not Y or Z), no rotation applied`);
+	} else {
+		console.log(`[loadUSDModel] No upAxis conversion needed (file upAxis="${fileUpAxis}", conversion ${animationParams.applyUpAxisConversion ? 'enabled' : 'disabled'})`);
+	}
+
+	// Debug: Log scene hierarchy transforms
+	console.log('=== Scene Hierarchy After UpAxis Conversion ===');
+	console.log('usdSceneRoot:', {
+		rotation: { x: usdSceneRoot.rotation.x, y: usdSceneRoot.rotation.y, z: usdSceneRoot.rotation.z },
+		position: { x: usdSceneRoot.position.x, y: usdSceneRoot.position.y, z: usdSceneRoot.position.z },
+		scale: { x: usdSceneRoot.scale.x, y: usdSceneRoot.scale.y, z: usdSceneRoot.scale.z }
+	});
+	if (threeNode) {
+		console.log('threeNode (usdContentNode):', {
+			rotation: { x: threeNode.rotation.x, y: threeNode.rotation.y, z: threeNode.rotation.z },
+			position: { x: threeNode.position.x, y: threeNode.position.y, z: threeNode.position.z },
+			scale: { x: threeNode.scale.x, y: threeNode.scale.y, z: threeNode.scale.z }
+		});
+	}
+	console.log('==============================================');
+
+	// Apply scene scale and update shadow frustum based on model bounds
+	animationParams.applySceneScale();
+
+	// Traverse and enable shadows for all meshes
+	usdSceneRoot.traverse((child) => {
+		if (child.isMesh) {
+			child.castShadow = true;
+			child.receiveShadow = true;
+		}
+	});
+
+	// Extract USD animations if available
+	try {
+		const animationInfos = usd_scene.getAllAnimationInfos();
+		// IMPORTANT: Pass threeNode (the USD root) for correct node index mapping
+		// The node indices in USD animations reference nodes within the USD scene hierarchy
+		usdAnimations = convertUSDAnimationsToThreeJS(usd_scene, threeNode);
+
+		if (usdAnimations.length > 0) {
+			console.log(`Extracted ${usdAnimations.length} animations from USD file`);
+
+			// Animation parameters updated automatically via playAllUSDAnimations()
+
+			// Log animation details
+			usdAnimations.forEach((clip, index) => {
+				const info = animationInfos[index];
+				let typeStr = '';
+				if (info) {
+					const types = [];
+					if (info.has_skeletal_animation) types.push('skeletal');
+					if (info.has_node_animation) types.push('node');
+					if (types.length > 0) typeStr = ` [${types.join('+')}]`;
+				}
+				console.log(`Animation ${index}: ${clip.name}, duration: ${clip.duration}s, tracks: ${clip.tracks.length}${typeStr}`);
+			});
+
+			// Set time range from metadata or first USD animation
+			let timeRangeSource = "animation";
+			let beginTime = 0;
+			let endTime = 0;
+
+			// Prefer metadata startTimeCode/endTimeCode if available
+			if (currentSceneMetadata.startTimeCode !== null && currentSceneMetadata.startTimeCode !== undefined &&
+			    currentSceneMetadata.endTimeCode !== null && currentSceneMetadata.endTimeCode !== undefined) {
+				beginTime = currentSceneMetadata.startTimeCode;
+				endTime = currentSceneMetadata.endTimeCode;
+				timeRangeSource = "metadata";
+			} else {
+				// Fallback to first animation clip duration
+				const firstClip = usdAnimations[0];
+				if (firstClip && firstClip.duration > 0) {
+					beginTime = 0;
+					endTime = firstClip.duration;
+				}
+			}
+
+			if (endTime > beginTime) {
+				animationParams.beginTime = beginTime;
+				animationParams.endTime = endTime;
+				animationParams.duration = endTime - beginTime;
+				animationParams.time = beginTime; // Reset time to beginning
+				console.log(`Set time range from ${timeRangeSource}: ${beginTime}s - ${endTime}s`);
+
+				// Update GUI controllers if they exist
+				updateTimeRangeGUIControllers(endTime);
+			}
+
+
+		// Set playback speed (FPS) from framesPerSecond metadata
+		const fps = currentSceneMetadata.framesPerSecond || 24.0;
+		animationParams.speed = fps;
+		console.log(`Set animation speed (FPS) from metadata: ${fps}`);
+			// Play all USD animations automatically
+			playAllUSDAnimations();
+		} else {
+			// No USD animations found
+			console.log('No USD animations found in this USD file');
+
+			// Still build scene graph UI for static scenes
+			buildSceneGraphUI();
+		}
+	} catch (error) {
+		console.log('No animations found in USD file or animation extraction not supported:', error);
+	}
+}
+
+// Debug: Dump scene hierarchy
+function dumpSceneHierarchy(root, prefix = '', level = 0) {
+	const indent = '  '.repeat(level);
+	console.log(`${prefix}${indent}"${root.name || 'unnamed'}" [${root.type}] uuid=${root.uuid}`);
+
+	if (root.children && root.children.length > 0) {
+		root.children.forEach((child, index) => {
+			const isLast = index === root.children.length - 1;
+			const childPrefix = isLast ? '└─ ' : '├─ ';
+			dumpSceneHierarchy(child, childPrefix, level + 1);
+		});
+	}
+}
+
+// Toggle bounding box for an object
+function toggleBoundingBox(obj, show) {
+	if (show) {
+		// Create bbox helper if it doesn't exist
+		if (!objectBBoxHelpers.has(obj.uuid)) {
+			const bbox = new THREE.Box3();
+
+			// Compute bounding box from the object and its children
+			bbox.setFromObject(obj);
+
+			// Create a BoxHelper or Box3Helper
+			const helper = new THREE.Box3Helper(bbox, 0x00ff00); // Green color
+			helper.name = `bbox_${obj.name || obj.uuid}`;
+
+			// Store the helper
+			objectBBoxHelpers.set(obj.uuid, helper);
+
+			// Add to scene
+			scene.add(helper);
+
+			console.log(`BBox created for "${obj.name}":`, {
+				min: bbox.min,
+				max: bbox.max,
+				size: bbox.getSize(new THREE.Vector3())
+			});
+		} else {
+			// Make it visible
+			const helper = objectBBoxHelpers.get(obj.uuid);
+			helper.visible = true;
+		}
+	} else {
+		// Hide the bbox helper
+		if (objectBBoxHelpers.has(obj.uuid)) {
+			const helper = objectBBoxHelpers.get(obj.uuid);
+			helper.visible = false;
+		}
+	}
+}
+
+// Update bounding box helper for an object (call this during animation)
+function updateBoundingBox(obj) {
+	if (objectBBoxHelpers.has(obj.uuid)) {
+		const helper = objectBBoxHelpers.get(obj.uuid);
+		if (helper.visible) {
+			// Recompute the bounding box
+			const bbox = new THREE.Box3();
+			bbox.setFromObject(obj);
+
+			// Update the helper
+			helper.box = bbox;
+		}
+	}
+}
+
+// Build scene graph tree UI with animation controls
+function buildSceneGraphUI() {
+	if (!window.sceneGraphFolder) return;
+
+	// Clear existing controls
+	window.sceneGraphFolder.controllers.forEach(c => c.destroy());
+	window.sceneGraphFolder.folders.forEach(f => f.destroy());
+
+	// Recursively add objects to the tree
+	function addObjectToUI(obj, parentFolder) {
+		const objectName = obj.name || `${obj.type}_${obj.uuid.slice(0, 8)}`;
+		const hasChildren = obj.children && obj.children.length > 0;
+		const isAnimated = objectAnimationActions.has(obj.uuid);
+
+		if (hasChildren) {
+			// Create a folder for objects with children
+			const folder = parentFolder.addFolder(objectName + (isAnimated ? ' 🎬' : ''));
+
+			// Add select button to show transform info
+			const selectControl = {
+				select: function() {
+					selectObject(obj);
+				}
+			};
+			folder.add(selectControl, 'select').name('👁️ Select');
+
+			// Add animation toggle if this object is animated
+			if (isAnimated) {
+				const animControl = {
+					enabled: true,
+					toggleAnimation: function() {
+						const animData = objectAnimationActions.get(obj.uuid);
+						if (animData) {
+							animData.enabled = this.enabled;
+							if (this.enabled) {
+								// Re-enable by setting weight to 1
+								animData.action.setEffectiveWeight(1.0);
+							} else {
+								// Disable by setting weight to 0
+								animData.action.setEffectiveWeight(0.0);
+							}
+							console.log(`${objectName} animation: ${this.enabled ? 'enabled' : 'disabled'}`);
+						}
+					}
+				};
+				folder.add(animControl, 'enabled')
+					.name('🎬 Animate')
+					.onChange(() => animControl.toggleAnimation());
+			}
+
+			// Add bounding box toggle
+			const bboxControl = {
+				showBBox: false,
+				toggleBBox: function() {
+					toggleBoundingBox(obj, this.showBBox);
+				}
+			};
+			folder.add(bboxControl, 'showBBox')
+				.name('📦 BBox')
+				.onChange(() => bboxControl.toggleBBox());
+
+			// Recursively add children
+			obj.children.forEach(child => {
+				addObjectToUI(child, folder);
+			});
+		} else {
+			// Leaf node - add select button
+			const selectControl = {
+				select: function() {
+					selectObject(obj);
+				}
+			};
+			parentFolder.add(selectControl, 'select').name(`👁️ ${objectName}`);
+
+			// Add animation toggle if this object is animated
+			if (isAnimated) {
+				const animControl = {
+					enabled: true,
+					label: objectName + ' 🎬',
+					toggleAnimation: function() {
+						const animData = objectAnimationActions.get(obj.uuid);
+						if (animData) {
+							animData.enabled = this.enabled;
+							if (this.enabled) {
+								animData.action.setEffectiveWeight(1.0);
+							} else {
+								animData.action.setEffectiveWeight(0.0);
+							}
+							console.log(`${objectName} animation: ${this.enabled ? 'enabled' : 'disabled'}`);
+						}
+					}
+				};
+				parentFolder.add(animControl, 'enabled')
+					.name(animControl.label)
+					.onChange(() => animControl.toggleAnimation());
+			}
+
+			// Add bounding box toggle for leaf nodes too
+			const bboxControl = {
+				showBBox: false,
+				label: '📦 BBox',
+				toggleBBox: function() {
+					toggleBoundingBox(obj, this.showBBox);
+				}
+			};
+			parentFolder.add(bboxControl, 'showBBox')
+				.name(bboxControl.label)
+				.onChange(() => bboxControl.toggleBBox());
+		}
+	}
+
+	// Start building from usdSceneRoot
+	if (usdSceneRoot && usdSceneRoot.children.length > 0) {
+		// Add the USD scene root and its children
+		addObjectToUI(usdSceneRoot, window.sceneGraphFolder);
+		window.sceneGraphFolder.show();
+		console.log('Scene graph UI built');
+	}
+}
+
+// Select an object and display its transform info
+function selectObject(obj) {
+	selectedObject = obj;
+
+	// Remove previous selection helper
+	if (selectionHelper) {
+		scene.remove(selectionHelper);
+		if (selectionHelper.geometry) selectionHelper.geometry.dispose();
+		if (selectionHelper.material) selectionHelper.material.dispose();
+		selectionHelper = null;
+	}
+
+	// Create selection helper (wireframe box)
+	if (obj.isMesh || obj.isGroup) {
+		const bbox = new THREE.Box3().setFromObject(obj);
+		selectionHelper = new THREE.Box3Helper(bbox, 0xffff00); // Yellow color
+		selectionHelper.name = 'SelectionHelper';
+		scene.add(selectionHelper);
+	}
+
+	// Update transform info UI
+	updateTransformInfoUI(obj);
+
+	console.log('Selected object:', obj.name, obj);
+}
+
+// Update transform info UI
+function updateTransformInfoUI(obj) {
+	if (!window.transformInfoFolder) return;
+
+	// Clear existing controls
+	window.transformInfoFolder.controllers.forEach(c => c.destroy());
+
+	if (!obj) {
+		window.transformInfoFolder.hide();
+		return;
+	}
+
+	// Create display object
+	const transformInfo = {
+		name: obj.name || 'unnamed',
+		type: obj.type,
+		posX: obj.position.x.toFixed(4),
+		posY: obj.position.y.toFixed(4),
+		posZ: obj.position.z.toFixed(4),
+		rotX: (obj.rotation.x * 180 / Math.PI).toFixed(2) + '°',
+		rotY: (obj.rotation.y * 180 / Math.PI).toFixed(2) + '°',
+		rotZ: (obj.rotation.z * 180 / Math.PI).toFixed(2) + '°',
+		scaleX: obj.scale.x.toFixed(4),
+		scaleY: obj.scale.y.toFixed(4),
+		scaleZ: obj.scale.z.toFixed(4),
+	};
+
+	// Add USD metadata if available
+	if (obj.userData['primMeta.absPath']) {
+		transformInfo.usdPath = obj.userData['primMeta.absPath'];
+	}
+	if (obj.userData['primMeta.displayName']) {
+		transformInfo.displayName = obj.userData['primMeta.displayName'];
+	}
+
+	// Add read-only controllers
+	window.transformInfoFolder.add(transformInfo, 'name').name('Name').disable().listen();
+	window.transformInfoFolder.add(transformInfo, 'type').name('Type').disable().listen();
+
+	if (transformInfo.usdPath) {
+		window.transformInfoFolder.add(transformInfo, 'usdPath').name('USD Path').disable().listen();
+	}
+	if (transformInfo.displayName) {
+		window.transformInfoFolder.add(transformInfo, 'displayName').name('Display Name').disable().listen();
+	}
+
+	window.transformInfoFolder.add(transformInfo, 'posX').name('Position X').disable().listen();
+	window.transformInfoFolder.add(transformInfo, 'posY').name('Position Y').disable().listen();
+	window.transformInfoFolder.add(transformInfo, 'posZ').name('Position Z').disable().listen();
+
+	window.transformInfoFolder.add(transformInfo, 'rotX').name('Rotation X').disable().listen();
+	window.transformInfoFolder.add(transformInfo, 'rotY').name('Rotation Y').disable().listen();
+	window.transformInfoFolder.add(transformInfo, 'rotZ').name('Rotation Z').disable().listen();
+
+	window.transformInfoFolder.add(transformInfo, 'scaleX').name('Scale X').disable().listen();
+	window.transformInfoFolder.add(transformInfo, 'scaleY').name('Scale Y').disable().listen();
+	window.transformInfoFolder.add(transformInfo, 'scaleZ').name('Scale Z').disable().listen();
+
+	window.transformInfoFolder.show();
+	console.log('Transform info updated for:', obj.name);
+}
+
+// Store per-object animation actions for individual control
+const objectAnimationActions = new Map(); // uuid -> { action, enabled }
+
+// Play all USD animations (all channels applied together)
+function playAllUSDAnimations() {
+	if (usdAnimations.length === 0) return;
+
+	// Ensure mixer exists - create on usdContentNode (the actual USD root) for correct UUID resolution
+	// The mixer MUST be created on the same root that was used for animation extraction
+	if (!mixer && usdContentNode) {
+		mixer = new THREE.AnimationMixer(usdContentNode);
+		console.log('Created AnimationMixer on usdContentNode for hierarchical animation support');
+		if (mixer.root) {
+			console.log('Mixer root object:', mixer.root.name, 'UUID:', mixer.root.uuid);
+		}
+
+		// Debug: Dump scene hierarchy
+		console.log('=== Scene Hierarchy ===');
+		dumpSceneHierarchy(usdContentNode);
+		console.log('=======================');
+
+		// Debug: List all objects that the mixer can potentially target by name
+		if (mixer.root) {
+			console.log('=== Objects visible to mixer (by name) ===');
+			mixer.root.traverse((obj) => {
+				if (obj.name) {
+					console.log(`  "${obj.name}" (${obj.type}, uuid: ${obj.uuid.slice(0, 8)})`);
+				}
+			});
+			console.log('==========================================');
+		}
+	}
+
+	// Stop all current animations
+	objectAnimationActions.forEach(({action}) => action.stop());
+	objectAnimationActions.clear();
+
+	// All USD animation clips contain channels for different objects
+	// We need to play all clips together
+	console.log(`Playing ${usdAnimations.length} USD animation clip(s) with all channels`);
+
+	usdAnimations.forEach((clip, clipIndex) => {
+		if (mixer && clip) {
+			// Validate that all tracks can find their targets before creating the action
+			let allTracksValid = true;
+			const invalidTracks = [];
+
+			clip.tracks.forEach(track => {
+				// Track name format: "<uuid>.<property>"
+				const parts = track.name.split('.');
+				if (parts.length >= 2) {
+					const uuid = parts[0];
+					let found = false;
+					// Check in usdContentNode which is the mixer root
+					if (usdContentNode) {
+						usdContentNode.traverse(obj => {
+							if (obj.uuid === uuid) {
+								found = true;
+							}
+						});
+					}
+					if (!found) {
+						allTracksValid = false;
+						invalidTracks.push({ track: track.name, uuid: uuid });
+					}
+				}
+			});
+
+			if (!allTracksValid) {
+				console.warn(`⚠️ Clip ${clipIndex} "${clip.name}" has ${invalidTracks.length} track(s) with invalid UUIDs:`);
+				invalidTracks.forEach(({track, uuid}) => {
+					console.warn(`  - Track "${track}" references UUID ${uuid.slice(0, 8)} which doesn't exist in scene`);
+				});
+				console.warn(`  Skipping this clip to avoid errors.`);
+				return; // Skip this clip
+			}
+
+			const action = mixer.clipAction(clip);
+			action.loop = THREE.LoopRepeat;
+			action.play();
+			console.log(`  Clip ${clipIndex}: ${clip.name}, ${clip.tracks.length} tracks`);
+
+			// Debug: Log track targets to verify hierarchy
+			console.log('  Animation tracks:', clip.tracks.map(t => t.name));
+
+			// Group tracks by target object for per-object control
+			clip.tracks.forEach(track => {
+				// Track name format: "<uuid>.<property>"
+				const parts = track.name.split('.');
+				if (parts.length >= 2) {
+					const uuid = parts[0];
+					let found = false;
+					// Traverse usdContentNode which is the mixer root
+					if (usdContentNode) {
+						usdContentNode.traverse(obj => {
+							if (obj.uuid === uuid) {
+								console.log(`    ✓ Found target for track "${track.name}": "${obj.name}" (${obj.type})`);
+								found = true;
+
+								// Store action reference for this object
+								if (!objectAnimationActions.has(uuid)) {
+									objectAnimationActions.set(uuid, {
+										action: action,
+										enabled: true,
+										objectName: obj.name,
+										object: obj
+									});
+								}
+							}
+						});
+					}
+					if (!found) {
+						console.warn(`    ✗ Target not found for track "${track.name}"`);
+					}
+				}
+			});
+		}
+	});
+
+	// Store the first action as the main animation action for time control
+	if (usdAnimations.length > 0 && mixer) {
+		animationAction = mixer.clipAction(usdAnimations[0]);
+	}
+
+	// Build scene graph UI with per-object animation controls
+	buildSceneGraphUI();
+}
+
+// Animation mixer and actions
+let mixer = null;
+let animationAction = null;
+
+// Debug: Track object transforms during animation
+let debugAnimationTracking = false;
+let debugFrameCounter = 0;
+const DEBUG_LOG_INTERVAL = 60; // Log every 60 frames (about 1 second at 60fps)
+
+function debugLogObjectTransforms() {
+	if (!debugAnimationTracking || !usdSceneRoot) return;
+
+	debugFrameCounter++;
+	if (debugFrameCounter % DEBUG_LOG_INTERVAL !== 0) return;
+
+	console.log('=== Animation Transform Debug ===');
+	console.log(`Time: ${animationParams.time.toFixed(3)}s`);
+
+	usdSceneRoot.traverse((obj) => {
+		// Log transforms of named objects or objects with animation
+		if (obj.name && obj.name !== '' && obj !== usdSceneRoot) {
+			const pos = obj.position;
+			const rot = obj.rotation;
+			const scale = obj.scale;
+			console.log(`  "${obj.name}" (${obj.type}):`, {
+				position: `[${pos.x.toFixed(3)}, ${pos.y.toFixed(3)}, ${pos.z.toFixed(3)}]`,
+				rotation: `[${rot.x.toFixed(3)}, ${rot.y.toFixed(3)}, ${rot.z.toFixed(3)}]`,
+				scale: `[${scale.x.toFixed(3)}, ${scale.y.toFixed(3)}, ${scale.z.toFixed(3)}]`,
+				uuid: obj.uuid
+			});
+		}
+	});
+	console.log('================================');
+}
+
+// Animation parameters
+const animationParams = {
+	isPlaying: true,
+	playPause: function() {
+		this.isPlaying = !this.isPlaying;
+
+		// Pause/unpause all animation actions
+		if (mixer) {
+			// Collect unique actions
+			const uniqueActions = new Set();
+			objectAnimationActions.forEach(({action, enabled}) => {
+				if (action && enabled) {
+					uniqueActions.add(action);
+				}
+			});
+
+			// Set paused state on all unique actions
+			uniqueActions.forEach(action => {
+				action.paused = !this.isPlaying;
+			});
+		}
+
+		// Also update the main action if it exists (fallback)
+		if (animationAction) {
+			animationAction.paused = !this.isPlaying;
+		}
+	},
+	reset: function() {
+		animationParams.time = animationParams.beginTime;
+		animationParams.speed = 24.0;
+
+		// Reset all animation actions
+		if (mixer) {
+			// Collect unique actions
+			const uniqueActions = new Set();
+			objectAnimationActions.forEach(({action, enabled}) => {
+				if (action && enabled) {
+					uniqueActions.add(action);
+				}
+			});
+
+			// Set time on all unique actions
+			uniqueActions.forEach(action => {
+				action.time = animationParams.beginTime;
+			});
+		}
+
+		// Also reset the main action if it exists (fallback)
+		if (animationAction) {
+			animationAction.time = animationParams.beginTime;
+		}
+	},
+	time: 0,
+	beginTime: 0,
+	endTime: 10,
+	duration: 10, // timecodes
+	speed: 24.0, // FPS (frames per second)
+
+	// Rendering options
+	shadowsEnabled: true,
+	toggleShadows: function() {
+		renderer.shadowMap.enabled = this.shadowsEnabled;
+		directionalLight.castShadow = this.shadowsEnabled;
+		ground.receiveShadow = this.shadowsEnabled;
+
+		// Update all loaded USD objects
+		usdSceneRoot.traverse((child) => {
+			if (child.isMesh) {
+				child.castShadow = this.shadowsEnabled;
+				child.receiveShadow = this.shadowsEnabled;
+			}
+		});
+	},
+
+	// Up axis conversion (Z-up to Y-up)
+	applyUpAxisConversion: true,
+	toggleUpAxisConversion: function() {
+		if (this.applyUpAxisConversion && currentFileUpAxis === "Z") {
+			// Apply Z-up to Y-up conversion (-90 degrees around X axis)
+			usdSceneRoot.rotation.x = -Math.PI / 2;
+			console.log(`[toggleUpAxisConversion] Applied Z-up to Y-up rotation (file upAxis="${currentFileUpAxis}"): usdSceneRoot.rotation.x =`, usdSceneRoot.rotation.x);
+		} else {
+			// Reset rotation (either disabled or file is already Y-up)
+			usdSceneRoot.rotation.x = 0;
+			if (this.applyUpAxisConversion && currentFileUpAxis !== "Z") {
+				console.log(`[toggleUpAxisConversion] No rotation needed (file upAxis="${currentFileUpAxis}"): usdSceneRoot.rotation.x =`, usdSceneRoot.rotation.x);
+			} else {
+				console.log(`[toggleUpAxisConversion] Reset rotation (conversion disabled): usdSceneRoot.rotation.x =`, usdSceneRoot.rotation.x);
+			}
+		}
+	},
+
+	// Double-sided rendering
+	doubleSided: false,
+	toggleDoubleSided: function() {
+		// Update all loaded USD objects
+		usdSceneRoot.traverse((child) => {
+			if (child.isMesh && child.material) {
+				if (Array.isArray(child.material)) {
+					child.material.forEach(mat => {
+						mat.side = this.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+						mat.needsUpdate = true;
+					});
+				} else {
+					child.material.side = this.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+					child.material.needsUpdate = true;
+				}
+				// Also update original material if stored
+				if (child.userData.originalMaterial) {
+					if (Array.isArray(child.userData.originalMaterial)) {
+						child.userData.originalMaterial.forEach(mat => {
+							mat.side = this.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+						});
+					} else {
+						child.userData.originalMaterial.side = this.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+					}
+				}
+			}
+		});
+
+		// Update ground plane
+		if (ground.material) {
+			ground.material.side = this.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+			ground.material.needsUpdate = true;
+			if (ground.userData.originalMaterial) {
+				ground.userData.originalMaterial.side = this.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+			}
+		}
+	},
+
+	// Normal visualization
+	showNormals: false,
+	toggleNormalVisualization: function() {
+		// Update all loaded USD objects
+		usdSceneRoot.traverse((child) => {
+			if (child.isMesh && child.material) {
+				// Store original materials if switching to normal view
+				if (this.showNormals && !child.userData.originalMaterial) {
+					child.userData.originalMaterial = child.material;
+					// Create normal material
+					const normalMat = new THREE.MeshNormalMaterial({
+						side: this.doubleSided ? THREE.DoubleSide : THREE.FrontSide,
+						flatShading: false
+					});
+					child.material = normalMat;
+				}
+				// Restore original materials if switching back
+				else if (!this.showNormals && child.userData.originalMaterial) {
+					child.material = child.userData.originalMaterial;
+					child.userData.originalMaterial = null;
+				}
+			}
+		});
+
+		// Update ground plane
+		if (ground.material) {
+			if (this.showNormals && !ground.userData.originalMaterial) {
+				ground.userData.originalMaterial = ground.material;
+				ground.material = new THREE.MeshNormalMaterial({
+					side: this.doubleSided ? THREE.DoubleSide : THREE.FrontSide
+				});
+			} else if (!this.showNormals && ground.userData.originalMaterial) {
+				ground.material = ground.userData.originalMaterial;
+				ground.userData.originalMaterial = null;
+			}
+		}
+	},
+
+	// Scene scaling
+	sceneScale: 1.0,
+	applyMetersPerUnit: true, // Apply metersPerUnit scaling from USD metadata
+	applySceneScale: function() {
+		// Calculate effective scale: user scale * metersPerUnit (if enabled)
+		let effectiveScale = this.sceneScale;
+		if (this.applyMetersPerUnit && currentSceneMetadata.metersPerUnit) {
+			effectiveScale *= currentSceneMetadata.metersPerUnit;
+			console.log(`Applying metersPerUnit: ${currentSceneMetadata.metersPerUnit} (effective scale: ${effectiveScale})`);
+		}
+
+		usdSceneRoot.scale.set(effectiveScale, effectiveScale, effectiveScale);
+
+		// Calculate shadow camera frustum based on actual scene bounds
+		// This ensures shadows work correctly regardless of model size
+		if (usdContentNode) {
+			// Compute bounding box of the USD content
+			const bbox = new THREE.Box3().setFromObject(usdContentNode);
+
+			// Apply current scale to the bounding box
+			const scaledMin = bbox.min.clone().multiplyScalar(effectiveScale);
+			const scaledMax = bbox.max.clone().multiplyScalar(effectiveScale);
+
+			// Add padding (20% extra) to ensure shadows aren't clipped
+			const padding = 1.2;
+			const size = scaledMax.clone().sub(scaledMin).multiplyScalar(padding / 2);
+
+			// Set frustum to cover the entire scaled scene
+			const maxSize = Math.max(size.x, size.y, size.z);
+			directionalLight.shadow.camera.left = -maxSize;
+			directionalLight.shadow.camera.right = maxSize;
+			directionalLight.shadow.camera.top = maxSize;
+			directionalLight.shadow.camera.bottom = -maxSize;
+			directionalLight.shadow.camera.near = 0.5;
+			directionalLight.shadow.camera.far = maxSize * 4; // Far enough to cover tall objects
+
+			// Update the shadow camera projection matrix
+			directionalLight.shadow.camera.updateProjectionMatrix();
+
+			console.log(`Shadow camera frustum updated for scale ${effectiveScale}:`, {
+				bbox: { min: scaledMin, max: scaledMax },
+				frustumSize: maxSize,
+				far: maxSize * 4
+			});
+		} else {
+			// Fallback if usdContentNode not yet loaded
+			const baseFrustumSize = 100;
+			const frustumSize = baseFrustumSize * effectiveScale;
+
+			directionalLight.shadow.camera.left = -frustumSize;
+			directionalLight.shadow.camera.right = frustumSize;
+			directionalLight.shadow.camera.top = frustumSize;
+			directionalLight.shadow.camera.bottom = -frustumSize;
+			directionalLight.shadow.camera.near = 0.5;
+			directionalLight.shadow.camera.far = 500 * effectiveScale;
+
+			directionalLight.shadow.camera.updateProjectionMatrix();
+
+			console.log(`Shadow camera frustum updated (fallback) for scale ${effectiveScale}: [-${frustumSize}, ${frustumSize}]`);
+		}
+	},
+	setScalePreset_0_1: function() {
+		this.sceneScale = 0.1;
+		this.applySceneScale();
+	},
+	setScalePreset_1_0: function() {
+		this.sceneScale = 1.0;
+		this.applySceneScale();
+	},
+	setScalePreset_10_0: function() {
+		this.sceneScale = 10.0;
+		this.applySceneScale();
+	},
+
+	// Debug animation tracking
+	debugAnimationLog: false,
+	toggleDebugAnimationLog: function() {
+		debugAnimationTracking = this.debugAnimationLog;
+		if (this.debugAnimationLog) {
+			console.log('Animation debug logging enabled');
+			debugFrameCounter = 0; // Reset counter to log immediately
+		} else {
+			console.log('Animation debug logging disabled');
+		}
+	},
+
+	// Show all helpers toggle
+	showHelpers: true,
+	toggleAllHelpers: function() {
+		// Update individual toggles to match
+		this.showAxisHelper = this.showHelpers;
+		this.showGroundPlane = this.showHelpers;
+		this.showGrid = this.showHelpers;
+
+		// Apply changes
+		axisHelper.visible = this.showAxisHelper;
+		ground.visible = this.showGroundPlane;
+		gridHelper.visible = this.showGrid;
+
+		console.log(`All helpers ${this.showHelpers ? 'shown' : 'hidden'}`);
+	},
+
+	// Ground plane Y position
+	groundPlaneY: 0.0,
+	showGroundPlane: true,
+	showGrid: true,
+	applyGroundPlaneY: function() {
+		ground.position.y = this.groundPlaneY;
+		gridHelper.position.y = this.groundPlaneY;
+		console.log(`Ground plane Y position set to: ${this.groundPlaneY}`);
+	},
+	toggleGroundPlane: function() {
+		ground.visible = this.showGroundPlane;
+		// Update master toggle if needed
+		this.updateShowHelpersMasterToggle();
+	},
+	toggleGrid: function() {
+		gridHelper.visible = this.showGrid;
+		// Update master toggle if needed
+		this.updateShowHelpersMasterToggle();
+	},
+	updateShowHelpersMasterToggle: function() {
+		// Update master toggle to reflect if all helpers are shown
+		this.showHelpers = this.showAxisHelper && this.showGroundPlane && this.showGrid;
+	},
+	fitGroundToScene: function() {
+		// Calculate scene bounding box
+		const bbox = new THREE.Box3();
+		if (usdContentNode && usdContentNode.children.length > 0) {
+			bbox.setFromObject(usdContentNode);
+		} else if (usdSceneRoot && usdSceneRoot.children.length > 0) {
+			bbox.setFromObject(usdSceneRoot);
+		} else {
+			console.warn('No scene content to fit ground to');
+			return;
+		}
+
+		if (bbox.isEmpty()) {
+			console.warn('Scene bounding box is empty');
+			return;
+		}
+
+		// Set ground plane to the minimum Y of the bounding box
+		this.groundPlaneY = bbox.min.y;
+		this.applyGroundPlaneY();
+		console.log(`Ground plane fitted to scene bottom: Y = ${this.groundPlaneY.toFixed(4)}`);
+	},
+
+	// Fit to scene
+	fitToScene: function() {
+		fitToScene();
+	},
+
+	// Update functions
+	updateDuration: function() {
+		this.duration = this.endTime - this.beginTime;
+	}
+};
+
+// GUI setup
+const gui = new GUI();
+gui.title('Animation Controls');
+
+// Store references to GUI controllers for dynamic updates
+let timelineController = null;
+let beginTimeController = null;
+let endTimeController = null;
+
+// Playback controls
+const playbackFolder = gui.addFolder('Playback');
+playbackFolder.add(animationParams, 'playPause').name('Play / Pause');
+playbackFolder.add(animationParams, 'reset').name('Reset');
+playbackFolder.add(animationParams, 'speed', 0.1, 100, 0.1).name('Speed (FPS)').listen();
+timelineController = playbackFolder.add(animationParams, 'time', 0, 30, 0.01)
+	.name('Timeline')
+	.listen()
+	.onChange((value) => {
+		// When user manually scrubs the timeline, update all animation actions
+		if (mixer) {
+			// Collect unique actions (multiple objects might share the same action)
+			const uniqueActions = new Set();
+			objectAnimationActions.forEach(({action, enabled}) => {
+				if (action && enabled) {
+					uniqueActions.add(action);
+				}
+			});
+
+			console.log(`Timeline scrub to ${value.toFixed(3)}s - Updating ${uniqueActions.size} unique action(s) for ${objectAnimationActions.size} object(s)`);
+
+			// Debug: Show which objects and actions are being updated
+			const actionToObjects = new Map();
+			objectAnimationActions.forEach(({action, enabled, objectName}) => {
+				if (action && enabled) {
+					if (!actionToObjects.has(action)) {
+						actionToObjects.set(action, []);
+					}
+					actionToObjects.get(action).push(objectName);
+				}
+			});
+			actionToObjects.forEach((objects, action) => {
+				console.log(`  Action for [${objects.join(', ')}]: clip="${action.getClip().name}"`);
+			});
+
+			// To properly scrub all actions to a specific time:
+			// AnimationMixer.update(0) may not evaluate, so we use a different approach:
+			// 1. Set mixer's internal time to 0
+			// 2. Set each action's time to target
+			// 3. Force evaluation with a tiny non-zero delta
+			// 4. Restore paused state
+
+			const wasPaused = !animationParams.isPlaying;
+
+			// Stop and reset mixer's time
+			mixer.timeScale = 1.0;
+			mixer.time = 0;
+
+			// Configure all actions for the target time
+			uniqueActions.forEach(action => {
+				// Don't reset - just set time directly and ensure it's playing
+				action.paused = false;
+				action.enabled = true;
+				action.time = value;
+				action.weight = 1.0;
+
+				console.log(`  Set action time to ${value.toFixed(3)}s, clip="${action.getClip().name}"`);
+			});
+
+			// Also update the main action if it exists
+			if (animationAction && !uniqueActions.has(animationAction)) {
+				animationAction.paused = false;
+				animationAction.enabled = true;
+				animationAction.time = value;
+				animationAction.weight = 1.0;
+			}
+
+			// Force mixer to evaluate by calling update
+			// Using a small non-zero value to trigger evaluation
+			const deltaForEval = 0.0001;
+			mixer.update(deltaForEval);
+
+			// Compensate for the small delta we added
+			uniqueActions.forEach(action => {
+				action.time = value; // Reset to exact target time
+			});
+			if (animationAction) {
+				animationAction.time = value;
+			}
+
+			// Restore paused state if needed
+			if (wasPaused) {
+				uniqueActions.forEach(action => {
+					action.paused = true;
+				});
+				if (animationAction) {
+					animationAction.paused = true;
+				}
+			}
+
+			console.log(`Timeline scrub completed. Mixer time: ${mixer.time.toFixed(3)}s`);
+		}
+	});
+
+// Time range controls (nested inside Playback folder)
+beginTimeController = playbackFolder.add(animationParams, 'beginTime', 0, 29, 0.1)
+	.name('Begin TimeCode')
+	.onChange(() => {
+		if (animationParams.beginTime >= animationParams.endTime) {
+			animationParams.beginTime = animationParams.endTime - 0.1;
+		}
+		animationParams.updateDuration();
+	});
+endTimeController = playbackFolder.add(animationParams, 'endTime', 0.1, 30, 0.1)
+	.name('End TimeCode')
+	.onChange(() => {
+		if (animationParams.endTime <= animationParams.beginTime) {
+			animationParams.endTime = animationParams.beginTime + 0.1;
+		}
+		animationParams.updateDuration();
+	});
+playbackFolder.add(animationParams, 'duration', 0.1, 30, 0.1)
+	.name('Duration')
+	.listen()
+	.disable();
+
+playbackFolder.open();
+
+// Rendering controls
+const renderingFolder = gui.addFolder('Rendering');
+renderingFolder.add(animationParams, 'shadowsEnabled')
+	.name('Shadows')
+	.onChange(() => animationParams.toggleShadows());
+renderingFolder.add(animationParams, 'applyUpAxisConversion')
+	.name('Z-up to Y-up')
+	.onChange(() => animationParams.toggleUpAxisConversion());
+renderingFolder.add(animationParams, 'doubleSided')
+	.name('Double-Sided')
+	.onChange(() => animationParams.toggleDoubleSided());
+renderingFolder.add(animationParams, 'showNormals')
+	.name('Show Normals')
+	.onChange(() => animationParams.toggleNormalVisualization());
+
+// Add master helpers toggle
+renderingFolder.add(animationParams, 'showHelpers')
+	.name('🔧 Show Helpers (All)')
+	.onChange(() => animationParams.toggleAllHelpers());
+
+// Add axis helper toggle
+animationParams.showAxisHelper = true;
+animationParams.toggleAxisHelper = function() {
+	axisHelper.visible = this.showAxisHelper;
+	// Update master toggle if needed
+	this.updateShowHelpersMasterToggle();
+};
+renderingFolder.add(animationParams, 'showAxisHelper')
+	.name('Show Axis')
+	.onChange(() => animationParams.toggleAxisHelper());
+
+// Ground plane controls
+const groundFolder = renderingFolder.addFolder('Ground Plane');
+groundFolder.add(animationParams, 'showGroundPlane')
+	.name('Show Ground')
+	.onChange(() => animationParams.toggleGroundPlane());
+groundFolder.add(animationParams, 'showGrid')
+	.name('Show Grid')
+	.onChange(() => animationParams.toggleGrid());
+groundFolder.add(animationParams, 'groundPlaneY', -1000, 1000, 0.01)
+	.name('Y Position')
+	.onChange(() => animationParams.applyGroundPlaneY())
+	.listen();
+groundFolder.add(animationParams, 'fitGroundToScene')
+	.name('Fit to Scene Bottom');
+groundFolder.open();
+
+renderingFolder.add(animationParams, 'fitToScene')
+	.name('Fit to Scene');
+
+// Scene scaling controls
+const scaleFolder = renderingFolder.addFolder('Scene Scale');
+scaleFolder.add(animationParams, 'sceneScale', 0.01, 100, 0.01)
+	.name('Scale')
+	.onChange(() => animationParams.applySceneScale())
+	.listen();
+scaleFolder.add(animationParams, 'applyMetersPerUnit')
+	.name('Apply metersPerUnit')
+	.onChange(() => animationParams.applySceneScale());
+scaleFolder.add(animationParams, 'setScalePreset_0_1').name('Scale: 1/10 (0.1x)');
+scaleFolder.add(animationParams, 'setScalePreset_1_0').name('Scale: 1/1 (1.0x)');
+scaleFolder.add(animationParams, 'setScalePreset_10_0').name('Scale: 10/1 (10x)');
+scaleFolder.open();
+
+renderingFolder.open();
+
+// Scene Metadata - will be populated dynamically
+const metadataFolder = gui.addFolder('Scene Metadata');
+window.metadataFolder = metadataFolder;
+metadataFolder.hide(); // Hide until scene is loaded
+
+// Transform Info - will be populated when object is selected
+const transformInfoFolder = gui.addFolder('Transform Info');
+window.transformInfoFolder = transformInfoFolder;
+transformInfoFolder.hide(); // Hide until object is selected
+
+// Scene Graph Tree - will be populated dynamically
+const sceneGraphFolder = gui.addFolder('Scene Graph');
+window.sceneGraphFolder = sceneGraphFolder;
+sceneGraphFolder.hide(); // Hide until scene is loaded
+
+// Function to update time range GUI controllers when animation is loaded
+function updateTimeRangeGUIControllers(maxDuration) {
+	const newMax = Math.max(maxDuration, 30); // Ensure minimum of 30s for usability
+
+	// Update timeline controller
+	if (timelineController) {
+		timelineController.max(newMax);
+		timelineController.updateDisplay();
+	}
+
+	// Update begin time controller
+	if (beginTimeController) {
+		beginTimeController.max(newMax - 0.1);
+		beginTimeController.updateDisplay();
+	}
+
+	// Update end time controller
+	if (endTimeController) {
+		endTimeController.max(newMax);
+		endTimeController.updateDisplay();
+	}
+
+	console.log(`Updated GUI time range to 0-${newMax}s`);
+}
+
+// Function to update scene metadata UI
+function updateMetadataUI() {
+	if (!window.metadataFolder) return;
+
+	// Clear existing controls
+	window.metadataFolder.controllers.forEach(c => c.destroy());
+
+	// Create read-only display object
+	const metadataDisplay = {
+		upAxis: currentSceneMetadata.upAxis,
+		metersPerUnit: currentSceneMetadata.metersPerUnit,
+		framesPerSecond: currentSceneMetadata.framesPerSecond,
+		timeCodesPerSecond: currentSceneMetadata.timeCodesPerSecond,
+		startTimeCode: currentSceneMetadata.startTimeCode !== null ? currentSceneMetadata.startTimeCode.toFixed(2) : "N/A",
+		endTimeCode: currentSceneMetadata.endTimeCode !== null ? currentSceneMetadata.endTimeCode.toFixed(2) : "N/A",
+		autoPlay: currentSceneMetadata.autoPlay,
+		comment: currentSceneMetadata.comment || "N/A",
+		copyright: currentSceneMetadata.copyright || "N/A"
+	};
+
+	// Add read-only controllers
+	window.metadataFolder.add(metadataDisplay, 'upAxis').name('Up Axis').disable().listen();
+	window.metadataFolder.add(metadataDisplay, 'metersPerUnit').name('Meters Per Unit').disable().listen();
+	window.metadataFolder.add(metadataDisplay, 'framesPerSecond').name('FPS').disable().listen();
+	window.metadataFolder.add(metadataDisplay, 'timeCodesPerSecond').name('Timecodes/sec').disable().listen();
+	window.metadataFolder.add(metadataDisplay, 'startTimeCode').name('Start TimeCode').disable().listen();
+	window.metadataFolder.add(metadataDisplay, 'endTimeCode').name('End TimeCode').disable().listen();
+	window.metadataFolder.add(metadataDisplay, 'autoPlay').name('Auto Play').disable().listen();
+
+	if (currentSceneMetadata.comment) {
+		window.metadataFolder.add(metadataDisplay, 'comment').name('Comment').disable().listen();
+	}
+	if (currentSceneMetadata.copyright) {
+		window.metadataFolder.add(metadataDisplay, 'copyright').name('Copyright').disable().listen();
+	}
+
+	window.metadataFolder.show();
+	console.log('Scene metadata UI updated');
+}
+
+// Fit camera, grid, and shadows to scene bounds
+function fitToScene() {
+	// Compute bounding box of USD scene content
+	const bbox = new THREE.Box3();
+
+	if (usdContentNode && usdContentNode.children.length > 0) {
+		bbox.setFromObject(usdContentNode);
+	} else if (usdSceneRoot && usdSceneRoot.children.length > 0) {
+		bbox.setFromObject(usdSceneRoot);
+	} else {
+		console.warn('No scene content to fit to');
+		return;
+	}
+
+	// Check if bounding box is valid
+	if (bbox.isEmpty()) {
+		console.warn('Scene bounding box is empty');
+		return;
+	}
+
+	// Get bounding box dimensions
+	const size = new THREE.Vector3();
+	const center = new THREE.Vector3();
+	bbox.getSize(size);
+	bbox.getCenter(center);
+
+	console.log('Scene bounds:', {
+		min: bbox.min,
+		max: bbox.max,
+		size: size,
+		center: center
+	});
+
+	// Calculate the maximum dimension
+	const maxDim = Math.max(size.x, size.y, size.z);
+
+	// Calculate camera distance to fit the scene
+	// Use field of view to determine appropriate distance
+	const fov = camera.fov * (Math.PI / 180); // Convert to radians
+	const cameraDistance = Math.abs(maxDim / Math.sin(fov / 2)) * 0.7; // 0.7 for some padding
+
+	// Position camera at a nice viewing angle (similar to current position ratio)
+	const cameraOffset = new THREE.Vector3(1, 1, 1).normalize().multiplyScalar(cameraDistance);
+	const newCameraPos = center.clone().add(cameraOffset);
+
+	// Update camera position
+	camera.position.copy(newCameraPos);
+
+	// Update OrbitControls target to look at scene center
+	controls.target.copy(center);
+	controls.update();
+
+	console.log('Camera fitted:', {
+		position: newCameraPos,
+		target: center,
+		distance: cameraDistance
+	});
+
+	// Update grid size to match scene bounds (with some padding)
+	const gridSize = Math.ceil(maxDim * 2.5); // 2.5x padding for context
+	const gridDivisions = 20;
+
+	// Remove old grid
+	scene.remove(gridHelper);
+
+	// Create new grid at the bottom of the scene (bbox minimum Y)
+	gridHelper = new THREE.GridHelper(gridSize, gridDivisions, 0x666666, 0x444444);
+	gridHelper.position.y = bbox.min.y;
+	scene.add(gridHelper);
+
+	console.log('Grid updated:', {
+		size: gridSize,
+		divisions: gridDivisions,
+		divisionSize: gridSize / gridDivisions,
+		groundY: bbox.min.y
+	});
+
+	// Update ground plane to match grid
+	ground.geometry.dispose();
+	ground.geometry = new THREE.PlaneGeometry(gridSize, gridSize);
+	ground.position.y = bbox.min.y;
+
+	// Update ground plane Y parameter in UI
+	animationParams.groundPlaneY = bbox.min.y;
+
+	// Update shadow frustum to cover the scene (with padding)
+	const shadowSize = maxDim * 1.5; // 1.5x padding for shadows
+	directionalLight.shadow.camera.left = -shadowSize;
+	directionalLight.shadow.camera.right = shadowSize;
+	directionalLight.shadow.camera.top = shadowSize;
+	directionalLight.shadow.camera.bottom = -shadowSize;
+	directionalLight.shadow.camera.near = 0.5;
+	directionalLight.shadow.camera.far = cameraDistance * 3;
+	directionalLight.shadow.camera.updateProjectionMatrix();
+
+	// Position directional light relative to scene
+	const lightDistance = cameraDistance * 0.8;
+	directionalLight.position.set(
+		center.x + lightDistance * 0.5,
+		center.y + lightDistance,
+		center.z + lightDistance * 0.5
+	);
+
+	console.log('Shadows updated:', {
+		frustumSize: shadowSize,
+		lightPosition: directionalLight.position,
+		far: cameraDistance * 3
+	});
+
+	console.log('✓ Fit to scene complete');
+}
+
+// Info folder
+const infoFolder = gui.addFolder('Info');
+const info = {
+	fps: 0,
+	objects: scene.children.length
+};
+infoFolder.add(info, 'fps').name('FPS').listen().disable();
+infoFolder.add(info, 'objects').name('Objects').listen().disable();
+infoFolder.add(animationParams, 'debugAnimationLog')
+	.name('Debug Animation Log')
+	.onChange(() => animationParams.toggleDebugAnimationLog());
+infoFolder.open();
+
+// Window resize handler
+window.addEventListener('resize', onWindowResize, false);
+
+function onWindowResize() {
+	camera.aspect = window.innerWidth / window.innerHeight;
+	camera.updateProjectionMatrix();
+	renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+// Mouse click handler for object selection
+window.addEventListener('click', onMouseClick, false);
+
+function onMouseClick(event) {
+	// Ignore clicks on GUI
+	const guiElement = document.querySelector('.lil-gui');
+	if (guiElement && guiElement.contains(event.target)) {
+		return;
+	}
+
+	// Calculate mouse position in normalized device coordinates (-1 to +1)
+	mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+	mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+	// Update the picking ray with the camera and mouse position
+	raycaster.setFromCamera(mouse, camera);
+
+	// Calculate objects intersecting the picking ray
+	// Only check USD scene objects, not helpers/grid/ground
+	const intersectables = [];
+	if (usdSceneRoot) {
+		usdSceneRoot.traverse((obj) => {
+			if (obj.isMesh) {
+				intersectables.push(obj);
+			}
+		});
+	}
+
+	const intersects = raycaster.intersectObjects(intersectables, false);
+
+	if (intersects.length > 0) {
+		// Select the first intersected object
+		const selectedObj = intersects[0].object;
+		selectObject(selectedObj);
+		console.log('Clicked object:', selectedObj.name);
+	} else {
+		// Deselect if clicking on empty space
+		if (selectedObject) {
+			selectedObject = null;
+			if (selectionHelper) {
+				scene.remove(selectionHelper);
+				if (selectionHelper.geometry) selectionHelper.geometry.dispose();
+				if (selectionHelper.material) selectionHelper.material.dispose();
+				selectionHelper = null;
+			}
+			updateTransformInfoUI(null);
+			console.log('Deselected object');
+		}
+	}
+}
+
+// Function to load a USD file from ArrayBuffer
+async function loadUSDFromArrayBuffer(arrayBuffer, filename) {
+	// Clear existing USD scene
+	while (usdSceneRoot.children.length > 0) {
+		usdSceneRoot.remove(usdSceneRoot.children[0]);
+	}
+
+	// Clear selection
+	selectedObject = null;
+	if (selectionHelper) {
+		scene.remove(selectionHelper);
+		if (selectionHelper.geometry) selectionHelper.geometry.dispose();
+		if (selectionHelper.material) selectionHelper.material.dispose();
+		selectionHelper = null;
+	}
+	updateTransformInfoUI(null);
+
+	// Clear bounding box helpers
+	objectBBoxHelpers.forEach((helper) => {
+		scene.remove(helper);
+		helper.geometry.dispose();
+		if (helper.material) {
+			helper.material.dispose();
+		}
+	});
+	objectBBoxHelpers.clear();
+
+	// Reset animations
+	usdAnimations = [];
+
+	const loader = new TinyUSDZLoader();
+	await loader.init({ useZstdCompressedWasm: false, useMemory64: false });
+
+	// Create a Blob URL from the ArrayBuffer
+	// This allows the loader to load the file as if it were a normal URL
+	const blob = new Blob([arrayBuffer]);
+	const blobUrl = URL.createObjectURL(blob);
+
+	console.log(`Loading USD from file: ${filename} (${(arrayBuffer.byteLength / 1024).toFixed(2)} KB)`);
+
+	// Load USD scene from Blob URL
+	const usd_scene = await loader.loadAsync(blobUrl);
+
+	// Clean up the Blob URL after loading
+	URL.revokeObjectURL(blobUrl);
+
+	// Get the default root node from USD
+	const usdRootNode = usd_scene.getDefaultRootNode();
+
+	// Get scene metadata from the USD file
+	const sceneMetadata = usd_scene.getSceneMetadata ? usd_scene.getSceneMetadata() : {};
+	const fileUpAxis = sceneMetadata.upAxis || "Y";
+	currentFileUpAxis = fileUpAxis; // Store globally for toggle function
+
+	// Store metadata globally
+	currentSceneMetadata = {
+		upAxis: fileUpAxis,
+		metersPerUnit: sceneMetadata.metersPerUnit || 1.0,
+		framesPerSecond: sceneMetadata.framesPerSecond || 24.0,
+		timeCodesPerSecond: sceneMetadata.timeCodesPerSecond || 24.0,
+		startTimeCode: sceneMetadata.startTimeCode,
+		endTimeCode: sceneMetadata.endTimeCode,
+		autoPlay: sceneMetadata.autoPlay !== undefined ? sceneMetadata.autoPlay : true,
+		comment: sceneMetadata.comment || "",
+		copyright: sceneMetadata.copyright || ""
+	};
+
+	console.log('=== USD Scene Metadata ===');
+	console.log(`upAxis: "${currentSceneMetadata.upAxis}"`);
+	console.log(`metersPerUnit: ${currentSceneMetadata.metersPerUnit}`);
+	console.log(`framesPerSecond: ${currentSceneMetadata.framesPerSecond}`);
+	console.log(`timeCodesPerSecond: ${currentSceneMetadata.timeCodesPerSecond}`);
+	if (currentSceneMetadata.startTimeCode !== null && currentSceneMetadata.startTimeCode !== undefined) {
+		console.log(`startTimeCode: ${currentSceneMetadata.startTimeCode}`);
+	}
+	if (currentSceneMetadata.endTimeCode !== null && currentSceneMetadata.endTimeCode !== undefined) {
+		console.log(`endTimeCode: ${currentSceneMetadata.endTimeCode}`);
+	}
+	console.log(`autoPlay: ${currentSceneMetadata.autoPlay}`);
+	if (currentSceneMetadata.comment) {
+		console.log(`comment: "${currentSceneMetadata.comment}"`);
+	}
+	if (currentSceneMetadata.copyright) {
+		console.log(`copyright: "${currentSceneMetadata.copyright}"`);
+	}
+	console.log('========================');
+
+	// Update metadata UI
+	updateMetadataUI();
+
+	// Create default material
+	const defaultMtl = TinyUSDZLoaderUtils.createDefaultMaterial();
+
+	const options = {
+		overrideMaterial: false,
+		envMap: null,
+		envMapIntensity: 1.0,
+	};
+
+	// Build Three.js node from USD
+	const threeNode = TinyUSDZLoaderUtils.buildThreeNode(usdRootNode, defaultMtl, usd_scene, options);
+
+	// Store reference to USD content node for mixer creation
+	usdContentNode = threeNode;
+
+	// Add loaded USD scene to usdSceneRoot
+	usdSceneRoot.add(threeNode);
+
+	// Debug: Log initial transforms of all objects
+	console.log('=== Initial Object Transforms ===');
+	threeNode.traverse((obj) => {
+		if (obj.name && obj.name !== '') {
+			console.log(`Object "${obj.name}": position=[${obj.position.x.toFixed(3)}, ${obj.position.y.toFixed(3)}, ${obj.position.z.toFixed(3)}], scale=[${obj.scale.x.toFixed(3)}, ${obj.scale.y.toFixed(3)}, ${obj.scale.z.toFixed(3)}]`);
+		}
+	});
+	console.log('=================================');
+
+	// Apply Z-up to Y-up conversion if enabled AND the file is actually Z-up
+	if (animationParams.applyUpAxisConversion && fileUpAxis === "Z") {
+		usdSceneRoot.rotation.x = -Math.PI / 2;
+		console.log(`[loadUSDFromArrayBuffer] Applied Z-up to Y-up conversion (file upAxis="${fileUpAxis}"): rotation.x =`, usdSceneRoot.rotation.x);
+	} else if (animationParams.applyUpAxisConversion && fileUpAxis !== "Y") {
+		console.warn(`[loadUSDFromArrayBuffer] File upAxis is "${fileUpAxis}" (not Y or Z), no rotation applied`);
+	} else {
+		console.log(`[loadUSDFromArrayBuffer] No upAxis conversion needed (file upAxis="${fileUpAxis}", conversion ${animationParams.applyUpAxisConversion ? 'enabled' : 'disabled'})`);
+	}
+
+	// Apply scene scale and update shadow frustum based on model bounds
+	animationParams.applySceneScale();
+
+	// Traverse and enable shadows for all meshes
+	usdSceneRoot.traverse((child) => {
+		if (child.isMesh) {
+			child.castShadow = true;
+			child.receiveShadow = true;
+		}
+	});
+
+	// Extract USD animations if available
+	try {
+		const animationInfos = usd_scene.getAllAnimationInfos();
+		// IMPORTANT: Pass threeNode (the USD root) for correct node index mapping
+		// The node indices in USD animations reference nodes within the USD scene hierarchy
+		usdAnimations = convertUSDAnimationsToThreeJS(usd_scene, threeNode);
+
+		if (usdAnimations.length > 0) {
+			console.log(`Extracted ${usdAnimations.length} animations from USD file`);
+
+			// Animation parameters updated automatically via playAllUSDAnimations()
+
+			// Log animation details
+			usdAnimations.forEach((clip, index) => {
+				const info = animationInfos[index];
+				let typeStr = '';
+				if (info) {
+					const types = [];
+					if (info.has_skeletal_animation) types.push('skeletal');
+					if (info.has_node_animation) types.push('node');
+					if (types.length > 0) typeStr = ` [${types.join('+')}]`;
+				}
+				console.log(`Animation ${index}: ${clip.name}, duration: ${clip.duration}s, tracks: ${clip.tracks.length}${typeStr}`);
+			});
+
+			// Set time range from metadata or first USD animation
+			let timeRangeSource = "animation";
+			let beginTime = 0;
+			let endTime = 0;
+
+			// Prefer metadata startTimeCode/endTimeCode if available
+			if (currentSceneMetadata.startTimeCode !== null && currentSceneMetadata.startTimeCode !== undefined &&
+			    currentSceneMetadata.endTimeCode !== null && currentSceneMetadata.endTimeCode !== undefined) {
+				beginTime = currentSceneMetadata.startTimeCode;
+				endTime = currentSceneMetadata.endTimeCode;
+				timeRangeSource = "metadata";
+			} else {
+				// Fallback to first animation clip duration
+				const firstClip = usdAnimations[0];
+				if (firstClip && firstClip.duration > 0) {
+					beginTime = 0;
+					endTime = firstClip.duration;
+				}
+			}
+
+			if (endTime > beginTime) {
+				animationParams.beginTime = beginTime;
+				animationParams.endTime = endTime;
+				animationParams.duration = endTime - beginTime;
+				animationParams.time = beginTime; // Reset time to beginning
+				console.log(`Set time range from ${timeRangeSource}: ${beginTime}s - ${endTime}s`);
+
+				// Update GUI controllers if they exist
+				updateTimeRangeGUIControllers(endTime);
+			}
+
+
+		// Set playback speed (FPS) from framesPerSecond metadata
+		const fps = currentSceneMetadata.framesPerSecond || 24.0;
+		animationParams.speed = fps;
+		console.log(`Set animation speed (FPS) from metadata: ${fps}`);
+			// Play all USD animations automatically
+			playAllUSDAnimations();
+		} else {
+			// No USD animations found
+			console.log('No USD animations found in USD file');
+
+			// Still build scene graph UI for static scenes
+			buildSceneGraphUI();
+		}
+	} catch (error) {
+		console.log('No animations found in USD file or animation extraction not supported:', error);
+
+		// Still build scene graph UI for static scenes
+		buildSceneGraphUI();
+	}
+}
+
+// Listen for file upload events
+window.addEventListener('loadUSDFile', async (event) => {
+	const file = event.detail.file;
+	if (!file) return;
+
+	try {
+		const arrayBuffer = await file.arrayBuffer();
+		await loadUSDFromArrayBuffer(arrayBuffer, file.name);
+		console.log('USD file loaded successfully:', file.name);
+
+		// Hide loading indicator
+		if (window.hideLoadingIndicator) {
+			window.hideLoadingIndicator();
+		}
+	} catch (error) {
+		console.error('Failed to load USD file:', error);
+		alert('Failed to load USD file: ' + error.message);
+
+		// Hide loading indicator on error too
+		if (window.hideLoadingIndicator) {
+			window.hideLoadingIndicator();
+		}
+	}
+});
+
+// Listen for default model reload
+window.addEventListener('loadDefaultModel', async () => {
+	try {
+		await loadUSDModel();
+		console.log('Default model reloaded');
+	} catch (error) {
+		console.error('Failed to reload default model:', error);
+	}
+});
+
+// Load USD model
+loadUSDModel().catch((error) => {
+	console.error('Failed to load USD model:', error);
+	alert('Failed to load USD file: ' + error.message);
+});
+
+// FPS calculation
+let lastTime = performance.now();
+let frames = 0;
+let fpsUpdateTime = 0;
+
+// Animation loop
+function animate() {
+	requestAnimationFrame(animate);
+
+	const currentTime = performance.now();
+	const deltaTime = (currentTime - lastTime) / 1000; // Convert to seconds
+	lastTime = currentTime;
+
+	// Update FPS
+	frames++;
+	fpsUpdateTime += deltaTime;
+	if (fpsUpdateTime >= 0.5) {
+		info.fps = Math.round(frames / fpsUpdateTime);
+		frames = 0;
+		fpsUpdateTime = 0;
+	}
+
+	// Update animation time with begin/end range
+	if (animationParams.isPlaying) {
+		animationParams.time += deltaTime * animationParams.speed;
+
+		// Loop within begin/end range
+		if (animationParams.time > animationParams.endTime) {
+			animationParams.time = animationParams.beginTime;
+
+			// Sync all animation actions to the new time
+			if (mixer) {
+				// Collect unique actions
+				const uniqueActions = new Set();
+				objectAnimationActions.forEach(({action, enabled}) => {
+					if (action && enabled) {
+						uniqueActions.add(action);
+					}
+				});
+
+				// Set time on all unique actions
+				uniqueActions.forEach(action => {
+					action.time = animationParams.beginTime;
+				});
+			}
+
+			// Also update the main action if it exists (fallback)
+			if (animationAction) {
+				animationAction.time = animationParams.beginTime;
+			}
+		}
+		if (animationParams.time < animationParams.beginTime) {
+			animationParams.time = animationParams.beginTime;
+		}
+	}
+
+	// Update the mixer for KeyframeTrack animations
+	if (mixer && animationAction && animationParams.isPlaying) {
+		mixer.update(deltaTime * animationParams.speed);
+	}
+
+	// Debug: Log object transforms periodically
+	debugLogObjectTransforms();
+
+	// Update bounding boxes for objects that are being displayed
+	objectBBoxHelpers.forEach((helper, uuid) => {
+		if (helper.visible) {
+			// Find the object and update its bbox
+			usdSceneRoot.traverse(obj => {
+				if (obj.uuid === uuid) {
+					updateBoundingBox(obj);
+				}
+			});
+		}
+	});
+
+	// Update selection helper to follow selected object
+	if (selectionHelper && selectedObject) {
+		const bbox = new THREE.Box3().setFromObject(selectedObject);
+		selectionHelper.box = bbox;
+	}
+
+	// Update controls
+	controls.update();
+
+	// Render
+	renderer.render(scene, camera);
+}
+
+// Start animation
+animate();

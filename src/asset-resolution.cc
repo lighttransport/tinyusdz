@@ -83,9 +83,9 @@ bool AssetResolutionResolver::find(const std::string &assetPath) const {
     }
 
     return false;
-  }  
+  }
 
-  // default fallback: File-based 
+  // default fallback: File-based
   if ((_current_working_path == ".") || (_current_working_path == "./")) {
     std::string rpath = io::FindFile(assetPath, {});
   } else {
@@ -107,9 +107,11 @@ std::string AssetResolutionResolver::resolve(
 
   std::string ext = io::GetFileExtension(assetPath);
 
+  std::string resolvedPath;
+  bool resolved{false};
+
   if (_asset_resolution_handlers.count(ext)) {
     if (_asset_resolution_handlers.at(ext).resolve_fun) {
-      std::string resolvedPath;
       std::string err;
 
       // Use custom handler's userdata
@@ -117,19 +119,19 @@ std::string AssetResolutionResolver::resolve(
 
       int ret = _asset_resolution_handlers.at(ext).resolve_fun(assetPath.c_str(), _search_paths, &resolvedPath, &err, userdata);
       if (ret != 0) {
-        return std::string();
-      }
+        resolvedPath = std::string();
 
-      return resolvedPath;
+      }
+      resolved = true;
 
     } else {
       DCOUT("Resolve function is nullptr. Fallback to wildcard handler or built-in file handler.");
     }
   }
 
-  if (_asset_resolution_handlers.count("*")) {
+  if (!resolved && _asset_resolution_handlers.count("*")) {
     if (_asset_resolution_handlers.at("*").resolve_fun) {
-      std::string resolvedPath;
+      //std::string resolvedPath;
       std::string err;
 
       // Use custom handler's userdata
@@ -137,33 +139,35 @@ std::string AssetResolutionResolver::resolve(
 
       int ret = _asset_resolution_handlers.at("*").resolve_fun(assetPath.c_str(), _search_paths, &resolvedPath, &err, userdata);
       if (ret != 0) {
-        return std::string();
+        resolvedPath = std::string();
       }
 
-      return resolvedPath;
+      resolved = true;
+    }
+  }
 
+  if (!resolved) {
+    //DCOUT("cwd = " << _current_working_path);
+    //DCOUT("search_paths = " << _search_paths);
+    //DCOUT("assetPath = " << assetPath);
+
+    std::string rpath;
+    if ((_current_working_path == ".") || (_current_working_path == "./")) {
+      rpath = io::FindFile(assetPath, {});
+    } else {
+      rpath = io::FindFile(assetPath, {_current_working_path});
     }
 
-    return std::string();
+    if (rpath.size()) {
+      resolvedPath = rpath;
+    } else {
+      // TODO: Cache resolution.
+      resolvedPath = io::FindFile(assetPath, _search_paths);
+    }
   }
 
-  DCOUT("cwd = " << _current_working_path);
-  DCOUT("search_paths = " << _search_paths);
-  DCOUT("assetPath = " << assetPath);
+  return resolvedPath;
 
-  std::string rpath;
-  if ((_current_working_path == ".") || (_current_working_path == "./")) {
-    rpath = io::FindFile(assetPath, {});
-  } else {
-    rpath = io::FindFile(assetPath, {_current_working_path});
-  }
-
-  if (rpath.size()) {
-    return rpath;
-  }
-
-  // TODO: Cache resolition.
-  return io::FindFile(assetPath, _search_paths);
 }
 
 bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const std::string &assetPath,
@@ -198,7 +202,7 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
         }
         return false;
       }
-    
+
       DCOUT("asset_size: " << sz);
 
       tinyusdz::Asset asset;
@@ -244,7 +248,7 @@ bool AssetResolutionResolver::open_asset(const std::string &resolvedPath, const 
         }
         return false;
       }
-    
+
       DCOUT("asset_size: " << sz);
 
       tinyusdz::Asset asset;

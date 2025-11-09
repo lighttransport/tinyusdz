@@ -1,11 +1,39 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2024-Present Light Transport Entertainment, Inc.
-//
-// Evaluate Attribute API
-//
-// TODO:
-// - [ ] Reduce template code to speed-up compilation
-//
+
+///
+/// @file attribute-eval.hh
+/// @brief High-level USD attribute evaluation and resolution API
+///
+/// Provides convenient utilities for evaluating USD attributes with proper
+/// handling of connections, time samples, and value blocking. This API
+/// resolves attribute values to their final "terminal" values by following
+/// connections and computing time-sampled values.
+///
+/// Key classes:
+/// - TerminalAttributeValue: Resolved final attribute value
+/// - AttributeEvaluator: Main evaluation engine
+///
+/// Features:
+/// - Connection resolution (follows input/output connections)
+/// - Time sample interpolation
+/// - Value blocking detection (None values)
+/// - Type-safe attribute access
+/// - Fallback value handling
+///
+/// Usage:
+/// ```cpp
+/// tinyusdz::tydra::TerminalAttributeValue result;
+/// if (EvaluateAttribute(stage, prim_path, "points", 1.0, &result)) {
+///   if (result.has_value()) {
+///     // Use resolved value...
+///   }
+/// }
+/// ```
+///
+/// TODO:
+/// - [ ] Reduce template code to speed up compilation
+///
 #pragma once
 
 #include <map>
@@ -25,11 +53,21 @@ namespace tinyusdz {
 namespace tydra {
 
 ///
-/// Terminal Attribute value at specified timecode.
+/// Final resolved USD attribute value at a specific time.
 ///
-/// - No `None`(Value Blocked)
-/// - No connection(connection target is followed and resolved(fetch 'value producing attribute' in pxrUSD terminology))
-/// - No timeSampled value
+/// This class represents the "terminal" value of a USD attribute after
+/// all connections have been followed, time samples interpolated, and
+/// value blocking resolved. It contains the final concrete value that
+/// would be used for rendering or processing.
+///
+/// Properties:
+/// - No `None` (value blocked) - blocked values are detected but not stored
+/// - No connections - connection targets are followed and resolved 
+/// - No time samples - time-sampled values are interpolated to final value
+/// - Type-safe value access with proper USD type information
+///
+/// This follows pxrUSD's "value producing attribute" concept where the
+/// final resolved value is what matters for downstream consumers.
 ///
 class TerminalAttributeValue {
  public:
@@ -140,6 +178,14 @@ class TerminalAttributeValue {
 ///
 bool EvaluateAttribute(
     const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
+    const std::string &attr_name, TerminalAttributeValue *value,
+    std::string *err, const double t = tinyusdz::value::TimeCode::Default(),
+    const tinyusdz::value::TimeSampleInterpolationType tinterp =
+        tinyusdz::value::TimeSampleInterpolationType::Linear);
+
+// Layer/PrimSpec version
+bool EvaluateAttribute(
+    const tinyusdz::Layer &layer, const tinyusdz::PrimSpec &ps,
     const std::string &attr_name, TerminalAttributeValue *value,
     std::string *err, const double t = tinyusdz::value::TimeCode::Default(),
     const tinyusdz::value::TimeSampleInterpolationType tinterp =
