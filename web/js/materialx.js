@@ -54,6 +54,28 @@ def Xform "World"
 }
 `;
 
+// AOV (Arbitrary Output Variable) Modes
+const AOV_MODES = {
+    NONE: 'none',
+    NORMALS_WORLD: 'normals_world',
+    NORMALS_VIEW: 'normals_view',
+    TANGENTS: 'tangents',
+    BINORMALS: 'binormals',
+    TEXCOORD_0: 'texcoord_0',
+    TEXCOORD_1: 'texcoord_1',
+    POSITION_WORLD: 'position_world',
+    POSITION_VIEW: 'position_view',
+    DEPTH: 'depth',
+    MATERIAL_ID: 'material_id',
+    ALBEDO: 'albedo',
+    ROUGHNESS: 'roughness',
+    METALNESS: 'metalness',
+    SPECULAR: 'specular',
+    COAT: 'coat',
+    TRANSMISSION: 'transmission',
+    EMISSIVE: 'emissive'
+};
+
 // Global variables
 let scene, camera, renderer, controls;
 let raycaster, mouse;
@@ -84,6 +106,8 @@ let sceneRoot = null; // Root object for the USD scene (for upAxis conversion)
 let composer = null; // Effect composer for post-processing
 let falseColorPass = null; // False color shader pass
 let showingFalseColor = false; // Track if false color is being shown
+let currentAOVMode = AOV_MODES.NONE; // Current AOV visualization mode
+let aovOriginalMaterials = new Map(); // Store original materials when showing AOVs
 
 // Available texture color spaces
 const TEXTURE_COLOR_SPACES = {
@@ -270,6 +294,565 @@ const FalseColorShader = {
         }
     `
 };
+
+// AOV (Arbitrary Output Variable) System
+// Provides various visualization modes for debugging and analysis
+
+// Create AOV visualization material
+function createAOVMaterial(aovMode, materialData = null) {
+    let material;
+
+    switch(aovMode) {
+        case AOV_MODES.NORMALS_WORLD:
+            material = new THREE.MeshNormalMaterial();
+            material.name = 'AOV_NormalsWorld';
+            break;
+
+        case AOV_MODES.NORMALS_VIEW:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    varying vec3 vNormal;
+                    void main() {
+                        vNormal = normalize(normalMatrix * normal);
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec3 vNormal;
+                    void main() {
+                        gl_FragColor = vec4(normalize(vNormal) * 0.5 + 0.5, 1.0);
+                    }
+                `,
+                name: 'AOV_NormalsView'
+            });
+            break;
+
+        case AOV_MODES.TANGENTS:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    attribute vec4 tangent;
+                    varying vec3 vTangent;
+                    void main() {
+                        // Transform tangent to world space
+                        vTangent = normalize(normalMatrix * tangent.xyz);
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec3 vTangent;
+                    void main() {
+                        // Map tangent from [-1,1] to [0,1] for visualization
+                        gl_FragColor = vec4(vTangent * 0.5 + 0.5, 1.0);
+                    }
+                `,
+                name: 'AOV_Tangents'
+            });
+            break;
+
+        case AOV_MODES.BINORMALS:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    attribute vec4 tangent;
+                    varying vec3 vBinormal;
+                    void main() {
+                        vec3 worldNormal = normalize(normalMatrix * normal);
+                        vec3 worldTangent = normalize(normalMatrix * tangent.xyz);
+                        // Calculate binormal (bitangent)
+                        vBinormal = cross(worldNormal, worldTangent) * tangent.w;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec3 vBinormal;
+                    void main() {
+                        gl_FragColor = vec4(normalize(vBinormal) * 0.5 + 0.5, 1.0);
+                    }
+                `,
+                name: 'AOV_Binormals'
+            });
+            break;
+
+        case AOV_MODES.TEXCOORD_0:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        // Visualize UV coordinates with a checkerboard pattern
+                        vec2 checker = fract(vUv * 8.0);
+                        float pattern = step(0.5, checker.x) * step(0.5, checker.y) +
+                                       (1.0 - step(0.5, checker.x)) * (1.0 - step(0.5, checker.y));
+                        vec3 color = mix(vec3(vUv, 0.0), vec3(vUv, 1.0), pattern);
+                        gl_FragColor = vec4(color, 1.0);
+                    }
+                `,
+                name: 'AOV_TexCoord0'
+            });
+            break;
+
+        case AOV_MODES.TEXCOORD_1:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    attribute vec2 uv2;
+                    varying vec2 vUv2;
+                    void main() {
+                        vUv2 = uv2;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec2 vUv2;
+                    void main() {
+                        vec2 checker = fract(vUv2 * 8.0);
+                        float pattern = step(0.5, checker.x) * step(0.5, checker.y) +
+                                       (1.0 - step(0.5, checker.x)) * (1.0 - step(0.5, checker.y));
+                        vec3 color = mix(vec3(vUv2, 0.0), vec3(vUv2, 1.0), pattern);
+                        gl_FragColor = vec4(color, 1.0);
+                    }
+                `,
+                name: 'AOV_TexCoord1'
+            });
+            break;
+
+        case AOV_MODES.POSITION_WORLD:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    varying vec3 vWorldPosition;
+                    void main() {
+                        vec4 worldPos = modelMatrix * vec4(position, 1.0);
+                        vWorldPosition = worldPos.xyz;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec3 vWorldPosition;
+                    void main() {
+                        // Normalize world position for visualization
+                        vec3 color = fract(vWorldPosition * 0.5);
+                        gl_FragColor = vec4(color, 1.0);
+                    }
+                `,
+                name: 'AOV_PositionWorld'
+            });
+            break;
+
+        case AOV_MODES.POSITION_VIEW:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    varying vec3 vViewPosition;
+                    void main() {
+                        vec4 viewPos = modelViewMatrix * vec4(position, 1.0);
+                        vViewPosition = viewPos.xyz;
+                        gl_Position = projectionMatrix * viewPos;
+                    }
+                `,
+                fragmentShader: `
+                    varying vec3 vViewPosition;
+                    void main() {
+                        // Visualize view space position (depth gradient)
+                        float depth = -vViewPosition.z;
+                        vec3 color = vec3(depth * 0.1);
+                        gl_FragColor = vec4(color, 1.0);
+                    }
+                `,
+                name: 'AOV_PositionView'
+            });
+            break;
+
+        case AOV_MODES.DEPTH:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    varying float vDepth;
+                    void main() {
+                        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                        vDepth = -mvPosition.z;
+                        gl_Position = projectionMatrix * mvPosition;
+                    }
+                `,
+                fragmentShader: `
+                    varying float vDepth;
+                    uniform float cameraNear;
+                    uniform float cameraFar;
+
+                    void main() {
+                        // Normalize depth between near and far
+                        float normalizedDepth = (vDepth - cameraNear) / (cameraFar - cameraNear);
+                        gl_FragColor = vec4(vec3(normalizedDepth), 1.0);
+                    }
+                `,
+                uniforms: {
+                    cameraNear: { value: 0.1 },
+                    cameraFar: { value: 1000.0 }
+                },
+                name: 'AOV_Depth'
+            });
+            break;
+
+        case AOV_MODES.MATERIAL_ID:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    void main() {
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    uniform vec3 materialColor;
+                    void main() {
+                        gl_FragColor = vec4(materialColor, 1.0);
+                    }
+                `,
+                uniforms: {
+                    materialColor: { value: new THREE.Color(Math.random(), Math.random(), Math.random()) }
+                },
+                name: 'AOV_MaterialID'
+            });
+            break;
+
+        case AOV_MODES.ALBEDO:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec2 vUv;
+                    uniform vec3 baseColor;
+                    uniform sampler2D baseColorMap;
+                    uniform bool hasBaseColorMap;
+
+                    void main() {
+                        vec3 albedo = baseColor;
+                        if (hasBaseColorMap) {
+                            vec4 texColor = texture2D(baseColorMap, vUv);
+                            albedo *= texColor.rgb;
+                        }
+                        gl_FragColor = vec4(albedo, 1.0);
+                    }
+                `,
+                uniforms: {
+                    baseColor: { value: new THREE.Color(1, 1, 1) },
+                    baseColorMap: { value: null },
+                    hasBaseColorMap: { value: false }
+                },
+                name: 'AOV_Albedo'
+            });
+
+            // Copy material properties if available
+            if (materialData && materialData.threeMaterial) {
+                const srcMat = materialData.threeMaterial;
+                material.uniforms.baseColor.value.copy(srcMat.color || new THREE.Color(1, 1, 1));
+                if (srcMat.map) {
+                    material.uniforms.baseColorMap.value = srcMat.map;
+                    material.uniforms.hasBaseColorMap.value = true;
+                }
+            }
+            break;
+
+        case AOV_MODES.ROUGHNESS:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec2 vUv;
+                    uniform float roughness;
+                    uniform sampler2D roughnessMap;
+                    uniform bool hasRoughnessMap;
+
+                    void main() {
+                        float rough = roughness;
+                        if (hasRoughnessMap) {
+                            rough *= texture2D(roughnessMap, vUv).g;
+                        }
+                        gl_FragColor = vec4(vec3(rough), 1.0);
+                    }
+                `,
+                uniforms: {
+                    roughness: { value: 1.0 },
+                    roughnessMap: { value: null },
+                    hasRoughnessMap: { value: false }
+                },
+                name: 'AOV_Roughness'
+            });
+
+            if (materialData && materialData.threeMaterial) {
+                const srcMat = materialData.threeMaterial;
+                material.uniforms.roughness.value = srcMat.roughness || 1.0;
+                if (srcMat.roughnessMap) {
+                    material.uniforms.roughnessMap.value = srcMat.roughnessMap;
+                    material.uniforms.hasRoughnessMap.value = true;
+                }
+            }
+            break;
+
+        case AOV_MODES.METALNESS:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec2 vUv;
+                    uniform float metalness;
+                    uniform sampler2D metalnessMap;
+                    uniform bool hasMetalnessMap;
+
+                    void main() {
+                        float metal = metalness;
+                        if (hasMetalnessMap) {
+                            metal *= texture2D(metalnessMap, vUv).b;
+                        }
+                        gl_FragColor = vec4(vec3(metal), 1.0);
+                    }
+                `,
+                uniforms: {
+                    metalness: { value: 0.0 },
+                    metalnessMap: { value: null },
+                    hasMetalnessMap: { value: false }
+                },
+                name: 'AOV_Metalness'
+            });
+
+            if (materialData && materialData.threeMaterial) {
+                const srcMat = materialData.threeMaterial;
+                material.uniforms.metalness.value = srcMat.metalness || 0.0;
+                if (srcMat.metalnessMap) {
+                    material.uniforms.metalnessMap.value = srcMat.metalnessMap;
+                    material.uniforms.hasMetalnessMap.value = true;
+                }
+            }
+            break;
+
+        case AOV_MODES.SPECULAR:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec2 vUv;
+                    uniform vec3 specularColor;
+                    uniform float specularIntensity;
+
+                    void main() {
+                        gl_FragColor = vec4(specularColor * specularIntensity, 1.0);
+                    }
+                `,
+                uniforms: {
+                    specularColor: { value: new THREE.Color(1, 1, 1) },
+                    specularIntensity: { value: 1.0 }
+                },
+                name: 'AOV_Specular'
+            });
+
+            if (materialData && materialData.threeMaterial) {
+                const srcMat = materialData.threeMaterial;
+                if (srcMat.specularColor) {
+                    material.uniforms.specularColor.value.copy(srcMat.specularColor);
+                }
+                material.uniforms.specularIntensity.value = srcMat.specularIntensity || 1.0;
+            }
+            break;
+
+        case AOV_MODES.COAT:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec2 vUv;
+                    uniform float clearcoat;
+                    uniform float clearcoatRoughness;
+
+                    void main() {
+                        // Visualize clearcoat as intensity, clearcoat roughness as blue
+                        gl_FragColor = vec4(clearcoat, clearcoat, clearcoatRoughness, 1.0);
+                    }
+                `,
+                uniforms: {
+                    clearcoat: { value: 0.0 },
+                    clearcoatRoughness: { value: 0.0 }
+                },
+                name: 'AOV_Coat'
+            });
+
+            if (materialData && materialData.threeMaterial) {
+                const srcMat = materialData.threeMaterial;
+                material.uniforms.clearcoat.value = srcMat.clearcoat || 0.0;
+                material.uniforms.clearcoatRoughness.value = srcMat.clearcoatRoughness || 0.0;
+            }
+            break;
+
+        case AOV_MODES.TRANSMISSION:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec2 vUv;
+                    uniform float transmission;
+                    uniform vec3 attenuationColor;
+
+                    void main() {
+                        gl_FragColor = vec4(attenuationColor * transmission, 1.0);
+                    }
+                `,
+                uniforms: {
+                    transmission: { value: 0.0 },
+                    attenuationColor: { value: new THREE.Color(1, 1, 1) }
+                },
+                name: 'AOV_Transmission'
+            });
+
+            if (materialData && materialData.threeMaterial) {
+                const srcMat = materialData.threeMaterial;
+                material.uniforms.transmission.value = srcMat.transmission || 0.0;
+                if (srcMat.attenuationColor) {
+                    material.uniforms.attenuationColor.value.copy(srcMat.attenuationColor);
+                }
+            }
+            break;
+
+        case AOV_MODES.EMISSIVE:
+            material = new THREE.ShaderMaterial({
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying vec2 vUv;
+                    uniform vec3 emissive;
+                    uniform sampler2D emissiveMap;
+                    uniform bool hasEmissiveMap;
+                    uniform float emissiveIntensity;
+
+                    void main() {
+                        vec3 emissiveColor = emissive;
+                        if (hasEmissiveMap) {
+                            emissiveColor *= texture2D(emissiveMap, vUv).rgb;
+                        }
+                        gl_FragColor = vec4(emissiveColor * emissiveIntensity, 1.0);
+                    }
+                `,
+                uniforms: {
+                    emissive: { value: new THREE.Color(0, 0, 0) },
+                    emissiveMap: { value: null },
+                    hasEmissiveMap: { value: false },
+                    emissiveIntensity: { value: 1.0 }
+                },
+                name: 'AOV_Emissive'
+            });
+
+            if (materialData && materialData.threeMaterial) {
+                const srcMat = materialData.threeMaterial;
+                material.uniforms.emissive.value.copy(srcMat.emissive || new THREE.Color(0, 0, 0));
+                if (srcMat.emissiveMap) {
+                    material.uniforms.emissiveMap.value = srcMat.emissiveMap;
+                    material.uniforms.hasEmissiveMap.value = true;
+                }
+                material.uniforms.emissiveIntensity.value = srcMat.emissiveIntensity || 1.0;
+            }
+            break;
+
+        default:
+            return null;
+    }
+
+    return material;
+}
+
+// Apply AOV visualization to all meshes in the scene
+function applyAOVMode(aovMode) {
+    if (aovMode === AOV_MODES.NONE) {
+        restoreOriginalMaterials();
+        return;
+    }
+
+    // Store original materials if not already stored
+    if (aovOriginalMaterials.size === 0) {
+        scene.traverse((object) => {
+            if (object.isMesh && object.material) {
+                aovOriginalMaterials.set(object.uuid, object.material);
+            }
+        });
+    }
+
+    // Apply AOV materials to all meshes
+    scene.traverse((object) => {
+        if (object.isMesh && object.material) {
+            // Find the material data if available
+            let materialData = null;
+            for (let mat of materials) {
+                if (mat.threeMaterial === object.material ||
+                    mat.threeMaterial === aovOriginalMaterials.get(object.uuid)) {
+                    materialData = mat;
+                    break;
+                }
+            }
+
+            const aovMaterial = createAOVMaterial(aovMode, materialData);
+            if (aovMaterial) {
+                // Update depth uniforms if needed
+                if (aovMode === AOV_MODES.DEPTH && aovMaterial.uniforms) {
+                    aovMaterial.uniforms.cameraNear.value = camera.near;
+                    aovMaterial.uniforms.cameraFar.value = camera.far;
+                }
+                object.material = aovMaterial;
+            }
+        }
+    });
+
+    currentAOVMode = aovMode;
+    console.log(`AOV mode set to: ${aovMode}`);
+}
+
+// Restore original materials
+function restoreOriginalMaterials() {
+    scene.traverse((object) => {
+        if (object.isMesh && aovOriginalMaterials.has(object.uuid)) {
+            object.material = aovOriginalMaterials.get(object.uuid);
+        }
+    });
+
+    aovOriginalMaterials.clear();
+    currentAOVMode = AOV_MODES.NONE;
+    console.log('AOV mode disabled, original materials restored');
+}
+
+// Set AOV mode (wrapper function for UI)
+function setAOVMode(mode) {
+    applyAOVMode(mode);
+}
 
 // Get color space index for shader uniform
 function getColorSpaceIndex(colorSpaceName) {
@@ -1596,6 +2179,42 @@ function setupGUI() {
         .name('Fit to Scene');
 
     debugFolder.close();
+
+    // AOV (Arbitrary Output Variable) controls
+    const aovFolder = gui.addFolder('AOV Visualization');
+    const aovParams = {
+        mode: currentAOVMode
+    };
+
+    aovFolder.add(aovParams, 'mode', {
+        'None (Material)': AOV_MODES.NONE,
+        '─── Geometry ───': '',
+        'World Normals': AOV_MODES.NORMALS_WORLD,
+        'View Normals': AOV_MODES.NORMALS_VIEW,
+        'Tangents': AOV_MODES.TANGENTS,
+        'Binormals': AOV_MODES.BINORMALS,
+        'UV Coords 0': AOV_MODES.TEXCOORD_0,
+        'UV Coords 1': AOV_MODES.TEXCOORD_1,
+        'World Position': AOV_MODES.POSITION_WORLD,
+        'View Position': AOV_MODES.POSITION_VIEW,
+        'Depth': AOV_MODES.DEPTH,
+        '─── Material ───': '',
+        'Albedo': AOV_MODES.ALBEDO,
+        'Roughness': AOV_MODES.ROUGHNESS,
+        'Metalness': AOV_MODES.METALNESS,
+        'Specular': AOV_MODES.SPECULAR,
+        'Coat': AOV_MODES.COAT,
+        'Transmission': AOV_MODES.TRANSMISSION,
+        'Emissive': AOV_MODES.EMISSIVE,
+        '─── Utility ───': '',
+        'Material ID': AOV_MODES.MATERIAL_ID
+    }).name('AOV Mode').onChange(value => {
+        if (value === '') return; // Ignore separator selections
+        setAOVMode(value);
+        aovParams.mode = value;
+    });
+
+    aovFolder.close();
 }
 
 // Load USD file
