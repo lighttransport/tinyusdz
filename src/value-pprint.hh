@@ -9,6 +9,7 @@
 #include <sstream>
 
 #include "value-types.hh"
+#include "typed-array.hh"
 
 // forward decl
 namespace tinyusdz {
@@ -130,6 +131,32 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::Collection &v);
 // 1D array
 template <typename T>
 std::ostream &operator<<(std::ostream &os, const std::vector<T> &v) {
+  os << "[";
+  for (size_t i = 0; i < v.size(); i++) {
+    os << v[i];
+    if (i != (v.size() - 1)) {
+      os << ", ";
+    }
+  }
+  os << "]";
+  return os;
+}
+
+template <typename T>
+std::ostream &operator<<(std::ostream &os, const tinyusdz::TypedArray<T> &v) {
+  os << "[";
+  for (size_t i = 0; i < v.size(); i++) {
+    os << v[i];
+    if (i != (v.size() - 1)) {
+      os << ", ";
+    }
+  }
+  os << "]";
+  return os;
+}
+
+template <typename T>
+std::ostream &operator<<(std::ostream &os, const tinyusdz::ChunkedTypedArray<T> &v) {
   os << "[";
   for (size_t i = 0; i < v.size(); i++) {
     os << v[i];
@@ -364,9 +391,88 @@ std::string print_array_snipped(const std::vector<T> &vals, size_t N = 16) {
   return os.str();
 }
 
-// TODO: Remove
-// std::string pprint_any(const linb::any &v, const uint32_t indent = 0, bool
-// closing_brace = true);
+// Print first N and last N items.
+// 0 = print all items.
+// Useful when dump
+template <typename T>
+std::string print_array_snipped(const TypedArray<T> &vals, size_t N = 16) {
+  std::stringstream os;
+
+  if ((N == 0) || ((N * 2) >= vals.size())) {
+    os << "[";
+    for (size_t i = 0; i < vals.size(); i++) {
+      if (i > 0) {
+        os << ", ";
+      }
+      os << vals[i];
+    }
+    os << "]";
+  } else {
+    size_t head_end = (std::min)(N, vals.size());
+    size_t tail_start = (std::max)(vals.size() - N, head_end);
+
+    os << "[";
+
+    for (size_t i = 0; i < head_end; i++) {
+      if (i > 0) {
+        os << ", ";
+      }
+      os << vals[i];
+    }
+
+    os << ", ..., ";
+
+    for (size_t i = tail_start; i < vals.size(); i++) {
+      if (i > tail_start) {
+        os << ", ";
+      }
+      os << vals[i];
+    }
+
+    os << "]";
+  }
+  return os.str();
+}
+
+template <typename T>
+std::string print_array_snipped(const ChunkedTypedArray<T> &vals, size_t N = 16) {
+  std::stringstream os;
+
+  if ((N == 0) || ((N * 2) >= vals.size())) {
+    os << "[";
+    for (size_t i = 0; i < vals.size(); i++) {
+      if (i > 0) {
+        os << ", ";
+      }
+      os << vals[i];
+    }
+    os << "]";
+  } else {
+    size_t head_end = (std::min)(N, vals.size());
+    size_t tail_start = (std::max)(vals.size() - N, head_end);
+
+    os << "[";
+
+    for (size_t i = 0; i < head_end; i++) {
+      if (i > 0) {
+        os << ", ";
+      }
+      os << vals[i];
+    }
+
+    os << ", ..., ";
+
+    for (size_t i = tail_start; i < vals.size(); i++) {
+      if (i > tail_start) {
+        os << ", ";
+      }
+      os << vals[i];
+    }
+
+    os << "]";
+  }
+  return os.str();
+}
 
 }  // namespace value
 }  // namespace tinyusdz

@@ -4,11 +4,20 @@
 //
 #pragma once
 
+#include <functional>
 #include "stream-reader.hh"
 #include "tinyusdz.hh"
 
 namespace tinyusdz {
 namespace usdc {
+
+///
+/// Progress callback function type.
+/// @param[in] progress Progress value between 0.0 and 1.0
+/// @param[in] userptr User-provided pointer for custom data
+/// @return true to continue parsing, false to cancel
+///
+using ProgressCallback = std::function<bool(float progress, void *userptr)>;
 
 ///
 /// USDC(Crate) reader
@@ -21,12 +30,15 @@ struct USDCReaderConfig {
   uint32_t kMaxTokenLength = 4096; // Max length of `token`
   uint32_t kMaxStringLength = 1024*1024*64; // Max length of `string` data
   uint32_t kMaxElementSize = 8192; // Max allowed value for `elementSize`
-  size_t kMaxAllowedMemoryInMB = 1024*16; //Max allowed memory usage in [mb]
+  size_t kMaxAllowedMemoryInMB = 1024*128; //Max allowed memory usage in [mb]
 
   bool allow_unknown_prims = true;
   bool allow_unknown_apiSchemas = true;
 
   bool strict_allowedToken_check = false;
+  
+  // Memory optimization: use mmap for uncompressed arrays
+  bool use_mmap = false;
 };
 
 class USDCReader {
@@ -37,6 +49,14 @@ class USDCReader {
 
   void set_reader_config(const USDCReaderConfig &config);
   const USDCReaderConfig get_reader_config() const;
+
+  ///
+  /// Set progress callback for monitoring parsing progress.
+  ///
+  /// @param[in] callback Function to call during parsing to report progress
+  /// @param[in] userptr User-provided pointer for custom data
+  ///
+  void SetProgressCallback(ProgressCallback callback, void *userptr = nullptr);
 
   bool ReadUSDC();
 

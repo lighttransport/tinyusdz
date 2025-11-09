@@ -1,13 +1,17 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <sstream>
 
 #include "tinyusdz.hh"
+#include "layer.hh"
 #include "pprinter.hh"
 #include "str-util.hh"
 #include "io-util.hh"
+#include "usd-to-json.hh"
+#include "logger.hh"
 
 #include "tydra/scene-access.hh"
 
@@ -33,8 +37,28 @@ static std::string str_tolower(std::string s) {
   return s;
 }
 
+static std::string format_memory_size(size_t bytes) {
+  const char* units[] = {"B", "KB", "MB", "GB", "TB"};
+  int unit_index = 0;
+  double size = static_cast<double>(bytes);
+  
+  while (size >= 1024.0 && unit_index < 4) {
+    size /= 1024.0;
+    unit_index++;
+  }
+  
+  std::stringstream ss;
+  if (unit_index == 0) {
+    ss << static_cast<size_t>(size) << " " << units[unit_index];
+  } else {
+    ss.precision(2);
+    ss << std::fixed << size << " " << units[unit_index];
+  }
+  return ss.str();
+}
+
 void print_help() {
-    std::cout << "Usage tusdcat [--flatten] [--loadOnly] [--composition=STRLIST] [--relative] [--extract-variants] input.usda/usdc/usdz\n";
+    std::cout << "Usage tusdcat [--flatten] [--loadOnly] [--composition=STRLIST] [--relative] [--extract-variants] [--memstat] [--loglevel INT] [-j|--json] input.usda/usdc/usdz\n";
     std::cout << "\n --flatten (not fully implemented yet) Do composition(load sublayers, refences, payload, evaluate `over`, inherit, variants..)";
     std::cout << "  --composition: Specify which composition feature to be "
                  "enabled(valid when `--flatten` is supplied). Comma separated "
@@ -45,10 +69,20 @@ void print_help() {
     std::cout << "\n --extract-variants (w.i.p) Dump variants information to .json\n";
     std::cout << "\n --relative (not implemented yet) Print Path as relative Path\n";
     std::cout << "\n -l, --loadOnly Load(Parse) USD file only(Check if input USD is valid or not)\n";
+    std::cout << "\n -j, --json Output parsed USD as JSON string\n";
+    std::cout << "\n --memstat Print memory usage statistics for loaded Layer and Stage\n";
+    std::cout << "\n --loglevel INT Set logging level (0=Debug, 1=Warn, 2=Info, 3=Error, 4=Critical, 5=Off)\n";
 
 }
 
 int main(int argc, char **argv) {
+  // Enable DCOUT output if TINYUSDZ_ENABLE_DCOUT environment variable is set
+  const char* enable_dcout_env = std::getenv("TINYUSDZ_ENABLE_DCOUT");
+  if (enable_dcout_env != nullptr && std::strlen(enable_dcout_env) > 0) {
+    // Any non-empty value enables DCOUT
+    tinyusdz::g_enable_dcout_output = true;
+  }
+
   if (argc < 2) {
     print_help();
     return EXIT_FAILURE;
@@ -58,6 +92,8 @@ int main(int argc, char **argv) {
   bool has_relative{false};
   bool has_extract_variants{false};
   bool load_only{false};
+  bool json_output{false};
+  bool memstat{false};
 
   constexpr int kMaxIteration = 128;
 
@@ -77,8 +113,33 @@ int main(int argc, char **argv) {
       has_relative = true;
     } else if ((arg.compare("-l") == 0) || (arg.compare("--loadOnly") == 0)) {
       load_only = true;
+    } else if ((arg.compare("-j") == 0) || (arg.compare("--json") == 0)) {
+      json_output = true;
     } else if (arg.compare("--extract-variants") == 0) {
       has_extract_variants = true;
+    } else if (arg.compare("--memstat") == 0) {
+      memstat = true;
+    } else if (arg.compare("--loglevel") == 0) {
+      if (i + 1 >= argc) {
+        std::cerr << "--loglevel requires an integer argument\n";
+        return EXIT_FAILURE;
+      }
+      i++; // Move to next argument
+      try {
+        int log_level = std::stoi(argv[i]);
+        if (log_level < 0 || log_level > 5) {
+          std::cerr << "Invalid log level: " << log_level << ". Must be between 0 and 5.\n";
+          return EXIT_FAILURE;
+        }
+        tinyusdz::logging::Logger::getInstance().setLogLevel(
+            static_cast<tinyusdz::logging::LogLevel>(log_level));
+      } catch (const std::invalid_argument& e) {
+        std::cerr << "Invalid log level argument: " << argv[i] << ". Must be an integer.\n";
+        return EXIT_FAILURE;
+      } catch (const std::out_of_range& e) {
+        std::cerr << "Log level value out of range: " << argv[i] << "\n";
+        return EXIT_FAILURE;
+      }
     } else if (tinyusdz::startsWith(arg, "--composition=")) {
       std::string value_str = tinyusdz::removePrefix(arg, "--composition=");
       if (value_str.empty()) {
@@ -159,7 +220,29 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
       }
 
-      std::cout << to_string(stage) << "\n";
+      if (memstat) {
+        size_t stage_mem = stage.estimate_memory_usage();
+        std::cout << "# Memory Statistics (Stage from USDZ)\n";
+        std::cout << "  Stage memory usage: " << format_memory_size(stage_mem) 
+                  << " (" << stage_mem << " bytes)\n\n";
+      }
+
+      if (json_output) {
+#if defined(TINYUSDZ_WITH_JSON)
+        auto json_result = tinyusdz::ToJSON(stage);
+        if (json_result) {
+          std::cout << json_result.value() << "\n";
+        } else {
+          std::cerr << "Failed to convert USDZ stage to JSON: " << json_result.error() << "\n";
+          return EXIT_FAILURE;
+        }
+      } else {
+        std::cout << to_string(stage) << "\n";
+#else
+      std::cerr << "JSON output is not supported in this build\n";
+      return EXIT_FAILURE;
+#endif
+      }
 
       return EXIT_SUCCESS;
     }
@@ -174,6 +257,13 @@ int main(int argc, char **argv) {
       std::cerr << "Failed to read USD data as Layer: \n";
       std::cerr << err << "\n";
       return -1;
+    }
+
+    if (memstat) {
+      size_t layer_mem = root_layer.estimate_memory_usage();
+      std::cout << "# Memory Statistics (Layer)\n";
+      std::cout << "  Layer memory usage: " << format_memory_size(layer_mem) 
+                << " (" << layer_mem << " bytes)\n\n";
     }
 
     std::cout << "# input\n";
@@ -338,7 +428,7 @@ int main(int argc, char **argv) {
     }
 
     tinyusdz::Stage comp_stage;
-    ret = LayerToStage(src_layer, &comp_stage, &warn, &err);
+    ret = LayerToStage(std::move(src_layer), &comp_stage, &warn, &err);
     if (warn.size()) {
       std::cout << warn<< "\n";
     }
@@ -347,7 +437,28 @@ int main(int argc, char **argv) {
       std::cerr << err << "\n";
     }
     
-    std::cout << comp_stage.ExportToString() << "\n";
+    if (memstat) {
+      size_t stage_mem = comp_stage.estimate_memory_usage();
+      std::cout << "\n# Memory Statistics (Stage after composition)\n";
+      std::cout << "  Stage memory usage: " << format_memory_size(stage_mem) 
+                << " (" << stage_mem << " bytes)\n\n";
+    }
+    
+    if (json_output) {
+#if defined(TINYUSDZ_WITH_JSON)
+      auto json_result = tinyusdz::ToJSON(comp_stage);
+      if (json_result) {
+        std::cout << json_result.value() << "\n";
+      } else {
+        std::cerr << "Failed to convert composed stage to JSON: " << json_result.error() << "\n";
+        return EXIT_FAILURE;
+      }
+#else
+      std::cerr << "JSON output is not supported in this build\n";
+#endif
+    } else {
+      std::cout << comp_stage.ExportToString() << "\n";
+    }
 
     using MeshMap = std::map<std::string, const tinyusdz::GeomMesh *>;
     MeshMap meshmap;
@@ -381,11 +492,38 @@ int main(int argc, char **argv) {
     }
 
     if (load_only) {
+      if (memstat) {
+        size_t stage_mem = stage.estimate_memory_usage();
+        std::cout << "# Memory Statistics (Stage)\n";
+        std::cout << "  Stage memory usage: " << format_memory_size(stage_mem) 
+                  << " (" << stage_mem << " bytes)\n";
+      }
       return EXIT_SUCCESS;
     }
 
-    std::string s = stage.ExportToString(has_relative);
-    std::cout << s << "\n";
+    if (memstat) {
+      size_t stage_mem = stage.estimate_memory_usage();
+      std::cout << "# Memory Statistics (Stage)\n";
+      std::cout << "  Stage memory usage: " << format_memory_size(stage_mem) 
+                << " (" << stage_mem << " bytes)\n\n";
+    }
+
+    if (json_output) {
+#if defined(TINYUSDZ_WITH_JSON)
+      auto json_result = tinyusdz::ToJSON(stage);
+      if (json_result) {
+        std::cout << json_result.value() << "\n";
+      } else {
+        std::cerr << "Failed to convert stage to JSON: " << json_result.error() << "\n";
+        return EXIT_FAILURE;
+      }
+#else
+      std::cerr << "JSON output is not supported in this build\n";
+#endif
+    } else {
+      std::string s = stage.ExportToString(has_relative);
+      std::cout << s << "\n";
+    }
 
     if (has_extract_variants) {
       tinyusdz::Dictionary dict;

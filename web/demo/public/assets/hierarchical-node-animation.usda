@@ -1,0 +1,344 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    endTimeCode = 240
+    startTimeCode = 1
+    timeCodesPerSecond = 24
+    upAxis = "Y"
+)
+
+def Xform "World"
+{
+    def Xform "Sun" (
+        doc = "Central object rotating on its axis"
+    )
+    {
+        # Sun rotation (slow spin on Y axis)
+        float3 xformOp:rotateXYZ.timeSamples = {
+            1: (0, 0, 0),
+            60: (0, 90, 0),
+            120: (0, 180, 0),
+            180: (0, 270, 0),
+            240: (0, 360, 0),
+        }
+        float3 xformOp:scale = (2, 3, 1)  # Elongated to show rotation
+        uniform token[] xformOpOrder = ["xformOp:scale", "xformOp:rotateXYZ"]
+
+        def Mesh "SunGeometry"
+        {
+            # Asymmetric box-like shape (8 vertices slightly offset)
+            point3f[] points = [
+                (-1.1, -0.9, -1.05),  # vertex 0 - slightly offset
+                (0.95, -1.05, -0.98),  # vertex 1
+                (1.05, 0.92, -1.02),   # vertex 2
+                (-0.98, 1.08, -0.95),  # vertex 3
+                (-1.02, -1.1, 0.96),   # vertex 4
+                (1.08, -0.95, 1.05),   # vertex 5
+                (0.93, 1.05, 0.98),    # vertex 6
+                (-1.05, 0.98, 1.1),    # vertex 7
+            ]
+
+            int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+            int[] faceVertexIndices = [
+                0, 1, 2, 3,  # back face
+                4, 7, 6, 5,  # front face
+                0, 4, 5, 1,  # bottom face
+                2, 6, 7, 3,  # top face
+                0, 3, 7, 4,  # left face
+                1, 5, 6, 2,  # right face
+            ]
+
+            color3f[] primvars:displayColor = [(1.0, 0.8, 0.0)]  # Yellow/gold
+            float3[] extent = [(-1.1, -1.1, -1.1), (1.1, 1.1, 1.1)]
+            uniform token subdivisionScheme = "none"
+        }
+
+        def Xform "Earth" (
+            doc = "Object orbiting around Sun with its own rotation"
+        )
+        {
+            # Earth's orbit around Sun and its own rotation
+            float3 xformOp:translate.timeSamples = {
+                1: (8, 0, 0),
+                30: (5.66, 0, 5.66),
+                60: (0, 0, 8),
+                90: (-5.66, 0, 5.66),
+                120: (-8, 0, 0),
+                150: (-5.66, 0, -5.66),
+                180: (0, 0, -8),
+                210: (5.66, 0, -5.66),
+                240: (8, 0, 0),
+            }
+            float3 xformOp:rotateXYZ.timeSamples = {
+                1: (0, 0, 0),
+                10: (0, 150, 0),
+                20: (0, 300, 0),
+                30: (0, 450, 0),
+                40: (0, 600, 0),
+                50: (0, 750, 0),
+                60: (0, 900, 0),
+                70: (0, 1050, 0),
+                80: (0, 1200, 0),
+                90: (0, 1350, 0),
+                100: (0, 1500, 0),
+                110: (0, 1650, 0),
+                120: (0, 1800, 0),
+                130: (0, 1950, 0),
+                140: (0, 2100, 0),
+                150: (0, 2250, 0),
+                160: (0, 2400, 0),
+                170: (0, 2550, 0),
+                180: (0, 2700, 0),
+                190: (0, 2850, 0),
+                200: (0, 3000, 0),
+                210: (0, 3150, 0),
+                220: (0, 3300, 0),
+                230: (0, 3450, 0),
+                240: (0, 3600, 0),
+            }
+            float3 xformOp:scale = (0.8, 1.2, 0.6)  # Elongated ellipsoid shape
+            uniform token[] xformOpOrder = ["xformOp:scale", "xformOp:rotateXYZ", "xformOp:translate"]
+
+            def Mesh "EarthGeometry"
+            {
+                # Diamond-like asymmetric shape
+                point3f[] points = [
+                    (-0.85, -1.2, -0.9),   # vertex 0
+                    (1.1, -0.85, -1.05),    # vertex 1
+                    (0.9, 1.15, -0.85),     # vertex 2
+                    (-1.05, 0.9, -1.1),     # vertex 3
+                    (-0.95, -0.9, 1.15),    # vertex 4
+                    (0.85, -1.1, 0.9),      # vertex 5
+                    (1.15, 0.85, 1.1),      # vertex 6
+                    (-0.9, 1.05, 0.85),     # vertex 7
+                ]
+
+                int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+                int[] faceVertexIndices = [
+                    0, 1, 2, 3,  # back face
+                    4, 7, 6, 5,  # front face
+                    0, 4, 5, 1,  # bottom face
+                    2, 6, 7, 3,  # top face
+                    0, 3, 7, 4,  # left face
+                    1, 5, 6, 2,  # right face
+                ]
+
+                color3f[] primvars:displayColor = [(0.0, 0.5, 1.0)]  # Blue
+                float3[] extent = [(-1.2, -1.2, -1.2), (1.2, 1.2, 1.2)]
+                uniform token subdivisionScheme = "none"
+            }
+
+            def Xform "Moon" (
+                doc = "Object orbiting around Earth with its own rotation"
+            )
+            {
+                # Moon's orbit around Earth and its own rotation
+                float3 xformOp:translate.timeSamples = {
+                    1: (3, 0, 0),
+                    15: (2.12, 0, 2.12),
+                    30: (0, 0, 3),
+                    45: (-2.12, 0, 2.12),
+                    60: (-3, 0, 0),
+                    75: (-2.12, 0, -2.12),
+                    90: (0, 0, -3),
+                    105: (2.12, 0, -2.12),
+                    120: (3, 0, 0),
+                    135: (2.12, 0, 2.12),
+                    150: (0, 0, 3),
+                    165: (-2.12, 0, 2.12),
+                    180: (-3, 0, 0),
+                    195: (-2.12, 0, -2.12),
+                    210: (0, 0, -3),
+                    225: (2.12, 0, -2.12),
+                    240: (3, 0, 0),
+                }
+                float3 xformOp:rotateXYZ.timeSamples = {
+                    1: (0, 0, 0),
+                    20: (0, 360, 0),
+                    40: (0, 720, 0),
+                    60: (0, 1080, 0),
+                    80: (0, 1440, 0),
+                    100: (0, 1800, 0),
+                    120: (0, 2160, 0),
+                    140: (0, 2520, 0),
+                    160: (0, 2880, 0),
+                    180: (0, 3240, 0),
+                    200: (0, 3600, 0),
+                    220: (0, 3960, 0),
+                    240: (0, 4320, 0),
+                }
+                float3 xformOp:scale = (0.4, 0.3, 0.5)  # Smaller, elongated shape
+                uniform token[] xformOpOrder = ["xformOp:scale", "xformOp:rotateXYZ", "xformOp:translate"]
+
+                def Mesh "MoonGeometry"
+                {
+                    # Irregular octahedron-like shape
+                    point3f[] points = [
+                        (-0.75, -1.05, -0.8),   # vertex 0
+                        (1.2, -0.8, -0.95),     # vertex 1
+                        (0.85, 0.95, -1.1),     # vertex 2
+                        (-1.1, 1.2, -0.75),     # vertex 3
+                        (-0.9, -0.75, 1.05),    # vertex 4
+                        (0.95, -1.15, 0.8),     # vertex 5
+                        (1.05, 1.1, 0.95),      # vertex 6
+                        (-0.8, 0.85, 1.2),      # vertex 7
+                    ]
+
+                    int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+                    int[] faceVertexIndices = [
+                        0, 1, 2, 3,  # back face
+                        4, 7, 6, 5,  # front face
+                        0, 4, 5, 1,  # bottom face
+                        2, 6, 7, 3,  # top face
+                        0, 3, 7, 4,  # left face
+                        1, 5, 6, 2,  # right face
+                    ]
+
+                    color3f[] primvars:displayColor = [(0.8, 0.8, 0.8)]  # Gray/silver
+                    float3[] extent = [(-1.2, -1.2, -1.2), (1.2, 1.2, 1.2)]
+                    uniform token subdivisionScheme = "none"
+                }
+
+                def Xform "Satellite" (
+                    doc = "Small object orbiting around Moon"
+                )
+                {
+                    # Satellite's fast orbit around Moon and spinning
+                    float3 xformOp:translate.timeSamples = {
+                        1: (1.5, 0, 0),
+                        8: (1.06, 0, 1.06),
+                        15: (0, 0, 1.5),
+                        22: (-1.06, 0, 1.06),
+                        30: (-1.5, 0, 0),
+                        37: (-1.06, 0, -1.06),
+                        45: (0, 0, -1.5),
+                        52: (1.06, 0, -1.06),
+                        60: (1.5, 0, 0),
+                        68: (1.06, 0, 1.06),
+                        75: (0, 0, 1.5),
+                        82: (-1.06, 0, 1.06),
+                        90: (-1.5, 0, 0),
+                        97: (-1.06, 0, -1.06),
+                        105: (0, 0, -1.5),
+                        112: (1.06, 0, -1.06),
+                        120: (1.5, 0, 0),
+                        128: (1.06, 0, 1.06),
+                        135: (0, 0, 1.5),
+                        142: (-1.06, 0, 1.06),
+                        150: (-1.5, 0, 0),
+                        157: (-1.06, 0, -1.06),
+                        165: (0, 0, -1.5),
+                        172: (1.06, 0, -1.06),
+                        180: (1.5, 0, 0),
+                        188: (1.06, 0, 1.06),
+                        195: (0, 0, 1.5),
+                        202: (-1.06, 0, 1.06),
+                        210: (-1.5, 0, 0),
+                        217: (-1.06, 0, -1.06),
+                        225: (0, 0, -1.5),
+                        232: (1.06, 0, -1.06),
+                        240: (1.5, 0, 0),
+                    }
+                    float3 xformOp:rotateXYZ.timeSamples = {
+                        1: (0, 0, 0),
+                        5: (0, 180, 0),
+                        10: (0, 360, 0),
+                        15: (0, 540, 0),
+                        20: (0, 720, 0),
+                        25: (0, 900, 0),
+                        30: (0, 1080, 0),
+                        35: (0, 1260, 0),
+                        40: (0, 1440, 0),
+                        45: (0, 1620, 0),
+                        50: (0, 1800, 0),
+                        55: (0, 1980, 0),
+                        60: (0, 2160, 0),
+                        65: (0, 2340, 0),
+                        70: (0, 2520, 0),
+                        75: (0, 2700, 0),
+                        80: (0, 2880, 0),
+                        85: (0, 3060, 0),
+                        90: (0, 3240, 0),
+                        95: (0, 3420, 0),
+                        100: (0, 3600, 0),
+                        105: (0, 3780, 0),
+                        110: (0, 3960, 0),
+                        115: (0, 4140, 0),
+                        120: (0, 4320, 0),
+                        125: (0, 4500, 0),
+                        130: (0, 4680, 0),
+                        135: (0, 4860, 0),
+                        140: (0, 5040, 0),
+                        145: (0, 5220, 0),
+                        150: (0, 5400, 0),
+                        155: (0, 5580, 0),
+                        160: (0, 5760, 0),
+                        165: (0, 5940, 0),
+                        170: (0, 6120, 0),
+                        175: (0, 6300, 0),
+                        180: (0, 6480, 0),
+                        185: (0, 6660, 0),
+                        190: (0, 6840, 0),
+                        195: (0, 7020, 0),
+                        200: (0, 7200, 0),
+                        205: (0, 7380, 0),
+                        210: (0, 7560, 0),
+                        215: (0, 7740, 0),
+                        220: (0, 7920, 0),
+                        225: (0, 8100, 0),
+                        230: (0, 8280, 0),
+                        235: (0, 8460, 0),
+                        240: (0, 8640, 0),
+                    }
+                    float3 xformOp:scale = (0.15, 0.25, 0.1)  # Very small, elongated
+                    uniform token[] xformOpOrder = ["xformOp:scale", "xformOp:rotateXYZ", "xformOp:translate"]
+
+                    def Mesh "SatelliteGeometry"
+                    {
+                        # Tiny tetrahedron-like shape
+                        point3f[] points = [
+                            (-0.6, -1.3, -0.7),    # vertex 0
+                            (1.4, -0.7, -0.85),    # vertex 1
+                            (0.7, 1.1, -1.2),      # vertex 2
+                            (-1.2, 0.8, -0.6),     # vertex 3
+                            (-0.8, -0.6, 1.3),     # vertex 4
+                            (0.85, -1.2, 0.7),     # vertex 5
+                            (1.3, 0.7, 1.1),       # vertex 6
+                            (-0.7, 1.4, 0.6),      # vertex 7
+                        ]
+
+                        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+                        int[] faceVertexIndices = [
+                            0, 1, 2, 3,  # back face
+                            4, 7, 6, 5,  # front face
+                            0, 4, 5, 1,  # bottom face
+                            2, 6, 7, 3,  # top face
+                            0, 3, 7, 4,  # left face
+                            1, 5, 6, 2,  # right face
+                        ]
+
+                        color3f[] primvars:displayColor = [(1.0, 0.0, 0.5)]  # Magenta/pink
+                        float3[] extent = [(-1.4, -1.4, -1.4), (1.4, 1.4, 1.4)]
+                        uniform token subdivisionScheme = "none"
+                    }
+                }
+            }
+        }
+    }
+
+    # Add a material with anisotropic roughness for better visual effect
+    def Material "AnisotropicMaterial"
+    {
+        token outputs:surface.connect = </World/AnisotropicMaterial/PbrShader.outputs:surface>
+
+        def Shader "PbrShader"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            float inputs:anisotropicRotation = 0.5
+            float inputs:roughness = 0.3
+            float inputs:metallic = 0.7
+            float inputs:ior = 1.5
+            token outputs:surface
+        }
+    }
+}

@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2022 - 2023, Syoyo Fujita.
 // Copyright 2023 - Present, Light Transport Entertainment Inc.
+
+///
+/// @file usdc-writer.hh
+/// @brief USDC (USD binary/Crate) writer interface  
+///
+/// Work-in-progress writer for exporting USD scenes to binary Crate format.
+/// Provides more compact file sizes compared to ASCII format.
+///
 #pragma once
 
 #include "tinyusdz.hh"

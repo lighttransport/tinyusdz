@@ -36,14 +36,34 @@ namespace {
 // Typed TimeSamples to typeless TimeSamples
 template <typename T>
 value::TimeSamples ToTypelessTimeSamples(const TypedTimeSamples<T> &ts) {
+  value::TimeSamples dst;
+
+#ifdef TINYUSDZ_USE_TIMESAMPLES_SOA
+  const auto &times = ts.get_times();
+  const auto &values = ts.get_values();
+  const auto &blocked = ts.get_blocked();
+
+  for (size_t i = 0; i < times.size(); i++) {
+    if (blocked[i]) {
+      // For untyped TimeSamples, blocked samples need a dummy value
+      dst.add_blocked_sample(times[i], value::Value());
+    } else {
+      dst.add_sample(times[i], values[i]);
+    }
+  }
+#else
   const std::vector<typename TypedTimeSamples<T>::Sample> &samples =
       ts.get_samples();
 
-  value::TimeSamples dst;
-
   for (size_t i = 0; i < samples.size(); i++) {
-    dst.add_sample(samples[i].t, samples[i].value);
+    if (samples[i].blocked) {
+      // For untyped TimeSamples, blocked samples need a dummy value
+      dst.add_blocked_sample(samples[i].t, value::Value());
+    } else {
+      dst.add_sample(samples[i].t, samples[i].value);
+    }
   }
+#endif
 
   return dst;
 }
@@ -52,16 +72,38 @@ value::TimeSamples ToTypelessTimeSamples(const TypedTimeSamples<T> &ts) {
 template <typename T>
 value::TimeSamples EnumTimeSamplesToTypelessTimeSamples(
     const TypedTimeSamples<T> &ts) {
+  value::TimeSamples dst;
+
+#ifdef TINYUSDZ_USE_TIMESAMPLES_SOA
+  const auto &times = ts.get_times();
+  const auto &values = ts.get_values();
+  const auto &blocked = ts.get_blocked();
+
+  for (size_t i = 0; i < times.size(); i++) {
+    if (blocked[i]) {
+      // For untyped TimeSamples, blocked samples need a dummy value
+      dst.add_blocked_sample(times[i], value::Value());
+    } else {
+      // to token
+      value::token tok(to_string(values[i]));
+      dst.add_sample(times[i], tok);
+    }
+  }
+#else
   const std::vector<typename TypedTimeSamples<T>::Sample> &samples =
       ts.get_samples();
 
-  value::TimeSamples dst;
-
   for (size_t i = 0; i < samples.size(); i++) {
-    // to token
-    value::token tok(to_string(samples[i].value));
-    dst.add_sample(samples[i].t, tok);
+    if (samples[i].blocked) {
+      // For untyped TimeSamples, blocked samples need a dummy value
+      dst.add_blocked_sample(samples[i].t, value::Value());
+    } else {
+      // to token
+      value::token tok(to_string(samples[i].value));
+      dst.add_sample(samples[i].t, tok);
+    }
   }
+#endif
 
   return dst;
 }
@@ -2259,7 +2301,7 @@ bool PrimToPrimSpecImpl(const Xform &p, PrimSpec &ps, std::string *err) {
   // TODO..
   std::vector<value::token> toks;
   Attribute xformOpOrderAttr;
-  xformOpOrderAttr.set_value(toks);
+  xformOpOrderAttr.set_value(std::move(toks));
   ps.props().emplace("xformOpOrder",
                      Property(xformOpOrderAttr, /* custom */ false));
 
@@ -2489,7 +2531,7 @@ GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
     if (err) {
       (*err) += "Prim must be GeomMesh.\n";
     }
-    return std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>{};
+    return dst;
   }
 
   //
@@ -2504,8 +2546,7 @@ GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
       if (err) {
         (*err) += "Failed to get `skel:blendShapes` attribute.\n";
       }
-      return std::vector<
-          std::pair<std::string, const tinyusdz::BlendShape *>>{};
+      return dst;
     }
 
     if (pmesh->blendShapeTargets.value().is_path()) {
@@ -2515,22 +2556,19 @@ GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
               "Array size mismatch with `skel:blendShapes` and "
               "`skel:blendShapeTargets`.\n";
         }
-        return std::vector<
-            std::pair<std::string, const tinyusdz::BlendShape *>>{};
+        return dst;
       }
 
       const Path &targetPath = pmesh->blendShapeTargets.value().targetPath;
       const Prim *bsprim{nullptr};
       if (!stage.find_prim_at_path(targetPath, bsprim, err)) {
-        return std::vector<
-            std::pair<std::string, const tinyusdz::BlendShape *>>{};
+        return dst;
       }
       if (!bsprim) {
         if (err) {
           (*err) += "Internal error. BlendShape Prim is nullptr.\n";
         }
-        return std::vector<
-            std::pair<std::string, const tinyusdz::BlendShape *>>{};
+        return dst;
       }
 
       if (const auto *bs = bsprim->as<BlendShape>()) {
@@ -2540,8 +2578,7 @@ GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
           (*err) += fmt::format("{} is not BlendShape Prim.\n",
                                 targetPath.full_path_name());
         }
-        return std::vector<
-            std::pair<std::string, const tinyusdz::BlendShape *>>{};
+        return dst;
       }
 
     } else if (pmesh->blendShapeTargets.value().is_pathvector()) {
@@ -2552,8 +2589,7 @@ GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
               "Array size mismatch with `skel:blendShapes` and "
               "`skel:blendShapeTargets`.\n";
         }
-        return std::vector<
-            std::pair<std::string, const tinyusdz::BlendShape *>>{};
+        return dst;
       }
     } else {
       if (err) {
@@ -2561,8 +2597,7 @@ GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
             "Invalid or unsupported definition of `skel:blendShapeTargets` "
             "relationship.\n";
       }
-      return std::vector<
-          std::pair<std::string, const tinyusdz::BlendShape *>>{};
+      return dst;
     }
 
     for (size_t i = 0;
@@ -2571,15 +2606,13 @@ GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
           pmesh->blendShapeTargets.value().targetPathVector[i];
       const Prim *bsprim{nullptr};
       if (!stage.find_prim_at_path(targetPath, bsprim, err)) {
-        return std::vector<
-            std::pair<std::string, const tinyusdz::BlendShape *>>{};
+        return dst;
       }
       if (!bsprim) {
         if (err) {
           (*err) += "Internal error. BlendShape Prim is nullptr.";
         }
-        return std::vector<
-            std::pair<std::string, const tinyusdz::BlendShape *>>{};
+        return dst;
       }
 
       if (const auto *bs = bsprim->as<BlendShape>()) {
@@ -2589,8 +2622,7 @@ GetBlendShapes(const tinyusdz::Stage &stage, const tinyusdz::Prim &prim,
           (*err) += fmt::format("{} is not BlendShape Prim.",
                                 targetPath.full_path_name());
         }
-        return std::vector<
-            std::pair<std::string, const tinyusdz::BlendShape *>>{};
+        return dst;
       }
     }
   }
