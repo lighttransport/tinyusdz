@@ -1088,6 +1088,67 @@ struct GeomBasisCurves : public GPrim {
       velocities;  // vector3f
   TypedAttribute<Animatable<std::vector<value::vector3f>>>
       accelerations;  // vector3f
+
+  //
+  // Utility functions
+  //
+
+  ///
+  /// @brief Returns `points`.
+  ///
+  /// NOTE: No support for connected attribute. Using tydra::EvaluateTypedAttribute preferred.
+  ///
+  /// @param[in] time Time for TimeSampled `points` data.
+  /// @param[in] interp Interpolation type for TimeSampled `points` data
+  /// @return points vector(copied). Returns empty when `points` attribute is
+  /// not defined.
+  ///
+  const std::vector<value::point3f> get_points(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
+
+  ///
+  /// @brief Returns `curveVertexCounts`.
+  ///
+  /// NOTE: No support for connected attribute. Using tydra::EvaluateTypedAttribute preferred.
+  ///
+  /// @return curve vertex counts vector(copied)
+  ///
+  const std::vector<int> get_curveVertexCounts(double time = value::TimeCode::Default()) const;
+
+  ///
+  /// @brief Returns `widths`.
+  ///
+  /// NOTE: No support for connected attribute. Using tydra::EvaluateTypedAttribute preferred.
+  ///
+  /// @return widths vector(copied)
+  ///
+  const std::vector<float> get_widths(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
+
+  ///
+  /// @brief Returns normals vector. Precedence order: `primvars:normals` then
+  /// `normals`.
+  ///
+  /// NOTE: No support for connected attribute. Using tydra::GetGeomPrimvar preferred.
+  ///
+  /// @return normals vector(copied). Returns empty normals vector when neither
+  /// `primvars:normals` nor `normals` attribute defined, attribute is a
+  /// Relationship, Connection Attribute, or normals attribute have invalid type(other than `normal3f`).
+  ///
+  const std::vector<value::normal3f> get_normals(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
+
+  ///
+  /// @brief Get interpolation of `primvars:normals`, then `normals`.
+  /// @return Interpolation of normals. `vertex` by default.
+  ///
+  Interpolation get_normalsInterpolation() const;
 };
 
 struct GeomNurbsCurves : public GPrim {
@@ -1113,6 +1174,67 @@ struct GeomNurbsCurves : public GPrim {
   TypedAttribute<Animatable<std::vector<double>>> knots;
   TypedAttribute<Animatable<std::vector<value::double2>>> ranges;
   TypedAttribute<Animatable<std::vector<double>>> pointWeights;
+
+  //
+  // Utility functions
+  //
+
+  ///
+  /// @brief Returns `points`.
+  ///
+  /// NOTE: No support for connected attribute. Using tydra::EvaluateTypedAttribute preferred.
+  ///
+  /// @param[in] time Time for TimeSampled `points` data.
+  /// @param[in] interp Interpolation type for TimeSampled `points` data
+  /// @return points vector(copied). Returns empty when `points` attribute is
+  /// not defined.
+  ///
+  const std::vector<value::point3f> get_points(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
+
+  ///
+  /// @brief Returns `curveVertexCounts`.
+  ///
+  /// NOTE: No support for connected attribute. Using tydra::EvaluateTypedAttribute preferred.
+  ///
+  /// @return curve vertex counts vector(copied)
+  ///
+  const std::vector<int> get_curveVertexCounts(double time = value::TimeCode::Default()) const;
+
+  ///
+  /// @brief Returns `widths`.
+  ///
+  /// NOTE: No support for connected attribute. Using tydra::EvaluateTypedAttribute preferred.
+  ///
+  /// @return widths vector(copied)
+  ///
+  const std::vector<float> get_widths(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
+
+  ///
+  /// @brief Returns normals vector. Precedence order: `primvars:normals` then
+  /// `normals`.
+  ///
+  /// NOTE: No support for connected attribute. Using tydra::GetGeomPrimvar preferred.
+  ///
+  /// @return normals vector(copied). Returns empty normals vector when neither
+  /// `primvars:normals` nor `normals` attribute defined, attribute is a
+  /// Relationship, Connection Attribute, or normals attribute have invalid type(other than `normal3f`).
+  ///
+  const std::vector<value::normal3f> get_normals(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
+
+  ///
+  /// @brief Get interpolation of `primvars:normals`, then `normals`.
+  /// @return Interpolation of normals. `vertex` by default.
+  ///
+  Interpolation get_normalsInterpolation() const;
 };
 
 //

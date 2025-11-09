@@ -1,0 +1,28 @@
+#usda 1.0
+(
+    doc = "NurbsCurves test with point weights - rational NURBS"
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+def NurbsCurves "WeightedNurbs"
+{
+    int[] curveVertexCounts = [9]
+    point3f[] points = [
+        # Control points for a circular arc
+        (1, 0, 0), (1, 1, 0), (0, 1, 0), (-1, 1, 0), (-1, 0, 0),
+        (-1, -1, 0), (0, -1, 0), (1, -1, 0), (1, 0, 0)
+    ]
+    double[] pointWeights = [
+        1.0, 0.707, 1.0, 0.707, 1.0, 0.707, 1.0, 0.707, 1.0
+    ]
+    int[] order = [3]
+    double[] knots = [0, 0, 0, 0.25, 0.25, 0.5, 0.5, 0.75, 0.75, 1, 1, 1]
+    double2[] ranges = [(0, 1)]
+    float[] widths = [0.05] (
+        interpolation = "constant"
+    )
+    color3f[] primvars:displayColor = [(1, 0.5, 0)] (
+        interpolation = "constant"
+    )
+}

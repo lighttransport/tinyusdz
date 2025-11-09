@@ -1,0 +1,22 @@
+#usda 1.0
+(
+    doc = "Basic BasisCurves test with bezier basis - single cubic curve"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "Curves"
+{
+    def BasisCurves "SimpleBezier"
+    {
+        uniform token basis = "bezier"
+        uniform token type = "cubic"
+        uniform token wrap = "nonperiodic"
+        int[] curveVertexCounts = [4]
+        point3f[] points = [(0, 0, 0), (1, 2, 0), (2, 2, 0), (3, 0, 0)]
+        color3f[] primvars:displayColor = [(1, 0, 0)]
+        float[] widths = [0.1] (
+            interpolation = "constant"
+        )
+    }
+}

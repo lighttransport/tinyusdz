@@ -1136,4 +1136,298 @@ bool GeomSubset::ValidateSubsets(
 
 }
 
+// -------------------------------------------------------
+// GeomBasisCurves implementations
+// -------------------------------------------------------
+
+const std::vector<value::point3f> GeomBasisCurves::get_points(
+    double time, value::TimeSampleInterpolationType interp) const {
+  std::vector<value::point3f> dst;
+
+  if (!points.authored() || points.is_blocked()) {
+    return dst;
+  }
+
+  if (points.is_connection()) {
+    // TODO: connection
+    return dst;
+  }
+
+  if (auto pv = points.get_value()) {
+    std::vector<value::point3f> val;
+    if (pv.value().get(time, &val, interp)) {
+      dst = std::move(val);
+    }
+  }
+
+  return dst;
+}
+
+const std::vector<int> GeomBasisCurves::get_curveVertexCounts(double time) const {
+  std::vector<int> dst;
+
+  if (!curveVertexCounts.authored() || curveVertexCounts.is_blocked()) {
+    return dst;
+  }
+
+  if (curveVertexCounts.is_connection()) {
+    // TODO: connection
+    return dst;
+  }
+
+  if (auto pv = curveVertexCounts.get_value()) {
+    std::vector<int> val;
+    if (pv.value().get(time, &val, value::TimeSampleInterpolationType::Held)) {
+      dst = std::move(val);
+    }
+  }
+  return dst;
+}
+
+const std::vector<float> GeomBasisCurves::get_widths(
+    double time, value::TimeSampleInterpolationType interp) const {
+  std::vector<float> dst;
+
+  if (!widths.authored() || widths.is_blocked()) {
+    return dst;
+  }
+
+  if (widths.is_connection()) {
+    // TODO: connection
+    return dst;
+  }
+
+  if (auto pv = widths.get_value()) {
+    std::vector<float> val;
+    if (pv.value().get(time, &val, interp)) {
+      dst = std::move(val);
+    }
+  }
+
+  return dst;
+}
+
+const std::vector<value::normal3f> GeomBasisCurves::get_normals(
+    double time, value::TimeSampleInterpolationType interp) const {
+  std::vector<value::normal3f> dst;
+
+  std::string err;
+  if (has_primvar("normals")) {
+    GeomPrimvar primvar;
+    if (!get_primvar("normals", &primvar, &err)) {
+      return dst;
+    }
+
+    primvar.flatten_with_indices(time, &dst, interp);
+    return dst;
+  } else if (normals.authored()) {
+    if (normals.is_connection()) {
+      // Not supported
+      return dst;
+    } else if (normals.is_blocked()) {
+      return dst;
+    }
+
+    std::vector<int> indices;
+    if (props.count("normals:indices")) {
+      Attribute indexAttr = props.at("normals:indices").get_attribute();
+
+      if (indexAttr.is_connection()) {
+        // not supported.
+        return dst;
+      }
+
+      if (!indexAttr.get_value(time, &indices, interp)) {
+        // err
+        return dst;
+      }
+
+    }
+
+    std::vector<value::normal3f> value;
+    if (!normals.get_value().value().get(time, &value, interp)) {
+      return dst;
+    }
+
+    if (indices.size()) {
+      uint32_t elementSize = normals.metas().elementSize.value_or(1);
+
+      std::vector<value::normal3f> expanded_normals;
+      auto ret = ExpandWithIndices(value, elementSize, indices, &expanded_normals);
+
+      if (!ret) {
+        return dst;
+      }
+
+      dst = expanded_normals;
+    } else {
+      dst = value;
+    }
+  }
+
+  return dst;
+}
+
+Interpolation GeomBasisCurves::get_normalsInterpolation() const {
+  if (props.count("primvars:normals")) {
+    const auto &prop = props.at("primvars:normals");
+    if (prop.get_attribute().type_name() == "normal3f[]") {
+      if (prop.get_attribute().metas().interpolation) {
+        return prop.get_attribute().metas().interpolation.value();
+      }
+    }
+  } else if (normals.metas().interpolation) {
+    return normals.metas().interpolation.value();
+  }
+
+  return Interpolation::Vertex;  // default 'vertex'
+}
+
+// -------------------------------------------------------
+// GeomNurbsCurves implementations
+// -------------------------------------------------------
+
+const std::vector<value::point3f> GeomNurbsCurves::get_points(
+    double time, value::TimeSampleInterpolationType interp) const {
+  std::vector<value::point3f> dst;
+
+  if (!points.authored() || points.is_blocked()) {
+    return dst;
+  }
+
+  if (points.is_connection()) {
+    // TODO: connection
+    return dst;
+  }
+
+  if (auto pv = points.get_value()) {
+    std::vector<value::point3f> val;
+    if (pv.value().get(time, &val, interp)) {
+      dst = std::move(val);
+    }
+  }
+
+  return dst;
+}
+
+const std::vector<int> GeomNurbsCurves::get_curveVertexCounts(double time) const {
+  std::vector<int> dst;
+
+  if (!curveVertexCounts.authored() || curveVertexCounts.is_blocked()) {
+    return dst;
+  }
+
+  if (curveVertexCounts.is_connection()) {
+    // TODO: connection
+    return dst;
+  }
+
+  if (auto pv = curveVertexCounts.get_value()) {
+    std::vector<int> val;
+    if (pv.value().get(time, &val, value::TimeSampleInterpolationType::Held)) {
+      dst = std::move(val);
+    }
+  }
+  return dst;
+}
+
+const std::vector<float> GeomNurbsCurves::get_widths(
+    double time, value::TimeSampleInterpolationType interp) const {
+  std::vector<float> dst;
+
+  if (!widths.authored() || widths.is_blocked()) {
+    return dst;
+  }
+
+  if (widths.is_connection()) {
+    // TODO: connection
+    return dst;
+  }
+
+  if (auto pv = widths.get_value()) {
+    std::vector<float> val;
+    if (pv.value().get(time, &val, interp)) {
+      dst = std::move(val);
+    }
+  }
+
+  return dst;
+}
+
+const std::vector<value::normal3f> GeomNurbsCurves::get_normals(
+    double time, value::TimeSampleInterpolationType interp) const {
+  std::vector<value::normal3f> dst;
+
+  std::string err;
+  if (has_primvar("normals")) {
+    GeomPrimvar primvar;
+    if (!get_primvar("normals", &primvar, &err)) {
+      return dst;
+    }
+
+    primvar.flatten_with_indices(time, &dst, interp);
+    return dst;
+  } else if (normals.authored()) {
+    if (normals.is_connection()) {
+      // Not supported
+      return dst;
+    } else if (normals.is_blocked()) {
+      return dst;
+    }
+
+    std::vector<int> indices;
+    if (props.count("normals:indices")) {
+      Attribute indexAttr = props.at("normals:indices").get_attribute();
+
+      if (indexAttr.is_connection()) {
+        // not supported.
+        return dst;
+      }
+
+      if (!indexAttr.get_value(time, &indices, interp)) {
+        // err
+        return dst;
+      }
+
+    }
+
+    std::vector<value::normal3f> value;
+    if (!normals.get_value().value().get(time, &value, interp)) {
+      return dst;
+    }
+
+    if (indices.size()) {
+      uint32_t elementSize = normals.metas().elementSize.value_or(1);
+
+      std::vector<value::normal3f> expanded_normals;
+      auto ret = ExpandWithIndices(value, elementSize, indices, &expanded_normals);
+
+      if (!ret) {
+        return dst;
+      }
+
+      dst = expanded_normals;
+    } else {
+      dst = value;
+    }
+  }
+
+  return dst;
+}
+
+Interpolation GeomNurbsCurves::get_normalsInterpolation() const {
+  if (props.count("primvars:normals")) {
+    const auto &prop = props.at("primvars:normals");
+    if (prop.get_attribute().type_name() == "normal3f[]") {
+      if (prop.get_attribute().metas().interpolation) {
+        return prop.get_attribute().metas().interpolation.value();
+      }
+    }
+  } else if (normals.metas().interpolation) {
+    return normals.metas().interpolation.value();
+  }
+
+  return Interpolation::Vertex;  // default 'vertex'
+}
+
 }  // namespace tinyusdz

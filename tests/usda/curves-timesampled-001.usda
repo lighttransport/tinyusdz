@@ -1,0 +1,41 @@
+#usda 1.0
+(
+    doc = "BasisCurves with time-sampled animation"
+    metersPerUnit = 1
+    upAxis = "Y"
+    startTimeCode = 0
+    endTimeCode = 2
+)
+
+def BasisCurves "AnimatedCurve"
+{
+    uniform token basis = "bspline"
+    uniform token type = "cubic"
+    uniform token wrap = "nonperiodic"
+    int[] curveVertexCounts = [5]
+
+    # Animated points - curve moves up over time
+    point3f[] points.timeSamples = {
+        0: [(0, 0, 0), (1, 0.5, 0), (2, 1, 0), (3, 0.5, 0), (4, 0, 0)],
+        1: [(0, 1, 0), (1, 1.5, 0), (2, 2, 0), (3, 1.5, 0), (4, 1, 0)],
+        2: [(0, 2, 0), (1, 2.5, 0), (2, 3, 0), (3, 2.5, 0), (4, 2, 0)]
+    }
+
+    # Animated widths - gets thinner over time
+    float[] widths.timeSamples = {
+        0: [0.2, 0.25, 0.3, 0.25, 0.2],
+        1: [0.15, 0.2, 0.25, 0.2, 0.15],
+        2: [0.1, 0.15, 0.2, 0.15, 0.1]
+    } (
+        interpolation = "vertex"
+    )
+
+    # Color changes from red to blue over time
+    color3f[] primvars:displayColor.timeSamples = {
+        0: [(1, 0, 0)],
+        1: [(0.5, 0, 0.5)],
+        2: [(0, 0, 1)]
+    } (
+        interpolation = "constant"
+    )
+}

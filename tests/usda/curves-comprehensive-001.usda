@@ -1,0 +1,108 @@
+#usda 1.0
+(
+    doc = """Comprehensive curves test combining multiple features:
+    - Multiple curve types in one scene
+    - Different basis types
+    - Various interpolation modes
+    - Primvars with indices
+    - Materials and shading"""
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Scope "CurvesScene"
+{
+    def BasisCurves "BezierCurve"
+    {
+        uniform token basis = "bezier"
+        uniform token type = "cubic"
+        uniform token wrap = "nonperiodic"
+        int[] curveVertexCounts = [4]
+        point3f[] points = [(0, 0, 0), (0.5, 1, 0), (1.5, 1, 0), (2, 0, 0)]
+        float[] widths = [0.1] (
+            interpolation = "constant"
+        )
+        color3f[] primvars:displayColor = [(1, 0, 0)] (
+            interpolation = "constant"
+        )
+    }
+
+    def BasisCurves "BSplineHair"
+    {
+        uniform token basis = "bspline"
+        uniform token type = "cubic"
+        uniform token wrap = "nonperiodic"
+        int[] curveVertexCounts = [6, 6, 6]
+        point3f[] points = [
+            # Strand 1
+            (3, 0, 0), (3, 0.5, 0), (3, 1, 0), (3, 1.5, 0), (3, 2, 0), (3, 2.5, 0),
+            # Strand 2
+            (3.3, 0, 0), (3.3, 0.5, 0.1), (3.3, 1, 0.1), (3.3, 1.5, 0), (3.3, 2, 0), (3.3, 2.5, 0),
+            # Strand 3
+            (3.6, 0, 0), (3.6, 0.5, -0.1), (3.6, 1, -0.1), (3.6, 1.5, 0), (3.6, 2, 0), (3.6, 2.5, 0)
+        ]
+
+        # Varying widths along each strand
+        float[] primvars:widths = [0.08, 0.07, 0.06, 0.05, 0.04, 0.03] (
+            interpolation = "vertex"
+        )
+
+        # Indexed displayColor - reuse colors for strands
+        int[] primvars:displayColor:indices = [0, 1, 0]
+        color3f[] primvars:displayColor = [(0.4, 0.2, 0.1), (0.3, 0.15, 0.08)] (
+            interpolation = "uniform"
+        )
+
+        # Custom primvar for shader
+        float[] primvars:roughness = [0.8] (
+            interpolation = "constant"
+        )
+    }
+
+    def BasisCurves "LinearWire"
+    {
+        uniform token type = "linear"
+        uniform token wrap = "nonperiodic"
+        int[] curveVertexCounts = [5]
+        point3f[] points = [(5, 0, 0), (5.5, 0.5, 0), (6, 1, 0), (6.5, 0.5, 0), (7, 0, 0)]
+        float[] widths = [0.05, 0.08, 0.1, 0.08, 0.05] (
+            interpolation = "vertex"
+        )
+        color3f[] primvars:displayColor = [(0, 1, 0)] (
+            interpolation = "constant"
+        )
+    }
+
+    def BasisCurves "PeriodicRing"
+    {
+        uniform token basis = "catmullRom"
+        uniform token type = "cubic"
+        uniform token wrap = "periodic"
+        int[] curveVertexCounts = [8]
+        point3f[] points = [
+            (9, 0.5, 0.5), (9, -0.5, 0.5), (9, -0.5, -0.5), (9, 0.5, -0.5),
+            (9, 1, 0), (9, 0, 1), (9, -1, 0), (9, 0, -1)
+        ]
+        float[] widths = [0.1] (
+            interpolation = "constant"
+        )
+        color3f[] primvars:displayColor = [(1, 1, 0)] (
+            interpolation = "constant"
+        )
+    }
+
+    def NurbsCurves "NurbsArc"
+    {
+        int[] curveVertexCounts = [5]
+        point3f[] points = [(11, 0, 0), (11, 1, 0), (12, 1.5, 0), (13, 1, 0), (13, 0, 0)]
+        double[] pointWeights = [1.0, 0.8, 1.0, 0.8, 1.0]
+        int[] order = [3]
+        double[] knots = [0, 0, 0, 0.5, 0.5, 1, 1, 1]
+        float[] widths = [0.15] (
+            interpolation = "constant"
+        )
+        color3f[] primvars:displayColor = [(0, 0.5, 1)] (
+            interpolation = "constant"
+        )
+    }
+}
