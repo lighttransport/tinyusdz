@@ -1,0 +1,58 @@
+#usda 1.0
+(
+    doc = "OpenPBR subsurface scattering material with texture"
+    metersPerUnit = 1
+    upAxis = "Y"
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Sphere "SubsurfaceSphere"
+    {
+        double radius = 1.0
+        rel material:binding = </World/_materials/SubsurfaceMaterial>
+
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+    }
+
+    def Scope "_materials"
+    {
+        def Material "SubsurfaceMaterial"
+        {
+            token outputs:surface.connect = </World/_materials/SubsurfaceMaterial/OpenPBRSurface.outputs:surface>
+
+            def Shader "OpenPBRSurface"
+            {
+                uniform token info:id = "OpenPBRSurface"
+                color3f inputs:base_color.connect = </World/_materials/SubsurfaceMaterial/ColorTexture.outputs:rgb>
+                float inputs:base_weight = 0.8
+                float inputs:specular_roughness = 0.3
+                float inputs:specular_weight = 0.5
+                color3f inputs:subsurface_color.connect = </World/_materials/SubsurfaceMaterial/ColorTexture.outputs:rgb>
+                float inputs:subsurface_weight = 0.5
+                float inputs:subsurface_radius = 0.1
+                color3f inputs:subsurface_radius_scale = (1.0, 0.5, 0.3)
+                token outputs:surface
+            }
+
+            def Shader "ColorTexture"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @./textures/01.jpg@
+                string inputs:filtertype = "linear"
+                float2 inputs:texcoord.connect = </World/_materials/SubsurfaceMaterial/Primvar.outputs:result>
+                color3f outputs:rgb
+            }
+
+            def Shader "Primvar"
+            {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                int inputs:index = 0
+                float2 outputs:result
+            }
+        }
+    }
+}

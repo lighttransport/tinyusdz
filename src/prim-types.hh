@@ -1,4 +1,13 @@
 // SPDX-License-Identifier: Apache 2.0
+
+///
+/// @file prim-types.hh
+/// @brief Core USD primitive type definitions and data structures
+///
+/// Contains fundamental USD concepts including Prim (primitive), Layer,
+/// Properties, Attributes, Relationships, and supporting data structures.
+/// These form the building blocks of USD scene graphs.
+///
 #pragma once
 
 #ifdef _MSC_VER
@@ -50,7 +59,11 @@
 
 namespace tinyusdz {
 
-// Simple Python-like OrderedDict
+///
+/// Simple Python-like OrderedDict implementation.
+/// Preserves insertion order while providing O(1) key-based lookup.
+/// Used throughout USD data structures where order matters.
+///
 template <typename T>
 class ordered_dict {
  public:
@@ -1148,289 +1161,7 @@ using PropMetas = AttrMetas;
 // 2: (3.0, false)
 //
 
-template <typename T>
-struct TypedTimeSamples {
- public:
-  struct Sample {
-    double t;
-    T value;
-    bool blocked{false};
-  };
-
-  bool empty() const { return _samples.empty(); }
-
-  void update() const {
-    std::sort(_samples.begin(), _samples.end(),
-              [](const Sample &a, const Sample &b) { return a.t < b.t; });
-
-    _dirty = false;
-
-    return;
-  }
-
-  // Get value at specified time.
-  // For non-interpolatable types(includes enums and unknown types)
-  //
-  // Return `Held` value even when TimeSampleInterpolationType is
-  // Linear. Returns nullopt when specified time is out-of-range.
-  template<typename V = T, std::enable_if_t<!value::LerpTraits<V>::supported(), std::nullptr_t> = nullptr>
-  bool get(T *dst, double t = value::TimeCode::Default(),
-           value::TimeSampleInterpolationType interp =
-               value::TimeSampleInterpolationType::Linear) const {
-
-    (void)interp;
-
-    if (!dst) {
-      return false;
-    }
-
-    if (empty()) {
-      return false;
-    }
-
-    if (_dirty) {
-      update();
-    }
-
-    if (value::TimeCode(t).is_default()) {
-      // FIXME: Use the first item for now.
-      // TODO: Handle bloked
-      (*dst) = _samples[0].value;
-      return true;
-    } else {
-
-      if (_samples.size() == 1) {
-        (*dst) = _samples[0].value;
-        return true;
-      }
-
-      // Held = nerarest preceding value for a gien time.
-      // example:
-      // input = 0.0: 100, 1.0: 200
-      //
-      // t -1.0 => 100(time 0.0)
-      // t 0.0 => 100(time 0.0)
-      // t 0.1 => 100(time 0.0)
-      // t 0.9 => 100(time 0.0)
-      // t 1.0 => 200(time 1.0)
-      //
-      // This can be achieved by using upper_bound, and subtract 1 from the found position.
-      auto it = std::upper_bound(
-        _samples.begin(), _samples.end(), t,
-        [](double tval, const Sample &a) { return tval < a.t; });
-
-      const auto it_minus_1 = (it == _samples.begin()) ? _samples.begin() : (it - 1);
-
-      (*dst) = it_minus_1->value;
-      return true;
-    }
-
-  }
-
-  // TODO: Move to .cc to save compile time.
-  // Get value at specified time.
-  // Return linearly interpolated value when TimeSampleInterpolationType is
-  // Linear. Returns nullopt when specified time is out-of-range.
-  template<typename V = T, std::enable_if_t<value::LerpTraits<V>::supported(), std::nullptr_t> = nullptr>
-  bool get(T *dst, double t = value::TimeCode::Default(),
-           value::TimeSampleInterpolationType interp =
-               value::TimeSampleInterpolationType::Linear) const {
-    if (!dst) {
-      return false;
-    }
-
-    if (empty()) {
-      return false;
-    }
-
-    if (_dirty) {
-      update();
-    }
-
-    if (value::TimeCode(t).is_default()) {
-      // FIXME: Use the first item for now.
-      // TODO: Handle bloked
-      (*dst) = _samples[0].value;
-      return true;
-    } else {
-
-      if (_samples.size() == 1) {
-        (*dst) = _samples[0].value;
-        return true;
-      }
-
-      auto it = std::lower_bound(
-        _samples.begin(), _samples.end(), t,
-        [](const Sample &a, double tval) { return a.t < tval; });
-
-      if (interp == value::TimeSampleInterpolationType::Linear) {
-
-        // MS STL does not allow seek vector iterator before begin
-        // Issue #110
-        const auto it_minus_1 = (it == _samples.begin()) ? _samples.begin() : (it - 1);
-
-        size_t idx0 = size_t((std::max)(
-            int64_t(0),
-            (std::min)(int64_t(_samples.size() - 1),
-                     int64_t(std::distance(_samples.begin(), it_minus_1)))));
-        size_t idx1 =
-            size_t((std::max)(int64_t(0), (std::min)(int64_t(_samples.size() - 1),
-                                                 int64_t(idx0) + 1)));
-
-        double tl = _samples[idx0].t;
-        double tu = _samples[idx1].t;
-
-        double dt = (t - tl);
-        if (std::fabs(tu - tl) < std::numeric_limits<double>::epsilon()) {
-          // slope is zero.
-          dt = 0.0;
-        } else {
-          dt /= (tu - tl);
-        }
-
-        // Just in case.
-        dt = (std::max)(0.0, (std::min)(1.0, dt));
-
-        const value::Value &pv0 = _samples[idx0].value;
-        const value::Value &pv1 = _samples[idx1].value;
-
-        if (pv0.type_id() != pv1.type_id()) {
-          // Type mismatch.
-          return false;
-        }
-
-        // To concrete type
-        const T *p0 = pv0.as<T>();
-        const T *p1 = pv1.as<T>();
-
-        if (!p0 || !p1) {
-          return false;
-        }
-
-        const T p = lerp(*p0, *p1, dt);
-
-        (*dst) = std::move(p);
-        return true;
-      } else {
-        if (it == _samples.end()) {
-          // ???
-          return false;
-        }
-
-        (*dst) = it->value;
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  void add_sample(const Sample &s) {
-    _samples.push_back(s);
-    _dirty = true;
-  }
-
-  void add_sample(const double t, const T &v) {
-    Sample s;
-    s.t = t;
-    s.value = v;
-    _samples.emplace_back(s);
-    _dirty = true;
-  }
-
-  void add_blocked_sample(const double t) {
-    Sample s;
-    s.t = t;
-    s.blocked = true;
-    _samples.emplace_back(s);
-    _dirty = true;
-  }
-
-  bool has_sample_at(const double t) const {
-    if (_dirty) {
-      update();
-    }
-
-    const auto it = std::find_if(_samples.begin(), _samples.end(), [&t](const Sample &s) {
-      return tinyusdz::math::is_close(t, s.t);
-    });
-
-    return (it != _samples.end());
-  }
-
-  bool get_sample_at(const double t, Sample **dst) {
-    if (!dst) {
-      return false;
-    }
-
-    if (_dirty) {
-      update();
-    }
-
-    const auto it = std::find_if(_samples.begin(), _samples.end(), [&t](const Sample &sample) {
-      return math::is_close(t, sample.t);
-    });
-
-    if (it != _samples.end()) {
-      (*dst) = &(*it); 
-    }
-    return false;
-  }
-
-  const std::vector<Sample> &get_samples() const {
-    if (_dirty) {
-      update();
-    }
-
-    return _samples;
-  }
-
-  std::vector<Sample> &samples() {
-    if (_dirty) {
-      update();
-    }
-
-    return _samples;
-  }
-
-  // From typeless timesamples.
-  bool from_timesamples(const value::TimeSamples &ts) {
-    std::vector<Sample> buf;
-    for (size_t i = 0; i < ts.size(); i++) {
-      if (ts.get_samples()[i].value.type_id() != value::TypeTraits<T>::type_id()) {
-        return false;
-      }
-      Sample s;
-      s.t = ts.get_samples()[i].t;
-      s.blocked = ts.get_samples()[i].blocked;
-      if (const auto pv = ts.get_samples()[i].value.as<T>()) {
-        s.value = (*pv);
-      } else {
-        return false;
-      }
-
-      buf.push_back(s);
-    }
-
-
-    _samples = std::move(buf);
-    _dirty = true;
-
-    return true;
-  }
-
-  size_t size() const {
-    if (_dirty) {
-      update();
-    }
-    return _samples.size();
-  }
-
- private:
-  // Need to be sorted when looking up the value.
-  mutable std::vector<Sample> _samples;
-  mutable bool _dirty{false};
-};
+// TypedTimeSamples has been moved to timesamples.hh
 
 //
 // Scalar(default) and/or TimeSamples
@@ -2203,6 +1934,7 @@ class Relationship {
   //
   enum class Type { DefineOnly, Path, PathVector, ValueBlock };
 
+  // TODO: move to private
   Type type{Type::DefineOnly};
   Path targetPath;
   std::vector<Path> targetPathVector;
@@ -2244,6 +1976,8 @@ class Relationship {
 
   const AttrMeta &metas() const { return _metas; }
   AttrMeta &metas() { return _metas; }
+
+  size_t estimate_memory_usage() const;
 
  private:
   AttrMeta _metas;
@@ -2418,7 +2152,67 @@ enum class TimeSampleInterpolation {
 class Attribute {
 
  public:
-  Attribute() = default;
+  Attribute() {
+    //TUSDZ_LOG_I("Attribute default constructor called");
+  }
+
+  // Copy constructor
+  Attribute(const Attribute& rhs) 
+    : _name(rhs._name),
+      _variability(rhs._variability),
+      _varying_authored(rhs._varying_authored),
+      _type_name(rhs._type_name),
+      _var(rhs._var),
+      _paths(rhs._paths),
+      _metas(rhs._metas) {
+    //TUSDZ_LOG_I("Attribute copy constructor called");
+  }
+
+  // Move constructor
+  Attribute(Attribute&& rhs) noexcept
+    : _name(std::move(rhs._name)),
+      _variability(rhs._variability),
+      _varying_authored(rhs._varying_authored),
+      _type_name(std::move(rhs._type_name)),
+      _var(std::move(rhs._var)),
+      _paths(std::move(rhs._paths)),
+      _metas(std::move(rhs._metas)) {
+    //TUSDZ_LOG_I("Attribute move constructor called");
+    rhs._variability = Variability::Varying;
+    rhs._varying_authored = false;
+  }
+
+  // Copy assignment operator
+  Attribute& operator=(const Attribute& rhs) {
+    //TUSDZ_LOG_I("Attribute copy assignment operator called");
+    if (this != &rhs) {
+      _name = rhs._name;
+      _variability = rhs._variability;
+      _varying_authored = rhs._varying_authored;
+      _type_name = rhs._type_name;
+      _var = rhs._var;
+      _paths = rhs._paths;
+      _metas = rhs._metas;
+    }
+    return *this;
+  }
+
+  // Move assignment operator
+  Attribute& operator=(Attribute&& rhs) noexcept {
+    //TUSDZ_LOG_I("Attribute move assignment operator called");
+    if (this != &rhs) {
+      _name = std::move(rhs._name);
+      _variability = rhs._variability;
+      _varying_authored = rhs._varying_authored;
+      _type_name = std::move(rhs._type_name);
+      _var = std::move(rhs._var);
+      _paths = std::move(rhs._paths);
+      _metas = std::move(rhs._metas);
+      rhs._variability = Variability::Varying;
+      rhs._varying_authored = false;
+    }
+    return *this;
+  }
 
   ///
   /// Construct Attribute with typed value(`float`, `token`, ...).
@@ -2508,6 +2302,14 @@ class Attribute {
     _var.set_value(v);
   }
 
+  template <typename T>
+  void set_value(T &&v) {
+    if (_type_name.empty()) {
+      _type_name = value::TypeTraits<T>::type_name();
+    }
+    _var.set_value(std::move(v));
+  }
+
   void set_var(primvar::PrimVar &v) {
     if (_type_name.empty()) {
       _type_name = v.type_name();
@@ -2574,6 +2376,24 @@ class Attribute {
     _var.set_timesample(t, v);
   }
 
+  /// Set TypedTimeSamples for frequently used types with move semantics
+  template <typename T>
+  void set_typed_timesamples(TypedTimeSamples<T> &&typed_ts) {
+    if (_type_name.empty()) {
+      _type_name = value::TypeTraits<T>::type_name();
+    }
+    _var.set_typed_timesamples(std::move(typed_ts));
+  }
+
+  /// Set TypedTimeSamples for frequently used types (const ref)
+  template <typename T>
+  void set_typed_timesamples(const TypedTimeSamples<T> &typed_ts) {
+    if (_type_name.empty()) {
+      _type_name = value::TypeTraits<T>::type_name();
+    }
+    _var.set_typed_timesamples(typed_ts);
+  }
+
   template <typename T>
   bool get(const double t, T *dst,
            value::TimeSampleInterpolationType tinterp =
@@ -2606,6 +2426,101 @@ class Attribute {
                  value::TimeSampleInterpolationType tinterp =
                      value::TimeSampleInterpolationType::Linear) const {
     return get(t, dst, tinterp);
+  }
+
+  /// @brief Get TypedArrayView to the underlying array data of this Attribute.
+  /// 
+  /// Returns a zero-copy view over array data for scalar (default) values only.
+  /// This method does NOT support timesamples - only works with default values.
+  /// For non-array types or timesamples, returns an empty view.
+  ///
+  /// The view provides efficient access to array data without copying, enabling
+  /// memory-optimized processing of vertex attributes, indices, and other array data.
+  ///
+  /// @tparam T The desired element type for the view
+  /// @param strict_cast If true, requires exact type match; if false, allows compatible role type casting
+  /// @return TypedArrayView<const T> - may be empty if type conversion not possible or attribute has timesamples
+  ///
+  /// Example:
+  /// ```cpp
+  /// // Get view of vertex positions as float3
+  /// auto positions_view = position_attr.get_value_view<value::float3>();
+  /// if (!positions_view.empty()) {
+  ///   for (const auto& pos : positions_view) {
+  ///     // Process position without copying data
+  ///   }
+  /// }
+  ///
+  /// // Get view as compatible role type
+  /// auto normals_view = normal_attr.get_value_view<value::vector3f>();  // float3 -> vector3f
+  /// ```
+  template <typename T>
+  TypedArrayView<const T> get_value_view(bool strict_cast = false) const {
+    // Only support scalar (default) values, not timesamples
+    if (has_timesamples()) {
+      return TypedArrayView<const T>();  // Empty view for timesamples
+    }
+    
+    if (is_blocked()) {
+      return TypedArrayView<const T>();  // Empty view for blocked attributes
+    }
+    
+    if (is_connection()) {
+      return TypedArrayView<const T>();  // Empty view for connections
+    }
+    
+    if (!has_value()) {
+      return TypedArrayView<const T>();  // Empty view if no value
+    }
+    
+    // Get the underlying value and create a view using Value::as_view()
+    const primvar::PrimVar& pvar = get_var();
+    const value::Value& val = pvar.value_raw();
+    
+    return val.as_view<T>(strict_cast);
+  }
+
+  /// @brief Mutable version of get_value_view() for write access to array data.
+  ///
+  /// Same as get_value_view() but returns a mutable view that allows modification
+  /// of the underlying array data. Only works with scalar (default) values.
+  ///
+  /// @tparam T The desired element type for the view  
+  /// @param strict_cast If true, requires exact type match; if false, allows compatible role type casting
+  /// @return TypedArrayView<T> - may be empty if type conversion not possible or attribute has timesamples
+  ///
+  /// Example:
+  /// ```cpp
+  /// // Get mutable view and modify data in-place
+  /// auto positions_view = position_attr.get_value_view<value::float3>();
+  /// if (!positions_view.empty()) {
+  ///   positions_view[0] = {1.0f, 2.0f, 3.0f};  // Modifies original data
+  /// }
+  /// ```
+  template <typename T>
+  TypedArrayView<T> get_value_view(bool strict_cast = false) {
+    // Only support scalar (default) values, not timesamples
+    if (has_timesamples()) {
+      return TypedArrayView<T>();  // Empty view for timesamples
+    }
+    
+    if (is_blocked()) {
+      return TypedArrayView<T>();  // Empty view for blocked attributes
+    }
+    
+    if (is_connection()) {
+      return TypedArrayView<T>();  // Empty view for connections
+    }
+    
+    if (!has_value()) {
+      return TypedArrayView<T>();  // Empty view if no value
+    }
+    
+    // Get the underlying value and create a view using Value::as_view()
+    primvar::PrimVar& pvar = get_var();
+    value::Value& val = pvar.value_raw();
+    
+    return val.as_view<T>(strict_cast);
   }
 
 
@@ -2692,6 +2607,11 @@ class Attribute {
   const std::vector<Path> &connections() const { return _paths; }
   std::vector<Path> &connections() { return _paths; }
 
+  ///
+  /// Estimate memory usage of this Attribute in bytes
+  ///
+  size_t estimate_memory_usage() const;
+
  private:
   std::string _name;  // attrib name
   Variability _variability{
@@ -2725,7 +2645,9 @@ class Property {
                  // this and use Attrib.
   };
 
-  Property() = default;
+  Property() {
+    //TUSDZ_LOG_I("Property default constructor called");
+  }
 
   // TODO: Deprecate this constructor.
   // Property(const std::string &type_name, bool custom = false)
@@ -2790,6 +2712,56 @@ class Property {
     _attrib.set_connections(paths);
     _attrib.set_type_name(prop_value_type_name);
     _type = Type::Connection;
+  }
+
+  // Copy constructor
+  Property(const Property& rhs) 
+      : _attrib(rhs._attrib),
+        _listOpQual(rhs._listOpQual),
+        _type(rhs._type),
+        _rel(rhs._rel),
+        _prop_value_type_name(rhs._prop_value_type_name),
+        _has_custom(rhs._has_custom) {
+    //TUSDZ_LOG_I("Property copy constructor called");
+  }
+
+  // Move constructor
+  Property(Property&& rhs) noexcept
+      : _attrib(std::move(rhs._attrib)),
+        _listOpQual(rhs._listOpQual),
+        _type(rhs._type),
+        _rel(std::move(rhs._rel)),
+        _prop_value_type_name(std::move(rhs._prop_value_type_name)),
+        _has_custom(rhs._has_custom) {
+    //TUSDZ_LOG_I("Property move constructor called");
+  }
+
+  // Copy assignment operator
+  Property& operator=(const Property& rhs) {
+    //TUSDZ_LOG_I("Property copy assignment operator called");
+    if (this != &rhs) {
+      _type = rhs._type;
+      _attrib = rhs._attrib;
+      _rel = rhs._rel;
+      _prop_value_type_name = rhs._prop_value_type_name;
+      _has_custom = rhs._has_custom;
+      _listOpQual = rhs._listOpQual;
+    }
+    return *this;
+  }
+
+  // Move assignment operator
+  Property& operator=(Property&& rhs) noexcept {
+    //TUSDZ_LOG_I("Property move assignment operator called");
+    if (this != &rhs) {
+      _type = rhs._type;
+      _attrib = std::move(rhs._attrib);
+      _rel = std::move(rhs._rel);
+      _prop_value_type_name = std::move(rhs._prop_value_type_name);
+      _has_custom = rhs._has_custom;
+      _listOpQual = rhs._listOpQual;
+    }
+    return *this;
   }
 
   bool is_attribute() const {
@@ -2884,6 +2856,8 @@ class Property {
   }
 
   ListEditQual get_listedit_qual() const { return _listOpQual; }
+
+  size_t estimate_memory_usage() const;
 
  private:
   Attribute _attrib;  // attribute(value or ".connect")
@@ -3615,6 +3589,12 @@ class Prim {
     set_primdata(elementName, prim);
   }
 
+  // Special member functions (copy and move)
+  Prim(const Prim&) = default;
+  Prim& operator=(const Prim&) = default;
+  Prim(Prim&&) = default;
+  Prim& operator=(Prim&&) = default;
+
   // Replace exting prim
   template <typename T>
   void set_primdata(const T &prim) {
@@ -3844,10 +3824,6 @@ class Prim {
             // NumPrimsInStage)
 
   std::map<std::string, VariantSet> _variantSets;
-
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  mutable std::mutex _mutex;
-#endif
 };
 
 bool IsXformablePrim(const Prim &prim);
@@ -3969,21 +3945,29 @@ class PrimNode {
 /// Properties(Relationships and Attributes)
 class PrimSpec {
  public:
-  PrimSpec() = default;
+  PrimSpec() {
+    //TUSDZ_LOG_I("PrimSpec default constructor called");
+  }
 
   PrimSpec(const Specifier &spec, const std::string &name)
-      : _specifier(spec), _name(name) {}
+      : _specifier(spec), _name(name) {
+    //TUSDZ_LOG_I("PrimSpec constructor called with spec and name: " << name);
+  }
   PrimSpec(const Specifier &spec, const std::string &typeName,
            const std::string &name)
-      : _specifier(spec), _typeName(typeName), _name(name) {}
+      : _specifier(spec), _typeName(typeName), _name(name) {
+    //TUSDZ_LOG_I("PrimSpec constructor called with spec, typeName, and name: " << name);
+  }
 
   PrimSpec(const PrimSpec &rhs) {
+    //TUSDZ_LOG_I("PrimSpec copy constructor called");
     if (this != &rhs) {
       CopyFrom(rhs);
     }
   }
 
   PrimSpec &operator=(const PrimSpec &rhs) {
+    //TUSDZ_LOG_I("PrimSpec copy assignment operator called");
     if (this != &rhs) {
       CopyFrom(rhs);
     }
@@ -3991,7 +3975,15 @@ class PrimSpec {
     return *this;
   }
 
+  PrimSpec(PrimSpec &&rhs) noexcept {
+    //TUSDZ_LOG_I("PrimSpec move constructor called");
+    if (this != &rhs) {
+      MoveFrom(rhs);
+    }
+  }
+
   PrimSpec &operator=(PrimSpec &&rhs) noexcept {
+    //TUSDZ_LOG_I("PrimSpec move assignment operator called");
     if (this != &rhs) {
       MoveFrom(rhs);
     }
@@ -4260,276 +4252,9 @@ struct LayerMetas {
 };
 
 
-// Similar to SdfLayer or Stage
-// It is basically hold the list of PrimSpec and Layer metadatum.
-class Layer {
- public:
-  const std::string name() const { return _name; }
-
-  void set_name(const std::string name) { _name = name; }
-
-  void clear_primspecs() { _prim_specs.clear(); }
-
-  // Check if `primname` exists in root Prims?
-  bool has_primspec(const std::string &primname) const {
-    return _prim_specs.count(primname) > 0;
-  }
-
-  ///
-  /// Add PrimSpec(copy PrimSpec instance).
-  ///
-  /// @return false when `name` already exists in `primspecs`, `name` is empty
-  /// string or `name` contains invalid character to be used in Prim
-  /// element_name.
-  ///
-  bool add_primspec(const std::string &name, const PrimSpec &ps) {
-    if (name.empty()) {
-      return false;
-    }
-
-    if (!ValidatePrimElementName(name)) {
-      return false;
-    }
-
-    if (has_primspec(name)) {
-      return false;
-    }
-
-    _prim_specs.emplace(name, ps);
-
-    return true;
-  }
-
-  ///
-  /// Add PrimSpec.
-  ///
-  /// @return false when `name` already exists in `primspecs`, `name` is empty
-  /// string or `name` contains invalid character to be used in Prim
-  /// element_name.
-  ///
-  bool emplace_primspec(const std::string &name, PrimSpec &&ps) {
-    if (name.empty()) {
-      return false;
-    }
-
-    if (!ValidatePrimElementName(name)) {
-      return false;
-    }
-
-    if (has_primspec(name)) {
-      return false;
-    }
-
-    _prim_specs.emplace(name, std::move(ps));
-
-    return true;
-  }
-
-  ///
-  /// Replace PrimSpec(copy PrimSpec instance)
-  ///
-  /// @return false when `name` does not exist in `primspecs`, `name` is empty
-  /// string or `name` contains invalid character to be used in Prim
-  /// element_name.
-  ///
-  bool replace_primspec(const std::string &name, const PrimSpec &ps) {
-    if (name.empty()) {
-      return false;
-    }
-
-    if (!ValidatePrimElementName(name)) {
-      return false;
-    }
-
-    if (!has_primspec(name)) {
-      return false;
-    }
-
-    _prim_specs.at(name) = ps;
-
-    return true;
-  }
-
-  ///
-  /// Replace PrimSpec
-  ///
-  /// @return false when `name` does not exist in `primspecs`, `name` is empty
-  /// string or `name` contains invalid character to be used in Prim
-  /// element_name.
-  ///
-  bool replace_primspec(const std::string &name, PrimSpec &&ps) {
-    if (name.empty()) {
-      return false;
-    }
-
-    if (!ValidatePrimElementName(name)) {
-      return false;
-    }
-
-    if (!has_primspec(name)) {
-      return false;
-    }
-
-    _prim_specs.at(name) = std::move(ps);
-
-    return true;
-  }
-
-  const std::unordered_map<std::string, PrimSpec> &primspecs() const {
-    return _prim_specs;
-  }
-
-  std::unordered_map<std::string, PrimSpec> &primspecs() { return _prim_specs; }
-
-  const LayerMetas &metas() const { return _metas; }
-  LayerMetas &metas() { return _metas; }
-
-  bool has_unresolved_references() const {
-    return _has_unresolved_references;
-  }
-
-  bool has_unresolved_payload() const {
-    return _has_unresolved_payload;
-  }
-
-  bool has_unresolved_variant() const {
-    return _has_unresolved_variant;
-  }
-
-  bool has_over_primspec() const {
-    return _has_over_primspec;
-  }
-
-  bool has_class_primspec() const {
-    return _has_class_primspec;
-  }
-
-  bool has_unresolved_inherits() const {
-    return _has_unresolved_inherits;
-  }
-
-  bool has_unresolved_specializes() const {
-    return _has_unresolved_specializes;
-  }
-
-  ///
-  /// Check if PrimSpec tree contains any `references` and cache the result.
-  ///
-  /// @param[in] max_depth Maximum PrimSpec traversal depth.
-  /// @returns true if PrimSpec tree contains any (unresolved) `references`. false if not.
-  ///
-  bool check_unresolved_references(const uint32_t max_depth = 1024 * 1024) const;
-
-  ///
-  /// Check if PrimSpec tree contains any `payload` and cache the result.
-  ///
-  /// @param[in] max_depth Maximum PrimSpec traversal depth.
-  /// @returns true if PrimSpec tree contains any (unresolved) `payload`. false if not.
-  ///
-  bool check_unresolved_payload(const uint32_t max_depth = 1024 * 1024) const;
-
-  ///
-  /// Check if PrimSpec tree contains any `variant` and cache the result.
-  ///
-  /// @param[in] max_depth Maximum PrimSpec traversal depth.
-  /// @returns true if PrimSpec tree contains any (unresolved) `variant`. false if not.
-  ///
-  bool check_unresolved_variant(const uint32_t max_depth = 1024 * 1024) const;
-
-  ///
-  /// Check if PrimSpec tree contains any `specializes` and cache the result.
-  ///
-  /// @param[in] max_depth Maximum PrimSpec traversal depth.
-  /// @returns true if PrimSpec tree contains any (unresolved) `specializes`. false if not.
-  ///
-  bool check_unresolved_specializes(const uint32_t max_depth = 1024 * 1024) const;
-
-  ///
-  /// Check if PrimSpec tree contains any `inherits` and cache the result.
-  ///
-  /// @param[in] max_depth Maximum PrimSpec traversal depth.
-  /// @returns true if PrimSpec tree contains any (unresolved) `inherits`. false if not.
-  ///
-  bool check_unresolved_inherits(const uint32_t max_depth = 1024 * 1024) const;
-
-  ///
-  /// Check if PrimSpec tree contains any Prim with `over` specifier and cache the result.
-  ///
-  /// @param[in] max_depth Maximum PrimSpec traversal depth.
-  /// @returns true if PrimSpec tree contains any Prim with `over` specifier. false if not.
-  ///
-  bool check_over_primspec(const uint32_t max_depth = 1024 * 1024) const;
-
-  ///
-  /// Find a PrimSpec at `path` and returns it if found.
-  ///
-  /// @param[in] path PrimSpec path to find.
-  /// @param[out] ps Pointer to PrimSpec pointer
-  /// @param[out] err Error message
-  ///
-  bool find_primspec_at(const Path &path, const PrimSpec **ps, std::string *err) const;
-
-
-  ///
-  /// Set state for AssetResolution in the subsequent composition operation.
-  ///
-  void set_asset_resolution_state(
-    const std::string &cwp, const std::vector<std::string> &search_paths, void *userdata=nullptr) {
-    _current_working_path = cwp;
-    _asset_search_paths = search_paths;
-    _asset_resolution_userdata = userdata;
-  }
-
-  void get_asset_resolution_state(
-    std::string &cwp, std::vector<std::string> &search_paths, void *&userdata) {
-    cwp = _current_working_path;
-    search_paths = _asset_search_paths;
-    userdata = _asset_resolution_userdata;
-  }
-
-  const std::string get_current_working_path() const {
-    return _current_working_path;
-  }
-
-  const std::vector<std::string> get_asset_search_paths() const {
-    return _asset_search_paths;
-  }
-
- private:
-  std::string _name;  // layer name ~= USD filename
-
-  // key = prim name
-  std::unordered_map<std::string, PrimSpec> _prim_specs;
-  LayerMetas _metas;
-
-#if defined(TINYUSDZ_ENABLE_THREAD)
-  mutable std::mutex _mutex;
-#endif
-
-  // Cached primspec path.
-  // key : prim_part string (e.g. "/path/bora")
-  mutable std::map<std::string, const PrimSpec *> _primspec_path_cache;
-  mutable bool _dirty{true};
-
-  // Cached flags for composition.
-  // true by default even PrimSpec tree does not contain any `references`, `payload`, etc.
-  mutable bool _has_unresolved_references{true};
-  mutable bool _has_unresolved_payload{true};
-  mutable bool _has_unresolved_variant{true};
-  mutable bool _has_unresolved_inherits{true};
-  mutable bool _has_unresolved_specializes{true};
-  mutable bool _has_over_primspec{true};
-  mutable bool _has_class_primspec{true};
-
-  //
-  // Record AssetResolution state(search paths, current working directory)
-  // when this layer is opened by compostion(`references`, `payload`, `subLayers`)
-  //
-  mutable std::string _current_working_path;
-  mutable std::vector<std::string> _asset_search_paths;
-  mutable void *_asset_resolution_userdata{nullptr};
-
-};
+// Forward declaration for Layer class
+// Layer class has been moved to layer.hh
+class Layer;
 
 
 nonstd::optional<Interpolation> InterpolationFromString(const std::string &v);

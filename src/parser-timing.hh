@@ -1,0 +1,164 @@
+// SPDX-License-Identifier: Apache 2.0
+// Copyright 2023 - Present, Light Transport Entertainment Inc.
+//
+// Parser execution time profiling infrastructure
+
+#pragma once
+
+#include <chrono>
+#include <map>
+#include <string>
+#include <vector>
+
+namespace tinyusdz {
+
+///
+/// High-resolution timing utilities for parser profiling
+///
+class ParserTimer {
+ public:
+  using Clock = std::chrono::high_resolution_clock;
+  using TimePoint = Clock::time_point;
+  using Duration = std::chrono::nanoseconds;
+
+  ///
+  /// Start timing a named operation
+  ///
+  void StartTimer(const std::string& operation_name);
+
+  ///
+  /// End timing for the named operation
+  /// Returns elapsed time in nanoseconds
+  ///
+  Duration EndTimer(const std::string& operation_name);
+
+  ///
+  /// Record a timing measurement directly
+  ///
+  void RecordTiming(const std::string& operation_name, Duration elapsed);
+
+  ///
+  /// Get total elapsed time for an operation (sum of all measurements)
+  ///
+  Duration GetTotalTime(const std::string& operation_name) const;
+
+  ///
+  /// Get number of times an operation was measured
+  ///
+  size_t GetOperationCount(const std::string& operation_name) const;
+
+  ///
+  /// Get average time per operation
+  ///
+  Duration GetAverageTime(const std::string& operation_name) const;
+
+  ///
+  /// Get all recorded operation names
+  ///
+  std::vector<std::string> GetOperationNames() const;
+
+  ///
+  /// Clear all timing data
+  ///
+  void Clear();
+
+  ///
+  /// Generate human-readable timing report
+  ///
+  std::string GenerateReport() const;
+
+ private:
+  struct TimingData {
+    Duration total_time{0};
+    size_t count{0};
+  };
+
+  std::map<std::string, TimePoint> active_timers_;
+  std::map<std::string, TimingData> timing_data_;
+};
+
+///
+/// RAII timer for automatic scope-based timing
+///
+class ScopedTimer {
+ public:
+  ScopedTimer(ParserTimer* timer, const std::string& operation_name);
+  ~ScopedTimer();
+
+  // Non-copyable
+  ScopedTimer(const ScopedTimer&) = delete;
+  ScopedTimer& operator=(const ScopedTimer&) = delete;
+
+ private:
+  ParserTimer* timer_;
+  std::string operation_name_;
+};
+
+///
+/// Profiling configuration for parsers
+///
+struct ParserProfilingConfig {
+  bool enable_profiling{false};           ///< Enable/disable profiling
+  bool profile_parsing_phases{true};      ///< Profile major parsing phases
+  bool profile_property_parsing{false};   ///< Profile individual property parsing
+  bool profile_value_parsing{false};      ///< Profile value type parsing
+  bool profile_memory_operations{false};  ///< Profile memory allocations
+};
+
+///
+/// Centralized profiling interface for all parsers
+///
+class ParserProfiler {
+ public:
+  static ParserProfiler& GetInstance();
+
+  ///
+  /// Configure profiling settings
+  ///
+  void SetConfig(const ParserProfilingConfig& config);
+  const ParserProfilingConfig& GetConfig() const;
+
+  ///
+  /// Get timer instance for a parser
+  ///
+  ParserTimer* GetTimer(const std::string& parser_name);
+
+  ///
+  /// Generate comprehensive profiling report for all parsers
+  ///
+  std::string GenerateReport() const;
+
+  ///
+  /// Clear all profiling data
+  ///
+  void ClearAll();
+
+ private:
+  ParserProfiler() = default;
+  
+  ParserProfilingConfig config_;
+  std::map<std::string, ParserTimer> timers_;
+};
+
+// Helper macro for variable name concatenation
+#define TINYUSDZ_CONCAT_IMPL(x, y) x##y
+#define TINYUSDZ_CONCAT(x, y) TINYUSDZ_CONCAT_IMPL(x, y)
+
+// Convenience macros for profiling
+#define TINYUSDZ_PROFILE_FUNCTION(parser_name) \
+  tinyusdz::ScopedTimer TINYUSDZ_CONCAT(timer_scope_, __LINE__)(tinyusdz::ParserProfiler::GetInstance().GetTimer(parser_name), __FUNCTION__)
+
+#define TINYUSDZ_PROFILE_SCOPE(parser_name, scope_name) \
+  tinyusdz::ScopedTimer TINYUSDZ_CONCAT(timer_scope_, __LINE__)(tinyusdz::ParserProfiler::GetInstance().GetTimer(parser_name), scope_name)
+
+#define TINYUSDZ_PROFILE_START(parser_name, operation) \
+  if (tinyusdz::ParserProfiler::GetInstance().GetConfig().enable_profiling) { \
+    tinyusdz::ParserProfiler::GetInstance().GetTimer(parser_name)->StartTimer(operation); \
+  }
+
+#define TINYUSDZ_PROFILE_END(parser_name, operation) \
+  if (tinyusdz::ParserProfiler::GetInstance().GetConfig().enable_profiling) { \
+    tinyusdz::ParserProfiler::GetInstance().GetTimer(parser_name)->EndTimer(operation); \
+  }
+
+}  // namespace tinyusdz

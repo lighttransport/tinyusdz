@@ -1,0 +1,10 @@
+#usda 1.0
+
+def Xform "test_bool"
+{
+  bool enabled.timeSamples = {
+      0: false,
+      10: true,
+      20: false,
+  }
+}

@@ -30,6 +30,8 @@
 #include <vector>
 
 #include "usda-reader.hh"
+#include "layer.hh"
+#include "parser-timing.hh"
 
 //
 #if !defined(TINYUSDZ_DISABLE_MODULE_USDA_READER)
@@ -81,7 +83,7 @@ namespace prim {
 
 // template specialization forward decls.
 // implimentations will be located in prim-reconstruct.cc
-#define RECONSTRUCT_PRIM_DECL(__ty) template<> bool ReconstructPrim<__ty>(const Specifier &spec, const PropertyMap &, const ReferenceList &, __ty *, std::string *, std::string *, const PrimReconstructOptions &)
+#define RECONSTRUCT_PRIM_DECL(__ty) template<> bool ReconstructPrim<__ty>(const Specifier &spec, PropertyMap &, const ReferenceList &, __ty *, std::string *, std::string *, const PrimReconstructOptions &)
 
 RECONSTRUCT_PRIM_DECL(Xform);
 RECONSTRUCT_PRIM_DECL(Model);
@@ -107,7 +109,7 @@ RECONSTRUCT_PRIM_DECL(GeomCapsule);
 RECONSTRUCT_PRIM_DECL(GeomBasisCurves);
 RECONSTRUCT_PRIM_DECL(GeomNurbsCurves);
 RECONSTRUCT_PRIM_DECL(GeomCamera);
-RECONSTRUCT_PRIM_DECL(PointInstancer);
+RECONSTRUCT_PRIM_DECL(GeomPointInstancer);
 RECONSTRUCT_PRIM_DECL(Material);
 RECONSTRUCT_PRIM_DECL(Shader);
 RECONSTRUCT_PRIM_DECL(NodeGraph);
@@ -198,7 +200,7 @@ DEFINE_PRIM_TYPE(Skeleton, kSkeleton, value::TYPE_ID_SKELETON);
 DEFINE_PRIM_TYPE(SkelAnimation, kSkelAnimation, value::TYPE_ID_SKELANIMATION);
 DEFINE_PRIM_TYPE(BlendShape, kBlendShape, value::TYPE_ID_BLENDSHAPE);
 DEFINE_PRIM_TYPE(GeomCamera, kGeomCamera, value::TYPE_ID_GEOM_CAMERA);
-DEFINE_PRIM_TYPE(PointInstancer, kPointInstancer, value::TYPE_ID_GEOM_POINT_INSTANCER);
+DEFINE_PRIM_TYPE(GeomPointInstancer, kPointInstancer, value::TYPE_ID_GEOM_POINT_INSTANCER);
 DEFINE_PRIM_TYPE(Scope, "Scope", value::TYPE_ID_SCOPE);
 
 DEFINE_PRIM_TYPE(GPrim, "GPrim", value::TYPE_ID_GPRIM);
@@ -309,6 +311,8 @@ class USDAReader::Impl {
 
   void SetBaseDir(const std::string &str) { _base_dir = str; }
 
+  void SetFilename(const std::string &str) { _filename = str; }
+
 #if 0
   ///
   /// True: create PrimSpec instead of typed Prim.
@@ -319,6 +323,7 @@ class USDAReader::Impl {
 
   void set_reader_config(const USDAReaderConfig &config) {
     _config = config;
+    _parser.SetMaxMemoryLimit(config.max_memory_limit_in_mb);
   }
 
   const USDAReaderConfig get_reader_config() const {
@@ -354,7 +359,7 @@ class USDAReader::Impl {
   template <typename T>
   bool ReconstructPrim(
       const Specifier &spec,
-      const prim::PropertyMap &properties,
+      prim::PropertyMap &properties,
       const prim::ReferenceList &references,
       T *out);
 
@@ -365,7 +370,7 @@ class USDAReader::Impl {
         PrimTypeTraits<T>::prim_type_name,
         [&](const Path &full_path, const Specifier spec, const std::string &_primTypeName, const Path &prim_name, const int64_t primIdx,
             const int64_t parentPrimIdx,
-            const prim::PropertyMap &properties,
+            prim::PropertyMap &properties,
             const ascii::AsciiParser::PrimMetaMap &in_meta,
             const ascii::AsciiParser::VariantSetList &in_variants)
             -> nonstd::expected<bool, std::string> {
@@ -1192,7 +1197,6 @@ class USDAReader::Impl {
   ///
   const Stage &GetStage() const { return _stage; }
 
-
  private:
   //bool stage_reconstructed_{false};
 
@@ -1244,6 +1248,7 @@ class USDAReader::Impl {
   std::stack<ParseState> parse_stack;
 
   std::string _base_dir;  // Used for importing another USD file
+  std::string _filename;  // Used for displaying error context from source file
   //AssetResolutionResolver _arr;
 
 #if 0 // TODO: Remove since not used.
@@ -1557,7 +1562,7 @@ bool USDAReader::Impl::ReconstructStage() {
 template <>
 bool USDAReader::Impl::ReconstructPrim(
     const Specifier &spec,
-    const prim::PropertyMap &properties,
+    prim::PropertyMap &properties,
     const prim::ReferenceList &references,
     Xform *xform) {
 
@@ -1610,7 +1615,7 @@ bool USDAReader::Impl::ReconstructPrim<NodeGraph>(
 template <typename T>
 bool USDAReader::Impl::ReconstructPrim(
     const Specifier &spec,
-    const prim::PropertyMap &properties,
+    prim::PropertyMap &properties,
     const prim::ReferenceList &references,
     T *prim) {
 
@@ -1634,6 +1639,7 @@ bool USDAReader::Impl::ReconstructPrim(
 ///
 
 bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
+  TINYUSDZ_PROFILE_FUNCTION("usda-reader");
 
   ///
   /// Convert parser option.
@@ -1697,7 +1703,14 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
   }
 
   if (!ret) {
-    PUSH_ERROR_AND_RETURN("Parse failed:\n" + _parser.GetError());
+    std::string error_msg;
+    if (!_filename.empty()) {
+      error_msg = _parser.GetErrorWithSourceContext(_filename);
+    }
+    if (error_msg.empty()) {
+      error_msg = _parser.GetError();
+    }
+    PUSH_ERROR_AND_RETURN("Parse failed:\n" + error_msg);
   }
 
 
@@ -1736,6 +1749,10 @@ bool USDAReader::read(const uint32_t state_flags, bool as_primspec) {
 
 void USDAReader::set_base_dir(const std::string &dir) {
   return _impl->SetBaseDir(dir);
+}
+
+void USDAReader::set_filename(const std::string &filename) {
+  return _impl->SetFilename(filename);
 }
 
 // std::vector<GPrim> USDAReader::GetGPrims() { return _impl->GetGPrims(); }

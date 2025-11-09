@@ -1,0 +1,10 @@
+#usda 1.0
+
+def Xform "test_assetpath"
+{
+  asset texture.timeSamples = {
+      0: @textures/wood.jpg@,
+      10: @textures/metal.png@,
+      20: @textures/concrete.exr@,
+  }
+}
