@@ -5,6 +5,8 @@
 #include <sstream>
 
 #include "tinyusdz.hh"
+#include "layer.hh"
+#include "prim-types.hh"
 #include "pprinter.hh"
 #include "str-util.hh"
 #include "io-util.hh"
@@ -346,7 +348,7 @@ int main(int argc, char **argv) {
     }
 
     tinyusdz::Stage comp_stage;
-    ret = LayerToStage(src_layer, &comp_stage, &warn, &err);
+    ret = LayerToStage(std::move(src_layer), &comp_stage, &warn, &err);
     if (warn.size()) {
       std::cout << warn<< "\n";
     }

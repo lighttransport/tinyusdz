@@ -137,6 +137,10 @@ Somewhat working Tydra framwork for rendering USD model with OpenGL/Vulkan-like 
 
 v0.9.0 has better JS/WASM support and some USD composition features(including composition in JS/WASM).
 
+### Thread Safety
+
+**Important:** The TinyUSDZ API is **not thread-safe**. Core classes (`Stage`, `Prim`, `Layer`, `PrimSpec`) do not provide internal synchronization. Applications must implement their own synchronization mechanisms (e.g., mutexes, locks) when accessing these objects from multiple threads concurrently.
+
 * [x] USDZ/USDC(Crate) parser
   * USDC Crate version v0.8.0(most commonly used version as of 2022 Nov) or higher is supported.
 * [ ] USDZ/USDC(Crate) writer (Work-in-progress)
@@ -552,6 +556,8 @@ Some helper code is licensed under MIT license.
 * SDL2 : zlib license. https://www.libsdl.org/index.php
 * optional-lite: BSL 1.0 license. https://github.com/martinmoene/optional-lite
 * expected-lite: BSL 1.0 license. https://github.com/martinmoene/expected-lite
+* span-lite: BSL 1.0 license. https://github.com/martinmoene/span-lite
+* string-view-lite: BSL 1.0 license. https://github.com/martinmoene/string-view-lite
 * mapbox/earcut.hpp: ISC license. https://github.com/mapbox/earcut.hpp
 * par_shapes.h generate parametric surfaces and other simple shapes: MIT license https://github.com/prideout/par
 * MaterialX: Apache 2.0 license. https://github.com/AcademySoftwareFoundation/MaterialX
@@ -586,5 +592,10 @@ Some helper code is licensed under MIT license.
 * pugixml: MIT license. https://github.com/zeux/pugixml
 * nanoflann: 2-clause BSD license. https://github.com/jlblancoc/nanoflann
 * tinymeshutils: MIT license. https://github.com/syoyo/tinymeshutils
+* dragonbox : Apache 2.0 or Boost 1.0 license(tinyusdz prefer Boost 1.0 license) https://github.com/jk-jeon/dragonbox
 * criterion(for benchmark): MIT license. https://github.com/p-ranav/criterion
 * yyjson: MIT license. https://github.com/ibireme/yyjson
+* civetweb: MIT license. https://github.com/civetweb/civetweb
+* libsais: Apache 2.0 license. https://github.com/IlyaGrebnov/libsais
+* quickjs-ng: MIT license: https://github.com/quickjs-ng/quickjs
+* meshoptimizer: MIT license: https://github.com/zeux/meshoptimizer

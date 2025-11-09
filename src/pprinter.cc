@@ -8,11 +8,15 @@
 #include "pprinter.hh"
 
 #include "prim-pprint.hh"
+#include "prim-pprint-parallel.hh"
 #include "prim-types.hh"
+#include "layer.hh"
 #include "str-util.hh"
 #include "tiny-format.hh"
 #include "usdShade.hh"
+#include "usdMtlx.hh"
 #include "value-pprint.hh"
+#include "timesamples-pprint.hh"
 //
 #include "common-macros.inc"
 
@@ -44,7 +48,7 @@
 // TODO:
 // - [ ] Print properties based on lexcographically(USDA)
 // - [ ] Refactor variantSet stmt print.
-// - [ ] wrap float/double print with `dtos` for accurate float/double value
+// - [ ] Implement our own dtos
 // stringify.
 
 namespace tinyusdz {
@@ -69,8 +73,8 @@ inline std::string dtos(const float v) {
 #endif
 
 inline std::string dtos(const double v) {
-  char buf[128];
-  dtoa_milo(v, buf);
+  char buf[384];
+  *dtoa_milo(v, buf) = '\0';
 
   return std::string(buf);
 }
@@ -246,6 +250,21 @@ std::string print_typed_timesamples(const TypedTimeSamples<T> &v,
 
   ss << "{\n";
 
+#ifdef TINYUSDZ_USE_TIMESAMPLES_SOA
+  const auto &times = v.get_times();
+  const auto &values = v.get_values();
+  const auto &blocked = v.get_blocked();
+
+  for (size_t i = 0; i < times.size(); i++) {
+    ss << pprint::Indent(indent + 1) << times[i] << ": ";
+    if (blocked[i]) {
+      ss << "None";
+    } else {
+      ss << values[i];
+    }
+    ss << ",\n";
+  }
+#else
   const auto &samples = v.get_samples();
 
   for (size_t i = 0; i < samples.size(); i++) {
@@ -257,6 +276,7 @@ std::string print_typed_timesamples(const TypedTimeSamples<T> &v,
     }
     ss << ",\n";
   }
+#endif
 
   ss << pprint::Indent(indent) << "}\n";
 
@@ -270,6 +290,21 @@ std::string print_typed_token_timesamples(const TypedTimeSamples<T> &v,
 
   ss << "{\n";
 
+#ifdef TINYUSDZ_USE_TIMESAMPLES_SOA
+  const auto &times = v.get_times();
+  const auto &values = v.get_values();
+  const auto &blocked = v.get_blocked();
+
+  for (size_t i = 0; i < times.size(); i++) {
+    ss << pprint::Indent(indent + 1) << times[i] << ": ";
+    if (blocked[i]) {
+      ss << "None";
+    } else {
+      ss << quote(to_string(values[i]));
+    }
+    ss << ",\n";
+  }
+#else
   const auto &samples = v.get_samples();
 
   for (size_t i = 0; i < samples.size(); i++) {
@@ -281,6 +316,7 @@ std::string print_typed_token_timesamples(const TypedTimeSamples<T> &v,
     }
     ss << ",\n";
   }
+#endif
 
   ss << pprint::Indent(indent) << "}\n";
 
@@ -293,6 +329,21 @@ static std::string print_str_timesamples(const TypedTimeSamples<std::string> &v,
 
   ss << "{\n";
 
+#ifdef TINYUSDZ_USE_TIMESAMPLES_SOA
+  const auto &times = v.get_times();
+  const auto &values = v.get_values();
+  const auto &blocked = v.get_blocked();
+
+  for (size_t i = 0; i < times.size(); i++) {
+    ss << pprint::Indent(indent + 1) << times[i] << ": ";
+    if (blocked[i]) {
+      ss << "None";
+    } else {
+      ss << buildEscapedAndQuotedStringForUSDA(values[i]);
+    }
+    ss << ",\n";
+  }
+#else
   const auto &samples = v.get_samples();
 
   for (size_t i = 0; i < samples.size(); i++) {
@@ -304,6 +355,7 @@ static std::string print_str_timesamples(const TypedTimeSamples<std::string> &v,
     }
     ss << ",\n";
   }
+#endif
 
   ss << pprint::Indent(indent) << "}\n";
 
@@ -1287,19 +1339,16 @@ std::string print_typed_token_attr(const TypedAttributeWithFallback<T> &attr,
 
 std::string print_timesamples(const value::TimeSamples &v,
                               const uint32_t indent) {
-  std::stringstream ss;
+  // Use the new pprint_timesamples function from timesamples-pprint
+  // which handles both POD and non-POD cases efficiently
+  std::string result = pprint_timesamples(v, indent);
 
-  ss << "{\n";
-
-  for (size_t i = 0; i < v.size(); i++) {
-    ss << pprint::Indent(indent + 1);
-    ss << v.get_samples()[i].t << ": "
-       << value::pprint_value(v.get_samples()[i].value);
-    ss << ",\n";  // USDA allow ',' for the last item
+  // Add a trailing newline if not present (for consistency with other pprinter functions)
+  if (!result.empty() && result.back() != '\n') {
+    result += '\n';
   }
-  ss << pprint::Indent(indent) << "}\n";
 
-  return ss.str();
+  return result;
 }
 
 std::string print_rel_prop(const Property &prop, const std::string &name,
@@ -1396,7 +1445,11 @@ std::string print_prop(const Property &prop, const std::string &prop_name,
       ss << "\n";
     }
 
-    if (attr.has_timesamples() && (attr.variability() != Variability::Uniform)) {
+    // Check if timeSamples were authored (even if empty)
+    // An authored but empty timeSamples will have a valid type_id but size=0
+    bool has_timesamples_authored = (attr.has_timesamples() || attr.get_var().ts_raw().type_id() != 0);
+
+    if (has_timesamples_authored && (attr.variability() != Variability::Uniform)) {
 
       ss << pprint::Indent(indent);
 
@@ -1576,7 +1629,10 @@ std::string print_xformOps(const std::vector<XformOp> &xformOps,
         ss << "\n";
       }
 
-      if (xformOp.has_timesamples()) {
+      // Check if timeSamples were authored (even if empty)
+      bool has_timesamples_authored = (xformOp.has_timesamples() || xformOp.get_var().ts_raw().type_id() != 0);
+
+      if (has_timesamples_authored) {
 
         if (printed_vars.count(varname + ".timeSamples")) {
           continue;
@@ -1590,11 +1646,8 @@ std::string print_xformOps(const std::vector<XformOp> &xformOps,
         ss << ".timeSamples";
         ss << " = ";
 
-        if (auto pv = xformOp.get_timesamples()) {
-          ss << print_timesamples(pv.value(), indent);
-        } else {
-          ss << "[InternalError]";
-        }
+        // Always use ts_raw() to get timeSamples even if empty
+        ss << print_timesamples(xformOp.get_var().ts_raw(), indent);
         ss << "\n";
       }
 
@@ -3523,7 +3576,7 @@ std::string to_string(const GeomCapsule &geom, const uint32_t indent,
   return ss.str();
 }
 
-std::string to_string(const PointInstancer &instancer, const uint32_t indent,
+std::string to_string(const GeomPointInstancer &instancer, const uint32_t indent,
                       bool closing_brace) {
   std::stringstream ss;
 
@@ -3545,6 +3598,7 @@ std::string to_string(const PointInstancer &instancer, const uint32_t indent,
   ss << print_typed_attr(instancer.protoIndices, "protoIndices", indent + 1);
   ss << print_typed_attr(instancer.ids, "ids", indent + 1);
   ss << print_typed_attr(instancer.invisibleIds, "invisibleIds", indent + 1);
+  ss << print_typed_attr(instancer.inactiveIds, "inactiveIds", indent + 1);
   ss << print_typed_attr(instancer.positions, "positions", indent + 1);
   ss << print_typed_attr(instancer.orientations, "orientations", indent + 1);
   ss << print_typed_attr(instancer.scales, "scales", indent + 1);
@@ -4055,6 +4109,9 @@ std::string to_string(const Shader &shader, const uint32_t indent,
     ss << print_shader_params(pvtx2d.value(), indent + 1);
   } else if (auto pvs = shader.value.get_value<UsdPreviewSurface>()) {
     ss << print_shader_params(pvs.value(), indent + 1);
+  } else if (auto mtlx_opbr = shader.value.get_value<MtlxOpenPBRSurface>()) {
+    // Blender v4.5 MaterialX OpenPBR Surface
+    ss << print_common_shader_params(mtlx_opbr.value(), indent + 1);
   } else if (auto pvsn = shader.value.get_value<ShaderNode>()) {
     // Generic ShaderNode
     ss << print_common_shader_params(pvsn.value(), indent + 1);
@@ -4603,7 +4660,11 @@ std::string print_layer_metas(const LayerMetas &metas, const uint32_t indent) {
   return meta_ss.str();
 }
 
-std::string print_layer(const Layer &layer, const uint32_t indent) {
+std::string print_layer(const Layer &layer, const uint32_t indent, bool parallel) {
+#if !defined(TINYUSDZ_ENABLE_THREAD)
+  (void)parallel; // Threading disabled
+#endif
+
   std::stringstream ss;
 
   // FIXME: print magic-header outside of this function?
@@ -4626,26 +4687,64 @@ std::string print_layer(const Layer &layer, const uint32_t indent) {
       primNameTable.emplace(item.first, &item.second);
     }
 
-    for (size_t i = 0; i < layer.metas().primChildren.size(); i++) {
-      value::token nameTok = layer.metas().primChildren[i];
-      // DCOUT(fmt::format("primChildren  {}/{} = {}", i,
-      //                   layer.metas().primChildren.size(), nameTok.str()));
-      const auto it = primNameTable.find(nameTok.str());
-      if (it != primNameTable.end()) {
-        ss << prim::print_primspec((*it->second), indent);
-        if (i != (layer.metas().primChildren.size() - 1)) {
-          ss << "\n";
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    if (parallel) {
+      // Parallel printing path
+      std::vector<const PrimSpec*> ordered_primspecs;
+      ordered_primspecs.reserve(layer.metas().primChildren.size());
+
+      for (size_t i = 0; i < layer.metas().primChildren.size(); i++) {
+        value::token nameTok = layer.metas().primChildren[i];
+        const auto it = primNameTable.find(nameTok.str());
+        if (it != primNameTable.end()) {
+          ordered_primspecs.push_back(it->second);
         }
-      } else {
-        // TODO: Report warning?
+      }
+
+      prim::ParallelPrintConfig config;
+      ss << prim::print_primspecs_parallel(ordered_primspecs, indent, config);
+    } else
+#endif  // TINYUSDZ_ENABLE_THREAD
+    {
+      // Sequential printing path (original)
+      for (size_t i = 0; i < layer.metas().primChildren.size(); i++) {
+        value::token nameTok = layer.metas().primChildren[i];
+        // DCOUT(fmt::format("primChildren  {}/{} = {}", i,
+        //                   layer.metas().primChildren.size(), nameTok.str()));
+        const auto it = primNameTable.find(nameTok.str());
+        if (it != primNameTable.end()) {
+          ss << prim::print_primspec((*it->second), indent);
+          if (i != (layer.metas().primChildren.size() - 1)) {
+            ss << "\n";
+          }
+        } else {
+          // TODO: Report warning?
+        }
       }
     }
   } else {
-    size_t i = 0;
-    for (const auto &item : layer.primspecs()) {
-      ss << prim::print_primspec(item.second, indent);
-      if (i != (layer.primspecs().size() - 1)) {
-        ss << "\n";
+#if defined(TINYUSDZ_ENABLE_THREAD)
+    if (parallel) {
+      // Parallel printing path
+      std::vector<const PrimSpec*> primspecs;
+      primspecs.reserve(layer.primspecs().size());
+      for (const auto &item : layer.primspecs()) {
+        primspecs.push_back(&item.second);
+      }
+
+      prim::ParallelPrintConfig config;
+      ss << prim::print_primspecs_parallel(primspecs, indent, config);
+    } else
+#endif  // TINYUSDZ_ENABLE_THREAD
+    {
+      // Sequential printing path (original)
+      size_t i = 0;
+      for (const auto &item : layer.primspecs()) {
+        ss << prim::print_primspec(item.second, indent);
+        if (i != (layer.primspecs().size() - 1)) {
+          ss << "\n";
+        }
+        i++;
       }
     }
   }

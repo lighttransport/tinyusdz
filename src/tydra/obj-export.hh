@@ -1,8 +1,33 @@
 // SPDX-License-Identifier: Apache 2.0
 // Copyright 2024 - Present, Light Transport Entertainment Inc.
-//
-// Simple RenderMesh/RenderMaterial -> wavefront .obj exporter
-//
+
+///
+/// @file obj-export.hh
+/// @brief Export Tydra render data to Wavefront OBJ format
+///
+/// Provides utilities for exporting TinyUSDZ render scene data to
+/// industry-standard Wavefront OBJ/MTL format for use in 3D modeling
+/// and rendering applications.
+///
+/// Features:
+/// - Exports mesh geometry (vertices, normals, texture coordinates)
+/// - Generates corresponding MTL material files
+/// - Preserves material assignments and texture references
+/// - Direct export from RenderScene data structures
+///
+/// Limitations:
+/// - No up-axis conversion (exports coordinates as-is)
+/// - Z-up USD scenes export as Z-up OBJ files
+/// - Single mesh export (use multiple calls for multiple meshes)
+///
+/// Usage:
+/// ```cpp
+/// std::string obj_content, mtl_content;
+/// std::string warn, err;
+/// bool success = tinyusdz::tydra::export_to_obj(
+///   render_scene, mesh_id, obj_content, mtl_content, &warn, &err);
+/// ```
+///
 #pragma once
 
 #include "render-data.hh"

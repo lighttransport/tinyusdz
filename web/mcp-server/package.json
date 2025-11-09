@@ -1,0 +1,25 @@
+{
+  "name": "mcp-server",
+  "module": "server-http.js",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "tinyusdz": "0.9.5-rc.3"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.16.0",
+    "body-parser": "^2.2.0",
+    "path": "^0.12.7",
+    "uuid": "^11.1.0",
+    "vite": "^7.0.4"
+  }
+}

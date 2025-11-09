@@ -1,0 +1,39 @@
+#usda 1.0
+(
+    comment = "Simple USD sample file for JavaScript LayerMetas demo"
+    defaultPrim = "Scene"
+    doc = "This USD file demonstrates basic layer metadata that can be queried via JavaScript"
+    endTimeCode = 100
+    framesPerSecond = 24
+    metersPerUnit = 1
+    startTimeCode = 1
+    timeCodesPerSecond = 24
+    upAxis = "Y"
+)
+
+def Xform "Scene"
+{
+    def Sphere "Ball"
+    {
+        float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+        double radius = 1
+        
+        # Animated transform
+        float3 xformOp:translate.timeSamples = {
+            1: (0, 0, 0),
+            50: (2, 1, 0),
+            100: (0, 0, 0)
+        }
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+    
+    def Cube "Box"
+    {
+        float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+        double size = 2
+        
+        # Static transform
+        float3 xformOp:translate = (3, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}

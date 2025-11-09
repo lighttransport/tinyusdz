@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TinyUSDZ MaterialX/OpenPBR Demo</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a1a;
+        }
+
+        #canvas-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 14px;
+            max-width: 400px;
+            z-index: 100;
+        }
+
+        #info h2 {
+            margin: 0 0 10px 0;
+            font-size: 18px;
+            border-bottom: 1px solid #666;
+            padding-bottom: 5px;
+        }
+
+        #info .status {
+            margin: 5px 0;
+        }
+
+        #info .status.success {
+            color: #4CAF50;
+        }
+
+        #info .status.error {
+            color: #f44336;
+        }
+
+        #file-input-container {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 100;
+        }
+
+        #file-input {
+            display: none;
+        }
+
+        .btn {
+            background: #2196F3;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.3s;
+            margin: 0 5px;
+        }
+
+        .btn:hover {
+            background: #1976D2;
+        }
+
+        .btn.secondary {
+            background: #4CAF50;
+        }
+
+        .btn.secondary:hover {
+            background: #388E3C;
+        }
+
+        #loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .loading-spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #2196F3;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        #material-panel {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            z-index: 100;
+            min-width: 250px;
+        }
+
+        #material-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            border-bottom: 1px solid #666;
+            padding-bottom: 5px;
+        }
+
+        .material-item {
+            padding: 5px;
+            cursor: pointer;
+            border: 1px solid transparent;
+            margin: 2px 0;
+            transition: background 0.3s;
+        }
+
+        .material-item:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .material-item.selected {
+            background: rgba(33, 150, 243, 0.3);
+            border-color: #2196F3;
+        }
+
+        /* Override dat.GUI styling for better integration */
+        .dg.ac {
+            z-index: 200 !important;
+        }
+
+        .dg .property-name {
+            width: 45% !important;
+        }
+
+        .dg .c {
+            width: 55% !important;
+        }
+
+        /* Texture panel styling */
+        #texture-panel .texture-item {
+            margin: 10px 0;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 3px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        #texture-panel .texture-item.disabled {
+            opacity: 0.5;
+        }
+
+        #texture-panel .texture-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        #texture-panel .texture-name {
+            font-weight: bold;
+            color: #4CAF50;
+        }
+
+        #texture-panel .texture-toggle {
+            background: #2196F3;
+            color: white;
+            border: none;
+            padding: 3px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 10px;
+        }
+
+        #texture-panel .texture-toggle:hover {
+            background: #1976D2;
+        }
+
+        #texture-panel .texture-toggle.disabled {
+            background: #666;
+        }
+
+        #texture-panel .texture-preview {
+            width: 100%;
+            max-width: 200px;
+            height: auto;
+            border-radius: 3px;
+            margin-top: 5px;
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: border-color 0.3s;
+        }
+
+        #texture-panel .texture-preview:hover {
+            border-color: #2196F3;
+        }
+
+        #texture-panel .texture-info {
+            margin-top: 5px;
+            font-size: 10px;
+            color: #999;
+        }
+
+        #texture-panel .texture-colorspace {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        #texture-panel .texture-colorspace select {
+            font-size: 10px;
+            padding: 3px 6px;
+            background: #333;
+            color: white;
+            border: 1px solid #555;
+            border-radius: 3px;
+            cursor: pointer;
+            transition: border-color 0.3s;
+        }
+
+        #texture-panel .texture-colorspace select:hover {
+            border-color: #2196F3;
+        }
+
+        #texture-panel .texture-colorspace select:focus {
+            outline: none;
+            border-color: #2196F3;
+            box-shadow: 0 0 5px rgba(33, 150, 243, 0.5);
+        }
+    </style>
+</head>
+<body>
+    <div id="canvas-container"></div>
+
+    <div id="info">
+        <h2>TinyUSDZ MaterialX/OpenPBR Demo</h2>
+        <div id="status" class="status">Loading WASM module...</div>
+        <div id="model-info" style="display: none;">
+            <div>Objects: <span id="object-count">0</span></div>
+            <div>Materials: <span id="material-count">0</span></div>
+            <div>Selected: <span id="selected-object">None</span></div>
+        </div>
+    </div>
+
+    <div id="file-input-container">
+        <button class="btn" onclick="document.getElementById('file-input').click()">
+            Load USD File(TODO)
+        </button>
+        <button class="btn secondary" onclick="loadSampleModel()">
+            Load Sample(TODO)
+        </button>
+        <button class="btn" onclick="toggleEnvironment()">
+            Toggle HDR
+        </button>
+        <button class="btn" onclick="toggleBackgroundEnvmap()">
+            Toggle Envmap BG
+        </button>
+        <button class="btn" onclick="toggleFalseColor()">
+            False Color
+        </button>
+        <button class="btn" id="color-space-btn" onclick="toggleColorSpace()" style="display: none;">
+            Toggle P3(TODO)
+        </button>
+        <button class="btn" onclick="importMaterialXFile()" title="Import MaterialX XML file">
+            📥 Import MTLX(TODO)
+        </button>
+        <button class="btn" onclick="loadHDRTextureForMaterial()" title="Load HDR/EXR texture">
+            🖼️ Load Texture(TODO)
+        </button>
+        <input type="file" id="file-input" accept=".usd,.usda,.usdc,.usdz">
+    </div>
+
+    <div id="material-panel" style="display: none;">
+        <h3>Materials</h3>
+        <div id="material-list"></div>
+        <div id="material-export" style="display: none; margin-top: 15px; padding-top: 15px; border-top: 1px solid #666;">
+            <div style="font-size: 11px; color: #999; margin-bottom: 8px;">Export Selected Material:</div>
+            <button class="btn" style="width: 100%; margin-bottom: 5px; padding: 8px; font-size: 11px;" onclick="exportSelectedMaterialJSON()">
+                📄 Export JSON
+            </button>
+            <button class="btn" style="width: 100%; padding: 8px; font-size: 11px;" onclick="exportSelectedMaterialMTLX()">
+                📄 Export MaterialX (.mtlx)
+            </button>
+        </div>
+    </div>
+
+    <div id="texture-panel" style="display: none; position: absolute; bottom: 10px; right: 10px; background: rgba(0, 0, 0, 0.8); color: white; padding: 15px; border-radius: 5px; font-size: 12px; max-width: 400px; max-height: 500px; overflow-y: auto;">
+        <h3 style="margin: 0 0 10px 0; font-size: 14px; border-bottom: 1px solid #666; padding-bottom: 5px;">Textures</h3>
+        <div id="texture-list"></div>
+    </div>
+
+    <div id="loading-overlay">
+        <div class="loading-spinner"></div>
+    </div>
+
+    <!-- Import maps for Three.js ES modules -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+                "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/",
+                "tinyusdz/": "./src/tinyusdz/"
+            }
+        }
+    </script>
+
+    <!-- Main application script as module -->
+    <script type="module" src="materialx.js"></script>
+</body>
+</html>
