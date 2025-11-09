@@ -1244,6 +1244,8 @@ if(TINYUSDZ_BUILD_EXAMPLES)
   if (TINYUSDZ_WITH_TYDRA)
     add_subdirectory(examples/tydra_api)
     add_subdirectory(examples/tydra_to_renderscene)
+    add_subdirectory(examples/variant-lister)
+    add_subdirectory(examples/variant-analyzer)
   endif ()
 
   add_subdirectory(examples/api_tutorial)

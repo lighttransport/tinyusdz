@@ -17,6 +17,9 @@
 namespace tinyusdz {
 namespace tydra {
 
+// Forward declaration for nested variants
+struct VariantSet;
+
 ///
 /// A single variant option within a VariantSet.
 /// Maps to USD variant content.
@@ -39,8 +42,8 @@ struct VariantOption {
   std::map<std::string, std::string> property_overrides;
 
   // Nested variant sets - supports USD's nested variant hierarchy
-  // key = nested variantSet name
-  std::vector<std::shared_ptr<struct VariantSet>> nested_variant_sets;
+  // Fully qualified to avoid namespace collision with tinyusdz::VariantSet
+  std::vector<std::shared_ptr<VariantSet>> nested_variant_sets;
 
   bool operator==(const VariantOption& other) const {
     return name == other.name;
