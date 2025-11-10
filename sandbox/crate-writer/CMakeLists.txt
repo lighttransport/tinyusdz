@@ -168,6 +168,40 @@ if(BUILD_CRATE_WRITER_TESTS)
     ${CMAKE_CURRENT_SOURCE_DIR}/../../
   )
 
+  # Test: Comprehensive feature demonstration
+  add_executable(test_comprehensive
+    tests/test_comprehensive.cc
+  )
+
+  target_link_libraries(test_comprehensive
+    crate-writer
+    crate-encoding
+    ${TINYUSDZ_STATIC_LIB}
+  )
+
+  target_include_directories(test_comprehensive PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../
+  )
+
+  # Test: Additional test scenes (deduplication, compression, etc.)
+  add_executable(test_scenes
+    tests/test_scenes.cc
+  )
+
+  target_link_libraries(test_scenes
+    crate-writer
+    crate-encoding
+    ${TINYUSDZ_STATIC_LIB}
+  )
+
+  target_include_directories(test_scenes PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../
+  )
+
   # Test: OpenUSD integer compression (optional, requires OpenUSD)
   find_path(OPENUSD_INCLUDE_DIR pxr/usd/sdf/integerCoding.h
     PATHS
