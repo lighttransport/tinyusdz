@@ -2063,7 +2063,10 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
     }
   }
   // Phase 2: Dictionary serialization
-  // Dictionary format: uint64_t count + (key as StringIndex, value as ValueRep) pairs
+  // Dictionary format (OpenUSD simple WriteMap): uint64_t count + for each: (StringIndex key, ValueRep value)
+  // This matches OpenUSD's WriteMap template (crateFile.cpp:1410-1416)
+  // Note: TinyUSDZ's ReadCustomData (crate-reader.cc:2027-2094) expects recursive offset format,
+  // but we're testing if it can also handle the simple format
   else if (auto* dict_val = value.as<value::dict>()) {
     uint64_t count = dict_val->size();
     if (!Write(count)) {
@@ -2071,86 +2074,89 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       return -1;
     }
 
-    // Write each key-value pair
+    // Write each (key, value) pair directly
     for (const auto& kv : *dict_val) {
-      // Key is stored as StringIndex
+      // Write key as StringIndex
       crate::StringIndex key_idx = GetOrCreateString(kv.first);
       if (!Write(key_idx.value)) {
         if (err) *err = "Failed to write dictionary key index";
         return -1;
       }
 
-      // Value is stored as ValueRep - need to pack it
-      // Use pointer form of linb::any_cast to check type
+      // Pack value to ValueRep
       crate::ValueRep value_rep;
-      bool value_written = false;
+      bool value_packed = false;
 
       // Try int32
       if (auto* int_val = linb::any_cast<int32_t>(&kv.second)) {
         crate::CrateValue cv;
         cv.Set(*int_val);
         value_rep = PackValue(cv, err);
-        value_written = true;
+        value_packed = true;
       }
       // Try int (convert to int32)
       else if (auto* int_val = linb::any_cast<int>(&kv.second)) {
         crate::CrateValue cv;
         cv.Set(static_cast<int32_t>(*int_val));
         value_rep = PackValue(cv, err);
-        value_written = true;
+        value_packed = true;
       }
       // Try uint32
       else if (auto* uint_val = linb::any_cast<uint32_t>(&kv.second)) {
         crate::CrateValue cv;
         cv.Set(*uint_val);
         value_rep = PackValue(cv, err);
-        value_written = true;
+        value_packed = true;
       }
       // Try float
       else if (auto* float_val = linb::any_cast<float>(&kv.second)) {
         crate::CrateValue cv;
         cv.Set(*float_val);
         value_rep = PackValue(cv, err);
-        value_written = true;
+        value_packed = true;
       }
       // Try double
       else if (auto* double_val = linb::any_cast<double>(&kv.second)) {
         crate::CrateValue cv;
         cv.Set(*double_val);
         value_rep = PackValue(cv, err);
-        value_written = true;
+        value_packed = true;
       }
       // Try bool
       else if (auto* bool_val = linb::any_cast<bool>(&kv.second)) {
         crate::CrateValue cv;
         cv.Set(*bool_val);
         value_rep = PackValue(cv, err);
-        value_written = true;
+        value_packed = true;
       }
       // Try string
       else if (auto* str_val = linb::any_cast<std::string>(&kv.second)) {
         crate::CrateValue cv;
         cv.Set(*str_val);
         value_rep = PackValue(cv, err);
-        value_written = true;
+        value_packed = true;
       }
       // Try token
       else if (auto* tok_val = linb::any_cast<value::token>(&kv.second)) {
         crate::CrateValue cv;
         cv.Set(*tok_val);
         value_rep = PackValue(cv, err);
-        value_written = true;
+        value_packed = true;
       }
       else {
         if (err) *err = "Unsupported dictionary value type";
         return -1;
       }
 
-      if (value_written) {
-        if (!Write(value_rep.GetData())) {
-          if (err) *err = "Failed to write dictionary value";
-          return -1;
-        }
+      if (!value_packed) {
+        if (err) *err = "Failed to pack dictionary value";
+        return -1;
+      }
+
+      // Write ValueRep directly (no offset indirection)
+      if (!Write(value_rep.GetData())) {
+        if (err) *err = "Failed to write dictionary ValueRep";
+        return -1;
       }
     }
   }
