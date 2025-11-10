@@ -1389,8 +1389,11 @@ bool CrateWriter::ConvertAttributeToFields(
 
   // Add customData if present
   if (metas.customData) {
-    // TODO: Convert Dictionary to CrateValue
-    std::cerr << "[ConvertAttributeToFields] customData conversion not yet implemented for " << attr_name << "\n";
+    crate::CrateValue custom_data_value;
+    custom_data_value.Set(metas.customData.value());
+    fields.push_back({attr_name + ".customData", custom_data_value});
+    std::cerr << "[ConvertAttributeToFields] Added customData for " << attr_name
+              << " with " << metas.customData.value().size() << " entries\n";
   }
 
   return true;
