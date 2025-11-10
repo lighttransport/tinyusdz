@@ -82,6 +82,7 @@ struct MtlxModel {
 
   std::map<std::string, MtlxMaterial> surface_materials;
   std::map<std::string, value::Value> shaders; // MtlxUsdPreviewSurface, MtlxAutodeskStandardSurface, or OpenPBRSurface
+  std::map<std::string, value::Value> light_shaders; // Light shaders (EDF nodes)
   std::map<std::string, PrimSpec> nodegraphs; // NodeGraph PrimSpecs
   std::map<std::string, std::vector<MtlxShaderConnection>> shader_connections; // Shader name -> list of connections
 };
