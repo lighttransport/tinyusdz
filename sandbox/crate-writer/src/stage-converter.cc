@@ -543,7 +543,17 @@ bool CrateWriter::ExtractXformOpsFromXformable(
       }
     }
 
-    // TODO: Handle time samples
+    // Handle time samples for animated xformOps
+    if (xformOp.has_timesamples()) {
+      const value::TimeSamples& ts = xformOp._var._ts;
+
+      crate::CrateValue ts_crate_val;
+      ts_crate_val.Set(ts);
+      fields.push_back({op_name + ".timeSamples", ts_crate_val});
+
+      std::cerr << "DEBUG: Successfully extracted animated xformOp: " << op_name
+                << " with " << ts.size() << " samples\n";
+    }
   }
 
   // Extract xformOpOrder
@@ -1141,9 +1151,18 @@ bool CrateWriter::ConvertAttributeToFields(
 
   // 2c. Extract time samples
   if (pvar.has_timesamples()) {
-    // TODO: Convert TimeSamples to Crate format
-    // This requires creating a TimeSamples CrateValue
-    std::cerr << "[ConvertAttributeToFields] TimeSamples not yet implemented for " << attr_name << "\n";
+    // Convert TimeSamples to CrateValue
+    const value::TimeSamples& ts = pvar._ts;
+
+    // Create a CrateValue with TimeSamples
+    crate::CrateValue ts_crate_val;
+    ts_crate_val.Set(ts);
+
+    // Add the timeSamples field
+    fields.push_back({attr_name + ".timeSamples", ts_crate_val});
+
+    std::cerr << "[ConvertAttributeToFields] Added TimeSamples for " << attr_name
+              << " with " << ts.size() << " samples\n";
   }
 
   // 3. Add variability if not default
