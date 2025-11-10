@@ -35,6 +35,8 @@ More on the status: https://github.com/lighttransport/tinyusdz/blob/release/doc/
 * Better animation(TimeSamples) support https://github.com/lighttransport/tinyusdz/tree/skinning
 * MaterialX support https://github.com/lighttransport/tinyusdz/tree/mtlx-2025
 * USDC writer(experimental) https://github.com/lighttransport/tinyusdz/issues/261
+* Subdivision surface https://github.com/lighttransport/tinyusdz/tree/subdiv-2025
+* Curves(hairs) https://github.com/lighttransport/tinyusdz/tree/curves-2025
   
 ## Branches
 
