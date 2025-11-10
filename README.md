@@ -28,13 +28,13 @@ More on the status: https://github.com/lighttransport/tinyusdz/blob/release/doc/
 
 * We plan to use C++17 by default: https://github.com/lighttransport/tinyusdz/issues/220
 * JS/WASM binding
-* MCP(ModelContextProtocol) support
+* MCP(ModelContextProtocol) support 
   * USDJ(JSON representation of USD)
   * Scripting USD with JavaScript(using embedded JS runtime(QuickJS-ng)) 
 * Various optimization
-* Better animation(TimeSamples) support
-* MaterialX support
-* USDC writer(experimental)
+* Better animation(TimeSamples) support https://github.com/lighttransport/tinyusdz/tree/skinning
+* MaterialX support https://github.com/lighttransport/tinyusdz/tree/mtlx-2025
+* USDC writer(experimental) https://github.com/lighttransport/tinyusdz/issues/261
   
 ## Branches
 
