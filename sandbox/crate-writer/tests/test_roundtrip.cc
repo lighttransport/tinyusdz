@@ -399,8 +399,7 @@ int main() {
   total++; if (TestRoundTrip("VectorTypes", Test_VectorTypes)) passed++;
   total++; if (TestRoundTrip("StringTypes", Test_StringTypes)) passed++;
   total++; if (TestRoundTrip("LargeArrays", Test_LargeArrays)) passed++;
-  // TODO: Dictionary test currently fails - known issue with Dictionary offset encoding
-  // total++; if (TestRoundTrip("Dictionary", Test_Dictionary)) passed++;
+  total++; if (TestRoundTrip("Dictionary", Test_Dictionary)) passed++;
   total++; if (TestRoundTrip("Hierarchy", Test_Hierarchy)) passed++;
   total++; if (TestRoundTrip("TokenArray", Test_TokenArray)) passed++;
 
