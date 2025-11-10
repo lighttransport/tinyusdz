@@ -6,7 +6,24 @@
 #include "material-serializer.hh"
 #include <sstream>
 #include <iomanip>
+
+// Suppress warnings for external yyjson header
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wreserved-macro-identifier"
+#pragma clang diagnostic ignored "-Wreserved-identifier"
+#pragma clang diagnostic ignored "-Wold-style-cast"
+#pragma clang diagnostic ignored "-Wcast-qual"
+#pragma clang diagnostic ignored "-Wdocumentation"
+#pragma clang diagnostic ignored "-Wdocumentation-unknown-command"
+#pragma clang diagnostic ignored "-Wzero-as-null-pointer-constant"
+#endif
+
 #include "external/yyjson.h"
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 namespace tinyusdz {
 namespace tydra {
@@ -14,11 +31,22 @@ namespace tydra {
 namespace {
 
 // Helper to convert vec3/array<float,3> to JSON array
-template<typename T>
-std::string vec3ToJson(const T& vec) {
+std::string vec3ToJson(const std::array<float, 3>& vec) {
   std::stringstream ss;
   ss << "[" << vec[0] << ", " << vec[1] << ", " << vec[2] << "]";
   return ss.str();
+}
+
+// Helper for value serialization
+template<typename T>
+void serializeValue(std::stringstream& json, const T& value) {
+  json << value;
+}
+
+// Specialization for array<float, 3>
+template<>
+void serializeValue<std::array<float, 3>>(std::stringstream& json, const std::array<float, 3>& value) {
+  json << vec3ToJson(value);
 }
 
 
@@ -47,8 +75,8 @@ std::string serializeOpenPBRToJson(const OpenPBRSurfaceShader& shader, const Ren
       case tydra::ColorSpace::sRGB_DisplayP3: return "srgb_displayp3";
       case tydra::ColorSpace::Custom: return "custom";
       case tydra::ColorSpace::Unknown: return "unknown";
-      default: return "unknown";
     }
+    return "unknown"; // Should never reach here
   };
 
   // Macro to serialize shader parameter with optional texture info
@@ -63,10 +91,10 @@ std::string serializeOpenPBRToJson(const OpenPBRSurfaceShader& shader, const Ren
       json << "\"textureId\": " << texId;
 
       // Look up texture image information
-      if (texId >= 0 && texId < renderScene->textures.size()) {
-        const auto& uvTexture = renderScene->textures[texId];
-        if (uvTexture.texture_image_id >= 0 && uvTexture.texture_image_id < renderScene->images.size()) {
-          const auto& image = renderScene->images[uvTexture.texture_image_id];
+      if (texId >= 0 && static_cast<size_t>(texId) < renderScene->textures.size()) {
+        const auto& uvTexture = renderScene->textures[static_cast<size_t>(texId)];
+        if (uvTexture.texture_image_id >= 0 && static_cast<size_t>(uvTexture.texture_image_id) < renderScene->images.size()) {
+          const auto& image = renderScene->images[static_cast<size_t>(uvTexture.texture_image_id)];
           json << ", \"assetIdentifier\": \"" << image.asset_identifier << "\"";
 
           // Include texture metadata
@@ -83,13 +111,7 @@ std::string serializeOpenPBRToJson(const OpenPBRSurfaceShader& shader, const Ren
     } else {
       // Scalar parameter
       json << "\"type\": \"value\", \"value\": ";
-      if constexpr(std::is_same_v<decltype(param.value), float>) {
-        json << param.value;
-      } else if constexpr(std::is_same_v<decltype(param.value), std::array<float, 3>>) {
-        json << vec3ToJson(param.value);
-      } else {
-        json << param.value;
-      }
+      serializeValue(json, param.value);
     }
     json << "}";
   };

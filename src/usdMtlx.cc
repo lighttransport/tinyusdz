@@ -1842,7 +1842,7 @@ bool ReadMaterialXFromString(const std::string &str,
       std::string name;
       std::string typeName;
       std::string valueStr;
-      pugi::xml_attribute nodename_attr = inp.attribute("nodename");
+      mtlx::pugi::xml_attribute nodename_attr = inp.attribute("nodename");
 
       GET_ATTR_VALUE(inp, "name", std::string, name);
       GET_ATTR_VALUE(inp, "type", std::string, typeName);
