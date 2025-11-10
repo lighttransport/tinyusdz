@@ -23,9 +23,95 @@ bool CrateWriter::ConvertStageToSpecs(const Stage& stage, std::string* err) {
   std::cerr << "DEBUG: ConvertStageToSpecs called with "
             << stage.root_prims().size() << " root prims\n";
 
-  // Add root spec first
+  // Add root spec first with layer metadata
   Path root_path("/", "");
   crate::FieldValuePairVector root_fields;
+
+  // Extract layer metadata from Stage
+  const StageMetas& metas = stage.metas();
+
+  // Add timeCodesPerSecond
+  if (metas.timeCodesPerSecond.authored()) {
+    crate::CrateValue tcps_value;
+    tcps_value.Set(metas.timeCodesPerSecond.get_value());
+    root_fields.push_back({"timeCodesPerSecond", tcps_value});
+    std::cerr << "[ConvertStageToSpecs] Added timeCodesPerSecond: "
+              << metas.timeCodesPerSecond.get_value() << "\n";
+  }
+
+  // Add framesPerSecond
+  if (metas.framesPerSecond.authored()) {
+    crate::CrateValue fps_value;
+    fps_value.Set(metas.framesPerSecond.get_value());
+    root_fields.push_back({"framesPerSecond", fps_value});
+    std::cerr << "[ConvertStageToSpecs] Added framesPerSecond: "
+              << metas.framesPerSecond.get_value() << "\n";
+  }
+
+  // Add startTimeCode
+  if (metas.startTimeCode.authored()) {
+    crate::CrateValue start_value;
+    start_value.Set(metas.startTimeCode.get_value());
+    root_fields.push_back({"startTimeCode", start_value});
+    std::cerr << "[ConvertStageToSpecs] Added startTimeCode: "
+              << metas.startTimeCode.get_value() << "\n";
+  }
+
+  // Add endTimeCode
+  if (metas.endTimeCode.authored()) {
+    crate::CrateValue end_value;
+    end_value.Set(metas.endTimeCode.get_value());
+    root_fields.push_back({"endTimeCode", end_value});
+    std::cerr << "[ConvertStageToSpecs] Added endTimeCode: "
+              << metas.endTimeCode.get_value() << "\n";
+  }
+
+  // Add upAxis
+  if (metas.upAxis.authored()) {
+    crate::CrateValue axis_value;
+    // Convert Axis enum to token string
+    std::string axis_str = to_string(metas.upAxis.get_value());
+    crate::TokenIndex axis_tok = GetOrCreateToken(axis_str);
+    axis_value.Set(axis_tok.value);
+    root_fields.push_back({"upAxis", axis_value});
+    std::cerr << "[ConvertStageToSpecs] Added upAxis: " << axis_str << "\n";
+  }
+
+  // Add metersPerUnit
+  if (metas.metersPerUnit.authored()) {
+    crate::CrateValue mpu_value;
+    mpu_value.Set(metas.metersPerUnit.get_value());
+    root_fields.push_back({"metersPerUnit", mpu_value});
+    std::cerr << "[ConvertStageToSpecs] Added metersPerUnit: "
+              << metas.metersPerUnit.get_value() << "\n";
+  }
+
+  // Add defaultPrim
+  if (!metas.defaultPrim.str().empty()) {
+    crate::CrateValue dp_value;
+    crate::TokenIndex dp_tok = GetOrCreateToken(metas.defaultPrim.str());
+    dp_value.Set(dp_tok.value);
+    root_fields.push_back({"defaultPrim", dp_value});
+    std::cerr << "[ConvertStageToSpecs] Added defaultPrim: "
+              << metas.defaultPrim.str() << "\n";
+  }
+
+  // Add doc (documentation)
+  if (!metas.doc.value.empty()) {
+    crate::CrateValue doc_value;
+    doc_value.Set(metas.doc.value);
+    root_fields.push_back({"documentation", doc_value});
+    std::cerr << "[ConvertStageToSpecs] Added documentation\n";
+  }
+
+  // Add customLayerData
+  if (!metas.customLayerData.empty()) {
+    crate::CrateValue cld_value;
+    cld_value.Set(metas.customLayerData);
+    root_fields.push_back({"customLayerData", cld_value});
+    std::cerr << "[ConvertStageToSpecs] Added customLayerData with "
+              << metas.customLayerData.size() << " entries\n";
+  }
 
   if (!AddSpec(root_path, SpecType::PseudoRoot, root_fields, err)) {
     if (err) *err = "Failed to add root spec: " + *err;
