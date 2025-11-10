@@ -188,6 +188,7 @@ class NonboundableLight : public Xformable, public Collection {
 struct SphereLight : public BoundableLight {
 
   TypedAttributeWithFallback<Animatable<float>> radius{0.5f}; // inputs:radius
+  nonstd::optional<ShapingAPI> shaping; // Optional shaping API
 
 };
 
@@ -204,6 +205,7 @@ struct RectLight : public BoundableLight {
   TypedAttribute<Animatable<value::AssetPath>> file; // asset inputs:texture:file
   TypedAttributeWithFallback<Animatable<float>> height{1.0f}; // inputs:height size in Y axis
   TypedAttributeWithFallback<Animatable<float>> width{1.0f}; // inputs:width  size in X axis
+  nonstd::optional<ShapingAPI> shaping; // Optional shaping API
 
 };
 
