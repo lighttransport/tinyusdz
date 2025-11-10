@@ -1044,13 +1044,37 @@ bool CrateWriter::ConvertPrimSpecRecursive(
     fields.push_back({"documentation", doc_value});
   }
 
+  // Add variant selection if present
+  if (metas.variants) {
+    const VariantSelectionMap& variant_map = metas.variants.value();
+    crate::CrateValue variant_value;
+    variant_value.Set(variant_map);
+    fields.push_back({"variants", variant_value});
+
+    std::cerr << "[ConvertPrimSpecRecursive] Added variants field with "
+              << variant_map.size() << " selections\n";
+  }
+
+  // Add variantSets list if present
+  if (metas.variantSets) {
+    const auto& variant_sets_pair = metas.variantSets.value();
+    const std::vector<std::string>& variant_sets_list = variant_sets_pair.second;
+
+    // Convert to string array for CrateValue
+    crate::CrateValue variant_sets_value;
+    variant_sets_value.Set(variant_sets_list);
+    fields.push_back({"variantSets", variant_sets_value});
+
+    std::cerr << "[ConvertPrimSpecRecursive] Added variantSets field with "
+              << variant_sets_list.size() << " sets\n";
+  }
+
   // TODO: Convert other metadata:
   // - customData (Dictionary)
   // - apiSchemas
   // - references
   // - payloads
   // - inherits
-  // - variantSets
   // - assetInfo
 
   // 5. Add spec to file
