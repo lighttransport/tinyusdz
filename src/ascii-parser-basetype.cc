@@ -1037,7 +1037,6 @@ bool AsciiParser::ReadBasicType(nonstd::optional<value::uint4> *value) {
 
 bool AsciiParser::ReadBasicType(uint32_t *value) {
   std::stringstream ss;
-  constexpr uint32_t kMaxDigits = 100;
 
   // Maximum digits for uint32_t is 10 (4294967295)
   // Add small buffer for safety but prevent huge strings
@@ -1078,11 +1077,6 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
 
   size_t digit_count = has_sign ? 0 : 1;  // Count digits excluding sign
   while (!Eof()) {
-
-    if (digits > kMaxDigits) {
-      return false;
-    }
-
     char c;
     if (!Char1(&c)) {
       return false;
@@ -1096,7 +1090,6 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
         return false;
       }
       ss << c;
-      digits++;
     } else {
       _sr->seek_from_current(-1);
       break;
@@ -1134,7 +1127,6 @@ bool AsciiParser::ReadBasicType(uint32_t *value) {
 #else
   // use jsteemann/atoi
   // IMPORTANT: Store the string first to avoid temporary object issues
-  std::string str = ss.str();
   const char* start = str.c_str();
   const char* end = str.c_str() + str.size();
 
@@ -1251,8 +1243,6 @@ bool AsciiParser::ReadBasicType(int64_t *value) {
   return true;
 #else
   // use jsteemann/atoi
-  // IMPORTANT: Store the string first to avoid temporary object issues
-  std::string str = ss.str();
   const char* start = str.c_str();
   const char* end = str.c_str() + str.size();
 
@@ -1372,8 +1362,6 @@ bool AsciiParser::ReadBasicType(uint64_t *value) {
   return true;
 #else
   // use jsteemann/atoi
-  // IMPORTANT: Store the string first to avoid temporary object issues
-  std::string str = ss.str();
   const char* start = str.c_str();
   const char* end = str.c_str() + str.size();
 
