@@ -202,6 +202,23 @@ if(BUILD_CRATE_WRITER_TESTS)
     ${CMAKE_CURRENT_SOURCE_DIR}/../../
   )
 
+  # Test: TimeSamples (animation) support
+  add_executable(test_timesamples
+    tests/test_timesamples.cc
+  )
+
+  target_link_libraries(test_timesamples
+    crate-writer
+    crate-encoding
+    ${TINYUSDZ_STATIC_LIB}
+  )
+
+  target_include_directories(test_timesamples PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../
+  )
+
   # Test: OpenUSD integer compression (optional, requires OpenUSD)
   find_path(OPENUSD_INCLUDE_DIR pxr/usd/sdf/integerCoding.h
     PATHS
