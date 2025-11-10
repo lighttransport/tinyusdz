@@ -1069,11 +1069,93 @@ bool CrateWriter::ConvertPrimSpecRecursive(
               << variant_sets_list.size() << " sets\n";
   }
 
+  // Add references if present
+  if (metas.references) {
+    const auto& references_pair = metas.references.value();
+    const ListEditQual& qual = references_pair.first;
+    const std::vector<Reference>& ref_list = references_pair.second;
+
+    // Convert to ListOp<Reference>
+    ListOp<Reference> ref_listop;
+
+    // Set the appropriate list based on ListEditQual
+    switch (qual) {
+      case ListEditQual::ResetToExplicit:
+        ref_listop.ClearAndMakeExplicit();
+        ref_listop.SetExplicitItems(ref_list);
+        break;
+      case ListEditQual::Append:
+        ref_listop.SetAppendedItems(ref_list);
+        break;
+      case ListEditQual::Prepend:
+        ref_listop.SetPrependedItems(ref_list);
+        break;
+      case ListEditQual::Add:
+        ref_listop.SetAddedItems(ref_list);
+        break;
+      case ListEditQual::Delete:
+        ref_listop.SetDeletedItems(ref_list);
+        break;
+      default:
+        // Default to explicit
+        ref_listop.ClearAndMakeExplicit();
+        ref_listop.SetExplicitItems(ref_list);
+        break;
+    }
+
+    crate::CrateValue ref_value;
+    ref_value.Set(ref_listop);
+    fields.push_back({"references", ref_value});
+
+    std::cerr << "[ConvertPrimSpecRecursive] Added references field with "
+              << ref_list.size() << " references\n";
+  }
+
+  // Add payload if present
+  if (metas.payload) {
+    const auto& payload_pair = metas.payload.value();
+    const ListEditQual& qual = payload_pair.first;
+    const std::vector<Payload>& payload_list = payload_pair.second;
+
+    // Convert to ListOp<Payload>
+    ListOp<Payload> payload_listop;
+
+    // Set the appropriate list based on ListEditQual
+    switch (qual) {
+      case ListEditQual::ResetToExplicit:
+        payload_listop.ClearAndMakeExplicit();
+        payload_listop.SetExplicitItems(payload_list);
+        break;
+      case ListEditQual::Append:
+        payload_listop.SetAppendedItems(payload_list);
+        break;
+      case ListEditQual::Prepend:
+        payload_listop.SetPrependedItems(payload_list);
+        break;
+      case ListEditQual::Add:
+        payload_listop.SetAddedItems(payload_list);
+        break;
+      case ListEditQual::Delete:
+        payload_listop.SetDeletedItems(payload_list);
+        break;
+      default:
+        // Default to explicit
+        payload_listop.ClearAndMakeExplicit();
+        payload_listop.SetExplicitItems(payload_list);
+        break;
+    }
+
+    crate::CrateValue payload_value;
+    payload_value.Set(payload_listop);
+    fields.push_back({"payload", payload_value});
+
+    std::cerr << "[ConvertPrimSpecRecursive] Added payload field with "
+              << payload_list.size() << " payloads\n";
+  }
+
   // TODO: Convert other metadata:
   // - customData (Dictionary)
   // - apiSchemas
-  // - references
-  // - payloads
   // - inherits
   // - assetInfo
 
