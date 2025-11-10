@@ -283,9 +283,26 @@ Some fields written correctly by crate-writer produce warnings in TinyUSDZ reade
 
 ### Verification
 1. TinyUSDZ tusdcat: ✅ Verified working
-2. OpenUSD usdcat: ⏳ Pending (tools not built)
-3. OpenUSD usddumpcrate: ⏳ Pending
-4. OpenUSD usdview: ⏳ Pending
+2. TinyUSDZ tusddumpcrate: ✅ **VERIFIED - Complete binary format analysis**
+3. OpenUSD usdcat: ⏳ Pending (tools not built)
+4. OpenUSD usddumpcrate: ⏳ Pending
+5. OpenUSD usdview: ⏳ Pending
+
+### Detailed Verification (2025-01-11)
+
+**Tool**: TinyUSDZ tusddumpcrate v1.0
+
+Comprehensive binary format verification completed on both test files:
+- ✅ All 6 sections correctly formatted (TOKENS, STRINGS, FIELDS, FIELDSETS, PATHS, SPECS)
+- ✅ ValueRep bit packing verified (type codes, inlined/array/compressed flags)
+- ✅ Token compression and deduplication working
+- ✅ Dictionary format confirmed OpenUSD-compatible (simple WriteMap format)
+- ✅ All data types correctly encoded (Matrix4d, Vec3f arrays, PathVector, etc.)
+- ✅ Fieldset deduplication functional (6 unique from 18 potential)
+- ✅ Path tree encoding correct
+- ✅ File structure validated (bootstrap, TOC, section offsets)
+
+See `VERIFICATION_REPORT.md` for complete analysis with binary dumps and format details.
 
 ## Next Steps
 
@@ -325,3 +342,4 @@ The implementation provides a solid foundation for USD file generation in TinyUS
 - Crate Writer: `/sandbox/crate-writer/src/crate-writer.cc`
 - Tests: `/sandbox/crate-writer/tests/`
 - Dictionary Fix: `crate-dict-fix.md`
+- Verification Report: `VERIFICATION_REPORT.md`
