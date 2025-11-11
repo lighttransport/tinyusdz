@@ -113,6 +113,37 @@ bool CrateWriter::ConvertStageToSpecs(const Stage& stage, std::string* err) {
               << metas.customLayerData.size() << " entries\n";
   }
 
+  // Add subLayers
+  if (!metas.subLayers.empty()) {
+    // Convert SubLayer array to string array (asset paths)
+    // Note: LayerOffset information is currently not encoded in the path string
+    std::vector<std::string> sublayer_paths;
+    sublayer_paths.reserve(metas.subLayers.size());
+
+    for (const auto& sublayer : metas.subLayers) {
+      // Extract asset path as string
+      std::string path_str = sublayer.assetPath.GetAssetPath();
+
+      // TODO: Encode layerOffset in path string if non-default
+      // OpenUSD format: @path.usd@ (offset=1.0, scale=2.0)
+      // For now, just use the plain path
+      if (sublayer.layerOffset._offset != 0.0 || sublayer.layerOffset._scale != 1.0) {
+        std::cerr << "WARNING: SubLayer layerOffset not yet encoded in path (offset="
+                  << sublayer.layerOffset._offset << ", scale="
+                  << sublayer.layerOffset._scale << ")\n";
+      }
+
+      sublayer_paths.push_back(path_str);
+    }
+
+    // Serialize as string array
+    crate::CrateValue sublayers_value;
+    sublayers_value.Set(sublayer_paths);
+    root_fields.push_back({"subLayers", sublayers_value});
+    std::cerr << "[ConvertStageToSpecs] Added subLayers with "
+              << sublayer_paths.size() << " layers\n";
+  }
+
   if (!AddSpec(root_path, SpecType::PseudoRoot, root_fields, err)) {
     if (err) *err = "Failed to add root spec: " + *err;
     return false;
