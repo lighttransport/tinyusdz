@@ -1,0 +1,69 @@
+{
+  "version": "1.0.0",
+  "description": "Instance detection and sharing example",
+  "config": {
+    "enable_instancing": true
+  },
+  "instructions": [
+    {
+      "operation": "compute",
+      "prim_path": "/Scene/Instance1",
+      "parameters": {
+        "compute_instanceability": true
+      }
+    },
+    {
+      "operation": "compute",
+      "prim_path": "/Scene/Instance2",
+      "parameters": {
+        "compute_instanceability": true
+      }
+    },
+    {
+      "operation": "compute",
+      "prim_path": "/Scene/Instance3",
+      "parameters": {
+        "compute_instanceability": true
+      }
+    },
+    {
+      "operation": "query",
+      "prim_path": "/Scene/Instance1",
+      "parameters": {
+        "query_type": "instances"
+      }
+    },
+    {
+      "operation": "analyze",
+      "prim_path": "/Scene/Instance1",
+      "parameters": {}
+    },
+    {
+      "operation": "analyze",
+      "prim_path": "/Scene/Instance2",
+      "parameters": {}
+    },
+    {
+      "operation": "validate",
+      "prim_path": "/Scene/Instance1",
+      "expected": {
+        "is_instanceable": true
+      }
+    },
+    {
+      "operation": "validate",
+      "prim_path": "/Scene/Instance2",
+      "expected": {
+        "is_instanceable": true
+      }
+    },
+    {
+      "operation": "export",
+      "prim_path": "/Scene",
+      "parameters": {
+        "format": "dot",
+        "output_file": "instances.dot"
+      }
+    }
+  ]
+}

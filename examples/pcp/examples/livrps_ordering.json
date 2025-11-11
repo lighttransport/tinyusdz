@@ -1,0 +1,58 @@
+{
+  "version": "1.0.0",
+  "description": "LIVRPS strength ordering test - all arc types",
+  "config": {
+    "usd_mode": false,
+    "variant_fallbacks": [
+      {
+        "variant_set": "level",
+        "selections": ["base"]
+      }
+    ]
+  },
+  "instructions": [
+    {
+      "operation": "compute",
+      "prim_path": "/TestPrim",
+      "parameters": {
+        "cull_empty": false,
+        "enforce_permissions": true
+      }
+    },
+    {
+      "operation": "analyze",
+      "prim_path": "/TestPrim",
+      "parameters": {}
+    },
+    {
+      "operation": "query",
+      "prim_path": "/TestPrim",
+      "parameters": {
+        "query_type": "arcs"
+      }
+    },
+    {
+      "operation": "validate",
+      "prim_path": "/TestPrim",
+      "expected": {
+        "has_specs": true,
+        "arc_types": [
+          "root",
+          "inherit",
+          "variant",
+          "reference",
+          "payload",
+          "specialize"
+        ]
+      }
+    },
+    {
+      "operation": "export",
+      "prim_path": "/TestPrim",
+      "parameters": {
+        "format": "json",
+        "output_file": "livrps_result.json"
+      }
+    }
+  ]
+}

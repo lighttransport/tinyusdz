@@ -1,0 +1,52 @@
+{
+  "version": "1.0.0",
+  "description": "Reference composition example with multiple references and overrides",
+  "instructions": [
+    {
+      "operation": "compute",
+      "prim_path": "/Scene",
+      "parameters": {
+        "cull_empty": true
+      }
+    },
+    {
+      "operation": "compute",
+      "prim_path": "/Scene/Model_1",
+      "parameters": {
+        "cull_empty": true
+      }
+    },
+    {
+      "operation": "analyze",
+      "prim_path": "/Scene/Model_1",
+      "parameters": {}
+    },
+    {
+      "operation": "query",
+      "prim_path": "/Scene/Model_1",
+      "parameters": {
+        "query_type": "arcs"
+      }
+    },
+    {
+      "operation": "compute",
+      "prim_path": "/Scene/Model_2",
+      "parameters": {}
+    },
+    {
+      "operation": "query",
+      "prim_path": "/Scene/Model_2",
+      "parameters": {
+        "query_type": "nodes"
+      }
+    },
+    {
+      "operation": "validate",
+      "prim_path": "/Scene/Model_1",
+      "expected": {
+        "has_specs": true,
+        "arc_types": ["root", "reference"]
+      }
+    }
+  ]
+}

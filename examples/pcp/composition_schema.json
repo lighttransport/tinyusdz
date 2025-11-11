@@ -1,0 +1,166 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PCP Composition Instructions",
+  "description": "Schema for TinyUSDZ PCP composition instructions",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Schema version",
+      "const": "1.0.0"
+    },
+    "description": {
+      "type": "string",
+      "description": "Description of the composition setup"
+    },
+    "config": {
+      "type": "object",
+      "description": "Cache configuration",
+      "properties": {
+        "usd_mode": {
+          "type": "boolean",
+          "description": "Enable USD mode (lighter weight)",
+          "default": true
+        },
+        "enable_instancing": {
+          "type": "boolean",
+          "description": "Enable instance detection",
+          "default": true
+        },
+        "variant_fallbacks": {
+          "type": "array",
+          "description": "Default variant selections",
+          "items": {
+            "type": "object",
+            "properties": {
+              "variant_set": {"type": "string"},
+              "selections": {
+                "type": "array",
+                "items": {"type": "string"}
+              }
+            },
+            "required": ["variant_set", "selections"]
+          }
+        },
+        "expression_variables": {
+          "type": "object",
+          "description": "Expression variable mappings",
+          "additionalProperties": {"type": "string"}
+        }
+      }
+    },
+    "instructions": {
+      "type": "array",
+      "description": "List of composition instructions to execute",
+      "items": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "description": "Operation to perform",
+            "enum": [
+              "compute",
+              "include_payload",
+              "exclude_payload",
+              "set_variant",
+              "set_expression",
+              "invalidate",
+              "query",
+              "analyze",
+              "benchmark",
+              "validate",
+              "export"
+            ]
+          },
+          "prim_path": {
+            "type": "string",
+            "description": "Prim path to operate on",
+            "pattern": "^(/[^/]+)*$"
+          },
+          "parameters": {
+            "type": "object",
+            "description": "Operation-specific parameters",
+            "additionalProperties": true,
+            "properties": {
+              "cull_empty": {
+                "type": "boolean",
+                "description": "Cull nodes with no opinions"
+              },
+              "include_ancestral": {
+                "type": "boolean",
+                "description": "Include ancestral opinions"
+              },
+              "enforce_permissions": {
+                "type": "boolean",
+                "description": "Enforce permission checks"
+              },
+              "variant_set": {
+                "type": "string",
+                "description": "Variant set name"
+              },
+              "selection": {
+                "type": "string",
+                "description": "Variant selection"
+              },
+              "variable_name": {
+                "type": "string",
+                "description": "Expression variable name"
+              },
+              "variable_value": {
+                "type": "string",
+                "description": "Expression variable value"
+              },
+              "recompute": {
+                "type": "boolean",
+                "description": "Recompute after change"
+              },
+              "recursive": {
+                "type": "boolean",
+                "description": "Apply recursively to descendants"
+              },
+              "query_type": {
+                "type": "string",
+                "description": "Type of query to perform",
+                "enum": [
+                  "nodes",
+                  "arcs",
+                  "dependencies",
+                  "instances",
+                  "errors",
+                  "specs",
+                  "children",
+                  "properties"
+                ]
+              },
+              "format": {
+                "type": "string",
+                "description": "Export format",
+                "enum": ["text", "json", "dot", "usda"]
+              },
+              "output_file": {
+                "type": "string",
+                "description": "Output file path"
+              }
+            }
+          },
+          "expected": {
+            "type": "object",
+            "description": "Expected results for validation",
+            "properties": {
+              "has_specs": {"type": "boolean"},
+              "is_instanceable": {"type": "boolean"},
+              "num_nodes": {"type": "integer"},
+              "num_errors": {"type": "integer"},
+              "arc_types": {
+                "type": "array",
+                "items": {"type": "string"}
+              }
+            }
+          }
+        },
+        "required": ["operation", "prim_path"]
+      }
+    }
+  },
+  "required": ["version", "instructions"]
+}

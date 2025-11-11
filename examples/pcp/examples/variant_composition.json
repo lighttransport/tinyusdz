@@ -1,0 +1,65 @@
+{
+  "version": "1.0.0",
+  "description": "Variant selection and composition example",
+  "config": {
+    "variant_fallbacks": [
+      {
+        "variant_set": "quality",
+        "selections": ["medium", "low"]
+      },
+      {
+        "variant_set": "purpose",
+        "selections": ["render", "proxy"]
+      }
+    ]
+  },
+  "instructions": [
+    {
+      "operation": "compute",
+      "prim_path": "/Asset",
+      "parameters": {}
+    },
+    {
+      "operation": "set_variant",
+      "prim_path": "/Asset",
+      "parameters": {
+        "variant_set": "quality",
+        "selection": "high",
+        "recompute": true
+      }
+    },
+    {
+      "operation": "analyze",
+      "prim_path": "/Asset",
+      "parameters": {}
+    },
+    {
+      "operation": "set_variant",
+      "prim_path": "/Asset",
+      "parameters": {
+        "variant_set": "quality",
+        "selection": "low",
+        "recompute": true
+      }
+    },
+    {
+      "operation": "analyze",
+      "prim_path": "/Asset",
+      "parameters": {}
+    },
+    {
+      "operation": "query",
+      "prim_path": "/Asset",
+      "parameters": {
+        "query_type": "nodes"
+      }
+    },
+    {
+      "operation": "benchmark",
+      "prim_path": "/Asset",
+      "parameters": {
+        "iterations": 100
+      }
+    }
+  ]
+}

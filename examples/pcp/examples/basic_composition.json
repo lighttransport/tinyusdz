@@ -1,0 +1,36 @@
+{
+  "version": "1.0.0",
+  "description": "Basic composition example - compute prim indexes",
+  "instructions": [
+    {
+      "operation": "compute",
+      "prim_path": "/",
+      "parameters": {
+        "cull_empty": true,
+        "include_ancestral": true
+      }
+    },
+    {
+      "operation": "compute",
+      "prim_path": "/World",
+      "parameters": {}
+    },
+    {
+      "operation": "compute",
+      "prim_path": "/World/Props",
+      "parameters": {}
+    },
+    {
+      "operation": "analyze",
+      "prim_path": "/World/Props",
+      "parameters": {}
+    },
+    {
+      "operation": "query",
+      "prim_path": "/World/Props",
+      "parameters": {
+        "query_type": "children"
+      }
+    }
+  ]
+}

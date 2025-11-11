@@ -1,0 +1,55 @@
+{
+  "version": "1.0.0",
+  "description": "Payload inclusion control example",
+  "instructions": [
+    {
+      "operation": "compute",
+      "prim_path": "/Scene",
+      "parameters": {}
+    },
+    {
+      "operation": "compute",
+      "prim_path": "/Scene/HeavyAsset",
+      "parameters": {}
+    },
+    {
+      "operation": "analyze",
+      "prim_path": "/Scene/HeavyAsset",
+      "parameters": {}
+    },
+    {
+      "operation": "include_payload",
+      "prim_path": "/Scene/HeavyAsset",
+      "parameters": {
+        "recompute": true
+      }
+    },
+    {
+      "operation": "analyze",
+      "prim_path": "/Scene/HeavyAsset",
+      "parameters": {}
+    },
+    {
+      "operation": "query",
+      "prim_path": "/Scene/HeavyAsset",
+      "parameters": {
+        "query_type": "nodes"
+      }
+    },
+    {
+      "operation": "include_payload",
+      "prim_path": "/Scene/HeavyAsset/SubAsset",
+      "parameters": {
+        "recursive": true,
+        "recompute": true
+      }
+    },
+    {
+      "operation": "query",
+      "prim_path": "/Scene",
+      "parameters": {
+        "query_type": "dependencies"
+      }
+    }
+  ]
+}
