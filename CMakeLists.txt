@@ -260,6 +260,18 @@ option(TINYUSDZ_WITH_REMOTERY
        "Build with Remotery profiling support" OFF)
 # ---------
 
+# -- PCP (Prim Cache Population) --
+option(TINYUSDZ_WITH_PCP
+       "Build with PCP (Prim Cache Population) composition engine" ON)
+
+if(TINYUSDZ_WITH_TYDRA AND NOT TINYUSDZ_WITH_PCP)
+  set(TINYUSDZ_WITH_PCP ON CACHE BOOL "PCP is required for Tydra" FORCE)
+endif()
+
+option(TINYUSDZ_WITH_BLAKE3
+       "Build with BLAKE3 support for PCP hashing" ON)
+# ---------
+
 # -- optional tool --
 # TODO: deperecate. Use tusdcat
 option(TINYUSDZ_WITH_TOOL_USDA_PARSER "Build with USDA parser program" Off)
@@ -513,7 +525,26 @@ if (TINYUSDZ_WITH_TYDRA)
         ${PROJECT_SOURCE_DIR}/src/tydra/js-script.hh
         ${PROJECT_SOURCE_DIR}/src/tydra/js-script.cc
         )
-    
+
+    # PCP (Prim Cache Population) composition engine
+    if(TINYUSDZ_WITH_PCP)
+        list(APPEND TINYUSDZ_SOURCES
+            ${PROJECT_SOURCE_DIR}/src/tydra/pcp-cache.cc
+            ${PROJECT_SOURCE_DIR}/src/tydra/pcp-prim-index.cc
+            ${PROJECT_SOURCE_DIR}/src/tydra/pcp-map-function.cc
+            ${PROJECT_SOURCE_DIR}/src/tydra/pcp-node.cc
+            ${PROJECT_SOURCE_DIR}/src/tydra/pcp-layer-stack.cc
+            ${PROJECT_SOURCE_DIR}/src/tydra/pcp-dependencies.cc
+            ${PROJECT_SOURCE_DIR}/src/tydra/pcp-compose-site.cc
+            ${PROJECT_SOURCE_DIR}/src/tydra/pcp-changes.cc
+            ${PROJECT_SOURCE_DIR}/src/tydra/pcp-path-translation.cc
+            ${PROJECT_SOURCE_DIR}/src/tydra/pcp-instancing.cc
+            ${PROJECT_SOURCE_DIR}/src/tydra/pcp-diagnostics.cc
+            ${PROJECT_SOURCE_DIR}/src/tydra/pcp-performance.cc
+            ${PROJECT_SOURCE_DIR}/src/tydra/pcp-debug-utils.cc
+        )
+    endif(TINYUSDZ_WITH_PCP)
+
     if(TINYUSDZ_WITH_WAMR)
         list(APPEND TINYUSDZ_SOURCES
             ${PROJECT_SOURCE_DIR}/src/tydra/wasm-runtime.cc
@@ -1395,6 +1426,16 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
                                PRIVATE "TINYUSDZ_WITH_TYDRA")
   endif(TINYUSDZ_WITH_TYDRA)
 
+  if(TINYUSDZ_WITH_PCP)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_PCP")
+  endif(TINYUSDZ_WITH_PCP)
+
+  if(TINYUSDZ_WITH_BLAKE3)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_BLAKE3")
+  endif(TINYUSDZ_WITH_BLAKE3)
+
   if(TINYUSDZ_WITH_GEOGRAM)
     target_include_directories(${TINYUSDZ_LIB_TARGET} PRIVATE ${GEOGRAM_INCLUDE_DIR})
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}
@@ -1565,6 +1606,10 @@ if(TINYUSDZ_BUILD_EXAMPLES)
     add_subdirectory(examples/tydra_to_renderscene)
     add_subdirectory(examples/usddiff)
 
+    if (TINYUSDZ_WITH_PCP)
+      add_subdirectory(examples/pcp)
+    endif()
+
     if (TINYUSDZ_WITH_MCP_SERVER)
       add_subdirectory(examples/mcp_server)
     endif()
@@ -1656,6 +1701,11 @@ if(TINYUSDZ_BUILD_TESTS)
   # unit tester
   #
   add_subdirectory(${PROJECT_SOURCE_DIR}/tests/unit)
+
+  #
+  # PCP Integration Tests
+  #
+  add_subdirectory(${PROJECT_SOURCE_DIR}/tests/integration)
 
   #
   # Compression tester
