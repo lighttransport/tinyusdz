@@ -1,0 +1,43 @@
+#usda 1.0
+(
+    defaultPrim = "Scene"
+    upAxis = "Y"
+)
+
+def Xform "Scene"
+{
+    def NurbsSurface "NonUniformNurbsSurface"
+    (
+        doc = "A NURBS surface with non-uniform knot vectors"
+    )
+    {
+        uniform int uVertexCount = 4
+        uniform int vVertexCount = 4
+        uniform int order[2] = [4, 4]
+
+        point3f[] points = [
+            (-1, -1, 0), (-0.33, -1, 0.2), (0.33, -1, 0.2), (1, -1, 0),
+            (-1, -0.33, 0.2), (-0.5, -0.5, 0.5), (0.5, -0.5, 0.5), (1, -0.33, 0.2),
+            (-1, 0.33, 0.2), (-0.5, 0.5, 0.5), (0.5, 0.5, 0.5), (1, 0.33, 0.2),
+            (-1, 1, 0), (-0.33, 1, 0.2), (0.33, 1, 0.2), (1, 1, 0)
+        ]
+
+        # Non-uniform knot vectors (clustered knots create sharper features)
+        # U: clustered knots at 0.3 and 0.7
+        double[] knots = [
+            0, 0, 0, 0, 0.3, 0.3, 0.7, 0.7, 1, 1, 1, 1,
+            0, 0, 0, 0, 0.25, 0.5, 0.75, 1, 1, 1, 1, 1
+        ]
+
+        double2 uRange = (0, 1)
+        double2 vRange = (0, 1)
+
+        # Non-uniform weights creating a saddle-like shape
+        double[] pointWeights = [
+            1.0, 1.2, 1.2, 1.0,
+            1.2, 0.8, 0.8, 1.2,
+            1.2, 0.8, 0.8, 1.2,
+            1.0, 1.2, 1.2, 1.0
+        ]
+    }
+}

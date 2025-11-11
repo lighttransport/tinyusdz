@@ -1,0 +1,52 @@
+#usda 1.0
+(
+    defaultPrim = "Scene"
+    upAxis = "Y"
+)
+
+def Xform "Scene"
+{
+    def NurbsSurface "TrimmedBicubicSurface"
+    (
+        doc = "A bicubic NURBS surface with a circular trim curve"
+    )
+    {
+        uniform int uVertexCount = 4
+        uniform int vVertexCount = 4
+        uniform int order[2] = [4, 4]
+
+        point3f[] points = [
+            (-1, -1, -1), (-0.33, -1, -1.5), (0.33, -1, -1.5), (1, -1, -1),
+            (-1, -0.33, -1.5), (-0.5, -0.5, -2), (0.5, -0.5, -2), (1, -0.33, -1.5),
+            (-1, 0.33, -1.5), (-0.5, 0.5, -2), (0.5, 0.5, -2), (1, 0.33, -1.5),
+            (-1, 1, -1), (-0.33, 1, -1.5), (0.33, 1, -1.5), (1, 1, -1)
+        ]
+
+        double[] knots = [
+            0, 0, 0, 0, 1, 1, 1, 1,
+            0, 0, 0, 0, 1, 1, 1, 1
+        ]
+
+        double2 uRange = (0, 1)
+        double2 vRange = (0, 1)
+
+        # Trim curve metadata
+        # A circular trim curve centered at (0.5, 0.5) with radius 0.3
+        int[] trimCurveCount = [1]  # One trim curve in the first loop
+
+        # Trim curve control points (in parametric domain, 2D)
+        # Start and end points on the circle
+        texcoord2d[] trimCurvePoints = [
+            (0.8, 0.5),   # Start point
+            (0.2, 0.5)    # End point (circular arc)
+        ]
+
+        # Trim curve knots (linear, just two knots)
+        double[] trimCurveKnots = [0, 0, 1, 1]
+
+        # Trim curve degree
+        int[] trimCurveOrder = [2]  # Linear
+
+        # Trim curve is not rational (no weights)
+    }
+}

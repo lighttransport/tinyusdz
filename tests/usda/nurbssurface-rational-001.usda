@@ -1,0 +1,38 @@
+#usda 1.0
+(
+    defaultPrim = "Scene"
+    upAxis = "Y"
+)
+
+def Xform "Scene"
+{
+    def NurbsSurface "RationalBicubicSurface"
+    {
+        uniform int uVertexCount = 4
+        uniform int vVertexCount = 4
+        uniform int order[2] = [4, 4]
+
+        point3f[] points = [
+            (-1, -1, 0), (-0.5, -1, 0), (0.5, -1, 0), (1, -1, 0),
+            (-1, -0.5, 0), (-0.5, -0.5, 0.5), (0.5, -0.5, 0.5), (1, -0.5, 0),
+            (-1, 0.5, 0), (-0.5, 0.5, 0.5), (0.5, 0.5, 0.5), (1, 0.5, 0),
+            (-1, 1, 0), (-0.5, 1, 0), (0.5, 1, 0), (1, 1, 0)
+        ]
+
+        double[] knots = [
+            0, 0, 0, 0, 1, 1, 1, 1,
+            0, 0, 0, 0, 1, 1, 1, 1
+        ]
+
+        # Weights for rational NURBS (some corner points weighted higher)
+        double[] pointWeights = [
+            1.0, 1.0, 1.0, 1.0,
+            1.0, 1.414, 1.414, 1.0,
+            1.0, 1.414, 1.414, 1.0,
+            1.0, 1.0, 1.0, 1.0
+        ]
+
+        double2 uRange = (0, 1)
+        double2 vRange = (0, 1)
+    }
+}

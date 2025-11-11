@@ -1,0 +1,66 @@
+#usda 1.0
+(
+    defaultPrim = "Scene"
+    upAxis = "Y"
+)
+
+def Xform "Scene"
+{
+    def NurbsSurface "TrimmedWithHoles"
+    (
+        doc = "A NURBS surface with multiple trim loops (outer boundary and holes)"
+    )
+    {
+        uniform int uVertexCount = 5
+        uniform int vVertexCount = 5
+        uniform int order[2] = [4, 4]
+
+        point3f[] points = [
+            (-2, -2, 0), (-1, -2, 0.2), (0, -2, 0.2), (1, -2, 0.2), (2, -2, 0),
+            (-2, -1, 0.2), (-1, -1, 0.5), (0, -1, 0.6), (1, -1, 0.5), (2, -1, 0.2),
+            (-2, 0, 0.2), (-1, 0, 0.6), (0, 0, 0.8), (1, 0, 0.6), (2, 0, 0.2),
+            (-2, 1, 0.2), (-1, 1, 0.5), (0, 1, 0.6), (1, 1, 0.5), (2, 1, 0.2),
+            (-2, 2, 0), (-1, 2, 0.2), (0, 2, 0.2), (1, 2, 0.2), (2, 2, 0)
+        ]
+
+        double[] knots = [
+            0, 0, 0, 0, 0.5, 1, 1, 1, 1,
+            0, 0, 0, 0, 0.5, 1, 1, 1, 1
+        ]
+
+        double2 uRange = (0, 1)
+        double2 vRange = (0, 1)
+
+        # Trim curves metadata
+        # Two trim loops: outer boundary (1 curve) and hole (1 curve)
+        int[] trimCurveCount = [4, 4]  # 4 curves for outer boundary, 4 for hole
+
+        # Outer boundary (rectangle 0.05 from edges)
+        texcoord2d[] trimCurvePoints = [
+            # First outer loop (CCW)
+            (0.05, 0.05), (0.95, 0.05),    # Bottom edge
+            (0.95, 0.05), (0.95, 0.95),    # Right edge
+            (0.95, 0.95), (0.05, 0.95),    # Top edge
+            (0.05, 0.95), (0.05, 0.05),    # Left edge (closing)
+            # Hole loop (CW) - centered at (0.5, 0.5) with radius 0.15
+            (0.65, 0.5), (0.5, 0.35),      # Arc segment 1
+            (0.5, 0.35), (0.35, 0.5),      # Arc segment 2
+            (0.35, 0.5), (0.5, 0.65),      # Arc segment 3
+            (0.5, 0.65), (0.65, 0.5)       # Arc segment 4 (closing)
+        ]
+
+        double[] trimCurveKnots = [
+            0, 0, 1, 1,  # Outer: bottom
+            0, 0, 1, 1,  # Outer: right
+            0, 0, 1, 1,  # Outer: top
+            0, 0, 1, 1,  # Outer: left
+            0, 0, 1, 1,  # Hole: segment 1
+            0, 0, 1, 1,  # Hole: segment 2
+            0, 0, 1, 1,  # Hole: segment 3
+            0, 0, 1, 1   # Hole: segment 4
+        ]
+
+        # All trim curves are linear in this example
+        int[] trimCurveOrder = [2, 2, 2, 2, 2, 2, 2, 2]
+    }
+}

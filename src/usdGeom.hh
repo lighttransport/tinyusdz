@@ -37,6 +37,7 @@ constexpr auto kGeomMesh = "Mesh";
 constexpr auto kGeomSubset = "GeomSubset";
 constexpr auto kGeomBasisCurves = "BasisCurves";
 constexpr auto kGeomNurbsCurves = "NurbsCurves";
+constexpr auto kGeomNurbsSurface = "NurbsSurface";
 constexpr auto kGeomCylinder = "Cylinder";
 constexpr auto kGeomCapsule = "Capsule";
 constexpr auto kGeomPoints = "Points";
@@ -1238,6 +1239,112 @@ struct GeomNurbsCurves : public GPrim {
 };
 
 //
+// NURBS Surface primitive.
+//
+// Represents a Non-Uniform Rational B-Spline surface, potentially with trim curves
+//
+struct GeomNurbsSurface : public GPrim {
+  //
+  // Control point and surface definition
+  //
+  TypedAttribute<Animatable<std::vector<value::point3f>>>
+      points;  // Control point positions (num_u * num_v)
+
+  TypedAttribute<Animatable<std::vector<int>>>
+      order;  // Degree + 1 for u and v directions [order_u, order_v]
+
+  TypedAttribute<Animatable<std::vector<double>>>
+      knots;  // Flattened knot vectors [knots_u..., knots_v...]
+
+  TypedAttribute<Animatable<std::vector<double>>>
+      pointWeights;  // Optional weights for rational NURBS (num_u * num_v)
+
+  TypedAttribute<Animatable<std::vector<int>>>
+      uVertexCount;  // Number of control points in U direction
+
+  TypedAttribute<Animatable<std::vector<int>>>
+      vVertexCount;  // Number of control points in V direction
+
+  // Parameter domain ranges (subset of full knot range)
+  TypedAttribute<Animatable<std::vector<value::double2>>>
+      uRange;  // [start, end] for u parameter
+  TypedAttribute<Animatable<std::vector<value::double2>>>
+      vRange;  // [start, end] for v parameter
+
+  //
+  // Trim curves (optional, for trimmed surfaces)
+  //
+  // Trim curves are specified as 2D curves in the parametric domain (u, v)
+  // Structure: each trim loop contains multiple trim curves forming closed regions
+  //
+  TypedAttribute<Animatable<std::vector<int>>>
+      trimCurveCount;  // Number of trim curves per loop
+
+  TypedAttribute<Animatable<std::vector<int>>>
+      trimLoop;  // Trim loop indices (which curves belong to which loop)
+
+  // Trim curve control points (2D, in parametric domain)
+  TypedAttribute<Animatable<std::vector<value::texcoord2d>>>
+      trimCurvePoints;
+
+  TypedAttribute<Animatable<std::vector<double>>>>
+      trimCurveKnots;
+
+  TypedAttribute<Animatable<std::vector<double>>>>
+      trimCurveOrder;
+
+  TypedAttribute<Animatable<std::vector<double>>>>
+      trimCurveWeights;
+
+  //
+  // Utility functions
+  //
+
+  ///
+  /// @brief Returns `points`.
+  ///
+  const std::vector<value::point3f> get_points(
+      double time = value::TimeCode::Default(),
+      value::TimeSampleInterpolationType interp =
+          value::TimeSampleInterpolationType::Linear) const;
+
+  ///
+  /// @brief Returns surface degree/order information
+  ///
+  const std::vector<int> get_order(
+      double time = value::TimeCode::Default()) const;
+
+  ///
+  /// @brief Returns knot vectors
+  ///
+  const std::vector<double> get_knots(
+      double time = value::TimeCode::Default()) const;
+
+  ///
+  /// @brief Returns point weights (if rational NURBS)
+  ///
+  const std::vector<double> get_pointWeights(
+      double time = value::TimeCode::Default()) const;
+
+  ///
+  /// @brief Returns point weights, returning all 1.0 if not specified
+  ///
+  std::vector<double> get_pointWeightsOr(
+      double time = value::TimeCode::Default()) const;
+
+  ///
+  /// @brief Returns u and v vertex counts
+  ///
+  std::pair<int, int> get_vertexCounts(
+      double time = value::TimeCode::Default()) const;
+
+  ///
+  /// @brief Check if surface has trim curves
+  ///
+  bool has_trim_curves() const;
+};
+
+//
 // Points primitive.
 //
 struct GeomPoints : public GPrim {
@@ -1297,6 +1404,8 @@ DEFINE_TYPE_TRAIT(GeomMesh, kGeomMesh, TYPE_ID_GEOM_MESH, 1);
 DEFINE_TYPE_TRAIT(GeomBasisCurves, kGeomBasisCurves, TYPE_ID_GEOM_BASIS_CURVES,
                   1);
 DEFINE_TYPE_TRAIT(GeomNurbsCurves, kGeomNurbsCurves, TYPE_ID_GEOM_NURBS_CURVES,
+                  1);
+DEFINE_TYPE_TRAIT(GeomNurbsSurface, kGeomNurbsSurface, TYPE_ID_GEOM_NURBS_SURFACE,
                   1);
 DEFINE_TYPE_TRAIT(GeomSphere, kGeomSphere, TYPE_ID_GEOM_SPHERE, 1);
 DEFINE_TYPE_TRAIT(GeomCube, kGeomCube, TYPE_ID_GEOM_CUBE, 1);

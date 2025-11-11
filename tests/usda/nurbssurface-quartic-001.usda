@@ -1,0 +1,41 @@
+#usda 1.0
+(
+    defaultPrim = "Scene"
+    upAxis = "Y"
+)
+
+def Xform "Scene"
+{
+    def NurbsSurface "QuarticNurbsSurface"
+    (
+        doc = "A quartic (degree 4) NURBS surface with 5x5 control points"
+    )
+    {
+        uniform int uVertexCount = 5
+        uniform int vVertexCount = 5
+        uniform int order[2] = [5, 5]  # Degree 4 = Order 5
+
+        point3f[] points = [
+            # Row 0
+            (-2, -2, 0), (-1, -2, 0.1), (0, -2, 0.15), (1, -2, 0.1), (2, -2, 0),
+            # Row 1
+            (-2, -1, 0.1), (-1, -1, 0.4), (0, -1, 0.5), (1, -1, 0.4), (2, -1, 0.1),
+            # Row 2
+            (-2, 0, 0.15), (-1, 0, 0.5), (0, 0, 0.7), (1, 0, 0.5), (2, 0, 0.15),
+            # Row 3
+            (-2, 1, 0.1), (-1, 1, 0.4), (0, 1, 0.5), (1, 1, 0.4), (2, 1, 0.1),
+            # Row 4
+            (-2, 2, 0), (-1, 2, 0.1), (0, 2, 0.15), (1, 2, 0.1), (2, 2, 0)
+        ]
+
+        # Knots for quartic (degree 4): need n + p + 1 knots
+        # n=4 (5 points - 1), p=4 (degree), so need 10 knots
+        double[] knots = [
+            0, 0, 0, 0, 0, 0.5, 1, 1, 1, 1, 1,
+            0, 0, 0, 0, 0, 0.5, 1, 1, 1, 1, 1
+        ]
+
+        double2 uRange = (0, 1)
+        double2 vRange = (0, 1)
+    }
+}
