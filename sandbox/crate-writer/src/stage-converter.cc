@@ -686,8 +686,75 @@ bool CrateWriter::ExtractGPrimProperties(
   }
 
   // Extract common GPrim properties
-  // For now, we'll skip these as they require TypedAttributeWithFallback handling
-  // TODO: Extract visibility, purpose, extent, doubleSided, orientation
+
+  // Extract visibility
+  if (gprim->visibility.authored()) {
+    const auto& vis_animatable = gprim->visibility.get_value();
+    if (vis_animatable.has_default()) {
+      Visibility vis_val;
+      if (vis_animatable.get_default(&vis_val)) {
+        if (vis_val != Visibility::Inherited) {  // Only write if not default
+          crate::CrateValue vis_crate_val;
+          crate::TokenIndex vis_tok = GetOrCreateToken(to_string(vis_val));
+          vis_crate_val.Set(vis_tok.value);
+          fields.push_back({"visibility", vis_crate_val});
+          std::cerr << "[ExtractGPrimProperties] Added visibility: " << to_string(vis_val) << "\n";
+        }
+      }
+    }
+    // TODO: Handle animated visibility (TimeSamples)
+  }
+
+  // Extract purpose
+  if (gprim->purpose.authored()) {
+    Purpose purpose_val = gprim->purpose.get_value();
+    if (purpose_val != Purpose::Default) {  // Only write if not default
+      crate::CrateValue purpose_crate_val;
+      crate::TokenIndex purpose_tok = GetOrCreateToken(to_string(purpose_val));
+      purpose_crate_val.Set(purpose_tok.value);
+      fields.push_back({"purpose", purpose_crate_val});
+      std::cerr << "[ExtractGPrimProperties] Added purpose: " << to_string(purpose_val) << "\n";
+    }
+  }
+
+  // Extract extent (bounding box) - stored as float3[2] in USD
+  if (gprim->extent.has_value()) {
+    auto extent_animatable = gprim->extent.get_value();
+    if (extent_animatable && extent_animatable->has_default()) {
+      Extent extent_val;
+      if (extent_animatable->get_default(&extent_val)) {
+        // Convert Extent struct to float3[2]
+        std::vector<value::float3> extent_vec = {extent_val.lower, extent_val.upper};
+        crate::CrateValue extent_crate_val;
+        value::Value extent_value(extent_vec);
+        if (ConvertValue(extent_value, extent_crate_val, err)) {
+          fields.push_back({"extent", extent_crate_val});
+          std::cerr << "[ExtractGPrimProperties] Added extent\n";
+        }
+      }
+    }
+  }
+
+  // Extract doubleSided
+  if (gprim->doubleSided.authored()) {
+    bool double_sided_val = gprim->doubleSided.get_value();
+    crate::CrateValue ds_crate_val;
+    ds_crate_val.Set(double_sided_val);
+    fields.push_back({"doubleSided", ds_crate_val});
+    std::cerr << "[ExtractGPrimProperties] Added doubleSided: " << double_sided_val << "\n";
+  }
+
+  // Extract orientation
+  if (gprim->orientation.authored()) {
+    Orientation orient_val = gprim->orientation.get_value();
+    if (orient_val != Orientation::RightHanded) {  // Only write if not default
+      crate::CrateValue orient_crate_val;
+      crate::TokenIndex orient_tok = GetOrCreateToken(to_string(orient_val));
+      orient_crate_val.Set(orient_tok.value);
+      fields.push_back({"orientation", orient_crate_val});
+      std::cerr << "[ExtractGPrimProperties] Added orientation: " << to_string(orient_val) << "\n";
+    }
+  }
 
   return true;
 }
