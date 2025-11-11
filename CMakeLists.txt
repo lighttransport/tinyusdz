@@ -542,6 +542,8 @@ if (TINYUSDZ_WITH_TYDRA)
             ${PROJECT_SOURCE_DIR}/src/tydra/pcp-diagnostics.cc
             ${PROJECT_SOURCE_DIR}/src/tydra/pcp-performance.cc
             ${PROJECT_SOURCE_DIR}/src/tydra/pcp-debug-utils.cc
+            ${PROJECT_SOURCE_DIR}/src/tydra/pcp-threading.cc
+            ${PROJECT_SOURCE_DIR}/src/tydra/pcp-timesample.cc
         )
     endif(TINYUSDZ_WITH_PCP)
 

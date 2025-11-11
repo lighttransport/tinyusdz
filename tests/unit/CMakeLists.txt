@@ -24,7 +24,10 @@ if (TINYUSDZ_WITH_PXR_COMPAT_API)
 endif ()
 
 if (TINYUSDZ_WITH_PCP)
-    list(APPEND TEST_SOURCES pcp-comprehensive-tests.cc)
+    list(APPEND TEST_SOURCES
+        pcp-comprehensive-tests.cc
+        pcp-threading-timesample-tests.cc
+    )
 endif ()
 
 add_executable(${TEST_TARGET_NAME}
