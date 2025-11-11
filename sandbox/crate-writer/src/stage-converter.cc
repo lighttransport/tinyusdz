@@ -1689,10 +1689,49 @@ bool CrateWriter::ConvertRelationshipToFields(
   var_value.Set(var_tok.value);
   fields.push_back({rel_name + ".variability", var_value});
 
-  // 4. TODO: Add other relationship metadata if present
-  // - documentation
-  // - hidden
-  // - customData
+  // 4. Add relationship metadata from AttrMetas
+  const AttrMeta& metas = rel.metas();
+
+  // Add comment if present
+  if (metas.comment) {
+    crate::CrateValue comment_value;
+    comment_value.Set(metas.comment.value().value);  // StringData.value
+    fields.push_back({rel_name + ".comment", comment_value});
+    std::cerr << "[ConvertRelationshipToFields] Added comment for " << rel_name << "\n";
+  }
+
+  // Add hidden if present
+  if (metas.hidden) {
+    crate::CrateValue hidden_value;
+    hidden_value.Set(metas.hidden.value());
+    fields.push_back({rel_name + ".hidden", hidden_value});
+    std::cerr << "[ConvertRelationshipToFields] Added hidden for " << rel_name << "\n";
+  }
+
+  // Add customData if present
+  if (metas.customData) {
+    crate::CrateValue custom_data_value;
+    custom_data_value.Set(metas.customData.value());
+    fields.push_back({rel_name + ".customData", custom_data_value});
+    std::cerr << "[ConvertRelationshipToFields] Added customData for " << rel_name
+              << " with " << metas.customData.value().size() << " entries\n";
+  }
+
+  // Add displayName if present
+  if (metas.displayName) {
+    crate::CrateValue display_name_value;
+    display_name_value.Set(metas.displayName.value());
+    fields.push_back({rel_name + ".displayName", display_name_value});
+    std::cerr << "[ConvertRelationshipToFields] Added displayName for " << rel_name << "\n";
+  }
+
+  // Add displayGroup if present
+  if (metas.displayGroup) {
+    crate::CrateValue display_group_value;
+    display_group_value.Set(metas.displayGroup.value());
+    fields.push_back({rel_name + ".displayGroup", display_group_value});
+    std::cerr << "[ConvertRelationshipToFields] Added displayGroup for " << rel_name << "\n";
+  }
 
   return true;
 }
