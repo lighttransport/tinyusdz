@@ -1337,11 +1337,127 @@ bool CrateWriter::ConvertPrimSpecRecursive(
               << payload_list.size() << " payloads\n";
   }
 
-  // TODO: Convert other metadata:
-  // - customData (Dictionary)
-  // - apiSchemas
-  // - inherits
-  // - assetInfo
+  // Add customData if present
+  if (metas.customData) {
+    crate::CrateValue custom_data_value;
+    custom_data_value.Set(metas.customData.value());
+    fields.push_back({"customData", custom_data_value});
+    std::cerr << "[ConvertPrimSpecRecursive] Added customData with "
+              << metas.customData.value().size() << " entries\n";
+  }
+
+  // Add apiSchemas if present
+  if (metas.apiSchemas) {
+    const APISchemas& api_schemas = metas.apiSchemas.value();
+
+    // Convert APISchemas to TokenListOp
+    ListOp<value::token> api_listop;
+
+    // Build list of API schema names as tokens
+    std::vector<value::token> api_tokens;
+    for (const auto& [api_name, instance_name] : api_schemas.names) {
+      std::string api_str = to_string(api_name);
+
+      // For multi-apply API schemas, append instance name
+      // e.g. "CollectionAPI:material:MainMaterial"
+      if (!instance_name.empty()) {
+        api_str += ":" + instance_name;
+      }
+
+      api_tokens.push_back(value::token(api_str));
+    }
+
+    // Set the appropriate list based on ListEditQual
+    switch (api_schemas.listOpQual) {
+      case ListEditQual::ResetToExplicit:
+        api_listop.ClearAndMakeExplicit();
+        api_listop.SetExplicitItems(api_tokens);
+        break;
+      case ListEditQual::Prepend:
+        api_listop.SetPrependedItems(api_tokens);
+        break;
+      case ListEditQual::Append:
+        api_listop.SetAppendedItems(api_tokens);
+        break;
+      case ListEditQual::Add:
+        api_listop.SetAddedItems(api_tokens);
+        break;
+      case ListEditQual::Delete:
+        api_listop.SetDeletedItems(api_tokens);
+        break;
+      default:
+        // Default to prepend (USD convention)
+        api_listop.SetPrependedItems(api_tokens);
+        break;
+    }
+
+    crate::CrateValue api_value;
+    api_value.Set(api_listop);
+    fields.push_back({"apiSchemas", api_value});
+
+    std::cerr << "[ConvertPrimSpecRecursive] Added apiSchemas with "
+              << api_tokens.size() << " schemas\n";
+  }
+
+  // Add inherits if present
+  if (metas.inherits) {
+    const auto& inherits_pair = metas.inherits.value();
+    const ListEditQual& qual = inherits_pair.first;
+    const std::vector<Path>& inherits_list = inherits_pair.second;
+
+    // Convert to ListOp<Path>
+    ListOp<Path> inherits_listop;
+
+    // Set the appropriate list based on ListEditQual
+    switch (qual) {
+      case ListEditQual::ResetToExplicit:
+        inherits_listop.ClearAndMakeExplicit();
+        inherits_listop.SetExplicitItems(inherits_list);
+        break;
+      case ListEditQual::Append:
+        inherits_listop.SetAppendedItems(inherits_list);
+        break;
+      case ListEditQual::Prepend:
+        inherits_listop.SetPrependedItems(inherits_list);
+        break;
+      case ListEditQual::Add:
+        inherits_listop.SetAddedItems(inherits_list);
+        break;
+      case ListEditQual::Delete:
+        inherits_listop.SetDeletedItems(inherits_list);
+        break;
+      default:
+        // Default to explicit
+        inherits_listop.ClearAndMakeExplicit();
+        inherits_listop.SetExplicitItems(inherits_list);
+        break;
+    }
+
+    crate::CrateValue inherits_value;
+    inherits_value.Set(inherits_listop);
+    fields.push_back({"inherits", inherits_value});
+
+    std::cerr << "[ConvertPrimSpecRecursive] Added inherits with "
+              << inherits_list.size() << " paths\n";
+  }
+
+  // Add assetInfo if present
+  if (metas.assetInfo) {
+    crate::CrateValue asset_info_value;
+    asset_info_value.Set(metas.assetInfo.value());
+    fields.push_back({"assetInfo", asset_info_value});
+    std::cerr << "[ConvertPrimSpecRecursive] Added assetInfo with "
+              << metas.assetInfo.value().size() << " entries\n";
+  }
+
+  // Add instanceable if present
+  if (metas.instanceable) {
+    crate::CrateValue instanceable_value;
+    instanceable_value.Set(metas.instanceable.value());
+    fields.push_back({"instanceable", instanceable_value});
+    std::cerr << "[ConvertPrimSpecRecursive] Added instanceable: "
+              << metas.instanceable.value() << "\n";
+  }
 
   // 5. Add spec to file
   if (!AddSpec(prim_path, SpecType::Prim, fields, err)) {
