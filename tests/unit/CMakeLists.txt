@@ -18,6 +18,7 @@ set(TEST_SOURCES
 	unit-timesamples.cc
 	unit-materialx.cc
 	unit-task-queue.cc
+	unit-typedarray.cc
    )
 
 if (TINYUSDZ_WITH_PXR_COMPAT_API)
