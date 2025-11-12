@@ -35,6 +35,9 @@
 #   pragma clang diagnostic ignored "-Wunused-label"
 #   pragma clang diagnostic ignored "-Wunused-macros"
 #   pragma clang diagnostic ignored "-Wunused-variable"
+#   pragma clang diagnostic ignored "-Wreserved-macro-identifier"
+#   pragma clang diagnostic ignored "-Wold-style-cast"
+#   pragma clang diagnostic ignored "-Wzero-as-null-pointer-constant"
 #elif defined(__GNUC__)
 #   pragma GCC diagnostic ignored "-Wunused-function"
 #   pragma GCC diagnostic ignored "-Wunused-parameter"
