@@ -58,15 +58,10 @@ jobs:
         run: |
           bun install
           bun run build
-
+          cp ../../doc/static/* dist/
+          
       - name: Setup Pages
         uses: actions/configure-pages@v5
-
-      - name: Upload static pages
-        uses: actions/upload-pages-artifact@v3
-        with:
-          # Upload static pages.
-          path: ${{ github.workspace }}/doc/static
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
