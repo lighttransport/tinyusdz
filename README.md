@@ -37,7 +37,7 @@ More on the status: https://github.com/lighttransport/tinyusdz/blob/release/doc/
 * USDC writer(experimental) https://github.com/lighttransport/tinyusdz/issues/261
 * Subdivision surface https://github.com/lighttransport/tinyusdz/tree/subdiv-2025
 * Curves(hairs) https://github.com/lighttransport/tinyusdz/tree/curves-2025
-* PCP composition(experiment) https://github.com/lighttransport/tinyusdz/issues/262
+* PCP composition(experimental) https://github.com/lighttransport/tinyusdz/issues/262
   * Documentation(w.i.p) https://lighttransport.github.io/tinyusdz/pcp.html 
   
 ## Branches
