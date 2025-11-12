@@ -481,11 +481,14 @@ class CrateValue {
   SET_TYPE_LIST(SET_TYPE_TYPED_ARRAY)
   SET_TYPE_LIST(MOVE_SET_TYPE_TYPED_ARRAY)
 
+// ChunkedTypedArray is now an alias to TypedArray, so no separate overloads needed
+#if 0
 #define SET_TYPE_CHUNKED_TYPED_ARRAY(__ty) void Set(const ChunkedTypedArray<__ty> &v) { value_ = v; }
 #define MOVE_SET_TYPE_CHUNKED_TYPED_ARRAY(__ty) void Set(ChunkedTypedArray<__ty> &&v) { value::Value src(std::move(v)); value_ = std::move(src); }
-  
+
   SET_TYPE_LIST(SET_TYPE_CHUNKED_TYPED_ARRAY)
   SET_TYPE_LIST(MOVE_SET_TYPE_CHUNKED_TYPED_ARRAY)
+#endif
 
 #if 0 // TODO: Unsafe so Remove
   // Useful function to retrieve concrete value with type T.

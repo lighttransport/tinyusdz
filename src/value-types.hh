@@ -1801,6 +1801,8 @@ struct TypeTraits<TypedArray<T>> {
   static constexpr bool is_array() { return true; }
 };
 
+// ChunkedTypedArray is now an alias to TypedArray, so no separate TypeTraits needed
+#if 0
 template <typename T>
 struct TypeTraits<ChunkedTypedArray<T>> {
   using value_type = TypedArray<T>;
@@ -1821,6 +1823,7 @@ struct TypeTraits<ChunkedTypedArray<T>> {
   static constexpr bool is_role_type() { return TypeTraits<T>::is_role_type(); }
   static constexpr bool is_array() { return true; }
 };
+#endif
 
 
 #if 0  // Current pxrUSD does not support 2D array
@@ -2084,7 +2087,8 @@ class Value {
   static bool check_vector_size(const std::vector<T>& vec) {
     constexpr size_t MAX_REASONABLE_SIZE = 100000000; // 100M
     if (vec.size() > MAX_REASONABLE_SIZE) {
-      TUSDZ_LOG_E("ERROR: Vector size " << vec.size() << " exceeds reasonable limit (" << MAX_REASONABLE_SIZE << "). Data is likely corrupted!");
+      // NOTE: Cannot use TUSDZ_LOG_E here due to header inclusion order
+      std::cerr << "ERROR: Vector size " << vec.size() << " exceeds reasonable limit (" << MAX_REASONABLE_SIZE << "). Data is likely corrupted!" << std::endl;
       return false;
     }
     return true;

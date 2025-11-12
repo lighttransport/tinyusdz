@@ -1080,7 +1080,7 @@ bool CrateReader::UnpackTimeSampleValue_HALF(double t,
       }
 
       // Convert std::vector to TypedArray
-      v = TypedArray<value::half>(new TypedArrayImpl<value::half>(temp_v.data(), temp_v.size()));
+      v = TypedArray<value::half>(temp_v.data(), temp_v.size());
 
       if (dst.is_using_pod()) {
         // Store current index before adding

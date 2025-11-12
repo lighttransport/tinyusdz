@@ -416,14 +416,11 @@ std::string try_print_typed_array(const uint8_t* packed_ptr_data) {
         return "";  // Return empty to indicate failure
     }
 
-    // Cast to TypedArrayImpl<T>*
-    auto* impl = reinterpret_cast<TypedArrayImpl<T>*>(ptr_bits);
-
-    // Create TypedArray with dedup flag to prevent deletion
-    TypedArray<T> typed_array(impl, true);
+    // Cast to TypedArray<T>* (get_packed_value returns pointer to TypedArray itself)
+    auto* typed_array_ptr = reinterpret_cast<TypedArray<T>*>(ptr_bits);
 
     // Create a view to access the data
-    TypedArrayView<const T> view(typed_array);
+    TypedArrayView<const T> view(*typed_array_ptr);
 
     if (view.size() == 0) {
         return "[]";
@@ -843,23 +840,20 @@ std::string print_typed_array(const uint8_t* packed_ptr_data) {
         return "";  // Return empty to indicate failure
     }
 
-    // Cast to TypedArrayImpl<T>*
-    auto* impl = reinterpret_cast<TypedArrayImpl<T>*>(ptr_bits);
+    // Cast to TypedArray<T>* (get_packed_value returns pointer to TypedArray itself)
+    auto* typed_array_ptr = reinterpret_cast<TypedArray<T>*>(ptr_bits);
 
-    
-    if (!impl) {
+
+    if (!typed_array_ptr) {
         return "[InternalError. nullptr]";
     }
 
-    TUSDZ_LOG_I("impl->size : " << impl->size());
-
-    // Create TypedArray with dedup flag to prevent deletion
-    TypedArray<T> typed_array(impl, true);
-
-    TUSDZ_LOG_I("typed_array.size = " << typed_array.size());
+    TUSDZ_LOG_I("typed_array_ptr->size() : " << typed_array_ptr->size());
 
     // Create a view to access the data
-    TypedArrayView<const T> view(typed_array);
+    TypedArrayView<const T> view(*typed_array_ptr);
+
+    TUSDZ_LOG_I("view.size() = " << view.size());
 
     if (view.size() == 0) {
         return "[]";
@@ -1052,50 +1046,16 @@ bool try_print_typed_array_value(StreamWriter& writer, const uint8_t* packed_ptr
         return false;  // Return false to indicate failure
     }
 
-    // Cast to TypedArrayImpl<T>*
-    auto* impl = reinterpret_cast<TypedArrayImpl<T>*>(ptr_bits);
+    // Cast to TypedArray<T>*  (get_packed_value returns pointer to TypedArray itself)
+    auto* typed_array_ptr = reinterpret_cast<TypedArray<T>*>(ptr_bits);
 
-    // Check if impl looks valid by examining first few bytes
-    // TypedArrayImpl should have a vtable pointer and size field
-    if (impl == nullptr) {
+    // Check if pointer looks valid
+    if (typed_array_ptr == nullptr) {
         return false;
     }
 
-    // Try to inspect the impl structure to understand what we're dealing with
-    //TUSDZ_LOG_I("Inspecting TypedArrayImpl<" << typeid(T).name() << ">* at 0x" << std::hex << ptr_bits << std::dec);
-
-    // Check if impl is valid by trying to access it
-    //TUSDZ_LOG_I("impl->is_view() = " << impl->is_view());
-    //TUSDZ_LOG_I("impl->size() = " << impl->size());
-    //TUSDZ_LOG_I("impl->empty() = " << impl->empty());
-    //TUSDZ_LOG_I("impl->data() = 0x" << std::hex << reinterpret_cast<uintptr_t>(impl->data()) << std::dec);
-
-    // Also check the storage vector size
-    //TUSDZ_LOG_I("impl->storage().size() = " << impl->storage().size());
-
-    // DEBUG: Try to access the data pointer directly to see if it contains valid data
-    const T* data_ptr = impl->data();
-    (void)data_ptr;  // Suppress unused warning when debug logging is disabled
-    #if 0  // Disabled debug code
-    if (data_ptr != nullptr) {
-        //TUSDZ_LOG_I("Trying to read first element from data_ptr...");
-        // Try to read first few bytes to see if they look reasonable
-        const uint8_t* byte_ptr = reinterpret_cast<const uint8_t*>(data_ptr);
-        //TUSDZ_LOG_I("First 16 bytes at data_ptr: "
-        //            << std::hex
-        //            << static_cast<int>(byte_ptr[0]) << " " << static_cast<int>(byte_ptr[1]) << " " << static_cast<int>(byte_ptr[2]) << " " << static_cast<int>(byte_ptr[3]) << " "
-        //            << static_cast<int>(byte_ptr[4]) << " " << static_cast<int>(byte_ptr[5]) << " " << static_cast<int>(byte_ptr[6]) << " " << static_cast<int>(byte_ptr[7]) << " "
-        //            << static_cast<int>(byte_ptr[8]) << " " << static_cast<int>(byte_ptr[9]) << " " << static_cast<int>(byte_ptr[10]) << " " << static_cast<int>(byte_ptr[11]) << " "
-        //            << static_cast<int>(byte_ptr[12]) << " " << static_cast<int>(byte_ptr[13]) << " " << static_cast<int>(byte_ptr[14]) << " " << static_cast<int>(byte_ptr[15])
-        //            << std::dec);
-    }
-    #endif
-
-    // Create TypedArray with dedup flag to prevent deletion
-    TypedArray<T> typed_array(impl, true);
-
     // Create a view to access the data
-    TypedArrayView<const T> view(typed_array);
+    TypedArrayView<const T> view(*typed_array_ptr);
 
     //TUSDZ_LOG_I("TypedArrayView size: " << view.size());
 

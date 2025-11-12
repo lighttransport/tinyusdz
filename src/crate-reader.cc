@@ -816,8 +816,8 @@ bool CrateReader::ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d) 
     uint64_t current_pos = _sr->tell();
     const uint8_t* data_ptr = _sr->data() + current_pos;
 
-    // Create a view over the mmap'd data
-    *d = TypedArray<float>(new TypedArrayImpl<float>(const_cast<float*>(reinterpret_cast<const float*>(data_ptr)), length, true), true);
+    // Note: Now copies data instead of creating a view (mmap optimization lost)
+    *d = TypedArray<float>(reinterpret_cast<const float*>(data_ptr), length);
 
     // Advance the stream position
     if (!_sr->seek_from_current(int64_t(sizeof(float) * length))) {
@@ -828,11 +828,11 @@ bool CrateReader::ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d) 
     return true;
   } else {
     // Fall back to regular allocation for compressed data or when mmap is disabled
-    (*d)->resize(length);
+    d->resize(length);
 
     if (!is_compressed) {
       if (!_sr->read(sizeof(float) * length, sizeof(float) * length,
-                     reinterpret_cast<uint8_t *>((*d)->data()))) {
+                     reinterpret_cast<uint8_t *>(d->data()))) {
         _err += "Failed to read float array data.\n";
         return false;
       }
@@ -841,7 +841,7 @@ bool CrateReader::ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d) 
       // Handle compressed data - same as original implementation
       if (length < crate::kMinCompressedArraySize) {
         size_t sz = sizeof(float) * length;
-        if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>((*d)->data()))) {
+        if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
           _err += "Failed to read uncompressed array data.\n";
           return false;
         }
@@ -862,7 +862,7 @@ bool CrateReader::ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d) 
           return false;
         }
         for (size_t i = 0; i < length; i++) {
-          (*d)->data()[i] = float(ints[i]);
+          d->data()[i] = float(ints[i]);
         }
       } else if (code == 't') {
         uint32_t lutSize;
@@ -886,7 +886,7 @@ bool CrateReader::ReadFloatArrayTyped(bool is_compressed, TypedArray<float> *d) 
           return false;
         }
 
-        auto o = (*d)->data();
+        auto o = d->data();
         for (auto index : indexes) {
           *o++ = lut[index];
         }
@@ -935,8 +935,8 @@ bool CrateReader::ReadFloat2ArrayTyped(TypedArray<value::float2> *d) {
     uint64_t current_pos = _sr->tell();
     const uint8_t* data_ptr = _sr->data() + current_pos;
 
-    // Create a view over the mmap'd data
-    *d = TypedArray<value::float2>(new TypedArrayImpl<value::float2>(const_cast<value::float2*>(reinterpret_cast<const value::float2*>(data_ptr)), length, true), true);
+    // Note: Now copies data instead of creating a view (mmap optimization lost)
+    *d = TypedArray<value::float2>(reinterpret_cast<const value::float2*>(data_ptr), length);
 
     // Advance the stream position
     if (!_sr->seek_from_current(int64_t(sizeof(value::float2) * length))) {
@@ -947,10 +947,10 @@ bool CrateReader::ReadFloat2ArrayTyped(TypedArray<value::float2> *d) {
     return true;
   } else {
     // Fall back to regular allocation for compressed data or when mmap is disabled
-    (*d)->resize(length);
+    d->resize(length);
 
       if (!_sr->read(sizeof(value::float2) * length, sizeof(value::float2) * length,
-                     reinterpret_cast<uint8_t *>((*d)->data()))) {
+                     reinterpret_cast<uint8_t *>(d->data()))) {
         _err += "Failed to read float2 array data.\n";
         return false;
       }
@@ -984,7 +984,7 @@ bool CrateReader::ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d
   }
 
   if (length == 0) {
-    (*d)->clear();
+    d->clear();
     return true;
   }
 
@@ -999,8 +999,8 @@ bool CrateReader::ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d
     uint64_t current_pos = _sr->tell();
     const uint8_t* data_ptr = _sr->data() + current_pos;
 
-    // Create a view over the mmap'd data
-    *d = TypedArray<double>(new TypedArrayImpl<double>(const_cast<double*>(reinterpret_cast<const double*>(data_ptr)), length, true), true);
+    // Note: Now copies data instead of creating a view (mmap optimization lost)
+    *d = TypedArray<double>(reinterpret_cast<const double*>(data_ptr), length);
 
     // Advance the stream position
     if (!_sr->seek_from_current(int64_t(sizeof(double) * length))) {
@@ -1011,11 +1011,11 @@ bool CrateReader::ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d
     return true;
   } else {
     // Fall back to regular allocation for compressed data or when mmap is disabled
-    (*d)->resize(length);
+    d->resize(length);
 
     if (!is_compressed) {
       if (!_sr->read(sizeof(double) * length, sizeof(double) * length,
-                     reinterpret_cast<uint8_t *>((*d)->data()))) {
+                     reinterpret_cast<uint8_t *>(d->data()))) {
         _err += "Failed to read double array data.\n";
         return false;
       }
@@ -1024,7 +1024,7 @@ bool CrateReader::ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d
       // Handle compressed data - same as original implementation
       if (length < crate::kMinCompressedArraySize) {
         size_t sz = sizeof(double) * length;
-        if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>((*d)->data()))) {
+        if (!_sr->read(sz, sz, reinterpret_cast<uint8_t *>(d->data()))) {
           _err += "Failed to read uncompressed array data.\n";
           return false;
         }
@@ -1044,7 +1044,7 @@ bool CrateReader::ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d
           _err += "Failed to read compressed ints in ReadDoubleArrayTyped.\n";
           return false;
         }
-        std::copy(ints.begin(), ints.end(), (*d)->data());
+        std::copy(ints.begin(), ints.end(), d->data());
       } else if (code == 't') {
         uint32_t lutSize;
         if (!_sr->read4(&lutSize)) {
@@ -1067,7 +1067,7 @@ bool CrateReader::ReadDoubleArrayTyped(bool is_compressed, TypedArray<double> *d
           return false;
         }
 
-        auto o = (*d)->data();
+        auto o = d->data();
         for (auto index : indexes) {
           *o++ = lut[index];
         }
@@ -1107,7 +1107,7 @@ bool CrateReader::ReadIntArrayTyped(bool is_compressed, TypedArray<T> *d) {
   }
 
   if (length == 0) {
-    (*d)->clear();
+    d->clear();
     return true;
   }
 
@@ -1122,8 +1122,8 @@ bool CrateReader::ReadIntArrayTyped(bool is_compressed, TypedArray<T> *d) {
     uint64_t current_pos = _sr->tell();
     const uint8_t* data_ptr = _sr->data() + current_pos;
 
-    // Create a view over the mmap'd data
-    *d = TypedArray<T>(new TypedArrayImpl<T>(const_cast<T*>(reinterpret_cast<const T*>(data_ptr)), length, true), true);
+    // Note: Now copies data instead of creating a view (mmap optimization lost)
+    *d = TypedArray<T>(reinterpret_cast<const T*>(data_ptr), length);
 
     // Advance the stream position
     if (!_sr->seek_from_current(int64_t(sizeof(T) * length))) {
@@ -1134,18 +1134,18 @@ bool CrateReader::ReadIntArrayTyped(bool is_compressed, TypedArray<T> *d) {
     return true;
   } else {
     // Fall back to regular allocation for compressed data or when mmap is disabled
-    (*d)->resize(length);
+    d->resize(length);
 
     if (!is_compressed) {
       if (!_sr->read(sizeof(T) * length, sizeof(T) * length,
-                     reinterpret_cast<uint8_t *>((*d)->data()))) {
+                     reinterpret_cast<uint8_t *>(d->data()))) {
         _err += "Failed to read int array data.\n";
         return false;
       }
       return true;
     } else {
       // Handle compressed data
-      if (!ReadCompressedInts((*d)->data(), length)) {
+      if (!ReadCompressedInts(d->data(), length)) {
         _err += "Failed to read compressed int array.\n";
         return false;
       }
@@ -4546,8 +4546,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           uint64_t current_pos = _sr->tell();
           const uint8_t* data_ptr = _sr->data() + current_pos;
           
-          // Create a view over the mmap'd data
-          v = TypedArray<value::float3>(new TypedArrayImpl<value::float3>(const_cast<value::float3*>(reinterpret_cast<const value::float3*>(data_ptr)), static_cast<size_t>(n), true), true);
+          // Note: Now copies data instead of creating a view (mmap optimization lost)
+          v = TypedArray<value::float3>(reinterpret_cast<const value::float3*>(data_ptr), static_cast<size_t>(n));
           
           // Advance stream reader position
           if (!_sr->seek_set(current_pos + n * sizeof(value::float3))) {
@@ -4635,8 +4635,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           uint64_t current_pos = _sr->tell();
           const uint8_t* data_ptr = _sr->data() + current_pos;
           
-          // Create a view over the mmap'd data
-          v = TypedArray<value::half3>(new TypedArrayImpl<value::half3>(const_cast<value::half3*>(reinterpret_cast<const value::half3*>(data_ptr)), static_cast<size_t>(n), true), true);
+          // Note: Now copies data instead of creating a view (mmap optimization lost)
+          v = TypedArray<value::half3>(reinterpret_cast<const value::half3*>(data_ptr), static_cast<size_t>(n));
           
           // Advance stream reader position
           if (!_sr->seek_set(current_pos + n * sizeof(value::half3))) {
@@ -4718,8 +4718,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           uint64_t current_pos = _sr->tell();
           const uint8_t* data_ptr = _sr->data() + current_pos;
           
-          // Create a view over the mmap'd data
-          v = TypedArray<value::int3>(new TypedArrayImpl<value::int3>(const_cast<value::int3*>(reinterpret_cast<const value::int3*>(data_ptr)), static_cast<size_t>(n), true), true);
+          // Note: Now copies data instead of creating a view (mmap optimization lost)
+          v = TypedArray<value::int3>(reinterpret_cast<const value::int3*>(data_ptr), static_cast<size_t>(n));
           
           // Advance stream reader position
           if (!_sr->seek_set(current_pos + n * sizeof(value::int3))) {
@@ -4802,8 +4802,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           uint64_t current_pos = _sr->tell();
           const uint8_t* data_ptr = _sr->data() + current_pos;
           
-          // Create a view over the mmap'd data
-          v = TypedArray<value::double4>(new TypedArrayImpl<value::double4>(const_cast<value::double4*>(reinterpret_cast<const value::double4*>(data_ptr)), static_cast<size_t>(n), true), true);
+          // Note: Now copies data instead of creating a view (mmap optimization lost)
+          v = TypedArray<value::double4>(reinterpret_cast<const value::double4*>(data_ptr), static_cast<size_t>(n));
           
           // Advance stream reader position
           if (!_sr->seek_set(current_pos + n * sizeof(value::double4))) {
@@ -4885,8 +4885,8 @@ bool CrateReader::UnpackValueRep(const crate::ValueRep &rep,
           uint64_t current_pos = _sr->tell();
           const uint8_t* data_ptr = _sr->data() + current_pos;
           
-          // Create a view over the mmap'd data
-          v = TypedArray<value::float4>(new TypedArrayImpl<value::float4>(const_cast<value::float4*>(reinterpret_cast<const value::float4*>(data_ptr)), static_cast<size_t>(n), true), true);
+          // Note: Now copies data instead of creating a view (mmap optimization lost)
+          v = TypedArray<value::float4>(reinterpret_cast<const value::float4*>(data_ptr), static_cast<size_t>(n));
           
           // Advance stream reader position
           if (!_sr->seek_set(current_pos + n * sizeof(value::float4))) {

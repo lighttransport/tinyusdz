@@ -155,6 +155,8 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::TypedArray<T> &v) {
   return os;
 }
 
+// ChunkedTypedArray is now an alias to TypedArray, so no separate operator<< needed
+#if 0
 template <typename T>
 std::ostream &operator<<(std::ostream &os, const tinyusdz::ChunkedTypedArray<T> &v) {
   os << "[";
@@ -167,6 +169,7 @@ std::ostream &operator<<(std::ostream &os, const tinyusdz::ChunkedTypedArray<T> 
   os << "]";
   return os;
 }
+#endif
 
 // Provide specialized version for int and float array.
 template <>
@@ -434,6 +437,8 @@ std::string print_array_snipped(const TypedArray<T> &vals, size_t N = 16) {
   return os.str();
 }
 
+// ChunkedTypedArray is now an alias to TypedArray, so no separate print_array_snipped needed
+#if 0
 template <typename T>
 std::string print_array_snipped(const ChunkedTypedArray<T> &vals, size_t N = 16) {
   std::stringstream os;
@@ -473,6 +478,7 @@ std::string print_array_snipped(const ChunkedTypedArray<T> &vals, size_t N = 16)
   }
   return os.str();
 }
+#endif
 
 }  // namespace value
 }  // namespace tinyusdz
