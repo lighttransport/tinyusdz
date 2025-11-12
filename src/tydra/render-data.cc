@@ -6101,18 +6101,30 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
           value::AssetPath texAssetPath;
           bool found_file = false;
 
-          for (const auto& prop : image_shader->props) {
-            if (prop.first == "inputs:file" && prop.second.is_attribute()) {
-              const Attribute &attr = prop.second.get_attribute();
-              if (attr.has_value()) {
-                auto asset_val = attr.get_value<value::AssetPath>();
-                if (asset_val) {
-                  texAssetPath = *asset_val;
-                  found_file = true;
-                  break;
+          // Helper lambda to find file input in a property map
+          auto find_file_input = [&](const std::map<std::string, Property>& props_map) -> bool {
+            for (const auto& prop : props_map) {
+              if (prop.first == "inputs:file" && prop.second.is_attribute()) {
+                const Attribute &attr = prop.second.get_attribute();
+                if (attr.has_value()) {
+                  auto asset_val = attr.get_value<value::AssetPath>();
+                  if (asset_val) {
+                    texAssetPath = *asset_val;
+                    return true;
+                  }
                 }
               }
             }
+            return false;
+          };
+
+          // Check both ShaderNode props and Shader props
+          const ShaderNode *shader_node = image_shader->value.as<ShaderNode>();
+          if (shader_node && !shader_node->props.empty()) {
+            found_file = find_file_input(shader_node->props);
+          }
+          if (!found_file) {
+            found_file = find_file_input(image_shader->props);
           }
 
           if (!found_file) {
@@ -6124,35 +6136,43 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
           UsdUVTexture synth_tex;
           synth_tex.file.set_value(texAssetPath);
 
-          // Map MaterialX wrap modes to USD
-          for (const auto& prop : image_shader->props) {
-            if (prop.first == "inputs:uaddressmode" && prop.second.is_attribute()) {
-              const Attribute &attr = prop.second.get_attribute();
-              if (attr.has_value()) {
-                auto val = attr.get_value<std::string>();
-                if (val) {
-                  if (*val == "periodic") {
-                    synth_tex.wrapS.set_value(UsdUVTexture::Wrap::Repeat);
-                  } else if (*val == "clamp") {
-                    synth_tex.wrapS.set_value(UsdUVTexture::Wrap::Clamp);
+          // Helper lambda to extract wrap mode from properties
+          auto extract_wrap_modes = [&](const std::map<std::string, Property>& props_map) {
+            for (const auto& prop : props_map) {
+              if (prop.first == "inputs:uaddressmode" && prop.second.is_attribute()) {
+                const Attribute &attr = prop.second.get_attribute();
+                if (attr.has_value()) {
+                  auto val = attr.get_value<std::string>();
+                  if (val) {
+                    if (*val == "periodic") {
+                      synth_tex.wrapS.set_value(UsdUVTexture::Wrap::Repeat);
+                    } else if (*val == "clamp") {
+                      synth_tex.wrapS.set_value(UsdUVTexture::Wrap::Clamp);
+                    }
+                  }
+                }
+              }
+              if (prop.first == "inputs:vaddressmode" && prop.second.is_attribute()) {
+                const Attribute &attr = prop.second.get_attribute();
+                if (attr.has_value()) {
+                  auto val = attr.get_value<std::string>();
+                  if (val) {
+                    if (*val == "periodic") {
+                      synth_tex.wrapT.set_value(UsdUVTexture::Wrap::Repeat);
+                    } else if (*val == "clamp") {
+                      synth_tex.wrapT.set_value(UsdUVTexture::Wrap::Clamp);
+                    }
                   }
                 }
               }
             }
-            if (prop.first == "inputs:vaddressmode" && prop.second.is_attribute()) {
-              const Attribute &attr = prop.second.get_attribute();
-              if (attr.has_value()) {
-                auto val = attr.get_value<std::string>();
-                if (val) {
-                  if (*val == "periodic") {
-                    synth_tex.wrapT.set_value(UsdUVTexture::Wrap::Repeat);
-                  } else if (*val == "clamp") {
-                    synth_tex.wrapT.set_value(UsdUVTexture::Wrap::Clamp);
-                  }
-                }
-              }
-            }
+          };
+
+          // Map MaterialX wrap modes to USD - check both ShaderNode and Shader props
+          if (shader_node && !shader_node->props.empty()) {
+            extract_wrap_modes(shader_node->props);
           }
+          extract_wrap_modes(image_shader->props);
 
           // Use ConvertUVTexture to properly handle the texture
           UVTexture rtex;
