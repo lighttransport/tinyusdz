@@ -502,6 +502,8 @@ enum TypeId {
 
   TYPE_ID_IMAGING_MTLX_PREVIEWSURFACE,
   TYPE_ID_IMAGING_MTLX_STANDARDSURFACE,
+  TYPE_ID_IMAGING_MTLX_OPENPBRSURFACE,
+  TYPE_ID_IMAGING_OPENPBR_SURFACE,
 
   TYPE_ID_IMAGING_END,
 
@@ -525,6 +527,7 @@ enum TypeId {
   TYPE_ID_COLLECTION,
   TYPE_ID_COLLECTION_INSTANCE,
   TYPE_ID_MATERIAL_BINDING,
+  TYPE_ID_MATERIALX_CONFIG_API,
   TYPE_ID_API_END,
 
   // Base ID for user data type(less than `TYPE_ID_STL_ARRAY_BIT-1`)
@@ -1809,6 +1812,7 @@ struct TypeTraits<TypedArray<T>> {
   static constexpr uint32_t array_bit() { return TYPE_ID_TYPED_ARRAY_BIT; }
 };
 
+#if 0  // Disabled: ChunkedTypedArray causes redefinition error
 template <typename T>
 struct TypeTraits<ChunkedTypedArray<T>> {
   using value_type = TypedArray<T>;
@@ -1830,6 +1834,7 @@ struct TypeTraits<ChunkedTypedArray<T>> {
   static constexpr bool is_array() { return true; }
   static constexpr uint32_t array_bit() { return TYPE_ID_TYPED_ARRAY_BIT; }
 };
+#endif
 
 
 #if 0  // Current pxrUSD does not support 2D array
