@@ -5,6 +5,7 @@
 
 # App-specific
 build/
+build_*/
 
 # User-specific files
 *.rsuser
@@ -355,3 +356,18 @@ compile_commands.json
 
 # Cmake
 CMakeUserPresets.json
+
+# Artifacts and temporary files
+# Prevent accidental commits of test binaries and source files
+*.d
+*.o
+*.out
+*.tmp
+
+# Benchmark and test executables
+benchmark_simple
+benchmark_value32
+benchmark_old_value
+test_value32
+run_benchmark.sh
+benchmark_value.cc
