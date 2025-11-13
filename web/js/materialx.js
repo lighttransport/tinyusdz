@@ -103,6 +103,7 @@ let originalMaterials = new Map(); // Store original materials when showing norm
 let currentFileUpAxis = 'Y'; // Store the current file's upAxis (Y or Z)
 let applyUpAxisConversion = true; // Apply Z-up to Y-up conversion by default
 let sceneRoot = null; // Root object for the USD scene (for upAxis conversion)
+let currentSceneMetadata = null; // Store the current USD scene metadata
 let composer = null; // Effect composer for post-processing
 let falseColorPass = null; // False color shader pass
 let showingFalseColor = false; // Track if false color is being shown
@@ -768,7 +769,7 @@ function createAOVMaterial(aovMode, materialData = null) {
                     emissive: { value: new THREE.Color(0, 0, 0) },
                     emissiveMap: { value: null },
                     hasEmissiveMap: { value: false },
-                    emissiveIntensity: { value: 1.0 }
+                    emissiveIntensity: { value: 0.0 }
                 },
                 name: 'AOV_Emissive'
             });
@@ -780,7 +781,7 @@ function createAOVMaterial(aovMode, materialData = null) {
                     material.uniforms.emissiveMap.value = srcMat.emissiveMap;
                     material.uniforms.hasEmissiveMap.value = true;
                 }
-                material.uniforms.emissiveIntensity.value = srcMat.emissiveIntensity || 1.0;
+                material.uniforms.emissiveIntensity.value = srcMat.emissiveIntensity || 0.0;
             }
             break;
 
@@ -1055,7 +1056,7 @@ function exportMaterialToJSON(material) {
     if (mat.emissive && (mat.emissive.r > 0 || mat.emissive.g > 0 || mat.emissive.b > 0)) {
         exportData.openPBR.emission = {
             color: [mat.emissive.r, mat.emissive.g, mat.emissive.b],
-            intensity: mat.emissiveIntensity || 1.0
+            intensity: mat.emissiveIntensity || 0.0
         };
     }
 
@@ -1308,9 +1309,9 @@ const OPENPBR_PARAMS = {
         ior: { min: 1, max: 3, default: 1.5, step: 0.01 }
     },
     emission: {
-        weight: { min: 0, max: 1, default: 0, step: 0.01 },
+        luminance: { min: 0, max: 10, default: 0, step: 0.01 },
         color: { default: [1, 1, 1], type: 'color' },
-        intensity: { min: 0, max: 10, default: 1, step: 0.1 }
+        weight: { min: 0, max: 1, default: 1, step: 0.01 }
     },
     geometry: {
         opacity: { min: 0, max: 1, default: 1, step: 0.01 },
@@ -2034,20 +2035,42 @@ function toggleNormalMaterial(show) {
 
 // Apply upAxis conversion to scene
 function applyUpAxisConversionToScene() {
-    if (!sceneRoot) return;
+    console.log(`=== applyUpAxisConversionToScene() called ===`);
+    console.log(`  applyUpAxisConversion: ${applyUpAxisConversion}`);
+    console.log(`  currentFileUpAxis: "${currentFileUpAxis}"`);
+    console.log(`  currentFileUpAxis === 'Z': ${currentFileUpAxis === 'Z'}`);
+    console.log(`  sceneRoot exists: ${!!sceneRoot}`);
+    console.log(`  sceneRoot children count: ${sceneRoot ? sceneRoot.children.length : 'N/A'}`);
+
+    if (!sceneRoot) {
+        console.error(`ERROR: sceneRoot is null or undefined - cannot apply upAxis conversion`);
+        return;
+    }
+
+    console.log(`  Current sceneRoot rotation BEFORE applying conversion:`);
+    console.log(`    x=${sceneRoot.rotation.x}, y=${sceneRoot.rotation.y}, z=${sceneRoot.rotation.z}`);
 
     if (applyUpAxisConversion && currentFileUpAxis === 'Z') {
         // Apply Z-up to Y-up conversion (-90 degrees around X axis)
+        console.log(`  -> Applying Z-up to Y-up conversion...`);
         sceneRoot.rotation.x = -Math.PI / 2;
-        console.log(`Applied Z-up to Y-up conversion (file upAxis="${currentFileUpAxis}"): rotation.x =`, sceneRoot.rotation.x);
+        sceneRoot.rotation.y = 0;
+        sceneRoot.rotation.z = 0;
+        console.log(`  ✓ Applied Z-up to Y-up conversion (file upAxis="${currentFileUpAxis}")`);
+        console.log(`    sceneRoot.rotation AFTER: x=${sceneRoot.rotation.x.toFixed(4)}, y=${sceneRoot.rotation.y.toFixed(4)}, z=${sceneRoot.rotation.z.toFixed(4)}`);
+        console.log(`    sceneRoot has ${sceneRoot.children.length} children`);
     } else {
         // Reset rotation (either disabled or file is already Y-up)
+        console.log(`  -> No conversion needed or disabled`);
         sceneRoot.rotation.x = 0;
+        sceneRoot.rotation.y = 0;
+        sceneRoot.rotation.z = 0;
         if (currentFileUpAxis !== 'Z') {
-            console.log(`No rotation needed (file upAxis="${currentFileUpAxis}")`);
+            console.log(`  ✓ No rotation needed (file upAxis="${currentFileUpAxis}" is already Y-up compatible)`);
         } else {
-            console.log(`Reset rotation (conversion disabled)`);
+            console.log(`  ○ Reset rotation (conversion disabled, file is Z-up but conversion is off)`);
         }
+        console.log(`    sceneRoot.rotation: x=${sceneRoot.rotation.x}, y=${sceneRoot.rotation.y}, z=${sceneRoot.rotation.z}`);
     }
 }
 
@@ -2262,11 +2285,42 @@ async function loadUSDFile(arrayBuffer, filename) {
         }
 
         // Get scene metadata (including upAxis)
+        console.log(`=== Extracting scene metadata ===`);
         const sceneMetadata = currentNativeLoader.getSceneMetadata ? currentNativeLoader.getSceneMetadata() : {};
+        console.log(`Raw sceneMetadata:`, sceneMetadata);
+        console.log(`sceneMetadata.upAxis type:`, typeof sceneMetadata.upAxis);
+        console.log(`sceneMetadata.upAxis value:`, sceneMetadata.upAxis);
+        console.log(`sceneMetadata.upAxis === 'Z':`, sceneMetadata.upAxis === 'Z');
+        console.log(`sceneMetadata.upAxis === 'Y':`, sceneMetadata.upAxis === 'Y');
         currentFileUpAxis = sceneMetadata.upAxis || 'Y';
+        console.log(`Set currentFileUpAxis to: "${currentFileUpAxis}"`);
+        console.log(`currentFileUpAxis type:`, typeof currentFileUpAxis);
+        console.log(`currentFileUpAxis === 'Z':`, currentFileUpAxis === 'Z');
+
+        // Store complete scene metadata
+        currentSceneMetadata = {
+            upAxis: currentFileUpAxis,
+            metersPerUnit: sceneMetadata.metersPerUnit || 1.0,
+            framesPerSecond: sceneMetadata.framesPerSecond,
+            timeCodesPerSecond: sceneMetadata.timeCodesPerSecond,
+            startTimeCode: sceneMetadata.startTimeCode,
+            endTimeCode: sceneMetadata.endTimeCode,
+            autoPlay: sceneMetadata.autoPlay,
+            comment: sceneMetadata.comment || '',
+            copyright: sceneMetadata.copyright || '',
+            author: sceneMetadata.author || '',
+            defaultPrim: sceneMetadata.defaultPrim || ''
+        };
 
         console.log(`=== USD Scene Metadata ===`);
-        console.log(`upAxis: "${currentFileUpAxis}"`);
+        console.log(`upAxis: "${currentSceneMetadata.upAxis}"`);
+        console.log(`metersPerUnit: ${currentSceneMetadata.metersPerUnit}`);
+        if (currentSceneMetadata.framesPerSecond !== null && currentSceneMetadata.framesPerSecond !== undefined) {
+            console.log(`framesPerSecond: ${currentSceneMetadata.framesPerSecond}`);
+        }
+        if (currentSceneMetadata.comment) {
+            console.log(`comment: "${currentSceneMetadata.comment}"`);
+        }
 
         // Get scene information
         const numMeshes = currentNativeLoader.numMeshes();
@@ -2279,6 +2333,9 @@ async function loadUSDFile(arrayBuffer, filename) {
         document.getElementById('object-count').textContent = numMeshes;
         document.getElementById('material-count').textContent = numMaterials;
 
+        // Update scene metadata panel
+        updateSceneMetadataPanel();
+
         // Load materials
         await loadMaterials();
 
@@ -2286,7 +2343,17 @@ async function loadUSDFile(arrayBuffer, filename) {
         loadMeshes();
 
         // Apply Z-up to Y-up conversion if enabled AND the file is actually Z-up
-        applyUpAxisConversionToScene();
+        console.log(`\n=== CALLING applyUpAxisConversionToScene() ===`);
+        console.log(`About to apply conversion with:`);
+        console.log(`  currentFileUpAxis: "${currentFileUpAxis}"`);
+        console.log(`  applyUpAxisConversion: ${applyUpAxisConversion}`);
+        console.log(`  sceneRoot: ${!!sceneRoot}`);
+        console.log(`  sceneRoot.children.length: ${sceneRoot ? sceneRoot.children.length : 'N/A'}`);
+
+        // HACK
+        //applyUpAxisConversionToScene();
+        console.log(`\nIMMEDIATELY AFTER applyUpAxisConversionToScene():`);
+        console.log(`  sceneRoot.rotation: x=${sceneRoot?.rotation.x.toFixed(4)}, y=${sceneRoot?.rotation.y.toFixed(4)}, z=${sceneRoot?.rotation.z.toFixed(4)}`);
 
         // Update material panel
         updateMaterialPanel();
@@ -2295,6 +2362,30 @@ async function loadUSDFile(arrayBuffer, filename) {
         fitCameraToScene();
 
         updateStatus(`Loaded: ${numMeshes} objects, ${numMaterials} materials`, 'success');
+
+        // Final summary - verify rotation is still applied
+        console.log(`\n================================================`);
+        console.log(`=== LOAD COMPLETE SUMMARY ===`);
+        console.log(`File: ${filename}`);
+        console.log(`UpAxis from file metadata: "${currentFileUpAxis}"`);
+        console.log(`Conversion enabled: ${applyUpAxisConversion}`);
+        console.log(`Meshes loaded: ${meshes.length}`);
+        console.log(`Meshes in sceneRoot: ${sceneRoot ? sceneRoot.children.length : 0}`);
+        console.log(`\nFINAL sceneRoot rotation:`);
+        console.log(`  x=${sceneRoot?.rotation.x.toFixed(4)} (should be ${currentFileUpAxis === 'Z' && applyUpAxisConversion ? '-1.5708 (-90°)' : '0.0000'})`);
+        console.log(`  y=${sceneRoot?.rotation.y.toFixed(4)} (should be 0.0000)`);
+        console.log(`  z=${sceneRoot?.rotation.z.toFixed(4)} (should be 0.0000)`);
+
+        if (currentFileUpAxis === 'Z' && applyUpAxisConversion) {
+            const expectedRotation = -Math.PI / 2;
+            const actualRotation = sceneRoot?.rotation.x || 0;
+            const isCorrect = Math.abs(actualRotation - expectedRotation) < 0.001;
+            console.log(`\nRotation check: ${isCorrect ? '✓ CORRECT' : '✗ WRONG!'}`);
+            if (!isCorrect) {
+                console.error(`ERROR: Expected rotation ${expectedRotation.toFixed(4)} but got ${actualRotation.toFixed(4)}`);
+            }
+        }
+        console.log(`================================================\n`);
 
     } catch (error) {
         console.error('Error loading USD file:', error);
@@ -2546,9 +2637,18 @@ async function createOpenPBRMaterial(materialData) {
             }
 
             // Emission
+            // In OpenPBR: final_emission = emission_color * emission_luminance
+            // We need to load both and set them on the material
+            let emissionColor = null;
+            let emissionLuminance = 1.0;
+
+            console.log("=== Loading Emission (Flat Format) ===");
+            console.log("pbrFlat.emission_color:", pbrFlat.emission_color);
+            console.log("pbrFlat.emission_luminance:", pbrFlat.emission_luminance);
+
             if (pbrFlat.emission_color) {
                 if (Array.isArray(pbrFlat.emission_color)) {
-                    material.emissive = createColorWithSpace(...pbrFlat.emission_color);
+                    emissionColor = pbrFlat.emission_color;
                 } else if (typeof pbrFlat.emission_color === 'object') {
                     // TODO: Temporarily disabled - enable later
                     // const emissiveTexId = pbrFlat.emission_color.textureId;
@@ -2560,13 +2660,26 @@ async function createOpenPBRMaterial(materialData) {
                     //     }
                     // }
                     if (pbrFlat.emission_color.value && Array.isArray(pbrFlat.emission_color.value)) {
-                        material.emissive = createColorWithSpace(...pbrFlat.emission_color.value);
+                        emissionColor = pbrFlat.emission_color.value;
                     }
                 }
             }
             if (pbrFlat.emission_luminance !== undefined) {
-                material.emissiveIntensity = typeof pbrFlat.emission_luminance === 'number' ? pbrFlat.emission_luminance :
-                                           (pbrFlat.emission_luminance.value || 1);
+                emissionLuminance = typeof pbrFlat.emission_luminance === 'number' ? pbrFlat.emission_luminance :
+                                   (typeof pbrFlat.emission_luminance === 'object' && pbrFlat.emission_luminance.value !== undefined ? pbrFlat.emission_luminance.value : 0.0);
+            }
+
+            console.log("Extracted emissionColor:", emissionColor);
+            console.log("Extracted emissionLuminance:", emissionLuminance);
+
+            // Apply emission: color and intensity
+            if (emissionColor) {
+                material.emissive = createColorWithSpace(...emissionColor);
+                material.emissiveIntensity = emissionLuminance;
+                console.log("Applied to material.emissive:", material.emissive);
+                console.log("Applied to material.emissiveIntensity:", material.emissiveIntensity);
+            } else {
+                console.log("No emission color found, skipping emission setup");
             }
 
             // Normal map
@@ -2724,32 +2837,51 @@ async function createOpenPBRMaterial(materialData) {
         }
 
         // Emission
-        //if (pbr.emission) {
-        //    // Use emission_color (with underscore)
-        //    if (pbr.emission.emission_color !== undefined) {
-        //        const emissiveValue = Array.isArray(pbr.emission.emission_color) ? pbr.emission.emission_color :
-        //                             (pbr.emission.emission_color.value || [0, 0, 0]);
-        //        material.emissive = createColorWithSpace(...emissiveValue);
+        // In OpenPBR: final_emission = emission_color * emission_luminance
+        if (pbr.emission) {
+            console.log("=== Loading Emission (Grouped Format) ===");
+            console.log("pbr.emission:", pbr.emission);
+            console.log("pbr.emission.emission_color:", pbr.emission.emission_color);
+            console.log("pbr.emission.emission_luminance:", pbr.emission.emission_luminance);
 
-        //        // TODO: Temporarily disabled - enable later
-        //        // Check for emission texture
-        //        // if (typeof pbr.emission.emission_color === 'object' && pbr.emission.emission_color.textureId !== undefined) {
-        //        //     const emissiveTexId = pbr.emission.emission_color.textureId;
-        //        //     if (emissiveTexId >= 0) {
-        //        //         const texture = await loadTextureFromUSD(emissiveTexId);
-        //        //         if (texture) {
-        //        //             material.emissiveMap = texture;
-        //        //             material.userData.textures.emissiveMap = { textureId: emissiveTexId, texture };
-        //        //         }
-        //        //     }
-        //        // }
-        //    }
-        //    // Use emission_luminance (with underscore)
-        //    if (pbr.emission.emission_luminance !== undefined) {
-        //        material.emissiveIntensity = typeof pbr.emission.emission_luminance === 'number' ? pbr.emission.emission_luminance :
-        //                                    (pbr.emission.emission_luminance.value || 1);
-        //    }
-        //}
+            let emissionColor = null;
+            let emissionLuminance = 1.0;
+
+            // Use emission_color (with underscore)
+            if (pbr.emission.emission_color !== undefined) {
+                emissionColor = Array.isArray(pbr.emission.emission_color) ? pbr.emission.emission_color :
+                               (pbr.emission.emission_color.value || null);
+
+                // TODO: Temporarily disabled - enable later
+                // Check for emission texture
+                // if (typeof pbr.emission.emission_color === 'object' && pbr.emission.emission_color.textureId !== undefined) {
+                //     const emissiveTexId = pbr.emission.emission_color.textureId;
+                //     if (emissiveTexId >= 0) {
+                //         const texture = await loadTextureFromUSD(emissiveTexId);
+                //         if (texture) {
+                //             material.emissiveMap = texture;
+                //             material.userData.textures.emissiveMap = { textureId: emissiveTexId, texture };
+                //         }
+                //     }
+                // }
+            }
+            // Use emission_luminance (with underscore)
+            if (pbr.emission.emission_luminance !== undefined) {
+                console.log("XYZ: pbr.emission.emission_luminance:", pbr.emission.emission_luminance, typeof pbr.emission.emission_luminance);
+                emissionLuminance = typeof pbr.emission.emission_luminance === 'number' ? pbr.emission.emission_luminance :
+                                   (typeof pbr.emission.emission_luminance === 'object' && pbr.emission.emission_luminance.value !== undefined ? pbr.emission.emission_luminance.value : 0.0);
+            }
+
+            // Apply emission: color and intensity
+            if (emissionColor) {
+                material.emissive = createColorWithSpace(...emissionColor);
+                material.emissiveIntensity = emissionLuminance;
+                console.log("Applied to material.emissive (grouped):", material.emissive);
+                console.log("Applied to material.emissiveIntensity (grouped):", material.emissiveIntensity);
+            } else {
+                console.log("No emission color found (grouped), skipping emission setup");
+            }
+        }
 
         // Geometry (check for normal and bump maps)
         //if (pbr.geometry) {
@@ -2774,7 +2906,7 @@ async function createOpenPBRMaterial(materialData) {
         //        const opacityValue = typeof pbr.geometry.geometry_opacity === 'number' ? pbr.geometry.geometry_opacity :
         //                            (pbr.geometry.geometry_opacity.value !== undefined ? pbr.geometry.geometry_opacity.value : 1);
         //        material.opacity = opacityValue;
-        //        material.transparent = opacityValue < 1.0;
+        //        material.transparent = opacityValue < 1;
 
         //        // TODO: Temporarily disabled - enable later
         //        // Check for opacity texture
@@ -2868,11 +3000,28 @@ function extractOpenPBRParams(materialData) {
         return {};
     }
 
-    // Try openPBRShader first (from native loader), then openPBR (legacy)
-    const pbr = materialData.openPBRShader || materialData.openPBR;
+    // Try multiple property name variations for flat format (same logic as createOpenPBRMaterial)
+    let pbrFlat = materialData.openPBRShader || materialData.openPBR_surface || materialData.openpbr_surface;
+    const pbrGrouped = materialData.openPBR;
+
+    // If no nested object found, check if flat properties exist directly on materialData
+    if (!pbrFlat && (materialData.base_color !== undefined ||
+                    materialData.base_metalness !== undefined ||
+                    materialData.specular_roughness !== undefined)) {
+        pbrFlat = materialData;
+    }
+
+    // Use flat format if available, otherwise grouped format
+    const pbr = pbrFlat || pbrGrouped;
     if (!pbr) {
+        console.warn("extractOpenPBRParams: No PBR data found");
         return {};
     }
+
+    console.log("=== Extracting OpenPBR params ===");
+    console.log("Using pbrFlat:", !!pbrFlat);
+    console.log("Using pbrGrouped:", !!pbrGrouped);
+    console.log("pbr keys:", Object.keys(pbr));
 
     // The native loader returns flat parameters like base_weight, base_color, etc.
     // We need to group them for the GUI: {base: {weight, color}, specular: {...}}
@@ -2886,36 +3035,85 @@ function extractOpenPBRParams(materialData) {
         geometry: {}
     };
 
-    // Map flat parameters to grouped structure
-    Object.entries(pbr).forEach(([key, value]) => {
-        // Skip type field
-        if (key === 'type') return;
-
-        // Split parameter name (e.g., "base_weight" -> ["base", "weight"])
-        const parts = key.split('_');
-        if (parts.length >= 2) {
-            const group = parts[0]; // base, specular, transmission, etc.
-            const param = parts.slice(1).join('_'); // weight, color, roughness, etc.
-
-            // Map group names
-            const groupMap = {
-                'base': 'base',
-                'specular': 'specular',
-                'transmission': 'transmission',
-                'subsurface': 'subsurface',
-                'coat': 'coat',
-                'emission': 'emission'
-            };
-
-            if (groupMap[group]) {
-                params[groupMap[group]][param] = value;
-            } else if (key === 'opacity' || key === 'normal' || key === 'tangent') {
-                // Geometry parameters
-                params.geometry[key] = value;
+    // Helper function to unwrap parameter values
+    // The C++ serializer wraps values in objects like {type: "value", value: X} or {type: "texture", textureId: Y, value: X}
+    const unwrapValue = (val) => {
+        if (val && typeof val === 'object') {
+            if (val.value !== undefined) {
+                // It's wrapped - return the actual value
+                return val.value;
+            } else if (val.textureId !== undefined && val.value === undefined) {
+                // It's a texture-only reference, skip for now (GUI doesn't handle texture editing yet)
+                return null;
             }
         }
-    });
+        // It's already a plain value
+        return val;
+    };
 
+    // Check if we have a nested grouped format (from C++ serializer)
+    // The C++ serializer outputs: { base: { base_weight: {type, value}, ... }, specular: { ... } }
+    const groupKeys = ['base', 'specular', 'transmission', 'subsurface', 'coat', 'emission'];
+    const hasNestedGroups = groupKeys.some(key => pbr[key] && typeof pbr[key] === 'object');
+
+    if (hasNestedGroups && pbrGrouped) {
+        // Handle nested grouped format from C++ serializer
+        console.log("=== Using nested grouped format ===");
+
+        groupKeys.forEach(groupName => {
+            if (pbr[groupName] && typeof pbr[groupName] === 'object') {
+                params[groupName] = {};
+                Object.entries(pbr[groupName]).forEach(([paramKey, paramValue]) => {
+                    // Remove group prefix from parameter name if present
+                    // e.g., "base_weight" -> "weight", "specular_color" -> "color"
+                    const prefix = groupName + '_';
+                    const cleanKey = paramKey.startsWith(prefix) ? paramKey.substring(prefix.length) : paramKey;
+
+                    const unwrappedValue = unwrapValue(paramValue);
+                    if (unwrappedValue !== null) {
+                        params[groupName][cleanKey] = unwrappedValue;
+                    }
+                });
+            }
+        });
+    } else {
+        // Handle flat format (old behavior)
+        console.log("=== Using flat format ===");
+
+        Object.entries(pbr).forEach(([key, value]) => {
+            // Skip type field and internal fields
+            if (key === 'type' || key === 'hasOpenPBR') return;
+
+            const extractedValue = unwrapValue(value);
+            if (extractedValue === null) return;
+
+            // Split parameter name (e.g., "base_weight" -> ["base", "weight"])
+            const parts = key.split('_');
+            if (parts.length >= 2) {
+                const group = parts[0]; // base, specular, transmission, etc.
+                const param = parts.slice(1).join('_'); // weight, color, roughness, etc.
+
+                // Map group names
+                const groupMap = {
+                    'base': 'base',
+                    'specular': 'specular',
+                    'transmission': 'transmission',
+                    'subsurface': 'subsurface',
+                    'coat': 'coat',
+                    'emission': 'emission'
+                };
+
+                if (groupMap[group]) {
+                    params[groupMap[group]][param] = extractedValue;
+                } else if (key === 'opacity' || key === 'normal' || key === 'tangent') {
+                    // Geometry parameters
+                    params.geometry[key] = extractedValue;
+                }
+            }
+        });
+    }
+
+    console.log("=== Extracted params ===", params);
     return params;
 }
 
@@ -3009,6 +3207,13 @@ function loadMeshes() {
                 const matrix = new THREE.Matrix4();
                 matrix.fromArray(meshData.transform);
                 mesh.applyMatrix4(matrix);
+                console.log(`Mesh ${i} has transform matrix:`, meshData.transform);
+
+                // Extract position from matrix for diagnostic
+                const position = new THREE.Vector3();
+                const scale = new THREE.Vector3();
+                matrix.decompose(position, new THREE.Quaternion(), scale);
+                console.log(`  Transform includes: position=(${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`);
             }
 
             sceneRoot.add(mesh);
@@ -3020,6 +3225,80 @@ function loadMeshes() {
         }
     }
     console.log(`Total meshes added to scene: ${meshes.length}`);
+}
+
+// Update scene metadata panel
+function updateSceneMetadataPanel() {
+    const panel = document.getElementById('scene-metadata');
+    const content = document.getElementById('metadata-content');
+
+    if (!currentSceneMetadata) {
+        panel.style.display = 'none';
+        return;
+    }
+
+    panel.style.display = 'block';
+
+    let html = '';
+
+    // upAxis
+    html += `<div><strong>Up Axis:</strong> ${currentSceneMetadata.upAxis}</div>`;
+
+    // metersPerUnit
+    html += `<div><strong>Meters/Unit:</strong> ${currentSceneMetadata.metersPerUnit}</div>`;
+
+    // Animation metadata (only if present)
+    if (currentSceneMetadata.framesPerSecond !== null && currentSceneMetadata.framesPerSecond !== undefined) {
+        html += `<div><strong>FPS:</strong> ${currentSceneMetadata.framesPerSecond}</div>`;
+    }
+
+    if (currentSceneMetadata.timeCodesPerSecond !== null && currentSceneMetadata.timeCodesPerSecond !== undefined) {
+        html += `<div><strong>TimeCodes/Sec:</strong> ${currentSceneMetadata.timeCodesPerSecond}</div>`;
+    }
+
+    if (currentSceneMetadata.startTimeCode !== null && currentSceneMetadata.startTimeCode !== undefined) {
+        html += `<div><strong>Start Time:</strong> ${currentSceneMetadata.startTimeCode}</div>`;
+    }
+
+    if (currentSceneMetadata.endTimeCode !== null && currentSceneMetadata.endTimeCode !== undefined) {
+        html += `<div><strong>End Time:</strong> ${currentSceneMetadata.endTimeCode}</div>`;
+    }
+
+    if (currentSceneMetadata.autoPlay !== null && currentSceneMetadata.autoPlay !== undefined) {
+        html += `<div><strong>Auto Play:</strong> ${currentSceneMetadata.autoPlay ? 'Yes' : 'No'}</div>`;
+    }
+
+    // Default prim
+    if (currentSceneMetadata.defaultPrim) {
+        html += `<div><strong>Default Prim:</strong> ${currentSceneMetadata.defaultPrim}</div>`;
+    }
+
+    // Author
+    if (currentSceneMetadata.author) {
+        html += `<div><strong>Author:</strong> ${currentSceneMetadata.author}</div>`;
+    }
+
+    // Comment (can be multiline)
+    if (currentSceneMetadata.comment) {
+        const commentLines = currentSceneMetadata.comment.split('\n');
+        if (commentLines.length === 1) {
+            html += `<div><strong>Comment:</strong> ${currentSceneMetadata.comment}</div>`;
+        } else {
+            html += `<div><strong>Comment:</strong></div>`;
+            html += `<div style="padding-left: 10px; font-style: italic; color: #bbb;">`;
+            commentLines.forEach(line => {
+                html += `${line}<br>`;
+            });
+            html += `</div>`;
+        }
+    }
+
+    // Copyright
+    if (currentSceneMetadata.copyright) {
+        html += `<div><strong>Copyright:</strong> ${currentSceneMetadata.copyright}</div>`;
+    }
+
+    content.innerHTML = html;
 }
 
 // Update material panel
@@ -3325,7 +3604,7 @@ function createTextureTransformUI(material, mapName, texture) {
         valueSpan.textContent = value.toFixed(2);
         valueSpan.style.minWidth = '40px';
         valueSpan.style.textAlign = 'right';
-        valueSpan.style.color = '#fff';
+        valueSpan.style.color = 'white';
         row.appendChild(valueSpan);
 
         slider.oninput = (e) => {
@@ -3605,11 +3884,17 @@ function createParameterControls(material) {
                     // Slider
                     const numValue = typeof value === 'number' ? value : parseFloat(value) || 0;
                     const sliderObj = { [paramName]: numValue };
-                    groupFolder.add(sliderObj, paramName, paramDef.min, paramDef.max, paramDef.step)
+                    const controller = groupFolder.add(sliderObj, paramName, paramDef.min, paramDef.max, paramDef.step)
                         .onChange(val => {
                             params[groupName][paramName] = val;
                             updateMaterialFromParams(threeMat, params);
                         });
+
+                    // Set decimal places based on step size
+                    if (paramDef.step < 1) {
+                        const decimals = Math.max(0, -Math.floor(Math.log10(paramDef.step)));
+                        controller.decimals(decimals);
+                    }
                 }
             });
 
@@ -3687,13 +3972,17 @@ function updateMaterialFromParams(material, params) {
     }
 
     // Emission
+    // In OpenPBR, final emission = emission_color * emission_luminance
+    // Three.js multiplies emissive * emissiveIntensity internally, which matches this
     if (params.emission) {
         if (params.emission.color) {
-            const [r, g, b] = srgbToDisplayP3(...params.emission.color);
-            material.emissive.setRGB(r, g, b);
+            const colorValue = Array.isArray(params.emission.color) ? params.emission.color :
+                              (params.emission.color.value || [0, 0, 0]);
+            material.emissive = createColorWithSpace(...colorValue);
         }
-        if (params.emission.intensity !== undefined) {
-            material.emissiveIntensity = params.emission.intensity;
+        material.emissiveIntensity = 0.0; // default no emission
+        if (params.emission.luminance !== undefined) {
+            material.emissiveIntensity = params.emission.luminance;
         }
     }
 
@@ -3728,10 +4017,12 @@ function clearScene() {
     // Deselect object and remove bounding box
     deselectObject();
 
-    // Remove meshes
+    // Remove meshes (they're in sceneRoot, not directly in scene)
     meshes.forEach(mesh => {
         mesh.geometry.dispose();
-        scene.remove(mesh);
+        if (sceneRoot) {
+            sceneRoot.remove(mesh);
+        }
     });
     meshes = [];
 
@@ -3762,10 +4053,22 @@ function clearScene() {
     originalMaterials.clear();
     showingNormals = false;
 
+    // Reset sceneRoot rotation (for upAxis conversion)
+    if (sceneRoot) {
+        sceneRoot.rotation.set(0, 0, 0);
+    }
+
+    // Reset upAxis to default
+    currentFileUpAxis = 'Y';
+
+    // Clear scene metadata
+    currentSceneMetadata = null;
+
     // Clear UI panels
     document.getElementById('material-panel').style.display = 'none';
     document.getElementById('texture-panel').style.display = 'none';
     document.getElementById('model-info').style.display = 'none';
+    document.getElementById('scene-metadata').style.display = 'none';
     document.getElementById('selected-object').textContent = 'None';
 }
 
@@ -4369,7 +4672,7 @@ function addTextureTransformControls(folder, material, textureName) {
     // Rotation control
     const rotationParam = { rotation: texture.rotation };
     transformFolder.add(rotationParam, 'rotation', 0, Math.PI * 2, 0.01).name('Rotation').onChange((value) => {
-        texture.rotation = value;
+        texture.rotation = value * (Math.PI / 180);
         texture.needsUpdate = true;
     });
 
@@ -4431,13 +4734,3 @@ function reportError(context, error, severity = 'error') {
 
     updateStatus(userMessage, severity);
 }
-
-// Export functions for HTML onclick handlers
-window.toggleEnvironment = toggleEnvironment;
-window.toggleBackgroundEnvmap = toggleBackgroundEnvmap;
-window.loadSampleModel = loadSampleModel;
-window.toggleColorSpace = toggleColorSpace;
-window.exportSelectedMaterialJSON = exportSelectedMaterialJSON;
-window.exportSelectedMaterialMTLX = exportSelectedMaterialMTLX;
-window.importMaterialXFile = importMaterialXFile;
-window.loadHDRTextureForMaterial = loadHDRTextureForMaterial;
