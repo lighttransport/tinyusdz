@@ -95,6 +95,32 @@ static json vec3ToJson(const vec3& v) {
   return json::array({v[0], v[1], v[2]});
 }
 
+// Helper function to set a parameter in JSON with optional grouping
+// For flattened: "base_color" stays as inputs["base_color"]
+// For grouped: "base_color" becomes inputs["base"]["color"]
+static void setJsonParameter(json& inputs, const std::string& param_name, const json& value, bool use_grouped) {
+  if (!use_grouped) {
+    // Flattened format: base_color
+    inputs[param_name] = value;
+  } else {
+    // Grouped format: base.color
+    size_t underscore_pos = param_name.find('_');
+    if (underscore_pos != std::string::npos) {
+      std::string group = param_name.substr(0, underscore_pos);
+      std::string property = param_name.substr(underscore_pos + 1);
+
+      // Create group object if it doesn't exist
+      if (!inputs.contains(group)) {
+        inputs[group] = json::object();
+      }
+      inputs[group][property] = value;
+    } else {
+      // No underscore, keep as-is
+      inputs[param_name] = value;
+    }
+  }
+}
+
 // Helper function to convert vec2 to JSON array
 // Static function that may not be used currently
 #ifdef __clang__
@@ -251,11 +277,11 @@ bool ThreeJSMaterialExporter::ExportMaterial(const RenderMaterial& material,
   if (has_openpbr && options.use_webgpu) {
     // Export as WebGPU node material
     output["type"] = "NodeMaterial";
-    output["nodes"] = ConvertOpenPBRToNodeMaterial(material.openPBRShader.value());
+    output["nodes"] = ConvertOpenPBRToNodeMaterial(material.openPBRShader.value(), options);
   } else if (has_openpbr && options.generate_fallback) {
     // Export as WebGL MeshPhysicalMaterial
     output["type"] = "MeshPhysicalMaterial";
-    json params = ConvertOpenPBRToPhysicalMaterial(material.openPBRShader.value());
+    json params = ConvertOpenPBRToPhysicalMaterial(material.openPBRShader.value(), options);
     for (auto it = params.items().begin(); it != params.items().end(); ++it) {
       output[it.key()] = it.value();
     }
@@ -285,7 +311,7 @@ bool ThreeJSMaterialExporter::ExportMaterial(const RenderMaterial& material,
   return true;
 }
 
-json ThreeJSMaterialExporter::ConvertOpenPBRToNodeMaterial(const OpenPBRSurfaceShader& shader) {
+json ThreeJSMaterialExporter::ConvertOpenPBRToNodeMaterial(const OpenPBRSurfaceShader& shader, const ExportOptions& options) {
   json nodes = json::object();
 
   // Create OpenPBR surface node
@@ -295,27 +321,31 @@ json ThreeJSMaterialExporter::ConvertOpenPBRToNodeMaterial(const OpenPBRSurfaceS
     {"inputs", json::object()}
   };
 
+  bool use_grouped = options.use_grouped_parameters;
+
   // Map all OpenPBR parameters
   auto add_param = [&](const std::string& name, const auto& param) {
+    json value;
     if (param.is_texture()) {
-      surface_node["inputs"][name] = {
+      value = {
         {"type", "texture"},
         {"textureId", param.texture_id}
       };
     } else {
-      surface_node["inputs"][name] = param.value;
+      value = param.value;
     }
+    setJsonParameter(surface_node["inputs"], name, value, use_grouped);
   };
 
   // Base layer
   add_param("base_weight", shader.base_weight);
-  surface_node["inputs"]["base_color"] = vec3ToJson(shader.base_color.value);
+  setJsonParameter(surface_node["inputs"], "base_color", vec3ToJson(shader.base_color.value), use_grouped);
   add_param("base_roughness", shader.base_roughness);
   add_param("base_metalness", shader.base_metalness);
 
   // Specular layer
   add_param("specular_weight", shader.specular_weight);
-  surface_node["inputs"]["specular_color"] = vec3ToJson(shader.specular_color.value);
+  setJsonParameter(surface_node["inputs"], "specular_color", vec3ToJson(shader.specular_color.value), use_grouped);
   add_param("specular_roughness", shader.specular_roughness);
   add_param("specular_ior", shader.specular_ior);
   add_param("specular_ior_level", shader.specular_ior_level);
@@ -324,42 +354,42 @@ json ThreeJSMaterialExporter::ConvertOpenPBRToNodeMaterial(const OpenPBRSurfaceS
 
   // Transmission
   add_param("transmission_weight", shader.transmission_weight);
-  surface_node["inputs"]["transmission_color"] = vec3ToJson(shader.transmission_color.value);
+  setJsonParameter(surface_node["inputs"], "transmission_color", vec3ToJson(shader.transmission_color.value), use_grouped);
   add_param("transmission_depth", shader.transmission_depth);
-  surface_node["inputs"]["transmission_scatter"] = vec3ToJson(shader.transmission_scatter.value);
+  setJsonParameter(surface_node["inputs"], "transmission_scatter", vec3ToJson(shader.transmission_scatter.value), use_grouped);
   add_param("transmission_scatter_anisotropy", shader.transmission_scatter_anisotropy);
   add_param("transmission_dispersion", shader.transmission_dispersion);
 
   // Subsurface
   add_param("subsurface_weight", shader.subsurface_weight);
-  surface_node["inputs"]["subsurface_color"] = vec3ToJson(shader.subsurface_color.value);
-  surface_node["inputs"]["subsurface_radius"] = vec3ToJson(shader.subsurface_radius.value);
+  setJsonParameter(surface_node["inputs"], "subsurface_color", vec3ToJson(shader.subsurface_color.value), use_grouped);
+  setJsonParameter(surface_node["inputs"], "subsurface_radius", vec3ToJson(shader.subsurface_radius.value), use_grouped);
   add_param("subsurface_scale", shader.subsurface_scale);
   add_param("subsurface_anisotropy", shader.subsurface_anisotropy);
 
   // Sheen
   add_param("sheen_weight", shader.sheen_weight);
-  surface_node["inputs"]["sheen_color"] = vec3ToJson(shader.sheen_color.value);
+  setJsonParameter(surface_node["inputs"], "sheen_color", vec3ToJson(shader.sheen_color.value), use_grouped);
   add_param("sheen_roughness", shader.sheen_roughness);
 
   // Coat
   add_param("coat_weight", shader.coat_weight);
-  surface_node["inputs"]["coat_color"] = vec3ToJson(shader.coat_color.value);
+  setJsonParameter(surface_node["inputs"], "coat_color", vec3ToJson(shader.coat_color.value), use_grouped);
   add_param("coat_roughness", shader.coat_roughness);
   add_param("coat_anisotropy", shader.coat_anisotropy);
   add_param("coat_rotation", shader.coat_rotation);
   add_param("coat_ior", shader.coat_ior);
-  surface_node["inputs"]["coat_affect_color"] = vec3ToJson(shader.coat_affect_color.value);
+  setJsonParameter(surface_node["inputs"], "coat_affect_color", vec3ToJson(shader.coat_affect_color.value), use_grouped);
   add_param("coat_affect_roughness", shader.coat_affect_roughness);
 
   // Emission
   add_param("emission_luminance", shader.emission_luminance);
-  surface_node["inputs"]["emission_color"] = vec3ToJson(shader.emission_color.value);
+  setJsonParameter(surface_node["inputs"], "emission_color", vec3ToJson(shader.emission_color.value), use_grouped);
 
   // Geometry
   add_param("opacity", shader.opacity);
-  surface_node["inputs"]["normal"] = vec3ToJson(shader.normal.value);
-  surface_node["inputs"]["tangent"] = vec3ToJson(shader.tangent.value);
+  setJsonParameter(surface_node["inputs"], "normal", vec3ToJson(shader.normal.value), use_grouped);
+  setJsonParameter(surface_node["inputs"], "tangent", vec3ToJson(shader.tangent.value), use_grouped);
 
   nodes["surface"] = surface_node;
 
@@ -378,7 +408,8 @@ json ThreeJSMaterialExporter::ConvertOpenPBRToNodeMaterial(const OpenPBRSurfaceS
   return nodes;
 }
 
-json ThreeJSMaterialExporter::ConvertOpenPBRToPhysicalMaterial(const OpenPBRSurfaceShader& shader) {
+json ThreeJSMaterialExporter::ConvertOpenPBRToPhysicalMaterial(const OpenPBRSurfaceShader& shader, const ExportOptions& options) {
+  (void)options; // Options reserved for future use (e.g., grouped userData)
   json params = json::object();
 
   // Map OpenPBR to MeshPhysicalMaterial parameters
