@@ -62,9 +62,11 @@
 #include "common-macros.inc"
 
 // forward decl
+#ifndef TUSDZ_NEW_VALUE_TYPE
 namespace linb {
 class any;
 };
+#endif  // TUSDZ_NEW_VALUE_TYPE
 
 namespace tinyusdz {
 
@@ -269,11 +271,9 @@ static_assert(sizeof(TimeCode) == 8, "Size of TimeCode must be 8.");
 // These ID assignment won't affect Crate binary serialization.
 // (See `crate-format.hh` for Type ID used in Crate binary)
 //
-// TODO(syoyo): Support 3D and 4D?
-constexpr uint32_t TYPE_ID_1D_ARRAY_BIT = 1 << 20;  // 1024
-// constexpr uint32_t TYPE_ID_2D_ARRAY_BIT = 1 << 21;  // 2048
-//  constexpr uint32_t TYPE_ID_3D_ARRAY_BIT = 1 << 22;
-//  constexpr uint32_t TYPE_ID_4D_ARRAY_BIT = 1 << 23;
+constexpr uint32_t TYPE_ID_STL_ARRAY_BIT = 1 << 20;  // 1048576
+constexpr uint32_t TYPE_ID_TYPED_ARRAY_BIT = 1 << 21;  // 2097152
+constexpr uint32_t TYPE_ID_ARRAY_BIT_MASK = TYPE_ID_STL_ARRAY_BIT | TYPE_ID_TYPED_ARRAY_BIT;  // 3145728
 constexpr uint32_t TYPE_ID_TERMINATOR_BIT = 1 << 24;
 
 enum TypeId {
@@ -285,7 +285,7 @@ enum TypeId {
 
   // -- begin value type
   TYPE_ID_VALUE_BEGIN,
-
+  
   TYPE_ID_TOKEN,
   TYPE_ID_STRING,
   TYPE_ID_STRING_DATA,  // String for primvar and metadata. Includes multi-line
@@ -395,11 +395,11 @@ enum TypeId {
   TYPE_ID_DICT,        // Generic dict type. TODO: remove?
   TYPE_ID_CUSTOMDATA,  // similar to `dictionary`, but limited types are allowed
                        // to use. for metadatum(e.g. `customData` in Prim Meta)
-
+                       
   TYPE_ID_VALUE_END,
 
   // -- end value type
-
+  
   TYPE_ID_LAYER_OFFSET,
   TYPE_ID_PAYLOAD,
 
@@ -502,8 +502,6 @@ enum TypeId {
 
   TYPE_ID_IMAGING_MTLX_PREVIEWSURFACE,
   TYPE_ID_IMAGING_MTLX_STANDARDSURFACE,
-  TYPE_ID_IMAGING_MTLX_OPENPBRSURFACE,
-  TYPE_ID_IMAGING_OPENPBR_SURFACE,
 
   TYPE_ID_IMAGING_END,
 
@@ -521,16 +519,15 @@ enum TypeId {
 
   TYPE_ID_MODEL_END,
 
-
+  
   // Types for API
   TYPE_ID_API_BEGIN = 1 << 14,
   TYPE_ID_COLLECTION,
   TYPE_ID_COLLECTION_INSTANCE,
   TYPE_ID_MATERIAL_BINDING,
-  TYPE_ID_MATERIALX_CONFIG_API,
   TYPE_ID_API_END,
 
-  // Base ID for user data type(less than `TYPE_ID_1D_ARRAY_BIT-1`)
+  // Base ID for user data type(less than `TYPE_ID_STL_ARRAY_BIT-1`)
   TYPE_ID_USER_BEGIN = 1 << 16,
 
   TYPE_ID_ALL = (TYPE_ID_TERMINATOR_BIT - 1)  // terminator.
@@ -955,6 +952,8 @@ struct matrix4d {
 };
 
 // = matrix4d
+
+// = matrix4d
 struct frame4d {
   frame4d() {
     m[0][0] = 1.0;
@@ -980,12 +979,20 @@ struct frame4d {
   double m[4][4];
 };
 
+// Matrix comparison operators
+bool operator==(const matrix2f &a, const matrix2f &b);
+bool operator==(const matrix3f &a, const matrix3f &b);
+bool operator==(const matrix4f &a, const matrix4f &b);
+bool operator==(const matrix2d &a, const matrix2d &b);
+bool operator==(const matrix3d &a, const matrix3d &b);
+bool operator==(const matrix4d &a, const matrix4d &b);
+
 // ret = m x n in row-major(n x m in column-major)
 // i.e. You can express TRS transform as
 //
 // p * S * R * T = p'
 // p' = Mult(Mult(S, R), T)
-//
+// 
 // you can express world matrix as
 //
 // node.world = parent.world * node.local
@@ -993,7 +1000,7 @@ struct frame4d {
 template <typename MTy, typename STy, size_t N>
 MTy Mult(const MTy &m, const MTy &n) {
   MTy ret;
-  //memset(ret.m, 0, sizeof(MTy));
+  //memset(ret.m, 0, sizeof(MTy)); 
 
   for (size_t j = 0; j < N; j++) {
     for (size_t i = 0; i < N; i++) {
@@ -1174,16 +1181,6 @@ inline matrix4d operator*(const matrix4d &a, const matrix4d &b) {
   matrix4d ret = Mult<matrix4d, double, 4>(a, b);
   return ret;
 }
-
-// Equality operators for matrix types
-// Use floating-point aware comparison (suitable for dedup)
-// Implementations in value-types.cc
-bool operator==(const matrix2f &a, const matrix2f &b);
-bool operator==(const matrix3f &a, const matrix3f &b);
-bool operator==(const matrix4f &a, const matrix4f &b);
-bool operator==(const matrix2d &a, const matrix2d &b);
-bool operator==(const matrix3d &a, const matrix3d &b);
-bool operator==(const matrix4d &a, const matrix4d &b);
 
 // Quaternion has memory layout of [x, y, z, w] in Crate(Binary)
 // and QfQuat class in pxrUSD.
@@ -1612,7 +1609,16 @@ using double4 = std::array<double, 4>;
 
 // struct any_value;
 // using dict = std::map<std::string, any_value>;
+
+#ifndef TUSDZ_NEW_VALUE_TYPE
+// OLD implementation: dict uses linb::any for type-erasure
 using dict = std::map<std::string, linb::any>;
+#else
+// NEW implementation: dict uses Value with explicit type tracking
+// Forward declaration of Value class (full definition comes later)
+class Value;
+using dict = std::map<std::string, Value>;
+#endif
 
 template <class dtype>
 struct TypeTraits;
@@ -1767,17 +1773,18 @@ struct TypeTraits<std::vector<T>> {
   // Return the size of base type
   static constexpr size_t size() { return TypeTraits<T>::size(); }
   static constexpr uint32_t type_id() { return
-      TypeTraits<T>::type_id() | TYPE_ID_1D_ARRAY_BIT; }
+      TypeTraits<T>::type_id() | TYPE_ID_STL_ARRAY_BIT; }
   static constexpr uint32_t get_type_id() {
-      return TypeTraits<T>::type_id() | TYPE_ID_1D_ARRAY_BIT; }
+      return TypeTraits<T>::type_id() | TYPE_ID_STL_ARRAY_BIT; }
   static constexpr uint32_t underlying_type_id() {
-      return TypeTraits<T>::underlying_type_id() | TYPE_ID_1D_ARRAY_BIT; }
+      return TypeTraits<T>::underlying_type_id() | TYPE_ID_STL_ARRAY_BIT; }
   static std::string type_name() { return TypeTraits<T>::type_name() + "[]"; }
   static std::string underlying_type_name() {
     return TypeTraits<T>::underlying_type_name() + "[]";
   }
   static constexpr bool is_role_type() { return TypeTraits<T>::is_role_type(); }
   static constexpr bool is_array() { return true; }
+  static constexpr uint32_t array_bit() { return TYPE_ID_STL_ARRAY_BIT; }
 };
 
 template <typename T>
@@ -1788,21 +1795,20 @@ struct TypeTraits<TypedArray<T>> {
   // Return the size of base type
   static constexpr size_t size() { return TypeTraits<T>::size(); }
   static constexpr uint32_t type_id() { return
-      TypeTraits<T>::type_id() | TYPE_ID_1D_ARRAY_BIT; }
+      TypeTraits<T>::type_id() | TYPE_ID_STL_ARRAY_BIT | TYPE_ID_TYPED_ARRAY_BIT; }
   static constexpr uint32_t get_type_id() {
-      return TypeTraits<T>::type_id() | TYPE_ID_1D_ARRAY_BIT; }
+      return TypeTraits<T>::type_id() | TYPE_ID_STL_ARRAY_BIT | TYPE_ID_TYPED_ARRAY_BIT; }
   static constexpr uint32_t underlying_type_id() {
-      return TypeTraits<T>::underlying_type_id() | TYPE_ID_1D_ARRAY_BIT; }
+      return TypeTraits<T>::underlying_type_id() | TYPE_ID_STL_ARRAY_BIT | TYPE_ID_TYPED_ARRAY_BIT; }
   static std::string type_name() { return TypeTraits<T>::type_name() + "[]"; }
   static std::string underlying_type_name() {
     return TypeTraits<T>::underlying_type_name() + "[]";
   }
   static constexpr bool is_role_type() { return TypeTraits<T>::is_role_type(); }
   static constexpr bool is_array() { return true; }
+  static constexpr uint32_t array_bit() { return TYPE_ID_TYPED_ARRAY_BIT; }
 };
 
-// ChunkedTypedArray is now an alias to TypedArray, so no separate TypeTraits needed
-#if 0
 template <typename T>
 struct TypeTraits<ChunkedTypedArray<T>> {
   using value_type = TypedArray<T>;
@@ -1811,19 +1817,19 @@ struct TypeTraits<ChunkedTypedArray<T>> {
   // Return the size of base type
   static constexpr size_t size() { return TypeTraits<T>::size(); }
   static constexpr uint32_t type_id() { return
-      TypeTraits<T>::type_id() | TYPE_ID_1D_ARRAY_BIT; }
+      TypeTraits<T>::type_id() | TYPE_ID_STL_ARRAY_BIT | TYPE_ID_TYPED_ARRAY_BIT; }
   static constexpr uint32_t get_type_id() {
-      return TypeTraits<T>::type_id() | TYPE_ID_1D_ARRAY_BIT; }
+      return TypeTraits<T>::type_id() | TYPE_ID_STL_ARRAY_BIT | TYPE_ID_TYPED_ARRAY_BIT; }
   static constexpr uint32_t underlying_type_id() {
-      return TypeTraits<T>::underlying_type_id() | TYPE_ID_1D_ARRAY_BIT; }
+      return TypeTraits<T>::underlying_type_id() | TYPE_ID_STL_ARRAY_BIT | TYPE_ID_TYPED_ARRAY_BIT; }
   static std::string type_name() { return TypeTraits<T>::type_name() + "[]"; }
   static std::string underlying_type_name() {
     return TypeTraits<T>::underlying_type_name() + "[]";
   }
   static constexpr bool is_role_type() { return TypeTraits<T>::is_role_type(); }
   static constexpr bool is_array() { return true; }
+  static constexpr uint32_t array_bit() { return TYPE_ID_TYPED_ARRAY_BIT; }
 };
-#endif
 
 
 #if 0  // Current pxrUSD does not support 2D array
@@ -1889,7 +1895,10 @@ bool IsRoleType(const uint32_t tyid);
 }  // namespace value
 }  // namespace tinyusdz
 
+#ifndef TUSDZ_NEW_VALUE_TYPE
+// linb::any implementation - used only in OLD Value class
 #include "tiny-any.inc"
+#endif  // TUSDZ_NEW_VALUE_TYPE
 
 namespace tinyusdz {
 namespace value {
@@ -1899,6 +1908,8 @@ namespace value {
 /// TODO: Type-check when casting with underlying_type(Need to modify linb::any
 /// class)
 ///
+#ifndef TUSDZ_NEW_VALUE_TYPE
+// Original implementation using linb::any
 class Value {
  public:
   Value() {
@@ -1917,11 +1928,17 @@ class Value {
 
   template <class T>
   Value(const T &v) : v_(v) {
+    // Prohibit C-style arrays at compile time - must use std::vector or TypedArray
+    static_assert(!std::is_array<T>::value,
+      "C-style arrays are not allowed. Use std::vector<T> or TypedArray<T> instead.");
     //TUSDZ_LOG_I("Value templated constructor called with type: " << typeid(T).name());
   }
 
   template <class T>
   Value(T &&v) noexcept : v_(std::move(v)) {
+    // Prohibit C-style arrays at compile time - must use std::vector or TypedArray
+    static_assert(!std::is_array<typename std::remove_reference<T>::type>::value,
+      "C-style arrays are not allowed. Use std::vector<T> or TypedArray<T> instead.");
     //TUSDZ_LOG_I("Value templated move constructor called with type: " << typeid(T).name());
   }
 
@@ -1949,11 +1966,11 @@ class Value {
       return linb::any_cast<const T>(&v_);
     } else if (!strict_cast) {
       // NOTE: linb::any_cast does type_id check, so use linb::cast(~= reinterpret_cast) here
-      if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
-        if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
+      if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_STL_ARRAY_BIT)) { // both are array type
+        if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_STL_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_STL_ARRAY_BIT))) {
           return linb::cast<const T>(&v_);
         }
-      } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
+      } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_STL_ARRAY_BIT)) { // both are scalar type.
         if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
           return linb::cast<const T>(&v_);
         }
@@ -1971,11 +1988,11 @@ class Value {
     if (TypeTraits<T>::type_id() == v_.type_id()) {
       return linb::any_cast<T>(&v_);
     } else if (!strict_cast) {
-      if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
-        if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
+      if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_STL_ARRAY_BIT)) { // both are array type
+        if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_STL_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_STL_ARRAY_BIT))) {
           return linb::cast<T>(&v_);
         }
-      } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
+      } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_STL_ARRAY_BIT)) { // both are scalar type.
         if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
           return linb::cast<T>(&v_);
         }
@@ -1990,7 +2007,7 @@ class Value {
   //
   // Returns a view over array data if the value contains an array type that's compatible
   // with the requested element type T. For non-array types, returns an empty view.
-  //
+  // 
   // The view provides zero-copy access to the underlying data with type safety validation.
   //
   // Template parameter T: the desired element type for the view
@@ -2001,13 +2018,13 @@ class Value {
   template <class T>
   TypedArrayView<const T> as_view(bool strict_cast = false) const {
     // Check if this is an array type
-    if (!(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) {
+    if (!(v_.type_id() & value::TYPE_ID_STL_ARRAY_BIT)) {
       // Not an array type - return empty view
       return TypedArrayView<const T>();
     }
 
     // For arrays, we need to check if we can safely view the underlying data as T
-    uint32_t underlying_type_id = v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT);
+    uint32_t underlying_type_id = v_.underlying_type_id() & (~value::TYPE_ID_STL_ARRAY_BIT);
     uint32_t target_type_id = TypeTraits<T>::underlying_type_id();
 
     if (strict_cast) {
@@ -2032,13 +2049,13 @@ class Value {
   template <class T>
   TypedArrayView<T> as_view(bool strict_cast = false) {
     // Check if this is an array type
-    if (!(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) {
+    if (!(v_.type_id() & value::TYPE_ID_STL_ARRAY_BIT)) {
       // Not an array type - return empty view
       return TypedArrayView<T>();
     }
 
     // For arrays, we need to check if we can safely view the underlying data as T
-    uint32_t underlying_type_id = v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT);
+    uint32_t underlying_type_id = v_.underlying_type_id() & (~value::TYPE_ID_STL_ARRAY_BIT);
     uint32_t target_type_id = TypeTraits<T>::underlying_type_id();
 
     if (strict_cast) {
@@ -2047,7 +2064,7 @@ class Value {
         return TypedArrayView<T>();
       }
     } else {
-      // Non-strict cast - allow compatible types (same underlying type)
+      // Non-strict cast - allow compatible types (same underlying type)  
       if (underlying_type_id != target_type_id) {
         return TypedArrayView<T>();
       }
@@ -2069,37 +2086,6 @@ class Value {
   }
 #endif
 
-#if 0
-  // Helper to log vector size
-  template <typename T>
-  static void log_vector_size(const std::vector<T>& vec) {
-    TUSDZ_LOG_I("  vector size: " << vec.size());
-  }
-
-  template <typename T>
-  static void log_vector_size(const T&) {
-    // Non-vector type, do nothing
-  }
-#endif
-
-  // Helper to check vector size bounds
-  template <typename T>
-  static bool check_vector_size(const std::vector<T>& vec) {
-    constexpr size_t MAX_REASONABLE_SIZE = 100000000; // 100M
-    if (vec.size() > MAX_REASONABLE_SIZE) {
-      // NOTE: Cannot use TUSDZ_LOG_E here due to header inclusion order
-      std::cerr << "ERROR: Vector size " << vec.size() << " exceeds reasonable limit (" << MAX_REASONABLE_SIZE << "). Data is likely corrupted!" << std::endl;
-      return false;
-    }
-    return true;
-  }
-
-  template <typename T>
-  static bool check_vector_size(const T&) {
-    // Non-vector type, always OK
-    return true;
-  }
-
   // Type-safe way to get concrete value.
   template <class T>
   nonstd::optional<T> get_value(bool strict_cast = false) const {
@@ -2110,25 +2096,14 @@ class Value {
         return nonstd::nullopt;
       }
 
-      //TUSDZ_LOG_I("get_value: about to move/copy value of type " << TypeTraits<T>::type_name());
-      //log_vector_size(*pv);
       return std::move(*pv);
     } else if (!strict_cast) {
 
-      if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are array type
-        if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_1D_ARRAY_BIT))) {
-          //TUSDZ_LOG_I("get_value: strict_cast=false, both are array types, about to cast for type " << TypeTraits<T>::type_name());
-          const T* pv = linb::cast<const T>(&v_);
-          //TUSDZ_LOG_I("get_value: cast successful, pv=" << (pv ? "valid" : "null"));
-          if (pv) {
-            //log_vector_size(*pv);
-            if (!check_vector_size(*pv)) {
-              return nonstd::nullopt;
-            }
-          }
-          return std::move(*pv);
+      if (TypeTraits<T>::is_array() && (v_.type_id() & value::TYPE_ID_STL_ARRAY_BIT)) { // both are array type
+        if ((TypeTraits<T>::underlying_type_id() & (~value::TYPE_ID_STL_ARRAY_BIT)) == (v_.underlying_type_id() & (~value::TYPE_ID_STL_ARRAY_BIT))) {
+          return std::move(*linb::cast<const T>(&v_));
         }
-      } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT)) { // both are scalar type.
+      } else if (!TypeTraits<T>::is_array() && !(v_.type_id() & value::TYPE_ID_STL_ARRAY_BIT)) { // both are scalar type.
         if (TypeTraits<T>::underlying_type_id() == v_.underlying_type_id()) {
           return std::move(*linb::cast<const T>(&v_));
         }
@@ -2158,6 +2133,9 @@ class Value {
 
   template <class T>
   Value &operator=(const T &v) {
+    // Prohibit C-style arrays at compile time - must use std::vector or TypedArray
+    static_assert(!std::is_array<T>::value,
+      "C-style arrays are not allowed. Use std::vector<T> or TypedArray<T> instead.");
     //TUSDZ_LOG_I("Value templated assignment operator called with type: " << typeid(T).name());
     v_ = v;
     return (*this);
@@ -2174,7 +2152,7 @@ class Value {
 
   const linb::any &get_raw() const { return v_; }
 
-  bool is_array() const { return (v_.type_id() & value::TYPE_ID_1D_ARRAY_BIT); }
+  bool is_array() const { return (v_.type_id() & value::TYPE_ID_STL_ARRAY_BIT); }
 
   // return 0 for non array type.
   // This method is primaliry for Primvar types(`float[]`, `color3f[]`, ...)
@@ -2205,17 +2183,17 @@ class Value {
   template <class T>
   TypedArrayView<const T> create_array_view_helper(bool strict_cast) const {
     // Try common array types that could contain T elements
-
+    
     // Direct type match - try std::vector<T>
     if (auto* vec = as<std::vector<T>>(strict_cast)) {
       return TypedArrayView<const T>(*vec);
     }
-
+    
     // Try related types based on underlying type compatibility
     if (!strict_cast) {
       // Handle role type conversions (e.g., float3 <-> vector3f <-> normal3f)
       uint32_t target_underlying_id = TypeTraits<T>::underlying_type_id();
-
+      
       switch (target_underlying_id) {
         case TYPE_ID_FLOAT: {
           if (auto* vec = as<std::vector<float>>(false)) {
@@ -2284,7 +2262,7 @@ class Value {
           break;
       }
     }
-
+    
     // No compatible type found
     return TypedArrayView<const T>();
   }
@@ -2292,17 +2270,17 @@ class Value {
   template <class T>
   TypedArrayView<T> create_array_view_helper_mutable(bool strict_cast) {
     // Try common array types that could contain T elements
-
+    
     // Direct type match - try std::vector<T>
     if (auto* vec = as<std::vector<T>>(strict_cast)) {
       return TypedArrayView<T>(*vec);
     }
-
+    
     // Try related types based on underlying type compatibility
     if (!strict_cast) {
       // Handle role type conversions (e.g., float3 <-> vector3f <-> normal3f)
       uint32_t target_underlying_id = TypeTraits<T>::underlying_type_id();
-
+      
       switch (target_underlying_id) {
         case TYPE_ID_FLOAT: {
           if (auto* vec = as<std::vector<float>>(false)) {
@@ -2371,12 +2349,557 @@ class Value {
           break;
       }
     }
-
+    
     // No compatible type found
     return TypedArrayView<T>();
   }
 
 };
+#elif defined(TUSDZ_NEW_VALUE_TYPE)
+//
+// New optimized Value implementation (32 bytes, inspired by crate::ValueRep)
+// Enabled with TUSDZ_NEW_VALUE_TYPE preprocessor flag
+// WARNING: This implementation is DEPRECATED and BROKEN - use TUSDZ_NEW_32BYTE_VALUE instead
+//
+// Layout (32 bytes total):
+// - 24 bytes: data_ (stores pointer or inlined value if sizeof(T) <= 24)
+// - 4 bytes: type_id_
+// - 1 byte: flags_ (array bit + reserved bits)
+// - 3 bytes: padding_ (reserved for future use)
+//
+// Can inline up to double3 (24 bytes), float4/matrix2f (16 bytes), etc.
+//
+class Value {
+ public:
+  static constexpr size_t kInlineDataSize = 24;
+
+  // Bit flags in flags_ byte
+  static constexpr uint8_t kArrayBitFlag = 0x01;       // Bit 0: is array
+  static constexpr uint8_t kHeapAllocatedFlag = 0x02;  // Bit 1: heap allocated
+
+  // Array class stored in bits 2-3 (when kArrayBitFlag is set)
+  static constexpr uint8_t kArrayClassMask = 0x0C;     // Bits 2-3: array class
+  static constexpr uint8_t kArrayClassShift = 2;
+
+  enum class ArrayClass : uint8_t {
+    StdVector = 0,      // std::vector<T>
+    TypedArray = 1,     // TypedArray<T>
+    Reserved = 2,       // Reserved for future use
+    Invalid = 3         // Invalid/unset
+  };
+
+  // Default constructor - creates invalid/null value
+  Value() noexcept : type_id_(TYPE_ID_NULL), flags_(0) {
+    std::memset(data_, 0, sizeof(data_));
+    std::memset(padding_, 0, sizeof(padding_));
+  }
+
+  // Explicit nullptr constructor - creates null value (for aggregate init with {nullptr})
+  // This ensures Value v{nullptr} properly initializes all fields
+  Value(std::nullptr_t) noexcept : type_id_(TYPE_ID_NULL), flags_(0) {
+    std::memset(data_, 0, sizeof(data_));
+    std::memset(padding_, 0, sizeof(padding_));
+  }
+
+  // Destructor - frees heap-allocated data
+  ~Value() {
+    destroy();
+  }
+
+  // Copy constructor
+  Value(const Value& rhs) : type_id_(rhs.type_id_), flags_(rhs.flags_) {
+    // CRITICAL: Clear data_ before copy to prevent garbage being interpreted as pointer
+    std::memset(data_, 0, sizeof(data_));
+    std::memcpy(padding_, rhs.padding_, sizeof(padding_));
+    copy_data_from(rhs);
+  }
+
+  // Move constructor
+  Value(Value&& rhs) noexcept : type_id_(rhs.type_id_), flags_(rhs.flags_) {
+    std::memcpy(padding_, rhs.padding_, sizeof(padding_));
+    std::memcpy(data_, rhs.data_, sizeof(data_));
+
+    // Clear rhs so it doesn't free the data
+    std::memset(rhs.data_, 0, sizeof(rhs.data_));
+    rhs.type_id_ = TYPE_ID_NULL;
+    rhs.flags_ = 0;
+  }
+
+  // Copy assignment
+  Value& operator=(const Value& rhs) {
+    if (this != &rhs) {
+      destroy();
+      type_id_ = rhs.type_id_;
+      flags_ = rhs.flags_;
+      std::memcpy(padding_, rhs.padding_, sizeof(padding_));
+      copy_data_from(rhs);
+    }
+    return *this;
+  }
+
+  // Move assignment
+  Value& operator=(Value&& rhs) noexcept {
+    if (this != &rhs) {
+      destroy();
+      type_id_ = rhs.type_id_;
+      flags_ = rhs.flags_;
+      std::memcpy(padding_, rhs.padding_, sizeof(padding_));
+      std::memcpy(data_, rhs.data_, sizeof(data_));
+
+      std::memset(rhs.data_, 0, sizeof(rhs.data_));
+      rhs.type_id_ = TYPE_ID_NULL;
+      rhs.flags_ = 0;
+    }
+    return *this;
+  }
+
+  //
+  // Constructor from concrete type T (copy)
+  //
+  template <typename T>
+  Value(const T& value) : type_id_(TypeTraits<T>::type_id()), flags_(0) {
+    // Prohibit C-style arrays at compile time - must use std::vector or TypedArray
+    static_assert(!std::is_array<T>::value,
+      "C-style arrays are not allowed. Use std::vector<T> or TypedArray<T> instead.");
+
+    std::memset(padding_, 0, sizeof(padding_));
+
+    // Determine if this is an array type
+    if (TypeTraits<T>::is_array()) {
+      flags_ |= kArrayBitFlag;
+    }
+
+    construct_value(value);
+  }
+
+  // Constructor from concrete type T (move)
+  //
+  template <typename T>
+  Value(T&& value) : type_id_(TypeTraits<typename std::remove_reference<T>::type>::type_id()), flags_(0) {
+    // Prohibit C-style arrays at compile time - must use std::vector or TypedArray
+    static_assert(!std::is_array<typename std::remove_reference<T>::type>::value,
+      "C-style arrays are not allowed. Use std::vector<T> or TypedArray<T> instead.");
+
+    using DecayedType = typename std::remove_reference<T>::type;
+    std::memset(padding_, 0, sizeof(padding_));
+
+    // Determine if this is an array type
+    if (TypeTraits<DecayedType>::is_array()) {
+      flags_ |= kArrayBitFlag;
+    }
+
+    construct_value(std::forward<T>(value));
+  }
+
+  //
+  // Validation and debugging
+  //
+#ifdef TUSDZ_NEW_VALUE_TYPE_DEBUG
+  void ValidateStructure() const {
+    // Validate that the structure is 32 bytes
+    static_assert(sizeof(Value) == 32, "Value must be exactly 32 bytes");
+
+    // Check if type_id matches flags_ indicators
+    if (type_id_ == TYPE_ID_NULL && flags_ != 0) {
+      std::cerr << "WARNING: type_id is NULL but flags is non-zero: " << (int)flags_ << std::endl;
+    }
+  }
+#else
+  void ValidateStructure() const {}
+#endif
+
+  //
+  // Type queries
+  //
+  uint32_t type_id() const noexcept { return type_id_; }
+
+  uint32_t underlying_type_id() const noexcept {
+    if (is_array()) {
+      return type_id_ & (~TYPE_ID_STL_ARRAY_BIT);
+    }
+    // TODO: Handle role types - map to underlying type
+    return type_id_;
+  }
+
+  const std::string type_name() const {
+    return GetTypeName(type_id_);
+  }
+
+  const std::string underlying_type_name() const {
+    return GetUnderlyingTypeName(type_id_);
+  }
+
+  bool is_array() const noexcept {
+    return (flags_ & kArrayBitFlag) != 0;
+  }
+
+  bool is_empty() const noexcept {
+    return type_id_ == TYPE_ID_NULL;
+  }
+
+  bool is_none() const noexcept {
+    return type_id_ == TYPE_ID_VALUEBLOCK;
+  }
+
+  // Get array class (only valid when is_array() == true)
+  ArrayClass get_array_class() const noexcept {
+    if (!is_array()) {
+      return ArrayClass::Invalid;
+    }
+    uint8_t class_bits = (flags_ & kArrayClassMask) >> kArrayClassShift;
+    return static_cast<ArrayClass>(class_bits);
+  }
+
+  //
+  // Type-safe access with strict_cast option
+  // IMPORTANT: Prevents unsafe casts between std::vector and TypedArray
+  //
+  template <typename T>
+  const T* as(bool strict_cast = false) const {
+    uint32_t target_type_id = TypeTraits<T>::type_id();
+
+    if (strict_cast) {
+      // Exact type match required
+      if (type_id_ != target_type_id) {
+        return nullptr;
+      }
+    } else {
+      // Allow role type conversions
+      if (!is_compatible_type<T>()) {
+        return nullptr;
+      }
+    }
+
+    // Check array class compatibility
+    if (!check_array_class_compatible<T>()) {
+      return nullptr;
+    }
+
+    // Access the value
+    return get_value_ptr<T>();
+  }
+
+  template <typename T>
+  T* as(bool strict_cast = false) {
+    return const_cast<T*>(const_cast<const Value*>(this)->as<T>(strict_cast));
+  }
+
+  //
+  // Get value as optional (type-safe)
+  //
+  template <typename T>
+  nonstd::optional<T> get_value() const {
+    const T* ptr = as<T>(/*strict_cast=*/false);
+    if (ptr) {
+      return *ptr;
+    }
+    return nonstd::nullopt;
+  }
+
+  //
+  // Array size (for array types only)
+  //
+  size_t array_size() const;
+
+  //
+  // Memory usage estimation
+  //
+  size_t estimate_memory_usage() const;
+
+  //
+  // Get TypedArrayView to the underlying array data
+  // Supports both std::vector and TypedArray
+  //
+  template <typename T>
+  TypedArrayView<const T> as_view(bool strict_cast = false) const {
+    // Check if this is an array type
+    if (!is_array()) {
+      return TypedArrayView<const T>();
+    }
+
+    // Check type compatibility
+    uint32_t underlying_type_id = this->underlying_type_id();
+    uint32_t target_type_id = TypeTraits<T>::underlying_type_id();
+
+    if (strict_cast) {
+      if (underlying_type_id != target_type_id) {
+        return TypedArrayView<const T>();
+      }
+    } else {
+      // Allow compatible types (same underlying type)
+      if (underlying_type_id != target_type_id) {
+        return TypedArrayView<const T>();
+      }
+    }
+
+    // Get array class and create appropriate view
+    ArrayClass aclass = get_array_class();
+
+    if (aclass == ArrayClass::StdVector) {
+      // Try to get as std::vector
+      const std::vector<T>* vec = as<std::vector<T>>(strict_cast);
+      if (vec) {
+        return TypedArrayView<const T>(vec->data(), vec->size());
+      }
+    } else if (aclass == ArrayClass::TypedArray) {
+      // Try to get as TypedArray
+      const TypedArray<T>* arr = as<TypedArray<T>>(strict_cast);
+      if (arr) {
+        return TypedArrayView<const T>(arr->data(), arr->size());
+      }
+    }
+
+    return TypedArrayView<const T>();
+  }
+
+  //
+  // Non-const version of as_view() for mutable access
+  //
+  template <typename T>
+  TypedArrayView<T> as_view(bool strict_cast = false) {
+    // Check if this is an array type
+    if (!is_array()) {
+      return TypedArrayView<T>();
+    }
+
+    // Check type compatibility
+    uint32_t underlying_type_id = this->underlying_type_id();
+    uint32_t target_type_id = TypeTraits<T>::underlying_type_id();
+
+    if (strict_cast) {
+      if (underlying_type_id != target_type_id) {
+        return TypedArrayView<T>();
+      }
+    } else {
+      // Allow compatible types (same underlying type)
+      if (underlying_type_id != target_type_id) {
+        return TypedArrayView<T>();
+      }
+    }
+
+    // Get array class and create appropriate view
+    ArrayClass aclass = get_array_class();
+
+    if (aclass == ArrayClass::StdVector) {
+      // Try to get as std::vector
+      std::vector<T>* vec = as<std::vector<T>>(strict_cast);
+      if (vec) {
+        return TypedArrayView<T>(vec->data(), vec->size());
+      }
+    } else if (aclass == ArrayClass::TypedArray) {
+      // Try to get as TypedArray
+      TypedArray<T>* arr = as<TypedArray<T>>(strict_cast);
+      if (arr) {
+        return TypedArrayView<T>(arr->data(), arr->size());
+      }
+    }
+
+    return TypedArrayView<T>();
+  }
+
+ private:
+  uint8_t data_[24];    // 24 bytes: pointer or inlined data
+  uint32_t type_id_;    // 4 bytes: TYPE_ID_*
+  uint8_t flags_;       // 1 byte: array bit + reserved bits
+  uint8_t padding_[3];  // 3 bytes: reserved for future use
+
+  //
+  // Check if type T is compatible with stored type (considering role types)
+  //
+  template <typename T>
+  bool is_compatible_type() const {
+    uint32_t target_type_id = TypeTraits<T>::type_id();
+
+    if (type_id_ == target_type_id) {
+      return true;
+    }
+
+    // Handle array types
+    if (TypeTraits<T>::is_array() && is_array()) {
+      uint32_t target_underlying = TypeTraits<T>::underlying_type_id() & (~TYPE_ID_STL_ARRAY_BIT);
+      uint32_t stored_underlying = underlying_type_id();
+      return target_underlying == stored_underlying;
+    }
+
+    // Handle scalar role types
+    if (!TypeTraits<T>::is_array() && !is_array()) {
+      return TypeTraits<T>::underlying_type_id() == underlying_type_id();
+    }
+
+    return false;
+  }
+
+  //
+  // Check if array class is compatible with type T
+  // Prevents unsafe casts between std::vector and TypedArray
+  //
+  template <typename T>
+  bool check_array_class_compatible() const {
+    // If not an array, no need to check
+    if (!is_array()) {
+      return true;
+    }
+
+    ArrayClass stored_class = get_array_class();
+
+    // Determine requested array class from type T
+    if (is_std_vector<T>::value) {
+      return stored_class == ArrayClass::StdVector;
+    } else if (is_typed_array<T>::value) {
+      return stored_class == ArrayClass::TypedArray;
+    }
+
+    // Non-array type requested for array value
+    return false;
+  }
+
+  //
+  // Type traits to detect std::vector and TypedArray
+  //
+  template <typename T>
+  struct is_std_vector : std::false_type {};
+
+  template <typename T>
+  struct is_std_vector<std::vector<T>> : std::true_type {};
+
+  template <typename T>
+  struct is_typed_array : std::false_type {};
+
+  template <typename T>
+  struct is_typed_array<TypedArray<T>> : std::true_type {};
+
+  template <typename T>
+  struct is_chunked_typed_array : std::false_type {};
+
+  template <typename T>
+  struct is_chunked_typed_array<ChunkedTypedArray<T>> : std::true_type {};
+
+  //
+  // Get pointer to stored value
+  //
+  template <typename T>
+  const T* get_value_ptr() const {
+    // Check actual storage location using the heap-allocated flag
+    // This MUST match what was done in construct_value()
+    if (flags_ & kHeapAllocatedFlag) {
+      // Value is heap-allocated, data_ stores pointer to heap
+      void* ptr;
+      std::memcpy(&ptr, data_, sizeof(void*));
+      return reinterpret_cast<const T*>(ptr);
+    } else {
+      // Value is inlined in data_
+      return reinterpret_cast<const T*>(data_);
+    }
+  }
+
+  //
+  // Check if type can be inlined
+  //
+  template <typename T>
+  static constexpr bool is_trivially_copyable() {
+    return std::is_trivially_copyable<T>::value;
+  }
+
+  //
+  // Construct value (inline or heap-allocate)
+  //
+  template <typename T>
+  void construct_value(const T& value) {
+    // CRITICAL: Clear data_ first to prevent garbage from being interpreted as heap pointer
+    std::memset(data_, 0, sizeof(data_));
+
+    if (sizeof(T) <= kInlineDataSize && is_trivially_copyable<T>()) {
+      // Inline storage - heap flag should NOT be set
+      std::memcpy(data_, &value, sizeof(T));
+      // Ensure heap flag is clear
+      flags_ &= ~kHeapAllocatedFlag;
+    } else {
+      // Heap allocate
+      flags_ |= kHeapAllocatedFlag;
+
+      // Set array class if this is an array type
+      set_array_class_from_type<T>();
+
+      T* ptr = new T(value);
+      void* vptr = reinterpret_cast<void*>(ptr);
+      std::memcpy(data_, &vptr, sizeof(void*));
+    }
+  }
+
+  template <typename T>
+  void construct_value(T&& value) {
+    using DecayedType = typename std::remove_reference<T>::type;
+
+    // CRITICAL: Clear data_ first to prevent garbage from being interpreted as heap pointer
+    std::memset(data_, 0, sizeof(data_));
+
+    if (sizeof(DecayedType) <= kInlineDataSize && is_trivially_copyable<DecayedType>()) {
+      // Inline storage - heap flag should NOT be set
+      std::memcpy(data_, &value, sizeof(DecayedType));
+      // Ensure heap flag is clear
+      flags_ &= ~kHeapAllocatedFlag;
+    } else {
+      // Heap allocate
+      flags_ |= kHeapAllocatedFlag;
+
+      // Set array class if this is an array type
+      set_array_class_from_type<DecayedType>();
+
+      DecayedType* ptr = new DecayedType(std::forward<T>(value));
+      void* vptr = reinterpret_cast<void*>(ptr);
+      std::memcpy(data_, &vptr, sizeof(void*));
+    }
+  }
+
+  //
+  // Set array class bits based on type T
+  //
+  template <typename T>
+  void set_array_class_from_type() {
+    if (!TypeTraits<T>::is_array()) {
+      return; // Not an array, nothing to set
+    }
+
+    ArrayClass aclass = ArrayClass::Invalid;
+
+    if (is_std_vector<T>::value) {
+      aclass = ArrayClass::StdVector;
+    } else if (is_typed_array<T>::value) {
+      aclass = ArrayClass::TypedArray;
+    } else if (is_chunked_typed_array<T>::value) {
+      // Treat ChunkedTypedArray same as TypedArray for now
+      aclass = ArrayClass::TypedArray;
+    }
+
+    // Clear existing array class bits and set new ones
+    flags_ &= ~kArrayClassMask;
+    flags_ |= (static_cast<uint8_t>(aclass) << kArrayClassShift);
+  }
+
+  //
+  // Copy data from another Value
+  //
+  void copy_data_from(const Value& rhs);
+
+  //
+  // Destroy heap-allocated data
+  //
+  void destroy();
+};
+
+static_assert(sizeof(Value) == 32, "Value must be exactly 32 bytes");
+
+#elif defined(TUSDZ_NEW_32BYTE_VALUE)
+//
+// New handler-based 32-byte Value implementation
+// This is the recommended safe implementation
+//
+#include "value-types-handler.hh"
+
+// Use Value32 as Value
+using Value = Value32;
+
+#endif // TUSDZ_NEW_VALUE_TYPE / TUSDZ_NEW_32BYTE_VALUE
 
 ///
 /// ValueView - A compact view to typed data
@@ -2411,7 +2934,7 @@ class ValueView {
     : ptr_(&value), type_id_(value.type_id()), flags_(FLAG_NONE) {
     std::memset(padding_, 0, sizeof(padding_));
     // Detect storage type based on type_id
-    if (type_id_ & TYPE_ID_1D_ARRAY_BIT) {
+    if (type_id_ & TYPE_ID_STL_ARRAY_BIT) {
       // For now, we'll mark as vector by default
       // In practice, you'd check the actual storage type
       flags_ = FLAG_IS_VECTOR;
@@ -2424,7 +2947,7 @@ class ValueView {
       type_id_(value ? value->type_id() : TYPE_ID_INVALID),
       flags_(FLAG_NONE) {
     std::memset(padding_, 0, sizeof(padding_));
-    if (value && (type_id_ & TYPE_ID_1D_ARRAY_BIT)) {
+    if (value && (type_id_ & TYPE_ID_STL_ARRAY_BIT)) {
       flags_ = FLAG_IS_VECTOR;
     }
   }
@@ -2488,8 +3011,8 @@ class ValueView {
   }
 
   uint32_t underlying_type_id() const noexcept {
-    if (type_id_ & TYPE_ID_1D_ARRAY_BIT) {
-      return type_id_ & (~TYPE_ID_1D_ARRAY_BIT);
+    if (type_id_ & TYPE_ID_STL_ARRAY_BIT) {
+      return type_id_ & (~TYPE_ID_STL_ARRAY_BIT);
     }
     // Map role types to their underlying types
     switch (type_id_) {
@@ -2582,7 +3105,7 @@ class ValueView {
     if (!ptr_) return TypedArrayView<const T>();
 
     // Check if this is an array type
-    if (!(type_id_ & TYPE_ID_1D_ARRAY_BIT)) {
+    if (!(type_id_ & TYPE_ID_STL_ARRAY_BIT)) {
       return TypedArrayView<const T>();
     }
 
@@ -2715,7 +3238,7 @@ struct LerpTraits<std::vector<ty>> { \
   static constexpr bool supported() { \
     return true; \
   } \
-};
+}; 
 
 DEFINE_LERP_TRAIT(value::half)
 DEFINE_LERP_TRAIT(value::half2)
@@ -2924,7 +3447,7 @@ TYPECAST_BASETYPE(TYPE_ID_UINT32, uint32_t);
 TYPECAST_BASETYPE(TYPE_ID_FLOAT, float);
 TYPECAST_BASETYPE(TYPE_ID_DOUBLE, double);
 
-TYPECAST_BASETYPE(TYPE_ID_FLOAT | TYPE_ID_1D_ARRAY_BIT, std::vector<float>);
+TYPECAST_BASETYPE(TYPE_ID_FLOAT | TYPE_ID_STL_ARRAY_BIT, std::vector<float>);
 
 // TODO(syoyo): Implement more types...
 
