@@ -11,6 +11,8 @@ import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+import { MaterialXLoader } from 'three/examples/jsm/loaders/MaterialXLoader.js';
+import { convertOpenPBRToMaterialXML } from './convert-openpbr-to-mtlx.js';
 
 // Embedded default OpenPBR scene (simple sphere with material)
 const EMBEDDED_USDA_SCENE = `#usda 1.0
@@ -107,6 +109,8 @@ let currentSceneMetadata = null; // Store the current USD scene metadata
 let composer = null; // Effect composer for post-processing
 let falseColorPass = null; // False color shader pass
 let showingFalseColor = false; // Track if false color is being shown
+let useNodeMaterial = false; // Toggle between MeshPhysicalMaterial and NodeMaterial (via MaterialXLoader)
+let materialXLoader = null; // MaterialXLoader instance
 let currentAOVMode = AOV_MODES.NONE; // Current AOV visualization mode
 let aovOriginalMaterials = new Map(); // Store original materials when showing AOVs
 
@@ -2214,6 +2218,25 @@ function setupGUI() {
 
     debugFolder.close();
 
+    // Material Rendering controls
+    const materialFolder = gui.addFolder('Material Rendering');
+    const materialParams = {
+        useNodeMaterial: useNodeMaterial,
+        reloadMaterials: async function() {
+            console.log("Reloading materials with new settings...");
+            await loadMaterials();
+        }
+    };
+
+    materialFolder.add(materialParams, 'useNodeMaterial').name('Use NodeMaterial (MaterialX)').onChange(async (value) => {
+        useNodeMaterial = value;
+        console.log(`Material type changed to: ${value ? 'NodeMaterial (via MaterialXLoader)' : 'MeshPhysicalMaterial'}`);
+        await loadMaterials();
+    });
+
+    materialFolder.add(materialParams, 'reloadMaterials').name('🔄 Reload Materials');
+    materialFolder.open();
+
     // AOV (Arbitrary Output Variable) controls
     const aovFolder = gui.addFolder('AOV Visualization');
     const aovParams = {
@@ -2504,6 +2527,45 @@ async function loadMaterials() {
 
 // Create Three.js material from OpenPBR data
 async function createOpenPBRMaterial(materialData) {
+
+    // === NodeMaterial Support via MaterialXLoader ===
+    if (useNodeMaterial && materialData.hasOpenPBR) {
+        console.log("=== Creating NodeMaterial via MaterialXLoader ===");
+        try {
+            const mtlxXML = convertOpenPBRToMaterialXML(materialData, materialData.name || 'Material');
+            console.log("Generated MaterialX XML:", mtlxXML);
+
+            if (!materialXLoader) {
+                materialXLoader = new MaterialXLoader();
+            }
+
+            const mtlxMaterials = await new Promise((resolve, reject) => {
+                materialXLoader.parse(mtlxXML, '', (materials) => {
+                    resolve(materials);
+                }, (error) => {
+                    console.error("MaterialXLoader error:", error);
+                    reject(error);
+                });
+            });
+
+            if (mtlxMaterials && Object.keys(mtlxMaterials).length > 0) {
+                const nodeMaterial = Object.values(mtlxMaterials)[0];
+                console.log("Created NodeMaterial:", nodeMaterial);
+                nodeMaterial.envMapIntensity = exposureValue;
+                nodeMaterial.userData.materialData = materialData;
+                nodeMaterial.userData.isNodeMaterial = true;
+                nodeMaterial.name = materialData.name || 'NodeMaterial';
+                return nodeMaterial;
+            } else {
+                console.warn("MaterialXLoader returned no materials, falling back to MeshPhysicalMaterial");
+            }
+        } catch (error) {
+            console.error("Failed to create NodeMaterial:", error);
+            console.warn("Falling back to MeshPhysicalMaterial");
+        }
+    }
+    // === End NodeMaterial Support ===
+
     const material = new THREE.MeshPhysicalMaterial();
 
     // Set initial environment map intensity based on current exposure
