@@ -1569,6 +1569,42 @@ function applyTextureToMaterial(material, paramName, texture, isEnabled = true) 
     material.needsUpdate = true;
 }
 
+// Map OpenPBR parameter names to Three.js texture map names
+function getMapNameForParameter(groupName, paramName) {
+    const paramKey = `${groupName}_${paramName}`;
+    const mapping = {
+        'base_color': 'map',
+        'specular_roughness': 'roughnessMap',
+        'geometry_normal': 'normalMap',
+        'coat_normal': 'clearcoatNormalMap',
+        'emission_color': 'emissiveMap',
+        'base_metalness': 'metalnessMap'
+    };
+    return mapping[paramKey] || null;
+}
+
+// Get texture info for a material parameter (from userData.textures)
+function getTextureInfoForParameter(material, groupName, paramName) {
+    if (!material || !material.threeMaterial || !material.threeMaterial.userData.textures) {
+        return null;
+    }
+
+    const mapName = getMapNameForParameter(groupName, paramName);
+    if (!mapName) {
+        return null;
+    }
+
+    const texInfo = material.threeMaterial.userData.textures[mapName];
+    if (texInfo) {
+        return {
+            ...texInfo,
+            mapName: mapName
+        };
+    }
+
+    return null;
+}
+
 // Get texture info for a material parameter
 function getTextureInfo(materialData, category, paramName) {
     if (!materialData || !materialData.hasOpenPBR || !materialData.openPBR) {
@@ -3105,8 +3141,8 @@ function extractOpenPBRParams(materialData) {
                 // It's wrapped - return the actual value
                 return val.value;
             } else if (val.textureId !== undefined && val.value === undefined) {
-                // It's a texture-only reference, skip for now (GUI doesn't handle texture editing yet)
-                return null;
+                // It's a texture-only reference, preserve the object so GUI can show it with texture info
+                return val;
             }
         }
         // It's already a plain value
@@ -3915,10 +3951,13 @@ function createParameterControls(material) {
                 let rawValue = params[groupName][paramName];
                 if (rawValue === undefined) return;
 
+                // Check if this parameter has a texture
+                const hasTexture = rawValue && typeof rawValue === 'object' && rawValue.textureId !== undefined;
+
                 // Extract actual value if it's wrapped in an object with {name, type, value} structure
                 const value = (rawValue && typeof rawValue === 'object' && rawValue.value !== undefined)
                     ? rawValue.value
-                    : rawValue;
+                    : (hasTexture ? [1, 1, 1] : rawValue); // Default color if texture-only
 
                 if (paramDef.type === 'color') {
                     // Color picker
@@ -3927,7 +3966,7 @@ function createParameterControls(material) {
                         //color: [colorValue[0] * 255, colorValue[1] * 255, colorValue[2] * 255]
                         color: [colorValue[0], colorValue[1], colorValue[2]]
                     };
-                    groupFolder.addColor(colorObj, 'color').name(paramName).onChange(val => {
+                    const controller = groupFolder.addColor(colorObj, 'color').name(paramName).onChange(val => {
                         const r = val[0]; // / 255;
                         const g = val[1]; // / 255;
                         const b = val[2]; // / 255;
@@ -3935,6 +3974,21 @@ function createParameterControls(material) {
                         params[groupName][paramName] = [r, g, b];
                         updateMaterialFromParams(threeMat, params);
                     });
+
+                    // Add texture view button if this parameter has a texture
+                    if (hasTexture) {
+                        const textureInfo = getTextureInfoForParameter(material, groupName, paramName);
+                        if (textureInfo && textureInfo.texture) {
+                            const viewBtn = document.createElement('button');
+                            viewBtn.textContent = '🖼️';
+                            viewBtn.title = 'View texture';
+                            viewBtn.style.cssText = 'margin-left: 5px; padding: 2px 8px; background: #2196F3; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 14px;';
+                            viewBtn.onclick = () => {
+                                enlargeTexture(textureInfo.texture, formatTextureName(textureInfo.mapName || paramName));
+                            };
+                            controller.domElement.parentElement.appendChild(viewBtn);
+                        }
+                    }
                 } else if (paramDef.type === 'boolean') {
                     // Checkbox
                     const boolObj = { [paramName]: !!value };
@@ -3988,7 +4042,10 @@ function updateMaterialFromParams(material, params) {
     if (params.base) {
         if (params.base.color) {
             console.log("[base_color] ", params.base.color);
-            const [r, g, b] = srgbToDisplayP3(...params.base.color);
+            // Handle both array values and texture objects
+            const colorValue = Array.isArray(params.base.color) ? params.base.color :
+                              (params.base.color.value || [1, 1, 1]);
+            const [r, g, b] = srgbToDisplayP3(...colorValue);
             material.color.setRGB(r, g, b);
         }
         if (params.base.metalness !== undefined) {
