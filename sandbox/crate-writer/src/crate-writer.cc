@@ -2706,10 +2706,100 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
         return -1;
       }
 
-      // Pack the value to get ValueRep
-      crate::ValueRep value_rep = PackValue(crate_value, err);
-      if (err && !err->empty()) {
-        return -1;
+      // DEDUPLICATION: Check if this is a numeric array that can be deduplicated
+      crate::ValueRep value_rep;
+      bool dedup_attempted = false;
+
+      if (options_.enable_deduplication) {
+        // Check for numeric array types
+        bool is_numeric_array = false;
+        std::vector<char> value_bytes;
+
+        if (auto* float_arr = crate_value.as<std::vector<float>>()) {
+          is_numeric_array = true;
+          size_t byte_size = float_arr->size() * sizeof(float);
+          value_bytes.resize(byte_size);
+          std::memcpy(value_bytes.data(), float_arr->data(), byte_size);
+        } else if (auto* double_arr = crate_value.as<std::vector<double>>()) {
+          is_numeric_array = true;
+          size_t byte_size = double_arr->size() * sizeof(double);
+          value_bytes.resize(byte_size);
+          std::memcpy(value_bytes.data(), double_arr->data(), byte_size);
+        } else if (auto* int_arr = crate_value.as<std::vector<int32_t>>()) {
+          is_numeric_array = true;
+          size_t byte_size = int_arr->size() * sizeof(int32_t);
+          value_bytes.resize(byte_size);
+          std::memcpy(value_bytes.data(), int_arr->data(), byte_size);
+        } else if (auto* uint_arr = crate_value.as<std::vector<uint32_t>>()) {
+          is_numeric_array = true;
+          size_t byte_size = uint_arr->size() * sizeof(uint32_t);
+          value_bytes.resize(byte_size);
+          std::memcpy(value_bytes.data(), uint_arr->data(), byte_size);
+        } else if (auto* int64_arr = crate_value.as<std::vector<int64_t>>()) {
+          is_numeric_array = true;
+          size_t byte_size = int64_arr->size() * sizeof(int64_t);
+          value_bytes.resize(byte_size);
+          std::memcpy(value_bytes.data(), int64_arr->data(), byte_size);
+        } else if (auto* uint64_arr = crate_value.as<std::vector<uint64_t>>()) {
+          is_numeric_array = true;
+          size_t byte_size = uint64_arr->size() * sizeof(uint64_t);
+          value_bytes.resize(byte_size);
+          std::memcpy(value_bytes.data(), uint64_arr->data(), byte_size);
+        }
+
+        if (is_numeric_array && !value_bytes.empty()) {
+          // Check dedup cache
+          auto it = array_dedup_map_.find(value_bytes);
+          if (it != array_dedup_map_.end()) {
+            // Found duplicate! Reuse the offset without writing data
+            int64_t cached_offset = it->second;
+
+            // Create ValueRep manually without calling PackValue (which would write data)
+            // Arrays use element type + IsArray flag
+            crate::CrateDataTypeId type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_INVALID;
+            if (crate_value.as<std::vector<float>>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT;
+            } else if (crate_value.as<std::vector<double>>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE;
+            } else if (crate_value.as<std::vector<int32_t>>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_INT;
+            } else if (crate_value.as<std::vector<uint32_t>>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT;
+            } else if (crate_value.as<std::vector<int64_t>>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64;
+            } else if (crate_value.as<std::vector<uint64_t>>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64;
+            }
+
+            value_rep.SetType(static_cast<int32_t>(type_id));
+            value_rep.SetIsArray();  // Mark as array
+            value_rep.SetPayload(static_cast<uint64_t>(cached_offset));
+            dedup_attempted = true;
+
+            std::cerr << "[TimeSamples Dedup] Reused array at offset " << cached_offset
+                      << " for sample " << i << " (" << value_bytes.size() << " bytes saved)\n";
+          } else {
+            // New array - pack normally and cache the offset
+            value_rep = PackValue(crate_value, err);
+            if (err && !err->empty()) {
+              return -1;
+            }
+            int64_t new_offset = static_cast<int64_t>(value_rep.GetPayload());
+            array_dedup_map_[value_bytes] = new_offset;
+            dedup_attempted = true;
+
+            std::cerr << "[TimeSamples Dedup] Cached new array at offset " << new_offset
+                      << " for sample " << i << " (" << value_bytes.size() << " bytes)\n";
+          }
+        }
+      }
+
+      // If deduplication wasn't attempted, pack normally
+      if (!dedup_attempted) {
+        value_rep = PackValue(crate_value, err);
+        if (err && !err->empty()) {
+          return -1;
+        }
       }
 
       // Write the ValueRep
