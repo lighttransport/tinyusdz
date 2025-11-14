@@ -17,6 +17,7 @@
 #include "unit-timesamples.h"
 #include "unit-pprint.h"
 #include "unit-task-queue.h"
+#include "unit-dedup.h"
 
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
 #include "unit-pxr-compat-api.h"
@@ -46,6 +47,10 @@ TEST_LIST = {
   { "task_queue_full_test", task_queue_full_test },
   { "task_queue_multithreaded_test", task_queue_multithreaded_test },
   { "task_queue_clear_test", task_queue_clear_test },
+  { "dedup_float_array_test", dedup_float_array_test },
+  { "dedup_double_array_test", dedup_double_array_test },
+  { "dedup_int_array_test", dedup_int_array_test },
+  { "dedup_unique_arrays_test", dedup_unique_arrays_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif
