@@ -51,6 +51,8 @@ TEST_LIST = {
   { "dedup_double_array_test", dedup_double_array_test },
   { "dedup_int_array_test", dedup_int_array_test },
   { "dedup_unique_arrays_test", dedup_unique_arrays_test },
+  { "dedup_string_array_test", dedup_string_array_test },
+  { "dedup_matrix4d_test", dedup_matrix4d_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif
