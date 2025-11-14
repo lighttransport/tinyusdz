@@ -2706,48 +2706,170 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
         return -1;
       }
 
-      // DEDUPLICATION: Check if this is a numeric array that can be deduplicated
+      // DEDUPLICATION: Check if this value can be deduplicated
       crate::ValueRep value_rep;
       bool dedup_attempted = false;
 
       if (options_.enable_deduplication) {
-        // Check for numeric array types
-        bool is_numeric_array = false;
+        bool is_dedup_candidate = false;
         std::vector<char> value_bytes;
 
+        // ===== NUMERIC ARRAY TYPES =====
         if (auto* float_arr = crate_value.as<std::vector<float>>()) {
-          is_numeric_array = true;
+          is_dedup_candidate = true;
           size_t byte_size = float_arr->size() * sizeof(float);
           value_bytes.resize(byte_size);
           std::memcpy(value_bytes.data(), float_arr->data(), byte_size);
         } else if (auto* double_arr = crate_value.as<std::vector<double>>()) {
-          is_numeric_array = true;
+          is_dedup_candidate = true;
           size_t byte_size = double_arr->size() * sizeof(double);
           value_bytes.resize(byte_size);
           std::memcpy(value_bytes.data(), double_arr->data(), byte_size);
         } else if (auto* int_arr = crate_value.as<std::vector<int32_t>>()) {
-          is_numeric_array = true;
+          is_dedup_candidate = true;
           size_t byte_size = int_arr->size() * sizeof(int32_t);
           value_bytes.resize(byte_size);
           std::memcpy(value_bytes.data(), int_arr->data(), byte_size);
         } else if (auto* uint_arr = crate_value.as<std::vector<uint32_t>>()) {
-          is_numeric_array = true;
+          is_dedup_candidate = true;
           size_t byte_size = uint_arr->size() * sizeof(uint32_t);
           value_bytes.resize(byte_size);
           std::memcpy(value_bytes.data(), uint_arr->data(), byte_size);
         } else if (auto* int64_arr = crate_value.as<std::vector<int64_t>>()) {
-          is_numeric_array = true;
+          is_dedup_candidate = true;
           size_t byte_size = int64_arr->size() * sizeof(int64_t);
           value_bytes.resize(byte_size);
           std::memcpy(value_bytes.data(), int64_arr->data(), byte_size);
         } else if (auto* uint64_arr = crate_value.as<std::vector<uint64_t>>()) {
-          is_numeric_array = true;
+          is_dedup_candidate = true;
           size_t byte_size = uint64_arr->size() * sizeof(uint64_t);
           value_bytes.resize(byte_size);
           std::memcpy(value_bytes.data(), uint64_arr->data(), byte_size);
         }
+        // ===== STRING/TOKEN ARRAY TYPES =====
+        else if (auto* string_arr = crate_value.as<std::vector<std::string>>()) {
+          is_dedup_candidate = true;
+          // Serialize strings: [count][len1][str1][len2][str2]...
+          size_t total_size = sizeof(uint64_t); // array count
+          for (const auto& str : *string_arr) {
+            total_size += sizeof(uint64_t) + str.size(); // length + data
+          }
+          value_bytes.reserve(total_size);
 
-        if (is_numeric_array && !value_bytes.empty()) {
+          // Write count
+          uint64_t count = string_arr->size();
+          value_bytes.insert(value_bytes.end(),
+                            reinterpret_cast<const char*>(&count),
+                            reinterpret_cast<const char*>(&count) + sizeof(uint64_t));
+
+          // Write each string with length prefix
+          for (const auto& str : *string_arr) {
+            uint64_t len = str.size();
+            value_bytes.insert(value_bytes.end(),
+                              reinterpret_cast<const char*>(&len),
+                              reinterpret_cast<const char*>(&len) + sizeof(uint64_t));
+            value_bytes.insert(value_bytes.end(), str.begin(), str.end());
+          }
+        } else if (auto* token_arr = crate_value.as<std::vector<value::token>>()) {
+          is_dedup_candidate = true;
+          // Serialize tokens: [count][len1][str1][len2][str2]...
+          size_t total_size = sizeof(uint64_t);
+          for (const auto& tok : *token_arr) {
+            total_size += sizeof(uint64_t) + tok.str().size();
+          }
+          value_bytes.reserve(total_size);
+
+          uint64_t count = token_arr->size();
+          value_bytes.insert(value_bytes.end(),
+                            reinterpret_cast<const char*>(&count),
+                            reinterpret_cast<const char*>(&count) + sizeof(uint64_t));
+
+          for (const auto& tok : *token_arr) {
+            uint64_t len = tok.str().size();
+            value_bytes.insert(value_bytes.end(),
+                              reinterpret_cast<const char*>(&len),
+                              reinterpret_cast<const char*>(&len) + sizeof(uint64_t));
+            value_bytes.insert(value_bytes.end(), tok.str().begin(), tok.str().end());
+          }
+        }
+        // ===== VECTOR ARRAY TYPES =====
+        else if (auto* float3_arr = crate_value.as<std::vector<value::float3>>()) {
+          is_dedup_candidate = true;
+          size_t byte_size = float3_arr->size() * sizeof(value::float3);
+          value_bytes.resize(byte_size);
+          std::memcpy(value_bytes.data(), float3_arr->data(), byte_size);
+        } else if (auto* double3_arr = crate_value.as<std::vector<value::double3>>()) {
+          is_dedup_candidate = true;
+          size_t byte_size = double3_arr->size() * sizeof(value::double3);
+          value_bytes.resize(byte_size);
+          std::memcpy(value_bytes.data(), double3_arr->data(), byte_size);
+        } else if (auto* float2_arr = crate_value.as<std::vector<value::float2>>()) {
+          is_dedup_candidate = true;
+          size_t byte_size = float2_arr->size() * sizeof(value::float2);
+          value_bytes.resize(byte_size);
+          std::memcpy(value_bytes.data(), float2_arr->data(), byte_size);
+        } else if (auto* float4_arr = crate_value.as<std::vector<value::float4>>()) {
+          is_dedup_candidate = true;
+          size_t byte_size = float4_arr->size() * sizeof(value::float4);
+          value_bytes.resize(byte_size);
+          std::memcpy(value_bytes.data(), float4_arr->data(), byte_size);
+        }
+        // ===== SCALAR MATRIX TYPES =====
+        else if (auto* matrix2d = crate_value.as<value::matrix2d>()) {
+          is_dedup_candidate = true;
+          value_bytes.resize(sizeof(value::matrix2d));
+          std::memcpy(value_bytes.data(), matrix2d, sizeof(value::matrix2d));
+        } else if (auto* matrix3d = crate_value.as<value::matrix3d>()) {
+          is_dedup_candidate = true;
+          value_bytes.resize(sizeof(value::matrix3d));
+          std::memcpy(value_bytes.data(), matrix3d, sizeof(value::matrix3d));
+        } else if (auto* matrix4d = crate_value.as<value::matrix4d>()) {
+          is_dedup_candidate = true;
+          value_bytes.resize(sizeof(value::matrix4d));
+          std::memcpy(value_bytes.data(), matrix4d, sizeof(value::matrix4d));
+        }
+        // ===== SCALAR QUATERNION TYPES =====
+        else if (auto* quatf = crate_value.as<value::quatf>()) {
+          is_dedup_candidate = true;
+          value_bytes.resize(sizeof(value::quatf));
+          std::memcpy(value_bytes.data(), quatf, sizeof(value::quatf));
+        } else if (auto* quatd = crate_value.as<value::quatd>()) {
+          is_dedup_candidate = true;
+          value_bytes.resize(sizeof(value::quatd));
+          std::memcpy(value_bytes.data(), quatd, sizeof(value::quatd));
+        } else if (auto* quath = crate_value.as<value::quath>()) {
+          is_dedup_candidate = true;
+          value_bytes.resize(sizeof(value::quath));
+          std::memcpy(value_bytes.data(), quath, sizeof(value::quath));
+        }
+        // ===== SCALAR VECTOR TYPES =====
+        else if (auto* float3 = crate_value.as<value::float3>()) {
+          is_dedup_candidate = true;
+          value_bytes.resize(sizeof(value::float3));
+          std::memcpy(value_bytes.data(), float3, sizeof(value::float3));
+        } else if (auto* double3 = crate_value.as<value::double3>()) {
+          is_dedup_candidate = true;
+          value_bytes.resize(sizeof(value::double3));
+          std::memcpy(value_bytes.data(), double3, sizeof(value::double3));
+        } else if (auto* float2 = crate_value.as<value::float2>()) {
+          is_dedup_candidate = true;
+          value_bytes.resize(sizeof(value::float2));
+          std::memcpy(value_bytes.data(), float2, sizeof(value::float2));
+        } else if (auto* float4 = crate_value.as<value::float4>()) {
+          is_dedup_candidate = true;
+          value_bytes.resize(sizeof(value::float4));
+          std::memcpy(value_bytes.data(), float4, sizeof(value::float4));
+        } else if (auto* double2 = crate_value.as<value::double2>()) {
+          is_dedup_candidate = true;
+          value_bytes.resize(sizeof(value::double2));
+          std::memcpy(value_bytes.data(), double2, sizeof(value::double2));
+        } else if (auto* double4 = crate_value.as<value::double4>()) {
+          is_dedup_candidate = true;
+          value_bytes.resize(sizeof(value::double4));
+          std::memcpy(value_bytes.data(), double4, sizeof(value::double4));
+        }
+
+        if (is_dedup_candidate && !value_bytes.empty()) {
           // Check dedup cache
           auto it = array_dedup_map_.find(value_bytes);
           if (it != array_dedup_map_.end()) {
@@ -2755,31 +2877,106 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
             int64_t cached_offset = it->second;
 
             // Create ValueRep manually without calling PackValue (which would write data)
-            // Arrays use element type + IsArray flag
+            // Determine type ID and whether it's an array
             crate::CrateDataTypeId type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_INVALID;
+            bool is_array = false;
+
+            // Numeric arrays
             if (crate_value.as<std::vector<float>>()) {
               type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_FLOAT;
+              is_array = true;
             } else if (crate_value.as<std::vector<double>>()) {
               type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_DOUBLE;
+              is_array = true;
             } else if (crate_value.as<std::vector<int32_t>>()) {
               type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_INT;
+              is_array = true;
             } else if (crate_value.as<std::vector<uint32_t>>()) {
               type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT;
+              is_array = true;
             } else if (crate_value.as<std::vector<int64_t>>()) {
               type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_INT64;
+              is_array = true;
             } else if (crate_value.as<std::vector<uint64_t>>()) {
               type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_UINT64;
+              is_array = true;
+            }
+            // String/token arrays
+            else if (crate_value.as<std::vector<std::string>>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_STRING;
+              is_array = true;
+            } else if (crate_value.as<std::vector<value::token>>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_TOKEN;
+              is_array = true;
+            }
+            // Vector arrays
+            else if (crate_value.as<std::vector<value::float3>>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3F;
+              is_array = true;
+            } else if (crate_value.as<std::vector<value::double3>>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3D;
+              is_array = true;
+            } else if (crate_value.as<std::vector<value::float2>>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2F;
+              is_array = true;
+            } else if (crate_value.as<std::vector<value::float4>>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4F;
+              is_array = true;
+            }
+            // Scalar matrix types
+            else if (crate_value.as<value::matrix2d>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX2D;
+              is_array = false;
+            } else if (crate_value.as<value::matrix3d>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX3D;
+              is_array = false;
+            } else if (crate_value.as<value::matrix4d>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_MATRIX4D;
+              is_array = false;
+            }
+            // Scalar quaternion types
+            else if (crate_value.as<value::quatf>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATF;
+              is_array = false;
+            } else if (crate_value.as<value::quatd>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATD;
+              is_array = false;
+            } else if (crate_value.as<value::quath>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_QUATH;
+              is_array = false;
+            }
+            // Scalar vector types
+            else if (crate_value.as<value::float3>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3F;
+              is_array = false;
+            } else if (crate_value.as<value::double3>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC3D;
+              is_array = false;
+            } else if (crate_value.as<value::float2>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2F;
+              is_array = false;
+            } else if (crate_value.as<value::float4>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4F;
+              is_array = false;
+            } else if (crate_value.as<value::double2>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2D;
+              is_array = false;
+            } else if (crate_value.as<value::double4>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4D;
+              is_array = false;
             }
 
             value_rep.SetType(static_cast<int32_t>(type_id));
-            value_rep.SetIsArray();  // Mark as array
+            if (is_array) {
+              value_rep.SetIsArray();  // Mark as array
+            }
             value_rep.SetPayload(static_cast<uint64_t>(cached_offset));
             dedup_attempted = true;
 
-            std::cerr << "[TimeSamples Dedup] Reused array at offset " << cached_offset
+            std::cerr << "[TimeSamples Dedup] Reused value at offset " << cached_offset
                       << " for sample " << i << " (" << value_bytes.size() << " bytes saved)\n";
           } else {
-            // New array - pack normally and cache the offset
+            // New value - pack normally and cache the offset
             value_rep = PackValue(crate_value, err);
             if (err && !err->empty()) {
               return -1;
@@ -2788,7 +2985,7 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
             array_dedup_map_[value_bytes] = new_offset;
             dedup_attempted = true;
 
-            std::cerr << "[TimeSamples Dedup] Cached new array at offset " << new_offset
+            std::cerr << "[TimeSamples Dedup] Cached new value at offset " << new_offset
                       << " for sample " << i << " (" << value_bytes.size() << " bytes)\n";
           }
         }
