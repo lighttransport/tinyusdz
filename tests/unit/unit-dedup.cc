@@ -382,3 +382,192 @@ void dedup_unique_arrays_test(void) {
   std::cout << "  File sizes similar (no dedup opportunity): " << (ratio * 100.0) << "%" << std::endl;
   std::cout << "  Test PASSED" << std::endl;
 }
+
+// Test 5: String array deduplication
+void dedup_string_array_test(void) {
+  std::cout << "\n=== Test: String Array Deduplication ===" << std::endl;
+
+  Stage stage;
+  Xform xform;
+  xform.name = "StringArrayTest";
+  xform.spec = Specifier::Def;
+
+  Attribute attr;
+  attr.set_type_name("string[]");
+  attr.set_var(Variability::Varying);
+
+  value::TimeSamples ts;
+  std::vector<std::string> repeated_array = {"hello", "world", "usd"};
+  std::vector<std::string> different_array = {"foo", "bar", "baz"};
+
+  // Pattern: repeated_array appears in 30 frames, different_array in 20 frames
+  for (int frame = 1; frame <= 50; frame++) {
+    double time = static_cast<double>(frame);
+    if (frame <= 30) {
+      ts.add_sample(time, value::Value(repeated_array));
+    } else {
+      ts.add_sample(time, value::Value(different_array));
+    }
+  }
+
+  PrimAttrib prim_attr;
+  prim_attr._var._ts = ts;
+  prim_attr._var._value = value::Value(repeated_array);
+  attr.set_var(prim_attr);
+
+  xform.props()["stringArray"] = Property(attr, false);
+
+  Prim prim(xform);
+  prim.element_name() = "StringArrayTest";
+  prim.spec() = Specifier::Def;
+  stage.root_prims().emplace_back(prim);
+
+  std::string filename_dedup = "/tmp/test_dedup_string_enabled.usdc";
+  std::string filename_no_dedup = "/tmp/test_dedup_string_disabled.usdc";
+
+  // With dedup
+  {
+    std::string err;
+    CrateWriter writer(filename_dedup);
+    CrateWriter::Options opts;
+    opts.enable_deduplication = true;
+    writer.SetOptions(opts);
+
+    TEST_CHECK(writer.Open(&err));
+    TEST_CHECK(writer.ConvertStageToSpecs(stage, &err));
+    TEST_CHECK(writer.Finalize(&err));
+    writer.Close();
+  }
+
+  // Without dedup
+  {
+    std::string err;
+    CrateWriter writer(filename_no_dedup);
+    CrateWriter::Options opts;
+    opts.enable_deduplication = false;
+    writer.SetOptions(opts);
+
+    TEST_CHECK(writer.Open(&err));
+    TEST_CHECK(writer.ConvertStageToSpecs(stage, &err));
+    TEST_CHECK(writer.Finalize(&err));
+    writer.Close();
+  }
+
+  size_t size_dedup = GetFileSize(filename_dedup);
+  size_t size_no_dedup = GetFileSize(filename_no_dedup);
+
+  std::cout << "  Size with dedup:    " << size_dedup << " bytes" << std::endl;
+  std::cout << "  Size without dedup: " << size_no_dedup << " bytes" << std::endl;
+
+  // Should see space savings
+  TEST_CHECK(size_dedup < size_no_dedup);
+
+  if (size_no_dedup > 0) {
+    double savings = 100.0 * (1.0 - static_cast<double>(size_dedup) / static_cast<double>(size_no_dedup));
+    std::cout << "  Space savings: " << savings << "%" << std::endl;
+  }
+
+  std::cout << "  Test PASSED" << std::endl;
+}
+
+// Test 6: Matrix4d scalar deduplication (transform animations)
+void dedup_matrix4d_test(void) {
+  std::cout << "\n=== Test: Matrix4d Scalar Deduplication ===" << std::endl;
+
+  Stage stage;
+  Xform xform;
+  xform.name = "MatrixTest";
+  xform.spec = Specifier::Def;
+
+  Attribute attr;
+  attr.set_type_name("matrix4d");
+  attr.set_var(Variability::Varying);
+
+  value::TimeSamples ts;
+
+  // Create two distinct matrices
+  value::matrix4d identity_matrix;
+  for (int i = 0; i < 4; i++) {
+    for (int j = 0; j < 4; j++) {
+      identity_matrix.m[i][j] = (i == j) ? 1.0 : 0.0;
+    }
+  }
+
+  value::matrix4d transform_matrix;
+  for (int i = 0; i < 4; i++) {
+    for (int j = 0; j < 4; j++) {
+      transform_matrix.m[i][j] = (i == j) ? 2.0 : 0.5;
+    }
+  }
+
+  // Repeat identity matrix for 40 frames, transform for 10 frames
+  for (int frame = 1; frame <= 50; frame++) {
+    double time = static_cast<double>(frame);
+    if (frame <= 40) {
+      ts.add_sample(time, value::Value(identity_matrix));
+    } else {
+      ts.add_sample(time, value::Value(transform_matrix));
+    }
+  }
+
+  PrimAttrib prim_attr;
+  prim_attr._var._ts = ts;
+  prim_attr._var._value = value::Value(identity_matrix);
+  attr.set_var(prim_attr);
+
+  xform.props()["xformMatrix"] = Property(attr, false);
+
+  Prim prim(xform);
+  prim.element_name() = "MatrixTest";
+  prim.spec() = Specifier::Def;
+  stage.root_prims().emplace_back(prim);
+
+  std::string filename_dedup = "/tmp/test_dedup_matrix_enabled.usdc";
+  std::string filename_no_dedup = "/tmp/test_dedup_matrix_disabled.usdc";
+
+  // With dedup
+  {
+    std::string err;
+    CrateWriter writer(filename_dedup);
+    CrateWriter::Options opts;
+    opts.enable_deduplication = true;
+    writer.SetOptions(opts);
+
+    TEST_CHECK(writer.Open(&err));
+    TEST_CHECK(writer.ConvertStageToSpecs(stage, &err));
+    TEST_CHECK(writer.Finalize(&err));
+    writer.Close();
+  }
+
+  // Without dedup
+  {
+    std::string err;
+    CrateWriter writer(filename_no_dedup);
+    CrateWriter::Options opts;
+    opts.enable_deduplication = false;
+    writer.SetOptions(opts);
+
+    TEST_CHECK(writer.Open(&err));
+    TEST_CHECK(writer.ConvertStageToSpecs(stage, &err));
+    TEST_CHECK(writer.Finalize(&err));
+    writer.Close();
+  }
+
+  size_t size_dedup = GetFileSize(filename_dedup);
+  size_t size_no_dedup = GetFileSize(filename_no_dedup);
+
+  std::cout << "  Size with dedup:    " << size_dedup << " bytes" << std::endl;
+  std::cout << "  Size without dedup: " << size_no_dedup << " bytes" << std::endl;
+
+  // Should see significant space savings (matrices are 128 bytes each)
+  TEST_CHECK(size_dedup < size_no_dedup);
+
+  if (size_no_dedup > 0) {
+    double savings = 100.0 * (1.0 - static_cast<double>(size_dedup) / static_cast<double>(size_no_dedup));
+    std::cout << "  Space savings: " << savings << "%" << std::endl;
+    // Expect at least 20% savings
+    TEST_CHECK(savings > 20.0);
+  }
+
+  std::cout << "  Test PASSED" << std::endl;
+}
