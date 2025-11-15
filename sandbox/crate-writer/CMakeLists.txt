@@ -259,6 +259,24 @@ if(BUILD_CRATE_WRITER_TESTS)
   else()
     message(STATUS "OpenUSD not found, skipping OpenUSD integer compression test")
   endif()
+
+  # Test: OpenUSD deduplication verification
+  add_executable(test_openusd_dedup_verify
+    tests/test_openusd_dedup_verify.cc
+  )
+
+  target_link_libraries(test_openusd_dedup_verify
+    crate-writer
+    crate-encoding
+    ${TINYUSDZ_STATIC_LIB}
+  )
+
+  target_include_directories(test_openusd_dedup_verify PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../
+  )
+
 endif()
 
 # ============================================================================
