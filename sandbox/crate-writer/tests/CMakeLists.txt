@@ -106,56 +106,13 @@ target_compile_options(lz4_objs PRIVATE
     -g
 )
 
-# Build crate-writer library objects to link
-add_library(crate_writer_objs OBJECT
-    ${CRATE_WRITER_ROOT}/src/crate-writer.cc
-    ${TINYUSDZ_ROOT}/src/timesamples.cc
-    ${TINYUSDZ_ROOT}/src/prim-types.cc
-    ${TINYUSDZ_ROOT}/src/value-types.cc
-    ${TINYUSDZ_ROOT}/src/lz4-compression.cc
-    ${TINYUSDZ_ROOT}/src/crate-format.cc
-    ${TINYUSDZ_ROOT}/src/linear-algebra.cc
-    ${TINYUSDZ_ROOT}/src/tiny-format.cc
-    ${TINYUSDZ_ROOT}/src/str-util.cc
-    ${TINYUSDZ_ROOT}/src/xform.cc
-    ${TINYUSDZ_ROOT}/src/integerCoding.cpp
-)
-
-target_include_directories(crate_writer_objs PRIVATE
-    ${CRATE_WRITER_ROOT}/include
-    ${PATH_SORT_ROOT}/include
-    ${TINYUSDZ_ROOT}/src
-    ${TINYUSDZ_ROOT}/src/external
-)
-
-target_compile_options(crate_writer_objs PRIVATE
-    -Wall
-    -Wno-deprecated
-    -O2
-    -g
-)
-
-# Build path-sort library objects
-add_library(path_sort_objs OBJECT
-    ${PATH_SORT_ROOT}/src/path_sort.cc
-    ${PATH_SORT_ROOT}/src/tree_encode.cc
-)
-
-target_include_directories(path_sort_objs PRIVATE
-    ${PATH_SORT_ROOT}/include
-)
-
-target_compile_options(path_sort_objs PRIVATE
-    -Wall
-    -O2
-    -g
-)
+# Build crate-writer as a subdirectory
+set(BUILD_CRATE_WRITER_EXAMPLES OFF CACHE BOOL "" FORCE)
+add_subdirectory(${CRATE_WRITER_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/crate-writer-build)
 
 # Link libraries
 target_link_libraries(test_roundtrip
-    crate_writer_objs
-    lz4_objs
-    path_sort_objs
+    crate-writer
     ${USD_LIBS}
     TBB::tbb
     Python3::Python
@@ -168,6 +125,39 @@ target_link_libraries(test_roundtrip
 set_target_properties(test_roundtrip PROPERTIES
     INSTALL_RPATH "${OPENUSD_ROOT}/lib"
     BUILD_WITH_INSTALL_RPATH TRUE
+)
+
+# ==============================================================================
+# OpenUSD Deduplication Verification Test
+# This test creates a USD file with deduplication enabled and is designed to be
+# verified by OpenUSD tools (usdcat, Python API)
+# ==============================================================================
+
+add_executable(test_openusd_dedup_verify
+    test_openusd_dedup_verify.cc
+)
+
+target_compile_options(test_openusd_dedup_verify PRIVATE
+    -Wall
+    -Wno-deprecated
+    -Wno-deprecated-declarations
+    -O2
+    -g
+)
+
+target_include_directories(test_openusd_dedup_verify PRIVATE
+    ${CRATE_WRITER_ROOT}/include
+    ${PATH_SORT_ROOT}/include
+    ${TINYUSDZ_ROOT}/src
+    ${TINYUSDZ_ROOT}/src/external
+)
+
+# Link against crate-writer (no OpenUSD needed for this test)
+target_link_libraries(test_openusd_dedup_verify
+    crate-writer
+    pthread
+    dl
+    m
 )
 
 # Print configuration
