@@ -6,12 +6,12 @@
 #include "acutest.h"
 
 #include "unit-dedup.h"
-#include "../../sandbox/crate-writer/include/crate-writer.hh"
+#include "../../src/crate-writer.hh"
 #include "../../src/tinyusdz.hh"
 #include "../../src/prim-types.hh"
 #include "../../src/value-types.hh"
 #include "../../src/timesamples.hh"
-#include "../../src/io-format.hh"
+#include "../../src/io-util.hh"
 #include <cmath>
 #include <fstream>
 
