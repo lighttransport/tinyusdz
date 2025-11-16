@@ -23,6 +23,7 @@
 #include "value-types.hh"
 #include "tydra/render-data.hh"
 #include "tydra/scene-access.hh"
+#include "tydra/material-serializer.hh"
 
 #include "tydra/mcp-context.hh"
 #include "tydra/mcp-resources.hh"
@@ -1238,114 +1239,138 @@ class TinyUSDZLoaderNative {
 
   int numMeshes() const { return render_scene_.meshes.size(); }
 
+  int numMaterials() const { return render_scene_.materials.size(); }
+
+  // Legacy method for backward compatibility
   emscripten::val getMaterial(int mat_id) const {
-    emscripten::val mat = emscripten::val::object();
+    // Default to JSON format for backward compatibility
+    return getMaterial(mat_id, "json");
+  }
+
+  // New method that supports format parameter (json or xml)
+  emscripten::val getMaterial(int mat_id, const std::string& format) const {
+    emscripten::val result = emscripten::val::object();
 
     if (!loaded_) {
-      return mat;
+      result.set("error", "Scene not loaded");
+      return result;
     }
 
-    if (mat_id >= render_scene_.materials.size()) {
-      return mat;
+    if (mat_id < 0 || mat_id >= render_scene_.materials.size()) {
+      result.set("error", "Invalid material ID");
+      return result;
     }
 
-    const auto &m = render_scene_.materials[mat_id];
+    const auto &material = render_scene_.materials[mat_id];
 
-    // UsdPreviewSurface like shader param
-    // [x] diffuseColor : color3f or texture
-    // [x] emissiveColor : color3f or texture
-    // [x] useSpecularWorkflow : bool
-    // * SpecularWorkflow
-    //   [x] specularColor : color3f or texture
-    // * MetalnessWorkflow
-    //   [x] metallic : float or texture
-    // [x] roughness : float or texture
-    // [x] clearcoat : float or texture
-    // [x] clearcoatRoughness : float or texture
-    // [x] opacity : float or texture
-    // [ ] opacityMode(from 2.6) : transparent or presence
-    // [x] opacityThreshold : float or texture
-    // [x] ior : float or texture
-    // [x] normal : normal3f or texture
-    // [x] displacement : float or texture
-    // [x] occlusion : float or texture
-
-    mat.set("diffuseColor", m.surfaceShader.diffuseColor.value);
-    if (m.surfaceShader.diffuseColor.is_texture()) {
-      mat.set("diffuseColorTextureId", m.surfaceShader.diffuseColor.texture_id);
-    }
-
-    mat.set("emissiveColor", m.surfaceShader.emissiveColor.value);
-    if (m.surfaceShader.emissiveColor.is_texture()) {
-      mat.set("emissiveColorTextureId",
-              m.surfaceShader.emissiveColor.texture_id);
-    }
-    mat.set("useSpecularWorkflow", m.surfaceShader.useSpecularWorkflow);
-    if (m.surfaceShader.useSpecularWorkflow) {
-      mat.set("specularColor", m.surfaceShader.specularColor.value);
-      if (m.surfaceShader.specularColor.is_texture()) {
-        mat.set("specularColorTextureId",
-                m.surfaceShader.specularColor.texture_id);
-      }
-
+    // Determine serialization format
+    tinyusdz::tydra::SerializationFormat serFormat;
+    if (format == "xml") {
+      serFormat = tinyusdz::tydra::SerializationFormat::XML;
+    } else if (format == "json") {
+      serFormat = tinyusdz::tydra::SerializationFormat::JSON;
     } else {
-      mat.set("metallic", m.surfaceShader.metallic.value);
-      if (m.surfaceShader.metallic.is_texture()) {
-        mat.set("metallicTextureId", m.surfaceShader.metallic.texture_id);
+      // For backward compatibility, if format is not recognized,
+      // return the old format
+      if (format.empty() || format == "legacy") {
+        // Return legacy format for backward compatibility
+        emscripten::val mat = emscripten::val::object();
+
+        // Check if material has UsdPreviewSurface
+        if (!material.hasUsdPreviewSurface()) {
+          mat.set("error", "Material does not have UsdPreviewSurface shader");
+          return mat;
+        }
+
+        const auto &m = material;
+        const auto &shader = *m.surfaceShader;
+
+        mat.set("diffuseColor", shader.diffuseColor.value);
+        if (shader.diffuseColor.is_texture()) {
+          mat.set("diffuseColorTextureId", shader.diffuseColor.texture_id);
+        }
+
+        mat.set("emissiveColor", shader.emissiveColor.value);
+        if (shader.emissiveColor.is_texture()) {
+          mat.set("emissiveColorTextureId", shader.emissiveColor.texture_id);
+        }
+
+        mat.set("useSpecularWorkflow", shader.useSpecularWorkflow);
+        if (shader.useSpecularWorkflow) {
+          mat.set("specularColor", shader.specularColor.value);
+          if (shader.specularColor.is_texture()) {
+            mat.set("specularColorTextureId", shader.specularColor.texture_id);
+          }
+        } else {
+          mat.set("metallic", shader.metallic.value);
+          if (shader.metallic.is_texture()) {
+            mat.set("metallicTextureId", shader.metallic.texture_id);
+          }
+        }
+
+        mat.set("roughness", shader.roughness.value);
+        if (shader.roughness.is_texture()) {
+          mat.set("roughnessTextureId", shader.roughness.texture_id);
+        }
+
+        mat.set("clearcoat", shader.clearcoat.value);
+        if (shader.clearcoat.is_texture()) {
+          mat.set("clearcoatTextureId", shader.clearcoat.texture_id);
+        }
+
+        mat.set("clearcoatRoughness", shader.clearcoatRoughness.value);
+        if (shader.clearcoatRoughness.is_texture()) {
+          mat.set("clearcoatRoughnessTextureId", shader.clearcoatRoughness.texture_id);
+        }
+
+        mat.set("opacity", shader.opacity.value);
+        if (shader.opacity.is_texture()) {
+          mat.set("opacityTextureId", shader.opacity.texture_id);
+        }
+
+        mat.set("opacityThreshold", shader.opacityThreshold.value);
+        if (shader.opacityThreshold.is_texture()) {
+          mat.set("opacityThresholdTextureId", shader.opacityThreshold.texture_id);
+        }
+
+        mat.set("ior", shader.ior.value);
+        if (shader.ior.is_texture()) {
+          mat.set("iorTextureId", shader.ior.texture_id);
+        }
+
+        mat.set("normal", shader.normal.value);
+        if (shader.normal.is_texture()) {
+          mat.set("normalTextureId", shader.normal.texture_id);
+        }
+
+        mat.set("displacement", shader.displacement.value);
+        if (shader.displacement.is_texture()) {
+          mat.set("displacementTextureId", shader.displacement.texture_id);
+        }
+
+        mat.set("occlusion", shader.occlusion.value);
+        if (shader.occlusion.is_texture()) {
+          mat.set("occlusionTextureId", shader.occlusion.texture_id);
+        }
+
+        return mat;
       }
+
+      result.set("error", "Unsupported format. Use 'json' or 'xml'");
+      return result;
     }
 
-    mat.set("roughness", m.surfaceShader.roughness.value);
-    if (m.surfaceShader.roughness.is_texture()) {
-      mat.set("roughnessTextureId", m.surfaceShader.roughness.texture_id);
+    // Use the new serialization function with RenderScene for texture info
+    auto serialized = tinyusdz::tydra::serializeMaterial(material, serFormat, &render_scene_);
+
+    if (serialized.has_value()) {
+      result.set("data", serialized.value());
+      result.set("format", format);
+    } else {
+      result.set("error", serialized.error());
     }
 
-    mat.set("cleacoat", m.surfaceShader.clearcoat.value);
-    if (m.surfaceShader.clearcoat.is_texture()) {
-      mat.set("cleacoatTextureId", m.surfaceShader.clearcoat.texture_id);
-    }
-
-    mat.set("clearcoatRoughness", m.surfaceShader.clearcoatRoughness.value);
-    if (m.surfaceShader.clearcoatRoughness.is_texture()) {
-      mat.set("clearcoatRoughnessTextureId",
-              m.surfaceShader.clearcoatRoughness.texture_id);
-    }
-
-    mat.set("opacity", m.surfaceShader.opacity.value);
-    if (m.surfaceShader.opacity.is_texture()) {
-      mat.set("opacityTextureId", m.surfaceShader.opacity.texture_id);
-    }
-
-    // TODO
-    // mat.set("opacityMode", m.surfaceShader.opacityMode);
-
-    mat.set("opacityThreshold", m.surfaceShader.opacityThreshold.value);
-    if (m.surfaceShader.opacityThreshold.is_texture()) {
-      mat.set("opacityThresholdTextureId",
-              m.surfaceShader.opacityThreshold.texture_id);
-    }
-
-    mat.set("ior", m.surfaceShader.ior.value);
-    if (m.surfaceShader.ior.is_texture()) {
-      mat.set("iorTextureId", m.surfaceShader.ior.texture_id);
-    }
-
-    mat.set("normal", m.surfaceShader.normal.value);
-    if (m.surfaceShader.normal.is_texture()) {
-      mat.set("normalTextureId", m.surfaceShader.normal.texture_id);
-    }
-
-    mat.set("displacement", m.surfaceShader.displacement.value);
-    if (m.surfaceShader.displacement.is_texture()) {
-      mat.set("displacementTextureId", m.surfaceShader.displacement.texture_id);
-    }
-
-    mat.set("occlusion", m.surfaceShader.occlusion.value);
-    if (m.surfaceShader.occlusion.is_texture()) {
-      mat.set("occlusionTextureId", m.surfaceShader.occlusion.texture_id);
-    }
-
-    return mat;
+    return result;
   }
 
   emscripten::val getTexture(int tex_id) const {
@@ -1456,16 +1481,36 @@ class TinyUSDZLoaderNative {
     }
 
     {
-      // slot 0 hardcoded.
-      uint32_t uvSlotId = 0;
-      if (rmesh.texcoords.count(uvSlotId)) {
-        const float *uvs_ptr = reinterpret_cast<const float *>(
-            rmesh.texcoords.at(uvSlotId).data.data());
+      // Export all UV sets
+      emscripten::val uvSets = emscripten::val::object();
 
-        // assume vec2
+      for (const auto& uv_pair : rmesh.texcoords) {
+        uint32_t uvSlotId = uv_pair.first;
+        const auto& uv_data = uv_pair.second;
+
+        const float *uvs_ptr = reinterpret_cast<const float *>(uv_data.data.data());
+
+        // Create UV set object with metadata
+        emscripten::val uvSet = emscripten::val::object();
+        uvSet.set("data", emscripten::typed_memory_view(
+                     uv_data.vertex_count() * 2, uvs_ptr));
+        uvSet.set("vertexCount", uv_data.vertex_count());
+        uvSet.set("slotId", int(uvSlotId));
+
+        // Add to UV sets collection
+        std::string slotKey = "uv" + std::to_string(uvSlotId);
+        uvSets.set(slotKey.c_str(), uvSet);
+      }
+
+      mesh.set("uvSets", uvSets);
+
+      // Keep backward compatibility - slot 0 as "texcoords"
+      if (rmesh.texcoords.count(0)) {
+        const float *uvs_ptr = reinterpret_cast<const float *>(
+            rmesh.texcoords.at(0).data.data());
         mesh.set("texcoords",
                  emscripten::typed_memory_view(
-                     rmesh.texcoords.at(uvSlotId).vertex_count() * 2, uvs_ptr));
+                     rmesh.texcoords.at(0).vertex_count() * 2, uvs_ptr));
       }
     }
 
@@ -2733,7 +2778,9 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("getURI", &TinyUSDZLoaderNative::getURI)
       .function("getMesh", &TinyUSDZLoaderNative::getMesh)
       .function("numMeshes", &TinyUSDZLoaderNative::numMeshes)
-      .function("getMaterial", &TinyUSDZLoaderNative::getMaterial)
+      .function("getMaterial", select_overload<emscripten::val(int) const>(&TinyUSDZLoaderNative::getMaterial))
+      .function("getMaterialWithFormat", select_overload<emscripten::val(int, const std::string&) const>(&TinyUSDZLoaderNative::getMaterial))
+      .function("numMaterials", &TinyUSDZLoaderNative::numMaterials)
       .function("getTexture", &TinyUSDZLoaderNative::getTexture)
       .function("getImage", &TinyUSDZLoaderNative::getImage)
       .function("getDefaultRootNodeId",
