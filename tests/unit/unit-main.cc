@@ -64,6 +64,7 @@ TEST_LIST = {
   { "crate_writer_multiple_prims_test", crate_writer_multiple_prims_test },
   { "crate_writer_nested_prims_test", crate_writer_nested_prims_test },
   { "crate_writer_error_handling_test", crate_writer_error_handling_test },
+  { "crate_writer_material_shader_test", crate_writer_material_shader_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif

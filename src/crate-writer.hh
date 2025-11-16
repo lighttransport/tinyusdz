@@ -205,6 +205,12 @@ private:
   /// Extract common GPrim properties (visibility, purpose, etc.)
   bool ExtractGPrimProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
 
+  /// Extract Material properties (outputs: surface, displacement, volume)
+  bool ExtractMaterialProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract Shader properties (info:id, inputs, outputs)
+  bool ExtractShaderProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
   /// Extract xformOps from Xformable (GPrim or Xform)
   bool ExtractXformOpsFromXformable(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
 

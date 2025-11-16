@@ -13,6 +13,7 @@
 #include "crate-writer.hh"
 #include "io-util.hh"
 #include "usdc-reader.hh"
+#include "usdShade.hh"
 #include <cstdio>
 
 using namespace tinyusdz;
@@ -510,4 +511,66 @@ void crate_writer_error_handling_test(void) {
     TEST_CHECK(result == false);
     TEST_CHECK(!err.empty());
   }
+}
+
+//
+// Test 10: Material and Shader writing
+// Verifies that Material and Shader prims can be written
+//
+void crate_writer_material_shader_test(void) {
+  std::string filename = get_temp_filename("test_material");
+  std::string err;
+
+  // Create stage with Material and Shader
+  Stage stage;
+
+  // Create a basic Shader prim
+  Shader shader;
+  shader.name = "TestShader";
+  shader.spec = Specifier::Def;
+  shader.info_id = "UsdPreviewSurface";  // Shader type
+
+  Prim shader_prim("TestShader", shader);
+  stage.root_prims().emplace_back(shader_prim);
+
+  // Create a Material prim
+  Material material;
+  material.name = "TestMaterial";
+  material.spec = Specifier::Def;
+
+  Prim material_prim("TestMaterial", material);
+  stage.root_prims().emplace_back(material_prim);
+
+  // Write to USDC
+  CrateWriter writer(filename);
+  CrateWriter::Options opts;
+  opts.version_major = 0;
+  opts.version_minor = 8;
+  opts.version_patch = 0;
+
+  writer.SetOptions(opts);
+
+  TEST_CHECK(writer.Open(&err));
+  TEST_CHECK(writer.ConvertStageToSpecs(stage, &err));
+  TEST_CHECK(writer.Finalize(&err));
+  writer.Close();
+
+  // Read back and verify
+  Stage loaded_stage;
+  std::string warn;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+  }
+
+  // Verify prims were loaded
+  TEST_CHECK(loaded_stage.root_prims().size() == 2);
+  if (loaded_stage.root_prims().size() == 2) {
+    TEST_MSG("Prim 0: %s", loaded_stage.root_prims()[0].element_name().c_str());
+    TEST_MSG("Prim 1: %s", loaded_stage.root_prims()[1].element_name().c_str());
+  }
+
+  cleanup_file(filename);
 }
