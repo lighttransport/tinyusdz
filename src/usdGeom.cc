@@ -322,6 +322,7 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
 
     TUSDZ_LOG_I("get_value");
 
+#if 0 // FIXME: seems not work in emscripten build
     // Try to use TypedArrayView for zero-copy access when possible (default values only)
     // Only for trivially copyable types (excluding bool due to std::vector<bool> specialization)
     // Using SFINAE helper function for C++14 compatibility (avoids 'if constexpr' requirement)
@@ -334,11 +335,24 @@ bool GeomPrimvar::flatten_with_indices(const double t, std::vector<T> *dest, con
         return true;  // Zero-copy path succeeded
       }
     }
+#endif
 
-    // Fallback to std::vector for timesamples or if view failed
+    // Use std::vector instead of TypedArray to avoid potential corruption issues
     std::vector<T> value;
     if (_attr.get_value<std::vector<T>>(t, &value, tinterp)) {
 
+      TUSDZ_LOG_I("vsize " << value.size());
+
+      // Sanity check for corrupted size
+      if (value.size() > 1000000000) {  // 1 billion elements is unreasonable
+        if (err) {
+          (*err) += fmt::format(
+              "[Internal Error] Array has invalid size: {} for attribute type `{}`",
+              value.size(), _attr.type_name());
+        }
+        return false;
+      }
+      
       uint32_t elementSize = _attr.metas().elementSize.value_or(1);
       TUSDZ_LOG_I("elementSize" << elementSize);
 

@@ -1679,6 +1679,7 @@ bool USDAReader::Impl::Read(const uint32_t state_flags, bool as_primspec) {
 
   RegisterReconstructCallback<Material>();
   RegisterReconstructCallback<Shader>();
+  RegisterReconstructCallback<NodeGraph>();
 
   RegisterReconstructCallback<Scope>();
 
