@@ -5289,10 +5289,10 @@ nonstd::expected<bool, std::string> GetConnectedMtlxTexture(
     const Prim *current_prim{nullptr};
 
     // First, try regular stage lookup
-    bool found_in_stage = stage.find_prim_at_path(Path(current_prim_part, ""), current_prim, &err);
+    bool current_found_in_stage = stage.find_prim_at_path(Path(current_prim_part, ""), current_prim, &err);
 
     // If not found and this is under a NodeGraph, look in NodeGraph children
-    if (!found_in_stage || !current_prim) {
+    if (!current_found_in_stage || !current_prim) {
       // Check if this path is under the NodeGraph we found earlier
       size_t last_slash = current_prim_part.rfind('/');
       if (last_slash != std::string::npos) {
