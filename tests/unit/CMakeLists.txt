@@ -16,6 +16,7 @@ set(TEST_SOURCES
 	unit-math.cc
 	unit-ioutil.cc
 	unit-timesamples.cc
+	unit-materialx.cc
 	unit-task-queue.cc
    )
 

@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TinyUSDZ Material Renderer</title>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.177.0/build/three.module.js",
+            "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.177.0/examples/jsm/"
+        }
+    }
+    </script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #1a1a1a;
+        }
+        #canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+        #status {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-family: monospace;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px;
+            border-radius: 4px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div id="status">Rendering...</div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+        import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+
+        // Material definitions for testing
+        const MATERIALS = {
+            brass: {
+                name: 'Brass',
+                base_color: [0.95, 0.65, 0.25],
+                base_metalness: 1.0,
+                base_roughness: 0.3,
+                specular_ior: 1.5
+            },
+            glass: {
+                name: 'Glass',
+                base_color: [1.0, 1.0, 1.0],
+                base_metalness: 0.0,
+                base_roughness: 0.0,
+                transmission_weight: 1.0,
+                transmission_color: [1.0, 1.0, 1.0],
+                specular_ior: 1.52
+            },
+            gold: {
+                name: 'Gold',
+                base_color: [1.0, 0.766, 0.336],
+                base_metalness: 1.0,
+                base_roughness: 0.2,
+                specular_ior: 1.5
+            },
+            copper: {
+                name: 'Copper',
+                base_color: [0.955, 0.637, 0.538],
+                base_metalness: 1.0,
+                base_roughness: 0.25,
+                specular_ior: 1.5
+            },
+            plastic: {
+                name: 'Plastic',
+                base_color: [0.8, 0.2, 0.1],
+                base_metalness: 0.0,
+                base_roughness: 0.5,
+                specular_ior: 1.5
+            },
+            marble: {
+                name: 'Marble',
+                base_color: [0.9, 0.9, 0.85],
+                base_metalness: 0.0,
+                base_roughness: 0.1,
+                subsurface_weight: 0.3,
+                subsurface_color: [0.9, 0.9, 0.85]
+            }
+        };
+
+        // Get material name from URL parameter or default to 'brass'
+        const urlParams = new URLSearchParams(window.location.search);
+        const materialName = urlParams.get('material') || 'brass';
+        const materialData = MATERIALS[materialName] || MATERIALS.brass;
+
+        // Setup scene
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a1a1a);
+
+        const camera = new THREE.PerspectiveCamera(
+            45,
+            window.innerWidth / window.innerHeight,
+            0.1,
+            1000
+        );
+        camera.position.set(0, 0, 5);
+
+        const renderer = new THREE.WebGLRenderer({
+            canvas: document.getElementById('canvas'),
+            antialias: true,
+            alpha: false
+        });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(1); // Fixed pixel ratio for consistent screenshots
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.0;
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+
+        // Lighting setup (studio-style)
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        scene.add(ambientLight);
+
+        const keyLight = new THREE.DirectionalLight(0xffffff, 1.0);
+        keyLight.position.set(5, 5, 5);
+        scene.add(keyLight);
+
+        const fillLight = new THREE.DirectionalLight(0xffffff, 0.5);
+        fillLight.position.set(-5, 0, -5);
+        scene.add(fillLight);
+
+        // Create material from OpenPBR data
+        function createMaterial(data) {
+            const material = new THREE.MeshPhysicalMaterial({
+                color: new THREE.Color(...data.base_color),
+                metalness: data.base_metalness || 0.0,
+                roughness: data.base_roughness || 0.5,
+                transmission: data.transmission_weight || 0.0,
+                ior: data.specular_ior || 1.5,
+                thickness: 1.0,
+                clearcoat: data.coat_weight || 0.0,
+                clearcoatRoughness: data.coat_roughness || 0.0,
+            });
+
+            // Handle transmission color
+            if (data.transmission_weight && data.transmission_weight > 0) {
+                material.transparent = true;
+                material.opacity = 1.0;
+            }
+
+            return material;
+        }
+
+        // Create test geometry (shaderball-like sphere)
+        const geometry = new THREE.SphereGeometry(1.5, 64, 64);
+        const material = createMaterial(materialData);
+        const mesh = new THREE.Mesh(geometry, material);
+        scene.add(mesh);
+
+        // Environment map for reflections
+        const pmremGenerator = new THREE.PMREMGenerator(renderer);
+        const envMap = pmremGenerator.fromScene(
+            new RoomEnvironment(renderer),
+            0.04
+        ).texture;
+        scene.environment = envMap;
+        material.envMap = envMap;
+        material.envMapIntensity = 1.0;
+
+        // Animation loop
+        let frameCount = 0;
+        const RENDER_FRAMES = 120; // Render for 120 frames before marking complete
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            controls.update();
+            renderer.render(scene, camera);
+
+            frameCount++;
+
+            // Mark rendering as complete after enough frames
+            if (frameCount === RENDER_FRAMES) {
+                window.renderComplete = true;
+                console.log('Rendering complete');
+            }
+        }
+
+        // Start rendering
+        console.log(`Rendering material: ${materialData.name}`);
+        animate();
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>

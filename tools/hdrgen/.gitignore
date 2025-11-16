@@ -1,0 +1,13 @@
+# HDRGen output files
+output/*.hdr
+output/*.exr
+
+# Keep test files for CI
+!output/test_*.hdr
+
+# Node modules (if dependencies are added later)
+node_modules/
+
+# System files
+.DS_Store
+Thumbs.db
