@@ -181,10 +181,10 @@ private:
   bool ConvertPrimRecursive(const Prim& prim, const Path& parent_path, std::string* err);
 
   /// Extract properties from a Prim and add as fields
-  bool ExtractPrimProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractPrimProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract type-specific properties based on prim type
-  bool ExtractTypeSpecificProperties(const Prim& prim, const std::string& type_name,
+  bool ExtractTypeSpecificProperties(const Prim& prim, const Path& prim_path, const std::string& type_name,
                                      crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract Xform-specific properties (xformOps)
@@ -206,7 +206,10 @@ private:
   bool ExtractGPrimProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract Material properties (outputs: surface, displacement, volume)
-  bool ExtractMaterialProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+  bool ExtractMaterialProperties(const Prim& prim, const Path& prim_path, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Add Material output specs as separate attribute specs (called after Material prim spec is added)
+  bool AddMaterialOutputSpecs(const Material* material, const Path& prim_path, std::string* err);
 
   /// Extract Shader properties (info:id, inputs, outputs)
   bool ExtractShaderProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);

@@ -531,14 +531,20 @@ void crate_writer_material_shader_test(void) {
   shader.info_id = "UsdPreviewSurface";  // Shader type
 
   Prim shader_prim("TestShader", shader);
+  shader_prim.prim_type_name() = "Shader";  // Set typeName explicitly
   stage.root_prims().emplace_back(shader_prim);
 
-  // Create a Material prim
+  // Create a Material prim with surface output connection
   Material material;
   material.name = "TestMaterial";
   material.spec = Specifier::Def;
 
+  // Set surface output to connect to the shader
+  Path shader_path("/TestShader", "");
+  material.surface.set(shader_path);
+
   Prim material_prim("TestMaterial", material);
+  material_prim.prim_type_name() = "Material";  // Set typeName explicitly
   stage.root_prims().emplace_back(material_prim);
 
   // Write to USDC
@@ -555,6 +561,8 @@ void crate_writer_material_shader_test(void) {
   TEST_CHECK(writer.Finalize(&err));
   writer.Close();
 
+  std::cerr << "Material test file: " << filename << "\n";
+
   // Read back and verify
   Stage loaded_stage;
   std::string warn;
@@ -570,7 +578,28 @@ void crate_writer_material_shader_test(void) {
   if (loaded_stage.root_prims().size() == 2) {
     TEST_MSG("Prim 0: %s", loaded_stage.root_prims()[0].element_name().c_str());
     TEST_MSG("Prim 1: %s", loaded_stage.root_prims()[1].element_name().c_str());
+
+    // Find the Material prim and verify surface connection
+    for (const auto& prim : loaded_stage.root_prims()) {
+      if (prim.element_name() == "TestMaterial") {
+        const Material* loaded_mat = prim.data().as<Material>();
+        TEST_CHECK(loaded_mat != nullptr);
+        if (loaded_mat) {
+          TEST_CHECK(loaded_mat->surface.authored());
+          TEST_CHECK(loaded_mat->surface.has_value());
+          if (loaded_mat->surface.has_value()) {
+            const auto& connections = loaded_mat->surface.get_connections();
+            TEST_CHECK(connections.size() == 1);
+            if (connections.size() == 1) {
+              TEST_MSG("Surface connection: %s", connections[0].full_path_name().c_str());
+              TEST_CHECK(connections[0].full_path_name() == "/TestShader");
+            }
+          }
+        }
+      }
+    }
   }
 
+  std::cerr << "Material test file: " << filename << "\n";
   cleanup_file(filename);
 }
