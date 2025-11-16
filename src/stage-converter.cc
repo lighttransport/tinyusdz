@@ -1566,23 +1566,19 @@ bool CrateWriter::ConvertPropertyToFields(
     // Empty property - skip
     return true;
   } else if (prop.is_attribute()) {
-    // Convert attribute
-    bool success = ConvertAttributeToFields(prop_name, prop.get_attribute(), fields, err);
+    // Convert attribute - creates separate spec, doesn't add to fields
+    bool success = ConvertAttributeToFields(prop_name, prop.get_attribute(), parent_path, err);
 
-    // Add custom flag if set (Property level, not Attribute level)
-    if (success && prop.has_custom()) {
-      crate::CrateValue custom_value;
-      custom_value.Set(true);
-      fields.push_back({prop_name + ".custom", custom_value});
-    }
+    // TODO: Handle custom flag - needs to be added to the attribute spec, not parent prim
+    // For now, custom flag handling is deferred
 
     return success;
   } else if (prop.is_relationship()) {
     // Convert relationship - creates separate spec, doesn't add to fields
     return ConvertRelationshipToFields(prop_name, prop.get_relationship(), parent_path, err);
   } else if (prop.is_attribute_connection()) {
-    // Convert connection
-    return ConvertConnectionToFields(prop_name, prop.get_attribute(), fields, err);
+    // Convert connection - creates separate spec, doesn't add to fields
+    return ConvertConnectionToFields(prop_name, prop.get_attribute(), parent_path, err);
   } else {
     if (err) *err = "Unknown property type for: " + prop_name;
     return false;
@@ -1592,19 +1588,26 @@ bool CrateWriter::ConvertPropertyToFields(
 bool CrateWriter::ConvertAttributeToFields(
     const std::string& attr_name,
     const Attribute& attr,
-    crate::FieldValuePairVector& fields,
+    const Path& parent_path,
     std::string* err) {
 
-  // NOTE: This function adds fields to the parent prim spec
-  // In a proper implementation, attributes should create separate specs
-  // with SpecType::Attribute, but for now we add fields to the parent
+  // Create separate spec for this attribute (proper USD Crate format)
+  // Attributes are property specs, not prim fields
+
+  crate::FieldValuePairVector attr_fields;
+
+  // Create the attribute path
+  Path attr_path = parent_path.AppendProperty(attr_name);
+
+  std::cerr << "[ConvertAttributeToFields] Creating separate spec for attribute: "
+            << attr_path.full_path_name() << "\n";
 
   // 1. Add type name - store as value::token, not as token index!
   if (!attr.type_name().empty()) {
     crate::CrateValue type_value;
     value::token tok(attr.type_name());
     type_value.Set(tok);  // Store the token, not the index!
-    fields.push_back({attr_name + ".typeName", type_value});
+    attr_fields.push_back({"typeName", type_value});
   }
 
   // 2. Extract value from PrimVar
@@ -1613,15 +1616,12 @@ bool CrateWriter::ConvertAttributeToFields(
   // 2a. Check for blocked value
   if (pvar.is_blocked()) {
     // Add a ValueBlock indicator
-    // CrateValue doesn't have SetValueBlock(), need to use value::ValueBlock
     crate::CrateValue blocked_value;
     blocked_value.Set(value::ValueBlock());
-    fields.push_back({attr_name, blocked_value});
-    return true;
+    attr_fields.push_back({"default", blocked_value});
   }
-
   // 2b. Extract default value
-  if (pvar.has_value()) {
+  else if (pvar.has_value()) {
     const value::Value& val = pvar.value_raw();
     crate::CrateValue crate_val;
 
@@ -1631,7 +1631,7 @@ bool CrateWriter::ConvertAttributeToFields(
       return false;
     }
 
-    fields.push_back({attr_name, crate_val});
+    attr_fields.push_back({"default", crate_val});
   }
 
   // 2c. Extract time samples
@@ -1644,7 +1644,7 @@ bool CrateWriter::ConvertAttributeToFields(
     ts_crate_val.Set(ts);
 
     // Add the timeSamples field
-    fields.push_back({attr_name + ".timeSamples", ts_crate_val});
+    attr_fields.push_back({"timeSamples", ts_crate_val});
 
     std::cerr << "[ConvertAttributeToFields] Added TimeSamples for " << attr_name
               << " with " << ts.size() << " samples\n";
@@ -1655,14 +1655,10 @@ bool CrateWriter::ConvertAttributeToFields(
     crate::CrateValue var_value;
     crate::TokenIndex var_tok = GetOrCreateToken(to_string(attr.variability()));
     var_value.Set(var_tok.value);
-    fields.push_back({attr_name + ".variability", var_value});
+    attr_fields.push_back({"variability", var_value});
   }
 
-  // 4. Add custom flag if set (Property level, not AttrMeta)
-  // Note: The custom flag is typically set at the Property level
-  // We'll need to handle this when calling from ConvertPropertyToFields
-
-  // 5. Add metadata from AttrMetas
+  // 4. Add metadata from AttrMetas
   const AttrMetas& metas = attr.metas();
 
   // Add interpolation if specified
@@ -1670,24 +1666,33 @@ bool CrateWriter::ConvertAttributeToFields(
     crate::CrateValue interp_value;
     crate::TokenIndex interp_tok = GetOrCreateToken(to_string(metas.interpolation.value()));
     interp_value.Set(interp_tok.value);
-    fields.push_back({attr_name + ".interpolation", interp_value});
+    attr_fields.push_back({"interpolation", interp_value});
   }
 
   // Add hidden if specified
   if (metas.hidden) {
     crate::CrateValue hidden_value;
     hidden_value.Set(metas.hidden.value());
-    fields.push_back({attr_name + ".hidden", hidden_value});
+    attr_fields.push_back({"hidden", hidden_value});
   }
 
   // Add customData if present
   if (metas.customData) {
     crate::CrateValue custom_data_value;
     custom_data_value.Set(metas.customData.value());
-    fields.push_back({attr_name + ".customData", custom_data_value});
+    attr_fields.push_back({"customData", custom_data_value});
     std::cerr << "[ConvertAttributeToFields] Added customData for " << attr_name
               << " with " << metas.customData.value().size() << " entries\n";
   }
+
+  // Create the attribute spec
+  if (!AddSpec(attr_path, SpecType::Attribute, attr_fields, err)) {
+    if (err) *err = "Failed to add attribute spec: " + attr_path.full_path_name() + ": " + *err;
+    return false;
+  }
+
+  std::cerr << "[ConvertAttributeToFields] Successfully created attribute spec with "
+            << attr_fields.size() << " fields\n";
 
   return true;
 }
@@ -1828,16 +1833,11 @@ bool CrateWriter::ConvertRelationshipToFields(
 bool CrateWriter::ConvertConnectionToFields(
     const std::string& conn_name,
     const Attribute& attr,
-    crate::FieldValuePairVector& fields,
+    const Path& parent_path,
     std::string* err) {
 
-  // IMPORTANT: In proper USD Crate format, attribute connections should create
-  // separate specs with SpecType::Connection. For now, we add fields
-  // to the parent prim spec.
-
-  // TODO: Create separate connection spec:
-  // Path conn_path = parent_path.AppendProperty(conn_name).AppendProperty("connect");
-  // AddSpec(conn_path, SpecType::Connection, conn_fields, err);
+  // Create separate spec for this connection (proper USD Crate format)
+  // Connections are specs at path: parent.AppendProperty(attr_name).AppendProperty("connect")
 
   // Attribute connections represent ".connect" relationships
   if (!attr.has_connections()) {
@@ -1845,7 +1845,16 @@ bool CrateWriter::ConvertConnectionToFields(
     return true;
   }
 
-  // 1. Add connection paths
+  crate::FieldValuePairVector conn_fields;
+
+  // Create the connection path
+  // Connection path is: /Prim.attribute.connect
+  Path conn_path = parent_path.AppendProperty(conn_name).AppendProperty("connect");
+
+  std::cerr << "[ConvertConnectionToFields] Creating separate spec for connection: "
+            << conn_path.full_path_name() << "\n";
+
+  // 1. Add connection paths (targets)
   const std::vector<Path>& conn_paths = attr.connections();
 
   if (conn_paths.size() == 1) {
@@ -1854,14 +1863,13 @@ bool CrateWriter::ConvertConnectionToFields(
     std::vector<Path> wrapped_path;
     wrapped_path.push_back(conn_paths[0]);
     conn_value.Set(wrapped_path);
-    fields.push_back({conn_name + ".connect", conn_value});
+    conn_fields.push_back({"targetPaths", conn_value});
   } else if (conn_paths.size() > 1) {
     // Multiple connection paths
     crate::CrateValue conns_value;
-    // Make a copy of the paths vector
     std::vector<Path> paths_copy = conn_paths;
     conns_value.Set(paths_copy);
-    fields.push_back({conn_name + ".connect", conns_value});
+    conn_fields.push_back({"targetPaths", conns_value});
   }
 
   // 2. Add type name for the connection (same as attribute type) - store as token!
@@ -1869,11 +1877,17 @@ bool CrateWriter::ConvertConnectionToFields(
     crate::CrateValue type_value;
     value::token tok(attr.type_name());
     type_value.Set(tok);  // Store the token, not the index!
-    fields.push_back({conn_name + ".connect.typeName", type_value});
+    conn_fields.push_back({"typeName", type_value});
   }
 
-  // 3. Connections don't have variability or other metadata typically
-  // They inherit from the attribute they're connected to
+  // 3. Create the connection spec
+  if (!AddSpec(conn_path, SpecType::Connection, conn_fields, err)) {
+    if (err) *err = "Failed to add connection spec: " + conn_path.full_path_name() + ": " + *err;
+    return false;
+  }
+
+  std::cerr << "[ConvertConnectionToFields] Successfully created connection spec with "
+            << conn_fields.size() << " fields\n";
 
   return true;
 }

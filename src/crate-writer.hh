@@ -223,18 +223,20 @@ private:
                                const Path& parent_path, crate::FieldValuePairVector& fields,
                                std::string* err);
 
-  /// Convert an Attribute to Fields
+  /// Convert an Attribute to separate spec (proper USD format)
+  /// Creates a spec with SpecType::Attribute at parent_path.AppendProperty(attr_name)
   bool ConvertAttributeToFields(const std::string& attr_name, const Attribute& attr,
-                                crate::FieldValuePairVector& fields, std::string* err);
+                                const Path& parent_path, std::string* err);
 
   /// Convert a Relationship to separate spec (proper USD format)
   /// Creates a spec with SpecType::Relationship at parent_path.AppendProperty(rel_name)
   bool ConvertRelationshipToFields(const std::string& rel_name, const Relationship& rel,
                                    const Path& parent_path, std::string* err);
 
-  /// Convert an Attribute Connection to Fields
+  /// Convert an Attribute Connection to separate spec (proper USD format)
+  /// Creates a spec with SpecType::Connection
   bool ConvertConnectionToFields(const std::string& conn_name, const Attribute& attr,
-                                 crate::FieldValuePairVector& fields, std::string* err);
+                                 const Path& parent_path, std::string* err);
 
   // ======================================================================
   // Value encoding
