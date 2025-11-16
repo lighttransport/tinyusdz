@@ -194,14 +194,15 @@ bool CrateWriter::ConvertPrimRecursive(
   }
 
   Path prim_path(abs_path_str, "");
+  std::string type_name = prim.prim_type_name();
 
   std::cerr << "DEBUG: Converting prim: " << abs_path_str
-            << " (type: " << prim.prim_type_name() << ")\n";
+            << " (type: " << type_name << ")\n";
 
   // Extract properties from this prim
   crate::FieldValuePairVector fields;
 
-  if (!ExtractPrimProperties(prim, fields, err)) {
+  if (!ExtractPrimProperties(prim, prim_path, fields, err)) {
     if (err) *err = "Failed to extract properties for " + abs_path_str + ": " + *err;
     return false;
   }
@@ -216,6 +217,19 @@ bool CrateWriter::ConvertPrimRecursive(
 
   std::cerr << "DEBUG: Added spec for " << abs_path_str << " with "
             << fields.size() << " fields\n";
+
+  // After adding the prim spec, handle Material outputs as separate attribute specs
+  // This must happen AFTER the prim spec is added to maintain correct ordering
+  if (type_name == "Material") {
+    const Material* material = prim.data().as<Material>();
+    if (material) {
+      // These will be added as separate attribute specs after the Material prim
+      if (!AddMaterialOutputSpecs(material, prim_path, err)) {
+        if (err) *err = "Failed to add Material output specs: " + *err;
+        return false;
+      }
+    }
+  }
 
   // Recursively process children
   for (const auto& child : prim.children()) {
@@ -233,6 +247,7 @@ bool CrateWriter::ConvertPrimRecursive(
 
 bool CrateWriter::ExtractPrimProperties(
   const Prim& prim,
+  const Path& prim_path,
   crate::FieldValuePairVector& fields,
   std::string* err
 ) {
@@ -258,7 +273,7 @@ bool CrateWriter::ExtractPrimProperties(
   }
 
   // Extract type-specific properties
-  if (!ExtractTypeSpecificProperties(prim, type_name, fields, err)) {
+  if (!ExtractTypeSpecificProperties(prim, prim_path, type_name, fields, err)) {
     // Log warning but don't fail - we still want to create the prim
     std::cerr << "WARNING: Failed to extract type-specific properties for "
               << type_name << ": " << (err ? *err : "unknown error") << "\n";
@@ -273,6 +288,7 @@ bool CrateWriter::ExtractPrimProperties(
 
 bool CrateWriter::ExtractTypeSpecificProperties(
   const Prim& prim,
+  const Path& prim_path,
   const std::string& type_name,
   crate::FieldValuePairVector& fields,
   std::string* err
@@ -289,7 +305,7 @@ bool CrateWriter::ExtractTypeSpecificProperties(
   } else if (type_name == "Cylinder") {
     return ExtractCylinderProperties(prim, fields, err);
   } else if (type_name == "Material") {
-    return ExtractMaterialProperties(prim, fields, err);
+    return ExtractMaterialProperties(prim, prim_path, fields, err);
   } else if (type_name == "Shader") {
     return ExtractShaderProperties(prim, fields, err);
   }
@@ -874,6 +890,7 @@ bool CrateWriter::ExtractGPrimProperties(
 
 bool CrateWriter::ExtractMaterialProperties(
   const Prim& prim,
+  const Path& prim_path,
   crate::FieldValuePairVector& fields,
   std::string* err
 ) {
@@ -885,12 +902,107 @@ bool CrateWriter::ExtractMaterialProperties(
 
   std::cerr << "[ExtractMaterialProperties] Processing Material: " << material->name << "\n";
 
-  // Material outputs are special - they're output attributes with connections
-  // For now, we'll handle them as regular properties via the props map
-  // which will be processed by ConvertPropertyToFields
+  // Material outputs (surface, displacement, volume) are handled separately
+  // by AddMaterialOutputSpecs() which is called AFTER the Material prim spec is added
+  // This ensures correct ordering in the spec list
 
-  // Note: Material outputs (surface, displacement, volume) are TypedConnection<value::token>
-  // These should be in the prim's props map and will be handled by the property conversion
+  // Material prims typically don't have additional properties besides their outputs
+  // Any generic properties would be added here
+
+  return true;
+}
+
+// ============================================================================
+// Material Output Specs (called AFTER Material prim spec is added)
+// ============================================================================
+
+bool CrateWriter::AddMaterialOutputSpecs(
+  const Material* material,
+  const Path& prim_path,
+  std::string* err
+) {
+  std::cerr << "[AddMaterialOutputSpecs] prim_path: " << prim_path.full_path_name() << "\n";
+  std::cerr << "[AddMaterialOutputSpecs] surface.authored(): " << material->surface.authored() << "\n";
+  std::cerr << "[AddMaterialOutputSpecs] surface.has_value(): " << material->surface.has_value() << "\n";
+
+  // Handle outputs:surface
+  if (material->surface.authored() && material->surface.has_value()) {
+    const auto& connections = material->surface.get_connections();
+    std::cerr << "[AddMaterialOutputSpecs] surface connections.size(): " << connections.size() << "\n";
+    if (!connections.empty()) {
+      std::string output_name = "outputs:surface";
+      Path output_path = prim_path.AppendProperty(output_name);
+
+      std::cerr << "[AddMaterialOutputSpecs] Adding surface output spec at: " << output_path.full_path_name() << "\n";
+
+      crate::FieldValuePairVector output_fields;
+
+      // Add typeName field
+      crate::CrateValue type_value;
+      value::token type_tok("token");
+      type_value.Set(type_tok);
+      output_fields.push_back({"typeName", type_value});
+
+      // Add targetPaths connection (always as a vector)
+      crate::CrateValue conn_value;
+      conn_value.Set(connections);
+      output_fields.push_back({"targetPaths", conn_value});
+
+      if (!AddSpec(output_path, SpecType::Attribute, output_fields, err)) {
+        return false;
+      }
+
+      std::cerr << "[AddMaterialOutputSpecs] Successfully added surface output spec\n";
+    }
+  }
+
+  // Handle outputs:displacement
+  if (material->displacement.authored() && material->displacement.has_value()) {
+    const auto& connections = material->displacement.get_connections();
+    if (!connections.empty()) {
+      std::string output_name = "outputs:displacement";
+      Path output_path = prim_path.AppendProperty(output_name);
+
+      crate::FieldValuePairVector output_fields;
+
+      crate::CrateValue type_value;
+      value::token type_tok("token");
+      type_value.Set(type_tok);
+      output_fields.push_back({"typeName", type_value});
+
+      crate::CrateValue conn_value;
+      conn_value.Set(connections);
+      output_fields.push_back({"targetPaths", conn_value});
+
+      if (!AddSpec(output_path, SpecType::Attribute, output_fields, err)) {
+        return false;
+      }
+    }
+  }
+
+  // Handle outputs:volume
+  if (material->volume.authored() && material->volume.has_value()) {
+    const auto& connections = material->volume.get_connections();
+    if (!connections.empty()) {
+      std::string output_name = "outputs:volume";
+      Path output_path = prim_path.AppendProperty(output_name);
+
+      crate::FieldValuePairVector output_fields;
+
+      crate::CrateValue type_value;
+      value::token type_tok("token");
+      type_value.Set(type_tok);
+      output_fields.push_back({"typeName", type_value});
+
+      crate::CrateValue conn_value;
+      conn_value.Set(connections);
+      output_fields.push_back({"targetPaths", conn_value});
+
+      if (!AddSpec(output_path, SpecType::Attribute, output_fields, err)) {
+        return false;
+      }
+    }
+  }
 
   return true;
 }
