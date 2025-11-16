@@ -1932,7 +1932,7 @@ struct ComputeTangentPackedVertexDataEqual {
 
 template <class PackedVert>
 struct ComputeTangentVertexInput {
-  // std::vector<value::float3> positions;
+  // std::vector<value::point3f> positions;
   std::vector<uint32_t> point_indices;
   std::vector<value::float3> normals;
   std::vector<value::float2> uvs;
@@ -1960,7 +1960,7 @@ struct ComputeTangentVertexInput {
 
 template <class PackedVert>
 struct ComputeTangentVertexOutput {
-  // std::vector<value::float3> positions;
+  // std::vector<value::point3f> positions;
   std::vector<uint32_t> point_indices;
   std::vector<value::float3> normals;
   std::vector<value::float2> uvs;
@@ -5477,6 +5477,212 @@ static bool RawAssetRead(
 }  // namespace
 
 // Convert UsdUVTexture shader node.
+///
+/// Convert GeomPoints with primvars:gsplat:* to RenderGSplat
+/// for 3D Gaussian Splatting rendering (Three.js Spark compatible)
+///
+bool RenderSceneConverter::ConvertGeomPoints(
+    const RenderSceneConverterEnv &env, const tinyusdz::Path &points_abs_path,
+    const tinyusdz::GeomPoints &points,
+    RenderGSplat *dst) {
+
+  if (!dst) {
+    PUSH_ERROR_AND_RETURN("`dst` gsplat pointer is nullptr");
+  }
+
+  RenderGSplat gsplat;
+
+  // Set basic info
+  gsplat.prim_name = points_abs_path.prim_part();
+  gsplat.abs_path = points_abs_path.full_path_name();
+  if (points.metas().displayName.has_value()) {
+    gsplat.display_name = points.metas().displayName.value_or("");
+  }
+
+  //
+  // 1. Get positions - try primvars:gsplat:positions first, then fall back to points attribute
+  //
+  {
+    std::vector<value::point3f> positions;
+
+    // Try primvars:gsplat:positions first
+    if (points.has_primvar("gsplat:positions")) {
+      GeomPrimvar pvar;
+      if (!GetGeomPrimvar(env.stage, &points, "gsplat:positions", &pvar, &_err)) {
+        return false;
+      }
+
+
+      if (!pvar.get_value(&positions)) {
+        PUSH_ERROR_AND_RETURN("Failed to get value from primvars:gsplat:positions");
+      }
+    } else {
+      // Fall back to standard points attribute
+      if (!EvaluateTypedAnimatableAttribute(
+          env.stage, points.points, "points", &positions, &_err, env.timecode,
+          value::TimeSampleInterpolationType::Linear)) {
+        PUSH_ERROR_AND_RETURN("Failed to get positions from GeomPoints");
+      }
+    }
+
+    if (positions.empty()) {
+      PUSH_ERROR_AND_RETURN("GeomPoints has no position data");
+    }
+
+    // Convert point3f to float3
+    gsplat.positions.resize(positions.size());
+    for (size_t i = 0; i < positions.size(); i++) {
+      gsplat.positions[i] = {positions[i].x, positions[i].y, positions[i].z};
+    }
+  }
+
+  size_t num_splats = gsplat.positions.size();
+
+  //
+  // 2. Get scales (required for Gaussian splats)
+  //
+  {
+    if (!points.has_primvar("gsplat:scales")) {
+      PUSH_ERROR_AND_RETURN("GeomPoints requires primvars:gsplat:scales for Gaussian splatting");
+    }
+
+    GeomPrimvar pvar;
+    if (!GetGeomPrimvar(env.stage, &points, "gsplat:scales", &pvar, &_err)) {
+      return false;
+    }
+
+
+    std::vector<value::float3> scales;
+    if (!pvar.get_value(&scales)) {
+      PUSH_ERROR_AND_RETURN("Failed to get value from primvars:gsplat:scales");
+    }
+
+    if (scales.size() != num_splats) {
+      PUSH_ERROR_AND_RETURN(fmt::format("primvars:gsplat:scales size mismatch: expected {}, got {}",
+                                        num_splats, scales.size()));
+    }
+
+    gsplat.scales = scales;
+  }
+
+  //
+  // 3. Get rotations (required for Gaussian splats)
+  //
+  {
+    if (!points.has_primvar("gsplat:rotations")) {
+      PUSH_ERROR_AND_RETURN("GeomPoints requires primvars:gsplat:rotations for Gaussian splatting");
+    }
+
+    GeomPrimvar pvar;
+    if (!GetGeomPrimvar(env.stage, &points, "gsplat:rotations", &pvar, &_err)) {
+      return false;
+    }
+
+
+    std::vector<value::quath> rotations;
+    if (!pvar.get_value(&rotations)) {
+      // Try quatf if quath fails
+      std::vector<value::quatf> rotations_f;
+      if (!pvar.get_value(&rotations_f)) {
+        PUSH_ERROR_AND_RETURN("Failed to get value from primvars:gsplat:rotations");
+      }
+      // Convert quatf to quath
+      rotations.resize(rotations_f.size());
+      for (size_t i = 0; i < rotations_f.size(); i++) {
+        rotations[i].real = value::float_to_half_full(rotations_f[i].real);
+                                    rotations[i].imag[0] = value::float_to_half_full(rotations_f[i].imag[0]);
+        rotations[i].imag[1] = value::float_to_half_full(rotations_f[i].imag[1]);
+        rotations[i].imag[2] = value::float_to_half_full(rotations_f[i].imag[2]);
+      }
+    }
+
+    if (rotations.size() != num_splats) {
+      PUSH_ERROR_AND_RETURN(fmt::format("primvars:gsplat:rotations size mismatch: expected {}, got {}",
+                                        num_splats, rotations.size()));
+    }
+
+    gsplat.rotations = rotations;
+  }
+
+  //
+  // 4. Get alphas (required for Gaussian splats)
+  //
+  {
+    if (!points.has_primvar("gsplat:alphas")) {
+      PUSH_ERROR_AND_RETURN("GeomPoints requires primvars:gsplat:alphas for Gaussian splatting");
+    }
+
+    GeomPrimvar pvar;
+    if (!GetGeomPrimvar(env.stage, &points, "gsplat:alphas", &pvar, &_err)) {
+      return false;
+    }
+
+
+    std::vector<float> alphas;
+    if (!pvar.get_value(&alphas)) {
+      PUSH_ERROR_AND_RETURN("Failed to get value from primvars:gsplat:alphas");
+    }
+
+    if (alphas.size() != num_splats) {
+      PUSH_ERROR_AND_RETURN(fmt::format("primvars:gsplat:alphas size mismatch: expected {}, got {}",
+                                        num_splats, alphas.size()));
+    }
+
+    gsplat.alphas = alphas;
+  }
+
+  //
+  // 5. Get spherical harmonics coefficients (optional)
+  //
+  auto extract_sh = [&](const std::string &name, std::vector<value::float3> &out) -> bool {
+    if (!points.has_primvar(name)) {
+      return true;  // Optional, not an error
+    }
+
+    GeomPrimvar pvar;
+    if (!GetGeomPrimvar(env.stage, &points, name, &pvar, &_err)) {
+      _warn += fmt::format("Warning: Failed to get primvars:{}\n", name);
+      return true;  // Continue even if SH fails
+    }
+
+
+
+    if (!pvar.get_value(&out)) {
+      _warn += fmt::format("Warning: Failed to get value from primvars:{}\n", name);
+      return true;
+    }
+
+    if (out.size() != num_splats) {
+      _warn += fmt::format("Warning: primvars:{} size mismatch: expected {}, got {}\n",
+                          name, num_splats, out.size());
+      out.clear();
+    }
+
+    return true;
+  };
+
+  extract_sh("gsplat:sh_l0", gsplat.sh_l0);
+  extract_sh("gsplat:sh_l1", gsplat.sh_l1);
+  extract_sh("gsplat:sh_l2", gsplat.sh_l2);
+  extract_sh("gsplat:sh_l3", gsplat.sh_l3);
+
+  //
+  // 6. Get shDegree (optional, uniform int)
+  //
+  if (points.has_primvar("gsplat:shDegree")) {
+    GeomPrimvar pvar;
+    if (GetGeomPrimvar(env.stage, &points, "gsplat:shDegree", &pvar, &_err)) {
+      int shDegree = 0;
+      if (pvar.get_value(&shDegree)) {
+        gsplat.shDegree = shDegree;
+      }
+    }
+  }
+
+  *dst = gsplat;
+  return true;
+}
+
 // @return true upon conversion success(textures.back() contains the converted
 // UVTexture)
 //
@@ -7444,6 +7650,49 @@ bool MeshVisitor(const tinyusdz::Path &abs_path, const tinyusdz::Prim &prim,
     visitorEnv->converter->meshes.emplace_back(std::move(rmesh));
   }
 
+  //
+  // GeomPoints with Gaussian Splat data (primvars:gsplat:*)
+  //
+  if (const tinyusdz::GeomPoints *ppoints = prim.as<tinyusdz::GeomPoints>()) {
+    DCOUT("GeomPoints: " << abs_path);
+
+    // Check if this GeomPoints has Gaussian splat data
+    // by looking for required primvars
+    if (ppoints->has_primvar("gsplat:scales") &&
+        ppoints->has_primvar("gsplat:rotations") &&
+        ppoints->has_primvar("gsplat:alphas")) {
+
+      DCOUT("GeomPoints with Gaussian Splat data: " << abs_path);
+
+      RenderGSplat rgsplat;
+
+      if (!visitorEnv->converter->ConvertGeomPoints(
+              *visitorEnv->env, abs_path, *ppoints, &rgsplat)) {
+        if (err) {
+          (*err) += fmt::format("GeomPoints (Gaussian splat) conversion failed: {}",
+                                abs_path.full_path_name());
+          (*err) += "\n" + visitorEnv->converter->GetError() + "\n";
+        }
+        return false;
+      }
+
+      uint64_t gsplat_id = uint64_t(visitorEnv->converter->gsplats.size());
+      if (gsplat_id >= size_t((std::numeric_limits<int32_t>::max)())) {
+        if (err) {
+          (*err) += "Gaussian splat index too large.\n";
+        }
+        return false;
+      }
+
+      visitorEnv->converter->gsplatMap.add(abs_path.full_path_name(), gsplat_id);
+      visitorEnv->converter->gsplats.emplace_back(std::move(rgsplat));
+
+      DCOUT("Converted Gaussian splat: " << abs_path << " with " << rgsplat.num_splats() << " splats");
+    } else {
+      DCOUT("GeomPoints without Gaussian splat data (missing required primvars), ignoring: " << abs_path);
+    }
+  }
+
   return true;  // continue traversal
 }
 
@@ -8488,6 +8737,7 @@ bool RenderSceneConverter::ConvertToRenderScene(
 
   render_scene.nodes = std::move(root_nodes);
   render_scene.meshes = std::move(meshes);
+  render_scene.gsplats = std::move(gsplats);
   render_scene.textures = std::move(textures);
   render_scene.images = std::move(images);
   render_scene.buffers = std::move(buffers);
@@ -9641,6 +9891,12 @@ size_t RenderScene::estimate_memory_usage() const {
   total += meshes.capacity() * sizeof(RenderMesh);
   for (const auto& mesh : meshes) {
     total += mesh.estimate_memory_usage() - sizeof(RenderMesh); // Avoid double-counting base size
+  }
+
+  // Gaussian Splats - use the detailed estimation
+  total += gsplats.capacity() * sizeof(RenderGSplat);
+  for (const auto& gsplat : gsplats) {
+    total += gsplat.estimate_memory_usage() - sizeof(RenderGSplat); // Avoid double-counting base size
   }
 
   total += animations.capacity() * sizeof(AnimationClip);

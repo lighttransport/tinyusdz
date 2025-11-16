@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TinyUSDZ Gaussian Splatting Demo</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #000;
+        }
+
+        #canvas-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 14px;
+            max-width: 400px;
+            z-index: 100;
+            border: 1px solid #444;
+        }
+
+        #info h2 {
+            margin: 0 0 10px 0;
+            font-size: 20px;
+            border-bottom: 1px solid #666;
+            padding-bottom: 8px;
+            color: #4CAF50;
+        }
+
+        #info .status {
+            margin: 5px 0;
+            padding: 5px;
+            border-radius: 3px;
+        }
+
+        #info .status.success {
+            color: #4CAF50;
+            background: rgba(76, 175, 80, 0.1);
+        }
+
+        #info .status.error {
+            color: #f44336;
+            background: rgba(244, 67, 54, 0.1);
+        }
+
+        #info .status.info {
+            color: #2196F3;
+        }
+
+        #controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 100;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+            margin: 0 5px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+            font-weight: 600;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn.secondary {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+
+        .btn.secondary:hover {
+            box-shadow: 0 6px 20px rgba(245, 87, 108, 0.4);
+        }
+
+        #file-input {
+            display: none;
+        }
+
+        #loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.9);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            flex-direction: column;
+        }
+
+        #loading-overlay.active {
+            display: flex;
+        }
+
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            border-radius: 50%;
+            border-top: 4px solid #667eea;
+            width: 60px;
+            height: 60px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            color: white;
+            margin-top: 20px;
+            font-size: 18px;
+        }
+
+        #stats-panel {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            font-family: monospace;
+            z-index: 100;
+            border: 1px solid #444;
+        }
+
+        #stats-panel div {
+            margin: 3px 0;
+        }
+
+        .welcome {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            text-align: center;
+            z-index: 50;
+        }
+
+        .welcome h1 {
+            font-size: 48px;
+            margin: 0 0 20px 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .welcome p {
+            font-size: 18px;
+            color: #aaa;
+        }
+    </style>
+</head>
+<body>
+    <div id="canvas-container"></div>
+
+    <div id="info">
+        <h2>🎨 Gaussian Splatting</h2>
+        <div class="status info">Load a USD, SPZ, or PLY file with Gaussian splat data</div>
+        <div id="splat-info"></div>
+    </div>
+
+    <div id="controls">
+        <input type="file" id="file-input" accept=".usd,.usda,.usdc,.usdz,.spz,.ply" />
+        <button class="btn" onclick="document.getElementById('file-input').click()">
+            📁 Load File
+        </button>
+        <button class="btn secondary" id="reset-camera">
+            🎥 Reset Camera
+        </button>
+    </div>
+
+    <div id="loading-overlay">
+        <div class="spinner"></div>
+        <div class="loading-text">Processing Gaussian Splats...</div>
+    </div>
+
+    <div id="stats-panel">
+        <div>FPS: <span id="fps">0</span></div>
+        <div>Splats: <span id="splat-count">0</span></div>
+        <div>Memory: <span id="memory">0 MB</span></div>
+    </div>
+
+    <div class="welcome" id="welcome">
+        <h1>Gaussian Splatting</h1>
+        <p>Load a USD, SPZ, or PLY file containing Gaussian splat data<br>
+        USD: GeomPoints with primvars:gsplat:* attributes<br>
+        SPZ/PLY: Niantic SPZ or standard PLY gaussian splat format</p>
+    </div>
+
+    <script type="module" src="./gsplat.js"></script>
+</body>
+</html>

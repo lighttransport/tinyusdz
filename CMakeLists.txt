@@ -144,6 +144,8 @@ option(TINYUSDZ_WITH_USDFBX "Build with usdFbx support(import FBX .fbx)"
        OFF)
 option(TINYUSDZ_WITH_USDVOX
        "Build with usdVox support(import MagicaVoxel .vox)" ON)
+option(TINYUSDZ_WITH_USDGSPLAT
+       "Build with usdGSplat support(import Gaussian splat formats like .spz)" ON)
 option(
   TINYUSDZ_WITH_OPENSUBDIV
   "Build with OpenSubdiv(osdCPU. if required, set `osd_DIR` to specify the path to your own OpenSubdiv)"
@@ -581,6 +583,29 @@ if(TINYUSDZ_WITH_USDVOX)
   list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/usdVox.cc)
 endif()
 
+if(TINYUSDZ_WITH_USDGSPLAT)
+  list(APPEND TINYUSDZ_SOURCES ${PROJECT_SOURCE_DIR}/src/usdGSplat.cc)
+  # Add SPZ library sources (requires C++17)
+  list(APPEND TINYUSDZ_DEP_SOURCES
+       ${PROJECT_SOURCE_DIR}/src/external/spz/splat-types.cc
+       ${PROJECT_SOURCE_DIR}/src/external/spz/load-spz.cc
+       ${PROJECT_SOURCE_DIR}/src/external/spz/splat-c-types.cc)
+  # SPZ and usdGSplat require C++17
+  # Note: Disable Werror for usdGSplat.cc due to incomplete TypeTraits for Animatable types
+  set_source_files_properties(
+    ${PROJECT_SOURCE_DIR}/src/usdGSplat.cc
+    PROPERTIES
+      COMPILE_OPTIONS "-std=c++17;-Wno-error"
+      SKIP_PRECOMPILE_HEADERS ON)
+  set_source_files_properties(
+    ${PROJECT_SOURCE_DIR}/src/external/spz/splat-types.cc
+    ${PROJECT_SOURCE_DIR}/src/external/spz/load-spz.cc
+    ${PROJECT_SOURCE_DIR}/src/external/spz/splat-c-types.cc
+    PROPERTIES
+      COMPILE_OPTIONS "-std=c++17"
+      SKIP_PRECOMPILE_HEADERS ON)
+endif()
+
 set(TINYUSDZ_PYTHON_BINDING_SOURCES
     ${PROJECT_SOURCE_DIR}/src/python-bindings.cc)
 
@@ -951,6 +976,16 @@ if(TINYUSDZ_WITH_TIFF OR TINYUSDZ_WITH_EXR)
   if(TINYUSDZ_USE_SYSTEM_ZLIB)
     list(APPEND TINYUSDZ_EXT_LIBRARIES ZLIB::ZLIB)
   endif()
+endif()
+
+# SPZ library requires zlib for gzip compression
+if(TINYUSDZ_WITH_USDGSPLAT)
+  if(NOT TINYUSDZ_USE_SYSTEM_ZLIB)
+    message(STATUS "USDGSPLAT requires system zlib, enabling TINYUSDZ_USE_SYSTEM_ZLIB")
+    set(TINYUSDZ_USE_SYSTEM_ZLIB ON CACHE BOOL "Use system zlib (required for USDGSPLAT)" FORCE)
+    find_package(ZLIB REQUIRED)
+  endif()
+  list(APPEND TINYUSDZ_EXT_LIBRARIES ZLIB::ZLIB)
 endif()
 
 
@@ -1427,6 +1462,13 @@ foreach(TINYUSDZ_LIB_TARGET ${TINYUSDZ_LIBS})
                                  PRIVATE "BH_PLATFORM_LINUX=1")
     endif()
   endif(TINYUSDZ_WITH_WAMR)
+
+  if(TINYUSDZ_WITH_USDGSPLAT)
+    target_include_directories(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE ${PROJECT_SOURCE_DIR}/src/external/spz)
+    target_compile_definitions(${TINYUSDZ_LIB_TARGET}
+                               PRIVATE "TINYUSDZ_WITH_USDGSPLAT")
+  endif(TINYUSDZ_WITH_USDGSPLAT)
 
   if(TINYUSDZ_WITH_COROUTINE)
     target_compile_definitions(${TINYUSDZ_LIB_TARGET}

@@ -1219,6 +1219,60 @@ struct RenderMesh {
   size_t estimate_memory_usage() const;
 };
 
+///
+/// Gaussian Splat data structure for 3D Gaussian Splatting rendering
+/// Compatible with Three.js Spark format
+/// Based on https://github.com/lighttransport/tinyusdz/issues/190
+///
+/// Data is extracted from GeomPoints with primvars:gsplat:* namespace
+/// Values are actual (not before activation function applied):
+/// - scales are actual scale values (not exp(x))
+/// - alphas are actual opacity [0.0, 1.0] (not sigmoid(a))
+///
+struct RenderGSplat {
+  std::string prim_name;  // element name in USD
+  std::string abs_path;   // absolute Prim path in USD
+  std::string display_name;
+
+  // Required attributes
+  std::vector<value::float3> positions;     // float3[] - actual position (x, y, z)
+  std::vector<value::float3> scales;        // float3[]/half3[] - actual scale values for each splat
+  std::vector<value::quath> rotations;      // quath[]/quatf[] - quaternion rotation
+  std::vector<float> alphas;                // float[]/half[] - opacity in [0.0, 1.0]
+
+  // Spherical harmonics coefficients (optional, by band)
+  // SH coefficients for different frequency bands
+  std::vector<value::float3> sh_l0;  // float3[]/half3[] - SH band 0 (DC component)
+  std::vector<value::float3> sh_l1;  // float3[]/half3[] - SH band 1
+  std::vector<value::float3> sh_l2;  // float3[]/half3[] - SH band 2
+  std::vector<value::float3> sh_l3;  // float3[]/half3[] - SH band 3
+
+  int shDegree{0};  // uniform int - SH band level (0-3)
+
+  // Number of splats
+  size_t num_splats() const { return positions.size(); }
+
+  bool empty() const { return positions.empty(); }
+
+  uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
+
+  ///
+  /// Estimate memory usage of this RenderGSplat in bytes
+  ///
+  size_t estimate_memory_usage() const {
+    size_t sz = 0;
+    sz += positions.size() * sizeof(value::float3);
+    sz += scales.size() * sizeof(value::float3);
+    sz += rotations.size() * sizeof(value::quath);
+    sz += alphas.size() * sizeof(float);
+    sz += sh_l0.size() * sizeof(value::float3);
+    sz += sh_l1.size() * sizeof(value::float3);
+    sz += sh_l2.size() * sizeof(value::float3);
+    sz += sh_l3.size() * sizeof(value::float3);
+    return sz;
+  }
+};
+
 enum class UVReaderFloatComponentType {
   COMPONENT_FLOAT,
   COMPONENT_FLOAT2,
@@ -1557,6 +1611,7 @@ class RenderScene {
   ChunkedVectorArray<RenderLight> lights;
   ChunkedVectorArray<UVTexture> textures;
   ChunkedVectorArray<RenderMesh> meshes;
+  ChunkedVectorArray<RenderGSplat> gsplats;  ///< Gaussian Splat data for 3D Gaussian Splatting
   ChunkedVectorArray<AnimationClip> animations;  ///< Animation clips (glTF/Three.js compatible)
   ChunkedVectorArray<SkelHierarchy> skeletons;
   ChunkedVectorArray<BufferData>
@@ -1569,6 +1624,7 @@ class RenderScene {
   std::vector<RenderLight> lights;
   std::vector<UVTexture> textures;
   std::vector<RenderMesh> meshes;
+  std::vector<RenderGSplat> gsplats;  ///< Gaussian Splat data for 3D Gaussian Splatting
   std::vector<AnimationClip> animations;  ///< Animation clips (glTF/Three.js compatible)
   std::vector<SkelHierarchy> skeletons;
   std::vector<BufferData>
@@ -2512,6 +2568,7 @@ class RenderSceneConverter {
   // TODO: Move to private?
   StringAndIdMap root_nodeMap;
   StringAndIdMap meshMap;
+  StringAndIdMap gsplatMap;
   StringAndIdMap materialMap;
   StringAndIdMap cameraMap;
   StringAndIdMap lightMap;
@@ -2525,6 +2582,7 @@ class RenderSceneConverter {
 #ifdef TYDRA_USE_CHUNKED_ARRAY
   ChunkedVectorArray<Node> root_nodes;
   ChunkedVectorArray<RenderMesh> meshes;
+  ChunkedVectorArray<RenderGSplat> gsplats;
   ChunkedVectorArray<RenderMaterial> materials;
   ChunkedVectorArray<RenderCamera> cameras;
   ChunkedVectorArray<RenderLight> lights;
@@ -2536,6 +2594,7 @@ class RenderSceneConverter {
 #else
   std::vector<Node> root_nodes;
   std::vector<RenderMesh> meshes;
+  std::vector<RenderGSplat> gsplats;
   std::vector<RenderMaterial> materials;
   std::vector<RenderCamera> cameras;
   std::vector<RenderLight> lights;
@@ -2664,6 +2723,30 @@ class RenderSceneConverter {
       const std::vector<std::pair<std::string, const tinyusdz::BlendShape *>>
           &blendshapes,
       RenderMesh *dst);
+
+  ///
+  /// Convert GeomPoints with primvars:gsplat:* to RenderGSplat
+  /// for 3D Gaussian Splatting rendering (Three.js Spark compatible)
+  ///
+  /// Extracts Gaussian Splatting data from GeomPoints primvars:
+  /// - primvars:gsplat:positions (float3[]) - splat positions
+  /// - primvars:gsplat:scales (float3[]/half3[]) - splat scales
+  /// - primvars:gsplat:rotations (quath[]/quatf[]) - splat rotations
+  /// - primvars:gsplat:alphas (float[]/half[]) - splat opacity [0.0, 1.0]
+  /// - primvars:gsplat:sh_l0, sh_l1, sh_l2, sh_l3 (float3[]/half3[]) - spherical harmonics
+  /// - primvars:gsplat:shDegree (uniform int) - SH band level (0-3)
+  ///
+  /// @param[in] env Converter environment
+  /// @param[in] points_abs_path Absolute path to the GeomPoints primitive
+  /// @param[in] points GeomPoints primitive
+  /// @param[out] dst RenderGSplat output
+  ///
+  /// @return true when success.
+  ///
+  bool ConvertGeomPoints(
+      const RenderSceneConverterEnv &env, const tinyusdz::Path &points_abs_path,
+      const tinyusdz::GeomPoints &points,
+      RenderGSplat *dst);
 
   ///
   /// Convert USD Material/Shader to renderer-friendly Material

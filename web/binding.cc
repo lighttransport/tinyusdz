@@ -1241,6 +1241,122 @@ class TinyUSDZLoaderNative {
 
   int numMaterials() const { return render_scene_.materials.size(); }
 
+  int numGSplats() const { return render_scene_.gsplats.size(); }
+
+  emscripten::val getGSplat(int gsplat_id) const {
+    emscripten::val result = emscripten::val::object();
+
+    if (!loaded_) {
+      result.set("error", "Scene not loaded");
+      return result;
+    }
+
+    if (gsplat_id < 0 || gsplat_id >= render_scene_.gsplats.size()) {
+      result.set("error", "Invalid gsplat ID");
+      return result;
+    }
+
+    const auto &gsplat = render_scene_.gsplats[gsplat_id];
+
+    result.set("prim_name", gsplat.prim_name);
+    result.set("abs_path", gsplat.abs_path);
+    result.set("display_name", gsplat.display_name);
+    result.set("num_splats", static_cast<int>(gsplat.num_splats()));
+    result.set("shDegree", gsplat.shDegree);
+
+    // Convert positions to JS array
+    emscripten::val positions = emscripten::val::array();
+    for (size_t i = 0; i < gsplat.positions.size(); i++) {
+      emscripten::val pos = emscripten::val::array();
+      pos.call<void>("push", gsplat.positions[i][0]);
+      pos.call<void>("push", gsplat.positions[i][1]);
+      pos.call<void>("push", gsplat.positions[i][2]);
+      positions.call<void>("push", pos);
+    }
+    result.set("positions", positions);
+
+    // Convert scales to JS array
+    emscripten::val scales = emscripten::val::array();
+    for (size_t i = 0; i < gsplat.scales.size(); i++) {
+      emscripten::val scale = emscripten::val::array();
+      scale.call<void>("push", gsplat.scales[i][0]);
+      scale.call<void>("push", gsplat.scales[i][1]);
+      scale.call<void>("push", gsplat.scales[i][2]);
+      scales.call<void>("push", scale);
+    }
+    result.set("scales", scales);
+
+    // Convert rotations to JS array
+    emscripten::val rotations = emscripten::val::array();
+    for (size_t i = 0; i < gsplat.rotations.size(); i++) {
+      emscripten::val rot = emscripten::val::array();
+      rot.call<void>("push", tinyusdz::value::half_to_float(gsplat.rotations[i].imag[0]));
+      rot.call<void>("push", tinyusdz::value::half_to_float(gsplat.rotations[i].imag[1]));
+      rot.call<void>("push", tinyusdz::value::half_to_float(gsplat.rotations[i].imag[2]));
+      rot.call<void>("push", tinyusdz::value::half_to_float(gsplat.rotations[i].real));
+      rotations.call<void>("push", rot);
+    }
+    result.set("rotations", rotations);
+
+    // Convert alphas to JS array
+    emscripten::val alphas = emscripten::val::array();
+    for (size_t i = 0; i < gsplat.alphas.size(); i++) {
+      alphas.call<void>("push", gsplat.alphas[i]);
+    }
+    result.set("alphas", alphas);
+
+    // Convert spherical harmonics if available
+    if (!gsplat.sh_l0.empty()) {
+      emscripten::val sh_l0 = emscripten::val::array();
+      for (size_t i = 0; i < gsplat.sh_l0.size(); i++) {
+        emscripten::val sh = emscripten::val::array();
+        sh.call<void>("push", gsplat.sh_l0[i][0]);
+        sh.call<void>("push", gsplat.sh_l0[i][1]);
+        sh.call<void>("push", gsplat.sh_l0[i][2]);
+        sh_l0.call<void>("push", sh);
+      }
+      result.set("sh_l0", sh_l0);
+    }
+
+    if (!gsplat.sh_l1.empty()) {
+      emscripten::val sh_l1 = emscripten::val::array();
+      for (size_t i = 0; i < gsplat.sh_l1.size(); i++) {
+        emscripten::val sh = emscripten::val::array();
+        sh.call<void>("push", gsplat.sh_l1[i][0]);
+        sh.call<void>("push", gsplat.sh_l1[i][1]);
+        sh.call<void>("push", gsplat.sh_l1[i][2]);
+        sh_l1.call<void>("push", sh);
+      }
+      result.set("sh_l1", sh_l1);
+    }
+
+    if (!gsplat.sh_l2.empty()) {
+      emscripten::val sh_l2 = emscripten::val::array();
+      for (size_t i = 0; i < gsplat.sh_l2.size(); i++) {
+        emscripten::val sh = emscripten::val::array();
+        sh.call<void>("push", gsplat.sh_l2[i][0]);
+        sh.call<void>("push", gsplat.sh_l2[i][1]);
+        sh.call<void>("push", gsplat.sh_l2[i][2]);
+        sh_l2.call<void>("push", sh);
+      }
+      result.set("sh_l2", sh_l2);
+    }
+
+    if (!gsplat.sh_l3.empty()) {
+      emscripten::val sh_l3 = emscripten::val::array();
+      for (size_t i = 0; i < gsplat.sh_l3.size(); i++) {
+        emscripten::val sh = emscripten::val::array();
+        sh.call<void>("push", gsplat.sh_l3[i][0]);
+        sh.call<void>("push", gsplat.sh_l3[i][1]);
+        sh.call<void>("push", gsplat.sh_l3[i][2]);
+        sh_l3.call<void>("push", sh);
+      }
+      result.set("sh_l3", sh_l3);
+    }
+
+    return result;
+  }
+
   // Legacy method for backward compatibility
   emscripten::val getMaterial(int mat_id) const {
     // Default to JSON format for backward compatibility
@@ -2716,6 +2832,8 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("getURI", &TinyUSDZLoaderNative::getURI)
       .function("getMesh", &TinyUSDZLoaderNative::getMesh)
       .function("numMeshes", &TinyUSDZLoaderNative::numMeshes)
+      .function("getGSplat", &TinyUSDZLoaderNative::getGSplat)
+      .function("numGSplats", &TinyUSDZLoaderNative::numGSplats)
       .function("getMaterial", select_overload<emscripten::val(int) const>(&TinyUSDZLoaderNative::getMaterial))
       .function("getMaterialWithFormat", select_overload<emscripten::val(int, const std::string&) const>(&TinyUSDZLoaderNative::getMaterial))
       .function("numMaterials", &TinyUSDZLoaderNative::numMaterials)

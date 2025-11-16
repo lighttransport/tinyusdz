@@ -1,0 +1,72 @@
+#usda 1.0
+(
+    doc = """Example USD file showing how to reference Gaussian splat files (.spz and .ply).
+
+    To use this example:
+    1. Obtain a Gaussian splat file in .spz or .ply format
+    2. Place it in this models/ directory
+    3. Update the reference paths below to point to your files
+
+    Gaussian splat files can be obtained from:
+    - Scaniverse iOS app (https://scaniverse.com) - exports .spz
+    - 3D Gaussian Splatting training (https://github.com/graphdeco-inria/gaussian-splatting) - exports .ply
+    - Converting between formats using tools from github.com/nianticlabs/spz
+    """
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "GaussianSplats"
+{
+    # Example 1: Reference an external .spz file (compressed format)
+    # The .spz file will be automatically converted to a GeomPoints prim
+    # with primvars:gsplat:* attributes
+
+    def Points "Splat_SPZ" (
+        prepend references = @example.spz@
+    )
+    {
+        # The referenced .spz data will provide:
+        # - positions (point3f[])
+        # - primvars:gsplat:scales (float3[])
+        # - primvars:gsplat:rotations (quatf[])
+        # - primvars:gsplat:alphas (float[])
+        # - primvars:gsplat:sh_l0 (float3[])
+        # - primvars:gsplat:shDegree (int)
+        # - optionally: sh_l1, sh_l2, sh_l3 (higher order spherical harmonics)
+
+        # You can override or add additional attributes here if needed
+    }
+
+    # Example 2: Reference an external .ply file (uncompressed format)
+    # The .ply file will be automatically converted to a GeomPoints prim
+    # with the same primvars:gsplat:* attributes as .spz
+
+    def Points "Splat_PLY" (
+        prepend references = @example.ply@
+    )
+    {
+        # The referenced .ply data provides the same attributes as .spz
+        # Both formats are converted to the same USD representation
+
+        # Example: Position the splat to the side
+        double3 xformOp:translate = (5, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}
+
+# Alternative: Inline Gaussian splat data (for testing/small datasets)
+def Points "InlineSplatExample"
+{
+    # Minimal example with just a few gaussian splats
+    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+
+    # Required gsplat attributes
+    float3[] primvars:gsplat:scales = [(0.1, 0.1, 0.1), (0.15, 0.15, 0.15), (0.12, 0.12, 0.12)]
+    quatf[] primvars:gsplat:rotations = [(1, 0, 0, 0), (1, 0, 0, 0), (1, 0, 0, 0)]
+    float[] primvars:gsplat:alphas = [1.0, 0.8, 0.9]
+
+    # Optional: Spherical harmonics DC component (base color)
+    float3[] primvars:gsplat:sh_l0 = [(1, 0, 0), (0, 1, 0), (0, 0, 1)]
+    int primvars:gsplat:shDegree = 0
+}

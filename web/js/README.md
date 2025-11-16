@@ -60,4 +60,61 @@ NPM packaing is not handled in this folder.
 
 Please see `../npm`
 
+## Gaussian Splatting Demo
+
+The `gsplat.html` and `gsplat.js` files provide a web-based demo for loading and visualizing Gaussian splat data.
+
+### Supported Formats
+
+The demo supports three file formats:
+
+1. **USD Files** (.usd, .usda, .usdc, .usdz)
+   - GeomPoints with `primvars:gsplat:*` attributes
+   - Example attributes: scales, rotations, alphas, sh_l0, shDegree
+
+2. **SPZ Files** (.spz)
+   - Niantic SPZ compressed Gaussian splat format
+   - ~10x smaller than PLY with minimal quality loss
+   - Obtained from Scaniverse app or converted from PLY
+
+3. **PLY Files** (.ply)
+   - Standard PLY format with Gaussian splat vertex properties
+   - Output from 3D Gaussian Splatting training
+   - Binary format with gaussian-specific fields (scale_0-2, rot_0-3, opacity, f_dc_0-2, f_rest_*)
+
+### Running the Demo
+
+```bash
+# Start development server
+bun run dev
+
+# Navigate to the gsplat demo
+# Open http://localhost:5173/gsplat.html
+```
+
+Or use the dedicated npm script:
+
+```bash
+bun run dev:gsplat
+```
+
+### Loading Files
+
+1. Click "📁 Load File" button
+2. Select a .usd, .spz, or .ply file
+3. The file will be processed by TinyUSDZ
+4. Gaussian splats will render as a point cloud (temporary visualization)
+
+**Note**: The current implementation renders splats as point clouds. For production use, integrate with a proper Gaussian splatting renderer like:
+- @google/model-viewer with splat support
+- antimatter15/splat
+- three-gpu-pathtracer GSplat
+
+### Example Files
+
+For testing, you can use:
+- USD files from `../../models/gsplat-reference-example.usda`
+- SPZ files from Scaniverse app export
+- PLY files from [3D Gaussian Splatting](https://github.com/graphdeco-inria/gaussian-splatting) training
+
 
