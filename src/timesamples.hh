@@ -1832,10 +1832,9 @@ struct TimeSamples {
 #pragma clang diagnostic pop
 #endif
 
-    if (_use_pod) {
-      // For POD storage, convert samples on demand
-      // This is not ideal for performance, but maintains backward compatibility
-      // Users should prefer typed access methods when possible
+    if (_use_pod && !_pod_samples._times.empty()) {
+      // For old PODTimeSamples storage (backward compatibility), convert samples on demand
+      // This path is for legacy data stored in _pod_samples
       if (_dirty) {
         update();
       }
@@ -1854,7 +1853,8 @@ struct TimeSamples {
       return _samples;
     }
 
-    // If _use_pod = false but unified storage has data, convert to generic samples
+    // If unified storage has data (Phase 3), convert to generic samples
+    // This includes both _use_pod=true (Phase 3 unified POD) and _use_pod=false cases
     if (!_times.empty() && _samples.empty()) {
       if (_dirty) {
         update();
