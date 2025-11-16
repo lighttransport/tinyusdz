@@ -11,6 +11,7 @@
 #include <iostream>
 #include "layer.hh"
 #include "pprinter.hh"  // For to_string(Specifier), to_string(Variability)
+#include "usdShade.hh"  // For Material and Shader
 
 namespace tinyusdz {
 namespace experimental {
@@ -287,6 +288,10 @@ bool CrateWriter::ExtractTypeSpecificProperties(
     return ExtractSphereProperties(prim, fields, err);
   } else if (type_name == "Cylinder") {
     return ExtractCylinderProperties(prim, fields, err);
+  } else if (type_name == "Material") {
+    return ExtractMaterialProperties(prim, fields, err);
+  } else if (type_name == "Shader") {
+    return ExtractShaderProperties(prim, fields, err);
   }
 
   // For unknown types or types without specific handlers,
@@ -859,6 +864,65 @@ bool CrateWriter::ExtractGPrimProperties(
       std::cerr << "[ExtractGPrimProperties] Added orientation: " << to_string(orient_val) << "\n";
     }
   }
+
+  return true;
+}
+
+// ============================================================================
+// Material Property Extraction
+// ============================================================================
+
+bool CrateWriter::ExtractMaterialProperties(
+  const Prim& prim,
+  crate::FieldValuePairVector& fields,
+  std::string* err
+) {
+  const Material* material = prim.data().as<Material>();
+  if (!material) {
+    if (err) *err = "Failed to cast prim to Material";
+    return false;
+  }
+
+  std::cerr << "[ExtractMaterialProperties] Processing Material: " << material->name << "\n";
+
+  // Material outputs are special - they're output attributes with connections
+  // For now, we'll handle them as regular properties via the props map
+  // which will be processed by ConvertPropertyToFields
+
+  // Note: Material outputs (surface, displacement, volume) are TypedConnection<value::token>
+  // These should be in the prim's props map and will be handled by the property conversion
+
+  return true;
+}
+
+// ============================================================================
+// Shader Property Extraction
+// ============================================================================
+
+bool CrateWriter::ExtractShaderProperties(
+  const Prim& prim,
+  crate::FieldValuePairVector& fields,
+  std::string* err
+) {
+  const Shader* shader = prim.data().as<Shader>();
+  if (!shader) {
+    if (err) *err = "Failed to cast prim to Shader";
+    return false;
+  }
+
+  std::cerr << "[ExtractShaderProperties] Processing Shader: " << shader->name << "\n";
+
+  // Add info:id (shader type identifier)
+  if (!shader->info_id.empty()) {
+    crate::CrateValue info_id_value;
+    value::token tok(shader->info_id);
+    info_id_value.Set(tok);
+    fields.push_back({"info:id", info_id_value});
+    std::cerr << "[ExtractShaderProperties] Added info:id: " << shader->info_id << "\n";
+  }
+
+  // Shader inputs and outputs are handled through the props map
+  // which will be processed by ConvertPropertyToFields
 
   return true;
 }
