@@ -297,7 +297,7 @@ bool ReduceGreedy(const std::vector<BoneInfluence> &influences, uint32_t target_
 
   // Keep top N
   uint32_t keep = std::min(target_count, uint32_t(sorted.size()));
-  out_selected.assign(sorted.begin(), sorted.begin() + keep);
+  out_selected.assign(sorted.begin(), sorted.begin() + static_cast<std::ptrdiff_t>(keep));
 
   return true;
 }
