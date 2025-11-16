@@ -571,9 +571,28 @@ void crate_writer_material_shader_test(void) {
   TEST_CHECK(ret == true);
   if (!ret) {
     TEST_MSG("Failed to load: %s", err.c_str());
+    std::cerr << "FAILED TO LOAD: " << err << "\n";
   }
 
   // Verify prims were loaded
+  std::cerr << "Loaded " << loaded_stage.root_prims().size() << " root prims\n";
+  for (size_t i = 0; i < loaded_stage.root_prims().size(); i++) {
+    const auto& prim = loaded_stage.root_prims()[i];
+    std::cerr << "  Prim " << i << ": " << prim.element_name()
+              << " (type: " << prim.prim_type_name() << ")"
+              << " children=" << prim.children().size() << "\n";
+    for (size_t j = 0; j < prim.children().size(); j++) {
+      std::cerr << "    Child " << j << ": " << prim.children()[j].element_name()
+                << " (type: " << prim.children()[j].prim_type_name() << ")\n";
+    }
+  }
+  TEST_MSG("Loaded %zu root prims", loaded_stage.root_prims().size());
+  for (size_t i = 0; i < loaded_stage.root_prims().size(); i++) {
+    TEST_MSG("Prim %zu: %s (type: %s)", i,
+             loaded_stage.root_prims()[i].element_name().c_str(),
+             loaded_stage.root_prims()[i].prim_type_name().c_str());
+  }
+
   TEST_CHECK(loaded_stage.root_prims().size() == 2);
   if (loaded_stage.root_prims().size() == 2) {
     TEST_MSG("Prim 0: %s", loaded_stage.root_prims()[0].element_name().c_str());

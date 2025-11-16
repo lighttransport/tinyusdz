@@ -105,6 +105,16 @@ bool CrateWriter::AddSpec(const Path& path,
   // For now, just accumulate the data
   spec_data_.push_back(spec_data);
 
+  std::cerr << "DEBUG AddSpec[" << (spec_data_.size()-1) << "]: path=" << path.full_path_name()
+            << " spec_type=" << static_cast<int>(spec_type) << " (";
+  switch(spec_type) {
+    case SpecType::PseudoRoot: std::cerr << "PseudoRoot"; break;
+    case SpecType::Prim: std::cerr << "Prim"; break;
+    case SpecType::Attribute: std::cerr << "Attribute"; break;
+    default: std::cerr << "Other"; break;
+  }
+  std::cerr << ")\n";
+
   // Pre-register the path for deduplication
   GetOrCreatePath(path);
 
@@ -131,44 +141,18 @@ bool CrateWriter::Finalize(std::string* err) {
   // Step 1: Process all specs and build internal tables
   // ========================================================================
 
-  // Phase 5: Sort specs for better compression
-  // Sorting strategy:
-  // 0. PseudoRoot MUST be first (required by USD spec)
-  // 1. Prims before properties
-  // 2. Within prims: alphabetically by path
-  // 3. Within properties: group by parent prim, then alphabetically by property name
+  // Phase 5: Sort specs for better compression and correct hierarchy
+  // CRITICAL: Sort specs using the same USD path comparison algorithm
+  // that will be used in WritePathsSection (SortSimplePaths).
+  // This ensures path indices assigned here match the path tree encoding.
+  //
+  // PseudoRoot ("/") MUST be first (required by USD spec)
   std::sort(spec_data_.begin(), spec_data_.end(),
     [](const SpecData& a, const SpecData& b) {
-      // CRITICAL: PseudoRoot must always be first
-      // Check if either is the root path "/"
-      bool a_is_root = (a.spec_type == SpecType::PseudoRoot ||
-                        (a.path.prim_part() == "/" && a.path.prop_part().empty()));
-      bool b_is_root = (b.spec_type == SpecType::PseudoRoot ||
-                        (b.path.prim_part() == "/" && b.path.prop_part().empty()));
-
-      if (a_is_root && !b_is_root) return true;   // Root always first
-      if (!a_is_root && b_is_root) return false;  // Root always first
-      if (a_is_root && b_is_root) return false;   // Both root (shouldn't happen), keep order
-
-      bool a_is_prim = a.path.is_prim_path();
-      bool b_is_prim = b.path.is_prim_path();
-
-      // Prims before properties
-      if (a_is_prim != b_is_prim) {
-        return a_is_prim;  // true (prim) sorts before false (property)
-      }
-
-      // Both are prims or both are properties
-      if (a_is_prim) {
-        // Both prims - sort alphabetically by full path
-        return a.path.prim_part() < b.path.prim_part();
-      } else {
-        // Both properties - first by parent prim, then by property name
-        if (a.path.prim_part() != b.path.prim_part()) {
-          return a.path.prim_part() < b.path.prim_part();
-        }
-        return a.path.prop_part() < b.path.prop_part();
-      }
+      // Use the same path comparison as pathlib::SortSimplePaths
+      pathlib::SimplePath a_path(a.path.prim_part(), a.path.prop_part());
+      pathlib::SimplePath b_path(b.path.prim_part(), b.path.prop_part());
+      return pathlib::ComparePaths(a_path, b_path) < 0;
     });
 
   // Verify that the first spec is PseudoRoot (required by USD spec)
@@ -185,6 +169,38 @@ bool CrateWriter::Finalize(std::string* err) {
       }
       return false;
     }
+  }
+
+  // Debug: Show order after sorting
+  std::cerr << "DEBUG After sorting, spec_data_ has " << spec_data_.size() << " specs:\n";
+  for (size_t i = 0; i < spec_data_.size(); ++i) {
+    std::cerr << "  Spec[" << i << "]: path=" << spec_data_[i].path.full_path_name()
+              << " spec_type=" << static_cast<int>(spec_data_[i].spec_type) << " (";
+    switch(spec_data_[i].spec_type) {
+      case SpecType::PseudoRoot: std::cerr << "PseudoRoot"; break;
+      case SpecType::Prim: std::cerr << "Prim"; break;
+      case SpecType::Attribute: std::cerr << "Attribute"; break;
+      default: std::cerr << "Other"; break;
+    }
+    std::cerr << ")\n";
+  }
+
+  // CRITICAL: Rebuild path deduplication table to match sorted order
+  // Path indices must correspond to the sorted spec order
+  path_to_index_.clear();
+  paths_.clear();
+  for (const auto& spec_data : spec_data_) {
+    if (path_to_index_.find(spec_data.path) == path_to_index_.end()) {
+      crate::PathIndex idx;
+      idx.value = static_cast<uint32_t>(paths_.size());
+      path_to_index_[spec_data.path] = idx;
+      paths_.push_back(spec_data.path);
+    }
+  }
+
+  std::cerr << "DEBUG Rebuilt path table with " << paths_.size() << " paths:\n";
+  for (size_t i = 0; i < paths_.size(); ++i) {
+    std::cerr << "  path[" << i << "]: " << paths_[i].full_path_name() << "\n";
   }
 
   // Build field and fieldset tables
@@ -258,37 +274,57 @@ bool CrateWriter::Finalize(std::string* err) {
   const auto& reverse_tokens_prep = tree_prep.token_table.GetReverseTokens();
 
   // Build a map of path tree tokens (original index -> token string)
+  // CRITICAL: Include BOTH positive (prim) and negative (property) indices
   std::map<int32_t, std::string> path_tree_tokens;
   for (const auto& pair : reverse_tokens_prep) {
-    if (pair.first >= 0) {
-      path_tree_tokens[pair.first] = pair.second;
-    }
+    // Store both positive and negative indices
+    // Properties use negative indices, prims use positive indices
+    path_tree_tokens[pair.first] = pair.second;
   }
 
   // For each path tree token, check if it already exists in our token table
   // If it exists, we can reuse it. If not, append it.
-  std::map<int32_t, uint32_t> path_tree_to_our_index;  // Maps path tree index -> our token index
+  // CRITICAL: Keep path tree indices WITH THEIR ORIGINAL SIGN!
+  // Both +N and -N can exist as different tokens (prims vs properties).
+  // We need to store them separately to avoid collisions.
+  std::map<int32_t, uint32_t> path_tree_to_our_index;  // Maps path tree index (with sign!) -> our token index
 
   for (const auto& pair : path_tree_tokens) {
-    int32_t path_tree_idx = pair.first;
+    int32_t path_tree_idx = pair.first;  // Keep original sign!
     const std::string& token_str = pair.second;
 
     // Check if this token already exists in our token table
     auto it = token_to_index_.find(token_str);
     if (it != token_to_index_.end()) {
       // Token already exists, reuse it
-      path_tree_to_our_index[path_tree_idx] = it->second.value;
+      path_tree_to_our_index[path_tree_idx] = it->second.value;  // Store with ORIGINAL sign
     } else {
       // New token, append it
       uint32_t new_idx = static_cast<uint32_t>(tokens_.size());
       tokens_.push_back(token_str);
       token_to_index_[token_str] = crate::TokenIndex(new_idx);
-      path_tree_to_our_index[path_tree_idx] = new_idx;
+      path_tree_to_our_index[path_tree_idx] = new_idx;  // Store with ORIGINAL sign
     }
   }
 
   // Store the mapping for later use when writing the path tree
   path_tree_token_remap_ = path_tree_to_our_index;
+
+  // Debug: Print the path tree tokens
+  std::cerr << "DEBUG: path_tree_tokens has " << path_tree_tokens.size() << " entries:\n";
+  for (const auto& pair : path_tree_tokens) {
+    std::cerr << "  path_tree_idx=" << pair.first << " -> token='" << pair.second << "'\n";
+  }
+
+  // Debug: Print the remap table
+  std::cerr << "DEBUG: path_tree_token_remap_ has " << path_tree_token_remap_.size() << " entries:\n";
+  for (const auto& pair : path_tree_token_remap_) {
+    std::cerr << "  path_tree_idx=" << pair.first << " -> our_idx=" << pair.second;
+    if (pair.second < tokens_.size()) {
+      std::cerr << " (token='" << tokens_[pair.second] << "')";
+    }
+    std::cerr << "\n";
+  }
 
   // Seek to the end of value data section before writing structural sections
   // (WriteValueData() seeks back after writing, so file position is not at the end)
@@ -944,26 +980,27 @@ bool CrateWriter::WritePathsSection(std::string* err) {
   std::vector<int32_t> remapped_element_token_indexes;
   remapped_element_token_indexes.reserve(tree.element_token_indexes.size());
 
+  std::cerr << "DEBUG: Remapping element_token_indexes (before remapping):\n";
+  for (size_t i = 0; i < tree.element_token_indexes.size(); ++i) {
+    std::cerr << "  [" << i << "] = " << tree.element_token_indexes[i] << "\n";
+  }
+
   for (int32_t path_tree_idx : tree.element_token_indexes) {
-    if (path_tree_idx < 0) {
-      // Negative indices for properties: negate, remap, then negate again
-      int32_t abs_idx = -path_tree_idx;
-      auto it = path_tree_token_remap_.find(abs_idx);
-      if (it != path_tree_token_remap_.end()) {
+    // Look up using the ORIGINAL signed index (map now stores with sign)
+    auto it = path_tree_token_remap_.find(path_tree_idx);
+    if (it != path_tree_token_remap_.end()) {
+      // Found the mapping
+      if (path_tree_idx < 0) {
+        // Property: negate the result to keep it negative
         remapped_element_token_indexes.push_back(-static_cast<int32_t>(it->second));
       } else {
-        // Shouldn't happen, but preserve original if not found
-        remapped_element_token_indexes.push_back(path_tree_idx);
+        // Prim: use positive result
+        remapped_element_token_indexes.push_back(static_cast<int32_t>(it->second));
       }
     } else {
-      // Positive indices for prim parts
-      auto it = path_tree_token_remap_.find(path_tree_idx);
-      if (it != path_tree_token_remap_.end()) {
-        remapped_element_token_indexes.push_back(static_cast<int32_t>(it->second));
-      } else {
-        // Shouldn't happen, but preserve original if not found
-        remapped_element_token_indexes.push_back(path_tree_idx);
-      }
+      // Not found - shouldn't happen, but preserve original
+      std::cerr << "WARNING: path_tree_idx " << path_tree_idx << " not found in remap table!\n";
+      remapped_element_token_indexes.push_back(path_tree_idx);
     }
   }
 
@@ -1016,6 +1053,18 @@ bool CrateWriter::WritePathsSection(std::string* err) {
     }
   }
 
+  // Debug: Print element_token_indexes array
+  std::cerr << "DEBUG: Path tree element_token_indexes array (" << tree.element_token_indexes.size() << " entries):\n";
+  for (size_t i = 0; i < tree.element_token_indexes.size(); ++i) {
+    std::cerr << "  element_token_indexes[" << i << "] = " << tree.element_token_indexes[i];
+    if (tree.element_token_indexes[i] < 0) {
+      std::cerr << " (property)";
+    } else {
+      std::cerr << " (prim)";
+    }
+    std::cerr << "\n";
+  }
+
   // Compress and write elementTokenIndexes array (int32_t - can be negative)
   {
     size_t buffer_size = Usd_IntegerCompression::GetCompressedBufferSize(tree.element_token_indexes.size());
@@ -1036,6 +1085,17 @@ bool CrateWriter::WritePathsSection(std::string* err) {
       if (err) *err = "Failed to write elementTokenIndexes";
       return false;
     }
+  }
+
+  // Debug: Print jumps array
+  std::cerr << "DEBUG: Path tree jumps array (" << tree.jumps.size() << " entries):\n";
+  for (size_t i = 0; i < tree.jumps.size(); ++i) {
+    std::cerr << "  jumps[" << i << "] = " << tree.jumps[i];
+    if (tree.jumps[i] == -2) std::cerr << " (leaf)";
+    else if (tree.jumps[i] == -1) std::cerr << " (only child follows)";
+    else if (tree.jumps[i] == 0) std::cerr << " (only sibling follows)";
+    else if (tree.jumps[i] > 0) std::cerr << " (child+sibling, offset=" << tree.jumps[i] << ")";
+    std::cerr << "\n";
   }
 
   // Compress and write jumps array (int32_t)
