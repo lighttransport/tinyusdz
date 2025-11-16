@@ -12,3 +12,4 @@ void crate_writer_multiple_prims_test(void);
 void crate_writer_nested_prims_test(void);
 void crate_writer_error_handling_test(void);
 void crate_writer_material_shader_test(void);
+void crate_writer_layer_metadata_test(void);
