@@ -943,14 +943,15 @@ bool CrateWriter::AddMaterialOutputSpecs(
       type_value.Set(type_tok);
       output_fields.push_back({"typeName", type_value});
 
-      // Add targetPaths as a ListOp[Path] (required by USD spec)
-      ListOp<Path> target_paths_listop;
-      target_paths_listop.ClearAndMakeExplicit();
-      target_paths_listop.SetExplicitItems(connections);
+      // Add connectionPaths as a ListOp[Path] (for Attribute connections)
+      // Note: Use "connectionPaths" for Attribute connections, "targetPaths" for Relationships
+      ListOp<Path> connection_paths_listop;
+      connection_paths_listop.ClearAndMakeExplicit();
+      connection_paths_listop.SetExplicitItems(connections);
 
       crate::CrateValue conn_value;
-      conn_value.Set(target_paths_listop);
-      output_fields.push_back({"targetPaths", conn_value});
+      conn_value.Set(connection_paths_listop);
+      output_fields.push_back({"connectionPaths", conn_value});
 
       if (!AddSpec(output_path, SpecType::Attribute, output_fields, err)) {
         return false;
@@ -974,14 +975,15 @@ bool CrateWriter::AddMaterialOutputSpecs(
       type_value.Set(type_tok);
       output_fields.push_back({"typeName", type_value});
 
-      // Add targetPaths as a ListOp[Path] (required by USD spec)
-      ListOp<Path> target_paths_listop;
-      target_paths_listop.ClearAndMakeExplicit();
-      target_paths_listop.SetExplicitItems(connections);
+      // Add connectionPaths as a ListOp[Path] (for Attribute connections)
+      // Note: Use "connectionPaths" for Attribute connections, "targetPaths" for Relationships
+      ListOp<Path> connection_paths_listop;
+      connection_paths_listop.ClearAndMakeExplicit();
+      connection_paths_listop.SetExplicitItems(connections);
 
       crate::CrateValue conn_value;
-      conn_value.Set(target_paths_listop);
-      output_fields.push_back({"targetPaths", conn_value});
+      conn_value.Set(connection_paths_listop);
+      output_fields.push_back({"connectionPaths", conn_value});
 
       if (!AddSpec(output_path, SpecType::Attribute, output_fields, err)) {
         return false;
@@ -1003,14 +1005,15 @@ bool CrateWriter::AddMaterialOutputSpecs(
       type_value.Set(type_tok);
       output_fields.push_back({"typeName", type_value});
 
-      // Add targetPaths as a ListOp[Path] (required by USD spec)
-      ListOp<Path> target_paths_listop;
-      target_paths_listop.ClearAndMakeExplicit();
-      target_paths_listop.SetExplicitItems(connections);
+      // Add connectionPaths as a ListOp[Path] (for Attribute connections)
+      // Note: Use "connectionPaths" for Attribute connections, "targetPaths" for Relationships
+      ListOp<Path> connection_paths_listop;
+      connection_paths_listop.ClearAndMakeExplicit();
+      connection_paths_listop.SetExplicitItems(connections);
 
       crate::CrateValue conn_value;
-      conn_value.Set(target_paths_listop);
-      output_fields.push_back({"targetPaths", conn_value});
+      conn_value.Set(connection_paths_listop);
+      output_fields.push_back({"connectionPaths", conn_value});
 
       if (!AddSpec(output_path, SpecType::Attribute, output_fields, err)) {
         return false;
