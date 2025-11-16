@@ -1374,8 +1374,9 @@ bool CrateWriter::ConvertValue(
 bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
   std::cout << "[ConvertLayerToSpecs] Starting Layer→Crate conversion\n";
 
-  // 1. Add PseudoRoot spec
+  // 1. Add PseudoRoot spec with layer metadata
   // The PseudoRoot is a special prim at "/" that serves as the root of the scene
+  // Layer metadata (upAxis, metersPerUnit, etc.) is stored as fields on PseudoRoot
   {
     Path root_path("/", "");  // Root path - use standard constructor
     crate::FieldValuePairVector root_fields;
@@ -1385,6 +1386,89 @@ bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
     crate::CrateValue spec_value;
     spec_value.Set(Specifier::Def);
     root_fields.push_back({"specifier", spec_value});
+
+    // Extract and add layer metadata from Layer.metas()
+    const LayerMetas& metas = layer.metas();
+
+    // upAxis (token: "X", "Y", or "Z")
+    if (metas.upAxis.authored()) {
+      Axis axis = metas.upAxis.get_value();
+      std::string axis_str = tinyusdz::to_string(axis);  // "X", "Y", or "Z"
+      crate::CrateValue axis_value;
+      value::token axis_tok(axis_str);
+      axis_value.Set(axis_tok);
+      root_fields.push_back({"upAxis", axis_value});
+    }
+
+    // metersPerUnit (double)
+    if (metas.metersPerUnit.authored()) {
+      crate::CrateValue meters_value;
+      meters_value.Set(metas.metersPerUnit.get_value());
+      root_fields.push_back({"metersPerUnit", meters_value});
+    }
+
+    // timeCodesPerSecond (double)
+    if (metas.timeCodesPerSecond.authored()) {
+      crate::CrateValue time_value;
+      time_value.Set(metas.timeCodesPerSecond.get_value());
+      root_fields.push_back({"timeCodesPerSecond", time_value});
+    }
+
+    // framesPerSecond (double)
+    if (metas.framesPerSecond.authored()) {
+      crate::CrateValue fps_value;
+      fps_value.Set(metas.framesPerSecond.get_value());
+      root_fields.push_back({"framesPerSecond", fps_value});
+    }
+
+    // startTimeCode (double)
+    if (metas.startTimeCode.authored()) {
+      crate::CrateValue start_value;
+      start_value.Set(metas.startTimeCode.get_value());
+      root_fields.push_back({"startTimeCode", start_value});
+    }
+
+    // endTimeCode (double)
+    if (metas.endTimeCode.authored()) {
+      crate::CrateValue end_value;
+      end_value.Set(metas.endTimeCode.get_value());
+      root_fields.push_back({"endTimeCode", end_value});
+    }
+
+    // defaultPrim (token)
+    if (!metas.defaultPrim.str().empty()) {
+      crate::CrateValue default_prim_value;
+      default_prim_value.Set(metas.defaultPrim);
+      root_fields.push_back({"defaultPrim", default_prim_value});
+    }
+
+    // documentation (string)
+    if (!metas.doc.value.empty()) {
+      crate::CrateValue doc_value;
+      doc_value.Set(metas.doc.value);
+      root_fields.push_back({"documentation", doc_value});
+    }
+
+    // comment (string)
+    if (!metas.comment.value.empty()) {
+      crate::CrateValue comment_value;
+      comment_value.Set(metas.comment.value);
+      root_fields.push_back({"comment", comment_value});
+    }
+
+    // kilogramsPerUnit (double) - UsdPhysics
+    if (metas.kilogramsPerUnit.authored()) {
+      crate::CrateValue kg_value;
+      kg_value.Set(metas.kilogramsPerUnit.get_value());
+      root_fields.push_back({"kilogramsPerUnit", kg_value});
+    }
+
+    // customLayerData (dict)
+    if (!metas.customLayerData.empty()) {
+      crate::CrateValue custom_data_value;
+      custom_data_value.Set(metas.customLayerData);
+      root_fields.push_back({"customLayerData", custom_data_value});
+    }
 
     // Add PseudoRoot spec
     if (!AddSpec(root_path, SpecType::PseudoRoot, root_fields, err)) {

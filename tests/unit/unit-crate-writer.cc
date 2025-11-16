@@ -14,6 +14,8 @@
 #include "io-util.hh"
 #include "usdc-reader.hh"
 #include "usdShade.hh"
+#include "layer.hh"
+#include "pprinter.hh"
 #include <cstdio>
 
 using namespace tinyusdz;
@@ -620,5 +622,115 @@ void crate_writer_material_shader_test(void) {
   }
 
   std::cerr << "Material test file: " << filename << "\n";
+  cleanup_file(filename);
+}
+
+void crate_writer_layer_metadata_test(void) {
+  using namespace tinyusdz;
+
+  std::string filename = "test_layer_metadata.usdc";
+
+  // Create a layer with metadata
+  Layer layer;
+  layer.set_name("TestLayer");
+
+  // Set various layer metadata
+  LayerMetas& metas = layer.metas();
+
+  // Standard metadata
+  metas.upAxis = Axis::Z;  // Set upAxis to Z
+  metas.metersPerUnit = 0.01;  // centimeters
+  metas.timeCodesPerSecond = 30.0;  // 30 fps
+  metas.framesPerSecond = 30.0;
+  metas.startTimeCode = 1.0;
+  metas.endTimeCode = 120.0;
+  metas.defaultPrim = value::token("MyPrim");
+  metas.doc.value = "Test documentation string";
+  metas.comment.value = "Test comment";
+  metas.kilogramsPerUnit = 0.001;  // grams
+
+  // Add a simple prim so the layer has content
+  PrimSpec ps;
+  ps.specifier() = Specifier::Def;
+  ps.typeName() = "Xform";
+  layer.add_primspec("MyPrim", ps);
+
+  // Write using CrateWriter
+  {
+    experimental::CrateWriter writer(filename);
+    std::string err;
+
+    TEST_CHECK(writer.Open(&err));
+    if (!writer.Open(&err)) {
+      TEST_MSG("Failed to open: %s", err.c_str());
+      return;
+    }
+
+    TEST_CHECK(writer.ConvertLayerToSpecs(layer, &err));
+    if (!writer.ConvertLayerToSpecs(layer, &err)) {
+      TEST_MSG("Failed to convert: %s", err.c_str());
+      return;
+    }
+
+    TEST_CHECK(writer.Finalize(&err));
+    if (!writer.Finalize(&err)) {
+      TEST_MSG("Failed to finalize: %s", err.c_str());
+      return;
+    }
+
+    writer.Close();
+  }
+
+  TEST_MSG("Layer metadata test file: %s", filename.c_str());
+
+  // Load and verify
+  Stage loaded_stage;
+  std::string warn, err;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  if (!ret) {
+    std::cerr << "FAILED TO LOAD: " << err << "\n";
+  }
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  // Verify layer metadata was preserved
+  const LayerMetas& loaded_metas = loaded_stage.metas();
+
+  TEST_CHECK(loaded_metas.upAxis.get_value() == Axis::Z);
+  TEST_MSG("upAxis: %s (expected Z)", to_string(loaded_metas.upAxis.get_value()).c_str());
+
+  TEST_CHECK(std::abs(loaded_metas.metersPerUnit.get_value() - 0.01) < 0.0001);
+  TEST_MSG("metersPerUnit: %f (expected 0.01)", loaded_metas.metersPerUnit.get_value());
+
+  TEST_CHECK(std::abs(loaded_metas.timeCodesPerSecond.get_value() - 30.0) < 0.0001);
+  TEST_MSG("timeCodesPerSecond: %f (expected 30.0)", loaded_metas.timeCodesPerSecond.get_value());
+
+  TEST_CHECK(std::abs(loaded_metas.framesPerSecond.get_value() - 30.0) < 0.0001);
+  TEST_MSG("framesPerSecond: %f (expected 30.0)", loaded_metas.framesPerSecond.get_value());
+
+  TEST_CHECK(std::abs(loaded_metas.startTimeCode.get_value() - 1.0) < 0.0001);
+  TEST_MSG("startTimeCode: %f (expected 1.0)", loaded_metas.startTimeCode.get_value());
+
+  TEST_CHECK(std::abs(loaded_metas.endTimeCode.get_value() - 120.0) < 0.0001);
+  TEST_MSG("endTimeCode: %f (expected 120.0)", loaded_metas.endTimeCode.get_value());
+
+  TEST_CHECK(loaded_metas.defaultPrim.str() == "MyPrim");
+  TEST_MSG("defaultPrim: %s (expected MyPrim)", loaded_metas.defaultPrim.str().c_str());
+
+  TEST_CHECK(loaded_metas.doc.value == "Test documentation string");
+  TEST_MSG("doc: %s", loaded_metas.doc.value.c_str());
+
+  TEST_CHECK(loaded_metas.comment.value == "Test comment");
+  TEST_MSG("comment: %s", loaded_metas.comment.value.c_str());
+
+  TEST_CHECK(std::abs(loaded_metas.kilogramsPerUnit.get_value() - 0.001) < 0.00001);
+  TEST_MSG("kilogramsPerUnit: %f (expected 0.001)", loaded_metas.kilogramsPerUnit.get_value());
+
+  std::cerr << "Layer metadata roundtrip successful!\n";
   cleanup_file(filename);
 }
