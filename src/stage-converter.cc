@@ -1261,7 +1261,7 @@ bool CrateWriter::ConvertPrimSpecRecursive(
   for (const auto& item : primspec.props()) {
     const auto& prop_name = item.first;
     const auto& prop = item.second;
-    if (!ConvertPropertyToFields(prop_name, prop, fields, err)) {
+    if (!ConvertPropertyToFields(prop_name, prop, prim_path, fields, err)) {
       if (err) *err = "Failed to convert property: " + prop_name + " on prim: " + prim_path.full_path_name();
       return false;
     }
@@ -1557,6 +1557,7 @@ bool CrateWriter::ConvertPrimSpecRecursive(
 bool CrateWriter::ConvertPropertyToFields(
     const std::string& prop_name,
     const Property& prop,
+    const Path& parent_path,
     crate::FieldValuePairVector& fields,
     std::string* err) {
 
@@ -1577,8 +1578,8 @@ bool CrateWriter::ConvertPropertyToFields(
 
     return success;
   } else if (prop.is_relationship()) {
-    // Convert relationship
-    return ConvertRelationshipToFields(prop_name, prop.get_relationship(), fields, err);
+    // Convert relationship - creates separate spec, doesn't add to fields
+    return ConvertRelationshipToFields(prop_name, prop.get_relationship(), parent_path, err);
   } else if (prop.is_attribute_connection()) {
     // Convert connection
     return ConvertConnectionToFields(prop_name, prop.get_attribute(), fields, err);
@@ -1694,38 +1695,39 @@ bool CrateWriter::ConvertAttributeToFields(
 bool CrateWriter::ConvertRelationshipToFields(
     const std::string& rel_name,
     const Relationship& rel,
-    crate::FieldValuePairVector& fields,
+    const Path& parent_path,
     std::string* err) {
 
-  // IMPORTANT: In proper USD Crate format, relationships should create
-  // separate specs with SpecType::Relationship. For now, we add fields
-  // to the parent prim spec.
+  // Create separate spec for this relationship (proper USD Crate format)
+  // Relationships are property specs, not prim fields
 
-  // TODO: Create separate relationship spec:
-  // Path rel_path = parent_path.AppendProperty(rel_name);
-  // AddSpec(rel_path, SpecType::Relationship, rel_fields, err);
+  crate::FieldValuePairVector rel_fields;
+
+  // Create the relationship path
+  Path rel_path = parent_path.AppendProperty(rel_name);
+
+  std::cerr << "[ConvertRelationshipToFields] Creating separate spec for relationship: "
+            << rel_path.full_path_name() << "\n";
 
   // 1. Check relationship type and add targetPaths
   if (rel.is_blocked()) {
     // Add ValueBlock for the relationship
     crate::CrateValue blocked_value;
     blocked_value.Set(value::ValueBlock());
-    fields.push_back({rel_name, blocked_value});
-    return true;
+    rel_fields.push_back({"targetPaths", blocked_value});
   } else if (rel.is_path()) {
     // Single target path - wrap in a vector since CrateValue doesn't have Set(Path)
     crate::CrateValue path_value;
     std::vector<Path> targets;
     targets.push_back(rel.targetPath);
     path_value.Set(targets);
-    fields.push_back({rel_name + ".targetPaths", path_value});
+    rel_fields.push_back({"targetPaths", path_value});
   } else if (rel.is_pathvector()) {
     // Multiple target paths
     crate::CrateValue paths_value;
-    // Make a copy of the path vector
     std::vector<Path> targets = rel.targetPathVector;
     paths_value.Set(targets);
-    fields.push_back({rel_name + ".targetPaths", paths_value});
+    rel_fields.push_back({"targetPaths", paths_value});
   }
   // DefineOnly relationships don't add targetPaths field
 
@@ -1757,7 +1759,7 @@ bool CrateWriter::ConvertRelationshipToFields(
     }
     crate::TokenIndex qual_tok = GetOrCreateToken(qual_str);
     qual_value.Set(qual_tok.value);
-    fields.push_back({rel_name + ".listOpQual", qual_value});
+    rel_fields.push_back({"listOpQual", qual_value});
   }
 
   // 3. Relationships have implicit uniform variability
@@ -1765,7 +1767,7 @@ bool CrateWriter::ConvertRelationshipToFields(
   crate::CrateValue var_value;
   crate::TokenIndex var_tok = GetOrCreateToken("uniform");
   var_value.Set(var_tok.value);
-  fields.push_back({rel_name + ".variability", var_value});
+  rel_fields.push_back({"variability", var_value});
 
   // 4. Add relationship metadata from AttrMetas
   const AttrMeta& metas = rel.metas();
@@ -1774,7 +1776,7 @@ bool CrateWriter::ConvertRelationshipToFields(
   if (metas.comment) {
     crate::CrateValue comment_value;
     comment_value.Set(metas.comment.value().value);  // StringData.value
-    fields.push_back({rel_name + ".comment", comment_value});
+    rel_fields.push_back({"comment", comment_value});
     std::cerr << "[ConvertRelationshipToFields] Added comment for " << rel_name << "\n";
   }
 
@@ -1782,7 +1784,7 @@ bool CrateWriter::ConvertRelationshipToFields(
   if (metas.hidden) {
     crate::CrateValue hidden_value;
     hidden_value.Set(metas.hidden.value());
-    fields.push_back({rel_name + ".hidden", hidden_value});
+    rel_fields.push_back({"hidden", hidden_value});
     std::cerr << "[ConvertRelationshipToFields] Added hidden for " << rel_name << "\n";
   }
 
@@ -1790,7 +1792,7 @@ bool CrateWriter::ConvertRelationshipToFields(
   if (metas.customData) {
     crate::CrateValue custom_data_value;
     custom_data_value.Set(metas.customData.value());
-    fields.push_back({rel_name + ".customData", custom_data_value});
+    rel_fields.push_back({"customData", custom_data_value});
     std::cerr << "[ConvertRelationshipToFields] Added customData for " << rel_name
               << " with " << metas.customData.value().size() << " entries\n";
   }
@@ -1799,7 +1801,7 @@ bool CrateWriter::ConvertRelationshipToFields(
   if (metas.displayName) {
     crate::CrateValue display_name_value;
     display_name_value.Set(metas.displayName.value());
-    fields.push_back({rel_name + ".displayName", display_name_value});
+    rel_fields.push_back({"displayName", display_name_value});
     std::cerr << "[ConvertRelationshipToFields] Added displayName for " << rel_name << "\n";
   }
 
@@ -1807,9 +1809,18 @@ bool CrateWriter::ConvertRelationshipToFields(
   if (metas.displayGroup) {
     crate::CrateValue display_group_value;
     display_group_value.Set(metas.displayGroup.value());
-    fields.push_back({rel_name + ".displayGroup", display_group_value});
+    rel_fields.push_back({"displayGroup", display_group_value});
     std::cerr << "[ConvertRelationshipToFields] Added displayGroup for " << rel_name << "\n";
   }
+
+  // Create the relationship spec
+  if (!AddSpec(rel_path, SpecType::Relationship, rel_fields, err)) {
+    if (err) *err = "Failed to add relationship spec: " + rel_path.full_path_name() + ": " + *err;
+    return false;
+  }
+
+  std::cerr << "[ConvertRelationshipToFields] Successfully created relationship spec with "
+            << rel_fields.size() << " fields\n";
 
   return true;
 }
