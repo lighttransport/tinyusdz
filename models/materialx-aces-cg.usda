@@ -1,0 +1,56 @@
+#usda 1.0
+(
+    doc = "MaterialX material with ACES CG colorspace (HDR VFX workflow)"
+    metersPerUnit = 1
+    upAxis = "Y"
+    defaultPrim = "World"
+)
+
+def Xform "World"
+{
+    def Sphere "ACESphere"
+    {
+        double radius = 1.0
+        rel material:binding = </World/_materials/ACESMaterial>
+
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+            interpolation = "vertex"
+        )
+    }
+
+    def Scope "_materials"
+    {
+        def Material "ACESMaterial"
+        {
+            token outputs:surface.connect = </World/_materials/ACESMaterial/OpenPBRSurface.outputs:surface>
+
+            def Shader "OpenPBRSurface"
+            {
+                uniform token info:id = "OpenPBRSurface"
+                color3f inputs:base_color.connect = </World/_materials/ACESMaterial/ACESTexture.outputs:rgb>
+                float inputs:base_weight = 1.0
+                float inputs:base_metalness = 0.5
+                float inputs:specular_roughness = 0.3
+                token outputs:surface
+            }
+
+            def Shader "ACESTexture"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @./textures/checkerboard.png@ (
+                    colorSpace = "acescg"
+                )
+                string inputs:filtertype = "linear"
+                float2 inputs:texcoord.connect = </World/_materials/ACESMaterial/PrimvarNode.outputs:result>
+                color3f outputs:rgb
+            }
+
+            def Shader "PrimvarNode"
+            {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                string inputs:varname = "st"
+                float2 outputs:result
+            }
+        }
+    }
+}
