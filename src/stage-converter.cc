@@ -360,6 +360,8 @@ bool CrateWriter::ExtractTypeSpecificProperties(
     return ExtractCameraProperties(prim, fields, err);
   } else if (type_name == "BasisCurves") {
     return ExtractBasisCurvesProperties(prim, fields, err);
+  } else if (type_name == "GeomSubset") {
+    return ExtractGeomSubsetProperties(prim, fields, err);
   } else if (type_name == "Material") {
     return ExtractMaterialProperties(prim, prim_path, fields, err);
   } else if (type_name == "Shader") {
@@ -1201,6 +1203,80 @@ bool CrateWriter::ExtractBasisCurvesProperties(
   }
 
   return ExtractGPrimProperties(prim, fields, err);
+}
+
+bool CrateWriter::ExtractGeomSubsetProperties(
+  const Prim& prim,
+  crate::FieldValuePairVector& fields,
+  std::string* err
+) {
+  const GeomSubset* subset = prim.data().as<GeomSubset>();
+  if (!subset) {
+    if (err) *err = "Failed to cast prim to GeomSubset";
+    return false;
+  }
+
+  // Helper lambda to convert enum to string
+  auto add_enum_attribute = [&](const std::string& attr_name, const std::string& enum_val) -> bool {
+    crate::CrateValue crate_val;
+    value::Value enum_value(enum_val);
+    return ConvertValue(enum_value, crate_val, err) &&
+           (fields.push_back({attr_name, crate_val}), true);
+  };
+
+  // Helper lambda to convert array values
+  auto add_array_attribute = [&](const std::string& attr_name, const value::Value& val) -> bool {
+    crate::CrateValue crate_val;
+    return ConvertValue(val, crate_val, err) &&
+           (fields.push_back({attr_name, crate_val}), true);
+  };
+
+  // Extract elementType enum (Face/Point)
+  {
+    const GeomSubset::ElementType& elem_type = subset->elementType.get_value();
+    std::string elem_str = (elem_type == GeomSubset::ElementType::Face) ? "face" : "point";
+    if (!add_enum_attribute("elementType", elem_str)) {
+      return false;
+    }
+    std::cerr << "DEBUG: Extracted GeomSubset elementType = " << elem_str << "\n";
+  }
+
+  // Extract familyName token if authored
+  if (subset->familyName.authored()) {
+    auto familyname_opt = subset->familyName.get_value();
+    if (familyname_opt.has_value()) {
+      const value::token& familyname_val = familyname_opt.value();
+      std::string fname_str = familyname_val.str();
+      crate::CrateValue crate_val;
+      value::Value familyname_value(fname_str);
+      if (ConvertValue(familyname_value, crate_val, err)) {
+        fields.push_back({"familyName", crate_val});
+        std::cerr << "DEBUG: Extracted GeomSubset familyName = " << fname_str << "\n";
+      } else {
+        return false;
+      }
+    }
+  }
+
+  // Extract indices (int[]) - TypedAttribute returns optional
+  if (subset->indices.authored()) {
+    auto indices_opt = subset->indices.get_value();
+    if (indices_opt.has_value()) {
+      const Animatable<std::vector<int32_t>>& indices_anim = indices_opt.value();
+      if (indices_anim.has_default()) {
+        std::vector<int32_t> indices_val;
+        if (indices_anim.get_default(&indices_val)) {
+          value::Value indices_value(indices_val);
+          if (!add_array_attribute("indices", indices_value)) {
+            return false;
+          }
+          std::cerr << "DEBUG: Extracted " << indices_val.size() << " subset indices\n";
+        }
+      }
+    }
+  }
+
+  return true;
 }
 
 // ============================================================================
