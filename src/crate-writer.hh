@@ -217,6 +217,9 @@ private:
   /// Extract BasisCurves-specific properties (type, basis, wrap, points, widths, etc.)
   bool ExtractBasisCurvesProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
 
+  /// Extract GeomSubset-specific properties (elementType, familyName, indices)
+  bool ExtractGeomSubsetProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
   /// Extract common GPrim properties (visibility, purpose, etc.)
   bool ExtractGPrimProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
 
