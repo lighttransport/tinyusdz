@@ -231,6 +231,52 @@ bool CrateWriter::ConvertPrimRecursive(
     }
   }
 
+  // After adding Shader prim spec, handle shader-specific inputs as separate attribute specs
+  if (type_name == "Shader") {
+    const Shader* shader = prim.data().as<Shader>();
+    if (shader) {
+      // Check shader type and extract inputs accordingly
+      if (shader->info_id == "UsdPreviewSurface") {
+        // Try to get UsdPreviewSurface from shader value
+        if (auto* preview_surface = shader->value.as<UsdPreviewSurface>()) {
+          if (!AddUsdPreviewSurfaceInputSpecs(preview_surface, prim_path, err)) {
+            if (err) *err = "Failed to add UsdPreviewSurface input specs: " + *err;
+            return false;
+          }
+        }
+      } else if (shader->info_id == "UsdUVTexture") {
+        // Try to get UsdUVTexture from shader value
+        if (auto* uv_texture = shader->value.as<UsdUVTexture>()) {
+          if (!AddUsdUVTextureInputSpecs(uv_texture, prim_path, err)) {
+            if (err) *err = "Failed to add UsdUVTexture input specs: " + *err;
+            return false;
+          }
+        }
+      } else if (shader->info_id == "UsdTransform2d") {
+        // Try to get UsdTransform2d from shader value
+        if (auto* transform2d = shader->value.as<UsdTransform2d>()) {
+          if (!AddUsdTransform2dInputSpecs(transform2d, prim_path, err)) {
+            if (err) *err = "Failed to add UsdTransform2d input specs: " + *err;
+            return false;
+          }
+        }
+      } else if (shader->info_id.find("UsdPrimvarReader_") == 0) {
+        // Handle all UsdPrimvarReader_* variants (float, float2, float3, etc.)
+        if (!AddUsdPrimvarReaderInputSpecs(shader->value, shader->info_id, prim_path, err)) {
+          if (err) *err = "Failed to add UsdPrimvarReader input specs: " + *err;
+          return false;
+        }
+      }
+    }
+  }
+
+  // After adding prim spec, handle material bindings as separate relationship specs
+  // This applies to any prim that might have material bindings (typically geometry)
+  if (!AddMaterialBindingSpecs(prim, prim_path, err)) {
+    // Don't fail on material binding errors - just warn
+    std::cerr << "WARNING: Failed to add material binding specs: " << (err ? *err : "unknown error") << "\n";
+  }
+
   // Recursively process children
   for (const auto& child : prim.children()) {
     if (!ConvertPrimRecursive(child, prim_path, err)) {
@@ -304,6 +350,12 @@ bool CrateWriter::ExtractTypeSpecificProperties(
     return ExtractSphereProperties(prim, fields, err);
   } else if (type_name == "Cylinder") {
     return ExtractCylinderProperties(prim, fields, err);
+  } else if (type_name == "Cone") {
+    return ExtractConeProperties(prim, fields, err);
+  } else if (type_name == "Capsule") {
+    return ExtractCapsuleProperties(prim, fields, err);
+  } else if (type_name == "Points") {
+    return ExtractPointsProperties(prim, fields, err);
   } else if (type_name == "Material") {
     return ExtractMaterialProperties(prim, prim_path, fields, err);
   } else if (type_name == "Shader") {
@@ -601,6 +653,234 @@ bool CrateWriter::ExtractCylinderProperties(
   return ExtractGPrimProperties(prim, fields, err);
 }
 
+bool CrateWriter::ExtractConeProperties(
+  const Prim& prim,
+  crate::FieldValuePairVector& fields,
+  std::string* err
+) {
+  const GeomCone* cone = prim.data().as<GeomCone>();
+  if (!cone) {
+    if (err) *err = "Failed to cast prim to GeomCone";
+    return false;
+  }
+
+  // Extract radius
+  if (cone->radius.authored()) {
+    const Animatable<double>& radius_animatable = cone->radius.get_value();
+    if (radius_animatable.has_default()) {
+      double radius_val;
+      if (radius_animatable.get_default(&radius_val)) {
+        crate::CrateValue crate_val;
+        value::Value radius_value(radius_val);
+        if (ConvertValue(radius_value, crate_val, err)) {
+          fields.push_back({"radius", crate_val});
+          std::cerr << "DEBUG: Extracted cone radius: " << radius_val << "\n";
+        }
+      }
+    }
+  }
+
+  // Extract height
+  if (cone->height.authored()) {
+    const Animatable<double>& height_animatable = cone->height.get_value();
+    if (height_animatable.has_default()) {
+      double height_val;
+      if (height_animatable.get_default(&height_val)) {
+        crate::CrateValue crate_val;
+        value::Value height_value(height_val);
+        if (ConvertValue(height_value, crate_val, err)) {
+          fields.push_back({"height", crate_val});
+          std::cerr << "DEBUG: Extracted cone height: " << height_val << "\n";
+        }
+      }
+    }
+  }
+
+  // Extract axis
+  if (cone->axis.authored()) {
+    const Axis& axis_val = cone->axis.get_value();
+    std::string axis_str = to_string(axis_val);
+    crate::CrateValue axis_crate_val;
+    value::token axis_token(axis_str);
+    axis_crate_val.Set(axis_token);
+    fields.push_back({"axis", axis_crate_val});
+    std::cerr << "DEBUG: Extracted cone axis: " << axis_str << "\n";
+  }
+
+  return ExtractGPrimProperties(prim, fields, err);
+}
+
+bool CrateWriter::ExtractCapsuleProperties(
+  const Prim& prim,
+  crate::FieldValuePairVector& fields,
+  std::string* err
+) {
+  const GeomCapsule* capsule = prim.data().as<GeomCapsule>();
+  if (!capsule) {
+    if (err) *err = "Failed to cast prim to GeomCapsule";
+    return false;
+  }
+
+  // Extract radius
+  if (capsule->radius.authored()) {
+    const Animatable<double>& radius_animatable = capsule->radius.get_value();
+    if (radius_animatable.has_default()) {
+      double radius_val;
+      if (radius_animatable.get_default(&radius_val)) {
+        crate::CrateValue crate_val;
+        value::Value radius_value(radius_val);
+        if (ConvertValue(radius_value, crate_val, err)) {
+          fields.push_back({"radius", crate_val});
+          std::cerr << "DEBUG: Extracted capsule radius: " << radius_val << "\n";
+        }
+      }
+    }
+  }
+
+  // Extract height
+  if (capsule->height.authored()) {
+    const Animatable<double>& height_animatable = capsule->height.get_value();
+    if (height_animatable.has_default()) {
+      double height_val;
+      if (height_animatable.get_default(&height_val)) {
+        crate::CrateValue crate_val;
+        value::Value height_value(height_val);
+        if (ConvertValue(height_value, crate_val, err)) {
+          fields.push_back({"height", crate_val});
+          std::cerr << "DEBUG: Extracted capsule height: " << height_val << "\n";
+        }
+      }
+    }
+  }
+
+  // Extract axis
+  if (capsule->axis.authored()) {
+    const Axis& axis_val = capsule->axis.get_value();
+    std::string axis_str = to_string(axis_val);
+    crate::CrateValue axis_crate_val;
+    value::token axis_token(axis_str);
+    axis_crate_val.Set(axis_token);
+    fields.push_back({"axis", axis_crate_val});
+    std::cerr << "DEBUG: Extracted capsule axis: " << axis_str << "\n";
+  }
+
+  return ExtractGPrimProperties(prim, fields, err);
+}
+
+bool CrateWriter::ExtractPointsProperties(
+  const Prim& prim,
+  crate::FieldValuePairVector& fields,
+  std::string* err
+) {
+  const GeomPoints* points = prim.data().as<GeomPoints>();
+  if (!points) {
+    if (err) *err = "Failed to cast prim to GeomPoints";
+    return false;
+  }
+
+  // Helper lambda to convert array values
+  auto add_array_attribute = [&](const std::string& attr_name, const value::Value& val) -> bool {
+    crate::CrateValue crate_val;
+    return ConvertValue(val, crate_val, err) &&
+           (fields.push_back({attr_name, crate_val}), true);
+  };
+
+  // Extract points (point3f[]) - TypedAttribute returns optional
+  if (points->points.authored()) {
+    auto points_opt = points->points.get_value();
+    if (points_opt.has_value()) {
+      const Animatable<std::vector<value::point3f>>& points_anim = points_opt.value();
+      if (points_anim.has_default()) {
+        std::vector<value::point3f> points_val;
+        if (points_anim.get_default(&points_val)) {
+          value::Value points_value(points_val);
+          if (!add_array_attribute("points", points_value)) {
+            return false;
+          }
+          std::cerr << "DEBUG: Extracted " << points_val.size() << " points\n";
+        }
+      }
+    }
+  }
+
+  // Extract widths (float[]) - TypedAttribute returns optional
+  if (points->widths.authored()) {
+    auto widths_opt = points->widths.get_value();
+    if (widths_opt.has_value()) {
+      const Animatable<std::vector<float>>& widths_anim = widths_opt.value();
+      if (widths_anim.has_default()) {
+        std::vector<float> widths_val;
+        if (widths_anim.get_default(&widths_val)) {
+          value::Value widths_value(widths_val);
+          if (!add_array_attribute("widths", widths_value)) {
+            return false;
+          }
+          std::cerr << "DEBUG: Extracted " << widths_val.size() << " widths\n";
+        }
+      }
+    }
+  }
+
+  // Note: ids (int64[]) is not yet supported by ConvertValue
+  // This can be added in future when int64[] conversion is implemented
+
+  // Extract normals (normal3f[]) - TypedAttribute returns optional
+  if (points->normals.authored()) {
+    auto normals_opt = points->normals.get_value();
+    if (normals_opt.has_value()) {
+      const Animatable<std::vector<value::normal3f>>& normals_anim = normals_opt.value();
+      if (normals_anim.has_default()) {
+        std::vector<value::normal3f> normals_val;
+        if (normals_anim.get_default(&normals_val)) {
+          value::Value normals_value(normals_val);
+          if (!add_array_attribute("normals", normals_value)) {
+            return false;
+          }
+          std::cerr << "DEBUG: Extracted " << normals_val.size() << " normals\n";
+        }
+      }
+    }
+  }
+
+  // Extract velocities (vector3f[]) - TypedAttribute returns optional
+  if (points->velocities.authored()) {
+    auto velocities_opt = points->velocities.get_value();
+    if (velocities_opt.has_value()) {
+      const Animatable<std::vector<value::vector3f>>& velocities_anim = velocities_opt.value();
+      if (velocities_anim.has_default()) {
+        std::vector<value::vector3f> velocities_val;
+        if (velocities_anim.get_default(&velocities_val)) {
+          value::Value velocities_value(velocities_val);
+          if (!add_array_attribute("velocities", velocities_value)) {
+            return false;
+          }
+          std::cerr << "DEBUG: Extracted " << velocities_val.size() << " velocities\n";
+        }
+      }
+    }
+  }
+
+  // Extract accelerations (vector3f[]) - TypedAttribute returns optional
+  if (points->accelerations.authored()) {
+    auto accelerations_opt = points->accelerations.get_value();
+    if (accelerations_opt.has_value()) {
+      const Animatable<std::vector<value::vector3f>>& accelerations_anim = accelerations_opt.value();
+      if (accelerations_anim.has_default()) {
+        std::vector<value::vector3f> accelerations_val;
+        if (accelerations_anim.get_default(&accelerations_val)) {
+          value::Value accelerations_value(accelerations_val);
+          if (!add_array_attribute("accelerations", accelerations_value)) {
+            return false;
+          }
+          std::cerr << "DEBUG: Extracted " << accelerations_val.size() << " accelerations\n";
+        }
+      }
+    }
+  }
+
+  return ExtractGPrimProperties(prim, fields, err);
+}
+
 // ============================================================================
 // XformOp Extraction Helper
 // ============================================================================
@@ -627,6 +907,15 @@ bool CrateWriter::ExtractXformOpsFromXformable(
   } else if (auto* cylinder = prim.data().as<GeomCylinder>()) {
     xformable = static_cast<const Xformable*>(cylinder);
     std::cerr << "DEBUG ExtractXformOps: Cast to GeomCylinder succeeded\n";
+  } else if (auto* cone = prim.data().as<GeomCone>()) {
+    xformable = static_cast<const Xformable*>(cone);
+    std::cerr << "DEBUG ExtractXformOps: Cast to GeomCone succeeded\n";
+  } else if (auto* capsule = prim.data().as<GeomCapsule>()) {
+    xformable = static_cast<const Xformable*>(capsule);
+    std::cerr << "DEBUG ExtractXformOps: Cast to GeomCapsule succeeded\n";
+  } else if (auto* points = prim.data().as<GeomPoints>()) {
+    xformable = static_cast<const Xformable*>(points);
+    std::cerr << "DEBUG ExtractXformOps: Cast to GeomPoints succeeded\n";
   } else if (auto* xform = prim.data().as<Xform>()) {
     xformable = xform;
     std::cerr << "DEBUG ExtractXformOps: Cast to Xform succeeded\n";
@@ -1021,6 +1310,715 @@ bool CrateWriter::AddMaterialOutputSpecs(
     }
   }
 
+  return true;
+}
+
+bool CrateWriter::AddMaterialBindingSpecs(
+  const Prim& prim,
+  const Path& prim_path,
+  std::string* err
+) {
+  // Extract and write material binding relationships from a Prim
+  // Material bindings are relationships that need separate specs in Crate format
+
+  // Try to get MaterialBinding interface from the prim data
+  // Geometry types and Group types inherit from GPrim which inherits from MaterialBinding
+  const GeomSphere* geom_sphere = prim.data().as<GeomSphere>();
+  const GeomCone* geom_cone = nullptr;
+  const GeomCapsule* geom_capsule = nullptr;
+  const GeomPoints* geom_points = nullptr;
+  const GeomCube* geom_cube = nullptr;
+  const GeomCylinder* geom_cylinder = nullptr;
+  const GeomMesh* geom_mesh = nullptr;
+  const GeomSubset* geom_subset = nullptr;
+  const Xform* xform = nullptr;
+  const Model* model = nullptr;
+  const Scope* scope = nullptr;
+
+  // Determine which type the prim is and get the MaterialBinding interface
+  const MaterialBinding* mat_binding = nullptr;
+
+  if (geom_sphere) {
+    mat_binding = static_cast<const MaterialBinding*>(geom_sphere);
+  } else if ((geom_cone = prim.data().as<GeomCone>())) {
+    mat_binding = static_cast<const MaterialBinding*>(geom_cone);
+  } else if ((geom_capsule = prim.data().as<GeomCapsule>())) {
+    mat_binding = static_cast<const MaterialBinding*>(geom_capsule);
+  } else if ((geom_points = prim.data().as<GeomPoints>())) {
+    mat_binding = static_cast<const MaterialBinding*>(geom_points);
+  } else if ((geom_cube = prim.data().as<GeomCube>())) {
+    mat_binding = static_cast<const MaterialBinding*>(geom_cube);
+  } else if ((geom_cylinder = prim.data().as<GeomCylinder>())) {
+    mat_binding = static_cast<const MaterialBinding*>(geom_cylinder);
+  } else if ((geom_mesh = prim.data().as<GeomMesh>())) {
+    mat_binding = static_cast<const MaterialBinding*>(geom_mesh);
+  } else if ((geom_subset = prim.data().as<GeomSubset>())) {
+    mat_binding = static_cast<const MaterialBinding*>(geom_subset);
+  } else if ((xform = prim.data().as<Xform>())) {
+    mat_binding = static_cast<const MaterialBinding*>(xform);
+  } else if ((model = prim.data().as<Model>())) {
+    mat_binding = static_cast<const MaterialBinding*>(model);
+  } else if ((scope = prim.data().as<Scope>())) {
+    mat_binding = static_cast<const MaterialBinding*>(scope);
+  }
+
+  if (!mat_binding) {
+    // Prim type doesn't support material bindings
+    return true;
+  }
+
+  // Add material:binding relationship if present
+  if (mat_binding->has_materialBinding()) {
+    const Relationship& binding = mat_binding->materialBinding.value();
+    if (!ConvertRelationshipToFields("material:binding", binding, prim_path, err)) {
+      if (err) *err = "Failed to add material:binding relationship: " + *err;
+      return false;
+    }
+  }
+
+  // Add material:binding:preview relationship if present
+  if (mat_binding->has_materialBindingPreview()) {
+    const Relationship& binding = mat_binding->materialBindingPreview.value();
+    if (!ConvertRelationshipToFields("material:binding:preview", binding, prim_path, err)) {
+      if (err) *err = "Failed to add material:binding:preview relationship: " + *err;
+      return false;
+    }
+  }
+
+  // Add material:binding:full relationship if present
+  if (mat_binding->has_materialBindingFull()) {
+    const Relationship& binding = mat_binding->materialBindingFull.value();
+    if (!ConvertRelationshipToFields("material:binding:full", binding, prim_path, err)) {
+      if (err) *err = "Failed to add material:binding:full relationship: " + *err;
+      return false;
+    }
+  }
+
+  // Add other purpose-specific material bindings from materialBindingMap
+  for (const auto& binding_entry : mat_binding->materialBindingMap()) {
+    const std::string& purpose = binding_entry.first;
+    const Relationship& rel = binding_entry.second;
+
+    std::string rel_name = "material:binding";
+    if (!purpose.empty()) {
+      rel_name += ":" + purpose;
+    }
+
+    if (!ConvertRelationshipToFields(rel_name, rel, prim_path, err)) {
+      if (err) *err = "Failed to add " + rel_name + " relationship: " + *err;
+      return false;
+    }
+  }
+
+  // Add collection-based material bindings
+  for (const auto& coll_entry : mat_binding->materialBindingCollectionMap()) {
+    const std::string& coll_name = coll_entry.first;
+    const auto& purpose_map = coll_entry.second;
+
+    // Iterate through all purposes in this collection
+    for (const auto& purpose : purpose_map.keys()) {
+      const Relationship* rel = nullptr;
+      if (purpose_map.at(purpose, &rel)) {
+        std::string rel_name = "material:binding:collection:" + coll_name;
+        if (!purpose.empty()) {
+          rel_name += ":" + purpose;
+        }
+
+        if (!ConvertRelationshipToFields(rel_name, *rel, prim_path, err)) {
+          if (err) *err = "Failed to add " + rel_name + " relationship: " + *err;
+          return false;
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+// ============================================================================
+// UsdPreviewSurface Shader Input Specs (called AFTER Shader prim spec is added)
+// ============================================================================
+
+bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
+  const UsdPreviewSurface* preview_surface,
+  const Path& prim_path,
+  std::string* err
+) {
+  std::cerr << "[AddUsdPreviewSurfaceInputSpecs] prim_path: " << prim_path.full_path_name() << "\n";
+
+  // Helper lambda to add an input attribute spec
+  auto add_input_spec = [&](const std::string& input_name, const std::string& type_name, const crate::CrateValue& value) -> bool {
+    Path input_path = prim_path.AppendProperty(input_name);
+    crate::FieldValuePairVector input_fields;
+
+    // Add typeName
+    crate::CrateValue type_value;
+    value::token type_tok(type_name);
+    type_value.Set(type_tok);
+    input_fields.push_back({"typeName", type_value});
+
+    // Add default value
+    input_fields.push_back({"default", value});
+
+    return AddSpec(input_path, SpecType::Attribute, input_fields, err);
+  };
+
+  // Extract and add common PBR inputs
+
+  // inputs:diffuseColor (color3f)
+  if (preview_surface->diffuseColor.authored()) {
+    crate::CrateValue diffuse_value;
+    // Handle both constant and animated values
+    if (preview_surface->diffuseColor.get_value().is_timesamples()) {
+      // TODO: Handle timesampled values
+      std::cerr << "[AddUsdPreviewSurfaceInputSpecs] Warning: timesampled diffuseColor not yet supported\n";
+    } else {
+      value::color3f color;
+      if (preview_surface->diffuseColor.get_value().get_scalar(&color)) {
+        // Convert color3f to float3 for CrateValue (they're binary compatible)
+        value::float3 color_as_float3 = {color.r, color.g, color.b};
+        diffuse_value.Set(color_as_float3);
+        if (!add_input_spec("inputs:diffuseColor", "color3f", diffuse_value)) {
+          return false;
+        }
+      }
+    }
+  }
+
+  // inputs:emissiveColor (color3f)
+  if (preview_surface->emissiveColor.authored()) {
+    crate::CrateValue emissive_value;
+    if (!preview_surface->emissiveColor.get_value().is_timesamples()) {
+      value::color3f color;
+      if (preview_surface->emissiveColor.get_value().get_scalar(&color)) {
+        // Convert color3f to float3 for CrateValue
+        value::float3 color_as_float3 = {color.r, color.g, color.b};
+        emissive_value.Set(color_as_float3);
+        if (!add_input_spec("inputs:emissiveColor", "color3f", emissive_value)) {
+          return false;
+        }
+      }
+    }
+  }
+
+  // inputs:useSpecularWorkflow (int)
+  if (preview_surface->useSpecularWorkflow.authored()) {
+    crate::CrateValue use_spec_value;
+    if (!preview_surface->useSpecularWorkflow.get_value().is_timesamples()) {
+      int use_spec;
+      if (preview_surface->useSpecularWorkflow.get_value().get_scalar(&use_spec)) {
+        use_spec_value.Set(use_spec);
+        if (!add_input_spec("inputs:useSpecularWorkflow", "int", use_spec_value)) {
+          return false;
+        }
+      }
+    }
+  }
+
+  // inputs:specularColor (color3f) - for specular workflow
+  if (preview_surface->specularColor.authored()) {
+    crate::CrateValue spec_color_value;
+    if (!preview_surface->specularColor.get_value().is_timesamples()) {
+      value::color3f color;
+      if (preview_surface->specularColor.get_value().get_scalar(&color)) {
+        // Convert color3f to float3 for CrateValue
+        value::float3 color_as_float3 = {color.r, color.g, color.b};
+        spec_color_value.Set(color_as_float3);
+        if (!add_input_spec("inputs:specularColor", "color3f", spec_color_value)) {
+          return false;
+        }
+      }
+    }
+  }
+
+  // inputs:metallic (float) - for metalness workflow
+  if (preview_surface->metallic.authored()) {
+    crate::CrateValue metallic_value;
+    if (!preview_surface->metallic.get_value().is_timesamples()) {
+      float metallic;
+      if (preview_surface->metallic.get_value().get_scalar(&metallic)) {
+        metallic_value.Set(metallic);
+        if (!add_input_spec("inputs:metallic", "float", metallic_value)) {
+          return false;
+        }
+      }
+    }
+  }
+
+  // inputs:roughness (float)
+  if (preview_surface->roughness.authored()) {
+    crate::CrateValue roughness_value;
+    if (!preview_surface->roughness.get_value().is_timesamples()) {
+      float roughness;
+      if (preview_surface->roughness.get_value().get_scalar(&roughness)) {
+        roughness_value.Set(roughness);
+        if (!add_input_spec("inputs:roughness", "float", roughness_value)) {
+          return false;
+        }
+      }
+    }
+  }
+
+  // inputs:clearcoat (float)
+  if (preview_surface->clearcoat.authored()) {
+    crate::CrateValue clearcoat_value;
+    if (!preview_surface->clearcoat.get_value().is_timesamples()) {
+      float clearcoat;
+      if (preview_surface->clearcoat.get_value().get_scalar(&clearcoat)) {
+        clearcoat_value.Set(clearcoat);
+        if (!add_input_spec("inputs:clearcoat", "float", clearcoat_value)) {
+          return false;
+        }
+      }
+    }
+  }
+
+  // inputs:clearcoatRoughness (float)
+  if (preview_surface->clearcoatRoughness.authored()) {
+    crate::CrateValue clearcoat_rough_value;
+    if (!preview_surface->clearcoatRoughness.get_value().is_timesamples()) {
+      float clearcoat_rough;
+      if (preview_surface->clearcoatRoughness.get_value().get_scalar(&clearcoat_rough)) {
+        clearcoat_rough_value.Set(clearcoat_rough);
+        if (!add_input_spec("inputs:clearcoatRoughness", "float", clearcoat_rough_value)) {
+          return false;
+        }
+      }
+    }
+  }
+
+  // inputs:opacity (float)
+  if (preview_surface->opacity.authored()) {
+    crate::CrateValue opacity_value;
+    if (!preview_surface->opacity.get_value().is_timesamples()) {
+      float opacity;
+      if (preview_surface->opacity.get_value().get_scalar(&opacity)) {
+        opacity_value.Set(opacity);
+        if (!add_input_spec("inputs:opacity", "float", opacity_value)) {
+          return false;
+        }
+      }
+    }
+  }
+
+  // inputs:opacityThreshold (float)
+  if (preview_surface->opacityThreshold.authored()) {
+    crate::CrateValue opacity_thresh_value;
+    if (!preview_surface->opacityThreshold.get_value().is_timesamples()) {
+      float opacity_thresh;
+      if (preview_surface->opacityThreshold.get_value().get_scalar(&opacity_thresh)) {
+        opacity_thresh_value.Set(opacity_thresh);
+        if (!add_input_spec("inputs:opacityThreshold", "float", opacity_thresh_value)) {
+          return false;
+        }
+      }
+    }
+  }
+
+  // inputs:ior (float)
+  if (preview_surface->ior.authored()) {
+    crate::CrateValue ior_value;
+    if (!preview_surface->ior.get_value().is_timesamples()) {
+      float ior;
+      if (preview_surface->ior.get_value().get_scalar(&ior)) {
+        ior_value.Set(ior);
+        if (!add_input_spec("inputs:ior", "float", ior_value)) {
+          return false;
+        }
+      }
+    }
+  }
+
+  // inputs:normal (normal3f)
+  if (preview_surface->normal.authored()) {
+    crate::CrateValue normal_value;
+    if (!preview_surface->normal.get_value().is_timesamples()) {
+      value::normal3f normal;
+      if (preview_surface->normal.get_value().get_scalar(&normal)) {
+        // Convert normal3f to float3 for CrateValue (they're binary compatible)
+        value::float3 normal_as_float3 = {normal.x, normal.y, normal.z};
+        normal_value.Set(normal_as_float3);
+        if (!add_input_spec("inputs:normal", "normal3f", normal_value)) {
+          return false;
+        }
+      }
+    }
+  }
+
+  // inputs:displacement (float)
+  if (preview_surface->displacement.authored()) {
+    crate::CrateValue displacement_value;
+    if (!preview_surface->displacement.get_value().is_timesamples()) {
+      float displacement;
+      if (preview_surface->displacement.get_value().get_scalar(&displacement)) {
+        displacement_value.Set(displacement);
+        if (!add_input_spec("inputs:displacement", "float", displacement_value)) {
+          return false;
+        }
+      }
+    }
+  }
+
+  // inputs:occlusion (float)
+  if (preview_surface->occlusion.authored()) {
+    crate::CrateValue occlusion_value;
+    if (!preview_surface->occlusion.get_value().is_timesamples()) {
+      float occlusion;
+      if (preview_surface->occlusion.get_value().get_scalar(&occlusion)) {
+        occlusion_value.Set(occlusion);
+        if (!add_input_spec("inputs:occlusion", "float", occlusion_value)) {
+          return false;
+        }
+      }
+    }
+  }
+
+  std::cerr << "[AddUsdPreviewSurfaceInputSpecs] Successfully added UsdPreviewSurface inputs\n";
+  return true;
+}
+
+// ============================================================================
+// UsdUVTexture Shader Input Specs (called AFTER Shader prim spec is added)
+// ============================================================================
+
+bool CrateWriter::AddUsdUVTextureInputSpecs(
+  const UsdUVTexture* uv_texture,
+  const Path& prim_path,
+  std::string* err
+) {
+  std::cerr << "[AddUsdUVTextureInputSpecs] prim_path: " << prim_path.full_path_name() << "\n";
+
+  // Helper lambda to add an input spec as a separate attribute
+  auto add_input_spec = [&](const std::string& input_name, const std::string& type_name, const crate::CrateValue& value) -> bool {
+    Path input_path = prim_path.AppendProperty(input_name);
+    crate::FieldValuePairVector input_fields;
+
+    // typeName field
+    crate::CrateValue typename_value;
+    value::token typename_tok(type_name);
+    typename_value.Set(typename_tok);
+    input_fields.push_back({"typeName", typename_value});
+
+    // default field (the value)
+    input_fields.push_back({"default", value});
+
+    return AddSpec(input_path, SpecType::Attribute, input_fields, err);
+  };
+
+  // Helper to convert Wrap enum to token string
+  auto wrap_to_string = [](UsdUVTexture::Wrap wrap) -> std::string {
+    switch (wrap) {
+      case UsdUVTexture::Wrap::UseMetadata: return "useMetadata";
+      case UsdUVTexture::Wrap::Black: return "black";
+      case UsdUVTexture::Wrap::Clamp: return "clamp";
+      case UsdUVTexture::Wrap::Repeat: return "repeat";
+      case UsdUVTexture::Wrap::Mirror: return "mirror";
+      default: return "useMetadata";
+    }
+  };
+
+  // Helper to convert SourceColorSpace enum to token string
+  auto colorspace_to_string = [](UsdUVTexture::SourceColorSpace cs) -> std::string {
+    switch (cs) {
+      case UsdUVTexture::SourceColorSpace::Auto: return "auto";
+      case UsdUVTexture::SourceColorSpace::Raw: return "raw";
+      case UsdUVTexture::SourceColorSpace::SRGB: return "sRGB";
+      default: return "auto";
+    }
+  };
+
+  // Extract and add texture inputs
+
+  // inputs:file (asset) - texture file path
+  if (uv_texture->file.authored()) {
+    crate::CrateValue file_value;
+    auto file_opt = uv_texture->file.get_value();
+    if (file_opt.has_value()) {
+      const auto& file_animatable = file_opt.value();
+      if (!file_animatable.is_timesamples()) {
+        value::AssetPath file_path;
+        if (file_animatable.get_scalar(&file_path)) {
+          file_value.Set(file_path);
+          if (!add_input_spec("inputs:file", "asset", file_value)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  // inputs:st (texcoord2f) - texture coordinates
+  if (uv_texture->st.authored()) {
+    crate::CrateValue st_value;
+    if (!uv_texture->st.get_value().is_timesamples()) {
+      value::texcoord2f st;
+      if (uv_texture->st.get_value().get_scalar(&st)) {
+        // Convert texcoord2f to float2 for CrateValue
+        value::float2 st_as_float2 = {st.s, st.t};
+        st_value.Set(st_as_float2);
+        if (!add_input_spec("inputs:st", "texCoord2f", st_value)) {
+          return false;
+        }
+      }
+    }
+  }
+
+  // inputs:wrapS (token) - S axis wrap mode
+  if (uv_texture->wrapS.authored()) {
+    crate::CrateValue wraps_value;
+    if (!uv_texture->wrapS.get_value().is_timesamples()) {
+      UsdUVTexture::Wrap wrap_s;
+      if (uv_texture->wrapS.get_value().get_scalar(&wrap_s)) {
+        value::token wrap_tok(wrap_to_string(wrap_s));
+        wraps_value.Set(wrap_tok);
+        if (!add_input_spec("inputs:wrapS", "token", wraps_value)) {
+          return false;
+        }
+      }
+    }
+  }
+
+  // inputs:wrapT (token) - T axis wrap mode
+  if (uv_texture->wrapT.authored()) {
+    crate::CrateValue wrapt_value;
+    if (!uv_texture->wrapT.get_value().is_timesamples()) {
+      UsdUVTexture::Wrap wrap_t;
+      if (uv_texture->wrapT.get_value().get_scalar(&wrap_t)) {
+        value::token wrap_tok(wrap_to_string(wrap_t));
+        wrapt_value.Set(wrap_tok);
+        if (!add_input_spec("inputs:wrapT", "token", wrapt_value)) {
+          return false;
+        }
+      }
+    }
+  }
+
+  // inputs:fallback (color4f) - fallback color when texture is missing
+  if (uv_texture->fallback.authored()) {
+    crate::CrateValue fallback_value;
+    const value::color4f& fallback = uv_texture->fallback.get_value();
+    // Convert color4f to float4 for CrateValue
+    value::float4 fallback_as_float4 = {fallback.r, fallback.g, fallback.b, fallback.a};
+    fallback_value.Set(fallback_as_float4);
+    if (!add_input_spec("inputs:fallback", "color4f", fallback_value)) {
+      return false;
+    }
+  }
+
+  // inputs:sourceColorSpace (token) - color space
+  if (uv_texture->sourceColorSpace.authored()) {
+    crate::CrateValue colorspace_value;
+    if (!uv_texture->sourceColorSpace.get_value().is_timesamples()) {
+      UsdUVTexture::SourceColorSpace cs;
+      if (uv_texture->sourceColorSpace.get_value().get_scalar(&cs)) {
+        value::token cs_tok(colorspace_to_string(cs));
+        colorspace_value.Set(cs_tok);
+        if (!add_input_spec("inputs:sourceColorSpace", "token", colorspace_value)) {
+          return false;
+        }
+      }
+    }
+  }
+
+  // inputs:scale (float4) - scale factor
+  if (uv_texture->scale.authored()) {
+    crate::CrateValue scale_value;
+    const value::float4& scale = uv_texture->scale.get_value();
+    scale_value.Set(scale);
+    if (!add_input_spec("inputs:scale", "float4", scale_value)) {
+      return false;
+    }
+  }
+
+  // inputs:bias (float4) - bias offset
+  if (uv_texture->bias.authored()) {
+    crate::CrateValue bias_value;
+    const value::float4& bias = uv_texture->bias.get_value();
+    bias_value.Set(bias);
+    if (!add_input_spec("inputs:bias", "float4", bias_value)) {
+      return false;
+    }
+  }
+
+  std::cerr << "[AddUsdUVTextureInputSpecs] Successfully added UsdUVTexture inputs\n";
+  return true;
+}
+
+// ============================================================================
+// UsdPrimvarReader Shader Input Specs (called AFTER Shader prim spec is added)
+// ============================================================================
+
+bool CrateWriter::AddUsdPrimvarReaderInputSpecs(
+  const value::Value& shader_value,
+  const std::string& reader_type,
+  const Path& prim_path,
+  std::string* err
+) {
+  std::cerr << "[AddUsdPrimvarReaderInputSpecs] prim_path: " << prim_path.full_path_name()
+            << ", type: " << reader_type << "\n";
+
+  // Helper lambda to add an input spec as a separate attribute
+  auto add_input_spec = [&](const std::string& input_name, const std::string& type_name, const crate::CrateValue& value) -> bool {
+    Path input_path = prim_path.AppendProperty(input_name);
+    crate::FieldValuePairVector input_fields;
+
+    // typeName field
+    crate::CrateValue typename_value;
+    value::token typename_tok(type_name);
+    typename_value.Set(typename_tok);
+    input_fields.push_back({"typeName", typename_value});
+
+    // default field (the value)
+    input_fields.push_back({"default", value});
+
+    return AddSpec(input_path, SpecType::Attribute, input_fields, err);
+  };
+
+  // Extract varname (string) - common to all UsdPrimvarReader variants
+  // Try to get varname from the shader value using type-erased access
+  std::string varname_str;
+  bool has_varname = false;
+
+  // The varname field is TypedAttribute<Animatable<std::string>>
+  // We need to extract it generically from the shader_value
+
+  // Helper macro to try extracting varname from a specific UsdPrimvarReader type
+  #define TRY_EXTRACT_VARNAME(ReaderType) \
+    if (!has_varname) { \
+      if (auto* reader = shader_value.as<ReaderType>()) { \
+        if (reader->varname.authored()) { \
+          auto varname_opt = reader->varname.get_value(); \
+          if (varname_opt.has_value()) { \
+            const auto& varname_anim = varname_opt.value(); \
+            if (!varname_anim.is_timesamples()) { \
+              std::string vn; \
+              if (varname_anim.get_scalar(&vn)) { \
+                varname_str = vn; \
+                has_varname = true; \
+              } \
+            } \
+          } \
+        } \
+      } \
+    }
+
+  // Try all supported UsdPrimvarReader types
+  TRY_EXTRACT_VARNAME(UsdPrimvarReader_float)
+  TRY_EXTRACT_VARNAME(UsdPrimvarReader_float2)
+  TRY_EXTRACT_VARNAME(UsdPrimvarReader_float3)
+  TRY_EXTRACT_VARNAME(UsdPrimvarReader_float4)
+  TRY_EXTRACT_VARNAME(UsdPrimvarReader_int)
+  TRY_EXTRACT_VARNAME(UsdPrimvarReader_string)
+  TRY_EXTRACT_VARNAME(UsdPrimvarReader_normal)
+  TRY_EXTRACT_VARNAME(UsdPrimvarReader_vector)
+  TRY_EXTRACT_VARNAME(UsdPrimvarReader_point)
+
+  #undef TRY_EXTRACT_VARNAME
+
+  // Add inputs:varname (string)
+  if (has_varname) {
+    crate::CrateValue varname_value;
+    varname_value.Set(varname_str);
+    if (!add_input_spec("inputs:varname", "string", varname_value)) {
+      return false;
+    }
+    std::cerr << "[AddUsdPrimvarReaderInputSpecs] Added varname: " << varname_str << "\n";
+  }
+
+  // Note: We don't extract the fallback value because it's type-specific
+  // and would require templated handling for each type variant.
+  // The varname is the most important input for UsdPrimvarReader.
+  // If fallback support is needed, it can be added later with type-specific handlers.
+
+  std::cerr << "[AddUsdPrimvarReaderInputSpecs] Successfully added UsdPrimvarReader inputs\n";
+  return true;
+}
+
+bool CrateWriter::AddUsdTransform2dInputSpecs(
+  const UsdTransform2d* transform2d,
+  const Path& prim_path,
+  std::string* err
+) {
+  std::cerr << "[AddUsdTransform2dInputSpecs] prim_path: " << prim_path.full_path_name() << "\n";
+
+  // Helper lambda to add an input spec as a separate attribute
+  auto add_input_spec = [&](const std::string& input_name, const std::string& type_name, const crate::CrateValue& value) -> bool {
+    Path input_path = prim_path.AppendProperty(input_name);
+    crate::FieldValuePairVector input_fields;
+
+    // typeName field
+    crate::CrateValue typename_value;
+    value::token typename_tok(type_name);
+    typename_value.Set(typename_tok);
+    input_fields.push_back({"typeName", typename_value});
+
+    // default field (the value)
+    input_fields.push_back({"default", value});
+
+    return AddSpec(input_path, SpecType::Attribute, input_fields, err);
+  };
+
+  // Extract inputs:in (float2)
+  if (transform2d->in.authored()) {
+    crate::CrateValue in_crate_value;
+    if (!transform2d->in.get_value().is_timesamples()) {
+      value::float2 in_value;
+      if (transform2d->in.get_value().get_scalar(&in_value)) {
+        in_crate_value.Set(in_value);
+        if (!add_input_spec("inputs:in", "float2", in_crate_value)) {
+          return false;
+        }
+        std::cerr << "[AddUsdTransform2dInputSpecs] Added in: (" << in_value[0] << ", " << in_value[1] << ")\n";
+      }
+    }
+  }
+
+  // Extract inputs:rotation (float) - in degrees, CCW
+  if (transform2d->rotation.authored()) {
+    crate::CrateValue rotation_crate_value;
+    if (!transform2d->rotation.get_value().is_timesamples()) {
+      float rotation_value;
+      if (transform2d->rotation.get_value().get_scalar(&rotation_value)) {
+        rotation_crate_value.Set(rotation_value);
+        if (!add_input_spec("inputs:rotation", "float", rotation_crate_value)) {
+          return false;
+        }
+        std::cerr << "[AddUsdTransform2dInputSpecs] Added rotation: " << rotation_value << "\n";
+      }
+    }
+  }
+
+  // Extract inputs:scale (float2)
+  if (transform2d->scale.authored()) {
+    crate::CrateValue scale_crate_value;
+    if (!transform2d->scale.get_value().is_timesamples()) {
+      value::float2 scale_value;
+      if (transform2d->scale.get_value().get_scalar(&scale_value)) {
+        scale_crate_value.Set(scale_value);
+        if (!add_input_spec("inputs:scale", "float2", scale_crate_value)) {
+          return false;
+        }
+        std::cerr << "[AddUsdTransform2dInputSpecs] Added scale: (" << scale_value[0] << ", " << scale_value[1] << ")\n";
+      }
+    }
+  }
+
+  // Extract inputs:translation (float2)
+  if (transform2d->translation.authored()) {
+    crate::CrateValue translation_crate_value;
+    if (!transform2d->translation.get_value().is_timesamples()) {
+      value::float2 translation_value;
+      if (transform2d->translation.get_value().get_scalar(&translation_value)) {
+        translation_crate_value.Set(translation_value);
+        if (!add_input_spec("inputs:translation", "float2", translation_crate_value)) {
+          return false;
+        }
+        std::cerr << "[AddUsdTransform2dInputSpecs] Added translation: (" << translation_value[0] << ", " << translation_value[1] << ")\n";
+      }
+    }
+  }
+
+  std::cerr << "[AddUsdTransform2dInputSpecs] Successfully added UsdTransform2d inputs\n";
   return true;
 }
 
@@ -1998,17 +2996,23 @@ bool CrateWriter::ConvertRelationshipToFields(
     blocked_value.Set(value::ValueBlock());
     rel_fields.push_back({"targetPaths", blocked_value});
   } else if (rel.is_path()) {
-    // Single target path - wrap in a vector since CrateValue doesn't have Set(Path)
+    // Single target path - wrap in ListOp<Path> (required by USDC format)
+    // For a single path relationship, set it as explicit with one item
     crate::CrateValue path_value;
+    ListOp<Path> listop;
     std::vector<Path> targets;
     targets.push_back(rel.targetPath);
-    path_value.Set(targets);
+    listop.SetExplicitItems(targets);
+    path_value.Set(listop);
     rel_fields.push_back({"targetPaths", path_value});
   } else if (rel.is_pathvector()) {
-    // Multiple target paths
+    // Multiple target paths - wrap in ListOp<Path> (required by USDC format)
+    // For a pathvector relationship, set items as explicit list
     crate::CrateValue paths_value;
+    ListOp<Path> listop;
     std::vector<Path> targets = rel.targetPathVector;
-    paths_value.Set(targets);
+    listop.SetExplicitItems(targets);
+    paths_value.Set(listop);
     rel_fields.push_back({"targetPaths", paths_value});
   }
   // DefineOnly relationships don't add targetPaths field
@@ -2047,8 +3051,8 @@ bool CrateWriter::ConvertRelationshipToFields(
   // 3. Relationships have implicit uniform variability
   // Add it explicitly in the Crate format
   crate::CrateValue var_value;
-  crate::TokenIndex var_tok = GetOrCreateToken("uniform");
-  var_value.Set(var_tok.value);
+  Variability var = Variability::Uniform;  // Relationships are always uniform
+  var_value.Set(var);
   rel_fields.push_back({"variability", var_value});
 
   // 4. Add relationship metadata from AttrMetas

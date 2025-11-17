@@ -202,6 +202,15 @@ private:
   /// Extract Cylinder-specific properties (radius, height)
   bool ExtractCylinderProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
 
+  /// Extract Cone-specific properties (radius, height, axis)
+  bool ExtractConeProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract Capsule-specific properties (radius, height, axis)
+  bool ExtractCapsuleProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract Points-specific properties (points, widths, ids, normals, velocities, accelerations)
+  bool ExtractPointsProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
   /// Extract common GPrim properties (visibility, purpose, etc.)
   bool ExtractGPrimProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
 
@@ -213,6 +222,23 @@ private:
 
   /// Extract Shader properties (info:id, inputs, outputs)
   bool ExtractShaderProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Add UsdPreviewSurface shader input specs as separate attribute specs (called after Shader prim spec is added)
+  bool AddUsdPreviewSurfaceInputSpecs(const UsdPreviewSurface* preview_surface, const Path& prim_path, std::string* err);
+
+  /// Add UsdUVTexture shader input specs as separate attribute specs (called after Shader prim spec is added)
+  bool AddUsdUVTextureInputSpecs(const UsdUVTexture* uv_texture, const Path& prim_path, std::string* err);
+
+  /// Add UsdPrimvarReader shader input specs as separate attribute specs (called after Shader prim spec is added)
+  /// This works with all UsdPrimvarReader_* variants (float, float2, float3, etc.)
+  bool AddUsdPrimvarReaderInputSpecs(const value::Value& shader_value, const std::string& reader_type, const Path& prim_path, std::string* err);
+
+  /// Add UsdTransform2d shader input specs as separate attribute specs (called after Shader prim spec is added)
+  bool AddUsdTransform2dInputSpecs(const UsdTransform2d* transform2d, const Path& prim_path, std::string* err);
+
+  /// Add material binding relationships as separate relationship specs (called after Prim spec is added)
+  /// Handles material:binding, material:binding:preview, and material:binding:full relationships
+  bool AddMaterialBindingSpecs(const Prim& prim, const Path& prim_path, std::string* err);
 
   /// Extract xformOps from Xformable (GPrim or Xform)
   bool ExtractXformOpsFromXformable(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
