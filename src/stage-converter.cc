@@ -360,6 +360,8 @@ bool CrateWriter::ExtractTypeSpecificProperties(
     return ExtractCameraProperties(prim, fields, err);
   } else if (type_name == "BasisCurves") {
     return ExtractBasisCurvesProperties(prim, fields, err);
+  } else if (type_name == "NurbsCurves") {
+    return ExtractNurbsCurvesProperties(prim, fields, err);
   } else if (type_name == "GeomSubset") {
     return ExtractGeomSubsetProperties(prim, fields, err);
   } else if (type_name == "Material") {
@@ -1205,6 +1207,195 @@ bool CrateWriter::ExtractBasisCurvesProperties(
   return ExtractGPrimProperties(prim, fields, err);
 }
 
+bool CrateWriter::ExtractNurbsCurvesProperties(
+  const Prim& prim,
+  crate::FieldValuePairVector& fields,
+  std::string* err
+) {
+  const GeomNurbsCurves* nurbs_curves = prim.data().as<GeomNurbsCurves>();
+  if (!nurbs_curves) {
+    if (err) *err = "Failed to cast prim to GeomNurbsCurves";
+    return false;
+  }
+
+  // Helper lambda to convert array values
+  auto add_array_attribute = [&](const std::string& attr_name, const value::Value& val) -> bool {
+    crate::CrateValue crate_val;
+    return ConvertValue(val, crate_val, err) &&
+           (fields.push_back({attr_name, crate_val}), true);
+  };
+
+  // Extract points (point3f[]) - TypedAttribute returns optional
+  if (nurbs_curves->points.authored()) {
+    auto points_opt = nurbs_curves->points.get_value();
+    if (points_opt.has_value()) {
+      const Animatable<std::vector<value::point3f>>& points_anim = points_opt.value();
+      if (points_anim.has_default()) {
+        std::vector<value::point3f> points_val;
+        if (points_anim.get_default(&points_val)) {
+          value::Value points_value(points_val);
+          if (!add_array_attribute("points", points_value)) {
+            return false;
+          }
+          std::cerr << "DEBUG: Extracted " << points_val.size() << " nurbs curve points\n";
+        }
+      }
+    }
+  }
+
+  // Extract order (int[]) - NURBS curve order per curve
+  if (nurbs_curves->order.authored()) {
+    auto order_opt = nurbs_curves->order.get_value();
+    if (order_opt.has_value()) {
+      const Animatable<std::vector<int>>& order_anim = order_opt.value();
+      if (order_anim.has_default()) {
+        std::vector<int> order_val;
+        if (order_anim.get_default(&order_val)) {
+          value::Value order_value(order_val);
+          if (!add_array_attribute("order", order_value)) {
+            return false;
+          }
+          std::cerr << "DEBUG: Extracted " << order_val.size() << " nurbs curve orders\n";
+        }
+      }
+    }
+  }
+
+  // Extract knots (double[]) - NURBS knot vector
+  if (nurbs_curves->knots.authored()) {
+    auto knots_opt = nurbs_curves->knots.get_value();
+    if (knots_opt.has_value()) {
+      const Animatable<std::vector<double>>& knots_anim = knots_opt.value();
+      if (knots_anim.has_default()) {
+        std::vector<double> knots_val;
+        if (knots_anim.get_default(&knots_val)) {
+          value::Value knots_value(knots_val);
+          if (!add_array_attribute("knots", knots_value)) {
+            return false;
+          }
+          std::cerr << "DEBUG: Extracted " << knots_val.size() << " nurbs knots\n";
+        }
+      }
+    }
+  }
+
+  // Extract ranges (double2[]) - NURBS curve parameter ranges
+  // TODO: double2 array conversion not yet implemented, skip for now
+  if (nurbs_curves->ranges.authored()) {
+    std::cerr << "DEBUG: Skipping ranges (double2[] conversion not yet implemented)\n";
+  }
+
+  // Extract pointWeights (double[]) - Weights for curve control points
+  if (nurbs_curves->pointWeights.authored()) {
+    auto weights_opt = nurbs_curves->pointWeights.get_value();
+    if (weights_opt.has_value()) {
+      const Animatable<std::vector<double>>& weights_anim = weights_opt.value();
+      if (weights_anim.has_default()) {
+        std::vector<double> weights_val;
+        if (weights_anim.get_default(&weights_val)) {
+          value::Value weights_value(weights_val);
+          if (!add_array_attribute("pointWeights", weights_value)) {
+            return false;
+          }
+          std::cerr << "DEBUG: Extracted " << weights_val.size() << " nurbs point weights\n";
+        }
+      }
+    }
+  }
+
+  // Extract curveVertexCounts (int[]) - Vertices per curve
+  if (nurbs_curves->curveVertexCounts.authored()) {
+    auto counts_opt = nurbs_curves->curveVertexCounts.get_value();
+    if (counts_opt.has_value()) {
+      const Animatable<std::vector<int>>& counts_anim = counts_opt.value();
+      if (counts_anim.has_default()) {
+        std::vector<int> counts_val;
+        if (counts_anim.get_default(&counts_val)) {
+          value::Value counts_value(counts_val);
+          if (!add_array_attribute("curveVertexCounts", counts_value)) {
+            return false;
+          }
+          std::cerr << "DEBUG: Extracted " << counts_val.size() << " nurbs curve vertex counts\n";
+        }
+      }
+    }
+  }
+
+  // Extract widths (float[]) - TypedAttribute returns optional
+  if (nurbs_curves->widths.authored()) {
+    auto widths_opt = nurbs_curves->widths.get_value();
+    if (widths_opt.has_value()) {
+      const Animatable<std::vector<float>>& widths_anim = widths_opt.value();
+      if (widths_anim.has_default()) {
+        std::vector<float> widths_val;
+        if (widths_anim.get_default(&widths_val)) {
+          value::Value widths_value(widths_val);
+          if (!add_array_attribute("widths", widths_value)) {
+            return false;
+          }
+          std::cerr << "DEBUG: Extracted " << widths_val.size() << " nurbs curve widths\n";
+        }
+      }
+    }
+  }
+
+  // Extract normals (normal3f[]) - TypedAttribute returns optional
+  if (nurbs_curves->normals.authored()) {
+    auto normals_opt = nurbs_curves->normals.get_value();
+    if (normals_opt.has_value()) {
+      const Animatable<std::vector<value::normal3f>>& normals_anim = normals_opt.value();
+      if (normals_anim.has_default()) {
+        std::vector<value::normal3f> normals_val;
+        if (normals_anim.get_default(&normals_val)) {
+          value::Value normals_value(normals_val);
+          if (!add_array_attribute("normals", normals_value)) {
+            return false;
+          }
+          std::cerr << "DEBUG: Extracted " << normals_val.size() << " nurbs curve normals\n";
+        }
+      }
+    }
+  }
+
+  // Extract velocities (vector3f[]) - TypedAttribute returns optional
+  if (nurbs_curves->velocities.authored()) {
+    auto velocities_opt = nurbs_curves->velocities.get_value();
+    if (velocities_opt.has_value()) {
+      const Animatable<std::vector<value::vector3f>>& velocities_anim = velocities_opt.value();
+      if (velocities_anim.has_default()) {
+        std::vector<value::vector3f> velocities_val;
+        if (velocities_anim.get_default(&velocities_val)) {
+          value::Value velocities_value(velocities_val);
+          if (!add_array_attribute("velocities", velocities_value)) {
+            return false;
+          }
+          std::cerr << "DEBUG: Extracted " << velocities_val.size() << " nurbs curve velocities\n";
+        }
+      }
+    }
+  }
+
+  // Extract accelerations (vector3f[]) - TypedAttribute returns optional
+  if (nurbs_curves->accelerations.authored()) {
+    auto accelerations_opt = nurbs_curves->accelerations.get_value();
+    if (accelerations_opt.has_value()) {
+      const Animatable<std::vector<value::vector3f>>& accelerations_anim = accelerations_opt.value();
+      if (accelerations_anim.has_default()) {
+        std::vector<value::vector3f> accelerations_val;
+        if (accelerations_anim.get_default(&accelerations_val)) {
+          value::Value accelerations_value(accelerations_val);
+          if (!add_array_attribute("accelerations", accelerations_value)) {
+            return false;
+          }
+          std::cerr << "DEBUG: Extracted " << accelerations_val.size() << " nurbs curve accelerations\n";
+        }
+      }
+    }
+  }
+
+  return ExtractGPrimProperties(prim, fields, err);
+}
+
 bool CrateWriter::ExtractGeomSubsetProperties(
   const Prim& prim,
   crate::FieldValuePairVector& fields,
@@ -1320,6 +1511,9 @@ bool CrateWriter::ExtractXformOpsFromXformable(
   } else if (auto* basis_curves = prim.data().as<GeomBasisCurves>()) {
     xformable = static_cast<const Xformable*>(basis_curves);
     std::cerr << "DEBUG ExtractXformOps: Cast to GeomBasisCurves succeeded\n";
+  } else if (auto* nurbs_curves = prim.data().as<GeomNurbsCurves>()) {
+    xformable = static_cast<const Xformable*>(nurbs_curves);
+    std::cerr << "DEBUG ExtractXformOps: Cast to GeomNurbsCurves succeeded\n";
   } else if (auto* xform = prim.data().as<Xform>()) {
     xformable = xform;
     std::cerr << "DEBUG ExtractXformOps: Cast to Xform succeeded\n";
@@ -1737,6 +1931,7 @@ bool CrateWriter::AddMaterialBindingSpecs(
   const GeomSubset* geom_subset = nullptr;
   const GeomCamera* geom_camera = nullptr;
   const GeomBasisCurves* geom_basis_curves = nullptr;
+  const GeomNurbsCurves* geom_nurbs_curves = nullptr;
   const Xform* xform = nullptr;
   const Model* model = nullptr;
   const Scope* scope = nullptr;
@@ -1764,6 +1959,8 @@ bool CrateWriter::AddMaterialBindingSpecs(
     mat_binding = static_cast<const MaterialBinding*>(geom_camera);
   } else if ((geom_basis_curves = prim.data().as<GeomBasisCurves>())) {
     mat_binding = static_cast<const MaterialBinding*>(geom_basis_curves);
+  } else if ((geom_nurbs_curves = prim.data().as<GeomNurbsCurves>())) {
+    mat_binding = static_cast<const MaterialBinding*>(geom_nurbs_curves);
   } else if ((xform = prim.data().as<Xform>())) {
     mat_binding = static_cast<const MaterialBinding*>(xform);
   } else if ((model = prim.data().as<Model>())) {
