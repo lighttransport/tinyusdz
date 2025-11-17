@@ -22,4 +22,5 @@ void crate_writer_capsule_test(void);
 void crate_writer_points_test(void);
 void crate_writer_camera_test(void);
 void crate_writer_basis_curves_test(void);
+void crate_writer_geom_subset_test(void);
 void crate_writer_material_binding_test(void);
