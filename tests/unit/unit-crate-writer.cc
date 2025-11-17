@@ -1507,6 +1507,283 @@ void crate_writer_points_test(void) {
   cleanup_file(filename);
 }
 
+void crate_writer_camera_test(void) {
+  std::string filename = get_temp_filename("test_camera.usdc");
+
+  {
+    // Create a Stage with a Camera
+    Stage stage;
+
+    // Create a Camera prim
+    GeomCamera camera;
+    camera.name = "Camera";
+    camera.focalLength = 35.0f;  // 35mm lens
+    camera.clippingRange = value::float2({0.1f, 10000.0f});
+    camera.exposure = 0.0f;
+    camera.fStop = 2.8f;
+    camera.horizontalAperture = 21.0f;
+    camera.verticalAperture = 15.2f;
+
+    Prim camera_prim("Camera", camera);
+    camera_prim.prim_type_name() = "Camera";
+    stage.root_prims().push_back(camera_prim);
+
+    // Write using CrateWriter
+    experimental::CrateWriter writer(filename);
+    std::string err;
+    bool ret = writer.Open(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to open writer: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.ConvertStageToSpecs(stage, &err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to convert stage: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.Finalize(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to finalize: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    writer.Close();
+  }
+
+  TEST_MSG("Camera test file: %s", filename.c_str());
+
+  // Load and verify
+  Stage loaded_stage;
+  std::string warn, err;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  if (!ret) {
+    std::cerr << "FAILED TO LOAD: " << err << "\n";
+  }
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  // Find the camera prim
+  auto camera_prim_result = loaded_stage.GetPrimAtPath(Path("/Camera", ""));
+  TEST_CHECK(camera_prim_result.has_value());
+  if (!camera_prim_result.has_value()) {
+    TEST_MSG("Failed to find camera prim: %s", camera_prim_result.error().c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  const Prim* camera_prim = camera_prim_result.value();
+  TEST_CHECK(camera_prim != nullptr);
+  TEST_CHECK(camera_prim->prim_type_name() == "Camera");
+
+  // Verify camera properties
+  const GeomCamera* loaded_camera = camera_prim->data().as<GeomCamera>();
+  TEST_CHECK(loaded_camera != nullptr);
+  if (loaded_camera) {
+    // Check focalLength
+    if (loaded_camera->focalLength.authored()) {
+      const Animatable<float>& fl_anim = loaded_camera->focalLength.get_value();
+      float fl_val;
+      if (fl_anim.get_scalar(&fl_val)) {
+        TEST_MSG("Camera focalLength: %.1f", fl_val);
+        TEST_CHECK(std::abs(fl_val - 35.0f) < 0.01f);
+      }
+    }
+
+    // Check clippingRange
+    if (loaded_camera->clippingRange.authored()) {
+      const Animatable<value::float2>& cr_anim = loaded_camera->clippingRange.get_value();
+      value::float2 cr_val;
+      if (cr_anim.get_scalar(&cr_val)) {
+        TEST_MSG("Camera clippingRange: [%.1f, %.1f]", cr_val[0], cr_val[1]);
+        TEST_CHECK(std::abs(cr_val[0] - 0.1f) < 0.01f);
+        TEST_CHECK(std::abs(cr_val[1] - 10000.0f) < 1.0f);
+      }
+    }
+
+    // Check fStop
+    if (loaded_camera->fStop.authored()) {
+      const Animatable<float>& fs_anim = loaded_camera->fStop.get_value();
+      float fs_val;
+      if (fs_anim.get_scalar(&fs_val)) {
+        TEST_MSG("Camera fStop: %.1f", fs_val);
+        TEST_CHECK(std::abs(fs_val - 2.8f) < 0.01f);
+      }
+    }
+  }
+
+  std::cerr << "Camera roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+void crate_writer_basis_curves_test(void) {
+  std::string filename = get_temp_filename("test_basis_curves.usdc");
+
+  {
+    // Create a stage with a BasisCurves prim
+    Stage stage;
+
+    // Create curve point data
+    std::vector<value::point3f> points_data = {
+      {0.0f, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.0f},
+      {2.0f, 1.0f, 0.0f},
+      {3.0f, 0.0f, 0.0f},
+    };
+
+    std::vector<int> counts_data = {4};
+    std::vector<float> widths_data = {1.0f, 1.0f, 1.0f, 1.0f};
+
+    // Create GeomBasisCurves
+    GeomBasisCurves basis_curves;
+    basis_curves.type = GeomBasisCurves::Type::Cubic;
+    basis_curves.basis = GeomBasisCurves::Basis::Bezier;
+    basis_curves.wrap = GeomBasisCurves::Wrap::Nonperiodic;
+
+    // Set animatable properties
+    Animatable<std::vector<value::point3f>> points_anim(points_data);
+    Animatable<std::vector<int>> counts_anim(counts_data);
+    Animatable<std::vector<float>> widths_anim(widths_data);
+
+    basis_curves.points.set_value(points_anim);
+    basis_curves.curveVertexCounts.set_value(counts_anim);
+    basis_curves.widths.set_value(widths_anim);
+
+    // Create Prim with BasisCurves
+    Prim curves_prim("MyBasisCurve", basis_curves);
+    curves_prim.prim_type_name() = "BasisCurves";
+
+    // Add to stage
+    stage.root_prims().push_back(curves_prim);
+
+    // Write using CrateWriter
+    experimental::CrateWriter writer(filename);
+    std::string err;
+    bool ret = writer.Open(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to open writer: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.ConvertStageToSpecs(stage, &err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to convert stage: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.Finalize(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to finalize: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    writer.Close();
+  }
+
+  TEST_MSG("BasisCurves test file: %s", filename.c_str());
+
+  // Load and verify
+  Stage loaded_stage;
+  std::string warn, err;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  if (!ret) {
+    std::cerr << "FAILED TO LOAD: " << err << "\n";
+  }
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  // Find the BasisCurves prim
+  auto curves_prim_result = loaded_stage.GetPrimAtPath(Path("/MyBasisCurve", ""));
+  TEST_CHECK(curves_prim_result.has_value());
+  if (!curves_prim_result.has_value()) {
+    TEST_MSG("Failed to find BasisCurves prim: %s", curves_prim_result.error().c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  const Prim* curves_prim = curves_prim_result.value();
+  TEST_CHECK(curves_prim != nullptr);
+  TEST_CHECK(curves_prim->prim_type_name() == "BasisCurves");
+
+  if (curves_prim) {
+    // Verify BasisCurves type
+    const GeomBasisCurves* loaded_curves = curves_prim->data().as<GeomBasisCurves>();
+    TEST_CHECK(loaded_curves != nullptr);
+    if (loaded_curves) {
+      // Verify enum properties
+      TEST_CHECK(loaded_curves->type.get_value() == GeomBasisCurves::Type::Cubic);
+      TEST_CHECK(loaded_curves->basis.get_value() == GeomBasisCurves::Basis::Bezier);
+      TEST_CHECK(loaded_curves->wrap.get_value() == GeomBasisCurves::Wrap::Nonperiodic);
+
+      // Verify points
+      if (loaded_curves->points.authored()) {
+        auto points_opt = loaded_curves->points.get_value();
+        if (points_opt.has_value()) {
+          const Animatable<std::vector<value::point3f>>& points_anim = points_opt.value();
+          std::vector<value::point3f> pts;
+          if (points_anim.get_default(&pts)) {
+            TEST_CHECK(pts.size() == 4);
+            TEST_MSG("BasisCurves has %zu points", pts.size());
+          }
+        }
+      }
+
+      // Verify curveVertexCounts
+      if (loaded_curves->curveVertexCounts.authored()) {
+        auto counts_opt = loaded_curves->curveVertexCounts.get_value();
+        if (counts_opt.has_value()) {
+          const Animatable<std::vector<int>>& counts_anim = counts_opt.value();
+          std::vector<int> counts;
+          if (counts_anim.get_default(&counts)) {
+            TEST_CHECK(counts.size() == 1);
+            TEST_CHECK(counts[0] == 4);
+            TEST_MSG("BasisCurves curveVertexCounts: [%d]", counts[0]);
+          }
+        }
+      }
+
+      // Verify widths
+      if (loaded_curves->widths.authored()) {
+        auto widths_opt = loaded_curves->widths.get_value();
+        if (widths_opt.has_value()) {
+          const Animatable<std::vector<float>>& widths_anim = widths_opt.value();
+          std::vector<float> widths;
+          if (widths_anim.get_default(&widths)) {
+            TEST_CHECK(widths.size() == 4);
+            TEST_MSG("BasisCurves has %zu widths", widths.size());
+          }
+        }
+      }
+    }
+  }
+
+  std::cerr << "BasisCurves roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
 void crate_writer_material_binding_test(void) {
   std::string filename = get_temp_filename("test_material_binding.usdc");
 
