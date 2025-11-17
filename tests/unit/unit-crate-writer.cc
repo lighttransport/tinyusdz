@@ -1784,6 +1784,196 @@ void crate_writer_basis_curves_test(void) {
   cleanup_file(filename);
 }
 
+void crate_writer_nurbs_curves_test(void) {
+  std::string filename = get_temp_filename("test_nurbs_curves.usdc");
+
+  {
+    // Create a stage with a NurbsCurves prim
+    Stage stage;
+
+    // Create NURBS curve data - simple quadratic curve
+    std::vector<value::point3f> points = {
+      {0.0f, 0.0f, 0.0f},
+      {1.0f, 1.0f, 0.0f},
+      {2.0f, 0.0f, 0.0f},
+      {3.0f, 1.0f, 0.0f},
+    };
+
+    // NURBS curve order (degree + 1)
+    std::vector<int> orders = {3};  // Quadratic (degree 2)
+
+    // Knot vector for quadratic NURBS
+    std::vector<double> knots = {0.0, 0.0, 0.0, 1.0, 1.0, 1.0};
+
+    // Parameter range
+    std::vector<value::double2> ranges = {{0.0, 1.0}};
+
+    // Weights for control points (uniform weights for non-rational curve)
+    std::vector<double> weights = {1.0, 1.0, 1.0, 1.0};
+
+    // Curve vertex counts
+    std::vector<int> vertex_counts = {4};
+
+    // Create GeomNurbsCurves
+    GeomNurbsCurves nurbs_curves;
+    Animatable<std::vector<value::point3f>> points_anim(points);
+    Animatable<std::vector<int>> orders_anim(orders);
+    Animatable<std::vector<double>> knots_anim(knots);
+    Animatable<std::vector<value::double2>> ranges_anim(ranges);
+    Animatable<std::vector<double>> weights_anim(weights);
+    Animatable<std::vector<int>> counts_anim(vertex_counts);
+
+    nurbs_curves.points.set_value(points_anim);
+    nurbs_curves.order.set_value(orders_anim);
+    nurbs_curves.knots.set_value(knots_anim);
+    nurbs_curves.ranges.set_value(ranges_anim);
+    nurbs_curves.pointWeights.set_value(weights_anim);
+    nurbs_curves.curveVertexCounts.set_value(counts_anim);
+
+    // Create Prim with NurbsCurves
+    Prim nurbs_prim("MyNurbsCurve", nurbs_curves);
+    nurbs_prim.prim_type_name() = "NurbsCurves";
+
+    // Add to stage
+    stage.root_prims().push_back(nurbs_prim);
+
+    // Write using CrateWriter
+    experimental::CrateWriter writer(filename);
+    std::string err;
+    bool ret = writer.Open(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to open writer: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.ConvertStageToSpecs(stage, &err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to convert stage: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.Finalize(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to finalize: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    writer.Close();
+  }
+
+  TEST_MSG("NurbsCurves test file: %s", filename.c_str());
+
+  // Load and verify
+  Stage loaded_stage;
+  std::string warn, err;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  if (!ret) {
+    std::cerr << "FAILED TO LOAD: " << err << "\n";
+  }
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  // Find the NurbsCurves prim
+  auto nurbs_prim_result = loaded_stage.GetPrimAtPath(Path("/MyNurbsCurve", ""));
+  TEST_CHECK(nurbs_prim_result.has_value());
+  if (!nurbs_prim_result.has_value()) {
+    TEST_MSG("Failed to find NurbsCurves prim: %s", nurbs_prim_result.error().c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  const Prim* nurbs_prim = nurbs_prim_result.value();
+  TEST_CHECK(nurbs_prim != nullptr);
+  TEST_CHECK(nurbs_prim->prim_type_name() == "NurbsCurves");
+
+  if (nurbs_prim) {
+    // Verify NurbsCurves type
+    const GeomNurbsCurves* loaded_nurbs = nurbs_prim->data().as<GeomNurbsCurves>();
+    TEST_CHECK(loaded_nurbs != nullptr);
+    if (loaded_nurbs) {
+      // Verify points
+      if (loaded_nurbs->points.authored()) {
+        auto points_opt = loaded_nurbs->points.get_value();
+        if (points_opt.has_value()) {
+          const Animatable<std::vector<value::point3f>>& points_anim = points_opt.value();
+          std::vector<value::point3f> pts;
+          if (points_anim.get_default(&pts)) {
+            TEST_CHECK(pts.size() == 4);
+            TEST_MSG("NurbsCurves has %zu points", pts.size());
+          }
+        }
+      }
+
+      // Verify order
+      if (loaded_nurbs->order.authored()) {
+        auto order_opt = loaded_nurbs->order.get_value();
+        if (order_opt.has_value()) {
+          const Animatable<std::vector<int>>& order_anim = order_opt.value();
+          std::vector<int> orders;
+          if (order_anim.get_default(&orders)) {
+            TEST_CHECK(orders.size() == 1);
+            TEST_CHECK(orders[0] == 3);
+            TEST_MSG("NurbsCurves order: %d", orders[0]);
+          }
+        }
+      }
+
+      // Verify knots
+      if (loaded_nurbs->knots.authored()) {
+        auto knots_opt = loaded_nurbs->knots.get_value();
+        if (knots_opt.has_value()) {
+          const Animatable<std::vector<double>>& knots_anim = knots_opt.value();
+          std::vector<double> knots;
+          if (knots_anim.get_default(&knots)) {
+            TEST_CHECK(knots.size() == 6);
+            TEST_MSG("NurbsCurves has %zu knots", knots.size());
+          }
+        }
+      }
+
+      // Verify ranges
+      if (loaded_nurbs->ranges.authored()) {
+        auto ranges_opt = loaded_nurbs->ranges.get_value();
+        if (ranges_opt.has_value()) {
+          const Animatable<std::vector<value::double2>>& ranges_anim = ranges_opt.value();
+          std::vector<value::double2> ranges;
+          if (ranges_anim.get_default(&ranges)) {
+            TEST_CHECK(ranges.size() == 1);
+            TEST_MSG("NurbsCurves has %zu ranges", ranges.size());
+          }
+        }
+      }
+
+      // Verify pointWeights
+      if (loaded_nurbs->pointWeights.authored()) {
+        auto weights_opt = loaded_nurbs->pointWeights.get_value();
+        if (weights_opt.has_value()) {
+          const Animatable<std::vector<double>>& weights_anim = weights_opt.value();
+          std::vector<double> weights;
+          if (weights_anim.get_default(&weights)) {
+            TEST_CHECK(weights.size() == 4);
+            TEST_MSG("NurbsCurves has %zu point weights", weights.size());
+          }
+        }
+      }
+    }
+  }
+
+  std::cerr << "NurbsCurves roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
 void crate_writer_geom_subset_test(void) {
   std::string filename = get_temp_filename("test_geom_subset.usdc");
 

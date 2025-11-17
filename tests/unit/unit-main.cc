@@ -75,6 +75,7 @@ TEST_LIST = {
   { "crate_writer_points_test", crate_writer_points_test },
   { "crate_writer_camera_test", crate_writer_camera_test },
   { "crate_writer_basis_curves_test", crate_writer_basis_curves_test },
+  { "crate_writer_nurbs_curves_test", crate_writer_nurbs_curves_test },
   { "crate_writer_geom_subset_test", crate_writer_geom_subset_test },
   { "crate_writer_material_binding_test", crate_writer_material_binding_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
