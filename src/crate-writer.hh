@@ -211,6 +211,12 @@ private:
   /// Extract Points-specific properties (points, widths, ids, normals, velocities, accelerations)
   bool ExtractPointsProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
 
+  /// Extract Camera-specific properties (focal length, aperture, clipping range, etc.)
+  bool ExtractCameraProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract BasisCurves-specific properties (type, basis, wrap, points, widths, etc.)
+  bool ExtractBasisCurvesProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
   /// Extract common GPrim properties (visibility, purpose, etc.)
   bool ExtractGPrimProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
 

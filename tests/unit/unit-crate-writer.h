@@ -20,4 +20,6 @@ void crate_writer_usd_transform2d_test(void);
 void crate_writer_cone_test(void);
 void crate_writer_capsule_test(void);
 void crate_writer_points_test(void);
+void crate_writer_camera_test(void);
+void crate_writer_basis_curves_test(void);
 void crate_writer_material_binding_test(void);
