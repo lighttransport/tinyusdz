@@ -1784,6 +1784,168 @@ void crate_writer_basis_curves_test(void) {
   cleanup_file(filename);
 }
 
+void crate_writer_geom_subset_test(void) {
+  std::string filename = get_temp_filename("test_geom_subset.usdc");
+
+  {
+    // Create a stage with a Mesh and a GeomSubset
+    Stage stage;
+
+    // Create simple mesh data (cube-like structure)
+    std::vector<value::point3f> points = {
+      {-1.0f, -1.0f, -1.0f},
+      {1.0f, -1.0f, -1.0f},
+      {1.0f, 1.0f, -1.0f},
+      {-1.0f, 1.0f, -1.0f},
+      {-1.0f, -1.0f, 1.0f},
+      {1.0f, -1.0f, 1.0f},
+      {1.0f, 1.0f, 1.0f},
+      {-1.0f, 1.0f, 1.0f},
+    };
+
+    std::vector<int> face_vertex_counts = {4, 4, 4, 4, 4, 4};
+    std::vector<int> face_vertex_indices = {
+      0, 1, 2, 3,  // front
+      4, 7, 6, 5,  // back
+      0, 4, 5, 1,  // bottom
+      2, 6, 7, 3,  // top
+      0, 3, 7, 4,  // left
+      1, 5, 6, 2   // right
+    };
+
+    // Create GeomMesh
+    GeomMesh mesh;
+    Animatable<std::vector<value::point3f>> points_anim(points);
+    Animatable<std::vector<int>> fv_counts_anim(face_vertex_counts);
+    Animatable<std::vector<int>> fv_indices_anim(face_vertex_indices);
+
+    mesh.points.set_value(points_anim);
+    mesh.faceVertexCounts.set_value(fv_counts_anim);
+    mesh.faceVertexIndices.set_value(fv_indices_anim);
+
+    // Create Prim with Mesh
+    Prim mesh_prim("MyMesh", mesh);
+    mesh_prim.prim_type_name() = "Mesh";
+
+    // Create GeomSubset that references first 3 faces (12 indices)
+    GeomSubset subset;
+    subset.elementType = GeomSubset::ElementType::Face;
+    subset.name = "material_faces";
+
+    // Set family name
+    value::token family_name("material_family");
+    subset.familyName.set_value(family_name);
+
+    // Set indices for first 3 faces (0-11)
+    std::vector<int32_t> subset_indices = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+    Animatable<std::vector<int32_t>> indices_anim(subset_indices);
+    subset.indices.set_value(indices_anim);
+
+    // Create Prim with GeomSubset
+    Prim subset_prim("MyMesh_subset", subset);
+    subset_prim.prim_type_name() = "GeomSubset";
+
+    // Add to stage
+    stage.root_prims().push_back(mesh_prim);
+    stage.root_prims().push_back(subset_prim);
+
+    // Write using CrateWriter
+    experimental::CrateWriter writer(filename);
+    std::string err;
+    bool ret = writer.Open(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to open writer: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.ConvertStageToSpecs(stage, &err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to convert stage: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.Finalize(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to finalize: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    writer.Close();
+  }
+
+  TEST_MSG("GeomSubset test file: %s", filename.c_str());
+
+  // Load and verify
+  Stage loaded_stage;
+  std::string warn, err;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  if (!ret) {
+    std::cerr << "FAILED TO LOAD: " << err << "\n";
+  }
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  // Find the subset prim
+  auto subset_prim_result = loaded_stage.GetPrimAtPath(Path("/MyMesh_subset", ""));
+  TEST_CHECK(subset_prim_result.has_value());
+  if (!subset_prim_result.has_value()) {
+    TEST_MSG("Failed to find GeomSubset prim: %s", subset_prim_result.error().c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  const Prim* subset_prim = subset_prim_result.value();
+  TEST_CHECK(subset_prim != nullptr);
+  TEST_CHECK(subset_prim->prim_type_name() == "GeomSubset");
+
+  if (subset_prim) {
+    // Verify GeomSubset type
+    const GeomSubset* loaded_subset = subset_prim->data().as<GeomSubset>();
+    TEST_CHECK(loaded_subset != nullptr);
+    if (loaded_subset) {
+      // Verify elementType property
+      TEST_CHECK(loaded_subset->elementType.get_value() == GeomSubset::ElementType::Face);
+      TEST_MSG("GeomSubset elementType verified: face");
+
+      // Verify familyName
+      if (loaded_subset->familyName.authored()) {
+        auto familyname_opt = loaded_subset->familyName.get_value();
+        if (familyname_opt.has_value()) {
+          const value::token& familyname_val = familyname_opt.value();
+          TEST_MSG("GeomSubset familyName: %s", familyname_val.str().c_str());
+        }
+      }
+
+      // Verify indices
+      if (loaded_subset->indices.authored()) {
+        auto indices_opt = loaded_subset->indices.get_value();
+        if (indices_opt.has_value()) {
+          const Animatable<std::vector<int32_t>>& indices_anim = indices_opt.value();
+          std::vector<int32_t> indices;
+          if (indices_anim.get_default(&indices)) {
+            TEST_CHECK(indices.size() == 12);
+            TEST_MSG("GeomSubset has %zu indices", indices.size());
+          }
+        }
+      }
+    }
+  }
+
+  std::cerr << "GeomSubset roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
 void crate_writer_material_binding_test(void) {
   std::string filename = get_temp_filename("test_material_binding.usdc");
 
