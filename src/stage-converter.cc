@@ -356,6 +356,10 @@ bool CrateWriter::ExtractTypeSpecificProperties(
     return ExtractCapsuleProperties(prim, fields, err);
   } else if (type_name == "Points") {
     return ExtractPointsProperties(prim, fields, err);
+  } else if (type_name == "Camera") {
+    return ExtractCameraProperties(prim, fields, err);
+  } else if (type_name == "BasisCurves") {
+    return ExtractBasisCurvesProperties(prim, fields, err);
   } else if (type_name == "Material") {
     return ExtractMaterialProperties(prim, prim_path, fields, err);
   } else if (type_name == "Shader") {
@@ -881,6 +885,324 @@ bool CrateWriter::ExtractPointsProperties(
   return ExtractGPrimProperties(prim, fields, err);
 }
 
+bool CrateWriter::ExtractCameraProperties(
+  const Prim& prim,
+  crate::FieldValuePairVector& fields,
+  std::string* err
+) {
+  const GeomCamera* camera = prim.data().as<GeomCamera>();
+  if (!camera) {
+    if (err) *err = "Failed to cast prim to GeomCamera";
+    return false;
+  }
+
+  // Helper lambda to add float attributes with fallback
+  // TypedAttributeWithFallback<Animatable<T>>::get_value() returns const Animatable<T>&
+  auto add_float_attr = [&](const std::string& name, const TypedAttributeWithFallback<Animatable<float>>& attr) -> bool {
+    const Animatable<float>& anim = attr.get_value();  // Returns either authored or fallback value
+    float scalar_val;
+    if (anim.get_scalar(&scalar_val)) {
+      crate::CrateValue crate_val;
+      crate_val.Set(scalar_val);
+      fields.push_back({name, crate_val});
+      std::cerr << "DEBUG: Extracted camera " << name << " = " << scalar_val << "\n";
+      return true;
+    }
+    return true;
+  };
+
+  // Helper lambda to add double attributes with fallback
+  // TypedAttributeWithFallback<Animatable<T>>::get_value() returns const Animatable<T>&
+  auto add_double_attr = [&](const std::string& name, const TypedAttributeWithFallback<Animatable<double>>& attr) -> bool {
+    const Animatable<double>& anim = attr.get_value();  // Returns either authored or fallback value
+    double scalar_val;
+    if (anim.get_scalar(&scalar_val)) {
+      crate::CrateValue crate_val;
+      crate_val.Set(scalar_val);
+      fields.push_back({name, crate_val});
+      std::cerr << "DEBUG: Extracted camera " << name << " = " << scalar_val << "\n";
+      return true;
+    }
+    return true;
+  };
+
+  // Extract float2 clippingRange
+  // clippingRange is TypedAttributeWithFallback<Animatable<float2>>, so get_value() returns the Animatable
+  {
+    const Animatable<value::float2>& anim = camera->clippingRange.get_value();
+    value::float2 range_val;
+    if (anim.get_scalar(&range_val)) {
+      crate::CrateValue crate_val;
+      crate_val.Set(range_val);
+      fields.push_back({"clippingRange", crate_val});
+      std::cerr << "DEBUG: Extracted camera clippingRange\n";
+    }
+  }
+
+  // Extract exposure (float)
+  add_float_attr("exposure", camera->exposure);
+
+  // Extract focalLength (float, default 50.0mm)
+  add_float_attr("focalLength", camera->focalLength);
+
+  // Extract focusDistance (float)
+  add_float_attr("focusDistance", camera->focusDistance);
+
+  // Extract horizontalAperture (float)
+  add_float_attr("horizontalAperture", camera->horizontalAperture);
+
+  // Extract horizontalApertureOffset (float)
+  add_float_attr("horizontalApertureOffset", camera->horizontalApertureOffset);
+
+  // Extract verticalAperture (float)
+  add_float_attr("verticalAperture", camera->verticalAperture);
+
+  // Extract verticalApertureOffset (float)
+  add_float_attr("verticalApertureOffset", camera->verticalApertureOffset);
+
+  // Extract fStop (float, 0.0 = no focusing)
+  add_float_attr("fStop", camera->fStop);
+
+  // Extract projection (token enum)
+  // projection is TypedAttributeWithFallback<Animatable<Projection>>, so get_value() returns the Animatable
+  {
+    const Animatable<GeomCamera::Projection>& proj_anim = camera->projection.get_value();
+    GeomCamera::Projection proj_val;
+    if (proj_anim.get_scalar(&proj_val)) {
+      std::string proj_str = (proj_val == GeomCamera::Projection::Perspective) ? "perspective" : "orthographic";
+      crate::TokenIndex proj_tok = GetOrCreateToken(proj_str);
+      crate::CrateValue crate_val;
+      crate_val.Set(proj_tok.value);
+      fields.push_back({"projection", crate_val});
+      std::cerr << "DEBUG: Extracted camera projection = " << proj_str << "\n";
+    }
+  }
+
+  // Extract stereoRole (uniform token enum)
+  // stereoRole is TypedAttributeWithFallback<StereoRole>, so get_value() returns the StereoRole
+  {
+    std::string stereo_str;
+    const GeomCamera::StereoRole& stereo = camera->stereoRole.get_value();
+    if (stereo == GeomCamera::StereoRole::Left) {
+      stereo_str = "left";
+    } else if (stereo == GeomCamera::StereoRole::Right) {
+      stereo_str = "right";
+    } else {
+      stereo_str = "mono";  // default
+    }
+    crate::TokenIndex stereo_tok = GetOrCreateToken(stereo_str);
+    crate::CrateValue crate_val;
+    crate_val.Set(stereo_tok.value);
+    fields.push_back({"stereoRole", crate_val});
+    std::cerr << "DEBUG: Extracted camera stereoRole = " << stereo_str << " (uniform)\n";
+  }
+
+  // Extract shutterOpen (double)
+  add_double_attr("shutterOpen", camera->shutterOpen);
+
+  // Extract shutterClose (double)
+  add_double_attr("shutterClose", camera->shutterClose);
+
+  // Extract clippingPlanes (float4[]) if present - TypedAttribute (no fallback)
+  if (camera->clippingPlanes.authored()) {
+    auto planes_opt = camera->clippingPlanes.get_value();
+    if (planes_opt.has_value()) {
+      const Animatable<std::vector<value::float4>>& planes_anim = planes_opt.value();
+      std::vector<value::float4> planes_val;
+      if (planes_anim.get_default(&planes_val)) {
+        crate::CrateValue crate_val;
+        if (ConvertValue(value::Value(planes_val), crate_val, err)) {
+          fields.push_back({"clippingPlanes", crate_val});
+          std::cerr << "DEBUG: Extracted camera clippingPlanes with " << planes_val.size() << " planes\n";
+        }
+      }
+    }
+  }
+
+  return ExtractGPrimProperties(prim, fields, err);
+}
+
+bool CrateWriter::ExtractBasisCurvesProperties(
+  const Prim& prim,
+  crate::FieldValuePairVector& fields,
+  std::string* err
+) {
+  const GeomBasisCurves* basis_curves = prim.data().as<GeomBasisCurves>();
+  if (!basis_curves) {
+    if (err) *err = "Failed to cast prim to GeomBasisCurves";
+    return false;
+  }
+
+  // Helper lambda to convert enum to string
+  auto add_enum_attribute = [&](const std::string& attr_name, const std::string& enum_val) -> bool {
+    crate::CrateValue crate_val;
+    value::Value enum_value(enum_val);
+    return ConvertValue(enum_value, crate_val, err) &&
+           (fields.push_back({attr_name, crate_val}), true);
+  };
+
+  // Helper lambda to convert array values
+  auto add_array_attribute = [&](const std::string& attr_name, const value::Value& val) -> bool {
+    crate::CrateValue crate_val;
+    return ConvertValue(val, crate_val, err) &&
+           (fields.push_back({attr_name, crate_val}), true);
+  };
+
+  // Extract type enum (Cubic/Linear)
+  {
+    const GeomBasisCurves::Type& type_val = basis_curves->type.get_value();
+    std::string type_str = (type_val == GeomBasisCurves::Type::Cubic) ? "cubic" : "linear";
+    if (!add_enum_attribute("type", type_str)) {
+      return false;
+    }
+    std::cerr << "DEBUG: Extracted basis curves type = " << type_str << "\n";
+  }
+
+  // Extract basis enum (Bezier/Bspline/CatmullRom)
+  {
+    const GeomBasisCurves::Basis& basis_val = basis_curves->basis.get_value();
+    std::string basis_str;
+    if (basis_val == GeomBasisCurves::Basis::Bezier) {
+      basis_str = "bezier";
+    } else if (basis_val == GeomBasisCurves::Basis::Bspline) {
+      basis_str = "bspline";
+    } else {  // CatmullRom
+      basis_str = "catmullRom";
+    }
+    if (!add_enum_attribute("basis", basis_str)) {
+      return false;
+    }
+    std::cerr << "DEBUG: Extracted basis curves basis = " << basis_str << "\n";
+  }
+
+  // Extract wrap enum (Nonperiodic/Periodic/Pinned)
+  {
+    const GeomBasisCurves::Wrap& wrap_val = basis_curves->wrap.get_value();
+    std::string wrap_str;
+    if (wrap_val == GeomBasisCurves::Wrap::Nonperiodic) {
+      wrap_str = "nonperiodic";
+    } else if (wrap_val == GeomBasisCurves::Wrap::Periodic) {
+      wrap_str = "periodic";
+    } else {  // Pinned
+      wrap_str = "pinned";
+    }
+    if (!add_enum_attribute("wrap", wrap_str)) {
+      return false;
+    }
+    std::cerr << "DEBUG: Extracted basis curves wrap = " << wrap_str << "\n";
+  }
+
+  // Extract points (point3f[]) - TypedAttribute returns optional
+  if (basis_curves->points.authored()) {
+    auto points_opt = basis_curves->points.get_value();
+    if (points_opt.has_value()) {
+      const Animatable<std::vector<value::point3f>>& points_anim = points_opt.value();
+      if (points_anim.has_default()) {
+        std::vector<value::point3f> points_val;
+        if (points_anim.get_default(&points_val)) {
+          value::Value points_value(points_val);
+          if (!add_array_attribute("points", points_value)) {
+            return false;
+          }
+          std::cerr << "DEBUG: Extracted " << points_val.size() << " basis curve points\n";
+        }
+      }
+    }
+  }
+
+  // Extract curveVertexCounts (int[]) - TypedAttribute returns optional
+  if (basis_curves->curveVertexCounts.authored()) {
+    auto counts_opt = basis_curves->curveVertexCounts.get_value();
+    if (counts_opt.has_value()) {
+      const Animatable<std::vector<int>>& counts_anim = counts_opt.value();
+      if (counts_anim.has_default()) {
+        std::vector<int> counts_val;
+        if (counts_anim.get_default(&counts_val)) {
+          value::Value counts_value(counts_val);
+          if (!add_array_attribute("curveVertexCounts", counts_value)) {
+            return false;
+          }
+          std::cerr << "DEBUG: Extracted " << counts_val.size() << " curve vertex counts\n";
+        }
+      }
+    }
+  }
+
+  // Extract widths (float[]) - TypedAttribute returns optional
+  if (basis_curves->widths.authored()) {
+    auto widths_opt = basis_curves->widths.get_value();
+    if (widths_opt.has_value()) {
+      const Animatable<std::vector<float>>& widths_anim = widths_opt.value();
+      if (widths_anim.has_default()) {
+        std::vector<float> widths_val;
+        if (widths_anim.get_default(&widths_val)) {
+          value::Value widths_value(widths_val);
+          if (!add_array_attribute("widths", widths_value)) {
+            return false;
+          }
+          std::cerr << "DEBUG: Extracted " << widths_val.size() << " basis curve widths\n";
+        }
+      }
+    }
+  }
+
+  // Extract normals (normal3f[]) - TypedAttribute returns optional
+  if (basis_curves->normals.authored()) {
+    auto normals_opt = basis_curves->normals.get_value();
+    if (normals_opt.has_value()) {
+      const Animatable<std::vector<value::normal3f>>& normals_anim = normals_opt.value();
+      if (normals_anim.has_default()) {
+        std::vector<value::normal3f> normals_val;
+        if (normals_anim.get_default(&normals_val)) {
+          value::Value normals_value(normals_val);
+          if (!add_array_attribute("normals", normals_value)) {
+            return false;
+          }
+          std::cerr << "DEBUG: Extracted " << normals_val.size() << " basis curve normals\n";
+        }
+      }
+    }
+  }
+
+  // Extract velocities (vector3f[]) - TypedAttribute returns optional
+  if (basis_curves->velocities.authored()) {
+    auto velocities_opt = basis_curves->velocities.get_value();
+    if (velocities_opt.has_value()) {
+      const Animatable<std::vector<value::vector3f>>& velocities_anim = velocities_opt.value();
+      if (velocities_anim.has_default()) {
+        std::vector<value::vector3f> velocities_val;
+        if (velocities_anim.get_default(&velocities_val)) {
+          value::Value velocities_value(velocities_val);
+          if (!add_array_attribute("velocities", velocities_value)) {
+            return false;
+          }
+          std::cerr << "DEBUG: Extracted " << velocities_val.size() << " basis curve velocities\n";
+        }
+      }
+    }
+  }
+
+  // Extract accelerations (vector3f[]) - TypedAttribute returns optional
+  if (basis_curves->accelerations.authored()) {
+    auto accelerations_opt = basis_curves->accelerations.get_value();
+    if (accelerations_opt.has_value()) {
+      const Animatable<std::vector<value::vector3f>>& accelerations_anim = accelerations_opt.value();
+      if (accelerations_anim.has_default()) {
+        std::vector<value::vector3f> accelerations_val;
+        if (accelerations_anim.get_default(&accelerations_val)) {
+          value::Value accelerations_value(accelerations_val);
+          if (!add_array_attribute("accelerations", accelerations_value)) {
+            return false;
+          }
+          std::cerr << "DEBUG: Extracted " << accelerations_val.size() << " basis curve accelerations\n";
+        }
+      }
+    }
+  }
+
+  return ExtractGPrimProperties(prim, fields, err);
+}
+
 // ============================================================================
 // XformOp Extraction Helper
 // ============================================================================
@@ -916,6 +1238,12 @@ bool CrateWriter::ExtractXformOpsFromXformable(
   } else if (auto* points = prim.data().as<GeomPoints>()) {
     xformable = static_cast<const Xformable*>(points);
     std::cerr << "DEBUG ExtractXformOps: Cast to GeomPoints succeeded\n";
+  } else if (auto* camera = prim.data().as<GeomCamera>()) {
+    xformable = static_cast<const Xformable*>(camera);
+    std::cerr << "DEBUG ExtractXformOps: Cast to GeomCamera succeeded\n";
+  } else if (auto* basis_curves = prim.data().as<GeomBasisCurves>()) {
+    xformable = static_cast<const Xformable*>(basis_curves);
+    std::cerr << "DEBUG ExtractXformOps: Cast to GeomBasisCurves succeeded\n";
   } else if (auto* xform = prim.data().as<Xform>()) {
     xformable = xform;
     std::cerr << "DEBUG ExtractXformOps: Cast to Xform succeeded\n";
@@ -1331,6 +1659,8 @@ bool CrateWriter::AddMaterialBindingSpecs(
   const GeomCylinder* geom_cylinder = nullptr;
   const GeomMesh* geom_mesh = nullptr;
   const GeomSubset* geom_subset = nullptr;
+  const GeomCamera* geom_camera = nullptr;
+  const GeomBasisCurves* geom_basis_curves = nullptr;
   const Xform* xform = nullptr;
   const Model* model = nullptr;
   const Scope* scope = nullptr;
@@ -1354,6 +1684,10 @@ bool CrateWriter::AddMaterialBindingSpecs(
     mat_binding = static_cast<const MaterialBinding*>(geom_mesh);
   } else if ((geom_subset = prim.data().as<GeomSubset>())) {
     mat_binding = static_cast<const MaterialBinding*>(geom_subset);
+  } else if ((geom_camera = prim.data().as<GeomCamera>())) {
+    mat_binding = static_cast<const MaterialBinding*>(geom_camera);
+  } else if ((geom_basis_curves = prim.data().as<GeomBasisCurves>())) {
+    mat_binding = static_cast<const MaterialBinding*>(geom_basis_curves);
   } else if ((xform = prim.data().as<Xform>())) {
     mat_binding = static_cast<const MaterialBinding*>(xform);
   } else if ((model = prim.data().as<Model>())) {
