@@ -5122,6 +5122,311 @@ nonstd::expected<bool, std::string> GetConnectedUVTexture(
                   prim->prim_type_name()));
 }
 
+// Helper function to find ND_image_color4 texture nodes in a MaterialX NodeGraph
+// by traversing connections from the given output
+template <typename T>
+nonstd::expected<bool, std::string> GetConnectedMtlxTexture(
+    const Stage &stage, const TypedAnimatableAttributeWithFallback<T> &src,
+    Path *tex_abs_path, const Shader **image_shader_out,
+    std::string *st_varname_out, const AssetInfo **assetInfo_out) {
+
+  if (!src.is_connection()) {
+    return nonstd::make_unexpected("Attribute must be connection.\n");
+  }
+
+  if (src.get_connections().size() != 1) {
+    return nonstd::make_unexpected(
+        "Attribute connections must be single connection Path.\n");
+  }
+
+  const Path &path = src.get_connections()[0];
+  const std::string prim_part = path.prim_part();
+  const std::string prop_part = path.prop_part();
+
+  DCOUT("Checking MaterialX connection: " << path.full_path_name());
+  DCOUT("  prim_part: " << prim_part);
+  DCOUT("  prop_part: " << prop_part);
+
+  // The prim_part should be the NodeGraph path itself
+  // For </root/_materials/Material/NodeGraphs.outputs:node_out>,
+  // prim_part = "/root/_materials/Material/NodeGraphs"
+
+  // First, try to find via stage lookup
+  const Prim *ng_prim{nullptr};
+  std::string err;
+  bool found_in_stage = stage.find_prim_at_path(Path(prim_part, ""), ng_prim, &err);
+
+  // If not found in stage lookup, try to navigate through Material's children
+  if (!found_in_stage || !ng_prim) {
+    DCOUT("Prim not found in stage lookup, trying Material children approach");
+
+    // Extract Material path - it should be everything before the last element
+    size_t last_slash = prim_part.rfind('/');
+    if (last_slash == std::string::npos) {
+      return nonstd::make_unexpected(
+          fmt::format("Invalid NodeGraph path structure: {}\n", prim_part));
+    }
+
+    std::string material_path = prim_part.substr(0, last_slash);
+    std::string nodegraph_name = prim_part.substr(last_slash + 1);
+
+    DCOUT("Looking for Material at: " << material_path);
+    DCOUT("NodeGraph name: " << nodegraph_name);
+
+    // Find the Material
+    const Prim *mat_prim{nullptr};
+    if (!stage.find_prim_at_path(Path(material_path, ""), mat_prim, &err)) {
+      return nonstd::make_unexpected(
+          fmt::format("Material {} not found: {}\n", material_path, err));
+    }
+
+    // Look for NodeGraph child
+    if (mat_prim) {
+      std::string children_info = "Material has " + std::to_string(mat_prim->children().size()) + " children: ";
+      for (const auto& child : mat_prim->children()) {
+        std::string child_name = child.element_name();
+        std::string child_type = child.data().type_name();
+        children_info += "'" + child_name + "'(" + child_type + ") ";
+
+        // Check if this is a NodeGraph (by type, since name might be empty)
+        if (child_type == "NodeGraph") {
+          // If the child has no name but is the right type, use it
+          // This handles the case where the NodeGraph doesn't have element_name set
+          ng_prim = &child;
+          break;
+        } else if (child_name == nodegraph_name) {
+          // Also check by exact name match
+          ng_prim = &child;
+          break;
+        }
+      }
+
+      if (!ng_prim) {
+        return nonstd::make_unexpected(
+            fmt::format("NodeGraph '{}' not found. {}\n", nodegraph_name, children_info));
+      }
+    } else {
+      return nonstd::make_unexpected(
+          fmt::format("Material prim is null\n"));
+    }
+  }
+
+  DCOUT("Found prim: " << prim_part << ", type: " << (ng_prim ? ng_prim->data().type_name() : "null"));
+
+  const NodeGraph *ng = ng_prim ? ng_prim->as<NodeGraph>() : nullptr;
+  if (!ng) {
+    // Debug output to understand why it's not a NodeGraph
+    if (ng_prim) {
+      return nonstd::make_unexpected(
+          fmt::format("{} is not a NodeGraph, prim_type: {}\n", prim_part, ng_prim->data().type_name()));
+    }
+    return nonstd::make_unexpected(
+        fmt::format("{} is not a NodeGraph\n", prim_part));
+  }
+
+  // Find the output connection we're looking for
+  // The prop_part should be like "outputs:node_out"
+  std::string output_name = prop_part;
+  if (startsWith(output_name, "outputs:")) {
+    output_name = output_name.substr(8); // Remove "outputs:" prefix
+  }
+
+  // Look for the connection in props
+  // Try both with and without ".connect" suffix
+  std::string conn_prop_name = "outputs:" + output_name + ".connect";
+  auto it = ng->props.find(conn_prop_name);
+
+  if (it == ng->props.end()) {
+    // Try without .connect suffix
+    conn_prop_name = "outputs:" + output_name;
+    it = ng->props.find(conn_prop_name);
+
+    if (it == ng->props.end()) {
+      // List available props for debugging
+      std::string available_props = "Available props: ";
+      for (const auto& prop : ng->props) {
+        available_props += prop.first + " ";
+      }
+      return nonstd::make_unexpected(
+          fmt::format("Output connection '{}' not found in NodeGraph. {}\n",
+                      conn_prop_name, available_props));
+    }
+  }
+
+  // NodeGraph outputs can be stored as attributes or relationships
+  Path current_path;
+  bool found_connection = false;
+
+  if (it->second.is_attribute()) {
+    // It's an attribute - look for connections on the attribute
+    const Attribute &attr = it->second.get_attribute();
+    if (attr.has_connections() && !attr.connections().empty()) {
+      current_path = attr.connections()[0];
+      found_connection = true;
+    }
+  } else if (it->second.is_relationship()) {
+    // Also support relationship format
+    auto targets = it->second.get_relationTargets();
+    if (!targets.empty()) {
+      current_path = targets[0];
+      found_connection = true;
+    }
+  }
+
+  if (!found_connection) {
+    return nonstd::make_unexpected(
+        fmt::format("Output {} has no connection targets\n", conn_prop_name));
+  }
+  const Shader *image_shader = nullptr;
+
+  // Traverse the node connections to find ND_image_color4
+  // Maximum depth to prevent infinite loops
+  int max_depth = 10;
+  std::string traversal_log = "Traversal: ";
+  while (max_depth-- > 0) {
+    std::string current_prim_part = current_path.prim_part();
+
+    const Prim *current_prim{nullptr};
+
+    // First, try regular stage lookup
+    bool found_in_stage = stage.find_prim_at_path(Path(current_prim_part, ""), current_prim, &err);
+
+    // If not found and this is under a NodeGraph, look in NodeGraph children
+    if (!found_in_stage || !current_prim) {
+      // Check if this path is under the NodeGraph we found earlier
+      size_t last_slash = current_prim_part.rfind('/');
+      if (last_slash != std::string::npos) {
+        std::string parent_path = current_prim_part.substr(0, last_slash);
+        std::string child_name = current_prim_part.substr(last_slash + 1);
+
+        // Check if parent is our NodeGraph
+        if (ng_prim && parent_path.find("NodeGraphs") != std::string::npos) {
+          // Look for the child in the NodeGraph prim
+          for (const auto& child : ng_prim->children()) {
+            if (child.element_name() == child_name) {
+              current_prim = &child;
+              break;
+            }
+          }
+        }
+      }
+
+      if (!current_prim) {
+        return nonstd::make_unexpected(
+            fmt::format("Shader {} not found\n", current_prim_part));
+      }
+    }
+
+    const Shader *current_shader = current_prim ? current_prim->as<Shader>() : nullptr;
+    if (!current_shader) {
+      return nonstd::make_unexpected(
+          fmt::format("{} is not a Shader. {}\n", current_prim_part, traversal_log));
+    }
+
+    // Log this node
+    traversal_log += current_shader->info_id + " -> ";
+
+    // Check if this is an ND_image_color4 node
+    if (current_shader->info_id == "ND_image_color4" ||
+        current_shader->info_id == "ND_image_color3") {
+      image_shader = current_shader;
+      if (tex_abs_path) {
+        *tex_abs_path = current_path;
+      }
+      if (image_shader_out) {
+        *image_shader_out = image_shader;
+      }
+      if (assetInfo_out) {
+        // get_assetInfo returns AssetInfo converted from customData/assetInfo
+        bool authored = false;
+        const AssetInfo &info = current_shader->metas().get_assetInfo(&authored);
+        if (authored) {
+          *assetInfo_out = &info;
+        }
+      }
+
+      // For MaterialX, we don't have an explicit st varname,
+      // so we'll use "st" as default (same as UsdPreviewSurface)
+      if (st_varname_out) {
+        *st_varname_out = "st";
+      }
+
+      return true;
+    }
+
+    // Check if this node has an input connection we should follow
+    // For ND_convert_color4_color3, follow inputs:in
+    bool found_next = false;
+    DCOUT("Checking shader " << current_shader->info_id << " at " << current_prim_part);
+
+    // Debug: log all properties from both Shader and ShaderNode
+    std::string props_list = "ShaderProps: ";
+    for (const auto& prop : current_shader->props) {
+      props_list += prop.first + " ";
+    }
+
+    // Check if the shader has a ShaderNode value with properties
+    const ShaderNode *shader_node = current_shader->value.as<ShaderNode>();
+    if (shader_node && !shader_node->props.empty()) {
+      props_list += " NodeProps: ";
+      for (const auto& prop : shader_node->props) {
+        props_list += prop.first + " ";
+      }
+    }
+    traversal_log += "[" + props_list + "] ";
+
+    // Helper lambda to check for connections in a property map
+    auto find_connection = [&](const std::map<std::string, Property>& props_map) -> bool {
+      for (const auto& prop : props_map) {
+        if (startsWith(prop.first, "inputs:")) {
+          bool is_connection = false;
+          Path next_path;
+
+          if (endsWith(prop.first, ".connect")) {
+            // Explicit .connect suffix
+            is_connection = true;
+            if (prop.second.is_relationship()) {
+              auto next_targets = prop.second.get_relationTargets();
+              if (!next_targets.empty()) {
+                next_path = next_targets[0];
+              }
+            }
+          } else if (prop.second.is_attribute()) {
+            // Check if attribute has connections
+            const Attribute &attr = prop.second.get_attribute();
+            if (attr.has_connections() && !attr.connections().empty()) {
+              is_connection = true;
+              next_path = attr.connections()[0];
+            }
+          }
+
+          if (is_connection && !next_path.full_path_name().empty()) {
+            DCOUT("  Following connection from " << prop.first << " to " << next_path);
+            current_path = next_path;
+            return true;
+          }
+        }
+      }
+      return false;
+    };
+
+    // Try shader_node->props first, then fall back to current_shader->props
+    if (shader_node && !shader_node->props.empty()) {
+      found_next = find_connection(shader_node->props);
+    }
+    if (!found_next) {
+      found_next = find_connection(current_shader->props);
+    }
+
+    if (!found_next) {
+      break;
+    }
+  }
+
+  return nonstd::make_unexpected(
+      fmt::format("No ND_image_color4 texture node found. {}\n", traversal_log));
+}
+
 static bool RawAssetRead(
     const value::AssetPath &assetPath, const AssetInfo &assetInfo,
     const AssetResolutionResolver &assetResolver,
@@ -5764,7 +6069,8 @@ template <typename T, typename Dty>
 bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
     const RenderSceneConverterEnv &env, const Path &shader_abs_path,
     const TypedAttributeWithFallback<Animatable<T>> &param,
-    const std::string &param_name, ShaderParam<Dty> &dst_param) {
+    const std::string &param_name, ShaderParam<Dty> &dst_param,
+    bool is_materialx) {
   if (!param.authored()) {
     return true;
   }
@@ -5774,6 +6080,139 @@ bool RenderSceneConverter::ConvertPreviewSurfaceShaderParam(
   } else if (param.is_connection()) {
     DCOUT(fmt::format("{} is attribute connection.", param_name));
 
+    // Check if this is a MaterialX connection to a NodeGraph
+    if (is_materialx && param.get_connections().size() == 1) {
+      const Path &conn_path = param.get_connections()[0];
+      if (conn_path.prim_part().find("/NodeGraphs") != std::string::npos) {
+        // This is a MaterialX NodeGraph connection, traverse to find texture
+        const Shader *image_shader{nullptr};
+        Path texPath;
+        std::string st_varname;
+        const AssetInfo *assetInfo{nullptr};
+
+        auto mtlx_result = GetConnectedMtlxTexture(
+            env.stage, param, &texPath, &image_shader, &st_varname, &assetInfo);
+
+        if (mtlx_result) {
+          // Found a MaterialX texture node
+          DCOUT("Found MaterialX texture node: " << texPath);
+
+          // Extract the file path from the image shader
+          value::AssetPath texAssetPath;
+          bool found_file = false;
+
+          // Helper lambda to find file input in a property map
+          auto find_file_input = [&](const std::map<std::string, Property>& props_map) -> bool {
+            for (const auto& prop : props_map) {
+              if (prop.first == "inputs:file" && prop.second.is_attribute()) {
+                const Attribute &attr = prop.second.get_attribute();
+                if (attr.has_value()) {
+                  auto asset_val = attr.get_value<value::AssetPath>();
+                  if (asset_val) {
+                    texAssetPath = *asset_val;
+                    return true;
+                  }
+                }
+              }
+            }
+            return false;
+          };
+
+          // Check both ShaderNode props and Shader props
+          const ShaderNode *shader_node = image_shader->value.as<ShaderNode>();
+          if (shader_node && !shader_node->props.empty()) {
+            found_file = find_file_input(shader_node->props);
+          }
+          if (!found_file) {
+            found_file = find_file_input(image_shader->props);
+          }
+
+          if (!found_file) {
+            PUSH_WARN(fmt::format("MaterialX image node {} has no file input", texPath.prim_part()));
+            return true;
+          }
+
+          // Create a synthetic UsdUVTexture to pass to ConvertUVTexture
+          UsdUVTexture synth_tex;
+          synth_tex.file.set_value(texAssetPath);
+
+          // Helper lambda to extract wrap mode from properties
+          auto extract_wrap_modes = [&](const std::map<std::string, Property>& props_map) {
+            for (const auto& prop : props_map) {
+              if (prop.first == "inputs:uaddressmode" && prop.second.is_attribute()) {
+                const Attribute &attr = prop.second.get_attribute();
+                if (attr.has_value()) {
+                  auto val = attr.get_value<std::string>();
+                  if (val) {
+                    if (*val == "periodic") {
+                      synth_tex.wrapS.set_value(UsdUVTexture::Wrap::Repeat);
+                    } else if (*val == "clamp") {
+                      synth_tex.wrapS.set_value(UsdUVTexture::Wrap::Clamp);
+                    }
+                  }
+                }
+              }
+              if (prop.first == "inputs:vaddressmode" && prop.second.is_attribute()) {
+                const Attribute &attr = prop.second.get_attribute();
+                if (attr.has_value()) {
+                  auto val = attr.get_value<std::string>();
+                  if (val) {
+                    if (*val == "periodic") {
+                      synth_tex.wrapT.set_value(UsdUVTexture::Wrap::Repeat);
+                    } else if (*val == "clamp") {
+                      synth_tex.wrapT.set_value(UsdUVTexture::Wrap::Clamp);
+                    }
+                  }
+                }
+              }
+            }
+          };
+
+          // Map MaterialX wrap modes to USD - check both ShaderNode and Shader props
+          if (shader_node && !shader_node->props.empty()) {
+            extract_wrap_modes(shader_node->props);
+          }
+          extract_wrap_modes(image_shader->props);
+
+          // Use ConvertUVTexture to properly handle the texture
+          UVTexture rtex;
+          AssetInfo mtlx_assetInfo; // Use the assetInfo if available
+          if (assetInfo) {
+            mtlx_assetInfo = *assetInfo;
+          }
+
+          // Handle colorSpace from attribute metadata if available
+          // AssetInfo doesn't have set_string, so we'll need to handle this differently
+          // For now, just use the assetInfo as-is
+
+          if (!ConvertUVTexture(env, texPath, mtlx_assetInfo, synth_tex, &rtex)) {
+            PUSH_ERROR_AND_RETURN(fmt::format(
+                "Failed to convert MaterialX texture for {}", param_name));
+          }
+
+          // Set the connected output channel and UV primvar name
+          rtex.connectedOutputChannel = tydra::UVTexture::Channel::RGB;
+          rtex.varname_uv = st_varname;
+
+          uint64_t texId = textures.size();
+          textures.push_back(rtex);
+
+          textureMap.add(texId, shader_abs_path.prim_part() + "." + param_name);
+
+          DCOUT(fmt::format("MaterialX TexId {}.{} = {}",
+                            shader_abs_path.prim_part(), param_name, texId));
+
+          dst_param.texture_id = int32_t(texId);
+
+          return true;
+        } else {
+          PUSH_WARN(fmt::format("Failed to find MaterialX texture for {}: {}",
+                                param_name, mtlx_result.error()));
+        }
+      }
+    }
+
+    // Fall back to standard UsdUVTexture handling
     const UsdUVTexture *ptex{nullptr};
     const Shader *pshader{nullptr};
     Path texPath;
@@ -5958,22 +6397,26 @@ bool RenderSceneConverter::ConvertOpenPBRSurfaceShader(
   // Convert base layer parameters
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.base_weight, "base_weight",
-          rshader.base_weight)) {
+          rshader.base_weight, true)) {
+    PushWarn(fmt::format("Failed to convert base_weight parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.base_color, "base_color",
-          rshader.base_color)) {
+          rshader.base_color, true)) {
+    PushWarn(fmt::format("Failed to convert base_color parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.base_roughness, "base_roughness",
           rshader.base_roughness)) {
+    PushWarn(fmt::format("Failed to convert base_roughness parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.base_metalness, "base_metalness",
           rshader.base_metalness)) {
+    PushWarn(fmt::format("Failed to convert base_metalness parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
 
@@ -5981,36 +6424,43 @@ bool RenderSceneConverter::ConvertOpenPBRSurfaceShader(
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.specular_weight, "specular_weight",
           rshader.specular_weight)) {
+    PushWarn(fmt::format("Failed to convert specular_weight parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.specular_color, "specular_color",
           rshader.specular_color)) {
+    PushWarn(fmt::format("Failed to convert specular_color parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.specular_roughness, "specular_roughness",
           rshader.specular_roughness)) {
+    PushWarn(fmt::format("Failed to convert specular_roughness parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.specular_ior, "specular_ior",
           rshader.specular_ior)) {
+    PushWarn(fmt::format("Failed to convert specular_ior parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.specular_ior_level, "specular_ior_level",
           rshader.specular_ior_level)) {
+    PushWarn(fmt::format("Failed to convert specular_ior_level parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.specular_anisotropy, "specular_anisotropy",
           rshader.specular_anisotropy)) {
+    PushWarn(fmt::format("Failed to convert specular_anisotropy parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.specular_rotation, "specular_rotation",
           rshader.specular_rotation)) {
+    PushWarn(fmt::format("Failed to convert specular_rotation parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
 
@@ -6018,31 +6468,37 @@ bool RenderSceneConverter::ConvertOpenPBRSurfaceShader(
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.transmission_weight, "transmission_weight",
           rshader.transmission_weight)) {
+    PushWarn(fmt::format("Failed to convert transmission_weight parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.transmission_color, "transmission_color",
-          rshader.transmission_color)) {
+          rshader.transmission_color, true)) {
+    PushWarn(fmt::format("Failed to convert transmission_color parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.transmission_depth, "transmission_depth",
           rshader.transmission_depth)) {
+    PushWarn(fmt::format("Failed to convert transmission_depth parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.transmission_scatter, "transmission_scatter",
           rshader.transmission_scatter)) {
+    PushWarn(fmt::format("Failed to convert transmission_scatter parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.transmission_scatter_anisotropy,
           "transmission_scatter_anisotropy", rshader.transmission_scatter_anisotropy)) {
+    PushWarn(fmt::format("Failed to convert transmission_scatter_anisotropy parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.transmission_dispersion,
           "transmission_dispersion", rshader.transmission_dispersion)) {
+    PushWarn(fmt::format("Failed to convert transmission_dispersion parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
 
@@ -6050,26 +6506,31 @@ bool RenderSceneConverter::ConvertOpenPBRSurfaceShader(
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.subsurface_weight, "subsurface_weight",
           rshader.subsurface_weight)) {
+    PushWarn(fmt::format("Failed to convert subsurface_weight parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.subsurface_color, "subsurface_color",
-          rshader.subsurface_color)) {
+          rshader.subsurface_color, true)) {
+    PushWarn(fmt::format("Failed to convert subsurface_color parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.subsurface_radius, "subsurface_radius",
           rshader.subsurface_radius)) {
+    PushWarn(fmt::format("Failed to convert subsurface_radius parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.subsurface_scale, "subsurface_scale",
           rshader.subsurface_scale)) {
+    PushWarn(fmt::format("Failed to convert subsurface_scale parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.subsurface_anisotropy,
           "subsurface_anisotropy", rshader.subsurface_anisotropy)) {
+    PushWarn(fmt::format("Failed to convert subsurface_anisotropy parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
 
@@ -6077,16 +6538,19 @@ bool RenderSceneConverter::ConvertOpenPBRSurfaceShader(
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.sheen_weight, "sheen_weight",
           rshader.sheen_weight)) {
+    PushWarn(fmt::format("Failed to convert sheen_weight parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.sheen_color, "sheen_color",
           rshader.sheen_color)) {
+    PushWarn(fmt::format("Failed to convert sheen_color parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.sheen_roughness, "sheen_roughness",
           rshader.sheen_roughness)) {
+    PushWarn(fmt::format("Failed to convert sheen_roughness parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
 
@@ -6094,41 +6558,49 @@ bool RenderSceneConverter::ConvertOpenPBRSurfaceShader(
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.coat_weight, "coat_weight",
           rshader.coat_weight)) {
+    PushWarn(fmt::format("Failed to convert coat_weight parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.coat_color, "coat_color",
           rshader.coat_color)) {
+    PushWarn(fmt::format("Failed to convert coat_color parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.coat_roughness, "coat_roughness",
           rshader.coat_roughness)) {
+    PushWarn(fmt::format("Failed to convert coat_roughness parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.coat_anisotropy, "coat_anisotropy",
           rshader.coat_anisotropy)) {
+    PushWarn(fmt::format("Failed to convert coat_anisotropy parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.coat_rotation, "coat_rotation",
           rshader.coat_rotation)) {
+    PushWarn(fmt::format("Failed to convert coat_rotation parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.coat_ior, "coat_ior",
           rshader.coat_ior)) {
+    PushWarn(fmt::format("Failed to convert coat_ior parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.coat_affect_color, "coat_affect_color",
           rshader.coat_affect_color)) {
+    PushWarn(fmt::format("Failed to convert coat_affect_color parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.coat_affect_roughness, "coat_affect_roughness",
           rshader.coat_affect_roughness)) {
+    PushWarn(fmt::format("Failed to convert coat_affect_roughness parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
 
@@ -6136,11 +6608,13 @@ bool RenderSceneConverter::ConvertOpenPBRSurfaceShader(
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.emission_luminance, "emission_luminance",
           rshader.emission_luminance)) {
+    PushWarn(fmt::format("Failed to convert emission_luminance parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.emission_color, "emission_color",
           rshader.emission_color)) {
+    PushWarn(fmt::format("Failed to convert emission_color parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
 
@@ -6148,16 +6622,19 @@ bool RenderSceneConverter::ConvertOpenPBRSurfaceShader(
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.opacity, "opacity",
           rshader.opacity)) {
+    PushWarn(fmt::format("Failed to convert opacity parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.normal, "normal",
           rshader.normal)) {
+    PushWarn(fmt::format("Failed to convert normal parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
   if (!ConvertPreviewSurfaceShaderParam(
           env, shader_abs_path, shader.tangent, "tangent",
           rshader.tangent)) {
+    PushWarn(fmt::format("Failed to convert tangent parameter for shader: {}", shader_abs_path.prim_part()));
     return false;
   }
 
@@ -8352,6 +8829,8 @@ bool InferColorSpace(const value::token &tok, ColorSpace *cty) {
   return true;
 }
 
+#if 0  // Deprecated: Use implementation in render-scene-dump.cc instead
+
 namespace {
 
 template <typename T>
@@ -9061,6 +9540,8 @@ std::string DumpRenderScene(const RenderScene &scene,
 
   return ss.str();
 }
+
+#endif  // Deprecated dump functions
 
 // Memory usage estimation implementations
 
