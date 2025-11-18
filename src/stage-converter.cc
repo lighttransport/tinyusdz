@@ -4189,5 +4189,120 @@ bool CrateWriter::ConvertConnectionToFields(
   return true;
 }
 
+// ============================================================================
+// Variant Set and Variant Conversion (USD Composition)
+// ============================================================================
+
+bool CrateWriter::ConvertVariantSetToFields(
+    const std::string& variantset_name,
+    const VariantSet& variantset,
+    const Path& parent_path,
+    std::string* err) {
+
+  // VariantSet path: parent{variantSetName} (e.g., /Chair{materialVariant})
+  std::string variantset_path_str = parent_path.prim_part() + "{" + variantset_name + "}";
+  Path vs_path(variantset_path_str, "");
+
+  std::cerr << "[ConvertVariantSetToFields] Creating VariantSet spec: "
+            << vs_path.full_path_name() << "\n";
+
+  // VariantSet spec needs "variantChildren" field listing all variant names
+  crate::FieldValuePairVector vs_fields;
+
+  std::vector<value::token> variant_tokens;
+  for (const auto& variant_item : variantset.variantSet) {
+    variant_tokens.push_back(value::token(variant_item.first));
+  }
+
+  crate::CrateValue variant_children_value;
+  variant_children_value.Set(variant_tokens);
+  vs_fields.push_back({"variantChildren", variant_children_value});
+
+  if (!AddSpec(vs_path, SpecType::VariantSet, vs_fields, err)) {
+    if (err) *err = "Failed to add VariantSet spec: " + vs_path.full_path_name() + ": " + *err;
+    return false;
+  }
+
+  std::cerr << "[ConvertVariantSetToFields] Created VariantSet with "
+            << variantset.variantSet.size() << " variants\n";
+
+  // For each variant, create a Variant spec
+  for (const auto& variant_item : variantset.variantSet) {
+    const auto& variant_name = variant_item.first;
+    const auto& variant_data = variant_item.second;
+
+    if (!ConvertVariantToFields(variant_name, variant_data, vs_path, variantset_name, err)) {
+      if (err) *err = "Failed to convert variant '" + variant_name + "': " + *err;
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool CrateWriter::ConvertVariantToFields(
+    const std::string& variant_name,
+    const Variant& variant,
+    const Path& variantset_path,
+    const std::string& variantset_name,
+    std::string* err) {
+
+  // Variant path: variantset_path{variantName=variant_name}
+  // (e.g., /Chair{materialVariant=plastic})
+  std::string variant_path_str = variantset_path.prim_part() + "{" +
+                                 variantset_name + "=" + variant_name + "}";
+  Path v_path(variant_path_str, "");
+
+  std::cerr << "[ConvertVariantToFields] Creating Variant spec: "
+            << v_path.full_path_name() << "\n";
+
+  // Variant spec contains variant metadata and prim children
+  crate::FieldValuePairVector v_fields;
+
+  // Add variant specifier (always "def" for variants)
+  crate::CrateValue spec_value;
+  spec_value.Set(Specifier::Def);
+  v_fields.push_back({"specifier", spec_value});
+
+  // Add variant properties as separate attribute specs
+  for (const auto& prop_item : variant.properties()) {
+    const auto& prop_name = prop_item.first;
+    const auto& prop = prop_item.second;
+
+    // Handle variant properties based on their type
+    if (prop.is_attribute()) {
+      if (!ConvertAttributeToFields(prop_name, prop.get_attribute(), v_path, err)) {
+        if (err) *err = "Failed to convert variant attribute: " + prop_name;
+        return false;
+      }
+    } else if (prop.is_relationship()) {
+      if (!ConvertRelationshipToFields(prop_name, prop.get_relationship(), v_path, err)) {
+        if (err) *err = "Failed to convert variant relationship: " + prop_name;
+        return false;
+      }
+    }
+  }
+
+  // Add variant prim children (recursively convert each child prim)
+  // Note: This is a simplified implementation - full variant support would
+  // need to convert the entire prim hierarchy within the variant
+  for (const auto& child_prim : variant.primChildren()) {
+    std::string child_name = child_prim.element_name();
+    std::cerr << "[ConvertVariantToFields] Note: Variant prim children not yet fully supported. "
+              << "Child '" << child_name << "' will be skipped\n";
+  }
+
+  // Create the variant spec
+  if (!AddSpec(v_path, SpecType::Variant, v_fields, err)) {
+    if (err) *err = "Failed to add Variant spec: " + v_path.full_path_name() + ": " + *err;
+    return false;
+  }
+
+  std::cerr << "[ConvertVariantToFields] Created Variant spec with "
+            << v_fields.size() << " fields\n";
+
+  return true;
+}
+
 } // namespace experimental
 } // namespace tinyusdz
