@@ -1,0 +1,13 @@
+# Verification artifacts (generated output)
+verification-results/
+
+# npm
+node_modules/
+package-lock.json
+
+# WASM build artifacts
+src/tinyusdz/*.wasm
+src/tinyusdz/*.js
+
+# Patch scripts (temporary)
+apply-nodematerial-patch.sh

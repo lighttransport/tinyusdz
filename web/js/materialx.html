@@ -165,6 +165,124 @@
             width: 55% !important;
         }
 
+        /* Floatable Controls Panel */
+        #controls-wrapper {
+            position: absolute;
+            top: 150px;
+            right: 10px;
+            z-index: 200;
+            background: rgba(0, 0, 0, 0.85);
+            border-radius: 5px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+            overflow: visible;
+            min-width: 350px;
+            max-width: 600px;
+        }
+
+        #controls-wrapper.minimized .lil-gui {
+            display: none;
+        }
+
+        #controls-header {
+            background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);
+            color: white;
+            padding: 8px 12px;
+            cursor: move;
+            user-select: none;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 13px;
+            font-weight: 500;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            position: relative;
+            z-index: 1;
+        }
+
+        #controls-header:active {
+            cursor: grabbing;
+        }
+
+        #controls-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        #controls-buttons {
+            display: flex;
+            gap: 5px;
+        }
+
+        .control-btn {
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            width: 24px;
+            height: 24px;
+            border-radius: 3px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+
+        .control-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .control-btn:active {
+            background: rgba(255, 255, 255, 0.4);
+        }
+
+        #controls-wrapper .lil-gui {
+            position: relative !important;
+            top: 0 !important;
+            right: 0 !important;
+            max-height: calc(100vh - 200px);
+            overflow-y: auto;
+            border-radius: 0 0 5px 5px;
+            z-index: 2;
+            pointer-events: auto;
+        }
+
+        #controls-wrapper .lil-gui * {
+            pointer-events: auto;
+        }
+
+        /* Override resize cursor when dragging */
+        #controls-wrapper.dragging,
+        #texture-panel-wrapper.dragging {
+            cursor: grabbing !important;
+        }
+
+        #controls-wrapper.dragging .lil-gui,
+        #controls-wrapper.dragging .lil-gui * {
+            cursor: default !important;
+        }
+
+        #texture-panel-wrapper.dragging * {
+            cursor: grabbing !important;
+        }
+
+        /* Floatable Texture Panel */
+        #texture-panel-wrapper {
+            resize: both;
+            min-width: 300px;
+            max-width: 600px;
+            z-index: 150;
+        }
+
+        #texture-panel-wrapper.minimized #texture-panel {
+            display: none;
+        }
+
+        #texture-panel-header:active {
+            cursor: grabbing;
+        }
+
         /* Texture panel styling */
         #texture-panel .texture-item {
             margin: 10px 0;
@@ -268,6 +386,10 @@
             <div>Materials: <span id="material-count">0</span></div>
             <div>Selected: <span id="selected-object">None</span></div>
         </div>
+        <div id="scene-metadata" style="display: none; margin-top: 10px; padding-top: 10px; border-top: 1px solid #666;">
+            <h3 style="margin: 0 0 5px 0; font-size: 13px;">Scene Metadata</h3>
+            <div id="metadata-content" style="font-size: 11px; line-height: 1.6;"></div>
+        </div>
     </div>
 
     <div id="file-input-container">
@@ -312,9 +434,19 @@
         </div>
     </div>
 
-    <div id="texture-panel" style="display: none; position: absolute; bottom: 10px; right: 10px; background: rgba(0, 0, 0, 0.8); color: white; padding: 15px; border-radius: 5px; font-size: 12px; max-width: 400px; max-height: 500px; overflow-y: auto;">
-        <h3 style="margin: 0 0 10px 0; font-size: 14px; border-bottom: 1px solid #666; padding-bottom: 5px;">Textures</h3>
-        <div id="texture-list"></div>
+    <div id="texture-panel-wrapper" style="display: none; position: absolute; bottom: 10px; right: 10px;">
+        <div id="texture-panel-header" style="background: linear-gradient(135deg, #4CAF50 0%, #388E3C 100%); color: white; padding: 8px 12px; cursor: move; user-select: none; display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 500; border-radius: 5px 5px 0 0; border-bottom: 1px solid rgba(255, 255, 255, 0.1);">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <span>🖼️</span>
+                <span>Textures</span>
+            </div>
+            <div style="display: flex; gap: 5px;">
+                <button class="control-btn" id="texture-minimize-btn" style="background: rgba(255, 255, 255, 0.2); border: none; color: white; width: 24px; height: 24px; border-radius: 3px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px; transition: background 0.2s;">−</button>
+            </div>
+        </div>
+        <div id="texture-panel" style="background: rgba(0, 0, 0, 0.85); color: white; padding: 15px; border-radius: 0 0 5px 5px; font-size: 12px; max-width: 400px; max-height: 500px; overflow-y: auto; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);">
+            <div id="texture-list"></div>
+        </div>
     </div>
 
     <div id="loading-overlay">

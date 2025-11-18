@@ -11,6 +11,8 @@ import { TinyUSDZLoaderUtils } from 'tinyusdz/TinyUSDZLoaderUtils.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+import { MaterialXLoader } from 'three/examples/jsm/loaders/MaterialXLoader.js';
+import { convertOpenPBRToMaterialXML } from './convert-openpbr-to-mtlx.js';
 
 // Embedded default OpenPBR scene (simple sphere with material)
 const EMBEDDED_USDA_SCENE = `#usda 1.0
@@ -103,9 +105,12 @@ let originalMaterials = new Map(); // Store original materials when showing norm
 let currentFileUpAxis = 'Y'; // Store the current file's upAxis (Y or Z)
 let applyUpAxisConversion = true; // Apply Z-up to Y-up conversion by default
 let sceneRoot = null; // Root object for the USD scene (for upAxis conversion)
+let currentSceneMetadata = null; // Store the current USD scene metadata
 let composer = null; // Effect composer for post-processing
 let falseColorPass = null; // False color shader pass
 let showingFalseColor = false; // Track if false color is being shown
+let useNodeMaterial = false; // Toggle between MeshPhysicalMaterial and NodeMaterial (via MaterialXLoader)
+let materialXLoader = null; // MaterialXLoader instance
 let currentAOVMode = AOV_MODES.NONE; // Current AOV visualization mode
 let aovOriginalMaterials = new Map(); // Store original materials when showing AOVs
 
@@ -768,7 +773,7 @@ function createAOVMaterial(aovMode, materialData = null) {
                     emissive: { value: new THREE.Color(0, 0, 0) },
                     emissiveMap: { value: null },
                     hasEmissiveMap: { value: false },
-                    emissiveIntensity: { value: 1.0 }
+                    emissiveIntensity: { value: 0.0 }
                 },
                 name: 'AOV_Emissive'
             });
@@ -780,7 +785,7 @@ function createAOVMaterial(aovMode, materialData = null) {
                     material.uniforms.emissiveMap.value = srcMat.emissiveMap;
                     material.uniforms.hasEmissiveMap.value = true;
                 }
-                material.uniforms.emissiveIntensity.value = srcMat.emissiveIntensity || 1.0;
+                material.uniforms.emissiveIntensity.value = srcMat.emissiveIntensity || 0.0;
             }
             break;
 
@@ -883,9 +888,10 @@ function applyColorSpaceShader(material, textureColorSpaces) {
         // Add uniforms for each texture's color space
         const uniformsToAdd = {};
 
-        if (textureColorSpaces.map !== undefined) {
-            uniformsToAdd.mapColorSpace = { value: getColorSpaceIndex(textureColorSpaces.map) };
-        }
+        // Disabled for a while.
+        //if (textureColorSpaces.map !== undefined) {
+        //    uniformsToAdd.mapColorSpace = { value: getColorSpaceIndex(textureColorSpaces.map) };
+        //}
         if (textureColorSpaces.normalMap !== undefined) {
             uniformsToAdd.normalMapColorSpace = { value: getColorSpaceIndex(textureColorSpaces.normalMap) };
         }
@@ -902,23 +908,23 @@ function applyColorSpaceShader(material, textureColorSpaces) {
         // Add uniforms to shader
         shader.uniforms = Object.assign(shader.uniforms, uniformsToAdd);
 
-        // Modify shader code to apply color space conversions
-        // For base color map
-        if (textureColorSpaces.map !== undefined) {
-            shader.fragmentShader = shader.fragmentShader.replace(
-                '#include <map_fragment>',
-                `
-                #ifdef USE_MAP
-                    vec4 sampledDiffuseColor = texture2D( map, vMapUv );
-                    sampledDiffuseColor.rgb = convertColorSpace(sampledDiffuseColor.rgb, mapColorSpace);
-                    #ifdef DECODE_VIDEO_TEXTURE
-                        sampledDiffuseColor = vec4( mix( pow( sampledDiffuseColor.rgb * 0.9478672986 + vec3( 0.0521327014 ), vec3( 2.4 ) ), sampledDiffuseColor.rgb * 0.0773993808, vec3( lessThanEqual( sampledDiffuseColor.rgb, vec3( 0.04045 ) ) ) ), sampledDiffuseColor.w );
-                    #endif
-                    diffuseColor *= sampledDiffuseColor;
-                #endif
-                `
-            );
-        }
+        //// Modify shader code to apply color space conversions
+        //// For base color map
+        //if (textureColorSpaces.map !== undefined) {
+        //    shader.fragmentShader = shader.fragmentShader.replace(
+        //        '#include <map_fragment>',
+        //        `
+        //        #ifdef USE_MAP
+        //            vec4 sampledDiffuseColor = texture2D( map, vMapUv );
+        //            sampledDiffuseColor.rgb = convertColorSpace(sampledDiffuseColor.rgb, mapColorSpace);
+        //            #ifdef DECODE_VIDEO_TEXTURE
+        //                sampledDiffuseColor = vec4( mix( pow( sampledDiffuseColor.rgb * 0.9478672986 + vec3( 0.0521327014 ), vec3( 2.4 ) ), sampledDiffuseColor.rgb * 0.0773993808, vec3( lessThanEqual( sampledDiffuseColor.rgb, vec3( 0.04045 ) ) ) ), sampledDiffuseColor.w );
+        //            #endif
+        //            diffuseColor *= sampledDiffuseColor;
+        //        #endif
+        //        `
+        //    );
+        //}
 
         // For roughness map
         if (textureColorSpaces.roughnessMap !== undefined) {
@@ -1054,7 +1060,7 @@ function exportMaterialToJSON(material) {
     if (mat.emissive && (mat.emissive.r > 0 || mat.emissive.g > 0 || mat.emissive.b > 0)) {
         exportData.openPBR.emission = {
             color: [mat.emissive.r, mat.emissive.g, mat.emissive.b],
-            intensity: mat.emissiveIntensity || 1.0
+            intensity: mat.emissiveIntensity || 0.0
         };
     }
 
@@ -1307,9 +1313,9 @@ const OPENPBR_PARAMS = {
         ior: { min: 1, max: 3, default: 1.5, step: 0.01 }
     },
     emission: {
-        weight: { min: 0, max: 1, default: 0, step: 0.01 },
+        luminance: { min: 0, max: 10, default: 0, step: 0.01 },
         color: { default: [1, 1, 1], type: 'color' },
-        intensity: { min: 0, max: 10, default: 1, step: 0.1 }
+        weight: { min: 0, max: 1, default: 1, step: 0.01 }
     },
     geometry: {
         opacity: { min: 0, max: 1, default: 1, step: 0.01 },
@@ -1370,8 +1376,63 @@ function createColorWithSpace(r, g, b) {
     }
 }
 
+// Get MIME type from texture image data
+function getMimeTypeForTexture(imgData) {
+    // Helper to get file extension
+    const getFileExtension = (uri) => {
+        if (!uri || typeof uri !== 'string') return '';
+        const cleanUri = uri.split('?')[0].split('#')[0];
+        const lastDotIndex = cleanUri.lastIndexOf('.');
+        if (lastDotIndex === -1 || lastDotIndex === cleanUri.length - 1) {
+            return '';
+        }
+        return cleanUri.substring(lastDotIndex + 1).toLowerCase();
+    };
+
+    // Try to determine from URI
+    if (imgData.uri) {
+        const ext = getFileExtension(imgData.uri);
+        const mimeTypes = {
+            'jpg': 'image/jpeg',
+            'jpeg': 'image/jpeg',
+            'png': 'image/png',
+            'gif': 'image/gif',
+            'webp': 'image/webp',
+            'bmp': 'image/bmp',
+            'hdr': 'image/vnd.radiance',
+            'exr': 'image/x-exr'
+        };
+        if (mimeTypes[ext]) {
+            return mimeTypes[ext];
+        }
+    }
+
+    // Try to detect from magic bytes if available
+    if (imgData.data) {
+        const data = new Uint8Array(imgData.data);
+        if (data.length >= 4) {
+            // PNG magic bytes: 89 50 4E 47
+            if (data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4E && data[3] === 0x47) {
+                return 'image/png';
+            }
+            // JPEG magic bytes: FF D8 FF
+            if (data[0] === 0xFF && data[1] === 0xD8 && data[2] === 0xFF) {
+                return 'image/jpeg';
+            }
+            // WEBP magic bytes: 52 49 46 46 ... 57 45 42 50
+            if (data[0] === 0x52 && data[1] === 0x49 && data[2] === 0x46 && data[3] === 0x46) {
+                return 'image/webp';
+            }
+        }
+    }
+
+    // Default fallback
+    return 'image/png';
+}
+
 // Load texture from USD data
-function loadTextureFromUSD(textureId) {
+async function loadTextureFromUSD(textureId) {
+    console.log("loadTextureFromUSD ID:", textureId);
     // Validate texture ID
     if (!validateTextureId(textureId, 'loadTextureFromUSD')) {
         return null;
@@ -1388,6 +1449,7 @@ function loadTextureFromUSD(textureId) {
     }
 
     try {
+        console.log("Loading texture ID:", textureId);
         // Get texture metadata
         const texData = currentNativeLoader.getTexture(textureId);
         if (!texData || texData.textureImageId === undefined) {
@@ -1403,142 +1465,96 @@ function loadTextureFromUSD(textureId) {
 
         // Get image data
         const imgData = currentNativeLoader.getImage(texData.textureImageId);
-        if (!imgData || !imgData.data) {
-            console.warn(`Image ${texData.textureImageId} has no pixel data`);
+        if (!imgData) {
+            console.warn(`Image ${texData.textureImageId} not found`);
             return null;
         }
 
-        // Validate image dimensions
-        if (imgData.width <= 0 || imgData.height <= 0) {
-            console.error(`Invalid texture dimensions: ${imgData.width}x${imgData.height}`);
-            return null;
+        console.log(`Loading texture ${textureId}: uri="${imgData.uri}", bufferId=${imgData.bufferId}, decoded=${imgData.decoded}, hasData=${!!imgData.data}`);
+
+        // Handle 3 cases: URI only, embedded undecoded, and decoded
+        // Case 1: URI only (need to fetch from external file)
+        if (imgData.uri && (imgData.bufferId === -1 || imgData.bufferId === undefined)) {
+            console.log(`Loading texture from URI: ${imgData.uri}`);
+            const loader = new THREE.TextureLoader();
+
+            try {
+                const texture = await loader.loadAsync(imgData.uri);
+                // TODO: Temporarily disabled - causes shader error
+                // texture.colorSpace = THREE.SRGBColorSpace;
+                textureCache.set(textureId, texture);
+                console.log(`Successfully loaded texture ${textureId} from URI`);
+                return texture;
+            } catch (error) {
+                console.error(`Failed to load texture ${textureId} from URI: ${imgData.uri}`, error);
+                return null;
+            }
         }
 
-        // Validate channel count
-        if (imgData.channels < 1 || imgData.channels > 4) {
-            console.error(`Invalid channel count: ${imgData.channels}`);
-            return null;
+        // Case 2 & 3: Embedded texture (either decoded or needs decoding)
+        if (imgData.bufferId >= 0 && imgData.data) {
+            if (imgData.decoded) {
+                // Case 3: Already decoded - use DataTexture
+                console.log(`Creating DataTexture for texture ${textureId}: ${imgData.width}x${imgData.height}, ${imgData.channels} channels`);
+
+                const image8Array = new Uint8ClampedArray(imgData.data);
+                const texture = new THREE.DataTexture(image8Array, imgData.width, imgData.height);
+
+                if (imgData.channels === 1) {
+                    texture.format = THREE.RedFormat;
+                } else if (imgData.channels === 2) {
+                    texture.format = THREE.RGFormat;
+                } else if (imgData.channels === 3) {
+                    console.error(`RGB format (3 channels) is not supported in recent Three.js. Texture ${textureId} will not display correctly.`);
+                    return null;
+                } else if (imgData.channels === 4) {
+                    texture.format = THREE.RGBAFormat;
+                } else {
+                    console.error(`Unsupported image channels: ${imgData.channels}`);
+                    return null;
+                }
+
+                texture.flipY = true;
+                texture.needsUpdate = true;
+                // TODO: Temporarily disabled - causes shader error
+                // texture.colorSpace = THREE.SRGBColorSpace;
+
+                textureCache.set(textureId, texture);
+                console.log(`Loaded decoded texture ${textureId}`);
+                return texture;
+
+            } else {
+                // Case 2: Embedded but not decoded - create Blob URL and load
+                console.log(`Creating Blob for undecoded texture ${textureId}`);
+
+                const mimeType = getMimeTypeForTexture(imgData);
+                const blob = new Blob([imgData.data], { type: mimeType });
+                const blobUrl = URL.createObjectURL(blob);
+
+                const loader = new THREE.TextureLoader();
+                try {
+                    const texture = await loader.loadAsync(blobUrl);
+                    // TODO: Temporarily disabled - causes shader error
+                    // texture.colorSpace = THREE.SRGBColorSpace;
+                    textureCache.set(textureId, texture);
+                    URL.revokeObjectURL(blobUrl); // Clean up blob URL
+                    console.log(`Successfully loaded texture ${textureId} from Blob`);
+                    return texture;
+                } catch (error) {
+                    URL.revokeObjectURL(blobUrl);
+                    console.error(`Failed to load texture ${textureId} from Blob`, error);
+                    return null;
+                }
+            }
         }
 
-        // Convert to Three.js texture
-        const texture = createThreeTexture(imgData, texData);
-
-        if (texture) {
-            textureCache.set(textureId, texture);
-            console.log(`Loaded texture ${textureId}: ${imgData.width}x${imgData.height}, ${imgData.channels} channels`);
-        }
-
-        return texture;
+        console.warn(`Texture ${textureId} has invalid state`);
+        return null;
 
     } catch (error) {
         reportError('loadTextureFromUSD', error);
         return null;
     }
-}
-
-// Create Three.js texture from USD image data
-function createThreeTexture(imgData, texData) {
-    try {
-        const { width, height, channels, data } = imgData;
-
-        // Create canvas to convert image data
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-
-        // Create ImageData
-        const imageData = ctx.createImageData(width, height);
-        const pixels = imageData.data;
-
-        // Convert based on channel count
-        if (channels === 1) {
-            // Grayscale
-            for (let i = 0; i < width * height; i++) {
-                const gray = data[i];
-                pixels[i * 4 + 0] = gray;
-                pixels[i * 4 + 1] = gray;
-                pixels[i * 4 + 2] = gray;
-                pixels[i * 4 + 3] = 255;
-            }
-        } else if (channels === 2) {
-            // Grayscale + Alpha
-            for (let i = 0; i < width * height; i++) {
-                const gray = data[i * 2];
-                const alpha = data[i * 2 + 1];
-                pixels[i * 4 + 0] = gray;
-                pixels[i * 4 + 1] = gray;
-                pixels[i * 4 + 2] = gray;
-                pixels[i * 4 + 3] = alpha;
-            }
-        } else if (channels === 3) {
-            // RGB
-            for (let i = 0; i < width * height; i++) {
-                pixels[i * 4 + 0] = data[i * 3 + 0];
-                pixels[i * 4 + 1] = data[i * 3 + 1];
-                pixels[i * 4 + 2] = data[i * 3 + 2];
-                pixels[i * 4 + 3] = 255;
-            }
-        } else if (channels === 4) {
-            // RGBA
-            for (let i = 0; i < width * height * 4; i++) {
-                pixels[i] = data[i];
-            }
-        }
-
-        // Put image data on canvas
-        ctx.putImageData(imageData, 0, 0);
-
-        // Create Three.js texture from canvas
-        const texture = new THREE.CanvasTexture(canvas);
-
-        // Set color space to Linear since we handle conversion in shader
-        // This prevents Three.js from doing its own sRGB conversion
-        texture.colorSpace = THREE.LinearSRGBColorSpace;
-
-        // Store original color space info for reference
-        texture.userData = texture.userData || {};
-        texture.userData.sourceColorSpace = imgData.colorSpace ||
-            (channels >= 3 ? 'srgb' : 'linear');
-
-        // Apply wrap modes from USD
-        if (texData) {
-            texture.wrapS = getThreeWrapMode(texData.wrapS);
-            texture.wrapT = getThreeWrapMode(texData.wrapT);
-        } else {
-            texture.wrapS = THREE.RepeatWrapping;
-            texture.wrapT = THREE.RepeatWrapping;
-        }
-
-        // Enable mipmaps and filtering
-        texture.generateMipmaps = true;
-        texture.minFilter = THREE.LinearMipmapLinearFilter;
-        texture.magFilter = THREE.LinearFilter;
-        texture.anisotropy = renderer ? renderer.capabilities.getMaxAnisotropy() : 4;
-
-        texture.needsUpdate = true;
-
-        return texture;
-
-    } catch (error) {
-        console.error('Error creating Three.js texture:', error);
-        return null;
-    }
-}
-
-// Convert USD wrap mode to Three.js wrap mode
-function getThreeWrapMode(wrapMode) {
-    if (!wrapMode) return THREE.RepeatWrapping;
-
-    const mode = wrapMode.toLowerCase();
-    if (mode.includes('repeat')) {
-        return THREE.RepeatWrapping;
-    } else if (mode.includes('clamp')) {
-        return THREE.ClampToEdgeWrapping;
-    } else if (mode.includes('mirror')) {
-        return THREE.MirroredRepeatWrapping;
-    }
-    return THREE.RepeatWrapping;
 }
 
 // Apply texture to material parameter
@@ -1551,6 +1567,42 @@ function applyTextureToMaterial(material, paramName, texture, isEnabled = true) 
 
     material[paramName] = texture;
     material.needsUpdate = true;
+}
+
+// Map OpenPBR parameter names to Three.js texture map names
+function getMapNameForParameter(groupName, paramName) {
+    const paramKey = `${groupName}_${paramName}`;
+    const mapping = {
+        'base_color': 'map',
+        'specular_roughness': 'roughnessMap',
+        'geometry_normal': 'normalMap',
+        'coat_normal': 'clearcoatNormalMap',
+        'emission_color': 'emissiveMap',
+        'base_metalness': 'metalnessMap'
+    };
+    return mapping[paramKey] || null;
+}
+
+// Get texture info for a material parameter (from userData.textures)
+function getTextureInfoForParameter(material, groupName, paramName) {
+    if (!material || !material.threeMaterial || !material.threeMaterial.userData.textures) {
+        return null;
+    }
+
+    const mapName = getMapNameForParameter(groupName, paramName);
+    if (!mapName) {
+        return null;
+    }
+
+    const texInfo = material.threeMaterial.userData.textures[mapName];
+    if (texInfo) {
+        return {
+            ...texInfo,
+            mapName: mapName
+        };
+    }
+
+    return null;
 }
 
 // Get texture info for a material parameter
@@ -2023,20 +2075,42 @@ function toggleNormalMaterial(show) {
 
 // Apply upAxis conversion to scene
 function applyUpAxisConversionToScene() {
-    if (!sceneRoot) return;
+    console.log(`=== applyUpAxisConversionToScene() called ===`);
+    console.log(`  applyUpAxisConversion: ${applyUpAxisConversion}`);
+    console.log(`  currentFileUpAxis: "${currentFileUpAxis}"`);
+    console.log(`  currentFileUpAxis === 'Z': ${currentFileUpAxis === 'Z'}`);
+    console.log(`  sceneRoot exists: ${!!sceneRoot}`);
+    console.log(`  sceneRoot children count: ${sceneRoot ? sceneRoot.children.length : 'N/A'}`);
+
+    if (!sceneRoot) {
+        console.error(`ERROR: sceneRoot is null or undefined - cannot apply upAxis conversion`);
+        return;
+    }
+
+    console.log(`  Current sceneRoot rotation BEFORE applying conversion:`);
+    console.log(`    x=${sceneRoot.rotation.x}, y=${sceneRoot.rotation.y}, z=${sceneRoot.rotation.z}`);
 
     if (applyUpAxisConversion && currentFileUpAxis === 'Z') {
         // Apply Z-up to Y-up conversion (-90 degrees around X axis)
+        console.log(`  -> Applying Z-up to Y-up conversion...`);
         sceneRoot.rotation.x = -Math.PI / 2;
-        console.log(`Applied Z-up to Y-up conversion (file upAxis="${currentFileUpAxis}"): rotation.x =`, sceneRoot.rotation.x);
+        sceneRoot.rotation.y = 0;
+        sceneRoot.rotation.z = 0;
+        console.log(`  ✓ Applied Z-up to Y-up conversion (file upAxis="${currentFileUpAxis}")`);
+        console.log(`    sceneRoot.rotation AFTER: x=${sceneRoot.rotation.x.toFixed(4)}, y=${sceneRoot.rotation.y.toFixed(4)}, z=${sceneRoot.rotation.z.toFixed(4)}`);
+        console.log(`    sceneRoot has ${sceneRoot.children.length} children`);
     } else {
         // Reset rotation (either disabled or file is already Y-up)
+        console.log(`  -> No conversion needed or disabled`);
         sceneRoot.rotation.x = 0;
+        sceneRoot.rotation.y = 0;
+        sceneRoot.rotation.z = 0;
         if (currentFileUpAxis !== 'Z') {
-            console.log(`No rotation needed (file upAxis="${currentFileUpAxis}")`);
+            console.log(`  ✓ No rotation needed (file upAxis="${currentFileUpAxis}" is already Y-up compatible)`);
         } else {
-            console.log(`Reset rotation (conversion disabled)`);
+            console.log(`  ○ Reset rotation (conversion disabled, file is Z-up but conversion is off)`);
         }
+        console.log(`    sceneRoot.rotation: x=${sceneRoot.rotation.x}, y=${sceneRoot.rotation.y}, z=${sceneRoot.rotation.z}`);
     }
 }
 
@@ -2180,6 +2254,25 @@ function setupGUI() {
 
     debugFolder.close();
 
+    // Material Rendering controls
+    const materialFolder = gui.addFolder('Material Rendering');
+    const materialParams = {
+        useNodeMaterial: useNodeMaterial,
+        reloadMaterials: async function() {
+            console.log("Reloading materials with new settings...");
+            await loadMaterials();
+        }
+    };
+
+    materialFolder.add(materialParams, 'useNodeMaterial').name('Use NodeMaterial (MaterialX)').onChange(async (value) => {
+        useNodeMaterial = value;
+        console.log(`Material type changed to: ${value ? 'NodeMaterial (via MaterialXLoader)' : 'MeshPhysicalMaterial'}`);
+        await loadMaterials();
+    });
+
+    materialFolder.add(materialParams, 'reloadMaterials').name('🔄 Reload Materials');
+    materialFolder.open();
+
     // AOV (Arbitrary Output Variable) controls
     const aovFolder = gui.addFolder('AOV Visualization');
     const aovParams = {
@@ -2251,11 +2344,42 @@ async function loadUSDFile(arrayBuffer, filename) {
         }
 
         // Get scene metadata (including upAxis)
+        console.log(`=== Extracting scene metadata ===`);
         const sceneMetadata = currentNativeLoader.getSceneMetadata ? currentNativeLoader.getSceneMetadata() : {};
+        console.log(`Raw sceneMetadata:`, sceneMetadata);
+        console.log(`sceneMetadata.upAxis type:`, typeof sceneMetadata.upAxis);
+        console.log(`sceneMetadata.upAxis value:`, sceneMetadata.upAxis);
+        console.log(`sceneMetadata.upAxis === 'Z':`, sceneMetadata.upAxis === 'Z');
+        console.log(`sceneMetadata.upAxis === 'Y':`, sceneMetadata.upAxis === 'Y');
         currentFileUpAxis = sceneMetadata.upAxis || 'Y';
+        console.log(`Set currentFileUpAxis to: "${currentFileUpAxis}"`);
+        console.log(`currentFileUpAxis type:`, typeof currentFileUpAxis);
+        console.log(`currentFileUpAxis === 'Z':`, currentFileUpAxis === 'Z');
+
+        // Store complete scene metadata
+        currentSceneMetadata = {
+            upAxis: currentFileUpAxis,
+            metersPerUnit: sceneMetadata.metersPerUnit || 1.0,
+            framesPerSecond: sceneMetadata.framesPerSecond,
+            timeCodesPerSecond: sceneMetadata.timeCodesPerSecond,
+            startTimeCode: sceneMetadata.startTimeCode,
+            endTimeCode: sceneMetadata.endTimeCode,
+            autoPlay: sceneMetadata.autoPlay,
+            comment: sceneMetadata.comment || '',
+            copyright: sceneMetadata.copyright || '',
+            author: sceneMetadata.author || '',
+            defaultPrim: sceneMetadata.defaultPrim || ''
+        };
 
         console.log(`=== USD Scene Metadata ===`);
-        console.log(`upAxis: "${currentFileUpAxis}"`);
+        console.log(`upAxis: "${currentSceneMetadata.upAxis}"`);
+        console.log(`metersPerUnit: ${currentSceneMetadata.metersPerUnit}`);
+        if (currentSceneMetadata.framesPerSecond !== null && currentSceneMetadata.framesPerSecond !== undefined) {
+            console.log(`framesPerSecond: ${currentSceneMetadata.framesPerSecond}`);
+        }
+        if (currentSceneMetadata.comment) {
+            console.log(`comment: "${currentSceneMetadata.comment}"`);
+        }
 
         // Get scene information
         const numMeshes = currentNativeLoader.numMeshes();
@@ -2268,14 +2392,27 @@ async function loadUSDFile(arrayBuffer, filename) {
         document.getElementById('object-count').textContent = numMeshes;
         document.getElementById('material-count').textContent = numMaterials;
 
+        // Update scene metadata panel
+        updateSceneMetadataPanel();
+
         // Load materials
-        loadMaterials();
+        await loadMaterials();
 
         // Load meshes
         loadMeshes();
 
         // Apply Z-up to Y-up conversion if enabled AND the file is actually Z-up
-        applyUpAxisConversionToScene();
+        console.log(`\n=== CALLING applyUpAxisConversionToScene() ===`);
+        console.log(`About to apply conversion with:`);
+        console.log(`  currentFileUpAxis: "${currentFileUpAxis}"`);
+        console.log(`  applyUpAxisConversion: ${applyUpAxisConversion}`);
+        console.log(`  sceneRoot: ${!!sceneRoot}`);
+        console.log(`  sceneRoot.children.length: ${sceneRoot ? sceneRoot.children.length : 'N/A'}`);
+
+        // HACK
+        //applyUpAxisConversionToScene();
+        console.log(`\nIMMEDIATELY AFTER applyUpAxisConversionToScene():`);
+        console.log(`  sceneRoot.rotation: x=${sceneRoot?.rotation.x.toFixed(4)}, y=${sceneRoot?.rotation.y.toFixed(4)}, z=${sceneRoot?.rotation.z.toFixed(4)}`);
 
         // Update material panel
         updateMaterialPanel();
@@ -2284,6 +2421,30 @@ async function loadUSDFile(arrayBuffer, filename) {
         fitCameraToScene();
 
         updateStatus(`Loaded: ${numMeshes} objects, ${numMaterials} materials`, 'success');
+
+        // Final summary - verify rotation is still applied
+        console.log(`\n================================================`);
+        console.log(`=== LOAD COMPLETE SUMMARY ===`);
+        console.log(`File: ${filename}`);
+        console.log(`UpAxis from file metadata: "${currentFileUpAxis}"`);
+        console.log(`Conversion enabled: ${applyUpAxisConversion}`);
+        console.log(`Meshes loaded: ${meshes.length}`);
+        console.log(`Meshes in sceneRoot: ${sceneRoot ? sceneRoot.children.length : 0}`);
+        console.log(`\nFINAL sceneRoot rotation:`);
+        console.log(`  x=${sceneRoot?.rotation.x.toFixed(4)} (should be ${currentFileUpAxis === 'Z' && applyUpAxisConversion ? '-1.5708 (-90°)' : '0.0000'})`);
+        console.log(`  y=${sceneRoot?.rotation.y.toFixed(4)} (should be 0.0000)`);
+        console.log(`  z=${sceneRoot?.rotation.z.toFixed(4)} (should be 0.0000)`);
+
+        if (currentFileUpAxis === 'Z' && applyUpAxisConversion) {
+            const expectedRotation = -Math.PI / 2;
+            const actualRotation = sceneRoot?.rotation.x || 0;
+            const isCorrect = Math.abs(actualRotation - expectedRotation) < 0.001;
+            console.log(`\nRotation check: ${isCorrect ? '✓ CORRECT' : '✗ WRONG!'}`);
+            if (!isCorrect) {
+                console.error(`ERROR: Expected rotation ${expectedRotation.toFixed(4)} but got ${actualRotation.toFixed(4)}`);
+            }
+        }
+        console.log(`================================================\n`);
 
     } catch (error) {
         console.error('Error loading USD file:', error);
@@ -2295,21 +2456,26 @@ async function loadUSDFile(arrayBuffer, filename) {
 
 // Load embedded default scene
 async function loadEmbeddedScene() {
-    console.log('Loading default scene from suzanne-materialx.usda...');
+
+    //const usd_filename = {'suzanne-materialx.usda': './assets/suzanne-materialx.usda'};
+    const usd_filename = 'fancy-teapot-mtlx.usdz';
+    const usd_filepath = './assets/fancy-teapot-mtlx.usdz';
+
+    console.log(`Loading default scene from ${usd_filename}...`);
 
     try {
         // Fetch the suzanne-materialx.usda file
-        const response = await fetch('./assets/suzanne-materialx.usda');
+        const response = await fetch(usd_filepath);
         if (!response.ok) {
             throw new Error(`Failed to fetch: ${response.statusText}`);
         }
 
         const arrayBuffer = await response.arrayBuffer();
-        await loadUSDFile(arrayBuffer, 'suzanne-materialx.usda');
+        await loadUSDFile(arrayBuffer, usd_filename);
 
-        console.log('Successfully loaded suzanne-materialx.usda');
+        console.log(`Successfully loaded ${usd_filename}`);
     } catch (error) {
-        console.error('Error loading suzanne-materialx.usda:', error);
+        console.error(`Error loading ${usd_filename}:`, error);
         updateStatus('Failed to load default scene, using fallback', 'error');
 
         // Fallback to embedded scene
@@ -2321,7 +2487,7 @@ async function loadEmbeddedScene() {
 }
 
 // Load materials from USD
-function loadMaterials() {
+async function loadMaterials() {
     if (!currentNativeLoader) {
         console.error('loadMaterials: No USD loader available');
         return;
@@ -2361,7 +2527,7 @@ function loadMaterials() {
             console.log(`Material ${i}:`, materialData);
 
             // Create Three.js material from OpenPBR data
-            const threeMaterial = createOpenPBRMaterial(materialData);
+            const threeMaterial = await createOpenPBRMaterial(materialData);
             if (!threeMaterial) {
                 throw new Error('Failed to create Three.js material');
             }
@@ -2396,7 +2562,46 @@ function loadMaterials() {
 }
 
 // Create Three.js material from OpenPBR data
-function createOpenPBRMaterial(materialData) {
+async function createOpenPBRMaterial(materialData) {
+
+    // === NodeMaterial Support via MaterialXLoader ===
+    if (useNodeMaterial && materialData.hasOpenPBR) {
+        console.log("=== Creating NodeMaterial via MaterialXLoader ===");
+        try {
+            const mtlxXML = convertOpenPBRToMaterialXML(materialData, materialData.name || 'Material');
+            console.log("Generated MaterialX XML:", mtlxXML);
+
+            if (!materialXLoader) {
+                materialXLoader = new MaterialXLoader();
+            }
+
+            const mtlxMaterials = await new Promise((resolve, reject) => {
+                materialXLoader.parse(mtlxXML, '', (materials) => {
+                    resolve(materials);
+                }, (error) => {
+                    console.error("MaterialXLoader error:", error);
+                    reject(error);
+                });
+            });
+
+            if (mtlxMaterials && Object.keys(mtlxMaterials).length > 0) {
+                const nodeMaterial = Object.values(mtlxMaterials)[0];
+                console.log("Created NodeMaterial:", nodeMaterial);
+                nodeMaterial.envMapIntensity = exposureValue;
+                nodeMaterial.userData.materialData = materialData;
+                nodeMaterial.userData.isNodeMaterial = true;
+                nodeMaterial.name = materialData.name || 'NodeMaterial';
+                return nodeMaterial;
+            } else {
+                console.warn("MaterialXLoader returned no materials, falling back to MeshPhysicalMaterial");
+            }
+        } catch (error) {
+            console.error("Failed to create NodeMaterial:", error);
+            console.warn("Falling back to MeshPhysicalMaterial");
+        }
+    }
+    // === End NodeMaterial Support ===
+
     const material = new THREE.MeshPhysicalMaterial();
 
     // Set initial environment map intensity based on current exposure
@@ -2406,9 +2611,24 @@ function createOpenPBRMaterial(materialData) {
     material.userData.textures = {};
 
     if (materialData.hasOpenPBR) {
-        // Try openPBRShader first (new flat format), then openPBR (old grouped format)
-        const pbrFlat = materialData.openPBRShader;
+        console.log("=== Material has OpenPBR ===");
+        console.log("Available keys:", Object.keys(materialData));
+
+        // Try multiple property name variations for flat format
+        // Sometimes the properties are nested, sometimes they're directly on materialData
+        let pbrFlat = materialData.openPBRShader || materialData.openPBR_surface || materialData.openpbr_surface;
         const pbrGrouped = materialData.openPBR;
+
+        // If no nested object found, check if flat properties exist directly on materialData
+        if (!pbrFlat && (materialData.base_color !== undefined ||
+                        materialData.base_metalness !== undefined ||
+                        materialData.specular_roughness !== undefined)) {
+            console.log("Flat format properties found directly on materialData");
+            pbrFlat = materialData;
+        }
+
+        console.log("pbrFlat:", pbrFlat);
+        console.log("pbrGrouped:", pbrGrouped);
 
         // Use flat format if available
         if (pbrFlat) {
@@ -2416,212 +2636,404 @@ function createOpenPBRMaterial(materialData) {
 
             // Base color
             if (pbrFlat.base_color) {
-                material.color = createColorWithSpace(...pbrFlat.base_color);
+                // Check if it's a texture reference (object with textureId) or a color value (array)
+                if (Array.isArray(pbrFlat.base_color)) {
+                    material.color = createColorWithSpace(...pbrFlat.base_color);
+                } else if (typeof pbrFlat.base_color === 'object' && pbrFlat.base_color.textureId !== undefined) {
+                    // It's a texture
+                    const colorTexId = pbrFlat.base_color.textureId;
+                    if (colorTexId >= 0) {
+                        const texture = await loadTextureFromUSD(colorTexId);
+                        if (texture) {
+                            material.map = texture;
+                            material.userData.textures.map = { textureId: colorTexId, texture };
+                        }
+                    }
+                    // Also use the value if present
+                    if (pbrFlat.base_color.value && Array.isArray(pbrFlat.base_color.value)) {
+                        material.color = createColorWithSpace(...pbrFlat.base_color.value);
+                    }
+                }
             }
 
             // Metalness
             if (pbrFlat.base_metalness !== undefined) {
-                material.metalness = pbrFlat.base_metalness;
+                if (typeof pbrFlat.base_metalness === 'number') {
+                    material.metalness = pbrFlat.base_metalness;
+                } else if (typeof pbrFlat.base_metalness === 'object') {
+                    // TODO: Temporarily disabled - enable later
+                    // const metalnessTexId = pbrFlat.base_metalness.textureId;
+                    // if (metalnessTexId !== undefined && metalnessTexId >= 0) {
+                    //     const texture = await loadTextureFromUSD(metalnessTexId);
+                    //     if (texture) {
+                    //         material.metalnessMap = texture;
+                    //         material.userData.textures.metalnessMap = { textureId: metalnessTexId, texture };
+                    //     }
+                    // }
+                    if (pbrFlat.base_metalness.value !== undefined) {
+                        material.metalness = pbrFlat.base_metalness.value;
+                    }
+                }
             }
 
             // Roughness
             if (pbrFlat.specular_roughness !== undefined) {
-                material.roughness = pbrFlat.specular_roughness;
+                if (typeof pbrFlat.specular_roughness === 'number') {
+                    material.roughness = pbrFlat.specular_roughness;
+                } else if (typeof pbrFlat.specular_roughness === 'object') {
+                    // TODO: Temporarily disabled - enable later
+                    // const roughnessTexId = pbrFlat.specular_roughness.textureId;
+                    // if (roughnessTexId !== undefined && roughnessTexId >= 0) {
+                    //     const texture = await loadTextureFromUSD(roughnessTexId);
+                    //     if (texture) {
+                    //         material.roughnessMap = texture;
+                    //         material.userData.textures.roughnessMap = { textureId: roughnessTexId, texture };
+                    //     }
+                    // }
+                    if (pbrFlat.specular_roughness.value !== undefined) {
+                        material.roughness = pbrFlat.specular_roughness.value;
+                    }
+                }
             }
 
             // IOR
             if (pbrFlat.specular_ior !== undefined) {
-                material.ior = pbrFlat.specular_ior;
+                material.ior = typeof pbrFlat.specular_ior === 'number' ? pbrFlat.specular_ior :
+                              (pbrFlat.specular_ior.value || 1.5);
             }
 
             // Specular color
             if (pbrFlat.specular_color) {
-                material.specularColor = createColorWithSpace(...pbrFlat.specular_color);
+                if (Array.isArray(pbrFlat.specular_color)) {
+                    material.specularColor = createColorWithSpace(...pbrFlat.specular_color);
+                } else if (typeof pbrFlat.specular_color === 'object' && pbrFlat.specular_color.value) {
+                    material.specularColor = createColorWithSpace(...pbrFlat.specular_color.value);
+                }
             }
 
             // Transmission
             if (pbrFlat.transmission_weight !== undefined) {
-                material.transmission = pbrFlat.transmission_weight;
+                material.transmission = typeof pbrFlat.transmission_weight === 'number' ? pbrFlat.transmission_weight :
+                                       (pbrFlat.transmission_weight.value || 0);
             }
             if (pbrFlat.transmission_color) {
-                material.attenuationColor = createColorWithSpace(...pbrFlat.transmission_color);
+                if (Array.isArray(pbrFlat.transmission_color)) {
+                    material.attenuationColor = createColorWithSpace(...pbrFlat.transmission_color);
+                } else if (typeof pbrFlat.transmission_color === 'object' && pbrFlat.transmission_color.value) {
+                    material.attenuationColor = createColorWithSpace(...pbrFlat.transmission_color.value);
+                }
             }
 
             // Coat (clearcoat)
             if (pbrFlat.coat_weight !== undefined) {
-                material.clearcoat = pbrFlat.coat_weight;
+                material.clearcoat = typeof pbrFlat.coat_weight === 'number' ? pbrFlat.coat_weight :
+                                    (pbrFlat.coat_weight.value || 0);
             }
             if (pbrFlat.coat_roughness !== undefined) {
-                material.clearcoatRoughness = pbrFlat.coat_roughness;
+                material.clearcoatRoughness = typeof pbrFlat.coat_roughness === 'number' ? pbrFlat.coat_roughness :
+                                             (pbrFlat.coat_roughness.value || 0);
             }
 
             // Emission
+            // In OpenPBR: final_emission = emission_color * emission_luminance
+            // We need to load both and set them on the material
+            let emissionColor = null;
+            let emissionLuminance = 1.0;
+
+            console.log("=== Loading Emission (Flat Format) ===");
+            console.log("pbrFlat.emission_color:", pbrFlat.emission_color);
+            console.log("pbrFlat.emission_luminance:", pbrFlat.emission_luminance);
+
             if (pbrFlat.emission_color) {
-                material.emissive = createColorWithSpace(...pbrFlat.emission_color);
+                if (Array.isArray(pbrFlat.emission_color)) {
+                    emissionColor = pbrFlat.emission_color;
+                } else if (typeof pbrFlat.emission_color === 'object') {
+                    // TODO: Temporarily disabled - enable later
+                    // const emissiveTexId = pbrFlat.emission_color.textureId;
+                    // if (emissiveTexId !== undefined && emissiveTexId >= 0) {
+                    //     const texture = await loadTextureFromUSD(emissiveTexId);
+                    //     if (texture) {
+                    //         material.emissiveMap = texture;
+                    //         material.userData.textures.emissiveMap = { textureId: emissiveTexId, texture };
+                    //     }
+                    // }
+                    if (pbrFlat.emission_color.value && Array.isArray(pbrFlat.emission_color.value)) {
+                        emissionColor = pbrFlat.emission_color.value;
+                    }
+                }
             }
             if (pbrFlat.emission_luminance !== undefined) {
-                material.emissiveIntensity = pbrFlat.emission_luminance;
+                emissionLuminance = typeof pbrFlat.emission_luminance === 'number' ? pbrFlat.emission_luminance :
+                                   (typeof pbrFlat.emission_luminance === 'object' && pbrFlat.emission_luminance.value !== undefined ? pbrFlat.emission_luminance.value : 0.0);
             }
+
+            console.log("Extracted emissionColor:", emissionColor);
+            console.log("Extracted emissionLuminance:", emissionLuminance);
+
+            // Apply emission: color and intensity
+            if (emissionColor) {
+                material.emissive = createColorWithSpace(...emissionColor);
+                material.emissiveIntensity = emissionLuminance;
+                console.log("Applied to material.emissive:", material.emissive);
+                console.log("Applied to material.emissiveIntensity:", material.emissiveIntensity);
+            } else {
+                console.log("No emission color found, skipping emission setup");
+            }
+
+            // Normal map
+            // TODO: Temporarily disabled - enable later
+            // if (pbrFlat.geometry_normal) {
+            //     const normalTexId = typeof pbrFlat.geometry_normal === 'object' ? pbrFlat.geometry_normal.textureId : undefined;
+            //     if (normalTexId !== undefined && normalTexId >= 0) {
+            //         const texture = await loadTextureFromUSD(normalTexId);
+            //         if (texture) {
+            //             material.normalMap = texture;
+            //             material.normalScale = new THREE.Vector2(1, 1);
+            //             material.userData.textures.normalMap = { textureId: normalTexId, texture };
+            //         }
+            //     }
+            // }
 
             // Opacity
             if (pbrFlat.opacity !== undefined) {
-                material.opacity = pbrFlat.opacity;
-                material.transparent = pbrFlat.opacity < 1.0;
+                const opacityValue = typeof pbrFlat.opacity === 'number' ? pbrFlat.opacity :
+                                    (pbrFlat.opacity.value !== undefined ? pbrFlat.opacity.value : 1);
+                material.opacity = opacityValue;
+                material.transparent = opacityValue < 1.0;
+
+                // TODO: Temporarily disabled - enable later
+                // Check for opacity texture
+                // if (typeof pbrFlat.opacity === 'object' && pbrFlat.opacity.textureId !== undefined) {
+                //     const opacityTexId = pbrFlat.opacity.textureId;
+                //     if (opacityTexId >= 0) {
+                //         const texture = await loadTextureFromUSD(opacityTexId);
+                //         if (texture) {
+                //             material.alphaMap = texture;
+                //             material.userData.textures.alphaMap = { textureId: opacityTexId, texture };
+                //             material.transparent = true;
+                //         }
+                //     }
+                // }
             }
 
         } else if (pbrGrouped) {
-            // Old grouped format - keep for backward compatibility
+            // Grouped format - uses nested structure with underscore naming
             const pbr = pbrGrouped;
+
+            console.log("=== Using grouped format ===");
+            console.log("pbr keys:", Object.keys(pbr));
+            console.log("pbr.base:", pbr.base);
 
         // Base parameters
         if (pbr.base) {
-            // Base color
-            if (pbr.base.color) {
-                const colorValue = Array.isArray(pbr.base.color) ? pbr.base.color :
-                                  (pbr.base.color.value || [1, 1, 1]);
+            // Base color - use base_color (with underscore)
+            if (pbr.base.base_color !== undefined) {
+                console.log("base.base_color", pbr.base.base_color);
+                const colorValue = Array.isArray(pbr.base.base_color) ? pbr.base.base_color :
+                                  (pbr.base.base_color.value || [1, 1, 1]);
                 material.color = createColorWithSpace(...colorValue);
 
                 // Check for base color texture
-                const colorTexId = pbr.base.color.textureId;
-                if (colorTexId !== undefined && colorTexId >= 0) {
-                    const texture = loadTextureFromUSD(colorTexId);
-                    if (texture) {
-                        material.map = texture;
-                        material.userData.textures.map = { textureId: colorTexId, texture };
+                if (typeof pbr.base.base_color === 'object' && pbr.base.base_color.textureId !== undefined) {
+                    const colorTexId = pbr.base.base_color.textureId;
+                    console.log("colorTexId", colorTexId);
+                    if (colorTexId >= 0) {
+                        const texture = await loadTextureFromUSD(colorTexId);
+                        if (texture) {
+                            console.log("base_tex", texture);
+                            material.map = texture;
+                            material.userData.textures.map = { textureId: colorTexId, texture };
+                        }
                     }
                 }
             }
 
-            // Metalness
-            if (pbr.base.metalness !== undefined) {
-                const metalnessValue = typeof pbr.base.metalness === 'number' ? pbr.base.metalness :
-                                      (pbr.base.metalness.value || 0);
+            // Metalness - use base_metalness (with underscore)
+            if (pbr.base.base_metalness !== undefined) {
+                const metalnessValue = typeof pbr.base.base_metalness === 'number' ? pbr.base.base_metalness :
+                                      (pbr.base.base_metalness.value || 0);
                 material.metalness = metalnessValue;
 
+                // TODO: Temporarily disabled - enable later
                 // Check for metalness texture
-                const metalnessTexId = pbr.base.metalness.textureId;
-                if (metalnessTexId !== undefined && metalnessTexId >= 0) {
-                    const texture = loadTextureFromUSD(metalnessTexId);
-                    if (texture) {
-                        material.metalnessMap = texture;
-                        material.userData.textures.metalnessMap = { textureId: metalnessTexId, texture };
-                    }
-                }
+                // if (typeof pbr.base.base_metalness === 'object' && pbr.base.base_metalness.textureId !== undefined) {
+                //     const metalnessTexId = pbr.base.base_metalness.textureId;
+                //     if (metalnessTexId >= 0) {
+                //         const texture = await loadTextureFromUSD(metalnessTexId);
+                //         if (texture) {
+                //             material.metalnessMap = texture;
+                //             material.userData.textures.metalnessMap = { textureId: metalnessTexId, texture };
+                //         }
+                //     }
+                // }
             }
         }
 
         // Specular parameters
         if (pbr.specular) {
-            // Roughness
-            if (pbr.specular.roughness !== undefined) {
-                const roughnessValue = typeof pbr.specular.roughness === 'number' ? pbr.specular.roughness :
-                                      (pbr.specular.roughness.value || 0.3);
+            // Roughness - use specular_roughness (with underscore)
+            if (pbr.specular.specular_roughness !== undefined) {
+                const roughnessValue = typeof pbr.specular.specular_roughness === 'number' ? pbr.specular.specular_roughness :
+                                      (pbr.specular.specular_roughness.value || 0.3);
                 material.roughness = roughnessValue;
 
+                // TODO: Temporarily disabled - enable later
                 // Check for roughness texture
-                const roughnessTexId = pbr.specular.roughness.textureId;
-                if (roughnessTexId !== undefined && roughnessTexId >= 0) {
-                    const texture = loadTextureFromUSD(roughnessTexId);
-                    if (texture) {
-                        material.roughnessMap = texture;
-                        material.userData.textures.roughnessMap = { textureId: roughnessTexId, texture };
-                    }
-                }
+                // if (typeof pbr.specular.specular_roughness === 'object' && pbr.specular.specular_roughness.textureId !== undefined) {
+                //     const roughnessTexId = pbr.specular.specular_roughness.textureId;
+                //     if (roughnessTexId >= 0) {
+                //         const texture = await loadTextureFromUSD(roughnessTexId);
+                //         if (texture) {
+                //             material.roughnessMap = texture;
+                //             material.userData.textures.roughnessMap = { textureId: roughnessTexId, texture };
+                //         }
+                //     }
+                // }
             }
 
-            if (pbr.specular.ior !== undefined) {
-                material.ior = typeof pbr.specular.ior === 'number' ? pbr.specular.ior :
-                              (pbr.specular.ior.value || 1.5);
+            // IOR - use specular_ior (with underscore)
+            if (pbr.specular.specular_ior !== undefined) {
+                material.ior = typeof pbr.specular.specular_ior === 'number' ? pbr.specular.specular_ior :
+                              (pbr.specular.specular_ior.value || 1.5);
             }
 
-            if (pbr.specular.color) {
-                const colorValue = Array.isArray(pbr.specular.color) ? pbr.specular.color :
-                                  (pbr.specular.color.value || [1, 1, 1]);
+            // Specular color - use specular_color (with underscore)
+            if (pbr.specular.specular_color !== undefined) {
+                const colorValue = Array.isArray(pbr.specular.specular_color) ? pbr.specular.specular_color :
+                                  (pbr.specular.specular_color.value || [1, 1, 1]);
                 material.specularColor = createColorWithSpace(...colorValue);
             }
         }
 
         // Transmission
         if (pbr.transmission) {
-            if (pbr.transmission.weight !== undefined) {
-                material.transmission = pbr.transmission.weight;
+            // Use transmission_weight (with underscore)
+            if (pbr.transmission.transmission_weight !== undefined) {
+                material.transmission = typeof pbr.transmission.transmission_weight === 'number' ? pbr.transmission.transmission_weight :
+                                       (pbr.transmission.transmission_weight.value || 0);
             }
-            if (pbr.transmission.color) {
-                const colorValue = Array.isArray(pbr.transmission.color) ? pbr.transmission.color :
-                                  (pbr.transmission.color.value || [1, 1, 1]);
+            // Use transmission_color (with underscore)
+            if (pbr.transmission.transmission_color !== undefined) {
+                const colorValue = Array.isArray(pbr.transmission.transmission_color) ? pbr.transmission.transmission_color :
+                                  (pbr.transmission.transmission_color.value || [1, 1, 1]);
                 material.attenuationColor = createColorWithSpace(...colorValue);
             }
         }
 
         // Coat (clearcoat)
         if (pbr.coat) {
-            if (pbr.coat.weight !== undefined) {
-                material.clearcoat = pbr.coat.weight;
+            // Use coat_weight (with underscore)
+            if (pbr.coat.coat_weight !== undefined) {
+                material.clearcoat = typeof pbr.coat.coat_weight === 'number' ? pbr.coat.coat_weight :
+                                    (pbr.coat.coat_weight.value || 0);
             }
-            if (pbr.coat.roughness !== undefined) {
-                material.clearcoatRoughness = pbr.coat.roughness;
+            // Use coat_roughness (with underscore)
+            if (pbr.coat.coat_roughness !== undefined) {
+                material.clearcoatRoughness = typeof pbr.coat.coat_roughness === 'number' ? pbr.coat.coat_roughness :
+                                             (pbr.coat.coat_roughness.value || 0);
             }
         }
 
         // Emission
+        // In OpenPBR: final_emission = emission_color * emission_luminance
         if (pbr.emission) {
-            if (pbr.emission.color) {
-                const emissiveValue = Array.isArray(pbr.emission.color) ? pbr.emission.color :
-                                     (pbr.emission.color.value || [0, 0, 0]);
-                material.emissive = createColorWithSpace(...emissiveValue);
+            console.log("=== Loading Emission (Grouped Format) ===");
+            console.log("pbr.emission:", pbr.emission);
+            console.log("pbr.emission.emission_color:", pbr.emission.emission_color);
+            console.log("pbr.emission.emission_luminance:", pbr.emission.emission_luminance);
 
+            let emissionColor = null;
+            let emissionLuminance = 1.0;
+
+            // Use emission_color (with underscore)
+            if (pbr.emission.emission_color !== undefined) {
+                emissionColor = Array.isArray(pbr.emission.emission_color) ? pbr.emission.emission_color :
+                               (pbr.emission.emission_color.value || null);
+
+                // TODO: Temporarily disabled - enable later
                 // Check for emission texture
-                const emissiveTexId = pbr.emission.color.textureId;
-                if (emissiveTexId !== undefined && emissiveTexId >= 0) {
-                    const texture = loadTextureFromUSD(emissiveTexId);
-                    if (texture) {
-                        material.emissiveMap = texture;
-                        material.userData.textures.emissiveMap = { textureId: emissiveTexId, texture };
-                    }
-                }
+                // if (typeof pbr.emission.emission_color === 'object' && pbr.emission.emission_color.textureId !== undefined) {
+                //     const emissiveTexId = pbr.emission.emission_color.textureId;
+                //     if (emissiveTexId >= 0) {
+                //         const texture = await loadTextureFromUSD(emissiveTexId);
+                //         if (texture) {
+                //             material.emissiveMap = texture;
+                //             material.userData.textures.emissiveMap = { textureId: emissiveTexId, texture };
+                //         }
+                //     }
+                // }
             }
-            if (pbr.emission.intensity !== undefined) {
-                material.emissiveIntensity = typeof pbr.emission.intensity === 'number' ? pbr.emission.intensity :
-                                            (pbr.emission.intensity.value || 1);
+            // Use emission_luminance (with underscore)
+            if (pbr.emission.emission_luminance !== undefined) {
+                console.log("XYZ: pbr.emission.emission_luminance:", pbr.emission.emission_luminance, typeof pbr.emission.emission_luminance);
+                emissionLuminance = typeof pbr.emission.emission_luminance === 'number' ? pbr.emission.emission_luminance :
+                                   (typeof pbr.emission.emission_luminance === 'object' && pbr.emission.emission_luminance.value !== undefined ? pbr.emission.emission_luminance.value : 0.0);
+            }
+
+            // Apply emission: color and intensity
+            if (emissionColor) {
+                material.emissive = createColorWithSpace(...emissionColor);
+                material.emissiveIntensity = emissionLuminance;
+                console.log("Applied to material.emissive (grouped):", material.emissive);
+                console.log("Applied to material.emissiveIntensity (grouped):", material.emissiveIntensity);
+            } else {
+                console.log("No emission color found (grouped), skipping emission setup");
             }
         }
 
         // Geometry (check for normal and bump maps)
-        if (pbr.geometry) {
-            // Normal map
-            if (pbr.geometry.normal) {
-                const normalTexId = pbr.geometry.normal.textureId;
-                if (normalTexId !== undefined && normalTexId >= 0) {
-                    const texture = loadTextureFromUSD(normalTexId);
-                    if (texture) {
-                        material.normalMap = texture;
-                        material.normalScale = new THREE.Vector2(1, 1);
-                        material.userData.textures.normalMap = { textureId: normalTexId, texture };
-                    }
-                }
-            }
-        }
+        //if (pbr.geometry) {
+        //    // TODO: Temporarily disabled - enable later
+        //    // Normal map - use geometry_normal (with underscore)
+        //    // if (pbr.geometry.geometry_normal !== undefined) {
+        //    //     if (typeof pbr.geometry.geometry_normal === 'object' && pbr.geometry.geometry_normal.textureId !== undefined) {
+        //    //         const normalTexId = pbr.geometry.geometry_normal.textureId;
+        //    //         if (normalTexId >= 0) {
+        //    //             const texture = await loadTextureFromUSD(normalTexId);
+        //    //             if (texture) {
+        //    //                 material.normalMap = texture;
+        //    //                 material.normalScale = new THREE.Vector2(1, 1);
+        //    //                 material.userData.textures.normalMap = { textureId: normalTexId, texture };
+        //    //             }
+        //    //         }
+        //    //     }
+        //    // }
 
-        // Geometry
-        if (pbr.geometry) {
-            if (pbr.geometry.opacity !== undefined) {
-                material.opacity = pbr.geometry.opacity;
-                material.transparent = pbr.geometry.opacity < 1;
-            }
-        }
+        //    // Opacity - use geometry_opacity (with underscore)
+        //    if (pbr.geometry.geometry_opacity !== undefined) {
+        //        const opacityValue = typeof pbr.geometry.geometry_opacity === 'number' ? pbr.geometry.geometry_opacity :
+        //                            (pbr.geometry.geometry_opacity.value !== undefined ? pbr.geometry.geometry_opacity.value : 1);
+        //        material.opacity = opacityValue;
+        //        material.transparent = opacityValue < 1;
+
+        //        // TODO: Temporarily disabled - enable later
+        //        // Check for opacity texture
+        //        // if (typeof pbr.geometry.geometry_opacity === 'object' && pbr.geometry.geometry_opacity.textureId !== undefined) {
+        //        //     const opacityTexId = pbr.geometry.geometry_opacity.textureId;
+        //        //     if (opacityTexId >= 0) {
+        //        //         const texture = await loadTextureFromUSD(opacityTexId);
+        //        //         if (texture) {
+        //        //             material.alphaMap = texture;
+        //        //             material.userData.textures.alphaMap = { textureId: opacityTexId, texture };
+        //        //             material.transparent = true;
+        //        //         }
+        //        //     }
+        //        // }
+        //    }
+        //}
 
         // Thin film
-        if (pbr.thin_film) {
-            if (pbr.thin_film.thickness !== undefined) {
-                material.thickness = pbr.thin_film.thickness;
-            }
-        }
+        //if (pbr.thin_film) {
+        //    if (pbr.thin_film.thickness !== undefined) {
+        //        material.thickness = pbr.thin_film.thickness;
+        //    }
+        //}
 
         // Subsurface (approximation with subsurface scattering)
-        if (pbr.subsurface && pbr.subsurface.weight > 0) {
-            // Three.js doesn't have direct subsurface support, but we can approximate
-            material.transmission = Math.max(material.transmission, pbr.subsurface.weight * 0.5);
-        }
+        //if (pbr.subsurface && pbr.subsurface.weight > 0) {
+        //    // Three.js doesn't have direct subsurface support, but we can approximate
+        //    material.transmission = Math.max(material.transmission, pbr.subsurface.weight * 0.5);
+        //}
         } // end of else if (pbrGrouped)
 
     } else if (materialData.hasUsdPreviewSurface && materialData.usdPreviewSurface) {
@@ -2672,7 +3084,8 @@ function createOpenPBRMaterial(materialData) {
 
     // Apply color space shader if textures are present
     if (Object.keys(material.userData.textures || {}).length > 0) {
-        applyColorSpaceShader(material, material.userData.colorSpaceSettings);
+        // HACK. disabled 
+        //applyColorSpaceShader(material, material.userData.colorSpaceSettings);
     }
 
     material.needsUpdate = true;
@@ -2685,11 +3098,28 @@ function extractOpenPBRParams(materialData) {
         return {};
     }
 
-    // Try openPBRShader first (from native loader), then openPBR (legacy)
-    const pbr = materialData.openPBRShader || materialData.openPBR;
+    // Try multiple property name variations for flat format (same logic as createOpenPBRMaterial)
+    let pbrFlat = materialData.openPBRShader || materialData.openPBR_surface || materialData.openpbr_surface;
+    const pbrGrouped = materialData.openPBR;
+
+    // If no nested object found, check if flat properties exist directly on materialData
+    if (!pbrFlat && (materialData.base_color !== undefined ||
+                    materialData.base_metalness !== undefined ||
+                    materialData.specular_roughness !== undefined)) {
+        pbrFlat = materialData;
+    }
+
+    // Use flat format if available, otherwise grouped format
+    const pbr = pbrFlat || pbrGrouped;
     if (!pbr) {
+        console.warn("extractOpenPBRParams: No PBR data found");
         return {};
     }
+
+    console.log("=== Extracting OpenPBR params ===");
+    console.log("Using pbrFlat:", !!pbrFlat);
+    console.log("Using pbrGrouped:", !!pbrGrouped);
+    console.log("pbr keys:", Object.keys(pbr));
 
     // The native loader returns flat parameters like base_weight, base_color, etc.
     // We need to group them for the GUI: {base: {weight, color}, specular: {...}}
@@ -2703,36 +3133,85 @@ function extractOpenPBRParams(materialData) {
         geometry: {}
     };
 
-    // Map flat parameters to grouped structure
-    Object.entries(pbr).forEach(([key, value]) => {
-        // Skip type field
-        if (key === 'type') return;
-
-        // Split parameter name (e.g., "base_weight" -> ["base", "weight"])
-        const parts = key.split('_');
-        if (parts.length >= 2) {
-            const group = parts[0]; // base, specular, transmission, etc.
-            const param = parts.slice(1).join('_'); // weight, color, roughness, etc.
-
-            // Map group names
-            const groupMap = {
-                'base': 'base',
-                'specular': 'specular',
-                'transmission': 'transmission',
-                'subsurface': 'subsurface',
-                'coat': 'coat',
-                'emission': 'emission'
-            };
-
-            if (groupMap[group]) {
-                params[groupMap[group]][param] = value;
-            } else if (key === 'opacity' || key === 'normal' || key === 'tangent') {
-                // Geometry parameters
-                params.geometry[key] = value;
+    // Helper function to unwrap parameter values
+    // The C++ serializer wraps values in objects like {type: "value", value: X} or {type: "texture", textureId: Y, value: X}
+    const unwrapValue = (val) => {
+        if (val && typeof val === 'object') {
+            if (val.value !== undefined) {
+                // It's wrapped - return the actual value
+                return val.value;
+            } else if (val.textureId !== undefined && val.value === undefined) {
+                // It's a texture-only reference, preserve the object so GUI can show it with texture info
+                return val;
             }
         }
-    });
+        // It's already a plain value
+        return val;
+    };
 
+    // Check if we have a nested grouped format (from C++ serializer)
+    // The C++ serializer outputs: { base: { base_weight: {type, value}, ... }, specular: { ... } }
+    const groupKeys = ['base', 'specular', 'transmission', 'subsurface', 'coat', 'emission'];
+    const hasNestedGroups = groupKeys.some(key => pbr[key] && typeof pbr[key] === 'object');
+
+    if (hasNestedGroups && pbrGrouped) {
+        // Handle nested grouped format from C++ serializer
+        console.log("=== Using nested grouped format ===");
+
+        groupKeys.forEach(groupName => {
+            if (pbr[groupName] && typeof pbr[groupName] === 'object') {
+                params[groupName] = {};
+                Object.entries(pbr[groupName]).forEach(([paramKey, paramValue]) => {
+                    // Remove group prefix from parameter name if present
+                    // e.g., "base_weight" -> "weight", "specular_color" -> "color"
+                    const prefix = groupName + '_';
+                    const cleanKey = paramKey.startsWith(prefix) ? paramKey.substring(prefix.length) : paramKey;
+
+                    const unwrappedValue = unwrapValue(paramValue);
+                    if (unwrappedValue !== null) {
+                        params[groupName][cleanKey] = unwrappedValue;
+                    }
+                });
+            }
+        });
+    } else {
+        // Handle flat format (old behavior)
+        console.log("=== Using flat format ===");
+
+        Object.entries(pbr).forEach(([key, value]) => {
+            // Skip type field and internal fields
+            if (key === 'type' || key === 'hasOpenPBR') return;
+
+            const extractedValue = unwrapValue(value);
+            if (extractedValue === null) return;
+
+            // Split parameter name (e.g., "base_weight" -> ["base", "weight"])
+            const parts = key.split('_');
+            if (parts.length >= 2) {
+                const group = parts[0]; // base, specular, transmission, etc.
+                const param = parts.slice(1).join('_'); // weight, color, roughness, etc.
+
+                // Map group names
+                const groupMap = {
+                    'base': 'base',
+                    'specular': 'specular',
+                    'transmission': 'transmission',
+                    'subsurface': 'subsurface',
+                    'coat': 'coat',
+                    'emission': 'emission'
+                };
+
+                if (groupMap[group]) {
+                    params[groupMap[group]][param] = extractedValue;
+                } else if (key === 'opacity' || key === 'normal' || key === 'tangent') {
+                    // Geometry parameters
+                    params.geometry[key] = extractedValue;
+                }
+            }
+        });
+    }
+
+    console.log("=== Extracted params ===", params);
     return params;
 }
 
@@ -2826,6 +3305,13 @@ function loadMeshes() {
                 const matrix = new THREE.Matrix4();
                 matrix.fromArray(meshData.transform);
                 mesh.applyMatrix4(matrix);
+                console.log(`Mesh ${i} has transform matrix:`, meshData.transform);
+
+                // Extract position from matrix for diagnostic
+                const position = new THREE.Vector3();
+                const scale = new THREE.Vector3();
+                matrix.decompose(position, new THREE.Quaternion(), scale);
+                console.log(`  Transform includes: position=(${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`);
             }
 
             sceneRoot.add(mesh);
@@ -2837,6 +3323,80 @@ function loadMeshes() {
         }
     }
     console.log(`Total meshes added to scene: ${meshes.length}`);
+}
+
+// Update scene metadata panel
+function updateSceneMetadataPanel() {
+    const panel = document.getElementById('scene-metadata');
+    const content = document.getElementById('metadata-content');
+
+    if (!currentSceneMetadata) {
+        panel.style.display = 'none';
+        return;
+    }
+
+    panel.style.display = 'block';
+
+    let html = '';
+
+    // upAxis
+    html += `<div><strong>Up Axis:</strong> ${currentSceneMetadata.upAxis}</div>`;
+
+    // metersPerUnit
+    html += `<div><strong>Meters/Unit:</strong> ${currentSceneMetadata.metersPerUnit}</div>`;
+
+    // Animation metadata (only if present)
+    if (currentSceneMetadata.framesPerSecond !== null && currentSceneMetadata.framesPerSecond !== undefined) {
+        html += `<div><strong>FPS:</strong> ${currentSceneMetadata.framesPerSecond}</div>`;
+    }
+
+    if (currentSceneMetadata.timeCodesPerSecond !== null && currentSceneMetadata.timeCodesPerSecond !== undefined) {
+        html += `<div><strong>TimeCodes/Sec:</strong> ${currentSceneMetadata.timeCodesPerSecond}</div>`;
+    }
+
+    if (currentSceneMetadata.startTimeCode !== null && currentSceneMetadata.startTimeCode !== undefined) {
+        html += `<div><strong>Start Time:</strong> ${currentSceneMetadata.startTimeCode}</div>`;
+    }
+
+    if (currentSceneMetadata.endTimeCode !== null && currentSceneMetadata.endTimeCode !== undefined) {
+        html += `<div><strong>End Time:</strong> ${currentSceneMetadata.endTimeCode}</div>`;
+    }
+
+    if (currentSceneMetadata.autoPlay !== null && currentSceneMetadata.autoPlay !== undefined) {
+        html += `<div><strong>Auto Play:</strong> ${currentSceneMetadata.autoPlay ? 'Yes' : 'No'}</div>`;
+    }
+
+    // Default prim
+    if (currentSceneMetadata.defaultPrim) {
+        html += `<div><strong>Default Prim:</strong> ${currentSceneMetadata.defaultPrim}</div>`;
+    }
+
+    // Author
+    if (currentSceneMetadata.author) {
+        html += `<div><strong>Author:</strong> ${currentSceneMetadata.author}</div>`;
+    }
+
+    // Comment (can be multiline)
+    if (currentSceneMetadata.comment) {
+        const commentLines = currentSceneMetadata.comment.split('\n');
+        if (commentLines.length === 1) {
+            html += `<div><strong>Comment:</strong> ${currentSceneMetadata.comment}</div>`;
+        } else {
+            html += `<div><strong>Comment:</strong></div>`;
+            html += `<div style="padding-left: 10px; font-style: italic; color: #bbb;">`;
+            commentLines.forEach(line => {
+                html += `${line}<br>`;
+            });
+            html += `</div>`;
+        }
+    }
+
+    // Copyright
+    if (currentSceneMetadata.copyright) {
+        html += `<div><strong>Copyright:</strong> ${currentSceneMetadata.copyright}</div>`;
+    }
+
+    content.innerHTML = html;
 }
 
 // Update material panel
@@ -3142,7 +3702,7 @@ function createTextureTransformUI(material, mapName, texture) {
         valueSpan.textContent = value.toFixed(2);
         valueSpan.style.minWidth = '40px';
         valueSpan.style.textAlign = 'right';
-        valueSpan.style.color = '#fff';
+        valueSpan.style.color = 'white';
         row.appendChild(valueSpan);
 
         slider.oninput = (e) => {
@@ -3391,10 +3951,13 @@ function createParameterControls(material) {
                 let rawValue = params[groupName][paramName];
                 if (rawValue === undefined) return;
 
+                // Check if this parameter has a texture
+                const hasTexture = rawValue && typeof rawValue === 'object' && rawValue.textureId !== undefined;
+
                 // Extract actual value if it's wrapped in an object with {name, type, value} structure
                 const value = (rawValue && typeof rawValue === 'object' && rawValue.value !== undefined)
                     ? rawValue.value
-                    : rawValue;
+                    : (hasTexture ? [1, 1, 1] : rawValue); // Default color if texture-only
 
                 if (paramDef.type === 'color') {
                     // Color picker
@@ -3403,7 +3966,7 @@ function createParameterControls(material) {
                         //color: [colorValue[0] * 255, colorValue[1] * 255, colorValue[2] * 255]
                         color: [colorValue[0], colorValue[1], colorValue[2]]
                     };
-                    groupFolder.addColor(colorObj, 'color').name(paramName).onChange(val => {
+                    const controller = groupFolder.addColor(colorObj, 'color').name(paramName).onChange(val => {
                         const r = val[0]; // / 255;
                         const g = val[1]; // / 255;
                         const b = val[2]; // / 255;
@@ -3411,6 +3974,21 @@ function createParameterControls(material) {
                         params[groupName][paramName] = [r, g, b];
                         updateMaterialFromParams(threeMat, params);
                     });
+
+                    // Add texture view button if this parameter has a texture
+                    if (hasTexture) {
+                        const textureInfo = getTextureInfoForParameter(material, groupName, paramName);
+                        if (textureInfo && textureInfo.texture) {
+                            const viewBtn = document.createElement('button');
+                            viewBtn.textContent = '🖼️';
+                            viewBtn.title = 'View texture';
+                            viewBtn.style.cssText = 'margin-left: 5px; padding: 2px 8px; background: #2196F3; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 14px;';
+                            viewBtn.onclick = () => {
+                                enlargeTexture(textureInfo.texture, formatTextureName(textureInfo.mapName || paramName));
+                            };
+                            controller.domElement.parentElement.appendChild(viewBtn);
+                        }
+                    }
                 } else if (paramDef.type === 'boolean') {
                     // Checkbox
                     const boolObj = { [paramName]: !!value };
@@ -3422,11 +4000,17 @@ function createParameterControls(material) {
                     // Slider
                     const numValue = typeof value === 'number' ? value : parseFloat(value) || 0;
                     const sliderObj = { [paramName]: numValue };
-                    groupFolder.add(sliderObj, paramName, paramDef.min, paramDef.max, paramDef.step)
+                    const controller = groupFolder.add(sliderObj, paramName, paramDef.min, paramDef.max, paramDef.step)
                         .onChange(val => {
                             params[groupName][paramName] = val;
                             updateMaterialFromParams(threeMat, params);
                         });
+
+                    // Set decimal places based on step size
+                    if (paramDef.step < 1) {
+                        const decimals = Math.max(0, -Math.floor(Math.log10(paramDef.step)));
+                        controller.decimals(decimals);
+                    }
                 }
             });
 
@@ -3458,7 +4042,10 @@ function updateMaterialFromParams(material, params) {
     if (params.base) {
         if (params.base.color) {
             console.log("[base_color] ", params.base.color);
-            const [r, g, b] = srgbToDisplayP3(...params.base.color);
+            // Handle both array values and texture objects
+            const colorValue = Array.isArray(params.base.color) ? params.base.color :
+                              (params.base.color.value || [1, 1, 1]);
+            const [r, g, b] = srgbToDisplayP3(...colorValue);
             material.color.setRGB(r, g, b);
         }
         if (params.base.metalness !== undefined) {
@@ -3504,13 +4091,17 @@ function updateMaterialFromParams(material, params) {
     }
 
     // Emission
+    // In OpenPBR, final emission = emission_color * emission_luminance
+    // Three.js multiplies emissive * emissiveIntensity internally, which matches this
     if (params.emission) {
         if (params.emission.color) {
-            const [r, g, b] = srgbToDisplayP3(...params.emission.color);
-            material.emissive.setRGB(r, g, b);
+            const colorValue = Array.isArray(params.emission.color) ? params.emission.color :
+                              (params.emission.color.value || [0, 0, 0]);
+            material.emissive = createColorWithSpace(...colorValue);
         }
-        if (params.emission.intensity !== undefined) {
-            material.emissiveIntensity = params.emission.intensity;
+        material.emissiveIntensity = 0.0; // default no emission
+        if (params.emission.luminance !== undefined) {
+            material.emissiveIntensity = params.emission.luminance;
         }
     }
 
@@ -3545,10 +4136,12 @@ function clearScene() {
     // Deselect object and remove bounding box
     deselectObject();
 
-    // Remove meshes
+    // Remove meshes (they're in sceneRoot, not directly in scene)
     meshes.forEach(mesh => {
         mesh.geometry.dispose();
-        scene.remove(mesh);
+        if (sceneRoot) {
+            sceneRoot.remove(mesh);
+        }
     });
     meshes = [];
 
@@ -3579,10 +4172,22 @@ function clearScene() {
     originalMaterials.clear();
     showingNormals = false;
 
+    // Reset sceneRoot rotation (for upAxis conversion)
+    if (sceneRoot) {
+        sceneRoot.rotation.set(0, 0, 0);
+    }
+
+    // Reset upAxis to default
+    currentFileUpAxis = 'Y';
+
+    // Clear scene metadata
+    currentSceneMetadata = null;
+
     // Clear UI panels
     document.getElementById('material-panel').style.display = 'none';
     document.getElementById('texture-panel').style.display = 'none';
     document.getElementById('model-info').style.display = 'none';
+    document.getElementById('scene-metadata').style.display = 'none';
     document.getElementById('selected-object').textContent = 'None';
 }
 
@@ -4186,7 +4791,7 @@ function addTextureTransformControls(folder, material, textureName) {
     // Rotation control
     const rotationParam = { rotation: texture.rotation };
     transformFolder.add(rotationParam, 'rotation', 0, Math.PI * 2, 0.01).name('Rotation').onChange((value) => {
-        texture.rotation = value;
+        texture.rotation = value * (Math.PI / 180);
         texture.needsUpdate = true;
     });
 
@@ -4248,13 +4853,3 @@ function reportError(context, error, severity = 'error') {
 
     updateStatus(userMessage, severity);
 }
-
-// Export functions for HTML onclick handlers
-window.toggleEnvironment = toggleEnvironment;
-window.toggleBackgroundEnvmap = toggleBackgroundEnvmap;
-window.loadSampleModel = loadSampleModel;
-window.toggleColorSpace = toggleColorSpace;
-window.exportSelectedMaterialJSON = exportSelectedMaterialJSON;
-window.exportSelectedMaterialMTLX = exportSelectedMaterialMTLX;
-window.importMaterialXFile = importMaterialXFile;
-window.loadHDRTextureForMaterial = loadHDRTextureForMaterial;
