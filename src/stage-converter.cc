@@ -2938,6 +2938,15 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
     return AddSpec(input_path, SpecType::Attribute, input_fields, err);
   };
 
+  // Helper to convert OpacityMode enum to token string
+  auto opacity_mode_to_string = [](UsdPreviewSurface::OpacityMode mode) -> std::string {
+    switch (mode) {
+      case UsdPreviewSurface::OpacityMode::Transparent: return "transparent";
+      case UsdPreviewSurface::OpacityMode::Presence: return "presence";
+      default: return "transparent";
+    }
+  };
+
   // Extract and add common PBR inputs
 
   // inputs:diffuseColor (color3f)
@@ -3070,6 +3079,21 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
       if (preview_surface->opacity.get_value().get_scalar(&opacity)) {
         opacity_value.Set(opacity);
         if (!add_input_spec("inputs:opacity", "float", opacity_value)) {
+          return false;
+        }
+      }
+    }
+  }
+
+  // inputs:opacityMode (token) - Controls transparency behavior (transparent or presence)
+  if (preview_surface->opacityMode.authored()) {
+    crate::CrateValue opacity_mode_value;
+    if (!preview_surface->opacityMode.get_value().is_timesamples()) {
+      UsdPreviewSurface::OpacityMode mode;
+      if (preview_surface->opacityMode.get_value().get_scalar(&mode)) {
+        value::token mode_tok(opacity_mode_to_string(mode));
+        opacity_mode_value.Set(mode_tok);
+        if (!add_input_spec("inputs:opacityMode", "token", opacity_mode_value)) {
           return false;
         }
       }
