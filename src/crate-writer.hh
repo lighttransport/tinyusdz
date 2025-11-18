@@ -220,8 +220,14 @@ private:
   /// Extract NurbsCurves-specific properties (order, knots, ranges, pointWeights, points, etc.)
   bool ExtractNurbsCurvesProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
 
+  /// Extract PointInstancer-specific properties (protoIndices, positions, orientations, scales, velocities, etc.)
+  bool ExtractPointInstancerProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
   /// Extract GeomSubset-specific properties (elementType, familyName, indices)
   bool ExtractGeomSubsetProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract BlendShape properties (offsets, normalOffsets, pointIndices)
+  bool ExtractBlendShapeProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract common GPrim properties (visibility, purpose, etc.)
   bool ExtractGPrimProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);

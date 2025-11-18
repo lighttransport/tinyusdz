@@ -2113,6 +2113,102 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
       }
     }
   }
+  // Vec2d array (double2[])
+  else if (auto* vec2d_array = value.as<std::vector<value::double2>>()) {
+    uint64_t count = vec2d_array->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write Vec2d array count";
+      return -1;
+    }
+    for (const auto& vec : *vec2d_array) {
+      for (size_t i = 0; i < 2; ++i) {
+        if (!Write(vec[i])) {
+          if (err) *err = "Failed to write Vec2d array element";
+          return -1;
+        }
+      }
+    }
+  }
+  // Vec3d array (double3[])
+  else if (auto* vec3d_array = value.as<std::vector<value::double3>>()) {
+    uint64_t count = vec3d_array->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write Vec3d array count";
+      return -1;
+    }
+    for (const auto& vec : *vec3d_array) {
+      for (size_t i = 0; i < 3; ++i) {
+        if (!Write(vec[i])) {
+          if (err) *err = "Failed to write Vec3d array element";
+          return -1;
+        }
+      }
+    }
+  }
+  // Vec4d array (double4[])
+  else if (auto* vec4d_array = value.as<std::vector<value::double4>>()) {
+    uint64_t count = vec4d_array->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write Vec4d array count";
+      return -1;
+    }
+    for (const auto& vec : *vec4d_array) {
+      for (size_t i = 0; i < 4; ++i) {
+        if (!Write(vec[i])) {
+          if (err) *err = "Failed to write Vec4d array element";
+          return -1;
+        }
+      }
+    }
+  }
+  // Quath array (half-precision quaternion array)
+  else if (auto* quath_array = value.as<std::vector<value::quath>>()) {
+    uint64_t count = quath_array->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write Quath array count";
+      return -1;
+    }
+    // Each quath is: real (uint16_t) + imag[0,1,2] (3 x uint16_t) = 8 bytes
+    for (const auto& q : *quath_array) {
+      if (!Write(q.real.value) || !Write(q.imag[0].value) ||
+          !Write(q.imag[1].value) || !Write(q.imag[2].value)) {
+        if (err) *err = "Failed to write Quath array element";
+        return -1;
+      }
+    }
+  }
+  // Quatf array (single-precision quaternion array)
+  else if (auto* quatf_array = value.as<std::vector<value::quatf>>()) {
+    uint64_t count = quatf_array->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write Quatf array count";
+      return -1;
+    }
+    // Each quatf is: real (float) + imag[0,1,2] (3 x float) = 16 bytes
+    for (const auto& q : *quatf_array) {
+      if (!Write(q.real) || !Write(q.imag[0]) ||
+          !Write(q.imag[1]) || !Write(q.imag[2])) {
+        if (err) *err = "Failed to write Quatf array element";
+        return -1;
+      }
+    }
+  }
+  // Quatd array (double-precision quaternion array)
+  else if (auto* quatd_array = value.as<std::vector<value::quatd>>()) {
+    uint64_t count = quatd_array->size();
+    if (!Write(count)) {
+      if (err) *err = "Failed to write Quatd array count";
+      return -1;
+    }
+    // Each quatd is: real (double) + imag[0,1,2] (3 x double) = 32 bytes
+    for (const auto& q : *quatd_array) {
+      if (!Write(q.real) || !Write(q.imag[0]) ||
+          !Write(q.imag[1]) || !Write(q.imag[2])) {
+        if (err) *err = "Failed to write Quatd array element";
+        return -1;
+      }
+    }
+  }
   // String array - special handling (strings are stored as indices)
   else if (auto* string_array = value.as<std::vector<std::string>>()) {
     uint64_t count = string_array->size();
@@ -3284,8 +3380,14 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
             } else if (crate_value.as<std::vector<value::float2>>()) {
               type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2F;
               is_array = true;
+            } else if (crate_value.as<std::vector<value::double2>>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC2D;
+              is_array = true;
             } else if (crate_value.as<std::vector<value::float4>>()) {
               type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4F;
+              is_array = true;
+            } else if (crate_value.as<std::vector<value::double4>>()) {
+              type_id = crate::CrateDataTypeId::CRATE_DATA_TYPE_VEC4D;
               is_array = true;
             }
             // Scalar matrix types
