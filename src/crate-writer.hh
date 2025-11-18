@@ -400,6 +400,15 @@ private:
   /// Extract DomeLight properties (texture path, color, intensity, exposure)
   bool ExtractDomeLightProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
 
+  /// Extract Skeleton properties (jointNames, joints, bindTransforms, restTransforms)
+  bool ExtractSkeletonProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract SkelAnimation properties (joints, rotations, translations, scales, blendShapeWeights)
+  bool ExtractSkelAnimationProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract SkelRoot properties (visibility, purpose, extent)
+  bool ExtractSkelRootProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
   /// Extract common GPrim properties (visibility, purpose, etc.)
   bool ExtractGPrimProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
 
