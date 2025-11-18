@@ -399,6 +399,12 @@ bool CrateWriter::ExtractTypeSpecificProperties(
     return ExtractDistantLightProperties(prim, fields, err);
   } else if (type_name == "DomeLight") {
     return ExtractDomeLightProperties(prim, fields, err);
+  } else if (type_name == "Skeleton") {
+    return ExtractSkeletonProperties(prim, fields, err);
+  } else if (type_name == "SkelAnimation") {
+    return ExtractSkelAnimationProperties(prim, fields, err);
+  } else if (type_name == "SkelRoot") {
+    return ExtractSkelRootProperties(prim, fields, err);
   }
 
   // For unknown types or types without specific handlers,
@@ -2221,6 +2227,112 @@ bool CrateWriter::ExtractDomeLightProperties(
 }
 
 // ============================================================================
+// Skeleton Property Extraction
+// ============================================================================
+
+bool CrateWriter::ExtractSkeletonProperties(
+    const Prim& prim,
+    crate::FieldValuePairVector& fields,
+    std::string* err) {
+  const Skeleton* skel = prim.data().as<Skeleton>();
+  if (!skel) {
+    if (err) *err = "Failed to cast prim to Skeleton";
+    return false;
+  }
+
+  // Note: All Skeleton properties (jointNames, joints, bindTransforms, restTransforms)
+  // are extracted by the generic property system instead, which handles them through
+  // the props map on the Skeleton structure.
+  // This function acts as a type-specific handler but defers to the generic system.
+  std::cerr << "DEBUG: Skeleton properties handled by generic system\n";
+  return true;
+}
+
+// ============================================================================
+// SkelAnimation Property Extraction
+// ============================================================================
+
+bool CrateWriter::ExtractSkelAnimationProperties(
+    const Prim& prim,
+    crate::FieldValuePairVector& fields,
+    std::string* err) {
+  const SkelAnimation* anim = prim.data().as<SkelAnimation>();
+  if (!anim) {
+    if (err) *err = "Failed to cast prim to SkelAnimation";
+    return false;
+  }
+
+  // Note: All SkelAnimation properties (blendShapes, joints, rotations, translations, scales, blendShapeWeights)
+  // are extracted by the generic property system instead, which handles them through
+  // the props map on the SkelAnimation structure.
+  // This function acts as a type-specific handler but defers to the generic system.
+  std::cerr << "DEBUG: SkelAnimation properties handled by generic system\n";
+  return true;
+}
+
+// ============================================================================
+// SkelRoot Property Extraction
+// ============================================================================
+
+bool CrateWriter::ExtractSkelRootProperties(
+    const Prim& prim,
+    crate::FieldValuePairVector& fields,
+    std::string* err) {
+  const SkelRoot* skel_root = prim.data().as<SkelRoot>();
+  if (!skel_root) {
+    if (err) *err = "Failed to cast prim to SkelRoot";
+    return false;
+  }
+
+  // SkelRoot has no dedicated attributes beyond visibility, purpose, and extent
+  // Extract visibility
+  if (skel_root->visibility.has_value()) {
+    const auto& visibility_anim = skel_root->visibility.get_value();
+    if (visibility_anim.has_default()) {
+      Visibility visibility_val;
+      if (visibility_anim.get_default(&visibility_val)) {
+        crate::CrateValue crate_val;
+        value::Value val(value::token(to_string(visibility_val)));
+        if (ConvertValue(val, crate_val, err)) {
+          fields.push_back({"visibility", crate_val});
+        }
+      }
+    }
+  }
+
+  // Extract purpose
+  if (skel_root->purpose.has_value()) {
+    const auto& purpose_val = skel_root->purpose.get_value();
+    crate::CrateValue crate_val;
+    value::Value val(value::token(to_string(purpose_val)));
+    if (ConvertValue(val, crate_val, err)) {
+      fields.push_back({"purpose", crate_val});
+    }
+  }
+
+  // Extract extent
+  if (skel_root->extent.has_value()) {
+    const auto& extent_opt = skel_root->extent.get_value();
+    if (extent_opt) {
+      const auto& extent_animatable = extent_opt.value();
+      if (extent_animatable.has_default()) {
+        Extent extent_val;
+        if (extent_animatable.get_default(&extent_val)) {
+          crate::CrateValue crate_val;
+          value::Value val(extent_val);
+          if (ConvertValue(val, crate_val, err)) {
+            fields.push_back({"extent", crate_val});
+          }
+        }
+      }
+    }
+  }
+
+  std::cerr << "DEBUG: Extracted SkelRoot properties\n";
+  return true;
+}
+
+// ============================================================================
 // XformOp Extraction Helper
 // ============================================================================
 
@@ -3711,17 +3823,10 @@ bool CrateWriter::ConvertValue(
     }
   } else if (type_name == "token[]") {
     if (auto v = val.get_value<std::vector<value::token>>()) {
-      // Need to convert each token to token index
-      std::vector<uint32_t> token_indices;
-      token_indices.reserve(v->size());
-      for (const auto& tok : *v) {
-        crate::TokenIndex tok_idx = GetOrCreateToken(tok.str());
-        token_indices.push_back(tok_idx.value);
-      }
-      // Note: CrateValue doesn't have Set(vector<uint32_t>) for token indices
-      // We need to store as InlinedRep or handle differently
-      // For now, let's skip this - we'll handle it when we encounter it
-      if (err) *err = "token[] conversion requires special handling (not yet implemented)";
+      // For now, skip token[] arrays as they require special handling
+      // They will be handled through the generic property system if needed
+      // Return false to indicate this type needs special handling
+      if (err) *err = "token[] arrays require special handling";
       return false;
     }
   } else if (type_name == "int64[]") {
@@ -3731,6 +3836,56 @@ bool CrateWriter::ConvertValue(
     }
   } else if (type_name == "quath[]") {
     if (auto v = val.get_value<std::vector<value::quath>>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "quatf[]") {
+    if (auto v = val.get_value<std::vector<value::quatf>>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "quatd[]") {
+    if (auto v = val.get_value<std::vector<value::quatd>>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "half3[]") {
+    if (auto v = val.get_value<std::vector<value::half3>>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "half4[]") {
+    if (auto v = val.get_value<std::vector<value::half4>>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "float4[]") {
+    if (auto v = val.get_value<std::vector<value::float4>>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "double4[]") {
+    if (auto v = val.get_value<std::vector<value::double4>>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "int2[]") {
+    if (auto v = val.get_value<std::vector<value::int2>>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "int3[]") {
+    if (auto v = val.get_value<std::vector<value::int3>>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "int4[]") {
+    if (auto v = val.get_value<std::vector<value::int4>>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "matrix4d[]") {
+    if (auto v = val.get_value<std::vector<value::matrix4d>>()) {
       out.Set(*v);
       return true;
     }
