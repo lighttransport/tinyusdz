@@ -1,0 +1,3 @@
+https://github.com/usd-wg/assets/tree/main/full_assets/Teapot
+
+The original Fancy Teapot data was part of the Tea Set created by James Ray Cook, Jurita Burger, and Rico Cilliers at PolyHaven. They generously made it available under a Public Domain - CC0 license.

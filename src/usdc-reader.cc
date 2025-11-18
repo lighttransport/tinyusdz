@@ -1898,6 +1898,7 @@ nonstd::optional<Prim> USDCReader::Impl::ReconstructPrimFromTypeName(
   RECONSTRUCT_PRIM(SkelAnimation, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(BlendShape, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(Shader, typeName, prim_name, spec)
+  RECONSTRUCT_PRIM(NodeGraph, typeName, prim_name, spec)
   RECONSTRUCT_PRIM(Material, typeName, prim_name, spec) {
     PUSH_WARN("TODO or unsupported prim type: " << typeName);
     if (is_unsupported_prim) {
