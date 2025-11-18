@@ -101,9 +101,29 @@ bool CrateWriter::AddSpec(const Path& path,
   spec_data.spec_type = spec_type;  // Store the spec type
   spec_data.fields = fields;
 
+  // Estimate memory usage for this spec
+  // Path + field names + approximate field value sizes
+  int64_t estimated_memory = path.full_path_name().size();  // Path string
+  for (const auto& field : fields) {
+    estimated_memory += field.first.size();  // Field name
+    estimated_memory += 64;  // Approximate field value overhead
+  }
+
+  // Check memory limit
+  if (WouldExceedMemoryLimit(estimated_memory)) {
+    if (err) {
+      *err = "Adding spec would exceed memory limit of " +
+             std::to_string(options_.max_memory_bytes / (1024*1024)) + " MB. " +
+             "Current usage: " + std::to_string(memory_used_estimate_ / (1024*1024)) + " MB";
+    }
+    std::cerr << "ERROR: " << *err << "\n";
+    return false;
+  }
+
   // We'll fill in the actual crate::Spec later during Finalize
   // For now, just accumulate the data
   spec_data_.push_back(spec_data);
+  memory_used_estimate_ += estimated_memory;
 
   std::cerr << "DEBUG AddSpec[" << (spec_data_.size()-1) << "]: path=" << path.full_path_name()
             << " spec_type=" << static_cast<int>(spec_type) << " (";
@@ -3996,8 +4016,21 @@ bool CrateWriter::Seek(int64_t pos) {
 }
 
 bool CrateWriter::WriteBytes(const void* data, size_t size) {
+  // Check file size limit before writing
+  if (WouldExceedFileSizeLimit(static_cast<int64_t>(size))) {
+    std::cerr << "ERROR: Writing " << size << " bytes would exceed file size limit of "
+              << options_.max_file_size_bytes / (1024*1024) << " MB\n"
+              << "  Current file size: " << bytes_written_ << " bytes\n"
+              << "  Limit: " << options_.max_file_size_bytes << " bytes\n";
+    return false;
+  }
+
   file_.write(static_cast<const char*>(data), size);
-  return file_.good();
+  if (file_.good()) {
+    bytes_written_ += static_cast<int64_t>(size);
+    return true;
+  }
+  return false;
 }
 
 } // namespace experimental
