@@ -1515,12 +1515,82 @@ struct RenderCamera {
 // Simple light
 struct RenderLight
 {
-  std::string name;  // elementName in USD (e.g. "frontCamera")
-  std::string
-      abs_path;  // abosolute GeomCamera Prim path in USD (e.g. "/xform/camera")
+  enum class LightType {
+    Point,         // SphereLight
+    Directional,   // DistantLight
+    Rect,          // RectLight (area light)
+    Disk,          // DiskLight (area light)
+    Cylinder,      // CylinderLight (area light)
+    Dome,          // DomeLight (environment/IBL)
+    Geometry       // GeometryLight
+  };
 
+  enum class DomeTextureFormat {
+    Automatic,
+    Latlong,
+    MirroredBall,
+    Angular
+  };
 
-  // TODO..
+  std::string name;  // elementName in USD (e.g. "keyLight")
+  std::string abs_path;  // absolute Light Prim path in USD (e.g. "/lights/keyLight")
+  LightType lightType{LightType::Point};
+
+  // Common light properties (LightAPI)
+  std::array<float, 3> color{{1.0f, 1.0f, 1.0f}};  // Linear RGB color
+  float intensity{1.0f};
+  float exposure{0.0f};  // EV (exposure value)
+  float diffuse{1.0f};   // Diffuse multiplier
+  float specular{1.0f};  // Specular multiplier
+  bool normalize{false}; // Normalize power by surface area
+
+  // Color temperature
+  bool enableColorTemperature{false};
+  float colorTemperature{6500.0f};  // Kelvin
+
+  // Shadow properties (ShadowAPI)
+  bool shadowEnable{true};
+  std::array<float, 3> shadowColor{{0.0f, 0.0f, 0.0f}};  // RGB
+  float shadowDistance{-1.0f};       // -1 = infinite
+  float shadowFalloff{-1.0f};        // -1 = no falloff
+  float shadowFalloffGamma{1.0f};
+
+  // Shaping properties (ShapingAPI) - for SphereLight and RectLight with optional shaping
+  float shapingFocus{0.0f};
+  std::array<float, 3> shapingFocusTint{{0.0f, 0.0f, 0.0f}};
+  float shapingConeAngle{90.0f};     // degrees
+  float shapingConeSoftness{0.0f};
+  std::string shapingIesFile;        // IES profile file path
+  float shapingIesAngleScale{0.0f};
+  bool shapingIesNormalize{false};
+
+  // Type-specific properties
+  // SphereLight / DiskLight
+  float radius{0.5f};
+
+  // CylinderLight
+  float length{1.0f};  // Y-axis length
+
+  // RectLight
+  float width{1.0f};   // X-axis width
+  float height{1.0f};  // Y-axis height
+  std::string textureFile;  // Texture for RectLight
+
+  // DistantLight
+  float angle{0.53f};  // Angular diameter in degrees
+
+  // DomeLight
+  DomeTextureFormat domeTextureFormat{DomeTextureFormat::Automatic};
+  float guideRadius{1.0e5f};  // Radius for visualization
+  // textureFile is shared with RectLight
+
+  // GeometryLight (mesh lights with MeshLightAPI)
+  int32_t geometry_mesh_id{-1};  // Index to meshes array for geometry lights
+  std::string material_sync_mode;  // MeshLightAPI materialSyncMode
+
+  // Transform (for light direction/position calculations)
+  // These are typically extracted from the node's transform
+  std::array<double, 4> xformMatrix[4];  // Local transform matrix
 };
 
 struct SceneMetadata
@@ -2756,6 +2826,40 @@ class RenderSceneConverter {
   /// @param[in] root XformNode
   ///
   bool BuildNodeHierarchy(const RenderSceneConverterEnv &env, const XformNode &node);
+
+  ///
+  /// Convert UsdLux lights to renderer-friendly RenderLight
+  ///
+
+  bool ConvertSphereLight(const RenderSceneConverterEnv &env,
+                          const Path &light_abs_path,
+                          const SphereLight &light,
+                          RenderLight *rlight_out);
+
+  bool ConvertDistantLight(const RenderSceneConverterEnv &env,
+                           const Path &light_abs_path,
+                           const DistantLight &light,
+                           RenderLight *rlight_out);
+
+  bool ConvertDomeLight(const RenderSceneConverterEnv &env,
+                        const Path &light_abs_path,
+                        const DomeLight &light,
+                        RenderLight *rlight_out);
+
+  bool ConvertRectLight(const RenderSceneConverterEnv &env,
+                        const Path &light_abs_path,
+                        const RectLight &light,
+                        RenderLight *rlight_out);
+
+  bool ConvertDiskLight(const RenderSceneConverterEnv &env,
+                        const Path &light_abs_path,
+                        const DiskLight &light,
+                        RenderLight *rlight_out);
+
+  bool ConvertCylinderLight(const RenderSceneConverterEnv &env,
+                            const Path &light_abs_path,
+                            const CylinderLight &light,
+                            RenderLight *rlight_out);
 
  private:
   ///
