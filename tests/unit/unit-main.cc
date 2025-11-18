@@ -110,6 +110,9 @@ TEST_LIST = {
   { "crate_writer_memory_limit_test", crate_writer_memory_limit_test },
   { "crate_writer_filesize_limit_test", crate_writer_filesize_limit_test },
   { "crate_writer_limit_disable_test", crate_writer_limit_disable_test },
+  { "crate_writer_validation_enabled_test", crate_writer_validation_enabled_test },
+  { "crate_writer_validation_disabled_test", crate_writer_validation_disabled_test },
+  { "crate_writer_compression_test", crate_writer_compression_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif
