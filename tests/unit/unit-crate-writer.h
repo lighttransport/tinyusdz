@@ -57,3 +57,6 @@ void crate_writer_error_context_test(void);
 void crate_writer_memory_limit_test(void);
 void crate_writer_filesize_limit_test(void);
 void crate_writer_limit_disable_test(void);
+void crate_writer_validation_enabled_test(void);
+void crate_writer_validation_disabled_test(void);
+void crate_writer_compression_test(void);
