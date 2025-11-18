@@ -2778,7 +2778,8 @@ class RenderSceneConverter {
   bool ConvertPreviewSurfaceShaderParam(
       const RenderSceneConverterEnv &env, const Path &shader_abs_path,
       const TypedAttributeWithFallback<Animatable<T>> &param,
-      const std::string &param_name, ShaderParam<Dty> &dst_param);
+      const std::string &param_name, ShaderParam<Dty> &dst_param,
+      bool is_materialx = false);
 
   ///
   /// Build (single) vertex indices for RenderMesh.
@@ -2817,9 +2818,9 @@ class RenderSceneConverter {
     const XformNode &node,
     Node &out_rnode);
 
-  void PushInfo(const std::string &msg) { _info += msg; }
-  void PushWarn(const std::string &msg) { _warn += msg; }
-  void PushError(const std::string &msg) { _err += msg; }
+  void PushInfo(const std::string &msg) { _info += msg + "\n"; }
+  void PushWarn(const std::string &msg) { _warn += msg + "\n"; }
+  void PushError(const std::string &msg) { _err += msg + "\n"; }
 
   ///
   /// Call progress callback if set.
