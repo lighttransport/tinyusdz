@@ -4033,5 +4033,103 @@ bool CrateWriter::WriteBytes(const void* data, size_t size) {
   return false;
 }
 
+// ============================================================================
+// Validation Methods (Phase 5)
+// ============================================================================
+
+bool CrateWriter::ValidateStage(const Stage& stage, std::string* err) {
+  // Reset validation state
+  validation_prim_count_ = 0;
+  validation_property_count_ = 0;
+  validation_warnings_.clear();
+  validation_warnings_count_ = 0;
+
+  if (!options_.enable_validation) {
+    return true;  // Validation disabled
+  }
+
+  std::cerr << "[ValidateStage] Starting validation...\n";
+
+  // Check for empty stage
+  if (stage.root_prims().empty()) {
+    std::string warning = "WARNING: Stage has no root prims";
+    if (err) *err = warning;
+    validation_warnings_.push_back(warning);
+    validation_warnings_count_++;
+  }
+
+  // Validate each root prim
+  for (const auto& prim : stage.root_prims()) {
+    validation_prim_count_++;
+
+    // Check prim name is not empty
+    if (prim.element_name().empty()) {
+      std::string warning = "WARNING: Prim has empty name at index " +
+                           std::to_string(validation_prim_count_);
+      validation_warnings_.push_back(warning);
+      validation_warnings_count_++;
+      std::cerr << warning << "\n";
+    }
+
+    // Check for invalid path characters in prim name
+    const std::string& prim_name = prim.element_name();
+    if (prim_name.find('/') != std::string::npos ||
+        prim_name.find('.') != std::string::npos) {
+      std::string warning = "WARNING: Prim name contains invalid characters: " + prim_name;
+      validation_warnings_.push_back(warning);
+      validation_warnings_count_++;
+      std::cerr << warning << "\n";
+    }
+  }
+
+  std::cerr << "[ValidateStage] Validation complete:\n"
+            << "  Prims validated: " << validation_prim_count_ << "\n"
+            << "  Warnings: " << validation_warnings_count_ << "\n";
+
+  return validation_warnings_count_ == 0 || !options_.enable_validation;
+}
+
+bool CrateWriter::ValidateLayer(const Layer& layer, std::string* err) {
+  // Reset validation state
+  validation_prim_count_ = 0;
+  validation_property_count_ = 0;
+  validation_warnings_.clear();
+  validation_warnings_count_ = 0;
+
+  if (!options_.enable_validation) {
+    return true;  // Validation disabled
+  }
+
+  std::cerr << "[ValidateLayer] Starting validation...\n";
+
+  // Note: Layer is forward declared in crate-writer.hh, so we do minimal validation
+  // Actual validation should be done before passing to CrateWriter
+
+  std::string msg = "Layer validation: structure check (detailed validation requires full Layer definition)";
+  std::cerr << "[ValidateLayer] " << msg << "\n";
+
+  if (err) *err = msg;
+  return true;
+}
+
+std::string CrateWriter::GetValidationSummary() const {
+  std::string summary = "Validation Summary:\n";
+  summary += "  Prims: " + std::to_string(validation_prim_count_) + "\n";
+  summary += "  Properties: " + std::to_string(validation_property_count_) + "\n";
+  summary += "  Warnings: " + std::to_string(validation_warnings_count_) + "\n";
+
+  if (!validation_warnings_.empty()) {
+    summary += "\nWarnings:\n";
+    for (size_t i = 0; i < validation_warnings_.size() && i < 10; ++i) {
+      summary += "  [" + std::to_string(i + 1) + "] " + validation_warnings_[i] + "\n";
+    }
+    if (validation_warnings_.size() > 10) {
+      summary += "  ... and " + std::to_string(validation_warnings_.size() - 10) + " more warnings\n";
+    }
+  }
+
+  return summary;
+}
+
 } // namespace experimental
 } // namespace tinyusdz
