@@ -29,6 +29,70 @@ namespace tinyusdz {
 namespace experimental {
 
 ///
+/// ErrorContextStack - Tracks error context during crate writing operations
+///
+/// Provides detailed error messages with full operation history and path context
+///
+class ErrorContextStack {
+ public:
+  ErrorContextStack(int max_depth = 10) : max_depth_(max_depth) {}
+
+  /// Push an operation context onto the stack
+  void Push(const std::string& operation) {
+    if (static_cast<int>(stack_.size()) < max_depth_) {
+      stack_.push_back(operation);
+    }
+  }
+
+  /// Pop an operation context from the stack
+  void Pop() {
+    if (!stack_.empty()) {
+      stack_.pop_back();
+    }
+  }
+
+  /// Get the current full context path
+  std::string GetContextPath() const {
+    if (stack_.empty()) return "";
+
+    std::string result;
+    for (size_t i = 0; i < stack_.size(); ++i) {
+      if (i > 0) result += " -> ";
+      result += stack_[i];
+    }
+    return result;
+  }
+
+  /// Get detailed error message with context
+  std::string GetDetailedErrorMessage(const std::string& base_error) const {
+    if (stack_.empty()) {
+      return base_error;
+    }
+
+    std::string detailed = base_error + "\nContext Stack:\n";
+    for (size_t i = 0; i < stack_.size(); ++i) {
+      detailed += "  [" + std::to_string(i) + "] " + stack_[i] + "\n";
+    }
+    return detailed;
+  }
+
+  /// Check if stack is at maximum depth
+  bool IsMaxDepth() const {
+    return static_cast<int>(stack_.size()) >= max_depth_;
+  }
+
+  /// Clear the entire stack
+  void Clear() { stack_.clear(); }
+
+  /// Get stack size
+  size_t Size() const { return stack_.size(); }
+
+ private:
+  std::vector<std::string> stack_;
+  int max_depth_;
+};
+
+///
 /// CrateWriter - Experimental framework for writing USDC binary files
 ///
 /// This is a bare-bones implementation focusing on core structure.
@@ -135,6 +199,28 @@ public:
   ///
   bool WouldExceedMemoryLimit(int64_t additional_bytes) const {
     return (memory_used_estimate_ + additional_bytes) > options_.max_memory_bytes;
+  }
+
+  // Error context tracking
+  ///
+  /// Get the current error context path
+  ///
+  std::string GetErrorContextPath() const {
+    return error_context_.GetContextPath();
+  }
+
+  ///
+  /// Get detailed error message with full context
+  ///
+  std::string GetDetailedErrorMessage(const std::string& error) const {
+    return error_context_.GetDetailedErrorMessage(error);
+  }
+
+  ///
+  /// Clear the error context stack
+  ///
+  void ClearErrorContext() {
+    error_context_.Clear();
   }
 
   // Configuration options
@@ -268,6 +354,24 @@ private:
 
   /// Extract BlendShape properties (offsets, normalOffsets, pointIndices)
   bool ExtractBlendShapeProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract SphereLight properties (radius, color, intensity, exposure, shaping)
+  bool ExtractSphereLightProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract RectLight properties (width, height, color, intensity, exposure, shaping)
+  bool ExtractRectLightProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract DiskLight properties (radius, color, intensity, exposure, shaping)
+  bool ExtractDiskLightProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract CylinderLight properties (radius, length, color, intensity, exposure, shaping)
+  bool ExtractCylinderLightProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract DistantLight properties (angle, color, intensity, exposure)
+  bool ExtractDistantLightProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract DomeLight properties (texture path, color, intensity, exposure)
+  bool ExtractDomeLightProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Extract common GPrim properties (visibility, purpose, etc.)
   bool ExtractGPrimProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
@@ -421,6 +525,9 @@ private:
   // Memory and file size tracking for resource limits
   int64_t bytes_written_ = 0;           // Current file size in bytes
   int64_t memory_used_estimate_ = 0;    // Estimated memory usage (tokens, strings, paths, specs, etc.)
+
+  // Error context stack for detailed error messages
+  ErrorContextStack error_context_{options_.error_context_depth};
 
   // Deduplication tables
   std::unordered_map<std::string, crate::TokenIndex> token_to_index_;
