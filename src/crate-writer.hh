@@ -112,6 +112,31 @@ public:
   ///
   bool ConvertLayerToSpecs(const Layer& layer, std::string* err = nullptr);
 
+  // Resource tracking and limit enforcement
+  ///
+  /// Get current file size in bytes
+  ///
+  int64_t GetBytesWritten() const { return bytes_written_; }
+
+  ///
+  /// Get estimated memory usage
+  ///
+  int64_t GetMemoryUsageEstimate() const { return memory_used_estimate_; }
+
+  ///
+  /// Check if file size limit would be exceeded
+  ///
+  bool WouldExceedFileSizeLimit(int64_t additional_bytes) const {
+    return (bytes_written_ + additional_bytes) > options_.max_file_size_bytes;
+  }
+
+  ///
+  /// Check if memory limit would be exceeded
+  ///
+  bool WouldExceedMemoryLimit(int64_t additional_bytes) const {
+    return (memory_used_estimate_ + additional_bytes) > options_.max_memory_bytes;
+  }
+
   // Configuration options
   struct Options {
     uint8_t version_major = 0;
@@ -120,6 +145,21 @@ public:
 
     bool enable_compression = true;   // Phase 4: LZ4 compression enabled by default
     bool enable_deduplication = true; // Deduplicate tokens/strings/paths/values
+
+    // Memory and file size limits (with WASM-specific defaults)
+    // These prevent resource exhaustion when processing untrusted USD files
+#ifdef __wasm__
+    // WASM environment has stricter limits
+    int64_t max_memory_bytes = 256 * 1024 * 1024;      // 256 MB default for WASM
+    int64_t max_file_size_bytes = 100 * 1024 * 1024;   // 100 MB default for WASM
+#else
+    // Desktop/server environment limits
+    int64_t max_memory_bytes = 32 * 1024 * 1024 * 1024LL;  // 32 GB default
+    int64_t max_file_size_bytes = 1024 * 1024 * 1024LL;    // 1 GB default
+#endif
+
+    // Error context depth (how many stack frames to include in error messages)
+    int error_context_depth = 5;
   };
 
   void SetOptions(const Options& opts) { options_ = opts; }
@@ -291,6 +331,19 @@ private:
   bool ConvertConnectionToFields(const std::string& conn_name, const Attribute& attr,
                                  const Path& parent_path, std::string* err);
 
+  /// Convert a VariantSet to separate specs (proper USD format)
+  /// Creates specs with SpecType::VariantSet for variant selection metadata
+  bool ConvertVariantSetToFields(const std::string& variantset_name,
+                                 const VariantSet& variantset,
+                                 const Path& parent_path, std::string* err);
+
+  /// Convert a Variant to separate spec (proper USD format)
+  /// Creates a spec with SpecType::Variant containing variant properties and children
+  bool ConvertVariantToFields(const std::string& variant_name,
+                              const Variant& variant,
+                              const Path& variantset_path,
+                              const std::string& variantset_name, std::string* err);
+
   // ======================================================================
   // Value encoding
   // ======================================================================
@@ -364,6 +417,10 @@ private:
 
   bool is_open_ = false;
   bool is_finalized_ = false;
+
+  // Memory and file size tracking for resource limits
+  int64_t bytes_written_ = 0;           // Current file size in bytes
+  int64_t memory_used_estimate_ = 0;    // Estimated memory usage (tokens, strings, paths, specs, etc.)
 
   // Deduplication tables
   std::unordered_map<std::string, crate::TokenIndex> token_to_index_;
