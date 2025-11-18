@@ -277,6 +277,21 @@ bool CrateWriter::ConvertPrimRecursive(
     std::cerr << "WARNING: Failed to add material binding specs: " << (err ? *err : "unknown error") << "\n";
   }
 
+  // After adding prim spec, process VariantSets if present
+  // Variants represent alternative versions of prims/properties
+  const auto& variant_sets = prim.variantSets();
+  if (!variant_sets.empty()) {
+    std::cerr << "DEBUG: Processing " << variant_sets.size() << " VariantSets for " << abs_path_str << "\n";
+    for (const auto& vs_item : variant_sets) {
+      const auto& variantset_name = vs_item.first;
+      const auto& variantset_data = vs_item.second;
+      if (!ConvertVariantSetToFields(variantset_name, variantset_data, prim_path, err)) {
+        if (err) *err = "Failed to convert VariantSet '" + variantset_name + "' for " + abs_path_str + ": " + *err;
+        return false;
+      }
+    }
+  }
+
   // Recursively process children
   for (const auto& child : prim.children()) {
     if (!ConvertPrimRecursive(child, prim_path, err)) {
@@ -372,6 +387,18 @@ bool CrateWriter::ExtractTypeSpecificProperties(
     return ExtractShaderProperties(prim, fields, err);
   } else if (type_name == "BlendShape") {
     return ExtractBlendShapeProperties(prim, fields, err);
+  } else if (type_name == "SphereLight") {
+    return ExtractSphereLightProperties(prim, fields, err);
+  } else if (type_name == "RectLight") {
+    return ExtractRectLightProperties(prim, fields, err);
+  } else if (type_name == "DiskLight") {
+    return ExtractDiskLightProperties(prim, fields, err);
+  } else if (type_name == "CylinderLight") {
+    return ExtractCylinderLightProperties(prim, fields, err);
+  } else if (type_name == "DistantLight") {
+    return ExtractDistantLightProperties(prim, fields, err);
+  } else if (type_name == "DomeLight") {
+    return ExtractDomeLightProperties(prim, fields, err);
   }
 
   // For unknown types or types without specific handlers,
@@ -1855,6 +1882,341 @@ bool CrateWriter::ExtractBlendShapeProperties(
   // TODO: Handle inbetween blend shapes (stored in props with "inbetweens:" namespace)
   // For now, just extract basic properties
 
+  return true;
+}
+
+// ============================================================================
+// UsdLux Light Property Extraction
+// ============================================================================
+
+/// Helper function to extract common light properties
+// Helper to extract common light properties (implemented inline in each light type extractor)
+
+bool CrateWriter::ExtractSphereLightProperties(
+    const Prim& prim,
+    crate::FieldValuePairVector& fields,
+    std::string* err) {
+  const SphereLight* light = prim.data().as<SphereLight>();
+  if (!light) {
+    if (err) *err = "Failed to cast prim to SphereLight";
+    return false;
+  }
+
+  // Extract radius
+  if (light->radius.has_value()) {
+    const Animatable<float>& radius_anim = light->radius.get_value();
+    if (radius_anim.has_default()) {
+      float radius_val;
+      if (radius_anim.get_default(&radius_val)) {
+        crate::CrateValue crate_val;
+        value::Value val(radius_val);
+        if (ConvertValue(val, crate_val, err)) {
+          fields.push_back({"radius", crate_val});
+        }
+      }
+    }
+  }
+
+  // Extract intensity
+  if (light->intensity.has_value()) {
+    const Animatable<float>& intensity_anim = light->intensity.get_value();
+    if (intensity_anim.has_default()) {
+      float intensity_val;
+      if (intensity_anim.get_default(&intensity_val)) {
+        crate::CrateValue crate_val;
+        value::Value val(intensity_val);
+        if (ConvertValue(val, crate_val, err)) {
+          fields.push_back({"intensity", crate_val});
+        }
+      }
+    }
+  }
+
+  // Extract color
+  if (light->color.has_value()) {
+    const Animatable<value::color3f>& color_anim = light->color.get_value();
+    if (color_anim.has_default()) {
+      value::color3f color_val;
+      if (color_anim.get_default(&color_val)) {
+        crate::CrateValue crate_val;
+        value::Value val(color_val);
+        if (ConvertValue(val, crate_val, err)) {
+          fields.push_back({"color", crate_val});
+        }
+      }
+    }
+  }
+
+  // Extract exposure
+  if (light->exposure.has_value()) {
+    const Animatable<float>& exposure_anim = light->exposure.get_value();
+    if (exposure_anim.has_default()) {
+      float exposure_val;
+      if (exposure_anim.get_default(&exposure_val)) {
+        crate::CrateValue crate_val;
+        value::Value val(exposure_val);
+        if (ConvertValue(val, crate_val, err)) {
+          fields.push_back({"exposure", crate_val});
+        }
+      }
+    }
+  }
+
+  std::cerr << "DEBUG: Extracted SphereLight properties\n";
+  return true;
+}
+
+bool CrateWriter::ExtractRectLightProperties(
+    const Prim& prim,
+    crate::FieldValuePairVector& fields,
+    std::string* err) {
+  const RectLight* light = prim.data().as<RectLight>();
+  if (!light) {
+    if (err) *err = "Failed to cast prim to RectLight";
+    return false;
+  }
+
+  // Extract width
+  if (light->width.has_value()) {
+    const Animatable<float>& width_anim = light->width.get_value();
+    if (width_anim.has_default()) {
+      float width_val;
+      if (width_anim.get_default(&width_val)) {
+        crate::CrateValue crate_val;
+        value::Value val(width_val);
+        if (ConvertValue(val, crate_val, err)) {
+          fields.push_back({"width", crate_val});
+        }
+      }
+    }
+  }
+
+  // Extract height
+  if (light->height.has_value()) {
+    const Animatable<float>& height_anim = light->height.get_value();
+    if (height_anim.has_default()) {
+      float height_val;
+      if (height_anim.get_default(&height_val)) {
+        crate::CrateValue crate_val;
+        value::Value val(height_val);
+        if (ConvertValue(val, crate_val, err)) {
+          fields.push_back({"height", crate_val});
+        }
+      }
+    }
+  }
+
+  // Extract intensity
+  if (light->intensity.has_value()) {
+    const Animatable<float>& intensity_anim = light->intensity.get_value();
+    if (intensity_anim.has_default()) {
+      float intensity_val;
+      if (intensity_anim.get_default(&intensity_val)) {
+        crate::CrateValue crate_val;
+        value::Value val(intensity_val);
+        if (ConvertValue(val, crate_val, err)) {
+          fields.push_back({"intensity", crate_val});
+        }
+      }
+    }
+  }
+
+  std::cerr << "DEBUG: Extracted RectLight properties\n";
+  return true;
+}
+
+bool CrateWriter::ExtractDiskLightProperties(
+    const Prim& prim,
+    crate::FieldValuePairVector& fields,
+    std::string* err) {
+  const DiskLight* light = prim.data().as<DiskLight>();
+  if (!light) {
+    if (err) *err = "Failed to cast prim to DiskLight";
+    return false;
+  }
+
+  // Extract radius
+  if (light->radius.has_value()) {
+    const Animatable<float>& radius_anim = light->radius.get_value();
+    if (radius_anim.has_default()) {
+      float radius_val;
+      if (radius_anim.get_default(&radius_val)) {
+        crate::CrateValue crate_val;
+        value::Value val(radius_val);
+        if (ConvertValue(val, crate_val, err)) {
+          fields.push_back({"radius", crate_val});
+        }
+      }
+    }
+  }
+
+  // Extract intensity
+  if (light->intensity.has_value()) {
+    const Animatable<float>& intensity_anim = light->intensity.get_value();
+    if (intensity_anim.has_default()) {
+      float intensity_val;
+      if (intensity_anim.get_default(&intensity_val)) {
+        crate::CrateValue crate_val;
+        value::Value val(intensity_val);
+        if (ConvertValue(val, crate_val, err)) {
+          fields.push_back({"intensity", crate_val});
+        }
+      }
+    }
+  }
+
+  std::cerr << "DEBUG: Extracted DiskLight properties\n";
+  return true;
+}
+
+bool CrateWriter::ExtractCylinderLightProperties(
+    const Prim& prim,
+    crate::FieldValuePairVector& fields,
+    std::string* err) {
+  const CylinderLight* light = prim.data().as<CylinderLight>();
+  if (!light) {
+    if (err) *err = "Failed to cast prim to CylinderLight";
+    return false;
+  }
+
+  // Extract radius
+  if (light->radius.has_value()) {
+    const Animatable<float>& radius_anim = light->radius.get_value();
+    if (radius_anim.has_default()) {
+      float radius_val;
+      if (radius_anim.get_default(&radius_val)) {
+        crate::CrateValue crate_val;
+        value::Value val(radius_val);
+        if (ConvertValue(val, crate_val, err)) {
+          fields.push_back({"radius", crate_val});
+        }
+      }
+    }
+  }
+
+  // Extract length
+  if (light->length.has_value()) {
+    const Animatable<float>& length_anim = light->length.get_value();
+    if (length_anim.has_default()) {
+      float length_val;
+      if (length_anim.get_default(&length_val)) {
+        crate::CrateValue crate_val;
+        value::Value val(length_val);
+        if (ConvertValue(val, crate_val, err)) {
+          fields.push_back({"length", crate_val});
+        }
+      }
+    }
+  }
+
+  // Extract intensity
+  if (light->intensity.has_value()) {
+    const Animatable<float>& intensity_anim = light->intensity.get_value();
+    if (intensity_anim.has_default()) {
+      float intensity_val;
+      if (intensity_anim.get_default(&intensity_val)) {
+        crate::CrateValue crate_val;
+        value::Value val(intensity_val);
+        if (ConvertValue(val, crate_val, err)) {
+          fields.push_back({"intensity", crate_val});
+        }
+      }
+    }
+  }
+
+  std::cerr << "DEBUG: Extracted CylinderLight properties\n";
+  return true;
+}
+
+bool CrateWriter::ExtractDistantLightProperties(
+    const Prim& prim,
+    crate::FieldValuePairVector& fields,
+    std::string* err) {
+  const DistantLight* light = prim.data().as<DistantLight>();
+  if (!light) {
+    if (err) *err = "Failed to cast prim to DistantLight";
+    return false;
+  }
+
+  // Extract angle
+  if (light->angle.has_value()) {
+    const Animatable<float>& angle_anim = light->angle.get_value();
+    if (angle_anim.has_default()) {
+      float angle_val;
+      if (angle_anim.get_default(&angle_val)) {
+        crate::CrateValue crate_val;
+        value::Value val(angle_val);
+        if (ConvertValue(val, crate_val, err)) {
+          fields.push_back({"angle", crate_val});
+        }
+      }
+    }
+  }
+
+  // Extract intensity
+  if (light->intensity.has_value()) {
+    const Animatable<float>& intensity_anim = light->intensity.get_value();
+    if (intensity_anim.has_default()) {
+      float intensity_val;
+      if (intensity_anim.get_default(&intensity_val)) {
+        crate::CrateValue crate_val;
+        value::Value val(intensity_val);
+        if (ConvertValue(val, crate_val, err)) {
+          fields.push_back({"intensity", crate_val});
+        }
+      }
+    }
+  }
+
+  std::cerr << "DEBUG: Extracted DistantLight properties\n";
+  return true;
+}
+
+bool CrateWriter::ExtractDomeLightProperties(
+    const Prim& prim,
+    crate::FieldValuePairVector& fields,
+    std::string* err) {
+  const DomeLight* light = prim.data().as<DomeLight>();
+  if (!light) {
+    if (err) *err = "Failed to cast prim to DomeLight";
+    return false;
+  }
+
+  // Extract texture file path if present
+  if (light->file.has_value()) {
+    const auto& file_opt = light->file.get_value();
+    if (file_opt) {
+      const Animatable<value::AssetPath>& file_anim = *file_opt;
+      if (file_anim.has_default()) {
+        value::AssetPath file_val;
+        if (file_anim.get_default(&file_val)) {
+          crate::CrateValue crate_val;
+          // Store asset path as string
+          value::Value val(file_val.GetAssetPath());
+          if (ConvertValue(val, crate_val, err)) {
+            fields.push_back({"file", crate_val});
+          }
+        }
+      }
+    }
+  }
+
+  // Extract intensity
+  if (light->intensity.has_value()) {
+    const Animatable<float>& intensity_anim = light->intensity.get_value();
+    if (intensity_anim.has_default()) {
+      float intensity_val;
+      if (intensity_anim.get_default(&intensity_val)) {
+        crate::CrateValue crate_val;
+        value::Value val(intensity_val);
+        if (ConvertValue(val, crate_val, err)) {
+          fields.push_back({"intensity", crate_val});
+        }
+      }
+    }
+  }
+
+  std::cerr << "DEBUG: Extracted DomeLight properties\n";
   return true;
 }
 
@@ -4284,12 +4646,18 @@ bool CrateWriter::ConvertVariantToFields(
   }
 
   // Add variant prim children (recursively convert each child prim)
-  // Note: This is a simplified implementation - full variant support would
-  // need to convert the entire prim hierarchy within the variant
-  for (const auto& child_prim : variant.primChildren()) {
-    std::string child_name = child_prim.element_name();
-    std::cerr << "[ConvertVariantToFields] Note: Variant prim children not yet fully supported. "
-              << "Child '" << child_name << "' will be skipped\n";
+  // Variant prim children are full prims that exist only within this variant
+  const auto& child_prims = variant.primChildren();
+  if (!child_prims.empty()) {
+    std::cerr << "[ConvertVariantToFields] Processing " << child_prims.size()
+              << " prim children for variant: " << variant_name << "\n";
+    for (const auto& child_prim : child_prims) {
+      // Recursively convert each prim child (they inherit the variant path context)
+      if (!ConvertPrimRecursive(child_prim, v_path, err)) {
+        if (err) *err = "Failed to convert variant prim child: " + child_prim.element_name() + ": " + *err;
+        return false;
+      }
+    }
   }
 
   // Create the variant spec
