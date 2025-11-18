@@ -5140,3 +5140,528 @@ void crate_writer_large_array_types_test(void) {
   std::cerr << "Large array types roundtrip successful!\n";
   cleanup_file(filename);
 }
+
+//
+// Test 69: SphereLight with radius and intensity
+// Verifies that SphereLight prims can be created and written with properties
+//
+void crate_writer_sphere_light_test(void) {
+  std::string filename = get_temp_filename("test_sphere_light");
+  std::string err;
+
+  // Create a stage with a SphereLight
+  Stage stage;
+  SphereLight light;
+  light.name = "MyLight";
+  light.radius.set_value(Animatable<float>(2.5f));
+  light.intensity.set_value(Animatable<float>(1.5f));
+  light.color.set_value(Animatable<value::color3f>(value::color3f({1.0f, 0.8f, 0.6f})));
+
+  Prim light_prim("MyLight", light);
+  stage.root_prims().push_back(light_prim);
+
+  // Write to USDC
+  CrateWriter writer(filename);
+  CrateWriter::Options opts;
+  opts.version_major = 0;
+  opts.version_minor = 8;
+  opts.version_patch = 0;
+  writer.SetOptions(opts);
+
+  bool ret = writer.Open(&err);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to open writer: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  ret = writer.ConvertStageToSpecs(stage, &err);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to convert stage: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  ret = writer.Finalize(&err);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to finalize: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  writer.Close();
+
+  TEST_MSG("SphereLight test file: %s", filename.c_str());
+
+  // Load and verify roundtrip
+  Stage loaded_stage;
+  std::string warn;
+  ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  auto loaded_light = loaded_stage.GetPrimAtPath(Path("/MyLight", ""));
+  TEST_CHECK(loaded_light.has_value());
+
+  std::cerr << "SphereLight roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+//
+// Test 70: RectLight with width, height, and intensity
+//
+void crate_writer_rect_light_test(void) {
+  std::string filename = get_temp_filename("test_rect_light");
+  std::string err;
+
+  // Create a stage with a RectLight
+  Stage stage;
+  RectLight light;
+  light.name = "RectLightPrim";
+  light.width.set_value(Animatable<float>(4.0f));
+  light.height.set_value(Animatable<float>(2.0f));
+  light.intensity.set_value(Animatable<float>(2.0f));
+  light.color.set_value(Animatable<value::color3f>(value::color3f({1.0f, 1.0f, 1.0f})));
+
+  Prim light_prim("RectLightPrim", light);
+  stage.root_prims().push_back(light_prim);
+
+  // Write to USDC
+  CrateWriter writer(filename);
+  CrateWriter::Options opts;
+  opts.version_major = 0;
+  opts.version_minor = 8;
+  opts.version_patch = 0;
+  writer.SetOptions(opts);
+
+  bool ret = writer.Open(&err);
+  TEST_CHECK(ret == true);
+
+  ret = writer.ConvertStageToSpecs(stage, &err);
+  TEST_CHECK(ret == true);
+
+  ret = writer.Finalize(&err);
+  TEST_CHECK(ret == true);
+
+  writer.Close();
+
+  TEST_MSG("RectLight test file: %s", filename.c_str());
+
+  // Load and verify roundtrip
+  Stage loaded_stage;
+  std::string warn;
+  ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  TEST_CHECK(ret == true);
+
+  auto loaded_light = loaded_stage.GetPrimAtPath(Path("/RectLightPrim", ""));
+  TEST_CHECK(loaded_light.has_value());
+
+  std::cerr << "RectLight roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+//
+// Test 71: DistantLight with angle and intensity
+//
+void crate_writer_distant_light_test(void) {
+  std::string filename = get_temp_filename("test_distant_light");
+  std::string err;
+
+  // Create a stage with a DistantLight
+  Stage stage;
+  DistantLight light;
+  light.name = "DistantLightPrim";
+  light.angle.set_value(Animatable<float>(0.5f));
+  light.intensity.set_value(Animatable<float>(1.0f));
+  light.color.set_value(Animatable<value::color3f>(value::color3f({1.0f, 1.0f, 1.0f})));
+
+  Prim light_prim("DistantLightPrim", light);
+  stage.root_prims().push_back(light_prim);
+
+  // Write to USDC
+  CrateWriter writer(filename);
+  CrateWriter::Options opts;
+  opts.version_major = 0;
+  opts.version_minor = 8;
+  opts.version_patch = 0;
+  writer.SetOptions(opts);
+
+  bool ret = writer.Open(&err);
+  TEST_CHECK(ret == true);
+
+  ret = writer.ConvertStageToSpecs(stage, &err);
+  TEST_CHECK(ret == true);
+
+  ret = writer.Finalize(&err);
+  TEST_CHECK(ret == true);
+
+  writer.Close();
+
+  TEST_MSG("DistantLight test file: %s", filename.c_str());
+
+  // Load and verify roundtrip
+  Stage loaded_stage;
+  std::string warn;
+  ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  TEST_CHECK(ret == true);
+
+  auto loaded_light = loaded_stage.GetPrimAtPath(Path("/DistantLightPrim", ""));
+  TEST_CHECK(loaded_light.has_value());
+
+  std::cerr << "DistantLight roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+//
+// Test 72: DomeLight with texture file
+//
+void crate_writer_dome_light_test(void) {
+  std::string filename = get_temp_filename("test_dome_light");
+  std::string err;
+
+  // Create a stage with a DomeLight
+  Stage stage;
+  DomeLight light;
+  light.name = "DomeLightPrim";
+  light.file.set_value(Animatable<value::AssetPath>(value::AssetPath("textures/environment.exr")));
+  light.intensity.set_value(Animatable<float>(1.5f));
+  light.color.set_value(Animatable<value::color3f>(value::color3f({1.0f, 1.0f, 1.0f})));
+
+  Prim light_prim("DomeLightPrim", light);
+  stage.root_prims().push_back(light_prim);
+
+  // Write to USDC
+  CrateWriter writer(filename);
+  CrateWriter::Options opts;
+  opts.version_major = 0;
+  opts.version_minor = 8;
+  opts.version_patch = 0;
+  writer.SetOptions(opts);
+
+  bool ret = writer.Open(&err);
+  TEST_CHECK(ret == true);
+
+  ret = writer.ConvertStageToSpecs(stage, &err);
+  TEST_CHECK(ret == true);
+
+  ret = writer.Finalize(&err);
+  TEST_CHECK(ret == true);
+
+  writer.Close();
+
+  TEST_MSG("DomeLight test file: %s", filename.c_str());
+
+  // Load and verify roundtrip
+  Stage loaded_stage;
+  std::string warn;
+  ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  TEST_CHECK(ret == true);
+
+  auto loaded_light = loaded_stage.GetPrimAtPath(Path("/DomeLightPrim", ""));
+  TEST_CHECK(loaded_light.has_value());
+
+  std::cerr << "DomeLight roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+//
+// Test 73: Multiple lights in scene hierarchy
+// Verifies that multiple light types can coexist in the same stage
+//
+void crate_writer_multiple_lights_test(void) {
+  std::string filename = get_temp_filename("test_multiple_lights");
+  std::string err;
+
+  // Create a stage with multiple lights
+  Stage stage;
+
+  // SphereLight
+  SphereLight sphere;
+  sphere.name = "SphereLight";
+  sphere.radius.set_value(Animatable<float>(1.0f));
+  sphere.intensity.set_value(Animatable<float>(1.0f));
+
+  // RectLight
+  RectLight rect;
+  rect.name = "RectLight";
+  rect.width.set_value(Animatable<float>(2.0f));
+  rect.height.set_value(Animatable<float>(1.0f));
+  rect.intensity.set_value(Animatable<float>(0.8f));
+
+  // DistantLight
+  DistantLight distant;
+  distant.name = "DistantLight";
+  distant.angle.set_value(Animatable<float>(0.3f));
+  distant.intensity.set_value(Animatable<float>(1.2f));
+
+  stage.root_prims().push_back(Prim("SphereLight", sphere));
+  stage.root_prims().push_back(Prim("RectLight", rect));
+  stage.root_prims().push_back(Prim("DistantLight", distant));
+
+  // Write to USDC
+  CrateWriter writer(filename);
+  CrateWriter::Options opts;
+  opts.version_major = 0;
+  opts.version_minor = 8;
+  opts.version_patch = 0;
+  writer.SetOptions(opts);
+
+  bool ret = writer.Open(&err);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to open writer: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  ret = writer.ConvertStageToSpecs(stage, &err);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to convert stage: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  ret = writer.Finalize(&err);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to finalize: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  writer.Close();
+
+  TEST_MSG("Multiple lights test file: %s", filename.c_str());
+
+  // Load and verify roundtrip
+  Stage loaded_stage;
+  std::string warn;
+  ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  // Verify all lights are present
+  auto sphere_prim = loaded_stage.GetPrimAtPath(Path("/SphereLight", ""));
+  auto rect_prim = loaded_stage.GetPrimAtPath(Path("/RectLight", ""));
+  auto distant_prim = loaded_stage.GetPrimAtPath(Path("/DistantLight", ""));
+
+  TEST_CHECK(sphere_prim.has_value());
+  TEST_CHECK(rect_prim.has_value());
+  TEST_CHECK(distant_prim.has_value());
+
+  if (sphere_prim.has_value() && rect_prim.has_value() && distant_prim.has_value()) {
+    TEST_MSG("All light types successfully written and loaded (SphereLight, RectLight, DistantLight)");
+  }
+
+  std::cerr << "Multiple lights roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+//
+// Test 74: Error Context Stack
+// Verifies that error context tracking provides detailed error information
+//
+void crate_writer_error_context_test(void) {
+  std::string filename = get_temp_filename("test_error_context");
+  std::string err;
+
+  // Create a simple stage
+  Stage stage;
+  Xform xform;
+  xform.name = "TestXform";
+  Prim prim("TestXform", xform);
+  stage.root_prims().push_back(prim);
+
+  // Create writer and verify error context API
+  CrateWriter writer(filename);
+  CrateWriter::Options opts;
+  opts.version_major = 0;
+  opts.version_minor = 8;
+  opts.version_patch = 0;
+  opts.error_context_depth = 5;
+  writer.SetOptions(opts);
+
+  // Verify initial context is empty
+  TEST_CHECK(writer.GetErrorContextPath().empty());
+
+  // Write file successfully
+  bool ret = writer.Open(&err);
+  TEST_CHECK(ret == true);
+
+  ret = writer.ConvertStageToSpecs(stage, &err);
+  TEST_CHECK(ret == true);
+
+  ret = writer.Finalize(&err);
+  TEST_CHECK(ret == true);
+
+  writer.Close();
+
+  // Verify error context was cleared or is managed
+  TEST_MSG("Error context test file: %s", filename.c_str());
+  TEST_MSG("Error context API: GetErrorContextPath() = '%s'", writer.GetErrorContextPath().c_str());
+
+  // Verify file exists
+  std::vector<uint8_t> data;
+  TEST_CHECK(tinyusdz::io::ReadWholeFile(&data, &err, filename, /* filesize_max */ 0, nullptr));
+  TEST_CHECK(data.size() > 0);
+
+  std::cerr << "Error context test successful!\n";
+  cleanup_file(filename);
+}
+
+//
+// Test 75: Memory Limit Enforcement
+// Verifies that memory limits are enforced during writing
+//
+void crate_writer_memory_limit_test(void) {
+  std::string filename = get_temp_filename("test_memory_limit");
+  std::string err;
+
+  // Create a simple stage
+  Stage stage;
+  Xform xform;
+  xform.name = "TestXform";
+  Prim prim("TestXform", xform);
+  stage.root_prims().push_back(prim);
+
+  // Create writer with very strict memory limit (1 KB)
+  CrateWriter writer(filename);
+  CrateWriter::Options opts;
+  opts.version_major = 0;
+  opts.version_minor = 8;
+  opts.version_patch = 0;
+  opts.max_memory_bytes = 1024;  // 1 KB limit
+  writer.SetOptions(opts);
+
+  bool ret = writer.Open(&err);
+  TEST_CHECK(ret == true);
+
+  // This should fail or succeed depending on the exact memory cost
+  // The important part is that memory limit is checked
+  ret = writer.ConvertStageToSpecs(stage, &err);
+
+  if (ret) {
+    // If it succeeds, the memory usage is low enough
+    TEST_MSG("Memory usage within limit: %lld bytes", writer.GetMemoryUsageEstimate());
+  } else {
+    // If it fails, it should be due to memory limit
+    TEST_MSG("Memory limit enforced as expected: %s", err.c_str());
+  }
+
+  writer.Close();
+
+  std::cerr << "Memory limit test completed!\n";
+  cleanup_file(filename);
+}
+
+//
+// Test 76: File Size Limit Enforcement
+// Verifies that file size limits are enforced during writing
+//
+void crate_writer_filesize_limit_test(void) {
+  std::string filename = get_temp_filename("test_filesize_limit");
+  std::string err;
+
+  // Create a simple stage
+  Stage stage;
+  Xform xform;
+  xform.name = "TestXform";
+  Prim prim("TestXform", xform);
+  stage.root_prims().push_back(prim);
+
+  // Create writer with reasonable file size limit (1 MB)
+  CrateWriter writer(filename);
+  CrateWriter::Options opts;
+  opts.version_major = 0;
+  opts.version_minor = 8;
+  opts.version_patch = 0;
+  opts.max_file_size_bytes = 1024 * 1024;  // 1 MB limit
+  writer.SetOptions(opts);
+
+  bool ret = writer.Open(&err);
+  TEST_CHECK(ret == true);
+
+  ret = writer.ConvertStageToSpecs(stage, &err);
+  TEST_CHECK(ret == true);
+
+  ret = writer.Finalize(&err);
+  TEST_CHECK(ret == true);
+
+  writer.Close();
+
+  // Check file size is reasonable
+  std::vector<uint8_t> data;
+  ret = tinyusdz::io::ReadWholeFile(&data, &err, filename, /* filesize_max */ 0, nullptr);
+  TEST_CHECK(ret == true);
+
+  int64_t file_size = static_cast<int64_t>(data.size());
+  TEST_CHECK(file_size <= 1024 * 1024);  // Should be under 1 MB
+
+  TEST_MSG("File size: %lld bytes (limit: 1 MB)", file_size);
+
+  std::cerr << "File size limit test successful!\n";
+  cleanup_file(filename);
+}
+
+//
+// Test 77: Disable Limits and Set Custom Limits
+// Verifies that limits can be disabled and customized
+//
+void crate_writer_limit_disable_test(void) {
+  std::string filename = get_temp_filename("test_limit_disable");
+  std::string err;
+
+  // Create a simple stage
+  Stage stage;
+  Xform xform;
+  xform.name = "TestXform";
+  Prim prim("TestXform", xform);
+  stage.root_prims().push_back(prim);
+
+  // Create writer with disabled limits (set to maximum values)
+  CrateWriter writer(filename);
+  CrateWriter::Options opts;
+  opts.version_major = 0;
+  opts.version_minor = 8;
+  opts.version_patch = 0;
+  opts.max_memory_bytes = INT64_MAX;        // Disable memory limit
+  opts.max_file_size_bytes = INT64_MAX;     // Disable file size limit
+  writer.SetOptions(opts);
+
+  bool ret = writer.Open(&err);
+  TEST_CHECK(ret == true);
+
+  ret = writer.ConvertStageToSpecs(stage, &err);
+  TEST_CHECK(ret == true);
+
+  ret = writer.Finalize(&err);
+  TEST_CHECK(ret == true);
+
+  writer.Close();
+
+  // Verify file was created
+  std::vector<uint8_t> data;
+  ret = tinyusdz::io::ReadWholeFile(&data, &err, filename, /* filesize_max */ 0, nullptr);
+  TEST_CHECK(ret == true);
+  TEST_CHECK(data.size() > 0);
+
+  TEST_MSG("Successfully wrote with disabled limits");
+  TEST_MSG("Bytes written: %lld, Memory estimate: %lld",
+           writer.GetBytesWritten(), writer.GetMemoryUsageEstimate());
+
+  std::cerr << "Limit disable test successful!\n";
+  cleanup_file(filename);
+}

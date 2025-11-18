@@ -101,6 +101,15 @@ TEST_LIST = {
   { "crate_writer_visibility_purpose_test", crate_writer_visibility_purpose_test },
   { "crate_writer_instance_offsets_test", crate_writer_instance_offsets_test },
   { "crate_writer_large_array_types_test", crate_writer_large_array_types_test },
+  { "crate_writer_sphere_light_test", crate_writer_sphere_light_test },
+  { "crate_writer_rect_light_test", crate_writer_rect_light_test },
+  { "crate_writer_distant_light_test", crate_writer_distant_light_test },
+  { "crate_writer_dome_light_test", crate_writer_dome_light_test },
+  { "crate_writer_multiple_lights_test", crate_writer_multiple_lights_test },
+  { "crate_writer_error_context_test", crate_writer_error_context_test },
+  { "crate_writer_memory_limit_test", crate_writer_memory_limit_test },
+  { "crate_writer_filesize_limit_test", crate_writer_filesize_limit_test },
+  { "crate_writer_limit_disable_test", crate_writer_limit_disable_test },
 #if defined(TINYUSDZ_WITH_PXR_COMPAT_API)
   { "pxr_compat_api_test", pxr_compat_api_test },
 #endif
