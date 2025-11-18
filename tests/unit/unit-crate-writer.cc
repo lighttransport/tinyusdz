@@ -758,6 +758,10 @@ void crate_writer_usd_preview_surface_test(void) {
     Animatable<float> opacity_anim(0.85f);
     preview_surface.opacity.set_value(opacity_anim);
 
+    // Set opacityMode to test enum serialization
+    Animatable<UsdPreviewSurface::OpacityMode> opacity_mode_anim(UsdPreviewSurface::OpacityMode::Presence);
+    preview_surface.opacityMode.set_value(opacity_mode_anim);
+
     Animatable<float> ior_anim(1.45f);
     preview_surface.ior.set_value(ior_anim);
 
