@@ -1,0 +1,224 @@
+#usda 1.0
+(
+    doc = """Test file for UsdLux MeshLightAPI
+    This file demonstrates various MeshLight scenarios:
+    - Basic mesh with MeshLightAPI
+    - Mesh light with emissive material
+    - Different materialSyncMode values (materialGlowTintsLight vs independent)
+    """
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "Lights"
+{
+    # Scenario 1: Simple emissive sphere mesh light
+    def Mesh "EmissiveSphere" (
+        apiSchemas = ["MeshLightAPI"]
+    )
+    {
+        uniform bool doubleSided = 1
+        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4, 4, 4]
+        int[] faceVertexIndices = [0, 1, 3, 2, 2, 3, 5, 4, 4, 5, 7, 6, 6, 7, 1, 0, 1, 7, 5, 3, 6, 0, 2, 4]
+        point3f[] points = [(-0.5, -0.5, 0.5), (0.5, -0.5, 0.5), (-0.5, 0.5, 0.5), (0.5, 0.5, 0.5), (-0.5, 0.5, -0.5), (0.5, 0.5, -0.5), (-0.5, -0.5, -0.5), (0.5, -0.5, -0.5)]
+        double3 xformOp:translate = (-2, 1, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        # MeshLightAPI properties
+        float inputs:intensity = 100
+        color3f inputs:color = (1, 0.8, 0.6)
+        bool inputs:normalize = true
+
+        # Material with emission
+        rel material:binding = </Materials/EmissiveMaterial_Orange>
+    }
+
+    # Scenario 2: Rectangle mesh light with materialGlowTintsLight mode
+    def Mesh "EmissiveRectangle" (
+        apiSchemas = ["MeshLightAPI"]
+    )
+    {
+        uniform bool doubleSided = 1
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-1, 0, -0.5), (1, 0, -0.5), (1, 0, 0.5), (-1, 0, 0.5)]
+        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)] (
+            interpolation = "vertex"
+        )
+        double3 xformOp:translate = (0, 2, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        # MeshLightAPI properties
+        float inputs:intensity = 50
+        color3f inputs:color = (0.8, 1, 0.8)
+        bool inputs:normalize = false
+        # materialSyncMode: materialGlowTintsLight means the material emission affects light color
+        token inputs:materialSyncMode = "materialGlowTintsLight"
+
+        rel material:binding = </Materials/EmissiveMaterial_Green>
+    }
+
+    # Scenario 3: Complex mesh light (torus-like) with independent mode
+    def Mesh "EmissiveTorus" (
+        apiSchemas = ["MeshLightAPI"]
+    )
+    {
+        uniform bool doubleSided = 0
+        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4]
+        int[] faceVertexIndices = [
+            0, 1, 5, 4,   1, 2, 6, 5,   2, 3, 7, 6,   3, 0, 4, 7,
+            4, 5, 9, 8,   5, 6, 10, 9,  6, 7, 11, 10, 7, 4, 8, 11,
+            8, 9, 13, 12, 9, 10, 14, 13, 10, 11, 15, 14, 11, 8, 12, 15
+        ]
+        point3f[] points = [
+            # Inner ring at y=0
+            (0.5, 0, 0), (0, 0, 0.5), (-0.5, 0, 0), (0, 0, -0.5),
+            # Outer ring at y=0
+            (1, 0, 0), (0, 0, 1), (-1, 0, 0), (0, 0, -1),
+            # Inner ring at y=0.5
+            (0.5, 0.5, 0), (0, 0.5, 0.5), (-0.5, 0.5, 0), (0, 0.5, -0.5),
+            # Outer ring at y=0.5
+            (1, 0.5, 0), (0, 0.5, 1), (-1, 0.5, 0), (0, 0.5, -1)
+        ]
+        double3 xformOp:translate = (2, 1, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        # MeshLightAPI properties
+        float inputs:intensity = 200
+        color3f inputs:color = (1, 0.2, 0.2)
+        # materialSyncMode: independent means light color is independent of material
+        token inputs:materialSyncMode = "independent"
+
+        rel material:binding = </Materials/EmissiveMaterial_Blue>
+    }
+
+    # Scenario 4: Disk mesh light (many triangles)
+    def Mesh "EmissiveDisk" (
+        apiSchemas = ["MeshLightAPI"]
+    )
+    {
+        uniform bool doubleSided = 1
+        int[] faceVertexCounts = [3, 3, 3, 3, 3, 3, 3, 3]
+        int[] faceVertexIndices = [
+            0, 1, 2,  0, 2, 3,  0, 3, 4,  0, 4, 5,
+            0, 5, 6,  0, 6, 7,  0, 7, 8,  0, 8, 1
+        ]
+        point3f[] points = [
+            # Center
+            (0, 0, 0),
+            # Perimeter (8 points)
+            (1, 0, 0), (0.707, 0, 0.707), (0, 0, 1), (-0.707, 0, 0.707),
+            (-1, 0, 0), (-0.707, 0, -0.707), (0, 0, -1), (0.707, 0, -0.707)
+        ]
+        normal3f[] normals = [
+            (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0),
+            (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)
+        ] (
+            interpolation = "vertex"
+        )
+        double3 xformOp:translate = (0, 0.5, 2)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+
+        # MeshLightAPI properties with color temperature
+        float inputs:intensity = 150
+        color3f inputs:color = (1, 1, 1)
+        bool inputs:enableColorTemperature = true
+        float inputs:colorTemperature = 6500  # Daylight white
+        bool inputs:normalize = true
+
+        rel material:binding = </Materials/EmissiveMaterial_White>
+    }
+}
+
+def Scope "Materials"
+{
+    def Material "EmissiveMaterial_Orange"
+    {
+        token outputs:surface.connect = </Materials/EmissiveMaterial_Orange/Shader.outputs:surface>
+
+        def Shader "Shader"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:emissiveColor = (1, 0.5, 0)
+            float inputs:metallic = 0
+            float inputs:roughness = 0.5
+            token outputs:surface
+        }
+    }
+
+    def Material "EmissiveMaterial_Green"
+    {
+        token outputs:surface.connect = </Materials/EmissiveMaterial_Green/Shader.outputs:surface>
+
+        def Shader "Shader"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:emissiveColor = (0, 1, 0)
+            float inputs:metallic = 0
+            float inputs:roughness = 0.5
+            token outputs:surface
+        }
+    }
+
+    def Material "EmissiveMaterial_Blue"
+    {
+        token outputs:surface.connect = </Materials/EmissiveMaterial_Blue/Shader.outputs:surface>
+
+        def Shader "Shader"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:emissiveColor = (0, 0.3, 1)
+            float inputs:metallic = 0
+            float inputs:roughness = 0.5
+            token outputs:surface
+        }
+    }
+
+    def Material "EmissiveMaterial_White"
+    {
+        token outputs:surface.connect = </Materials/EmissiveMaterial_White/Shader.outputs:surface>
+
+        def Shader "Shader"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:emissiveColor = (1, 1, 1)
+            float inputs:metallic = 0
+            float inputs:roughness = 0.5
+            token outputs:surface
+        }
+    }
+}
+
+# Reference scene with ground plane for context
+def Xform "Scene"
+{
+    def Mesh "GroundPlane"
+    {
+        uniform bool doubleSided = 0
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-5, 0, -5), (5, 0, -5), (5, 0, 5), (-5, 0, 5)]
+        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)] (
+            interpolation = "vertex"
+        )
+
+        rel material:binding = </Materials/GroundMaterial>
+    }
+}
+
+def Scope "Materials"
+{
+    def Material "GroundMaterial"
+    {
+        token outputs:surface.connect = </Materials/GroundMaterial/Shader.outputs:surface>
+
+        def Shader "Shader"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.18, 0.18, 0.18)
+            float inputs:metallic = 0
+            float inputs:roughness = 0.8
+            token outputs:surface
+        }
+    }
+}

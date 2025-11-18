@@ -224,9 +224,190 @@ tinyusdz_test --mtlx 04_complete_scene.usda
 
 ---
 
+### 06_mesh_lights.usda
+**MeshLightAPI Test Cases**
+
+Demonstrates:
+- `MeshLightAPI` - Converting geometry into area lights
+- Multiple mesh types as emissive lights
+- `materialSyncMode` parameter variants
+- Different mesh light shapes (cube, rectangle, torus, disk)
+
+**Test Scenarios:**
+
+1. **EmissiveSphere** - Simple emissive cube mesh
+   - Basic MeshLightAPI application
+   - Intensity: 100, orange color
+   - Normalize enabled for physical correctness
+   - Orange emissive material
+
+2. **EmissiveRectangle** - Rectangle area light
+   - `materialSyncMode: materialGlowTintsLight`
+   - Material emission color affects light output
+   - Green tinted light synchronized with material
+   - Positioned overhead for general illumination
+
+3. **EmissiveTorus** - Complex multi-faced mesh light
+   - `materialSyncMode: independent`
+   - Light color independent of material emission
+   - Red light output despite blue material
+   - Demonstrates complex geometry as light source
+
+4. **EmissiveDisk** - Circular disk light (triangulated)
+   - Color temperature enabled (6500K daylight)
+   - Multiple triangular faces forming disk
+   - White emissive material
+   - Normalize enabled
+
+**Key Features:**
+- Material binding to emissive materials
+- Double-sided vs single-sided emission
+- Different materialSyncMode behaviors
+- Various mesh topologies as light sources
+
+---
+
+### 07_animated_mesh_lights.usda
+**Animated MeshLightAPI with Time Samples**
+
+Demonstrates:
+- Time-sampled light properties
+- Animated transforms for moving lights
+- Color animation and pulsing effects
+- Color temperature animation
+
+**Test Scenarios:**
+
+1. **PulsingSphere** - Intensity animation
+   - Pulsing effect: 10 → 500 → 10 intensity over time
+   - Time samples at frames 1, 30, 60, 90, 120
+   - Orange-red color
+   - Demonstrates dramatic intensity changes
+
+2. **ColorChangingRect** - Color animation
+   - Color cycling: Red → Yellow → Green → Cyan → Red
+   - Smooth color transitions using time samples
+   - `materialSyncMode: independent` for controlled color
+   - Fixed intensity, animated hue
+
+3. **OrbitingLight** - Transform animation
+   - Circular orbital motion
+   - Animated translate transform
+   - Fixed light properties, moving position
+   - Blue colored light
+
+4. **ColorTempLight** - Color temperature animation
+   - Animates between 2700K (warm) and 6500K (cool)
+   - Demonstrates white balance shifts
+   - Warm incandescent → neutral → cool daylight cycle
+   - Color temperature physically drives color output
+
+**Key Features:**
+- `.timeSamples` syntax for property animation
+- Multiple properties can be animated independently
+- Transform animation vs property animation
+- Timeline: 120 frames at 24 fps (5 seconds)
+
+**Technical Notes:**
+- Color temperature overrides explicit color when enabled
+- Time samples interpolate linearly between keyframes
+- Transform animation moves entire mesh and its emission
+- Material properties can also be time-sampled
+
+---
+
+## MeshLightAPI Concepts
+
+### Geometry as Light Source
+
+MeshLightAPI converts any mesh geometry into an area light:
+- Each face emits light according to its area
+- Supports complex shapes and topologies
+- More physically accurate than point/directional lights
+- Computationally expensive for many faces
+
+### materialSyncMode
+
+Controls interaction between material emission and light output:
+
+| Mode | Behavior |
+|------|----------|
+| `materialGlowTintsLight` | Material emission color multiplies with light color |
+| `independent` | Light color is independent of material |
+| `noMaterialResponse` | Mesh doesn't receive lighting from other sources |
+
+### When to Use Mesh Lights
+
+**Advantages:**
+- Physically accurate soft shadows
+- Natural light falloff for area sources
+- Realistic illumination for large emissive surfaces
+- Supports complex custom shapes
+
+**Disadvantages:**
+- Higher computational cost than analytic lights
+- Requires tessellated geometry (more faces = more cost)
+- May need many samples for noise-free rendering
+
+**Best For:**
+- Light panels and strips
+- Emissive screens and displays
+- Neon signs and lit signage
+- Architectural lighting (windows, ceiling panels)
+- Sci-fi glowing elements
+
+---
+
+## Testing These Files
+
+### With TinyUSDZ
+
+```bash
+# Parse and validate mesh lights
+tinyusdz_viewer 06_mesh_lights.usda
+
+# Test animated mesh lights
+tinyusdz_viewer 07_animated_mesh_lights.usda --frame 60
+
+# Convert to render scene
+tinyusdz_test --tydra 06_mesh_lights.usda
+
+# Export to Three.js
+tinyusdz_export --threejs 07_animated_mesh_lights.usda -o output.json
+```
+
+### Expected Behavior
+
+1. **Light Parsing**
+   - MeshLightAPI schema detected on mesh prims
+   - Light properties extracted (intensity, color, normalize, etc.)
+   - materialSyncMode correctly parsed
+   - Time-sampled properties handled
+
+2. **Conversion to RenderScene**
+   - Meshes with MeshLightAPI create RenderLight entries
+   - RenderLight.lightType = Geometry
+   - geometry_mesh_id references the mesh
+   - material_sync_mode stored for renderer
+
+3. **JSON Serialization**
+   - Light exports as JSON with type "MeshEmissive"
+   - Includes mesh reference via geometry_mesh_id
+   - Material sync mode included in userData
+   - Time-sampled values exported at current timecode
+
+4. **Three.js Export**
+   - Geometry lights exported with mesh references
+   - Emissive material properly set
+   - Animation tracks created for time-sampled properties
+   - userData contains UsdLux-specific parameters
+
+---
+
 ## References
 
 - [MaterialX Specification v1.38](https://materialx.org/assets/MaterialX.v1.38D1.Spec.pdf)
 - [MaterialX PBR Spec](https://materialx.org/assets/MaterialX.v1.38.PBRSpec.pdf)
 - [USD Lux Schema](https://openusd.org/release/api/usd_lux_page_front.html)
+- [USD MeshLightAPI](https://openusd.org/release/api/class_usd_lux_mesh_light_a_p_i.html)
 - [TinyUSDZ Documentation](../../../README.md)

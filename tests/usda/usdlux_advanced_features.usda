@@ -1,0 +1,134 @@
+#usda 1.0
+(
+    doc = "Advanced UsdLux features - IES profiles, shaping, portals, light filters"
+    defaultPrim = "Scene"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "Scene"
+{
+    def Scope "Lights"
+    {
+        # IES Profile Light (Photometric data)
+        def SphereLight "IESLight"
+        {
+            color3f inputs:color = (1.0, 0.9, 0.8)
+            float inputs:intensity = 500.0
+            float inputs:radius = 0.1
+
+            # IES photometric profile
+            asset inputs:shaping:ies:file = @./lights/chandelier.ies@
+            bool inputs:shaping:ies:normalize = true
+            float inputs:shaping:ies:angleScale = 1.0
+
+            double3 xformOp:translate = (0, 3, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        # Shaped Cylinder Light (Gobo/Cookie pattern)
+        def CylinderLight "GoboLight"
+        {
+            color3f inputs:color = (0.8, 0.6, 1.0)
+            float inputs:intensity = 200.0
+            float inputs:radius = 0.15
+            float inputs:length = 0.3
+
+            # Shaping with texture (gobo/cookie)
+            float inputs:shaping:cone:angle = 60.0
+            float inputs:shaping:cone:softness = 0.1
+            float inputs:shaping:focus = 0.5
+            color3f inputs:shaping:focus:tint = (0.8, 0.6, 1.0)
+
+            double3 xformOp:translate = (3, 4, 2)
+            double3 xformOp:rotateXYZ = (-45, -30, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+        }
+
+        # Rect Light with texture
+        def RectLight "TexturedPanel"
+        {
+            color3f inputs:color = (1.0, 1.0, 1.0)
+            float inputs:intensity = 100.0
+            float inputs:width = 3.0
+            float inputs:height = 2.0
+
+            # Texture for the light panel
+            asset inputs:texture:file = @./textures/light_panel.png@
+
+            # Shadow properties with falloff
+            bool inputs:shadow:enable = true
+            color3f inputs:shadow:color = (0.1, 0.1, 0.15)
+            float inputs:shadow:distance = 10.0
+            float inputs:shadow:falloff = 2.0
+            float inputs:shadow:falloffGamma = 1.0
+
+            double3 xformOp:translate = (-4, 2.5, 0)
+            double3 xformOp:rotateXYZ = (0, 90, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+        }
+
+        # Dome Light with HDR texture
+        def DomeLight "StudioHDRI"
+        {
+            color3f inputs:color = (1.0, 1.0, 1.0)
+            float inputs:intensity = 1.0
+            float inputs:exposure = 0.0
+
+            # HDR environment texture
+            asset inputs:texture:file = @./hdri/studio_4k.exr@
+            token inputs:texture:format = "latlong"
+
+            # Guide radius for UI visualization
+            float inputs:guideRadius = 100.0
+
+            # Portal for interior rendering optimization
+            # (Portals help guide dome light sampling through windows/openings)
+            # rel portals = </Scene/Lights/WindowPortals>
+        }
+
+        # Light with all diffuse/specular controls
+        def SphereLight "ControlledLight"
+        {
+            color3f inputs:color = (1.0, 1.0, 1.0)
+            float inputs:intensity = 150.0
+            float inputs:radius = 0.3
+
+            # Separate diffuse and specular contribution
+            float inputs:diffuse = 1.0
+            float inputs:specular = 0.5  # Reduced specular highlights
+
+            # Normalize makes intensity energy-conserving
+            bool inputs:normalize = true
+
+            double3 xformOp:translate = (2, 3, 4)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+    }
+
+    # Test geometry
+    def Xform "TestObjects"
+    {
+        def Cube "TestCube"
+        {
+            double size = 1.0
+            double3 xformOp:translate = (-2, 0.5, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Sphere "TestSphere"
+        {
+            double radius = 0.5
+            double3 xformOp:translate = (0, 0.5, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def Cylinder "TestCylinder"
+        {
+            double radius = 0.4
+            double height = 1.0
+            double3 xformOp:translate = (2, 0.5, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+    }
+}

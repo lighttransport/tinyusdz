@@ -1373,6 +1373,53 @@ class TinyUSDZLoaderNative {
     return result;
   }
 
+  int numLights() const { return render_scene_.lights.size(); }
+
+  // Get light with format parameter (json or xml)
+  emscripten::val getLight(int light_id, const std::string& format) const {
+    emscripten::val result = emscripten::val::object();
+
+    if (!loaded_) {
+      result.set("error", "Scene not loaded");
+      return result;
+    }
+
+    if (light_id < 0 || light_id >= render_scene_.lights.size()) {
+      result.set("error", "Invalid light ID");
+      return result;
+    }
+
+    const auto &light = render_scene_.lights[light_id];
+
+    // Determine serialization format
+    tinyusdz::tydra::SerializationFormat serFormat;
+    if (format == "xml") {
+      serFormat = tinyusdz::tydra::SerializationFormat::XML;
+    } else if (format == "json") {
+      serFormat = tinyusdz::tydra::SerializationFormat::JSON;
+    } else {
+      result.set("error", "Unsupported format. Use 'json' or 'xml'");
+      return result;
+    }
+
+    // Use the new serialization function with RenderScene for mesh info
+    auto serialized = tinyusdz::tydra::serializeLight(light, serFormat, &render_scene_);
+
+    if (serialized.has_value()) {
+      result.set("data", serialized.value());
+      result.set("format", format);
+    } else {
+      result.set("error", serialized.error());
+    }
+
+    return result;
+  }
+
+  // Legacy method for backward compatibility (defaults to JSON)
+  emscripten::val getLight(int light_id) const {
+    return getLight(light_id, "json");
+  }
+
   emscripten::val getTexture(int tex_id) const {
     emscripten::val tex = emscripten::val::object();
 
@@ -2719,6 +2766,9 @@ EMSCRIPTEN_BINDINGS(tinyusdz_module) {
       .function("getMaterial", select_overload<emscripten::val(int) const>(&TinyUSDZLoaderNative::getMaterial))
       .function("getMaterialWithFormat", select_overload<emscripten::val(int, const std::string&) const>(&TinyUSDZLoaderNative::getMaterial))
       .function("numMaterials", &TinyUSDZLoaderNative::numMaterials)
+      .function("getLight", select_overload<emscripten::val(int) const>(&TinyUSDZLoaderNative::getLight))
+      .function("getLightWithFormat", select_overload<emscripten::val(int, const std::string&) const>(&TinyUSDZLoaderNative::getLight))
+      .function("numLights", &TinyUSDZLoaderNative::numLights)
       .function("getTexture", &TinyUSDZLoaderNative::getTexture)
       .function("getImage", &TinyUSDZLoaderNative::getImage)
       .function("getDefaultRootNodeId",
