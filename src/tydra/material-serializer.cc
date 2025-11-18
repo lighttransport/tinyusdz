@@ -368,5 +368,151 @@ nonstd::expected<std::string, std::string> serializeMaterial(
   return nonstd::make_unexpected("Unsupported serialization format");
 }
 
+nonstd::expected<std::string, std::string> serializeLight(
+    const RenderLight& light,
+    SerializationFormat format,
+    const RenderScene* renderScene) {
+
+  if (format == SerializationFormat::JSON) {
+    std::stringstream json;
+    json << "{";
+    json << "\"name\": \"" << light.name << "\",";
+    json << "\"abs_path\": \"" << light.abs_path << "\",";
+
+    // Light type
+    json << "\"type\": \"";
+    switch (light.lightType) {
+      case RenderLight::LightType::Point:
+        json << "Point";
+        break;
+      case RenderLight::LightType::Directional:
+        json << "Directional";
+        break;
+      case RenderLight::LightType::Rect:
+        json << "Rect";
+        break;
+      case RenderLight::LightType::Disk:
+        json << "Disk";
+        break;
+      case RenderLight::LightType::Cylinder:
+        json << "Cylinder";
+        break;
+      case RenderLight::LightType::Dome:
+        json << "Dome";
+        break;
+      case RenderLight::LightType::Geometry:
+        json << "Geometry";
+        break;
+    }
+    json << "\",";
+
+    // Common properties
+    json << "\"color\": [" << light.color[0] << ", " << light.color[1] << ", " << light.color[2] << "],";
+    json << "\"intensity\": " << light.intensity << ",";
+    json << "\"exposure\": " << light.exposure << ",";
+    json << "\"diffuse\": " << light.diffuse << ",";
+    json << "\"specular\": " << light.specular << ",";
+    json << "\"normalize\": " << (light.normalize ? "true" : "false") << ",";
+
+    // Color temperature
+    json << "\"enableColorTemperature\": " << (light.enableColorTemperature ? "true" : "false") << ",";
+    json << "\"colorTemperature\": " << light.colorTemperature << ",";
+
+    // Shadow properties
+    json << "\"shadow\": {";
+    json << "\"enable\": " << (light.shadowEnable ? "true" : "false") << ",";
+    json << "\"color\": [" << light.shadowColor[0] << ", " << light.shadowColor[1] << ", " << light.shadowColor[2] << "],";
+    json << "\"distance\": " << light.shadowDistance << ",";
+    json << "\"falloff\": " << light.shadowFalloff << ",";
+    json << "\"falloffGamma\": " << light.shadowFalloffGamma;
+    json << "},";
+
+    // Shaping properties (for Point/Rect lights with shaping)
+    json << "\"shaping\": {";
+    json << "\"focus\": " << light.shapingFocus << ",";
+    json << "\"focusTint\": [" << light.shapingFocusTint[0] << ", " << light.shapingFocusTint[1] << ", " << light.shapingFocusTint[2] << "],";
+    json << "\"coneAngle\": " << light.shapingConeAngle << ",";
+    json << "\"coneSoftness\": " << light.shapingConeSoftness << ",";
+    json << "\"iesFile\": \"" << light.shapingIesFile << "\",";
+    json << "\"iesAngleScale\": " << light.shapingIesAngleScale << ",";
+    json << "\"iesNormalize\": " << (light.shapingIesNormalize ? "true" : "false");
+    json << "},";
+
+    // Type-specific properties
+    json << "\"properties\": {";
+
+    switch (light.lightType) {
+      case RenderLight::LightType::Point:
+      case RenderLight::LightType::Disk:
+        json << "\"radius\": " << light.radius;
+        break;
+
+      case RenderLight::LightType::Cylinder:
+        json << "\"radius\": " << light.radius << ",";
+        json << "\"length\": " << light.length;
+        break;
+
+      case RenderLight::LightType::Rect:
+        json << "\"width\": " << light.width << ",";
+        json << "\"height\": " << light.height;
+        if (!light.textureFile.empty()) {
+          json << ",\"textureFile\": \"" << light.textureFile << "\"";
+        }
+        break;
+
+      case RenderLight::LightType::Directional:
+        json << "\"angle\": " << light.angle;
+        break;
+
+      case RenderLight::LightType::Dome:
+        json << "\"textureFormat\": \"";
+        switch (light.domeTextureFormat) {
+          case RenderLight::DomeTextureFormat::Automatic:
+            json << "automatic";
+            break;
+          case RenderLight::DomeTextureFormat::Latlong:
+            json << "latlong";
+            break;
+          case RenderLight::DomeTextureFormat::MirroredBall:
+            json << "mirroredBall";
+            break;
+          case RenderLight::DomeTextureFormat::Angular:
+            json << "angular";
+            break;
+        }
+        json << "\",";
+        json << "\"guideRadius\": " << light.guideRadius;
+        if (!light.textureFile.empty()) {
+          json << ",\"textureFile\": \"" << light.textureFile << "\"";
+        }
+        break;
+
+      case RenderLight::LightType::Geometry:
+        json << "\"geometryMeshId\": " << light.geometry_mesh_id << ",";
+        json << "\"materialSyncMode\": \"" << light.material_sync_mode << "\"";
+
+        // Include mesh info if renderScene is provided
+        if (renderScene && light.geometry_mesh_id >= 0 &&
+            static_cast<size_t>(light.geometry_mesh_id) < renderScene->meshes.size()) {
+          const auto& mesh = renderScene->meshes[static_cast<size_t>(light.geometry_mesh_id)];
+          json << ",\"meshName\": \"" << mesh.prim_name << "\"";
+          json << ",\"meshPath\": \"" << mesh.abs_path << "\"";
+        }
+        break;
+    }
+
+    json << "}";  // Close properties
+    json << "}";  // Close root
+
+    return json.str();
+
+  } else if (format == SerializationFormat::XML) {
+    // XML serialization for lights not implemented yet
+    return nonstd::make_unexpected("XML serialization for lights not yet implemented");
+  }
+
+  return nonstd::make_unexpected("Unsupported serialization format");
+}
+
 } // namespace tydra
 } // namespace tinyusdz
