@@ -362,12 +362,16 @@ bool CrateWriter::ExtractTypeSpecificProperties(
     return ExtractBasisCurvesProperties(prim, fields, err);
   } else if (type_name == "NurbsCurves") {
     return ExtractNurbsCurvesProperties(prim, fields, err);
+  } else if (type_name == "PointInstancer") {
+    return ExtractPointInstancerProperties(prim, fields, err);
   } else if (type_name == "GeomSubset") {
     return ExtractGeomSubsetProperties(prim, fields, err);
   } else if (type_name == "Material") {
     return ExtractMaterialProperties(prim, prim_path, fields, err);
   } else if (type_name == "Shader") {
     return ExtractShaderProperties(prim, fields, err);
+  } else if (type_name == "BlendShape") {
+    return ExtractBlendShapeProperties(prim, fields, err);
   }
 
   // For unknown types or types without specific handlers,
@@ -519,6 +523,180 @@ bool CrateWriter::ExtractMeshProperties(
         }
       }
     }
+  }
+
+  // Extract subdivision surface corner properties
+  // cornerIndices - indices of corner vertices
+  if (mesh->cornerIndices.has_value()) {
+    auto corner_indices_animatable = mesh->cornerIndices.get_value();
+    if (corner_indices_animatable && corner_indices_animatable->has_default()) {
+      std::vector<int32_t> corner_indices_val;
+      if (corner_indices_animatable->get_default(&corner_indices_val)) {
+        size_t size_before = corner_indices_val.size();
+        crate::CrateValue crate_val;
+        value::Value corner_indices_value(corner_indices_val);
+        if (ConvertValue(corner_indices_value, crate_val, err)) {
+          fields.push_back({"cornerIndices", crate_val});
+          std::cerr << "DEBUG: Extracted " << size_before << " cornerIndices\n";
+        }
+      }
+    }
+  }
+
+  // cornerSharpnesses - sharpness values for corners
+  if (mesh->cornerSharpnesses.has_value()) {
+    auto corner_sharp_animatable = mesh->cornerSharpnesses.get_value();
+    if (corner_sharp_animatable && corner_sharp_animatable->has_default()) {
+      std::vector<float> corner_sharp_val;
+      if (corner_sharp_animatable->get_default(&corner_sharp_val)) {
+        size_t size_before = corner_sharp_val.size();
+        crate::CrateValue crate_val;
+        value::Value corner_sharp_value(corner_sharp_val);
+        if (ConvertValue(corner_sharp_value, crate_val, err)) {
+          fields.push_back({"cornerSharpnesses", crate_val});
+          std::cerr << "DEBUG: Extracted " << size_before << " cornerSharpnesses\n";
+        }
+      }
+    }
+  }
+
+  // Extract crease properties
+  // creaseIndices - indices of crease edge endpoints
+  if (mesh->creaseIndices.has_value()) {
+    auto crease_indices_animatable = mesh->creaseIndices.get_value();
+    if (crease_indices_animatable && crease_indices_animatable->has_default()) {
+      std::vector<int32_t> crease_indices_val;
+      if (crease_indices_animatable->get_default(&crease_indices_val)) {
+        size_t size_before = crease_indices_val.size();
+        crate::CrateValue crate_val;
+        value::Value crease_indices_value(crease_indices_val);
+        if (ConvertValue(crease_indices_value, crate_val, err)) {
+          fields.push_back({"creaseIndices", crate_val});
+          std::cerr << "DEBUG: Extracted " << size_before << " creaseIndices\n";
+        }
+      }
+    }
+  }
+
+  // creaseLengths - number of edges in each crease chain
+  if (mesh->creaseLengths.has_value()) {
+    auto crease_lengths_animatable = mesh->creaseLengths.get_value();
+    if (crease_lengths_animatable && crease_lengths_animatable->has_default()) {
+      std::vector<int32_t> crease_lengths_val;
+      if (crease_lengths_animatable->get_default(&crease_lengths_val)) {
+        size_t size_before = crease_lengths_val.size();
+        crate::CrateValue crate_val;
+        value::Value crease_lengths_value(crease_lengths_val);
+        if (ConvertValue(crease_lengths_value, crate_val, err)) {
+          fields.push_back({"creaseLengths", crate_val});
+          std::cerr << "DEBUG: Extracted " << size_before << " creaseLengths\n";
+        }
+      }
+    }
+  }
+
+  // creaseSharpnesses - sharpness values for creases
+  if (mesh->creaseSharpnesses.has_value()) {
+    auto crease_sharp_animatable = mesh->creaseSharpnesses.get_value();
+    if (crease_sharp_animatable && crease_sharp_animatable->has_default()) {
+      std::vector<float> crease_sharp_val;
+      if (crease_sharp_animatable->get_default(&crease_sharp_val)) {
+        size_t size_before = crease_sharp_val.size();
+        crate::CrateValue crate_val;
+        value::Value crease_sharp_value(crease_sharp_val);
+        if (ConvertValue(crease_sharp_value, crate_val, err)) {
+          fields.push_back({"creaseSharpnesses", crate_val});
+          std::cerr << "DEBUG: Extracted " << size_before << " creaseSharpnesses\n";
+        }
+      }
+    }
+  }
+
+  // Extract hole indices
+  if (mesh->holeIndices.has_value()) {
+    auto hole_indices_animatable = mesh->holeIndices.get_value();
+    if (hole_indices_animatable && hole_indices_animatable->has_default()) {
+      std::vector<int32_t> hole_indices_val;
+      if (hole_indices_animatable->get_default(&hole_indices_val)) {
+        size_t size_before = hole_indices_val.size();
+        crate::CrateValue crate_val;
+        value::Value hole_indices_value(hole_indices_val);
+        if (ConvertValue(hole_indices_value, crate_val, err)) {
+          fields.push_back({"holeIndices", crate_val});
+          std::cerr << "DEBUG: Extracted " << size_before << " holeIndices\n";
+        }
+      }
+    }
+  }
+
+  // Extract subdivision control attributes
+  // interpolateBoundary - TypedAttributeWithFallback<Animatable<InterpolateBoundary>>
+  if (mesh->interpolateBoundary.has_value()) {
+    auto interp_boundary_anim = mesh->interpolateBoundary.get_value();
+    if (interp_boundary_anim.has_default()) {
+      GeomMesh::InterpolateBoundary interp_val;
+      if (interp_boundary_anim.get_default(&interp_val)) {
+        crate::CrateValue crate_val;
+        value::Value val(static_cast<int32_t>(interp_val));
+        if (ConvertValue(val, crate_val, err)) {
+          fields.push_back({"interpolateBoundary", crate_val});
+          std::cerr << "DEBUG: Extracted interpolateBoundary\n";
+        }
+      }
+    }
+  }
+
+  // subdivisionScheme - TypedAttributeWithFallback<SubdivisionScheme> (no Animatable!)
+  if (mesh->subdivisionScheme.has_value()) {
+    const auto& subdiv_scheme = mesh->subdivisionScheme.get_value();
+    crate::CrateValue crate_val;
+    value::Value val(static_cast<int32_t>(subdiv_scheme));
+    if (ConvertValue(val, crate_val, err)) {
+      fields.push_back({"subdivisionScheme", crate_val});
+      std::cerr << "DEBUG: Extracted subdivisionScheme\n";
+    }
+  }
+
+  // faceVaryingLinearInterpolation - TypedAttributeWithFallback<Animatable<FaceVaryingLinearInterpolation>>
+  if (mesh->faceVaryingLinearInterpolation.has_value()) {
+    auto fv_interp_anim = mesh->faceVaryingLinearInterpolation.get_value();
+    if (fv_interp_anim.has_default()) {
+      GeomMesh::FaceVaryingLinearInterpolation fv_interp_val;
+      if (fv_interp_anim.get_default(&fv_interp_val)) {
+        crate::CrateValue crate_val;
+        value::Value val(static_cast<int32_t>(fv_interp_val));
+        if (ConvertValue(val, crate_val, err)) {
+          fields.push_back({"faceVaryingLinearInterpolation", crate_val});
+          std::cerr << "DEBUG: Extracted faceVaryingLinearInterpolation\n";
+        }
+      }
+    }
+  }
+
+  // Extract blend shapes (token array)
+  if (mesh->blendShapes.has_value()) {
+    auto blend_shapes_val = mesh->blendShapes.get_value();
+    if (blend_shapes_val) {
+      size_t size_before = blend_shapes_val->size();
+      crate::CrateValue crate_val;
+      value::Value val(*blend_shapes_val);
+      if (ConvertValue(val, crate_val, err)) {
+        fields.push_back({"blendShapes", crate_val});
+        std::cerr << "DEBUG: Extracted " << size_before << " blendShapes\n";
+      }
+    }
+  }
+
+  // Extract skeleton relationship
+  if (mesh->skeleton) {
+    // Relationships are handled separately
+    std::cerr << "DEBUG: Mesh has skeleton relationship\n";
+  }
+
+  // Extract blend shape targets relationship
+  if (mesh->blendShapeTargets) {
+    // Relationships are handled separately
+    std::cerr << "DEBUG: Mesh has blendShapeTargets relationship\n";
   }
 
   // Extract common GPrim properties
@@ -1280,9 +1458,10 @@ bool CrateWriter::ExtractNurbsCurvesProperties(
   }
 
   // Extract ranges (double2[]) - NURBS curve parameter ranges
-  // TODO: double2 array conversion not yet implemented, skip for now
+  // TODO: Requires crate reader support for VEC2D arrays. Skip for now.
   if (nurbs_curves->ranges.authored()) {
-    std::cerr << "DEBUG: Skipping ranges (double2[] conversion not yet implemented)\n";
+    // Arrays of double2 need crate reader enhancements to properly unpack VEC2D arrays
+    // Skip this property for now
   }
 
   // Extract pointWeights (double[]) - Weights for curve control points
@@ -1396,6 +1575,148 @@ bool CrateWriter::ExtractNurbsCurvesProperties(
   return ExtractGPrimProperties(prim, fields, err);
 }
 
+bool CrateWriter::ExtractPointInstancerProperties(
+  const Prim& prim,
+  crate::FieldValuePairVector& fields,
+  std::string* err
+) {
+  const GeomPointInstancer* instancer = prim.data().as<GeomPointInstancer>();
+  if (!instancer) {
+    if (err) *err = "Failed to cast prim to GeomPointInstancer";
+    return false;
+  }
+
+  // Helper lambda to convert array values
+  auto add_array_attribute = [&](const std::string& attr_name, const value::Value& val) -> bool {
+    crate::CrateValue crate_val;
+    return ConvertValue(val, crate_val, err) &&
+           (fields.push_back({attr_name, crate_val}), true);
+  };
+
+  // Extract protoIndices (int32[]) - Indices into prototypes array
+  if (instancer->protoIndices.authored()) {
+    auto indices_opt = instancer->protoIndices.get_value();
+    if (indices_opt.has_value()) {
+      const Animatable<std::vector<int32_t>>& indices_anim = indices_opt.value();
+      if (indices_anim.has_default()) {
+        std::vector<int32_t> indices_val;
+        if (indices_anim.get_default(&indices_val)) {
+          size_t size_before = indices_val.size();
+          value::Value indices_value(indices_val);
+          if (!add_array_attribute("protoIndices", indices_value)) {
+            return false;
+          }
+          std::cerr << "DEBUG: Extracted " << size_before << " proto indices\n";
+        }
+      }
+    }
+  }
+
+  // Extract positions (point3f[]) - Instance positions
+  if (instancer->positions.authored()) {
+    auto positions_opt = instancer->positions.get_value();
+    if (positions_opt.has_value()) {
+      const Animatable<std::vector<value::point3f>>& positions_anim = positions_opt.value();
+      if (positions_anim.has_default()) {
+        std::vector<value::point3f> positions_val;
+        if (positions_anim.get_default(&positions_val)) {
+          size_t size_before = positions_val.size();
+          value::Value positions_value(positions_val);
+          if (!add_array_attribute("positions", positions_value)) {
+            return false;
+          }
+          std::cerr << "DEBUG: Extracted " << size_before << " instance positions\n";
+        }
+      }
+    }
+  }
+
+  // Extract scales (float3[]) - Instance scales
+  if (instancer->scales.authored()) {
+    auto scales_opt = instancer->scales.get_value();
+    if (scales_opt.has_value()) {
+      const Animatable<std::vector<value::float3>>& scales_anim = scales_opt.value();
+      if (scales_anim.has_default()) {
+        std::vector<value::float3> scales_val;
+        if (scales_anim.get_default(&scales_val)) {
+          size_t size_before = scales_val.size();
+          value::Value scales_value(scales_val);
+          if (!add_array_attribute("scales", scales_value)) {
+            return false;
+          }
+          std::cerr << "DEBUG: Extracted " << size_before << " instance scales\n";
+        }
+      }
+    }
+  }
+
+  // Extract velocities (vector3f[]) - Instance velocities
+  if (instancer->velocities.authored()) {
+    auto velocities_opt = instancer->velocities.get_value();
+    if (velocities_opt.has_value()) {
+      const Animatable<std::vector<value::vector3f>>& velocities_anim = velocities_opt.value();
+      if (velocities_anim.has_default()) {
+        std::vector<value::vector3f> velocities_val;
+        if (velocities_anim.get_default(&velocities_val)) {
+          size_t size_before = velocities_val.size();
+          value::Value velocities_value(velocities_val);
+          if (!add_array_attribute("velocities", velocities_value)) {
+            return false;
+          }
+          std::cerr << "DEBUG: Extracted " << size_before << " instance velocities\n";
+        }
+      }
+    }
+  }
+
+  // Extract accelerations (vector3f[]) - Instance accelerations
+  if (instancer->accelerations.authored()) {
+    auto accelerations_opt = instancer->accelerations.get_value();
+    if (accelerations_opt.has_value()) {
+      const Animatable<std::vector<value::vector3f>>& accelerations_anim = accelerations_opt.value();
+      if (accelerations_anim.has_default()) {
+        std::vector<value::vector3f> accelerations_val;
+        if (accelerations_anim.get_default(&accelerations_val)) {
+          size_t size_before = accelerations_val.size();
+          value::Value accelerations_value(accelerations_val);
+          if (!add_array_attribute("accelerations", accelerations_value)) {
+            return false;
+          }
+          std::cerr << "DEBUG: Extracted " << size_before << " instance accelerations\n";
+        }
+      }
+    }
+  }
+
+  // Extract angularVelocities (vector3f[]) - Instance angular velocities
+  if (instancer->angularVelocities.authored()) {
+    auto ang_vel_opt = instancer->angularVelocities.get_value();
+    if (ang_vel_opt.has_value()) {
+      const Animatable<std::vector<value::vector3f>>& ang_vel_anim = ang_vel_opt.value();
+      if (ang_vel_anim.has_default()) {
+        std::vector<value::vector3f> ang_vel_val;
+        if (ang_vel_anim.get_default(&ang_vel_val)) {
+          size_t size_before = ang_vel_val.size();
+          value::Value ang_vel_value(ang_vel_val);
+          if (!add_array_attribute("angularVelocities", ang_vel_value)) {
+            return false;
+          }
+          std::cerr << "DEBUG: Extracted " << size_before << " instance angular velocities\n";
+        }
+      }
+    }
+  }
+
+  // TODO: Extract enhanced properties (ids, orientations, invisibleIds, inactiveIds)
+  // These require crate reader support for int64[] and quath[] type IDs
+  // For now, the write infrastructure is in place (ConvertValue, WriteValueData)
+  // but the reader needs updates to support unpacking these types
+
+  // Note: prototypes (relationship) - handled separately in AddRelationshipSpecs
+
+  return ExtractGPrimProperties(prim, fields, err);
+}
+
 bool CrateWriter::ExtractGeomSubsetProperties(
   const Prim& prim,
   crate::FieldValuePairVector& fields,
@@ -1471,6 +1792,73 @@ bool CrateWriter::ExtractGeomSubsetProperties(
 }
 
 // ============================================================================
+// BlendShape Property Extraction
+// ============================================================================
+
+bool CrateWriter::ExtractBlendShapeProperties(
+  const Prim& prim,
+  crate::FieldValuePairVector& fields,
+  std::string* err
+) {
+  const BlendShape* blend_shape = prim.data().as<BlendShape>();
+  if (!blend_shape) {
+    if (err) *err = "Failed to cast prim to BlendShape";
+    return false;
+  }
+
+  // Helper lambda to convert array values
+  auto add_array_attribute = [&](const std::string& attr_name, const value::Value& val) -> bool {
+    crate::CrateValue crate_val;
+    return ConvertValue(val, crate_val, err) &&
+           (fields.push_back({attr_name, crate_val}), true);
+  };
+
+  // Extract offsets (vector3f[]) - Position deltas for each vertex
+  if (blend_shape->offsets.has_value()) {
+    auto offsets_val = blend_shape->offsets.get_value();
+    if (offsets_val) {
+      size_t size_before = offsets_val->size();
+      value::Value offsets_value(*offsets_val);
+      if (!add_array_attribute("offsets", offsets_value)) {
+        return false;
+      }
+      std::cerr << "DEBUG: Extracted " << size_before << " blend shape offsets\n";
+    }
+  }
+
+  // Extract normalOffsets (vector3f[]) - Normal deltas for each vertex
+  if (blend_shape->normalOffsets.has_value()) {
+    auto normal_offsets_val = blend_shape->normalOffsets.get_value();
+    if (normal_offsets_val) {
+      size_t size_before = normal_offsets_val->size();
+      value::Value normal_offsets_value(*normal_offsets_val);
+      if (!add_array_attribute("normalOffsets", normal_offsets_value)) {
+        return false;
+      }
+      std::cerr << "DEBUG: Extracted " << size_before << " blend shape normalOffsets\n";
+    }
+  }
+
+  // Extract pointIndices (int[]) - Subset of vertices affected (optional)
+  if (blend_shape->pointIndices.has_value()) {
+    auto point_indices_val = blend_shape->pointIndices.get_value();
+    if (point_indices_val) {
+      size_t size_before = point_indices_val->size();
+      value::Value point_indices_value(*point_indices_val);
+      if (!add_array_attribute("pointIndices", point_indices_value)) {
+        return false;
+      }
+      std::cerr << "DEBUG: Extracted " << size_before << " blend shape pointIndices\n";
+    }
+  }
+
+  // TODO: Handle inbetween blend shapes (stored in props with "inbetweens:" namespace)
+  // For now, just extract basic properties
+
+  return true;
+}
+
+// ============================================================================
 // XformOp Extraction Helper
 // ============================================================================
 
@@ -1514,6 +1902,9 @@ bool CrateWriter::ExtractXformOpsFromXformable(
   } else if (auto* nurbs_curves = prim.data().as<GeomNurbsCurves>()) {
     xformable = static_cast<const Xformable*>(nurbs_curves);
     std::cerr << "DEBUG ExtractXformOps: Cast to GeomNurbsCurves succeeded\n";
+  } else if (auto* instancer = prim.data().as<GeomPointInstancer>()) {
+    xformable = static_cast<const Xformable*>(instancer);
+    std::cerr << "DEBUG ExtractXformOps: Cast to GeomPointInstancer succeeded\n";
   } else if (auto* xform = prim.data().as<Xform>()) {
     xformable = xform;
     std::cerr << "DEBUG ExtractXformOps: Cast to Xform succeeded\n";
@@ -1932,6 +2323,7 @@ bool CrateWriter::AddMaterialBindingSpecs(
   const GeomCamera* geom_camera = nullptr;
   const GeomBasisCurves* geom_basis_curves = nullptr;
   const GeomNurbsCurves* geom_nurbs_curves = nullptr;
+  const GeomPointInstancer* geom_point_instancer = nullptr;
   const Xform* xform = nullptr;
   const Model* model = nullptr;
   const Scope* scope = nullptr;
@@ -1961,6 +2353,8 @@ bool CrateWriter::AddMaterialBindingSpecs(
     mat_binding = static_cast<const MaterialBinding*>(geom_basis_curves);
   } else if ((geom_nurbs_curves = prim.data().as<GeomNurbsCurves>())) {
     mat_binding = static_cast<const MaterialBinding*>(geom_nurbs_curves);
+  } else if ((geom_point_instancer = prim.data().as<GeomPointInstancer>())) {
+    mat_binding = static_cast<const MaterialBinding*>(geom_point_instancer);
   } else if ((xform = prim.data().as<Xform>())) {
     mat_binding = static_cast<const MaterialBinding*>(xform);
   } else if ((model = prim.data().as<Model>())) {
@@ -2881,6 +3275,11 @@ bool CrateWriter::ConvertValue(
       out.Set(*v);
       return true;
     }
+  } else if (type_name == "double2[]") {
+    if (auto v = val.get_value<std::vector<value::double2>>()) {
+      out.Set(*v);
+      return true;
+    }
   } else if (type_name == "string[]") {
     if (auto v = val.get_value<std::vector<std::string>>()) {
       out.Set(*v);
@@ -2962,6 +3361,16 @@ bool CrateWriter::ConvertValue(
       // For now, let's skip this - we'll handle it when we encounter it
       if (err) *err = "token[] conversion requires special handling (not yet implemented)";
       return false;
+    }
+  } else if (type_name == "int64[]") {
+    if (auto v = val.get_value<std::vector<int64_t>>()) {
+      out.Set(*v);
+      return true;
+    }
+  } else if (type_name == "quath[]") {
+    if (auto v = val.get_value<std::vector<value::quath>>()) {
+      out.Set(*v);
+      return true;
     }
   }
 

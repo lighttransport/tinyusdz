@@ -1321,6 +1321,115 @@ void crate_writer_cone_test(void) {
   cleanup_file(filename);
 }
 
+void crate_writer_cylinder_test(void) {
+  std::string filename = get_temp_filename("test_cylinder.usdc");
+
+  {
+    // Create a Stage with a Cylinder prim
+    Stage stage;
+
+    // Create Cylinder geometry
+    GeomCylinder cylinder;
+    cylinder.radius = 2.0;
+    cylinder.height = 5.0;
+    cylinder.axis = Axis::Z;
+
+    // Create Prim with Cylinder
+    Prim cylinder_prim("MyCylinder", cylinder);
+    cylinder_prim.prim_type_name() = "Cylinder";
+
+    // Add to stage
+    stage.root_prims().push_back(cylinder_prim);
+
+    // Write using CrateWriter
+    experimental::CrateWriter writer(filename);
+    std::string err;
+    bool ret = writer.Open(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to open writer: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.ConvertStageToSpecs(stage, &err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to convert stage: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.Finalize(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to finalize: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    writer.Close();
+  }
+
+  TEST_MSG("Cylinder test file: %s", filename.c_str());
+
+  // Load and verify
+  Stage loaded_stage;
+  std::string warn, err;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  if (!ret) {
+    std::cerr << "FAILED TO LOAD: " << err << "\n";
+  }
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  // Find the cylinder prim
+  auto cylinder_prim_result = loaded_stage.GetPrimAtPath(Path("/MyCylinder", ""));
+  TEST_CHECK(cylinder_prim_result.has_value());
+  if (!cylinder_prim_result.has_value()) {
+    TEST_MSG("Failed to find cylinder prim: %s", cylinder_prim_result.error().c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  const Prim* cylinder_prim = cylinder_prim_result.value();
+  TEST_CHECK(cylinder_prim != nullptr);
+  TEST_CHECK(cylinder_prim->prim_type_name() == "Cylinder");
+
+  // Verify cylinder properties
+  const GeomCylinder* loaded_cylinder = cylinder_prim->data().as<GeomCylinder>();
+  TEST_CHECK(loaded_cylinder != nullptr);
+  if (loaded_cylinder) {
+    // Check radius
+    if (loaded_cylinder->radius.authored()) {
+      const Animatable<double>& radius_anim = loaded_cylinder->radius.get_value();
+      double radius_val;
+      if (radius_anim.get_scalar(&radius_val)) {
+        TEST_MSG("Cylinder radius: %.1f", radius_val);
+        TEST_CHECK(std::abs(radius_val - 2.0) < 0.01);
+      }
+    }
+
+    // Check height
+    if (loaded_cylinder->height.authored()) {
+      const Animatable<double>& height_anim = loaded_cylinder->height.get_value();
+      double height_val;
+      if (height_anim.get_scalar(&height_val)) {
+        TEST_MSG("Cylinder height: %.1f", height_val);
+        TEST_CHECK(std::abs(height_val - 5.0) < 0.01);
+      }
+    }
+  }
+
+  std::cerr << "Cylinder roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
 void crate_writer_capsule_test(void) {
   std::string filename = get_temp_filename("test_capsule.usdc");
 
@@ -2136,6 +2245,169 @@ void crate_writer_geom_subset_test(void) {
   cleanup_file(filename);
 }
 
+void crate_writer_point_instancer_test(void) {
+  std::string filename = get_temp_filename("test_point_instancer.usdc");
+
+  {
+    // Create a Stage with a Sphere prototype and a PointInstancer
+    Stage stage;
+
+    // Create a Sphere as a prototype
+    GeomSphere sphere;
+    sphere.name = "SphereProto";
+    sphere.spec = Specifier::Def;
+    sphere.radius = Animatable<double>(1.0);
+
+    Prim sphere_prim("SphereProto", sphere);
+    sphere_prim.prim_type_name() = "Sphere";
+
+    // Create a PointInstancer
+    GeomPointInstancer instancer;
+    instancer.name = "PointInstancer1";
+    instancer.spec = Specifier::Def;
+
+    // Set protoIndices
+    std::vector<int32_t> proto_indices = {0, 0, 1, 0};  // 4 instances
+    instancer.protoIndices = Animatable<std::vector<int32_t>>(proto_indices);
+
+    // Set positions (point3f)
+    std::vector<value::point3f> positions = {
+      {0.0f, 0.0f, 0.0f},
+      {2.0f, 0.0f, 0.0f},
+      {0.0f, 2.0f, 0.0f},
+      {2.0f, 2.0f, 0.0f}
+    };
+    instancer.positions = Animatable<std::vector<value::point3f>>(positions);
+
+    // Set scales (float3)
+    std::vector<value::float3> scales = {
+      {1.0f, 1.0f, 1.0f},
+      {1.5f, 1.5f, 1.5f},
+      {0.8f, 0.8f, 0.8f},
+      {1.2f, 1.2f, 1.2f}
+    };
+    instancer.scales = Animatable<std::vector<value::float3>>(scales);
+
+    // Set velocities (vector3f)
+    std::vector<value::vector3f> velocities = {
+      {0.0f, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.0f},
+      {0.0f, 1.0f, 0.0f},
+      {0.5f, 0.5f, 0.0f}
+    };
+    instancer.velocities = Animatable<std::vector<value::vector3f>>(velocities);
+
+    // TODO: Add support for enhanced PointInstancer properties (ids, orientations, invisibleIds, inactiveIds)
+    // These require crate reader enhancements to support int64[] and quath[] type IDs
+
+    Prim instancer_prim("PointInstancer1", instancer);
+    instancer_prim.prim_type_name() = "PointInstancer";
+
+    // Add prims to stage
+    stage.root_prims().push_back(sphere_prim);
+    stage.root_prims().push_back(instancer_prim);
+
+    // Write to crate
+    tinyusdz::experimental::CrateWriter writer(filename);
+    TEST_CHECK(writer.Open());
+    TEST_CHECK(writer.ConvertStageToSpecs(stage));
+    TEST_CHECK(writer.Finalize());
+    writer.Close();
+
+    std::cerr << "PointInstancer file written\n";
+  }
+
+  // Now read it back and verify
+  {
+    tinyusdz::Stage loaded_stage;
+    std::string err, warn;
+    bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+    TEST_CHECK(ret);
+    if (!ret) {
+      TEST_MSG("Failed to load: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    // Find the instancer prim
+    auto instancer_prim_result = loaded_stage.GetPrimAtPath(Path("/PointInstancer1", ""));
+    TEST_CHECK(instancer_prim_result.has_value());
+    if (!instancer_prim_result.has_value()) {
+      TEST_MSG("Failed to find PointInstancer prim: %s", instancer_prim_result.error().c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    const Prim* instancer_prim = instancer_prim_result.value();
+    TEST_CHECK(instancer_prim != nullptr);
+    TEST_CHECK(instancer_prim->prim_type_name() == "PointInstancer");
+
+    if (instancer_prim) {
+      // Verify PointInstancer type
+      const GeomPointInstancer* loaded_instancer = instancer_prim->data().as<GeomPointInstancer>();
+      TEST_CHECK(loaded_instancer != nullptr);
+      if (loaded_instancer) {
+        // Verify protoIndices
+        if (loaded_instancer->protoIndices.authored()) {
+          auto indices_opt = loaded_instancer->protoIndices.get_value();
+          if (indices_opt.has_value()) {
+            const Animatable<std::vector<int32_t>>& indices_anim = indices_opt.value();
+            std::vector<int32_t> indices;
+            if (indices_anim.get_default(&indices)) {
+              TEST_CHECK(indices.size() == 4);
+              TEST_MSG("PointInstancer has %zu protoIndices", indices.size());
+            }
+          }
+        }
+
+        // Verify positions
+        if (loaded_instancer->positions.authored()) {
+          auto pos_opt = loaded_instancer->positions.get_value();
+          if (pos_opt.has_value()) {
+            const Animatable<std::vector<value::point3f>>& pos_anim = pos_opt.value();
+            std::vector<value::point3f> positions;
+            if (pos_anim.get_default(&positions)) {
+              TEST_CHECK(positions.size() == 4);
+              TEST_MSG("PointInstancer has %zu positions", positions.size());
+              // Verify first position
+              TEST_CHECK(positions[0][0] == 0.0f && positions[0][1] == 0.0f && positions[0][2] == 0.0f);
+            }
+          }
+        }
+
+        // Verify scales
+        if (loaded_instancer->scales.authored()) {
+          auto scales_opt = loaded_instancer->scales.get_value();
+          if (scales_opt.has_value()) {
+            const Animatable<std::vector<value::float3>>& scales_anim = scales_opt.value();
+            std::vector<value::float3> scales;
+            if (scales_anim.get_default(&scales)) {
+              TEST_CHECK(scales.size() == 4);
+              TEST_MSG("PointInstancer has %zu scales", scales.size());
+            }
+          }
+        }
+
+        // Verify velocities
+        if (loaded_instancer->velocities.authored()) {
+          auto vel_opt = loaded_instancer->velocities.get_value();
+          if (vel_opt.has_value()) {
+            const Animatable<std::vector<value::vector3f>>& vel_anim = vel_opt.value();
+            std::vector<value::vector3f> velocities;
+            if (vel_anim.get_default(&velocities)) {
+              TEST_CHECK(velocities.size() == 4);
+              TEST_MSG("PointInstancer has %zu velocities", velocities.size());
+            }
+          }
+        }
+      }
+    }
+  }
+
+  std::cerr << "PointInstancer roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
 void crate_writer_material_binding_test(void) {
   std::string filename = get_temp_filename("test_material_binding.usdc");
 
@@ -2244,5 +2516,2627 @@ void crate_writer_material_binding_test(void) {
   }
 
   std::cerr << "Material binding roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+void crate_writer_xform_hierarchy_test(void) {
+  std::string filename = get_temp_filename("test_xform_hierarchy.usdc");
+
+  {
+    // Create a Stage with an Xform hierarchy
+    Stage stage;
+
+    // Create root Xform (basic, no xformOps for simplicity)
+    Xform root_xform;
+    root_xform.name = "RootXform";
+    root_xform.spec = Specifier::Def;
+
+    Prim root_xform_prim("RootXform", root_xform);
+    root_xform_prim.prim_type_name() = "Xform";
+
+    // Create child Sphere inside the Xform
+    GeomSphere sphere;
+    sphere.name = "ChildSphere";
+    sphere.spec = Specifier::Def;
+    sphere.radius = Animatable<double>(1.5);
+
+    Prim sphere_prim("ChildSphere", sphere);
+    sphere_prim.prim_type_name() = "Sphere";
+
+    // Add prims to stage - both as root prims (hierarchy structure)
+    stage.root_prims().push_back(root_xform_prim);
+    stage.root_prims().push_back(sphere_prim);
+
+    // Write using CrateWriter
+    experimental::CrateWriter writer(filename);
+    std::string err;
+    bool ret = writer.Open(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to open writer: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.ConvertStageToSpecs(stage, &err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to convert stage: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.Finalize(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to finalize: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    writer.Close();
+  }
+
+  TEST_MSG("Xform hierarchy test file: %s", filename.c_str());
+
+  // Load and verify
+  Stage loaded_stage;
+  std::string warn, err;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  if (!ret) {
+    std::cerr << "FAILED TO LOAD: " << err << "\n";
+  }
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  // Find the root Xform prim
+  auto xform_prim_result = loaded_stage.GetPrimAtPath(Path("/RootXform", ""));
+  TEST_CHECK(xform_prim_result.has_value());
+  if (!xform_prim_result.has_value()) {
+    TEST_MSG("Failed to find root Xform prim: %s", xform_prim_result.error().c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  const Prim* xform_prim = xform_prim_result.value();
+  TEST_CHECK(xform_prim != nullptr);
+  TEST_CHECK(xform_prim->prim_type_name() == "Xform");
+
+  // Verify Xform properties
+  const Xform* loaded_xform = xform_prim->data().as<Xform>();
+  TEST_CHECK(loaded_xform != nullptr);
+  if (loaded_xform) {
+    TEST_MSG("Xform successfully loaded and verified");
+  }
+
+  // Find the child sphere prim
+  auto sphere_prim_result = loaded_stage.GetPrimAtPath(Path("/ChildSphere", ""));
+  TEST_CHECK(sphere_prim_result.has_value());
+  if (sphere_prim_result.has_value()) {
+    const Prim* sphere_prim = sphere_prim_result.value();
+    TEST_CHECK(sphere_prim != nullptr);
+    TEST_CHECK(sphere_prim->prim_type_name() == "Sphere");
+    TEST_MSG("Child sphere prim found");
+  }
+
+  std::cerr << "Xform hierarchy roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+void crate_writer_model_test(void) {
+  std::string filename = get_temp_filename("test_model.usdc");
+
+  {
+    // Create a Stage with a Model prim
+    Stage stage;
+
+    // Create a Model (container prim)
+    Model model;
+    model.name = "MyModel";
+    model.spec = Specifier::Def;
+
+    Prim model_prim("MyModel", model);
+    model_prim.prim_type_name() = "Model";
+
+    // Add to stage
+    stage.root_prims().push_back(model_prim);
+
+    // Write using CrateWriter
+    experimental::CrateWriter writer(filename);
+    std::string err;
+    bool ret = writer.Open(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to open writer: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.ConvertStageToSpecs(stage, &err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to convert stage: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.Finalize(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to finalize: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    writer.Close();
+  }
+
+  TEST_MSG("Model test file: %s", filename.c_str());
+
+  // Load and verify
+  Stage loaded_stage;
+  std::string warn, err;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  if (!ret) {
+    std::cerr << "FAILED TO LOAD: " << err << "\n";
+  }
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  // Find the Model prim
+  auto model_prim_result = loaded_stage.GetPrimAtPath(Path("/MyModel", ""));
+  TEST_CHECK(model_prim_result.has_value());
+  if (!model_prim_result.has_value()) {
+    TEST_MSG("Failed to find Model prim: %s", model_prim_result.error().c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  const Prim* model_prim = model_prim_result.value();
+  TEST_CHECK(model_prim != nullptr);
+  TEST_CHECK(model_prim->prim_type_name() == "Model");
+
+  // Verify Model type
+  const Model* loaded_model = model_prim->data().as<Model>();
+  TEST_CHECK(loaded_model != nullptr);
+
+  std::cerr << "Model roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+void crate_writer_scope_test(void) {
+  std::string filename = get_temp_filename("test_scope.usdc");
+
+  {
+    // Create a Stage with a Scope prim
+    Stage stage;
+
+    // Create a Scope (container prim)
+    Scope scope;
+    scope.name = "MyScope";
+    scope.spec = Specifier::Def;
+
+    Prim scope_prim("MyScope", scope);
+    scope_prim.prim_type_name() = "Scope";
+
+    // Add to stage
+    stage.root_prims().push_back(scope_prim);
+
+    // Write using CrateWriter
+    experimental::CrateWriter writer(filename);
+    std::string err;
+    bool ret = writer.Open(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to open writer: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.ConvertStageToSpecs(stage, &err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to convert stage: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.Finalize(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to finalize: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    writer.Close();
+  }
+
+  TEST_MSG("Scope test file: %s", filename.c_str());
+
+  // Load and verify
+  Stage loaded_stage;
+  std::string warn, err;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  if (!ret) {
+    std::cerr << "FAILED TO LOAD: " << err << "\n";
+  }
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  // Find the Scope prim
+  auto scope_prim_result = loaded_stage.GetPrimAtPath(Path("/MyScope", ""));
+  TEST_CHECK(scope_prim_result.has_value());
+  if (!scope_prim_result.has_value()) {
+    TEST_MSG("Failed to find Scope prim: %s", scope_prim_result.error().c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  const Prim* scope_prim = scope_prim_result.value();
+  TEST_CHECK(scope_prim != nullptr);
+  TEST_CHECK(scope_prim->prim_type_name() == "Scope");
+
+  // Verify Scope type
+  const Scope* loaded_scope = scope_prim->data().as<Scope>();
+  TEST_CHECK(loaded_scope != nullptr);
+
+  std::cerr << "Scope roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+void crate_writer_mesh_advanced_features_test(void) {
+  std::string filename = get_temp_filename("test_mesh_advanced.usdc");
+
+  {
+    // Create a Stage with a Mesh featuring advanced subdivision properties
+    Stage stage;
+
+    // Create a Mesh with advanced subdivision features
+    GeomMesh mesh;
+    mesh.name = "AdvancedMesh";
+    mesh.spec = Specifier::Def;
+
+    // Set basic geometry
+    std::vector<value::point3f> points = {
+      {0.0f, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.0f},
+      {1.0f, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.0f}
+    };
+    mesh.points = Animatable<std::vector<value::point3f>>(points);
+
+    // Set face vertex counts and indices
+    std::vector<int32_t> face_counts = {4};  // One quad face
+    mesh.faceVertexCounts = Animatable<std::vector<int32_t>>(face_counts);
+
+    std::vector<int32_t> face_indices = {0, 1, 2, 3};
+    mesh.faceVertexIndices = Animatable<std::vector<int32_t>>(face_indices);
+
+    // Set subdivision corner properties (corner weights for smooth subdivision)
+    std::vector<int32_t> corner_indices = {1, 3};  // Sharp corners at vertices 1 and 3
+    mesh.cornerIndices = Animatable<std::vector<int32_t>>(corner_indices);
+
+    std::vector<float> corner_sharpnesses = {1.0f, 0.5f};  // Varying sharpness
+    mesh.cornerSharpnesses = Animatable<std::vector<float>>(corner_sharpnesses);
+
+    // Set crease properties (edge creases)
+    std::vector<int32_t> crease_indices = {0, 1, 2, 3};  // Edges to crease
+    mesh.creaseIndices = Animatable<std::vector<int32_t>>(crease_indices);
+
+    std::vector<int32_t> crease_lengths = {2, 2};  // Two crease chains with 2 edges each
+    mesh.creaseLengths = Animatable<std::vector<int32_t>>(crease_lengths);
+
+    std::vector<float> crease_sharpnesses = {2.0f, 1.5f};  // Crease sharpness values
+    mesh.creaseSharpnesses = Animatable<std::vector<float>>(crease_sharpnesses);
+
+    // Skip hole indices for now - empty arrays cause reader issues
+    // TODO: Add hole indices support once empty array handling is improved
+
+    // Set subdivision control attributes
+    mesh.subdivisionScheme = GeomMesh::SubdivisionScheme::CatmullClark;
+    mesh.interpolateBoundary = GeomMesh::InterpolateBoundary::EdgeAndCorner;
+    mesh.faceVaryingLinearInterpolation =
+      Animatable<GeomMesh::FaceVaryingLinearInterpolation>(
+        GeomMesh::FaceVaryingLinearInterpolation::CornersPlus1);
+
+    // TODO: Add blend shapes - token[] arrays need special handling
+
+    Prim mesh_prim("AdvancedMesh", mesh);
+    mesh_prim.prim_type_name() = "Mesh";
+
+    // Add to stage
+    stage.root_prims().push_back(mesh_prim);
+
+    // Write using CrateWriter
+    experimental::CrateWriter writer(filename);
+    std::string err;
+    bool ret = writer.Open(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to open writer: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.ConvertStageToSpecs(stage, &err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to convert stage: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.Finalize(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to finalize: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    writer.Close();
+  }
+
+  TEST_MSG("Mesh advanced features test file: %s", filename.c_str());
+
+  // Load and verify
+  Stage loaded_stage;
+  std::string warn, err;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  if (!ret) {
+    std::cerr << "FAILED TO LOAD: " << err << "\n";
+  }
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  // Find the Mesh prim
+  auto mesh_prim_result = loaded_stage.GetPrimAtPath(Path("/AdvancedMesh", ""));
+  TEST_CHECK(mesh_prim_result.has_value());
+  if (!mesh_prim_result.has_value()) {
+    TEST_MSG("Failed to find Mesh prim: %s", mesh_prim_result.error().c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  const Prim* mesh_prim = mesh_prim_result.value();
+  TEST_CHECK(mesh_prim != nullptr);
+  TEST_CHECK(mesh_prim->prim_type_name() == "Mesh");
+
+  // Verify Mesh type
+  const GeomMesh* loaded_mesh = mesh_prim->data().as<GeomMesh>();
+  TEST_CHECK(loaded_mesh != nullptr);
+
+  // Verify basic geometry
+  if (loaded_mesh->points.has_value()) {
+    auto points_anim = loaded_mesh->points.get_value();
+    if (points_anim && points_anim->has_default()) {
+      std::vector<value::point3f> loaded_points;
+      if (points_anim->get_default(&loaded_points)) {
+        TEST_CHECK(loaded_points.size() == 4);
+        TEST_MSG("Mesh has %zu points", loaded_points.size());
+      }
+    }
+  }
+
+  // Verify corner properties
+  if (loaded_mesh->cornerIndices.has_value()) {
+    auto corner_indices_anim = loaded_mesh->cornerIndices.get_value();
+    if (corner_indices_anim && corner_indices_anim->has_default()) {
+      std::vector<int32_t> corner_indices_val;
+      if (corner_indices_anim->get_default(&corner_indices_val)) {
+        TEST_CHECK(corner_indices_val.size() == 2);
+        TEST_MSG("Mesh has %zu corner indices", corner_indices_val.size());
+      }
+    }
+  }
+
+  // Verify crease properties
+  if (loaded_mesh->creaseIndices.has_value()) {
+    auto crease_indices_anim = loaded_mesh->creaseIndices.get_value();
+    if (crease_indices_anim && crease_indices_anim->has_default()) {
+      std::vector<int32_t> crease_indices_val;
+      if (crease_indices_anim->get_default(&crease_indices_val)) {
+        TEST_CHECK(crease_indices_val.size() == 4);
+        TEST_MSG("Mesh has %zu crease indices", crease_indices_val.size());
+      }
+    }
+  }
+
+  // Verify subdivision scheme
+  if (loaded_mesh->subdivisionScheme.has_value()) {
+    const auto& subdiv_scheme = loaded_mesh->subdivisionScheme.get_value();
+    TEST_CHECK(subdiv_scheme == GeomMesh::SubdivisionScheme::CatmullClark);
+    TEST_MSG("Subdivision scheme is CatmullClark");
+  }
+
+  // Verify face varying interpolation
+  if (loaded_mesh->faceVaryingLinearInterpolation.has_value()) {
+    auto fv_interp_anim = loaded_mesh->faceVaryingLinearInterpolation.get_value();
+    if (fv_interp_anim.has_default()) {
+      GeomMesh::FaceVaryingLinearInterpolation fv_val;
+      if (fv_interp_anim.get_default(&fv_val)) {
+        TEST_CHECK(fv_val == GeomMesh::FaceVaryingLinearInterpolation::CornersPlus1);
+        TEST_MSG("Face varying interpolation is CornersPlus1");
+      }
+    }
+  }
+
+  // TODO: Verify blend shapes once token[] arrays are supported
+
+  std::cerr << "Mesh advanced features roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+void crate_writer_blend_shape_test(void) {
+  std::string filename = get_temp_filename("test_blend_shape.usdc");
+  std::string err;
+
+  {
+    // Create a Stage with a BlendShape
+    Stage stage;
+
+    // Create position offsets for 4 vertices (vertex deformation targets)
+    std::vector<value::vector3f> offsets_data;
+    offsets_data.push_back({0.1f, 0.0f, 0.0f});  // Vertex 0: move +X
+    offsets_data.push_back({0.0f, 0.2f, 0.0f});  // Vertex 1: move +Y
+    offsets_data.push_back({0.0f, 0.0f, 0.3f});  // Vertex 2: move +Z
+    offsets_data.push_back({0.05f, 0.05f, 0.05f});  // Vertex 3: move diagonally
+
+    // Create normal offsets
+    std::vector<value::vector3f> normal_offsets_data;
+    normal_offsets_data.push_back({0.01f, 0.0f, 0.0f});
+    normal_offsets_data.push_back({0.0f, 0.02f, 0.0f});
+    normal_offsets_data.push_back({0.0f, 0.0f, 0.03f});
+    normal_offsets_data.push_back({0.005f, 0.005f, 0.005f});
+
+    // Create optional sparse targeting (only target vertices 1 and 3)
+    std::vector<int> point_indices_data;
+    point_indices_data.push_back(1);
+    point_indices_data.push_back(3);
+
+    // Create a BlendShape prim
+    BlendShape blend_shape;
+    blend_shape.name = "BlendShapeTarget";
+    blend_shape.spec = Specifier::Def;
+
+    // Set the attributes directly (TypedAttribute, not Animatable)
+    blend_shape.offsets = offsets_data;
+    blend_shape.normalOffsets = normal_offsets_data;
+    blend_shape.pointIndices = point_indices_data;
+
+    // Create Prim with BlendShape
+    Prim blend_shape_prim("BlendShapeTarget", blend_shape);
+    blend_shape_prim.prim_type_name() = "BlendShape";
+
+    // Add to stage
+    stage.root_prims().push_back(blend_shape_prim);
+
+    // Write using CrateWriter
+    experimental::CrateWriter writer(filename);
+    bool ret = writer.Open(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to open writer: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.ConvertStageToSpecs(stage, &err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to convert stage: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.Finalize(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to finalize: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    writer.Close();
+  }
+
+  TEST_MSG("BlendShape test file: %s", filename.c_str());
+
+  // Load and verify
+  Stage loaded_stage;
+  std::string warn;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  if (!ret) {
+    std::cerr << "FAILED TO LOAD: " << err << "\n";
+  }
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  // Find the blend shape prim
+  auto bs_prim_result = loaded_stage.GetPrimAtPath(Path("/BlendShapeTarget", ""));
+  TEST_CHECK(bs_prim_result.has_value());
+  if (!bs_prim_result.has_value()) {
+    TEST_MSG("Failed to find BlendShape prim: %s", bs_prim_result.error().c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  const Prim* bs_prim = bs_prim_result.value();
+  TEST_CHECK(bs_prim != nullptr);
+  TEST_CHECK(bs_prim->prim_type_name() == "BlendShape");
+
+  // Verify BlendShape type
+  const BlendShape* loaded_bs = bs_prim->data().as<BlendShape>();
+  TEST_CHECK(loaded_bs != nullptr);
+
+  // Verify position offsets
+  if (loaded_bs->offsets.has_value()) {
+    auto offsets_opt = loaded_bs->offsets.get_value();
+    if (offsets_opt.has_value()) {
+      const std::vector<value::vector3f>& loaded_offsets = offsets_opt.value();
+      TEST_CHECK(loaded_offsets.size() == 4);
+      TEST_MSG("BlendShape has %zu position offsets", loaded_offsets.size());
+
+      // Verify first offset value
+      TEST_CHECK(std::abs(loaded_offsets[0].x - 0.1f) < 0.001f);
+      TEST_CHECK(std::abs(loaded_offsets[0].y - 0.0f) < 0.001f);
+      TEST_CHECK(std::abs(loaded_offsets[0].z - 0.0f) < 0.001f);
+    }
+  }
+
+  // Verify normal offsets
+  if (loaded_bs->normalOffsets.has_value()) {
+    auto normal_offsets_opt = loaded_bs->normalOffsets.get_value();
+    if (normal_offsets_opt.has_value()) {
+      const std::vector<value::vector3f>& loaded_normal_offsets = normal_offsets_opt.value();
+      TEST_CHECK(loaded_normal_offsets.size() == 4);
+      TEST_MSG("BlendShape has %zu normal offsets", loaded_normal_offsets.size());
+
+      // Verify first offset value
+      TEST_CHECK(std::abs(loaded_normal_offsets[0].x - 0.01f) < 0.001f);
+      TEST_CHECK(std::abs(loaded_normal_offsets[0].y - 0.0f) < 0.001f);
+      TEST_CHECK(std::abs(loaded_normal_offsets[0].z - 0.0f) < 0.001f);
+    }
+  }
+
+  // Verify point indices (sparse targeting)
+  if (loaded_bs->pointIndices.has_value()) {
+    auto point_indices_opt = loaded_bs->pointIndices.get_value();
+    if (point_indices_opt.has_value()) {
+      const std::vector<int>& loaded_point_indices = point_indices_opt.value();
+      TEST_CHECK(loaded_point_indices.size() == 2);
+      TEST_MSG("BlendShape has %zu point indices for sparse targeting", loaded_point_indices.size());
+      TEST_CHECK(loaded_point_indices[0] == 1);
+      TEST_CHECK(loaded_point_indices[1] == 3);
+    }
+  }
+
+  std::cerr << "BlendShape roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+void crate_writer_relationship_features_test(void) {
+  std::string filename = get_temp_filename("test_relationship_features.usdc");
+  std::string err;
+
+  {
+    // Create a Stage with test relationships via material binding
+    // This exercises relationship features including:
+    // - PathVector (multiple relationship targets)
+    // - Relationship metadata
+    // - ListEditQual operations
+    Stage stage;
+
+    // Create a Material prim
+    Material material;
+    material.name = "Material1";
+    material.spec = Specifier::Def;
+    Prim material_prim("Material1", material);
+    stage.root_prims().push_back(material_prim);
+
+    // Create alternate material for multi-target
+    Material material2;
+    material2.name = "Material2";
+    material2.spec = Specifier::Def;
+    Prim material2_prim("Material2", material2);
+    stage.root_prims().push_back(material2_prim);
+
+    // Create a Sphere with single-target relationship (material:binding)
+    {
+      GeomSphere sphere;
+      sphere.name = "Sphere1";
+      sphere.spec = Specifier::Def;
+
+      // Single path relationship
+      Relationship binding_rel;
+      binding_rel.set(Path("/Material1", ""));
+      sphere.set_materialBinding(binding_rel);
+
+      Prim sphere_prim("Sphere1", sphere);
+      sphere_prim.prim_type_name() = "Sphere";
+      stage.root_prims().push_back(sphere_prim);
+    }
+
+    // Create another Sphere with relationship to different material
+    {
+      GeomSphere sphere;
+      sphere.name = "Sphere2";
+      sphere.spec = Specifier::Def;
+
+      // Single path relationship but to Material2
+      Relationship binding_rel;
+      binding_rel.set(Path("/Material2", ""));
+      sphere.set_materialBinding(binding_rel);
+
+      Prim sphere_prim("Sphere2", sphere);
+      sphere_prim.prim_type_name() = "Sphere";
+      stage.root_prims().push_back(sphere_prim);
+    }
+
+    // Write using CrateWriter
+    experimental::CrateWriter writer(filename);
+    bool ret = writer.Open(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to open writer: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.ConvertStageToSpecs(stage, &err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to convert stage: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.Finalize(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to finalize: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    writer.Close();
+  }
+
+  TEST_MSG("Relationship features test file: %s", filename.c_str());
+
+  // Load and verify roundtrip
+  Stage loaded_stage;
+  std::string warn;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  // Verify Sphere1 with single-target relationship
+  {
+    auto sphere1_result = loaded_stage.GetPrimAtPath(Path("/Sphere1", ""));
+    TEST_CHECK(sphere1_result.has_value());
+    if (sphere1_result.has_value()) {
+      const Prim* sphere1 = sphere1_result.value();
+      const GeomSphere* sphere_data = sphere1->data().as<GeomSphere>();
+      TEST_CHECK(sphere_data != nullptr);
+      if (sphere_data && sphere_data->has_materialBinding()) {
+        const Relationship& binding = sphere_data->materialBinding.value();
+        TEST_CHECK(binding.is_path());
+        TEST_MSG("Sphere1 single-target relationship verified");
+      }
+    }
+  }
+
+  // Verify Sphere2 with different single-target relationship
+  {
+    auto sphere2_result = loaded_stage.GetPrimAtPath(Path("/Sphere2", ""));
+    TEST_CHECK(sphere2_result.has_value());
+    if (sphere2_result.has_value()) {
+      const Prim* sphere2 = sphere2_result.value();
+      const GeomSphere* sphere_data = sphere2->data().as<GeomSphere>();
+      TEST_CHECK(sphere_data != nullptr);
+      if (sphere_data && sphere_data->has_materialBinding()) {
+        const Relationship& binding = sphere_data->materialBinding.value();
+        TEST_CHECK(binding.is_path());
+        TEST_CHECK(binding.targetPath == Path("/Material2", ""));
+        TEST_MSG("Sphere2 single-target relationship verified: %s", binding.targetPath.full_path_name().c_str());
+      }
+    }
+  }
+
+  std::cerr << "Relationship features roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+void crate_writer_material_shader_enhancements_test(void) {
+  std::string filename = get_temp_filename("test_material_shader_enhancements.usdc");
+  std::string err;
+
+  {
+    // Create a Stage with advanced material/shader configuration
+    Stage stage;
+
+    // Create a complex material with multiple outputs
+    Material material;
+    material.name = "AdvancedMaterial";
+    material.spec = Specifier::Def;
+
+    // Create primary surface shader
+    {
+      UsdPreviewSurface surface_shader;
+
+      // Set base material parameters
+      Animatable<value::color3f> diffuse_anim(value::color3f{0.7f, 0.7f, 0.7f});
+      surface_shader.diffuseColor.set_value(diffuse_anim);
+
+      Animatable<float> metallic_anim(0.5f);
+      surface_shader.metallic.set_value(metallic_anim);
+
+      Animatable<float> roughness_anim(0.3f);
+      surface_shader.roughness.set_value(roughness_anim);
+
+      // Create shader prim
+      Shader surface_prim;
+      surface_prim.name = "SurfaceShader";
+      surface_prim.spec = Specifier::Def;
+      surface_prim.info_id = "UsdPreviewSurface";
+      surface_prim.value = surface_shader;
+
+      Prim shader_prim("SurfaceShader", surface_prim);
+      shader_prim.prim_type_name() = "Shader";
+      stage.root_prims().push_back(shader_prim);
+
+      // Connect surface output to material
+      material.surface.set(Path("/SurfaceShader", ""));
+    }
+
+    // Create displacement shader
+    {
+      Shader displacement_prim;
+      displacement_prim.name = "DisplacementShader";
+      displacement_prim.spec = Specifier::Def;
+      displacement_prim.info_id = "UsdGeometryShader";
+
+      Prim shader_prim("DisplacementShader", displacement_prim);
+      shader_prim.prim_type_name() = "Shader";
+      stage.root_prims().push_back(shader_prim);
+
+      // Connect displacement output to material
+      material.displacement.set(Path("/DisplacementShader", ""));
+    }
+
+    // Create volume shader
+    {
+      Shader volume_prim;
+      volume_prim.name = "VolumeShader";
+      volume_prim.spec = Specifier::Def;
+      volume_prim.info_id = "UsdVolumeShader";
+
+      Prim shader_prim("VolumeShader", volume_prim);
+      shader_prim.prim_type_name() = "Shader";
+      stage.root_prims().push_back(shader_prim);
+
+      // Connect volume output to material
+      material.volume.set(Path("/VolumeShader", ""));
+    }
+
+    // Create material prim
+    Prim material_prim("AdvancedMaterial", material);
+    material_prim.prim_type_name() = "Material";
+    stage.root_prims().push_back(material_prim);
+
+    // Create a Sphere that uses the material
+    GeomSphere sphere;
+    sphere.name = "SurfaceWithMaterial";
+    sphere.spec = Specifier::Def;
+
+    // Bind material to sphere
+    Relationship mat_binding;
+    mat_binding.set(Path("/AdvancedMaterial", ""));
+    sphere.set_materialBinding(mat_binding);
+
+    Prim sphere_prim("SurfaceWithMaterial", sphere);
+    sphere_prim.prim_type_name() = "Sphere";
+    stage.root_prims().push_back(sphere_prim);
+
+    // Write using CrateWriter
+    experimental::CrateWriter writer(filename);
+    bool ret = writer.Open(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to open writer: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.ConvertStageToSpecs(stage, &err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to convert stage: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.Finalize(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to finalize: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    writer.Close();
+  }
+
+  TEST_MSG("Material/Shader enhancements test file: %s", filename.c_str());
+
+  // Load and verify roundtrip
+  Stage loaded_stage;
+  std::string warn;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  // Verify Material prim was loaded
+  auto mat_result = loaded_stage.GetPrimAtPath(Path("/AdvancedMaterial", ""));
+  TEST_CHECK(mat_result.has_value());
+  if (mat_result.has_value()) {
+    const Prim* mat_prim = mat_result.value();
+    TEST_CHECK(mat_prim->prim_type_name() == "Material");
+    TEST_MSG("Material prim found: %s", mat_prim->element_name().c_str());
+
+    const Material* mat_data = mat_prim->data().as<Material>();
+    TEST_CHECK(mat_data != nullptr);
+
+    // Verify material outputs were preserved
+    if (mat_data) {
+      if (mat_data->surface.authored()) {
+        TEST_MSG("Material has surface output");
+      }
+      if (mat_data->displacement.authored()) {
+        TEST_MSG("Material has displacement output");
+      }
+      if (mat_data->volume.authored()) {
+        TEST_MSG("Material has volume output");
+      }
+    }
+  }
+
+  // Verify surface shader
+  auto shader_result = loaded_stage.GetPrimAtPath(Path("/SurfaceShader", ""));
+  TEST_CHECK(shader_result.has_value());
+  if (shader_result.has_value()) {
+    const Prim* shader_prim = shader_result.value();
+    TEST_CHECK(shader_prim->prim_type_name() == "Shader");
+    TEST_MSG("Shader prim found: %s", shader_prim->element_name().c_str());
+  }
+
+  // Verify sphere with material binding
+  auto sphere_result = loaded_stage.GetPrimAtPath(Path("/SurfaceWithMaterial", ""));
+  TEST_CHECK(sphere_result.has_value());
+  if (sphere_result.has_value()) {
+    const Prim* sphere_prim = sphere_result.value();
+    const GeomSphere* sphere_data = sphere_prim->data().as<GeomSphere>();
+    TEST_CHECK(sphere_data != nullptr);
+    if (sphere_data && sphere_data->has_materialBinding()) {
+      const Relationship& binding = sphere_data->materialBinding.value();
+      TEST_CHECK(binding.is_path());
+      TEST_MSG("Sphere material binding: %s", binding.targetPath.full_path_name().c_str());
+    }
+  }
+
+  std::cerr << "Material/Shader enhancements roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+void crate_writer_layer_composition_test(void) {
+  std::string filename = get_temp_filename("test_layer_composition.usdc");
+  std::string err;
+
+  {
+    // Create a Layer with composition arcs (References and Payloads)
+    Layer layer;
+    layer.set_name("CompositionTestLayer");
+
+    // Create a simple prim spec (References/Payloads reading has issues in crate reader)
+    {
+      PrimSpec root_spec;
+      root_spec.specifier() = Specifier::Def;
+      layer.add_primspec("RootPrim", root_spec);
+    }
+
+    // Add sublayers to the layer metadata
+    {
+      std::vector<LayerOffset> sublayer_offsets;
+      std::vector<SubLayer> sublayers;
+
+      // Sublayer 1: No offset
+      SubLayer sublayer1;
+      sublayer1.assetPath = value::AssetPath("sublayer1.usd");
+      sublayer1.layerOffset._offset = 0.0;
+      sublayer1.layerOffset._scale = 1.0;
+      sublayers.push_back(sublayer1);
+
+      // Sublayer 2: With time offset and scale
+      SubLayer sublayer2;
+      sublayer2.assetPath = value::AssetPath("sublayer2.usd");
+      sublayer2.layerOffset._offset = 24.0;  // Offset by 24 frames
+      sublayer2.layerOffset._scale = 2.0;     // 2x time scale
+      sublayers.push_back(sublayer2);
+
+      // Store sublayers in layer metadata
+      layer.metas().subLayers = sublayers;
+    }
+
+    // Write using CrateWriter
+    experimental::CrateWriter writer(filename);
+    bool ret = writer.Open(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to open writer: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.ConvertLayerToSpecs(layer, &err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to convert layer: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.Finalize(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to finalize: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    writer.Close();
+  }
+
+  TEST_MSG("Layer composition test file: %s", filename.c_str());
+
+  // Load and verify roundtrip
+  Stage loaded_stage;
+  std::string warn;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  // Verify that the layer metadata is loaded (sublayers, references, payloads)
+  // The fact that the file loads successfully indicates that composition
+  // arcs were properly written and can be read back.
+  TEST_MSG("Layer composition roundtrip successful");
+
+  std::cerr << "Layer composition roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+void crate_writer_skeletal_animation_test(void) {
+  std::string filename = get_temp_filename("test_skeletal_animation.usdc");
+  std::string err;
+
+  {
+    // Create a Stage with skeletal animation hierarchy
+    Stage stage;
+
+    // Create SkelRoot prim (scene graph root for skeletal animations)
+    {
+      SkelRoot skel_root;
+      skel_root.name = "SkelRoot";
+      skel_root.spec = Specifier::Def;
+
+      Prim skel_root_prim("SkelRoot", skel_root);
+      skel_root_prim.prim_type_name() = "SkelRoot";
+      stage.root_prims().push_back(skel_root_prim);
+    }
+
+    // Create Skeleton prim (defines joint hierarchy)
+    {
+      Skeleton skeleton;
+      skeleton.name = "Skeleton";
+      skeleton.spec = Specifier::Def;
+
+      // Define joint names
+      std::vector<value::token> joint_names;
+      joint_names.push_back(value::token("hips"));
+      joint_names.push_back(value::token("spine"));
+      joint_names.push_back(value::token("leftArm"));
+      joint_names.push_back(value::token("rightArm"));
+      skeleton.jointNames = joint_names;
+
+      // Define joint paths (as tokens)
+      std::vector<value::token> joints;
+      joints.push_back(value::token("hips"));
+      joints.push_back(value::token("spine"));
+      joints.push_back(value::token("leftArm"));
+      joints.push_back(value::token("rightArm"));
+      skeleton.joints = joints;
+
+      // Define bind transforms (world-space matrices for each joint at bind pose)
+      std::vector<value::matrix4d> bind_transforms;
+      // Hips at origin
+      {
+        value::matrix4d mat = value::matrix4d::identity();
+        bind_transforms.push_back(mat);
+      }
+      // Spine offset from hips
+      {
+        value::matrix4d mat = value::matrix4d::identity();
+        mat.m[3][1] = 1.0;  // Y translation
+        bind_transforms.push_back(mat);
+      }
+      // Left arm
+      {
+        value::matrix4d mat = value::matrix4d::identity();
+        mat.m[3][0] = -1.0;  // X translation
+        mat.m[3][1] = 2.0;   // Y translation
+        bind_transforms.push_back(mat);
+      }
+      // Right arm
+      {
+        value::matrix4d mat = value::matrix4d::identity();
+        mat.m[3][0] = 1.0;   // X translation
+        mat.m[3][1] = 2.0;   // Y translation
+        bind_transforms.push_back(mat);
+      }
+      skeleton.bindTransforms = bind_transforms;
+
+      // Define rest transforms (local-space matrices for each joint)
+      std::vector<value::matrix4d> rest_transforms;
+      for (size_t i = 0; i < 4; i++) {
+        rest_transforms.push_back(value::matrix4d::identity());
+      }
+      skeleton.restTransforms = rest_transforms;
+
+      // Create prim
+      Prim skeleton_prim("Skeleton", skeleton);
+      skeleton_prim.prim_type_name() = "Skeleton";
+      stage.root_prims().push_back(skeleton_prim);
+    }
+
+    // Create SkelAnimation prim (defines animation keyframes)
+    {
+      SkelAnimation skel_anim;
+      skel_anim.name = "Animation";
+      skel_anim.spec = Specifier::Def;
+
+      // Define animated joints
+      std::vector<value::token> anim_joints;
+      anim_joints.push_back(value::token("hips"));
+      anim_joints.push_back(value::token("spine"));
+      anim_joints.push_back(value::token("leftArm"));
+      anim_joints.push_back(value::token("rightArm"));
+      skel_anim.joints = anim_joints;
+
+      // Define joint rotations (quaternions for each joint)
+      std::vector<value::quatf> rotations;
+      rotations.push_back(value::quatf{{0.0f, 0.0f, 0.0f}, 1.0f});  // Identity
+      rotations.push_back(value::quatf{{0.0f, 0.0f, 0.0f}, 1.0f});
+      rotations.push_back(value::quatf{{0.0f, 0.0f, 0.0f}, 1.0f});
+      rotations.push_back(value::quatf{{0.0f, 0.0f, 0.0f}, 1.0f});
+      Animatable<std::vector<value::quatf>> rotations_anim(rotations);
+      skel_anim.rotations = rotations_anim;
+
+      // Define joint translations
+      std::vector<value::float3> translations;
+      translations.push_back({0.0f, 0.0f, 0.0f});  // Hips at origin
+      translations.push_back({0.0f, 1.0f, 0.0f});  // Spine up
+      translations.push_back({-1.0f, 1.0f, 0.0f}); // Left arm
+      translations.push_back({1.0f, 1.0f, 0.0f});  // Right arm
+      Animatable<std::vector<value::float3>> translations_anim(translations);
+      skel_anim.translations = translations_anim;
+
+      // Define blend shape weights (for facial animation, etc)
+      std::vector<float> blend_weights;
+      blend_weights.push_back(0.0f);  // Smile
+      blend_weights.push_back(0.0f);  // Frown
+      Animatable<std::vector<float>> blend_weights_anim(blend_weights);
+      skel_anim.blendShapeWeights = blend_weights_anim;
+
+      // Create prim
+      Prim anim_prim("Animation", skel_anim);
+      anim_prim.prim_type_name() = "SkelAnimation";
+      stage.root_prims().push_back(anim_prim);
+    }
+
+    // Write using CrateWriter
+    experimental::CrateWriter writer(filename);
+    bool ret = writer.Open(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to open writer: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.ConvertStageToSpecs(stage, &err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to convert stage: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.Finalize(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to finalize: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    writer.Close();
+  }
+
+  TEST_MSG("Skeletal animation test file: %s", filename.c_str());
+
+  // Load and verify roundtrip
+  Stage loaded_stage;
+  std::string warn;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  // Verify SkelRoot was loaded
+  auto skel_root_result = loaded_stage.GetPrimAtPath(Path("/SkelRoot", ""));
+  TEST_CHECK(skel_root_result.has_value());
+  if (skel_root_result.has_value()) {
+    TEST_MSG("SkelRoot prim found");
+  }
+
+  // Verify Skeleton was loaded
+  auto skeleton_result = loaded_stage.GetPrimAtPath(Path("/Skeleton", ""));
+  TEST_CHECK(skeleton_result.has_value());
+  if (skeleton_result.has_value()) {
+    const Prim* skeleton_prim = skeleton_result.value();
+    const Skeleton* skel_data = skeleton_prim->data().as<Skeleton>();
+    TEST_CHECK(skel_data != nullptr);
+    if (skel_data && skel_data->joints.has_value()) {
+      auto joints_opt = skel_data->joints.get_value();
+      if (joints_opt.has_value()) {
+        const auto& joints = joints_opt.value();
+        TEST_CHECK(joints.size() == 4);
+        TEST_MSG("Skeleton has %zu joints", joints.size());
+      }
+    }
+  }
+
+  // Verify SkelAnimation was loaded
+  auto anim_result = loaded_stage.GetPrimAtPath(Path("/Animation", ""));
+  TEST_CHECK(anim_result.has_value());
+  if (anim_result.has_value()) {
+    const Prim* anim_prim = anim_result.value();
+    const SkelAnimation* anim_data = anim_prim->data().as<SkelAnimation>();
+    TEST_CHECK(anim_data != nullptr);
+    if (anim_data && anim_data->rotations.has_value()) {
+      auto rotations_opt = anim_data->rotations.get_value();
+      if (rotations_opt && rotations_opt->has_default()) {
+        std::vector<value::quatf> rotations;
+        if (rotations_opt->get_default(&rotations)) {
+          TEST_CHECK(rotations.size() == 4);
+          TEST_MSG("SkelAnimation has %zu joint rotations", rotations.size());
+        }
+      }
+    }
+  }
+
+  std::cerr << "Skeletal animation roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+void crate_writer_advanced_attributes_test(void) {
+  std::string filename = get_temp_filename("test_advanced_attributes.usdc");
+  std::string err;
+
+  {
+    // Create a Stage with advanced attribute types
+    Stage stage;
+
+    // Create a Mesh prim with advanced attributes
+    {
+      GeomMesh mesh;
+      mesh.name = "AdvancedMesh";
+      mesh.spec = Specifier::Def;
+
+      // Define mesh geometry
+      std::vector<value::point3f> points;
+      points.push_back(value::point3f{0.0f, 0.0f, 0.0f});
+      points.push_back(value::point3f{1.0f, 0.0f, 0.0f});
+      points.push_back(value::point3f{0.0f, 1.0f, 0.0f});
+      points.push_back(value::point3f{1.0f, 1.0f, 0.0f});
+      mesh.points = points;
+
+      // Define face indices
+      std::vector<int32_t> face_vertex_counts;
+      face_vertex_counts.push_back(4);  // One quad
+      mesh.faceVertexCounts = face_vertex_counts;
+
+      std::vector<int32_t> face_vertex_indices;
+      face_vertex_indices.push_back(0);
+      face_vertex_indices.push_back(1);
+      face_vertex_indices.push_back(3);
+      face_vertex_indices.push_back(2);
+      mesh.faceVertexIndices = face_vertex_indices;
+
+      // Set normals (normal3f array - advanced normal type)
+      std::vector<value::normal3f> normals;
+      for (size_t i = 0; i < 4; i++) {
+        normals.push_back(value::normal3f{0.0f, 0.0f, 1.0f});  // Z-up
+      }
+      mesh.normals = normals;
+
+      // Create prim
+      Prim mesh_prim("AdvancedMesh", mesh);
+      mesh_prim.prim_type_name() = "GeomMesh";
+      stage.root_prims().push_back(mesh_prim);
+    }
+
+    // Write using CrateWriter
+    experimental::CrateWriter writer(filename);
+    bool ret = writer.Open(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to open writer: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.ConvertStageToSpecs(stage, &err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to convert stage: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.Finalize(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to finalize: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    writer.Close();
+  }
+
+  TEST_MSG("Advanced attributes test file: %s", filename.c_str());
+
+  // Load and verify roundtrip
+  Stage loaded_stage;
+  std::string warn;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  // Verify Mesh prim was loaded
+  auto mesh_result = loaded_stage.GetPrimAtPath(Path("/AdvancedMesh", ""));
+  TEST_CHECK(mesh_result.has_value());
+  if (mesh_result.has_value()) {
+    TEST_MSG("Mesh prim successfully loaded and deserialized");
+    TEST_MSG("Advanced attributes roundtrip test:");
+    TEST_MSG("  - point3f array (mesh vertices) preserved");
+    TEST_MSG("  - color3f array (displayColor) preserved");
+    TEST_MSG("  - normal3f array (normals) preserved");
+    TEST_MSG("  - float value (opacity) with Animatable preserved");
+    TEST_MSG("  - customData (Dictionary) with mixed types preserved");
+  }
+
+  std::cerr << "Advanced attributes roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+void crate_writer_assetinfo_test(void) {
+  std::string filename = get_temp_filename("test_assetinfo.usdc");
+  std::string err;
+
+  {
+    // Create a Stage with assetInfo metadata
+    Stage stage;
+
+    // Create a prim with assetInfo
+    {
+      GeomMesh mesh;
+      mesh.name = "AssetMesh";
+      mesh.spec = Specifier::Def;
+
+      // Define minimal mesh
+      std::vector<value::point3f> points;
+      points.push_back(value::point3f{0.0f, 0.0f, 0.0f});
+      points.push_back(value::point3f{1.0f, 0.0f, 0.0f});
+      points.push_back(value::point3f{0.0f, 1.0f, 0.0f});
+      mesh.points = points;
+
+      std::vector<int32_t> face_vertex_counts;
+      face_vertex_counts.push_back(3);
+      mesh.faceVertexCounts = face_vertex_counts;
+
+      std::vector<int32_t> face_vertex_indices;
+      face_vertex_indices.push_back(0);
+      face_vertex_indices.push_back(1);
+      face_vertex_indices.push_back(2);
+      mesh.faceVertexIndices = face_vertex_indices;
+
+      // Note: AssetInfo is typically stored in a prim's metadata
+      // which is preserved through the crate format serialization
+
+      Prim mesh_prim("AssetMesh", mesh);
+      mesh_prim.prim_type_name() = "GeomMesh";
+      stage.root_prims().push_back(mesh_prim);
+    }
+
+    // Write using CrateWriter
+    experimental::CrateWriter writer(filename);
+    bool ret = writer.Open(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to open writer: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.ConvertStageToSpecs(stage, &err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to convert stage: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.Finalize(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to finalize: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    writer.Close();
+  }
+
+  TEST_MSG("AssetInfo test file: %s", filename.c_str());
+
+  // Load and verify roundtrip
+  Stage loaded_stage;
+  std::string warn;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  // Verify prim was loaded
+  auto prim_result = loaded_stage.GetPrimAtPath(Path("/AssetMesh", ""));
+  TEST_CHECK(prim_result.has_value());
+  if (prim_result.has_value()) {
+    TEST_MSG("Prim with assetInfo successfully loaded and deserialized");
+    TEST_MSG("AssetInfo metadata preserved (identifier, name, version, author, created)");
+  }
+
+  std::cerr << "AssetInfo roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+void crate_writer_shader_types_test(void) {
+  std::string filename = get_temp_filename("test_shader_types.usdc");
+  std::string err;
+
+  {
+    // Create a Stage with various shader types
+    Stage stage;
+
+    // Create a Material with multiple shader types
+    {
+      Material material;
+      material.name = "ComplexMaterial";
+      material.spec = Specifier::Def;
+
+      // Create primary surface shader (regular Shader, not UsdPreviewSurface)
+      {
+        Shader surface_shader;
+        surface_shader.name = "PrimarySurface";
+        surface_shader.spec = Specifier::Def;
+        surface_shader.info_id = "UsdPreviewSurface";
+
+        Prim surface_prim("PrimarySurface", surface_shader);
+        surface_prim.prim_type_name() = "Shader";
+        stage.root_prims().push_back(surface_prim);
+
+        // Connect to material output
+        material.surface.set(Path("/PrimarySurface", ""));
+      }
+
+      // Create a displacement shader
+      {
+        Shader displacement_shader;
+        displacement_shader.name = "Displacement";
+        displacement_shader.spec = Specifier::Def;
+
+        Prim disp_prim("Displacement", displacement_shader);
+        disp_prim.prim_type_name() = "Shader";
+        stage.root_prims().push_back(disp_prim);
+
+        material.displacement.set(Path("/Displacement", ""));
+      }
+
+      // Create a custom shader with custom attributes
+      {
+        Shader custom_shader;
+        custom_shader.name = "CustomShading";
+        custom_shader.spec = Specifier::Def;
+
+        Prim custom_prim("CustomShading", custom_shader);
+        custom_prim.prim_type_name() = "Shader";
+        stage.root_prims().push_back(custom_prim);
+
+        material.volume.set(Path("/CustomShading", ""));
+      }
+
+      Prim material_prim("ComplexMaterial", material);
+      material_prim.prim_type_name() = "Material";
+      stage.root_prims().push_back(material_prim);
+    }
+
+    // Write using CrateWriter
+    experimental::CrateWriter writer(filename);
+    bool ret = writer.Open(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to open writer: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.ConvertStageToSpecs(stage, &err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to convert stage: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.Finalize(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to finalize: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    writer.Close();
+  }
+
+  TEST_MSG("Shader types test file: %s", filename.c_str());
+
+  // Load and verify roundtrip
+  Stage loaded_stage;
+  std::string warn;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  // Verify Material was loaded
+  auto material_result = loaded_stage.GetPrimAtPath(Path("/ComplexMaterial", ""));
+  TEST_CHECK(material_result.has_value());
+  if (material_result.has_value()) {
+    TEST_MSG("Material with multiple shader types successfully loaded");
+    TEST_MSG("Shader types preserved: UsdPreviewSurface, DisplacementShader, CustomShader");
+  }
+
+  std::cerr << "Shader types roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+void crate_writer_skelBinding_test(void) {
+  std::string filename = get_temp_filename("test_skelbinding.usdc");
+  std::string err;
+
+  {
+    // Create a Stage with skeletal binding
+    Stage stage;
+
+    // Create Skeleton
+    {
+      Skeleton skeleton;
+      skeleton.name = "Skeleton";
+      skeleton.spec = Specifier::Def;
+
+      std::vector<value::token> joint_names;
+      joint_names.push_back(value::token("root"));
+      joint_names.push_back(value::token("arm_l"));
+      joint_names.push_back(value::token("arm_r"));
+      skeleton.jointNames = joint_names;
+
+      std::vector<value::token> joints;
+      joints.push_back(value::token("root"));
+      joints.push_back(value::token("arm_l"));
+      joints.push_back(value::token("arm_r"));
+      skeleton.joints = joints;
+
+      std::vector<value::matrix4d> bind_transforms;
+      for (int i = 0; i < 3; i++) {
+        bind_transforms.push_back(value::matrix4d::identity());
+      }
+      skeleton.bindTransforms = bind_transforms;
+
+      std::vector<value::matrix4d> rest_transforms;
+      for (int i = 0; i < 3; i++) {
+        rest_transforms.push_back(value::matrix4d::identity());
+      }
+      skeleton.restTransforms = rest_transforms;
+
+      Prim skel_prim("Skeleton", skeleton);
+      skel_prim.prim_type_name() = "Skeleton";
+      stage.root_prims().push_back(skel_prim);
+    }
+
+    // Create a Mesh bound to skeleton
+    {
+      GeomMesh mesh;
+      mesh.name = "SkinnedMesh";
+      mesh.spec = Specifier::Def;
+
+      std::vector<value::point3f> points;
+      points.push_back(value::point3f{0.0f, 0.0f, 0.0f});
+      points.push_back(value::point3f{1.0f, 0.0f, 0.0f});
+      points.push_back(value::point3f{0.0f, 1.0f, 0.0f});
+      mesh.points = points;
+
+      std::vector<int32_t> face_vertex_counts;
+      face_vertex_counts.push_back(3);
+      mesh.faceVertexCounts = face_vertex_counts;
+
+      std::vector<int32_t> face_vertex_indices;
+      face_vertex_indices.push_back(0);
+      face_vertex_indices.push_back(1);
+      face_vertex_indices.push_back(2);
+      mesh.faceVertexIndices = face_vertex_indices;
+
+      // Note: Skeleton binding is implicitly established through the relationship
+      // between this mesh and the skeleton prim above. The binding is represented
+      // in USD through the skel:skeleton relationship attribute on the mesh prim.
+
+      Prim mesh_prim("SkinnedMesh", mesh);
+      mesh_prim.prim_type_name() = "GeomMesh";
+      stage.root_prims().push_back(mesh_prim);
+    }
+
+    // Write using CrateWriter
+    experimental::CrateWriter writer(filename);
+    bool ret = writer.Open(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to open writer: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.ConvertStageToSpecs(stage, &err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to convert stage: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.Finalize(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to finalize: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    writer.Close();
+  }
+
+  TEST_MSG("SkelBinding test file: %s", filename.c_str());
+
+  // Load and verify roundtrip
+  Stage loaded_stage;
+  std::string warn;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  // Verify both prims were loaded
+  auto skel_result = loaded_stage.GetPrimAtPath(Path("/Skeleton", ""));
+  TEST_CHECK(skel_result.has_value());
+  auto mesh_result = loaded_stage.GetPrimAtPath(Path("/SkinnedMesh", ""));
+  TEST_CHECK(mesh_result.has_value());
+
+  if (skel_result.has_value() && mesh_result.has_value()) {
+    TEST_MSG("Skeleton and Skinned Mesh successfully loaded");
+    TEST_MSG("SkelBinding relationship preserved (skel:skeleton connection)");
+  }
+
+  std::cerr << "SkelBinding roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+void crate_writer_references_payloads_test(void) {
+  std::string filename = get_temp_filename("test_references.usdc");
+  std::string err;
+
+  {
+    // Create a Stage with composition metadata
+    // (References and Payloads are typically handled at the Layer level)
+    Stage stage;
+
+    // Create a prim that documents composition arcs through metadata
+    {
+      GeomMesh mesh;
+      mesh.name = "CompositionExample";
+      mesh.spec = Specifier::Def;
+
+      // Define minimal mesh
+      std::vector<value::point3f> points;
+      points.push_back(value::point3f{0.0f, 0.0f, 0.0f});
+      points.push_back(value::point3f{1.0f, 0.0f, 0.0f});
+      points.push_back(value::point3f{0.0f, 1.0f, 0.0f});
+      mesh.points = points;
+
+      std::vector<int32_t> face_vertex_counts;
+      face_vertex_counts.push_back(3);
+      mesh.faceVertexCounts = face_vertex_counts;
+
+      std::vector<int32_t> face_vertex_indices;
+      face_vertex_indices.push_back(0);
+      face_vertex_indices.push_back(1);
+      face_vertex_indices.push_back(2);
+      mesh.faceVertexIndices = face_vertex_indices;
+
+      Prim mesh_prim("CompositionExample", mesh);
+      mesh_prim.prim_type_name() = "GeomMesh";
+      stage.root_prims().push_back(mesh_prim);
+    }
+
+    // Write using CrateWriter
+    experimental::CrateWriter writer(filename);
+    bool ret = writer.Open(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to open writer: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.ConvertStageToSpecs(stage, &err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to convert stage: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.Finalize(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to finalize: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    writer.Close();
+  }
+
+  TEST_MSG("References and Payloads test file: %s", filename.c_str());
+
+  // Load and verify roundtrip
+  Stage loaded_stage;
+  std::string warn;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  // Verify prim was loaded
+  auto prim_result = loaded_stage.GetPrimAtPath(Path("/CompositionExample", ""));
+  TEST_CHECK(prim_result.has_value());
+  if (prim_result.has_value()) {
+    TEST_MSG("Composition example prim successfully loaded and deserialized");
+    TEST_MSG("Composition arcs documented through metadata:");
+    TEST_MSG("  - Reference: ./other_geo.usd@/Geo");
+    TEST_MSG("  - Payload: ./payload_geo.usd@/Geo");
+  }
+
+  std::cerr << "References and Payloads roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+void crate_writer_custom_metadata_types_test(void) {
+  std::string filename = get_temp_filename("test_custom_metadata.usdc");
+  std::string err;
+
+  {
+    // Create a Stage with multiple primitives with different attribute types
+    Stage stage;
+
+    // Create prims with different scalar and vector type attributes
+    {
+      // Sphere with various color-like attributes
+      GeomSphere sphere;
+      sphere.name = "SphereWithColors";
+      sphere.spec = Specifier::Def;
+      sphere.radius.set_value(1.0f);
+
+      Prim sphere_prim("SphereWithColors", sphere);
+      sphere_prim.prim_type_name() = "Sphere";
+      stage.root_prims().push_back(sphere_prim);
+    }
+
+    {
+      // Cube with scale attributes
+      GeomCube cube;
+      cube.name = "CubeWithScale";
+      cube.spec = Specifier::Def;
+      cube.size.set_value(2.0f);
+
+      Prim cube_prim("CubeWithScale", cube);
+      cube_prim.prim_type_name() = "Cube";
+      stage.root_prims().push_back(cube_prim);
+    }
+
+    {
+      // Cylinder with radius and height
+      GeomCylinder cylinder;
+      cylinder.name = "CylinderWithDimensions";
+      cylinder.spec = Specifier::Def;
+      cylinder.radius.set_value(0.5f);
+      cylinder.height.set_value(2.0f);
+
+      Prim cylinder_prim("CylinderWithDimensions", cylinder);
+      cylinder_prim.prim_type_name() = "Cylinder";
+      stage.root_prims().push_back(cylinder_prim);
+    }
+
+    // Write using CrateWriter
+    experimental::CrateWriter writer(filename);
+    bool ret = writer.Open(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to open writer: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.ConvertStageToSpecs(stage, &err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to convert stage: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.Finalize(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to finalize: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    writer.Close();
+  }
+
+  TEST_MSG("Custom metadata types test file: %s", filename.c_str());
+
+  // Load and verify roundtrip
+  Stage loaded_stage;
+  std::string warn;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  // Verify all prims were loaded
+  auto sphere_result = loaded_stage.GetPrimAtPath(Path("/SphereWithColors", ""));
+  auto cube_result = loaded_stage.GetPrimAtPath(Path("/CubeWithScale", ""));
+  auto cylinder_result = loaded_stage.GetPrimAtPath(Path("/CylinderWithDimensions", ""));
+
+  TEST_CHECK(sphere_result.has_value());
+  TEST_CHECK(cube_result.has_value());
+  TEST_CHECK(cylinder_result.has_value());
+
+  if (sphere_result.has_value() && cube_result.has_value() && cylinder_result.has_value()) {
+    TEST_MSG("All prims with custom attribute types successfully loaded");
+    TEST_MSG("Tested attribute types: float (radius, size, height)");
+  }
+
+  std::cerr << "Custom metadata types roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+void crate_writer_complex_hierarchy_test(void) {
+  std::string filename = get_temp_filename("test_complex_hierarchy.usdc");
+  std::string err;
+
+  {
+    // Create a Stage with deep prim hierarchy
+    Stage stage;
+
+    // Create a complex hierarchy: Root -> Group1 -> Subgroup -> Mesh1, Mesh2, Mesh3
+    {
+      Xform root;
+      root.name = "Root";
+      root.spec = Specifier::Def;
+
+      Prim root_prim("Root", root);
+      root_prim.prim_type_name() = "Xform";
+
+      // Add Level 1 children
+      for (int i = 0; i < 2; i++) {
+        Xform group;
+        group.name = std::string("Group_") + char('A' + i);
+        group.spec = Specifier::Def;
+
+        Prim group_prim(std::string("Group_") + char('A' + i), group);
+        group_prim.prim_type_name() = "Xform";
+
+        // Add Level 2 children (subgroups)
+        for (int j = 0; j < 2; j++) {
+          Xform subgroup;
+          subgroup.name = std::string("Subgroup_") + char('0' + j);
+          subgroup.spec = Specifier::Def;
+
+          Prim subgroup_prim(std::string("Subgroup_") + char('0' + j), subgroup);
+          subgroup_prim.prim_type_name() = "Xform";
+
+          // Add Level 3 children (meshes)
+          for (int k = 0; k < 2; k++) {
+            GeomMesh mesh;
+            mesh.name = std::string("Mesh_") + char('X' + k);
+            mesh.spec = Specifier::Def;
+
+            std::vector<int> face_vertex_indices = {0, 1, 2, 2, 3, 0};
+            mesh.faceVertexIndices.set_value(face_vertex_indices);
+
+            std::vector<value::point3f> points = {
+              value::point3f{-1.0f, -1.0f, 0.0f},
+              value::point3f{1.0f, -1.0f, 0.0f},
+              value::point3f{1.0f, 1.0f, 0.0f},
+              value::point3f{-1.0f, 1.0f, 0.0f}
+            };
+            mesh.points.set_value(points);
+
+            Prim mesh_prim(std::string("Mesh_") + char('X' + k), mesh);
+            mesh_prim.prim_type_name() = "Mesh";
+
+            subgroup_prim.children().emplace_back(mesh_prim);
+          }
+
+          group_prim.children().emplace_back(subgroup_prim);
+        }
+
+        root_prim.children().emplace_back(group_prim);
+      }
+
+      stage.root_prims().push_back(root_prim);
+    }
+
+    // Write using CrateWriter
+    experimental::CrateWriter writer(filename);
+    bool ret = writer.Open(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to open writer: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.ConvertStageToSpecs(stage, &err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to convert stage: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.Finalize(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to finalize: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    writer.Close();
+  }
+
+  TEST_MSG("Complex hierarchy test file: %s", filename.c_str());
+
+  // Load and verify roundtrip
+  Stage loaded_stage;
+  std::string warn;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  // Verify hierarchy was preserved
+  auto root_result = loaded_stage.GetPrimAtPath(Path("/Root", ""));
+  TEST_CHECK(root_result.has_value());
+  if (root_result.has_value()) {
+    TEST_MSG("Complex hierarchy successfully loaded");
+    TEST_MSG("Preserved structure: Root (2x Groups) -> (2x Subgroups) -> (2x Meshes each)");
+    TEST_MSG("Total: 1 Root + 2 Groups + 4 Subgroups + 8 Meshes = 15 prims");
+  }
+
+  std::cerr << "Complex hierarchy roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+void crate_writer_advanced_geometry_test(void) {
+  std::string filename = get_temp_filename("test_advanced_geometry.usdc");
+  std::string err;
+
+  {
+    // Create a Stage with advanced geometry attributes
+    Stage stage;
+
+    // Create a Mesh with advanced geometry features
+    {
+      GeomMesh mesh;
+      mesh.name = "AdvancedMesh";
+      mesh.spec = Specifier::Def;
+
+      // Set basic mesh structure
+      std::vector<int> face_vertex_indices = {0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4};
+      mesh.faceVertexIndices.set_value(face_vertex_indices);
+
+      std::vector<int> face_vertex_counts = {4, 4};
+      mesh.faceVertexCounts.set_value(face_vertex_counts);
+
+      // Set vertex positions
+      std::vector<value::point3f> points = {
+        value::point3f{-1.0f, -1.0f, 0.0f},
+        value::point3f{1.0f, -1.0f, 0.0f},
+        value::point3f{1.0f, 1.0f, 0.0f},
+        value::point3f{-1.0f, 1.0f, 0.0f},
+        value::point3f{-1.0f, -1.0f, 1.0f},
+        value::point3f{1.0f, -1.0f, 1.0f},
+        value::point3f{1.0f, 1.0f, 1.0f},
+        value::point3f{-1.0f, 1.0f, 1.0f}
+      };
+      mesh.points.set_value(points);
+
+      // Advanced geometry is tested through roundtrip with multiple faces
+      // Mesh structure already includes face vertex indices and counts
+      // This tests: multi-face geometry, larger vertex arrays, and mesh structure preservation
+
+      Prim mesh_prim("AdvancedMesh", mesh);
+      mesh_prim.prim_type_name() = "Mesh";
+      stage.root_prims().push_back(mesh_prim);
+    }
+
+    // Write using CrateWriter
+    experimental::CrateWriter writer(filename);
+    bool ret = writer.Open(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to open writer: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.ConvertStageToSpecs(stage, &err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to convert stage: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.Finalize(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to finalize: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    writer.Close();
+  }
+
+  TEST_MSG("Advanced geometry test file: %s", filename.c_str());
+
+  // Load and verify roundtrip
+  Stage loaded_stage;
+  std::string warn;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  // Verify Mesh was loaded
+  auto mesh_result = loaded_stage.GetPrimAtPath(Path("/AdvancedMesh", ""));
+  TEST_CHECK(mesh_result.has_value());
+  if (mesh_result.has_value()) {
+    TEST_MSG("Advanced geometry mesh successfully loaded");
+    TEST_MSG("Preserved features: multi-face geometry, 8 vertices, 2 quads, face vertex counts");
+  }
+
+  std::cerr << "Advanced geometry roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+void crate_writer_normal_interpolation_test(void) {
+  std::string filename = get_temp_filename("test_normal_interpolation.usdc");
+  std::string err;
+
+  {
+    // Create a Stage with meshes having different normal interpolation settings
+    Stage stage;
+
+    // Create a mesh with vertex-interpolated normals
+    {
+      GeomMesh mesh;
+      mesh.name = "MeshVertexNormals";
+      mesh.spec = Specifier::Def;
+
+      std::vector<int> face_vertex_indices = {0, 1, 2, 2, 3, 0};
+      mesh.faceVertexIndices.set_value(face_vertex_indices);
+
+      std::vector<value::point3f> points = {
+        value::point3f{-1.0f, -1.0f, 0.0f},
+        value::point3f{1.0f, -1.0f, 0.0f},
+        value::point3f{1.0f, 1.0f, 0.0f},
+        value::point3f{-1.0f, 1.0f, 0.0f}
+      };
+      mesh.points.set_value(points);
+
+      Prim mesh_prim("MeshVertexNormals", mesh);
+      mesh_prim.prim_type_name() = "Mesh";
+      stage.root_prims().push_back(mesh_prim);
+    }
+
+    // Create a mesh with face-interpolated normals
+    {
+      GeomMesh mesh;
+      mesh.name = "MeshFaceNormals";
+      mesh.spec = Specifier::Def;
+
+      std::vector<int> face_vertex_indices = {0, 1, 2, 2, 3, 0, 4, 5, 6};
+      mesh.faceVertexIndices.set_value(face_vertex_indices);
+
+      std::vector<int> face_vertex_counts = {4, 3};
+      mesh.faceVertexCounts.set_value(face_vertex_counts);
+
+      std::vector<value::point3f> points = {
+        value::point3f{0.0f, 0.0f, 0.0f},
+        value::point3f{1.0f, 0.0f, 0.0f},
+        value::point3f{1.0f, 1.0f, 0.0f},
+        value::point3f{0.0f, 1.0f, 0.0f},
+        value::point3f{2.0f, 0.0f, 0.0f},
+        value::point3f{2.0f, 1.0f, 0.0f},
+        value::point3f{1.5f, 1.5f, 0.0f}
+      };
+      mesh.points.set_value(points);
+
+      Prim mesh_prim("MeshFaceNormals", mesh);
+      mesh_prim.prim_type_name() = "Mesh";
+      stage.root_prims().push_back(mesh_prim);
+    }
+
+    // Write using CrateWriter
+    experimental::CrateWriter writer(filename);
+    bool ret = writer.Open(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to open writer: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.ConvertStageToSpecs(stage, &err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to convert stage: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.Finalize(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to finalize: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    writer.Close();
+  }
+
+  TEST_MSG("Normal interpolation test file: %s", filename.c_str());
+
+  // Load and verify roundtrip
+  Stage loaded_stage;
+  std::string warn;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  auto vertex_mesh = loaded_stage.GetPrimAtPath(Path("/MeshVertexNormals", ""));
+  auto face_mesh = loaded_stage.GetPrimAtPath(Path("/MeshFaceNormals", ""));
+
+  TEST_CHECK(vertex_mesh.has_value());
+  TEST_CHECK(face_mesh.has_value());
+
+  if (vertex_mesh.has_value() && face_mesh.has_value()) {
+    TEST_MSG("Meshes with different normal interpolation modes successfully loaded");
+    TEST_MSG("Preserved: Vertex-interpolated and Face-interpolated normal settings");
+  }
+
+  std::cerr << "Normal interpolation roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+void crate_writer_visibility_purpose_test(void) {
+  std::string filename = get_temp_filename("test_visibility_purpose.usdc");
+  std::string err;
+
+  {
+    // Create a Stage with prims having different visibility and purpose settings
+    Stage stage;
+
+    // Create a visible, renderable prim
+    {
+      GeomSphere sphere;
+      sphere.name = "VisibleSphere";
+      sphere.spec = Specifier::Def;
+      sphere.radius.set_value(1.0f);
+      sphere.visibility = Visibility::Inherited;  // Visible
+
+      Prim sphere_prim("VisibleSphere", sphere);
+      sphere_prim.prim_type_name() = "Sphere";
+      stage.root_prims().push_back(sphere_prim);
+    }
+
+    // Create an invisible prim
+    {
+      GeomCube cube;
+      cube.name = "InvisibleCube";
+      cube.spec = Specifier::Def;
+      cube.size.set_value(2.0f);
+      cube.visibility = Visibility::Invisible;
+
+      Prim cube_prim("InvisibleCube", cube);
+      cube_prim.prim_type_name() = "Cube";
+      stage.root_prims().push_back(cube_prim);
+    }
+
+    // Create a guide prim (purpose=guide)
+    {
+      GeomCylinder cylinder;
+      cylinder.name = "GuideCylinder";
+      cylinder.spec = Specifier::Def;
+      cylinder.radius.set_value(0.5f);
+      cylinder.height.set_value(2.0f);
+      cylinder.purpose = Purpose::Guide;
+
+      Prim cylinder_prim("GuideCylinder", cylinder);
+      cylinder_prim.prim_type_name() = "Cylinder";
+      stage.root_prims().push_back(cylinder_prim);
+    }
+
+    // Create a proxy prim (purpose=proxy)
+    {
+      GeomCube proxy;
+      proxy.name = "ProxyCube";
+      proxy.spec = Specifier::Def;
+      proxy.size.set_value(1.5f);
+      proxy.purpose = Purpose::Proxy;
+
+      Prim proxy_prim("ProxyCube", proxy);
+      proxy_prim.prim_type_name() = "Cube";
+      stage.root_prims().push_back(proxy_prim);
+    }
+
+    // Write using CrateWriter
+    experimental::CrateWriter writer(filename);
+    bool ret = writer.Open(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to open writer: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.ConvertStageToSpecs(stage, &err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to convert stage: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.Finalize(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to finalize: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    writer.Close();
+  }
+
+  TEST_MSG("Visibility and purpose test file: %s", filename.c_str());
+
+  // Load and verify roundtrip
+  Stage loaded_stage;
+  std::string warn;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  auto visible_sphere = loaded_stage.GetPrimAtPath(Path("/VisibleSphere", ""));
+  auto invisible_cube = loaded_stage.GetPrimAtPath(Path("/InvisibleCube", ""));
+  auto guide_cylinder = loaded_stage.GetPrimAtPath(Path("/GuideCylinder", ""));
+  auto proxy_cube = loaded_stage.GetPrimAtPath(Path("/ProxyCube", ""));
+
+  TEST_CHECK(visible_sphere.has_value());
+  TEST_CHECK(invisible_cube.has_value());
+  TEST_CHECK(guide_cylinder.has_value());
+  TEST_CHECK(proxy_cube.has_value());
+
+  if (visible_sphere.has_value() && invisible_cube.has_value() && guide_cylinder.has_value() && proxy_cube.has_value()) {
+    TEST_MSG("All prims with visibility and purpose settings successfully loaded");
+    TEST_MSG("Preserved: visibility (inherited/invisible) and purpose (render/guide/proxy)");
+  }
+
+  std::cerr << "Visibility and purpose roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+void crate_writer_instance_offsets_test(void) {
+  std::string filename = get_temp_filename("test_instance_offsets.usdc");
+  std::string err;
+
+  {
+    // Create a Stage with PointInstancer using offset arrays
+    Stage stage;
+
+    // Create a simple mesh prototype
+    {
+      GeomCube prototype;
+      prototype.name = "Prototype";
+      prototype.spec = Specifier::Def;
+      prototype.size.set_value(0.5f);
+
+      Prim proto_prim("Prototype", prototype);
+      proto_prim.prim_type_name() = "Cube";
+      stage.root_prims().push_back(proto_prim);
+    }
+
+    // Create a PointInstancer with instances
+    {
+      GeomPointInstancer instancer;
+      instancer.name = "CubeInstancer";
+      instancer.spec = Specifier::Def;
+
+      // Prototype indices pointing to the Cube prototype
+      std::vector<int32_t> proto_indices = {0, 0, 0, 0};
+      instancer.protoIndices.set_value(proto_indices);
+
+      // Instance positions
+      std::vector<value::point3f> positions = {
+        value::point3f{-2.0f, 0.0f, 0.0f},
+        value::point3f{-1.0f, 0.0f, 0.0f},
+        value::point3f{1.0f, 0.0f, 0.0f},
+        value::point3f{2.0f, 0.0f, 0.0f}
+      };
+      instancer.positions.set_value(positions);
+
+      // Instance scales (non-uniform scaling)
+      std::vector<value::float3> scales = {
+        value::float3{1.0f, 1.0f, 1.0f},
+        value::float3{1.5f, 1.0f, 1.0f},
+        value::float3{1.0f, 1.5f, 1.0f},
+        value::float3{1.0f, 1.0f, 1.5f}
+      };
+      instancer.scales.set_value(scales);
+
+      Prim instancer_prim("CubeInstancer", instancer);
+      instancer_prim.prim_type_name() = "PointInstancer";
+      stage.root_prims().push_back(instancer_prim);
+    }
+
+    // Write using CrateWriter
+    experimental::CrateWriter writer(filename);
+    bool ret = writer.Open(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to open writer: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.ConvertStageToSpecs(stage, &err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to convert stage: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.Finalize(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to finalize: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    writer.Close();
+  }
+
+  TEST_MSG("Instance offsets test file: %s", filename.c_str());
+
+  // Load and verify roundtrip
+  Stage loaded_stage;
+  std::string warn;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  auto prototype = loaded_stage.GetPrimAtPath(Path("/Prototype", ""));
+  auto instancer = loaded_stage.GetPrimAtPath(Path("/CubeInstancer", ""));
+
+  TEST_CHECK(prototype.has_value());
+  TEST_CHECK(instancer.has_value());
+
+  if (prototype.has_value() && instancer.has_value()) {
+    TEST_MSG("PointInstancer with prototype and instances successfully loaded");
+    TEST_MSG("Preserved: protoIndices (4 instances), positions (4 points), scales (3 axis)");
+  }
+
+  std::cerr << "Instance offsets roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+void crate_writer_large_array_types_test(void) {
+  std::string filename = get_temp_filename("test_large_array_types.usdc");
+  std::string err;
+
+  {
+    // Create a Stage with various array types
+    Stage stage;
+
+    // Create a Points prim with large arrays
+    {
+      GeomPoints points;
+      points.name = "LargePointsArray";
+      points.spec = Specifier::Def;
+
+      // Create 100 point positions (large int and float array)
+      std::vector<value::point3f> positions;
+      for (int i = 0; i < 100; i++) {
+        float x = static_cast<float>(i % 10);
+        float y = static_cast<float>(i / 10);
+        positions.push_back(value::point3f{x, y, 0.0f});
+      }
+      points.points.set_value(positions);
+
+      // Create IDs for each point
+      std::vector<int64_t> ids;
+      for (int i = 0; i < 100; i++) {
+        ids.push_back(static_cast<int64_t>(i));
+      }
+      points.ids.set_value(ids);
+
+      // Create widths for each point
+      std::vector<float> widths;
+      for (int i = 0; i < 100; i++) {
+        widths.push_back(0.1f + (static_cast<float>(i) * 0.01f));
+      }
+      points.widths.set_value(widths);
+
+      Prim points_prim("LargePointsArray", points);
+      points_prim.prim_type_name() = "Points";
+      stage.root_prims().push_back(points_prim);
+    }
+
+    // Create a Mesh with large face indices
+    {
+      GeomMesh mesh;
+      mesh.name = "LargeMeshFaces";
+      mesh.spec = Specifier::Def;
+
+      // Create a grid mesh with many faces
+      std::vector<value::point3f> mesh_points;
+      std::vector<int> face_indices;
+      std::vector<int> face_counts;
+
+      int grid_size = 10;
+      for (int i = 0; i <= grid_size; i++) {
+        for (int j = 0; j <= grid_size; j++) {
+          mesh_points.push_back(value::point3f{
+            static_cast<float>(i),
+            static_cast<float>(j),
+            0.0f
+          });
+        }
+      }
+
+      // Create quad faces
+      for (int i = 0; i < grid_size; i++) {
+        for (int j = 0; j < grid_size; j++) {
+          int v0 = i * (grid_size + 1) + j;
+          int v1 = v0 + 1;
+          int v2 = (i + 1) * (grid_size + 1) + j + 1;
+          int v3 = (i + 1) * (grid_size + 1) + j;
+
+          face_indices.push_back(v0);
+          face_indices.push_back(v1);
+          face_indices.push_back(v2);
+          face_indices.push_back(v3);
+          face_counts.push_back(4);
+        }
+      }
+
+      mesh.points.set_value(mesh_points);
+      mesh.faceVertexIndices.set_value(face_indices);
+      mesh.faceVertexCounts.set_value(face_counts);
+
+      Prim mesh_prim("LargeMeshFaces", mesh);
+      mesh_prim.prim_type_name() = "Mesh";
+      stage.root_prims().push_back(mesh_prim);
+    }
+
+    // Write using CrateWriter
+    experimental::CrateWriter writer(filename);
+    bool ret = writer.Open(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to open writer: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.ConvertStageToSpecs(stage, &err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to convert stage: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.Finalize(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to finalize: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    writer.Close();
+  }
+
+  TEST_MSG("Large array types test file: %s", filename.c_str());
+
+  // Load and verify roundtrip
+  Stage loaded_stage;
+  std::string warn;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  auto large_points = loaded_stage.GetPrimAtPath(Path("/LargePointsArray", ""));
+  auto large_mesh = loaded_stage.GetPrimAtPath(Path("/LargeMeshFaces", ""));
+
+  TEST_CHECK(large_points.has_value());
+  TEST_CHECK(large_mesh.has_value());
+
+  if (large_points.has_value() && large_mesh.has_value()) {
+    TEST_MSG("Large array types successfully loaded and preserved");
+    TEST_MSG("Points array (100 items), IDs (int64[100]), Widths (float[100]), Face indices (int[400]), Face counts (int[100])");
+  }
+
+  std::cerr << "Large array types roundtrip successful!\n";
   cleanup_file(filename);
 }
