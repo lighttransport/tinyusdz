@@ -223,6 +223,32 @@ public:
     error_context_.Clear();
   }
 
+  // Validation methods
+  ///
+  /// Validate a Stage before writing
+  /// Checks for common issues like invalid paths, missing prims, cycles, etc.
+  ///
+  /// @param stage The Stage to validate
+  /// @param err Optional error message output
+  /// @return true if valid, false if validation fails
+  ///
+  bool ValidateStage(const Stage& stage, std::string* err = nullptr);
+
+  ///
+  /// Validate a Layer before writing
+  /// Checks for common issues in PrimSpecs and properties
+  ///
+  /// @param layer The Layer to validate
+  /// @param err Optional error message output
+  /// @return true if valid, false if validation fails
+  ///
+  bool ValidateLayer(const Layer& layer, std::string* err = nullptr);
+
+  ///
+  /// Get validation results summary
+  ///
+  std::string GetValidationSummary() const;
+
   // Configuration options
   struct Options {
     uint8_t version_major = 0;
@@ -231,6 +257,7 @@ public:
 
     bool enable_compression = true;   // Phase 4: LZ4 compression enabled by default
     bool enable_deduplication = true; // Deduplicate tokens/strings/paths/values
+    bool enable_validation = true;    // Phase 5: Pre-write validation enabled by default
 
     // Memory and file size limits (with WASM-specific defaults)
     // These prevent resource exhaustion when processing untrusted USD files
@@ -528,6 +555,12 @@ private:
 
   // Error context stack for detailed error messages
   ErrorContextStack error_context_{options_.error_context_depth};
+
+  // Validation tracking
+  size_t validation_prim_count_ = 0;           // Number of prims validated
+  size_t validation_property_count_ = 0;       // Number of properties validated
+  size_t validation_warnings_count_ = 0;       // Number of validation warnings
+  std::vector<std::string> validation_warnings_;  // Collected validation warnings
 
   // Deduplication tables
   std::unordered_map<std::string, crate::TokenIndex> token_to_index_;

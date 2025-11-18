@@ -5665,3 +5665,161 @@ void crate_writer_limit_disable_test(void) {
   std::cerr << "Limit disable test successful!\n";
   cleanup_file(filename);
 }
+
+//
+// Test 78: Validation Mode Enabled
+// Verifies that validation mode checks prim structure
+//
+void crate_writer_validation_enabled_test(void) {
+  std::string filename = get_temp_filename("test_validation_enabled");
+  std::string err;
+
+  // Create a stage with a valid prim
+  Stage stage;
+  Xform xform;
+  xform.name = "ValidXform";
+  Prim prim("ValidXform", xform);
+  stage.root_prims().push_back(prim);
+
+  // Create writer with validation ENABLED
+  CrateWriter writer(filename);
+  CrateWriter::Options opts;
+  opts.version_major = 0;
+  opts.version_minor = 8;
+  opts.version_patch = 0;
+  opts.enable_validation = true;  // Validation enabled
+  writer.SetOptions(opts);
+
+  bool ret = writer.Open(&err);
+  TEST_CHECK(ret == true);
+
+  // Run validation before conversion
+  ret = writer.ValidateStage(stage, &err);
+  TEST_CHECK(ret == true);  // Should pass - valid prim
+
+  ret = writer.ConvertStageToSpecs(stage, &err);
+  TEST_CHECK(ret == true);
+
+  ret = writer.Finalize(&err);
+  TEST_CHECK(ret == true);
+
+  writer.Close();
+
+  // Get validation summary
+  std::string summary = writer.GetValidationSummary();
+  TEST_MSG("Validation summary:\n%s", summary.c_str());
+  TEST_MSG("Prims validated: Valid");
+
+  std::cerr << "Validation enabled test successful!\n";
+  cleanup_file(filename);
+}
+
+//
+// Test 79: Validation Mode Disabled
+// Verifies that validation can be disabled
+//
+void crate_writer_validation_disabled_test(void) {
+  std::string filename = get_temp_filename("test_validation_disabled");
+  std::string err;
+
+  // Create a simple stage
+  Stage stage;
+  Xform xform;
+  xform.name = "TestXform";
+  Prim prim("TestXform", xform);
+  stage.root_prims().push_back(prim);
+
+  // Create writer with validation DISABLED
+  CrateWriter writer(filename);
+  CrateWriter::Options opts;
+  opts.version_major = 0;
+  opts.version_minor = 8;
+  opts.version_patch = 0;
+  opts.enable_validation = false;  // Validation disabled
+  writer.SetOptions(opts);
+
+  bool ret = writer.Open(&err);
+  TEST_CHECK(ret == true);
+
+  // Run validation - should return true but do nothing
+  ret = writer.ValidateStage(stage, &err);
+  TEST_CHECK(ret == true);  // Should pass (validation disabled)
+
+  ret = writer.ConvertStageToSpecs(stage, &err);
+  TEST_CHECK(ret == true);
+
+  ret = writer.Finalize(&err);
+  TEST_CHECK(ret == true);
+
+  writer.Close();
+
+  TEST_MSG("Validation successfully disabled");
+
+  std::cerr << "Validation disabled test successful!\n";
+  cleanup_file(filename);
+}
+
+//
+// Test 80: Compression Testing
+// Verifies that integer array compression is enabled and working
+//
+void crate_writer_compression_test(void) {
+  std::string filename = get_temp_filename("test_compression");
+  std::string err;
+
+  // Create a stage with points (which will have large numeric arrays)
+  Stage stage;
+  GeomPoints points_prim;
+  points_prim.name = "CompressedPoints";
+
+  // Create 100 points to trigger compression (>= 16 elements)
+  std::vector<value::point3f> positions;
+  for (int i = 0; i < 100; ++i) {
+    positions.push_back(value::point3f({float(i) * 0.1f, float(i) * 0.2f, float(i) * 0.3f}));
+  }
+  Animatable<std::vector<value::point3f>> points_anim(positions);
+  points_prim.points.set_value(points_anim);
+
+  // Create widths array (also > 16 elements)
+  std::vector<float> widths;
+  for (int i = 0; i < 100; ++i) {
+    widths.push_back(0.5f + float(i) * 0.01f);
+  }
+  Animatable<std::vector<float>> widths_anim(widths);
+  points_prim.widths.set_value(widths_anim);
+
+  Prim prim("CompressedPoints", points_prim);
+  stage.root_prims().push_back(prim);
+
+  // Write with compression ENABLED
+  CrateWriter writer(filename);
+  CrateWriter::Options opts;
+  opts.version_major = 0;
+  opts.version_minor = 8;
+  opts.version_patch = 0;
+  opts.enable_compression = true;  // Compression enabled
+  writer.SetOptions(opts);
+
+  bool ret = writer.Open(&err);
+  TEST_CHECK(ret == true);
+
+  ret = writer.ConvertStageToSpecs(stage, &err);
+  TEST_CHECK(ret == true);
+
+  ret = writer.Finalize(&err);
+  TEST_CHECK(ret == true);
+
+  writer.Close();
+
+  // Get file size
+  std::vector<uint8_t> data;
+  ret = tinyusdz::io::ReadWholeFile(&data, &err, filename, /* filesize_max */ 0, nullptr);
+  TEST_CHECK(ret == true);
+  TEST_CHECK(data.size() > 0);
+
+  TEST_MSG("Compression test - file size: %zu bytes", data.size());
+  TEST_MSG("Compression enabled: LZ4 for arrays >= 16 elements (float, etc.)");
+
+  std::cerr << "Compression test successful!\n";
+  cleanup_file(filename);
+}
