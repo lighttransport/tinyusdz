@@ -2822,6 +2822,55 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
     }
   };
 
+  // Helper to handle timesampled float shader inputs
+  auto add_input_spec_with_timesamples = [&](
+      const std::string& input_name,
+      const std::string& type_name,
+      const crate::CrateValue& default_value,
+      const Animatable<float>* animatable) -> bool {
+    // First add the default value spec
+    if (!add_input_spec(input_name, type_name, default_value)) {
+      return false;
+    }
+
+    // If there are timesamples, create a separate timeSamples spec
+    if (animatable && animatable->has_timesamples()) {
+      const auto& typed_ts = animatable->get_timesamples();
+
+      // Convert TypedTimeSamples<float> to value::TimeSamples
+      value::TimeSamples ts;
+      for (size_t i = 0; i < typed_ts.size(); i++) {
+        double time;
+        float sample_value;
+
+#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
+        time = typed_ts.get_samples()[i].t;
+        sample_value = typed_ts.get_samples()[i].value;
+#else
+        time = typed_ts.get_times()[i];
+        sample_value = typed_ts.get_values()[i];
+#endif
+
+        value::Value v(sample_value);
+        ts.add_sample(time, v);
+      }
+
+      // Create timeSamples spec
+      Path ts_path = prim_path.AppendProperty(input_name + ".timeSamples");
+      crate::FieldValuePairVector ts_fields;
+
+      crate::CrateValue ts_value;
+      ts_value.Set(ts);
+      ts_fields.push_back({"default", ts_value});
+
+      if (!AddSpec(ts_path, SpecType::Attribute, ts_fields, err)) {
+        return false;
+      }
+    }
+
+    return true;
+  };
+
   // Extract and add common PBR inputs
 
   // inputs:diffuseColor (color3f)
@@ -2892,13 +2941,11 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
   // inputs:metallic (float) - for metalness workflow
   if (preview_surface->metallic.authored()) {
     crate::CrateValue metallic_value;
-    if (!preview_surface->metallic.get_value().is_timesamples()) {
-      float metallic;
-      if (preview_surface->metallic.get_value().get_scalar(&metallic)) {
-        metallic_value.Set(metallic);
-        if (!add_input_spec("inputs:metallic", "float", metallic_value)) {
-          return false;
-        }
+    float metallic = 0.0f;
+    if (preview_surface->metallic.get_value().get_scalar(&metallic)) {
+      metallic_value.Set(metallic);
+      if (!add_input_spec_with_timesamples("inputs:metallic", "float", metallic_value, &preview_surface->metallic.get_value())) {
+        return false;
       }
     }
   }
@@ -2906,13 +2953,11 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
   // inputs:roughness (float)
   if (preview_surface->roughness.authored()) {
     crate::CrateValue roughness_value;
-    if (!preview_surface->roughness.get_value().is_timesamples()) {
-      float roughness;
-      if (preview_surface->roughness.get_value().get_scalar(&roughness)) {
-        roughness_value.Set(roughness);
-        if (!add_input_spec("inputs:roughness", "float", roughness_value)) {
-          return false;
-        }
+    float roughness = 0.0f;
+    if (preview_surface->roughness.get_value().get_scalar(&roughness)) {
+      roughness_value.Set(roughness);
+      if (!add_input_spec_with_timesamples("inputs:roughness", "float", roughness_value, &preview_surface->roughness.get_value())) {
+        return false;
       }
     }
   }
@@ -2920,13 +2965,11 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
   // inputs:clearcoat (float)
   if (preview_surface->clearcoat.authored()) {
     crate::CrateValue clearcoat_value;
-    if (!preview_surface->clearcoat.get_value().is_timesamples()) {
-      float clearcoat;
-      if (preview_surface->clearcoat.get_value().get_scalar(&clearcoat)) {
-        clearcoat_value.Set(clearcoat);
-        if (!add_input_spec("inputs:clearcoat", "float", clearcoat_value)) {
-          return false;
-        }
+    float clearcoat = 0.0f;
+    if (preview_surface->clearcoat.get_value().get_scalar(&clearcoat)) {
+      clearcoat_value.Set(clearcoat);
+      if (!add_input_spec_with_timesamples("inputs:clearcoat", "float", clearcoat_value, &preview_surface->clearcoat.get_value())) {
+        return false;
       }
     }
   }
@@ -2934,13 +2977,11 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
   // inputs:clearcoatRoughness (float)
   if (preview_surface->clearcoatRoughness.authored()) {
     crate::CrateValue clearcoat_rough_value;
-    if (!preview_surface->clearcoatRoughness.get_value().is_timesamples()) {
-      float clearcoat_rough;
-      if (preview_surface->clearcoatRoughness.get_value().get_scalar(&clearcoat_rough)) {
-        clearcoat_rough_value.Set(clearcoat_rough);
-        if (!add_input_spec("inputs:clearcoatRoughness", "float", clearcoat_rough_value)) {
-          return false;
-        }
+    float clearcoat_rough = 0.0f;
+    if (preview_surface->clearcoatRoughness.get_value().get_scalar(&clearcoat_rough)) {
+      clearcoat_rough_value.Set(clearcoat_rough);
+      if (!add_input_spec_with_timesamples("inputs:clearcoatRoughness", "float", clearcoat_rough_value, &preview_surface->clearcoatRoughness.get_value())) {
+        return false;
       }
     }
   }
@@ -2948,13 +2989,11 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
   // inputs:opacity (float)
   if (preview_surface->opacity.authored()) {
     crate::CrateValue opacity_value;
-    if (!preview_surface->opacity.get_value().is_timesamples()) {
-      float opacity;
-      if (preview_surface->opacity.get_value().get_scalar(&opacity)) {
-        opacity_value.Set(opacity);
-        if (!add_input_spec("inputs:opacity", "float", opacity_value)) {
-          return false;
-        }
+    float opacity = 0.0f;
+    if (preview_surface->opacity.get_value().get_scalar(&opacity)) {
+      opacity_value.Set(opacity);
+      if (!add_input_spec_with_timesamples("inputs:opacity", "float", opacity_value, &preview_surface->opacity.get_value())) {
+        return false;
       }
     }
   }
@@ -2977,13 +3016,11 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
   // inputs:opacityThreshold (float)
   if (preview_surface->opacityThreshold.authored()) {
     crate::CrateValue opacity_thresh_value;
-    if (!preview_surface->opacityThreshold.get_value().is_timesamples()) {
-      float opacity_thresh;
-      if (preview_surface->opacityThreshold.get_value().get_scalar(&opacity_thresh)) {
-        opacity_thresh_value.Set(opacity_thresh);
-        if (!add_input_spec("inputs:opacityThreshold", "float", opacity_thresh_value)) {
-          return false;
-        }
+    float opacity_thresh = 0.0f;
+    if (preview_surface->opacityThreshold.get_value().get_scalar(&opacity_thresh)) {
+      opacity_thresh_value.Set(opacity_thresh);
+      if (!add_input_spec_with_timesamples("inputs:opacityThreshold", "float", opacity_thresh_value, &preview_surface->opacityThreshold.get_value())) {
+        return false;
       }
     }
   }
@@ -2991,13 +3028,11 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
   // inputs:ior (float)
   if (preview_surface->ior.authored()) {
     crate::CrateValue ior_value;
-    if (!preview_surface->ior.get_value().is_timesamples()) {
-      float ior;
-      if (preview_surface->ior.get_value().get_scalar(&ior)) {
-        ior_value.Set(ior);
-        if (!add_input_spec("inputs:ior", "float", ior_value)) {
-          return false;
-        }
+    float ior = 0.0f;
+    if (preview_surface->ior.get_value().get_scalar(&ior)) {
+      ior_value.Set(ior);
+      if (!add_input_spec_with_timesamples("inputs:ior", "float", ior_value, &preview_surface->ior.get_value())) {
+        return false;
       }
     }
   }
@@ -3021,13 +3056,11 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
   // inputs:displacement (float)
   if (preview_surface->displacement.authored()) {
     crate::CrateValue displacement_value;
-    if (!preview_surface->displacement.get_value().is_timesamples()) {
-      float displacement;
-      if (preview_surface->displacement.get_value().get_scalar(&displacement)) {
-        displacement_value.Set(displacement);
-        if (!add_input_spec("inputs:displacement", "float", displacement_value)) {
-          return false;
-        }
+    float displacement = 0.0f;
+    if (preview_surface->displacement.get_value().get_scalar(&displacement)) {
+      displacement_value.Set(displacement);
+      if (!add_input_spec_with_timesamples("inputs:displacement", "float", displacement_value, &preview_surface->displacement.get_value())) {
+        return false;
       }
     }
   }
@@ -3035,13 +3068,11 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
   // inputs:occlusion (float)
   if (preview_surface->occlusion.authored()) {
     crate::CrateValue occlusion_value;
-    if (!preview_surface->occlusion.get_value().is_timesamples()) {
-      float occlusion;
-      if (preview_surface->occlusion.get_value().get_scalar(&occlusion)) {
-        occlusion_value.Set(occlusion);
-        if (!add_input_spec("inputs:occlusion", "float", occlusion_value)) {
-          return false;
-        }
+    float occlusion = 0.0f;
+    if (preview_surface->occlusion.get_value().get_scalar(&occlusion)) {
+      occlusion_value.Set(occlusion);
+      if (!add_input_spec_with_timesamples("inputs:occlusion", "float", occlusion_value, &preview_surface->occlusion.get_value())) {
+        return false;
       }
     }
   }
