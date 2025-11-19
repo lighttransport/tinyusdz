@@ -3182,6 +3182,56 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
     }
   };
 
+  // Helper to handle timesampled float2 inputs (for st coordinates)
+  auto add_input_spec_with_timesamples_float2 = [&](
+      const std::string& input_name,
+      const crate::CrateValue& default_value,
+      const Animatable<value::texcoord2f>* animatable) -> bool {
+    // First add the default value spec
+    if (!add_input_spec(input_name, "texCoord2f", default_value)) {
+      return false;
+    }
+
+    // If there are timesamples, create a separate timeSamples spec
+    if (animatable && animatable->has_timesamples()) {
+      const auto& typed_ts = animatable->get_timesamples();
+
+      // Convert TypedTimeSamples<texcoord2f> to value::TimeSamples
+      value::TimeSamples ts;
+      for (size_t i = 0; i < typed_ts.size(); i++) {
+        double time;
+        value::texcoord2f sample_value;
+
+#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
+        time = typed_ts.get_samples()[i].t;
+        sample_value = typed_ts.get_samples()[i].value;
+#else
+        time = typed_ts.get_times()[i];
+        sample_value = typed_ts.get_values()[i];
+#endif
+
+        // Convert texcoord2f to float2 for TimeSamples
+        value::float2 sample_as_float2 = {sample_value.s, sample_value.t};
+        value::Value v(sample_as_float2);
+        ts.add_sample(time, v);
+      }
+
+      // Create timeSamples spec
+      Path ts_path = prim_path.AppendProperty(input_name + ".timeSamples");
+      crate::FieldValuePairVector ts_fields;
+
+      crate::CrateValue ts_value;
+      ts_value.Set(ts);
+      ts_fields.push_back({"default", ts_value});
+
+      if (!AddSpec(ts_path, SpecType::Attribute, ts_fields, err)) {
+        return false;
+      }
+    }
+
+    return true;
+  };
+
   // Extract and add texture inputs
 
   // inputs:file (asset) - texture file path
@@ -3205,15 +3255,13 @@ bool CrateWriter::AddUsdUVTextureInputSpecs(
   // inputs:st (texcoord2f) - texture coordinates
   if (uv_texture->st.authored()) {
     crate::CrateValue st_value;
-    if (!uv_texture->st.get_value().is_timesamples()) {
-      value::texcoord2f st;
-      if (uv_texture->st.get_value().get_scalar(&st)) {
-        // Convert texcoord2f to float2 for CrateValue
-        value::float2 st_as_float2 = {st.s, st.t};
-        st_value.Set(st_as_float2);
-        if (!add_input_spec("inputs:st", "texCoord2f", st_value)) {
-          return false;
-        }
+    value::texcoord2f st = {0.0f, 0.0f};
+    if (uv_texture->st.get_value().get_scalar(&st)) {
+      // Convert texcoord2f to float2 for CrateValue
+      value::float2 st_as_float2 = {st.s, st.t};
+      st_value.Set(st_as_float2);
+      if (!add_input_spec_with_timesamples_float2("inputs:st", st_value, &uv_texture->st.get_value())) {
+        return false;
       }
     }
   }
@@ -3409,16 +3457,110 @@ bool CrateWriter::AddUsdTransform2dInputSpecs(
     return AddSpec(input_path, SpecType::Attribute, input_fields, err);
   };
 
+  // Helper to handle timesampled float2 inputs
+  auto add_input_spec_with_timesamples_float2 = [&](
+      const std::string& input_name,
+      const crate::CrateValue& default_value,
+      const Animatable<value::float2>* animatable) -> bool {
+    // First add the default value spec
+    if (!add_input_spec(input_name, "float2", default_value)) {
+      return false;
+    }
+
+    // If there are timesamples, create a separate timeSamples spec
+    if (animatable && animatable->has_timesamples()) {
+      const auto& typed_ts = animatable->get_timesamples();
+
+      // Convert TypedTimeSamples<float2> to value::TimeSamples
+      value::TimeSamples ts;
+      for (size_t i = 0; i < typed_ts.size(); i++) {
+        double time;
+        value::float2 sample_value;
+
+#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
+        time = typed_ts.get_samples()[i].t;
+        sample_value = typed_ts.get_samples()[i].value;
+#else
+        time = typed_ts.get_times()[i];
+        sample_value = typed_ts.get_values()[i];
+#endif
+
+        value::Value v(sample_value);
+        ts.add_sample(time, v);
+      }
+
+      // Create timeSamples spec
+      Path ts_path = prim_path.AppendProperty(input_name + ".timeSamples");
+      crate::FieldValuePairVector ts_fields;
+
+      crate::CrateValue ts_value;
+      ts_value.Set(ts);
+      ts_fields.push_back({"default", ts_value});
+
+      if (!AddSpec(ts_path, SpecType::Attribute, ts_fields, err)) {
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  // Helper to handle timesampled float inputs
+  auto add_input_spec_with_timesamples_float = [&](
+      const std::string& input_name,
+      const crate::CrateValue& default_value,
+      const Animatable<float>* animatable) -> bool {
+    // First add the default value spec
+    if (!add_input_spec(input_name, "float", default_value)) {
+      return false;
+    }
+
+    // If there are timesamples, create a separate timeSamples spec
+    if (animatable && animatable->has_timesamples()) {
+      const auto& typed_ts = animatable->get_timesamples();
+
+      // Convert TypedTimeSamples<float> to value::TimeSamples
+      value::TimeSamples ts;
+      for (size_t i = 0; i < typed_ts.size(); i++) {
+        double time;
+        float sample_value;
+
+#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
+        time = typed_ts.get_samples()[i].t;
+        sample_value = typed_ts.get_samples()[i].value;
+#else
+        time = typed_ts.get_times()[i];
+        sample_value = typed_ts.get_values()[i];
+#endif
+
+        value::Value v(sample_value);
+        ts.add_sample(time, v);
+      }
+
+      // Create timeSamples spec
+      Path ts_path = prim_path.AppendProperty(input_name + ".timeSamples");
+      crate::FieldValuePairVector ts_fields;
+
+      crate::CrateValue ts_value;
+      ts_value.Set(ts);
+      ts_fields.push_back({"default", ts_value});
+
+      if (!AddSpec(ts_path, SpecType::Attribute, ts_fields, err)) {
+        return false;
+      }
+    }
+
+    return true;
+  };
+
   // Extract inputs:in (float2)
   if (transform2d->in.authored()) {
     crate::CrateValue in_crate_value;
-    if (!transform2d->in.get_value().is_timesamples()) {
-      value::float2 in_value;
-      if (transform2d->in.get_value().get_scalar(&in_value)) {
-        in_crate_value.Set(in_value);
-        if (!add_input_spec("inputs:in", "float2", in_crate_value)) {
-          return false;
-        }
+    value::float2 in_value = {0.0f, 0.0f};
+    if (transform2d->in.get_value().get_scalar(&in_value)) {
+      in_crate_value.Set(in_value);
+      if (!add_input_spec_with_timesamples_float2("inputs:in", in_crate_value, &transform2d->in.get_value())) {
+        return false;
       }
     }
   }
@@ -3426,13 +3568,11 @@ bool CrateWriter::AddUsdTransform2dInputSpecs(
   // Extract inputs:rotation (float) - in degrees, CCW
   if (transform2d->rotation.authored()) {
     crate::CrateValue rotation_crate_value;
-    if (!transform2d->rotation.get_value().is_timesamples()) {
-      float rotation_value;
-      if (transform2d->rotation.get_value().get_scalar(&rotation_value)) {
-        rotation_crate_value.Set(rotation_value);
-        if (!add_input_spec("inputs:rotation", "float", rotation_crate_value)) {
-          return false;
-        }
+    float rotation_value = 0.0f;
+    if (transform2d->rotation.get_value().get_scalar(&rotation_value)) {
+      rotation_crate_value.Set(rotation_value);
+      if (!add_input_spec_with_timesamples_float("inputs:rotation", rotation_crate_value, &transform2d->rotation.get_value())) {
+        return false;
       }
     }
   }
@@ -3440,13 +3580,11 @@ bool CrateWriter::AddUsdTransform2dInputSpecs(
   // Extract inputs:scale (float2)
   if (transform2d->scale.authored()) {
     crate::CrateValue scale_crate_value;
-    if (!transform2d->scale.get_value().is_timesamples()) {
-      value::float2 scale_value;
-      if (transform2d->scale.get_value().get_scalar(&scale_value)) {
-        scale_crate_value.Set(scale_value);
-        if (!add_input_spec("inputs:scale", "float2", scale_crate_value)) {
-          return false;
-        }
+    value::float2 scale_value = {1.0f, 1.0f};
+    if (transform2d->scale.get_value().get_scalar(&scale_value)) {
+      scale_crate_value.Set(scale_value);
+      if (!add_input_spec_with_timesamples_float2("inputs:scale", scale_crate_value, &transform2d->scale.get_value())) {
+        return false;
       }
     }
   }
@@ -3454,13 +3592,11 @@ bool CrateWriter::AddUsdTransform2dInputSpecs(
   // Extract inputs:translation (float2)
   if (transform2d->translation.authored()) {
     crate::CrateValue translation_crate_value;
-    if (!transform2d->translation.get_value().is_timesamples()) {
-      value::float2 translation_value;
-      if (transform2d->translation.get_value().get_scalar(&translation_value)) {
-        translation_crate_value.Set(translation_value);
-        if (!add_input_spec("inputs:translation", "float2", translation_crate_value)) {
-          return false;
-        }
+    value::float2 translation_value = {0.0f, 0.0f};
+    if (transform2d->translation.get_value().get_scalar(&translation_value)) {
+      translation_crate_value.Set(translation_value);
+      if (!add_input_spec_with_timesamples_float2("inputs:translation", translation_crate_value, &transform2d->translation.get_value())) {
+        return false;
       }
     }
   }
