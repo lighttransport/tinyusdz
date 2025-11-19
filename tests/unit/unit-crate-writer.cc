@@ -2301,8 +2301,18 @@ void crate_writer_point_instancer_test(void) {
     };
     instancer.velocities = Animatable<std::vector<value::vector3f>>(velocities);
 
-    // TODO: Add support for enhanced PointInstancer properties (ids, orientations, invisibleIds, inactiveIds)
-    // These require crate reader enhancements to support int64[] and quath[] type IDs
+    // Set enhanced properties (ids, invisibleIds, inactiveIds)
+    std::vector<int64_t> ids = {100, 101, 102, 103};
+    instancer.ids = Animatable<std::vector<int64_t>>(ids);
+
+    std::vector<int64_t> invisible_ids = {102};  // Hide one instance
+    instancer.invisibleIds = Animatable<std::vector<int64_t>>(invisible_ids);
+
+    std::vector<int64_t> inactive_ids = {103};  // Deactivate one instance
+    instancer.inactiveIds = inactive_ids;
+
+    // Note: orientations (quath[]) test skipped - requires proper quath construction
+    // orientations would be extracted if populated
 
     Prim instancer_prim("PointInstancer1", instancer);
     instancer_prim.prim_type_name() = "PointInstancer";
@@ -2403,6 +2413,42 @@ void crate_writer_point_instancer_test(void) {
               TEST_MSG("PointInstancer has %zu velocities", velocities.size());
             }
           }
+        }
+
+        // Verify ids
+        if (loaded_instancer->ids.authored()) {
+          auto ids_opt = loaded_instancer->ids.get_value();
+          if (ids_opt.has_value()) {
+            const Animatable<std::vector<int64_t>>& ids_anim = ids_opt.value();
+            std::vector<int64_t> ids;
+            if (ids_anim.get_default(&ids)) {
+              TEST_CHECK(ids.size() == 4);
+              TEST_MSG("PointInstancer has %zu ids", ids.size());
+              TEST_CHECK(ids[0] == 100 && ids[3] == 103);
+            }
+          }
+        }
+
+        // Verify invisibleIds
+        if (loaded_instancer->invisibleIds.authored()) {
+          auto inv_opt = loaded_instancer->invisibleIds.get_value();
+          if (inv_opt.has_value()) {
+            const Animatable<std::vector<int64_t>>& inv_anim = inv_opt.value();
+            std::vector<int64_t> invisible_ids;
+            if (inv_anim.get_default(&invisible_ids)) {
+              TEST_CHECK(invisible_ids.size() == 1);
+              TEST_MSG("PointInstancer has %zu invisibleIds", invisible_ids.size());
+              TEST_CHECK(invisible_ids[0] == 102);
+            }
+          }
+        }
+
+        // Verify inactiveIds
+        std::vector<int64_t> inactive_ids;
+        if (loaded_instancer->inactiveIds.get_value(&inactive_ids)) {
+          TEST_CHECK(inactive_ids.size() == 1);
+          TEST_MSG("PointInstancer has %zu inactiveIds", inactive_ids.size());
+          TEST_CHECK(inactive_ids[0] == 103);
         }
       }
     }
