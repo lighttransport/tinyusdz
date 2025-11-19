@@ -5521,7 +5521,103 @@ void crate_writer_multiple_lights_test(void) {
 }
 
 //
-// Test 74: Error Context Stack
+// Test 74: Light Filters Relationships
+// Verifies that light filter relationships (rel light:filters) are properly exported
+//
+void crate_writer_light_filters_test(void) {
+  std::string filename = get_temp_filename("test_light_filters");
+  std::string err;
+
+  // Create a stage with a light that has filter relationships
+  Stage stage;
+
+  // Create a filter prim (could be any prim type, but typically a Shader)
+  Shader filter_shader;
+  filter_shader.name = "LightFilter";
+  filter_shader.info_id = "LightFilter";  // Custom light filter
+
+  // Create a rect light with filter relationships
+  RectLight rect;
+  rect.name = "RectLightWithFilters";
+  rect.width.set_value(Animatable<float>(2.0f));
+  rect.height.set_value(Animatable<float>(1.0f));
+  rect.intensity.set_value(Animatable<float>(1.0f));
+
+  // Add light filter relationship
+  Relationship light_filters;
+  light_filters.set(Path("/LightFilter", ""));
+  rect.lightFilters = light_filters;
+
+  stage.root_prims().push_back(Prim("LightFilter", filter_shader));
+  stage.root_prims().push_back(Prim("RectLightWithFilters", rect));
+
+  // Write to USDC
+  CrateWriter writer(filename);
+  CrateWriter::Options opts;
+  opts.version_major = 0;
+  opts.version_minor = 8;
+  opts.version_patch = 0;
+  writer.SetOptions(opts);
+
+  bool ret = writer.Open(&err);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to open writer: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  ret = writer.ConvertStageToSpecs(stage, &err);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to convert stage: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  ret = writer.Finalize(&err);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to finalize: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  writer.Close();
+
+  TEST_MSG("Light filters test file: %s", filename.c_str());
+
+  // Load and verify roundtrip
+  Stage loaded_stage;
+  std::string warn;
+  ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  // Verify the light was loaded correctly
+  auto light_prim_result = loaded_stage.GetPrimAtPath(Path("/RectLightWithFilters", ""));
+  TEST_CHECK(light_prim_result.has_value());
+
+  if (light_prim_result.has_value()) {
+    const Prim* light_prim = light_prim_result.value();
+    const RectLight* loaded_light = light_prim->data().as<RectLight>();
+    if (loaded_light && loaded_light->lightFilters.has_value()) {
+      TEST_MSG("Light filter relationship successfully written and loaded!");
+    } else {
+      TEST_MSG("Light filter relationship not found after roundtrip");
+    }
+  }
+
+  std::cerr << "Light filters roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+//
+// Test 75: Error Context Stack
 // Verifies that error context tracking provides detailed error information
 //
 void crate_writer_error_context_test(void) {

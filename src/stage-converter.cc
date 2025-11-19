@@ -246,6 +246,12 @@ bool CrateWriter::ConvertPrimRecursive(
     // Don't fail on material binding errors - just warn
   }
 
+  // After adding light prim spec, handle light filter relationships as separate relationship specs
+  // This applies to any light prim that has light:filters relationships
+  if (!AddLightFilterSpecs(prim, prim_path, err)) {
+    // Don't fail on light filter relationship errors - just warn
+  }
+
   // After adding prim spec, process VariantSets if present
   // Variants represent alternative versions of prims/properties
   const auto& variant_sets = prim.variantSets();
@@ -2810,6 +2816,88 @@ bool CrateWriter::AddMaterialBindingSpecs(
           return false;
         }
       }
+    }
+  }
+
+  return true;
+}
+
+// ============================================================================
+// Light Filter Relationship Specs (called AFTER Light prim spec is added)
+// ============================================================================
+
+bool CrateWriter::AddLightFilterSpecs(
+  const Prim& prim,
+  const Path& prim_path,
+  std::string* err
+) {
+  // Extract and write light filter relationships from a Light prim
+  // Light filters are relationships that need separate specs in Crate format
+
+  // Get the appropriate light type and extract lightFilters relationship
+  // Light filters are supported for lights that inherit from BoundableLight or NonboundableLight
+  const SphereLight* sphere_light = prim.data().as<SphereLight>();
+  const RectLight* rect_light = nullptr;
+  const DiskLight* disk_light = nullptr;
+  const CylinderLight* cylinder_light = nullptr;
+  const DistantLight* distant_light = nullptr;
+  const DomeLight* dome_light = nullptr;
+  const GeometryLight* geometry_light = nullptr;
+  const PortalLight* portal_light = nullptr;
+
+  // Determine which light type the prim is
+  const void* light_base = nullptr;
+
+  if (sphere_light) {
+    light_base = static_cast<const void*>(sphere_light);
+  } else if ((rect_light = prim.data().as<RectLight>())) {
+    light_base = static_cast<const void*>(rect_light);
+  } else if ((disk_light = prim.data().as<DiskLight>())) {
+    light_base = static_cast<const void*>(disk_light);
+  } else if ((cylinder_light = prim.data().as<CylinderLight>())) {
+    light_base = static_cast<const void*>(cylinder_light);
+  } else if ((distant_light = prim.data().as<DistantLight>())) {
+    light_base = static_cast<const void*>(distant_light);
+  } else if ((dome_light = prim.data().as<DomeLight>())) {
+    light_base = static_cast<const void*>(dome_light);
+  } else if ((geometry_light = prim.data().as<GeometryLight>())) {
+    light_base = static_cast<const void*>(geometry_light);
+  } else if ((portal_light = prim.data().as<PortalLight>())) {
+    light_base = static_cast<const void*>(portal_light);
+  }
+
+  if (!light_base) {
+    // Prim is not a light type with filter support
+    return true;
+  }
+
+  // Get the lightFilters relationship from the appropriate light type
+  nonstd::optional<Relationship> light_filters;
+
+  if (sphere_light) {
+    light_filters = sphere_light->lightFilters;
+  } else if (rect_light) {
+    light_filters = rect_light->lightFilters;
+  } else if (disk_light) {
+    light_filters = disk_light->lightFilters;
+  } else if (cylinder_light) {
+    light_filters = cylinder_light->lightFilters;
+  } else if (distant_light) {
+    light_filters = distant_light->lightFilters;
+  } else if (dome_light) {
+    light_filters = dome_light->lightFilters;
+  } else if (geometry_light) {
+    light_filters = geometry_light->lightFilters;
+  } else if (portal_light) {
+    light_filters = portal_light->lightFilters;
+  }
+
+  // Add light:filters relationship if present
+  if (light_filters.has_value()) {
+    const Relationship& filters = light_filters.value();
+    if (!ConvertRelationshipToFields("light:filters", filters, prim_path, err)) {
+      if (err) *err = "Failed to add light:filters relationship: " + *err;
+      return false;
     }
   }
 
