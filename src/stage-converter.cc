@@ -140,16 +140,12 @@ bool CrateWriter::ConvertStageToSpecs(const Stage& stage, std::string* err) {
     crate::CrateValue sublayers_value;
     sublayers_value.Set(sublayer_paths);
     root_fields.push_back({"subLayers", sublayers_value});
-    std::cerr << "[ConvertStageToSpecs] Added subLayers with "
-              << sublayer_paths.size() << " layers\n";
 
     // Serialize subLayerOffsets as LayerOffset array (only if non-default)
     if (has_non_default_offsets) {
       crate::CrateValue offsets_value;
       offsets_value.Set(sublayer_offsets);
       root_fields.push_back({"subLayerOffsets", offsets_value});
-      std::cerr << "[ConvertStageToSpecs] Added subLayerOffsets with "
-                << sublayer_offsets.size() << " offsets\n";
     }
   }
 
@@ -4001,8 +3997,13 @@ bool CrateWriter::ConvertLayerToSpecs(const Layer& layer, std::string* err) {
 
   std::cout << "[ConvertLayerToSpecs] Successfully converted " << prim_count << " primspecs\n";
 
-  // 3. TODO: Handle sublayers if present
-  // if (layer.HasSublayers()) { ... }
+  // NOTE: Sublayers are exported via layer metadata (subLayers/subLayerOffsets fields)
+  // We intentionally do NOT traverse and re-export sublayer content at write time because:
+  // 1. Sublayers are composition references (asset paths) to external files
+  // 2. The Stage already contains merged/composed prims from all sublayers
+  // 3. Re-loading sublayers would duplicate content and break on moved files
+  // 4. Sublayer metadata alone is sufficient for reconstruction at load time
+  // This design is correct - composition happens at LOAD time, not WRITE time.
 
   return true;
 }
