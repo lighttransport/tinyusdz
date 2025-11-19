@@ -1211,6 +1211,39 @@ struct RenderMesh {
   // If you want to access user-defined primvars or custom property,
   // Plese look into corresponding Prim( stage::find_prim_at_path(abs_path) )
 
+  //
+  // Area light properties (MeshLightAPI)
+  // When is_area_light = true, this mesh emits light.
+  //
+  // Renderer integration guide:
+  //   1. Calculate effective light color: light_color * light_intensity * pow(2, light_exposure)
+  //   2. Apply materialSyncMode:
+  //      - "materialGlowTintsLight" (default): material.emissiveColor tints the light color
+  //           finalEmission = effectiveLightColor * material.emissiveColor
+  //      - "independent": material emission and light are independent
+  //           finalEmission = effectiveLightColor + material.emissiveColor
+  //      - "noMaterialResponse": material doesn't respond to light (only emits)
+  //           finalEmission = effectiveLightColor
+  //   3. If light_normalize = true, divide by surface area for energy conservation
+  //
+  bool is_area_light{false};  // true if MeshLightAPI is applied
+  std::array<float, 3> light_color{{1.0f, 1.0f, 1.0f}};  // inputs:color (linear RGB)
+  float light_intensity{1.0f};  // inputs:intensity
+  float light_exposure{0.0f};  // inputs:exposure (optional, in EV)
+  bool light_normalize{false};  // inputs:normalize - divide by surface area if true
+  std::string light_material_sync_mode;  // inputs:materialSyncMode
+                                         // "materialGlowTintsLight" (default), "independent", or "noMaterialResponse"
+
+  // Helper: Calculate effective light color with intensity and exposure applied
+  inline std::array<float, 3> get_effective_light_color() const {
+    float multiplier = light_intensity * std::pow(2.0f, light_exposure);
+    return {{
+      light_color[0] * multiplier,
+      light_color[1] * multiplier,
+      light_color[2] * multiplier
+    }};
+  }
+
   uint64_t handle{0};  // Handle ID for Graphics API. 0 = invalid
   
   ///
@@ -2859,6 +2892,11 @@ class RenderSceneConverter {
   bool ConvertCylinderLight(const RenderSceneConverterEnv &env,
                             const Path &light_abs_path,
                             const CylinderLight &light,
+                            RenderLight *rlight_out);
+
+  bool ConvertGeometryLight(const RenderSceneConverterEnv &env,
+                            const Path &light_abs_path,
+                            const GeometryLight &light,
                             RenderLight *rlight_out);
 
  private:

@@ -4087,6 +4087,50 @@ bool ReconstructPrim<DistantLight>(
 }
 
 template <>
+bool ReconstructPrim<GeometryLight>(
+    const Specifier &spec,
+    PropertyMap &properties,
+    const ReferenceList &references,
+    GeometryLight *light,
+    std::string *warn,
+    std::string *err,
+    const PrimReconstructOptions &options) {
+
+  (void)references;
+  (void)options;
+
+  std::set<std::string> table;
+
+  if (!prim::ReconstructXformOpsFromProperties(spec, table, properties, &light->xformOps, err)) {
+    return false;
+  }
+
+  for (const auto &prop : properties) {
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:color", GeometryLight, light->color)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:intensity", GeometryLight, light->intensity)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:exposure", GeometryLight, light->exposure)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:diffuse", GeometryLight, light->diffuse)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:specular", GeometryLight, light->specular)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:normalize", GeometryLight, light->normalize)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:enableColorTemperature", GeometryLight, light->enableColorTemperature)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:colorTemperature", GeometryLight, light->colorTemperature)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:enable", GeometryLight, light->shadowEnable)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:color", GeometryLight, light->shadowColor)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:distance", GeometryLight, light->shadowDistance)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:falloff", GeometryLight, light->shadowFalloff)
+    PARSE_TYPED_ATTRIBUTE(table, prop, "inputs:shadow:falloffGamma", GeometryLight, light->shadowFalloffGamma)
+    PARSE_TIMESAMPLED_ENUM_PROPERTY(table, prop, kVisibility, Visibility, VisibilityEnumHandler, GeometryLight,
+                   light->visibility, options.strict_allowedToken_check)
+    PARSE_UNIFORM_ENUM_PROPERTY(table, prop, kPurpose, Purpose, PurposeEnumHandler, GeometryLight,
+                       light->purpose, options.strict_allowedToken_check)
+    ADD_PROPERTY(table, prop, GeometryLight, light->props)
+    PARSE_PROPERTY_END_MAKE_WARN(table, prop)
+  }
+
+  return true;
+}
+
+template <>
 bool ReconstructPrim<DomeLight>(
     const Specifier &spec,
     PropertyMap &properties,
@@ -6147,6 +6191,7 @@ RECONSTRUCT_PRIM_PRIMSPEC_IMPL(CylinderLight)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(DiskLight)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(DistantLight)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(RectLight)
+RECONSTRUCT_PRIM_PRIMSPEC_IMPL(GeometryLight)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(SkelRoot)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(Skeleton)
 RECONSTRUCT_PRIM_PRIMSPEC_IMPL(SkelAnimation)
