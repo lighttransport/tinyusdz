@@ -4872,6 +4872,95 @@ bool RenderSceneConverter::ConvertMesh(
   dst.abs_path = abs_prim_path.full_path_name();
   dst.display_name = mesh.metas().displayName.value_or("");
 
+  //
+  // Check for MeshLightAPI - if present, mark this mesh as an area light
+  //
+  const auto &prim_metas = mesh.metas();
+  if (prim_metas.apiSchemas) {
+    const auto &api_schemas = prim_metas.apiSchemas.value();
+    bool has_meshlight_api = false;
+
+    for (const auto &schema_pair : api_schemas.names) {
+      if (schema_pair.first == APISchemas::APIName::MeshLightAPI) {
+        has_meshlight_api = true;
+        break;
+      }
+    }
+
+    if (has_meshlight_api) {
+      DCOUT("Mesh has MeshLightAPI: " << abs_prim_path.full_path_name());
+
+      dst.is_area_light = true;
+
+      // Extract MeshLightAPI properties from mesh
+      // MeshLightAPI inherits from LightAPI, which uses "inputs:" prefix
+
+      // color
+      if (mesh.props.count("inputs:color")) {
+        const Property &prop = mesh.props.at("inputs:color");
+        const Attribute &attr = prop.get_attribute();
+        const primvar::PrimVar &pvar = attr.get_var();
+        if (auto val = pvar.get_value<value::color3f>()) {
+          dst.light_color[0] = val.value()[0];
+          dst.light_color[1] = val.value()[1];
+          dst.light_color[2] = val.value()[2];
+        }
+      }
+
+      // intensity
+      if (mesh.props.count("inputs:intensity")) {
+        const Property &prop = mesh.props.at("inputs:intensity");
+        const Attribute &attr = prop.get_attribute();
+        const primvar::PrimVar &pvar = attr.get_var();
+        if (auto val = pvar.get_value<float>()) {
+          dst.light_intensity = val.value();
+        }
+      }
+
+      // exposure (optional)
+      if (mesh.props.count("inputs:exposure")) {
+        const Property &prop = mesh.props.at("inputs:exposure");
+        const Attribute &attr = prop.get_attribute();
+        const primvar::PrimVar &pvar = attr.get_var();
+        if (auto val = pvar.get_value<float>()) {
+          dst.light_exposure = val.value();
+        }
+      }
+
+      // normalize
+      if (mesh.props.count("inputs:normalize")) {
+        const Property &prop = mesh.props.at("inputs:normalize");
+        const Attribute &attr = prop.get_attribute();
+        const primvar::PrimVar &pvar = attr.get_var();
+        if (auto val = pvar.get_value<bool>()) {
+          dst.light_normalize = val.value();
+        }
+      }
+
+      // materialSyncMode
+      if (mesh.props.count("inputs:materialSyncMode")) {
+        const Property &prop = mesh.props.at("inputs:materialSyncMode");
+        const Attribute &attr = prop.get_attribute();
+        const primvar::PrimVar &pvar = attr.get_var();
+        if (auto val = pvar.get_value<value::token>()) {
+          dst.light_material_sync_mode = val.value().str();
+        }
+      }
+
+      // Set default if not specified
+      if (dst.light_material_sync_mode.empty()) {
+        dst.light_material_sync_mode = "materialGlowTintsLight";  // USD default
+      }
+
+      DCOUT("  Area light properties:"
+            << " color=(" << dst.light_color[0] << "," << dst.light_color[1] << "," << dst.light_color[2] << ")"
+            << " intensity=" << dst.light_intensity
+            << " exposure=" << dst.light_exposure
+            << " normalize=" << dst.light_normalize
+            << " materialSyncMode=" << dst.light_material_sync_mode);
+    }
+  }
+
 #if 0 // TODO
 #if defined(TINYUSDZ_WITH_MESHOPT)
   TUSDZ_LOG_I("Optimize indices");
@@ -8220,49 +8309,8 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
         rnode.id = -1;
       }
 
-      // Check for MeshLightAPI - if present, also create a light from this mesh
-      const auto &prim_metas = prim->metas();
-      if (prim_metas.apiSchemas) {
-        const auto &api_schemas = prim_metas.apiSchemas.value();
-        bool has_meshlight_api = false;
-
-        for (const auto &schema_pair : api_schemas.names) {
-          if (schema_pair.first == APISchemas::APIName::MeshLightAPI) {
-            has_meshlight_api = true;
-            break;
-          }
-        }
-
-        if (has_meshlight_api) {
-          DCOUT("Mesh has MeshLightAPI: " << primPath);
-
-          // Create a geometry light referencing this mesh
-          // The emission properties will be extracted from the material during rendering
-          const GeomMesh *mesh = prim->as<GeomMesh>();
-          if (mesh && rnode.id >= 0) {
-            RenderLight mesh_light;
-            mesh_light.name = prim->element_name() + "_light";
-            mesh_light.abs_path = primPath + "_light";
-            mesh_light.lightType = RenderLight::LightType::Geometry;
-
-            // Store reference to the mesh so renderer can access geometry and material
-            mesh_light.geometry_mesh_id = rnode.id;
-
-            // Default values - renderer should override with material emission
-            mesh_light.color = {{1.0f, 1.0f, 1.0f}};
-            mesh_light.intensity = 1.0f;
-            mesh_light.material_sync_mode = "materialGlowTintsLight";  // USD default
-
-            // Add the mesh light
-            size_t light_id = lights.size();
-            lightMap.add(mesh_light.abs_path, light_id);
-            lights.push_back(std::move(mesh_light));
-
-            DCOUT("Created mesh light: " << mesh_light.abs_path
-                  << " (light_id=" << light_id << ", mesh_id=" << mesh_light.geometry_mesh_id << ")");
-          }
-        }
-      }
+      // Note: MeshLightAPI is now handled in ConvertMesh, which sets
+      // mesh.is_area_light = true and stores light properties directly in RenderMesh
     } else if (prim->type_id() == value::TYPE_ID_GEOM_CAMERA) {
       rnode.local_matrix = node.get_local_matrix();
       rnode.global_matrix = node.get_world_matrix();
@@ -8350,6 +8398,12 @@ bool RenderSceneConverter::BuildNodeHierarchyImpl(
       } else if (prim->type_id() == value::TYPE_ID_LUX_CYLINDER) {
         const CylinderLight *cylinderLight = prim->as<CylinderLight>();
         if (cylinderLight && ConvertCylinderLight(env, lightPath, *cylinderLight, &rlight)) {
+          rnode.nodeType = NodeType::Xform;  // No specific node type yet
+          light_converted = true;
+        }
+      } else if (prim->type_id() == value::TYPE_ID_LUX_GEOMETRY) {
+        const GeometryLight *geometryLight = prim->as<GeometryLight>();
+        if (geometryLight && ConvertGeometryLight(env, lightPath, *geometryLight, &rlight)) {
           rnode.nodeType = NodeType::Xform;  // No specific node type yet
           light_converted = true;
         }
@@ -8806,6 +8860,56 @@ bool RenderSceneConverter::ConvertCylinderLight(
       rlight.radius = val;
     }
   }
+
+  (*rlight_out) = std::move(rlight);
+  return true;
+}
+
+bool RenderSceneConverter::ConvertGeometryLight(
+    const RenderSceneConverterEnv &env,
+    const Path &light_abs_path,
+    const GeometryLight &light,
+    RenderLight *rlight_out) {
+
+  if (!rlight_out) {
+    PUSH_ERROR_AND_RETURN("rlight_out arg is nullptr.");
+  }
+
+  RenderLight rlight;
+  rlight.name = light.name;
+  rlight.abs_path = light_abs_path.full_path_name();
+  rlight.lightType = RenderLight::LightType::Geometry;
+
+  // Extract common properties
+  if (!ExtractCommonLightProperties(env, light, &rlight)) {
+    return false;
+  }
+
+  // Extract geometry relationship to find the target mesh
+  // GeometryLight uses a relationship to point to the mesh geometry
+  if (light.geometry.authored() && !light.geometry.is_blocked()) {
+    const std::vector<Path> targets = light.geometry.get_targetPaths();
+    if (!targets.empty()) {
+      // Use the first target path
+      const Path &target_path = targets[0];
+      std::string geometry_path = target_path.full_path_name();
+
+      // Try to find the mesh in the meshMap
+      // Note: The actual mesh_id will be resolved during scene building
+      // For now, we store the path and mark geometry_mesh_id as unresolved (-1)
+      // The renderer should resolve this later by looking up the mesh by path
+      rlight.geometry_mesh_id = -1;  // Will be resolved during BuildNodeHierarchy
+
+      DCOUT("GeometryLight " << rlight.abs_path << " references geometry: " << geometry_path);
+    } else {
+      PUSH_WARN("GeometryLight " << rlight.abs_path << " has no geometry targets");
+    }
+  } else {
+    PUSH_WARN("GeometryLight " << rlight.abs_path << " missing geometry relationship");
+  }
+
+  // Default material sync mode for GeometryLight
+  rlight.material_sync_mode = "materialGlowTintsLight";
 
   (*rlight_out) = std::move(rlight);
   return true;
