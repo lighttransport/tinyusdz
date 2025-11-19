@@ -116,7 +116,6 @@ bool CrateWriter::AddSpec(const Path& path,
              std::to_string(options_.max_memory_bytes / (1024*1024)) + " MB. " +
              "Current usage: " + std::to_string(memory_used_estimate_ / (1024*1024)) + " MB";
     }
-    std::cerr << "ERROR: " << *err << "\n";
     return false;
   }
 
@@ -133,7 +132,6 @@ bool CrateWriter::AddSpec(const Path& path,
     case SpecType::Attribute: std::cerr << "Attribute"; break;
     default: std::cerr << "Other"; break;
   }
-  std::cerr << ")\n";
 
   // Pre-register the path for deduplication
   GetOrCreatePath(path);
@@ -192,7 +190,6 @@ bool CrateWriter::Finalize(std::string* err) {
   }
 
   // Debug: Show order after sorting
-  std::cerr << "DEBUG After sorting, spec_data_ has " << spec_data_.size() << " specs:\n";
   for (size_t i = 0; i < spec_data_.size(); ++i) {
     std::cerr << "  Spec[" << i << "]: path=" << spec_data_[i].path.full_path_name()
               << " spec_type=" << static_cast<int>(spec_data_[i].spec_type) << " (";
@@ -202,7 +199,6 @@ bool CrateWriter::Finalize(std::string* err) {
       case SpecType::Attribute: std::cerr << "Attribute"; break;
       default: std::cerr << "Other"; break;
     }
-    std::cerr << ")\n";
   }
 
   // CRITICAL: Rebuild path deduplication table to match sorted order
@@ -218,9 +214,7 @@ bool CrateWriter::Finalize(std::string* err) {
     }
   }
 
-  std::cerr << "DEBUG Rebuilt path table with " << paths_.size() << " paths:\n";
   for (size_t i = 0; i < paths_.size(); ++i) {
-    std::cerr << "  path[" << i << "]: " << paths_[i].full_path_name() << "\n";
   }
 
   // Build field and fieldset tables
@@ -330,21 +324,7 @@ bool CrateWriter::Finalize(std::string* err) {
   // Store the mapping for later use when writing the path tree
   path_tree_token_remap_ = path_tree_to_our_index;
 
-  // Debug: Print the path tree tokens
-  std::cerr << "DEBUG: path_tree_tokens has " << path_tree_tokens.size() << " entries:\n";
-  for (const auto& pair : path_tree_tokens) {
-    std::cerr << "  path_tree_idx=" << pair.first << " -> token='" << pair.second << "'\n";
-  }
-
-  // Debug: Print the remap table
-  std::cerr << "DEBUG: path_tree_token_remap_ has " << path_tree_token_remap_.size() << " entries:\n";
-  for (const auto& pair : path_tree_token_remap_) {
-    std::cerr << "  path_tree_idx=" << pair.first << " -> our_idx=" << pair.second;
-    if (pair.second < tokens_.size()) {
-      std::cerr << " (token='" << tokens_[pair.second] << "')";
-    }
-    std::cerr << "\n";
-  }
+  // Debug loops removed (original debug statements deleted)
 
   // Seek to the end of value data section before writing structural sections
   // (WriteValueData() seeks back after writing, so file position is not at the end)
@@ -640,13 +620,10 @@ bool CrateWriter::CompressData(const char* input, size_t inputSize,
   compressed->resize(1 + static_cast<size_t>(compressedSize));
 
   // DEBUG: Print first few bytes of compressed data
-  std::cerr << "DEBUG CompressData: First 16 bytes after chunk byte: ";
   for (int i = 1; i < std::min(17, (int)compressed->size()); ++i) {
     char buf[4];
     snprintf(buf, sizeof(buf), "%02x ", (unsigned char)(*compressed)[i]);
-    std::cerr << buf;
   }
-  std::cerr << std::endl;
 
   return true;
 }
@@ -659,25 +636,18 @@ bool CrateWriter::WriteTokensSection(std::string* err) {
   int64_t section_start = Tell();
 
   // Debug: print token count
-  std::cerr << "DEBUG: WriteTokensSection called with " << tokens_.size() << " tokens" << std::endl;
   for (size_t i = 0; i < std::min(tokens_.size(), size_t(10)); ++i) {
-    std::cerr << "  Token[" << i << "]: " << tokens_[i] << std::endl;
   }
 
   // Write token count
   uint64_t token_count = static_cast<uint64_t>(tokens_.size());
-  int64_t token_count_offset = Tell();
-  std::cerr << "DEBUG: Writing token_count = " << token_count << " at offset " << token_count_offset << std::endl;
 
   // DEBUG: Print bytes being written
   const unsigned char* bytes = reinterpret_cast<const unsigned char*>(&token_count);
-  std::cerr << "DEBUG: Bytes to write: ";
   for (size_t i = 0; i < sizeof(token_count); ++i) {
     char buf[4];
     snprintf(buf, sizeof(buf), "%02x ", bytes[i]);
-    std::cerr << buf;
   }
-  std::cerr << std::endl;
 
   // Write directly as bytes instead of using Write() template
   file_.write(reinterpret_cast<const char*>(&token_count), sizeof(token_count));
@@ -687,7 +657,6 @@ bool CrateWriter::WriteTokensSection(std::string* err) {
     if (err) *err = "Failed to write token count bytes";
     return false;
   }
-  std::cerr << "DEBUG: After write, offset = " << Tell() << ", file.good() = " << file_.good() << std::endl;
 
   // Build token blob (null-terminated strings)
   std::ostringstream blob;
@@ -698,20 +667,14 @@ bool CrateWriter::WriteTokensSection(std::string* err) {
 
   std::string token_blob = blob.str();
 
-  std::cerr << "DEBUG: Token blob size = " << token_blob.size() << " bytes" << std::endl;
-  std::cerr << "DEBUG: First 60 bytes: ";
   for (size_t i = 0; i < std::min(token_blob.size(), size_t(60)); ++i) {
     if (token_blob[i] == '\0') {
-      std::cerr << "\\0";
     } else if (isprint(token_blob[i])) {
-      std::cerr << token_blob[i];
     } else {
       char buf[5];
       snprintf(buf, sizeof(buf), "\\x%02x", (unsigned char)token_blob[i]);
-      std::cerr << buf;
     }
   }
-  std::cerr << std::endl;
 
   // Phase 4: Compress the blob if compression is enabled
   std::vector<char> compressed_blob;
@@ -720,7 +683,6 @@ bool CrateWriter::WriteTokensSection(std::string* err) {
     return false;
   }
 
-  std::cerr << "DEBUG: Compressed blob size (with chunk byte) = " << compressed_blob.size() << " bytes" << std::endl;
 
   // Write in compressed format (version 0.4.0+):
   // - uncompressedSize (uint64_t)
@@ -894,23 +856,18 @@ bool CrateWriter::WriteFieldSetsSection(std::string* err) {
   //
   // See: pxr/usd/sdf/crateFile.cpp _WriteFieldSets()
 
-  std::cerr << "DEBUG: WriteFieldSetsSection with " << fieldsets_.size() << " fieldsets" << std::endl;
 
   // Flatten all fieldsets into a single array with terminators
   std::vector<uint32_t> fieldset_vals;
   for (size_t i = 0; i < fieldsets_.size(); ++i) {
     const auto& fieldset = fieldsets_[i];
-    std::cerr << "  Fieldset[" << i << "]: size=" << fieldset.size() << " values: [";
     for (const auto& field_idx : fieldset) {
-      std::cerr << field_idx.value << " ";
       fieldset_vals.push_back(field_idx.value);
     }
     // Write terminator (default FieldIndex() has value ~0u)
     fieldset_vals.push_back(~0u);
-    std::cerr << "~0u]" << std::endl;
   }
 
-  std::cerr << "DEBUG: Total fieldset_vals = " << fieldset_vals.size() << std::endl;
 
   size_t num_vals = fieldset_vals.size();
 
@@ -1000,9 +957,7 @@ bool CrateWriter::WritePathsSection(std::string* err) {
   std::vector<int32_t> remapped_element_token_indexes;
   remapped_element_token_indexes.reserve(tree.element_token_indexes.size());
 
-  std::cerr << "DEBUG: Remapping element_token_indexes (before remapping):\n";
   for (size_t i = 0; i < tree.element_token_indexes.size(); ++i) {
-    std::cerr << "  [" << i << "] = " << tree.element_token_indexes[i] << "\n";
   }
 
   for (int32_t path_tree_idx : tree.element_token_indexes) {
@@ -1019,7 +974,6 @@ bool CrateWriter::WritePathsSection(std::string* err) {
       }
     } else {
       // Not found - shouldn't happen, but preserve original
-      std::cerr << "WARNING: path_tree_idx " << path_tree_idx << " not found in remap table!\n";
       remapped_element_token_indexes.push_back(path_tree_idx);
     }
   }
@@ -1046,10 +1000,8 @@ bool CrateWriter::WritePathsSection(std::string* err) {
   // Convert path_indexes from uint64_t to uint32_t
   // (USD paths typically won't exceed 2^32 entries)
   std::vector<uint32_t> path_indexes_32(tree.path_indexes.size());
-  std::cerr << "DEBUG: Path tree has " << tree.path_indexes.size() << " path indices:\n";
   for (size_t i = 0; i < tree.path_indexes.size(); ++i) {
     path_indexes_32[i] = static_cast<uint32_t>(tree.path_indexes[i]);
-    std::cerr << "  pathIndex[" << i << "] = " << path_indexes_32[i] << "\n";
   }
 
   // Compress and write pathIndexes array (uint32_t)
@@ -1074,15 +1026,10 @@ bool CrateWriter::WritePathsSection(std::string* err) {
   }
 
   // Debug: Print element_token_indexes array
-  std::cerr << "DEBUG: Path tree element_token_indexes array (" << tree.element_token_indexes.size() << " entries):\n";
   for (size_t i = 0; i < tree.element_token_indexes.size(); ++i) {
-    std::cerr << "  element_token_indexes[" << i << "] = " << tree.element_token_indexes[i];
     if (tree.element_token_indexes[i] < 0) {
-      std::cerr << " (property)";
     } else {
-      std::cerr << " (prim)";
     }
-    std::cerr << "\n";
   }
 
   // Compress and write elementTokenIndexes array (int32_t - can be negative)
@@ -1108,14 +1055,11 @@ bool CrateWriter::WritePathsSection(std::string* err) {
   }
 
   // Debug: Print jumps array
-  std::cerr << "DEBUG: Path tree jumps array (" << tree.jumps.size() << " entries):\n";
   for (size_t i = 0; i < tree.jumps.size(); ++i) {
-    std::cerr << "  jumps[" << i << "] = " << tree.jumps[i];
     if (tree.jumps[i] == -2) std::cerr << " (leaf)";
     else if (tree.jumps[i] == -1) std::cerr << " (only child follows)";
     else if (tree.jumps[i] == 0) std::cerr << " (only sibling follows)";
     else if (tree.jumps[i] > 0) std::cerr << " (child+sibling, offset=" << tree.jumps[i] << ")";
-    std::cerr << "\n";
   }
 
   // Compress and write jumps array (int32_t)
@@ -1186,9 +1130,7 @@ bool CrateWriter::WriteSpecsSection(std::string* err) {
     current_offset += static_cast<uint32_t>(fieldsets_[i].size() + 1);
   }
 
-  std::cerr << "DEBUG: Fieldset number to offset mapping:\n";
   for (size_t i = 0; i < fieldset_number_to_offset.size(); ++i) {
-    std::cerr << "  Fieldset[" << i << "] -> offset " << fieldset_number_to_offset[i] << "\n";
   }
 
   // Separate pathIndexes, fieldSetIndexes, specTypes
@@ -1200,7 +1142,6 @@ bool CrateWriter::WriteSpecsSection(std::string* err) {
   fieldset_indexes.reserve(num_specs);
   spec_types.reserve(num_specs);
 
-  std::cerr << "DEBUG WriteSpecsSection: Processing " << num_specs << " specs:\n";
   for (size_t i = 0; i < spec_data_.size(); ++i) {
     const auto& spec_data = spec_data_[i];
     path_indexes.push_back(spec_data.spec.path_index.value);
@@ -1223,7 +1164,6 @@ bool CrateWriter::WriteSpecsSection(std::string* err) {
       case SpecType::Attribute: std::cerr << "Attribute"; break;
       default: std::cerr << "Other"; break;
     }
-    std::cerr << ")\n";
   }
 
   // Helper to compress and write an integer array
@@ -1282,7 +1222,6 @@ bool CrateWriter::WriteSpecsSection(std::string* err) {
 
 bool CrateWriter::WriteTableOfContents(std::string* err) {
   int64_t toc_offset = Tell();
-  std::cerr << "DEBUG: WriteTableOfContents() at offset " << toc_offset << std::endl;
 
   // Write section count
   uint64_t section_count = static_cast<uint64_t>(toc_.sections.size());
@@ -1291,11 +1230,7 @@ bool CrateWriter::WriteTableOfContents(std::string* err) {
     return false;
   }
 
-  // Debug: print first few sections
-  for (size_t i = 0; i < std::min(toc_.sections.size(), size_t(3)); ++i) {
-    const auto& sec = toc_.sections[i];
-    std::cerr << "  Section[" << i << "]: " << sec.name << " start=" << sec.start << " size=" << sec.size << std::endl;
-  }
+  // Debug loop removed (original debug statements deleted)
 
   // Write sections
   for (const auto& section : toc_.sections) {
@@ -1322,7 +1257,6 @@ bool CrateWriter::WriteTableOfContents(std::string* err) {
   // We need to save this before writing bootstrap
   int64_t saved_toc_offset = toc_offset;
 
-  std::cerr << "DEBUG: Before bootstrap write, TOC offset = " << saved_toc_offset << std::endl;
 
   // IMPORTANT: Flush before seeking to beginning
   // We need to flush all buffered writes before seeking backwards
@@ -1351,7 +1285,6 @@ bool CrateWriter::WriteTableOfContents(std::string* err) {
   }
 
   file_.flush();
-  std::cerr << "DEBUG: Bootstrap written successfully" << std::endl;
 
   return true;
 }
@@ -3153,10 +3086,6 @@ int64_t CrateWriter::WriteValueData(const crate::CrateValue& value, std::string*
     const auto& samples = timesamples_val->get_samples();
 
     if (samples.size() != num_samples) {
-      std::cerr << "ERROR TimeSamples size mismatch:\n";
-      std::cerr << "  timesamples_val->size() = " << num_samples << "\n";
-      std::cerr << "  get_samples().size() = " << samples.size() << "\n";
-      std::cerr << "  is_using_pod() = " << (timesamples_val->is_using_pod() ? "true" : "false") << "\n";
       if (err) *err = "TimeSamples: samples size mismatch (size=" + std::to_string(num_samples) +
                        ", get_samples=" + std::to_string(samples.size()) + ")";
       return -1;
@@ -4048,7 +3977,6 @@ bool CrateWriter::ValidateStage(const Stage& stage, std::string* err) {
     return true;  // Validation disabled
   }
 
-  std::cerr << "[ValidateStage] Starting validation...\n";
 
   // Check for empty stage
   if (stage.root_prims().empty()) {
@@ -4068,7 +3996,6 @@ bool CrateWriter::ValidateStage(const Stage& stage, std::string* err) {
                            std::to_string(validation_prim_count_);
       validation_warnings_.push_back(warning);
       validation_warnings_count_++;
-      std::cerr << warning << "\n";
     }
 
     // Check for invalid path characters in prim name
@@ -4078,7 +4005,6 @@ bool CrateWriter::ValidateStage(const Stage& stage, std::string* err) {
       std::string warning = "WARNING: Prim name contains invalid characters: " + prim_name;
       validation_warnings_.push_back(warning);
       validation_warnings_count_++;
-      std::cerr << warning << "\n";
     }
   }
 
@@ -4100,13 +4026,11 @@ bool CrateWriter::ValidateLayer(const Layer& layer, std::string* err) {
     return true;  // Validation disabled
   }
 
-  std::cerr << "[ValidateLayer] Starting validation...\n";
 
   // Note: Layer is forward declared in crate-writer.hh, so we do minimal validation
   // Actual validation should be done before passing to CrateWriter
 
   std::string msg = "Layer validation: structure check (detailed validation requires full Layer definition)";
-  std::cerr << "[ValidateLayer] " << msg << "\n";
 
   if (err) *err = msg;
   return true;
