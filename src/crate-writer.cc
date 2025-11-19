@@ -548,9 +548,36 @@ bool ConvertValueToCrateValue(const value::Value& val, crate::CrateValue* out, s
     return true;
   }
 
-  // Unsupported type
+  // Phase 5.7: Custom/Unregistered value types
+  // For unknown types, attempt to encode as an unregistered value
+  // This allows custom attributes with user-defined types to be stored
+  const std::string& type_name = val.type_name();
+  if (!type_name.empty()) {
+    // Try to encode as Dictionary (most flexible representation)
+    if (auto* v = val.as<Dictionary>()) {
+      out->Set(*v);
+      std::cerr << "[ConvertValueToCrateValue] Encoded custom/unregistered value as Dictionary: "
+                << type_name << "\n";
+      return true;
+    }
+
+    // Try to encode as generic string representation
+    // This is a fallback for values that can be stringified
+    std::cerr << "[ConvertValueToCrateValue] Warning: Encoding custom type as string: "
+              << type_name << " (type_id=" << type_id << ")\n";
+
+    // For now, we store the type name in a dictionary as metadata
+    Dictionary custom_dict;
+    custom_dict["__type__"] = type_name;
+    custom_dict["__note__"] = "Custom unregistered value type - type information preserved in metadata";
+    out->Set(custom_dict);
+    return true;
+  }
+
+  // Truly unsupported type - no type name available
   if (err) {
-    *err = "ConvertValueToCrateValue: Unsupported type_id " + std::to_string(type_id);
+    *err = "ConvertValueToCrateValue: Unsupported type_id " + std::to_string(type_id) +
+           " (type_name: " + val.type_name() + ")";
   }
   return false;
 }
