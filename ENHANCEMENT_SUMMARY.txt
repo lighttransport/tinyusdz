@@ -1,0 +1,175 @@
+TINYUSDZ CRATE WRITER - ENHANCEMENT OPPORTUNITIES SUMMARY
+=========================================================
+
+ANALYSIS DATE: November 19, 2025
+CURRENT TEST STATUS: 74 tests passing
+REPOSITORY: crate-writer-2025 branch
+
+=== QUICK STATUS ===
+
+Shader Types Fully Supported (4):
+  ✓ UsdPreviewSurface (with timesampled inputs)
+  ✓ UsdUVTexture (with timesampled inputs)
+  ✓ UsdTransform2d (with timesampled inputs)
+  ✓ UsdPrimvarReader_* (all 10 variants)
+
+Shader Types Partially/Not Supported (4):
+  ⚠ NodeGraph (declared but empty - needs full implementation)
+  ✗ UsdRamp, UsdColorSpace (not in codebase)
+  ✗ Math nodes: UsdAdd, UsdMultiply, UsdMix, etc.
+
+Light Types Fully Supported (6):
+  ✓ SphereLight
+  ✓ RectLight
+  ✓ DiskLight
+  ✓ CylinderLight
+  ✓ DistantLight
+  ✓ DomeLight
+
+Light Types Partially Supported (3):
+  ⚠ GeometryLight (has geometry rel, missing light API properties)
+  ⚠ PortalLight (empty struct)
+  ⚠ PluginLight (empty struct)
+
+Geometry Types: 95% Complete
+  All major types supported: Mesh, Curves, Points, Shapes, Camera, Subsets
+  Recent additions: BasisCurves, NurbsCurves, PointInstancer enhancements
+
+Composition Arcs: 60% Complete
+  ✓ References, Payloads, Inherits, Over, SubLayers
+  ⚠ Specializes (not yet implemented)
+  ⚠ VariantSets composition (partial - variant processing exists)
+
+Animation/TimeSamples:
+  ✓ Attribute TimeSamples (with shader input support)
+  ✓ Visibility TimeSamples
+  ⚠ Relationship TimeSamples (not supported)
+  ⚠ Indexed Primvar TimeSamples (known limitation)
+
+Material/Shader Features:
+  ✓ Surface/Displacement/Volume outputs
+  ✓ Shader input connections
+  ✓ Material binding (direct and collection-based)
+  ⚠ Light filters (not yet supported - TODO comment at line 60, 116)
+  ⚠ SDR metadata (not yet supported - TODO comment at line 25-28)
+  ⚠ interfaceOnly connections (not yet supported - TODO comment at line 26)
+  ⚠ Material fallback value serialization (needs verification)
+
+=== TOP 3 HIGHEST PRIORITY ENHANCEMENTS ===
+
+1. LIGHT FILTER SUPPORT (HIGH PRIORITY)
+   Impact: HIGH - Required for professional lighting setups
+   Effort: MEDIUM (2-3 days)
+   Files: usdLux.hh
+   Details: Add rel light:filters relationship type, light linking support
+   Blocker: None - can be done immediately
+
+2. NODEGRAPH FULL IMPLEMENTATION (HIGH PRIORITY)
+   Impact: HIGH - Enables complex shader networks beyond chains
+   Effort: MEDIUM-HIGH (3-4 days)
+   Files: usdShade.hh, usdc-writer.cc
+   Details: Add properties container, connectivity validation
+   Blocker: None - can be done immediately
+
+3. COMPOSITION ARC ENHANCEMENTS - SPECIALIZES (HIGH PRIORITY)
+   Impact: MEDIUM-HIGH - Advanced scene organization
+   Effort: MEDIUM (2-3 days)
+   Files: composition.hh, stage.hh
+   Details: Add specializes arc processing, variant composition
+   Blocker: None - can be done immediately
+
+=== SECONDARY PRIORITIES ===
+
+4. ADDITIONAL SHADER NETWORK NODES (MEDIUM)
+   - UsdAdd, UsdMultiply, UsdMix, UsdSeparateXYZ, UsdCombineXYZ, UsdRamp
+   - Effort: 3-5 days
+   - Impact: Expands shader network expressiveness
+
+5. GEOMETRY LIGHT COMPLETION (MEDIUM)
+   - Add Light API properties to GeometryLight struct
+   - Effort: 1 day
+   - Impact: Enables procedural lighting
+
+6. SDR METADATA SUPPORT (MEDIUM)
+   - Shader documentation and tool integration
+   - Effort: 2 days
+   - Impact: Improves developer experience
+
+=== KNOWN LIMITATIONS ===
+
+Low Priority Issues:
+- Indexed primvar animation (rare use case, high effort)
+- PortalLight and PluginLight (specialized cases)
+- Active metadata (rarely used)
+- Relationship TimeSamples (very rare)
+
+=== RECOMMENDED IMPLEMENTATION ORDER ===
+
+RELEASE N:
+  - Light Filter Relationships (HIGH impact, medium effort)
+  - GeometryLight Full Properties (QUICK win)
+
+RELEASE N+1:
+  - NodeGraph Implementation (HIGH impact, medium effort)
+  - Specialize Composition Arc (HIGH impact)
+
+RELEASE N+2:
+  - Additional Shader Nodes (MEDIUM impact, variable effort)
+  - Variant Composition Integration (completion of existing work)
+
+=== FILE LOCATIONS SUMMARY ===
+
+Core Schema Files:
+  - /src/usdShade.hh       (lines 44-348)   - Shader definitions
+  - /src/usdLux.hh          (lines 30-244)   - Light definitions
+  - /src/usdGeom.hh         (lines 34-1100+) - Geometry definitions
+  - /src/composition.hh     (lines 30-150)   - Composition arcs
+
+Writer Files:
+  - /src/usdc-writer.cc     - Main USDC writer
+  - /src/crate-writer.cc/hh - Experimental crate writer framework
+
+=== RECENT IMPROVEMENTS ===
+
+Last 5 commits addressing enhancements:
+1. Add comprehensive validation system (commit 3af0af81)
+2. Add timesampled shader input support (commits c1a7b078, c0ca8bd7)
+3. Add enhanced PointInstancer properties (commit 8f76cadd)
+4. Add comprehensive enhancements (commit d445ef64)
+   - Variant support
+   - Light types (6 types)
+   - Error context stack
+   - Memory limits
+
+=== TEST COVERAGE ===
+
+Current: 74 tests passing
+Recommended additions for enhancements:
+  Test 75-76: Light filters and GeometryLight
+  Test 77-78: NodeGraph implementations
+  Test 79: Specialize arc composition
+  Test 80-87: Additional shader nodes
+  Test 88-90: Other enhancements
+
+=== HOW TO USE THIS ANALYSIS ===
+
+1. Read CRATE_WRITER_ANALYSIS.md for full detailed analysis
+2. Refer to section 7 for high-priority opportunities
+3. Check section 8 for recommended implementation sequence
+4. Use file locations from section 10 to navigate codebase
+5. Review test recommendations in section 9
+
+=== CONCLUSION ===
+
+The crate writer is approximately 80-85% complete for core USD features.
+Remaining work focuses on:
+  - Professional-grade features (light filters, advanced shaders)
+  - Complex material hierarchies (NodeGraph)
+  - Advanced composition patterns (Specialize, VariantSets)
+  - Specialized geometry and lighting features
+
+All recommended enhancements can be implemented without breaking changes.
+The codebase has good architecture for adding these features incrementally.
+
+For questions about specific features, refer to the detailed analysis document.
+
