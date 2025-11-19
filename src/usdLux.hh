@@ -207,8 +207,10 @@ struct GeometryLight : public NonboundableLight {
 
 };
 
-// TODO
 struct PortalLight : public NonboundableLight {
+
+  // Portal geometry relationship - defines the area where this portal applies
+  RelationshipProperty geometry; // `rel geometry`
 
 };
 
