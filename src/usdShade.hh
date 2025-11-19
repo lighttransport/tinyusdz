@@ -114,8 +114,22 @@ struct Material : UsdShadePrim {
 
 };
 
-// TODO
+/// NodeGraph (Shader Network Container)
+/// Container for organizing shader nodes and connections in a network.
+/// Can contain multiple shader nodes as children and provide interface inputs/outputs.
 struct NodeGraph : UsdShadePrim {
+
+  // Optional properties for shader network node management
+  // Child shaders and their connections are managed through the standard prim children mechanism
+  // Interface inputs/outputs can be defined through typed attributes
+  std::map<std::string, Property> props;  // Additional properties for interface definitions
+  std::vector<value::token> _primChildren;  // Child prim names
+  std::vector<value::token> _properties;    // Property names
+
+  const std::vector<value::token> &primChildrenNames() const { return _primChildren; }
+  const std::vector<value::token> &propertyNames() const { return _properties; }
+  std::vector<value::token> &primChildrenNames() { return _primChildren; }
+  std::vector<value::token> &propertyNames() { return _properties; }
 
 };
 
