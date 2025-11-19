@@ -39,6 +39,9 @@ constexpr auto kPluginLight = "PluginLight";
 constexpr auto kLightFilter = "LightFilter";
 constexpr auto kPluginLightFilter = "PluginLightFilter";
 
+// Relationship property names
+constexpr auto kGeometry = "geometry";
+
 //
 // API Schemas - Declared before light classes since they're used as optional members
 //
