@@ -472,7 +472,7 @@ private:
   /// Convert an Attribute to separate spec (proper USD format)
   /// Creates a spec with SpecType::Attribute at parent_path.AppendProperty(attr_name)
   bool ConvertAttributeToFields(const std::string& attr_name, const Attribute& attr,
-                                const Path& parent_path, std::string* err);
+                                const Path& parent_path, bool is_custom, std::string* err);
 
   /// Convert a Relationship to separate spec (proper USD format)
   /// Creates a spec with SpecType::Relationship at parent_path.AppendProperty(rel_name)

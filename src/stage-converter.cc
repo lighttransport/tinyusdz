@@ -4781,12 +4781,8 @@ bool CrateWriter::ConvertPropertyToFields(
     return true;
   } else if (prop.is_attribute()) {
     // Convert attribute - creates separate spec, doesn't add to fields
-    bool success = ConvertAttributeToFields(prop_name, prop.get_attribute(), parent_path, err);
-
-    // TODO: Handle custom flag - needs to be added to the attribute spec, not parent prim
-    // For now, custom flag handling is deferred
-
-    return success;
+    // Pass the custom flag to be added to the attribute spec
+    return ConvertAttributeToFields(prop_name, prop.get_attribute(), parent_path, prop.has_custom(), err);
   } else if (prop.is_relationship()) {
     // Convert relationship - creates separate spec, doesn't add to fields
     return ConvertRelationshipToFields(prop_name, prop.get_relationship(), parent_path, err);
@@ -4803,6 +4799,7 @@ bool CrateWriter::ConvertAttributeToFields(
     const std::string& attr_name,
     const Attribute& attr,
     const Path& parent_path,
+    bool is_custom,
     std::string* err) {
 
   // Create separate spec for this attribute (proper USD Crate format)
@@ -4897,6 +4894,14 @@ bool CrateWriter::ConvertAttributeToFields(
     attr_fields.push_back({"customData", custom_data_value});
     std::cerr << "[ConvertAttributeToFields] Added customData for " << attr_name
               << " with " << metas.customData.value().size() << " entries\n";
+  }
+
+  // Add custom flag if attribute is custom
+  if (is_custom) {
+    crate::CrateValue custom_value;
+    custom_value.Set(true);  // The field name "custom" with value true indicates custom attribute
+    attr_fields.push_back({"custom", custom_value});
+    std::cerr << "[ConvertAttributeToFields] Added custom flag for " << attr_name << "\n";
   }
 
   // Create the attribute spec
@@ -5190,7 +5195,7 @@ bool CrateWriter::ConvertVariantToFields(
 
     // Handle variant properties based on their type
     if (prop.is_attribute()) {
-      if (!ConvertAttributeToFields(prop_name, prop.get_attribute(), v_path, err)) {
+      if (!ConvertAttributeToFields(prop_name, prop.get_attribute(), v_path, prop.has_custom(), err)) {
         if (err) *err = "Failed to convert variant attribute: " + prop_name;
         return false;
       }
