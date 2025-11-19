@@ -4587,6 +4587,48 @@ bool CrateWriter::ConvertPrimSpecRecursive(
               << inherits_list.size() << " paths\n";
   }
 
+  // Add specializes if present
+  if (metas.specializes) {
+    const auto& specializes_pair = metas.specializes.value();
+    const ListEditQual& qual = specializes_pair.first;
+    const std::vector<Path>& specializes_list = specializes_pair.second;
+
+    // Convert to ListOp<Path>
+    ListOp<Path> specializes_listop;
+
+    // Set the appropriate list based on ListEditQual
+    switch (qual) {
+      case ListEditQual::ResetToExplicit:
+        specializes_listop.ClearAndMakeExplicit();
+        specializes_listop.SetExplicitItems(specializes_list);
+        break;
+      case ListEditQual::Append:
+        specializes_listop.SetAppendedItems(specializes_list);
+        break;
+      case ListEditQual::Prepend:
+        specializes_listop.SetPrependedItems(specializes_list);
+        break;
+      case ListEditQual::Add:
+        specializes_listop.SetAddedItems(specializes_list);
+        break;
+      case ListEditQual::Delete:
+        specializes_listop.SetDeletedItems(specializes_list);
+        break;
+      default:
+        // Default to explicit
+        specializes_listop.ClearAndMakeExplicit();
+        specializes_listop.SetExplicitItems(specializes_list);
+        break;
+    }
+
+    crate::CrateValue specializes_value;
+    specializes_value.Set(specializes_listop);
+    fields.push_back({"specializes", specializes_value});
+
+    std::cerr << "[ConvertPrimSpecRecursive] Added specializes with "
+              << specializes_list.size() << " paths\n";
+  }
+
   // Add assetInfo if present
   if (metas.assetInfo) {
     crate::CrateValue asset_info_value;

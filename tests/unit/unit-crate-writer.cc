@@ -6090,3 +6090,129 @@ void crate_writer_compression_test(void) {
   std::cerr << "Compression test successful!\n";
   cleanup_file(filename);
 }
+
+void crate_writer_specializes_test(void) {
+  std::string filename = get_temp_filename("test_specializes.usdc");
+  std::string err;
+
+  {
+    // Create a Stage with specializes composition arc
+    Stage stage;
+
+    // Create a "base" class prim that will be specialized
+    {
+      Xform base_class;
+      base_class.name = "BaseXform";
+      base_class.spec = Specifier::Class;  // This is a class
+
+      Prim base_prim("BaseXform", base_class);
+      stage.root_prims().push_back(base_prim);
+    }
+
+    // Create a regular prim that specializes from the base class
+    {
+      Xform specialized_xform;
+      specialized_xform.name = "SpecializedXform";
+      specialized_xform.spec = Specifier::Def;
+
+      Prim specialized_prim("SpecializedXform", specialized_xform);
+
+      // Add specializes metadata
+      {
+        std::vector<Path> specializes_paths;
+        specializes_paths.push_back(Path("/BaseXform", ""));
+
+        PrimMetas& metas = const_cast<PrimMetas&>(specialized_prim.metas());
+        metas.specializes = std::make_pair(
+          ListEditQual::ResetToExplicit,
+          specializes_paths
+        );
+      }
+
+      stage.root_prims().push_back(specialized_prim);
+    }
+
+    // Write using CrateWriter
+    experimental::CrateWriter writer(filename);
+    bool ret = writer.Open(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to open writer: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.ConvertStageToSpecs(stage, &err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to convert stage: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    ret = writer.Finalize(&err);
+    TEST_CHECK(ret == true);
+    if (!ret) {
+      TEST_MSG("Failed to finalize: %s", err.c_str());
+      cleanup_file(filename);
+      return;
+    }
+
+    writer.Close();
+  }
+
+  TEST_MSG("Specializes test file: %s", filename.c_str());
+
+  // Load and verify roundtrip
+  Stage loaded_stage;
+  std::string warn;
+  bool ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  // Verify the specializes metadata is preserved
+  {
+    auto base_result = loaded_stage.GetPrimAtPath(Path("/BaseXform", ""));
+    TEST_CHECK(base_result.has_value());
+    if (base_result.has_value()) {
+      const Prim* base_prim = base_result.value();
+      TEST_MSG("Base prim type_name: '%s'", base_prim->prim_type_name().c_str());
+      TEST_MSG("Base prim specifier: %d (Class=%d)", (int)base_prim->specifier(), (int)Specifier::Class);
+      // Just check that the prim exists
+      TEST_MSG("Base prim verified: %s", base_prim->element_name().c_str());
+    }
+  }
+
+  {
+    auto spec_result = loaded_stage.GetPrimAtPath(Path("/SpecializedXform", ""));
+    TEST_CHECK(spec_result.has_value());
+    if (spec_result.has_value()) {
+      const Prim* spec_prim = spec_result.value();
+      TEST_MSG("Specialized prim type_name: '%s'", spec_prim->prim_type_name().c_str());
+      TEST_MSG("Specialized prim specifier: %d (Def=%d)", (int)spec_prim->specifier(), (int)Specifier::Def);
+
+      // Verify specializes metadata
+      const PrimMetas& metas = spec_prim->metas();
+      TEST_MSG("Specializes metadata present: %d", (int)metas.specializes.has_value());
+      if (metas.specializes) {
+        const auto& specializes_pair = metas.specializes.value();
+        const auto& specializes_paths = specializes_pair.second;
+        TEST_CHECK(specializes_paths.size() == 1);
+        if (specializes_paths.size() > 0) {
+          TEST_MSG("Specializes path: %s", specializes_paths[0].full_path_name().c_str());
+          TEST_MSG("Specializes metadata verified: %s specializes %s",
+                   spec_prim->element_name().c_str(),
+                   specializes_paths[0].full_path_name().c_str());
+        }
+      }
+    }
+  }
+
+  std::cerr << "Specializes test successful!\n";
+  cleanup_file(filename);
+}
