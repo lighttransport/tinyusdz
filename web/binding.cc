@@ -1572,6 +1572,17 @@ class TinyUSDZLoaderNative {
     mesh.set("materialId", rmesh.material_id);
     mesh.set("doubleSided", rmesh.doubleSided);
 
+    // Export area light properties (MeshLightAPI)
+    mesh.set("isAreaLight", rmesh.is_area_light);
+    if (rmesh.is_area_light) {
+      const float *light_color_ptr = rmesh.light_color.data();
+      mesh.set("lightColor", emscripten::typed_memory_view(3, light_color_ptr));
+      mesh.set("lightIntensity", rmesh.light_intensity);
+      mesh.set("lightExposure", rmesh.light_exposure);
+      mesh.set("lightNormalize", rmesh.light_normalize);
+      mesh.set("lightMaterialSyncMode", emscripten::val(rmesh.light_material_sync_mode));
+    }
+
     // Export skinning data (joint indices, joint weights)
     if (!rmesh.joint_and_weights.jointIndices.empty()) {
       const int *joint_indices_ptr = rmesh.joint_and_weights.jointIndices.data();

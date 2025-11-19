@@ -23,8 +23,9 @@ const testFiles = [
   {
     name: 'Mesh Lights',
     file: '../../tests/usda/usdlux_mesh_lights_simple.usda',
-    expectedLights: 3,
-    description: 'MeshLightAPI geometry lights'
+    expectedLights: 1, // Only StandardLight - mesh lights are in meshes array now
+    expectedAreaLightMeshes: 2, // EmissiveCube and LightPanel with MeshLightAPI
+    description: 'MeshLightAPI geometry lights (Option B: meshes with area light flags)'
   },
   {
     name: 'Complete Scene',
@@ -60,7 +61,9 @@ async function testFile(testConfig) {
     passed: false,
     error: null,
     numLights: 0,
-    lights: []
+    lights: [],
+    numAreaLightMeshes: 0,
+    areaLightMeshes: []
   };
 
   try {
@@ -144,14 +147,64 @@ async function testFile(testConfig) {
       }
     }
 
-    // Verify expected count
-    if (numLights === testConfig.expectedLights) {
-      console.log(`\n✓ PASS: Found expected ${testConfig.expectedLights} lights`);
+    // Check for area light meshes (Option B representation)
+    if (testConfig.expectedAreaLightMeshes !== undefined) {
+      console.log(`\n  Area Light Meshes (MeshLightAPI):`);
+      const numMeshes = usd.numMeshes();
+
+      for (let i = 0; i < numMeshes; i++) {
+        const mesh = usd.getMesh(i);
+        if (!mesh || !mesh.isAreaLight) continue;
+
+        // Extract light color from typed memory view
+        const lightColor = mesh.lightColor ?
+          [mesh.lightColor[0], mesh.lightColor[1], mesh.lightColor[2]] :
+          [1.0, 1.0, 1.0];
+
+        result.numAreaLightMeshes++;
+        result.areaLightMeshes.push({
+          name: mesh.primName,
+          abs_path: mesh.absPath,
+          lightColor: lightColor,
+          lightIntensity: mesh.lightIntensity || 1.0,
+          lightExposure: mesh.lightExposure || 0.0,
+          lightNormalize: mesh.lightNormalize || false,
+          lightMaterialSyncMode: mesh.lightMaterialSyncMode || 'materialGlowTintsLight'
+        });
+
+        console.log(`    ✓ Area Light Mesh ${result.numAreaLightMeshes}: ${mesh.primName}`);
+        console.log(`        Path: ${mesh.absPath}`);
+        console.log(`        Color: RGB(${lightColor[0].toFixed(2)}, ${lightColor[1].toFixed(2)}, ${lightColor[2].toFixed(2)})`);
+        console.log(`        Intensity: ${(mesh.lightIntensity || 1.0).toFixed(2)}`);
+        if (mesh.lightExposure && mesh.lightExposure !== 0) {
+          console.log(`        Exposure: ${mesh.lightExposure.toFixed(2)} EV`);
+        }
+        console.log(`        Normalize: ${mesh.lightNormalize || false}`);
+        console.log(`        Material Sync: ${mesh.lightMaterialSyncMode || 'materialGlowTintsLight'}`);
+      }
+    }
+
+    // Verify expected counts
+    let passed = true;
+    if (numLights !== testConfig.expectedLights) {
+      console.log(`\n✗ FAIL: Expected ${testConfig.expectedLights} lights, found ${numLights}`);
+      result.error = `Light count mismatch`;
+      passed = false;
+    }
+
+    if (testConfig.expectedAreaLightMeshes !== undefined &&
+        result.numAreaLightMeshes !== testConfig.expectedAreaLightMeshes) {
+      console.log(`\n✗ FAIL: Expected ${testConfig.expectedAreaLightMeshes} area light meshes, found ${result.numAreaLightMeshes}`);
+      result.error = (result.error || '') + ` Area light mesh count mismatch`;
+      passed = false;
+    }
+
+    if (passed) {
+      console.log(`\n✓ PASS: Found expected ${testConfig.expectedLights} lights` +
+        (testConfig.expectedAreaLightMeshes !== undefined ? ` and ${testConfig.expectedAreaLightMeshes} area light meshes` : ''));
       result.passed = true;
       results.passed++;
     } else {
-      console.log(`\n✗ FAIL: Expected ${testConfig.expectedLights} lights, found ${numLights}`);
-      result.error = `Light count mismatch`;
       results.failed++;
     }
 
