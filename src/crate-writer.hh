@@ -400,6 +400,9 @@ private:
   /// Extract DomeLight properties (texture path, color, intensity, exposure)
   bool ExtractDomeLightProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
 
+  /// Extract GeometryLight properties (geometry relationship, color, intensity, exposure)
+  bool ExtractGeometryLightProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
   /// Extract Skeleton properties (jointNames, joints, bindTransforms, restTransforms)
   bool ExtractSkeletonProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
 
@@ -420,6 +423,9 @@ private:
 
   /// Extract Shader properties (info:id, inputs, outputs)
   bool ExtractShaderProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
+  /// Extract NodeGraph properties (shader network container)
+  bool ExtractNodeGraphProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
 
   /// Add UsdPreviewSurface shader input specs as separate attribute specs (called after Shader prim spec is added)
   bool AddUsdPreviewSurfaceInputSpecs(const UsdPreviewSurface* preview_surface, const Path& prim_path, std::string* err);
