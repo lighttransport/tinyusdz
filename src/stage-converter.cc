@@ -377,6 +377,8 @@ bool CrateWriter::ExtractTypeSpecificProperties(
     return ExtractDomeLightProperties(prim, fields, err);
   } else if (type_name == "GeometryLight") {
     return ExtractGeometryLightProperties(prim, fields, err);
+  } else if (type_name == "PortalLight") {
+    return ExtractPortalLightProperties(prim, fields, err);
   } else if (type_name == "Skeleton") {
     return ExtractSkeletonProperties(prim, fields, err);
   } else if (type_name == "SkelAnimation") {
@@ -2233,6 +2235,67 @@ bool CrateWriter::ExtractGeometryLightProperties(
 
   // Note: The geometry relationship is extracted by the generic property system
   // through the props map on the GeometryLight structure, so we don't need to handle it here.
+
+  return true;
+}
+
+bool CrateWriter::ExtractPortalLightProperties(
+    const Prim& prim,
+    crate::FieldValuePairVector& fields,
+    std::string* err) {
+  const PortalLight* light = prim.data().as<PortalLight>();
+  if (!light) {
+    if (err) *err = "Failed to cast prim to PortalLight";
+    return false;
+  }
+
+  // Extract intensity (inherited from NonboundableLight)
+  if (light->intensity.has_value()) {
+    const Animatable<float>& intensity_anim = light->intensity.get_value();
+    if (intensity_anim.has_default()) {
+      float intensity_val;
+      if (intensity_anim.get_default(&intensity_val)) {
+        crate::CrateValue crate_val;
+        value::Value val(intensity_val);
+        if (ConvertValue(val, crate_val, err)) {
+          fields.push_back({"intensity", crate_val});
+        }
+      }
+    }
+  }
+
+  // Extract color (inherited from NonboundableLight)
+  if (light->color.has_value()) {
+    const Animatable<value::color3f>& color_anim = light->color.get_value();
+    if (color_anim.has_default()) {
+      value::color3f color_val;
+      if (color_anim.get_default(&color_val)) {
+        crate::CrateValue crate_val;
+        value::Value val(color_val);
+        if (ConvertValue(val, crate_val, err)) {
+          fields.push_back({"color", crate_val});
+        }
+      }
+    }
+  }
+
+  // Extract exposure (inherited from NonboundableLight)
+  if (light->exposure.has_value()) {
+    const Animatable<float>& exposure_anim = light->exposure.get_value();
+    if (exposure_anim.has_default()) {
+      float exposure_val;
+      if (exposure_anim.get_default(&exposure_val)) {
+        crate::CrateValue crate_val;
+        value::Value val(exposure_val);
+        if (ConvertValue(val, crate_val, err)) {
+          fields.push_back({"exposure", crate_val});
+        }
+      }
+    }
+  }
+
+  // Note: The geometry relationship is extracted by the generic property system
+  // through the props map on the PortalLight structure, so we don't need to handle it here.
 
   return true;
 }

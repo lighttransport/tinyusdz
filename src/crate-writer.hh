@@ -403,6 +403,9 @@ private:
   /// Extract GeometryLight properties (geometry relationship, color, intensity, exposure)
   bool ExtractGeometryLightProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
 
+  /// Extract PortalLight properties (geometry relationship, color, intensity, exposure)
+  bool ExtractPortalLightProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
+
   /// Extract Skeleton properties (jointNames, joints, bindTransforms, restTransforms)
   bool ExtractSkeletonProperties(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
 
