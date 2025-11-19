@@ -57,7 +57,9 @@ class BoundableLight : public Xformable, public Collection {
   TypedAttributeWithFallback<Animatable<float>> intensity{1.0f}; // inputs:intensity
   TypedAttributeWithFallback<Animatable<bool>> normalize{false}; // inputs:normalize normalize power by the surface area of the light.
   TypedAttributeWithFallback<Animatable<float>> specular{1.0f}; // inputs:specular specular multiplier
-  // rel light:filters
+
+  // Light Filter Relationships
+  nonstd::optional<Relationship> lightFilters; // rel light:filters - Array of filter prims to apply
 
   // Shadow API
   TypedAttributeWithFallback<Animatable<bool>> shadowEnable{true}; // bool inputs:shadow:enable = 1
@@ -113,7 +115,9 @@ class NonboundableLight : public Xformable, public Collection {
   TypedAttributeWithFallback<Animatable<float>> intensity{1.0f}; // inputs:intensity
   TypedAttributeWithFallback<Animatable<bool>> normalize{false}; // inputs:normalize normalize power by the surface area of the light.
   TypedAttributeWithFallback<Animatable<float>> specular{1.0f}; // inputs:specular specular multiplier
-  // rel light:filters
+
+  // Light Filter Relationships
+  nonstd::optional<Relationship> lightFilters; // rel light:filters - Array of filter prims to apply
 
   // Shadow API
   TypedAttributeWithFallback<Animatable<bool>> shadowEnable{true}; // bool inputs:shadow:enable = 1

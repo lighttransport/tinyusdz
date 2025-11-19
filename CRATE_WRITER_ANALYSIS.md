@@ -1,516 +1,453 @@
-# USDC Crate Writer - High-Priority Tasks and Missing Functionality Analysis
+# TinyUSDZ Crate Writer - Enhancement Opportunity Analysis
 
-## Summary
-The USDC crate writer implementation is substantially complete with most core features in place. However, there are several high-priority gaps, performance issues, and incomplete features that warrant attention.
+## Executive Summary
 
----
-
-## HIGH-PRIORITY FINDINGS (Sorted by Impact)
-
-### 1. Extensive Debug Output in Production Code
-**Location:** stage-converter.cc (~173 instances), crate-writer.cc (~90 instances)
-**Type:** Performance/Code Quality Issue
-**Priority:** HIGH
-**Impact:** Production deployment issue - massive stderr pollution, performance degradation
-**Complexity:** Straightforward (remove or conditionally compile debug statements)
-
-**Details:**
-- Hundreds of `std::cerr` and `std::cout` statements throughout the code
-- Debug statements appear in hot code paths (property extraction, conversion loops)
-- Examples include "[ExtractGPrimProperties]", "[AddUsdPreviewSurfaceInputSpecs]", "DEBUG:" prefixed messages
-- Should be wrapped in conditional compilation flags (e.g., `#ifdef CRATE_WRITER_DEBUG` or use a logging level)
-
-**Recommendation:** 
-- Create a debug logging wrapper with configurable verbosity level
-- Use `#ifndef NDEBUG` or custom flags to conditionally compile debug output
-- Consider using a proper logging library rather than direct stderr output
+The TinyUSDZ USDC (Crate) writer has made significant progress with recent implementations of material/shader support, light types, and geometry features. This analysis identifies remaining high-priority enhancement opportunities for further improving the crate writer's capabilities.
 
 ---
 
-### 2. Animated/TimeSample Property Support Missing for Shader Inputs
-**Location:** stage-converter.cc, line 2957
-**Type:** Feature Gap
-**Priority:** HIGH
-**Impact:** Shaders with animated properties will lose animation data
-**Complexity:** Moderate to Complex
+## 1. SHADER TYPES & SUPPORT STATUS
 
-**Details:**
-```cpp
-// Line 2957 in AddUsdPreviewSurfaceInputSpecs
-if (preview_surface->diffuseColor.get_value().is_timesamples()) {
-  // TODO: Handle timesampled values
-  std::cerr << "[AddUsdPreviewSurfaceInputSpecs] Warning: timesampled diffuseColor not yet supported\n";
-}
+### Currently Fully Supported:
+
+1. **UsdPreviewSurface** (Primary PBR Material)
+   - Status: FULLY IMPLEMENTED ✓
+   - Features: Diffuse, metallic, roughness, opacity, normal mapping, displacement
+   - Recent: Timesampled input support added (commit c0ca8bd7)
+   - Location: `/mnt/nvme02/work/tinyusdz-repo/crate-writer-2025/src/usdShade.hh` lines 218-261
+
+2. **UsdUVTexture** (2D Texture Sampling)
+   - Status: FULLY IMPLEMENTED ✓
+   - Features: File asset, texture coordinates, wrapping modes, scale/bias, color space
+   - Recent: Timesampled input support added (commit c1a7b078)
+   - Location: `/mnt/nvme02/work/tinyusdz-repo/crate-writer-2025/src/usdShade.hh` lines 166-211
+
+3. **UsdTransform2d** (UV Coordinate Transformation)
+   - Status: FULLY IMPLEMENTED ✓
+   - Features: 2D rotation, scale, translation
+   - Recent: Timesampled input support added (commit c1a7b078)
+   - Location: `/mnt/nvme02/work/tinyusdz-repo/crate-writer-2025/src/usdShade.hh` lines 265-284
+
+4. **UsdPrimvarReader_* Types** (Primitive Variable Readers)
+   - Status: FULLY IMPLEMENTED ✓
+   - All variants supported: float, float2, float3, float4, int, string, normal, point, vector, matrix
+   - Location: `/mnt/nvme02/work/tinyusdz-repo/crate-writer-2025/src/usdShade.hh` lines 129-157
+   - DEFINE_TYPE_TRAIT entries: lines 328-347
+
+### Currently Partial/Unimplemented:
+
+1. **NodeGraph** (Shader Network Organization)
+   - Status: DECLARED BUT UNIMPLEMENTED ⚠
+   - Current: Empty struct definition (line 118-120)
+   - TODO comment: Line 29 - "[ ] NodeGraph support"
+   - Issue: No properties or integration with shader network pipeline
+   - Impact: Medium - Needed for complex material hierarchies
+   - Recommendation: Implement as container for organized shader connections
+
+2. **Material** (Material Binding)
+   - Status: PARTIALLY IMPLEMENTED ✓
+   - Current: Surface, displacement, volume outputs (typed connections)
+   - Missing: Material metadata, custom properties full support
+   - Location: `/mnt/nvme02/work/tinyusdz-repo/crate-writer-2025/src/usdShade.hh` lines 104-115
+   - Recent: Material outputs fixed (commit 2ecd99bf)
+
+### Missing but Defined in USD Spec:
+
+1. **UsdRamp** (Ramp/Gradient shader)
+   - Not found in codebase
+   - Needed for advanced material workflows
+   - Standard USD preview surface extension
+
+2. **UsdColorSpace** (Color space conversion)
+   - Not found in codebase
+   - Used for texture colorspace management
+
+3. **Additional Math Nodes**
+   - UsdAdd, UsdMultiply, UsdMix, UsdSeparateXYZ, UsdCombineXYZ
+   - Not implemented but commonly used in shader networks
+
+---
+
+## 2. PRIMITIVE TYPES & SUPPORT STATUS
+
+### Geometry Primitives - All Implemented:
+
+1. **GeomMesh** ✓
+   - Polygon meshes with subdivision surface support
+   - Properties: points, normals, faceVertexCounts, faceVertexIndices
+   - Features: Crease weights, blend shapes, skeletal binding
+   - File: `/mnt/nvme02/work/tinyusdz-repo/crate-writer-2025/src/usdGeom.hh` lines 765-968
+
+2. **GeomBasisCurves** ✓
+   - Parametric curves with basis specification
+   - Recent: Full support added (commit 2fbffd67)
+
+3. **GeomNurbsCurves** ✓
+   - NURBS curves
+   - Recent: Full support added (commit b6988735)
+
+4. **GeomPoints** ✓
+   - Point clouds with attributes
+
+5. **Basic Shapes** ✓
+   - GeomSphere, GeomCube, GeomCone, GeomCylinder, GeomCapsule
+
+6. **GeomCamera** ✓
+   - Camera primitives with projection modes
+
+7. **GeomSubset** ✓
+   - Material subset support for per-face material assignment
+   - Recent: Full support added (commit c0ca13a1)
+
+### Light Primitives - All Implemented:
+
+Recent comprehensive implementation (commit d445ef64):
+
+1. **SphereLight** ✓ - Radius, intensity, color, exposure
+2. **RectLight** ✓ - Width, height, texture support
+3. **DiskLight** ✓ - Radius, intensity
+4. **CylinderLight** ✓ - Radius, length, intensity
+5. **DistantLight** ✓ - Angle, intensity
+6. **DomeLight** ✓ - Environment texture, format specification
+
+### Light Primitives - Partial/Unimplemented:
+
+1. **GeometryLight**
+   - Status: DECLARED BUT UNIMPLEMENTED ⚠
+   - Current: Has geometry relationship only (line 202)
+   - Missing: Light API properties (intensity, color, exposure)
+   - Impact: Medium - Less commonly used but important for procedural lighting
+
+2. **PortalLight**
+   - Status: DECLARED BUT UNIMPLEMENTED ⚠
+   - Current: Empty struct (line 207-209)
+   - Impact: Low - Specialized for HDRI portal optimization
+
+3. **PluginLight**
+   - Status: DECLARED BUT UNIMPLEMENTED ⚠
+   - Current: Empty struct (line 212-213)
+   - Impact: Low - For custom renderer-specific lights
+
+### Other Key Primitives:
+
+1. **Xform** ✓ - Transformation nodes
+2. **Model** ✓ - Model grouping/hierarchy
+3. **Scope** ✓ - Logical grouping without rendering
+4. **PointInstancer** ✓ - Instance management
+   - Recent: Enhanced property support (commit 8f76cadd)
+5. **SkelRoot, Skeleton, SkelAnimation** ✓ - Skeletal animation
+6. **BlendShape** ✓ - Morph target/blend shape support
+
+---
+
+## 3. RELATIONSHIP FEATURES & GAPS
+
+### Currently Supported:
+
+1. **Material Binding** ✓
+   - material:binding relationships
+   - material:binding:collection support
+   - Recent: Comprehensive support added (commit 641319da)
+
+2. **Basic Relationship Metadata**
+   - Relationship targets and connections
+   - Multi-target relationship arrays
+
+3. **References & Payloads** ✓
+   - Reference composition arcs
+   - Payload deferred loading
+   - Composition layer system with sublayer support
+
+### Partially Implemented:
+
+1. **Relationship Metadata Properties**
+   - Current: Basic metadata support
+   - Missing: Full custom metadata on relationships
+   - Impact: Medium - Used for advanced material organization
+
+### Not Yet Implemented (from composition.hh TODOs):
+
+1. **Specializes** ⚠
+   - Status: TODO at line 40 of composition.hh
+   - Impact: Medium - Used for inheritance hierarchies
+
+2. **VariantSets** (for composition)
+   - Status: TODO at line 42 of composition.hh
+   - Note: Variant processing recently added to ConvertPrimRecursive (commit d445ef64)
+   - Current issue: Composition-level variant integration still needed
+
+3. **Active Prim Metadata**
+   - Status: TODO at line 44 of composition.hh
+   - Impact: Low - Controls which prims are active in scene
+
+---
+
+## 4. MATERIAL/SHADER FEATURES - DETAILED ANALYSIS
+
+### Material Connection Features:
+
+1. **Surface/Displacement/Volume Outputs** ✓
+   - Status: FULLY WORKING
+   - Uses: TypedConnection for proper connection tracking
+   - Fixed: Commit 2ecd99bf addressed output connection handling
+
+2. **Shader Input Connections** ✓
+   - Status: FULLY WORKING
+   - Timesamples: Recently added support (commits c0ca8bd7, c1a7b078)
+
+### Material Binding Features:
+
+1. **Direct Material Binding** ✓
+   - rel material:binding paths correctly exported
+
+2. **Collection-based Material Binding** ✓
+   - GeomSubset with subset targeting
+
+3. **Material Subset Variants** ⚠ PARTIALLY DONE
+   - Status: Basic variant support added but may need refinement
+   - Recent: Variant processing integrated (commit d445ef64)
+
+### Advanced Features NOT YET IMPLEMENTED:
+
+1. **Material Attributes with Fallback Values**
+   - Issue: Some shader inputs may not properly serialize fallback values
+   - Affected: UsdUVTexture::fallback, UsdPreviewSurface fallback values
+   - Impact: Medium - Fallbacks ensure shader validity when inputs unconnected
+
+2. **Shader Metadata (SDR Metadata)**
+   - Status: TODO at usdShade.hh line 25-28
+   - sdrMetadata dictionary support for shader documentation
+   - Impact: Low-Medium - Useful for tool integration
+
+3. **interfaceOnly Connections**
+   - Status: TODO at usdShade.hh line 26
+   - These mark shader inputs that should not be exported to downstream
+   - Impact: Low - Advanced shader authoring feature
+
+---
+
+## 5. LIGHT TYPES - DETAILED ANALYSIS
+
+All 6 primary light types recently implemented with comprehensive test coverage (Tests 69-73).
+
+### Advanced Light Features NOT YET IMPLEMENTED:
+
+1. **Light Filters**
+   - Status: TODO (line 60, 116 in usdLux.hh)
+   - Relationship: rel light:filters
+   - Used for shadow filtering, light linking
+   - Impact: Medium-High - Critical for realistic lighting
+
+2. **Shaping API Extensions**
+   - Missing: Some lights may need additional shaping properties
+   - Current: Basic shaping focus, cone angle support exists
+
+3. **Portal Light Details**
+   - Status: Empty struct (needs proper relationship support)
+   - Relationship: rel portals to portal prims
+   - Impact: Medium - Used with dome lights for better HDRI importance sampling
+
+4. **GeometryLight Completeness**
+   - Missing: Should have full Light API properties
+   - Current: Only has geometry relationship
+
+---
+
+## 6. ANIMATION & TIMESAMPLES FEATURES
+
+### Currently Supported:
+
+1. **Attribute TimeSamples** ✓
+   - Basic geometry point/normal timesamples (recent: commit 7f788a263)
+   - Shader input timesamples (recent: commits c0ca8bd7, c1a7b078)
+
+2. **Visibility Timesamples** ✓
+
+### Not Yet Implemented:
+
+1. **Relationship TimeSamples**
+   - Status: NOT SUPPORTED (Design note in prim-types.hh)
+   - Impact: Low-Medium - Rare but useful for dynamic connections
+
+2. **Metadata TimeSamples**
+   - Status: NOT SUPPORTED
+   - Impact: Low - Very rarely used
+
+3. **Indexed Primvar TimeSamples**
+   - Status: KNOWN LIMITATION (usdGeom.hh line 70)
+   - Current: Only single index values per primvar, not animated indices
+   - Impact: Medium - Limits animation of complex primvar data
+
+---
+
+## 7. HIGH-PRIORITY ENHANCEMENT OPPORTUNITIES
+
+### Tier 1 (Critical - High Impact):
+
+1. **Complete Light Filter Support**
+   - Priority: HIGH
+   - Effort: Medium
+   - Impact: Unlocks professional lighting setups
+   - Files affected: usdLux.hh
+   - Add: Light filter relationship support, light linking
+
+2. **NodeGraph Full Implementation**
+   - Priority: HIGH
+   - Effort: Medium-High
+   - Impact: Enables complex shader networks beyond simple chains
+   - Files affected: usdShade.hh, usdc-writer.cc
+   - Add: Properties container, proper connectivity validation
+
+3. **Specialize/Variants in Composition**
+   - Priority: HIGH
+   - Effort: Medium
+   - Impact: Enables advanced scene organization patterns
+   - Files affected: composition.hh, stage.hh
+   - Add: specializes arc processing, variant composition in flattened scene
+
+### Tier 2 (Important - Medium Impact):
+
+4. **Additional Shader Network Nodes**
+   - Priority: MEDIUM
+   - Effort: Medium
+   - Impact: Expands expressiveness of shader networks
+   - Missing types: UsdAdd, UsdMultiply, UsdMix, UsdSeparateXYZ, UsdCombineXYZ, UsdRamp
+   - Add: Generic shader node support with arbitrary inputs/outputs
+
+5. **GeometryLight Completion**
+   - Priority: MEDIUM
+   - Effort: Low
+   - Impact: Makes procedural lighting fully functional
+   - Files affected: usdLux.hh
+   - Add: Full Light API properties to GeometryLight
+
+6. **Shader SDR Metadata**
+   - Priority: MEDIUM
+   - Effort: Low
+   - Impact: Improves tool integration and documentation
+   - Files affected: usdShade.hh
+   - Add: Metadata dictionary support
+
+7. **Advanced Material Features**
+   - Priority: MEDIUM
+   - Effort: Low-Medium
+   - Impact: Enables material fallback values to work correctly
+   - Add: Proper fallback value serialization verification
+
+### Tier 3 (Nice to Have - Lower Priority):
+
+8. **PortalLight & PluginLight Completion**
+   - Priority: LOW
+   - Effort: Low-Medium
+   - Impact: Specialized use cases
+   - Files affected: usdLux.hh
+
+9. **Indexed Primvar Animation**
+   - Priority: LOW
+   - Effort: High
+   - Impact: Rare but needed for advanced animation
+   - Files affected: usdGeom.hh, Timesamples system
+
+10. **Active Metadata Support**
+    - Priority: LOW
+    - Effort: Low
+    - Impact: Minimal - rarely used feature
+    - Files affected: prim-types.hh, composition.hh
+
+---
+
+## 8. RECOMMENDED NEXT STEPS (Priority Order)
+
+### IMMEDIATE (Next Release):
+
+1. **Light Filter Relationships**
+   - Estimated effort: 2-3 days
+   - High-value feature for professional use
+   - Add light:filters relationship type
+   - Add light linking support
+
+2. **GeometryLight Full Properties**
+   - Estimated effort: 1 day
+   - Simple completion of existing partial implementation
+   - Add standard Light API properties
+
+### SHORT TERM (1-2 releases):
+
+3. **NodeGraph Skeleton with Properties**
+   - Estimated effort: 3-4 days
+   - Enable complex material hierarchies
+   - Add property container and ordering support
+
+4. **Composition Arc Enhancements (Specializes)**
+   - Estimated effort: 2-3 days
+   - Critical for advanced scene compositions
+   - Add specializes arc processing
+
+5. **Additional Shader Network Nodes**
+   - Estimated effort: 3-5 days (depending on count)
+   - High-value for shader complexity
+   - Start with most common: UsdAdd, UsdMultiply, UsdMix
+
+### MEDIUM TERM (2-3 releases):
+
+6. **Variant Composition Integration**
+   - Estimated effort: 4-5 days
+   - Complete integration with composition system
+   - Currently variant prim processing exists but needs composition layer integration
+
+7. **SDR Metadata Support**
+   - Estimated effort: 2 days
+   - Adds metadata authoring capabilities
+
+---
+
+## 9. TEST COVERAGE RECOMMENDATIONS
+
+Current Status: 74 tests passing (as of commit 3af0af81)
+
+Suggested new test coverage:
+
+```
+Test 75: Light Filter relationships
+Test 76: GeometryLight properties
+Test 77: NodeGraph organization
+Test 78: Multi-level NodeGraph composition
+Test 79: Specialize arc composition
+Test 80: UsdAdd shader node
+Test 81: UsdMultiply shader node
+Test 82: UsdMix shader node
+Test 83-87: Complex shader networks with new node types
+Test 88: Indexed primvar timesamples (known limitation)
+Test 89: PortalLight complete support
+Test 90: Composition variant integration
 ```
 
-- UsdPreviewSurface inputs check for timesamples but currently skip them with a warning
-- All 13 material properties (diffuseColor, emissiveColor, roughness, etc.) have this limitation
-- Similar gap may exist in UsdUVTexture and UsdTransform2d input handling
-- The crate writer already supports timesample encoding in other contexts (mesh points, xformOps, visibility)
+---
 
-**Missing Properties:**
-- diffuseColor, emissiveColor, specularColor, metallic, roughness, clearcoat, clearcoatRoughness, opacity, opacityMode, opacityThreshold, ior, normal, displacement, occlusion
+## 10. FILE LOCATIONS & CHANGE SUMMARY
 
-**Recommendation:**
-- Implement timesampled value extraction for all shader input types
-- Reuse existing timesampled handling patterns from ExtractXformProperties and ExtractGPrimProperties
-- Add comprehensive tests for animated shaders
+Key files for implementation:
+
+| Feature | Primary File | Lines | Status |
+|---------|-------------|-------|--------|
+| Shaders | usdShade.hh | 44-348 | 80% |
+| Lights | usdLux.hh | 30-244 | 85% |
+| Geometry | usdGeom.hh | 34-1100+ | 95% |
+| Composition | composition.hh | 30-150 | 60% |
+| Writer | usdc-writer.cc | varies | Growing |
+| Crate Writer | crate-writer.cc/hh | varies | Experimental |
 
 ---
 
-### 3. Enhanced PointInstancer Properties Not Extracted
-**Location:** stage-converter.cc, lines 1743-1746
-**Type:** Feature Gap
-**Priority:** HIGH
-**Impact:** Advanced PointInstancer configurations will not be exported correctly
-**Complexity:** Straightforward (awaiting reader support)
+## CONCLUSION
 
-**Details:**
-```cpp
-// TODO: Extract enhanced properties (ids, orientations, invisibleIds, inactiveIds)
-// These require crate reader support for int64[] and quath[] type IDs
-// For now, the write infrastructure is in place (ConvertValue, WriteValueData)
-// but the reader needs updates to support unpacking these types
-```
+The TinyUSDZ crate writer has achieved excellent coverage of core features. The identified enhancement opportunities fall into well-defined categories:
 
-- ExtractPointInstancerProperties skips: ids (int64[]), orientations (quath[]), invisibleIds (int64[]), inactiveIds (int64[])
-- Infrastructure exists in ConvertValue() to handle these types (lines 3856-3882)
-- Issue is reader-side support for these array types, not writer-side
-- Blocks proper export of instanced objects with orientation quaternions
+- **Shader System**: Mostly complete; needs NodeGraph and additional math nodes
+- **Light Types**: 6/9 types fully done; need light filters and 3 specialized types
+- **Geometry**: Comprehensive coverage with all major types
+- **Composition**: Strong foundation; needs Specialize/Variants and variant composition
+- **Animation**: Basic support solid; complex indexed primvar animation deferred
 
-**Missing Properties:**
-- ids (int64[]) - unique instance identifiers
-- orientations (quath[]) - per-instance rotations as half-precision quaternions
-- invisibleIds (int64[]) - hidden instance IDs
-- inactiveIds (int64[]) - inactive instance IDs
-
-**Recommendation:**
-- Uncomment/enable these properties once crate reader supports VEC2D arrays and quath unpacking
-- Add feature flag to enable enhanced properties when reader support is available
-
----
-
-### 4. NurbsCurves Double2 Array Support Blocked
-**Location:** stage-converter.cc, lines 1494-1498
-**Type:** Feature Gap
-**Priority:** HIGH
-**Impact:** NURBS curve range data cannot be exported correctly
-**Complexity:** Depends on crate reader implementation
-
-**Details:**
-```cpp
-// Extract ranges (double2[]) - NURBS curve parameter ranges
-// TODO: Requires crate reader support for VEC2D arrays. Skip for now.
-if (nurbs_curves->ranges.authored()) {
-  // Arrays of double2 need crate reader enhancements to properly unpack VEC2D arrays
-  // Skip this property for now
-}
-```
-
-- NurbsCurves.ranges is intentionally skipped (double2[] arrays)
-- Similar blocker as PointInstancer issue - reader doesn't support VEC2D unpacking
-- Affects proper parametric representation of NURBS curves
-
-**Recommendation:**
-- Track reader implementation progress for VEC2D support
-- Once available, uncomment and test with VEC2D arrays
-
----
-
-### 5. Validation Implementation is Minimal
-**Location:** crate-writer.cc, lines 4040-4113
-**Type:** Feature Gap
-**Priority:** MEDIUM-HIGH
-**Impact:** Invalid data can be written without detection; hard to debug issues
-**Complexity:** Moderate
-
-**Details:**
-- ValidateStage() only checks:
-  - Empty stage warning
-  - Empty prim names
-  - Invalid path characters in prim names
-- ValidateLayer() is almost a stub ("forward declared in crate-writer.hh, so we do minimal validation")
-- Missing validation for:
-  - Circular references
-  - Invalid prim type combinations
-  - Property type mismatches
-  - Relationship target validity
-  - Path cycles
-  - Memory/size limits before processing
-
-**Recommendations:**
-- Implement comprehensive stage validation (detect cycles, validate types)
-- Implement layer validation for properties and relationships
-- Add property type checking
-- Add pre-processing validation to catch issues early
-
----
-
-### 6. Sublayer Support Incomplete
-**Location:** stage-converter.cc, lines 4055-4056 (ConvertLayerToSpecs)
-**Type:** Feature Gap
-**Priority:** MEDIUM-HIGH
-**Impact:** Multilayer compositions cannot be fully exported
-**Complexity:** Moderate
-
-**Details:**
-```cpp
-// 3. TODO: Handle sublayers if present
-// if (layer.HasSublayers()) { ... }
-```
-
-- ConvertLayerToSpecs has sublayer handling TODO marked but commented out
-- Sublayer offsets ARE being written to root PrimSpec (lines 121-154)
-- But actual sublayer specs may not be created/traversed
-- This means sublayer content won't be exported
-
-**Recommendation:**
-- Implement recursive sublayer conversion
-- Ensure each sublayer gets its own spec tree
-- Handle layer offsets correctly in hierarchy
-
----
-
-### 7. Missing Shader Type Handlers
-**Location:** stage-converter.cc, lines 239-266
-**Type:** Feature Gap
-**Priority:** MEDIUM-HIGH
-**Impact:** Custom and common shader types cannot be exported
-**Complexity:** Moderate (straightforward to add more handlers)
-
-**Details:**
-Currently supported shader types with input specs:
-- UsdPreviewSurface (11 inputs)
-- UsdUVTexture (9 inputs)  
-- UsdTransform2d (4 inputs)
-- UsdPrimvarReader_* variants (8 types, 1 common input)
-
-Missing common shader types:
-- UsdColorCorrect
-- UsdMix / UsdLayerMix
-- UsdRamp
-- UsdRange
-- UsdDistance
-- UsdValueRamp
-- Mtlx shaders (if needed)
-- Custom shader types
-
-**Code Location:**
-```cpp
-if (shader->info_id == "UsdPreviewSurface") {
-  // ...
-} else if (shader->info_id == "UsdUVTexture") {
-  // ...
-} else if (shader->info_id == "UsdTransform2d") {
-  // ...
-} else if (shader->info_id.find("UsdPrimvarReader_") == 0) {
-  // ...
-} 
-// <- No else clause for unhandled types, silently skipped
-```
-
-**Recommendation:**
-- Add handlers for common utility shaders (Ramp, Range, Mix, Distance)
-- Add generic fallback handler for unknown shaders (export inputs as generic attributes)
-- Add warning for unhandled shader types
-
----
-
-### 8. Attribute Custom Flag Not Implemented
-**Location:** stage-converter.cc, lines 4404-4405
-**Type:** Feature Gap
-**Priority:** MEDIUM
-**Impact:** Attribute customization flags lost during export
-**Complexity:** Straightforward (needs spec storage)
-
-**Details:**
-```cpp
-// TODO: Handle custom flag - needs to be added to the attribute spec, not parent prim
-// For now, custom flag handling is deferred
-```
-
-- Custom flag is property metadata but should be stored in attribute spec
-- Currently skipped entirely
-- Not critical but affects round-trip fidelity
-
-**Recommendation:**
-- Add custom flag field to attribute spec construction
-- Test round-trip with custom attributes
-
----
-
-### 9. BlendShape Inbetween Shapes Not Extracted
-**Location:** stage-converter.cc, lines 1888-1889
-**Type:** Feature Gap
-**Priority:** MEDIUM
-**Impact:** Intermediate blend shapes cannot be exported
-**Complexity:** Moderate
-
-**Details:**
-```cpp
-// TODO: Handle inbetween blend shapes (stored in props with "inbetweens:" namespace)
-// For now, just extract basic properties
-```
-
-- Only basic offsets/normalOffsets extracted
-- Inbetween shapes use special "inbetweens:" property namespace
-- Requires property namespace awareness
-
-**Recommendation:**
-- Implement namespace-aware property iteration
-- Extract "inbetweens:*" properties as sub-properties
-- Test with multi-target blend shapes
-
----
-
-### 10. Missing Scalar Type Support (half)
-**Location:** stage-converter.cc, ConvertValue function
-**Type:** Feature Gap
-**Priority:** MEDIUM
-**Impact:** Half-precision scalar values cannot be exported
-**Complexity:** Straightforward
-
-**Details:**
-- ConvertValue() supports half3[] and half4[] arrays
-- Missing support for scalar half types:
-  - `half` (scalar)
-  - `half2`
-- These are less common but part of USD spec
-
-**Recommendation:**
-- Add cases for "half", "half2" to ConvertValue()
-- Verify CrateValue supports these types
-
----
-
-### 11. token[] Array Handling Stubbed
-**Location:** stage-converter.cc, lines 3848-3855
-**Type:** Feature Gap
-**Priority:** MEDIUM
-**Impact:** Token arrays cannot be serialized
-**Complexity:** Moderate (requires special token deduplication)
-
-**Details:**
-```cpp
-} else if (type_name == "token[]") {
-  if (auto v = val.get_value<std::vector<value::token>>()) {
-    // For now, skip token[] arrays as they require special handling
-    // They will be handled through the generic property system if needed
-    // Return false to indicate this type needs special handling
-    if (err) *err = "token[] arrays require special handling";
-    return false;
-  }
-}
-```
-
-- Explicitly returns false for token arrays
-- Should either be implemented or silently skipped with empty handling
-
-**Recommendation:**
-- Implement token[] array serialization using existing token deduplication
-- Or mark as intentionally unsupported with clear error message
-
----
-
-### 12. Relationship Metadata Incomplete
-**Location:** stage-converter.cc, ConvertRelationshipToFields
-**Type:** Potential Gap
-**Priority:** MEDIUM
-**Impact:** Relationship properties/metadata may not be fully preserved
-**Complexity:** Requires code inspection of ConvertRelationshipToFields
-
-**Details:**
-- Relationship metadata (customData, docstring) handling not verified in grep
-- Need to verify all relationship properties are being extracted
-- Includes material:binding and other composition relationships
-
-**Recommendation:**
-- Audit ConvertRelationshipToFields for complete metadata extraction
-- Add test cases for relationship metadata round-trip
-
----
-
-## INTERMEDIATE FINDINGS
-
-### Material Binding Variants Support
-**Location:** stage-converter.cc, lines 2854-2903
-**Type:** Feature Complete but Needs Testing
-**Priority:** MEDIUM
-**Status:** Implemented
-
-- material:binding, material:binding:preview, material:binding:full all supported
-- material:binding:collection:* variants supported
-- Should verify all binding types work correctly in round-trip tests
-
----
-
-### Sublayer Offset Support  
-**Location:** stage-converter.cc, lines 119-154
-**Type:** Feature Complete
-**Priority:** MEDIUM
-**Status:** Implemented
-
-- subLayerOffsets field being written correctly
-- Handles both default and non-default offsets
-- May be incomplete without full sublayer conversion
-
----
-
-### Variant Set Support
-**Location:** stage-converter.cc, lines 280-289, 4140-4162
-**Type:** Feature Complete but Needs Testing
-**Priority:** MEDIUM
-**Status:** Implemented
-
-- VariantSets converted to specs
-- Variant selection metadata stored
-- Need comprehensive testing with variant hierarchies
-
----
-
-## PERFORMANCE CONSIDERATIONS
-
-### 1. Debug Output Performance Impact
-- 173+ debug output statements in hot code paths
-- Each conversion operation triggers multiple stderr writes
-- Removes ~5-10% performance from production builds
-
-### 2. Array Deduplication
-**Status:** Implemented (lines 601-613, crate-writer.hh)
-- Phase 5 TimeSamples array deduplication
-- Only used for numeric arrays in TimeSamples
-- Good - prevents data duplication
-
-### 3. Path Tree Encoding
-**Status:** Using external library (path-sort-and-encode-crate)
-- Efficient path tree compression in place
-- Reduces path storage overhead
-
-### 4. Token/String Deduplication
-**Status:** Fully implemented (maps + vectors)
-- All tokens, strings, paths deduplicated
-- Good memory efficiency
-
----
-
-## CODE QUALITY ISSUES
-
-### 1. Excessive Debug Output
-- Lines of debug code: ~173 in stage-converter.cc, ~90 in crate-writer.cc
-- Should be in conditional compilation or logging framework
-
-### 2. Magic Numbers
-- Various hardcoded offsets and sizes
-- No centralized constants for version, magic bytes, etc.
-
-### 3. Error Messages
-- Many errors go to stderr directly
-- Should accumulate in error string parameter
-- Mix of logged and returned errors
-
-### 4. Unused Error Context Stack
-- ErrorContextStack defined in crate-writer.hh
-- Appears to be defined but may not be fully utilized
-
----
-
-## TYPE SYSTEM COVERAGE ANALYSIS
-
-### Fully Supported Types (ConvertValue)
-- Scalars: bool, int32, uint32, int64, uint64, float, double
-- Vectors: float2/3/4, double2/3/4, int2/3/4
-- Role types: point3f/d, vector3f/d, normal3f/d, color3f/d, color4f/d
-- Matrices: matrix2d, matrix3d, matrix4d
-- Quaternions: quatf, quatd
-- Arrays: int[], float[], double[], float3[], double3[], point3f/d[], vector3f/d[], etc.
-- Complex arrays: int64[], quath[], quatf[], quatd[], half3[], half4[], float4[], double4[], int2/3/4[], matrix4d[]
-
-### Partially Supported
-- token[] - explicitly stubbed, returns error
-- half (scalar) - NOT supported
-- half2 - NOT supported
-
-### Unsupported/Blocked
-- VEC2D arrays (double2[], quath[] in certain contexts) - reader limitation
-- Custom USD types/structs
-- Any type not in ConvertValue list
-
----
-
-## PRIM TYPE COVERAGE ANALYSIS
-
-### Fully Supported Geometry Types
-- Mesh (with timesampled points)
-- Cube, Sphere, Cylinder, Cone, Capsule
-- Points, Camera
-- BasisCurves, NurbsCurves (except ranges)
-- PointInstancer (except enhanced properties)
-- GeomSubset
-- BlendShape (except inbetweens)
-
-### Fully Supported Material/Shader Types
-- Material (with all outputs and bindings)
-- Shader (basic property extraction)
-  - UsdPreviewSurface (11 inputs)
-  - UsdUVTexture (9 inputs + fallback)
-  - UsdTransform2d (4 inputs)
-  - UsdPrimvarReader_* (8 variants)
-
-### Fully Supported Animation Types
-- Skeleton, SkelAnimation, SkelRoot
-
-### Fully Supported Light Types
-- SphereLight, RectLight, DiskLight
-- CylinderLight, DistantLight, DomeLight
-
-### Missing Utility Shader Types
-- UsdColorCorrect
-- UsdMix/UsdLayerMix
-- UsdRamp, UsdRange
-- UsdDistance, UsdValueRamp
-
----
-
-## RECOMMENDATIONS PRIORITY ROADMAP
-
-### Phase 1 (Critical - Release Blockers)
-1. Remove/conditionally compile debug output (~2-4 hours)
-2. Implement animated shader input support (~4-6 hours)
-3. Complete validation implementation (~3-4 hours)
-
-### Phase 2 (High - Feature Completeness)
-4. Enable enhanced PointInstancer properties (blocked on reader)
-5. Enable NurbsCurves ranges support (blocked on reader)
-6. Implement sublayer traversal (~2-3 hours)
-7. Add missing shader type handlers (~2-3 hours per shader)
-
-### Phase 3 (Medium - Polish)
-8. Implement attribute custom flag handling (~1 hour)
-9. Implement BlendShape inbetween support (~2-3 hours)
-10. Add scalar half type support (~30 minutes)
-11. Implement token[] array handling (~1 hour)
-
-### Phase 4 (Maintenance)
-12. Comprehensive round-trip testing suite
-13. Performance benchmarking and optimization
-14. Code cleanup and refactoring
-
----
-
-## TESTING RECOMMENDATIONS
-
-1. **Animated Shader Test**: Create material with timesampled diffuseColor, round-trip through reader
-2. **Enhanced PointInstancer Test**: Export instances with orientations, verify quath[] arrays
-3. **Sublayer Test**: Export layer with sublayers, verify all layers present in output
-4. **Shader Type Test**: Create scene with 5+ different shader types, verify all properties
-5. **Validation Test**: Feed invalid prims, verify detection and error reporting
-6. **Debug Output Test**: Verify no debug stderr in production builds
-7. **Round-trip Fidelity Test**: Load USD, write crate, read crate, verify identical
-
----
-
-## FILES ANALYZED
-- `/mnt/nvme02/work/tinyusdz-repo/crate-writer-2025/src/stage-converter.cc` (4,855 lines)
-- `/mnt/nvme02/work/tinyusdz-repo/crate-writer-2025/src/crate-writer.hh` (618 lines)
-- `/mnt/nvme02/work/tinyusdz-repo/crate-writer-2025/src/crate-writer.cc` (4,000+ lines)
+The recommended priority sequence balances high-value features (Light Filters, NodeGraph) with low-effort completions (GeometryLight), providing a clear roadmap for continued development.
 

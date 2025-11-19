@@ -53,6 +53,7 @@ void crate_writer_rect_light_test(void);
 void crate_writer_distant_light_test(void);
 void crate_writer_dome_light_test(void);
 void crate_writer_multiple_lights_test(void);
+void crate_writer_light_filters_test(void);
 void crate_writer_error_context_test(void);
 void crate_writer_memory_limit_test(void);
 void crate_writer_filesize_limit_test(void);
