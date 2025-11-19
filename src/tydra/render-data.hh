@@ -1626,6 +1626,14 @@ bool DefaultTextureImageLoaderFunction(const value::AssetPath &assetPath,
 struct MeshConverterConfig {
   bool triangulate{true};
 
+  // Triangulation method for polygons with 5+ vertices
+  enum class TriangulationMethod {
+    Earcut,     // Use earcut algorithm (robust, handles complex polygons)
+    TriangleFan // Use simple triangle fan (faster, only for convex polygons)
+  };
+
+  TriangulationMethod triangulation_method{TriangulationMethod::Earcut};
+
   bool validate_geomsubset{true};  // Validate GeomSubset.
 
   // We may want texcoord data even if the Mesh does not have bound Material.
