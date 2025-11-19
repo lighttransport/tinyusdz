@@ -359,6 +359,8 @@ bool CrateWriter::ExtractTypeSpecificProperties(
     return ExtractMaterialProperties(prim, prim_path, fields, err);
   } else if (type_name == "Shader") {
     return ExtractShaderProperties(prim, fields, err);
+  } else if (type_name == "NodeGraph") {
+    return ExtractNodeGraphProperties(prim, fields, err);
   } else if (type_name == "BlendShape") {
     return ExtractBlendShapeProperties(prim, fields, err);
   } else if (type_name == "SphereLight") {
@@ -373,6 +375,8 @@ bool CrateWriter::ExtractTypeSpecificProperties(
     return ExtractDistantLightProperties(prim, fields, err);
   } else if (type_name == "DomeLight") {
     return ExtractDomeLightProperties(prim, fields, err);
+  } else if (type_name == "GeometryLight") {
+    return ExtractGeometryLightProperties(prim, fields, err);
   } else if (type_name == "Skeleton") {
     return ExtractSkeletonProperties(prim, fields, err);
   } else if (type_name == "SkelAnimation") {
@@ -2172,6 +2176,67 @@ bool CrateWriter::ExtractDomeLightProperties(
   return true;
 }
 
+bool CrateWriter::ExtractGeometryLightProperties(
+    const Prim& prim,
+    crate::FieldValuePairVector& fields,
+    std::string* err) {
+  const GeometryLight* light = prim.data().as<GeometryLight>();
+  if (!light) {
+    if (err) *err = "Failed to cast prim to GeometryLight";
+    return false;
+  }
+
+  // Extract intensity (inherited from NonboundableLight)
+  if (light->intensity.has_value()) {
+    const Animatable<float>& intensity_anim = light->intensity.get_value();
+    if (intensity_anim.has_default()) {
+      float intensity_val;
+      if (intensity_anim.get_default(&intensity_val)) {
+        crate::CrateValue crate_val;
+        value::Value val(intensity_val);
+        if (ConvertValue(val, crate_val, err)) {
+          fields.push_back({"intensity", crate_val});
+        }
+      }
+    }
+  }
+
+  // Extract color (inherited from NonboundableLight)
+  if (light->color.has_value()) {
+    const Animatable<value::color3f>& color_anim = light->color.get_value();
+    if (color_anim.has_default()) {
+      value::color3f color_val;
+      if (color_anim.get_default(&color_val)) {
+        crate::CrateValue crate_val;
+        value::Value val(color_val);
+        if (ConvertValue(val, crate_val, err)) {
+          fields.push_back({"color", crate_val});
+        }
+      }
+    }
+  }
+
+  // Extract exposure (inherited from NonboundableLight)
+  if (light->exposure.has_value()) {
+    const Animatable<float>& exposure_anim = light->exposure.get_value();
+    if (exposure_anim.has_default()) {
+      float exposure_val;
+      if (exposure_anim.get_default(&exposure_val)) {
+        crate::CrateValue crate_val;
+        value::Value val(exposure_val);
+        if (ConvertValue(val, crate_val, err)) {
+          fields.push_back({"exposure", crate_val});
+        }
+      }
+    }
+  }
+
+  // Note: The geometry relationship is extracted by the generic property system
+  // through the props map on the GeometryLight structure, so we don't need to handle it here.
+
+  return true;
+}
+
 // ============================================================================
 // Skeleton Property Extraction
 // ============================================================================
@@ -3695,6 +3760,25 @@ bool CrateWriter::ExtractShaderProperties(
 
   // Shader inputs and outputs are handled through the props map
   // which will be processed by ConvertPropertyToFields
+
+  return true;
+}
+
+bool CrateWriter::ExtractNodeGraphProperties(
+  const Prim& prim,
+  crate::FieldValuePairVector& fields,
+  std::string* err
+) {
+  const NodeGraph* node_graph = prim.data().as<NodeGraph>();
+  if (!node_graph) {
+    if (err) *err = "Failed to cast prim to NodeGraph";
+    return false;
+  }
+
+  // NodeGraph is primarily a container for organizing shader nodes and interfaces.
+  // All specific properties (inputs, outputs, and child nodes) are handled through
+  // the generic property system via the props map.
+  // This function acts as a type-specific handler but defers to the generic system.
 
   return true;
 }

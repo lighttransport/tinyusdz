@@ -107,6 +107,7 @@ TEST_LIST = {
   { "crate_writer_dome_light_test", crate_writer_dome_light_test },
   { "crate_writer_multiple_lights_test", crate_writer_multiple_lights_test },
   { "crate_writer_light_filters_test", crate_writer_light_filters_test },
+  { "crate_writer_nodegraph_test", crate_writer_nodegraph_test },
   { "crate_writer_error_context_test", crate_writer_error_context_test },
   { "crate_writer_memory_limit_test", crate_writer_memory_limit_test },
   { "crate_writer_filesize_limit_test", crate_writer_filesize_limit_test },
