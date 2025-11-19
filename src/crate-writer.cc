@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <set>
 #include <sstream>
 
 // Phase 4: Compression support
@@ -3977,7 +3978,6 @@ bool CrateWriter::ValidateStage(const Stage& stage, std::string* err) {
     return true;  // Validation disabled
   }
 
-
   // Check for empty stage
   if (stage.root_prims().empty()) {
     std::string warning = "WARNING: Stage has no root prims";
@@ -3985,6 +3985,9 @@ bool CrateWriter::ValidateStage(const Stage& stage, std::string* err) {
     validation_warnings_.push_back(warning);
     validation_warnings_count_++;
   }
+
+  // Build a set of root prim names for defaultPrim validation
+  std::set<std::string> root_prim_names;
 
   // Validate each root prim
   for (const auto& prim : stage.root_prims()) {
@@ -3998,19 +4001,81 @@ bool CrateWriter::ValidateStage(const Stage& stage, std::string* err) {
       validation_warnings_count_++;
     }
 
-    // Check for invalid path characters in prim name
+    // Collect prim name for defaultPrim validation
+    if (!prim.element_name().empty()) {
+      root_prim_names.insert(prim.element_name());
+    }
+
+    // Check for invalid path characters in prim name (/, ., and other invalid chars)
     const std::string& prim_name = prim.element_name();
-    if (prim_name.find('/') != std::string::npos ||
-        prim_name.find('.') != std::string::npos) {
-      std::string warning = "WARNING: Prim name contains invalid characters: " + prim_name;
+    for (char c : prim_name) {
+      if (c == '/' || c == '.' || c == ':' || c == '[' || c == ']' || c == '(' || c == ')') {
+        std::string warning = "WARNING: Prim name contains invalid character '" +
+                             std::string(1, c) + "' in name: " + prim_name;
+        validation_warnings_.push_back(warning);
+        validation_warnings_count_++;
+        break;  // Only report once per prim
+      }
+    }
+  }
+
+  // Validate stage metadata
+  const StageMetas& metas = stage.metas();
+
+  // Validate defaultPrim if specified
+  if (!metas.defaultPrim.str().empty()) {
+    const std::string& default_prim_name = metas.defaultPrim.str();
+    if (root_prim_names.find(default_prim_name) == root_prim_names.end()) {
+      std::string warning = "WARNING: defaultPrim '" + default_prim_name +
+                           "' does not refer to any root prim";
       validation_warnings_.push_back(warning);
       validation_warnings_count_++;
     }
   }
 
-  std::cerr << "[ValidateStage] Validation complete:\n"
-            << "  Prims validated: " << validation_prim_count_ << "\n"
-            << "  Warnings: " << validation_warnings_count_ << "\n";
+  // Validate time metadata consistency
+  if (metas.startTimeCode.authored() && metas.endTimeCode.authored()) {
+    double start = metas.startTimeCode.get_value();
+    double end = metas.endTimeCode.get_value();
+    if (start > end) {
+      std::string warning = "WARNING: startTimeCode (" + std::to_string(start) +
+                           ") is greater than endTimeCode (" + std::to_string(end) + ")";
+      validation_warnings_.push_back(warning);
+      validation_warnings_count_++;
+    }
+  }
+
+  // Validate framesPerSecond and timeCodesPerSecond are positive
+  if (metas.framesPerSecond.authored()) {
+    double fps = metas.framesPerSecond.get_value();
+    if (fps <= 0.0) {
+      std::string warning = "WARNING: framesPerSecond must be positive, got " +
+                           std::to_string(fps);
+      validation_warnings_.push_back(warning);
+      validation_warnings_count_++;
+    }
+  }
+
+  if (metas.timeCodesPerSecond.authored()) {
+    double tcps = metas.timeCodesPerSecond.get_value();
+    if (tcps <= 0.0) {
+      std::string warning = "WARNING: timeCodesPerSecond must be positive, got " +
+                           std::to_string(tcps);
+      validation_warnings_.push_back(warning);
+      validation_warnings_count_++;
+    }
+  }
+
+  // Validate metersPerUnit is positive if specified
+  if (metas.metersPerUnit.authored()) {
+    double mpu = metas.metersPerUnit.get_value();
+    if (mpu <= 0.0) {
+      std::string warning = "WARNING: metersPerUnit must be positive, got " +
+                           std::to_string(mpu);
+      validation_warnings_.push_back(warning);
+      validation_warnings_count_++;
+    }
+  }
 
   return validation_warnings_count_ == 0 || !options_.enable_validation;
 }
