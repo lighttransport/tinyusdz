@@ -438,6 +438,10 @@ private:
   /// Handles material:binding, material:binding:preview, and material:binding:full relationships
   bool AddMaterialBindingSpecs(const Prim& prim, const Path& prim_path, std::string* err);
 
+  /// Add light filter relationships as separate relationship specs (called after Light prim spec is added)
+  /// Handles light:filters relationships for SphereLight, RectLight, DiskLight, CylinderLight, DistantLight, DomeLight
+  bool AddLightFilterSpecs(const Prim& prim, const Path& prim_path, std::string* err);
+
   /// Extract xformOps from Xformable (GPrim or Xform)
   bool ExtractXformOpsFromXformable(const Prim& prim, crate::FieldValuePairVector& fields, std::string* err);
 
