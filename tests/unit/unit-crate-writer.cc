@@ -5617,7 +5617,128 @@ void crate_writer_light_filters_test(void) {
 }
 
 //
-// Test 75: Error Context Stack
+// Test 75: NodeGraph (Shader Network Container)
+// Verifies that NodeGraph container for shader networks is properly exported
+//
+void crate_writer_nodegraph_test(void) {
+  std::string filename = get_temp_filename("test_nodegraph");
+  std::string err;
+
+  // Create a stage with a NodeGraph containing shaders
+  Stage stage;
+
+  // Create a NodeGraph (shader network container)
+  NodeGraph node_graph;
+  node_graph.name = "ShaderNetwork";
+
+  // Create a UsdPreviewSurface shader inside the NodeGraph
+  UsdPreviewSurface preview_surface;
+  preview_surface.diffuseColor.set_value(Animatable<value::color3f>(value::color3f({0.5f, 0.5f, 0.5f})));
+  preview_surface.metallic.set_value(Animatable<float>(0.5f));
+  preview_surface.roughness.set_value(Animatable<float>(0.3f));
+
+  Shader shader;
+  shader.name = "Surface";
+  shader.info_id = "UsdPreviewSurface";
+  shader.value = preview_surface;
+
+  // Create a UV Texture shader in the NodeGraph
+  UsdUVTexture uv_texture;
+  uv_texture.file.set_value(Animatable<value::AssetPath>(value::AssetPath("textures/diffuse.png")));
+
+  Shader texture;
+  texture.name = "DiffuseTexture";
+  texture.info_id = "UsdUVTexture";
+  texture.value = uv_texture;
+
+  // Create a Material that uses the shaders from the NodeGraph
+  Material material;
+  material.name = "TestMaterial";
+
+  // Add prims to stage
+  stage.root_prims().push_back(Prim("ShaderNetwork", node_graph));
+  stage.root_prims().push_back(Prim("Surface", shader));
+  stage.root_prims().push_back(Prim("DiffuseTexture", texture));
+  stage.root_prims().push_back(Prim("TestMaterial", material));
+
+  // Write to USDC
+  CrateWriter writer(filename);
+  CrateWriter::Options opts;
+  opts.version_major = 0;
+  opts.version_minor = 8;
+  opts.version_patch = 0;
+  writer.SetOptions(opts);
+
+  bool ret = writer.Open(&err);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to open writer: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  ret = writer.ConvertStageToSpecs(stage, &err);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to convert stage: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  ret = writer.Finalize(&err);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to finalize: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  writer.Close();
+
+  TEST_MSG("NodeGraph test file: %s", filename.c_str());
+
+  // Load and verify roundtrip
+  Stage loaded_stage;
+  std::string warn;
+  ret = tinyusdz::LoadUSDFromFile(filename, &loaded_stage, &warn, &err);
+  TEST_CHECK(ret == true);
+  if (!ret) {
+    TEST_MSG("Failed to load: %s", err.c_str());
+    cleanup_file(filename);
+    return;
+  }
+
+  // Verify the NodeGraph was loaded correctly
+  auto nodegraph_prim_result = loaded_stage.GetPrimAtPath(Path("/ShaderNetwork", ""));
+  TEST_CHECK(nodegraph_prim_result.has_value());
+
+  if (nodegraph_prim_result.has_value()) {
+    const Prim* nodegraph_prim = nodegraph_prim_result.value();
+    const NodeGraph* loaded_nodegraph = nodegraph_prim->data().as<NodeGraph>();
+    if (loaded_nodegraph) {
+      TEST_MSG("NodeGraph container successfully written and loaded!");
+    } else {
+      TEST_MSG("Failed to load NodeGraph prim");
+    }
+  }
+
+  // Verify the shaders were loaded
+  auto surface_prim_result = loaded_stage.GetPrimAtPath(Path("/Surface", ""));
+  auto texture_prim_result = loaded_stage.GetPrimAtPath(Path("/DiffuseTexture", ""));
+
+  TEST_CHECK(surface_prim_result.has_value());
+  TEST_CHECK(texture_prim_result.has_value());
+
+  if (surface_prim_result.has_value() && texture_prim_result.has_value()) {
+    TEST_MSG("Shader network with NodeGraph container successfully completed!");
+  }
+
+  std::cerr << "NodeGraph roundtrip successful!\n";
+  cleanup_file(filename);
+}
+
+//
+// Test 76: Error Context Stack
 // Verifies that error context tracking provides detailed error information
 //
 void crate_writer_error_context_test(void) {
