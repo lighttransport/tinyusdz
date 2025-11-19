@@ -3054,39 +3054,83 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
     return true;
   };
 
+  // Helper to handle timesampled color3f shader inputs
+  auto add_input_spec_with_timesamples_color3f = [&](
+      const std::string& input_name,
+      const std::string& type_name,
+      const crate::CrateValue& default_value,
+      const Animatable<value::color3f>* animatable) -> bool {
+    // First add the default value spec
+    if (!add_input_spec(input_name, type_name, default_value)) {
+      return false;
+    }
+
+    // If there are timesamples, create a separate timeSamples spec
+    if (animatable && animatable->has_timesamples()) {
+      const auto& typed_ts = animatable->get_timesamples();
+
+      // Convert TypedTimeSamples<color3f> to value::TimeSamples with float3 values
+      value::TimeSamples ts;
+      for (size_t i = 0; i < typed_ts.size(); i++) {
+        double time;
+        value::color3f sample_color;
+
+#ifndef TINYUSDZ_USE_TIMESAMPLES_SOA
+        time = typed_ts.get_samples()[i].t;
+        sample_color = typed_ts.get_samples()[i].value;
+#else
+        time = typed_ts.get_times()[i];
+        sample_color = typed_ts.get_values()[i];
+#endif
+
+        // Convert color3f to float3 for crate format
+        value::float3 color_as_float3 = {sample_color.r, sample_color.g, sample_color.b};
+        value::Value v(color_as_float3);
+        ts.add_sample(time, v);
+      }
+
+      // Create timeSamples spec
+      Path ts_path = prim_path.AppendProperty(input_name + ".timeSamples");
+      crate::FieldValuePairVector ts_fields;
+
+      crate::CrateValue ts_value;
+      ts_value.Set(ts);
+      ts_fields.push_back({"default", ts_value});
+
+      if (!AddSpec(ts_path, SpecType::Attribute, ts_fields, err)) {
+        return false;
+      }
+    }
+
+    return true;
+  };
+
   // Extract and add common PBR inputs
 
   // inputs:diffuseColor (color3f)
   if (preview_surface->diffuseColor.authored()) {
-    crate::CrateValue diffuse_value;
-    // Handle both constant and animated values
-    if (preview_surface->diffuseColor.get_value().is_timesamples()) {
-      // TODO: Handle timesampled values
-    } else {
-      value::color3f color;
-      if (preview_surface->diffuseColor.get_value().get_scalar(&color)) {
-        // Convert color3f to float3 for CrateValue (they're binary compatible)
-        value::float3 color_as_float3 = {color.r, color.g, color.b};
-        diffuse_value.Set(color_as_float3);
-        if (!add_input_spec("inputs:diffuseColor", "color3f", diffuse_value)) {
-          return false;
-        }
+    value::color3f color;
+    if (preview_surface->diffuseColor.get_value().get_scalar(&color)) {
+      // Convert color3f to float3 for CrateValue (they're binary compatible)
+      value::float3 color_as_float3 = {color.r, color.g, color.b};
+      crate::CrateValue diffuse_value;
+      diffuse_value.Set(color_as_float3);
+      if (!add_input_spec_with_timesamples_color3f("inputs:diffuseColor", "color3f", diffuse_value, &preview_surface->diffuseColor.get_value())) {
+        return false;
       }
     }
   }
 
   // inputs:emissiveColor (color3f)
   if (preview_surface->emissiveColor.authored()) {
-    crate::CrateValue emissive_value;
-    if (!preview_surface->emissiveColor.get_value().is_timesamples()) {
-      value::color3f color;
-      if (preview_surface->emissiveColor.get_value().get_scalar(&color)) {
-        // Convert color3f to float3 for CrateValue
-        value::float3 color_as_float3 = {color.r, color.g, color.b};
-        emissive_value.Set(color_as_float3);
-        if (!add_input_spec("inputs:emissiveColor", "color3f", emissive_value)) {
-          return false;
-        }
+    value::color3f color;
+    if (preview_surface->emissiveColor.get_value().get_scalar(&color)) {
+      // Convert color3f to float3 for CrateValue
+      value::float3 color_as_float3 = {color.r, color.g, color.b};
+      crate::CrateValue emissive_value;
+      emissive_value.Set(color_as_float3);
+      if (!add_input_spec_with_timesamples_color3f("inputs:emissiveColor", "color3f", emissive_value, &preview_surface->emissiveColor.get_value())) {
+        return false;
       }
     }
   }
@@ -3107,16 +3151,14 @@ bool CrateWriter::AddUsdPreviewSurfaceInputSpecs(
 
   // inputs:specularColor (color3f) - for specular workflow
   if (preview_surface->specularColor.authored()) {
-    crate::CrateValue spec_color_value;
-    if (!preview_surface->specularColor.get_value().is_timesamples()) {
-      value::color3f color;
-      if (preview_surface->specularColor.get_value().get_scalar(&color)) {
-        // Convert color3f to float3 for CrateValue
-        value::float3 color_as_float3 = {color.r, color.g, color.b};
-        spec_color_value.Set(color_as_float3);
-        if (!add_input_spec("inputs:specularColor", "color3f", spec_color_value)) {
-          return false;
-        }
+    value::color3f color;
+    if (preview_surface->specularColor.get_value().get_scalar(&color)) {
+      // Convert color3f to float3 for CrateValue
+      value::float3 color_as_float3 = {color.r, color.g, color.b};
+      crate::CrateValue spec_color_value;
+      spec_color_value.Set(color_as_float3);
+      if (!add_input_spec_with_timesamples_color3f("inputs:specularColor", "color3f", spec_color_value, &preview_surface->specularColor.get_value())) {
+        return false;
       }
     }
   }
