@@ -1665,10 +1665,67 @@ bool CrateWriter::ExtractPointInstancerProperties(
     }
   }
 
-  // TODO: Extract enhanced properties (ids, orientations, invisibleIds, inactiveIds)
-  // These require crate reader support for int64[] and quath[] type IDs
-  // For now, the write infrastructure is in place (ConvertValue, WriteValueData)
-  // but the reader needs updates to support unpacking these types
+  // Extract ids (int64[]) - Instance identifiers
+  if (instancer->ids.authored()) {
+    auto ids_opt = instancer->ids.get_value();
+    if (ids_opt.has_value()) {
+      const Animatable<std::vector<int64_t>>& ids_anim = ids_opt.value();
+      if (ids_anim.has_default()) {
+        std::vector<int64_t> ids_val;
+        if (ids_anim.get_default(&ids_val)) {
+          value::Value ids_value(ids_val);
+          if (!add_array_attribute("ids", ids_value)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  // Extract orientations (quath[]) - Instance orientations as quaternions (half precision)
+  if (instancer->orientations.authored()) {
+    auto orientations_opt = instancer->orientations.get_value();
+    if (orientations_opt.has_value()) {
+      const Animatable<std::vector<value::quath>>& orientations_anim = orientations_opt.value();
+      if (orientations_anim.has_default()) {
+        std::vector<value::quath> orientations_val;
+        if (orientations_anim.get_default(&orientations_val)) {
+          value::Value orientations_value(orientations_val);
+          if (!add_array_attribute("orientations", orientations_value)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  // Extract invisibleIds (int64[]) - IDs of instances to hide
+  if (instancer->invisibleIds.authored()) {
+    auto invisible_opt = instancer->invisibleIds.get_value();
+    if (invisible_opt.has_value()) {
+      const Animatable<std::vector<int64_t>>& invisible_anim = invisible_opt.value();
+      if (invisible_anim.has_default()) {
+        std::vector<int64_t> invisible_val;
+        if (invisible_anim.get_default(&invisible_val)) {
+          value::Value invisible_value(invisible_val);
+          if (!add_array_attribute("invisibleIds", invisible_value)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  // Extract inactiveIds (int64[]) - IDs of instances to deactivate
+  if (instancer->inactiveIds.authored()) {
+    std::vector<int64_t> inactive_val;
+    if (instancer->inactiveIds.get_value(&inactive_val)) {
+      value::Value inactive_value(inactive_val);
+      if (!add_array_attribute("inactiveIds", inactive_value)) {
+        return false;
+      }
+    }
+  }
 
   // Note: prototypes (relationship) - handled separately in AddRelationshipSpecs
 
